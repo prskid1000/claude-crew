@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 flow.tests.ps1: dev-flow plumbing: bossy.ps1 track add / run (task ids, promotion), board join / leave, health's overdue beat;
-devtools.py finish / prior gate; pokey.ps1 api arguments; buildy.js MR dedupe (moved from bossy.tests: its cap).
+devtools.py finish / prior gate; pokey.ps1 api, goody verbs and seats (from pokey.tests: its cap); buildy.js MR dedupe (moved
+from bossy.tests: its cap).
 Usage: pwsh -NoProfile -File <kit>/tests/flow.tests.ps1 (or tests/kit-tests.ps1 -Area flow).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -67,6 +68,20 @@ Expect "devtools: finish runs track run -Task for a tracked open task only; prio
 $Q = Join-Path $k 'skills/pokey/pokey.ps1'
 $pa = Px $Q api GET '/x' -Target nosuch 2>&1 | Out-String; $pb = Px $Q api '/x' '/y' -Target nosuch 2>&1 | Out-String
 Expect "pokey api: <METHOD> <path> positional (reaches the targets file), a second path refused" ($pa -notmatch 'positional parameter|missing -Path' -and $pa -match 'targets\.local\.json' -and $pb -match "a second positional '/y'")
+# pokey seat claims and seats: live holders keep theirs, dead or unknown ones are taken over (moved from pokey.tests: its cap)
+$sd = TkPath $k qa-seats; $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force (Join-Path $sd 'claims'), $crd, (Join-Path $sd 'seats') | Out-Null
+$myStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); $ago7h = (Get-Date).AddHours(-7).ToString('s')
+& $J @{ run = 'CL'; code = 'C1'; owner = 'w9'; since = $ago7h; holderPid = $PID; holderStart = $myStart } (Join-Path $sd 'claims/CL__C1.json')
+& $J @{ run = 'CL'; code = 'C2'; owner = 'w9'; since = $ago7h } (Join-Path $sd 'claims/CL__C2.json')
+& $J @{ run = 'CL'; code = 'C4'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } (Join-Path $sd 'claims/CL__C4.json')
+$sq = { param($c, [double]$gb = 0.1) pwsh @np $Q seat acquire -Agent "test:$c" -Kind api -RunDir $crd -Code $c -Owner w1 -KeepFreeGB $gb -WaitMinutes 0 | Out-String; "rc=$LASTEXITCODE"; $null = pwsh @np $Q seat release -Agent "test:$c" }
+$o1, $o2, $o4, $o3 = ('C1', 'C2', 'C4' | ForEach-Object { "$(& $sq $_)" }) + "$(& $sq C3 100000)"
+Expect 'seat: a live holder keeps its claim past 6 h; an unknown holder''s old claim is free; a dead holder''s is taken over; still waiting exits 4' ($o1 -match 'ALREADY' -and $o1 -match 'rc=3' -and $o2 -notmatch 'ALREADY' -and
+  $o4 -notmatch 'ALREADY' -and (Read-Json (Join-Path $sd 'claims/CL__C4.json')).owner -eq 'w1' -and $o3 -match 'rc=4')
+$sw = { param($n, $o) & $J ($o + @{ agent = $n; lease = $n; need = 0; since = (Get-Date).AddHours(-4).ToString('s') }) (Join-Path $sd "seats/$n.json") }
+& $sw L1 @{ holderPid = $PID; holderStart = $myStart }; & $sw L2 @{ holderPid = 999999; seen = '2000-01-01' }; & $sw L3 @{ holderPid = 999999 }
+$null = pwsh @np $Q seat status
+Expect 'seat: a live holder''s 4 h seat stays; a dead one''s goes after the grace' ((Test-Path (Join-Path $sd 'seats/L1.json')) -and -not (Test-Path (Join-Path $sd 'seats/L2.json')) -and (Get-Content (Join-Path $sd 'seats/L3.json') | ConvertFrom-Json).seen); Remove-Item (Join-Path $sd 'seats/L*')
 # wt commit: a refusal reaches stderr (a chained call shows it)
 $cr = Join-Path (Kd) 'cr'; New-Item -ItemType Directory -Force $cr | Out-Null; git -C $cr init -q; git -C $cr commit -q --allow-empty -m init; 'z' | Set-Content "$cr/z.txt"
 Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty')
@@ -76,5 +91,13 @@ Expect 'wt commit: an over-long subject is refused on stderr with its findings' 
 $uq = node -e "const s = require('fs').readFileSync(process.argv[1], 'utf8'); eval(s.match(/^const nu = .*$/m)[0] + '\n' + s.match(/^const uniqMr = .*$/m)[0] + '\nglobalThis.u = uniqMr');
 const r = u([{ url: 'https://h/g/a/-/merge_requests/1', merged: true }, { url: 'https://h/g/a/-/merge_requests/1/', merged: false }, { url: 'https://h/g/a/-/merge_requests/2', merged: true }]); console.log(r.length === 2 && !r[0].merged && r[1].merged)" (Join-Path $src 'workflows/buildy.js')
 Expect "buildy: duplicate MRs collapse, MERGED only when every copy is ($uq)" ("$uq" -eq 'true')
+# pokey api errors and goody verbs (moved from pokey.tests: its cap)
+& $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tx = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'key' }; users = @{ admin = 1 } } } } (Join-Path $k 'skills/pokey/targets.local.json') 5
+$ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 -Save "$(Kd)/q.json" 2>&1 | Out-String; $ac = $LASTEXITCODE; $bs = Px $Q api -Target tq -Path '/x' -Save "Q-T1_01`b_poll" 2>&1 | Out-String; $gx = Invoke-PsTest gx ". `$args[0]; function Invoke-ApiExtra { param(`$Path, `$Target, `$Save, `$OutDir) `"`$OutDir|`$Save`" }; Invoke-Api /x -Target tx -Save D:/z/q.json" @($Q)
+$uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the goody android-swarm
+$xo = foreach ($verbName in 'deployed', 'annotate') { $verbOut = Px $Q $verbName 2>&1 | Out-String; "$LASTEXITCODE $verbOut".Trim() }
+$wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
+Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
+Expect 'api -Save: a full path is split (api-auth goody too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
 Remove-TestKit $k
 Complete-Tests

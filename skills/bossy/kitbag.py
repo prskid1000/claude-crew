@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1016 README graph · L1118 lint command · L1250 audit ·
-  L1359 registry · L1694 prose · L1839 sections · L1969 budget · L1993 goodies · L2500 state lint · L2572 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1016 README graph · L1118 lint command · L1265 audit ·
+  L1374 registry · L1709 prose · L1854 sections · L1984 budget · L2008 goodies · L2515 state lint · L2587 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1195,6 +1195,21 @@ const scan = () => {
   }
   return res
 }
+// a canvas page exposes window.uiBoxes() = {view: [x0, y0, x1, y1], boxes: [{id, key?, own?, b: [x, y, w, h]}]} (page px): each box inside
+// view, no two boxes meet (a label never against its own node: own === key); 12 listed per kind, then a count
+const layout = () => {
+  if (typeof window.uiBoxes !== 'function') return []
+  const { view: [a, b, c, d], boxes } = window.uiBoxes(), tol = 0.5, hits = { 'off-screen': [], overlap: [] }
+  for (const x of boxes) { const [l, t, w, h] = x.b; if (l < a - tol || t < b - tol || l + w > c + tol || t + h > d + tol) hits['off-screen'].push(x.id) }
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+    const p = boxes[i], q = boxes[j]
+    if ((p.own && p.own === q.key) || (q.own && q.own === p.key)) continue
+    const [pl, pt, pw, ph] = p.b, [ql, qt, qw, qh] = q.b
+    if (pl + tol < ql + qw && ql + tol < pl + pw && pt + tol < qt + qh && qt + tol < pt + ph) hits.overlap.push(`${p.id} x ${q.id}`)
+  }
+  return Object.entries(hits).flatMap(([why, l]) => l.slice(0, 12).map((t) => ({ el: 'layout', why, text: t.slice(0, 120) }))
+    .concat(l.length > 12 ? [{ el: 'layout', why, text: `and ${l.length - 12} more` }] : []))
+}
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
 const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
 try {
@@ -1204,7 +1219,7 @@ try {
     await page.goto(pathToFileURL(file).href, { waitUntil: 'load' })
     for (const sel of clicks) await page.click(sel).catch((e) => clipped.push({ el: sel, why: `click failed: ${e.message}`, text: '' }))
     await new Promise((r) => setTimeout(r, 400))   // panels slide in, layouts settle
-    clipped.push(...await page.evaluate(scan))
+    clipped.push(...await page.evaluate(layout), ...await page.evaluate(scan))
     const shot = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}.png`
     await page.screenshot({ path: shot, fullPage: true })
     res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot, clipped }); await ctx.close()
@@ -1214,7 +1229,7 @@ console.log(JSON.stringify(res))'''
 
 def cmd_ui_check(a):
     """ui-check <page.html> [--widths 1366,900,390] [--click 'sel,sel;sel']: PAGE_JS (light + dark; each --click state after
-    the page as loaded); exit 1 on clipped text or a failed click, 0 = pass + stamp."""
+    the page as loaded); exit 1 on clipped text, a failed click or a layout box (window.uiBoxes) off-screen or overlapping, 0 = pass + stamp."""
     flags, rest = parse_opts(a, {'--widths', '--click'})
     widths = str(flags.get('--widths') or '1366,900,390')
     if len(rest) != 1 or not osp.isfile(rest[0]) or not re.fullmatch(r'\d+(,\d+)*', widths):

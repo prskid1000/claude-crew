@@ -29,9 +29,9 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` after each check (pokey step 4) and `board beat` (spend / budget, PAUSE:
   do what it says); HANDOFF -> write the resume brief it names, WIP commit, `board leave -Handoff <brief>`, return `handoff` =
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that check, never retest the done ones.
-- PASS only for behaviour you saw, with its evidence; any defect is FAIL (`defect: own` | `new`), never a note; NOT_TESTED only
-  when truly impossible, with `cause` (never "no time"); a local item: unblock the env yourself, a kitty / coordinator fix ->
-  NOT_TESTED with `env_fix`.
+- PASS only for behaviour you saw, with its evidence; any defect is FAIL (`defect: own` | `new`, or `knownBug: <task id>`
+  when an open task already tracks it), never a note; NOT_TESTED only when truly impossible, with `cause` (never "no time");
+  a local item: unblock the env yourself, a kitty / coordinator fix -> NOT_TESTED with `env_fix`.
 - Results reach the tracker only through `pokey.ps1 finalize` (an ad hoc check too: a one-item run.json); it updates the task's
   AI testing doc and its one result comment in place. Never a hand-written verdict comment, status or a second report doc.
 - Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after (goody `runtimes`).

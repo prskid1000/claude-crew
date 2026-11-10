@@ -169,7 +169,8 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: auto-fill, a min width per item,
 optional max across), never one full-width row per item; tables only for many-column rows (agents, shells, parameters).
-Content never truncates; it wraps (every kit page: `kitbag.py ui-check <page>` fails on clipped text at 1366, 900 and 390 px).
+Content never truncates; it wraps (every kit page: `kitbag.py ui-check <page>` fails on clipped text at 1366, 900 and 390 px; a canvas page's `window.uiBoxes()`: on a node or label
+off-screen or overlapping).
 
 ## Goodies
 Optional parts (more trackers, git hosts, CI and report types, stack presets, the local env, phone lanes, deploys, kit admin and

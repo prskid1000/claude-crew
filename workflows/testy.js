@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L212 local · L240 app · L263 test-prompt ·
-//   L317 verify · L361 run-item · L543 pool · L565 budget · L593 run · L631 learn
+// Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L214 local · L242 app · L265 test-prompt ·
+//   L319 verify · L364 run-item · L547 pool · L569 budget · L597 run · L635 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -159,6 +159,7 @@ const CHECKS_SCHEMA = {
      screen: { type: 'string' },
      result: { type: 'string', enum: ['PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'OUT_OF_SCOPE', 'PENDING'] },
      defect: { type: 'string', enum: ['own', 'new'], description: 'FAIL only (pokey tester step 5)' },
+     knownBug: { type: 'string', description: 'FAIL only: tracker id of the open task that already tracks this defect (not a tested task); no new [Bug], not the task\'s own failure' },
      signature: { type: 'string', description: 'new defect: file:line, exact error text or URL pattern (the open collector [Bug] dedupes on it)' },
      cause: { type: 'string', enum: ['no-mail-sandbox', 'phone-only', 'undeployed', 'env-data', 'tool-down'], description: 'NOT_TESTED only: why' },
      env_fix: { type: 'string', description: 'local env, NOT_TESTED: the exact coordinator-only fix' },
@@ -184,7 +185,8 @@ const VERIFY_SCHEMA = {
   outcome: { type: 'string', enum: ['confirmed', 'refuted', 'inconclusive'], description: 'see the prompt' },
   attempts: { type: 'integer', description: 'how many times you ran the check' },
   observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } },
-  basis: { type: 'string', description: '_verify evidence files, the log window read (UTC), or the code path (file:line); none' } },
+  basis: { type: 'string', description: '_verify evidence files, the log window read (UTC), or the code path (file:line); none' },
+  knownBug: { type: 'string', description: 'confirmed FAIL already tracked by an open task (not a tested task): its tracker id; empty = keep the class' } },
   required: ['id', 'outcome', 'attempts', 'observed', 'evidence', 'basis'] } } },
  required: ['verdicts'],
 }
@@ -341,7 +343,8 @@ Per check id one verdict with attempts and outcome:
 - inconclusive: those conditions could not be recreated; say which in observed (the FAIL stays).
 basis = your _verify evidence, the log window read, or the code path (file:line); a refutation without _verify evidence or code
 basis counts as inconclusive. Read the CURRENT code of the failing path; intermittent server failures: read the server log for the
-first tester's UTC window first. Keep or correct each FAIL's defect class (own / new).`
+first tester's UTC window first. Keep or correct each FAIL's defect class (own / new / knownBug: <task id> when an open task already
+tracks the same defect: check its text and signature; never a tested task).`
 }
 
 function finalPrompt(it, res) {
@@ -508,15 +511,16 @@ async function runItem(it, idx, L) {
    c.evidence = [...c.evidence, ...(x.evidence || [])]
    // re-test + audit text lives in verify (the report renders it outside the Results cell); observed stays within the note cap
    const audit = c.verify
+   if (outcome === 'confirmed' && String(x.knownBug || '').trim()) c.knownBug = String(x.knownBug).trim()   // pokey finalize checks the id exists
    if (outcome === 'confirmed') c.verify = vJoin('confirmed', `Independent re-test confirmed: ${x.observed}`, audit)
    else if (outcome === 'inconclusive') c.verify = vJoin('inconclusive', `Re-test inconclusive (conditions not recreated): ${x.observed}`, audit)
    else if (firstEv) { c.verify = vJoin('not reproduced (flaky)', `An independent re-test under the same conditions did not reproduce it; the first run's evidence stands. Re-test: ${x.observed}`, audit); c.flaky = true }
-   else { c.verify = vJoin('not reproduced', `Re-test: ${x.observed}`, `First run: ${c.observed}`, audit); c.result = 'PASS_WITH_NOTE'; c.observed = 'First run reported a failure with no saved evidence; an independent re-test under the same conditions did not reproduce it.' }
+   else { delete c.knownBug; c.verify = vJoin('not reproduced', `Re-test: ${x.observed}`, `First run: ${c.observed}`, audit); c.result = 'PASS_WITH_NOTE'; c.observed = 'First run reported a failure with no saved evidence; an independent re-test under the same conditions did not reproduce it.' }   // knownBug: FAIL only
   }
  }
  const n = (k) => res.checks.filter((c) => c.result === k).length
  const line =`${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
- const holdLocal = envFixOpen && !res.checks.some((c) => c.result === 'FAIL' && c.defect !== 'new')
+ const holdLocal = envFixOpen && !res.checks.some((c) => c.result === 'FAIL' && c.defect !== 'new' && !c.knownBug)
  if (it.skipClose || holdLocal) {
   // verdicts stay on disk for the lead (finalize -Code); held.json tells supervise + workers
   const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator fixes the env + pokey.ps1 retest (never failedTesting for an env reason)` : 'publish left to the lead (skipClose)'

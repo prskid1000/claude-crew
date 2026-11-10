@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L119 seat · L186 api · L326 finalize · L728 retest
+Sections: L23 report · L122 seat · L189 api · L329 finalize · L754 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -83,19 +83,22 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   $o.Add('## Tasks'); $o.Add(''); $o.Add('Result per task:'); $o.Add(''); $o.Add('| Task | Pass | Fail | Not tested | Status |'); $o.Add('|---|---|---|---|---|')
   foreach ($st in @(if (@($Item.subtasks).Count) { @($Item.subtasks) } else { [pscustomobject]@{ id = ''; name = $Item.title } })) {
     $tc = @($checks | Where-Object { -not $st.id -or $_.subtask_id -eq $st.id -or @($Item.subtasks).Count -eq 1 }); $tn = @{}; foreach ($k in $label.Keys) { $tn[$k] = @($tc | Where-Object result -eq $k).Count }
-    $o.Add("| $(MdEsc $st.name) | $($tn.PASS + $tn.PASS_WITH_NOTE) | $($tn.FAIL) | $($tn.NOT_TESTED) | $(if ($tn.FAIL) { 'failed' } elseif ($tn.NOT_TESTED) { 'partly tested' } elseif ($tn.PENDING) { 'pending' } else { 'passed' }) |")
+    $tk = @($tc | Where-Object { $_.result -eq 'FAIL' -and "$($_.knownBug)".Trim() }).Count   # known defects: FAIL, not the task's own
+    $o.Add("| $(MdEsc $st.name) | $($tn.PASS + $tn.PASS_WITH_NOTE) | $($tn.FAIL) | $($tn.NOT_TESTED) | $(if ($tn.FAIL -gt $tk) { 'failed' } elseif ($tk -and -not $tn.NOT_TESTED -and -not $tn.PENDING) { "passed ($tk known defect$(if ($tk -ne 1) { 's' }))" } elseif ($tn.NOT_TESTED) { 'partly tested' } elseif ($tn.PENDING) { 'pending' } else { 'passed' }) |")
   }
   $o.Add(''); $o.Add('## Results'); $o.Add(''); $o.Add('Each check, its evidence inline:'); $o.Add(''); $o.Add('| Check | Result | Observed | Evidence |'); $o.Add('|---|---|---|---|')
   foreach ($c in $checks) {    $saw = if ($c.result -eq 'FAIL') { '[details](#' + ("$($c.id) — $($c.screen)".ToLower() -replace '[^\w\- ]', '' -replace ' ', '-') + ')' } else { MdEsc $c.observed }
     $evc = (@($c.evidence | Where-Object { $_ }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$' -and $Map.files[$_]) { MdImg $_ } elseif ($pk = Peek $_) { "$pk<br>[full file]($(([string]$Map.files[$_].link) -replace ' ', '%20'))" } else { "file: $(Lnk $_)" } }) -join '<br>'
     $vt = @(([string]$c.verify -replace ' \| ', ' · ') -split '\s+' | Where-Object { $_ }); $rt = if ($vt.Count) { " (re-test: $(MdEsc (($vt | Select-Object -First 20) -join ' '))$(if ($vt.Count -gt 20) { ' …' }))" }
-    $o.Add("| **$(MdEsc $c.id)** $(MdEsc $c.screen) | $($label[[string]$c.result])$rt | $saw | $evc |")
-    if ($null -ne $Cells) { $Cells[[string]$c.id] = @{ result = ([string]$c.result -replace '_', ' '); evidence = $evc } }   # the human doc's row
+    $kb = "$($c.knownBug)".Trim(); $kn = if ($kb -and $c.result -eq 'FAIL') { " (known: [$(MdEsc $kb)]($(TaskLink $kb)))" } else { '' }   # FAIL (known: <task id>)
+    $o.Add("| **$(MdEsc $c.id)** $(MdEsc $c.screen) | $($label[[string]$c.result])$kn$rt | $saw | $evc |")
+    if ($null -ne $Cells) { $Cells[[string]$c.id] = @{ result = ([string]$c.result -replace '_', ' ') + $(if ($kn) { " (known: $kb)" }); evidence = $evc } }   # the human doc's row
   }
   if ($fails.Count) {
     $o.Add(''); $o.Add('## Failures in detail')
     foreach ($c in $fails) {
       $o.Add(''); $o.Add("### $($c.id) — $($c.screen)"); $o.Add("**Steps:** $($c.what_was_done)"); $o.Add(''); $o.Add("**Saw:** $($c.observed)")
+      if (($kb = "$($c.knownBug)".Trim())) { $o.Add(''); $o.Add("**Known defect:** tracked in [$kb]($(TaskLink $kb)); no new [Bug]") }
       if ($c.verify) { $o.Add(''); $o.Add("**Independent re-test:** $(VerifyMd $c)") }
     }
   }
@@ -392,6 +395,14 @@ $prose = {
   @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text (($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', '') 3>$null))   # link lists are not prose
 }
 $prWhy = "$Code prose check: shorten observed / what_was_done in $Results (crafty/templates.md ""Writing standards"")"
+# knownBug: a FAIL already tracked by another OPEN task (an untracked defect must never close a task); -in compares any case
+$knownBad = { $tested = @(@($item.subtasks) | ForEach-Object { ([string]$_.id).Trim().TrimStart('#') })
+  @(foreach ($c in @(@($res.checks) | Where-Object { "$($_.knownBug)".Trim() })) { $kb = "$($c.knownBug)".Trim(); $kt = try { Get-TrackerTask $kb } catch { $null }
+  if ($c.result -ne 'FAIL') { "$($c.id): knownBug $kb on a $($c.result) check (FAIL only)" }
+  elseif ("$($c.defect)" -eq 'own') { "$($c.id): knownBug $kb with defect own (pick one)" }
+  elseif ($kb.TrimStart('#') -in $tested) { "$($c.id): knownBug $kb is a tested task (its own failure: defect own)" }
+  elseif (-not "$($kt.name)".Trim()) { "$($c.id): knownBug $kb not found in the tracker" }
+  elseif ((Test-TrackerStatus "$($kt.status)" 'closed') -or "$($kt.status)" -ieq 'closed') { "$($c.id): knownBug $kb is closed (reopen it, or defect new)" } }) }
 if ($Check) {
   # standard name, else setup form
   $ids = @(@($res.checks) | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -Unique | Sort-Object Length -Descending)
@@ -474,13 +485,14 @@ if ($Check) {
   # devtools.py PRE_EXISTING: doc checks are never waived
   $preEx = @(@($res.checks) | Where-Object { $_.result -match '^PASS' -and "$($_.observed)" -match '(?i)\b(known|ignored?|waived?|accepted|not (our|my|this)|out of scope)\b.{0,40}pre-?existing|pre-?existing\b.{0,30}\b(bug|defect|issue|failure|error|overlap|problem|broken|behaviou?r)|\b(unrelated to|not caused by) (this|the) (change|task)\b' } | ForEach-Object { [string]$_.id })
   if ($preEx.Count) { $fail = $true; "$Code pre-existing check: a check of the doc is the task's own: a defect in it is FAIL (defect own; outside the change: new), never waived as pre-existing: $($preEx -join ', ')" }
+  $kbBad = @(& $knownBad); if ($kbBad.Count) { $fail = $true; "$Code known-bug check: $($kbBad -join '; ')" }
   if ($badTypes.Count) {
     $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
     $badTypes | ForEach-Object { "  $_" }
   }
   $pr = @(& $prose)
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
-  if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: $checkCmd"; 'EXIT=1'; exit 1 }
+  if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count -or $kbBad.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: $checkCmd"; 'EXIT=1'; exit 1 }
   "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"
   if ($publishAfter) { $pass = @{} + $PSBoundParameters; foreach ($k in 'FixNames', 'Check') { $pass.Remove($k) }; Invoke-Finalize @pass; return }
   'EXIT=0'; exit 0
@@ -490,6 +502,8 @@ if ($lostList.Count) {
 }
 $pr = @(& $prose)
 if ($pr.Count) { throw "${prWhy}, then re-run - nothing was published: $($pr -join '; ')" }
+$kbBad = @(& $knownBad)
+if ($kbBad.Count) { throw "$Code known-bug check: $($kbBad -join '; ') - nothing was published. Fix knownBug in results.json (or drop it: defect own / new), then re-run." }
 $fin = "$D/finalize.json"
 $prev = if ((Test-Path $fin) -and -not $Force) { Get-Content $fin -Raw | ConvertFrom-Json } else { $null }
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
@@ -554,8 +568,9 @@ $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # lo
 $isLocal = [string]$(if ($item.localEnv) { $item.localEnv } else { $run.localEnv })   # local env item (ENV-FIX)
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
 $canCreate = [bool]$bugList -or $KitConf.TrackerType -in 'github', 'gitlab', 'none'   # clickup/jira need a list/project
-# own vs new: tester's 'defect' wins, else X = new
-function Test-NewDefect($c) { if ("$($c.defect)" -in 'new', 'own') { return "$($c.defect)" -eq 'new' }; [string]$c.id -match '^X\d' }
+# own vs new: tester's 'defect' wins, else X = new; a knownBug FAIL is neither (tracked elsewhere)
+function Test-KnownBug($c) { [bool]"$($c.knownBug)".Trim() }
+function Test-NewDefect($c) { if (Test-KnownBug $c) { return $false }; if ("$($c.defect)" -in 'new', 'own') { return "$($c.defect)" -eq 'new' }; [string]$c.id -match '^X\d' }
 # bossy.ps1 bugbrief parses "### <id> — <screen>" + "**Saw:**"
 $script:NtHold = 'env-data', 'phone-only', 'tool-down', 'no-mail-sandbox'   # NOT_TESTED causes no developer can fix
 function Format-Check($c) {
@@ -626,6 +641,14 @@ function Add-NewDefects($st, [object[]]$defects) {
   } finally { if ($own) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
 # no failedTesting status -> inProgress + comment
+# knownBug FAILs: no [Bug]; one edited-in-place "Seen again" line per known task and run item; a failure is retried next run
+function Send-KnownSeen($rec, [object[]]$known) {
+  $rn = Split-Path $RunDir -Leaf; $lost = $false
+  foreach ($kg in @($known | Group-Object { "$($_.knownBug)".Trim() })) {
+    $seen = "Seen again in $rn ($Code $(($kg.Group | ForEach-Object id) -join ', ') on $(if ($item.target) { $item.target } else { $run.target }), $Date): $docUrl"
+    if ($null -eq (TrySay { $null = Set-TrackerKitComment $kg.Name "qa-seen-$rn-$Code" $seen; $true } "comment on known bug $($kg.Name)")) { $lost = $true } }
+  if ($rec -is [Collections.IDictionary]) { $rec.seenFailed = $lost } else { $rec | Add-Member -Force NoteProperty seenFailed $lost }
+}
 function Set-FailedTesting($rec, $st) {
   $ok = TrySay { Set-TrackerStatus $st.id 'failedTesting'; $true } "set $($st.id) failedTesting"
   if ($null -eq $ok) {
@@ -666,10 +689,11 @@ foreach ($st in @($item.subtasks)) {
   $dupOf = if ($item.dups) { [string]$item.dups.($st.id) } else { '' }   # run.json dups share the primary's checks
   if (-not $mine.Count -and $dupOf) { $mine = @($checks | Where-Object { $_.subtask_id -eq $dupOf }) }
   $allFails = @($mine | Where-Object { $_.result -eq 'FAIL' })
-  $newDefects = @($allFails | Where-Object { Test-NewDefect $_ }); $ownFails = @($allFails | Where-Object { -not (Test-NewDefect $_) })
+  $knownFails = @($allFails | Where-Object { Test-KnownBug $_ })
+  $newDefects = @($allFails | Where-Object { Test-NewDefect $_ }); $ownFails = @($allFails | Where-Object { -not (Test-NewDefect $_) -and -not (Test-KnownBug $_) })
   $ntChecks = @($mine | Where-Object { $_.result -eq 'NOT_TESTED' }); $nt = $ntChecks.Count; $pend = Cnt $mine 'PENDING'
   $pass = (Cnt $mine 'PASS') + (Cnt $mine 'PASS_WITH_NOTE'); $oos = Cnt $mine 'OUT_OF_SCOPE'   # OUT_OF_SCOPE: qa.outOfScope
-  $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $ownFails.Count; newDefects = $newDefects.Count; notTested = $nt; outOfScope = $oos; pending = $pend; bug = $null; closed = $false; failedTesting = $false
+  $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $ownFails.Count; newDefects = $newDefects.Count; known = @($knownFails | ForEach-Object { "$($_.id) -> $("$($_.knownBug)".Trim())" }); notTested = $nt; outOfScope = $oos; pending = $pend; bug = $null; closed = $false; failedTesting = $false
     notTestedHold = @($ntChecks | Where-Object { "$($_.cause)" -in $script:NtHold }).Count }
   $prevRec = if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
   if ($NoTracker) {
@@ -678,10 +702,11 @@ foreach ($st in @($item.subtasks)) {
     $rec.noTracker = $true
   } else {
     if ($prevRec.noTracker -or $prevRec.commentFailed) { $prevRec = $null }   # failed comment: post again
+    if ($prevRec.seenFailed -and $knownFails.Count) { Send-KnownSeen $prevRec $knownFails }   # a lost "Seen again" line is posted on the next run
     if ($prevRec.closed -or $prevRec.failedTesting) { $out.subtasks += $prevRec; continue }   # keep the first run's record
     # sibling re-run: re-resolve only
     if ($prevRec) {
-      $rec.bug = $prevRec.bug
+      $rec.bug = $prevRec.bug; if ($prevRec.seenFailed) { $rec.seenFailed = $true }
       $rec.bugError = if ($prevRec.bugError) { $prevRec.bugError } elseif ($newDefects.Count -and -not $rec.bug) { 'new defects have no [Bug] task' }
       $out.subtasks += $rec; Resolve-Outcome $rec $st $pend; Save-Fin; continue
     }
@@ -697,6 +722,7 @@ foreach ($st in @($item.subtasks)) {
       else { $rec.bugError = '[Bug] task could not be created'; Write-Warning "$($st.id): could not create the [Bug] task for $(($newDefects | ForEach-Object id) -join ', ')" }
     }
     elseif ($newDefects.Count) { $rec.bugError = 'no bug list configured'; Write-Warning "$($st.id): no tracker list for bug tasks (tracker.list) - task kept open" }
+    if ($knownFails.Count) { $msg += ". Known defects seen again: $(($knownFails | ForEach-Object { "$($_.id) ($("$($_.knownBug)".Trim()))" }) -join ', ')"; Send-KnownSeen $rec $knownFails }
     $msg += if ($hDoc -and (Test-KitTaskDocLink $st.id) -eq $true) { '. Screenshots and evidence: the human testing doc in the description' } else { ". Screenshots and evidence: $docUrl" }   # testing doc links live only in the description
     $text = $msg   # one line; details live in the doc
     $posted = if ($reportFile) { TrySay { $null = Add-TrackerAttachment $st.id $reportFile $text; $true } "post the report on $($st.id)" }
@@ -722,7 +748,7 @@ try { Invoke-KitLocked $rix { $ri = Read-KitState $rix; if (-not $ri) { $ri = [o
 } finally { $fmx.ReleaseMutex(); $fmx.Dispose() }
 "$Code report ($rtype): $docUrl"
 if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }
-$out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, failed $($_.fail), new defects $([int]$_.newDefects), not tested $($_.notTested), out of scope $([int]$_.outOfScope), pending $($_.pending), bug $($_.bug), $(if ($_.closed) { 'closed' } elseif ($_.failedTesting) { "failed testing$(if ($_.statusFallback) { " (set $($_.statusFallback))" })" } elseif ($_.waitingFor) { "open (waiting for $(@($_.waitingFor) -join ', '))" } else { "open ($($_.keptOpen))" })" }
+$out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, failed $($_.fail), new defects $([int]$_.newDefects), known $(@($_.known).Count), not tested $($_.notTested), out of scope $([int]$_.outOfScope), pending $($_.pending), bug $($_.bug), $(if ($_.closed) { 'closed' } elseif ($_.failedTesting) { "failed testing$(if ($_.statusFallback) { " (set $($_.statusFallback))" })" } elseif ($_.waitingFor) { "open (waiting for $(@($_.waitingFor) -join ', '))" } else { "open ($($_.keptOpen))" })" }
 }
 
 # ---- retest: RETEST item for a live fix (same -Code replaces it)

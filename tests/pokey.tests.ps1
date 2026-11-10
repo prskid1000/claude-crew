@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-pokey.tests.ps1: pokey.ps1 finalize (result rule), seats, api errors, retest; browser.mjs (api auth: guard.tests.ps1).
+pokey.tests.ps1: pokey.ps1 finalize (result rule, knownBug), retest; browser.mjs (api auth: guard.tests.ps1).
 Usage: pwsh -NoProfile -File <kit>/tests/pokey.tests.ps1 (or tests/kit-tests.ps1 -Area pokey).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -95,6 +95,17 @@ $wr = New-Run 'W' @(@{ code = 'W1'; task = 'TW'; checks = @(@('X1', 'FAIL'), @('
 $rw.checks[0].observed = 'answer links HM pages; vector.py:120 plain mode'; $rw.checks[1].observed = 'GET https://h.example/api/help/42 gives 500'; & $J $rw "$wr/W1/results.json"
 $null = Fin $wr 'W1'; $null = Fin $wr 'W1'; $dw = (Task 'BW').description; $bw = @(Bugs | Where-Object { $_.parent -eq 'PW' })
 Expect "finalize: another agent's open [Bug] under the ask gets one section; the known defect is a duplicate line ($($bw.Count))" (-not $bw.Count -and $dw.StartsWith('Source: watch-s') -and ([regex]::Matches($dw, '\[kit:bug:qa-W\]')).Count -eq 1 -and $dw -match '### X2 ' -and $dw -notmatch '### X1 ' -and $dw -match 'Duplicates.*W1 X1 \(`vector\.py:120`\)' -and (Task 'BW').name -eq '[Bug] Ask W — help links' -and (Rec $wr 'W1').closed)
+# knownBug: a FAIL tracked by another task: FAIL (known: id) in the report, no [Bug], the task closes, one "Seen again" line on the known task
+New-Task 'PK' 'Ask K'; New-Task 'TK' 'Task K' 'PK'; New-Task 'KB1' '[Bug] quick create 500' 'PK'; New-Task 'TK2' 'Task K2' 'PK'; New-Task 'KBC' '[Bug] done' 'PK' 'closed'
+$kr = New-Run 'KR' @(@{ code = 'K1'; task = 'TK'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'K2'; task = 'TK2'; checks = @(@('C1', 'FAIL'), @('X1', 'FAIL')) }, @{ code = 'K3'; task = 'TK3'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL'), @('X2', 'FAIL'), @('X3', 'FAIL', 'own')) })
+foreach ($kc in 'K1', 'K2', 'K3') { $rj = Read-Json "$kr/$kc/results.json"; $kn = @(if ($kc -eq 'K3') { 'NOPE9', 'KBC', 'KB1' } else { 'KB1' }); for ($ki = 0; $ki -lt $kn.Count; $ki++) { $rj.checks[$ki + 1] | Add-Member knownBug $kn[$ki] }; & $J $rj "$kr/$kc/results.json" }
+$ko = Fin $kr 'K1'; $kRec = Rec $kr 'K1'; $kMd = Read-Text "$kr/K1/report.md"; $kSeen = @((Task 'KB1').comments | Where-Object { $_.text -match '^Seen again in KR \(K1 X1 on t, ' })
+Expect "knownBug: no new defect, the task closes, report FAIL (known: id), one Seen-again line on the known task ($($kRec.known))" ($kRec.closed -and $kRec.fail -eq 0 -and $kRec.newDefects -eq 0 -and "$($kRec.known)" -eq 'X1 -> KB1' -and
+  -not @(Bugs | Where-Object { $_.parent -eq 'PK' -and $_.id -ne 'KB1' }).Count -and $kMd -match '\| \*\*X1\*\* s \| \*\*FAIL\*\* \(known: \[KB1\]\([^)]*\)\)' -and $kMd -match '\*\*Known defect:\*\* tracked in \[KB1\]' -and $kSeen.Count -eq 1 -and @((Task 'TK').comments | Where-Object { $_.text -match 'Known defects seen again: X1 \(KB1\)' }).Count -eq 1)
+$null = Fin $kr 'K2'; $k2 = Rec $kr 'K2'
+Expect 'knownBug next to an own FAIL: still failedTesting (own count 1), no [Bug]' ($k2.failedTesting -and $k2.fail -eq 1 -and $k2.newDefects -eq 0 -and -not @(Bugs | Where-Object { $_.parent -eq 'PK' -and $_.id -ne 'KB1' }).Count)
+$k3c = Fin $kr 'K3' -Check; $k3cc = $LASTEXITCODE; $k3 = Fin $kr 'K3'
+Expect "knownBug refused (unknown id, closed task, with defect own): -Check exits 1 naming each, nothing published ($k3cc)" ($k3cc -eq 1 -and $k3c -match 'K3 known-bug check: X1: knownBug NOPE9 not found in the tracker; X2: knownBug KBC is closed.*; X3: knownBug KB1 with defect own' -and $k3 -match 'nothing was published' -and -not (Test-Path "$kr/K3/finalize.json"))
 $null = Fin $c 'C1'
 Expect 'a re-run posts no second results comment' (@((Task 'T4').comments | Where-Object { $_.text -match 'Test results' }).Count -eq 1)
 $h = New-Run 'H' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'PASS') }, @{ code = 'H2'; task = 'T10'; checks = , @('C2', 'FAIL') })
@@ -160,22 +171,6 @@ $rj = Read-Json "$nr/N1/results.json"; $rj.checks[1] | Add-Member cause 'env-dat
 $null = Fin $nr N1; $rn = Rec $nr N1
 Expect 'NOT_TESTED env-data: status kept, keptOpen, a decision asked' (-not $rn.failedTesting -and (Task 'TN').status -eq 'open' -and $rn.keptOpen -match 'owner decides' -and "$($rn.decision)" -match 'DECISION')
 # ---- review batch 2: pokey.ps1, testy, browser.mjs
-$sd = TkPath $k qa-seats
-New-TestDir (Join-Path $sd 'claims')
-$crd = Join-Path (Kd) 'runs/CL'; New-TestDir $crd
-$myStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); $ago7h = (Get-Date).AddHours(-7).ToString('s')
-& $J @{ run = 'CL'; code = 'C1'; owner = 'w9'; since = $ago7h; holderPid = $PID; holderStart = $myStart } (Join-Path $sd 'claims/CL__C1.json')
-& $J @{ run = 'CL'; code = 'C2'; owner = 'w9'; since = $ago7h } (Join-Path $sd 'claims/CL__C2.json')
-& $J @{ run = 'CL'; code = 'C4'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } (Join-Path $sd 'claims/CL__C4.json')
-$sq = { param($c, [double]$gb = 0.1) pwsh @np $Q seat acquire -Agent "test:$c" -Kind api -RunDir $crd -Code $c -Owner w1 -KeepFreeGB $gb -WaitMinutes 0 | Out-String; "rc=$LASTEXITCODE"; $null = pwsh @np $Q seat release -Agent "test:$c" }
-$o1, $o2, $o4, $o3 = ('C1', 'C2', 'C4' | ForEach-Object { "$(& $sq $_)" }) + "$(& $sq C3 100000)"
-Expect 'seat: a live holder keeps its claim past 6 h; an unknown holder''s old claim is free; a dead holder''s is taken over; still waiting exits 4' ($o1 -match 'ALREADY' -and $o1 -match 'rc=3' -and $o2 -notmatch 'ALREADY' -and
-  $o4 -notmatch 'ALREADY' -and (Read-Json (Join-Path $sd 'claims/CL__C4.json')).owner -eq 'w1' -and $o3 -match 'rc=4')
-New-TestDir (Join-Path $sd 'seats')
-$sw = { param($n, $o) & $J ($o + @{ agent = $n; lease = $n; need = 0; since = (Get-Date).AddHours(-4).ToString('s') }) (Join-Path $sd "seats/$n.json") }
-& $sw L1 @{ holderPid = $PID; holderStart = $myStart }; & $sw L2 @{ holderPid = 999999; seen = '2000-01-01' }; & $sw L3 @{ holderPid = 999999 }
-$null = pwsh @np $Q seat status
-Expect 'seat: a live holder''s 4 h seat stays; a dead one''s goes after the grace' ((Test-Path (Join-Path $sd 'seats/L1.json')) -and -not (Test-Path (Join-Path $sd 'seats/L2.json')) -and (Get-Content (Join-Path $sd 'seats/L3.json') | ConvertFrom-Json).seen); Remove-Item (Join-Path $sd 'seats/L*')
 $sr = New-Run 'SR' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') }, @{ code = 'S2'; task = 'TS'; checks = , @('C2', 'PASS') })
 $ps = @('S1', 'S2' | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', "`"$Q`"", 'finalize', '-RunDir', "`"$sr`"", '-Code', $_ -PassThru -WindowStyle Hidden })
 $ps | Wait-Process -Timeout 180
@@ -216,13 +211,6 @@ $by = New-Run 'BY' @(@{ code = 'Y1'; task = 'TY'; checks = , @('X1', 'FAIL', 'ne
 (Read-Text "$by/Y1/results.json") -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
 $null = Fin $by 'Y1'; $null = pwsh @np $Q retest -RunDir $by -Task BY -Code Y2
 Expect 'bugPrefix: an open [Defect] under the ask gets the section, its name kept; retest strips it; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (1)' -and (Task 'BY').description -match '(?m)^Source: qa-BY \[kit:bug:qa-BY\]' -and (Read-Text "$by/run.json") -match 'RETEST Ask Y — new' -and (Read-Text "$by/Y1/report.md") -notmatch 'docs\.google'); Remove-Item $kl
-& $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tx = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'key' }; users = @{ admin = 1 } } } } (Join-Path $k 'skills/pokey/targets.local.json') 5
-$ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 -Save "$(Kd)/q.json" 2>&1 | Out-String; $ac = $LASTEXITCODE; $bs = Px $Q api -Target tq -Path '/x' -Save "Q-T1_01`b_poll" 2>&1 | Out-String; $gx = Invoke-PsTest gx ". `$args[0]; function Invoke-ApiExtra { param(`$Path, `$Target, `$Save, `$OutDir) `"`$OutDir|`$Save`" }; Invoke-Api /x -Target tx -Save D:/z/q.json" @($Q)
-$uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the goody android-swarm
-$xo = foreach ($v in 'deployed', 'annotate') { $o = Px $Q $v 2>&1 | Out-String; "$LASTEXITCODE $o".Trim() }
-$wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
-Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
-Expect 'api -Save: a full path is split (api-auth goody too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
 # browser.mjs: mocks, then local fixture servers
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {

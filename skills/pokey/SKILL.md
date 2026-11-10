@@ -48,16 +48,15 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **FAIL**: any defect: 5xx, unexpected 4xx, crash, stuck flow, unsaved data, broken navigation, missing screen,
      silent 200 with empty data, wrong answer stated as fact, restart errors. Set **`defect`**: `own` = task expected
      behaviour failed, never "pre-existing" (failedTesting -> back to dev); `new` = regression outside change
-     (checks `X1`, `X2`... -> [Bug] task).
+     (checks `X1`, `X2`... -> [Bug] task); **`knownBug: <task id>`**: an open, untested task already tracks it.
    - **Upstream 5xx** (502/503/504 or a killed long turn from a service the change does not touch): check that service's
      health and restart times first (service log, a control call). An outage -> NOT_TESTED `tool-down`, re-run after recovery;
      a real defect there -> `defect: new` under that service's owner, one bug per shared cause.
    - **Retests of a fix** fail on the sibling path: run the whole flow end to end and every screen reading
      same record/rule; date/shift fixes also cross midnight.
-   - **NOT_TESTED**: only when truly impossible here, with the reason, what you tried and `cause` (`no-mail-sandbox` |
+   - **NOT_TESTED**: only when truly impossible: the reason, what you tried, `cause` (`no-mail-sandbox` |
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
-     NOT_TESTED gets ONE stronger retry (`models.retest`, told your blocker); still
-     NOT_TESTED -> the task goes to failedTesting: never for "no time" (shared test envs).
+     ONE stronger retry (`models.retest`, told your blocker); still NOT_TESTED -> failedTesting; never for "no time".
    - **Local env item** (`localEnv`): no cause is final (envy "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
      with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
    - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, every answer with its UTC time; set
@@ -65,7 +64,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **Flaky**: a FAIL with saved evidence that a re-test does not reproduce stays FAIL, `flaky: true` (own ->
      failedTesting, new -> [Bug] tagged flaky); never PASS_WITH_NOTE.
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
-     never tested, never counted; the in-app part of the same check is still tested.
+     not counted; its in-app part is still tested.
    - **PENDING**: tested later in another lane (the workflow adds `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
    limits: 40 words per observed or finding, 25 per sentence, 900 per report), run `pokey.ps1
@@ -74,10 +73,10 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    out); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
-all checks pass -> **closed** · an own check FAILED or checks not tested completely (shared test env) -> **failedTesting**
-(fallback `inProgress` + comment), the one QA comment (no doc link) lists failed / untested checks and why, NO new task ·
-a new defect -> ONE `[Bug] <ask> — new defects (n)` under the task's original ask (its open collector
-grows; a known `signature`: a duplicate line) · PENDING -> open.
+all checks pass -> **closed** · an own check FAILED or not all tested -> **failedTesting** (fallback `inProgress` +
+comment), one QA comment (no doc link) lists failed / untested checks and why, NO new task · a new defect -> ONE
+`[Bug] <ask> — new defects (n)` under the original ask (its open collector grows; a known `signature`: a duplicate line) ·
+a `knownBug` FAIL: not own, no new task, a "Seen again" line on it · PENDING -> open.
 
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
 change may be another agent's; change a setting only when a check needs it, restore it at once, list it in `setup_changes`;
