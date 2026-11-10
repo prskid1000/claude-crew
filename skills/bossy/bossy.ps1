@@ -22,10 +22,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L31 init · L49 board · L224 budget · L252 launch · L518 recover · L601 pause · L645 resume · L703 program · L747 param ·
-  L753 track · L1067 supervise · L1366 report · L1445 audit · L1505 storage · L1715 bugbrief · L1817 cleanup · L1939 learn ·
-  L1969 decide · L2037 health · L2096 retro due · L2106 tidy · L2175 the kit origin's main and goodies · L2191 setup ·
-  L2258 guard-sendmessage
+Sections: L31 init · L49 board · L228 budget · L256 launch · L522 recover · L605 pause · L649 resume · L707 program · L752 param ·
+  L758 track · L1078 supervise · L1378 report · L1457 audit · L1517 storage · L1727 bugbrief · L1829 cleanup · L1951 learn ·
+  L1981 decide · L2049 health · L2109 retro due · L2119 tidy · L2188 the kit origin's main and goodies · L2204 setup ·
+  L2271 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -90,7 +90,9 @@ function ItemKeys($s) {
 }
 function Warnings($me, $act) {
   foreach ($o in $act | Where-Object { $_.session -ne $me.session }) {
-    if ($o.agent -eq $me.agent -and (-not $me.run -or $o.run -eq $me.run)) { "DUPLICATE: agent $($o.agent) is also active in session $($o.session) (joined $(([datetime]$o.joined).ToString('HH:mm'))). The newer session must stop without writing." }
+    $quiet = ((Get-Date) - [datetime]$o.beat).TotalMinutes -ge 3 -and -not ($o.pid -and (Test-KitPid $o.pid $o.pidStart))   # join's takeover rule: a stopped agent's row
+    if ($o.agent -eq $me.agent -and (-not $me.run -or $o.run -eq $me.run) -and $quiet) { "STALE: $($o.agent) in session $($o.session) is quiet since $(([datetime]$o.beat).ToString('HH:mm')): not a duplicate, continue" }
+    elseif ($o.agent -eq $me.agent -and (-not $me.run -or $o.run -eq $me.run)) { "DUPLICATE: agent $($o.agent) is also active in session $($o.session) (joined $(([datetime]$o.joined).ToString('HH:mm'))). The newer session must stop without writing." }
     $shared = @($o.worktrees | ForEach-Object { Norm $_ }) | Where-Object { $_ -in @($me.worktrees | ForEach-Object { Norm $_ }) }
     if ($shared) { "CLAIM: $($o.agent) also claims $($shared -join ', ') (worktree / phone / port). Don't both use it - tell the coordinator." }
     if ($me.run -and $o.run -eq $me.run -and $me.items -and $o.items) {
@@ -172,7 +174,7 @@ switch ($Action) {
     try { $null = Invoke-KitStorageTick } catch {}
     $u = Get-Unread $me.agent; if ($u) { "INBOX: $u message(s) wait: bossy.ps1 board inbox -Agent $($me.agent)" }
     $pz = Get-KitActivePause $me.run; if ($pz) { "PAUSE ($($pz.reason)): now, at this step boundary: crafty.ps1 checkpoint, crafty.ps1 wt commit (WIP, no push), release your leases, then board leave -Session $Session -Status paused (again while it prints PAUSED); return no result" }
-    $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; exit 1 }
+    $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; if ($w -notlike 'STALE:*') { exit 1 } }
   }
   'show' { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" }
     Invoke-KitHooks Get-KitBoardLines }   # QA seats, local-env leases
@@ -184,9 +186,11 @@ switch ($Action) {
     'ok: no other active agent claims this worktree'; exit 0
   }
   'leave' {
-    if (-not $Session -and $Force) { $Session = @(All | Where-Object { $_.agent -eq $Agent -and $_.status -ne 'left' -and ((Test-KitHolder $_) -eq $false -or $_.session -notin (Active).session) })[0].session }   # token lost: a gone / quiet row
+    $mine = @(if (-not $Session -and $Agent) { All | Where-Object { $_.agent -eq $Agent -and $_.status -ne 'left' -and (-not $Run -or $_.run -eq $Run) } })
+    if ($mine.Count -eq 1 -and -not $Force) { $Session = $mine[0].session }   # token lost: the agent's only row
+    elseif ($Force) { $Session = @($mine | Where-Object { (Test-KitHolder $_) -eq $false -or $_.session -notin (Active).session })[0].session }   # else a gone / quiet one
     $f = Join-Path $dir "$Session.json"
-    if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left, no handoff; token lost: -Agent -Force)"; exit 1 }
+    if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left, no handoff; token lost: -Agent [-Run], several rows: -Force)"; exit 1 }
     $paused = $Status -eq 'paused'
     Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-Date).ToString('o'); if ($Handoff) { $x | Add-Member -Force NoteProperty handoffBrief $Handoff }; if ($paused) { $x | Add-Member -Force NoteProperty paused $x.beat }; $script:leftEntry = $x; $x }
     $cf = Get-KitCheckpointFile $script:leftEntry.agent
@@ -199,7 +203,7 @@ switch ($Action) {
       if ($pz) { "PAUSED ($Session): stay stopped, return no result; the coordinator stops this run or resumes it. Run this same leave again now"; exit 0 }
       "RESUMED: board join -Agent $($script:leftEntry.agent) -Run '$($script:leftEntry.run)' -Resume, then go on at your checkpoint's next step"; exit 0
     }
-    "left ($Session)$(if ($Handoff) { ": handoff brief $Handoff (a fresh agent continues: board join prints CONTINUE)" })"
+    "left ($Session)$(if ($Handoff) { ": handoff brief $Handoff (a fresh agent continues: board join prints CONTINUE)" })"; $global:LASTEXITCODE = 0   # a release's git call left its code (no exit: dot-sourced callers)
   }
   'msg' {
     if (-not ($Agent -and $To -and $Text)) { 'usage: board msg -Agent <me> -To <agent id> -Text "<message>"'; exit 2 }
@@ -739,6 +743,7 @@ function Get-OrphanQaItems([int]$Hours = 48) {
 # task '0' broke every promote
 function NormTask($id) {
   $id = "$id".Trim().Trim("'", '"').Trim()
+  if ($id -match '\s|!\d+$') { $id = if (($rx = Get-KitTaskTagRx) -and $id -match $rx) { $Matches.id } else { '' } }   # a title -> its tagged id; an MR ref is no task
   if ($KitConf.TrackerTag) { $id = $id -replace "^(?i)$([regex]::Escape($KitConf.TrackerTag))", '' }
   if ($id -match '^(0+|-+|none|null|undefined|n/?a|tbd|task|id)?$') { return '' }
   $id
@@ -897,7 +902,7 @@ switch ($Action) {
     $o = Load $Task; if (-not $o) { $o = @{ task = $Task; mrs = @(); onMerged = @($OnMerged -split '\s*,\s*'); done = $false; created = (Get-Date).ToString('o') } }
     $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
     $before = @($o.mrs).Count
-    if ($Discover -and @($KitConf.TrackerRepos).Count) { $refs = @(@($refs) + @(Find-TaskMrs $Task) | Select-Object -Unique) }
+    if ($Discover -and @($KitConf.TrackerRepos).Count) { $refs = @(@($refs) + @(Find-TaskMrs $Task) | Select-Object -Unique); $o.discoveredAt = (Get-Date).ToString('o') }
     $o.mrs = @(@($o.mrs) + $refs | Where-Object { $_ } | Select-Object -Unique)
     if ($PSBoundParameters.ContainsKey('OnMerged')) { $o.onMerged = @($OnMerged -split '\s*,\s*') }
     if ($Discover) { $o.discover = $true }
@@ -917,7 +922,7 @@ switch ($Action) {
     elseif (-not $o.done) { $o.done = $false }
     Save $o; $s = Load $Task; Set-KitMrsComment $s
     "tracking $Task : $(@($s.mrs) -join ', ')$(if (@($s.mergeAfter).Count) { ' | merge-after: ' + (@($s.mergeAfter) -join ', ') }) -> on all merged: $(@($s.onMerged) -join ' -> ')$(if ($s.holdPromotion) { " (promotion HELD: $($s.holdPromotion))" })$(if ($Discover -and -not @($s.mrs).Count) { ' (no MR found yet: every run looks again)' })"
-    if (-not $Discover -and @($s.mrs).Count -and -not @($s.mrs | Where-Object { (MrState $_) -ne 'merged' }).Count) { Invoke-Track run -Task $Task -Detail:$Detail -Quiet:$Quiet }
+    if (@($s.mrs).Count -and -not @($s.mrs | Where-Object { (MrState $_) -ne 'merged' }).Count) { Invoke-Track run -Task $Task -Detail:$Detail -Quiet:$Quiet }
   }
   'run' {
     # a later push cancels merge-when-green
@@ -947,6 +952,12 @@ switch ($Action) {
     # least recently checked first: no starving
     foreach ($id in @((Read-KitTracking).tasks.Values | Where-Object { -not $_.done -and (-not $Task -or $_.task -eq $Task) } | Sort-Object { [string]$_.checkedAt } | ForEach-Object task)) {
       $o = Load $id; if (-not $o -or $o.done) { continue }   # fresh: a hold added meanwhile counts
+      if (($real = NormTask $id) -ne $id) {   # an MR ref or a title as the task (its ATTENTION never cleared): moved to the id it names
+        if (-not $real) { $real = @($o.mrs | ForEach-Object { TaskOfMr $_ } | Where-Object { $_ })[0] }
+        Update-KitTracking { param($t) if ($real) { $n = if ($t.tasks[$real]) { $t.tasks[$real] } else { $c = @{}; foreach ($f in $o.Keys) { $c[$f] = $o[$f] }; $c }   # hold, onMerged, wave kept
+            $n.task = $real; foreach ($f in 'mrs', 'mergeAfter') { $n[$f] = @(@($n[$f]) + @($o[$f]) | Where-Object { $_ } | Select-Object -Unique) }; $t.tasks[$real] = $n }; $t.tasks.Remove($id) }
+        if ($real) { "MOVED $id`: no tracker id; its MRs track under $real" } else { "ATTENTION $id`: no tracker id, dropped: register its MRs: bossy.ps1 track add -Task <id> -Mrs $(@($o.mrs) -join ',')" }; continue
+      }
       $o.checkedAt = (Get-Date).ToString('o'); Save $o -Run
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
       # every 30 min; merged 60+ min, not promoted, not HELD = LAG
@@ -1101,7 +1112,7 @@ $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
 $kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.n = $name; Test-KitSweep $kitSweep $name }   # learned cost, starved first; a cut-short section still names its ACT
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
-function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed timed out inline each round
+function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs', 'deploy intest') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest timed out inline each round
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params: 3 s, when due (d-20261029173533)
 if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
@@ -1238,7 +1249,8 @@ if ($AutoFix -and (Within 'tracker checks')) {
   $heldIds = @((Read-KitTracking).tasks.Values | Where-Object { $_.holdPromotion -and -not $_.done } | ForEach-Object task)
   foreach ($l in @(Invoke-Bounded $KitCmd.orch @('track', 'run', '-Detail'))) {   # the last background result
     if (Test-KitHeldLine $l $heldIds) { continue }
-    if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
+    if ($l -match '^ATTENTION \S+: no tracker id') { Flag 'ACT' $l 'Register its MRs under the real task id (the command in the line).' }
+    elseif ($l -match '^(DONE|COMMENTED|DROPPED|MOVED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^CONFIG') { Flag 'INFO' $l 'A kit.local.json key is missing for this task; add it or register its MRs by hand.' }
     elseif ($l -match '^LAG') { Flag 'ACT' $l "Promote it (& $($KitCmd.dev) tracker status <id> <status>) or hold it on purpose (bossy.ps1 track add -Task <id> -HoldPromotion '<why>')." }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
@@ -2087,6 +2099,7 @@ if (-not $hook -or $hook.source -ne 'compact') {
   if ($stopped.Count) { $msgs += "paused/crashed runs: $($stopped.Count) ($($stopped -join '; '))$(if ($crashed.Count) { "; $($crashed.Count) board agent(s) marked crashed" }). Do: & '$($KitCmd.orch)' resume -All (network first; a brief per agent from its checkpoint; bossy E3); finished ones: bossy.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: arm one (bossy E1: a one-shot timer in $(Get-KitBeatMinutes) min, prompt: ""$(Get-KitBeatPrompt)"")" }
 }
 if ($py) { $msgs += @(Invoke-KitBackground 'health checks' $KitCmd.orch @('health', '-Checks')) }
+$msgs += @(Get-KitBeatOverdue)   # after a compaction too
 if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
 $msgs += @(Invoke-KitHooks Get-KitHealthLines)   # goody kit-admin: weekly audit nudge
 Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }) $hook

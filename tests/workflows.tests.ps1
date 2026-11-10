@@ -30,13 +30,13 @@ run(args, a.agent, _n, _n, pipeline).then((oa) => run(args, b.agent, _n, _n, pip
 })).catch(_err)
 '@
 Expect-Each (Invoke-Js dw-local $jsd $wfd) 'buildy local loop: #' 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text' -Show 5
-# buildy: blocking finding -> fix -> ONE re-review; deferred item holds promotion
+# buildy: blocking -> fix -> ONE re-review; a deferred item holds promotion, an owner-deferred one not
 $jsr = @'
 const lt = { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' }
 const rep = (extra = {}) => _rep(lt, extra)
 let reviews = 0
 const { calls, agent } = _mock((prompt, o) => {
- if (/^build:/.test(o.label)) return rep({ deferred: [{ id: 'A2', reason: 'needs data' }] })
+ if (/^build:/.test(o.label)) return rep({ deferred: [{ id: 'A2', reason: 'needs data' }, { id: 'A3', reason: 'o', ownerDecided: true }] })
  if (/^review:/.test(o.label)) return { findings: [{ mr: '1', file: 'a.ts', line: 3, severity: reviews++ ? 'nit' : 'blocking', problem: reviews > 1 ? 'rename y' : 'null check missing', fix: 'add it' }] }
  if (/^fix:/.test(o.label)) return rep({ worktrees: ['c:\\WT\\x1\\'] })
  if (/^ship:/.test(o.label)) return rep(_merged(1))
@@ -136,7 +136,7 @@ $as = & { . $O; $env:KIT_OFFLINE = '0'; function Find-TaskMrs { 'g/api!7' }
   $o, $n, $g = (& $f 'fx9abc' 0), (& $f 'fx9abc' -3), (& $f 'A3, A4 g/api!2' 0); "$($o.state)|$($o.skip.Count)|$($n.state)|$($n.skip -join ',')|$($n.items[0].doc)|$($g.state)" }
 Remove-Item Env:KIT_OFFLINE
 Expect 'recover area state: MR older than the run = earlier work, failedTesting = dev; doc link from the MR; a loose MR among 2 items = unknown' ($as -eq 'start|0|merged|build,review,ci,merge,testing-doc|https://d/1|unknown')
-# launch records: a fix round supersedes the launch (one recover entry); launch -Done -RunId closes both
+# launch records: a fix round supersedes the launch; launch -Done -RunId closes both
 $ld = TkPath $k launches -Create; $self = { param($s, $run, $json) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv (& { . $O; Get-KitFnv $json }) @args | Out-String }
 $sa = '{"select":{"statuses":["inTest"]},"target":"stg","kitDir":"C:/k"}'
 $null = & $self testy.js select-stg $sa -RunDir 'C:/rt/qa-runs/d-stg'
@@ -290,7 +290,7 @@ run(args, agent, _n, _n, null).then(() => {
 '@
 $res = Invoke-Js tc-flaky $js6 $wf
 Expect-Each $res 'testy verify: #' 'flaky', 'no-evidence' -Show 5
-# budget: over the cap -> refused + split; build handoff -> its brief; testy at 80% returns the rest; spent read last
+# budget: over the cap -> refused + split; handoff -> its brief; testy at 80% returns the rest
 $jsb = @'
 const mk = (out, spent, handoff) => { const calls = []; return { calls, agent: async (p, o) => { calls.push({ label: o.label, prompt: p })
   if (/^record-args/.test(o.label)) return { ok: true, output: `RECORDED x\nBUDGET ${out}` }
@@ -312,7 +312,7 @@ const m3 = mk('{"cap":1000000,"estimate":750000,"stopAt":0.8}', 900000); const o
 console.log(`stop-next:${o3.next && o3.next.args.only.join(',') === 'W2,W3' && m3.calls.filter((c) => c.label === 'budget').length === 2 && !m3.calls.some((c) => c.label === 'test:W2')}`)
 '@
 Expect-Each (@(Invoke-Js wb-b "$jsb`n$jsbB" $wfd) + @(Invoke-Js wb-t "$jsb`n$jsbT" $wf)) 'workflow budget: #' @('refuse', 'handoff', 'stop-next') -Show 5
-# recover (2026-10-23 records): one task over phase runs + a wave; relaunch under another name; one item twice
+# recover: one task over phase runs + a wave; relaunch under another name; one item twice
 $gw = Join-Path (Kd) 'pw'; New-Item -ItemType Directory -Force $gw | Out-Null; 'a' | Set-Content "$gw/a.txt"; Save-GitRepo $gw base; git -C $gw remote add origin https://h.example/g/api.git
 $pa = Invoke-PsTest areas @'
 $null = . $args[0] 6>$null; $env:KIT_OFFLINE = '0'; $br = @{ 39 = 't-tsk1abc-5a'; 43 = 't-tsk1abc-6a'; 45 = 't-tsk2abc-rates' }

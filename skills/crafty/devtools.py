@@ -21,8 +21,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L39 config · L73 run · L161 tracker · L349 git host · L432 MR · L593 merge · L842 docs · L997 publish · L1351 plugins ·
-  L1365 keepboth · L1384 selftest · L1787 CLI
+Sections: L39 config · L73 run · L161 tracker · L353 git host · L436 MR · L597 merge · L846 docs · L1001 publish · L1355 plugins ·
+  L1369 keepboth · L1388 selftest · L1791 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -227,10 +227,10 @@ def prior_gate(task, repo, what):
     if not fresh and not OVERRIDE:
         raise SystemExit(f'{what} refused: run crafty.ps1 prior -Task {task} first (check before create)')
     leaf = lambda r: re.split(r'[\\/]', r or '')[-1]
-    hit, paired = [], []
+    hit, paired, known = [], [], (read_tracking().get('tasks') or {})
     for f in p.get('found') or []:
-        if not isinstance(f, dict) or f.get('kind') in (None, '', 'doc', 'qa'):
-            continue
+        if not isinstance(f, dict) or f.get('kind') in (None, '', 'doc', 'qa') or (f.get('kind') == 'task' and f.get('ref') in known):
+            continue   # a tracked task is known work (a sibling), never an unseen duplicate
         if f.get('kind') != 'task' and f.get('repo') and f.get('tagged'):   # carries the task id: a sibling wave branch's work
             paired.append(f)
         elif f.get('kind') == 'task' or not f.get('repo') or (leaf(repo) in (leaf(f['repo']), leaf(f.get('proj'))) if repo else True):
@@ -344,6 +344,10 @@ def finish(tid, guide, solution_md, status='review', ai=None):
         print(f'[finish] {tid} is {t.get("status")}: status kept (never backwards)', file=sys.stderr)
     else:
         set_status(tid, status)
+    tid = tid[len(TAG):] if TAG and tid.startswith(TAG) else tid   # tracking keys carry no tag
+    tr = ((read_tracking().get('tasks') or {}).get(tid) or {})
+    if tr and not tr.get('done'):   # merged MRs waited on these links: promote now, not a supervise sweep later
+        print(_run([PWSH, '-NoProfile', '-NonInteractive', '-File', os.path.join(KIT_DIR, 'skills', 'bossy', 'bossy.ps1'), 'track', 'run', '-Task', tid], write=True, sec=180), file=sys.stderr)
 
 
 # ---- git host: lib.ps1 git-host adapters via crafty.ps1 host

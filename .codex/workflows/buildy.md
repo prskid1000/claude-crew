@@ -10,10 +10,10 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
 
 1. **Spike** -- args.openQuestions: one rechy answers them in the brief before any devy starts
 2. **Build** -- one devy per area: worktree, code, testing goals, local test loop, MRs, testing doc
-3. **Decide** -- items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume
+3. **Decide** -- items paused for an owner decision or an ENV-FIX resume after the answer
 4. **Review** -- one revy per devy (+ datay on an area with migrations) + CI pipelines
-5. **Fix** -- a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; should-fix / nit -> MR Follow-ups); merge in order, register the tracker task
-6. **Deploy** -- the merged work joins the deploy batch silently (goody deploys); a person says deploy <env> (never asked, never deployed here)
+5. **Fix** -- a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; others -> MR Follow-ups); merge in order, register the tracker task
+6. **Deploy** -- merged work joins the deploy batch (goody deploys); a person says deploy <env>, never asked
 7. **Learn** -- signals from this wave, cleanup (/tidy turns them into lessons)
 
 ## Owner decisions

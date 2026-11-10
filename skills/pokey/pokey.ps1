@@ -2,7 +2,7 @@
 pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/pokey/pokey.ps1 <verb> [args]
   seat acquire|release|status ...                  memory seat + item claim
   deployed -Mrs <repo>!<iid>,... [-Detail] [-Json] [-TimeoutSec 100]  live on a test env? (goody deploys)
-  api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-ContentType <type>] [-Save <name | full path> -OutDir <abs dir>]
+  api -Target <t> -As <user> -Method <M> -Path '/...' (or api <M> '/...') [-Body <json>] [-ContentType <type>] [-Save <name | full path> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check] [-FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish; -Check ends EXIT=<n>
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
   evidence fetch|index|read-chunk|frames|write-vision|label|verify|tune|feedback|bench|status <link | key> ...   videos -> text index (goody media-evidence)
@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L119 seat · L186 api · L323 finalize · L725 retest
+Sections: L23 report · L119 seat · L186 api · L326 finalize · L728 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -196,9 +196,12 @@ param(
   [string]$OutDir = $null,          # default: <runtime>/work/evidence
   [hashtable]$Headers = @{},
   [string]$ContentType = 'application/json',
-  [int]$TimeoutSec = 180
+  [int]$TimeoutSec = 180,
+  [Parameter(Position = 1)][string]$PathAfterMethod   # api GET /x: the habit of curl
 )
 $ErrorActionPreference = 'Stop'
+if ($PathAfterMethod -and $Path -match '^(GET|POST|PUT|PATCH|DELETE|HEAD)$') { $Method, $Path = $Path, $PathAfterMethod; $PSBoundParameters.Method = $Method; $PSBoundParameters.Path = $Path; $null = $PSBoundParameters.Remove('PathAfterMethod') }
+elseif ($PathAfterMethod) { throw "a second positional '$PathAfterMethod': use -Method <M> -Path '/...'" }
 # Git Bash /d/x -> D:/x (else \d\x on the current drive)
 $OutDir = $OutDir -replace '^/([A-Za-z])/', '$1:/'; $Save = $Save -replace '^/([A-Za-z])/', '$1:/'
 # a '\b' or '\a' in the caller's string arrives as a control character

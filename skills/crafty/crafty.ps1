@@ -237,7 +237,7 @@ switch ($Action) {
     $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
     $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
     $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # subject style is commitlint's; WIP commits pass
-    if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { "commit refused: $($pf.Count) prose finding(s) above: rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
+    if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { [Console]::Error.WriteLine("commit refused: $($pf.Count) prose finding(s): rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes: $($pf -join '; ')"); exit 1 }   # stderr: a chained call shows it
     git -C $Dir @c commit -m $Message
     exit $LASTEXITCODE
   }

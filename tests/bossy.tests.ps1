@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-bossy.tests.ps1: bossy.ps1 track, decide, launch, board, supervise, learn, budget, setup (goodies: deploys, kit-admin, supervise-resources).
+bossy.tests.ps1: bossy.ps1 decide, launch, board, supervise, learn, budget, setup (goodies: deploys, kit-admin, supervise-resources).
 Usage: pwsh -NoProfile -File <kit>/tests/bossy.tests.ps1 (or tests/kit-tests.ps1 -Area bossy).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -19,29 +19,10 @@ Set-KitOriginProtection; $global:seen -join ' '
 $ph = pwsh @np "$mk/skills/bossy/bossy.ps1" health 2>&1 | Out-String
 Expect 'setup: protects origin main + goodies (fake host), no verb -> by-hand line; health shows it' ($po -match 'protect: main set' -and
   $po -match 'goodies failed: set it by hand on github\.com/o/r' -and $po -match 'o/r#main o/r#goodies' -and $ph -match 'protection: goodies failed')
-$env:KIT_TRACKER_TYPE = 'clickup'   # tag CU- (type only: no clickup call, no goody)
-$out = pwsh @np $O track add -Task 0 -Mrs 'web!1' 2>&1 | Out-String
-Expect "track: placeholder task '0' refused" ($LASTEXITCODE -ne 0 -and $out -match 'needs a real -Task id')
-& $J @{ tasks = @{ old1 = @{ task = 'old1'; mrs = @('api!9'); done = $true } } } $tf   # a tracking.json from before tasks/
-$out = pwsh @np $O track add -Task 'CU-abc123' -Mrs 'web!1,web!2' -MergeAfter 'web!2>api!7' 2>&1 | Out-String
-$trk = { & { . (Join-Path $k 'skills/crafty/lib.ps1'); (Read-KitTracking).tasks } }; $tasks = & $trk; $td = TkPath $k tasks
-$tk = Read-Json "$td/abc123.json"; $am = Read-Json (Join-Path (Split-Path $td) 'automerge.json')
-Expect 'state: tracking.json -> tasks/<id>.json (schemaVersion, holder, mrs in order) + automerge.json, deleted (no .migrated)' ($tk.schemaVersion -eq 1 -and $tk.holder.pid -and
-  (@($tk.track.mrs) -join ',') -eq 'web!1,web!2' -and (Read-Json "$td/old1.json").track.done -and $am.schemaVersion -eq 1 -and -not (Test-Path $tf) -and -not (Test-Path "$tf.migrated"))
-Copy-Item (Join-Path $src 'skills/bossy/STATE.md') (Join-Path $k 'skills/bossy'); '{bad' | Set-Content "$td/bad1.json"
-$rtd = TkPath $k runtimes -Create; & $J @{ held = @{}; waiting = @() } "$rtd/locks.json"; & $J @{ isUp = $true } "$rtd/vm.json"
-$sl = & $py -X utf8 (Join-Path $k 'skills/bossy/kitbag.py') state lint 2>&1 | Out-String; $slc = $LASTEXITCODE; Remove-Item "$td/bad1.json", "$rtd/locks.json", "$rtd/vm.json"
-Expect "state lint: a broken task file is BAD (exit 1), readers skip it; locks.json has its own row ($slc)" ($slc -eq 1 -and $sl -match 'BAD .*bad1\.json: unreadable' -and $tasks.ContainsKey('old1') -and $sl -notmatch 'locks\.json' -and $sl -match 'vm\.json: missing leases')
-Expect 'track: tag stripped, merge order echoed' ($tasks.ContainsKey('abc123') -and $out -match 'merge-after: web!2>api!7')
-$null = pwsh @np $O track add -Task zero1 2>&1; $zr = pwsh @np $O track run -Detail 2>&1 | Out-String
-Expect 'track run: a task with 0 MRs is held, never promoted' (-not (& $trk).zero1.done -and $zr -match 'HOLD zero1: no MR')
 $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -ErrorAction SilentlyContinue
 $ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
 Expect 'supervise: without -Session the lock owner is the session, stable per round (no step-aside from itself), detached too' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
-$tb = pwsh -NoProfile -Command ". '$O'; `$KitConf.TrackerTag = 'CU-'; `$KitConf.TrackerRepos = @('web'); `$KitConf.GitlabGroup = 'g'; function Invoke-HostApi(`$p) { if (`$p -match 'search=') { @{ iid = 5; state = 'merged' } } elseif (`$p -match 'merge_requests/5$') { @{ target_branch = 'rel/x' } } }; Get-TaskMrBranches 'abc', '' | ForEach-Object { `"`$(`$_.ref) `$(`$_.repo)@`$(`$_.branch)`" }"
-Expect "bugbrief: the original task's MRs give repo@target" ($tb -eq 'web!5 web@rel/x')
-Remove-Item Env:KIT_TRACKER_TYPE
 $cf =Join-Path (Kd) 'brief.contracts.md'; '# contracts' | Set-Content $cf
 $out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Keep the old total?' -Options 'B: recompute','A: keep — no data change' -Recommend A -Contracts $cf | Out-String
 $id = if ($out -match 'DECISION (\S+) pending') { $Matches[1] }
@@ -124,7 +105,7 @@ $c1 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All me
 $null = Invoke-Track add -Task t6 -HoldPromotion ''
 $null = Invoke-Track run -Detail
 "hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count -eq 1)"
-$KitConf.TrackerRepos = @('g/web'); $KitConf.TrackerTag = 'CU-'; $null = Invoke-Track add -Task t7 -Discover -Mrs 'g/web!7'; $global:q = 0
+$KitConf.TrackerRepos = @('g/web'); $KitConf.TrackerTag = 'CU-'; $global:q = 0; $null = Invoke-Track add -Task t7 -Discover -Mrs 'g/web!7'
 $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 "throttle:$($q1 -ge 1 -and $global:q -eq $q1 -and (Read-KitTracking).tasks['t7'].checkedAt)"
 function Get-TrackerTask($id) { if ($id -eq 't8') { Update-KitTracking { param($t) $t.tasks['t8'].holdPromotion = 'late' } }; [pscustomobject]@{ status = 'promoted'; subtasks = @() } }   # a hold added mid-run

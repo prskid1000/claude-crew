@@ -31,7 +31,8 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
 5. **Verify** (every deploy): test env: `pokey.ps1 deployed -Mrs <refs> -Detail` = all DEPLOYED (MANUAL resolved); production:
    the version check of the org's deploy rules; services active; each `probe` / health URL answers 200; no new error lines in
    the service logs since the deploy; the monitoring error rate vs the hour before (the org's monitoring skill or rule). All
-   pass -> `bossy.ps1 deploy record -Env <env> -Mrs <refs> -By <who>`; test env also `bossy.ps1 deploy intest -Apply -Task <ids>`.
+   pass -> `bossy.ps1 deploy record -Env <env> -Mrs <refs> -By <who>`;
+   test env also `bossy.ps1 deploy intest -Apply -Mrs <the same refs>` (the kit maps MRs to tasks).
 6. **Failed verify or deploy:** roll back per the org's deploy rules (the previous release) when they allow it without asking;
    else, and always on production, `bossy.ps1 decide ask` first (options: roll back · fix forward · keep, with the evidence).
    After a rollback: verify again (step 5), no `deploy record`, no inTest; the MRs go back as `failed` with the cause.

@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L862 status · L1091 supervise sweep ·
-  L1162 supervise report · L1258 tracker · L1574 prior · L1596 ask bugs · L1767 git-host · L1924 kitlog · L2042 params ·
-  L2348 entry-scripts
+Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L870 status · L1099 supervise sweep ·
+  L1170 supervise report · L1266 tracker · L1582 prior · L1604 ask bugs · L1775 git-host · L1932 kitlog · L2050 params ·
+  L2356 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -437,6 +437,14 @@ function Test-KitLive($l) {
 function Get-KitBeatMinutes {
   $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
   if ($s.nextBeat -and $s.report.at -and ((Get-Date) - [datetime]$s.report.at).TotalMinutes -lt 2 * [double]$s.nextBeat) { [double]$s.nextBeat } else { [double](Get-KitParam 'supervise.heartbeatMinutes') }
+}
+# health: the beat supervise asked for passed while agents live (a one-shot dies with a restart or a busy session)
+function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
+  $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+  if (-not $s.report.at -or -not $s.nextBeat) { return }
+  $last = [datetime]$s.report.at; $due = $last.AddMinutes([double]$s.nextBeat); $late = [int]($Now - $due).TotalMinutes
+  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and ($Now - [datetime]$_.beat).TotalMinutes -lt [double](Get-KitParam 'idle.beatMinutes') })   # board Active
+  if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now, then arm one one-shot (bossy E1)" }
 }
 # heartbeat prompt (bossy E1), re-armed word for word from supervise's stderr
 function Get-KitBeatPrompt { "Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced; never summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1)." }
