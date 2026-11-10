@@ -71,14 +71,17 @@ Expect-Each (Invoke-PsTest 'deployed-refs' $t @($Q)) 'deployed: # (squash deploy
 & $J @{ repos = @(@{ name = 'py'; deploys = @(@{ target = 'mc'; ssh = @{ host = 'h1'; subdir = 'mcp/' } }, @{ target = 'pm'; ssh = @{ host = 'h2'; subdir = 'pm' } }, @{ target = 'px'; paths = @('pm/*.py'); ssh = @{ host = 'h3' } }) }) } $kl
 Set-Content "$(Kd)/na.ps1" @'
 . $args[0]; $global:hosts = @(); function ssh { $global:hosts += $args[-2]; 'HEAD=abc1234 2026-01-02'; 'ANC=yes'; 'RC=0'; 'FILES=1' }
-function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*requests/5/changes' { @{ changes = @(@{ new_path = 'pm/a.py'; old_path = 'pm/a.py' }); overflow = [bool]$env:NA_OVF } } } }
+function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*requests/5/changes*' { @{ changes = @(@{ new_path = 'pm/a.py'; old_path = 'pm/a.py' }); overflow = [bool]$env:NA_OVF } } } }
 "glob:$((Test-DeployTouched @{ paths = @('b/**') } @('b/x/y.ts')) -and -not (Test-DeployTouched @{ ssh = @{ subdir = 'mcp' } } @('mcpx/a.py')) -and (Test-DeployTouched @{ } @('z')))"
-Invoke-Deployed -Mrs 'py!5' -Json   # exits
+Invoke-Deployed -Mrs 'py!5' -Json -Target "$env:NA_TGT"   # exits
 '@
 $na = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; $nac = $LASTEXITCODE; $nr = @(($na -replace '(?s)^.*?(\[.*\]).*$', '$1') | ConvertFrom-Json)
 Expect "deployed: an MR outside a target's paths / ssh.subdir is N/A there (no ssh), exit 0 ($nac)" ($na -match 'glob:True' -and $nac -eq 0 -and ($nr | Where-Object target -eq 'mc').state -eq 'N/A' -and
   ($nr | Where-Object target -eq 'mc').detail -match 'n/a for mc: changes nothing under mcp/\*\*' -and ($nr | Where-Object target -eq 'pm').state -eq 'DEPLOYED' -and ($nr | Where-Object target -eq 'px').state -eq 'DEPLOYED')
 $env:NA_OVF = '1'; $no = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env:NA_OVF; $nor = @(($no -replace '(?s)^.*?(\[.*\]).*$', '$1') | ConvertFrom-Json)
 Expect 'deployed: a partial change list (overflow) never makes a target N/A' (($nor | Where-Object target -eq 'mc').state -eq 'DEPLOYED')
+$env:NA_TGT = 'mc,px'; $nt = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env:NA_TGT; $ntr = @(($nt -replace '(?s)^.*?(\[.*\]).*$', '$1') | ConvertFrom-Json)
+$dcs = Get-Content (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -Raw; $chU = @([regex]::Matches($dcs, 'merge_requests/\$\(?[\w.]+\)?/changes[^"]*') | ForEach-Object { $_.Value -replace '\$\(?[\w.]+\)?', 'I' } | Select-Object -Unique)
+Expect "deployed: -Target takes a list (deploy plan: one run per repo); the paths filter and the content check share one change-list call ($(@($ntr.target) -join ',') | $($chU -join ' '))" ((@($ntr.target) -join ',') -eq 'mc,px' -and $chU.Count -eq 1)
 Remove-TestKit $k
 Complete-Tests

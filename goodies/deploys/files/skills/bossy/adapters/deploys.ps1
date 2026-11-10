@@ -1,11 +1,11 @@
 <#
 deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
-  bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec 100]   merged-not-deployed MRs per test env, trigger, window
+  bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec <deploy.deployedTimeoutSec, 100>]   merged-not-deployed MRs per test env, trigger, window
   bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L92 intest · L195 deploy · L330 supervise
+Sections: L13 helpers · L92 intest · L195 deploy · L338 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -42,7 +42,7 @@ function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until) {
   $deps = @($deps | Where-Object { -not $_.from -or -not $tb -or $tb -in @($_.from) })
   $files = @(); $cut = $false
   if (@($deps | Where-Object { @(Get-DeployPaths $_).Count }).Count) {
-    $ch = if ($Fx) { [pscustomobject]@{ changes = @($fm.paths | ForEach-Object { [pscustomobject]@{ new_path = $_ } }); overflow = $fm.overflow } } else { try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid/changes" } catch { } }
+    $ch = if ($Fx) { [pscustomobject]@{ changes = @($fm.paths | ForEach-Object { [pscustomobject]@{ new_path = $_ } }); overflow = $fm.overflow } } else { try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid/changes?access_raw_diffs=true" } catch { } }
     $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
     $cut = [bool]$ch.overflow -or @($ch.changes).Count -ge 100   # gitlab overflow, github's first page: the list is partial
   }
@@ -196,7 +196,7 @@ if (-not $Quiet -or $gone.Count) { "mark-in-test: $($cand.Count) candidate(s), $
 function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest')][string]$Action = 'plan',
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [int]$History = 300,
-    [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100)
+    [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
   if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <deploy branch> [-From <branch>] [-Push]" }
   if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploys'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task -Days $Days -FromMrs @(Split-KitList $Mrs); return }
@@ -256,20 +256,25 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $rowsOf = { param($m) if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] } }
   if ($fx) { foreach ($m in $cand.Keys) { $rows[$m] = @($fx.mrs.$m.rows) } }
   elseif ($cand.Count) {
-    $lim = [math]::Max(2, $TimeoutSec); $t0 = Get-Date   # 100: a foreground call ends under a 120 s tool timeout; supervise passes deploy.planTimeoutSec
+    $lim = [math]::Max(2, $TimeoutSec); $t0 = Get-Date   # 100 (default): a foreground call ends under a 120 s tool timeout; supervise passes deploy.planTimeoutSec
     $until = $t0.AddSeconds([math]::Max($lim * 0.9, $lim - 10))   # one deadline for all; the rest of the plan fits in the remainder
     $anc = Get-DeployedByAncestry @($cand.Keys) $repos $targets $Days $t0.AddSeconds($lim / 3)
     foreach ($kv in $anc.GetEnumerator()) { $km, $kt = $kv.Key -split '\|', 2; if (-not $rows.ContainsKey($km)) { $rows[$km] = @() }; $rows[$km] += [pscustomobject]@{ mr = $km; target = $kt; state = 'DEPLOYED'; detail = $kv.Value } }
-    # one pokey.ps1 deployed per target, all at once, each with its own MRs and the same deadline: one slow env no longer blanks the rest
-    $runs = @(foreach ($t in @(if ($Env) { $Env } else { $targets })) {
-        $tm = @($cand.Keys | Where-Object { $t -in @(& $tgtOf $_) -and -not $anc.ContainsKey("$_|$t") }); if (-not $tm.Count) { continue }
+    # one pokey.ps1 deployed per repo (its MR and change-list calls once for all targets), each MR on the targets it still needs,
+    # all at once with the same deadline: 5 env processes refetched every MR and timed out (94 MRs on one env)
+    $grp = [ordered]@{}; foreach ($m in $cand.Keys) {
+      $need = @(& $tgtOf $m | Where-Object { $_ -in $targets -and -not $anc.ContainsKey("$m|$_") } | Sort-Object -Unique); if (-not $need.Count) { continue }
+      $gk = "$(& $repoOf $m)|$($need -join ',')"; if (-not $grp.Contains($gk)) { $grp[$gk] = [pscustomobject]@{ t = $need -join ','; m = [Collections.Generic.List[string]]::new() } }; $grp[$gk].m.Add($m)
+    }
+    $runs = @(foreach ($g in $grp.Values) {
+        $t = $g.t; $tm = @($g.m)
         $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
         foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Lines', '-Exclude', (Get-NoTestRx), '-TimeoutSec', [math]::Max(1, [int](($until - (Get-Date)).TotalSeconds) - 2))) { $si.ArgumentList.Add([string]$x) }
         $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
         $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
         $p = [Diagnostics.Process]::Start($si); [pscustomobject]@{ t = $t; m = $tm; p = $p; out = [Collections.Generic.List[string]]::new(); rl = $p.StandardOutput.ReadLineAsync(); se = $p.StandardError.ReadToEndAsync() }
       })
-    if (-not $Json) { [Console]::Error.WriteLine("deploy plan: $($anc.Count) MR x env in a green deploy job; probing the rest on $($runs.Count) test env(s) in parallel (max $lim s each) ...") }
+    if (-not $Json) { [Console]::Error.WriteLine("deploy plan: $($anc.Count) MR x env in a green deploy job; probing the rest in $($runs.Count) repo run(s) in parallel (max $lim s each) ...") }
     # each MR's row is printed (stderr) as it comes: a run moved to the background still shows what finished
     $take = { param($q, [int]$ms) while ($q.rl -and $q.rl.Wait($ms)) { $ln = $q.rl.Result; if ($null -eq $ln) { $q.rl = $null; break }; $q.out.Add($ln); $q.rl = $q.p.StandardOutput.ReadLineAsync()
         if (-not $Json -and $ln -match '^\s*\{') { try { $x = $ln | ConvertFrom-Json; [Console]::Error.WriteLine("  $($x.mr) @ $($x.target): $($x.state) $($x.detail)") } catch {} } } }
@@ -278,12 +283,15 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
       $fin = $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { try { $q.p.Kill($true) } catch {} }
       & $take $q 2000; $null = $q.se.Wait(5000); $txt = $q.out -join "`n"
       $parsed = @($txt -split "`r?`n" | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.mr })   # -Lines: one row per line
+      $qts = @($q.t -split ','); $fw = $null
       if (-not $fin -or ($parsed.Count -and $q.p.ExitCode -notin 0, 1)) {   # a timeout or crash keeps the rows already checked
-        $failOf[$q.t] = "pokey.ps1 deployed $(if ($fin) { "exit $($q.p.ExitCode)" } else { "timed out after $lim s" }) on $($q.t)"
+        $fw = "pokey.ps1 deployed $(if ($fin) { "exit $($q.p.ExitCode)" } else { "timed out after $lim s" }) on $($q.t)"
       }
-      elseif (-not $parsed.Count -or $q.p.ExitCode -notin 0, 1) { $failOf[$q.t] = "pokey.ps1 deployed exit $($q.p.ExitCode) on $($q.t): $(("$txt$(if ($q.se.IsCompleted) { $q.se.Result })" -split "`n" | Where-Object { $_ } | Select-Object -First 1))"; continue }
-      $seen = @($parsed | ForEach-Object { Get-CanonMr $_.mr })   # an MR without a row never vanishes: UNKNOWN each
-      $parsed += @($q.m | Where-Object { (Get-CanonMr $_) -notin $seen } | ForEach-Object { [pscustomobject]@{ mr = $_; target = $q.t; state = 'UNKNOWN'; detail = "not checked: $(if ($failOf[$q.t]) { $failOf[$q.t] } else { "no row from pokey.ps1 deployed on $($q.t)" })" } })
+      elseif (-not $parsed.Count -or $q.p.ExitCode -notin 0, 1) { $fw = "pokey.ps1 deployed exit $($q.p.ExitCode) on $($q.t): $(("$txt$(if ($q.se.IsCompleted) { $q.se.Result })" -split "`n" | Where-Object { $_ } | Select-Object -First 1))" }
+      if ($fw) { foreach ($y in $qts) { $failOf[$y] = $fw } }
+      $parsed = @(foreach ($x in $parsed) { if ($x.target -in $qts) { $x } else { foreach ($y in $qts) { [pscustomobject]@{ mr = $x.mr; target = $y; state = $x.state; detail = $x.detail } } } })   # a row for no one target (NOT-MERGED, the deadline): one per target
+      $seen = @($parsed | ForEach-Object { "$(Get-CanonMr $_.mr)|$($_.target)" })
+      $parsed += @(foreach ($y in $qts) { $q.m | Where-Object { "$(Get-CanonMr $_)|$y" -notin $seen } | ForEach-Object { [pscustomobject]@{ mr = $_; target = $y; state = 'UNKNOWN'; detail = "not checked: $(if ($fw) { $fw } else { "no row from pokey.ps1 deployed on $y" })" } } })   # an MR x target without a row never vanishes: UNKNOWN each
       foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x } }
     }
   }

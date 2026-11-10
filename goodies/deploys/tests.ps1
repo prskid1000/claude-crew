@@ -53,37 +53,43 @@ Expect "deploy plan: deploys[].from / paths pick the targets an MR feeds; an unk
 $sup = (Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
 Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
 $dps = Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw
-Expect 'deploy plan: -TimeoutSec 100 by default; supervise passes deploy.planTimeoutSec (600 s, params.registry.json); a record triggers a learn pass' ($dps -match '\[int\]\$TimeoutSec = 100\)' -and $dps -match "'-TimeoutSec', \[int\]\(Get-KitParam 'deploy\.planTimeoutSec'\)" -and $dps -match 'Add-KitParamTrigger deploy' -and (Get-Content (Join-Path $src 'skills/bossy/params.registry.json') -Raw | ConvertFrom-Json).params.'deploy.planTimeoutSec' -match 'default=600\b')
-# one pokey.ps1 deployed per target, in parallel: a crashed or slow target is UNKNOWN (never NOTHING), the others stand
-& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'bad' }, @{ target = 'slow' }, @{ target = 'good' }, @{ target = 'part' }, @{ target = 'crash' }) }) } $cfgF
-& $J @{ tasks = @{ u = @{ task = 'u'; mrs = @('api!1', 'api!2'); done = $false } }; automerge = @{} } $tf
+$preg = (Get-Content (Join-Path $src 'skills/bossy/params.registry.json') -Raw | ConvertFrom-Json).params
+Expect 'deploy plan: -TimeoutSec from deploy.deployedTimeoutSec (100 s); supervise passes deploy.planTimeoutSec (600 s, params.registry.json); a record triggers a learn pass' ($dps -match "\[int\]\`$TimeoutSec = \(Get-KitParam 'deploy\.deployedTimeoutSec'\)\)" -and $preg.'deploy.deployedTimeoutSec' -match 'default=100\b' -and $dps -match "'-TimeoutSec', \[int\]\(Get-KitParam 'deploy\.planTimeoutSec'\)" -and $dps -match 'Add-KitParamTrigger deploy' -and (Get-Content (Join-Path $src 'skills/bossy/params.registry.json') -Raw | ConvertFrom-Json).params.'deploy.planTimeoutSec' -match 'default=600\b')
+# one pokey.ps1 deployed per repo, in parallel, each MR on the targets it needs: a crashed or slow run is UNKNOWN (never NOTHING), the others stand
+$fRepos = @(foreach ($n in 'bad', 'slow', 'good', 'part', 'crash') { @{ name = $n; deploys = @(@{ target = $n }) } }) + @(@{ name = 'two'; deploys = @(@{ target = 'ta' }, @{ target = 'tb' }) })
+& $J @{ repos = $fRepos } $cfgF
+& $J @{ tasks = @{ u = @{ task = 'u'; mrs = @(foreach ($n in 'bad', 'slow', 'good', 'part', 'crash', 'two') { "$n!1"; "$n!2" }); done = $false } }; automerge = @{} } $tf
 $fq = Join-Path (Kd) 'fake-deployed.ps1'
 Set-Content $fq @'
-$t = $args[[array]::IndexOf($args, '-Target') + 1]; if ($t -eq 'good') { Set-Content $env:FAKE_TO $args[[array]::IndexOf($args, '-TimeoutSec') + 1] }
+$t = $args[[array]::IndexOf($args, '-Target') + 1]; $ms = @($args[[array]::IndexOf($args, '-Mrs') + 1] -split ','); Add-Content $env:FAKE_LOG "$t|$($ms -join ',')"
+if ($t -eq 'good') { Set-Content $env:FAKE_TO $args[[array]::IndexOf($args, '-TimeoutSec') + 1] }
 if ($t -eq 'slow') { Start-Sleep 30 }
 if ($t -eq 'bad') { 'pokey.ps1: usage error'; exit 2 }
-"{`"mr`":`"api!1`",`"target`":`"$t`",`"state`":`"NOT-DEPLOYED`",`"detail`":`"x`"}"
-if ($t -eq 'part') { Start-Sleep 30 }; if ($t -eq 'crash') { exit 3 }   # api!1 checked, api!2 never
-"{`"mr`":`"api!2`",`"target`":`"$t`",`"state`":`"DEPLOYED`",`"detail`":`"live`"}"
+foreach ($y in $t -split ',') { "{`"mr`":`"$($ms[0])`",`"target`":`"$y`",`"state`":`"NOT-DEPLOYED`",`"detail`":`"x`"}" }
+if ($t -eq 'part') { Start-Sleep 30 }; if ($t -eq 'crash') { exit 3 }   # <repo>!1 checked, <repo>!2 never
+if ($t -match ',') { "{`"mr`":`"$($ms[1])`",`"target`":`"$t`",`"state`":`"UNKNOWN`",`"detail`":`"deadline`"}"; exit 1 }   # a row for no one target
+foreach ($y in $t -split ',') { "{`"mr`":`"$($ms[1])`",`"target`":`"$y`",`"state`":`"DEPLOYED`",`"detail`":`"live`"}" }
 '@ -Encoding utf8
 $ut = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
-$KitCmd.qa = $args[1]; $env:FAKE_TO = $args[2]; $sw = [Diagnostics.Stopwatch]::StartNew()
+$KitCmd.qa = $args[1]; $env:FAKE_TO = $args[2]; $env:FAKE_LOG = $args[3]; $sw = [Diagnostics.Stopwatch]::StartNew()
 $p = @(Invoke-Deploy plan -Json -TimeoutSec 4 | ConvertFrom-Json); $s = @{}; foreach ($x in $p) { $s[$x.target] = $x }
 "bad:$($s.bad.status -eq 'UNKNOWN' -and $s.bad.why -match 'exit 2 on bad')"
 "slow:$($s.slow.status -eq 'UNKNOWN' -and $s.slow.why -match 'timed out after 4 s on slow')"
-"good:$($s.good.status -eq 'READY' -and (@($s.good.mrs.mr) -join ',') -eq 'api!1')"
-"part:$($s.part.status -eq 'READY' -and (@($s.part.mrs.mr) -join ',') -eq 'api!1' -and $s.part.why -match 'api!2: not checked: .*timed out after 4 s on part')"
-"crash:$($s.crash.status -eq 'READY' -and $s.crash.why -match 'api!2: not checked: pokey\.ps1 deployed exit 3 on crash')"
+"good:$($s.good.status -eq 'READY' -and (@($s.good.mrs.mr) -join ',') -eq 'good!1')"
+"part:$($s.part.status -eq 'READY' -and (@($s.part.mrs.mr) -join ',') -eq 'part!1' -and $s.part.why -match 'part!2: not checked: .*timed out after 4 s on part')"
+"crash:$($s.crash.status -eq 'READY' -and $s.crash.why -match 'crash!2: not checked: pokey\.ps1 deployed exit 3 on crash')"
 "parallel:$($sw.Elapsed.TotalSeconds -lt 20)"
 "childcap:$((Get-Content $env:FAKE_TO) -as [int] -in 0..3)"
+$lg = @(Get-Content $env:FAKE_LOG); "perrepo:$($lg.Count -eq 6 -and $lg -contains 'ta,tb|two!1,two!2' -and $s.ta.status -eq 'READY' -and $s.tb.status -eq 'READY' -and $s.ta.why -match 'two!2: deadline' -and $s.tb.why -match 'two!2: deadline')"
+Remove-Item $env:FAKE_LOG; $null = Invoke-Deploy plan -Env tb -Json -TimeoutSec 4; "needed:$((@(Get-Content $env:FAKE_LOG) -join ';') -eq 'tb|two!1,two!2')"
 $null = Invoke-Deploy plan -TimeoutSec 4   # text mode: each row on stderr as it comes
 '@
-$res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq, (Join-Path (Kd) 'child-timeout.txt'))
-Expect-Each $res 'deploy plan: per target in parallel, a failed one UNKNOWN; a timeout keeps the rows already checked; each child gets the time left as -TimeoutSec (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel', 'childcap')
+$res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq, (Join-Path (Kd) 'child-timeout.txt'), (Join-Path (Kd) 'child-calls.txt'))
+Expect-Each $res 'deploy plan: one run per repo in parallel with only the targets each MR needs, a failed one UNKNOWN; a timeout keeps the rows already checked; each child gets the time left as -TimeoutSec (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel', 'childcap', 'perrepo', 'needed')
 $all = $res -join "`n"
-Expect 'deploy plan: each MR row printed as its check ends, a slow env''s finished rows too' ($all -match '(?m)^\s+api!1 @ part: NOT-DEPLOYED x' -and $all -match '(?m)^\s+api!2 @ good: DEPLOYED live')
+Expect 'deploy plan: each MR row printed as its check ends, a slow env''s finished rows too' ($all -match '(?m)^\s+part!1 @ part: NOT-DEPLOYED x' -and $all -match '(?m)^\s+good!2 @ good: DEPLOYED live')
 # an MR whose merge is in the deploy branch's last green job: DEPLOYED from one git rev-list, never probed; the request is on disk before the probe
 $gr = Join-Path (Kd) 'anc-repo'; $null = git init -q -b main $gr; git -C $gr -c user.name=t -c user.email=t@t commit -q --allow-empty -m c1
 $c1 = git -C $gr rev-parse HEAD; git -C $gr branch staging; git -C $gr -c user.name=t -c user.email=t@t commit -q --allow-empty -m c2; $c2 = git -C $gr rev-parse HEAD
@@ -182,7 +188,7 @@ $KitCmd.qa = $args[1]
 function Get-TrackerTask($id) { [pscustomobject]@{ id = $id; name = "n$id"; status = 'promoted' } }; function Test-TrackerStatus { $true }
 function Set-TrackerStatus { }; function Add-TrackerComment { }
 $tbs = @{ 1 = 'st/b'; 2 = 'st/b'; 3 = 'st/b'; 4 = 'main'; 5 = 'main' }; $fs = @{ 1 = 'a/x.java'; 4 = @('b/api/x.java', 'a/docs/r.md'); 5 = 'common/lib/x.java' }
-function Invoke-HostApi([string]$Path) { $i = [int]($Path -replace '^.*merge_requests/(\d+).*$', '$1'); if ($Path -match '/changes$') { [pscustomobject]@{ changes = @(@($fs[$i]) | ForEach-Object { [pscustomobject]@{ new_path = $_ } }) } } else { [pscustomobject]@{ target_branch = $tbs[$i] } } }
+function Invoke-HostApi([string]$Path) { $i = [int]($Path -replace '^.*merge_requests/(\d+).*$', '$1'); if ($Path -match '/changes(\?|$)') { [pscustomobject]@{ changes = @(@($fs[$i]) | ForEach-Object { [pscustomobject]@{ new_path = $_ } }) } } else { [pscustomobject]@{ target_branch = $tbs[$i] } } }
 Write-KitLog deploy-log record ([ordered]@{ target = 'b-st'; mrs = @('jc!2'); by = 'opsy' }); Write-KitLog deploy-log record ([ordered]@{ target = 'a-st'; mrs = @('jc!3'); by = 'opsy' })   # the wrong target proves nothing
 $o = @(foreach ($n in 1..5) { Invoke-MarkInTest -Task "t$n" -Quiet:$false | Where-Object { $_ -match '^(MARK|WAIT)' } | ForEach-Object { "$n=$_" } })
 function Has($n, $rx) { [bool]@($o | Where-Object { $_ -match "^$n=$rx" }).Count }
