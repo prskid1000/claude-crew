@@ -20,7 +20,7 @@ const CFG = existsSync(TF) ? JSON.parse(readFileSync(TF, 'utf8')) : { targets: {
 const __HERE = dirname(fileURLToPath(import.meta.url))
 export const KIT = resolve(__HERE, '..', '..')
 const MAP = JSON.parse(readFileSync(join(__HERE, '..', 'crafty', 'kit.example.json'), 'utf8'))._paths
-export const runtimeDir = () => { const d = process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir); if (!d || d === '/' || d === '\\') throw new Error(`runtimeDir: bad '${d}'`); return resolve(d) }
+export const runtimeDir = () => { const d = process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir); if (!d || d === '/' || d === '\\') throw new Error(`runtimeDir: bad '${d}'`); return resolve(KIT, d) }
 export function kitPath(name, { create = false } = {}) {
   const [rel, base] = name === 'runtime' ? ['/', runtimeDir()] : name in MAP.runtime ? [MAP.runtime[name], runtimeDir()] : name in MAP.durable ? [MAP.durable[name], join(KIT, MAP.stateDir)] : []
   if (!rel) throw new Error(`kitPath: unknown name '${name}' (kit.example.json _paths)`)

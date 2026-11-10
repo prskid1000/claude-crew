@@ -2042,7 +2042,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 $kit = $KitConf.Kit
 $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
 if ($Checks) {   # 6-7 s: background, health shows the last run
-  if ($py) { "$(& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null)"; foreach ($c in 'port --check', 'goody check') { & $py -X utf8 $KitCmd.kitbag @($c -split ' ') 2>$null } }
+  if ($py) { "$(& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null)"; foreach ($c in 'port --deploy', 'port --check', 'goody check') { & $py -X utf8 $KitCmd.kitbag @($c -split ' ') 2>$null } }
   exit 0
 }
 if ($Flow -or $Fetch) {
@@ -2235,7 +2235,7 @@ if ($Exclude) { $r = Update-Exclude; if ($r) { Say $r }; $m = Set-Memory; if ($m
 
 if (-not (Test-Path (Join-Path $kit '.git'))) { Write-Warning "$kit is not a git clone: install per README ""Install""" }
 else {
-  if ((git -C $kit config core.hooksPath) -ne '.githooks') { git -C $kit config core.hooksPath .githooks; Say 'git: core.hooksPath = .githooks (pre-commit, pre-push, post-merge on)' }
+  if ((git -C $kit config core.hooksPath) -ne '.githooks') { git -C $kit config core.hooksPath .githooks; Say 'git: core.hooksPath = .githooks (pre-commit, pre-push, post-merge, post-rewrite on)' }
   Set-KitOriginProtection | Where-Object { $_ -notmatch ' ok$' } | ForEach-Object { Say $_ }
   $r = Update-Exclude; if ($r) { Say $r }
 }

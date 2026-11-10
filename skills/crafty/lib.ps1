@@ -10,7 +10,7 @@ Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L862
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitEntry = $MyInvocation.PSCommandPath   # the script that dot-sourced this file (Resolve-KitExtra runs it again)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
-function Get-KitRuntime { $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } elseif ($script:KitRoot -and $script:KitRoot -notin '/', '\') { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir }; if (-not $rt -or $rt -in '/', '\') { throw "Get-KitRuntime: bad runtime '$rt'" }; $rt }
+function Get-KitRuntime { $rt = if ($env:CLAUDE_RUNTIME) { if ([IO.Path]::IsPathRooted($env:CLAUDE_RUNTIME) -or -not $script:KitRoot) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $env:CLAUDE_RUNTIME } } elseif ($script:KitRoot -and $script:KitRoot -notin '/', '\') { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir }; if (-not $rt -or $rt -in '/', '\') { throw "Get-KitRuntime: bad runtime '$rt'" }; $rt }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   $m = $script:KitPathMap
   if ($Name -eq 'runtime') { $p = Get-KitRuntime; $dir = $true }

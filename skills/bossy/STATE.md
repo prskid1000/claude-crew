@@ -50,6 +50,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `pauses` | `bossy.ps1 pause / resume` | `dir v1: at run state` | keep | schemaVersion |
 | `programs` | `bossy.ps1 program` | `dir v1` | keep | schemaVersion (`_updated` gone) |
 | `browser-ports` | `browser.mjs` | `json v0` | keep | none |
+| `ports-deployed` | goody `ports` (`kitbag.py port`) | `json v1: files` | rewritten each deploy | new: the workspace copies it wrote |
 | `owner-apps` | `bossy.ps1 supervise` | `json v0` | keep | none |
 | `runtimes` | goody `runtimes` | `dir v0: leases` | keep | none |
 | `locks` | `lib.ps1` (`repos[].exclusiveTests`) | `json v0: held waiting` | keep | none |

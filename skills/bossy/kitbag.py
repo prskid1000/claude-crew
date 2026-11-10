@@ -18,8 +18,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L32 paths · L83 state · L138 kitlog · L237 load · L617 lint · L996 README graph · L1098 lint command · L1134 audit ·
-  L1243 registry · L1578 prose · L1723 sections · L1853 budget · L1877 goodies · L2384 state lint · L2456 main
+Sections: L32 paths · L83 state · L138 kitlog · L237 load · L633 lint · L1015 README graph · L1117 lint command · L1153 audit ·
+  L1262 registry · L1597 prose · L1742 sections · L1872 budget · L1896 goodies · L2403 state lint · L2475 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -34,7 +34,7 @@ with open(osp.join(KIT_DIR, 'skills', 'crafty', 'kit.example.json'), encoding='u
     MAP = json.load(_f)['_paths']
 
 def runtime_dir(kit=None):
-    return os.environ.get('CLAUDE_RUNTIME') or osp.join(kit or KIT_DIR, MAP['runtimeDir'])
+    return osp.join(kit or KIT_DIR, os.environ.get('CLAUDE_RUNTIME') or MAP['runtimeDir'])   # a relative one: from the kit, never the cwd
 
 def kit_path(name, create=False, kit=None):
     """Absolute path of a named runtime or durable entry. kit= resolves it for another kit folder (kit-lint on a clone)."""
@@ -373,6 +373,22 @@ def main_clone(d):
     """Main worktree of the repo holding d (d itself if not a linked worktree or git fails)."""
     rc, common, _ = git(d, 'rev-parse', '--path-format=absolute', '--git-common-dir', timeout=20)
     return osp.dirname(osp.normpath(common)) if rc == 0 and common else d
+
+def stray_runtimes(kit):
+    """<workspace>/.runtime folders up to 3 levels deep that are no kit checkout's own (an installed <workspace>/.claude only)."""
+    main = main_clone(kit)
+    if osp.basename(osp.normpath(main)) != '.claude':
+        return []
+    ws, rt, out = osp.dirname(osp.normpath(main)), MAP['runtimeDir'], []
+    level = [ws]
+    for depth in range(3):
+        out += [osp.join(d, rt) for d in level if osp.isdir(osp.join(d, rt)) and not osp.isfile(osp.join(d, 'skills', 'crafty', 'crafty.ps1'))]
+        nxt = []
+        for d in level if depth < 2 else []:
+            with contextlib.suppress(OSError):
+                nxt += [osp.join(d, x) for x in os.listdir(d) if x not in SKIP_DIRS and osp.isdir(osp.join(d, x))]
+        level = nxt
+    return [p for p in out if osp.normcase(osp.abspath(p)) != osp.normcase(osp.abspath(runtime_dir(main)))]
 
 def load(kit):
     k = Kit()
@@ -773,6 +789,9 @@ def lint(k, g=None, org_terms=None):
             bad('REACH-MENTION', f, 'reached only through a mention: list it in a Files index or the router')
     for f, why in k.junk:
         bad('JUNK', f, why)
+    for d in stray_runtimes(k.dir):
+        bad('RUNTIME-STRAY', d, f'a {MAP["runtimeDir"]} outside the kit (a relative path from the wrong folder; the guard denies new ones): '
+            f'move what is needed under <kit>/{MAP["runtimeDir"]} (crafty.ps1 dir), then delete it')
     # ---- file caps (ports excluded), per group
     counted = counted_files(k.dir) or [x for x in k.files if not x.startswith(GENERATED)]
     plumbing = [x for x in counted if x.startswith(PLUMBING)]

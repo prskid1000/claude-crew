@@ -1,0 +1,5 @@
+#!/bin/sh
+# Kit post-rewrite hook (enabled by bossy.ps1 setup): git pull --rebase skips post-merge, so a rebase runs it; an amend does not.
+[ "$1" = rebase ] || exit 0
+[ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ] || exit 0   # the main clone only, not a kit worktree's wt sync
+exec "$(dirname "$0")/post-merge"

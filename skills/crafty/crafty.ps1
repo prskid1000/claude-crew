@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 wt · L304 stack · L484 gate · L752 check · L1008 pipes · L1058 guard · L1739 dir · L1749 checkpoint ·
-  L1773 prior · L1809 tracker · L1866 host
+Sections: L21 init · L27 wt · L304 stack · L484 gate · L752 check · L1008 pipes · L1058 guard · L1778 dir · L1788 checkpoint ·
+  L1812 prior · L1848 tracker · L1905 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1148,10 +1148,15 @@ if ($SelfTest) {
   @('B', 'mshta x.hta', $true, $da),
   @('B', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, $rp),
   @('P', '& D:/kit/learn.ps1 -Skill crafty -Text "never rm the {RT}/work folder" -Source workflow', $false, $rp),
-  @('B', 'rm -rf /d/x/{RT}/work', $true, $rp),
-  @('P', 'Remove-Item -Recurse -Force "D:\x y\{RT}\work"', $true, $rp),
-  @('B', "python -c `"import shutil; shutil.rmtree('/d/x/{RT}/work')`"", $true, $rp),
-  @('B', 'cd /d/x/{RT} && rm -rf work', $true, $rp),
+  @('B', 'rm -rf {KRTB}/work', $true, $rp),
+  @('P', 'Remove-Item -Recurse -Force "{KRT}\work"', $true, $rp),
+  @('B', "python -c `"import shutil; shutil.rmtree('{KRT}/work')`"", $true, $rp),
+  @('B', 'cd {KRTB} && rm -rf work', $true, $rp), @('B', 'cd {KIT}; rm -rf {RT}/work', $true, $rp), @('B', 'rm -rf $K/{RT}/work', $true, $rp),
+  @('B', 'rm -rf /d/x/{RT}/work', $false, $rp), @('P', 'Remove-Item -Recurse "D:\x\{RT}\work"', $false, $rp), @('B', 'cd /d/x/{RT} && rm -rf work', $false, $rp),
+  @('B', 'cd {WS}; rmdir {RT}/work/agents/a {RT}/work {RT}', $false, $rp), @('B', 'cd {WS}; mkdir -p {RT}/work/agents/a', $true, 'outside the kit'),
+  @('E', '{WS}/{RT}/work/a.md', $true, 'outside the kit'), @('B', 'mkdir -p {KRT}/work/agents/a; echo x > /d/x/{RT}/a.txt', $false, 'outside the kit'),
+  @('B', 'rm -rf {KRTU}/work', $true, $rp), @('B', 'cd {WS}; mkdir -p {RTU}/w', $true, 'outside the kit'), @('B', 'mv {WS}/{RT}/work/x {KRT}/work/agents/x; cat {WS}/{RT}/a.md > {KRT}/b.md', $false, 'outside the kit'),
+  @('B', 'cd {WS}; echo "{RT}/" >> .gitignore; ls {RT} 2>&1', $false, 'outside the kit'), @('B', 'cd {WS}; mkdir -p a/b/c/{RT}', $false, 'outside the kit'),
   @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
   @('B', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
   @('B', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $false),
@@ -1235,10 +1240,10 @@ if ($SelfTest) {
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
-  $fail = 0
+  $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
   foreach ($c in $cases) {
     $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch'; G = 'run_command' }[$c[0]]
-    $v = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
+    $v = $c[1].Replace('{KRTU}', ($krt -replace '[^/]+$', { $_.Value.ToUpper() })).Replace('{RTU}', '.RUNTIME').Replace('{KRTB}', ($krt -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KRT}', $krt).Replace('{WS}', (Split-Path $live)).Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
     # cwd-independent results
     $hookIn = @{ tool_name = $tool; cwd = (Join-Path (Get-KitPath agents) 'guard-selftest'); tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) }
     if ($tool -eq 'run_command') { $hookIn = @{ conversationId = 'selftest'; toolCall = @{ args = @{ CommandLine = $v } }; cwd = $hookIn.cwd } }
@@ -1328,8 +1333,31 @@ function CrlfKitFile([string]$p, [string]$base) {
   if ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($p)).Contains("`r`n")) { $p }
 }
 $liveWhy = 'the live kit runs every agent: edit your kit worktree (crafty.ps1 wt) and push; the coordinator pulls'
+# a .runtime path: 'kit' = <kit>/.runtime or unresolvable ($var, ~), 'stray' = one more up to 2 folders into the workspace (lint RUNTIME-STRAY; not a kit checkout's), else 'other'
+$rtFull = [IO.Path]::GetFullPath((Get-KitRuntime)).TrimEnd('\', '/'); $rtLeaf = Split-Path $rtFull -Leaf
+$wsRoot = Split-Path $(if ($live) { $live } else { $script:KitRoot })
+function FullOf([string]$p, [string]$base) {
+  if (-not $p -or $p -match '[$%~*?<>|`]') { return }
+  $p = $p -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'
+  if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return }; $p = Join-Path $base $p }
+  [IO.Path]::GetFullPath($p).TrimEnd('\', '/')
+}
+function Under([string]$p, [string]$root) { $r = [IO.Path]::GetRelativePath($root, $p); $r -eq '.' -or ($r -notmatch '^\.\.([\\/]|$)' -and -not [IO.Path]::IsPathRooted($r)) }
+function RuntimeKind([string]$tok, [string]$base) {
+  if (-not ($f = FullOf $tok $base) -or (Under $f $rtFull)) { return 'kit' }
+  $up = Split-Path $f
+  if ((Under $up $wsRoot) -and @([IO.Path]::GetRelativePath($wsRoot, $up) -split '[\\/]' | Where-Object { $_ -ne '.' }).Count -le 2 -and -not (Test-Path -LiteralPath (Join-Path $up 'skills/crafty/crafty.ps1'))) { 'stray' } else { 'other' }
+}
+function RuntimeKinds([string]$seg, [string]$base) {
+  $n = ($seg -replace '\\', '/') -replace '(?<![\w:])/([A-Za-z])/', '$1:/'
+  if ($n -match ([regex]::Escape($rtFull.Replace('\', '/')) + '(?=[/''"\s;|)]|$)')) { 'kit' }   # a kit path with spaces
+  [regex]::Matches($seg, "(?i)(?<![\w.-])[^\s'""=]*?(?<![\w.-])$([regex]::Escape($rtLeaf))(?=[\\/'""\s;|)]|$)") | ForEach-Object { RuntimeKind $_.Value $base }
+}
+$segBase = $here
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
+$strayWhy = "a $rtLeaf outside the kit (a relative path from the wrong folder): agent files go under & $($KitCmd.dev) dir -Agent <id> (<kit>/$rtLeaf/work/agents/<id>/)"
+foreach ($e in $edits) { if ((RuntimeKinds " $e" $here) -contains 'stray') { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e is $strayWhy" } }
 # shared temp body / desc files got swapped between agents
 $tmpRoots = @('/tmp', $env:TEMP, $env:TMP, [IO.Path]::GetTempPath()) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') } | Select-Object -Unique
 $tmpRx = '(?i)(?:^|[\s''"=<>(,@])(?:' + ((@($tmpRoots | ForEach-Object { [regex]::Escape($_) }) + '\$env:(?:TEMP|TMP)', '%(?:TEMP|TMP)%', '\$\{?TMPDIR\}?') -join '|') + ')[\\/](?<f>[^\s''"\\/;|&)]*(?:body|desc|comment|summary|message|msg)[^\s''"\\/;|&)]*)(?=$|[\s''";|&)])'
@@ -1430,19 +1458,30 @@ function DeleteSegments([string]$t) {
 $end = '[''"]?(\s|;|\||\)|$)'
 $delWord = '(Remove-Item|(^|[\s;|&(`])(rm|rmdir|rd|del)(\s|$)|rimraf|shutil\.rmtree|Directory\]::Delete)'   # a command word only
 if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
-  $inRuntime = $false; $rt = '(' + [regex]::Escape((Split-Path (Get-KitRuntime) -Leaf)) + ')'; $sd = [regex]::Escape($script:KitPathMap.stateDir.Trim('/\'))
+  $inRuntime = $false; $rt = '(' + [regex]::Escape($rtLeaf) + ')'; $sd = [regex]::Escape($script:KitPathMap.stateDir.Trim('/\'))
   foreach ($seg in DeleteSegments $raw) {
-    if ($seg -match '^\s*(cd|Set-Location|sl|pushd|Push-Location)\s') { $inRuntime = $seg -match "$rt([\\/]+work)?[\\/]*\s*`$"; continue }
+    if ($seg -match '^\s*(cd|Set-Location|sl|pushd|Push-Location)\s+(?<to>.*?)\s*$') {
+      $to = $Matches.to.Trim('''"'); $inRuntime = $seg -match "$rt([\\/]+work)?[\\/]*\s*`$" -and (RuntimeKinds $seg $segBase) -contains 'kit'
+      $segBase = if (($nb = FullOf $to $segBase)) { $nb } else { $null }; continue }
     if ($seg -notmatch $delWord) { continue }
     if ($seg -match ("($sd([\\/][\w.-]+)*|tracking\.local\.json|learning\.local\.(jsonl|stamp)|tracker-none\.local)" + $end)) {
       Deny 'That is durable local kit state (task tracking, learning signals): never delete it. Requests to remove it are for the lead (coordinator).' }
     if ($seg -match 'cleanup\.ps1|bossy\.ps1["'']?\s+cleanup') { continue }
-    if ($seg -match ("$rt([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*" + $end) -or
+    if (($seg -match ("$rt([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*" + $end) -and (RuntimeKinds $seg $segBase) -contains 'kit') -or
         ($inRuntime -and $seg -match '\s[''"]?(\.[\\/])?(work([\\/]+[\w.-]+)?|\*|\.)[\\/]*[''"]?(\s|$)')) {
       $act = @(ActiveWork)
       if ($act.Count) { Deny "The runtime's work/ holds runs in progress ($($act -join ', ') written < 3 h ago): do not delete it. cache/ and logs/ may go; bossy.ps1 cleanup prunes old work; a wipe is for the lead (coordinator)." }
     }
   }
+}
+$segBase = $here
+foreach ($seg in DeleteSegments $raw) {
+  if ($seg -match '^\s*(cd|Set-Location|sl|pushd|Push-Location)\s+(?<to>.*?)\s*$') { $segBase = FullOf $Matches.to.Trim('''"') $segBase; continue }
+  # only what is written: a redirect's target, a copy's last argument, a create verb's arguments (reading the stray stays allowed)
+  $wrote = @([regex]::Matches($seg, '(?<![\d&>])>{1,2}(?!&)\s*(?<t>\S+)') | ForEach-Object { $_.Groups['t'].Value })
+  if ($seg -match '(^|[\s(`])(cp|mv|Copy-Item|Move-Item)\s') { $wrote += ($seg.TrimEnd() -split '\s+')[-1] }
+  if ($seg -match '(^|[\s(`])(?<v>mkdir|md|New-Item|ni|touch|tee|Out-File|Set-Content|Add-Content)\s+(?<a>.*)$') { $wrote += @($Matches.a -split '\s+' | Where-Object { $_ -and $_ -notmatch '^-' }) }
+  if (@($wrote | ForEach-Object { RuntimeKinds " $($_.Trim('''"'))" $segBase }) -contains 'stray') { Deny "kit guard: that writes $strayWhy" }
 }
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }

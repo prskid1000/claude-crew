@@ -18,7 +18,7 @@ row.
 | `STATE.md` | a script's state file changes; an agent needs a task's doc / comment / MR / env-run links (`.state/tasks/<id>.json`) |
 | `params.registry.json` | a timeout, wait or limit is added or changed (every tunable key: learned or fixed); `bossy.ps1 param show` |
 | `adapters/supervise_resources.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`: dot-sourced by bossy.ps1 (build gate, phones, QA seats, browsers, agents' background shells) |
-| `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
+| `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge`, `<kit>/.githooks/post-rewrite` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
 | `kitbag.py`, `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 
 ## One orchestration model (both flows)
