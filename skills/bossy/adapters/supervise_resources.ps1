@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L45 supervise · L237 shells · L356 page · L657 release · L686 lines · L711 cleanup
+Sections: L13 builds · L45 supervise · L237 shells · L356 page · L659 release · L688 lines · L713 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -428,7 +428,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   if ($samples.Count -ge 2 -and ([datetime]$samples[-1].at - [datetime]$samples[-2].at).TotalMinutes -lt [double](Get-KitParam 'supervise.heartbeatMinutes')) { $samples = @($samples | Select-Object -SkipLast 1) }
   if ($nowT) { $dFree = [ordered]@{}; foreach ($dk in $nowT.disks) { $dFree[$dk.drive] = $dk.free }
     $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; disks = [pscustomobject]$dFree } }
-  $stats = [ordered]@{ keepFree = $d.keepFree; days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples); settings = [pscustomobject]$settings
+  $stats = [ordered]@{ keepFree = $d.keepFree; repos = (Get-KitRepoSweep); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples); settings = [pscustomobject]$settings
     changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ($apv."$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })" -or $apv."$($_.key)|") { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
@@ -544,6 +544,8 @@ function Format-KitSuperviseHtml($j) {
     (& $nowCard 'QA seats' "$(& $fmt $nw.seats)<small> / $(& $fmt $nw.seatsMax)</small>$(& $trend $nw.seats $pv.seats)" 'taken / fit in free RAM' "7 days peak $(& $agg { $_.seats } max) taken") +
     (@(foreach ($dk in @($nw.disks | Where-Object { $_ })) { $dv = "$($dk.drive)"; $ttf = if ($null -ne $dk.ttf -and [double]$dk.ttf -lt 72) { [double]$dk.ttf }   # full-in only under 72 h
       & $nowCard "Disk $dv" "$(& $fmt $dk.free)<small> GB free</small>$(& $trend $dk.free $(if ($pv.disks) { $pv.disks.$dv }) 1)" "$(if ([double]$dk.rate -ge 0) { '+' })$(& $n1 $dk.rate) GB/h$(if ($null -ne $ttf) { " · full in $(& $n1 $ttf) h" })" "7 days low $(& $agg { if ($_.disks) { $_.disks.$dv } } min) GB" $(if ($null -eq $ttf) { '' } elseif ($ttf -lt 24) { 'hot' } else { 'warn' }) }) -join '') +
+    $(if (($rr = @($st.repos.repos | Where-Object { $_ })).Count) { $sumR = { param($k) ($rr | ForEach-Object { [int]$_.$k } | Measure-Object -Sum).Sum }   # bossy.ps1 cleanup writes it
+      & $nowCard 'Branches · worktrees' "$(& $sumR branches)<small> br · </small>$(& $sumR worktrees)<small> wt</small>" (@($rr | ForEach-Object { "$($_.repo) $($_.branches)/$($_.worktrees)" }) -join ' · ') "$(& $sumR removable) to clean · $(& $sumR kept) kept (unpushed, open, dirty) · cleanup $(try { ([datetime]$st.repos.at).ToString('MM-dd HH:mm') } catch { '?' })" $(if ((& $sumR removable) -gt 0) { 'warn' }) }) +
     (& $nowCard 'Sweep time' "$(& $fmt $nw.secs)<small> s</small>$(& $trend $nw.secs $pv.secs -1)" $nw.slow "7 days avg $(& $agg { $_.secs } avg) s · peak $(& $agg { $_.secs } max) s" 'lo'))) + '<h3>Today and 7 days</h3>' }
   $statsHtml = $nowHtml + (& $grid stats 170px @((& $card4 'Runs' 'runs') + (& $card4 'Agents spawned' 'spawned') + (& $card4 'Agents finished' 'finished' 1) + (& $card4 'Agents failed' 'failed' -1) +
     (& $statCard 'Avg agent duration' (& $avgOf 0) (& $avgOf 1) (& $avgOf $wk) $(if (& $same 'durN') { & $avgOf $pw }) 0 ' min') + (& $card4 'Deploys recorded' 'deploys') +
@@ -709,10 +711,6 @@ function Get-KitRecoverLinesResources {
 }
 
 # ---- cleanup: idle resources
-# unclaimed deploymerge-* worktree (goody deploys) idle idle.graceMinutes, min 60 (CI waits write nothing): blocks the next merge
-function Test-KitIdleDeployMerge([string]$Name, [string]$Dir, [string[]]$Claimed, $Newest, [datetime]$Now) {
-  $Name -like 'deploymerge-*' -and $Dir.ToLower() -notin $Claimed -and $Newest -and ($Now - $Newest).TotalMinutes -ge [math]::Max(60, [double](Get-KitParam 'idle.graceMinutes'))
-}
 # holderless test browsers, idle / surplus browser profiles, idle Gradle / Kotlin daemons
 function Invoke-KitCleanupResources {
   $profiles = Get-KitPath chrome-profiles

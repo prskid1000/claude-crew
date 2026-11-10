@@ -111,7 +111,7 @@ foreach ($n in 'gone', 'dirty') { git -C "$wr-main" worktree add -q -b "f/$n" "$
 $dw = "$wr/deploymerge-s-wtr-main"; git -C "$wr-main" worktree add -q -b d $dw; $wn = pwsh @np "$k/skills/crafty/crafty.ps1" wt new -Repo "$wr-main" -Branch b -Target main -Name deploymerge-s -Root $wr 2>&1
 'edit' | Add-Content "$wr/dirty/dirty.txt"; foreach ($f in Get-ChildItem $wr -Recurse -File -Force) { $f.LastWriteTime = (Get-Date).AddDays(-9) }
 $wp = pwsh @np $O cleanup -WorktreesOnly -WorktreeRoot $wr 2>&1 | Out-String
-Expect "cleanup: a clean worktree with a gone remote branch goes after worktreeDays (branch kept), an ownerless deploymerge-* after grace; uncommitted files only reported" (-not (Test-Path $dw) -and "$wn" -match 'holder: none' -and -not (Test-Path "$wr/gone") -and (git -C "$wr-main" branch --list 'f/gone') -and (Test-Path "$wr/dirty/dirty.txt") -and $wp -match 'remote branch gone' -and $wp -match 'dirty \(f/dirty\): uncommitted files, idle 9 d: kept')
+Expect "cleanup: a clean worktree with a gone remote branch goes after worktreeDays (branch kept), an ownerless deploymerge-* after grace; uncommitted files only reported" (-not (Test-Path $dw) -and "$wn" -match 'holder: none' -and -not (Test-Path "$wr/gone") -and (git -C "$wr-main" branch --list 'f/gone') -and (Test-Path "$wr/dirty/dirty.txt") -and $wp -match 'upstream gone, idle' -and $wp -match 'dirty \(f/dirty\): uncommitted files, idle 9 d: kept')
 Remove-Item Env:KIT_TRANSCRIPTS
 Remove-TestKit $k
 # ---- resources (was the goody supervise-resources)

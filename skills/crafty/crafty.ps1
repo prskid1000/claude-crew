@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 wt · L304 stack · L484 gate · L752 check · L1008 pipes · L1058 guard · L1778 dir · L1788 checkpoint ·
-  L1812 prior · L1848 tracker · L1905 host
+Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L914 check · L1170 pipes · L1220 guard · L1963 dir ·
+  L1973 checkpoint · L1997 prior · L2033 tracker · L2090 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -24,12 +24,157 @@ $__rest = @($args | Select-Object -Skip 1)
 # an abandoned gate mutex is ours
 function Lock-Gate($m) { try { $m.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $true } }
 . (Join-Path $PSScriptRoot 'lib.ps1')
+# ---- sweep: worktrees and local branches of every repo (wt remove, cleanup); nothing unpushed, dirty or held goes
+# one checkout per repo: repos[].checkout, git checkouts under reposRoot, the kit
+function Get-KitRepoDirs {
+  $seen = @{}
+  $cand = @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.checkout)" }) + @(if ($KitConf.ReposRoot -and (Test-Path -LiteralPath $KitConf.ReposRoot) -and (Test-Path -LiteralPath $KitConf.ConfigFile)) { Get-ChildItem -LiteralPath $KitConf.ReposRoot -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git') } | ForEach-Object FullName }) + @($KitConf.Kit)
+  foreach ($d in @($cand | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) })) {
+    $gd = "$(git -C $d rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim().ToLower()
+    if ($gd -and -not $seen[$gd]) { $seen[$gd] = 1; (Resolve-Path -LiteralPath $d).Path.TrimEnd('\', '/') }
+  }
+}
+function Get-KitWorktrees([string]$Repo) {   # git worktree list as objects; branch '' = detached
+  $cur = $null
+  foreach ($l in @(git -C $Repo worktree list --porcelain 2>$null) + '') {
+    if ($l -like 'worktree *') { $cur = [ordered]@{ path = $l.Substring(9).Replace('\', '/'); branch = ''; head = '' } }
+    elseif (-not $l) { if ($cur) { [pscustomobject]$cur }; $cur = $null }
+    elseif ($cur -and $l -like 'branch refs/heads/*') { $cur.branch = $l.Substring(18) }
+    elseif ($cur -and $l -like 'HEAD *') { $cur.head = $l.Substring(5) }
+  }
+}
+# never deleted: main/master/develop, release, staging, production, hotfix, critical, localenv; protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
+function Get-KitKeepBranchRx([string]$Repo) {
+  $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
+  $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @('main', 'master', 'develop', 'release/*', 'staging', 'staging/*', 'production', 'production/*', 'prod/*', 'hotfix/*', 'critical/*') }
+  $all = @($base) + 'localenv/*' + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
+  '^(' + (@($all | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape("$_") -replace '\\\*', '.+' }) -join '|') + ')$'
+}
+# may a local branch go? delete + why; $Ctx caches per repo (keep rx, checkouts, bases, host MR refs)
+function Get-KitBranchVerdict([string]$Repo, [string]$Branch, [hashtable]$Ctx, [double]$IdleHours = 2, [switch]$IgnoreCheckout) {
+  $v = { param($go, $why) [pscustomobject]@{ branch = $Branch; delete = [bool]$go; why = $why } }
+  if (-not $Ctx.keep) { $Ctx.keep = Get-KitKeepBranchRx $Repo }
+  if ($null -eq $Ctx.out) { $Ctx.out = @{}; foreach ($w in @(Get-KitWorktrees $Repo)) { if ($w.branch) { $Ctx.out[$w.branch] = $w.path } } }
+  if ($null -eq $Ctx.bases) { $tg = Get-RepoConf ((("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$') -split '[/:\\]')[-1]) 'target' ''
+    $Ctx.bases = @(@("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim(), $(if ($tg) { "origin/$tg" })) | Where-Object { $_ -and (git -C $Repo rev-parse -q --verify "refs/remotes/$_" 2>$null) } | Select-Object -Unique) }
+  if ($Branch -match $Ctx.keep) { return & $v $false 'protected (default, target or deploy branch)' }
+  if (-not $IgnoreCheckout -and $Ctx.out[$Branch]) { return & $v $false "checked out in $($Ctx.out[$Branch])" }
+  $tip = "$(git -C $Repo rev-parse -q --verify "refs/heads/$Branch" 2>$null)".Trim(); if (-not $tip) { return & $v $false 'no such branch' }
+  $t = if ("$(git -C $Repo reflog show -1 --format=%gd --date=unix "refs/heads/$Branch" 2>$null)" -match '@\{(\d+)\}') { $Matches[1] } else { "$(git -C $Repo log -1 --format=%ct $tip 2>$null)".Trim() }   # last move, not commit time
+  if ($t -and $IdleHours -gt 0 -and ($age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::FromUnixTimeSeconds([long]$t)).TotalHours) -lt $IdleHours) { return & $v $false "moved $([math]::Round($age * 60)) min ago" }
+  foreach ($b in $Ctx.bases) { git -C $Repo merge-base --is-ancestor $tip $b 2>$null; if ($LASTEXITCODE -eq 0) { return & $v $true "merged into $b" } }
+  $up, $track = "$(git -C $Repo for-each-ref --format='%(upstream:short)|%(upstream:track)' "refs/heads/$Branch" 2>$null)".Trim() -split '\|', 2
+  $on = "$(git -C $Repo for-each-ref --contains $tip --count=1 --format='%(refname:short)' refs/remotes/origin 2>$null)".Trim()
+  if (-not $on) {   # MR / PR refs keep pushed work after its branch is deleted
+    if ($null -eq $Ctx.mrRefs) { $Ctx.mrRefs = @{}; $r = Invoke-KitExe git @('-C', $Repo, 'ls-remote', 'origin', 'refs/merge-requests/*/head', 'refs/pull/*/head') 30
+      foreach ($l in @(if (-not $r.code) { "$($r.out)" -split "`n" })) { $s, $ref = $l.Trim() -split '\s+', 2; if ($ref) { $Ctx.mrRefs[$s] = $ref } } }
+    $on = $Ctx.mrRefs[$tip]
+  }
+  $iid = if ($Branch -match '^(?:mr|pr)[-_]?(\d+)$') { $Matches[1] }   # an MR checkout branch
+  if (-not $on -and ($iid -or $track -eq '[gone]')) {   # squash-merged: the tip inside a merged MR's head
+    foreach ($m in @(if ($iid) { Get-MergedMrs $Repo '' '' 'merged' $iid } else { Get-MergedMrs $Repo $Branch })) {
+      if ($m.sha -and ($m.sha -eq $tip -or $(git -C $Repo merge-base --is-ancestor $tip $m.sha 2>$null; $LASTEXITCODE -eq 0))) { return & $v $true "MR merged, tip in its head ($(if ($iid) { "!$iid" } else { $m.sha.Substring(0, 8) }))" } } }
+  if (-not $on) { return & $v $false "$("$(git -C $Repo rev-list --count $tip --not --remotes=origin 2>$null)".Trim()) commit(s) on no remote branch or MR$(if ($track -eq '[gone]') { " (upstream $up gone)" })" }
+  if ($track -eq '[gone]') { return & $v $true "upstream $up gone, tip on the host ($on)" }
+  if (($up -and ($up -replace '^origin/') -eq $Branch) -or (git -C $Repo rev-parse -q --verify "refs/remotes/origin/$Branch" 2>$null)) {
+    if ($tip -in @(Get-MergedMrs $Repo $Branch | ForEach-Object sha)) { return & $v $true 'MR merged at its tip' }
+    return & $v $false "open: origin/$Branch not merged"
+  }
+  & $v $true "local copy, its commits are on the host ($on)"
+}
+# a worktree-root folder no repo registers (a half-done remove): goes when every file is git-ignored or in its repo's objects
+function Get-KitLeftoverVerdict([string]$Dir, [string[]]$RepoDirs) {
+  $leaf = Split-Path $Dir -Leaf; $repo = @($RepoDirs | Where-Object { $leaf -like "*-$(Split-Path $_ -Leaf)" -or $leaf -eq (Split-Path $_ -Leaf) } | Select-Object -First 1)[0]
+  $files = @(Get-ChildItem -LiteralPath $Dir -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.LinkType })   # links are never followed
+  if ($files.Count -gt 500) { return [pscustomobject]@{ delete = $false; why = "$($files.Count) files: check by hand" } }
+  $left = @(foreach ($f in $files) { $rel = [IO.Path]::GetRelativePath($Dir, $f.FullName).Replace('\', '/')
+      if ($repo -and $f.Name -notlike '*.local.*') {
+        git -C $repo check-ignore -q --no-index -- $rel 2>$null; if ($LASTEXITCODE -eq 0) { continue }
+        $h = "$(git -C $repo hash-object --path=$rel -- $f.FullName 2>$null)".Trim(); if ($h) { git -C $repo cat-file -e "$h^{blob}" 2>$null; if ($LASTEXITCODE -eq 0) { continue } } }
+      $rel })
+  if ($left.Count) { return [pscustomobject]@{ delete = $false; why = "$($left.Count) file(s) in no git: $(@($left | Select-Object -First 3) -join ', ')" } }
+  [pscustomobject]@{ delete = $true; why = $(if ($files.Count) { "$($files.Count) file(s), all ignored or in $(Split-Path $repo -Leaf)'s history" } else { 'empty skeleton (links only)' }) }
+}
+# links first (never followed), then the folder
+function Remove-KitLeftover([string]$Dir) {
+  foreach ($l in @(Get-ChildItem -LiteralPath $Dir -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue)) { if ($l.PSIsContainer) { [IO.Directory]::Delete($l.FullName) } else { [IO.File]::Delete($l.FullName) } }
+  if (@(Get-ChildItem -LiteralPath $Dir -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue).Count) { throw "links left in ${Dir}: not removed" }
+  Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction Stop
+}
+# every worktree-root folder, then every repo's branches; { actions (bytes, why, path), kept, notes }; counts -> repo-sweep (health, dashboard)
+function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryRun) {
+  $ErrorActionPreference = 'SilentlyContinue'; $now = Get-Date; $wtDays = [double](Get-KitParam 'cleanup.worktreeDays')   # gone branch / uncommitted: idle this long
+  $actions = [Collections.ArrayList]::new(); $kept = [Collections.ArrayList]::new(); $notes = @()
+  $act = { param($b, $why, $path) [void]$actions.Add([pscustomobject]@{ bytes = [long]$b; why = $why; path = $path }) }; $keep = { param($what, $why) [void]$kept.Add("$what`: $why") }
+  $size = { param($p) [long](Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
+  $cat = { param($w) $w -replace '^(upstream) \S+ (gone).*', '$1 $2, tip on the host' -replace ' \(.*$' -replace '^merged into \S+', 'merged' }   # one action group per reason
+  $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($now - [datetime]$_.beat).TotalHours -lt 24 } | ForEach-Object { $_.worktrees } | Where-Object { "$_" -match '^([A-Za-z]:)?[\\/]' } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
+  $cmdLines = @(Get-SysProcs | Where-Object { $_.Id -ne $PID -and $_.CommandLine } | ForEach-Object { $_.CommandLine.Replace('/', '\').ToLower() })   # an editor, build or shell in the folder
+  $heldBy = { param($p) $l = $p.ToLower(); if ($l -in $claimed) { 'a board agent' } elseif (@($cmdLines | Where-Object { $_.Contains($l) }).Count) { 'a running process' } }
+  $ctx = [ordered]@{}; $reg = @{}
+  $addRepo = { param($rp) if ($rp -and -not $ctx.Contains($rp)) { $ctx[$rp] = @{}; foreach ($x in @(Get-KitWorktrees $rp)) { $reg[$x.path.ToLower()] = $rp } } }
+  foreach ($rp in @(Get-KitRepoDirs)) { & $addRepo $rp }
+  foreach ($w in @(foreach ($root in $Roots) { Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue })) {
+    $d = $w.FullName; $key = $d.Replace('\', '/').ToLower()
+    if (-not $reg[$key] -and "$(git -C $d rev-parse --path-format=absolute --show-toplevel 2>$null)".Trim().ToLower() -eq $key) { & $addRepo ("$(@(git -C $d worktree list --porcelain 2>$null)[0])" -replace '^worktree ') }
+    $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '[\\/](node_modules|\.git|target|build)[\\/]' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+    $idleH = ($now - $(if ($newest) { $newest } else { $w.LastWriteTime })).TotalHours; $old = $idleH -ge 24 * $wtDays   # no file (a skeleton): the folder's own time
+    if ($who = & $heldBy $d) { & $keep $d "held by $who"; continue }
+    if (-not ($rp = $reg[$key])) {   # no repo lists it: a remove git half did (junctions + files)
+      if ($idleH -lt $IdleHours) { & $keep $d "no repo lists it, changed $([int]($idleH * 60)) min ago"; continue }
+      $lv = Get-KitLeftoverVerdict $d @($ctx.Keys)
+      if (-not $lv.delete) { & $keep $d "no repo lists it; $($lv.why)"; if ($old) { $notes += "folder $d`: no repo lists it, $($lv.why): kept (move what you need, then delete it)" }; continue }
+      & $act (& $size $d) 'leftover folder no repo lists (links unlinked, never followed)' "$d ($($lv.why))"
+      if (-not $DryRun) { try { Remove-KitLeftover $d } catch { & $act 0 'FAILED leftover folder' "$d`: $($_.Exception.Message)" } }
+      continue
+    }
+    $br = "$(git -C $d rev-parse --abbrev-ref HEAD 2>$null)".Trim(); if ($br -eq 'HEAD') { $br = '' }
+    if (-not $ctx[$rp].keep) { $ctx[$rp].keep = Get-KitKeepBranchRx $rp }
+    if ($br -and $br -match $ctx[$rp].keep) { continue }   # env / default worktrees: their owners'
+    if (git -C $d status --porcelain 2>$null) { & $keep "$d$(if ($br) { " ($br)" })" 'uncommitted files'; if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($idleH / 24)) d: kept (never deleted; commit or remove it by hand)" }; continue }
+    # an unclaimed deploymerge-* (goody deploys) idle idle.graceMinutes, min 60 (CI waits write nothing): blocks the next merge
+    $dm = $w.Name -like 'deploymerge-*' -and $d.ToLower() -notin $claimed -and $newest -and ($now - $newest).TotalMinutes -ge [math]::Max(60, [double](Get-KitParam 'idle.graceMinutes'))
+    if (-not $dm -and $idleH -lt $IdleHours) { & $keep "$d ($br)" "active, changed $([int]($idleH * 60)) min ago"; continue }
+    if (-not (Invoke-GitFetch -Dir $d)) { & $keep $d 'git fetch failed'; continue }
+    $why = if ($dm) { 'ownerless deploy merge' } elseif ($br) {
+      $bv = Get-KitBranchVerdict $rp $br $ctx[$rp] -IdleHours 0 -IgnoreCheckout
+      if ($bv.delete -and ($idleH -ge 24 -or $bv.why -notlike 'local copy*')) { $bv.why } elseif ($old -and $bv.why -match 'upstream \S+ gone') { "upstream gone, idle $wtDays d+ (branch kept: $($bv.why))" } else { & $keep "$d ($br)" $bv.why; $null }
+    } else {
+      $hd = "$(git -C $d rev-parse HEAD 2>$null)".Trim()
+      $dep = @(foreach ($n in 'node_modules', '.venv') { $i = Get-Item -LiteralPath (Join-Path $d $n) -Force -ErrorAction SilentlyContinue; if ($i -and -not $i.LinkType -and -not (Test-Path -LiteralPath (Join-Path $i.FullName '.kit-farm.json'))) { $n } })
+      if ($dep) { & $keep $d "detached, its own $($dep -join ' + ') install (a dependency store)"; $null }
+      elseif ($idleH -ge 24 -and "$(git -C $d for-each-ref --contains $hd --count=1 --format='%(refname)' refs/remotes/origin 2>$null)".Trim()) { 'detached HEAD on the host' }
+      else { & $keep $d 'detached: HEAD on no remote branch, or idle < 24 h'; $null }
+    }
+    if (-not $why) { continue }
+    & $act (& $size $d) "worktree: $(& $cat $why) (clean, idle, no holder)" "$d$(if ($br) { " ($br)" }): $why"
+    if (-not $DryRun -and (Test-Path -LiteralPath $d)) { try { $null = Invoke-Wt remove -Dir $d 2>&1 } catch {}; if (Test-Path -LiteralPath $d) { & $act 0 'FAILED worktree remove' $d } }
+  }
+  $counts = [Collections.ArrayList]::new()
+  foreach ($rp in @($ctx.Keys)) {
+    $leaf = Split-Path $rp -Leaf
+    $pr = @(git -C $rp worktree prune -n -v 2>&1 | ForEach-Object { "$_" } | Where-Object { $_.Trim() })
+    if ($pr.Count) { & $act 0 'worktree record of a missing folder pruned' "$($pr.Count) in $leaf"; if (-not $DryRun) { git -C $rp worktree prune 2>$null } }
+    $ctx[$rp].out = $null; $del = 0; $keptN = 0
+    $brs = @(git -C $rp for-each-ref --format='%(refname:short)' refs/heads 2>$null)
+    if (-not (Invoke-GitFetch -Dir $rp)) { $notes += "git fetch failed in $rp`: its branches not swept"; $brs = @() }
+    foreach ($b in $brs) {
+      $bv = Get-KitBranchVerdict $rp $b $ctx[$rp] -IdleHours ([math]::Max(1, $IdleHours))
+      if ($bv.delete) { $del++; & $act 0 "local branch: $(& $cat $bv.why)" "$b in $leaf`: $($bv.why)"; if (-not $DryRun) { git -C $rp branch -D $b 2>$null | Out-Null } }
+      elseif ($bv.why -notmatch '^(protected|checked out)') { $keptN++; & $keep "$b in $leaf" $bv.why }
+    }
+    [void]$counts.Add([ordered]@{ repo = $leaf; branches = @(git -C $rp for-each-ref --format='%(refname:short)' refs/heads 2>$null).Count; worktrees = [math]::Max(0, @(Get-KitWorktrees $rp).Count - 1); removable = $(if ($DryRun) { $del } else { 0 }); kept = $keptN })
+  }
+  Write-KitAtomic (Get-KitPath repo-sweep -Create) ([ordered]@{ at = $now.ToString('o'); dryRun = [bool]$DryRun; repos = @($counts) } | ConvertTo-Json -Depth 4)
+  [pscustomobject]@{ actions = @($actions); kept = @($kept); notes = @($notes) }
+}
 # ---- wt: a worktree per agent; deps linked, never installed
 function Invoke-Wt {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override
+  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
+  [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
@@ -260,13 +405,25 @@ switch ($Action) {
     }
     if (-not $Dir) { throw 'remove needs -Dir <worktree> or -Name <name from wt new>' }
     if ($Dir -match '\$\{?\w') { throw "wt remove -Dir '$Dir' holds an unexpanded variable ($($Matches[0])): expand it in the caller (double-quoted path, no single quotes or escaped `$)" }
-    if (-not (Test-Path -LiteralPath $Dir)) {   # removed by hand: prune it if git still lists it, else error (typo)
-      $want = [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/') -replace '\\', '/'
-      $own = @(@(if ($Repo) { $Repo } else { @(@(Get-KitValue 'repos' @()).checkout) + $KitConf.Kit }) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Where-Object { @(git -C $_ worktree list --porcelain 2>$null) -contains "worktree $want" })
-      if (-not $own.Count) { throw "no such folder: $Dir (and no repo lists it as a worktree)" }
-      foreach ($pr in $own) { git -C $pr worktree prune 2>$null }; "already gone: $Dir (git worktree prune ran in $($own -join ', '))"; exit 0
+    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir).TrimEnd('\', '/'); $want = $full -replace '\\', '/'   # relative: from the PowerShell location, as Resolve-Wt
+    $repoDirs = @(@(if ($Repo -and (Test-Path -LiteralPath $Repo)) { (Resolve-Path -LiteralPath $Repo).Path }) + @(Get-KitRepoDirs))
+    $reg = @(foreach ($rp in $repoDirs) { foreach ($w in @(Get-KitWorktrees $rp)) { if ($w.path -eq $want) { [pscustomobject]@{ repo = $rp; wt = $w } } } })[0]
+    $inRoot = @(@($KitConf.WorktreeRoots) + @($Root) | Where-Object { $_ -and ([IO.Path]::GetFullPath("$_").TrimEnd('\', '/') -replace '\\', '/') -eq ((Split-Path $full) -replace '\\', '/') }).Count   # a root's direct child, never a folder inside a worktree
+    # prune, then the branch when nothing is lost (merged, upstream gone, on the host): lib.ps1 "sweep"
+    $finish = { param($rp, $br) git -C $rp worktree prune 2>$null
+      if ($br) { try { $bv = Get-KitBranchVerdict $rp $br @{} -IdleHours 0; if ($bv.delete) { git -C $rp branch -D $br 2>$null | Out-Null; "deleted branch $br ($($bv.why))" } else { "kept branch ${br}: $($bv.why)" } } catch { "kept branch ${br}: verdict failed ($($_.Exception.Message))" } } }
+    if (-not (Test-Path -LiteralPath $Dir)) {   # removed already (a second call, by hand): prune + branch; a path outside the roots and unknown = typo
+      if ($reg) { & $finish $reg.repo $reg.wt.branch; "already gone: $Dir (record pruned in $($reg.repo))"; exit 0 }
+      if ($inRoot) { "already gone: $Dir (no folder, no repo lists it)"; exit 0 }
+      throw "no such folder: $Dir (and no repo lists it as a worktree)"
+    }
+    if (-not $reg -and $inRoot -and "$(git -C $full rev-parse --path-format=absolute --show-toplevel 2>$null)".Trim() -ne $want) {   # a half-done remove: junctions + files git has
+      $lv = Get-KitLeftoverVerdict $full $repoDirs
+      if (-not $lv.delete) { throw "wt remove: $Dir is no worktree (no repo lists it) and holds $($lv.why): keep what you need, then delete it by hand" }
+      Remove-KitLeftover $full; "removed leftover $Dir ($($lv.why))"; exit 0
     }
     $Dir = Resolve-Wt $Dir
+    $br = "$(git -C $Dir rev-parse --abbrev-ref HEAD 2>$null)".Trim(); if ($br -eq 'HEAD') { $br = '' }
     $gd = (git -C $Dir rev-parse --path-format=absolute --git-dir).Trim()
     if ($gd -eq (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim() -or $Dir -eq (Resolve-Path -LiteralPath $KitConf.Kit).Path.TrimEnd('\', '/')) { throw "$Dir is a main working tree or the running kit: wt remove only removes linked worktrees" }
     $links = @(@(@(Meta $Dir 'links') | Where-Object { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | ForEach-Object { $_.FullName }) | Sort-Object -Unique)
@@ -290,14 +447,19 @@ switch ($Action) {
     foreach ($l in $links) { if (Test-Path $l) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } } }
     $main = ((git -C $Dir worktree list --porcelain | Select-Object -First 1) -replace '^worktree ', '')
     $gitSaid = @(git -C $main worktree remove $(if ($Force) { '--force' }) $Dir 2>&1 | ForEach-Object { "$_" })
-    if ($LASTEXITCODE) {
+    if ($LASTEXITCODE -and @(git -C $main worktree list --porcelain 2>$null) -contains "worktree $want") {
       foreach ($u in $undo) { if ($u[1] -and -not (Test-Path $u[0])) { New-DirLink $u[0] $u[1] } }
       foreach ($u in $farmUndo) { $src = $u[1][0]; $wtr = $u[1][1]; $null = Set-NodeModules $u[0] $src (git -C $Dir rev-parse --path-format=absolute --git-common-dir | Split-Path) $wtr }
       throw "git worktree remove failed for $Dir (links restored): $(($gitSaid | Where-Object { $_.Trim() }) -join ' ' -replace '\s+', ' '); fix that, or -Force"
     }
+    # git dropped the record but a locked file kept the folder: never restore links into it (a junction skeleton no sweep could see)
+    if (Test-Path -LiteralPath $full) { $lv = Get-KitLeftoverVerdict $full $repoDirs; if (-not $lv.delete) { "left $Dir in place: $($lv.why)" } else { try { Remove-KitLeftover $full } catch { "left $Dir in place: $($_.Exception.Message)" } } }
+    & $finish $main $br
     "removed $Dir"
   }
   'list' { git -C $(if ($Repo) { $Repo } else { (Get-Location).Path }) worktree list }
+  'sweep' { $r = Invoke-KitSweep @(if ($Root) { Split-KitList $Root } else { $KitConf.WorktreeRoots }) $IdleHours -DryRun:$DryRun
+    if ($Json) { $r | ConvertTo-Json -Depth 4 -Compress } else { $r.actions | ForEach-Object { "$(if ($DryRun) { 'would go' } else { 'gone' }): $($_.path)" }; $r.kept | ForEach-Object { "kept: $_" }; $r.notes } }
 }
 }
 
@@ -1237,6 +1399,13 @@ if ($SelfTest) {
   $cr = Join-Path (Get-KitPath agents -Create) 'guard-selftest/crlf'; New-Item -ItemType Directory -Force "$cr/skills/crafty" | Out-Null; git init -q $cr   # tracked CRLF, tracked LF, untracked CRLF
   foreach ($cf in 'skills/crafty/crafty.ps1', 'n.ps1') { [IO.File]::WriteAllText("$cr/$cf", "a`r`n") }; [IO.File]::WriteAllText("$cr/lf.md", "a`n"); git -C $cr -c core.autocrlf=false add skills lf.md
   [IO.File]::WriteAllText("$cr/NOTICE", "text`n"); [IO.File]::WriteAllText("$cr/run", "#!/bin/sh`necho ok`n")   # an extensionless file a desktop app would open; a #! script
+  $cases += @(@('B', 'git fetch -q origin merge-requests/12/head:mr12', $true, 'local branch from an MR'), @('P', 'gh pr checkout 7', $true, 'local branch from an MR'),
+    @('B', 'git fetch origin merge-requests/12/head && git diff origin/main...FETCH_HEAD; git fetch origin pull/3/head:refs/remotes/origin/pr3', $false, 'local branch from an MR'),
+    @('B', 'git -C x worktree remove --force y', $true, 'wt remove -Dir'), @('B', 'git worktree list; git worktree prune', $false, 'wt remove -Dir'))
+  if ($mc = @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.checkout)" } | Where-Object { $_ -and (Test-Path -LiteralPath $_) })[0]) {   # a configured main checkout
+    $ef = @(Get-ChildItem -LiteralPath $mc -File | Select-Object -First 1).Name
+    $cases += @(@('B', "echo x > $mc/kit-scratch-$PID.txt", $true, 'shared main checkout'), @('B', "cd $mc && git status > kit-scratch-$PID.txt", $true, 'shared main checkout'), @('E', "$mc/kit-scratch-$PID.md", $true, 'shared main checkout'),
+      @('B', "git -C $mc status > $cr/s.txt; echo x >> $mc/$ef; echo x > $mc/sub/new.txt", $false, 'shared main checkout')) }
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
@@ -1277,7 +1446,7 @@ $cmd = if ($in.tool_input.command) { [string]$in.tool_input.command }
        else { '' }
 $K = $PSScriptRoot
 $protected = @('main', 'master', 'develop', 'release/\S+')
-try { $kc = Get-Content (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) } catch {}
+try { $kc = Get-Content (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '\S+' }) } catch {}   # globs
 
 function Deny($why) {
   if ($in.session_id) {   # test runs must not raise a guard WATCH
@@ -1358,6 +1527,16 @@ $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
 $strayWhy = "a $rtLeaf outside the kit (a relative path from the wrong folder): agent files go under & $($KitCmd.dev) dir -Agent <id> (<kit>/$rtLeaf/work/agents/<id>/)"
 foreach ($e in $edits) { if ((RuntimeKinds " $e" $here) -contains 'stray') { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e is $strayWhy" } }
+# scratch (h.txt, r.txt) at the top of a shared main checkout (repos[].checkout) outlives the agent and dirties every base
+$mainRoots = @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.checkout)" } | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
+$scratchWhy = "is a new file at the top of a shared main checkout: write scratch under & $($KitCmd.dev) dir -Agent <id> -Name <file>"
+function MainScratch([string]$p, [string]$base) {
+  if (-not $p -or -not $mainRoots.Count -or $p -match '[$*?<>|`]') { return $false }
+  $p = $p -replace '^/([A-Za-z])/', '$1:/'
+  if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return $false }; $p = Join-Path $base $p }
+  $full = [IO.Path]::GetFullPath($p); (Split-Path $full) -in $mainRoots -and -not (Test-Path -LiteralPath $full)
+}
+foreach ($e in $edits) { if (MainScratch $e $here) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $scratchWhy" } }
 # shared temp body / desc files got swapped between agents
 $tmpRoots = @('/tmp', $env:TEMP, $env:TMP, [IO.Path]::GetTempPath()) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') } | Select-Object -Unique
 $tmpRx = '(?i)(?:^|[\s''"=<>(,@])(?:' + ((@($tmpRoots | ForEach-Object { [regex]::Escape($_) }) + '\$env:(?:TEMP|TMP)', '%(?:TEMP|TMP)%', '\$\{?TMPDIR\}?') -join '|') + ')[\\/](?<f>[^\s''"\\/;|&)]*(?:body|desc|comment|summary|message|msg)[^\s''"\\/;|&)]*)(?=$|[\s''";|&)])'
@@ -1482,7 +1661,13 @@ foreach ($seg in DeleteSegments $raw) {
   if ($seg -match '(^|[\s(`])(cp|mv|Copy-Item|Move-Item)\s') { $wrote += ($seg.TrimEnd() -split '\s+')[-1] }
   if ($seg -match '(^|[\s(`])(?<v>mkdir|md|New-Item|ni|touch|tee|Out-File|Set-Content|Add-Content)\s+(?<a>.*)$') { $wrote += @($Matches.a -split '\s+' | Where-Object { $_ -and $_ -notmatch '^-' }) }
   if (@($wrote | ForEach-Object { RuntimeKinds " $($_.Trim('''"'))" $segBase }) -contains 'stray') { Deny "kit guard: that writes $strayWhy" }
+  foreach ($x in $wrote) { if (MainScratch $x.Trim('''"') $segBase) { Deny "kit guard: $x $scratchWhy" } }
 }
+# a bare remove leaves junction skeletons no repo lists, and the branch
+if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+("[^"]*"|\S+)\s+)*worktree\s+remove\b') { Deny "kit guard: use & $($KitCmd.dev) wt remove -Dir <worktree>: it unlinks shared folders first, prunes and deletes the branch once nothing is lost (a bare git worktree remove leaves junctions behind)" }
+# an MR fetched into a local branch (mr8520) outlives its reader
+if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*fetch\b[^;&|\n]*\b(merge-requests|pull)/\d+/head:(?!refs/remotes/)\S' -or $raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?(glab|gh)(\.exe)?\s+(mr|pr)\s+checkout\b') {
+  Deny 'kit guard: that makes a local branch from an MR, which outlives you: git fetch origin merge-requests/<n>/head (GitHub: pull/<n>/head), then read FETCH_HEAD (git diff origin/<target>...FETCH_HEAD); to change it: crafty.ps1 wt new' }
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }
 # hand-made task branches skip wt new's prior-work gate

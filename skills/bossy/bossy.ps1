@@ -16,16 +16,16 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   release -Agent <id>[,<id>] [-Reason]   every lease of those agents (lanes, env + layers, GPU, builds, tabs), logged in .state/leases.jsonl
   storage [-Drive] [-Since 24h|7d] [-Folders] [-Scan]   free space per drive, folder sizes, rescues (.state/storage)
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
-  report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly]
+  report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
   deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check ...   deploy batch; decision pauses; a person's gate word
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L31 init · L49 board · L228 budget · L256 launch · L522 recover · L605 pause · L649 resume · L707 program · L752 param ·
-  L758 track · L1078 supervise · L1379 report · L1458 audit · L1518 storage · L1728 bugbrief · L1830 cleanup · L1952 learn ·
-  L1982 decide · L2094 health · L2154 retro due · L2164 tidy · L2233 the kit origin's main and goodies · L2249 setup ·
-  L2316 guard-sendmessage
+  L758 track · L1078 supervise · L1379 report · L1458 audit · L1518 storage · L1728 bugbrief · L1830 cleanup · L1914 learn ·
+  L1944 decide · L2056 health · L2117 retro due · L2127 tidy · L2196 the kit origin's main and goodies · L2212 setup ·
+  L2279 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1829,11 +1829,10 @@ if ($tracked) { "already tracked: $Task" } else {
 
 # ---- cleanup: kit-created leftovers only, never repos or in-use
 function Invoke-Cleanup {
-param([switch]$DryRun, [switch]$IfDue, [switch]$Quiet, [switch]$WorktreesOnly, [string[]]$WorktreeRoot = @(), [double]$WorktreeIdleHours = 2)
+param([switch]$DryRun, [switch]$IfDue, [switch]$Quiet, [switch]$WorktreesOnly, [string[]]$WorktreeRoot = @(), [double]$WorktreeIdleHours = 2, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
 $tmp = Get-KitTemp
 if (-not $WorktreeRoot) { $WorktreeRoot = $KitConf.WorktreeRoots }
-$keepBranches = '^(' + ((@('localenv/.+') + @($(if ((Get-KitSetting 'protectedBranchesMode' '') -ne 'replace') { 'main', 'master', 'develop' })) + @($KitConf.ProtectedBranches | ForEach-Object { [regex]::Escape($_) })) -join '|') + ')$'
 $mark = Get-KitPath last-cleanup -Create
 if ($IfDue -and (Test-Path $mark) -and ((Get-Date) - [datetime](Get-Content $mark -Raw).Trim()).TotalHours -lt 20) { exit 0 }
 
@@ -1888,48 +1887,10 @@ foreach ($f in Get-ChildItem $tmp -Force | Where-Object { $_.Name -match '^(kit-
 
 }
 
-# a branch goes only with a MERGED MR at its tip
-function MergedTip($repo, $br) { @(Get-MergedMrs $repo $br | ForEach-Object sha) }
-$wtDays = [double](Get-KitParam 'cleanup.worktreeDays')   # gone branch / uncommitted: idle this long
-$repos = @{}; $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalHours -lt 24 } | ForEach-Object { $_.worktrees } | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
-foreach ($root in $WorktreeRoot) {
-  foreach ($w in Get-ChildItem $root -Directory) {
-    $d = $w.FullName
-    if (-not (git -C $d rev-parse --is-inside-work-tree 2>$null)) { continue }
-    $br = git -C $d rev-parse --abbrev-ref HEAD 2>$null
-    if (-not $br -or $br -eq 'HEAD' -or $br -match $keepBranches) { continue }
-    $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '[\\/](node_modules|\.git|target|build)[\\/]' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
-    $old = $newest -and ($now - $newest).TotalDays -ge $wtDays
-    if (git -C $d status --porcelain 2>$null) { if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($now - $newest).TotalDays) d: kept (never deleted; commit or remove it by hand)" }; continue }
-    if (-not ($dm = Test-KitIdleDeployMerge $w.Name $d $claimed $newest $now) -and $newest -and ($now - $newest).TotalHours -lt $WorktreeIdleHours) { continue }
-    if (-not (Invoke-GitFetch -Dir $d)) { continue }
-    $main = "$(git -C $d rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
-    $tip = (git -C $d rev-parse HEAD 2>$null); $ob = "$(git -C $d symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim()
-    # tip merged or in origin's default: nothing lost (claimed = in use)
-    $why = if (-not $main -or $d.ToLower() -in $claimed) { $null } elseif ($dm) { 'ownerless deploy merge (branch kept)' } elseif ($tip -in @(MergedTip $main $br)) { 'MR merged at its tip' } elseif ($ob -and (-not $newest -or ($now - $newest).TotalHours -ge 24) -and $(git -C $d merge-base --is-ancestor $tip $ob 2>$null; $LASTEXITCODE -eq 0)) { "contained in $ob" }
-      elseif ($old -and "$(git -C $d for-each-ref --format='%(upstream:track)' "refs/heads/$br" 2>$null)".Trim() -eq '[gone]') { "remote branch gone, idle $wtDays d+ (local branch kept)" }
-    if (-not $why) { continue }
-    $sz = [long](Size $d); $script:freed += $sz
-    [void]$actions.Add([pscustomobject]@{ mb = $sz / 1MB; why = "worktree + local branch: $why (clean, idle)"; path = "$d ($br)" })
-    if (-not $DryRun) { & $KitCmd.dev wt remove -Dir $d | Out-Null; if (-not (Test-Path $d) -and $why -notmatch 'branch kept') { git -C $main branch -D $br 2>$null | Out-Null } }
-    if ($main) { $repos[$main] = $true }
-  }
-}
-$roots = @($KitConf.ReposRoot) | Where-Object { $_ -and (Test-Path $_) -and (Test-Path $KitConf.ConfigFile) }
-foreach ($r in $roots) { foreach ($c in Get-ChildItem $r -Directory) { if (Test-Path (Join-Path $c.FullName '.git')) { $gd = "$(git -C $c.FullName rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim(); if ($gd) { $repos[$gd] = $true } } } }
-foreach ($repo in @($repos.Keys)) {
-  if (-not (git -C $repo rev-parse --git-dir 2>$null)) { continue }
-  if (-not (Invoke-GitFetch -Dir $repo)) { continue }
-  $out = @(git -C $repo worktree list --porcelain 2>$null | Where-Object { $_ -like 'branch refs/heads/*' } | ForEach-Object { $_.Substring(18) })
-  foreach ($line in git -C $repo for-each-ref --format='%(refname:short)|%(objectname)|%(upstream:track)' refs/heads) {
-    $b, $tip, $track = $line -split '\|', 3
-    if ($track -ne '[gone]' -or $b -match $keepBranches -or $b -in $out) { continue }
-    $merged = MergedTip $repo $b
-    if (-not $merged -or $tip -notin $merged) { continue }
-    [void]$actions.Add([pscustomobject]@{ mb = 0; why = 'branch merged at its tip, remote gone -> deleted'; path = "$b in $repo" })
-    if (-not $DryRun) { git -C $repo branch -D $b 2>$null | Out-Null }
-  }
-}
+# worktrees + local branches of every repo: crafty.ps1 wt sweep (nothing dirty, unpushed or held goes; -Detail: each item and what stays)
+$rootList = $WorktreeRoot -join ','; $kept = @()
+try { $sw = $(if ($DryRun) { & $KitCmd.dev wt sweep -Root $rootList -IdleHours $WorktreeIdleHours -Json -DryRun } else { & $KitCmd.dev wt sweep -Root $rootList -IdleHours $WorktreeIdleHours -Json }) -join "`n" | ConvertFrom-Json
+  foreach ($x in @($sw.actions)) { $script:freed += [long]$x.bytes; [void]$actions.Add([pscustomobject]@{ mb = [long]$x.bytes / 1MB; why = $x.why; path = $x.path }) }; $kept = @($sw.kept); $notes += @($sw.notes) } catch { $notes += "worktree sweep failed: $($_.Exception.Message)" }
 
 if (-not $WorktreesOnly) {
 $envLogs = [IO.Path]::GetFullPath((Get-KitPath localenv-logs))   # local env rotates these (logMaxMB): a rewrite races the writer
@@ -1945,7 +1906,8 @@ Gone "$(Get-KitPath tracking).migrated" 'tracking.json.migrated: its tasks live 
 $summary = "$(if ($DryRun) { '[dry run] would free' } else { 'freed' }) $([math]::Round($script:freed / 1MB, 1)) MB in $($actions.Count) action(s)"
 $groups = @($actions | Group-Object why | ForEach-Object { [pscustomobject]@{ why = $_.Name; n = $_.Count; mb = ($_.Group | Measure-Object mb -Sum).Sum; first = $_.Group[0].path } } | Sort-Object mb -Descending)
 if (-not $DryRun) { if (-not $WorktreesOnly) { $now.ToString('o') | Set-Content $mark }; Write-KitLog calls cleanup @{ freedMB = [math]::Round($script:freed / 1MB, 1); actions = $actions.Count; byWhy = @($groups | ForEach-Object { "$($_.why): $($_.n), $([math]::Round($_.mb, 1)) MB" }) } }
-if (-not $Quiet) { $summary; $groups | ForEach-Object { '{0,9:N1} MB {1,5} x  {2}  (e.g. {3})' -f $_.mb, $_.n, $_.why, $_.first }; $notes }
+if (-not $Quiet) { $summary; $groups | ForEach-Object { '{0,9:N1} MB {1,5} x  {2}  (e.g. {3})' -f $_.mb, $_.n, $_.why, $_.first }; $notes
+  if ($Detail) { "$(if ($DryRun) { 'would go' } else { 'gone' }):"; $actions | ForEach-Object { "  $($_.path)" }; "kept ($($kept.Count)):"; $kept | ForEach-Object { "  $_" } } }
 $global:LASTEXITCODE = 0
 }
 
@@ -2145,6 +2107,7 @@ if (-not $hook -or $hook.source -ne 'compact') {
 }
 if ($py) { $msgs += @(Invoke-KitBackground 'health checks' $KitCmd.orch @('health', '-Checks')) }
 $msgs += @(Get-KitBeatOverdue)   # after a compaction too
+if ($rs = Get-KitRepoSweep) { $msgs += "repos ($(([datetime]$rs.at).ToString('MM-dd HH:mm')) sweep): $(@($rs.repos | ForEach-Object { "$($_.repo) $($_.branches) branches · $($_.worktrees) worktrees$(if ($_.removable) { " · $($_.removable) to clean" })$(if ($_.kept) { " · $($_.kept) kept" })" }) -join '; ') (kept = unpushed, open or dirty: bossy.ps1 cleanup -DryRun -Detail)" }
 if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
 $msgs += @(Invoke-KitHooks Get-KitHealthLines)   # goody kit-admin: weekly audit nudge
 Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }) $hook

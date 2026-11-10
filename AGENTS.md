@@ -90,8 +90,8 @@ These rules hold whatever the route:
   current drive; the guard denies it).
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by
   name (`Get-KitPath`); never elsewhere in the kit. Your own files (notes, bodies, diffs, logs, evidence outside a QA run) go
-  only where `crafty.ps1 dir -Agent <id> [-Item <task>] [-Name <file>]` (or `-Kind evidence -Item <task>`) says, never in `/tmp`
-  or `%TEMP%` itself (shared by every agent: the guard denies body / desc files there).
+  only where `crafty.ps1 dir -Agent <id> [-Item <task>] [-Name <file>]` (or `-Kind evidence -Item <task>`) says, never in `/tmp`,
+  `%TEMP%` itself or a main checkout (shared: the guard denies body / desc files there).
 - The kit learns: every agent reads its lessons at step 0 (`bossy.ps1 learn -Read -Skill <skill>`) and records surprises with
   `bossy.ps1 learn`.
 - A script prints `<feature> is a goody: run kitbag.py goody add <name>` -> run that in `<kit>` (README "Goodies"), then retry.

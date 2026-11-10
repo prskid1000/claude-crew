@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L872 status · L1113 supervise sweep ·
-  L1184 supervise report · L1280 tracker · L1596 prior · L1618 ask bugs · L1789 git-host · L1946 kitlog · L2064 params ·
-  L2370 entry-scripts
+  L1184 supervise report · L1280 tracker · L1596 prior · L1618 ask bugs · L1789 git-host · L1949 kitlog · L2067 params ·
+  L2373 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1892,12 +1892,13 @@ function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fiel
   Invoke-HostVerb $v $a -NoMemo:$NoMemo
 }
 # from the host, not git: a squash merge's tip is never in the target
-function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target, [string]$State = 'merged') {
+function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target, [string]$State = 'merged', [string]$Iid) {   # -Iid: that MR, in that state
   $url = "$(git -C $Dir remote get-url origin 2>$null)".Trim()
   if ($url -notmatch '^(?:https?://(?:[^@/]+@)?(?<host>[^/]+)/|[^@]+@(?<host>[^:]+):)(?<path>.+?)(?:\.git)?/?$') { return @() }
   $hostName = $Matches.host; $path = $Matches.path -replace '/_git/', '/' -replace '^v3/', ''
   $type = if ($hostName -eq $KitConf.GitHost) { $script:HostType } else { Get-HostKind $hostName }
   if ($type -eq 'gitlab') { $env:GITLAB_HOST = $hostName }
+  if ($Iid) { return @(Invoke-HostVerb 'mr.get' @{ repo = $path; type = $type; n = $Iid } | Where-Object { $_ -and $_.state -eq $State }) }
   $q = @{ repo = $path; type = $type; source_branch = $Branch; state = $State; per_page = 20 }; if ($Target) { $q.target_branch = $Target }
   @(Invoke-HostVerb 'mr.list' $q | Where-Object { $_ -and (-not $Target -or $_.target_branch -eq $Target) })
 }
@@ -1915,7 +1916,7 @@ function Get-KitHostUser {
 }
 # deploy MR (no task): a protected or deploy/* source, or a repos[].deploys[].branch target that is not the task target
 function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
-  if ($Source -match ('^(?:main|master|develop|release/.+|deploy/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$')) { return $true }
+  if ($Source -match ('^(?:main|master|develop|release/.+|deploy/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + ([regex]::Escape($_) -replace '\\\*', '.+') }) -join '') + ')$')) { return $true }
   $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq ($Repo -split '/')[-1] } | Select-Object -First 1
   [bool]($Target -and $r -and $Target -in @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }))
 }
@@ -1942,6 +1943,8 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
     action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)'; refs = $refs }
 }
+
+function Get-KitRepoSweep { try { Get-Content -LiteralPath (Get-KitPath repo-sweep) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null } }   # the last cleanup's counts per repo
 
 # ---- kitlog: every log line (kit.example.json _paths.log)
 $script:KitLogMap = $script:KitPathMap.log
