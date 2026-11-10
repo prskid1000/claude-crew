@@ -2219,16 +2219,16 @@ $script:NewCoreTestKit = ${function:New-TestKit}
 function New-TestKit([string]$name) { $k = & $script:NewCoreTestKit $name; if (Test-Path '<files>') { Copy-Item '<files>/*' $k -Recurse -Force }; $k }
 """
 
-def goody_overlay(kit, files, to):
+def goody_overlay(kit, files, to, ref=EXTRAS_REF):
     """A git copy of the kit like an installed one (tracked files committed; installed goodies' files and the goody's own
-    branch files on top, excluded): tests read the branch's files, never the copy installed in the kit."""
+    branch files on top, excluded; the tested branch as origin/goodies): tests read the branch's files, never the kit's copy."""
     rc, o, _ = git(kit, 'ls-files')
     for rel in (o.split('\n') if rc == 0 else []):
         if rel and osp.isfile(osp.join(kit, rel)):
             os.makedirs(osp.dirname(osp.join(to, rel)), exist_ok=True)
             shutil.copy2(osp.join(kit, rel), osp.join(to, rel))
     for args in (('init', '-q'), ('add', '-A'), ('-c', 'user.name=goody-test', '-c', 'user.email=goody-test@localhost', 'commit', '-q', '-m', 'core'),
-                 ('fetch', '-q', kit, f'+{EXTRAS_REF}:{EXTRAS_REF}')):   # goody list / check read the branch
+                 ('fetch', '-q', kit, f'+{ref}:{EXTRAS_REF}')):   # goody list / check read the branch
         git(to, *args)
     extra = [p for paths in installed_extras(kit).values() for p in paths]
     for rel in extra:
@@ -2261,7 +2261,7 @@ def extra_test(kit, names, ref=EXTRAS_REF):
         sec = ''.join(f'FAIL {c} {w}: {m}\n' for r, _, fs in os.walk(files) for x in fs
                       for rel in sec_files([osp.relpath(osp.join(r, x), files).replace('\\', '/')]) for c, w, m in sec_check(rel, read(osp.join(r, x)))[0])
         if osp.isfile(osp.join(here, 'tests.ps1')):
-            src = goody_overlay(kit, files, osp.join(tmp, 'kit'))
+            src = goody_overlay(kit, files, osp.join(tmp, 'kit'), ref)
             if osp.isfile(osp.join(src, 'tests', 'harness.ps1')) and not osp.exists(osp.join(here, 'harness.ps1')):
                 with open(osp.join(here, 'harness.ps1'), 'w', encoding='utf-8') as fh:   # a test written to sit next to the harness
                     fh.write(HARNESS_SHIM.replace('<kit>', src.replace("'", "''")).replace('<files>', files.replace("'", "''")))
