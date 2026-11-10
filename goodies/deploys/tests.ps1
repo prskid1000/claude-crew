@@ -125,9 +125,13 @@ $script:viewed = @(); function Get-TrackerTask($id) { $script:viewed += $id; if 
 $o = Invoke-MarkInTest -Apply | Out-String
 "gone:$($o -match 'GONE  gone1' -and $o -match 'missing: gone1' -and -not (Read-KitTracking).tasks.ContainsKey('gone1') -and (Read-KitTracking).tasks.ContainsKey('ok2'))"
 "scope:$((@($script:viewed | Sort-Object) -join ',') -eq 'gone1,ok2,qa5' -and $o -match 'mark-in-test: 3 candidate')"
-$script:viewed = @(); $null = Invoke-MarkInTest -Task old3; "task:$(($script:viewed -join ',') -eq 'old3')"
+$script:viewed = @(); $tq = Invoke-MarkInTest -Task old3 | Out-String; "task:$(($script:viewed -join ',') -eq 'old3' -and $tq -match "SKIP  old3  status 'inProgress', not promoted")"
+Update-KitTracking { param($t) $t.tasks['api!4'] = @{ task = 'api!4'; mrs = @('api!4') } }   # an MR ref registered as a task
+function Get-TrackerTask($id) { $script:viewed += $id; if ($id -ne 'nil1') { [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } } }; $nq = Invoke-MarkInTest -Task nil1 | Out-String
+$script:viewed = @(); $mq = Invoke-MarkInTest -FromMrs 'api!4,api!3,api!9' | Out-String
+"mrs:$((@($script:viewed | Sort-Object) -join ',') -eq 'old3,open4' -and $mq -match 'MAP   api!4 -> open4\r?\n' -and $mq -match 'api!9 -> no task' -and $nq -match 'SKIP  nil1  the tracker returned nothing')"
 '@
-Expect-Each (Invoke-PsTest 'intest-gone' $it @($O)) 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (#)' @('gone', 'scope', 'task')
+Expect-Each (Invoke-PsTest 'intest-gone' $it @($O)) 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (SKIP line), -Mrs their tracked tasks (#)' @('gone', 'scope', 'task', 'mrs')
 $pt = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
@@ -146,12 +150,16 @@ $now = $now.AddMinutes(5); $script:planOut = @('[]'); $r = @(Get-KitSuperviseFla
 Update-KitTracking { param($t) $t.tasks.d1 = @{ task = 'd1'; mrs = @('api!1'); done = $true; doneAt = $now.ToString('o') } }
 $script:planOut = @('WATCH background d failed: boom'); $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)   # a deployed check with no JSON: flagged, not stamped (asked again)
 "live:$(@($r.what -match '^deployed check d1: background d failed').Count -and -not (Read-KitTracking).tasks.d1.liveCheckedAt)"
+Set-KitTaskFields d1 @{ inTestDue = $now.ToString('o') }; Update-KitTracking { param($t) $t.tasks.d2 = @{ task = 'd2'; inTestDue = $now.ToString('o') } }
+function Invoke-Bounded { param($s, $a) if ($a[1] -eq 'intest') { $script:it = $a; @('MARKED  d2  in test (api!2 on stage) | n', 'ERROR d1  could not set status: x', 'mark-in-test: 2 candidate(s)') } }
+$r = @(Get-KitSuperviseFlagsDeploys -AutoFix); $tk = (Read-KitTracking).tasks
+"intest:$(($script:it -join ' ') -eq 'deploy intest -Apply -Task d1,d2' -and @($r | Where-Object { "$($_.what)" -match '^auto-fixed: MARKED  d2 ' }).Count -eq 1 -and -not @($r | Where-Object { "$($_.what)" -match 'd1' }).Count -and $tk.d1.inTestDue -and -not $tk.d2.inTestDue)"
 $gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())   # trigger ask, the rest real
 @{ at = $now.AddMinutes(-90).ToString('o'); ready = @('stage (1 MR(s))'); ask = @('stage: 1 MR(s) (api!1)') } | ConvertTo-Json | Set-Content $pc
 $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
 "ask:$(@($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*window open .plan 9\d min old, refresh pending')"
 '@
-Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again (#)' @('none', 'good', 'stale', 'watch', 'empty', 'live', 'ask')
+Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names (#)' @('none', 'good', 'stale', 'watch', 'empty', 'live', 'intest', 'ask')
 # a deploy MR (into deploys[].branch) feeds its own target only; from / paths pick an MR's targets in the intest gate too; old requests expire
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da' }, @{ target = 'b-st'; branch = 'st/b'; job = 'db' }) }) } $cfgF
 & $J @{ tasks = @{ g = @{ task = 'g'; mrs = @('jc!1', 'jc!2'); done = $true; doneAt = $now } }; automerge = @{} } $tf

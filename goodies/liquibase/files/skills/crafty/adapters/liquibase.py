@@ -22,7 +22,8 @@ def xml_change(el):
 
 def lbcheck(argv):
     """Liquibase sanity check (crafty.ps1 check): replays master.xml's includes; flags create / add of an existing table / column
-without <preConditions>, schema changeSets without <rollback> (beyond auto-rollback types), not-reversible ones with an empty one.
+without <preConditions>, schema changeSets without <rollback> (beyond auto-rollback types), not-reversible ones with an empty one,
+a <tagDatabase> changeSet with anything beside it (the XSD rejects even a <rollback> there).
 Reports files named >= since (yyyyMMddHHmmss) or listed in env LBCHECK_CHANGED ('|'); prints issues + 'ISSUES <n>', exit 1 if n."""
     if not argv or argv[0] in ('-h', '--help'):
         print('python devtools.py lbcheck <master.xml> [since]   Liquibase sanity check (run by crafty.ps1 check -Step migrations)')
@@ -57,6 +58,9 @@ Reports files named >= since (yyyyMMddHHmmss) or listed in env LBCHECK_CHANGED (
             if t == 'changeSet':
                 kids = [k for k in node if local(k.tag) not in NON_CHANGE]
                 guarded, cid = any(local(k.tag) == 'preConditions' for k in node), node.get('id')
+                tagged = [local(k.tag) for k in node if local(k.tag) not in ('tagDatabase', 'preConditions', 'validCheckSum', 'modifySql')]   # a <comment> fails too (4.23 parse)
+                if report and any(local(k.tag) == 'tagDatabase' for k in node) and tagged:   # the XSD allows tagDatabase alone: api start fails
+                    issues.append(f'{fname} {cid}: <tagDatabase> beside <{tagged[0]}>: a tagDatabase changeSet holds nothing else (no <rollback>: Liquibase rolls a tag back itself)')
                 for ch in map(xml_change, kids):
                     tb, have = ch['table'], cols.setdefault(ch['table'], set()) if ch['type'] in ('createTable', 'addColumn') else cols.get(ch['table'], set())
                     hit = ([tb] if tb in cols and ch['type'] == 'createTable' and have else []) + ([f'{tb}.{c}' for c in ch['columns'] if c in have] if ch['type'] == 'addColumn' else [])
