@@ -123,9 +123,9 @@ print(f'ports-targets:{not bad_tr} {bad_tr}')
 deploy('both')
 for c in ('Thumbs.db', 'x.swp', 'a~', 'n.bak', 'm.orig', 'r.log', 'q.tmp', 'q.temp', 'tmp/a', 'temp/b', 'cache/c', 'log/d', 'logs/e', 'sessions/s.jsonl', 'history.jsonl', 'empty.toml'):
     (ws3 / '.codex' / c).parent.mkdir(parents=True, exist_ok=True); (ws3 / '.codex' / c).write_text('' if c == 'empty.toml' else 'z', encoding='utf-8')
-(ws3 / '.agents' / 'mine.toml').write_text('hand', encoding='utf-8')
+(ws3 / '.agents' / 'mine.toml').write_text('hand: exported notes, an imported note, an exported procedure', encoding='utf-8')
 out_nf = deploy('none')
-ok_folders = not (ws3 / '.codex').exists() and (ws3 / '.agents' / 'mine.toml').read_text(encoding='utf-8') == 'hand' \
+ok_folders = not (ws3 / '.codex').exists() and (ws3 / '.agents' / 'mine.toml').read_text(encoding='utf-8').startswith('hand') \
     and not (ws3 / '.agents' / 'agents').exists() and '.agents/mine.toml' in out_nf and 'removed:' in out_nf and pt.deployed_stale() == []
 (ws3 / '.agents' / 'mine.toml').unlink()
 deploy('none')
