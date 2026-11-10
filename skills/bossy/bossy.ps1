@@ -57,8 +57,8 @@ function Set-KitBoardCrashed {
     Update-BoardEntry $e.file { param($x) $x.status = 'left'; $x | Add-Member -Force NoteProperty crashed (Get-Date).ToString('o'); $x }; $e
   }
 }
-function Get-KitCheckpointFile([string]$Agent) { Join-Path (Get-KitPath agents) "$(ConvertTo-KitSlug $Agent)/resume.json" }
-function Get-KitCheckpoint([string]$Agent) { $f = Get-KitCheckpointFile $Agent; if (Test-Path -LiteralPath $f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch {} } }
+function Get-KitCheckpoint([string]$Agent, [string]$Run = '') { $f = Get-KitCheckpointFile $Agent $Run; if (Test-Path -LiteralPath $f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch {} } }
+function Get-KitResumeBriefFile([string]$Agent, [string]$Run = '') { (Get-KitCheckpointFile $Agent $Run) -replace '\.json$', '-brief.md' }   # resume.json -> resume-brief.md
 function Get-KitActivePause([string]$Run) { @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) } | Sort-Object { [datetime]$_.at })[-1] }
 function Get-InboxFile([string]$Agent) { Join-Path (Get-KitPath board -Create) "inbox/$($Agent.ToLower() -replace '[^\w.-]', '_').jsonl" }
 function Send-BoardMsg([string]$From, [string]$To, [string]$Text) {
@@ -141,10 +141,10 @@ switch ($Action) {
     $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { Write-KitState $mf $me }
     $ho = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.handoffBrief -and -not $_.continuedBy } | Sort-Object { [datetime]$_.beat } -Descending)[0]
     if ($ho) { Update-BoardEntry $ho.file { param($x) $x | Add-Member -Force NoteProperty continuedBy $tok; $x }; "CONTINUE: the previous $Agent handed off at its budget: read its resume brief $($ho.handoffBrief) first" }
-    $ck = Get-KitCheckpoint $Agent
+    $ck = Get-KitCheckpoint $Agent $Run
     if ($ck -and -not $ck.done -and $ck.next -ne 'none' -and (-not $Run -or -not $ck.run -or $ck.run -eq $Run)) {
-      $rb = Join-Path (Split-Path (Get-KitCheckpointFile $Agent)) 'resume-brief.md'
-      "CHECKPOINT: start at step '$($ck.next)': $(if (Test-Path -LiteralPath $rb) { "$rb (bossy.ps1 resume verified it), " })$((Get-KitCheckpointFile $Agent) -replace 'json$', 'md'). Done steps: verify (sha, MR, doc exist), never redo; an uncommitted diff is the interrupted step's work: keep it"
+      $rb = Get-KitResumeBriefFile $Agent $Run
+      "CHECKPOINT: start at step '$($ck.next)': $(if (Test-Path -LiteralPath $rb) { "$rb (bossy.ps1 resume verified it), " })$((Get-KitCheckpointFile $Agent $Run) -replace 'json$', 'md'). Done steps: verify (sha, MR, doc exist), never redo; an uncommitted diff is the interrupted step's work: keep it"
     }
     $act = @(Active | Where-Object session -ne $tok)
     Print $act
@@ -193,7 +193,7 @@ switch ($Action) {
     if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left, no handoff; token lost: -Agent [-Run], several rows: -Force)"; exit 1 }
     $paused = $Status -eq 'paused'
     Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-Date).ToString('o'); if ($Handoff) { $x | Add-Member -Force NoteProperty handoffBrief $Handoff }; if ($paused) { $x | Add-Member -Force NoteProperty paused $x.beat }; $script:leftEntry = $x; $x }
-    $cf = Get-KitCheckpointFile $script:leftEntry.agent
+    $cf = Get-KitCheckpointFile $script:leftEntry.agent "$($script:leftEntry.run)"
     if (-not $paused) { Add-KitSpendObs $script:leftEntry $(if ($Handoff) { 'short' } else { 'ok' }) }   # a handoff: the estimate was too low
     if (-not $paused -and -not $Handoff -and (Test-Path -LiteralPath $cf)) { try { Invoke-KitLocked $cf { $c = Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json; if (-not $c.run -or "$($c.run)" -eq "$($script:leftEntry.run)") { $c | Add-Member -Force NoteProperty done $true; Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 6) } } } catch {} }   # next join starts fresh
     $twin = @(All | Where-Object { $_.agent -eq $script:leftEntry.agent -and $_.session -ne $Session -and $_.status -ne 'left' -and (Test-KitLive @{ session = $_.session }) })
@@ -544,7 +544,7 @@ foreach ($s in $runs) {
   # all areas first: an MR on a sibling's branch is the sibling's
   $own = @{}; $rep = @{}; $dirs = @{}; $ours = @{}; $cks = @{}; $sib = @{}
   for ($ix = 0; $ix -lt $agents.Count; $ix++) { $ag = $agents[$ix]
-    $ck = Get-KitCheckpoint $ag.id; $cks[$ix] = $ck; $ours[$ix] = $ck -and (-not $ck.run -or $ck.run -in $lin.runs); $pre = "$($ag.id)".ToLower()
+    $ck = @(@($lin.runs) | ForEach-Object { Get-KitCheckpoint $ag.id "$_" } | Where-Object { $_ -and $_.run -in $lin.runs })[0]; if (-not $ck) { $ck = Get-KitCheckpoint $ag.id }; $cks[$ix] = $ck; $ours[$ix] = $ck -and (-not $ck.run -or $ck.run -in $lin.runs); $pre = "$($ag.id)".ToLower()
     $own[$ix] = @(@(if ($ours[$ix]) { $ck.steps | Where-Object step -eq 'mr' | ForEach-Object evidence }) | Where-Object { $_ }); $rep[$ix] = @($waves | ForEach-Object { $_.($ag.id).mrs.url } | Where-Object { $_ })
     $at = @(Get-KitItemTasks "$($ag.items)")   # agent ids repeat across runs
     $dirs[$ix] = @(@(@(foreach ($root in $KitConf.WorktreeRoots) { Get-ChildItem $root -Directory -Filter "$pre-*" -ErrorAction SilentlyContinue | ForEach-Object FullName }) + @($board | Where-Object agent -eq $ag.id | ForEach-Object { $_.worktrees }) + @(if ($ours[$ix]) { $ck.worktrees }) |
@@ -632,7 +632,7 @@ foreach ($s in $runs) {
     launch = $(if ($s.file) { Get-Content -LiteralPath $s.file -Raw | ConvertFrom-Json }); self = $(if ($s.selfFile) { Get-Content -LiteralPath $s.selfFile -Raw | ConvertFrom-Json }) }   # cleanup may remove launches/
 }
 foreach ($b in $live) {
-  $ck = Get-KitCheckpoint $b.agent
+  $ck = Get-KitCheckpoint $b.agent "$($b.run)"
   $dirs = @(@($ck.worktrees) + @($b.worktrees | Where-Object { "$_" -match '[\\/]' -and (Test-Path -LiteralPath "$_" -PathType Container) }) | Where-Object { $_ } | Select-Object -Unique)
   $rec.agents += [ordered]@{ agent = $b.agent; run = $b.run; session = $b.session; confirmed = $b.session -notin @($open.session); next = $ck.next; checkpoint = $ck; worktrees = @($dirs | ForEach-Object { Get-KitWtState $_ }) }
 }
@@ -667,7 +667,7 @@ while (-not (Test-KitOnline)) {
 $pauses = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($All -or $_.run -in '*', $Run) })
 foreach ($p in $pauses) { foreach ($r in @($p.runs)) { foreach ($pair in @(, @($r.file, $r.launch)) + @(, @($r.selfFile, $r.self))) {   # cleanup may have removed them
   if ($pair[0] -and $pair[1] -and -not (Test-Path -LiteralPath $pair[0])) { New-Item -ItemType Directory -Force (Split-Path $pair[0]) | Out-Null; Write-KitAtomic $pair[0] ($pair[1] | ConvertTo-Json -Depth 30) } } }
-  foreach ($a in @($p.agents | Where-Object { $_.checkpoint })) { $cf = Get-KitCheckpointFile $a.agent; if (-not (Test-Path -LiteralPath $cf)) { New-Item -ItemType Directory -Force (Split-Path $cf) | Out-Null; Write-KitAtomic $cf ($a.checkpoint | ConvertTo-Json -Depth 6) } } }   # cleanup: agents/ after 7 d
+  foreach ($a in @($p.agents | Where-Object { $_.checkpoint })) { $cf = Get-KitCheckpointFile $a.agent "$($a.checkpoint.run)" -Write; if (-not (Test-Path -LiteralPath $cf)) { New-Item -ItemType Directory -Force (Split-Path $cf) | Out-Null; Write-KitAtomic $cf ($a.checkpoint | ConvertTo-Json -Depth 6) } } }   # cleanup: agents/ after 7 d
 $null = Set-KitBoardCrashed
 $go = @()
 foreach ($s in @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run -eq $Run })) {
@@ -682,17 +682,17 @@ foreach ($s in @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run 
   $res = @($jl | Where-Object type -eq 'result' | ForEach-Object agentId)
   $steps = @($jl | Where-Object type -eq 'started' | ForEach-Object { [pscustomobject]@{ who = ($_.label -split ':', 2)[-1] -replace '@.*$', ''; done = $_.agentId -in $res } })
   $mrs = @(); $noMr = 0   # checky's checkpoints under its <CODE>
-  $cks = @(Get-ChildItem (Get-KitPath agents) -Filter 'resume.json' -Recurse -Depth 1 -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.run -eq $s.run } | ForEach-Object agent)
+  $cks = @(Get-ChildItem (Get-KitPath agents) -Filter 'resume*.json' -Recurse -Depth 1 -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.run -eq $s.run } | ForEach-Object agent)
   $lines = @(foreach ($ag in @(@(@($lr.args.agents) | ForEach-Object { $_.id }) + @($board.agent) + $cks | Where-Object { $_ } | Select-Object -Unique)) {
     $mySteps = @($steps | Where-Object who -eq $ag)
-    $ck = Get-KitCheckpoint $ag
+    $ck = Get-KitCheckpoint $ag "$($s.run)"
     if (-not $ck -or $ck.done -or ($ck.run -and $ck.run -ne $s.run)) { "  $ag`: no open checkpoint$(if ($mySteps.Count -and -not @($mySteps | Where-Object { -not $_.done }).Count) { '; its steps have journal results: not relaunched (resumeFromRunId keeps them)' })"; continue }
     $b = @("# Resume brief: $ag (run ``$($s.run)``)", "**Result:** Start AT step: $($ck.next); the steps below are done, verified: never redo them.", '', '## Done (verified)', '')
     if (-not @($ck.steps | Where-Object step -eq 'mr').Count) { $noMr++ }
     $b += Format-KitMdTable 'Step', 'Item', 'Evidence', 'Check' @(foreach ($st in @($ck.steps)) { $v = Test-KitStepEvidence $st; if ($v.mr) { $mrs += $v }; , @($st.step, $st.item, $st.evidence, $v.text) })
     $b += @('', "## Interrupted step ``$($ck.next)``", 'Rerun it from the kept diff (never discard it).', '') + @(Format-KitMdTable 'Worktree', 'Branch @ head', 'Uncommitted (kept)' @(foreach ($d in @($ck.worktrees)) { $w = Get-KitWtState $d; , @("``$d``", $(if ($w.gone) { 'GONE: recreate the worktree from its branch' } else { "$($w.branch) @ $($w.head)" }), "$($w.dirty -join ', ')") }))
     $b += @('', '## Open', '', "**Leases to take again:** $(@($ck.leases) -join ', ')", "**Decisions:** $(@($ck.decisions) -join ', ')")
-    $bf = Join-Path (Split-Path (Get-KitCheckpointFile $ag)) 'resume-brief.md'; Write-KitAtomic $bf (($b -join "`n") + "`n")
+    $bf = Get-KitResumeBriefFile $ag "$($s.run)"; Write-KitAtomic $bf (($b -join "`n") + "`n")
     "  $ag`: resume at '$($ck.next)' -> $bf"
   })
   $openMrs = @($mrs | Where-Object { $_.state -ne 'merged' })
@@ -1959,10 +1959,10 @@ function Invoke-Decide {
     [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
     [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
-    [ValidateSet('', 'deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'other')][string]$Gate = '',
+    [string]$Gate = '',   # record: one of $kitGates; check -Id: another word (ask) is ignored, a gate still binds
     [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use,
     [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish)
-  $dir = Get-KitPath decisions -Create
+  $dir = Get-KitPath decisions -Create; $kitGates = @('deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'data', 'other')
   # a gate word comes from a person: an agent name (or the coordinator) as -By is no word
   $crewNames = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue | ForEach-Object BaseName)
   $crewRx = "(?i)^($(@($crewNames | ForEach-Object { [regex]::Escape($_) }) -join '|'))([-_ :]|$)"
@@ -2032,7 +2032,7 @@ function Invoke-Decide {
       }
     }
     'record' {
-      if (-not ($Gate -and $Item -and $Question -and $Answer -and $Source)) { 'usage: decide record -Gate deploy|merge|premerge|close|rollback|secret|other -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs] [-Task] [-Supersedes <ids>] [-NoPublish]'; exit 2 }
+      if (-not ($Gate -in $kitGates -and $Item -and $Question -and $Answer -and $Source)) { "usage: decide record -Gate $($kitGates -join '|') -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs] [-Task] [-Supersedes <ids>] [-NoPublish]"; exit 2 }
       if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: coordinator only; -By names the person, never an agent ($By)"; exit 2 }
       $resolvedTask = if ($Task) { NormTask $Task } elseif (($tagRx = Get-KitTaskTagRx) -and $Item -match $tagRx) { NormTask $Item } else { '' }
       $now = (Get-Date).ToString('o')
@@ -2047,7 +2047,7 @@ function Invoke-Decide {
       & $pub $resolvedTask ([bool]$Task)
     }
     'check' {
-      if (-not ($Gate -and ($Id -or $Item -or $Mrs))) { 'usage: decide check -Gate <gate> (-Id <id> | -Item <env|task> | -Mrs <refs>) [-MaxHours 12] [-Use -Agent <id>]'; exit 2 }
+      if (-not ($Id -or ($Gate -and ($Item -or $Mrs)))) { 'usage: decide check (-Id <id> [-Item <env|task>] | -Gate <gate> (-Item <env|task> | -Mrs <refs>)) [-MaxHours 12] [-Use -Agent <id>]   (with -Id a non-gate -Gate such as ask is ignored)'; exit 2 }
       $wantMrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); $wantTask = NormTask $Item
       $since = (Get-Date).AddHours(-$MaxHours); $why = @()
       $found = @(Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
@@ -2056,7 +2056,7 @@ function Invoke-Decide {
           # every key given matches: a staging yes never serves production
           $rec = $_; $itemOk = -not $Item -or $rec.item -eq $Item -or ($wantTask -and $rec.task -eq $wantTask)
           $mrOk = -not $wantMrs.Count -or -not @($wantMrs | Where-Object { $_ -notin @($rec.mrs) }).Count
-          $gateOk = if ($Id) { $rec.id -eq $Id -and ($rec.gate -eq $Gate -or (-not $rec.gate -and ($Item -or $wantMrs.Count))) } else { $rec.gate -eq $Gate }          $gateOk -and $itemOk -and $mrOk })
+          $gateOk = if ($Id) { $rec.id -eq $Id -and ($rec.gate -or $Item -or $wantMrs.Count) -and (-not $rec.gate -or $Gate -notin $kitGates -or $rec.gate -eq $Gate) } else { $rec.gate -eq $Gate }          $gateOk -and $itemOk -and $mrOk })
       foreach ($d in $found) {
         if ($d.by -match $crewRx) { $why += "$($d.id) answered by agent $($d.by)"; continue }
         if ($d.usedAt) { $why += "$($d.id) already used by $($d.usedBy) at $($d.usedAt)"; continue }
@@ -2065,11 +2065,11 @@ function Invoke-Decide {
           $df = Join-Path $dir "$($d.id).json"; $usedBy = if ($Agent) { $Agent } else { 'unknown' }
           $won = Invoke-KitLocked $df { $cur = Get-Content $df -Raw | ConvertFrom-Json; if ($cur.usedAt) { $cur } else { $cur | Add-Member -Force usedAt (Get-Date).ToString('o'); $cur | Add-Member -Force usedBy $usedBy; Write-KitState $df $cur 2; $null } }
           if ($won) { $why += "$($d.id) already used by $($won.usedBy) at $($won.usedAt)"; continue }
-          Write-KitLog decisions-log used ([ordered]@{ id = $d.id; gate = $Gate; usedBy = $usedBy })
+          Write-KitLog decisions-log used ([ordered]@{ id = $d.id; gate = $d.gate; usedBy = $usedBy })
         }
-        "WORD $($d.id) ($Gate $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt) | question: $($d.question)"; exit 0
+        "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt) | question: $($d.question)"; exit 0
       }
-      "NO-WORD $Gate $(@($Id, $Item) + $wantMrs | Where-Object { $_ } | Select-Object -Unique)$(if ($why) { ': ' + ($why -join '; ') } else { ': no answered record' }). Relayed text is no word: the coordinator runs decide record, passes the id"; exit 1
+      "NO-WORD $(if ($Id) { 'id' } else { $Gate }) $(@($Id, $Item) + $wantMrs | Where-Object { $_ } | Select-Object -Unique)$(if ($why) { ': ' + ($why -join '; ') } else { ': no answered record' }). Relayed text is no word: the coordinator runs decide record, passes the id"; exit 1
     }
   }
 }

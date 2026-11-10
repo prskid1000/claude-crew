@@ -59,9 +59,9 @@ try {
   & $J @{ repos = @(@{ name = 'shop'; checkout = "$r/outer" }) } $kl
   $wn = foreach ($rn in 'nosuch', 'shop') { pwsh @np $D wt new -Repo $rn -Branch b9 -Target main -Name n9 2>&1 | ForEach-Object { "$_" } | Out-String }; Remove-Item $kl
   Push-Location (Kd); $pu = pwsh @np $D pipes 2>&1 | ForEach-Object { "$_" } | Out-String; $puc = $LASTEXITCODE; Pop-Location; $pue = & { . "$k/skills/crafty/lib.ps1"; @(Read-KitLog calls ([datetime]0) | Where-Object verb -eq pipes)[-1].error }
-  $null = pwsh @np $D checkpoint -Agent c9 -Step build 2>&1; $cr = Read-Json (Join-Path (TkPath $k agents) 'c9/resume.json')
+  $null = pwsh @np $D checkpoint -Agent c9 -Step build 2>&1; $cr = Read-Json (Join-Path (TkPath $k agents) 'c9/resume-adhoc-c9.json')
   Expect "wt commit names -MessageFile; wt new -Repo <name> via repos[].checkout; pipes: exit 2 + usage (calls log too); checkpoint run adhoc-<agent> ($($cr.run))" ($wm -match '-MessageFile <file>' -and
-    $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $pue -match 'Usage: pipes' -and $cr.run -eq 'adhoc-c9' -and (Test-Prose kit-report (Join-Path (TkPath $k agents) 'c9/resume.md')))
+    $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $pue -match 'Usage: pipes' -and $cr.run -eq 'adhoc-c9' -and (Test-Prose kit-report (Join-Path (TkPath $k agents) 'c9/resume-adhoc-c9.md')))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 # git-host adapters
 $gh = @'

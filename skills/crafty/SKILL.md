@@ -105,7 +105,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
   every render path) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
   endpoint and delete stale known-bug blocks in the same MR.
 - **Text files:** write with the Write tool, change with Edit, pass file paths (`devtools.py doc <file>`, MR body from a file);
-  never heredocs / sed / string-replace for text with backslashes, quotes or CRLF.
+  never heredocs / sed / string-replace for text with backslashes, quotes or CRLF. Files over ~8 KB or holding backticks, quotes
+  or backslashes: the Write tool (or a scratchpad file passed to the interpreter), never a Bash heredoc (unexpected EOF, mangled).
 - **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
   (`repos[].migrations.check`, else Liquibase: goody `liquibase`; exit 5 = UNRUN: say so in the MR). Local env DB drift (a

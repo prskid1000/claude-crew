@@ -121,7 +121,26 @@ $null = Px $O decide check -Gate deploy -Item prd -Mrs 'api!9'; $c5 = $LASTEXITC
 $sf = Get-ChildItem $k -Recurse -Filter "$sid.json" | Select-Object -First 1; $sj = Read-Json $sf.FullName; $sj.answeredAt = (Get-Date).AddHours(-13).ToString('o'); & $J $sj $sf.FullName
 $so = Px $O decide check -Gate deploy -Item stg -Mrs 'api!9' | Out-String
 Expect 'decide check: a staging yes never serves another env; a word older than -MaxHours (12) is none' ($c5 -eq 1 -and $so -match "NO-WORD.*$sid older than 12 h")
+$dataId = (Px $O decide record -Gate data -Item stgdata -Question q -Answer y -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'
+$null = Px $O decide record -Gate bogus -Item stgdata -Question q -Answer y -Source chat; $bogusCode = $LASTEXITCODE
+$dataAsk = Px $O decide check -Gate ask -Id $dataId 2>&1 | Out-String; $dataBare = Px $O decide check -Id $dataId | Out-String
+$null = Px $O decide check -Gate merge -Item stgdata; $dataMerge = $LASTEXITCODE; $null = Px $O decide check -Gate deploy -Id $dataId; $dataDeploy = $LASTEXITCODE
+Expect 'decide: gate data recorded, an unknown gate refused; check -Id ignores a non-gate -Gate (ask, none); a real gate still binds' ($dataId -match '^d-' -and $bogusCode -eq 2 -and $dataAsk -match "WORD $dataId \(data stgdata\)" -and $dataBare -match "WORD $dataId" -and $dataMerge -eq 1 -and $dataDeploy -eq 1)
 $D = Join-Path $k 'skills/crafty/crafty.ps1'
+# checkpoints: two agents sharing a name, different runs = one file each; -Read -Run picks its own; an old resume.json is still read
+$ckDirTwin = Join-Path (TkPath $k agents) 'twin'
+$null = pwsh @np $D checkpoint -Agent twin -Run r-fix -Step commit 2>&1; $null = pwsh @np $D checkpoint -Agent twin -Run r-aud -Step goals 2>&1
+$twinFix = Read-Json (Join-Path $ckDirTwin 'resume-r-fix.json'); $twinAud = Read-Json (Join-Path $ckDirTwin 'resume-r-aud.json')
+$twinRead = pwsh @np $D checkpoint -Agent twin -Run r-fix -Read 2>&1 | Out-String
+$legacyDir = Join-Path (TkPath $k agents) 'oldie'; New-Item -ItemType Directory -Force $legacyDir | Out-Null
+& $J @{ agent = 'oldie'; run = 'r1'; next = 'mr'; steps = @() } (Join-Path $legacyDir 'resume.json'); 'old checkpoint md' | Set-Content (Join-Path $legacyDir 'resume.md')
+$legacyRead = pwsh @np $D checkpoint -Agent oldie -Run r1 -Read 2>&1 | Out-String; $legacyNoRun = pwsh @np $D checkpoint -Agent oldie -Read 2>&1 | Out-String
+$twinNewest = pwsh @np $D checkpoint -Agent twin -Read 2>&1 | Out-String
+$legacyRj = Px $O board join -Agent oldie -Run r1 | Out-String; if ($legacyRj -match 'SESSION (\S+)') { $null = Px $O board leave -Session $Matches[1] }
+$null = pwsh @np $D checkpoint -Agent oldie -Run r1 -Step mr 2>&1; $legacyKept = Read-Json (Join-Path $legacyDir 'resume.json')
+Expect "checkpoint: same -Agent, two runs = two files (resume-<run>.json); -Read -Run its own; an old resume.json / .md still read; its run in flight keeps writing it" (
+  @($legacyKept.steps).Count -eq 1 -and $legacyKept.next -eq 'review' -and -not (Test-Path (Join-Path $legacyDir 'resume-r1.json')) -and $twinFix.run -eq 'r-fix' -and
+  @($twinFix.steps).Count -eq 1 -and $twinAud.run -eq 'r-aud' -and $twinRead -match 'run `r-fix`' -and $legacyRead -match 'old checkpoint md' -and $legacyNoRun -match 'old checkpoint md' -and $twinNewest -match 'run `r-aud`' -and $legacyRj -match "CHECKPOINT: start at step 'mr'.*oldie[\\/]resume\.md")
 $lf = Join-Path (Kd) 'mrs.ps1'; Set-Content $lf "'[]'"; & $J @{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.list' = "pwsh -NoProfile -File `"$lf`"" } }; tracker = @{ type = 'none'; branchTag = 'TK-' } } "$k/skills/crafty/kit.local.json"
 $gr = Join-Path (Kd) 'pr'; git init -q -b main $gr; git -C $gr commit -q --allow-empty -m i; git -C $gr remote add origin $gr; git -C $gr branch TK-7-old
 $w = { param($b, $o) $wa = @('wt', 'new', '-Repo', $gr, '-Branch', $b, '-Target', 'main', '-Name', $b, '-Root', (Join-Path (Kd) 'pw')) + @(if ($o) { '-Override', $o }); pwsh @np $D @wa 2>&1 | Out-String; $LASTEXITCODE }

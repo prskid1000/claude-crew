@@ -106,7 +106,7 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
 
 ## Pause and resume
 - **Checkpoints** (both paths): each agent runs `crafty.ps1 checkpoint` at every step boundary (worktree, commit, testing goals,
-  loop round, MR, review, CI, testing doc, tracker, merge; QA: each check): `work/agents/<id>/resume.json` + `resume.md`. Kit
+  loop round, MR, review, CI, testing doc, tracker, merge; QA: each check): `work/agents/<id>/resume-<run>.json` + `.md` (per run: same-named agents never overwrite; an old `resume.json` is still read). Kit
   state is written atomically (temp + rename) or appended; leases, gate slots and board entries keep their process id with its
   start time (a pid reused after a cold boot holds nothing); a lock whose holder died is taken at once (Windows).
 - **Pause** (power off, a day offline): `bossy.ps1 pause -All | -Run <run> [-Reason] [-Wait 10]`. Agents read PAUSE on their
@@ -116,7 +116,7 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
 - **Crash** (power loss, kill): SessionStart `health` marks dead board entries and launch records crashed and prints
   `paused/crashed runs: N -> bossy.ps1 resume`.
 - **Resume**: `bossy.ps1 resume -All | -Run <run> [-Wait <min>]`. Offline -> says so, stops. Per agent a brief
-  (`work/agents/<id>/resume-brief.md`) starting AT its next step: done steps verified (commit present, MR state), never
+  (`work/agents/<id>/resume-<run>-brief.md`) starting AT its next step: done steps verified (commit present, MR state), never
   redone; the uncommitted diff kept for the interrupted step; journal results kept (`resumeFromRunId`); a run whose MRs all
   merged skipped; then the exact Workflow call. `board join` shows each relaunched agent its CHECKPOINT.
 - Kept: commits, diffs, MRs, tracker state, decisions, checkpoints, launch records, coordinator program state (`bossy.ps1

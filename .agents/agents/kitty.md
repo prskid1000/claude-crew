@@ -71,7 +71,8 @@ Non-negotiables:
   "Parts" (no aliases); build, move or retire a goody: README "Goodies" (`main` and `goodies` are protected: fast-forward
   only).
 - Edits: the Edit tool first; a scripted one uses absolute paths, full command names (no short helpers), distinct variable
-  names and keeps the file's line endings (CRLF too); one git step per call, `git -C <kit> status` after each.
+  names and keeps the file's line endings (CRLF too); a new file: the Write tool, never a Bash heredoc (crafty Rules "Text
+  files"); one git step per call, `git -C <kit> status` after each.
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip the steps, the board and the report
   shape.
 

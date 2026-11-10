@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L914 check · L1170 pipes · L1220 guard · L1977 dir ·
-  L1987 checkpoint · L2011 prior · L2049 tracker · L2115 host
+  L1987 checkpoint · L2012 prior · L2050 tracker · L2122 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1984,13 +1984,14 @@ New-Item -ItemType Directory -Force $d | Out-Null
 if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug $Agent)-" })$(& $slug $Name)" } else { $d.TrimEnd('\', '/') }
 }
 
-# ---- checkpoint: resume point per step: resume.json + resume.md, atomic
+# ---- checkpoint: resume point per step: resume-<run>.json + .md, atomic
 $script:KitSteps = 'worktree', 'commit', 'goals', 'loop', 'mr', 'review', 'ci', 'doc', 'tracker', 'merge', 'done'
 function Invoke-Checkpoint {
 param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read)
 if (-not $Agent -or -not ($Step -or $Read)) { "usage: crafty.ps1 checkpoint -Agent <id> [-Run <run>] -Step <$($script:KitSteps -join '|')|<check id>> [-Evidence <sha|iid|url|result>] [-Item <task>] [-Next <step>] [-Dir <wt>] [-Leases <a,b>] | -Agent <id> -Read"; exit 2 }
-if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }$jf = Invoke-Dir -Agent $Agent -Name 'resume.json'; $mf = Invoke-Dir -Agent $Agent -Name 'resume.md'
-if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent" }; return }
+if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }
+$null = Invoke-Dir -Agent $Agent; $jf = Get-KitCheckpointFile $Agent $Run -Write:(-not $Read); $mf = $jf -replace '\.json$', '.md'   # per run: same-named agents never overwrite
+if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent$(if ($Run) { " run $Run" })" }; return }
 $c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
 if (-not $c -or ($Run -and "$($c.run)" -ne $Run)) { $c = @{ agent = $Agent; run = $Run; steps = @(); worktrees = @(); leases = @() } }   # another run's: start over
 $s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-Date).ToString('o') }
@@ -2047,6 +2048,12 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
 }
 
 # ---- tracker: lib.ps1 adapters
+# a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy nobody updates; "Decision needed for X" passes
+function Test-KitDecisionText([string]$Text) { "$Text".Trim() -match '^\W{0,3}decisions?\W*(\(|:|\r?\n|$)' }
+function Remove-TrackerComment([string]$Id, [string]$Comment) {
+  $ad = $KitAdapters['tracker'][$__trType]; if (-not ($ad -and $ad.ContainsKey('comment-delete'))) { throw "tracker ($__trType): the adapter has no comment-delete verb: remove comment $Comment by hand" }
+  Clear-TrackerMemo $Id; __TrA 'comment-delete' @{ id = $Id; comment = $Comment }
+}
 function Invoke-Tracker {
   $__trA = @($args); $__trPos = New-Object System.Collections.ArrayList; $__trOpt = @{}
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {

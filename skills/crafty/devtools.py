@@ -1039,7 +1039,7 @@ def _pub_update(key, **fields):
 def local_pass(task):
     """The newest `crafty.ps1 checkpoint -Step loop -Item <task>` evidence across agents: (True|False|None, evidence)."""
     last = None
-    for f in glob.glob(os.path.join(kit_path('agents'), '*', 'resume.json')):
+    for f in glob.glob(os.path.join(kit_path('agents'), '*', 'resume*.json')):   # resume-<run>.json; old resume.json
         try:
             with open(f, encoding='utf-8') as fh:
                 steps = json.load(fh).get('steps') or []

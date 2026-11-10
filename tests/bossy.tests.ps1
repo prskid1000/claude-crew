@@ -230,11 +230,11 @@ $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters')
 $sw = [Diagnostics.Stopwatch]::StartNew(); $hh = Px $O health | Out-String; $hs = $sw.Elapsed.TotalSeconds
 $env:KIT_OFFLINE = '1'; $off = Invoke-TestScript $O resume -All; $env:KIT_OFFLINE = '0'
 $rs = Px $O resume -All | Out-String; $ag = TkPath $k agents
-$b1 = Get-Content "$ag/c1/resume-brief.md" -Raw; $b2 = Get-Content "$ag/c2/resume-brief.md" -Raw; $rj = Px $O board join -Agent C1 -Run cr -Resume | Out-String
+$b1 = Get-Content "$ag/c1/resume-cr-brief.md" -Raw; $b2 = Get-Content "$ag/c2/resume-cr-brief.md" -Raw; $rj = Px $O board join -Agent C1 -Run cr -Resume | Out-String
 $bad = @(Get-ChildItem (TkPath $k work) -Recurse -Filter '*.json' | Where-Object { try { $null = Get-Content $_.FullName -Raw | ConvertFrom-Json; $false } catch { $true } })
 Expect 'crash: agent killed holding the board lock -> health marks it crashed, no lock left, state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt 60 -and -not (Test-Path "$bf.lock") -and -not $bad.Count)
 Expect 'resume offline: says so, exit 1, nothing relaunched' ($off.code -eq 1 -and $off.out -match 'OFFLINE' -and $off.out -cnotmatch 'RESUME|RELAUNCH')
-Expect 'resume after a crash: brief at the next step, done verified, diff kept; join: CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match '\| b\.txt \|' -and (Test-Prose kit-report "$ag/c1/resume-brief.md") -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
+Expect 'resume after a crash: brief at the next step, done verified, diff kept; join: CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match '\| b\.txt \|' -and (Test-Prose kit-report "$ag/c1/resume-cr-brief.md") -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
 $rl = @($rs -split "`n" | Where-Object { $_ -match 'RELAUNCH .*finished steps skipped' } | ForEach-Object { ($_ -replace '^.*args: (\{.*\}) \}\)\s*$', '$1') | ConvertFrom-Json -AsHashtable })
 Expect 'resume after MR opened: starts at review, MR verified; an all-merged run still relaunches' ($b2 -match 'Start AT step: review' -and $b2 -match 'merge_requests/5 \| MR opened' -and $rs -match '(?s)run cm.*all 1 MR\(s\) merged: the relaunch')
 Expect 'recover: host + tracker state -> RELAUNCH skip list (open: build; merged + promoted: all), brief item table' ($rl.Count -eq 2 -and $rl[0].mode -eq 'resume' -and

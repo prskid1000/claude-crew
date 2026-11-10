@@ -12,7 +12,7 @@ it; supervise runs it each beat on recent files: a BAD file = WATCH).
 - **Times:** ISO 8601 with offset (`ToString('o')`, `isoformat()`); readers accept the old offset-less form.
 - **Ids:** stable, file-safe: session `<agent>-<8 hex>`, decision `d-<yyyyMMddHHmmss>-<agent>-<4>`, task = tracker id, run =
   workflow run name.
-- **Format:** JSON for scripts; markdown only for people (`resume.md`, resume briefs, reports): templates.md kind `kit-report`.
+- **Format:** JSON for scripts; markdown only for people (`resume-<run>.md`, resume briefs, reports): templates.md kind `kit-report`.
 - **Change a schema:** bump `v<n>` in its row and the writer; readers accept `n-1`. A new file: a `_paths` name + a row.
   Deleting state still in use: the owner decides (`bossy.ps1 decide ask`).
 - **Lifecycle:** `.runtime` ages out by `_paths.keep` (`bossy.ps1 cleanup`); in `.state` cleanup only trims the logs the Inventory
@@ -56,7 +56,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `locks` | `lib.ps1` (`repos[].exclusiveTests`) | `json v0: held waiting` | keep | none |
 | `board` | `bossy.ps1 board` | `dir v1: agent session run beat status` | 14 d | schemaVersion; file-safe session |
 | `launches` | `bossy.ps1 launch`, workflows (`args-*`) | `dir=self-*.json v1: script run args` | 3 d | schemaVersion |
-| `agents` | `crafty.ps1 checkpoint` | `dir=*/resume.json v1: agent run steps` | 7 d | schemaVersion, ISO |
+| `agents` | `crafty.ps1 checkpoint` | `dir=*/resume*.json v1: agent run steps` | 7 d | schemaVersion, ISO |
 | `decisions` | `bossy.ps1 decide` | `dir v2: id status question` | 14 d | `options` {key label description recommended}, `blocking`; gate words: `gate`, `source`, `usedAt` |
 | `qa-runs` | `testy.js`, `pokey.ps1 finalize` | `dir=*/index.json v1: run items` | 14 d | new `index.json` |
 | `waves` | `bossy.ps1 report` | `dir v0: run` | 14 d | none |

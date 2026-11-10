@@ -18,7 +18,6 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
-- Bash tool heredocs over ~8 KB or holding backticks, odd quotes or backslashes fail (unexpected EOF) or get mangled: write files with the Write tool, or a scratchpad file passed to the interpreter. (5×)
 - A contract claim that an old consumer ignores a new param is tested against the deployed consumer (one call on staging) before merge; kwargs-strict handlers reject unknown params. (2x)
 - Long kit verbs (bossy deploy request, waits) via Bash: start with run_in_background or a timeout over 120 s, then read the output file; a foreground call cut at 120 s loses the plan (1x).
 - After wt new, check the dependency links (node_modules, linkPaths) exist before editing; a worktree without them fails wt remove and can empty the folder: save the diff first, recreate with wt new. (1×)

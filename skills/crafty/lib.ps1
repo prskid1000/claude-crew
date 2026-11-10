@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L872 status · L1113 supervise sweep ·
-  L1184 supervise report · L1280 tracker · L1605 prior · L1627 ask bugs · L1834 git-host · L1994 kitlog · L2114 params ·
-  L2420 entry-scripts
+Sections: L9 paths · L67 state · L136 config · L216 OS · L418 leases · L879 status · L1120 supervise sweep ·
+  L1191 supervise report · L1287 tracker · L1606 prior · L1628 ask bugs · L1835 git-host · L1995 kitlog · L2115 params ·
+  L2421 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -57,6 +57,13 @@ function Test-KitMoveUnsupported([Exception]$Err) {
 }
 # kit-made names (crafty.ps1 dir, briefs, checkpoints, snapshots)
 function ConvertTo-KitSlug([string]$Text) { ("$Text".ToLower() -replace '[^a-z0-9.]+', '-').Trim('-.') }
+# per agent and run (same-named agents never overwrite): agents/<agent>/resume-<run>.json; an old resume.json is still read
+function Get-KitCheckpointFile([string]$Agent, [string]$Run = '', [switch]$Write) {
+  $ckDir = Join-Path (Get-KitPath agents) (ConvertTo-KitSlug $Agent); $runFile = if ($Run) { Join-Path $ckDir "resume-$(ConvertTo-KitSlug $Run).json" }
+  if ($runFile -and ((Test-Path -LiteralPath $runFile) -or ($Write -and "$((Read-KitState (Join-Path $ckDir 'resume.json')).run)" -ne $Run))) { return $runFile }
+  if ($Run -or $Write) { return Join-Path $ckDir 'resume.json' }   # old file (same run in flight: keeps its steps); readers compare its .run
+  @(@(Get-ChildItem -LiteralPath $ckDir -Filter 'resume*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | ForEach-Object FullName) + (Join-Path $ckDir 'resume.json'))[0]
+}
 # ---- state: skills/bossy/STATE.md (tolerant reads, atomic writes, one file per key)
 function Read-KitState([string]$Path) {   # never throws (state-lint flags the bad file)
   if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
@@ -1486,14 +1493,8 @@ $script:KitMrsHeading = 'MRs (merge order)'   # bossy.ps1 Set-KitMrsComment is i
 $script:KitDecisionsHeading = 'Decisions'   # bossy.ps1 decide publish is its one writer
 function ConvertTo-KitLetters([string]$Text) { ("$Text" -replace '[^\p{L}\p{N}]', '').ToLower() }
 function Test-KitHeadText([string]$Text, [string]$Heading) { (ConvertTo-KitLetters (("$Text".Trim() -split "`r?`n")[0])) -eq (ConvertTo-KitLetters $Heading) }
-# a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy nobody updates; "Decision needed for X" passes
-function Test-KitDecisionText([string]$Text) { "$Text".Trim() -match '^\W{0,3}decisions?\W*(\(|:|\r?\n|$)' }
 # ours: the heading, then only rendered lines (a person's "Decisions: ship it" is never edited or deleted)
 function Test-KitDecisionsComment($Comment) { (Test-KitHeadText $Comment.text $script:KitDecisionsHeading) -and -not @(@("$($Comment.text)".Trim() -split "`r?`n" | Select-Object -Skip 1 | Where-Object { $_.Trim() }) | Where-Object { $_ -notmatch '^\s*(\d+\. |- )\S|^\W*(Open|Superseded)\W*$|^\W*Plan\W*:' }).Count }
-function Remove-TrackerComment([string]$Id, [string]$Comment) {
-  $ad = $KitAdapters['tracker'][$__trType]; if (-not ($ad -and $ad.ContainsKey('comment-delete'))) { throw "tracker ($__trType): the adapter has no comment-delete verb: remove comment $Comment by hand" }
-  Clear-TrackerMemo $Id; __TrA 'comment-delete' @{ id = $Id; comment = $Comment }
-}
 function Get-TrackerHeadComments([string]$Id, [string]$Heading, [scriptblock]$Match) { @(Get-TrackerComments $Id | Where-Object { $_.id -and (Test-KitHeadText $_.text $Heading) -and (-not $Match -or (& $Match $_)) }) }
 # MR refs in the task's MRs comments, any writer's format
 function Get-KitMrsListed([string]$Task) {
