@@ -30,9 +30,10 @@ function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Header
 }
 $env:GITEA_TOKEN = 'tok'
 $r = Invoke-HostVerb 'mr.merge' @{ type = 'gitea'; repo = 'o/gtrepo'; n = '3'; sha = 'ggg' }; $pb = @($script:http | ? m -eq 'POST')[-1]; "gt-merge:$($r.state -eq 'merged' -and $pb.b.Do -eq 'squash' -and $pb.b.head_commit_id -eq 'ggg' -and $pb.h.Authorization -eq 'token tok' -and $pb.u -eq 'https://git.example/api/v1/repos/o/gtrepo/pulls/3/merge')"
+$null = Invoke-HostVerb 'mr.merge' @{ type = 'gitea'; repo = 'o/gtrepo'; n = '3'; method = 'merge' }; "gt-deploy-merge:$((@($script:http | ? m -eq 'POST')[-1]).b.Do -eq 'merge')"
 $b = Invoke-HostVerb 'repo.base' @{ type = 'gitea'; repo = 'o/gtrepo'; a = 'ggg'; b = 'main' }; "gt-base:$($b.id -eq 'ggg')"
 }
 $out = @($res)
-$fail = 0; foreach ($n in 'gt-merge gt-base'.Split(' ')) { $ok = $out -contains "${n}:True"; if (-not $ok) { $fail++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) $n" }
+$fail = 0; foreach ($n in 'gt-merge gt-base gt-deploy-merge'.Split(' ')) { $ok = $out -contains "${n}:True"; if (-not $ok) { $fail++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) $n" }
 Remove-Item -Recurse -Force $script:KitRoot -ErrorAction SilentlyContinue
 exit [int]($fail -gt 0)

@@ -31,8 +31,9 @@ function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Header
 $env:AZURE_DEVOPS_EXT_PAT = 'pat'
 $m = Invoke-HostVerb 'mr.get' @{ type = 'azure'; repo = 'org/proj/azrepo'; n = '5' }; "az-mr:$($m.has_conflicts -and $m.source_branch -eq 'f/x' -and $m.sha -eq 'aaa' -and $m.web_url -eq 'https://dev.azure.com/org/proj/_git/azrepo/pullrequest/5' -and $m.head_pipeline.status -eq 'success' -and $m.head_pipeline.id -eq 77)"
 $r = Invoke-HostVerb 'mr.merge' @{ type = 'azure'; repo = 'org/proj/azrepo'; n = '5'; sha = 'aaa'; auto = $true }; $pb = @($script:http | ? m -eq 'PATCH')[-1].b; "az-auto:$($r.merge_when_pipeline_succeeds -and $pb.autoCompleteSetBy.id -eq 'u-1' -and $pb.completionOptions.mergeStrategy -eq 'squash' -and -not $pb.status)"
+$null = Invoke-HostVerb 'mr.merge' @{ type = 'azure'; repo = 'org/proj/azrepo'; n = '5'; sha = 'aaa'; method = 'merge' }; "az-deploy-merge:$((@($script:http | ? m -eq 'PATCH')[-1]).b.completionOptions.mergeStrategy -eq 'noFastForward')"
 }
 $out = @($res)
-$fail = 0; foreach ($n in 'az-mr az-auto'.Split(' ')) { $ok = $out -contains "${n}:True"; if (-not $ok) { $fail++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) $n" }
+$fail = 0; foreach ($n in 'az-mr az-auto az-deploy-merge'.Split(' ')) { $ok = $out -contains "${n}:True"; if (-not $ok) { $fail++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) $n" }
 Remove-Item -Recurse -Force $script:KitRoot -ErrorAction SilentlyContinue
 exit [int]($fail -gt 0)

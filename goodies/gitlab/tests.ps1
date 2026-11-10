@@ -37,6 +37,8 @@ $null = Invoke-HostApi 'projects/g%2Fr/merge_requests/5/merge' -Method PUT -Fiel
 Check 'host: mr.merge squashes, removes the branch' ($global:calls[-1] -like 'glab api -X PUT projects/g%2Fr/merge_requests/5/merge -f *squash=true*' -and $global:calls[-1] -like '*should_remove_source_branch=true*')
 $null = Invoke-HostApi 'projects/g%2Fr/merge_requests/5'; $n = $global:calls.Count; $null = Invoke-HostApi 'projects/g%2Fr/merge_requests/5'
 Check 'host: a repeated read is memoised' ($global:calls.Count -eq $n)
+$null = Invoke-HostVerb 'mr.merge' @{ type = 'gitlab'; repo = 'g/r'; n = 5; method = 'merge' }
+Check 'host: a deploy MR (method merge) merges with squash off' ($global:calls[-1] -like '*merge_requests/5/merge*squash=false*')
 $v = foreach ($b in 'main', 'dev', 'goodies', 'locked', 'auth') { "$b=$(Invoke-HostVerb 'branch.protect' @{ type = 'gitlab'; repo = 'o/r'; branch = $b } -NoMemo 2>$null)" }
 Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;goodies=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
 $null = Invoke-HostVerb 'mr.update' @{ type = 'gitlab'; repo = 'o/r'; n = 5; title = 't'; body = 'b' } -NoMemo

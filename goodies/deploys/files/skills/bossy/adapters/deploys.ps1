@@ -195,10 +195,10 @@ if (-not $Quiet -or $gone.Count) { "mark-in-test: $($cand.Count) candidate(s), $
 # ---- deploy: plan, request, record
 function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest')][string]$Action = 'plan',
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
-    [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [int]$History = 300,
+    [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [switch]$Mr, [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300,
     [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
-  if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <deploy branch> [-From <branch>] [-Push]" }
-  if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploys'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
+  if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <env|deploy branch> [-From <branch>] -Mr [-Mrs <refs>] [-Decision <id>] (tag deploys: -Push)" }
+  if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploys'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -Mr:$Mr -Mrs $Mrs -Decision $Decision -WaitMinutes $WaitMinutes -History $History; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task -Days $Days -FromMrs @(Split-KitList $Mrs); return }
   $Mrs = @(Split-KitList $Mrs)
   $dd = Get-KitPath deploys -Create; $pf = Join-Path $dd 'pending.json'; $log = Get-KitPath deploy-log -Create

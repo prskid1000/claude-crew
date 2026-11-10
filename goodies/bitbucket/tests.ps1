@@ -32,9 +32,10 @@ $env:BITBUCKET_TOKEN = 'u:app'
 $m = Invoke-HostVerb 'mr.get' @{ type = 'bitbucket'; repo = 'ws/bbrepo'; n = '12' }; "bb-mr:$($m.iid -eq 12 -and $m.state -eq 'opened' -and $m.sha -eq 'abc123def456' -and $m.head_pipeline.status -eq 'running' -and $m.head_pipeline.id -eq '41' -and $script:http[0].h.Authorization -like 'Basic *')"
 $l = @(Invoke-HostVerb 'mr.list' @{ type = 'bitbucket'; repo = 'ws/bbrepo'; state = 'opened'; source_branch = 'f/x' }); "bb-list:$($l[0].iid -eq 12 -and @($script:http | ? { $_.u -match 'state=OPEN&q=source.branch.name%3D%22f%2Fx%22' }).Count -eq 1)"
 $r = Invoke-HostVerb 'mr.merge' @{ type = 'bitbucket'; repo = 'ws/bbrepo'; n = '12'; sha = 'abc123def456'; auto = $true }; "bb-kit-auto:$($r.auto_merge -eq 'kit' -and (Read-KitTracking).automerge.ContainsKey('ws/bbrepo!12') -and -not @($script:http | ? m -eq 'POST').Count)"
-$p = @(Invoke-HostVerb 'ci.runs' @{ type = 'bitbucket'; repo = 'ws/bbrepo'; ref = 'f/x' }); $j = @(Invoke-HostVerb 'ci.jobs' @{ type = 'bitbucket'; repo = 'ws/bbrepo'; id = $p[0].id }); "bb-pipelines:$($p[0].status -eq 'failed' -and $j[0].id -eq '{p-1}/{s-1}' -and $j[0].status -eq 'failed')"
+$p = @(Invoke-HostVerb 'ci.runs' @{ type = 'bitbucket'; repo = 'ws/bbrepo'; ref = 'f/x' }); $j = @(Invoke-HostVerb 'ci.jobs' @{ type = 'bitbucket'; repo = 'ws/bbrepo'; id = $p[0].id }); $null = Invoke-HostVerb 'mr.merge' @{ type = 'bitbucket'; repo = 'ws/bbrepo'; n = '12'; method = 'merge' }; "bb-deploy-merge:$((@($script:http | ? m -eq 'POST')[-1]).b.merge_strategy -eq 'merge_commit')"
+"bb-pipelines:$($p[0].status -eq 'failed' -and $j[0].id -eq '{p-1}/{s-1}' -and $j[0].status -eq 'failed')"
 }
 $out = @($res)
-$fail = 0; foreach ($n in 'bb-mr bb-list bb-kit-auto bb-pipelines'.Split(' ')) { $ok = $out -contains "${n}:True"; if (-not $ok) { $fail++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) $n" }
+$fail = 0; foreach ($n in 'bb-mr bb-list bb-kit-auto bb-pipelines bb-deploy-merge'.Split(' ')) { $ok = $out -contains "${n}:True"; if (-not $ok) { $fail++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) $n" }
 Remove-Item -Recurse -Force $script:KitRoot -ErrorAction SilentlyContinue
 exit [int]($fail -gt 0)

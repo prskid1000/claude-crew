@@ -32,9 +32,10 @@ $l = @(Invoke-HostVerb 'mr.list' @{ repo = 'o/r'; state = 'opened'; source_branc
 $s = Invoke-HostVerb 'ci.status' @{ repo = 'o/r'; sha = 'zzz' } -NoMemo; "gh-status-external:$($s.status -eq 'pending')"
 $pm = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'main' } -NoMemo; $px = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'goodies' } -NoMemo; $pn = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'new' } -NoMemo; $pl = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'locked' } -NoMemo
 "gh-protect:$($pm -eq 'ok' -and $px -like 'failed: protected but force push*' -and $pn -eq 'set' -and $pl -like 'skip: no admin rights*' -and @($script:calls -match 'PUT repos/o/r/branches/new/protection').Count)"
+$null = Invoke-HostVerb 'mr.merge' @{ repo = 'o/r'; n = 7; method = 'merge' }; "gh-deploy-merge:$(@($script:calls | ? { $_ -like 'gh pr merge 7 -R o/r --merge*' -and $_ -notlike '*--squash*' }).Count -eq 1)"
 '@
 $res = Invoke-PsTest 'github-host' $gh @(Join-Path $k 'skills/crafty/lib.ps1')
-Expect-Each $res 'github host: #' 'gh-mr', 'gh-merged', 'gh-changes', 'gh-base', 'gh-runs', 'gh-auto', 'gh-list-head', 'gh-status-external', 'gh-protect'
+Expect-Each $res 'github host: #' 'gh-mr', 'gh-merged', 'gh-changes', 'gh-base', 'gh-runs', 'gh-auto', 'gh-list-head', 'gh-status-external', 'gh-protect', 'gh-deploy-merge'
 # tracker on recorded answers (an unknown call fails)
 $tb = @'
 . $args[0]; $global:log = [Collections.Generic.List[string]]::new(); $__trRepo = 'g/p'
