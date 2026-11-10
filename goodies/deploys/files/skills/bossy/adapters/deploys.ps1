@@ -5,11 +5,11 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L94 intest · L195 deploy · L330 supervise
+Sections: L13 helpers · L92 intest · L195 deploy · L330 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
-
+. (Join-Path $PSScriptRoot '../../pokey/adapters/deployed_checks.ps1')   # Get-DeployPaths, Test-DeployTouched: one paths rule for plan, intest, deployed
 # ---- helpers: test-env filter, MR refs
 # not a test env: deploys[].production, else productionPattern on the name; -Lanes: + laneApk
 function Get-NoTestRx([switch]$Lanes) { $rx = Get-KitSetting 'deploy.productionPattern' '(?i)prod|critical'; $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
@@ -33,7 +33,7 @@ function Get-MrTargetBranch([string]$Mr, $Fx) {
 function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until) {
   $c = Get-CanonMr (ConvertTo-MrRef $Mr); $rn, $iid = $c -split '!', 2; $rn = ($rn -split '/')[-1]
   $deps = @(@($Repos | Where-Object { $_.name -eq $rn } | Select-Object -First 1).deploys | Where-Object { $_.target })
-  $filt = @($deps | Where-Object { $_.from -or $_.paths }).Count
+  $filt = @($deps | Where-Object { $_.from -or @(Get-DeployPaths $_).Count }).Count
   if ((-not $filt -and @($deps | Where-Object branch).Count -lt 2) -or ($Until -and (Get-Date) -gt $Until)) { return @($deps.target | Select-Object -Unique) }
   $fm = if ($Fx) { $Fx.mrs.$Mr ?? $Fx.mrs.$c }
   $tb = Get-MrTargetBranch $Mr $Fx
@@ -41,15 +41,13 @@ function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until) {
   if (-not $filt) { return @($deps.target | Select-Object -Unique) }
   $deps = @($deps | Where-Object { -not $_.from -or -not $tb -or $tb -in @($_.from) })
   $files = @(); $cut = $false
-  if (@($deps | Where-Object paths).Count) {
+  if (@($deps | Where-Object { @(Get-DeployPaths $_).Count }).Count) {
     $ch = if ($Fx) { [pscustomobject]@{ changes = @($fm.paths | ForEach-Object { [pscustomobject]@{ new_path = $_ } }); overflow = $fm.overflow } } else { try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid/changes" } catch { } }
     $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
     $cut = [bool]$ch.overflow -or @($ch.changes).Count -ge 100   # gitlab overflow, github's first page: the list is partial
   }
-  # glob: ** any depth, * and ? within one folder, the rest literal ([id] too)
-  $rxOf = { param($g) '^' + ([regex]::Escape($g) -replace '\\\*\\\*/', '(.*/)?' -replace '\\\*\\\*', '.*' -replace '\\\*', '[^/]*' -replace '\\\?', '[^/]') + '$' }
   @($deps | Where-Object {
-      $d = $_; -not $d.paths -or $cut -or -not $files.Count -or @($files | Where-Object { $f = $_; @($d.paths | Where-Object { $f -match (& $rxOf $_) }).Count }).Count
+      $cut -or -not $files.Count -or (Test-DeployTouched $_ $files)
     } | ForEach-Object target | Select-Object -Unique)
 }
 # MRs in a CI deploy's last green job (its commit holds the merge): mr|target -> detail; per repo one MR list and one git
@@ -164,8 +162,10 @@ foreach ($id in $cand.Keys) {
     $missing = @(); $matched = $false; $need = @()
     # a deploy MR or a repo with deploys[].from / paths: every test target it feeds (the plan's set), a deploy MR's also by its record
     $rn = (((Get-CanonMr (ConvertTo-MrRef $mr)) -split '!')[0] -split '/')[-1]; $deps = @(@($repos | Where-Object name -eq $rn | Select-Object -First 1).deploys | Where-Object { $_.target -and $_.target -notmatch (Get-NoTestRx -Lanes) })
-    $tb = if (@($deps | Where-Object branch).Count -ge 2 -or @($deps | Where-Object { $_.from -or $_.paths }).Count) { Get-MrTargetBranch $mr $null }; $dm = $tb -and @($deps | Where-Object branch -eq $tb).Count
-    $fed = if ($dm -or @($deps | Where-Object { $_.from -or $_.paths }).Count) { @(Get-MrDeployTargets $mr $repos $null $null | Where-Object { $_ -in $deps.target }) } else { @() }
+    $tb = if (@($deps | Where-Object branch).Count -ge 2 -or @($deps | Where-Object { $_.from -or @(Get-DeployPaths $_).Count }).Count) { Get-MrTargetBranch $mr $null }; $dm = $tb -and @($deps | Where-Object branch -eq $tb).Count
+    $fed = if ($dm -or @($deps | Where-Object { $_.from -or @(Get-DeployPaths $_).Count }).Count) { @(Get-MrDeployTargets $mr $repos $null $null | Where-Object { $_ -in $deps.target }) } else { @() }
+    $tst = @($rows | Where-Object { $_.target -notmatch (Get-NoTestRx -Lanes) })   # an MR with nothing for any test target (docs): nothing to wait for
+    if (-not $fed.Count -and -not $ok.Count -and $tst.Count -and -not @($tst | Where-Object state -ne 'N/A').Count) { $live += "$mr n/a on every test target"; continue }
     if ($fed.Count) {
       $missing = @($fed | Where-Object { $t1 = $_; -not @($ok | Where-Object target -eq $t1).Count -and -not ($dm -and $recOf["$(Get-CanonMr (ConvertTo-MrRef $mr))|$t1"]) })
       $need = @($missing | ForEach-Object { "^$([regex]::Escape($_))$" })
@@ -178,7 +178,7 @@ foreach ($id in $cand.Keys) {
     }
     if (-not $matched -and -not $ok.Count) { $missing += 'any test env' }
     if ($ok.Count -and -not $missing.Count) { $live += "$mr on $((($ok | ForEach-Object { $_.target }) -join '+'))"; continue }
-    $r0 = $rows | Where-Object { $t0 = $_.target; $_.state -ne 'DEPLOYED' -and (-not $need.Count -or @($need | Where-Object { $t0 -match $_ }).Count) } | Select-Object -First 1
+    $r0 = $rows | Where-Object { $t0 = $_.target; $_.state -notin 'DEPLOYED', 'N/A' -and (-not $need.Count -or @($need | Where-Object { $t0 -match $_ }).Count) } | Select-Object -First 1
     $why = "$mr not live on: " + $(if ($missing.Count) { $missing -join ', ' } else { 'a test env' }) + $(if ($r0) { " ($($r0.state): $($r0.detail))" } else { '' }); break
   }
   if ($why) { $wait++; Out-Line "WAIT  $id  $why | $short"; continue }
@@ -346,7 +346,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       if (($raw -join "`n").Trim() -notmatch '^[\[{]') { foreach ($w in @($raw -match '^WATCH ')) { & $flag 'WATCH' "deployed check $($o.task): $($w -replace '^WATCH ')" 'Supervise checks it again next round.' }; continue }
       $rows = @($raw | Out-String | ConvertFrom-Json)
       $o.liveCheckedAt = $now.ToString('o')
-      $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -ne 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
+      $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -notin 'DEPLOYED', 'N/A' }).Count -and @($rows | Where-Object { $_.target -eq $t -and $_.state -eq 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
       $new = @($live | Where-Object { $_ -notin @($o.liveOn) })
       $fields = @{ liveCheckedAt = $o.liveCheckedAt }; if ($new.Count) { $fields.liveOn = @(@($o.liveOn) + $new | Where-Object { $_ } | Select-Object -Unique) }
       Set-KitTaskFields $o.task $fields
@@ -380,7 +380,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     if ($asked -and $cache) { $cache | Add-Member -Force NoteProperty asked $asked; $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8 }
     $askAge = if ($cache.at) { [int]($now - [datetime]$cache.at).TotalMinutes } else { 0 }
     $askStale = if ($askAge -ge 60) { " (plan $askAge min old, refresh pending: plan again before asking)" } else { '' }
-    foreach ($a in @($cache.ask | Where-Object { ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower() -eq 'ask' })) { & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open$askStale" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply." }
+    foreach ($a in @($cache.ask | Where-Object { ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower() -eq 'ask' })) { & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open$askStale" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; their yes: decide record -Gate deploy -Item <env> -Source askuser, its id to opsy; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply." }
   }
   # what waits for a person's deploy <env> (the cached plan): INFO lines of the supervise report
   $pcd = try { Get-Content (Join-Path (Get-KitPath deploys) 'plan-cache.json') -Raw | ConvertFrom-Json } catch { $null }

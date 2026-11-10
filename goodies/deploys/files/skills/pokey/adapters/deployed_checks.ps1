@@ -1,9 +1,16 @@
 #Requires -Version 7
 # deploys (goody): pokey.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Api, OnRef, LocalAncestor.
-# Sections: L5 shell · L7 probe · L69 kinds · L101 deployed
+# Sections: L5 shell · L14 probe · L76 kinds · L108 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
+# a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
+function Get-DeployPaths($d) { if ($d.paths) { @($d.paths) } elseif ("$($d.ssh.subdir)".Trim('/')) { @("$("$($d.ssh.subdir)".Trim('/'))/**") } else { @() } }
+# glob: ** any depth, * and ? within one folder, the rest literal ([id] too); also used by deploy plan / intest (deploys.ps1)
+function Test-DeployTouched($d, [string[]]$Files) {
+  $rx = @(Get-DeployPaths $d | ForEach-Object { '^' + ([regex]::Escape($_) -replace '\\\*\\\*/', '(.*/)?' -replace '\\\*\\\*', '.*' -replace '\\\*', '[^/]*' -replace '\\\?', '[^/]') + '$' })
+  -not $rx.Count -or @($Files | Where-Object { $f = $_; @($rx | Where-Object { $f -match $_ }).Count }).Count -gt 0
+}
 # ---- probe: version probe, memoised ssh state
 # probeField: JSON path in the answer
 function Probe($d, $r) {
@@ -181,6 +188,10 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -eq $Target) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
   if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
   foreach ($d in $deps) {
+    if (@(Get-DeployPaths $d).Count) {   # an MR outside the target's paths is n/a there: no ssh, no NOT-DEPLOYED
+      $ch = Api "projects/$p/merge_requests/$iid/changes"; $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
+      if ($files.Count -and -not $ch.overflow -and @($ch.changes).Count -lt 100 -and -not (Test-DeployTouched $d $files)) { Row $d 'N/A' "n/a for $($d.target): changes nothing under $((Get-DeployPaths $d) -join ', ')"; continue }   # a partial list proves nothing
+    }
     if ($d.laneApk) {   # app repo: the lane APK's commit
       if ($ext = Get-Command Test-LaneApkDeployed -ErrorAction SilentlyContinue) { & $ext $d }
       else { Row $d 'UNKNOWN' 'deploys[] laneApk is a goody: run kitbag.py goody add android-swarm' }
@@ -199,14 +210,15 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
     else { NotLiveRow $p $ref $d "on $($d.branch), but no successful $($d.job) includes it yet" }
   }
 } } | ForEach-Object { $out.Add($_); if ($Lines) { $_ | ConvertTo-Json -Depth 3 -Compress } }
-if ($Lines) { exit $(if (@($out | Where-Object { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 }) }
+$miss = @($out | Where-Object { $_.state -notin 'DEPLOYED', 'N/A' })   # N/A: the MR has nothing for that target
+if ($Lines) { exit $(if ($miss.Count) { 1 } else { 0 }) }
 $row = { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail }
 if ($Json) { $out | ConvertTo-Json -Depth 3 }
 elseif ($Detail) { $out | ForEach-Object $row }
 else {
   $live = @($out | Where-Object state -eq 'DEPLOYED')
-  "deployed: $($live.Count)/$(@($out).Count) MR x target$(if ($live.Count) { ' (' + (($live | ForEach-Object { "$($_.mr)@$($_.target)" }) -join ', ') + ')' })"
+  "deployed: $($live.Count)/$($live.Count + $miss.Count) MR x target$(if ($live.Count) { ' (' + (($live | ForEach-Object { "$($_.mr)@$($_.target)" }) -join ', ') + ')' })"
   $out | Where-Object state -ne 'DEPLOYED' | ForEach-Object $row
 }
-exit $(if (@($out | Where-Object { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 })
+exit $(if ($miss.Count) { 1 } else { 0 })
 }
