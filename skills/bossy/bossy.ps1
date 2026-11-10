@@ -23,9 +23,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L31 init · L49 board · L228 budget · L256 launch · L522 recover · L605 pause · L649 resume · L707 program · L752 param ·
-  L758 track · L1078 supervise · L1378 report · L1457 audit · L1517 storage · L1727 bugbrief · L1829 cleanup · L1951 learn ·
-  L1981 decide · L2049 health · L2109 retro due · L2119 tidy · L2188 the kit origin's main and goodies · L2204 setup ·
-  L2271 guard-sendmessage
+  L758 track · L1078 supervise · L1379 report · L1458 audit · L1518 storage · L1728 bugbrief · L1830 cleanup · L1952 learn ·
+  L1982 decide · L2050 health · L2110 retro due · L2120 tidy · L2189 the kit origin's main and goodies · L2205 setup ·
+  L2272 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1146,8 +1146,8 @@ foreach ($w in $wfDirs) {
     if (Within 'wave reports') { $null = Invoke-Bounded $KitCmd.orch @('report', '-Run', $w.Name); Phase 'workflows' }
   }
   foreach ($a in $running) {
-    $tf = Get-ChildItem $w.FullName -Recurse -File -Filter "*$($a.agentId)*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    $idle = if ($tf) { [int]($now - $tf.LastWriteTime).TotalMinutes } else { -1 }
+    $act = Get-KitLastActivity (Join-Path $w.FullName "agent-$($a.agentId).jsonl")   # the status rows' source: transcript + task outputs
+    $idle = if ($act) { [int]($now - $act).TotalMinutes } else { -1 }
     L ("  {0,-18} idle {1} min" -f $a.label, $idle)
     if ($idle -ge 0 -and $idle -lt $idleMin) { [void]$liveLabels.Add($a.label) }
     [void]$runningLabels.Add($a.label); [void]$wfAgents.Add([pscustomobject]@{ label = $a.label; agentId = $a.agentId; dir = $w.FullName })
@@ -1171,8 +1171,9 @@ foreach ($e in @($entries | Where-Object { $_.status -ne 'left' -and (Test-KitHo
   if ($AutoFix) { & $markLeft $e; Flag 'INFO' "auto-fixed: board entry $($e.agent) ($($e.run)) marked left: its session process $($e.holderPid) is gone" 'Resume its work if unfinished (bossy.ps1 recover).' }
   else { Flag 'WATCH' "board entry $($e.agent) ($($e.run)): its session process $($e.holderPid) is gone" 'supervise -AutoFix marks it left; bossy.ps1 recover lists its work.' }
 }
-$bm = [double](Get-KitParam 'idle.beatMinutes'); $active = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt $bm })
-$stale = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -ge $bm -and ($now - [datetime]$_.beat).TotalHours -lt 6 })
+$bm = [double](Get-KitParam 'idle.beatMinutes'); $quiet = { param($e) $x = Get-KitLastActivity "$($e.transcript)" $e "$($e.tool)"; if ($x) { $now - $x } else { $now - [datetime]$e.beat } }   # beat or transcript write
+$active = @($entries | Where-Object { $_.status -ne 'left' -and (& $quiet $_).TotalMinutes -lt $bm })
+$stale = @($entries | Where-Object { $_.status -ne 'left' -and (& $quiet $_).TotalMinutes -ge $bm -and ($now - [datetime]$_.beat).TotalHours -lt 6 })
 # two waves may both have X1
 foreach ($g in $active | Group-Object { "$($_.run)/$($_.agent)" } | Where-Object Count -gt 1) {
   $byBeat = @($g.Group | Sort-Object { [datetime]$_.beat } -Descending); $newest = [datetime]$byBeat[0].beat
@@ -1201,7 +1202,7 @@ foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
   $sib = @($entries | Where-Object { $_.run -eq $s.run -and $_.session -ne $s.session })
   if ($AutoFix -and $s.run -and $sib.Count -and -not @($sib | Where-Object status -ne 'left').Count) { & $markLeft $s 'finished'; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) left: every other agent of its run left" 'Nothing to do.'; continue }
   if ($s.agent -in $calls) { continue }   # no beat but kit calls: alive (a silent one: its status row is STUCK, a flag)
-  if ($AutoFix -and ($now - [datetime]$s.beat).TotalHours -ge 2) { & $markLeft $s; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) silent $([int]($now - [datetime]$s.beat).TotalMinutes) min -> marked left" 'Nothing to do.'; continue }
+  if ($AutoFix -and (& $quiet $s).TotalHours -ge 2) { & $markLeft $s; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) silent $([int]($now - [datetime]$s.beat).TotalMinutes) min -> marked left" 'Nothing to do.'; continue }
 }
 foreach ($x in @(Get-KitPauseFlags @(Read-KitJsonFiles (Get-KitPath pauses)) $active $runTotal)) { Flag $x.level $x.what $x.action }
 # local, so before network sections; STUCK = a flag
@@ -1262,7 +1263,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
     elseif ($l -match '^ATTENTION') { Flag 'ACT' $l 'A tracked MR failed its pipeline, was closed or conflicts (a sibling changed the same lines): get it fixed or rebased (resume its agent with RESUME_BRIEF).' }
   }
   foreach ($l in @(Invoke-KitOutbox)) { Flag $(if ($l -match '^GAVE UP') { 'ACT' } else { 'INFO' }) $(if ($l -match '^SENT') { "auto-fixed: outbox $l" } else { "outbox: $l" }) 'A tracker write lost to the network: do it by hand (crafty.ps1 tracker).' }
-  foreach ($gone in $stale | Where-Object { ($now - [datetime]$_.beat).TotalHours -ge 2 -and $_.agent -notin $liveNames }) { & $markLeft $gone }   # a long workflow step beats nothing
+  foreach ($gone in $stale | Where-Object { (& $quiet $_).TotalHours -ge 2 -and $_.agent -notin $liveNames }) { & $markLeft $gone }   # a long workflow step beats nothing
   # idle Gradle / Kotlin daemons hold GBs
   if ($pct -ge 85) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }

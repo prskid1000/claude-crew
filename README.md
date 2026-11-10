@@ -99,6 +99,8 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
 - **End:** an agent ends with `bossy.ps1 release -Agent <id>` (every lease of that id: lane + its emulator, env and its layers, GPU, build, tabs);
   `board leave` and /buildy, /testy after each agent stage repeat it. A holder on the board with no live entry is dead (its holder
   pid is the shared session process); `supervise -AutoFix` reclaims every kind after the grace (lanes stop with `emu kill`).
+- **Activity:** one source (`lib.ps1` `Get-KitLastActivity`) for leases, STUCK rows, stale board rows and shell owners: the newest of
+  the board beat and the agent's transcript write (+ task outputs it names); a workflow step counts under any run name it joined with.
 - **Log:** `.state/leases.jsonl` (`lib.ps1` `Write-KitLeaseLog`): one line per acquire / release / reclaim / down (kind, name, agent,
   session, run, since, reason); the newest half kept past 1 MB. Last used: `bossy.ps1 status`, the lane and env status (goody `android-swarm`, goody `local-env`).
 

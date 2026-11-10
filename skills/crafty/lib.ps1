@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L870 status · L1099 supervise sweep ·
-  L1170 supervise report · L1266 tracker · L1582 prior · L1604 ask bugs · L1775 git-host · L1932 kitlog · L2050 params ·
-  L2356 entry-scripts
+Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L872 status · L1114 supervise sweep ·
+  L1185 supervise report · L1281 tracker · L1597 prior · L1619 ask bugs · L1790 git-host · L1947 kitlog · L2065 params ·
+  L2371 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -427,10 +427,11 @@ function Test-KitLive($l) {
   if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
   $all = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
     Where-Object { if ($l.session) { $_.session -eq $l.session } else { ($_.agent -and $_.agent -in @($a, $l.holder)) -or ($l.holder -and $_.session -eq $l.holder) } })
-  if (@($all | Where-Object { $_.status -ne 'left' -and (($now - [datetime]$_.beat).TotalMinutes -lt $bm -or ($_.pid -and (Test-KitPid $_.pid $_.pidStart))) }).Count) { return $true }
+  $fresh = { param($e, $m) $x = Get-KitLiveCached "act:$($e.session)/$($e.agent)/$($e.run)" { Get-KitLastActivity "$($e.transcript)" $e "$($e.tool)" }; $x -and ($now - $x).TotalMinutes -lt $m }   # a silent agent writing its transcript is live
+  if (@($all | Where-Object { $_.status -ne 'left' -and ((& $fresh $_ $bm) -or ($_.pid -and (Test-KitPid $_.pid $_.pidStart))) }).Count) { return $true }
   if ($mine.Count -or $l.session) { return $false }   # its step finished / its board entry left or went quiet
   if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -ErrorAction SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt [math]::Max($bm, (Get-KitBeatMinutes) + 5)) { return $true } }   # its heartbeat writes it
-  if ($all.Count -and -not @($all | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 3 * $bm }).Count) { return $false }   # left / long quiet: its holder pid is the shared session process (a subagent)
+  if ($all.Count -and -not @($all | Where-Object { $_.status -ne 'left' -and (& $fresh $_ (3 * $bm)) }).Count) { return $false }   # left / long quiet: its holder pid is the shared session process (a subagent)
   (Test-KitHolder $l) -eq $true
 }
 # last supervise NEXT; one older than 2 beats = coordinator stopped
@@ -443,7 +444,8 @@ function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
   $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
   if (-not $s.report.at -or -not $s.nextBeat) { return }
   $last = [datetime]$s.report.at; $due = $last.AddMinutes([double]$s.nextBeat); $late = [int]($Now - $due).TotalMinutes
-  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and ($Now - [datetime]$_.beat).TotalMinutes -lt [double](Get-KitParam 'idle.beatMinutes') })   # board Active
+  $bm = [double](Get-KitParam 'idle.beatMinutes')
+  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and $_.beat -and ($Now - [datetime]$_.beat).TotalHours -lt 6 -and ($a = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($Now - $a).TotalMinutes -lt $bm })   # board Active or writing its transcript
   if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now, then arm one one-shot (bossy E1)" }
 }
 # heartbeat prompt (bossy E1), re-armed word for word from supervise's stderr
@@ -956,6 +958,13 @@ function Format-KitSessionStart([string]$Text, $Hook) {
   elseif ($Text) { @{ systemMessage = $Text; hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $Text } } | ConvertTo-Json -Compress -Depth 4 }
 }
 function Get-KitTranscriptKind([string]$Tool) { if (-not $Tool) { 'claude' } elseif ($KitAdapters.transcript[$Tool]) { $Tool } else { 'none' } }
+# the one activity source of every liveness check (STUCK rows, stale board rows, lease grace, shell owners): newest of board beat and transcript write (+ task outputs it names)
+function Get-KitLastActivity([string]$Tx, $Entry, [string]$Tool) {
+  $fi = if ($Tx) { Get-Item -LiteralPath $Tx -ErrorAction SilentlyContinue }   # one tail read per transcript write and process (sweeps ask per step, shell, lease)
+  $t = if ($fi) { $mk = "$($fi.FullName)|$($fi.LastWriteTimeUtc.Ticks)|$([long]((Get-Date).Ticks / 1.5e8))"; if (-not $script:KitActMemo -or $script:KitActMemo.Count -gt 300) { $script:KitActMemo = @{} }
+    if (-not $script:KitActMemo.ContainsKey($mk)) { $script:KitActMemo[$mk] = Invoke-KitAdapter transcript (Get-KitTranscriptKind $Tool) last @{ file = $Tx } }; $script:KitActMemo[$mk] }
+  @(@($t.at) + @($(if ($Entry.beat) { try { [datetime]$Entry.beat } catch {} })) | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1]
+}
 # first that holds: STOPPED · FINISHED · WAITING · ACTIVE (progress within $StuckMin) · STUCK
 function Set-KitStatusState($R, [datetime]$Now, [double]$StuckMin) {
   $s = if ($R.stopped) { 'STOPPED' } elseif ($R.done) { 'FINISHED' } elseif ($R.wait) { 'WAITING' } elseif ($R.last -and ($Now - [datetime]$R.last).TotalMinutes -lt $StuckMin) { 'ACTIVE' } else { 'STUCK' }
@@ -997,7 +1006,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   # a board transcript inside a workflow folder maps the engine's folder id to the run's name
   $recent = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { -not $_.takenOverBy -and ($Now - [datetime]$_.beat).TotalHours -lt $(if ($_.status -eq 'left') { 2 } else { 6 }) })   # supervise's window
   $runOf = @{}; foreach ($e in $recent) { if ("$($e.transcript)" -match '[\\/]workflows[\\/]([^\\/]+)[\\/]agent-' -and $e.run) { $runOf[$Matches[1]] = $e.run } }
-  $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $steps = @{}; $runSteps = [Collections.Generic.List[object]]::new()
+  $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $steps = @{}; $anyRun = @{}; $runSteps = [Collections.Generic.List[object]]::new()
   foreach ($w in @(Get-KitWorkflowDirs $Session | Sort-Object LastWriteTime -Descending | Select-Object -First 6 | Sort-Object LastWriteTime)) {   # oldest first: a relaunch's steps win
     $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
     $ev = @(Get-Content $j | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} }); $jt = (Get-Item $j).LastWriteTime
@@ -1013,7 +1022,10 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     if (-not @($lr).Count) { $lr = @(@($rec) + @($launch | Where-Object { $_.run -eq $run -and $_.cap }) | Where-Object { $_ }) }   # its self record: script, tokens spent, cap
     foreach ($s in $started) {
       $st = [pscustomobject]@{ label = [string]$s.label; run = $run; result = $res[$s.agentId].result; tf = Join-Path $w.FullName "agent-$($s.agentId).jsonl"; tx = $null; covered = $false; jt = $jt }
-      if ($live -and $s -in $running) { $st.tx = & $last 'claude' $st.tf; $seen.Add($st.tx.at); $runSteps.Add($st) }
+      if ($live -and $s -in $running) { $st.tx = & $last 'claude' $st.tf; $seen.Add($st.tx.at); $runSteps.Add($st)
+        $st | Add-Member -Force NoteProperty created (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime
+        $st | Add-Member -Force NoteProperty type $(try { (Get-Content ($st.tf -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json).agentType } catch { '' })
+        foreach ($n in @(LabelNames $st.label)) { $anyRun[$n] = if ($anyRun.ContainsKey($n) -and $anyRun[$n] -ne $st) { $false } else { $st } } }   # one running step of a name: its agent, whatever run it joined the board under
       foreach ($k in @(LabelNames $st.label | ForEach-Object { "$run/$_"; if ($run -like 'wf_*') { "?/$_" } })) { if (-not ($steps[$k].tx -and -not $st.tx)) { $steps[$k] = $st } }   # latest step wins, running first; ?/ = run name unknown
     }
     $errs = @($res.Values | Where-Object { $_.result.error }).Count; $spent = @($lr.spent | Where-Object { $_ })[0]; $cap = @($lr.cap | Where-Object { $_ })[0]
@@ -1033,7 +1045,10 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { if ($hit) { $x.transcript = $hit.FullName } else { $x.txTry = $Now.ToString('o') }; Write-KitState $e.file $x } } } catch { }   # a miss: 10 min until the next scan
     if ($hit) { $hit.FullName } }
   foreach ($e in @($recent | Group-Object { "$($_.run)/$($_.agent)" } | ForEach-Object { $_.Group | Sort-Object { [datetime]$_.joined } | Select-Object -Last 1 })) {   # a re-join replaces its older entry
-    $sq = $steps["?/$($e.agent)"]; $st = @($steps["$($e.run)/$($e.agent)"], $(if ($sq.tx -or $sq.jt -ge [datetime]$e.joined) { $sq }) | Where-Object { $_ })[0]; if ($st) { $st.covered = $true }; $on = [bool]$st.tx   # an unnamed run's ended step never matches a newer entry
+    $sq = $steps["?/$($e.agent)"]; $st = @($steps["$($e.run)/$($e.agent)"], $(if ($sq.tx -or $sq.jt -ge [datetime]$e.joined) { $sq }) | Where-Object { $_ })[0]   # an unnamed run's ended step never matches a newer entry
+    $sa = $anyRun["$($e.agent)"]; if (-not $st -and $sa -and $e.status -ne 'left' -and -not $e.crashed -and $sa.type -and $sa.type -eq $e.type -and $sa.created -and [datetime]$e.joined -ge $sa.created.AddMinutes(-1)) { $st = $sa   # testy testers join under the run folder, the launch is select-<target>
+      if (-not $e.transcript -and $e.file) { try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { $x.transcript = $sa.tf; Write-KitState $e.file $x } } } catch { } } }   # lease grace and shell owners read it too
+    if ($st) { $st.covered = $true }; $on = [bool]$st.tx
     $t = if ($on) { $st.tx } else { $tx = & $txOf $e; & $last $e.tool $(if ($tx) { $tx } elseif ($st) { $st.tf }) }
     $w = if ($e.paused -and -not $on) { [pscustomobject]@{ why = 'owner pause'; at = $e.paused; next = "bossy.ps1 resume -Run $($e.run)" } } else { & $waitOf $e.run @($e.agent) }
     if (-not $w -and "$($e.status)" -match '^(?i)wait' -and ($Now - [datetime]$e.beat).TotalMinutes -lt $stuck) { $w = [pscustomobject]@{ why = "$($e.status)"; at = $e.beat; next = '' } }   # its own words (e.g. waiting for area X1) while it beats

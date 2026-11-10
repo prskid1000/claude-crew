@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L45 supervise · L237 shells · L357 page · L651 release · L680 lines · L705 cleanup
+Sections: L13 builds · L45 supervise · L237 shells · L356 page · L650 release · L679 lines · L704 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -303,8 +303,7 @@ function Get-KitShellOwner([string]$Tx, $Board) {
     foreach ($l in @(Select-String -LiteralPath $j -SimpleMatch "`"$id`"" | ForEach-Object { try { $_.Line | ConvertFrom-Json } catch {} })) { if ($l.type -eq 'started' -and -not $name) { $name = (($l.label -split ':', 2)[-1] -split '@')[0] }; if ($l.type -eq 'result') { $fin = $true } }
   } else { $m = try { Get-Content -LiteralPath ($Tx -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }; if (-not $name) { $name = $m.agentType }; if ($m.finished) { $fin = $true } }
   $live = $e -and $e.status -ne 'left' -and (Test-KitHolder $e) -ne $false
-  $last = @(@((Get-Item -LiteralPath $Tx -ErrorAction SilentlyContinue).LastWriteTime) + @(if ($e.beat) { try { [datetime]$e.beat } catch {} }) | Where-Object { $_ } | Sort-Object)[-1]
-  [pscustomobject]@{ name = $(if ($name) { "$name" } else { "agent $id" }); finished = [bool]$fin; coordinator = $false; live = [bool]$live; last = $last }
+  [pscustomobject]@{ name = $(if ($name) { "$name" } else { "agent $id" }); finished = [bool]$fin; coordinator = $false; live = [bool]$live; last = (Get-KitLastActivity $Tx $e "$($e.tool)") }
 }
 # ORPHAN: owner finished, off the board, idle idle.graceMinutes; or dir gone. STUCK: no CPU growth, older than supervise.shellStuckMinutes.
 # -AutoFix kills on the 2nd gone sweep, or the 1st if no poll loop and owner idle 20+ min

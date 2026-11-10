@@ -247,5 +247,14 @@ $pb = Px $O board beat -Session $ps | Out-String; $pl = Px $O board leave -Sessi
 $pr = Read-Json (Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | Select-Object -Last 1).FullName; $pll = Px $O launch -List -Brief | Out-String
 $pu = Px $O resume -Run pr | Out-String; $pl2 = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pl3 = Px $O launch -List -Brief | Out-String; Remove-Item $ad -Recurse -Force
 Expect 'pause: record, PAUSE on beat, leave waits, launch paused; resume of a waiting run releases it' ($pz -match 'PAUSED 1 of 2 .*not confirmed: P2' -and $pz -match 'NOT safe yet: P2' -and $pr.state -eq 'paused' -and @($pr.agents | Where-Object confirmed).agent -eq 'P1' -and $pr.runs[0].self -and $pb -match 'PAUSE \(power off\)' -and $pl -match '^PAUSED' -and $pll -match 'paused buildy\.js' -and $pu -match 'still running: P1' -and $pu -cnotmatch 'RELAUNCH' -and $pl2 -match 'RESUMED' -and $pl3 -notmatch 'paused buildy')
+# board: the same name in a live session 5 min after its beat = a parallel agent
+$j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"
+$e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-KitPidStart $PID }; $e3.beat = (Get-Date).AddMinutes(-5).ToString('o'); & $J $e3 $f3
+$j4 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b3 = pwsh @np $O board beat -Session $s3 | Out-String
+Expect "board: a same-name agent in a live session is BY-2, no takeover ($j4)" ($j4 -match 'you are BY-2' -and $j4 -notmatch 'TAKEOVER|DUPLICATE' -and $b3 -notmatch 'TAKEN')
+# lease grace and shell owners: a quiet beat with a fresh transcript is live (lib.ps1 Get-KitLastActivity)
+foreach ($n in 1, 40) { $lf = Join-Path (Kd) "L$n.jsonl"; Set-Content $lf '{}'; (Get-Item $lf).LastWriteTime = (Get-Date).AddMinutes(-$n); & $J @{ session = "s-L$n"; agent = "L$n"; run = 'lr'; status = 'working'; beat = (Get-Date).AddMinutes(-30).ToString('o'); joined = (Get-Date).AddHours(-1).ToString('o'); transcript = $lf } (Join-Path (TkPath $k board -Create) "s-L$n.json") }
+$lv = Invoke-PsTest 'liveact' '. $args[0]; Test-KitLive @{ agent = "L1"; session = "s-L1" }; Test-KitLive @{ agent = "L40"; session = "s-L40" }; (Get-KitLastActivity $args[1] @{ beat = "2000-01-01" }) -gt (Get-Date).AddMinutes(-5)' @($O, (Join-Path (Kd) 'L1.jsonl'))
+Expect "Test-KitLive / Get-KitLastActivity: transcript activity counts like a beat ($($lv -join ','))" (($lv -join ',') -eq 'True,False,True')
 Remove-TestKit $k
 Complete-Tests

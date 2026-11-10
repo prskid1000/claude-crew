@@ -60,6 +60,10 @@ Expect "status: one row per state, transcripts first ($($st -join ' // '))" ((& 
   (& $sv 'S6 (devy)' 'WAITING: GPU, held by vision x') -and (& $sv 'S7 (devy)' 'FINISHED: turn complete \| .* exec_ command: npm test') -and (& $sv 'S8 (devy)' 'STOPPED \(killed\) \| .* run_command: Run unit tests') -and
   @($st -match '^transcripts read: claude 2\.9, codex 0\.157\.0$').Count -and @($st -match '^\[WATCH\] STUCK S3 \(devy\) \(sr\): no progress for 30 min').Count -and
   @(pwsh @np $O status -Json | ConvertFrom-Json | Where-Object { $_.name -eq 'S2 (devy)' -and $_.state -eq 'WAITING' }).Count)
+& $wj wf_t1 sel @(@{ type = 'started'; agentId = 't1'; label = 'test:W7' }) 0; $t1 = "$(Split-Path $wd)/wf_t1/agent-t1"; $null = & $tx "$t1.jsonl" '{}' 1
+& $J @{ agentType = 'checky' } "$t1.meta.json"; & $se W7 @{ run = 'qrun'; type = 'checky'; beat = (& $ago 30); joined = (& $ago 0) }; & $se W7z @{ agent = 'W7'; run = 'zz'; beat = (& $ago 30) }
+$st = Invoke-PsTest 'anyrun' '. $args[0]; Format-KitStatusTable (Get-KitStatusRows)' @($O)
+Expect 'status: a step of another run name = its entry''s progress' ((& $sv 'W7 (checky)' 'ACTIVE') -and (& $sv 'W7 (devy)' 'STUCK') -and @($st -match '^\| W7 \(checky\)').Count -eq 1 -and (Read-Json "$bd/s-W7.json").transcript -match 'agent-t1')
 $nb = pwsh -NoProfile -Command ". '$O'; foreach (`$c in @(15, 1, 0, 0, 0, 2, 2, 1), @(15, 0, 1, 0, 0, 2, 2, 1), @(15, 0, 0, 1, 0, 2, 2, 1), @(15, 0, 0, 0, 3, 2, 2, 1), @(15, 0, 0, 0, 0, 9, 9, 3), @(15, 0, 0, 0, 0, 0, 0, 0), @(15, 0, 0, 0, 0, 2, 0, 2), @(15, 0, 0, 0, 0, 2, 2, 1), @(5, 0, 0, 0, 0, 2, 2, 1), @(30, 0, 0, 0, 0, 2, 2, 1)) { `$n = Get-KitNextBeat `$c[0] 15 `$c[1] `$c[2] ([bool]`$c[3]) `$c[4] `$c[5] `$c[6] `$c[7]; `"`$(`$n.min) `$(`$n.why)`" }"
 Expect "heartbeat NEXT and its reason per case ($($nb -join ' | '))" (($nb -join '|') -eq '5 fast pace: 1 new ACT|5 fast pace: 1 new ENV-FIX|8 quick pace: storage anomaly|8 quick pace: 3 failed builds in a row|8 quick pace: 9 live agents|30 slow pace: nothing runs|22 slow pace: every agent idle|15 normal pace|10 easing back to 15 min|22 easing back to 15 min' -and $sj.nextBeat.min -ge 5 -and $sj.nextBeat.min -le 30 -and (Read-Json (TkPath $k supervise-state)).nextBeat -eq $sj.nextBeat.min)
 $bt = pwsh -NoProfile -Command ". '$O'; `$f = Get-KitPath supervise-state; `$s = Get-Content `$f -Raw | ConvertFrom-Json -AsHashtable; `$s.nextBeat = 30; `$s.report.at = (Get-Date).AddMinutes(-10).ToString('s'); `$s | ConvertTo-Json -Depth 5 | Set-Content `$f; Get-KitBeatMinutes; `$s.report.at = (Get-Date).AddMinutes(-70).ToString('s'); `$s | ConvertTo-Json -Depth 5 | Set-Content `$f; Get-KitBeatMinutes"
@@ -160,11 +164,6 @@ Expect 'board show lists QA seats and env leases; recover lists the lease with n
 'idea', 'win', 'retired' | ForEach-Object { @{ at = '2099-01-01'; skill = 'kitty'; kind = $_; text = 'board slot' } | ConvertTo-Json -Compress } | Add-Content $sg
 $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json; $tg = Get-Content $tp.digest -Raw; pwsh @np $O tidy done -At '2026-01-02T03:04' >$null
 Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $tg -match '(?s)2x kitty \[idea,win\].*-> lesson.*<- retired' -and (Get-Content (TkPath $k last-retro)) -match 'T03:04:00')
-# board: the same name in a live session 5 min after its beat = a parallel agent
-$j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"
-$e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-KitPidStart $PID }; $e3.beat = (Get-Date).AddMinutes(-5).ToString('o'); & $J $e3 $f3
-$j4 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b3 = pwsh @np $O board beat -Session $s3 | Out-String
-Expect "board: a same-name agent in a live session is BY-2, no takeover ($j4)" ($j4 -match 'you are BY-2' -and $j4 -notmatch 'TAKEOVER|DUPLICATE' -and $b3 -notmatch 'TAKEN')
 # storage: verdicts, learned normal, folder sizes, drill-down, db watchdog, rescue hold
 $sd = Join-Path (Kd) 'stree'; foreach ($f in 'a/x/1.bin', 'a/y/2.bin', 'b/3.bin') { New-Item -ItemType Directory -Force (Split-Path "$sd/$f") | Out-Null; [IO.File]::WriteAllBytes("$sd/$f", [byte[]]::new(1MB)) }
 'if ($env:USE10) { 1..10 | ForEach-Object { "$_ 0.6 10 q$_" } } else { "42 0.5 900 SELECT 1"; "43 7 30 SELECT big" }' | Set-Content "$sd/use.ps1"; 'param($i) Add-Content (Join-Path $PSScriptRoot killed.txt) $i' | Set-Content "$sd/kill.ps1"
