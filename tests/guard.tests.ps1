@@ -205,8 +205,7 @@ Expect "api -Save: octet-stream sniffed, empty body: no file ($bo)" ($bo -ceq 'S
 Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
 $pp = Px $Q api /x -Target tt 2>&1 | Out-String; $pg = Px $Q api -Target tt -Path 'C:/Program Files/Git/x' 2>&1 | Out-String
 Expect 'api: a Git Bash path (C:/Program Files/Git/x) is sent as /x' ($pg -match 'HTTP 200'); $pu = Px $Q api -Target tt 2>&1 | ForEach-Object { "$_" } | Out-String; $puc = $LASTEXITCODE
-Expect 'api: the first bare arg is -Path; none -> exit 2 with the usage line' ($pp -match 'HTTP 200' -and $puc -eq 2 -and $pu -match 'Usage: api -Target')
-$api.proc.Kill()
+Expect 'api: the first bare arg is -Path; none -> exit 2 with the usage line' ($pp -match 'HTTP 200' -and $puc -eq 2 -and $pu -match 'Usage: api -Target')$api.proc.Kill()
 # crafty.ps1 tracker bug (lib.ps1 Add-KitAskBug)
 $env:KIT_TRACKER_TYPE = 'none'; $bk = Kd
 $ak = (pwsh @np $D tracker create -List L1 -Name 'Ask help routing' -Description 'a' -NewTask fixture | ConvertFrom-Json).id

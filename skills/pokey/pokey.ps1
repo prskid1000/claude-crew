@@ -1,7 +1,7 @@
 <#
 pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/pokey/pokey.ps1 <verb> [args]
   seat acquire|release|status ...                  memory seat + item claim
-  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json] [-TimeoutSec 100]  live on a test env? (goody deploys)
+  deployed -Mrs <repo>!<iid>,... [-Target <t>,..] [-Detail] [-Json] [-TimeoutSec <deploy.deployedTimeoutSec>]  live on a test env? (goody deploys)
   api -Target <t> -As <user> -Method <M> -Path '/...' (or api <M> '/...') [-Body <json>] [-ContentType <type>] [-Save <name | full path> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check] [-FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish; -Check ends EXIT=<n>
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L122 seat · L189 api · L329 finalize · L754 retest
+Sections: L23 report · L122 seat · L189 api · L331 finalize · L756 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -254,7 +254,9 @@ function Login {
   $b = [ordered]@{}; foreach ($p in $a.body.PSObject.Properties) { $b[$p.Name] = if ($p.Value -is [string]) { Fill $p.Value } else { $p.Value } }
   $lu = Fill $(if ($a.path -match '^https?://') { $a.path } else { $base + $a.path })
   $form = $a.contentType -eq 'form'
-  $r = Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -ConnectionTimeoutSeconds 60
+  $r = try { Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -ConnectionTimeoutSeconds 60 } catch {
+    $lc = [int]$_.Exception.Response.StatusCode; if ($lc -notin 401, 403) { throw }   # a bad login names where to look (23x a bare 401 body)
+    throw "login refused (HTTP $lc) on target $Target, tenant '$Tenant', user $As`: check targets.local.json targets.$Target.users.$As (password; the user's tenant: -Tenant) and auth.path. $(-join ("$($_.ErrorDetails.Message)" -replace '\s+', ' ' -replace $(if ($u[1]) { [regex]::Escape([string]$u[1]) } else { '(?!)' }), '[redacted]')[0..199])" }
   $tok = Get-Field ($r.Content | ConvertFrom-Json) $(if ($a.tokenField) { $a.tokenField } else { 'access_token' })
   if (-not $tok) { throw "login to $Target as $As returned no token" }
   $tok | Set-Content $cache -NoNewline

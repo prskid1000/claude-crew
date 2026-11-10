@@ -444,9 +444,9 @@ const results = await pipeline(
   if (['done', 'merged'].includes(r.resumed)) return { id: a.id, report: r, findings: [], resumed: r.resumed }   // merged before the stop: no review, CI or merge
   const lt = r.localTest || { status: 'NONE' }
   if (lt.status === 'BLOCKED' || lt.status === 'FAIL') {
-   // FAIL after the stronger round: held for the coordinator; BLOCKED: owner decision / remote dependency
+   // FAIL or remote (no ask pending): coordinator decides; decision: owner
    const why = lt.status === 'BLOCKED' ? `${lt.blockedKind}: ${lt.blockedReason || ''}` : (lt.failing || []).join('; ') || lt.env
-   log(`${a.id}: local test ${lt.status} - not reviewed, not merged (${why})${lt.status === 'FAIL' ? ': the coordinator decides' : ''}`)
+   log(`${a.id}: local test ${lt.status} - not reviewed, not merged (${why})${lt.status === 'FAIL' || lt.blockedKind === 'remote' ? ': the coordinator decides' : ''}`)
    return { id: a.id, report: r, findings: [], blocked: `local test ${lt.status}${lt.status === 'FAIL' ? ' after the stronger fix round' : ''}: ${why}` }
   }
   if (!r.mrs.length) return { id: a.id, report: r, findings: [] }

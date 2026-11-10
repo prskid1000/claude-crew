@@ -99,6 +99,9 @@ $xo = foreach ($verbName in 'deployed', 'annotate') { $verbOut = Px $Q $verbName
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
 Expect 'api -Save: a full path is split (api-auth goody too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
+$api = Start-TestApi; & $J @{ targets = @{ tb = @{ api = "http://127.0.0.1:$($api.port)"; auth = @{ type = 'login'; path = '/bad' }; users = @{ admin = 'u', 'K9' } } } } (Join-Path $k 'skills/pokey/targets.local.json') 6
+$lb = (Px $Q api -Target tb -Path '/l' 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $api.proc.Kill()
+Expect 'api: refused login names target, tenant, user' ($lb -match "\(HTTP 401\) on target tb, tenant '', user admin: .*targets\.tb\.users\.admin" -and $lb -notmatch 'K9')
 # gate words (deploy, merge, close ...): a recorded person's answer, never relayed text
 $gcf = Join-Path (Kd) 'gate.contracts.md'; '# contracts' | Set-Content $gcf
 $nw = Px $O decide check -Gate deploy -Item hx | Out-String; $c1 = $LASTEXITCODE
@@ -117,5 +120,19 @@ $null = Px $O decide check -Gate deploy -Item prd -Mrs 'api!9'; $c5 = $LASTEXITC
 $sf = Get-ChildItem $k -Recurse -Filter "$sid.json" | Select-Object -First 1; $sj = Read-Json $sf.FullName; $sj.answeredAt = (Get-Date).AddHours(-13).ToString('o'); & $J $sj $sf.FullName
 $so = Px $O decide check -Gate deploy -Item stg -Mrs 'api!9' | Out-String
 Expect 'decide check: a staging yes never serves another env; a word older than -MaxHours (12) is none' ($c5 -eq 1 -and $so -match "NO-WORD.*$sid older than 12 h")
+$D = Join-Path $k 'skills/crafty/crafty.ps1'
+$lf = Join-Path (Kd) 'mrs.ps1'; Set-Content $lf "'[]'"; & $J @{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.list' = "pwsh -NoProfile -File `"$lf`"" } }; tracker = @{ type = 'none'; branchTag = 'TK-' } } "$k/skills/crafty/kit.local.json"
+$gr = Join-Path (Kd) 'pr'; git init -q -b main $gr; git -C $gr commit -q --allow-empty -m i; git -C $gr remote add origin $gr; git -C $gr branch TK-7-old
+$w = { param($b, $o) $wa = @('wt', 'new', '-Repo', $gr, '-Branch', $b, '-Target', 'main', '-Name', $b, '-Root', (Join-Path (Kd) 'pw')) + @(if ($o) { '-Override', $o }); pwsh @np $D @wa 2>&1 | Out-String; $LASTEXITCODE }
+$w0 = & $w TK-7-new; Set-Content $lf "'[{""iid"":4,""state"":""opened"",""source_branch"":""TK-7-old""}]'"; $p7 = pwsh @np $D prior -Task 7 -Repo $gr | Out-String; $p7c = $LASTEXITCODE; Set-Content $lf "'[]'"
+$w1 = & $w TK-7-new; $w2 = & $w TK-7-new 'retest round'; $w4 = & $w TK-7-old
+$p8 = pwsh @np $D prior -Task 8 -Repo $gr | Out-String; $p8c = $LASTEXITCODE; $w3 = & $w TK-8-a; git -C $gr branch TK-8-sib; $p8s = pwsh @np $D prior -Task 8 -Repo $gr | Out-String; $p8r = $LASTEXITCODE
+$gd = '{"tool_name":"Bash","tool_input":{"command":"git checkout -b TK-9-x"}}' | pwsh @np $D guard | Out-String; $fy = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') finish 9 a b 2>&1 | Out-String
+Expect 'prior gate: wt new refused before prior / on a found branch (hints); -Override or found branch + MR pass; NONE, own, sibling pass; guard + devtools.py finish need prior' ($w0[-1] -eq 1 -and "$w0" -match 'run crafty.ps1 prior' -and $p7c -eq 1 -and $p7 -match 'FOUND branch .*TK-7-old' -and $w1[-1] -eq 1 -and "$w1" -match 'already exists: branch' -and ($w1n = "$w1" -replace '[\s|]+', ' ') -match 'reuse: crafty\.ps1 wt new .*-Branch TK-7-old' -and $w1n -match "7-new -Override '<why>'" -and $w2[-1] -eq 0 -and $w4[-1] -eq 0 -and $p8c -eq 0 -and $p8 -match '^NONE' -and $w3[-1] -eq 0 -and $p8r -eq 0 -and $p8s -match 'INFO branch .*8-sib' -and $gd -match '"deny"' -and $gd -match 'prior -Task 9' -and $fy -match 'prior -Task 9 first')
+Set-Content $lf "'[{""iid"":5,""state"":""opened"",""title"":""api"",""source_branch"":""TK-10-api""}]'"; $null = pwsh @np $D prior -Task 10 -Repo $gr; $f10 = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') finish 10 a b 2>&1 | Out-String; $m10 = & $py -X utf8 -c "import sys; sys.path[:0] = [sys.argv[1]]; import devtools as d; d.prior_gate('10', sys.argv[2], 'mr')" "$k/skills/crafty" $gr 2>&1 | Out-String; $w10 = & $w TK-10-web; $g10 = '{"tool_name":"Bash","tool_input":{"command":"git checkout -b TK-10-dup"}}' | pwsh @np $D guard | Out-String; Set-Content $lf "'[]'"
+Expect 'prior gate: a tagged MR of the task is its own (finish, mr in its repo: INFO, passes); wt new there and the guard (repo unknown) still stop' ($f10 -match 'INFO devtools.py finish 10: paired mr pr!5' -and $f10 -notmatch 'already exists' -and $m10 -match '^INFO mr: paired mr pr!5' -and $w10[-1] -eq 1 -and "$w10" -match 'already exists: mr pr!5' -and $g10 -match '"deny"' -and $g10 -match 'already exists')
+$gc = { git -C $gr -c user.name=t -c user.email=t@t @args }; & $gc checkout -q -b TK-11-a; & $gc commit -q --allow-empty -m 'TK-11 wip'; & $gc checkout -q main; & $gc commit -q --allow-empty -m 'TK-11 fix'
+Set-Content $lf "'[{""state"":""merged"",""target_branch"":""main"",""source_branch"":""TK-11-a""},{""iid"":7,""state"":""merged"",""target_branch"":""stg"",""source_branch"":""TK-11-b""}]'"; $p11 = pwsh @np $D prior -Task 11 -Repo $gr | Out-String; Set-Content $lf "'[]'"
+Expect 'prior gate: merged into target = fix round' ($p11 -match 'FOUND mr pr pr!7' -and $p11 -notmatch 'pr!6|TK-11-a|commit')
 Remove-TestKit $k
 Complete-Tests

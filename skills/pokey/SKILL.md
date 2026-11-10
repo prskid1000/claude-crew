@@ -34,7 +34,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 3. **Test each check:** API
    `pokey.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
    on HTTP 0 / 4xx / 5xx; status and body still print);
-   web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; visible only when the owner asks): UI checks
+   web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`): UI checks
    at each `qa.matrix` variant (`matrix()`) + `layoutIssues()`; stated qualities measured (`contrast()`, timings);
    app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command;
    e2e: `check -Step e2e` (the change's specs).
@@ -67,7 +67,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      not counted; its in-app part is still tested.
    - **PENDING**: tested later in another lane (the workflow adds `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
-   limits: 40 words per observed or finding, 25 per sentence, 900 per report), run `pokey.ps1
+   limits: 40 words per observed or finding, 25 per sentence, 900 per report; same for run.json `envLines`), run `pokey.ps1
    finalize -RunDir <run> -Code <CODE> -Check -FixNames` (scoped retry: `-Results results-retry.json`) until exit 0;
    kill your background shells, `board leave`, release seat / phone, close your tab (`s.done()`, never `killSession` or log
    out); return the results.

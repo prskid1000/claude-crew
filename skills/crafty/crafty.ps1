@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L914 check · L1170 pipes · L1220 guard · L1963 dir ·
-  L1973 checkpoint · L1997 prior · L2033 tracker · L2090 host
+  L1973 checkpoint · L1997 prior · L2035 tracker · L2092 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2005,16 +2005,18 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
   $tt = Get-TrackerTask $Task; $words = if ($Query) { $Query } else { $tt.name }
   foreach ($d in @(Find-KitSimilarTasks $words $tt.list $tt.parent @() @($Task))) { & $add task '' $d.id "$($d.name) (score $($d.score))" }
   foreach ($r in @(if ($Repo) { $Repo } elseif ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()) | ForEach-Object name })) {
-    $n = ($r -split '[\\/]')[-1]
+    $n = ($r -split '[\\/]')[-1]; $tgtBr = Get-RepoConf $n target 'main'; $mergedSrc = @()   # merged into the target: a fix round, not a duplicate
     foreach ($q in @($tag) + @($Query | Where-Object { $_ })) {
       foreach ($m in @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $n -Raw); state = 'all'; search = $q; updated_after = $since.ToString('o') })) {
+        if ($m.state -eq 'merged' -and "$($m.target_branch)" -eq $tgtBr) { $mergedSrc += "$($m.source_branch)"; continue }
         if ($m.iid -and $m.state -ne 'closed' -and "$($m.source_branch)" -notin $claimed -and ($q -ne $tag -or "$($m.title) $($m.source_branch)" -match $idRx)) { & $add mr $n "$n!$($m.iid) ($($m.state))" $m.title ("$($m.title) $($m.source_branch)" -match $idRx) $m.source_branch } } }
     $dir = @($r, (Get-RepoConf $n checkout $null), (Join-Path $KitConf.ReposRoot $n)) | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ '.git')) } | Select-Object -First 1
     if (-not $dir) { continue }
-    foreach ($b in @(git -C $dir for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>$null)) { if ($b -match $idRx -and ($b -replace '^origin/') -notin $claimed) { & $add branch $n $b '' $true } }
-    foreach ($c in @(git -C $dir log --all -i "--grep=$tag" "--since=$($since.ToString('yyyy-MM-dd'))" --format='%h %s' -n 5 2>$null)) {   # a commit on a claimed branch is this task's own
+    foreach ($b in @(git -C $dir for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>$null)) { if ($b -match $idRx -and ($b -replace '^origin/') -notin @($claimed) + $mergedSrc) { & $add branch $n $b '' $true } }
+    $nc = 0; foreach ($c in @(git -C $dir log --all -i "--grep=$tag" "--since=$($since.ToString('yyyy-MM-dd'))" --format='%h %s' -n 50 2>$null)) {   # a commit on a claimed branch is this task's own
+      if ($nc -ge 5) { break }; if ($c -notmatch $idRx) { continue }; git -C $dir merge-base --is-ancestor ($c -split ' ')[0] "origin/$tgtBr" 2>$null; if ($LASTEXITCODE -eq 0) { continue }
       $on = @(git -C $dir branch -a --format='%(refname:short)' --contains ($c -split ' ')[0] 2>$null | ForEach-Object { $_ -replace '^origin/' })
-      if ($c -match $idRx -and -not @($on | Where-Object { $_ -in $claimed }).Count) { & $add commit $n ($c -split ' ')[0] ($c -split ' ', 2)[1] $true $on } }
+      if (-not @($on | Where-Object { $_ -in @($claimed) + $mergedSrc + $tgtBr }).Count) { $nc++; & $add commit $n ($c -split ' ')[0] ($c -split ' ', 2)[1] $true $on } }
     if ($Symbol) { foreach ($g in @(git -C $dir grep -n -F $Symbol "origin/$(Get-RepoConf $n target 'main')" -- 2>$null | Select-Object -First 3)) { & $add code $n (($g -split ':', 4)[1..2] -join ':') '' } }
   }
   $st = Read-KitState (Get-KitTaskFile $Task)
