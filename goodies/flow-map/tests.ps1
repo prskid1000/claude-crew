@@ -26,6 +26,7 @@ function Bounded { for ($i = 0; $i -lt 3; $i++) { Start-Sleep 1 }; foreach ($x i
      'marked.ps1': 'function Watch($f) {\n  while ($true) { Start-Sleep 5 }   # flow: unbounded on purpose - watch until Ctrl+C\n}\n'}
 k = types.SimpleNamespace(files=list(T), texts=T, dir=sys.argv[2], skills=[], agents={}, workflows={})
 d = flow.model(k, [])
+flow.write(sys.argv[4], dict(d), dict(d).pop('_texts', {}))   # the page, for kitbag.py ui-check
 c = collections.Counter(m.group(0) for i in d['issues'] for m in [re.search(r'(fp|real|marked)\.\w+', i['text'])] if m)
 print(' '.join(f'{f}={c.get(f, 0)}' for f in T), 'deliberate=' + str(sum(1 for i in d['deliberate'] if 'marked.ps1' in i['text'])))
 V = {'tool.py': "def cmd_lint(a):\n    pass\n\nCOMMANDS = {'lint': cmd_lint, 'audit': cmd_lint}\nFORMATS = {'json': cmd_lint}\nEXTRA_OF = {'flow': 'flow-map',\n  'port': 'ports'}\n",
@@ -44,10 +45,18 @@ for name, S in [('tests', {'tool.ps1': tool, 'tests/t.tests.ps1': runread}), ('d
     print(f'scc-{name}=' + str(sum(1 for c in flow.model(k, [])['cycles'] if c['kind'] == 'scc')))
 '@
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
-$res = "$(& $py -X utf8 $f (Join-Path $Kit 'skills/bossy') ([IO.Path]::GetTempPath()) (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py') 2>&1)"
+$pgOut = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-$PID.html"
+$res = "$(& $py -X utf8 $f (Join-Path $Kit 'skills/bossy') ([IO.Path]::GetTempPath()) (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py') $pgOut 2>&1)"
 Remove-Item $f -Force
+# the page: no clipped label at 1366 / 900 / 390, light + dark, as loaded and with the legend and each side panel open
+$uiRt = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-rt-$PID"; $env:CLAUDE_RUNTIME = $uiRt   # own shots and stamp, never the kit's
+$ui = if (Test-Path (Join-Path $Kit 'skills/pokey/node_modules/puppeteer-core')) { @(& $py -X utf8 (Join-Path $Kit 'skills/bossy/kitbag.py') ui-check $pgOut --click '#legb;.ri[data-t=issues];.ri[data-t=loops];.ri[data-t=trace];.ri[data-t=code]' 2>&1); $LASTEXITCODE } else { 'SKIP flow-map page check: no puppeteer-core in the kit' }
+Remove-Item Env:CLAUDE_RUNTIME; Remove-Item $pgOut, ($pgOut -replace '\.html$', '-src.js'), $uiRt -Recurse -Force -ErrorAction SilentlyContinue
 $pg = Get-Content -Raw (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py')
-$checks = [ordered]@{
+$checks = [ordered]@{}
+if ($ui[-1] -is [string]) { $ui[-1] } else { $checks["page: no clipped text (kitbag.py ui-check, 3 widths x 2 themes x 6 states; $(@($ui | Where-Object { "$_" -cmatch 'CLIP|failed' }) -join ' | '))"] = $ui[-1] -eq 0 }
+$checks += [ordered]@{
+  'canvas labels wrap, never cut (no label .slice)' = $pg -notmatch '\.l\.slice\(0|t\.slice\(0, 64\)|`\.slice\(0, [68]0\)'
   'legend lists use the kit''s one compact grid (.cg auto-fill via cgrid()), no fixed column counts' = $pg -match '\.cg\{display:grid;[^}]*repeat\(auto-fill,minmax\(min\(100%' -and $pg -notmatch 'repeat\([23],minmax\(0,1fr\)\)' -and ([regex]::Matches($pg, "\+ cgrid\(")).Count -eq 3
   "no false loop issues ($res)" = $res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0'
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'

@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 Installed by `kitbag.py goody add flow-map`; kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1066 page · L1396 command
+Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1066 page · L1403 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -1090,18 +1090,18 @@ input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;pos
 .dd.open>.menu{display:block}.menu label{display:flex;gap:6px;align-items:center;padding:3px 4px;border-radius:5px;cursor:pointer}.menu label:hover{background:var(--pn2)}.menu small{margin-left:auto;color:var(--mut)}
 #legb{position:absolute;left:10px;bottom:10px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center}
 #leg{display:none;position:absolute;left:10px;bottom:52px;background:var(--pn);border:1px solid var(--ln);border-radius:10px;padding:10px;box-shadow:0 8px 24px #0003;width:min(640px,calc(100% - 20px))}
-#leg.open{display:block}.cg{display:grid;gap:4px 14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(var(--cmin,200px),calc((100% - (var(--cmax,99) - 1) * 14px) / var(--cmax,99)))),1fr))}#leg .it{display:flex;gap:6px;align-items:center;white-space:nowrap;overflow:hidden}
+#leg.open{display:block}.cg{display:grid;gap:4px 14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(var(--cmin,200px),calc((100% - (var(--cmax,99) - 1) * 14px) / var(--cmax,99)))),1fr))}#leg .it{display:flex;gap:6px;align-items:center;overflow-wrap:anywhere;min-width:0}
 #leg h4{margin:8px 0 4px;font-size:11px;color:var(--mut);font-weight:600}
 #side{width:0;transition:width .18s ease;background:var(--pn);border-left:1px solid var(--ln);display:flex;flex-direction:column;position:relative;overflow:hidden}
 #side.drag{transition:none}#grip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2}#grip:hover{background:var(--sel)}
 #rail{width:44px;background:var(--pn2);border-left:1px solid var(--ln);display:flex;flex-direction:column;align-items:center;padding-top:8px;gap:4px}
 .ri{position:relative;width:34px;height:34px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:var(--mut)}.ri:hover,.ri.on{background:var(--pn);color:var(--fg)}
 .ri.on::before{content:'';position:absolute;left:-5px;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--fg)}
-.badge{position:absolute;right:-2px;top:-2px;min-width:16px;height:16px;border-radius:8px;background:var(--bad);color:#fff;font-size:10px;display:grid;place-items:center;padding:0 3px}
+.badge{position:absolute;right:0;top:0;min-width:16px;height:16px;border-radius:8px;background:var(--bad);color:#fff;font-size:10px;display:grid;place-items:center;padding:0 3px}
 #sh{padding:10px 12px 8px 14px;border-bottom:1px solid var(--ln);font-weight:600;display:flex;align-items:center;gap:8px;min-height:40px}
 #sb{flex:1;overflow:auto;padding:0 0 12px 6px}.sticky{position:sticky;top:0;background:var(--pn);padding:8px 8px 6px 6px;z-index:1;display:flex;gap:6px;flex-wrap:wrap}
 .li{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:6px;cursor:pointer}.li:hover{background:var(--pn2)}.li.on{background:var(--sel)}
-.li .t{flex:1;min-width:0}.li .f{display:block;font:11px var(--mono);color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.li.bad .t{color:var(--bad)}
+.li .t{flex:1;min-width:0}.li .f{display:block;font:11px var(--mono);color:var(--mut);overflow-wrap:anywhere}.li.bad .t{color:var(--bad)}
 .num{font:600 10px var(--mono);color:var(--mut);min-width:20px;text-align:right;padding-top:2px}.grp{font-size:11px;color:var(--mut);font-weight:600;padding:8px 8px 2px}
 .empty{color:var(--mut);padding:16px 10px;line-height:1.5}.ico{flex:none}
 pre{margin:0;font:12px/1.55 var(--mono);tab-size:2}.cl{display:flex}.cl .n{color:var(--mut);min-width:44px;text-align:right;padding-right:10px;user-select:none}.cl .x{white-space:pre;flex:1}
@@ -1123,6 +1123,7 @@ select.b{max-width:100%}#sx,#howto{display:none}
 <div id="rail"></div></div><div id="tip"></div>
 <script>
 const D = __DATA__, $ = s => document.querySelector(s), cv = $('#c'), X = cv.getContext('2d'), tip = $('#tip');
+const wrapL = t => { const out = []; let cur = ''; for (const w of String(t).split(/(?<=[\s|/,·(])/)) { if (cur && (cur + w).length > 28) { out.push(cur.trim()); cur = '' } cur += w } return cur.trim() ? [...out, cur.trim()] : out };   // canvas label lines, 28 chars
 const LS = {get(k, d) { try { const v = localStorage.getItem('kf.' + k); return v == null ? d : JSON.parse(v) } catch (e) { return d } }, set(k, v) { try { localStorage.setItem('kf.' + k, JSON.stringify(v)) } catch (e) {} }};
 const IC = {bolt: 'M13 2L4 14h7l-1 8 9-12h-7z', person: 'M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8M4 21c1-5 15-5 16 0', clock: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7v5l3 2',
  table: 'M3 5h18v14H3zM3 10h18M9 5v14', slash: 'M15 4l-6 16', puzzle: 'M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 0-4 0H4v-4a2 2 0 1 0 0-4z',
@@ -1235,10 +1236,15 @@ function draw() {
   if (r * sc > 5) icon(KD[n.kk][1], n.x, n.y, r * 1.15, n.col, Math.max(1.2 * lw, r * .12));
   if (n.fx != null) { X.fillStyle = fg; X.beginPath(); X.arc(n.x + r * .8, n.y - r * .8, 2.2 * lw, 0, 6.283); X.fill() } }
  X.textAlign = 'center';
- for (const n of VN) { if (!on(n)) continue; const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r, show = n === sel || n === hover || (focus ? focus.has(n) && (focus.size < 150 || r * sc > 6) : (n.lv === LVL || n.k === 'file') && r * sc > 4.5 && big);
-  if (!show) continue; X.globalAlpha = F(n) ? 1 : .2; X.font = `${n.k === 'file' ? 600 : 400} ${(n.k === 'file' ? 12 : 11) * lw}px system-ui`;
-  X.lineWidth = 3 * lw; X.strokeStyle = bg; const t = n.l.slice(0, 40); X.strokeText(t, n.x, n.y + r + 12 * lw); X.fillStyle = fg; X.fillText(t, n.x, n.y + r + 12 * lw) }
- for (const [x, y, t, c] of lab) { X.globalAlpha = 1; X.font = `${10.5 * lw}px system-ui`; X.lineWidth = 3 * lw; X.strokeStyle = bg; X.strokeText(t.slice(0, 64), x, y); X.fillStyle = c; X.fillText(t.slice(0, 64), x, y) }
+ // labels never cut: long ones wrap; one that would overlap a drawn label waits for hover / select (those always draw)
+ const boxes = [], text = (t, x, y, c, must) => { const ls = wrapL(t), h = 13 * lw, w = Math.max(...ls.map(l => X.measureText(l).width)) + 4 * lw, bx = [x - w / 2, y - h, w, ls.length * h];
+  if (!must && boxes.some(b => bx[0] < b[0] + b[2] && b[0] < bx[0] + bx[2] && bx[1] < b[1] + b[3] && b[1] < bx[1] + bx[3])) return; boxes.push(bx);
+  X.lineWidth = 3 * lw; X.strokeStyle = bg; X.fillStyle = c; ls.forEach((l, i) => { X.strokeText(l, x, y + i * h); X.fillText(l, x, y + i * h) }) };
+ const cand = VN.filter(n => on(n)).map(n => { const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r; return {n, r, must: n === sel || n === hover,
+  show: n === sel || n === hover || (focus ? focus.has(n) && (focus.size < 150 || r * sc > 6) : (n.lv === LVL || n.k === 'file') && r * sc > 4.5 && big)} }).filter(c => c.show);
+ cand.sort((a, b) => b.must - a.must || (b.n.k === 'file') - (a.n.k === 'file'));
+ for (const {n, r, must} of cand) { X.globalAlpha = F(n) ? 1 : .2; X.font = `${n.k === 'file' ? 600 : 400} ${(n.k === 'file' ? 12 : 11) * lw}px system-ui`; text(n.l, n.x, n.y + r + 12 * lw, fg, must) }
+ for (const [x, y, t, c] of lab) { X.globalAlpha = 1; X.font = `${10.5 * lw}px system-ui`; text(t, x, y, c, false) }
  if (trace) { X.font = `600 ${10 * lw}px system-ui`; const done = new Set();
   trace.forEach((s, i) => { const n = rep(s.n); if (!n || done.has(n)) return; done.add(n); const t = String(i + 1), w = (t.length * 6 + 8) * lw, bx = n.x + n.r * .7, by = n.y - n.r - 9 * lw;
    X.globalAlpha = 1; X.fillStyle = i === tIdx ? hi : n.col; X.beginPath(); X.roundRect ? X.roundRect(bx - w / 2, by - 7 * lw, w, 14 * lw, 7 * lw) : X.rect(bx - w / 2, by - 7 * lw, w, 14 * lw); X.fill();
@@ -1290,7 +1296,7 @@ function tab(t) {
  if (t === 'trace') {
   const st = document.createElement('div'); st.className = 'sticky'; const se = document.createElement('select'); se.className = 'b'; se.style.flex = '1'; se.add(new Option('trace from… (agent, trigger, row, command)', ''));
   const ent = N.filter(n => /slash|event|human|timer|row/.test(n.k) || (n.k === 'file' && n.fam === 'crew'));
-  ent.sort((a, b) => a.kk.localeCompare(b.kk) || a.l.localeCompare(b.l)).forEach(n => se.add(new Option(`${KD[n.kk][2]}: ${n.l}`.slice(0, 80), n.i)));
+  ent.sort((a, b) => a.kk.localeCompare(b.kk) || a.l.localeCompare(b.l)).forEach(n => se.add(new Option(`${KD[n.kk][2]}: ${n.l}`, n.i)));
   se.value = trace ? trace[0].n.i : ''; se.onchange = () => se.value && runTrace(N[+se.value]); st.append(se);
   for (const [lab, d] of [['‹ prev', -1], ['next ›', 1]]) { const b = document.createElement('span'); b.className = 'b'; b.textContent = lab; b.onclick = () => stepTo(tIdx + d); st.append(b) }
   const b2 = document.createElement('span'); b2.className = 'b'; b2.textContent = 'from selected'; b2.onclick = () => sel && runTrace(sel); st.append(b2); sb.append(st);
@@ -1298,7 +1304,7 @@ function tab(t) {
   trace.forEach((s, i) => { const n = s.n, d = row(n, `${s.loop ? '↻ back to ' : ''}${esc(n.l)}${s.via && !s.loop ? ` <small style="color:var(--mut)">${esc(s.via.k)}</small>` : ''}`,
    `<span class="num" style="padding-left:${Math.min(s.dep, 8) * 6}px">${i + 1}</span>`, (i === tIdx ? 'on ' : '') + (bad.has(n.i) ? 'bad' : ''), () => { stepTo(i); openSide('code') });
    const br = n.out.filter(e => e.k === 'branch');
-   if (n.k === 'decision' && br.length > 1 && !s.loop) { const x = document.createElement('select'); x.className = 'b'; br.forEach((e, j) => x.add(new Option(`${e.l} → ${N[e.t].l}`.slice(0, 60), j)));
+   if (n.k === 'decision' && br.length > 1 && !s.loop) { const x = document.createElement('select'); x.className = 'b'; br.forEach((e, j) => x.add(new Option(`${e.l} → ${N[e.t].l}`, j)));
     x.value = choice[n.i] || 0; x.onclick = ev => ev.stopPropagation(); x.onchange = () => { choice[n.i] = +x.value; runTrace(trace[0].n) }; d.querySelector('.t').append(x) }
    sb.append(d) }); return
  }
@@ -1328,7 +1334,7 @@ let srcWanted = null, more = 0;
 function code(n) {
  if (!n) { sb.innerHTML = '<div class="empty">Click a node on the graph: its source span shows here, with its line marked.</div>'; return }
  const f = D.files[n.g].id, real = !f.startsWith('('), abs = (D.kit + '/' + f).replace(/\\/g, '/'), ln = n.ln || 1;
- $('#sh').innerHTML = svgI(KD[n.kk][1], n.col, 18) + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.l)}</span><small style="color:var(--mut);font-weight:400">${esc(KD[n.kk][2])}</small>`;
+ $('#sh').innerHTML = svgI(KD[n.kk][1], n.col, 18) + `<span style="overflow-wrap:anywhere;min-width:0">${esc(n.l)}</span><small style="color:var(--mut);font-weight:400">${esc(KD[n.kk][2])}</small>`;
  const m = $('#meta'); m.style.display = 'block'; const iss = bad.get(n.i) || [];
  m.innerHTML = `<div class="f">${esc(f)}${n.ln ? ':' + n.ln : ''}</div>${n.d ? `<div>${esc(n.d)}</div>` : ''}${iss.map(it => `<div style="color:var(--bad)">⚠ ${esc(it.code)}: ${esc(it.text)}</div>`).join('')}
   <div>${n.out.length} out · ${n.in.length} in${real ? ` · ${D.kit ? `<a href="vscode://file/${encodeURI(abs)}:${ln}">open in editor</a>` : ''}${D.repoUrl ? `<a target="_blank" rel="noopener" href="${D.repoUrl}/${encodeURI(f)}#L${ln}">view on GitHub</a>` : ''}<span class="lnk" id="cp">copy path:line</span>` : ''}</div>`;
