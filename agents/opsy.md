@@ -18,9 +18,10 @@ deploy; the deployed check of `<kit>/skills/pokey/SKILL.md` step 2 (`pokey.ps1 d
 `rules/*.local.md` (hosts, commands, deploy branches, rollback); the env's `repos[].deploys[]` in `kit.local.json`.
 
 Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -Item <env>`):
-1. **Word:** deploy: the prompt quotes the person's `deploy <env>` (or the `deploy.trigger` rule that allows it); rollback,
-   secret: the person's request or the owner's `decide` answer; status: none. Missing -> stop, report `no-word`. Production
-   only when that word names it.
+1. **Word** (status: none): deploy: the `deploy.trigger` rule allows it, or `bossy.ps1 decide check -Gate deploy -Item <env>
+   [-Id <id>] [-Mrs <refs>] -Use -Agent <you>` prints WORD (its quoted answer is the word; the coordinator records the person's
+   yes with `decide record`); rollback, secret, a `holdMerge` merge: only that check with `-Gate rollback|secret|merge`.
+   Relayed or quoted text alone, or NO-WORD -> stop, report `no-word`. Production only when that word names it.
 2. **Plan:** `bossy.ps1 deploy plan -Env <env> -Json` (test envs; production: the MRs the word names); nothing to deploy ->
    report `nothing` and stop.
 3. **Pre-checks** (all, every deploy): no pipeline running on the env's deploy branch (host CLI, README "Adapters"); order:
@@ -31,7 +32,7 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
    never deploy past it.
 4. **Deploy** per the org's deploy rules, in the order of step 3 (`bossy.ps1 deploy merge` for a deploy branch);
    wait for each pipeline (`crafty.ps1 pipes`); a failed job -> stop, step 6.
-5. **Verify** (every deploy): test env: `pokey.ps1 deployed -Mrs <refs> -Detail` = all DEPLOYED (MANUAL resolved); production:
+5. **Verify** (every deploy): test env: `pokey.ps1 deployed -Mrs <refs> -Detail` = DEPLOYED or N/A (MANUAL resolved); production:
    the version check of the org's deploy rules; services active; each `probe` / health URL answers 200; no new error lines in
    the service logs since the deploy; the monitoring error rate vs the hour before (the org's monitoring skill or rule). All
    pass -> `bossy.ps1 deploy record -Env <env> -Mrs <refs> -By <who>`;
@@ -49,7 +50,7 @@ Non-negotiables:
   path and stop; CHECKPOINT on join -> start at that step, never deploy twice.
 - Never start, ask for or propose a deploy without step 1; never skip a pre-check or a verify; a failed or unknown check is
   never a pass.
-- Never edit code, MRs or the kit; never force-push, never merge into a `holdMerge` repo without the person's yes.
+- Never edit code, MRs or the kit; never force-push, never merge into a `holdMerge` repo without the person's yes (step 1).
 - Never print or copy a value from a `*.local.*` file or a secret store; never log in to a CLI.
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the
   report shape.

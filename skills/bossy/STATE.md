@@ -57,7 +57,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `board` | `bossy.ps1 board` | `dir v1: agent session run beat status` | 14 d | schemaVersion; file-safe session |
 | `launches` | `bossy.ps1 launch`, workflows (`args-*`) | `dir=self-*.json v1: script run args` | 3 d | schemaVersion |
 | `agents` | `crafty.ps1 checkpoint` | `dir=*/resume.json v1: agent run steps` | 7 d | schemaVersion, ISO |
-| `decisions` | `bossy.ps1 decide` | `dir v2: id status question` | 14 d | `options` {key label description recommended}, `blocking` |
+| `decisions` | `bossy.ps1 decide` | `dir v2: id status question` | 14 d | `options` {key label description recommended}, `blocking`; gate words: `gate`, `source`, `usedAt` |
 | `qa-runs` | `testy.js`, `pokey.ps1 finalize` | `dir=*/index.json v1: run items` | 14 d | new `index.json` |
 | `waves` | `bossy.ps1 report` | `dir v0: run` | 14 d | none |
 | `supervise-state` | `bossy.ps1 supervise` | `json v0` | 30 d | ISO |

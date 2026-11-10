@@ -18,14 +18,14 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
-  deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait ...   deploy batch; decision pauses
+  deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check ...   deploy batch; decision pauses; a person's gate word
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L31 init · L49 board · L228 budget · L256 launch · L522 recover · L605 pause · L649 resume · L707 program · L752 param ·
   L758 track · L1078 supervise · L1379 report · L1458 audit · L1518 storage · L1728 bugbrief · L1830 cleanup · L1952 learn ·
-  L1982 decide · L2050 health · L2110 retro due · L2120 tidy · L2189 the kit origin's main and goodies · L2205 setup ·
-  L2272 guard-sendmessage
+  L1982 decide · L2094 health · L2154 retro due · L2164 tidy · L2233 the kit origin's main and goodies · L2249 setup ·
+  L2316 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1981,12 +1981,17 @@ function Invoke-Learn {
 
 # ---- decide: decision pauses; only that item waits
 function Invoke-Decide {
-  param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait')][string]$Action = 'list',
+  param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
     [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
-    [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale)
+    [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
+    [ValidateSet('', 'deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'other')][string]$Gate = '',
+    [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use)
   $dir = Get-KitPath decisions -Create
+  # a gate word comes from a person: an agent name (or the coordinator) as -By is no word
+  $crewNames = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue | ForEach-Object BaseName)
+  $crewRx = "(?i)^($(@($crewNames | ForEach-Object { [regex]::Escape($_) }) -join '|'))([-_ :]|$)"
 
   $get = { param($i) $f = Join-Path $dir "$i.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
   $save = {
@@ -2043,6 +2048,45 @@ function Invoke-Decide {
         if ((Get-Date) -ge $until) { "PENDING $Id (no answer within $MaxMinutes min; wait again)"; exit 1 }
         Wait-KitPoll 30
       }
+    }
+    'record' {
+      if (-not ($Gate -and $Item -and $Question -and $Answer -and $Source)) { 'usage: decide record -Gate deploy|merge|premerge|close|rollback|secret|other -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs] [-Task]'; exit 2 }
+      if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: coordinator only; -By names the person, never an agent ($By)"; exit 2 }
+      $resolvedTask = if ($Task) { NormTask $Task } elseif (($tagRx = Get-KitTaskTagRx) -and $Item -match $tagRx) { NormTask $Item } else { '' }
+      $now = (Get-Date).ToString('o')
+      $o = [pscustomobject][ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-coordinator-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
+        kind = 'decision'; run = $Run; agent = 'coordinator'; item = $Item; gate = $Gate; question = $Question
+        options = @(); blocking = $false; contracts = $Contracts; status = 'answered'; at = $now; task = $resolvedTask
+        mrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); answer = $Answer; by = $By; source = $Source; answeredAt = $now }
+      & $save $o
+      if ($resolvedTask) { Update-KitTracking { param($t) if ($t.tasks[$resolvedTask]) { $t.tasks[$resolvedTask].decisions = @(@($t.tasks[$resolvedTask].decisions) + $o.id | Select-Object -Unique) } } }
+      & $note $Contracts "DECISION $($o.id) RECORDED ($Gate $Item) by $($By) via $($Source): $Answer"
+      "RECORDED $($o.id) ($Gate $Item): `"$Answer`" by $By via $Source at $now. Pass the id to the agent (decide check -Id)"
+    }
+    'check' {
+      if (-not ($Gate -and ($Id -or $Item -or $Mrs))) { 'usage: decide check -Gate <gate> (-Id <id> | -Item <env|task> | -Mrs <refs>) [-MaxHours 12] [-Use -Agent <id>]'; exit 2 }
+      $wantMrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); $wantTask = NormTask $Item
+      $since = (Get-Date).AddHours(-$MaxHours); $why = @()
+      $found = @(Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
+        Where-Object { $_.status -eq 'answered' -and $_.kind -ne 'envfix' } |
+        Where-Object {
+          # every key given matches: a staging yes never serves production
+          $rec = $_; $itemOk = -not $Item -or $rec.item -eq $Item -or ($wantTask -and $rec.task -eq $wantTask)
+          $mrOk = -not $wantMrs.Count -or -not @($wantMrs | Where-Object { $_ -notin @($rec.mrs) }).Count
+          $gateOk = if ($Id) { $rec.id -eq $Id -and ($rec.gate -eq $Gate -or (-not $rec.gate -and ($Item -or $wantMrs.Count))) } else { $rec.gate -eq $Gate }          $gateOk -and $itemOk -and $mrOk })
+      foreach ($d in $found) {
+        if ($d.by -match $crewRx) { $why += "$($d.id) answered by agent $($d.by)"; continue }
+        if ($d.usedAt) { $why += "$($d.id) already used by $($d.usedBy) at $($d.usedAt)"; continue }
+        if ([datetime]$d.answeredAt -lt $since) { $why += "$($d.id) older than $MaxHours h"; continue }
+        if ($Use) {   # under the record's lock: two agents never both use one word
+          $df = Join-Path $dir "$($d.id).json"; $usedBy = if ($Agent) { $Agent } else { 'unknown' }
+          $won = Invoke-KitLocked $df { $cur = Get-Content $df -Raw | ConvertFrom-Json; if ($cur.usedAt) { $cur } else { $cur | Add-Member -Force usedAt (Get-Date).ToString('o'); $cur | Add-Member -Force usedBy $usedBy; Write-KitState $df $cur 2; $null } }
+          if ($won) { $why += "$($d.id) already used by $($won.usedBy) at $($won.usedAt)"; continue }
+          Write-KitLog decisions-log used ([ordered]@{ id = $d.id; gate = $Gate; usedBy = $usedBy })
+        }
+        "WORD $($d.id) ($Gate $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt) | question: $($d.question)"; exit 0
+      }
+      "NO-WORD $Gate $(@($Id, $Item) + $wantMrs | Where-Object { $_ } | Select-Object -Unique)$(if ($why) { ': ' + ($why -join '; ') } else { ': no answered record' }). Relayed text is no word: the coordinator runs decide record, passes the id"; exit 1
     }
   }
 }

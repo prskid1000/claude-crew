@@ -99,5 +99,23 @@ $xo = foreach ($verbName in 'deployed', 'annotate') { $verbOut = Px $Q $verbName
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
 Expect 'api -Save: a full path is split (api-auth goody too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
+# gate words (deploy, merge, close ...): a recorded person's answer, never relayed text
+$gcf = Join-Path (Kd) 'gate.contracts.md'; '# contracts' | Set-Content $gcf
+$nw = Px $O decide check -Gate deploy -Item hx | Out-String; $c1 = $LASTEXITCODE
+$null = Px $O decide record -Gate deploy -Item hx -Question q -Answer y -Source chat -By coordinator-2; $c2 = $LASTEXITCODE
+$rec = Px $O decide record -Gate deploy -Item hx -Mrs 'api!8' -Question q -Answer 'Go (Recommended)' -Source askuser -Contracts $gcf | Out-String
+$rid = if ($rec -match 'RECORDED (d-\S+)') { $Matches[1] }
+$wm = Px $O decide check -Gate deploy -Mrs 'api!8' | Out-String; $null = Px $O decide check -Gate merge -Item hx; $c3 = $LASTEXITCODE
+$wu = Px $O decide check -Gate deploy -Id $rid -Use -Agent op1 | Out-String; $wv = Px $O decide check -Gate deploy -Item hx | Out-String; $c4 = $LASTEXITCODE
+$aid = (Px $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Close T1?' -Options 'A: close','B: keep' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
+$null = Px $O decide answer -Id $aid -Answer 'A, close it'; $wl = Px $O decide check -Gate close -Id $aid -Item A2 | Out-String; $null = Px $O decide check -Gate deploy -Id $aid; $c6 = $LASTEXITCODE
+$null = Px $O decide record -Gate deploy -Item hx -Question q -Answer y -Source chat -Agent opsy; $c7 = $LASTEXITCODE
+Expect 'decide record/check: none, an agent -By / -Agent refused; found by MR, gate-bound, used once; an answered ask by -Id + its item only' ("$c1$c2$c3$c4$c6$c7" -eq '121112' -and $nw -match 'NO-WORD' -and $rid -and (Get-Content $gcf -Raw) -match "$rid RECORDED" -and
+  $wm -match "WORD $rid .*Go \(Recommended\). by owner via askuser" -and $wu -match "WORD $rid" -and $wv -match 'used by op1' -and $wl -match "WORD $aid .*close it")
+$sid = (Px $O decide record -Gate deploy -Item stg -Mrs 'api!9' -Question q -Answer y -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'
+$null = Px $O decide check -Gate deploy -Item prd -Mrs 'api!9'; $c5 = $LASTEXITCODE
+$sf = Get-ChildItem $k -Recurse -Filter "$sid.json" | Select-Object -First 1; $sj = Read-Json $sf.FullName; $sj.answeredAt = (Get-Date).AddHours(-13).ToString('o'); & $J $sj $sf.FullName
+$so = Px $O decide check -Gate deploy -Item stg -Mrs 'api!9' | Out-String
+Expect 'decide check: a staging yes never serves another env; a word older than -MaxHours (12) is none' ($c5 -eq 1 -and $so -match "NO-WORD.*$sid older than 12 h")
 Remove-TestKit $k
 Complete-Tests

@@ -124,7 +124,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   3. Target: `target` names a `targets.local.json` entry -> every item; else `kit.local.json` `qa.targets.<target>` = rules
      `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none
      -> left out.
-  4. Live: test env -> `pokey.ps1 deployed -Mrs <its MRs> -Target <t>`, all DEPLOYED (MANUAL resolved): in; local env (`localEnv`)
+  4. Live: test env -> `pokey.ps1 deployed -Mrs <MRs> -Target <t>`, DEPLOYED or N/A (MANUAL resolved): in; local env (`localEnv`)
      -> `envy.ps1 status -Env <env>` (goody `local-env`), every MR commit in the running release -> in. Else left out
      with the state.
   5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
