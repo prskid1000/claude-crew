@@ -48,10 +48,14 @@ $global:fx = [ordered]@{ 'assignees,body' = '{"number":5,"title":"Bug","state":"
  'create -R o/r --title New one --assignee Ann Lee --label priority:high' = 'https://github.com/o/r/issues/9'; '^issue edit 5 -R o/r --body-file' = 'ok'; 'list -R o/r .*--label status:in test' = '[{"number":7,"title":"A","assignees":[{"login":"ann"}]}]' }
 $r = @{ v = Get-TrackerTask 'o/r#5'; s = Set-TrackerStatus 'o/r#5' inTest; c = Add-TrackerComment 'o/r#5' 'two words'; n = New-TrackerTask -List o/r -Name 'New one' -Description 'd' -Parent 'o/r#5' -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks o/r inTest) }
 "tracker:$($r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.v.subtasks[0].status -eq 'closed' -and $r.v.parent -eq '1' -and $r.n.id -eq 9 -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 'ann')"
+$global:fx = [ordered]@{ 'view 5 -R o/r --json comments' = '{"comments":[{"author":{"login":"a"},"createdAt":"2026-01-01T00:00:00Z","body":"old","url":"https://github.com/o/r/issues/5#issuecomment-77"}]}'
+ 'api -X PATCH repos/o/r/issues/comments/77 .*new words' = '{"id":77}'; 'api -X DELETE repos/o/r/issues/comments/77' = '' }; $global:log.Clear()
+$c = @(Get-TrackerComments 'o/r#5'); $e = __TrA 'comment-edit' @{ id = 'o/r#5'; comment = $c[0].id; text = 'new words' }; $x = __TrA 'comment-delete' @{ id = 'o/r#5'; comment = $c[0].id }
+"cmt:$($c[0].id -eq '77' -and $e -match 'edited' -and $x -match 'deleted' -and $global:log.Count -eq 3)"
 '@
-Expect-Each (Invoke-PsTest 'github-tracker' $tb @(Join-Path $k 'skills/crafty/lib.ps1')) 'github #: view, status, comment, create, list on recorded answers' 'tracker'
+Expect-Each (Invoke-PsTest 'github-tracker' $tb @(Join-Path $k 'skills/crafty/lib.ps1')) 'github #: view, status, comment, create, list; comment ids, edit, delete on recorded answers' 'tracker', 'cmt'
 $env:KIT_TRACKER_TYPE = 'github'; 'body text' | Set-Content "$(Kd)/c.md"
-$out = pwsh @np $D tracker comment o/r#12 -File "$(Kd)/c.md" -DryRun 6>&1 2>&1 | Out-String
+$out = pwsh @np $D tracker comment o/r#12 -File "$(Kd)/c.md" -Kind comment-status -ProseOk x -DryRun 6>&1 2>&1 | Out-String
 Remove-Item Env:KIT_TRACKER_TYPE
 Expect 'github: tracker comment -File sends the file as the body' ($out -match 'issue comment 12 -R o/r --body "body text')
 Remove-TestKit $k

@@ -18,6 +18,10 @@ function Run($type, $fx, $id, $list, [scriptblock]$ok) {
  if (-not $pass) { $global:failed++ }
  "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker ${type}: view, status, comment, create, list"
 }
+function Cmt($type, $fx, $id, $cid) {   # comment ids, then a kit comment edited in place and a stale one deleted (lib.ps1 Set-TrackerKitComment, tracker uncomment)
+ try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $c = @(Get-TrackerComments $id); $null = __TrA 'comment-edit' @{ id = $id; comment = $c[0].id; text = 'new words' }; $null = __TrA 'comment-delete' @{ id = $id; comment = $c[0].id }; $pass = "$($c[0].id)" -eq $cid -and $global:log.Count -eq 3 } catch { $pass = $false; "  $type error: $_" }
+ if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker ${type}: comment ids, comment-edit, comment-delete"
+}
 $v = { param($r, $s, $n) $r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq $n -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq $s }
 $jf = { param($ver, $doc, $who, $srch) [ordered]@{ "GET https://j.test/rest/api/$ver/issue/P-1\?" = '{"key":"P-1","fields":{"summary":"Bug","status":{"name":"In Progress"},"parent":{"key":"P-0"},"subtasks":[{"key":"P-2","fields":{"summary":"Sub","status":{"name":"To Do"}}}],"description":' + $doc + '}}'
  'transitions  ' = '{"transitions":[{"id":"31","name":"QA","to":{"name":"In Test"}}]}'; 'transitions application/json .*"31"' = ''; "P-1/comment .*$(if ($ver -eq 3) { '"type":"doc"' } else { '"body":"two words"' })" = '{"id":"9"}'
@@ -31,4 +35,5 @@ $wk = __TrWiki $md
 $okWiki = $wk -eq "<!-- kit:delivery -->`n*Sum*: 1 of 2`n||Subtask||MRs||`n|[S-1|https://j.test/S-1]|!8 merged \\ !7 a / b|`n* one`n<!-- /kit:delivery -->" -and (__TrWiki $wk) -eq $wk
 if (-not ($okAdf -and $okWiki)) { $global:failed++; "  adf: $back`n  wiki: $wk" }
 "$(if ($okAdf -and $okWiki) { 'PASS' } else { 'FAIL' }) tracker jira / jira-server: Markdown tables, links, breaks, lists -> ADF (round trip to the same Markdown) / wiki (stable when re-sent)"
+Cmt jira ([ordered]@{ 'GET .*api/3/issue/P-1/comment\?maxResults' = '{"comments":[{"id":"10007","author":{"displayName":"A"},"created":"2026-01-01T00:00:00Z","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"old"}]}]}}]}'; 'PUT .*api/3/issue/P-1/comment/10007 .*new words' = '{"id":"10007"}'; 'DELETE .*api/3/issue/P-1/comment/10007' = '' }) P-1 '10007'
 exit [int]($global:failed -gt 0)

@@ -1,7 +1,8 @@
 #Requires -Version 7
 # Goody tracker-jira: Jira Cloud and Jira Server / Data Center trackers (tracker.type jira | jira-server).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/ (kitbag.py goody add tracker-jira); helpers come from lib.ps1.
-# helpers only this goody uses (kept out of the core lib.ps1)
+# Sections: L5 helpers · L19 texts · L72 tracker
+# ---- helpers: only this goody uses them (kept out of the core lib.ps1)
 function __TrBase([string]$Env) { $v = [Environment]::GetEnvironmentVariable($Env); if ($v) { $v.TrimEnd('/') } else { "<$Env>" } }
 function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$File, [string]$CType) {
   if ($__trDry) { Write-Host "DRYRUN: $Method $Uri$(if ($null -ne $Body) { '  body=' + (__TrShort ($Body | ConvertTo-Json -Depth 20 -Compress)) })$(if ($File) { "  file=$File" })"; return $null }
@@ -15,6 +16,7 @@ function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$
   Invoke-RestMethod @p
 }
 function __TrPrioName([string]$p, [string]$Names) { if ($p -match '^[1-4]$') { ($Names -split ' ')[[int]$p - 1] } else { $p } }
+# ---- texts: Markdown <-> ADF (cloud) and wiki (server)
 # Markdown (lib.ps1 ConvertFrom-KitMarkdown) -> ADF: tables, bullet lists, strong / code / link marks, line breaks
 function __TrAdfPara([string]$s) {
   $runs = @(foreach ($r in ConvertFrom-KitMdInline $s) {
@@ -67,6 +69,7 @@ function __TrWiki([string]$Text) {
     }) -join "`n"
 }
 function __TrJDoc([string]$t) { if ($__trType -eq 'jira') { __TrAdf $t } else { __TrWiki $t } }   # Markdown marks would show as typed
+# ---- tracker: REST calls and the jira / jira-server verbs
 function __TrJira([string]$Method, [string]$Path, $Body, [string]$FilePath) {
   $h = if ($__trType -ne 'jira' -and $env:JIRA_TOKEN) { Get-KitAuth JIRA_TOKEN } elseif ($env:JIRA_EMAIL -and $env:JIRA_API_TOKEN) { @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($env:JIRA_EMAIL):$($env:JIRA_API_TOKEN)")) } } else { @{} }
   if (-not $__trDry -and -not ($env:JIRA_BASE_URL -and $h.Authorization)) { throw "tracker ($__trType): set JIRA_BASE_URL and JIRA_EMAIL + JIRA_API_TOKEN$(if ($__trType -ne 'jira') { ' (or JIRA_TOKEN)' })" }
@@ -88,7 +91,9 @@ Register-KitAdapter 'tracker' 'jira' @{
     $null = __TrJira 'POST' "issue/$id/transitions" @{ transition = @{ id = $(if ($tr) { $tr.id } else { "<id of '$name'>" }) } }; "status of $id`: $name"
   }
   'comment' = { param($a) $res = __TrJira 'POST' "issue/$($a.id)/comment" @{ body = (__TrJDoc $a.text) }; if ($res) { "commented on $($a.id)" } }
-  'comments' = { param($a) @((__TrJira 'GET' "issue/$($a.id)/comment?maxResults=200" $null).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.displayName $_.created ((__TrAdfText $_.body).Trim()) } }
+  'comments' = { param($a) @((__TrJira 'GET' "issue/$($a.id)/comment?maxResults=200" $null).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.displayName $_.created ((__TrAdfText $_.body).Trim()) $_.id } }
+  'comment-edit' = { param($a) $null = __TrJira 'PUT' "issue/$($a.id)/comment/$($a.comment)" @{ body = (__TrJDoc $a.text) }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment
+  'comment-delete' = { param($a) $null = __TrJira 'DELETE' "issue/$($a.id)/comment/$($a.comment)" $null; "deleted comment $($a.comment)" }
   'create' = { param($a)
     $f = @{ project = @{ key = $a.list }; summary = $a.name; description = (__TrJDoc $a.description)
       issuetype = @{ name = $(if ($a.parent) { Get-KitSetting 'tracker.subtaskType' 'Subtask' } else { Get-KitSetting 'tracker.issueType' 'Task' }) } }

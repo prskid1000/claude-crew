@@ -33,7 +33,9 @@ Register-KitAdapter 'tracker' 'youtrack' @{
   }
   'status' = { param($a) __TrYtCmd $a.id "State {$($a.status)}"; "status of $($a.id): $($a.status)" }
   'comment' = { param($a) $null = __TrYt 'POST' "issues/$($a.id)/comments?fields=id" @{ text = $a.text }; "commented on $($a.id)" }
-  'comments' = { param($a) @(__TrYt 'GET' "issues/$($a.id)/comments?fields=text,created,author(login)&`$top=200" $null) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.created $_.text } }
+  'comments' = { param($a) @(__TrYt 'GET' "issues/$($a.id)/comments?fields=id,text,created,author(login)&`$top=200" $null) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.created $_.text $_.id } }
+  'comment-edit' = { param($a) $null = __TrYt 'POST' "issues/$($a.id)/comments/$($a.comment)?fields=id" @{ text = $a.text }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment
+  'comment-delete' = { param($a) $null = __TrYt 'DELETE' "issues/$($a.id)/comments/$($a.comment)" $null; "deleted comment $($a.comment)" }
   'create' = { param($a)
     $p = @(__TrYt 'GET' 'admin/projects?fields=id,shortName&$top=500' $null | Where-Object { $_.shortName -eq $a.list })[0]
     if (-not $p -and -not $__trDry) { throw "tracker (youtrack): no project '$($a.list)' (tracker.list = a project short name)" }

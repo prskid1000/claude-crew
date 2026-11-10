@@ -18,10 +18,15 @@ function Run($type, $fx, $id, $list, [scriptblock]$ok) {
  if (-not $pass) { $global:failed++ }
  "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker ${type}: view, status, comment, create, list"
 }
+function Cmt($type, $fx, $id, $cid) {   # comment ids, then a kit comment edited in place and a stale one deleted (lib.ps1 Set-TrackerKitComment, tracker uncomment)
+ try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $c = @(Get-TrackerComments $id); $null = __TrA 'comment-edit' @{ id = $id; comment = $c[0].id; text = 'new words' }; $null = __TrA 'comment-delete' @{ id = $id; comment = $c[0].id }; $pass = "$($c[0].id)" -eq $cid -and $global:log.Count -eq 3 } catch { $pass = $false; "  $type error: $_" }
+ if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker ${type}: comment ids, comment-edit, comment-delete"
+}
 $v = { param($r, $s, $n) $r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq $n -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq $s }
 Run linear ([ordered]@{ 'identifier title url description' = '{"data":{"issue":{"identifier":"E-1","title":"Bug","state":{"name":"In Progress"},"team":{"key":"E"},"children":{"nodes":[{"identifier":"E-2","title":"Sub"}]}}}}'
  'team \{ states' = '{"data":{"issue":{"team":{"states":{"nodes":[{"id":"s1","name":"Backlog"},{"id":"s2","name":"In Test"}]}}}}}'; '"stateId":"s2"' = '{"data":{"issueUpdate":{"success":true}}}'
  '"b":"two words"' = '{"data":{"commentCreate":{"success":true}}}'; 'teams\(filter' = '{"data":{"teams":{"nodes":[{"id":"t1"}]}}}'; 'issue\(id: \$id\) \{ id' = '{"data":{"issue":{"id":"uuid-1"}}}'
  'users\(filter' = '{"data":{"users":{"nodes":[{"id":"u1"}]}}}'; '"parentId":"uuid-1"' = '{"data":{"issueCreate":{"issue":{"identifier":"E-9"}}}}'
  '"eqIgnoreCase":"in test"' = '{"data":{"issues":{"nodes":[{"identifier":"E-3","title":"A","assignee":{"id":"u1","name":"Ann"}}]}}}' }) E-1 E { param($r, $l) & $v $r u1 E-9 }
+Cmt linear ([ordered]@{ 'comments\(first: 200\)' = '{"data":{"issue":{"comments":{"nodes":[{"id":"cm-7","body":"old","createdAt":"2026-01-01T00:00:00Z","user":{"name":"A"}}]}}}}'; '(?=.*commentUpdate)(?=.*cm-7)(?=.*new words)' = '{"data":{"commentUpdate":{"success":true}}}'; '(?=.*commentDelete)(?=.*cm-7)' = '{"data":{"commentDelete":{"success":true}}}' }) E-1 'cm-7'
 exit [int]($global:failed -gt 0)

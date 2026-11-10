@@ -1,7 +1,7 @@
 #Requires -Version 7
 # github (goody): GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L5 gh · L16 tracker · L61 git-host · L96 ci
+# Sections: L5 gh · L16 tracker · L64 git-host · L99 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -35,7 +35,10 @@ Register-KitAdapter 'tracker' 'github' @{
     __GhCli ($edit + @('--add-label', "$__trLp$name"))
   }
   'comment' = { param($a) $r, $n = __TrRef $a.id; __TrGhBody @('issue', 'comment', $n, '-R', $r) $a.text }
-  'comments' = { param($a) $r, $n = __TrRef $a.id; @((__TrJson (__GhCli @('issue', 'view', $n, '-R', $r, '--json', 'comments'))).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.createdAt $_.body } }
+  'comments' = { param($a) $r, $n = __TrRef $a.id; @((__TrJson (__GhCli @('issue', 'view', $n, '-R', $r, '--json', 'comments'))).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.createdAt $_.body $(if ("$($_.url)" -match '#issuecomment-(\d+)') { $Matches[1] }) } }
+  # a kit comment edited in place / a stale one removed (lib.ps1 Set-TrackerKitComment, tracker uncomment): REST id from the comment URL
+  'comment-edit' = { param($a) $r = (__TrRef $a.id)[0]; if ($__trDry) { return "DRYRUN: gh api -X PATCH repos/$r/issues/comments/$($a.comment)" }; __GhEnv; $x = __Cli gh "repos/$r/issues/comments/$($a.comment)" 'PATCH' @{ body = $a.text } -Json -Res; if (-not $x -or $x.code) { throw "tracker (github): comment $($a.comment) not edited: $($x.err)" }; "edited comment $($a.comment)" }
+  'comment-delete' = { param($a) $r = (__TrRef $a.id)[0]; if ($__trDry) { return "DRYRUN: gh api -X DELETE repos/$r/issues/comments/$($a.comment)" }; __GhEnv; $x = __Cli gh "repos/$r/issues/comments/$($a.comment)" 'DELETE' @{} -Res; if (-not $x -or $x.code) { throw "tracker (github): comment $($a.comment) not deleted: $($x.err)" }; "deleted comment $($a.comment)" }
   'create' = { param($a)
     $r = __TrRepoOf $a.list; $c = @('issue', 'create', '-R', $r, '--title', $a.name)
     if ($a.assignee) { $c += @('--assignee', $a.assignee) }

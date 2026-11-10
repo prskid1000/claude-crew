@@ -67,7 +67,9 @@ Register-KitAdapter 'tracker' 'gitlab' @{
     $res = __TrGl 'PUT' $p $b; if ($res) { "status of #$($res.iid): $name" }
   }
   'comment' = { param($a) $res = __TrGl 'POST' (__TrGlPath $a.id '/notes') @{ body = $a.text }; if ($res) { "commented on #$((__TrRef $a.id)[1])" } }
-  'comments' = { param($a) @(__TrGl 'GET' (__TrGlPath $a.id '/notes?sort=asc&per_page=100') $null) | Where-Object { $_ -and -not $_.system } | ForEach-Object { __TrComment $_.author.username $_.created_at $_.body } }
+  'comments' = { param($a) @(__TrGl 'GET' (__TrGlPath $a.id '/notes?sort=asc&per_page=100') $null) | Where-Object { $_ -and -not $_.system } | ForEach-Object { __TrComment $_.author.username $_.created_at $_.body $_.id } }
+  'comment-edit' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id "/notes/$($a.comment)") @{ body = $a.text }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment
+  'comment-delete' = { param($a) $null = __TrGl 'DELETE' (__TrGlPath $a.id "/notes/$($a.comment)") $null; "deleted comment $($a.comment)" }
   'create' = { param($a)
     $r = __TrRepoOf $a.list; $b = @{ title = $a.name; description = (__TrPartOf $a) + $a.description }
     if ($a.priority) { $b.labels = "priority:$(__TrPrio $a.priority)" }

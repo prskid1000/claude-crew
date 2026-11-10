@@ -1,7 +1,8 @@
 #Requires -Version 7
 # Goody tracker-azure: Azure Boards tracker (tracker.type azure).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/ (kitbag.py goody add tracker-azure); helpers come from lib.ps1.
-# helpers only this goody uses (kept out of the core lib.ps1)
+# Sections: L5 helpers · L17 rest · L25 html · L51 tracker
+# ---- helpers: only this goody uses them (kept out of the core lib.ps1)
 function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$File, [string]$CType) {
   if ($__trDry) { Write-Host "DRYRUN: $Method $Uri$(if ($null -ne $Body) { '  body=' + (__TrShort ($Body | ConvertTo-Json -Depth 20 -Compress)) })$(if ($File) { "  file=$File" })"; return $null }
   if (-not ($File -or $CType)) {
@@ -13,6 +14,7 @@ function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$
   else { $p.Body = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $Body -Depth 20 -Compress)); $p.ContentType = $CType }
   Invoke-RestMethod @p
 }
+# ---- rest: Azure DevOps REST calls
 # adapter:tracker/azure: Azure Boards work items (REST 7.1; tracker.org + tracker.project, AZURE_DEVOPS_EXT_PAT); list = area path; HTML text
 function __TrAz([string]$Method, [string]$Path, $Body, [string]$CType, [string]$File) {
   if (-not $__trDry -and -not $env:AZURE_DEVOPS_EXT_PAT) { throw 'tracker (azure): set AZURE_DEVOPS_EXT_PAT' }
@@ -20,6 +22,7 @@ function __TrAz([string]$Method, [string]$Path, $Body, [string]$CType, [string]$
   __TrHttp $Method "$u$(if ($u -match '\?') { '&' } else { '?' })api-version=7.1$(if ($Path -match '/comments') { '-preview.4' })" $Body (Get-KitAuth AZURE_DEVOPS_EXT_PAT basic) $File $CType
 }
 function __TrAzSet($Id, $F) { __TrAz 'PATCH' "wit/workitems/$Id" @(foreach ($k in @($F.Keys)) { @{ op = 'add'; path = "/fields/$k"; value = $F[$k] } }) 'application/json-patch+json' }
+# ---- html: Markdown <-> HTML texts
 # Markdown (lib.ps1 ConvertFrom-KitMarkdown) -> HTML: tables, lists, b / code / a, br (Markdown marks would show as typed)
 function __TrHtmlRuns([string]$s) {
   -join @(foreach ($r in ConvertFrom-KitMdInline $s) { $e = [Net.WebUtility]::HtmlEncode($r.text); switch ($r.mark) { 'br' { '<br>' } 'bold' { "<b>$e</b>" } 'code' { "<code>$e</code>" } 'link' { "<a href=`"$([Net.WebUtility]::HtmlEncode($r.url))`">$e</a>" } default { $e } } })
@@ -45,6 +48,7 @@ function __TrUnHtml([string]$t) {
         if ($rs.Count) { "`n" + ((@($rs[0], "|$('---|' * ([regex]::Matches($rs[0], '(?<!\\)\|').Count - 1))") + @($rs | Select-Object -Skip 1)) -join "`n") + "`n" }
       }) -replace '\n\n+(?=\| )', "`n").Trim()
 }
+# ---- tracker: the azure verbs
 Register-KitAdapter 'tracker' 'azure' @{
   'url' = { param($a) "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '<tracker.org>')/$(Get-KitSetting 'tracker.project' '<tracker.project>')/_workitems/edit/$($a.id)" }
   'view' = { param($a)
@@ -56,7 +60,9 @@ Register-KitAdapter 'tracker' 'azure' @{
   }
   'status' = { param($a) $null = __TrAzSet $a.id @{ 'System.State' = $a.status }; "status of $($a.id): $($a.status)" }
   'comment' = { param($a) $null = __TrAz 'POST' "wit/workItems/$($a.id)/comments" @{ text = (__TrHtml $a.text) }; "commented on $($a.id)" }
-  'comments' = { param($a) @((__TrAz 'GET' "wit/workItems/$($a.id)/comments" $null).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.createdBy.displayName $_.createdDate (__TrUnHtml $_.text) } }
+  'comments' = { param($a) @((__TrAz 'GET' "wit/workItems/$($a.id)/comments" $null).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.createdBy.displayName $_.createdDate (__TrUnHtml $_.text) $_.id } }
+  'comment-edit' = { param($a) $null = __TrAz 'PATCH' "wit/workItems/$($a.id)/comments/$($a.comment)" @{ text = (__TrHtml $a.text) }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment
+  'comment-delete' = { param($a) $null = __TrAz 'DELETE' "wit/workItems/$($a.id)/comments/$($a.comment)" $null; "deleted comment $($a.comment)" }
   'create' = { param($a)
     $o = @(foreach ($kv in ([ordered]@{ 'System.Title' = $a.name; 'System.Description' = (__TrHtml $a.description); 'System.AreaPath' = $a.list; 'System.AssignedTo' = $a.assignee; 'Microsoft.VSTS.Common.Priority' = $(if ($a.priority -match '^[1-4]$') { [int]$a.priority }) }).GetEnumerator()) { if ($kv.Value) { @{ op = 'add'; path = "/fields/$($kv.Key)"; value = $kv.Value } } })
     if ($a.parent) { $o += @{ op = 'add'; path = '/relations/-'; value = @{ rel = 'System.LinkTypes.Hierarchy-Reverse'; url = "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '')/_apis/wit/workItems/$($a.parent)" } } }

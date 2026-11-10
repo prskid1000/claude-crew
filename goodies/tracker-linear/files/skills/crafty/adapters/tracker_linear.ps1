@@ -35,7 +35,9 @@ Register-KitAdapter 'tracker' 'linear' @{
     __TrLinSet $a.id @{ stateId = $s.id }; "status of $($a.id): $($a.status)"
   }
   'comment' = { param($a) $null = __TrLin 'mutation($id: String!, $b: String!) { commentCreate(input: { issueId: $id, body: $b }) { success } }' @{ id = $a.id; b = $a.text }; "commented on $($a.id)" }
-  'comments' = { param($a) @((__TrLin 'query($id: String!) { issue(id: $id) { comments(first: 200) { nodes { body createdAt user { name } } } } }' @{ id = $a.id }).issue.comments.nodes) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.name $_.createdAt $_.body } }
+  'comments' = { param($a) @((__TrLin 'query($id: String!) { issue(id: $id) { comments(first: 200) { nodes { id body createdAt user { name } } } } }' @{ id = $a.id }).issue.comments.nodes) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.name $_.createdAt $_.body $_.id } }
+  'comment-edit' = { param($a) $null = __TrLin 'mutation($id: String!, $b: String!) { commentUpdate(id: $id, input: { body: $b }) { success } }' @{ id = $a.comment; b = $a.text }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment
+  'comment-delete' = { param($a) $null = __TrLin 'mutation($id: String!) { commentDelete(id: $id) { success } }' @{ id = $a.comment }; "deleted comment $($a.comment)" }
   'create' = { param($a)
     $in = @{ teamId = @((__TrLin 'query($k: String!) { teams(filter: { key: { eq: $k } }) { nodes { id } } }' @{ k = $a.list }).teams.nodes.id)[0]; title = $a.name; description = $a.description }
     if ($a.parent) { $in.parentId = (__TrLin 'query($id: String!) { issue(id: $id) { id } }' @{ id = $a.parent }).issue.id }

@@ -129,8 +129,8 @@ Update-KitTracking { param($t) $t.tasks['gone1'] = @{ task = 'gone1'; mrs = @('a
   $t.tasks['old3'] = @{ task = 'old3'; mrs = @('api!3'); done = $true; doneAt = $old }; $t.tasks['open4'] = @{ task = 'open4'; mrs = @('api!4') }; $t.tasks['qa5'] = @{ task = 'qa5'; mrs = @('api!5'); done = $true; doneAt = $d0; qaCovered = @('r1') } }
 $script:viewed = @(); function Get-TrackerTask($id) { $script:viewed += $id; if ($id -eq 'gone1') { throw "HTTP 404 'Task not found, deleted'" }; [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } }
 $o = Invoke-MarkInTest -Apply | Out-String
-"gone:$($o -match 'GONE  gone1' -and $o -match 'missing: gone1' -and -not (Read-KitTracking).tasks.ContainsKey('gone1') -and (Read-KitTracking).tasks.ContainsKey('ok2'))"
-"scope:$((@($script:viewed | Sort-Object) -join ',') -eq 'gone1,ok2,qa5' -and $o -match 'mark-in-test: 3 candidate')"
+"gone:$($o -match 'GONE  gone1' -and $o -match 'deleted in the tracker \(gone1\)' -and -not (Read-KitTracking).tasks.ContainsKey('gone1') -and (Read-KitTracking).tasks.ContainsKey('ok2'))"
+"scope:$((@($script:viewed | Sort-Object) -join ',') -eq 'gone1,ok2,qa5' -and $o -match "mark-in-test: 3 task\(s\) checked \(3 promoted by the kit in 14 d, subtasks included\): 2 now 'inProgress', 1 deleted in the tracker \(gone1\)")"
 $script:viewed = @(); $tq = Invoke-MarkInTest -Task old3 | Out-String; "task:$(($script:viewed -join ',') -eq 'old3' -and $tq -match "SKIP  old3  status 'inProgress', not promoted")"
 Update-KitTracking { param($t) $t.tasks['api!4'] = @{ task = 'api!4'; mrs = @('api!4') } }   # an MR ref registered as a task
 function Get-TrackerTask($id) { $script:viewed += $id; if ($id -ne 'nil1') { [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } } }; $nq = Invoke-MarkInTest -Task nil1 | Out-String
@@ -157,7 +157,7 @@ Update-KitTracking { param($t) $t.tasks.d1 = @{ task = 'd1'; mrs = @('api!1'); d
 $script:planOut = @('WATCH background d failed: boom'); $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)   # a deployed check with no JSON: flagged, not stamped (asked again)
 "live:$(@($r.what -match '^deployed check d1: background d failed').Count -and -not (Read-KitTracking).tasks.d1.liveCheckedAt)"
 Set-KitTaskFields d1 @{ inTestDue = $now.ToString('o') }; Update-KitTracking { param($t) $t.tasks.d2 = @{ task = 'd2'; inTestDue = $now.ToString('o') } }
-function Invoke-Bounded { param($s, $a) if ($a[1] -eq 'intest') { $script:it = $a; @('MARKED  d2  in test (api!2 on stage) | n', 'ERROR d1  could not set status: x', 'mark-in-test: 2 candidate(s)') } }
+function Invoke-Bounded { param($s, $a) if ($a[1] -eq 'intest') { $script:it = $a; @('MARKED  d2  in test (api!2 on stage) | n', 'ERROR d1  could not set status: x', 'mark-in-test: 2 task(s) checked (the tasks named (-Task / -Mrs)): 1 moved to in test, 1 blocked (d1: x)') } }
 $r = @(Get-KitSuperviseFlagsDeploys -AutoFix); $tk = (Read-KitTracking).tasks
 "intest:$(($script:it -join ' ') -eq 'deploy intest -Apply -Task d1,d2' -and @($r | Where-Object { "$($_.what)" -match '^auto-fixed: MARKED  d2 ' }).Count -eq 1 -and -not @($r | Where-Object { "$($_.what)" -match 'd1' }).Count -and $tk.d1.inTestDue -and -not $tk.d2.inTestDue)"
 $gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())   # trigger ask, the rest real
@@ -186,7 +186,7 @@ $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
 $KitCmd.qa = $args[1]
 function Get-TrackerTask($id) { [pscustomobject]@{ id = $id; name = "n$id"; status = 'promoted' } }; function Test-TrackerStatus { $true }
-function Set-TrackerStatus { }; function Add-TrackerComment { }
+function Set-TrackerStatus { }; function Add-TrackerComment { $global:kc += 'appended' }; function Set-TrackerKitComment($i, $kd) { $global:kc += "$i|$kd" }; $global:kc = @()
 $tbs = @{ 1 = 'st/b'; 2 = 'st/b'; 3 = 'st/b'; 4 = 'main'; 5 = 'main' }; $fs = @{ 1 = 'a/x.java'; 4 = @('b/api/x.java', 'a/docs/r.md'); 5 = 'common/lib/x.java' }
 function Invoke-HostApi([string]$Path) { $i = [int]($Path -replace '^.*merge_requests/(\d+).*$', '$1'); if ($Path -match '/changes(\?|$)') { [pscustomobject]@{ changes = @(@($fs[$i]) | ForEach-Object { [pscustomobject]@{ new_path = $_ } }) } } else { [pscustomobject]@{ target_branch = $tbs[$i] } } }
 Write-KitLog deploy-log record ([ordered]@{ target = 'b-st'; mrs = @('jc!2'); by = 'opsy' }); Write-KitLog deploy-log record ([ordered]@{ target = 'a-st'; mrs = @('jc!3'); by = 'opsy' })   # the wrong target proves nothing
@@ -197,10 +197,13 @@ function Has($n, $rx) { [bool]@($o | Where-Object { $_ -match "^$n=$rx" }).Count
 "wait:$(Has 3 'WAIT .*jc!3 not live on: b-st \(NOT-DEPLOYED: not on b-st yet\)')"
 "paths:$(Has 4 'MARK .*jc!4 on b-st\b')"
 "shared:$(Has 5 'WAIT .*jc!5 not live on: a-st \(NOT-DEPLOYED: not on a-st yet\)')"
+$null = Invoke-MarkInTest -Task t1 -Apply -Quiet; "keyed:$("$global:kc" -eq 't1|comment-intest')"
+$fs = Format-KitInTestSummary 63 62 1 14 $false ([ordered]@{ 'moved to in test' = @('a'); 'already closed' = @('b', 'c'); 'not deployed yet' = @('d'); 'blocked' = @('e: no status') })
+"summary:$($fs -eq 'mark-in-test: 63 task(s) checked (62 promoted by the kit in 14 d, subtasks included, 1 more assigned to you in trackerLists): 1 moved to in test, 2 already closed, 1 not deployed yet, 1 blocked (e: no status)')"
 '@
 & $J @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('jc!1') }; t2 = @{ task = 't2'; mrs = @('jc!2') }; t3 = @{ task = 't3'; mrs = @('jc!3') }; t4 = @{ task = 't4'; mrs = @('jc!4') }; t5 = @{ task = 't5'; mrs = @('jc!5') } }; automerge = @{} } $tf
 $res = Invoke-PsTest 'intest-gate' $ug @($O, $fq2)
-Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside (#)' @('live', 'record', 'wait', 'paths', 'shared') 20
+Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside; the in-test note is ONE comment edited in place; the summary counts each outcome and says where the tasks came from (#)' @('live', 'record', 'wait', 'paths', 'shared', 'keyed', 'summary') 20
 Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests

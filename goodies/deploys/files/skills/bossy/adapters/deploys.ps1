@@ -2,10 +2,10 @@
 deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec <deploy.deployedTimeoutSec, 100>]   merged-not-deployed MRs per test env, trigger, window
   bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
-  bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest
+  bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L92 intest · L195 deploy · L338 supervise
+Sections: L13 helpers · L92 intest · L206 deploy · L349 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -109,6 +109,7 @@ if ($FromMrs.Count -and -not $Task.Count) { return }
 # the owner (tracker.owner); -Task: those
 $cand = [ordered]@{}   # tracking: tasks/<id>.json (skills/bossy/STATE.md)
 foreach ($id in @($track.Keys)) { $o = $track[$id]; if ($Task.Count -or ($o.done -and $o.doneAt -and ((Get-Date) - [datetime]$o.doneAt).TotalDays -le $Days)) { $cand[$id] = @{ mrs = @($o.mrs); name = '' } } }
+$nKit = $cand.Count; $nList = 0   # the summary says where the checked tasks came from
 $ownerId = try { "$(Get-TrackerOwner)".Trim() } catch { '' }
 $lists = @(Get-KitValue 'trackerLists' @()) | Where-Object { $_ } | Select-Object -Unique
 if ($lists.Count -and -not $ownerId -and -not $Task.Count) { Out-Line "SKIP  trackerLists: the owner is unknown (tracker.owner), so other people's tasks stay out" }
@@ -117,7 +118,7 @@ elseif ($lists.Count) {
     $arr = try { @(Get-TrackerTasks $l 'promoted') } catch { Write-Warning "mark-in-test: list $l lookup failed: $($_.Exception.Message)"; @() }
     foreach ($t in $arr) {
       if ($ownerId -and -not (@($t.assignees | ForEach-Object { "$($_.id)" }) -contains $ownerId)) { continue }
-      if (-not $cand.Contains($t.id)) { $cand[$t.id] = @{ mrs = @(); name = $t.name } } elseif (-not $cand[$t.id].name) { $cand[$t.id].name = $t.name }
+      if (-not $cand.Contains($t.id)) { $cand[$t.id] = @{ mrs = @(); name = $t.name }; $nList++ } elseif (-not $cand[$t.id].name) { $cand[$t.id].name = $t.name }
     }
   }
 }
@@ -136,12 +137,15 @@ function Get-MrPaths([string]$mr) {
   $pathMemo[$mr]
 }
 
-$marked = 0; $wait = 0; $gone = @()
+$gone = @(); $tally = [ordered]@{}   # outcome -> task ids (and why)
+function Add-Tally([string]$Outcome, [string]$Detail) { if (-not $tally.Contains($Outcome)) { $tally[$Outcome] = [Collections.Generic.List[string]]::new() }; $tally[$Outcome].Add($Detail) }
 foreach ($id in $cand.Keys) {
   # a task deleted in the tracker: skipped, reported, dropped from tracking; another task's failure never ends the batch
-  $info = try { Get-TrackerTask $id } catch { if (Remove-KitGoneTask $id $_) { $gone += $id; Out-Line "GONE  $id  deleted in the tracker: skipped, no longer tracked" } else { Out-Line "ERROR $id  tracker view failed: $($_.Exception.Message)" }; continue }
-  if (-not $info) { if ($Task.Count) { Out-Line "SKIP  $id  the tracker returned nothing" }; continue }
-  if (-not (Test-TrackerStatus ([string]$info.status) 'promoted')) { if ($Task.Count) { Out-Line "SKIP  $id  status '$($info.status)', not promoted" }; continue }  # never override a person
+  $info = try { Get-TrackerTask $id } catch { if (Remove-KitGoneTask $id $_) { $gone += $id; Add-Tally 'deleted in the tracker' $id; Out-Line "GONE  $id  deleted in the tracker: skipped, no longer tracked" } else { Add-Tally 'unreadable' "$id`: $($_.Exception.Message)"; Out-Line "ERROR $id  tracker view failed: $($_.Exception.Message)" }; continue }
+  if (-not $info) { Add-Tally 'unreadable' "$id`: the tracker returned nothing"; if ($Task.Count) { Out-Line "SKIP  $id  the tracker returned nothing" }; continue }
+  if (-not (Test-TrackerStatus ([string]$info.status) 'promoted')) {   # never override a person
+    Add-Tally $(if (Test-TrackerStatus ([string]$info.status) 'closed') { 'already closed' } elseif (Test-TrackerStatus ([string]$info.status) 'inTest') { 'already in test' } else { "now '$($info.status)'" }) $id
+    if ($Task.Count) { Out-Line "SKIP  $id  status '$($info.status)', not promoted" }; continue }
   $name = if ($info.name) { $info.name } else { $cand[$id].name }
   $short = if ($name.Length -gt 70) { $name.Substring(0, 70) } else { $name }
   $mrs = @($cand[$id].mrs | Where-Object { $_ })
@@ -153,7 +157,7 @@ foreach ($id in $cand.Keys) {
     }
     $mrs = @($mrs | Select-Object -Unique)
   }
-  if (-not $mrs.Count) { Out-Line "SKIP  $id  no MRs found | $short"; continue }
+  if (-not $mrs.Count) { Add-Tally 'no MRs found' $id; Out-Line "SKIP  $id  no MRs found | $short"; continue }
   $live = @(); $why = $null
   foreach ($mr in $mrs) {
     $rows = @(& $KitCmd.qa deployed -Mrs $mr -Json -Exclude (Get-NoTestRx) 2>$null | Out-String | ConvertFrom-Json)
@@ -181,15 +185,22 @@ foreach ($id in $cand.Keys) {
     $r0 = $rows | Where-Object { $t0 = $_.target; $_.state -notin 'DEPLOYED', 'N/A' -and (-not $need.Count -or @($need | Where-Object { $t0 -match $_ }).Count) } | Select-Object -First 1
     $why = "$mr not live on: " + $(if ($missing.Count) { $missing -join ', ' } else { 'a test env' }) + $(if ($r0) { " ($($r0.state): $($r0.detail))" } else { '' }); break
   }
-  if ($why) { $wait++; Out-Line "WAIT  $id  $why | $short"; continue }
-  if (-not $Apply) { Out-Line "MARK  $id  would set in test ($($live -join '; ')) | $short"; continue }
+  if ($why) { Add-Tally 'not deployed yet' $id; Out-Line "WAIT  $id  $why | $short"; continue }
+  if (-not $Apply) { Add-Tally 'would move to in test (no -Apply)' $id; Out-Line "MARK  $id  would set in test ($($live -join '; ')) | $short"; continue }
   try {
     Set-TrackerStatus $id 'inTest'
-    Add-TrackerComment $id ("In test: every MR is deployed on a test env (checked " + [datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm') + " UTC): " + ($live -join '; ') + '.')
-    $marked++; Out-Line "MARKED  $id  in test ($($live -join '; ')) | $short"
-  } catch { Out-Line "ERROR $id  could not set status: $($_.Exception.Message)" }
+    $null = Set-TrackerKitComment $id 'comment-intest' ("In test: every MR is deployed on a test env (checked " + [datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm') + " UTC): " + ($live -join '; ') + '.')
+    Add-Tally 'moved to in test' $id; Out-Line "MARKED  $id  in test ($($live -join '; ')) | $short"
+  } catch { Add-Tally 'blocked' "$id`: $($_.Exception.Message)"; Out-Line "ERROR $id  could not set status: $($_.Exception.Message)" }
 }
-if (-not $Quiet -or $gone.Count) { "mark-in-test: $($cand.Count) candidate(s), $marked marked, $wait waiting on a deploy$(if ($gone.Count) { ", $($gone.Count) deleted in the tracker (missing: $($gone -join ', '))" })" }
+if (-not $Quiet -or $gone.Count -or $tally.Contains('blocked') -or $tally.Contains('unreadable')) { Format-KitInTestSummary $cand.Count $nKit $nList $Days ([bool]$Task.Count) $tally }
+}
+# "mark-in-test: <n> tasks checked (<where from>): <n> <outcome>, ..."; ids where a person acts (blocked, unreadable, deleted)
+function Format-KitInTestSummary([int]$Total, [int]$FromKit, [int]$FromLists, [int]$Days, [bool]$Named, $Tally) {
+  $src = if ($Named) { 'the tasks named (-Task / -Mrs)' } else { @(if ($FromKit) { "$FromKit promoted by the kit in $Days d, subtasks included" }; if ($FromLists) { "$FromLists more assigned to you in trackerLists" }) -join ', ' }
+  $order = @('moved to in test', 'would move to in test (no -Apply)', 'already closed', 'already in test') + @($Tally.Keys | Where-Object { $_ -like 'now *' }) + @('not deployed yet', 'no MRs found', 'blocked', 'unreadable', 'deleted in the tracker')
+  $parts = foreach ($k in $order | Where-Object { $Tally.Contains($_) }) { "$($Tally[$k].Count) $k$(if ($k -in 'blocked', 'unreadable', 'deleted in the tracker') { " ($($Tally[$k] -join '; '))" })" }
+  "mark-in-test: $Total task(s) checked$(if ($src) { " ($src)" }): $(if ($parts) { $parts -join ', ' } else { 'nothing to do' })"
 }
 
 # ---- deploy: plan, request, record
