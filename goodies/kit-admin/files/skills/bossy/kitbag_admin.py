@@ -374,10 +374,10 @@ def cmd_recover(kit, fix):
         idle_h = (time.time() - max((osp.getmtime(osp.join(path, f)) for f in os.listdir(path)), default=0)) / 3600 if osp.isdir(path) else 99
         if rc_m == 0 and not wd.strip():
             if fix and idle_h > 2:
-                rc, _, e = git(kit, 'worktree', 'remove', path)
+                rc, _, e = pwsh(osp.join(kit, 'skills', 'crafty', 'crafty.ps1'), 'wt', 'remove', '-Dir', path)   # unlinks junctions first, deletes the merged branch
                 out('FIX' if rc == 0 else 'ACT', 'RECOVER-WORKTREE', path, f'kit worktree of finished branch {br} removed' + ('' if rc == 0 else f' failed: {e[:120]}'))
             elif idle_h > 2:
-                out('ACT', 'RECOVER-WORKTREE', path, f'kit branch {br} has nothing beyond origin/main (merged or never used) and the worktree is clean (idle {idle_h:.0f} h)', f'git -C {kit} worktree remove {path}')
+                out('ACT', 'RECOVER-WORKTREE', path, f'kit branch {br} has nothing beyond origin/main (merged or never used) and the worktree is clean (idle {idle_h:.0f} h)', f'pwsh -File {osp.join(kit, "skills", "crafty", "crafty.ps1")} wt remove -Dir {path}')
             else:
                 out('INFO', 'RECOVER-WORKTREE', path, f'kit branch {br} has nothing new for origin/main, but the worktree was touched {idle_h * 60:.0f} min ago (in use?): leave it')
         else:
