@@ -169,6 +169,7 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: auto-fill, a min width per item,
 optional max across), never one full-width row per item; tables only for many-column rows (agents, shells, parameters).
+Content never truncates; it wraps (every kit page: `kitbag.py ui-check <page>` fails on clipped text at 1366, 900 and 390 px).
 
 ## Goodies
 Optional parts (more trackers, git hosts, CI and report types, stack presets, the local env, phone lanes, deploys, kit admin and
@@ -289,7 +290,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kitbag.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 354000 · all tests 84000 · files: 33 content + 9 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 389000 · all tests 84000 · files: 33 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, a goody's in `goodies/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name

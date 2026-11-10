@@ -11,6 +11,7 @@
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show] · budget raise [-Tests] -Reason "<why>"   # the kit total (-Tests: tests/) vs its cap; raise: goody kit-admin
   python -X utf8 kitbag.py state lint [--since <min>] [--json]   # .state / .runtime files vs _paths.schema (skills/bossy/STATE.md)
+  python -X utf8 kitbag.py ui-check <page.html> [--widths 1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
   python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N] [--dry-run]
 
 lint problem codes: each message says what is wrong and the fix; skills/bossy/kit-admin.md (goody kit-admin) lists them.
@@ -18,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L32 paths · L83 state · L138 kitlog · L237 load · L633 lint · L1015 README graph · L1117 lint command · L1153 audit ·
-  L1262 registry · L1597 prose · L1742 sections · L1872 budget · L1896 goodies · L2403 state lint · L2475 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1016 README graph · L1118 lint command · L1250 audit ·
+  L1359 registry · L1694 prose · L1839 sections · L1969 budget · L1993 goodies · L2500 state lint · L2572 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1148,7 +1149,103 @@ def cmd_lint(a):
             print(f'WARN {c:10} {w}: {m}')
         print(f'kitbag lint: {len(problems)} problem(s) in {kit} ({len(k.files)} files, {len(k.skills)} skills, '
          f'{len(k.workflows)} workflows, {len(k.agents)} agents)')
+    for c, w, m in ui_check_warns(kit):   # stderr: the pre-commit hook drops lint's stdout
+        print(f'WARN {c:10} {w}: {m}', file=sys.stderr)
     return 1 if problems and '--warn' not in flags else 0
+
+UI_MARK = '<!doctype' + ' html'   # split: kitbag.py itself is no page generator
+
+def ui_check_stamp(kit=None):
+    return osp.join(kit_path('shots', kit=kit), 'ui-check', 'stamp.json')
+
+def ui_check_warns(kit):
+    """WARN UI-CHECK: a changed page generator (a script holding UI_MARK; spec.mjs only seeds a test DOM) newer than the last passing ui-check."""
+    code, out, _ = git(kit, 'diff', 'HEAD', '--name-only')
+    if code:
+        return []
+    stamp = ui_check_stamp(kit)
+    since = osp.getmtime(stamp) if osp.isfile(stamp) else 0
+    hits = []
+    for rel in out.splitlines():
+        p = osp.join(kit, rel)
+        if rel.endswith(('.ps1', '.py', '.mjs', '.js')) and not rel.startswith('tests/') and rel != 'skills/crafty/spec.mjs' and osp.isfile(p) and osp.getmtime(p) > since:
+            with open(p, encoding='utf-8', errors='replace') as fh:
+                if UI_MARK in fh.read().lower():
+                    hits.append(rel)
+    return [('UI-CHECK', r, 'page generator changed since the last passing ui-check -> kitbag.py ui-check <its page>, read the 3 shots, then commit') for r in hits]
+
+# node, cwd skills/pokey (its puppeteer-core): per width x theme x state (selectors clicked in order, fresh storage), every <details>
+# open: a full-page shot + the text that is clipped (ellipsis, line-clamp, clip-path, hidden overflow; wider than its box outside a scroll
+# box) or squeezed (a few letters a line)
+PAGE_JS = r'''import puppeteer from 'puppeteer-core'
+import { pathToFileURL } from 'node:url'
+const [bm, file, ws, st, out, stem] = process.argv.slice(1), { CHROME } = await import(bm)
+const scan = () => {
+  document.querySelectorAll('details').forEach((d) => { d.open = true })
+  const res = [], name = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '')
+  for (const e of document.querySelectorAll('body, body *')) {
+    if (e.closest('svg,script,style,noscript,#tip') || !e.getClientRects().length) continue
+    const cs = getComputedStyle(e), txt = (e.innerText || '').trim().replace(/\s+/g, ' '), fs = parseFloat(cs.fontSize), lh = parseFloat(cs.lineHeight) || fs * 1.2
+    if (!txt) continue
+    const why = cs.textOverflow === 'ellipsis' ? 'text-overflow: ellipsis' : cs.webkitLineClamp && cs.webkitLineClamp !== 'none' ? `line-clamp ${cs.webkitLineClamp}`
+      : cs.clipPath !== 'none' ? `clip-path ${cs.clipPath}` : /hidden|clip/.test(cs.overflowY) && e.scrollHeight > e.clientHeight + 1 ? `scrollHeight ${e.scrollHeight} > clientHeight ${e.clientHeight}`
+      : /auto|scroll/.test(cs.overflowX) || cs.display === 'inline' ? '' : e.scrollWidth > e.clientWidth + 1 ? `scrollWidth ${e.scrollWidth} > clientWidth ${e.clientWidth}`
+      : e.clientWidth > 0 && e.clientWidth < 4 * fs && txt.length > 6 && e.clientHeight > 3 * lh ? `squeezed: ${e.clientWidth} px wide, ${Math.round(e.clientHeight / lh)} lines` : ''
+    if (why) res.push({ el: name(e), why, text: txt.slice(0, 80) })
+  }
+  return res
+}
+if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
+const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
+try {
+  for (const width of ws.split(',').map(Number)) for (const theme of ['light', 'dark']) for (const [si, clicks] of JSON.parse(st).entries()) {
+    const ctx = await b.createBrowserContext(), page = await ctx.newPage(), clipped = []
+    await page.setViewport({ width, height: width < 600 ? 844 : 900 }); await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }])
+    await page.goto(pathToFileURL(file).href, { waitUntil: 'load' })
+    for (const sel of clicks) await page.click(sel).catch((e) => clipped.push({ el: sel, why: `click failed: ${e.message}`, text: '' }))
+    await new Promise((r) => setTimeout(r, 400))   // panels slide in, layouts settle
+    clipped.push(...await page.evaluate(scan))
+    const shot = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}.png`
+    await page.screenshot({ path: shot, fullPage: true })
+    res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot, clipped }); await ctx.close()
+  }
+} finally { await b.close() }
+console.log(JSON.stringify(res))'''
+
+def cmd_ui_check(a):
+    """ui-check <page.html> [--widths 1366,900,390] [--click 'sel,sel;sel']: PAGE_JS (light + dark; each --click state after
+    the page as loaded); exit 1 on clipped text or a failed click, 0 = pass + stamp."""
+    flags, rest = parse_opts(a, {'--widths', '--click'})
+    widths = str(flags.get('--widths') or '1366,900,390')
+    if len(rest) != 1 or not osp.isfile(rest[0]) or not re.fullmatch(r'\d+(,\d+)*', widths):
+        print('usage: kitbag.py ui-check <page.html> [--widths 1366,900,390] [--click "<selector>,<selector>;<selector>"]', file=sys.stderr)
+        return 2
+    states = [[]] + [[x.strip() for x in s.split(',') if x.strip()] for s in str(flags.get('--click') or '').split(';') if s.strip()]
+    pokey, shots = osp.join(KIT_DIR, 'skills', 'pokey'), osp.join(kit_path('shots', create=True), 'ui-check')
+    os.makedirs(shots, exist_ok=True)
+    stem = re.sub(r'\.html?$', '', osp.basename(rest[0]), flags=re.I)
+    code, out, err = run(['node', '--input-type=module', '-e', PAGE_JS, Path(pokey, 'browser.mjs').as_uri(), osp.abspath(rest[0]), widths,
+                          json.dumps(states), shots, stem], cwd=pokey, timeout=600)
+    try:
+        res = json.loads(out.splitlines()[-1])
+    except (ValueError, IndexError):
+        print(f'kitbag ui-check: the headless render failed (exit {code}): {err or out}', file=sys.stderr)
+        return 2
+    bad = 0
+    for r in res:
+        print(f"{r['width']} px {r['theme']} {r['state']}: {r['shot']} · {len(r['clipped'])} clipped")
+        for c in r['clipped']:
+            print(f"  CLIP {c['el']}: {c['why']} ({c['text']})")
+        bad += len(r['clipped'])
+    if bad:
+        print(f'kitbag ui-check: {bad} issue(s): content wraps, never truncates (README "Live supervisor dashboard")')
+        return 1
+    stamp = ui_check_stamp()
+    os.makedirs(osp.dirname(stamp), exist_ok=True)
+    with open(stamp, 'w', encoding='utf-8') as fh:
+        json.dump({'at': datetime.datetime.now().astimezone().isoformat(), 'page': osp.abspath(rest[0]), 'widths': widths}, fh)
+    print('kitbag ui-check: no clipped text; now read each shot (overlap, gaps, contrast) before the commit')
+    return 0
 
 # ---- audit: findings, shared helpers, stamp (scan: goody kit-admin)
 # user-named subtrees (or samples): never "missing"
@@ -2477,9 +2574,9 @@ def collections_counter(items):
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
   'budget': ({'-Tests', '--tests'}, {'-Reason', '-reason', '--reason'}, False), 'goody': ({'--auto', '--dry-run'}, {'--days', '--ref'}, False), 'sections': ({'--fix'}, set(), False),
-  'state': ({'--json'}, {'--since'}, False)}
-NAMED_ARGS = ('prose', 'budget', 'goody', 'sections', 'new', 'rename', 'remove', 'state')   # positionals: files, verbs or names, never a kit dir
-COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'goody': cmd_extra, 'sections': cmd_sections, 'state': cmd_state}
+  'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False)}
+NAMED_ARGS = ('prose', 'budget', 'goody', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check')   # positionals: files, verbs or names, never a kit dir
+COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'goody': cmd_extra, 'sections': cmd_sections, 'state': cmd_state, 'ui-check': cmd_ui_check}
 
 def parse_opts(a, valued=()):
     """(flags, positionals) of arguments check_args accepted: a switch maps to True, a value flag to its value."""

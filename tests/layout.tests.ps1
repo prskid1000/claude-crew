@@ -53,5 +53,29 @@ $gridWant = @('kpis', 'flags', 'info', 'gauges', 'res', 'stats', 'toks', 'kv' | 
 $gridOld = @('<section class=kpis>', '<div class=gauges>', '<div class=stats>', 'class=toks>', '<span class=tn>', '<th>Resource</th>', '<th>Key</th><th>Value</th>', 'grid-template-columns:minmax(0,240px)' | Where-Object { $gridPage.Contains($_) })
 Expect "supervise page: list sections use the grid helper (missing: $gridWant), no old list pattern (found: $gridOld); tokens 3 across max with a full-width bar" (
   -not $gridWant.Count -and -not $gridOld.Count -and $gridPage -match "cg toks' style='--cmin:\d+px;--cmax:3'><div class='ci f' title='r1 &#183; 2k of 10k tokens'><div class=tn>r1</div><div class=sm>2k of 10k tokens</div><span class=bar>" -and $gridPage -match '\.cg\{display:grid;[^}]*repeat\(auto-fill,minmax\(min\(100%')
+# kitbag.py ui-check (headless, light + dark): an ellipsis, an overflow or a squeezed cell fails; the dashboard with long names and 10
+# holders passes at 1366 / 900 / 390 and stamps; lint nudges (UI-CHECK) on a changed page generator newer than the stamp
+if (Use-BrowserKit) {
+  $uiKb = Join-Path $k 'skills/bossy/kitbag.py'; $uiBad = Join-Path (Kd) 'clip.html'
+  [IO.File]::WriteAllText($uiBad, '<!doctype html><body><div style="width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">browser app-staging·tenant1·admin</div><div style="width:90px;white-space:nowrap">test:W2P, test:W2U, test:W2R</div><table style="width:60px;table-layout:fixed"><tr><td style="width:20px;overflow-wrap:anywhere">abcdefghijklmnop</td><td>x</td></tr></table><p style="width:90px;height:16px;overflow:hidden">one two three four five six</p><p style="width:90px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1">clamped to one line of text</p></body>')
+  $uiBadOut = @(& $py -X utf8 $uiKb ui-check $uiBad --widths 390 2>&1); $uiBadCode = $LASTEXITCODE
+  Expect "ui-check: ellipsis, overflow, hidden height, line-clamp and a squeezed cell fail in both themes (exit $uiBadCode)" ($uiBadCode -eq 1 -and @($uiBadOut -match 'CLIP div: text-overflow: ellipsis').Count -eq 2 -and @($uiBadOut -match 'CLIP div: scrollWidth').Count -eq 2 -and @($uiBadOut -match 'CLIP td: squeezed').Count -eq 2 -and @($uiBadOut -match 'CLIP p: scrollHeight').Count -eq 2 -and @($uiBadOut -match 'CLIP p: line-clamp 1').Count -eq 2)
+  git init -q $k; git -C $k add skills/bossy; git -C $k commit -q -m base; Add-Content (Join-Path $k 'skills/bossy/adapters/supervise_resources.ps1') '# touched'
+  $uiWarn = { & $py -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print([w for _, w, _ in kitbag.ui_check_warns(sys.argv[2])])" (Join-Path $k 'skills/bossy') $k }
+  $uiWarnBefore = & $uiWarn
+  $uiPage = Join-Path (Kd) 'dash.html'
+  Invoke-PsTest uipage @'
+. $args[0]
+$holders = (1..10 | ForEach-Object { "test:W2$([char](64 + $_))-checky-lane-$_" }) -join ', '
+$res = @(@{ name = 'browser app-staging·tenant1·admin'; by = $holders; gb = 2.4 }, @{ name = 'lock C:/work/.worktrees/f-TASK-1234-copy-orders-with-rerating-java/target'; by = 'devy-1; waiting: devy-2, devy-3'; gb = 0 })
+$sh = @(@{ pid = 123456; owner = 'W2R-checky-2026-11-10-app-staging-intest-verify'; age = 42; state = 'STUCK'; dir = 'C:/work/.worktrees/f-TASK-1234-copy-orders/app/api'; cmd = 'pwsh -NoProfile -File C:/work/.claude/skills/crafty/crafty.ps1 check -Dir C:/work/.worktrees/f-TASK-1234-copy-orders/app/api'; next = 'kill' })
+$ag = @(@{ name = 'wf_build_2026_11_10_super_long_workflow_identifier (workflow)'; run = '2026-11-10-app-staging-intest-and-a-long-run-name'; state = 'ACTIVE'; task = 'TASK-1234 Copy orders · steps 3/9 · 412k tokens of 967k'; since = '2026-01-02T09:10:00'; last = '2026-01-02T09:58:00'; doing = 'running crafty.ps1 check on C:/work/.worktrees/f-TASK-1234-copy-orders-with-rerating-java' })
+$st = @{ settings = @{ 'supervise.paceRules' = '{"busy":5,"some":"long-value-without-spaces-0123456789abcdefghijklmnopqrstuvwxyz"}' }; params = @(@{ key = 'supervise.heartbeatMinutes.withAVeryLongKeyName'; ctx = 'android-swarm|lane-3'; value = '15'; source = 'approved · kit.local.json'; learned = '12'; changed = '2026-01-02T09:00:00'; why = 'owner pinned it' }) }
+Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; flags = @(@{ level = 'ACT'; what = 'STUCK W2R-checky-2026-11-10-app-staging-intest-verify-very-long-agent-name: no progress for 41 min'; action = 'stop it' }); agents = $ag; resources = $res; shells = $sh; mem = @{ TotalGB = 31.7; AvailGB = 9.4 }; stats = $st } | ConvertTo-Json -Depth 8 | ConvertFrom-Json) | Set-Content -LiteralPath $args[1] -Encoding utf8
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uiPage) | Out-Null
+  $uiOut = @(& $py -X utf8 $uiKb ui-check $uiPage 2>&1); $uiCode = $LASTEXITCODE; $uiShots = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*.png' -ErrorAction SilentlyContinue)
+  Expect "ui-check: the dashboard (long names, 10 holders) has no clipped text at 1366 / 900 / 390, light + dark, 6 shots; UI-CHECK nudge before the stamp only (exit $uiCode, $($uiShots.Count) shots, before $uiWarnBefore; $($uiOut | Where-Object { $_ -match 'CLIP' } | Select-Object -First 3))" (
+    $uiCode -eq 0 -and $uiShots.Count -eq 6 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise_resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
+}
 Remove-TestKit $k
 Complete-Tests

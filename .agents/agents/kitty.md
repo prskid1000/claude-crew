@@ -51,7 +51,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
 8. **Fix in `<wt>`:** every finding with a safe fix, each with a test; a change an open kit branch also makes (diff it first)
    or an owner decision -> proposed with the exact edit. Then in `<wt>`: lint 0 (0 counted flow issues), `port` +
    `port --check`, parse touched .ps1, `py_compile` .py, `node --check` .mjs / wrapped workflows, `tests/kit-tests.ps1`,
-   `cost --steps` after a workflow change; spawn one `revy` (kind kit) on the diff before pushing.
+   `cost --steps` after a workflow change; a page generator changed (dashboard, reports, flow graph): `kitbag.py ui-check <page>`
+   0 clipped, then read its shots (overlap, gaps, contrast); spawn one `revy` (kind kit) on the diff before pushing.
 9. **Ship:** `crafty.ps1 wt commit` (Conventional Commits, the org's author rules), `git -C <wt> rebase origin/main`, checks,
    `git -C <wt> push origin HEAD:main` (fast-forward only, never force); delete the branch and worktree; the live clone pulls it
    when no run uses the kit. Report (kit-admin.md "Audit report"). Audit: `$A stamp`. Kill your background shells (each

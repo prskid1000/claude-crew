@@ -13,7 +13,8 @@ Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md`; 
 - Limits per artefact: table `skills/crafty/templates.md` "Writing standards", checked by `kitbag.py prose --kind <kind> <file>`.
   Fewer words, same facts: dense and specific. Code comment: 1 line saying why.
 - Cut greetings, preamble, recaps, hedges, praise, filler, closing summaries. A longer-than-needed text is a defect.
-- Chat to owner: dense text only (`<thing> <state/action> <reason>` -> next step); no Mermaid, SVG gauges or box art in chat turns. Visuals live in dashboard (supervise-report.html) and report artifacts.
+- Chat to owner: dense text only (`<thing> <state/action> <reason>` -> next step); no Mermaid, SVG gauges or box art in chat turns. Visuals live in dashboard (supervise-report.html) and report artifacts:
+  text wraps, never truncates; a changed page ships after `kitbag.py ui-check <page>` passes, shots read.
 - **Corrections:** a correction applies to its whole group: when the owner corrects one output, format or behaviour, fix every
   sibling the same way (all adapters, goodies, templates, ports, docs that produce or describe it), a test each; list what changed.
 

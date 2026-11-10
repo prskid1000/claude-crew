@@ -1,4 +1,4 @@
-// browser.mjs: headless-browser library for testing any web app (import it; usage below). Exit codes: none (a library).
+// browser.mjs: headless-browser library to test any web app (import it; usage below). Exit codes: none (a library).
 // targets.local.json: web, webLogin, users, browser: one shared headless Chrome (puppeteer) per target+tenant+user, a tab each.
 // Logins shared via the session file (web storage + cookies), locked; never log out.
 // webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Goodies (adapters/, kitbag.py goody
@@ -36,7 +36,7 @@ const PF = ['C:/Program Files', 'C:/Program Files (x86)'], MAC = (a) => `/Applic
 const BROWSERS = [process.env.CHROME_PATH, ...(process.platform === 'win32' ? [...PF.map((d) => `${d}/Google/Chrome/Application/chrome.exe`), ...PF.map((d) => `${d}/Microsoft/Edge/Application/msedge.exe`)]
   : process.platform === 'darwin' ? [MAC('Google Chrome'), homedir() + MAC('Google Chrome'), MAC('Microsoft Edge'), MAC('Chromium')]
   : ['/opt/google/chrome/chrome', '/opt/microsoft/msedge/msedge', ...onPath(['google-chrome', 'google-chrome-stable', 'microsoft-edge', 'microsoft-edge-stable', 'chromium', 'chromium-browser']), '/snap/bin/chromium'])].filter(Boolean)
-const CHROME = BROWSERS.find(existsSync)
+export const CHROME = BROWSERS.find(existsSync)
 const browserOpts = (t) => ({ engine: 'chrome', lang: Intl.DateTimeFormat().resolvedOptions().locale, width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
