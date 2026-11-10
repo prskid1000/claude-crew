@@ -48,16 +48,19 @@ $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Conten
 $pgOut = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-$PID.html"
 $res = "$(& $py -X utf8 $f (Join-Path $Kit 'skills/bossy') ([IO.Path]::GetTempPath()) (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py') $pgOut 2>&1)"
 Remove-Item $f -Force
-# the page: no clipped label at 1366 / 900 / 390, light + dark, as loaded and with the legend and each side panel open
+# the page: no clipped label, no node or label off-screen or overlapping (window.uiBoxes) at 1366 / 900 / 390, light + dark,
+# as loaded, with each side tab open (key included) and in the Detail and Everything views
 $uiRt = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-rt-$PID"; $env:CLAUDE_RUNTIME = $uiRt   # own shots and stamp, never the kit's
-$ui = if (Test-Path (Join-Path $Kit 'skills/pokey/node_modules/puppeteer-core')) { @(& $py -X utf8 (Join-Path $Kit 'skills/bossy/kitbag.py') ui-check $pgOut --click '#legb;.ri[data-t=issues];.ri[data-t=loops];.ri[data-t=trace];.ri[data-t=code]' 2>&1); $LASTEXITCODE } else { 'SKIP flow-map page check: no puppeteer-core in the kit' }
+$ui = if (Test-Path (Join-Path $Kit 'skills/pokey/node_modules/puppeteer-core')) { @(& $py -X utf8 (Join-Path $Kit 'skills/bossy/kitbag.py') ui-check $pgOut --click '.ri[data-t=key];.ri[data-t=issues];.ri[data-t=loops];.ri[data-t=trace];.ri[data-t=code];#lv .b:nth-child(2);#lv .b:nth-child(3)' 2>&1); $LASTEXITCODE } else { 'SKIP flow-map page check: no puppeteer-core in the kit' }
 Remove-Item Env:CLAUDE_RUNTIME; Remove-Item $pgOut, ($pgOut -replace '\.html$', '-src.js'), $uiRt -Recurse -Force -ErrorAction SilentlyContinue
 $pg = Get-Content -Raw (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py')
 $checks = [ordered]@{}
-if ($ui[-1] -is [string]) { $ui[-1] } else { $checks["page: no clipped text (kitbag.py ui-check, 3 widths x 2 themes x 6 states; $(@($ui | Where-Object { "$_" -cmatch 'CLIP|failed' }) -join ' | '))"] = $ui[-1] -eq 0 }
+if ($ui[-1] -is [string]) { $ui[-1] } else { $checks["page: no clipped text, every node + label in view, none overlapping (kitbag.py ui-check, 3 widths x 2 themes x 8 states; $(@($ui | Where-Object { "$_" -cmatch 'CLIP|failed' }) -join ' | '))"] = $ui[-1] -eq 0 }
 $checks += [ordered]@{
   'canvas labels wrap, never cut (no label .slice)' = $pg -notmatch '\.l\.slice\(0|t\.slice\(0, 64\)|`\.slice\(0, [68]0\)'
   'legend lists use the kit''s one compact grid (.cg auto-fill via cgrid()), no fixed column counts' = $pg -match '\.cg\{display:grid;[^}]*repeat\(auto-fill,minmax\(min\(100%' -and $pg -notmatch 'repeat\([23],minmax\(0,1fr\)\)' -and ([regex]::Matches($pg, "\+ cgrid\(")).Count -eq 3
+  'the fitted layout stays: rebuild never reheats; load, resize (until a pan or zoom) and every view button refit the whole graph' = $pg -notmatch 'heat\(\.15\)' -and $pg -match 'function setLevel\(L\) \{ LVL = L; rebuild\(\); fitView\(\) \}' -and $pg -match 'if \(auto\) return fitView\(\)'
+  'the key docks as a side tab (a bottom sheet on phones), never a panel over the graph' = $pg -match "key: \['key', 'Key'\]" -and $pg -notmatch 'id="leg"'
   "no false loop issues ($res)" = $res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0'
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'

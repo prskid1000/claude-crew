@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 Installed by `kitbag.py goody add flow-map`; kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1066 page · L1403 command
+Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1066 page · L1445 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -1088,10 +1088,8 @@ PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport
 .b.on{background:var(--fg);color:var(--bg)}.seg{display:inline-flex}.seg .b{border-radius:0;margin-left:-1px}.seg .b:first-child{border-radius:8px 0 0 8px}.seg .b:last-child{border-radius:0 8px 8px 0}
 input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;position:absolute;top:30px;left:0;background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:6px;min-width:220px;z-index:5;box-shadow:0 8px 24px #0003}
 .dd.open>.menu{display:block}.menu label{display:flex;gap:6px;align-items:center;padding:3px 4px;border-radius:5px;cursor:pointer}.menu label:hover{background:var(--pn2)}.menu small{margin-left:auto;color:var(--mut)}
-#legb{position:absolute;left:10px;bottom:10px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center}
-#leg{display:none;position:absolute;left:10px;bottom:52px;background:var(--pn);border:1px solid var(--ln);border-radius:10px;padding:10px;box-shadow:0 8px 24px #0003;width:min(640px,calc(100% - 20px))}
-#leg.open{display:block}.cg{display:grid;gap:4px 14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(var(--cmin,200px),calc((100% - (var(--cmax,99) - 1) * 14px) / var(--cmax,99)))),1fr))}#leg .it{display:flex;gap:6px;align-items:center;overflow-wrap:anywhere;min-width:0}
-#leg h4{margin:8px 0 4px;font-size:11px;color:var(--mut);font-weight:600}
+#key{padding:10px 12px}#howto{margin-bottom:8px;line-height:1.5}.cg{display:grid;gap:4px 14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(var(--cmin,200px),calc((100% - (var(--cmax,99) - 1) * 14px) / var(--cmax,99)))),1fr))}#key .it{display:flex;gap:6px;align-items:center;overflow-wrap:anywhere;min-width:0}
+#key h4{margin:8px 0 4px;font-size:11px;color:var(--mut);font-weight:600}
 #side{width:0;transition:width .18s ease;background:var(--pn);border-left:1px solid var(--ln);display:flex;flex-direction:column;position:relative;overflow:hidden}
 #side.drag{transition:none}#grip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2}#grip:hover{background:var(--sel)}
 #rail{width:44px;background:var(--pn2);border-left:1px solid var(--ln);display:flex;flex-direction:column;align-items:center;padding-top:8px;gap:4px}
@@ -1103,22 +1101,20 @@ input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;pos
 .li{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:6px;cursor:pointer}.li:hover{background:var(--pn2)}.li.on{background:var(--sel)}
 .li .t{flex:1;min-width:0}.li .f{display:block;font:11px var(--mono);color:var(--mut);overflow-wrap:anywhere}.li.bad .t{color:var(--bad)}
 .num{font:600 10px var(--mono);color:var(--mut);min-width:20px;text-align:right;padding-top:2px}.grp{font-size:11px;color:var(--mut);font-weight:600;padding:8px 8px 2px}
-.empty{color:var(--mut);padding:16px 10px;line-height:1.5}.ico{flex:none}
+.empty{color:var(--mut);padding:16px 10px;line-height:1.5;overflow-wrap:anywhere}.ico{flex:none}
 pre{margin:0;font:12px/1.55 var(--mono);tab-size:2}.cl{display:flex}.cl .n{color:var(--mut);min-width:44px;text-align:right;padding-right:10px;user-select:none}.cl .x{white-space:pre;flex:1}
 .cl.me{background:var(--sel)}.kw{color:var(--kw)}.st{color:var(--st)}.cm{color:var(--cm);font-style:italic}.nu{color:var(--nu)}.va{color:var(--va)}
 #meta{padding:8px 14px;border-bottom:1px solid var(--ln);color:var(--mut);line-height:1.5}#meta .f{font:11px var(--mono)}#meta a,.lnk{color:var(--va);cursor:pointer;margin-right:12px;text-decoration:none}
 #tip{position:fixed;max-width:380px;background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:6px 8px;pointer-events:none;display:none;white-space:pre-wrap;box-shadow:0 4px 14px #0002;z-index:9}
-select.b{max-width:100%}#sx,#howto{display:none}
+select.b{max-width:100%}#sx{display:none}
 @media (pointer:coarse),(max-width:640px){.b,.menu label,.li{min-height:44px}.b{display:inline-flex;align-items:center}.seg .b{padding:4px 12px}
-#rail{width:52px}.ri,#legb{width:44px;height:44px}input.b,select.b{font-size:16px}}
+#rail{width:52px}.ri{width:44px;height:44px}input.b,select.b{font-size:16px}}
 @media (max-width:640px){input#q{flex:1 1 120px;width:auto;min-width:0}.dd>.menu{position:fixed;top:auto;left:8px;right:60px;max-height:60dvh;overflow:auto}
 #side{position:fixed;left:0;right:52px;bottom:0;height:62vh;height:62dvh;width:auto!important;display:none;border:1px solid var(--ln);border-radius:14px 14px 0 0;z-index:8;box-shadow:0 -8px 24px #0003}
-#side.open{display:flex}#grip{display:none}#sh{padding-right:56px}#sx{display:inline-flex;position:absolute;right:6px;top:4px;z-index:3}#howto{display:block;margin-bottom:8px;line-height:1.5}
-#leg{max-height:70dvh;overflow:auto}}</style></head><body>
+#side.open{display:flex}#grip{display:none}#sh{padding-right:56px}#sx{display:inline-flex;position:absolute;right:6px;top:4px;z-index:3}}</style></head><body>
 <div id="app"><div id="main"><canvas id="c"></canvas>
-<div id="top"><b class="b" id="ttl" title="How to read: icons = kinds (key, bottom-left); zoom in for more detail; click a node = its neighbours + its code; click a highlighted neighbour to extend; dashed arc = loop / back edge; double-click = collapse a file; drag = pin">kit flow</b>
-<input class="b" id="q" placeholder="search…"><span class="seg" id="lv"></span><span class="dd" id="ddS"><span class="b">Show ▾</span><div class="menu"></div></span><span class="dd" id="ddE"><span class="b">Edges ▾</span><div class="menu"></div></span><span class="b" id="fit">fit</span></div>
-<span class="b" id="legb" title="key"></span><div id="leg"></div></div>
+<div id="top"><b class="b" id="ttl" title="How to read: icons = kinds (key tab, right rail); zoom in for more detail; click a node = its neighbours + its code; click a highlighted neighbour to extend; dashed arc = loop / back edge; double-click = collapse a file; drag = pin">kit flow</b>
+<input class="b" id="q" placeholder="search…"><span class="seg" id="lv"></span><span class="dd" id="ddS"><span class="b">Show ▾</span><div class="menu"></div></span><span class="dd" id="ddE"><span class="b">Edges ▾</span><div class="menu"></div></span><span class="b" id="fit">fit</span></div></div>
 <div id="side"><div id="grip" title="drag to resize · double-click to reset"></div><span class="b" id="sx" title="close">✕</span><div id="sh"></div><div id="meta" style="display:none"></div><div id="sb"></div></div>
 <div id="rail"></div></div><div id="tip"></div>
 <script>
@@ -1169,7 +1165,7 @@ function rebuild() {
  VN = N.filter(vis); const seen = new Map(); VE = [];
  for (const e of E) { if (!ekOn[e.k]) continue; const a = rep(N[e.s]), b = rep(N[e.t]); if (!a || !b || (a === b && e.s !== e.t)) continue;
   const key = a.i + ',' + b.i + ',' + e.k; if (seen.has(key)) { seen.get(key).n++; continue } const v = {a, b, e, n: 1}; seen.set(key, v); VE.push(v) }
- $('#lv').querySelectorAll('.b').forEach((b, i) => b.classList.toggle('on', i === LVL)); heat(.15)
+ $('#lv').querySelectorAll('.b').forEach((b, i) => b.classList.toggle('on', i === LVL)); draw()   // no reheat: it re-spread a fitted layout off-screen
 }
 let alpha = 1, raf = 0;
 const heat = a => { alpha = Math.max(alpha, a); if (!raf) raf = requestAnimationFrame(frame) };
@@ -1196,8 +1192,46 @@ function tick() {
   if (n.fx != null) { n.x = n.fx; n.y = n.fy; n.vx = n.vy = 0; continue } n.vx *= .55; n.vy *= .55; n.x += n.vx; n.y += n.vy }
  alpha *= .99
 }
-let tx = 0, ty = 0, sc = .3, W = 0, H = 0, dpr = 1;
-const size = () => { const r = $('#main').getBoundingClientRect(), ow = W; W = r.width; H = r.height; dpr = devicePixelRatio || 1; cv.width = W * dpr; cv.height = H * dpr; if (ow) tx += (W - ow) / 2; draw() };
+let tx = 0, ty = 0, sc = .3, W = 0, H = 0, dpr = 1, auto = true, drawn = [];   // auto: no pan / zoom since the last whole-graph fit
+const size = () => { const r = $('#main').getBoundingClientRect(), ow = W; W = r.width; H = r.height; dpr = devicePixelRatio || 1; cv.width = W * dpr; cv.height = H * dpr; if (auto) return fitView(); if (ow) tx += (W - ow) / 2; draw() };
+const dr = (n, s = sc) => LVL === 0 ? Math.max(n.k === 'file' ? 16 : 11, 5 / s) : n.r;   // drawn radius (world; Overview: at least 5 px at scale s)
+const LPX = new Map();   // label size in screen px (fixed font), per node
+function labPx(n) { let v = LPX.get(n); if (v) return v; X.font = `${n.k === 'file' ? 600 : 400} ${n.k === 'file' ? 12 : 11}px system-ui`; const ls = wrapL(n.l);
+ v = {ls, w: Math.max(...ls.map(l => X.measureText(l).width)) + 4, h: ls.length * 13}; LPX.set(n, v); return v }
+const labBox = (n, s = sc) => { const p = labPx(n); return [n.x - p.w / 2 / s, n.y + dr(n, s) + 2 / s, p.w / s, p.h / s] };   // [x, y, w, h] world, under the node
+function free() {   // the canvas area under the bar, in canvas px (a phone's bottom sheet overlays it on purpose: too little room left to fit)
+ const m = $('#main').getBoundingClientRect(), t = $('#top').getBoundingClientRect(); return [8, t.bottom - m.top + 8, W - 8, Math.max(t.bottom - m.top + 60, H - 8)] }
+function fitTo(ns) {   // the largest scale whose node + label boxes fit the free area (labels keep their px size, so search the scale)
+ ns = ns && ns.length ? ns : VN; if (!ns.length || !W) return; const [fx0, fy0, fx1, fy1] = free(), aw = fx1 - fx0, ah = fy1 - fy0;
+ const ext = s => { let a = 1e9, b = -1e9, c = 1e9, d = -1e9; for (const n of ns) { const r = dr(n, s) * s, p = labPx(n), hw = Math.max(r, p.w / 2), x = n.x * s, y = n.y * s;
+  a = Math.min(a, x - hw); b = Math.max(b, x + hw); c = Math.min(c, y - r); d = Math.max(d, y + r + 2 + p.h) } return [a, b, c, d] };
+ let lo = 1e-4, hi = 2.5; for (let i = 0; i < 40; i++) { const s = (lo + hi) / 2, [a, b, c, d] = ext(s); if (b - a <= aw && d - c <= ah) lo = s; else hi = s }
+ sc = lo; const [a, b, c, d] = ext(sc); tx = (fx0 + fx1) / 2 - (a + b) / 2; ty = (fy0 + fy1) / 2 - (c + d) / 2; auto = false; draw() }
+function declutter(s) {   // push apart visible nodes until no two boxes meet (Overview: circle + label at scale s, a file node moves its group; deeper: circles, one node)
+ const ns = VN, gap = LVL ? 2 : 4 / s, unit = n => !LVL && n.k === 'file' && G[n.g].m.length > 1 ? G[n.g].m : [n];
+ const move = (n, dx, dy, other) => { for (const m of (other && other.g === n.g ? [n] : unit(n))) { m.x += dx; m.y += dy; if (m.fx != null) { m.fx += dx; m.fy += dy } } };
+ // box offsets from the node centre (fixed for this scale); pairs read live positions, so a push is never applied twice from a stale box
+ const off = ns.map(n => { const r = dr(n, s); let x0 = -r, x1 = r, y1 = r; if (!LVL) { const l = labBox(n, s); x0 = Math.min(x0, l[0] - n.x); x1 = Math.max(x1, l[0] + l[2] - n.x); y1 = l[1] + l[3] - n.y } return [x0 - gap / 2, -r - gap / 2, x1 + gap / 2, y1 + gap / 2] });
+ const box = k => { const n = ns[k], o = off[k]; return [n.x + o[0], n.y + o[1], n.x + o[2], n.y + o[3]] };
+ const C = Math.max(...off.map(o => Math.max(o[2] - o[0], o[3] - o[1]))), hk = (i, j) => i + ',' + j;
+ let hits = 0;
+ for (let it = 0; it < 60; it++) {
+  const grid = new Map(); hits = 0;
+  ns.forEach((n, k) => { const b = box(k), key = hk(Math.floor(b[0] / C), Math.floor(b[1] / C)); (grid.get(key) || grid.set(key, []).get(key)).push(k) });
+  ns.forEach((n0, k) => { const b0 = box(k), gi = Math.floor(b0[0] / C), gj = Math.floor(b0[1] / C);
+   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const q of grid.get(hk(gi + i, gj + j)) || []) { if (q <= k) continue; const b = box(k), o = box(q);
+    const ox = Math.min(b[2], o[2]) - Math.max(b[0], o[0]), oy = Math.min(b[3], o[3]) - Math.max(b[1], o[1]); if (ox <= 0 || oy <= 0) continue;
+    const n = ns[k], m = ns[q], same = n.g === m.g, fn = same && n.k === 'file' ? m : same && m.k === 'file' ? n : null; hits++;
+    const hor = ox < oy, sx = (b[0] + b[2]) - (o[0] + o[2]) || (k % 2 ? 1 : -1), sy = (b[1] + b[3]) - (o[1] + o[3]) || (k % 2 ? 1 : -1), d = (hor ? ox : oy) + gap;   // overshoot by the gap: a jammed pack opens instead of creeping
+    const vx = hor ? Math.sign(sx) * d : 0, vy = hor ? 0 : Math.sign(sy) * d;
+    if (fn) move(fn, fn === n ? vx : -vx, fn === n ? vy : -vy, fn === n ? m : n); else { move(n, vx / 2, vy / 2, m); move(m, -vx / 2, -vy / 2, n) } } });
+  if (!hits) break }
+ return hits }   // 0 = no two boxes meet
+function spread(f) {   // a dense pack only creeps apart pair by pair: scale every position about the visible centre (shape kept, circles keep their size)
+ const cx = VN.reduce((a, n) => a + n.x, 0) / VN.length, cy = VN.reduce((a, n) => a + n.y, 0) / VN.length;
+ for (const n of N) { n.x = cx + (n.x - cx) * f; n.y = cy + (n.y - cy) * f; if (n.fx != null) { n.fx = cx + (n.fx - cx) * f; n.fy = cy + (n.fy - cy) * f } } }
+function fitView() {   // whole graph in view, nothing overlapping: fit, declutter at 0.8 x the scale (room for the refit), spread if still packed
+ if (!W || !VN.length) return; for (let i = 0; i < 16; i++) { fitTo(VN); if (!declutter(sc * .8)) break; spread(1.12) } fitTo(VN); fitSc = sc / [1, 2.4, 5][LVL]; auto = true; draw() }
 const s2w = (x, y) => [(x - tx) / sc, (y - ty) / sc];
 function zoomLevel() { const z = sc / fitSc, L = z < 1.8 ? 0 : z < 4 ? 1 : 2; if (L !== LVL) { LVL = L; rebuild() } }
 function hull(P) {
@@ -1230,21 +1264,26 @@ function draw() {
   if (loopy && (hl || (e.k === 'loop' && LVL === 0 && !focus))) lab.push([mx, my, '↻' + (e.b ? ' ' + e.b : ''), '#db2777']);
   if (hl && fE.size < 120) lab.push([mx, my + 12 * lw, e.k + (e.l ? ' · ' + e.l : '') + (v.n > 1 ? ` (×${v.n})` : ''), fg]) }
  const big = sc * 8 > 3;
- for (const n of VN) { if (!on(n)) continue; const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r; X.globalAlpha = F(n) ? 1 : .12;
+ for (const n of VN) { if (!on(n)) continue; const r = dr(n); X.globalAlpha = F(n) ? 1 : .12;
   X.beginPath(); X.arc(n.x, n.y, r, 0, 6.283); X.fillStyle = pn; X.fill(); X.globalAlpha *= .22; X.fillStyle = n.col; X.fill(); X.globalAlpha = F(n) ? 1 : .12;
   const ring = bad.has(n.i) && (sel === n || (focus && focus.has(n))) ? '#dc2626' : n === sel ? hi : n.col; X.strokeStyle = ring; X.lineWidth = (n === sel || ring === '#dc2626' ? 2.5 : 1.2) * lw; X.stroke();
   if (r * sc > 5) icon(KD[n.kk][1], n.x, n.y, r * 1.15, n.col, Math.max(1.2 * lw, r * .12));
   if (n.fx != null) { X.fillStyle = fg; X.beginPath(); X.arc(n.x + r * .8, n.y - r * .8, 2.2 * lw, 0, 6.283); X.fill() } }
  X.textAlign = 'center';
- // labels never cut: long ones wrap; one that would overlap a drawn label waits for hover / select (those always draw)
- const boxes = [], text = (t, x, y, c, must) => { const ls = wrapL(t), h = 13 * lw, w = Math.max(...ls.map(l => X.measureText(l).width)) + 4 * lw, bx = [x - w / 2, y - h, w, ls.length * h];
-  if (!must && boxes.some(b => bx[0] < b[0] + b[2] && b[0] < bx[0] + bx[2] && bx[1] < b[1] + b[3] && b[1] < bx[1] + bx[3])) return; boxes.push(bx);
-  X.lineWidth = 3 * lw; X.strokeStyle = bg; X.fillStyle = c; ls.forEach((l, i) => { X.strokeText(l, x, y + i * h); X.fillText(l, x, y + i * h) }) };
- const cand = VN.filter(n => on(n)).map(n => { const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r; return {n, r, must: n === sel || n === hover,
-  show: n === sel || n === hover || (focus ? focus.has(n) && (focus.size < 150 || r * sc > 6) : (n.lv === LVL || n.k === 'file') && r * sc > 4.5 && big)} }).filter(c => c.show);
+ // labels never cut: long ones wrap; one that would overlap a drawn label or another node waits for hover / select (those always draw)
+ const CG = 40 / sc, cg = new Map(), ck = (i, j) => i + ',' + j, meet = (p, q) => p[0] < q[0] + q[2] && q[0] < p[0] + p[2] && p[1] < q[1] + q[3] && q[1] < p[1] + p[3];
+ for (const n of VN) if (on(n)) { const r = dr(n), b = [n.x - r, n.y - r, 2 * r, 2 * r], key = ck(Math.floor(n.x / CG), Math.floor(n.y / CG)); (cg.get(key) || cg.set(key, []).get(key)).push([n, b]) }
+ const onNode = (bx, own) => { for (let i = Math.floor(bx[0] / CG) - 1; i <= Math.floor((bx[0] + bx[2]) / CG) + 1; i++) for (let j = Math.floor(bx[1] / CG) - 1; j <= Math.floor((bx[1] + bx[3]) / CG) + 1; j++)
+  for (const [m, b] of cg.get(ck(i, j)) || []) if (m !== own && meet(bx, b)) return true; return false };
+ const boxes = [], [f0, f1, f2, f3] = free(), fw = [(f0 - tx) / sc, (f1 - ty) / sc, (f2 - tx) / sc, (f3 - ty) / sc]; drawn = [];
+ const inFree = b => b[0] >= fw[0] && b[1] >= fw[1] && b[0] + b[2] <= fw[2] && b[1] + b[3] <= fw[3];   // an edge label outside the fitted area is skipped
+ const text = (ls, bx, c, must, own, t) => { if (!must && (boxes.some(b => meet(bx, b)) || onNode(bx, own) || (!own && !inFree(bx)))) return; boxes.push(bx); drawn.push({t, own, b: bx});
+  X.lineWidth = 3 * lw; X.strokeStyle = bg; X.fillStyle = c; ls.forEach((l, i) => { const y = bx[1] + (10 + 13 * i) * lw; X.strokeText(l, bx[0] + bx[2] / 2, y); X.fillText(l, bx[0] + bx[2] / 2, y) }) };
+ const cand = VN.filter(n => on(n)).map(n => { const r = dr(n); return {n, r, must: n === sel || n === hover,
+  show: n === sel || n === hover || (focus ? focus.has(n) && (focus.size < 150 || r * sc > 6) : (n.lv === LVL || n.k === 'file') && (!LVL || (r * sc > 4.5 && big)))} }).filter(c => c.show);   // Overview: every label (declutter made room)
  cand.sort((a, b) => b.must - a.must || (b.n.k === 'file') - (a.n.k === 'file'));
- for (const {n, r, must} of cand) { X.globalAlpha = F(n) ? 1 : .2; X.font = `${n.k === 'file' ? 600 : 400} ${(n.k === 'file' ? 12 : 11) * lw}px system-ui`; text(n.l, n.x, n.y + r + 12 * lw, fg, must) }
- for (const [x, y, t, c] of lab) { X.globalAlpha = 1; X.font = `${10.5 * lw}px system-ui`; text(t, x, y, c, false) }
+ for (const {n, must} of cand) { X.globalAlpha = F(n) ? 1 : .2; X.font = `${n.k === 'file' ? 600 : 400} ${(n.k === 'file' ? 12 : 11) * lw}px system-ui`; text(labPx(n).ls, labBox(n), fg, must, n, n.l) }
+ for (const [x, y, t, c] of lab) { X.globalAlpha = 1; X.font = `${10.5 * lw}px system-ui`; const ls = wrapL(t), w = Math.max(...ls.map(l => X.measureText(l).width)) + 4 * lw; text(ls, [x - w / 2, y - 10 * lw, w, ls.length * 13 * lw], c, false, null, t) }
  if (trace) { X.font = `600 ${10 * lw}px system-ui`; const done = new Set();
   trace.forEach((s, i) => { const n = rep(s.n); if (!n || done.has(n)) return; done.add(n); const t = String(i + 1), w = (t.length * 6 + 8) * lw, bx = n.x + n.r * .7, by = n.y - n.r - 9 * lw;
    X.globalAlpha = 1; X.fillStyle = i === tIdx ? hi : n.col; X.beginPath(); X.roundRect ? X.roundRect(bx - w / 2, by - 7 * lw, w, 14 * lw, 7 * lw) : X.rect(bx - w / 2, by - 7 * lw, w, 14 * lw); X.fill();
@@ -1252,10 +1291,8 @@ function draw() {
  X.globalAlpha = 1
 }
 function frame() { raf = 0; for (let i = 0; i < 2 && alpha > .02; i++) tick(); draw(); if (alpha > .02 || drag) raf = requestAnimationFrame(frame) }
-function fitTo(ns) { ns = ns && ns.length ? ns : VN; if (!ns.length) return; const xs = ns.map(n => n.x), ys = ns.map(n => n.y), a = Math.min(...xs), b = Math.max(...xs), c = Math.min(...ys), d = Math.max(...ys);
- sc = Math.min((W - 60) / (b - a + 120), (H - 90) / (d - c + 120), 2.5); tx = W / 2 - (a + b) / 2 * sc; ty = 30 + (H - 30) / 2 - (c + d) / 2 * sc; draw() }
-const center = n => { tx = W / 2 - n.x * sc; ty = H / 2 - n.y * sc; draw() };
-function setLevel(L) { const cx = (W / 2 - tx) / sc, cy = (H / 2 - ty) / sc; sc = fitSc * [1, 2.4, 5][L]; tx = W / 2 - cx * sc; ty = H / 2 - cy * sc; LVL = L; rebuild() }
+const center = n => { auto = false; tx = W / 2 - n.x * sc; ty = H / 2 - n.y * sc; draw() };
+function setLevel(L) { LVL = L; rebuild(); fitView() }
 function neigh(n, extend) {
  if (!extend || !focus) { focus = new Set([n]); fE = new Set() }
  if (!fE) fE = new Set()
@@ -1279,7 +1316,7 @@ function runTrace(start) { trace = walk(start); tIdx = 0; show(trace.map(s => s.
 function stepTo(i) { if (!trace) return; tIdx = Math.max(0, Math.min(trace.length - 1, i)); sel = trace[tIdx].n; center(rep(sel) || sel); if (curTab === 'trace') tab('trace'); else draw() }
 const side = $('#side'), sb = $('#sb'), esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
 const svgI = (name, col, s = 16) => `<svg class="ico" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${col || 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${IC[name]}"/></svg>`;
-const TABS = {code: ['code', 'Code'], trace: ['route', 'Trace'], loops: ['loop', 'Loops'], issues: ['warn', 'Issues']};
+const TABS = {code: ['code', 'Code'], trace: ['route', 'Trace'], loops: ['loop', 'Loops'], issues: ['warn', 'Issues'], key: ['key', 'Key']};   // the key docks in the side panel (a bottom sheet on phones), never over the graph
 let curTab = LS.get('tab', 'code'), sideW = LS.get('w', 420), sideOpen = false;
 if (!D.issues.length) { delete TABS.issues; if (curTab === 'issues') curTab = 'code' }
 for (const t in TABS) { const d = document.createElement('div'); d.className = 'ri'; d.dataset.t = t; d.title = TABS[t][1] + (t === 'issues' ? (D.dirty ? ' (uncommitted work: commit is blocked until 0)' : '') : ''); d.innerHTML = svgI(TABS[t][0], null, 20) + (t === 'issues' && D.issues.length ? `<span class="badge">${D.issues.length}</span>` : t === 'loops' ? `<span class="badge" style="background:#db2777">${D.cycles.length}</span>` : '');
@@ -1293,6 +1330,7 @@ function filterBox(ph, onq) { const s = document.createElement('div'); s.classNa
 function tab(t) {
  document.querySelectorAll('.ri').forEach(r => r.classList.toggle('on', r.dataset.t === t)); $('#sh').innerHTML = svgI(TABS[t][0], null, 16) + TABS[t][1]; sb.innerHTML = ''; $('#meta').style.display = 'none';
  if (t === 'code') return code(sel);
+ if (t === 'key') { sb.innerHTML = keyHtml(); return }
  if (t === 'trace') {
   const st = document.createElement('div'); st.className = 'sticky'; const se = document.createElement('select'); se.className = 'b'; se.style.flex = '1'; se.add(new Option('trace from… (agent, trigger, row, command)', ''));
   const ent = N.filter(n => /slash|event|human|timer|row/.test(n.k) || (n.k === 'file' && n.fam === 'crew'));
@@ -1358,21 +1396,20 @@ function menu(id, items, state, label) { const dd = $(id), m = dd.querySelector(
  for (const [k, html, c] of items) { const l = document.createElement('label'); l.innerHTML = `<input type="checkbox" ${state[k] ? 'checked' : ''}>${html}<small>${c}</small>`; l.firstChild.onchange = ev => { state[k] = ev.target.checked; rebuild() }; m.append(l) } }
 menu('#ddS', Object.keys(FAM).map(f => [f, `${svgI(Object.values(KD).find(k => k[0] === f)[1], FAM[f][1])} ${FAM[f][0]}`, N.filter(n => n.fam === f).length]), famOn);
 menu('#ddE', Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => [k, `<svg width="26" height="8"><line x1="1" y1="4" x2="25" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="6 4"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg> ${k}`, E.filter(e => e.k === k).length]), ekOn);
-const leg = $('#leg'), cnt = k => N.filter(n => n.kk === k).length;
+const cnt = k => N.filter(n => n.kk === k).length;
 $('#sx').onclick = closeSide;
 const cgrid = (h, min) => `<div class="g cg" style="--cmin:${min}">${h}</div>`   // every list of short items: the kit's one auto-fill grid (README dashboard)
-leg.innerHTML = `<div id="howto">${esc($('#ttl').title.replace('; double-click = collapse a file', '').replace(/click/g, 'tap').replace('zoom in', 'pinch to zoom in'))}</div>` + '<h4 style="margin-top:0">Nodes</h4>' + cgrid(Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join(''), '150px') +
+const keyHtml = () => `<div id="key"><div id="howto">${esc(narrow() ? $('#ttl').title.replace('; double-click = collapse a file', '').replace(/click/g, 'tap').replace('zoom in', 'pinch to zoom in') : $('#ttl').title)}</div>` + '<h4 style="margin-top:0">Nodes</h4>' + cgrid(Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join(''), '150px') +
  '<h4>Edges</h4>' + cgrid(Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => `<span class="it"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="5 3"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg>${k}</span>`).join(''), '130px') +
- '<h4>Families</h4>' + cgrid(Object.values(FAM).map(f => `<span class="it"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="${f[1]}"/></svg>${f[0]}</span>`).join(''), '130px');
-$('#legb').innerHTML = svgI('key', null, 18); $('#legb').onclick = e => { e.stopPropagation(); leg.classList.toggle('open') }; $('#legb').onmouseenter = () => { if (matchMedia('(hover:hover)').matches) leg.classList.add('open') }; leg.onclick = e => e.stopPropagation();
-$('#ttl').onclick = e => { if (narrow()) { e.stopPropagation(); leg.classList.toggle('open') } };   // no hover on phones: the how-to sits in the key
-addEventListener('click', () => { leg.classList.remove('open'); document.querySelectorAll('.dd').forEach(x => x.classList.remove('open')) });
+ '<h4>Families</h4>' + cgrid(Object.values(FAM).map(f => `<span class="it"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="${f[1]}"/></svg>${f[0]}</span>`).join(''), '130px') + '</div>';
+$('#ttl').onclick = () => { if (narrow()) openSide('key') };   // no hover on phones: the how-to sits in the key
+addEventListener('click', () => document.querySelectorAll('.dd').forEach(x => x.classList.remove('open')));
 $('#q').oninput = () => { const q = $('#q').value.trim().toLowerCase(); trace = null; if (!q) { force = new Set(); focus = fE = null; return rebuild() } show(N.filter(n => (n.l + ' ' + n.id).toLowerCase().includes(q)).slice(0, 300)) };
 $('#q').onkeydown = e => { if (e.key === 'Enter' && focus && focus.size) { const n = [...focus][0]; select(n); center(n) } };
-$('#fit').onclick = () => { fitTo(); fitSc = sc; LVL = 0; rebuild() };
+$('#fit').onclick = fitView;
 let drag = null, pinch = null;
 const ptrs = new Map();   // touch: one finger pans / drags, two pinch-zoom; a touch hit reaches 22 px (a 44 px target)
-const hit = (sx, sy, slop = 4) => { const [x, y] = s2w(sx, sy); let best = null, bd = 1e9; for (const n of VN) { const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r, d = Math.hypot(n.x - x, n.y - y); if (d < Math.max(r + 4 / sc, slop / sc) && d < bd) { bd = d; best = n } } return best };
+const hit = (sx, sy, slop = 4) => { const [x, y] = s2w(sx, sy); let best = null, bd = 1e9; for (const n of VN) { const r = dr(n), d = Math.hypot(n.x - x, n.y - y); if (d < Math.max(r + 4 / sc, slop / sc) && d < bd) { bd = d; best = n } } return best };
 const pt = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] };
 const two = () => { const [a, b] = [...ptrs.values()]; return [Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
 cv.addEventListener('pointerdown', e => { const [x, y] = pt(e); ptrs.set(e.pointerId, [x, y]); cv.setPointerCapture(e.pointerId);
@@ -1381,20 +1418,25 @@ cv.addEventListener('pointerdown', e => { const [x, y] = pt(e); ptrs.set(e.point
 const lift = e => { ptrs.delete(e.pointerId); if (pinch && ptrs.size < 2) { pinch = null; drag = null } };
 cv.addEventListener('pointercancel', e => { lift(e); drag = null });
 cv.addEventListener('pointermove', e => { const [x, y] = pt(e); if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, [x, y]);
- if (pinch && ptrs.size >= 2) { const [d, mx, my] = two(), f = d / pinch.d; sc = pinch.sc * f; tx = mx - (pinch.mx - pinch.tx) * f; ty = my - (pinch.my - pinch.ty) * f; zoomLevel(); draw(); return }
+ if (pinch && ptrs.size >= 2) { const [d, mx, my] = two(), f = d / pinch.d; auto = false; sc = pinch.sc * f; tx = mx - (pinch.mx - pinch.tx) * f; ty = my - (pinch.my - pinch.ty) * f; zoomLevel(); draw(); return }
  if (!drag) { if (e.pointerType === 'touch') return; const n = hit(x, y); if (n !== hover) { hover = n; draw() }
   if (n) { tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 14, innerWidth - 390) + 'px'; tip.style.top = e.clientY + 14 + 'px'; tip.textContent = `${n.l}\n${KD[n.kk][2]} · ${fl(n)}${bad.has(n.i) ? '\n⚠ ' + bad.get(n.i)[0].code : ''}` } else tip.style.display = 'none'; return }
- const dx = x - drag.x, dy = y - drag.y; if (Math.abs(dx) + Math.abs(dy) > drag.thr) drag.moved = true; if (!drag.moved) return;
+ const dx = x - drag.x, dy = y - drag.y; if (Math.abs(dx) + Math.abs(dy) > drag.thr) drag.moved = true; if (!drag.moved) return; auto = false;
  if (drag.n) { const [wx, wy] = s2w(x, y); drag.n.fx = wx; drag.n.fy = wy; heat(.2) } else { tx = drag.tx + dx; ty = drag.ty + dy; draw() } });
 cv.addEventListener('pointerup', e => { lift(e); if (drag && !drag.moved) { const n = drag.n; if (!n) { sel = null; focus = fE = null; trace = null; force = new Set(); rebuild() } else select(n, e.shiftKey || (focus && focus.has(n) && n !== sel)) } drag = null });
 cv.addEventListener('dblclick', e => { const n = hit(...pt(e)); if (!n || !G[n.g].fn) return; coll.has(n.g) ? coll.delete(n.g) : coll.add(n.g); rebuild() });
 cv.addEventListener('contextmenu', e => { const n = hit(...pt(e)); if (n) { e.preventDefault(); n.fx = n.fy = null; heat(.2) } });
-cv.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = pt(e), f = Math.exp(-e.deltaY * .0015); tx = x - (x - tx) * f; ty = y - (y - ty) * f; sc *= f; zoomLevel(); draw() }, {passive: false});
-addEventListener('keydown', e => { if (e.key === 'Escape') { leg.classList.remove('open'); sel = null; trace = null; focus = fE = null; force = new Set(); $('#q').value = ''; rebuild() }
+cv.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = pt(e), f = Math.exp(-e.deltaY * .0015); auto = false; tx = x - (x - tx) * f; ty = y - (y - ty) * f; sc *= f; zoomLevel(); draw() }, {passive: false});
+addEventListener('keydown', e => { if (e.key === 'Escape') { sel = null; trace = null; focus = fE = null; force = new Set(); $('#q').value = ''; rebuild() }
  if (trace && (e.key === 'ArrowRight' || e.key === 'ArrowLeft') && document.activeElement.tagName !== 'INPUT') stepTo(tIdx + (e.key === 'ArrowRight' ? 1 : -1)) });
 new ResizeObserver(size).observe($('#main'));
-rebuild(); for (let i = 0; i < 420; i++) tick(); size(); fitTo(); fitSc = sc; draw(); if (LS.get('open', false) && !narrow()) openSide(curTab);
-window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, show, fitTo, center, get sc() { return sc }};
+rebuild(); for (let i = 0; i < 420; i++) tick(); alpha = 0; size(); if (LS.get('open', false) && !narrow()) openSide(curTab);   // size() fits the whole graph (auto)
+// ui-check layout hook: drawn node and label boxes in page px, and the free area they must stay inside (kitbag.py ui-check)
+window.uiBoxes = () => { const m = $('#main').getBoundingClientRect(), [a, b, c, d] = free(), P = (x, y) => [x * sc + tx + m.left, y * sc + ty + m.top];
+ const out = VN.map(n => { const r = dr(n), [x, y] = P(n.x - r, n.y - r); return {id: 'node ' + n.l, key: 'n' + n.i, b: [x, y, 2 * r * sc, 2 * r * sc]} });
+ for (const L of drawn) { const [x, y] = P(L.b[0], L.b[1]); out.push({id: 'label ' + L.t, own: L.own ? 'n' + L.own.i : '', b: [x, y, L.b[2] * sc, L.b[3] * sc]}) }
+ return {view: [a + m.left, b + m.top, c + m.left, d + m.top], boxes: out} };
+window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, show, fitTo, fitView, declutter, center, get sc() { return sc }};
 </script></body></html>
 '''
 

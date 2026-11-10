@@ -81,6 +81,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   foreach ($c in $checks) {   # evidence inline in its row: images, then one line per data file
     $p = (Pal $c.result); $zebra = if ($i++ % 2) { '#f8fafc' } else { '#ffffff' }
     $v = if ($vs = VStatus $c) { "<br><span style='font-size:8pt;color:#374151'>re-test: $(Esc $vs)</span>" } else { '' }
+    $kb = "$($c.knownBug)".Trim(); if ($kb -and $c.result -eq 'FAIL') { $v = " (known: <a href='$(TaskLink $kb)'>$(Esc $kb)</a>)$v" }   # FAIL (known: <task id>): tracked elsewhere
     $ev = (@($c.evidence | Where-Object { $_ -and $Map.files[$_] }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$') { Img $Map $_ ([math]::Min(260, (ImgWidth $_))) } else { "file: <a href='$($Map.files[$_].link)'>$(Esc $_)</a><br>" } }) -join ''
     A "<tr style='background:$zebra'><td style='$script:Cell'><b>$(Esc $c.id)</b> $(Esc $c.screen)</td><td style='$script:Cell;background:$($p.bg);color:$($p.fg)'><b>$($p.label)</b>$v</td><td style='$script:Cell'>$(EscCode $c.observed)</td><td style='$script:Cell'>$ev</td></tr>"
   }
@@ -93,6 +94,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
       A "<h3 style='font-size:11.5pt;margin:12px 0 4px 0'>$(Esc $c.id) — $(Esc $c.screen)</h3><table style='border-collapse:collapse;width:100%'>"
       A (Fact 'Steps' (EscCode $c.what_was_done)); A (Fact 'What we saw' (EscCode $c.observed))
       if ($c.verify) { A (Fact 'Independent re-test' (VFull $c)) }
+      if (($kb = "$($c.knownBug)".Trim())) { A (Fact 'Known defect' "tracked in <a href='$(TaskLink $kb)'>$(Esc $kb)</a>; no new bug task") }
       A "</table>"
     }
   }
