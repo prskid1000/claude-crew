@@ -58,17 +58,16 @@ $superviseOut = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') supervise -Auto
 $livePage = Get-Content ([IO.Path]::ChangeExtension((TkPath $k supervise-report), '.html')) -Raw
 Expect "supervise page: Statistics tiles (live agents + stale, memory, gate, QA seats, a disk each: full-in under 72 h only, sweep time), no sweep log; a silent board entry = STUCK flag, no board / shells count lines (missing: $($tileMissing -join ' | '))" (
   -not $tileMissing.Count -and $tilePage -notmatch 'full in 90|Sweep log|<pre' -and @($superviseOut.flags.what -match '^STUCK Y7 .*\(r7\): no progress for 40 min').Count -eq 1 -and -not @($superviseOut.summary -match '^(board|shells): ').Count -and $livePage -match 'This sweep</h3>.+Memory</div>.+Sweep time' -and $livePage -notmatch 'Sweep log')
-# supervise page: every list of short items goes through the one grid helper (.cg, auto-fill); no one-row-per-item list or narrow column
+# supervise page: short-item lists use the grid helper (.cg); a tile + ring per disk, a flagged one tinted and first
 $gridPage = (Invoke-PsTest grids @'
 . $args[0]
-Format-KitSuperviseHtml ('{"at":"2026-01-02T10:00:00","flags":[{"level":"WATCH","what":"w"},{"level":"INFO","what":"i"}],"agents":[{"name":"a (workflow)","run":"r1","state":"ACTIVE","task":"t · steps 1/4 · 2k tokens of 10k"}],"resources":[{"name":"seat","by":"W1","gb":1.5}],"mem":{"TotalGB":8,"AvailGB":2},"stats":{"settings":{"heartbeatMinutes":15}}}' | ConvertFrom-Json)
+Format-KitSuperviseHtml ('{"at":"2026-01-02T10:00:00","flags":[{"level":"WATCH","what":"disk D: x"},{"level":"INFO","what":"i"}],"agents":[{"name":"a (workflow)","run":"r1","state":"ACTIVE","task":"t · steps 1/4 · 2k tokens of 10k"}],"resources":[{"name":"seat","by":"W1","gb":1.5}],"mem":{"TotalGB":8,"AvailGB":2},"stats":{"settings":{"heartbeatMinutes":15},"disks":[{"drive":"C","free":40,"total":900},{"drive":"D","free":300,"total":500,"series":[3,2]}]}}' | ConvertFrom-Json)
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
 $gridWant = @('kpis', 'flags', 'info', 'gauges', 'res', 'stats', 'toks', 'kv' | Where-Object { $gridPage -notmatch "class='cg $_' style='--cmin:\d+px" })
 $gridOld = @('<section class=kpis>', '<div class=gauges>', '<div class=stats>', 'class=toks>', '<span class=tn>', '<th>Resource</th>', '<th>Key</th><th>Value</th>', 'grid-template-columns:minmax(0,240px)' | Where-Object { $gridPage.Contains($_) })
-Expect "supervise page: list sections use the grid helper (missing: $gridWant), no old list pattern (found: $gridOld); tokens 3 across max with a full-width bar" (
+Expect "supervise page: list sections use the grid helper (missing: $gridWant), no old list pattern (found: $gridOld); tokens 3 across max with a full-width bar; disks" ($gridPage -match "(?s)tile warn'><div class=k>Disk D.+spark watch.+Disk C.+disk D: 40%'.+val watch.+disk C" -and
   -not $gridWant.Count -and -not $gridOld.Count -and $gridPage -match "cg toks' style='--cmin:\d+px;--cmax:3'><div class='ci f' title='r1 &#183; 2k of 10k tokens'><div class=tn>r1</div><div class=sm>2k of 10k tokens</div><span class=bar>" -and $gridPage -match '\.cg\{display:grid;[^}]*repeat\(auto-fill,minmax\(min\(100%')
-# kitbag.py ui-check (headless, light + dark): an ellipsis, an overflow or a squeezed cell fails; the dashboard with long names and 10
-# holders passes at 1366 / 900 / 390 and stamps; lint nudges (UI-CHECK) on a changed page generator newer than the stamp
+# kitbag.py ui-check (headless, light + dark): cases below
 if (Use-BrowserKit) {
   $uiKb = Join-Path $k 'skills/bossy/kitbag.py'; $uiBad = Join-Path (Kd) 'clip.html'
   [IO.File]::WriteAllText($uiBad, '<!doctype html><body><div style="width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">browser app-staging·tenant1·admin</div><div style="width:90px;white-space:nowrap">test:W2P, test:W2U, test:W2R</div><table style="width:60px;table-layout:fixed"><tr><td style="width:20px;overflow-wrap:anywhere">abcdefghijklmnop</td><td>x</td></tr></table><p style="width:90px;height:16px;overflow:hidden">one two three four five six</p><p style="width:90px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1">clamped to one line of text</p></body>')

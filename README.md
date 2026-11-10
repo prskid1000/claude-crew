@@ -156,8 +156,9 @@ Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Code
 
 Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-report.html` and its `.json` (the full data):
 - header: last sweep, staleness (amber past 2x NEXT, red past 4x), auto-refresh 60 s, filter (`/`), light / dark toggle;
-- tiles with sparklines: active agents, ACT, WATCH, auto-FIXED, RAM, disk free and fill rate;
-- flags as cards with the next step (ACT first), INFO below; RAM, disk and agents-by-state gauges;
+- tiles with sparklines: active agents, ACT, WATCH, auto-FIXED, RAM, free GB and fill rate per watched drive (a drive with a WATCH / ACT
+  storage flag coloured and first);
+- flags as cards with the next step (ACT first), INFO below; RAM, a disk gauge per drive and agents-by-state gauges;
 - agents grouped by run: state chip, since, last progress, the workflow's steps and tokens as bars; today's timeline;
 - statistics: this sweep's tiles (live agents and stale ones, memory, build gate, QA seats, free GB per disk with "full in"
   under 72 h, sweep time and its slowest section) vs the previous sample and over 7 days; from the kit's logs (runs, agents
