@@ -14,10 +14,10 @@ $global:fx = [ordered]@{ 'task view C1' = '{"id":"C1","name":"Bug","status":{"st
   'comment list C1 --json' = '[{"id":"55","user":{"username":"kit"},"date":"1700000000000","comment_text":"round one\n\n[kit:qa-result]"},{"id":"56","user":{"username":"ann"},"date":"1700000001000","comment_text":"a person"}]'
   'comment edit 55 round two' = '{}'
   'status set in test C1' = 'Status set'; 'comment add C1 two words' = '{"id":"90"}'; 'member list' = '[{"id":7,"username":"Ann Lee"}]'
-  'task create --list-id L9 .*--assignee 7 --parent C1' = '{"id":"C5"}'; 'task create --list-id L9 --name x .*--parent C1' = '{"id":"C6"}'; 'task list --list-id L9 --status in test --page 0' = '[{"id":"C3","name":"A","assignees":[{"id":7,"username":"ann"}]}]' }
+  '(?s)task create --list-id L9 .*--assignee 7 --parent C1' = '{"id":"C5"}'; 'task create --list-id L9 --name x .*--parent C1' = '{"id":"C6"}'; 'task list --list-id L9 --status in test --page 0' = '[{"id":"C3","name":"A","assignees":[{"id":7,"username":"ann"}]}]' }
 try {
   Initialize-KitTracker -Type clickup
-  $r = @{ v = Get-TrackerTask C1; s = Set-TrackerStatus C1 inTest; c = Add-TrackerComment C1 'two words'; n = New-TrackerTask -List L9 -Name 'New one' -Description 'd' -Parent C1 -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks L9 inTest); p = __TrA 'create' @{ name = 'x'; description = 'd'; parent = 'C1' } }
+  $r = @{ v = Get-TrackerTask C1; s = Set-TrackerStatus C1 inTest; c = Add-TrackerComment C1 'two words'; n = New-TrackerTask -List L9 -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent C1 -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks L9 inTest); p = __TrA 'create' @{ name = 'x'; description = 'd'; parent = 'C1' } }
   $pass = $r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq 'C5' -and $r.p.id -eq 'C6' -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 7 -and ($global:log -join "`n") -match '--priority 2'
 } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $failed++ }

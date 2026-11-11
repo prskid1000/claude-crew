@@ -12,7 +12,7 @@ foreach ($c in 'clickup', 'gh', 'glab', 'mytr') { Set-Item "function:$c" { $i = 
 function Run($type, $fx, $id, $list, [scriptblock]$ok) {
  try {
   Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear()
-  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id inTest; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description 'd' -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }
+  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id inTest; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }
   $pass = [bool](& $ok $r ($global:log -join "`n"))
  } catch { $pass = $false; "  $type error: $_" }
  if (-not $pass) { $global:failed++ }

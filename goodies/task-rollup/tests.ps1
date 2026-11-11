@@ -69,5 +69,29 @@ Expect "rollup: an unchanged second run writes nothing and fetches merged MRs ne
 Expect "rollup: nothing changed locally + inside track.rollupMinutes -> no tracker read ($($res.r3) reads)" ($res.r3 -eq 0 -and -not $res.o3)
 Expect "rollup milestone: all merged posted once; the next run posts nothing ($($res.o4) | $($res.o5))" (@($res.c4).Count -eq 1 -and $res.c4[0] -match '^All 2 subtasks merged: delivery status in the description\.$' -and $res.o4 -match 'milestone merged' -and $res.o5 -match 'no change')
 Expect 'marker splice: only the section between markers changes; a new one goes after its -After section' ($res.splice -eq "x`n<!-- kit:delivery -->`nnew`n<!-- /kit:delivery -->`ny" -and $res.after -eq "<!-- kit:delivery -->`nd`n<!-- /kit:delivery -->`n`n<!-- kit:triage -->`nT`n<!-- /kit:triage -->`n`nowner")
+# close: every subtask closed -> ONE close-parent ask (gate close), closed only on the owner's answer; a reopen re-asks; no subtasks: no ask.
+# items: a task's own Items list as its checklist, ticked by merged MRs naming an id, all when its MRs are all merged
+$cl = & {
+  $env:KIT_TRACKER_TYPE = 'none'; . (Join-Path $k 'skills/bossy/bossy.ps1') 6>$null; $dd = Get-KitPath decisions -Create
+  $view = { param($i) __TrA 'view' @{ id = $i } }; $st = { param($i, $s) $null = __TrNone $i 'st' { param($o) $o.status = $s } }
+  $p = (__TrA 'create' @{ name = 'Close parent'; description = 'ask' }).id; $a = (__TrA 'create' @{ name = 'Sub a'; parent = $p }).id; $b = (__TrA 'create' @{ name = 'Sub b'; parent = $p }).id
+  $solo = (__TrA 'create' @{ name = 'Solo'; description = 'x' }).id; & $st $a closed; & $st $solo closed
+  $r0 = Update-KitParentRollup $p -Force; & $st $b closed; $r1 = Update-KitParentRollup $p -Force; $r2 = Update-KitParentRollup $p -Force
+  $ask = (Read-KitState (Get-KitTaskFile $p)).rollup.closeAsk; $dec = Get-Content (Join-Path $dd "$ask.json") -Raw | ConvertFrom-Json; $n1 = @(Get-ChildItem $dd -Filter '*.json').Count; $s1 = (& $view $p).status
+  $null = Invoke-Decide answer -Id $ask -Answer 'a lot of docs pending' -NoPublish; $null = Update-KitParentRollup $p; $d3 = (& $view $p).description; $r3b = Update-KitParentRollup $p; $act3 = (Read-KitState (Get-KitTaskFile $p)).rollup.closeActed
+  & $st $b 'in progress'; $null = Update-KitParentRollup $p -Force; & $st $b closed; $r5 = Update-KitParentRollup $p -Force; $ask2 = (Read-KitState (Get-KitTaskFile $p)).rollup.closeAsk
+  $null = Invoke-Decide answer -Id $ask2 -Answer 'A' -NoPublish; $r6 = Update-KitParentRollup $p; $null = Invoke-TaskRollup -Task $solo
+  $it = (__TrA 'create' @{ name = 'Own'; description = "**Items (ids):** A1, A2 (deferred)`n`n- note" }).id; Update-KitTaskIndex $it { param($x) $x.track = @{ task = $it; mrs = @('api-repo!9'); done = $false } }
+  function ProjPath($r) { "g/$r" }; function Invoke-HostVerb([string]$Verb, [hashtable]$A) { @{ state = 'merged'; title = 'fix: A1' } }
+  $i1 = Update-KitTaskItems $it (& $view $it); $id1 = (& $view $it).description; $i2 = Update-KitTaskItems $it
+  Update-KitTaskIndex $it { param($x) $x.track.done = $true }; $i3 = @(Invoke-KitTrackRollupHook) -join ' '
+  [pscustomobject]@{ r0 = "$r0"; r1 = "$r1"; r2 = "$r2"; gate = $dec.gate; dtask = $dec.task; n1 = $n1; s1 = $s1; d3 = $d3; ask = $ask; ask2 = $ask2; r3b = "$r3b"; act3 = $act3; r5 = "$r5"; r6 = "$r6"; s6 = (& $view $p).status
+    d6 = (& $view $p).description; fin = (Read-KitState (Get-KitTaskFile $p)).rollup.parentClosed; n7 = @(Get-ChildItem $dd -Filter '*.json').Count; i1 = "$i1"; id1 = $id1; i2 = "$i2"; i3 = $i3; it = $it }
+}
+Expect "close: none while a subtask is open; all closed -> ONE ask (gate close, task = parent), the parent untouched ($($cl.r1) | $($cl.n1))" ($cl.r0 -notmatch 'close asked' -and $cl.r1 -match "close asked $($cl.ask)" -and $cl.r2 -notmatch 'close asked' -and $cl.n1 -eq 1 -and $cl.gate -eq 'close' -and $cl.dtask -and $cl.s1 -ne 'closed')
+Expect "close: any answer but A (here 'a lot of ...') -> kept, acted on once (no re-read), shown in the delivery line; a reopened subtask spends it, all closed again asks once more; 'A' closes it, final ($($cl.r6))" ($cl.d3 -match 'parent kept open: a lot of docs pending' -and -not $cl.r3b -and $cl.act3 -eq $cl.ask -and $cl.ask2 -and $cl.ask2 -ne $cl.ask -and $cl.r5 -match 'close asked' -and
+  $cl.r6 -match 'parent closed' -and $cl.s6 -eq 'closed' -and $cl.d6 -match '\*\*Delivery status\*\*:[^\n]* · parent closed' -and $cl.fin -eq $true)
+Expect "close: a task without subtasks is never asked about (its flow unchanged) ($($cl.n7) decisions)" ($cl.n7 -eq 2)
+Expect "items: the task's own Items list -> its checklist, an id a merged MR names ticked; unchanged = no write; all ticked once its MRs are all merged ($($cl.i1) | $($cl.i3))" ($cl.i1 -match '1/2 done' -and $cl.id1 -match '(?s)\*\*Items\*\*\n- \[x\] A1\n- \[ \] A2' -and -not $cl.i2 -and $cl.i3 -match "items $($cl.it): 2/2 done")
 Remove-TestKit $k
 Complete-Tests
