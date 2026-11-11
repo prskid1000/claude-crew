@@ -22,8 +22,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L31 init · L49 board · L228 budget · L256 launch · L516 recover · L603 pause · L614 resume · L677 program · L722 param ·
-  L728 track · L1048 supervise · L1350 report · L1429 audit · L1489 storage · L1699 bugbrief · L1801 cleanup · L1885 learn ·
+Sections: L31 init · L49 board · L228 budget · L256 launch · L516 recover · L602 pause · L613 resume · L676 program · L721 param ·
+  L727 track · L1047 supervise · L1350 report · L1429 audit · L1489 storage · L1699 bugbrief · L1801 cleanup · L1885 learn ·
   L1915 decide · L2048 health · L2110 retro due · L2120 tidy · L2189 the kit origin's main and goodies · L2205 setup ·
   L2272 guard-sendmessage
 #>
@@ -517,8 +517,7 @@ function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $nu
 function Invoke-Recover {
 param([string]$RunId, [string[]]$Run = @(), [int]$Hours = 24, [int]$MaxSeconds = 150)
 $Run = @(Split-KitList $Run)
-if (-not $script:KitDeadline) { $script:KitDeadline = (Get-Date).AddSeconds($MaxSeconds) }   # resume set it: one budget for both
-Invoke-KitHooks Close-KitFinishedRuns   # adapters/supervise_resources.ps1
+if (-not $script:KitDeadline) { $script:KitDeadline = (Get-Date).AddSeconds($MaxSeconds); Invoke-KitHooks Close-KitFinishedRuns }   # resume did both: one budget, one scan
 $runs = @(Get-StoppedRuns -Hours $Hours -All:([bool]($RunId -or $Run.Count)) | Where-Object { (-not $RunId -or $_.runId -eq $RunId) -and (-not $Run.Count -or $_.run -in $Run) })
 if ($RunId -and -not $runs.Count) { "no launch record for $RunId within $Hours h (bossy.ps1 launch -List)"; exit 0 }
 $wfDirs = @(Get-KitWorkflowDirs | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-$Hours) })
@@ -639,7 +638,7 @@ Invoke-KitHooks Close-KitFinishedRuns   # adapters/supervise_resources.ps1
 $null = Set-KitBoardCrashed
 $go = @(); $todo = @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run -eq $Run }); $ri = 0
 foreach ($s in $todo) {
-  if ((Get-Date) -ge $script:KitDeadline) { $rest = @($todo | Select-Object -Skip $ri); "partial: time budget ($MaxSeconds s) used; $($rest.Count) run(s) not resumed: $(@($rest.run) -join ', '). Rerun: bossy.ps1 resume -Run <run> (one each)"; break }
+  if ((Get-Date) -ge $script:KitDeadline) { $rest = @($todo | Select-Object -Skip $ri); "partial: time budget ($MaxSeconds s) used; $($rest.Count) run(s) not resumed: $(@($rest.run) -join ', '). Rerun: bossy.ps1 resume -Run <run> (one each); the pause stays"; $pauses = @(); break }
   $ri++
   "== $($s.leaf) run $($s.run) ($(if ($s.paused) { 'paused' } else { 'crashed' }))"
   $board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object run -eq $s.run)
@@ -1097,9 +1096,9 @@ foreach ($w in $wfDirs) {
   $started = @($ev | Where-Object type -eq 'started'); $res = @{}; foreach ($r in $ev | Where-Object type -eq 'result') { $res[$r.agentId] = $r }
   foreach ($r in $res.Values) { $dl = [string]($started | Where-Object agentId -eq $r.agentId | Select-Object -First 1).label; [void]$doneLabels.Add($dl); foreach ($nm in LabelNames $dl) { if (-not $doneAt[$nm] -or $doneAt[$nm] -lt $w.LastWriteTime) { $doneAt[$nm] = $w.LastWriteTime } } }
   if ($w.Name -in $finishedRuns) { continue }
-  $wsc = "$(@(Get-KitWorkflowRecords $w $ev $lnch | Where-Object script)[0].script)"
-  $done = [bool]($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }) -or ($wsc -and (Test-KitJournalFinished $w.FullName (Split-Path $wsc -Leaf)))   # the engine writes no end marker
-  if (-not $done -and (Get-KitWorkflowStop $w @(Get-KitWorkflowRecords $w $ev $lnch))) { continue }   # stopped (TaskStop, restart)
+  $wrec = @(Get-KitWorkflowRecords $w $ev $lnch); $wsc = "$(@($wrec | Where-Object script)[0].script)"
+  $done = [bool]($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }) -or ($wsc -and (Get-Command Test-KitJournalFinished -ErrorAction SilentlyContinue) -and (Test-KitJournalFinished $w.FullName (Split-Path $wsc -Leaf) $(if (@($wrec | Where-Object { (Test-KitHolder $_) -eq $true }).Count) { 10 } else { 2 })))   # the engine writes no end marker
+  if (-not $done -and (Get-KitWorkflowStop $w $wrec)) { continue }   # stopped (TaskStop, restart)
   if ($done -and $AutoFix -and -not $state.closedRuns[$w.Name] -and (Within 'run records')) {
     $state.closedRuns[$w.Name] = $now.ToString('o'); $cl = @(Invoke-Bounded $KitCmd.orch @('launch', '-Done', '-RunId', $w.Name)) -join ' '
     if ($cl -match 'marked completed') { Flag 'INFO' "auto-fixed: run $($w.Name) finished: launch record closed" 'Nothing to do.' }
@@ -1161,7 +1160,8 @@ foreach ($g in $active | Group-Object { "$($_.run)/$($_.agent)" } | Where-Object
 }
 # testers don't beat in long checks
 $liveNames = @($liveLabels | ForEach-Object { LabelNames $_ })
-$doneNames = @($doneLabels | ForEach-Object { LabelNames $_ } | Where-Object { $_ -and $_ -notin $liveNames })
+$runNames = @($runningLabels | ForEach-Object { LabelNames $_ })   # running, however idle: an earlier step's result (decide:SD) closed a live resume:SD
+$doneNames = @($doneLabels | ForEach-Object { LabelNames $_ } | Where-Object { $_ -and $_ -notin $liveNames -and $_ -notin $runNames })
 # workflow steps for Test-KitLive
 Write-KitAtomic (Get-KitPath live-steps -Create) (@{ at = $now.ToString('o'); running = @($runningLabels); labels = @(@($runningLabels) + @($doneLabels) | Where-Object { $_ } | Select-Object -Unique) } | ConvertTo-Json)
 foreach ($s in $stale | Where-Object { $_.agent -in $doneNames -and (-not $doneAt[$_.agent] -or -not $_.joined -or [datetime]$_.joined -le $doneAt[$_.agent]) }) {   # an older result never closes a newer entry
@@ -1169,7 +1169,7 @@ foreach ($s in $stale | Where-Object { $_.agent -in $doneNames -and (-not $doneA
 }
 # others left = finished; kit calls since beat = alive; else silent
 $calls = if (@($stale | Where-Object { $_.agent -notin $liveNames -and $_.agent -notin $doneNames }).Count) { @(Read-KitLog calls $now.AddMinutes(-$bm) | ForEach-Object agent | Select-Object -Unique) }
-foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent -notin $doneNames }) {
+foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent -notin $doneNames -and $_.agent -notin $runNames }) {   # a running step: STUCK row, never left
   $sib = @($entries | Where-Object { $_.run -eq $s.run -and $_.session -ne $s.session })
   if ($AutoFix -and $s.run -and $sib.Count -and -not @($sib | Where-Object status -ne 'left').Count) { & $markLeft $s 'finished'; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) left: every other agent of its run left" 'Nothing to do.'; continue }
   if ($s.agent -in $calls) { continue }   # no beat but kit calls: alive (a silent one: its status row is STUCK, a flag)

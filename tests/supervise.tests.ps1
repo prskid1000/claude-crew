@@ -13,18 +13,18 @@ $pzw = pwsh -NoProfile -Command ". '$O'; (Get-KitPauseFlags @(Read-KitJsonFiles 
 $af = Join-Path (Kd) 'rx.json'; [IO.File]::WriteAllText($af, '{"brief":"C:/b/rx.md"}')
 $pzl = pwsh @np $O launch -Self -Script buildy.js -Run rx -ArgsFile $af | Out-String; $pza = pwsh -NoProfile -Command ". '$O'; [bool](Get-KitActivePause rx); [bool](Get-KitActivePause ry)"; Remove-Item $pzf, (Join-Path (TkPath $k launches) 'self-buildy-rx*')   # a typed launch record pairs with a self record by time
 Expect 'pause of all runs: supervise flags it while a run works; a relaunch releases only that run (recorded)' ($pzw -match 'pause pause-zz\.json \(C: full, since 12:34\) is active while run\(s\) work: rx' -and $pzl -match 'PAUSE pause-zz\.json \(C: full\) released for run rx' -and $pza[0] -eq 'False' -and $pza[1] -eq 'True')
-# journals (KIT_TRANSCRIPTS/<session>/subagents/workflows/<id>) and board entries of a live holder (this process)
+# journals (KIT_TRANSCRIPTS/<s>/subagents/workflows/<id>), board entries held by this process
 $env:KIT_TRANSCRIPTS = Join-Path (Kd) 'tx'
 function New-Journal($id, [object[]]$Lines) { $d = New-Item -ItemType Directory -Force (Join-Path $env:KIT_TRANSCRIPTS "s1/subagents/workflows/$id"); $Lines | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 6 } | Set-Content (Join-Path $d 'journal.jsonl') }
 $hs = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); $bd = TkPath $k board -Create
 function New-Entry($agent, $run, $min, $status = 'working') { & $J @{ session = "s-$agent"; agent = $agent; run = $run; type = 'revy'; status = $status; beat = (Get-Date).AddMinutes(-$min).ToString('o'); joined = (Get-Date).AddHours(-1).ToString('o'); holderPid = $PID; holderStart = $hs } (Join-Path $bd "s-$agent.json") }
-New-Journal wf_r1 @(@{ type = 'started'; agentId = 'a1'; label = 'review:PY-RET' }, @{ type = 'result'; agentId = 'a1'; result = @{ findings = @() } }, @{ type = 'started'; agentId = 'a2'; label = 'build:X2' })
+New-Journal wf_r1 @(@{ type = 'started'; agentId = 'a1'; label = 'review:PY-RET' }, @{ type = 'result'; agentId = 'a1'; result = @{ findings = @() } }, @{ type = 'started'; agentId = 'a2'; label = 'build:X2' }, @{ type = 'started'; agentId = 'a3'; label = 'decide:SD' }, @{ type = 'result'; agentId = 'a3'; result = @{} }, @{ type = 'started'; agentId = 'a4'; label = 'resume:SD' })
 New-Journal wf_r3 @(@{ type = 'started'; agentId = 'b1'; label = 'learn' }, @{ type = 'result'; agentId = 'b1'; result = @{ signals = 1 } }, @{ type = 'finished' })
-New-Entry 'review-PY-RET' r1 49; New-Entry 'revy-1400' kit-fix 40; New-Entry 'kitty' kit-fix 41 'left'; New-Entry 'H9' r2 30
+New-Entry 'review-PY-RET' r1 49; New-Entry 'revy-1400' kit-fix 40; New-Entry 'kitty' kit-fix 41 'left'; New-Entry 'H9' r2 30; New-Entry 'SD' r1 49
 $null = pwsh @np $O launch -RunId wf_r3 -Script buildy.js -ArgsJson '{"brief":"C:/b/r3.md","run":"r3"}' 2>&1
 $sj = pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json; $sw = @($sj.flags | ForEach-Object { "[$($_.level)] $($_.what)" }) -join "`n"
 $lr3 = Read-Json (Join-Path (TkPath $k launches) 'wf_r3.json'); $left = { param($a) $e = Read-Json (Join-Path $bd "s-$a.json"); $e.status -eq 'left' -and $e.finished }
-Expect 'supervise -AutoFix: stale entries with a journal result or a finished parent leave as finished (INFO); a silent one = STUCK (WATCH); a finished run''s record closes' ((& $left 'review-PY-RET') -and (& $left 'revy-1400') -and -not (& $left 'H9') -and
+Expect 'supervise -AutoFix: stale entries with a journal result (not one running again) or a finished parent leave (INFO); a silent one = STUCK (WATCH); a finished run''s record closes' ((& $left 'review-PY-RET') -and (& $left 'revy-1400') -and -not (& $left 'H9') -and -not (& $left 'SD') -and
   $sw -match '\[INFO\] auto-fixed: board entry review-PY-RET \(r1\) left: its workflow step has a journal result' -and $sw -match '\[INFO\] auto-fixed: board entry revy-1400 \(kit-fix\) left: every other agent of its run left' -and
   $sw -match '\[WATCH\] STUCK H9 \(revy\) \(r2\): no progress for 30 min' -and $sw -match '\[INFO\] auto-fixed: run wf_r3 finished: launch record closed' -and $lr3.completed -and $lr3.learned -match 'own|launch -Done')
 # status rows, one per state; transcripts (Claude, Codex, Antigravity shapes) with set mtimes
@@ -42,7 +42,7 @@ $se = { param($a, [hashtable]$x) $b = @{ session = "s-$a"; agent = $a; run = 'sr
 & $se S6 @{}; & $se S7 @{ tool = 'codex'; transcript = $cx }; & $se S8 @{ tool = 'antigravity'; transcript = $ag; status = 'running tests' }
 & $J @{ id = 'e-1'; kind = 'envfix'; run = 'sr'; agent = 'S2'; status = 'pending'; at = (& $ago 20) } (Join-Path (TkPath $k decisions -Create) 'e-1.json')
 & $J @{ waiting = @(@{ kind = 'lanes'; holder = 'S6'; heldBy = 'vision x'; pid = $PID; pidStart = $hs; at = (& $ago 3) }) } (Join-Path (TkPath $k runtimes -Create) 'gpu.json')
-# an older folder of run sr (its S32 finished; the newer one runs S32 again), a run whose only step waits, a paused run between steps
+# run sr: older folder (S32 done, rerun in the newer), a run whose one step waits, a paused run
 $wj = { param($id, $run, [object[]]$L, $m, $x = @{}) New-Journal $id $L; (Get-Item "$(Split-Path $wd)/$id/journal.jsonl").LastWriteTime = (Get-Date).AddMinutes(-$m); & $J (@{ runId = $id; run = $run } + $x) (Join-Path (TkPath $k launches) "$id.json") }
 & $wj wf_s0 sr @(@{ type = 'started'; agentId = 'x0'; label = 'build:S32' }, @{ type = 'result'; agentId = 'x0'; result = @{ summary = 'old' } }) 60; & $se S32 @{ status = 'left' }
 & $wj wf_s2 sp @(@{ type = 'started'; agentId = 'y1'; label = 'build:P1' }) 30; $null = & $tx "$(Split-Path $wd)/wf_s2/agent-y1.jsonl" '{}' 30
@@ -72,11 +72,11 @@ $es = 'ERROR SPIKE: 3 new error line(s) in D:\x\rm-api.log'; $ss = Read-Json ($s
 $ak = pwsh @np $O supervise -Ack $es -Reason 'expected 4xx' | Out-String
 $sf = pwsh -NoProfile -Command ". '$O'; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; Select-KitFlags @([pscustomobject]@{ level = 'ACT'; what = 'ERROR SPIKE: 5 new error line(s) in D:\x\rm-api.log' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X1 (r) 16 min ago' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X1 (r) 17 min ago' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X2 (r) 16 min ago' }) `$a (Get-Date) | ForEach-Object what"
 Expect 'supervise -Ack hides that flag (counts differ) 24 h; one line per problem, ids apart (X1, X2)' ($ak -match 'acknowledged for 24 h[\s\S]*hides 1 flag' -and $sf.Count -eq 3 -and $sf[0] -eq 'HANDOFF X1 (r) 16 min ago' -and $sf[1] -eq 'HANDOFF X2 (r) 16 min ago' -and $sf[2] -match '1 acknowledged flag\(s\) hidden')
-# a seat whose agent returned (its Claude transcript ends in the final answer): -AutoFix leaves it, never STUCK
+# seat of a returned agent (transcript ends in its answer): -AutoFix leaves it
 foreach ($n in 'subagents/S10', 'S11') { & $se ($n -replace '.*/') @{ beat = (& $ago 30); run = 'sx'; transcript = (& $tx (Join-Path (Kd) "$n.jsonl") '{"message":{"role":"assistant","stop_reason":"end_turn"}}' 30) } }
 $w10 = (pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json).flags.what -match 'S1[01]'
 Expect "supervise -AutoFix: a returned subagent's seat leaves, a session's stays ($w10)" ((Read-Json "$bd/s-S10.json").status -eq 'left' -and "$w10" -eq 'auto-fixed: board entry S10 (sx) left: its agent returned' -and (Read-Json "$bd/s-S11.json").status -ne 'left')
-# runs stopped with steps running (TaskStop, a restart): its holder gone, no record and no older Claude, launch -Done without a record; today's ARP reuses the code
+# runs stopped mid-step: holder gone, no record, no older Claude; launch -Done, no record
 & $J @{ script = 'C:/k/testy.js'; run = 'ry'; fnv = 'ab12'; at = (& $ago 60); holderPid = $PID; holderStart = '2000-01-01T00:00:00Z' } (Join-Path (TkPath $k launches) 'self-testy-ry-ab12.json'); & $se ARP @{ run = 'today'; type = 'checky'; joined = (& $ago 10) }
 $ys = Invoke-PsTest 'stopped' '. $args[0]; $env:KIT_TRANSCRIPTS = $args[1]; function Get-KitClaudeStarts { Get-Date }
   foreach ($y in 1..4) { $d = "$($args[1])/s2/subagents/workflows/wf_y$y"; $null = New-Item -ItemType Directory -Force $d; Set-Content "$d/agent-c$y.jsonl" "{}"
@@ -117,7 +117,7 @@ Remove-TestKit $k
 # ---- resources (was the goody supervise-resources)
 $k = New-TestKit sres
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
-# gate.cacheFlush: a starved gate + a big file cache -> one flush per 30 min; a failing command = one WATCH
+# gate.cacheFlush: starved gate + big cache -> 1 flush / 30 min; failing command = 1 WATCH
 $cft = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
@@ -211,7 +211,7 @@ const c = _mock(_pass); await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: '
 console.log(`release:${L.indexOf('release-X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release-X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release-X1').prompt)}`)
 '@ (Join-Path $src 'workflows/buildy.js')
 Expect-Each $jr 'buildy: # (after the build stage and the run)' 'release'
-# supervise: the owner's MRs merged in 24 h that no task tracks = one WATCH; the host list is cached one beat, tracking re-read
+# owner's untracked MRs merged in 24 h = one WATCH; host list cached a beat, tracking re-read
 $um = @'
 $o, $add = $args; . $o; $KitConf.TrackerType = 'command'; $KitConf.TrackerTag = 'TT-'; $KitConf.TrackerRepos = @('shop')
 function Get-KitHostUser { 'me' }

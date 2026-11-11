@@ -790,13 +790,13 @@ param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]
 if ($Status) { Show-KitPause; return }
 if ($Finish) { Complete-KitPause $Finish $Wait; return }
 if (-not ($Run -or $All)) { 'usage: bossy.ps1 pause -Run <run> | -All [-Reason "<why>"] [-Wait <min>: block until agents leave] | -Status'; exit 2 }
-$closed = @(Close-KitFinishedRuns)
 $pf = Join-Path (Get-KitPath pauses -Create) "pause-$(Get-Date -Format yyyy-MM-dd-HHmmss).json"
-$rec = [ordered]@{ at = (Get-Date).ToString('o'); reason = $Reason; run = $(if ($All) { '*' } else { $Run }); state = 'pausing'; wait = $Wait; agents = @(); runs = @() }
+$rec = [ordered]@{ at = (Get-Date).ToString('o'); reason = $Reason; run = $(if ($All) { '*' } else { $Run }); state = 'pausing'; wait = $Wait; finisher = $(if ($PSBoundParameters.ContainsKey('Wait')) { $PID }); agents = @(); runs = @() }
 Write-KitState $pf $rec   # from now every board beat prints PAUSE
 $mine = { param($x) $All -or $x.run -eq $Run }
 $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and (& $mine $_) -and (Test-KitHolder $_) -ne $false })
 foreach ($b in $live) { Send-BoardMsg 'coordinator' $b.agent "PAUSE ($Reason): at your next step boundary: crafty.ps1 checkpoint, crafty.ps1 wt commit (WIP, no push), release your leases, board leave -Session $($b.session) -Status paused; return no result" }
+$closed = @(Close-KitFinishedRuns 24)   # after PAUSE went out: agents stop at once
 # live runs, or stopped within 24 h: an older crashed run is not running, resume -All lists it
 $runs = @(Get-StoppedRuns -Hours 24 -All | Where-Object { & $mine $_ })
 foreach ($s in $runs) {
@@ -805,7 +805,7 @@ foreach ($s in $runs) {
     launch = $(if ($s.file) { Get-Content -LiteralPath $s.file -Raw | ConvertFrom-Json }); self = $(if ($s.selfFile) { Get-Content -LiteralPath $s.selfFile -Raw | ConvertFrom-Json }) }   # cleanup may remove launches/
 }
 $rec.agents = @(foreach ($b in $live) { [ordered]@{ agent = $b.agent; run = $b.run; session = $b.session; board = $b.file; confirmed = $false } })
-Write-KitState $pf $rec
+Invoke-KitLocked $pf { $cur = Get-Content -LiteralPath $pf -Raw | ConvertFrom-Json; if ($cur.state -ne 'resumed') { Write-KitState $pf $rec } }   # a relaunch meanwhile released it
 $closed
 "PAUSE sent to $($live.Count) agent(s)$(if ($live.Count) { " ($(@($live.agent) -join ', '))" }); $($runs.Count) run(s) marked paused$(if ($runs.Count) { ": $(@($runs.run) -join ', ')" })"
 if ($PSBoundParameters.ContainsKey('Wait')) { "waiting up to $Wait min for each to leave at a checkpoint"; Complete-KitPause $pf $Wait; return }
@@ -814,8 +814,8 @@ $null = Invoke-KitBackground "pause-finish $(Split-Path $pf -LeafBase)" $KitCmd.
 "check: bossy.ps1 pause -Status (says when it is safe to power off); record: $pf"
 }
 # finished = an end marker, or its last step (the workflow's last phase) answered and none running; the engine writes no marker
-function Test-KitJournalFinished([string]$Dir, [string]$Leaf) {
-  $j = Join-Path $Dir 'journal.jsonl'; if (-not $Dir -or -not (Test-Path -LiteralPath $j) -or ((Get-Date) - (Get-Item -LiteralPath $j).LastWriteTime).TotalMinutes -lt 2) { return $false }
+function Test-KitJournalFinished([string]$Dir, [string]$Leaf, [double]$QuietMin = 2) {   # a live holder: callers pass 10
+  $j = Join-Path $Dir 'journal.jsonl'; if (-not $Dir -or -not (Test-Path -LiteralPath $j) -or ((Get-Date) - (Get-Item -LiteralPath $j).LastWriteTime).TotalMinutes -lt $QuietMin) { return $false }
   $ev = @(Get-Content -LiteralPath $j | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} })
   if (@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count) { return $true }
   $st = @($ev | Where-Object type -eq 'started'); $res = @($ev | Where-Object type -eq 'result' | ForEach-Object agentId)
@@ -830,7 +830,8 @@ function Close-KitFinishedRuns([int]$Hours = 168) {
     $rx = [regex]::Escape("launch -Self -Script $($s.leaf) -Run '$($s.run)' ") + ".*-Fnv $($sj.fnv)"
     $wf = if ($s.runId) { @($wfs | Where-Object Name -eq $s.runId)[0] } elseif ($sj.wfDir -and $sj.fnv) { @($wfs | Where-Object { $_.FullName -eq "$($sj.wfDir)".TrimEnd('\', '/') -and @(Get-ChildItem $_.FullName -Filter 'agent-*.jsonl' | Where-Object { Select-String -LiteralPath $_.FullName -Pattern $rx -Quiet } | Select-Object -First 1).Count })[0] }
     $id = $wf.Name
-    if (-not $wf -or -not (Test-KitJournalFinished $wf.FullName $s.leaf)) { continue }
+    $hl = @(@($s.record) + @($sj) | Where-Object { $_ -and (Test-KitHolder $_) -eq $true }).Count
+    if (-not $wf -or -not (Test-KitJournalFinished $wf.FullName $s.leaf $(if ($hl) { 10 } else { 2 }))) { continue }
     $fs = @(@($s.file, $s.selfFile) | Where-Object { $_ }); Set-KitLaunchField $fs completed $now
     foreach ($f in $fs) { if (-not (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).learned) { Set-KitLaunchField @($f) learned "$now (finished: journal)" } }   # its own Learn phase ran
     "closed finished run $($s.run) ($id): its journal ended at the last phase"
@@ -842,17 +843,20 @@ function Get-KitPauseOpen($Rec) { @($Rec.agents | Where-Object { $e = try { Get-
 function Complete-KitPause([string]$Pf, [double]$Wait) {
   $rec = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json
   $until = (Get-Date).AddMinutes($Wait)
-  while ($true) { $open = @(Get-KitPauseOpen $rec); if (-not $open.Count -or (Get-Date) -ge $until) { break }; Wait-KitPoll 15 }
+  $resumed = { (Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json).state -eq 'resumed' }
+  while ($true) { $open = @(Get-KitPauseOpen $rec); if (-not $open.Count -or (Get-Date) -ge $until -or (& $resumed)) { break }; Wait-KitPoll 15 }
+  if (& $resumed) { "pause $Pf was resumed meanwhile: nothing stopped"; return }
   foreach ($s in @($rec.runs)) { Invoke-KitStopLearn ([pscustomobject]@{ run = $s.run; leaf = $s.leaf; runId = $s.runId; file = $s.file; selfFile = $s.selfFile; at = $s.at }) 'pause' }
   foreach ($a in @($rec.agents)) {
     $b = try { Get-Content -LiteralPath $a.board -Raw | ConvertFrom-Json } catch { $null }; $ck = Get-KitCheckpoint $a.agent "$($a.run)"
     $dirs = @(@($ck.worktrees) + @($b.worktrees | Where-Object { "$_" -match '[\\/]' -and (Test-Path -LiteralPath "$_" -PathType Container) }) | Where-Object { $_ } | Select-Object -Unique)
     foreach ($kv in @{ confirmed = $a.session -notin @($open.session); next = $ck.next; checkpoint = $ck; worktrees = @($dirs | ForEach-Object { Get-KitWtState $_ }) }.GetEnumerator()) { $a | Add-Member -Force NoteProperty $kv.Key $kv.Value }
   }
-  Invoke-KitLocked $Pf { $now = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json; $script:KitPauseResumed = $now.state -eq 'resumed' }
-  if ($script:KitPauseResumed) { "pause $Pf was resumed meanwhile: nothing stopped"; return }
+  if (& $resumed) { "pause $Pf was resumed meanwhile: nothing stopped"; return }
   $hooks = @(Invoke-KitHooks Invoke-KitPause)   # goody local-env: stops unheld services
-  Invoke-KitLocked $Pf { $now = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json; if ($now.state -ne 'resumed') { $rec.state = 'paused'; $rec | Add-Member -Force NoteProperty finishedAt (Get-Date).ToString('o'); $rec | Add-Member -Force NoteProperty notes @($hooks | ForEach-Object { "$_" }); Write-KitState $Pf $rec } }
+  if (& $resumed) { "resumed while the local env stopped: start what the run needs again (envy.ps1 up)" }
+  # only this finisher's fields onto the current record: a resume's state / released written meanwhile stay
+  Invoke-KitLocked $Pf { $now = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json; if ($now.state -ne 'resumed') { $now.state = 'paused'; foreach ($kv in @{ finishedAt = (Get-Date).ToString('o'); notes = @($hooks | ForEach-Object { "$_" }); agents = @($rec.agents) }.GetEnumerator()) { $now | Add-Member -Force NoteProperty $kv.Key $kv.Value }; Write-KitState $Pf $now } }
   "PAUSED $(@($rec.agents).Count - $open.Count) of $(@($rec.agents).Count) agent(s) at a checkpoint$(if ($open.Count) { "; not confirmed: $(@($open.agent) -join ', ') (their last checkpoint and worktree hold the state; resume treats them as crashed)" }); $(@($rec.runs).Count) run(s) marked paused$(if (@($rec.runs).Count) { ": $(@($rec.runs.run) -join ', ')" })"
   $hooks
   "record: $Pf"
@@ -865,6 +869,7 @@ function Show-KitPause {
   $p = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' } | Sort-Object { [datetimeoffset]$_.at })[-1]
   if (-not $p) { 'no pause in effect'; return }
   $job = Get-KitPauseJob $p.file
+  if ($p.finisher -and (Get-Process -Id $p.finisher -ErrorAction SilentlyContinue)) { $job.live = $true }   # a -Wait pause finishes inline
   if ($p.state -eq 'pausing' -and -not $job.live) { Complete-KitPause $p.file 0; if (@(Get-KitPauseOpen $p).Count) { exit 1 }; return }
   $open = @(Get-KitPauseOpen $p)
   "pause $($p.file): $($p.state) since $(([datetimeoffset]$p.at).ToString('HH:mm')) ($($p.reason)); $(@($p.agents).Count - $open.Count) of $(@($p.agents).Count) agent(s) stopped; $(@($p.runs).Count) run(s) paused$(if ($job.live) { "; finishing in the background (log $($job.log))" })"

@@ -197,14 +197,14 @@ Expect 'pause: returns in seconds, PAUSING + -Status; finisher confirms in the b
 # a journal that ended at the workflow's last phase = finished: closed, never listed; the time budget cuts recover with a partial line
 $env:KIT_TRANSCRIPTS = Join-Path (Kd) 'txf'; $lfd = TkPath $k launches
 $fwf = Join-Path $k 'workflows/finwf.js'; New-Item -ItemType Directory -Force (Split-Path $fwf) | Out-Null; "phase('Build')`nphase('Learn')" | Set-Content $fwf   # its last phase: Learn
-foreach ($w in @('wf_fin1', 'Learn', 'learn', $true), @('wf_open1', 'Build', 'build:X1', $false)) {
+foreach ($w in @('wf_fin1', 'Learn', 'learn', $true), @('wf_open1', 'Build', 'build:X1', $false), @('wf_live1', 'Learn', 'learn', $true)) {   # live1: a live holder, quiet 5 < 10 min
   $wd = New-Item -ItemType Directory -Force (Join-Path $env:KIT_TRANSCRIPTS "s1/subagents/workflows/$($w[0])"); $jf = Join-Path $wd 'journal.jsonl'
   @('{"type":"started","agentId":"a1","label":"build:X1","phase":"Build"}', '{"type":"result","agentId":"a1","result":{}}', "{""type"":""started"",""agentId"":""a2"",""label"":""$($w[2])"",""phase"":""$($w[1])""}") + @(if ($w[3]) { '{"type":"result","agentId":"a2","result":{"signals":0}}' }) | Set-Content $jf
   (Get-Item $jf).LastWriteTime = (Get-Date).AddMinutes(-5)
-  $null = Px $O launch -RunId $w[0] -Script $fwf -ArgsJson "{""brief"":""C:/b/$($w[0]).md""}" 2>&1; $lf = Join-Path $lfd "$($w[0]).json"; $x = Read-Json $lf; $x.holderPid = 999999; $x.at = (Get-Date).AddHours(-3).ToString('o'); & $J $x $lf 10   # 3 h back: no self record of this file pairs with it
+  $null = Px $O launch -RunId $w[0] -Script $fwf -ArgsJson "{""brief"":""C:/b/$($w[0]).md""}" 2>&1; $lf = Join-Path $lfd "$($w[0]).json"; $x = Read-Json $lf; $x.holderPid = 999999; if ($w[0] -eq 'wf_live1') { $x.holderPid = $PID; $x.holderStart = & { . (Lib); Get-KitPidStart $PID } }; $x.at = (Get-Date).AddHours(-3).ToString('o'); & $J $x $lf 10   # 3 h back: no self record of this file pairs with it
 }
-$env:KIT_OFFLINE = 0; $fr = Px $O resume -All | Out-String; Remove-Item Env:KIT_OFFLINE; $fb = Px $O recover -MaxSeconds 0 | Out-String; Remove-Item Env:KIT_TRANSCRIPTS; Remove-Item $fwf
-Expect 'resume: a finished journal closes its record (not listed); an open one is listed; recover -MaxSeconds 0: partial + rerun line' ($fr -match 'closed finished run .*\(wf_fin1\)' -and (Read-Json (Join-Path $lfd 'wf_fin1.json')).completed -and $fr -notmatch '== \w+\.js run wf_fin1' -and
+$env:KIT_OFFLINE = 0; $fr = Px $O resume -All | Out-String; Remove-Item Env:KIT_OFFLINE; $fb = (Invoke-TestScript $O recover -MaxSeconds 0).out; Remove-Item Env:KIT_TRANSCRIPTS; Remove-Item $fwf
+Expect 'resume: a finished journal closes its record (not listed); an open one is listed; recover -MaxSeconds 0: partial + rerun line' ($fr -match 'closed finished run .*\(wf_fin1\)' -and (Read-Json (Join-Path $lfd 'wf_fin1.json')).completed -and -not (Read-Json (Join-Path $lfd 'wf_live1.json')).completed -and $fr -notmatch '== \w+\.js run wf_fin1' -and
   $fr -match '== finwf\.js run wf_open1' -and $fb -match 'partial: time budget \(0 s\) used; \d+ run\(s\) not checked: .*Rerun: bossy\.ps1 recover -Run' -and $fb -notmatch '(?m)^== \w+\.js run')
 Remove-TestKit $k
 Complete-Tests
