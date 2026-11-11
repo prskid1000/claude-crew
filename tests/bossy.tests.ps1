@@ -245,7 +245,7 @@ $pd = TkPath $k pauses -Create; $pj = Start-ThreadJob { & $using:pwshExe -NoProf
 while (-not (Get-ChildItem $pd -Filter 'pause-*.json')) { Start-Sleep -Milliseconds 100 }
 $pb = Px $O board beat -Session $ps | Out-String; $pl = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pz = $pj | Wait-Job | Receive-Job
 $pr = Read-Json (Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | Select-Object -Last 1).FullName; $pll = Px $O launch -List -Brief | Out-String
-$pu = Px $O resume -Run pr | Out-String; $pl2 = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pl3 = Px $O launch -List -Brief | Out-String; Remove-Item $ad -Recurse -Force
+$pu = Px $O resume -Run pr | Out-String; $pl2 = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pl3 = Px $O launch -List -Brief | Out-String; Remove-Item (Join-Path $ad 'fakehost.ps1') -Force   # the fake only: adapters/ holds kit files
 Expect 'pause: record, PAUSE on beat, leave waits, launch paused; resume of a waiting run releases it' ($pz -match 'PAUSED 1 of 2 .*not confirmed: P2' -and $pz -match 'NOT safe yet: P2' -and $pr.state -eq 'paused' -and @($pr.agents | Where-Object confirmed).agent -eq 'P1' -and $pr.runs[0].self -and $pb -match 'PAUSE \(power off\)' -and $pl -match '^PAUSED' -and $pll -match 'paused buildy\.js' -and $pu -match 'still running: P1' -and $pu -cnotmatch 'RELAUNCH' -and $pl2 -match 'RESUMED' -and $pl3 -notmatch 'paused buildy')
 # board: the same name in a live session 5 min after its beat = a parallel agent
 $j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"

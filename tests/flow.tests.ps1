@@ -2,7 +2,8 @@
 <#
 flow.tests.ps1: dev-flow plumbing: bossy.ps1 track add / run (task ids, promotion), board join / leave, health's overdue beat;
 devtools.py finish / prior gate; pokey.ps1 api, goody verbs and seats (from pokey.tests: its cap); buildy.js MR dedupe (moved
-from bossy.tests: its cap); decide publish (the task's ONE Decisions comment).
+from bossy.tests: its cap); decide publish (the task's ONE Decisions comment); pause -Status, finished runs closed, recover's
+time budget (from bossy.tests: its cap).
 Usage: pwsh -NoProfile -File <kit>/tests/flow.tests.ps1 (or tests/kit-tests.ps1 -Area flow).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -184,5 +185,26 @@ $ck2 = Px $O launch -Check -ArgsFile $sbArgs 2>&1 | Out-String; $ck2c = $LASTEXI
 $null = Px $crPath tracker describe $sbSub 'bare'; $ck3 = Px $O launch -Self -Script buildy.js -Run wave-c -ArgsFile $sbArgs 2>&1 | Out-String
 Expect "launch -Check / -Self: TASKS REFUSED with the fix per gap, then ok ($ck1c $ck2c)" ($ck1c -eq 1 -and $ck1 -match "TASKS REFUSED ${sbSub}: parent $sbPar has no delivery section: bossy.ps1 track rollup -Task $sbPar" -and $ck1 -match 'goody add task-rollup' -and
   $ck1 -match "TASKS REFUSED ${sbTop}: its description lacks Items .*tracker scope -Task $sbTop" -and $ck2c -eq 0 -and $ck2 -match 'TASKS ok: 1 area' -and $ck3 -match 'RECORDED' -and $ck3 -match "TASKS REFUSED ${sbSub}: its description lacks Problem, Goal, Items, Acceptance, Links")
+# pause without -Wait: back in seconds, the wait runs in the background; -Status says when it is safe
+$qs = if ((Px $O board join -Agent Q1 -Run pq | Out-String) -match 'SESSION (\S+)') { $Matches[1] }; $null = Px $O launch -RunId wf_pq -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/pq.md"}' 2>&1
+$sw = [Diagnostics.Stopwatch]::StartNew(); $qp = Px $O pause -Run pq -Reason 'go out' | Out-String; $qt = $sw.Elapsed.TotalSeconds
+$qf = (Get-ChildItem (TkPath $k pauses -Create) -Filter 'pause-*.json' | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; $q0 = (Read-Json $qf).state
+$qn = Invoke-TestScript $O pause -Status; $null = Px $O board leave -Session $qs -Status paused -Wait 0
+for ($i = 0; $i -lt 300 -and (Read-Json $qf).state -ne 'paused'; $i++) { Start-Sleep -Milliseconds 200 }   # the background finisher: 60 s at most
+$qy = Invoke-TestScript $O pause -Status; $qr = Read-Json $qf; $null = Px $O resume -Run pq
+Expect 'pause: returns in seconds, PAUSING + -Status; finisher confirms in the background; -Status: NOT safe (exit 1), then safe (exit 0)' ($qt -lt 20 -and $qp -match 'PAUSING' -and $qp -match 'pause -Status' -and $q0 -eq 'pausing' -and
+  $qn.code -eq 1 -and $qn.out -match 'NOT safe yet: Q1' -and $qr.state -eq 'paused' -and @($qr.agents | Where-Object confirmed).agent -eq 'Q1' -and $qy.code -eq 0 -and $qy.out -match 'Safe to power off')
+# a journal that ended at the workflow's last phase = finished: closed, never listed; the time budget cuts recover with a partial line
+$env:KIT_TRANSCRIPTS = Join-Path (Kd) 'txf'; $lfd = TkPath $k launches
+$fwf = Join-Path $k 'workflows/finwf.js'; New-Item -ItemType Directory -Force (Split-Path $fwf) | Out-Null; "phase('Build')`nphase('Learn')" | Set-Content $fwf   # its last phase: Learn
+foreach ($w in @('wf_fin1', 'Learn', 'learn', $true), @('wf_open1', 'Build', 'build:X1', $false)) {
+  $wd = New-Item -ItemType Directory -Force (Join-Path $env:KIT_TRANSCRIPTS "s1/subagents/workflows/$($w[0])"); $jf = Join-Path $wd 'journal.jsonl'
+  @('{"type":"started","agentId":"a1","label":"build:X1","phase":"Build"}', '{"type":"result","agentId":"a1","result":{}}', "{""type"":""started"",""agentId"":""a2"",""label"":""$($w[2])"",""phase"":""$($w[1])""}") + @(if ($w[3]) { '{"type":"result","agentId":"a2","result":{"signals":0}}' }) | Set-Content $jf
+  (Get-Item $jf).LastWriteTime = (Get-Date).AddMinutes(-5)
+  $null = Px $O launch -RunId $w[0] -Script $fwf -ArgsJson "{""brief"":""C:/b/$($w[0]).md""}" 2>&1; $lf = Join-Path $lfd "$($w[0]).json"; $x = Read-Json $lf; $x.holderPid = 999999; $x.at = (Get-Date).AddHours(-3).ToString('o'); & $J $x $lf 10   # 3 h back: no self record of this file pairs with it
+}
+$env:KIT_OFFLINE = 0; $fr = Px $O resume -All | Out-String; Remove-Item Env:KIT_OFFLINE; $fb = Px $O recover -MaxSeconds 0 | Out-String; Remove-Item Env:KIT_TRANSCRIPTS; Remove-Item $fwf
+Expect 'resume: a finished journal closes its record (not listed); an open one is listed; recover -MaxSeconds 0: partial + rerun line' ($fr -match 'closed finished run .*\(wf_fin1\)' -and (Read-Json (Join-Path $lfd 'wf_fin1.json')).completed -and $fr -notmatch '== \w+\.js run wf_fin1' -and
+  $fr -match '== finwf\.js run wf_open1' -and $fb -match 'partial: time budget \(0 s\) used; \d+ run\(s\) not checked: .*Rerun: bossy\.ps1 recover -Run' -and $fb -notmatch '(?m)^== \w+\.js run')
 Remove-TestKit $k
 Complete-Tests

@@ -112,13 +112,16 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
   loop round, MR, review, CI, testing doc, tracker, merge; QA: each check): `work/agents/<id>/resume-<run>.json` + `.md` (per run: same-named agents never overwrite; an old `resume.json` is still read). Kit
   state is written atomically (temp + rename) or appended; leases, gate slots and board entries keep their process id with its
   start time (a pid reused after a cold boot holds nothing); a lock whose holder died is taken at once (Windows).
-- **Pause** (power off, a day offline): `bossy.ps1 pause -All | -Run <run> [-Reason] [-Wait 10]`. Agents read PAUSE on their
-  next `board beat` (and inbox), checkpoint, commit WIP locally, release leases and leave the board `paused`; env services no
-  live holder needs stop (goody `local-env`); `.state/pauses/` records runs, launch records, agents, checkpoints and worktree
-  heads; it prints "safe to power off". Nothing after it needs the network.
+- **Pause** (power off, a day offline): `bossy.ps1 pause -All | -Run <run> [-Reason]` returns in seconds; `pause -Status`
+  says when it is "safe to power off" (exit 1 until then; `-Wait <min>` blocks as before). Agents read PAUSE on their next
+  `board beat` (and inbox), checkpoint, commit WIP locally, release leases and leave the board `paused` (a running build or
+  test step ends first); a background finisher then stops env services no live holder needs (goody `local-env`);
+  `.state/pauses/` records runs, launch records, agents, checkpoints and worktree heads. Nothing after it needs the network.
 - **Crash** (power loss, kill): SessionStart `health` marks dead board entries and launch records crashed and prints
   `paused/crashed runs: N -> bossy.ps1 resume`.
-- **Resume**: `bossy.ps1 resume -All | -Run <run> [-Wait <min>]`. Offline -> says so, stops. Per agent a brief
+- **Resume**: `bossy.ps1 resume -All | -Run <run> [-Wait <min>] [-Hours 24] [-MaxSeconds 150]`: paused runs and runs
+  crashed in `-Hours`; a run whose journal ended at its last phase is closed, not listed (also `health`, `pause`); lines
+  stream as found; past `-MaxSeconds` a `partial:` line names the runs left. Offline -> says so, stops. Per agent a brief
   (`work/agents/<id>/resume-<run>-brief.md`) starting AT its next step: done steps verified (commit present, MR state), never
   redone; the uncommitted diff kept for the interrupted step; journal results kept (`resumeFromRunId`); a run whose MRs all
   merged skipped; then the exact Workflow call. `board join` shows each relaunched agent its CHECKPOINT.
