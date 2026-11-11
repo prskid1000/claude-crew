@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L67 state · L136 config · L216 OS · L418 leases · L879 status · L1120 supervise sweep ·
-  L1191 supervise report · L1287 tracker · L1606 prior · L1628 ask bugs · L1835 git-host · L1995 kitlog · L2115 params ·
-  L2421 entry-scripts
+Sections: L9 paths · L67 state · L136 config · L216 OS · L413 leases · L874 status · L1115 supervise sweep ·
+  L1186 supervise report · L1282 tracker · L1608 prior · L1624 ask bugs · L1831 git-host · L1991 kitlog · L2111 params ·
+  L2417 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -254,10 +254,6 @@ function Get-SysCpu {
     else { $la = if ($KitIsMac) { [double]((sysctl -n vm.loadavg) -replace '[{}]' -split '\s+' | Where-Object { $_ })[0] } else { [double]((Get-Content /proc/loadavg) -split ' ')[0] }; [int][math]::Min(100, 100 * $la / [Environment]::ProcessorCount) } } catch { $null }
 }
 # RAM every build, phone and QA seat leaves free
-function Get-KitKeepFreeGB {
-  if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
-  [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15))))
-}
 # the file cache is freed only under RAM pressure, which a gate never allows: half of it counts as available
 function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [double]$Mem.CacheGB, 1) }
 # bossy.ps1 storage disk-rescue hold on a kit drive: crafty.ps1 gate holds new builds
@@ -355,7 +351,6 @@ function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0
   $h = [double](Get-KitSetting 'budget.handoffAt' $ex.handoffAt)
   [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = [int]($tok * $h); handoffAt = $h; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $(if ($src) { $src } else { (& $row $n).source }) }
 }
-function Add-KitMemSample([double]$Free) { try { $f = Get-KitPath mem-samples -Create; if (-not (Test-Path $f) -or ((Get-Date) - (Get-Item $f).LastWriteTime).TotalSeconds -ge 60) { Add-Content $f "$((Get-Date).ToString('s'))`t$([math]::Round($Free, 1))" } } catch {} }
 # reads only the last 512 KB (then 8 MB): Get-Content -Tail took 1.3 s per MB-sized transcript
 function Get-KitSpend([string]$File) {
   if (-not $File -or -not (Test-Path -LiteralPath $File)) { return $null }
@@ -1487,7 +1482,6 @@ function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $I
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }
 # ONE kit comment per kind: adapter verb comment-edit, else posted + old removed via comment-delete, else only posted; found by id, last text or legacy '[kit:<kind>]'
 # marker. People's comments are never touched
-function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result', 'comment-intest' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
 function Get-KitCommentSig([string]$Text) { $n = ConvertTo-KitLetters ("$Text" -replace '\\?\[kit:[^\]\\]*\\?\]', ''); $n.Substring(0, [math]::Min(60, $n.Length)) }   # trackers re-render markdown: letters and digits only
 $script:KitMrsHeading = 'MRs (merge order)'   # bossy.ps1 Set-KitMrsComment is its one writer
 $script:KitDecisionsHeading = 'Decisions'   # bossy.ps1 decide publish is its one writer
@@ -1574,10 +1568,18 @@ function Get-TrackerOwner {
   }
   $script:__trOwner = ([string]$o).Trim(); $script:__trOwner
 }
+# missing labels of a task text (templates.md task-description; -Subtask: Items too); a [Bug] keeps its own shape
+function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask) {
+  if (-not "$Text".Trim()) { return @('a description') }; if ($Name -match '^\W*Bug\]' -or "$Name".TrimStart().StartsWith([string](Get-KitSetting 'tracker.bugPrefix' '[Bug]'), 'OrdinalIgnoreCase')) { return @() }
+  @(foreach ($lb in @('Problem', 'Goal') + @(if ($Subtask) { 'Items|Bugs' }) + @('Acceptance', 'Links')) { if ($Text -notmatch "(?im)^(?:\s*\d+[.)])?\W{0,6}(?:$lb)\b(?:\s+\w+){0,2}(?:\s*\([^)\r\n]*\))?\W{0,3}(?::|\s+[-–—]|\s*$)") { ($lb -split '\|')[0] } })
+}
 # -NewTask '<why>' skips the duplicate check (logged); -Related: tasks the owner named this session
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related) {
+  $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask })   # no bare subtasks (owner, 2026-11-11)
+  if ($gap.Count) { throw "tracker create refused: subtask '$Name' of $Parent lacks $($gap -join ', ') (templates.md task-description): -File <md>; then bossy.ps1 track rollup -Task $Parent -From <brief dir> (goody task-rollup)" }
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
-  if ($NewTask) { Write-KitLog calls prior-override @{ what = "task $Name"; reason = $NewTask } }
+  # under -Parent the check sees only siblings: the reason acks them (matched [] = no supervise WATCH)
+  if ($NewTask) { Write-KitLog calls prior-override (@{ what = "task $Name"; reason = $NewTask } + $(if ($sub) { @{ matched = @(); parent = $Parent } } else { @{} })) }
   else {
     $dup = try { @(Find-KitSimilarTasks $Name $List $Parent $Related) } catch { throw "tracker create: UNKNOWN: the duplicate check failed ($_): retry, or -NewTask '<why it differs>'" }
     if ($dup.Count) { Write-KitLog calls prior-refused @{ what = "task $Name"; found = $dup[0].id }
@@ -1618,12 +1620,6 @@ function Find-KitSimilarTasks([string]$Name, [string]$List, [string]$Parent, [st
   @(foreach ($x in $c.Values) { if ("$($x.id)" -in $Skip -or "$($x.id)" -eq $Parent) { continue }
       $w = @(Get-KitTitleWords $x.name); $n = @($w | Where-Object { $_ -in $mine }).Count; $lo = [math]::Max(2, [math]::Min($w.Count, $mine.Count))
       if ($n -ge 2 -and $n / $lo -ge $min) { [pscustomobject]@{ id = "$($x.id)"; name = $x.name; score = [math]::Round($n / $lo, 2) } } }) | Sort-Object score -Descending
-}
-# appends a dated scope section; the old text (doc links on top) stays
-function Add-TrackerScope([string]$Id, [string]$Item) {
-  $d = "$((Get-TrackerTask $Id).description)".TrimEnd(); if (-not (Get-TrackerTask $Id).name) { throw "tracker scope: task $Id not found (UNKNOWN)" }
-  $null = Set-TrackerDescription $Id "$d`n`n**Scope (extended $(Get-Date -Format yyyy-MM-dd)):**`n$Item"; Write-KitLog calls task-scope @{ task = $Id; item = $Item }
-  "scope of $Id extended: work and open MRs under it"
 }
 # ---- ask bugs: ONE open QA collector [Bug] per ask across agents; each source owns a "[kit:bug:<key>]" section; known signatures = duplicates
 function ConvertTo-KitBugNorm([string]$Text) { ((("$Text" -replace '\\(.)', '$1') -replace '/\d+(?=/|\b)', '/{id}') -replace '\s+', ' ').ToLower().Trim() }

@@ -13,7 +13,7 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L138 record-args · L158 budget · L178 build-prompt · L257 ship-prompt · L280 plan · L294 spike ·
+// Sections: L18 args · L138 record-args · L157 budget · L176 build-prompt · L255 ship-prompt · L278 plan · L294 spike ·
 //   L307 local-loop · L371 stages · L510 ship · L625 deploy · L642 learn
 // ---- args: the run's input, checked
 /* args = {
@@ -28,7 +28,7 @@ export const meta = {
  holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
  kitDir: '<abs .claude>', runtimeDir: '<default <kitDir>/.runtime>', run: '<board run; default from the brief>',
 }
-Returns { resumedDone } (every area done) or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch, next } or { spikeOpen, next } (no devy started).
+Returns { resumedDone } (every area done) or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch | taskGaps, next } or { spikeOpen, next } (no devy started).
 */
 const A0 = args || {}   // as given (resume); A = this run's batch (the rest -> next)
 const BATCH = A0.batch > 0 && Array.isArray(A0.agents) && A0.agents.length > A0.batch ? A0.batch : 0
@@ -63,7 +63,7 @@ const STEPS = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker']
 const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
 const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported${MODE === 'duel' ? ' (duel is a goody: run kitbag.py goody add duel)' : ''}`)
-// args removed in the 2026-10-21 trim: say so instead of silently ignoring them
+// args removed in the 2026-10-21 trim: warned, not ignored
 for (const k of ['review', 'localRetries', 'envFixCycles', 'envFixWaitMinutes', 'decisionWaitMinutes', 'requireLocal', 'roles', 'models', 'duel']) if (k in A0) log(`WARNING: args.${k} was removed and is ignored`)
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (the owner words): agents may drop their items for the latest chat message. Pass mandate next time (bossy step 3).')
 const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // hash: same name, other wave (bossy.ps1 Get-LaunchRunName)
@@ -135,8 +135,7 @@ const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, v
 `
 const MODELS = { spike: 'opus', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
-// ---- record-args: the launch record (a resume needs it byte-exact)
-// full args go to the launch record first (bossy.ps1 launch -Self, FNV-1a): resumes need them byte-exact
+// ---- record-args: the launch record (bossy.ps1 launch -Self, FNV-1a: a resume needs it byte-exact)
 function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }   // hoisted: RUN needs it
 async function recordArgs(wf, run, a, phaseName, plan) {
  const json = JSON.stringify(a)
@@ -155,8 +154,7 @@ Return ok=true when it prints RECORDED, else ok=false; output = its full output 
  log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
  return ''
 }
-// ---- budget: the plan cap and the stop line
-// BUDGET (README "Configuration" budget): cap = the plan's budgets; over it -> refused + split; at stopAt no new round, rest -> next
+// ---- budget: the plan cap (README "Configuration" budget): over it -> refused + split; at stopAt no new round, rest -> next
 const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }
 function takeBudget(out, units) {
  try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(out) || [])[1])); BUD.unit = BUD.estimate / Math.max(1, units) } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
@@ -282,12 +280,14 @@ const OQ = MODE === 'resume' ? [] : [].concat(A.openQuestions || []).map(String)
 const PLAN = [...(OQ.length ? [`rechy/${MODELS.spike}:1`] : []), ...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,${a.migrations ? `datay/${MODELS.review}:1,` : ''}step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
  `step/haiku:2,kitty/${MODELS.learn}:1`].join(',')
 if (A.agents.every(allDone)) { log('RESUME: every area is done (MRs merged, tracker and testing doc set): nothing to run'); return { resumedDone: A.agents.map((a) => ({ agent: a.id, mrs: RES[a.id].mrs || [] })) } }
-takeBudget(await recordArgs('buildy', RUN, A0, 'Build', PLAN), A.agents.length)
+const REC = await recordArgs('buildy', RUN, A0, 'Build', PLAN), GAPS = REC.match(/^TASKS REFUSED .*$/gm)
+takeBudget(REC, A.agents.length)
 const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents: own(agents), batch: undefined, ...extra } })
+if (GAPS) { log(`REFUSED:\n${GAPS.join('\n')}`); return { refused: true, taskGaps: GAPS, next: nextCall([], A0) } }
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  const batch = Math.max(1, Math.floor(A.agents.length * BUD.stopAt * BUD.cap / BUD.estimate))
  log(`REFUSED: estimate ${BUD.estimate} > ${BUD.stopAt * 100}% of the cap ${BUD.cap}: run ${batch} area(s) per run (args.batch)`)
- return { refused: true, estimate: BUD.estimate, cap: BUD.cap, batch, next: { scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, batch } } }
+ return { refused: true, estimate: BUD.estimate, cap: BUD.cap, batch, next: nextCall([], { ...A0, batch }) }
 }
 log(`wave: ${A.agents.length} agents, mode ${MODE}, local retries ${LOCAL_RETRIES}, brief ${A.brief}`)
 

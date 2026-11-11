@@ -35,5 +35,5 @@
   "uiCheck.timeoutSec": "config default=600 unit=s",
   "api.loginHoldMinutes": "config default=30 unit=min"
  },
- "_literals": {"skills/bossy/adapters/supervise_resources.ps1": 10, "skills/bossy/bossy.ps1": 41, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 8, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 34, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
+ "_literals": {"skills/bossy/adapters/supervise_resources.ps1": 10, "skills/bossy/bossy.ps1": 41, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 9, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 33, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
 }

@@ -165,5 +165,24 @@ $null = Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Limits?' 
 $null = Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Ignored?' -Answer 'x' -Source chat -NoPublish
 $all = @(Px $crPath tracker comments $dt | ConvertFrom-Json); $cm = @($all | Where-Object { $_.text -match '^\*\*Decisions\*\*' }); $ct = "$($cm.text)"
 Expect "decide: an unknown task (never indexed, item A2) or -NoPublish posts nothing, publish indexes it; then answer / record edit ONE Decisions comment (same question or -Supersedes -> Superseded, pending -> Open); a person's 'Decisions' comment untouched" ($dn -notmatch 'PUBLISHED' -and $d1 -match 'PUBLISHED' -and $dx -notmatch 'PUBLISHED' -and $cm.Count -eq 1 -and @($all.text -match '^Decisions\r?\nship it$').Count -eq 1 -and $ct -match '1\. \d{4}-\d\d-\d\d . Where\? -> B: db \(owner\)' -and $ct -match '2\. .*Limits\? -> 50 starts' -and $ct -match '(?s)\*\*Open\*\*.*Pending\? \(waiting\)' -and $ct -match '(?s)\*\*Superseded\*\*.*Where\? -> A: s3 \(by #1\).*40 turns \(by #2\)' -and $ct -notmatch 'Ignored|Item code'); $env:KIT_TRACKER_TYPE = 'clickup'
+# tracker create -Parent: the subtask template or refused, a [Bug] its own text; -NewTask under a parent logs matched [] (no WATCH)
+$env:KIT_TRACKER_TYPE = 'none'; $sbGood = "1. Problem: p`n**Goal** - g`n**Items (ids):** A1, A2`nAcceptance criteria:`n- a`n**Links:** x"
+$sbPar = (Px $crPath tracker create -List L1 -Name 'Launch parent ask' -Description 'the ask' | ConvertFrom-Json).id
+$sb0 = Px $crPath tracker create -List L1 -Name 'Phase two api' -Parent $sbPar -NewTask 'planned phase' 2>&1 | Out-String; $sb0c = $LASTEXITCODE
+$sb1 = Px $crPath tracker create -List L1 -Name 'Phase two api' -Parent $sbPar -Description "**Problem:** p`n## Goal`n**Acceptance:** a" -Key sb-1 2>&1 | Out-String; $sb1c = $LASTEXITCODE
+$sbSub = (Px $crPath tracker create -List L1 -Name 'Phase two api' -Parent $sbPar -NewTask 'planned phase' -Description $sbGood | ConvertFrom-Json).id
+$sbBug = (Px $crPath tracker create -List L1 -Name '[Bug] ask — crash' -Parent $sbPar -NewTask x -Description 'steps, saw, expected' | ConvertFrom-Json).id
+$sbLog = pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog calls (Get-Date).AddMinutes(-9) | Where-Object { `$_.event -eq 'prior-override' -and `$_.parent -eq '$sbPar' } | ForEach-Object { `"`$(`$null -ne `$_.PSObject.Properties['matched'])/`$(@(`$_.matched | Where-Object { `$_ }).Count)`" }) -join ','"
+Expect "tracker create -Parent: no or a partial template refused (rc 1: the gaps, -File, track rollup; -Key too); the template and a [Bug] pass; -NewTask logs matched [] ($sb0c $sb1c $sbLog)" ($sb0c -eq 1 -and $sb0 -match "subtask 'Phase two api' of $sbPar lacks a description" -and
+  $sb1c -eq 1 -and $sb1 -match 'lacks Items, Links \(' -and $sb1 -match 'track rollup -Task' -and $sbSub -and $sbBug -and "$sbLog".Trim() -eq 'True/0,True/0')
+# launch -Check / -Self (buildy): every item task an Items list (the owner's task: scope), a subtask the template + a parent delivery section
+$sbTop = (Px $crPath tracker create -List L1 -Name 'Own task no items' -Description 'the owner text' | ConvertFrom-Json).id
+$sbArgs = Join-Path (Kd) 'chk-args.json'; [IO.File]::WriteAllText($sbArgs, (@{ brief = (Join-Path (Kd) 'wave-c.md'); agents = @(@{ id = 'X1'; items = "$sbSub, $sbTop" }) } | ConvertTo-Json -Depth 4 -Compress))
+$ck1 = Px $O launch -Check -ArgsFile $sbArgs 2>&1 | Out-String; $ck1c = $LASTEXITCODE
+$null = Px $crPath tracker describe $sbPar "the ask`n<!-- kit:delivery -->`nx`n<!-- /kit:delivery -->"; $null = Px $crPath tracker scope -Task $sbTop -Add '**Items:** B1'
+$ck2 = Px $O launch -Check -ArgsFile $sbArgs 2>&1 | Out-String; $ck2c = $LASTEXITCODE
+$null = Px $crPath tracker describe $sbSub 'bare'; $ck3 = Px $O launch -Self -Script buildy.js -Run wave-c -ArgsFile $sbArgs 2>&1 | Out-String
+Expect "launch -Check / -Self: TASKS REFUSED with the fix per gap, then ok ($ck1c $ck2c)" ($ck1c -eq 1 -and $ck1 -match "TASKS REFUSED ${sbSub}: parent $sbPar has no delivery section: bossy.ps1 track rollup -Task $sbPar" -and $ck1 -match 'goody add task-rollup' -and
+  $ck1 -match "TASKS REFUSED ${sbTop}: its description lacks Items .*tracker scope -Task $sbTop" -and $ck2c -eq 0 -and $ck2 -match 'TASKS ok: 1 area' -and $ck3 -match 'RECORDED' -and $ck3 -match "TASKS REFUSED ${sbSub}: its description lacks Problem, Goal, Items, Acceptance, Links")
 Remove-TestKit $k
 Complete-Tests

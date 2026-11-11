@@ -4,7 +4,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk], uncomment <id> <comment id>, create [-NewTask '<why>'] [-Related <ids>], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk], uncomment <id> <comment id>, create [-NewTask '<why>'] [-Related <ids>] [-Parent <id> -File <md>: a subtask needs Problem, Goal, Items, Acceptance, Links], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
  pipes [-Mrs <url>,...] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs in a wt worktree: its branch's open MRs); -UntilMerged: for the merges
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L914 check · L1170 pipes · L1220 guard · L1977 dir ·
-  L1987 checkpoint · L2012 prior · L2050 tracker · L2122 host
+Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L919 check · L1175 pipes · L1225 guard · L1982 dir ·
+  L1992 checkpoint · L2017 prior · L2055 tracker · L2135 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -672,6 +672,11 @@ function Get-GateHistCmd([string]$Cmd, [string]$Dir) {
   $c = $Cmd; foreach ($d in @([IO.Path]::GetFullPath($Dir).TrimEnd('\', '/')) | ForEach-Object { $_; $_.Replace('\', '/') } | Select-Object -Unique) { $c = [regex]::Replace($c, [regex]::Escape($d) + '(?=[\\/\s"'']|$)', '.', 'IgnoreCase') }
   if ($c.Length -gt 120) { $c.Substring(0, 120) } else { $c }
 }
+function Get-KitKeepFreeGB {
+  if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
+  [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15))))
+}
+function Add-KitMemSample([double]$Free) { try { $f = Get-KitPath mem-samples -Create; if (-not (Test-Path $f) -or ((Get-Date) - (Get-Item $f).LastWriteTime).TotalSeconds -ge 60) { Add-Content $f "$((Get-Date).ToString('s'))`t$([math]::Round($Free, 1))" } } catch {} }
 function Invoke-Gate {
 param(
   [Parameter(Mandatory)][string]$Cmd,
@@ -2050,6 +2055,14 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
 # ---- tracker: lib.ps1 adapters
 # a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy nobody updates; "Decision needed for X" passes
 function Test-KitDecisionText([string]$Text) { "$Text".Trim() -match '^\W{0,3}decisions?\W*(\(|:|\r?\n|$)' }
+# one-per-task comment kinds: edited in place (Set-TrackerKitComment)
+function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result', 'comment-intest' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
+# appends a dated scope section; the old text (doc links on top) stays
+function Add-TrackerScope([string]$Id, [string]$Item) {
+  $d = "$((Get-TrackerTask $Id).description)".TrimEnd(); if (-not (Get-TrackerTask $Id).name) { throw "tracker scope: task $Id not found (UNKNOWN)" }
+  $null = Set-TrackerDescription $Id "$d`n`n**Scope (extended $(Get-Date -Format yyyy-MM-dd)):**`n$Item"; Write-KitLog calls task-scope @{ task = $Id; item = $Item }
+  "scope of $Id extended: work and open MRs under it"
+}
 function Remove-TrackerComment([string]$Id, [string]$Comment) {
   $ad = $KitAdapters['tracker'][$__trType]; if (-not ($ad -and $ad.ContainsKey('comment-delete'))) { throw "tracker ($__trType): the adapter has no comment-delete verb: remove comment $Comment by hand" }
   Clear-TrackerMemo $Id; __TrA 'comment-delete' @{ id = $Id; comment = $Comment }

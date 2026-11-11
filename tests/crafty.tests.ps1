@@ -127,7 +127,7 @@ $fx = [ordered]@{ '^view T1' = '{"id":"T1","name":"Bug","status":"In Progress","
  '^list B in test' = '[{"id":"T3","name":"A","assignees":[{"id":"ann"}]}]' }
 function mytr { $global:LASTEXITCODE = 0; $c = "$($args -join ' ')"; $global:log.Add($c); foreach ($k in $fx.Keys) { if ($c -match $k) { return $fx[$k] } }; throw "404 no fixture: $c" }
 Initialize-KitTracker -Type command
-$r = @{ v = Get-TrackerTask T1; s = Set-TrackerStatus T1 inTest; c = Add-TrackerComment T1 'two words'; n = New-TrackerTask -List B -Name 'New one' -Description 'd' -Parent T1 -Assignee 'Ann Lee' -Priority 2 -NewTask fixture; l = @(Get-TrackerTasks B inTest) }
+$r = @{ v = Get-TrackerTask T1; s = Set-TrackerStatus T1 inTest; c = Add-TrackerComment T1 'two words'; n = New-TrackerTask -List B -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent T1 -Assignee 'Ann Lee' -Priority 2 -NewTask fixture; l = @(Get-TrackerTasks B inTest) }
 "command:$($r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq 'T9' -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 'ann')"
 '@
 $res = Invoke-PsTest 'tracker-test' $tb @(Lib)

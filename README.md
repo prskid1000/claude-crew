@@ -60,6 +60,9 @@ Board and disagreements: AGENTS.md "Crew".
 - `/buildy`: devy codes and tests on the local env in a loop, revy reviews, the workflow merges; only a person's `deploy <env>`
   ships it (`deploy.trigger`).
 - `/testy`: checky lead / test / verify per testing doc; the result rule closes the task, fails it back to dev or files one [Bug].
+- Every task the kit builds: an Items list (subtasks: the whole templates.md task-description; `tracker create -Parent` and the
+  launch refuse less), both testing-doc links before promoted; a parent with every subtask closed closes only on the owner's
+  answer to its one close ask (goody task-rollup).
 - Tasks move through logical tracker statuses (`tracker.statuses` maps them to your board's names). The local env: one shared
   instance per env, branches as layers. WIP commits after every dev-flow step: a fresh agent loses nothing after a crash. The kit
   learns from every run (`/tidy`) and fixes itself in a kit worktree.

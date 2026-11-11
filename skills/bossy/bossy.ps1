@@ -2,7 +2,7 @@
 bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skills/bossy/bossy.ps1 <verb> [args]
   board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool]   agent board, messages
   learn -Skill -Kind -Text | -Read | -Show (-Lesson | -Bump | -Fixed | -Trim | -Stats | -History: goody kit-admin)   signals, lessons
-  launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Done -RunId|-Run | -List [-Brief]
+  launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Check -ArgsFile (buildy item tasks) | -Done -RunId|-Run | -List [-Brief]
   recover [-RunId <id> | -Run <runs>] [-Hours 48]   stopped runs: state, resume brief, exact resume call
   pause -Run <run> | -All [-Reason] [-Wait 10] · resume -Run <run> | -All [-Wait <min>]   stop at checkpoints; paused / crashed runs back
   program set|get|list -Program <name> [-Key <k>] [-Value <v>]   the coordinator's program state in .state
@@ -22,10 +22,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L31 init · L49 board · L228 budget · L256 launch · L522 recover · L605 pause · L649 resume · L707 program · L752 param ·
-  L758 track · L1078 supervise · L1379 report · L1458 audit · L1518 storage · L1728 bugbrief · L1830 cleanup · L1914 learn ·
-  L1944 decide · L2077 health · L2138 retro due · L2148 tidy · L2217 the kit origin's main and goodies · L2233 setup ·
-  L2300 guard-sendmessage
+Sections: L31 init · L49 board · L228 budget · L256 launch · L513 recover · L596 pause · L640 resume · L698 program · L743 param ·
+  L749 track · L1069 supervise · L1370 report · L1449 audit · L1509 storage · L1719 bugbrief · L1821 cleanup · L1905 learn ·
+  L1935 decide · L2068 health · L2129 retro due · L2139 tidy · L2208 the kit origin's main and goodies · L2224 setup ·
+  L2291 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -254,16 +254,6 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 }
 
 # ---- launch: records for resume after a restart
-# a (re)launch ends its pause and leaves a '*' pause
-function Clear-KitPauseFor([string]$Run) {
-  foreach ($p in @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) })) {
-    Invoke-KitLocked $p.file { $j = Get-Content -LiteralPath $p.file -Raw | ConvertFrom-Json
-      if ($j.run -eq '*') { $j | Add-Member -Force NoteProperty released @(@($j.released | Where-Object { $_ }) + $Run) } else { $j.state = 'resumed'; $j | Add-Member -Force NoteProperty resumedAt (Get-Date).ToString('o') }
-      $j | Add-Member -Force NoteProperty releasedBy @(@($j.releasedBy | Where-Object { $_ }) + "launch $Run $((Get-Date).ToString('o'))")
-      Write-KitAtomic $p.file ($j | ConvertTo-Json -Depth 30) }
-    "PAUSE $(Split-Path $p.file -Leaf) ($($p.reason)) released for run ${Run}: it was launched again"
-  }
-}
 function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
 # run stopped before Learn: signals + report once (launch field learned)
 function Invoke-KitStopLearn($S, [string]$By) {
@@ -299,7 +289,7 @@ function Invoke-KitStopLearn($S, [string]$By) {
 function Invoke-Launch {
 param(
   [string]$RunId, [string]$Script, [string]$ArgsJson, [string]$ArgsFile, [string]$RunDir, [string]$Session,
-  [switch]$Done, [switch]$List, [switch]$Brief, [int]$Hours = 24, [switch]$Self, [string]$Run, [string]$Fnv, [string]$Plan = ''
+  [switch]$Done, [switch]$List, [switch]$Brief, [int]$Hours = 24, [switch]$Self, [string]$Run, [string]$Fnv, [string]$Plan = '', [switch]$Check
 )
 $ErrorActionPreference = 'Stop'
 $kit = $KitConf.Kit
@@ -326,8 +316,10 @@ if ($Self) {
   Write-KitState $sf $rec
   "RECORDED $leaf $Run (fnv $got)"; if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }
   if (-not $prev -or $prev.completed -or $prev.paused) { Clear-KitPauseFor $Run }
+  if ($leaf -like 'buildy*' -and "$($a.mode)" -ne 'resume') { try { Test-KitLaunchTasks $a } catch { "TASKS UNKNOWN: $_" } }   # TASKS REFUSED: buildy.js refuses
   exit 0
 }
+if ($Check) { Test-KitLaunchTasks -File $ArgsFile }   # the coordinator, before a /buildy launch
 
 if ($Done) {
   if (-not $RunId -and -not $Run) { 'usage: launch -Done -RunId <id> | -Run <run> (a self record: the workflow wrote it)'; exit 2 }
@@ -388,8 +380,7 @@ function Get-LaunchRunName($a) {
   ''
 }
 # task ids in items text (notes have words like oauth2)
-function Get-KitItemTasks([string]$Text) { @("$Text" -split '[\s,;()]+' | ForEach-Object { NormTask $_ } | Where-Object { $_ -match '^(?=.*\d)(?=.*[a-z])[\w-]{5,}$' }) }
-# recover writes <slug>.resume.md: a relaunch's brief
+function Get-KitItemTasks([string]$Text) { @("$Text" -split '[\s,;()]+' | ForEach-Object { NormTask $_ } | Where-Object { $_ -match '^(?=.*\d)(?=.*[a-z])[\w-]{5,}$' }) }# recover writes <slug>.resume.md: a relaunch's brief
 function Get-KitResumeKeys($S) { @(@($S.runId, $S.run) | Where-Object { $_ } | ForEach-Object { "$(ConvertTo-KitSlug $_).resume.md" }) }
 function Get-KitParentKey($A) { $l = "$($A.brief)" -split '[\\/]' | Select-Object -Last 1; if ($l -match '\.resume\.md$') { $l.ToLower() } }
 $script:KitArgs = @{}
@@ -1986,7 +1977,7 @@ function Invoke-Decide {
       $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
         kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
         options = $opts; recommend = $Recommend; blocking = -not $Fyi; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('o')
-        task = $resolvedTask; mrs = $mrsClean; commit = $Commit; parentId = $ParentId }
+        task = $resolvedTask; mrs = $mrsClean; commit = $Commit; parentId = $ParentId; gate = $(if ($Gate -in $kitGates) { $Gate }) }
       & $save ([pscustomobject]$o)
       if ($resolvedTask) {
         Update-KitTracking { param($t) if ($t.tasks[$resolvedTask]) { $t.tasks[$resolvedTask].decisions = @(@($t.tasks[$resolvedTask].decisions) + $o.id | Select-Object -Unique) } }
