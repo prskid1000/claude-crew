@@ -43,6 +43,11 @@ $now = (Get-Date).ToString('s'); $nd = @{ rows = @(@{ target = 'stage'; state = 
 $fx3 = Join-Path (Kd) 'deploy-fixture3.json'; & $J @{ mrs = @{ 'api!7' = $nd; 'api!8' = $nd; 'api!9' = $nd } } $fx3
 $p = @(& $dep plan -Offline $fx3 -Json | ConvertFrom-Json)
 Expect 'deploy plan: skips a task live on every test env and a done task without doneAt' ((@($p | Where-Object target -eq 'stage' | ForEach-Object { $_.mrs.mr }) -join ',') -eq 'api!9')
+# an open task untouched for -Days (14) is not this plan's: October's 94 MRs filled it
+& $J @{ tasks = @{ d = @{ task = 'd'; mrs = @('api!10'); done = $false; created = (Get-Date).AddDays(-30).ToString('s') }; e = @{ task = 'e'; mrs = @('api!11'); done = $false; created = (Get-Date).AddDays(-30).ToString('s'); allMergedAt = $now } }; automerge = @{} } $tf
+$fx5 = Join-Path (Kd) 'deploy-fixture5.json'; & $J @{ mrs = @{ 'api!10' = $nd; 'api!11' = $nd } } $fx5
+$p = @(& $dep plan -Offline $fx5 -Json | ConvertFrom-Json)
+Expect 'deploy plan: an open task with no activity in -Days is skipped; one merged recently stays' ((@($p | Where-Object target -eq 'stage' | ForEach-Object { $_.mrs.mr }) -join ',') -eq 'api!11')
 # one repo, two products: an MR counts only where deploys[].from has its target branch and deploys[].paths a file it touched
 & $J @{ repos = @(@{ name = 'web'; deploys = @(@{ target = 'a-st'; from = 'a-main' }, @{ target = 'b-st'; from = @('main'); paths = @('b/ui/**', 'b/[id]/*.ts') }, @{ target = 'c-st' }) }) } $cfgF
 & $J @{ tasks = @{ f = @{ task = 'f'; mrs = @('web!1', 'web!2', 'web!3', 'web!4', 'web!5', 'web!6'); done = $true; doneAt = $now } }; automerge = @{} } $tf
@@ -56,9 +61,9 @@ $dps = Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw
 $preg = (Get-Content (Join-Path $src 'skills/bossy/params.registry.json') -Raw | ConvertFrom-Json).params
 Expect 'deploy plan: -TimeoutSec from deploy.deployedTimeoutSec (100 s); supervise passes deploy.planTimeoutSec (600 s, params.registry.json); a record triggers a learn pass' ($dps -match "\[int\]\`$TimeoutSec = \(Get-KitParam 'deploy\.deployedTimeoutSec'\)\)" -and $preg.'deploy.deployedTimeoutSec' -match 'default=100\b' -and $dps -match "'-TimeoutSec', \[int\]\(Get-KitParam 'deploy\.planTimeoutSec'\)" -and $dps -match 'Add-KitParamTrigger deploy' -and (Get-Content (Join-Path $src 'skills/bossy/params.registry.json') -Raw | ConvertFrom-Json).params.'deploy.planTimeoutSec' -match 'default=600\b')
 # one pokey.ps1 deployed per repo, in parallel, each MR on the targets it needs: a crashed or slow run is UNKNOWN (never NOTHING), the others stand
-$fRepos = @(foreach ($n in 'bad', 'slow', 'good', 'part', 'crash') { @{ name = $n; deploys = @(@{ target = $n }) } }) + @(@{ name = 'two'; deploys = @(@{ target = 'ta' }, @{ target = 'tb' }) })
+$fRepos = @(foreach ($n in 'bad', 'slow', 'good', 'part', 'crash', 'many') { @{ name = $n; deploys = @(@{ target = $n }) } }) + @(@{ name = 'two'; deploys = @(@{ target = 'ta' }, @{ target = 'tb' }) }, @{ name = 'fr'; deploys = @(@{ target = 'fa'; from = 'x-main' }, @{ target = 'fb' }) })
 & $J @{ repos = $fRepos } $cfgF
-& $J @{ tasks = @{ u = @{ task = 'u'; mrs = @(foreach ($n in 'bad', 'slow', 'good', 'part', 'crash', 'two') { "$n!1"; "$n!2" }); done = $false } }; automerge = @{} } $tf
+& $J @{ tasks = @{ u = @{ task = 'u'; mrs = @(@(foreach ($n in 'bad', 'slow', 'good', 'part', 'crash', 'two') { "$n!1"; "$n!2" }) + @(1..9 | ForEach-Object { "many!$_" }) + @('fr!1', 'fr!2')); done = $false } }; automerge = @{} } $tf
 $fq = Join-Path (Kd) 'fake-deployed.ps1'
 Set-Content $fq @'
 $t = $args[[array]::IndexOf($args, '-Target') + 1]; $ms = @($args[[array]::IndexOf($args, '-Mrs') + 1] -split ','); Add-Content $env:FAKE_LOG "$t|$($ms -join ',')"
@@ -73,21 +78,22 @@ foreach ($y in $t -split ',') { "{`"mr`":`"$($ms[1])`",`"target`":`"$y`",`"state
 $ut = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
-$KitCmd.qa = $args[1]; $env:FAKE_TO = $args[2]; $env:FAKE_LOG = $args[3]; $sw = [Diagnostics.Stopwatch]::StartNew()
+$KitCmd.qa = $args[1]; $env:FAKE_TO = $args[2]; $env:FAKE_LOG = $args[3]; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitMrTb = @{ 'fr!1' = 'y-main'; 'fr!2' = 'y-main' }
 $p = @(Invoke-Deploy plan -Json -TimeoutSec 4 | ConvertFrom-Json); $s = @{}; foreach ($x in $p) { $s[$x.target] = $x }
 "bad:$($s.bad.status -eq 'UNKNOWN' -and $s.bad.why -match 'exit 2 on bad')"
 "slow:$($s.slow.status -eq 'UNKNOWN' -and $s.slow.why -match 'timed out after 4 s on slow')"
 "good:$($s.good.status -eq 'READY' -and (@($s.good.mrs.mr) -join ',') -eq 'good!1')"
 "part:$($s.part.status -eq 'READY' -and (@($s.part.mrs.mr) -join ',') -eq 'part!1' -and $s.part.why -match 'part!2: not checked: .*timed out after 4 s on part')"
+"feeds:$($s.fa.status -eq 'NOTHING' -and -not $s.fa.why -and $s.fb.status -eq 'READY' -and $s.fb.why -match 'fr!2: deadline')"
 "crash:$($s.crash.status -eq 'READY' -and $s.crash.why -match 'crash!2: not checked: pokey\.ps1 deployed exit 3 on crash')"
 "parallel:$($sw.Elapsed.TotalSeconds -lt 20)"
 "childcap:$((Get-Content $env:FAKE_TO) -as [int] -in 0..3)"
-$lg = @(Get-Content $env:FAKE_LOG); "perrepo:$($lg.Count -eq 6 -and $lg -contains 'ta,tb|two!1,two!2' -and $s.ta.status -eq 'READY' -and $s.tb.status -eq 'READY' -and $s.ta.why -match 'two!2: deadline' -and $s.tb.why -match 'two!2: deadline')"
+$lg = @(Get-Content $env:FAKE_LOG); "slices:$((@($lg | Where-Object { $_ -like 'many|*' } | ForEach-Object { @(($_ -split '\|')[1] -split ',').Count }) -join ',') -eq '4,4,1')";"perrepo:$($lg.Count -eq 10 -and $lg -contains 'ta,tb|two!1,two!2' -and $s.ta.status -eq 'READY' -and $s.tb.status -eq 'READY' -and $s.ta.why -match 'two!2: deadline' -and $s.tb.why -match 'two!2: deadline')"
 Remove-Item $env:FAKE_LOG; $null = Invoke-Deploy plan -Env tb -Json -TimeoutSec 4; "needed:$((@(Get-Content $env:FAKE_LOG) -join ';') -eq 'tb|two!1,two!2')"
 $null = Invoke-Deploy plan -TimeoutSec 4   # text mode: each row on stderr as it comes
 '@
 $res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq, (Join-Path (Kd) 'child-timeout.txt'), (Join-Path (Kd) 'child-calls.txt'))
-Expect-Each $res 'deploy plan: one run per repo in parallel with only the targets each MR needs, a failed one UNKNOWN; a timeout keeps the rows already checked; each child gets the time left as -TimeoutSec (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel', 'childcap', 'perrepo', 'needed')
+Expect-Each $res 'deploy plan: one run per repo (slices of 4+ MRs) in parallel with only the targets each MR needs, a failed one UNKNOWN; a timeout keeps the rows already checked; each child gets the time left as -TimeoutSec (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel', 'childcap', 'perrepo', 'needed', 'slices', 'feeds')
 $all = $res -join "`n"
 Expect 'deploy plan: each MR row printed as its check ends, a slow env''s finished rows too' ($all -match '(?m)^\s+part!1 @ part: NOT-DEPLOYED x' -and $all -match '(?m)^\s+good!2 @ good: DEPLOYED live')
 # an MR whose merge is in the deploy branch's last green job: DEPLOYED from one git rev-list, never probed; the request is on disk before the probe

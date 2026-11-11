@@ -113,7 +113,7 @@ param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [swi
 $ErrorActionPreference = 'SilentlyContinue'
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())
-function Row($d, $s, $x) { [pscustomobject]@{ mr = $ref; target = $d.target; state = $s; detail = $x } }
+function Row($d, $s, $x) { [pscustomobject]@{ mr = $ref; target = $d.target; state = $s; detail = $x; branch = "$($mr.target_branch)" } }   # branch: deploy plan's feeds check needs no host call
 function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
 # memoised: supervise asks per round
 $memo = @{}

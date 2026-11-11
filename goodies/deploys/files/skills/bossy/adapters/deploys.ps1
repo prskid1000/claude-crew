@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L92 intest · L206 deploy · L349 supervise
+Sections: L13 helpers · L92 intest · L206 deploy · L359 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -30,7 +30,7 @@ function Get-MrTargetBranch([string]$Mr, $Fx) {
 # the targets an MR feeds: its repo's deploys, less those whose from (branches) lacks its target branch or whose paths (globs)
 # it never touched; one repo, two products. A deploy MR (into deploys[].branch) feeds that target only. A failed or cut
 # lookup, or one past $Until, keeps the deploy (shown, never hidden)
-function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until) {
+function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until, [switch]$NoPaths) {   # -NoPaths: a probe row already said N/A for paths it never touched
   $c = Get-CanonMr (ConvertTo-MrRef $Mr); $rn, $iid = $c -split '!', 2; $rn = ($rn -split '/')[-1]
   $deps = @(@($Repos | Where-Object { $_.name -eq $rn } | Select-Object -First 1).deploys | Where-Object { $_.target })
   $filt = @($deps | Where-Object { $_.from -or @(Get-DeployPaths $_).Count }).Count
@@ -41,7 +41,7 @@ function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until) {
   if (-not $filt) { return @($deps.target | Select-Object -Unique) }
   $deps = @($deps | Where-Object { -not $_.from -or -not $tb -or $tb -in @($_.from) })
   $files = @(); $cut = $false
-  if (@($deps | Where-Object { @(Get-DeployPaths $_).Count }).Count) {
+  if (-not $NoPaths -and @($deps | Where-Object { @(Get-DeployPaths $_).Count }).Count) {
     $ch = if ($Fx) { [pscustomobject]@{ changes = @($fm.paths | ForEach-Object { [pscustomobject]@{ new_path = $_ } }); overflow = $fm.overflow } } else { try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid/changes?access_raw_diffs=true" } catch { } }
     $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
     $cut = [bool]$ch.overflow -or @($ch.changes).Count -ge 100   # gitlab overflow, github's first page: the list is partial
@@ -68,7 +68,7 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
       if ($page.Count -lt 100) { break }
     }
     if (-not $shaOf.Count) { continue }
-    $null = git -C $dir fetch -q origin @($deps.branch) @($tb.Keys) 2>$null
+    $null = Invoke-GitFetch $dir ([math]::Max(10, [int]($Until - (Get-Date)).TotalSeconds)) @(@($deps.branch) + @($tb.Keys) | Select-Object -Unique) 3>$null   # bounded: an unbounded fetch ate the probes' time (late: the old refs; the probes judge the rest)
     $known = @($shaOf.Values | Select-Object -Unique | git -C $dir cat-file --batch-check 2>$null | Where-Object { $_ -match '^\S+ commit ' } | ForEach-Object { ($_ -split ' ')[0] })
     if (-not $known.Count) { continue }
     foreach ($d in $deps) {
@@ -246,10 +246,12 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $repoOf = { param($m) ((ConvertTo-MrRef $m) -split '!')[0] -split '/' | Select-Object -Last 1 }
   $fedOf = @{}; $tgtOf = { param($m) if (-not $fedOf.ContainsKey($m)) { $fedOf[$m] = @(Get-MrDeployTargets $m $repos $fx $until) }; $fedOf[$m] }
   if ($Action -eq 'request') { $targets = @($targets | Where-Object { $t = $_; @($Mrs | Where-Object { $t -in @(& $tgtOf $_) }).Count }) }
-  $taskOf = @{}; $cand = [ordered]@{}
+  $taskOf = @{}; $cand = [ordered]@{}; $idle = 0
   $tr = Read-KitTracking
   foreach ($t in $tr.tasks.Values) {
     if ($t.done -and (-not $t.doneAt -or ((Get-Date) - [datetime]$t.doneAt).TotalDays -gt $Days)) { continue }   # no doneAt: an old record
+    $act = @(@($t.created, $t.reopenedAt, $t.allMergedAt, $t.mergedSeenAt) | ForEach-Object { try { [datetime]$_ } catch {} } | Sort-Object)[-1]
+    if (-not $t.done -and $act -and ((Get-Date) - $act).TotalDays -gt $Days) { $idle++; continue }   # open, untouched for -Days: not this plan's (94 MRs of October filled it)
     foreach ($m in @($t.mrs)) {
       # live on every test env of its repo (supervise liveOn): nothing to deploy, no lookup
       $need = @($tOf[(& $repoOf $m)] | Where-Object { $_ -in $targets })
@@ -274,10 +276,15 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     # one pokey.ps1 deployed per repo (its MR and change-list calls once for all targets), each MR on the targets it still needs,
     # all at once with the same deadline: 5 env processes refetched every MR and timed out (94 MRs on one env)
     $grp = [ordered]@{}; foreach ($m in $cand.Keys) {
-      $need = @(& $tgtOf $m | Where-Object { $_ -in $targets -and -not $anc.ContainsKey("$m|$_") } | Sort-Object -Unique); if (-not $need.Count) { continue }
+      # its repo's targets, not the ones it feeds: that lookup is 1-2 host calls per MR, serial (144 MRs: 240 s, the probes got -TimeoutSec 1); the batch below drops a target it does not feed
+      $need = @($tOf[(& $repoOf $m)] | Where-Object { $_ -in $targets -and -not $anc.ContainsKey("$m|$_") } | Sort-Object -Unique); if (-not $need.Count) { continue }
       $gk = "$(& $repoOf $m)|$($need -join ',')"; if (-not $grp.Contains($gk)) { $grp[$gk] = [pscustomobject]@{ t = $need -join ','; m = [Collections.Generic.List[string]]::new() } }; $grp[$gk].m.Add($m)
     }
-    $runs = @(foreach ($g in $grp.Values) {
+    # a process checks its MRs one by one (2+ host calls each): slices of <= $per run side by side, at most 16 processes
+    $nm = @($grp.Values | ForEach-Object { $_.m.Count } | Measure-Object -Sum).Sum; $per = [math]::Max(4, [math]::Ceiling($nm / 16))
+    $grp = @(foreach ($g in $grp.Values) { for ($i = 0; $i -lt $g.m.Count; $i += $per) { [pscustomobject]@{ t = $g.t; m = @($g.m)[$i..([math]::Min($i + $per, $g.m.Count) - 1)] } } })
+    if (($until - (Get-Date)).TotalSeconds -lt $lim / 2) { $until = (Get-Date).AddSeconds($lim / 2) }   # the ancestry step ran late: probes still get half (they got -TimeoutSec 1)
+    $runs = @(foreach ($g in $grp) {
         $t = $g.t; $tm = @($g.m)
         $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
         foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Lines', '-Exclude', (Get-NoTestRx), '-TimeoutSec', [math]::Max(1, [int](($until - (Get-Date)).TotalSeconds) - 2))) { $si.ArgumentList.Add([string]$x) }
@@ -289,10 +296,11 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     # each MR's row is printed (stderr) as it comes: a run moved to the background still shows what finished
     $take = { param($q, [int]$ms) while ($q.rl -and $q.rl.Wait($ms)) { $ln = $q.rl.Result; if ($null -eq $ln) { $q.rl = $null; break }; $q.out.Add($ln); $q.rl = $q.p.StandardOutput.ReadLineAsync()
         if (-not $Json -and $ln -match '^\s*\{') { try { $x = $ln | ConvertFrom-Json; [Console]::Error.WriteLine("  $($x.mr) @ $($x.target): $($x.state) $($x.detail)") } catch {} } } }
-    while (@($runs | Where-Object rl).Count -and (Get-Date) -lt $until) { foreach ($q in $runs) { & $take $q 0 }; Start-Sleep -Milliseconds 200 }
+    # an exited run is done once drained: a grandchild (git, ssh) holding its stdout kept the plan waiting to the deadline (45 s idle)
+    while (@($runs | Where-Object rl).Count -and (Get-Date) -lt $until) { foreach ($q in $runs) { & $take $q 0; if ($q.rl -and $q.p.HasExited) { & $take $q 300; $q.rl = $null } }; Start-Sleep -Milliseconds 200 }
     foreach ($q in $runs) {
       $fin = $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { try { $q.p.Kill($true) } catch {} }
-      & $take $q 2000; $null = $q.se.Wait(5000); $txt = $q.out -join "`n"
+      & $take $q 2000; $null = $q.se.Wait($(if ($fin) { 300 } else { 5000 })); $txt = $q.out -join "`n"   # exited: stderr held open by a grandchild cost 5 s a run
       $parsed = @($txt -split "`r?`n" | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.mr })   # -Lines: one row per line
       $qts = @($q.t -split ','); $fw = $null
       if (-not $fin -or ($parsed.Count -and $q.p.ExitCode -notin 0, 1)) {   # a timeout or crash keeps the rows already checked
@@ -303,7 +311,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
       $parsed = @(foreach ($x in $parsed) { if ($x.target -in $qts) { $x } else { foreach ($y in $qts) { [pscustomobject]@{ mr = $x.mr; target = $y; state = $x.state; detail = $x.detail } } } })   # a row for no one target (NOT-MERGED, the deadline): one per target
       $seen = @($parsed | ForEach-Object { "$(Get-CanonMr $_.mr)|$($_.target)" })
       $parsed += @(foreach ($y in $qts) { $q.m | Where-Object { "$(Get-CanonMr $_)|$y" -notin $seen } | ForEach-Object { [pscustomobject]@{ mr = $_; target = $y; state = 'UNKNOWN'; detail = "not checked: $(if ($fw) { $fw } else { "no row from pokey.ps1 deployed on $y" })" } } })   # an MR x target without a row never vanishes: UNKNOWN each
-      foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x } }
+      foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x; if ($x.branch) { if (-not $script:KitMrTb) { $script:KitMrTb = @{} }; $script:KitMrTb[(Get-CanonMr $x.mr)] = $x.branch } } }   # Get-MrTargetBranch's memo
     }
   }
   $trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower()
@@ -312,8 +320,9 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $logged = if (Test-Path $log) { @(Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
   $hostErr = $null
   $recOf = @{}; foreach ($x in $logged) { foreach ($m in @($x.mrs)) { $recOf["$(Get-CanonMr (ConvertTo-MrRef $m))|$($x.target)"] = 1 } }   # MANUAL (no check can see it): a recorded deploy is the proof
+  $feeds = @{}   # no deadline here: a cut lookup would batch an MR for a target it never feeds
   $plan = foreach ($t in $targets) {
-    $batch = @(foreach ($m in @($cand.Keys | Where-Object { $t -in @(& $tgtOf $_) })) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })
+    $batch = @(foreach ($m in @($cand.Keys)) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { if (-not $feeds.ContainsKey($m)) { $feeds[$m] = @(Get-MrDeployTargets $m $repos $fx $null -NoPaths:(-not $fx)) }; if ($t -notin $feeds[$m]) { continue }; [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })   # feeds-lookup only for a not-deployed row
     $last = $null; $src = ''
     $l = @($logged | Where-Object { $_.target -eq $t } | Sort-Object { [datetime]$_.at }) | Select-Object -Last 1
     if ($l) { $last = [datetime]$l.at; $src = "kit log ($($l.by))" }
@@ -330,12 +339,13 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     }
     $h = & $winOf $t
     $next = if ($last) { $last.AddHours($h) } else { $null }
-    $mine = @($cand.Keys | Where-Object { $t -in @(& $tgtOf $_) })
-    $unk = @(foreach ($m in $mine) { @(& $rowsOf $m) | Where-Object { $_ -and $_.target -eq $t -and $_.state -eq 'UNKNOWN' } | ForEach-Object { "${m}: $($_.detail)" } })
+    $mine = @($cand.Keys | Where-Object { $t -in $tOf[(& $repoOf $_)] })   # its repo deploys there (a feeds lookup per MR here cost 40 s): only for UNKNOWN reasons
+    $unk = @(foreach ($m in $mine) { @(& $rowsOf $m) | Where-Object { $_ -and $_.target -eq $t -and $_.state -eq 'UNKNOWN' } | Where-Object { if (-not $feeds.ContainsKey($m)) { $feeds[$m] = @(Get-MrDeployTargets $m $repos $fx $null -NoPaths:(-not $fx)) }; $t -in $feeds[$m] } | ForEach-Object { "${m}: $($_.detail)" } })   # an UNKNOWN for a target it never feeds is no reason
     $why = if ($unk.Count) { $unk -join '; ' } elseif ($failOf[$t] -and $mine.Count -and -not @($mine | Where-Object { @(& $rowsOf $_) | Where-Object { $_ -and $_.target -eq $t } }).Count) { $failOf[$t] }
     $status = if ($why -and -not $batch.Count) { 'UNKNOWN' } elseif (-not $batch.Count) { 'NOTHING' } elseif ($running) { 'DEPLOYING' } elseif ($trigger -ne 'ask') { 'READY' } elseif ($next -and (Get-Date) -lt $next) { 'WAIT' } else { 'ASK' }
     [pscustomobject]@{ target = $t; status = $status; trigger = $trigger; last = $(if ($last) { $last.ToString('s') }); lastSource = $src; windowHours = $h; nextAllowed = $(if ($next) { $next.ToString('s') }); mrs = $batch; why = $why; pending = @($pend | ForEach-Object { "$($_.run) $($_.at)" }) }
   }
+  if ($idle) { [Console]::Error.WriteLine("deploy plan: $idle open task(s) idle over $Days days left out (-Days widens)") }
   if ($Json) { ConvertTo-Json @($plan) -Depth 6; return }
   foreach ($p in $plan) {
     $when = switch ($p.status) { 'WAIT' { " until $(([datetime]$p.nextAllowed).ToString('yyyy-MM-dd HH:mm')) (one deploy per $($p.windowHours) h)" } 'ASK' { ': ask the owner ONCE with this batch' } 'READY' { ": waits for a person's 'deploy $($p.target)' (deploy.trigger owner: nobody asks)" } 'UNKNOWN' { ": the deploy check failed: $($p.why) (plan again)" } 'DEPLOYING' { ': a deploy pipeline runs now (wait, then plan again)' } default { '' } }
