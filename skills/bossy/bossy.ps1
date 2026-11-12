@@ -1337,7 +1337,7 @@ $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"   # before the page: its Sweep time tile
 $page = Write-KitSuperviseHtml $report $lines $nextLine
 if ($Json) { [pscustomobject]@{ at = $now.ToString('o'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
-if ($Brief) {   # pasted verbatim (supervise.output)
+if ($Brief) {   # the coordinator acts on it and replies with its actions only (supervise.output)
   $md = @(Format-KitReport $report)
   Write-KitSuperviseReport $report $md $lines $nextLine
   $shown = $report.PSObject.Copy(); $shown.rows = @(Select-KitBriefRows $report.rows $now)   # older finished: report file only

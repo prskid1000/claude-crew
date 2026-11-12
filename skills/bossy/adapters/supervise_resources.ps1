@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L244 shells · L373 page · L698 usage · L909 release · L948 lines · L973 cleanup ·
-  L1009 launch · L1087 pause · L1205 sessions
+Sections: L15 builds · L47 supervise · L244 shells · L373 page · L699 usage · L914 release · L953 lines · L978 cleanup ·
+  L1014 launch · L1092 pause · L1210 sessions
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -675,6 +675,7 @@ function Get-KitSupervisePageCss {
   '.dw{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.dw svg{width:92px;height:92px;flex:none;transform:rotate(0)}.dw circle{fill:none;stroke-width:6}.dw .dbg{stroke:var(--sf2)}' +
   '.dl{list-style:none;margin:0;padding:0;flex:1;min-width:120px;font-size:12px;display:grid;gap:3px}.dl li{display:grid;grid-template-columns:10px minmax(0,1fr) auto 34px;gap:6px;align-items:center}.dl i{width:10px;height:10px;border-radius:2px}' +
   '.dl span{overflow-wrap:anywhere}.dl b{font-weight:600;font-variant-numeric:tabular-nums}.dl small{color:var(--mt);text-align:right;font-variant-numeric:tabular-nums}' +
+  '.hb{list-style:none;margin:0;padding:0;display:grid;gap:4px;font-size:12px}.hb li{display:grid;grid-template-columns:minmax(0,8em) minmax(0,1fr) auto;gap:6px;align-items:center}.hb span{overflow-wrap:anywhere}.hb i{display:block;height:8px;width:var(--p);min-width:1px;border-radius:0 3px 3px 0;background:var(--slate)}.hb b{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}.dw+h4{margin:12px 0 6px}' +
   '.uk{container-type:inline-size}@container (min-width:560px) and (max-width:959px){.uk>.stats{grid-template-columns:repeat(3,minmax(0,1fr))}}' +   # 6 KPI tiles: 6 or 3 across, never 5 + 1
   '.uc .sy{max-height:clamp(200px,36dvh,360px)}.uc .tw>table:not(.ag){min-width:0}.uc :is(th,td){padding:5px 4px}.uc td{overflow-wrap:normal}.ut td:first-child,.us td:first-child{overflow-wrap:anywhere}.uc .sy td{white-space:normal}.ua td:first-child{white-space:nowrap}' +
   '@media(min-width:641px){.ua :is(th,td):not(:first-child),.ut :is(th,td):nth-child(n+4),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.ru :is(th,td):nth-child(n+4):nth-child(-n+7){text-align:right}}' +
@@ -877,7 +878,7 @@ function Format-KitUsageHtml($U) {
     "<b>$(& $tk $d0.tok)</b><b class=cc>$(if ($null -eq $d0.cost) { '—' } else { '$' + [math]::Round([double]$d0.cost) })</b><span>$(& $e $(if ($isToday) { 'today' } else { "$($d0.day)".Substring(5) }))</span></li>" })
   $chart = "<ol class=dch style='grid-template-columns:repeat($([math]::Max(1, $dy.Count)),minmax(0,1fr))' aria-label='tokens and est. cost per day, $($dy.Count) days'>$($cols -join '')</ol><div class=ax><span><i class='lg sl'>tokens</i> <i class='lg pl'>est. cost</i></span><span>7 days $(& $tk (& $sum 'tok')) · $(& $usd (& $sum 'cost'))</span></div>"
   # donut: top 4 slices + other, legend with value and share (never colour alone); circle r 15.915 = circumference 100
-  $donut = { param([string]$title, $rows, [scriptblock]$fmt, [int]$top = 4)
+  $donut = { param([string]$title, $rows, [scriptblock]$fmt, [int]$top = 4, [string]$extra = '')
     $rs = @($rows | Where-Object { $_ -and [double]$_.v -gt 0 } | Sort-Object { -[double]$_.v }); $all = [double](($rs | Measure-Object v -Sum).Sum)
     if (-not $all) { return "<div class='st uc dn'><h4>$(& $e $title)</h4><p class=empty>None</p></div>" }
     $sl = @($rs | Select-Object -First $top) + @(if ($rs.Count -gt $top) { [pscustomobject]@{ k = 'other'; v = [double]((@($rs | Select-Object -Skip $top) | Measure-Object v -Sum).Sum) } })
@@ -885,11 +886,15 @@ function Format-KitUsageHtml($U) {
     $segs = @(for ($i = 0; $i -lt $sl.Count; $i++) { $p = 100 * [double]$sl[$i].v / $all; $c = if ($sl[$i].c) { $sl[$i].c } else { $pal[$i] }
       "<circle r=15.915 cx=21 cy=21 stroke='var(--$c)' stroke-dasharray='$(& $n1 $p) $(& $n1 (100 - $p))' stroke-dashoffset='$(& $n1 (25 - $cum))'><title>$(& $e "$($sl[$i].k): $(& $fmt $sl[$i].v) ($([math]::Round($p))%)")</title></circle>"; $cum += $p })
     $leg = @(for ($i = 0; $i -lt $sl.Count; $i++) { $c = if ($sl[$i].c) { $sl[$i].c } else { $pal[$i] }; "<li><i style='background:var(--$c)'></i><span>$(& $e ("$($sl[$i].k)" -replace '^claude-'))</span><b>$(& $fmt $sl[$i].v)</b><small>$([math]::Round(100 * [double]$sl[$i].v / $all))%</small></li>" })
-    "<div class='st uc dn'><h4>$(& $e $title)</h4><div class=dw><svg viewBox='0 0 42 42' role=img aria-label='$(& $e $title)'><circle class=dbg r=15.915 cx=21 cy=21 />$($segs -join '')</svg><ul class=dl>$($leg -join '')</ul></div></div>" }
+    "<div class='st uc dn'><h4>$(& $e $title)</h4><div class=dw><svg viewBox='0 0 42 42' role=img aria-label='$(& $e $title)'><circle class=dbg r=15.915 cx=21 cy=21 />$($segs -join '')</svg><ul class=dl>$($leg -join '')</ul></div>$extra</div>" }
   $oc = @(@('pass', ([double]$rt.n - $rt.empty - $rt.fail - $rt.stopped), 'sage'), @('failed', $rt.fail, 'act'), @('empty', $rt.empty, 'watch'), @('stopped', $rt.stopped, 'slate'), @('stuck', $rt.stuck, 'plum'), @('running', $rt.running, 'mt')) | ForEach-Object { [pscustomobject]@{ k = $_[0]; v = [double]$_[1]; c = $_[2] } }
   $pies = (& $donut 'Tokens by role, 7 days' @($U.byRole | ForEach-Object { [pscustomobject]@{ k = $_.k; v = [double]$_.sum } }) $tk) +
     (& $donut 'Est. cost by model, 7 days' @($U.modelCost) $usd) +
     (& $donut 'Workflow step outcomes, 7 days' $oc { param($x) "$([int]$x)" } 6)
+  # under the short Per model table: tokens by model (donut) + avg elapsed per step by model (bars, not parts of a whole)
+  $mdl = @($U.byModel | Where-Object { $_ }); $mxMin = [math]::Max(0.01, [double](@($mdl | ForEach-Object { [double]$_.avgMin }) + 0 | Measure-Object -Maximum).Maximum)
+  $timeBars = "<h4>Avg time per step by model</h4><ul class=hb>$(@($mdl | ForEach-Object { $nm = "$($_.k)" -replace '^claude-'; "<li title='$(& $e "${nm}: $(& $mn $_.avgMin) avg, $($_.n) step(s)")'><span>$(& $e $nm)</span><i style='--p:$(& $n1 (100 * [double]$_.avgMin / $mxMin))%'></i><b>$(& $mn $_.avgMin)</b></li>" }) -join '')</ul>"
+  $modelCharts = & $donut 'Tokens by model, 7 days' @($mdl | ForEach-Object { [pscustomobject]@{ k = $_.k; v = [double]$_.sum } }) $tk 4 $(if ($mdl.Count) { $timeBars })
   $stepRows = { param($ss) @($ss | ForEach-Object { , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), (& $tk $_.tok), "$(& $tk $_.in) / $(& $tk $_.out) / $(& $tk $_.cr) / $(& $tk $_.cw)", (& $mn $_.min), $_.tools, @{ h = "<span class='chip $(switch ($_.result) { 'pass' { 's-act' } 'running' { 's-fin' } 'stuck' { 's-stuck' } 'fail' { 's-stuck' } default { 's-oth' } })'>$(& $e $_.result)</span>" }, "$($_.round)$(if ($_.retry) { " · retry $($_.retry)" })") }) }
   $runHtml = @(foreach ($r in @($runs | Select-Object -First 25)) {   # newest 25: the page stays light
       $cp = "<span class=bl>$(& $tk $r.tok) tokens</span>$(if ($r.cap) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" })"   # budget = context spend (budget -Run), not billed tokens
@@ -901,7 +906,7 @@ function Format-KitUsageHtml($U) {
   "<h3>Usage: tokens, cost, elapsed time (7 calendar days$(if ($U.partial) { '; transcripts still being read' }))</h3><div class=uk>$kpis</div>" +
     "<div class='ug ud'><div class='st uc uw'><h4>Last 7 days: tokens and est. cost per day</h4>$chart</div>$pies</div>" +
     "<h4>Runs ($($runs.Count)$(if ($runs.Count -gt 25) { ', newest 25' }))</h4><div class='rus sy'>$(if ($runHtml) { $runHtml } else { '<p class=empty>None</p>' })</div>" +
-    "<div class=ug>$(& $aggT 'Per step type' $U.byType)$(& $aggT 'Per role' $U.byRole)<div class=ucs>$(& $aggT 'Per model' $U.byModel)</div></div>" +
+    "<div class=ug>$(& $aggT 'Per step type' $U.byType)$(& $aggT 'Per role' $U.byRole)<div class=ucs>$(& $aggT 'Per model' $U.byModel)$modelCharts</div></div>" +
     "<div class='ug u2'><div class='st uc ut'><h4>Top 5 steps, 24 h</h4>$(& $topT $U.top24)</div><div class='st uc ut'><h4>Top 5 steps, 7 days</h4>$(& $topT $U.top7)</div></div>" +
     "<div class='st uc us'><h4>Coordinator sessions (main session turns)</h4><div class=sy>$(& $table 'Session', 'Tokens', 'Est. cost', 'Elapsed', 'Model' @($cos | ForEach-Object { , @($_.session, (& $tk $_.tok), (& $usd $_.cost), (& $mn $_.min), ("$($_.model)" -replace '^claude-')) }))</div></div>" +
     "<div class='st uc us'><h4>Agents outside workflows, by session</h4><div class=sy>$(& $table 'Session', 'Agents', 'Tokens', 'Est. cost', 'Roles' @($bgs | ForEach-Object { , @($_.session, $_.n, (& $tk $_.tok), (& $usd $_.cost), $_.roles) }))</div></div>"

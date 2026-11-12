@@ -133,7 +133,7 @@ Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Ra
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } })
-$cardGrid = @("class=ug><div class='st uc ua'>", "class=ucs><div class='st uc ua'><h4>Per model", "class='ug u2'>", 'class=uk>', 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
+$cardGrid = @("class=ug><div class='st uc ua'>", "class=ucs><div class='st uc ua'><h4>Per model", "</div></div></div><div class='st uc dn'><h4>Tokens by model, 7 days</h4>", 'Avg time per step by model</h4><ul class=hb><li', "class='ug u2'>", 'class=uk>', 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
 # the right-align nth-child ranges assume these column counts: agg 7, top-5 5, session 5, run steps 9
 $thCount = { param($open) ([regex]::Match($h, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th>' -AllMatches).Matches.Count }
 $colCounts = "$(& $thCount "class='st uc ua'>") $(& $thCount "class='st uc ut'>") $(& $thCount "class='st uc us'>") $(& $thCount "class='ru f'>")"
@@ -174,7 +174,7 @@ $sr = Get-KitSuperviseSeries @('disk D: 60 GB free, +25 GB/h (normal 1), full in
 "$($sr.disks[0].h1) $($h2.Contains('filling 25 GB/h (11 min) &#183; last hour 50 GB used'))"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uy) | Out-String
 $yv = @($yo.Trim() -split "`r?`n")
-Expect "usage numbers: prices by id / alias / variant + 1 h writes, unpriced listed, outcomes, one window, runs by id, coordinator, host MRs, charts, disk filling + last hour ($($yv -join ' // '))" ($yv[-5] -eq 'build:A=fail,check:A=pass,fix:A=fail,review:A=empty,track:A=stopped|100|0.0009|2E-05|0.00015|gpt-x|5 2 1 1' -and $yv[-4] -eq '2|2|1110 0.0086|3538|host 1 1' -and $yv[-3] -eq 'True True 3 True True True' -and $yv[-2] -eq 'claude-opus-5-5,claude-sonnet-5-5|1|0' -and $yv[-1] -eq '-50 True')
+Expect "usage numbers: prices by id / alias / variant + 1 h writes, unpriced listed, outcomes, one window, runs by id, coordinator, host MRs, charts, disk filling + last hour ($($yv -join ' // '))" ($yv[-5] -eq 'build:A=fail,check:A=pass,fix:A=fail,review:A=empty,track:A=stopped|100|0.0009|2E-05|0.00015|gpt-x|5 2 1 1' -and $yv[-4] -eq '2|2|1110 0.0086|3538|host 1 1' -and $yv[-3] -eq 'True True 4 True True True' -and $yv[-2] -eq 'claude-opus-5-5,claude-sonnet-5-5|1|0' -and $yv[-1] -eq '-50 True')
 Remove-Item (Join-Path $ld 'wf_y1.json'), (Join-Path $ld 'wf_y2.json') -Force
 # status: one agent joined twice (with -Type, then with -Run) on one transcript = one row (active agents not inflated)
 $jvTx = Join-Path (Kd) 'JV.jsonl'; '{}' | Set-Content $jvTx; $jvB = TkPath $k board -Create; $jvNow = (Get-Date).ToString('o')

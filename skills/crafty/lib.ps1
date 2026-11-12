@@ -450,8 +450,8 @@ function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
   $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and $_.beat -and ($Now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') -and ($a = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($Now - $a).TotalMinutes -lt $bm })   # board Active or writing its transcript
   if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now, then arm one one-shot (bossy E1)" }
 }
-# heartbeat prompt (bossy E1), re-armed word for word from supervise's stderr
-function Get-KitBeatPrompt { "Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced; never summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1)." }
+# heartbeat prompt (bossy E1)
+function Get-KitBeatPrompt { "Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief. Act on every ACT and WATCH line; re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min. Reply = 1-4 lines of the actions taken this beat, plus one line only when an ACT needs the owner; never paste the stdout (detail: supervise-report.html) (bossy E1)." }
 # base = learned heartbeatMinutes (15: how often new ACTs appear); drifts back halfway per beat
 # Act / EnvFix = NEW since the last sweep: an ACT left open (owner's call, being fixed) keeps the normal pace
 function Get-KitNextBeat([double]$Prev, [double]$Base, [int]$Act, [int]$EnvFix, [bool]$Storage, [int]$BuildFails, [int]$Agents, [int]$Live, [int]$Running) {
