@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L138 record-args · L157 budget · L176 build-prompt · L255 ship-prompt · L278 plan · L294 spike ·
-//   L307 local-loop · L371 stages · L510 ship · L625 deploy · L642 learn
+//   L307 local-loop · L378 stages · L516 ship · L631 deploy · L647 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -42,7 +42,7 @@ const DEV = `${K}/crafty.ps1`
 const DT = `${K}/devtools.py`
 const ORCH = `${KIT}/skills/bossy/bossy.ps1`
 const RT = (A.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
-// kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
+// kit paths by name = kit.example.json _paths (lint RUNTIME-MAP)
 const KP = {"runtime": {"launches": "work/launches/"}, "durable": {}}
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
@@ -329,7 +329,14 @@ function mergeReports(x, r2, note) {
   testerGuide: r2.testerGuide && !/^none/i.test(r2.testerGuide) ? r2.testerGuide : x.testerGuide, summary: `${x.summary}\n\n${note}: ${r2.summary}` }
 }
 const settleOnThrow = async (a, fn) => { try { return await fn() } catch (e) { SETTLED[a.id].done(null); throw e } }
-// every lease of these ids (lanes, env, GPU, builds, tabs) once their devy stage ends, any outcome; idempotent (the reaper is the last net)
+// a devy step with no report (task unseen, schema refused): redo once
+async function agentOrRedo(prompt, opts) {
+ const r = await agent(prompt, opts)
+ if (r) return r
+ log(`${opts.label}: redo`)
+ return agent(`No report came back: do it now (a merged / scheduled MR: report it, never merge twice).\n${prompt}`, { ...opts, label: `${opts.label}@redo`, agentType: 'devy' })
+}
+// every lease of these ids once their devy stage ends, any outcome; idempotent
 const releaseAll = (ids, phaseName) => runStep(`& ${ORCH} release -Agent '${[].concat(ids).join(',')}' -Reason 'agent finished'`, `release-${[].concat(ids).join('-')}`, phaseName, { ok: 'when it exits 0' })
  .then((r) => { if (!r || !r.ok) log(`WARNING release of ${ids} failed (${r ? r.output : 'no answer'}): supervise -AutoFix reclaims after the grace`) }).catch(() => null)
 const releasing = async (a, phaseName, fn) => { try { return await fn() } finally { await releaseAll(a.id, phaseName) } }
@@ -341,7 +348,7 @@ function normLocal(r) {
  if (lt && lt.status === 'BLOCKED' && !['decision', 'remote'].includes(lt.blockedKind)) return { ...r, localTest: { ...lt, status: 'FAIL', failing: [...(lt.failing || []), `reported BLOCKED without blockedKind (${lt.blockedReason || lt.env || 'no reason'}): the local env is ours`] } }
  return r
 }
-// local test loop at workflow level: FAIL -> `retries` more rounds on the build model, then ONE stronger fix round (MODELS.retest)
+// local loop: FAIL -> `retries` rounds on the build model, then ONE stronger round (MODELS.retest)
 async function localLoop(a, r, retries, stage) {
  for (let h = 0; r && r.handoff && h < 3; h++) {   // budget handoff -> a fresh devy
   log(`${a.id}: HANDOFF at its budget (${r.handoff}): a fresh devy continues`)
@@ -387,8 +394,7 @@ const results = await pipeline(
   return localLoop(a, r, LOCAL_RETRIES, 'Build')
   })
  }),
- // Decide: owner-decision items wait for the answer (other areas go on), ENV-FIX items for the coordinator's fix (<= ENV_FIX_CYCLES
- // per area); then the agent continues them
+ // Decide: decision items wait for the answer, ENV-FIX items for the fix (<= ENV_FIX_CYCLES per area); others go on
  (r, a) => settleOnThrow(a, async () => {
   if (!r || r.error || r.budgetStopped || !((r.needsDecision || []).length || (r.needsEnvFix || []).length)) return r
   return releasing(a, 'Decide', async () => {
@@ -466,7 +472,7 @@ const results = await pipeline(
    x = { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: true, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(r, r2, 'Fix round'), 0, 'Fix')) }
    const lt2 = x.report.localTest || {}
    if (lt2.status === 'BLOCKED' || lt2.status === 'FAIL') return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
-   // re-review: only blocking findings hold the merge (one more fix round, then a decision); should-fix / nit -> the MR's Follow-ups
+   // re-review: blocking holds the merge (one more fix round, then a decision); should-fix / nit -> Follow-ups
    let open = findings.filter(mustFix), soft = []
    const held = async (y, more = []) => ({ ...x, ...y, fixed: false, findings: [...x.findings, ...open], ...((soft.length || more.length) && { followUps: await followUps(a, x.report, [...soft, ...more]) }) })
    for (let round = 1; open.length; round++) {
@@ -497,7 +503,7 @@ const results = await pipeline(
   const deferred = (x.report.deferred || []).filter((d) => !d.ownerDecided)
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
   if (why) log(`${a.id}: tracker task registered with its promotion HELD (${why}): release with bossy.ps1 track add -Task <id> -HoldPromotion ''`)
-  const tr = await agent(`STEP: register devy ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}${AGENT_ENV(`track-${a.id}`)}
+  const tr = await agentOrRedo(`STEP: register devy ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}${AGENT_ENV(`track-${a.id}`)}
 MRs: ${x.report.mrs.map((m) => m.url).join(', ')}
 1. The task id is in each MR's title after the tracker tag (the title wins over the branch); group the MRs by task.
 2. Per task: & ${ORCH} track add -Task <task id> -Discover -Mrs '<repo>!<iid>','<repo>!<iid>' -HoldPromotion '${(why || '').replace(/'/g, '').slice(0, 200)}'
@@ -510,7 +516,7 @@ Return ok=true and the output lines.`, { label: `track:${a.id}`, phase: 'Fix', s
 // ---- ship: CI gate, merge, outcome
 async function ciGate(a, r) {
  if (!r.mrs.some((m) => !m.merged)) return []
- const ci = await agent(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, agentType: 'devy', ...pick('ci'), effort: 'low' })
+ const ci = await agentOrRedo(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, agentType: 'devy', ...pick('ci'), effort: 'low' })
  if (!ci) { log(`${a.id}: WARNING CI gate agent returned nothing; merge-when-green still waits for the pipelines`); return [] }
  return (ci.mrs || []).filter((m) => m.status === 'failed').map((m) => ({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking',
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
@@ -525,7 +531,7 @@ async function followUps(a, r, soft) {
   const mine = soft.filter((f) => has(f, m.url) || !mrs.some((o) => has(f, o.url)))
   log(`${a.id}: ${m.url}: ${mine.length} re-review finding(s) -> Follow-ups${mine.length ? `: ${mine.map((f) => `${f.severity} ${f.file}${f.line ? ':' + f.line : ''}`).join(', ')}` : ''}`)
  }
- const st = await agent(`STEP: put review follow-ups into the MR descriptions. Do exactly this, nothing else:${PATHS}
+ const st = await agentOrRedo(`STEP: put review follow-ups into the MR descriptions. Do exactly this, nothing else:${PATHS}
 1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers); read it back: it parses:
 <<<JSON
 ${JSON.stringify(soft)}
@@ -545,7 +551,7 @@ async function askBlocking(a, r, open) {
  if (id) decisions.push({ agent: a.id, item: r.mrs.map((m) => m.url).join(' '), decisionId: id[1], question: `still blocking: ${q}` })
  return id ? id[1] : ''
 }
-// a consumer re-checks its unmerged producer MRs each slice; all merged -> it merges in this run; a failed / closed one -> WAIT
+// a consumer re-checks its producer MRs each slice: all merged -> it merges now; a failed / closed one -> WAIT
 async function producersMerged(a, wait) {
  for (let t = 0; t < WAIT_SLICES && wait.length; t++) {
   const w = await runStep(`& ${DEV} pipes -Mrs ${wait.map((m) => m.url).join(',')} -MaxMinutes 9 -UntilMerged`, `producer-wait:${a.id}`, 'Fix', { ok: 'when it prints JSON', slow: true, whole: true })
@@ -568,7 +574,7 @@ async function ship(a, x) {
   const missing = DEPS[a.id].filter((id, i) => !prods[i] || !prods[i].report || !prods[i].report.mrs.length)
   if (missing.length) return { ...x, shipFindings: [BLOCK(x.report.mrs, `Producer area(s) ${missing.join(', ')} reported no MRs: not merged (merge order).`, 'Ship the producer first, then merge these.')], mergeOrderHeld: true }
   wait = prods.flatMap((p) => p.report.mrs.filter((m) => !m.merged))
-  // only merges under way (scheduled, or waiting on their own producer); a held, failed or conflicting one never merges by waiting
+  // only merges under way (scheduled, or waiting on a producer); held, failed or conflicting ones never merge by waiting
   if (wait.every((m) => ['SCHEDULED', 'WAIT'].includes(m.mergeState) && !isHeld(m))) wait = await producersMerged(a, wait)
  }
  // the workflow registers the order (a ship agent once merged a consumer anyway); devtools.py merge then answers WAIT
@@ -580,7 +586,7 @@ async function ship(a, x) {
   if (!reg || !reg.ok || !/merge-after:/.test(reg.output)) return { ...x, mergeOrderHeld: true, shipFindings: [BLOCK(open, `Merge order not registered (${reg ? reg.output : 'the step returned nothing'}): nothing merged.`, `bossy.ps1 track add -Task <id> -MergeAfter '${pairs.join(',')}', then devtools.py merge`)] }
  }
  const r3 = wait.length ? { mrs: open.map((m) => ({ url: m.url, merged: false, mergeState: 'WAIT' })), summary: `waiting for producer MR(s) ${wait.map((m) => m.url).join(', ')}` }
-  : await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
+  : await agentOrRedo(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
  if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
  const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'MERGED' : 'OPEN')]))
  const mrs = uniqMr(x.report.mrs).map((m) => { const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN'); return { ...m, mergeState: s, merged: s === 'MERGED' } })
@@ -622,9 +628,8 @@ const leftover = [...out.filter((x) => x.budgetStopped).map((x) => A0.agents.fin
 if (leftover.length) { outcome.next = nextCall(leftover, out.some((x) => x.budgetStopped) ? { mode: 'resume' } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 
-// ---- deploy: merged work joins the deploy batch
-// Deploy (goody deploys; skipped without it): merged (or merge-scheduled) work joins the batch silently. deploy.trigger owner (default):
-// nobody asks or proposes a deploy, a person says "deploy <env>" (bossy E5); ask: the coordinator asks once per env. Never deploys.
+// ---- deploy: merged work joins the deploy batch (goody deploys) silently; trigger owner: a person says "deploy <env>" (bossy E5),
+// ask: the coordinator asks once per env. Never deploys.
 phase('Deploy')
 const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const DEPLOYS = `${KIT}/skills/bossy/adapters/deploys.ps1`

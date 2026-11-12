@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks, run records (resumed run liveness, re-bind); the
-supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage).
+supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage); testy's goody guards.
 Usage: pwsh -NoProfile -File <kit>/tests/layout.tests.ps1 (or tests/kit-tests.ps1 -Area layout).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -131,5 +131,21 @@ $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); 
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")
 Expect "usage: dedupe by message id, appended lines, partial line waits; run, step, outcomes, background, cost, page ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.002358|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True')
+# testy: envy / phoney calls guarded (goodies): a missing one prints the goody line; the prompt names goody sync
+$js3b = @'
+const { calls, agent } = _mock((prompt, o) => {
+ if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
+})
+const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
+ items: [_item('P1', 'app')] }
+run(args, agent, _n, _n, null).then(() => {
+ const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release-Falcon') || {}).prompt || ''
+ const guard = (s, x) => tp.includes(`if (Test-Path 'C:/kit/skills/${s}') { & 'C:/kit/skills/${s}' `) && tp.includes(`else { '${x} is a goody: run kitbag.py goody add ${x}' }`)
+ console.log(`local-guard:${guard('envy/envy.ps1', 'local-env') && /goody sync \(or goody add local-env\)/.test(tp)}`)
+ console.log(`phone-guard:${guard('phoney/phoney.ps1', 'android-swarm') && /goody sync \(or goody add android-swarm\)/.test(tp)}`)
+ console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
+}).catch(_err)
+'@
+Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy goodies: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8
 Remove-TestKit $k
 Complete-Tests

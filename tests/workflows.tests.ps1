@@ -42,12 +42,13 @@ const { calls, agent } = _mock((prompt, o) => {
  if (/^ship:/.test(o.label)) return rep(_merged(1))
 }, '[]')
 const args = { brief: 'C:/b/wave-x.md', agents: [{ id: 'X1', items: 'A1, A2', area: 'a' }], mandate: ['m'], ..._kl }
-run(args, agent, _n, _n, pipeline).then(() => {
- const rv = calls.filter((c) => c.label === 'review:X1'), ti = calls.findIndex((c) => c.label === 'track:X1'), si = calls.findIndex((c) => c.label === 'ship:X1')
+let lost = 0; const agentLost = async (p, o) => (o.label === 'track:X1' && !lost++) ? null : agent(p, o)
+run(args, agentLost, _n, _n, pipeline).then(() => {
+ const rv = calls.filter((c) => c.label === 'review:X1'), ti = calls.findIndex((c) => c.label === 'track:X1@redo'), si = calls.findIndex((c) => c.label === 'ship:X1')
  console.log(`re-review:${rv.length === 2 && /RE-REVIEW after fix round 1/.test(rv[1].prompt) && /null check missing/.test(rv[1].prompt) && si > calls.indexOf(rv[1])}`)
  console.log(`follow-ups:${calls.some((c) => c.label === 'followups:X1' && /rename y/.test(c.prompt) && / followups \S+ https:\/\/h\/g\/api/.test(c.prompt))}`)
  console.log(`wt-dedup:${calls[si].prompt.includes('(worktrees: C:/wt/x1)')}`)
- console.log(`hold:${ti >= 0 && /-HoldPromotion 'deferred items: A2'/.test(calls[ti].prompt)}`)
+ console.log(`hold:${lost === 1 && ti >= 0 && /^No report came back[\s\S]*-HoldPromotion 'deferred items: A2'/.test(calls[ti].prompt)}`)   // track redone once
  const m = /-Run '([^']+)'/.exec(calls.find((c) => c.label === 'record-args').prompt)
  console.log(`run:${m ? m[1] : 'none'}`)
 }).catch(_err)
@@ -56,7 +57,7 @@ $res = Invoke-Js dw-review $jsr $wfd
 $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
 Expect-Each $res 'buildy: #' 're-review', 'follow-ups', 'hold', 'wt-dedup' -Show 5
 # buildy: still blocking after fix round 2 -> a decide ask, no merge
-$jsb = $jsr -replace "severity: reviews\+\+ \? 'nit' : 'blocking'", "severity: 'blocking', n: reviews++" -replace "if \(/\^ship:/", "if (/^decide:/.test(o.label)) return { ok: true, output: 'DECISION d1 pending' }`n if (/^ship:/" -replace "(?s)run\(args, agent, _n, _n, pipeline\)\.then.*", @'
+$jsb = $jsr -replace "severity: reviews\+\+ \? 'nit' : 'blocking'", "severity: 'blocking', n: reviews++" -replace "if \(/\^ship:/", "if (/^decide:/.test(o.label)) return { ok: true, output: 'DECISION d1 pending' }`n if (/^ship:/" -replace "(?s)run\(args, agentLost, _n, _n, pipeline\)\.then.*", @'
 run(args, agent, _n, _n, pipeline).then((o) => console.log(`ask:${calls.filter((c) => c.label === 'fix:X1').length === 2 && calls.filter((c) => c.label === 'review:X1').length === 3 && calls.some((c) => c.label === 'decide:X1' && /Still blocking after 2 fix rounds/.test(c.prompt)) && !calls.some((c) => c.label === 'ship:X1') && calls.some((c) => c.label === 'followups:X1')
   && o.decisions.some((d) => d.agent === 'X1' && d.decisionId === 'd1') && o.openFindings.length > 0}`)).catch(_err)
 '@
@@ -187,22 +188,6 @@ run(args, a.agent, _n, _n, null).then(() => run(args, b.agent, _n, _n, null)).th
 '@
 $res = Invoke-Js tc-envfix $js3 $wf
 Expect-Each $res 'testy local: #' 'envfix-ask', 'envfix-pass', 'envfix-held' -Show 5
-# testy: envy / phoney calls guarded (goodies): a missing one prints the goody line; the prompt names goody sync
-$js3b = @'
-const { calls, agent } = _mock((prompt, o) => {
- if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
-})
-const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
- items: [_item('P1', 'app')] }
-run(args, agent, _n, _n, null).then(() => {
- const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release-Falcon') || {}).prompt || ''
- const guard = (s, x) => tp.includes(`if (Test-Path 'C:/kit/skills/${s}') { & 'C:/kit/skills/${s}' `) && tp.includes(`else { '${x} is a goody: run kitbag.py goody add ${x}' }`)
- console.log(`local-guard:${guard('envy/envy.ps1', 'local-env') && /goody sync \(or goody add local-env\)/.test(tp)}`)
- console.log(`phone-guard:${guard('phoney/phoney.ps1', 'android-swarm') && /goody sync \(or goody add android-swarm\)/.test(tp)}`)
- console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
-}).catch(_err)
-'@
-Expect-Each (Invoke-Js tc-extras $js3b $wf) 'testy goodies: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8
 # testy retries per check: fewer checks keep the first FAIL; duplicate C5b retries as C5
 $js4 = @'
 const { calls, agent } = _mock((prompt, o) => {
