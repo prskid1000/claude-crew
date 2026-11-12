@@ -9,14 +9,16 @@ Verbs: envs · status · doctor · deploy · wait · use · release · promote �
        (owner) up -Services [-Owner] · unhold · restart -Services · down · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
        [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] · cleanup [-Quick] [-DryRun] ·
        _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
-In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.extends), .state/localenv/<env>.env (secrets).
-Out: text; status -Json.
+Lanes (envs.<env>.lanes.max > 1): -Env <env> = the agent's lane, else (deploy / use / task) the least busy one with room;
+  -Lane <k> pins one; -Env <env><k> names one.
+In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.extends; lanes), .state/localenv/<env>.env (secrets).
+Out: text; status -Json, envs -Json.
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / seed not green / needs a goody · 2 usage
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L27 config · L195 state · L242 layer drops · L314 leases · L415 code · L447 migrations · L737 hooks · L809 marks ·
-  L947 seed · L993 processes · L1308 daemon · L1768 cleanup · L1840 doctor · L1890 verbs
+Sections: L29 config · L226 state · L273 layer drops · L345 leases · L466 code · L498 migrations · L788 hooks · L860 marks ·
+  L998 seed · L1044 processes · L1366 daemon · L1826 cleanup · L1898 doctor · L1948 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -49,8 +51,36 @@ function Resolve-EnvCfg([string]$n, [string[]]$seen = @()) {
   $mine = $own | Select-Object * -ExcludeProperty extends
   Merge-Cfg ($base | ConvertTo-Json -Depth 20 | ConvertFrom-Json) ($mine | ConvertTo-Json -Depth 20 | ConvertFrom-Json)
 }
+# every string of a config (objects, lists), rewritten by $fix
+function Update-CfgText($o, [scriptblock]$fix) {
+  if ($o -is [pscustomobject]) { foreach ($p in @($o.PSObject.Properties)) { if ($p.Value -is [string]) { $p.Value = & $fix $p.Value } else { Update-CfgText $p.Value $fix } } }
+  elseif ($o -is [array]) { for ($i = 0; $i -lt $o.Count; $i++) { if ($o[$i] -is [string]) { $o[$i] = & $fix $o[$i] } else { Update-CfgText $o[$i] $fix } } }
+}
+# lane $k of env $g (lanes { max, portStep }; lane 1 = $g, lane k = $g<k>), every lane the same way: ports of services the env
+# runs + (k-1) x portStep, then envs.<g><k> keys ($over), then every string: {lane} ('' / k), {port:<svc>}, ":<old port>" -> new
+function Get-LaneCfg($base, [string]$g, [int]$k, $over) {
+  $c = $base | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $off = ($k - 1) * [int]$(if ($base.lanes.portStep) { $base.lanes.portStep } else { 100 })
+  foreach ($s in @($c.services | Where-Object { $_ -and -not ($_.external -and -not $_.start) })) { foreach ($pk in 'port', 'debugPort') { if ($s.$pk) { $s.$pk = [int]$s.$pk + $off } } }
+  if ($over) { $c = Merge-Cfg $c ($over | Select-Object * -ExcludeProperty extends | ConvertTo-Json -Depth 20 | ConvertFrom-Json) }
+  $map = @{}; $ports = @{}
+  foreach ($s in @($c.services | Where-Object { $_.name })) {
+    $b = @($base.services | Where-Object name -eq $s.name)[0]; if ($s.port) { $ports[[string]$s.name] = "$($s.port)" }
+    foreach ($pk in 'port', 'debugPort') { if ($b.$pk -and $s.$pk -and "$($b.$pk)" -ne "$($s.$pk)") { $map["$($b.$pk)"] = "$($s.$pk)" } }
+  }
+  $lane = if ($k -gt 1) { "$k" } else { '' }
+  Update-CfgText $c { param([string]$t)
+    $t = [regex]::Replace($t.Replace('{lane}', $lane), '\{port:([\w.-]+)\}', { param($m) if ($ports.ContainsKey($m.Groups[1].Value)) { $ports[$m.Groups[1].Value] } else { $m.Value } })
+    if ($map.Count) { $t = [regex]::Replace($t, '(?<=:)\d{2,5}(?!\d)', { param($m) if ($map.ContainsKey($m.Value)) { $map[$m.Value] } else { $m.Value } }) }
+    $t }
+  if ($c.db.port -and $map.ContainsKey("$($c.db.port)")) { $c.db.port = [int]$map["$($c.db.port)"] }
+  $c | Add-Member group $g -Force; $c | Add-Member lane $k -Force; $c
+}
 if ($script:LE.envs) {
-  $__envs = [ordered]@{}; foreach ($__n in @($script:LE.envs.PSObject.Properties.Name)) { $__envs[$__n] = Resolve-EnvCfg $__n }
+  $__envs = [ordered]@{}; $__res = [ordered]@{}; foreach ($__n in @($script:LE.envs.PSObject.Properties.Name)) { $__res[$__n] = Resolve-EnvCfg $__n }
+  $__lanes = @{}; foreach ($__n in $__res.Keys) { for ($__k = 2; $__k -le [int]$__res[$__n].lanes.max; $__k++) { $__lanes["$__n$__k"] = $true } }
+  foreach ($__n in @($__res.Keys | Where-Object { -not $__lanes.ContainsKey($_) })) {   # envs.<env><k> of a laned env: that lane's keys, no env of its own
+    for ($__k = 1; $__k -le [math]::Max(1, [int]$__res[$__n].lanes.max); $__k++) { $__ln = if ($__k -gt 1) { "$__n$__k" } else { $__n }; $__envs[$__ln] = Get-LaneCfg $__res[$__n] $__n $__k $(if ($__k -gt 1) { $script:LE.envs.$__ln }) }
+  }
   $script:LE.envs = [pscustomobject]$__envs
   # a static service runs from a staged copy of its built files, like an artifact
   foreach ($__s in @($__envs.Values | ForEach-Object { @($_.services) } | Where-Object { $_ -and $_.static -and -not $_.artifact })) { $__s | Add-Member artifact ([string]$__s.static) -Force }
@@ -80,6 +110,7 @@ $script:FailPattern = [string](Opt 'failPattern' "APPLICATION FAILED TO START|Ap
 function Now { (Get-Date).ToString('o') }
 function EnvNames { if ($script:LE -and $script:LE.envs) { @($script:LE.envs.PSObject.Properties.Name) } else { @() } }
 function Get-EnvCfg([string]$e) { $c = $script:LE.envs.$e; if (-not $c) { throw "unknown env '$e' (configured: $((EnvNames) -join ', '))" }; $c }
+function LaneNames([string]$e) { $g = (Get-EnvCfg $e).group; @(EnvNames | Where-Object { $script:LE.envs.$_.group -eq $g }) }   # lane order
 function Get-RepoCfg([string]$name) {
   $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1
   if (-not $r) { throw "repo '$name' is not in kit.local.json repos[] (name or alias)" }
@@ -163,8 +194,8 @@ function StartCmd([string]$e, $s, [string]$artifact) {
 }
 function EnvVars([string]$e, $item) {
   $v = [ordered]@{}
-  $f = if ((Get-EnvCfg $e).envFile) { [string](Get-EnvCfg $e).envFile } else { Join-Path (Get-KitPath localenv-env) "$e.env" }
-  if (Test-Path -LiteralPath $f) {
+  $fs = if ((Get-EnvCfg $e).envFile) { @([string](Get-EnvCfg $e).envFile) } else { @("$((Get-EnvCfg $e).group)", $e | Select-Object -Unique | ForEach-Object { Join-Path (Get-KitPath localenv-env) "$_.env" }) }   # a lane: its env's file, then its own
+  foreach ($f in @($fs | Where-Object { Test-Path -LiteralPath $_ })) {
     foreach ($l in Get-Content -LiteralPath $f) {
       if ($l -match '^\s*(#|$)') { continue }
       if ($l -match '^\s*(export\s+)?([A-Za-z_][\w.]*)\s*=\s*(.*?)\s*$') { $v[$Matches[2]] = $Matches[3] -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1' }
@@ -354,6 +385,26 @@ function Touch-Lease([string]$e, [string]$agent) {
   $st = Read-State $e; $l = $st.leases[$agent]
   if (-not $l -or $l.owner -or ($l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalSeconds -lt 30)) { return }
   Update-State $e { param($x) if ($x.leases[$agent]) { $x.leases[$agent].lastUse = (Now) } }
+}
+# a lane's users: agents with a layer, lease, hold or open deploy there; services up; train running
+function Get-LaneLoad([string]$n) {
+  $st = Read-State $n
+  $who = @(@($st.leases.Keys | ForEach-Object { if ($st.leases[$_].agent) { $st.leases[$_].agent } else { ($_ -split '/')[0] } }) + @($st.holds.Keys) + @($st.release.repos.Values | ForEach-Object { @($_.layers) } | Where-Object { $_ } | ForEach-Object agent) + @($st.requests | Where-Object { $_.kind -eq 'deploy' -and $_.status -in 'queued', 'in-train' } | ForEach-Object agent))
+  [pscustomobject]@{ env = $n; agents = @($who | Where-Object { $_ } | Select-Object -Unique); up = @($st.services.Values | Where-Object { $_.status -eq 'up' }).Count; train = [bool]$st.train }
+}
+# -Lane k; else the lane the agent already uses; else (deploy / use / task) the least busy lane, a cold one only with room for all its services
+function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [string]$id) {
+  $names = @(LaneNames $e)
+  if ($k) { if ($k -gt $names.Count) { throw "-Lane ${k}: $($names[0]) has $($names.Count) lane(s) (localEnv.envs.$($names[0]).lanes.max)" }; return $names[$k - 1] }
+  $loads = @($names | ForEach-Object { Get-LaneLoad $_ })
+  if ($id) { foreach ($n in $names) { if (@((Read-State $n).requests | Where-Object id -eq $id).Count) { return $n } } }   # wait -Id: the lane holding that request
+  $mine = @($loads | Where-Object { $agent -in $_.agents })[0]; if ($mine) { return $mine.env }
+  if ($action -notin 'deploy', 'use', 'task') { return $e }
+  $room = (Get-GateAvailGB (Get-SysMem)) - (KeepFreeGB)
+  $ok = @($loads | Where-Object { $n = $_.env; $_.up -or $n -eq $names[0] -or (@(EnvServices $n | Where-Object { Managed $_ } | ForEach-Object { Need-GB $n $_ }) | Measure-Object -Sum).Sum -le $room })
+  $best = @($ok | Sort-Object @{ Expression = { $_.agents.Count + [int]$_.train } }, @{ Expression = { $_.up }; Descending = $true }, @{ Expression = { [array]::IndexOf($names, $_.env) } })[0]
+  Write-Host "[$($best.env)] lane $([array]::IndexOf($names, $best.env) + 1) of $($names[0]), least busy ($(($loads | ForEach-Object { "$($_.env) $($_.agents.Count) agent(s)$(if ($_.env -notin $ok.env) { ' no room' })" }) -join ', ')); later calls with -Env $($names[0]) stay on it"
+  $best.env
 }
 # the holders' board inbox (bossy.ps1 board msg) + their status -Agent notice
 function Send-LeaseNotice([string]$e, [string[]]$keys, [string]$text) {
@@ -1251,6 +1302,13 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = "port $($s.port) held by pid $holder (not started by the env)" }
     throw "[$e] $($s.name): port $($s.port) is held by pid $holder, which the env did not start: stop it or change the port"
   }
+  if ($s.init.cmd -and -not ($s.init.creates -and (Test-Path -LiteralPath (Expand-Placeholders ([string]$s.init.creates) $e $s $dir '')))) {   # before a start while init.creates is missing (a lane's own data)
+    $ic = Expand-Placeholders ([string]$s.init.cmd) $e $s $dir ''; $ilog = LogFile $e "$($s.name)-init"; Add-Content $ilog "== $(Now) init: $ic"
+    "[$e] $($s.name): init (once; log $ilog)"; $t0i = Get-Date
+    $code = Invoke-Shell $ic $ilog (EnvVars $e $s) ([int]$(if ($s.init.timeoutSec) { $s.init.timeoutSec } else { 1800 }))
+    if ($code) { Event $e 'init-failed' @{ service = $s.name; why = (Get-ShellWhy $code) }; throw "[$e] $($s.name): init failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 5) -join ' | '). Log: $ilog" }
+    Event $e 'init' @{ service = $s.name; sec = [int]((Get-Date) - $t0i).TotalSeconds }
+  }
   # RAM first, then the machine-wide start lock for launch + health only; RAM is checked again under the lock
   $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { 'Global\kit-localenv-start' } else { 'kit-localenv-start' }))
   $got = $false; $tw = Get-Date
@@ -1850,7 +1908,7 @@ function Get-Doctor([string]$e) {
     if (-not $b) { & $add 'WARN' "no baseline mark: envy.ps1 seed -Env $e (a green seed marks baseline-<date>)" }
     elseif ($st0.binlog.days -and ((Get-Date) - [datetime]$b.at).TotalDays -gt [double]$st0.binlog.days - 3) { & $add 'WARN' "baseline mark $($b.name) expires with the binlog ($($st0.binlog.days) d): seed -Env $e again" }   # TODO-PARAM (fixed default)
   }
-  $f = if ($c.envFile) { [string]$c.envFile } else { Join-Path (Get-KitPath localenv-env) "$e.env" }
+  $f = if ($c.envFile) { [string]$c.envFile } else { Join-Path (Get-KitPath localenv-env) "$($c.group).env" }   # a lane's own file is optional
   if (-not (Test-Path -LiteralPath $f)) { & $add $(if ($c.envFile) { 'FAIL' } else { 'WARN' }) "env file $f is missing$(if (-not $c.envFile) { ' (secrets go there)' })" }
   $cmds = [ordered]@{}; $none = [pscustomobject]@{ port = '' }
   foreach ($p in @($c.db.PSObject.Properties | Where-Object { $_.Value -is [string] -and $_.Name -notmatch '^(_|engine$|name$|user$|host$|uri$|jdbc$|passwordEnv$|schemasQuery$|afterRevert$|flashbackExclude$|bin$)' -and $_.Value -ne 'liquibase' })) { $cmds["db.$($p.Name)"] = Expand-Placeholders $p.Value $e $none $KitConf.Workspace '' }
@@ -1896,7 +1954,8 @@ param(
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
-  [switch]$DryRun, [switch]$Stale, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json
+  [switch]$DryRun, [switch]$Stale, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
+  [int]$Lane = 0
 )
 if ($Action -eq 'help') { foreach ($hl in @(Get-Content $PSCommandPath | Select-Object -Skip 1)) { if ($hl -eq '#>') { break }; $hl }; return }   # the verbs, before any env check
 if ($Action -eq 'marks') { if ($Name) { throw "marks lists the marks; to make one: mark -Name $Name" }; $Action = 'mark' }   # the list form agents guess
@@ -1906,6 +1965,7 @@ if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environment
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
 if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
+if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 $e = $EnvName
 # db.engine without its presets (goody db-engine-presets): stop before anything changes
 $needs = @(foreach ($n in @($e)) { $c = $script:LE.envs.$n; if ($c.db.engine -and -not $script:DbPresets) { "env $n (db.engine): db.engine presets are a goody: run kitbag.py goody add db-engine-presets" } })
@@ -2029,9 +2089,10 @@ function Show-Status([string]$env1) {
 }
 
 switch ($Action) {
-  'envs' {
+  'envs' {   # -Json: env, group, lane, port per service (pokey.ps1 derives a lane's target from it)
+    if ($Json) { @(EnvNames | ForEach-Object { $ec = Get-EnvCfg $_; $pm = [ordered]@{}; foreach ($s in EnvServices $_ | Where-Object port) { $pm[$s.name] = [int]$s.port }; [pscustomobject]@{ env = $_; group = $ec.group; lane = $ec.lane; ports = [pscustomobject]$pm } }) | ConvertTo-Json -Depth 4 -AsArray; return }
     foreach ($n in EnvNames) {
-      "$n$(if ((Get-EnvCfg $n).description) { " - $((Get-EnvCfg $n).description)" })"
+      $ln = @(LaneNames $n); "$n$(if ($ln.Count -gt 1) { " (lane $((Get-EnvCfg $n).lane) of $($ln[0]); -Env $($ln[0]) picks one)" })$(if ((Get-EnvCfg $n).description) { " - $((Get-EnvCfg $n).description)" })"
       foreach ($s in EnvServices $n) { '  {0,-14} {1,-28}{2}{5}{3}{4}' -f $s.name, $(if ($s.repo) { "$($s.repo)/$($s.dir)" } else { 'external' }), $(if ($s.port) { "  :$($s.port)" }), $(if ($s.dependsOn) { "  needs $(@($s.dependsOn) -join ',')" }), $(if ($s.hot) { '  hot' } elseif ($s.static) { '  static (built files)' } elseif ($s.artifact) { '  runs from artifact' }), $(if ($s.debugPort) { "  debug :$($s.debugPort)" }) }
       if ((Get-EnvCfg $n).tasks) { "  tasks: $((Get-EnvCfg $n).tasks.PSObject.Properties.Name -join ', ')" }
     }

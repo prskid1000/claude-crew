@@ -322,6 +322,17 @@ $lk = & { . $L3; $lkLog = LogFile t api; Set-Content $lkLog 'APPLICATION FAILED 
   function Start-Pwsh { Add-Content $lkLog 'Started App in 1.0 seconds'; $PID }; function Healthy { (++$script:lkH) -gt 1 }
   try { $o = @(Start-SvcOnce t (Svc t api) 1 '') -join ' '; "$($o -match 'open elsewhere, appending')|$((Read-State t).services.api.status)|$(-not (Test-Path "$lkLog.prev"))" } catch { "threw: $_" } finally { $lkHold.Dispose() } }
 Expect "start: a held log is appended to, its old fail line ignored, the service comes up ($lk)" ($lk -eq 'True|up|True')
+# init (a lane's own data): runs before a start while init.creates is missing, then not again; a failed init stops the start
+& $J @{ localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'db'; start = 'x'; init = @{ cmd = 'echo made> "{dir}/made.txt"'; creates = '{dir}/made.txt' } }, @{ name = 'bad'; start = 'x'; init = @{ cmd = 'exit 3'; creates = '{dir}/never.txt' } }) } } } } $cf3 8
+$initRes = & { . $L3; Remove-Item (Join-Path $sq 'made.txt') -ErrorAction SilentlyContinue
+  function SvcDir { $sq }; function StartCmd { 'x' }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }
+  function Start-Pwsh { $PID }; function Healthy { $true }; function Stop-Svc { }; function Owned { $false }
+  $first = @(Start-SvcOnce t (Svc t db) 1 '') -join ' '; $made = Test-Path (Join-Path $sq 'made.txt'); $again = @(Start-SvcOnce t (Svc t db) 1 '') -join ' '
+  $bad = try { Start-SvcOnce t (Svc t bad) 1 '' | Out-Null; 'started' } catch { "$_" }
+  Remove-Item (Join-Path $sq 'made.txt') -ErrorAction SilentlyContinue
+  "$($first -match 'db: init')|$made|$($again -match 'init')|$($bad -match 'init failed \(exit 3\)')" }
+Expect "start: init runs once while init.creates is missing; a failed init stops the start ($initRes)" ($initRes -eq 'True|True|False|True')
+& $J @{ localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'api'; start = 'x' }) } } } } $cf3 8   # the config the next checks share
 # a start worker queued with a copy that trains replaced (and pruned) while it waited for room starts the copy the state names
 $lt = & { . $L3; Update-State t { param($x) $x.services = @{ api = @{ status = 'failed'; artifact = 'run/r9-b/app.jar'; release = 9 } } }
   function SvcDir { $sq }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }; $script:ltArgs = $null; function Healthy { [bool]$script:ltArgs }; function Stop-Svc { }; function Wait-Deps { }   # up only once launched
@@ -459,5 +470,38 @@ $cks = & { . $ckL; $global:ckSql = @(); function Invoke-DbSql { $global:ckSql +=
   "$pure|$($global:ckSql -join ';')|$($sqlNotes -join ';')|$($after -join ';')|$all" }
 Expect "localenv: an edited unmerged changeSet gets MD5SUM NULL (merged / whitespace-only untouched); restore.after gets {mark}, onMigrations false skips releases ($cks)" ($cks -match '^0\|UPDATE `s1`\.DATABASECHANGELOG SET MD5SUM = NULL WHERE ID = ''l1'' AND AUTHOR = ''a'' AND \(FILENAME = ''c1\.xml'' OR FILENAME LIKE ''%/c1\.xml''\)\|r b: changeSet\(s\) a:l1 of c1\.xml .*NOT re-applied' -and $cks -match '\|restore\.after marker: ok: reset release-7\|2$')
 Remove-TestKit $ck
+# lanes: lane 1 = the env unchanged, lane k = <env><k>: managed ports + (k-1) x portStep, {lane} / {port:<svc>} / ":<port>" rewritten,
+# envs.<env><k> overrides one lane (its db port follows); -Env <env> keeps an agent on its lane, else the least busy one; -Lane pins
+$laneKit = New-LocalEnvKit lelane; $lkL = Join-Path $laneKit 'skills/envy/envy.ps1'
+Set-JsonFile (Join-Path $laneKit 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{
+  shop = @{ lanes = @{ max = 3 }; env = @{ DB_PORT = '{port:db}'; SEARCH = 'http://127.0.0.1:{port:search}' }; db = @{ port = 3306 }
+    services = @(@{ name = 'db'; external = $true; port = 3306 }, @{ name = 'search'; external = $true; port = 9200; start = 'search -data d{lane}' },
+      @{ name = 'api'; port = 8080; debugPort = 5005; start = 'echo {port}'; health = 'http://127.0.0.1:8080/health' })
+    smoke = @(@{ name = 'h'; url = 'http://127.0.0.1:8080/ok' }) }
+  shop2 = @{ services = @(@{ name = 'db'; external = $false; port = 3406; start = 'db --port={port}'; init = @{ cmd = 'clone'; creates = 'x' } }) }
+  solo = @{ services = @(@{ name = 'w'; port = 7000; start = 'echo' }) } } } } 8
+$lr = & { . $lkL
+  $c1 = Get-EnvCfg shop; $c2 = Get-EnvCfg shop2; $c3 = Get-EnvCfg shop3
+  $p = { param($c, $n) @($c.services | Where-Object name -eq $n)[0] }
+  $one = "$((& $p $c1 'api').port)/$((& $p $c1 'api').debugPort)/$((& $p $c1 'search').start)/$($c1.env.DB_PORT)/$($c1.db.port)/$($c1.smoke[0].url)"
+  $two = "$((& $p $c2 'api').port)/$((& $p $c2 'api').debugPort)/$((& $p $c2 'search').port)/$((& $p $c2 'search').start)/$((& $p $c2 'api').health)/$($c2.env.DB_PORT)/$($c2.env.SEARCH)/$($c2.db.port)/$($c2.smoke[0].url)/$((& $p $c2 'db').init.cmd)"
+  $three = "$((& $p $c3 'api').port)/$((& $p $c3 'db').port)/$($c3.db.port)"
+  "$((EnvNames | Sort-Object) -join ',')|$(@(LaneNames shop2) -join ',')|$(@(LaneNames solo) -join ',')|$one|$two|$three|$(@(Test-PortClash).Count)" }
+Expect "lanes: lane 1 unchanged, lanes 2..max derived (ports + portStep, {lane}, {port:<svc>}, URL ports), envs.<env><k> overrides its lane, no clash ($lr)" ($lr -eq 'shop,shop2,shop3,solo|shop,shop2,shop3|solo|8080/5005/search -data d/3306/3306/http://127.0.0.1:8080/ok|8180/5105/9300/search -data d2/http://127.0.0.1:8180/health/3406/http://127.0.0.1:9300/3406/http://127.0.0.1:8180/ok/clone|8280/3306/3306|0')
+$ls = & { . $lkL
+  Update-State shop { param($x) $x.leases.A1 = @{ services = @('api'); agent = 'A1' }; $x.leases.A2 = @{ services = @('api'); agent = 'A2' } }
+  Update-State shop2 { param($x) $x.release.repos.r = @{ layers = @(@{ branch = 'b'; agent = 'B1' }) } }
+  function Get-GateAvailGB { 50 }; function KeepFreeGB { 10 }; function Need-GB { 1 }
+  $sticky = Select-Lane shop B1 0 'use'; $pick = Select-Lane shop N1 0 'deploy'; $read = Select-Lane shop N2 0 'logs'; $pin = Select-Lane shop N3 2 'logs'
+  function Get-GateAvailGB { 5 }; $cold = Select-Lane shop N4 0 'deploy'
+  $bad = try { Select-Lane shop N5 4 'use' } catch { 'refused' }
+  Update-State shop3 { param($x) $x.requests = @(@{ id = 'q9'; kind = 'deploy'; status = 'queued'; agent = 'Q1' }, @{ id = 'q8'; kind = 'deploy'; status = 'done'; agent = 'Q2' }) }
+  $queued = Select-Lane shop Q1 0 'deploy'; $waitId = Select-Lane shop Q2 0 'wait' 'q8'
+  "$sticky|$pick|$read|$pin|$cold|$bad|$queued|$waitId" } 6>$null
+Expect "lanes: the agent's lane (layer, lease, open deploy) sticks; wait -Id finds its request's lane; deploy / use go to the least busy lane (a cold one only with room); other verbs stay; -Lane pins; a lane past max refused ($ls)" ($ls -eq 'shop2|shop3|shop|shop2|shop|refused|shop3|shop3')
+$lt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); $tc = [pscustomobject]@{ targets = [pscustomobject]@{ 'local-shop' = [pscustomobject]@{ api = 'http://127.0.0.1:8080/x'; web = 'http://127.0.0.1:4200' } } }
+  $t2 = Get-LaneTarget $tc 'local-shop2'; "$($t2.api)|$($t2.web)|$($null -eq (Get-LaneTarget $tc 'other2'))|$((Get-LaneTarget $tc 'local-shop3').api)" }
+Expect "lanes: pokey target <target><k> = the base target with lane k's ports ($lt)" ($lt -eq 'http://127.0.0.1:8180/x|http://127.0.0.1:4200|True|http://127.0.0.1:8280/x')
+Remove-TestKit $laneKit
 Remove-TestKit $k
 Complete-Tests

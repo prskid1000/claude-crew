@@ -69,6 +69,13 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   exits) shrinks it to `idleMB` (256): chunk-aligned, one resize at a time, never during a switch-over, one log line each; `db.expect`
   then skips the pool. Doctor: the pool and the server's RAM. Windows can keep the freed memory in mysqld's working set until a
   restart; the resize is `SET GLOBAL` only: keep the server's configured size (my.cnf / `SET PERSIST`) the idle one.
+- **Lanes** (`envs.<env>.lanes` { max, portStep 100 }): copies of an env side by side, each its own state, controller, train, worktrees,
+  logs and release dirs. Lane 1 = `<env>`, lane k = `<env><k>`, all derived alike: ports of services the env runs + (k-1) x
+  portStep; in every string `{lane}` ('' / k), `{port:<svc>}` and `:<old port>` follow; `envs.<env><k>` keys override that lane
+  (e.g. its own DB service; `db.port` follows its port); env file `<env>.env`, then `<env><k>.env`. `-Env <env>` (deploy, use,
+  task) = the lane the agent already uses, else the least busy one (a cold lane only when free RAM minus the keep-free floor
+  holds all its services); `-Lane <k>` pins; owner verbs act on the named lane. API calls: `pokey.ps1 api -Target <target><k>`.
+  `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).
 - Config: envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`,
   `smoke`) merge by `name`. `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health and `db.expect` ({ server
   variable: value }); `deploy` stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100; per service too).
@@ -96,7 +103,7 @@ description: "Load when: you reproduce, debug or test a change on the local env 
 ```powershell
 $L = '<kit>/skills/envy/envy.ps1'
 & $L envs; & $L status -Env <env>                                       # 1. which env serves your repo; what is live
-& $L deploy -Env <env> -Agent <id> -Dir <worktree>                      # 2. committed work only -> LIVE r<n> | REFUSED | REJECTED | ROLLED BACK
+& $L deploy -Env <env> -Agent <id> -Dir <worktree>                      # 2. committed work only -> LIVE r<n> | REFUSED | REJECTED | ROLLED BACK; "[<env><k>] lane k": test there (target <target><k>)
 & $L wait -Env <env> -Id <request>                                      #    when it printed "still ..."
 & $L use -Env <env> -Agent <id> -Services <svc,..> -Session <board token> -Note "<goals>"   # 3. lease, then test
 & $L status -Env <env> -Agent <id>                                      # 4. "CHANGED since your lease" -> re-run those goals
