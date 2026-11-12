@@ -2395,7 +2395,12 @@ switch ($Action) {
     if ($Kill) { Stop-DbConn $e $Kill; Event $e 'db-kill' @{ id = $Kill; by = $Agent }; "[$e] db connection $Kill killed"; return }
     foreach ($q in @(Get-DbTempUse $e)) { '{0} {1} {2} {3}' -f $q.id, $q.gb.ToString([Globalization.CultureInfo]::InvariantCulture), $q.secs, (Protect-KitText $q.query) }
   }
-  'logs' { if (-not $Services) { throw 'logs needs -Service' }; Touch-Lease $e $Agent; $f = LogFile $e $Services[0]; if (Test-Path $f) { Read-LogTail $f $Tail $Grep $Since } else { "no log yet: $f" } }
+  'logs' {
+    if (-not $Services) {   # no -Service: api, else the env's only service, else the list (a usage line, never a crash)
+      $sn = @(EnvServices $e | ForEach-Object name); $Services = @(if ('api' -in $sn) { 'api' } elseif ($sn.Count -eq 1) { $sn[0] })
+      if (-not $Services) { "logs needs -Service: one of $($sn -join ', ') (envy.ps1 logs -Env $e -Service <name>)"; exit 2 }
+    }
+    Touch-Lease $e $Agent; $f = LogFile $e $Services[0]; if (Test-Path $f) { Read-LogTail $f $Tail $Grep $Since } else { "no log yet: $f" } }
   'events' { Touch-Lease $e $Agent; $ev = @(Read-KitLog env (Get-Date).AddDays(-30) | Where-Object env -eq $e | Select-Object -Last $Tail); if ($ev) { $ev | ForEach-Object { $_ | Select-Object * -ExcludeProperty stream | ConvertTo-Json -Compress } } else { 'no events yet' } }
   '_exec' {
     $s = Svc $e $Services[0]; $sdir = SvcDir $e $s; $log = LogFile $e $s.name

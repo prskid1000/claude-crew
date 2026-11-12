@@ -183,7 +183,8 @@ function LocalSame($dir, $a, $b, $files) {
 $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds($TimeoutSec); $nth = 0
 & { foreach ($m in @(Split-KitList $Mrs)) {
   if ($nth++ -and (Get-Date) -gt $until) { [pscustomobject]@{ mr = $m; target = "$Target"; state = 'UNKNOWN'; detail = "not checked: -TimeoutSec $TimeoutSec reached (check it again)" }; continue }
-  if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
+  $m = if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { "$m".Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' }   # an MR URL or <group>/<repo>!<iid> -> <repo>!<iid> (as bossy.ps1 ConvertTo-MrRef; pokey does not load bossy)
+  if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>, <group>/<repo>!<iid> or an MR URL' }; continue }
   $r = Repo $Matches.repo; $iid = $Matches.iid
   if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }
   $p = [uri]::EscapeDataString($(if ($group) { "$group/$($r.name)" } else { $r.name })); $ref = "$($r.name)!$iid"

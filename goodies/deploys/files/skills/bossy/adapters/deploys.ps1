@@ -4,9 +4,10 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
+  bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L92 intest · L206 deploy · L359 supervise
-Exit codes: 0 ok · 2 usage.
+Sections: L14 helpers · L93 intest · L207 deploy · L365 restart · L398 supervise
+Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
 . (Join-Path $PSScriptRoot '../../pokey/adapters/deployed_checks.ps1')   # Get-DeployPaths, Test-DeployTouched: one paths rule for plan, intest, deployed
@@ -204,10 +205,15 @@ function Format-KitInTestSummary([int]$Total, [int]$FromKit, [int]$FromLists, [i
 }
 
 # ---- deploy: plan, request, record
-function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest')][string]$Action = 'plan',
+function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest', 'restart')][string]$Action = 'plan',
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [switch]$Mr, [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300,
+    [string]$Service, [int]$RecheckSeconds = 120, [switch]$Ungated,
     [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
+  if ($Action -eq 'restart') {
+    if (-not $Env) { 'usage: deploy restart -Env <target>[,<target>..] [-Service <a,b>] [-WaitMinutes 20] [-Ungated]'; exit 2 }
+    Invoke-DeployRestart @(Split-KitList @($Env)) $Service $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 20 }) $RecheckSeconds -Ungated:$Ungated; return
+  }
   if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <env|deploy branch> [-From <branch>] -Mr [-Mrs <refs>] [-Decision <id>] (tag deploys: -Push)" }
   if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploys'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -Mr:$Mr -Mrs $Mrs -Decision $Decision -WaitMinutes $WaitMinutes -History $History; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task -Days $Days -FromMrs @(Split-KitList $Mrs); return }
@@ -354,6 +360,39 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   }
   if (-not @($plan).Count) { 'no test deploy targets in kit.local.json repos[].deploys' }
   if ($hostErr) { "last deploy unknown: $hostErr" }   # once, not per target
+}
+
+# ---- restart: services of an ssh deploy, gated by its busy check in the same shell, right before each restart
+# deploys[].ssh.busy: a host shell command whose output = live work (e.g. a running agent turn); busy -> wait, re-check, bounded
+function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMinutes = 20, [int]$RecheckSeconds = 120, [switch]$Ungated) {
+  foreach ($t in $Targets) {
+    $d = @(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -eq $t } | Select-Object -First 1
+    if (-not $d.ssh.host) { "deploy restart: $t has no repos[].deploys[].ssh (host, key, service): restart it by the org's deploy rules"; exit 2 }
+    $s = $d.ssh; $svcs = @(Split-KitList @($(if ($Service) { $Service } else { $s.service })))
+    if (-not $svcs.Count) { "deploy restart: no -Service and no deploys[].ssh.service for $t"; exit 2 }
+    if (-not $s.busy -and -not $Ungated) { "REFUSED deploy restart ${t}: no deploys[].ssh.busy (a shell command that prints live work on the host, e.g. running agent turns): set it, or -Ungated when nothing on $($s.host) can be cut; nothing restarted"; exit 2 }
+    $end = (Get-Date).AddMinutes($WaitMinutes); $done = @(); $sec = [int](Get-KitParam 'deploy.sshTimeoutSeconds'); $key = [string]$s.key -replace '^~', $HOME
+    while ($true) {
+      $left = @($svcs | Where-Object { $_ -notin $done })
+      $sh = @(
+        "SU=$(if ($s.sudo -ne $false) { "'sudo -n'" })"
+        foreach ($v in $left) {   # the busy check runs immediately before each restart: no gap for a new turn to start unseen
+          if ($s.busy) { "B=`$(sh -c $(Sq $s.busy) </dev/null 2>/dev/null); if [ -n `"`$B`" ]; then echo BUSY=1; printf '%s\n' `"`$B`" | head -n 5 | sed 's/^/LIVE=/'; exit 0; fi" }
+          "`$SU systemctl restart $(Sq $v); R=`$?; echo `"DONE=$v `$R`"; echo `"ACTIVE=$v `$(systemctl is-active $(Sq $v) 2>/dev/null)`"; [ `$R -eq 0 ] || exit 0"   # a failed restart stops the rest
+        }
+        'echo END=1'
+      ) -join "`n"
+      $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh))
+      $lines = @(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', "ConnectTimeout=$([math]::Min(15, $sec))", '-o', 'StrictHostKeyChecking=accept-new', $s.host, "echo $b64 | base64 -d | bash")) ($sec + 120))
+      foreach ($x in @($lines -match '^DONE=')) { $nm, $rc = ($x -replace '^DONE=', '') -split ' ', 2; if ("$rc".Trim() -ne '0') { "FAILED deploy restart ${t}: systemctl restart $nm exit $rc on $($s.host)$(if ($done) { " (restarted before: $($done -join ', '))" })"; exit 1 }; $done += $nm }
+      $act = @($lines -match '^ACTIVE=' -replace '^ACTIVE=', '')
+      if ($lines -match '^END=1') { Write-KitLog deploy-log restart ([ordered]@{ target = $t; services = $svcs; gated = (-not $Ungated) }); "RESTARTED ${t}: $($svcs -join ', ') on $($s.host) ($($act -join '; '))$(if ($Ungated) { ' (ungated)' })"; break }
+      if (-not ($lines -match '^BUSY=1')) { "UNKNOWN deploy restart ${t}: no answer from $($s.host) (ssh failed or timed out)$(if ($done) { "; restarted: $($done -join ', ')" }); restart state unknown: check systemctl on the host before a retry"; exit 1 }
+      $live = @($lines -match '^LIVE=' -replace '^LIVE=', '') -join ' | '
+      if ((Get-Date).AddSeconds($RecheckSeconds) -gt $end) { "REFUSED deploy restart ${t}: live work on $($s.host) after $WaitMinutes min ($live); $(if ($done) { "restarted: $($done -join ', '), not: " } else { 'not restarted: ' })$(@($svcs | Where-Object { $_ -notin $done }) -join ', ') (bossy.ps1 decide ask)"; exit 3 }
+      "BUSY ${t}: live work on $($s.host) ($live): re-check in $RecheckSeconds s (until $($end.ToString('HH:mm')))"; Start-Sleep $RecheckSeconds
+    }
+  }
 }
 
 # ---- supervise: inTest moves, the cached plan

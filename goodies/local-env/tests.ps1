@@ -114,6 +114,11 @@ Expect "logs: only new OOM lines; FailPattern has heap OOM; -Grep + -Since from 
 & $J @{ localEnv = @{ logMaxMB = 0.002; envs = @{ t = @{ services = @(@{ name = 'gen'; start = 'pwsh -NoProfile -Command "1..80 | ForEach-Object { ''x'' * 60 }"' }) } } } } $cf3 8
 $null = Px $L3 _exec -Env t -Service gen 2>&1; $gl = & { . (Join-Path $k3 'skills/crafty/lib.ps1'); Join-Path (Get-KitPath localenv-logs -Create) 't-gen.log' }
 Expect "_exec: output copied to the log, rotated to .prev past logMaxMB" ((Test-Path "$gl.prev") -and (Get-Item $gl).Length -lt 6KB -and (Get-Content $gl -Raw) -match 'exited 0')
+# logs without -Service: api, else the only service, else the list as a usage line (exit 2), never a crash
+$lgOne = Px $L3 logs -Env t -Tail 1 2>&1 | Out-String
+& $J @{ localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'gen'; start = 'echo g' }, @{ name = 'web'; start = 'echo w' }) } } } } $cf3 8
+$lgTwo = Px $L3 logs -Env t 2>&1 | Out-String; $lgTwoRc = $LASTEXITCODE
+Expect "logs: no -Service reads the only service; two without api list them, exit 2 ($($lgOne.Trim()) | $($lgTwo.Trim()) $lgTwoRc)" ($lgOne -match 'exited 0' -and $lgTwo -match 'logs needs -Service: one of gen, web' -and $lgTwoRc -eq 2)
 # processes: tree ids from one snapshot; a state write is skipped when nothing changed
 & $J @{ localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'api'; start = 'echo api'; port = 41005 }) } } } } $cf3 8
 $tr = & { . $L3; $snap = @{ procs = @{ 1 = 1GB; 2 = 1GB; 3 = 1GB; 9 = 5GB }; kids = @{ 1 = @(2); 2 = @(3) }; names = @{} }

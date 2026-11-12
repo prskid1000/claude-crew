@@ -55,6 +55,16 @@ Expect "deploy merge -Mr: deploy/st-<date> pushed, MR to staging with method mer
 Remove-Item Env:DM_HOST_LOG
 $o3 = pwsh @np $O deploy merge -To staging 2>&1 | Out-String
 Expect "deploy merge without -Repo: a clear error, no binding crash ($($o3.Trim()))" ($o3 -match 'deploy merge: -Repo missing' -and $o3 -notmatch 'Cannot bind')
+# -To a target name: from another clone of the repo (no checkout match) it still resolves; a target without branch = a clear stop
+Get-ChildItem "$r/wt" -Directory -Filter 'deploymerge-*' -ErrorAction SilentlyContinue | ForEach-Object { git -C "$r/repo" worktree remove --force $_.FullName 2>$null }
+git clone -q "$r/origin.git" "$r/repo2" 2>$null
+$o7 = pwsh @np $O deploy merge -Repo "$r/repo2" -To st 2>&1 | Out-String
+$cfg7 = Get-Content $kl -Raw | ConvertFrom-Json; $cfg7.repos[0].deploys += [pscustomobject]@{ target = 'hostonly'; ssh = @{ host = 'u@h' } }; $cfg7 | ConvertTo-Json -Depth 8 | Set-Content $kl
+$o8 = pwsh @np $O deploy merge -Repo "$r/repo2" -To hostonly -Mr 2>&1 | Out-String; $o8c = $LASTEXITCODE
+Expect "deploy merge -To <target>: resolved from another clone; a target without branch stops with the fix, exit 2 ($($o7.Trim()) | $($o8.Trim()))" ($o7 -match 'deploymerge-staging' -and $o7 -notmatch 'fetch origin .*FAILED' -and $o8c -eq 2 -and $o8 -match 'deploys\[\] target hostonly has no branch')
+$cfg7.repos += [pscustomobject]@{ name = 'other'; checkout = "$r/none"; deploys = @(@{ target = 'o-st'; branch = 'staging' }) }; $cfg7 | ConvertTo-Json -Depth 8 | Set-Content $kl
+$o9 = pwsh @np $O deploy merge -Repo "$r/repo2" -To staging 2>&1 | Out-String; $o9c = $LASTEXITCODE
+Expect "deploy merge: -To that two repos' deploys name, from an unknown clone = a stop, exit 2 ($($o9.Trim()))" ($o9c -eq 2 -and $o9 -match 'names deploys of shop, other')
 Remove-Item Env:CLAUDE_WT_ROOT
 Remove-TestKit $k
 Complete-Tests

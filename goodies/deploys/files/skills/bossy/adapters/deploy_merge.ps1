@@ -2,7 +2,7 @@
 # Goody deploys (kitbag.py goody add deploys): bossy.ps1 deploy merge, dot-sourced by bossy.ps1.
 # Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env>-<date> pushed, MR squash off, merged on green),
 # or tags it (deploys[].tag; -Push pushes the tag). A deploy branch itself is never pushed to.
-# Sections: L6 merge · L63 mr
+# Sections: L6 merge · L70 mr
 # ---- merge: tag or trunk, the merge in a worktree
 function Invoke-DeployMerge {
 param(
@@ -13,7 +13,14 @@ $ErrorActionPreference = 'Stop'
 $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
 $rc = @(Get-KitValue 'repos' @()) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rp) } | Select-Object -First 1
 # -To: a deploys[] target or branch; tag: tags origin/<From>; trunk (branch = From): no merge
-$dep = @($rc.deploys) | Where-Object { $_.target -eq $To -or $_.branch -eq $To } | Select-Object -First 1
+$hit = { param($x) @($x.deploys) | Where-Object { $_.target -eq $To -or $_.branch -eq $To } }
+if (-not $rc) {   # -Repo a worktree or another clone: the one repo whose deploys name -To
+  $cand = @(@(Get-KitValue 'repos' @()) | Where-Object { & $hit $_ })
+  if ($cand.Count -gt 1) { "deploy merge: -To $To names deploys of $(@($cand.name) -join ', '): pass -Repo <that repo's checkout>; nothing merged"; exit 2 }
+  $rc = $cand | Select-Object -First 1
+}
+$dep = & $hit $rc | Select-Object -First 1
+if ($dep.target -eq $To -and -not $dep.branch -and -not $dep.tag) { "deploy merge: deploys[] target $To has no branch (kit.local.json repos[].deploys[].branch = the branch its CI deploys from): add it or pass -To <branch>; nothing merged"; exit 2 }
 if (-not $From) {
   $From = @($dep.from)[0] ?? $rc.target   # deploys[].from: one repo, two products on different main lines
   if (-not $From) { $h = (git -C $Repo symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null); if ($h) { $From = ($h -replace '^origin/', '').Trim() } }
