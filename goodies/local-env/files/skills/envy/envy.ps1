@@ -17,8 +17,9 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L29 config · L226 state · L273 layer drops · L345 leases · L466 code · L498 migrations · L788 hooks · L860 marks ·
-  L1006 seed · L1052 processes · L1381 daemon · L1841 cleanup · L1913 doctor · L1965 verbs
+Sections: L30 config · L227 state · L274 layer drops · L346 leases · L472 code · L504 migrations ·
+  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1047 seed · L1093 processes · L1461 daemon ·
+  L1920 cleanup · L1992 doctor · L2044 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -439,9 +440,14 @@ function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[
   }
 }
 function Leased($why) { [bool]@($why | Where-Object { "$_" -match '^(lease|hold):' }).Count }
+# a service in start backoff (failed, 3 starts / 30 min) gets a fresh try: a new release staged for it, an asked restart
+function Clear-StartBackoff($v, [string]$why) { if ($v -and $v.status -eq 'failed') { $v.status = 'down'; $v.restarts = @(); $v.why = "${why}: backoff cleared (was: $($v.why))" } }
 function IdleWhy([double]$min, [string]$pressure) { if ($pressure) { "idle, stopped under memory pressure ($pressure)" } else { "idle: no holder for $min min (starts on the next lease)" } }
 # the services a train protects from idle stops: none while it only waits for leases (it changes nothing yet)
-function Get-IdleBlock($st) { if (-not $st.train -or "$($st.train.phase)" -like 'waiting for leases*') { @() } else { @($st.train.blockServices) } }
+function Get-IdleBlock($st, [string]$e) {   # + the env's own DB: a train's marks, slices and migration checks need it
+  if (-not $st.train -or "$($st.train.phase)" -like 'waiting for leases*') { return @() }
+  @(@($st.train.blockServices) + @(if ($e) { (DbSvc $e).name }) | Where-Object { $_ } | Select-Object -Unique)
+}
 # up, unneeded, no dependent up, starting, waiting or in a train, past the idle grace (or any idle one under pressure); biggest first
 function Get-IdleServices([string]$e, $st, $need, [string[]]$block, [string]$pressure) {
   @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -eq 'up' -and -not $need[$_.name] -and $_.name -notin $block } | Where-Object {
@@ -641,8 +647,31 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
   }
   @{ kept = $kept; dropped = $dropped; targetSha = $base }
 }
+# ---- shared builds (opt-in services[].shareBuild true: a build whose output depends on its code and its own config only, e.g. a
+# web bundle that reads no per-lane value): lanes of one env stage another lane's recorded copy of the same code (the worktree tree
+# without its prepare commits) and the same build config, no build
+$script:BuildKeys = @{}; $script:SharedStage = @{}
+function BuildKey([string]$e, $s) {
+  if ($s.shareBuild -ne $true -or -not $s.build -or -not $s.repo -or -not ($s.artifact -or $s.static)) { return $null }
+  $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; if (-not $wt -or -not (Test-Path -LiteralPath (Join-Path $wt '.git'))) { return $null }
+  $n = 0; while ($n -lt 10 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv prepare*') { $n++ }   # lane paths only ({cache}, {env}, {dir}, {wt})
+  $tree = "$(git -C $wt rev-parse "HEAD~$n^{tree}" 2>$null)".Trim(); if ($LASTEXITCODE -or -not $tree) { return $null }
+  $cfg = [ordered]@{ tree = $tree; dir = "$($s.dir)"; build = "$($s.build)"; artifact = "$($s.artifact)"; static = "$($s.static)"; unpack = "$($s.unpack)"; prepare = "$($s.prepare)"; reactor = @($s.reactor); env = $s.env }
+  [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes(($cfg | ConvertTo-Json -Depth 8 -Compress)))).ToLower()
+}
+# -> @{ lane; dir; path } of another lane's recorded copy with this key (keyed when it was built), else nothing; never throws
+function Find-SharedBuild([string]$e, $s, [string]$key) {
+  foreach ($l in @(LaneNames $e | Where-Object { $_ -ne $e })) {
+    try { $st = Read-State $l; $hit = @(@(if ($st.builds -is [hashtable]) { $st.builds[$s.name] }) | Where-Object { $_ -and $_.key -eq $key -and $_.path -and (Test-Path -LiteralPath "$($_.path)") })[-1] } catch { continue }
+    if ($hit) { return @{ lane = $l; dir = "$($hit.dir)"; path = "$($hit.path)" } }
+  }
+  $null
+}
 function Build-Repo([string]$e, [string]$rn) {
   foreach ($s in EnvServices $e | Where-Object { $_.build -and (RepoOf $e $_) -eq $rn }) {
+    $script:SharedStage.Remove($s.name); $script:BuildKeys[$s.name] = $key = BuildKey $e $s
+    $hit = if ($key) { Find-SharedBuild $e $s $key }
+    if ($hit) { Write-Host "[$e] $($s.name): lane $($hit.lane) built the same code: its copy is staged, no build"; $script:SharedStage[$s.name] = $hit; Event $e 'build-shared' @{ service = $s.name; repo = $rn; from = $hit.lane; key = $key }; continue }
     $dir = SvcDir $e $s; $cmd = Expand-Placeholders ([string]$s.build) $e $s $dir ''
     if ($cmd -match '\{reactor\}') { $cmd = $cmd.Replace('{reactor}', (Write-Reactor $e $s)) }
     Write-Host "[$e] building $($s.name): $cmd"
@@ -695,7 +724,17 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
     $live = @((Read-State $e).services.Values | ForEach-Object { ReleaseDirOf (Split-Path $to) "$($_.artifact)" })
     for ($i = 2; $to -in $live; $i++) { $to = Join-Path (Get-KitPath localenv) "run/$e/$($s.name)/$tag-$i" }   # a running copy is never replaced
     Remove-Item -LiteralPath $to -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $to | Out-Null
-    if ($s.static) {
+    $bk = $script:BuildKeys[$s.name]; $sh = $script:SharedStage[$s.name]; $shared = [bool]$sh; $shLane = $null; $script:BuildKeys.Remove($s.name); $script:SharedStage.Remove($s.name)   # one build, one stage
+    for ($try = 0; $sh -and $try -lt 3; $try++) {   # another lane's copy of the same build (its AOT cache belongs to its file); pruned meanwhile: the next one
+      try {
+        if (-not (Test-Path -LiteralPath $sh.path)) { throw 'gone' }
+        Get-ChildItem -LiteralPath $sh.dir -Force | Where-Object Name -ne 'app.aot' | Copy-Item -Destination $to -Recurse -Force
+        $rel = [IO.Path]::GetRelativePath($sh.dir, $sh.path); $out[$s.name] = if ($rel -eq '.') { $to } else { Join-Path $to $rel }; $shLane = $sh.lane; break
+      } catch { Get-ChildItem -LiteralPath $to -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; $sh = Find-SharedBuild $e $s $bk }
+    }
+    if ($out[$s.name]) { }
+    elseif ($shared) { throw "[$e] $($s.name): the other lanes' copies of this build are gone since the build step (pruned): deploy again (it builds then)" }
+    elseif ($s.static) {
       $src = Join-Path $dir $s.static
       if (-not (Test-Path -LiteralPath $src -PathType Container)) { throw "[$e] $($s.name): no built files in $src after the build (static)" }
       Copy-Item (Join-Path $src '*') $to -Recurse -Force; $out[$s.name] = $to
@@ -710,7 +749,9 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
       }
       if (-not $out[$s.name]) { Copy-Item $f.FullName $to -Force; $out[$s.name] = Join-Path $to $f.Name }
     }
-    Event $e 'stage' @{ service = $s.name; tag = $tag; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); unpacked = [bool]$s.unpack }
+    $bo = $out[$s.name]
+    if ($bk) { Update-State $e { param($x) if ($x.builds -isnot [hashtable]) { $x.builds = @{} }; $x.builds[$s.name] = @(@(@($x.builds[$s.name]) | Where-Object { $_ -and $_.key -ne $bk }) + @(@{ key = $bk; dir = $to; path = $bo; at = (Now) }) | Select-Object -Last 3) } }   # other lanes look here
+    Event $e 'stage' @{ service = $s.name; tag = $tag; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); unpacked = [bool]$s.unpack; shared = $shLane }
     $null = Remove-OldReleases $e $s (Split-Path $to)
   }
   $out
@@ -1261,6 +1302,19 @@ function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
 # connection waits for them again and retries once, before the train rolls back
 $script:DepFailPattern = '(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|whilst connecting to|\bES client\b|elasticsearch.{0,40}(unreachable|refused|not reachable|timed? ?out)'   # TODO-PARAM (fixed default)
 # a dependency that is down and that nobody starts is claimed (status waiting, waitFor dep: the loop leaves it) and started here
+# a train's DB steps (marks, slices, migration checks, the guard, a restore) on a lane whose own DB service rests: a start in
+# progress is waited for, else the train starts it (-Latest: a start that got there first wins) -> its lines; throws when it fails
+function Ensure-DbUp([string]$e, [int]$release) {
+  $d = DbSvc $e; if (-not $d -or -not (DbSvcDown $e)) { return }
+  $until = (Get-Date).AddMinutes((StartMin $d))
+  while ((DbSvcDown $e) -and (Get-Date) -lt $until) {
+    $x = (Read-State $e).services[$d.name]
+    $worker = @(Get-SysProcs | Where-Object { "$($_.CommandLine)" -match "$([regex]::Escape("_daemon -Env $e -Start $($d.name)"))(\s|$)" }).Count   # the loop's start worker, before it claims
+    if (-not ($x.status -eq 'starting' -and (Owned $x)) -and -not ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart)) -and -not $worker) { break }
+    Start-Sleep 2
+  }
+  if (DbSvcDown $e) { "[$e] $($d.name) rests: started for the train's DB steps"; Start-Svc $e $d $release '' -Latest }
+}
 function Wait-Deps([string]$e, $s) {
   foreach ($d in @($s.dependsOn | Where-Object { $_ })) {
     $ds = Svc $e $d; if (-not $ds) { continue }; $until = (Get-Date).AddMinutes((StartMin $ds)); $said = $false
@@ -1320,7 +1374,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
   }
   # RAM first, then the machine-wide start lock for launch + health only; RAM is checked again under the lock
   $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { 'Global\kit-localenv-start' } else { 'kit-localenv-start' }))
-  $got = $false; $tw = Get-Date
+  $got = $false; $tw = Get-Date; $dbStarted = $false
   try {
     for ($round = 1; ; $round++) {
       Wait-Room $e $s
@@ -1368,11 +1422,37 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
       foreach ($m in $pm) { try {   # each leaves the queue only once taken (a failed one waits for the next start)
         "[$e] mark $(New-Mark $e $m.name $m.kind $m.repos ([int]$m.release)) (waited for $($s.name))"; Update-State $e { param($x) $x.pendingMarks = @(@($x.pendingMarks) | Where-Object { $_ -and $_.name -ne $m.name }) }
       } catch { "[$e] mark $($m.name) still queued: $("$_".Split("`n")[0])" } }
+      $dbStarted = $true
     }
     Start-AotTrain $e $s $artifact
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose(); Update-State $e { param($x) $v = $x.services[$s.name]; if ($v -and $v.status -eq 'waiting' -and $v.waitPid -eq $PID) { $v.status = 'down' } } }   # a claim never outlives its start
+  if ($dbStarted) { Add-SeedBaseline $e $s.name }   # after the start lock: other starts never wait on the check
+}
+# the env's own DB up with no baseline mark (copied before marks, expired): a green seed check marks one. SQL checks only (a cmd
+# check may need the app, not up yet); its result is the env's seed state like any seed -Check
+function Add-SeedBaseline([string]$e, [string]$by) {
+  if (-not (MarksOn $e) -or @((Read-State $e).marks | Where-Object { $_ -and $_.kind -eq 'baseline' }).Count) { return }
+  try {
+    $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { return }
+    if (@((Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).items | Where-Object { $_ -and -not $_.check.sql }).Count) { return "[$e] no baseline mark: its seed has non-SQL checks (envy.ps1 seed -Env $e once the env is up)" }
+    $script:SeedBad = $false; $null = Invoke-Seed $e -Check
+    if ($script:SeedBad) { "[$e] no baseline mark: the seed check is not green (envy.ps1 seed -Env $e)" } else { "[$e] mark $(New-Mark $e "baseline-$((Get-Date).ToString('yyyy-MM-dd'))" 'baseline') (seed check green at the $by start)" }
+  } catch { "[$e] no baseline mark: $("$_".Split("`n")[0])" }
 }
 
+# the loop's db chores -> lines to say: temp watchdog and buffer pool once a minute (TODO-PARAM), mark expiry once a day; all rest
+# while the env's own DB service is down (a lane's copy stopped idle or under memory pressure: no client errors, it starts on a lease)
+function Invoke-DbChores([string]$e, $st, [hashtable]$at) {
+  if (DbSvcDown $e) { return }
+  if (((Get-Date) - $at.temp).TotalSeconds -ge 60 -and (Get-Command Invoke-DbTempWatch -ErrorAction SilentlyContinue) -and (Test-DbTemp $e)) {
+    $at.temp = Get-Date   # the connection using the most temp above db.tempMaxGB is killed; a connection gone before the KILL: said
+    try { foreach ($k in @(Invoke-DbTempWatch $e)) { $k; Event $e 'db-kill' @{ by = 'watchdog'; what = $k } } } catch { "db temp watchdog: $("$_".Split("`n")[0])" }
+  }
+  if (((Get-Date) - $at.pool).TotalSeconds -ge 60 -and (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue)) {   # goody db-engine-presets, db.bufferPool
+    $at.pool = Get-Date; try { foreach ($k in @(Invoke-DbPool $e)) { $k; Event $e 'db-pool' @{ what = $k } } } catch { "db pool: $("$_".Split("`n")[0])" }
+  }
+  if ((MarksOn $e) -and ((Get-Date) - $at.marks).TotalSeconds -ge 60 -and (-not $st.binlog -or ((Get-Date) - [datetime]$st.binlog.checkedAt).TotalHours -ge 24)) { $at.marks = Get-Date; try { Update-Marks $e } catch { "marks: $("$_".Split("`n")[0])" } }
+}
 # the loop's inputs: kit.local.json, envy.ps1, lib.ps1 and the dot-sourced goody adapters; a changed stamp = a fresh loop between trains
 function Get-LoopStamp {
   $fs = @($__cfgFile, (Join-Path $PSScriptRoot 'envy.ps1'), (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1'), (Join-Path (Split-Path $PSScriptRoot) 'crafty/adapters/liquibase.ps1')) + @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName)
@@ -1491,8 +1571,12 @@ function Run-Train {
   }
 
   $st2 = Read-State $e
-  $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $ok -and (Managed $_) -and $st2.services[$_.name].status -eq 'up' -and -not ($_.hot -and -not $_.artifact) })
-  $switchNames = @($switch | ForEach-Object name)
+  # up services switch over; a down one a lease needs starts on the new release here too (verified now, rolled back on failure,
+  # never left live unchecked for the loop's next start); a down one nobody needs starts on it at its next lease
+  $wanted = @(@($st2.leases.Values) + @($st2.holds.Values) | ForEach-Object { Closure $e @($_.services | Where-Object { $_ }) } | Select-Object -Unique)
+  $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $ok -and (Managed $_) -and -not ($_.hot -and -not $_.artifact) -and ($st2.services[$_.name].status -eq 'up' -or ($_.artifact -and $_.name -in $wanted)) })
+  $verifyDown = @($switch | Where-Object { $st2.services[$_.name].status -ne 'up' } | ForEach-Object name)
+  $switchNames = @($switch | Where-Object { $_.name -notin $verifyDown } | ForEach-Object name)   # leases wait only for what runs
   $block = @(@($switchNames) + @(Dependents $e $switchNames) | Select-Object -Unique)
   if ($switch.Count) { Phase 'waiting for leases (switch-over)' $block @($affected); Wait-Leases $e $block @() $own }
   $undo = { param($l) if ((MarksOn $e) -and $l.since) { " (envy.ps1 restore -Env $e -Release $($l.since) undoes it)" } else { '' } }
@@ -1543,6 +1627,7 @@ function Run-Train {
       }
     }
   }
+  if ($ok.Count -and ((MarksOn $e) -or $migRepos.Count)) { Phase 'db up for the release marks and checks' $block @($affected); try { Ensure-DbUp $e $newN } catch { $notes.Add("db service did not start for the release's DB steps: $("$_".Split("`n")[0])") } }
   if ($ok.Count -and (MarksOn $e)) {   # the DB before this release's code first runs: restore -Release / a rollback come back here
     $code = @{}; foreach ($k in $st2.release.repos.Keys) { $code[$k] = $st2.release.repos[$k] }; foreach ($k in $repoOut.Keys) { $code[$k] = $repoOut[$k] }
     $relMark = try { New-Mark $e "release-$newN" 'release' $code $newN } catch { $notes.Add("mark release-$newN failed (no restore point): $("$_".Split("`n")[0])"); $null }
@@ -1568,7 +1653,7 @@ function Run-Train {
   foreach ($s in $switch) {
     $rn = RepoOf $e $s
     if ($rn -notin $ok) { continue }
-    if ((Read-State $e).services[$s.name].status -ne 'up') { "[$e] $($s.name) stopped idle while the train waited: it starts on release $newN at its next lease"; continue }
+    if ($s.name -notin $verifyDown -and (Read-State $e).services[$s.name].status -ne 'up') { "[$e] $($s.name) stopped idle while the train waited: it starts on release $newN at its next lease"; continue }
     try { Start-Svc $e $s $newN $artifacts[$s.name] }
     catch {
       $sw = "$_".Split("`n")[0]
@@ -1603,6 +1688,7 @@ function Run-Restore($st, $req) {
   $m = try { Find-Mark $st $req.mark 0 } catch { & $refuse "$_"; return }
   $schemas = @($req.schemas | Where-Object { $_ }); if (-not $schemas.Count) { $schemas = @(EnvSchemas $e) }
   Phase "restore to $($m.name): plan"
+  try { Ensure-DbUp $e ([int]$st.release.n) } catch { & $refuse "the db service did not start: $("$_".Split("`n")[0])"; return }
   $plan = try { Get-RestorePlan $e $m $schemas $tag } catch { & $refuse "plan failed: $("$_".Split("`n")[0])"; return }
   if (@($plan.refused).Count) { & $refuse (@($plan.refused | Select-Object -First 3) -join '; '); return }
   $all = @(EnvServices $e | Where-Object { Managed $_ } | ForEach-Object name)
@@ -1653,7 +1739,8 @@ function Record-Train {
         $x.release.repos[$rn] = $repoOut[$rn]
       }
       $x.release.n = $newN; $x.release.at = (Now); $x.release.train = $Train
-      foreach ($sn in $artifacts.Keys) { if (-not $x.services[$sn]) { $x.services[$sn] = @{ status = 'down' } }; if ($x.services[$sn].status -ne 'up') { $x.services[$sn].artifact = $artifacts[$sn]; $x.services[$sn].release = $newN } }
+      foreach ($sn in $artifacts.Keys) { if (-not $x.services[$sn]) { $x.services[$sn] = @{ status = 'down' } }; if ($x.services[$sn].status -ne 'up') { $x.services[$sn].artifact = $artifacts[$sn]; $x.services[$sn].release = $newN
+        Clear-StartBackoff $x.services[$sn] "release $newN staged" } }
       $x.releases = @(@($x.releases) + @(@{ n = $newN; at = (Now); train = $Train; changed = $changed; notes = @($notes) }) | Select-Object -Last 20)
     }
     foreach ($id in @($migNote.Keys)) { if ($results[$id] -and $results[$id].outcome -eq 'live') { $results[$id].message = (@($results[$id].message, $migNote[$id]) | Where-Object { $_ }) -join '; ' } }
@@ -1705,7 +1792,7 @@ try { $owned = $mx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $own
 if (-not $owned) { exit }
 Say "loop started (pid $PID)"
 $cfgAt = Get-LoopStamp; $reload = $false   # kit.local.json and the scripts as read at start
-$quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue; $tempAt = [datetime]::MinValue; $poolAt = [datetime]::MinValue
+$quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue; $choreAt = @{ temp = [datetime]::MinValue; pool = [datetime]::MinValue; marks = [datetime]::MinValue }
 try {
   while ($true) {
     $tick++
@@ -1767,7 +1854,7 @@ try {
       # ---- stop first: every service idle past its grace, or idle under pressure, in this tick (dependents first, biggest first);
       #      a train still waiting for leases changes nothing yet: its services stop when idle too
       $pressure = Pressure
-      $idleBlock = Get-IdleBlock $st
+      $idleBlock = Get-IdleBlock $st $e
       for ($round = 0; $round -lt 20; $round++) {
         $idle = @(Get-IdleServices $e $st $need $idleBlock $pressure)
         if (-not $idle.Count) { break }
@@ -1806,21 +1893,13 @@ try {
         Say 'queued a refresh: a needed service has no build yet'
       }
 
-      # ---- db temp watchdog, once a minute (TODO-PARAM): the connection using the most temp above db.tempMaxGB is killed
-      if (((Get-Date) - $tempAt).TotalSeconds -ge 60 -and (Get-Command Invoke-DbTempWatch -ErrorAction SilentlyContinue) -and (Test-DbTemp $e) -and -not (DbSvcDown $e)) {
-        $tempAt = Get-Date   # a db down or a connection gone before the KILL: said, the tick goes on
-        try { foreach ($k in @(Invoke-DbTempWatch $e)) { Say $k; Event $e 'db-kill' @{ by = 'watchdog'; what = $k } } } catch { Say "db temp watchdog: $("$_".Split("`n")[0])" }
-      }
-      # ---- db buffer pool, once a minute (goody db-engine-presets, db.bufferPool): busy size while a lease or train is live, idle after the grace
-      if (((Get-Date) - $poolAt).TotalSeconds -ge 60 -and (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue)) { $poolAt = Get-Date; try { foreach ($k in @(Invoke-DbPool $e)) { Say $k; Event $e 'db-pool' @{ what = $k } } } catch { Say "db pool: $("$_".Split("`n")[0])" } }
-      # ---- marks whose binlog is gone expire, once a day
-      if ((MarksOn $e) -and (-not $st.binlog -or ((Get-Date) - [datetime]$st.binlog.checkedAt).TotalHours -ge 24)) { Update-Marks $e | ForEach-Object { Say "$_" } }
+      foreach ($k in @(Invoke-DbChores $e $st $choreAt)) { Say $k }
 
       # ---- exit when idle
       $st = Read-State $e
       $busy = $st.train -or @($st.requests | Where-Object { $_.status -notin 'done', 'deferred' }).Count -or $st.leases.Count -or $st.holds.Count -or
         @($starters.Values | Where-Object { Owned $_ }).Count -or @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -in 'up', 'starting' }).Count
-      if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { if (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue) { try { foreach ($k in @(Invoke-DbPool $e -Now)) { Say $k } } catch { } }; Say 'idle: loop exits'; break }
+      if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { if ((Get-Command Invoke-DbPool -ErrorAction SilentlyContinue) -and -not (DbSvcDown $e)) { try { foreach ($k in @(Invoke-DbPool $e -Now)) { Say $k } } catch { } }; Say 'idle: loop exits'; break }
     } catch {
       $fails++; $m = "$_".Split("`n")[0]
       if ($m -ne $lastErr) { Say "tick $tick failed ($fails in a row, retrying): $_ $($_.ScriptStackTrace)"; $lastErr = $m }
@@ -2068,7 +2147,7 @@ function Show-Status([string]$env1) {
     recent = @(@($st.requests | Where-Object status -eq 'done' | Select-Object -Last 5 | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch) -> $($_.result.outcome)$(if ($_.result.release) { " (release $($_.result.release))" })" }) + @(Get-LayerDrops $env1))
     keepFree = $("$((Get-KeepFree).gb) GB: $((Get-KeepFree).why)"); keepFreeGB = [double](Get-KeepFree).gb
     marks = $(if (@($st.marks | Where-Object { $_ }).Count -or $st.binlog) { $ms = @($st.marks | Where-Object { $_ }); $b = @($ms | Where-Object kind -eq 'baseline')[-1]
-      [pscustomobject]@{ count = $ms.Count; newest = @($ms)[-1].name; baseline = $b.name; baselineAgeDays = $(if ($b) { [math]::Round(((Get-Date) - [datetime]$b.at).TotalDays, 1) }); expired = @($st.expiredMarks | Where-Object { $_ }); binlogDays = $st.binlog.days } })
+      [pscustomobject]@{ count = $ms.Count; newest = @($ms)[-1].name; baseline = $b.name; baselineAgeDays = $(if ($b) { [math]::Round(((Get-Date) - [datetime]$b.at).TotalDays, 1) }); expired = @($st.expiredMarks | Where-Object { $_ }); binlogDays = $st.binlog.days; dbDown = (DbSvcDown $env1) } })
     seed = $(if ($st.seed) { [pscustomobject]@{ at = $st.seed.at; ok = [bool]$st.seed.ok; missing = @($st.seed.missing | Where-Object { $_ }); drift = @($st.seed.drift | Where-Object { $_ }) } })
     loop = $(if (Owned $st.loop "_daemon -Env $env1") { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
   }
@@ -2244,7 +2323,8 @@ switch ($Action) {
   'restart' {   # down would end the leases and stop dependents: this stops only -Services, the controller starts them again
     if (-not $Services) { throw 'restart needs -Services <svc,..>' }
     $order = @(EnvServices $e | Where-Object { $_.name -in $Services -and (Managed $_) }); [array]::Reverse($order)
-    foreach ($s in $order) { if (Healthy $e $s) { Stop-Svc $e $s 'restarted' }; "[$e] $($s.name) restarting" }
+    foreach ($s in $order) { if (Healthy $e $s) { Stop-Svc $e $s 'restarted' }; "[$e] $($s.name) restarting$(if ((Read-State $e).services[$s.name].artifact) { " from $((Read-State $e).services[$s.name].artifact)" })" }
+    Update-State $e { param($x) foreach ($s in $order) { Clear-StartBackoff $x.services[$s.name] 'restart asked' } }
     Event $e 'restart' @{ agent = $Agent; services = @($order.name) }
     $st = Read-State $e; Prune $st; $wanted = @(@($st.leases.Values) + @($st.holds.Values) | ForEach-Object { Closure $e @($_.services) })
     $idle = @($order.name | Where-Object { $_ -notin $wanted }); if ($idle.Count) { "[$e] no lease or hold needs $($idle -join ', '): down until the next use / up" }

@@ -143,7 +143,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
     if ($ev.marks) {
       $new = @($ev.marks.expired | Where-Object { $_ -notin @($last["$($ev.env)/expired"]) }); $seenEnv["$($ev.env)/expired"] = @($ev.marks.expired)
       if ($new.Count) { & $watch "MARKS EXPIRED: $($ev.env) $($new -join ', ') (the binlog keeps $($ev.marks.binlogDays) d)" "restore to them is gone; envy.ps1 doctor -Env $($ev.env)" }
-      if (-not $ev.marks.baseline) { & $watch "NO BASELINE MARK: $($ev.env)" "envy.ps1 seed -Env $($ev.env) (a green seed marks baseline-<date>)" }
+      if (-not $ev.marks.baseline) { if (-not $ev.marks.dbDown) { & $watch "NO BASELINE MARK: $($ev.env)" "envy.ps1 seed -Env $($ev.env) (a green seed marks baseline-<date>)" } }   # a lane's DB at rest: its start marks it
       elseif ($ev.marks.binlogDays -and [double]$ev.marks.baselineAgeDays -gt [double]$ev.marks.binlogDays - 3) { & $watch "BASELINE EXPIRES: $($ev.env) $($ev.marks.baseline) is $($ev.marks.baselineAgeDays) d old, the binlog keeps $($ev.marks.binlogDays) d" "envy.ps1 seed -Env $($ev.env)" }
       if ($ev.marks.binlogDays -and [double]$ev.marks.binlogDays -lt [double](Get-KitSetting 'localEnv.marks.keepDays' 30)) { & $watch "SHORT BINLOG: $($ev.env) keeps $($ev.marks.binlogDays) d < marks.keepDays" "envy.ps1 doctor -Env $($ev.env) (SET PERSIST binlog_expire_logs_seconds)" }
     }
