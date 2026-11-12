@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L244 shells · L373 page · L699 usage · L914 release · L953 lines · L978 cleanup ·
-  L1014 launch · L1092 pause · L1210 sessions
+Sections: L15 builds · L47 supervise · L251 shells · L380 page · L706 usage · L921 release · L960 lines · L985 cleanup ·
+  L1021 launch · L1099 pause · L1217 sessions
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -169,6 +169,13 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   foreach ($x in @(Read-KitLog leases $now | Where-Object { $_.event -eq 'reclaim' -and $_.kind -in 'env', 'tab' })) { & $flag 'INFO' "auto-fixed: reclaimed $($x.kind) $($x.name) of $($x.agent) ($($x.reason))" 'Nothing to do.' }   # the env and tab sweeps above log, not print
   $need = [double](@(@($queue | ForEach-Object { [double]$_.need }) + 0) | Measure-Object -Maximum).Maximum
   if ($need) { [pscustomobject]@{ ramNeed = $need } }   # bossy.ps1 names the biggest rows of every goody
+}
+
+# kit to-do (bossy K1): open "- [ ]" lines in <agents>/kitty/kit-*.md and no kitty on the board = nobody works them
+function Get-KitSuperviseFlagsKitTodo([switch]$AutoFix, $Board = $entries) {
+  $td = Join-Path (Get-KitPath agents) 'kitty'; if (-not (Test-Path $td) -or @($Board | Where-Object { $_.status -ne 'left' -and $_.beat -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt 6 -and ($_.type -eq 'kitty' -or "$($_.agent)" -match '^kitty') }).Count) { return }
+  $n = @(Get-ChildItem $td -Filter 'kit-*.md' -File | ForEach-Object { Get-Content $_.FullName } | Where-Object { $_ -match '^\s*[-*] \[ \]' }).Count
+  if ($n) { [pscustomobject]@{ level = 'ACT'; what = "kit to-do has $n open item(s), no kitty live"; action = "Spawn kitty (kind fix) on $td\kit-*.md (bossy K1)." } }
 }
 
 # a WATCH per prior-gate override this beat (Assert-KitPrior) whose hits hold other work; none logged: flagged

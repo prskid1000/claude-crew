@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks, run records (resumed run liveness, re-bind); the
-supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage); testy's goody guards.
+supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage); testy's goody guards; tracked ports current.
 Usage: pwsh -NoProfile -File <kit>/tests/layout.tests.ps1 (or tests/kit-tests.ps1 -Area layout).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -197,5 +197,8 @@ run(args, agent, _n, _n, null).then(() => {
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy goodies: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8
+# tracked ports current (GEMINI.md went stale after a commit): kitbag.py port --check, workspace copies aside; 2 = no ports goody
+$pck = python -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') port --check 2>&1 | Out-String; $pckc = $LASTEXITCODE; $pst = @([regex]::Matches($pck, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -notmatch '\(workspace copy\)$' })
+Expect "port: the tracked ports (.codex, .agents, GEMINI.md) match a fresh generation: run kitbag.py port before committing ($($pst -join ', '))" ($pckc -eq 2 -or -not $pst.Count)
 Remove-TestKit $k
 Complete-Tests

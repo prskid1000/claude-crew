@@ -91,10 +91,9 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 - K1. Spawn ONE `kitty` (`subagent_type: 'kitty'`, kind build / fix / docs / audit / setup / env / recover) with the change or the
   friction in the owner's words. It works in its own kit worktree (never the live clone: runs execute it), keeps the kit generic
   (org values in `kit.local.json`, org-only parts in the local overlay), prefers a script check over a rule, and has `revy`
-  (kind kit) review the diff.
-- K2. Its checks (kitty step 8): `kitbag.py lint` = 0 (flow issues too), `port` + `port --check`, parsed .ps1,
-  `py_compile`, `node --check`, `tests/kit-tests.ps1`, `cost --steps` after a workflow change, `lint --org-terms`.
-  Over the kit cap: trim, else `kitbag.py budget raise`.
+  (kind kit) review the diff. A queued kit item (`- [ ]` in `work/agents/kitty/kit-*.md`) = a kitty spawned now or live.
+- K2. Its checks: kitty step 8 (lint 0, ports, parses, `tests/kit-tests.ps1`, `lint --org-terms`). Over the kit cap: trim,
+  else `kitbag.py budget raise`.
 - K3. It commits (the pre-commit hook regenerates the README graph and the ports, and blocks on lint), rebases, pushes main
   fast-forward (pre-push blocks org terms and local files) and retires the lesson the change fixes (`learn -Fixed`). You pull the
   live clone once no run uses it and relay its ASK lines.

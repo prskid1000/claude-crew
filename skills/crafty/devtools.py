@@ -23,7 +23,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L40 config · L74 run · L162 tracker · L365 git host · L448 MR · L615 merge · L895 docs · L1050 publish · L1408 plugins ·
-  L1422 keepboth · L1441 selftest · L1855 CLI
+  L1422 keepboth · L1441 selftest · L1856 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1524,9 +1524,10 @@ def selftest():
         g['_host'] = tb(lb.replace('pending', 'none')); rnone = merge_word(auto_merge('.', '7')); rt0, ups = g['read_tracking'], []
         g['read_tracking'] = lambda *a: {'tasks': {'T7': {'mrs': ['o/web!5', 'web!6']}}}
         g['_host'] = lambda v, **a: (ups.append(a) or {}) if v == 'mr.update' else ({'state': 'opened', 'title': 't', 'description': 'x'} if a.get('repo') == 'o/web' else {})
+        cfg0 = g['CFG']; g['CFG'] = {}   # hermetic: a live repos[] entry 'web' would rewrite o/web!5
         with _c.redirect_stderr(io.StringIO()):
             rr = refresh_mr_docs('T7', 'github')
-        g['read_tracking'] = rt0; rfin = rr == ['o/web!5'] and 'Testing doc (AI): https://d/testing-ai' in ups[0]['body'] and rnone == 'MERGED'
+        g['read_tracking'], g['CFG'] = rt0, cfg0; rfin = rr == ['o/web!5'] and 'Testing doc (AI): https://d/testing-ai' in ups[0]['body'] and rnone == 'MERGED'
         g['_nodoc'] = 'testing-ai'; calls.clear(); g['_host'] = tb(lb); rn = auto_merge('.', '7'); nm = not merged()
         wl, miss = with_doc_lines(lb, 'T7'); g.pop('_nodoc')
         g['_pub_read'] = lambda key: {'rounds': [{'body': g['_aib']}]} if key == 'T7:testing-ai' else {}

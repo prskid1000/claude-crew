@@ -2,7 +2,7 @@
 <#
 sessions.tests.ps1: several coordinators on one machine (adapters/supervise_resources.ps1 "sessions"): run owners for pause /
 resume / recover (-Everyone), a stepped-aside supervise prints its own runs' flags, task claims at launch, the step-age HANDOFF;
-handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints; git-host adapters, crafty.ps1 host MR refs and check's python stale-env.
+handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints; git-host adapters, crafty.ps1 host MR refs and check's python stale-env; the kit to-do ACT.
 Usage: pwsh -NoProfile -File <kit>/tests/sessions.tests.ps1 (or tests/kit-tests.ps1 -Area sessions).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -131,5 +131,9 @@ $probeRes = Invoke-PsTest 'py-probe' @'
 . $args[0]; Get-PyStaleModules $args[1] 'python -X utf8' "x`nModuleNotFoundError: No module named 'zz_kit_absent.sub'`nModuleNotFoundError: No module named 'os.zz'" @()
 '@ @($D, (Kd))
 Expect "check python: the probe takes 'python -X utf8' and names a missing package, not a missing submodule of one found ($probeRes)" ("$probeRes" -eq 'zz_kit_absent')
+# kit to-do (bossy K1): open items queued while no kitty runs = an ACT
+$tdd = Join-Path (TkPath $k agents -Create) 'kitty'; New-Item -ItemType Directory -Force $tdd | Out-Null; "- [ ] a`n- [x] b`n  - [ ] c`n| 4 | x | open |" | Set-Content (Join-Path $tdd 'kit-todo.md')
+$ktd = & { . $O; $kb = @(@{ status = 'left'; type = 'kitty'; agent = 'kitty'; beat = "$(Get-Date)" }, @{ status = 'working'; type = 'kitty'; agent = 'kitty-2'; beat = "$((Get-Date).AddHours(-7))" }); "$(@(Get-KitSuperviseFlagsKitTodo -Board $kb | ForEach-Object { "$($_.level) $($_.what)" }))|$(@(Get-KitSuperviseFlagsKitTodo -Board @($kb + @{ status = 'working'; type = 'kitty'; agent = 'kitty'; beat = "$(Get-Date)" })).Count)" }
+Expect "kit to-do: open '- [ ]' items and no live kitty (left, or no beat for 6 h) = one ACT; a live kitty = none ($ktd)" ($ktd -eq 'ACT kit to-do has 2 open item(s), no kitty live|0')
 Remove-TestKit $k
 Complete-Tests

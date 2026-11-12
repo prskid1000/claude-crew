@@ -102,9 +102,9 @@ $null = Invoke-Track run -Detail
 $h = Invoke-Track add -Task t6 -Mrs 'g/web!8' -HoldPromotion 'deferred A2' | Out-String
 $r1 = Invoke-Track run -Detail | Out-String
 $c1 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count
-$null = Invoke-Track add -Task t6 -HoldPromotion ''
+$null = Invoke-Track add -Task t6 -HoldPromotion ''; $c2 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count   # the release itself promotes
 $null = Invoke-Track run -Detail
-"hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count -eq 1)"
+"hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and $c2 -eq 1 -and @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count -eq 1)"
 $KitConf.TrackerRepos = @('g/web'); $KitConf.TrackerTag = 'CU-'; $global:q = 0; $null = Invoke-Track add -Task t7 -Discover -Mrs 'g/web!7'
 $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 "throttle:$($q1 -ge 1 -and $global:q -eq $q1 -and (Read-KitTracking).tasks['t7'].checkedAt)"

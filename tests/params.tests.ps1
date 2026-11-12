@@ -74,6 +74,7 @@ $wait = { param($wn = 'bgx') $r = Get-Content (Join-Path (Get-KitPath background
 $dq = foreach ($r in 1, 2) { @(Invoke-KitSweepCall $sw dq $args[1] @() -Detached).Count; & $wait dq }
 "bg:$($dq -join '')$($sw.cost.dq -gt 0)$($i1 -join ','):$($sw.cost.quick -gt 0):$($b1.Count):$($b2 -join ','):$($sw.cost.bgx -lt 50)"
 $s2 = New-KitSweep $n0.AddSeconds(-6) @{ sweep = @{ v = 2; cost = @{ s = 10; q = 0.5 }; starved = @('s', 'q') } }; "starved:$(Test-KitSweep $s2 s $n0)$(Test-KitSweep $s2 q $n0)"
+$s6 = New-KitSweep $n0.AddSeconds(-60) @{ sweep = @{ v = 2; cost = @{ 'tracker checks' = 50; y = 1 } } }; "always:$(Test-KitSweep $s6 'tracker checks' $n0)$(Test-KitSweep $s6 y $n0)"
 $s3 = New-KitSweep $n0.AddSeconds(60) @{}; $null = Test-KitSweep $s3 a $n0; Start-KitSweepPhase $s3 hook $n0.AddSeconds(2); $null = Test-KitSweep $s3 b $n0.AddSeconds(7); $st3 = @{}
 $s4 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{ big = 30; x = 4 }; starved = @('big') } }; "hold:$(Test-KitSweep $s4 x $n0):$((New-KitSweep $n0 @{ sweep = @{ cost = @{ old = 99 } } }).cost.Count)"
 $s5 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{}; last = @{ 'deploy checks' = "$($n0.AddMinutes(-5))"; cleanup = "$($n0.AddMinutes(-40))" } } }; $st5 = @{}
@@ -88,7 +89,7 @@ $cr = @(Invoke-KitBackground crash $ce @()); "hung:$($hu[0] -match '^WATCH backg
 '@ @((Lib), $bs)
 Expect "sweep: a section runs when its cost fits the time left after starved ones; starved first; costs EWMA; skipped = next starved ($(@($sr -match '^sweep') -join ' '))" ($sr -contains 'sweep:FalseTrueTrueFalse' -and $sr -contains 'sweep2:a,d:1.3:6.8')
 Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background, or cheap with -Detached: the last result, a fresh detached run, args intact, smart quotes too ($(@($sr -match '^bg:') -join ' '))" ($sr -contains "bg:01Truebg-out:True:0:bg-out-X a'?b:True")
-Expect "sweep: a starved section runs up to 10 s past the deadline if min(cost, 5) s fit; a hung background run is stopped; a crashed one (console stderr) is a WATCH line ($(@($sr -match '^(starved|hung):') -join ' '))" ($sr -contains 'starved:FalseTrue' -and $sr -contains 'hung:TrueTrue:True')
+Expect "sweep: tracker checks (promotion) run past the deadline; a starved section runs up to 10 s past it if min(cost, 5) s fit; a hung background run is stopped; a crashed one (console stderr) is a WATCH line ($(@($sr -match '^(starved|hung|always):') -join ' '))" ($sr -contains 'starved:FalseTrue' -and $sr -contains 'always:TrueFalse' -and $sr -contains 'hung:TrueTrue:True')
 Expect "sweep: an ungated phase is no section's cost, named in slowest; starved hold at most half; pre-v2 costs relearn ($(@($sr -match '^(phase|hold):') -join ' '))" ($sr -contains 'phase:2:1:False:slowest: ~hook 5.0 s, a 2.0 s, b 1.0 s' -and $sr -contains 'hold:True:0')
 Expect "sweep: inside its sectionMinutes not due (no skip); due: runs (twice in a round too), stamped ($(@($sr -match '^due:') -join ' '))" ($sr -contains 'due:FalseTrueTrue:0:True')
 # net: after a timeout the next call waits x1.5 (that call only); hang retries within 10% of calls (>= 1 a minute)

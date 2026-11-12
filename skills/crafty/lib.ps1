@@ -1115,15 +1115,15 @@ function Format-KitStatusTable($Rows, $Now, $Versions, [int]$Cap = 0) {
   if ($Versions -and $Versions.Count) { "transcripts read: $(@($Versions.Values | Sort-Object) -join ', ')" }
 }
 
-# ---- supervise sweep: sections by learned cost, starved first; slow calls in the background
+# ---- supervise sweep: sections by learned cost, starved first, promotion always; slow calls in the background
 # runs when its cost fits the time left after starved sections; supervise.sectionMinutes caps its cadence
 function New-KitSweep([datetime]$Deadline, $State) {
   $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary] -or $sw.v -ne 2) { $sw.cost = @{} }   # v2: costs exclude ungated work
   $every = @{ 'cleanup' = 30; 'deploy checks' = 10; 'stale layers' = 15 }   # only one-shot sections: standing flags would vanish off-round
   $cf = Get-KitSetting 'supervise.sectionMinutes' $null; if ($cf) { foreach ($p in @($cf.PSObject.Properties | Where-Object MemberType -eq NoteProperty)) { $v = 0.0; if ([double]::TryParse("$($p.Value)", [ref]$v)) { $every[$p.Name] = $v } } }
-  [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); last = $(if ($sw.last -is [Collections.IDictionary]) { $sw.last } else { @{} }); every = $every; ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
+  [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); last = $(if ($sw.last -is [Collections.IDictionary]) { $sw.last } else { @{} }); every = $every; always = @('tracker checks'); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
 }
-# an ungated phase (~<name>): reported, never charged to the section before it
+# an ungated phase (~<name>): reported, never charged to the prior section
 function Start-KitSweepPhase($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds }
   $Sw.cur = "~$Name"; $Sw.t = $Now
@@ -1132,9 +1132,9 @@ function Test-KitSweep($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds; $Sw.cur = $null }
   if (-not $Sw.ran.ContainsKey($Name) -and $Sw.last[$Name] -and ($Now - [datetime]$Sw.last[$Name]).TotalMinutes -lt [double]$Sw.every[$Name]) { return $false }
   $left = ($Sw.deadline - $Now).TotalSeconds
-  $hold = [math]::Min(0.5 * $left, [double](@($Sw.starved | Where-Object { $_ -ne $Name -and -not $Sw.ran.ContainsKey($_) } | ForEach-Object { [double]$Sw.cost[$_] }) | Measure-Object -Sum).Sum)   # starved ones reserve at most half, so an -AutoFix-only one cannot starve the rest
-  # starved: up to 10 s past the deadline (14 sections were skipped 13 h in a row)
-  $go = if ($Name -in $Sw.starved) { $left + 10 -ge [math]::Min([double]$Sw.cost[$Name], 5) } else { $left -gt 0 -and $left -ge [double]$Sw.cost[$Name] + $hold }
+  $hold = [math]::Min(0.5 * $left, [double](@($Sw.starved | Where-Object { $_ -ne $Name -and -not $Sw.ran.ContainsKey($_) } | ForEach-Object { [double]$Sw.cost[$_] }) | Measure-Object -Sum).Sum)   # starved reserve at most half: none starves the rest
+  # starved: up to 10 s past the deadline
+  $go = if ($Name -in $Sw.always) { $true } elseif ($Name -in $Sw.starved) { $left + 10 -ge [math]::Min([double]$Sw.cost[$Name], 5) } else { $left -gt 0 -and $left -ge [double]$Sw.cost[$Name] + $hold }
   if ($go) { $Sw.cur = $Name; $Sw.t = $Now } elseif ($Name -notin $Sw.skipped) { $Sw.skipped.Add($Name) }
   $go
 }
@@ -1155,7 +1155,7 @@ function Invoke-KitSweepCall($Sw, [string]$Name, [string]$Script, [string[]]$A, 
   }
   @(Invoke-KitBackground $(if ($Job) { $Job } else { $Name }) $Script $A { param($s) $Sw.cost[$Name] = [math]::Round(0.7 * [double]$Sw.cost[$Name] + 0.3 * $s, 2) } ([double]$c))
 }
-# past max(10 x cost, 30 min) = hung, stopped; empty result with errors = a WATCH line
+# past max(10 x cost, 30 min) = hung, stopped; empty result with errors = WATCH
 function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scriptblock]$OnSeconds, [double]$Cost = 0) {
   $d = Get-KitPath background -Create; $sl = ConvertTo-KitSlug $Name
   if ($sl.Length -gt 100) { $sl = $sl.Substring(0, 80) + '-' + [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($sl))).Substring(0, 12) }   # stay within MAX_PATH
