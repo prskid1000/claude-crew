@@ -62,9 +62,12 @@ d.state_read = lambda p: pr('T2'); d.prior_gate('T1', 'web', 'x')
 d.state_read = lambda p: pr('T9')
 try: d.prior_gate('T1', 'web', 'x'); print('prior: False')
 except SystemExit: print('prior: True')
+d.CFG.update(repos=[{'name': 'web'}]); seen = []
+d._host = lambda v, **kw: (seen.append((v, kw.get('repo'), kw.get('n'))), {'title': 't'} if v == 'mr.get' else {'web_url': 'u'})[1]
+print('ref:', d._norm_ref('top/sub/web!5'), d._norm_ref('other/x!6'), d.followups([{'problem': 'p'}], 'top/web!7'), seen)
 '@)
 $fo = & $py -X utf8 $fy (Join-Path $k 'skills/crafty') 2>&1 | Out-String
-Expect "devtools: finish runs track run -Task for a tracked open task only; prior gate: a tracked task is no duplicate, an unknown one stops ($fo)" ($fo -match 'finish: True' -and $fo -match 'prior: True')
+Expect "devtools: finish runs track run -Task for a tracked open task only; prior gate: a tracked task is no duplicate, an unknown one stops; group/repo!n = a configured repo, followups takes a ref ($fo)" ($fo -match 'finish: True' -and $fo -match 'prior: True' -and $fo -match "\('web', '5'\) \('other/x', '6'\)" -and $fo -match "\('mr\.update', '[\w/]*web', '7'\)")
 # pokey api: api GET /x binds the method; a second positional otherwise is an error, not a missing -Path
 $Q = Join-Path $k 'skills/pokey/pokey.ps1'
 $pa = Px $Q api GET '/x' -Target nosuch 2>&1 | Out-String; $pb = Px $Q api '/x' '/y' -Target nosuch 2>&1 | Out-String
@@ -110,12 +113,12 @@ $nw = Px $O decide check -Gate deploy -Item hx | Out-String; $c1 = $LASTEXITCODE
 $null = Px $O decide record -Gate deploy -Item hx -Question q -Answer y -Source chat -By coordinator-2; $c2 = $LASTEXITCODE
 $rec = Px $O decide record -Gate deploy -Item hx -Mrs 'api!8' -Question q -Answer 'Go (Recommended)' -Source askuser -Contracts $gcf | Out-String
 $rid = if ($rec -match 'RECORDED (d-\S+)') { $Matches[1] }
-$wm = Px $O decide check -Gate deploy -Mrs 'api!8' | Out-String; $null = Px $O decide check -Gate merge -Item hx; $c3 = $LASTEXITCODE
+$wm = Px $O decide check -Gate deploy -Mrs 'grp/api!8' | Out-String; $null = Px $O decide check -Gate merge -Item hx; $c3 = $LASTEXITCODE
 $wu = Px $O decide check -Gate deploy -Id $rid -Use -Agent op1 | Out-String; $wv = Px $O decide check -Gate deploy -Item hx | Out-String; $c4 = $LASTEXITCODE
 $aid = (Px $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Close T1?' -Options 'A: close','B: keep' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
 $null = Px $O decide answer -Id $aid -Answer 'A, close it'; $wl = Px $O decide check -Gate close -Id $aid -Item A2 | Out-String; $null = Px $O decide check -Gate deploy -Id $aid; $c6 = $LASTEXITCODE
 $null = Px $O decide record -Gate deploy -Item hx -Question q -Answer y -Source chat -Agent opsy; $c7 = $LASTEXITCODE
-Expect 'decide record/check: none, an agent -By / -Agent refused; found by MR, gate-bound, used once; an answered ask by -Id + its item only' ("$c1$c2$c3$c4$c6$c7" -eq '121112' -and $nw -match 'NO-WORD' -and $rid -and (Get-Content $gcf -Raw) -match "$rid RECORDED" -and
+Expect 'decide record/check: none, an agent -By / -Agent refused; found by MR (group/repo!n too), gate-bound, used once; an answered ask by -Id + its item only' ("$c1$c2$c3$c4$c6$c7" -eq '121112' -and $nw -match 'NO-WORD' -and $rid -and (Get-Content $gcf -Raw) -match "$rid RECORDED" -and
   $wm -match "WORD $rid .*Go \(Recommended\). by owner via askuser" -and $wu -match "WORD $rid" -and $wv -match 'used by op1' -and $wl -match "WORD $aid .*close it")
 $sid = (Px $O decide record -Gate deploy -Item stg -Mrs 'api!9' -Question q -Answer y -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'
 $null = Px $O decide check -Gate deploy -Item prd -Mrs 'api!9'; $c5 = $LASTEXITCODE

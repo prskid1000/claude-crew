@@ -976,7 +976,7 @@ def lint(k, g=None, org_terms=None):
                 for n, v in (kp.get(sect) or {}).items():
                     if (pmap.get(sect) or {}).get(n) != v:
                         bad('RUNTIME-MAP', p, f'KP.{sect}["{n}"] = "{v}" but kit.example.json _paths says "{(pmap.get(sect) or {}).get(n)}"')
-            known = set(kp.get('runtime') or {}) | set(kp.get('durable') or {})   # rp('x') missing from KP resolves to <runtime>/undefined
+            known = set(kp.get('runtime') or {}) | set(kp.get('durable') or {})   # an rp(<name>) missing from KP resolves to <runtime>/undefined
             for n in sorted(set(re.findall(r"""\brp\(['"]([\w-]+)['"]\)""", k.texts.get(p, ''))) - known):
                 bad('RUNTIME-MAP', p, f"rp('{n}') is not in const KP (resolves to .../undefined): add it from kit.example.json _paths")
     # ---- config keys documented (kit copy of the reference)

@@ -22,8 +22,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L40 config · L74 run · L162 tracker · L365 git host · L448 MR · L612 merge · L889 docs · L1044 publish · L1400 plugins ·
-  L1414 keepboth · L1433 selftest · L1845 CLI
+Sections: L40 config · L74 run · L162 tracker · L365 git host · L448 MR · L615 merge · L895 docs · L1050 publish · L1406 plugins ·
+  L1420 keepboth · L1439 selftest · L1851 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -581,10 +581,13 @@ def of_mr(items, url, urls):
 def followups(findings, url):
     """Review findings that do not hold the merge -> the MR body's "## Follow-ups" (above the footer), one bullet each; a bullet
     already there (same file + problem) is kept once. -> the bullets added"""
-    m = re.match(r'^\w+://([^/]+)/(.+?)/(?:-/merge_requests|pulls?|pull-requests|pullrequest)/(\d+)', str(url))
-    if not m:
-        raise SystemExit(f'followups: {url!r} is no MR / PR URL')
-    host, proj, iid = host_kind(m.group(1)), m.group(2).replace('/_git/', '/'), m.group(3)
+    m, r = re.match(r'^\w+://([^/]+)/(.+?)/(?:-/merge_requests|pulls?|pull-requests|pullrequest)/(\d+)', str(url)), _norm_ref(url)
+    if m:
+        host, proj, iid = host_kind(m.group(1)), m.group(2).replace('/_git/', '/'), m.group(3)
+    elif r:   # <repo>!<iid> or <group>/<repo>!<iid>: the configured host
+        host = host_kind(GITLAB_HOST); proj, iid = _ref_path(host, r[0]), r[1]
+    else:
+        raise SystemExit(f'followups: {url!r} is no MR / PR URL, <repo>!<iid> or <group>/<repo>!<iid>')
     mr = _host('mr.get', type=host, repo=proj, n=iid)
     if not isinstance(mr, dict) or not mr.get('title'):
         raise SystemExit(f'followups: {url} not readable: {str(mr)[:200]}')
@@ -695,6 +698,9 @@ def _norm_ref(ref):
     if not m:
         return None
     repo = m.group('repo')
+    known = {n for r in CFG.get('repos') or [] if isinstance(r, dict) for n in [r.get('name')] + list(r.get('aliases') or []) if n}
+    if '/' in repo and repo.rsplit('/', 1)[-1] in known:   # <group>/<repo>!<iid> -> the configured repo
+        repo = repo.rsplit('/', 1)[-1]
     repo = str((CFG.get('repoAliases') or {}).get(repo) or repo)
     return repo, m.group('iid')
 
