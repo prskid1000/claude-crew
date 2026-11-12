@@ -8,9 +8,9 @@ Reads: task state (.state/tasks: track), the git host (Invoke-HostVerb mr.get / 
 the deploy log, the tracker (parent + its subtasks, one view per read). Writes (tracker adapter, only on a diff): the parent
 description between <!-- kit:delivery --> / <!-- kit:triage --> markers, each subtask's "Items" checklist (adapter verb
 checklist, else an <!-- kit:items --> description section), one comment per milestone (all merged, deployed to <env>, all closed).
-Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer.
+Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L18 triage · L62 render · L132 rollup · L217 items · L247 close
+Sections: L18 triage · L62 render · L132 rollup · L221 items · L251 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -155,9 +155,13 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $trk = (Read-KitTracking).tasks; $known = @($ro.subtasks | Where-Object { $_ })
   $sig0 = Get-KitRollupLocalSig $ro $known $trk; $mins = [double](Get-KitSetting 'track.rollupMinutes' 30)
   $ans = $ro.closeAsk -and $ro.closeActed -ne $ro.closeAsk -and (Get-KitCloseAsk "$($ro.closeAsk)").status -eq 'answered'   # a new answer: act now
-  if (-not $Force -and ($ro.parentClosed -or (-not $ans -and $ro.localSig -eq $sig0 -and $ro.readAt -and ((Get-Date) - [datetime]$ro.readAt).TotalMinutes -lt $mins))) { return }   # parent closed: final
+  $fresh = $ro.readAt -and ((Get-Date) - [datetime]$ro.readAt).TotalMinutes -lt $mins
+  if (-not $Force -and (($ro.parentClosed -and $fresh) -or (-not $ro.parentClosed -and -not $ans -and $ro.localSig -eq $sig0 -and $fresh))) { return }   # a closed parent: its status read once per rollupMinutes
   $stamp = { Update-KitTaskIndex $Parent { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.readAt = (Get-Date).ToString('o'); $x.rollup.localSig = $sig0 } }   # a failed or empty read waits too
   Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { & $stamp; return "ROLLUP ${Parent}: tracker read failed, nothing written" }
+  if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) { & $stamp; return } }   # still closed: final
+  elseif ($ro.parentClosed) {   # -Force too: the old answer never re-closes it
+    Update-KitTaskIndex $Parent { param($x) $x.rollup.parentClosed = $false; $x.rollup.closeHold = 'reopened' }; $ro.parentClosed = $false; $ro.closeHold = 'reopened' }   # reopened: its delivery table updates again
   $subs = @($pt.subtasks | Where-Object { $_.id }); if (-not $subs.Count) { & $stamp; return }
   $tri = ConvertTo-KitTriage $ro.triage; $areaOf = @{}; foreach ($a in @($tri.agents)) { if ($a.task) { $areaOf[$a.task] = $a } }
   $mc = @{}; if ($ro.mrs -is [Collections.IDictionary]) { foreach ($k in $ro.mrs.Keys) { $mc[$k] = $ro.mrs[$k] } }
@@ -250,7 +254,8 @@ function Get-KitCloseAsk([string]$Id) { $f = if ($Id) { Join-Path (Get-KitPath d
 function Update-KitParentClose([string]$Parent, $Pt, $Rows, $Ro) {
   $ask = "$($Ro.closeAsk)"; $d = Get-KitCloseAsk $ask
   if (Test-TrackerStatus "$($Pt.status)" 'closed') { return @{ ask = $ask; note = 'parent closed' } }
-  if (-not $Rows.Count -or @($Rows | Where-Object { -not $_.closed }).Count) { return @{ ask = $(if ($d.status -eq 'pending') { $ask }); note = '' } }
+  if (-not $Rows.Count -or @($Rows | Where-Object { -not $_.closed }).Count) { if ($Ro.closeHold) { Update-KitTaskIndex $Parent { param($y) $y.rollup.closeHold = '' } }; return @{ ask = $(if ($d.status -eq 'pending') { $ask }); note = '' } }
+  if ($Ro.closeHold) { return @{ ask = ''; note = 'parent reopened: no close ask until a subtask reopens' } }   # a person reopened it: never closed again by the old answer
   if (-not $d) {
     $o = Invoke-Decide ask -Run rollup -Agent coordinator -Item $Parent -Task $Parent -Gate close -Question "All $($Rows.Count) subtasks of $Parent are closed: close the parent?" -Options 'A: close the parent — every subtask is closed', 'B: keep it open — the answer says why' -Recommend A
     $nid = if ("$o" -match 'DECISION (\S+) pending') { $Matches[1] }; Update-KitTaskIndex $Parent { param($y) if ($y.rollup -isnot [Collections.IDictionary]) { $y.rollup = @{} }; $y.rollup.closeAsk = "$nid" }; return @{ ask = "$nid"; note = "parent: close asked ($nid)"; did = "close asked $nid" }

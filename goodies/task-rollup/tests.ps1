@@ -85,12 +85,14 @@ $cl = & {
   function ProjPath($r) { "g/$r" }; function Invoke-HostVerb([string]$Verb, [hashtable]$A) { @{ state = 'merged'; title = 'fix: A1' } }
   $i1 = Update-KitTaskItems $it (& $view $it); $id1 = (& $view $it).description; $i2 = Update-KitTaskItems $it
   Update-KitTaskIndex $it { param($x) $x.track.done = $true }; $i3 = @(Invoke-KitTrackRollupHook) -join ' '
-  [pscustomobject]@{ r0 = "$r0"; r1 = "$r1"; r2 = "$r2"; gate = $dec.gate; dtask = $dec.task; n1 = $n1; s1 = $s1; d3 = $d3; ask = $ask; ask2 = $ask2; r3b = "$r3b"; act3 = $act3; r5 = "$r5"; r6 = "$r6"; s6 = (& $view $p).status
-    d6 = (& $view $p).description; fin = (Read-KitState (Get-KitTaskFile $p)).rollup.parentClosed; n7 = @(Get-ChildItem $dd -Filter '*.json').Count; i1 = "$i1"; id1 = $id1; i2 = "$i2"; i3 = $i3; it = $it }
+  $s6 = (& $view $p).status; $d6 = (& $view $p).description; $fin = (Read-KitState (Get-KitTaskFile $p)).rollup.parentClosed
+  $null = Update-KitParentRollup $p; & $st $p 'in progress'; Update-KitTaskIndex $p { param($x) $x.rollup.readAt = (Get-Date).AddHours(-2).ToString('o') }; $null = Update-KitParentRollup $p -Force   # reopened: rolls up again (the verb forces)
+  [pscustomobject]@{ r0 = "$r0"; r1 = "$r1"; r2 = "$r2"; gate = $dec.gate; dtask = $dec.task; n1 = $n1; s1 = $s1; d3 = $d3; ask = $ask; ask2 = $ask2; r3b = "$r3b"; act3 = $act3; r5 = "$r5"; r6 = "$r6"; s6 = $s6
+    d6 = $d6; fin = $fin; reopen = "$((Read-KitState (Get-KitTaskFile $p)).rollup.parentClosed) $((& $view $p).status) $(@(Get-ChildItem $dd -Filter '*.json').Count)"; n7 = @(Get-ChildItem $dd -Filter '*.json').Count; i1 = "$i1"; id1 = $id1; i2 = "$i2"; i3 = $i3; it = $it }
 }
 Expect "close: none while a subtask is open; all closed -> ONE ask (gate close, task = parent), the parent untouched ($($cl.r1) | $($cl.n1))" ($cl.r0 -notmatch 'close asked' -and $cl.r1 -match "close asked $($cl.ask)" -and $cl.r2 -notmatch 'close asked' -and $cl.n1 -eq 1 -and $cl.gate -eq 'close' -and $cl.dtask -and $cl.s1 -ne 'closed')
 Expect "close: any answer but A (here 'a lot of ...') -> kept, acted on once (no re-read), shown in the delivery line; a reopened subtask spends it, all closed again asks once more; 'A' closes it, final ($($cl.r6))" ($cl.d3 -match 'parent kept open: a lot of docs pending' -and -not $cl.r3b -and $cl.act3 -eq $cl.ask -and $cl.ask2 -and $cl.ask2 -ne $cl.ask -and $cl.r5 -match 'close asked' -and
-  $cl.r6 -match 'parent closed' -and $cl.s6 -eq 'closed' -and $cl.d6 -match '\*\*Delivery status\*\*:[^\n]* · parent closed' -and $cl.fin -eq $true)
+  $cl.r6 -match 'parent closed' -and $cl.s6 -eq 'closed' -and $cl.d6 -match '\*\*Delivery status\*\*:[^\n]* · parent closed' -and $cl.fin -eq $true -and $cl.reopen -eq 'False in progress 2')   # reopened by a person: rolls up again, never re-closed or re-asked
 Expect "close: a task without subtasks is never asked about (its flow unchanged) ($($cl.n7) decisions)" ($cl.n7 -eq 2)
 Expect "items: the task's own Items list -> its checklist, an id a merged MR names ticked; unchanged = no write; all ticked once its MRs are all merged ($($cl.i1) | $($cl.i3))" ($cl.i1 -match '1/2 done' -and $cl.id1 -match '(?s)\*\*Items\*\*\n- \[x\] A1\n- \[ \] A2' -and -not $cl.i2 -and $cl.i3 -match "items $($cl.it): 2/2 done")
 Remove-TestKit $k
