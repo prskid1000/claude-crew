@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L122 seat · L189 api · L338 finalize · L764 retest
+Sections: L23 report · L122 seat · L189 api · L354 finalize · L780 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -187,6 +187,21 @@ switch ($Action) {
 }
 }
 # ---- api: a target's API as a test user
+# '<target><k>' = lane k of a local env (goody local-env, envy.ps1 envs -Json): the base target, its lane-1 URL ports moved to lane k's
+function Get-LaneTarget($cfg, [string]$name) {
+  $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
+  if ($name -notmatch '^(?<b>.+?)(?<k>\d+)$' -or -not $cfg.targets.($Matches.b) -or -not (Test-Path -LiteralPath $envy)) { return $null }
+  $base = $cfg.targets.($Matches.b); $k = [int]$Matches.k; $urls = [string](@($base.web, $base.api) -join ' ')
+  $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $envy, 'envs', '-Json') 60; $lanes = try { @($r.out | ConvertFrom-Json) } catch { @() }
+  foreach ($g in @($lanes | Where-Object { $_.lane -eq 1 })) {
+    $one = @($g.ports.PSObject.Properties | Where-Object { $urls -match ":$($_.Value)(?!\d)" }); $lk = @($lanes | Where-Object { $_.group -eq $g.group -and $_.lane -eq $k })[0]
+    if (-not $one.Count -or -not $lk) { continue }
+    $t = $base | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    foreach ($f in 'web', 'api') { if ($t.$f) { foreach ($p in $one) { $t.$f = [regex]::Replace([string]$t.$f, ":$($p.Value)(?!\d)", ":$($lk.ports.($p.Name))") } } }
+    return $t
+  }
+  $null
+}
 function Invoke-Api {
 param(
   [string]$Method = 'GET',
@@ -232,7 +247,8 @@ if (-not $Target) { $Target = $cfg.default }
 $pin = @("$env:KIT_QA_TARGETS" -split '[,\s]+' | Where-Object { $_ })
 if ($pin.Count -and $Target -notin $pin) { throw "target '$Target' is not this QA run's target ($($pin -join ', ')): a run tests only its own env (run.json target / alsoTargets)" }
 $t = $cfg.targets.$Target
-if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')" }
+if (-not $t) { $t = Get-LaneTarget $cfg $Target }
+if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')$(if ($Target -match '\d$') { ' (a local env lane <target><k>: its base target must point at lane 1 ports; envy.ps1 envs)' })" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $u = @($t.users.$As)
 if (-not $t.users.$As -and $t.auth.type -ne 'none') { throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')" }   # not @(...).Count: @($null).Count is 1
