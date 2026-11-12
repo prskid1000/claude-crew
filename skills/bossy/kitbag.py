@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1016 README graph · L1118 lint command · L1265 audit ·
-  L1374 registry · L1715 prose · L1860 sections · L1990 budget · L2014 goodies · L2521 state lint · L2593 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1268 audit ·
+  L1377 registry · L1718 prose · L1863 sections · L1993 budget · L2017 goodies · L2524 state lint · L2596 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -976,6 +976,9 @@ def lint(k, g=None, org_terms=None):
                 for n, v in (kp.get(sect) or {}).items():
                     if (pmap.get(sect) or {}).get(n) != v:
                         bad('RUNTIME-MAP', p, f'KP.{sect}["{n}"] = "{v}" but kit.example.json _paths says "{(pmap.get(sect) or {}).get(n)}"')
+            known = set(kp.get('runtime') or {}) | set(kp.get('durable') or {})   # rp('x') missing from KP resolves to <runtime>/undefined
+            for n in sorted(set(re.findall(r"""\brp\(['"]([\w-]+)['"]\)""", k.texts.get(p, ''))) - known):
+                bad('RUNTIME-MAP', p, f"rp('{n}') is not in const KP (resolves to .../undefined): add it from kit.example.json _paths")
     # ---- config keys documented (kit copy of the reference)
     conf = section(k.texts.get('README.md', ''), 'Configuration') or ''
     if conf:

@@ -42,8 +42,8 @@ const DEV = `${K}/crafty.ps1`
 const DT = `${K}/devtools.py`
 const ORCH = `${KIT}/skills/bossy/bossy.ps1`
 const RT = (A.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
-// kit paths by name = kit.example.json _paths (lint RUNTIME-MAP)
-const KP = {"runtime": {"launches": "work/launches/"}, "durable": {}}
+// = kit.example.json _paths (lint RUNTIME-MAP)
+const KP = {"runtime": {"launches": "work/launches/", "agents": "work/agents/"}, "durable": {}}
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'

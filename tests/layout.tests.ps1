@@ -54,7 +54,7 @@ $liveSamples = @([pscustomobject]@{ at = '2026-01-02T09:30:00'; run = 5; mem = 7
 Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; stats = [pscustomobject]@{ now = (Get-KitSuperviseNow $sweepLines 20); live = $liveSamples } })
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
 $tileWant = @("st warn'><div class=k>Live agents</div><div class=v>3<small> running</small><span class='tr eq'>▼ 2", '9 of 12 done &#183; wf_a &#183; 1 stale: fix:W2T 27 min', "st warn'><div class=k>Disk D</div><div class=v>479.1<small> GB free</small><span class='tr bad'>▼ 1.4",
-  '+1.7 GB/h &#183; full in 30.2 h', "st '><div class=k>Disk E", 'QA seats</div><div class=v>1<small> / 12', 'Build gate</div><div class=v>1<small> running · </small>2', '7 days avg 65.5% &#183; peak 70%',
+  'filling 1.7 GB/h (11 min) &#183; full in 30.2 h', 'steady (11 min)', "st '><div class=k>Disk E", 'QA seats</div><div class=v>1<small> / 12', 'Build gate</div><div class=v>1<small> running · </small>2', '7 days avg 65.5% &#183; peak 70%',
   "st lo'><div class=k>Sweep time</div><div class=v>34<small> s</small><span class='tr good'>▼ 6</span></div><div class=s title='wave reports 14.2 s'")
 $tileMissing = @($tileWant | Where-Object { -not $tilePage.Contains($_) })
 $staleBoard = Join-Path (TkPath $k board -Create) 'stale-s.json'; @{ session = 'stale-s'; agent = 'Y7'; run = 'r7'; status = 'working'; beat = (Get-Date).AddMinutes(-40).ToString('o'); joined = (Get-Date).AddMinutes(-50).ToString('o') } | ConvertTo-Json | Set-Content $staleBoard -Encoding utf8
@@ -120,7 +120,7 @@ Expect 'launch -RunId: a self record without wfDir re-bound by its launch -Self 
 Remove-Item (Join-Path $ld 'self-buildy-w-3.json'), (Join-Path $ld 'wf_r3.json') -Force
 # usage: per message id (a repeated content block counts once), appended lines only, a partial last line waits; steps, rounds, outcomes, background agents, cost, page
 $ux = Join-Path (Kd) 'ux'; $uw = New-Item -ItemType Directory -Force "$ux/s1/subagents/workflows/wf_u1"; $ub = "$ux/s1/subagents"
-$um = { param($id, [int[]]$v, [string]$t, [string]$extra = '') "{`"type`":`"assistant`",`"timestamp`":`"$t`",`"message`":{`"model`":`"claude-sonnet-x`",`"id`":`"$id`",`"role`":`"assistant`",`"content`":[$extra],`"usage`":{`"input_tokens`":$($v[0]),`"cache_creation_input_tokens`":$($v[3]),`"cache_read_input_tokens`":$($v[2]),`"output_tokens`":$($v[1])}}}" }
+$um = { param($id, [int[]]$v, [string]$t, [string]$extra = '') "{`"type`":`"assistant`",`"timestamp`":`"$t`",`"message`":{`"model`":`"claude-sonnet-5-5`",`"id`":`"$id`",`"role`":`"assistant`",`"content`":[$extra],`"usage`":{`"input_tokens`":$($v[0]),`"cache_creation_input_tokens`":$($v[3]),`"cache_read_input_tokens`":$($v[2]),`"output_tokens`":$($v[1])}}}" }
 $t0 = (Get-Date).Date.AddMinutes(1).ToUniversalTime(); $iso = { param($m) $t0.AddMinutes($m).ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
 [IO.File]::WriteAllText("$uw/agent-a1.jsonl", ((& $um 'msg_1' 10, 5, 1000, 100 (& $iso 0) '{"type":"tool_use"}'), (& $um 'msg_1' 10, 50, 1000, 100 (& $iso 1)), (& $um 'msg_2' 1, 20, 2000, 0 (& $iso 10)) -join "`n") + "`n")
 [IO.File]::WriteAllText("$uw/agent-a2.jsonl", (& $um 'msg_9' 1, 1, 0, 0 (& $iso 12)) + "`n"); [IO.File]::WriteAllText("$ub/agent-b1.jsonl", (& $um 'msg_7' 0, 7, 0, 0 (& $iso 5)) + "`n")
@@ -133,14 +133,54 @@ Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Ra
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } })
-$cardGrid = @("class=ug><div class='st uc ua'>", "class=ucs><div class='st uc ua'><h4>Per model</h4>", "class='ug u2'>", 'class=uk>', 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
+$cardGrid = @("class=ug><div class='st uc ua'>", "class=ucs><div class='st uc ua'><h4>Per model", "class='ug u2'>", 'class=uk>', 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
 # the right-align nth-child ranges assume these column counts: agg 7, top-5 5, session 5, run steps 9
 $thCount = { param($open) ([regex]::Match($h, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th>' -AllMatches).Matches.Count }
 $colCounts = "$(& $thCount "class='st uc ua'>") $(& $thCount "class='st uc ut'>") $(& $thCount "class='st uc us'>") $(& $thCount "class='ru f'>")"
 "$($h -match 'Tokens today') $($h -match "class='ru f'") $($h -match 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 5 5 9')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")
-Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; run, step, outcomes, background, cost, page in auto-fit card grids ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.002358|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True True')
+Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; run, step, outcomes, background, cost, page in auto-fit card grids ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.001272|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True True')
+# usage numbers: 5.5 prices (alias, dated and [1m] ids, 1-hour writes), unknown model listed; ok=false / failed event = fail, empty = no field but ok,
+# stopped its own rate; one calendar window (a 9-day-old message drops); runs a day by workflow id; coordinator sessions; host-merged MRs
+$uy = Join-Path (Kd) 'uy'; $y1 = New-Item -ItemType Directory -Force "$uy/s1/subagents/workflows/wf_y1"; $y2 = New-Item -ItemType Directory -Force "$uy/s1/subagents/workflows/wf_y2"
+$ym = { param($id, [string]$model, [int[]]$v, [int]$h1, [datetime]$at) "{`"type`":`"assistant`",`"timestamp`":`"$($at.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))`",`"message`":{`"model`":`"$model`",`"id`":`"$id`",`"usage`":{`"input_tokens`":$($v[0]),`"cache_creation_input_tokens`":$($v[3]),`"cache_read_input_tokens`":$($v[2]),`"output_tokens`":$($v[1]),`"cache_creation`":{`"ephemeral_1h_input_tokens`":$h1,`"ephemeral_5m_input_tokens`":$($v[3] - $h1)}}}}" }
+$yt = (Get-Date).Date.AddHours(1)
+[IO.File]::WriteAllText("$y1/agent-b1.jsonl", ((& $ym 'msg_o' 'claude-sonnet-5-5[1m]' 5000, 0, 0, 0 0 $yt.AddDays(-9)), (& $ym 'msg_n' 'claude-sonnet-5-5[1m]' 100, 10, 1000, 200 0 $yt) -join "`n") + "`n")
+[IO.File]::WriteAllText("$y1/agent-b2.jsonl", (& $ym 'msg_a' 'sonnet' 10, 0, 0, 0 0 $yt) + "`n"); [IO.File]::WriteAllText("$y1/agent-b3.jsonl", (& $ym 'msg_b' 'claude-haiku-5-5-20261101' 1000, 100, 0, 0 0 $yt) + "`n")
+[IO.File]::WriteAllText("$y1/agent-b4.jsonl", (& $ym 'msg_c' 'gpt-x' 7, 0, 0, 0 0 $yt) + "`n"); [IO.File]::WriteAllText("$y2/agent-c1.jsonl", (& $ym 'msg_d' 'sonnet' 1, 0, 0, 0 0 $yt) + "`n")
+[IO.File]::WriteAllText("$uy/main-1.jsonl", ((& $ym 'msg_m' 'claude-opus-5-5' 100, 10, 0, 1000 1000 $yt), (& $ym 'msg_s' 'claude-sonnet-5-5' 0, 0, 0, 0 0 $yt) -join "`n") + "`n")   # a /model switch: parts per model
+(@{ type = 'started'; agentId = 'b1'; label = 'build:A' }, @{ type = 'result'; agentId = 'b1'; result = @{ ok = $false; summary = 'red' } }, @{ type = 'started'; agentId = 'b2'; label = 'review:A' }, @{ type = 'result'; agentId = 'b2'; result = @{ ok = $true; summary = '' } },
+  @{ type = 'started'; agentId = 'b3'; label = 'check:A' }, @{ type = 'result'; agentId = 'b3'; result = @{ ok = $true; findings = @('f1') } }, @{ type = 'started'; agentId = 'b4'; label = 'fix:A' }, @{ type = 'failed'; agentId = 'b4' }, @{ type = 'finished' } | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 6 }) | Set-Content "$y1/journal.jsonl"
+(@{ type = 'started'; agentId = 'c1'; label = 'track:A' }, @{ type = 'finished' } | ForEach-Object { $_ | ConvertTo-Json -Compress }) | Set-Content "$y2/journal.jsonl"
+foreach ($wy in 'wf_y1', 'wf_y2') { @{ runId = $wy; run = 'same-run'; script = 'buildy.js'; at = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content (Join-Path $ld "$wy.json") }
+$yo = Invoke-PsTest usage2 @'
+$null = . $args[0] 6>$null; $env:KIT_TRANSCRIPTS = $args[1]; $KitConf.TrackerRepos = @('r1')
+function Get-KitHostUser { 'me' }; function Get-HostProject { param($n, [switch]$Raw) $n }
+function Invoke-HostVerb { param($v, $a) $mr = { param($i, $d, $who, $src) [pscustomobject]@{ iid = $i; merged_at = (Get-Date).AddDays($d).ToString('o'); author = @{ username = $who }; source_branch = $src; target_branch = 'main' } }
+  & $mr 1 0 'me' 'f/x'; & $mr 2 -10 'me' 'f/y'; & $mr 3 0 'other' 'f/z'; & $mr 4 0 'me' 'main' }   # in window, too old, not mine, a deploy MR
+$u = Get-KitUsage -Seconds 30; $s = @($u.runs.steps); $res = ($s | Sort-Object label | ForEach-Object { "$($_.label)=$($_.result)" }) -join ','
+$b1 = @($s | Where-Object label -eq 'build:A')[0]; $cst = { param($l) [math]::Round([double](@($s | Where-Object label -eq $l)[0].cost), 6) }
+"$res|$($b1.in)|$(& $cst 'build:A')|$(& $cst 'review:A')|$(& $cst 'check:A')|$(@($u.unpriced).model -join ',')|$($u.rates.n) $($u.rates.fail) $($u.rates.empty) $($u.rates.stopped)"
+"$(@($u.days)[-1].runs)|$(@($u.runs).Count)|$($u.coord[0].tok) $([math]::Round((Get-KitUsageCost @(100, 10, 0, 1000, 1000) 'claude-opus-5-5'), 4))|$(@($u.days)[-1].tok)|$($u.merged.source) $($u.merged.n) $(@($u.days)[-1].merged)"
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $u } })
+"$($h -match 'Coordinator sessions') $($h -match 'class=dch') $(([regex]::Matches($h, "class='st uc dn'")).Count) $($h -match 'not priced: gpt-x') $($h -match '1 MR\(s\) merged on the git host by me') $($h -match "'Elapsed'|>Elapsed<")"
+$pm = @(Get-KitUsageParts (Update-KitUsageFile "$($args[1])/main-1.jsonl" $null ([ref][long]1GB)) @((Get-Date).ToString('yyyy-MM-dd')) | ForEach-Object model | Sort-Object) -join ','
+function Invoke-HostVerb { throw 'host down' }; $hp = Get-KitUsageHostMrs (Get-Date).Date (Get-Date) @{ at = '2020-01-01T00:00:00'; since = 'x'; mrs = @(1) }
+$cf = Get-KitPath usage-cache; $cj = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable; foreach ($kv in @($cj.files.GetEnumerator())) { if ($kv.Key -like '*agent-b3*') { $kv.Value.v = 2 } }; $cj | ConvertTo-Json -Depth 7 | Set-Content $cf
+"$pm|$(@($hp.mrs).Count)|$(@((Get-KitUsage -Seconds 0).runs.steps | Where-Object label -eq 'check:A').Count)"
+function Get-KitStorageSamples { param($Drive, $Tail) foreach ($x in @(0, 100), @(3600, 110), @(7200, 60)) { [pscustomobject]@{ t = $x[0]; free = $x[1] } } }   # a 50 GB drop in the last hour
+$sr = Get-KitSuperviseSeries @('disk D: 60 GB free, +25 GB/h (normal 1), full in 2.4 h') $null; $h2 = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ disks = $sr.disks } })
+"$($sr.disks[0].h1) $($h2.Contains('filling 25 GB/h (11 min) &#183; last hour 50 GB used'))"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uy) | Out-String
+$yv = @($yo.Trim() -split "`r?`n")
+Expect "usage numbers: prices by id / alias / variant + 1 h writes, unpriced listed, outcomes, one window, runs by id, coordinator, host MRs, charts, disk filling + last hour ($($yv -join ' // '))" ($yv[-5] -eq 'build:A=fail,check:A=pass,fix:A=fail,review:A=empty,track:A=stopped|100|0.0009|2E-05|0.00015|gpt-x|5 2 1 1' -and $yv[-4] -eq '2|2|1110 0.0086|3538|host 1 1' -and $yv[-3] -eq 'True True 3 True True True' -and $yv[-2] -eq 'claude-opus-5-5,claude-sonnet-5-5|1|0' -and $yv[-1] -eq '-50 True')
+Remove-Item (Join-Path $ld 'wf_y1.json'), (Join-Path $ld 'wf_y2.json') -Force
+# status: one agent joined twice (with -Type, then with -Run) on one transcript = one row (active agents not inflated)
+$jvTx = Join-Path (Kd) 'JV.jsonl'; '{}' | Set-Content $jvTx; $jvB = TkPath $k board -Create; $jvNow = (Get-Date).ToString('o')
+foreach ($jvE in @{ session = 's-JVz'; agent = 'JV'; run = 'rr'; type = '' }, @{ session = 's-JV'; agent = 'JV'; run = ''; type = 'devy' }, @{ session = 's-KZ1'; agent = 'KZ'; run = 'r1'; status = 'left' }, @{ session = 's-KZ2'; agent = 'KZ'; run = 'r2' }) { $jvR = @{ type = 'devy'; status = 'working'; beat = $jvNow; joined = $jvNow; transcript = $jvTx }; foreach ($kv in $jvE.GetEnumerator()) { $jvR[$kv.Key] = $kv.Value }; & $J $jvR (Join-Path $jvB "$($jvE.session).json") }   # KZ: left, re-joined live
+$jv = Invoke-PsTest 'dupjoin' '$null = . $args[0] 6>$null; @(Get-KitStatusRows | Where-Object { $_.name -match "^(JV|KZ) " } | ForEach-Object { "$($_.name)/$($_.run)" }) -join ","' @($O)
+Expect "status: two board entries of one agent on one transcript = one row, the typed one, a live re-join over its left twin ($jv)" ((@("$jv".Trim() -split ',') | Sort-Object) -join ',' -eq 'JV (devy)/,KZ (devy)/r2')
 # testy: envy / phoney calls guarded (goodies): a missing one prints the goody line; the prompt names goody sync
 $js3b = @'
 const { calls, agent } = _mock((prompt, o) => {

@@ -51,7 +51,7 @@
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels QA never tests (OUT_OF_SCOPE, not counted). targets: /testy select groups (target: '<group>'): a task's env: the first rule matching lists / repos / nameRegex / pathRegex (localEnv: live = in its running release). seatGB: RAM per QA seat. matrix: UI cases run at viewports (WxH) x fontScales x themes (app-set). notLocal: [{ name, match: row regex }] deps no local env runs (PASS -> NOT_TESTED_LOCAL). qualityWords: stated-quality regex ('' = off).", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. email>"],
   "matrix": { "viewports": [] }, "notLocal": [],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
- "deploy": { "_readme": "trigger: owner (default: a person says deploy <env>) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target + default). planTimeoutSec bounds supervise's deploy plan per test env (late = UNKNOWN); productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 } },
+ "deploy": { "_readme": "trigger: owner (default: a person says deploy <env>) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target + default); planTimeoutSec bounds supervise's deploy plan per test env (late = UNKNOWN); productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 } },
  "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry; lost tracker writes wait in .state/outbox.jsonl (supervise replays)", "timeoutSec": 60 },
  "tests": { "_readme": "Per stack (crafty.ps1 stack names): testFor = test names -Touched derives from a changed file's base name ({name}; defaults: check). e2e (check -Step e2e; module globs): specs (default *.cy.*, e2e/*.spec, *.e2e.*), map[] {dir?, paths, specs}; else by folder, name, import, route.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
  "protectedBranches": ["staging"],
@@ -68,10 +68,11 @@
   "watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50, "actHours": 1, "factor": 10, "minRateGBh": 5, "scanDropGB": 1, "scanCooldownMin": 30, "scanHours": 24, "drillGB": 1, "flatDays": 7, "holdMinutes": 60,
   "db": { "use": "", "kill": "", "maxGB": 5 } },
  "idle": { "graceMinutes": 10 },
- "params": { "_readme": "Tunables (param show; keys: params.registry.json). A learned key starts at its default, learns both ways (.state/params.json, per machine) within default/4..x4: a failure (timeout, OOM, short: a holder back after its grace, a handoff, 2+ new ACTs in one sweep) steps safe from the next use (x1.5 or the need); a risky step <= 10%/day after 5 new observations, none 7 d after a failure; shadowDays: shown only, then applied; past 2x default: owner yes (param approve). A kit.local.json value = a pin (no learning); learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
- "budget": { "_readme": "Agent budget = its tool's compaction point; handoff at handoffAt x it or a step > stepHours (0: off); run cap = planned agents' budgets: estimate > runStopAt x cap: refused (split); at it no new item starts. estimate: per agent, item",
+ "params": { "_readme": "Tunables (param show; keys: params.registry.json) learn both ways per machine (.state/params.json) from the default within default/4..x4: a failure (timeout, OOM, short: holder back past grace, handoff, 2+ new ACTs a sweep) steps safe next use (x1.5 or the need); risky steps <= 10%/day after 5 new samples, none 7 d after a failure; shadowDays: shown, then used; past 2x default: param approve (owner). kit.local.json value = pin; learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
+ "budget": { "_readme": "Budget = an agent tool's compaction point: handoff at handoffAt x it or a step > stepHours (0: off); run cap = planned budgets: estimate > runStopAt x cap refused (split), at it no new item; estimate per agent, item",
   "handoffAt": 0.8, "runStopAt": 0.8, "stepHours": 2,
-  "prices": {"opus":[5,25,0.5,6.25],"sonnet":[3,15,0.3,3.75],"haiku":[1,5,0.1,1.25]},
+  "prices": {"_readme": "USD/1M [in, out, cache read, 5-min write, 1-h (2x in)]; list 2026-11-03",
+   "opus-5-5":[4,20,0.2,5],"sonnet-5-5":[2,10,0.1,2.5],"haiku-5-5":[0.1,0.5,0.01,0.125]},
   "estimate": { "devy": 70000, "revy": 50000, "checky": 60000, "kitty": 60000, "rechy": 60000, "datay": 50000, "step": 15000, "item": 30000 },
   "defaults": {
    "claude-1m": { "tokens": 967000, "source": "Claude Code docs: 1M models compact at ~967k" },
@@ -95,7 +96,7 @@
  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
  "localFiles": {
   "skills/pokey/targets.local.json": {
-   "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: goody api-auth; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
+   "_readme": "One entry per TEST environment (never production), local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: goody api-auth; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
    "default": "my-staging",
    "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000 },
    "targets": {
