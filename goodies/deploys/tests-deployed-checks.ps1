@@ -84,5 +84,17 @@ Expect 'deployed: every row carries the MR target branch (deploy plan: no feeds 
 $env:NA_TGT = 'mc,px'; $nt = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env:NA_TGT; $ntr = @(($nt -replace '(?s)^.*?(\[.*\]).*$', '$1') | ConvertFrom-Json)
 $dcs = Get-Content (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -Raw; $chU = @([regex]::Matches($dcs, 'merge_requests/\$\(?[\w.]+\)?/changes[^"]*') | ForEach-Object { $_.Value -replace '\$\(?[\w.]+\)?', 'I' } | Select-Object -Unique)
 Expect "deployed: -Target takes a list (deploy plan: one run per repo); the paths filter and the content check share one change-list call ($(@($ntr.target) -join ',') | $($chU -join ' '))" ((@($ntr.target) -join ',') -eq 'mc,px' -and $chU.Count -eq 1)
+# ssh.shaFile (a CI deploy's record of the commit it installed): live = the merge is its ancestor, even when the host checkout is unreadable
+& $J @{ repos = @(@{ name = 'py'; deploys = @(@{ target = 'sf'; branch = 'stage/py'; ssh = @{ host = 'h1'; shaFile = '/opt/a/deployed.sha' } }, @{ target = 'fx'; from = @('release'); ssh = @{ host = 'h2' } }) }) } $kl
+Set-Content "$(Kd)/sf.ps1" @'
+. $args[0]; function ssh { $x = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($args[-1] -split ' ')[1])); if ($x -match "cat '/opt/a/deployed\.sha'") { "DSHA=$env:SF_SHA" }; 'HEAD= '; 'ANC=no'; 'RC=2'; 'DIFF=cannot cd' }
+function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'f' * 40; merged_at = '2026-01-02'; target_branch = 'main' } } '*requests/5/changes*' { @{ changes = @() } } '*commits/stage%2Fpy' { @{ id = 'b' * 40 } } '*merge_base*' { @{ id = $(if ($p -match 'refs\[\]=d{7}') { 'f' * 40 } elseif ($p -notmatch 'c{40}') { 'x' }) } } } }
+Invoke-Deployed -Mrs 'py!5' -Json
+'@
+$all = foreach ($v in ('d' * 40), ('e' * 40), '', 'ddddddd main', ('c' * 40)) { $env:SF_SHA = $v; $o = Px "$(Kd)/sf.ps1" $Q 2>&1 | Out-String; , @(($o -replace '(?s)^.*?(\[.*\]).*$', '$1') | ConvertFrom-Json) }; Remove-Item Env:SF_SHA
+$sf = @($all | ForEach-Object { @($_ | Where-Object target -eq 'sf')[0] }); $fx = @($all[0] | Where-Object target -eq 'fx')[0]
+Expect "deployed ssh.shaFile: holds the merge (branch ahead: pending), lacks it, none, a short sha + text, host silent = UNKNOWN ($(@($sf.state) -join ','))" ((@($sf.state) -join ',') -eq 'DEPLOYED,NOT-DEPLOYED,UNKNOWN,DEPLOYED,UNKNOWN' -and $sf[4].detail -match 'git host did not answer' -and
+  $sf[0].detail -match 'deployed commit dddddddd \(/opt/a/deployed\.sha\) holds ffffffff; stage/py is at bbbbbbbb: a deploy pending or failed' -and $sf[2].detail -match 'no commit in /opt/a/deployed\.sha on h1')
+Expect "deployed: a target whose from lacks the MR's branch is N/A before any probe ($($fx.state): $($fx.detail))" ($fx.state -eq 'N/A' -and $fx.detail -match 'merged into main, not release')
 Remove-TestKit $k
 Complete-Tests

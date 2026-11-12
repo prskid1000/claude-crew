@@ -1,7 +1,7 @@
 #Requires -Version 7
 # deploys (goody): pokey.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Api, OnRef, LocalAncestor.
-# Sections: L5 shell · L14 probe · L76 kinds · L108 deployed
+# Sections: L5 shell · L14 probe · L77 kinds · L117 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -34,7 +34,7 @@ function Invoke-BoundedSsh([string[]]$A, [int]$Sec) {
 }
 function SshState($s, $sha) {
   $sub = ([string]$s.subdir).Trim('/')
-  $hk = "$($s.host)|$($s.repoDir)|$sub|$($s.appDir)"; $k = "$hk|$sha"
+  $hk = "$($s.host)|$($s.repoDir)|$sub|$($s.appDir)|$($s.shaFile)"; $k = "$hk|$sha"
   if ($memo.ContainsKey($k)) { return $memo[$k] }
   $h = $memo[$hk]   # one ssh per host: a later MR's ancestry comes from the local checkout when it has the host HEAD
   if ($memo.ContainsKey($hk) -and -not $h.head) { $memo[$k] = $h; return $h }   # a host that failed once stays UNKNOWN this run
@@ -46,6 +46,7 @@ function SshState($s, $sha) {
     "R=$(Sq ([string]$s.repoDir).TrimEnd('/')); SUB=$(Sq $sub); A=$(Sq ([string]$s.appDir).TrimEnd('/')); X=($xs); SU=$(if ($s.sudo -ne $false) { "'sudo -n'" })"
     'H=sha256sum; command -v sha256sum >/dev/null || H="shasum -a 256"'
     'echo "HEAD=$(git -C "$R" rev-parse --short HEAD 2>/dev/null) $(git -C "$R" log -1 --format=%cI HEAD 2>/dev/null)"'
+    $(if ($s.shaFile) { "echo `"DSHA=`$(`$SU cat $(Sq $s.shaFile) 2>/dev/null | head -c 64)`"" })
     "if git -C `"`$R`" merge-base --is-ancestor $sha HEAD 2>/dev/null; then echo ANC=yes; else echo ANC=no; fi"
     $(if ($s.service) { "echo `"SVC=`$(systemctl show -p ActiveEnterTimestamp --value $(Sq $s.service) 2>/dev/null)`"" })
     'skip() { local c pat cs; IFS=/ read -ra cs <<< "$1"; for c in "${cs[@]}"; do for pat in "${X[@]}"; do [[ $c == $pat ]] && return 0; done; done; return 1; }'
@@ -69,7 +70,7 @@ function SshState($s, $sha) {
     @{ head = (($lines -match '^HEAD=') -replace '^HEAD=', '' | Select-Object -First 1).Trim()
       anc = [bool]($lines -match '^ANC=yes'); rc = [int](($lines -match '^RC=') -replace '^RC=', '' | Select-Object -First 1)
       diff = @($lines -match '^DIFF=' -replace '^DIFF=', ''); svc = (($lines -match '^SVC=') -replace '^SVC=', '' | Select-Object -First 1)
-      files = [int](($lines -match '^FILES=') -replace '^FILES=', '' | Select-Object -First 1) }
+      files = [int](($lines -match '^FILES=') -replace '^FILES=', '' | Select-Object -First 1); dsha = "$(($lines -match '^DSHA=') -replace '^DSHA=', '' | Select-Object -First 1)".Trim() }
   }
   $memo[$k] = $res; if (-not $memo.ContainsKey($hk)) { $memo[$hk] = $res }; $res
 }
@@ -79,6 +80,14 @@ function Test-DeployedExtra($d) {
     $s = $d.ssh; $st = SshState $s $sha
     if (-not $st) { return Row $d 'UNKNOWN' "no answer from $($s.host) over ssh within $(Get-KitParam 'deploy.sshTimeoutSeconds') s (key $($s.key); the host needs bash, git, base64)" }
     $where = "host HEAD $($st.head)$(if ($st.svc) { ", service up since $($st.svc)" })"
+    if ($s.shaFile) {   # a CI deploy writes the commit it installed: live = the merge is its ancestor; the deploy branch head should equal it
+      $ds = "$(("$($st.dsha)".Trim() -split '\s+')[0])".ToLower(); if ($ds -notmatch '^[0-9a-f]{7,40}$') { return Row $d 'UNKNOWN' "no commit in $($s.shaFile) on $($s.host) ($where)" }
+      $d8 = $ds.Substring(0, [math]::Min(8, $ds.Length)); $bh = if ($d.branch) { "$(RefSha $p $d.branch)" }
+      $lag = if (-not $d.branch) { '' } elseif (-not $bh) { "; $($d.branch) head unknown (git host)" } elseif (-not $bh.StartsWith($ds, 'OrdinalIgnoreCase')) { "; $($d.branch) is at $($bh.Substring(0, [math]::Min(8, $bh.Length))): a deploy pending or failed" }
+      $on = if ($sha -eq $ds) { $true } else { LocalAncestor $r.checkout $sha $ds }
+      if ($null -eq $on) { $mb = (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$ds").id; if (-not $mb) { return Row $d 'UNKNOWN' "git host did not answer whether $d8 ($($s.shaFile)) holds $s8" }; $on = $mb -eq $sha }   # a failed call is not 'not deployed'
+      return Row $d $(if ($on) { 'DEPLOYED' } else { 'NOT-DEPLOYED' }) "deployed commit $d8 ($($s.shaFile)) $(if ($on) { 'holds' } else { 'lacks' }) $s8$lag"
+    }
     if ($st.rc -gt 1 -and -not $st.head) { return Row $d 'UNKNOWN' "host checkout unreadable: $(($st.diff | Select-Object -First 2) -join '; ')" }   # a wrong repoDir is not 'not deployed'
     if (-not $st.anc) { return Row $d 'NOT-DEPLOYED' "$s8 is not in the host checkout ($where)" }
     if ($st.rc -gt 1) { return Row $d 'UNKNOWN' "in the host checkout, but the compare failed: $(($st.diff | Select-Object -First 2) -join '; ')" }
@@ -188,6 +197,7 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -in @(Split-KitList $Target)) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
   if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
   foreach ($d in $deps) {
+    if ($d.from -and $mr.target_branch -and $mr.target_branch -notin @($d.from) -and $mr.target_branch -ne $d.branch) { Row $d 'N/A' "n/a for $($d.target): merged into $($mr.target_branch), not $(@($d.from) -join ' / ')"; continue }   # before any probe (ssh, pipelines)
     if (@(Get-DeployPaths $d).Count) {   # an MR outside the target's paths is n/a there: no ssh, no NOT-DEPLOYED
       $ch = Api "projects/$p/merge_requests/$iid/changes?access_raw_diffs=true"; $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
       if ($files.Count -and -not $ch.overflow -and @($ch.changes).Count -lt 100 -and -not (Test-DeployTouched $d $files)) { Row $d 'N/A' "n/a for $($d.target): changes nothing under $((Get-DeployPaths $d) -join ', ')"; continue }   # a partial list proves nothing
