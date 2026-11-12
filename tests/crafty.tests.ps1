@@ -251,5 +251,7 @@ if ($IsWindows) { 'SKIP posix (Linux / macOS only)' } else {
   $r = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; `$m = Get-SysMem; `$p = @(Get-SysProcs | Where-Object Id -eq `$PID); `$d = Join-Path '$(Kd)' 'l'; New-DirLink `$d '$(Kd)'; ""`$(`$m.TotalGB -gt 0 -and `$m.AvailGB -gt 0)|`$(`$p.Count)|`$(@(Get-DirLinks '$(Kd)' 1).Count)""" 2>&1 | Out-String
   Expect "posix: memory, own process, a directory link ($($r.Trim()))" ($r.Trim() -match '^True\|1\|1$')
 }
+$gf = Invoke-PsTest gitfetch '. $args[0]; $d = $args[1]; git init -q $d; git -C $d remote add origin "$d-o.git"; Invoke-GitFetch $d 10 3>$null; git init -q --bare "$d-o.git"; Invoke-GitFetch $d 10' @((Lib), (Join-Path (Kd) 'gf'))
+Expect 'Invoke-GitFetch: a failed fetch is not memoized' (($gf -join ',') -eq 'False,True')
 Remove-TestKit $k
 Complete-Tests

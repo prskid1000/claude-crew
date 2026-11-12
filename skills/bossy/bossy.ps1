@@ -3,8 +3,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool]   agent board, messages
   learn -Skill -Kind -Text | -Read | -Show (-Lesson | -Bump | -Fixed | -Trim | -Stats | -History: goody kit-admin)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Check -ArgsFile (buildy item tasks) | -Done -RunId|-Run | -List [-Brief]
-  recover [-RunId <id> | -Run <runs>] [-Hours 24] [-MaxSeconds 150]   stopped runs: state, resume brief, exact resume call
-  pause -Run <run> | -All [-Reason] [-Wait <min>] | -Status · resume -Run <run> | -All [-Wait <min>] [-Hours 24] [-MaxSeconds 150]   stop at checkpoints; paused / crashed runs back
+  recover [-RunId <id> | -Run <runs>] [-Hours 24] [-MaxSeconds 150] [-Everyone]   stopped runs: state, resume brief, exact resume call
+  pause -Run <run> | -All [-Reason] [-Wait <min>] [-Everyone] | -Status · resume -Run <run> | -All [-Wait <min>] [-Hours 24] [-MaxSeconds 150] [-Everyone]
+    stop at checkpoints; paused / crashed runs back; another live coordinator's runs only with -Everyone
   program set|get|list -Program <name> [-Key <k>] [-Value <v>]   the coordinator's program state in .state
   param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Usage] [-Json]   agent budget, run cap + spend; -Usage: page usage
@@ -22,10 +23,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L31 init · L49 board · L228 budget · L257 launch · L521 recover · L607 pause · L618 resume · L681 program · L726 param ·
-  L732 track · L1052 supervise · L1356 report · L1435 audit · L1495 storage · L1705 bugbrief · L1807 cleanup · L1891 learn ·
-  L1921 decide · L2054 health · L2116 retro due · L2126 tidy · L2195 the kit origin's main and goodies · L2211 setup ·
-  L2278 guard-sendmessage
+Sections: L32 init · L50 board · L230 budget · L259 launch · L492 recover · L578 pause · L589 resume · L652 program · L697 param ·
+  L703 track · L1023 supervise · L1327 report · L1406 audit · L1466 storage · L1676 bugbrief · L1778 cleanup · L1862 learn ·
+  L1892 decide · L2025 health · L2087 retro due · L2097 tidy · L2166 the kit origin's main and goodies · L2182 setup ·
+  L2249 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -158,7 +159,7 @@ switch ($Action) {
   }
   'beat' {
     $f = Join-Path $dir "$Session.json"; if (-not (Test-Path $f)) { throw "unknown session $Session - join first" }
-    $script:beatEntry = $null; $script:beatTaken = $null
+    $script:beatEntry = $null; $script:beatTaken = $null; $ho = $null
     Update-BoardEntry $f { param($x) if ($x.status -eq 'left' -and $x.takenOverBy) { $script:beatTaken = $x; return $null }; $x.beat = (Get-Date).ToString('o'); if ($Status) { $x.status = $Status }; $script:beatEntry = $x; $x }
     if ($script:beatTaken) { $me = $script:beatTaken; "TAKEN OVER: session $($me.takenOverBy) replaced $Session at $(([datetime]$me.takenOverAt).ToString('HH:mm')). Stop without writing and tell the coordinator."; exit 1 }
     $me = $script:beatEntry
@@ -169,8 +170,9 @@ switch ($Action) {
       $bg = if ($sp.model -and $sp.model -ne $me.model) { Get-KitBudget -Model $sp.model } else { [pscustomobject]@{ budget = $me.budget; handoff = $me.handoff; model = $me.model } }
       Update-BoardEntry $f { param($x) foreach ($p in @{ transcript = $tf; spend = $sp.spend; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff }.GetEnumerator()) { $x | Add-Member -Force NoteProperty $p.Key $p.Value }; $x }
       "budget: spend $($sp.spend) / $($bg.budget) (handoff at $($bg.handoff))"
-      if ($bg.handoff -and $sp.spend -ge $bg.handoff) { $hb = Join-Path (Get-KitPath briefs -Create) "$(ConvertTo-KitSlug "handoff-$($me.agent)-$Session").md"; "HANDOFF: spend $($sp.spend) >= $($bg.handoff): write a resume brief (templates.md ""Resume brief"") to $hb, commit WIP, board leave -Session $Session -Handoff $hb, return handoff = $hb and stop: a fresh agent continues" }
+      if ($bg.handoff -and $sp.spend -ge $bg.handoff) { $ho = Get-KitHandoffLine $me $Session "spend $($sp.spend) >= $($bg.handoff)" }
     }
+    if (-not $ho) { $ho = Get-KitStepAgeHandoff $me $Session }; $ho   # one step past budget.stepHours: a fresh agent from the checkpoint
     try { $null = Invoke-KitStorageTick } catch {}
     $u = Get-Unread $me.agent; if ($u) { "INBOX: $u message(s) wait: bossy.ps1 board inbox -Agent $($me.agent)" }
     $pz = Get-KitActivePause $me.run; if ($pz) { "PAUSE ($($pz.reason)): $(Get-KitPauseSteps $Session)" }
@@ -256,37 +258,6 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 
 # ---- launch: records for resume after a restart
 function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
-# run stopped before Learn: signals + report once (launch field learned)
-function Invoke-KitStopLearn($S, [string]$By) {
-  $recs = @(@($S.file, $S.selfFile) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
-  if (-not $recs.Count -or @($recs | Where-Object { (Get-Content -LiteralPath $_ -Raw | ConvertFrom-Json).learned }).Count) { return }
-  $id = if ($S.runId) { $S.runId } else { Resolve-KitRunId $S @(Get-KitWorkflowDirs) }
-  $wf = @(Get-KitWorkflowDirs | Where-Object { $id -and $_.Name -eq $id })[0]
-  $jl = @(if ($wf -and (Test-Path (Join-Path $wf.FullName 'journal.jsonl'))) { Get-Content (Join-Path $wf.FullName 'journal.jsonl') | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} } })
-  $lab = @{}; foreach ($e in $jl | Where-Object type -eq 'started') { $lab[$e.agentId] = [string]$e.label }
-  $res = @($jl | Where-Object type -eq 'result'); $n = 0
-  # no Learn phase (tidy): none skipped
-  $wfs = if ($S.leaf) { Join-Path $KitConf.Kit "workflows/$($S.leaf)" }
-  $noLearn = $wfs -and (Test-Path -LiteralPath $wfs) -and -not (Select-String -LiteralPath $wfs -Pattern "phase\('Learn'\)" -Quiet)
-  if (-not @($jl | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -and -not @($lab.Values | Where-Object { $_ -eq 'learn' }).Count) {
-    $skill = if ($S.leaf -like 'buildy*') { 'crafty' } elseif ($S.leaf -like 'testy*') { 'pokey' } else { 'bossy' }
-    $cut = { param($t) $t = "$t" -replace '\s+', ' '; $t.Substring(0, [math]::Min(200, $t.Length)) }
-    $since = if ($S.at) { [datetime]$S.at } else { (Get-Date).AddDays(-2) }
-    $sig = @(foreach ($r in $res) { $l = $lab[$r.agentId]
-        if ($r.result.error) { , @('failure', "$l`: $(& $cut $r.result.error)") }
-        if ($r.result.handoff) { , @('friction', "$l handed off at its budget: $(& $cut $r.result.handoff)") }
-        $b = @($r.result.findings | Where-Object severity -eq 'blocking'); if ($l -like 'review:*' -and $b.Count) { , @('defect-missed', "$l`: $($b.Count) blocking finding(s), first: $(& $cut $b[0].problem)") }
-        $nt = @($r.result.checks | Where-Object { $_.result -eq 'NOT_TESTED' }); if ($nt.Count) { , @('friction', "$l`: $($nt.Count) check(s) NOT_TESTED, first $($nt[0].id): $(& $cut $nt[0].observed)") }
-        $nr = @($r.result.checks | Where-Object { "$($_.verify)" -match '(?i)not reproduced|inconclusive' }); if ($nr.Count) { , @('false-positive', "$l`: $($nr.Count) check(s) not reproduced or inconclusive in verify, first $($nr[0].id): $(& $cut $nr[0].verify)") } }
-      $g = @(Read-KitLog guard $since | Where-Object { $_.event -eq 'deny' -and $_.run -eq $S.run }); if ($g.Count) { , @('rule-violation', "guard blocked $($g.Count) command(s), first: $(& $cut $g[0].why)") }
-      foreach ($d in @(Read-KitLog decisions-log $since | Where-Object { $_.kind -eq 'envfix' -and $_.status -eq 'pending' -and $_.run -eq $S.run })) { , @('stale-env', "ENV-FIX $($d.agent): $(& $cut $d.question)") }
-      if ($By -ne 'pause' -and -not $noLearn) { , @('friction', "run stopped by $By before its Learn phase: $($lab.Count) step(s), $($res.Count) result(s)") })
-    foreach ($x in $sig) { Write-KitLog signals '' ([ordered]@{ skill = $skill; kind = $x[0]; text = $x[1]; ref = $S.run; source = "stop:$By" }); $n++ }
-    if ($id) { $null = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.orch, 'report', '-Run', $id, '-Stopped') 30 }   # waves/<id>.json; bounded: pause must stay quick
-  }
-  Set-KitLaunchField $recs learned "$((Get-Date).ToString('o')) ($By)"
-  "learn: run $($S.run) stopped by $By - $(if ($n) { "$n signal(s) recorded" } else { 'nothing to record (finished, its own Learn phase ran or a clean pause)' })"
-}
 function Invoke-Launch {
 param(
   [string]$RunId, [string]$Script, [string]$ArgsJson, [string]$ArgsFile, [string]$RunDir, [string]$Session,
@@ -317,7 +288,7 @@ if ($Self) {
   Write-KitState $sf $rec
   "RECORDED $leaf $Run (fnv $got)"; if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }
   if (-not $prev -or $prev.completed -or $prev.paused) { Clear-KitPauseFor $Run }
-  if ($leaf -like 'buildy*' -and "$($a.mode)" -ne 'resume') { try { Test-KitLaunchTasks $a } catch { "TASKS UNKNOWN: $_" } }   # TASKS REFUSED: buildy.js refuses
+  if ($leaf -like 'buildy*' -and "$($a.mode)" -ne 'resume') { try { Test-KitLaunchTasks $a -RunName $Run } catch { "TASKS UNKNOWN: $_" } }   # TASKS REFUSED: buildy.js refuses
   exit 0
 }
 if ($Check) { Test-KitLaunchTasks -File $ArgsFile }   # the coordinator, before a /buildy launch
@@ -520,7 +491,7 @@ function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $nu
 }
 # ---- recover: stopped runs; area state from host, tracker, worktrees
 function Invoke-Recover {
-param([string]$RunId, [string[]]$Run = @(), [int]$Hours = 24, [int]$MaxSeconds = 150)
+param([string]$RunId, [string[]]$Run = @(), [int]$Hours = 24, [int]$MaxSeconds = 150, [switch]$Everyone)
 $Run = @(Split-KitList $Run)
 if (-not $script:KitDeadline) { $script:KitDeadline = (Get-Date).AddSeconds($MaxSeconds); Invoke-KitHooks Close-KitFinishedRuns }   # resume did both: one budget, one scan
 $runs = @(Get-StoppedRuns -Hours $Hours -All:([bool]($RunId -or $Run.Count)) | Where-Object { (-not $RunId -or $_.runId -eq $RunId) -and (-not $Run.Count -or $_.run -in $Run) })
@@ -532,7 +503,7 @@ $script:KitOnline = $null; $script:KitTasks = @{}; $ri = 0
 foreach ($s in $runs) {
   # host + tracker calls per area add up (a 14-item run: minutes): stop in time, say what is left
   if ((Get-Date) -ge $script:KitDeadline) { $rest = @($runs | Select-Object -Skip $ri); "partial: time budget ($MaxSeconds s) used; $($rest.Count) run(s) not checked: $(@($rest.run) -join ', '). Rerun: bossy.ps1 recover -Run '$(@($rest.run | Select-Object -Unique) -join ',')'"; break }
-  $ri++
+  $ri++; if (($ow = Get-KitOwnedLine $s $Everyone)) { $ow; continue }
   $lr = Get-Content -LiteralPath $(if ($s.selfFile) { $s.selfFile } else { $s.file }) -Raw | ConvertFrom-Json; $a = $lr.args
   $aj = Get-LaunchArgsJson $lr; if (-not $a.runDir -and $lr.runDir) { $a | Add-Member -Force NoteProperty runDir $lr.runDir }
   "== $($s.leaf) run $(if ($s.runId) { $s.runId } else { '<id unknown>' }) ($($s.run)), launched $($s.at.ToString('yyyy-MM-dd HH:mm'))"
@@ -613,7 +584,7 @@ function Set-KitLaunchField([string[]]$Files, [string]$Name, $Value) {
   foreach ($x in @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if ($null -eq $Value) { $j.PSObject.Properties.Remove($Name) } else { $j | Add-Member -Force NoteProperty $Name $Value }; Write-KitState $x $j } }
 }
 # back in seconds, -Status, the background finisher: adapters/supervise_resources.ps1 "pause"
-function Invoke-Pause { param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish) Start-KitPause @PSBoundParameters }
+function Invoke-Pause { param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish, [switch]$Everyone) Start-KitPause @PSBoundParameters }
 
 # ---- resume: paused and crashed runs; done steps verified (sha, MR), never redone
 function Test-KitOnline { if ($env:KIT_OFFLINE) { return $env:KIT_OFFLINE -eq '0' }; $c = [Net.Sockets.TcpClient]::new(); try { $c.ConnectAsync($KitConf.GitHost, 443).Wait(5000) -and $c.Connected } catch { $false } finally { $c.Dispose() } }
@@ -627,14 +598,14 @@ function Test-KitStepEvidence($st) {
   [pscustomobject]@{ text = $(if ($e -match '^https?://') { 'link recorded' } else { 'recorded' }) }
 }
 function Invoke-Resume {
-param([string]$Run = '', [switch]$All, [double]$Wait = 0, [int]$Hours = 24, [int]$MaxSeconds = 150)   # paused runs: any age; crashed: $Hours
+param([string]$Run = '', [switch]$All, [double]$Wait = 0, [int]$Hours = 24, [int]$MaxSeconds = 150, [switch]$Everyone)   # paused runs: any age; crashed: $Hours
 if (-not ($Run -or $All)) { 'usage: bossy.ps1 resume -Run <run> | -All [-Wait <min> for the network] [-Hours 24] [-MaxSeconds 150]'; exit 2 }
 $until = (Get-Date).AddMinutes($Wait)
 while (-not (Test-KitOnline)) {
   if ((Get-Date) -ge $until) { "OFFLINE: $($KitConf.GitHost):443 unreachable; resume needs the git host and the tracker. Connect, then run bossy.ps1 resume again (-Wait <min> waits for the network)"; exit 1 }
   Wait-KitPoll 30
 }
-$pauses = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($All -or $_.run -in '*', $Run) })
+$pauses = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($Everyone -or -not (Get-KitRunOwner $_)) -and ($All -or $_.run -in '*', $Run) })   # another live coordinator's pause: its own resume
 foreach ($p in $pauses) { foreach ($r in @($p.runs)) { foreach ($pair in @(, @($r.file, $r.launch)) + @(, @($r.selfFile, $r.self))) {   # cleanup may have removed them
   if ($pair[0] -and $pair[1] -and -not (Test-Path -LiteralPath $pair[0])) { New-Item -ItemType Directory -Force (Split-Path $pair[0]) | Out-Null; Write-KitAtomic $pair[0] ($pair[1] | ConvertTo-Json -Depth 30) } } }
   foreach ($a in @($p.agents | Where-Object { $_.checkpoint })) { $cf = Get-KitCheckpointFile $a.agent "$($a.checkpoint.run)" -Write; if (-not (Test-Path -LiteralPath $cf)) { New-Item -ItemType Directory -Force (Split-Path $cf) | Out-Null; Write-KitAtomic $cf ($a.checkpoint | ConvertTo-Json -Depth 6) } } }   # cleanup: agents/ after 7 d
@@ -644,7 +615,7 @@ $null = Set-KitBoardCrashed
 $go = @(); $todo = @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run -eq $Run }); $ri = 0
 foreach ($s in $todo) {
   if ((Get-Date) -ge $script:KitDeadline) { $rest = @($todo | Select-Object -Skip $ri); "partial: time budget ($MaxSeconds s) used; $($rest.Count) run(s) not resumed: $(@($rest.run) -join ', '). Rerun: bossy.ps1 resume -Run <run> (one each); the pause stays"; $pauses = @(); break }
-  $ri++
+  $ri++; if (($ow = Get-KitOwnedLine $s $Everyone)) { $ow; $pauses = @($pauses | Where-Object run -ne $s.run); continue }   # its pause stays
   "== $($s.leaf) run $($s.run) ($(if ($s.paused) { 'paused' } else { 'crashed' }))"
   $board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object run -eq $s.run)
   $waiting = @($board | Where-Object { $_.paused -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 3 })   # paused agents beat every 1.5 min
@@ -675,7 +646,7 @@ foreach ($s in $todo) {
 }
 # '*' pause resumed for one run: others stay paused
 foreach ($p in $pauses) { Invoke-KitLocked $p.file { $j = Get-Content -LiteralPath $p.file -Raw | ConvertFrom-Json; if ($All -or $j.run -ne '*') { $j.state = 'resumed'; $j | Add-Member -Force NoteProperty resumedAt (Get-Date).ToString('o') } else { $j | Add-Member -Force NoteProperty released @(@($j.released) + $Run | Where-Object { $_ } | Select-Object -Unique) }; Write-KitState $p.file $j } }
-if ($go.Count) { Invoke-Recover -Run $go -Hours $Hours -MaxSeconds $MaxSeconds } else { 'nothing to relaunch' }
+if ($go.Count) { Invoke-Recover -Run $go -Hours $Hours -MaxSeconds $MaxSeconds -Everyone:$Everyone } else { 'nothing to relaunch' }
 }
 
 # ---- program: coordinator state per program, read after a restart
@@ -1070,14 +1041,14 @@ $actSec = @{}; $lastWithin = @{ n = $null }; function Set-ActSection($lvl, $what
 function Flag($lvl, $what, $action, $cols) { Set-ActSection $lvl $what; [void]$flags.Add([pscustomobject](@{ level = $lvl; what = $what; action = $action } + $(if ($cols) { $cols } else { @{} }))) }
 function L($s) { [void]$lines.Add($s) }
 $lk = Join-Path (Get-KitPath cache -Create) 'supervise.lock'
-$me = Get-SuperviseOwner $Session
+$me = Get-SuperviseOwner $Session; Update-KitCoordinatorBeat   # the registry: this session's coordinator row stays live
 $script:aside = $null
 Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
   if (-not $Takeover -and $held -and $held.session -ne $me -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt [math]::Max(15, [math]::Min(45, 1.5 * (Get-KitBeatMinutes)))) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
   Write-KitAtomic $lk (@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } | ConvertTo-Json)
 }
-if ($script:aside) { $script:aside; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }
+if ($script:aside) { $script:aside; Get-KitAsideFlags $me; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }
 $budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 40) } else { 240 }
 $deadline = (Get-Date).AddSeconds($budgetSeconds)
 $env:KIT_NET_TIMEOUT_SEC = [string][math]::Min(20, (Get-KitNetTimeout)); $env:KIT_NET_TRIES = '2'
@@ -1328,7 +1299,7 @@ if ($late.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budge
 $s1 = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; $state.acks = @{}; $a0 = $s1.acks   # re-read: an -Ack during this sweep
 $state.known = @{}; foreach ($r in @(if ($s1.known) { $s1.known.Keys })) { if (($now - [datetime]$s1.known[$r]).TotalDays -lt $(if ("$r".StartsWith('noise:')) { 30 } else { 2 })) { $state.known[$r] = $s1.known[$r] } }   # -Ack refs: MRs 2 d, noise 30 d
 foreach ($k in @(if ($a0) { $a0.Keys })) { if (($now - [datetime]$a0[$k].at).TotalHours -lt 24) { $state.acks[$k] = $a0[$k] } }
-$state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @{ what = $_.what; kind = $_.kind; who = $_.who; problem = $_.problem; refs = @($_.refs | Where-Object { $_ }) } })   # what supervise -Ack matches against
+$state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @{ level = $_.level; what = $_.what; action = $_.action; kind = $_.kind; who = $_.who; problem = $_.problem; refs = @($_.refs | Where-Object { $_ }) } })   # supervise -Ack; a stepped-aside session's own flags
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }
 $base = [double](Get-KitParam 'supervise.heartbeatMinutes'); $acts = @($flags | Where-Object level -eq 'ACT' | ForEach-Object { Get-KitFlagKey $_.what })

@@ -68,9 +68,9 @@
   "watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50, "actHours": 1, "factor": 10, "minRateGBh": 5, "scanDropGB": 1, "scanCooldownMin": 30, "scanHours": 24, "drillGB": 1, "flatDays": 7, "holdMinutes": 60,
   "db": { "use": "", "kill": "", "maxGB": 5 } },
  "idle": { "graceMinutes": 10 },
- "params": { "_readme": "Tunables (bossy.ps1 param show; every key: skills/bossy/params.registry.json). A learned key starts at its default, learns both ways from observations (.state/params.json, per machine) within default/4..x4: a failure (timeout, OOM, short: a holder back after its grace, a handoff, 2+ new ACTs in one sweep) steps safe from the next use (x1.5 or the need); a risky step <= 10%/day after 5 new observations, none 7 d after a failure; shadowDays: shown only, then applied; past 2x default: owner yes (param approve). A kit.local.json value = a pin (no learning); learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
- "budget": { "_readme": "Agent budget = its tool's compaction point; handoff at handoffAt x it; run cap = its planned agents' budgets: estimate > runStopAt x cap: refused (split); at it no new item starts. estimate: per agent, item",
-  "handoffAt": 0.8, "runStopAt": 0.8,
+ "params": { "_readme": "Tunables (param show; keys: params.registry.json). A learned key starts at its default, learns both ways (.state/params.json, per machine) within default/4..x4: a failure (timeout, OOM, short: a holder back after its grace, a handoff, 2+ new ACTs in one sweep) steps safe from the next use (x1.5 or the need); a risky step <= 10%/day after 5 new observations, none 7 d after a failure; shadowDays: shown only, then applied; past 2x default: owner yes (param approve). A kit.local.json value = a pin (no learning); learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
+ "budget": { "_readme": "Agent budget = its tool's compaction point; handoff at handoffAt x it or a step > stepHours (0: off); run cap = planned agents' budgets: estimate > runStopAt x cap: refused (split); at it no new item starts. estimate: per agent, item",
+  "handoffAt": 0.8, "runStopAt": 0.8, "stepHours": 2,
   "prices": {"opus":[5,25,0.5,6.25],"sonnet":[3,15,0.3,3.75],"haiku":[1,5,0.1,1.25]},
   "estimate": { "devy": 70000, "revy": 50000, "checky": 60000, "kitty": 60000, "rechy": 60000, "datay": 50000, "step": 15000, "item": 30000 },
   "defaults": {

@@ -205,13 +205,13 @@ if (-not $global:KitFetched) { $global:KitFetched = @{} }
 function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = @()) {
   $common = "$(git -C $Dir rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim(); if (-not $common) { return $false }
   $key = "$common|$($Refs -join ',')"
-  Get-KitMemo $global:KitFetched $key 600 {
+  [bool](Get-KitMemo $global:KitFetched $key 600 {
     $a = @('-C', $Dir, 'fetch', '-q', '--prune', 'origin') + @($Refs | Where-Object { $_ })
     $r = Invoke-KitExe git $a $TimeoutSec
     if ($r.timedOut) { Write-Warning "git fetch in $Dir timed out after $TimeoutSec s (skipped)" }
     elseif ($r.code) { Write-Warning "git fetch in $Dir failed (exit $($r.code)): $("$($r.err)".Trim() -split "`n" | Select-Object -Last 1)" }
-    [bool](-not $r.timedOut -and $r.code -eq 0)
-  }
+    if (-not $r.timedOut -and $r.code -eq 0) { $true }   # a failure is not memoized: the next caller fetches again
+  })
 }
 # ---- OS: helpers (Windows, Linux, macOS)
 $KitIsWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT

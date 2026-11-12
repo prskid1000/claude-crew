@@ -17,7 +17,7 @@ row.
 | `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (goody `kit-admin`; `.githooks` install it) |
 | `STATE.md` | a script's state file changes; an agent needs a task's doc / comment / MR / env-run links (`.state/tasks/<id>.json`) |
 | `params.registry.json` | a timeout, wait or limit is added or changed (every tunable key: learned or fixed); `bossy.ps1 param show` |
-| `adapters/supervise_resources.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`, `launch -Check`: dot-sourced by bossy.ps1 (build gate, phones, QA seats, browsers, agents' background shells) |
+| `adapters/supervise_resources.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`, `launch -Check`: dot-sourced by bossy.ps1 (resources, sessions) |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge`, `<kit>/.githooks/post-rewrite` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
 | `kitbag.py`, `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 
@@ -28,9 +28,8 @@ checkpoints (`crafty.ps1 checkpoint`), your own program state (`bossy.ps1 progra
 synced; never only in the session: a heartbeat after a restart reads it). Both
 workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they differ only in their steps.
 What happened when, who called what: `bossy.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
-line per step, kit call, build, guard block, signal, decision, deploy; supervise and retros read it, never journals or
-logs). Tunables (lease grace, timeouts, gate memory, heartbeat, budgets) learn from live data: `bossy.ps1 param show`
-(value, default, last change, next risky step; supervise -AutoFix learns). Launch by path:
+line per step, call, build, block, signal, decision, deploy; never read journals or logs). Tunables (lease grace,
+timeouts, gate memory, heartbeat, budgets) learn live: `bossy.ps1 param show` (supervise -AutoFix learns). Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's words).
 
 **Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change;
@@ -52,7 +51,9 @@ defect -> one [Bug] per ask (E6); a local env item still NOT_TESTED -> ENV-FIX (
 unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 
 ## Steps (you = the coordinator)
-0. `bossy.ps1 learn -Read -Skill bossy`. Project facts: the brief, run.json, memory, the repo's CLAUDE.md.
+0. `bossy.ps1 learn -Read -Skill bossy`. Project facts: the brief, run.json, memory, the repo's CLAUDE.md. Several coordinators
+   (Claude Code, Codex, Antigravity sessions): each `board join -Type coordinator`; one supervises, the others' heartbeat prints
+   their own runs' flags; pause / resume / recover act on your runs (`-Everyone`: all); a task another run works on is refused.
 1. **Scope:** group work by area (disjoint screens / packages per agent), not item count; the local env each repo uses.
 2. **Brief:** spawn `briefy` (kind brief, bugs: bugfix; the owner's words verbatim): brief, `<brief>.contracts.md`, impact check,
    openQuestions, launch args; then one `revy` (kind plan) on it; openQuestions -> `/buildy` args `openQuestions` (phase Spike).
@@ -70,7 +71,7 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 ## Events (check this table whenever something happens)
 | # | Event | Action |
 |---|---|---|
-| E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat, one-shot: a timer in `supervise.heartbeatMinutes` (15, learned) min, prompt = stderr `HEARTBEAT_PROMPT=` word for word: "Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced; never summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1)." (stderr is never pasted; one-shot or cron update; a 2nd session's supervise steps aside); a skipped re-arm: CLAUDE.md "Heartbeat". Stop when nothing runs |
+| E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat, one-shot: a timer in `supervise.heartbeatMinutes` (15, learned) min, prompt = stderr `HEARTBEAT_PROMPT=` word for word: "Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced; never summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1)." (stderr is never pasted; one-shot or cron update); a skipped re-arm: CLAUDE.md "Heartbeat". Stop when nothing runs |
 | E2 | supervise prints ACT / WATCH | do the printed action (setup-data build failures -> `datay` kind fixture); leave healthy agents alone; answered or false: `supervise -Ack '<flag or cell text>' -Reason '<why>'` (24 h; MRs, error signatures: kept) |
 | E3 | Agents/workflow stopped (crash, limits, restart, power loss), budget handoff, or the owner pauses (power off, offline) | pause: `bossy.ps1 pause -All` (or `-Run <run>`, `-Reason`), then `pause -Status` until "safe to power off"; the machine stays on: stop runs and heartbeat. Back or after a crash: `bossy.ps1 resume -All` (network first; a brief per agent from its checkpoint; then `recover`'s exact `Workflow({ scriptPath, resumeFromRunId, args })`, refused -> its RELAUNCH line (`mode: 'resume'`, per-area `resume` skip list from host + tracker: done steps skipped, all done = no agent); unpublished QA -> `pokey.ps1 finalize` lines); then E1. You stopped it: `launch -Done -RunId <id>` |
 | E4 | DECISION <id> (supervise, decisions, duel debate) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | DECISION blocking: one question-tool call (Claude Code `AskUserQuestion`) from `decide list -Ask -Json`, no tool: its text; FYI: a numbered list (`decide list -Fyi`), owner answers "1 A, 2 B"; then `decide answer -Id <id> -Answer '<choice>'` per id (owner judges a duel; it rewrites the task's Decisions comment, never typed); close ask (every subtask closed): `A` closes the parent; evidence settles -> a duel (goody `duel`). ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, service starts only from live lease; shared DB data: `datay` kind localdb); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `pokey.ps1 retest` |
@@ -89,9 +90,9 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 ## Change the kit (HEAL and extending)
 - K1. Spawn ONE `kitty` (`subagent_type: 'kitty'`, kind build / fix / docs / audit / setup / env / recover) with the change or the
   friction in the owner's words. It works in its own kit worktree (never the live clone: runs execute it), keeps the kit generic
-  (no org, product, tenant, host, id or local path; config through `kit.local.json`; org-only parts in the local overlay), adds
-  parts with `kitbag.py new` (README "Extending"), prefers a script check over a rule, and has `revy` (kind kit) review the diff.
-- K2. Its checks (kitty step 8): `kitbag.py lint` = 0 problems and 0 counted flow issues, `port` + `port --check`, parsed .ps1,
+  (org values in `kit.local.json`, org-only parts in the local overlay), prefers a script check over a rule, and has `revy`
+  (kind kit) review the diff.
+- K2. Its checks (kitty step 8): `kitbag.py lint` = 0 (flow issues too), `port` + `port --check`, parsed .ps1,
   `py_compile`, `node --check`, `tests/kit-tests.ps1`, `cost --steps` after a workflow change, `lint --org-terms`.
   Over the kit cap: trim, else `kitbag.py budget raise`.
 - K3. It commits (the pre-commit hook regenerates the README graph and the ports, and blocks on lint), rebases, pushes main
