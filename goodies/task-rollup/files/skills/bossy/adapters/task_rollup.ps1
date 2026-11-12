@@ -10,7 +10,7 @@ description between <!-- kit:delivery --> / <!-- kit:triage --> markers, each su
 checklist, else an <!-- kit:items --> description section), one comment per milestone (all merged, deployed to <env>, all closed).
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L18 triage · L62 render · L132 rollup · L221 items · L251 close
+Sections: L18 triage · L62 render · L132 rollup · L221 items · L254 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -221,12 +221,15 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
 # ---- items: every built task's own "Items" checklist from its description's Items list (launch -Self / -Check write it, track run
 # ticks it: an id a merged MR names, all once the task's MRs are all merged); a subtask with triage rows keeps the rollup's checklist
 function Get-KitDescItemIds([string]$Text) {
-  $ls = @("$Text" -split "`r?`n"); $o = @()
+  $ls = @("$Text" -split "`r?`n"); $o = @(); $idRx = '^(?<id>[A-Za-z]+-?\d[\w-]*)(?![\w-])'
   for ($i = 0; $i -lt $ls.Count; $i++) {
     if ($ls[$i] -notmatch '(?i)^\W{0,6}(?:Items|Bugs)\b[^:]*:\W*(?<l>.*)$') { continue }
-    $o = @($Matches.l -split '[,;]'); for ($j = $i + 1; $j -lt $ls.Count -and $ls[$j] -match '^\s*[-*]\s+(\[.\]\s*)?(?<b>.+)$'; $j++) { $o += $Matches.b }; break
+    # items split on ' · ' and list bullets; a piece on ',' / ';' only when each part starts with an id ("A1, A2 (x)"), never inside an item's text
+    $o = @(foreach ($seg in $Matches.l -split ' · ') { $cs = @($seg -split '[,;]' | ForEach-Object { ($_ -replace '[`*]', '').Trim() } | Where-Object { $_ }); if ($cs.Count -gt 1 -and -not @($cs | Where-Object { $_ -notmatch $idRx }).Count) { $cs } else { $seg } })
+    for ($j = $i + 1; $j -lt $ls.Count -and $ls[$j] -match '^\s*[-*]\s+(\[.\]\s*)?(?<b>.+)$'; $j++) { $o += $Matches.b }; break
   }
-  @($o | ForEach-Object { ((($_ -replace '[`*]', '') -split ' · ')[0] -replace '\s*[(:].*$', '').Trim() } | Where-Object { $_ } | Select-Object -Unique)
+  # a **Label:** piece is the next field; an item's id = its leading id token (TP-01), else its text before ( or :
+  @($o | Where-Object { $_ -notmatch '^\s*\*\*[^*]+:\*\*' } | ForEach-Object { $t = ($_ -replace '[`*]', '').Trim(); if ($t -match $idRx) { $Matches.id } else { (($t -split ' · ')[0] -replace '\s*[(:].*$', '').Trim() } } | Where-Object { $_ } | Select-Object -Unique)
 }
 function Update-KitTaskItems([string]$Task, $T) {
   $x = Read-KitState (Get-KitTaskFile $Task); if ($x.itemsFrom -eq 'triage' -or $x.itemsFinal) { return }
