@@ -18,7 +18,7 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L29 config · L226 state · L273 layer drops · L345 leases · L466 code · L498 migrations · L788 hooks · L860 marks ·
-  L1006 seed · L1052 processes · L1379 daemon · L1839 cleanup · L1911 doctor · L1963 verbs
+  L1006 seed · L1052 processes · L1381 daemon · L1841 cleanup · L1913 doctor · L1965 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -904,7 +904,7 @@ function Update-Marks([string]$e) {
 function Find-Mark($st, [string]$mark, [int]$release) {
   $n = if ($mark) { ConvertTo-KitSlug $mark } else { "release-$release" }
   $m = @($st.marks | Where-Object { $_ -and $_.name -eq $n })[0]
-  if (-not $m) { throw "no mark $n$(if ($n -in @($st.expiredMarks)) { ' (expired: its binlog is gone)' }) - marks: $(@($st.marks | Where-Object { $_ } | ForEach-Object name) -join ', ')" }
+  if (-not $m) { throw "no mark $n$(if ($n -in @($st.expiredMarks)) { ' (expired: its binlog is gone)' } elseif ($n -in @(@($st.pendingMarks) | Where-Object { $_ } | ForEach-Object name)) { ' yet: queued until the DB service starts (nothing changed since)' }) - marks: $(@($st.marks | Where-Object { $_ } | ForEach-Object name) -join ', ')" }
   $m
 }
 # what a restore to mark $m changes (read-only): the row flashback plan, the tables whose structure changed (binlog DDL) and how
@@ -1365,7 +1365,9 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     "[$e] $($s.name) up$(if ($s.port) { " on port $($s.port)" }) in $sec s ($gb GB)"
     if ((DbSvc $e).name -eq $s.name) {   # marks queued while the DB was down
       $pm = @((Read-State $e).pendingMarks | Where-Object { $_ })
-      if ($pm.Count) { Update-State $e { param($x) $x.pendingMarks = @() }; foreach ($m in $pm) { try { "[$e] mark $(New-Mark $e $m.name $m.kind $m.repos ([int]$m.release)) (waited for $($s.name))" } catch { "[$e] mark $($m.name) failed: $("$_".Split("`n")[0])" } } }
+      foreach ($m in $pm) { try {   # each leaves the queue only once taken (a failed one waits for the next start)
+        "[$e] mark $(New-Mark $e $m.name $m.kind $m.repos ([int]$m.release)) (waited for $($s.name))"; Update-State $e { param($x) $x.pendingMarks = @(@($x.pendingMarks) | Where-Object { $_ -and $_.name -ne $m.name }) }
+      } catch { "[$e] mark $($m.name) still queued: $("$_".Split("`n")[0])" } }
     }
     Start-AotTrain $e $s $artifact
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose(); Update-State $e { param($x) $v = $x.services[$s.name]; if ($v -and $v.status -eq 'waiting' -and $v.waitPid -eq $PID) { $v.status = 'down' } } }   # a claim never outlives its start
