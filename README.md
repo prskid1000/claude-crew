@@ -113,9 +113,11 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
   state is written atomically (temp + rename) or appended; leases, gate slots and board entries keep their process id with its
   start time (a pid reused after a cold boot holds nothing); a lock whose holder died is taken at once (Windows).
 - **Pause** (power off, a day offline): `bossy.ps1 pause -All | -Run <run> [-Reason]` returns in seconds; `pause -Status`
-  says when it is "safe to power off" (exit 1 until then; `-Wait <min>` blocks as before). Agents read PAUSE on their next
-  `board beat` (and inbox), checkpoint, commit WIP locally, release leases and leave the board `paused` (a running build or
-  test step ends first); a background finisher then stops env services no live holder needs (goody `local-env`);
+  says when it is "safe to power off" (exit 1 until then; `-Wait <min>` blocks as before): every agent left, or not yet left
+  but at a checkpoint with a clean worktree and no build. Gated builds and tests of the paused agents stop at once (queued
+  ones never start; the gate says `redo`); agents read PAUSE on their next `board beat` (and inbox), let a git or MR call
+  finish, checkpoint `-Next 'redo: <step>'`, commit WIP locally, release leases and leave the board `paused`; a background
+  finisher then stops env services no live holder needs (goody `local-env`);
   `.state/pauses/` records runs, launch records, agents, checkpoints and worktree heads. Nothing after it needs the network.
 - **Crash** (power loss, kill): SessionStart `health` marks dead board entries and launch records crashed and prints
   `paused/crashed runs: N -> bossy.ps1 resume`.
@@ -124,7 +126,9 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
   stream as found; past `-MaxSeconds` a `partial:` line names the runs left. Offline -> says so, stops. Per agent a brief
   (`work/agents/<id>/resume-<run>-brief.md`) starting AT its next step: done steps verified (commit present, MR state), never
   redone; the uncommitted diff kept for the interrupted step; journal results kept (`resumeFromRunId`); a run whose MRs all
-  merged skipped; then the exact Workflow call. `board join` shows each relaunched agent its CHECKPOINT.
+  merged skipped; then the exact Workflow call. `board join` shows each relaunched agent its CHECKPOINT. Recording the
+  resumed run (`launch -RunId`) re-binds its self record to the new session; a run is live while any record's holder lives or
+  its folder was written within `supervise.stuckMinutes` (quiet past that: STUCK; STOPPED only when every holder is gone).
 - Kept: commits, diffs, MRs, tracker state, decisions, checkpoints, launch records, coordinator program state (`bossy.ps1
   program set|get`). Lost: agent conversations (a fresh agent from its brief), running builds and tests (rerun), env service
   processes (started on the next lease), browser logins.

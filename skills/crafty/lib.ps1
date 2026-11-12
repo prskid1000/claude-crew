@@ -882,12 +882,12 @@ function Get-KitWorkflowRecords($Dir, $Events, $Launches) {
   $m = @($Events | Where-Object type -eq 'result' | ForEach-Object { [regex]::Match("$($_.result.output)", 'RECORDED (\S+) (\S+) \(fnv (\w+)\)') } | Where-Object Success)[0]
   if ($m) { $Launches | Where-Object { "$($_.fnv)" -eq $m.Groups[3].Value -and $_.run -eq $m.Groups[2].Value -and (Split-Path "$($_.script)" -Leaf) -eq $m.Groups[1].Value -and [math]::Abs(([datetime]$_.at - $Dir.CreationTime).TotalMinutes) -le 30 } | Select-Object -First 1 }
 }
-# ended without end marker (TaskStop, restart): record completed, holder gone, or all Claude processes younger + quiet for stuckMinutes
+# no end marker (TaskStop, restart): completed, or quiet and every holder gone (none: every Claude process younger)
 function Get-KitWorkflowStop($Dir, $Records) {
   if (@($Records | Where-Object completed).Count) { return 'completed' }
-  $h = @($Records | Where-Object holderPid)[0]; if ($h) { if ((Test-KitHolder $h) -eq $false) { 'session gone' }; return }
-  $cs = @(Get-KitClaudeStarts); $quiet = (Get-Date).AddMinutes(-[double](Get-KitParam 'supervise.stuckMinutes'))   # no Claude process found: unknown
-  if (-not @($Records).Count -and $cs.Count -and -not @($cs | Where-Object { $_ -le $Dir.CreationTime }).Count -and -not @(Get-ChildItem -LiteralPath $Dir.FullName -File | Where-Object LastWriteTime -gt $quiet).Count) { 'session gone' }
+  if (Test-KitRunLive $Dir $Records) { return }   # bossy adapters/supervise_resources.ps1
+  $h = @($Records | Where-Object holderPid); if ($h.Count) { if (-not @($h | Where-Object { (Test-KitHolder $_) -ne $false }).Count) { 'session gone' }; return }
+  if (-not @($Records).Count -and ($cs = @(Get-KitClaudeStarts)).Count -and -not @($cs | Where-Object { $_ -le $Dir.CreationTime }).Count) { 'session gone' }   # no Claude process found: unknown
 }
 function Get-KitClaudeStarts { @(Get-Process -ErrorAction SilentlyContinue | Where-Object ProcessName -match '^claude' | ForEach-Object { try { $_.StartTime } catch {} }) }
 # a broken file is skipped
@@ -960,7 +960,7 @@ function Format-KitSessionStart([string]$Text, $Hook) {
   elseif ($Text) { @{ systemMessage = $Text; hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $Text } } | ConvertTo-Json -Compress -Depth 4 }
 }
 function Get-KitTranscriptKind([string]$Tool) { if (-not $Tool) { 'claude' } elseif ($KitAdapters.transcript[$Tool]) { $Tool } else { 'none' } }
-# the one activity source of every liveness check (STUCK rows, stale board rows, lease grace, shell owners): newest of board beat and transcript write (+ task outputs it names)
+# every liveness check (STUCK rows, stale board rows, lease grace, shell owners): newest board beat or transcript write (+ its task outputs)
 function Get-KitLastActivity([string]$Tx, $Entry, [string]$Tool) {
   $fi = if ($Tx) { Get-Item -LiteralPath $Tx -ErrorAction SilentlyContinue }   # one tail read per transcript write (sweeps ask per step, shell, lease)
   $t = if ($fi) { Get-KitLiveCached "tx:$($fi.FullName)" { Invoke-KitAdapter transcript (Get-KitTranscriptKind $Tool) last @{ file = $Tx } } }
@@ -1480,7 +1480,7 @@ function Add-TrackerComment([string]$Id, [string]$Text) { if (-not "$Id".Trim())
 function __Set-TrackerStatus([string]$Id, [string]$Status) { Clear-TrackerMemo $Id; __TrA 'status' @{ id = $Id; status = (Resolve-TrackerStatus $Status); logical = $Status } }
 function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'comment' @{ id = $Id; text = (__TrText $Text) } }
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }
-# ONE kit comment per kind: adapter verb comment-edit, else posted + old removed via comment-delete, else only posted; found by id, last text or legacy '[kit:<kind>]'
+# ONE kit comment per kind: comment-edit, else post + comment-delete the old, else post; found by id, last text or legacy '[kit:<kind>]'
 # marker. People's comments are never touched
 function Get-KitCommentSig([string]$Text) { $n = ConvertTo-KitLetters ("$Text" -replace '\\?\[kit:[^\]\\]*\\?\]', ''); $n.Substring(0, [math]::Min(60, $n.Length)) }   # trackers re-render markdown: letters and digits only
 $script:KitMrsHeading = 'MRs (merge order)'   # bossy.ps1 Set-KitMrsComment is its one writer

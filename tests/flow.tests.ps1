@@ -194,6 +194,21 @@ for ($i = 0; $i -lt 300 -and (Read-Json $qf).state -ne 'paused'; $i++) { Start-S
 $qy = Invoke-TestScript $O pause -Status; $qr = Read-Json $qf; $null = Px $O resume -Run pq
 Expect 'pause: returns in seconds, PAUSING + -Status; finisher confirms in the background; -Status: NOT safe (exit 1), then safe (exit 0)' ($qt -lt 20 -and $qp -match 'PAUSING' -and $qp -match 'pause -Status' -and $q0 -eq 'pausing' -and
   $qn.code -eq 1 -and $qn.out -match 'NOT safe yet: Q1' -and $qr.state -eq 'paused' -and @($qr.agents | Where-Object confirmed).agent -eq 'Q1' -and $qy.code -eq 0 -and $qy.out -match 'Safe to power off')
+# fast pause: the paused agent's long gated build (owner = its worktree's name) stops at once, a queued one is refused, another owner's runs; unconfirmed = safe only from a checkpoint after the pause, worktree clean
+$kq = Join-Path (Kd) 'kq'; $null = New-Item -ItemType Directory -Force $kq; 'x' | Set-Content "$kq/a.txt"; Save-GitRepo $kq init
+$null = Px $O board join -Agent Q2 -Run pk -Claims $kq; $ca = $env:CLAUDE_AGENT; Remove-Item Env:CLAUDE_AGENT -ErrorAction SilentlyContinue
+try {
+  $bj = Start-ThreadJob { & $using:pwshExe -NoProfile -File $using:crPath gate -Dir $using:kq -Cmd 'pwsh -NoProfile -Command Start-Sleep 300' 2>&1 | Out-String }
+  $gl = Join-Path $env:TEMP 'claude-build-gate'; for ($i = 0; $i -lt 150 -and -not @(Get-ChildItem $gl -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json').Count; $i++) { Start-Sleep -Milliseconds 200 }
+  $sw = [Diagnostics.Stopwatch]::StartNew(); $kp = Px $O pause -Run pk -Reason 'power off' | Out-String; $kb = $bj | Wait-Job -Timeout 60 | Receive-Job; $kt = $sw.Elapsed.TotalSeconds
+  $kg = Invoke-TestScript $crPath gate -Dir $kq -Cmd 'echo never'; $env:CLAUDE_AGENT = 'ZZ'; $ko = Invoke-TestScript $crPath gate -Dir (Kd) -Cmd 'echo free'; Remove-Item Env:CLAUDE_AGENT
+  $null = Px $crPath checkpoint -Agent Q2 -Run pk -Step build -Next 'redo: test' -Dir $kq
+  $kf = (Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; for ($i = 0; $i -lt 300 -and (Read-Json $kf).state -ne 'paused'; $i++) { Start-Sleep -Milliseconds 200 }
+  $ks = Invoke-TestScript $O pause -Status; 'y' | Set-Content "$kq/b.txt"; $kd = Invoke-TestScript $O pause -Status
+} finally { if ($ca) { $env:CLAUDE_AGENT = $ca } }
+$null = Px $O resume -Run pk
+Expect "fast pause: build stopped in $([int]$kt) s, gate says redo; queued gate refused (3), other owner runs; safe after a fresh checkpoint, not when dirty" ($kp -match '1 build\(s\) / test\(s\) stopped \(kq build' -and $kb -match 'stopped by the kit: PAUSE \(power off\): redo this step' -and $kt -lt 60 -and
+  $kg.code -eq 3 -and $kg.out -match '\[gate\] PAUSE \(power off\): not started' -and $ko.code -eq 0 -and $ks.code -eq 0 -and $ks.out -match 'Safe to power off.*Q2: not confirmed, at a checkpoint' -and $kd.code -eq 1 -and $kd.out -match 'NOT safe yet: Q2')
 # a journal that ended at the workflow's last phase = finished: closed, never listed; the time budget cuts recover with a partial line
 $env:KIT_TRANSCRIPTS = Join-Path (Kd) 'txf'; $lfd = TkPath $k launches
 $fwf = Join-Path $k 'workflows/finwf.js'; New-Item -ItemType Directory -Force (Split-Path $fwf) | Out-Null; "phase('Build')`nphase('Learn')" | Set-Content $fwf   # its last phase: Learn

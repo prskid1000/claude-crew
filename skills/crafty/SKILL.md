@@ -95,8 +95,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
   review round, CI result, testing doc url, tracker, merge) `& $D checkpoint -Agent <id> -Run <run> -Step <worktree|commit|goals|
   loop|mr|review|ci|doc|tracker|merge> -Evidence "<sha|url|result>" -Dir <wt>`, and a WIP commit (`chore(wip): <step>`) after
   steps 1-5. `board join` prints CHECKPOINT: start at that step; verify the done ones, never redo them; keep an uncommitted
-  diff. `board beat` prints PAUSE: checkpoint, WIP commit (no push), release your leases, `board leave -Session <t> -Status
-  paused` (again while it prints PAUSED); return no result.
+  diff. `board beat` prints PAUSE (do what it says; a gate line `stopped by the kit: PAUSE` = that build or test is not done:
+  checkpoint `-Next 'redo: <step>'`, never a fix round).
 - **Scope:** only your items; additive changes (optional fields, new endpoints/params, flags); never remove features or inputs;
   DTOs not entities in APIs; foreign files only as one-line hooks you list; decisions in the brief are final, a NEW one -> D1.
 - **Shared code:** before changing a shared helper, hook, service, formatter, validator, default or global style, grep every

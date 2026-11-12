@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks; the
+layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks, run records (resumed run liveness, re-bind); the
 supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log).
 Usage: pwsh -NoProfile -File <kit>/tests/layout.tests.ps1 (or tests/kit-tests.ps1 -Area layout).
 Exit codes: 0 pass · 1 a check failed.
@@ -94,5 +94,25 @@ Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; flags = 
   Expect "ui-check: the dashboard (long names, 10 holders) has no clipped text at 1366 / 900 / 390, light + dark, 6 shots; UI-CHECK nudge before the stamp only (exit $uiCode, $($uiShots.Count) shots, before $uiWarnBefore; $($uiOut | Where-Object { $_ -match 'CLIP' } | Select-Object -First 3))" (
     $uiCode -eq 0 -and $uiShots.Count -eq 6 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise_resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
 }
+# run records on disk: a resumed run's liveness and its self record re-bound
+$O = Join-Path $k 'skills/bossy/bossy.ps1'; $ld = TkPath $k launches -Create
+$wfr = New-Item -ItemType Directory -Force (Join-Path (Kd) 'wf/wf_r2'); $txr = Join-Path $wfr 'agent-a1.jsonl'; '{}' | Set-Content $txr
+$rb = Invoke-PsTest rebind @'
+$null = . $args[0] 6>$null; $d = Get-Item $args[1]; $old = (Get-Date).AddHours(-3); $dead = @{ holderPid = 999999; holderStart = '2020-01-01T00:00:00Z' }
+$me = [pscustomobject]@{ runId = 'wf_r2'; script = 'x/buildy.js'; at = (Get-Date).ToString('o'); holderPid = $PID; holderStart = (Get-KitPidStart $PID); file = 'r.json'; args = @{ brief = 'C:/b/w.md' } }
+$sf = [pscustomobject](@{ script = 'x/buildy.js'; run = 'w-1'; at = $old.ToString('o'); wfDir = $d.FullName; file = (Join-Path $d.Parent 'self-w.json') } + $dead); $sf | ConvertTo-Json | Set-Content $sf.file
+$rd = [pscustomobject](@{ runId = 'wf_r2'; script = 'x/buildy.js'; at = $old.ToString('o'); file = 'r.json'; args = @{ brief = 'C:/b/w.md' } } + $dead)
+$a = @(Get-StoppedRunsOf @($me) @($sf) $old.AddHours(-1) $false).Count; $b = @(Get-StoppedRunsOf @($rd) @($sf) $old.AddHours(-1) $false).Count; $c = "$(Get-KitWorkflowStop $d @($sf, $me))"
+(Get-Item $args[2]).LastWriteTime = $old; "$a $b $c|$(@(Get-StoppedRunsOf @($rd) @($sf) $old.AddHours(-1) $false).Count) $(Get-KitWorkflowStop $d @($sf, $rd))"
+'@ @($O, "$wfr", $txr) | Out-String
+[IO.File]::WriteAllText((Join-Path $ld 'self-buildy-w-1.json'), (@{ script = 'buildy.js'; run = 'w-1'; at = (Get-Date).ToString('o'); wfDir = "$wfr"; holderPid = 999999; crashed = 'x' } | ConvertTo-Json))
+$rbo = pwsh @np $O launch -RunId wf_r2 -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/w.md"}' 2>&1 | Out-String; $rbs = Read-Json (Join-Path $ld 'self-buildy-w-1.json')
+Expect "resumed run: live record or fresh step transcript = not stopped, quiet + dead holders = session gone; launch -RunId re-binds its self record ($($rb.Trim()))" ($rb.Trim() -eq '0 0 |1 session gone' -and $rbo -match 're-bound self-buildy-w-1' -and -not $rbs.crashed -and $rbs.holderPid -ne 999999)
+Remove-Item (Join-Path $ld 'self-buildy-w-1.json'), (Join-Path $ld 'wf_r2.json') -Force
+$tx3 = New-Item -ItemType Directory -Force (Join-Path (Kd) 'tx3/s1/subagents/workflows/wf_r3'); "launch -Self -Script buildy.js -Run 'w-3' -ArgsFile a.json -Fnv abcd1234" | Set-Content (Join-Path $tx3 'agent-x.jsonl')
+[IO.File]::WriteAllText((Join-Path $ld 'self-buildy-w-3.json'), (@{ script = 'buildy.js'; run = 'w-3'; at = (Get-Date).ToString('o'); fnv = 'abcd1234'; holderPid = 999999; crashed = 'x' } | ConvertTo-Json))
+$env:KIT_TRANSCRIPTS = Join-Path (Kd) 'tx3'; $rb3 = pwsh @np $O launch -RunId wf_r3 -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/w3.md"}' 2>&1 | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
+Expect 'launch -RunId: a self record without wfDir re-bound by its launch -Self line (args hash) in that run folder' ($rb3 -match 're-bound self-buildy-w-3' -and -not (Read-Json (Join-Path $ld 'self-buildy-w-3.json')).crashed)
+Remove-Item (Join-Path $ld 'self-buildy-w-3.json'), (Join-Path $ld 'wf_r3.json') -Force
 Remove-TestKit $k
 Complete-Tests

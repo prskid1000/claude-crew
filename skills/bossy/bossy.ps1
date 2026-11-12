@@ -22,10 +22,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L31 init · L49 board · L228 budget · L256 launch · L516 recover · L602 pause · L613 resume · L676 program · L721 param ·
-  L727 track · L1047 supervise · L1350 report · L1429 audit · L1489 storage · L1699 bugbrief · L1801 cleanup · L1885 learn ·
-  L1915 decide · L2048 health · L2110 retro due · L2120 tidy · L2189 the kit origin's main and goodies · L2205 setup ·
-  L2272 guard-sendmessage
+Sections: L31 init · L49 board · L228 budget · L256 launch · L520 recover · L606 pause · L617 resume · L680 program · L725 param ·
+  L731 track · L1051 supervise · L1354 report · L1433 audit · L1493 storage · L1703 bugbrief · L1805 cleanup · L1889 learn ·
+  L1919 decide · L2052 health · L2114 retro due · L2124 tidy · L2193 the kit origin's main and goodies · L2209 setup ·
+  L2276 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -173,7 +173,7 @@ switch ($Action) {
     }
     try { $null = Invoke-KitStorageTick } catch {}
     $u = Get-Unread $me.agent; if ($u) { "INBOX: $u message(s) wait: bossy.ps1 board inbox -Agent $($me.agent)" }
-    $pz = Get-KitActivePause $me.run; if ($pz) { "PAUSE ($($pz.reason)): now, at this step boundary: crafty.ps1 checkpoint, crafty.ps1 wt commit (WIP, no push), release your leases, then board leave -Session $Session -Status paused (again while it prints PAUSED); return no result" }
+    $pz = Get-KitActivePause $me.run; if ($pz) { "PAUSE ($($pz.reason)): $(Get-KitPauseSteps $Session)" }
     $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; if ($w -notlike 'STALE:*') { exit 1 } }
   }
   'show' { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" }
@@ -355,6 +355,7 @@ if (-not $List) {
   $f = Join-Path $dir "$(& $safe $RunId).json"
   Write-KitState $f $rec
   Write-Host "[launch] recorded $RunId ($(Split-Path $Script -Leaf)) -> $f"
+  Update-KitSelfHolder $dir $RunId $Script | ForEach-Object { Write-Host "[launch] $_" }
   if (($ln = Get-LaunchRunName $a)) { Clear-KitPauseFor $ln }
   exit 0
 }
@@ -422,10 +423,13 @@ function Get-StoppedRuns([int]$Hours = 24, [switch]$All, [switch]$Raw) {
 }
 function Get-StoppedRunsOf($records, $selfs, [datetime]$since, [bool]$All) {
   $used = @{}
+  # a resumed run is live under its new record; its self record keeps the dead holder: never crashed, never relaunched
+  $liveIds = @{}; foreach ($r in $records | Where-Object { $_.runId -and -not $_.completed -and (Test-KitHolder $_) -eq $true }) { $liveIds[$r.runId] = $true }
+  foreach ($s in $selfs | Where-Object { $_.wfDir -and -not $_.completed }) { $sid = Split-Path "$($s.wfDir)" -Leaf; if (-not $liveIds[$sid] -and (Test-KitRunLive "$($s.wfDir)" @())) { $liveIds[$sid] = $true } }
   foreach ($r in $records | Where-Object { -not $_.completed }) {
     $at = try { [datetime]$r.at } catch { (Get-Item -LiteralPath $r.file).LastWriteTime }
     if ($at -lt $since -and -not $r.paused -and -not ($All -and (Test-KitHolder $r) -eq $true)) { continue }   # a paused run waits for resume however long; -All: a live one however old
-    if (-not $All -and -not $r.paused -and (Test-KitHolder $r) -eq $true) { continue }
+    if (-not $All -and -not $r.paused -and ((Test-KitHolder $r) -eq $true -or ($r.runId -and $liveIds[$r.runId]))) { foreach ($so in @($selfs | Where-Object { $_.wfDir -and (Split-Path "$($_.wfDir)" -Leaf) -eq $r.runId })) { $used[$so.file] = $true }; continue }
     $leaf = Split-Path ([string]$r.script) -Leaf; $run = Get-LaunchRunName $r.args
     $free = @($selfs | Where-Object { -not $used[$_.file] -and (Split-Path ([string]$_.script) -Leaf) -eq $leaf })
     $sf = @($free | Where-Object { $run -and $_.run -eq $run } | Sort-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) }) | Select-Object -First 1 -ExpandProperty file
@@ -436,7 +440,7 @@ function Get-StoppedRunsOf($records, $selfs, [datetime]$since, [bool]$All) {
     [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; last = $last; file = $r.file; selfFile = $sf; runDir = $r.runDir; record = $r; paused = $r.paused }
   }
   foreach ($s in $selfs | Where-Object { -not $used[$_.file] -and -not $_.completed -and ($_.paused -or [datetime]$_.at -ge $since -or ($All -and (Test-KitHolder $_) -eq $true)) }) {
-    if (-not $All -and -not $s.paused -and (Test-KitHolder $s) -eq $true) { continue }
+    if (-not $All -and -not $s.paused -and ((Test-KitHolder $s) -eq $true -or ($s.wfDir -and $liveIds[(Split-Path "$($s.wfDir)" -Leaf)]))) { continue }
     # only a completed record of THIS launch hides it
     if (@($records | Where-Object { $_.completed -and (Get-LaunchRunName $_.args) -eq $s.run -and [math]::Abs(([datetime]$_.at - [datetime]$s.at).TotalMinutes) -le 30 }).Count) { continue }
     [pscustomobject]@{ runId = $null; leaf = (Split-Path ([string]$s.script) -Leaf); script = $s.script; run = $s.run; at = [datetime]$s.at; file = $null; selfFile = $s.file; runDir = $(if ($s.runDir) { $s.runDir } else { $s.args.runDir }); record = $null; paused = $s.paused; last = [datetime]$s.at }

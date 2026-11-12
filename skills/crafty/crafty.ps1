@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L919 check · L1175 pipes · L1225 guard · L1982 dir ·
-  L1992 checkpoint · L2017 prior · L2055 tracker · L2135 host
+Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L929 check · L1185 pipes · L1235 guard · L1992 dir ·
+  L2002 checkpoint · L2027 prior · L2065 tracker · L2145 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -643,7 +643,15 @@ else {
 }
 }
 
-# ---- gate: machine-wide memory gate; exit = command's code, 3 = no start in time
+# ---- gate: machine-wide memory gate; exit = command's code, 3 = no start in time or a PAUSE
+# the open pause over a live board agent (by name, or a worktree holding $Dir) of a paused run or one it lists; nobody on the board: none
+function Get-KitPauseFor([string]$Agent, [string]$Dir) {
+  $ps = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' }); if (-not $ps.Count) { return }
+  $full = try { [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/') } catch { '' }
+  $me = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and ($_.agent -eq $Agent -or ($full -and @($_.worktrees | Where-Object { "$_" -match '[\\/]' -and $full.StartsWith("$_".TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) }).Count)) })[0]
+  if (-not $me) { return }
+  @($ps | Where-Object { ($me.run -and ($_.run -eq $me.run -or ($_.run -eq '*' -and $me.run -notin @($_.released)))) -or $me.agent -in @($_.agents.agent) })[0]
+}
 # kind: command regex -> default GB until 2 runs are learned
 $script:GateKinds = [ordered]@{
   'emulator' = @('^exit 0 #emulator', 4.5)
@@ -816,6 +824,7 @@ $proc = $null; $entry = $null; $waits = 0
 Write-Ticket
 try {
 while ((Get-Date) -lt $deadline) {
+  if (($pz = Get-KitPauseFor $owner $Dir)) { Write-Host "[gate] PAUSE ($($pz.reason)): not started; this step is not done: checkpoint -Next 'redo: <this step>' and leave (board beat says how)"; exit 3 }
   $got = Lock-Gate $gate
   if (-not $got) { continue }
   try {
@@ -893,9 +902,10 @@ try {
   $why = try { "$((Get-Content $entry -Raw | ConvertFrom-Json).reclaimed)" } catch { '' }   # supervise -AutoFix marks the build it stops
   Remove-Item $entry -ErrorAction SilentlyContinue; Write-KitLeaseLog release build "$kind $(Split-Path $Dir -Leaf)" $buildLease $(if ($why) { $why } else { "ended, exit $code" })
 }
-if ($kind -ne 'emulator') { Add-KitParamObs 'gate.waitMinutes' $sw.Elapsed.TotalMinutes -Default 90 }   # learns build time, not wait time
+if ($why) { Write-Host "[gate] stopped by the kit: $why (exit $code)" }   # a killed build teaches neither time nor peak
+if ($kind -ne 'emulator' -and -not $why) { Add-KitParamObs 'gate.waitMinutes' $sw.Elapsed.TotalMinutes -Default 90 }   # learns build time, not wait time
 Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); waitSec = $waitSec })
-if ($peak -gt 0.2 -and $kind -ne 'emulator') {
+if ($peak -gt 0.2 -and $kind -ne 'emulator' -and -not $why) {
   # oom: exit 137 / 134 near its reservation
   if ($NeedGB -le 0) { Add-KitParamObs 'gate.needGB' $peak $histKey $(if ($code -eq 0) { 'ok' } elseif ($code -in 134, 137 -and $peak -ge 0.9 * $reserved) { 'oom' } else { 'fail' }) $estimate }
   # concurrent ends; never reset an unreadable file

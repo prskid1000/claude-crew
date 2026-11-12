@@ -7,8 +7,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 builds · L46 supervise · L238 shells · L357 page · L660 release · L689 lines · L714 cleanup · L750 launch ·
-  L785 pause
+Sections: L14 builds · L46 supervise · L243 shells · L362 page · L665 release · L704 lines · L729 cleanup · L765 launch ·
+  L810 pause
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -44,6 +44,11 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
 }
 
 # ---- supervise: resource flags and report rows
+# a run is live while a holder lives or its folder was written within stuckMinutes (a resumed run keeps its folder; lib Get-KitWorkflowStop)
+function Test-KitRunLive($Dir, $Records) {
+  if (@($Records | Where-Object { $_ -and (Test-KitHolder $_) -eq $true }).Count) { return $true }
+  $q = (Get-Date).AddMinutes(-[double](Get-KitParam 'supervise.stuckMinutes')); "$Dir" -and [bool]@(Get-ChildItem -LiteralPath "$Dir" -Filter '*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $q).Count
+}
 # STUCK rows (agents and steps, not their run): WATCH, ACT from 3x the threshold
 function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
   foreach ($r in @($Rows | Where-Object { $_.state -eq 'STUCK' -and -not $_.left })) {   # a run with running steps: its steps are the rows
@@ -658,11 +663,24 @@ function Format-KitSuperviseOut($d, $Shown, [string]$Path) {
 }
 
 # ---- release: every lease of an agent (release, board leave, workflows after each stage); idempotent
+# live gated builds of $Agent ('*' = all): its gate owner name, or a dir inside one of its worktrees (the owner may be a worktree name)
+function Get-KitAgentBuilds([string]$Agent, [string[]]$Dirs = @()) {
+  $in = { param($p) foreach ($w in $Dirs) { if ($w -and "$p".TrimEnd('\', '/').StartsWith($w.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) { return $true } }; $false }
+  foreach ($bf in @(Get-ChildItem (Join-Path (Get-KitTemp) 'claude-build-gate') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json')) {
+    $t = try { Get-Content $bf.FullName -Raw | ConvertFrom-Json } catch { continue }
+    if (($Agent -eq '*' -or $t.owner -eq $Agent -or (& $in $t.dir)) -and (Test-KitPid $t.pid $t.start)) { $t | Add-Member -Force NoteProperty file $bf.FullName; $t }   # a reused pid is not ours
+  }
+}
+# killed, marked with $Reason (the gate prints it); release and pause stop them
+function Stop-KitAgentBuilds([string]$Agent, [string]$Reason, [string[]]$Dirs = @()) {
+  foreach ($t in @(Get-KitAgentBuilds $Agent $Dirs)) { $bp = Get-Process -Id ([int]$t.pid) -ErrorAction SilentlyContinue
+    if ($bp) { $bf = $t.file; $t.PSObject.Properties.Remove('file'); $t | Add-Member -Force reclaimed $Reason; $t | ConvertTo-Json | Set-Content $bf; try { $bp.Kill($true) } catch {}; "$($t.owner) build: stopped $($t.kind) (pid $($t.pid))" } }
+}
 function Invoke-KitReleaseAgent([string[]]$Agent, [string]$Reason = 'agent finished') {
   $Agent = @(Split-KitList $Agent); if (-not $Agent.Count) { Stop-KitVerb 'usage: bossy.ps1 release -Agent <id>[,<id>] [-Reason <why>]' }
   Invoke-KitLeaseReason $Reason {
     $sub = { param($script, [string[]]$a) $r = Invoke-KitExe 'pwsh' (@('-NoProfile', '-NonInteractive', '-File', $script) + $a) 180; if ($r.code) { $script:KitReleaseFailed = $true; 'FAILED ' }; @("$($r.out) $($r.err)" -split "`r?`n" | Where-Object { $_.Trim() })[-1] }
-    $envs = @(if (@(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue | Select-String -SimpleMatch -List @($Agent | ForEach-Object { "`"$_`"" })).Count) { Get-KitLocalEnvStatus }); $ledger = Join-Path (Get-KitTemp) 'claude-build-gate'
+    $envs = @(if (@(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue | Select-String -SimpleMatch -List @($Agent | ForEach-Object { "`"$_`"" })).Count) { Get-KitLocalEnvStatus })
     $tabs = @(Read-KitJsonFiles (Get-KitPath sessions) 'tabs-*.json' | ForEach-Object { $_.PSObject.Properties.Value | Where-Object { $_.agent } })
     foreach ($a in $Agent) {
       $n = 0
@@ -673,10 +691,7 @@ function Invoke-KitReleaseAgent([string[]]$Agent, [string]$Reason = 'agent finis
         if (@($ev.repos | ForEach-Object { @($_.layers) } | Where-Object { $_ -and $_.agent -eq $a }).Count) { "$a env: $(& $sub $KitCmd.local 'drop', '-Env', $ev.env, '-Agent', $a, '-Note', $Reason)"; $n++ }   # paused / handed off: envy keeps them
       }
       $g0 = @((Get-KitGpuState).leases | Where-Object holder -eq $a).Count; if ($g0) { Remove-KitGpu -Holder $a; "$a gpu: $g0 lease(s) released"; $n++ }
-      foreach ($bf in @(Get-ChildItem $ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json')) {
-        $t = try { Get-Content $bf.FullName -Raw | ConvertFrom-Json } catch { continue }; $bp = if ($t.owner -eq $a -and (Test-KitPid $t.pid $t.start)) { Get-Process -Id ([int]$t.pid) -ErrorAction SilentlyContinue }   # a reused pid is not ours
-        if ($bp) { $t | Add-Member -Force reclaimed $Reason; $t | ConvertTo-Json | Set-Content $bf.FullName; try { $bp.Kill($true) } catch {}; "$a build: stopped $($t.kind) (pid $($t.pid))"; $n++ }
-      }
+      foreach ($x in @(Stop-KitAgentBuilds $a $Reason)) { $x; $n++ }
       if (@($tabs | Where-Object agent -eq $a).Count -and (Test-Path (Join-Path $KitConf.Kit 'skills/pokey/node_modules/puppeteer-core'))) {
         $r = Invoke-KitExe 'node' @('--input-type=module', '-e', "const m = await import('$([Uri]::new((Join-Path $KitConf.Kit 'skills/pokey/browser.mjs')).AbsoluteUri)'); console.log(await m.sweepAll('$($a -replace "'", '')'))") 120
         "$a tabs: $("$($r.out)".Trim()) closed"; $n++
@@ -748,6 +763,16 @@ function Invoke-KitCleanupResources {
 }
 
 # ---- launch: pauses a launch releases; a buildy launch's item tasks (launch -Self, launch -Check)
+# resumeFromRunId keeps the folder: its self record re-bound to this session (health, status, recover read its holder)
+function Update-KitSelfHolder([string]$Dir, [string]$RunId, [string]$Script) {
+  $c = @{}; $leaf = Split-Path "$Script" -Leaf   # no wfDir (budget -Run never ran): its launch -Self line in that run's folder, by args hash (48 h)
+  $mine = { param($s) if ($s.wfDir) { return (Split-Path "$($s.wfDir)" -Leaf) -eq $RunId }; if ((Split-Path "$($s.script)" -Leaf) -ne $leaf -or -not $s.fnv -or ((Get-Date) - [datetime]$s.at).TotalHours -gt 48) { return $false }
+    if (-not $c.ContainsKey('wd')) { $c.wd = @(Get-KitWorkflowDirs | Where-Object Name -eq $RunId) }; $c.wd.Count -and (Resolve-KitRunId ([pscustomobject]@{ selfFile = $s.file; leaf = $leaf; run = $s.run }) $c.wd -FnvOnly) -eq $RunId }
+  foreach ($so in @(Read-KitJsonFiles $Dir 'self-*.json' | Where-Object { -not $_.completed -and (& $mine $_) })) {
+    Invoke-KitLocked $so.file { $x = Get-Content -LiteralPath $so.file -Raw | ConvertFrom-Json -AsHashtable; foreach ($kv in (Get-KitHolder).GetEnumerator()) { $x[$kv.Key] = $kv.Value }; $x.Remove('crashed'); $x.rebound = (Get-Date).ToString('o'); Write-KitState $so.file $x }
+    "re-bound $(Split-Path $so.file -Leaf) to this session"
+  }
+}
 # a (re)launch ends its pause and leaves a '*' pause
 function Clear-KitPauseFor([string]$Run) {
   foreach ($p in @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) })) {
@@ -783,6 +808,8 @@ function Test-KitLaunchTasks($A, [string]$File) {
 }
 
 # ---- pause: pause / pause -Status and the finisher behind them; finished runs closed (bossy.ps1 pause, resume, recover, health)
+# one PAUSE text for the board message and every beat: fast (stopped builds are redone) and safe (no cut git / MR call)
+function Get-KitPauseSteps([string]$Session) { "now: let a running git, push or MR call finish, never cut one; a build, test, env deploy or browser run stops (the kit stopped gated builds: that step is not done); crafty.ps1 checkpoint -Step <last done step> -Next 'redo: <the step you were in>', crafty.ps1 wt commit (WIP, no push), release your leases, then board leave -Session $Session -Status paused (again while it prints PAUSED); return no result" }
 # returns in seconds: record + PAUSE messages + runs marked; waiting for agents, stop-learn and the local-env stop run in the
 # background (-Wait <min> given: inline, as before). An agent stops only at a step boundary: a build or test step takes minutes.
 function Start-KitPause {
@@ -795,7 +822,9 @@ $rec = [ordered]@{ at = (Get-Date).ToString('o'); reason = $Reason; run = $(if (
 Write-KitState $pf $rec   # from now every board beat prints PAUSE
 $mine = { param($x) $All -or $x.run -eq $Run }
 $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and (& $mine $_) -and (Test-KitHolder $_) -ne $false })
-foreach ($b in $live) { Send-BoardMsg 'coordinator' $b.agent "PAUSE ($Reason): at your next step boundary: crafty.ps1 checkpoint, crafty.ps1 wt commit (WIP, no push), release your leases, board leave -Session $($b.session) -Status paused; return no result" }
+foreach ($b in $live) { Send-BoardMsg 'coordinator' $b.agent "PAUSE ($Reason): $(Get-KitPauseSteps $b.session)" }
+# a build or test blocks its agent for minutes: stopped now (queued ones leave the gate), the agent redoes that step after resume
+$stoppedBuilds = @(if ($All) { Stop-KitAgentBuilds '*' "PAUSE ($Reason): redo this step after resume" } else { foreach ($b in $live) { Stop-KitAgentBuilds $b.agent "PAUSE ($Reason): redo this step after resume" @($b.worktrees) } })
 $closed = @(Close-KitFinishedRuns 24)   # after PAUSE went out: agents stop at once
 # live runs, or stopped within 24 h: an older crashed run is not running, resume -All lists it
 $runs = @(Get-StoppedRuns -Hours 24 -All | Where-Object { & $mine $_ })
@@ -807,10 +836,10 @@ foreach ($s in $runs) {
 $rec.agents = @(foreach ($b in $live) { [ordered]@{ agent = $b.agent; run = $b.run; session = $b.session; board = $b.file; confirmed = $false } })
 Invoke-KitLocked $pf { $cur = Get-Content -LiteralPath $pf -Raw | ConvertFrom-Json; if ($cur.state -ne 'resumed') { Write-KitState $pf $rec } }   # a relaunch meanwhile released it
 $closed
-"PAUSE sent to $($live.Count) agent(s)$(if ($live.Count) { " ($(@($live.agent) -join ', '))" }); $($runs.Count) run(s) marked paused$(if ($runs.Count) { ": $(@($runs.run) -join ', ')" })"
+"PAUSE sent to $($live.Count) agent(s)$(if ($live.Count) { " ($(@($live.agent) -join ', '))" }); $($runs.Count) run(s) marked paused$(if ($runs.Count) { ": $(@($runs.run) -join ', ')" }); $($stoppedBuilds.Count) build(s) / test(s) stopped$(if ($stoppedBuilds.Count) { " ($($stoppedBuilds -join '; '))" })"
 if ($PSBoundParameters.ContainsKey('Wait')) { "waiting up to $Wait min for each to leave at a checkpoint"; Complete-KitPause $pf $Wait; return }
 $null = Invoke-KitBackground "pause-finish $(Split-Path $pf -LeafBase)" $KitCmd.orch @('pause', '-Finish', $pf, '-Wait', "$Wait")
-"PAUSING: agents stop at their next step boundary (up to $Wait min; a running build or test finishes first); local env stops after that"
+"PAUSING: agents stop at their next step boundary (up to $Wait min; builds and tests were stopped, a git or MR call finishes first); local env stops after that"
 "check: bossy.ps1 pause -Status (says when it is safe to power off); record: $pf"
 }
 # finished = an end marker, or its last step (the workflow's last phase) answered and none running; the engine writes no marker
@@ -839,12 +868,26 @@ function Close-KitFinishedRuns([int]$Hours = 168) {
 }
 function Get-KitPauseJob([string]$Pf) { $b = Join-Path (Get-KitPath background -Create) (ConvertTo-KitSlug "pause-finish $(Split-Path $Pf -LeafBase)"); [pscustomobject]@{ log = "$b.out"; live = [bool]$(try { $j = Get-Content -LiteralPath "$b.json" -Raw | ConvertFrom-Json; Test-KitPid $j.pid $j.start } catch { $false }) } }
 function Get-KitPauseOpen($Rec) { @($Rec.agents | Where-Object { $e = try { Get-Content -LiteralPath $_.board -Raw | ConvertFrom-Json } catch { $null }; $e -and $e.status -ne 'left' -and (Test-KitHolder $e) -ne $false }) }
+# not confirmed, yet safe to power off (fails closed): a checkpoint since the pause, a worktree, all clean (no uncommitted file, no git
+# operation half done), no gated build, no local-env lease
+function Test-KitPauseSafe($A, $At) {
+  $ck = Get-KitCheckpoint $A.agent "$($A.run)"; if (-not $ck -or $ck.done -or -not $ck.updated -or ($At -and [datetimeoffset]"$($ck.updated)" -lt [datetimeoffset]"$At")) { return $false }
+  $b = try { Get-Content -LiteralPath $A.board -Raw | ConvertFrom-Json } catch { $null }
+  $wts = @(@($ck.worktrees) + @($b.worktrees) | Where-Object { "$_" -match '[\\/]' -and (Test-Path -LiteralPath "$_" -PathType Container) } | Select-Object -Unique)
+  if (-not $wts.Count -or @(Get-KitAgentBuilds $A.agent $wts).Count) { return $false }
+  if (@(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue | Select-String -SimpleMatch -List "`"$($A.agent)`"").Count) { return $false }   # its name in an env lease file
+  foreach ($d in $wts) {
+    $gd = "$(git -C $d rev-parse --absolute-git-dir 2>$null)".Trim()
+    if (@(Get-KitWtState $d).dirty.Count -or ($gd -and @('index.lock', 'rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD' | Where-Object { Test-Path -LiteralPath (Join-Path $gd $_) }).Count)) { return $false }
+  }
+  $true
+}
 # wait for the agents, learn from the stopped runs, stop the local env, state paused; a resume meanwhile wins
 function Complete-KitPause([string]$Pf, [double]$Wait) {
   $rec = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json
   $until = (Get-Date).AddMinutes($Wait)
   $resumed = { (Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json).state -eq 'resumed' }
-  while ($true) { $open = @(Get-KitPauseOpen $rec); if (-not $open.Count -or (Get-Date) -ge $until -or (& $resumed)) { break }; Wait-KitPoll 15 }
+  while ($true) { $open = @(Get-KitPauseOpen $rec); if (-not @($open | Where-Object { -not (Test-KitPauseSafe $_ $rec.at) }).Count -or (Get-Date) -ge $until -or (& $resumed)) { break }; Wait-KitPoll 15 }   # safe unconfirmed agents: no wait
   if (& $resumed) { "pause $Pf was resumed meanwhile: nothing stopped"; return }
   foreach ($s in @($rec.runs)) { Invoke-KitStopLearn ([pscustomobject]@{ run = $s.run; leaf = $s.leaf; runId = $s.runId; file = $s.file; selfFile = $s.selfFile; at = $s.at }) 'pause' }
   foreach ($a in @($rec.agents)) {
@@ -860,8 +903,9 @@ function Complete-KitPause([string]$Pf, [double]$Wait) {
   "PAUSED $(@($rec.agents).Count - $open.Count) of $(@($rec.agents).Count) agent(s) at a checkpoint$(if ($open.Count) { "; not confirmed: $(@($open.agent) -join ', ') (their last checkpoint and worktree hold the state; resume treats them as crashed)" }); $(@($rec.runs).Count) run(s) marked paused$(if (@($rec.runs).Count) { ": $(@($rec.runs.run) -join ', ')" })"
   $hooks
   "record: $Pf"
-  if ($open.Count) { "NOT safe yet: $(@($open.agent) -join ', ') still working; wait (bossy.ps1 pause -Status) or power off anyway = a crash for them (resume starts them at their last checkpoint)" }
-  else { 'Safe to power off: nothing after this needs the network.' }
+  $unsafe = @($open | Where-Object { -not (Test-KitPauseSafe $_ $rec.at) })
+  if ($unsafe.Count) { "NOT safe yet: $(@($unsafe.agent) -join ', ') still working; wait (bossy.ps1 pause -Status) or power off anyway = a crash for them (resume starts them at their last checkpoint)" }
+  else { "Safe to power off: nothing after this needs the network.$(if ($open.Count) { " $(@($open.agent) -join ', '): not confirmed, at a checkpoint with a clean worktree and no build (resume starts there)" })" }
   'Machine stays on: stop the workflow runs and the heartbeat (agents wait in board leave). Back: bossy.ps1 resume -All (or -Run <run>)'
 }
 # the newest open pause: who still works, safe to power off; a finisher that died is finished here (no wait)
@@ -870,10 +914,10 @@ function Show-KitPause {
   if (-not $p) { 'no pause in effect'; return }
   $job = Get-KitPauseJob $p.file
   if ($p.finisher -and (Get-Process -Id $p.finisher -ErrorAction SilentlyContinue)) { $job.live = $true }   # a -Wait pause finishes inline
-  if ($p.state -eq 'pausing' -and -not $job.live) { Complete-KitPause $p.file 0; if (@(Get-KitPauseOpen $p).Count) { exit 1 }; return }
-  $open = @(Get-KitPauseOpen $p)
+  if ($p.state -eq 'pausing' -and -not $job.live) { Complete-KitPause $p.file 0; if (@(Get-KitPauseOpen $p | Where-Object { -not (Test-KitPauseSafe $_ $p.at) }).Count) { exit 1 }; return }
+  $open = @(Get-KitPauseOpen $p); $unsafe = @($open | Where-Object { -not (Test-KitPauseSafe $_ $p.at) })
   "pause $($p.file): $($p.state) since $(([datetimeoffset]$p.at).ToString('HH:mm')) ($($p.reason)); $(@($p.agents).Count - $open.Count) of $(@($p.agents).Count) agent(s) stopped; $(@($p.runs).Count) run(s) paused$(if ($job.live) { "; finishing in the background (log $($job.log))" })"
   @($p.notes) | Where-Object { $_ }
-  if ($open.Count -or $p.state -ne 'paused') { "NOT safe yet: $(if ($open.Count) { "$(@($open.agent) -join ', ') still working" } else { 'local env still stopping' }); check again in a minute"; exit 1 }
-  'Safe to power off: nothing after this needs the network.'
+  if ($unsafe.Count -or $p.state -ne 'paused') { "NOT safe yet: $(if ($unsafe.Count) { "$(@($unsafe.agent) -join ', ') still working" } else { 'local env still stopping' }); check again in a minute"; exit 1 }
+  "Safe to power off: nothing after this needs the network.$(if ($open.Count) { " $(@($open.agent) -join ', '): not confirmed, at a checkpoint with a clean worktree and no build (resume starts there)" })"
 }
