@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L122 seat · L189 api · L354 finalize · L780 retest
+Sections: L23 report · L122 seat · L189 api · L356 finalize · L782 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -251,7 +251,9 @@ if (-not $t) { $t = Get-LaneTarget $cfg $Target }
 if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')$(if ($Target -match '\d$') { ' (a local env lane <target><k>: its base target must point at lane 1 ports; envy.ps1 envs)' })" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $u = @($t.users.$As)
-if (-not $t.users.$As -and $t.auth.type -ne 'none') { throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')" }   # not @(...).Count: @($null).Count is 1
+if (-not $t.users.$As -and $t.auth.type -ne 'none') {   # not @(...).Count: @($null).Count is 1
+  $holders = @($cfg.targets.PSObject.Properties | Where-Object { $_.Name -ne $Target -and $_.Value.users.$As } | ForEach-Object Name)   # names only, never values
+  throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })" }
 if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has no api URL (web-only: use browser.mjs)" }
 $base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }

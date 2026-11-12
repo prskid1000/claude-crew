@@ -32,6 +32,7 @@
   "qa.seatGB": "config default=1.5 unit=GB",
   "supervise.statsDays": "config default=7 unit=d",
   "board.rowHours": "config default=24 unit=h",
+  "track.planHours": "config default=72 unit=h",
   "uiCheck.timeoutSec": "config default=600 unit=s",
   "api.loginHoldMinutes": "config default=30 unit=min"
  },

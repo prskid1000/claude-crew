@@ -1,7 +1,6 @@
 # Templates (crafty)
 
-Copy a section to the scratchpad or run folder, fill the `<...>` parts, drop what does not apply; which step fills which:
-the using skill's Files index.
+Copy a section, fill the `<...>` parts, drop what does not apply; which step fills which: the using skill's Files index.
 
 ## Writing standards (every artefact the kit reads or writes)
 Rules: AGENTS.md "Writing"; every limit is a ceiling. `kitbag.py prose --kind <kind> <file>` measures a text (exit 1 =
@@ -77,8 +76,8 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 `bossy.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos), added to the wave brief:
 ```markdown
 1. Read the bug: crafty.ps1 tracker view <id> + comments (the QA comment lists failed and untested checks).
-2. Reproduce LOCALLY first (envy SKILL.md "Debug locally"): the checks' steps on the local env, logs, DB state, debugger.
-   Steps + evidence -> the testing-goals doc. Not reproducible locally -> say why, reproduce on the test env.
+2. Reproduce LOCALLY first (envy SKILL.md "Debug locally"): the checks' steps, logs, DB state, debugger -> goals doc + AI doc
+   `repro` row. Not reproducible locally -> say why, reproduce on the test env.
 3. Classify each check: real bug (root cause + regression test red before, green after) · stale deploy (name the missing commit)
    · expected (cite the decision) · config/data (what to set where).
 4. Fix, then re-run the same reproduction as the first local check; then the full testing goals.
@@ -131,7 +130,7 @@ Before merge (each human check; Q = a stated quality, measured):
 ## Testing doc (AI)
 The local test record, by devy from `goals.md`: a row per positive, negative, edge and regression case (invalid input, role
 denials, boundaries, empty data, concurrency, nearby features, impact edges), its # cell naming its human check
-(`A1 (T1)`); UI rows at every `qa.matrix` variant (`matrix()`; `Matrix:` line). A failing case is FAIL, never
+(`A1 (T1)`); a bug fix: a `repro` row (merge refuses without); UI rows at every `qa.matrix` variant (`matrix()`; `Matrix:` line). A failing case is FAIL, never
 "pre-existing"; a `qa.notLocal` (stubbed) path is NOT_TESTED_LOCAL, never PASS. Each round fills Result and Evidence (images
 inline, request / response + link), adds its Rounds row: `devtools.py doc --key <task>:testing-ai --label "loop round <n>"`
 (same link; refused: no negative row or Rounds table, a dropped row, a Result without an Evidence link).

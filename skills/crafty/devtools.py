@@ -8,8 +8,9 @@
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
- python -X utf8 devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
-  last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
+ python -X utf8 devtools.py merge <worktree> <iid> [--override "<why>"]   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
+  last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
+  whose AI testing doc has no local reproduction; --override passes, logged)
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
   publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
   (same text: none; human doc: earlier rounds no env run tested show as one "Replaced drafts (not tested): <dates>" line)
@@ -21,8 +22,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L39 config · L73 run · L161 tracker · L353 git host · L436 MR · L597 merge · L846 docs · L1001 publish · L1355 plugins ·
-  L1369 keepboth · L1388 selftest · L1791 CLI
+Sections: L40 config · L74 run · L162 tracker · L365 git host · L448 MR · L612 merge · L889 docs · L1044 publish · L1400 plugins ·
+  L1414 keepboth · L1433 selftest · L1845 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -252,12 +253,23 @@ def task_of_branch(branch):
     return m.group(1) if m else ''
 
 
+def prose_limits(kind):
+    """'<kind>: <format> · limits <limits>' from templates.md "Writing standards" ('' when unknown)."""
+    try:
+        from kitbag import writing_standards
+        s = writing_standards(KIT_DIR)[0].get(kind) or {}
+    except Exception:   # a broken standards table must not block a write that passes
+        return ''
+    return f'{kind}: {s.get("format") or "-"} · limits {s.get("limits") or "-"}' if s else ''
+
+
 def prose_gate(kind, text):
     """prose() before a write: over a limit -> exit 1 before anything is written, unless --prose-ok."""
     found = prose(kind, text)
     if found and not PROSE_OK:
-        raise SystemExit(f'[prose] {kind} refused: {len(found)} finding(s) above; rewrite to the limits (same facts), or pass'
-                         ' --prose-ok "<why>" for a format the brief fixes. Nothing was written.')
+        lim = prose_limits(kind)
+        raise SystemExit(f'[prose] {kind} refused: {len(found)} finding(s) above; rewrite to the limits (same facts){f" ({lim})" if lim else ""},'
+                         ' or pass --prose-ok "<why>" for a format the brief fixes. Nothing was written.')
     return found
 
 
@@ -510,6 +522,9 @@ def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
         print(f'[mr] body is missing {missing} - templates.md "MR body"', file=sys.stderr)
+    for kind in ('mr-title', 'mr-body'):   # the limits first: 29 refusals came from guessing them
+        if lim := prose_limits(kind):
+            print(f'[prose] {lim}', file=sys.stderr)
     prose_gate('mr-title', title)
     prose_gate('mr-body', body_md)
     if _verified_gaps(body_md):
@@ -754,6 +769,33 @@ def auto_merge(worktree, iid, max_wait=90):
         STOP_AT[0] = 0.0
 
 
+def _mr_task(m, proj, iid):
+    """The task of an MR: its branch's tag, else the tracked task that lists it ('' when none)."""
+    return task_of_branch(m.get('source_branch')) or next((t for t, x in (read_tracking().get('tasks') or {}).items() if any(
+        (lambda r: r and r[1] == iid and _same_repo(r[0], proj))(_norm_ref(y)) for y in (x or {}).get('mrs') or [])), '')
+
+
+BUG_FIX = re.compile(r'(?im)^(?:bug)?fix/|^fix(?:\([^)]*\))?!?:|\[bug\]')   # branch fix/..., title fix(...): or [Bug]
+REPRO = re.compile(r'(?i)\brepro(?:duc\w*|s)?\b')
+
+
+def _repro_gap(m, proj, iid):
+    """NOT_MERGED text when a bug fix's AI testing doc holds no local reproduction (a devy merged a [Bug] fix on unit tests only);
+    '' when no bug fix, no task, no stored doc rounds (a linked URL: unknown) or --override."""
+    if not BUG_FIX.search(f"{m.get('source_branch') or ''}\n{m.get('title') or ''}"):
+        return ''
+    tid = _mr_task(m, proj, iid)
+    rounds = [str(r.get('body') or '') for r in (_pub_read(f'{tid}:testing-ai').get('rounds') or [])] if tid else []
+    if not rounds or any(REPRO.search(b) for b in rounds):
+        return ''
+    if OVERRIDE:
+        kitlog('calls', 'repro-override', {'task': tid, 'mr': f'{proj}!{iid}', 'reason': OVERRIDE})
+        return ''
+    return (f'!{iid}: bug fix of task {tid} with no local reproduction in its AI testing doc: reproduce it first (envy SKILL.md "Debug locally"),'
+            f' add a "repro" row (the bug before the fix, the same steps after; not reproducible locally: the row says why),'
+            f' devtools.py doc --key {tid}:testing-ai, merge again; --override "<why>" passes, logged\nNOT_MERGED')
+
+
 def _auto_merge(worktree, iid, max_wait):
     """Merge when green (GitLab merge-when-pipeline-succeeds, GitHub auto-merge), or at once when green already or without CI.
     Waits <= max_wait s with flushed progress (fits a tool timeout). Last line = one merge_word, read back from the host:
@@ -783,8 +825,7 @@ def _auto_merge(worktree, iid, max_wait):
         return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
     body = str(m.get('description') or m.get('body') or '').replace('\r\n', '\n')
     if TASK_LINK.get(TRACKER_TYPE, '\0') in body and not (DOC_LINK.search(body) and AI_LINK.search(body)):   # a task's MR: both docs linked first
-        tid = task_of_branch(m.get('source_branch')) or next((t for t, x in (read_tracking().get('tasks') or {}).items() if any(
-            (lambda r: r and r[1] == iid and _same_repo(r[0], proj))(_norm_ref(y)) for y in (x or {}).get('mrs') or [])), '')
+        tid = _mr_task(m, proj, iid)
         new, nodoc = with_doc_lines(body, tid) if tid else (body, list(DOC_LABEL))
         if nodoc or not isinstance(H('mr.update', title=m.get('title') or '', body=new), dict):   # body fixed here: 4 runs lost merges to it
             return (f'!{iid}: a task MR without "Testing doc: <url>" and "Testing doc (AI): <url>" lines (task {tid or "unknown"}: no published {" / ".join(nodoc) or "doc write"});'
@@ -793,6 +834,8 @@ def _auto_merge(worktree, iid, max_wait):
     if NO_DOC.search(body):   # merged 3x with no doc: testers had nothing to follow (a published doc replaced "none" above)
         return (f'!{iid}: the MR body says "Testing doc: none"; every change gets a human testing doc: write it, devtools.py doc, '
                 f'put its link in the MR body, merge again\nNOT_MERGED')
+    if gap := _repro_gap(m, proj, iid):
+        return gap
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
         return f'CONFLICT: {RESOLVE}\nCONFLICT'
     st = (m.get('head_pipeline') or {}).get('status')
@@ -1141,9 +1184,11 @@ def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', hu
         toks = set(re.split(r'[\s,;_|()]+', ' '.join(re.findall(r'(?im)\bMatrix:(.*)$', ai_md)).lower()))   # values or matrix() tags
         miss = [v for k, v in want if norm(v) not in toks and not (k == 'fontScales' and 'f' + norm(v) in toks)]
         fresh_ui = not prior or any(ui(' | '.join(r)) for r in rows)
-        if miss and fresh_ui:
-            out.append(f'UI cases miss qa.matrix value(s) {", ".join(miss)}: run each UI case per variant (browser.mjs matrix()),'
-                       ' values or tags on a "Matrix:" line')
+        if miss and fresh_ui:   # the cases and the exact line: 9 refusals listed values only
+            cases = [r[0] for r in (rows if prior else rows + earlier) if r[0] and ui(' | '.join(r))]
+            line = ', '.join(('f' if k == 'fontScales' else '') + norm(v) for k, v in want)
+            out.append(f'UI cases miss qa.matrix value(s) {", ".join(miss)} (case(s) {", ".join(cases) or "with screenshots"}): run each'
+                       f' per variant (browser.mjs matrix()), then add this line under the cases table: "Matrix: {line}"')
         elif miss:
             old[f'are UI cases missing qa.matrix value(s) {", ".join(miss)}'] = [r[0] for r in earlier if ui(' | '.join(r))]
     _warn_earlier(where, old)
@@ -1475,7 +1520,14 @@ def selftest():
             rr = refresh_mr_docs('T7', 'github')
         g['read_tracking'] = rt0; rfin = rr == ['o/web!5'] and 'Testing doc (AI): https://d/testing-ai' in ups[0]['body'] and rnone == 'MERGED'
         g['_nodoc'] = 'testing-ai'; calls.clear(); g['_host'] = tb(lb); rn = auto_merge('.', '7'); nm = not merged()
-        wl, miss = with_doc_lines(lb, 'T7'); g.pop('_nodoc'); g['_pub_read'], g['TAG'], g['TRACKER_TYPE'] = pr0, tag0, tt0
+        wl, miss = with_doc_lines(lb, 'T7'); g.pop('_nodoc')
+        g['_pub_read'] = lambda key: {'rounds': [{'body': g['_aib']}]} if key == 'T7:testing-ai' else {}
+        fb = lambda: (lambda f: lambda v, **a: dict(f(v, **a), source_branch='fix/CU-T7-x') if v == 'mr.get' else f(v, **a))(nd('x'))
+        g['_aib'] = '| A1 | regression | s | ok | PASS | [j](https://j) |'; calls.clear(); g['_host'] = fb(); rb = auto_merge('.', '7'); bnm = not merged()
+        g['_aib'] += '\n| A0 | repro | the bug, then the fix | 500, then 200 | PASS | [j](https://j) |'; calls.clear(); g['_host'] = fb()
+        expect('merge: a bug fix (branch fix/) whose AI doc has no repro row: NOT_MERGED, no merge call; with one: MERGED',
+               merge_word(rb) == 'NOT_MERGED' and 'no local reproduction' in rb and bnm and merge_word(auto_merge('.', '7')) == 'MERGED')
+        g['_pub_read'], g['TAG'], g['TRACKER_TYPE'] = pr0, tag0, tt0
         expect(f'merge: a task MR without doc lines (or "none") gets them from the published docs and merges; finish writes them into tracked open MRs; a doc not published: NOT_MERGED naming it ({rf}, {miss})',
                rf == 'MERGED' and rfin and up and '## Links\n- Testing doc: https://d/testing-doc\n- Testing doc (AI): https://d/testing-ai\n' in up[0] and 'pending' not in up[0]
                and merge_word(rn) == 'NOT_MERGED' and 'testing-ai' in rn and nm and miss == ['testing-ai'] and 'Testing doc: https://d/testing-doc' in wl and 'pending' not in wl)
@@ -1572,6 +1624,8 @@ def _publish_selftest(expect, refused):
             long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
                    not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))
+            with contextlib.redirect_stderr(io.StringIO()):
+                g['PROSE_OK'] = ''; refused('prose_gate: the refusal names the kind\'s format and limits (mr-title)', lambda: prose_gate('mr-title', 'x' * 200), 'limits 1l 90ch'); g['PROSE_OK'] = 'selftest'
         h = md_to_html(doc.replace('| | |\n', '| PASS | ![T1: list](https://img/1.png "900") |\n').replace('1. Open the list.', 'Run `tool check -Step test -Tests ALongClassNameSmokeTest`')
                        + '```\n{"a": 1}\n```\n')
         th = re.findall(r'<th style="([^"]*)"><b>([^<]*)</b></th>', h)
@@ -1606,7 +1660,7 @@ def _publish_selftest(expect, refused):
         g['CFG'] = {**CFG, 'qa': {'notLocal': [{'name': 'help service', 'match': r'/help\b'}], 'matrix': {'viewports': ['1280x720', '1920x1080'], 'fontScales': [2]}}}
         expect('case_gaps: a qa.notLocal PASS -> NOT_TESTED_LOCAL; UI evidence needs each qa.matrix value on a "Matrix:" line',
                [x.split(' ')[1] for x in cg([row('A1', 'GET /help', 'PASS'), row('A2', 'GET /help', 'NOT_TESTED_LOCAL: stub'), row('A3', 's', 'PASS', '![a](https://i/a.png)'), 'Matrix: 1280x720, 2\n'])]
-               == ['A1', 'cases'] and '1920x1080' in cg([row('A3', 's', 'PASS', '![a](https://i/a.png)')])[0] and not cg([row('A3', 's', 'PASS', '![a](https://i/a.png)'), 'Matrix: 1280x720, 1920x1080, 2\n']))
+               == ['A1', 'cases'] and all(x in cg([row('A3', 's', 'PASS', '![a](https://i/a.png)')])[0] for x in ('1920x1080', 'case(s) A3', '"Matrix: 1280x720, 1920x1080, f2"')) and not cg([row('A3', 's', 'PASS', '![a](https://i/a.png)'), 'Matrix: 1280x720, 1920x1080, 2\n']))
         g['CFG'] = {**CFG, 'qa': {}}
         hm2 = doc.replace('| T1 | 1. Open the list. | Newest first. | | |\n', '| T1 | 1. Open the list. | Newest first. | | |\n| T2 | 2. Sort. | Oldest first. | | |\n')
         expect('case_gaps: each human check needs an AI row that ran it; a NOT_TESTED_LOCAL row a human check',
@@ -1804,7 +1858,7 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
-    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override') if cmd in ('comment', 'finish', 'mr') else ():
+    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override') if cmd in ('comment', 'finish', 'mr') else ('--override',) if cmd == 'merge' else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
         elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, not "unknown option"

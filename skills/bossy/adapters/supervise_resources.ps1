@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L244 shells · L363 page · L668 usage · L810 release · L849 lines · L874 cleanup ·
-  L910 launch · L988 pause · L1106 sessions
+Sections: L15 builds · L47 supervise · L244 shells · L373 page · L678 usage · L820 release · L859 lines · L884 cleanup ·
+  L920 launch · L998 pause · L1116 sessions
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -281,21 +281,28 @@ function Get-KitAgentShells($Procs) {
     if ($p.Name -match '^(bash|sh|zsh|pwsh|powershell)(\.exe)?$' -and -not $mine[$p.Id] -and $par -and ($par.Name -match '^claude(\.exe)?$' -or ($par.Name -match '^node(\.exe)?$' -and "$($par.CommandLine)" -match '(?i)claude-code|@anthropic-ai[\\/]claude|[\\/]claude(\.exe|\.js|\.mjs)?(\s|"|$)'))) { $p }
   }
 }
-# the transcript whose tool_use ran this command, nearest the shell's start; $null: none
-function Find-KitShellTranscript([string]$Cmd, [datetime]$Created) {
-  $frag = "$(@([regex]::Matches($Cmd, '[^"\\\r\n\t]{8,}') | Sort-Object Length -Descending)[0])"; if (-not $frag) { return $null }
-  $frag = $frag.Substring(0, [math]::Min(120, $frag.Length)); $r = Invoke-KitAdapter transcript claude root
-  if (-not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return $null }
-  $files = @(Get-ChildItem -LiteralPath $r.dir -Recurse -Filter '*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $Created.AddMinutes(-1) } | ForEach-Object FullName)
-  $best = $null
-  foreach ($h in @(if ($files) { Select-String -LiteralPath $files -SimpleMatch -Pattern $frag -ErrorAction SilentlyContinue })) {
-    if ($h.Line -notmatch '"tool_use"') { continue }
-    $o = try { $h.Line | ConvertFrom-Json -Depth 80 } catch { continue }
-    $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' -and "$($_.input.command)".Contains($frag) })[0]; if (-not $u) { continue }
-    $gap = if ($o.timestamp) { [math]::Abs(([datetimeoffset]$o.timestamp - [datetimeoffset]$Created).TotalSeconds) } else { 1e9 }
-    if ($gap -le 120 -and (-not $best -or $gap -lt $best.gap)) { $best = [pscustomobject]@{ file = $h.Path; bg = [bool]$u.input.run_in_background; gap = $gap } }
+# per new shell (key -> cmd, created): the transcript whose tool_use ran it, nearest its start ($null: none). One listing; per file
+# only its last 16 MB (append-only: a new shell's line is near the end), searched with IndexOf (a Select-String per shell over the
+# 90 MB coordinator transcript cost 20 s a sweep)
+function Find-KitShellTranscripts([hashtable]$Want) {
+  $out = @{}; $frags = @{}
+  foreach ($k in @($Want.Keys)) { $f = "$(@([regex]::Matches($Want[$k].cmd, '[^"\\\r\n\t]{8,}') | Sort-Object Length -Descending)[0])"; if ($f) { $frags[$k] = $f.Substring(0, [math]::Min(120, $f.Length)) } }
+  $r = Invoke-KitAdapter transcript claude root; if (-not $frags.Count -or -not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return $out }
+  $from = @($frags.Keys | ForEach-Object { $Want[$_].created } | Sort-Object)[0].AddMinutes(-1)
+  foreach ($file in @(Get-ChildItem -LiteralPath $r.dir -Recurse -Filter '*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $from } | ForEach-Object FullName)) {
+    $text = try { $fs = [IO.File]::Open($file, 'Open', 'Read', 'ReadWrite, Delete'); try { $n = [int][math]::Min($fs.Length, 16MB); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $got = $fs.Read($b, 0, $n); [Text.Encoding]::UTF8.GetString($b, 0, $got) } finally { $fs.Dispose() } } catch { '' }
+    foreach ($k in @($frags.Keys)) {
+      for ($i = $text.IndexOf($frags[$k], [StringComparison]::Ordinal); $i -ge 0; $i = $text.IndexOf($frags[$k], $e, [StringComparison]::Ordinal)) {
+        $s0 = $text.LastIndexOf("`n", $i) + 1; $e = $text.IndexOf("`n", $i); if ($e -lt 0) { $e = $text.Length }; $line = $text.Substring($s0, $e - $s0)
+        if ($line -notmatch '"tool_use"' -or ($line -match '"timestamp":"([^"]+)"' -and [math]::Abs(([datetimeoffset]$Matches[1] - [datetimeoffset]$Want[$k].created).TotalSeconds) -gt 120)) { continue }   # parse only lines near the shell's start
+        $o = try { $line | ConvertFrom-Json -Depth 80 } catch { continue }
+        $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' -and "$($_.input.command)".Contains($frags[$k]) })[0]; if (-not $u) { continue }
+        $gap = if ($o.timestamp) { [math]::Abs(([datetimeoffset]$o.timestamp - [datetimeoffset]$Want[$k].created).TotalSeconds) } else { 1e9 }
+        if ($gap -le 120 -and (-not $out[$k] -or $gap -lt $out[$k].gap)) { $out[$k] = [pscustomobject]@{ file = $file; bg = [bool]$u.input.run_in_background; gap = $gap } }
+      }
+    }
   }
-  $best
+  $out
 }
 # owner: main transcript = coordinator; step finished = journal result; subagent = .meta.json finished (also set while idling on
 # its shell); board entry: finished once left, live while its holder runs
@@ -319,10 +326,13 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
   $stuckMin = [double](Get-KitParam 'supervise.shellStuckMinutes'); $old = if ($State.shells -is [Collections.IDictionary]) { $State.shells } else { @{} }; $new = @{}
   $kids = @{}; foreach ($p in $Procs) { if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.Generic.List[object]]::new() }; $kids[$p.ParentId].Add($p) }
   $board = @(Read-KitJsonFiles (Get-KitPath board)); $rows = [Collections.Generic.List[object]]::new(); $flags = [Collections.Generic.List[object]]::new()
-  foreach ($p in @(Get-KitAgentShells $Procs)) {
-    $made = if ($p.Created) { [datetime]$p.Created } else { $Now }; $age = ($Now - $made).TotalMinutes; $key = "$($p.Id)@$($made.ToString('s'))"
+  $shells = @(Get-KitAgentShells $Procs); $made0 = { param($p) if ($p.Created) { [datetime]$p.Created } else { $Now } }
+  $want = @{}; foreach ($p in $shells) { $m0 = & $made0 $p; $k0 = "$($p.Id)@$($m0.ToString('s'))"; if (-not ($old[$k0] -is [Collections.IDictionary] -and $old[$k0].ContainsKey('tx'))) { $want[$k0] = @{ cmd = (Get-KitShellCommand $p.CommandLine); created = $m0 } } }
+  $found = if ($want.Count) { Find-KitShellTranscripts $want } else { @{} }   # once per shell: the tool_use line is written before the shell starts
+  foreach ($p in $shells) {
+    $made = & $made0 $p; $age = ($Now - $made).TotalMinutes; $key = "$($p.Id)@$($made.ToString('s'))"
     $s = if ($old[$key] -is [Collections.IDictionary]) { $old[$key] } else { @{} }; $new[$key] = $s; if ($s.killed) { continue }; $cmd = Get-KitShellCommand $p.CommandLine
-    if (-not $s.ContainsKey('tx')) { $f = Find-KitShellTranscript $cmd $made; $s.tx = "$($f.file)"; $s.bg = [bool]$f.bg }   # once: the tool_use line is written before the shell starts
+    if (-not $s.ContainsKey('tx')) { $f = $found[$key]; $s.tx = "$($f.file)"; $s.bg = [bool]$f.bg }
     $tree = @{}; $cpu = 0.0; $st = [Collections.Stack]::new(); $st.Push($p)
     while ($st.Count) { $q = $st.Pop(); if ($tree[$q.Id]) { continue }; $tree[$q.Id] = 1; $cpu += [double]$q.Cpu; foreach ($c in @($kids[$q.Id])) { if ($c) { $st.Push($c) } } }
     $flat = $null -ne $p.Cpu -and $null -ne $s.cpu -and [math]::Abs($cpu - [double]$s.cpu) -lt 0.02
@@ -718,7 +728,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
   $tot = { param($r) [long]$r.in + [long]$r.out + [long]$r.cr + [long]$r.cw }
   $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $stuck = [double](Get-KitParam 'supervise.stuckMinutes')
   $runs = [Collections.Generic.List[object]]::new(); $steps = [Collections.Generic.List[object]]::new(); $bg = @{}
-  foreach ($sd in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)) {
+  foreach ($sd in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {   # no age filter: a session folder keeps its creation time while its runs go on for days
     $sub = Join-Path $sd.FullName 'subagents'; if (-not (Test-Path -LiteralPath $sub)) { continue }
     foreach ($w in @(Get-ChildItem -LiteralPath (Join-Path $sub 'workflows') -Directory -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)) {
       $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path -LiteralPath $j)) { continue }

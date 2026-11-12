@@ -9,7 +9,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   program set|get|list -Program <name> [-Key <k>] [-Value <v>]   the coordinator's program state in .state
   param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Usage] [-Json]   agent budget, run cap + spend; -Usage: page usage
-  track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged (add: at once)
+  track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged and every launched area delivered (add: at once; -HoldPromotion '' releases)
     | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists (goody task-rollup)
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
@@ -23,10 +23,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L32 init · L50 board · L230 budget · L259 launch · L492 recover · L578 pause · L589 resume · L652 program · L697 param ·
-  L703 track · L1023 supervise · L1327 report · L1406 audit · L1466 storage · L1676 bugbrief · L1778 cleanup · L1862 learn ·
-  L1892 decide · L2025 health · L2087 retro due · L2097 tidy · L2166 the kit origin's main and goodies · L2182 setup ·
-  L2249 guard-sendmessage
+Sections: L32 init · L50 board · L230 budget · L259 launch · L492 recover · L578 pause · L589 resume · L652 program · L703 param ·
+  L709 track · L1048 supervise · L1352 report · L1431 audit · L1491 storage · L1701 bugbrief · L1803 cleanup · L1887 learn ·
+  L1917 decide · L2050 health · L2112 retro due · L2122 tidy · L2191 the kit origin's main and goodies · L2207 setup ·
+  L2274 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -140,7 +140,7 @@ switch ($Action) {
                       status = 'working'; joined = $joined; beat = $now.ToString('o'); pid = $PID; pidStart = (Get-KitPidStart $PID) } + (Get-KitHolder)
     $bg = Get-KitBudget -Tool $Tool -Model $Model; $me += [ordered]@{ tool = $bg.tool; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; spend = 0 }
     $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { Write-KitState $mf $me }
-    $ho = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.handoffBrief -and -not $_.continuedBy } | Sort-Object { [datetime]$_.beat } -Descending)[0]
+    $ho = @(Get-KitHandoffs 1e6 $tok | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" } | Sort-Object { [datetime]$_.beat } -Descending)[0]
     if ($ho) { Update-BoardEntry $ho.file { param($x) $x | Add-Member -Force NoteProperty continuedBy $tok; $x }; "CONTINUE: the previous $Agent handed off at its budget: read its resume brief $($ho.handoffBrief) first" }
     $ck = Get-KitCheckpoint $Agent $Run
     if ($ck -and -not $ck.done -and $ck.next -ne 'none' -and (-not $Run -or -not $ck.run -or $ck.run -eq $Run)) {
@@ -239,7 +239,7 @@ function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,.
 }
 function Invoke-Budget {
 param([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Plan = '', [string]$Run = '', [switch]$Json, [switch]$Usage)
-if ($Usage) { Show-KitUsage 60 $Json; exit 0 }
+if ($Usage) { Show-KitUsage 180 $Json; exit 0 }   # detached each sweep: a week's backlog (~150 s) in one or two sweeps, then appended lines only
 if ($Run) {
   $sf = @(Read-KitJsonFiles (Get-KitPath launches -Create) 'self-*.json' | Where-Object run -eq $Run | Sort-Object { [datetime]$_.at } -Descending)[0]
   if (-not $sf) { "no launch record for run $Run"; exit 1 }
@@ -668,7 +668,13 @@ if ($Key) { if (-not $p.ContainsKey($Key)) { "program $Program has no key $Key";
 if ($Json -or $p -isnot [string]) { ConvertTo-Json -InputObject $p -Depth 20 } else { $p }
 }
 
-function Get-KitHandoffs([double]$Hours = 48) { @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.handoffBrief -and -not $_.continuedBy -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt $Hours }) }
+# open = no successor: none marked, no later row of that agent (not $Except) in its run, or any run for a one-per-machine agent
+# named after its type (kitty: a fresh one ran as kit-build); area ids (D1) repeat across runs
+function Get-KitHandoffs([double]$Hours = 48, [string]$Except = '') {
+  $boardRows = @(Read-KitJsonFiles (Get-KitPath board))
+  @($boardRows | Where-Object { $ho = $_; $ho.handoffBrief -and -not $ho.continuedBy -and ((Get-Date) - [datetime]$ho.beat).TotalHours -lt $Hours -and
+      -not @($boardRows | Where-Object { $_.agent -eq $ho.agent -and ("$($_.run)" -eq "$($ho.run)" -or $ho.agent -eq $ho.type) -and $_.session -ne $Except -and $_.session -ne $ho.session -and $_.joined -and [datetime]$_.joined -gt [datetime]$ho.beat }).Count })
+}
 function Get-OrphanQaItems([int]$Hours = 48) {
   $live = @(Read-KitJsonFiles (Get-KitPath launches -Create) |
       Where-Object { -not $_.completed -and (Test-KitHolder $_) -ne $false } | ForEach-Object { [string]$(if ($_.runDir) { $_.runDir } else { $_.args.runDir }) } | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf })
@@ -690,7 +696,7 @@ function NormTask($id) {
   $id = "$id".Trim().Trim("'", '"').Trim()
   if ($id -match '\s|!\d+$') { $id = if (($rx = Get-KitTaskTagRx) -and $id -match $rx) { $Matches.id } else { '' } }   # a title -> its tagged id; an MR ref is no task
   if ($KitConf.TrackerTag) { $id = $id -replace "^(?i)$([regex]::Escape($KitConf.TrackerTag))", '' }
-  if ($id -match '^(0+|-+|none|null|undefined|n/?a|tbd|task|id)?$') { return '' }
+  if ($id -match '^(0+|-+|x+|none|null|undefined|n/?a|tbd|todo|task|id|task-?id|placeholder|<[^>]*>|\{[^}]*\})?$') { return '' }   # a brief's placeholder (PLACEHOLDER, <task>) is no id
   $id
 }
 
@@ -721,6 +727,23 @@ function Get-TaskMrBranches([string[]]$Tasks) {
     $m = Invoke-HostApi "projects/$($pp -replace '/', '%2F')/merge_requests/$iid"
     if ($m.target_branch) { [pscustomobject]@{ ref = $ref; repo = $repo; branch = [string]$m.target_branch } }
   }
+}
+# areas a run launched (track.planHours) for a task with no wave report listing it done: a later batch or a budget cut; $Since: released before
+function Get-KitPlannedAreas([string]$TaskId, $Since) {
+  $TaskId = NormTask $TaskId
+  if ($null -eq $script:planRecs) {
+    $script:planRecs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and ((Get-Date) - [datetime]$_.at).TotalHours -lt [double](Get-KitParam 'track.planHours') })
+    $script:planDone = @{}; $planFrom = @($script:planRecs | ForEach-Object { [datetime]$_.at } | Sort-Object)[0]   # waves written since the oldest launch
+    foreach ($wf in @(if ($planFrom) { Get-ChildItem (Get-KitPath waves) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $planFrom } })) {
+      $wr = try { Get-Content -LiteralPath $wf.FullName -Raw | ConvertFrom-Json } catch { $null }
+      foreach ($wa in @(if ($wr.agents) { $wr.agents.PSObject.Properties })) { foreach ($dk in @((@($wa.Value.done) -join ' ') -split '[,\s]+' | Where-Object { $_ })) { $script:planDone["$($wa.Name)|$(NormTask $dk)"] = 1 } }
+    }
+  }
+  @(foreach ($pr in $script:planRecs) {
+      if ($Since -and [datetime]$pr.at -le [datetime]$Since) { continue }
+      foreach ($pa in @($pr.args.agents | Where-Object { $_.id -and $_.items })) {
+        if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"]) { "$($pa.id)" }
+      } }) | Select-Object -Unique
 }
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() } }
 function Invoke-Track {
@@ -767,7 +790,7 @@ function ProducerOpen($proj, $iid) {
 }
 $script:doneFields = 'doneAt', 'liveOn', 'liveCheckedAt', 'qaCovered'
 function Save($o, [switch]$Run) {
-  # keep concurrent writes; -Run: track add owns holdPromotion / onMerged / wave
+  # keep concurrent writes; -Run: track add owns holdPromotion / onMerged / wave / planReleased
   Update-KitTracking {
     param($all)
     $cur = $all.tasks[$o.task]
@@ -777,7 +800,7 @@ function Save($o, [switch]$Run) {
       if ($o.done -and -not $cur.done -and [string]$cur.reopenedAt -ne [string]$o.reopenedAt) { $o.done = $false; $o.reopenedAt = $cur.reopenedAt; foreach ($k in $script:doneFields) { $o.Remove($k) } }
       elseif ($cur.done -and -not $o.done -and [string]$cur.reopenedAt -eq [string]$o.reopenedAt -and -not $newMrs.Count) { $o.done = $true; $o.doneAt = $cur.doneAt }
     }
-    if ($cur -and $Run) { foreach ($k in 'holdPromotion', 'onMerged', 'wave') { if ($cur.ContainsKey($k)) { $o[$k] = $cur[$k] } else { $o.Remove($k) } } }
+    if ($cur -and $Run) { foreach ($k in 'holdPromotion', 'onMerged', 'wave', 'planReleased') { if ($cur.ContainsKey($k)) { $o[$k] = $cur[$k] } else { $o.Remove($k) } } }
     if ($cur) { foreach ($k in 'mrs', 'mergeAfter') { $o[$k] = @(@($o[$k]) + @($cur[$k]) | Where-Object { $_ } | Select-Object -Unique) }; if ($cur.discover) { $o.discover = $true } }
     $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
     $o.mergeAfter = @(@($o.mergeAfter) | Where-Object { $_ } | ForEach-Object { $p = $_ -split '>', 2; if ($p.Count -eq 2) { "$(NormRef $p[0])>$(NormRef $p[1])" } else { $_ } } | Select-Object -Unique)
@@ -852,7 +875,7 @@ switch ($Action) {
     if ($PSBoundParameters.ContainsKey('OnMerged')) { $o.onMerged = @($OnMerged -split '\s*,\s*') }
     if ($Discover) { $o.discover = $true }
     if ($Wave) { $o.wave = $Wave }
-    if ($PSBoundParameters.ContainsKey('HoldPromotion')) { if ($HoldPromotion) { $o.holdPromotion = $HoldPromotion } else { $o.Remove('holdPromotion') } }
+    if ($PSBoundParameters.ContainsKey('HoldPromotion')) { if ($HoldPromotion) { $o.holdPromotion = $HoldPromotion } else { $o.Remove('holdPromotion'); $o.planReleased = (Get-Date).ToString('o') } }   # '' also releases the planned areas launched before now
     if ($MergeAfter) {
       $o.mergeAfter = @(@($o.mergeAfter) + @($MergeAfter -split '\s*,\s*') | Where-Object { $_ } | Select-Object -Unique)
       # it would merge before its producer
@@ -870,8 +893,9 @@ switch ($Action) {
     if (@($s.mrs).Count -and -not @($s.mrs | Where-Object { (MrState $_) -ne 'merged' }).Count) { Invoke-Track run -Task $Task -Detail:$Detail -Quiet:$Quiet }
   }
   'run' {
+    $script:planRecs = $null   # Get-KitPlannedAreas reads launches + waves once per run
     # a later push cancels merge-when-green
-    $am = (Read-KitTracking).automerge
+    $am =(Read-KitTracking).automerge
     if ($am.Count -and -not $Task) {
       $keep = @{}
       foreach ($ref in @($am.Keys)) {
@@ -954,7 +978,8 @@ switch ($Action) {
       $failed = @($states.GetEnumerator() | Where-Object { $_.Value -match 'pipeline (failed|canceled)|closed|conflict' })
       if ($failed) { if (-not $Quiet) { "ATTENTION $($o.task): $(($failed | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ', ')" }; continue }
       if (@($states.Values | Where-Object { $_ -ne 'merged' }).Count) { continue }
-      $held = @(Get-ChildItem $wavesDir -Filter '*.json' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-6) } | ForEach-Object {
+      if ($planned = @(Get-KitPlannedAreas $o.task $o.planReleased)) { Hold "HOLD $($o.task): MRs merged, planned area(s) $($planned -join ', ') not delivered yet (a later batch or wave); dropped for good: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
+      $held =@(Get-ChildItem $wavesDir -Filter '*.json' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-6) } | ForEach-Object {
           $w = Get-Content $_.FullName -Raw | ConvertFrom-Json
           if (@($w.running).Count) { & $KitCmd.orch report -Run $w.run *> $null; $w = Get-Content $_.FullName -Raw | ConvertFrom-Json }
           if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and (ConvertTo-MrRef $_.mr) -in @($o.mrs | ForEach-Object { ($_ -split '/')[-1] }) } } })
@@ -974,7 +999,7 @@ switch ($Action) {
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
       # both docs linked first (3 tasks went without); unread = held
-      if ($todo -contains 'promoted' -and $KitConf.TrackerType -ne 'none' -and (Test-KitTaskDocLink $o.task) -ne $true) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, no testing-doc link (human + AI) or the task is unread: not promoted (devtools.py finish <task> <testing.md> <solution.md> --ai <ai.md>)" }; continue }
+      if ($todo -contains 'promoted' -and $KitConf.TrackerType -ne 'none' -and (Test-KitTaskDocLink $o.task) -ne $true) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, no testing-doc link (human + AI) or the task is unread: not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
       $setFailed = $false
       foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
@@ -1057,7 +1082,8 @@ $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
 $kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.n = $name; Test-KitSweep $kitSweep $name }   # learned cost, starved first; a cut-short section still names its ACT
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
-function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs', 'deploy intest', 'budget -Usage') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest timed out inline each round
+function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run', 'report -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs', 'deploy intest', 'budget -Usage') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest timed out inline each round
+$null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached at the start, outside the budget: a gated one was skipped most sweeps
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params: 3 s, when due (d-20261029173533)
 if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
@@ -1284,7 +1310,6 @@ Phase 'retro'; if (-not $runTotal) {
 }
 foreach ($e in $active | Where-Object { $_.budget -and $_.spend -ge $_.handoff }) { Flag 'WATCH' "$($e.agent) ($($e.run)) past its handoff point: $($e.spend) of $($e.budget) tokens" 'It hands off at its next beat; silent 20 min -> stop it, continue fresh (bossy.ps1 recover).' @{ kind = 'BUDGET'; who = "$($e.agent) ($($e.run))"; problem = "past its handoff point: $($e.spend) of $($e.budget) tokens" } }
 foreach ($h in Get-KitHandoffs 24 | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -ge 15 }) { Flag 'ACT' "HANDOFF $($h.agent) ($($h.run)) $([int]($now - [datetime]$h.beat).TotalMinutes) min ago, no fresh agent yet" "Spawn a fresh $(if ($h.type) { $h.type } else { 'agent' }) (same -Agent, -Run): continue from $($h.handoffBrief)" @{ kind = 'HANDOFF'; who = "$($h.agent) ($($h.run))"; age = "$([int]($now - [datetime]$h.beat).TotalMinutes) min"; problem = 'handed off, no fresh agent yet' } }
-if (Within 'usage') { $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage') }
 foreach ($sf in @(Get-ChildItem (Get-KitPath launches) -Filter 'self-*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-12) } | Sort-Object LastWriteTime -Descending | Select-Object -First 3)) {
   $o = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json } catch { $null }; if (-not $o.cap -or $o.completed -or -not (Within 'run budgets')) { continue }
   $sp = try { @(Invoke-Bounded $KitCmd.orch @('budget', '-Run', $o.run, '-Json')) -join '' | ConvertFrom-Json } catch { $null }

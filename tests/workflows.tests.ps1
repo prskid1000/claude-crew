@@ -11,7 +11,9 @@ $wfd = Join-Path $src 'workflows/buildy.js'
 $jsd = @'
 const lt = (status, extra = {}) => ({ status, env: 'shop r1', rounds: 3, failing: status === 'PASS' ? [] : ['G1 still 500'], goalsDoc: 'g.md', ...extra })
 const rep = (status, extra = {}) => _rep(lt(status), extra)
-const mk = (envfix) => _mock((prompt, o) => {
+const mk = (envfix, gap) => _mock((prompt, o) => {
+ if (/^build:/.test(o.label) && gap) return rep('FAIL', { localTest: lt('FAIL', { envGap: gap === 'gap' }) })
+ if (/^local-strong:/.test(o.label) && gap) return rep('FAIL')
  if (/^build:/.test(o.label)) return envfix ? rep('FAIL', { done: [], needsEnvFix: [{ item: 'A1', envFixId: 'e-20260101000000-x1', need: 'refresh the release' }] }) : rep('BLOCKED', { localTest: lt('BLOCKED', { blockedReason: 'local DB missing a table' }) })
  if (/^local:/.test(o.label)) return rep('FAIL')
  if (/^envfix:/.test(o.label)) return { ok: true, output: 'ANSWERED e-20260101000000-x1: done: refreshed r2' }
@@ -20,8 +22,11 @@ const mk = (envfix) => _mock((prompt, o) => {
  if (/^ship:/.test(o.label)) return rep('PASS', _merged(1))
 }, '[]')
 const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], ..._kl }
-const a = mk(false), b = mk(true)
-run(args, a.agent, _n, _n, pipeline).then((oa) => run(args, b.agent, _n, _n, pipeline).then((ob) => {
+const a = mk(false), b = mk(true), c = mk(false, 'gap'), d = mk(false, 'fail')
+run(args, c.agent, _n, _n, pipeline).then((oc) => run(args, d.agent, _n, _n, pipeline).then((od) => {
+ const lb = (m, l) => m.calls.some((x) => x.label === l)
+ console.log(`env-gap:${!c.calls.some((x) => /^local/.test(x.label)) && lb(c, 'review:X1') && lb(c, 'ship:X1') && !oc.blocked.length && lb(d, 'local-strong:X1') && !lb(d, 'ship:X1') && od.blocked.length === 1}`)
+})).then(() => run(args, a.agent, _n, _n, pipeline)).then((oa) => run(args, b.agent, _n, _n, pipeline).then((ob) => {
  const s = a.calls.find((c) => c.label === 'local-strong:X1')
  console.log(`blocked-is-fail:${a.calls.some((c) => c.label === 'local:X1') && !oa.blocked.length}`)
  console.log(`strong-round:${!!s && s.model === 'opus' && /STRONGER FIX ROUND/.test(s.prompt) && a.calls.some((c) => c.label === 'ship:X1')}`)
@@ -29,7 +34,7 @@ run(args, a.agent, _n, _n, pipeline).then((oa) => run(args, b.agent, _n, _n, pip
  console.log(`flow-text:${/decide ask -Kind envfix/.test(a.calls.find((c) => c.label === 'build:X1').prompt) && /LOCAL LOOP until 0 open bugs/.test(a.calls.find((c) => c.label === 'build:X1').prompt) && /never an earlier round removed/.test(a.calls.find((c) => c.label === 'build:X1').prompt)}`)
 })).catch(_err)
 '@
-Expect-Each (Invoke-Js dw-local $jsd $wfd) 'buildy local loop: #' 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text' -Show 5
+Expect-Each (Invoke-Js dw-local $jsd $wfd) 'buildy local loop: # (env-gap: FAIL only for env gaps is reviewed and shipped, a real FAIL blocks)' 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text', 'env-gap' -Show 5
 # buildy: blocking -> fix -> ONE re-review; a deferred item holds promotion, an owner-deferred one not
 $jsr = @'
 const lt = { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' }

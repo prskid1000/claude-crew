@@ -25,14 +25,18 @@ $swBossy = Join-Path $k 'skills/bossy/bossy.ps1'; $swCrafty = Join-Path $k 'skil
 $env:GIT_COMMITTER_DATE = (Get-Date).AddDays(-2).ToString('o'); git init -q --bare -b main $so; git clone -q $so $sr 2>$null; 'a' | Set-Content "$sr/a.txt"; Save-GitRepo $sr init; git -C $sr push -q origin main 2>$null
 foreach ($b in 'f/merged', 'staging/x', 'f/open', 'f/local') { git -C $sr branch $b }
 foreach ($b in 'f/open', 'f/local') { git -C $sr switch -q $b; $b | Set-Content "$sr/b.txt"; Save-GitRepo $sr $b }; git -C $sr push -q -u origin f/open 2>$null; git -C $sr switch -q main; git -C $sr branch mr7 f/open
-git -C $sr worktree add -q -b f/wt "$sw/wt-srepo" 2>$null; Remove-Item Env:GIT_COMMITTER_DATE
+git -C $sr worktree add -q -b f/wt "$sw/wt-srepo" 2>$null; git -C $sr worktree add -q -b f/wt2 "$sw/wt2-srepo" 2>$null; Remove-Item Env:GIT_COMMITTER_DATE
+# wt2: a live board row without claims whose agent checkpointed it since joining (a kitty after its push) holds it
+$heldRow = Join-Path (TkPath $k board -Create) 'kt-held.json'; & $J @{ agent = 'kt'; session = 'kt-held'; run = 'kr'; worktrees = @(); status = 'working'; joined = (Get-Date).AddHours(-1).ToString('o'); beat = (Get-Date).ToString('o') } $heldRow
+& $J @{ agent = 'kt'; run = 'kr'; steps = @(@{ step = '8'; dir = "$sw\wt2-srepo"; at = (Get-Date).ToString('o') }) } (& { . (Lib); Get-KitCheckpointFile kt kr -Write })
 $tgt = Join-Path (Kd) 'shared'; New-Item -ItemType Directory -Force "$tgt", "$sw/skel-srepo/sub", "$sw/note-srepo" | Out-Null; 'keep' | Set-Content "$tgt/f.txt"; 'mine' | Set-Content "$sw/note-srepo/n.txt"
 $null = New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path "$sw/skel-srepo/sub/node_modules" -Value $tgt
 foreach ($f in Get-ChildItem $sw -Recurse -Force -Attributes !ReparsePoint) { $f.LastWriteTime = (Get-Date).AddDays(-1) }
 $swOut = pwsh @np $swBossy cleanup -WorktreesOnly -WorktreeRoot $sw -Detail 2>&1 | Out-String; $swBr = @(git -C $sr for-each-ref --format='%(refname:short)' refs/heads) -join ','
-$swRm = @(1, 2 | ForEach-Object { "$(pwsh @np $swCrafty wt remove -Dir "$sw/wt-srepo" -Root $sw 2>&1) rc=$LASTEXITCODE" })
-Expect "sweep: f/merged, mr7, worktree wt-srepo + f/wt gone; main / staging/x / f/open / f/local kept; skeleton gone, link target kept; note-srepo kept; repo-sweep counts; wt remove after: already gone, exit 0 ($swBr | $($swRm -join ' | '))" ($swBr -eq 'f/local,f/open,main,staging/x' -and -not (Test-Path "$sw/skel-srepo") -and (Test-Path "$tgt/f.txt") -and (Test-Path "$sw/note-srepo/n.txt") -and
-  $swOut -match 'f/local in srepo: 1 commit\(s\) on no remote' -and $swOut -match 'open: origin/f/open not merged' -and (Get-Content -LiteralPath (TkPath $k repo-sweep) -Raw | ConvertFrom-Json).repos[0].branches -eq 4 -and
+$swRm = @(1, 2 | ForEach-Object { "$(pwsh @np $swCrafty wt remove -Dir "$sw/wt-srepo" -Root $sw 2>&1) rc=$LASTEXITCODE" }); Remove-Item -LiteralPath $heldRow
+Expect "sweep: f/merged, mr7, worktree wt-srepo + f/wt gone; main / staging/x / f/open / f/local kept; wt2 a board agent checkpointed kept; skeleton gone, link target kept; note-srepo kept; repo-sweep counts; wt remove after: already gone, exit 0 ($swBr | $($swRm -join ' | '))" ($swBr -eq 'f/local,f/open,f/wt2,main,staging/x' -and -not (Test-Path "$sw/skel-srepo") -and (Test-Path "$tgt/f.txt") -and (Test-Path "$sw/note-srepo/n.txt") -and
+  (Test-Path "$sw/wt2-srepo") -and $swOut -match 'wt2-srepo: held by a board agent' -and
+  $swOut -match 'f/local in srepo: 1 commit\(s\) on no remote' -and $swOut -match 'open: origin/f/open not merged' -and (Get-Content -LiteralPath (TkPath $k repo-sweep) -Raw | ConvertFrom-Json).repos[0].branches -eq 5 -and
   $swOut -match 'worktree: merged' -and @($swRm -match 'already gone.*rc=0$').Count -eq 2)
 # post-rewrite runs post-merge after a rebase (pull --rebase), not after an amend
 $hookRepo = Join-Path (Kd) 'hookrepo'; $hookDir = Join-Path (Kd) 'hookdir'; New-Item -ItemType Directory -Force $hookDir | Out-Null
@@ -122,6 +126,7 @@ $t0 = (Get-Date).Date.AddMinutes(1).ToUniversalTime(); $iso = { param($m) $t0.Ad
 [IO.File]::WriteAllText("$uw/agent-a2.jsonl", (& $um 'msg_9' 1, 1, 0, 0 (& $iso 12)) + "`n"); [IO.File]::WriteAllText("$ub/agent-b1.jsonl", (& $um 'msg_7' 0, 7, 0, 0 (& $iso 5)) + "`n")
 '{"agentType":"devy","model":"sonnet"}' | Set-Content "$uw/agent-a1.meta.json"; '{"agentType":"revy"}' | Set-Content "$uw/agent-a2.meta.json"; '{"agentType":"revy","description":"review x"}' | Set-Content "$ub/agent-b1.meta.json"
 (@{ type = 'started'; agentId = 'a1'; label = 'build:X1' }, @{ type = 'result'; agentId = 'a1'; result = @{ summary = 'ok'; mrs = @(@{ url = 'u/1'; merged = $true }) } }, @{ type = 'started'; agentId = 'a2'; label = 'review:X1' }, @{ type = 'result'; agentId = 'a2'; result = @{ error = 'boom' } } | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 6 }) | Set-Content "$uw/journal.jsonl"
+(Get-Item "$ux/s1").LastWriteTime = (Get-Date).AddDays(-10)   # a coordinator session started 10 days ago, its runs today (the page showed 0)
 $uo = Invoke-PsTest usage @'
 $null = . $args[0] 6>$null; $env:KIT_TRANSCRIPTS = $args[1]; $a = Get-KitUsage -Seconds 30
 Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Raw).Trim() -replace 'msg_9', 'msg_8') -NoNewline; [IO.File]::AppendAllText($args[2], "`n{`"type`":`"assistant`",`"message`":{`"usage`"")
@@ -130,7 +135,7 @@ $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object 
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } }); "$($h -match 'Tokens today') $($h -match "class='ru f'") $($h -match 'Agents outside workflows')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")
-Expect "usage: dedupe by message id, appended lines, partial line waits; run, step, outcomes, background, cost, page ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.002358|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True')
+Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; run, step, outcomes, background, cost, page ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.002358|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True')
 # testy: envy / phoney calls guarded (goodies): a missing one prints the goody line; the prompt names goody sync
 $js3b = @'
 const { calls, agent } = _mock((prompt, o) => {

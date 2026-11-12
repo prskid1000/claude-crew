@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L929 check · L1185 pipes · L1235 guard · L1992 dir ·
-  L2002 checkpoint · L2027 prior · L2065 tracker · L2145 host
+Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L933 check · L1189 pipes · L1239 guard · L1996 dir ·
+  L2006 checkpoint · L2031 prior · L2069 tracker · L2149 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -108,7 +108,11 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
   $act = { param($b, $why, $path) [void]$actions.Add([pscustomobject]@{ bytes = [long]$b; why = $why; path = $path }) }; $keep = { param($what, $why) [void]$kept.Add("$what`: $why") }
   $size = { param($p) [long](Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
   $cat = { param($w) $w -replace '^(upstream) \S+ (gone).*', '$1 $2, tip on the host' -replace ' \(.*$' -replace '^merged into \S+', 'merged' }   # one action group per reason
-  $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') } | ForEach-Object { $_.worktrees } | Where-Object { "$_" -match '^([A-Za-z]:)?[\\/]' } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
+  # a live row's claims + the worktrees its agent checkpointed since it joined (a kitty's own worktree went after its push)
+  $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') } | ForEach-Object {
+      $liveRow = $_; $liveRow.worktrees
+      if ($liveRow.agent -and $liveRow.joined) { @((Read-KitState (Get-KitCheckpointFile $liveRow.agent "$($liveRow.run)")).steps | Where-Object { $_.dir -and $_.at -and [datetime]$_.at -ge [datetime]$liveRow.joined } | ForEach-Object { $_.dir }) }
+    } | Where-Object { "$_" -match '^([A-Za-z]:)?[\\/]' } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
   $cmdLines = @(Get-SysProcs | Where-Object { $_.Id -ne $PID -and $_.CommandLine } | ForEach-Object { $_.CommandLine.Replace('/', '\').ToLower() })   # an editor, build or shell in the folder
   $heldBy = { param($p) $l = $p.ToLower(); if ($l -in $claimed) { 'a board agent' } elseif (@($cmdLines | Where-Object { $_.Contains($l) }).Count) { 'a running process' } }
   $ctx = [ordered]@{}; $reg = @{}

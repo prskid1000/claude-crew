@@ -115,7 +115,7 @@ $KitConf.TrackerType = 'fake'; $global:tdesc = 'Testing doc (human): https://d/h
 $null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invoke-Track run | Out-String; $s0 = @($global:sets)
 $global:tdesc += "`nTesting doc (AI): https://d/g"; $null = Invoke-Track run; $unk = & { function Get-TrackerTask { throw 'down' }; Test-KitTaskDocLink t9 }
 $global:tdesc = "**Testing doc (human):**`n`n**Testing doc (AI):** [open](https://d/g)"; $bl0 = Test-KitTaskDocLink t9; $global:tdesc = $global:tdesc -replace '(human\):\*\*)', '$1 [open](https://d/h)'; $bl1 = Test-KitTaskDocLink t9
-"nodoc:$($nd -match 'ATTENTION t9: MRs merged, no testing-doc link' -and -not $s0.Count -and $global:sets -contains 't9=promoted' -and $null -eq $unk -and -not $bl0 -and $bl1)"
+"nodoc:$($nd -match 'ATTENTION t9: MRs merged, no testing-doc link.*finish t9 .*; MRs \S*web!5' -and -not $s0.Count -and $global:sets -contains 't9=promoted' -and $null -eq $unk -and -not $bl0 -and $bl1)"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
 Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; nodoc: promoted only with both doc links, the human one alone held)' @('skip', 'once', 'hold', 'throttle', 'keep', 'nodoc') 8

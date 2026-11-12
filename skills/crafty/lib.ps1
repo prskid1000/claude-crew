@@ -1234,8 +1234,8 @@ function Get-KitFlagCells($f) {
 }
 # a flag's identity across rounds: counts, times and sizes vary
 function Get-KitFlagKey([string]$What) { $k = (($What.ToLower() -replace '\b\d+\b', '#') -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
-# -Ack text as pasted from the -Brief table: cells add spaces after - / (word wrap), escape |, end in …; counts vary
-function ConvertTo-KitAckText([string]$Text) { ($Text.ToLower() -replace '\b\d+\b', '#') -replace '[\s\\|…''"`]', '' }
+# -Ack text as pasted from the -Brief table: cells add spaces after - / (word wrap), escape |, end in …, join with ·; counts vary
+function ConvertTo-KitAckText([string]$Text) { ($Text.ToLower() -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
 # an ack matches the flag's whole line or any one cell
 function Test-KitAcked($Flag, [string[]]$Keys) {
   $c = Get-KitFlagCells $Flag; $w = ConvertTo-KitAckText "$($Flag.what)"; $cells = ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"

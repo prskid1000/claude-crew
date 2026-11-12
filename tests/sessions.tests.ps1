@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 sessions.tests.ps1: several coordinators on one machine (adapters/supervise_resources.ps1 "sessions"): run owners for pause /
-resume / recover (-Everyone), a stepped-aside supervise prints its own runs' flags, task claims at launch, the step-age HANDOFF.
+resume / recover (-Everyone), a stepped-aside supervise prints its own runs' flags, task claims at launch, the step-age HANDOFF;
+handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints.
 Usage: pwsh -NoProfile -File <kit>/tests/sessions.tests.ps1 (or tests/kit-tests.ps1 -Area sessions).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -46,6 +47,44 @@ try {
   $x = Read-Json $sf; $x.joined = (Get-Date).AddHours(-3).ToString('o'); & $J $x $sf; $h0 = Px $O board beat -Session $ss | Out-String
   $cp = & { . (Lib); Get-KitCheckpointFile S1 sr -Write }; $hb = foreach ($c in @(-3, $false), @(-3, $true), @(0, $false)) { & $J @{ agent = 'S1'; run = 'sr'; next = 'test'; done = $c[1]; updated = (Get-Date).AddHours($c[0]).ToString('o') } $cp; Px $O board beat -Session $ss | Out-String }
   Expect 'board beat: a step past budget.stepHours -> HANDOFF; none without a checkpoint, a done one or after a newer one' ($hb[0] -match 'HANDOFF: one step running 3\.0 h >= budget\.stepHours 2: write a resume brief' -and "$h0$($hb[1])$($hb[2])" -notmatch 'HANDOFF')
+  # a handoff's successor = a later row of that agent, any run (a fresh kitty ran as kit-build): no HANDOFF flag, no stale CONTINUE
+  foreach ($hr in @('HK', 'HK'), @('D9', 'devy')) { & $J @{ agent = $hr[0]; type = $hr[1]; session = "$($hr[0])-a"; run = 'r1'; status = 'left'; handoffBrief = 'C:/b/h.md'; joined = (Get-Date).AddHours(-2).ToString('o'); beat = (Get-Date).AddMinutes(-30).ToString('o') } (Join-Path $bd "$($hr[0])-a.json") }
+  $hoCount = { (@(& { . $O; Get-KitHandoffs 24 }).agent | Where-Object { $_ -in 'HK', 'D9' } | Sort-Object) -join ',' }
+  $ho0 = & $hoCount; foreach ($ha in 'HK', 'D9') { $null = Px $O board join -Agent $ha -Run r2 }; $ho1 = & $hoCount; $hoJoin = Px $O board join -Agent HK -Run r1 | Out-String
+  $hoAck = & { . (Lib); Test-KitAcked ([pscustomobject]@{ what = 'HANDOFF HK (r1) 40 min ago, no fresh agent yet'; kind = 'HANDOFF'; who = 'HK (r1)'; problem = 'handed off, no fresh agent yet' }) @('HANDOFF · HK (r1) · handed off, no fresh agent yet') }
+  Expect "handoff: a one-per-machine agent (named after its type) is continued by its row in any run, an area id (D9) only in its run; no stale CONTINUE; an -Ack pasted from the -Brief cells (·) matches ($ho0 / $ho1)" ($ho0 -eq 'D9,HK' -and $ho1 -eq 'D9' -and $hoJoin -notmatch 'CONTINUE' -and $hoAck)
+  $ntOut = & { . $O; $KitConf.TrackerTag = 'CU-'; @('PLACEHOLDER', 'CU-PLACEHOLDER', '<task>', 'abc123x') | ForEach-Object { "[$(NormTask $_)]" } }
+  Expect "track: a brief's placeholder task id is no id ($($ntOut -join ''))" (($ntOut -join '') -eq '[][][][abc123x]')
+  # pokey api: an unknown user names the target that holds it (names only)
+  $tlf = Join-Path $k 'skills/pokey/targets.local.json'; & $J @{ default = 'ta'; targets = @{ ta = @{ api = 'http://127.0.0.1:9'; users = @{ admin = @('u1', 'p1') } }; tb = @{ api = 'http://127.0.0.1:9'; users = @{ sa = @('u2', 'p2') } } } } $tlf
+  $pu = Invoke-TestScript (Join-Path $k 'skills/pokey/pokey.ps1') api -Target ta -As sa -Path /x; Remove-Item -LiteralPath $tlf
+  Expect 'pokey api: an unknown user names the target holding it, never a value' ($pu.out -match "No user 'sa' in target ta\. Known: admin\. 'sa' is in target\(s\) tb: -Target tb -As sa" -and $pu.out -notmatch 'u2|p2')
+  # resume -MaxSeconds 0: partial, the pause kept
+  $env:KIT_OFFLINE = '0'; $rpz = Px $O resume -Run mr -MaxSeconds 0 | Out-String; Remove-Item Env:KIT_OFFLINE
+  Expect 'resume -MaxSeconds: out of time = partial with the runs left, their pause kept' ($rpz -match 'partial: time budget \(0 s\) used; 1 run\(s\) not resumed: mr' -and @(Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | ForEach-Object { Read-Json $_.FullName } | Where-Object { $_.run -eq '*' -and $_.state -ne 'resumed' }).Count)
+  $planTest = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+$global:sets = @(); $global:mrReads = 0
+function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { $global:mrReads++; [pscustomobject]@{ state = 'merged' } }
+function Get-TrackerTask($id) { [pscustomobject]@{ status = 'review'; subtasks = @() } }
+function Set-TrackerStatus($id, $s) { $global:sets += "$id=$s" }
+function Set-TrackerKitComment { }; function Get-TrackerComments { }; function Add-TrackerComment { }; function Start-Process { }
+@{ script = 'buildy.js'; run = 'pl'; at = (Get-Date).ToString('o'); args = @{ agents = @(@{ id = 'P1'; items = 'tpl1' }, @{ id = 'P2'; items = 'tpl1 F2' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path (Get-KitPath launches -Create) 'self-buildy-pl-1.json')
+@{ run = 'wf_pl'; agents = @{ P1 = @{ done = @('tpl1') } } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path (Get-KitPath waves -Create) 'wf_pl.json')
+$null = Invoke-Track add -Task tpl1 -Mrs 'g/web!3'; $h1 = Invoke-Track run -Detail | Out-String; $s1 = @($global:sets)
+$null = Invoke-Track add -Task tpl1 -HoldPromotion ''; $null = Invoke-Track run -Detail
+"plan:$($h1 -match 'HOLD tpl1: MRs merged, planned area\(s\) P2 not delivered' -and -not ($s1 -match 'tpl1=') -and $global:sets -contains 'tpl1=promoted')"
+$global:mrReads = 0; foreach ($n in 1, 2) { $null = Test-KitStepEvidence @{ evidence = 'g/web!4' } }; "mrread:$($global:mrReads -eq 1)"
+$pf = Join-Path (Get-KitPath pauses -Create) 'pause-fin.json'; @{ at = (Get-Date).ToString('o'); run = '*'; state = 'pausing'; agents = @(); runs = @(); released = @() } | ConvertTo-Json | Set-Content $pf
+function Invoke-KitPauseLateResume { $j = Get-Content $Pf -Raw | ConvertFrom-Json; $j.released = @('late'); $j | ConvertTo-Json | Set-Content $Pf }   # a resume -Run late meanwhile
+$null = Complete-KitPause $pf 0; $fin = Get-Content $pf -Raw | ConvertFrom-Json; "fin:$($fin.state -eq 'paused' -and @($fin.released) -contains 'late')"
+'@
+  $planRes = Invoke-PsTest 'plan-test' $planTest @($O)
+  $null = Px $O supervise -Brief -Takeover 2>$null; $usageJob = Join-Path (TkPath $k background) 'bossy.ps1-budget-usage.json'
+  Expect 'supervise: every sweep starts the usage refresh as a detached job, outside the section budget' (Test-Path -LiteralPath $usageJob)
+  Expect-Each $planRes 'sessions: # (plan: launched areas no wave delivered hold promotion, HoldPromotion '''' releases; mrread: one MR read per resume; fin: the pause finisher keeps a released run)' @('plan', 'mrread', 'fin') 8
 } finally { $fp.Kill(); $mp.Kill(); Remove-Item Env:KIT_HOLDER_PID }
 Remove-TestKit $k
 Complete-Tests
