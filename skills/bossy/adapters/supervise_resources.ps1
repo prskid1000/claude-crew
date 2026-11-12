@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L244 shells · L373 page · L678 usage · L820 release · L859 lines · L884 cleanup ·
-  L920 launch · L998 pause · L1116 sessions
+Sections: L15 builds · L47 supervise · L244 shells · L373 page · L684 usage · L827 release · L866 lines · L891 cleanup ·
+  L927 launch · L1005 pause · L1123 sessions
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -658,6 +658,12 @@ function Get-KitSupervisePageCss {
   # Usage: fixed-height scroll boxes (sticky header), runs collapsed to one line, the chart's past days slate
   'h4{font-size:11.5px;font-weight:600;color:var(--mt);margin:14px 0 6px}.sy{max-height:clamp(200px,42dvh,440px);overflow:auto}.sy>.tw{overflow:visible}.sy th{position:sticky;top:0;z-index:1;background:var(--sf)}.sy td{white-space:nowrap}.sy td:first-child{white-space:normal}td{font-variant-numeric:tabular-nums}.hist .w0{fill:var(--slate)}' +
   '.ru{border:1px solid var(--ln);border-radius:10px;margin:0 0 6px}.ru>summary{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:7px 10px;background:var(--sf2);border-radius:10px;font-size:12.5px;cursor:pointer}.ru[open]>summary{border-radius:10px 10px 0 0}.ru>summary .bar{margin:0}.ru>.sy{padding:0 4px 4px}' +
+  # usage cards: auto-fit grids fill the row, equal height, long tables scroll inside; numbers right-aligned (desktop)
+  '.ug{display:grid;gap:12px;margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,var(--umin,380px)),1fr));container-type:inline-size}.ug.u2{--umin:440px}.ucs{display:flex;flex-direction:column;gap:12px;min-width:0}.ucs>.uc:last-child{flex:1}.uc{min-width:0;padding:10px 12px}.us{margin-top:12px}.uc>h4{margin:0 0 6px}' +
+  '@container (min-width:772px) and (max-width:1163px){.ucs{grid-column:1/-1;flex-direction:row}.ucs>.uc{flex:1}}' +   # 2 tracks: the model + chart column takes a full row, side by side
+  '.uk{container-type:inline-size}@container (min-width:560px) and (max-width:959px){.uk>.stats{grid-template-columns:repeat(3,minmax(0,1fr))}}' +   # 6 KPI tiles: 6 or 3 across, never 5 + 1
+  '.uc .sy{max-height:clamp(200px,36dvh,360px)}.uc .tw>table:not(.ag){min-width:0}.uc :is(th,td){padding:5px 4px}.uc td{overflow-wrap:normal}.ut td:first-child,.us td:first-child{overflow-wrap:anywhere}.uc .sy td{white-space:normal}.ua td:first-child{white-space:nowrap}' +
+  '@media(min-width:641px){.ua :is(th,td):not(:first-child),.ut :is(th,td):nth-child(n+4),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.ru :is(th,td):nth-child(n+4):nth-child(-n+7){text-align:right}}' +
   '.tw>table:not(.ag){min-width:520px}@media(max-width:640px){.wrap{padding:12px}.stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.st{padding:10px}header.top{padding:8px 12px;position:static}.hs{display:none}.tb{width:100%}input[type=search]{flex:1;width:auto}.gr{grid-template-columns:96px minmax(0,1fr)}.gx{margin-left:106px}.gx span:nth-child(even){display:none}.tile .v{font-size:20px}.gauges{grid-template-columns:repeat(3,minmax(0,1fr))}' +
   # phone: a table row = a card, one "header value" line per cell (7 columns never fit 390 px)
   '.tw>table:not(.ag){min-width:0}.tw>table:not(.ag) tr:first-child{display:none}.tw>table:not(.ag),.tw>table:not(.ag) :is(tbody,tr,td){display:block;width:auto}.tw>table:not(.ag) tr{border-bottom:1px solid var(--ln);padding:6px 0}' +
@@ -792,13 +798,13 @@ function Format-KitUsageHtml($U) {
   $pct = { param($a, $b) if ([double]$b) { [math]::Round(100 * [double]$a / [double]$b) } }
   $vs = { param($cur, $base) if ($null -eq $cur -or -not [double]$base) { return '' }; $p = [math]::Round(100 * ([double]$cur - [double]$base) / [double]$base)   # vs the 7-day average
     "<span class='tr $(if ($p -gt 0) { 'bad' } elseif ($p -lt 0) { 'good' } else { 'eq' })'>$(if ($p -gt 0) { '▲' } elseif ($p -lt 0) { '▼' } else { '=' }) $([math]::Abs($p))%</span>" }
-  $kpis = & $grid stats 170px @(
+  $kpis = & $grid stats 150px @(
     (& $card 'Tokens today' "$(& $tk $td.tok)$(& $vs $td.tok (& $avg 'tok'))" "vs 7-day avg $(& $tk (& $avg 'tok'))" "7 days $(& $tk (& $sum 'tok'))"),
     (& $card 'Est. cost today' "$(& $usd $td.cost)$(& $vs $td.cost (& $avg 'cost'))" "vs 7-day avg $(& $usd (& $avg 'cost')) (budget.prices)" "7 days $(& $usd (& $sum 'cost'))"),
     (& $card 'Tokens per merged MR' "$(if ($merged) { & $tk ($wfTok / $merged) } else { '—' })" "$merged MR(s) merged · $items item(s): $(if ($items) { & $tk ($wfTok / $items) } else { '—' }) per item" '7 days, workflow runs'),
     (& $card 'Review + fix share' "$(if ($wfTok) { & $n1 (& $pct $loop $wfTok) } else { '—' })<small>%</small>" "$(& $tk $loop) of $(& $tk $wfTok) workflow tokens" '7 days' $(if ($wfTok -and $loop / $wfTok -gt 0.5) { 'warn' })),
     (& $card 'Steps empty · failed · stuck' "$(& $n1 (& $pct $rt.empty $rt.n))<small>%</small> · $(& $n1 (& $pct $rt.fail $rt.n))<small>%</small> · $([int]$rt.stuck)" "$($rt.empty) empty, $($rt.fail) failed of $($rt.n) ended steps" '7 days' $(if ($rt.stuck -or $rt.fail) { 'warn' })),
-    (& $card 'Agents outside workflows' "$(& $tk (($bgs | Measure-Object tok -Sum).Sum))" "$(($bgs | Measure-Object n -Sum).Sum) agent(s) in $($bgs.Count) session(s)" "est. $(& $usd (($bgs | Where-Object { $null -ne $_.cost } | Measure-Object cost -Sum).Sum))"))
+    (& $card 'Agents outside workflows' "$(& $tk (($bgs | Measure-Object tok -Sum).Sum))" "$(($bgs | Measure-Object n -Sum).Sum) agent(s) in $($bgs.Count) session(s)" "est. $(& $usd (($bgs | Where-Object { $null -ne $_.cost } | Measure-Object cost -Sum).Sum))")) 6
   # 7 days: tokens per day, today last; tooltip has cost, runs, merged MRs
   $mx = [math]::Max(1, (@($dy | ForEach-Object { [double]$_.tok }) + 0 | Measure-Object -Maximum).Maximum); $bw = 100 / [math]::Max(1, $dy.Count)
   $bars = @(for ($i = 0; $i -lt $dy.Count; $i++) { $d0 = $dy[$i]; $hh = 56 * [double]$d0.tok / $mx; $x = & $n1 ($i * $bw + $bw * 0.2)
@@ -809,13 +815,14 @@ function Format-KitUsageHtml($U) {
       $cp = "<span class=bl>$(& $tk $r.tok) tokens</span>$(if ($r.cap) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" })"   # budget = context spend (budget -Run), not billed tokens
       "<details class='ru f'><summary><span class=gn0>$(& $e $r.run)</span><span class='chip $(if ($r.status -eq 'running') { 's-act' } else { 's-fin' })'>$(& $e $r.status)</span>$cp<span class=m>$(& $usd $r.cost) · $(& $mn $r.wall) · $($r.done)/$($r.total) steps · $($r.merged) merged · $(& $e $r.roles)</span></summary>" +
       "<div class=sy>$(& $table 'Step', 'Role', 'Model', 'Tokens', 'In / out / cache r / w', 'Time', 'Tools', 'Result', 'Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok })))</div></details>" }) -join ''
-  $aggT = { param([string]$title, $rows) "<div><h4>$(& $e $title)</h4><div class=sy>$(& $table 'Key', 'N', 'Avg', 'p50', 'p90', 'Avg time', 'p90 time' @($rows | ForEach-Object { , @(("$($_.k)" -replace '^claude-'), $_.n, (& $tk $_.avg), (& $tk $_.p50), (& $tk $_.p90), (& $mn $_.avgMin), (& $mn $_.p90Min)) }))</div></div>" }
+  $aggT = { param([string]$title, $rows) "<div class='st uc ua'><h4>$(& $e $title)</h4><div class=sy>$(& $table 'Key', 'N', 'Avg', 'p50', 'p90', 'Avg time', 'p90 time' @($rows | ForEach-Object { , @(("$($_.k)" -replace '^claude-'), $_.n, (& $tk $_.avg), (& $tk $_.p50), (& $tk $_.p90), (& $mn $_.avgMin), (& $mn $_.p90Min)) }))</div></div>" }
   $topT = { param($rows) & $table 'Step', 'Role', 'Model', 'Tokens', 'Time' @($rows | ForEach-Object { , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), (& $tk $_.tok), (& $mn $_.min)) }) }
-  "<h3>Usage: tokens, cost, time (7 days$(if ($U.partial) { '; transcripts still being read' }))</h3>" + $kpis + $chart +
+  # cards in auto-fit grids fill the width; the short per-model table shares a column with the day chart; long tables scroll inside
+  "<h3>Usage: tokens, cost, time (7 days$(if ($U.partial) { '; transcripts still being read' }))</h3><div class=uk>$kpis</div>" +
     "<h4>Runs ($($runs.Count)$(if ($runs.Count -gt 25) { ', newest 25' }))</h4><div class='rus sy'>$(if ($runHtml) { $runHtml } else { '<p class=empty>None</p>' })</div>" +
-    (& $grid aggs 460px @((& $aggT 'Per step type' $U.byType), (& $aggT 'Per role' $U.byRole), (& $aggT 'Per model' $U.byModel))) +
-    (& $grid aggs 460px @("<div><h4>Top 5 steps, 24 h</h4>$(& $topT $U.top24)</div>", "<div><h4>Top 5 steps, 7 days</h4>$(& $topT $U.top7)</div>")) +
-    "<h4>Agents outside workflows, by session</h4>" + (& $table 'Session', 'Agents', 'Tokens', 'Est. cost', 'Roles' @($bgs | ForEach-Object { , @($_.session, $_.n, (& $tk $_.tok), (& $usd $_.cost), $_.roles) }))
+    "<div class=ug>$(& $aggT 'Per step type' $U.byType)$(& $aggT 'Per role' $U.byRole)<div class=ucs>$(& $aggT 'Per model' $U.byModel)<div class='st uc'><h4>Last 7 days</h4>$chart</div></div></div>" +
+    "<div class='ug u2'><div class='st uc ut'><h4>Top 5 steps, 24 h</h4>$(& $topT $U.top24)</div><div class='st uc ut'><h4>Top 5 steps, 7 days</h4>$(& $topT $U.top7)</div></div>" +
+    "<div class='st uc us'><h4>Agents outside workflows, by session</h4><div class=sy>$(& $table 'Session', 'Agents', 'Tokens', 'Est. cost', 'Roles' @($bgs | ForEach-Object { , @($_.session, $_.n, (& $tk $_.tok), (& $usd $_.cost), $_.roles) }))</div></div>"
 }
 # ---- release: every lease of an agent (release, board leave, workflows after each stage); idempotent
 # live gated builds of $Agent ('*' = all): its gate owner name, or a dir inside one of its worktrees (the owner may be a worktree name)
