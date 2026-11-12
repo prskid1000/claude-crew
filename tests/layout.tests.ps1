@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks, run records (resumed run liveness, re-bind); the
-supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log).
+supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage).
 Usage: pwsh -NoProfile -File <kit>/tests/layout.tests.ps1 (or tests/kit-tests.ps1 -Area layout).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -63,10 +63,10 @@ $gridPage = (Invoke-PsTest grids @'
 . $args[0]
 Format-KitSuperviseHtml ('{"at":"2026-01-02T10:00:00","flags":[{"level":"WATCH","what":"disk D: x"},{"level":"INFO","what":"i"}],"agents":[{"name":"a (workflow)","run":"r1","state":"ACTIVE","task":"t · steps 1/4 · 2k tokens of 10k"}],"resources":[{"name":"seat","by":"W1","gb":1.5}],"mem":{"TotalGB":8,"AvailGB":2},"stats":{"settings":{"heartbeatMinutes":15},"disks":[{"drive":"C","free":40,"total":900},{"drive":"D","free":300,"total":500,"series":[3,2]}]}}' | ConvertFrom-Json)
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
-$gridWant = @('kpis', 'flags', 'info', 'gauges', 'res', 'stats', 'toks', 'kv' | Where-Object { $gridPage -notmatch "class='cg $_' style='--cmin:\d+px" })
+$gridWant = @('kpis', 'flags', 'info', 'gauges', 'res', 'stats', 'kv' | Where-Object { $gridPage -notmatch "class='cg $_' style='--cmin:\d+px" })
 $gridOld = @('<section class=kpis>', '<div class=gauges>', '<div class=stats>', 'class=toks>', '<span class=tn>', '<th>Resource</th>', '<th>Key</th><th>Value</th>', 'grid-template-columns:minmax(0,240px)' | Where-Object { $gridPage.Contains($_) })
-Expect "supervise page: list sections use the grid helper (missing: $gridWant), no old list pattern (found: $gridOld); tokens 3 across max with a full-width bar; disks" ($gridPage -match "(?s)tile warn'><div class=k>Disk D.+spark watch.+Disk C.+disk D: 40%'.+val watch.+disk C" -and
-  -not $gridWant.Count -and -not $gridOld.Count -and $gridPage -match "cg toks' style='--cmin:\d+px;--cmax:3'><div class='ci f' title='r1 &#183; 2k of 10k tokens'><div class=tn>r1</div><div class=sm>2k of 10k tokens</div><span class=bar>" -and $gridPage -match '\.cg\{display:grid;[^}]*repeat\(auto-fill,minmax\(min\(100%')
+Expect "supervise page: list sections use the grid helper (missing: $gridWant), no old list pattern (found: $gridOld); no usage cache: its one line; disks" ($gridPage -match "(?s)tile warn'><div class=k>Disk D.+spark watch.+Disk C.+disk D: 40%'.+val watch.+disk C" -and
+  -not $gridWant.Count -and -not $gridOld.Count -and $gridPage -match 'No usage yet: bossy\.ps1 budget -Usage' -and $gridPage -match '\.cg\{display:grid;[^}]*repeat\(auto-fill,minmax\(min\(100%')
 # kitbag.py ui-check (headless, light + dark): cases below
 if (Use-BrowserKit) {
   $uiKb = Join-Path $k 'skills/bossy/kitbag.py'; $uiBad = Join-Path (Kd) 'clip.html'
@@ -114,5 +114,22 @@ $tx3 = New-Item -ItemType Directory -Force (Join-Path (Kd) 'tx3/s1/subagents/wor
 $env:KIT_TRANSCRIPTS = Join-Path (Kd) 'tx3'; $rb3 = pwsh @np $O launch -RunId wf_r3 -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/w3.md"}' 2>&1 | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
 Expect 'launch -RunId: a self record without wfDir re-bound by its launch -Self line (args hash) in that run folder' ($rb3 -match 're-bound self-buildy-w-3' -and -not (Read-Json (Join-Path $ld 'self-buildy-w-3.json')).crashed)
 Remove-Item (Join-Path $ld 'self-buildy-w-3.json'), (Join-Path $ld 'wf_r3.json') -Force
+# usage: per message id (a repeated content block counts once), appended lines only, a partial last line waits; steps, rounds, outcomes, background agents, cost, page
+$ux = Join-Path (Kd) 'ux'; $uw = New-Item -ItemType Directory -Force "$ux/s1/subagents/workflows/wf_u1"; $ub = "$ux/s1/subagents"
+$um = { param($id, [int[]]$v, [string]$t, [string]$extra = '') "{`"type`":`"assistant`",`"timestamp`":`"$t`",`"message`":{`"model`":`"claude-sonnet-x`",`"id`":`"$id`",`"role`":`"assistant`",`"content`":[$extra],`"usage`":{`"input_tokens`":$($v[0]),`"cache_creation_input_tokens`":$($v[3]),`"cache_read_input_tokens`":$($v[2]),`"output_tokens`":$($v[1])}}}" }
+$t0 = (Get-Date).Date.AddMinutes(1).ToUniversalTime(); $iso = { param($m) $t0.AddMinutes($m).ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
+[IO.File]::WriteAllText("$uw/agent-a1.jsonl", ((& $um 'msg_1' 10, 5, 1000, 100 (& $iso 0) '{"type":"tool_use"}'), (& $um 'msg_1' 10, 50, 1000, 100 (& $iso 1)), (& $um 'msg_2' 1, 20, 2000, 0 (& $iso 10)) -join "`n") + "`n")
+[IO.File]::WriteAllText("$uw/agent-a2.jsonl", (& $um 'msg_9' 1, 1, 0, 0 (& $iso 12)) + "`n"); [IO.File]::WriteAllText("$ub/agent-b1.jsonl", (& $um 'msg_7' 0, 7, 0, 0 (& $iso 5)) + "`n")
+'{"agentType":"devy","model":"sonnet"}' | Set-Content "$uw/agent-a1.meta.json"; '{"agentType":"revy"}' | Set-Content "$uw/agent-a2.meta.json"; '{"agentType":"revy","description":"review x"}' | Set-Content "$ub/agent-b1.meta.json"
+(@{ type = 'started'; agentId = 'a1'; label = 'build:X1' }, @{ type = 'result'; agentId = 'a1'; result = @{ summary = 'ok'; mrs = @(@{ url = 'u/1'; merged = $true }) } }, @{ type = 'started'; agentId = 'a2'; label = 'review:X1' }, @{ type = 'result'; agentId = 'a2'; result = @{ error = 'boom' } } | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 6 }) | Set-Content "$uw/journal.jsonl"
+$uo = Invoke-PsTest usage @'
+$null = . $args[0] 6>$null; $env:KIT_TRANSCRIPTS = $args[1]; $a = Get-KitUsage -Seconds 30
+Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Raw).Trim() -replace 'msg_9', 'msg_8') -NoNewline; [IO.File]::AppendAllText($args[2], "`n{`"type`":`"assistant`",`"message`":{`"usage`"")
+$b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
+"$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } }); "$($h -match 'Tokens today') $($h -match "class='ru f'") $($h -match 'Agents outside workflows')"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
+$uv = @($uo.Trim() -split "`r?`n")
+Expect "usage: dedupe by message id, appended lines, partial line waits; run, step, outcomes, background, cost, page ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.002358|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True')
 Remove-TestKit $k
 Complete-Tests

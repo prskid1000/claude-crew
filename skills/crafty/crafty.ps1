@@ -1,6 +1,6 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
- wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit [-ProseOk '<why>']: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate)
+ wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit [-ProseOk '<why>'] [-AllowEmpty]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate)
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
@@ -173,7 +173,7 @@ function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
+  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
   [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
@@ -383,7 +383,7 @@ switch ($Action) {
     $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
     $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # subject style is commitlint's; WIP commits pass
     if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { [Console]::Error.WriteLine("commit refused: $($pf.Count) prose finding(s): rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes: $($pf -join '; ')"); exit 1 }   # stderr: a chained call shows it
-    git -C $Dir @c commit -m $Message
+    git -C $Dir @c commit -m $Message @(if ($AllowEmpty) { '--allow-empty' })   # a deploy MR on a branch equal to its target
     exit $LASTEXITCODE
   }
   'status' {

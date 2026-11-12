@@ -172,8 +172,14 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 - agents grouped by run: state chip, since, last progress, the workflow's steps and tokens as bars; today's timeline;
 - statistics: this sweep's tiles (live agents and stale ones, memory, build gate, QA seats, free GB per disk with "full in"
   under 72 h, sweep time and its slowest section) vs the previous sample and over 7 days; from the kit's logs (runs, agents
-  spawned / finished / failed, average duration, tokens vs budget, auto-fixed %, deploys, decisions, lessons): today vs
-  yesterday, 7 days vs the 7 before; `—` = no source;
+  spawned / finished / failed, average duration, auto-fixed %, deploys, decisions, lessons): today vs yesterday, 7 days vs
+  the 7 before; `—` = no source;
+- usage (7 days; `bossy.ps1 budget -Usage` in the background each sweep reads the transcripts' usage fields incrementally,
+  cached by `_paths` `usage-cache`): tokens and est. cost today vs the 7-day average (`budget.prices`: USD per M tokens [in, out, cache read, cache write] per model-name part), tokens per merged MR and
+  item, review + fix share, empty / failed / stuck steps, agents outside workflows; tokens per day; runs collapsed to one line
+  (tokens, context budget bar, cost, wall time, steps, roles), each with its steps (role, model, in / out / cache, time, tool
+  calls, result, round, retry); avg / p50 / p90 tokens and time per step type, role and model; top 5 steps (24 h, 7 days);
+  Agent-tool spawns by session;
 - resources and leases, shells, `supervise` settings and learned changes; the last `supervise.historySweeps` (12) sweeps as a
   stacked bar.
 
@@ -255,7 +261,7 @@ scaffolding, the duel mode, evidence videos to a text index) live on the origin'
 | `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: goody build-heap; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). |
 | `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | bossy.ps1 storage: free space per fixed drive every sampleSeconds, .state/storage (keepDays). ACT + rescue: a 10 min fill, full within actHours or factor x the learned normal (&gt;= minRateGBh) below watchFreeGB; floors (watchFreeGB, supervise.minDiskFreeGB) on kit drives only. Rescue: kill the db query holding temp, hold builds holdMinutes. Scans (background): a drop &gt;= scanDropGB (scanCooldownMin), scanHours, ACT; defaults + watch[] + learned children (drillGB, flatDays). db.use: &lt;id&gt; &lt;temp GB&gt; &lt;seconds&gt; &lt;query&gt; each; db.kill: {id}; past db.maxGB (5): killed. TODO-PARAM. |
 | `params` | {"learning": "on", "shadowDays": 14} | Tunables (bossy.ps1 param show; every key: skills/bossy/params.registry.json). A learned key starts at its default, learns both ways from observations (.state/params.json, per machine) within default/4..x4: a failure (timeout, OOM, short: a holder back after its grace, a handoff, 2+ new ACTs in one sweep) steps safe from the next use (x1.5 or the need); a risky step &lt;= 10%/day after 5 new observations, none 7 d after a failure; shadowDays: shown only, then applied; past 2x default: owner yes (param approve). A kit.local.json value = a pin (no learning); learning on / shadow / off. |
-| `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "estimate": {"devy": 70000,… | Agent budget = its tool's default compaction point (bossy.ps1 budget; defaults below); handoff at handoffAt x budget; run cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split; at runStopAt x cap no new item starts (rest = next). estimate: per agent / item |
+| `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "prices": {"opus": [5, 25, 0.5,… | Agent budget = its tool's compaction point; handoff at handoffAt x it; run cap = its planned agents' budgets: estimate &gt; runStopAt x cap: refused (split); at it no new item starts. estimate: per agent, item |
 <!-- kit-graph:end -->
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
 `KIT_REPORT_TYPE`, `KIT_NET_TIMEOUT_SEC` / `KIT_NET_TRIES` / `KIT_NO_OUTBOX`, `CHROME_PATH`; goodies name their own (GOODY.md).

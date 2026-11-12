@@ -31,7 +31,8 @@ try {
   $po = pwsh @np $D wt commit -Dir "$r/outer" -Message $lm 2>&1 | Out-String; $pc = $LASTEXITCODE; $ps = git -C "$r/outer" log -1 --format=%s
   $null = pwsh @np $D wt commit -Dir "$r/outer" -Message $lm -ProseOk 'test' 2>&1; $pk = $LASTEXITCODE
   'w' | Set-Content "$r/outer/w.txt"; $null = pwsh @np $D wt commit -Dir "$r/outer" -Message ('wip: ' + 'pause ' * 20) 2>&1; $pk += $LASTEXITCODE
-  Expect "wt commit: a subject over its prose limit is refused, -ProseOk / a WIP commit pass ($pc $pk)" ($pc -eq 1 -and $po -match 'commit refused' -and $ps -eq 'feat: from file' -and $pk -eq 0 -and (git -C "$r/outer" log -2 --format=%s)[1] -eq $lm.Trim())
+  $null = pwsh @np $D wt commit -Dir "$r/outer" -Message 'chore: deploy marker' -AllowEmpty 2>&1; $pk += $LASTEXITCODE
+  Expect "wt commit: a subject over its prose limit is refused, -ProseOk / a WIP / an -AllowEmpty commit pass ($pc $pk)" ($pc -eq 1 -and $po -match 'commit refused' -and $ps -eq 'feat: from file' -and $pk -eq 0 -and (git -C "$r/outer" log -3 --format=%s)[2] -eq $lm.Trim())
   foreach ($n in 'a', 'ab', 'c-1', 'c-2') { git -C "$r/outer" worktree add -q -b $n "$r/wt/$n-outer" 2>$null }
   Push-Location "$r/outer"
   $bad = @(@(), @('-Dir', "$r/outer"), @('-Name', 'zz'), @('-Name', 'c')) | ForEach-Object { $a = $_; $null = pwsh @np $D wt remove @a -Force 2>&1; $LASTEXITCODE }

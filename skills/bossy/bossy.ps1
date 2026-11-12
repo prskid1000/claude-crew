@@ -7,7 +7,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   pause -Run <run> | -All [-Reason] [-Wait <min>] | -Status · resume -Run <run> | -All [-Wait <min>] [-Hours 24] [-MaxSeconds 150]   stop at checkpoints; paused / crashed runs back
   program set|get|list -Program <name> [-Key <k>] [-Value <v>]   the coordinator's program state in .state
   param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
-  budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Json]   agent budget, run cap + spend
+  budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Usage] [-Json]   agent budget, run cap + spend; -Usage: page usage
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged (add: at once)
     | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists (goody task-rollup)
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
@@ -22,10 +22,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L31 init · L49 board · L228 budget · L256 launch · L520 recover · L606 pause · L617 resume · L680 program · L725 param ·
-  L731 track · L1051 supervise · L1354 report · L1433 audit · L1493 storage · L1703 bugbrief · L1805 cleanup · L1889 learn ·
-  L1919 decide · L2052 health · L2114 retro due · L2124 tidy · L2193 the kit origin's main and goodies · L2209 setup ·
-  L2276 guard-sendmessage
+Sections: L31 init · L49 board · L228 budget · L257 launch · L521 recover · L607 pause · L618 resume · L681 program · L726 param ·
+  L732 track · L1052 supervise · L1356 report · L1435 audit · L1495 storage · L1705 bugbrief · L1807 cleanup · L1891 learn ·
+  L1921 decide · L2054 health · L2116 retro due · L2126 tidy · L2195 the kit origin's main and goodies · L2211 setup ·
+  L2278 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -236,7 +236,8 @@ function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,.
   [pscustomobject]@{ cap = [int]$cap; estimate = [int]$est; perModel = $memo }
 }
 function Invoke-Budget {
-param([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Plan = '', [string]$Run = '', [switch]$Json)
+param([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Plan = '', [string]$Run = '', [switch]$Json, [switch]$Usage)
+if ($Usage) { Show-KitUsage 60 $Json; exit 0 }
 if ($Run) {
   $sf = @(Read-KitJsonFiles (Get-KitPath launches -Create) 'self-*.json' | Where-Object run -eq $Run | Sort-Object { [datetime]$_.at } -Descending)[0]
   if (-not $sf) { "no launch record for run $Run"; exit 1 }
@@ -423,7 +424,7 @@ function Get-StoppedRuns([int]$Hours = 24, [switch]$All, [switch]$Raw) {
 }
 function Get-StoppedRunsOf($records, $selfs, [datetime]$since, [bool]$All) {
   $used = @{}
-  # a resumed run is live under its new record; its self record keeps the dead holder: never crashed, never relaunched
+  # a resumed run: live by its new record or folder, never by its old self record
   $liveIds = @{}; foreach ($r in $records | Where-Object { $_.runId -and -not $_.completed -and (Test-KitHolder $_) -eq $true }) { $liveIds[$r.runId] = $true }
   foreach ($s in $selfs | Where-Object { $_.wfDir -and -not $_.completed }) { $sid = Split-Path "$($s.wfDir)" -Leaf; if (-not $liveIds[$sid] -and (Test-KitRunLive "$($s.wfDir)" @())) { $liveIds[$sid] = $true } }
   foreach ($r in $records | Where-Object { -not $_.completed }) {
@@ -1085,7 +1086,7 @@ $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
 $kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.n = $name; Test-KitSweep $kitSweep $name }   # learned cost, starved first; a cut-short section still names its ACT
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
-function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs', 'deploy intest') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest timed out inline each round
+function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs', 'deploy intest', 'budget -Usage') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest timed out inline each round
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params: 3 s, when due (d-20261029173533)
 if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
@@ -1312,6 +1313,7 @@ Phase 'retro'; if (-not $runTotal) {
 }
 foreach ($e in $active | Where-Object { $_.budget -and $_.spend -ge $_.handoff }) { Flag 'WATCH' "$($e.agent) ($($e.run)) past its handoff point: $($e.spend) of $($e.budget) tokens" 'It hands off at its next beat; silent 20 min -> stop it, continue fresh (bossy.ps1 recover).' @{ kind = 'BUDGET'; who = "$($e.agent) ($($e.run))"; problem = "past its handoff point: $($e.spend) of $($e.budget) tokens" } }
 foreach ($h in Get-KitHandoffs 24 | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -ge 15 }) { Flag 'ACT' "HANDOFF $($h.agent) ($($h.run)) $([int]($now - [datetime]$h.beat).TotalMinutes) min ago, no fresh agent yet" "Spawn a fresh $(if ($h.type) { $h.type } else { 'agent' }) (same -Agent, -Run): continue from $($h.handoffBrief)" @{ kind = 'HANDOFF'; who = "$($h.agent) ($($h.run))"; age = "$([int]($now - [datetime]$h.beat).TotalMinutes) min"; problem = 'handed off, no fresh agent yet' } }
+if (Within 'usage') { $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage') }
 foreach ($sf in @(Get-ChildItem (Get-KitPath launches) -Filter 'self-*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-12) } | Sort-Object LastWriteTime -Descending | Select-Object -First 3)) {
   $o = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json } catch { $null }; if (-not $o.cap -or $o.completed -or -not (Within 'run budgets')) { continue }
   $sp = try { @(Invoke-Bounded $KitCmd.orch @('budget', '-Run', $o.run, '-Json')) -join '' | ConvertFrom-Json } catch { $null }

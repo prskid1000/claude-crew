@@ -7,8 +7,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 builds · L46 supervise · L243 shells · L362 page · L665 release · L704 lines · L729 cleanup · L765 launch ·
-  L810 pause
+Sections: L14 builds · L46 supervise · L243 shells · L362 page · L667 usage · L809 release · L848 lines · L873 cleanup ·
+  L909 launch · L954 pause
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -434,13 +434,14 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   if ($samples.Count -ge 2 -and ([datetime]$samples[-1].at - [datetime]$samples[-2].at).TotalMinutes -lt [double](Get-KitParam 'supervise.heartbeatMinutes')) { $samples = @($samples | Select-Object -SkipLast 1) }
   if ($nowT) { $dFree = [ordered]@{}; foreach ($dk in $nowT.disks) { $dFree[$dk.drive] = $dk.free }
     $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; disks = [pscustomobject]$dFree } }
-  $stats = [ordered]@{ keepFree = $d.keepFree; repos = (Get-KitRepoSweep); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples); settings = [pscustomobject]$settings
+  $usage = Read-KitUsageResult   # budget -Usage writes it
+  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples); settings = [pscustomobject]$settings
     changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ($apv."$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })" -or $apv."$($_.key)|") { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
             learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); changed = $_.changed; why = $_.why } } } catch { }) }
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
-  Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 6)
+  Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 9)
   Write-KitAtomic $p (Format-KitSuperviseHtml $j)
   $pub = [string](Get-KitSetting 'supervise.publish' '')   # the bytes never pass through the model
   if ($pub.Trim()) {   # encoded: Windows strips the double quotes of a joined -Command line
@@ -508,12 +509,10 @@ function Format-KitSuperviseHtml($j) {
   $histHtml = if ($hist.Count) { "<div class=hist><svg viewBox='0 0 100 60' preserveAspectRatio=none role=img aria-label='flags per sweep'>$($rects -join '')</svg><div class=ax><span>$(& $e $(try { ([datetime]$hist[0].at).ToString('HH:mm') } catch { '' }))</span><span><i class='lg act'>ACT</i> <i class='lg watch'>WATCH</i> <i class='lg sage'>FIXED</i></span><span>$(& $e $(try { ([datetime]$hist[-1].at).ToString('HH:mm') } catch { '' }))</span></div></div>" } else { '<p class=empty>No sweeps yet.</p>' }
   # agents by run; steps and tokens as bars
   $groups = @($agents | Group-Object { "$($_.run)" } | Sort-Object { -not @($_.Group | Where-Object state -ne 'FINISHED').Count }, { -not $_.Name }, Name)
-  $tokRuns = [Collections.Generic.List[object]]::new()
   $agentHtml = if (-not $agents.Count) { '<p class=empty>No agents on the board.</p>' } else { '<div class=tw><table class=ag><tr><th>State</th><th>Agent</th><th class=hs>Task</th><th>Since</th><th>Last progress</th><th class=hs>Doing · next</th></tr>' + (@(foreach ($g in $groups) {
     $wf = @($g.Group | Where-Object { "$($_.name)" -like '* (workflow)' }) | Select-Object -First 1; $meta = "$($wf.task) $($wf.done)"
     $steps = if ($meta -match '(\d+)/(\d+) steps|steps (\d+)/(\d+)') { if ($Matches[1]) { [double]$Matches[1], [double]$Matches[2] } else { [double]$Matches[3], [double]$Matches[4] } }
     $toks = if ($meta -match '([\d.]+[kKmM]?) tokens of ([\d.]+[kKmM]?)') { $tk = $Matches[1], $Matches[2]; (& $big $tk[0]), (& $big $tk[1]), "$($tk[0]) of $($tk[1]) tokens" }
-    if ($toks -and $g.Name) { $tokRuns.Add(@($g.Name, $toks)) }
     "<tbody class=grp><tr class=gh><th colspan=6><span class=gn0>$(if ($g.Name) { & $e $g.Name } else { 'no run' })</span><span class=m> $($g.Count) agent(s) · $(@($g.Group | Where-Object state -ne 'FINISHED').Count) active</span>$(if ($steps) { & $bar $steps[0] $steps[1] "$($steps[0])/$($steps[1]) steps" 'sage' })$(if ($toks) { & $bar $toks[0] $toks[1] $toks[2] })</th></tr>" +
     (@(foreach ($a in @($g.Group | Sort-Object { $_.state -eq 'FINISHED' }, name)) { $sub = @($a.wait, $a.done, $a.stopped | Where-Object { "$_".Trim() }) -join ' · '
       "<tr class=f><td><span class='chip $(& $stCls $a.state)'>$(& $e ("$($a.state)" -replace '\s.*'))</span>$(if ($sub) { "<div class=sm>$(& $e $sub)</div>" })</td><td>$(& $e $a.name)</td><td class=hs>$(& $e $a.task)</td><td>$(& $when $a.since)</td><td>$(& $when $a.last)</td><td class=hs>$(& $e $a.doing)$(if ("$($a.next)".Trim()) { "<div class=sm>$(& $e $a.next)</div>" })</td></tr>" }) -join '') + '</tbody>' }) -join '') + '</table></div>' }
@@ -557,7 +556,7 @@ function Format-KitSuperviseHtml($j) {
     (& $statCard 'Avg agent duration' (& $avgOf 0) (& $avgOf 1) (& $avgOf $wk) $(if (& $same 'durN') { & $avgOf $pw }) 0 ' min') + (& $card4 'Deploys recorded' 'deploys') +
     (& $card4 'Decisions asked' 'asked') + (& $card4 'Decisions answered' 'answered' 1) + (& $card4 'Lessons recorded' 'lessons') +
     "<div class=st><div class=k>Flags auto-FIXED</div><div class=v>$(& $fmt (& $fxPct 0 $hist.Count))<small>%</small>$(if ($half) { & $trend (& $fxPct $half $hist.Count) (& $fxPct 0 $half) 1 })</div><div class=w>$(($fxFixed | Measure-Object -Sum).Sum) of $(($fxRaised | Measure-Object -Sum).Sum) flags, last $($hist.Count) sweeps</div></div>")) +
-    '<h3>Tokens vs budget per run</h3>' + $(if ($tokRuns.Count) { & $grid toks 300px @($tokRuns | ForEach-Object { & $item $_[0] $_[1][2] (& $bar $_[1][0] $_[1][1] '') }) 3 } else { '<p class=empty>—</p>' })
+    (Format-KitUsageHtml $st.usage)
   $resMax = [math]::Max(0.01, (@($j.resources | ForEach-Object { [double]$_.gb }) + 0 | Measure-Object -Maximum).Maximum)
   $resHtml = if (-not @($j.resources | Where-Object { $_ }).Count) { '<p class=empty>No resource held.</p>' } else { & $grid res 260px @($j.resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb } | ForEach-Object { & $item $_.name "$($_.by) · $(& $n1 $_.gb) GB" (& $bar ([double]$_.gb) $resMax '' 'slate') }) }
   $shellHtml = & $table 'PID', 'Owner', 'Age', 'State', 'Dir', 'Command', 'Next' @($j.shells | Where-Object { $_ } | ForEach-Object { , @($_.pid, $_.owner, @{ h = & $minAgo $_.age },$_.state, $_.dir, $_.cmd, $_.next) })
@@ -575,7 +574,7 @@ function Format-KitSuperviseHtml($j) {
     "var ar=d.getElementById('ar'),on=L.getItem('kc-ar')!=='0',tm;function sa(){ar.setAttribute('aria-pressed',on);ar.textContent=on?'Auto-refresh 60 s':'Auto-refresh off';clearTimeout(tm);if(on)tm=setTimeout(function(){var p={};d.querySelectorAll('details.sec').forEach(function(s){s.querySelectorAll(SC).forEach(function(e,i){if(e.scrollTop||e.scrollLeft)p[s.id+i]=[e.scrollTop,e.scrollLeft]})});S.setItem('kc-sp',JSON.stringify(p));S.setItem('kc-y',scrollY);location.reload()},6e4)}ar.onclick=function(){on=!on;L.setItem('kc-ar',on?'1':'0');sa()};sa();" +
     "var cl=JSON.parse(L.getItem('kc-closed')||'[]');d.querySelectorAll('details.sec').forEach(function(s){if(cl.indexOf(s.id)>=0)s.open=false;s.addEventListener('toggle',function(){var c=JSON.parse(L.getItem('kc-closed')||'[]').filter(function(x){return x!=s.id});if(!s.open)c.push(s.id);L.setItem('kc-closed',JSON.stringify(c))})});" +
     "var q=d.getElementById('q');function fl(){var v=q.value.toLowerCase();S.setItem('kc-q',q.value);d.querySelectorAll('.f').forEach(function(x){x.hidden=!!v&&x.textContent.toLowerCase().indexOf(v)<0});d.querySelectorAll('tbody.grp').forEach(function(g){g.hidden=!g.querySelector('tr.f:not([hidden])')})}q.oninput=fl;q.value=S.getItem('kc-q')||'';if(q.value)fl();d.addEventListener('keydown',function(x){if(x.key=='/'&&d.activeElement!=q){x.preventDefault();q.focus()}});" +
-    "var SC='.bd,.info,.tw';function cu(e){var v=e.scrollHeight>e.clientHeight+1,h=e.scrollWidth>e.clientWidth+1,c=e.classList,o=v||h;c.toggle('sc',o);if(o)e.tabIndex=0;else e.removeAttribute('tabindex');c.toggle('u',v&&e.scrollTop>1);c.toggle('d',v&&e.scrollTop+e.clientHeight<e.scrollHeight-1);c.toggle('l',h&&e.scrollLeft>1);c.toggle('r',h&&e.scrollLeft+e.clientWidth<e.scrollWidth-1)}" +
+    "var SC='.bd,.info,.tw,.sy';function cu(e){var v=e.scrollHeight>e.clientHeight+1,h=e.scrollWidth>e.clientWidth+1,c=e.classList,o=v||h;c.toggle('sc',o);if(o)e.tabIndex=0;else e.removeAttribute('tabindex');c.toggle('u',v&&e.scrollTop>1);c.toggle('d',v&&e.scrollTop+e.clientHeight<e.scrollHeight-1);c.toggle('l',h&&e.scrollLeft>1);c.toggle('r',h&&e.scrollLeft+e.clientWidth<e.scrollWidth-1)}" +
     "function ca(){d.querySelectorAll(SC).forEach(cu)}ca();addEventListener('resize',ca);d.addEventListener('toggle',ca,true);q.addEventListener('input',ca);" +
     "var tp=d.createElement('div');tp.id='tip';tp.setAttribute('role','tooltip');tp.hidden=true;d.body.appendChild(tp);" +
     "function sh(el){var s=el&&(el.getAttribute('title')||(el.querySelector(':scope>title')||{}).textContent);if(!s){tp.hidden=true;return}tp.textContent=s;tp.hidden=false;var b=el.getBoundingClientRect(),w=tp.offsetWidth,g=tp.offsetHeight;tp.style.left=Math.max(4,Math.min(innerWidth-w-4,b.left))+'px';tp.style.top=(b.bottom+g+6>innerHeight?b.top-g-6:b.bottom+6)+'px'}" +
@@ -645,6 +644,9 @@ function Get-KitSupervisePageCss {
   '.tr{font-size:11.5px;font-weight:600;margin-left:8px;letter-spacing:0}.tr.good{color:var(--sage2)}.tr.bad{color:var(--act)}.tr.eq{color:var(--mt)}' +
   '.ci{border:1px solid var(--ln);border-radius:10px;padding:8px 12px;min-width:0}.ci .sm,.tn{overflow-wrap:anywhere}.ci .bar{display:block;width:100%;margin:6px 0 2px}.bl:empty{display:none}.flags .flag{margin:0}' +
   'footer{margin-top:24px;text-align:center;font-size:11.5px;color:var(--mt)}[hidden]{display:none!important}' +
+  # Usage: fixed-height scroll boxes (sticky header), runs collapsed to one line, the chart's past days slate
+  'h4{font-size:11.5px;font-weight:600;color:var(--mt);margin:14px 0 6px}.sy{max-height:clamp(200px,42dvh,440px);overflow:auto}.sy>.tw{overflow:visible}.sy th{position:sticky;top:0;z-index:1;background:var(--sf)}.sy td{white-space:nowrap}.sy td:first-child{white-space:normal}td{font-variant-numeric:tabular-nums}.hist .w0{fill:var(--slate)}' +
+  '.ru{border:1px solid var(--ln);border-radius:10px;margin:0 0 6px}.ru>summary{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:7px 10px;background:var(--sf2);border-radius:10px;font-size:12.5px;cursor:pointer}.ru[open]>summary{border-radius:10px 10px 0 0}.ru>summary .bar{margin:0}.ru>.sy{padding:0 4px 4px}' +
   '.tw>table:not(.ag){min-width:520px}@media(max-width:640px){.wrap{padding:12px}.stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.st{padding:10px}header.top{padding:8px 12px;position:static}.hs{display:none}.tb{width:100%}input[type=search]{flex:1;width:auto}.gr{grid-template-columns:96px minmax(0,1fr)}.gx{margin-left:106px}.gx span:nth-child(even){display:none}.tile .v{font-size:20px}.gauges{grid-template-columns:repeat(3,minmax(0,1fr))}' +
   # phone: a table row = a card, one "header value" line per cell (7 columns never fit 390 px)
   '.tw>table:not(.ag){min-width:0}.tw>table:not(.ag) tr:first-child{display:none}.tw>table:not(.ag),.tw>table:not(.ag) :is(tbody,tr,td){display:block;width:auto}.tw>table:not(.ag) tr{border-bottom:1px solid var(--ln);padding:6px 0}' +
@@ -662,6 +664,148 @@ function Format-KitSuperviseOut($d, $Shown, [string]$Path) {
   "$(@($d.rows | Where-Object state -ne 'FINISHED').Count) agent(s) active · $(@($d.flags | Where-Object level -eq 'ACT').Count) ACT · $(@($d.flags | Where-Object level -eq 'WATCH').Count) WATCH"
 }
 
+# ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
+# one transcript's totals since its last read offset (append-only files); Claude: per message id (a message repeats per content block), Codex: last cumulative count
+function Update-KitUsageFile([string]$Path, $Rec, [ref]$Left) {
+  $fi = [IO.FileInfo]::new($Path); if (-not $fi.Exists) { return $Rec }
+  if (-not $Rec -or $null -eq $Rec.days -or [long]$Rec.off -gt $fi.Length) { $Rec = [ordered]@{ off = 0L; in = 0L; out = 0L; cr = 0L; cw = 0L; n = 0; tools = 0; model = ''; t0 = ''; t1 = ''; lastId = ''; lastU = @(0, 0, 0, 0); days = @{} } }
+  $n = [int][math]::Min([math]::Min($fi.Length - [long]$Rec.off, [math]::Max([long]0, [long]$Left.Value)), [long]256MB); if ($n -le 0) { return $Rec }
+  $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite, Delete')
+  try { $null = $fs.Seek([long]$Rec.off, 'Begin'); $b = [byte[]]::new($n); $got = $fs.Read($b, 0, $n) } finally { $fs.Dispose() }
+  if ($got -le 0) { return $Rec }; $end = [Array]::LastIndexOf($b, [byte]10, $got - 1); if ($end -lt 0) { return $Rec }   # no whole line yet; shrunk meanwhile
+  $Left.Value -= $end + 1; $Rec.off = [long]$Rec.off + $end + 1
+  $num = { param($l, [string]$k) $m = [regex]::Match($l, """$k"":(\d+)"); if ($m.Success) { [long]$m.Groups[1].Value } else { 0L } }
+  foreach ($l in [Text.Encoding]::UTF8.GetString($b, 0, $end).Split([char]10)) {
+    $ts = [regex]::Match($l, '"timestamp":"([^"]+)"'); if ($ts.Success) { if (-not $Rec.t0) { $Rec.t0 = $ts.Groups[1].Value }; $Rec.t1 = $ts.Groups[1].Value }
+    if ($l.Contains('"total_token_usage"')) {   # codex rollout: cumulative
+      $m = [regex]::Match($l, '"total_token_usage":\{([^}]*)\}'); if ($m.Success) { $u = $m.Groups[1].Value; $Rec.cr = & $num $u 'cached_input_tokens'; $Rec.in = (& $num $u 'input_tokens') - $Rec.cr; $Rec.out = & $num $u 'output_tokens'; $Rec.n++ }; continue }
+    if (-not $l.Contains('"usage"') -or -not $l.Contains('"assistant"')) { continue }
+    $Rec.tools += ([regex]::Matches($l, '"type":"tool_use"')).Count
+    $md = [regex]::Match($l, '"model":"([^"]+)"'); if ($md.Success -and $md.Groups[1].Value -ne '<synthetic>') { $Rec.model = $md.Groups[1].Value }
+    $uu = @((& $num $l 'input_tokens'), (& $num $l 'output_tokens'), (& $num $l 'cache_read_input_tokens'), (& $num $l 'cache_creation_input_tokens'))
+    $id = [regex]::Match($l, '"id":"(msg_[^"]+)"').Groups[1].Value
+    if ($id -and $id -eq $Rec.lastId) { $p = @($Rec.lastU) } else { $p = @(0, 0, 0, 0); $Rec.n++ }
+    $Rec.in += $uu[0] - $p[0]; $Rec.out += $uu[1] - $p[1]; $Rec.cr += $uu[2] - $p[2]; $Rec.cw += $uu[3] - $p[3]; $Rec.lastId = $id; $Rec.lastU = $uu
+    if ($ts.Success) { if ($null -eq $Rec.days) { $Rec.days = @{} }; $dk = ([datetimeoffset]$ts.Groups[1].Value).LocalDateTime.ToString('yyyy-MM-dd'); $Rec.days[$dk] = [long]$Rec.days[$dk] + ($uu | Measure-Object -Sum).Sum - ($p | Measure-Object -Sum).Sum }   # tokens by the day they were spent
+  }
+  $Rec
+}
+# USD per million tokens [input, output, cache read, cache write] by model-name part (budget.prices); unknown model: $null
+function Get-KitUsageCost($R, [string]$Model) {
+  $pr = Get-KitSetting 'budget.prices' $null; if (-not $pr) { if ($null -eq $script:KitPrices) { $script:KitPrices = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget.prices }; $pr = $script:KitPrices }; if (-not $pr) { return $null }
+  $hit = @($pr.PSObject.Properties | Where-Object { $_.Name -notlike '_*' -and $Model -like "*$($_.Name)*" })[0]; if (-not $hit) { return $null }
+  $v = @($hit.Value | ForEach-Object { [double]$_ }); ([double]$R.in * $v[0] + [double]$R.out * $v[1] + [double]$R.cr * $v[2] + [double]$R.cw * $v[3]) / 1e6
+}
+# budget -Usage: supervise runs it in the background each sweep; the page reads its cache
+function Show-KitUsage([double]$Seconds, [bool]$Json) {
+  $u = Get-KitUsage -Seconds $Seconds; $d0 = @($u.days)[-1]
+  if ($Json) { $u | ConvertTo-Json -Depth 8 -Compress; return }
+  "usage: today $($d0.tok) tokens$(if ($null -ne $d0.cost) { ", est. `$$($d0.cost)" }); 7 days $(($u.days | Measure-Object tok -Sum).Sum) tokens, $(@($u.runs).Count) run(s), $((@($u.bg) | Measure-Object n -Sum).Sum) agent(s) outside workflows$(if ($u.partial) { '; transcripts still being read (run again)' })"
+}
+function Get-KitPct($Vals, [double]$P) { $s = @($Vals | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ } | Sort-Object); if (-not $s.Count) { return $null }; $s[[int][math]::Min($s.Count - 1, [math]::Floor($P * $s.Count))] }
+# runs, steps, background agents of the last $Days days; parses for at most $Seconds (the cache keeps offsets: the rest next call); stored with the result
+function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seconds = 60) {
+  $cf = Get-KitPath usage-cache -Create; $cache = try { (Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable).files } catch { $null }; if ($cache -isnot [hashtable]) { $cache = @{} }
+  $root = (Invoke-KitAdapter transcript claude root).dir; $since = $Now.AddDays(-$Days); $stop = (Get-Date).AddSeconds($Seconds); $left = [ref][long]2GB; $seen = @{}
+  $read = { param([string]$f) $seen[$f] = 1; try { if ((Get-Date) -lt $stop -and $left.Value -gt 0) { $cache[$f] = Update-KitUsageFile $f $cache[$f] $left }; if ([IO.FileInfo]::new($f).Length -gt [long]$cache[$f].off + 64KB) { $script:KitUsagePartial = $true } } catch { }; $cache[$f] }   # a vanished file: its last totals; a half-written line is no backlog
+  $script:KitUsagePartial = $false
+  $lk = "$cf.lock"; if ((Test-Path -LiteralPath $lk) -and ((Get-Date) - [IO.File]::GetLastWriteTime($lk)).TotalMinutes -gt 10) { Remove-Item -LiteralPath $lk -Force -ErrorAction SilentlyContinue }   # a killed run's
+  try { $lkh = [IO.File]::Open($lk, 'CreateNew', 'Write', 'None') } catch { return (Read-KitUsageResult) }   # another run reads: its last result
+  try {
+  $meta = { param([string]$f) try { Get-Content -LiteralPath ($f -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null } }
+  $mins = { param($r) if ($r.t0 -and $r.t1) { [math]::Round(([datetimeoffset]$r.t1 - [datetimeoffset]$r.t0).TotalMinutes, 1) } }
+  $tot = { param($r) [long]$r.in + [long]$r.out + [long]$r.cr + [long]$r.cw }
+  $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $stuck = [double](Get-KitParam 'supervise.stuckMinutes')
+  $runs = [Collections.Generic.List[object]]::new(); $steps = [Collections.Generic.List[object]]::new(); $bg = @{}
+  foreach ($sd in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)) {
+    $sub = Join-Path $sd.FullName 'subagents'; if (-not (Test-Path -LiteralPath $sub)) { continue }
+    foreach ($w in @(Get-ChildItem -LiteralPath (Join-Path $sub 'workflows') -Directory -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)) {
+      $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path -LiteralPath $j)) { continue }
+      $ev = @(Get-Content -LiteralPath $j | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} }); $res = @{}; foreach ($x in $ev | Where-Object type -eq 'result') { $res[$x.agentId] = $x.result }
+      $rec = @(Get-KitWorkflowRecords $w $ev $launch); $name = @(@($rec | ForEach-Object run) + $w.Name | Where-Object { $_ })[0]; $cap = @($rec.cap | Where-Object { $_ })[0]; $spent = @($rec.spent | Where-Object { $_ })[0]
+      $live = -not (Get-KitWorkflowStop $w $rec) -and -not @($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count
+      $labels = @{}; $noRes = @{}; $rs = [Collections.Generic.List[object]]::new()
+      foreach ($s in @($ev | Where-Object type -eq 'started')) {
+        $f = Join-Path $w.FullName "agent-$($s.agentId).jsonl"; if (-not (Test-Path -LiteralPath $f)) { continue }
+        $u = & $read $f; $m = & $meta $f; $lb = [string]$s.label; $labels[$lb] = 1 + [int]$labels[$lb]
+        $r = $res[$s.agentId]; $age = ($Now - [IO.File]::GetLastWriteTime($f)).TotalMinutes
+        $out = if ($r) { if ($r.error) { 'fail' } elseif (-not "$($r.summary)$($r.output)".Trim() -and -not @($r.mrs).Count) { 'empty' } else { 'pass' } } elseif ($live -and $age -lt $stuck) { 'running' } elseif ($live) { 'stuck' } else { 'stopped' }
+        $model = if ($u.model) { $u.model } else { "$($m.model)" }
+        $st = [pscustomobject]@{ run = $name; label = $lb; type = (($lb -split ':')[0] -creplace '-[A-Z][\w-]*$'); role = "$($m.agentType)"; model = $model; in = [long]$u.in; out = [long]$u.out; cr = [long]$u.cr; cw = [long]$u.cw; tok = (& $tot $u); cost = (Get-KitUsageCost $u $model)
+          min = (& $mins $u); tools = [int]$u.tools; result = $out; round = $labels[$lb]; retry = [int]$noRes[$lb]; days = $u.days; at = $(if ($u.t1) { ([datetimeoffset]$u.t1).LocalDateTime.ToString('o') } else { [IO.File]::GetLastWriteTime($f).ToString('o') }); mrs = @($r.mrs | Where-Object merged | ForEach-Object { "$(if ($_.url) { $_.url } else { $_.ref })" }) }
+        if (-not $r) { $noRes[$lb] = 1 + [int]$noRes[$lb] }; $rs.Add($st); $steps.Add($st) }   # retry: earlier starts of the label with no result
+      if (-not $rs.Count) { continue }
+      $items = @(@($rec | ForEach-Object { $_.args.agents }) | ForEach-Object { "$($_.items)" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique).Count
+      $runs.Add([pscustomobject]@{ run = $name; id = $w.Name; status = $(if ($live) { 'running' } else { 'ended' }); cap = [long]$cap; spent = [long]$spent; tok = [long]($rs | Measure-Object tok -Sum).Sum; cost = $(if (@($rs | Where-Object { $null -ne $_.cost }).Count) { [math]::Round(($rs | Measure-Object cost -Sum).Sum, 2) })
+          in = [long]($rs | Measure-Object in -Sum).Sum; out = [long]($rs | Measure-Object out -Sum).Sum; cr = [long]($rs | Measure-Object cr -Sum).Sum; cw = [long]($rs | Measure-Object cw -Sum).Sum
+          wall = [math]::Round(($w.LastWriteTime - $w.CreationTime).TotalMinutes); roles = (@($rs | Group-Object role | Sort-Object Count -Descending | ForEach-Object { "$(if ($_.Name) { $_.Name } else { 'step' }) $($_.Count)" }) -join ' · ')
+          done = @($rs | Where-Object { $_.result -in 'pass', 'empty', 'fail' }).Count; total = $rs.Count; merged = @($rs.mrs | Where-Object { $_ } | Select-Object -Unique).Count; items = $items
+          loop = [long](@($rs | Where-Object { $_.type -in 'review', 'fix' }) | Measure-Object tok -Sum).Sum; at = $w.LastWriteTime.ToString('o'); steps = @($rs) }) }
+    foreach ($f in @(Get-ChildItem -LiteralPath $sub -Filter 'agent-*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)) {   # Agent-tool spawns, by coordinator session
+      $u = & $read $f.FullName; $m = & $meta $f.FullName; $k = $sd.Name; if (-not $bg[$k]) { $bg[$k] = [ordered]@{ session = $k; n = 0; tok = 0L; cost = $null; roles = @{}; at = '' } }
+      $model = if ($u.model) { $u.model } else { "$($m.model)" }; $c = Get-KitUsageCost $u $model; $g = $bg[$k]; $g.n++; $g.tok += & $tot $u; if ($null -ne $c) { $g.cost = [double]$g.cost + $c }
+      $rl = if ($m.agentType) { "$($m.agentType)" } else { 'agent' }; $g.roles[$rl] = 1 + [int]$g.roles[$rl]; if ($f.LastWriteTime.ToString('o') -gt $g.at) { $g.at = $f.LastWriteTime.ToString('o') }
+      $steps.Add([pscustomobject]@{ run = ''; label = "$($m.description)"; type = 'agent'; role = $rl; model = $model; in = [long]$u.in; out = [long]$u.out; cr = [long]$u.cr; cw = [long]$u.cw; tok = (& $tot $u); cost = $c; min = (& $mins $u); tools = [int]$u.tools; result = 'pass'; round = 1; retry = 0; days = $u.days; at = $f.LastWriteTime.ToString('o'); mrs = @() }) }
+  }
+  foreach ($k in @($cache.Keys)) { if (-not $seen[$k]) { $cache.Remove($k) } }   # older than $Days: dropped
+  $grp = { param([string]$by) @($steps | Where-Object { $_.$by -and $_.tok } | Group-Object $by | ForEach-Object { $g = @($_.Group); [pscustomobject]@{ k = $_.Name; n = $g.Count; avg = [long]($g | Measure-Object tok -Average).Average; p50 = (Get-KitPct $g.tok 0.5); p90 = (Get-KitPct $g.tok 0.9); avgMin = $(if (@($g.min | Where-Object { $null -ne $_ }).Count) { [math]::Round(($g.min | Where-Object { $null -ne $_ } | Measure-Object -Average).Average, 1) }); p90Min = (Get-KitPct $g.min 0.9) } } | Sort-Object { -$_.avg * $_.n }) }
+  $wf = @($steps | Where-Object run); $ended = @($wf | Where-Object result -in 'pass', 'empty', 'fail', 'stuck')
+  $top = { param([double]$h) @($steps | Where-Object { ($Now - [datetime]$_.at).TotalHours -le $h } | Sort-Object { -$_.tok } | Select-Object -First 5 | ForEach-Object { [pscustomobject]@{ label = $(if ($_.run) { "$($_.label) · $($_.run)" } else { $_.label }); role = $_.role; model = $_.model; tok = $_.tok; min = $_.min } }) }
+  $dayRows = @(foreach ($i in 0..($Days - 1)) { $dk = $Now.AddDays(-$i).ToString('yyyy-MM-dd'); $ds = @($steps | Where-Object { $_.days -and [long]$_.days[$dk] }); $tk = [long](@($ds | ForEach-Object { [long]$_.days[$dk] }) | Measure-Object -Sum).Sum
+      $dc = @($ds | Where-Object { $null -ne $_.cost -and $_.tok } | ForEach-Object { [double]$_.cost * [long]$_.days[$dk] / [double]$_.tok })   # cost split by the day's share of its tokens
+      [pscustomobject]@{ day = $dk; tok = $tk; cost = $(if ($dc.Count) { [math]::Round(($dc | Measure-Object -Sum).Sum, 2) }); runs = @($ds | Where-Object run | ForEach-Object run | Select-Object -Unique).Count; merged = @(@($steps | Where-Object { "$($_.at)".StartsWith($dk) }).mrs | Where-Object { $_ } | Select-Object -Unique).Count } })
+  [Array]::Reverse($dayRows)
+  $usageOut = [pscustomobject]@{ at = $Now.ToString('o'); partial = $script:KitUsagePartial; runs = @($runs | Sort-Object at -Descending); bg = @($bg.Values | ForEach-Object { [pscustomobject]@{ session = $_.session; n = $_.n; tok = $_.tok; cost = $(if ($null -ne $_.cost) { [math]::Round($_.cost, 2) }); roles = (@($_.roles.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ' · ') } } | Sort-Object { -$_.tok })
+    byType = (& $grp type); byRole = (& $grp role); byModel = (& $grp model)
+    rates = [pscustomobject]@{ n = $ended.Count; empty = @($ended | Where-Object result -eq 'empty').Count; fail = @($ended | Where-Object result -eq 'fail').Count; stuck = @($wf | Where-Object result -eq 'stuck').Count }
+    top24 = (& $top 24); top7 = (& $top (24 * $Days)); days = $dayRows }
+  try { Write-KitAtomic $cf (@{ files = $cache } | ConvertTo-Json -Depth 5 -Compress); Write-KitAtomic ($cf -replace '\.json$', '.result.json') ($usageOut | ConvertTo-Json -Depth 8 -Compress) } catch {}
+  $usageOut
+  } finally { $lkh.Dispose(); Remove-Item -LiteralPath $lk -Force -ErrorAction SilentlyContinue }
+}
+# the last budget -Usage result (the page, a run that finds the lock taken)
+function Read-KitUsageResult { try { Get-Content -LiteralPath ((Get-KitPath usage-cache) -replace '\.json$', '.result.json') -Raw -ErrorAction Stop | ConvertFrom-Json -Depth 12 } catch { $null } }
+# Statistics "Usage" (budget -Usage result): KPI strip, 7-day chart, runs (collapsed, steps in a scroll box), per type / role / model, top 5, background agents;
+# called by Format-KitSuperviseHtml: its helpers ($e $n1 $grid $table $bar $trend $at) by dynamic scope
+function Format-KitUsageHtml($U) {
+  if (-not $U -or -not @($U.days).Count) { return '<h3>Usage</h3><p class=empty>No usage yet: bossy.ps1 budget -Usage runs each sweep.</p>' }
+  $tk = { param($v) if ($null -eq $v) { '—' } elseif ([double]$v -ge 1e6) { "$(& $n1 ([double]$v / 1e6))M" } elseif ([double]$v -ge 1e3) { "$([math]::Round([double]$v / 1e3))k" } else { "$([long]$v)" } }
+  $usd = { param($v) if ($null -eq $v) { '—' } else { '$' + ([double]$v).ToString('0.00', [cultureinfo]::InvariantCulture) } }
+  $mn = { param($v) if ($null -eq $v) { '—' } elseif ([double]$v -ge 90) { "$(& $n1 ([double]$v / 60)) h" } else { "$(& $n1 $v) min" } }
+  $dy = @($U.days | Where-Object { $_ }); $td = $dy[-1]; $prev = @($dy | Select-Object -SkipLast 1)
+  $avg = { param([string]$k) $vs = @($prev | ForEach-Object { $_.$k } | Where-Object { $null -ne $_ }); if ($vs.Count) { ($vs | Measure-Object -Average).Average } }
+  $sum = { param([string]$k) $vs = @($dy | ForEach-Object { $_.$k } | Where-Object { $null -ne $_ }); if ($vs.Count) { ($vs | Measure-Object -Sum).Sum } }
+  $runs = @($U.runs | Where-Object { $_ }); $wfTok = [double](($runs | Measure-Object tok -Sum).Sum); $loop = [double](($runs | Measure-Object loop -Sum).Sum)
+  $merged = [int](($runs | Measure-Object merged -Sum).Sum); $items = [int](($runs | Measure-Object items -Sum).Sum); $rt = $U.rates; $bgs = @($U.bg | Where-Object { $_ })
+  $card = { param([string]$label, [string]$v, [string]$sub, [string]$w, [string]$cls = '') "<div class='st $cls'><div class=k>$(& $e $label)</div><div class=v>$v</div>$(if ($sub) { "<div class=s title='$(& $e $sub)'>$(& $e $sub)</div>" })<div class=w>$(& $e $w)</div></div>" }
+  $pct = { param($a, $b) if ([double]$b) { [math]::Round(100 * [double]$a / [double]$b) } }
+  $vs = { param($cur, $base) if ($null -eq $cur -or -not [double]$base) { return '' }; $p = [math]::Round(100 * ([double]$cur - [double]$base) / [double]$base)   # vs the 7-day average
+    "<span class='tr $(if ($p -gt 0) { 'bad' } elseif ($p -lt 0) { 'good' } else { 'eq' })'>$(if ($p -gt 0) { '▲' } elseif ($p -lt 0) { '▼' } else { '=' }) $([math]::Abs($p))%</span>" }
+  $kpis = & $grid stats 170px @(
+    (& $card 'Tokens today' "$(& $tk $td.tok)$(& $vs $td.tok (& $avg 'tok'))" "vs 7-day avg $(& $tk (& $avg 'tok'))" "7 days $(& $tk (& $sum 'tok'))"),
+    (& $card 'Est. cost today' "$(& $usd $td.cost)$(& $vs $td.cost (& $avg 'cost'))" "vs 7-day avg $(& $usd (& $avg 'cost')) (budget.prices)" "7 days $(& $usd (& $sum 'cost'))"),
+    (& $card 'Tokens per merged MR' "$(if ($merged) { & $tk ($wfTok / $merged) } else { '—' })" "$merged MR(s) merged · $items item(s): $(if ($items) { & $tk ($wfTok / $items) } else { '—' }) per item" '7 days, workflow runs'),
+    (& $card 'Review + fix share' "$(if ($wfTok) { & $n1 (& $pct $loop $wfTok) } else { '—' })<small>%</small>" "$(& $tk $loop) of $(& $tk $wfTok) workflow tokens" '7 days' $(if ($wfTok -and $loop / $wfTok -gt 0.5) { 'warn' })),
+    (& $card 'Steps empty · failed · stuck' "$(& $n1 (& $pct $rt.empty $rt.n))<small>%</small> · $(& $n1 (& $pct $rt.fail $rt.n))<small>%</small> · $([int]$rt.stuck)" "$($rt.empty) empty, $($rt.fail) failed of $($rt.n) ended steps" '7 days' $(if ($rt.stuck -or $rt.fail) { 'warn' })),
+    (& $card 'Agents outside workflows' "$(& $tk (($bgs | Measure-Object tok -Sum).Sum))" "$(($bgs | Measure-Object n -Sum).Sum) agent(s) in $($bgs.Count) session(s)" "est. $(& $usd (($bgs | Where-Object { $null -ne $_.cost } | Measure-Object cost -Sum).Sum))"))
+  # 7 days: tokens per day, today last; tooltip has cost, runs, merged MRs
+  $mx = [math]::Max(1, (@($dy | ForEach-Object { [double]$_.tok }) + 0 | Measure-Object -Maximum).Maximum); $bw = 100 / [math]::Max(1, $dy.Count)
+  $bars = @(for ($i = 0; $i -lt $dy.Count; $i++) { $d0 = $dy[$i]; $hh = 56 * [double]$d0.tok / $mx; $x = & $n1 ($i * $bw + $bw * 0.2)
+    "<rect class=$(if ($i -eq $dy.Count - 1) { 'x' } else { 'w0' }) x=$x y=$(& $n1 (60 - $hh)) width=$(& $n1 ($bw * 0.6)) height=$(& $n1 $hh) /><rect class=hit x=$(& $n1 ($i * $bw)) y=0 width=$(& $n1 $bw) height=60><title>$(& $e "$($d0.day): $(& $tk $d0.tok) tokens · $(& $usd $d0.cost) · $($d0.runs) run(s) · $($d0.merged) MR(s) merged")</title></rect>" })
+  $chart = "<div class=hist><svg viewBox='0 0 100 60' preserveAspectRatio=none role=img aria-label='tokens per day, 7 days'>$($bars -join '')</svg><div class=ax><span>$(& $e ("$($dy[0].day)".Substring(5)))</span><span>tokens per day · today $(& $tk $td.tok)</span><span>$(& $e ("$($td.day)".Substring(5)))</span></div></div>"
+  $stepRows = { param($ss) @($ss | ForEach-Object { , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), (& $tk $_.tok), "$(& $tk $_.in) / $(& $tk $_.out) / $(& $tk $_.cr) / $(& $tk $_.cw)", (& $mn $_.min), $_.tools, @{ h = "<span class='chip $(switch ($_.result) { 'pass' { 's-act' } 'running' { 's-fin' } 'stuck' { 's-stuck' } 'fail' { 's-stuck' } default { 's-oth' } })'>$(& $e $_.result)</span>" }, "$($_.round)$(if ($_.retry) { " · retry $($_.retry)" })") }) }
+  $runHtml = @(foreach ($r in @($runs | Select-Object -First 25)) {   # newest 25: the page stays light
+      $cp = "<span class=bl>$(& $tk $r.tok) tokens</span>$(if ($r.cap) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" })"   # budget = context spend (budget -Run), not billed tokens
+      "<details class='ru f'><summary><span class=gn0>$(& $e $r.run)</span><span class='chip $(if ($r.status -eq 'running') { 's-act' } else { 's-fin' })'>$(& $e $r.status)</span>$cp<span class=m>$(& $usd $r.cost) · $(& $mn $r.wall) · $($r.done)/$($r.total) steps · $($r.merged) merged · $(& $e $r.roles)</span></summary>" +
+      "<div class=sy>$(& $table 'Step', 'Role', 'Model', 'Tokens', 'In / out / cache r / w', 'Time', 'Tools', 'Result', 'Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok })))</div></details>" }) -join ''
+  $aggT = { param([string]$title, $rows) "<div><h4>$(& $e $title)</h4><div class=sy>$(& $table 'Key', 'N', 'Avg', 'p50', 'p90', 'Avg time', 'p90 time' @($rows | ForEach-Object { , @(("$($_.k)" -replace '^claude-'), $_.n, (& $tk $_.avg), (& $tk $_.p50), (& $tk $_.p90), (& $mn $_.avgMin), (& $mn $_.p90Min)) }))</div></div>" }
+  $topT = { param($rows) & $table 'Step', 'Role', 'Model', 'Tokens', 'Time' @($rows | ForEach-Object { , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), (& $tk $_.tok), (& $mn $_.min)) }) }
+  "<h3>Usage: tokens, cost, time (7 days$(if ($U.partial) { '; transcripts still being read' }))</h3>" + $kpis + $chart +
+    "<h4>Runs ($($runs.Count)$(if ($runs.Count -gt 25) { ', newest 25' }))</h4><div class='rus sy'>$(if ($runHtml) { $runHtml } else { '<p class=empty>None</p>' })</div>" +
+    (& $grid aggs 460px @((& $aggT 'Per step type' $U.byType), (& $aggT 'Per role' $U.byRole), (& $aggT 'Per model' $U.byModel))) +
+    (& $grid aggs 460px @("<div><h4>Top 5 steps, 24 h</h4>$(& $topT $U.top24)</div>", "<div><h4>Top 5 steps, 7 days</h4>$(& $topT $U.top7)</div>")) +
+    "<h4>Agents outside workflows, by session</h4>" + (& $table 'Session', 'Agents', 'Tokens', 'Est. cost', 'Roles' @($bgs | ForEach-Object { , @($_.session, $_.n, (& $tk $_.tok), (& $usd $_.cost), $_.roles) }))
+}
 # ---- release: every lease of an agent (release, board leave, workflows after each stage); idempotent
 # live gated builds of $Agent ('*' = all): its gate owner name, or a dir inside one of its worktrees (the owner may be a worktree name)
 function Get-KitAgentBuilds([string]$Agent, [string[]]$Dirs = @()) {
