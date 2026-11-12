@@ -7,15 +7,15 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk], uncomment <id> <comment id>, create [-NewTask '<why>'] [-Related <ids>] [-Parent <id> -File <md>: a subtask needs Problem, Goal, Items, Acceptance, Links], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
  pipes [-Mrs <url>,...] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs in a wt worktree: its branch's open MRs); -UntilMerged: for the merges
- host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
+ host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
  checkpoint -Agent <id> [-Run <run>] -Step <step> [-Evidence] [-Dir <wt>] [-Next] | -Read  resume point (bossy.ps1 pause / resume)
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L933 check · L1189 pipes · L1239 guard · L1996 dir ·
-  L2006 checkpoint · L2031 prior · L2069 tracker · L2149 host
+Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L933 check · L1236 pipes · L1286 guard · L2043 dir ·
+  L2053 checkpoint · L2078 prior · L2116 tracker · L2196 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -931,6 +931,46 @@ exit $code
 }
 
 # ---- check: gated stack steps; exit = failing step's code (3 gate / test lock, 4 no container engine, 5 UNRUN)
+# failed python test: top-level packages its "No module named" lines (no output: the test files' imports) name that find_spec
+# misses (never imported; the repo and src/ count) -> names; check.importProbeSec cap
+function Get-PyStaleModules([string]$Dir, [string]$Py, [string]$RunText, [string[]]$TestFiles) {
+  $mode, $items = if ("$RunText".Trim()) { 'names', @([regex]::Matches($RunText, "(?:ModuleNotFoundError|ImportError): No module named '([\w.]+)'") | ForEach-Object { $_.Groups[1].Value }) } else { 'files', @($TestFiles | ForEach-Object { Join-Path $Dir ($_ -split '::')[0] } | Where-Object { $_ -match '\.py$' -and (Test-Path -LiteralPath $_) }) }
+  $Py = ($Py -replace '^\s*"([^"]+)".*', '$1' -split '\s+-')[0].Trim('"', ' ')   # "python -X utf8", a quoted path
+  $pyExe = if (Test-Path -LiteralPath (Join-Path $Dir $Py)) { Join-Path $Dir $Py } else { Resolve-Tool $Py }
+  if (-not $items.Count -or -not $pyExe) { return @() }
+  $probe = @'
+import ast, importlib.util as u, os, sys
+m, t, c = sys.argv[1], set(), os.getcwd(); sys.path[:0] = [c, c + '/src']
+for a in sys.argv[2:]:
+    if m == 'names': t.add(a.split('.')[0]); continue
+    sys.path.insert(0, os.path.dirname(os.path.abspath(a)))
+    try: t |= {x.split('.')[0] for n in ast.parse(open(a, encoding='utf-8').read()).body for x in ([y.name for y in n.names] if isinstance(n, ast.Import) else [n.module] if isinstance(n, ast.ImportFrom) and not n.level and n.module else [])}
+    except Exception: pass
+def gone(x):
+    try: return u.find_spec(x) is None
+    except Exception: return False
+print(' '.join(x for x in sorted(t) if gone(x)))
+'@
+  $psi = [Diagnostics.ProcessStartInfo]::new($pyExe); foreach ($x in @('-X', 'utf8', '-', $mode) + $items) { $psi.ArgumentList.Add($x) }   # stdin: a .bat shim (pyenv) mangles a multi-line -c
+  $psi.WorkingDirectory = $Dir; $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $psi.RedirectStandardOutput = $psi.RedirectStandardError = $true
+  $pr = try { [Diagnostics.Process]::Start($psi) } catch { return @() }; $pr.StandardInput.Write($probe); $pr.StandardInput.Close(); $outTask = $pr.StandardOutput.ReadToEndAsync(); $null = $pr.StandardError.ReadToEndAsync()
+  if (-not $pr.WaitForExit(1000 * [int](Get-KitParam 'check.importProbeSec'))) { try { $pr.Kill($true) } catch { }; return @() }
+  @("$($outTask.Result)".Trim() -split '\s+' | Where-Object { $_ })
+}
+# stale-env hint: each module's requirements.txt line, the file's plain pins as constraints (a full -r rebuilt other pins, 2026-11-12)
+function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
+  $venv = Get-Item -LiteralPath (Join-Path $Dir '.venv') -Force -ErrorAction SilentlyContinue; $venvDir = if ($venv.LinkTarget) { [IO.Path]::GetFullPath($venv.LinkTarget, $Dir) } else { $venv.FullName }
+  $venvPy = if ($venvDir) { Join-Path $venvDir $(if ($KitIsWindows) { 'Scripts\python.exe' } else { 'bin/python' }) } else { $Py }
+  $reqFile = Join-Path $Dir 'requirements.txt'; $norm = { "$args".ToLower() -replace '[-_.]+', '_' }; $hits = @{}
+  $reqLines = @(if (Test-Path -LiteralPath $reqFile) { Get-Content -LiteralPath $reqFile | ForEach-Object { ($_ -split '#')[0].Trim() } | Where-Object { $_ -match '^\w[\w.-]*(\[[^\]]*\])?\s*([=<>~!;]|$)' } })
+  $pins = @($reqLines | Where-Object { $_ -match '[=<>~!]' })
+  foreach ($m in $Stale) { $hits[$m] = @($reqLines | Where-Object { (& $norm ($_ -split '[\[<>=!~;\s]')[0]) -eq (& $norm $m) })[0] }
+  Write-Host "[check] stale-env: $($Stale -join ', ') (the venv lacks them: not a test failure)"
+  foreach ($m in @($Stale | Where-Object { -not $hits[$_] })) { Write-Host "[check] stale-env: no requirements.txt line for $m`: add its package (the import name may differ), then install" }
+  $quoted = @($hits.Values | Where-Object { $_ } | ForEach-Object { '"' + $_ + '"' }) -join ' '; if (-not $quoted) { return }
+  $cons = Join-Path (Get-KitPath logs -Create) "constraints-$([Convert]::ToHexString([Security.Cryptography.MD5]::HashData([Text.Encoding]::UTF8.GetBytes($Dir.ToLower()))).Substring(0, 12)).txt"; $pins -replace '\[[^\]]*\]' | Set-Content -LiteralPath $cons -Encoding utf8
+  Write-Host "[check] ENV-FIX to kitty (shared venv, when no build uses it; never run it from a worktree): `"$venvPy`" -m pip install -c `"$cons`" $quoted"
+}
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -1167,16 +1207,23 @@ foreach ($s in $steps) {
   }
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }
   if ($Show) { "$s : $cmd"; continue }
-  $unrun = $false   # goody ts-typecheck: a huge tsc baseline = unrun (exit 5)
+  $unrun = $false; $runLog = $runText = $null   # goody ts-typecheck: a huge tsc baseline = unrun (exit 5)
   $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }   # goody ts-typecheck
   if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else {
     $lk = if ($s -eq 'test') { Get-TestLock @($Tests -split '[,\s]+' | Where-Object { $_ }) }
     if ($lk -and -not (Use-KitLock "$($lk.lock)" $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Split-Path (Get-CheckRepo).top -Leaf }) $st.dir)) { Write-Host "[check] test not started: lock $($lk.lock) still held by $($script:KitLockRefused.holder) (repos[].exclusiveTests); retry when it ends"; exit 3 }
-    try { & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE } finally { if ($lk) { Remove-KitLock "$($lk.lock)" } }
+    # a python test run's output goes to a log too: its "No module named" lines tell a stale venv from a failed test
+    $runLog = if ($s -eq 'test' -and $pyRun) { Join-Path (Get-KitPath logs -Create) "check-$(Hash12 $st.dir.ToLower())-$PID.log" }   # per run: parallel checks of one dir
+    if ($runLog) { Write-Host "[check] test output goes to $runLog and prints when the run ends"; $env:PYTHONUTF8 = '1' }
+    try { & $KitCmd.dev gate -Dir $st.dir -Cmd $(if ($runLog) { "($cmd) > `"$runLog`" 2>&1" } else { $cmd }); $rc = $LASTEXITCODE } finally {
+      if ($lk) { Remove-KitLock "$($lk.lock)" }
+      if ($runLog) { $runText = Get-Content -LiteralPath $runLog -Raw -Encoding utf8 -ErrorAction SilentlyContinue; if ($runText) { Write-Host $runText.TrimEnd() }; Remove-Item -LiteralPath $runLog -ErrorAction SilentlyContinue } }
   }
   $ran++
   if ($rc -and $s -eq 'typecheck' -and $cmd -match '\btsc\b' -and -not $tc) { Write-Host '[check] errors outside your changes fail here: the baseline split is a goody: run kitbag.py goody add ts-typecheck' }
+  $stale = if ($rc -and $runLog) { @(Get-PyStaleModules $st.dir $pyRun $runText $tl) } else { @() }   # 24 of 39 python builds failed on the env, not the code
+  if ($stale.Count) { Write-PyStaleEnv $st.dir $pyRun $stale; Write-Host "[check] exit 5: $s UNRUN (stale-env, test exit $rc)"; exit 5 }
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
   }
   if (-not $Show) { Write-Host "[check] $s $(if ($unrun) { 'UNRUN (not a pass: see above)' } else { 'ok' })" }
@@ -2147,8 +2194,22 @@ function Invoke-Tracker {
 }
 
 # ---- host: git-host / ci adapters for devtools.py
-function Invoke-Host([Parameter(Mandatory)][string]$Verb, [string]$ArgJson = '{}') {
-  $a = $(if ($ArgJson -like '@*') { Get-Content -LiteralPath $ArgJson.Substring(1) -Raw -Encoding utf8 } else { $ArgJson }) | ConvertFrom-Json -AsHashtable
+# a bare MR ref (MR URL, [group/]repo!iid, "repo iid", iid = the current folder's origin) -> @{ repo; n [; type] }, else $null
+function ConvertFrom-MrRef([string[]]$Ref) {
+  $s = (@($Ref | Where-Object { $_ }) -join ' ').Trim()
+  if ($u = ConvertFrom-MrUrl $s) { return $u }
+  if ($s -match '^(?<r>[A-Za-z][\w./-]*)(?:!|\s+)(?<n>\d+)$') { return @{ repo = $Matches.r; n = $Matches.n } }
+  if ($s -notmatch '^!?(?<n>\d+)$') { return $null }
+  $n = $Matches.n
+  if ("$(git remote get-url origin 2>$null)".Trim() -match '^(?:\w+://(?:[^@/]+@)?(?<h>[^/]+)/|[^@]+@(?<h>[^:]+):)(?<p>.+?)(?:\.git)?/?$') {
+    $originHost = $Matches.h -replace ':\d+$'; @{ repo = $Matches.p -replace '/_git/', '/' -replace '^v3/'; n = $n; type = $(if ($originHost -eq $KitConf.GitHost) { $script:HostType } else { Get-HostKind $originHost }) } }
+  else { Stop-KitVerb "host: iid $n needs a git folder with an origin: use repo!iid or the MR URL" }
+}
+function Invoke-Host([Parameter(Mandatory)][string]$Verb, [string]$ArgJson = '{}', [Parameter(ValueFromRemainingArguments)][string[]]$MrRef) {
+  if ($ArgJson -match '^\s*[{@]' -and @($MrRef | Where-Object { $_ }).Count) { Stop-KitVerb "host: extra argument(s) after the JSON: $($MrRef -join ' ')" }
+  $a = if ($ArgJson -match '^\s*[{@]') { $(if ($ArgJson -like '@*') { Get-Content -LiteralPath $ArgJson.Substring(1) -Raw -Encoding utf8 } else { $ArgJson }) | ConvertFrom-Json -AsHashtable }
+  else { ConvertFrom-MrRef (@($ArgJson) + @($MrRef)) }   # a bare MR ref: 17 usage errors in one retro
+  if ($null -eq $a) { Stop-KitVerb "host: '$((@($ArgJson) + @($MrRef) | Where-Object { $_ }) -join ' ')' is no JSON and no MR ref. Usage: host <verb> '<args JSON>' | host <verb> <iid | [group/]repo!iid | MR URL | repo iid>" }
   $global:KitHostFailed = $false; $r = @(Invoke-HostVerb $Verb $a -NoMemo | Where-Object { $null -ne $_ })   # a failed call = null (unknown)
   if (-not $r.Count -and $global:KitHostFailed) { 'null' } elseif ($Verb -in 'mr.list', 'ci.runs', 'ci.jobs') { ConvertTo-Json -InputObject $r -Depth 8 -Compress }
   elseif ($r.Count -eq 1 -and $r[0] -is [string]) { $r[0] } else { ConvertTo-Json -InputObject $(if ($r.Count) { $r[0] } else { $null }) -Depth 8 -Compress }

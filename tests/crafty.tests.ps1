@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-crafty.tests.ps1: crafty.ps1 wt / check / gate / guard goody notes, lib.ps1 git host + tracker adapters, devtools.py.
+crafty.tests.ps1: crafty.ps1 wt / check / gate / guard goody notes, lib.ps1 tracker adapters, devtools.py (git host: sessions.tests.ps1).
 Usage: pwsh -NoProfile -File <kit>/tests/crafty.tests.ps1 (or tests/kit-tests.ps1 -Area crafty).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -64,22 +64,6 @@ try {
   Expect "wt commit names -MessageFile; wt new -Repo <name> via repos[].checkout; pipes: exit 2 + usage (calls log too); checkpoint run adhoc-<agent> ($($cr.run))" ($wm -match '-MessageFile <file>' -and
     $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $pue -match 'Usage: pipes' -and $cr.run -eq 'adhoc-c9' -and (Test-Prose kit-report (Join-Path (TkPath $k agents) 'c9/resume-adhoc-c9.md')))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
-# git-host adapters
-$gh = @'
-. $args[0]
-$u = 'https://h/g/s/r/-/merge_requests/4', 'https://github.com/o/r/pull/5', 'https://h/w/r/pull-requests/6', 'https://h/o/p/_git/r/pullrequest/7' | % { $x = ConvertFrom-MrUrl $_; "$($x.type):$($x.repo)!$($x.n)" }
-"mr-urls:$("$u" -eq 'gitlab:g/s/r!4 github:o/r!5 bitbucket:w/r!6 azure:o/p/r!7')"
-$m = Invoke-HostVerb 'mr.get' @{ type = 'command'; repo = 'o/cmd'; n = '4' }; "command:$($m.iid -eq 4 -and $m.title -eq 'o/cmd')"
-$e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; $g = try { Invoke-HostVerb 'mr.get' @{ repo = 'o/r'; n = '1' } } catch { "$_" }   # unknown host = gitlab
-"extra-line:$($e -eq 'git-host github is a goody: run kitbag.py goody add github' -and $g -eq 'git-host gitlab is a goody: run kitbag.py goody add gitlab')"
-"ci-object:$(try { $null = Invoke-HostVerb 'ci.status' @{ type = 'command'; repo = 'o/cmd' }; $true } catch {})"
-'@
-$ka = New-TestKit adapters; $cmdf = Join-Path (Split-Path $ka) 'host-cmd.ps1'; Set-Content $cmdf '[ordered]@{ iid = [int]$args[1]; state = ''merged''; title = $args[0] } | ConvertTo-Json -Compress'
-& $J @{ gitHost = 'git.example'; repos = @(@{ name = 'cmd'; ci = @{ mrPipelines = $false } }); gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/crafty/kit.local.json') 5
-$f = Join-Path (Kd) 'githost-test.ps1'; Set-Content $f $gh
-$res = @(pwsh @np $f (Join-Path $ka 'skills/crafty/lib.ps1') 2>&1)
-Expect-Each $res 'git host: #' 'mr-urls', 'command', 'extra-line', 'ci-object'
-Remove-TestKit $ka
 $env:KIT_TRACKER_TYPE = 'none'
 $t = pwsh @np $D tracker create -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
 $null = pwsh @np $D tracker status $t.id failedTesting; $sNo = pwsh @np $D tracker status $t.id 2>&1 | Out-String; $stCode = $LASTEXITCODE

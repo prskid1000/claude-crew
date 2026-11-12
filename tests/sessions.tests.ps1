@@ -2,7 +2,7 @@
 <#
 sessions.tests.ps1: several coordinators on one machine (adapters/supervise_resources.ps1 "sessions"): run owners for pause /
 resume / recover (-Everyone), a stepped-aside supervise prints its own runs' flags, task claims at launch, the step-age HANDOFF;
-handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints.
+handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints; git-host adapters, crafty.ps1 host MR refs and check's python stale-env.
 Usage: pwsh -NoProfile -File <kit>/tests/sessions.tests.ps1 (or tests/kit-tests.ps1 -Area sessions).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -91,5 +91,45 @@ $beatRx = 'Get-KitBeatPrompt \{ "Run & .+? supervise -AutoFix -Brief\. (.+?)" \}
 $beatTail = if ((Get-Content (Join-Path $src 'skills/crafty/lib.ps1') -Raw) -match $beatRx) { $Matches[1] }
 $beatDocs = @('CLAUDE.md', 'GEMINI.md', 'skills/bossy/SKILL.md' | ForEach-Object { Get-Content (Join-Path $src $_) -Raw -ErrorAction SilentlyContinue })
 Expect 'heartbeat prompt: reply = 1-4 action lines, never the stdout; SKILL.md E1 quotes it; no doc asks to paste the stdout' ($beatTail -match 'Reply = 1-4 lines.*never paste the stdout' -and "$($beatDocs[2])".Contains($beatTail) -and -not ($beatDocs -match 'verbatim,? (and )?unfenced|entire stdout|renders as cards'))
+# git-host adapters
+$gh = @'
+. $args[0]
+$u = 'https://h/g/s/r/-/merge_requests/4', 'https://github.com/o/r/pull/5', 'https://h/w/r/pull-requests/6', 'https://h/o/p/_git/r/pullrequest/7' | % { $x = ConvertFrom-MrUrl $_; "$($x.type):$($x.repo)!$($x.n)" }
+"mr-urls:$("$u" -eq 'gitlab:g/s/r!4 github:o/r!5 bitbucket:w/r!6 azure:o/p/r!7')"
+$m = Invoke-HostVerb 'mr.get' @{ type = 'command'; repo = 'o/cmd'; n = '4' }; "command:$($m.iid -eq 4 -and $m.title -eq 'o/cmd')"
+$e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; $g = try { Invoke-HostVerb 'mr.get' @{ repo = 'o/r'; n = '1' } } catch { "$_" }   # unknown host = gitlab
+"extra-line:$($e -eq 'git-host github is a goody: run kitbag.py goody add github' -and $g -eq 'git-host gitlab is a goody: run kitbag.py goody add gitlab')"
+"ci-object:$(try { $null = Invoke-HostVerb 'ci.status' @{ type = 'command'; repo = 'o/cmd' }; $true } catch {})"
+'@
+$ka = New-TestKit adapters; $cmdf = Join-Path (Split-Path $ka) 'host-cmd.ps1'; Set-Content $cmdf '[ordered]@{ iid = [int]$args[1]; state = ''merged''; title = $args[0] } | ConvertTo-Json -Compress'
+& $J @{ gitHost = 'git.example'; repos = @(@{ name = 'cmd'; ci = @{ mrPipelines = $false } }); gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/crafty/kit.local.json') 5
+$f = Join-Path (Kd) 'githost-test.ps1'; Set-Content $f $gh
+$res = @(pwsh @np $f (Join-Path $ka 'skills/crafty/lib.ps1') 2>&1)
+Expect-Each $res 'git host: #' 'mr-urls', 'command', 'extra-line', 'ci-object'
+& $J @{ gitHost = 'git.example'; gitHostType = 'command'; repos = @(@{ name = 'cmd'; ci = @{ mrPipelines = $false } }); gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/crafty/kit.local.json') 5
+$hostRefDir = Join-Path (Kd) 'hostref'; git init -q $hostRefDir; git -C $hostRefDir remote add origin https://git.example/o/cmd.git; $kaCrafty = Join-Path $ka 'skills/crafty/crafty.ps1'
+Push-Location $hostRefDir; $hostRefOut = @(@('cmd!4'), @('g/cmd!5'), @('cmd', '6'), @('7') | % { (pwsh @np $kaCrafty host mr.get @_ | ConvertFrom-Json).title }); $hostBad = pwsh @np $kaCrafty host mr.get 'not a ref' 2>&1 | Out-String; $hostBadCode = $LASTEXITCODE; Pop-Location
+Expect "host: a bare MR ref binds to {repo, n} ([group/]repo!iid, repo iid; iid = the folder's origin); neither JSON nor a ref: exit 2 + both forms ($($hostRefOut -join ' '))" (($hostRefOut -join ' ') -eq 'cmd g/cmd cmd o/cmd' -and $hostBadCode -eq 2 -and $hostBad -match 'repo!iid')
+$noGitDir = Join-Path ([IO.Path]::GetTempPath()) "kit-nogit-$PID"; New-Item -ItemType Directory -Force $noGitDir | Out-Null   # outside any git repo
+Push-Location $noGitDir; $hostEdge = @(@('{"repo":"cmd","n":"4"}', '5'), @('8')) | % { $edgeOut = pwsh @np $kaCrafty host mr.get @_ 2>&1 | Out-String; "$LASTEXITCODE $edgeOut" }; Pop-Location; Remove-Item -LiteralPath $noGitDir -Recurse -Force
+Expect 'host: an argument after the JSON and an iid outside a git folder: exit 2, each named' ($hostEdge[0] -match '(?s)^2 .*extra argument\(s\) after the JSON: 5' -and $hostEdge[1] -match '(?s)^2 .*iid 8 needs a git folder')
+Remove-TestKit $ka
+# crafty.ps1 check, python stale-env
+$D = Join-Path $k 'skills/crafty/crafty.ps1'
+$pyCase = { param([string]$caseName, [string]$imports, [string]$body, [string[]]$extra)
+  $cd = Join-Path (Kd) "py-$caseName"; New-Item -ItemType Directory -Force "$cd/src/localpkg" | Out-Null; 'NoSuchMod-Kit-Probe[x]==1.0', 'kit-bare-absent' | Set-Content "$cd/requirements.txt"; '' | Set-Content "$cd/src/localpkg/__init__.py"
+  "import unittest`n$imports`nclass T(unittest.TestCase):`n    def test_a(self): $body" | Set-Content "$cd/test_$caseName.py"
+  $caseOut = pwsh @np $D check -Dir $cd -Step test @extra 2>&1 | Out-String; "$LASTEXITCODE|$caseOut" }
+$pyOut = @{ pin = & $pyCase pin 'import nosuchmod_kit_probe' pass @('-Tests', 'test_pin.py'); all = & $pyCase all 'import yaml_kit_absent.sub' pass @('-AllTests')
+  bare = & $pyCase bare 'import kit_bare_absent' pass @('-Tests', 'test_bare.py')
+  fail = & $pyCase fail 'print("optional: No module named ''zz_kit''")' 'self.assertEqual(1, 2)' @('-Tests', 'test_fail.py'); src = & $pyCase src 'import localpkg' pass @('-Tests', 'test_src.py') }
+Expect "check python: a ModuleNotFoundError line = stale-env, exit 5 + the pinned ENV-FIX command; -AllTests too (a bare requirements line counts; none: no command); a failed assert (a printed optional ImportError too) or a src/ module = FAILED" (
+  $pyOut.pin -match '^5\|' -and $pyOut.pin -match 'stale-env: nosuchmod_kit_probe' -and $pyOut.pin -match 'never run it from a worktree\): ".*" -m pip install -c ".*constraints-\w+\.txt" "NoSuchMod-Kit-Probe\[x\]==1\.0"' -and
+  $pyOut.bare -match '^5\|' -and $pyOut.bare -match '-m pip install -c ".*" "kit-bare-absent"' -and $pyOut.all -match '^5\|' -and $pyOut.all -match 'no requirements.txt line for yaml_kit_absent' -and $pyOut.all -notmatch 'pip install' -and
+  $pyOut.fail -match '(?s)^1\|.*test FAILED' -and $pyOut.fail -notmatch 'stale-env' -and $pyOut.src -match '^1\|' -and $pyOut.src -notmatch 'stale-env')
+$probeRes = Invoke-PsTest 'py-probe' @'
+. $args[0]; Get-PyStaleModules $args[1] 'python -X utf8' "x`nModuleNotFoundError: No module named 'zz_kit_absent.sub'`nModuleNotFoundError: No module named 'os.zz'" @()
+'@ @($D, (Kd))
+Expect "check python: the probe takes 'python -X utf8' and names a missing package, not a missing submodule of one found ($probeRes)" ("$probeRes" -eq 'zz_kit_absent')
 Remove-TestKit $k
 Complete-Tests

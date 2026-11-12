@@ -22,8 +22,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L40 config · L74 run · L162 tracker · L365 git host · L448 MR · L615 merge · L895 docs · L1050 publish · L1406 plugins ·
-  L1420 keepboth · L1439 selftest · L1851 CLI
+Sections: L40 config · L74 run · L162 tracker · L365 git host · L448 MR · L615 merge · L895 docs · L1050 publish · L1408 plugins ·
+  L1422 keepboth · L1441 selftest · L1855 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -334,7 +334,7 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     ai_md = rd(ai) if os.path.isfile(ai) else ((rounds or [{}])[-1].get('body') or '')
     own = rounds[:-1] if rounds and rounds[-1].get('body') == ai_md else rounds   # the newest round, already published, is the caller's
     gaps = case_gaps(ai_md, rd(guide) if os.path.isfile(guide) else None, t.get('description') or '', [r['body'] for r in own],
-                     f'finish {tid}', [r['body'] for r in _pub_read(f'{tid}:testing-doc').get('rounds') or []]) if ai_md.strip() else []
+                     f'finish {tid}', [r['body'] for r in _pub_read(f'{tid}:testing-doc').get('rounds') or []], tid) if ai_md.strip() else []
     if gaps:
         raise SystemExit(f'finish {tid}: ' + '; '.join(gaps) + '. Fix the AI doc (run the cases), then finish again. Nothing was written.')
     ai_url, guide_url = _doc_url(tid, 'testing-ai', ai), _doc_url(tid, 'testing-doc', guide)
@@ -1160,7 +1160,7 @@ def _warn_earlier(where, earlier):
                   ' their owner fixes them in a later round', file=sys.stderr)
 
 
-def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', human_prior=()):
+def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', human_prior=(), tid=''):
     """AI doc rule breaks of the rows this round adds or changes (prior / human_prior = published round bodies; earlier rows
     and checks: WARN only), each
     naming its fix (pre-existing waiver, qa.notLocal PASS, qa.matrix gap); with the human doc and task: a human check no AI row
@@ -1205,8 +1205,10 @@ def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', hu
         ran = [h for h in hid if any(has(h, i) and RAN.match(r or '') for i, r, _, _ in rows + earlier)]
         _warn_earlier(where, {'are human checks no AI row ran': [r[0] for r in hold if r[0] not in ran]})
         if unran := [r[0] for r in hnew if r[0] and r[0] != '#' and r[0] not in ran]:
+            add = ' '.join(f'"| A<n> ({h}) | positive | <step> | <expected> | <PASS or FAIL, once run> | <evidence link> |"' for h in unran)
             out.append(f'human check(s) {", ".join(unran)} have no AI row that ran them: the loop runs each'
-                       ' (its AI row\'s # cell names it: "A3 (T2)")')
+                       ' (its AI row\'s # cell names it: "A3 (T2)")' + (f'; add the row(s) {add} to the AI doc, then republish it:'
+                       f' python -X utf8 devtools.py doc "<title>" <ai.md> --key {tid}:testing-ai' if tid else ''))
         orphan = [i for i, r, _, _ in rows if local(r) and not any(has(h, i) for h in hid)]
         if orphan:
             out.append(f'row(s) {", ".join(orphan)} are NOT_TESTED_LOCAL but no human check carries them:'
@@ -1763,6 +1765,8 @@ def _publish_selftest(expect, refused):
         g['task'] = lambda t: {'id': t, 'name': 'n', 'status': st['s'], 'description': st['d']}
         refused('finish: no AI doc -> refused, nothing written', lambda: finish('T8', human, '**Solution** — x'), 'no AI testing doc')
         refused('finish: a human check no AI row ran -> refused', lambda: finish('T9', w(os.path.join(tmp, 'h4.md'), hm2), '**Solution** — x', ai=a2p), 'T2 have no AI row')
+        refused('finish: the refusal names the AI row and the doc command per check', lambda: finish('T9', w(os.path.join(tmp, 'h4.md'), hm2), '**Solution** — x', ai=a2p),
+                '"| A<n> (T2) | positive | <step> | <expected> | <PASS or FAIL, once run> | <evidence link> |" to the AI doc, then republish it: python -X utf8 devtools.py doc "<title>" <ai.md> --key T9:testing-ai')
         a5 = w(os.path.join(tmp, 'a5.md'), a2.replace('| A3 | edge | GET /list, no rows | 200, [] | | |', '| A3 | edge | GET /list, no rows | 200, [] | NOT_TESTED_LOCAL | |'))
         with contextlib.redirect_stderr(io.StringIO()):
             publish('T5:testing-ai', 'X', a5)
