@@ -11,7 +11,7 @@ deployed targets; a deselected one's kit-written copies are removed (its folder 
 the files (bossy.ps1 health, prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py
 loads this file and shares its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L37 characters · L72 agents · L118 hooks · L167 workflows · L298 mechanics · L330 deploy · L379 targets · L581 command
+Sections: L37 characters · L72 agents · L118 hooks · L167 workflows · L298 mechanics · L331 deploy · L380 targets · L582 command
 """
 import base64, contextlib, fnmatch, hashlib, io, json, os, re, shutil, tempfile
 from pathlib import Path
@@ -296,10 +296,11 @@ def port_workflows():
     print(f"ported {len(made)} workflow(s) -> .codex/workflows/*.md, .agents/kit-workflows/*.py")
 
 # ---- mechanics: what CLAUDE.md says for Claude Code, per CLI (GEMINI.md for agy; AGENTS.override.md head for Codex)
-E1_PROMPT = ("Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced; never "
-  "summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; "
-  "re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1).")
-PASTE = ("The reply IS the ENTIRE supervise stdout, verbatim and unfenced, never summarised or cut; resolve WATCH lines like ACT "
+E1_PROMPT = ("Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Act on every ACT and WATCH line; "
+  "re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min. Reply = 1-4 lines of the "
+  "actions taken this beat, plus one line only when an ACT needs the owner; never paste the stdout (detail: "
+  "supervise-report.html) (bossy E1).")
+PASTE = ("The reply = 1-4 lines of the actions taken this beat, never the supervise stdout; resolve WATCH lines like ACT "
   "ones without asking; ask the owner only for a real decision.")
 
 def mechanics(tool):
