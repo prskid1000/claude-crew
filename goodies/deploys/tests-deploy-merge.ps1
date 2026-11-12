@@ -35,8 +35,9 @@ Set-Content $hostPs @'
 $v, $rest = $args; $log = $env:DM_HOST_LOG; $flag = "$log.merged"
 switch ($v) {
   'create' { Add-Content $log "create $($rest -join ' | ')"; '{"iid":5,"web_url":"https://h.example/g/shop/-/merge_requests/5"}' }
-  'get' { @{ iid = 5; sha = 'abc'; state = $(if (Test-Path $flag) { 'merged' } else { 'opened' }) } | ConvertTo-Json -Compress }
-  'merge' { Add-Content $log "merge $($rest -join ' ')"; Set-Content $flag x; '{"iid":5}' }
+  'get' { $gets = if (Test-Path $flag) { [int](Get-Content $flag) } else { -1 }; if ($gets -ge 0) { Set-Content $flag ($gets + 1) }   # merges async: 'opened' for 2 reads after the merge call
+    @{ iid = 5; sha = 'abc'; state = $(if ($gets -ge 2) { 'merged' } else { 'opened' }) } | ConvertTo-Json -Compress }
+  'merge' { Add-Content $log "merge $($rest -join ' ')"; Set-Content $flag 0; '{"iid":5,"state":"opened"}' }
   'ci' { '{"id":1,"status":"success"}' }
 }
 '@

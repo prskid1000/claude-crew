@@ -169,7 +169,9 @@ $r = @(Get-KitSuperviseFlagsDeploys -AutoFix); $tk = (Read-KitTracking).tasks
 $gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())   # trigger ask, the rest real
 @{ at = $now.AddMinutes(-90).ToString('o'); ready = @('stage (1 MR(s))'); ask = @('stage: 1 MR(s) (api!1)') } | ConvertTo-Json | Set-Content $pc
 $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
-"ask:$(@($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*window open .plan 9\d min old, refresh pending')"
+$a1 = @($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*window open .plan 9\d min old, refresh pending'
+@{ at = $now.AddMinutes(-90).ToString('o'); ready = @(); ask = $null } | ConvertTo-Json | Set-Content $pc; $r = @(Get-KitSuperviseFlagsDeploys)   # no batch: no empty ask
+"ask:$([bool]$a1 -and -not @($r | Where-Object { "$($_.what)" -match '^DEPLOY ASK' }).Count)"
 '@
 Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names (#)' @('none', 'good', 'stale', 'watch', 'empty', 'live', 'intest', 'ask')
 # a deploy MR (into deploys[].branch) feeds its own target only; from / paths pick an MR's targets in the intest gate too; old requests expire

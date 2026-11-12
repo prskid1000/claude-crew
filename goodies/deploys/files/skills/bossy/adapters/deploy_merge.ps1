@@ -92,8 +92,9 @@ do {   # wait for its pipeline: success merges, any other end state stops
 if ($cur.state -eq 'merged') { "deploy MR $url already merged"; exit 0 }
 if ($cur.state -ne 'opened') { "deploy MR $url is $(if ($cur) { $cur.state } else { 'unreadable' }): not merged"; exit 1 }
 if (-not $noCi -and $st -ne 'success') { "deploy MR $url pipeline $(if ($st) { $st } else { 'none' })$(if ((Get-Date) -gt $end) { " after $WaitMinutes min" }): not merged (crafty.ps1 pipes -Mrs $url; merge it on green)"; exit 1 }
-$null = Invoke-HostVerb 'mr.merge' ($ha + @{ n = $iid; method = 'merge'; sha = $cur.sha })
-$done = Invoke-HostVerb 'mr.get' ($ha + @{ n = $iid }) -NoMemo
+$done = Invoke-HostVerb 'mr.merge' ($ha + @{ n = $iid; method = 'merge'; sha = $cur.sha })
+# the host merges asynchronously: 'opened' for some seconds after an accepted merge call
+for ($i = 0; $i -lt 30 -and "$($done.state)" -ne 'merged'; $i++) { if ($i) { Start-Sleep 3 }; $done = Invoke-HostVerb 'mr.get' ($ha + @{ n = $iid }) -NoMemo; if ($done -and $done.state -notin 'opened', 'locked') { break } }
 if ($done.state -ne 'merged') { "deploy MR $url merge FAILED (state $($done.state)): merge it by hand, squash off"; exit 1 }
 "merged deploy MR $url into $To (merge commit, $ahead commits from $From)"
 }
