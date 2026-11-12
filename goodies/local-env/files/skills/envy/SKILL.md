@@ -76,6 +76,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   task) = the lane the agent already uses, else the least busy one (a cold lane only when free RAM minus the keep-free floor
   holds all its services); `-Lane <k>` pins; owner verbs act on the named lane. API calls: `pokey.ps1 api -Target <target><k>`.
   `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).
+  A lane's own DB service (port = `db.port`) down: marks wait for its start (an init's fresh copy marks `baseline-<date>`), db
+  checks and the temp watchdog rest. Seed: the env's seed file; `{lane}` in it (e.g. `-Target local-shop{lane}`).
 - Config: envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`,
   `smoke`) merge by `name`. `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health and `db.expect` ({ server
   variable: value }); `deploy` stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100; per service too).

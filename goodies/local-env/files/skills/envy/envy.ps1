@@ -18,7 +18,7 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L29 config · L226 state · L273 layer drops · L345 leases · L466 code · L498 migrations · L788 hooks · L860 marks ·
-  L998 seed · L1044 processes · L1366 daemon · L1826 cleanup · L1898 doctor · L1948 verbs
+  L1006 seed · L1052 processes · L1379 daemon · L1839 cleanup · L1911 doctor · L1963 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -179,7 +179,7 @@ function Expand-Placeholders([string]$t, [string]$e, $s, [string]$dir, [string]$
     $af = AotFile $artifact; $t = $t.Replace('{aot}', $(if ($af -and (Test-Path -LiteralPath $af)) { $(if ($s.aotUse) { [string]$s.aotUse } else { '-XX:AOTCache="{aotFile}"' }).Replace('{aotFile}', $af) } else { '' }))
   }
   if ($t -match '\{cache\}') { $t = $t.Replace('{cache}', (Join-Path (Get-KitPath cache -Create) "localenv/$e-$($s.name)")) }   # a build cache outside the repo
-  $t.Replace('{port}', "$($s.port)").Replace('{debugPort}', "$($s.debugPort)").Replace('{dir}', $dir).Replace('{wt}', $wt).Replace('{env}', $e).Replace('{kit}', $KitConf.Kit).Replace('{workspace}', $KitConf.Workspace).Replace('{artifact}', "$artifact").Replace('{lanIp}', $(if ($t -match '\{lanIp\}') { LanIp } else { '' }))
+  $t.Replace('{port}', "$($s.port)").Replace('{debugPort}', "$($s.debugPort)").Replace('{dir}', $dir).Replace('{wt}', $wt).Replace('{env}', $e).Replace('{lane}', $(if ($t.Contains('{lane}') -and [int](Get-EnvCfg $e).lane -gt 1) { "$((Get-EnvCfg $e).lane)" } else { '' })).Replace('{kit}', $KitConf.Kit).Replace('{workspace}', $KitConf.Workspace).Replace('{artifact}', "$artifact").Replace('{lanIp}', $(if ($t -match '\{lanIp\}') { LanIp } else { '' }))
 }
 $script:stacks = @{}
 function StackOf([string]$dir) {
@@ -869,9 +869,17 @@ function EnvSchemas([string]$e) {
   @($s | Where-Object { $_ } | Select-Object -Unique)
 }
 # kind: release | use | owner | baseline; $repos = the code it stands for (default: the live release)
+# the env's own DB service (a service it runs on db.port, e.g. a lane's copy); down = nothing writes: marks wait, watchdog rests
+function DbSvc([string]$e) { $p = (Get-EnvCfg $e).db.port; if ($p) { @(EnvServices $e | Where-Object { (Managed $_) -and "$($_.port)" -eq "$p" })[0] } }
+function DbSvcDown([string]$e) { $d = DbSvc $e; [bool]($d -and -not (Test-PortListening ([int]$d.port))) }
 function New-Mark([string]$e, [string]$name, [string]$kind, $repos, [int]$release = -1) {
   if (-not (MarksOn $e)) { return $null }
-  $pos = Get-DbPos $e; $name = ConvertTo-KitSlug $name
+  $name = ConvertTo-KitSlug $name
+  if (DbSvcDown $e) {   # taken when that service starts, before anything else connects (Start-SvcOnce)
+    Update-State $e { param($x) $x.pendingMarks = @(@($x.pendingMarks) | Where-Object { $_ -and $_.name -ne $name }) + @(@{ name = $name; kind = $kind; repos = $repos; release = $release }) }
+    return $name
+  }
+  $pos = Get-DbPos $e
   Update-State $e { param($x)
     $code = if ($repos) { $repos } else { $x.release.repos }
     $m = @{ name = $name; kind = $kind; at = (Now); pos = $pos; release = $(if ($release -ge 0) { $release } else { [int]$x.release.n }); repos = ($code | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable) }
@@ -997,7 +1005,7 @@ function Invoke-RestoreFallback([string]$e) {
 
 # ---- seed: the env's baseline data, declared in envs.<env>.seed (JSON { "items": [ { name, check: { sql, expect } | { cmd }, create:
 # { cmd }, how, needs: [names] } ] }; default <state>/localenv/<env>.seed.json); every create is idempotent through its check
-function SeedFile([string]$e) { $f = (Get-EnvCfg $e).seed; if ($f) { Expand-Placeholders ([string]$f) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' } else { Join-Path (Get-KitPath localenv-env) "$e.seed.json" } }
+function SeedFile([string]$e) { $f = (Get-EnvCfg $e).seed; if ($f) { Expand-Placeholders ([string]$f) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' } else { Join-Path (Get-KitPath localenv-env) "$((Get-EnvCfg $e).group).seed.json" } }   # lanes share their envs fixtures
 # -> ok | missing | drift (the value differs from expect) | error
 function Test-SeedItem([string]$e, $it) {
   $log = LogFile $e 'seed'
@@ -1308,6 +1316,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     $code = Invoke-Shell $ic $ilog (EnvVars $e $s) ([int]$(if ($s.init.timeoutSec) { $s.init.timeoutSec } else { 1800 }))
     if ($code) { Event $e 'init-failed' @{ service = $s.name; why = (Get-ShellWhy $code) }; throw "[$e] $($s.name): init failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 5) -join ' | '). Log: $ilog" }
     Event $e 'init' @{ service = $s.name; sec = [int]((Get-Date) - $t0i).TotalSeconds }
+    if ((DbSvc $e).name -eq $s.name) { $null = New-Mark $e "baseline-$((Get-Date).ToString('yyyy-MM-dd'))" 'baseline' }   # fresh data = its baseline (taken once it is up)
   }
   # RAM first, then the machine-wide start lock for launch + health only; RAM is checked again under the lock
   $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { 'Global\kit-localenv-start' } else { 'kit-localenv-start' }))
@@ -1354,6 +1363,10 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     Update-State $e { param($x) $x.services[$s.name].status = 'up'; $x.services[$s.name].gb = $gb; $x.services[$s.name].upAt = (Now) }
     Event $e 'up' @{ service = $s.name; release = $release; sec = $sec; gb = $gb; aot = [bool]($artifact -and (Test-Path -LiteralPath "$(AotFile $artifact)")) }
     "[$e] $($s.name) up$(if ($s.port) { " on port $($s.port)" }) in $sec s ($gb GB)"
+    if ((DbSvc $e).name -eq $s.name) {   # marks queued while the DB was down
+      $pm = @((Read-State $e).pendingMarks | Where-Object { $_ })
+      if ($pm.Count) { Update-State $e { param($x) $x.pendingMarks = @() }; foreach ($m in $pm) { try { "[$e] mark $(New-Mark $e $m.name $m.kind $m.repos ([int]$m.release)) (waited for $($s.name))" } catch { "[$e] mark $($m.name) failed: $("$_".Split("`n")[0])" } } }
+    }
     Start-AotTrain $e $s $artifact
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose(); Update-State $e { param($x) $v = $x.services[$s.name]; if ($v -and $v.status -eq 'waiting' -and $v.waitPid -eq $PID) { $v.status = 'down' } } }   # a claim never outlives its start
 }
@@ -1792,7 +1805,7 @@ try {
       }
 
       # ---- db temp watchdog, once a minute (TODO-PARAM): the connection using the most temp above db.tempMaxGB is killed
-      if (((Get-Date) - $tempAt).TotalSeconds -ge 60 -and (Get-Command Invoke-DbTempWatch -ErrorAction SilentlyContinue) -and (Test-DbTemp $e)) {
+      if (((Get-Date) - $tempAt).TotalSeconds -ge 60 -and (Get-Command Invoke-DbTempWatch -ErrorAction SilentlyContinue) -and (Test-DbTemp $e) -and -not (DbSvcDown $e)) {
         $tempAt = Get-Date   # a db down or a connection gone before the KILL: said, the tick goes on
         try { foreach ($k in @(Invoke-DbTempWatch $e)) { Say $k; Event $e 'db-kill' @{ by = 'watchdog'; what = $k } } } catch { Say "db temp watchdog: $("$_".Split("`n")[0])" }
       }
@@ -1902,8 +1915,10 @@ function Get-Doctor([string]$e) {
   foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
   if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired: remove the key" }
   foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne $c.db.$_ }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
-  if (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e) + @(if (Get-Command Get-DbExpectDoctor -ErrorAction SilentlyContinue) { Get-DbExpectDoctor $e }) + @(if (Get-Command Get-DbPoolDoctor -ErrorAction SilentlyContinue) { Get-DbPoolDoctor $e })) { & $add $x.level $x.what } }
-  if (MarksOn $e) {
+  $dbDown = DbSvcDown $e   # a lane DB that starts with a lease: its checks wait for it
+  if ($dbDown) { & $add OK "db service $((DbSvc $e).name) is down (it starts with a lease): db checks skipped" }
+  elseif (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e) + @(if (Get-Command Get-DbExpectDoctor -ErrorAction SilentlyContinue) { Get-DbExpectDoctor $e }) + @(if (Get-Command Get-DbPoolDoctor -ErrorAction SilentlyContinue) { Get-DbPoolDoctor $e })) { & $add $x.level $x.what } }
+  if ((MarksOn $e) -and -not $dbDown) {
     $st0 = Read-State $e; $b = @($st0.marks | Where-Object { $_ -and $_.kind -eq 'baseline' })[-1]
     if (-not $b) { & $add 'WARN' "no baseline mark: envy.ps1 seed -Env $e (a green seed marks baseline-<date>)" }
     elseif ($st0.binlog.days -and ((Get-Date) - [datetime]$b.at).TotalDays -gt [double]$st0.binlog.days - 3) { & $add 'WARN' "baseline mark $($b.name) expires with the binlog ($($st0.binlog.days) d): seed -Env $e again" }   # TODO-PARAM (fixed default)

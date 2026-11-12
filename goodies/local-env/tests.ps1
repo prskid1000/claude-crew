@@ -499,6 +499,16 @@ $ls = & { . $lkL
   $queued = Select-Lane shop Q1 0 'deploy'; $waitId = Select-Lane shop Q2 0 'wait' 'q8'
   "$sticky|$pick|$read|$pin|$cold|$bad|$queued|$waitId" } 6>$null
 Expect "lanes: the agent's lane (layer, lease, open deploy) sticks; wait -Id finds its request's lane; deploy / use go to the least busy lane (a cold one only with room); other verbs stay; -Lane pins; a lane past max refused ($ls)" ($ls -eq 'shop2|shop3|shop|shop2|shop|refused|shop3|shop3')
+$lm = & { . $lkL; function MarksOn { $true }; function Get-DbPos { 'pos1' }; $global:lmUp = $false; function Test-PortListening { $global:lmUp }
+  $q = New-Mark shop2 'release-3' 'release'; $pend = "$(@((Read-State shop2).pendingMarks).name)|$(@((Read-State shop2).marks | Where-Object { $_ }).Count)"
+  function SvcDir { $env:TEMP }; function StartCmd { 'x' }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }
+  function Start-Pwsh { $PID }; function Healthy { $global:lmUp = $true; $true }; function Stop-Svc { }; function Owned { $false }; function Get-PortPids { @() }
+  $db = @(EnvServices shop2 | Where-Object name -eq 'db')[0] | Select-Object * -ExcludeProperty init
+  $out = @(Start-SvcOnce shop2 $db 1 '') -join ' '; $st = Read-State shop2
+  "$q|$pend|$(@($st.marks).name)|$(@($st.pendingMarks).Count)|$($out -match 'waited for db')|$(DbSvcDown shop)" }
+Expect "lanes: a mark while the lane's own DB service is down waits and is taken when it starts; an external DB is never 'down' ($lm)" ($lm -eq 'release-3|release-3|0|release-3|0|True|False')
+$lsd = & { . $lkL; $none = [pscustomobject]@{ port = '' }; "$(Split-Path (SeedFile shop2) -Leaf)|$(Expand-Placeholders 'pokey -Target local-shop{lane}' shop2 $none '' '')|$(Expand-Placeholders 'local-shop{lane}' shop $none '' '')" }
+Expect "lanes: a lane seeds from its env's seed file; {lane} expands at run time too (seed commands) ($lsd)" ($lsd -eq 'shop.seed.json|pokey -Target local-shop2|local-shop')
 $lt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); $tc = [pscustomobject]@{ targets = [pscustomobject]@{ 'local-shop' = [pscustomobject]@{ api = 'http://127.0.0.1:8080/x'; web = 'http://127.0.0.1:4200' } } }
   $t2 = Get-LaneTarget $tc 'local-shop2'; "$($t2.api)|$($t2.web)|$($null -eq (Get-LaneTarget $tc 'other2'))|$((Get-LaneTarget $tc 'local-shop3').api)" }
 Expect "lanes: pokey target <target><k> = the base target with lane k's ports ($lt)" ($lt -eq 'http://127.0.0.1:8180/x|http://127.0.0.1:4200|True|http://127.0.0.1:8280/x')
