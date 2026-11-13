@@ -40,6 +40,10 @@ Non-negotiables:
    `kitbag.py prose --kind wave-brief <brief>`; return the launch args `{ brief, agents:[{id, items, area, dependsOn?,
    migrations: true when the area adds or changes one}], mode: 'feature' | 'bugfix' | 'resume', mandate, holdMerge?,
    openQuestions: [its rechy lines] }`.
+7. **Tasks** (new ones only): `crafty.ps1 tracker create -Spec <json>` each (fields: crafty.ps1 "task spec"; items = its
+   item table rows, `desc` = Title plus ports; links = full URLs, never a local path); the item table `items.md` (`ID | Area
+   | Title`, optional Sev, Ports) beside the brief with `{ agents: [{ id: <Area>, task }] }` in a `.json`, then `bossy.ps1
+   track rollup -Task <parent> -From <brief dir>` (Items checklists, delivery section).
 **rule-change:** append the owner's words (verbatim, timestamp) under the brief's "Rule changes during the wave" and to the
 contracts file; `board show` -> `board msg` every agent whose area it touches (what changed, re-read before the next push).
 
