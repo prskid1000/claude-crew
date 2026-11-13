@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L251 shells · L380 page · L916 usage · L1143 release · L1182 lines · L1215 cleanup ·
-  L1251 launch · L1329 pause · L1447 sessions · L1499 ci tasks · L1551 the kit origin's main and goodies
+Sections: L15 builds · L47 supervise · L253 shells · L382 page · L918 usage · L1145 release · L1184 lines · L1217 cleanup ·
+  L1253 launch · L1331 pause · L1449 sessions · L1501 ci tasks · L1553 the kit origin's main and goodies
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -184,20 +184,22 @@ function Get-KitSuperviseFlagsPrior([switch]$AutoFix) {
   foreach ($e in @(Read-KitLog calls (Get-Date).AddMinutes(-(Get-KitBeatMinutes)) | Where-Object event -eq 'prior-override')) {
     $hits = ''
     if ($e.PSObject.Properties['matched']) {
-      if ($null -eq $briefs) { $briefs = @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { -not $_.completed -and $_.args.brief } | ForEach-Object { Get-Content -LiteralPath $_.args.brief -Raw -ErrorAction SilentlyContinue }) }
+      if ($null -eq $briefs) { $briefs = @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { -not $_.completed -and $_.args.brief } | ForEach-Object { "$(Get-Content -LiteralPath $_.args.brief -Raw -ErrorAction SilentlyContinue)`n$($_.args | ConvertTo-Json -Depth 8 -Compress)" }) }
       $other = @(Get-KitPriorForeign $e $briefs); if (-not $other.Count) { continue }
       $hits = ": matches $(@($other | ForEach-Object { "$($_.kind) $($_.ref)" }) -join ', ')"
     }
     [pscustomobject]@{ level = 'WATCH'; what = "prior override: $($e.what) $($e.task) ($($e.reason))$hits"; action = 'Check it is no duplicate (crafty.ps1 prior -Task <id>); a duplicate: stop it, reuse the existing work' }
   }
 }
-# hits neither its own task's (tagged) nor a task its live brief names beside it
+# hits not its own (tagged), named with it in a live launch (brief, args) or of its parent
 function Get-KitPriorForeign($Entry, [string[]]$Briefs) {
   $tag = "$($KitConf.TrackerTag)"; $has = { param($t, $id) "$t" -match "(?i)(?<![A-Za-z0-9])$([regex]::Escape("$id"))(?![A-Za-z0-9])" }   # whole ids: 7 is not in 17
+  $parentOf = { param($id) "$((Read-KitState (Get-KitTaskFile "$id")).spec.parent)" }; $parentOf0 = & $parentOf $Entry.task
   foreach ($h in @($Entry.matched | Where-Object { $_ })) {
     if ($h.tagged -or (& $has $h.ref "$tag$($Entry.task)")) { continue }
     $tid = if ($h.kind -eq 'task') { "$($h.ref)" } elseif ($tag -and "$($h.ref)" -match "(?i)$([regex]::Escape($tag))([A-Za-z0-9]+)") { $Matches[1] }
     if ($tid -and @($Briefs | Where-Object { $_ -and (& $has $_ $tid) -and (& $has $_ $Entry.task) }).Count) { continue }
+    if ($tid -and $parentOf0 -and (& $parentOf $tid) -eq $parentOf0) { continue }
     $h
   }
 }

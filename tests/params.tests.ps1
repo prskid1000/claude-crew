@@ -201,17 +201,18 @@ rmSync(m.kitPath('browser-ports')); console.log(a === await P('s', 't', 'a') && 
 '@
   Expect 'browser.mjs: stable port per user key, locked logins' ("$res" -eq 'true true true')
 }
-# supervise NO MRS (bossy.ps1) and prior overrides (adapters/supervise_resources.ps1): a stale flag source each
+# supervise NO MRS, prior overrides: a stale flag source each
 $nm = & { . $O; $s = @(@{ agentId = 'b1'; label = 'build:W2' }, @{ agentId = 'b2'; label = 'local:W2' }); $r1 = @{ mrs = @(); worktrees = @('C:\wt\w2-web'); deferred = @(@{ id = 'T9' }) }
   $rs = @(@{ agentId = 'b1'; result = $r1 }, @{ agentId = 'b2'; result = @{ mrs = @(@{ url = 'u' }) } }); $tk = @{ tasks = @{ T9 = @{ mrs = @('api!4') } } }
   "$(Test-KitNoMrs $s $rs build:W2 $r1 'not done' $tk)|$(Test-KitNoMrs $s @($rs[0]) build:W2 $r1 'not done' $tk)|$(Test-KitNoMrs $s @($rs[0]) build:W2 $r1 'not done' @{ tasks = @{ T9 = @{ mrs = @('web!5') } } })|$(Test-KitNoMrs $s @($rs[0]) build:W2 $r1 'shipped' $tk)|$(Test-KitNoMrs $s @($rs[0]) build:W2 $r1 'not done' @{ tasks = @{ T9 = @{ done = $true; mrs = @('web!5') } } })" }
 Expect "NO MRS: only when no later step of its item nor the open task's tracked MR in its repo has MRs ($nm)" ($nm -eq 'False|True|False|False|True')
-$wbf = Join-Path (Kd) 'wave7.md'; Set-Content $wbf 'items: P7, P13'; & $J @{ run = 'w7'; args = @{ brief = $wbf } } (Join-Path (TkPath $k launches -Create) 'self-buildy-w7.json')
+$wbf = Join-Path (Kd) 'wave7.md'; Set-Content $wbf 'items: P7, P13'; & $J @{ run = 'w7'; args = @{ brief = $wbf; agents = @(@{ id = 'A'; note = 'P21' }) } } (Join-Path (TkPath $k launches -Create) 'self-buildy-w7.json')
 $pov = pwsh -NoProfile -Command ". '$O'; Update-KitTaskIndex P7 { param(`$x) `$x.prior = [ordered]@{ at = (Get-Date).ToString('o'); validUntil = (Get-Date).AddHours(1).ToString('o'); found = @(@{ kind = 'branch'; ref = 'P7-a'; tagged = `$true }, @{ kind = 'task'; ref = 'P12' }) } }
   Assert-KitPrior P7 '' 'wt x' 'own'; & '$py' -X utf8 '$k/skills/crafty/devtools.py' finish P7 a b --override pyown 2>&1 | Out-Null
-  Write-KitLog calls prior-override @{ task = 'P7'; what = 'mr w'; reason = 'r'; matched = @(@{ kind = 'task'; ref = 'P13' }, @{ kind = 'task'; ref = 'P1' }) }; Write-KitLog calls prior-override @{ task = 'P7'; what = 'mr'; reason = 'r' }
+  foreach (`$st in 'P7', 'P22') { Update-KitTaskIndex `$st { param(`$x) `$x.spec = @{ parent = 'PP' } } }
+  Write-KitLog calls prior-override @{ task = 'P7'; what = 'mr w'; reason = 'r'; matched = @(@{ kind = 'task'; ref = 'P13' }, @{ kind = 'task'; ref = 'P21' }, @{ kind = 'task'; ref = 'P22' }, @{ kind = 'task'; ref = 'P1' }) }; Write-KitLog calls prior-override @{ task = 'P7'; what = 'mr'; reason = 'r' }
   @(Read-KitLog calls (Get-Date).AddMinutes(-9) | Where-Object event -eq 'prior-override' | ForEach-Object { @(`$_.matched | Where-Object { `$_ }).Count }) -join ','; '|'; @(Get-KitSuperviseFlagsPrior | ForEach-Object what) -join ';'"
-Expect "prior override: the gate's hits are logged; WATCH only for another task's work or no hits known ($pov)" ("$pov" -match '^2,2,2,0 \|' -and "$pov" -match 'wt x P7 \(own\): matches task P12' -and "$pov" -match 'finish P7 P7 \(pyown\): matches task P12' -and "$pov" -match 'mr w P7 \(r\): matches task P1;' -and "$pov" -match 'override: mr P7 \(r\)$' -and "$pov" -notmatch 'P13|P7-a')
+Expect "prior override: the gate's hits are logged; WATCH only for another task's work (no sibling) or no hits known ($pov)" ("$pov" -match '^2,2,4,0 \|' -and "$pov" -match 'wt x P7 \(own\): matches task P12' -and "$pov" -match 'finish P7 P7 \(pyown\): matches task P12' -and "$pov" -match 'mr w P7 \(r\): matches task P1;' -and "$pov" -match 'override: mr P7 \(r\)$' -and "$pov" -notmatch 'P13|P21|P22|P7-a')
 $kv = pwsh -NoProfile -Command ". '$(Lib)'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
 # (cap moves from supervise.tests) bugbrief args and failed checks, cleanup log rotation
