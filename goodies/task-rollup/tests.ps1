@@ -56,11 +56,11 @@ $res = & {
     after = (Set-KitDescSection "<!-- kit:delivery -->`nd`n<!-- /kit:delivery -->`n`nowner" 'triage' 'T' 'delivery') }
 }
 $d = $res.d1
-Expect "rollup: delivery under the testing-doc links, triage after it, the owner's text kept ($($res.o1))" ($d -match '(?s)^\*\*Testing doc \(human\):\*\* \[open\]\(https://h\)\n\n<!-- kit:delivery -->.*<!-- /kit:delivery -->\n\n<!-- kit:triage -->.*<!-- /kit:triage -->\n\nThe owner''s words\.$')
+Expect "rollup: delivery under the testing-doc links, triage after it, the owner's text kept ($($res.o1))" ($d -match '(?s)^\*\*Testing doc \(human\):\*\* \[open\]\(https://h\)\n\n<!-- kit:items -->\n\*\*Items\*\*\n- \[ \] API1 · API fixes · [^\n]+\n- \[ \] WEB1 · Web fixes · [^\n]+\n- \[ \] LOCAL-\d+ · A person''s subtask \(no kit state\) · [^\n]+\n<!-- /kit:items -->\n\n<!-- kit:delivery -->.*<!-- /kit:delivery -->\n\n<!-- kit:triage -->.*<!-- /kit:triage -->\n\nThe owner''s words\.$')
 $apiRow = '| [API1 · API fixes](' + $res.u1 + ') | in test | [!8](https://git/g/api-repo/8) merged · stage<br>[!7](https://git/g/api-repo/7) merged · stage | 2/2 | 1C/1L | A-1, A-2 |'
 Expect 'rollup delivery: summary, one table per repo (alias label) in merge order: subtask, status, MRs, items, severity, item ids; a subtask without kit state = a plain row' ($d -match '\*\*Delivery status\*\*: 1 of 3 merged · deployed: stage \(1\) · 1 in test · 0 closed · next: merge: 2 subtask\(s\) not merged' -and
   $d.Contains("**API (api-repo)**`n`n| Subtask | Status | MRs | Items | Severity | Item ids |`n|---|---|---|---|---|---|`n$apiRow") -and $d -match '\*\*Web \(web-repo\)\*\*' -and $d -match '\[!3\]\([^)]+\) open \| 0/1 \| 1M \| W-1 \|' -and
-  $d -match '\*\*Other\*\*\n\n\|[^\n]+\n\|[^\n]+\n\| \[A person''s subtask[^\n]+\| — \| — \| — \| — \|' -and $d.IndexOf('**API') -lt $d.IndexOf('**Web') -and $d -notmatch '(?m)^- ')
+  $d -match '\*\*Other\*\*\n\n\|[^\n]+\n\|[^\n]+\n\| \[A person''s subtask[^\n]+\| — \| — \| — \| — \|' -and $d.IndexOf('**API') -lt $d.IndexOf('**Web') -and ($d -replace '(?s)<!-- kit:items -->.*<!-- /kit:items -->') -notmatch '(?m)^- ')
 Expect "item text: <id> · <plain description> · <MR URLs> (deduped, empty parts left out); Items words after the id, a (label) unwrapped, markdown escapes dropped, a status suffix (- merged) dropped ($($res.fmt))" ($res.fmt -eq 'P4-X-01 · Fix it · u1 u2|JL|PY4 · api-repo: P4-PY-01|X · re-merged|api-repo, refine: P4-JR-01/invoice->site_visit rule')
 Expect "rollup severity cell: C H M L initials, another severity in full, none = ? ($($res.sevs))" ($res.sevs -eq '2C/1 Cosmetic/1 ?')
 Expect 'rollup triage: severity x decision counts; not in this wave = a table (id, severity, verdict, reason)' ($d -match '5 = 3 fix · 1 defer · 1 duplicate' -and $d -match '\| Critical \| 1 \| 0 \| 0 \| 0 \| 1 \|' -and
@@ -105,5 +105,24 @@ Expect "items: the task's own Items list -> its checklist, an id a merged MR nam
 Expect "items: one MRs item (no Items list) resolved at once when its only MR is already merged, before promotion (track add of a late-linked merged MR) ($($cl.late))" ($cl.late -match '^items \S+: 1/1 done\|' -and $cl.late -match '- \[x\] MRs')
 Expect "items: split on ' · ' and bullets, on ',' only after a bare id (never inside an item's text: 'PS-04 golden cases T1, N1'); id = its leading token; a **Label:** piece ends the list ($($cl.iSplit))" ($cl.iSplit -eq 'TP-01|TP-02 / B3|Fix the grid / A1|A2|High / PS-04')
 Expect "items: a task without an Items list gets ONE item 'MRs · <task name> · <MR URLs>', no MRs comment ($($cl.oneItem))" ($cl.oneItem -match '(?s)- \[x\] MRs · Solo bug · https://git/g/api-repo/11 https://git/g/api-repo/12.*\|0$')
+# a briefy item table (ID | Phase | Owner area | Ports | Title), areas spread over subtasks, a { id, task } map; a task without subtasks
+$bf = & {
+  $env:KIT_TRACKER_TYPE = 'none'; . (Join-Path $k 'skills/bossy/bossy.ps1') 6>$null; $view = { param($i) __TrA 'view' @{ id = $i } }
+  $b1 = Join-Path (Kd) 'brief-b'; $b2 = Join-Path (Kd) 'brief-c'; New-Item -ItemType Directory -Force $b1, $b2 | Out-Null
+  Set-Content (Join-Path $b1 'items.md') "| ID | Phase | Owner area | Ports RM | Title |`n|---|---|---|---|---|`n| H-P1-S01 | P1 | HS | P1-JS-01 | HM tables ``agent`` |`n| H-P1-C01 | P1 | HC | P1-JC-02 | Chat with an agent |`n| H-P2-C01 | P2 | HC | P2-JT-05 | Unattended chats |"
+  Set-Content (Join-Path $b2 'items.md') "| ID | Area | Title |`n|---|---|---|`n| R-1 | RX | Old item |"
+  $p = (__TrA 'create' @{ name = 'Feature parent' }).id
+  $s1 = (__TrA 'create' @{ name = '[Feature] HM P1: store'; parent = $p; description = "**Items:**`n- HS (java, store): H-P1-S01`n- HC (java, chat): H-P1-C01" }).id
+  $s2 = (__TrA 'create' @{ name = '[Feature] HM P2: triggers'; parent = $p; description = "**Items:**`n- HC (java, chat): H-P2-C01" }).id
+  Set-JsonFile (Join-Path $b1 'rollup-agents.json') @{ agents = @(@{ id = 'HM-P1'; task = $s1 }, @{ id = 'HM-P2'; task = $s2 }) }
+  $o = Invoke-TaskRollup -Task $p -From "$b1;$b2"; $i1 = (& $view $s1).description; $i2 = (& $view $s2).description; $pd = (& $view $p).description
+  $null = __TrNone $s2 'st' { param($x) $x.status = 'closed' }; $null = Invoke-TaskRollup -Task $p; $pd2 = (& $view $p).description
+  $leaf = (__TrA 'create' @{ name = 'Leaf'; description = "**Items:**`n- HS (java, store): H-P1-S01" }).id; $ol = Invoke-TaskRollup -Task $leaf -From $b1
+  $solo = (__TrA 'create' @{ name = 'Solo' }).id; $os = Invoke-TaskRollup -Task $solo
+  [pscustomobject]@{ o = "$o"; i1 = $i1; i2 = $i2; pd = $pd; pd2 = $pd2; ol = "$ol"; ld = (& $view $leaf).description; os = "$os"; s1 = $s1; s2 = $s2 }
+}
+Expect "rollup -From 'a;b': briefy columns (Owner area, Ports -> '(ports X)'); a subtask's items = the ids its Items list names, beside its area items ($($bf.o))" ($bf.o -match '4 item\(s\)' -and $bf.i1 -match '(?s)- \[ \] H-P1-S01 · HM tables agent \(ports P1-JS-01\)\n- \[ \] H-P1-C01 · Chat with an agent \(ports P1-JC-02\)\n- \[ \] HS · HM tables agent \(ports P1-JS-01\)\n- \[ \] HC · Chat with an agent' -and $bf.i1 -notmatch 'H-P2-C01' -and $bf.i2 -match '- \[ \] H-P2-C01 · Unattended chats' -and $bf.i2 -notmatch 'H-P1')
+Expect "rollup parent: its Items checklist = one item per subtask '<code> · <name without [Kind]> · <URL>', ticked once closed" ($bf.pd -match "(?s)\*\*Items\*\*\n- \[ \] HM-P1 · HM P1: store · \S*$($bf.s1)\S*\n- \[ \] HM-P2 · HM P2: triggers · " -and $bf.pd2 -match '- \[x\] HM-P2 · HM P2: triggers')
+Expect "rollup without subtasks: the item table -> its own Items checklist; none stored -> says so ($($bf.ol) | $($bf.os))" ($bf.ld -match '- \[ \] H-P1-S01 · HM tables agent \(ports P1-JS-01\)' -and $bf.ld -notmatch 'H-P1-C01' -and $bf.ol -match 'its Items checklist only' -and $bf.os -match 'nothing to write')
 Remove-TestKit $k
 Complete-Tests

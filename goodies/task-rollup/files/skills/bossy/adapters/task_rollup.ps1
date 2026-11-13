@@ -1,22 +1,23 @@
 <#
 task_rollup.ps1 (goody task-rollup): a parent task's delivery status, triage and subtask Items checklists, all script-built,
 dot-sourced by bossy.ps1 (skills/bossy/adapters/).
-  bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>]   -From stores the run's triage (item table + launch
-    args) in the parent's task state; then rebuilds and writes what changed
+  bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>[;<another>]]   -From stores the run's triage (item
+    table + agents) in the parent's task state; then rebuilds and writes what changed; a task without subtasks: its Items only
   track run calls Invoke-KitTrackRollupHook: every parent with a not-done tracked subtask or a stored triage
 Reads: task state (.state/tasks: track), the git host (Invoke-HostVerb mr.get / mr.url; merged MRs cached for good),
 the deploy log, the tracker (parent + its subtasks, one view per read). Writes (tracker adapter, only on a diff): the parent
-description between <!-- kit:delivery --> / <!-- kit:triage --> markers, each subtask's "Items" checklist (adapter verb
-checklist, else an <!-- kit:items --> description section), one comment per milestone (all merged, deployed to <env>, all closed).
+description between <!-- kit:delivery --> / <!-- kit:triage --> markers, the parent's "Items" checklist (one per subtask, lib.ps1
+Update-KitParentItems), each subtask's "Items" checklist (adapter verb checklist, else an <!-- kit:items --> description section),
+one comment per milestone (all merged, deployed to <env>, all closed).
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L19 triage · L63 render · L144 rollup · L231 items · L276 close
+Sections: L20 triage · L69 render · L147 rollup · L242 items · L287 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
-if (-not (Get-Command Set-KitTaskChecklist -ErrorAction Ignore)) { throw 'goody task-rollup needs a newer kit core (lib.ps1 Set-KitTaskChecklist): git pull the kit, then kitbag.py goody sync' }
+if (-not (Get-Command Update-KitParentItems -ErrorAction Ignore)) { throw 'goody task-rollup needs a newer kit core (lib.ps1 Update-KitParentItems): git pull the kit, then kitbag.py goody sync' }
 
-# ---- triage: the brief's item table (columns ID, Area; Sev, Decision, Decision id, Title or the last column) + launch args (agents)
+# ---- triage: the brief's item table (columns ID, Area or Owner area; Sev, Decision, Decision id, Ports, Title or the last column) + agents
 function ConvertFrom-KitMdTables([string]$Text) {
   $tables = [Collections.Generic.List[object]]::new(); $cur = $null
   foreach ($ln in ("$Text" -split "`r?`n")) {
@@ -28,24 +29,29 @@ function ConvertFrom-KitMdTables([string]$Text) {
   }
   $tables
 }
+# -From 'a;b': each source's rows and agents, joined (a parent whose subtasks come from two briefs)
 function Read-KitTriage([string]$From) {
+  $parts = @("$From" -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($parts.Count -eq 1) { $From = $parts[0] }
+  if ($parts.Count -gt 1) { $all = @($parts | ForEach-Object { Read-KitTriage $_ }); return [pscustomobject]@{ source = (@($all.source | Where-Object { $_ }) -join ' + '); rows = @($all | ForEach-Object { @($_.rows) }); agents = @($all | ForEach-Object { @($_.agents) }) } }
   $dir = if (Test-Path -LiteralPath $From -PathType Container) { $From } else { Split-Path $From }
   $mds = if (Test-Path -LiteralPath $From -PathType Leaf) { @(Get-Item -LiteralPath $From) } else { @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -File | Sort-Object Name) }
   $col = { param($h, [string]$rx) @($h | Where-Object { $_ -match $rx })[0] }
   $rows = @(); $source = ''
   foreach ($f in $mds) {
     foreach ($tb in @(ConvertFrom-KitMdTables (Get-Content -LiteralPath $f.FullName -Raw))) {
-      $cid = & $col $tb.head '^id$'; $car = & $col $tb.head '^(area|agent)$'; if (-not $cid -or -not $car) { continue }
-      $csev = & $col $tb.head '^sev'; $cdec = & $col $tb.head '^decision$'; $cdid = & $col $tb.head '^decision.?id$'
+      $cid = & $col $tb.head '^id$'; $car = & $col $tb.head '^((owner\s+)?area|agent)$'; if (-not $cid -or -not $car) { continue }
+      $csev = & $col $tb.head '^sev'; $cdec = & $col $tb.head '^decision$'; $cdid = & $col $tb.head '^decision.?id$'; $cpo = & $col $tb.head '^ports\b'
       $cti = & $col $tb.head '^(title|summary|name)$'; if (-not $cti) { $cti = & $col $tb.head 'reason|fix|why' }; if (-not $cti) { $cti = $tb.head[-1] }
-      $rows = @(foreach ($r in $tb.rows) { if ($r[$cid]) { [pscustomobject]@{ id = $r[$cid]; sev = "$(if ($csev) { $r[$csev] })"; decision = "$(if ($cdec -and $r[$cdec]) { $r[$cdec] } else { 'fix' })"; area = $r[$car]; decisionId = "$(if ($cdid) { $r[$cdid] })"; title = "$($r[$cti])" } } })
+      $rows = @(foreach ($r in $tb.rows) { if ($r[$cid]) { [pscustomobject]@{ id = $r[$cid]; sev = "$(if ($csev) { $r[$csev] })"; decision = "$(if ($cdec -and $r[$cdec]) { $r[$cdec] } else { 'fix' })"; area = $r[$car]; decisionId = "$(if ($cdid) { $r[$cdid] })"; title = "$($r[$cti])$(if ($cpo -and $r[$cpo]) { " (ports $($r[$cpo]))" })" } } })
       $source = $f.Name; break
     }
     if ($rows.Count) { break }
   }
-  $la = @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { $_.agents })[0]
+  # agents of every .json (launch args, a rollup map { id, task }): one per id, the one naming a task wins
+  $byId = [ordered]@{}; foreach ($a in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object { try { @((Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).agents) } catch { } } | Where-Object { $_.id })) { if (-not $byId.Contains("$($a.id)") -or ($a.task -and -not $byId["$($a.id)"].task)) { $byId["$($a.id)"] = $a } }
   $names = @{}; foreach ($rp in @(Get-KitValue 'repos' @())) { foreach ($n in @($rp.name) + @($rp.aliases)) { if ($n) { $names["$n"] = "$($rp.name)" } } }
-  $all = @($la.agents)
+  $all = @($byId.Values)
   $agents = @(for ($i = 0; $i -lt $all.Count; $i++) {
       $a = $all[$i]; $txt = "$($a.area) $($a.note)"
       $tid = if ($a.task) { "$($a.task)" } elseif ($txt -match '(?i)\btask\s+(?<t>(?=[\w-]*\d)[\w-]+)') { $Matches.t } else { '' }
@@ -64,7 +70,6 @@ function ConvertTo-KitTriage($T) {
 $script:KitSevOrder = @('critical', 'high', 'medium', 'low')
 function Get-KitSevRank([string]$Sev) { $i = [array]::IndexOf($script:KitSevOrder, "$Sev".Trim().ToLower()); if ($i -lt 0) { 9 } else { $i } }
 function Get-KitItemKind([string]$Decision) { if ($Decision -match '(?i)^dup') { 'duplicate' } elseif ($Decision -match '(?i)defer') { 'defer' } elseif ($Decision -match '(?i)already') { 'already fixed' } else { 'fix' } }
-function Get-KitCut([string]$Text, [int]$Max) { $t = ("$Text" -replace '\s+', ' ' -replace '\|', '/').Trim(); if ($t.Length -gt $Max) { $t.Substring(0, $Max - 1) + '…' } else { $t } }
 # state and JSON reads turn ISO strings into [datetime]; both -> [datetimeoffset] (UTC kept), else $null
 function ConvertTo-KitWhen($Value) { if ($Value -is [datetime]) { [datetimeoffset]$Value } elseif ($Value -is [datetimeoffset]) { $Value } elseif ("$Value") { try { [datetimeoffset]::Parse("$Value", [Globalization.CultureInfo]::InvariantCulture) } catch { $null } } }
 # the ids an MR names: in its title, description or branch, or as a whole branch segment (f/CU-1-jr names area JR)
@@ -75,20 +80,18 @@ function Get-KitMrNamedIds([string[]]$Ids, $Mv) {
 # a task's tracked MR refs, one per MR (bossy.ps1 NormRef: old state may hold <group>/<repo>!<iid> next to <repo>!<iid>)
 function Get-KitTrackRefs($Mrs) { $nr = Get-Command NormRef -ErrorAction Ignore; @(@($Mrs) | Where-Object { $_ } | ForEach-Object { if ($nr) { NormRef $_ } else { "$_" } } | Select-Object -Unique) }
 function Get-KitRollupHash([string]$Text) { [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes("$Text"))) }
-# a checklist item, readable by the owner: "<id> · <plain description> · <MR URLs>"; the id leads (adapters key items by the text
-# before the first ' · ', so a later text renames the item in place); empty parts left out
-function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
-  $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'   # links live in the URL part, a status suffix in the tick
-  (@($Id, (Get-KitCut $Desc 110), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
+# checklist item text, Get-KitCut: lib.ps1 Format-KitItemText (task spec)
 # an Items piece's text naming triage ids -> their titles (plain words), else the text itself
 function Get-KitItemDesc([string]$Desc, $Rows) {
   $hit = @(@($Rows) | Where-Object { $_.id -and $Desc -match "(?<![\w-])$([regex]::Escape($_.id))(?![\w-])" })
   if ($hit.Count) { @($hit | ForEach-Object { $_.title }) -join '; ' } else { $Desc }
 }
 # one subtask's items, severity first: fix items tick when merged; deferred / duplicate ones stay unticked with their reason.
+# rows: its area's, plus those its description's Items list names (one area across subtasks, several areas on one subtask)
 # URLs: the MRs naming the id, else those naming an area whose Items words list it ($DescMap: area id -> words), else (fix) all once merged
-function Get-KitSubItems($Tri, [string]$Area, [string[]]$DoneIds, [bool]$AllDone, $Mrs, $DescMap = @{}) {
-  @($Tri.rows | Where-Object { $_.area -eq $Area } | Sort-Object -Stable { Get-KitSevRank $_.sev } | ForEach-Object {
+function Get-KitSubItems($Tri, [string]$Area, [string[]]$DoneIds, [bool]$AllDone, $Mrs, $DescMap = @{}, [switch]$All) {
+  $said = "$(@($DescMap.Keys) + @($DescMap.Values) -join ' ')"
+  @($Tri.rows | Where-Object { $All -or ($Area -and $_.area -eq $Area) -or ($said -and $said -match "(?<![\w.-])$([regex]::Escape($_.id))(?![\w-]|\.\w)") } | Sort-Object -Stable { Get-KitSevRank $_.sev } | ForEach-Object {
       $k = Get-KitItemKind $_.decision; $t = Get-KitCut $_.title 90; $rid = $_.id
       $d = "$(if ($_.sev) { "$($_.sev) · " })$(if ($k -eq 'fix') { $t } elseif ($k -eq 'defer') { "deferred: $t" } else { "$(Get-KitCut $_.decision 30): $t" })"
       $own = @($Mrs | Where-Object { @($_.ids) -contains $rid })
@@ -168,8 +171,10 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) { & $stamp; return } }   # still closed: final
   elseif ($ro.parentClosed) {   # -Force too: the old answer never re-closes it
     Update-KitTaskIndex $Parent { param($x) $x.rollup.parentClosed = $false; $x.rollup.closeHold = 'reopened' }; $ro.parentClosed = $false; $ro.closeHold = 'reopened' }   # reopened: its delivery table updates again
-  $subs = @($pt.subtasks | Where-Object { $_.id }); if (-not $subs.Count) { & $stamp; return }
   $tri = ConvertTo-KitTriage $ro.triage; $areaOf = @{}; foreach ($a in @($tri.agents)) { if ($a.task) { $areaOf[$a.task] = $a } }
+  $subs = @($pt.subtasks | Where-Object { $_.id }); $leaf = -not $subs.Count   # no subtasks + an item table: its own Items checklist only
+  if ($leaf -and -not @($tri.rows | Where-Object { $_ }).Count) { & $stamp; return "ROLLUP ${Parent}: no subtasks and no stored item table (-From): nothing to write" }
+  if ($leaf) { $subs = @([pscustomobject]@{ id = $Parent; name = $pt.name; url = $pt.url; status = $pt.status }) }
   $mc = @{}; if ($ro.mrs -is [Collections.IDictionary]) { foreach ($k in $ro.mrs.Keys) { $mc[$k] = $ro.mrs[$k] } }
   $dep = Get-KitDeployIndex; $allIds = @($tri.rows | ForEach-Object id); $did = [Collections.Generic.List[string]]::new()
   $rows = foreach ($sb in $subs) {
@@ -192,10 +197,12 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
     $mrs = @(@($mrs | Where-Object state -eq 'merged' | Sort-Object { ConvertTo-KitWhen $_.mergedAt }) + @($mrs | Where-Object state -ne 'merged' | Sort-Object { [int]$_.iid }))
     $merged = $mrs.Count -gt 0 -and -not @($mrs | Where-Object state -ne 'merged').Count
     $envs = if ($merged) { @(@($mrs[0].envs) | Where-Object { $en = $_; -not @($mrs | Where-Object { @($_.envs) -notcontains $en }).Count }) } else { @() }
-    if ($ag -and $sx -and -not $sx.Contains('itemDesc') -and ($stk = try { Get-TrackerTask $sb.id } catch { $null }).name) {   # its own Items words: from the subtask's Items list, read once
+    if (-not $sx) { $sx = @{} }
+    if (@($tri.rows | Where-Object { $_ }).Count -and ($Force -or -not $sx.Contains('itemDesc')) -and ($stk = if ($leaf) { $pt } else { try { Get-TrackerTask $sb.id } catch { $null } }).name) {   # its own Items words: read once (-Force: again)
       $di0 = @(Get-KitDescItems $stk.description); $sx.itemDesc = @{}; foreach ($e in $di0) { $sx.itemDesc[$e.id] = $e.text }; if ($di0.Count) { $sx.itemIds = @($di0.id) }
       $dsc = $sx.itemDesc; $dids = @($sx.itemIds); Update-KitTaskIndex $sb.id { param($x) $x.itemDesc = $dsc; $x.itemIds = $dids } }
-    $items = if ($ag) { @(Get-KitSubItems $tri $ag.area @($mrs | Where-Object state -eq 'merged' | ForEach-Object { @($_.ids) }) $merged $mrs $(if ($sx.itemDesc -is [Collections.IDictionary]) { $sx.itemDesc } else { @{} })) } else { @() }
+    $dmap = if ($sx.itemDesc -is [Collections.IDictionary]) { $sx.itemDesc } else { @{} }; $mids = @($mrs | Where-Object state -eq 'merged' | ForEach-Object { @($_.ids) })
+    $items = @(Get-KitSubItems $tri "$($ag.area)" $mids $merged $mrs $dmap); if ($leaf -and -not $items.Count) { $items = @(Get-KitSubItems $tri '' $mids $merged $mrs $dmap -All) }
     if ($items.Count) {   # the task's own Items ids (areas) share the checklist: one ticks once every MR naming it merged, all once all merged
       $tid = @($items.id); $items += @(@($sx.itemIds) | Where-Object { $_ -and $tid -notcontains $_ } | ForEach-Object { $di = $_; $nm = @($mrs | Where-Object { @($_.ids) -contains $di })
           [pscustomobject]@{ id = $di; sev = ''; text = (Format-KitItemText $di (Get-KitItemDesc "$($sx.itemDesc[$di])" $tri.rows) $(if ($nm.Count) { @($nm.url) } elseif ($merged) { @($mrs.url) })); fix = $false; done = ($merged -or ($nm.Count -and -not @($nm | Where-Object state -ne 'merged').Count)) } })
@@ -206,12 +213,16 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
       repo = $(if ($ag.repo) { $ag.repo } elseif ($mrs.Count) { $mrs[0].repo } else { 'other' }); mrs = $mrs; merged = $merged; envs = $envs; items = $items
       inTest = (Test-TrackerStatus $sb.status 'inTest'); closed = (Test-TrackerStatus $sb.status 'closed') }
   }
-  $rows = @($rows); $pc = Update-KitParentClose $Parent $pt $rows $ro; if ($pc.did) { $did.Add($pc.did) }
+  $rows = @($rows)
+  if ($leaf) { Update-KitTaskIndex $Parent { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.mrs = $mc; $x.rollup.readAt = (Get-Date).ToString('o'); $x.rollup.localSig = $sig0 }; return "ROLLUP ${Parent}: $(if ($did.Count) { $did -join ' · ' } else { 'no change' }) (no subtasks: its Items checklist only)" }
+  $pc = Update-KitParentClose $Parent $pt $rows $ro; if ($pc.did) { $did.Add($pc.did) }
   $want = [ordered]@{ delivery = (Format-KitDelivery $rows $pc.note) }; if ($tri -and $tri.rows.Count) { $want.triage = Format-KitTriage $tri }
   $sec = @{}; if ($ro.sections -is [Collections.IDictionary]) { foreach ($k in $ro.sections.Keys) { $sec[$k] = $ro.sections[$k] } }
   $desc = "$($pt.description)"; $nd = $desc -replace "`r`n", "`n"; $changed = @()
   foreach ($k in $want.Keys) { $h = Get-KitRollupHash $want[$k]; if ($sec[$k] -ne $h -or $nd.IndexOf("<!-- kit:$k -->") -lt 0) { $nd = Set-KitDescSection $nd $k $want[$k] $(if ($k -eq 'triage') { 'delivery' }); $sec[$k] = $h; $changed += $k } }
   if ($changed.Count) { try { $null = Set-TrackerDescription $Parent $nd; $did.Add("description ($($changed -join ', '))") } catch { $did.Add("description FAILED: $("$_".Split("`n")[0])"); foreach ($k in $changed) { $sec.Remove($k) } } }
+  $codeOf = @{}; foreach ($k in $areaOf.Keys) { $codeOf[$k] = "$($areaOf[$k].area)" }   # the parent's Items, one per subtask (lib.ps1), after the description write
+  $pio = try { Update-KitParentItems $Parent $pt $codeOf } catch { "parent items FAILED: $("$_".Split("`n")[0])" }; if ($pio) { $did.Add("$pio") }
   $ms = @($ro.milestones | Where-Object { $_ }); $kit = @($rows | Where-Object { $_.area -or $trk.ContainsKey($_.id) }); $n = $kit.Count   # only subtasks the kit tracks or triaged
   $due = [ordered]@{}
   if ($n -and -not @($kit | Where-Object { -not $_.merged }).Count) { $due['merged'] = "All $n subtasks merged: delivery status in the description." }
@@ -249,7 +260,7 @@ function Get-KitDescItems([string]$Text) {
 }
 # no Items list: ONE item "MRs · <task name> · <MR URLs>" carries the links; -Force: a final checklist is written again (track add)
 function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
-  $x = Read-KitState (Get-KitTaskFile $Task); if ($x.itemsFrom -eq 'triage' -or ($x.itemsFinal -and -not $Force)) { return }
+  $x = Read-KitState (Get-KitTaskFile $Task); if ($x.itemsFrom -in 'triage', 'subtasks' -or ($x.itemsFinal -and -not $Force)) { return }
   $dsc = @{}; if ($T) { foreach ($e in @(Get-KitDescItems $T.description)) { $dsc[$e.id] = $e.text } } elseif ($x.itemDesc -is [Collections.IDictionary]) { foreach ($k in $x.itemDesc.Keys) { $dsc[$k] = $x.itemDesc[$k] } }
   $ids = @(@(if ($T) { Get-KitDescItemIds $T.description } else { $x.itemIds }) | Where-Object { $_ }); $tr = (Read-KitTracking).tasks[$Task]
   $one = -not $ids.Count -or "$ids" -eq 'MRs'; if ($one) { if (-not @($tr.mrs).Count) { return }; $ids = @('MRs'); if ($T.name) { $dsc.MRs = $T.name } }

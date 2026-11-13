@@ -11,7 +11,10 @@
   its MRs merged; deferred / duplicate unticked with the reason): tracker verb `checklist`, else an `<!-- kit:items -->` section.
   Its own Items ids (areas) join that checklist as `<id> · <plain description> · <MR URLs>` (the description: the Items words,
   triage ids in them as their titles), ticked once every MR naming the id merged. The id leads: a new text renames in place.
-  One parent comment per milestone: all merged, deployed to `<env>`, all closed.
+  A subtask's triage items: its area's rows plus the ids its own Items list names (one area over several subtasks). The parent's
+  own "Items" checklist: one item per subtask (core `Update-KitParentItems`), ticked when it closes. A
+  task without subtasks: its triage rows (named, else all) as its Items checklist. One parent comment per milestone: all merged,
+  deployed to `<env>`, all closed.
 - Parent close (owner, 2026-11-11): every subtask in the tracker's closed status -> ONE decision (`decide ask -Gate close`, task =
   the parent; A close / B keep open + why), shown in the delivery line; the parent closes only on the answer `A` (`decide answer`).
   A reopened subtask spends an answered ask; all closed again asks once more. A task without subtasks keeps its flow (QA closes it).
@@ -20,8 +23,9 @@
   an id a merged MR names, all once its MRs are all merged. No Items list: one item `MRs · <task name> · <MR URLs>` (`track add`
   writes it; the task's MR links live here, there is no MRs comment).
 - Sources: task state (`track`), the git host (`mr.get` / `mr.url`; merged MRs cached), the
-  deploy log, the tracker (one parent view per read), the stored triage (`-From`: the first `.md` table with ID and Area
-  columns; agents from a `.json` with `agents` [{ id, task or "task <id>" in note, repo or a `repos[]` name in area / note }]).
+  deploy log, the tracker (one parent view per read), the stored triage (`-From <dir>[;<dir>]`: per source the first `.md`
+  table with ID and Area (or Owner area) columns, a Ports column added to the title; agents from every `.json` with `agents`
+  [{ id, task or "task <id>" in note, repo or a `repos[]` name in area / note }], one per id, the one with a task wins).
 - Writes only on a diff (section hashes, checklist signature); no read while local state is unchanged and
   `track.rollupMinutes` (default 30) has not passed.
 Needed when: `tracker.type` = `*`
