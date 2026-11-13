@@ -9,6 +9,8 @@ $T = { param($a) @{ api = "http://127.0.0.1:$P"; auth = $a; users = @{ admin = '
   th = & $T @{ type = 'command'; cmd = 'echo X-Sig: s1' } } } (Join-Path $k 'skills/pokey/targets.local.json') 6
 $ok = foreach ($x in 'tc/c', 'tr/b', 'tq/q', 'th/h') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
 Expect "api auth kinds ($ok)" (@($ok).Count -eq 4 -and (Get-Content "$(Kd)/A1-C1_01_tq.json" -Raw) -match 'api_key=\[redacted\]')
+$nu = Px $Q api -Target tq -As ghost -Path '/q' 2>&1 | Out-String; $nuc = $LASTEXITCODE
+Expect 'api (goody auth kind): a user missing from the target exits 2 NO-USER, no stack trace' ($nuc -eq 2 -and $nu -match "NO-USER 'ghost' in target tq" -and $nu -notmatch 'Exception|at line')
 $api.proc.Kill()
 Remove-TestKit $k
 Complete-Tests

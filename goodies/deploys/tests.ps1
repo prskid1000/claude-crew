@@ -95,7 +95,7 @@ $null = Invoke-Deploy plan -TimeoutSec 4   # text mode: each row on stderr as it
 $res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq, (Join-Path (Kd) 'child-timeout.txt'), (Join-Path (Kd) 'child-calls.txt'))
 Expect-Each $res 'deploy plan: one run per repo (slices of 4+ MRs) in parallel with only the targets each MR needs, a failed one UNKNOWN; a timeout keeps the rows already checked; each child gets the time left as -TimeoutSec (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel', 'childcap', 'perrepo', 'needed', 'slices', 'feeds')
 $all = $res -join "`n"
-Expect 'deploy plan: each MR row printed as its check ends, a slow env''s finished rows too' ($all -match '(?m)^\s+part!1 @ part: NOT-DEPLOYED x' -and $all -match '(?m)^\s+good!2 @ good: DEPLOYED live')
+Expect 'deploy plan: each NOT-DEPLOYED row printed as its check ends (a slow env''s too), DEPLOYED / UNKNOWN only counted per state' ($all -match '(?m)^\s+part!1 @ part: NOT-DEPLOYED x' -and $all -notmatch '(?m)^\s+good!2 @ good: DEPLOYED live' -and $all -match 'deploy plan probes: DEPLOYED \d+ · NOT-DEPLOYED \d+')
 # an MR whose merge is in the deploy branch's last green job: DEPLOYED from one git rev-list, never probed; the request is on disk before the probe
 $gr = Join-Path (Kd) 'anc-repo'; $null = git init -q -b main $gr; git -C $gr -c user.name=t -c user.email=t@t commit -q --allow-empty -m c1
 $c1 = git -C $gr rev-parse HEAD; git -C $gr branch staging; git -C $gr -c user.name=t -c user.email=t@t commit -q --allow-empty -m c2; $c2 = git -C $gr rev-parse HEAD

@@ -159,6 +159,8 @@ $L = '<kit>/skills/envy/envy.ps1'
 - Coordinator-only (`up`, `restart`, `down`, `refresh`, `drop`, shared DB repair): ENV-FIX `bossy.ps1 decide ask -Kind envfix
   -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, then WAIT (`decide wait -Id <id>`) and continue: an env fix request, not a
   verdict. Only org-rule out-of-scope channels stay OUT_OF_SCOPE.
+- An ENV-FIX that edits `<env>.env` takes effect only after a restart: once the holder releases, the fixer runs `envy restart
+  -Services <svc>` (the services reading that line), then rechecks the failing step before `decide answer`.
 
 **Rules**
 - No dev servers by hand (the guard blocks them while `localEnv` is set); never edit env worktrees, push `localenv/*` or install

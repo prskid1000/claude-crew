@@ -84,6 +84,11 @@ Expect 'deployed: every row carries the MR target branch (deploy plan: no feeds 
 $env:NA_TGT = 'mc,px'; $nt = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env:NA_TGT; $ntr = @(($nt -replace '(?s)^.*?(\[.*\]).*$', '$1') | ConvertFrom-Json)
 $dcs = Get-Content (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -Raw; $chU = @([regex]::Matches($dcs, 'merge_requests/\$\(?[\w.]+\)?/changes[^"]*') | ForEach-Object { $_.Value -replace '\$\(?[\w.]+\)?', 'I' } | Select-Object -Unique)
 Expect "deployed: -Target takes a list (deploy plan: one run per repo); the paths filter and the content check share one change-list call ($(@($ntr.target) -join ',') | $($chU -join ' '))" ((@($ntr.target) -join ',') -eq 'mc,px' -and $chU.Count -eq 1)
+# deploys[].serves: an app env's check (-Target <app env>) covers the service hosts that back it; none -> NO-TARGET names serves
+& $J @{ repos = @(@{ name = 'py'; deploys = @(@{ target = 'mc'; ssh = @{ host = 'h1'; subdir = 'mcp/' } }, @{ target = 'pm'; serves = @('app-stg'); ssh = @{ host = 'h2'; subdir = 'pm' } }) }) } $kl
+$env:NA_TGT = 'app-stg'; $sv = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; $env:NA_TGT = 'nope'; $sn = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env:NA_TGT
+$svr = @(($sv -replace '(?s)^.*?(\[.*\]|\{.*\}).*$', '$1') | ConvertFrom-Json); $snr = @(($sn -replace '(?s)^.*?(\[.*\]|\{.*\}).*$', '$1') | ConvertFrom-Json)   # one row: an object
+Expect "deployed: -Target <app env> checks the deploys[] entries that serve it; none -> NO-TARGET naming deploys[].serves ($(@($svr.target) -join ','))" ((@($svr.target) -join ',') -eq 'pm' -and $svr[0].state -eq 'DEPLOYED' -and $snr[0].state -eq 'NO-TARGET' -and $snr[0].detail -match 'no deploys\[\] entry of py has target or serves nope.*deploys\[\]\.serves')
 # ssh.shaFile (a CI deploy's record of the commit it installed): live = the merge is its ancestor, even when the host checkout is unreadable
 & $J @{ repos = @(@{ name = 'py'; deploys = @(@{ target = 'sf'; branch = 'stage/py'; ssh = @{ host = 'h1'; shaFile = '/opt/a/deployed.sha' } }, @{ target = 'fx'; from = @('release'); ssh = @{ host = 'h2' } }) }) } $kl
 Set-Content "$(Kd)/sf.ps1" @'

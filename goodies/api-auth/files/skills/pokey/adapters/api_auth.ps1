@@ -36,7 +36,7 @@ $t = $cfg.targets.$Target
 if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $u = @($t.users.$As)
-if (-not $t.users.$As -and $t.auth.type -ne 'none') { throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')" }   # not @(...).Count: @($null).Count is 1
+if (-not $t.users.$As -and $t.auth.type -ne 'none') { "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $($t.users.PSObject.Properties.Name -join ', ')"; exit 2 }   # as pokey.ps1 api; not @(...).Count: @($null).Count is 1
 if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has no api URL (web-only: use browser.mjs)" }
 $base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }

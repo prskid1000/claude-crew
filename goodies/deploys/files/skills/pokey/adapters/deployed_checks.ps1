@@ -195,8 +195,9 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   $sha = @($mr.squash_commit_sha, $mr.merge_commit_sha, $mr.sha) | Where-Object { $_ } | Select-Object -First 1
   if (-not $sha) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'UNKNOWN'; detail = 'merged MR has no commit sha (glab auth status?)' }; continue }
   $s8 = $sha.Substring(0, [math]::Min(8, $sha.Length))
-  $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -in @(Split-KitList $Target)) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
-  if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
+  # deploys[].serves: the app envs a service host backs (a backend service of the app env checked on its own hosts)
+  $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -in @(Split-KitList $Target) -or @(@($_.serves) | Where-Object { $_ -in @(Split-KitList $Target) }).Count) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
+  if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = $(if (@($r.deploys).Count -and $Target) { "no deploys[] entry of $($r.name) has target or serves $Target (map an app env to this repo's hosts: deploys[].serves)" } else { 'no deploys configured for this repo' }) }; continue }
   foreach ($d in $deps) {
     if ($d.from -and $mr.target_branch -and $mr.target_branch -notin @($d.from) -and $mr.target_branch -ne $d.branch) { Row $d 'N/A' "n/a for $($d.target): merged into $($mr.target_branch), not $(@($d.from) -join ' / ')"; continue }   # before any probe (ssh, pipelines)
     if (@(Get-DeployPaths $d).Count) {   # an MR outside the target's paths is n/a there: no ssh, no NOT-DEPLOYED
