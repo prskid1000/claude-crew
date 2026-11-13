@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L251 shells · L380 page · L868 usage · L1094 release · L1133 lines · L1166 cleanup ·
-  L1202 launch · L1280 pause · L1398 sessions · L1450 ci tasks · L1502 the kit origin's main and goodies
+Sections: L15 builds · L47 supervise · L251 shells · L380 page · L875 usage · L1101 release · L1140 lines · L1173 cleanup ·
+  L1209 launch · L1287 pause · L1405 sessions · L1457 ci tasks · L1509 the kit origin's main and goodies
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -146,7 +146,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
     if ($b.CommandLine -notmatch '--remote-debugging-port=(\d+)' -or -not $keyOf[$Matches[1]]) { continue }
     $k = $keyOf[$Matches[1]]; $tf = Get-Item (Join-Path (Get-KitPath sessions) "tabs-$($k -replace '\|', '__').json") -ErrorAction SilentlyContinue; $tabs = try { Get-Content $tf.FullName -Raw | ConvertFrom-Json } catch { $null }
     $idleM = ($now - $(if ($tabs._idle) { [DateTimeOffset]::FromUnixTimeMilliseconds([long]$tabs._idle).LocalDateTime } else { [datetime]$b.Created })).TotalMinutes   # no tab holder since (browser.mjs sweep)
-    if ($AutoFix -and $tabs._idle -and -not @($tabs.PSObject.Properties | Where-Object Name -notmatch '^_').Count -and $idleM -ge [double](Get-KitSetting 'idle.graceMinutes' 10)) {
+    if ($AutoFix -and $tabs._idle -and -not @($tabs.PSObject.Properties | Where-Object Name -notmatch '^_').Count -and $idleM -ge [double](Get-KitParam 'idle.graceMinutes')) {
       try { (Get-Process -Id $b.Id).Kill($true) } catch {}; & $flag 'INFO' "auto-fixed: closed test browser $k (no tab holder for $([int]$idleM) min)" 'Nothing to do.'; continue
     }
     $rows.Add([pscustomobject]@{ name = "browser $(($k -split '\|' | Where-Object { $_ }) -join '·')"; by = (@($tabs.PSObject.Properties | Where-Object { $_.Name -ne '_key' -and $_.Value.agent } | ForEach-Object { $_.Value.agent }) | Select-Object -Unique) -join ', '; gb = & $tree $b })
@@ -173,7 +173,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
 
 # kit to-do (bossy K1): open "- [ ]" lines in <agents>/kitty/kit-*.md and no kitty on the board = nobody works them
 function Get-KitSuperviseFlagsKitTodo([switch]$AutoFix, $Board = $entries) {
-  $td = Join-Path (Get-KitPath agents) 'kitty'; if (-not (Test-Path $td) -or @($Board | Where-Object { $_.status -ne 'left' -and $_.beat -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt 6 -and ($_.type -eq 'kitty' -or "$($_.agent)" -match '^kitty') }).Count) { return }
+  $td = Join-Path (Get-KitPath agents) 'kitty'; if (-not (Test-Path $td) -or @($Board | Where-Object { $_.status -ne 'left' -and $_.beat -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'supervise.kittyLiveHours') -and ($_.type -eq 'kitty' -or "$($_.agent)" -match '^kitty') }).Count) { return }
   $n = @(Get-ChildItem $td -Filter 'kit-*.md' -File | ForEach-Object { Get-Content $_.FullName } | Where-Object { $_ -match '^\s*[-*] \[ \]' }).Count
   if ($n) { [pscustomobject]@{ level = 'ACT'; what = "kit to-do has $n open item(s), no kitty live"; action = "Spawn kitty (kind fix) on $td\kit-*.md (bossy K1)." } }
 }
@@ -662,7 +662,7 @@ function Format-KitSuperviseHtml($j) {
     [pscustomobject]@{ tone = $tn; h = "<div class='dk $tn' title='$(& $e (& $diskRate $dk))'><div class=v><span class=dn0>$(& $e $dv)</span> $(& $fmt $dk.free)<small>$(& $e " GB free · $(& $diskRate $dk -Short)$(if ($null -ne $ttf) { " · full in $(& $n1 $ttf) h" })")</small>$(& $trend $dk.free $(if ($pv.disks) { $pv.disks.$dv }) 1 'GB')</div>$mtr$(& $spark $dw 'slate' 'free GB, 7 days' 'low')</div>" } })
   # QA seats as slots (filled = taken), up to 24; the numbers stay in the tile
   $dots = { param($u, $m) $u = [int]$u; $m = [math]::Min(24, [int]$m); if ($m -le 0) { return '' }; "<div class=dots role=img aria-label='$u of $m QA seats taken'>$(@(1..$m | ForEach-Object { "<i$(if ($_ -le $u) { ' class=on' })></i>" }) -join '')</div>" }
-  $l24 = @($lv | Where-Object { $_.at -and ($at - [datetime]$_.at).TotalHours -le 24 }); $memPk = & $agg { $_.mem } max; $usedGB = if ($tot -and $null -ne $memPct) { $tot * [double]$memPct / 100 }
+  $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) }); $memPk = & $agg { $_.mem } max; $usedGB = if ($tot -and $null -ne $memPct) { $tot * [double]$memPct / 100 }
   # build gate: a row per kind from its history (running, queued, today, waits, RAM promised, a 24 h busy strip); RAM capacity dots; QA seats, phone lanes, emulators
   $gs = $st.gate; $gateOld = 
 (& $nowCard 'Build gate · QA seats' "$(& $fmt $nw.gr)<small> running · </small>$(& $fmt $nw.gq)<small> queued</small>$(& $trend $nw.gq $pv.gq -1)<small> · seats </small>$(& $fmt $nw.seats)<small> / $(& $fmt $nw.seatsMax)</small>" "longest wait $(& $fmt $nw.gw) min" "7 days peak wait $(& $agg { $_.gw } max) min · seats $(& $agg { $_.seats } max)" $(if ($nw.gw -ge 30) { 'hot' } elseif ($nw.gq -ge 6) { 'warn' }) "$(& $dots $nw.seats $nw.seatsMax)$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queue, 24 h' 'peak' 0)")
@@ -702,11 +702,18 @@ function Format-KitSuperviseHtml($j) {
     $ri = & $item $nm "$(if ($r.shared) { 'shared · always on' } elseif ($by) { $by } else { 'no live holder' })$(if ($pts.Count -lt 2 -and [double]$r.gb) { " · $(& $n1 $r.gb) GB" })" "$(if (@($pts | Where-Object gb).Count) { & $spark $pts.gb 'slate' "RAM GB now $(& $n1 $r.gb), 24 h" '' 0 })$tl"
     if ($orphan) { $ri -replace "^<div class='ci f'", "<div class='ci f orphan'" } else { $ri } }
   $resHtml = if (-not @($j.resources | Where-Object { $_ }).Count) { '<p class=empty>No resource held.</p>' } else { & $grid res 260px @($j.resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb } | ForEach-Object { & $resCard $_ }) }
-  # a long command: its first line (wrapped, never cut), the whole one a click away
-  $cmdCell = { param([string]$c) $ls = @("$c".Trim() -split '\r?\n'); if ($ls.Count -le 1 -and "$c".Length -le 120) { return "$c" }
-    $hd = $ls[0]; if ($hd.Length -gt 120) { $cut = $hd.LastIndexOf(' ', 119); $hd = $hd.Substring(0, $(if ($cut -ge 40) { $cut } else { 120 })) }
-    @{ h = "<details class=cmd><summary>$(& $e $hd) <span class=cnt>(more$(if ($ls.Count -gt 1) { ", $($ls.Count) lines" }))</span></summary><div class=cmdf>$(& $e $c)</div></details>" } }
-  $shellHtml = & $table 'PID', 'Owner', 'Age', 'State', 'Dir', 'Command', 'Next' @($j.shells | Where-Object { $_ } | ForEach-Object { , @($_.pid, $_.owner, @{ h = & $minAgo $_.age },$_.state, $_.dir, (& $cmdCell "$($_.cmd)"), $_.next) })
+  # a command on one line, cut at 120 chars with an ellipsis in the text (no CSS clip), the whole one a click away
+  $cmdCell = { param([string]$c) $full = "$c".Trim(); $one = $full -replace '\s+', ' '; if ($one -eq $full -and $one.Length -le 120) { return $one }
+    $hd = if ($one.Length -gt 120) { $one.Substring(0, 119).TrimEnd() + '…' } else { $one }
+    @{ h = "<details class=cmd><summary title='$(& $e $one)'>$(& $e $hd)</summary><div class=cmdf>$(& $e $full)</div></details>" } }
+  # Dir only when a shell runs outside the kit, Next only when one has a step; Command takes the free width (colgroup)
+  $shRows = @($j.shells | Where-Object { $_ }); $kitDirNorm = "$script:KitRoot".TrimEnd('\', '/') -replace '\\', '/'
+  $shDir = { param($s) $dn = "$($s.dir)".TrimEnd('\', '/') -replace '\\', '/'; if ($dn -and $dn -ne $kitDirNorm) { "$($s.dir)" } else { '' } }
+  $shDirOn = [bool]@($shRows | Where-Object { & $shDir $_ }).Count; $shNextOn = [bool]@($shRows | Where-Object { "$($_.next)".Trim() }).Count
+  $shCols = @('PID', 'Owner', 'Age', 'State') + @(if ($shDirOn) { 'Dir' }) + 'Command' + @(if ($shNextOn) { 'Next' })
+  $shWidths = @('64px', '12%', '64px', '76px') + @(if ($shDirOn) { '14%' }) + 'auto' + @(if ($shNextOn) { '15%' })
+  $shAge = { param($v) if ("$v" -match '^\s*(\d+(?:\.\d+)?)(?: min)?\s*$') { $tx = $at.AddMinutes(-[double]$Matches[1]); "<span class=ago data-t='$($tx.ToString('o'))' title='$($tx.ToString('yyyy-MM-dd HH:mm'))'>$(& $ago $tx)</span>" } else { & $e $v } }
+  $shellHtml = (& $table $shCols @($shRows | ForEach-Object { $sr = $_; , @(@($sr.pid, $sr.owner, @{ h = & $shAge $sr.age }, $sr.state) + @(if ($shDirOn) { & $shDir $sr }) + @(& $cmdCell "$($sr.cmd)") + @(if ($shNextOn) { "$($sr.next)" })) })) -replace '^<div class=tw><table>', "<div class=tw><table><colgroup>$(@($shWidths | ForEach-Object { "<col style='width:$_'>" }) -join '')</colgroup>"
   $setRows = @(if ($st.settings) { $st.settings.PSObject.Properties | ForEach-Object { , @($_.Name, $_.Value) } })
   $chg = @($st.changes | Where-Object { $_ }); [array]::Reverse($chg); $prm = @($st.params | Where-Object { $_ }); $hm = { param($x) if ($x) { try { ([datetime]$x).ToString('MM-dd HH:mm') } catch { "$x" } } else { '' } }   # '' keeps the cell: an empty result drops it from the row
   # Tuning: every tunable once (params + supervise.* settings), grouped by area; source = default / local config / learned (its learned-from note); the last 10 changes inside
@@ -786,7 +793,7 @@ function Get-KitSupervisePageCss {
   '.spark{display:block;width:100%;height:22px;margin-top:4px}.spark .l{fill:none;stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round}.spark .a{fill:currentColor;opacity:.12}' +
   '.sage{color:color-mix(in srgb,var(--sage) 55%,var(--fg))}.act{color:color-mix(in srgb,var(--act) 55%,var(--fg))}.watch{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.slate{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}' +
   '.fbl>details>.bd,.sxb{max-height:clamp(150px,40dvh,480px);overflow-y:auto}.sxb{max-height:clamp(150px,30dvh,320px)}' +   # long lists scroll inside; content never truncates, it wraps (owner 2026-11-10)
-  '.fx table{table-layout:fixed;min-width:0}.fx th:last-child:nth-child(n+6){width:30%}tr.hl td{background:color-mix(in srgb,var(--sage) 12%,transparent)}.sh th:nth-child(1){width:64px}.sh th:is(:nth-child(3),:nth-child(4)){width:76px}' +   # fixed layout, wrapping cells: no horizontal scroll at 1366 px
+  '.fx table{table-layout:fixed;min-width:0}.fx th:last-child:nth-child(n+6){width:30%}tr.hl td{background:color-mix(in srgb,var(--sage) 12%,transparent)}.fx.sh th{width:auto!important}.sh .ago{white-space:nowrap}' +   # fixed layout, wrapping cells: no horizontal scroll at 1366 px
   'summary{list-style:none;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:6px 12px;min-height:36px;user-select:none}summary::-webkit-details-marker{display:none}' +
   'summary h2{margin:0;font-size:12px;font-weight:650;text-transform:uppercase;letter-spacing:.07em}summary::after{content:"";margin-left:auto;width:7px;height:7px;border-right:1.5px solid var(--mt);border-bottom:1.5px solid var(--mt);transform:rotate(45deg);transition:transform .15s}details:not([open])>summary::after{transform:rotate(-45deg)}' +
   '.cnt{font-size:11.5px;color:var(--mt);font-variant-numeric:tabular-nums}.bd{padding:0 12px 10px}details.sub{border:1px solid var(--ln);border-radius:8px;margin-top:8px;align-self:start}details.sub>summary{min-height:30px;padding:4px 10px}summary :is(h3,h4){margin:0}details.st.sub{padding:0}details.st.sub>.bd{padding:0 10px 8px}details.none>summary{cursor:default}details.none>summary::after{display:none}summary:focus-visible{outline:2px solid var(--sage);outline-offset:-2px;border-radius:8px}.jl{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:12px}.jl a{color:var(--mt);text-decoration:none}.jl a:hover,.jl a:focus-visible{color:var(--fg)}.lv.FIX{color:color-mix(in srgb,var(--sage) 55%,var(--fg));background:color-mix(in srgb,var(--sage) 15%,transparent)}summary .chip.lv{margin-left:2px}.tw:not(.all) tr.more{display:none}.sa{margin:6px 0 2px;font:inherit;font-size:12px;background:var(--sf2);color:var(--fg);border:1px solid var(--ln);border-radius:6px;padding:2px 10px;cursor:pointer}.bar.sb3{display:inline-flex;gap:1px}.bar.sb3 i{border-radius:0}.bar i.mt{background:var(--mt)}.tm{color:var(--mt)}.dots{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px}.dots i{width:8px;height:8px;border-radius:50%;border:1px solid var(--mt)}.dots i.on{background:var(--slate);border-color:var(--slate)}:is(td[data-k=Key],td[data-k=Context],td[data-k=Dir],td[data-k=Command]){font-family:ui-monospace,Consolas,monospace;font-size:11.5px}.fl{display:grid;gap:8px;align-items:stretch}@media(min-width:1100px){.fl{grid-template-columns:minmax(0,1fr) 280px}}.fmas{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:8px;align-content:start;align-items:start}.fmas>.flag{margin:0}' +
@@ -798,7 +805,7 @@ function Get-KitSupervisePageCss {
   '@media(max-width:899px){.hr{grid-template-columns:minmax(0,auto) minmax(0,1fr)}.hr .hw{grid-column:1/-1}}' +
   '.lgd{display:inline-block;width:14px;height:0;border-top:2px solid var(--c);vertical-align:middle;margin:0 3px 0 6px}.lgd.ds{border-top-style:dashed}.lgd.dd{border-top-style:dotted}' +
   '.sh4{margin:6px 0 2px;font-size:12px;color:var(--mt)}.cg.res{align-items:stretch}' +
-  '.cmd>summary{cursor:pointer;overflow-wrap:anywhere}.cmd>summary .cnt{white-space:nowrap}.cmdf{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:4px;font-size:11.5px}.lc{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}.chip.ls{font-size:10.5px;padding:0 6px;background:var(--sf2);color:var(--mt)}.ci.orphan{border-color:color-mix(in srgb,var(--watch) 55%,var(--ln));background:color-mix(in srgb,var(--watch) 9%,var(--sf))}.chip.k-build{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}.chip.k-test{color:color-mix(in srgb,var(--plum) 55%,var(--fg))}.chip.k-kit{color:var(--mt)}' +
+  '.cmd>summary{cursor:pointer;overflow-wrap:anywhere;display:block;padding:0;min-height:0}.cmd>summary::after{content:none}.cmd>summary .cnt{white-space:nowrap}.cmdf{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:4px;font-size:11.5px}.lc{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}.chip.ls{font-size:10.5px;padding:0 6px;background:var(--sf2);color:var(--mt)}.ci.orphan{border-color:color-mix(in srgb,var(--watch) 55%,var(--ln));background:color-mix(in srgb,var(--watch) 9%,var(--sf))}.chip.k-build{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}.chip.k-test{color:color-mix(in srgb,var(--plum) 55%,var(--fg))}.chip.k-kit{color:var(--mt)}' +
   '.flag{border:1px solid var(--ln);border-left:3px solid var(--watch);border-radius:8px;padding:6px 10px}.flag.ACT{border-left-color:var(--act);background:color-mix(in srgb,var(--act) 5%,var(--sf))}' +
   '.flag .h{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mt)}.flag .w{margin:3px 0 2px;word-break:break-word}.flag .n{font-size:12.5px;color:var(--mt);word-break:break-word}.flag .n b{color:var(--sage2);margin-right:4px}.dot{opacity:.5}' +
   '.info{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px;color:var(--mt)}.info li{padding:2px 0 2px 14px;position:relative;word-break:break-word}.info li::before{content:"";position:absolute;left:2px;top:9px;width:5px;height:5px;border-radius:50%;background:var(--sage)}' +
@@ -1177,7 +1184,7 @@ function Invoke-KitCleanupResources {
     $tabs = $null; if ($c.CommandLine -match '--remote-debugging-port=(\d+)' -and $keyOf[$Matches[1]]) { $tabs = try { Get-Content (Join-Path (Get-KitPath sessions) "tabs-$($keyOf[$Matches[1]] -replace '\|', '__').json") -Raw | ConvertFrom-Json } catch { $null } }
     if (@($tabs.PSObject.Properties | Where-Object { $_.Name -notmatch '^_' -and $_.Value.pid -and (Get-Process -Id ([int]$_.Value.pid) -ErrorAction SilentlyContinue) }).Count) { continue }
     $since = if ($tabs._idle) { [DateTimeOffset]::FromUnixTimeMilliseconds([long]$tabs._idle).LocalDateTime } else { [datetime]$c.Created }
-    if (($now - $since).TotalMinutes -ge [double](Get-KitSetting 'idle.graceMinutes' 10)) { [void]$actions.Add("killed headless browser pid $($c.Id) (no live tab holder for $([int]($now - $since).TotalMinutes) min)"); if (-not $DryRun) { Stop-SysProcess $c.Id } }
+    if (($now - $since).TotalMinutes -ge [double](Get-KitParam 'idle.graceMinutes')) { [void]$actions.Add("killed headless browser pid $($c.Id) (no live tab holder for $([int]($now - $since).TotalMinutes) min)"); if (-not $DryRun) { Stop-SysProcess $c.Id } }
   }
   $inUse = @($chromes | ForEach-Object { if ($_.CommandLine -match 'chrome-profiles[\\/](\d+)') { $Matches[1] } } | Sort-Object -Unique)
   foreach ($p in Get-ChildItem $profiles -Directory -ErrorAction SilentlyContinue) { if ($p.Name -notin $inUse -and (Old $p 24)) { Gone $p.FullName 'idle browser profile' } }
