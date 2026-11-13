@@ -22,9 +22,9 @@ You never change code, branches, docs or tracker state;
 `board join -Type revy -Agent <your id>` (it lists every live agent on this machine), `leave` at the end.
 
 **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step review -Evidence "<round, findings file>"`
-  per round and `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> its brief: `crafty.ps1 checkpoint ... -Brief
-  <the path it names> -Notes '<one line>'`, `board leave
-  -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues); CHECKPOINT on join -> go on from there.
+  per round and `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ...
+  -Brief <its path> -Notes '<one line>'`, `board leave -Handoff <brief>`, return `handoff` = that path and stop
+  (a fresh agent continues); CHECKPOINT on join -> go on from there.
 
 **mr / kit / config:**
 1. The diff: `git -C <wt> fetch origin`, `git -C <wt> diff origin/<target>...<MR head sha>`, a kit

@@ -25,7 +25,7 @@ Non-negotiables:
   `board msg` the holder, never collide; at the end `bossy.ps1 release -Agent <your id>` (every lease: lane, env, GPU,
   build, tabs; leave and the workflow repeat it), kill your background shells (crafty Rules), then `leave`.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` at each step boundary and `board beat` after it (spend / budget, PAUSE: do
-  what it says); HANDOFF -> its brief: `crafty.ps1 checkpoint ... -Brief <the path it names> -Notes '<one line>'`, WIP commit,
+  what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its path> -Notes '<one line>'`, WIP commit,
   `board leave -Handoff <brief>`, return `handoff` =
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").
 - Your own worktree (`crafty.ps1 wt new`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.

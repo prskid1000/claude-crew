@@ -23,16 +23,15 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L32 init · L50 board · L230 budget · L259 launch · L492 recover · L578 pause · L589 resume · L652 program · L703 param ·
-  L709 track · L1036 supervise · L1340 report · L1419 audit · L1479 storage · L1689 bugbrief · L1791 cleanup · L1875 learn ·
-  L1905 decide · L2039 health · L2101 retro due · L2111 tidy · L2180 the kit origin's main and goodies · L2196 setup ·
-  L2263 guard-sendmessage
+Sections: L32 init · L49 board · L229 budget · L258 launch · L491 recover · L577 pause · L588 resume · L651 program · L702 param ·
+  L708 track · L1035 supervise · L1339 report · L1418 audit · L1478 storage · L1688 bugbrief · L1790 cleanup · L1874 learn ·
+  L1904 decide · L2038 health · L2100 retro due · L2110 tidy · L2179 the kit origin's main and goodies · L2195 setup ·
+  L2262 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
-if ($__verb -in 'supervise', 'status') { try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { } }   # before output: captured stdout got · as OEM bytes
 . (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1')
 # a broken adapter must not take every verb and hook down
 foreach ($adapter in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue)) { try { . $adapter.FullName } catch { [Console]::Error.WriteLine("adapter $($adapter.Name): $_") } }

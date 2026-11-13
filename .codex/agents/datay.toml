@@ -42,7 +42,7 @@ Non-negotiables:
 - Every write: a mark or a saved GET first, the printed WHERE and count, the re-count after. No full dumps (marks only).
 - Only your env and records; another agent's data, a setting or a shared fixture -> `board msg` the holder; still split ->
   `bossy.ps1 decide ask`.
-- **Budget and checkpoints:** HANDOFF -> its brief: `crafty.ps1 checkpoint ... -Brief <the path it names> -Notes '<one line>'`,
+- **Budget and checkpoints:** HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its path> -Notes '<one line>'`,
   `board leave -Handoff <brief>`, return `handoff` =
   that path and stop; CHECKPOINT on join -> start at that item.
 - Never edit product code or the kit; never print a value from a `*.local.*` file or the env's secrets.

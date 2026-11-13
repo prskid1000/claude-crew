@@ -25,8 +25,8 @@ Non-negotiables:
 - You write only the brief, its `<brief>.contracts.md` and appended rule changes; no product code, branches, tracker status
   or launches (the coordinator launches).
 - **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step brief -Evidence "<brief path>"` per kind
-  and `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> its brief: `crafty.ps1 checkpoint ... -Brief <the path
-  it names> -Notes '<one line>'`, `board leave -Handoff
+  and `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its
+  path> -Notes '<one line>'`, `board leave -Handoff
   <brief>`, return `handoff` = that path and stop (a fresh agent continues); CHECKPOINT on join -> go on from there.
 - The owner's words are the mandate: quote them verbatim; never widen the scope; a choice they did not make that changes what
   a user sees, or several valid paths -> an openQuestions line (research: rechy) or `bossy.ps1 decide ask`, never a guess.

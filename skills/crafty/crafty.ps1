@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L476 stack · L656 gate · L971 check · L1274 pipes · L1331 guard · L2101 dir ·
-  L2111 checkpoint · L2139 prior · L2177 tracker · L2199 task spec · L2348 host
+Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L970 check · L1273 pipes · L1330 guard · L2100 dir ·
+  L2110 checkpoint · L2138 prior · L2176 tracker · L2198 task spec · L2347 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -364,8 +364,7 @@ switch ($Action) {
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
     if ($Spec) {   # commitFormat subject + change bullets; python prints UTF-8, stdout only
       if ($Message) { throw 'commit: -Spec or -Message / -MessageFile, not both' }
-      $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-      try { $out = @(python -X utf8 $KitCmd.devtools render commit $Spec 2>$null); $code = $LASTEXITCODE; $why = if ($code) { @(python -X utf8 $KitCmd.devtools render commit $Spec 2>&1) -join ' ' } } finally { [Console]::OutputEncoding = $enc }
+      $out = @(python -X utf8 $KitCmd.devtools render commit $Spec 2>$null); $code = $LASTEXITCODE; $why = if ($code) { @(python -X utf8 $KitCmd.devtools render commit $Spec 2>&1) -join ' ' }
       if ($code) { throw "commit spec: $why" }; $Message = ($out -join "`n").TrimEnd()
     }
     if (-not $Message -or -not $Message.Trim()) { throw "commit needs -Message '<subject>' or -MessageFile <file> (multi-line: write it to `$(crafty.ps1 dir -Agent <id> -Name commit-msg.txt) with the Write tool, then -MessageFile <that path>)" }

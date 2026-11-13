@@ -1,11 +1,12 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L67 state · L136 config · L216 OS · L413 leases · L854 status · L1098 supervise sweep ·
-  L1169 supervise report · L1265 tracker · L1589 prior · L1605 ask bugs · L1810 git-host · L1970 kitlog · L2090 params ·
+Sections: L10 paths · L68 state · L137 config · L217 OS · L414 leases · L855 status · L1099 supervise sweep ·
+  L1170 supervise report · L1266 tracker · L1589 prior · L1605 ask bugs · L1810 git-host · L1970 kitlog · L2090 params ·
   L2395 entry-scripts
 #>
 #Requires -Version 7
+try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # every kit script: piped stdout and child output are UTF-8 (· → £ é), never the console code page
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitEntry = $MyInvocation.PSCommandPath   # the script that dot-sourced this file (Resolve-KitExtra runs it again)
@@ -1298,8 +1299,7 @@ function __TrCli([string]$Exe, [string[]]$A) {
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { throw "tracker ($__trType): the '$Exe' CLI is not on PATH" }
   $h2 = "$($A[0..1] -join ' ')"; $all = "$($A -join ' ')"
   $write = ($h2 -match '(?i)\b(comment|create|add|edit|attach|upload|new)\b' -and $h2 -notmatch '(?i)status') -or ($all -match '(?i)(^|\s)(-X|--method)\s+(POST|PUT|PATCH|DELETE)\b' -and $all -notmatch '(?i)status')
-  $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-  try { $r = Invoke-KitRetry { Invoke-KitNetExe $Exe $A } -Connect:$write } finally { [Console]::OutputEncoding = $enc }
+  $r = Invoke-KitRetry { Invoke-KitNetExe $Exe $A } -Connect:$write
   $out = (@($r.out, $r.err) | Where-Object { $_ }) -join "`n"
   if ($r.code -and $out -notmatch 'no matching status') { throw "tracker ($__trType): $Exe $h2 failed (exit $($r.code)): $(__TrShort $out)" }
   $out
@@ -1554,10 +1554,10 @@ function Set-KitTaskChecklist([string]$Task, [string]$Name, $Items) {
   if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { Set-TrackerDescription $Task $nd }
 }
 # checklist item "<id> · <plain words> · <URLs>" (links and a status suffix out of the words); task specs: crafty.ps1 "task spec"
-function Get-KitCut([string]$Text, [int]$Max) { $t = ("$Text" -replace '\s+', ' ' -replace '\|', '/').Trim(); if ($t.Length -gt $Max) { $t.Substring(0, $Max - 1) + '…' } else { $t } }
+function Format-KitCell([string]$Text) { ("$Text" -replace '\s+', ' ' -replace '\|', '/').Trim() }   # one line, never cut (Writing standards: text wraps, never truncates)
 function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
   $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'
-  (@($Id, (Get-KitCut $Desc 110), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
+  (@($Id, (Format-KitCell $Desc), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
 function ConvertTo-KitSpecItems($Spec) { @($Spec.items | Where-Object { $_.code } | ForEach-Object { [pscustomobject]@{ text = (Format-KitItemText "$($_.code)" "$($_.desc)" @($_.mrs)); done = [bool]$_.done } }) }
 # a parent's Items: its spec items + one per subtask "<code> · <name without [Kind]> · <URL>", ticked once closed; code: the
 # subtask's spec, the parent spec's subtasks[{ id, code }], $CodeOf (rollup areas), else its id
