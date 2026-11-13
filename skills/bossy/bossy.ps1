@@ -749,8 +749,8 @@ $script:holds = 0
 function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
 $script:gone = @{}   # deleted in the tracker
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { if (Remove-KitGoneTask $id $_) { $script:gone[$id] = $true }; '' } }
-# a held task already closed / in test is done (never promoted backwards); status read once per 30 min
-function HeldPast($o) { $nw = Get-Date; if ($o.holdCheckedAt -and ($nw - [datetime]$o.holdCheckedAt).TotalMinutes -lt 30) { return '' }
+# a held task already closed / in test is done (never promoted backwards); status read once per track.holdCheckMinutes
+function HeldPast($o) { $nw = Get-Date; if ($o.holdCheckedAt -and ($nw - [datetime]$o.holdCheckedAt).TotalMinutes -lt [double](Get-KitParam 'track.holdCheckMinutes')) { return '' }
   $hs = TaskStatus $o.task; if (-not $hs -or $script:gone[$o.task]) { return '' }   # unread or deleted: retry next sweep, never re-saved
   $o.holdCheckedAt = $nw.ToString('o'); $past = Test-TrackerStatus $hs 'closed', 'inTest'
   if ($past) { $o.done = $true; $o.doneAt = $o.holdCheckedAt }; $null = Save $o -Run

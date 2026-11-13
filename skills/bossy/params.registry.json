@@ -36,7 +36,9 @@
   "track.planHours": "config default=72 unit=h",
   "uiCheck.timeoutSec": "config default=600 unit=s",
   "check.importProbeSec": "config default=90 unit=s",
-  "api.loginHoldMinutes": "config default=30 unit=min"
+  "api.loginHoldMinutes": "config default=30 unit=min",
+  "gate.maxHours": "config default=24 unit=h",
+  "track.holdCheckMinutes": "config default=30 unit=min"
  },
  "_literals": {"skills/bossy/adapters/supervise_resources.ps1": 14, "skills/bossy/bossy.ps1": 40, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 9, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 33, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
 }

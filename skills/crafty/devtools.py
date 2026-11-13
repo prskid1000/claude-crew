@@ -2146,8 +2146,10 @@ def _cli():
     if cmd in VERBS:   # a plugin verb parses its own arguments
         stamp_fn(VERBS[cmd])
         sys.exit(VERBS[cmd](a[1:]) or 0)
-    if cmd in ('cases', 'render'):   # parse their own arguments
-        sys.exit((cases_cmd if cmd == 'cases' else render_cmd)(a[1:]))
+    if cmd == 'cases':   # cases and render parse their own arguments; one arm each: lint's flow finds the verb
+        sys.exit(cases_cmd(a[1:]))
+    if cmd == 'render':
+        sys.exit(render_cmd(a[1:]))
     if cmd == 'lbcheck':
         extra_missing('devtools.py lbcheck (Liquibase check)', 'liquibase')
     if cmd == 'findings':

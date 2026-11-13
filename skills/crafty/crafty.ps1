@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L970 check · L1273 pipes · L1330 guard · L2100 dir ·
-  L2110 checkpoint · L2139 prior · L2177 tracker · L2199 task spec · L2348 host
+Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L971 check · L1274 pipes · L1331 guard · L2101 dir ·
+  L2111 checkpoint · L2140 prior · L2178 tracker · L2200 task spec · L2349 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -931,7 +931,8 @@ $sw = [Diagnostics.Stopwatch]::StartNew(); $peak = 0.0   # double: Max(int, doub
 $c0 = if ($ctr) { Get-GateContainerGB }; $ctrPeak = 0.0; $tick = 0
 try {
   $null = $proc.Handle   # keeps ExitCode readable
-  while (-not $proc.HasExited -and $sw.Elapsed.TotalHours -lt 24) {
+  $gateMaxHours = [double](Get-KitParam 'gate.maxHours')
+  while (-not $proc.HasExited -and $sw.Elapsed.TotalHours -lt $gateMaxHours) {
     $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id))
     if ($null -ne $c0 -and ($tick++ % 3) -eq 2 -and $null -ne ($cn = Get-GateContainerGB)) { $ctrPeak = [math]::Max($ctrPeak, $cn - $c0) }
     Start-Sleep -Seconds 5
