@@ -48,7 +48,7 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
   $rows = [Collections.Generic.List[object]]::new(); $fl = [Collections.Generic.List[object]]::new(); $own = @(); $up = [ordered]@{}
   foreach ($ev in @($Envs | Where-Object { $_.env -and @($_.services).Count })) {
     $holders = @(@($ev.leases) + @($ev.holds) | Where-Object { $_ })
-    $down = @($ev.services | Where-Object { $d0 = $_.service; $_.state -notmatch '^up' -and @($holders | Where-Object { $d0 -in @($_.services) }).Count })
+    $down = @($ev.services | Where-Object { $d0 = $_.service; $_.state -notmatch '^(up|waiting)' -and @($holders | Where-Object { $d0 -in @($_.services) }).Count })
     foreach ($sv in @($ev.services | Where-Object { $_.state -match '^up' })) {
       $hl = @($holders | Where-Object { $sv.service -in @($_.services) }); $gl = @($hl | Where-Object { $null -ne $_.graceLeft } | ForEach-Object graceLeft | Sort-Object)[0]
       $key = if ($sv.port) { "$($sv.service):$($sv.port)" } else { "$($ev.env)/$($sv.service)" }; if (-not $up.Contains($key)) { $up[$key] = @{ svc = $sv.service; envs = @(); who = @(); gl = @(); gb = 0; ext = $false } }

@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L30 config · L227 state · L274 layer drops · L346 leases · L472 code · L504 migrations ·
-  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1051 seed · L1097 processes · L1465 daemon ·
-  L1924 cleanup · L1996 doctor · L2048 verbs
+  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1051 seed · L1097 processes · L1478 daemon ·
+  L1937 cleanup · L2009 doctor · L2061 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1302,26 +1302,30 @@ function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
   Start-Detached -FilePath $pwsh -ArgumentList $a -WorkingDirectory $dir -Log $log
   Start-Sleep 1; (Get-SysProcs | Where-Object { $_.CommandLine -match [regex]::Escape($match) } | Select-Object -First 1).Id
 }
-# a start waits for its dependsOn to be HEALTHY (a train may restart one meanwhile); a start that fails on a dependency
-# connection waits for them again and retries once, before the train rolls back
+# a start waits for its dependsOn to be HEALTHY (a train may restart one meanwhile; one whose own start still waits for room
+# is waited for past startMinutes); a start that fails on a dependency connection waits for them again and retries once
 $script:DepFailPattern = '(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|whilst connecting to|\bES client\b|elasticsearch.{0,40}(unreachable|refused|not reachable|timed? ?out)'   # TODO-PARAM (fixed default)
 # a dependency that is down and that nobody starts is claimed (status waiting, waitFor dep: the loop leaves it) and started here
 # a train's DB steps (marks, slices, migration checks, the guard, a restore) on a lane whose own DB service rests: a start in
 # progress is waited for, else the train starts it (-Latest: a start that got there first wins) -> its lines; throws when it fails
+function Test-SvcStartLive([string]$e, [string]$name) {   # a start in progress: owned starting, a live claim (room, lock, dep) or the loop's worker before it claims
+  $x = (Read-State $e).services[$name]
+  if (($x.status -eq 'starting' -and (Owned $x)) -or ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart))) { return $true }
+  [bool]@(Get-SysProcs | Where-Object { "$($_.CommandLine)" -match "$([regex]::Escape("_daemon -Env $e -Start $name"))(\s|$)" }).Count
+}
 function Ensure-DbUp([string]$e, [int]$release) {
   $d = DbSvc $e; if (-not $d -or -not (DbSvcDown $e)) { return }
   $until = (Get-Date).AddMinutes((StartMin $d))
   while ((DbSvcDown $e) -and (Get-Date) -lt $until) {
-    $x = (Read-State $e).services[$d.name]
-    $worker = @(Get-SysProcs | Where-Object { "$($_.CommandLine)" -match "$([regex]::Escape("_daemon -Env $e -Start $($d.name)"))(\s|$)" }).Count   # the loop's start worker, before it claims
-    if (-not ($x.status -eq 'starting' -and (Owned $x)) -and -not ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart)) -and -not $worker) { break }
+    if (-not (Test-SvcStartLive $e $d.name)) { break }
     Start-Sleep 2
   }
   if (DbSvcDown $e) { "[$e] $($d.name) rests: started for the train's DB steps"; Start-Svc $e $d $release '' -Latest }
 }
 function Wait-Deps([string]$e, $s) {
   foreach ($d in @($s.dependsOn | Where-Object { $_ })) {
-    $ds = Svc $e $d; if (-not $ds) { continue }; $until = (Get-Date).AddMinutes((StartMin $ds)); $said = $false
+    $ds = Svc $e $d; if (-not $ds) { continue }; $t0 = Get-Date; $until = $t0.AddMinutes((StartMin $ds)); $said = $false
+    $hard = $t0.AddMinutes($script:RoomWaitMin + (StartMin $ds)); $saidLive = $t0   # its own start still waiting for room: its room wait + start
     $xd = (Read-State $e).services[$d]
     if (-not (Healthy $e $ds) -and (Managed $ds) -and -not ($ds.repo -and $ds.artifact -and -not ($xd.artifact -and (Test-Path -LiteralPath $xd.artifact)))) {   # no build yet: the loop queues one
       $c = @{ ok = $false }
@@ -1335,7 +1339,11 @@ function Wait-Deps([string]$e, $s) {
       }
     }
     while (-not (Healthy $e $ds)) {
-      if ((Get-Date) -gt $until) { throw "[$e] $($s.name): dependency down: $d was not healthy within $(StartMin $ds) min - not started" }
+      $now = Get-Date
+      if ($now -gt $until) {
+        if ($now -gt $hard -or -not (Test-SvcStartLive $e $d)) { throw "[$e] $($s.name): dependency down: $d was not healthy within $([int]($now - $t0).TotalMinutes) min - not started" }
+        if (($now - $saidLive).TotalMinutes -ge 5) { "[$e] $($s.name) still waits for $d`: its start is in progress (up to $([int]($hard - $t0).TotalMinutes) min)"; $saidLive = $now }
+      }
       if (-not $said) { "[$e] $($s.name) waits for $d to be healthy"; $said = $true }; Wait-KitPoll 5
     }
   }
@@ -1362,12 +1370,15 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
   if (-not (Test-Path $dir)) { throw "[$e] $($s.name): folder $dir does not exist" }
   $cmd = StartCmd $e $s $artifact
   $x0 = (Read-State $e).services[$s.name]
-  if ((Owned $x0) -or ($s.port -and @(Get-PortPids ([int]$s.port)).Count)) { Stop-Svc $e $s 'stopped before a new start' }   # only when it runs or holds its port
-  if ($s.port -and (Test-PortListening ([int]$s.port))) {
-    $holder = @(Get-PortPids ([int]$s.port)) -join ','
-    Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = "port $($s.port) held by pid $holder (not started by the env)" }
-    throw "[$e] $($s.name): port $($s.port) is held by pid $holder, which the env did not start: stop it or change the port"
-  }
+  $freed = @{ v = $false }
+  $free = { param([string]$why) $xs = (Read-State $e).services[$s.name]
+    if ((Owned $xs) -or ($s.port -and @(Get-PortPids ([int]$s.port)).Count)) { Stop-Svc $e $s $why; $freed.v = $true }   # only when it runs or holds its port
+    if ($s.port -and (Test-PortListening ([int]$s.port))) {
+      $holder = @(Get-PortPids ([int]$s.port)) -join ','
+      Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = "port $($s.port) held by pid $holder (not started by the env)" }
+      throw "[$e] $($s.name): port $($s.port) is held by pid $holder, which the env did not start: stop it or change the port"
+    } }
+  & $free 'stopped before a new start'
   if ($s.init.cmd -and -not ($s.init.creates -and (Test-Path -LiteralPath (Expand-Placeholders ([string]$s.init.creates) $e $s $dir '')))) {   # before a start while init.creates is missing (a lane's own data)
     $ic = Expand-Placeholders ([string]$s.init.cmd) $e $s $dir ''; $ilog = LogFile $e "$($s.name)-init"; Add-Content $ilog "== $(Now) init: $ic"
     "[$e] $($s.name): init (once; log $ilog)"; $t0i = Get-Date
@@ -1391,6 +1402,8 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     }
     $xl = if ($Latest) { (Read-State $e).services[$s.name] }
     if ($Latest -and ((Healthy $e $s) -or ($xl.status -eq 'starting' -and (Owned $xl) -and $xl.pid -ne $x0.pid))) { "[$e] $($s.name): started by another process meanwhile"; return }   # a worker or a dependent's start got there first
+    $freed.v = $false; & $free 'stopped before a new start (another start ran it while this one waited for room)'   # 2026-11-13: r356 kept 8443 + debug port, r357 "came up" on it
+    if ($freed.v) { Update-State $e { param($x) $v = $x.services[$s.name]; $v.status = 'waiting'; $v.waitFor = 'lock'; $v.waitPid = $PID; $v.waitStart = Get-KitPidStart $PID } }   # the stop wrote down: keep the claim so the loop queues no second start
     if ($xl.artifact -and "$($xl.artifact)" -ne $artifact) { "[$e] $($s.name): a newer staged copy since this start was queued (release $($xl.release))"; $artifact = "$($xl.artifact)"; if ($xl.release) { $release = [int]$xl.release }; $cmd = StartCmd $e $s $artifact }
     $log = LogFile $e $s.name; $logFrom = 0   # a reader holding the log (tidy, logs -Grep): append, scan only the new lines
     if (Test-Path $log) { try { Move-Item $log "$log.prev" -Force -ErrorAction Stop } catch { $logFrom = (Get-Item $log).Length; "[$e] $($s.name): $log is open elsewhere, appending to it" } }
@@ -2130,9 +2143,9 @@ function Show-Status([string]$env1) {
       elseif ($h -and $ids -and (Resolve-Tool lsof)) { @(lsof -nP -a -p ($ids -join ',') -iTCP -sTCP:LISTEN -Fn 2>$null | Where-Object { $_ -match ':(\d+)$' } | ForEach-Object { [int]$Matches[1] } | Sort-Object -Unique) } else { @() }
     $idleMin = if ($h -and $x.lastNeed) { [int]((Get-Date) - [datetime]$x.lastNeed).TotalMinutes } else { $null }
     [pscustomobject]@{
-      service = $s.name; state = $(if ($h) { if (-not (Managed $s)) { 'up (external)' } elseif (Owned $x) { 'up' } else { 'up (adopted)' } } elseif ($x.status -in 'starting', 'failed') { $x.status } else { 'down' })
+      service = $s.name; state = $(if ($h) { if (-not (Managed $s)) { 'up (external)' } elseif (Owned $x) { 'up' } else { 'up (adopted)' } } elseif ($x.status -in 'starting', 'failed') { $x.status } elseif ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart)) { "waiting ($(if ($x.waitFor) { $x.waitFor } else { 'RAM' }))" } else { 'down' })
       port = $s.port; gb = $(if ($ids) { TreeGB $ids $all } else { 0 }); release = $x.release; need = @($x.need | Where-Object { $_ }); idleMin = $idleMin; graceMin = $(if (Managed $s) { GraceMin $env1 $s }); listens = $listens
-      why = $x.why; hot = [bool]$s.hot; restarts30 = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 }).Count
+      why = $(if (-not ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart))) { $x.why }); hot = [bool]$s.hot; restarts30 = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 }).Count
     }
   }
   $o = [pscustomobject]@{

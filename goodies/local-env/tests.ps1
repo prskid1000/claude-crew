@@ -222,6 +222,22 @@ $wd = & { . $L3; Update-State dp { param($x) $x.services = @{ search = @{ status
   $o3 = try { $null = Wait-Deps dp (Svc dp 'api'); 'no throw' } catch { "$_" }
   "$($o1 -match 'starting it first' -and $o1 -match 'claim=waiting/dep')|$($script:started.Count)|$($o2 -match ': dependency down: search was not healthy')|$($o3 -match ': dependency down: ')" }
 Expect "deps: a down dependency nobody starts is claimed and started first; one claimed by a live start or alive but unhealthy is only waited for; timeout says 'dependency down' ($wd)" ($wd -eq 'True|0|True|True')
+# 2026-11-13: search's start waited 30 min for CPU; api gave up after startMinutes. A live dependency start is waited for past it
+$wl = & { . $L3; Update-State dp { param($x) $x.services = @{ search = @{ status = 'waiting'; why = 'no room to start'; waitFor = 'CPU'; waitPid = $PID; waitStart = (Get-KitPidStart $PID) } } }
+  $script:hc = 0; function Healthy { param($e, $s) $s.name -ne 'search' -or ++$script:hc -gt 4 }; function Wait-KitPoll { }; function Event { }
+  $script:t0 = 0; function Get-Date { if ($args.Count) { Microsoft.PowerShell.Utility\Get-Date @args } else { (Microsoft.PowerShell.Utility\Get-Date).AddMinutes(4 * $script:t0++) } }
+  $o = try { @(Wait-Deps dp (Svc dp 'api')) -join ';' } catch { "THROW $_" }
+  "$($o -match 'still waits for search: its start is in progress')|$($o -notmatch 'THROW')" }
+$wl += '|' + ((Px $L3 status -Env dp 2>&1 | Out-String) -match '(?m)^\s+search\s+waiting \(CPU\)[^\r\n]*' -and $Matches[0] -notmatch 'no room')
+Expect "deps: a dependency whose own start waits for room is waited for past startMinutes; status shows 'waiting (CPU)' without the stale why ($wl)" ($wl -eq 'True|True|True')
+# 2026-11-13: a worker started r356 while the train's r357 start waited for room; r357 then saw r356 healthy on its port
+$sm = & { . $L3; Update-State dp { param($x) $x.services = @{ api = @{ status = 'down' } } }; $script:ran = $false; $script:stops = @()
+  function SvcDir { $k3 }; function StartCmd { 'echo a' }; function Test-Room { $true }; function Test-PortListening { $false }
+  function Wait-Room { $script:ran = $true }; function Get-PortPids { if ($script:ran) { @(4242) } else { @() } }
+  function Stop-Svc { param($e, $s, $why) $script:stops += $why; $script:ran = $false; Update-State dp { param($x) $x.services.api = @{ status = 'down' } } }
+  function Start-Pwsh { $v = (Read-State dp).services.api; throw "launched $($v.status)/$($v.waitFor)" }
+  $l = try { $null = Start-SvcOnce dp (Svc dp 'api') 357 ''; 'no launch' } catch { "$_" }; "$($script:stops -join ';')|$l" }
+Expect "start: a service another start ran while this one waited for room is stopped under the lock before this launch, its claim kept ($sm)" ($sm -eq 'stopped before a new start (another start ran it while this one waited for room)|launched waiting/lock')
 $sr = & { . $L3; function Wait-Deps { }; function Start-SvcOnce { throw 'Connection refused: connect' }; function Healthy { $false }; function Event { }; function Wait-KitPoll { }
   try { $null = Start-Svc dp (Svc dp 'api') 1 ''; 'no throw' } catch { "$_" } }
 Expect "deps: a start failing on a dependency connection while the dependency is down throws 'dependency down' (the train keeps its release) ($sr)" ($sr -match ': dependency down: search went down')
@@ -400,8 +416,8 @@ Remove-TestKit $k3
 # supervise rows from this goody (skills/bossy/adapters/localenv_supervise.ps1): idle vs leased down services, new log errors
 $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') $ad
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
-$er = & { . $O; Get-KitEnvRows @([pscustomobject]@{ env = 'e'; services = @([pscustomobject]@{ service = 'api'; state = 'down'; why = 'idle for 15 min' }, [pscustomobject]@{ service = 'web'; state = 'down'; why = 'crashed' }); leases = @([pscustomobject]@{ agent = 'a1'; services = @('web') }); holds = @() }) (Get-Date) }
-Expect 'supervise: a down service with no lease is idle (no row, no flag); a leased one shows' (@($er.rows).Count -eq 1 -and $er.rows[0].name -match 'web' -and $er.rows[0].name -notmatch 'api' -and -not @($er.flags).Count)
+$er = & { . $O; Get-KitEnvRows @([pscustomobject]@{ env = 'e'; services = @([pscustomobject]@{ service = 'api'; state = 'down'; why = 'idle for 15 min' }, [pscustomobject]@{ service = 'web'; state = 'down'; why = 'crashed' }, [pscustomobject]@{ service = 'search'; state = 'waiting (CPU)' }); leases = @([pscustomobject]@{ agent = 'a1'; services = @('web', 'search') }); holds = @() }) (Get-Date) }
+Expect 'supervise: a down service with no lease is idle (no row, no flag); a leased one shows; a leased start waiting for room is no down row' (@($er.rows).Count -eq 1 -and $er.rows[0].name -match 'web' -and $er.rows[0].name -notmatch 'api' -and -not @($er.flags).Count)
 $sh = & { . $O; (Get-KitEnvRows @(foreach ($n in 'rm', 'hm') { [pscustomobject]@{ env = $n; services = @([pscustomobject]@{ service = 'mysql'; state = 'up (external)'; port = 3306; gb = 1.6 }); leases = @([pscustomobject]@{ agent = "a-$n"; services = @('mysql') }); holds = @() } }) (Get-Date)).rows | ForEach-Object { "$($_.name)|$($_.by)|$($_.gb)|$($_.shared)" } }
 Expect "supervise rows: one service on one port shared by several envs = one row, holders merged, RAM once, shared (always on, never an orphan) ($sh)" (@($sh).Count -eq 1 -and $sh -eq 'mysql (rm, hm)|a-rm, a-hm|1.6|True')
 $lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . $O; Get-KitLogErrors @($lg) @{} })

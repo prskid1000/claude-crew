@@ -32,7 +32,7 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   holder: stop after the idle grace, at once under memory pressure (a start waiting for RAM; a CPU wait is none); a dependency
   of a waiting, starting or train-switched service is never idle; an out-of-memory line in a running service's log restarts
   it. Starts wait for RAM + CPU: the keep-free floor is learned from 24 h of free-RAM samples (`status` shows it and why;
-  `keepFreeGB` fixes it). A start starts a down `dependsOn` nobody starts, then waits for it to be healthy; one failing on a
+  `keepFreeGB` fixes it). A start starts a down `dependsOn` nobody starts, then waits for it to be healthy (one whose start waits for room: up to `roomWaitMinutes` more; `status`: waiting (CPU)); one failing on a
   dependency connection waits again and retries once. A dependency still down: the train keeps its release, no rollback (the
   service starts once it is up). Restarts count only real starts (backoff 3 / 30 min).
 - **DB marks, restore, seed** (`db.engine` mysql / mariadb: goody `db-engine-presets`; nothing is ever dumped whole): a mark = a
