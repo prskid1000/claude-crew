@@ -180,7 +180,7 @@ $u = [pscustomobject]@{ days = @([pscustomobject]@{ day = '2026-01-02'; tok = 5 
 $fh = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; flags = @([pscustomobject]@{ level = 'ACT'; what = 'x' }); agents = @([pscustomobject]@{ name = 'devy-1 (devy)'; run = 'r1'; state = 'ACTIVE' }, [pscustomobject]@{ name = 'old (devy)'; run = 'r1'; state = 'FINISHED' })
   resources = @([pscustomobject]@{ name = 'browser t1'; by = 'devy-1'; gb = 0.2 }, [pscustomobject]@{ name = 'mysql'; by = ''; gb = 1 })
   stats = [pscustomobject]@{ usage = $u; params = @([pscustomobject]@{ key = 'k1' }, [pscustomobject]@{ key = 'k2' }); changes = @([pscustomobject]@{ key = 'k1' }); settings = [pscustomobject]@{ heartbeatMinutes = 15 } } })
-$st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=sec-(?<id>[\w-]+)(?<o> open)?><summary><h\d>(?<t>[^<]+)</h\d>(?:<span class=cnt>\((?<n>[^)]*)\)</span>)?(?:<span class='chip[^']*'>[^<]*</span>)*(?:<svg.*?</svg>)?</summary>(?<b><div class=bd>)?")) { "$($m.Groups['id'].Value)=$(if ($m.Groups['o'].Success) { 'open' } else { 'closed' })$(if ($m.Groups['n'].Success) { ":$($m.Groups['n'].Value)" })$(if (-not $m.Groups['b'].Success) { ':nobody' })" }
+$st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=sec-(?<id>[\w-]+)(?<o> open)?><summary><h\d>(?<t>[^<]+)</h\d>(?:<span class=cnt>\((?<n>[^)]*)\)</span>)?(?:<span class='chip[^']*'>[^<]*</span>)*(?:<svg.*?</svg>|<span class=sbh.*?</span>)?</summary>(?<b><div class=bd>)?")) { "$($m.Groups['id'].Value)=$(if ($m.Groups['o'].Success) { 'open' } else { 'closed' })$(if ($m.Groups['n'].Success) { ":$($m.Groups['n'].Value)" })$(if (-not $m.Groups['b'].Success) { ':nobody' })" }
 $sec = { param($id) [regex]::Match($fh, "(?s)id=sec-$id(?: open)?>.*?(?=<details class='sec top'|<footer)").Value }
 $int = & $sec internals; $runsH = & $sec runs; $agH = & $sec agents
 "$($st -join ' ')"
@@ -199,10 +199,10 @@ $rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text 
 "agents:$(-not @($rxAg | Where-Object { $agH -notmatch $_ }).Count -and $fh -match $rxOrphan)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
 $fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Trim() })
-$foldWant = 'flags=open', 'agents=open:1 live &#183; 1 finished', 'runs=open:1 running &#183; 3 in 7 days', 'machine=open', 'resources=open:2', 'shells=closed:0:nobody', 'usage=open', 'top=closed:0:nobody', 'internals=closed:5', 'params=closed:2', 'changes=closed:1', 'settings=closed:1', 'kit-runs=closed:1', 'agents-done=closed:1', 'steps=closed:0:nobody'
+$foldWant = 'flags=open', 'agents=open:1 running &#183; 1 done today', 'runs=open:1 running &#183; 3 in 7 days', 'machine=open', 'resources=open:2', 'shells=closed:0:nobody', 'usage=open', 'top=closed:0:nobody', 'internals=closed:5', 'params=closed:2', 'changes=closed:1', 'settings=closed:1', 'kit-runs=closed:1', 'agents-done=closed:1', 'steps=closed:0:nobody'
 $foldMiss = @($foldWant | Where-Object { " $($fl[0]) " -notmatch " $([regex]::Escape($_))[ :]" })
 Expect "supervise page: every section a <details> with '<title> (<count>)', the owner's default open states, an empty one summary only (missing: $foldMiss | $($fl[0]))" (-not $foldMiss.Count)
-Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: kit tuning + kit upkeep runs only, never leases / agents / usage / step types; runs: running on top, one fold per day (today open, its sum), labels + kind + resumed, budget bar only running or 80%+, kit runs out; agents: leases on the row, finished folded, an orphan lease tinted; cap: the newest 25 ended runs with step tables, the rest counted; ux: 10 rows then Show all (N), jump links, a No match line, keys break at | and /, tone text AA)' @('internals', 'runs', 'agents', 'cap', 'ux') 5
+Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: kit tuning + upkeep runs only; runs: running first, a fold per day (today open, sum), label, kind, resumed, budget bar running or 80%+, no kit runs; agents: leases on the row, finished folded, orphan tinted; cap: newest 25 ended runs, rest counted; ux: 10 rows + Show all (N), jump links, No match, keys break at | /, tone AA)' @('internals', 'runs', 'agents', 'cap', 'ux') 5
 # a CI-raised test task (tracker.ciTaskPattern): track add of its merged fix MR promotes it with no testing docs, holds while the
 # named job runs again on its branch, closes it with ONE qa-result comment linking the passing job; a plain task keeps the doc gate
 $ciTrack = Invoke-PsTest track-ci @'
@@ -228,5 +228,16 @@ $global:tname = 'Plain fix'; $global:st = 'open'; $p3 = Invoke-Track add -Task c
 "plain:$($global:st -eq 'open' -and $p3 -match 'ATTENTION ci2: MRs merged, no testing-doc link' -and $null -eq (Get-KitCiTask ci2))"
 '@ @($O)
 Expect-Each $ciTrack 'track: CI task # (wait: track add of a merged MR promotes at once, holds while the job runs again; closed: job passed -> closed + one qa-result comment with the job link; plain: no pattern match = the testing-doc gate)' @('wait', 'closed', 'plain') 3
+# each headline number renders once: 7-day tokens + cost (chart title), step outcomes (one bar), agents spawned (one tile; the Today list counted board rows)
+$once = Invoke-PsTest once @'
+$null = . $args[0] 6>$null; $t0 = [datetime]'2026-01-02T10:00:00'
+$u = [pscustomobject]@{ days = @(6..0 | ForEach-Object { [pscustomobject]@{ day = $t0.AddDays(-$_).ToString('yyyy-MM-dd'); tok = 971428571; cost = 249.57 } }); byRole = @([pscustomobject]@{ k = 'devy'; n = 3; sum = 5e9; cost = 900 })
+  rates = [pscustomobject]@{ n = 919; empty = 129; fail = 122; stopped = 119 }; merged = [pscustomobject]@{ source = 'workflows' } }
+$sd = @([pscustomobject]@{ day = '2026-01-02'; spawned = 46 }, [pscustomobject]@{ day = '2026-01-01'; spawned = 5 })
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $t0.ToString('o'); agents = @([pscustomobject]@{ name = 'a'; state = 'ACTIVE'; since = $t0.ToString('o') }); stats = [pscustomobject]@{ usage = $u; days = $sd } })
+$txt = $h -replace '(?s)<(style|script)>.*?</\1>' -replace '<[^>]+>', ' '
+"$(@('6.8B', '$1,747', '549', '129', '122', '119', '46') | ForEach-Object { ([regex]::Matches($txt, "(?<![\d.])$([regex]::Escape($_))(?![\d.])")).Count }) $($h -match 'sec-timeline')"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
+Expect "supervise page: 7-day tokens and cost, each step outcome and agents spawned render once, no Today list ($once)" ("$once".Trim() -eq '1 1 1 1 1 1 1 False')
 Remove-TestKit $k
 Complete-Tests

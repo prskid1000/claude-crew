@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1278 audit ·
-  L1387 registry · L1728 prose · L1873 sections · L2003 budget · L2027 goodies · L2534 state lint · L2606 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1279 audit ·
+  L1388 registry · L1729 prose · L1874 sections · L2004 budget · L2028 goodies · L2535 state lint · L2607 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1225,14 +1225,15 @@ const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args:
 try {
   for (const width of ws.split(',').map(Number)) for (const theme of ['light', 'dark']) for (const [si, clicks] of JSON.parse(st).entries()) {
     const ctx = await b.createBrowserContext(), page = await ctx.newPage(), clipped = []
-    await page.setViewport({ width, height: width < 600 ? 844 : 900 }); await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }])
+    const touch = width < 600   // a phone width: touch emulation (pointer: coarse) and taps
+    await page.setViewport({ width, height: touch ? 844 : 900, hasTouch: touch })   // no isMobile: a page without a viewport meta would lay out at 980 px; await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }])
     await page.goto(pathToFileURL(file).href, { waitUntil: 'load' })
-    for (const sel of clicks) await page.click(sel).catch((e) => clipped.push({ el: sel, why: `click failed: ${e.message}`, text: '' }))
+    for (const sel of clicks) await (touch ? page.tap(sel) : page.click(sel)).catch((e) => clipped.push({ el: sel, why: `${touch ? 'tap' : 'click'} failed: ${e.message}`, text: '' }))
     await new Promise((r) => setTimeout(r, 400))   // panels slide in, layouts settle
     const base = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}`, height = await page.evaluate(() => document.documentElement.scrollHeight)
     await page.screenshot({ path: `${base}.png`, fullPage: true })   // as the owner sees it: the page's own open / closed defaults
     const hs = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (hs > 1) clipped.push({ el: 'page', why: `horizontal page scroll ${hs} px (a wide table scrolls in its own box)`, text: '' })
-    clipped.push(...await page.evaluate(layout), ...await page.evaluate(scan), ...await page.evaluate(fit))
+    clipped.push(...await page.evaluate(layout), ...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
     await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
     res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped }); await ctx.close()
   }
