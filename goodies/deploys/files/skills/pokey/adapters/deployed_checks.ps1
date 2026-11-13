@@ -225,7 +225,7 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
 $miss = @($out | Where-Object { $_.state -notin 'DEPLOYED', 'N/A' })   # N/A: the MR has nothing for that target
 if ($Lines) { exit $(if ($miss.Count) { 1 } else { 0 }) }
 $row = { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail }
-if ($Json) { $out | ConvertTo-Json -Depth 3 }
+if ($Json) { return ($out | ConvertTo-Json -Depth 3) }   # returns, never exits: pokey.ps1 prepare calls it in-process (an exit ended prepare silently)
 elseif ($Detail) { $out | ForEach-Object $row }
 else {
   $live = @($out | Where-Object state -eq 'DEPLOYED')

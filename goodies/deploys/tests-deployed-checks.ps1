@@ -25,6 +25,14 @@ $res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" (Kd) 2>&1); $a
 $dl = @(Px $Q deployed -Mrs 'nope,zz!1' -Lines 2>&1); $dlc = $LASTEXITCODE
 $dt = @(Px $Q deployed -Mrs 'nope,zz!1' -Json -TimeoutSec 0 2>&1 | Out-String | ConvertFrom-Json); Remove-Item $kl
 Expect 'deployed -TimeoutSec: past the deadline the MRs left are UNKNOWN, the first is checked' ($dt.Count -eq 2 -and $dt[0].state -eq 'BAD-REF' -and $dt[1].state -eq 'UNKNOWN' -and $dt[1].detail -match 'TimeoutSec 0 reached')
+# prepare calls Invoke-Deployed in-process: its -Json returns, so prepare (pwsh -File, as testy runs it) still writes run.json and prints RUN
+$env:KIT_TRACKER_TYPE = 'none'; $craftyQ = Join-Path $k 'skills/crafty/crafty.ps1'
+$tPrep = (pwsh -NoProfile -File $craftyQ tracker create -Name '[Bug] Sort' -Description "**Testing doc (human):** [open](https://docs.example/h1)`n`nMR: https://git.example/g/nope/-/merge_requests/1" -NewTask fixture 2>$null | ConvertFrom-Json).id
+$null = pwsh -NoProfile -File $craftyQ tracker status $tPrep 'in test' 2>&1
+$prepJob = @{ runFolder = "$(Kd)/qa-runs/<yyyy-MM-dd>-dep"; tasks = @($tPrep); target = 'stg'; kitDir = $k } | ConvertTo-Json -Compress
+$prepOut = @(pwsh -NoProfile -File $Q prepare -Job $prepJob 2>&1); $prepCode = $LASTEXITCODE; $env:KIT_TRACKER_TYPE = $null
+$prepRun = try { "$($prepOut[-1])" -replace '^RUN ' | ConvertFrom-Json } catch { $null }
+Expect "prepare with the deploys goody: exit 0, RUN line, run.json; the not-live task left out ($prepCode $($prepOut[-2]))" ($prepCode -eq 0 -and $prepRun -and (Test-Path "$($prepRun.runDir)/run.json") -and $prepRun.left[0].reason -match 'not live on stg: nope!1 BAD-REF')
 $dj = @($dl | ForEach-Object { try { "$_" | ConvertFrom-Json } catch {} } | Where-Object state -eq 'BAD-REF')
 Expect "deployed -Lines: one JSON row per line, exit 1 when not all deployed ($dlc $($dl.Count))" ($dlc -eq 1 -and $dl.Count -eq 2 -and $dj.Count -eq 2 -and $dj[1].mr -eq 'zz!1')
 foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'logs', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
