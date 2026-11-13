@@ -10,10 +10,11 @@ description between <!-- kit:delivery --> / <!-- kit:triage --> markers, each su
 checklist, else an <!-- kit:items --> description section), one comment per milestone (all merged, deployed to <env>, all closed).
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L18 triage · L62 render · L154 rollup · L247 items · L292 close
+Sections: L19 triage · L63 render · L144 rollup · L231 items · L276 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
+if (-not (Get-Command Set-KitTaskChecklist -ErrorAction Ignore)) { throw 'goody task-rollup needs a newer kit core (lib.ps1 Set-KitTaskChecklist): git pull the kit, then kitbag.py goody sync' }
 
 # ---- triage: the brief's item table (columns ID, Area; Sev, Decision, Decision id, Title or the last column) + launch args (agents)
 function ConvertFrom-KitMdTables([string]$Text) {
@@ -139,17 +140,6 @@ function Format-KitDelivery($Rows, [string]$Note) {
   }
   $l -join "`n"
 }
-# the owner's text stays: only <!-- kit:<name> --> ... <!-- /kit:<name> --> is replaced; new: after section $After, else under the testing-doc links
-function Set-KitDescSection([string]$Desc, [string]$Name, [string]$Body, [string]$After) {
-  $s = "<!-- kit:$Name -->"; $e = "<!-- /kit:$Name -->"; $block = "$s`n$Body`n$e"; $d = "$Desc" -replace "`r`n", "`n"
-  $i = $d.IndexOf($s); $j = if ($i -ge 0) { $d.IndexOf($e, $i) } else { -1 }
-  if ($i -ge 0 -and $j -gt $i) { return $d.Substring(0, $i) + $block + $d.Substring($j + $e.Length) }
-  $ae = "<!-- /kit:$After -->"; $k = if ($After) { $d.IndexOf($ae) } else { -1 }
-  if ($k -ge 0) { $p = $k + $ae.Length; return $d.Substring(0, $p) + "`n`n$block" + $d.Substring($p) }
-  $lines = @($d -split "`n"); $last = 0
-  for ($x = 0; $x -lt $lines.Count; $x++) { if ($lines[$x] -match '(?i)^\W{0,3}Testing doc \(') { $last = $x + 1 } elseif ($lines[$x].Trim()) { break } }
-  (@((@($lines | Select-Object -First $last) -join "`n").Trim(), $block, (@($lines | Select-Object -Skip $last) -join "`n").Trim()) | Where-Object { $_ }) -join "`n`n"
-}
 
 # ---- rollup: read (throttled), build, write on a diff
 function Get-KitDeployIndex {
@@ -165,13 +155,7 @@ function Get-KitRollupLocalSig($Ro, [string[]]$Subs, $Tracking) {
   $lf = Get-Item -LiteralPath (Get-KitPath deploy-log) -ErrorAction SilentlyContinue
   Get-KitRollupHash ((@($Subs | Sort-Object | ForEach-Object { $tr = $Tracking[$_]; "$_=$(@($tr.mrs) -join ',')/$($tr.done)" }) + "$($lf.Length)" + ($Ro.triage | ConvertTo-Json -Depth 6 -Compress)) -join '|')
 }
-function Set-KitItemsChecklist([string]$Task, $Items) {
-  $ad = $KitAdapters['tracker'][$__trType]
-  if ($ad -and $ad.ContainsKey('checklist')) { return __TrA 'checklist' @{ id = $Task; name = 'Items'; items = @($Items | ForEach-Object { @{ text = $_.text; done = [bool]$_.done } }) } }
-  Clear-TrackerMemo $Task; $tk = Get-TrackerTask $Task; if (-not $tk.name) { throw "tracker read of $Task failed" }
-  $nd = Set-KitDescSection $tk.description 'items' ((@('**Items**') + @($Items | ForEach-Object { "- [$(if ($_.done) { 'x' } else { ' ' })] $($_.text)" })) -join "`n") ''
-  if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { Set-TrackerDescription $Task $nd }
-}
+function Set-KitItemsChecklist([string]$Task, $Items) { Set-KitTaskChecklist $Task 'Items' $Items }   # lib.ps1: checklist verb, else a description section
 function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $ix = Read-KitState (Get-KitTaskFile $Parent); $ro = if ($ix.rollup -is [Collections.IDictionary]) { $ix.rollup } else { @{} }
   $trk = (Read-KitTracking).tasks; $known = @($ro.subtasks | Where-Object { $_ })
