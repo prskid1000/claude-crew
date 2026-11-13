@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L139 record-args · L158 budget · L177 build-prompt · L258 ship-prompt · L281 plan · L297 spike ·
-//   L310 local-loop · L383 stages · L522 ship · L637 deploy · L653 learn
+//   L310 local-loop · L383 stages · L522 ship · L637 deploy · L652 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -94,7 +94,7 @@ const REPORT = {
    required: ['url', 'repo', 'merged'] } },
   worktrees: { type: 'array', items: { type: 'string' } },
   done: { type: 'array', items: { type: 'string' }, description: 'item ids finished (local test passed, MR open)' },
-  deferred: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, reason: { type: 'string' }, ownerDecided: { type: 'boolean', description: 'the owner deferred it: never holds promotion' } }, required: ['id', 'reason'] } },
+  deferred: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, reason: { type: 'string' }, ownerDecided: { type: 'boolean' }, kind: { enum: ['code', 'people'], description: 'people: a people step, no code; it and ownerDecided never hold promotion' } }, required: ['id', 'reason'] } },
   needsDecision: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, decisionId: { type: 'string', description: 'the id bossy.ps1 decide ask printed' }, question: { type: 'string' } }, required: ['item', 'decisionId', 'question'] },
    description: 'items you stopped for an owner decision (bossy.ps1 decide ask); [] when none' },
   needsEnvFix: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, envFixId: { type: 'string', description: 'the id bossy.ps1 decide ask -Kind envfix printed' }, need: { type: 'string' } }, required: ['item', 'envFixId', 'need'] },
@@ -506,7 +506,7 @@ const results = await pipeline(
  // Track: register the tracker task (promoted once all MRs merge, also by hand)
  async (x, a) => {
   if (!x || x.error || !x.report || !x.report.mrs.length || (x.resumed && skips(a, 'tracker'))) return x
-  const deferred = (x.report.deferred || []).filter((d) => !d.ownerDecided)
+  const deferred = (x.report.deferred || []).filter((d) => !d.ownerDecided && d.kind !== 'people')
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
   if (why) log(`${a.id}: tracker task registered with its promotion HELD (${why}): release with bossy.ps1 track add -Task <id> -HoldPromotion ''`)
   const tr = await agentOrRedo(`STEP: register devy ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}${AGENT_ENV(`track-${a.id}`)}
@@ -634,8 +634,7 @@ const leftover = [...out.filter((x) => x.budgetStopped).map((x) => A0.agents.fin
 if (leftover.length) { outcome.next = nextCall(leftover, out.some((x) => x.budgetStopped) ? { mode: 'resume' } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 
-// ---- deploy: merged work joins the deploy batch (goody deploys) silently; trigger owner: a person says "deploy <env>" (bossy E5),
-// ask: the coordinator asks once per env. Never deploys.
+// ---- deploy: merged work joins the deploy batch (goody deploys); never deploys (trigger: bossy E5)
 phase('Deploy')
 const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const DEPLOYS = `${KIT}/skills/bossy/adapters/deploys.ps1`

@@ -2149,7 +2149,7 @@ function Invoke-Tracker {
     'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> (read it: tracker view <id>)'; exit 2 }; Set-TrackerStatus $__id $__x }   # an empty status set Open
     'comment' {   # -Kind required (keyed kinds edit in place); over prose limits = refused
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = "$($__trOpt.Kind)"
-      if ($__k -like 'mrs-*' -or (Test-KitHeadText $__ct $script:KitMrsHeading)) { "tracker comment refused: the MRs comment has one writer, built from every MR of the task: bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] [-MergeAfter <consumer>><producer>]"; exit 1 }
+      if ($__k -like 'mrs-*' -or (Test-KitHeadText $__ct $script:KitMrsHeading)) { "tracker comment refused: no MRs comment: MR links live in the task's Items checklist (bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] writes them)"; exit 1 }
       if ($__k -eq 'comment-decisions' -or (Test-KitDecisionText $__ct)) { "tracker comment refused: decisions have one writer, rendered from the decision records and edited in place: bossy.ps1 decide record|answer (it republishes), or decide publish -Task $__id [-Link <plan url>]"; exit 1 }
       if (-not $__k) { "tracker comment refused: -Kind required (templates.md ""Writing standards""): comment-solution | qa-result | comment-intest | watch-<env> edit their one comment in place; comment-status and the rest append"; exit 2 }
       $__pf = @(if (-not $__trOpt.ProseOk) { Test-KitProse -Kind $__k -Text $__ct })

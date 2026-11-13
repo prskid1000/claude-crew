@@ -24,9 +24,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L32 init · L50 board · L230 budget · L259 launch · L492 recover · L578 pause · L589 resume · L652 program · L703 param ·
-  L709 track · L1048 supervise · L1352 report · L1431 audit · L1491 storage · L1701 bugbrief · L1803 cleanup · L1887 learn ·
-  L1917 decide · L2050 health · L2112 retro due · L2122 tidy · L2191 the kit origin's main and goodies · L2207 setup ·
-  L2274 guard-sendmessage
+  L709 track · L1033 supervise · L1337 report · L1416 audit · L1476 storage · L1686 bugbrief · L1788 cleanup · L1872 learn ·
+  L1902 decide · L2035 health · L2097 retro due · L2107 tidy · L2176 the kit origin's main and goodies · L2192 setup ·
+  L2259 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -745,6 +745,12 @@ function Get-KitPlannedAreas([string]$TaskId, $Since) {
         if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"]) { "$($pa.id)" }
       } }) | Select-Object -Unique
 }
+# one stored ref per MR: URL, group/repo!n, alias -> repo!n
+function NormRef($r) {
+  $r = "$r".Trim().Trim("'", '"'); if ($u = ConvertFrom-MrUrl $r) { $r = "$($u.repo)!$($u.n)" }
+  if ($g = $KitConf.GitlabGroup) { $r = $r -replace "^(?i)$([regex]::Escape($g))/(?=[\w./-]+!\d+$)" }
+  if ($r -match '^([\w.-]+)!(\d+)$' -and ($al = $KitConf.RepoAliases.($Matches[1]))) { "$al!$($Matches[2])" } else { $r }
+}
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' } }   # group/repo!n too
 function Invoke-Track {
 param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'rollup')][string]$Action = 'show', [string]$Reason, [string]$From, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
@@ -761,16 +767,8 @@ $script:holds = 0
 function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
 $script:gone = @{}   # deleted in the tracker
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { if (Remove-KitGoneTask $id $_) { $script:gone[$id] = $true }; '' } }
-$group = $KitConf.GitlabGroup
-$groupRx = if ($group) { '(?:' + [regex]::Escape($group) + '/)?' } else { '' }
-$alias = @{}; if ($KitConf.RepoAliases) { foreach ($p in $KitConf.RepoAliases.PSObject.Properties) { $alias[$p.Name] = [string]$p.Value } }
-function NormRef($r) {
-  $r = "$r".Trim().Trim("'", '"')
-  if ($u = ConvertFrom-MrUrl $r) { $r = "$($u.repo -replace "^(?i)$groupRx", '')!$($u.n)" }
-  if ($r -match '^(?<repo>[\w.-]+)!(?<iid>\d+)$' -and $alias[$Matches.repo]) { $r = "$($alias[$Matches.repo])!$($Matches.iid)" }
-  $r
-}
-function Load($t) { $x = Read-KitState (Get-KitTaskFile $t); if ($x.track -is [Collections.IDictionary]) { $x.track } else { (Read-KitTracking).tasks[$t] } }   # one file, not all
+function Load($t) { $x = Read-KitState (Get-KitTaskFile $t); $o = if ($x.track -is [Collections.IDictionary]) { $x.track } else { (Read-KitTracking).tasks[$t] }   # one file, not all
+  if ($o) { $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique) }; $o }   # old duplicates
 function TaskOfMr($ref) {
   if (-not $KitConf.TrackerTag -or $ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return '' }
   $proj = ProjPath $Matches.repo; if (-not $proj) { return '' }
@@ -842,20 +840,8 @@ function MrState0($ref) {
   if ($m.state -eq 'opened' -and ($m.has_conflicts -or $m.detailed_merge_status -eq 'conflict')) { return 'opened (conflict)' }
   $m.state
 }
-# the task's ONE MRs comment
-function Set-KitMrsComment($o) {
-  $task = $o.task; $refRx = '^(?<repo>[\w./-]+)!(?<iid>\d+)$'; $prod = @(@($o.mergeAfter) | ForEach-Object { NormRef (($_ -split '>', 2)[-1]) })
-  $mine = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ -match $refRx } | Select-Object -Unique)
-  $build = {   # under the lock: sees a racing writer's MRs
-    $more = @(@(Get-KitMrsListed $task | ForEach-Object { NormRef $_ }) + @(if (@($KitConf.TrackerRepos).Count) { Find-TaskMrs $task }) | Where-Object { $_ -match $refRx -and $mine -notcontains $_ } | Select-Object -Unique)
-    $rows = foreach ($r in $mine + $more) {
-      $null = $r -match $refRx; $pp = ProjPath $Matches.repo; $iid = $Matches.iid
-      [pscustomobject]@{ repo = $Matches.repo; iid = [int]$iid; pp = $pp; mine = $mine -contains $r; producer = $prod -contains $r }
-    }
-    Format-KitMrsComment $task @($rows) $(if ($o.mergedCommentAt) { @($o.onMerged)[-1] })
-  }
-  try { $null = Set-TrackerKitComment $task "mrs-$task" $build -Heading $script:KitMrsHeading } catch { Write-Warning "MRs comment of $task not updated: $_" }
-}
+# MR links live in the task's Items checklist, one URL per item (goody task-rollup); no MRs comment
+function Set-KitTaskMrItems($id) { if ($fn = Get-Command Update-KitTaskItems -ErrorAction Ignore) { try { $null = & $fn $id (Get-TrackerTask $id) -Force } catch { Write-Warning "Items of ${id} not updated: $_" } } }
 switch ($Action) {
   'rebuild' { $rebuildFn = Assert-KitExtra Invoke-TrackRebuild 'track rebuild' 'track-rebuild'; & $rebuildFn }   # not $rebuild: that is the -Rebuild switch
   'add' {
@@ -888,7 +874,7 @@ switch ($Action) {
     }
     if ($o.done -and @($o.mrs).Count -gt $before) { $o.done = $false; $o.reopenedAt = (Get-Date).ToString('o'); foreach ($k in $script:doneFields) { $o.Remove($k) } }
     elseif (-not $o.done) { $o.done = $false }
-    Save $o; $s = Load $Task; Set-KitMrsComment $s
+    Save $o; $s = Load $Task; Set-KitTaskMrItems $Task
     "tracking $Task : $(@($s.mrs) -join ', ')$(if (@($s.mergeAfter).Count) { ' | merge-after: ' + (@($s.mergeAfter) -join ', ') }) -> on all merged: $(@($s.onMerged) -join ' -> ')$(if ($s.holdPromotion) { " (promotion HELD: $($s.holdPromotion))" })$(if ($Discover -and -not @($s.mrs).Count) { ' (no MR found yet: every run looks again)' })"
     if (@($s.mrs).Count -and -not @($s.mrs | Where-Object { (MrState $_) -ne 'merged' }).Count) { Invoke-Track run -Task $Task -Detail:$Detail -Quiet:$Quiet }
   }
@@ -1003,7 +989,6 @@ switch ($Action) {
       $setFailed = $false
       foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
-      if (-not $o.mergedCommentAt) { $o.mergedCommentAt = (Get-Date).ToString('o'); Save $o -Run; Set-KitMrsComment $o }   # the MRs comment says merged: no extra comment
       $cmts = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
       if ((Test-KitTaskDocLink $o.task) -ne $true -and -not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions|doc)|tester guide|live check') })) {
         $steps = @(Get-KitWorkflowDirs | ForEach-Object { Get-Item (Join-Path $_.FullName 'journal.jsonl') -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
@@ -1013,13 +998,13 @@ switch ($Action) {
               if ($j.type -eq 'result' -and $mine -and @($j.result.needsLiveCheck).Count) { @($j.result.needsLiveCheck) }
             } } | Where-Object { $_ } | Select-Object -Unique)
         if ($steps.Count) {
-          try { $null = Add-TrackerComment $o.task ("How to test (from the dev agent's report; run after the next deploy of the MRs in the MRs comment):`n" + (($steps | ForEach-Object { "- $_" }) -join "`n")) } catch {}
+          try { $null = Add-TrackerComment $o.task ("How to test (from the dev agent's report; run after the next deploy of the MRs in the Items checklist):`n" + (($steps | ForEach-Object { "- $_" }) -join "`n")) } catch {}
           "COMMENTED $($o.task): posted $($steps.Count) how-to-test step(s) from the agent's report (its own testing comment was missing)"
         } else {
           "ATTENTION $($o.task): merged, but no solution/testing comment from its agent - post the solution, MR links and how-to-test on the task"
         }
       }
-      $o.done = $true; $o.doneAt = (Get-Date).ToString('o'); Save $o -Run
+      $o.done = $true; $o.doneAt = (Get-Date).ToString('o'); Save $o -Run; Set-KitTaskMrItems $o.task   # its Items tick
       "DONE $($o.task): all $(@($o.mrs).Count) MRs merged -> status $($o.onMerged -join ' -> ')"
       $script:merged = $true
     }
@@ -1407,7 +1392,7 @@ if ($Detail) {
   foreach ($k in $agents.Keys) { $a = $agents[$k]; $sc = @($a.mrs | Where-Object { & $isSched $_ }).Count
     '{0,-4} MRs {1}/{2} merged{3} | done [{4}] | deferred {5}{6}' -f $k, @($a.mrs | Where-Object merged).Count, @($a.mrs).Count, $(if ($sc) { ", $sc scheduled" }), ($a.done -join ','), @($a.deferred).Count, $(if ($a.note) { " | $(& $cut $a.note 80)" })
     foreach ($m in @($a.mrs | Where-Object { -not $_.merged })) { "       MR $($m.mergeState): $($m.url)" }
-    foreach ($d in @($a.deferred)) { "       deferred $($d.id): $($d.reason)" }
+    foreach ($d in @($a.deferred)) { "       deferred $($d.id)$(if ($d.kind -eq 'people') { ' (people step, no hold)' }): $($d.reason)" }
     foreach ($c in @($a.needsLiveCheck)) { "       live check: $c" } }
   foreach ($k in $qa.Keys) { $q = $qa[$k]; '{0,-5} {1}/{2} pass, {3} fail, {4} not tested{5}' -f $k, $q.pass, $q.checks, $q.fail, $q.notTested, $(if ($q.Contains('published')) { " | published: $($q.published)" }) }
   if ($addressed.Count) { "--- review findings addressed in the fix round ($($addressed.Count)) - see each agent's fix-round summary"; $addressed | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line)" } }
@@ -1419,7 +1404,7 @@ if ($Detail) {
   if ($qa.Count) { $parts += "QA $($qa.Count) pkg: pass $((Sum $qv 'pass'))/$((Sum $qv 'checks')), fail $((Sum $qv 'fail')), not tested $((Sum $qv 'notTested')), published $(@($qv | Where-Object { $_.Contains('published') -and $_.published }).Count)/$($qa.Count)" }
   if ($parts) { $parts -join ' | ' }
   foreach ($k in $agents.Keys) { $a = $agents[$k]; $um = @($a.mrs | Where-Object { -not $_.merged }).Count; $sc = @($a.mrs | Where-Object { & $isSched $_ }).Count; $dc = @($a.deferred).Count
-    if ($um -or $dc -or $a.note) { '  {0}: {1}{2}{3}' -f $k, $(if ($um) { "$um MR(s) not merged$(if ($sc) { " ($sc scheduled)" }) " }), $(if ($dc) { "deferred $dc ($(@($a.deferred | ForEach-Object id) -join ',')) " }), $(if ($a.note) { "| $(& $cut $a.note 80)" }) } }
+    if ($um -or $dc -or $a.note) { '  {0}: {1}{2}{3}' -f $k, $(if ($um) { "$um MR(s) not merged$(if ($sc) { " ($sc scheduled)" }) " }), $(if ($dc) { "deferred $dc ($(@($a.deferred | ForEach-Object { "$($_.id)$(if ($_.kind -eq 'people') { ' people' })" }) -join ',')) " }), $(if ($a.note) { "| $(& $cut $a.note 80)" }) } }
   foreach ($k in $qa.Keys) { $q = $qa[$k]; if ($q.fail -or $q.notTested -or ($q.Contains('published') -and -not $q.published)) { '  {0}: fail {1}, not tested {2}{3}' -f $k, $q.fail, $q.notTested, $(if ($q.Contains('published') -and -not $q.published) { ', NOT published' }) } }
   if ($open.Count) { "--- OPEN review findings ($($open.Count))"; $open | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line) - $(& $cut $_.problem 100)" } }
 }

@@ -98,13 +98,13 @@ $null = Invoke-Track run -Detail
 Update-KitTracking { param($t) $t.tasks['t5'].done = $false }
 $null = Invoke-Track run -Detail
 "skip:$(-not @($global:sets | Where-Object { $_ -like 't5=*' }).Count)"
-"once:$($d5 -and @($global:cmts | Where-Object { $_.id -eq 't5' -and $_.text -match 'All merged: promoted' }).Count -eq 1 -and -not @($global:cmts | Where-Object { $_.text -match '^All MRs merged|\[kit:' }).Count)"
+"once:$($d5 -and -not @($global:cmts | Where-Object { $_.id -eq 't5' }).Count)"   # no MRs comment, no merged comment
 $h = Invoke-Track add -Task t6 -Mrs 'g/web!8' -HoldPromotion 'deferred A2' | Out-String
 $r1 = Invoke-Track run -Detail | Out-String
-$c1 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count
-$null = Invoke-Track add -Task t6 -HoldPromotion ''; $c2 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count   # the release itself promotes
+$c1 = [int][bool](Read-KitTracking).tasks['t6'].done
+$null = Invoke-Track add -Task t6 -HoldPromotion ''; $c2 = [int][bool](Read-KitTracking).tasks['t6'].done   # the release itself promotes
 $null = Invoke-Track run -Detail
-"hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and $c2 -eq 1 -and @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count -eq 1)"
+"hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and $c2 -eq 1)"
 $KitConf.TrackerRepos = @('g/web'); $KitConf.TrackerTag = 'CU-'; $global:q = 0; $null = Invoke-Track add -Task t7 -Discover -Mrs 'g/web!7'
 $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 "throttle:$($q1 -ge 1 -and $global:q -eq $q1 -and (Read-KitTracking).tasks['t7'].checkedAt)"
@@ -116,9 +116,12 @@ $null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invo
 $global:tdesc += "`nTesting doc (AI): https://d/g"; $null = Invoke-Track run; $unk = & { function Get-TrackerTask { throw 'down' }; Test-KitTaskDocLink t9 }
 $global:tdesc = "**Testing doc (human):**`n`n**Testing doc (AI):** [open](https://d/g)"; $bl0 = Test-KitTaskDocLink t9; $global:tdesc = $global:tdesc -replace '(human\):\*\*)', '$1 [open](https://d/h)'; $bl1 = Test-KitTaskDocLink t9
 "nodoc:$($nd -match 'ATTENTION t9: MRs merged, no testing-doc link.*finish t9 .*; MRs \S*web!5' -and -not $s0.Count -and $global:sets -contains 't9=promoted' -and $null -eq $unk -and -not $bl0 -and $bl1)"
+$KitConf.GitlabGroup = 'grp'; $null = Invoke-Track add -Task t10 -Mrs 'grp/web!4,https://h/grp/web/-/merge_requests/4,web!4'
+Update-KitTaskIndex t11 { param($x) $x.track = @{ task = 't11'; mrs = @('web!3', 'grp/web!3'); done = $true } }; $null = Invoke-Track add -Task t11
+$rt = Read-KitTracking; "mrref:$((@($rt.tasks['t10'].mrs) -join ',') -eq 'web!4' -and (@($rt.tasks['t11'].mrs) -join ',') -eq 'web!3')"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
-Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; nodoc: promoted only with both doc links, the human one alone held)' @('skip', 'once', 'hold', 'throttle', 'keep', 'nodoc') 8
+Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; nodoc: promoted only with both doc links, the human one alone held; mrref: group/repo!n, URL and repo!n stored once, old duplicates dedupe on read)' @('skip', 'once', 'hold', 'throttle', 'keep', 'nodoc', 'mrref') 8
 $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
 $sv = pwsh @np $O supervise -Brief -Session me | Out-String

@@ -35,13 +35,13 @@ run(args, c.agent, _n, _n, pipeline).then((oc) => run(args, d.agent, _n, _n, pip
 })).catch(_err)
 '@
 Expect-Each (Invoke-Js dw-local $jsd $wfd) 'buildy local loop: # (env-gap: FAIL only for env gaps is reviewed and shipped, a real FAIL blocks)' 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text', 'env-gap' -Show 5
-# buildy: blocking -> fix -> ONE re-review; a deferred item holds promotion, an owner-deferred one not
+# buildy: blocking -> fix -> ONE re-review; a deferred item holds promotion, an owner-deferred one or a people step (kind people) not
 $jsr = @'
 const lt = { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' }
 const rep = (extra = {}) => _rep(lt, extra)
 let reviews = 0
 const { calls, agent } = _mock((prompt, o) => {
- if (/^build:/.test(o.label)) return rep({ deferred: [{ id: 'A2', reason: 'needs data' }, { id: 'A3', reason: 'o', ownerDecided: true }] })
+ if (/^build:/.test(o.label)) return rep({ deferred: [{ id: 'A2', reason: 'needs data' }, { id: 'A3', reason: 'o', ownerDecided: true }, { id: 'A4', reason: 'team labels a sheet', kind: 'people' }] })
  if (/^review:/.test(o.label)) return { findings: [{ mr: '1', file: 'a.ts', line: 3, severity: reviews++ ? 'nit' : 'blocking', problem: reviews > 1 ? 'rename y' : 'null check missing', fix: 'add it' }] }
  if (/^fix:/.test(o.label)) return rep({ worktrees: ['c:\\WT\\x1\\'] })
  if (/^ship:/.test(o.label)) return rep(_merged(1))

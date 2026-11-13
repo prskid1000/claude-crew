@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L67 state · L136 config · L216 OS · L413 leases · L874 status · L1118 supervise sweep ·
-  L1189 supervise report · L1285 tracker · L1611 prior · L1627 ask bugs · L1834 git-host · L1994 kitlog · L2114 params ·
-  L2419 entry-scripts
+  L1189 supervise report · L1285 tracker · L1576 prior · L1592 ask bugs · L1799 git-host · L1959 kitlog · L2079 params ·
+  L2384 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1486,48 +1486,13 @@ function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | W
 # ONE kit comment per kind: edit, else post + delete old, else post; found by id, last text or legacy '[kit:<kind>]'
 # marker. People's comments are never touched
 function Get-KitCommentSig([string]$Text) { $n = ConvertTo-KitLetters ("$Text" -replace '\\?\[kit:[^\]\\]*\\?\]', ''); $n.Substring(0, [math]::Min(60, $n.Length)) }   # trackers re-render markdown: letters and digits only
-$script:KitMrsHeading = 'MRs (merge order)'   # bossy.ps1 Set-KitMrsComment is its one writer
+$script:KitMrsHeading = 'MRs (merge order)'   # the retired MRs comment: never written (MR links: the Items checklist)
 $script:KitDecisionsHeading = 'Decisions'   # bossy.ps1 decide publish is its one writer
 function ConvertTo-KitLetters([string]$Text) { ("$Text" -replace '[^\p{L}\p{N}]', '').ToLower() }
 function Test-KitHeadText([string]$Text, [string]$Heading) { (ConvertTo-KitLetters (("$Text".Trim() -split "`r?`n")[0])) -eq (ConvertTo-KitLetters $Heading) }
 # ours: the heading, then only rendered lines (a person's "Decisions: ship it" is never edited or deleted)
 function Test-KitDecisionsComment($Comment) { (Test-KitHeadText $Comment.text $script:KitDecisionsHeading) -and -not @(@("$($Comment.text)".Trim() -split "`r?`n" | Select-Object -Skip 1 | Where-Object { $_.Trim() }) | Where-Object { $_ -notmatch '^\s*(\d+\. |- )\S|^\W*(Open|Superseded)\W*$|^\W*Plan\W*:' }).Count }
 function Get-TrackerHeadComments([string]$Id, [string]$Heading, [scriptblock]$Match) { @(Get-TrackerComments $Id | Where-Object { $_.id -and (Test-KitHeadText $_.text $Heading) -and (-not $Match -or (& $Match $_)) }) }
-# MR refs in the task's MRs comments, any writer's format
-function Get-KitMrsListed([string]$Task) {
-  foreach ($c in @(try { Get-TrackerHeadComments $Task $script:KitMrsHeading } catch { @() })) {
-    $repo = ''
-    foreach ($l in ("$($c.text)" -split "`r?`n")) {
-      $t = $l.Trim() -replace '\*\*', ''
-      if ($t -match '^(?<r>[A-Za-z][\w./-]*-[\w./-]*|[A-Za-z][\w.-]*/[\w./-]+):?$' -or $l.Trim() -match '^\*\*(?<r>[\w./-]+)\*\*$') { $repo = $Matches.r; continue }
-      foreach ($u in [regex]::Matches($t, 'https?://[^\s)\]]+')) { $u.Value }
-      if ($t -match '(?<r>[A-Za-z][\w./-]*) !(?<i>\d+)') { "$($Matches.r)!$($Matches.i)" } elseif ($repo -and $t -match '!(?<i>\d+)') { "$repo!$($Matches.i)" }
-    }
-  }
-}
-# untracked rows drop when closed, unread or titled for another task; merged by merge time, then open (producers first)
-function Format-KitMrsComment([string]$Task, $Rows, [string]$Status) {
-  foreach ($x in $Rows) { $a = @{ repo = $x.pp; n = "$($x.iid)" }; $x | Add-Member -Force NoteProperty m $(if ($x.pp) { try { Invoke-HostVerb 'mr.get' $a } catch { } }); $x | Add-Member -Force NoteProperty u $(if ($x.pp) { try { Invoke-HostVerb 'mr.url' $a } catch { } }) }
-  $tg = [regex]::Escape("$($KitConf.TrackerTag)"); $tk = [regex]::Escape($Task); $trx = Get-KitTaskTagRx
-  $other = { param($m) $trx -and @(@($m.title, $m.source_branch) | Where-Object { "$_" -match $trx -and $Matches.id -ne $Task }).Count }
-  $Rows = @($Rows | Where-Object { $_.mine -or ("$($_.m.state)" -notin '', 'closed' -and -not (& $other $_.m)) })
-  if (-not $Rows.Count) { return '' }
-  $at = { param($x) try { [datetimeoffset]"$($x.m.merged_at)" } catch { [datetimeoffset]::MaxValue } }
-  $Rows = @(@($Rows | Where-Object { "$($_.m.state)" -eq 'merged' } | Sort-Object { & $at $_ }, iid) + @($Rows | Where-Object { "$($_.m.state)" -ne 'merged' } | Sort-Object { -not $_.producer }, iid))
-  $word = { param($x) switch ("$($x.m.state)") { 'opened' { 'open' } '' { 'unknown' } default { $_ } } }
-  $lines = @("**$script:KitMrsHeading**"); $n = 0; foreach ($x in $Rows) { $x | Add-Member -Force NoteProperty num (++$n) }
-  foreach ($g in @($Rows.repo | Select-Object -Unique)) {
-    $lines += "**$g**"
-    foreach ($x in @($Rows | Where-Object repo -eq $g)) {
-      $t = ("$($x.m.title)" -replace "\s*\((?:$tg)?$tk\)", '' -replace "\s*\($([regex]::Escape(($g -split '/')[-1]))\)", '' -replace "\s+-\s+(?:$tg)?$tk\b", '' -replace '\s+-\s*$', '').Trim()   # task and repo are said already
-      if (-not $t) { $t = '(title unknown)' } elseif ($t.Length -gt 90) { $t = $t.Substring(0, 89) + '…' }
-      $lines += "$($x.num). $(if ($x.u) { "[!$($x.iid)]($($x.u))" } else { "!$($x.iid)" }) $t · $(& $word $x)"
-    }
-  }
-  $wait = @($Rows | Where-Object { "$($_.m.state)" -ne 'merged' })
-  $lines += if ($wait.Count) { "Waiting: $(@($wait | ForEach-Object { "$($_.repo) !$($_.iid) ($(& $word $_))" }) -join ', ')" } elseif ($Status) { "All merged: $Status" } else { 'All merged' }
-  $lines -join "`n"
-}
 # -Heading: found by heading, not this kit copy's index (agents run from several copies), under a machine-wide lock
 function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Heading, [scriptblock]$Match) {
   if ($Heading) { return Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-comment-$("$Id-$Kind" -replace '[^\w.-]', '_')") { Set-TrackerHeadComment $Id $Kind $Text $Heading $Match } }

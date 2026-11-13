@@ -218,7 +218,7 @@ without it.
 **MRs:** <ref (MERGED|SCHEDULED|OPEN)> · **Local proof:** <env r<n>, goals passed>
 **After deploy:** <settings/data to seed, or "nothing"> · **Deferred:** <item — reason, or "none">
 ```
-Kit comments, one per kind, edited: MRs (`track add`), decisions, solution, QA result; doc links: crafty "Tracker".
+Kit comments, one per kind, edited: decisions, solution, QA result (MR URLs: Items); doc links: crafty "Tracker".
 
 ## Decision request
 `bossy.ps1 decide ask` writes it to the contracts file; structured options feed the question tools (bossy E4).
