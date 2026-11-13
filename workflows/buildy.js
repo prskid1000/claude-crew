@@ -195,7 +195,7 @@ ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug locally BEFORE fixing: a `r
 - ENV GAP (Docker down, empty local index, a model limit; no ENV-FIX closes it), its tests run in the MR pipeline:
  NOT_TESTED_LOCAL + pipeline link in the AI doc; localTest FAIL + envGap true (merged on green CI). A product failure: envGap false.
 - Every goal PASS: crafty.ps1 checkpoint -Agent <id> -Run ${RUN} -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR spec"),
- then devtools.py finish <task> cases solution.md review --ai cases (docs from the cases spec),
+ then devtools.py finish <task> cases solution.json review --ai cases (docs from the cases spec),
  then devtools.py mr again with both links (edits it). A fix round (review, CI, failedTesting): a new AI doc round, then the same
  commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc, never an earlier round removed. Do NOT merge (the workflow
  does): merged=false, mergeState OPEN.`
@@ -221,7 +221,7 @@ function synth(a) {
 function postMergePrompt(a, r) {
  return continuePrompt(a, r, `RESUME, ONLY THE HUMAN TESTING DOC: every MR below is MERGED (host-verified at recovery); build, review, CI and merge are done: never redo them, open no branch or MR.
 ${r.mrs.map((m) => `- ${m.url}`).join('\n')}
-Complete the cases spec (devtools.py cases add / result), run devtools.py finish <task> cases solution.md review --ai cases (updates the task's docs, never new ones). Report these MRs merged=true, testerGuide = the human doc link.`)
+Complete the cases spec (devtools.py cases add / result), run devtools.py finish <task> cases solution.json review --ai cases (updates the task's docs, never new ones). Report these MRs merged=true, testerGuide = the human doc link.`)
 }
 function continuePrompt(a, r, why) {
  return `${WHY}
@@ -247,7 +247,7 @@ function fixPrompt(a, r, findings) {
  return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
 Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push; in the same push: cases
-result / round + devtools.py doc "<t>" cases --key <task>:testing-ai, cases add for changed checks, devtools.py mr --spec again. An already-merged MR:
+result / round + devtools.py doc "<t>" cases --key <task>:testing-ai, cases add for new checks, mr --spec again. An already-merged MR:
 put the fix on a new branch from the target (crafty.ps1 wt new) and open a follow-up MR.`)
 }
 function ciPrompt(r, a) {

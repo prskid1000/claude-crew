@@ -97,8 +97,8 @@ in a shared place (`work/docs|briefs|waves`, a QA run's top folder) that no row'
 | `merge-commit` | `crafty.ps1 wt commit` | — | — |
 | `task-name` | `crafty.ps1 tracker` | — | — |
 | `task-description` | `crafty.ps1 tracker` | — | — |
-| `comment-solution` | free: devy (item 5: spec) | `work/agents/*/*.md` | `md ^\*\*Solution:\*\*` |
-| `comment-status` | free: any agent (item 12: spec) | — | — |
+| `comment-solution` | `devtools.py comment --spec`, `devtools.py finish` | `work/agents/*/*.md` | `md ^\*\*Solution:\*\*` |
+| `comment-status` | `devtools.py comment --spec` | — | — |
 | `comment-deploy` | `bossy.ps1 deploy` | — | — |
 | `decisions` | `bossy.ps1 decide` | — | — |
 | `decision-request` | `bossy.ps1 decide` | — | — |

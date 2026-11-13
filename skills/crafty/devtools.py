@@ -1,7 +1,7 @@
 """devtools.py: tracker / git-host / docs helpers for agents (crafty steps 6-7). Host and project come from the worktree's
 `origin` remote, the MR target from its crafty.ps1 wt record. Tracker reads and status changes: crafty.ps1 tracker.
 
- python -X utf8 devtools.py comment <taskId> <file.md | "text"> [kind] [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
+ python -X utf8 devtools.py comment <taskId> --spec <c.json> [comment-solution|comment-status] (templates.md "Comment spec"; <file.md | "text"> [kind] warns) [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
  python -X utf8 devtools.py finish <taskId> <testing.md|url> <solution.md> [review] --ai <ai.md|url> [--prose-ok "<why>"]   both docs (human + AI)
   by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status;
   `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec
@@ -28,7 +28,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L45 config · L79 run · L167 tracker · L370 git host · L453 MR · L620 merge · L900 docs · L1055 publish · L1413 render ·
-  L1636 plugins · L1650 keepboth · L1669 selftest · L2081 CLI
+  L1664 plugins · L1678 keepboth · L1697 selftest · L2109 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1613,11 +1613,42 @@ def render_mr_body(s):
                         f'- **Sibling MRs:** {", ".join(sib)} (merge order: producers first)' if sib else '- **Sibling MRs:** none']) + '\n'
 
 
-def mr_gaps(s, kind='mr-body'):
-    return [k for k in ('type', 'change') + (('summary',) if kind == 'mr-body' else ()) if not s.get(k)] + [f'changes[{i}].text' for i, c in enumerate(s.get('changes') or []) if not c.get('text')]
+
+def render_solution(s):
+    """templates.md "Comment spec" comment-solution: MRs (merge state) from the task's tracking, the local proof from the loop checkpoint."""
+    t = s.get('task') or ''
+    tr = ((read_tracking().get('tasks') or {}).get(t[len(TAG):] if TAG and t.startswith(TAG) else t) or {}) if t else {}
+    mrs = s.get('mrs') or [f'{m} ({"MERGED" if tr.get("allMergedAt") else "OPEN"})' for m in tr.get('mrs') or []]
+    proof = s.get('localProof') or (t and local_pass(t)[1]) or 'none'
+    return (f'**Solution:** {s.get("solution", "")}\n**MRs:** {" · ".join(mrs) or "none"} · **Local proof:** {proof}\n'
+            f'**After deploy:** {s.get("afterDeploy") or "nothing"} · **Deferred:** {s.get("deferred") or "none"}\n')
 
 
-RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': render_commit}   # devtools.py render <kind> <spec.json>
+def render_status(s):
+    """comment-status: `<status> — <why> · <link>`."""
+    return f'{s.get("status", "")} — {s.get("why", "")}' + (f' · {s["link"]}' if s.get('link') else '') + '\n'
+
+
+SPEC_NEEDS = {'mr-body': ('type', 'change', 'summary'), 'mr-title': ('type', 'change'), 'commit': ('type', 'change'),
+              'comment-solution': ('solution',), 'comment-status': ('status', 'why')}
+
+
+def spec_gaps(s, kind):
+    """What a spec lacks for its kind (SPEC_NEEDS) + change entries without text."""
+    return [k for k in SPEC_NEEDS.get(kind, ()) if not s.get(k)] + [f'changes[{i}].text' for i, c in enumerate(s.get('changes') or []) if not c.get('text')]
+
+
+RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': render_commit, 'comment-solution': render_solution,
+             'comment-status': render_status}   # devtools.py render <kind> <spec.json>; comment / finish --spec
+
+
+def spec_text(path, kind, task=''):
+    """A spec file rendered as kind (refused on gaps); task fills the spec's task when it has none."""
+    s = json.loads(open(path, encoding='utf-8-sig').read())
+    s = {'task': task, **s} if task else s
+    if gaps := spec_gaps(s, kind):
+        raise SystemExit(f'{kind} spec refused: missing {", ".join(gaps)} (templates.md "Comment spec" / "MR spec")')
+    return RENDERERS[kind](s)
 
 
 def render_cmd(a):
@@ -1625,11 +1656,8 @@ def render_cmd(a):
     if len(a) < 2 or a[0] not in RENDERERS:
         print(f'usage: devtools.py render {"|".join(RENDERERS)} <spec.json>', file=sys.stderr)
         return 2
-    s = json.loads(open(a[1], encoding='utf-8-sig').read())
-    if gaps := (mr_gaps(s, a[0]) if a[0] in ('mr-title', 'mr-body', 'commit') else []):
-        raise SystemExit(f'{a[0]} spec refused: missing {", ".join(gaps)} (devtools.py "render")')
     sys.stdout.flush()
-    sys.stdout.buffer.write((RENDERERS[a[0]](s).rstrip('\n') + '\n').encode('utf-8'))   # LF on every OS (a commit message, a golden file)
+    sys.stdout.buffer.write((spec_text(a[1], a[0]).rstrip('\n') + '\n').encode('utf-8'))   # LF on every OS (a commit message, a golden file)
     return 0
 
 
@@ -2102,7 +2130,7 @@ def _cli():
         elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, not "unknown option"
             print(f'devtools.py {cmd}: {f} needs a value (an empty variable?)\n' + '\n'.join(ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)), file=sys.stderr)
             sys.exit(2)
-    ARITY['mr'] = 1 if opt.get('--spec') else 3
+    ARITY['mr'], ARITY['comment'] = (1, 1) if opt.get('--spec') else (3, 2)
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
     PROSE_OK = opt.get('--prose-ok') or ''
     OVERRIDE = opt.get('--override') or ''
@@ -2120,18 +2148,25 @@ def _cli():
               else f"devtools.py: unknown verb {cmd}: python -X utf8 devtools.py <verb> ... (verbs: {', '.join(sorted(ARITY))})\n{__doc__}", file=sys.stderr)
         print('\n'.join(use) if use else '', file=sys.stderr)
         sys.exit(2)
-    if cmd == 'comment':
+    if cmd == 'comment' and opt.get('--spec'):   # comment <task> --spec <json> [kind]: rendered
+        kd = a[2] if len(a) > 2 else 'comment-status'
+        if kd not in RENDERERS:
+            raise SystemExit(f'comment --spec: kind {kd} has no renderer ({", ".join(k for k in RENDERERS if k.startswith("comment-"))})')
+        print(comment(a[1], spec_text(opt['--spec'], kd, a[1]), kd))
+    elif cmd == 'comment':
+        print('WARN devtools.py comment: hand-written text; render it: comment <task> --spec <c.json> [kind] (templates.md "Comment spec")', file=sys.stderr)
         print(comment(a[1], _text(a[2]), a[3] if len(a) > 3 else 'comment-status'))
     elif cmd == 'finish':
         prior_gate(a[1], '', f'devtools.py finish {a[1]}')
         rc = lambda p, k: cases_file(a[1], k) if p == 'cases' else p   # rendered from the task's cases spec
-        finish(a[1], rc(a[2], 'human'), _body(a[3]), *(a[4:5] or ['review']), ai=rc(opt.get('--ai'), 'ai'))
+        sol = spec_text(a[3], 'comment-solution', a[1]) if a[3].endswith('.json') else _body(a[3])   # a .json = the comment spec
+        finish(a[1], rc(a[2], 'human'), sol, *(a[4:5] or ['review']), ai=rc(opt.get('--ai'), 'ai'))
         print('done')
     elif cmd == 'mr' and opt.get('--spec'):   # title + body rendered (devtools.py "render"); a 2nd positional = target
         if len(a) > 3:
             raise SystemExit('mr --spec <mr.json>: no title or body arguments (both are rendered); only <worktree> [target]')
         s = json.loads(open(opt['--spec'], encoding='utf-8-sig').read())
-        if gaps := mr_gaps(s):
+        if gaps := spec_gaps(s, 'mr-body'):
             raise SystemExit(f'mr spec refused: missing {", ".join(gaps)}')
         print(mr_create(a[1], render_title(s), render_mr_body(s), *(a[2:3] or [])))
     elif cmd == 'mr':

@@ -41,7 +41,7 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
 python <kit>/skills/crafty/devtools.py mr <wt> --spec mr.json   # 6. MR (templates.md "MR spec"); after finish: again, both links
-python <kit>/skills/crafty/devtools.py finish <task> cases solution.md review --ai cases   # human doc, links block, comment, status
+python <kit>/skills/crafty/devtools.py finish <task> cases solution.json review --ai cases   # human doc, links block, comment, status
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic)

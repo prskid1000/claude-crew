@@ -180,5 +180,10 @@ Expect 'cases round 2: only the case run in it, its result; a new result drops t
 Set-JsonFile "$wd/u.json" @{ type = 'fix'; change = 'remove init() — café ✅'; task = 'T1' }; $ut = Dt render mr-title "$wd/u.json"
 'y' | Set-Content "$gr/b.txt"; $null = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') wt commit -Dir $gr -Spec "$wd/u.json" 2>&1; $us = git -C $gr log -1 --format=%s
 Expect "render / wt commit -Spec: a () and ' - ' inside the change and non-ASCII text survive ($($ut.out) | $us)" ($ut.out -eq 'fix: remove init() — café ✅ (T1)' -and $us -eq 'fix: remove init() — café ✅')
+# ---- comments from specs (items 5, 12): solution and status comments, one renderer, any tracker
+Set-JsonFile "$wd/sol.json" @{ solution = 'orders sorted by id; now by date'; mrs = @('web!5 (MERGED)', 'api!4 (OPEN)'); localProof = 'local r3: round 2 PASS'; deferred = 'export sort — next sprint' }
+Set-JsonFile "$wd/st.json" @{ status = 'blocked'; why = 'needs the owner''s sort rule'; link = 'https://t/d1' }; Set-JsonFile "$wd/st2.json" @{ status = 'blocked' }
+$cs1 = Dt render comment-solution "$wd/sol.json"; $cs2 = Dt render comment-status "$wd/st.json"; $cs3 = Dt render comment-status "$wd/st2.json"
+Expect 'render comment-solution / comment-status: golden text; a status without why refused' ((Gold $cs1.out "**Solution:** orders sorted by id; now by date`n**MRs:** web!5 (MERGED) · api!4 (OPEN) · **Local proof:** local r3: round 2 PASS`n**After deploy:** nothing · **Deferred:** export sort — next sprint") -and $cs2.out -eq "blocked — needs the owner's sort rule · https://t/d1" -and $cs3.code -ne 0 -and $cs3.out -match 'missing why')
 Remove-TestKit $k
 Complete-Tests
