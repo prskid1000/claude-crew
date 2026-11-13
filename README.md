@@ -183,7 +183,9 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 - machine and resources: memory (used / total meter with a 7-day peak tick, 24 h sparkline), every watched disk in one tile
   (free GB, fill rate, "full in" under 72 h, used / size meter with a 7-day peak tick, 7-day free sparkline marking the low; a
   flagged drive coloured and first) in one row; build gate full width from its history (running, queued, builds today, longest
-  wait; a row per kind with today's count, waits, RAM and a 24 h busy strip; side panel: RAM dots promised / free, QA seats, phone lanes, emulators, test browsers (leases, never gated)); resources and leases: each a 24 h
+  wait; a row per kind: an hourly heatmap of the last 24 clock hours (shade = busy minutes, the current hour outlined, a cell's
+  tooltip: builds, busy min, max wait) and running, queued, today, wait avg / peak, RAM as number columns under one icon header
+  row, zeros dimmed; side panel: queued builds sparkline, RAM dots promised / free, QA seats, phone lanes, emulators, test browsers (leases, never gated)); resources and leases: each a 24 h
   RAM sparkline (its scale in the caption) and a lease timeline per holder; a shared always-on service (`shared` row) is never
   an orphan, a leasable one with no live holder is tinted; shells;
 - usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
@@ -201,12 +203,16 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: a wrapping row, a min width per item,
-optional max across, top-aligned, the last row's items grow), never one full-width row per item; tables only for many-column rows; 8-12 px gaps, every card
+optional max across, top-aligned, the last row's items grow; card grids pack as masonry: each card in page order into the
+shortest column), never one full-width row per item; repeated words (running, queued, today, wait, RAM) are one icon set
+(`Format-KitIcon`, a title and aria-label each); a flag text over 25 words shows a one-line summary that opens to the full text;
+tables only for many-column rows; 8-12 px gaps, every card
 as tall as its content. Content never truncates; it wraps (every kit page: `kitbag.py ui-check <page>` fails on clipped text at
 1920, 1366, 900 and 390 px (390: touch emulation, taps), on a `data-fit` card with 24+ px blank below its content, on a card row
 24+ px short of its box at 1280+ px (an empty column), on a canvas page's
 `window.uiBoxes()` node or label off-screen or overlapping, and on each issue a page's own `window.uiChecks()` returns: the
-dashboard checks a one-row header at desktop width and a text label on every bar and sparkline).
+dashboard checks a one-row header at desktop width, a text label on every bar and sparkline, and no card under a column with
+48+ px free above it).
 
 ## Goodies
 Optional parts (more trackers, git hosts, CI and report types, stack presets, the local env, phone lanes, deploys, kit admin and

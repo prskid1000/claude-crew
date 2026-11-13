@@ -1,12 +1,12 @@
 #Requires -Version 7
 <#
 tracker.tests.ps1: task texts rendered from a spec (crafty.ps1 "task spec": description, Items / Decisions checklists, the
-parent's subtask items), the prose check of tracker kinds (no local paths).
+parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap.
 Usage: pwsh -NoProfile -File <kit>/tests/tracker.tests.ps1 (or tests/kit-tests.ps1 -Area tracker).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$k = New-TestKit tracker; $KT = Join-Path $k 'skills/bossy/kitbag.py'
+$k = New-TestKit tracker; $KT = Join-Path $k 'skills/bossy/kitbag.py'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 function KtPy($code) { python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kitbag as k; $code" }
 $lp = KtPy "s = {'limits': '', 'format': '', 'required': []}; print([len(k.prose_check(kd, t, s, [])) for kd, t in (('comment-status', 'see ~/notes/a.md'), ('task-description', 'D:\\x\\y.md'), ('decisions', 'https://h/a/b.md ``common/agent-core``'), ('mr-body', '~/x.md'), ('task-description', 'GET /users/5 and /home/dashboard'))])"
 Expect "prose: a local path in a tracker text (task-*, comment-*, decisions) is a finding; a URL, repo path or route is not, other kinds unchecked ($lp)" ("$lp".Trim() -eq '[1, 1, 0, 0, 0]')
@@ -59,5 +59,25 @@ $u8db = (Get-Content -Raw -Encoding utf8 "$(Kd)/fake-tracker.json" | ConvertFrom
 Expect "task spec, non-ASCII: the adapter gets · → £ é intact, the long item uncut in Items and its checklist; kit stdout is UTF-8 with no console ($($u8c.Trim() -replace '\s+', ' '))" (
   $u8db.name -eq '[Feature] Café · £ → é' -and $u8db.description.Contains("- SG-1 · $longDesc") -and $u8db.description.Contains("- [ ] SG-1 · $longDesc") -and $u8db.description.Contains('bulk orders that skip the sample-setup step entirely? → yes') -and $u8db.description -notmatch '…|�' -and
   $u8c -match '"name": "\[Feature\] Café · £ → é"' -and $u8v.Contains("SG-1 · $longDesc"))
+# supervise page: a flag over 25 words keeps every word (summary + full text); the flag grid packs as masonry
+$lfOut = Invoke-PsTest longflag @'
+$null = . $args[0] 6>$null
+$dd = @{ flags = @([pscustomobject]@{ level = 'WATCH'; what = 'w1'; action = 'a1' }, [pscustomobject]@{ level = 'ACT'; what = 'DECISION <b>x</b>'; who = 'devy'; action = 'answer it' }) }
+$longWhat = 'state file D:\x\qa-runs\r1\run.json: drift: key(s) notes not in the schema (qa-runs:run: dir=*/run.json v0: title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles): add them to STATE.md or fix the writer'
+$lfFlags = @($dd.flags[0], $dd.flags[1], [pscustomobject]@{ level = 'WATCH'; what = $longWhat; action = ('step ' * 30).Trim() })
+$hl = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); flags = $lfFlags })
+$cards = @([regex]::Matches($hl, '(?s)<article class=.flag .*?</article>').Value)
+"longflag:$(-not @($lfFlags | Where-Object { $fc = Get-KitFlagCells $_; $fw = [Net.WebUtility]::HtmlEncode($fc.problem); $fa = [Net.WebUtility]::HtmlEncode($fc.action); -not @($cards | Where-Object { $_.Contains($fw) -and $_.Contains($fa) }).Count }).Count -and $cards.Count -eq 3 -and $hl -match "<details class=lx><summary>state file run\.json: drift: key\(s\) notes not in the schema \(…\): add them" -and $hl -match 'class=lf>step step' -and $hl -match "fmas style='--cmin:300px' data-mas>" -and $hl -match 'function ms\(\)\{' -and $hl -match 'px below free space in another column')"
+'@ @($O)
+Expect "supervise page: every flag's problem and Next verbatim on its card, a long one as summary + full text ($lfOut)" ("$lfOut" -match 'longflag:True')
+# build gate from its history: a build that started and ended between two sweeps counts; one row per kind (a local env's build = env deploy)
+$gtOut = Invoke-PsTest 'gatestats' @'
+$null = . $args[0] 6>$null; $t = (Get-Date).Date.AddHours(1); $b = { param($ev, $m, $o, $k, $x) Write-KitLog builds $ev ([ordered]@{ at = $t.AddMinutes($m).ToString('o'); owner = $o; kind = $k; project = 'api' } + $x) }
+& $b start 0 a maven-test @{ needGB = 3 }; & $b end 2 a maven-test @{ sec = 120; waitSec = 60 }; & $b end 5 localenv-x maven @{ sec = 30; waitSec = 0 }; & $b end 50 b docker @{ sec = 3600; waitSec = 0 }   # 00:50-01:50: 10 + 50 min over two hours
+$g = Get-KitGateStats $t.AddHours(1) @([pscustomobject]@{ name = 'browser rm·web'; gb = 1.25 }, [pscustomobject]@{ name = 'browser hm'; gb = 0.5 }, [pscustomobject]@{ name = 'phone p1'; gb = 2 }); $m = @($g.rows | Where-Object name -eq 'maven test')[0]
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); mem = @{ AvailGB = 20 }; stats = [pscustomobject]@{ keepFree = 10; gate = $g; now = @{ seats = 1; seatsMax = 4 } } })
+"$($g.running) $(@($g.rows.name -match '^(env deploy|maven)' | Sort-Object) -join ',') $($m.done)/$($m.waitMax)/$($m.peakGB)/$([array]::IndexOf(@($m.hours | ForEach-Object { $_[1] -gt 0 }), $true))/$(@(@($g.rows | Where-Object name -eq 'docker')[0].hours[21..22] | ForEach-Object { $_[1] }) -join ',') $($h -match "<span class=gn[^>]*>maven test</span>" -and $h -match "builds today</title>.*?</svg>$($g.today)</span>" -and $h -match "<div class='gk gh'><span class=gn>kind · hour</span><span class='gs0 hrs' aria-hidden=true>.*?<b class=nw style='grid-column:23/span 2'>now</b>" -and $h -match "class='gc z' title='maven test: 0 running builds'><svg class='ic i-run hit'.*?</svg>0<" -and $h -match "<div class=gk><span class=gn[^>]*>maven test</span><span class='gs hm'[^>]*>(<i[^>]*></i>){24}</span>(<span class='gc[^']*'[^>]*>.*?</span>){6}</div>" -and $h -match "title='01:00 &#183; maven test &#183; 1 builds &#183; 2 build-min &#183; max wait 1 min'" -and $h -match "<i class=nw style='--a:0%' title='02:00 \(now\)") $($h -match 'test browsers 2 \(1\.8 GB, leased\)')"
+'@ @($O)   # other areas' gated checks of this test kit add rows of their own
+Expect "gate card: history counts a build between sweeps, a row per kind, its busy minutes in the hours it spans; browsers in the lease row ($gtOut)" ("$gtOut" -eq '0 env deploy,maven test 1/1/3/22/10,50 True True')
 Remove-TestKit $k
 Complete-Tests
