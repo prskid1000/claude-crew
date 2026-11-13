@@ -192,7 +192,7 @@ $rxOrphan = "<div class='ci f orphan'[^>]*><div class=tn>mysql</div><div class=s
 $u.runs = @(1..27 | ForEach-Object { & $rn "r$_" "wf_$_" 'ended' $d0 'devy 1' '' 'build' }); $fh2 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } })
 $rowRx = "<details class='ru f'>"; $olderTxt = '2 older run(s)'
 $fh3 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; shells = @(1..12 | ForEach-Object { [pscustomobject]@{ pid = $_; dir = 'maven|a/b' } }) })
-$uxRx = @("<tr class='f more'>", 'class=sa data-n=12>Show all \(12\)', '<nav class=jl', 'id=nm class=empty hidden', 'maven\|<wbr>a/<wbr>b', '\.tw \.lo\{display:none', 'function jp\(k,f\)\{try', '\.fbl>details\[open\]\{flex-basis:100%\}', '\.gk\{grid-column:1/-1;grid-template-columns:subgrid\}', 'table\.tun tr\.gh\{display:block\}')   # a low column only inside tables (.st.lo tiles stay); stored state parsed safely
+$uxRx = @("<tr class='f more'>", 'class=sa data-n=12>Show all \(12\)', '<nav class=jl', 'id=nm class=empty hidden', 'maven\|<wbr>a/<wbr>b', '\.tw \.lo\{display:none', 'function jp\(k,f\)\{try', 'fbl>details\[open\]', 'subgrid', 'tun tr\.gh\{display')   # a low column only inside tables (.st.lo tiles stay); stored state parsed safely
 $rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text mixed toward --fg: WCAG AA in the light theme
 "ux:$(([regex]::Matches($fh3, $uxRx[0])).Count -eq 2 -and -not @($uxRx | Where-Object { $fh3 -notmatch $_ }).Count -and $fh3 -notmatch $rawTone)"
 "cap:$(([regex]::Matches($fh2, $rowRx)).Count -eq 25 -and $fh2.Contains($olderTxt))"

@@ -114,10 +114,9 @@ $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 function Get-TrackerTask($id) { if ($id -eq 't8') { Update-KitTracking { param($t) $t.tasks['t8'].holdPromotion = 'late' } }; [pscustomobject]@{ status = 'promoted'; subtasks = @() } }   # a hold added mid-run
 $null = Invoke-Track add -Task t8 -Mrs 'g/web!6'; $null = Invoke-Track run
 "keep:$((Read-KitTracking).tasks['t8'].holdPromotion -eq 'late')"
-function Get-TrackerTask($id) { [pscustomobject]@{ status = $(if ($id -eq 't12') { 'closed' } else { 'promoted' }); subtasks = @() } }
+function Get-TrackerTask($id) { $global:n13 += $id -eq 't13'; [pscustomobject]@{ status = $(if ($id -eq 't12') { 'closed' } else { 'promoted' }); subtasks = @() } }
 $r12 = @(Invoke-Track add -Task t12 -Mrs 'g/web!2' -HoldPromotion Z1) + @(Invoke-Track run -Detail) | Out-String
-function Get-TrackerTask($id) { if ($id -eq 't13') { $global:n13++ }; [pscustomobject]@{ status = 'promoted'; subtasks = @() } }
-$null = Invoke-Track add -Task t13 -Mrs 'g/web!7' -HoldPromotion 'Z2'; $global:n13 = 0; $r13 = @(1, 2 | ForEach-Object { Invoke-Track run -Detail }) | Out-String
+$null = Invoke-Track add -Task t13 -Mrs 'g/web!7' -HoldPromotion Z; $global:n13 = 0; $r13 = 1, 2 | % { Invoke-Track run -Detail } | Out-String
 "stalehold:$($r12 -match "DONE t12: status 'closed'.+ \(Z1\)" -and $r12 -notmatch 'HOLD t12' -and (Read-KitTracking).tasks['t12'].done -and ([regex]::Matches($r13, 'HOLD t13')).Count -eq 2 -and !$global:n13)"
 $KitConf.TrackerType = 'fake'; $global:tdesc = 'Testing doc (human): https://d/h'; function Get-TrackerTask($id) { [pscustomobject]@{ name = 'n'; status = 'review'; subtasks = @(); description = $global:tdesc } }
 $null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invoke-Track run | Out-String; $s0 = @($global:sets)
@@ -129,7 +128,7 @@ Update-KitTaskIndex t11 { param($x) $x.track = @{ task = 't11'; mrs = @('web!3',
 $rt = Read-KitTracking; "mrref:$((@($rt.tasks['t10'].mrs) -join ',') -eq 'web!4' -and (@($rt.tasks['t11'].mrs) -join ',') -eq 'web!3')"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
-Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; stalehold: held + closed = done; 1 read per 30 min; nodoc: promoted only with both doc links, the human one alone held; mrref: group/repo!n, URL and repo!n stored once, old duplicates dedupe on read)' @('skip', 'once', 'hold', 'throttle', 'keep', 'stalehold', 'nodoc', 'mrref') 9
+Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; stalehold: closed = done, 1 read/30 min; nodoc: promoted only with both doc links, the human one alone held; mrref: group/repo!n, URL and repo!n stored once, old duplicates dedupe on read)' @('skip', 'once', 'hold', 'throttle', 'keep', 'stalehold', 'nodoc', 'mrref') 9
 $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
 $sv = pwsh @np $O supervise -Brief -Session me | Out-String
