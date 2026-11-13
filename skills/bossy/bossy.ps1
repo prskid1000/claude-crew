@@ -25,8 +25,8 @@ Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L49 board · L225 budget · L254 launch · L487 recover · L573 pause · L584 resume · L647 program · L698 param ·
   L704 track · L1021 supervise · L1325 report · L1404 audit · L1464 storage · L1674 bugbrief · L1776 cleanup · L1860 learn ·
-  L1890 decide · L2024 health · L2086 retro due · L2096 tidy · L2165 the kit origin's main and goodies · L2181 setup ·
-  L2248 guard-sendmessage
+  L1891 decide · L2025 health · L2087 retro due · L2097 tidy · L2166 the kit origin's main and goodies · L2182 setup ·
+  L2249 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1866,9 +1866,9 @@ function Invoke-Learn {
     [string]$Skill, [ValidateSet('friction', 'failure', 'defect-missed', 'false-positive', 'rule-violation', 'stale-env', 'flaky', 'idea', 'win')][string]$Kind,
     [string]$Text, [string]$Ref = '', [string]$Source = 'agent',
     [switch]$Show, [int]$Last = 30, [switch]$Stats, [switch]$Read, [switch]$History, [string]$Grep,
-    [string]$Lesson, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
+    [string]$Lesson, [string]$When, [string]$Do, [string]$Why, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
   )
-  if ($Stats -or $History -or $Lesson -or $Fixed -or $Bump -or $Trim) {   # the retro's tools (kitty, /tidy)
+  if ($Stats -or $History -or $Lesson -or $When -or $Fixed -or $Bump -or $Trim) {   # the retro's tools (kitty, /tidy)
     $admin = Assert-KitExtra Invoke-LearnAdmin 'learn -Stats / -History / -Lesson / -Bump / -Fixed / -Trim' 'kit-admin'; & $admin @PSBoundParameters; return
   }
   $file = Get-KitPath signals -Create
@@ -1882,7 +1882,8 @@ function Invoke-Learn {
     }
     return
   }
-  if (-not ($Skill -and $Kind -and $Text)) { 'need -Skill -Kind -Text (or -Read, -Show; kit-admin: -Stats, -History, -Lesson, -Bump, -Fixed, -Trim)'; exit 2 }
+  if (-not ($Skill -and $Kind -and $Text)) { 'need -Skill -Kind -Text (or -Read, -Show; kit-admin: -Stats, -History, -When -Do -Why, -Bump, -Fixed, -Trim)'; exit 2 }
+  if ($Text.Length -gt 400) { "learn: -Text $($Text.Length) chars > 400: what happened + what fixed it, one line"; exit 2 }
   Write-KitLog signals '' ([ordered]@{ skill = $Skill; kind = $Kind; text = $Text; ref = $Ref; source = $Source })
   "recorded ($Skill/$Kind)"
 }

@@ -40,7 +40,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) | trigger queue, boot / wake |
 | `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) | new |
 | `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep | new: trimmed months |
-| `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text` | `logs.keepDays`, then `logs-summary` (retired: kept) | cleanup trims |
+| `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) | cleanup trims |
 | `decisions-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` | cleanup trims |
 | `deploy-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` | cleanup trims |
 | `leases` | `kitlog` | `jsonl v0: at event kind` | keep, capped | none |
@@ -90,7 +90,7 @@ matching place decides). `kitbag.py lint` [ARTEFACT]: a kind without a row fails
 | `handoff` | `crafty.ps1 checkpoint -Brief` | `work/briefs/handoff-*.md` | `md ^# Resume brief:` |
 | `testing-goals` | `devtools.py cases render` | `work/docs/*-goals.md` | `md ^# Testing goals:` |
 | `testing-doc` | `devtools.py cases render` | `work/docs/*-human.md` | `md ^# Testing:` |
-| `published` | `devtools.py doc` (a kept copy of any published doc) | `work/docs/*` | `any` |
+| `published` | `devtools.py doc` (kept copies) | `work/docs/*` | `any` |
 | `testing-ai` | `devtools.py cases render` | `work/docs/*-ai.md` | `md ^# Testing doc \(AI\):` |
 | `qa-report` | `pokey.ps1 finalize` | `work/qa-runs/*/report.md` | `any` |
 | `qa-run` | `testy.js`, `pokey.ps1 results` (written once, deltas by id) | `work/qa-runs/*/*.json` | `any` |

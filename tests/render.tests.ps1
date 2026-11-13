@@ -251,6 +251,13 @@ Expect "prepare: one item (MR + doc + in test), the doc-less task left out, excl
   (Gold $pNotes "# Lead notes: $pDay-stg`n**Result:** 1 in, 1 left out · target stg-a`n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| T1 [Bug] Orders sort | from the guide | to check |`n`n## Left out`n`n| Task | Reason |`n|---|---|`n| $tB [Bug] No doc | no ""Testing doc (human):"" link |`n`n## Answers (newest last)") -and
   (Get-Content -Raw "$($pRun.runDir)/lead-notes.md") -match '(?m)^- \d\d:\d\d T1: which tenant\? -> madrid\r?$')
 $env:KIT_TRACKER_TYPE = $null
+# ---- lessons and signals (items 7, 18): one lesson shape (lint), signals <= 400 chars with a fixed key set (state lint)
+$null = pwsh -NoProfile -File $bossyPs learn -Skill kitty -Kind idea -Text ('z' * 401) 2>&1; $sigLongCode = $LASTEXITCODE
+$null = pwsh -NoProfile -File $bossyPs learn -Skill kitty -Kind idea -Text 'short one' 2>&1
+Add-Content (TkPath $k signals) '{"at":"2026-11-13T10:00:00Z","skill":"kitty","kind":"idea","text":"x","colour":"red"}'
+$sigLint = @(& $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json | Where-Object name -eq 'signals' | ForEach-Object problem) -join ' '
+$shape = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KB)'); import kitbag as k; print([bool(k.LESSON_SHAPE.match(x)) for x in ('- a case -> do it (why) (2×)', '- free text (2×)', '- a -> b (3x)', '- (fixed in kit) a -> b (why)')])"
+Expect "learn: -Text over 400 chars refused (2); signals: a key outside the schema is drift; LESSON-SHAPE wants '<when> -> <do> (<why>)', a count is no why ($shape)" ($sigLongCode -eq 2 -and $sigLint -match 'drift: key\(s\) colour' -and "$shape".Trim() -eq '[True, False, False, True]')
 # ---- wave brief (item 6): one spec -> brief + contracts + /buildy args
 Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13'; items = 'T-1 epic'; decisions = 'none'; localEnv = 'r3'; testEnv = 'stg'; kitDir = 'K'
   repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true })

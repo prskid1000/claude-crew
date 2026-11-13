@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1328 audit ·
-  L1437 registry · L1778 prose · L1929 sections · L2059 budget · L2083 goodies · L2590 state lint · L2775 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L635 lint · L1033 README graph · L1135 lint command · L1332 audit ·
+  L1441 registry · L1782 prose · L1933 sections · L2063 budget · L2087 goodies · L2594 state lint · L2779 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -293,6 +293,7 @@ TEXT_EXT = ('.md', '.ps1', '.psm1', '.py', '.js', '.mjs', '.json', '.html', '.tx
 JUNK_EXT = ('.apk', '.aab', '.log', '.zip', '.tmp')
 RESERVED = {'nul', 'con', 'prn', 'aux'}
 BLOCKS = ('Load when', 'Not when', 'Hands off to', 'Files')
+LESSON_SHAPE = re.compile(r'^- (?:\(fixed in kit\) )?\S.*? -> \S.*\((?!\d+[x×]\)).+?\)')   # - <when> -> <do> (<why>) [. <appended>] [(n×)]
 FUZZY = re.compile(r'(?<!")read (it |this )?(only )?when (you need|needed)|\(read only when', re.I)   # quoted = named, not used
 IMPORT_RE = re.compile(r'^@([\w./-]+\.md)\s*$', re.MULTILINE)
 
@@ -938,6 +939,9 @@ def lint(k, g=None, org_terms=None):
         n = len([l for l in m.group(2).splitlines() if l.startswith('- ')])
         if n > 40:
             bad('LESSONS-CAP', f'LESSONS.md ## {m.group(1)}', f'{n} lessons (cap 40): bossy.ps1 learn -Skill {m.group(1)} -Trim')
+        for l in m.group(2).splitlines():   # learn -When -Do -Why renders it
+            if l.startswith('- ') and m.group(1) != 'Decisions' and not LESSON_SHAPE.match(l):
+                bad('LESSON-SHAPE', f'LESSONS.md ## {m.group(1)}', f'not "- <when> -> <do> (<why>)": {l[:80]}')
     # ---- README graph sections current
     rd = k.texts.get('README.md', '')
     if '<!-- kit-graph:start' in rd and update_readme(rd, readme_sections(k, g)) != rd:
@@ -2728,7 +2732,7 @@ def state_lint(since_min=0):
                 out.append(('BAD', name, rel, 'unreadable (not one JSON object' + (' on its last line)' if form == 'jsonl' else ')')))
                 continue
             extra = sorted(k for k in o if k not in allow) if _ else []
-            if extra and form != 'jsonl':   # a writer added keys the schema does not list: drift (supervise WATCH)
+            if extra:   # a writer added keys the schema does not list: drift (supervise WATCH); jsonl: its last line
                 out.append(('BAD', name, rel, f'drift: key(s) {", ".join(extra[:6])} not in the schema ({name}: {spec}): add them to STATE.md or fix the writer'))
             miss = [k for k in req if k not in o]
             if miss:
