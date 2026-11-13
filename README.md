@@ -323,7 +323,7 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
   `-Detail`: each item and what stays, why; counts per repo: health line, dashboard); Claude session temp: reported only.
   `crafty.ps1 wt remove` prunes and deletes its branch by the same rule.
 - The PreToolUse guard blocks `git stash`, `--no-verify`, force-pushes to shared branches, pushes to a deploy branch (`repos[].deploys[].branch`: a deploy MR only, `bossy.ps1 deploy merge -Mr`), ungated builds, hand-started dev
-  servers, `adb kill-server`, a file or folder path as the command or opened by `start` / `ii` / `code` (a desktop app: use the Read tool), Git Bash `/d/...` paths handed to Windows programs (node, python, java, curl, ...) and edits
+  servers, `adb kill-server`, whole-drive searches (`find /`, `grep -r C:/`, `Get-ChildItem -Recurse C:\`: Glob / Grep on a scoped path), a file or folder path as the command or opened by `start` / `ii` / `code` (a desktop app: use the Read tool), Git Bash `/d/...` paths handed to Windows programs (node, python, java, curl, ...) and edits
   to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live edit: `KIT_LIVE_EDIT=1` in the session env or the command),
   a raw `glab mr create` / `gh pr create` without `<tag><id>` in title or branch and a raw `glab mr merge` / `gh pr merge` of an MR no
   task tracks (an MR with no task: `KIT_NO_TASK=<reason>`, logged). Deploys start only from a person's word. Never production. One

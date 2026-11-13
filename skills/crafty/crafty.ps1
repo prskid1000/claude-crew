@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L971 check · L1288 pipes · L1345 guard · L2115 dir ·
-  L2125 checkpoint · L2154 prior · L2192 tracker · L2214 task spec · L2363 host
+Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L971 check · L1288 pipes · L1345 guard · L2162 dir ·
+  L2172 checkpoint · L2201 prior · L2239 tracker · L2261 task spec · L2410 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1347,7 +1347,7 @@ function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-process self-test)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'
+  $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
@@ -1525,7 +1525,15 @@ if ($SelfTest) {
   @('B', 'sudo docker run x', $true, $mg), @('B', 'docker --context ci image build .', $true, $mg), @('B', 'docker container run x', $true, $mg),
   @('B', 'grep -rn pytest requirements.txt; pytest --version; pytest -h; docker ps; docker compose logs api', $false, $mg),
   @('B', 'rg "foo|pytest" src; grep -E "(pytest|docker run)" a; git commit -m "fix; pytest runs"; echo x | grep -n "; docker build" f', $false, $mg),
-  @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''docker compose up -d''', $false, $mg)
+  @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''docker compose up -d''', $false, $mg),
+  # whole-drive searches: denied; a scoped path, a pattern of / or a heredoc line passes
+  @('B', 'find / -ipath "*backend-test-reconciler*" 2>/dev/null', $true, $dr), @('B', 'find /c -name SKILL.md', $true, $dr), @('B', 'sudo find -L /d/ -type f | head', $true, $dr),
+  @('B', 'find C:\ -name x', $true, $dr), @('B', 'grep -rn reconciler /', $true, $dr), @('B', 'rg -l -g "*.md" reconciler C:/', $true, $dr), @('B', 'ls -R /c | grep x', $true, $dr),
+  @('B', 'bash -c "find / -name x"', $true, $dr), @('P', 'cmd /c dir /s C:\*.md', $true, $dr), @('P', 'Get-ChildItem -Recurse C:\ -Filter SKILL.md', $true, $dr),
+  @('P', 'gci D:\ -r -Include *.md', $true, $dr), @('P', 'where.exe /r C:\ claude.exe', $true, $dr), @('P', 'rg --files D:\', $true, $dr), @('B', 'find //c/.. -name x', $true, $dr), @('B', 'rg --max-columns 5 x / src', $true, $dr), @('B', 'rg --max-columns 5 / src', $false, $dr),
+  @('B', 'find . -name x; find ~/.claude/skills -name SKILL.md; find /d/Codebase/cursor -maxdepth 2 -name pom.xml; ls /; ls -la /c', $false, $dr),
+  @('B', "grep -rn / src; rg -n `"/`" skills; grep -e x /etc/hosts; git commit -m `"never find / -name x`"; cat > n.md <<'EOF'`nfind / -name x`nEOF", $false, $dr),
+  @('P', 'Get-ChildItem -Recurse D:\Codebase\.claude\skills -Filter SKILL.md; Get-ChildItem C:\; where.exe git; rg -l x C:\Users\x\.claude', $false, $dr)
   )
   $gh = 'browser on Windows'   # Git for Windows help is HTML; elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
@@ -1849,6 +1857,45 @@ if (($mp = Find-MsysPath $raw $tn)) { Deny "kit guard: $($mp[0]) gets the Git Ba
 # Git for Windows opens help in the owner's browser
 if ($IsWindows -and $cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(help\s+(?!-[ag]\b)\S|[\w-]+\s+([^|;&\r\n]*\s)?--help\b)') { Deny "git help <cmd> / git <cmd> --help opens the manual in the owner's browser on Windows: use git <cmd> -h (usage in the terminal)" }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (phoney.ps1 avd reset).' }
+# a whole-drive search outlives its agent at full CPU (an orphaned find / starved every local-env start)
+function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
+  if ($depth -gt 3) { return }
+  $rootRx = '^(/+(\.\.?/*)*\*?|/+(mnt/|cygdrive/)?[a-zA-Z]/*(\.\.?/*)*\*?|[a-zA-Z]:[\\/]*|[a-zA-Z]:[\\/]+[^\\/]*[*?][^\\/]*|\\+)$'
+  if ($tool -eq 'Bash') { $text = [regex]::Replace($text, '(?ms)<<-?\s*([''"]?)(\w+)\1([^\n]*)\n(.*?)^\s*\2\s*$', { param($hd) '<<doc' + $hd.Groups[3].Value }) }
+  foreach ($seg in (Split-CommandSegments $text $tool)) {
+    if (-not ($seg -match $segRx)) { continue }
+    $rest = $Matches[3]; $leaf = ($Matches[2].Trim('''"') -replace '^.*[\\/]', '' -replace '\.(exe|cmd)$', '').ToLower()
+    if ($leaf -match '^((ba|z|da)?sh|pwsh|powershell)$') {
+      $inTool = if ($leaf -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }
+      foreach ($im in [regex]::Matches($rest, '(?:^|\s)(?:-c|-Command)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) { if (($hit = Find-DriveRootSearch ($im.Groups[1].Value + $im.Groups[2].Value) $inTool ($depth + 1))) { return $hit } }
+      continue
+    }
+    $words = @([regex]::Matches($rest, '"[^"]*"|''[^'']*''|\S+') | ForEach-Object { $_.Value.Trim('''"') })
+    if ($leaf -eq 'cmd') { $ci = [array]::FindIndex([string[]]$words, [Predicate[string]] { param($w) $w -match '^/+[ck]$' }); if ($ci -ge 0 -and ($hit = Find-DriveRootSearch ($words[($ci + 1)..($words.Count)] -join ' ') 'cmd' ($depth + 1))) { return $hit }; continue }
+    $paths = @()
+    if ($leaf -eq 'find') {   # paths come before the first expression word
+      $i = 0; while ($i -lt $words.Count -and $words[$i] -cmatch '^-([HLP]|O\d|D)$') { $i += 1 + [int]($words[$i] -eq '-D') }
+      while ($i -lt $words.Count -and $words[$i] -notmatch '^(-|\\?\(|!)') { $paths += $words[$i]; $i++ }
+    } elseif ($leaf -match '^([ef]?grep|rg|ag|ack|fd)$') {   # pattern first unless -e / -f / --files
+      if ($leaf -match 'grep' -and -not ($words -cmatch '^(-[a-zA-Z]*[rR][a-zA-Z]*|--(dereference-)?recursive|--directories=recurse)$')) { continue }
+      $pos = @(); $given = $false
+      for ($i = 0; $i -lt $words.Count; $i++) {
+        $w = $words[$i]
+        if ($w -cmatch '^(-[ef]|--regexp|--file|--files)$') { $given = $true }
+        if ($w -cmatch '^(-[efgtTmABCMjd]|--(regexp|file|glob|iglob|type|type-not|max-count|max-depth|context|before-context|after-context|include|exclude|exclude-dir|include-dir|max-columns|max-filesize|threads|sort|sortr|colors|engine|replace))$') { $i++; continue }
+        if ($w -notmatch '^-') { $pos += $w }
+      }
+      $paths = if ($given) { $pos } else { @($pos | Select-Object -Skip 1) }
+    } elseif ($leaf -match '^(ls|dir|gci|get-childitem)$') {
+      $rec = @($words | Where-Object { $_ -cmatch '^(-[a-zA-Z]*R[a-zA-Z]*|--recursive)$' -or $_ -match '^(/s|-rec\w*)$' -or ($tool -ne 'Bash' -and $_ -match '^-r$') }).Count
+      if ($rec) { $paths = @($words | Where-Object { $_ -notmatch '^-' }) }
+    } elseif ($leaf -eq 'where') {
+      $ri = [array]::FindIndex([string[]]$words, [Predicate[string]] { param($w) $w -match '^/r$' }); if ($ri -ge 0 -and $ri + 1 -lt $words.Count) { $paths = @($words[$ri + 1]) }
+    }
+    if (($root = @($paths | Where-Object { $_ -match $rootRx })[0])) { return @($leaf, $root) }
+  }
+}
+if (($ds = Find-DriveRootSearch $raw $tn)) { Deny "kit guard: that $($ds[0]) searches a whole drive ($($ds[1])): it runs for hours at full CPU and outlives you (an orphaned find / starved every local-env start). Search a scoped path: the Glob / Grep tools on the repo, the kit or ~/.claude (e.g. Glob **/SKILL.md in ~/.claude/skills), or name the folder (find <repo> -name x)." }
 $hl = "GUI windows on the owner's screen are not allowed (headless rule)."
 if ($cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?(gh|glab)(\.exe)?\s+(browse\b(?![^|;&\r\n]*\s(-n|--no-browser)\b)|(?!(run|workflow)\s)[^|;&\r\n]*\s(--web|-w)(?=[\s=;|&)]|$))') { Deny "gh / glab --web, -w and gh browse open the owner's browser: read it in the terminal (gh pr view <n>, glab mr view <n>, --json). $hl" }
 # raw MR create / merge skips track add (KIT_NO_TASK=<reason>)
