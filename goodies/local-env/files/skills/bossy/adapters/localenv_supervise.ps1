@@ -51,8 +51,8 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
     $down = @($ev.services | Where-Object { $d0 = $_.service; $_.state -notmatch '^up' -and @($holders | Where-Object { $d0 -in @($_.services) }).Count })
     foreach ($sv in @($ev.services | Where-Object { $_.state -match '^up' })) {
       $hl = @($holders | Where-Object { $sv.service -in @($_.services) }); $gl = @($hl | Where-Object { $null -ne $_.graceLeft } | ForEach-Object graceLeft | Sort-Object)[0]
-      $key = if ($sv.port) { "$($sv.service):$($sv.port)" } else { "$($ev.env)/$($sv.service)" }; if (-not $up.Contains($key)) { $up[$key] = @{ svc = $sv.service; envs = @(); who = @(); gl = @(); gb = 0 } }
-      $u = $up[$key]; $u.envs += $ev.env; $u.who += @($hl | ForEach-Object { if ($_.agent) { $_.agent } else { $_.who } }); $u.gl += @($gl | Where-Object { $null -ne $_ }); $u.gb = [math]::Max([double]$u.gb, [double]$sv.gb)
+      $key = if ($sv.port) { "$($sv.service):$($sv.port)" } else { "$($ev.env)/$($sv.service)" }; if (-not $up.Contains($key)) { $up[$key] = @{ svc = $sv.service; envs = @(); who = @(); gl = @(); gb = 0; ext = $false } }
+      $u = $up[$key]; $u.envs += $ev.env; $u.ext = $u.ext -or "$($sv.state)" -match 'external'; $u.who += @($hl | ForEach-Object { if ($_.agent) { $_.agent } else { $_.who } }); $u.gl += @($gl | Where-Object { $null -ne $_ }); $u.gb = [math]::Max([double]$u.gb, [double]$sv.gb)
       $why = @($sv.need); $h1 = @($ev.holds | Where-Object { $sv.service -in @($_.services) -and $_.at -and ($now - [datetime]$_.at).TotalMinutes -ge 30 })[0]
       if ($h1 -and $why.Count -and -not @($why | Where-Object { $_ -notmatch '^hold:' }).Count) { $fl.Add([pscustomobject]@{ level = 'WATCH'; what = "$($ev.env) $($sv.service) kept up only by $($h1.who)'s hold for $([int]($now - [datetime]$h1.at).TotalMinutes) min (no lease)"; action = "Done with it: & $($KitCmd.local) unhold -Env $($ev.env) -Agent $($h1.who)" }) }
     }
@@ -60,7 +60,7 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
     if ($down.Count) { $rows.Add([pscustomobject]@{ name = "$($ev.env) · $(($down | ForEach-Object service) -join ' · ') (down)"; by = "$(@($down | ForEach-Object { if ("$($_.why)" -match 'memory|RAM') { 'memory' } elseif ($_.why) { "$($_.why)".Substring(0, [math]::Min(30, "$($_.why)".Length)) } else { $_.state } } | Select-Object -Unique) -join ', ')"; gb = 0 }) }
   }
   $ur = @(foreach ($u in $up.Values) { $g = @($u.gl | Sort-Object)[0]
-    [pscustomobject]@{ name = $(if ($u.envs.Count -gt 1) { "$($u.svc) ($($u.envs -join ', '))" } else { "$($u.envs[0]) · $($u.svc)" }); by = "$((@($u.who) | Select-Object -Unique) -join ', ')$(if ($null -ne $g) { " (grace $g min)" })"; gb = $u.gb } }); if ($ur.Count) { $rows.InsertRange(0, [object[]]$ur) }
+    [pscustomobject]@{ name = $(if ($u.envs.Count -gt 1) { "$($u.svc) ($($u.envs -join ', '))" } else { "$($u.envs[0]) · $($u.svc)" }); by = "$((@($u.who) | Select-Object -Unique) -join ', ')$(if ($null -ne $g) { " (grace $g min)" })"; gb = $u.gb; shared = $u.ext -or $u.envs.Count -gt 1 } }); if ($ur.Count) { $rows.InsertRange(0, [object[]]$ur) }   # shared: an external or multi-env service, always on, never an orphan
   [pscustomobject]@{ rows = @($rows); flags = @($fl); owner = @($own) }
 }
 # ---- pause: bossy.ps1 pause: kit-started services no live lease or hold needs stop now (paused agents' leases are only in grace)

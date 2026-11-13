@@ -22,6 +22,11 @@ try {
 } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: view, status, comment, create (no list: the parent's), list on recorded answers"
+$global:fx.Insert(0, 'task view P2', '{"id":"P2","list":{"id":"L7"}}'); $global:fx.Insert(0, 'task view P3', '{"id":"P3","list":{"id":"L9"}}'); $global:fx['task create --list-id L7 .*--parent P2'] = '{"id":"C7"}'; $global:fx['task create --list-id L9 --name w .*--parent P4'] = '{"id":"C8"}'; $global:log.Clear()
+$sw = [IO.StringWriter]::new(); $se = [Console]::Error; [Console]::SetError($sw)
+try { $xw = __TrA 'create' @{ list = 'L9'; name = 'y'; description = 'd'; parent = 'P2' }; $xe = try { $null = __TrA 'create' @{ list = 'L9'; name = 'z'; description = 'd'; parent = 'P3' }; 'no throw' } catch { "$_" }; $xv = __TrA 'create' @{ list = 'L9'; name = 'w'; description = 'd'; parent = 'P4' } } finally { [Console]::SetError($se) }
+$pass = $xw.id -eq 'C7' -and $xv.id -eq 'C8' -and "$sw" -match 'parent P2 is in list L7, not L9' -and $xe -match 'subtask of P3 failed, nothing created' -and -not ($global:log -match 'create --list-id L9 --name z(?!.*--parent)'); if (-not $pass) { $failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: -Parent in another list -> created in the parent's list, said on stderr; a failed parent look-up keeps -List; a failed subtask create throws, never a silent top-level task ($xe)"
 $global:log.Clear(); try { $null = Set-TrackerKitComment C1 qa-result 'round two'; $pass = ($global:log -join "`n") -match '(?m)^comment edit 55 round two$' -and ($global:log -join "`n") -notmatch 'comment (add|delete)|56' } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: a kit comment's next round edits it (comment edit <id>); a person's comment untouched"

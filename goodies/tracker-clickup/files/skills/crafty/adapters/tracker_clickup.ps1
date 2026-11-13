@@ -25,7 +25,10 @@ Register-KitAdapter 'tracker' 'clickup' @{
   'comment-edit' = { param($a) __TrCli 'clickup' @('comment', 'edit', $a.comment, (ConvertTo-KitPlainText $a.text)) }   # a kit comment's next round (lib.ps1 Set-TrackerKitComment)
   'comment-delete' = { param($a) __TrCli 'clickup' @('comment', 'delete', $a.comment, '--yes') }
   'create' = { param($a)
-    $lid = $a.list; if (-not $lid -and $a.parent -and -not $__trDry) { $lid = [string](__TrJson (__TrCli 'clickup' @('task', 'view', $a.parent, '--json'))).list.id }   # no list: the parent's
+    # a subtask lives in its parent's list (ClickUp "subtasks in multiple lists" off): no list or another list -> the parent's, said on stderr
+    $lid = $a.list; $plid = if ($a.parent -and -not $__trDry) { try { [string](__TrJson (__TrCli 'clickup' @('task', 'view', $a.parent, '--json'))).list.id } catch { if (-not $lid) { throw } } }   # a failed look-up with -List: that list
+    if ($plid -and $lid -and $plid -ne $lid) { [Console]::Error.WriteLine("WARNING: tracker: parent $($a.parent) is in list $plid, not ${lid}: the subtask goes to list $plid") }
+    if ($plid) { $lid = $plid }
     if (-not $lid -and -not $__trDry) { throw 'tracker (clickup) create: no list (-List, tracker.list) and no parent to take it from' }
     $c = @('task', 'create', '--list-id', $lid, '--name', $a.name, '--markdown-description', $a.description, '--json'); $as = $a.assignee
     if ($a.priority) { $c += @('--priority', $a.priority) }
@@ -35,10 +38,8 @@ Register-KitAdapter 'tracker' 'clickup' @{
     }
     if ($as) { $c += @('--assignee', $as) }
     if ($__trDry) { $null = __TrCli 'clickup' ($c + @(if ($a.parent) { '--parent', $a.parent })); return [pscustomobject]@{ id = '<new>'; url = ''; assigned = [bool]$as } }
-    $t = if ($a.parent) { try { __TrJson (__TrCli 'clickup' ($c + @('--parent', $a.parent))) } catch { $null } }
-    $dropped = $a.parent -and -not $t.id; if (-not $t.id) { $t = __TrJson (__TrCli 'clickup' $c) }
+    $t = if ($a.parent) { try { __TrJson (__TrCli 'clickup' ($c + @('--parent', $a.parent))) } catch { throw "tracker (clickup) create: subtask of $($a.parent) failed, nothing created: $($_.Exception.Message)" } } else { __TrJson (__TrCli 'clickup' $c) }   # never a silent top-level task
     if (-not $t.id) { return }
-    if ($dropped) { $null = Add-TrackerComment $t.id "Related: $(Get-TrackerUrl $a.parent) (not its subtask: it is in another list)." }
     [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); assigned = [bool]$as }
   }
   'describe' = { param($a) __TrCli 'clickup' @('task', 'edit', $a.id, '--markdown-description', $a.text) }

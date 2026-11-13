@@ -1404,7 +1404,7 @@ function hl(line, lg) { const h = HL[lg] || HL.md, rx = new RegExp(`(${h[0].sour
  return out + esc(line.slice(last)) }
 let srcWanted = null, more = 0;
 function code(n) {
- const kitL = D.home ? `<a target="_blank" rel="noopener" href="${D.home}">kit repo</a><a target="_blank" rel="noopener" href="${D.readme}">README</a>` : '';
+ const kitL = D.home ? `<a target="_blank" rel="noopener" href="${esc(D.home)}">kit repo</a><a target="_blank" rel="noopener" href="${esc(D.readme)}">README</a>` : '';
  if (!n) { $('#meta').style.display = kitL ? 'block' : 'none'; $('#meta').innerHTML = kitL; sb.innerHTML = '<div class="empty">Click a node on the graph or pick one from the parts list: its source span shows here, with its line marked.</div>'; return }
  const f = D.files[n.g].id, real = !f.startsWith('('), abs = (D.kit + '/' + f).replace(/\\/g, '/'), ln = n.ln || 1, desc = n.d || (window.KF_DESC || [])[n.i] || '';
  $('#sh').innerHTML = svgI(KD[n.kk][1], n.col, 18) + `<span style="overflow-wrap:anywhere;min-width:0">${esc(n.l)}</span><small style="color:var(--mut);font-weight:400">${esc(KD[n.kk][2])}</small>`;
@@ -1495,14 +1495,14 @@ function setIntro(on) { $('#intro').hidden = !on; $('#lst').style.bottom = on &&
 $('#help').onclick = () => setIntro($('#intro').hidden); $('#ix').onclick = () => setIntro(false);
 const home = N.find(n => n.k === 'file' && D.files[n.g].id === 'skills/bossy/SKILL.md');
 $('#ib').onclick = () => home && pick(home);
-if (D.home) $('#il').insertAdjacentHTML('afterend', `<p><a href="${D.home}" target="_blank" rel="noopener">kit repo</a> · <a href="${D.readme}" target="_blank" rel="noopener">README</a></p>`);
+if (D.home) $('#il').insertAdjacentHTML('afterend', `<p><a href="${esc(D.home)}" target="_blank" rel="noopener">kit repo</a> · <a href="${esc(D.readme)}" target="_blank" rel="noopener">README</a></p>`);
 cv.setAttribute('aria-label', `Kit map: ${D.counts.nodes} parts and ${D.counts.edges} links. Use the parts list (the list button or Tab) or the search to pick one; arrow keys step through its neighbours.`);
 // deep links: #sel=<node id>&level=<0-2>&q=<search>, mirrored on every change
 function toHash() { const p = new URLSearchParams(); if (sel) p.set('sel', sel.id); if (LVL) p.set('level', LVL); const q = $('#q').value.trim(); if (q) p.set('q', q);
  const h = p.toString(); if (h !== location.hash.slice(1)) history.replaceState(null, '', h ? '#' + h : location.pathname + location.search) }
-function fromHash() { const p = new URLSearchParams(location.hash.slice(1)), L = +p.get('level') || 0, q = p.get('q') || '', n = p.get('sel') && N.find(m => m.id === p.get('sel'));
- if (L !== LVL) { LVL = Math.max(0, Math.min(2, L)); rebuild(); fitView() } $('#q').value = q; if (q) search(q); if (n) { select(n); center(n) } return !!(n || q || L) }
-addEventListener('hashchange', fromHash);
+function fromHash(nav) { const p = new URLSearchParams(location.hash.slice(1)), L = +p.get('level') || 0, q = p.get('q') || '', n = p.get('sel') && N.find(m => m.id === p.get('sel'));
+ if (L !== LVL) { LVL = Math.max(0, Math.min(2, L)); rebuild(); fitView() } $('#q').value = q; if (q || nav) search(q); if (n) { select(n); center(n) } else if (nav && sel) select(null); return !!(n || q || L) }   // nav: back / forward clears what the hash drops
+addEventListener('hashchange', () => fromHash(true));
 rebuild(); for (let i = 0; i < 420; i++) tick(); alpha = 0; size(); if (LS.get('open', false) && !narrow()) openSide(curTab);   // size() fits the whole graph (auto)
 fillList(''); setList(LS.get('view', narrow() ? 'list' : 'graph') === 'list'); setIntro(LS.get('intro', true));
 if (!fromHash() && home) { sel = home; neigh(home); toHash() }   // a first look: the coordinator and its links
