@@ -47,6 +47,11 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | final-report | an agent's last reply | the "Final reports" JSON of its role (`render final-report`) | 200w 25sw | link |
 | owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
 ## Wave brief
+Rendered (`devtools.py render wave-brief <spec.json> <brief.md>`, also `.contracts.md` + `.args.json`). Spec: `{ name, date?,
+items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, linkFrom, migrations }], agents: [{ id, items, area,
+repos, migrationRange, services, complex, note?, dependsOn?, migrations?, model?, effort? }], overlaps, branch, tracker,
+contracts: [{ name, type, producer, consumers, order, compatible }], openQuestions: [{ question, blocks, answers }], mandate, mode,
+holdMerge? }`.
 ```markdown
 # Wave brief: <wave name>, <date>
 **Read first:** `<kit>/skills/crafty/SKILL.md`; this brief wins where they differ.

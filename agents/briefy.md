@@ -40,10 +40,10 @@ Non-negotiables:
 4. **Contracts** (`<brief>.contracts.md`): per crossing field or endpoint: name, type, producer area, consumers, merge and deploy
    order, backward-compatible or not.
 5. `## openQuestions` (one per line: question, what it blocks, who answers: rechy / owner); empty -> "none".
-6. Write the brief where `crafty.ps1 dir -Agent briefy -Item <run> -Name wave-brief.md` says; check it with
-   `kitbag.py prose --kind wave-brief <brief>`; return the launch args `{ brief, agents:[{id, items, area, dependsOn?,
-   migrations: true when the area adds or changes one}], mode: 'feature' | 'bugfix' | 'resume', mandate, holdMerge?,
-   openQuestions: [its rechy lines] }`.
+6. Write the spec (JSON, templates.md "Wave brief" fields), never the brief: `python -X utf8 <kit>/skills/crafty/devtools.py
+   render wave-brief <spec.json> <brief>` (`<brief>` = `crafty.ps1 dir -Agent briefy -Item <run> -Name wave-brief.md`)
+   writes the brief, `<brief>.contracts.md` and `<brief>.args.json` (the /buildy launch args); check the brief with
+   `kitbag.py prose --kind wave-brief <brief>`; return the args file's path.
 7. **Tasks** (new ones only): `crafty.ps1 tracker create -Spec <json>` each (fields: crafty.ps1 "task spec"; items = its
    item table rows, `desc` = Title plus ports; links = full URLs, never a local path); the item table `items.md` (`ID | Area
    | Title`, optional Sev, Ports) beside the brief with `{ agents: [{ id: <Area>, task }] }` in a `.json`, then `bossy.ps1

@@ -251,5 +251,36 @@ Expect "prepare: one item (MR + doc + in test), the doc-less task left out, excl
   (Gold $pNotes "# Lead notes: $pDay-stg`n**Result:** 1 in, 1 left out · target stg-a`n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| T1 [Bug] Orders sort | from the guide | to check |`n`n## Left out`n`n| Task | Reason |`n|---|---|`n| $tB [Bug] No doc | no ""Testing doc (human):"" link |`n`n## Answers (newest last)") -and
   (Get-Content -Raw "$($pRun.runDir)/lead-notes.md") -match '(?m)^- \d\d:\d\d T1: which tenant\? -> madrid\r?$')
 $env:KIT_TRACKER_TYPE = $null
+# ---- wave brief (item 6): one spec -> brief + contracts + /buildy args
+Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13'; items = 'T-1 epic'; decisions = 'none'; localEnv = 'r3'; testEnv = 'stg'; kitDir = 'K'
+  repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true })
+  contracts = @([ordered]@{ name = 'GET /orders?sort'; type = 'query'; producer = 'X2'; consumers = 'X1'; order = 'X2 first'; compatible = $true }); openQuestions = @([ordered]@{ question = 'Which index?'; blocks = 'A2'; answers = 'rechy' }); mandate = @('sort orders'); mode = 'feature' })
+$wbo = Dt render wave-brief "$wd/wb.json" "$wd/wb.md"; $wbArgs = Get-Content -Raw "$wd/wb.args.json" | ConvertFrom-Json
+Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold (Get-Content -Raw "$wd/wb.md") @"
+# Wave brief: orders-sort, 2026-11-13
+**Read first:** ``K/skills/crafty/SKILL.md``; this brief wins where they differ.
+**Items:** T-1 epic · **Decisions:** none; final, don't re-ask (a NEW choice -> crafty D1).
+**Local env:** r3 · **Test env after deploy:** stg (never production).
+## Repos
+| Repo | Main checkout | Target | Link deps from | Migrations |
+|---|---|---|---|---|
+| web | R/web | main |  | none |
+## Agents
+| Agent | Items | Area (screens / packages / files) | Repos | Migration range | Services (leased, nothing else) | Complex? |
+|---|---|---|---|---|---|---|
+| X1 | A1 | orders screen | web |  | api | yes: new grid |
+| X2 | A2 | api sort | api |  |  | no |
+
+**Overlaps:** none · **Contracts:** ``orders-sort.contracts.md`` (1 crossing)
+**Branch:** ``f/<tag><task>-<slug>``, worktree name = agent id · **Tracker:** —.
+Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
+
+## openQuestions
+Which index? · blocks A2 · answers: rechy
+## Findings (rechy)
+none yet
+## Rule changes during the wave (newest last)
+"@) -and (Gold (Get-Content -Raw "$wd/wb.contracts.md") "# Contracts: orders-sort`n| Field / endpoint | Type | Producer | Consumers | Merge / deploy order | Backward-compatible |`n|---|---|---|---|---|---|`n| GET /orders?sort | query | X2 | X1 | X2 first | yes |`n## Rule changes during the wave (newest last)") -and
+  $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
 Remove-TestKit $k
 Complete-Tests

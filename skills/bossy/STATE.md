@@ -84,7 +84,7 @@ matching place decides). `kitbag.py lint` [ARTEFACT]: a kind without a row fails
 | `reference` | free: kitty (kit source) | — | — |
 | `lesson` | `bossy.ps1 learn` | — | — |
 | `history` | `bossy.ps1 learn -History` | — | — |
-| `wave-brief` | free: briefy (item 6: `brief render`) | `work/briefs/*.md` | `md ^# (Wave brief\|Bugfix wave\|Contracts)` |
+| `wave-brief` | `devtools.py render wave-brief` | `work/briefs/*.md` | `md ^# (Wave brief\|Bugfix wave\|Contracts)` |
 | `bug-brief` | `bossy.ps1 bugbrief` | `work/briefs/*.md` | `md ^# Bug-fix brief:` |
 | `resume-brief` | `crafty.ps1 checkpoint`, `bossy.ps1 recover` | `work/briefs/*.md` | `md ^# Resume brief:` |
 | `handoff` | `crafty.ps1 checkpoint -Brief` | `work/briefs/handoff-*.md` | `md ^# Resume brief:` |

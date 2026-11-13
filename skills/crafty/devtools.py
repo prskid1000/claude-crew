@@ -10,7 +10,7 @@
  python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch: title
   (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec; the old form `mr <wt> "<title>" <body.md>` still works
  python -X utf8 devtools.py render <kind> <spec.json> [<out file>]   an artefact rendered from its spec (kinds: mr-title mr-body commit
-  comment-solution comment-status final-report retro; crafty.ps1 wt commit -Spec)
+  comment-solution comment-status final-report retro wave-brief; crafty.ps1 wt commit -Spec)
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
@@ -29,7 +29,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L46 config · L80 run · L168 tracker · L371 git host · L454 MR · L621 merge · L901 docs · L1056 publish · L1414 render ·
-  L1696 plugins · L1710 keepboth · L1729 selftest · L2141 CLI
+  L1735 plugins · L1749 keepboth · L1768 selftest · L2180 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1631,7 +1631,8 @@ def render_status(s):
 
 
 SPEC_NEEDS = {'mr-body': ('type', 'change', 'summary'), 'mr-title': ('type', 'change'), 'commit': ('type', 'change'),
-              'comment-solution': ('solution',), 'comment-status': ('status', 'why'), 'final-report': ('role',), 'retro': ('date',)}
+              'comment-solution': ('solution',), 'comment-status': ('status', 'why'), 'final-report': ('role',), 'retro': ('date',),
+              'wave-brief': ('name', 'agents', 'mandate')}
 
 
 def spec_gaps(s, kind):
@@ -1664,8 +1665,41 @@ def render_retro(s):
                          + sec('Rejected', ['Signal', 'Why'], ('signal', 'why'), r) + ([f'**Lint:** {s["lint"]}'] if s.get('lint') else [])) + '\n'
 
 
+def render_wave_brief(s):
+    """templates.md "Wave brief" from briefy's spec; the contracts file and the /buildy args come from the same spec (wave_files)."""
+    yn = lambda v: f'yes: {v}' if isinstance(v, str) and v else ('yes' if v else 'no')
+    rows = lambda keys, xs: [[str(x.get(k) or '') for k in keys] for x in xs]
+    qs = [f'{q.get("question", "")} · blocks {q.get("blocks") or "—"} · answers: {q.get("answers") or "owner"}' for q in s.get('openQuestions') or []]
+    return '\n'.join([
+        f'# Wave brief: {s["name"]}, {s.get("date") or time.strftime("%Y-%m-%d")}',
+        f'**Read first:** `{s.get("kitDir") or "<kit>"}/skills/crafty/SKILL.md`; this brief wins where they differ.',
+        f'**Items:** {s.get("items") or "—"} · **Decisions:** {s.get("decisions") or "none"}; final, don\'t re-ask (a NEW choice -> crafty D1).',
+        f'**Local env:** {s.get("localEnv") or "none"} · **Test env after deploy:** {s.get("testEnv") or "—"} (never production).',
+        '## Repos', _table(['Repo', 'Main checkout', 'Target', 'Link deps from', 'Migrations'], rows(('repo', 'checkout', 'target', 'linkFrom', 'migrations'), s.get('repos') or [])),
+        '## Agents', _table(['Agent', 'Items', 'Area (screens / packages / files)', 'Repos', 'Migration range', 'Services (leased, nothing else)', 'Complex?'],
+                            [r + [yn(a.get('complex'))] for r, a in zip(rows(('id', 'items', 'area', 'repos', 'migrationRange', 'services'), s['agents']), s['agents'])]), '',
+        f'**Overlaps:** {s.get("overlaps") or "none"} · **Contracts:** `{s["name"]}.contracts.md` ({len(s.get("contracts") or [])} crossing)',
+        f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, worktree name = agent id · **Tracker:** {s.get("tracker") or "—"}.',
+        'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
+        '## openQuestions', *(qs or ['none']), '## Findings (rechy)', 'none yet', '## Rule changes during the wave (newest last)']) + '\n'
+
+
+def wave_files(s, brief_path):
+    """{path: text} beside the brief: <name>.contracts.md and <name>.args.json (/buildy launch args); same spec, no retyping."""
+    stem = os.path.splitext(brief_path)[0]
+    con = '\n'.join([f'# Contracts: {s["name"]}', _table(['Field / endpoint', 'Type', 'Producer', 'Consumers', 'Merge / deploy order', 'Backward-compatible'],
+                     [[str(c.get(k) or '') for k in ('name', 'type', 'producer', 'consumers', 'order')] + ['yes' if c.get('compatible') else 'no'] for c in s.get('contracts') or []])
+                     if s.get('contracts') else 'none', '## Rule changes during the wave (newest last)']) + '\n'
+    keep = ('id', 'items', 'area', 'note', 'complex', 'model', 'effort', 'dependsOn', 'migrations')
+    args = {'brief': brief_path.replace('\\', '/'), 'agents': [{k: a[k] for k in keep if a.get(k) not in (None, '', [], False)} for a in s['agents']],
+            'mode': s.get('mode') or 'feature', 'mandate': s['mandate'],
+            'openQuestions': [q['question'] for q in s.get('openQuestions') or [] if (q.get('answers') or '') == 'rechy'],
+            **({'holdMerge': s['holdMerge']} if s.get('holdMerge') else {}), **({'kitDir': s['kitDir']} if s.get('kitDir') else {})}
+    return {f'{stem}.contracts.md': con, f'{stem}.args.json': json.dumps(args, ensure_ascii=False, indent=1) + '\n'}
+
+
 RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': render_commit, 'comment-solution': render_solution,
-             'comment-status': render_status, 'final-report': render_report, 'retro': render_retro}   # devtools.py render <kind> <spec.json>; comment / finish --spec
+             'comment-status': render_status, 'final-report': render_report, 'retro': render_retro, 'wave-brief': render_wave_brief}   # devtools.py render <kind> <spec.json>; comment / finish --spec
 
 
 def spec_text(path, kind, task=''):
@@ -1683,10 +1717,15 @@ def render_cmd(a):
         print(f'usage: devtools.py render {"|".join(RENDERERS)} <spec.json>', file=sys.stderr)
         return 2
     txt = spec_text(a[1], a[0]).rstrip('\n') + '\n'
+    if a[0] == 'wave-brief' and len(a) < 3:
+        print('usage: devtools.py render wave-brief <spec.json> <brief.md> (contracts + /buildy args land beside it)', file=sys.stderr)
+        return 2
     if len(a) > 2:   # an out file: written, its path printed
-        with open(a[2], 'w', encoding='utf-8', newline='\n') as fh:
-            fh.write(txt)
-        print(a[2])
+        extra = wave_files(json.loads(open(a[1], encoding='utf-8-sig').read()), a[2]) if a[0] == 'wave-brief' else {}
+        for path, body in {a[2]: txt, **extra}.items():
+            with open(path, 'w', encoding='utf-8', newline='\n') as fh:
+                fh.write(body)
+            print(path)
         return 0
     sys.stdout.flush()
     sys.stdout.buffer.write(txt.encode('utf-8'))   # LF on every OS (a commit message, a golden file)
