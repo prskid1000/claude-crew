@@ -10,7 +10,7 @@ description between <!-- kit:delivery --> / <!-- kit:triage --> markers, each su
 checklist, else an <!-- kit:items --> description section), one comment per milestone (all merged, deployed to <env>, all closed).
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L18 triage · L62 render · L154 rollup · L247 items · L291 close
+Sections: L18 triage · L62 render · L154 rollup · L247 items · L292 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -272,7 +272,7 @@ function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
   $mc = @{}; if ($x.itemsMrs -is [Collections.IDictionary]) { foreach ($k in $x.itemsMrs.Keys) { $mc[$k] = $x.itemsMrs[$k] } }; $named = @{}
   $look = -not $x.itemsReadAt -or ((Get-Date) - [datetime]$x.itemsReadAt).TotalMinutes -ge [double](Get-KitSetting 'track.rollupMinutes' 30)
   foreach ($ref in @(Get-KitTrackRefs $tr.mrs)) {
-    if ($look -and -not $mc.Contains("$ref") -and "$ref" -match '^(?<r>[^!]+)!(?<i>\d+)$') {   # merged MRs only, each read once
+    if (($look -or $Force) -and -not $mc.Contains("$ref") -and "$ref" -match '^(?<r>[^!]+)!(?<i>\d+)$') {   # merged MRs only, each read once
       $pp = ProjPath $Matches.r; $mv = if ($pp) { try { Invoke-HostVerb 'mr.get' @{ repo = $pp; n = $Matches.i } } catch { } }
       if ("$($mv.state)" -eq 'merged') { $mc["$ref"] = @(Get-KitMrNamedIds $ids $mv) }
     }
@@ -280,9 +280,10 @@ function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
     foreach ($y in @(if ($one) { 'MRs' } else { $mc["$ref"] })) { if ($y) { $named[$y] = @($named[$y]) + @($u) | Where-Object { $_ } } }
   }
   $all = @(Get-KitTrackRefs $tr.mrs | ForEach-Object { if ("$_" -match '^(?<r>[^!]+)!(?<i>\d+)$' -and ($pp = ProjPath $Matches.r)) { try { Invoke-HostVerb 'mr.url' @{ repo = $pp; n = $Matches.i } } catch { } } })
-  $items = @($ids | ForEach-Object { [pscustomobject]@{ text = (Format-KitItemText $_ $dsc[$_] $(if ($named[$_]) { $named[$_] } elseif ($tr.done) { $all })); done = [bool]($tr.done -or (-not $one -and $named.Contains($_))) } })
+  $allIn = $one -and @(Get-KitTrackRefs $tr.mrs).Count -and -not @(Get-KitTrackRefs $tr.mrs | Where-Object { -not $mc.Contains("$_") }).Count   # the one MRs item: resolved once every MR merged, even linked late (an Items list: by the ids its MRs name)
+  $items = @($ids | ForEach-Object { [pscustomobject]@{ text = (Format-KitItemText $_ $dsc[$_] $(if ($named[$_]) { $named[$_] } elseif ($tr.done -or $allIn) { $all })); done = [bool]($tr.done -or $allIn -or (-not $one -and $named.Contains($_))) } })
   $sig = Get-KitRollupHash (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
-  if ($look) { Update-KitTaskIndex $Task { param($y) $y.itemsReadAt = (Get-Date).ToString('o'); $y.itemsMrs = $mc } }; if ($sig -eq "$($x.itemsSig)") { return }
+  if ($look -or $Force) { Update-KitTaskIndex $Task { param($y) $y.itemsReadAt = (Get-Date).ToString('o'); $y.itemsMrs = $mc } }; if ($sig -eq "$($x.itemsSig)") { return }
   $null = Set-KitItemsChecklist $Task $items; $fin = -not @($items | Where-Object { -not $_.done }).Count
   Update-KitTaskIndex $Task { param($y) $y.itemsSig = $sig; $y.itemsFrom = 'desc'; $y.itemIds = $ids; $y.itemDesc = $dsc; $y.itemsMrs = $mc; $y.itemsFinal = $fin }
   "items ${Task}: $(@($items | Where-Object done).Count)/$($items.Count) done"
