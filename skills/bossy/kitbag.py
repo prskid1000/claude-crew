@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1306 audit ·
-  L1415 registry · L1756 prose · L1907 sections · L2037 budget · L2061 goodies · L2568 state lint · L2712 main
+  L1415 registry · L1756 prose · L1907 sections · L2037 budget · L2061 goodies · L2568 state lint · L2718 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -2577,7 +2577,7 @@ def last_line(path, size=65536):
 
 def state_schemas(kit=None):
     """{name: schema} from the STATE.md Inventory rows: | `name` | owner | `schema` | ..."""
-    return dict(re.findall(r'(?m)^\| `([\w-]+)` \|[^|\n]*\| `([^`]+)` \|', section(read(osp.join(kit or KIT_DIR, STATE_DOC)), 'Inventory') or ''))
+    return dict(re.findall(r'(?m)^\| `([\w:-]+)` \|[^|\n]*\| `([^`]+)` \|', section(read(osp.join(kit or KIT_DIR, STATE_DOC)), 'Inventory') or ''))
 
 ART_ROW = re.compile(r'(?m)^\| `([\w-]+)` \| ([^|\n]+) \| (`[^`]+`|—) \| (`[^`]+`|—) \|')
 
@@ -2641,7 +2641,7 @@ def artefact_files(since_min=0):
             top = max((len(g) for g, _ in hits), default=0)   # the most specific place decides (docs/*-ai.md before docs/*)
             if f.suffix not in ('.md', '.json') or any(len(g) == top and shape_ok(s, str(f)) for g, s in hits):
                 continue
-            out.append(('WARN' if pat == 'work/agents/*/*' else 'BAD', 'artefacts', rel, 'unlisted shape: no STATE.md "Artefacts" row names'
+            out.append(('WARN' if pat in ('work/agents/*/*', 'work/docs/*') else 'BAD', 'artefacts', rel,   # docs: kept copies (publish gates them) 'unlisted shape: no STATE.md "Artefacts" row names'
                         ' its writer (render it from a spec, or add the row with its renderer)'))
     return out
 
@@ -2652,11 +2652,14 @@ def state_lint(since_min=0):
     own = {osp.normcase(kit_path(n)) for n, s in schemas.items() if not s.startswith('dir') and (n in MAP['runtime'] or n in MAP['durable'])}   # own-row files (runtimes/locks.json) are not their dir's
     for name, spec in schemas.items():
         m = re.match(r'(json|jsonl|text|dir)(?:=(\S+))?\s+v(\d+)(?::\s*(.*))?$', spec)
-        if not m or (name not in MAP['runtime'] and name not in MAP['durable']):
-            out.append(('BAD', name, STATE_DOC, f'Inventory {name}: {spec!r} (want "<form> v<n>: <keys>" for a _paths name)'))
+        base = name.split(':')[0]   # <_paths name>:<part> = another file kind in that folder (qa-runs:results)
+        if not m or (base not in MAP['runtime'] and base not in MAP['durable']):
+            out.append(('BAD', name, STATE_DOC, f'Inventory {name}: {spec!r} (want "<form> v<n>: <keys> [+ <allowed keys>]" for a _paths name)'))
             continue
-        form, pat, ver, req = m.group(1), m.group(2) or '*.json', int(m.group(3)), (m.group(4) or '').split()
-        p = kit_path(name)
+        form, pat, ver = m.group(1), m.group(2) or '*.json', int(m.group(3))
+        req, _, allow = (m.group(4) or '').partition(' + ')   # allowed: '' = any key
+        req, allow = req.split(), set(allow.split()) | set(req.split()) | {'schemaVersion', 'updated', 'holder'}
+        p = kit_path(base)
         for f in sorted(str(x) for x in Path(p).glob(pat)) if form == 'dir' else [p]:
             if not osp.isfile(f) or (since_min and now - osp.getmtime(f) > since_min * 60) or form == 'text' or (form == 'dir' and osp.normcase(f) in own):
                 continue
@@ -2669,6 +2672,9 @@ def state_lint(since_min=0):
             if not isinstance(o, dict):
                 out.append(('BAD', name, rel, 'unreadable (not one JSON object' + (' on its last line)' if form == 'jsonl' else ')')))
                 continue
+            extra = sorted(k for k in o if k not in allow) if _ else []
+            if extra and form != 'jsonl':   # a writer added keys the schema does not list: drift (supervise WATCH)
+                out.append(('BAD', name, rel, f'drift: key(s) {", ".join(extra[:6])} not in the schema ({name}: {spec}): add them to STATE.md or fix the writer'))
             miss = [k for k in req if k not in o]
             if miss:
                 out.append(('BAD', name, rel, f'missing {", ".join(miss)} ({name}: {spec})'))

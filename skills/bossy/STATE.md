@@ -27,7 +27,7 @@ it; supervise runs it each beat on recent files: a BAD file = WATCH).
   `work/waves/<run>.json` (`bossy.ps1 report`).
 
 ## Inventory
-Schema: `<form>[=<glob>] v<n>: <required keys>`; form json (one object), dir (one JSON per key, default `*.json`), jsonl (one
+Schema: `<form>[=<glob>] v<n>: <required keys> [+ <allowed keys>]` (a list: another key = drift, BAD); a `<name>:<part>` row = another file kind in that folder; form json (one object), dir (one JSON per key, default `*.json`), jsonl (one
 object a line; the last is checked), text; v0 = written before this file (no schemaVersion yet).
 
 | Name | Owner | Schema | Lifecycle | Change (2026-10-30) |
@@ -49,7 +49,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `last-retro` | `bossy.ps1 tidy done` | `text v0` | keep | offset |
 | `last-kitty-audit` | `kitbag.py audit stamp` | `text v0` | keep | none |
 | `pauses` | `bossy.ps1 pause / resume` | `dir v1: at run state` | keep | schemaVersion |
-| `programs` | `bossy.ps1 program` | `dir v1` | keep | schemaVersion (`_updated` gone) |
+| `programs` | `bossy.ps1 program` | `dir v1: updated` | keep | `updated` required |
 | `browser-ports` | `browser.mjs` | `json v0` | keep | none |
 | `ports-deployed` | goody `ports` (`kitbag.py port`) | `json v1: files` | rewritten each deploy | new: the workspace copies it wrote |
 | `owner-apps` | `bossy.ps1 supervise` | `json v0` | keep | none |
@@ -58,8 +58,13 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `board` | `bossy.ps1 board` | `dir v1: agent session run beat status` | 14 d | schemaVersion; file-safe session |
 | `launches` | `bossy.ps1 launch`, workflows (`args-*`) | `dir=self-*.json v1: script run args` | 3 d | schemaVersion |
 | `agents` | `crafty.ps1 checkpoint` | `dir=*/resume*.json v1: agent run steps` | 7 d | schemaVersion, ISO |
-| `decisions` | `bossy.ps1 decide` | `dir v2: id status question` | 14 d | `options` {key label description recommended}, `blocking`; gate words: `gate`, `source`, `usedAt` |
+| `decisions` | `bossy.ps1 decide` | `dir v2: id status question + kind run agent item options blocking contracts at task mrs answer by answeredAt recommend commit parentId gate source usedAt usedBy supersedes` | 14 d | `options` {key label description recommended}, `blocking`; gate words: `gate`, `source`, `usedAt` |
 | `qa-runs` | `testy.js`, `pokey.ps1 finalize` | `dir=*/index.json v1: run items` | 14 d | new `index.json` |
+| `qa-runs:run` | `testy.js` Prepare, `pokey.ps1 retest` | `dir=*/run.json v0: title runDir items + kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices` | 14 d | new: allowed keys |
+| `qa-runs:results` | the tester (testy.js CHECKS_SCHEMA), `pokey.ps1 results patch` | `dir=*/*/results.json v0: code checks + findings setup_changes data_created skipped handoff` | 14 d | new |
+| `qa-runs:held` | `pokey.ps1 results hold` | `dir=*/*/held.json v0: code held at + envFix summary` | 14 d | new |
+| `qa-runs:bugs` | `pokey.ps1 finalize` | `dir=*/bugs.json v0: groups + groups` | 14 d | new |
+| `qa-runs:cells` | `pokey.ps1 finalize` | `dir=*/*/cells.json v0` | 14 d | new: check id -> { result, evidence } |
 | `waves` | `bossy.ps1 report` | `dir v0: run` | 14 d | none |
 | `supervise-state` | `bossy.ps1 supervise` | `json v0` | 30 d | ISO |
 | `live-steps` | `bossy.ps1 supervise` | `json v0: at` | 30 d | none |
@@ -72,7 +77,7 @@ in a shared place (`work/docs|briefs|waves`, a QA run's top folder) that no row'
 
 | Kind | Writer | Where (runtime) | Shape |
 |---|---|---|---|
-| `skill` | free: kitty (kit source, a worktree + review) | — | — |
+| `skill` | free: kitty (kit source) | — | — |
 | `skill-step` | free: kitty (kit source) | — | — |
 | `agent` | free: kitty (kit source) | — | — |
 | `rule` | free: kitty (kit source) | — | — |

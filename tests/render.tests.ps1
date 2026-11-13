@@ -185,5 +185,11 @@ Set-JsonFile "$wd/sol.json" @{ solution = 'orders sorted by id; now by date'; mr
 Set-JsonFile "$wd/st.json" @{ status = 'blocked'; why = 'needs the owner''s sort rule'; link = 'https://t/d1' }; Set-JsonFile "$wd/st2.json" @{ status = 'blocked' }
 $cs1 = Dt render comment-solution "$wd/sol.json"; $cs2 = Dt render comment-status "$wd/st.json"; $cs3 = Dt render comment-status "$wd/st2.json"
 Expect 'render comment-solution / comment-status: golden text; a status without why refused' ((Gold $cs1.out "**Solution:** orders sorted by id; now by date`n**MRs:** web!5 (MERGED) · api!4 (OPEN) · **Local proof:** local r3: round 2 PASS`n**After deploy:** nothing · **Deferred:** export sort — next sprint") -and $cs2.out -eq "blocked — needs the owner's sort rule · https://t/d1" -and $cs3.code -ne 0 -and $cs3.out -match 'missing why')
+# ---- run-file schemas (items 10, 17, 19): required + allowed keys; another key = drift (BAD, supervise WATCH)
+$qr = TkPath $k qa-runs -Create; New-Item -ItemType Directory -Force "$qr/r3/A1" | Out-Null
+Set-JsonFile "$qr/r3/A1/results.json" @{ code = 'A1'; checks = @(); colour = 'red' }; Set-JsonFile "$qr/r3/run.json" @{ title = 't'; runDir = 'r3'; items = @() }
+Set-JsonFile (Join-Path (TkPath $k programs -Create) 'p1.json') @{ wave = 1 }
+$s10 = @(& $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json | ForEach-Object { "$($_.name)|$($_.problem)" }) -join "`n"
+Expect 'state lint schemas: a results.json key outside its schema is drift, a program without updated misses a key, a listed run.json passes' ($s10 -match 'qa-runs:results\|drift: key\(s\) colour' -and $s10 -match 'programs\|missing updated' -and $s10 -notmatch 'qa-runs:run\|drift')
 Remove-TestKit $k
 Complete-Tests
