@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 Installed by `kitbag.py goody add flow-map`; kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1066 page · L1445 command
+Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1066 page · L1523 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -1066,24 +1066,36 @@ def tarjan(n, out):
 # ---- page: the HTML page and its sidecar
 def html(data, src_name=''):
     data = dict(data, src=src_name)
-    return PAGE.replace('__DATA__', json.dumps(data, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/'))
+    page = PAGE.replace('__README__', esc_attr(data.get('readme') or 'README.md'))
+    return page.replace('__DATA__', json.dumps(data, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/'))
+
+def esc_attr(s):
+    return str(s).replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;')
 
 def write(out, data, texts):
-    """The page plus its sidecar (<page>-src.js: every file's text, loaded only when a node's code is first shown)."""
+    """The page plus its sidecar (<page>-src.js: every file's text and node descriptions, loaded when a node is first shown)."""
     side = out[:-5] + '-src.js' if out.endswith('.html') else out + '-src.js'
+    js = lambda v: json.dumps(v, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
     with open(side, 'w', encoding='utf-8') as fh:
-        fh.write('window.KF_SRC=' + json.dumps(texts, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/') + ';')
+        fh.write('window.KF_SRC=' + js(texts) + ';window.KF_DESC=' + js([n[4] for n in data['nodes']]) + ';')
     with open(out, 'w', encoding='utf-8') as fh:
-        fh.write(html(data, osp.basename(side)))
+        fh.write(html(dict(data, nodes=[n[:4] + [''] + n[5:] for n in data['nodes']]), osp.basename(side)))
 
-PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content"><title>Kit flow</title>
-<style>:root{--bg:#f4f7f4;--fg:#1a221a;--mut:#5e6c5e;--ln:#d5dfd5;--pn:#ffffff;--pn2:#eaefea;--hi:#c4b06a;--bad:#ce8f8a;--sel:#556b5522;
---kw:#4fa68f;--st:#79a86a;--cm:#8a948a;--nu:#c4b06a;--va:#5f93a8;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+PAGE = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content"><title>Claude Crew kit map</title>
+<meta name="description" content="Interactive map of the Claude Crew kit: its agents, skills and workflows, and who calls, runs or loads whom.">
+<style>:root{--bg:#f4f7f4;--fg:#1a221a;--mut:#5e6c5e;--ln:#d5dfd5;--pn:#ffffff;--pn2:#eaefea;--hi:#c4b06a;--bad:#a8443d;--sel:#556b5522;
+--kw:#2f7564;--st:#456f39;--cm:#5e6c5e;--nu:#806a1f;--va:#2f6b84;--lp:#a3245e;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root{--bg:#0c0c0c;--fg:#d8dee9;--mut:#8a948a;--ln:#212a21;--pn:#161b16;--pn2:#212a21;--hi:#e0ce8a;--bad:#dc9089;--sel:#79a86a25;
---kw:#7fc9bc;--st:#9fd48c;--cm:#6d6d6d;--nu:#ebc88d;--va:#8fbbd4}}
+--kw:#7fc9bc;--st:#9fd48c;--cm:#9aa59a;--nu:#ebc88d;--va:#8fbbd4;--lp:#f08bb4}}
 *{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Inter",sans-serif}
+button{font:inherit;color:inherit}:focus-visible{outline:2px solid var(--va);outline-offset:2px}
+.sr{position:absolute;left:-10000px;top:0}.lnk{background:none;border:0;padding:0}
 #app{display:flex;height:100%}#main{position:relative;flex:1;min-width:0}#c{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
-#top{position:absolute;top:8px;left:8px;right:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}#top>*{pointer-events:auto}
+#top{position:absolute;top:8px;left:8px;right:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}#top>*,#more>*{pointer-events:auto}#more{display:contents}#mn{display:none}
+#intro{position:absolute;left:12px;bottom:12px;width:min(340px,calc(100% - 24px));background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:12px 14px;line-height:1.5;box-shadow:0 8px 24px #0002;z-index:4}
+#intro h1{font-size:14px;margin:0 28px 6px 0}#intro p{margin:0 0 6px}#intro ul{list-style:none;margin:0 0 6px;padding:0}#intro li{display:flex;gap:8px;align-items:center}#intro a{color:var(--va)}#ix{position:absolute;right:8px;top:8px}
+#lst{position:absolute;top:52px;left:8px;width:280px;max-height:calc(100% - 64px);overflow:auto;background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:4px;z-index:3}
+#lst.sr:not(:focus-within){left:-10000px;right:auto;width:280px}#intro .lnk{margin:0;color:var(--va);cursor:pointer;text-decoration:underline}#lst .li{width:100%;text-align:left;background:none;border:0}#lst .li small{color:var(--mut);margin-left:auto}#lst .t{overflow-wrap:anywhere}#lst h2{margin:0}
 .b{background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:4px 9px;cursor:pointer;user-select:none;white-space:nowrap;color:var(--fg);font:inherit;transition:all .15s ease}.b:hover{border-color:var(--st);background:var(--pn2)}
 .b.on{background:var(--fg);color:var(--bg)}.seg{display:inline-flex}.seg .b{border-radius:0;margin-left:-1px}.seg .b:first-child{border-radius:8px 0 0 8px}.seg .b:last-child{border-radius:0 8px 8px 0}
 input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;position:absolute;top:30px;left:0;background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:6px;min-width:220px;z-index:5;box-shadow:0 8px 24px #0003}
@@ -1093,7 +1105,7 @@ input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;pos
 #side{width:0;transition:width .18s ease;background:var(--pn);border-left:1px solid var(--ln);display:flex;flex-direction:column;position:relative;overflow:hidden}
 #side.drag{transition:none}#grip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2}#grip:hover{background:var(--sel)}
 #rail{width:44px;background:var(--pn2);border-left:1px solid var(--ln);display:flex;flex-direction:column;align-items:center;padding-top:8px;gap:4px}
-.ri{position:relative;width:34px;height:34px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:var(--mut)}.ri:hover,.ri.on{background:var(--pn);color:var(--fg)}
+.ri{position:relative;width:34px;height:34px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:var(--mut);border:0;background:none;padding:0}.ri:hover,.ri.on{background:var(--pn);color:var(--fg)}
 .ri.on::before{content:'';position:absolute;left:-5px;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--fg)}
 .badge{position:absolute;right:0;top:0;min-width:16px;height:16px;border-radius:8px;background:var(--bad);color:#fff;font-size:10px;display:grid;place-items:center;padding:0 3px}
 #sh{padding:10px 12px 8px 14px;border-bottom:1px solid var(--ln);font-weight:600;display:flex;align-items:center;gap:8px;min-height:40px}
@@ -1102,24 +1114,41 @@ input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;pos
 .li .t{flex:1;min-width:0}.li .f{display:block;font:11px var(--mono);color:var(--mut);overflow-wrap:anywhere}.li.bad .t{color:var(--bad)}
 .num{font:600 10px var(--mono);color:var(--mut);min-width:20px;text-align:right;padding-top:2px}.grp{font-size:11px;color:var(--mut);font-weight:600;padding:8px 8px 2px}
 .empty{color:var(--mut);padding:16px 10px;line-height:1.5;overflow-wrap:anywhere}.ico{flex:none}
-pre{margin:0;font:12px/1.55 var(--mono);tab-size:2}.cl{display:flex}.cl .n{color:var(--mut);min-width:44px;text-align:right;padding-right:10px;user-select:none}.cl .x{white-space:pre;flex:1}
+pre{margin:0;font:12px/1.55 var(--mono);tab-size:2}.cl{display:flex}.cl .n{color:var(--mut);min-width:44px;text-align:right;padding-right:10px;user-select:none}.cl .x{white-space:pre-wrap;overflow-wrap:anywhere;flex:1;min-width:0}
 .cl.me{background:var(--sel)}.kw{color:var(--kw)}.st{color:var(--st)}.cm{color:var(--cm);font-style:italic}.nu{color:var(--nu)}.va{color:var(--va)}
 #meta{padding:8px 14px;border-bottom:1px solid var(--ln);color:var(--mut);line-height:1.5}#meta .f{font:11px var(--mono)}#meta a,.lnk{color:var(--va);cursor:pointer;margin-right:12px;text-decoration:none}
 #tip{position:fixed;max-width:380px;background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:6px 8px;pointer-events:none;display:none;white-space:pre-wrap;box-shadow:0 4px 14px #0002;z-index:9}
 select.b{max-width:100%}#sx{display:none}
 @media (pointer:coarse),(max-width:640px){.b,.menu label,.li{min-height:44px}.b{display:inline-flex;align-items:center}.seg .b{padding:4px 12px}
 #rail{width:52px}.ri{width:44px;height:44px}input.b,select.b{font-size:16px}}
-@media (max-width:640px){input#q{flex:1 1 120px;width:auto;min-width:0}.dd>.menu{position:fixed;top:auto;left:8px;right:60px;max-height:60dvh;overflow:auto}
+@media (max-width:640px){#top{flex-wrap:nowrap}input#q{flex:1 1 120px;width:auto;min-width:0}#mn{display:inline-flex}#more{display:none}
+#top.mo #more{display:flex;flex-wrap:wrap;gap:6px;position:absolute;top:52px;left:0;right:0;background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:8px;z-index:6}
+#lst{top:60px;right:8px;bottom:8px;width:auto;max-height:none}#intro{left:8px;bottom:8px;width:auto;right:8px}
+.dd>.menu{position:fixed;top:auto;left:8px;right:60px;max-height:60dvh;overflow:auto}
 #side{position:fixed;left:0;right:52px;bottom:0;height:62vh;height:62dvh;width:auto!important;display:none;border:1px solid var(--ln);border-radius:14px 14px 0 0;z-index:8;box-shadow:0 -8px 24px #0003}
 #side.open{display:flex}#grip{display:none}#sh{padding-right:56px}#sx{display:inline-flex;position:absolute;right:6px;top:4px;z-index:3}}</style></head><body>
-<div id="app"><div id="main"><canvas id="c"></canvas>
-<div id="top"><b class="b" id="ttl" title="How to read: icons = kinds (key tab, right rail); zoom in for more detail; click a node = its neighbours + its code; click a highlighted neighbour to extend; dashed arc = loop / back edge; double-click = collapse a file; drag = pin">kit flow</b>
-<input class="b" id="q" placeholder="search…"><span class="seg" id="lv"></span><span class="dd" id="ddS"><span class="b">Show ▾</span><div class="menu"></div></span><span class="dd" id="ddE"><span class="b">Edges ▾</span><div class="menu"></div></span><span class="b" id="fit">fit</span></div></div>
-<div id="side"><div id="grip" title="drag to resize · double-click to reset"></div><span class="b" id="sx" title="close">✕</span><div id="sh"></div><div id="meta" style="display:none"></div><div id="sb"></div></div>
-<div id="rail"></div></div><div id="tip"></div>
+<noscript><p style="padding:16px">This map needs JavaScript. Read the kit's <a href="__README__">README</a> instead.</p></noscript>
+<div id="app"><div id="main"><canvas id="c" role="img" tabindex="0"></canvas>
+<div id="top"><button class="b" id="help" aria-label="About this map" title="About this map" aria-expanded="false">?</button>
+<input class="b" id="q" type="search" aria-label="Search parts" placeholder="search an agent…"><button class="b" id="vw" aria-pressed="false" aria-controls="lst">list</button><button class="b" id="mn" aria-label="Menu" aria-expanded="false" aria-controls="more">☰</button>
+<span id="more"><span class="seg" id="lv" role="group" aria-label="Detail level"></span><span class="dd" id="ddS"><button class="b" aria-expanded="false">Show ▾</button><div class="menu"></div></span><span class="dd" id="ddE"><button class="b" aria-expanded="false">Edges ▾</button><div class="menu"></div></span><button class="b" id="fit">fit</button></span></div>
+<section id="intro" aria-labelledby="ih" hidden><button class="b" id="ix" aria-label="Close the intro">✕</button><h1 id="ih">Claude Crew kit map</h1>
+<p>A multi-agent dev + QA kit for Claude Code. Each circle is a part (agent, skill, workflow, trigger); lines show who calls, runs or loads whom.</p>
+<p><b>Start:</b> click <button class="lnk" id="ib">bossy</button> (the coordinator) or search an agent.</p>
+<ul><li><svg width="26" height="8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" stroke="currentColor" stroke-width="2"/></svg>calls, runs, spawns</li>
+<li><svg width="26" height="8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" stroke="currentColor" stroke-width="2" stroke-dasharray="6 4"/></svg>loop or trigger</li>
+<li><svg width="26" height="8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" stroke="currentColor" stroke-width="2" stroke-dasharray="1.5 3"/></svg>reads, loads</li></ul>
+<p id="il">Overview shows agent and workflow links; click a part or pick Everything for the rest.</p></section>
+<nav id="lst" class="sr" aria-label="Parts"></nav></div>
+<div id="side"><div id="grip" title="drag to resize · double-click to reset"></div><button class="b" id="sx" aria-label="Close the panel" title="close">✕</button><div id="sh"></div><div id="meta" style="display:none"></div><div id="sb"></div></div>
+<div id="rail" role="toolbar" aria-label="Panels"></div></div><div id="tip"></div><div id="live" class="sr" aria-live="polite"></div>
 <script>
 const D = __DATA__, $ = s => document.querySelector(s), cv = $('#c'), X = cv.getContext('2d'), tip = $('#tip');
 const wrapL = t => { const out = []; let cur = ''; for (const w of String(t).split(/(?<=[\s|/,·(])/)) { if (cur && (cur + w).length > 28) { out.push(cur.trim()); cur = '' } cur += w } return cur.trim() ? [...out, cur.trim()] : out };   // canvas label lines, 28 chars
+const oneL = t => { t = String(t); return t.length > 28 ? t.substring(0, 27).trimEnd() + '…' : t };   // a resting label: one line; hover, select and the tooltip show it whole
+const HOWTO = 'How to read: icons = kinds (key tab, right rail); zoom in for more detail; click a node = its neighbours + its code; click a highlighted neighbour to extend; arrow keys step through the selected node\'s neighbours, Enter picks one; dashed arc = loop / back edge; double-click = collapse a file; drag = pin';
+let seed = 7;   // seeded layout: the same map on every load
+const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
 const LS = {get(k, d) { try { const v = localStorage.getItem('kf.' + k); return v == null ? d : JSON.parse(v) } catch (e) { return d } }, set(k, v) { try { localStorage.setItem('kf.' + k, JSON.stringify(v)) } catch (e) {} }};
 const IC = {bolt: 'M13 2L4 14h7l-1 8 9-12h-7z', person: 'M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8M4 21c1-5 15-5 16 0', clock: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7v5l3 2',
  table: 'M3 5h18v14H3zM3 10h18M9 5v14', slash: 'M15 4l-6 16', puzzle: 'M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 0-4 0H4v-4a2 2 0 1 0 0-4z',
@@ -1157,15 +1186,16 @@ const coll = new Set();
 let LVL = 0, VN = [], VE = [], focus = null, fE = null, sel = null, force = new Set(), trace = null, tIdx = -1, hover = null, fitSc = 1;
 let ang = 0, rad = 0;
 [...G].sort((a, b) => b.m.length - a.m.length).forEach(g => { const R = 10 * Math.sqrt(g.m.length) + 30; rad += R * .55; ang += 2.4; const gx = Math.cos(ang) * rad, gy = Math.sin(ang) * rad;
- g.m.forEach(n => { const a = Math.random() * 6.28, d = Math.random() * R * .6; n.x = gx + Math.cos(a) * d; n.y = gy + Math.sin(a) * d }) });
+ g.m.forEach(n => { const a = rnd() * 6.28, d = rnd() * R * .6; n.x = gx + Math.cos(a) * d; n.y = gy + Math.sin(a) * d }) });
 function vis(n) { if (!famOn[n.fam]) return false; if (force.has(n)) return true; if (coll.has(n.g)) return n.k === 'file'; return n.lv <= LVL }
 function rep(n) { if (vis(n)) return n; if (n.par && vis(n.par)) return n.par; const f = G[n.g].fn; return f && f !== n && vis(f) ? f : null }
 N.forEach(n => { const b = n.in.find(e => e.k === 'branch' && N[e.s].k === 'decision'); if (n.k === 'row' && b) n.par = N[b.s] });
+const AW = n => n.kk === 'file-agent' || n.kk === 'file-workflow', OV = (a, b) => a !== b && AW(a) && AW(b) && (a.kk === 'file-agent' || b.kk === 'file-agent');   // Overview at rest: agent-agent and workflow-agent links only
 function rebuild() {
  VN = N.filter(vis); const seen = new Map(); VE = [];
  for (const e of E) { if (!ekOn[e.k]) continue; const a = rep(N[e.s]), b = rep(N[e.t]); if (!a || !b || (a === b && e.s !== e.t)) continue;
-  const key = a.i + ',' + b.i + ',' + e.k; if (seen.has(key)) { seen.get(key).n++; continue } const v = {a, b, e, n: 1}; seen.set(key, v); VE.push(v) }
- $('#lv').querySelectorAll('.b').forEach((b, i) => b.classList.toggle('on', i === LVL)); draw()   // no reheat: it re-spread a fitted layout off-screen
+  const key = a.i + ',' + b.i + ',' + e.k; if (seen.has(key)) { seen.get(key).n++; continue } const v = {a, b, e, n: 1, ov: OV(a, b)}; seen.set(key, v); VE.push(v) }
+ $('#lv').querySelectorAll('.b').forEach((b, i) => { b.classList.toggle('on', i === LVL); b.setAttribute('aria-pressed', i === LVL) }); draw()   // no reheat: it re-spread a fitted layout off-screen
 }
 let alpha = 1, raf = 0;
 const heat = a => { alpha = Math.max(alpha, a); if (!raf) raf = requestAnimationFrame(frame) };
@@ -1196,11 +1226,13 @@ let tx = 0, ty = 0, sc = .3, W = 0, H = 0, dpr = 1, auto = true, drawn = [];   /
 const size = () => { const r = $('#main').getBoundingClientRect(), ow = W; W = r.width; H = r.height; dpr = devicePixelRatio || 1; cv.width = W * dpr; cv.height = H * dpr; if (auto) return fitView(); if (ow) tx += (W - ow) / 2; draw() };
 const dr = (n, s = sc) => LVL === 0 ? Math.max(n.k === 'file' ? 16 : 11, 5 / s) : n.r;   // drawn radius (world; Overview: at least 5 px at scale s)
 const LPX = new Map();   // label size in screen px (fixed font), per node
-function labPx(n) { let v = LPX.get(n); if (v) return v; X.font = `${n.k === 'file' ? 600 : 400} ${n.k === 'file' ? 12 : 11}px system-ui`; const ls = wrapL(n.l);
- v = {ls, w: Math.max(...ls.map(l => X.measureText(l).width)) + 4, h: ls.length * 13}; LPX.set(n, v); return v }
-const labBox = (n, s = sc) => { const p = labPx(n); return [n.x - p.w / 2 / s, n.y + dr(n, s) + 2 / s, p.w / s, p.h / s] };   // [x, y, w, h] world, under the node
-function free() {   // the canvas area under the bar, in canvas px (a phone's bottom sheet overlays it on purpose: too little room left to fit)
- const m = $('#main').getBoundingClientRect(), t = $('#top').getBoundingClientRect(); return [8, t.bottom - m.top + 8, W - 8, Math.max(t.bottom - m.top + 60, H - 8)] }
+function labPx(n, full) { const ck = full ? 'f' + n.i : n; let v = LPX.get(ck); if (v) return v; X.font = `${n.k === 'file' ? 600 : 400} ${n.k === 'file' ? 12 : 11}px system-ui`; const ls = full ? wrapL(n.l) : [oneL(n.l)];
+ v = {ls, w: Math.max(...ls.map(l => X.measureText(l).width)) + 4, h: ls.length * 13}; LPX.set(ck, v); return v }
+const labBox = (n, s = sc, full) => { const p = labPx(n, full); return [n.x - p.w / 2 / s, n.y + dr(n, s) + 2 / s, p.w / s, p.h / s] };   // [x, y, w, h] world, under the node
+function free() {   // the canvas area under the bar and beside the intro, in canvas px (a phone's bottom sheet overlays it on purpose: too little room left to fit)
+ const m = $('#main').getBoundingClientRect(), t = $('#top').getBoundingClientRect(), y0 = t.bottom - m.top + 8, it = $('#intro'), ir = it && !it.hidden ? it.getBoundingClientRect() : null;
+ if (ir && W >= 700) return [ir.right - m.left + 8, y0, W - 8, Math.max(y0 + 60, H - 8)];   // a wide view: the graph beside the intro
+ return [8, y0, W - 8, Math.max(y0 + 60, (ir ? ir.top - m.top : H) - 8)] }
 function fitTo(ns) {   // the largest scale whose node + label boxes fit the free area (labels keep their px size, so search the scale)
  ns = ns && ns.length ? ns : VN; if (!ns.length || !W) return; const [fx0, fy0, fx1, fy1] = free(), aw = fx1 - fx0, ah = fy1 - fy0;
  const ext = s => { let a = 1e9, b = -1e9, c = 1e9, d = -1e9; for (const n of ns) { const r = dr(n, s) * s, p = labPx(n), hw = Math.max(r, p.w / 2), x = n.x * s, y = n.y * s;
@@ -1243,7 +1275,7 @@ function hull(P) {
 }
 function icon(name, x, y, s, col, lw) { X.save(); X.translate(x - s / 2, y - s / 2); X.scale(s / 24, s / 24); X.strokeStyle = col; X.lineWidth = lw * 24 / s; X.lineCap = X.lineJoin = 'round'; X.stroke(P2[name]); X.restore() }
 function draw() {
- raf = 0; const cs = getComputedStyle(document.documentElement), bg = cs.getPropertyValue('--bg'), fg = cs.getPropertyValue('--fg'), hi = cs.getPropertyValue('--hi'), pn = cs.getPropertyValue('--pn');
+ raf = 0; const cs = getComputedStyle(document.documentElement), bg = cs.getPropertyValue('--bg'), fg = cs.getPropertyValue('--fg'), hi = cs.getPropertyValue('--hi'), pn = cs.getPropertyValue('--pn'), lp = cs.getPropertyValue('--lp');
  X.setTransform(dpr, 0, 0, dpr, 0, 0); X.fillStyle = bg; X.fillRect(0, 0, W, H); X.setTransform(dpr * sc, 0, 0, dpr * sc, dpr * tx, dpr * ty);
  const lw = 1 / sc, F = n => !focus || focus.has(n), x0 = -tx / sc, y0 = -ty / sc, x1 = x0 + W / sc, y1 = y0 + H / sc, on = n => n.x > x0 - 50 && n.x < x1 + 50 && n.y > y0 - 50 && n.y < y1 + 50;
  if (LVL > 0) for (const g of G) { if (!g.fn || coll.has(g.i)) continue; const m = g.m.filter(n => n.k !== 'file' && vis(n)); if (m.length < 2) continue;
@@ -1251,7 +1283,8 @@ function draw() {
   X.beginPath(); h.forEach((p, i) => i ? X.lineTo(p[0], p[1]) : X.moveTo(p[0], p[1])); X.closePath(); X.fill(); X.stroke() }
  const lab = [];
  for (const v of VE) { const {a, b, e} = v; if (!on(a) && !on(b)) continue; const hl = fE ? fE.has(v) : false, dim = focus && !hl;
-  const loopy = e.back || e.k === 'loop'; X.globalAlpha = hl ? .95 : dim ? .04 : LVL === 0 ? .45 : LVL === 1 ? .25 : .14;
+  if (!LVL && !v.ov && !hl) continue;   // Overview: the rest of the links show on click or in Everything
+  const loopy = e.back || e.k === 'loop'; X.globalAlpha = hl ? .95 : dim ? (LVL ? .04 : .08) : LVL === 0 ? .45 : LVL === 1 ? .25 : .14;
   X.strokeStyle = X.fillStyle = hl ? hi : EK[e.k][0]; X.lineWidth = (hl ? 2 : loopy ? 1.4 : 1) * lw * (LVL === 0 ? 1.4 : 1);
   X.setLineDash(loopy || EK[e.k][1] === 'dash' ? [6 * lw, 4 * lw] : EK[e.k][1] === 'dot' ? [1.5 * lw, 3 * lw] : []); X.beginPath();
   let mx, my, ang;
@@ -1261,13 +1294,13 @@ function draw() {
   X.stroke(); X.setLineDash([]);
   if (a !== b && (hl || sc > .8 || LVL === 0)) { const d = b.r + 2, s = 6 * lw, hx = b.x - Math.cos(ang) * d, hy = b.y - Math.sin(ang) * d;
    X.beginPath(); X.moveTo(hx, hy); X.lineTo(hx - Math.cos(ang - .45) * s, hy - Math.sin(ang - .45) * s); X.lineTo(hx - Math.cos(ang + .45) * s, hy - Math.sin(ang + .45) * s); X.fill() }
-  if (loopy && (hl || (e.k === 'loop' && LVL === 0 && !focus))) lab.push([mx, my, '↻' + (e.b ? ' ' + e.b : ''), '#db2777']);
-  if (hl && fE.size < 120) lab.push([mx, my + 12 * lw, e.k + (e.l ? ' · ' + e.l : '') + (v.n > 1 ? ` (×${v.n})` : ''), fg]) }
+  if (loopy && (hl || (e.k === 'loop' && LVL === 0 && !focus))) lab.push([mx, my, '↻' + (e.b ? ' ' + e.b : ''), lp]);
+  if (hl && fE.size < 30) lab.push([mx, my + 12 * lw, e.k + (e.l ? ' · ' + e.l : '') + (v.n > 1 ? ` (×${v.n})` : ''), fg]) }
  const big = sc * 8 > 3;
  for (const n of VN) { if (!on(n)) continue; const r = dr(n); X.globalAlpha = F(n) ? 1 : .12;
   X.beginPath(); X.arc(n.x, n.y, r, 0, 6.283); X.fillStyle = pn; X.fill(); X.globalAlpha *= .22; X.fillStyle = n.col; X.fill(); X.globalAlpha = F(n) ? 1 : .12;
   const ring = bad.has(n.i) && (sel === n || (focus && focus.has(n))) ? '#dc2626' : n === sel ? hi : n.col; X.strokeStyle = ring; X.lineWidth = (n === sel || ring === '#dc2626' ? 2.5 : 1.2) * lw; X.stroke();
-  if (r * sc > 5) icon(KD[n.kk][1], n.x, n.y, r * 1.15, n.col, Math.max(1.2 * lw, r * .12));
+  if (r * sc > 5) icon(KD[n.kk][1], n.x, n.y, r * 1.4, n.col, Math.max(1.2 * lw, r * .12));
   if (n.fx != null) { X.fillStyle = fg; X.beginPath(); X.arc(n.x + r * .8, n.y - r * .8, 2.2 * lw, 0, 6.283); X.fill() } }
  X.textAlign = 'center';
  // labels never cut: long ones wrap; one that would overlap a drawn label or another node waits for hover / select (those always draw)
@@ -1279,26 +1312,26 @@ function draw() {
  const inFree = b => b[0] >= fw[0] && b[1] >= fw[1] && b[0] + b[2] <= fw[2] && b[1] + b[3] <= fw[3];   // an edge label outside the fitted area is skipped
  const text = (ls, bx, c, must, own, t) => { if (!must && (boxes.some(b => meet(bx, b)) || onNode(bx, own) || (!own && !inFree(bx)))) return; boxes.push(bx); drawn.push({t, own, b: bx});
   X.lineWidth = 3 * lw; X.strokeStyle = bg; X.fillStyle = c; ls.forEach((l, i) => { const y = bx[1] + (10 + 13 * i) * lw; X.strokeText(l, bx[0] + bx[2] / 2, y); X.fillText(l, bx[0] + bx[2] / 2, y) }) };
- const cand = VN.filter(n => on(n)).map(n => { const r = dr(n); return {n, r, must: n === sel || n === hover,
+ const cand = VN.filter(n => on(n)).map(n => { const r = dr(n); return {n, r, must: n === hover,
   show: n === sel || n === hover || (focus ? focus.has(n) && (focus.size < 150 || r * sc > 6) : (n.lv === LVL || n.k === 'file') && (!LVL || (r * sc > 4.5 && big)))} }).filter(c => c.show);   // Overview: every label (declutter made room)
- cand.sort((a, b) => b.must - a.must || (b.n.k === 'file') - (a.n.k === 'file'));
- for (const {n, must} of cand) { X.globalAlpha = F(n) ? 1 : .2; X.font = `${n.k === 'file' ? 600 : 400} ${(n.k === 'file' ? 12 : 11) * lw}px system-ui`; text(labPx(n).ls, labBox(n), fg, must, n, n.l) }
- for (const [x, y, t, c] of lab) { X.globalAlpha = 1; X.font = `${10.5 * lw}px system-ui`; const ls = wrapL(t), w = Math.max(...ls.map(l => X.measureText(l).width)) + 4 * lw; text(ls, [x - w / 2, y - 10 * lw, w, ls.length * 13 * lw], c, false, null, t) }
- if (trace) { X.font = `600 ${10 * lw}px system-ui`; const done = new Set();
-  trace.forEach((s, i) => { const n = rep(s.n); if (!n || done.has(n)) return; done.add(n); const t = String(i + 1), w = (t.length * 6 + 8) * lw, bx = n.x + n.r * .7, by = n.y - n.r - 9 * lw;
-   X.globalAlpha = 1; X.fillStyle = i === tIdx ? hi : n.col; X.beginPath(); X.roundRect ? X.roundRect(bx - w / 2, by - 7 * lw, w, 14 * lw, 7 * lw) : X.rect(bx - w / 2, by - 7 * lw, w, 14 * lw); X.fill();
-   X.fillStyle = '#fff'; X.fillText(t, bx, by + 3.5 * lw) }) }
+ cand.sort((a, b) => b.must - a.must || (b.n === sel) - (a.n === sel) || (b.n.k === 'file') - (a.n.k === 'file'));
+ for (const {n, must} of cand) { X.globalAlpha = F(n) ? 1 : .2; X.font = `${n.k === 'file' ? 600 : 400} ${(n.k === 'file' ? 12 : 11) * lw}px system-ui`; const full = n === hover; text(labPx(n, full).ls, labBox(n, sc, full), fg, must, n, n.l) }
+ for (const [x, y, t, c] of lab) { X.globalAlpha = 1; X.font = `${11 * lw}px system-ui`; const ls = wrapL(t), w = Math.max(...ls.map(l => X.measureText(l).width)) + 4 * lw; text(ls, [x - w / 2, y - 10 * lw, w, ls.length * 13 * lw], c, false, null, t) }
+ if (trace) { X.font = `600 ${11 * lw}px system-ui`; const done = new Set();
+  trace.forEach((s, i) => { const n = rep(s.n); if (!n || done.has(n)) return; done.add(n); const t = String(i + 1), w = (t.length * 7 + 8) * lw, bx = n.x + n.r * .7, by = n.y - n.r - 9 * lw;
+   X.globalAlpha = 1; X.fillStyle = i === tIdx ? hi : fg; X.beginPath(); X.roundRect ? X.roundRect(bx - w / 2, by - 7.5 * lw, w, 15 * lw, 7.5 * lw) : X.rect(bx - w / 2, by - 7.5 * lw, w, 15 * lw); X.fill();
+   X.fillStyle = i === tIdx ? '#1a221a' : bg; X.fillText(t, bx, by + 4 * lw) }) }
  X.globalAlpha = 1
 }
 function frame() { raf = 0; for (let i = 0; i < 2 && alpha > .02; i++) tick(); draw(); if (alpha > .02 || drag) raf = requestAnimationFrame(frame) }
 const center = n => { auto = false; tx = W / 2 - n.x * sc; ty = H / 2 - n.y * sc; draw() };
-function setLevel(L) { LVL = L; rebuild(); fitView() }
+function setLevel(L) { LVL = L; rebuild(); fitView(); toHash() }
 function neigh(n, extend) {
  if (!extend || !focus) { focus = new Set([n]); fE = new Set() }
  if (!fE) fE = new Set()
  focus.add(n); for (const v of VE) if (v.a === n || v.b === n) { fE.add(v); focus.add(v.a); focus.add(v.b) } draw()
 }
-function select(n, extend) { sel = n; if (n) { neigh(n, extend); openSide('code') } else { focus = fE = null; draw() } }
+function select(n, extend) { sel = n; nbI = -1; if (n) { neigh(n, extend); openSide('code') } else { focus = fE = null; draw() } toHash() }
 function show(nodes, edgesToo) { force = new Set(nodes); rebuild(); focus = new Set(nodes.map(rep).filter(Boolean)); fE = new Set(VE.filter(v => focus.has(v.a) && focus.has(v.b))); draw() }
 const PRI = {routes: 0, runs: 1, impl: 1, spawns: 2, branch: 3, triggers: 4, has: 5, calls: 6, writes: 7, loads: 8, next: 9, loop: 10}, COST = {calls: 2, has: 2, loads: 2, writes: 2}, choice = {};
 function walk(start) {
@@ -1319,16 +1352,17 @@ const svgI = (name, col, s = 16) => `<svg class="ico" width="${s}" height="${s}"
 const TABS = {code: ['code', 'Code'], trace: ['route', 'Trace'], loops: ['loop', 'Loops'], issues: ['warn', 'Issues'], key: ['key', 'Key']};   // the key docks in the side panel (a bottom sheet on phones), never over the graph
 let curTab = LS.get('tab', 'code'), sideW = LS.get('w', 420), sideOpen = false;
 if (!D.issues.length) { delete TABS.issues; if (curTab === 'issues') curTab = 'code' }
-for (const t in TABS) { const d = document.createElement('div'); d.className = 'ri'; d.dataset.t = t; d.title = TABS[t][1] + (t === 'issues' ? (D.dirty ? ' (uncommitted work: commit is blocked until 0)' : '') : ''); d.innerHTML = svgI(TABS[t][0], null, 20) + (t === 'issues' && D.issues.length ? `<span class="badge">${D.issues.length}</span>` : t === 'loops' ? `<span class="badge" style="background:#db2777">${D.cycles.length}</span>` : '');
+for (const t in TABS) { const d = document.createElement('button'); d.className = 'ri'; d.dataset.t = t; d.title = TABS[t][1] + (t === 'issues' ? (D.dirty ? ' (uncommitted work: commit is blocked until 0)' : '') : ''); d.setAttribute('aria-label', d.title); d.setAttribute('aria-pressed', 'false'); d.innerHTML = svgI(TABS[t][0], null, 20) + (t === 'issues' && D.issues.length ? `<span class="badge">${D.issues.length}</span>` : t === 'loops' ? `<span class="badge" style="background:var(--lp)">${D.cycles.length}</span>` : '');
  d.onclick = () => sideOpen && curTab === t ? closeSide() : openSide(t); $('#rail').append(d) }
 const narrow = () => matchMedia('(max-width:640px)').matches;   // phones: the side panel is a bottom sheet over the graph
 function openSide(t) { curTab = t; LS.set('tab', t); if (!sideOpen) { sideOpen = true; side.style.width = sideW + 'px'; side.classList.add('open'); LS.set('open', true) } tab(t); setTimeout(size, 200) }
-function closeSide() { sideOpen = false; side.style.width = '0'; side.classList.remove('open'); LS.set('open', false); document.querySelectorAll('.ri').forEach(r => r.classList.remove('on')); setTimeout(size, 200) }
+function closeSide() { sideOpen = false; side.style.width = '0'; side.classList.remove('open'); LS.set('open', false); document.querySelectorAll('.ri').forEach(r => { r.classList.remove('on'); r.setAttribute('aria-pressed', 'false') }); setTimeout(size, 200) }
 const fl = n => D.files[n.g].id + (n.ln ? ':' + n.ln : '');
-const row = (n, title, extra, cls, fn) => { const d = document.createElement('div'); d.className = 'li ' + (cls || ''); d.innerHTML = (extra || '') + (n ? svgI(KD[n.kk][1], n.col) : '') + `<span class="t">${title}<span class="f">${n ? esc(fl(n)) : ''}</span></span>`; d.onclick = fn; return d };
+const row = (n, title, extra, cls, fn) => { const d = document.createElement('div'); d.className = 'li ' + (cls || ''); d.innerHTML = (extra || '') + (n ? svgI(KD[n.kk][1], n.col) : '') + `<span class="t">${title}<span class="f">${n ? esc(fl(n)) : ''}</span></span>`; d.onclick = fn;
+ d.tabIndex = 0; d.setAttribute('role', 'button'); d.onkeydown = e => { if (e.target === d && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fn() } }; return d };   // a row holds a select (trace decisions): a div with the button role, not a <button>
 function filterBox(ph, onq) { const s = document.createElement('div'); s.className = 'sticky'; const i = document.createElement('input'); i.className = 'b'; i.placeholder = ph; i.style.width = '100%'; i.oninput = () => onq(i.value.toLowerCase()); s.append(i); sb.append(s); return s }
 function tab(t) {
- document.querySelectorAll('.ri').forEach(r => r.classList.toggle('on', r.dataset.t === t)); $('#sh').innerHTML = svgI(TABS[t][0], null, 16) + TABS[t][1]; sb.innerHTML = ''; $('#meta').style.display = 'none';
+ document.querySelectorAll('.ri').forEach(r => { r.classList.toggle('on', r.dataset.t === t); r.setAttribute('aria-pressed', r.dataset.t === t) }); $('#sh').innerHTML = svgI(TABS[t][0], null, 16) + TABS[t][1]; sb.innerHTML = ''; $('#meta').style.display = 'none';
  if (t === 'code') return code(sel);
  if (t === 'key') { sb.innerHTML = keyHtml(); return }
  if (t === 'trace') {
@@ -1336,8 +1370,8 @@ function tab(t) {
   const ent = N.filter(n => /slash|event|human|timer|row/.test(n.k) || (n.k === 'file' && n.fam === 'crew'));
   ent.sort((a, b) => a.kk.localeCompare(b.kk) || a.l.localeCompare(b.l)).forEach(n => se.add(new Option(`${KD[n.kk][2]}: ${n.l}`, n.i)));
   se.value = trace ? trace[0].n.i : ''; se.onchange = () => se.value && runTrace(N[+se.value]); st.append(se);
-  for (const [lab, d] of [['‹ prev', -1], ['next ›', 1]]) { const b = document.createElement('span'); b.className = 'b'; b.textContent = lab; b.onclick = () => stepTo(tIdx + d); st.append(b) }
-  const b2 = document.createElement('span'); b2.className = 'b'; b2.textContent = 'from selected'; b2.onclick = () => sel && runTrace(sel); st.append(b2); sb.append(st);
+  for (const [lab, d] of [['‹ prev', -1], ['next ›', 1]]) { const b = document.createElement('button'); b.className = 'b'; b.textContent = lab; b.onclick = () => stepTo(tIdx + d); st.append(b) }
+  const b2 = document.createElement('button'); b2.className = 'b'; b2.textContent = 'from selected'; b2.onclick = () => sel && runTrace(sel); st.append(b2); sb.append(st);
   if (!trace) { sb.insertAdjacentHTML('beforeend', '<div class="empty">Pick an entry above (an agent, a trigger, a router row …) or select a node and press "from selected". The path is numbered on the graph; prev / next walk it; a decision step lets you switch the outcome.</div>'); return }
   trace.forEach((s, i) => { const n = s.n, d = row(n, `${s.loop ? '↻ back to ' : ''}${esc(n.l)}${s.via && !s.loop ? ` <small style="color:var(--mut)">${esc(s.via.k)}</small>` : ''}`,
    `<span class="num" style="padding-left:${Math.min(s.dep, 8) * 6}px">${i + 1}</span>`, (i === tIdx ? 'on ' : '') + (bad.has(n.i) ? 'bad' : ''), () => { stepTo(i); openSide('code') });
@@ -1370,15 +1404,18 @@ function hl(line, lg) { const h = HL[lg] || HL.md, rx = new RegExp(`(${h[0].sour
  return out + esc(line.slice(last)) }
 let srcWanted = null, more = 0;
 function code(n) {
- if (!n) { sb.innerHTML = '<div class="empty">Click a node on the graph: its source span shows here, with its line marked.</div>'; return }
- const f = D.files[n.g].id, real = !f.startsWith('('), abs = (D.kit + '/' + f).replace(/\\/g, '/'), ln = n.ln || 1;
+ const kitL = D.home ? `<a target="_blank" rel="noopener" href="${D.home}">kit repo</a><a target="_blank" rel="noopener" href="${D.readme}">README</a>` : '';
+ if (!n) { $('#meta').style.display = kitL ? 'block' : 'none'; $('#meta').innerHTML = kitL; sb.innerHTML = '<div class="empty">Click a node on the graph or pick one from the parts list: its source span shows here, with its line marked.</div>'; return }
+ const f = D.files[n.g].id, real = !f.startsWith('('), abs = (D.kit + '/' + f).replace(/\\/g, '/'), ln = n.ln || 1, desc = n.d || (window.KF_DESC || [])[n.i] || '';
  $('#sh').innerHTML = svgI(KD[n.kk][1], n.col, 18) + `<span style="overflow-wrap:anywhere;min-width:0">${esc(n.l)}</span><small style="color:var(--mut);font-weight:400">${esc(KD[n.kk][2])}</small>`;
  const m = $('#meta'); m.style.display = 'block'; const iss = bad.get(n.i) || [];
- m.innerHTML = `<div class="f">${esc(f)}${n.ln ? ':' + n.ln : ''}</div>${n.d ? `<div>${esc(n.d)}</div>` : ''}${iss.map(it => `<div style="color:var(--bad)">⚠ ${esc(it.code)}: ${esc(it.text)}</div>`).join('')}
-  <div>${n.out.length} out · ${n.in.length} in${real ? ` · ${D.kit ? `<a href="vscode://file/${encodeURI(abs)}:${ln}">open in editor</a>` : ''}${D.repoUrl ? `<a target="_blank" rel="noopener" href="${D.repoUrl}/${encodeURI(f)}#L${ln}">view on GitHub</a>` : ''}<span class="lnk" id="cp">copy path:line</span>` : ''}</div>`;
- if (real) $('#cp').onclick = () => { const t = `${f}:${ln}`; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).catch(() => { const a = document.createElement('textarea'); a.value = t; document.body.append(a); a.select(); document.execCommand('copy'); a.remove() }); $('#cp').textContent = 'copied' };
- if (!real) { sb.innerHTML = '<div class="empty">A shared node (state, config, outcome or external CLI): no single source span. Its edges on the graph show who reads, writes or calls it.</div>'; return }
+ m.innerHTML = `<div class="f">${esc(f)}${n.ln ? ':' + n.ln : ''}</div>${desc ? `<div>${esc(desc)}</div>` : ''}${iss.map(it => `<div style="color:var(--bad)">⚠ ${esc(it.code)}: ${esc(it.text)}</div>`).join('')}
+  <div>${n.out.length} out · ${n.in.length} in${real ? ` · ${D.kit ? `<a href="vscode://file/${encodeURI(abs)}:${ln}">open in editor</a>` : ''}${D.repoUrl ? `<a target="_blank" rel="noopener" href="${D.repoUrl}/${encodeURI(f)}#L${ln}">view on GitHub</a>` : ''}<button class="lnk" id="cp">copy path:line</button>` : ' · '}<button class="lnk" id="cl">copy link</button>${kitL}</div>`;
+ const copy = (t, b) => { (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).catch(() => { const a = document.createElement('textarea'); a.value = t; document.body.append(a); a.select(); document.execCommand('copy'); a.remove() }); b.textContent = 'copied' };
+ if (real) $('#cp').onclick = () => copy(`${f}:${ln}`, $('#cp'));
+ $('#cl').onclick = () => { toHash(); copy(location.href, $('#cl')) };
  if (!window.KF_SRC) { sb.innerHTML = '<div class="empty">loading source…</div>'; if (!srcWanted && D.src) { srcWanted = document.createElement('script'); srcWanted.src = D.src; srcWanted.onload = () => curTab === 'code' && code(sel); srcWanted.onerror = () => sb.innerHTML = '<div class="empty">Source sidecar not found next to this page.</div>'; document.head.append(srcWanted) } return }
+ if (!real) { sb.innerHTML = '<div class="empty">A shared node (state, config, outcome or external CLI): no single source span. Its edges on the graph show who reads, writes or calls it.</div>'; return }
  const lines = (window.KF_SRC[f] || '').split('\n'), lg = {ps1: 'ps1', psm1: 'ps1', py: 'py', js: 'js', mjs: 'js', md: 'md', json: 'json', sh: 'py'}[f.split('.').pop()] || 'md';
  let end = n.end; if (!end) { const nx = G[n.g].m.filter(o => o.ln > ln && o.k !== 'file').map(o => o.ln); end = nx.length ? Math.min(...nx) - 1 : lines.length }
  if (n.k === 'file') end = lines.length; const a = Math.max(1, ln - (n.k === 'file' ? 0 : 2)), cap = a + 80 + more;
@@ -1390,8 +1427,8 @@ function code(n) {
 $('#grip').onpointerdown = e => { e.preventDefault(); side.classList.add('drag'); const mv = ev => { sideW = Math.max(280, Math.min(innerWidth * .7, innerWidth - 44 - ev.clientX)); side.style.width = sideW + 'px'; size(); if (sel) center(rep(sel) || sel) };
  const up = () => { side.classList.remove('drag'); LS.set('w', sideW); removeEventListener('pointermove', mv); removeEventListener('pointerup', up) }; addEventListener('pointermove', mv); addEventListener('pointerup', up) };
 $('#grip').ondblclick = () => { sideW = 420; side.style.width = sideW + 'px'; LS.set('w', sideW); setTimeout(size, 200) };
-['Overview', 'Detail', 'Everything'].forEach((t, i) => { const b = document.createElement('span'); b.className = 'b'; b.textContent = t; b.onclick = () => setLevel(i); $('#lv').append(b) });
-function menu(id, items, state, label) { const dd = $(id), m = dd.querySelector('.menu'); dd.firstElementChild.onclick = e => { e.stopPropagation(); document.querySelectorAll('.dd').forEach(x => x !== dd && x.classList.remove('open')); dd.classList.toggle('open') };
+['Overview', 'Detail', 'Everything'].forEach((t, i) => { const b = document.createElement('button'); b.className = 'b'; b.textContent = t; b.onclick = () => setLevel(i); $('#lv').append(b) });
+function menu(id, items, state, label) { const dd = $(id), m = dd.querySelector('.menu'); dd.firstElementChild.onclick = e => { e.stopPropagation(); document.querySelectorAll('.dd').forEach(x => x !== dd && x.classList.remove('open')); dd.classList.toggle('open'); ddAria() };
  m.onclick = e => e.stopPropagation();
  for (const [k, html, c] of items) { const l = document.createElement('label'); l.innerHTML = `<input type="checkbox" ${state[k] ? 'checked' : ''}>${html}<small>${c}</small>`; l.firstChild.onchange = ev => { state[k] = ev.target.checked; rebuild() }; m.append(l) } }
 menu('#ddS', Object.keys(FAM).map(f => [f, `${svgI(Object.values(KD).find(k => k[0] === f)[1], FAM[f][1])} ${FAM[f][0]}`, N.filter(n => n.fam === f).length]), famOn);
@@ -1399,12 +1436,13 @@ menu('#ddE', Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => [k, `<
 const cnt = k => N.filter(n => n.kk === k).length;
 $('#sx').onclick = closeSide;
 const cgrid = (h, min) => `<div class="g cg" style="--cmin:${min}">${h}</div>`   // every list of short items: the kit's one auto-fill grid (README dashboard)
-const keyHtml = () => `<div id="key"><div id="howto">${esc(narrow() ? $('#ttl').title.replace('; double-click = collapse a file', '').replace(/click/g, 'tap').replace('zoom in', 'pinch to zoom in') : $('#ttl').title)}</div>` + '<h4 style="margin-top:0">Nodes</h4>' + cgrid(Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join(''), '150px') +
+const keyHtml = () => `<div id="key"><div id="howto">${esc(narrow() ? HOWTO.replace('; double-click = collapse a file', '').replace(/click/g, 'tap').replace('zoom in', 'pinch to zoom in') : HOWTO)}</div>` + '<h4 style="margin-top:0">Nodes</h4>' + cgrid(Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join(''), '150px') +
  '<h4>Edges</h4>' + cgrid(Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => `<span class="it"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="5 3"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg>${k}</span>`).join(''), '130px') +
  '<h4>Families</h4>' + cgrid(Object.values(FAM).map(f => `<span class="it"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="${f[1]}"/></svg>${f[0]}</span>`).join(''), '130px') + '</div>';
-$('#ttl').onclick = () => { if (narrow()) openSide('key') };   // no hover on phones: the how-to sits in the key
-addEventListener('click', () => document.querySelectorAll('.dd').forEach(x => x.classList.remove('open')));
-$('#q').oninput = () => { const q = $('#q').value.trim().toLowerCase(); trace = null; if (!q) { force = new Set(); focus = fE = null; return rebuild() } show(N.filter(n => (n.l + ' ' + n.id).toLowerCase().includes(q)).slice(0, 300)) };
+const ddAria = () => document.querySelectorAll('.dd').forEach(x => x.firstElementChild.setAttribute('aria-expanded', x.classList.contains('open')));
+addEventListener('click', () => { document.querySelectorAll('.dd').forEach(x => x.classList.remove('open')); ddAria() });
+function search(q) { q = q.trim().toLowerCase(); trace = null; fillList(q); toHash(); if (!q) { force = new Set(); focus = fE = null; return rebuild() } show(N.filter(n => (n.l + ' ' + n.id).toLowerCase().includes(q)).slice(0, 300)) }
+$('#q').oninput = () => search($('#q').value);
 $('#q').onkeydown = e => { if (e.key === 'Enter' && focus && focus.size) { const n = [...focus][0]; select(n); center(n) } };
 $('#fit').onclick = fitView;
 let drag = null, pinch = null;
@@ -1427,16 +1465,56 @@ cv.addEventListener('pointerup', e => { lift(e); if (drag && !drag.moved) { cons
 cv.addEventListener('dblclick', e => { const n = hit(...pt(e)); if (!n || !G[n.g].fn) return; coll.has(n.g) ? coll.delete(n.g) : coll.add(n.g); rebuild() });
 cv.addEventListener('contextmenu', e => { const n = hit(...pt(e)); if (n) { e.preventDefault(); n.fx = n.fy = null; heat(.2) } });
 cv.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = pt(e), f = Math.exp(-e.deltaY * .0015); auto = false; tx = x - (x - tx) * f; ty = y - (y - ty) * f; sc *= f; zoomLevel(); draw() }, {passive: false});
-addEventListener('keydown', e => { if (e.key === 'Escape') { sel = null; trace = null; focus = fE = null; force = new Set(); $('#q').value = ''; rebuild() }
- if (trace && (e.key === 'ArrowRight' || e.key === 'ArrowLeft') && document.activeElement.tagName !== 'INPUT') stepTo(tIdx + (e.key === 'ArrowRight' ? 1 : -1)) });
+// keyboard: Escape clears; arrows walk a trace, else step through the selected node's neighbours (Enter picks); in the parts list they move the focus
+let nbI = -1;
+const nbs = n => [...new Set(VE.filter(v => v.a === n || v.b === n).map(v => v.a === n ? v.b : v.a))].filter(m => m !== n).sort((a, b) => a.l.localeCompare(b.l));
+const say = t => { $('#live').textContent = t };
+addEventListener('keydown', e => { const ae = document.activeElement, typing = /INPUT|SELECT|TEXTAREA/.test(ae.tagName), arrow = /^Arrow/.test(e.key), fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+ if (e.key === 'Escape') { sel = hover = null; trace = null; focus = fE = null; force = new Set(); $('#q').value = ''; fillList(''); rebuild(); toHash(); return }
+ if (arrow && ae.closest && ae.closest('#lst')) { const bs = [...$('#lst').querySelectorAll('button')], k = bs.indexOf(ae); if (k >= 0) { e.preventDefault(); bs[Math.max(0, Math.min(bs.length - 1, k + (fwd ? 1 : -1)))].focus() } return }
+ if (typing || (ae.tagName === 'BUTTON' && !arrow)) return;
+ if (trace && arrow) { e.preventDefault(); return stepTo(tIdx + (fwd ? 1 : -1)) }
+ if (sel && arrow) { const l = nbs(sel); if (!l.length) return; e.preventDefault(); nbI = (nbI + (fwd ? 1 : -1) + l.length) % l.length; hover = l[nbI]; center(hover); say(`${hover.l}, ${KD[hover.kk][2]}, ${nbI + 1} of ${l.length}; Enter picks it`) }
+ else if (e.key === 'Enter' && hover && sel && hover !== sel) { const n = hover; hover = null; select(n); center(n); say(`${n.l} selected`) } });
 new ResizeObserver(size).observe($('#main'));
+// parts list: agents, workflows, skills, commands and triggers by kind; a phone's default view, the keyboard and screen-reader way in on a desktop
+const LK = [['file-agent', 'Agents'], ['file-workflow', 'Workflows'], ['file-skill', 'Skills'], ['slash', 'Slash commands'], ['event', 'Triggers']];
+function pick(n) { if (narrow() && listMode) setList(false); select(n); center(n) }
+function fillList(q) { const l = $('#lst'); l.innerHTML = '';
+ for (const [k, t] of LK) { const ns = N.filter(n => n.kk === k && (!q || (n.l + ' ' + n.id).toLowerCase().includes(q))).sort((a, b) => a.l.localeCompare(b.l)); if (!ns.length) continue;
+  l.insertAdjacentHTML('beforeend', `<h2 class="grp">${t} · ${ns.length}</h2>`); const u = document.createElement('ul'); u.style.cssText = 'list-style:none;margin:0;padding:0';
+  for (const n of ns) { const li = document.createElement('li'), b = document.createElement('button'); b.className = 'li'; b.innerHTML = svgI(KD[n.kk][1], n.col) + `<span class="t">${esc(n.l)}</span><small>${esc(KD[n.kk][2])}</small>`; b.onclick = () => pick(n); li.append(b); u.append(li) }
+  l.append(u) }
+ if (!l.children.length) l.innerHTML = '<p class="empty">No part matches.</p>' }
+let listMode = false;
+function setList(on) { listMode = on; $('#lst').classList.toggle('sr', !on); $('#vw').setAttribute('aria-pressed', on); $('#vw').textContent = on ? 'graph' : 'list'; LS.set('view', on ? 'list' : 'graph'); draw() }
+$('#vw').onclick = () => setList(!listMode);
+$('#mn').onclick = e => { e.stopPropagation(); const o = $('#top').classList.toggle('mo'); $('#mn').setAttribute('aria-expanded', o) };
+// intro: first visit only (dismissal remembered), ? reopens it
+function setIntro(on) { $('#intro').hidden = !on; $('#lst').style.bottom = on && narrow() ? $('#intro').offsetHeight + 16 + 'px' : ''; $('#help').setAttribute('aria-expanded', on); LS.set('intro', on); if (auto) fitView(); else draw() }
+$('#help').onclick = () => setIntro($('#intro').hidden); $('#ix').onclick = () => setIntro(false);
+const home = N.find(n => n.k === 'file' && D.files[n.g].id === 'skills/bossy/SKILL.md');
+$('#ib').onclick = () => home && pick(home);
+if (D.home) $('#il').insertAdjacentHTML('afterend', `<p><a href="${D.home}" target="_blank" rel="noopener">kit repo</a> · <a href="${D.readme}" target="_blank" rel="noopener">README</a></p>`);
+cv.setAttribute('aria-label', `Kit map: ${D.counts.nodes} parts and ${D.counts.edges} links. Use the parts list (the list button or Tab) or the search to pick one; arrow keys step through its neighbours.`);
+// deep links: #sel=<node id>&level=<0-2>&q=<search>, mirrored on every change
+function toHash() { const p = new URLSearchParams(); if (sel) p.set('sel', sel.id); if (LVL) p.set('level', LVL); const q = $('#q').value.trim(); if (q) p.set('q', q);
+ const h = p.toString(); if (h !== location.hash.slice(1)) history.replaceState(null, '', h ? '#' + h : location.pathname + location.search) }
+function fromHash() { const p = new URLSearchParams(location.hash.slice(1)), L = +p.get('level') || 0, q = p.get('q') || '', n = p.get('sel') && N.find(m => m.id === p.get('sel'));
+ if (L !== LVL) { LVL = Math.max(0, Math.min(2, L)); rebuild(); fitView() } $('#q').value = q; if (q) search(q); if (n) { select(n); center(n) } return !!(n || q || L) }
+addEventListener('hashchange', fromHash);
 rebuild(); for (let i = 0; i < 420; i++) tick(); alpha = 0; size(); if (LS.get('open', false) && !narrow()) openSide(curTab);   // size() fits the whole graph (auto)
+fillList(''); setList(LS.get('view', narrow() ? 'list' : 'graph') === 'list'); setIntro(LS.get('intro', true));
+if (!fromHash() && home) { sel = home; neigh(home); toHash() }   // a first look: the coordinator and its links
 // ui-check layout hook: drawn node and label boxes in page px, and the free area they must stay inside (kitbag.py ui-check)
 window.uiBoxes = () => { const m = $('#main').getBoundingClientRect(), [a, b, c, d] = free(), P = (x, y) => [x * sc + tx + m.left, y * sc + ty + m.top];
+ if (listMode && narrow()) return {view: [a + m.left, b + m.top, c + m.left, d + m.top], boxes: []};   // the list covers the graph
  const out = VN.map(n => { const r = dr(n), [x, y] = P(n.x - r, n.y - r); return {id: 'node ' + n.l, key: 'n' + n.i, b: [x, y, 2 * r * sc, 2 * r * sc]} });
  for (const L of drawn) { const [x, y] = P(L.b[0], L.b[1]); out.push({id: 'label ' + L.t, own: L.own ? 'n' + L.own.i : '', b: [x, y, L.b[2] * sc, L.b[3] * sc]}) }
- return {view: [a + m.left, b + m.top, c + m.left, d + m.top], boxes: out} };
-window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, show, fitTo, fitView, declutter, center, get sc() { return sc }};
+ const V = [a + m.left, b + m.top, c + m.left, d + m.top], inV = o => o.b[0] >= V[0] && o.b[0] + o.b[2] <= V[2] && o.b[1] >= V[1] && o.b[1] + o.b[3] <= V[3];
+ return {view: V, boxes: auto ? out : out.filter(inV)} };   // panned or zoomed: only what lies wholly in view (the rest is off-screen on purpose)
+window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, show, fitTo, fitView, declutter, center, setList, get sc() { return sc }, get sel() { return sel }, get lvl() { return LVL },
+ drawnEdges: () => VE.filter(v => LVL || v.ov || (fE && fE.has(v))).length, ovEdges: () => VE.filter(v => v.ov).length, allEdges: () => VE.length};
 </script></body></html>
 '''
 
@@ -1475,7 +1553,11 @@ def build(kit, public=False):
     data = page_data(k, lint(k))
     if public:   # no local paths; code links go to the CI repo host
         repo, sha = os.environ.get('GITHUB_REPOSITORY'), os.environ.get('GITHUB_SHA')
-        data['kit'], data['repoUrl'] = '', (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}/blob/{sha}" if repo and sha else '')
+        home = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}" if repo else ''
+        data['kit'], data['repoUrl'], data['home'] = '', (f'{home}/blob/{sha}' if home and sha else ''), home
+        data['readme'] = f'{home}#readme' if home else ''
+    else:
+        data['readme'] = 'file:///' + data['kit'].lstrip('/') + '/README.md'
     return data
 
 def render(kit, out, quiet=False, data=None, public=False):
