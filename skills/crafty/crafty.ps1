@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L934 check · L1237 pipes · L1294 guard · L2051 dir ·
-  L2061 checkpoint · L2086 prior · L2124 tracker · L2146 task spec · L2294 host
+  L2061 checkpoint · L2086 prior · L2124 tracker · L2146 task spec · L2295 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2197,7 +2197,8 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
   if ($Task) {   # kept from the live text: testing-doc links the spec lacks (devtools.py finish writes them), kit sections (rollup)
     Clear-TrackerMemo $Task; $cur = "$((Get-TrackerTask $Task).description)" -replace "`r`n", "`n"; $nd = $r.description
     $docs = @($cur -split "`n" | Where-Object { $_ -match '^\*\*Testing doc \((human|AI)\):\*\*' -and $nd -notmatch "Testing doc \($($Matches[1])\)" }); if ($docs.Count) { $nd = (($docs -join "`n`n") + "`n`n" + $nd) }
-    foreach ($m in [regex]::Matches($cur, '(?s)<!-- kit:([\w-]+) -->\n(.*?)\n<!-- /kit:\1 -->')) { $nd = Set-KitDescSection $nd $m.Groups[1].Value $m.Groups[2].Value '' }
+    $ms = @([regex]::Matches($cur, '(?s)<!-- kit:([\w-]+) -->\n(.*?)\n<!-- /kit:\1 -->')); [array]::Reverse($ms)   # each lands on top: last first keeps their order
+    foreach ($m in $ms) { $nd = Set-KitDescSection $nd $m.Groups[1].Value $m.Groups[2].Value '' }
     $null = Set-TrackerName $Task $r.name; $null = Set-TrackerDescription $Task $nd; $id = $Task
   }
   else { $nt = New-TrackerTask -List "$($sp.list)" -Name $r.name -Description $r.description -Parent "$($sp.parent)" -Assignee "$($sp.assignee)" -Priority "$($sp.priority)" -NewTask "$($sp.newTask)" -Related @($sp.related); $id = "$($nt.id)"; if (-not $id) { throw "tracker create returned no id: $nt" } }
