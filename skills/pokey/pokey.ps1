@@ -7,13 +7,14 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
   evidence fetch|index|read-chunk|frames|write-vision|label|verify|tune|feedback|bench|status <link | key> ...   videos -> text index (goody media-evidence)
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
+  results patch|hold -RunDir <run> -Code <code> [-Patch '<{set, add, top} JSON>'] [-Why <w> -Summary <s> -EnvFix <json>]   the workflow's deltas / held.json
   ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL; goody android-swarm)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage,
   a missing goody or api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L122 seat · L189 api · L357 finalize · L790 retest
+Sections: L24 report · L123 seat · L190 api · L358 finalize · L791 results · L820 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -787,6 +788,35 @@ $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, faile
 'EXIT=0'; $global:LASTEXITCODE = 0   # an in-session & call kept a stale one; no exit: dot-sourced callers go on
 }
 
+# ---- results: results.json written once (the tester); the workflow's changes as deltas by check id; held.json by the script
+# a row's keys: testy.js CHECKS_SCHEMA + the keys the workflow adds (kitbag lint RESULT-KEYS keeps them in step)
+$script:ResultRowKeys = 'id', 'subtask_id', 'screen', 'result', 'defect', 'knownBug', 'signature', 'cause', 'env_fix', 'what_was_done', 'observed', 'evidence', 'attempts', 'window', 'guideId', 'verify', 'flaky'
+function Invoke-Results {
+param([Parameter(Mandatory, Position = 0)][ValidateSet('patch', 'hold')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Code,
+  [string]$Patch, [string]$Why, [string]$Summary, [string]$EnvFix)
+$dir = Join-Path $RunDir $Code
+if ($Action -eq 'hold') {   # supervise + workers read it; the time is the script's
+  Write-KitAtomic (Join-Path $dir 'held.json') ([ordered]@{ code = $Code; held = $Why; envFix = $(if ($EnvFix) { $EnvFix | ConvertFrom-Json } else { $null }); summary = $Summary; at = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json -Depth 6)
+  "held $Code`: $Why"; return
+}
+# -Patch { set: { <id>: { <field>: <value> } }, add: [<rows>], top: { findings, setup_changes, data_created } }
+$p = $Patch | ConvertFrom-Json -AsHashtable; $f = Join-Path $dir 'results.json'
+if (-not (Test-Path -LiteralPath $f)) { throw "results patch: no $f (the tester writes it first)" }
+$r = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable
+$bad = @(foreach ($c in @($p.add) + @($p.set.Values)) { if ($c) { $c.Keys | Where-Object { $_ -notin $script:ResultRowKeys } } }) | Select-Object -Unique
+if ($bad.Count) { throw "results patch refused: unknown row key(s) $($bad -join ', ') (testy.js CHECKS_SCHEMA); nothing written" }
+$seen = @{}; foreach ($c in $r.checks) {   # unique ids as the workflow makes them (testy.js run-item): a, b ... suffix, guideId
+  $id = "$(if ($c.id) { $c.id } else { 'check' })"; $n = $id; $k = 1; while ($seen.ContainsKey($n)) { $n = "$id$([char](97 + $k++))" }
+  if ($n -ne $id) { $c.guideId = $id }; $c.id = $n; $seen[$n] = $c }
+$setIds = if ($p.set) { @($p.set.Keys) } else { @() }
+$miss = @(foreach ($id in $setIds) { if (-not $seen.ContainsKey($id)) { $id } else { foreach ($kv in $p.set[$id].GetEnumerator()) { $seen[$id][$kv.Key] = $kv.Value } } })
+if ($miss.Count) { throw "results patch refused: no check $($miss -join ', ') in $f; nothing written" }
+foreach ($c in @($p.add)) { if ($c) { if ($seen.ContainsKey($c.id)) { foreach ($kv in $c.GetEnumerator()) { $seen[$c.id][$kv.Key] = $kv.Value } } else { $r.checks += $c; $seen[$c.id] = $c } } }
+if ($p.top) { foreach ($kv in $p.top.GetEnumerator()) { $r[$kv.Key] = $kv.Value } }
+Write-KitAtomic $f ($r | ConvertTo-Json -Depth 8)
+"patched $Code`: $($setIds.Count) changed, $(@($p.add | Where-Object { $_ }).Count) added, $(@($r.checks).Count) checks"
+}
+
 # ---- retest: RETEST item for a live fix (same -Code replaces it)
 function Invoke-Retest {
 param(
@@ -838,6 +868,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
       else { $xn = @{ deployed = 'deploys'; annotate = 'android-swarm'; evidence = 'media-evidence' }[$__verb]; Resolve-KitExtra $xn; [Console]::Error.WriteLine("pokey.ps1 $__verb is a goody: run kitbag.py goody add $xn"); exit 2 }
     }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
+    'results' { Invoke-KitVerb Invoke-Results $__rest }
     'ui' {   # goody android-swarm
       if (Get-Command Invoke-Ui -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Ui $__rest }
       elseif ((Get-KitSetting 'devices.type' 'android') -eq 'none') { 'no devices (devices.type none): app checks are NOT_TESTED'; exit 1 }

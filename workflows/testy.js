@@ -12,7 +12,7 @@ export const meta = {
 }
 
 // Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L214 local · L242 app · L265 test-prompt ·
-//   L319 verify · L364 run-item · L547 pool · L569 budget · L597 run · L635 learn
+//   L319 verify · L381 run-item · L562 pool · L584 budget · L612 run · L650 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -347,12 +347,29 @@ first tester's UTC window first. Keep or correct each FAIL's defect class (own /
 tracks the same defect: check its text and signature; never a tested task).`
 }
 
-function finalPrompt(it, res) {
+// results.json holds what the last unscoped tester wrote; close and hold send only the workflow's changes (pokey.ps1 results patch)
+const uniq = (checks) => { const seen = new Set(); return checks.map((c0) => { const c = { ...c0 }, id0 = String(c.id || 'check'); let id = id0, k = 1
+ while (seen.has(id)) id = `${id0}${String.fromCharCode(97 + k++)}`
+ if (id !== id0) c.guideId = id0
+ c.id = id; seen.add(id); return c }) }
+function resultsPatch(written, res) {
+ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b), base = new Map(uniq((written && written.checks) || []).map((c) => [c.id, c])), set = {}, add = [], top = {}
+ for (const c of res.checks) {
+  const b = base.get(c.id), d = {}
+  if (!b) { add.push(c); continue }
+  for (const k of Object.keys(c)) if (!same(c[k], b[k])) d[k] = c[k]
+  if (Object.keys(d).length) set[c.id] = d
+ }
+ for (const k of ['findings', 'setup_changes', 'data_created']) if (!same(res[k] || [], (written && written[k]) || [])) top[k] = res[k] || []
+ const p = { ...(Object.keys(set).length ? { set } : {}), ...(add.length ? { add } : {}), ...(Object.keys(top).length ? { top } : {}) }
+ return Object.keys(p).length ? `& '${Q}' results patch -RunDir '${R.runDir}' -Code ${res.code} -Patch '${JSON.stringify(p).replace(/'/g, "''")}'` : ''
+}
+function finalPrompt(it, res, written) {
+ const patch = resultsPatch(written, res)
  return `STEP (checky, role lead): publish the test results of package ${it.code}.${PATHS}
-1. Write this JSON exactly as given to ${outDir(it)}/results.json (Write tool; change nothing):
-${JSON.stringify(res)}
-2. Run in PowerShell: ${CHECK(it, ` -ExpectChecks ${res.checks.length}`)} (publishes nothing). ${CHECK_FAILS}, or fewer checks
- than sent (write step 1 again, complete): fix that data (step 3) and re-run it until exit 0.
+1. ${patch ? `Run in PowerShell, exactly as given (the workflow's changes to ${outDir(it)}/results.json; never rewrite the file):\n${patch}` : `${outDir(it)}/results.json is final: nothing to change.`}
+2. Run in PowerShell: ${CHECK(it, ` -ExpectChecks ${res.checks.length}`)} (publishes nothing). ${CHECK_FAILS}, or a count
+ other than sent: fix that data (step 3) and re-run it until exit 0.
  Then (timeout 600000): & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -ExpectChecks ${res.checks.length} (last line EXIT=0 = published)
  It publishes the report (kit.local.json reports.type), comments on the tasks and applies the result rule (closed /
  failedTesting / one [Bug] per ask); it refuses while evidence listed in results.json is missing.
@@ -389,6 +406,7 @@ async function runItem(it, idx, L) {
  let retried = false
  let res = await agent(testPrompt(it, L), { label: `test:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
  if (res && res.skipped) { log(`${it.code}: skipped - another worker owns or finished it`); return { code: it.code, skipped: true } }
+ let written = res && JSON.parse(JSON.stringify(res))   // what results.json holds (scoped testers write results-retry.json)
  for (let h = 0; res && res.handoff && h < 3; h++) {   // budget handoff -> a fresh tester
   log(`${it.code}: HANDOFF at its budget (${res.handoff}): a fresh tester continues`)
   const more = await agent(testPrompt({ ...it, scoped: true }, L) + `\nHANDOFF: a previous tester reached its budget; read its resume brief ${res.handoff} first and test only the checks it lists as left.`, { label: `handoff:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
@@ -398,6 +416,7 @@ async function runItem(it, idx, L) {
   log(`${it.code}: ${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running`)
   const prior = res ? `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${res.checks.filter((c) => c.result === 'NOT_TESTED').map((c) => c.id).join(', ')}. Reuse its valid evidence.` : ''
   const again = await agent(testPrompt(it, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
+  if (again && !again.skipped) written = JSON.parse(JSON.stringify(again))   // an unscoped tester wrote results.json anew
   if (again && !again.skipped && res) {
    for (const c2 of again.checks || []) {
     const i = res.checks.findIndex((c) => c.id === c2.id)
@@ -524,21 +543,17 @@ async function runItem(it, idx, L) {
  if (it.skipClose || holdLocal) {
   // verdicts stay on disk for the lead (finalize -Code); held.json tells supervise + workers
   const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator fixes the env + pokey.ps1 retest (never failedTesting for an env reason)` : 'publish left to the lead (skipClose)'
-  await agent(`STEP (checky, role lead): write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
-1. ${outDir(it)}/results.json:
-${JSON.stringify(res)}
-2. ${outDir(it)}/held.json:
-${JSON.stringify({ code: it.code, held: why, envFix, summary: line, at: '<now>' })}
-Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).
-3. Run in PowerShell: ${CHECK(it, ` -ExpectChecks ${res.checks.length}`)} (publishes nothing) and return its output.
- "a truncated copy" = write file 1 again, complete, and re-run. Other exit 1: return ok=true anyway with that output (the lead
- fixes them before publishing).`,
+  const q = (s) => String(s).replace(/'/g, "''"), patch = resultsPatch(written, res)
+  await agent(`STEP (checky, role lead): run these in PowerShell, exactly as given, then return ok=true with their output.
+${patch ? `${patch}\n` : ''}& '${Q}' results hold -RunDir '${R.runDir}' -Code ${it.code} -Why '${q(why)}' -Summary '${q(line)}'${envFix ? ` -EnvFix '${q(JSON.stringify(envFix))}'` : ''}
+${CHECK(it, ` -ExpectChecks ${res.checks.length}`)} (publishes nothing). Exit 1: return ok=true anyway with that output (the lead fixes
+ them before publishing).`,
    { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('hold'), effort: 'low' })
   log(`${line} (results saved; ${holdLocal ? 'ENV-FIX unresolved: the coordinator decides' : 'publish left to the lead'})`)
   return { code: it.code, summary: line, result: res, eventful: true, envFix, envFixOpen: holdLocal, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
  }
- let fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('close'), effort: 'low' })
- if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', model: 'sonnet' })
+ let fin = await agent(finalPrompt(it, res, written), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('close'), effort: 'low' })
+ if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res, written), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', model: 'sonnet' })
  log(line + (fin && fin.ok ? '' : ' [NOT PUBLISHED - the coordinator runs pokey.ps1 finalize for it (pokey L3)]'))
  const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduce|inconclusive/.test(`${c.observed || ''} ${c.verify || ''}`)) || !(fin && fin.ok)
  return { code: it.code, summary: line, finalize: fin, eventful, envFix, unpublished: !(fin && fin.ok), result: fin && fin.ok ? undefined : res, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }

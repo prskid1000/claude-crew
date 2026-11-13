@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1021 README graph · L1123 lint command · L1296 audit ·
-  L1405 registry · L1746 prose · L1897 sections · L2027 budget · L2051 goodies · L2558 state lint · L2700 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1304 audit ·
+  L1413 registry · L1754 prose · L1905 sections · L2035 budget · L2059 goodies · L2566 state lint · L2708 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -792,6 +792,14 @@ def lint(k, g=None, org_terms=None):
         bad('JUNK', f, why)
     for why in artefact_lint(k.dir, {osp.basename(x) for x in k.files}):
         bad('ARTEFACT', STATE_DOC, why)
+    sch = re.search(r'(?s)const CHECKS_SCHEMA = \{.*?checks: \{.*?properties: \{(.*?)\n {4}\},\n {4}required', k.texts.get('workflows/testy.js', ''))
+    rk = re.search(r"\$script:ResultRowKeys = ([^\n]+)", k.texts.get('skills/pokey/pokey.ps1', ''))
+    if sch and rk:   # pokey.ps1 results patch refuses keys the tester schema lacks
+        lost = sorted(set(re.findall(r'(?m)^ {5}(\w+):', sch.group(1))) - set(re.findall(r"'(\w+)'", rk.group(1))))
+        if lost:
+            bad('RESULT-KEYS', 'skills/pokey/pokey.ps1', f'$script:ResultRowKeys lacks testy.js CHECKS_SCHEMA row key(s) {", ".join(lost)}')
+    elif k.texts.get('workflows/testy.js') and k.texts.get('skills/pokey/pokey.ps1'):
+        bad('RESULT-KEYS', 'workflows/testy.js', 'CHECKS_SCHEMA rows or pokey.ps1 $script:ResultRowKeys not found (the results row schema)')
     for d in stray_runtimes(k.dir):
         bad('RUNTIME-STRAY', d, f'a {MAP["runtimeDir"]} outside the kit (a relative path from the wrong folder; the guard denies new ones): '
             f'move what is needed under <kit>/{MAP["runtimeDir"]} (crafty.ps1 dir), then delete it')

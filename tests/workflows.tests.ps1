@@ -172,7 +172,7 @@ run(args, agent, _n, _n, null).then(() => {
  const s = calls.find((c) => c.label === 'retest-strong:A1'), cl = calls.find((c) => c.label === 'close:A1')
  console.log(`strong:${!!s && s.model === 'opus' && /blocked by env-data/.test(s.prompt) && /ONLY these checks: C1/.test(s.prompt)}`)
  console.log(`test-sonnet:${calls.find((c) => c.label === 'test:A1').model === 'sonnet'}`)
- console.log(`closed-pass:${!!cl && /"id":"C1"[^}]*"result":"PASS"/.test(cl.prompt) && /\(stronger retry\)"[^}]*"firstAttempt":/.test(cl.prompt)}`)
+ console.log(`closed-pass:${!!cl && /"C1":\{[^}]*"result":"PASS"/.test(cl.prompt) && /\(stronger retry\)"[^}]*"firstAttempt":/.test(cl.prompt)}`)
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-retry $js $wf) 'testy NOT_TESTED retry: #' 'strong', 'closed-pass', 'test-sonnet'
@@ -189,7 +189,7 @@ const a = mk(true), b = mk(false)
 run(args, a.agent, _n, _n, null).then(() => run(args, b.agent, _n, _n, null)).then((out) => {
  const ask = a.calls.find((c) => c.label === 'envfix-ask:A1'), cl = a.calls.find((c) => c.label === 'close:A1')
  console.log(`envfix-ask:${!!ask && /decide ask -Kind envfix/.test(ask.prompt) && /refresh the release/.test(ask.prompt)}`)
- console.log(`envfix-pass:${!!cl && /"id":"C1"[^}]*"result":"PASS"/.test(cl.prompt) && /LOCAL ENV "shop"/.test(a.calls.find((c) => c.label === 'test:A1').prompt)}`)
+ console.log(`envfix-pass:${!!cl && /"C1":\{[^}]*"result":"PASS"/.test(cl.prompt) && /LOCAL ENV "shop"/.test(a.calls.find((c) => c.label === 'test:A1').prompt)}`)
  console.log(`envfix-held:${b.calls.filter((c) => c.label === 'envfix-ask:A1').length === 2 && !b.calls.some((c) => /^close/.test(c.label)) && b.calls.some((c) => c.label === 'hold:A1' && /ENV-FIX/.test(c.prompt)) && out.envFixOpen.includes('A1')}`)
 }).catch(_err)
 '@
@@ -206,7 +206,7 @@ const { calls, agent } = _mock((prompt, o) => {
 const args = { runDir: 'C:/runs/R4', ..._kl, items: [_item('A1')] }
 run(args, agent, _n, _n, null).then(() => {
  const cl = calls.find((c) => c.label === 'close:A1'), s = calls.find((c) => c.label === 'retest-strong:A1')
- console.log(`keeps-fail:${!!cl && /"id":"C1"[^}]*"result":"FAIL"/.test(cl.prompt) && /"id":"C3"[^}]*"result":"PASS"/.test(cl.prompt)}`)
+ console.log(`keeps-fail:${!!cl && /"id":"C1"[^}]*"result":"FAIL"/.test(cl.prompt) && !/"C3":\{[^}]*"result"/.test(cl.prompt) && /results patch/.test(cl.prompt)}`)
  console.log(`guide-id:${!!s && /ONLY these checks: C5\./.test(s.prompt) && /"id":"C5b"[^}]*"result":"PASS"/.test(cl.prompt)}`)
 }).catch(_err)
 '@
@@ -276,8 +276,8 @@ const { calls, agent } = _mock((prompt, o) => {
 const args = { runDir: 'C:/runs/R6', ..._kl, items: [_item('A1')] }
 run(args, agent, _n, _n, null).then(() => {
  const cl = calls.find((c) => c.label === 'close:A1')
- console.log(`flaky:${!!cl && /"id":"C1"[^}]*"result":"FAIL"[^}]*"not reproduced \(flaky\) \|[^}]*"flaky":true/.test(cl.prompt)}`)
- console.log(`no-evidence:${!!cl && /"id":"C2"[^}]*"result":"PASS_WITH_NOTE"[^}]*Re-test/.test(cl.prompt)}`)
+ console.log(`flaky:${!!cl && /"C1":\{[^}]*"not reproduced \(flaky\) \|[^}]*"flaky":true/.test(cl.prompt)}`)
+ console.log(`no-evidence:${!!cl && /"C2":\{[^}]*"result":"PASS_WITH_NOTE"[^}]*Re-test/.test(cl.prompt)}`)
 }).catch(_err)
 '@
 $res = Invoke-Js tc-flaky $js6 $wf
