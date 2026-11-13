@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1304 audit ·
-  L1413 registry · L1754 prose · L1905 sections · L2035 budget · L2059 goodies · L2566 state lint · L2710 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1306 audit ·
+  L1415 registry · L1756 prose · L1907 sections · L2037 budget · L2061 goodies · L2568 state lint · L2712 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1238,7 +1238,9 @@ const rows = () => innerWidth < 1280 ? [] : [...document.querySelectorAll('body 
   const end = g.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth), rs = []   // a row: items whose heights overlap (a margin shifts one top)
   const nm = (c) => ((c.querySelector('.k,summary,h3') || {}).textContent || c.id || c.className).trim().replace(/\s+/g, ' ').slice(0, 30)
   for (const c of kids) { const r = c.getBoundingClientRect(), it = { n: nm(c), h: r.height, k: c.classList[0] || c.tagName }, row = rs.find((x) => r.top < x.bottom - 1 && r.bottom > x.top + 1); if (row) { row.right = Math.max(row.right, r.right); row.bottom = Math.max(row.bottom, r.bottom); row.ids.push(c.id || c.className); row.its.push(it) } else rs.push({ top: r.top, bottom: r.bottom, right: r.right, ids: [c.id || c.className], its: [it] }) }
-  const last = rs.reduce((a, x) => (x.right < a.right ? x : a)), short = Math.round(end - last.right)
+  // an even grid (every card one width) that wrapped may end its last row short: leftover, no empty column; one short row still is
+  const ws = kids.map((c) => c.getBoundingClientRect().width), even = /grid/.test(cs.display) && rs.length > 1 && Math.max(...ws) - Math.min(...ws) < 1
+  const last = rs.reduce((a, x) => (x.right < a.right ? x : a)), short = even ? 0 : Math.round(end - last.right)
   // vertical: different cards side by side end within 48 px of each other (a list of like items, one class, may differ)
   const tall = rs.filter((x) => x.its.length > 1 && new Set(x.its.map((i) => i.k)).size > 1).map((x) => ({ x, d: Math.round(Math.max(...x.its.map((i) => i.h)) - Math.min(...x.its.map((i) => i.h))) })).filter((y) => y.d > 48)
   return (short >= 24 ? [{ el: 'rows', why: `a card row ends ${short} px short of its box (an empty column)`, text: `${g.className || g.tagName}: ${last.ids.join(', ')}`.slice(0, 120) }] : [])
