@@ -9,7 +9,7 @@ Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L15 builds · L47 supervise · L251 shells · L380 page · L689 usage · L912 release · L951 lines · L976 cleanup ·
-  L1012 launch · L1090 pause · L1208 sessions
+  L1012 launch · L1090 pause · L1208 sessions · L1260 ci tasks
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1255,4 +1255,39 @@ function Get-KitStepAgeHandoff($Me, [string]$Session) {
   $ck = Get-KitCheckpoint $Me.agent "$($Me.run)"; if (-not $ck.updated -or $ck.done) { return }   # agents that checkpoint their steps only
   $from = [datetimeoffset]$Me.joined; if ([datetimeoffset]$ck.updated -gt $from) { $from = [datetimeoffset]$ck.updated }   # the step since the last checkpoint (a resumed agent rejoins: joined)
   $age = ([datetimeoffset](Get-Date) - $from).TotalHours; if ($age -ge $h) { Get-KitHandoffLine $Me $Session ('one step running {0:0.0} h >= budget.stepHours {1}' -f $age, $h) }
+}
+
+# ---- ci tasks: test-only tasks a CI job raised, closed by bossy.ps1 track run once that job passes again
+# a test-only task raised by a CI job (tracker.ciTaskPattern on its name): its description names the job URL, its pipeline and the
+# Branch it failed on; that job passing again on that branch with the task's MRs in = its test (no testing docs, no person)
+function Get-KitCiTask([string]$Task) {
+  $rx = [string](Get-KitSetting 'tracker.ciTaskPattern' '^\W*\[[^\]]*Unit Test\]'); $tt = try { Get-TrackerTask $Task } catch { $null }
+  if (-not $rx -or "$($tt.name)" -notmatch $rx) { return $null }
+  $d = "$($tt.description)" -replace '\\(?=[_*])', ''
+  $jm = [regex]::Match($d, '(?<url>https?://[^\s)\]]+?/jobs/(?<id>\d+))'); $pm = [regex]::Match($d, '/pipelines/(?<id>\d+)'); $bm = [regex]::Match($d, '(?im)^\W*Branch\W*:\W*(?<b>[\w./-]+)')
+  [pscustomobject]@{ url = $jm.Groups['url'].Value; job = $jm.Groups['id'].Value; run = $pm.Groups['id'].Value; branch = $bm.Groups['b'].Value }
+}
+# pass = a newer run of the same job on the branch whose commit holds every merged MR of the job's repo; wait = none yet / still running
+function Test-KitCiTaskJob($Ci, [string[]]$Mrs) {
+  if (-not ($Ci.job -and $Ci.run -and $Ci.branch)) { return @{ state = 'bad'; why = 'its description names no Job URL, Pipeline or Branch' } }
+  $refs = @($Mrs | Where-Object { "$_" -match '^[^!]+!\d+$' } | ForEach-Object { $r, $n = "$_" -split '!'; [pscustomobject]@{ repo = (ProjPath $r); n = $n } } | Where-Object repo)
+  $repo = @($refs | Where-Object { $Ci.url -like "*/$($_.repo)/*" } | ForEach-Object repo)[0]; if (-not $repo) { $repo = @($refs.repo)[0] }
+  if (-not $repo) { return @{ state = 'bad'; why = 'no MR ref to find its repo' } }
+  $name = "$(@(Invoke-HostVerb 'ci.jobs' @{ repo = $repo; id = $Ci.run }) | Where-Object { "$($_.id)" -eq $Ci.job } | ForEach-Object name | Select-Object -First 1)"
+  if (-not $name) { return @{ state = 'bad'; why = "job $($Ci.job) not found in run $($Ci.run) of $repo" } }
+  $shas = @(foreach ($x in @($refs | Where-Object repo -eq $repo)) { $m = Invoke-HostVerb 'mr.get' @{ repo = $repo; n = $x.n }; @($m.merge_commit_sha, $m.squash_commit_sha, $m.sha | Where-Object { $_ })[0] })
+  foreach ($run in @(Invoke-HostVerb 'ci.runs' @{ repo = $repo; ref = $Ci.branch } | Where-Object { [long]$_.id -gt [long]$Ci.run } | Sort-Object { [long]$_.id } -Descending)) {
+    if (@($shas | Where-Object { "$((Invoke-HostVerb 'repo.base' @{ repo = $repo; a = $_; b = $run.sha }).id)" -ne $_ }).Count) { continue }   # the fix not in this commit yet
+    $jb = @(Invoke-HostVerb 'ci.jobs' @{ repo = $repo; id = $run.id }) | Where-Object name -eq $name | Select-Object -First 1; if (-not $jb) { continue }
+    $url = if ($jb.web_url) { "$($jb.web_url)" } else { $Ci.url -replace "/jobs/$($Ci.job)\b", "/jobs/$($jb.id)" }
+    switch (__CiWord "$($jb.status)") { 'success' { return @{ state = 'pass'; name = $name; url = $url } } { $_ -in 'failed', 'canceled' } { return @{ state = 'fail'; why = "CI job $name $($jb.status) again on $($Ci.branch) with the fix in: $url" } } default { return @{ state = 'wait'; why = "CI job $name $($jb.status) on $($Ci.branch): $url" } } }
+  }
+  @{ state = 'wait'; why = "no run of CI job $name on $($Ci.branch) with $(@($Mrs) -join ', ') in yet" }
+}
+# its job passed: closed + ONE QA comment (qa-result, edited in place) linking the passing job; state closed | wait | the reason
+function Close-KitCiTask([string]$Task, $Ci, [string[]]$Mrs) {
+  $cj = Test-KitCiTaskJob $Ci $Mrs; if ($cj.state -ne 'pass') { return @{ state = $cj.state; why = "CI task not closed: $($cj.why)" } }
+  try { $null = Set-TrackerStatus $Task 'closed' } catch { return @{ state = 'error'; why = "could not set status 'closed' (retried next run): $_" } }
+  try { $null = Set-TrackerKitComment $Task 'qa-result' "QA: PASS · CI job $($cj.name) passed on $($Ci.branch) with $(@($Mrs) -join ', ') merged: $($cj.url)" } catch { Write-Warning "QA comment of $Task not written: $_" }
+  @{ state = 'closed'; why = "all $(@($Mrs).Count) MRs merged, CI job $($cj.name) passed on $($Ci.branch) -> closed" }
 }

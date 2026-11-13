@@ -24,9 +24,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L50 board · L230 budget · L259 launch · L492 recover · L578 pause · L589 resume · L652 program · L703 param ·
-  L709 track · L1033 supervise · L1337 report · L1416 audit · L1476 storage · L1686 bugbrief · L1788 cleanup · L1872 learn ·
-  L1902 decide · L2035 health · L2097 retro due · L2107 tidy · L2176 the kit origin's main and goodies · L2192 setup ·
-  L2259 guard-sendmessage
+  L709 track · L1036 supervise · L1340 report · L1419 audit · L1479 storage · L1689 bugbrief · L1791 cleanup · L1875 learn ·
+  L1905 decide · L2038 health · L2100 retro due · L2110 tidy · L2179 the kit origin's main and goodies · L2195 setup ·
+  L2262 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -985,11 +985,14 @@ switch ($Action) {
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
       # both docs linked first (3 tasks went without); unread = held
-      if ($todo -contains 'promoted' -and $KitConf.TrackerType -ne 'none' -and (Test-KitTaskDocLink $o.task) -ne $true) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, no testing-doc link (human + AI) or the task is unread: not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
+      $ciTask = Get-KitCiTask $o.task   # raised by a CI job: that job passing again is its test, no testing docs
+      if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and (Test-KitTaskDocLink $o.task) -ne $true) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, no testing-doc link (human + AI) or the task is unread: not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
       $setFailed = $false
       foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
-      $cmts = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
+      if ($ciTask) { Set-KitTaskMrItems $o.task; $cj = Close-KitCiTask $o.task $ciTask @($o.mrs)
+        if ($cj.state -eq 'wait') { Hold "HOLD $($o.task): $($cj.why)" } elseif ($cj.state -ne 'closed') { if (-not $Quiet) { "ATTENTION $($o.task): $($cj.why)" } } else { $o.done = $true; $o.doneAt = (Get-Date).ToString('o'); Save $o -Run; "DONE $($o.task): $($cj.why)"; $script:merged = $true }; continue }
+      $cmts =@(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
       if ((Test-KitTaskDocLink $o.task) -ne $true -and -not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions|doc)|tester guide|live check') })) {
         $steps = @(Get-KitWorkflowDirs | ForEach-Object { Get-Item (Join-Path $_.FullName 'journal.jsonl') -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
             foreach ($line in Get-Content $_.FullName) {

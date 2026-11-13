@@ -32,11 +32,11 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | command; others: goodies (goody list). statuses maps logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated; branchTag: branch / MR task tag; bugPrefix: defect names. Examples: _examples, goody GOODY.md.",
+  "_readme": "type: none (default) | command; others: goodies (goody list). statuses: logical -> board names (list: first set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; ciTaskPattern: CI-raised test task names, closed when their job passes again. Examples: _examples, goody GOODY.md.",
   "type": "none",
   "repo": "<owner/name, for github issues>",
   "list": "<container of new tasks, e.g. a ClickUp list id>",
-  "owner": "<optional: assignee of new tasks; empty = your OS full name as a tracker member>",
+  "owner": "<assignee of new tasks; empty = your OS full name>",
   "branchTag": "<default by type: CU- / GH->", "bugPrefix": "[Bug]",
   "statuses": {
    "open": ["open", "to do"], "inProgress": "in progress", "review": ["for review", "in review"], "promoted": "promoted",
