@@ -184,14 +184,14 @@ $st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=
 $sec = { param($id) [regex]::Match($fh, "(?s)id=sec-$id(?: open)?>.*?(?=<details class='sec top'|<footer)").Value }
 $int = & $sec internals; $runsH = & $sec runs; $agH = & $sec agents
 "$($st -join ' ')"
-"internals:$(-not ($int -match 'sec-(resources|shells|agents|usage|steps|runs-)') -and $int -match 'sec-kit-runs' -and $int -match 'wf_kit')"
+"internals:$(-not ($int -match 'sec-(resources|shells|agents|usage|steps|runs-)') -and $int -match '<tr class=gh><th colspan=6><span class=gn0>k1</span>' -and $int -match 'sec-kit-runs' -and $int -match 'wf_kit')"
 $rxRun = @('id=sec-runs-2026-01-02 open><summary><h3>Today</h3><span class=cnt>\(1 runs &#183; 2 steps', 'id=sec-runs-2026-01-01><summary><h3>Yesterday', ">Ask RM bug wave</span><span class='chip k-build'>build</span><span class='chip s-oth'>resumed", "title='select-x &#183; wf_c'>select-x<")
 $rxAg = @("devy-1 \(devy\)<div class=lc><span class='chip ls'[^>]*>browser t1<", 'id=sec-agents-done><summary><h3>Finished today</h3><span class=cnt>\(1\)')
 $rxOrphan = "<div class='ci f orphan'[^>]*><div class=tn>mysql</div><div class=sm>no live holder"
 "runs:$($runsH -notmatch 'wf_kit' -and -not @($rxRun | Where-Object { $runsH -notmatch $_ }).Count -and $runsH.IndexOf('wf_a') -lt $runsH.IndexOf('sec-runs-2026-01-02') -and ($runsH -split "class='bar sb3'").Count -eq 4 -and ($runsH -split 'class=bar>').Count -eq 2)"
 $u.runs = @(1..27 | ForEach-Object { & $rn "r$_" "wf_$_" 'ended' $d0 'devy 1' '' 'build' }); $fh2 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } })
 $rowRx = "<details class='ru f'>"; $olderTxt = '2 older run(s)'
-$fh3 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ params = @(1..12 | ForEach-Object { [pscustomobject]@{ key = "k$_"; ctx = 'maven|a/b' } }) } })
+$fh3 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; shells = @(1..12 | ForEach-Object { [pscustomobject]@{ pid = $_; dir = 'maven|a/b' } }) })
 $uxRx = @("<tr class='f more'>", 'class=sa data-n=12>Show all \(12\)', '<nav class=jl', 'id=nm class=empty hidden', 'maven\|<wbr>a/<wbr>b', '\.tw \.lo\{display:none', 'function jp\(k,f\)\{try')   # a low column only inside tables (.st.lo tiles stay); stored state parsed safely
 $rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text mixed toward --fg: WCAG AA in the light theme
 "ux:$(([regex]::Matches($fh3, $uxRx[0])).Count -eq 2 -and -not @($uxRx | Where-Object { $fh3 -notmatch $_ }).Count -and $fh3 -notmatch $rawTone)"
@@ -199,7 +199,7 @@ $rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text 
 "agents:$(-not @($rxAg | Where-Object { $agH -notmatch $_ }).Count -and $fh -match $rxOrphan)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
 $fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Trim() })
-$foldWant = 'flags=open', 'agents=open:1 running &#183; 1 done today', 'runs=open:1 running &#183; 3 in 7 days', 'machine=open', 'resources=open:2', 'shells=closed:0:nobody', 'usage=open', 'top=closed:0:nobody', 'internals=closed:5', 'params=closed:2', 'changes=closed:1', 'settings=closed:1', 'kit-runs=closed:1', 'agents-done=closed:1', 'steps=closed:0:nobody'
+$foldWant = 'flags=open', 'agents=open:1 running &#183; 1 done today', 'runs=open:1 running &#183; 3 in 7 days', 'machine=open', 'resources=open:2', 'shells=closed:0:nobody', 'usage=open', 'top=closed:0:nobody', 'internals=closed:3', 'tuning=closed:3', 'kit-runs=closed:1', 'agents-done=closed:1', 'steps=closed:0:nobody'
 $foldMiss = @($foldWant | Where-Object { " $($fl[0]) " -notmatch " $([regex]::Escape($_))[ :]" })
 Expect "supervise page: every section a <details> with '<title> (<count>)', the owner's default open states, an empty one summary only (missing: $foldMiss | $($fl[0]))" (-not $foldMiss.Count)
 Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: kit tuning + upkeep runs only; runs: running first, a fold per day (today open, sum), label, kind, resumed, budget bar running or 80%+, no kit runs; agents: leases on the row, finished folded, orphan tinted; cap: newest 25 ended runs, rest counted; ux: 10 rows + Show all (N), jump links, No match, keys break at | /, tone AA)' @('internals', 'runs', 'agents', 'cap', 'ux') 5
@@ -244,7 +244,7 @@ $setOut = Invoke-PsTest 'settings' @'
 $null = . $args[0] 6>$null; $p = @{ key = 'supervise.shellStuckMinutes'; value = 45; source = 'learned' }; $__cfg = [pscustomobject]@{}; $s = Get-KitSuperviseSettings $p
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = @{ settings = $s } })
 $__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ heartbeatMinutes = 10 } }; $l = (Get-KitSuperviseSettings $p).'supervise.heartbeatMinutes'
-"$($s.'supervise.ramActPct'.source) $($s.'supervise.shellStuckMinutes'.source) $($h -match '>90 (·|&#183;) default<') $($l.value)/$($l.source)/$($l.default)"
+"$($s.'supervise.ramActPct'.source) $($s.'supervise.shellStuckMinutes'.source) $($h -match '<td data-k=Value>90</td><td data-k=Source>default</td>') $($l.value)/$($l.source)/$($l.default)"
 '@ @($O)
 Expect "settings: effective defaults with no override, learned, an override names its default ($setOut)" ("$setOut" -eq 'default learned True 10/local/15')
 Remove-TestKit $k

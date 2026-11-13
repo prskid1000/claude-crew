@@ -173,8 +173,8 @@ usage; top steps and kit internals folded; the page keeps each one the owner tog
 rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; the header holds
 jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
 of two fields a line, low-value columns hidden; tone-coloured text is mixed toward the foreground (WCAG AA in both themes):
-- flags as cards (an icon per kind) with the next step (ACT first), INFO below; ACT / WATCH / FIXED counts and flags per sweep (last
-  `supervise.historySweeps`, lines: ACT solid, WATCH dashed, FIXED dotted) in its summary;
+- flags as cards in masonry columns (an icon per kind, the next step, ACT first; auto-fixed folded); a side panel: flags per
+  sweep (last `supervise.historySweeps`, lines: ACT solid, WATCH dashed, FIXED dotted) and the other INFO lines folded as notes;
 - live agents grouped by run (a stacked bar by state in the summary): state chip, task, the leases it holds, since, last progress, doing / next; "Finished today" folded;
 - runs (dev and QA, 7 days): running ones on top, then one fold per day (today open; runs, steps, tokens, est. cost, merged),
   each run by its label (mandate or area; run id in the tooltip), kind chip, resumed, steps as a bar, tokens, est. cost, merged
@@ -182,8 +182,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   calls, result, round, retry);
 - machine and resources: memory (used / total meter with a 7-day peak tick, 24 h sparkline), every watched disk in one tile
   (free GB, fill rate, "full in" under 72 h, used / size meter with a 7-day peak tick, 7-day free sparkline marking the low; a
-  flagged drive coloured and first), build gate from its history (running, queued, builds today, longest
-  wait; RAM dots promised / free; a row per kind with today's count, waits, RAM and a 24 h busy strip) + QA seats, phone lanes, emulators, test browsers (leases, never gated); resources and leases: each a 24 h
+  flagged drive coloured and first) in one row; build gate full width from its history (running, queued, builds today, longest
+  wait; a row per kind with today's count, waits, RAM and a 24 h busy strip; side panel: RAM dots promised / free, QA seats, phone lanes, emulators, test browsers (leases, never gated)); resources and leases: each a 24 h
   RAM sparkline (its scale in the caption) and a lease timeline per holder; a shared always-on service (`shared` row) is never
   an orphan, a leasable one with no live holder is tinted; shells;
 - usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
@@ -196,7 +196,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 - top 5 steps, 7 days (today's marked);
 - kit internals (kit tuning and history only): kit activity tiles (workflow steps now, branches, sweep time, runs, agents
   spawned / finished / failed, average duration, deploys, decisions, lessons, auto-fixed %: today vs yesterday, 7 days vs the 7
-  before; `—` = no source), kit upkeep runs (tidy, retro), learned changes, parameters, effective `supervise` settings (value · default / local / learned).
+  before; `—` = no source), kit upkeep runs (tidy, retro), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
+  default / local config / learned with its note · changed · why), the last 10 learned changes on top.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: a wrapping row, a min width per item,
