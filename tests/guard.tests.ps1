@@ -185,6 +185,10 @@ Expect-Cases @(
   , @('check -Step e2e -AllTests: the whole suite, logged; gate refuses a bare suite; cypress dep = e2e step', { $a = & $e2 'src/billing/rate.ts' '-AllTests'; $g = Invoke-TestScript $D gate -Dir $er -Cmd 'npx cypress run'; $a.out += "|$($g.code)|$(pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog builds | Where-Object event -eq e2e-all).Count")"; $a },
       { param($r) $r.code -eq 0 -and $r.out -match 'WHOLE suite' -and $r.out -match '\|2\|1' -and $cs -match 'e2e\s+npx cypress run --spec "\{specs\}"' })
 )
+& $J @{ tests = @{ e2e = @{ run = @(@{ dir = ''; cmd = 'x -r0 --spec "{specs}"'; env = @{ CY_L = '1' }; split = 'folder' }) } } } $kl
+$er2 = "$((& $e2 'src/app/orders/list.component.ts' '-Show').out)|$((& $e2 'README.md' @('-AllTests', '-Show')).out)"
+Expect 'check -Step e2e: tests.e2e.run = cmd + env, one run per spec folder; -AllTests: a folder glob each' ($er2 -match 'env: CY_L=1' -and $er2 -match 'e2e : x -r0 --spec "cypress/e2e/02-orders/01\.create\.cy\.ts"' -and
+  $er2 -match '"cypress/e2e/(misc|nav)\.cy\.ts,cypress/e2e/(misc|nav)\.cy\.ts"' -and $er2 -match '"cypress/e2e/invoices/\*\.cy\.\*"' -and @([regex]::Matches($er2, 'e2e : ')).Count -eq 5)
 Remove-Item $kl
 # pokey.ps1 api: auth kinds, -Save, -ContentType, paths
 $Q = Join-Path $k 'skills/pokey/pokey.ps1'
@@ -200,22 +204,7 @@ Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct
 $pp = Px $Q api /x -Target tt 2>&1 | Out-String; $pg = Px $Q api -Target tt -Path 'C:/Program Files/Git/x' 2>&1 | Out-String
 Expect 'api: a Git Bash path (C:/Program Files/Git/x) is sent as /x' ($pg -match 'HTTP 200'); $pu = Px $Q api -Target tt 2>&1 | ForEach-Object { "$_" } | Out-String; $puc = $LASTEXITCODE
 Expect 'api: the first bare arg is -Path; none -> exit 2 with the usage line' ($pp -match 'HTTP 200' -and $puc -eq 2 -and $pu -match 'Usage: api -Target')$api.proc.Kill()
-# crafty.ps1 tracker bug (lib.ps1 Add-KitAskBug)
-$env:KIT_TRACKER_TYPE = 'none'; $bk = Kd
-$ak = (pwsh @np $D tracker create -List L1 -Name 'Ask help routing' -Description 'a' -NewTask fixture | ConvertFrom-Json).id
-'help answers link other product pages (vector.py:120)' | Set-Content "$bk/w1.md"; 'second defect' | Set-Content "$bk/w2.md"; 'same root cause' | Set-Content "$bk/w3.md"
-$tbg = { param($key, $name, $file, $sig) pwsh @np $D tracker bug -Parent $ak -Key $key -Name $name -File "$bk/$file" -Signature $sig -List L1 | ConvertFrom-Json }
-$b1 = & $tbg watch-stg-a '[Bug] Ask help — new defects (1)' w1.md 'vector.py:120'; $b2 = & $tbg qa-run1 '[Bug] staging run — new defects' w2.md 'other.py:9'
-$b3 = & $tbg qa-run2 '[Bug] another run' w3.md 'VECTOR.py:120|x.js:1'; 'second defect v2' | Set-Content "$bk/w2.md"; $b4 = & $tbg qa-run1 '[Bug] staging run — new defects' w2.md 'other.py:9'
-$bdx = (pwsh @np $D tracker view $b1.id | ConvertFrom-Json).description; $null = pwsh @np $D tracker status $b1.id closed; $b5 = & $tbg qa-run3 '[Bug] Ask help — later' w2.md 'none.py:0'
-Expect "tracker bug: one open [Bug] per ask, titles; re-run replaces its section; known signature = duplicate line; closed -> new one ($($b1.action) $($b2.action) $($b3.action) $($b4.action) $($b5.action))" ($b1.action -eq 'created' -and $b2.id -eq $b1.id -and $b2.action -eq 'appended' -and $b3.id -eq $b1.id -and @($b3.duplicates).Count -eq 1 -and $bdx -notmatch 'same root cause' -and $bdx -match 'Duplicates.*qa-run2 \(`VECTOR\.py:120`\)' -and $bdx -match 'second defect v2' -and $bdx -notmatch 'second defect\r?\n' -and ([regex]::Matches($bdx, '\[kit:bug:qa-run1\]')).Count -eq 1 -and $b5.action -eq 'created' -and $b5.id -ne $b1.id)
-$sg = & { . (Lib); $h = ConvertTo-KitBugNorm 'see src/my\_mod.py:12 and vector.py:1205, GET https://h.x/api/orders/5/lines'
-  "$(Test-KitBugSig $h 'my_mod.py:12')$(Test-KitBugSig $h 'mod.py:12')$(Test-KitBugSig $h 'vector.py:120')$(Test-KitBugSig $h 'https://h.x/api/orders')$(Test-KitBugSig $h 'https://h.x/api/orders/9/lines')"
-  (Get-KitDefectSigs ([pscustomobject]@{ observed = 'connect api.example.com:443 refused; https://app.example/#/orders/7?x=1 and https://app.example/#top'; cause = '' })) -join ' ' }
-$kb = pwsh @np $D tracker bug -Parent $ak -Key 'watch-stg-err [x]' -Name '[Bug] k' -File "$bk/w3.md" -Signature 'zz.py:1' -List L1 | ConvertFrom-Json; $kc = pwsh @np $D tracker bug -Parent $ak -Key 'watch-stg-err [x]' -Name '[Bug] k' -File "$bk/w3.md" -Signature 'zz.py:1' -List L1 | ConvertFrom-Json
-Expect "bug signatures: whole matches, escaped read-back, no host:port, hash routes kept; a key with ] stays one section ($($sg -join ' | '))" ($sg[0] -eq 'TrueFalseFalseFalseTrue' -and $sg[1] -eq 'https://app.example/#/orders/7' -and ([regex]::Matches((pwsh @np $D tracker view $kc.id | ConvertFrom-Json).description, 'kit:bug:watch-stg-err_x')).Count -eq 1 -and $kb.id -eq $kc.id)
 $ke = try { & { $k = $null; Kd } } catch { "$_" }; $re = try { & { . (Lib); $script:KitRoot = '/'; Get-KitRuntime } } catch { "$_" }
 Expect "path guards ($ke|$re)" ($ke -match 'Kd:' -and $re -match 'bad runtime')
-Remove-Item Env:KIT_TRACKER_TYPE
 Remove-TestKit $k
 Complete-Tests

@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L971 check · L1274 pipes · L1331 guard · L2101 dir ·
-  L2111 checkpoint · L2140 prior · L2178 tracker · L2200 task spec · L2349 host
+Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L971 check · L1288 pipes · L1345 guard · L2115 dir ·
+  L2125 checkpoint · L2154 prior · L2192 tracker · L2214 task spec · L2363 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1099,11 +1099,13 @@ function ConvertTo-GlobRx([string]$g) {
 $script:GlobRx = @{}   # compiled once: a map scans every tracked file
 function Test-Glob([string]$p, $globs) { foreach ($g in @($globs | Where-Object { $_ })) { if (-not $script:GlobRx.ContainsKey($g)) { $script:GlobRx[$g] = [regex]::new((ConvertTo-GlobRx $g)) }; if ($script:GlobRx[$g].IsMatch($p)) { return $g } } }
 if ($Step -eq 'e2e') {
-  $cmd = $st.commands.e2e
-  if (-not $cmd) { Write-Host "[check] $($st.stack) has no 'e2e' step (no Cypress / Playwright here: set .claude-stack.json commands.e2e with {specs})"; exit 2 }
   $cfg = Get-KitSetting 'tests.e2e' $null
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
   $mod = [IO.Path]::GetRelativePath($top, $st.dir).Replace('\', '/'); if ($mod -eq '.') { $mod = '' }
+  # tests.e2e.run[]: a module's own e2e recipe (cmd, env, split by folder) from kit config, never the product repo
+  $recipe = @($cfg.run | Where-Object { $_ -and "$($_.dir)".Replace('\', '/').Trim('/') -eq $mod })[0]
+  $cmd = if ($recipe.cmd) { "$($recipe.cmd)" } else { $st.commands.e2e }
+  if (-not $cmd) { Write-Host "[check] $($st.stack) has no 'e2e' step (no Cypress / Playwright here: set .claude-stack.json commands.e2e with {specs})"; exit 2 }
   $rel = { param($f) [IO.Path]::GetRelativePath($st.dir, $f).Replace('\', '/') }
   $all = @(@(git -C $st.dir ls-files 2>$null) + @(git -C $st.dir ls-files --others --exclude-standard 2>$null) | Where-Object { $_ } | Select-Object -Unique)
   $sg = if ($cfg.specs) { @($cfg.specs) } else { @('**/*.cy.*', 'cypress/integration/**/*.{js,ts}', 'e2e/**/*.spec.*', '**/*.e2e.*') + @(if ($cmd -match 'playwright') { 'tests/**/*.spec.*' }) }
@@ -1145,9 +1147,13 @@ if ($Step -eq 'e2e') {
     foreach ($key in $f, $noExt, ($noExt -replace '/index$', '')) { if ($byImp[$key]) { foreach ($s in $byImp[$key].Keys) { & $add $s "imports $f" } } }
   }
   foreach ($t in @($Tests -split '[,\s]+' | Where-Object { $_ })) { & $add $t.Replace('\', '/') 'named (-Tests)' }
+  # split = folder: one run per spec folder (a long single run crashed the Cypress renderer)
+  $split = "$($recipe.split)" -eq 'folder'; $groups = [ordered]@{}
+  $fold = { param($s) $fd = [IO.Path]::GetDirectoryName($s).Replace('\', '/'); if (-not $groups.Contains($fd)) { $groups[$fd] = [Collections.Generic.List[string]]::new() }; $fd }
   if ($AllTests) {
-    $cmd = $cmd -replace '\s*--spec[=\s]+"?\{specs\}"?', '' -replace '\s*\{specs\}', ''
     Write-Host "[check] e2e: the WHOLE suite (-AllTests: only on the owner's word), logged to the builds stream"
+    if ($split) { $globbed = @{}; foreach ($s in $specs) { $fd = & $fold $s; if ($s -notmatch '\.cy\.') { $groups[$fd].Add($s) } elseif (-not $globbed[$fd]) { $globbed[$fd] = 1; $groups[$fd].Add($(if ($fd) { "$fd/*.cy.*" } else { '*.cy.*' })) } } }
+    else { $cmd = $cmd -replace '\s*--spec[=\s]+"?\{specs\}"?', '' -replace '\s*\{specs\}', ''; $groups[''] = @() }
     if (-not $Show) { Write-KitLog builds e2e-all ([ordered]@{ dir = $st.dir; branch = "$(git -C $st.dir branch --show-current)"; cmd = $cmd }) }
   } else {
     if (-not $why.Count) {
@@ -1156,11 +1162,19 @@ if ($Step -eq 'e2e') {
     }
     Write-Host "[check] e2e: $($why.Count) spec(s) for $($chg.Count) changed file(s) (of $($specs.Count)):"
     foreach ($s in $why.Keys) { $r = $why[$s]; Write-Host "  $s <- $(($r | Select-Object -First 3) -join '; ')$(if ($r.Count -gt 3) { " (+$($r.Count - 3) more)" })" }
-    $cmd = $cmd.Replace('{specs}', $(if ($cmd -match '--spec[=\s]+"?\{specs\}') { $why.Keys -join ',' } else { $why.Keys -join ' ' }))
+    foreach ($s in $why.Keys) { $fd = if ($split) { & $fold $s } else { if (-not $groups.Contains('')) { $groups[''] = [Collections.Generic.List[string]]::new() }; '' }; $groups[$fd].Add($s) }
   }
-  if ($Show) { "e2e : $cmd"; exit 0 }
+  $envs = [ordered]@{}; if ($recipe.env) { foreach ($p in $recipe.env.PSObject.Properties) { $envs[$p.Name] = "$($p.Value)" } }
+  $runs = @(foreach ($fd in $groups.Keys) { $ss = @($groups[$fd]); $(if (-not $ss.Count) { $cmd } else { $cmd.Replace('{specs}', $(if ($cmd -match '--spec[=\s]+"?\{specs\}') { $ss -join ',' } else { $ss -join ' ' })) }) })
+  if (-not $runs.Count) { Write-Host "[check] e2e NOT_TESTED: no spec file found (tests.e2e.specs)"; exit 5 }
+  if ($Show) { if ($envs.Count) { "e2e env: $(@($envs.Keys | ForEach-Object { "$_=$($envs[$_])" }) -join ' ')" }; foreach ($r in $runs) { "e2e : $r" }; exit 0 }
+  foreach ($ek in $envs.Keys) { [Environment]::SetEnvironmentVariable($ek, $envs[$ek]) }
   $env:KIT_E2E_ALL = if ($AllTests) { '1' } else { '' }
-  & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE
+  $rc = 0; $n = 0
+  foreach ($r in $runs) {
+    $n++; if ($runs.Count -gt 1) { Write-Host "[check] e2e run $n/$($runs.Count): $r" }
+    & $KitCmd.dev gate -Dir $st.dir -Cmd $r; if ($LASTEXITCODE) { $rc = $LASTEXITCODE }
+  }
   Write-Host "[check] e2e $(if ($rc) { "FAILED (exit $rc)" } else { 'ok' })"; exit $rc
 }
 
