@@ -77,7 +77,7 @@ function Get-KitRollupHash([string]$Text) { [Convert]::ToHexString([Security.Cry
 # a checklist item, readable by the owner: "<id> · <plain description> · <MR URLs>"; the id leads (adapters key items by the text
 # before the first ' · ', so a later text renames the item in place); empty parts left out
 function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
-  $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '[\s·,;:–—-]+$'   # links live in the URL part
+  $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'   # links live in the URL part, a status suffix in the tick
   (@($Id, (Get-KitCut $Desc 110), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
 # an Items piece's text naming triage ids -> their titles (plain words), else the text itself
 function Get-KitItemDesc([string]$Desc, $Rows) {
