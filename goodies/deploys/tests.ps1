@@ -190,16 +190,23 @@ $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
 $r1 = @(Get-KitSuperviseFlagsDeploys -AutoFix); $r2 = @(Get-KitSuperviseFlagsDeploys -AutoFix)
 "fresh:$((& $acts $r1) -match '^DEPLOY ASK stage: 2 MR\(s\) .*new since hold aa11: api!2' -and -not (& $acts $r2) -and ($r2.info -join ';') -match 'held by owner: aa11')"
 & $word 'd-20260101000100-coordinator-bb22' 'yes, deploy stage'; $r = @(Get-KitSuperviseFlagsDeploys)
-"yes:$((& $acts $r) -match '^DEPLOY ASK stage' -and @($r.info -match '^deploy ready: stage').Count -eq 1)"
+"yes:$((& $acts $r) -match '^DEPLOY GO stage: approved \(bb22, owner\)' -and (& $acts $r) -notmatch 'DEPLOY ASK' -and @($r.info -match '^deploy ready: stage').Count -eq 1)"
 & $word 'd-20260101000200-opsy-stage-cc33' "wait: retry $($now.AddMinutes(30).ToString('HH:mm'))" 'host stayed busy' 0; $r = @(Get-KitSuperviseFlagsDeploys)
 "wait:$(-not (& $acts $r) -and ($r.info -join ';') -eq "deploy stage waiting: host busy, retry $($now.AddMinutes(30).ToString('HH:mm')) (cc33)")"
 $now = $now.AddMinutes(31); $r = @(Get-KitSuperviseFlagsDeploys)
 "due:$((& $acts $r) -match '^DEPLOY RETRY stage: host busy, wait cc33 due since' -and (& $acts $r) -notmatch 'DEPLOY ASK')"
-"kinds:$((@('dont deploy hm', 'No', 'hold it', 'wait: not urgent, never cut a live turn', 'Deploy tomorrow', 'yes: standing rule', 'deploy if needed', 'Sure, no problem', 'Please deploy now, no need to hold', 'test prod pipelines also') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
+& $word 'd-20260101000300-coordinator-dd44' 'yes: standing rule' 'deploy stage' 0; $r = @(Get-KitSuperviseFlagsDeploys)   # a yes after a wait of the last 12 h: still that retry
+"retry:$((& $acts $r) -match '^DEPLOY RETRY stage: host busy, wait cc33' -and (& $acts $r) -notmatch 'DEPLOY (ASK|GO)')"
+& $cacheOf @('api!1', 'api!2', 'api!3'); & $word 'd-20260101000400-coordinator-ee55' 'keep stage hanges held' 'deploy stage' -1; $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
+"all:$(-not (& $acts $r) -and ($r.info -join ';') -match 'deploy stage held by owner: ee55')"
+$gs2 = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.hold') { @('stage') } else { & $gs2 @args } }.GetNewClosure())
+& $word 'd-20260101000500-coordinator-ff66' 'yes' 'deploy stage' -2; $r = @(Get-KitSuperviseFlagsDeploys)
+"cfg:$(-not (& $acts $r) -and ($r.info -join ';') -match 'deploy stage held by config: deploy.hold')"
+"kinds:$((@('dont deploy hm', 'No', 'hold it', 'wait: not urgent, never cut a live turn', 'Deploy tomorrow', 'yes: standing rule', 'deploy if needed', 'Sure, no problem', 'Please deploy now, no need to hold', 'test prod pipelines also', 'keep hm hanges held', 'dnt deploy hm', 'no deploy for hm yet', 'HM: merge and promote, never deploy') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
 '@
 $hr = Invoke-PsTest 'deploy-holds' $ht @($O)
-Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (#)' @('held', 'fresh', 'yes', 'wait', 'due')
-Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear')
+Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too) (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg')
+Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear,noAll,no,no,noAll')
 # a deploy MR (into deploys[].branch) feeds its own target only; from / paths pick an MR's targets in the intest gate too; old requests expire
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da' }, @{ target = 'b-st'; branch = 'st/b'; job = 'db' }) }) } $cfgF
 & $J @{ tasks = @{ g = @{ task = 'g'; mrs = @('jc!1', 'jc!2'); done = $true; doneAt = $now } }; automerge = @{} } $tf

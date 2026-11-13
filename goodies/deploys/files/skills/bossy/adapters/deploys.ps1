@@ -398,34 +398,44 @@ function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMi
 }
 
 # ---- supervise: inTest moves, the cached plan
-# a deploy word's kind from how its answer starts: wait | no | yes | unclear (yes and unclear silence nothing; "no problem" inside a yes is no no)
+# a deploy word's kind: wait | no | yes | unclear (yes and unclear silence nothing; "no problem" inside a yes is no no); a no is env-wide
+# (noAll: new MRs stay held) when it says all / any / never / keep ... held / until
 function Get-KitDeployWordKind([string]$Answer) {
   $a = "$Answer".Trim()
-  if ($a -match '(?i)^(wait|later|retry|not yet)\b' -or ($a -notmatch '(?i)^(no|nope|nah)\b' -and $a -match '(?i)\b(tomorrow|tonight|later today)\b')) { 'wait' }
-  elseif ($a -match "(?i)^(no|nope|nah|don['’]?t|do not|never|skip|hold|not now|stop)\b") { 'no' }
+  if ($a -match '(?i)^(wait|later|retry|not yet)\b' -or ($a -notmatch '(?i)^(no|nope|nah)\b' -and $a -match '(?i)\b(tomorrow|tonight|later today)\b')) { return 'wait' }
+  $no = $a -match "(?i)^(no|nope|nah|d[o]?n['’]?t|do not|never|skip|hold|held|not now|stop)\b" -or $a -match "(?i)\b(keep|keeps|stays?|remains?|leave)\b[^.;]*\b(held|on hold)\b|\b(no|never|d[o]?n['’]?t|do not)\s+deploy|\b(hold|held)\s+(all|every|any)\b"
+  if ($no) { if ($a -match "(?i)\b(all|any|every|never|until)\b|\b(keep|keeps|stays?|remains?|leave)\b[^.;]*\bheld\b") { 'noAll' } else { 'no' } }
   elseif ($a -match '(?i)^(yes|y|sure|proceed|please|confirmed?|ok|okay|go|approved?|deploy)\b') { 'yes' }
   else { 'unclear' }
 }
-# the newest answered deploy word per env of the cached plan (decisions log, 30 d): a no -> held until a later yes or an MR it did not
-# cover (state ask: one fresh ask, then -Fold covers it); it covers its -Mrs, else the env's MRs when first seen (cache held.<env>);
-# a wait -> waiting until its retry (a HH:mm in the answer, else 20 min: the busy wait of deploy restart), then due
+# per env of the cached plan, its deploy words (decisions log, 30 d) and kit.local.json deploy.hold (env-wide, no word needed):
+# the newest a no -> held until a later yes or an MR it did not cover (state ask: one fresh ask, then -Fold covers it; it covers its -Mrs,
+# else the env's MRs when first seen, cache held.<env>); noAll / deploy.hold -> held whatever MRs come; a wait -> waiting until its retry
+# (a HH:mm in the answer, else 20 min: the busy wait of deploy restart), then due; a yes after a wait of the last 12 h: that retry; a yes: go
 function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Date), [switch]$Fold) {
   $hold = @{}; if (-not $Cache) { return $hold }
   $tgs = @(@(@($Cache.ask) | ForEach-Object { ("$_" -split ':', 2)[0].Trim() }) + @(@($Cache.ready) | ForEach-Object { "$_" -replace '\s*\(\d+ MR\(s\)\)$' }) | Where-Object { $_ } | Select-Object -Unique)
   if (-not $tgs.Count) { return $hold }
-  $tick = { param($v) if ($v -is [datetime]) { $v.ToUniversalTime().Ticks } else { Get-KitUtcTicks $v } }   # JSON gives a DateTime: "$x" drops the offset
-  $word = @{}; foreach ($d in @(Read-KitLog decisions-log $Now.AddDays(-30) | Where-Object { $_.event -eq 'answered' -and $_.gate -eq 'deploy' -and $_.kind -ne 'envfix' -and "$($_.answer)".Trim() } | Sort-Object { & $tick $_.answeredAt })) { foreach ($t in @(Split-KitList @("$($d.item)"))) { $word[$t] = $d } }
+  $atOf = { param($d) if ($d.answeredAt -is [datetime]) { $d.answeredAt } else { try { [datetime]"$($d.answeredAt)" } catch { $Now } } }   # JSON gives a DateTime: "$x" drops the offset
+  $words = @{}; foreach ($d in @(Read-KitLog decisions-log $Now.AddDays(-30) | Where-Object { $_.event -eq 'answered' -and $_.gate -eq 'deploy' -and $_.kind -ne 'envfix' -and "$($_.answer)".Trim() } | Sort-Object { (& $atOf $_).ToUniversalTime().Ticks })) { foreach ($t in @(Split-KitList @("$($d.item)"))) { if (-not $words[$t]) { $words[$t] = [Collections.Generic.List[object]]::new() }; $words[$t].Add($d) } }
+  $cfgHold = @(Split-KitList @(Get-KitSetting 'deploy.hold' @()))
+  $waitOf = { param($t, $d) $ans = "$($d.answer)".Trim(); $at = & $atOf $d; $sid = ("$($d.id)" -split '-')[-1]
+    $retry = if ($ans -match '\b([01]?\d|2[0-3]):([0-5]\d)\b') { $rt = $at.Date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2]); if ($rt -le $at) { $rt.AddDays(1) } else { $rt } } else { $at.AddMinutes(20) }
+    $why = if ("$($d.question) $ans" -match '(?i)\bbusy\b') { 'host busy' } else { "wait ($($d.by))" }
+    [pscustomobject]@{ target = $t; state = $(if ($Now -lt $retry) { 'waiting' } else { 'due' }); sid = $sid; why = $why; retry = $retry; text = "$t waiting: $why, retry $($retry.ToString('HH:mm')) ($sid)" } }
   $dirty = $false
   foreach ($t in $tgs) {
-    $d = $word[$t]; if (-not $d) { continue }
-    $sid = ("$($d.id)" -split '-')[-1]; $ans = "$($d.answer)".Trim(); $kind = Get-KitDeployWordKind $ans
-    $at = if ($d.answeredAt -is [datetime]) { $d.answeredAt } else { try { [datetime]"$($d.answeredAt)" } catch { $Now } }
-    if ($kind -eq 'wait') {
-      $retry = if ($ans -match '\b([01]?\d|2[0-3]):([0-5]\d)\b') { $rt = $at.Date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2]); if ($rt -le $at) { $rt.AddDays(1) } else { $rt } } else { $at.AddMinutes(20) }
-      $why = if ("$($d.question) $ans" -match '(?i)\bbusy\b') { 'host busy' } else { "wait ($($d.by))" }
-      $hold[$t] = [pscustomobject]@{ target = $t; state = $(if ($Now -lt $retry) { 'waiting' } else { 'due' }); sid = $sid; why = $why; retry = $retry; text = "$t waiting: $why, retry $($retry.ToString('HH:mm')) ($sid)" }
+    if ($t -in $cfgHold) { $hold[$t] = [pscustomobject]@{ target = $t; state = 'held'; sid = 'deploy.hold'; new = @(); text = "$t held by config: deploy.hold" }; continue }
+    $ws = @($words[$t] | Where-Object { $_ }); if (-not $ws.Count) { continue }
+    $d = $ws[-1]; $sid = ("$($d.id)" -split '-')[-1]; $kind = Get-KitDeployWordKind "$($d.answer)"
+    if ($kind -eq 'wait') { $hold[$t] = & $waitOf $t $d }
+    elseif ($kind -eq 'yes') {
+      $w = @($ws | Where-Object { (Get-KitDeployWordKind "$($_.answer)") -eq 'wait' -and ($Now - (& $atOf $_)).TotalHours -lt 12 } | Select-Object -Last 1)
+      $hold[$t] = if ($w.Count) { & $waitOf $t $w[0] } else { [pscustomobject]@{ target = $t; state = 'go'; sid = $sid; by = $d.by; text = "$t approved: $sid" } }
     }
-    elseif ($kind -eq 'no') {
+    elseif ($kind -in 'no', 'noAll') {
+      $by = if ($d.by) { $d.by } else { 'owner' }
+      if ($kind -eq 'noAll') { $hold[$t] = [pscustomobject]@{ target = $t; state = 'held'; sid = $sid; new = @(); text = "$t held by $($by): $sid" }; continue }
       $known = $Cache.mrsOf -and @($Cache.mrsOf.PSObject.Properties.Name) -contains $t   # an old cache without MR lists: held, nothing snapshotted
       $mrs = @(@($Cache.mrsOf.$t) | Where-Object { $_ }); $snap = $Cache.held.$t; $mine = $snap -and "$($snap.id)" -eq "$($d.id)"
       $cov = @(@($d.mrs) + @(if ($mine) { $snap.mrs } elseif (-not @($d.mrs).Count) { $mrs }) | Where-Object { $_ } | ForEach-Object { Get-CanonMr "$_" })
@@ -434,7 +444,7 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
         if (-not $Cache.held) { $Cache | Add-Member -Force NoteProperty held ([pscustomobject]@{}) }
         $Cache.held | Add-Member -Force NoteProperty $t ([pscustomobject]@{ id = "$($d.id)"; mrs = @(@($cov) + @($new | ForEach-Object { Get-CanonMr "$_" }) | Select-Object -Unique) }); $dirty = $true
       }
-      $hold[$t] = [pscustomobject]@{ target = $t; state = $(if ($new.Count) { 'ask' } else { 'held' }); sid = $sid; new = $new; text = "$t held by $(if ($d.by) { $d.by } else { 'owner' }): $sid" }
+      $hold[$t] = [pscustomobject]@{ target = $t; state = $(if ($new.Count) { 'ask' } else { 'held' }); sid = $sid; new = $new; text = "$t held by $($by): $sid" }
     }
   }
   if ($dirty -and $CacheFile) { $Cache | ConvertTo-Json -Depth 5 | Set-Content $CacheFile -Encoding utf8 }
@@ -498,6 +508,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       $h = $holds[("$a" -split ':', 2)[0].Trim()]
       if ($h.state -in 'held', 'waiting') { continue }   # its muted line below
       if ($h.state -eq 'due') { & $flag 'ACT' "DEPLOY RETRY $($h.target): $($h.why), wait $($h.sid) due since $($h.retry.ToString('HH:mm'))" "Deploy $($h.target) again per its deploy rules (the busy check runs first); still busy: a new wait with its retry time (decide record -Gate deploy -Item $($h.target) -Answer 'wait: retry HH:mm')."; continue }
+      if ($h.state -eq 'go') { & $flag 'ACT' "DEPLOY GO $($h.target): approved ($($h.sid), $($h.by)), $(("$a" -split ':', 2)[1].Trim()) not deployed" "Deploy $($h.target) now with that decision (opsy, bossy E5); no ask."; continue }
       & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open$(if ($h.state -eq 'ask') { " (new since hold $($h.sid): $($h.new -join ', '))" })$askStale" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; their yes: decide record -Gate deploy -Item <env> -Source askuser, its id to opsy; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply."
     }
   }
