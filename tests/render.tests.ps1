@@ -200,5 +200,9 @@ Expect "state todo: add / done render '- [ ] <code> · <desc> · <ref>', a dup c
 Set-JsonFile "$wd/fr.json" ([ordered]@{ role = 'devy'; agent = 'X1'; disputes = @(); mrs = @([ordered]@{ url = 'https://g/r/-/merge_requests/5'; state = 'MERGED' }); localTest = [ordered]@{ status = 'PASS'; rounds = 2 }; done = @('S01', 'S02'); extra = 'kept' })
 Set-JsonFile "$wd/fr2.json" ([ordered]@{ role = 'opsy'; env = 'staging'; verify = 'ok' }); $fr = Dt render final-report "$wd/fr.json"; $fr2 = Dt render final-report "$wd/fr2.json"
 Expect 'render final-report: the role''s keys in order, empty ones dropped, other keys kept; any role renders' ((Gold $fr.out "**devy** X1`n**mrs:** url https://g/r/-/merge_requests/5 state MERGED`n**localTest:** status PASS rounds 2`n**done:** S01 · S02`n**extra:** kept") -and (Gold $fr2.out "**opsy**`n**env:** staging`n**verify:** ok"))
+# ---- retro report (item 9) from the judge's lists
+Set-JsonFile "$wd/retro.json" ([ordered]@{ date = '2026-11-13'; applied = @([ordered]@{ change = 'gate waits learned'; file = '`lib.ps1`'; count = 3 }); rejected = @([ordered]@{ signal = 'one flaky run'; why = 'single' }) })
+$rr = Dt render retro "$wd/retro.json" (Join-Path $wd 'retro.md')
+Expect 'render retro: golden kit-report (Result counts, Changed / Awaiting approval / Rejected), written to the out file' (Gold (Get-Content -Raw (Join-Path $wd 'retro.md')) "# Retro 2026-11-13`n`n**Result:** 1 applied · 0 awaiting approval · 1 rejected`n`n## Changed`n`n| Change | File | Digest count |`n|---|---|---|`n| gate waits learned | ``lib.ps1`` | 3 |`n`n## Awaiting approval`n`nnone`n`n## Rejected`n`n| Signal | Why |`n|---|---|`n| one flaky run | single |")
 Remove-TestKit $k
 Complete-Tests

@@ -9,7 +9,8 @@
   goals file, AI doc and human doc rendered from it, never hand-written
  python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch: title
   (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec; the old form `mr <wt> "<title>" <body.md>` still works
- python -X utf8 devtools.py render mr-title|mr-body|commit <spec.json>   print an artefact rendered from its spec (crafty.ps1 wt commit -Spec)
+ python -X utf8 devtools.py render <kind> <spec.json> [<out file>]   an artefact rendered from its spec (kinds: mr-title mr-body commit
+  comment-solution comment-status final-report retro; crafty.ps1 wt commit -Spec)
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
@@ -27,8 +28,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L45 config · L79 run · L167 tracker · L370 git host · L453 MR · L620 merge · L900 docs · L1055 publish · L1413 render ·
-  L1679 plugins · L1693 keepboth · L1712 selftest · L2124 CLI
+Sections: L46 config · L80 run · L168 tracker · L371 git host · L454 MR · L621 merge · L901 docs · L1056 publish · L1414 render ·
+  L1696 plugins · L1710 keepboth · L1729 selftest · L2141 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1630,7 +1631,7 @@ def render_status(s):
 
 
 SPEC_NEEDS = {'mr-body': ('type', 'change', 'summary'), 'mr-title': ('type', 'change'), 'commit': ('type', 'change'),
-              'comment-solution': ('solution',), 'comment-status': ('status', 'why'), 'final-report': ('role',)}
+              'comment-solution': ('solution',), 'comment-status': ('status', 'why'), 'final-report': ('role',), 'retro': ('date',)}
 
 
 def spec_gaps(s, kind):
@@ -1653,8 +1654,18 @@ def render_report(s):
     return '\n'.join([f'**{s.get("role", "agent")}** {s.get("agent", "")}'.rstrip()] + [f'**{k}:** {val(s[k])}' for k in keys if s.get(k) not in (None, '', [], {})]) + '\n'
 
 
+def render_retro(s):
+    """The /tidy retro report (kit-report) from the judge's lists: Changed, Awaiting approval, Rejected tables."""
+    a, p, r = s.get('applied') or [], s.get('proposed') or [], s.get('rejected') or []
+    sec = lambda h, cols, keys, rows: [f'## {h}', _table(cols, [[x.get(k, '') for k in keys] for x in rows]) if rows else 'none']
+    return '\n\n'.join([f'# Retro {s.get("date", "")}', f'**Result:** {len(a)} applied · {len(p)} awaiting approval · {len(r)} rejected']
+                         + sec('Changed', ['Change', 'File', 'Digest count'], ('change', 'file', 'count'), a)
+                         + sec('Awaiting approval', ['Proposal', 'Exact edit'], ('proposal', 'edit'), p)
+                         + sec('Rejected', ['Signal', 'Why'], ('signal', 'why'), r) + ([f'**Lint:** {s["lint"]}'] if s.get('lint') else [])) + '\n'
+
+
 RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': render_commit, 'comment-solution': render_solution,
-             'comment-status': render_status, 'final-report': render_report}   # devtools.py render <kind> <spec.json>; comment / finish --spec
+             'comment-status': render_status, 'final-report': render_report, 'retro': render_retro}   # devtools.py render <kind> <spec.json>; comment / finish --spec
 
 
 def spec_text(path, kind, task=''):
@@ -1667,12 +1678,18 @@ def spec_text(path, kind, task=''):
 
 
 def render_cmd(a):
-    """render <kind> <spec.json>: the artefact's text on stdout (kinds: RENDERERS); refused on spec gaps."""
+    """render <kind> <spec.json> [<out file>]: the artefact's text on stdout or into the file (kinds: RENDERERS); refused on spec gaps."""
     if len(a) < 2 or a[0] not in RENDERERS:
         print(f'usage: devtools.py render {"|".join(RENDERERS)} <spec.json>', file=sys.stderr)
         return 2
+    txt = spec_text(a[1], a[0]).rstrip('\n') + '\n'
+    if len(a) > 2:   # an out file: written, its path printed
+        with open(a[2], 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write(txt)
+        print(a[2])
+        return 0
     sys.stdout.flush()
-    sys.stdout.buffer.write((spec_text(a[1], a[0]).rstrip('\n') + '\n').encode('utf-8'))   # LF on every OS (a commit message, a golden file)
+    sys.stdout.buffer.write(txt.encode('utf-8'))   # LF on every OS (a commit message, a golden file)
     return 0
 
 
