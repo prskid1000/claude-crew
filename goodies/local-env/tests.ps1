@@ -455,7 +455,10 @@ $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $bad = @()
 foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('P', 'git push -u origin f/CU-1-x', $false), @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true),
     @('B', 'npx ng serve --port 4200', $true), @('P', '& D:/kit/skills/envy/envy.ps1 up -Env shop', $false), @('B', 'yarn start', $true), @('P', 'dotnet watch run', $true),
     @('B', 'rg "ng serve" src', $false), @('B', 'git log -S bootRun --oneline', $false), @('P', 'git commit -m "fix: ng serve proxy"', $false), @('B', 'npm run dev:build', $false),
-    @('P', 'dotnet run -- migrate', $false), @('B', 'cd web && yarn start', $true), @('B', 'git push origin --delete localenv/shop', $false))) {
+    @('P', 'dotnet run -- migrate', $false), @('B', 'cd web && yarn start', $true), @('B', 'git push origin --delete localenv/shop', $false),
+    @('B', 'cd D:/w/web-ui && (yarn start --host 0.0.0.0 > D:/k/ui.log 2>&1 &) ; sleep 5', $true), @('B', 'PORT=4201 npm start', $true), @('P', 'Start-Process yarn -ArgumentList start', $true),
+    @('B', 'nohup yarn start &', $true), @('B', 'npx --yes ng serve', $true), @('B', 'yarn --cwd web start', $true), @('B', 'yarn workspace web start', $true),
+    @('B', 'yarn lint --fix', $false), @('B', 'npm run dev:build -- --watch=false', $false))) {
   $json = @{ tool_name = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress
   $denied = (pwsh @np (Join-Path $gk 'skills/crafty/crafty.ps1') guard -Json $json | Out-String) -match '"permissionDecision":"deny"'
   if ($denied -ne $c[2]) { $bad += $c[1] }
