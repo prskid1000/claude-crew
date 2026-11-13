@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L30 config · L227 state · L274 layer drops · L346 leases · L472 code · L504 migrations ·
-  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1050 seed · L1096 processes · L1464 daemon ·
-  L1923 cleanup · L1995 doctor · L2047 verbs
+  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1051 seed · L1097 processes · L1465 daemon ·
+  L1924 cleanup · L1996 doctor · L2048 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1003,7 +1003,7 @@ function RestorePlanText($p) {
 # (Invoke-RestoreFallback seeds them); the range is recorded undone and the marks inside it dropped (not when the flashback wrote
 # no row); $null = ok
 function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$UseTool) {
-  $st = Read-State $e; $db = (Get-EnvCfg $e).db; $script:RestoreFallback = @(@($plan.fallback) | Where-Object { $_ }); $noRows = $false
+  $st = Read-State $e; $db = (Get-EnvCfg $e).db; $script:RestoreFallback = @(@($plan.fallback) | Where-Object { $_ }); $noRows = $true   # until the row flashback runs
   $ev = @(Invoke-DbSql $e "SELECT EVENT_SCHEMA, EVENT_NAME FROM information_schema.EVENTS WHERE STATUS = 'ENABLED' AND EVENT_SCHEMA IN ($(@($schemas | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '))")
   foreach ($x in $ev) { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` DISABLE" }   # no writer while it runs
   try {
@@ -1026,7 +1026,8 @@ function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$Us
     $preFb = Get-DbPos $e
     try { $fb = Invoke-DbFlashback $e -From $m.pos -To $plan.to -Schemas $schemas -Skip @($st.undone) -Exclude $ex -Apply } catch { $noRows = (Get-DbPos $e) -eq $preFb; return "row flashback failed: $("$_".Split("`n")[0])" }
     $script:RestoreFallback += @($fb.fallback | Where-Object { $_ -and $_.table -notin $ex })
-    if (@($fb.refused).Count) { $noRows = $true; return "row flashback refused: $(@($fb.refused | Select-Object -First 3) -join '; ')" }
+    if (@($fb.refused).Count) { return "row flashback refused: $(@($fb.refused | Select-Object -First 3) -join '; ')" }
+    $noRows = $false
     if (-not $fb.applied) { return "row flashback failed: $($fb.error)" }
   } finally {
     foreach ($x in $ev) { try { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` ENABLE" } catch { } }

@@ -100,8 +100,9 @@ INSERT INTO fa.o VALUES (1, 'a é', 1.5), (2, NULL, 2), (3, 'c', 3); INSERT INTO
   Expect "restore -DryRun: tables + row counts, nothing changes ($dc)" ($dc -eq 0 -and $mk -match 'mark before-test at binlog\.\d+:\d+' -and $dry -match 'rows: 6 change\(s\) undone' -and $dry -match 'fa\.t : 1 insert\(s\) -> delete, 1 update\(s\) -> back, 1 delete\(s\) -> back in' -and (& $sum) -ne $c0)
   # a flashback that never started (python.bat: "The command line is too long") recorded the range undone: the next restore skipped all of it
   $nf = & { . $L3; $m = Find-Mark (Read-State s) 'before-test' 0; $p = Get-RestorePlan s $m @('fa', 'fb') 'nf'; function Invoke-DbFlashback { throw 'db_flashback.py apply failed (exit 1): The command line is too long.' }
-    "$(Invoke-RestoreDb s $m @('fa', 'fb') $p)|$(@((Read-State s).undone | Where-Object { $_ }).Count)|$([bool](Find-Mark (Read-State s) 'before-test' 0))" }
-  Expect "a flashback that wrote no row records no undone range and keeps the marks ($nf)" ($nf -eq 'row flashback failed: db_flashback.py apply failed (exit 1): The command line is too long.|0|True' -and (& $sum) -ne $c0)
+    $sp = $p.Clone(); $sp.steps = @(@{ dir = 'x'; tables = @('fa.t'); mark = 'm0' }); function Invoke-DbFb { @{ verified = $false; differs = @('fa.t') } }
+    "$(Invoke-RestoreDb s $m @('fa', 'fb') $p)|$(Invoke-RestoreDb s $m @('fa', 'fb') $sp)|$(@((Read-State s).undone | Where-Object { $_ }).Count)|$([bool](Find-Mark (Read-State s) 'before-test' 0))" }
+  Expect "a flashback that wrote no row (never started, or a structure step failed first) records no undone range and keeps the marks ($nf)" ($nf -eq 'row flashback failed: db_flashback.py apply failed (exit 1): The command line is too long.|structure back to mark m0 failed: still differs: fa.t|0|True' -and (& $sum) -ne $c0)
   $rt = & { . $L3; $st = Read-State s; $m = Find-Mark $st 'before-test' 0; $p = Get-RestorePlan s $m @('fa', 'fb') 't1'; $p0 = Get-DbPos s; $e1 = Invoke-RestoreDb s $m @('fa', 'fb') $p; "$e1|$((Read-State s).undone)|$p0" }
   Expect "flashback round trip: insert / update / delete over 2 schemas back to the mark's checksums ($rt)" ((& $sum) -eq $c0 -and $rt -match '^\|binlog\.\d+:\d+~binlog\.\d+:\d+\|')
   $p1 = ($rt -split '\|')[2]; $end = ((($rt -split '\|')[1]) -split '~')[1]
