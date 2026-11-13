@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L68 state · L137 config · L217 OS · L414 leases · L855 status · L1099 supervise sweep ·
-  L1170 supervise report · L1266 tracker · L1589 prior · L1605 ask bugs · L1810 git-host · L1970 kitlog · L2090 params ·
-  L2395 entry-scripts
+Sections: L10 paths · L68 state · L137 config · L217 OS · L414 leases · L858 status · L1102 supervise sweep ·
+  L1173 supervise report · L1269 tracker · L1592 prior · L1608 ask bugs · L1813 git-host · L1973 kitlog · L2093 params ·
+  L2398 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output (`& python`, git) UTF-8 (· → £ é), never the OEM code page; a console too
@@ -420,6 +420,7 @@ function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes 
   if ($ProcessId) { $l.pid = $ProcessId; $l.pidStart = Get-KitPidStart $ProcessId }; $l
 }
 $script:KitLiveCache = @{}
+function Get-KitGateLedger { Join-Path (Get-KitTemp) 'claude-build-gate' }   # one <pid>.json per running gated command (crafty.ps1 gate)
 function Get-KitLiveCached([string]$k, [scriptblock]$b) { $c = $script:KitLiveCache[$k]; if (-not $c -or ((Get-Date) - $c.at).TotalSeconds -gt 15) { $c = @{ at = Get-Date; v = (& $b) }; $script:KitLiveCache[$k] = $c }; $c.v }
 function Test-KitLive($l) {
   $now = Get-Date; $bm = [double](Get-KitParam 'idle.beatMinutes'); $a = "$($l.agent)"
@@ -428,6 +429,8 @@ function Test-KitLive($l) {
   $ls = Get-KitLiveCached steps { try { $s = Get-Content (Get-KitPath live-steps) -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$s.at).TotalMinutes -lt $bm) { $s } } catch {} }
   $mine = @($ls.labels | Where-Object { ($a -and (($_ -split ':', 2)[-1] -split '@')[0] -eq $a) -or ($l.lane -and $_ -match "@$([regex]::Escape($l.lane))$") })
   if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
+  # a holder blocked on a long gated command (a full e2e suite) writes no transcript: its running gate entry keeps it live
+  if ($a -and @(Get-KitLiveCached gate { @(Get-ChildItem (Get-KitGateLedger) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } | Where-Object { $_.owner -eq $a -and (Test-KitPid $_.pid $_.start) }).Count) { return $true }
   $all = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
     Where-Object { if ($l.session) { $_.session -eq $l.session } else { ($_.agent -and $_.agent -in @($a, $l.holder)) -or ($l.holder -and $_.session -eq $l.holder) } })
   $fresh = { param($e, $m) $x = Get-KitLiveCached "act:$($e.session)/$($e.agent)/$($e.run)" { Get-KitLastActivity "$($e.transcript)" $e "$($e.tool)" }; $x -and ($now - $x).TotalMinutes -lt $m }   # a silent agent writing its transcript is live
@@ -589,7 +592,7 @@ function Get-KitLockFile { Get-KitPath locks -Create }
 # alive: its process, or a build its gate started (a killed check leaves its test process running)
 function Test-KitLockHolder($H) {
   if (Test-KitPid $H.pid $H.pidStart) { return $true }
-  @(Get-ChildItem (Join-Path (Get-KitTemp) 'claude-build-gate') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { "$($_.gate)" -eq "$($H.pid)" -and (Test-KitPid $_.pid $_.start) }).Count -gt 0
+  @(Get-ChildItem (Get-KitGateLedger) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { "$($_.gate)" -eq "$($H.pid)" -and (Test-KitPid $_.pid $_.start) }).Count -gt 0
 }
 function Get-KitLockState {
   $s = try { Get-Content (Get-KitLockFile) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
