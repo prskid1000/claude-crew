@@ -25,6 +25,7 @@
   "qa.bugsLockSec": "config default=120 unit=s",
   "qa.finalizeLockSec": "config default=600 unit=s",
   "cleanup.worktreeDays": "config default=7 unit=d",
+  "cleanup.worktreeIdleHours": "config default=2 unit=h",
   "goodies.pruneDays": "config default=30 unit=d",
   "tidy.judgeMinutes": "config default=3 unit=min",
   "tracker.duplicateScore": "config default=0.6 unit=share",

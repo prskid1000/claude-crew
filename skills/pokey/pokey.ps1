@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   a missing goody or api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L122 seat · L189 api · L357 finalize · L784 retest
+Sections: L23 report · L122 seat · L189 api · L357 finalize · L790 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -420,9 +420,11 @@ $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
 $prose = {
   $lm = @{ folderLink = $D; files = @{} }; foreach ($x in @(@($files.Name) + @($vText.Keys) | Where-Object { $_ })) { $lm.files[$x] = @{ link = $x } }
   $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
-  # each finding names its file + field (kitbag result_notes); -Check: the run's run.json / bugs.json notes too
-  @(@(foreach ($pf in @(@(Join-Path $D $Results) + @(if ($Check) { "$RunDir/run.json", "$RunDir/bugs.json" }))) { if (Test-Path -LiteralPath $pf) { Test-KitProse -Kind result-note -Path $pf 3>$null } }) + @(Test-KitProse -Kind qa-report -Text (($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', '') 3>$null))   # link lists are not prose
+  # each finding names its file + field (kitbag result_notes): this package's results and report only
+  @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text (($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', '') 3>$null))   # link lists are not prose
 }
+# the run's shared run.json / bugs.json: WARN only (one package's note there never holds another package's close)
+$proseRun = { @(foreach ($pf in "$RunDir/run.json", "$RunDir/bugs.json") { if (Test-Path -LiteralPath $pf) { Test-KitProse -Kind result-note -Path $pf 3>$null } }) }
 $prWhy = "$Code prose check: shorten the named field (file, path) (crafty/templates.md ""Writing standards"")"
 # knownBug: a FAIL already tracked by another OPEN task (an untracked defect must never close a task); -in compares any case
 $knownBad = { $tested = @(@($item.subtasks) | ForEach-Object { ([string]$_.id).Trim().TrimStart('#') })
@@ -444,6 +446,8 @@ if ($Check) {
     $id = $null
     foreach ($i in $ids) { if ($stem -match "(?i)^$([regex]::Escape($i))(?=$|[^A-Za-z0-9])") { $id = $i; $stem = $stem.Substring($i.Length); break } }
     if (-not $id -and $refBy[$name]) { $id = $refBy[$name] }
+    # an uncited file of a check id no longer in results (X9-...): keep its id; the setup form runs out after 99 files
+    if (-not $id -and $stem -match '^([A-Za-z]{1,3}\d+[a-z]?)(?=[-_. ]|$)') { $id = $Matches[1]; $stem = $stem.Substring($id.Length) }
     $verify = $stem -match '(?i)(^|[^a-z])verify([^a-z]|$)'
     $stem = $stem -replace '(?i)(^|[^a-z])verify(?=[^a-z]|$)', '$1'
     $nn = -1
@@ -498,8 +502,9 @@ if ($Check) {
   # the exact next command, with this call's -ExpectChecks / -Results
   $canFix = @($suggest.Values | Where-Object { $_ }).Count
   $checkCmd = "& '$($PSCommandPath.Replace("'", "''"))' finalize -RunDir '$($RunDir.Replace("'", "''"))' -Code $Code -Check$(if ($canFix) { ' -FixNames' })$(if ($ExpectChecks -ge 0) { " -ExpectChecks $ExpectChecks" })$(if ($Results -ne 'results.json') { " -Results $Results" })"
+  # a name -FixNames renames blocks until renamed; one it cannot rename is a WARN (published as is: a name never holds a close)
   if ($badNames.Count) {
-    $fail = $true; "$Code evidence check: $($badNames.Count) off-standard name(s) (pokey SKILL.md Evidence):"
+    if ($canFix) { $fail = $true }; "$Code evidence check$(if (-not $canFix) { ' WARN' }): $($badNames.Count) off-standard name(s) (pokey SKILL.md Evidence):"
     $badNames | ForEach-Object { "  $_ -> $(if ($suggest[$_]) { $suggest[$_] } elseif ($emptyNames -contains $_) { '(empty file: not renamed, see below)' } else { '(no suggestion: rename by hand)' })" }
     if ($canFix) { "  rename them all with: $checkCmd" }
   }
@@ -521,6 +526,7 @@ if ($Check) {
   }
   $pr = @(& $prose)
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
+  $prRun = @(& $proseRun); if ($prRun.Count) { "$Code prose WARN (run.json / bugs.json, shared by every package: fix there; does not hold this close):"; $prRun | ForEach-Object { "  $_" } }
   if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count -or $kbBad.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: $checkCmd"; 'EXIT=1'; exit 1 }
   "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"
   if ($publishAfter) { $pass = @{} + $PSBoundParameters; foreach ($k in 'FixNames', 'Check') { $pass.Remove($k) }; Invoke-Finalize @pass; return }
