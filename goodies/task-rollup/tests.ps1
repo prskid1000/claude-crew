@@ -28,18 +28,18 @@ Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos = @(@{ name 
 $res = & {
   . (Lib); . $ad
   $p = (__TrA 'create' @{ name = 'Parent'; description = "**Testing doc (human):** [open](https://h)`n`nThe owner's words." }).id
-  $s1 = (__TrA 'create' @{ name = 'API fixes'; parent = $p }).id; $s2 = (__TrA 'create' @{ name = 'Web fixes'; parent = $p }).id
+  $s1 = (__TrA 'create' @{ name = 'API fixes'; parent = $p }).id; $s2 = (__TrA 'create' @{ name = 'Web fixes'; parent = $p; description = "**Items:** WEB1 (web-repo, grid): W-1, W-2 · WX: extra polish" }).id
   $null = __TrA 'create' @{ name = 'A person''s subtask (no kit state)'; parent = $p }
   $null = __TrNone $s1 'st' { param($o) $o.status = 'in test' }
   Set-JsonFile (Join-Path $bd 'launch-args.json') @{ batch = 1; agents = @(@{ id = 'API1'; items = 'A-1, A-2'; area = 'core (api-repo)'; note = "tracker task $s1" }, @{ id = 'WEB1'; items = 'W-1'; area = 'grid (web-repo)'; note = "tracker task $s2" }) }
   Update-KitTaskIndex $s1 { param($x) $x.track = @{ task = $s1; mrs = @('api-repo!7', 'api-repo!8'); done = $true }; $x.docs['testing-doc'] = @{ url = 'https://doc/h1'; updated = '2026-11-09T10:00:00Z' } }
-  Update-KitTaskIndex $s2 { param($x) $x.track = @{ task = $s2; mrs = @('web-repo!3'); done = $false } }
+  Update-KitTaskIndex $s2 { param($x) $x.track = @{ task = $s2; mrs = @('web-repo!3'); done = $false }; $x.itemIds = @('WEB1', 'WX') }   # its own Items list: area ids
   Set-Content (Get-KitPath deploy-log -Create) '{"event":"record","target":"stage","mrs":["api-repo!7","api-repo!8"],"at":"2026-11-09T12:00:00Z"}'
   $global:hostCalls = 0; $global:reads = 0; $global:writes = 0
   function ProjPath($r) { "g/$r" }
   function Invoke-HostVerb([string]$Verb, [hashtable]$A) {
     $global:hostCalls++; if ($Verb -eq 'mr.url') { return "https://git/$($A.repo)/$($A.n)" }
-    @{ '7' = @{ state = 'merged'; merged_at = '2026-11-09T09:00:00Z'; title = 'fix: A-1 guard' }; '8' = @{ state = 'merged'; merged_at = '2026-11-09T08:00:00Z'; title = 'fix: A-2' }; '3' = @{ state = $(if ($global:m3) { 'merged' } else { 'opened' }); merged_at = '2026-11-09T11:00:00Z'; title = 'fix: W-1' } }[[string]$A.n] }
+    @{ '7' = @{ state = 'merged'; merged_at = '2026-11-09T09:00:00Z'; title = 'fix: A-1 guard' }; '8' = @{ state = 'merged'; merged_at = '2026-11-09T08:00:00Z'; title = 'fix: A-2' }; '3' = @{ state = $(if ($global:m3) { 'merged' } else { 'opened' }); merged_at = '2026-11-09T11:00:00Z'; title = 'fix: W-1'; source_branch = 'f/CU-9-web1' } }[[string]$A.n] }
   $global:gtOrig = ${function:Get-TrackerTask}; $global:sdOrig = ${function:Set-TrackerDescription}; $global:acOrig = ${function:Add-TrackerComment}
   ${function:Get-TrackerTask} = { param($Id) $global:reads++; & $global:gtOrig $Id }
   ${function:Set-TrackerDescription} = { param($Id, $Text) $global:writes++; & $global:sdOrig $Id $Text }
@@ -49,8 +49,9 @@ $res = & {
   $w1 = $global:writes; $h1 = $global:hostCalls
   $o2 = Invoke-TaskRollup -Task $p; $w2 = $global:writes - $w1; $h2 = $global:hostCalls - $h1
   $r0 = $global:reads; $o3 = Update-KitParentRollup $p; $r3 = $global:reads - $r0
+  $j1 = (__TrA 'view' @{ id = $s2 }).description
   $global:m3 = $true; $o4 = Invoke-TaskRollup -Task $p; $c4 = @(__TrA 'comments' @{ id = $p }).text; $o5 = Invoke-TaskRollup -Task $p
-  [pscustomobject]@{ u1 = (__TrA 'view' @{ id = $s1 }).url; sevs = (Format-KitSevCounts @(@{ sev = 'Cosmetic' }, @{ sev = 'Critical' }, @{ sev = '' }, @{ sev = 'critical' })); o1 = "$o1"; d1 = $d1; i1 = $i1; c1 = "$c1"; w2 = $w2; h2 = $h2; o2 = "$o2"; o3 = "$o3"; r3 = $r3; o4 = "$o4"; c4 = @($c4); o5 = "$o5"
+  [pscustomobject]@{ j1 = $j1; j4 = (__TrA 'view' @{ id = $s2 }).description; u1 = (__TrA 'view' @{ id = $s1 }).url; fmt = "$(Format-KitItemText 'P4-X-01' 'Fix it' @('u1', 'u1', 'u2'))|$(Format-KitItemText 'JL' '' @())|$(@(Get-KitDescItems "**Items:**`n* JR (api-repo, refine): P4-JR-01`n* PS-01 invoice->site\_visit rule").text -join '/')"; sevs = (Format-KitSevCounts @(@{ sev = 'Cosmetic' }, @{ sev = 'Critical' }, @{ sev = '' }, @{ sev = 'critical' })); o1 = "$o1"; d1 = $d1; i1 = $i1; c1 = "$c1"; w2 = $w2; h2 = $h2; o2 = "$o2"; o3 = "$o3"; r3 = $r3; o4 = "$o4"; c4 = @($c4); o5 = "$o5"
     splice = (Set-KitDescSection "x`n<!-- kit:delivery -->`nold`n<!-- /kit:delivery -->`ny" 'delivery' 'new' '')
     after = (Set-KitDescSection "<!-- kit:delivery -->`nd`n<!-- /kit:delivery -->`n`nowner" 'triage' 'T' 'delivery') }
 }
@@ -60,10 +61,12 @@ $apiRow = '| [API1 · API fixes](' + $res.u1 + ') | in test | [!8](https://git/g
 Expect 'rollup delivery: summary, one table per repo (alias label) in merge order: subtask, status, MRs, items, severity, item ids; a subtask without kit state = a plain row' ($d -match '\*\*Delivery status\*\*: 1 of 3 merged · deployed: stage \(1\) · 1 in test · 0 closed · next: merge: 2 subtask\(s\) not merged' -and
   $d.Contains("**API (api-repo)**`n`n| Subtask | Status | MRs | Items | Severity | Item ids |`n|---|---|---|---|---|---|`n$apiRow") -and $d -match '\*\*Web \(web-repo\)\*\*' -and $d -match '\[!3\]\([^)]+\) open \| 0/1 \| 1M \| W-1 \|' -and
   $d -match '\*\*Other\*\*\n\n\|[^\n]+\n\|[^\n]+\n\| \[A person''s subtask[^\n]+\| — \| — \| — \| — \|' -and $d.IndexOf('**API') -lt $d.IndexOf('**Web') -and $d -notmatch '(?m)^- ')
+Expect "item text: <id> · <plain description> · <MR URLs> (deduped, empty parts left out); Items words after the id, a (label) unwrapped, markdown escapes dropped ($($res.fmt))" ($res.fmt -eq 'P4-X-01 · Fix it · u1 u2|JL|api-repo, refine: P4-JR-01/invoice->site_visit rule')
 Expect "rollup severity cell: C H M L initials, another severity in full, none = ? ($($res.sevs))" ($res.sevs -eq '2C/1 Cosmetic/1 ?')
 Expect 'rollup triage: severity x decision counts; not in this wave = a table (id, severity, verdict, reason)' ($d -match '5 = 3 fix · 1 defer · 1 duplicate' -and $d -match '\| Critical \| 1 \| 0 \| 0 \| 0 \| 1 \|' -and
   $d.Contains("**Not in this wave**`n`n| Id | Severity | Verdict | Reason |`n|---|---|---|---|`n| A-3 | High | deferred | owner: later (decision d-2) |`n| W-2 | Low | duplicate of W-1 | Same root cause |"))
-Expect 'rollup items (no checklist verb): ticked when merged, deferred unticked with its reason, severity first' ($res.i1 -match '(?s)\*\*Items\*\*\n- \[x\] A-1 · Critical · Guard the / admin path\n- \[ \] A-3 · High · deferred: owner: later\n- \[x\] A-2 · Low · Trim names')
+Expect 'rollup items (no checklist verb): ticked when merged, deferred unticked with its reason, severity first' ($res.i1 -match '(?s)\*\*Items\*\*\n- \[x\] A-1 · Critical · Guard the / admin path · https://git/g/api-repo/7\n- \[ \] A-3 · High · deferred: owner: later\n- \[x\] A-2 · Low · Trim names · https://git/g/api-repo/8')
+Expect 'rollup items: the task''s own area ids share the checklist, open while their MR is open, ticked once every MR naming them (branch segment) merged; the rest once all merged, with every MR URL; a triage row no MR names: the URLs of the area listing it' ($res.j1 -match '(?s)- \[ \] W-1[^\n]*\n- \[ \] W-2 · Low · duplicate of W-1: Same root cause · https://git/g/web-repo/3\n- \[ \] WEB1 · Fix the grid; Same root cause · https://git/g/web-repo/3\n- \[ \] WX · extra polish\n' -and $res.j4 -match '- \[x\] WEB1 · Fix the grid; Same root cause · https://git/g/web-repo/3\n- \[x\] WX · extra polish · https://git/g/web-repo/3' -and $d -match '\| 0/1 \| 1M \| W-1 \|')
 Expect "rollup milestones: none yet (not all merged) ($($res.c1))" (-not $res.c1)
 Expect "rollup: an unchanged second run writes nothing and fetches merged MRs never again ($($res.w2) writes, $($res.h2) host calls)" ($res.w2 -eq 0 -and $res.o2 -match 'no change' -and $res.h2 -le 2)
 Expect "rollup: nothing changed locally + inside track.rollupMinutes -> no tracker read ($($res.r3) reads)" ($res.r3 -eq 0 -and -not $res.o3)
@@ -82,20 +85,23 @@ $cl = & {
   & $st $b 'in progress'; $null = Update-KitParentRollup $p -Force; & $st $b closed; $r5 = Update-KitParentRollup $p -Force; $ask2 = (Read-KitState (Get-KitTaskFile $p)).rollup.closeAsk
   $null = Invoke-Decide answer -Id $ask2 -Answer 'A' -NoPublish; $r6 = Update-KitParentRollup $p; $null = Invoke-TaskRollup -Task $solo
   $it = (__TrA 'create' @{ name = 'Own'; description = "**Items (ids):** A1, A2 (deferred)`n`n- note" }).id; Update-KitTaskIndex $it { param($x) $x.track = @{ task = $it; mrs = @('api-repo!9'); done = $false } }
-  function ProjPath($r) { "g/$r" }; function Invoke-HostVerb([string]$Verb, [hashtable]$A) { @{ state = 'merged'; title = 'fix: A1' } }
+  function ProjPath($r) { "g/$r" }; function Invoke-HostVerb([string]$Verb, [hashtable]$A) { if ($Verb -eq 'mr.url') { return "https://git/$($A.repo)/$($A.n)" }; @{ state = 'merged'; title = 'fix: A1' } }
   $i1 = Update-KitTaskItems $it (& $view $it); $id1 = (& $view $it).description; $i2 = Update-KitTaskItems $it
   Update-KitTaskIndex $it { param($x) $x.track.done = $true }; $i3 = @(Invoke-KitTrackRollupHook) -join ' '
-  $iSplit = @((Get-KitDescItemIds "**Items:** TP-01 block ListAgents, SendMessage, TaskStop, Agent · TP-02 keep logs (x) · **Decisions:** d1") -join '|'; (Get-KitDescItemIds "Items:`n- B3 · High · fix it`n- Fix the grid: now`nnext") -join '|'; (Get-KitDescItemIds "Items: A1, A2 · High") -join '|') -join ' / '
+  $solo1 = (__TrA 'create' @{ name = 'Solo bug'; description = 'no list' }).id; Update-KitTaskIndex $solo1 { param($x) $x.track = @{ task = $solo1; mrs = @('api-repo!11', 'api-repo!12'); done = $true } }
+  $null = Update-KitTaskItems $solo1 (& $view $solo1) -Force; $oneItem = "$((& $view $solo1).description)|$(@(__TrA 'comments' @{ id = $solo1 }).Count)"
+  $iSplit = @((Get-KitDescItemIds "**Items:** TP-01 block ListAgents, SendMessage, TaskStop, Agent · TP-02 keep logs (x) · **Decisions:** d1") -join '|'; (Get-KitDescItemIds "Items:`n- B3 · High · fix it`n- Fix the grid: now`nnext") -join '|'; (Get-KitDescItemIds "Items: A1, A2 · High") -join '|'; (Get-KitDescItemIds "Items: PS-04 golden cases T1, N1, A10") -join '|') -join ' / '
   $s6 = (& $view $p).status; $d6 = (& $view $p).description; $fin = (Read-KitState (Get-KitTaskFile $p)).rollup.parentClosed
   $null = Update-KitParentRollup $p; & $st $p 'in progress'; Update-KitTaskIndex $p { param($x) $x.rollup.readAt = (Get-Date).AddHours(-2).ToString('o') }; $null = Update-KitParentRollup $p -Force   # reopened: rolls up again (the verb forces)
   [pscustomobject]@{ r0 = "$r0"; r1 = "$r1"; r2 = "$r2"; gate = $dec.gate; dtask = $dec.task; n1 = $n1; s1 = $s1; d3 = $d3; ask = $ask; ask2 = $ask2; r3b = "$r3b"; act3 = $act3; r5 = "$r5"; r6 = "$r6"; s6 = $s6
-    d6 = $d6; fin = $fin; reopen = "$((Read-KitState (Get-KitTaskFile $p)).rollup.parentClosed) $((& $view $p).status) $(@(Get-ChildItem $dd -Filter '*.json').Count)"; n7 = @(Get-ChildItem $dd -Filter '*.json').Count; i1 = "$i1"; id1 = $id1; i2 = "$i2"; i3 = $i3; it = $it; iSplit = $iSplit }
+    d6 = $d6; fin = $fin; reopen = "$((Read-KitState (Get-KitTaskFile $p)).rollup.parentClosed) $((& $view $p).status) $(@(Get-ChildItem $dd -Filter '*.json').Count)"; n7 = @(Get-ChildItem $dd -Filter '*.json').Count; i1 = "$i1"; id1 = $id1; i2 = "$i2"; i3 = $i3; it = $it; iSplit = $iSplit; oneItem = $oneItem }
 }
 Expect "close: none while a subtask is open; all closed -> ONE ask (gate close, task = parent), the parent untouched ($($cl.r1) | $($cl.n1))" ($cl.r0 -notmatch 'close asked' -and $cl.r1 -match "close asked $($cl.ask)" -and $cl.r2 -notmatch 'close asked' -and $cl.n1 -eq 1 -and $cl.gate -eq 'close' -and $cl.dtask -and $cl.s1 -ne 'closed')
 Expect "close: any answer but A (here 'a lot of ...') -> kept, acted on once (no re-read), shown in the delivery line; a reopened subtask spends it, all closed again asks once more; 'A' closes it, final ($($cl.r6))" ($cl.d3 -match 'parent kept open: a lot of docs pending' -and -not $cl.r3b -and $cl.act3 -eq $cl.ask -and $cl.ask2 -and $cl.ask2 -ne $cl.ask -and $cl.r5 -match 'close asked' -and
   $cl.r6 -match 'parent closed' -and $cl.s6 -eq 'closed' -and $cl.d6 -match '\*\*Delivery status\*\*:[^\n]* · parent closed' -and $cl.fin -eq $true -and $cl.reopen -eq 'False in progress 2')   # reopened by a person: rolls up again, never re-closed or re-asked
 Expect "close: a task without subtasks is never asked about (its flow unchanged) ($($cl.n7) decisions)" ($cl.n7 -eq 2)
-Expect "items: the task's own Items list -> its checklist, an id a merged MR names ticked; unchanged = no write; all ticked once its MRs are all merged ($($cl.i1) | $($cl.i3))" ($cl.i1 -match '1/2 done' -and $cl.id1 -match '(?s)\*\*Items\*\*\n- \[x\] A1\n- \[ \] A2' -and -not $cl.i2 -and $cl.i3 -match "items $($cl.it): 2/2 done")
-Expect "items: split on ' · ' and bullets, never on ',' inside an item; id = its leading token; a **Label:** piece ends the list ($($cl.iSplit))" ($cl.iSplit -eq 'TP-01|TP-02 / B3|Fix the grid / A1|A2|High')
+Expect "items: the task's own Items list -> its checklist, an id a merged MR names ticked; unchanged = no write; all ticked once its MRs are all merged ($($cl.i1) | $($cl.i3))" ($cl.i1 -match '1/2 done' -and $cl.id1 -match '(?s)\*\*Items\*\*\n- \[x\] A1 · https://git/g/api-repo/9\n- \[ \] A2 · deferred' -and -not $cl.i2 -and $cl.i3 -match "items $($cl.it): 2/2 done")
+Expect "items: split on ' · ' and bullets, on ',' only after a bare id (never inside an item's text: 'PS-04 golden cases T1, N1'); id = its leading token; a **Label:** piece ends the list ($($cl.iSplit))" ($cl.iSplit -eq 'TP-01|TP-02 / B3|Fix the grid / A1|A2|High / PS-04')
+Expect "items: a task without an Items list gets ONE item 'MRs · <task name> · <MR URLs>', no MRs comment ($($cl.oneItem))" ($cl.oneItem -match '(?s)- \[x\] MRs · Solo bug · https://git/g/api-repo/11 https://git/g/api-repo/12.*\|0$')
 Remove-TestKit $k
 Complete-Tests
