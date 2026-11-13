@@ -48,7 +48,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   fires); the **cascade guard** (`doctor` installs it, again after migrations; `teardown` removes it) journals the child rows
   of CASCADE / SET NULL foreign keys, which come back the same way. A table it cannot bring back exactly (structure changed with
   no slice, a cascade before the guard, a failed batch, FLOAT after DDL) falls back to its `seed` items (`tables`), named in the
-  summary; refused only when the binlog lacks the rows (statement-format DML).
+  summary; refused only when the binlog lacks the rows (statement-format DML). A schema dropped / created after the mark (a
+  tenant reset): its tables fall back to seed, its objects stay as they are now (never dropped as new).
   `db.rollback` (a tool's rollback command; `liquibase`: tag `release-<n>` before each release's migrations, rollback to it)
   runs only with `db.restoreVia: tool-then-kit` or `-UseToolRollback`; `restore.after` [ { name, cmd } ] ({mark}) runs after
   it and before a release with migrations switches over (`onMigrations: false`: after restores only): marker resets (a "latest
@@ -57,7 +58,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   DDL is not re-applied), each named in the notes and `<env>-migrations.log`. Marks expire with the binlog (`binlog_expire_logs_seconds`; `marks.keepDays` 30, `marks.max` 60); doctor
   checks binlog ROW / FULL images / FULL metadata / retention. `seed [-Check]`: the env's baseline data (`envs.<env>.seed`, JSON
   `items` [ { name, check: { sql, expect } | { cmd }, create: { cmd }, how, needs, tables } ], default
-  `<state>/localenv/<env>.seed.json`): each check gates its create. `db.timeoutSec`: seconds per hook (a number or `{ "<hook>":
+  `<state>/localenv/<env>.seed.json`): each check gates its create; with goody liquibase also DRIFT `routines:<schema>` = a
+  procedure / function an executed changeSet file created that the schema lacks (fix: delete those rows, reset a migration skip marker, restart). `db.timeoutSec`: seconds per hook (a number or `{ "<hook>":
   n }`; default 1800, query 120); `tasks` (`task -Task <name>`), `sql -Query` (read-only).
 - **DB temp** (mysql): once a minute the controller kills the connection with the most temp on disk (session temp tablespaces +
   TempTable mmap files) above `db.tempMaxGB` (5); `dbtemp [-Kill <id>]` lists / kills them with the env file's credential: set

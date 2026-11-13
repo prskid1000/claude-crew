@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L30 config · L227 state · L274 layer drops · L346 leases · L472 code · L504 migrations ·
-  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1051 seed · L1097 processes · L1478 daemon ·
-  L1937 cleanup · L2009 doctor · L2061 verbs
+  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1056 seed · L1134 processes · L1515 daemon ·
+  L1974 cleanup · L2046 doctor · L2098 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -959,17 +959,22 @@ function Get-RestorePlan([string]$e, $m, [string[]]$schemas, [string]$tag) {
   $first = @{}; foreach ($d in @($p.ddl | Where-Object { $_.table -and $_.kind -ne 'object' })) { $k = "$($d.schema).$($d.table)"; if (-not $first[$k]) { $first[$k] = $d } }
   # views / routines / triggers / events changed after the mark: back to the oldest later mark's definitions, else dropped when created after it
   $objFirst = [ordered]@{}; foreach ($d in @($p.ddl | Where-Object { $_.kind -eq 'object' -and $_.table -notlike 'kit_cg_*' })) { $k = "$($d.object):$($d.schema).$($d.table)"; if (-not $objFirst[$k]) { $objFirst[$k] = $d } }
+  # a schema dropped after the mark (then created again) changed all its tables and objects then, with no per-object DDL
+  $dbAt = @{}; foreach ($d in @($p.ddl | Where-Object { $_.kind -eq 'database' -and $_.sql -match '(?i)^\s*(/\*.*?\*/\s*)?DROP\s' })) { if (-not $dbAt[$d.schema]) { $dbAt[$d.schema] = $d } }
+  $byDb = { param($d) $x = $dbAt[$d.schema]; if ($x -and (Test-DbPosBefore $x.at $d.at)) { $x } }
   $objBy = [ordered]@{}
   foreach ($k in $objFirst.Keys) {
-    $d = $objFirst[$k]; $mk = @($later | Where-Object { $_.slices.objects -and -not (Test-DbPosBefore $d.at $_.pos) })[0]
+    $d = $objFirst[$k]; $x = & $byDb $d; $at = if ($x) { $x.at } else { $d.at }
+    $mk = @($later | Where-Object { $_.slices.objects -and -not (Test-DbPosBefore $at $_.pos) })[0]
     if ($mk) { if (-not $objBy[$mk.name]) { $objBy[$mk.name] = @{ mark = $mk.name; dir = $mk.slices.dir; names = @() } }; $objBy[$mk.name].names += $k }
+    elseif ($x) { $p.warnings = @($p.warnings) + "$k : its schema was dropped / created after the mark ($($x.at)), no mark kept its definition: left as it is now" }
     elseif ($d.op -eq 'CREATE' -and $d.sql -notmatch '(?i)^\s*CREATE\s+OR\s+REPLACE') { $p.objectDrops = @($p.objectDrops) + $k }
     else { $p.warnings = @($p.warnings) + "$k : changed after the mark ($($d.op) at $($d.at)) and no mark kept its definition: left as it is now" }
   }
   $p.objects = @($objBy.Values)
   $cover = @{}
   foreach ($k in $first.Keys) {
-    $d = $first[$k]; $tb = ($k -split '\.', 2)[1]
+    $d = $first[$k]; $tb = ($k -split '\.', 2)[1]; $x = & $byDb $d; if ($x) { $d = $x }
     $mk = @($later | Where-Object { $tb -in @($_.slices.tables) -and -not (Test-DbPosBefore $d.at $_.pos) })[0]   # the oldest mark kept before that DDL
     if ($mk) { $cover[$k] = $mk.name; continue }
     if ($d.kind -eq 'create') { $p.drops = @($p.drops) + $k; continue }
@@ -1065,6 +1070,31 @@ function Test-SeedItem([string]$e, $it) {
   $want = if ($it.check.expect) { [string]$it.check.expect } else { '^[1-9]\d*$' }
   @{ state = $(if (-not $v -or $v -eq '0') { 'missing' } elseif ($v -notmatch $want) { 'drift' } else { 'ok' }); got = $v }
 }
+# Liquibase: routines a schema's executed changeSet files create (rollback blocks left out) that it lacks -> @{ schema; names; files }
+# (a restore fallback or a tenant reset dropped them while DATABASECHANGELOG kept the rows, so Liquibase never runs them again)
+function Get-MissingRoutines([string]$e) {
+  if (-not (Get-Command Get-LiquibaseMaster -ErrorAction SilentlyContinue)) { return }
+  $dir = LiquibaseDir $e; if (-not $dir) { return }
+  $made = @{}
+  foreach ($f in Get-ChildItem -LiteralPath (Split-Path (Get-LiquibaseMaster $dir)) -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {
+    $t = [IO.File]::ReadAllText($f.FullName); if ($t -notmatch '(?i)\b(PROCEDURE|FUNCTION)\b') { continue }
+    $t = $t -replace '(?is)<rollback>.*?</rollback>|--rollback[^\n]*', ''
+    $c = @([regex]::Matches($t, '(?i)\bCREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(') | ForEach-Object { $_.Groups[1].Value.ToLower() })
+    $d = @([regex]::Matches($t, '(?i)\bDROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?(\w+)') | ForEach-Object { $_.Groups[1].Value.ToLower() } | Where-Object { $_ -notin $c })
+    if ($c.Count -or $d.Count) { $made[$f.Name.ToLower()] = @{ create = $c; drop = $d } }
+  }
+  if (-not $made.Count) { return }
+  foreach ($s in @(LiquibaseSchemas $e)) {
+    $want = [ordered]@{}
+    foreach ($r in @(Invoke-DbSql $e "SELECT FILENAME, MAX(ORDEREXECUTED) o FROM ``$s``.DATABASECHANGELOG WHERE EXECTYPE IN ('EXECUTED', 'RERAN') GROUP BY FILENAME ORDER BY o")) {
+      $m = $made[(Split-Path ([string]$r[0]) -Leaf).ToLower()]; if (-not $m) { continue }
+      foreach ($n in $m.create) { $want[$n] = [string]$r[0] }; foreach ($n in $m.drop) { $want.Remove($n) }
+    }
+    $have = @(Invoke-DbSql $e "SELECT LOWER(ROUTINE_NAME) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = '$($s.Replace("'", "''"))'" | ForEach-Object { $_[0] })
+    $gone = @($want.Keys | Where-Object { $_ -notin $have })
+    if ($gone.Count) { @{ schema = $s; names = $gone; files = @($gone | ForEach-Object { $want[$_] } | Select-Object -Unique) } }
+  }
+}
 # -Tables (a restore's fallback): only the items whose tables name one of them (schema.table or table) and what they need; none named: all
 function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
   $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { throw "[$e] no seed file $f (envs.$e.seed)" }
@@ -1085,6 +1115,13 @@ function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
     }
     $res[[string]$it.name] = $r.state
     $lines.Add(('  {0,-8} {1}{2}' -f $r.state.ToUpper(), $it.name, $(if ($r.created) { ' (created)' } elseif ($r.state -ne 'ok') { " - $($r.got)$(if ($r.state -eq 'missing' -and -not $it.create.cmd -and $it.how) { "; how: $($it.how)" })" })))
+  }
+  if (-not $Tables) {
+    foreach ($g in @(try { Get-MissingRoutines $e } catch { $res['routines'] = 'error'; $items += @{ name = 'routines' }; $lines.Add("  ERROR    routines - $("$_".Split("`n")[0])") })) {
+      if (-not $g.schema) { continue }
+      $res["routines:$($g.schema)"] = 'drift'; $items += @{ name = "routines:$($g.schema)" }
+      $lines.Add("  DRIFT    routines:$($g.schema) - $($g.names -join ', ') missing, DATABASECHANGELOG says $($g.files -join ', ') ran; how: delete those rows in $($g.schema), reset its migration skip marker (restore.after) and restart the service")
+    }
   }
   $bad = @($res.Keys | Where-Object { $res[$_] -ne 'ok' })
   if (-not $Tables) { Update-State $e { param($x) $x.seed = @{ at = (Now); ok = (-not $bad.Count); missing = @($bad | Where-Object { $res[$_] -in 'missing', 'blocked' }); drift = @($bad | Where-Object { $res[$_] -in 'drift', 'error' }) } } }

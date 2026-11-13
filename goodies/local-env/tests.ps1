@@ -495,6 +495,28 @@ $cks = & { . $ckL; $global:ckSql = @(); function Invoke-DbSql { $global:ckSql +=
   $after = @(Invoke-RestoreAfter t 'release-7' -Migrations); $all = @(Invoke-RestoreAfter t 'm1').Count
   "$pure|$($global:ckSql -join ';')|$($sqlNotes -join ';')|$($after -join ';')|$all" }
 Expect "localenv: an edited unmerged changeSet gets MD5SUM NULL (merged / whitespace-only untouched); restore.after gets {mark}, onMigrations false skips releases ($cks)" ($cks -match '^0\|UPDATE `s1`\.DATABASECHANGELOG SET MD5SUM = NULL WHERE ID = ''l1'' AND AUTHOR = ''a'' AND \(FILENAME = ''c1\.xml'' OR FILENAME LIKE ''%/c1\.xml''\)\|r b: changeSet\(s\) a:l1 of c1\.xml .*NOT re-applied' -and $cks -match '\|restore\.after marker: ok: reset release-7\|2$')
+# restore plan: a schema dropped after the mark (tenant reset) keeps its re-created objects and seeds its tables (never dropped as
+# "created after the mark"; ALTER DATABASE changes nothing); seed -Check: a routine an executed changeSet file made, now gone = DRIFT
+Set-Content (Join-Path $ckr 'changelog/c2.xml') '<changeSet id="p" author="a"><sql>DROP PROCEDURE IF EXISTS `p1`;</sql><sql>CREATE DEFINER=`root`@`localhost` PROCEDURE `p1`(in a int) BEGIN END</sql><sql>CREATE FUNCTION p2(a int) RETURNS int RETURN 1</sql><rollback>DROP PROCEDURE p1</rollback></changeSet>'
+Set-Content (Join-Path $ckr 'changelog/c3.xml') '<changeSet id="q" author="a"><sql>DROP FUNCTION IF EXISTS p2</sql><rollback>CREATE FUNCTION p2(a int) RETURNS int RETURN 1</rollback></changeSet>'
+$rpOut = & { . $ckL
+  function DbPosKey([string]$fp) { $f, $p = $fp -split ':(?=\d+$)'; @([long]([regex]::Match($f, '\d+$').Value), [long]$p) }
+  function Test-DbPosBefore([string]$a, [string]$b) { $x = DbPosKey $a; $y = DbPosKey $b; $x[0] -lt $y[0] -or ($x[0] -eq $y[0] -and $x[1] -lt $y[1]) }
+  function Read-State { @{ marks = @(); undone = @() } }; function Get-DbPos { 'b.000009:1' }
+  function Invoke-DbFlashback { @{ fallback = @(); warnings = @(); ddl = @(
+        @{ schema = 's1'; table = ''; kind = 'database'; at = 'b.000008:100'; sql = 'drop database s1' }, @{ schema = 's1'; table = 't1'; kind = 'create'; at = 'b.000008:150' },
+        @{ schema = 's2'; table = ''; kind = 'database'; at = 'b.000008:250'; sql = 'ALTER DATABASE s2 CHARACTER SET utf8mb4' },
+        @{ schema = 's1'; table = 'p1'; kind = 'object'; object = 'PROCEDURE'; op = 'CREATE'; at = 'b.000008:200'; sql = 'CREATE PROCEDURE p1' },
+        @{ schema = 's2'; table = 't2'; kind = 'create'; at = 'b.000008:300' },
+        @{ schema = 's2'; table = 'p9'; kind = 'object'; object = 'PROCEDURE'; op = 'CREATE'; at = 'b.000008:400'; sql = 'CREATE PROCEDURE p9' }) } }
+  $rp = Get-RestorePlan t @{ pos = 'b.000008:50' } @('s1', 's2') ''
+  function Get-LiquibaseMaster { Join-Path $ckr 'changelog/c1.xml' }; function LiquibaseDir { $ckr }; function LiquibaseSchemas { 's1', 's2' }
+  function Invoke-DbSql([string]$e, [string]$sql) {
+    if ($sql -match 'DATABASECHANGELOG') { , @('config/changelog/c2.xml', '5'); , @('config/changelog/c3.xml', '9') }
+    elseif ($sql -match "'s2'") { , @('p1') } }
+  $mr = @(Get-MissingRoutines t)
+  "drops=$($rp.objectDrops -join ',')|tdrops=$($rp.drops -join ',')|fb=$(@($rp.fallback.table) -join ',')|warn=$(@($rp.warnings).Count)|missing=$(@($mr | ForEach-Object { "$($_.schema):$($_.names -join '+')" }) -join ',')" }
+Expect "localenv: restore keeps objects / seeds tables of a schema re-created after the mark; seed finds routines an executed changeSet made that are gone ($rpOut)" ($rpOut -eq 'drops=PROCEDURE:s2.p9|tdrops=s2.t2|fb=s1.t1|warn=1|missing=s1:p1')
 Remove-TestKit $ck
 # lanes: lane 1 = the env unchanged, lane k = <env><k>: managed ports + (k-1) x portStep, {lane} / {port:<svc>} / ":<port>" rewritten,
 # envs.<env><k> overrides one lane (its db port follows); -Env <env> keeps an agent on its lane, else the least busy one; -Lane pins
