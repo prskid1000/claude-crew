@@ -166,31 +166,32 @@ Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Code
 
 Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-report.html` and its `.json` (the full data):
 - header: last sweep, staleness (amber past 2x NEXT, red past 4x), auto-refresh 60 s, filter (`/`), light / dark toggle;
-- tiles with sparklines: active agents, ACT, WATCH, auto-FIXED, RAM, free GB and fill rate per watched drive (a drive with a WATCH / ACT
-  storage flag coloured and first);
-- flags as cards with the next step (ACT first), INFO below; RAM, a disk gauge per drive and agents-by-state gauges;
-- agents grouped by run: state chip, since, last progress, the workflow's steps and tokens as bars; today's timeline;
-- statistics: this sweep's tiles (live agents and stale ones, memory, build gate, QA seats, free GB per disk with "full in"
-  under 72 h, sweep time and its slowest section) vs the previous sample and over 7 days; from the kit's logs (runs, agents
-  spawned / finished / failed, average duration, auto-fixed %, deploys, decisions, lessons): today vs yesterday, 7 days vs
-  the 7 before; `—` = no source;
-- usage (the 7 calendar days ending today, one cut for every number by the day tokens were spent; `bossy.ps1 budget -Usage`
-  in the background each sweep reads the transcripts' usage fields incrementally, cached by `_paths` `usage-cache`): tokens
-  and est. cost today vs the 7-day average (`budget.prices`: USD per M tokens [in, out, cache read, cache write 5 min, 1 h]
-  per model id or alias; unknown models listed as not priced), tokens per merged MR (the git host's merged MRs of this
-  login, cached 2 beats; no login: MRs reported by workflows) and item, review + fix share, empty / failed / stopped steps,
-  coordinator sessions and agents outside workflows; tokens per day; runs collapsed to one line (tokens, context budget
-  bar, cost, elapsed time, steps, roles), each with its steps (role, model, in / out / cache, elapsed, tool calls, result,
-  round, retry); avg / p50 / p90 tokens and elapsed per step type, role and model; top 5 steps (24 h, 7 days);
-  coordinator sessions and Agent-tool spawns by session;
-- resources and leases, shells, `supervise` settings and learned changes; the last `supervise.historySweeps` (12) sweeps as a
-  stacked bar.
+Each number appears once, in the order the owner acts on (owner 2026-11-13):
+- flags as cards with the next step (ACT first), INFO below;
+- live agents grouped by run: state chip, task, since, last progress, doing / next; finished ones folded;
+- runs, 7 days, one line each (steps done as a bar, tokens, est. cost, merged MRs, elapsed, context budget bar), each with
+  its steps (role, model, in / out / cache, elapsed, tool calls, result, round, retry);
+- machine: memory (with sparkline), every watched disk in one tile (free GB, fill rate, "full in" under 72 h; a flagged drive
+  coloured and first), build gate + QA seats in one tile; each vs the previous sample and over 7 days;
+- usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
+  sweep reads the transcripts' usage fields incrementally, cached by `_paths` `usage-cache`): tokens and est. cost today vs
+  the 7-day average (`budget.prices`: USD per M tokens [in, out, cache read, cache write 5 min, 1 h] per model id or alias;
+  unknown models listed as not priced), tokens per merged MR (the git host's merged MRs of this login, cached 2 beats; no
+  login: MRs reported by workflows), review + fix share; tokens and cost per day (the 7-day totals in its title); workflow
+  steps by outcome as one stacked bar; a role table (coordinator and agents outside workflows included: steps, tokens, share
+  bar, est. cost, avg / p90 time) and a model table (steps, tokens, est. cost, cost share bar, avg time);
+- top 5 steps, 7 days (today's marked);
+- kit internals, folded: flags per sweep (last `supervise.historySweeps`), kit activity tiles (workflow steps now, branches,
+  sweep time, runs, agents spawned / finished / failed, average duration, deploys, decisions, lessons, auto-fixed %: today
+  vs yesterday, 7 days vs the 7 before; `—` = no source), per step type (avg / p50 / p90), sessions when 2+, resources and
+  leases, shells, `supervise` settings and learned changes.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: auto-fill, a min width per item,
-optional max across), never one full-width row per item; tables only for many-column rows (agents, shells, parameters).
-Content never truncates; it wraps (every kit page: `kitbag.py ui-check <page>` fails on clipped text at 1366, 900 and 390 px; a canvas page's `window.uiBoxes()`: on a node or label
-off-screen or overlapping).
+optional max across, top-aligned), never one full-width row per item; tables only for many-column rows; 8-12 px gaps, every card
+as tall as its content. Content never truncates; it wraps (every kit page: `kitbag.py ui-check <page>` fails on clipped text at
+1366, 900 and 390 px, on a `data-fit` card with 24+ px blank below its content, and on a canvas page's `window.uiBoxes()` node or
+label off-screen or overlapping).
 
 ## Goodies
 Optional parts (more trackers, git hosts, CI and report types, stack presets, the local env, phone lanes, deploys, kit admin and

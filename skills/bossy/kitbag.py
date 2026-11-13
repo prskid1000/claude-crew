@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1268 audit ·
-  L1377 registry · L1718 prose · L1863 sections · L1993 budget · L2017 goodies · L2524 state lint · L2596 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1276 audit ·
+  L1385 registry · L1726 prose · L1871 sections · L2001 budget · L2025 goodies · L2532 state lint · L2604 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1213,6 +1213,13 @@ const layout = () => {
   return Object.entries(hits).flatMap(([why, l]) => l.slice(0, 12).map((t) => ({ el: 'layout', why, text: t.slice(0, 120) }))
     .concat(l.length > 12 ? [{ el: 'layout', why, text: `and ${l.length - 12} more` }] : []))
 }
+// a box marked data-fit (a card) sized to its content: 24+ px blank between its content's bottom and its own padding is a gap
+const fit = () => [...document.querySelectorAll('[data-fit]')].flatMap((e) => {
+  if (!e.getClientRects().length) return []
+  const cs = getComputedStyle(e), r = document.createRange(); r.selectNodeContents(e)
+  const gap = Math.round(e.getBoundingClientRect().bottom - parseFloat(cs.paddingBottom) - parseFloat(cs.borderBottomWidth) - r.getBoundingClientRect().bottom)
+  return gap >= 24 ? [{ el: 'fit', why: `blank ${gap} px below the content`, text: (e.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 60) }] : []
+})
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
 const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
 try {
@@ -1222,7 +1229,7 @@ try {
     await page.goto(pathToFileURL(file).href, { waitUntil: 'load' })
     for (const sel of clicks) await page.click(sel).catch((e) => clipped.push({ el: sel, why: `click failed: ${e.message}`, text: '' }))
     await new Promise((r) => setTimeout(r, 400))   // panels slide in, layouts settle
-    clipped.push(...await page.evaluate(layout), ...await page.evaluate(scan))
+    clipped.push(...await page.evaluate(layout), ...await page.evaluate(scan), ...await page.evaluate(fit))
     const shot = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}.png`
     await page.screenshot({ path: shot, fullPage: true })
     res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot, clipped }); await ctx.close()
@@ -1232,7 +1239,8 @@ console.log(JSON.stringify(res))'''
 
 def cmd_ui_check(a):
     """ui-check <page.html> [--widths 1366,900,390] [--click 'sel,sel;sel']: PAGE_JS (light + dark; each --click state after
-    the page as loaded); exit 1 on clipped text, a failed click or a layout box (window.uiBoxes) off-screen or overlapping, 0 = pass + stamp."""
+    the page as loaded); exit 1 on clipped text, a failed click, a layout box (window.uiBoxes) off-screen or overlapping or a [data-fit]
+    card with 24+ px blank below its content, 0 = pass + stamp."""
     flags, rest = parse_opts(a, {'--widths', '--click'})
     widths = str(flags.get('--widths') or '1366,900,390')
     if len(rest) != 1 or not osp.isfile(rest[0]) or not re.fullmatch(r'\d+(,\d+)*', widths):

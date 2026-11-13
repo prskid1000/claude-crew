@@ -53,30 +53,41 @@ $sweepLines = @('workflow wf_a: 12 agents, 9 finished, 3 running', '  fix:W2T   
 $liveSamples = @([pscustomobject]@{ at = '2026-01-02T09:30:00'; run = 5; mem = 70; secs = 40; disks = [pscustomobject]@{ D = 480.5 } }, [pscustomobject]@{ at = '2026-01-02T10:00:00'; run = 3; mem = 61; secs = 34; disks = [pscustomobject]@{ D = 479.08 } })
 Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; stats = [pscustomobject]@{ now = (Get-KitSuperviseNow $sweepLines 20); live = $liveSamples } })
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
-$tileWant = @("st warn'><div class=k>Live agents</div><div class=v>3<small> running</small><span class='tr eq'>▼ 2", '9 of 12 done &#183; wf_a &#183; 1 stale: fix:W2T 27 min', "st warn'><div class=k>Disk D</div><div class=v>479.1<small> GB free</small><span class='tr bad'>▼ 1.4",
-  'filling 1.7 GB/h (11 min) &#183; full in 30.2 h', 'steady (11 min)', "st '><div class=k>Disk E", 'QA seats</div><div class=v>1<small> / 12', 'Build gate</div><div class=v>1<small> running · </small>2', '7 days avg 65.5% &#183; peak 70%',
-  "st lo'><div class=k>Sweep time</div><div class=v>34<small> s</small><span class='tr good'>▼ 6</span></div><div class=s title='wave reports 14.2 s'")
+$tileWant = @("st warn' data-fit><div class=k>Workflow steps now</div><div class=v>3<small> running</small><span class='tr eq'>▼ 2", '9 of 12 done &#183; wf_a &#183; 1 stale: fix:W2T 27 min', "<div class='dk warn'><div class=v><span class=dn0>D</span> 479.1<small> GB free</small><span class='tr bad'>▼ 1.4",
+  'filling 1.7 GB/h (11 min) &#183; full in 30.2 h', 'steady (11 min)', "<div class='dk '><div class=v><span class=dn0>E</span>", '<small> · seats </small>1<small> / 12', 'Build gate &#183; QA seats</div><div class=v>1<small> running · </small>2', '7 days avg 65.5% &#183; peak 70%',
+  "st lo' data-fit><div class=k>Sweep time</div><div class=v>34<small> s</small><span class='tr good'>▼ 6</span></div><div class=s title='wave reports 14.2 s'")
 $tileMissing = @($tileWant | Where-Object { -not $tilePage.Contains($_) })
 $staleBoard = Join-Path (TkPath $k board -Create) 'stale-s.json'; @{ session = 'stale-s'; agent = 'Y7'; run = 'r7'; status = 'working'; beat = (Get-Date).AddMinutes(-40).ToString('o'); joined = (Get-Date).AddMinutes(-50).ToString('o') } | ConvertTo-Json | Set-Content $staleBoard -Encoding utf8
 $superviseOut = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') supervise -AutoFix -Json 2>$null | Out-String | ConvertFrom-Json
 $livePage = Get-Content ([IO.Path]::ChangeExtension((TkPath $k supervise-report), '.html')) -Raw
-Expect "supervise page: Statistics tiles (live agents + stale, memory, gate, QA seats, a disk each: full-in under 72 h only, sweep time), no sweep log; a silent board entry = STUCK flag, no board / shells count lines (missing: $($tileMissing -join ' | '))" (
-  -not $tileMissing.Count -and $tilePage -notmatch 'full in 90|Sweep log|<pre' -and @($superviseOut.flags.what -match '^STUCK Y7 .*\(r7\): no progress for 40 min').Count -eq 1 -and -not @($superviseOut.summary -match '^(board|shells): ').Count -and $livePage -match 'This sweep</h3>.+Memory</div>.+Sweep time' -and $livePage -notmatch 'Sweep log')
+Expect "supervise page: machine row (memory, disks in one tile: full-in under 72 h only, gate + QA seats in one) and folded kit tiles (workflow steps + stale, sweep time), no sweep log; a silent board entry = STUCK flag, no board / shells count lines (missing: $($tileMissing -join ' | '))" (
+  -not $tileMissing.Count -and $tilePage -notmatch 'full in 90|Sweep log|<pre' -and @($superviseOut.flags.what -match '^STUCK Y7 .*\(r7\): no progress for 40 min').Count -eq 1 -and -not @($superviseOut.summary -match '^(board|shells): ').Count -and $livePage -match 'Memory</div>.+Kit activity</h3>.+Sweep time' -and $livePage -notmatch 'Sweep log')
 # supervise page: short-item lists use the grid helper (.cg); a tile + ring per disk, a flagged one tinted and first
 $gridPage = (Invoke-PsTest grids @'
 . $args[0]
 Format-KitSuperviseHtml ('{"at":"2026-01-02T10:00:00","flags":[{"level":"WATCH","what":"disk D: x"},{"level":"INFO","what":"i"}],"agents":[{"name":"a (workflow)","run":"r1","state":"ACTIVE","task":"t · steps 1/4 · 2k tokens of 10k"}],"resources":[{"name":"seat","by":"W1","gb":1.5}],"mem":{"TotalGB":8,"AvailGB":2},"stats":{"settings":{"heartbeatMinutes":15},"disks":[{"drive":"C","free":40,"total":900},{"drive":"D","free":300,"total":500,"series":[3,2]}]}}' | ConvertFrom-Json)
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
-$gridWant = @('kpis', 'flags', 'info', 'gauges', 'res', 'stats', 'kv' | Where-Object { $gridPage -notmatch "class='cg $_' style='--cmin:\d+px" })
+$gridWant = @('flags', 'info', 'res', 'stats', 'kv' | Where-Object { $gridPage -notmatch "class='cg $_' style='--cmin:\d+px" })
 $gridOld = @('<section class=kpis>', '<div class=gauges>', '<div class=stats>', 'class=toks>', '<span class=tn>', '<th>Resource</th>', '<th>Key</th><th>Value</th>', 'grid-template-columns:minmax(0,240px)' | Where-Object { $gridPage.Contains($_) })
-Expect "supervise page: list sections use the grid helper (missing: $gridWant), no old list pattern (found: $gridOld); no usage cache: its one line; disks" ($gridPage -match "(?s)tile warn'><div class=k>Disk D.+spark watch.+Disk C.+disk D: 40%'.+val watch.+disk C" -and
+Expect "supervise page: list sections use the grid helper (missing: $gridWant), no old list pattern (found: $gridOld); no usage cache: its one line; memory from the board sample, disks in one tile, a flagged one tinted and first, no gauges" ($gridPage -match "(?s)Memory</div><div class=v>75<small>% used.+<div class='st warn' data-fit><div class=k>Disks</div><div class='dk warn'><div class=v><span class=dn0>D</span>.+dn0>C<" -and $gridPage -notmatch 'class=gauge' -and
   -not $gridWant.Count -and -not $gridOld.Count -and $gridPage -match 'No usage yet: bossy\.ps1 budget -Usage' -and $gridPage -match '\.cg\{display:grid;[^}]*repeat\(auto-fill,minmax\(min\(100%')
+# each headline number renders once: 7-day tokens + cost (chart title), step outcomes (one bar), agents spawned (one tile; the Today list counted board rows)
+$once = Invoke-PsTest once @'
+$null = . $args[0] 6>$null; $t0 = [datetime]'2026-01-02T10:00:00'
+$u = [pscustomobject]@{ days = @(6..0 | ForEach-Object { [pscustomobject]@{ day = $t0.AddDays(-$_).ToString('yyyy-MM-dd'); tok = 971428571; cost = 249.57 } }); byRole = @([pscustomobject]@{ k = 'devy'; n = 3; sum = 5e9; cost = 900 })
+  rates = [pscustomobject]@{ n = 919; empty = 129; fail = 122; stopped = 119 }; merged = [pscustomobject]@{ source = 'workflows' } }
+$sd = @([pscustomobject]@{ day = '2026-01-02'; spawned = 46 }, [pscustomobject]@{ day = '2026-01-01'; spawned = 5 })
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $t0.ToString('o'); agents = @([pscustomobject]@{ name = 'a'; state = 'ACTIVE'; since = $t0.ToString('o') }); stats = [pscustomobject]@{ usage = $u; days = $sd } })
+$txt = $h -replace '(?s)<(style|script)>.*?</\1>' -replace '<[^>]+>', ' '
+"$(@('6.8B', '$1746.99', '549', '129', '122', '119', '46') | ForEach-Object { ([regex]::Matches($txt, "(?<![\d.])$([regex]::Escape($_))(?![\d.])")).Count }) $($h -match 'sec-timeline')"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
+Expect "supervise page: 7-day tokens and cost, each step outcome and agents spawned render once, no Today list ($once)" ("$once".Trim() -eq '1 1 1 1 1 1 1 False')
 # kitbag.py ui-check (headless, light + dark): cases below
 if (Use-BrowserKit) {
   $uiKb = Join-Path $k 'skills/bossy/kitbag.py'; $uiBad = Join-Path (Kd) 'clip.html'
-  [IO.File]::WriteAllText($uiBad, '<!doctype html><body><div style="width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">browser app-staging·tenant1·admin</div><div style="width:90px;white-space:nowrap">test:W2P, test:W2U, test:W2R</div><table style="width:60px;table-layout:fixed"><tr><td style="width:20px;overflow-wrap:anywhere">abcdefghijklmnop</td><td>x</td></tr></table><p style="width:90px;height:16px;overflow:hidden">one two three four five six</p><p style="width:90px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1">clamped to one line of text</p></body>')
+  [IO.File]::WriteAllText($uiBad, '<!doctype html><body><div style="width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">browser app-staging·tenant1·admin</div><div style="width:90px;white-space:nowrap">test:W2P, test:W2U, test:W2R</div><table style="width:60px;table-layout:fixed"><tr><td style="width:20px;overflow-wrap:anywhere">abcdefghijklmnop</td><td>x</td></tr></table><p style="width:90px;height:16px;overflow:hidden">one two three four five six</p><p style="width:90px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1">clamped to one line of text</p><div style="display:grid;grid-template-columns:1fr 1fr"><div data-fit>a<br>b<br>c<br>d</div><div data-fit>stretched</div></div></body>')
   $uiBadOut = @(& $py -X utf8 $uiKb ui-check $uiBad --widths 390 2>&1); $uiBadCode = $LASTEXITCODE
-  Expect "ui-check: ellipsis, overflow, hidden height, line-clamp and a squeezed cell fail in both themes (exit $uiBadCode)" ($uiBadCode -eq 1 -and @($uiBadOut -match 'CLIP div: text-overflow: ellipsis').Count -eq 2 -and @($uiBadOut -match 'CLIP div: scrollWidth').Count -eq 2 -and @($uiBadOut -match 'CLIP td: squeezed').Count -eq 2 -and @($uiBadOut -match 'CLIP p: scrollHeight').Count -eq 2 -and @($uiBadOut -match 'CLIP p: line-clamp 1').Count -eq 2)
+  Expect "ui-check: ellipsis, overflow, hidden height, line-clamp, a squeezed cell and a stretched data-fit card (24+ px blank) fail in both themes (exit $uiBadCode)" ($uiBadCode -eq 1 -and @($uiBadOut -match 'CLIP fit: blank \d+ px below the content \(stretched\)').Count -eq 2 -and @($uiBadOut -match 'CLIP div: text-overflow: ellipsis').Count -eq 2 -and @($uiBadOut -match 'CLIP div: scrollWidth').Count -eq 2 -and @($uiBadOut -match 'CLIP td: squeezed').Count -eq 2 -and @($uiBadOut -match 'CLIP p: scrollHeight').Count -eq 2 -and @($uiBadOut -match 'CLIP p: line-clamp 1').Count -eq 2)
   $uiLay = Join-Path (Kd) 'boxes.html'   # a canvas page's window.uiBoxes: one box off-screen, one pair overlapping; a label on its own node passes
   [IO.File]::WriteAllText($uiLay, '<!doctype html><body><script>window.uiBoxes = () => ({view: [0, 0, 300, 300], boxes: [{id: "node a", key: "a", b: [10, 10, 20, 20]}, {id: "label a", own: "a", b: [5, 25, 40, 12]}, {id: "node b", key: "b", b: [60, 60, 20, 20]}, {id: "node c", key: "c", b: [70, 70, 20, 20]}, {id: "node far", key: "f", b: [290, 100, 20, 20]}]})</script></body>')
   $uiLayOut = @(& $py -X utf8 $uiKb ui-check $uiLay --widths 390 2>&1); $uiLayCode = $LASTEXITCODE
@@ -133,11 +144,11 @@ Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Ra
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } })
-$cardGrid = @("class=ug><div class='st uc ua'>", "class=ucs><div class='st uc ua'><h4>Per model", "</div></div></div><div class='st uc dn'><h4>Tokens by model, 7 days</h4>", 'Avg time per step by model</h4><ul class=hb><li', "class='ug u2'>", 'class=uk>', 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
-# the right-align nth-child ranges assume these column counts: agg 7, top-5 5, session 5, run steps 9
+$cardGrid = @("class=ug><div class='st uc' data-fit><h4>Per day", "<div class=ucol><div class='st uc ", "Per model</h4>", "class='st uc ur' data-fit><h4>Per role", 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
+# the right-align nth-child ranges assume these column counts: step type 7, top-5 5, role 7, model 6, run steps 9
 $thCount = { param($open) ([regex]::Match($h, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th>' -AllMatches).Matches.Count }
-$colCounts = "$(& $thCount "class='st uc ua'>") $(& $thCount "class='st uc ut'>") $(& $thCount "class='st uc us'>") $(& $thCount "class='ru f'>")"
-"$($h -match 'Tokens today') $($h -match "class='ru f'") $($h -match 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 5 5 9')"
+$colCounts = "$(& $thCount "class='st uc ua'>") $(& $thCount '<div class=ut>') $(& $thCount "class='st uc ur'") $(& $thCount "class='st uc um'") $(& $thCount "class='ru f'>")"
+"$($h -match 'Tokens today') $($h -match "class='ru f'") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 5 7 6 9')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")
 Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; run, step, outcomes, background, cost, page in auto-fit card grids ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.001272|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True True')
@@ -164,7 +175,7 @@ $b1 = @($s | Where-Object label -eq 'build:A')[0]; $cst = { param($l) [math]::Ro
 "$res|$($b1.in)|$(& $cst 'build:A')|$(& $cst 'review:A')|$(& $cst 'check:A')|$(@($u.unpriced).model -join ',')|$($u.rates.n) $($u.rates.fail) $($u.rates.empty) $($u.rates.stopped)"
 "$(@($u.days)[-1].runs)|$(@($u.runs).Count)|$($u.coord[0].tok) $([math]::Round((Get-KitUsageCost @(100, 10, 0, 1000, 1000) 'claude-opus-5-5'), 4))|$(@($u.days)[-1].tok)|$($u.merged.source) $($u.merged.n) $(@($u.days)[-1].merged)"
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $u } })
-"$($h -match 'Coordinator sessions') $($h -match 'class=dch') $(([regex]::Matches($h, "class='st uc dn'")).Count) $($h -match 'not priced: gpt-x') $($h -match '1 MR\(s\) merged on the git host by me') $($h -match "'Elapsed'|>Elapsed<")"
+"$($h -match "data-k='Role'>coordinator<") $($h -match 'class=dch') $(([regex]::Matches($h, "class='st uc dn'|class=gauge|viewBox='0 0 42 42'")).Count) $($h -match 'not priced: gpt-x') $($h -match '1 MR\(s\) merged on the git host by me') $($h -match "'Elapsed'|>Elapsed<")"
 $pm = @(Get-KitUsageParts (Update-KitUsageFile "$($args[1])/main-1.jsonl" $null ([ref][long]1GB)) @((Get-Date).ToString('yyyy-MM-dd')) | ForEach-Object model | Sort-Object) -join ','
 function Invoke-HostVerb { throw 'host down' }; $hp = Get-KitUsageHostMrs (Get-Date).Date (Get-Date) @{ at = '2020-01-01T00:00:00'; since = 'x'; mrs = @(1) }
 $cf = Get-KitPath usage-cache; $cj = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable; foreach ($kv in @($cj.files.GetEnumerator())) { if ($kv.Key -like '*agent-b3*') { $kv.Value.v = 2 } }; $cj | ConvertTo-Json -Depth 7 | Set-Content $cf
@@ -174,7 +185,7 @@ $sr = Get-KitSuperviseSeries @('disk D: 60 GB free, +25 GB/h (normal 1), full in
 "$($sr.disks[0].h1) $($h2.Contains('filling 25 GB/h (11 min) &#183; last hour 50 GB used'))"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uy) | Out-String
 $yv = @($yo.Trim() -split "`r?`n")
-Expect "usage numbers: prices by id / alias / variant + 1 h writes, unpriced listed, outcomes, one window, runs by id, coordinator, host MRs, charts, disk filling + last hour ($($yv -join ' // '))" ($yv[-5] -eq 'build:A=fail,check:A=pass,fix:A=fail,review:A=empty,track:A=stopped|100|0.0009|2E-05|0.00015|gpt-x|5 2 1 1' -and $yv[-4] -eq '2|2|1110 0.0086|3538|host 1 1' -and $yv[-3] -eq 'True True 4 True True True' -and $yv[-2] -eq 'claude-opus-5-5,claude-sonnet-5-5|1|0' -and $yv[-1] -eq '-50 True')
+Expect "usage numbers: prices by id / alias / variant + 1 h writes, unpriced listed, outcomes, one window, runs by id, coordinator, host MRs, charts, disk filling + last hour ($($yv -join ' // '))" ($yv[-5] -eq 'build:A=fail,check:A=pass,fix:A=fail,review:A=empty,track:A=stopped|100|0.0009|2E-05|0.00015|gpt-x|5 2 1 1' -and $yv[-4] -eq '2|2|1110 0.0086|3538|host 1 1' -and $yv[-3] -eq 'True True 0 True True True' -and $yv[-2] -eq 'claude-opus-5-5,claude-sonnet-5-5|1|0' -and $yv[-1] -eq '-50 True')
 Remove-Item (Join-Path $ld 'wf_y1.json'), (Join-Path $ld 'wf_y2.json') -Force
 # status: one agent joined twice (with -Type, then with -Run) on one transcript = one row (active agents not inflated)
 $jvTx = Join-Path (Kd) 'JV.jsonl'; '{}' | Set-Content $jvTx; $jvB = TkPath $k board -Create; $jvNow = (Get-Date).ToString('o')
