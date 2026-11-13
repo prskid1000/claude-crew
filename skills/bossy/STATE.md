@@ -63,3 +63,46 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `waves` | `bossy.ps1 report` | `dir v0: run` | 14 d | none |
 | `supervise-state` | `bossy.ps1 supervise` | `json v0` | 30 d | ISO |
 | `live-steps` | `bossy.ps1 supervise` | `json v0: at` | 30 d | none |
+
+## Artefacts (drift guard)
+Every agent-written kind (templates.md "Writing standards" + run files) and its writer: a renderer from a spec, or `free: <who>
+(<plan>)` until it has one. `kitbag.py lint` [ARTEFACT] fails on a kind without a row; `state lint` fails on a `.md` / `.json` file
+in a shared place (`work/docs|briefs|waves`, a QA run's top folder) that no row's Where + Shape (`md <first-line regex>`, `json
+<keys>`, `any`) or Inventory row lists, and warns on agent scratch (`work/agents/<id>/`) and loose files in `work/` itself.
+
+| Kind | Writer | Where (runtime) | Shape |
+|---|---|---|---|
+| `skill` | free: kitty (kit source, a worktree + review) | — | — |
+| `skill-step` | free: kitty (kit source) | — | — |
+| `agent` | free: kitty (kit source) | — | — |
+| `rule` | free: kitty (kit source) | — | — |
+| `reference` | free: kitty (kit source) | — | — |
+| `lesson` | `bossy.ps1 learn` | — | — |
+| `history` | `bossy.ps1 learn -History` | — | — |
+| `wave-brief` | free: briefy (item 6: `brief render`) | `work/briefs/*.md` | `md ^# (Wave brief\|Bugfix wave\|Contracts)` |
+| `bug-brief` | `bossy.ps1 bugbrief` | `work/briefs/*.md` | `md ^# Bug-fix brief:` |
+| `resume-brief` | `crafty.ps1 checkpoint`, `bossy.ps1 recover` | `work/briefs/*.md` | `md ^# Resume brief:` |
+| `handoff` | free: an agent's handoff notes (item 8) | `work/briefs/handoff-*.md` | `any` |
+| `testing-goals` | `devtools.py cases render` | `work/docs/*-goals.md` | `md ^# Testing goals:` |
+| `testing-doc` | `devtools.py cases render`, `devtools.py doc --key` | `work/docs/*` | `any` |
+| `testing-ai` | `devtools.py cases render` | `work/docs/*-ai.md` | `md ^# Testing doc \(AI\):` |
+| `qa-report` | `pokey.ps1 finalize` | `work/qa-runs/*/report.md` | `any` |
+| `qa-run` | `testy.js`, `pokey.ps1` (item 10: schemas) | `work/qa-runs/*/*.json` | `any` |
+| `lead-notes` | free: checky lead (item 4) | `work/qa-runs/*/lead-notes.md` | `md ^# Lead notes:` |
+| `result-note` | `pokey.ps1 finalize` (results.json cells) | — | — |
+| `mr-title` | `devtools.py render` | — | — |
+| `mr-body` | `devtools.py render` | `work/agents/*/*.md` | `md ^## Summary` |
+| `commit` | `crafty.ps1 wt commit` | — | — |
+| `merge-commit` | `crafty.ps1 wt commit` | — | — |
+| `task-name` | `crafty.ps1 tracker` | — | — |
+| `task-description` | `crafty.ps1 tracker` | — | — |
+| `comment-solution` | free: devy (item 5: spec) | `work/agents/*/*.md` | `md ^\*\*Solution:\*\*` |
+| `comment-status` | free: any agent (item 12: spec) | — | — |
+| `comment-deploy` | `bossy.ps1 deploy` | — | — |
+| `decisions` | `bossy.ps1 decide` | — | — |
+| `decision-request` | `bossy.ps1 decide` | — | — |
+| `kit-report` | `bossy.ps1 supervise`; free: retro (item 9), kit audit | — | — |
+| `final-report` | free: every crew member (item 13: role JSON) | — | — |
+| `owner-message` | free: the coordinator (chat, never a file) | — | — |
+| `spec` | free: the agent (renderer input: task, cases, MR spec) | `work/agents/*/*.json` | `any` |
+| `resume` | `crafty.ps1 checkpoint` | `work/agents/*/resume*.md` | `any` |

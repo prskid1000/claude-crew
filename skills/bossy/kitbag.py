@@ -10,7 +10,7 @@
   python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (goody kit-admin)
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show] · budget raise [-Tests] -Reason "<why>"   # the kit total (-Tests: tests/) vs its cap; raise: goody kit-admin
-  python -X utf8 kitbag.py state lint [--since <min>] [--json]   # .state / .runtime files vs _paths.schema (skills/bossy/STATE.md)
+  python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
   python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
   python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N] [--dry-run]
 
@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1294 audit ·
-  L1403 registry · L1744 prose · L1895 sections · L2025 budget · L2049 goodies · L2556 state lint · L2628 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1021 README graph · L1123 lint command · L1296 audit ·
+  L1405 registry · L1746 prose · L1897 sections · L2027 budget · L2051 goodies · L2558 state lint · L2700 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -790,6 +790,8 @@ def lint(k, g=None, org_terms=None):
             bad('REACH-MENTION', f, 'reached only through a mention: list it in a Files index or the router')
     for f, why in k.junk:
         bad('JUNK', f, why)
+    for why in artefact_lint(k.dir, {osp.basename(x) for x in k.files}):
+        bad('ARTEFACT', STATE_DOC, why)
     for d in stray_runtimes(k.dir):
         bad('RUNTIME-STRAY', d, f'a {MAP["runtimeDir"]} outside the kit (a relative path from the wrong folder; the guard denies new ones): '
             f'move what is needed under <kit>/{MAP["runtimeDir"]} (crafty.ps1 dir), then delete it')
@@ -2565,7 +2567,71 @@ def last_line(path, size=65536):
 
 def state_schemas(kit=None):
     """{name: schema} from the STATE.md Inventory rows: | `name` | owner | `schema` | ..."""
-    return dict(re.findall(r'(?m)^\| `([\w-]+)` \|[^|\n]*\| `([^`]+)` \|', read(osp.join(kit or KIT_DIR, STATE_DOC))))
+    return dict(re.findall(r'(?m)^\| `([\w-]+)` \|[^|\n]*\| `([^`]+)` \|', section(read(osp.join(kit or KIT_DIR, STATE_DOC)), 'Inventory') or ''))
+
+ART_ROW = re.compile(r'(?m)^\| `([\w-]+)` \| ([^|\n]+) \| (`[^`]+`|—) \| (`[^`]+`|—) \|')
+
+def artefacts(kit=None):
+    """[(kind, writer, where glob, shape)] from STATE.md "Artefacts (drift guard)"; '' for —."""
+    sec = section(read(osp.join(kit or KIT_DIR, STATE_DOC)), 'Artefacts (drift guard)') or ''
+    un = lambda x: '' if x == '—' else x.strip('`').replace('\\|', '|')
+    return [(kd, w.strip(), un(g), un(s)) for kd, w, g, s in ART_ROW.findall(sec)]
+
+def artefact_lint(kit, scripts):
+    """ARTEFACT: a Writing-standards kind without a row (a new free-text kind), a writer that is no kit script verb and no
+    "free: <who> (<plan>)", a shape that is no `md <regex>` / `json <keys>` / `any`."""
+    rows, out = artefacts(kit), []
+    have = {r[0] for r in rows}
+    out += [f'Writing-standards kind {kd} has no "Artefacts" row: name its writer (a renderer from a spec), never free text' for kd in writing_standards(kit)[0] if kd not in have]
+    for kd, w, g, s in rows:
+        names = re.findall(r'`([\w.]+\.(?:ps1|py|mjs|js))\b', w)
+        if not names and not w.startswith('free: '):
+            out.append(f'{kd}: writer {w!r}: a backticked kit script verb or "free: <who> (<plan>)"')
+        out += [f'{kd}: writer {n} is no kit script' for n in names if n not in scripts]
+        try:
+            if s and s != 'any' and not (s.startswith('json ') or (s.startswith('md ') and re.compile(s[3:]))):
+                out.append(f'{kd}: shape {s!r}: md <first-line regex> | json <keys> | any')
+        except re.error as e:
+            out.append(f'{kd}: shape regex {s[3:]!r}: {e}')
+    return out
+
+def shape_ok(shape, f):
+    """A file vs an Artefacts shape: md = its first non-empty line matches, json = one object with those keys."""
+    if not shape or shape == 'any':
+        return True
+    if shape.startswith('json '):
+        o = state_read(f)
+        return isinstance(o, dict) and all(k in o for k in shape[5:].split())
+    try:
+        with open(f, encoding='utf-8-sig', errors='replace') as fh:
+            first = next((ln.strip() for ln in fh if ln.strip()), '')
+    except OSError:
+        return False
+    return bool(re.search(shape[3:], first))
+
+def artefact_files(since_min=0):
+    """Drift guard on run files: a .md / .json in a shared place no Artefacts / Inventory row lists = BAD; agent scratch of no
+    listed shape and loose files in work/ itself = WARN (crafty.ps1 dir gives an agent's place)."""
+    rt, now, out = runtime_dir(), time.time(), []
+    rows = [(g, s) for _, _, g, s in artefacts() if g]
+    for n, spec in state_schemas().items():   # Inventory dirs: their own files
+        m = re.match(r'dir(?:=(\S+))?\s', spec)
+        if m and n in MAP['runtime'] and MAP['runtime'][n].startswith('work/'):
+            rows.append((MAP['runtime'][n] + (m.group(1) or '*.json'), 'any'))
+    pats = ('work/*', 'work/docs/*', 'work/briefs/*', 'work/waves/*', 'work/qa-runs/*/*', 'work/agents/*/*')
+    for pat in pats:
+        for f in Path(rt).glob(pat):
+            if not f.is_file() or (since_min and now - f.stat().st_mtime > since_min * 60):
+                continue
+            rel = f.relative_to(rt).as_posix()
+            if pat == 'work/*':
+                out.append(('WARN', 'artefacts', rel, 'loose file in work/: an agent\'s files go where crafty.ps1 dir -Agent <id> says'))
+                continue
+            if f.suffix not in ('.md', '.json') or any(fnmatch.fnmatch(rel, g) and shape_ok(s, str(f)) for g, s in rows):
+                continue
+            out.append(('WARN' if pat == 'work/agents/*/*' else 'BAD', 'artefacts', rel, 'unlisted shape: no STATE.md "Artefacts" row names'
+                        ' its writer (render it from a spec, or add the row with its renderer)'))
+    return out
 
 def state_lint(since_min=0):
     """[(level, name, file, problem)]: BAD = unreadable, wrong schemaVersion or a required key missing; WARN = written before
@@ -2599,13 +2665,19 @@ def state_lint(since_min=0):
             t = o.get('updated') or o.get('at')
             if isinstance(t, str) and t and not ISO_TIME.match(t):
                 out.append(('WARN', name, rel, 'a time without an offset (ISO 8601 with offset: STATE.md)'))
-    return out
+    return out + artefact_files(since_min)
 
 def cmd_state(a):
     """state lint [--since <min>] [--json]: exit 1 on a BAD file (supervise flags them)."""
     flags, rest = parse_opts(a, ('--since',))
+    if rest[:1] == ['writers']:   # the drift guard's registry: every agent-written kind and its writer
+        rows = artefacts()
+        for kd, w, g, s in rows:
+            print(f'{kd:18} {w}' + (f'  [{g} {s}]' if g else ''))
+        print(f'{len(rows)} kinds, {sum(w.startswith("free: ") for _, w, _, _ in rows)} still free text')
+        return 0
     if rest[:1] != ['lint']:
-        print('usage: kitbag.py state lint [--since <minutes>] [--json]', file=sys.stderr)
+        print('usage: kitbag.py state lint [--since <minutes>] [--json] | state writers', file=sys.stderr)
         return 2
     found = state_lint(float(flags.get('--since') or 0))
     if flags.get('--json'):

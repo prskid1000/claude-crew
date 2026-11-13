@@ -134,5 +134,21 @@ Expect "mr --spec: the same title and body reach every git-host adapter (gitlab,
 $gr = Join-Path (Kd) 'cr'; New-Item -ItemType Directory -Force $gr | Out-Null; git -C $gr init -q; 'x' | Set-Content "$gr/a.txt"
 $wc = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') wt commit -Dir $gr -Spec "$wd/mr.json" 2>&1 | Out-String; $wcm = git -C $gr log -1 --format=%B
 Expect "crafty.ps1 wt commit -Spec: the commit message is the rendered one ($($wcm -join ' '))" (Gold ($wcm -join "`n") $mc.out)
+# ---- drift guard (item 22): every agent-written kind names its writer; run files keep a listed shape
+New-Item -ItemType Directory -Force "$k/skills/crafty", "$k/skills/bossy" | Out-Null; Copy-Item (Join-Path $src 'skills/bossy/STATE.md') "$k/skills/bossy/"; Copy-Item (Join-Path $src 'skills/crafty/templates.md') "$k/skills/crafty/"
+$KB = Join-Path $k 'skills/bossy/kitbag.py'
+function Kb($code) { & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KB)'); import kitbag as k; $code" 2>&1 }
+$al0 = Kb "print(len(k.artefact_lint(r'$k', {'bossy.ps1', 'crafty.ps1', 'devtools.py', 'pokey.ps1', 'testy.js'})))"
+$tp = Get-Content -Raw "$k/skills/crafty/templates.md"; [IO.File]::WriteAllText("$k/skills/crafty/templates.md", $tp.Replace('| owner-message |', "| sprint-note | a new free-text note | prose | 50w | — |`n| owner-message |"))
+$sd = Get-Content -Raw "$k/skills/bossy/STATE.md"; [IO.File]::WriteAllText("$k/skills/bossy/STATE.md", $sd.Replace('| `owner-message` |', "| ``qa-x`` | hand-written | — | ``md ^(# x`` |`n| ``owner-message`` |"))
+$al1 = Kb "print('\n'.join(k.artefact_lint(r'$k', {'bossy.ps1', 'crafty.ps1', 'devtools.py', 'pokey.ps1', 'testy.js'})))"
+Expect "lint ARTEFACT: the kit's kinds all name a writer; a new Writing-standards kind without a row, a writer no script / free, a bad shape fail ($al0)" ("$al0".Trim() -eq '0' -and "$al1" -match 'kind sprint-note has no "Artefacts" row' -and "$al1" -match "qa-x: writer 'hand-written'" -and "$al1" -match 'qa-x: shape regex')
+[IO.File]::WriteAllText("$k/skills/bossy/STATE.md", $sd); $rw = TkPath $k work -Create
+foreach ($f in @{ 'qa-runs/r1/lead-notes.md' = "# Lead notes: r1"; 'qa-runs/r2/lead-notes.md' = "Notes of r2"; 'qa-runs/r1/fix-round.md' = "Fix round 2"; 'qa-runs/r1/run.json' = '{}'
+    'agents/a1/free.md' = 'my notes'; 'agents/a1/mr.md' = "## Summary"; 'agents/a1/spec.json' = '{}'; 'docs/T1_testing-ai.md' = 'x'; 'loose.py' = 'print(1)' }.GetEnumerator()) {
+  $p = Join-Path $rw $f.Key; New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null; [IO.File]::WriteAllText($p, $f.Value) }
+$sl = & $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json; $slc = $LASTEXITCODE
+$art = @($sl | Where-Object name -eq 'artefacts' | ForEach-Object { "$($_.level) $($_.file)" }) -join '; '
+Expect "state lint drift guard: an unlisted shape in a shared place BAD (exit 1), agent scratch / loose work files WARN, listed shapes pass ($art)" ($slc -eq 1 -and $art -match 'BAD work/qa-runs/r2/lead-notes.md' -and $art -match 'BAD work/qa-runs/r1/fix-round.md' -and $art -match 'WARN work/agents/a1/free.md' -and $art -match 'WARN work/loose.py' -and $art -notmatch 'r1/lead-notes|mr\.md|spec\.json|T1_testing|run\.json')
 Remove-TestKit $k
 Complete-Tests
