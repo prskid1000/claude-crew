@@ -398,13 +398,13 @@ function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMi
 }
 
 # ---- supervise: inTest moves, the cached plan
-# a deploy word's kind from its answer: yes | wait | no (an unclear answer silences nothing)
+# a deploy word's kind from how its answer starts: wait | no | yes | unclear (yes and unclear silence nothing; "no problem" inside a yes is no no)
 function Get-KitDeployWordKind([string]$Answer) {
   $a = "$Answer".Trim()
-  if ($a -match '(?i)^(yes|y|ok|okay|go|approved?|deploy)\b') { 'yes' }
-  elseif ($a -match '(?i)^(wait|later|retry|not yet)\b') { 'wait' }
-  elseif ($a -match "(?i)\b(no|don['’]?t|do not|never|skip|hold|not now|stop)\b") { 'no' }
-  else { 'yes' }
+  if ($a -match '(?i)^(wait|later|retry|not yet)\b' -or ($a -notmatch '(?i)^(no|nope|nah)\b' -and $a -match '(?i)\b(tomorrow|tonight|later today)\b')) { 'wait' }
+  elseif ($a -match "(?i)^(no|nope|nah|don['’]?t|do not|never|skip|hold|not now|stop)\b") { 'no' }
+  elseif ($a -match '(?i)^(yes|y|sure|proceed|please|confirmed?|ok|okay|go|approved?|deploy)\b') { 'yes' }
+  else { 'unclear' }
 }
 # the newest answered deploy word per env of the cached plan (decisions log, 30 d): a no -> held until a later yes or an MR it did not
 # cover (state ask: one fresh ask, then -Fold covers it); it covers its -Mrs, else the env's MRs when first seen (cache held.<env>);
