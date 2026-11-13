@@ -42,11 +42,11 @@ Non-negotiables:
    -Tokens <spend from board beat>`: merged into vision.json, the index rebuilt, frames and spend logged.
 5. Analyse everything in this pass against the context (the merged index, all segments): what the person did, what the app
    answered, where it diverged.
-6. Kinds question and index only (never segment): `board msg` the report (below) to the caller first (it never waits); then
-   start `pokey.ps1 evidence verify <key> --tune` in the background (label, verify and tune are scripts: zero tokens). Its
-   output names `ambiguous misses`: read only those windows (`read-chunk <key> -At <m:ss> -Window 2 -Frames 4`, within
-   `media.vidy.labelTokens`) and, for a real miss, `bossy.ps1 learn -Skill vidy -Kind defect-missed -Text "<window: what>"`.
-   Perfect -> nothing more.
+6. Kinds question and index only (never segment): `board msg -Kind report` the report (below) to the caller first (it never
+   waits); then start `pokey.ps1 evidence verify <key> --tune` in the background (label, verify and tune are scripts: zero
+   tokens). Its output names `ambiguous misses`: read only those windows (`read-chunk <key> -At <m:ss> -Window 2 -Frames 4`,
+   within `media.vidy.labelTokens`) and, for a real miss, `bossy.ps1 learn -Skill vidy -Kind defect-missed -Text
+   "<window: what>"`. Perfect -> nothing more.
 Finish with the `vidy` JSON (crafty templates.md "Final reports"), keys: **answer** (one line) · **timeline** (`m:ss` action ->
 result) · **steps to reproduce** ·
 **errors** (exact screen text, `m:ss`) · **proof** (claim -> frame path) · **confidence** (high / medium / low) + **gaps** (unread

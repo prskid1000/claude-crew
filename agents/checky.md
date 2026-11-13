@@ -38,7 +38,8 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
   point; goody `media-evidence`); unreadable -> ask the tester for the file.
 - Only the run's target env; load, stress and perf runs only on the local env, never on a shared one; never production.
 - **verify** (re-test every FAIL, audit every note): its rules are in the /testy prompts. Read-only.
-- A disagreement with another agent's result (own vs new, a refutation) -> `board msg` it; still split -> `decide ask`.
+- A disagreement with another agent's result (own vs new, a refutation) -> `board msg -Kind dispute` it; still split ->
+  `decide ask`.
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the
   report shape.
 

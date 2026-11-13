@@ -227,5 +227,13 @@ $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; age
 "$($h -match 'Finished today</h3><span class=cnt>\(1\)' -and $h -match '<td>k3 \(kitty\)') $($h -match '<span class=hw>pin 744</span>') $($h -match '<li class=f>RAM FLOOR: rm, hm moved 8 GB \(why\)</li>') $(([regex]::Matches($h, 'track add -Task')).Count) $($h -match "<h2>Machine and resources</h2></summary>") $($h -match "lgd t-sage dd'")"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join ' '
 Expect "supervise page: stale STOPPED agent finished, one hold item whole, notes grouped, release once, no machine header count, legend not a chart dot ($dashFix)" ($dashFix -eq 'True True True 1 True True')
+# ---- board messages (item 14): { kind, to, text, ref }, checked by board msg
+$bossyPs = Join-Path $k 'skills/bossy/bossy.ps1'
+$bm1 = pwsh -NoProfile -File $bossyPs board msg -Agent m1 -To m2 -Kind dispute -Ref 'web!5' -Text 'own, not new' 2>&1 | Out-String
+$null = pwsh -NoProfile -File $bossyPs board msg -Agent m1 -To m2 -Kind gossip -Text x 2>&1; $bmKindCode = $LASTEXITCODE
+$null = pwsh -NoProfile -File $bossyPs board msg -Agent m1 -To m2 -Text ('y' * 2001) 2>&1; $bmLongCode = $LASTEXITCODE
+$bmRow = Get-Content -Raw (Join-Path (TkPath $k board) 'inbox/m2.jsonl') | ConvertFrom-Json
+$bmIn = pwsh -NoProfile -File $bossyPs board inbox -Agent m2 2>&1 | Out-String
+Expect "board msg: the row is { at, from, to, kind, text, ref, read }; an unknown kind and a text over 2000 chars refused (2); inbox shows kind and ref ($($bmIn.Trim()))" ($bm1 -match 'sent to m2' -and (@($bmRow.PSObject.Properties.Name) -join ',') -eq 'at,from,to,kind,text,ref,read' -and $bmKindCode -eq 2 -and $bmLongCode -eq 2 -and $bmIn -match 'from m1 \[dispute\]: own, not new \(ref web!5\)')
 Remove-TestKit $k
 Complete-Tests

@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L251 shells · L380 page · L868 usage · L1094 release · L1133 lines · L1158 cleanup ·
-  L1194 launch · L1272 pause · L1390 sessions · L1442 ci tasks
+Sections: L15 builds · L47 supervise · L251 shells · L380 page · L868 usage · L1094 release · L1133 lines · L1166 cleanup ·
+  L1202 launch · L1280 pause · L1398 sessions · L1450 ci tasks
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1155,6 +1155,14 @@ function Get-KitRecoverLinesResources {
   }
 }
 
+# board messages (bossy.ps1 board msg | inbox): one jsonl per agent
+function Get-InboxFile([string]$Agent) { Join-Path (Get-KitPath board -Create) "inbox/$($Agent.ToLower() -replace '[^\w.-]', '_').jsonl" }
+$script:KitMsgKinds = 'note', 'hold', 'dispute', 'rule', 'rollback', 'report', 'pause'   # board msg schema { kind, to, text, ref }
+function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind = 'note', [string]$Ref = '') {
+  $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+  $line = [ordered]@{ at = (Get-Date).ToString('o'); from = $From; to = $To; kind = $Kind; text = $Text; ref = $Ref; read = $false } | ConvertTo-Json -Compress
+  Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
+}
 # ---- cleanup: idle resources
 # holderless test browsers, idle / surplus browser profiles, idle Gradle / Kotlin daemons
 function Invoke-KitCleanupResources {
@@ -1287,7 +1295,7 @@ $rec = [ordered]@{ at = (Get-Date).ToString('o'); reason = $Reason; run = $(if (
 Write-KitState $pf $rec   # from now every board beat prints PAUSE
 $mine = { param($x) ($All -or $x.run -eq $Run) -and -not $foreign["$($x.run)"] }
 $live = @($board0 | Where-Object { (& $mine $_) -and ($Everyone -or $_.run -or -not (Get-KitRunOwner $_)) })   # a run's agents follow its owner
-foreach ($b in $live) { Send-BoardMsg 'coordinator' $b.agent "PAUSE ($Reason): $(Get-KitPauseSteps $b.session)" }
+foreach ($b in $live) { Send-BoardMsg 'coordinator' $b.agent "PAUSE ($Reason): $(Get-KitPauseSteps $b.session)" 'pause' }
 # a build or test blocks its agent for minutes: stopped now (queued ones leave the gate), the agent redoes that step after resume
 $stoppedBuilds = @(if ($All -and -not $foreign.Count) { Stop-KitAgentBuilds '*' "PAUSE ($Reason): redo this step after resume" } else { foreach ($b in $live) { Stop-KitAgentBuilds $b.agent "PAUSE ($Reason): redo this step after resume" @($b.worktrees) } })
 $closed = @(Close-KitFinishedRuns 24)   # after PAUSE went out: agents stop at once

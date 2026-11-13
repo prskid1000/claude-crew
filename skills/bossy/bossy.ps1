@@ -1,6 +1,6 @@
 <#
 bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skills/bossy/bossy.ps1 <verb> [args]
-  board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool]   agent board, messages
+  board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool] [-Kind] [-Ref]   agent board, messages
   learn -Skill -Kind -Text | -Read | -Show (-Lesson | -Bump | -Fixed | -Trim | -Stats | -History: goody kit-admin)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Check -ArgsFile (buildy item tasks) | -Done -RunId|-Run | -List [-Brief]
   recover [-RunId <id> | -Run <runs>] [-Hours 24] [-MaxSeconds 150] [-Everyone]   stopped runs: state, resume brief, exact resume call
@@ -23,10 +23,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L32 init · L49 board · L229 budget · L258 launch · L491 recover · L577 pause · L588 resume · L651 program · L702 param ·
-  L708 track · L1025 supervise · L1329 report · L1408 audit · L1468 storage · L1678 bugbrief · L1780 cleanup · L1864 learn ·
-  L1894 decide · L2028 health · L2090 retro due · L2100 tidy · L2169 the kit origin's main and goodies · L2185 setup ·
-  L2252 guard-sendmessage
+Sections: L32 init · L49 board · L225 budget · L254 launch · L487 recover · L573 pause · L584 resume · L647 program · L698 param ·
+  L704 track · L1021 supervise · L1325 report · L1404 audit · L1464 storage · L1674 bugbrief · L1776 cleanup · L1860 learn ·
+  L1890 decide · L2024 health · L2086 retro due · L2096 tidy · L2165 the kit origin's main and goodies · L2181 setup ·
+  L2248 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -60,18 +60,12 @@ function Set-KitBoardCrashed {
 function Get-KitCheckpoint([string]$Agent, [string]$Run = '') { $f = Get-KitCheckpointFile $Agent $Run; if (Test-Path -LiteralPath $f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch {} } }
 function Get-KitResumeBriefFile([string]$Agent, [string]$Run = '') { (Get-KitCheckpointFile $Agent $Run) -replace '\.json$', '-brief.md' }   # resume.json -> resume-brief.md
 function Get-KitActivePause([string]$Run) { @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) } | Sort-Object { [datetime]$_.at })[-1] }
-function Get-InboxFile([string]$Agent) { Join-Path (Get-KitPath board -Create) "inbox/$($Agent.ToLower() -replace '[^\w.-]', '_').jsonl" }
-function Send-BoardMsg([string]$From, [string]$To, [string]$Text) {
-  $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
-  $line = [ordered]@{ at = (Get-Date).ToString('o'); from = $From; text = $Text; read = $false } | ConvertTo-Json -Compress
-  Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
-}
 function Invoke-Board {
 param(
   [Parameter(Position = 0)][ValidateSet('join', 'beat', 'show', 'check', 'leave', 'msg', 'inbox')][string]$Action = 'show',
   [string]$Agent, [string]$Area = '', [string[]]$Items = @(), [Alias('Claims')][string[]]$Worktrees = @(), [string]$Run = '', [string]$Contracts = '',
   [string]$Session, [string]$Status = '', [string]$Worktree, [switch]$Resume, [string]$Type = '',
-  [string]$To, [string]$Text, [switch]$All, [string]$Model = '', [string]$Tool = '', [string]$Handoff = '', [double]$Wait = 1.5, [switch]$Force
+  [string]$To, [string]$Text, [switch]$All, [string]$Model = '', [string]$Tool = '', [string]$Handoff = '', [double]$Wait = 1.5, [switch]$Force, [string]$Kind = 'note', [string]$Ref = ''
 )
 $dir = Get-KitPath board -Create
 $staleMin = [double](Get-KitParam 'idle.beatMinutes')
@@ -207,8 +201,10 @@ switch ($Action) {
     "left ($Session)$(if ($Handoff) { ": handoff brief $Handoff (a fresh agent continues: board join prints CONTINUE)" })"; $global:LASTEXITCODE = 0   # a release's git call left its code (no exit: dot-sourced callers)
   }
   'msg' {
-    if (-not ($Agent -and $To -and $Text)) { 'usage: board msg -Agent <me> -To <agent id> -Text "<message>"'; exit 2 }
-    Send-BoardMsg $Agent $To $Text
+    if (-not ($Agent -and $To -and $Text)) { "usage: board msg -Agent <me> -To <id> -Text '<message>' [-Kind $($script:KitMsgKinds -join '|')] [-Ref <id>]"; exit 2 }
+    if ($Kind -notin $script:KitMsgKinds) { "board msg: -Kind '$Kind' unknown ($($script:KitMsgKinds -join ', '))"; exit 2 }
+    if ($Text.Length -gt 2000) { "board msg: text over 2000 chars: a file, -Ref it"; exit 2 }
+    Send-BoardMsg $Agent $To $Text $Kind $Ref
     $held = @(Active | Where-Object { $_.agent -eq $To }); "sent to $To$(if (-not $held) { ' (not on the board now: it reads it when it joins)' })"
   }
   'inbox' {
@@ -216,7 +212,7 @@ switch ($Action) {
     $f = Get-InboxFile $Agent; if (-not (Test-Path $f)) { 'inbox: empty'; return }
     Invoke-KitLocked $f {
       $m = @(Get-Content $f | ForEach-Object { $_ | ConvertFrom-Json })
-      $show = @($m | Where-Object { $All -or -not $_.read }); foreach ($x in $show) { "$(([datetime]$x.at).ToString('HH:mm')) from $($x.from): $($x.text)" }
+      $show = @($m | Where-Object { $All -or -not $_.read }); foreach ($x in $show) { "$(([datetime]$x.at).ToString('HH:mm')) from $($x.from)$(if ($x.kind -and $x.kind -ne 'note') { " [$($x.kind)]" }): $($x.text)$(if ($x.ref) { " (ref $($x.ref))" })" }
       if (-not $show.Count) { 'inbox: nothing unread' }
       Write-KitAtomic $f ((@($m | ForEach-Object { $_.read = $true; $_ | ConvertTo-Json -Compress }) -join "`n") + "`n")
     }
