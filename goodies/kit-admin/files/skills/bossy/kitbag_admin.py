@@ -570,8 +570,8 @@ function mock(label) {
   case 'audit': return { reclassify: [{ id: 'T2', defect: false, reason: 'cosmetic' }], newDefects: [] }
   case 'verify': return { verdicts: [{ id: 'T3', outcome: 'confirmed', observed: '500 again', evidence: [] }] }
   case 'close': case 'hold': case 'add-followups': return { ok: true, output: 'published' }
-  case 'prepare': return { runDir: SAMPLE['testy'].runDir, items: 2, left: [{ id: 't3', reason: 'not live' }], summary: 'sample' }
-  case 'load-run': return { json: JSON.stringify(SAMPLE['testy']) }
+  case 'prepare': return { ok: true, output: 'RUN ' + JSON.stringify({ ...SAMPLE['testy'], left: [{ id: 't3', reason: 'not live' }] }) }
+  case 'load-run': return { ok: true, output: 'RUN ' + JSON.stringify(SAMPLE['testy']) }
   case 'prep': case 'prep-retry': return { ok: true, record: 'ok', prep: JSON.stringify({ work: 3, groups: 1, sec: 20, steps: ['signals'], digest: '/ws/.claude/<runtime>/logs/retros/digest.md', at: '2026-01-01T00:00:00', minutes: 30 }) }
   case 'analyse': return { proposals: [{ file: `${kit}/skills/crafty/LESSONS.md`, change: 'add-lesson', text: 'x', evidence: '2 signals', occurrences: 2, confidence: 'high' }] }
   case 'apply': return { applied: ['x'], proposedForApproval: [], rejected: [], report: 'r.md' }
