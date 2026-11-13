@@ -65,6 +65,9 @@ $j1 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt | Out-String; $s1 = 
 $j2 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt -Resume | Out-String
 $bt = pwsh @np $O board beat -Session $s1 | Out-String; $btc = $LASTEXITCODE
 $bd = TkPath $k board
+$jr = pwsh @np $O board join -Agent RV -Run rv | Out-String; $sr = if ($jr -match 'SESSION (\S+)') { $Matches[1] }; $rf0 = Join-Path $bd "$sr.json"
+$rw = Get-Content $rf0 -Raw | ConvertFrom-Json; $rw.status = 'left'; $rw | Add-Member -Force NoteProperty finished 'x'; $rw | ConvertTo-Json -Depth 5 | Set-Content $rf0
+$null = pwsh @np $O board beat -Session $sr; Expect 'board: a beat revives a reaped row' ((Get-Content $rf0 -Raw | ConvertFrom-Json).status -eq 'working')
 Expect 'board: beat after TAKEOVER exit 1, no lock left' ($j2 -match 'TAKEOVER' -and $btc -eq 1 -and $bt -match 'TAKEN OVER' -and -not @(Get-ChildItem $bd -Filter '*.lock').Count)
 $jc = pwsh @np $O board join -Agent 'pokey:DZ1' -Run rc | Out-String; $sc = if ($jc -match 'SESSION (\S+)') { $Matches[1] }
 [IO.File]::WriteAllText((Join-Path $ld 'args-rel.json'), $full)
