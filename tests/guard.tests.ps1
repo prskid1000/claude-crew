@@ -164,11 +164,11 @@ function Get-TrackerTask { @{ name = 'E500'; description = 'spike' } }; function
 $o = Invoke-BugBrief -Task b1 3>$null | Out-String; "d:$($o -match '"id":"B-b1"' -and (Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match '(?s)\*\*b1\*\* .*E500: spike.*\| w \| `C:/w` \| `m`')"
 function Get-TaskMrBranches { }; "r:$(try { Invoke-BugBrief -Task b1 3>$null; 0 } catch { "$_" -match 'no -Repos' })"
 function Get-TrackerTask { @{ name = 'E500'; description = "## Failed checks`n### C1 — a`n**Saw:** x`n### C2 — b`n**Saw:** y`n### C3 — c`n**Saw:** z" } }
-$null = Invoke-BugBrief -Task b1 -Repos w -Only C1, C2 -Skip 'C2=web area' 3>$null; $bt = Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw
-"o:$($bt -match '(?s)## Failed checks\s+- \*\*C1\*\*[^\n]*\n\n## Not yours \(coordinator\)\s+- \*\*C2\*\* — web area\s+- \*\*C3\*\* — outside -Only')"
-"n:$(try { Invoke-BugBrief -Task b1 -Repos w -Only C9 3>$null; 0 } catch { "$_" -match 'leave no check' })"
+$null = Invoke-BugBrief -Task b1 -Repos w -Only C1, C2 -Skip 'C2=web; api area' 3>$null; $bt = Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw
+"o:$($bt -match '(?s)## Failed checks\s+- \*\*C1\*\*[^\n]*\n\n## Not yours \(coordinator\)\s+- \*\*C2\*\* — web; api area\s+- \*\*C3\*\* — outside -Only')"
+"n:$(try { Invoke-BugBrief -Task b1 -Repos w -Only C9 3>$null; 0 } catch { "$_" -match 'no check C9 ' })"
 '@ @($BX); Remove-Item $kl
-Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else an error; -Only / -Skip -> a Not yours list, none left = error (#)' 'd', 'r', 'o', 'n'
+Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else an error; -Only / -Skip -> a Not yours list (a ; in a why kept), an unknown id = error (#)' 'd', 'r', 'o', 'n'
 # e2e: the diff's specs only (map, folder, name, imports, visits), none = NOT_TESTED, the whole suite only with -AllTests (logged)
 $er = Join-Path (Kd) 'e2e-repo'; $ef = @{ 'cypress/e2e/02-orders/01.create.cy.ts' = 'x'; 'cypress/e2e/misc.cy.ts' = "import { a } from '../../src/app/orders/list.component'`nimport d from '../fixtures/d.json'"; 'cypress/fixtures/d.json' = '1'; 'cypress/e2e/pay.cy.ts' = 'x'; 'cypress/e2e/n.cy.ts.snap' = 'x'; 'src/app/pay/components/row/row.ts' = 'a'
   'cypress/e2e/nav.cy.ts' = "cy.visit('/orders?x=1')"; 'cypress/e2e/users.cy.ts' = "cy.visit('/users')"; 'cypress/e2e/invoices/a.cy.ts' = 'x'; 'src/app/orders/list.component.ts' = 'a'; 'src/billing/rate.ts' = 'a' }

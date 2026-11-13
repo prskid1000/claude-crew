@@ -425,7 +425,7 @@ $prose = {
   $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
   # each finding names its file + field (kitbag result_notes): this package's results and report only
   $mdProse = ($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', ''   # link lists are not prose
-  foreach ($trName in @(@($item.subtasks) | ForEach-Object { "$($_.name)" -replace '\|', '\|' -replace "`r?`n", ' ' } | ForEach-Object Trim | Where-Object { $_ })) { $mdProse = $mdProse.Replace($trName, '') }   # tracker task names: quoted, not ours to rewrite
+  foreach ($trName in @(@($item.subtasks) | ForEach-Object { "$($_.name)" -replace '\|', '\|' -replace "`r?`n", ' ' } | ForEach-Object Trim | Where-Object { $_ })) { $mdProse = $mdProse.Replace("| $trName |", '| |') }   # tracker task names: quoted, not ours to rewrite
   @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text $mdProse 3>$null))
 }
 # the run's shared run.json / bugs.json: WARN only (one package's note there never holds another package's close)

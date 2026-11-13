@@ -24,8 +24,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L31 init · L48 board · L224 budget · L253 launch · L486 recover · L572 pause · L583 resume · L646 program · L697 param ·
-  L703 track · L1020 supervise · L1324 report · L1403 audit · L1463 storage · L1673 bugbrief · L1779 cleanup · L1863 learn ·
-  L1894 decide · L2028 health · L2090 retro due · L2100 tidy · L2169 setup · L2236 guard-sendmessage
+  L703 track · L1020 supervise · L1324 report · L1403 audit · L1463 storage · L1673 bugbrief · L1780 cleanup · L1864 learn ·
+  L1895 decide · L2029 health · L2091 retro due · L2101 tidy · L2170 setup · L2237 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1697,7 +1697,8 @@ $checks = @(Get-KitFailedChecks $texts)   # description, comments newest first
 $saw = ($desc -replace '\s+', ' ').Trim()   # no checks (watchy [Bug]): task is the check
 if (-not $checks) { $checks = @([pscustomobject]@{ id = $Task; screen = [string]$j.name; saw = $saw.Substring(0, [math]::Min(300, $saw.Length)) }) }
 if (-not $Agent) { $Agent = "B-$Task" }
-$Only = @(Split-KitList $Only); $skipWhy = @{}; foreach ($sk in @($Skip -split ';' | Where-Object { $_.Trim() })) { $skId, $skWhy = $sk -split '=', 2; $skipWhy[$skId.Trim()] = "$skWhy".Trim() }
+$Only = @(Split-KitList $Only); $skipWhy = @{}; foreach ($sk in @($Skip -split ';\s*(?=[^;=]+=)|;\s*$' | Where-Object { $_.Trim() })) { $skId, $skWhy = $sk -split '=', 2; $skipWhy[$skId.Trim()] = $(if ("$skWhy".Trim()) { "$skWhy" -replace '\s+', ' ' } else { 'skipped' }).Trim() }
+$unk = @(@($skipWhy.Keys) + $Only | Where-Object { $_ -notin $checks.id }); if ($unk) { throw "bugbrief: no check $($unk -join ', ') on $Task" }
 $notHere = @($checks | Where-Object { $skipWhy.ContainsKey($_.id) -or ($Only.Count -and $_.id -notin $Only) }); $checks = @($checks | Where-Object { $_ -notin $notHere })
 if (-not $checks.Count) { throw "bugbrief: -Only / -Skip leave no check of $Task" }
 
@@ -1740,7 +1741,7 @@ $origLine
 
 ## Failed checks
 $(($checks | ForEach-Object { "- **$($_.id)** — $($_.screen): $($_.saw)" }) -join "`n")
-$(if ($notHere) { "`n## Not yours (coordinator)`n" + (($notHere | ForEach-Object { "- **$($_.id)** — $(if ($skipWhy[$_.id]) { $skipWhy[$_.id] } else { 'outside -Only' })" }) -join "`n") + "`n" })$(if ($Hints) { "`n## Coordinator notes`n" + (($Hints | ForEach-Object { "- $_" }) -join "`n") + "`n" })
+$(if ($notHere) { "`n## Not yours (coordinator)`n" + (($notHere | ForEach-Object { "- **$($_.id)** — $(if ($skipWhy.ContainsKey($_.id)) { $skipWhy[$_.id] } else { 'outside -Only' })" }) -join "`n") + "`n" })$(if ($Hints) { "`n## Coordinator notes`n" + (($Hints | ForEach-Object { "- $_" }) -join "`n") + "`n" })
 Fix every check above (root cause + test) or prove it stale/expected with evidence. Fix only these checks. A check you cannot
 fix here (another area or repo) needs a follow-up tracker task (cause, proposed fix) linked in a comment on $Task before your MR is done.
 Product calls: the reference behaviour or a recorded decision, named. Additive only: users the fix does not target see no change
