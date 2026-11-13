@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L67 state · L136 config · L216 OS · L413 leases · L854 status · L1098 supervise sweep ·
-  L1169 supervise report · L1265 tracker · L1587 prior · L1603 ask bugs · L1808 git-host · L1968 kitlog · L2088 params ·
-  L2393 entry-scripts
+  L1169 supervise report · L1265 tracker · L1589 prior · L1605 ask bugs · L1810 git-host · L1970 kitlog · L2090 params ·
+  L2395 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1559,10 +1559,12 @@ function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
   $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'
   (@($Id, (Get-KitCut $Desc 110), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
 function ConvertTo-KitSpecItems($Spec) { @($Spec.items | Where-Object { $_.code } | ForEach-Object { [pscustomobject]@{ text = (Format-KitItemText "$($_.code)" "$($_.desc)" @($_.mrs)); done = [bool]$_.done } }) }
-# a parent's Items: its spec items + one per subtask "<spec code | $CodeOf | id> · <name without [Kind]> · <URL>", ticked once closed
+# a parent's Items: its spec items + one per subtask "<code> · <name without [Kind]> · <URL>", ticked once closed; code: the
+# subtask's spec, the parent spec's subtasks[{ id, code }], $CodeOf (rollup areas), else its id
 function Update-KitParentItems([string]$Parent, $Pt, [hashtable]$CodeOf = @{}) {
   if (-not $Pt) { Clear-TrackerMemo $Parent; $Pt = Get-TrackerTask $Parent }; $subs = @($Pt.subtasks | Where-Object { $_.id }); if (-not $subs.Count) { return }
   $px = Read-KitState (Get-KitTaskFile $Parent); $items = @(ConvertTo-KitSpecItems $px.spec) + @(foreach ($s in $subs) { $sc = (Read-KitState (Get-KitTaskFile $s.id)).spec.code
+      if (-not $sc) { $sc = @($px.spec.subtasks | Where-Object { "$($_.id)" -eq "$($s.id)" } | ForEach-Object code)[0] }
       [pscustomobject]@{ text = (Format-KitItemText $(if ($sc) { "$sc" } elseif ($CodeOf[$s.id]) { "$($CodeOf[$s.id])" } else { "$($s.id)" }) ("$($s.name)" -replace '^\s*\[[^\]]*\]\s*') @($s.url)); done = [bool](Test-TrackerStatus "$($s.status)" 'closed') } })
   $sig = ConvertTo-KitLetters (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join ';'); if ($sig -eq "$($px.parentItemsSig)") { return }
   $null = Set-KitTaskChecklist $Parent 'Items' $items; Update-KitTaskIndex $Parent { param($x) $x.parentItemsSig = $sig; $x.itemsFrom = 'subtasks' }
