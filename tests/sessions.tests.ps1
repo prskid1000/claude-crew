@@ -2,7 +2,7 @@
 <#
 sessions.tests.ps1: several coordinators on one machine (adapters/supervise_resources.ps1 "sessions"): run owners for pause /
 resume / recover (-Everyone), a stepped-aside supervise prints its own runs' flags, task claims at launch, the step-age HANDOFF;
-handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints; git-host adapters, crafty.ps1 host MR refs and check's python stale-env; the kit to-do ACT.
+handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints; git-host adapters, crafty.ps1 host MR refs and check's python stale-env; the kit to-do ACT; crafty.ps1 pipes default and statuses; board beat of an unknown session.
 Usage: pwsh -NoProfile -File <kit>/tests/sessions.tests.ps1 (or tests/kit-tests.ps1 -Area sessions).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -58,7 +58,7 @@ try {
   # pokey api: an unknown user names the target that holds it (names only)
   $tlf = Join-Path $k 'skills/pokey/targets.local.json'; & $J @{ default = 'ta'; targets = @{ ta = @{ api = 'http://127.0.0.1:9'; users = @{ admin = @('u1', 'p1') } }; tb = @{ api = 'http://127.0.0.1:9'; users = @{ sa = @('u2', 'p2') } } } } $tlf
   $pu = Invoke-TestScript (Join-Path $k 'skills/pokey/pokey.ps1') api -Target ta -As sa -Path /x; Remove-Item -LiteralPath $tlf
-  Expect 'pokey api: an unknown user names the target holding it, never a value' ($pu.out -match "No user 'sa' in target ta\. Known: admin\. 'sa' is in target\(s\) tb: -Target tb -As sa" -and $pu.out -notmatch 'u2|p2')
+  Expect 'pokey api: an unknown user names the target holding it, never a value' ($pu.out -match "NO-USER 'sa' in target ta \(not retried[^)]*\)\. Known: admin\. 'sa' is in target\(s\) tb: -Target tb -As sa" -and $pu.out -notmatch 'u2|p2')
   # resume -MaxSeconds 0: partial, the pause kept
   $env:KIT_OFFLINE = '0'; $rpz = Px $O resume -Run mr -MaxSeconds 0 | Out-String; Remove-Item Env:KIT_OFFLINE
   Expect 'resume -MaxSeconds: out of time = partial with the runs left, their pause kept' ($rpz -match 'partial: time budget \(0 s\) used; 1 run\(s\) not resumed: mr' -and @(Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | ForEach-Object { Read-Json $_.FullName } | Where-Object { $_.run -eq '*' -and $_.state -ne 'resumed' }).Count)
@@ -135,5 +135,39 @@ Expect "check python: the probe takes 'python -X utf8' and names a missing packa
 $tdd = Join-Path (TkPath $k agents -Create) 'kitty'; New-Item -ItemType Directory -Force $tdd | Out-Null; "- [ ] a`n- [x] b`n  - [ ] c`n| 4 | x | open |" | Set-Content (Join-Path $tdd 'kit-todo.md')
 $ktd = & { . $O; $kb = @(@{ status = 'left'; type = 'kitty'; agent = 'kitty'; beat = "$(Get-Date)" }, @{ status = 'working'; type = 'kitty'; agent = 'kitty-2'; beat = "$((Get-Date).AddHours(-7))" }); "$(@(Get-KitSuperviseFlagsKitTodo -Board $kb | ForEach-Object { "$($_.level) $($_.what)" }))|$(@(Get-KitSuperviseFlagsKitTodo -Board @($kb + @{ status = 'working'; type = 'kitty'; agent = 'kitty'; beat = "$(Get-Date)" })).Count)" }
 Expect "kit to-do: open '- [ ]' items and no live kitty (left, or no beat for 6 h) = one ACT; a live kitty = none ($ktd)" ($ktd -eq 'ACT kit to-do has 2 open item(s), no kitty live|0')
+$bu = pwsh @np $O board beat -Session 'nobody-1234' 2>&1 | Out-String; $buc = $LASTEXITCODE
+Expect 'board beat: an unknown session says join first, exit 3, no stack trace' ($buc -eq 3 -and $bu -match "unknown session 'nobody-1234': board join first" -and $bu -notmatch 'Exception|at line|ScriptStackTrace')
+# pipes default and statuses (crafty.ps1; moved from params for the per-file test caps)
+$D = Join-Path $k 'skills/crafty/crafty.ps1'; $lf = Join-Path (Kd) 'mrs.ps1'; Set-Content $lf "'[]'"
+& $J @{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.list' = "pwsh -NoProfile -File `"$lf`"" } } } "$k/skills/crafty/kit.local.json"
+$pipeRepo = Join-Path (Kd) 'pp'; $pipeWt = Join-Path (Kd) 'pp-wt'; git init -q -b main $pipeRepo; git -C $pipeRepo commit -q --allow-empty -m i; git -C $pipeRepo remote add origin 'https://git.example/g/pp.git'; git -C $pipeRepo worktree add -q -b TK-11-x $pipeWt
+Set-Content (Join-Path "$(git -C $pipeWt rev-parse --absolute-git-dir)" 'claude-target') 'main'; Push-Location $pipeWt; $pipeNone = pwsh @np $D pipes -MaxMinutes 0 2>&1 | Out-String; $pipeNoneCode = $LASTEXITCODE
+Set-Content $lf "'[{""iid"":6,""state"":""opened"",""source_branch"":""TK-11-x"",""target_branch"":""main"",""web_url"":""https://git.example/g/pp/-/merge_requests/6""}]'"; $pipeOut = pwsh @np $D pipes -MaxMinutes 0 2>&1 | Out-String; Pop-Location; Set-Content $lf "'[]'"
+Expect "pipes without -Mrs in a wt worktree: its branch's open MRs; none = exit 2 naming the branch ($pipeNoneCode)" ($pipeNoneCode -eq 2 -and $pipeNone -match 'no open MR for TK-11-x -> main' -and $pipeOut -match 'pipes: -Mrs https://git\.example/g/pp/-/merge_requests/6 \(open MRs of TK-11-x\)')
+# pipes: busy only with a head pipeline
+$pt = @'
+. $args[0]
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
+ if ($Verb -eq 'mr.get') { if ($A.n -in '3', '4') { [pscustomobject]@{ state = @{ '3' = 'opened'; '4' = 'closed' }[$A.n]; head_pipeline = @{ status = 'success' } } } elseif ($A.n -ne '9') { [pscustomobject]@{ state = 'opened'; head_pipeline = $null; target_branch = 'main' } } }
+ elseif ($Verb -eq 'ci.config') { if ($A.repo -match 'nocirepo') { $false } else { $null } }   # no CI file / a failed call
+ elseif ($Verb -eq 'mr.url') { "https://h.example/$($A.repo)/-/merge_requests/$($A.n)" }
+}
+Update-KitTaskIndex tp1 { param($x) $x.track = @{ task = 'tp1'; mrs = @('g/cirepo!3', 'g/cirepo!4'); done = $false; wave = 'w-p' } }
+Update-KitTaskIndex tp2 { param($x) $x.track = @{ task = 'tp2'; mrs = @('g/other!3'); done = $true } }
+Push-Location $env:TEMP; $tr = Invoke-Pipes -Run w-p -MaxMinutes 0 | ConvertFrom-Json; Pop-Location
+"tracked:$(@($tr.mrs).Count -eq 1 -and $tr.mrs[0].mr -eq 'https://h.example/g/cirepo/-/merge_requests/3')"
+$a = Invoke-Pipes -Mrs 'https://h.example/g/nocirepo/-/merge_requests/1' -MaxMinutes 0 | ConvertFrom-Json
+$b = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json
+$c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinutes 0 | ConvertFrom-Json
+function Get-KitValue { @{ name = 'cirepo'; ci = @{ mrPipelines = $false } } }
+"mr-off:$((Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json).done)"
+"no-ci:$($a.done -and $a.mrs[0].status -eq 'no-ci')"
+"no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
+"unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
+$t0 = Get-Date; $u = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/3','https://h.example/g/cirepo/-/merge_requests/4' -MaxMinutes 1 -UntilMerged | ConvertFrom-Json; $ut = ((Get-Date) - $t0).TotalSeconds; $g = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/3' -MaxMinutes 0 | ConvertFrom-Json
+"until-merged:$(-not $u.done -and $u.mrs[0].status -eq 'success' -and $u.mrs[1].status -eq 'closed' -and $ut -lt 20 -and $g.done)"
+'@
+$res = Invoke-PsTest 'pipes-test' $pt @($D)
+Expect-Each $res 'pipes: # (tracked: outside a worktree, no -Mrs = the open MRs of the tracked tasks of -Run)' 'no-ci', 'no-pipeline', 'unknown', 'mr-off', 'until-merged', 'tracked'
 Remove-TestKit $k
 Complete-Tests

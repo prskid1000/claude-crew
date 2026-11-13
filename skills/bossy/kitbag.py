@@ -1829,17 +1829,17 @@ def prose_check(kind, text, spec, banned):
             out.append(f'filler: "{mm.group(0).strip()}"')
     return out
 
-def result_notes(obj):
-    """Every note string in a results.json (any depth)."""
+def result_notes(obj, at=''):
+    """(field path, note) for every note string in a QA run JSON (results / run / bugs; any depth); a list entry by its id."""
     if isinstance(obj, dict):
         for k_, v in obj.items():
             if k_ in ('note', 'notes', 'finding', 'observed', 'what_was_done') and isinstance(v, str):
-                yield v
+                yield f'{at}.{k_}'.lstrip('.'), v
             else:
-                yield from result_notes(v)
+                yield from result_notes(v, f'{at}.{k_}')
     elif isinstance(obj, list):
-        for v in obj:
-            yield from result_notes(v)
+        for i, v in enumerate(obj):
+            yield from result_notes(v, f'{at}[{v.get("id") or v.get("code") or i if isinstance(v, dict) else i}]')
 
 def cmd_prose(a):
     """kitbag.py prose --kind <kind> <file | -> [--json] | --kinds"""
@@ -1857,8 +1857,8 @@ def cmd_prose(a):
     text = sys.stdin.read() if src == '-' else read(src)
     if kind == 'result-note' and src.endswith('.json'):
         found = []
-        for n in result_notes(json.loads(text)):
-            found += [f'note "{n[:50]}": {f}' for f in prose_check(kind, n, kinds[kind], banned)]
+        for at, n in result_notes(json.loads(text)):
+            found += [f'{osp.basename(src)} {at} "{n[:50]}": {f}' for f in prose_check(kind, n, kinds[kind], banned)]
     else:
         found = prose_check(kind, text, kinds[kind], banned)
     if '--json' in flags:

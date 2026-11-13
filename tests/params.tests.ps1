@@ -2,7 +2,7 @@
 <#
 params.tests.ps1: lib.ps1 params (registry, load tags, sketches, trigger queue, show, params-changes), the supervise sweep (learned
 section cost, cadence, starved first, background calls), net hang retry budget + back-off, the transcript walk cache, log trim, kitbag params
-lint, the tidy digest's QA gaps, track status lag; (cap moves) program state, browser.mjs exit release / kitParam / ports, pipes default and statuses, bugbrief args, cleanup log rotation.
+lint, the tidy digest's QA gaps, track status lag; (cap moves) program state, browser.mjs exit release / kitParam / ports, bugbrief args, cleanup log rotation.
 Usage: pwsh -NoProfile -File <kit>/tests/params.tests.ps1 (or tests/kit-tests.ps1 -Area params).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -183,7 +183,7 @@ Invoke-Track run -Detail; "t1:$($global:st.t1)"
 Expect 'track: an open MR moves an Open task to review; merged 60+ min = LAG, held = HOLD only' ($lg -match "DONE t1: status 'Open' -> review" -and $lg -match 't1:for review' -and $lg -match "LAG t3: all MRs merged at \d\d:\d\d, status still 'for review'" -and $lg -notmatch 'LAG t[24]' -and $lg -match 'HOLD t2' -and $lg -match 'HOLD t4')
 $hl = pwsh -NoProfile -Command ". '$O'; `$s = @{ acts = @('a') }; Add-KitActObs `$s @('a', 'b') (Get-Date); foreach (`$l in 'LAG h: x', 'ATTENTION h: no testing-doc link', 'ATTENTION h: w!1 closed', 'LAG g: x') { Test-KitHeldLine `$l h }"
 Expect "supervise: only a NEW ACT (b) paces fast; a held task's LAG / no-doc line dropped, others kept ($hl)" ("$hl" -eq 'b True True False False')
-# ---- moved here for the per-file test caps: browser.mjs exit release, kitParam, ports (pokey), pipes default (crafty)
+# ---- moved here for the per-file test caps: browser.mjs exit release, kitParam, ports (pokey)
 if (Use-BrowserKit) {
   $relf = Join-Path (Kd) 'released.txt'
   $res = NodeT exitrel ("const fs = await import('node:fs'), f = process.argv[2]; m.releaseOnExit(async () => fs.appendFileSync(f, 'a')); const off = m.releaseOnExit(async () => fs.appendFileSync(f, 'b')); off()`n" +
@@ -201,32 +201,6 @@ rmSync(m.kitPath('browser-ports')); console.log(a === await P('s', 't', 'a') && 
 '@
   Expect 'browser.mjs: stable port per user key, locked logins' ("$res" -eq 'true true true')
 }
-$D = Join-Path $k 'skills/crafty/crafty.ps1'; $lf = Join-Path (Kd) 'mrs.ps1'; Set-Content $lf "'[]'"
-& $J @{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.list' = "pwsh -NoProfile -File `"$lf`"" } } } "$k/skills/crafty/kit.local.json"
-$pipeRepo = Join-Path (Kd) 'pp'; $pipeWt = Join-Path (Kd) 'pp-wt'; git init -q -b main $pipeRepo; git -C $pipeRepo commit -q --allow-empty -m i; git -C $pipeRepo remote add origin 'https://git.example/g/pp.git'; git -C $pipeRepo worktree add -q -b TK-11-x $pipeWt
-Set-Content (Join-Path "$(git -C $pipeWt rev-parse --absolute-git-dir)" 'claude-target') 'main'; Push-Location $pipeWt; $pipeNone = pwsh @np $D pipes -MaxMinutes 0 2>&1 | Out-String; $pipeNoneCode = $LASTEXITCODE
-Set-Content $lf "'[{""iid"":6,""state"":""opened"",""source_branch"":""TK-11-x"",""target_branch"":""main"",""web_url"":""https://git.example/g/pp/-/merge_requests/6""}]'"; $pipeOut = pwsh @np $D pipes -MaxMinutes 0 2>&1 | Out-String; Pop-Location; Set-Content $lf "'[]'"
-Expect "pipes without -Mrs in a wt worktree: its branch's open MRs; none = exit 2 naming the branch ($pipeNoneCode)" ($pipeNoneCode -eq 2 -and $pipeNone -match 'no open MR for TK-11-x -> main' -and $pipeOut -match 'pipes: -Mrs https://git\.example/g/pp/-/merge_requests/6 \(open MRs of TK-11-x\)')
-# pipes: busy only with a head pipeline
-$pt = @'
-. $args[0]
-function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
- if ($Verb -eq 'mr.get') { if ($A.n -in '3', '4') { [pscustomobject]@{ state = @{ '3' = 'opened'; '4' = 'closed' }[$A.n]; head_pipeline = @{ status = 'success' } } } elseif ($A.n -ne '9') { [pscustomobject]@{ state = 'opened'; head_pipeline = $null; target_branch = 'main' } } }
- elseif ($Verb -eq 'ci.config') { if ($A.repo -match 'nocirepo') { $false } else { $null } }   # no CI file / a failed call
-}
-$a = Invoke-Pipes -Mrs 'https://h.example/g/nocirepo/-/merge_requests/1' -MaxMinutes 0 | ConvertFrom-Json
-$b = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json
-$c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinutes 0 | ConvertFrom-Json
-function Get-KitValue { @{ name = 'cirepo'; ci = @{ mrPipelines = $false } } }
-"mr-off:$((Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json).done)"
-"no-ci:$($a.done -and $a.mrs[0].status -eq 'no-ci')"
-"no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
-"unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
-$t0 = Get-Date; $u = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/3','https://h.example/g/cirepo/-/merge_requests/4' -MaxMinutes 1 -UntilMerged | ConvertFrom-Json; $ut = ((Get-Date) - $t0).TotalSeconds; $g = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/3' -MaxMinutes 0 | ConvertFrom-Json
-"until-merged:$(-not $u.done -and $u.mrs[0].status -eq 'success' -and $u.mrs[1].status -eq 'closed' -and $ut -lt 20 -and $g.done)"
-'@
-$res = Invoke-PsTest 'pipes-test' $pt @($D)
-Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown', 'mr-off', 'until-merged'
 # supervise NO MRS (bossy.ps1) and prior overrides (adapters/supervise_resources.ps1): a stale flag source each
 $nm = & { . $O; $s = @(@{ agentId = 'b1'; label = 'build:W2' }, @{ agentId = 'b2'; label = 'local:W2' }); $r1 = @{ mrs = @(); worktrees = @('C:\wt\w2-web'); deferred = @(@{ id = 'T9' }) }
   $rs = @(@{ agentId = 'b1'; result = $r1 }, @{ agentId = 'b2'; result = @{ mrs = @(@{ url = 'u' }) } }); $tk = @{ tasks = @{ T9 = @{ mrs = @('api!4') } } }

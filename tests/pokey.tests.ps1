@@ -48,7 +48,9 @@ Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observe
 Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty/')   # the prose limits
 $pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = @(1..3 | ForEach-Object { , @("C$_", 'PASS_WITH_NOTE') }) })
 $rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; $rj.checks[1].observed = '(b) pre-existing overlap'; $rj.checks[2] | Add-Member verify 'no'; & $J $rj "$pl/P1/results.json"
+$rn = Read-Json "$pl/run.json"; $rn.items[0] | Add-Member -Force notes ((1..60 | ForEach-Object { "runword$_" }) -join ' '); & $J $rn "$pl/run.json"
 $po = Fin $pl P1 -Check
+Expect "finalize -Check: each prose block line names file + field; run.json notes checked too" ($po -match 'results\.json checks\[C1\]\.observed "word1' -and $po -match 'run\.json items\[P1\]\.notes "runword1')
 Expect "finalize -Check: a 60-word observed fails prose; a note needs its (a)-(d) class; never pre-existing" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word' -and $po -match '(?m)P1 note check: .*: C1\r?$' -and $po -match '(?m)P1 pre-existing check: .*: C2\r?$')
 $pp = Fin $pl P1; $ppc = $LASTEXITCODE
 Expect "finalize publish: over prose limits exits 1 like -Check, nothing published ($ppc)" ($ppc -eq 1 -and $pp -match 'P1 prose check' -and $pp -match 'nothing was published' -and -not (Test-Path "$pl/P1/report.md") -and -not (Test-Path "$pl/P1/finalize.json"))

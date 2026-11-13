@@ -6,7 +6,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk], uncomment <id> <comment id>, create [-NewTask '<why>'] [-Related <ids>] [-Parent <id> -File <md>: a subtask needs Problem, Goal, Items, Acceptance, Links], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
- pipes [-Mrs <url>,...] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs in a wt worktree: its branch's open MRs); -UntilMerged: for the merges
+ pipes [-Mrs <url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L933 check · L1236 pipes · L1286 guard · L2043 dir ·
-  L2053 checkpoint · L2078 prior · L2116 tracker · L2196 host
+Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L933 check · L1236 pipes · L1293 guard · L2050 dir ·
+  L2060 checkpoint · L2085 prior · L2123 tracker · L2203 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1235,17 +1235,24 @@ exit 0
 
 # ---- pipes: wait for MR/PR pipelines (JSON)
 function Invoke-Pipes {
-param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged)   # -UntilMerged: a consumer waits for producers
-if (-not $Mrs) {   # in a wt worktree: its branch's open MRs
+param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run)   # -UntilMerged: a consumer waits for producers
+if (-not $Mrs) {   # in a wt worktree: its branch's open MRs; else the open MRs of the tracked tasks (-Run: of that run)
   $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
   $wtTarget = if ($wtGit -and (Test-Path -LiteralPath (Join-Path $wtGit 'claude-target'))) { (Get-Content -LiteralPath (Join-Path $wtGit 'claude-target') -TotalCount 1).Trim() }
   $script:KitRc = 2
-  if (-not $wtTarget) { Stop-KitVerb 'pipes: missing -Mrs (not in a crafty.ps1 wt worktree). Usage: pipes -Mrs <url>,... [-MaxMinutes 8] [-UntilMerged]' }
-  $wtBranch = "$(git -C $wtTop branch --show-current)".Trim()
-  if (-not $wtBranch) { Stop-KitVerb 'pipes: the worktree has a detached HEAD: pass -Mrs <url>,...' }
-  $Mrs = @(Get-MergedMrs $wtTop $wtBranch $wtTarget 'opened' | Where-Object source_branch -eq $wtBranch | ForEach-Object web_url | Where-Object { $_ })
-  if (-not $Mrs.Count) { Stop-KitVerb "pipes: no open MR for $wtBranch -> $wtTarget (open it, or pass -Mrs <url>,...)" }
-  $script:KitRc = 'exit'; [Console]::Error.WriteLine("pipes: -Mrs $($Mrs -join ',') (open MRs of $wtBranch)")
+  if (-not $wtTarget) {
+    $trRefs = @((Read-KitTracking).tasks.Values | Where-Object { -not $_.done -and (-not $Run -or "$($_.wave)" -eq $Run) } | ForEach-Object { @($_.mrs) } | Where-Object { "$_" -match '^[\w./-]+!\d+$' } | Select-Object -Unique)
+    $Mrs = @(foreach ($tr in $trRefs) { $trRepo, $trN = "$tr" -split '!', 2; $trA = @{ repo = (Get-HostProject $trRepo -Raw); n = $trN }
+        if ("$((Invoke-HostVerb 'mr.get' $trA).state)" -eq 'opened') { Invoke-HostVerb 'mr.url' $trA } }) | Where-Object { $_ }
+    if (-not $Mrs.Count) { Stop-KitVerb "pipes: missing -Mrs (not in a crafty.ps1 wt worktree, no open MR in tracking$(if ($Run) { " for run $Run" })). Usage: pipes -Mrs <url>,... [-Run <run>] [-MaxMinutes 8] [-UntilMerged]" }
+    $script:KitRc = 'exit'; [Console]::Error.WriteLine("pipes: -Mrs $($Mrs -join ',') (open tracked MRs$(if ($Run) { " of run $Run" }))")
+  } else {
+    $wtBranch = "$(git -C $wtTop branch --show-current)".Trim()
+    if (-not $wtBranch) { Stop-KitVerb 'pipes: the worktree has a detached HEAD: pass -Mrs <url>,...' }
+    $Mrs = @(Get-MergedMrs $wtTop $wtBranch $wtTarget 'opened' | Where-Object source_branch -eq $wtBranch | ForEach-Object web_url | Where-Object { $_ })
+    if (-not $Mrs.Count) { Stop-KitVerb "pipes: no open MR for $wtBranch -> $wtTarget (open it, or pass -Mrs <url>,...)" }
+    $script:KitRc = 'exit'; [Console]::Error.WriteLine("pipes: -Mrs $($Mrs -join ',') (open MRs of $wtBranch)")
+  }
 }
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })

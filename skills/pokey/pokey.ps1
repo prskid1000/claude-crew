@@ -9,11 +9,11 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
   ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL; goody android-swarm)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
-Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage
-  or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
+Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage,
+  a missing goody or api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L122 seat · L189 api · L356 finalize · L782 retest
+Sections: L23 report · L122 seat · L189 api · L357 finalize · L784 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -253,7 +253,8 @@ if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $u = @($t.users.$As)
 if (-not $t.users.$As -and $t.auth.type -ne 'none') {   # not @(...).Count: @($null).Count is 1
   $holders = @($cfg.targets.PSObject.Properties | Where-Object { $_.Name -ne $Target -and $_.Value.users.$As } | ForEach-Object Name)   # names only, never values
-  throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })" }
+  # exit 2, not a throw: a missing user never appears on retry (163x loop)
+  "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $($t.users.PSObject.Properties.Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"; exit 2 }
 if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has no api URL (web-only: use browser.mjs)" }
 $base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
@@ -419,9 +420,10 @@ $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
 $prose = {
   $lm = @{ folderLink = $D; files = @{} }; foreach ($x in @(@($files.Name) + @($vText.Keys) | Where-Object { $_ })) { $lm.files[$x] = @{ link = $x } }
   $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
-  @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text (($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', '') 3>$null))   # link lists are not prose
+  # each finding names its file + field (kitbag result_notes); -Check: the run's run.json / bugs.json notes too
+  @(@(foreach ($pf in @(@(Join-Path $D $Results) + @(if ($Check) { "$RunDir/run.json", "$RunDir/bugs.json" }))) { if (Test-Path -LiteralPath $pf) { Test-KitProse -Kind result-note -Path $pf 3>$null } }) + @(Test-KitProse -Kind qa-report -Text (($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', '') 3>$null))   # link lists are not prose
 }
-$prWhy = "$Code prose check: shorten observed / what_was_done in $Results (crafty/templates.md ""Writing standards"")"
+$prWhy = "$Code prose check: shorten the named field (file, path) (crafty/templates.md ""Writing standards"")"
 # knownBug: a FAIL already tracked by another OPEN task (an untracked defect must never close a task); -in compares any case
 $knownBad = { $tested = @(@($item.subtasks) | ForEach-Object { ([string]$_.id).Trim().TrimStart('#') })
   @(foreach ($c in @(@($res.checks) | Where-Object { "$($_.knownBug)".Trim() })) { $kb = "$($c.knownBug)".Trim(); $kt = try { Get-TrackerTask $kb } catch { $null }

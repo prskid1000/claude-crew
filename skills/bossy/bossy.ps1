@@ -22,7 +22,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions comment
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
-Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
+Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L50 board · L230 budget · L259 launch · L492 recover · L578 pause · L589 resume · L652 program · L703 param ·
   L709 track · L1033 supervise · L1337 report · L1416 audit · L1476 storage · L1686 bugbrief · L1788 cleanup · L1872 learn ·
   L1902 decide · L2035 health · L2097 retro due · L2107 tidy · L2176 the kit origin's main and goodies · L2192 setup ·
@@ -158,7 +158,7 @@ switch ($Action) {
     "SESSION $tok   (pass -Session $tok to beat / check / leave)"
   }
   'beat' {
-    $f = Join-Path $dir "$Session.json"; if (-not (Test-Path $f)) { throw "unknown session $Session - join first" }
+    $f = Join-Path $dir "$Session.json"; if (-not $Session -or -not (Test-Path $f)) { "board beat: unknown session '$Session': board join first (bossy.ps1 board join -Agent <id> [-Run <run>]), then beat with the SESSION it prints"; exit 3 }   # no stack trace
     $script:beatEntry = $null; $script:beatTaken = $null; $ho = $null
     Update-BoardEntry $f { param($x) if ($x.status -eq 'left' -and $x.takenOverBy) { $script:beatTaken = $x; return $null }; $x.beat = (Get-Date).ToString('o'); if ($Status) { $x.status = $Status } elseif ($x.status -eq 'left' -and -not $x.handoffBrief) { $x.status = 'working' }; $script:beatEntry = $x; $x }   # a beat proves it lives: a reaped row is back
     if ($script:beatTaken) { $me = $script:beatTaken; "TAKEN OVER: session $($me.takenOverBy) replaced $Session at $(([datetime]$me.takenOverAt).ToString('HH:mm')). Stop without writing and tell the coordinator."; exit 1 }

@@ -101,6 +101,8 @@ $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 -Save "$(Kd)/q.json" 2>&1 | 
 $uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the goody android-swarm
 $xo = foreach ($verbName in 'deployed', 'annotate') { $verbOut = Px $Q $verbName 2>&1 | Out-String; "$LASTEXITCODE $verbOut".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
+$nu = Px $Q api -Target tx -As ghost -Path '/x' 2>&1 | Out-String; $nuc = $LASTEXITCODE
+Expect 'api: a user missing from the target exits 2 NO-USER (not retried), known users named, no stack trace' ($nuc -eq 2 -and $nu -match "NO-USER 'ghost' in target tx \(not retried" -and $nu -match 'Known: admin' -and $nu -notmatch 'Exception|at line')
 Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
 Expect 'api -Save: a full path is split (api-auth goody too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
 $api = Start-TestApi; & $J @{ targets = @{ tb = @{ api = "http://127.0.0.1:$($api.port)"; auth = @{ type = 'login'; path = '/bad' }; users = @{ admin = 'u', 'K9' } } } } (Join-Path $k 'skills/pokey/targets.local.json') 6
