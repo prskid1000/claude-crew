@@ -235,5 +235,21 @@ $null = pwsh -NoProfile -File $bossyPs board msg -Agent m1 -To m2 -Text ('y' * 2
 $bmRow = Get-Content -Raw (Join-Path (TkPath $k board) 'inbox/m2.jsonl') | ConvertFrom-Json
 $bmIn = pwsh -NoProfile -File $bossyPs board inbox -Agent m2 2>&1 | Out-String
 Expect "board msg: the row is { at, from, to, kind, text, ref, read }; an unknown kind and a text over 2000 chars refused (2); inbox shows kind and ref ($($bmIn.Trim()))" ($bm1 -match 'sent to m2' -and (@($bmRow.PSObject.Properties.Name) -join ',') -eq 'at,from,to,kind,text,ref,read' -and $bmKindCode -eq 2 -and $bmLongCode -eq 2 -and $bmIn -match 'from m1 \[dispute\]: own, not new \(ref web!5\)')
+# ---- prepare (item 4): pokey.ps1 prepare = L1 selection by script: run.json, lead-notes skeleton, Left out; the last line RUN <json>
+$env:KIT_TRACKER_TYPE = 'none'; $PKp = Join-Path $k 'skills/pokey/pokey.ps1'
+$mkTask = { param($Name, $Desc) (pwsh -NoProfile -File $craftyPs tracker create -Name $Name -Description $Desc -NewTask fixture 2>$null | ConvertFrom-Json).id }
+$tA = & $mkTask '[Bug] Orders sort' "**Testing doc (human):** [open](https://docs.example/h1)`n`nMR: https://git.example/g/web/-/merge_requests/5"
+$tB = & $mkTask '[Bug] No doc' 'MR: https://git.example/g/web/-/merge_requests/6'
+$tC = & $mkTask '[Bug] Excluded' "**Testing doc (human):** [open](https://docs.example/h3)`n`nMR: https://git.example/g/web/-/merge_requests/7"
+foreach ($tx in $tA, $tB, $tC) { $null = pwsh -NoProfile -File $craftyPs tracker status $tx 'in test' 2>&1 }
+$pjob = @{ runFolder = "$wd/qa-runs/<yyyy-MM-dd>-stg"; statuses = @('inTest'); exclude = @($tC); target = 'stg-a'; kitDir = $k; runSettings = @{ mandate = @('test the sort') } } | ConvertTo-Json -Compress -Depth 4
+$pp = @(pwsh -NoProfile -File $PKp prepare -Job $pjob 2>&1); $pRun = ("$($pp[-1])" -replace '^RUN ') | ConvertFrom-Json
+$pNotes = Get-Content -Raw "$($pRun.runDir)/lead-notes.md"; $null = pwsh -NoProfile -File $PKp lead-notes add -RunDir $pRun.runDir -Code T1 -Text 'which tenant? -> madrid' 2>&1
+$pDay = Get-Date -Format 'yyyy-MM-dd'
+Expect "prepare: one item (MR + doc + in test), the doc-less task left out, exclude honoured; the last line is RUN <run>; lead-notes skeleton + lead-notes add ($($pp[-2]))" ("$($pp[-1])".StartsWith('RUN ') -and @($pRun.items).Count -eq 1 -and $pRun.items[0].code -eq 'T1' -and $pRun.items[0].subtasks[0].mrs -eq 'web!5' -and $pRun.items[0].target -eq 'stg-a' -and
+  (Get-Content -Raw $pRun.items[0].guideFile) -match 'https://docs.example/h1' -and @($pRun.left).Count -eq 1 -and $pRun.left[0].reason -match 'Testing doc' -and $pRun.mandate[0] -eq 'test the sort' -and $pRun.runDir -match "qa-runs/$pDay-stg$" -and
+  (Gold $pNotes "# Lead notes: $pDay-stg`n**Result:** 1 in, 1 left out · target stg-a`n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| T1 [Bug] Orders sort | from the guide | to check |`n`n## Left out`n`n| Task | Reason |`n|---|---|`n| $tB [Bug] No doc | no ""Testing doc (human):"" link |`n`n## Answers (newest last)") -and
+  (Get-Content -Raw "$($pRun.runDir)/lead-notes.md") -match '(?m)^- \d\d:\d\d T1: which tenant\? -> madrid\r?$')
+$env:KIT_TRACKER_TYPE = $null
 Remove-TestKit $k
 Complete-Tests

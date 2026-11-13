@@ -3,7 +3,7 @@ export const meta = {
  description: 'Any test run (tracker selection, smoke after a deploy, regression sweep, retest; local or a test env) by checky lead / test / verify: test deployed tasks against their human testing docs (web + API pools, device lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
  whenToUse: 'Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents',
  phases: [
-  { title: 'Prepare', detail: 'args.select only: checky lead (pokey L1) writes run.json + lead-notes.md; tasks not live are left out' },
+  { title: 'Prepare', detail: 'args.select only: pokey.ps1 prepare (L1 selection) writes run.json + lead-notes.md; tasks not live are left out' },
   { title: 'Test', detail: 'one checky (role test) per guide: web/API pool in parallel, app guides one per phone' },
   { title: 'Verify', detail: 'checky verify: note audit, stronger retry of NOT_TESTED, ENV-FIX cycles for local items, independent re-test of every FAIL' },
   { title: 'Close', detail: 'checky lead: report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask' },
@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L214 local · L242 app · L265 test-prompt ·
-//   L319 verify · L381 run-item · L562 pool · L584 budget · L612 run · L650 learn
+// Sections: L16 args · L37 record-args · L58 prepare · L87 config · L122 prompts · L211 local · L239 app · L262 test-prompt ·
+//   L316 verify · L378 run-item · L559 pool · L581 budget · L609 run · L647 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -55,36 +55,33 @@ Return ok=true when it prints RECORDED, else ok=false; output = its full output 
  return ''
 }
 if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')   // recorded again with its plan once its items are known
-// ---- prepare: args.select builds the run
-// PREPARE (args.select): a lead builds the run (pokey L1), then the short form
+// ---- prepare: pokey.ps1 prepare builds the run (args.select, pokey L1) or prints a built one (runDir); one STEP, last line RUN <json>
+const q0 = (s) => String(s).replace(/'/g, "''")
+const prepStep = async (cmd, label) => {
+ for (const [lb, model] of [[label, 'haiku'], [`${label}-retry`, 'sonnet']]) {
+  const got = await agent(`STEP: run exactly this in PowerShell (pwsh 7; tool timeout 600000) and return ok=true when it exits 0 (else ok=false) with its LAST output line (it starts with "RUN "), unchanged, as output; nothing else:${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}\n${cmd}`,
+   { label: lb, phase: 'Prepare', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'checky', model, effort: 'low' })
+  try { const f = JSON.parse(String((got && got.output) || '').trim().replace(/^RUN /, '')); if (f && Array.isArray(f.items)) return f } catch (e) { /* retried on sonnet */ }
+ }
+ return null
+}
 if (R.select && !R.runDir && !Array.isArray(R.items)) {
  phase('Prepare')
  const { select: S, name: N, target: T, ...rest } = R   // T may be a group, never an env: run.json holds the real target(s)
  if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
  const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : ['inTest'])
  const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
-  statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, tracking: `${K0}/.state/${KP.durable.tasks}`, runSettings: rest }
- const prep = await agent(`You are checky (role lead): build a test-only run, test nothing. PowerShell = pwsh 7 (the PowerShell tool); Python -X utf8.
-Follow ${K0}/skills/pokey/SKILL.md "Lead steps" L1 (selection) with this job (JSON): ${JSON.stringify(job)}
-Return runDir (absolute, forward slashes), items (count in run.json), left [{ id, reason }] and a one-line summary.`,
-  { label: 'prepare', phase: 'Prepare', schema: { type: 'object', properties: { runDir: { type: 'string' }, items: { type: 'number' },
-   left: { type: 'array', items: { type: 'object' } },
-   summary: { type: 'string' } }, required: ['runDir', 'items', 'left', 'summary'] }, agentType: 'checky', model: 'sonnet' })
- if (!prep || !prep.runDir) throw new Error('Prepare returned no runDir: build the run by hand (pokey L1), launch with { runDir }')
- for (const l of prep.left || []) log(`left out ${l.id}: ${l.reason}`)
- log(`prepared ${prep.runDir}: ${prep.items} item(s), ${(prep.left || []).length} left out (${prep.summary})`)
- if (!prep.items) return { prepared: prep.runDir, left: prep.left || [], results: [], next: 'nothing live to test (see left)' }
- R = { ...rest, runDir: prep.runDir }
+  statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, runSettings: rest }
+ const run = await prepStep(`& ${K0}/skills/pokey/pokey.ps1 prepare -Job '${q0(JSON.stringify(job))}'`, 'prepare')
+ if (!run || !run.runDir) throw new Error('pokey.ps1 prepare gave no run: run it by hand (pokey L1), launch with { runDir }')
+ for (const l of run.left || []) log(`left out ${l.id}: ${l.reason}`)
+ log(`prepared ${run.runDir}: ${run.items.length} item(s), ${(run.left || []).length} left out`)
+ if (!run.items.length) return { prepared: run.runDir, left: run.left || [], results: [], next: 'nothing live to test (see left)' }
+ R = { ...run, ...rest, runDir: run.runDir, items: run.items, lanes: rest.lanes || run.lanes }
 }
 if (R.runDir && !Array.isArray(R.items)) {
- // validate: small models may truncate run.json
- const loadRun = async (model, label) => {
-  const got = await agent(`STEP: read the file ${R.runDir}/run.json with the Read tool and return its complete content, byte for byte unchanged (no summarising, no trimming, every item), as the string field "json". Do nothing else.`,
-   { label, phase: 'Test', schema: { type: 'object', properties: { json: { type: 'string' } }, required: ['json'] }, agentType: 'checky', model, effort: 'low' })
-  try { const f = JSON.parse((got && got.json) || ''); return Array.isArray(f.items) && f.items.length ? f : null } catch (e) { return null }
- }
- const file = (await loadRun('haiku', 'load-run')) || (await loadRun('sonnet', 'load-run-retry'))
- if (!file) throw new Error(`could not read a valid ${R.runDir}/run.json (items[] missing after retry) - pass the full run.json object as args instead`)
+ const file = await prepStep(`& ${K0}/skills/pokey/pokey.ps1 prepare -RunDir '${q0(R.runDir)}'`, 'load-run')
+ if (!file || !file.items.length) throw new Error(`could not read a valid ${R.runDir}/run.json (items[] missing after retry) - pass the full run.json object as args instead`)
  R = { ...file, ...R, items: file.items, lanes: R.lanes || file.lanes }
 }
 // ---- config: items, kit paths, lanes, env-fix limits
@@ -231,7 +228,7 @@ OUT_OF_SCOPE (not NOT_TESTED): steps that only exercise ${(R.outOfScope || []).l
 TARGET "${tgt(it) || '(default)'}" (${QA}/targets.local.json), ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}.
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}${localBlock(it)}
-LEAD NOTES: ${R.runDir}/lead-notes.md (the lead answers there; you cannot be messaged): re-read before each check and before any NOT_TESTED.
+LEAD NOTES: ${R.runDir}/lead-notes.md (ask there: & ${Q} lead-notes add -RunDir '${R.runDir}' -Code ${it.code} -Text '<question>'; the lead answers there; you cannot be messaged): re-read before each check and before any NOT_TESTED.
 TOOLS: & '${Q}' api -Target ${tgt(it) || '<target>'} ...; tracker: & '${KIT}/skills/crafty/crafty.ps1' tracker view|comments <id>.`
 const WEB = (it) => `
 BROWSER (web): ${QA}/browser.mjs (read its header), scripts in <outDir>/scripts:

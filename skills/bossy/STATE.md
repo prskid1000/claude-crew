@@ -94,7 +94,7 @@ matching place decides). `kitbag.py lint` [ARTEFACT]: a kind without a row fails
 | `testing-ai` | `devtools.py cases render` | `work/docs/*-ai.md` | `md ^# Testing doc \(AI\):` |
 | `qa-report` | `pokey.ps1 finalize` | `work/qa-runs/*/report.md` | `any` |
 | `qa-run` | `testy.js`, `pokey.ps1 results` (written once, deltas by id) | `work/qa-runs/*/*.json` | `any` |
-| `lead-notes` | free: checky lead (item 4) | `work/qa-runs/*/lead-notes.md` | `md ^# Lead notes:` |
+| `lead-notes` | `pokey.ps1 prepare`, `lead-notes add` | `work/qa-runs/*/lead-notes.md` | `md ^# Lead notes:` |
 | `result-note` | `pokey.ps1 finalize` (results.json cells) | — | — |
 | `mr-title` | `devtools.py render` | — | — |
 | `mr-body` | `devtools.py render` | `work/agents/*/*.md` | `md ^## Summary` |

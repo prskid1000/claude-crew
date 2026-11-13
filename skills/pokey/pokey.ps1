@@ -7,6 +7,8 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
   evidence fetch|index|read-chunk|frames|write-vision|label|verify|tune|feedback|bench|status <link | key> ...   videos -> text index (goody media-evidence)
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
+  prepare -Job <job JSON | file> | -RunDir <run>   L1 selection: run.json, lead-notes.md, Left out; last line RUN <run JSON>
+  lead-notes add -RunDir <run> -Code <code> -Text '<question or answer>'   one line under "## Answers (newest last)"
   results patch|hold -RunDir <run> -Code <code> [-Patch '<{set, add, top} JSON>'] [-Why <w> -Summary <s> -EnvFix <json>]   the workflow's deltas / held.json
   ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL; goody android-swarm)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
@@ -14,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   a missing goody or api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L24 report · L123 seat · L190 api · L358 finalize · L791 results · L820 retest
+Sections: L26 report · L125 seat · L192 api · L360 finalize · L793 results · L822 retest · L862 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -857,6 +859,76 @@ Write-KitAtomic "$RunDir/run.json" ($r | ConvertTo-Json -Depth 8)
 "added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir/run.json - launch: Workflow testy { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"
 }
 
+# ---- prepare: a test-only run from a job (SKILL.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it
+function Invoke-Prepare {
+param([string]$Job, [string]$RunDir)
+$ErrorActionPreference = 'Stop'
+$emit = { param($Run) "RUN $(ConvertTo-Json -InputObject $Run -Depth 8 -Compress)" }   # the workflow reads this one line
+if ($RunDir) { $rf = Join-Path $RunDir 'run.json'; if (-not (Test-Path -LiteralPath $rf)) { throw "no run.json in $RunDir" }; return & $emit (Get-Content -LiteralPath $rf -Raw -Encoding utf8 | ConvertFrom-Json) }
+if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run>'; exit 2 }
+$jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
+if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
+$base = $jb.runFolder -replace '<yyyy-MM-dd>', (Get-Date -Format 'yyyy-MM-dd'); $dir = $base; for ($dn = 2; Test-Path -LiteralPath $dir; $dn++) { $dir = "$base-$dn" }
+New-Item -ItemType Directory -Force (Join-Path $dir 'guides') | Out-Null; $dir = (Resolve-Path -LiteralPath $dir).Path -replace '\\', '/'
+# 1. candidates: lists x statuses, plus tasks, minus exclude; mine = the tracker owner's
+$lists = @($jb.lists | Where-Object { $_ }); if (-not $lists.Count) { $lists = @(@(Get-KitValue 'trackerLists' @()) | Where-Object { $_ }) }; if (-not $lists.Count) { $lists = @('') }
+$sts = @($jb.statuses | Where-Object { $_ }); if (-not $sts.Count) { $sts = @('inTest') }
+$cand = [ordered]@{}; foreach ($ls in $lists) { foreach ($st in $sts) { foreach ($row in @(Get-TrackerTasks "$ls" "$st")) { if ($row.id) { $cand["$($row.id)"] = "$ls" } } } }
+foreach ($tid in @($jb.tasks | Where-Object { $_ })) { $cand["$tid"] = '' }
+foreach ($tid in @($jb.exclude | Where-Object { $_ })) { $cand.Remove("$tid") }
+$owner = if ($jb.mine) { "$(Get-TrackerOwner)" }
+$tgtRules = Get-KitSetting "qa.targets.$($jb.target)" $null
+$items = [Collections.Generic.List[object]]::new(); $left = [Collections.Generic.List[object]]::new(); $byDoc = @{}
+foreach ($tid in @($cand.Keys)) {
+  $tk = Get-TrackerTask $tid; $nm = "$($tk.name)"
+  $out = { param($Why) $left.Add([ordered]@{ id = $tid; name = $nm; reason = $Why }) }
+  if (-not $nm) { & $out 'not readable in the tracker'; continue }
+  if ($owner -and -not (@($tk.assignees) -contains $owner)) { continue }
+  # 2. MRs (tracking, else MR links in the description) and the human testing doc
+  $tf = Get-KitTaskFile $tid; $trk = if (Test-Path -LiteralPath $tf) { Get-Content -LiteralPath $tf -Raw | ConvertFrom-Json }
+  $mrs = @(@($trk.track.mrs) | Where-Object { $_ }); if (-not $mrs.Count) { $mrs = @([regex]::Matches("$($tk.description)", 'https?://\S+?/(?:-/merge_requests|pulls?|pull-requests)/\d+') | ForEach-Object { $mu = ConvertFrom-MrUrl $_.Value; if ($mu) { "$(($mu.repo -split '/')[-1])!$($mu.n)" } } | Select-Object -Unique) }
+  $doc = if ("$($tk.description)" -match '(?m)Testing doc \(human\):\*{0,2}\s*\[[^\]]*\]\((?<u>https?://[^)\s]+)\)') { $Matches.u } elseif ($trk.docs.human) { "$($trk.docs.human)" }
+  if (-not $mrs.Count) { & $out 'no MRs (tracking or task links)'; continue }
+  if (-not $doc) { & $out 'no "Testing doc (human):" link'; continue }
+  # 3. target: the job's target names a targets.local.json entry, else the first qa.targets rule that matches
+  $it = [ordered]@{ code = ''; title = $nm; guideFile = ''; lane = 'web'; subtasks = @([ordered]@{ id = $tid; name = $nm; mrs = ($mrs -join ', ') }) }
+  if ($tgtRules) {
+    $repoNames = @($mrs | ForEach-Object { ($_ -split '!')[0] })
+    $hit = @($tgtRules) | Where-Object { (-not $_.lists -or @($_.lists) -contains $cand[$tid]) -and (-not $_.repos -or @($repoNames | Where-Object { @($_.repos) -contains $_ }).Count) -and (-not $_.nameRegex -or $nm -match $_.nameRegex) } | Select-Object -First 1
+    if (-not $hit) { & $out "no qa.targets.$($jb.target) rule matches"; continue }
+    $it.target = "$($hit.target)"; if ($hit.localEnv) { $it.localEnv = "$($hit.localEnv)" }
+  } else { $it.target = "$($jb.target)" }
+  # 4. live: every MR deployed on the target (N/A, MANUAL count as in); a local env: its own check (lead)
+  if (-not $it.localEnv -and (Get-Command Invoke-Deployed -ErrorAction SilentlyContinue)) {
+    $dep = @(Invoke-Deployed -Mrs $mrs -Target $it.target -Json | ConvertFrom-Json)
+    $notLive = @($dep | Where-Object { $_.state -notmatch '^(DEPLOYED|N/A|MANUAL)' })
+    if ($notLive.Count) { & $out "not live on $($it.target): $(@($notLive | ForEach-Object { "$($_.mr) $($_.state)" }) -join ', ')"; continue }
+  }
+  if ($byDoc[$doc]) { $byDoc[$doc].subtasks += $it.subtasks[0]; continue }   # tasks sharing a doc = one item
+  $it.code = "T$($items.Count + 1)"; $gf = "$dir/guides/$($it.code).md"; $kept = Join-Path (Get-KitPath docs) "$($tid)_testing-doc.md"
+  if (Test-Path -LiteralPath $kept) { Copy-Item -LiteralPath $kept $gf } else { Set-Content -LiteralPath $gf -Encoding utf8 "# Guide: $nm`n`nHuman testing doc: $doc (no kept copy: read the doc itself, fully, before the first check)" }
+  $it.guideFile = $gf; $it.guideUrl = $doc; $items.Add($it); $byDoc[$doc] = $it
+}
+# 5. run.json + lead-notes.md (fixed headings; testers and the lead append with lead-notes add)
+$run = [ordered]@{ title = "$($jb.target): $(@($items | ForEach-Object title) -join '; ')"; target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }
+foreach ($rk in @($jb.runSettings.Keys | Where-Object { $_ -notin $run.Keys })) { $run[$rk] = $jb.runSettings[$rk] }
+Write-KitAtomic "$dir/run.json" ($run | ConvertTo-Json -Depth 8)
+$cell = { param($Text) "$Text" -replace '\s+', ' ' -replace '\|', '\|' }
+$ln = @("# Lead notes: $(Split-Path $dir -Leaf)", "**Result:** $($items.Count) in, $($left.Count) left out · target $($jb.target)", '', '## Prerequisites', '', '| Item | Flags / accounts / data ids | State |', '|---|---|---|') +
+  @($items | ForEach-Object { "| $($_.code) $(& $cell $_.title) | from the guide | $(if ($_.localEnv) { "envy.ps1 status -Env $($_.localEnv): every MR commit running?" } else { 'to check' }) |" }) + @('', '## Left out', '', '| Task | Reason |', '|---|---|') +
+  @($left | ForEach-Object { "| $($_.id) $(& $cell $_.name) | $(& $cell $_.reason) |" }) + @('', '## Answers (newest last)', '')
+Write-KitAtomic "$dir/lead-notes.md" (($ln -join "`n") + "`n")
+"prepared $dir`: $($items.Count) item(s), $($left.Count) left out"
+& $emit $run
+}
+# testers ask and the lead answers in lead-notes.md: one line each under "## Answers (newest last)"
+function Invoke-LeadNotes {
+param([Parameter(Position = 0)][ValidateSet('add')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Code, [Parameter(Mandatory)][string]$Text)
+$nf = Join-Path $RunDir 'lead-notes.md'; if (-not (Test-Path -LiteralPath $nf)) { throw "no lead-notes.md in $RunDir (pokey.ps1 prepare writes it)" }
+Invoke-KitLocked $nf { Add-Content -LiteralPath $nf -Encoding utf8 "- $(Get-Date -Format 'HH:mm') $Code`: $($Text -replace '\s+', ' ')" }
+"noted $Code in $nf"
+}
+
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
   switch ($__verb) {
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
@@ -868,6 +940,8 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
       else { $xn = @{ deployed = 'deploys'; annotate = 'android-swarm'; evidence = 'media-evidence' }[$__verb]; Resolve-KitExtra $xn; [Console]::Error.WriteLine("pokey.ps1 $__verb is a goody: run kitbag.py goody add $xn"); exit 2 }
     }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
+    'prepare' { Invoke-KitVerb Invoke-Prepare $__rest }
+    'lead-notes' { Invoke-KitVerb Invoke-LeadNotes $__rest }
     'results' { Invoke-KitVerb Invoke-Results $__rest }
     'ui' {   # goody android-swarm
       if (Get-Command Invoke-Ui -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Ui $__rest }

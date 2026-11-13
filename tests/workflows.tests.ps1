@@ -214,8 +214,8 @@ $res = Invoke-Js tc-merge $js4 $wf
 Expect-Each $res 'testy retries: #' 'keeps-fail', 'guide-id' -Show 5
 $js2 = @'
 const { calls, agent } = _mock((prompt, o) => {
- if (o.label === 'prepare') return { runDir: 'C:/rt/work/qa-runs/2026-01-01-local', items: 1, left: [{ id: 'T9', reason: 'not live' }], summary: 's' }
- if (/^load-run/.test(o.label)) return { json: JSON.stringify({ target: 'local-a', items: [_item('A1', 'api', { target: 'local-b' })] }) }
+ if (o.label === 'prepare') return _ok('RUN ' + JSON.stringify({ runDir: 'C:/rt/work/qa-runs/2026-01-01-local', target: 'local-a', items: [_item('A1', 'api', { target: 'local-b' })], left: [{ id: 'T9', reason: 'not live' }] }))
+ if (/^load-run/.test(o.label)) throw new Error('no load-run')
  if (/^test:/.test(o.label)) return _res('A1', [_ck('C1', 'PASS')])
 })
 const args = { select: { statuses: ['promoted', 'inTest'], exclude: ['T7'] }, target: 'local', ..._kl }
@@ -236,7 +236,7 @@ Expect-Each $res 'testy select: #' 'prepare', 'record', 'item-target' -Show 5
 $js7 = @'
 let first
 const mk = (rec) => async (p, o) => { first = first || { l: o.label, p }
- return /^load-run/.test(o.label) ? { json: JSON.stringify({ items: [1, 2, 3, 4].map((n) => ({ code: `F${n}`, lane: 'api' })) }) }
+ return /^load-run/.test(o.label) ? _ok('RUN ' + JSON.stringify({ items: [1, 2, 3, 4].map((n) => ({ code: `F${n}`, lane: 'api' })) }))
   : /^record-args/.test(o.label) ? _ok(rec) : /^test:/.test(o.label) ? _res(o.label.slice(5, 7), [_ck('C1', 'PASS')]) : _ok('') }
 const args = { runDir: 'C:/runs/R9', ..._kl, only: ['F1', 'F2', 'F3'], lanes: ['L'], instance: 'w2', batch: 1 }
 const keep = (n, only) => !!n && n.args.lanes[0] === 'L' && n.args.instance === 'w2' && n.args.only.join() === only
