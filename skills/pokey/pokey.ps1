@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   a missing goody or api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L26 report · L125 seat · L192 api · L360 finalize · L793 results · L822 retest · L862 prepare
+Sections: L26 report · L125 seat · L192 api · L360 finalize · L795 results · L824 retest · L864 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -424,7 +424,9 @@ $prose = {
   $lm = @{ folderLink = $D; files = @{} }; foreach ($x in @(@($files.Name) + @($vText.Keys) | Where-Object { $_ })) { $lm.files[$x] = @{ link = $x } }
   $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
   # each finding names its file + field (kitbag result_notes): this package's results and report only
-  @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text (($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', '') 3>$null))   # link lists are not prose
+  $mdProse = ($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', ''   # link lists are not prose
+  foreach ($trName in @(@($item.subtasks) | ForEach-Object { "$($_.name)" -replace '\|', '\|' -replace "`r?`n", ' ' } | ForEach-Object Trim | Where-Object { $_ })) { $mdProse = $mdProse.Replace($trName, '') }   # tracker task names: quoted, not ours to rewrite
+  @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text $mdProse 3>$null))
 }
 # the run's shared run.json / bugs.json: WARN only (one package's note there never holds another package's close)
 $proseRun = { @(foreach ($pf in "$RunDir/run.json", "$RunDir/bugs.json") { if (Test-Path -LiteralPath $pf) { Test-KitProse -Kind result-note -Path $pf 3>$null } }) }
