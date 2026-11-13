@@ -239,5 +239,13 @@ $txt = $h -replace '(?s)<(style|script)>.*?</\1>' -replace '<[^>]+>', ' '
 "$(@('6.8B', '$1,747', '549', '129', '122', '119', '46') | ForEach-Object { ([regex]::Matches($txt, "(?<![\d.])$([regex]::Escape($_))(?![\d.])")).Count }) $($h -match 'sec-timeline')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
 Expect "supervise page: 7-day tokens and cost, each step outcome and agents spawned render once, no Today list ($once)" ("$once".Trim() -eq '1 1 1 1 1 1 1 False')
+# Settings (supervise.*): effective values, never an empty section
+$setOut = Invoke-PsTest 'settings' @'
+$null = . $args[0] 6>$null; $p = @{ key = 'supervise.shellStuckMinutes'; value = 45; source = 'learned' }; $__cfg = [pscustomobject]@{}; $s = Get-KitSuperviseSettings $p
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = @{ settings = $s } })
+$__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ heartbeatMinutes = 10 } }; $l = (Get-KitSuperviseSettings $p).'supervise.heartbeatMinutes'
+"$($s.'supervise.ramActPct'.source) $($s.'supervise.shellStuckMinutes'.source) $($h -match '>90 (·|&#183;) default<') $($l.value)/$($l.source)/$($l.default)"
+'@ @($O)
+Expect "settings: effective defaults with no override, learned, an override names its default ($setOut)" ("$setOut" -eq 'default learned True 10/local/15')
 Remove-TestKit $k
 Complete-Tests

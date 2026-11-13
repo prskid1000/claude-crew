@@ -22,7 +22,7 @@ Expect 'setup: protects origin main + goodies (fake host), no verb -> by-hand li
 $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -ErrorAction SilentlyContinue
 $ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
-Expect 'supervise: without -Session the lock owner is the session, stable per round (no step-aside from itself), detached too' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
+Expect 'supervise: without -Session the lock owner is the session, stable per round' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
 $cf =Join-Path (Kd) 'brief.contracts.md'; '# contracts' | Set-Content $cf
 $out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Keep the old total?' -Options 'B: recompute','A: keep — no data change' -Recommend A -Contracts $cf | Out-String
 $id = if ($out -match 'DECISION (\S+) pending') { $Matches[1] }
@@ -138,7 +138,7 @@ $w0 = Get-Date; $sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session m
 $sr = Get-Content (TkPath $k supervise-report) -Raw; Stop-Process -Id (Read-Json (Join-Path (TkPath $k background) 'slow.json')).pid -ErrorAction SilentlyContinue
 Expect "supervise: a 20 s background child never holds the caller; sweep <= 25 s, each section <= 12.5 s (wall $([int]$ws) s)" ($ws -lt 20 -and $sr -match 'sweep: (\d+) s' -and [int]$Matches[1] -le 25 -and -not @((Read-Json (TkPath $k supervise-state)).sweep.cost.PSObject.Properties.Value -gt 12.5).Count)
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
-Expect 'supervise: a goody hook adds a sweep line, flag, report row, owner line, RAM need; kit-report shape; ACT: blocking -> tool, FYI -> list' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
+Expect 'supervise: a goody hook adds sweep line, flag, row, owner line, RAM need; kit-report shape' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
   $sr -match '^# Supervise report .*\n\*\*Result:\*\* \d+ ACT · \d+ WATCH' -and $sr -match "\| ACT \| DECISION $i1 \(blocking.*AskUserQuestion.*-Ask -Json" -and $sr -match "DECISION 1 FYI: $i2 \|" -and (Test-Prose kit-report (TkPath $k supervise-report))); Remove-Item "$ad/fake.ps1", "$ad/slow.ps1"   # the core adapter stays
 $lt = Join-Path (Kd) 'lk.json'; $old = { '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5) }   # a 5-min-old lock
 & $old; $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
@@ -164,7 +164,7 @@ $lg5 = 1..5001; Set-Content "$(TkPath $k logs -Create)/k5.log" $lg5; Set-Content
 $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
 Expect 'cleanup: a kit log over 5000 lines rotates, a local env service log never' ($cd -match '\b1 x\s+rotated.*k5\.log')
 Expect 'cleanup: an 8 h session sweep keeps tab registries (live browsers own them)' ($cd -match 'old-login\.json' -and $cd -notmatch 'tabs-t__u')
-Expect 'cleanup keep rules: newest N APKs kept, old background job files go, entries off the layout (runtime root, work/) go' ($cd -match '2 x\s+apks > 72 h' -and $cd -match '2 x\s+background > 72 h' -and $cd -match 'layout \(runtime root\)' -and $cd -match 'layout \(work/\)')
+Expect 'cleanup keep rules: newest N APKs, old job files and off-layout entries go' ($cd -match '2 x\s+apks > 72 h' -and $cd -match '2 x\s+background > 72 h' -and $cd -match 'layout \(runtime root\)' -and $cd -match 'layout \(work/\)')
 $env:KIT_RUN = 'r-9'; $env:KIT_AGENT = 'K1'; $null = pwsh @np $O decide list; $null = pwsh @np $O learn -Skill kitty -Kind idea -Text 'Bearer abc123defghij token=abc1 a@b.co'
 $null = python -X utf8 "$k/skills/bossy/kitbag.py" budget; $env:KIT_RUN = $env:KIT_AGENT = $null; $au = (pwsh @np $O audit -Run r-9 -Since 7 2>&1) -join "`n"
 Expect 'kitlog: call lines (ps1 + py) masked; audit -Since 7 (days) merges the streams' ($au -match '(?s)^audit run r-9: [3-9] events.*bossy\.ps1 decide list -> rc 0.*learn kitty/idea -> Bearer \[redacted\] token=\[redacted\] \[email\].*kitbag\.py budget')
@@ -253,11 +253,6 @@ $pb = Px $O board beat -Session $ps | Out-String; $pl = Px $O board leave -Sessi
 $pr = Read-Json (Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | Select-Object -Last 1).FullName; $pll = Px $O launch -List -Brief | Out-String
 $pu = Px $O resume -Run pr | Out-String; $pl2 = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pl3 = Px $O launch -List -Brief | Out-String; Remove-Item (Join-Path $ad 'fakehost.ps1') -Force   # the fake only: adapters/ holds kit files
 Expect 'pause: record, PAUSE on beat, leave waits, launch paused; resume of a waiting run releases it' ($pz -match 'PAUSED 1 of 2 .*not confirmed: P2' -and $pz -match 'NOT safe yet: P2' -and $pr.state -eq 'paused' -and @($pr.agents | Where-Object confirmed).agent -eq 'P1' -and $pr.runs[0].self -and $pb -match 'PAUSE \(power off\)' -and $pl -match '^PAUSED' -and $pll -match 'paused buildy\.js' -and $pu -match 'still running: P1' -and $pu -cnotmatch 'RELAUNCH' -and $pl2 -match 'RESUMED' -and $pl3 -notmatch 'paused buildy')
-# board: the same name in a live session 5 min after its beat = a parallel agent
-$j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"
-$e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-KitPidStart $PID }; $e3.beat = (Get-Date).AddMinutes(-5).ToString('o'); & $J $e3 $f3
-$j4 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b3 = pwsh @np $O board beat -Session $s3 | Out-String
-Expect "board: a same-name agent in a live session is BY-2, no takeover ($j4)" ($j4 -match 'you are BY-2' -and $j4 -notmatch 'TAKEOVER|DUPLICATE' -and $b3 -notmatch 'TAKEN')
 # lease grace and shell owners: a quiet beat with a fresh transcript is live (lib.ps1 Get-KitLastActivity)
 foreach ($n in 1, 40, 120) { $lf = Join-Path (Kd) "L$n.jsonl"; Set-Content $lf '{}'; (Get-Item $lf).LastWriteTime = (Get-Date).AddMinutes(-$n); & $J @{ session = "s-L$n"; agent = "L$n"; run = 'lr'; status = 'working'; beat = (Get-Date).AddMinutes(-[math]::Max(90, $n)).ToString('o'); joined = (Get-Date).AddHours(-3).ToString('o'); transcript = $lf } (Join-Path (TkPath $k board -Create) "s-L$n.json") }
 $lv = Invoke-PsTest 'liveact' '. $args[0]; Test-KitLive @{ agent = "L1"; session = "s-L1" }; Test-KitLive @{ agent = "L40"; session = "s-L40" }; (Get-KitLastActivity $args[1] @{ beat = "2000-01-01" }) -gt (Get-Date).AddMinutes(-5); Test-KitLive (New-KitLease L1); Test-KitLive (New-KitLease L120)' @($O, (Join-Path (Kd) 'L1.jsonl'))

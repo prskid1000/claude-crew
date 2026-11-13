@@ -11,7 +11,7 @@
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show] · budget raise [-Tests] -Reason "<why>"   # the kit total (-Tests: tests/) vs its cap; raise: goody kit-admin
   python -X utf8 kitbag.py state lint [--since <min>] [--json]   # .state / .runtime files vs _paths.schema (skills/bossy/STATE.md)
-  python -X utf8 kitbag.py ui-check <page.html> [--widths 1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
+  python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
   python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N] [--dry-run]
 
 lint problem codes: each message says what is wrong and the fix; skills/bossy/kit-admin.md (goody kit-admin) lists them.
@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1279 audit ·
-  L1388 registry · L1729 prose · L1874 sections · L2004 budget · L2028 goodies · L2535 state lint · L2607 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1289 audit ·
+  L1398 registry · L1739 prose · L1884 sections · L2014 budget · L2038 goodies · L2545 state lint · L2617 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1220,6 +1220,16 @@ const fit = () => [...document.querySelectorAll('[data-fit]')].flatMap((e) => {
   const gap = Math.round(e.getBoundingClientRect().bottom - parseFloat(cs.paddingBottom) - parseFloat(cs.borderBottomWidth) - r.getBoundingClientRect().bottom)
   return gap >= 24 ? [{ el: 'fit', why: `blank ${gap} px below the content`, text: (e.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 60) }] : []
 })
+// a card grid or wrapping row (items [data-fit] or <details>) at desktop width, as loaded: a row ending 24+ px short of its box is an empty column
+const rows = () => innerWidth < 1280 ? [] : [...document.querySelectorAll('body *')].flatMap((g) => {
+  const cs = getComputedStyle(g); if (!(/grid/.test(cs.display) || (/flex/.test(cs.display) && cs.flexWrap === 'wrap')) || !g.getClientRects().length || g.closest('details:not([open])')) return []
+  const kids = [...g.children].filter((c) => c.getClientRects().length && !/absolute|fixed/.test(getComputedStyle(c).position))
+  if (kids.length < 2 || !kids.some((c) => c.matches('[data-fit],details'))) return []
+  const end = g.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth), rs = []   // a row: items whose heights overlap (a margin shifts one top)
+  for (const c of kids) { const r = c.getBoundingClientRect(), row = rs.find((x) => r.top < x.bottom - 1 && r.bottom > x.top + 1); if (row) { row.right = Math.max(row.right, r.right); row.bottom = Math.max(row.bottom, r.bottom); row.ids.push(c.id || c.className) } else rs.push({ top: r.top, bottom: r.bottom, right: r.right, ids: [c.id || c.className] }) }
+  const last = rs.reduce((a, x) => (x.right < a.right ? x : a)), short = Math.round(end - last.right)
+  return short >= 24 ? [{ el: 'rows', why: `a card row ends ${short} px short of its box (an empty column)`, text: `${g.className || g.tagName}: ${last.ids.join(', ')}`.slice(0, 120) }] : []
+})
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
 const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
 try {
@@ -1233,7 +1243,7 @@ try {
     const base = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}`, height = await page.evaluate(() => document.documentElement.scrollHeight)
     await page.screenshot({ path: `${base}.png`, fullPage: true })   // as the owner sees it: the page's own open / closed defaults
     const hs = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (hs > 1) clipped.push({ el: 'page', why: `horizontal page scroll ${hs} px (a wide table scrolls in its own box)`, text: '' })
-    clipped.push(...await page.evaluate(layout), ...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
+    clipped.push(...await page.evaluate(layout), ...await page.evaluate(rows), ...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
     await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
     res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped }); await ctx.close()
   }
@@ -1241,13 +1251,13 @@ try {
 console.log(JSON.stringify(res))'''
 
 def cmd_ui_check(a):
-    """ui-check <page.html> [--widths 1366,900,390] [--click 'sel,sel;sel']: PAGE_JS (light + dark; each --click state after
+    """ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']: PAGE_JS (light + dark; each --click state after
     the page as loaded); exit 1 on clipped text, a failed click, a layout box (window.uiBoxes) off-screen or overlapping or a [data-fit]
-    card with 24+ px blank below its content, 0 = pass + stamp."""
+    card with 24+ px blank below its content or a card row 24+ px short of its box at 1280+ px, 0 = pass + stamp."""
     flags, rest = parse_opts(a, {'--widths', '--click'})
-    widths = str(flags.get('--widths') or '1366,900,390')
+    widths = str(flags.get('--widths') or '1920,1366,900,390')
     if len(rest) != 1 or not osp.isfile(rest[0]) or not re.fullmatch(r'\d+(,\d+)*', widths):
-        print('usage: kitbag.py ui-check <page.html> [--widths 1366,900,390] [--click "<selector>,<selector>;<selector>"]', file=sys.stderr)
+        print('usage: kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click "<selector>,<selector>;<selector>"]', file=sys.stderr)
         return 2
     states = [[]] + [[x.strip() for x in s.split(',') if x.strip()] for s in str(flags.get('--click') or '').split(';') if s.strip()]
     pokey, shots = osp.join(KIT_DIR, 'skills', 'pokey'), osp.join(kit_path('shots', create=True), 'ui-check')

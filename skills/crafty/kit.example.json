@@ -51,7 +51,7 @@
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels QA never tests (OUT_OF_SCOPE, not counted). targets: /testy select groups (target: '<group>'): a task's env: the first rule matching lists / repos / nameRegex / pathRegex (localEnv: live = in its running release). seatGB: RAM per QA seat. matrix: UI cases run at viewports (WxH) x fontScales x themes (app-set). notLocal: [{ name, match: row regex }] deps no local env runs (PASS -> NOT_TESTED_LOCAL). qualityWords: stated-quality regex ('' = off).", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. email>"],
   "matrix": { "viewports": [] }, "notLocal": [],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
- "deploy": { "_readme": "trigger: owner (default: a person says deploy <env>) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target + default); planTimeoutSec bounds supervise's deploy plan per test env (late = UNKNOWN); productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 } },
+ "deploy": { "_readme": "trigger: owner (default: a person says deploy <env>) | ask (one batched ask per env, at most one per minIntervalHours: a number or per target + default); planTimeoutSec bounds supervise's plan per env (late = UNKNOWN); productionPattern ((?i)prod|critical): by name when production is unset; hold: [<env>] never asked.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 } },
  "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry; lost tracker writes wait in .state/outbox.jsonl (supervise replays)", "timeoutSec": 60 },
  "tests": { "_readme": "Per stack (crafty.ps1 stack names): testFor = test names -Touched derives from a changed file's base name ({name}; defaults: check). e2e (check -Step e2e; module globs): specs (default *.cy.*, e2e/*.spec, *.e2e.*), map[] {dir?, paths, specs}; else by folder, name, import, route.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
  "protectedBranches": ["staging"],
@@ -149,7 +149,7 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
-  "caps": { "content": 33, "plumbing": 9, "totalTokens": 428000, "testTokens": 101000 },
+  "caps": { "content": 33, "plumbing": 9, "totalTokens": 428000, "testTokens": 111000 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/crafty/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },

@@ -120,7 +120,7 @@ switch ($Action) {
     $notes = @()
     $rejoin = $same | Where-Object { -not $Resume -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
       Sort-Object { [datetime]$_.joined } -Descending | Select-Object -First 1
-    $peer = @($same | Where-Object { -not ($Resume -or $rejoin) -and (Test-KitHolder $_) -and ($now - [datetime]$_.beat).TotalMinutes -lt $staleMin })
+    $peer = @($same | Where-Object { -not ($Resume -or $rejoin) -and (Test-KitHolder $_) -and (($now - [datetime]$_.beat).TotalMinutes -lt $staleMin -or ($_.transcript -and ($now - [IO.File]::GetLastWriteTime($_.transcript)).TotalMinutes -lt $staleMin / 6)) })   # or a fresh transcript
     if ($peer) { $b = $Agent; $n = 2; while (@(Active | Where-Object agent -eq "$b-$n").Count) { $n++ }; $Agent = "$b-$n"; $same = @(); $notes += "PARALLEL: $b runs in session $($peer[0].session): you are $Agent" }
     if ($rejoin) { $tok = $rejoin.session; $joined = $rejoin.joined; $notes += "REJOIN: same agent, run and claims within 2 min - reusing session $tok" }
     else { $tok = "$($Agent -replace '[\\/:*?"<>|\s]', '-')-" + ([guid]::NewGuid().ToString('N').Substring(0, 8)); $joined = $now.ToString('o') }
@@ -424,7 +424,7 @@ function Resolve-KitRunId($S, $WfDirs, [switch]$FnvOnly) {   # -FnvOnly: run nam
   $k = "$($S.selfFile)|$FnvOnly"; if ($script:KitRunIds.ContainsKey($k)) { return $script:KitRunIds[$k] }
   $sj = if ($S.selfFile) { try { Get-Content -LiteralPath $S.selfFile -Raw | ConvertFrom-Json } catch { $null } }; $fnv = "$($sj.fnv)"
   $base = [regex]::Escape("launch -Self -Script $($S.leaf) -Run '$($S.run)' "); $id = $null
-  # budget -Run stored its folder: one folder's transcripts, not every folder's (2.7 s per run on 41 folders)
+  # budget -Run stored its folder: read one folder, not 41 (2.7 s per run)
   $own = @($WfDirs | Where-Object { $fnv -and $sj.wfDir -and $_.FullName -eq "$($sj.wfDir)".TrimEnd('\', '/') })
   if ($own.Count -and @(Get-ChildItem $own[0].FullName -Filter 'agent-*.jsonl' -ErrorAction SilentlyContinue | Where-Object { Select-String -LiteralPath $_.FullName -Pattern "$base.*-Fnv $fnv" -Quiet } | Select-Object -First 1).Count) { $script:KitRunIds[$k] = $own[0].Name; return $own[0].Name }
   foreach ($rx in @(if ($fnv) { "$base.*-Fnv $fnv" }) + @(if (-not $FnvOnly) { $base })) {
@@ -728,7 +728,7 @@ function Get-TaskMrBranches([string[]]$Tasks) {
     if ($m.target_branch) { [pscustomobject]@{ ref = $ref; repo = $repo; branch = [string]$m.target_branch } }
   }
 }
-# areas a run launched (track.planHours) for a task with no wave report listing it done: a later batch or a budget cut; $Since: released before
+# launched areas (track.planHours) no wave report lists done: a later batch or budget cut
 function Get-KitPlannedAreas([string]$TaskId, $Since) {
   $TaskId = NormTask $TaskId
   if ($null -eq $script:planRecs) {
@@ -1848,7 +1848,7 @@ foreach ($f in Get-ChildItem $tmp -Force | Where-Object { $_.Name -match '^(kit-
 
 }
 
-# worktrees + local branches of every repo: crafty.ps1 wt sweep (nothing dirty, unpushed or held goes; -Detail: each item and what stays)
+# all repos' worktrees + branches: crafty.ps1 wt sweep (dirty, unpushed, held stay)
 $rootList = $WorktreeRoot -join ','; $kept = @()
 try { $sw = $(if ($DryRun) { & $KitCmd.dev wt sweep -Root $rootList -IdleHours $WorktreeIdleHours -Json -DryRun } else { & $KitCmd.dev wt sweep -Root $rootList -IdleHours $WorktreeIdleHours -Json }) -join "`n" | ConvertFrom-Json
   foreach ($x in @($sw.actions)) { $script:freed += [long]$x.bytes; [void]$actions.Add([pscustomobject]@{ mb = [long]$x.bytes / 1MB; why = $x.why; path = $x.path }) }; $kept = @($sw.kept); $notes += @($sw.notes) } catch { $notes += "worktree sweep failed: $($_.Exception.Message)" }

@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L251 shells · L380 page · L734 usage · L960 release · L999 lines · L1024 cleanup ·
-  L1060 launch · L1138 pause · L1256 sessions · L1308 ci tasks
+Sections: L15 builds · L47 supervise · L251 shells · L380 page · L814 usage · L1041 release · L1080 lines · L1105 cleanup ·
+  L1141 launch · L1219 pause · L1337 sessions · L1389 ci tasks
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -437,6 +437,45 @@ function Get-KitSuperviseNow([string[]]$Lines, [double]$GraceMinutes = 10) {
   [pscustomobject]$o
 }
 # page + .json, written atomically; returns its path; failure: a WATCH and '' (tables print)
+# the gate's card row of a build: kind (crafty.ps1 GateKinds) to a plain group; a local env's build = env deploy
+function Get-KitGateGroup([string]$Kind, [string]$Who) {
+  if ($Who -match 'localenv-') { return 'env deploy' }
+  switch -regex ($Kind) { '^maven-test$' { 'maven test' } '^maven$' { 'maven build' } '^(web-build|rn-bundle)$' { 'web build' } '^(typecheck|tsc-lint)$' { 'typecheck / lint' }
+    '^(js-test|ng-test)$' { 'js tests' } '^python$' { 'python' } '^e2e$' { 'cypress / e2e' } '^docker$' { 'docker' } '^(android-build|android-test|gradle)$' { 'android' } '^emulator$' { 'emulator' } default { 'other' } }
+}
+# the gate from its own history (builds log, 24 h), not a sweep's sample (a build between two sweeps was never seen: "0 running"):
+# per group running / queued now, done today, avg / peak wait, RAM promised, busy segments (% of 24 h); phone lanes and emulators
+function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
+  $from = $Now - [timespan]::FromDays(1); $led = Join-Path (Get-KitTemp) 'claude-build-gate'; $rd = { param($f) try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
+  $at = { param($v) if ($v -is [datetime]) { $v } else { try { [datetime]"$v" } catch { $null } } }
+  $run = @(Get-ChildItem $led -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { & $rd $_.FullName } | Where-Object { $_ -and $_.pid -and (Test-KitPid $_.pid $_.start) })
+  $que = @(Get-ChildItem (Join-Path $led 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { & $rd $_.FullName } | Where-Object { $_ })
+  $ends = @(Read-KitLog builds $from | Where-Object { $_.event -eq 'end' -and (& $at $_.at) })
+  $g = [ordered]@{}; $row = { param($n) if (-not $g.Contains($n)) { $g[$n] = [ordered]@{ name = $n; running = 0; queued = 0; done = 0; waits = [Collections.Generic.List[double]]::new(); ram = 0.0; peakGB = 0.0; segs = [Collections.Generic.List[object]]::new() } }; $g[$n] }
+  $pct = { param([datetime]$t) [math]::Round([math]::Max(0, [math]::Min(100, 100 * ($t - $from).TotalMinutes / 1440)), 2) }
+  foreach ($x in $ends) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.project)"); $e1 = & $at $x.at; $s1 = $e1.AddSeconds(-[double]$x.sec)
+    if ($e1 -ge $Now.Date) { $r.done++; $r.waits.Add([double]$x.waitSec / 60) }; $r.segs.Add(@((& $pct $s1), [math]::Max(0.15, (& $pct $e1) - (& $pct $s1)))) }
+  foreach ($x in @(Read-KitLog builds $Now.Date | Where-Object { $_.event -eq 'start' })) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.project)"); $r.peakGB = [math]::Max($r.peakGB, [double]$x.needGB) }
+  foreach ($x in $run) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.dir)"); $r.running++; $r.ram += [double]$x.need; $s1 = & $at $x.started; if ($s1) { $r.segs.Add(@((& $pct $s1), [math]::Max(0.15, 100 - (& $pct $s1)))) } }
+  foreach ($x in $que) { (& $row (Get-KitGateGroup "$($x.kind)" "$($x.owner)")).queued++ }
+  $rows = @($g.Values | ForEach-Object { [pscustomobject]@{ name = $_.name; running = $_.running; queued = $_.queued; done = $_.done; ram = [math]::Round($_.ram, 1); peakGB = [math]::Round($_.peakGB, 1)
+        waitAvg = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Average).Average, 1) } else { 0 }); waitMax = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Maximum).Maximum, 1) } else { 0 }); segs = @($_.segs) } } | Sort-Object { - ($_.running * 1000 + $_.queued * 100 + $_.done) })
+  $lanes = @(try { (Get-Content (Join-Path $KitConf.Kit 'skills/phoney/swarm.config.json') -Raw -ErrorAction Stop | ConvertFrom-Json).lanes } catch { })
+  [pscustomobject]@{ running = $run.Count; queued = $que.Count; today = [int](($rows | Measure-Object done -Sum).Sum); waitMax = [double](@($rows.waitMax) + 0 | Measure-Object -Maximum).Maximum
+    ram = [math]::Round([double](($run | Measure-Object need -Sum).Sum), 1); rows = $rows
+    lanes = $lanes.Count; leased = @($lanes | Where-Object { $_.name -and (Test-Path (Join-Path (Get-KitPath phones) "$($_.name).json")) }).Count; emulators = @($Resources | Where-Object { "$($_.name)" -like 'phone *' }).Count }
+}
+# effective supervise.* settings: kit.example.json defaults, kit.local.json overrides (marked, with the default), supervise.* params (learned or default)
+function Get-KitSuperviseSettings($Params = @()) {
+  $out = [ordered]@{}; $js = { param($v) if ($v -is [string] -or $v -is [ValueType]) { $v } else { $v | ConvertTo-Json -Compress -Depth 4 } }
+  if ($script:KitExample.supervise -is [psobject]) { foreach ($p in $script:KitExample.supervise.PSObject.Properties) { $out["supervise.$($p.Name)"] = [pscustomobject]@{ value = (& $js $p.Value); source = 'default' } } }
+  foreach ($p in @($Params | Where-Object { "$($_.key)" -like 'supervise.*' -and "$($_.ctx)" -in '', '_' })) {
+    $out["$($p.key)"] = [pscustomobject]@{ value = $p.value; source = $(if ("$($p.source)" -match 'learned') { 'learned' } elseif ("$($p.source)" -match '^default') { 'default' } else { ("$($p.source)" -split ' ')[0] }) } }
+  $set = Get-KitSetting 'supervise' $null
+  if ($set -is [psobject]) { foreach ($p in $set.PSObject.Properties) { $k = "supervise.$($p.Name)"; $was = $out[$k]
+      $out[$k] = [pscustomobject]@{ value = $(if ($p.Name -eq 'publish') { '(set)' } else { & $js $p.Value }); source = 'local'; default = $(if ($was -and "$($was.value)" -ne "$(& $js $p.Value)") { $was.value }) } } }
+  [pscustomobject]$out
+}
 function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $rk = @{ ACT = 0; WATCH = 1; INFO = 2 }
   $p = [IO.Path]::ChangeExtension((Get-KitPath supervise-report -Create), '.html'); $pj = [IO.Path]::ChangeExtension($p, '.json')
@@ -444,8 +483,6 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $fl = @(@($d.flags) + @($d.info | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }) | Sort-Object { $rk["$($_.level)"] })
   $fixedN = @($fl | Where-Object { $_.level -eq 'INFO' -and "$($_.what)" -like 'auto-fixed:*' }).Count
   $History = @(@([pscustomobject]@{ at = $d.at.ToString('o'); flags = @($d.flags | Where-Object level -ne 'INFO' | Select-Object level, what); active = @($d.rows | Where-Object state -ne 'FINISHED').Count; fixed = $fixedN }) + @($prior.history | Where-Object { $_ }) | Select-Object -First ([int](Get-KitSetting 'supervise.historySweeps' 12)))
-  $set = Get-KitSetting 'supervise' $null; $settings = [ordered]@{}
-  if ($set) { foreach ($sp0 in $set.PSObject.Properties) { $settings["supervise.$($sp0.Name)"] = if ($sp0.Name -eq 'publish') { '(set)' } else { $sp0.Value | ConvertTo-Json -Compress -Depth 4 } } }
   $series = try { Get-KitSuperviseSeries (@($Sweep) + @($fl | ForEach-Object what)) $prior.stats } catch { [ordered]@{ ram = @(); disks = @() } }
   $nowT = try { Get-KitSuperviseNow $Sweep ([double](Get-KitParam 'idle.graceMinutes')) } catch { $null }
   if ($nowT -and -not @($nowT.disks).Count) { $nowT.disks = @($series.disks | Where-Object { $_ } | ForEach-Object { [ordered]@{ drive = $_.drive; free = $_.free; rate = $_.rate; ttf = $null } }) }   # storage skipped this sweep: the last disk values
@@ -455,11 +492,13 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $rs = [ordered]@{}; foreach ($r0 in @($d.resources | Where-Object { $_.name })) { $rs["$($r0.name)"] = [pscustomobject]@{ gb = $r0.gb; by = "$($r0.by)" } }   # each resource's RAM + holder: the cards' 24 h history
     $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
   $usage = Read-KitUsageResult   # budget -Usage writes it
-  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples); settings = [pscustomobject]$settings
+  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
     changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ($apv."$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })" -or $apv."$($_.key)|") { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
             learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); changed = $_.changed; why = $_.why } } } catch { }) }
+  $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
+  $stats.gate = try { Get-KitGateStats $d.at @($d.resources) } catch { $null }
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 9)
   Write-KitAtomic $p (Format-KitSuperviseHtml $j)
@@ -469,6 +508,31 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $env:KIT_SUPERVISE_HTML = $p; try { Start-Process @sp | Out-Null } catch { Write-Warning "supervise.publish failed to start: $($_.Exception.Message)" } finally { Remove-Item Env:KIT_SUPERVISE_HTML -ErrorAction SilentlyContinue } }
   $p
   } catch { $w = [pscustomobject]@{ level = 'WATCH'; what = "supervise page failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Write-KitSuperviseHtml.' }; $d.flags = @($d.flags) + $w; if ($flags -is [Collections.IList]) { [void]$flags.Add($w) }; '' }   # $flags: the supervise verb's list (-Json, plain)
+}
+# a time series as lines, never bars (owner, 2026-11-13): $Points = @{ label; tip; x (the highlighted one) }; $Series = @{ vals; tone (a colour
+# var); style solid | dash | dot (told apart without colour); area; fmt = a value label; max (a shared scale) }, each on its own scale;
+# -Labels: values above the dots; $Avg = the first series' dotted reference line; one hover column per point (its tip); -Bare: the svg only
+function Format-KitLineChart($Points, $Series, [string]$Aria, [int]$Height = 96, $Avg = $null, [switch]$Labels, [switch]$Bare) {
+  $civ = [cultureinfo]::InvariantCulture; $ce = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $cn1 = { param($x) ([double]$x).ToString('0.##', $civ) }
+  $pts = @($Points); $n = $pts.Count; $ss = @($Series | Where-Object { $_ }); if (-not $n -or -not $ss.Count) { return '' }
+  $pad = if ($n -eq 1) { 50 } elseif ($Labels) { 7 } else { 2 }; $top = if ($Labels) { 34 } else { 8 }
+  $xOf = { param($i) if ($n -eq 1) { 50 } else { $pad + (100 - 2 * $pad) * $i / ($n - 1) } }
+  $yOf = { param($v, $mx) 4 + (96 - 4 - $top) * [math]::Max(0, [double]$v) / $mx }   # % from the bottom
+  $mxOf = @(foreach ($s in $ss) { if ($s.max) { [double]$s.max } else { [math]::Max(1e-9, [double](@(@($s.vals) | ForEach-Object { [double]$_ }) + 0 | Measure-Object -Maximum).Maximum) } })
+  $svg = @(for ($k = 0; $k -lt $ss.Count; $k++) { $s = $ss[$k]
+      $xy = @(for ($i = 0; $i -lt $n; $i++) { "$(& $cn1 (& $xOf $i)),$(& $cn1 (100 - (& $yOf @($s.vals)[$i] $mxOf[$k])))" }) -join ' '
+      if ($s.area) { "<polygon class='ar t-$($s.tone)' points='$(& $cn1 (& $xOf 0)),100 $xy $(& $cn1 (& $xOf ($n - 1))),100'/>" }
+      "<polyline class='ln t-$($s.tone) $($s.style)' points='$xy'/>" })
+  if ($null -ne $Avg -and [double]$Avg -gt 0) { $ay = & $cn1 (100 - (& $yOf $Avg $mxOf[0])); $svg += "<line class=avg x1=0 x2=100 y1=$ay y2=$ay />" }
+  $svgHtml = "<svg viewBox='0 0 100 100' preserveAspectRatio=none aria-hidden=true>$($svg -join '')</svg>"
+  if ($Bare) { return $svgHtml }
+  $labs = [Collections.Generic.List[string]]::new()   # value labels in their own layer: a hover column holds no text (narrow, it reads as squeezed)
+  $cols = @(for ($i = 0; $i -lt $n; $i++) { $p = $pts[$i]; $ys = @(for ($k = 0; $k -lt $ss.Count; $k++) { & $yOf @($ss[$k].vals)[$i] $mxOf[$k] })
+      $dots = @(for ($k = 0; $k -lt $ss.Count; $k++) { "<i class='dt t-$($ss[$k].tone) $($ss[$k].style)' style='bottom:$(& $cn1 $ys[$k])%'></i>" }) -join ''
+      if ($Labels) { $ls = @($ss | Where-Object fmt | ForEach-Object { & $_.fmt @($_.vals)[$i] }); if ($ls.Count) { $labs.Add("<b$(if ($p.x) { ' class=x' }) style='left:$(& $cn1 (& $xOf $i))%;bottom:$(& $cn1 ($ys | Measure-Object -Maximum).Maximum)%'>$(& $ce $ls[0])$(@($ls | Select-Object -Skip 1 | ForEach-Object { "<small>$(& $ce $_)</small>" }) -join '')</b>") } }
+      "<li$(if ($p.x) { ' class=x' }) style='left:$(& $cn1 (& $xOf $i))%' title='$(& $ce $p.tip)' aria-label='$(& $ce $p.tip)'>$dots</li>" })
+  $xl = @(for ($i = 0; $i -lt $n; $i++) { if ($pts[$i].label) { "<span$(if ($pts[$i].x) { ' class=x' }) style='left:$(& $cn1 (& $xOf $i))%'>$(& $ce $pts[$i].label)</span>" } })
+  "<figure class=lch style='--n:$n'><div class=lcp style='height:$($Height)px' role=img aria-label='$(& $ce $Aria)'>$svgHtml$(if ($labs.Count) { "<div class=lcl aria-hidden=true>$($labs -join '')</div>" })<ol>$($cols -join '')</ol></div>$(if ($xl.Count) { "<div class=lcx>$($xl -join '')</div>" })</figure>"
 }
 # pure (tests feed a sample); values HtmlEncoded; inline CSS / JS / SVG only: no request leaves the page
 function Format-KitSuperviseHtml($j) {
@@ -527,13 +591,9 @@ function Format-KitSuperviseHtml($j) {
   $info = @($flags | Where-Object level -eq 'INFO')
   $flagHtml = $(if ($nAct + $nWatch) { & $grid flags 340px @($flags | Where-Object level -in 'ACT', 'WATCH' | Sort-Object { $_.level -ne 'ACT' } | ForEach-Object { & $card $_ }) } else { '<p class=empty>No ACT or WATCH flags: all clear.</p>' }) +
     $(if ($info.Count) { & $grid info 280px @($info | ForEach-Object { "<li class=f>$(& $e $_.what)</li>" }) 0 ul })
-  # history: flags by level per sweep (stacked), oldest left
-  $hMax = [math]::Max(1, (@($hist | ForEach-Object { (& $hCount $_ 'ACT') + (& $hCount $_ 'WATCH') + [int]$_.fixed }) + 0 | Measure-Object -Maximum).Maximum)
-  $bw = 100 / [math]::Max(1, $hist.Count)
-  $rects = @(for ($i = 0; $i -lt $hist.Count; $i++) { $h = $hist[$i]; $y = 60; $x = & $n1 ($i * $bw + $bw * 0.15); $w = & $n1 ($bw * 0.7)
-    foreach ($seg in @(@('a', (& $hCount $h 'ACT')), @('w', (& $hCount $h 'WATCH')), @('x', [int]$h.fixed))) { if (-not $seg[1]) { continue }; $hh = 56 * $seg[1] / $hMax; $y -= $hh; "<rect class=$($seg[0]) x=$x y=$(& $n1 $y) width=$w height=$(& $n1 $hh) />" }
-    "<rect class=hit x=$(& $n1 ($i * $bw)) y=0 width=$(& $n1 $bw) height=60><title>$(& $e $(try { ([datetime]$h.at).ToString('HH:mm') } catch { $h.at })): $(& $hCount $h 'ACT') ACT, $(& $hCount $h 'WATCH') WATCH, $([int]$h.fixed) fixed</title></rect>" })
-  $histHtml = if ($hist.Count) { "<div class=hist><svg viewBox='0 0 100 60' preserveAspectRatio=none role=img aria-label='flags per sweep'>$($rects -join '')</svg><div class=ax><span>$(& $e $(try { ([datetime]$hist[0].at).ToString('HH:mm') } catch { '' }))</span><span><i class='lg act'>ACT</i> <i class='lg watch'>WATCH</i> <i class='lg sage'>FIXED</i></span><span>$(& $e $(try { ([datetime]$hist[-1].at).ToString('HH:mm') } catch { '' }))</span></div></div>" } else { '<p class=empty>No sweeps yet.</p>' }
+  # history: flags per sweep as lines, oldest left (ACT solid, WATCH dashed, FIXED dotted: told apart without colour); the header mini
+  $hMax = [math]::Max(1, (@($hist | ForEach-Object { [math]::Max([math]::Max((& $hCount $_ 'ACT'), (& $hCount $_ 'WATCH')), [int]$_.fixed) }) + 0 | Measure-Object -Maximum).Maximum)
+  $hSeries = @(@{ vals = @($hist | ForEach-Object { & $hCount $_ 'ACT' }); tone = 'act'; style = 'solid'; max = $hMax }, @{ vals = @($hist | ForEach-Object { & $hCount $_ 'WATCH' }); tone = 'watch'; style = 'dash'; max = $hMax }, @{ vals = @($hist | ForEach-Object { [int]$_.fixed }); tone = 'sage'; style = 'dot'; max = $hMax })
   # live agents by run, what each does now; finished ones folded (a run's steps, tokens and cost: Runs; the day's count: Agents spawned)
   # the leases an agent holds, on its row: a resource whose holder list names the agent's id (the name's first word)
   $leaseOf = { param($nm) $aid = ("$nm" -split ' ')[0]; if (-not $aid -or "$nm" -notmatch ' \(') { return '' }; $hs = @($j.resources | Where-Object { $_ -and "$($_.by)" -match "(^|[\s,;:])$([regex]::Escape($aid))([\s,;]|$)" })
@@ -576,10 +636,23 @@ function Format-KitSuperviseHtml($j) {
   # QA seats as slots (filled = taken), up to 24; the numbers stay in the tile
   $dots = { param($u, $m) $u = [int]$u; $m = [math]::Min(24, [int]$m); if ($m -le 0) { return '' }; "<div class=dots role=img aria-label='$u of $m QA seats taken'>$(@(1..$m | ForEach-Object { "<i$(if ($_ -le $u) { ' class=on' })></i>" }) -join '')</div>" }
   $l24 = @($lv | Where-Object { $_.at -and ($at - [datetime]$_.at).TotalHours -le 24 }); $memPk = & $agg { $_.mem } max; $usedGB = if ($tot -and $null -ne $memPct) { $tot * [double]$memPct / 100 }
-  $machineHtml = & $grid stats 230px @(
+  # build gate: a row per kind from its history (running, queued, today, waits, RAM promised, a 24 h busy strip); RAM capacity dots; QA seats, phone lanes, emulators
+  $gs = $st.gate; $gateOld = 
+(& $nowCard 'Build gate · QA seats' "$(& $fmt $nw.gr)<small> running · </small>$(& $fmt $nw.gq)<small> queued</small>$(& $trend $nw.gq $pv.gq -1)<small> · seats </small>$(& $fmt $nw.seats)<small> / $(& $fmt $nw.seatsMax)</small>" "longest wait $(& $fmt $nw.gw) min" "7 days peak wait $(& $agg { $_.gw } max) min · seats $(& $agg { $_.seats } max)" $(if ($nw.gw -ge 30) { 'hot' } elseif ($nw.gq -ge 6) { 'warn' }) "$(& $dots $nw.seats $nw.seatsMax)$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queue, 24 h' 'peak' 0)")
+  $gateCard = if (-not $gs) { $gateOld } else {
+    $fl = [math]::Max(0, [double]$j.mem.AvailGB - [double]$st.keepFree); $gb = [math]::Min(24, [int][math]::Ceiling([double]$gs.ram + $fl))   # 1 dot = 1 GB: promised to running builds, then free above the floor
+    $ramDots = if ($gb -gt 0) { "<div class=dots role=img aria-label='RAM for builds: $(& $n1 $gs.ram) GB promised, $(& $n1 $fl) GB free above the floor'>$(@(1..$gb | ForEach-Object { "<i$(if ($_ -le [math]::Round([double]$gs.ram)) { ' class=on' })></i>" }) -join '')</div><div class=s>RAM: $(& $n1 $gs.ram) GB promised · $(& $n1 $fl) GB free above the $(& $n1 $st.keepFree) GB floor</div>" }
+    $kRows = @($gs.rows | Where-Object { $_ } | ForEach-Object { $w = "$($_.running) running · $($_.queued) queued · $($_.done) today · wait avg $(& $n1 $_.waitAvg) / peak $(& $n1 $_.waitMax) min$(if ([double]$_.ram) { " · $(& $n1 $_.ram) GB now" } elseif ([double]$_.peakGB) { " · up to $(& $n1 $_.peakGB) GB" })"
+        "<div class=gk title='$(& $e "$($_.name): $w")'><span class=gn>$(& $e $_.name)$(if ($_.running) { " <b>$($_.running)</b>" })</span><span class=gw>$(& $e $w)</span><svg class=gs viewBox='0 0 100 10' preserveAspectRatio=none role=img aria-label='$(& $e $_.name) busy, last 24 h'>$(@($_.segs | ForEach-Object { "<rect x=$(& $n1 $_[0]) y=1 width=$(& $n1 $_[1]) height=8 />" }) -join '')</svg></div>" })
+    "<div class='st $(if ($gs.waitMax -ge 30) { 'hot' } elseif ($gs.queued -ge 6) { 'warn' })' data-fit><div class=k>Build gate · QA seats</div><div class=v>$(& $fmt $gs.running)<small> running · </small>$(& $fmt $gs.queued)<small> queued · </small>$(& $fmt $gs.today)<small> builds today · longest wait </small>$(& $n1 $gs.waitMax)<small> min</small></div>" +
+    "$ramDots$(if ($kRows.Count) { "<div class=gks>$($kRows -join '')</div><div class=ax><span>24 h ago</span><span>busy per kind</span><span>now</span></div>" } else { '<div class=s>no gated build in 24 h</div>' })" +
+    "$(& $dots $nw.seats $nw.seatsMax)<div class=s>QA seats $(& $fmt $nw.seats) / $(& $fmt $nw.seatsMax)$(if ($gs.lanes) { " · phone lanes $($gs.leased) / $($gs.lanes) leased · emulators $($gs.emulators) running" })</div></div>" }
+  # Memory over Build gate in one column beside Disks: no blank under the shorter card (owner, 2026-11-13)
+  $machCards = @(
     (& $nowCard 'Memory' "$(& $fmt $memPct)<small>% used</small>$(& $trend $nw.mem $pv.mem -1)" "$(& $fmt $memFree) GB free · floor $(& $fmt $st.keepFree) GB" "" $(if ($memPct -ge 90) { 'hot' } elseif ($memPct -ge 75) { 'warn' }) "$(if ($usedGB) { & $meter $usedGB $tot "$(& $n1 $usedGB) of $(& $n1 $tot) GB$(if ($memPk -ne '—') { " · tick: 7-day peak $memPk%" })" 'slate' $(if ($memPk -ne '—') { $tot * [double]$memPk / 100 }) })$(& $spark @($l24 | ForEach-Object mem) 'slate' 'used %, 24 h' 'peak' $null '%')"),
     "<div class='st $(if ($dkRows.tone -contains 'hot') { 'hot' } elseif (@($dkRows | Where-Object tone).Count) { 'warn' })' data-fit><div class=k>Disks$(if ($lv.Count) { '<small> · tick = 7-day peak use</small>' })</div>$(if ($dkRows.Count) { & $grid dks 190px @($dkRows.h) } else { '<div class=v>—</div><div class=s>no sample</div>' })</div>",
-    (& $nowCard 'Build gate · QA seats' "$(& $fmt $nw.gr)<small> running · </small>$(& $fmt $nw.gq)<small> queued</small>$(& $trend $nw.gq $pv.gq -1)<small> · seats </small>$(& $fmt $nw.seats)<small> / $(& $fmt $nw.seatsMax)</small>" "longest wait $(& $fmt $nw.gw) min" "7 days peak wait $(& $agg { $_.gw } max) min · seats $(& $agg { $_.seats } max)" $(if ($nw.gw -ge 30) { 'hot' } elseif ($nw.gq -ge 6) { 'warn' }) "$(& $dots $nw.seats $nw.seatsMax)$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queue, 24 h' 'peak' 0)")) 3
+    $gateCard)
+  $machineHtml = & $grid 'stats mach' 300px @("<div class=mcol>$($machCards[0])$($machCards[2])</div>", $machCards[1]) 2
   # Kit internals (folded): workflow steps now, branches, sweep time, the day counts from the kit's logs
   $nst = @($nw.stale | Where-Object { $_ })
   $kitTiles = & $grid stats 170px @($(if ($nw) { & $nowCard 'Workflow steps now' "$(& $fmt $nw.run)<small> running</small>$(& $trend $nw.run $pv.run)" "$(if ($null -ne $nw.total) { "$($nw.done) of $($nw.total) done · $(@($nw.wfs) -join ', ')" } else { 'no workflow running' })$(if ($nst.Count) { " · $($nst.Count) stale: $($nst -join ', ')" })" "7 days peak $(& $agg { $_.run } max) running" $(if ($nst.Count) { 'warn' }) }) +
@@ -605,7 +678,8 @@ function Format-KitSuperviseHtml($j) {
   $chg = @($st.changes | Where-Object { $_ }); [array]::Reverse($chg); $prm = @($st.params | Where-Object { $_ }); $hm = { param($x) if ($x) { try { ([datetime]$x).ToString('MM-dd HH:mm') } catch { "$x" } } else { '' } }   # '' keeps the cell: an empty result drops it from the row
   $setHtml = (& $fold 'changes' 'Recent changes' $chg.Count ('<div class=fx>' + ((& $table 'When', 'Key', 'Context', 'From', 'To', 'Why' @($chg | ForEach-Object { , @((& $hm $_.at), $_.key, $_.ctx, $_.from, $_.to, $_.why) })) -replace '<tr class=f>', '<tr class="f hl">') + '</div>') -cls sub) +
     (& $fold 'params' 'Parameters' $prm.Count ('<div class=fx>' + (& $table 'Key', 'Context', 'Value', '~Source', '~Learned', '~Changed', 'Why' @($prm | ForEach-Object { , @($_.key, $_.ctx, $_.value, $_.source, $_.learned, (& $hm $_.changed), $_.why) })) + '</div>') -cls sub) +
-    (& $fold 'settings' 'Settings (supervise.*)' $setRows.Count (& $grid kv 240px @($setRows | ForEach-Object { & $item $_[0] "$(if ($null -eq $_[1]) { '' } elseif ($_[1] -is [string] -or $_[1] -is [ValueType]) { $_[1] } else { $_[1] | ConvertTo-Json -Compress -Depth 4 })" })) -cls sub)
+    (& $fold 'settings' 'Settings (supervise.*)' $setRows.Count (& $grid kv 240px @($setRows | ForEach-Object { $sv = $_[1]; $val = if ($null -ne $sv -and $sv.PSObject.Properties.Name -contains 'source') { $sv.value } else { $sv }   # value · source (default / local / learned); a local override names the default
+        & $item $_[0] "$(if ($null -eq $val) { '' } elseif ($val -is [string] -or $val -is [ValueType]) { $val } else { $val | ConvertTo-Json -Compress -Depth 4 })$(if ($sv.source) { " · $($sv.source)$(if ($null -ne $sv.default -and "$($sv.default)" -ne '') { " (override; default $($sv.default))" })" })" })) -cls sub)
   $css = Get-KitSupervisePageCss
   $fav = if ($mark) { "<link rel=icon href='data:image/svg+xml,$([Uri]::EscapeDataString($mark))'>" }
   $js = "(function(){var d=document,L=localStorage,S=sessionStorage,r=d.documentElement,a=d.getElementById('age'),t=new Date(a.dataset.at),n=+a.dataset.next||15,nx=d.getElementById('nx'),same=S.getItem('kc-at')==a.dataset.at;S.setItem('kc-at',a.dataset.at);" +   # same: a reload brought no new sweep
@@ -635,7 +709,7 @@ function Format-KitSuperviseHtml($j) {
   $nRes = @($j.resources | Where-Object { $_ }).Count; $nSh = @($j.shells | Where-Object { $_ }).Count
   # kit internals: kit tuning and history only (owner, 2026-11-13: resources, leases, agents and usage are operational, never here)
   $intHtml = (& $fold 'activity' 'Kit activity' $null $kitTiles -cls sub) + $UP.kitRuns + $setHtml
-  $histMini = if ($hist.Count -ge 2) { "<svg class=hmini viewBox='0 0 100 60' preserveAspectRatio=none role=img aria-label='flags per sweep, last $($hist.Count) sweeps'><title>flags per sweep, last $($hist.Count) sweeps (ACT, WATCH, FIXED)</title>$($rects -join '')</svg>" }
+  $histMini = if ($hist.Count -ge 2) { "<span class=hmini role=img aria-label='flags per sweep, last $($hist.Count) sweeps' title='flags per sweep, last $($hist.Count) sweeps: ACT solid, WATCH dashed, FIXED dotted'>$(Format-KitLineChart @($hist) $hSeries '' -Bare)</span>" }
   # open by default: flags, agents, runs, machine and resources, usage; top steps and kit internals folded (the page remembers each)
   $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $nRes "<div class=sxb>$resHtml</div>" -Open -cls sub) + (& $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub)
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open -extra "<span class='chip lv ACT'>$nAct ACT</span><span class='chip lv WATCH'>$nWatch WATCH</span><span class='chip lv FIX'>$nFix FIXED</span>$histMini") + (& $section 'agents' 'Agents' $(if ($byState.Count) { $byState.t -join ' · ' } else { 0 }) $agentHtml -Open -extra $agBar) +
@@ -665,7 +739,7 @@ function Get-KitSupervisePageCss {
   '.chip{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.03em;background:var(--sf2);color:var(--mt);white-space:nowrap}.chip::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.85}' +
   '.chip.ok,.s-act{color:var(--sage2);background:color-mix(in srgb,var(--sage) 17%,transparent)}.chip.warn,.s-oth,.lv.WATCH{color:color-mix(in srgb,var(--watch) 55%,var(--fg));background:color-mix(in srgb,var(--watch) 16%,transparent)}.chip.bad,.s-stuck,.lv.ACT{color:color-mix(in srgb,var(--act) 55%,var(--fg));background:color-mix(in srgb,var(--act) 15%,transparent)}.s-fin{color:color-mix(in srgb,var(--slate) 55%,var(--fg));background:color-mix(in srgb,var(--slate) 14%,transparent)}' +
   # compact (owner 2026-11-13): 8-12 px gaps, every card as tall as its content (grids align to the top, never stretch; ui-check fails a [data-fit] box with 24+ px blank below its content)
-  '.wrap{max-width:1680px;margin:0 auto;padding:10px 20px 24px}.cg{display:grid;gap:var(--cgap,8px);align-items:start;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(var(--cmin,200px),calc((100% - (var(--cmax,99) - 1) * var(--cgap,8px)) / var(--cmax,99)))),1fr))}' +
+  '.wrap{max-width:1680px;margin:0 auto;padding:10px 20px 24px}.cg{display:flex;flex-wrap:wrap;gap:var(--cgap,8px);align-items:flex-start}.cg>*{flex:1 1 max(min(100%,var(--cmin,200px)),calc((100% - (var(--cmax,99) - 1) * var(--cgap,8px)) / var(--cmax,99)));min-width:0;box-sizing:border-box}' +
   'details.sec{background:var(--sf);border:1px solid var(--ln);border-radius:10px;box-shadow:var(--sh);margin-top:10px}.st .k{font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.07em;font-weight:600}' +
   '.spark{display:block;width:100%;height:22px;margin-top:4px}.spark .l{fill:none;stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round}.spark .a{fill:currentColor;opacity:.12}' +
   '.sage{color:color-mix(in srgb,var(--sage) 55%,var(--fg))}.act{color:color-mix(in srgb,var(--act) 55%,var(--fg))}.watch{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.slate{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}' +
@@ -673,13 +747,13 @@ function Get-KitSupervisePageCss {
   '.fx table{table-layout:fixed;min-width:0}.fx th:last-child:nth-child(n+6){width:30%}tr.hl td{background:color-mix(in srgb,var(--sage) 12%,transparent)}.sh th:nth-child(1){width:64px}.sh th:is(:nth-child(3),:nth-child(4)){width:76px}' +   # fixed layout, wrapping cells: no horizontal scroll at 1366 px
   'summary{list-style:none;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:6px 12px;min-height:36px;user-select:none}summary::-webkit-details-marker{display:none}' +
   'summary h2{margin:0;font-size:12px;font-weight:650;text-transform:uppercase;letter-spacing:.07em}summary::after{content:"";margin-left:auto;width:7px;height:7px;border-right:1.5px solid var(--mt);border-bottom:1.5px solid var(--mt);transform:rotate(45deg);transition:transform .15s}details:not([open])>summary::after{transform:rotate(-45deg)}' +
-  '.cnt{font-size:11.5px;color:var(--mt);font-variant-numeric:tabular-nums}.bd{padding:0 12px 10px}details.sub{border:1px solid var(--ln);border-radius:8px;margin-top:8px;align-self:start}details.sub>summary{min-height:30px;padding:4px 10px}summary :is(h3,h4){margin:0}details.st.sub{padding:0}details.st.sub>.bd{padding:0 10px 8px}details.none>summary{cursor:default}details.none>summary::after{display:none}summary:focus-visible{outline:2px solid var(--sage);outline-offset:-2px;border-radius:8px}.jl{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:12px}.jl a{color:var(--mt);text-decoration:none}.jl a:hover,.jl a:focus-visible{color:var(--fg)}.lv.FIX{color:color-mix(in srgb,var(--sage) 55%,var(--fg));background:color-mix(in srgb,var(--sage) 15%,transparent)}summary .chip.lv{margin-left:2px}.tw:not(.all) tr.more{display:none}.sa{margin:6px 0 2px;font:inherit;font-size:12px;background:var(--sf2);color:var(--fg);border:1px solid var(--ln);border-radius:6px;padding:2px 10px;cursor:pointer}.bar.sb3{display:inline-flex;gap:1px}.bar.sb3 i{border-radius:0}.bar i.mt{background:var(--mt)}.tm{color:var(--mt)}.dots{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px}.dots i{width:8px;height:8px;border-radius:50%;border:1px solid var(--mt)}.dots i.on{background:var(--slate);border-color:var(--slate)}:is(td[data-k=Key],td[data-k=Context],td[data-k=Dir],td[data-k=Command]){font-family:ui-monospace,Consolas,monospace;font-size:11.5px}.hmini{width:84px;height:18px;flex:none}.hmini .hit{fill:transparent}.hmini .a{fill:var(--act)}.hmini .w{fill:var(--watch)}.hmini .x{fill:var(--sage)}.lc{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}.chip.ls{font-size:10.5px;padding:0 6px;background:var(--sf2);color:var(--mt)}.ci.orphan{border-color:color-mix(in srgb,var(--watch) 55%,var(--ln));background:color-mix(in srgb,var(--watch) 9%,var(--sf))}.chip.k-build{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}.chip.k-test{color:color-mix(in srgb,var(--plum) 55%,var(--fg))}.chip.k-kit{color:var(--mt)}' +
+  '.cnt{font-size:11.5px;color:var(--mt);font-variant-numeric:tabular-nums}.bd{padding:0 12px 10px}details.sub{border:1px solid var(--ln);border-radius:8px;margin-top:8px;align-self:start}details.sub>summary{min-height:30px;padding:4px 10px}summary :is(h3,h4){margin:0}details.st.sub{padding:0}details.st.sub>.bd{padding:0 10px 8px}details.none>summary{cursor:default}details.none>summary::after{display:none}summary:focus-visible{outline:2px solid var(--sage);outline-offset:-2px;border-radius:8px}.jl{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:12px}.jl a{color:var(--mt);text-decoration:none}.jl a:hover,.jl a:focus-visible{color:var(--fg)}.lv.FIX{color:color-mix(in srgb,var(--sage) 55%,var(--fg));background:color-mix(in srgb,var(--sage) 15%,transparent)}summary .chip.lv{margin-left:2px}.tw:not(.all) tr.more{display:none}.sa{margin:6px 0 2px;font:inherit;font-size:12px;background:var(--sf2);color:var(--fg);border:1px solid var(--ln);border-radius:6px;padding:2px 10px;cursor:pointer}.bar.sb3{display:inline-flex;gap:1px}.bar.sb3 i{border-radius:0}.bar i.mt{background:var(--mt)}.tm{color:var(--mt)}.dots{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px}.dots i{width:8px;height:8px;border-radius:50%;border:1px solid var(--mt)}.dots i.on{background:var(--slate);border-color:var(--slate)}:is(td[data-k=Key],td[data-k=Context],td[data-k=Dir],td[data-k=Command]){font-family:ui-monospace,Consolas,monospace;font-size:11.5px}.hmini{display:inline-block;width:84px;height:18px;flex:none}.hmini svg{display:block;width:100%;height:100%;overflow:visible}.lc{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}.chip.ls{font-size:10.5px;padding:0 6px;background:var(--sf2);color:var(--mt)}.ci.orphan{border-color:color-mix(in srgb,var(--watch) 55%,var(--ln));background:color-mix(in srgb,var(--watch) 9%,var(--sf))}.chip.k-build{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}.chip.k-test{color:color-mix(in srgb,var(--plum) 55%,var(--fg))}.chip.k-kit{color:var(--mt)}' +
   '.flag{border:1px solid var(--ln);border-left:3px solid var(--watch);border-radius:8px;padding:6px 10px}.flag.ACT{border-left-color:var(--act);background:color-mix(in srgb,var(--act) 5%,var(--sf))}' +
   '.flag .h{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mt)}.flag .w{margin:3px 0 2px;word-break:break-word}.flag .n{font-size:12.5px;color:var(--mt);word-break:break-word}.flag .n b{color:var(--sage2);margin-right:4px}.dot{opacity:.5}' +
   '.info{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px;color:var(--mt)}.info li{padding:2px 0 2px 14px;position:relative;word-break:break-word}.info li::before{content:"";position:absolute;left:2px;top:9px;width:5px;height:5px;border-radius:50%;background:var(--sage)}' +
   '.empty{margin:0;padding:8px;text-align:center;color:var(--mt);border:1px dashed var(--ln);border-radius:8px;font-size:12.5px}' +
   '.lg{font-style:normal;font-size:11px;background:none}.lg::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;background:currentColor;margin-right:4px;vertical-align:0}' +
-  '.hist svg{display:block;width:100%;height:64px}.hist .a{fill:var(--act)}.hist .w{fill:var(--watch)}.hist .x{fill:var(--sage)}.hist .hit{fill:transparent}.hist .hit:hover{fill:color-mix(in srgb,var(--fg) 6%,transparent)}.ax{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--mt);margin-top:4px}' +
+  '.ax{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--mt);margin-top:4px}' +
   '.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:12.5px}th{text-align:left;font-weight:600;font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.06em;padding:4px 6px;border-bottom:1px solid var(--ln);overflow-wrap:break-word}' +   # headers break between words only: their longest word sets the column's min width
   'td{padding:3px 6px;border-bottom:1px solid var(--ln);vertical-align:top;overflow-wrap:anywhere}tr:last-child td{border-bottom:0}tr.f:hover td{background:color-mix(in srgb,var(--sf2) 55%,transparent)}' +
   'tr.gh th{background:var(--sf2);color:var(--fg);text-transform:none;letter-spacing:0;white-space:normal;font-size:12.5px;padding:4px 6px;border-radius:0}.gn0{font-weight:650}' +
@@ -705,16 +779,22 @@ function Get-KitSupervisePageCss {
   'h4{font-size:11.5px;font-weight:600;color:var(--mt);margin:0 0 4px}.sy{max-height:clamp(200px,42dvh,440px);overflow:auto}.sy>.tw{overflow:visible}.sy th{position:sticky;top:0;z-index:1;background:var(--sf)}.sy td{white-space:nowrap}.sy td:first-child{white-space:normal}td{font-variant-numeric:tabular-nums}' +
   '.ru{border:1px solid var(--ln);border-radius:8px;margin:0 0 4px}.ru>summary{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:4px 10px;min-height:32px;background:var(--sf2);border-radius:8px;font-size:12.5px;cursor:pointer}.ru[open]>summary{border-radius:8px 8px 0 0}.ru>summary .bar{margin:0}.ru>.sy,.ru>.tw{padding:0 4px 4px}' +
   # usage cards: the chart next to the outcome bar stacked on the model table (short under short), the role table full width; none stretches
-  '.ug{display:grid;gap:8px;margin-top:8px;align-items:start;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr))}.ucol{display:grid;gap:8px;min-width:0}.ur{grid-column:1/-1}.uc{padding:6px 10px;min-width:0}.ru>summary .bar{background:var(--sf)}' +
-  '.dch{display:grid;gap:4px;list-style:none;margin:0;padding:0;align-items:end}' +
-  '.dc{display:flex;flex-direction:column;align-items:center;gap:1px;min-width:0;font-size:10.5px;color:var(--mt);text-align:center;font-variant-numeric:tabular-nums;border-radius:6px;padding:2px 0}.dc:hover{background:color-mix(in srgb,var(--fg) 5%,transparent)}' +
-  '.db{display:flex;align-items:flex-end;justify-content:center;gap:2px;height:72px;width:100%;border-bottom:1px solid var(--ln);margin-bottom:3px}.db i{display:block;width:34%;max-width:16px;height:var(--p);min-height:1px;border-radius:3px 3px 0 0;background:var(--slate)}.db i.bc{background:var(--plum)}' +
-  '.dc.x .bt{background:var(--sage)}.dc.x span{color:var(--fg);font-weight:650}.dc b{font-weight:600;color:var(--fg);white-space:nowrap}.dc b.cc{font-weight:500;color:var(--mt)}.lg.sl{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}.lg.pl{color:color-mix(in srgb,var(--plum) 55%,var(--fg))}' +
-  '@media(max-width:640px){.dch{grid-template-columns:minmax(0,1fr)!important;gap:2px}.dc{display:grid;grid-template-columns:44px minmax(0,1fr) 52px 40px;gap:6px;text-align:left;padding:1px 4px}.dc span{order:-1}.dc b{text-align:right}' +   # phone: one row per day, horizontal bars
-  '.db{flex-direction:column;align-items:stretch;height:auto;border:0;margin:0;gap:2px}.db i{width:var(--p);max-width:none;height:5px;min-width:1px;min-height:0;border-radius:0 3px 3px 0}}' +
+  '.ug{display:grid;gap:8px;margin-top:8px;align-items:start;grid-template-columns:minmax(0,1fr)}.ucol{display:grid;gap:8px;min-width:0}.uc{padding:6px 10px;min-width:0}.ru>summary .bar{background:var(--sf)}' +
+  '@media(min-width:1100px){.ug{grid-template-columns:repeat(2,minmax(0,1fr))}.ur{grid-column:1/-1}}@media(min-width:1600px){.ug{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,1.25fr)}.ur{grid-column:auto}}' +   # no empty column: Per role spans the row or fills the third
+  '.lch{margin:4px 0 0}.lcp{position:relative}.lcp svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}.lcp ol{list-style:none;margin:0;padding:0;position:absolute;inset:0}' +
+  '.lch .ar,.lchm .ar{stroke:none;fill:var(--c);opacity:.16}.lch .ln,.lchm .ln{fill:none;stroke:var(--c);stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}.ln.dash{stroke-width:1.4;stroke-dasharray:5 3}.ln.dot{stroke-width:1.6;stroke-dasharray:1 3;opacity:1}.avg{stroke:var(--mt);stroke-width:1;stroke-dasharray:2 4;vector-effect:non-scaling-stroke}' +
+  '.t-sage{--c:var(--sage)}.t-slate{--c:var(--slate)}.t-act{--c:var(--act)}.t-watch{--c:var(--watch)}.t-plum{--c:var(--plum)}' +
+  '.lcp li{position:absolute;top:0;bottom:0;width:calc(100% / var(--n));transform:translateX(-50%);border-radius:6px}.lcp li:hover{background:color-mix(in srgb,var(--fg) 5%,transparent)}' +
+  '.dt{position:absolute;left:50%;width:7px;height:7px;margin:0 0 -3.5px -3.5px;border-radius:50%;background:var(--c);box-sizing:border-box}.dt.dash,.dt.dot{background:var(--sf);border:1.5px solid var(--c)}.lcp li.x .dt{width:11px;height:11px;margin:0 0 -5.5px -5.5px;box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 28%,transparent)}' +
+  '.lcl{position:absolute;inset:0;pointer-events:none}.lcl b{position:absolute;transform:translate(-50%,-9px);display:flex;flex-direction:column;align-items:center;font-size:10.5px;font-weight:600;line-height:1.15;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--fg)}.lcl b small{font-size:10px;font-weight:500;color:var(--mt)}.lcl b.x{color:var(--sage2)}' +
+  '.lcx{position:relative;height:16px;margin-top:3px;border-top:1px solid var(--ln);font-size:10.5px;color:var(--mt);font-variant-numeric:tabular-nums}.lcx span{position:absolute;top:2px;transform:translateX(-50%);white-space:nowrap}.lcx span.x{color:var(--fg);font-weight:650}' +
+  '.lk{font-style:normal;font-size:11px}.lk::before{content:"";display:inline-block;width:16px;height:0;border-top:2px solid var(--c);margin-right:5px;vertical-align:3px}.lk.dash::before{border-top-style:dashed}.lk.avg::before{border-top:1px dotted var(--mt)}' +
+  '.mcol{display:grid;gap:var(--cgap,8px);min-width:0}' +
+  '.gks{display:grid;gap:3px;margin-top:6px}.gk{display:grid;grid-template-columns:minmax(80px,auto) minmax(0,1fr);column-gap:8px;align-items:center;font-size:11.5px}.gn{font-weight:600;white-space:nowrap}.gn b{color:var(--sage2)}.gw{color:var(--mt);font-size:11px;text-align:right;overflow-wrap:anywhere}' +
+  '.gk .gs{grid-column:1/-1;display:block;width:100%;height:8px;background:var(--sf2);border-radius:3px}.gk .gs rect{fill:var(--slate)}' +
   '.uc .sy{max-height:clamp(200px,36dvh,360px)}.uc .tw>table:not(.ag),.ut .tw>table:not(.ag){min-width:0}.uc :is(th,td){padding:3px 4px}.uc td{overflow-wrap:normal}.ut td:first-child,.us td:first-child,.ur td:first-child{overflow-wrap:anywhere}:is(.uc,.us) .sy td,.us td{white-space:normal}.ua td:first-child{white-space:nowrap}' +
   '@media(min-width:641px){.ua :is(th,td):not(:first-child),.ut :is(th,td):nth-child(n+4),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.ru :is(th,td):nth-child(n+4):nth-child(-n+7),:is(.ur,.um) :is(th,td):not(:first-child){text-align:right}}' +
-  '.tw>table:not(.ag){min-width:520px}@media(max-width:640px){.wrap{padding:8px}header.top{padding:6px 10px;position:static}.hs{display:none}.tb{width:100%}input[type=search]{flex:1;width:auto}' +
+  '.tw>table:not(.ag){min-width:520px}@media(max-width:640px){.ag .tm{display:none}.ag .ago{white-space:nowrap}.wrap{padding:8px}header.top{padding:6px 10px;position:static}.hs{display:none}.tb{width:100%}input[type=search]{flex:1;width:auto}' +
   # phone: a table row = a card, two fields a line (label above value), low-value columns ('~') hidden
   '.tw>table:not(.ag){min-width:0}.tw>table:not(.ag) tr:first-child{display:none}.tw>table:not(.ag),.tw>table:not(.ag) :is(tbody,tr,td){display:block;width:auto}.tw>table:not(.ag) tr{border-bottom:1px solid var(--ln);padding:4px 0}' +
   '.tw>table:not(.ag) tr{display:flex;flex-wrap:wrap}.tw>table:not(.ag) td{border:0;padding:1px 8px;display:block;flex:1 1 40%;min-width:0;text-align:left!important}.tw>table:not(.ag) td::before{content:attr(data-k);display:block;color:var(--mt);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}.tw .lo{display:none!important}}'
@@ -914,13 +994,14 @@ function Format-KitUsageHtml($U) {
       else { & $card 'Tokens per MR reported by workflows' "$(if ($merged) { & $tk ($wfTok / $merged) } else { '—' })" "$merged MR(s) reported merged by workflows (no git-host login) · $items item(s): $(if ($items) { & $tk ($wfTok / $items) } else { '—' }) per item" 'workflow runs' }),
     (& $card 'Review + fix share' "$(if ($wfTok) { & $n1 (& $pct $loop $wfTok) } else { '—' })<small>%</small>" "of the workflow tokens" '' $(if ($wfTok -and $loop / $wfTok -gt 0.5) { 'warn' }))) 4
   $ocCard = & $fold 'u-outcome' 'Workflow steps by outcome' ([int]$ocAll) $ocHtml -Open -tag h4 -cls "sub st uc $(if ($rt.stuck -or $rt.fail) { 'warn' })"
-  # 7 days: a labelled column per day (0 days too), tokens and est. cost side by side, today highlighted; the 7-day total once, in the title
-  $mx = [math]::Max(1.0, [double](@($dy | ForEach-Object { [double]$_.tok }) + 0 | Measure-Object -Maximum).Maximum); $mc = [math]::Max(0.01, [double](@($dy | ForEach-Object { [double]$_.cost }) + 0 | Measure-Object -Maximum).Maximum)   # 1.0: an int 1 picks Max(int, int)
-  $cols = @(for ($i = 0; $i -lt $dy.Count; $i++) { $d0 = $dy[$i]; $isToday = $i -eq $dy.Count - 1
-    $tip = "$($d0.day)$(if ($isToday) { ' (today)' }): $(& $tk $d0.tok) tokens · est. $(& $usd $d0.cost) · $($d0.runs) run(s) · $($d0.merged) MR(s) merged"
-    "<li class='dc$(if ($isToday) { ' x' })' title='$(& $e $tip)' aria-label='$(& $e $tip)'><div class=db aria-hidden=true><i class=bt style='--p:$(& $n1 (100 * [double]$d0.tok / $mx))%'></i><i class=bc style='--p:$(& $n1 (100 * [double]$d0.cost / $mc))%'></i></div>" +
-    "<b>$(if ($isToday) { '&#160;' } else { & $tk $d0.tok })</b><b class=cc>$(if ($isToday) { '&#160;' } elseif ($null -eq $d0.cost) { '—' } else { '$' + [math]::Round([double]$d0.cost) })</b><span>$(& $e $(if ($isToday) { 'today' } else { "$($d0.day)".Substring(5) }))</span></li>" })   # today's values: the tiles
-  $chart = & $fold 'u-days' 'Per day' "$(& $tk (& $sum 'tok')) tokens · $(& $usd (& $sum 'cost')) in 7 days" -Open -tag h4 -cls 'sub st uc' -inner "<ol class=dch style='grid-template-columns:repeat($([math]::Max(1, $dy.Count)),minmax(0,1fr))' aria-label='tokens and est. cost per day, $($dy.Count) days'>$($cols -join '')</ol><div class=ax><span><i class='lg sl'>tokens</i> <i class='lg pl'>est. cost</i></span></div>"
+  # 7 days as lines (owner: no bar charts): est. cost = the solid filled line (left scale), tokens = the dashed line (right scale), a value
+  # label per dot, today highlighted, the dotted 7-day average; the 7-day total once, in the title
+  $dpts = @(for ($i = 0; $i -lt $dy.Count; $i++) { $d0 = $dy[$i]; $isToday = $i -eq $dy.Count - 1
+      @{ label = $(if ($isToday) { 'today' } else { "$($d0.day)".Substring(5) }); x = $isToday; tip = "$($d0.day)$(if ($isToday) { ' (today)' }): $(& $tk $d0.tok) tokens · est. $(& $usd $d0.cost) · $($d0.runs) run(s) · $($d0.merged) MR(s) merged" } })
+  $cAvg = & $avg 'cost'; $cMax = [double](@($dy | ForEach-Object { [double]$_.cost }) + 0 | Measure-Object -Maximum).Maximum; $tMax = [double](@($dy | ForEach-Object { [double]$_.tok }) + 0 | Measure-Object -Maximum).Maximum
+  $lines = Format-KitLineChart $dpts @(@{ vals = @($dy | ForEach-Object { if ($null -eq $_.cost) { $null } else { [double]$_.cost } }); tone = 'sage'; style = 'solid'; area = $true; fmt = { param($v) if ($null -eq $v) { '—' } else { '$' + [math]::Round([double]$v) } } },
+    @{ vals = @($dy | ForEach-Object { [double]$_.tok }); tone = 'slate'; style = 'dash'; fmt = { param($v) & $tk $v } }) "est. cost and tokens per day, $($dy.Count) days" 104 $cAvg -Labels
+  $chart = & $fold 'u-days' 'Per day' "$(& $tk (& $sum 'tok')) tokens · $(& $usd (& $sum 'cost')) in 7 days" -Open -tag h4 -cls 'sub st uc' -inner "$lines<div class=ax><span><i class='lk t-sage solid'>est. cost (left, 0-$(& $usd $cMax))</i> <i class='lk t-slate dash'>tokens (right, 0-$(& $tk $tMax))</i></span>$(if ($cAvg) { "<span><i class='lk avg'>7-day avg $(& $usd $cAvg)</i></span>" })</div>"
   # role and model: one table each, the share as an inline bar (exact values in the cells, the bar for the comparison)
   $roles = @($U.byRole | Where-Object { $_ } | Sort-Object { -[double]$_.sum }); $rAll = [double](($roles | Measure-Object sum -Sum).Sum)
   $roleT = & $fold 'u-roles' 'Per role (coordinator, workflows, agents outside them)' $roles.Count -Open -tag h4 -cls 'sub st uc ur' -inner "$(& $table 'Role', '~Steps', 'Tokens', 'Share', 'Est. cost', '~Avg time', '~p90 time' @($roles | ForEach-Object { , @($_.k, $_.n, (& $tk $_.sum), @{ h = "<span>$(& $bar ([double]$_.sum) $rAll "$(& $pct $_.sum $rAll)%" 'slate')</span>" }, (& $usd $_.cost), (& $mn $_.avgMin), (& $mn $_.p90Min)) }))"

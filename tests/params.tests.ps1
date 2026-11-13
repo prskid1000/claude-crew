@@ -223,5 +223,21 @@ Expect "bugbrief: failed checks across packages ($fc)" ($fc -eq 'T5=x (cause: en
 $lp = TkPath $k logs -Create; Set-Content "$lp/k4.log" (1..5000); Set-Content "$lp/k6.log" (1..5001); $hw = [IO.FileStream]::new("$lp/k6.log", 'Open', 'Write', 'ReadWrite')
 try { $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no') 2>&1 | Out-String } finally { $hw.Dispose() }
 Expect 'cleanup: a log over 5000 lines rotates while a writer holds it; 5000 lines stay' ($cd -match 'rotated.*k6\.log' -and $cd -notmatch 'k4')
+# build gate from its history: a build that started and ended between two sweeps counts; one row per kind (a local env's build = env deploy)
+$gtOut = Invoke-PsTest 'gatestats' @'
+$null = . $args[0] 6>$null; $t = (Get-Date).Date.AddHours(1); $b = { param($ev, $m, $o, $k, $x) Write-KitLog builds $ev ([ordered]@{ at = $t.AddMinutes($m).ToString('o'); owner = $o; kind = $k; project = 'api' } + $x) }
+& $b start 0 a maven-test @{ needGB = 3 }; & $b end 2 a maven-test @{ sec = 120; waitSec = 60 }; & $b end 5 localenv-x maven @{ sec = 30; waitSec = 0 }
+$g = Get-KitGateStats $t.AddHours(1); $m = @($g.rows | Where-Object name -eq 'maven test')[0]
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); mem = @{ AvailGB = 20 }; stats = [pscustomobject]@{ keepFree = 10; gate = $g; now = @{ seats = 1; seatsMax = 4 } } })
+"$($g.running) $(@($g.rows.name -match '^(env deploy|maven)' | Sort-Object) -join ',') $($m.done)/$($m.waitMax)/$($m.peakGB)/$(@($m.segs).Count) $($h -match "<span class=gn>maven test</span>" -and $h -match "$($g.today)<small> builds today")"
+'@ @($O)   # other areas' gated checks of this test kit add rows of their own
+Expect "gate card: history counts a build between sweeps, a row per kind ($gtOut)" ("$gtOut" -eq '0 env deploy,maven test 1/1/3/1 True')
+# board: the same name in a live session 5 min after its beat = a parallel agent
+$j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"
+$e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-KitPidStart $PID }; $e3.beat = (Get-Date).AddMinutes(-5).ToString('o'); & $J $e3 $f3
+$j4 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b3 = pwsh @np $O board beat -Session $s3 | Out-String
+Expect "board: a same-name agent in a live session is BY-2, no takeover ($j4)" ($j4 -match 'you are BY-2' -and $j4 -notmatch 'TAKEOVER|DUPLICATE' -and $b3 -notmatch 'TAKEN')
+$e3 = Read-Json $f3; $e3.beat = (Get-Date).AddMinutes(-40).ToString('o'); $e3 | Add-Member -Force NoteProperty transcript (Join-Path (Kd) 'by.jsonl'); '{}' | Set-Content $e3.transcript; & $J $e3 $f3
+$j5 = pwsh @np $O board join -Agent BY -Run rb | Out-String; Expect "board: beat 40 min old, transcript fresh = alive: BY-3" ($j5 -match 'you are BY-3' -and $j5 -notmatch 'TAKEOVER')
 Remove-TestKit $k
 Complete-Tests

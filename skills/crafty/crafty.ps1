@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L933 check · L1236 pipes · L1293 guard · L2050 dir ·
-  L2060 checkpoint · L2085 prior · L2123 tracker · L2203 host
+Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L934 check · L1237 pipes · L1294 guard · L2051 dir ·
+  L2061 checkpoint · L2086 prior · L2124 tracker · L2204 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -664,7 +664,8 @@ $script:GateKinds = [ordered]@{
   'gradle' = @('gradle(w|w\.bat)?\b', 3.5)
   'rn-bundle' = @('export:embed|react-native bundle|expo export', 3)
   'typecheck' = @('^\s*((npx|yarn|pnpm)\s+(exec\s+)?)?(vue-)?tsc\b[^&|;]*--noEmit', 2)   # before e2e: tsc -p cypress/tsconfig.json is no e2e run
-  'e2e' = @('cypress|playwright', 3.5)
+  'e2e' = @('cypress|playwright|\b(npm|yarn|pnpm|bun)\s+(run\s+)?e2e\b', 3.5)
+  'docker' = @('\bdocker(-compose)?\s+(compose\s+)?(build|run|up)\b', 3)   # through gate -Cmd only: the guard does not force it yet
   'ng-test' = @('\bng test\b|\bkarma\b', 3)
   'web-build' = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)
   'maven-test' = @('^(?!.*-D(skipTests|maven\.test\.skip)\b).*\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
