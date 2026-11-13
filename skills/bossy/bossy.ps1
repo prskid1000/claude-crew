@@ -19,14 +19,14 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
-  deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions comment
+  deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L50 board · L230 budget · L259 launch · L492 recover · L578 pause · L589 resume · L652 program · L703 param ·
   L709 track · L1036 supervise · L1340 report · L1419 audit · L1479 storage · L1689 bugbrief · L1791 cleanup · L1875 learn ·
-  L1905 decide · L2038 health · L2100 retro due · L2110 tidy · L2179 the kit origin's main and goodies · L2195 setup ·
-  L2262 guard-sendmessage
+  L1905 decide · L2039 health · L2101 retro due · L2111 tidy · L2180 the kit origin's main and goodies · L2196 setup ·
+  L2263 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1903,16 +1903,16 @@ function Invoke-Learn {
 }
 
 # ---- decide: decision pauses; only that item waits
-# the task's ONE Decisions comment (lib.ps1 Format-KitDecisionsComment), edited in place
+# the task's Decisions checklist (lib.ps1 Format-KitDecisionItems); no comment (owner, 2026-11-13)
 function Publish-KitDecisions([string]$Task, [string]$Link) {
   $rows = @(Get-KitTaskDecisionRows $Task); if (-not $rows.Count) { return "NONE $Task`: no decision records for it (decide ask / record -Task)" }
   $tt = try { Get-TrackerTask $Task } catch { $null }; if (-not $tt.name) { return "SKIP $Task`: no readable tracker task (an item code?): nothing published" }   # -Item A2 resolves to task A2
   if (-not $Link) { $Link = "$((Read-KitState (Get-KitTaskFile $Task)).decisions.link)" }
-  $body = (Format-KitDecisionsComment $rows $Link $Task) -join "`n"
-  $null = Test-KitProse -Kind comment-decisions -Text $body   # warnings only: the records are the facts
-  $r = Set-TrackerKitComment $Task 'comment-decisions' $body -Heading $script:KitDecisionsHeading -Match { param($c) Test-KitDecisionsComment $c }
+  $items = @(Format-KitDecisionItems $rows $Link $Task)
+  $null = Test-KitProse -Kind decisions -Text (@($items.text) -join "`n")   # warnings only: the records are the facts
+  $r = Set-KitTaskChecklist $Task 'Decisions' $items
   Update-KitTaskIndex $Task { param($x) $x.decisions = [ordered]@{ rows = $rows; link = $Link; publishedAt = (Get-Date).ToString('o') } }
-  "PUBLISHED decisions of $Task ($(@($body -split "`n" | Where-Object { $_ -match '^\d+\. ' }).Count) in force, $(@($rows | Where-Object status -eq 'pending').Count) open): $(if ("$r") { "$r" } else { 'comment edited' })"
+  "PUBLISHED decisions of $Task ($(@($items | Where-Object { $_.done -and $_.text -notmatch ' → superseded by |^plan · ' }).Count) in force, $(@($items | Where-Object { -not $_.done }).Count) open): $(if ("$r") { "$r" } else { 'checklist updated' })"
 }
 function Invoke-Decide {
   param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check', 'publish')][string]$Action = 'list',
@@ -1936,7 +1936,7 @@ function Invoke-Decide {
     Write-KitLog decisions-log $o.status ($o | Select-Object * -ExcludeProperty at, schemaVersion, updated, holder)   # at = this line's time
   }
   $note = { param($file, $text) if ($file -and (Test-Path (Split-Path $file))) { Add-Content -LiteralPath $file "`n$text" -Encoding utf8 } }
-  $pub = { param($t, [bool]$Named) if ($t -and -not $NoPublish -and ($Named -or (Test-Path (Get-KitTaskFile $t)))) { try { Publish-KitDecisions $t $Link } catch { Write-Warning "decisions comment of $t not updated (decide publish -Task $t retries): $_" } } }
+  $pub = { param($t, [bool]$Named) if ($t -and -not $NoPublish -and ($Named -or (Test-Path (Get-KitTaskFile $t)))) { try { Publish-KitDecisions $t $Link } catch { Write-Warning "Decisions checklist of $t not updated (decide publish -Task $t retries): $_" } } }
   $supIds = @(Split-KitList $Supersedes)
   switch ($Action) {
     'ask' {
@@ -1958,6 +1958,7 @@ function Invoke-Decide {
       }
       $txt = (Format-KitDecision ([pscustomobject]$o)) -join "`n"; $null = Test-KitProse -Kind decision-request -Text $txt; & $note $Contracts $txt
       "DECISION $($o.id) pending: $(if ($Fyi) { "FYI, item $Item goes on" } else { "item $Item stops (needs decision); continue your other items" }). Wait: bossy.ps1 decide wait -Id $($o.id)"
+      & $pub $resolvedTask $false   # its open item
     }
     'list' {
       $all = @(Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { -not ($Pending -or $Ask -or $Fyi) -or $_.status -eq 'pending' })
@@ -1980,7 +1981,7 @@ function Invoke-Decide {
       if ($o.kind -ne 'envfix') { & $pub "$($o.task)" $false }   # a known task only: -Item A2 / staging / 3 is no tracker task
     }
     'publish' {
-      $pt = NormTask $Task; if (-not $pt) { 'usage: decide publish -Task <id> [-Link <plan / brief url>]   (the ONE Decisions comment, edited in place)'; exit 2 }
+      $pt = NormTask $Task; if (-not $pt) { 'usage: decide publish -Task <id> [-Link <plan / brief url>]   (the Decisions checklist of the task, items updated in place)'; exit 2 }
       $pr = Publish-KitDecisions $pt $Link; $pr; if ($pr -match '^(SKIP|NONE) ') { exit 1 }
     }
     'wait' {

@@ -2,7 +2,7 @@
 <#
 flow.tests.ps1: dev-flow plumbing: bossy.ps1 track add / run (task ids, promotion), board join / leave, health's overdue beat;
 devtools.py finish / prior gate; pokey.ps1 api, goody verbs and seats (from pokey.tests: its cap); buildy.js MR dedupe (moved
-from bossy.tests: its cap); decide publish (the task's ONE Decisions comment); pause -Status, finished runs closed, recover's
+from bossy.tests: its cap); decide publish (the task's Decisions checklist); pause -Status, finished runs closed, recover's
 time budget (from bossy.tests: its cap).
 Usage: pwsh -NoProfile -File <kit>/tests/flow.tests.ps1 (or tests/kit-tests.ps1 -Area flow).
 Exit codes: 0 pass · 1 a check failed.
@@ -169,8 +169,9 @@ $di = & $dAsk 'Item code?' 'A2'; $dx = Px $O decide answer -Id $di -Answer 'A' |
 $rc = (Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Caps?' -Answer '40 turns' -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'
 $null = Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Limits?' -Answer '50 starts' -Source chat -Supersedes $rc.Trim()
 $null = Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Ignored?' -Answer 'x' -Source chat -NoPublish
-$all = @(Px $crPath tracker comments $dt | ConvertFrom-Json); $cm = @($all | Where-Object { $_.text -match '^\*\*Decisions\*\*' }); $ct = "$($cm.text)"
-Expect "decide: an unknown task (never indexed, item A2) or -NoPublish posts nothing, publish indexes it; then answer / record edit ONE Decisions comment (same question or -Supersedes -> Superseded, pending -> Open); a person's 'Decisions' comment untouched" ($dn -notmatch 'PUBLISHED' -and $d1 -match 'PUBLISHED' -and $dx -notmatch 'PUBLISHED' -and $cm.Count -eq 1 -and @($all.text -match '^Decisions\r?\nship it$').Count -eq 1 -and $ct -match '1\. \d{4}-\d\d-\d\d . Where\? -> B: db \(owner\)' -and $ct -match '2\. .*Limits\? -> 50 starts' -and $ct -match '(?s)\*\*Open\*\*.*Pending\? \(waiting\)' -and $ct -match '(?s)\*\*Superseded\*\*.*Where\? -> A: s3 \(by #1\).*40 turns \(by #2\)' -and $ct -notmatch 'Ignored|Item code'); $env:KIT_TRACKER_TYPE = 'clickup'
+$all = @(Px $crPath tracker comments $dt | ConvertFrom-Json); $cm = @($all | Where-Object { $_.text -match '^\*\*Decisions\*\*' }); $ct = "$((Px $crPath tracker view $dt | ConvertFrom-Json).description)"
+$sid = { param($i) ("$i".Trim() -split '-')[-1] }; $dv = @("- \[x\] $(& $sid $db) · Where\? → B: db · owner \d\d-\d\d", "- \[x\] $(& $sid $da) · Where\? → superseded by $(& $sid $db)", '- \[ \] \w{4} · Pending\? → open · asked \d\d-\d\d', "- \[x\] $(& $sid $rc) · Caps\? → superseded by \w{4}", '- \[x\] \w{4} · Limits\? → 50 starts · owner')
+Expect "decide: an unknown task (never indexed, item A2) or -NoPublish posts nothing, publish indexes it; ask / answer / record update ONE Decisions checklist by short id (answered resolved, pending open, same question or -Supersedes -> 'superseded by <id>'); no decisions comment, a person's 'Decisions' comment untouched ($ct)" ($dn -notmatch 'PUBLISHED' -and $d1 -match 'PUBLISHED' -and $dx -notmatch 'PUBLISHED' -and -not $cm.Count -and @($all.text -match '^Decisions\r?\nship it$').Count -eq 1 -and $ct -match '<!-- kit:decisions -->\r?\n\*\*Decisions\*\*' -and -not @($dv | Where-Object { $ct -notmatch $_ }).Count -and $ct -notmatch 'Ignored|Item code'); $env:KIT_TRACKER_TYPE = 'clickup'
 # tracker create -Parent: the subtask template or refused, a [Bug] its own text; -NewTask under a parent logs matched [] (no WATCH)
 $env:KIT_TRACKER_TYPE = 'none'; $sbGood = "1. Problem: p`n**Goal** - g`n**Items (ids):** A1, A2`nAcceptance criteria:`n- a`n**Links:** x"
 $sbPar = (Px $crPath tracker create -List L1 -Name 'Launch parent ask' -Description 'the ask' | ConvertFrom-Json).id

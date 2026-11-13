@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L67 state · L136 config · L216 OS · L413 leases · L874 status · L1118 supervise sweep ·
-  L1189 supervise report · L1285 tracker · L1576 prior · L1592 ask bugs · L1799 git-host · L1959 kitlog · L2079 params ·
-  L2384 entry-scripts
+  L1189 supervise report · L1285 tracker · L1592 prior · L1608 ask bugs · L1812 git-host · L1972 kitlog · L2092 params ·
+  L2397 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1487,11 +1487,8 @@ function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | W
 # marker. People's comments are never touched
 function Get-KitCommentSig([string]$Text) { $n = ConvertTo-KitLetters ("$Text" -replace '\\?\[kit:[^\]\\]*\\?\]', ''); $n.Substring(0, [math]::Min(60, $n.Length)) }   # trackers re-render markdown: letters and digits only
 $script:KitMrsHeading = 'MRs (merge order)'   # the retired MRs comment: never written (MR links: the Items checklist)
-$script:KitDecisionsHeading = 'Decisions'   # bossy.ps1 decide publish is its one writer
 function ConvertTo-KitLetters([string]$Text) { ("$Text" -replace '[^\p{L}\p{N}]', '').ToLower() }
 function Test-KitHeadText([string]$Text, [string]$Heading) { (ConvertTo-KitLetters (("$Text".Trim() -split "`r?`n")[0])) -eq (ConvertTo-KitLetters $Heading) }
-# ours: the heading, then only rendered lines (a person's "Decisions: ship it" is never edited or deleted)
-function Test-KitDecisionsComment($Comment) { (Test-KitHeadText $Comment.text $script:KitDecisionsHeading) -and -not @(@("$($Comment.text)".Trim() -split "`r?`n" | Select-Object -Skip 1 | Where-Object { $_.Trim() }) | Where-Object { $_ -notmatch '^\s*(\d+\. |- )\S|^\W*(Open|Superseded)\W*$|^\W*Plan\W*:' }).Count }
 function Get-TrackerHeadComments([string]$Id, [string]$Heading, [scriptblock]$Match) { @(Get-TrackerComments $Id | Where-Object { $_.id -and (Test-KitHeadText $_.text $Heading) -and (-not $Match -or (& $Match $_)) }) }
 # -Heading: found by heading, not this kit copy's index (agents run from several copies), under a machine-wide lock
 function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Heading, [scriptblock]$Match) {
@@ -1557,6 +1554,25 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
   __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = $Priority }
 }
 function Set-TrackerDescription([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'describe' @{ id = $Id; text = (__TrText $Text) } }
+# the owner's text stays: only <!-- kit:<name> --> ... <!-- /kit:<name> --> is replaced; new: after section $After, else under the testing-doc links
+function Set-KitDescSection([string]$Desc, [string]$Name, [string]$Body, [string]$After) {
+  $s = "<!-- kit:$Name -->"; $e = "<!-- /kit:$Name -->"; $block = "$s`n$Body`n$e"; $d = "$Desc" -replace "`r`n", "`n"
+  $i = $d.IndexOf($s); $j = if ($i -ge 0) { $d.IndexOf($e, $i) } else { -1 }
+  if ($i -ge 0 -and $j -gt $i) { return $d.Substring(0, $i) + $block + $d.Substring($j + $e.Length) }
+  $ae = "<!-- /kit:$After -->"; $k = if ($After) { $d.IndexOf($ae) } else { -1 }
+  if ($k -ge 0) { $p = $k + $ae.Length; return $d.Substring(0, $p) + "`n`n$block" + $d.Substring($p) }
+  $lines = @($d -split "`n"); $last = 0
+  for ($x = 0; $x -lt $lines.Count; $x++) { if ($lines[$x] -match '(?i)^\W{0,3}Testing doc \(') { $last = $x + 1 } elseif ($lines[$x].Trim()) { break } }
+  (@((@($lines | Select-Object -First $last) -join "`n").Trim(), $block, (@($lines | Select-Object -Skip $last) -join "`n").Trim()) | Where-Object { $_ }) -join "`n`n"
+}
+# a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '): adapter verb checklist, else a <!-- kit:<name> --> description section
+function Set-KitTaskChecklist([string]$Task, [string]$Name, $Items) {
+  $ad = $KitAdapters['tracker'][$__trType]
+  if ($ad -and $ad.ContainsKey('checklist')) { return __TrA 'checklist' @{ id = $Task; name = $Name; items = @($Items | ForEach-Object { @{ text = $_.text; done = [bool]$_.done } }) } }
+  Clear-TrackerMemo $Task; $tk = Get-TrackerTask $Task; if (-not $tk.name) { throw "tracker read of $Task failed" }
+  $nd = Set-KitDescSection $tk.description $Name.ToLower() ((@("**$Name**") + @($Items | ForEach-Object { "- [$(if ($_.done) { 'x' } else { ' ' })] $($_.text)" })) -join "`n") ''
+  if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { Set-TrackerDescription $Task $nd }
+}
 function Set-TrackerName([string]$Id, [string]$Name) { Clear-TrackerMemo $Id; __TrA 'rename' @{ id = $Id; name = $Name } }
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }
@@ -1746,27 +1762,24 @@ function Get-KitTaskDecisionRows([string]$Task) {
   @($rows.Values | Where-Object { $_.status -ne 'pending' -or "$($_.id)" -in $live } | Sort-Object { Get-KitUtcTicks $_.at })
 }
 function Get-KitUtcTicks($At) { try { ([datetimeoffset]"$At").UtcTicks } catch { 0 } }
-# templates.md comment-decisions: an OLDER answer moves under Superseded when a newer one answers the same question, names it
-# (-Supersedes) or says "supersedes d-<id>"; older -> newer only: chains end
-function Format-KitDecisionsComment($Rows, [string]$Link, [string]$Task) {
+# templates.md decisions: the task's Decisions checklist, one item per decision "<short id> · <question> → <answer> · <by> <MM-dd>" (resolved),
+# a pending ask unresolved, an OLDER answer the same question, -Supersedes or "supersedes d-<id>" replaced -> "superseded by <id>"
+function Format-KitDecisionItems($Rows, [string]$Link, [string]$Task) {
   $ans = @($Rows | Where-Object { $_.status -eq 'answered' -and $_.answer }); $sup = @{}; $tk = @{}; foreach ($r in $ans) { $tk["$($r.id)"] = Get-KitUtcTicks $r.at }
   foreach ($r in $ans) {
     $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+(d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
     foreach ($o in $ans) { if ($tk["$($o.id)"] -lt $tk["$($r.id)"] -and ("$($o.id)" -in $ids -or (ConvertTo-KitLetters $o.question) -eq (ConvertTo-KitLetters $r.question))) { $sup["$($o.id)"] = $r.id } }
   }
-  $day = { param($r) try { ([datetimeoffset]"$($r.at)").ToString('yyyy-MM-dd') } catch { "$($r.at)".Substring(0, [math]::Min(10, "$($r.at)".Length)) } }
-  $q = { param($r) $t = ("$($r.question)" -replace "\s*\($([regex]::Escape($Task))\)", '').Trim(); if ($t -match '^(.{4,}?\?)(\s|$)') { $t = $Matches[1] }; if ($t.Length -gt 120) { $t = ($t.Substring(0, 119) -replace '\s+\S*$', '') + '…' }; $t }
-  $a = { param($r) ("$($r.answer)" -replace '\s*\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?\)', '' -replace '\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?;\s*', '(').Trim() }   # "(owner, <date>)": the line says both
-  $who = { param($r) if ($r.by) { $r.by } else { 'owner' } }
-  $out = @("**$script:KitDecisionsHeading**"); $num = @{}; $n = 0
-  foreach ($r in @($ans | Where-Object { -not $sup.ContainsKey("$($_.id)") })) { $num["$($r.id)"] = ++$n; $out += "$n. $(& $day $r) · $(& $q $r) -> $(& $a $r) ($(& $who $r))" }
-  $open = @($Rows | Where-Object status -eq 'pending'); if ($open.Count) { $out += '**Open**'; foreach ($r in $open) { $out += "- $(& $day $r) · $(& $q $r) (waiting)" } }
-  if ($sup.Count) {
-    $out += '**Superseded**'
-    foreach ($r in @($ans | Where-Object { $sup.ContainsKey("$($_.id)") })) { $f = $sup["$($r.id)"]; $hop = 0; while ($sup.ContainsKey("$f") -and $hop++ -lt 20) { $f = $sup["$f"] }; $out += "- $(& $day $r) · $(& $q $r) -> $(& $a $r) (by #$($num["$f"]))" }
+  $sid = { param($i) ("$i" -split '-')[-1] }
+  $day = { param($r) try { ([datetimeoffset]"$($r.at)").ToString('MM-dd') } catch { '' } }
+  $q = { param($r) $t = ("$($r.question)" -replace "\s*\($([regex]::Escape($Task))\)", '').Trim(); if ($t -match '^(.{4,}?\?)(\s|$)') { $t = $Matches[1] }; if ($t.Length -gt 80) { $t = ($t.Substring(0, 79) -replace '\s+\S*$', '') + '…' }; $t }
+  $a = { param($r) ("$($r.answer)" -replace '\s*\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?\)', '' -replace '\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?;\s*', '(').Trim() }   # "(owner, <date>)": the item says both
+  foreach ($r in @($Rows | Where-Object { $_.status -eq 'pending' -or ($_.status -eq 'answered' -and $_.answer) })) {
+    $f = $sup["$($r.id)"]; $hop = 0; while ($sup.ContainsKey("$f") -and $hop++ -lt 20) { $f = $sup["$f"] }
+    $tail = if ($r.status -eq 'pending') { "open · asked $(& $day $r)" } elseif ($f) { "superseded by $(& $sid $f)" } else { "$(& $a $r) · $(if ($r.by) { $r.by } else { 'owner' }) $(& $day $r)" }
+    [pscustomobject]@{ text = "$(& $sid $r.id) · $(& $q $r) → $tail"; done = $r.status -ne 'pending' }
   }
-  if ($Link) { $out += "**Plan:** $Link" }
-  $out
+  if ($Link) { [pscustomobject]@{ text = "plan · $Link"; done = $true } }
 }
 # blocking decisions as ONE native question call (AskUserQuestion: 4 questions, 4 options, header <= 12 chars; Codex: 3)
 function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {

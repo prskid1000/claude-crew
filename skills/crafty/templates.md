@@ -41,7 +41,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | comment-solution | solution comment on a task | the "Task solution comment" template | 8l 120w | — |
 | comment-status | a status change note | `<status> — <why> · <link>` | 2l 40w | link |
 | comment-deploy | a deploy record (+ the batched ask under `deploy.trigger` ask) | env, MRs (merge order), who said deploy, result | 8l 120w | link |
-| comment-decisions | a task's decisions | `decide publish`: `<n>. <date> · <question> -> <answer> (<by>)`, Open, Superseded, Plan | 80l 600ch | — |
+| decisions | a task's Decisions checklist | `decide publish`: `<id> · <question> → <answer> · <by> <MM-dd>`, open unresolved | 80l 600ch | — |
 | decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
 | kit-report | supervise report, retro, lead notes, resume brief | `# <title>`, a `**Result:**` line, `##` sections, tables for like items | prose:400w 130ch | — |
 | final-report | an agent's last reply | the "Final reports" shape of its role | 200w 25sw | link |
