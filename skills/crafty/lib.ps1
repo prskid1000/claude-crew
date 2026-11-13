@@ -6,7 +6,7 @@ Sections: L10 paths · L68 state · L137 config · L217 OS · L414 leases · L85
   L2395 entry-scripts
 #>
 #Requires -Version 7
-try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # every kit script: piped stdout and child output are UTF-8 (· → £ é), never the console code page
+try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output (`& python`, git) UTF-8 (· → £ é), never the OEM code page; a console too
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitEntry = $MyInvocation.PSCommandPath   # the script that dot-sourced this file (Resolve-KitExtra runs it again)

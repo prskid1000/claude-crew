@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L970 check · L1273 pipes · L1330 guard · L2100 dir ·
-  L2110 checkpoint · L2138 prior · L2176 tracker · L2198 task spec · L2347 host
+  L2110 checkpoint · L2139 prior · L2177 tracker · L2199 task spec · L2348 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2115,7 +2115,8 @@ if (-not $Agent -or -not ($Step -or $Read)) { "usage: crafty.ps1 checkpoint -Age
 if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }
 $null = Invoke-Dir -Agent $Agent; $jf = Get-KitCheckpointFile $Agent $Run -Write:(-not $Read); $mf = $jf -replace '\.json$', '.md'   # per run: same-named agents never overwrite
 if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent$(if ($Run) { " run $Run" })" }; return }
-$c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String } catch { $null }   # times stay ISO text
+$c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
+foreach ($ckObj in @($c) + @($c.steps)) { foreach ($ckKey in 'at', 'updated') { if ($ckObj -is [Collections.IDictionary] -and $ckObj[$ckKey] -is [datetime]) { $ckObj[$ckKey] = $ckObj[$ckKey].ToString('o') } } }   # times stay ISO text (-DateKind needs pwsh 7.5)
 if (-not $c -or ($Run -and "$($c.run)" -ne $Run)) { $c = @{ agent = $Agent; run = $Run; steps = @(); worktrees = @(); leases = @() } }   # another run's: start over
 $s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-Date).ToString('o') }
 if ($Dir) { $Dir = (Resolve-Path -LiteralPath $Dir).Path; $s.dir = $Dir; $s.head = "$(git -C $Dir rev-parse --short HEAD 2>$null)".Trim(); $c.worktrees = @(@($c.worktrees) + $Dir | Where-Object { $_ } | Select-Object -Unique) }

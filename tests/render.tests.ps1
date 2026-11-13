@@ -148,8 +148,8 @@ foreach ($f in @{ 'qa-runs/r1/lead-notes.md' = "# Lead notes: r1"; 'qa-runs/r2/l
     'agents/a1/free.md' = 'my notes'; 'agents/a1/mr.md' = "## Summary"; 'agents/a1/spec.json' = '{}'; 'docs/T1_testing-ai.md' = '# Testing doc (AI): T1 x'; 'docs/T1_qa-report.md' = 'x'; 'loose.py' = 'print(1)' }.GetEnumerator()) {
   $p = Join-Path $rw $f.Key; New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null; [IO.File]::WriteAllText($p, $f.Value) }
 $sl = & $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json; $slc = $LASTEXITCODE
-$art = @($sl | Where-Object name -eq 'artefacts' | ForEach-Object { "$($_.level) $($_.file)" }) -join '; '
-Expect "state lint drift guard: an unlisted shape in a shared place BAD (exit 1), agent scratch / loose work files WARN, listed shapes pass ($art)" ($slc -eq 1 -and $art -match 'BAD work/qa-runs/r2/lead-notes.md' -and $art -match 'BAD work/qa-runs/r1/fix-round.md' -and $art -match 'WARN work/agents/a1/free.md' -and $art -match 'WARN work/loose.py' -and $art -notmatch 'r1/lead-notes|mr\.md|spec\.json|T1_testing|run\.json')
+$art = @($sl | Where-Object name -eq 'artefacts' | ForEach-Object { "$($_.level) $($_.file)" }) -join '; '; $artWhy = @($sl | Where-Object name -eq 'artefacts' | ForEach-Object problem) -join ' '
+Expect "state lint drift guard: an unlisted shape in a shared place BAD (exit 1), agent scratch / loose work files WARN, listed shapes pass ($art)" ($slc -eq 1 -and $art -match 'BAD work/qa-runs/r2/lead-notes.md' -and $art -match 'BAD work/qa-runs/r1/fix-round.md' -and $art -match 'WARN work/agents/a1/free.md' -and $art -match 'WARN work/loose.py' -and $art -notmatch 'r1/lead-notes|mr\.md|spec\.json|T1_testing|run\.json' -and $artWhy -match 'unlisted shape: no STATE\.md "Artefacts" row names its writer')
 # ---- results.json written once; the workflow sends deltas (item 3): testy.js resultsPatch -> pokey.ps1 results patch / hold
 $rd = Join-Path (Kd) 'qa-run'; New-Item -ItemType Directory -Force "$rd/W1" | Out-Null
 $row = { param($id, $r) [ordered]@{ id = $id; subtask_id = 't1'; screen = 's'; result = $r; what_was_done = 'w'; observed = 'o'; evidence = @(); attempts = 1 } }
@@ -210,5 +210,7 @@ $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step commi
 $hbo = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step mr -Evidence 'web!5' -Notes "rebase  pending`nthen push" -Brief $hbf 2>&1 | Out-String
 $hbt = (Get-Content -Raw $hbf) -replace '\d{4}-\d\d-\d\dT[\d:.+\-Z]+', 'T' -replace '\d{4}-\d\d-\d\d \d\d:\d\d', 'T' -replace '(?m)^\| T \|', '| T |'
 Expect "checkpoint -Notes -Brief: golden resume brief (Done table, Open, Notes as one line) ($($hbo.Trim()))" ($hbo -match 'resume brief: .*board leave -Handoff' -and (Gold $hbt "# Resume brief: h8 (run ``r8``)`n**Result:** Next: review (start here; the steps below are done: verify, never redo) · T`n`n## Done`n`n| At | Step | Item | Evidence | Worktree @ head |`n|---|---|---|---|---|`n| T | commit | — | abc1234 | — |`n| T | mr | — | web!5 | — |`n`n## Open`n`n**Worktrees:** `n**Leases:** `n**Decisions pending:** `n`n## Notes`n`n- T rebase pending then push"))
+$hlNoRun = & { . (Join-Path $k 'skills/bossy/bossy.ps1'); Get-KitHandoffLine ([pscustomobject]@{ agent = 'h8'; run = '' }) 's8' 'why' }
+Expect "HANDOFF line: the checkpoint call it names drops -Run when the agent has none ($hlNoRun)" ($hlNoRun -match 'checkpoint -Agent h8 -Step <last done>' -and $hlNoRun -notmatch '-Run ')
 Remove-TestKit $k
 Complete-Tests
