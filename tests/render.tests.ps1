@@ -145,7 +145,7 @@ $al1 = Kb "print('\n'.join(k.artefact_lint(r'$k', {'bossy.ps1', 'crafty.ps1', 'd
 Expect "lint ARTEFACT: the kit's kinds all name a writer; a new Writing-standards kind without a row, a writer no script / free, a bad shape fail ($al0)" ("$al0".Trim() -eq '0' -and "$al1" -match 'kind sprint-note has no "Artefacts" row' -and "$al1" -match "qa-x: writer 'hand-written'" -and "$al1" -match 'qa-x: shape regex')
 [IO.File]::WriteAllText("$k/skills/bossy/STATE.md", $sd); $rw = TkPath $k work -Create
 foreach ($f in @{ 'qa-runs/r1/lead-notes.md' = "# Lead notes: r1"; 'qa-runs/r2/lead-notes.md' = "Notes of r2"; 'qa-runs/r1/fix-round.md' = "Fix round 2"; 'qa-runs/r1/run.json' = '{}'
-    'agents/a1/free.md' = 'my notes'; 'agents/a1/mr.md' = "## Summary"; 'agents/a1/spec.json' = '{}'; 'docs/T1_testing-ai.md' = 'x'; 'loose.py' = 'print(1)' }.GetEnumerator()) {
+    'agents/a1/free.md' = 'my notes'; 'agents/a1/mr.md' = "## Summary"; 'agents/a1/spec.json' = '{}'; 'docs/T1_testing-ai.md' = '# Testing doc (AI): T1 x'; 'docs/T1_qa-report.md' = 'x'; 'loose.py' = 'print(1)' }.GetEnumerator()) {
   $p = Join-Path $rw $f.Key; New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null; [IO.File]::WriteAllText($p, $f.Value) }
 $sl = & $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json; $slc = $LASTEXITCODE
 $art = @($sl | Where-Object name -eq 'artefacts' | ForEach-Object { "$($_.level) $($_.file)" }) -join '; '
@@ -173,5 +173,12 @@ $ph = pwsh -NoProfile -File $PK results hold -RunDir $rd -Code W1 -Why "env: it'
 Expect "testy.js resultsPatch: only the changed fields and added rows (dup ids as the workflow names them), none when nothing changed ($($cmds -join ' || '))" ("$($cmds[0])" -match "^& 'pokey\.ps1' results patch -RunDir 'RD' -Code W1 -Patch '\{" -and $pj -match '"set":\{"T2":\{"verify":"re-test: confirmed \(it.s real\)"\}\}' -and $pj -match '"add":\[\{"id":"T1n"' -and $pj -notmatch 'T2b|"T1":' -and "$($cmds[1])" -eq 'NONE=""')
 Expect "pokey.ps1 results patch: deltas merged by id (dup ids made unique, guideId), rows added, unknown key / id refused, nothing written ($($pr.Trim()))" ($pr -match '1 changed, 1 added, 4 checks' -and (@($after.checks.id) -join ',') -eq 'T1,T2,T2b,T1n' -and $after.checks[1].verify -match "it's real" -and $after.checks[2].guideId -eq 'T2' -and $pb -match 'unknown row key\(s\) color' -and @((Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json).checks).Count -eq 4)
 Expect "pokey.ps1 results hold: held.json from arguments, the script's UTC time ($($hj.at))" ($hj.held -eq "env: it's down" -and $hj.envFix.id -eq 'd-1' -and $hj.summary -eq 'W1: pass 1/3' -and (Get-Content -Raw "$rd/W1/held.json") -match '"at": "\d{4}-\d\d-\d\dT[\d:.]+Z"')
+# review fixes: a round counts only the cases run in it, a result replaces the evidence, _del removes; () and non-ASCII survive formats
+$null = Dt cases result T1 A2 FAIL; $null = Dt cases round T1 --bugs 'A2: 500'; Set-JsonFile "$wd/del.json" @{ cases = @(@{ id = 'A2'; _del = $true }) }; $null = Dt cases add T1 "$wd/del.json"
+$ai2 = Get-Content -Raw (Dt cases render T1 ai).out
+Expect 'cases round 2: only the case run in it, its result; a new result drops the old evidence; _del removes a case' ($ai2 -match '(?m)^\| 2 \| [\d-]+ \| A2 \| 1 FAIL \| A2: 500 \|' -and $ai2 -notmatch '(?m)^\| A2 \|' -and $ai2 -match '(?m)^\| A1 \(T1\) \| positive')
+Set-JsonFile "$wd/u.json" @{ type = 'fix'; change = 'remove init() — café ✅'; task = 'T1' }; $ut = Dt render mr-title "$wd/u.json"
+'y' | Set-Content "$gr/b.txt"; $null = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') wt commit -Dir $gr -Spec "$wd/u.json" 2>&1; $us = git -C $gr log -1 --format=%s
+Expect "render / wt commit -Spec: a () and ' - ' inside the change and non-ASCII text survive ($($ut.out) | $us)" ($ut.out -eq 'fix: remove init() — café ✅ (T1)' -and $us -eq 'fix: remove init() — café ✅')
 Remove-TestKit $k
 Complete-Tests

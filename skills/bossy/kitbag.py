@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1304 audit ·
-  L1413 registry · L1754 prose · L1905 sections · L2035 budget · L2059 goodies · L2566 state lint · L2708 main
+  L1413 registry · L1754 prose · L1905 sections · L2035 budget · L2059 goodies · L2566 state lint · L2710 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -2635,7 +2635,9 @@ def artefact_files(since_min=0):
             if pat == 'work/*':
                 out.append(('WARN', 'artefacts', rel, 'loose file in work/: an agent\'s files go where crafty.ps1 dir -Agent <id> says'))
                 continue
-            if f.suffix not in ('.md', '.json') or any(fnmatch.fnmatch(rel, g) and shape_ok(s, str(f)) for g, s in rows):
+            hits = [(g, s) for g, s in rows if fnmatch.fnmatch(rel, g)]
+            top = max((len(g) for g, _ in hits), default=0)   # the most specific place decides (docs/*-ai.md before docs/*)
+            if f.suffix not in ('.md', '.json') or any(len(g) == top and shape_ok(s, str(f)) for g, s in hits):
                 continue
             out.append(('WARN' if pat == 'work/agents/*/*' else 'BAD', 'artefacts', rel, 'unlisted shape: no STATE.md "Artefacts" row names'
                         ' its writer (render it from a spec, or add the row with its renderer)'))

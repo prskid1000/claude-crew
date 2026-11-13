@@ -68,7 +68,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 Every agent-written kind (templates.md "Writing standards" + run files) and its writer: a renderer from a spec, or `free: <who>
 (<plan>)` until it has one. `kitbag.py lint` [ARTEFACT] fails on a kind without a row; `state lint` fails on a `.md` / `.json` file
 in a shared place (`work/docs|briefs|waves`, a QA run's top folder) that no row's Where + Shape (`md <first-line regex>`, `json
-<keys>`, `any`) or Inventory row lists, and warns on agent scratch (`work/agents/<id>/`) and loose files in `work/` itself.
+<keys>`, `any`) or Inventory row lists, and warns on agent scratch (`work/agents/<id>/`: specs are inputs, any shape) and loose files in `work/` itself; the longest matching Where decides.
 
 | Kind | Writer | Where (runtime) | Shape |
 |---|---|---|---|
@@ -84,7 +84,8 @@ in a shared place (`work/docs|briefs|waves`, a QA run's top folder) that no row'
 | `resume-brief` | `crafty.ps1 checkpoint`, `bossy.ps1 recover` | `work/briefs/*.md` | `md ^# Resume brief:` |
 | `handoff` | free: an agent's handoff notes (item 8) | `work/briefs/handoff-*.md` | `any` |
 | `testing-goals` | `devtools.py cases render` | `work/docs/*-goals.md` | `md ^# Testing goals:` |
-| `testing-doc` | `devtools.py cases render`, `devtools.py doc --key` | `work/docs/*` | `any` |
+| `testing-doc` | `devtools.py cases render` | `work/docs/*-human.md` | `md ^# Testing:` |
+| `published` | `devtools.py doc` (a kept copy of any published doc) | `work/docs/*` | `any` |
 | `testing-ai` | `devtools.py cases render` | `work/docs/*-ai.md` | `md ^# Testing doc \(AI\):` |
 | `qa-report` | `pokey.ps1 finalize` | `work/qa-runs/*/report.md` | `any` |
 | `qa-run` | `testy.js`, `pokey.ps1 results` (written once, deltas by id) | `work/qa-runs/*/*.json` | `any` |

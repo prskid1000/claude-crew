@@ -106,7 +106,7 @@ const REPORT = {
    envGap: { type: 'boolean', description: 'FAIL only: true = every failing goal is an ENV GAP (THE DEV FLOW); a product failure: false' },
    env: { type: 'string', description: '<env> r<n>, or "none: <why>"' }, rounds: { type: 'number' },
    failing: { type: 'array', items: { type: 'string' }, description: 'goal ids still failing, with one line each' },
-   goalsDoc: { type: 'string', description: 'path of the testing-goals doc' } }, required: ['status', 'env', 'rounds', 'failing', 'goalsDoc'] },
+   goalsDoc: { type: 'string', description: 'cases render <task> goals path' } }, required: ['status', 'env', 'rounds', 'failing', 'goalsDoc'] },
   needsLiveCheck: { type: 'array', items: { type: 'string' } },
   testerGuide: { type: 'string', description: 'link of the published human testing doc (devtools.py finish links it and the AI doc on the task; the MR body too)' },
   seed: { type: 'array', items: { type: 'string' }, description: 'settings/data to seed after deploy' },
@@ -184,7 +184,7 @@ function depNote(a) {
   (cs.length ? `MERGE ORDER: area(s) ${cs.join(', ')} consume your work: open your MRs early and say which MR carries the contract.\n` : '')
 }
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses); this run's commands:
-${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug locally BEFORE fixing: goals doc + an AI doc `repro` row (merge refuses without).\n' : ''}- Evidence links: pokey.ps1 evidence index <link>; unread frames -> vidy (R19: task, testing doc, your question; goody media-evidence).
+${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug locally BEFORE fixing: a `repro` case in the cases spec (merge refuses without).\n' : ''}- Evidence links: pokey.ps1 evidence index <link>; unread frames -> vidy (R19: task, testing doc, your question; goody media-evidence).
 - Lease ONLY the services your items declare (brief "Services") with -Session <board token>.
 - ENV-FIX: & ${ORCH} decide ask -Kind envfix -Run ${RUN} -Agent <id> -Item <item> -Question "<the fix>" ; that item -> needsEnvFix.
 - DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." -Recommend <A|B> (-Fyi: nothing waits)
@@ -246,8 +246,8 @@ blocking = data loss, no rollback, rows touched outside the change's filter. Ret
 function fixPrompt(a, r, findings) {
  return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
-Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push; in the same push update the
-MR body ("How tested", "Risks"), append the round to the AI testing doc and update the human doc if its cases changed. An already-merged MR:
+Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push; in the same push: cases
+result / round + devtools.py doc "<t>" cases --key <task>:testing-ai, cases add for changed checks, devtools.py mr --spec again. An already-merged MR:
 put the fix on a new branch from the target (crafty.ps1 wt new) and open a follow-up MR.`)
 }
 function ciPrompt(r, a) {

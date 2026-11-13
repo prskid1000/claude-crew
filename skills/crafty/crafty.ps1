@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L471 stack · L651 gate · L966 check · L1269 pipes · L1326 guard · L2096 dir ·
-  L2106 checkpoint · L2131 prior · L2169 tracker · L2191 task spec · L2340 host
+Sections: L21 init · L27 sweep · L175 wt · L476 stack · L656 gate · L971 check · L1274 pipes · L1331 guard · L2101 dir ·
+  L2111 checkpoint · L2136 prior · L2174 tracker · L2196 task spec · L2345 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -362,7 +362,12 @@ switch ($Action) {
   'commit' {
     $Dir = Resolve-Wt $Dir
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
-    if ($Spec) { $Message = (@(python -X utf8 $KitCmd.devtools render commit $Spec 2>&1) -join "`n").TrimEnd(); if ($LASTEXITCODE) { throw "commit spec: $Message" } }   # commitFormat subject + change bullets
+    if ($Spec) {   # commitFormat subject + change bullets; python prints UTF-8, stdout only
+      if ($Message) { throw 'commit: -Spec or -Message / -MessageFile, not both' }
+      $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+      try { $out = @(python -X utf8 $KitCmd.devtools render commit $Spec 2>$null); $code = $LASTEXITCODE; $why = if ($code) { @(python -X utf8 $KitCmd.devtools render commit $Spec 2>&1) -join ' ' } } finally { [Console]::OutputEncoding = $enc }
+      if ($code) { throw "commit spec: $why" }; $Message = ($out -join "`n").TrimEnd()
+    }
     if (-not $Message -or -not $Message.Trim()) { throw "commit needs -Message '<subject>' or -MessageFile <file> (multi-line: write it to `$(crafty.ps1 dir -Agent <id> -Name commit-msg.txt) with the Write tool, then -MessageFile <that path>)" }
     # a hand-made worktree lacks .husky/_ and hook deps
     $common = (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim()

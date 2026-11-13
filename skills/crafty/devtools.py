@@ -28,7 +28,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L45 config · L79 run · L167 tracker · L370 git host · L453 MR · L620 merge · L900 docs · L1055 publish · L1413 render ·
-  L1617 plugins · L1631 keepboth · L1650 selftest · L2062 CLI
+  L1636 plugins · L1650 keepboth · L1669 selftest · L2081 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1427,7 +1427,12 @@ def merge_spec(old, new):
         elif key and isinstance(v, list):
             by = {str(e.get(key)): dict(e) for e in out.get(k) or [] if isinstance(e, dict)}
             for e in v:
-                by[str(e.get(key))] = {**by.get(str(e.get(key)), {}), **e}
+                if not isinstance(e, dict) or e.get(key) in (None, ''):
+                    raise SystemExit(f'spec {k}: each entry is an object with {key!r}: {str(e)[:80]}')
+                if e.get('_del'):   # {"<key>": ..., "_del": true} removes that entry
+                    by.pop(str(e[key]), None)
+                    continue
+                by[str(e[key])] = {**by.get(str(e[key]), {}), **e}
             out[k] = list(by.values())
         else:
             out[k] = v
@@ -1460,7 +1465,8 @@ def cases_gaps(c):
     ids = [x.get('id') for k in ('checks', 'qualities', 'unchanged') for x in c.get(k) or []]
     out = [f'case {x.get("id") or "?"}: type {x.get("type")!r} (one of {"/".join(CASE_TYPES)})' for x in c.get('cases') or [] if x.get('type') not in CASE_TYPES]
     out += [f'case {x["id"]}: check {x["check"]!r} is no checks/qualities/unchanged id' for x in c.get('cases') or [] if x.get('check') and x['check'] not in ids]
-    out += [f'{k}: an entry without {SPEC_KEYS[k]}' for k in ('checks', 'cases') for x in c.get(k) or [] if not x.get(SPEC_KEYS[k])]
+    out += [f'{k}: an entry without {SPEC_KEYS[k]}' for k in ('checks', 'qualities', 'unchanged', 'cases') for x in c.get(k) or [] if not x.get(SPEC_KEYS[k])]
+    out += [f'{k}: an object' for k in ('plan',) if c.get(k) and not isinstance(c[k], dict)]
     return out + ([] if c.get('title') else ['title'])
 
 
@@ -1510,9 +1516,10 @@ def cases_file(tid, kind):
         raise SystemExit(f'task {tid} has no cases spec: devtools.py cases add {tid} <spec.json> first')
     if gaps := cases_gaps(c):
         raise SystemExit(f'cases spec of {tid}: ' + '; '.join(gaps))
+    txt = render_cases(c, kind, tid)
     out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', f'{tid}-{kind}') + '.md')
     with open(out, 'w', encoding='utf-8', newline='\n') as fh:
-        fh.write(render_cases(c, kind, tid))
+        fh.write(txt)
     return out
 
 
@@ -1528,11 +1535,18 @@ def cases_cmd(a):
         return 0
     opt = {rest[i][2:]: rest[i + 1] for i in range(len(rest) - 1) if rest[i] in ('--fix', '--bugs', '--retest')}
     if verb == 'add':
-        new = json.loads(open(rest[0], encoding='utf-8-sig').read() if rest and os.path.isfile(rest[0]) else (rest or ['{}'])[0])
+        if not (rest and os.path.isfile(rest[0])):
+            raise SystemExit('cases add <task> <spec.json>: write the spec to a file first (inline JSON loses its quotes on Windows)')
+        try:
+            new = json.loads(open(rest[0], encoding='utf-8-sig').read())
+        except ValueError as e:
+            raise SystemExit(f'cases add: {rest[0]} is no JSON ({e})')
+        if not isinstance(new, dict):
+            raise SystemExit('cases add: the spec is one JSON object (templates.md "Test cases")')
     elif verb == 'result':
         if len(rest) < 2:
             raise SystemExit('cases result <task> <case id> <PASS|FAIL|NOT_TESTED_LOCAL ...> [<evidence link> ...]')
-        new = {'cases': [{'id': rest[0], 'result': rest[1], **({'evidence': rest[2:]} if rest[2:] else {})}]}
+        new = {'cases': [{'id': rest[0], 'result': rest[1], 'evidence': rest[2:]}]}   # evidence replaced: an old FAIL's link never stays
     gaps = []
 
     def change(x):
@@ -1540,13 +1554,15 @@ def cases_cmd(a):
         c = x.get('cases') or {}
         if verb == 'result' and rest[0] not in [k.get('id') for k in c.get('cases') or []]:
             raise SystemExit(f'cases result: {tid} has no case {rest[0]} (cases add it first)')
+        n = len(c.get('rounds') or []) + 1   # the round in progress
+        if verb == 'result':
+            new['cases'][0]['ran'] = n
         if verb == 'round':
-            ran = [k for k in c.get('cases') or [] if k.get('result')]
+            ran = [k for k in c.get('cases') or [] if k.get('result') and k.get('ran', n) == n]   # only cases run this round
             cnt = {}
             for k in ran:
                 w = str(k['result']).split()[0].upper()
                 cnt[w] = cnt.get(w, 0) + 1
-            n = len(c.get('rounds') or []) + 1
             c = merge_spec(c, {'rounds': [{'round': n, 'date': time.strftime('%Y-%m-%d'), 'cases': ', '.join(k['id'] for k in ran),
                                            'result': ', '.join(f'{v} {w}' for w, v in cnt.items()), 'bugs': opt.get('bugs') or 'none',
                                            'fix': opt.get('fix') or '', 'retest': opt.get('retest') or ''}]})
@@ -1561,9 +1577,11 @@ def cases_cmd(a):
 
 def fmt_line(f, s):
     """A title / subject format ({type} {scope} {change} {task} {tag} {code} {repo}): empty () and a dangling ' -' dropped."""
-    vals = {'tag': TAG, **{k: v for k, v in s.items() if v}}
-    out = re.sub(r'\{(\w+)\}', lambda m: str(vals.get(m.group(1), '')), f)
-    return re.sub(r'\s{2,}', ' ', re.sub(r'\s+-\s*(?=\(|$)', ' ', re.sub(r'\s*\(\s*\)', '', out))).strip()
+    vals = {'tag': TAG, **{k: str(v) for k, v in s.items() if v and not isinstance(v, (list, dict))}}
+    keep = []   # a filled placeholder -> a sentinel while the empty ones' () and ' -' are dropped
+    out = re.sub(r'\{(\w+)\}', lambda m: (keep.append(vals[m.group(1)]) or f'\x00{len(keep) - 1}\x00') if vals.get(m.group(1)) else '', f)
+    out = re.sub(r'\s{2,}', ' ', re.sub(r'\s+-\s*(?=\(|$)', ' ', re.sub(r'\s*\(\s*\)', '', out))).strip()
+    return re.sub(r'\x00(\d+)\x00', lambda m: keep[int(m.group(1))], out)
 
 
 def render_title(s):
@@ -1580,8 +1598,9 @@ def render_commit(s):
 def render_mr_body(s):
     """templates.md "MR spec" from an MR spec; the Local env row from the loop checkpoint when the spec has none."""
     t = s.get('task') or ''
-    url = s.get('taskUrl') or (t and (_tracker('url', t) or '').strip().splitlines()[-1:] or [''])[0]
-    loop = s.get('localEnv') or (f'{s.get("env") or "local"}: {local_pass(t)[1]}' if t and local_pass(t)[1] else 'none')
+    url = s.get('taskUrl') or (t and ((_tracker('url', t) or '').strip().splitlines() or [''])[-1])
+    ev = '' if s.get('localEnv') or not t else local_pass(t)[1]
+    loop = s.get('localEnv') or (f'{s.get("env") or "local"}: {ev}' if ev else 'none')
     checks = s.get('checksRun') or []
     rows = [['Checks', ' · '.join(f'{c["name"]} {"✅" if str(c.get("result", "")).upper() in ("PASS", "OK", "0", "") else "❌ " + str(c["result"])}' for c in checks) or 'none'],
             ['Local env', loop], ['Not run', s.get('notRun') or 'nothing'], ['UI', s.get('ui') or 'not a UI change'],
@@ -2109,6 +2128,8 @@ def _cli():
         finish(a[1], rc(a[2], 'human'), _body(a[3]), *(a[4:5] or ['review']), ai=rc(opt.get('--ai'), 'ai'))
         print('done')
     elif cmd == 'mr' and opt.get('--spec'):   # title + body rendered (devtools.py "render"); a 2nd positional = target
+        if len(a) > 3:
+            raise SystemExit('mr --spec <mr.json>: no title or body arguments (both are rendered); only <worktree> [target]')
         s = json.loads(open(opt['--spec'], encoding='utf-8-sig').read())
         if gaps := mr_gaps(s):
             raise SystemExit(f'mr spec refused: missing {", ".join(gaps)}')

@@ -25,7 +25,7 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $O board join -Agent <id> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress
 & $D wt new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>; & $D wt sync -Dir <wt>   # 1. worktree, latest target
-#   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it in the testing-goals doc
+#   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it as the cases spec `repro`
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
 #   4. FIRST (templates.md "Test cases"): the task's cases spec, human checks from the request (never the code):
 #      devtools.py cases add <task> cases.json; automated tests (Rules > Tests); each loop round: cases result / round, then
@@ -106,7 +106,7 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   A fix on one path: grep every other path that writes, serves or proxies the same data (sibling services, other products,
   every render path) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
   endpoint and delete stale known-bug blocks in the same MR.
-- **Text files:** write with the Write tool, change with Edit, pass file paths (`devtools.py doc <file>`, MR body from a file);
+- **Text files:** write with the Write tool, change with Edit, pass file paths (MR, commit, test docs: specs);
   never heredocs / sed / string-replace for text with backticks, backslashes, quotes or CRLF, or over ~8 KB (unexpected EOF,
   mangled); a scratchpad file passed to the interpreter is fine.
 - **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;
