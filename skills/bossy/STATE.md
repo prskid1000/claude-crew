@@ -70,10 +70,10 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `live-steps` | `bossy.ps1 supervise` | `json v0: at` | 30 d | none |
 
 ## Artefacts (drift guard)
-Every agent-written kind (templates.md "Writing standards" + run files) and its writer: a renderer from a spec, or `free: <who>
-(<plan>)` until it has one. `kitbag.py lint` [ARTEFACT] fails on a kind without a row; `state lint` fails on a `.md` / `.json` file
-in a shared place (`work/docs|briefs|waves`, a QA run's top folder) that no row's Where + Shape (`md <first-line regex>`, `json
-<keys>`, `any`) or Inventory row lists, and warns on agent scratch (`work/agents/<id>/`: specs are inputs, any shape) and loose files in `work/` itself; the longest matching Where decides.
+Every agent-written kind (templates.md "Writing standards" + run files), its writer (a renderer, or `free: <who> (<plan>)`), place
+and shape (`md <first-line regex>`, `todo <regex>` + `- [ ] <code> · <desc> · <ref>` items, `json <keys>`, `any`; the longest
+matching place decides). `kitbag.py lint` [ARTEFACT]: a kind without a row fails. `state lint`: an unlisted `.md` / `.json` in
+`work/briefs|waves` or a QA run's folder = BAD; in `work/docs`, agent scratch (`work/agents/<id>/`) or loose in `work/` = WARN.
 
 | Kind | Writer | Where (runtime) | Shape |
 |---|---|---|---|
@@ -112,3 +112,4 @@ in a shared place (`work/docs|briefs|waves`, a QA run's top folder) that no row'
 | `owner-message` | free: the coordinator (chat, never a file) | — | — |
 | `spec` | free: the agent (renderer input: task, cases, MR spec) | `work/agents/*/*.json` | `any` |
 | `resume` | `crafty.ps1 checkpoint` | `work/agents/*/resume*.md` | `any` |
+| `kitty-todo` | `kitbag.py state todo` | `work/agents/kitty/*.md` | `todo ^# ` |

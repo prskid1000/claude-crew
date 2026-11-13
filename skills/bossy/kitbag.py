@@ -10,7 +10,7 @@
   python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (goody kit-admin)
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show] · budget raise [-Tests] -Reason "<why>"   # the kit total (-Tests: tests/) vs its cap; raise: goody kit-admin
-  python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
+  python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers | state todo add|done|lint <file> ...   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
   python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
   python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N] [--dry-run]
 
@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1306 audit ·
-  L1415 registry · L1756 prose · L1907 sections · L2037 budget · L2061 goodies · L2568 state lint · L2718 main
+  L1415 registry · L1756 prose · L1907 sections · L2037 budget · L2061 goodies · L2568 state lint · L2752 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -2599,10 +2599,10 @@ def artefact_lint(kit, scripts):
             out.append(f'{kd}: writer {w!r}: a backticked kit script verb or "free: <who> (<plan>)"')
         out += [f'{kd}: writer {n} is no kit script' for n in names if n not in scripts]
         try:
-            if s and s != 'any' and not (s.startswith('json ') or (s.startswith('md ') and re.compile(s[3:]))):
-                out.append(f'{kd}: shape {s!r}: md <first-line regex> | json <keys> | any')
+            if s and s != 'any' and not (s.startswith('json ') or (s.startswith(('md ', 'todo ')) and re.compile(s.partition(' ')[2]))):
+                out.append(f'{kd}: shape {s!r}: md|todo <first-line regex> | json <keys> | any')
         except re.error as e:
-            out.append(f'{kd}: shape regex {s[3:]!r}: {e}')
+            out.append(f'{kd}: shape regex {s.partition(" ")[2]!r}: {e}')
     return out
 
 def shape_ok(shape, f):
@@ -2614,10 +2614,42 @@ def shape_ok(shape, f):
         return isinstance(o, dict) and all(k in o for k in shape[5:].split())
     try:
         with open(f, encoding='utf-8-sig', errors='replace') as fh:
-            first = next((ln.strip() for ln in fh if ln.strip()), '')
+            lines = [ln.strip() for ln in fh if ln.strip()]
     except OSError:
         return False
-    return bool(re.search(shape[3:], first))
+    kind, _, rx = shape.partition(' ')   # todo: + every checkbox line is a TODO_ITEM
+    return bool(lines and re.search(rx, lines[0])) and (kind != 'todo' or all(TODO_ITEM.match(x) for x in lines if x.startswith('- [')))
+
+TODO_ITEM = re.compile(r'^- \[[ x]\] [\w.-]+ · [^·\n]+ · \S[^\n]*$')   # - [ ] <code> · <desc> · <ref>
+
+def todo_cmd(a):
+    """state todo add <file> <code> "<desc>" <ref> | done <file> <code> [<ref>] | lint <file>: a kitty to-do / handoff list,
+    one item shape (STATE.md Artefacts kitty-todo)."""
+    if len(a) < 2 or a[0] not in ('add', 'done', 'lint'):
+        print(todo_cmd.__doc__, file=sys.stderr)
+        return 2
+    verb, f = a[0], a[1]
+    lines = read(f).replace('\r\n', '\n').split('\n') if osp.isfile(f) else ['# Kit to-do', '', '']
+    if verb == 'lint':
+        bad = [x for x in lines if x.startswith('- [') and not TODO_ITEM.match(x)]
+        for x in bad:
+            print(f'TODO-SHAPE {x[:100]} (want "- [ ] <code> · <desc> · <ref>")')
+        return 1 if bad else 0
+    code = a[2] if len(a) > 2 else ''
+    at = next((i for i, x in enumerate(lines) if re.match(rf'^- \[[ x]\] {re.escape(code)} · ', x)), None)
+    if verb == 'add':
+        if len(a) < 5 or '·' in a[3] or at is not None:
+            raise SystemExit('state todo add <file> <code> "<desc, no ·>" <ref>: a new code, a desc, a ref (task, commit, file:line)')
+        lines.insert(len(lines) - (1 if lines[-1] == '' else 0), f'- [ ] {code} · {a[3]} · {a[4]}')
+    elif at is None:
+        raise SystemExit(f'state todo done: no item {code} in {f}')
+    else:
+        x = '- [x]' + lines[at][5:]
+        lines[at] = x.rsplit(' · ', 1)[0] + f' · {a[3]}' if len(a) > 3 else x
+    with open(f, 'w', encoding='utf-8', newline='\n') as fh:
+        fh.write('\n'.join(lines).rstrip('\n') + '\n')
+    print(f'{verb} {code}: {f}')
+    return 0
 
 def artefact_files(since_min=0):
     """Drift guard on run files: a .md / .json in a shared place no Artefacts / Inventory row lists = BAD; agent scratch of no
@@ -2688,6 +2720,8 @@ def state_lint(since_min=0):
 def cmd_state(a):
     """state lint [--since <min>] [--json]: exit 1 on a BAD file (supervise flags them)."""
     flags, rest = parse_opts(a, ('--since',))
+    if rest[:1] == ['todo']:
+        return todo_cmd(rest[1:])
     if rest[:1] == ['writers']:   # the drift guard's registry: every agent-written kind and its writer
         rows = artefacts()
         for kd, w, g, s in rows:

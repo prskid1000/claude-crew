@@ -138,10 +138,10 @@ Expect "crafty.ps1 wt commit -Spec: the commit message is the rendered one ($($w
 New-Item -ItemType Directory -Force "$k/skills/crafty", "$k/skills/bossy" | Out-Null; Copy-Item (Join-Path $src 'skills/bossy/STATE.md') "$k/skills/bossy/"; Copy-Item (Join-Path $src 'skills/crafty/templates.md') "$k/skills/crafty/"
 $KB = Join-Path $k 'skills/bossy/kitbag.py'
 function Kb($code) { & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KB)'); import kitbag as k; $code" 2>&1 }
-$al0 = Kb "print(len(k.artefact_lint(r'$k', {'bossy.ps1', 'crafty.ps1', 'devtools.py', 'pokey.ps1', 'testy.js'})))"
+$al0 = Kb "print(len(k.artefact_lint(r'$k', {'bossy.ps1', 'crafty.ps1', 'devtools.py', 'pokey.ps1', 'testy.js', 'kitbag.py'})))"
 $tp = Get-Content -Raw "$k/skills/crafty/templates.md"; [IO.File]::WriteAllText("$k/skills/crafty/templates.md", $tp.Replace('| owner-message |', "| sprint-note | a new free-text note | prose | 50w | — |`n| owner-message |"))
 $sd = Get-Content -Raw "$k/skills/bossy/STATE.md"; [IO.File]::WriteAllText("$k/skills/bossy/STATE.md", $sd.Replace('| `owner-message` |', "| ``qa-x`` | hand-written | — | ``md ^(# x`` |`n| ``owner-message`` |"))
-$al1 = Kb "print('\n'.join(k.artefact_lint(r'$k', {'bossy.ps1', 'crafty.ps1', 'devtools.py', 'pokey.ps1', 'testy.js'})))"
+$al1 = Kb "print('\n'.join(k.artefact_lint(r'$k', {'bossy.ps1', 'crafty.ps1', 'devtools.py', 'pokey.ps1', 'testy.js', 'kitbag.py'})))"
 Expect "lint ARTEFACT: the kit's kinds all name a writer; a new Writing-standards kind without a row, a writer no script / free, a bad shape fail ($al0)" ("$al0".Trim() -eq '0' -and "$al1" -match 'kind sprint-note has no "Artefacts" row' -and "$al1" -match "qa-x: writer 'hand-written'" -and "$al1" -match 'qa-x: shape regex')
 [IO.File]::WriteAllText("$k/skills/bossy/STATE.md", $sd); $rw = TkPath $k work -Create
 foreach ($f in @{ 'qa-runs/r1/lead-notes.md' = "# Lead notes: r1"; 'qa-runs/r2/lead-notes.md' = "Notes of r2"; 'qa-runs/r1/fix-round.md' = "Fix round 2"; 'qa-runs/r1/run.json' = '{}'
@@ -191,5 +191,10 @@ Set-JsonFile "$qr/r3/A1/results.json" @{ code = 'A1'; checks = @(); colour = 're
 Set-JsonFile (Join-Path (TkPath $k programs -Create) 'p1.json') @{ wave = 1 }
 $s10 = @(& $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json | ForEach-Object { "$($_.name)|$($_.problem)" }) -join "`n"
 Expect 'state lint schemas: a results.json key outside its schema is drift, a program without updated misses a key, a listed run.json passes' ($s10 -match 'qa-runs:results\|drift: key\(s\) colour' -and $s10 -match 'programs\|missing updated' -and $s10 -notmatch 'qa-runs:run\|drift')
+# ---- kitty to-do / handoff lists (item 21): one item shape, written by kitbag.py state todo, linted
+$td = Join-Path $wd 'todo.md'; $t1 = & $py -X utf8 $KB state todo add $td R1 'render the wave brief' 'kit-render-all.md:10' 2>&1; $null = & $py -X utf8 $KB state todo add $td R2 'retro report' 'item 9' 2>&1
+$t2 = & $py -X utf8 $KB state todo done $td R1 'kit abc1234' 2>&1; $t3 = & $py -X utf8 $KB state todo add $td R2 'again' 'x' 2>&1; $t3c = $LASTEXITCODE
+$tl0 = & $py -X utf8 $KB state todo lint $td 2>&1; $tl0c = $LASTEXITCODE; Add-Content $td '- [ ] free text item'; $tl1 = & $py -X utf8 $KB state todo lint $td 2>&1; $tl1c = $LASTEXITCODE
+Expect "state todo: add / done render '- [ ] <code> · <desc> · <ref>', a dup code refused; lint fails on a free line ($tl0c $tl1c)" ((Gold ((Get-Content -Raw $td) -replace '(?m)^- \[ \] free text item\r?\n?', '') "# Kit to-do`n`n- [x] R1 · render the wave brief · kit abc1234`n- [ ] R2 · retro report · item 9") -and $t3c -ne 0 -and $tl0c -eq 0 -and $tl1c -eq 1 -and "$tl1" -match 'TODO-SHAPE - \[ \] free text item')
 Remove-TestKit $k
 Complete-Tests
