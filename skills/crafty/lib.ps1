@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L67 state · L136 config · L216 OS · L413 leases · L874 status · L1118 supervise sweep ·
-  L1189 supervise report · L1285 tracker · L1592 prior · L1608 ask bugs · L1813 git-host · L1973 kitlog · L2093 params ·
-  L2398 entry-scripts
+Sections: L9 paths · L67 state · L136 config · L216 OS · L413 leases · L854 status · L1098 supervise sweep ·
+  L1169 supervise report · L1265 tracker · L1587 prior · L1603 ask bugs · L1808 git-host · L1968 kitlog · L2088 params ·
+  L2393 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -599,26 +599,6 @@ function Get-KitLockState {
 function Save-KitLockState($St) {
   Write-KitAtomic (Get-KitLockFile) ($St | ConvertTo-Json -Depth 5)
   foreach ($d in @($script:KitLockDropped)) { Write-KitLeaseLog release lock $d.lock @{ agent = $d.holder; at = $d.at } 'holder process ended' }; $script:KitLockDropped = @()
-}
-# -WaitMinutes -1: gate.waitMinutes learned per lock:<name>
-function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]$WaitMinutes = -1, [int]$ProcessId = $PID) {
-  $ctx = "lock:$Name"; $learned = $WaitMinutes -lt 0; if ($learned) { $WaitMinutes = [double](Get-KitParam 'gate.waitMinutes' $null $ctx) }
-  $me = @{ lock = $Name; holder = $Holder; pid = $ProcessId; pidStart = (Get-KitPidStart $ProcessId); at = (Get-Date).ToString('o'); dir = $Dir }
-  $f = Get-KitLockFile; $end = (Get-Date).AddMinutes($WaitMinutes); $n = 0; $script:KitLockRefused = $null
-  while ($true) {
-    $o = Invoke-KitLocked $f {
-      $st = Get-KitLockState; $h = $st.held[$Name]
-      $ahead = @($st.waiting | Where-Object { $_.lock -eq $Name -and $_.pid -ne $ProcessId -and [datetime]$_.at -lt [datetime]$me.at } | Sort-Object { [datetime]$_.at })
-      $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId })
-      $by = if ($h -and $h.pid -ne $ProcessId) { $h } elseif ($ahead.Count) { $ahead[0] + @{ queued = $true } } else { $null }
-      if ($by) { $st.waiting += $me } else { $g = $me.Clone(); $g.at = (Get-Date).ToString('o'); $st.held[$Name] = $g }   # held since = taken, not queued
-      Save-KitLockState $st; $by
-    }
-    if (-not $o) { Write-KitLeaseLog acquire lock $Name @{ agent = $Holder; at = $me.at }; if ($n) { Write-Host "[lock] $Name taken after $([int]((Get-Date) - [datetime]$me.at).TotalMinutes) min" }; return $true }
-    if ($n++ % 20 -eq 0) { Write-Host "[lock] waiting for lock $Name $(if ($o.queued) { 'behind' } else { 'held by' }) $($o.holder) since $(([datetime]$o.at).ToString('HH:mm')) (wait cap $WaitMinutes min)" }
-    if ((Get-Date) -ge $end) { Remove-KitLock $Name $ProcessId; if ($learned) { Add-KitParamObs 'gate.waitMinutes' $WaitMinutes $ctx 'timeout' 90 }; $script:KitLockRefused = $o; return $false }
-    Wait-KitPoll 15
-  }
 }
 function Remove-KitLock([string]$Name, [int]$ProcessId = $PID) {
   $f = Get-KitLockFile; if (-not (Test-Path $f)) { return }
@@ -1541,7 +1521,7 @@ function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask) {
 # -NewTask '<why>' skips the duplicate check (logged); -Related: tasks the owner named this session
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related) {
   $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask })   # no bare subtasks (owner, 2026-11-11)
-  if ($gap.Count) { throw "tracker create refused: subtask '$Name' of $Parent lacks $($gap -join ', ') (templates.md task-description): -File <md>; then bossy.ps1 track rollup -Task $Parent -From <brief dir> (goody task-rollup)" }
+  if ($gap.Count) { throw "tracker create refused: subtask '$Name' of $Parent lacks $($gap -join ', ') (templates.md task-description): crafty.ps1 tracker create -Spec <json> (crafty.ps1 ""task spec"")" }
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
   # under -Parent the check sees only siblings: the reason acks them (matched [] = no supervise WATCH)
   if ($NewTask) { Write-KitLog calls prior-override (@{ what = "task $Name"; reason = $NewTask } + $(if ($sub) { @{ matched = @(); parent = $Parent } } else { @{} })) }
@@ -1572,6 +1552,21 @@ function Set-KitTaskChecklist([string]$Task, [string]$Name, $Items) {
   Clear-TrackerMemo $Task; $tk = Get-TrackerTask $Task; if (-not $tk.name) { throw "tracker read of $Task failed" }
   $nd = Set-KitDescSection $tk.description $Name.ToLower() ((@("**$Name**") + @($Items | ForEach-Object { "- [$(if ($_.done) { 'x' } else { ' ' })] $($_.text)" })) -join "`n") ''
   if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { Set-TrackerDescription $Task $nd }
+}
+# checklist item "<id> · <plain words> · <URLs>" (links and a status suffix out of the words); task specs: crafty.ps1 "task spec"
+function Get-KitCut([string]$Text, [int]$Max) { $t = ("$Text" -replace '\s+', ' ' -replace '\|', '/').Trim(); if ($t.Length -gt $Max) { $t.Substring(0, $Max - 1) + '…' } else { $t } }
+function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
+  $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'
+  (@($Id, (Get-KitCut $Desc 110), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
+function ConvertTo-KitSpecItems($Spec) { @($Spec.items | Where-Object { $_.code } | ForEach-Object { [pscustomobject]@{ text = (Format-KitItemText "$($_.code)" "$($_.desc)" @($_.mrs)); done = [bool]$_.done } }) }
+# a parent's Items: its spec items + one per subtask "<spec code | $CodeOf | id> · <name without [Kind]> · <URL>", ticked once closed
+function Update-KitParentItems([string]$Parent, $Pt, [hashtable]$CodeOf = @{}) {
+  if (-not $Pt) { Clear-TrackerMemo $Parent; $Pt = Get-TrackerTask $Parent }; $subs = @($Pt.subtasks | Where-Object { $_.id }); if (-not $subs.Count) { return }
+  $px = Read-KitState (Get-KitTaskFile $Parent); $items = @(ConvertTo-KitSpecItems $px.spec) + @(foreach ($s in $subs) { $sc = (Read-KitState (Get-KitTaskFile $s.id)).spec.code
+      [pscustomobject]@{ text = (Format-KitItemText $(if ($sc) { "$sc" } elseif ($CodeOf[$s.id]) { "$($CodeOf[$s.id])" } else { "$($s.id)" }) ("$($s.name)" -replace '^\s*\[[^\]]*\]\s*') @($s.url)); done = [bool](Test-TrackerStatus "$($s.status)" 'closed') } })
+  $sig = ConvertTo-KitLetters (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join ';'); if ($sig -eq "$($px.parentItemsSig)") { return }
+  $null = Set-KitTaskChecklist $Parent 'Items' $items; Update-KitTaskIndex $Parent { param($x) $x.parentItemsSig = $sig; $x.itemsFrom = 'subtasks' }
+  "parent items ${Parent}: $(@($items | Where-Object done).Count)/$($items.Count) done"
 }
 function Set-TrackerName([string]$Id, [string]$Name) { Clear-TrackerMemo $Id; __TrA 'rename' @{ id = $Id; name = $Name } }
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {

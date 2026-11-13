@@ -40,25 +40,25 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 #      pause" -> stop checks there until "deploy done", then re-run; 0 bugs, every goal met -> release -> 6
 & $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
-python <kit>/skills/crafty/devtools.py mr <wt> "<title>" body.md              # 6. MR ("MR body"); after finish: again, both links
+python <kit>/skills/crafty/devtools.py mr <wt> "<title>" body.md   # 6. MR ("MR body"); after finish: again, both links
 python <kit>/skills/crafty/devtools.py finish <task> testing.md solution.md review --ai ai.md   # human doc, links block, comment, status
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
-python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       #    producers first; last line MERGED|SCHEDULED|WAIT|...
+python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic)
 & $O deploy request -Mrs <repo>!<iid>,... -Run <run>   # 8. deploy batch, silently (goody deploys; never deploy, never ask)
 & $O board leave -Session <token> -Status done   # 9. final report (templates.md "Final reports")
 ```
-- D1. **Decision pause**: about to change existing user-visible behaviour the task did not ask for (internal logic with the
-  same behaviour: no pause), or several valid paths
-  (design, data handling, migration strategy, UX)? `& $O decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options
-  "A: <label> — <why>","B: .." -Recommend <A|B> -Contracts <brief>.contracts.md` (`-Fyi`: nothing waits), stop THAT item
-  (`needsDecision`), continue the others. The answer: contracts file (`decide wait -Id <id>`); finish the item from it.
+- D1. **Decision pause**: about to change user-visible behaviour the task did not ask for (internal logic with the same
+  behaviour: no pause), or several valid paths (design, data handling, migration strategy, UX)? `& $O decide ask -Run <run>
+  -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." -Recommend <A|B> -Contracts
+  <brief>.contracts.md` (`-Fyi`: nothing waits), stop THAT item (`needsDecision`), continue the others. The answer: contracts
+  file (`decide wait -Id <id>`); finish the item from it.
 - D2. **ENV-FIX**: a local-env fix only the coordinator may do (`up`/`down`/`refresh`/`drop`, shared DB repair): `& $O decide ask
   -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, stop THAT item (`needsEnvFix`), continue the others.
   `localTest` BLOCKED only for an owner decision or a remote-only dependency (`blockedKind`, `blockedReason`).
 - D3. **Deferred** item that is a person's step, no code ("the team labels a sheet"):
   `kind: people` (holds no promotion).
-- No `localEnv` for your repo: step 5 = the automated tests only; "local env: none" in the MR and the report.
+- No `localEnv` for your repo: step 5 = the automated tests only; "local env: none" in the MR and report.
   `envy` (steps 2, 5, `$L`) is the goody `local-env`: `localEnv` set but `skills/envy/` missing ->
   `kitbag.py goody sync` once, else the same as no `localEnv`.
 
@@ -69,7 +69,7 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; never install into
   a linked `node_modules`/`.venv`; `wt sync` before editing, before every push, before merging; `wt remove` when done.
 - **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never a build or test tool
-  directly; waiting is normal; a killed build is no bug. Tool timeout 600000 ms, or `run_in_background` bounded
+  directly; waiting and killed builds are normal. Tool timeout 600000 ms, or `run_in_background` bounded
   (timeout or loop cap, no stdin read; killed before `leave`). A gate still queued when you must stop: push, Draft MR with
   `Not run: <gate>`, report NOT_MERGED. No dev servers by hand (the local env runs them), at most one headless browser; phones
   only through `phoney.ps1 acquire` (never `up`/`down`; goody `android-swarm`); Docker / WSL / VMs: `crafty.ps1 runtime use
@@ -89,7 +89,7 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
     `-Touched`). node-spec cannot bundle code needing framework DI or a linker (forms, router, store, injectable services):
     move the logic into a pure helper the component calls, spec that helper (never a local copy), list the wiring as a live check.
   - Run: `check -Step test -Tests <new tests> -Touched` before every push (full suites, `-AllTests`: the coordinator's
-    cadence). Each testing goal names its test or local manual check. E2E: only `check -Step e2e` (the diff's
+    cadence). Each testing goal names its test or manual check. E2E: only `check -Step e2e` (the diff's
     specs, each with its reason, for the goals doc; none = e2e NOT_TESTED; `-AllTests` only on the owner's word).
 - **Commits:** subject per `commitStyle` (default Conventional Commits) + any attribution trailer your harness or org
   asks for; `wt commit` only; never `--no-verify`, never type a hook's marker, never change shared git config or `git stash`.

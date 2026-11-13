@@ -37,7 +37,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | commit | commit message | subject; blank line; body bullets | first:72ch 12l 100ch | conv |
 | merge-commit | a merge commit (deploy merge, target into a branch) | subject naming both branches; blank line; why | 12l 100ch | — |
 | task-name | tracker task name | `[Feature/Bug/Chore] <area> — <outcome>` | 1l 100ch | — |
-| task-description | tracker task text | Problem, Goal, Items (subtask), Acceptance, Links | 200w each:6b | link |
+| task-description | tracker task text (`tracker create -Spec`) | Problem, Goal, Items, Acceptance, Links | 200w each:6b | link |
 | comment-solution | solution comment on a task | the "Task solution comment" template | 8l 120w | — |
 | comment-status | a status change note | `<status> — <why> · <link>` | 2l 40w | link |
 | comment-deploy | a deploy record (+ the batched ask under `deploy.trigger` ask) | env, MRs (merge order), who said deploy, result | 8l 120w | link |
@@ -218,7 +218,7 @@ without it.
 **MRs:** <ref (MERGED|SCHEDULED|OPEN)> · **Local proof:** <env r<n>, goals passed>
 **After deploy:** <settings/data to seed, or "nothing"> · **Deferred:** <item — reason, or "none">
 ```
-Kit comments, one per kind, edited: decisions, solution, QA result (MR URLs: Items); doc links: crafty "Tracker".
+Kit comments, one per kind, edited: solution, QA result (MR URLs: Items); doc links: crafty "Tracker".
 
 ## Decision request
 `bossy.ps1 decide ask` writes it to the contracts file; structured options feed the question tools (bossy E4).

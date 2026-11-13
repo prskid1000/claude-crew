@@ -4,7 +4,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk], uncomment <id> <comment id>, create [-NewTask '<why>'] [-Related <ids>] [-Parent <id> -File <md>: a subtask needs Problem, Goal, Items, Acceptance, Links], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only for a [Bug]), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
  pipes [-Mrs <url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L934 check · L1237 pipes · L1294 guard · L2051 dir ·
-  L2061 checkpoint · L2086 prior · L2124 tracker · L2204 host
+  L2061 checkpoint · L2086 prior · L2124 tracker · L2146 task spec · L2294 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2122,6 +2122,91 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
 }
 
 # ---- tracker: lib.ps1 adapters
+# lib.ps1 leases: a named lock (check exclusiveTests)
+# -WaitMinutes -1: gate.waitMinutes learned per lock:<name>
+function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]$WaitMinutes = -1, [int]$ProcessId = $PID) {
+  $ctx = "lock:$Name"; $learned = $WaitMinutes -lt 0; if ($learned) { $WaitMinutes = [double](Get-KitParam 'gate.waitMinutes' $null $ctx) }
+  $me = @{ lock = $Name; holder = $Holder; pid = $ProcessId; pidStart = (Get-KitPidStart $ProcessId); at = (Get-Date).ToString('o'); dir = $Dir }
+  $f = Get-KitLockFile; $end = (Get-Date).AddMinutes($WaitMinutes); $n = 0; $script:KitLockRefused = $null
+  while ($true) {
+    $o = Invoke-KitLocked $f {
+      $st = Get-KitLockState; $h = $st.held[$Name]
+      $ahead = @($st.waiting | Where-Object { $_.lock -eq $Name -and $_.pid -ne $ProcessId -and [datetime]$_.at -lt [datetime]$me.at } | Sort-Object { [datetime]$_.at })
+      $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId })
+      $by = if ($h -and $h.pid -ne $ProcessId) { $h } elseif ($ahead.Count) { $ahead[0] + @{ queued = $true } } else { $null }
+      if ($by) { $st.waiting += $me } else { $g = $me.Clone(); $g.at = (Get-Date).ToString('o'); $st.held[$Name] = $g }   # held since = taken, not queued
+      Save-KitLockState $st; $by
+    }
+    if (-not $o) { Write-KitLeaseLog acquire lock $Name @{ agent = $Holder; at = $me.at }; if ($n) { Write-Host "[lock] $Name taken after $([int]((Get-Date) - [datetime]$me.at).TotalMinutes) min" }; return $true }
+    if ($n++ % 20 -eq 0) { Write-Host "[lock] waiting for lock $Name $(if ($o.queued) { 'behind' } else { 'held by' }) $($o.holder) since $(([datetime]$o.at).ToString('HH:mm')) (wait cap $WaitMinutes min)" }
+    if ((Get-Date) -ge $end) { Remove-KitLock $Name $ProcessId; if ($learned) { Add-KitParamObs 'gate.waitMinutes' $WaitMinutes $ctx 'timeout' 90 }; $script:KitLockRefused = $o; return $false }
+    Wait-KitPoll 15
+  }
+}
+# ---- task spec: agents pass facts (JSON), never task markdown; tracker create|update <id>|render -Spec <json> renders the
+# description (testing-doc lines once the docs exist, Problem, Goal, Items `- <code> · <desc>`, Acceptance, Links), the Items checklist
+# `<code> · <desc> · <MR URLs>`, Decisions (lib.ps1 Format-KitDecisionItems) and the parent's Items (lib.ps1 Update-KitParentItems),
+# the same through every tracker adapter. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
+# assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
+# { text, url }], docs: { human, ai }, decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], proseOk }.
+# Refused: a missing field (a [Bug]: title + problem), a link or MR that is no full URL, a prose finding (a local path).
+# merge by key: items / subtasks by code, decisions by id; any other field present replaces the stored one
+function Merge-KitTaskSpec($Old, $New) {
+  $m = [ordered]@{}; foreach ($k in @($Old.Keys)) { $m[$k] = $Old[$k] }
+  foreach ($k in @($New.Keys)) {
+    $key = @{ items = 'code'; subtasks = 'code'; decisions = 'id' }[$k]
+    if (-not $key) { $m[$k] = $New[$k]; continue }
+    $byKey = [ordered]@{}; foreach ($e in @($m[$k]) + @($New[$k])) { if ($e -and $e[$key]) { $byKey["$($e[$key])"] = $(if ($byKey["$($e[$key])"]) { $o = $byKey["$($e[$key])"]; foreach ($f in $e.Keys) { $o[$f] = $e[$f] }; $o } else { $e }) } }
+    $m[$k] = @($byKey.Values)
+  }
+  $m
+}
+# what a spec lacks (a [Bug] keeps its own shape: name + problem)
+function Test-KitTaskSpec($Spec) {
+  $bug = "$($Spec.kind)" -match '(?i)^bug$' -or "$($Spec.title)" -match '^\W*Bug\]'
+  @(if (-not "$($Spec.title)".Trim()) { 'title' }; if (-not "$($Spec.problem)".Trim()) { 'problem' }
+    if (-not $bug) { if (-not "$($Spec.goal)".Trim()) { 'goal' }; if (-not (@($Spec.items) + @($Spec.subtasks) | Where-Object { $_.code }).Count) { 'items[{code, desc}] (or subtasks)' }; if (-not @($Spec.acceptance | Where-Object { $_ }).Count) { 'acceptance' } }
+    foreach ($ln in @($Spec.links) + @($Spec.docs.human, $Spec.docs.ai) + @($Spec.items | ForEach-Object { @($_.mrs) })) { $u = if ($ln -is [Collections.IDictionary]) { $ln.url } else { "$ln" }; if ($u -and $u -notmatch '^https?://\S+$') { "a full URL instead of '$u'" } })
+}
+function Get-KitSpecName($Spec) { $t = "$($Spec.title)".Trim(); if ($Spec.kind -and $t -notmatch '^\[') { "[$($Spec.kind)] $t" } else { $t } }
+# the description: testing-doc links (only once they exist), Problem, Goal, Items (one line per item / subtask), Acceptance, Links
+function Format-KitTaskText($Spec) {
+  $ln = @(); if ($Spec.docs.human) { $ln += "**Testing doc (human):** [open]($($Spec.docs.human))", '' }; if ($Spec.docs.ai) { $ln += "**Testing doc (AI):** [open]($($Spec.docs.ai))", '' }
+  $ln += "**Problem:** $("$($Spec.problem)".Trim())", ''; if ($Spec.goal) { $ln += "**Goal:** $("$($Spec.goal)".Trim())", '' }
+  $its = @(@($Spec.items) + @($Spec.subtasks) | Where-Object { $_.code } | ForEach-Object { "- $(Format-KitItemText "$($_.code)" "$($_.desc)" @())" })
+  if ($its.Count) { $ln += @('**Items:**') + $its + '' }
+  $ac = @($Spec.acceptance | Where-Object { $_ } | ForEach-Object { "- $_" }); if ($ac.Count) { $ln += @('**Acceptance:**') + $ac + '' }
+  $lk = @($Spec.links | Where-Object { $_ } | ForEach-Object { if ($_ -is [Collections.IDictionary]) { "[$(if ($_.text) { $_.text } else { $_.url })]($($_.url))" } else { "$_" } })
+  if ($lk.Count) { $ln += "**Links:** $($lk -join ' · ')" }
+  ($ln -join "`n").TrimEnd()
+}
+# the rendered task: name, description, checklists (Items: items with MR URLs; Decisions: templates.md decisions)
+function ConvertTo-KitTaskRender($Spec, [string]$Task) {
+  $dec = @($Spec.decisions | Where-Object { $_.id } | ForEach-Object { [ordered]@{ id = "$($_.id)"; question = "$($_.question)"; answer = "$($_.answer)"; by = "$($_.by)"; at = "$($_.at)"; status = $(if ($_.answer) { 'answered' } else { 'pending' }) } })
+  [pscustomobject]@{ name = (Get-KitSpecName $Spec); description = (Format-KitTaskText $Spec)
+    items = @(ConvertTo-KitSpecItems $Spec)
+    decisions = @(if ($dec.Count) { Format-KitDecisionItems $dec '' $Task }) }
+}
+# create (no -Task) or update by key (-Task: merged into its stored spec); refused on gaps or prose findings (a local path is one)
+function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
+  $old = if ($Task) { (Read-KitState (Get-KitTaskFile $Task)).spec }; $sp = if ($old -is [Collections.IDictionary]) { Merge-KitTaskSpec $old $Spec } else { $Spec }
+  $gap = @(Test-KitTaskSpec $sp); if ($gap.Count) { throw "tracker spec refused: missing or wrong: $($gap -join '; ') (crafty.ps1 ""task spec"")" }
+  $r = ConvertTo-KitTaskRender $sp $Task
+  $pf = @(if (-not $Spec.proseOk) { Test-KitProse -Kind task-description -Text "$($r.name)`n`n$($r.description)`n`n$(@($r.decisions.text) -join "`n")" }); if ($pf.Count) { throw "tracker spec refused: $($pf.Count) prose finding(s): $($pf -join '; ')" }
+  if ($DryRun) { return $r }
+  if ($Task) {   # kept from the live text: testing-doc links the spec lacks (devtools.py finish writes them), kit sections (rollup)
+    Clear-TrackerMemo $Task; $cur = "$((Get-TrackerTask $Task).description)" -replace "`r`n", "`n"; $nd = $r.description
+    $docs = @($cur -split "`n" | Where-Object { $_ -match '^\*\*Testing doc \((human|AI)\):\*\*' -and $nd -notmatch "Testing doc \($($Matches[1])\)" }); if ($docs.Count) { $nd = (($docs -join "`n`n") + "`n`n" + $nd) }
+    foreach ($m in [regex]::Matches($cur, '(?s)<!-- kit:([\w-]+) -->\n(.*?)\n<!-- /kit:\1 -->')) { $nd = Set-KitDescSection $nd $m.Groups[1].Value $m.Groups[2].Value '' }
+    $null = Set-TrackerName $Task $r.name; $null = Set-TrackerDescription $Task $nd; $id = $Task
+  }
+  else { $nt = New-TrackerTask -List "$($sp.list)" -Name $r.name -Description $r.description -Parent "$($sp.parent)" -Assignee "$($sp.assignee)" -Priority "$($sp.priority)" -NewTask "$($sp.newTask)" -Related @($sp.related); $id = "$($nt.id)"; if (-not $id) { throw "tracker create returned no id: $nt" } }
+  if ($r.items.Count) { $null = Set-KitTaskChecklist $id 'Items' $r.items }
+  if ($r.decisions.Count) { $null = Set-KitTaskChecklist $id 'Decisions' $r.decisions }
+  $sp.Remove('proseOk'); Update-KitTaskIndex $id { param($x) $x.spec = $sp; $x.parentItemsSig = ''; if ($r.items.Count) { $x.itemsSig = '' } }   # Items just rewritten: the rollup / parent items write theirs again
+  $po = @(if ($sp.parent) { Update-KitParentItems "$($sp.parent)" }; if ($Task -or $sp.subtasks) { Update-KitParentItems $id }) -join ' · '
+  [pscustomobject]@{ id = $id; url = (Get-TrackerUrl $id); name = $r.name; items = $r.items.Count; decisions = $r.decisions.Count; parent = "$po" }
+}
 # a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy nobody updates; "Decision needed for X" passes
 function Test-KitDecisionText([string]$Text) { "$Text".Trim() -match '^\W{0,3}decisions?\W*(\(|:|\r?\n|$)' }
 # one-per-task comment kinds: edited in place (Set-TrackerKitComment)
@@ -2141,10 +2226,11 @@ function Invoke-Tracker {
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Add|Signature)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Add -Signature -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Add|Signature|Spec)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Add -Signature -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
+  $__sp = if ($__trOpt.Spec) { if (-not (Test-Path -LiteralPath $__trOpt.Spec -PathType Leaf)) { "tracker: no such spec file $($__trOpt.Spec)"; exit 2 }; Get-Content -LiteralPath $__trOpt.Spec -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable }   # `skills/crafty/crafty.ps1` "task spec"
   if ($__trOpt.File) { if (-not (Test-Path -LiteralPath $__trOpt.File -PathType Leaf)) { "tracker: no such file $($__trOpt.File)"; exit 2 }; $__trOpt.Text = Get-Content -LiteralPath $__trOpt.File -Raw -Encoding utf8; if (-not $__trOpt.Description) { $__trOpt.Description = $__trOpt.Text } }
   Initialize-KitTracker -Type $__trOpt.Type -DryRun:([bool]$__trOpt.DryRun)
   $ErrorActionPreference = 'Stop'
@@ -2174,7 +2260,11 @@ function Invoke-Tracker {
       $null = Remove-TrackerComment $__id $__x; Write-KitLog calls comment-deleted @{ task = $__id; comment = $__x; head = (("$($__c[0].text)" -split "`r?`n")[0]) }
       "deleted comment $__x on $__id`: $((("$($__c[0].text)" -split "`r?`n")[0]))"
     }
-    'create' {   # -Key: updates that key's open task, never a second one
+    'render' { if (-not $__sp) { 'usage: tracker render -Spec <json>'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -DryRun) }
+    'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> (merged by key into the stored spec)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id) }
+    'create' {   # -Spec: rendered (crafty.ps1 "task spec"); free text only for a [Bug] (its own shape); -Key: updates that key's open task
+      if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
+      if ((($__trOpt.Parent -and $__trOpt.Parent -ne '-') -or $__trOpt.Name -match '^\s*\[(Feature|Chore)\]') -and @(Get-KitTaskTextGaps $__trOpt.Name 'x').Count) { "tracker create refused: a kit task's text (a subtask or a [Kind] name) is rendered from a spec: tracker create -Spec <json> (crafty.ps1 ""task spec""); free text only for a [Bug]"; exit 1 }
       $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
       $ot = if ($old.id) { Get-TrackerTask $old.id }
@@ -2193,11 +2283,11 @@ function Invoke-Tracker {
     'scope' { $__s = if ($__trOpt.Task) { $__trOpt.Task } else { $__id }; if (-not ($__s -and $__trOpt.Add)) { "usage: tracker scope -Task <id> -Add '<item>'"; exit 2 }; Add-TrackerScope $__s $__trOpt.Add }
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
-    'describe' { Set-TrackerDescription $__id $(if ($__x) { $__x } else { $__trOpt.Description }) }
+    'describe' { if ((Read-KitState (Get-KitTaskFile $__id)).spec) { "tracker describe refused: $__id is rendered from its spec: tracker update $__id -Spec <json with the changed keys>"; exit 1 }; Set-TrackerDescription $__id $(if ($__x) { $__x } else { $__trOpt.Description }) }
     'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
-    default { 'usage: crafty.ps1 tracker view|status|comment|comments|uncomment|create|bug|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
+    default { 'usage: crafty.ps1 tracker view|status|comment|comments|uncomment|create|update|render|bug|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
   }
 }
 

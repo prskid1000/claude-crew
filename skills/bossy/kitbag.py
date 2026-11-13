@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1289 audit ·
-  L1398 registry · L1739 prose · L1884 sections · L2014 budget · L2038 goodies · L2545 state lint · L2617 main
+  L1398 registry · L1739 prose · L1890 sections · L2020 budget · L2044 goodies · L2551 state lint · L2623 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1840,7 +1840,13 @@ def prose_check(kind, text, spec, banned):
         mm = re.search(b, flat, re.I | re.M)
         if mm:
             out.append(f'filler: "{mm.group(0).strip()}"')
+    if re.match(r'(task|comment)-|decisions$', kind):   # tracker texts: a reader has no access to this machine
+        mm = LOCAL_PATH_RX.search(re.sub(r'https?://\S+', ' ', flat))
+        if mm:
+            out.append(f'local path "{mm.group(0).strip()}": link the doc / MR URL instead, or leave it out')
     return out
+
+LOCAL_PATH_RX = re.compile(r'(?<![\w/.-])(?:[A-Za-z]:[\\/]|\\\\\w|~[\\/]|/(?:home|Users)/[\w.-]+/|/(?:tmp|mnt)/[\w.-]+/[\w.-]+|\.{1,2}[\\/]|\.(?:runtime|state|claude|claude-runtime)[\\/])\S*')
 
 def result_notes(obj, at=''):
     """(field path, note) for every note string in a QA run JSON (results / run / bugs; any depth); a list entry by its id."""

@@ -178,7 +178,7 @@ git init -q "$lr-s"; git -C "$lr-s" -c protocol.file.allow=always submodule add 
 & $J @{ repos = @(@{ name = 'lr'; checkout = "$lr-s/sub"; exclusiveTests = @(@{ dir = 'api'; match = 'BaseDb'; lock = 'db' }) }) } "$k/skills/crafty/kit.local.json"
 $lp = { param($t, $c = '', $w = 5) Start-Process $pwshExe "-NoProfile -Command `$env:KIT_PARAM_GATE_WAITMINUTES='$w'; & '$D' check -Dir '$lr-w/api' -Step test -Tests $t; exit `$LASTEXITCODE" -PassThru -NoNewWindow -RedirectStandardOutput "$lr/o$t$c" }
 $wx = { foreach ($p in $args) { $null = $p.Handle; $p.WaitForExit() } }; $p1 = & $lp ADb; $p2 = & $lp ADb#m 2; & $wx $p1 $p2; $t = Get-Content $env:LOCK_LOG -Raw; $wt = Get-Content "$lr/oADb*" -Raw
-$h = Start-Process $pwshExe "-NoProfile -Command . '$(Lib)'; `$null = Use-KitLock db hx; sleep 60" -PassThru -NoNewWindow; for ($i = 0; $i -lt 50 -and -not (Select-String hx "$(TkPath $k runtimes)/locks.json" -Quiet -EA 0); $i++) { sleep -m 200 }
+$h = Start-Process $pwshExe "-NoProfile -Command . '$k/skills/crafty/crafty.ps1'; `$null = Use-KitLock db hx; sleep 60" -PassThru -NoNewWindow; for ($i = 0; $i -lt 50 -and -not (Select-String hx "$(TkPath $k runtimes)/locks.json" -Quiet -EA 0); $i++) { sleep -m 200 }
 $c3 = & $lp C; $c4 = & $lp ADb 4 0.03; & $wx $c3 $c4; $h.Kill(); $h.WaitForExit(); $free = pwsh -NoProfile -Command ". '$(Lib)'; (Get-KitLockState).held.Count"
 Expect "check: exclusiveTests serial ($t), non-match free, cap exit 3, dead holder dropped" ($t -eq 'sese' -and $p1.ExitCode + $p2.ExitCode + $c3.ExitCode -eq 0 -and (gc "$lr/oC" -Raw) -notmatch 'for lock' -and $wt -match 'waiting for lock db held by' -and $c4.ExitCode -eq 3 -and (gc "$lr/oADb4" -Raw) -match 'held by hx since' -and $free -eq 0)
 Remove-Item "$k/skills/crafty/kit.local.json"
