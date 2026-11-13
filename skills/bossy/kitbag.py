@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1306 audit ·
-  L1415 registry · L1756 prose · L1907 sections · L2037 budget · L2061 goodies · L2568 state lint · L2753 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1029 README graph · L1131 lint command · L1328 audit ·
+  L1437 registry · L1778 prose · L1929 sections · L2059 budget · L2083 goodies · L2590 state lint · L2775 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1230,11 +1230,33 @@ const fit = () => [...document.querySelectorAll('[data-fit]')].flatMap((e) => {
   const gap = Math.round(e.getBoundingClientRect().bottom - parseFloat(cs.paddingBottom) - parseFloat(cs.borderBottomWidth) - r.getBoundingClientRect().bottom)
   return gap >= 24 ? [{ el: 'fit', why: `blank ${gap} px below the content`, text: (e.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 60) }] : []
 })
-// a card grid or wrapping row (items [data-fit] or <details>) at desktop width, as loaded: a row ending 24+ px short of its box is an empty column
+// a card grid or wrapping row (items [data-fit], details, article, figure, .ci, .st) at desktop width, as loaded: a row ending 24+ px short of its box is an empty column (an auto-fill slot, a lone card)
+// a multi-column box (CSS columns) leaves its later columns empty when it holds few cards: the content must reach within 24 px of its right edge
+const cols = () => innerWidth < 1280 ? [] : [...document.querySelectorAll('body *')].flatMap((g) => {
+  const cs = getComputedStyle(g); if ((cs.columnCount === 'auto' && cs.columnWidth === 'auto') || !g.getClientRects().length || !g.children.length) return []
+  const end = g.getBoundingClientRect().right - parseFloat(cs.paddingRight), right = Math.max(...[...g.children].map((c) => c.getBoundingClientRect().right)), short = Math.round(end - right)
+  return short >= 24 ? [{ el: 'rows', why: `CSS columns end ${short} px short of their box (empty columns): use a stretching grid`, text: (g.className || g.tagName).toString().slice(0, 80) }] : []
+})
+// a stray element: absolutely placed outside its parent's box (a class shared by a chart dot and a legend mark), or text cut by a clipping box / the window edge
+const stray = () => [...document.querySelectorAll('body *')].flatMap((e) => {
+  if (e.closest('svg,#tip,script,style') || !e.getClientRects().length) return []   // a closed fold's body has no box; its summary is checked
+  const cs = getComputedStyle(e), r = e.getBoundingClientRect(), out = []
+  if (cs.position === 'absolute' && e.parentElement) { const p = e.parentElement.getBoundingClientRect(), tol = 6
+    if (r.left < p.left - tol || r.right > p.right + tol || r.top < p.top - tol || r.bottom > p.bottom + tol) out.push({ el: 'stray', why: `absolute element ${Math.round(r.left)},${Math.round(r.top)} outside its parent box ${Math.round(p.left)}-${Math.round(p.right)} x ${Math.round(p.top)}-${Math.round(p.bottom)}`, text: `${e.tagName.toLowerCase()}.${String(e.className)} in ${String(e.parentElement.className || e.parentElement.tagName)}`.slice(0, 120) }) }
+  if (![...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) return out
+  if (r.right > innerWidth + 1 && !e.closest('.sc,.tw')) out.push({ el: 'clip', why: `text ends ${Math.round(r.right - innerWidth)} px past the window edge`, text: (e.innerText || '').trim().slice(0, 80) })
+  for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) {
+    const as = getComputedStyle(a); if (/auto|scroll/.test(as.overflowX + as.overflowY)) break
+    if (/hidden|clip/.test(as.overflowX) && r.right > a.getBoundingClientRect().right + 1) { out.push({ el: 'clip', why: `text cut ${Math.round(r.right - a.getBoundingClientRect().right)} px by ${a.tagName.toLowerCase()}.${String(a.className)} (overflow ${as.overflowX})`, text: (e.innerText || '').trim().slice(0, 80) }); break }
+  }
+  return out
+})
 const rows = () => innerWidth < 1280 ? [] : [...document.querySelectorAll('body *')].flatMap((g) => {
   const cs = getComputedStyle(g); if (!(/grid/.test(cs.display) || (/flex/.test(cs.display) && cs.flexWrap === 'wrap')) || !g.getClientRects().length || g.closest('details:not([open])')) return []
   const kids = [...g.children].filter((c) => c.getClientRects().length && !/absolute|fixed/.test(getComputedStyle(c).position))
-  if (kids.length < 2 || !kids.some((c) => c.matches('[data-fit],details'))) return []
+  if (!kids.length || !kids.some((c) => c.matches('[data-fit],details,article,figure,.ci,.st'))) return []
+  if (kids.length < 2) { const r = kids[0].getBoundingClientRect(), short = Math.round(g.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth) - r.right)   // a lone card in a grid row
+    return /grid/.test(cs.display) && short >= 24 ? [{ el: 'rows', why: `a lone card ends ${short} px short of its grid (cards stretch: auto-fit)`, text: (g.className || g.tagName).toString().slice(0, 80) }] : [] }
   const end = g.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth), rs = []   // a row: items whose heights overlap (a margin shifts one top)
   const nm = (c) => ((c.querySelector('.k,summary,h3') || {}).textContent || c.id || c.className).trim().replace(/\s+/g, ' ').slice(0, 30)
   for (const c of kids) { const r = c.getBoundingClientRect(), it = { n: nm(c), h: r.height, k: c.classList[0] || c.tagName }, row = rs.find((x) => r.top < x.bottom - 1 && r.bottom > x.top + 1); if (row) { row.right = Math.max(row.right, r.right); row.bottom = Math.max(row.bottom, r.bottom); row.ids.push(c.id || c.className); row.its.push(it) } else rs.push({ top: r.top, bottom: r.bottom, right: r.right, ids: [c.id || c.className], its: [it] }) }
@@ -1260,7 +1282,7 @@ try {
     const base = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}`, height = await page.evaluate(() => document.documentElement.scrollHeight)
     await page.screenshot({ path: `${base}.png`, fullPage: true })   // as the owner sees it: the page's own open / closed defaults
     const hs = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (hs > 1) clipped.push({ el: 'page', why: `horizontal page scroll ${hs} px (a wide table scrolls in its own box)`, text: '' })
-    clipped.push(...await page.evaluate(layout), ...await page.evaluate(rows), ...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
+    clipped.push(...await page.evaluate(layout), ...await page.evaluate(rows), ...await page.evaluate(cols), ...await page.evaluate(stray),...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
     await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
     res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped }); await ctx.close()
   }

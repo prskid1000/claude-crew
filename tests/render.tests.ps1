@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-render.tests.ps1: agent-written artefacts rendered from small specs (devtools.py "render"): golden text per renderer, the
+render.tests.ps1: agent-written artefacts rendered from small specs (devtools.py "render") and supervise page fixes: golden text per renderer, the
 same spec -> the same text on every adapter, the gates judge the rendered text.
 Usage: pwsh -NoProfile -File <kit>/tests/render.tests.ps1 (or tests/kit-tests.ps1 -Area render).
 Exit codes: 0 pass · 1 a check failed.
@@ -212,5 +212,20 @@ $hbt = (Get-Content -Raw $hbf) -replace '\d{4}-\d\d-\d\dT[\d:.+\-Z]+', 'T' -repl
 Expect "checkpoint -Notes -Brief: golden resume brief (Done table, Open, Notes as one line) ($($hbo.Trim()))" ($hbo -match 'resume brief: .*board leave -Handoff' -and (Gold $hbt "# Resume brief: h8 (run ``r8``)`n**Result:** Next: review (start here; the steps below are done: verify, never redo) · T`n`n## Done`n`n| At | Step | Item | Evidence | Worktree @ head |`n|---|---|---|---|---|`n| T | commit | — | abc1234 | — |`n| T | mr | — | web!5 | — |`n`n## Open`n`n**Worktrees:** `n**Leases:** `n**Decisions pending:** `n`n## Notes`n`n- T rebase pending then push"))
 $hlNoRun = & { . (Join-Path $k 'skills/bossy/bossy.ps1'); Get-KitHandoffLine ([pscustomobject]@{ agent = 'h8'; run = '' }) 's8' 'why' }
 Expect "HANDOFF line: the checkpoint call it names drops -Run when the agent has none ($hlNoRun)" ($hlNoRun -match 'checkpoint -Agent h8 -Step <last done>' -and $hlNoRun -notmatch '-Run ')
+if (Use-BrowserKit) {   # kitbag.py ui-check on a canvas page
+  $uiKb = Join-Path $k 'skills/bossy/kitbag.py'
+  $uiLay = Join-Path (Kd) 'boxes.html'   # a canvas page's window.uiBoxes: one box off-screen, one pair overlapping; a label on its own node passes
+  [IO.File]::WriteAllText($uiLay, '<!doctype html><body><figure style="position:relative;width:60px"><figcaption>k <i style="position:absolute;left:200px">stray</i></figcaption></figure><script>window.uiBoxes = () => ({view: [0, 0, 300, 300], boxes: [{id: "node a", key: "a", b: [10, 10, 20, 20]}, {id: "label a", own: "a", b: [5, 25, 40, 12]}, {id: "node b", key: "b", b: [60, 60, 20, 20]}, {id: "node c", key: "c", b: [70, 70, 20, 20]}, {id: "node far", key: "f", b: [290, 100, 20, 20]}]}); window.uiChecks = () => matchMedia("(pointer: coarse)").matches ? [{el: "x", why: "coarse", text: ""}] : []</script></body>')
+  $uiLayOut = @(& $py -X utf8 $uiKb ui-check $uiLay --widths 390 2>&1); $uiLayCode = $LASTEXITCODE
+  Expect "ui-check: uiBoxes off-screen / overlap fail (a label on its own node passes), uiChecks issues count, 390 px = touch, an absolute mark outside its parent = stray (exit $uiLayCode)" ($uiLayCode -eq 1 -and @($uiLayOut -match 'CLIP stray: absolute element').Count -eq 2 -and @($uiLayOut -match 'CLIP x: coarse').Count -eq 2 -and @($uiLayOut -match 'CLIP layout: off-screen \(node far\)').Count -eq 2 -and @($uiLayOut -match 'CLIP layout: overlap \(node b x node c\)').Count -eq 2 -and @($uiLayOut -match 'CLIP layout').Count -eq 4)
+}
+# owner 2026-11-13: a STOPPED agent idle 1 h is finished, idle 5 min live; one deferred item whole; same-kind notes one line; release command once; no machine header count; the legend mark is no chart dot
+$dashFix = (Invoke-PsTest dashfix @'
+. $args[0]
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; agents = @(@{ name = 'k2 (kitty)'; state = 'STOPPED'; last = '2026-01-02T09:00:00' }, @{ name = 'k3 (kitty)'; state = 'STOPPED'; last = '2026-01-02T09:55:00' }, @{ name = 'k1 (kitty)'; state = 'ACTIVE' }); history = @(@{ flags = @() }, @{ flags = @() })
+  flags = @(@{ level = 'INFO'; what = "HOLD t1: promotion held (deferred items: pin 744); release: bossy.ps1 track add -Task t1 -HoldPromotion ''" }, @{ level = 'INFO'; what = 'RAM FLOOR: rm moved 8 GB (why)' }, @{ level = 'INFO'; what = 'RAM FLOOR: hm moved 8 GB (why)' }) })
+"$($h -match 'Finished today</h3><span class=cnt>\(1\)' -and $h -match '<td>k3 \(kitty\)') $($h -match '<span class=hw>pin 744</span>') $($h -match '<li class=f>RAM FLOOR: rm, hm moved 8 GB \(why\)</li>') $(([regex]::Matches($h, 'track add -Task')).Count) $($h -match "<h2>Machine and resources</h2></summary>") $($h -match "lgd t-sage dd'")"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join ' '
+Expect "supervise page: stale STOPPED agent finished, one hold item whole, notes grouped, release once, no machine header count, legend not a chart dot ($dashFix)" ($dashFix -eq 'True True True 1 True True')
 Remove-TestKit $k
 Complete-Tests
