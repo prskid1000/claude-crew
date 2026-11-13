@@ -15,7 +15,7 @@ Sections: L20 triage · L69 render · L147 rollup · L242 items · L287 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
-if (-not (Get-Command Update-KitParentItems -ErrorAction Ignore)) { throw 'goody task-rollup needs a newer kit core (lib.ps1 Update-KitParentItems): git pull the kit, then kitbag.py goody sync' }
+if (-not ((Get-Command Update-KitParentItems -ErrorAction Ignore) -and (Get-Command ConvertTo-KitOneLine -ErrorAction Ignore))) { throw 'goody task-rollup needs a newer kit core (lib.ps1 Update-KitParentItems, ConvertTo-KitOneLine): git pull the kit, then kitbag.py goody sync' }
 
 # ---- triage: the brief's item table (columns ID, Area or Owner area; Sev, Decision, Decision id, Ports, Title or the last column) + agents
 function ConvertFrom-KitMdTables([string]$Text) {
@@ -80,7 +80,7 @@ function Get-KitMrNamedIds([string[]]$Ids, $Mv) {
 # a task's tracked MR refs, one per MR (bossy.ps1 NormRef: old state may hold <group>/<repo>!<iid> next to <repo>!<iid>)
 function Get-KitTrackRefs($Mrs) { $nr = Get-Command NormRef -ErrorAction Ignore; @(@($Mrs) | Where-Object { $_ } | ForEach-Object { if ($nr) { NormRef $_ } else { "$_" } } | Select-Object -Unique) }
 function Get-KitRollupHash([string]$Text) { [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes("$Text"))) }
-# checklist item text, Get-KitCut: lib.ps1 Format-KitItemText (task spec)
+# checklist item text, ConvertTo-KitOneLine: lib.ps1 Format-KitItemText (task spec)
 # an Items piece's text naming triage ids -> their titles (plain words), else the text itself
 function Get-KitItemDesc([string]$Desc, $Rows) {
   $hit = @(@($Rows) | Where-Object { $_.id -and $Desc -match "(?<![\w-])$([regex]::Escape($_.id))(?![\w-])" })
@@ -92,8 +92,8 @@ function Get-KitItemDesc([string]$Desc, $Rows) {
 function Get-KitSubItems($Tri, [string]$Area, [string[]]$DoneIds, [bool]$AllDone, $Mrs, $DescMap = @{}, [switch]$All) {
   $said = "$(@($DescMap.Keys) + @($DescMap.Values) -join ' ')"
   @($Tri.rows | Where-Object { $All -or ($Area -and $_.area -eq $Area) -or ($said -and $said -match "(?<![\w.-])$([regex]::Escape($_.id))(?![\w-]|\.\w)") } | Sort-Object -Stable { Get-KitSevRank $_.sev } | ForEach-Object {
-      $k = Get-KitItemKind $_.decision; $t = Get-KitCut $_.title 90; $rid = $_.id
-      $d = "$(if ($_.sev) { "$($_.sev) · " })$(if ($k -eq 'fix') { $t } elseif ($k -eq 'defer') { "deferred: $t" } else { "$(Get-KitCut $_.decision 30): $t" })"
+      $k = Get-KitItemKind $_.decision; $t = ConvertTo-KitOneLine $_.title; $rid = $_.id
+      $d = "$(if ($_.sev) { "$($_.sev) · " })$(if ($k -eq 'fix') { $t } elseif ($k -eq 'defer') { "deferred: $t" } else { "$(ConvertTo-KitOneLine $_.decision): $t" })"
       $own = @($Mrs | Where-Object { @($_.ids) -contains $rid })
       if (-not $own.Count) { $ar = @($DescMap.Keys | Where-Object { "$($DescMap[$_])" -match "(?<![\w-])$([regex]::Escape($rid))(?![\w-])" }); $own = @($Mrs | Where-Object { $mi = @($_.ids); @($ar | Where-Object { $mi -contains $_ }).Count }) }
       if (-not $own.Count -and $AllDone -and $k -eq 'fix') { $own = @($Mrs) }
@@ -112,7 +112,7 @@ function Format-KitTriage($Tri) {
   $out = @($rows | Where-Object { (Get-KitItemKind $_.decision) -in 'defer', 'duplicate' })
   if ($out.Count) {
     $l += @('', '**Not in this wave**', '', '| Id | Severity | Verdict | Reason |', '|---|---|---|---|')
-    foreach ($r in $out) { $l += "| $(Get-KitCut $r.id 40) | $(Get-KitCut $r.sev 20) | $(if ((Get-KitItemKind $r.decision) -eq 'defer') { 'deferred' } else { Get-KitCut $r.decision 40 }) | $(Get-KitCut $r.title 140)$(if ($r.decisionId) { " (decision $($r.decisionId))" }) |" }
+    foreach ($r in $out) { $l += "| $(ConvertTo-KitOneLine $r.id) | $(ConvertTo-KitOneLine $r.sev) | $(if ((Get-KitItemKind $r.decision) -eq 'defer') { 'deferred' } else { ConvertTo-KitOneLine $r.decision }) | $(ConvertTo-KitOneLine $r.title)$(if ($r.decisionId) { " (decision $($r.decisionId))" }) |" }
   }
   $l -join "`n"
 }
@@ -124,7 +124,7 @@ function Get-KitRepoLabel([string]$Repo) {
   "$(if ($script:KitAcronyms -contains "$al".ToLower()) { "$al".ToUpper() } else { "$al".Substring(0, 1).ToUpper() + "$al".Substring(1) }) ($Repo)"
 }
 # fix items per severity: 11C/1H (C H M L initials, another severity in full, zero counts left out)
-function Format-KitSevCounts($Items) { @(@($Items) | Group-Object sev | Sort-Object { Get-KitSevRank $_.Name } | ForEach-Object { $sn = "$($_.Name)".Trim(); "$($_.Count)$(if ((Get-KitSevRank $sn) -lt 9) { $sn.Substring(0, 1).ToUpper() } elseif ($sn) { " $(Get-KitCut $sn 20)" } else { ' ?' })" }) -join '/' }
+function Format-KitSevCounts($Items) { @(@($Items) | Group-Object sev | Sort-Object { Get-KitSevRank $_.Name } | ForEach-Object { $sn = "$($_.Name)".Trim(); "$($_.Count)$(if ((Get-KitSevRank $sn) -lt 9) { $sn.Substring(0, 1).ToUpper() } elseif ($sn) { " $(ConvertTo-KitOneLine $sn)" } else { ' ?' })" }) -join '/' }
 # $Rows: one per subtask (Update-KitParentRollup): the summary line, then one table per repo, merge order inside
 function Format-KitDelivery($Rows, [string]$Note) {
   $n = $Rows.Count; $m = @($Rows | Where-Object merged).Count; $t = @($Rows | Where-Object inTest).Count; $c = @($Rows | Where-Object closed).Count
@@ -138,7 +138,7 @@ function Format-KitDelivery($Rows, [string]$Note) {
     foreach ($r in $gr) {
       $mr = @($r.mrs | ForEach-Object { "$(if ($_.url) { "[!$($_.iid)]($($_.url))" } else { "!$($_.iid)" })$(if ($_.repo -ne $g.Name) { " $($_.repo)" }) $($_.state)$(if (@($_.envs).Count) { ' · ' + (@($_.envs) -join ', ') })" }) -join '<br>'
       $fx = @($r.items | Where-Object fix); $sv = Format-KitSevCounts $fx
-      $l += "| [$(Get-KitCut "$(if ($r.area) { "$($r.area) · " })$($r.name)" 80)]($($r.url)) | $(Get-KitCut $r.status 40) | $(if ($mr) { $mr } else { '—' }) | $(if ($fx.Count) { "$(@($fx | Where-Object done).Count)/$($fx.Count)" } else { '—' }) | $(if ($sv) { $sv } else { '—' }) | $(if ($fx.Count) { Get-KitCut (@($fx.id) -join ', ') 4000 } else { '—' }) |"
+      $l += "| [$(ConvertTo-KitOneLine "$(if ($r.area) { "$($r.area) · " })$($r.name)")]($($r.url)) | $(ConvertTo-KitOneLine $r.status) | $(if ($mr) { $mr } else { '—' }) | $(if ($fx.Count) { "$(@($fx | Where-Object done).Count)/$($fx.Count)" } else { '—' }) | $(if ($sv) { $sv } else { '—' }) | $(if ($fx.Count) { ConvertTo-KitOneLine (@($fx.id) -join ', ') } else { '—' }) |"
     }
   }
   $l -join "`n"
@@ -298,7 +298,7 @@ function Update-KitParentClose([string]$Parent, $Pt, $Rows, $Ro) {
   }
   if ($d.status -ne 'answered') { return @{ ask = $ask; note = "parent: close asked ($ask)" } }
   $acted = @{ ask = $ask; acted = $ask }
-  if ("$($d.answer)" -cnotmatch '^\s*A\s*(?:[:.)—-]|$)' -and "$($d.answer)" -notmatch '^\s*close(?: it| the parent)?\s*\.?\s*$') { return $acted + @{ note = "parent kept open: $(Get-KitCut $d.answer 80) ($ask)" } }
+  if ("$($d.answer)" -cnotmatch '^\s*A\s*(?:[:.)—-]|$)' -and "$($d.answer)" -notmatch '^\s*close(?: it| the parent)?\s*\.?\s*$') { return $acted + @{ note = "parent kept open: $(ConvertTo-KitOneLine $d.answer) ($ask)" } }
   try { $null = Set-TrackerStatus $Parent closed; $acted + @{ note = 'parent closed'; did = "parent closed ($ask)" } } catch { @{ ask = $ask; note = "parent: close failed, retried next run ($ask)"; did = "parent close FAILED: $("$_".Split("`n")[0])" } }
 }
 
