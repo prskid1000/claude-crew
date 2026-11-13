@@ -174,6 +174,32 @@ $a1 = @($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*win
 "ask:$([bool]$a1 -and -not @($r | Where-Object { "$($_.what)" -match '^DEPLOY ASK' }).Count)"
 '@
 Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names (#)' @('none', 'good', 'stale', 'watch', 'empty', 'live', 'intest', 'ask')
+$ht = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+function Within($n) { $true }; function Invoke-Bounded { @() }
+$gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())
+$pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'; $now = Get-Date
+$cacheOf = { param([string[]]$m) @{ at = $now.ToString('o'); asked = $now.ToString('o'); ready = @("stage ($($m.Count) MR(s))"); ask = @("stage: $($m.Count) MR(s) ($($m -join ', '))"); mrsOf = @{ stage = $m } } | ConvertTo-Json -Depth 4 | Set-Content $pc }
+$word = { param($id, $ans, $q = 'deploy stage', $min = 1) Write-KitLog decisions-log answered ([ordered]@{ id = $id; kind = 'decision'; item = 'stage,other'; gate = 'deploy'; question = $q; answer = $ans; by = 'owner'; answeredAt = $now.AddMinutes(-$min).ToString('o'); mrs = @() }) }
+$acts = { param($r) @($r | Where-Object level -eq 'ACT' | ForEach-Object what) -join ';' }
+& $cacheOf @('api!1'); & $word 'd-20260101000000-coordinator-aa11' 'dont deploy stage' 'deploy stage' 3
+$r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
+"held:$(-not (& $acts $r) -and ($r.info -join ';') -eq 'deploy stage held by owner: aa11' -and (Get-Content $pc -Raw | ConvertFrom-Json).held.stage.id -eq 'd-20260101000000-coordinator-aa11')"
+& $cacheOf @('api!1', 'api!2'); $held = (Get-Content $pc -Raw | ConvertFrom-Json); $held | Add-Member -Force NoteProperty held ([pscustomobject]@{ stage = @{ id = 'd-20260101000000-coordinator-aa11'; mrs = @('api!1') } }); $held | ConvertTo-Json -Depth 5 | Set-Content $pc
+$r1 = @(Get-KitSuperviseFlagsDeploys -AutoFix); $r2 = @(Get-KitSuperviseFlagsDeploys -AutoFix)
+"fresh:$((& $acts $r1) -match '^DEPLOY ASK stage: 2 MR\(s\) .*new since hold aa11: api!2' -and -not (& $acts $r2) -and ($r2.info -join ';') -match 'held by owner: aa11')"
+& $word 'd-20260101000100-coordinator-bb22' 'yes, deploy stage'; $r = @(Get-KitSuperviseFlagsDeploys)
+"yes:$((& $acts $r) -match '^DEPLOY ASK stage' -and ($r.info -join ';') -match '^deploy ready: stage')"
+& $word 'd-20260101000200-opsy-stage-cc33' "wait: retry $($now.AddMinutes(30).ToString('HH:mm'))" 'host stayed busy' 0; $r = @(Get-KitSuperviseFlagsDeploys)
+"wait:$(-not (& $acts $r) -and ($r.info -join ';') -eq "deploy stage waiting: host busy, retry $($now.AddMinutes(30).ToString('HH:mm')) (cc33)")"
+$now = $now.AddMinutes(31); $r = @(Get-KitSuperviseFlagsDeploys)
+"due:$((& $acts $r) -match '^DEPLOY RETRY stage: host busy, wait cc33 due since' -and (& $acts $r) -notmatch 'DEPLOY ASK')"
+"kinds:$((@('dont deploy hm', 'No', 'hold it', 'wait: not urgent, never cut a live turn', 'yes: standing rule', 'deploy if needed', 'Deploy + retest', 'test prod pipelines also') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
+'@
+$hr = Invoke-PsTest 'deploy-holds' $ht @($O)
+Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (#)' @('held', 'fresh', 'yes', 'wait', 'due')
+Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,yes,yes,yes,yes')
 # a deploy MR (into deploys[].branch) feeds its own target only; from / paths pick an MR's targets in the intest gate too; old requests expire
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da' }, @{ target = 'b-st'; branch = 'st/b'; job = 'db' }) }) } $cfgF
 & $J @{ tasks = @{ g = @{ task = 'g'; mrs = @('jc!1', 'jc!2'); done = $true; doneAt = $now } }; automerge = @{} } $tf
