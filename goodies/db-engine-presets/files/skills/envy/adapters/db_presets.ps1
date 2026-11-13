@@ -56,8 +56,11 @@ function Test-DbPosBefore([string]$a, [string]$b) { $x = DbPosKey $a; $y = DbPos
 # db_flashback.py <verb> (plan / apply / slice / structure / touched) -> its JSON; -Fail: a refusal or error throws
 function Invoke-DbFb([string]$e, [string]$Verb, [string[]]$Rest, [switch]$Fail) {
   $c = DbConn $e
-  $a = @('-X', 'utf8', $script:DbFlashbackPy, $Verb) + $Rest + @('--host', $c.host, '--port', $c.port, '--user', $c.user, '--mysql', $c.mysql, '--mysqlbinlog', $c.mysqlbinlog, '--mysqldump', $c.mysqldump)
-  $r = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe (Get-Python) $a 7200 }
+  # the options go in an @file (argparse, one per line): a restore's skip / exclude lists outgrow the 8191-char cmd.exe limit of a python.bat shim
+  $argFile = Join-Path (Get-KitTemp) "kit-dbfb-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8)).args"
+  [IO.File]::WriteAllLines($argFile, [string[]](@($Rest) + @('--host', $c.host, '--port', $c.port, '--user', $c.user, '--mysql', $c.mysql, '--mysqlbinlog', $c.mysqlbinlog, '--mysqldump', $c.mysqldump)), [Text.UTF8Encoding]::new($false))
+  try { $r = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe (Get-Python) @('-X', 'utf8', $script:DbFlashbackPy, $Verb, "@$argFile") 7200 } }
+  finally { Remove-Item -LiteralPath $argFile -Force -ErrorAction SilentlyContinue }
   $j = try { $r.out | ConvertFrom-Json -AsHashtable } catch { $null }
   if (-not $j) { throw "db_flashback.py $Verb failed (exit $($r.code)): $(@("$($r.err)" -split "`n" | Select-Object -Last 3) -join ' | ')" }
   if ($j.error -and ($Fail -or $Verb -notin 'apply', 'structure')) { throw "db_flashback.py ${Verb}: $($j.error)" }

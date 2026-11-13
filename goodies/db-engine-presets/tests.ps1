@@ -54,6 +54,11 @@ if ($IsWindows) {
   Expect "slices: a SELECT or mysqldump stream without its end line is read again; 3 lost = fail, no slice kept; a whole read keeps the rows without the end line ($es)" ("$es" -eq 'lost 3 01,02,0 2 01,02,0')
   $ec = & $py -X utf8 -c "import sys, gzip, os; sys.path.insert(0, r'$(Join-Path $k4 'skills/envy/adapters')'); import db_flashback as f`ng, E = r'$okBin\c.gz', f.ROWS_END.encode()`nchild = `"import sys, os; d = bytes.fromhex(sys.argv[1]); s = int(sys.argv[2]); os.write(2, b'w' * 300000); [os.write(1, d[i:i + s]) for i in range(0, len(d), s)]; sys.exit(int(sys.argv[3]))`"`ndef run(body, step, code=0):`n  try: f.stream_gz([sys.executable, '-c', child, body.hex(), str(step), str(code)], g, E, 'c'); return gzip.open(g).read()`n  except RuntimeError as e: return 'fail' + ('+file' if os.path.exists(g) else '')`nbody = b'01\t02\t0\n' * 40`nprint(all(run(body + E + t, s) == body for s in (1, 3, 100) for t in (b'\n', b'\r\n', b'')), run(body + E + b'\n', 100, 2), run(b'01\t' + E + b'\n', 100))"
   Expect "slices: any read size and line break, a 300 KB stderr (no hang); a failed exit or an end text that is not its own line leaves no slice ($ec)" ("$ec" -eq 'True fail fail')
+  # a restore with 4237 row changes: its option lists passed the 8191-char cmd.exe limit of a python.bat shim ("The command line is too long")
+  $pyShim = Join-Path $fakeBin 'python.cmd'; Set-Content $pyShim "@`"$((Get-Command $py).Source)`" %*"
+  $bigSchemas = (1..3000 | ForEach-Object { "tenant_schema_$_" }) -join ','
+  $el = & { . (Join-Path $k4 'skills/envy/envy.ps1'); function Get-Python { $pyShim }; try { $null = Invoke-DbFb s 'guard' @('--schemas', $bigSchemas); 'no throw' } catch { "$_" } }
+  Expect "flashback options past the command-line limit ($($bigSchemas.Length) chars) reach db_flashback.py through an @file ($el)" ("$el" -match '^db_flashback\.py guard: \w+Error: ' -and "$el" -notmatch 'too long')
   Remove-TestKit $k4
 }
 

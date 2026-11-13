@@ -970,7 +970,7 @@ def guard_cmd(a, db, schemas):
 
 # ---- cli
 def main(argv):
-    ap = argparse.ArgumentParser(prog='db_flashback.py')
+    ap = argparse.ArgumentParser(prog='db_flashback.py', fromfile_prefix_chars='@')   # @<file>: options one per line, past the command-line limit
     ap.add_argument('cmd', choices=['plan', 'apply', 'slice', 'structure', 'objects', 'guard', 'touched'])
     for o in ('--from', '--to', '--schemas', '--host', '--port', '--user', '--skip', '--out', '--spec', '--dir', '--tables', '--files', '--exclude', '--objects', '--names'): ap.add_argument(o)
     ap.add_argument('--tool', default=TOOL); ap.add_argument('--batch', type=int, default=1000)   # TODO-PARAM (fixed default)
