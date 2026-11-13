@@ -204,5 +204,11 @@ Expect 'render final-report: the role''s keys in order, empty ones dropped, othe
 Set-JsonFile "$wd/retro.json" ([ordered]@{ date = '2026-11-13'; applied = @([ordered]@{ change = 'gate waits learned'; file = '`lib.ps1`'; count = 3 }); rejected = @([ordered]@{ signal = 'one flaky run'; why = 'single' }) })
 $rr = Dt render retro "$wd/retro.json" (Join-Path $wd 'retro.md')
 Expect 'render retro: golden kit-report (Result counts, Changed / Awaiting approval / Rejected), written to the out file' (Gold (Get-Content -Raw (Join-Path $wd 'retro.md')) "# Retro 2026-11-13`n`n**Result:** 1 applied · 0 awaiting approval · 1 rejected`n`n## Changed`n`n| Change | File | Digest count |`n|---|---|---|`n| gate waits learned | ``lib.ps1`` | 3 |`n`n## Awaiting approval`n`nnone`n`n## Rejected`n`n| Signal | Why |`n|---|---|`n| one flaky run | single |")
+# ---- handoff resume brief (item 8): rendered from the checkpoint; the agent adds one notes line
+$craftyPs = Join-Path $k 'skills/crafty/crafty.ps1'; $hbf = Join-Path $wd 'handoff-h8.md'
+$null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step commit -Evidence abc1234 2>&1
+$hbo = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step mr -Evidence 'web!5' -Notes "rebase  pending`nthen push" -Brief $hbf 2>&1 | Out-String
+$hbt = (Get-Content -Raw $hbf) -replace '\d{4}-\d\d-\d\dT[\d:.+\-Z]+', 'T' -replace '\d{4}-\d\d-\d\d \d\d:\d\d', 'T' -replace '(?m)^\| T \|', '| T |'
+Expect "checkpoint -Notes -Brief: golden resume brief (Done table, Open, Notes as one line) ($($hbo.Trim()))" ($hbo -match 'resume brief: .*board leave -Handoff' -and (Gold $hbt "# Resume brief: h8 (run ``r8``)`n**Result:** Next: review (start here; the steps below are done: verify, never redo) · T`n`n## Done`n`n| At | Step | Item | Evidence | Worktree @ head |`n|---|---|---|---|---|`n| T | commit | — | abc1234 | — |`n| T | mr | — | web!5 | — |`n`n## Open`n`n**Worktrees:** `n**Leases:** `n**Decisions pending:** `n`n## Notes`n`n- T rebase pending then push"))
 Remove-TestKit $k
 Complete-Tests

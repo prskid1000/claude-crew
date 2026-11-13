@@ -85,20 +85,10 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 ```
 
 ## Resume brief
-`bossy.ps1 recover` (crash) or a budget handoff writes it. The next agent joins with the same id + `-Resume`
-(TAKEOVER), runs `crafty.ps1 wt status -Dir <wt>` per worktree, reads the task and its MRs; files changing under it: stop, report.
-```markdown
-# Resume brief: <agent> (run `<run>`)
-**Result:** Start AT step: <next>. The steps below are done and verified: never redo them.
-## Done (verified)
-| Step | Item | Evidence | Check |
-|---|---|---|---|
-## Interrupted step `<next>`
-| Worktree | Branch @ head | Uncommitted (kept) |
-|---|---|---|
-## Open
-**Leases to take again:** <ids> · **Decisions:** <ids>
-```
+Rendered, never hand-written: `bossy.ps1 recover` (crash) or, at a budget HANDOFF, `crafty.ps1 checkpoint -Agent <id> -Run <run>
+-Step <last done> -Next <step> -Notes '<one line>' -Brief <the path HANDOFF names>` (Done table with evidence and worktree @ head,
+Open: worktrees, leases, pending decisions, Notes). The next agent joins with the same id + `-Resume` (TAKEOVER), runs
+`crafty.ps1 wt status -Dir <wt>` per worktree, reads the task and its MRs; files changing under it: stop, report.
 `<run>.resume.md`: per area, done (skipped) / missing (run) steps, MRs, tracker, doc.
 
 ## Test cases (goals file, AI doc, human doc)

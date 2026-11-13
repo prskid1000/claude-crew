@@ -46,7 +46,8 @@ Non-negotiables:
   machine), then `bossy.ps1 learn -Read -Skill watchy`; the same env and window already watched -> stop and report; `leave`
   at the end.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step <n>` after each step and `board beat` (spend / budget,
-  PAUSE: do what it says); HANDOFF -> write the resume brief it names, `board leave -Handoff <brief>`, return `handoff` = that
+  PAUSE: do what it says); HANDOFF -> its brief: `crafty.ps1 checkpoint ... -Brief <the path it names> -Notes '<one line>'`,
+  `board leave -Handoff <brief>`, return `handoff` = that
   path and stop; CHECKPOINT on join -> start at that step, never open a task twice.
 - Read-only on every system: no restarts, no config, data or code changes, no deploys, no load; queries bounded by the window.
 - Personal data in evidence is masked (emails, phones, names, tokens); never print or copy a value from a `*.local.*` file.

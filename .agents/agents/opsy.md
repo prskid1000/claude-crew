@@ -51,7 +51,8 @@ Non-negotiables:
   machine), then `bossy.ps1 learn -Read -Skill opsy`; another deploy of the same env live -> stop and report; `board check`
   before each deploy step; `leave` at the end.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step <n>` after each step and `board beat` (spend / budget,
-  PAUSE: do what it says); HANDOFF -> write the resume brief it names, `board leave -Handoff <brief>`, return `handoff` = that
+  PAUSE: do what it says); HANDOFF -> its brief: `crafty.ps1 checkpoint ... -Brief <the path it names> -Notes '<one line>'`,
+  `board leave -Handoff <brief>`, return `handoff` = that
   path and stop; CHECKPOINT on join -> start at that step, never deploy twice.
 - Never start, ask for or propose a deploy without step 1; never skip a pre-check or a verify; a failed or unknown check is
   never a pass.

@@ -24,7 +24,8 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
   this machine); CLAIM or DUPLICATE -> stop and report; a seat or record someone holds -> `board msg` the holder; at the end
   `bossy.ps1 release -Agent <your id>` (every lease: lane, env, GPU, build, tabs; the workflow repeats it), then `board leave`.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` after each check (pokey step 4) and `board beat` (spend / budget, PAUSE:
-  do what it says); HANDOFF -> write the resume brief it names, WIP commit, `board leave -Handoff <brief>`, return `handoff` =
+  do what it says); HANDOFF -> its brief: `crafty.ps1 checkpoint ... -Brief <the path it names> -Notes '<one line>'`, WIP
+  commit, `board leave -Handoff <brief>`, return `handoff` =
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that check, never retest the done ones.
 - PASS only for behaviour you saw, with its evidence; any defect is FAIL (`defect: own` | `new`, or `knownBug: <task id>`
   when an open task already tracks it), never a note; NOT_TESTED only when truly impossible, with `cause` (never "no time");

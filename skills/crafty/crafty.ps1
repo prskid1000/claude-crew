@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 sweep · L175 wt · L476 stack · L656 gate · L971 check · L1274 pipes · L1331 guard · L2101 dir ·
-  L2111 checkpoint · L2136 prior · L2174 tracker · L2196 task spec · L2345 host
+  L2111 checkpoint · L2139 prior · L2177 tracker · L2199 task spec · L2348 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2111,12 +2111,12 @@ if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug 
 # ---- checkpoint: resume point per step: resume-<run>.json + .md, atomic
 $script:KitSteps = 'worktree', 'commit', 'goals', 'loop', 'mr', 'review', 'ci', 'doc', 'tracker', 'merge', 'done'
 function Invoke-Checkpoint {
-param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read)
-if (-not $Agent -or -not ($Step -or $Read)) { "usage: crafty.ps1 checkpoint -Agent <id> [-Run <run>] -Step <$($script:KitSteps -join '|')|<check id>> [-Evidence <sha|iid|url|result>] [-Item <task>] [-Next <step>] [-Dir <wt>] [-Leases <a,b>] | -Agent <id> -Read"; exit 2 }
+param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read, [string]$Notes = '', [string]$Brief = '')
+if (-not $Agent -or -not ($Step -or $Read)) { "usage: crafty.ps1 checkpoint -Agent <id> [-Run <run>] -Step <$($script:KitSteps -join '|')|<check id>> [-Evidence <sha|iid|url|result>] [-Item <task>] [-Next <step>] [-Dir <wt>] [-Leases <a,b>] [-Notes '<one line>'] [-Brief <handoff path>] | -Agent <id> -Read"; exit 2 }
 if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }
 $null = Invoke-Dir -Agent $Agent; $jf = Get-KitCheckpointFile $Agent $Run -Write:(-not $Read); $mf = $jf -replace '\.json$', '.md'   # per run: same-named agents never overwrite
 if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent$(if ($Run) { " run $Run" })" }; return }
-$c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
+$c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String } catch { $null }   # times stay ISO text
 if (-not $c -or ($Run -and "$($c.run)" -ne $Run)) { $c = @{ agent = $Agent; run = $Run; steps = @(); worktrees = @(); leases = @() } }   # another run's: start over
 $s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-Date).ToString('o') }
 if ($Dir) { $Dir = (Resolve-Path -LiteralPath $Dir).Path; $s.dir = $Dir; $s.head = "$(git -C $Dir rev-parse --short HEAD 2>$null)".Trim(); $c.worktrees = @(@($c.worktrees) + $Dir | Where-Object { $_ } | Select-Object -Unique) }
@@ -2124,12 +2124,15 @@ $i = [array]::IndexOf($script:KitSteps, $Step.ToLower())
 $c.steps = @(@($c.steps) + $s); $c.done = $false; $c.updated = $s.at
 $c.next = if ($Next) { $Next } elseif ($Step -eq 'done') { 'none' } elseif ($i -ge 0) { $script:KitSteps[$i + 1] } else { 'the next check' }
 if ($PSBoundParameters.ContainsKey('Leases')) { $c.leases = @(Split-KitList $Leases) }
+if ($Notes) { $c.notes = @(@($c.notes) + "$($s.at.Substring(0, 16)) $($Notes -replace '\s+', ' ')" | Where-Object { $_ }) }   # the agent's only free text: one line each
 $c.decisions = @(Get-ChildItem (Get-KitPath decisions) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.agent -eq $Agent -and $_.status -eq 'pending' } | ForEach-Object id)
 Write-KitState $jf $c
 $md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next) (start here; the steps below are done: verify, never redo) · $($c.updated)", '', '## Done', '') +
-  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Worktree @ head' @($c.steps | ForEach-Object { , @($_.at, $_.step, $_.item, $_.evidence, $(if ($_.head) { "``$($_.dir)`` @ $($_.head)" })) })) +
-  @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')")
+  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Worktree @ head' @($c.steps | ForEach-Object { , @($_.at, $_.step, $_.item, $_.evidence, "$(if ($_.head) { "``$($_.dir)`` @ $($_.head)" })") })) +
+  @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')") +
+  @(if ($c.notes) { '', '## Notes', ''; @($c.notes | ForEach-Object { "- $_" }) })
 Write-KitAtomic $mf (($md -join "`n") + "`n")
+if ($Brief) { Write-KitAtomic $Brief (((@("# Resume brief: $Agent (run ``$($c.run)``)") + $md[1..($md.Count - 1)]) -join "`n") + "`n"); "resume brief: $Brief (board leave -Handoff $Brief)" }   # the HANDOFF path: rendered, never hand-written
 "checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"
 }
 

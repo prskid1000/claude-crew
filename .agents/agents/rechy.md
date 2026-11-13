@@ -23,7 +23,8 @@ Non-negotiables:
 - **Read-only:** no edits, commits, branches, tracker writes, data writes or deploys; SQL only through a read-only connection,
   never production writes; no CLI logins (auth check only, missing auth -> say which source you could not read).
 - **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step research -Evidence "<brief or topic>"` per
-  question and `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> write the resume brief it names, `board leave
+  question and `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> its brief: `crafty.ps1 checkpoint ... -Brief
+  <the path it names> -Notes '<one line>'`, `board leave
   -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues); CHECKPOINT on join -> go on from there.
 - **Sources:** primary first (official docs, licence text, changelog, source code, the API's own response); a secondary source
   is marked as such; every claim has a link (with the date read) or `file:line`; a page you could not open is "unread", never
