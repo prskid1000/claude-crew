@@ -1,5 +1,7 @@
 # Deploy batch (bossy E5, goody deploys)
-A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env; inside
+A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env; the env's newest deploy word a no
+or a wait (`decide record -Gate deploy -Item <env> -Answer "no ..." | "wait: retry HH:mm"`): one muted held / waiting line, no
+ask, until a later yes or an MR the no did not cover; a wait past its time: DEPLOY RETRY; inside
 `deploy.minIntervalHours` say when). The coordinator records the yes (`bossy.ps1 decide record -Gate deploy -Item <env> -Source chat|askuser`) and spawns `opsy` with its id (router R7), which runs these steps at once, end to end, no
 question back:
 1. `bossy.ps1 deploy plan -Env <env>`: every session's merged-not-deployed MRs for that env.
