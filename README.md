@@ -168,7 +168,10 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 - header: last sweep, staleness (amber past 2x NEXT, red past 4x), auto-refresh 60 s, filter (`/`), light / dark toggle;
 Each number appears once, in the order the owner acts on (owner 2026-11-13). Every section and sub-section is a `<details>` whose
 summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, agents, runs, machine and resources,
-usage; top steps and kit internals folded; the page keeps each one the owner toggles (localStorage `kc-open`):
+usage; top steps and kit internals folded; the page keeps each one the owner toggles (localStorage `kc-open`). Tables show 10
+rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; the header holds
+jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
+of two fields a line, low-value columns hidden; tone-coloured text is mixed toward the foreground (WCAG AA in both themes):
 - flags as cards with the next step (ACT first), INFO below; ACT / WATCH / FIXED counts and flags per sweep (last
   `supervise.historySweeps`, stacked bars) in its summary;
 - live agents grouped by run: state chip, task, the leases it holds, since, last progress, doing / next; "Finished today" folded;

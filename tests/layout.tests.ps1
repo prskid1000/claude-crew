@@ -79,7 +79,7 @@ $u = [pscustomobject]@{ days = @(6..0 | ForEach-Object { [pscustomobject]@{ day 
 $sd = @([pscustomobject]@{ day = '2026-01-02'; spawned = 46 }, [pscustomobject]@{ day = '2026-01-01'; spawned = 5 })
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $t0.ToString('o'); agents = @([pscustomobject]@{ name = 'a'; state = 'ACTIVE'; since = $t0.ToString('o') }); stats = [pscustomobject]@{ usage = $u; days = $sd } })
 $txt = $h -replace '(?s)<(style|script)>.*?</\1>' -replace '<[^>]+>', ' '
-"$(@('6.8B', '$1746.99', '549', '129', '122', '119', '46') | ForEach-Object { ([regex]::Matches($txt, "(?<![\d.])$([regex]::Escape($_))(?![\d.])")).Count }) $($h -match 'sec-timeline')"
+"$(@('6.8B', '$1,747', '549', '129', '122', '119', '46') | ForEach-Object { ([regex]::Matches($txt, "(?<![\d.])$([regex]::Escape($_))(?![\d.])")).Count }) $($h -match 'sec-timeline')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
 Expect "supervise page: 7-day tokens and cost, each step outcome and agents spawned render once, no Today list ($once)" ("$once".Trim() -eq '1 1 1 1 1 1 1 False')
 # kitbag.py ui-check (headless, light + dark): cases below
@@ -107,7 +107,7 @@ Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; flags = 
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uiPage) | Out-Null
   $uiOut = @(& $py -X utf8 $uiKb ui-check $uiPage 2>&1); $uiCode = $LASTEXITCODE; $uiShots = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*.png' -ErrorAction SilentlyContinue | Where-Object Name -NotLike '*-open.png'); $uiOpen = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*-open.png' -ErrorAction SilentlyContinue)
   Expect "ui-check: the dashboard (long names, 10 holders) has no clipped text at 1366 / 900 / 390, light + dark, 6 shots as loaded (height printed) + 6 all open; UI-CHECK nudge before the stamp only (exit $uiCode, $($uiShots.Count)+$($uiOpen.Count) shots, before $uiWarnBefore; $($uiOut | Where-Object { $_ -match 'CLIP' } | Select-Object -First 3))" (
-    $uiCode -eq 0 -and $uiShots.Count -eq 6 -and $uiOpen.Count -eq 6 -and @($uiOut -match '· \d+ px tall as loaded ·').Count -eq 6 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise_resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
+    $uiCode -eq 0 -and $uiShots.Count -eq 6 -and $uiOpen.Count -eq 6 -and [int](@($uiOut -match '^1366 px light loaded: .* (\d+) px tall')[0] -replace '^.* (\d+) px tall.*$', '$1') -le 2700 -and @($uiOut -match '· \d+ px tall as loaded ·').Count -eq 6 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise_resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
 }
 # run records on disk: a resumed run's liveness and its self record re-bound
 $O = Join-Path $k 'skills/bossy/bossy.ps1'; $ld = TkPath $k launches -Create
@@ -146,7 +146,7 @@ $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object 
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } })
 $cardGrid = @("class=ug><details class='sec sub st uc' id=sec-u-days open><summary><h4>Per day", "<div class=ucol><details class='sec sub st uc ", "Per model</h4>", "class='sec sub st uc ur' id=sec-u-roles open><summary><h4>Per role", 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
 # the right-align nth-child ranges assume these column counts: step type 7, top-5 5, role 7, model 6, run steps 9
-$thCount = { param($open) ([regex]::Match($h, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th>' -AllMatches).Matches.Count }
+$thCount = { param($open) ([regex]::Match($h, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
 $colCounts = "$(& $thCount "class='uc ua'>") $(& $thCount '<div class=ut>') $(& $thCount "class='sec sub st uc ur'") $(& $thCount "class='sec sub st uc um'") $(& $thCount "class='ru f'>")"
 "$($h -match 'Tokens today') $($h -match "class='ru f'") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 5 7 6 9')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String

@@ -180,7 +180,7 @@ $u = [pscustomobject]@{ days = @([pscustomobject]@{ day = '2026-01-02'; tok = 5 
 $fh = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; flags = @([pscustomobject]@{ level = 'ACT'; what = 'x' }); agents = @([pscustomobject]@{ name = 'devy-1 (devy)'; run = 'r1'; state = 'ACTIVE' }, [pscustomobject]@{ name = 'old (devy)'; run = 'r1'; state = 'FINISHED' })
   resources = @([pscustomobject]@{ name = 'browser t1'; by = 'devy-1'; gb = 0.2 }, [pscustomobject]@{ name = 'mysql'; by = ''; gb = 1 })
   stats = [pscustomobject]@{ usage = $u; params = @([pscustomobject]@{ key = 'k1' }, [pscustomobject]@{ key = 'k2' }); changes = @([pscustomobject]@{ key = 'k1' }); settings = [pscustomobject]@{ heartbeatMinutes = 15 } } })
-$st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=sec-(?<id>[\w-]+)(?<o> open)?><summary><h\d>(?<t>[^<]+)</h\d>(?:<span class=cnt>\((?<n>[^)]*)\)</span>)?(?:<svg.*?</svg>)?</summary>(?<b><div class=bd>)?")) { "$($m.Groups['id'].Value)=$(if ($m.Groups['o'].Success) { 'open' } else { 'closed' })$(if ($m.Groups['n'].Success) { ":$($m.Groups['n'].Value)" })$(if (-not $m.Groups['b'].Success) { ':nobody' })" }
+$st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=sec-(?<id>[\w-]+)(?<o> open)?><summary><h\d>(?<t>[^<]+)</h\d>(?:<span class=cnt>\((?<n>[^)]*)\)</span>)?(?:<span class='chip[^']*'>[^<]*</span>)*(?:<svg.*?</svg>)?</summary>(?<b><div class=bd>)?")) { "$($m.Groups['id'].Value)=$(if ($m.Groups['o'].Success) { 'open' } else { 'closed' })$(if ($m.Groups['n'].Success) { ":$($m.Groups['n'].Value)" })$(if (-not $m.Groups['b'].Success) { ':nobody' })" }
 $sec = { param($id) [regex]::Match($fh, "(?s)id=sec-$id(?: open)?>.*?(?=<details class='sec top'|<footer)").Value }
 $int = & $sec internals; $runsH = & $sec runs; $agH = & $sec agents
 "$($st -join ' ')"
@@ -188,17 +188,21 @@ $int = & $sec internals; $runsH = & $sec runs; $agH = & $sec agents
 $rxRun = @('id=sec-runs-2026-01-02 open><summary><h3>Today</h3><span class=cnt>\(1 runs &#183; 2 steps', 'id=sec-runs-2026-01-01><summary><h3>Yesterday', ">Ask RM bug wave</span><span class='chip k-build'>build</span><span class='chip s-oth'>resumed", "title='select-x &#183; wf_c'>select-x<")
 $rxAg = @("devy-1 \(devy\)<div class=lc><span class='chip ls'[^>]*>browser t1<", 'id=sec-agents-done><summary><h3>Finished today</h3><span class=cnt>\(1\)')
 $rxOrphan = "<div class='ci f orphan'[^>]*><div class=tn>mysql</div><div class=sm>no live holder"
-"runs:$($runsH -notmatch 'wf_kit' -and -not @($rxRun | Where-Object { $runsH -notmatch $_ }).Count -and $runsH.IndexOf('wf_a') -lt $runsH.IndexOf('sec-runs-2026-01-02') -and ($runsH -split 'class=bar').Count -eq 5)"
+"runs:$($runsH -notmatch 'wf_kit' -and -not @($rxRun | Where-Object { $runsH -notmatch $_ }).Count -and $runsH.IndexOf('wf_a') -lt $runsH.IndexOf('sec-runs-2026-01-02') -and ($runsH -split "class='bar sb3'").Count -eq 4 -and ($runsH -split 'class=bar>').Count -eq 2)"
 $u.runs = @(1..27 | ForEach-Object { & $rn "r$_" "wf_$_" 'ended' $d0 'devy 1' '' 'build' }); $fh2 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } })
 $rowRx = "<details class='ru f'>"; $olderTxt = '2 older run(s)'
+$fh3 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ params = @(1..12 | ForEach-Object { [pscustomobject]@{ key = "k$_"; ctx = 'maven|a/b' } }) } })
+$uxRx = @("<tr class='f more'>", 'class=sa data-n=12>Show all \(12\)', '<nav class=jl', 'id=nm class=empty hidden', 'maven\|<wbr>a/<wbr>b', '\.tw \.lo\{display:none', 'function jp\(k,f\)\{try')   # a low column only inside tables (.st.lo tiles stay); stored state parsed safely
+$rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text mixed toward --fg: WCAG AA in the light theme
+"ux:$(([regex]::Matches($fh3, $uxRx[0])).Count -eq 2 -and -not @($uxRx | Where-Object { $fh3 -notmatch $_ }).Count -and $fh3 -notmatch $rawTone)"
 "cap:$(([regex]::Matches($fh2, $rowRx)).Count -eq 25 -and $fh2.Contains($olderTxt))"
 "agents:$(-not @($rxAg | Where-Object { $agH -notmatch $_ }).Count -and $fh -match $rxOrphan)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
 $fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Trim() })
-$foldWant = 'flags=open:1 ACT &#183; 0 WATCH &#183; 0 FIXED', 'agents=open:1 live &#183; 1 finished', 'runs=open:1 running &#183; 3 in 7 days', 'machine=open', 'resources=open:2', 'shells=closed:0:nobody', 'usage=open', 'top=closed:0:nobody', 'internals=closed:5', 'params=closed:2', 'changes=closed:1', 'settings=closed:1', 'kit-runs=closed:1', 'agents-done=closed:1', 'steps=closed:0:nobody'
+$foldWant = 'flags=open', 'agents=open:1 live &#183; 1 finished', 'runs=open:1 running &#183; 3 in 7 days', 'machine=open', 'resources=open:2', 'shells=closed:0:nobody', 'usage=open', 'top=closed:0:nobody', 'internals=closed:5', 'params=closed:2', 'changes=closed:1', 'settings=closed:1', 'kit-runs=closed:1', 'agents-done=closed:1', 'steps=closed:0:nobody'
 $foldMiss = @($foldWant | Where-Object { " $($fl[0]) " -notmatch " $([regex]::Escape($_))[ :]" })
 Expect "supervise page: every section a <details> with '<title> (<count>)', the owner's default open states, an empty one summary only (missing: $foldMiss | $($fl[0]))" (-not $foldMiss.Count)
-Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: kit tuning + kit upkeep runs only, never leases / agents / usage / step types; runs: running on top, one fold per day (today open, its sum), labels + kind + resumed, budget bar only running or 80%+, kit runs out; agents: leases on the row, finished folded, an orphan lease tinted; cap: the newest 25 ended runs with step tables, the rest counted)' @('internals', 'runs', 'agents', 'cap') 4
+Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: kit tuning + kit upkeep runs only, never leases / agents / usage / step types; runs: running on top, one fold per day (today open, its sum), labels + kind + resumed, budget bar only running or 80%+, kit runs out; agents: leases on the row, finished folded, an orphan lease tinted; cap: the newest 25 ended runs with step tables, the rest counted; ux: 10 rows then Show all (N), jump links, a No match line, keys break at | and /, tone text AA)' @('internals', 'runs', 'agents', 'cap', 'ux') 5
 # a CI-raised test task (tracker.ciTaskPattern): track add of its merged fix MR promotes it with no testing docs, holds while the
 # named job runs again on its branch, closes it with ONE qa-result comment linking the passing job; a plain task keeps the doc gate
 $ciTrack = Invoke-PsTest track-ci @'
