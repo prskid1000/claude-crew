@@ -166,25 +166,30 @@ Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Code
 
 Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-report.html` and its `.json` (the full data):
 - header: last sweep, staleness (amber past 2x NEXT, red past 4x), auto-refresh 60 s, filter (`/`), light / dark toggle;
-Each number appears once, in the order the owner acts on (owner 2026-11-13):
-- flags as cards with the next step (ACT first), INFO below;
-- live agents grouped by run: state chip, task, since, last progress, doing / next; finished ones folded;
-- runs, 7 days, one line each (steps done as a bar, tokens, est. cost, merged MRs, elapsed, context budget bar), each with
-  its steps (role, model, in / out / cache, elapsed, tool calls, result, round, retry);
-- machine: memory (with sparkline), every watched disk in one tile (free GB, fill rate, "full in" under 72 h; a flagged drive
-  coloured and first), build gate + QA seats in one tile; each vs the previous sample and over 7 days;
+Each number appears once, in the order the owner acts on (owner 2026-11-13). Every section and sub-section is a `<details>` whose
+summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, agents, runs, machine and resources,
+usage; top steps and kit internals folded; the page keeps each one the owner toggles (localStorage `kc-open`):
+- flags as cards with the next step (ACT first), INFO below; ACT / WATCH / FIXED counts and flags per sweep (last
+  `supervise.historySweeps`, stacked bars) in its summary;
+- live agents grouped by run: state chip, task, the leases it holds, since, last progress, doing / next; "Finished today" folded;
+- runs (dev and QA, 7 days): running ones on top, then one fold per day (today open; runs, steps, tokens, est. cost, merged),
+  each run by its label (mandate or area; run id in the tooltip), kind chip, resumed, steps as a bar, tokens, est. cost, merged
+  MRs, elapsed, the context budget bar while running or past 80%, and its steps (role, model, in / out / cache, elapsed, tool
+  calls, result, round, retry);
+- machine and resources: memory (with sparkline), every watched disk in one tile (free GB, fill rate, "full in" under 72 h; a
+  flagged drive coloured and first), build gate + QA seats in one tile, each vs the previous sample and over 7 days; resources
+  and leases (one with no live holder tinted); shells;
 - usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
   sweep reads the transcripts' usage fields incrementally, cached by `_paths` `usage-cache`): tokens and est. cost today vs
   the 7-day average (`budget.prices`: USD per M tokens [in, out, cache read, cache write 5 min, 1 h] per model id or alias;
   unknown models listed as not priced), tokens per merged MR (the git host's merged MRs of this login, cached 2 beats; no
-  login: MRs reported by workflows), review + fix share; tokens and cost per day (the 7-day totals in its title); workflow
-  steps by outcome as one stacked bar; a role table (coordinator and agents outside workflows included: steps, tokens, share
-  bar, est. cost, avg / p90 time) and a model table (steps, tokens, est. cost, cost share bar, avg time);
+  login: MRs reported by workflows), review + fix share; tokens and cost per day; workflow steps by outcome as one stacked
+  bar; a role table (coordinator and agents outside workflows included: steps, tokens, share bar, est. cost, avg / p90 time),
+  a model table (steps, tokens, est. cost, cost share bar, avg time); per step type (avg / p50 / p90), sessions when 2+;
 - top 5 steps, 7 days (today's marked);
-- kit internals, folded: flags per sweep (last `supervise.historySweeps`), kit activity tiles (workflow steps now, branches,
-  sweep time, runs, agents spawned / finished / failed, average duration, deploys, decisions, lessons, auto-fixed %: today
-  vs yesterday, 7 days vs the 7 before; `—` = no source), per step type (avg / p50 / p90), sessions when 2+, resources and
-  leases, shells, `supervise` settings and learned changes.
+- kit internals (kit tuning and history only): kit activity tiles (workflow steps now, branches, sweep time, runs, agents
+  spawned / finished / failed, average duration, deploys, decisions, lessons, auto-fixed %: today vs yesterday, 7 days vs the 7
+  before; `—` = no source), kit upkeep runs (tidy, retro), learned changes, parameters, `supervise` settings.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: auto-fill, a min width per item,

@@ -105,9 +105,9 @@ $ag = @(@{ name = 'wf_build_2026_11_10_super_long_workflow_identifier (workflow)
 $st = @{ settings = @{ 'supervise.paceRules' = '{"busy":5,"some":"long-value-without-spaces-0123456789abcdefghijklmnopqrstuvwxyz"}' }; params = @(@{ key = 'supervise.heartbeatMinutes.withAVeryLongKeyName'; ctx = 'android-swarm|lane-3'; value = '15'; source = 'approved · kit.local.json'; learned = '12'; changed = '2026-01-02T09:00:00'; why = 'owner pinned it' }) }
 Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; flags = @(@{ level = 'ACT'; what = 'STUCK W2R-checky-2026-11-10-app-staging-intest-verify-very-long-agent-name: no progress for 41 min'; action = 'stop it' }); agents = $ag; resources = $res; shells = $sh; mem = @{ TotalGB = 31.7; AvailGB = 9.4 }; stats = $st } | ConvertTo-Json -Depth 8 | ConvertFrom-Json) | Set-Content -LiteralPath $args[1] -Encoding utf8
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uiPage) | Out-Null
-  $uiOut = @(& $py -X utf8 $uiKb ui-check $uiPage 2>&1); $uiCode = $LASTEXITCODE; $uiShots = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*.png' -ErrorAction SilentlyContinue)
-  Expect "ui-check: the dashboard (long names, 10 holders) has no clipped text at 1366 / 900 / 390, light + dark, 6 shots; UI-CHECK nudge before the stamp only (exit $uiCode, $($uiShots.Count) shots, before $uiWarnBefore; $($uiOut | Where-Object { $_ -match 'CLIP' } | Select-Object -First 3))" (
-    $uiCode -eq 0 -and $uiShots.Count -eq 6 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise_resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
+  $uiOut = @(& $py -X utf8 $uiKb ui-check $uiPage 2>&1); $uiCode = $LASTEXITCODE; $uiShots = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*.png' -ErrorAction SilentlyContinue | Where-Object Name -NotLike '*-open.png'); $uiOpen = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*-open.png' -ErrorAction SilentlyContinue)
+  Expect "ui-check: the dashboard (long names, 10 holders) has no clipped text at 1366 / 900 / 390, light + dark, 6 shots as loaded (height printed) + 6 all open; UI-CHECK nudge before the stamp only (exit $uiCode, $($uiShots.Count)+$($uiOpen.Count) shots, before $uiWarnBefore; $($uiOut | Where-Object { $_ -match 'CLIP' } | Select-Object -First 3))" (
+    $uiCode -eq 0 -and $uiShots.Count -eq 6 -and $uiOpen.Count -eq 6 -and @($uiOut -match '· \d+ px tall as loaded ·').Count -eq 6 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise_resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
 }
 # run records on disk: a resumed run's liveness and its self record re-bound
 $O = Join-Path $k 'skills/bossy/bossy.ps1'; $ld = TkPath $k launches -Create
@@ -144,10 +144,10 @@ Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Ra
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } })
-$cardGrid = @("class=ug><div class='st uc' data-fit><h4>Per day", "<div class=ucol><div class='st uc ", "Per model</h4>", "class='st uc ur' data-fit><h4>Per role", 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
+$cardGrid = @("class=ug><details class='sec sub st uc' id=sec-u-days open><summary><h4>Per day", "<div class=ucol><details class='sec sub st uc ", "Per model</h4>", "class='sec sub st uc ur' id=sec-u-roles open><summary><h4>Per role", 'repeat(auto-fit') | Where-Object { -not $h.Contains($_) }
 # the right-align nth-child ranges assume these column counts: step type 7, top-5 5, role 7, model 6, run steps 9
 $thCount = { param($open) ([regex]::Match($h, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th>' -AllMatches).Matches.Count }
-$colCounts = "$(& $thCount "class='st uc ua'>") $(& $thCount '<div class=ut>') $(& $thCount "class='st uc ur'") $(& $thCount "class='st uc um'") $(& $thCount "class='ru f'>")"
+$colCounts = "$(& $thCount "class='uc ua'>") $(& $thCount '<div class=ut>') $(& $thCount "class='sec sub st uc ur'") $(& $thCount "class='sec sub st uc um'") $(& $thCount "class='ru f'>")"
 "$($h -match 'Tokens today') $($h -match "class='ru f'") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 5 7 6 9')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")

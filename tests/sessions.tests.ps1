@@ -2,7 +2,7 @@
 <#
 sessions.tests.ps1: several coordinators on one machine (adapters/supervise_resources.ps1 "sessions"): run owners for pause /
 resume / recover (-Everyone), a stepped-aside supervise prints its own runs' flags, task claims at launch, the step-age HANDOFF;
-handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints; git-host adapters, crafty.ps1 host MR refs and check's python stale-env; the kit to-do ACT; crafty.ps1 pipes default and statuses; board beat of an unknown session.
+the dashboard's folds and grouping (supervise page); handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints; git-host adapters, crafty.ps1 host MR refs and check's python stale-env; the kit to-do ACT; crafty.ps1 pipes default and statuses; board beat of an unknown session.
 Usage: pwsh -NoProfile -File <kit>/tests/sessions.tests.ps1 (or tests/kit-tests.ps1 -Area sessions).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -169,5 +169,35 @@ $t0 = Get-Date; $u = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_reque
 '@
 $res = Invoke-PsTest 'pipes-test' $pt @($D)
 Expect-Each $res 'pipes: # (tracked: outside a worktree, no -Mrs = the open MRs of the tracked tasks of -Run)' 'no-ci', 'no-pipeline', 'unknown', 'mr-off', 'until-merged', 'tracked'
+# every section folds (owner, 2026-11-13): open by default flags, agents, runs, machine and resources, usage; top steps + kit internals closed;
+# '<title> (<count>)' in the summary, 0 = the summary only; internals hold kit tuning only (never leases, agents, usage)
+$folds = Invoke-PsTest folds @'
+. $args[0]
+$t0 = [datetime]'2026-01-02T10:00:00'; $d0 = $t0.ToString('o'); $d1 = $t0.AddDays(-1).ToString('o')
+$rn = { param($run, $id, $st, $at, $roles, $lb, $kind) [pscustomobject]@{ run = $run; id = $id; status = $st; at = $at; started = $at; roles = $roles; label = $lb; kind = $kind; done = 2; total = 2; tok = 1000; cost = 1; merged = 1; cap = 100; spent = 10; steps = @() } }
+$u = [pscustomobject]@{ days = @([pscustomobject]@{ day = '2026-01-02'; tok = 5 }); rates = [pscustomobject]@{ n = 0 }; merged = [pscustomobject]@{ source = 'workflows' }
+  runs = @((& $rn 'wave-brief-1' 'wf_a' 'running' $d0 'devy 2' 'Ask RM bug wave' 'build'), (& $rn 'wave-brief-1' 'wf_b' 'ended' $d0 'devy 2' 'Ask RM bug wave' 'build'), (& $rn 'wf_kit' 'wf_k' 'ended' $d0 'kitty 2' '' ''), (& $rn 'select-x' 'wf_c' 'ended' $d1 'checky 4' '' 'test')) }
+$fh = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; flags = @([pscustomobject]@{ level = 'ACT'; what = 'x' }); agents = @([pscustomobject]@{ name = 'devy-1 (devy)'; run = 'r1'; state = 'ACTIVE' }, [pscustomobject]@{ name = 'old (devy)'; run = 'r1'; state = 'FINISHED' })
+  resources = @([pscustomobject]@{ name = 'browser t1'; by = 'devy-1'; gb = 0.2 }, [pscustomobject]@{ name = 'mysql'; by = ''; gb = 1 })
+  stats = [pscustomobject]@{ usage = $u; params = @([pscustomobject]@{ key = 'k1' }, [pscustomobject]@{ key = 'k2' }); changes = @([pscustomobject]@{ key = 'k1' }); settings = [pscustomobject]@{ heartbeatMinutes = 15 } } })
+$st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=sec-(?<id>[\w-]+)(?<o> open)?><summary><h\d>(?<t>[^<]+)</h\d>(?:<span class=cnt>\((?<n>[^)]*)\)</span>)?(?:<svg.*?</svg>)?</summary>(?<b><div class=bd>)?")) { "$($m.Groups['id'].Value)=$(if ($m.Groups['o'].Success) { 'open' } else { 'closed' })$(if ($m.Groups['n'].Success) { ":$($m.Groups['n'].Value)" })$(if (-not $m.Groups['b'].Success) { ':nobody' })" }
+$sec = { param($id) [regex]::Match($fh, "(?s)id=sec-$id(?: open)?>.*?(?=<details class='sec top'|<footer)").Value }
+$int = & $sec internals; $runsH = & $sec runs; $agH = & $sec agents
+"$($st -join ' ')"
+"internals:$(-not ($int -match 'sec-(resources|shells|agents|usage|steps|runs-)') -and $int -match 'sec-kit-runs' -and $int -match 'wf_kit')"
+$rxRun = @('id=sec-runs-2026-01-02 open><summary><h3>Today</h3><span class=cnt>\(1 runs &#183; 2 steps', 'id=sec-runs-2026-01-01><summary><h3>Yesterday', ">Ask RM bug wave</span><span class='chip k-build'>build</span><span class='chip s-oth'>resumed", "title='select-x &#183; wf_c'>select-x<")
+$rxAg = @("devy-1 \(devy\)<div class=lc><span class='chip ls'[^>]*>browser t1<", 'id=sec-agents-done><summary><h3>Finished today</h3><span class=cnt>\(1\)')
+$rxOrphan = "<div class='ci f orphan'[^>]*><div class=tn>mysql</div><div class=sm>no live holder"
+"runs:$($runsH -notmatch 'wf_kit' -and -not @($rxRun | Where-Object { $runsH -notmatch $_ }).Count -and $runsH.IndexOf('wf_a') -lt $runsH.IndexOf('sec-runs-2026-01-02') -and ($runsH -split 'class=bar').Count -eq 5)"
+$u.runs = @(1..27 | ForEach-Object { & $rn "r$_" "wf_$_" 'ended' $d0 'devy 1' '' 'build' }); $fh2 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } })
+$rowRx = "<details class='ru f'>"; $olderTxt = '2 older run(s)'
+"cap:$(([regex]::Matches($fh2, $rowRx)).Count -eq 25 -and $fh2.Contains($olderTxt))"
+"agents:$(-not @($rxAg | Where-Object { $agH -notmatch $_ }).Count -and $fh -match $rxOrphan)"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
+$fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Trim() })
+$foldWant = 'flags=open:1 ACT &#183; 0 WATCH &#183; 0 FIXED', 'agents=open:1 live &#183; 1 finished', 'runs=open:1 running &#183; 3 in 7 days', 'machine=open', 'resources=open:2', 'shells=closed:0:nobody', 'usage=open', 'top=closed:0:nobody', 'internals=closed:5', 'params=closed:2', 'changes=closed:1', 'settings=closed:1', 'kit-runs=closed:1', 'agents-done=closed:1', 'steps=closed:0:nobody'
+$foldMiss = @($foldWant | Where-Object { " $($fl[0]) " -notmatch " $([regex]::Escape($_))[ :]" })
+Expect "supervise page: every section a <details> with '<title> (<count>)', the owner's default open states, an empty one summary only (missing: $foldMiss | $($fl[0]))" (-not $foldMiss.Count)
+Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: kit tuning + kit upkeep runs only, never leases / agents / usage / step types; runs: running on top, one fold per day (today open, its sum), labels + kind + resumed, budget bar only running or 80%+, kit runs out; agents: leases on the row, finished folded, an orphan lease tinted; cap: the newest 25 ended runs with step tables, the rest counted)' @('internals', 'runs', 'agents', 'cap') 4
 Remove-TestKit $k
 Complete-Tests

@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1276 audit ·
-  L1385 registry · L1726 prose · L1871 sections · L2001 budget · L2025 goodies · L2532 state lint · L2604 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1277 audit ·
+  L1386 registry · L1727 prose · L1872 sections · L2002 budget · L2026 goodies · L2533 state lint · L2605 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1177,8 +1177,8 @@ def ui_check_warns(kit):
                     hits.append(rel)
     return [('UI-CHECK', r, 'page generator changed since the last passing ui-check -> kitbag.py ui-check <its page>, read the 3 shots, then commit') for r in hits]
 
-# node, cwd skills/pokey (its puppeteer-core): per width x theme x state (selectors clicked in order, fresh storage), every <details>
-# open: a full-page shot + the text that is clipped (ellipsis, line-clamp, clip-path, hidden overflow; wider than its box outside a scroll
+# node, cwd skills/pokey (its puppeteer-core): per width x theme x state (selectors clicked in order, fresh storage): a full-page shot
+# and height as loaded, then every <details> open: a second shot (-open) + the text that is clipped (ellipsis, line-clamp, clip-path, hidden overflow; wider than its box outside a scroll
 # box) or squeezed (a few letters a line)
 PAGE_JS = r'''import puppeteer from 'puppeteer-core'
 import { pathToFileURL } from 'node:url'
@@ -1229,10 +1229,11 @@ try {
     await page.goto(pathToFileURL(file).href, { waitUntil: 'load' })
     for (const sel of clicks) await page.click(sel).catch((e) => clipped.push({ el: sel, why: `click failed: ${e.message}`, text: '' }))
     await new Promise((r) => setTimeout(r, 400))   // panels slide in, layouts settle
+    const base = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}`, height = await page.evaluate(() => document.documentElement.scrollHeight)
+    await page.screenshot({ path: `${base}.png`, fullPage: true })   // as the owner sees it: the page's own open / closed defaults
     clipped.push(...await page.evaluate(layout), ...await page.evaluate(scan), ...await page.evaluate(fit))
-    const shot = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}.png`
-    await page.screenshot({ path: shot, fullPage: true })
-    res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot, clipped }); await ctx.close()
+    await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
+    res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped }); await ctx.close()
   }
 } finally { await b.close() }
 console.log(JSON.stringify(res))'''
@@ -1259,7 +1260,7 @@ def cmd_ui_check(a):
         return 2
     bad = 0
     for r in res:
-        print(f"{r['width']} px {r['theme']} {r['state']}: {r['shot']} · {len(r['clipped'])} clipped")
+        print(f"{r['width']} px {r['theme']} {r['state']}: {r['shot']} · {r.get('height', 0)} px tall as loaded · {len(r['clipped'])} clipped")
         for c in r['clipped']:
             print(f"  CLIP {c['el']}: {c['why']} ({c['text']})")
         bad += len(r['clipped'])
