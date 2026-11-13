@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L67 state · L136 config · L216 OS · L413 leases · L874 status · L1118 supervise sweep ·
-  L1189 supervise report · L1285 tracker · L1592 prior · L1608 ask bugs · L1812 git-host · L1972 kitlog · L2092 params ·
-  L2397 entry-scripts
+  L1189 supervise report · L1285 tracker · L1592 prior · L1608 ask bugs · L1813 git-host · L1973 kitlog · L2093 params ·
+  L2398 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1770,7 +1770,8 @@ function Format-KitDecisionItems($Rows, [string]$Link, [string]$Task) {
     $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+(d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
     foreach ($o in $ans) { if ($tk["$($o.id)"] -lt $tk["$($r.id)"] -and ("$($o.id)" -in $ids -or (ConvertTo-KitLetters $o.question) -eq (ConvertTo-KitLetters $r.question))) { $sup["$($o.id)"] = $r.id } }
   }
-  $sid = { param($i) ("$i" -split '-')[-1] }
+  $dup = @($Rows | Group-Object { ("$($_.id)" -split '-')[-1] } | Where-Object Count -gt 1 | ForEach-Object Name)
+  $sid = { param($i) $p = "$i" -split '-'; if ($p[-1] -in $dup) { $p[-2..-1] -join '-' } else { $p[-1] } }   # the checklist keys items by it: a clash takes the agent part too
   $day = { param($r) try { ([datetimeoffset]"$($r.at)").ToString('MM-dd') } catch { '' } }
   $q = { param($r) $t = ("$($r.question)" -replace "\s*\($([regex]::Escape($Task))\)", '').Trim(); if ($t -match '^(.{4,}?\?)(\s|$)') { $t = $Matches[1] }; if ($t.Length -gt 80) { $t = ($t.Substring(0, 79) -replace '\s+\S*$', '') + '…' }; $t }
   $a = { param($r) ("$($r.answer)" -replace '\s*\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?\)', '' -replace '\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?;\s*', '(').Trim() }   # "(owner, <date>)": the item says both

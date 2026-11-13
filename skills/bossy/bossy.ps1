@@ -1958,7 +1958,7 @@ function Invoke-Decide {
       }
       $txt = (Format-KitDecision ([pscustomobject]$o)) -join "`n"; $null = Test-KitProse -Kind decision-request -Text $txt; & $note $Contracts $txt
       "DECISION $($o.id) pending: $(if ($Fyi) { "FYI, item $Item goes on" } else { "item $Item stops (needs decision); continue your other items" }). Wait: bossy.ps1 decide wait -Id $($o.id)"
-      & $pub $resolvedTask $false   # its open item
+      $null = & $pub $resolvedTask $false   # its open item; the DECISION line stays last
     }
     'list' {
       $all = @(Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { -not ($Pending -or $Ask -or $Fyi) -or $_.status -eq 'pending' })
