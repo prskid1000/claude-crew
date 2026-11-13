@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L30 config · L227 state · L274 layer drops · L346 leases · L472 code · L504 migrations ·
-  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1047 seed · L1093 processes · L1461 daemon ·
-  L1920 cleanup · L1992 doctor · L2044 verbs
+  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1050 seed · L1096 processes · L1464 daemon ·
+  L1923 cleanup · L1995 doctor · L2047 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1000,9 +1000,10 @@ function RestorePlanText($p) {
 }
 # the DB part of a restore (writers stopped by the caller): [db.rollback, opt-in] renames back, structure per mark newest first,
 # created tables dropped, object definitions back, the row flashback; tables it cannot bring back exactly -> $script:RestoreFallback
-# (Invoke-RestoreFallback seeds them); the range is recorded undone and the marks inside it dropped; $null = ok
+# (Invoke-RestoreFallback seeds them); the range is recorded undone and the marks inside it dropped (not when the flashback wrote
+# no row); $null = ok
 function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$UseTool) {
-  $st = Read-State $e; $db = (Get-EnvCfg $e).db; $script:RestoreFallback = @(@($plan.fallback) | Where-Object { $_ })
+  $st = Read-State $e; $db = (Get-EnvCfg $e).db; $script:RestoreFallback = @(@($plan.fallback) | Where-Object { $_ }); $noRows = $false
   $ev = @(Invoke-DbSql $e "SELECT EVENT_SCHEMA, EVENT_NAME FROM information_schema.EVENTS WHERE STATUS = 'ENABLED' AND EVENT_SCHEMA IN ($(@($schemas | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '))")
   foreach ($x in $ev) { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` DISABLE" }   # no writer while it runs
   try {
@@ -1022,17 +1023,19 @@ function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$Us
     foreach ($k in @($plan.objectDrops)) { $t, $n = $k -split ':', 2; $null = Invoke-DbSql $e "DROP $t IF EXISTS ``$(($n -split '\.', 2) -join '`.`')``" }
     foreach ($o in @($plan.objects)) { $null = Invoke-DbFb $e 'objects' @('--dir', $o.dir, '--names', (@($o.names) -join ','), '--apply') -Fail }
     $ex = @($script:RestoreFallback | ForEach-Object table)
-    try { $fb = Invoke-DbFlashback $e -From $m.pos -To $plan.to -Schemas $schemas -Skip @($st.undone) -Exclude $ex -Apply } catch { return "row flashback failed: $("$_".Split("`n")[0])" }
+    $preFb = Get-DbPos $e
+    try { $fb = Invoke-DbFlashback $e -From $m.pos -To $plan.to -Schemas $schemas -Skip @($st.undone) -Exclude $ex -Apply } catch { $noRows = (Get-DbPos $e) -eq $preFb; return "row flashback failed: $("$_".Split("`n")[0])" }
     $script:RestoreFallback += @($fb.fallback | Where-Object { $_ -and $_.table -notin $ex })
-    if (@($fb.refused).Count) { return "row flashback refused: $(@($fb.refused | Select-Object -First 3) -join '; ')" }
+    if (@($fb.refused).Count) { $noRows = $true; return "row flashback refused: $(@($fb.refused | Select-Object -First 3) -join '; ')" }
     if (-not $fb.applied) { return "row flashback failed: $($fb.error)" }
   } finally {
     foreach ($x in $ev) { try { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` ENABLE" } catch { } }
     $end = Get-DbPos $e
     $gone = @()
-    Update-State $e { param($x) $x.undone = @(@($x.undone | Where-Object { $_ }) + "$($m.pos)~$end"); $script:goneMarks = @(@($x.marks) | Where-Object { $_ -and (Test-DbPosBefore $m.pos $_.pos) } | ForEach-Object name); $x.marks = @(@($x.marks) | Where-Object { $_ -and $_.name -notin $script:goneMarks }) }
-    Remove-MarkSlices $e $script:goneMarks
-    Event $e 'restore-db' @{ mark = $m.name; end = $end; fallback = @($script:RestoreFallback | ForEach-Object table) }
+    # a flashback that wrote no row leaves the changes in place: recorded undone, the next restore would skip them
+    if (-not $noRows) { Update-State $e { param($x) $x.undone = @(@($x.undone | Where-Object { $_ }) + "$($m.pos)~$end"); $script:goneMarks = @(@($x.marks) | Where-Object { $_ -and (Test-DbPosBefore $m.pos $_.pos) } | ForEach-Object name); $x.marks = @(@($x.marks) | Where-Object { $_ -and $_.name -notin $script:goneMarks }) }
+    Remove-MarkSlices $e $script:goneMarks }
+    Event $e 'restore-db' @{ mark = $m.name; end = $end; fallback = @($script:RestoreFallback | ForEach-Object table); recorded = (-not $noRows) }
   }
   $null
 }
