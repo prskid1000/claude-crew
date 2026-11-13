@@ -30,7 +30,7 @@ workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they 
 What happened when, who called what: `bossy.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
 line per step, call, build, block, signal, decision, deploy; never read journals or logs). Tunables (lease grace,
 timeouts, gate memory, heartbeat, budgets) learn live: `bossy.ps1 param show` (supervise -AutoFix learns). Launch by path:
-`Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's words).
+`Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })` with `kitDir` (absolute); buildy / testy: `mandate` (owner's words).
 
 **Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change;
 steps: AGENTS.md "The two flows"): merged work waits silently (`deploy request`) until a person says `deploy <env>` -> E5.

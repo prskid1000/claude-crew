@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L139 record-args · L158 budget · L177 build-prompt · L258 ship-prompt · L281 plan · L297 spike ·
-//   L310 local-loop · L383 stages · L522 ship · L637 deploy · L652 learn
+// Sections: L18 args · L140 record-args · L159 budget · L178 build-prompt · L259 ship-prompt · L282 plan · L298 spike ·
+//   L311 local-loop · L384 stages · L523 ship · L638 deploy · L653 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -63,9 +63,10 @@ const STEPS = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker']
 const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
 const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported${MODE === 'duel' ? ' (duel is a goody: run kitbag.py goody add duel)' : ''}`)
-// args removed in the 2026-10-21 trim: warned, not ignored
-for (const k of ['review', 'localRetries', 'envFixCycles', 'envFixWaitMinutes', 'decisionWaitMinutes', 'requireLocal', 'roles', 'models', 'duel']) if (k in A0) log(`WARNING: args.${k} was removed and is ignored`)
-if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (the owner words): agents may drop their items for the latest chat message. Pass mandate next time (bossy step 3).')
+// unknown or removed args: refused, never dropped (agents see only the brief and agents[])
+const badArgs = Object.keys(A0).filter((k) => !'brief agents openQuestions mandate mode resume complex holdMerge learn batch kitDir runtimeDir run'.split(' ').includes(k))
+if (badArgs.length) throw new Error(`buildy.js args refused: unknown ${badArgs.join(', ')}; free text: agents[].note or the brief`)
+if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (owner words): agents may drop items for the latest chat message (bossy step 3).')
 const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // hash: same name, other wave (bossy.ps1 Get-LaunchRunName)
 const LEARN = A.learn === undefined ? true : A.learn
 const LOCAL_RETRIES = 1
@@ -302,7 +303,7 @@ ${OQ.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 Append one block per question under "## Findings (rechy)" at the bottom of the brief: answer, evidence, recommendation, confidence
 (an owner choice: its decide ask id). Return ok=true when every question is answered (else ok=false: the open ones and decide ids), output = one line per question.`,
   { label: 'spike', phase: 'Spike', schema: OK_SCHEMA, agentType: 'rechy', ...pick('spike') })
- // devy never builds on an open question: the coordinator settles it, then launches next (no Spike again)
+ // devy never builds on an open question: the coordinator settles it, then launches next
  if (!(sp && sp.ok)) { const why = sp ? sp.output : 'rechy returned nothing'; log(`SPIKE OPEN: ${why} - no devy started`); return { spikeOpen: why, next: nextCall(A.agents, { openQuestions: undefined }) } }
  log(`spike: ${OQ.length} open question(s) answered in the brief`)
 }
@@ -383,7 +384,7 @@ fix (THE DEV FLOW step 3), never a reason to stop.`), { label: `local-strong:${a
 // ---- stages: build -> review -> fix per area
 const results = await pipeline(
  A.agents,
- // Build: code + testing goals + local loop; an agent that died (API timeout, usage limit) is retried once (infra flake)
+ // Build: code + goals + local loop; a dead agent (API timeout, usage limit) is retried once
  (a) => settleOnThrow(a, async () => {
   if (skips(a, 'build')) {
    const r0 = synth(a)
@@ -399,7 +400,7 @@ const results = await pipeline(
   return localLoop(a, r, LOCAL_RETRIES, 'Build')
   })
  }),
- // Decide: decision items wait for the answer, ENV-FIX items for the fix (<= ENV_FIX_CYCLES per area); others go on
+ // Decide: decision items wait for the answer, ENV-FIX ones for the fix (<= ENV_FIX_CYCLES per area)
  (r, a) => settleOnThrow(a, async () => {
   if (!r || r.error || r.budgetStopped || !((r.needsDecision || []).length || (r.needsEnvFix || []).length)) return r
   return releasing(a, 'Decide', async () => {
@@ -547,7 +548,7 @@ Return ok=true when it exits 0, output = its full output.`, { label: `followups:
  if (!st || !st.ok) { log(`${a.id}: WARNING Follow-ups not written (${st ? st.output : 'the step returned nothing'}): add them by hand`); return soft.map((f) => ({ ...f, written: false })) }
  return soft
 }
-// still blocking after 2 fix rounds: an owner decision (bossy.ps1 decide ask), never a silent "not merged"
+// still blocking after 2 fix rounds: an owner decision, never a silent "not merged"
 async function askBlocking(a, r, open) {
  const q = open.map((f) => `${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join(' / ').replace(/["'`$\r\n]+/g, ' ').slice(0, 400)
  const s = await runStep(`& ${ORCH} decide ask -Run ${RUN} -Agent ${a.id} -Item '${r.mrs.map((m) => m.url).join(' ')}' -Question "Still blocking after 2 fix rounds: ${q}" -Options "A: merge by hand, the finding goes to Follow-ups","B: hold, fix it by hand" -Recommend B`,
@@ -557,7 +558,7 @@ async function askBlocking(a, r, open) {
  if (id) decisions.push({ agent: a.id, item: r.mrs.map((m) => m.url).join(' '), decisionId: id[1], question: `still blocking: ${q}` })
  return id ? id[1] : ''
 }
-// a consumer re-checks its producer MRs each slice: all merged -> it merges now; a failed / closed one -> WAIT
+// a consumer re-checks its producers each slice: all merged -> it merges; a failed / closed one -> WAIT
 async function producersMerged(a, wait) {
  for (let t = 0; t < WAIT_SLICES && wait.length; t++) {
   const w = await runStep(`& ${DEV} pipes -Mrs ${wait.map((m) => m.url).join(',')} -MaxMinutes 9 -UntilMerged`, `producer-wait:${a.id}`, 'Fix', { ok: 'when it prints JSON', slow: true, whole: true })

@@ -93,13 +93,12 @@ console.log(`consumer-merges:${/pipes -Mrs u\/py\S* -MaxMinutes 9 -UntilMerged/.
 $jsx = $jsm -replace "mr\('py', 'WAIT'\)", "mr('py', 'NOT_MERGED')" -replace '(?s)console\.log\(`order:.*', "console.log(``no-poll:`${!L.includes('producer-wait:F2') && !L.includes('ship:F2')}``)`n"
 Expect-Each (Invoke-Js dw-pwait $jsw $wfd) 'buildy merge order: #' 'consumer-merges' -Show 9
 Expect-Each (Invoke-Js dw-nopoll $jsx $wfd) 'buildy merge order: a producer that will not merge by waiting (NOT_MERGED): #' 'no-poll' -Show 9
-# buildy: mode duel is a goody (refused, named); a removed arg is warned, not ignored
+# buildy: mode duel is a goody (refused, named); a removed arg is refused, never ignored
 $jso = @'
-const logs = [], base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
-const e = await run({ ...base, mode: 'duel' }, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)
-await run({ ...base, review: false }, _pass, (m) => logs.push(m), _n, pipeline)
+const base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }, err = (a) => run(a, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)
+const e = await err({ ...base, mode: 'duel' }), r = await err({ ...base, review: false })
 console.log(`duel-refused:${/duel is a goody: run kitbag.py goody add duel/.test(e)}`)
-console.log(`removed-arg:${logs.some((l) => /args.review was removed/.test(l))}`)
+console.log(`removed-arg:${/buildy\.js args refused: unknown review/.test(r)}`)
 '@
 Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-arg' -Show 5
 # buildy deploy batch: skipped without the deploys goody, else parsed
@@ -117,9 +116,9 @@ Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: #' 'deploy-skip', '
 # buildy: rechy spike first, open -> no devy; datay reviews migrations twice, none = no merge
 $jssp = @'
 const M = 'migration-review:X1', ok = (p, o) => /^(build|ship|fix):/.test(o.label) ? _rep({ status: 'PASS' }, /^sh/.test(o.label) ? _merged(1) : {}) : /review:/.test(o.label) ? { findings: [] } : undefined
-const go = async (x, f = ok) => { const m = _mock(f), ty = {}; const r = await run({ brief: 'w.md', ..._kl, agents: [{ id: 'X1', migrations: 1 }], ...x }, (p, o) => { ty[o.label] = o.agentType; return o.label === M && x.no ? null : m.agent(p, o) }, _n, _n, pipeline); return { r, ty, L: m.calls.map((c) => c.label) } }
+const go = async (x, f = ok, no) => { const m = _mock(f), ty = {}; const r = await run({ brief: 'w.md', ..._kl, agents: [{ id: 'X1', migrations: 1 }], ...x }, (p, o) => { ty[o.label] = o.agentType; return o.label === M && no ? null : m.agent(p, o) }, _n, _n, pipeline); return { r, ty, L: m.calls.map((c) => c.label) } }
 const n = (L, l) => L.filter((x) => x === l).length, a = await go({ openQuestions: ['q'] })
-const b = await go({ openQuestions: ['q'] }, (p, o) => o.label === 'spike' ? { ok: false, output: 'D-7' } : ok(p, o)), z = await go({ no: 1 })
+const b = await go({ openQuestions: ['q'] }, (p, o) => o.label === 'spike' ? { ok: false, output: 'D-7' } : ok(p, o)), z = await go({}, ok, 1)
 let k = 0; const f = await go({}, (p, o) => o.label === M && !k++ ? { findings: [{ mr: '1', file: 'm', severity: 'blocking', problem: 'p', fix: 'f' }] } : ok(p, o))
 console.log(`spike:${a.ty.spike === 'rechy' && a.L.indexOf('spike') < a.L.indexOf('build:X1') && b.r.spikeOpen === 'D-7' && !n(b.L, 'build:X1') && !b.r.next.args.openQuestions}`)
 console.log(`migration:${a.ty[M] === 'datay' && !n(z.L, 'ship:X1') && n(f.L, 'fix:X1') + n(f.L, M) + n(f.L, 'ship:X1') === 4}`)

@@ -8,7 +8,7 @@ export const meta = {
  ],
 }
 
-// Sections: L12 args · L24 prep · L49 judge
+// Sections: L12 args · L26 prep · L51 judge
 // ---- args: all optional
 /* args (all optional): {
  applyScripts: false,  // true: also apply script/default edits
@@ -16,6 +16,8 @@ export const meta = {
  runtimeDir: 'C:/work/.claude/.runtime',  // default <kitDir>/.runtime
 } */
 const A = args || {}
+const badArgs = Object.keys(A).filter((k) => !['applyScripts', 'kitDir', 'runtimeDir'].includes(k))   // refused, never dropped
+if (badArgs.length) throw new Error(`tidy.js args refused: unknown ${badArgs.join(', ')}`)
 const C = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
 const RT = (A.runtimeDir || `${C}/.runtime`).replace(/[\\/]+$/, '')
 // kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)

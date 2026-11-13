@@ -191,15 +191,15 @@ function Get-KitSuperviseFlagsPrior([switch]$AutoFix) {
     [pscustomobject]@{ level = 'WATCH'; what = "prior override: $($e.what) $($e.task) ($($e.reason))$hits"; action = 'Check it is no duplicate (crafty.ps1 prior -Task <id>); a duplicate: stop it, reuse the existing work' }
   }
 }
-# hits not its own (tagged), named with it in a live launch (brief, args) or of its parent
+# hits not its own (tagged), named in a live launch with it or as a sibling subtask
 function Get-KitPriorForeign($Entry, [string[]]$Briefs) {
   $tag = "$($KitConf.TrackerTag)"; $has = { param($t, $id) "$t" -match "(?i)(?<![A-Za-z0-9])$([regex]::Escape("$id"))(?![A-Za-z0-9])" }   # whole ids: 7 is not in 17
   $parentOf = { param($id) "$((Read-KitState (Get-KitTaskFile "$id")).spec.parent)" }; $parentOf0 = & $parentOf $Entry.task
   foreach ($h in @($Entry.matched | Where-Object { $_ })) {
     if ($h.tagged -or (& $has $h.ref "$tag$($Entry.task)")) { continue }
     $tid = if ($h.kind -eq 'task') { "$($h.ref)" } elseif ($tag -and "$($h.ref)" -match "(?i)$([regex]::Escape($tag))([A-Za-z0-9]+)") { $Matches[1] }
-    if ($tid -and @($Briefs | Where-Object { $_ -and (& $has $_ $tid) -and (& $has $_ $Entry.task) }).Count) { continue }
-    if ($tid -and $parentOf0 -and (& $parentOf $tid) -eq $parentOf0) { continue }
+    $sib = $tid -and $parentOf0 -and (& $parentOf $tid) -eq $parentOf0
+    if ($tid -and @($Briefs | Where-Object { $_ -and (& $has $_ $tid) -and ($sib -or (& $has $_ $Entry.task)) }).Count) { continue }
     $h
   }
 }

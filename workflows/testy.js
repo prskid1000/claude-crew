@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L37 record-args · L58 prepare · L87 config · L122 prompts · L211 local · L239 app · L262 test-prompt ·
-//   L316 verify · L378 run-item · L559 pool · L581 budget · L609 run · L647 learn
+// Sections: L16 args · L41 record-args · L62 prepare · L91 config · L126 prompts · L215 local · L243 app · L266 test-prompt ·
+//   L320 verify · L382 run-item · L563 pool · L585 budget · L613 run · L651 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -33,6 +33,10 @@ export const meta = {
 const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tasks": "tasks/"}}
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
+// an unknown arg is refused, never dropped (a coordinator's notes reached no tester): forms 1-3 above + run.json keys (STATE.md qa-runs:run)
+const ARG_KEYS = 'select name only instance batch runtimeDir envFixWaitMinutes title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent'.split(' ')
+const badArgs = Object.keys(ARGS0).filter((k) => !ARG_KEYS.includes(k))
+if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.join(', ')}; free text for testers goes in args.context`)
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
 // ---- record-args: the launch record (a resume needs it byte-exact)
 // launch record first (bossy.ps1 launch -Self, FNV-1a); runDir rides along once known

@@ -1,5 +1,5 @@
 # Kit state (`.state/` durable, `.runtime/` disposable)
-Read by kitty when a script's state changes, by revy (kind kit), by agents that need a task's links ("Indexes").
+Read by kitty when a script's state changes, revy (kind kit), agents needing a task's links ("Indexes").
 Paths: `kit.example.json` `_paths` (`Get-KitPath` / `kit_path`); schemas: the Inventory below (`kitbag.py state lint` parses
 it; supervise runs it each beat on recent files: a BAD file = WATCH).
 
@@ -60,7 +60,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `agents` | `crafty.ps1 checkpoint` | `dir=*/resume*.json v1: agent run steps` | 7 d | schemaVersion, ISO |
 | `decisions` | `bossy.ps1 decide` | `dir v2: id status question + kind run agent item options blocking contracts at task mrs answer by answeredAt recommend commit parentId gate source usedAt usedBy supersedes` | 14 d | `options` {key label description recommended}, `blocking`; gate words: `gate`, `source`, `usedAt` |
 | `qa-runs` | `testy.js`, `pokey.ps1 finalize` | `dir=*/index.json v1: run items` | 14 d | new `index.json` |
-| `qa-runs:run` | `testy.js` Prepare, `pokey.ps1 retest` | `dir=*/run.json v0: title runDir items + kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices` | 14 d | new: allowed keys |
+| `qa-runs:run` | `pokey.ps1 prepare`, `retest` | `dir=*/run.json v0: title runDir items + kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent` | 14 d | new keys: allowed |
 | `qa-runs:results` | the tester (testy.js CHECKS_SCHEMA), `pokey.ps1 results patch` | `dir=*/*/results.json v0: code checks + findings setup_changes data_created skipped handoff` | 14 d | new |
 | `qa-runs:held` | `pokey.ps1 results hold` | `dir=*/*/held.json v0: code held at + envFix summary` | 14 d | new |
 | `qa-runs:bugs` | `pokey.ps1 finalize` | `dir=*/bugs.json v0: groups + groups` | 14 d | new |
