@@ -114,10 +114,10 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, baseline data (by id;
   local env: `seed -Check`, goody `local-env`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
   **Selection** (`pokey.ps1 prepare -Job <job JSON>` runs steps 1-5, the workflow's Prepare step; by hand the same):
-  1. Folder = `runFolder` with today's date (taken -> `-2`, `-3`). Candidates: `crafty.ps1 tracker list <container> <status>` per
-     `lists` (empty: `trackerLists`, else `tracker.list` / `tracker.repo`) x `statuses` (logical names via `tracker.statuses`;
-     `in test` = `inTest`; other names pass through); plus `tasks` (`tracker view`), minus `exclude`; `mine` = only the
-     `tracker owner`'s.
+  1. Folder = `runFolder`, date placeholders (`<yyyy-MM-dd-HHmmss>`) expanded; one with files is refused, an empty one reused.
+     Candidates: `crafty.ps1 tracker list <container> <status>` per `lists` (empty: `trackerLists`, else `tracker.list` /
+     `tracker.repo`) x `statuses` (logical names via `tracker.statuses`; `in test` = `inTest`; other names pass through);
+     plus `tasks` (`tracker view`), minus `exclude`; `mine` = only the `tracker owner`'s.
   2. Per task: MRs `<repo>!<iid>` (`tracking` `<id>.json` `track.mrs`, else the task's MR links); its "Testing doc
      (human):" link -> `<run>/guides/<code>.md` (its kept copy, else the link).
      None of either -> left out. Tasks sharing a doc = one item.

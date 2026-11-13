@@ -243,13 +243,17 @@ $tB = & $mkTask '[Bug] No doc' 'MR: https://git.example/g/web/-/merge_requests/6
 $tC = & $mkTask '[Bug] Excluded' "**Testing doc (human):** [open](https://docs.example/h3)`n`nMR: https://git.example/g/web/-/merge_requests/7"
 foreach ($tx in $tA, $tB, $tC) { $null = pwsh -NoProfile -File $craftyPs tracker status $tx 'in test' 2>&1 }
 $pjob = @{ runFolder = "$wd/qa-runs/<yyyy-MM-dd>-stg"; statuses = @('inTest'); exclude = @($tC); target = 'stg-a'; kitDir = $k; runSettings = @{ mandate = @('test the sort') } } | ConvertTo-Json -Compress -Depth 4
-$pp = @(pwsh -NoProfile -File $PKp prepare -Job $pjob 2>&1); $pRun = ("$($pp[-1])" -replace '^RUN ') | ConvertFrom-Json
+$pp = @(pwsh -NoProfile -File $PKp prepare -Job $pjob 2>&1); $ppCode = $LASTEXITCODE; $pRun = ("$($pp[-1])" -replace '^RUN ') | ConvertFrom-Json
 $pNotes = Get-Content -Raw "$($pRun.runDir)/lead-notes.md"; $null = pwsh -NoProfile -File $PKp lead-notes add -RunDir $pRun.runDir -Code T1 -Text 'which tenant? -> madrid' 2>&1
 $pDay = Get-Date -Format 'yyyy-MM-dd'
-Expect "prepare: one item (MR + doc + in test), the doc-less task left out, exclude honoured; the last line is RUN <run>; lead-notes skeleton + lead-notes add ($($pp[-2]))" ("$($pp[-1])".StartsWith('RUN ') -and @($pRun.items).Count -eq 1 -and $pRun.items[0].code -eq 'T1' -and $pRun.items[0].subtasks[0].mrs -eq 'web!5' -and $pRun.items[0].target -eq 'stg-a' -and
+Expect "prepare: one item (MR + doc + in test), the doc-less task left out, exclude honoured; exit 0, the last line is RUN <run>; lead-notes skeleton + lead-notes add ($ppCode $($pp[-2]))" ($ppCode -eq 0 -and "$($pp[-1])".StartsWith('RUN ') -and @($pRun.items).Count -eq 1 -and $pRun.items[0].code -eq 'T1' -and $pRun.items[0].subtasks[0].mrs -eq 'web!5' -and $pRun.items[0].target -eq 'stg-a' -and
   (Get-Content -Raw $pRun.items[0].guideFile) -match 'https://docs.example/h1' -and @($pRun.left).Count -eq 1 -and $pRun.left[0].reason -match 'Testing doc' -and $pRun.mandate[0] -eq 'test the sort' -and $pRun.runDir -match "qa-runs/$pDay-stg$" -and
   (Gold $pNotes "# Lead notes: $pDay-stg`n**Result:** 1 in, 1 left out · target stg-a`n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| T1 [Bug] Orders sort | from the guide | to check |`n`n## Left out`n`n| Task | Reason |`n|---|---|`n| $tB [Bug] No doc | no ""Testing doc (human):"" link |`n`n## Answers (newest last)") -and
   (Get-Content -Raw "$($pRun.runDir)/lead-notes.md") -match '(?m)^- \d\d:\d\d T1: which tenant\? -> madrid\r?$')
+$ppAgain = @(pwsh -NoProfile -File $PKp prepare -Job $pjob 2>&1); $ppAgainCode = $LASTEXITCODE
+$null = New-Item -ItemType Directory -Force "$wd/qa-runs/$pDay-empty/guides"; $pjobEmpty = $pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-empty'
+$ppEmpty = @(pwsh -NoProfile -File $PKp prepare -Job $pjobEmpty 2>&1); $ppEmptyCode = $LASTEXITCODE
+Expect "prepare: a run folder with files is refused (exit 1, no -2 suffix); an empty one is reused and RUN printed ($ppAgainCode $ppEmptyCode $($ppEmpty[-2]))" ($ppAgainCode -eq 1 -and "$ppAgain" -match 'exists with files' -and -not (Test-Path "$wd/qa-runs/$pDay-stg-2") -and $ppEmptyCode -eq 0 -and "$($ppEmpty[-1])" -match "^RUN .*qa-runs/$pDay-empty""")
 $env:KIT_TRACKER_TYPE = $null
 # ---- lessons and signals (items 7, 18): one lesson shape (lint), signals <= 400 chars with a fixed key set (state lint)
 $null = pwsh -NoProfile -File $bossyPs learn -Skill kitty -Kind idea -Text ('z' * 401) 2>&1; $sigLongCode = $LASTEXITCODE

@@ -870,7 +870,8 @@ if ($RunDir) { $rf = Join-Path $RunDir 'run.json'; if (-not (Test-Path -LiteralP
 if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run>'; exit 2 }
 $jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
 if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
-$base = $jb.runFolder -replace '<yyyy-MM-dd>', (Get-Date -Format 'yyyy-MM-dd'); $dir = $base; for ($dn = 2; Test-Path -LiteralPath $dir; $dn++) { $dir = "$base-$dn" }
+$dir = [regex]::Replace("$($jb.runFolder)", '<([yMdHms][^<>]*)>', { param($DateTok) Get-Date -Format $DateTok.Groups[1].Value })   # <yyyy-MM-dd> and other date formats
+if (Get-ChildItem -LiteralPath $dir -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1) { throw "prepare: $dir exists with files: pass another name, or launch with { runDir }" }   # an empty one is reused
 New-Item -ItemType Directory -Force (Join-Path $dir 'guides') | Out-Null; $dir = (Resolve-Path -LiteralPath $dir).Path -replace '\\', '/'
 # 1. candidates: lists x statuses, plus tasks, minus exclude; mine = the tracker owner's
 $lists = @($jb.lists | Where-Object { $_ }); if (-not $lists.Count) { $lists = @(@(Get-KitValue 'trackerLists' @()) | Where-Object { $_ }) }; if (-not $lists.Count) { $lists = @('') }
@@ -914,7 +915,7 @@ foreach ($tid in @($cand.Keys)) {
 }
 # 5. run.json + lead-notes.md (fixed headings; testers and the lead append with lead-notes add)
 $run = [ordered]@{ title = "$($jb.target): $(@($items | ForEach-Object title) -join '; ')"; target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }
-foreach ($rk in @($jb.runSettings.Keys | Where-Object { $_ -notin $run.Keys })) { $run[$rk] = $jb.runSettings[$rk] }
+foreach ($rk in @(@($jb.runSettings.Keys) | Where-Object { $_ -and $_ -notin $run.Keys })) { $run[$rk] = $jb.runSettings[$rk] }
 Write-KitAtomic "$dir/run.json" ($run | ConvertTo-Json -Depth 8)
 $cell = { param($Text) "$Text" -replace '\s+', ' ' -replace '\|', '\|' }
 $ln = @("# Lead notes: $(Split-Path $dir -Leaf)", "**Result:** $($items.Count) in, $($left.Count) left out · target $($jb.target)", '', '## Prerequisites', '', '| Item | Flags / accounts / data ids | State |', '|---|---|---|') +
@@ -943,7 +944,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
       else { $xn = @{ deployed = 'deploys'; annotate = 'android-swarm'; evidence = 'media-evidence' }[$__verb]; Resolve-KitExtra $xn; [Console]::Error.WriteLine("pokey.ps1 $__verb is a goody: run kitbag.py goody add $xn"); exit 2 }
     }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
-    'prepare' { Invoke-KitVerb Invoke-Prepare $__rest }
+    'prepare' { Invoke-KitVerb Invoke-Prepare $__rest; exit 0 }   # pwsh -File would exit with a helper's git code (128); a crash exits 1 inside
     'lead-notes' { Invoke-KitVerb Invoke-LeadNotes $__rest }
     'results' { Invoke-KitVerb Invoke-Results $__rest }
     'ui' {   # goody android-swarm

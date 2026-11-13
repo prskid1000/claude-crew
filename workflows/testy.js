@@ -70,7 +70,7 @@ if (R.select && !R.runDir && !Array.isArray(R.items)) {
  const { select: S, name: N, target: T, ...rest } = R   // T may be a group, never an env: run.json holds the real target(s)
  if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
  const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : ['inTest'])
- const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
+ const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd-HHmmss>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
   statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, runSettings: rest }
  const run = await prepStep(`& ${K0}/skills/pokey/pokey.ps1 prepare -Job '${q0(JSON.stringify(job))}'`, 'prepare')
  if (!run || !run.runDir) throw new Error('pokey.ps1 prepare gave no run: run it by hand (pokey L1), launch with { runDir }')
