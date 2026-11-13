@@ -24,9 +24,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L49 board · L229 budget · L258 launch · L491 recover · L577 pause · L588 resume · L651 program · L702 param ·
-  L708 track · L1035 supervise · L1339 report · L1418 audit · L1478 storage · L1688 bugbrief · L1790 cleanup · L1874 learn ·
-  L1904 decide · L2038 health · L2100 retro due · L2110 tidy · L2179 the kit origin's main and goodies · L2195 setup ·
-  L2262 guard-sendmessage
+  L708 track · L1025 supervise · L1329 report · L1408 audit · L1468 storage · L1678 bugbrief · L1780 cleanup · L1864 learn ·
+  L1894 decide · L2028 health · L2090 retro due · L2100 tidy · L2169 the kit origin's main and goodies · L2185 setup ·
+  L2252 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -727,23 +727,6 @@ function Get-TaskMrBranches([string[]]$Tasks) {
     if ($m.target_branch) { [pscustomobject]@{ ref = $ref; repo = $repo; branch = [string]$m.target_branch } }
   }
 }
-# launched areas (track.planHours) no wave report lists done: a later batch or budget cut
-function Get-KitPlannedAreas([string]$TaskId, $Since) {
-  $TaskId = NormTask $TaskId
-  if ($null -eq $script:planRecs) {
-    $script:planRecs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and ((Get-Date) - [datetime]$_.at).TotalHours -lt [double](Get-KitParam 'track.planHours') })
-    $script:planDone = @{}; $planFrom = @($script:planRecs | ForEach-Object { [datetime]$_.at } | Sort-Object)[0]   # waves written since the oldest launch
-    foreach ($wf in @(if ($planFrom) { Get-ChildItem (Get-KitPath waves) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $planFrom } })) {
-      $wr = try { Get-Content -LiteralPath $wf.FullName -Raw | ConvertFrom-Json } catch { $null }
-      foreach ($wa in @(if ($wr.agents) { $wr.agents.PSObject.Properties })) { foreach ($dk in @((@($wa.Value.done) -join ' ') -split '[,\s]+' | Where-Object { $_ })) { $script:planDone["$($wa.Name)|$(NormTask $dk)"] = 1 } }
-    }
-  }
-  @(foreach ($pr in $script:planRecs) {
-      if ($Since -and [datetime]$pr.at -le [datetime]$Since) { continue }
-      foreach ($pa in @($pr.args.agents | Where-Object { $_.id -and $_.items })) {
-        if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"]) { "$($pa.id)" }
-      } }) | Select-Object -Unique
-}
 # one stored ref per MR: URL, group/repo!n, alias -> repo!n
 function NormRef($r) {
   $r = "$r".Trim().Trim("'", '"'); if ($u = ConvertFrom-MrUrl $r) { $r = "$($u.repo)!$($u.n)" }
@@ -766,6 +749,12 @@ $script:holds = 0
 function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
 $script:gone = @{}   # deleted in the tracker
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { if (Remove-KitGoneTask $id $_) { $script:gone[$id] = $true }; '' } }
+# a held task already closed / in test is done (never promoted backwards); status read once per 30 min
+function HeldPast($o) { $nw = Get-Date; if ($o.holdCheckedAt -and ($nw - [datetime]$o.holdCheckedAt).TotalMinutes -lt 30) { return '' }
+  $hs = TaskStatus $o.task; if (-not $hs -or $script:gone[$o.task]) { return '' }   # unread or deleted: retry next sweep, never re-saved
+  $o.holdCheckedAt = $nw.ToString('o'); $past = Test-TrackerStatus $hs 'closed', 'inTest'
+  if ($past) { $o.done = $true; $o.doneAt = $o.holdCheckedAt }; $null = Save $o -Run
+  if ($past) { "DONE $($o.task): status '$hs' already past promoted; hold dropped ($(if ($o.holdPromotion) { $o.holdPromotion } else { 'planned areas' }))" } }
 function Load($t) { $x = Read-KitState (Get-KitTaskFile $t); $o = if ($x.track -is [Collections.IDictionary]) { $x.track } else { (Read-KitTracking).tasks[$t] }   # one file, not all
   if ($o) { $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique) }; $o }   # old duplicates
 function TaskOfMr($ref) {
@@ -941,6 +930,7 @@ switch ($Action) {
         }
         if ($o.mrs -notcontains $dep) { $o.mrs = @(@($o.mrs) + $dep) }
       }
+      if ($o.holdPromotion -and ($hp = HeldPast $o)) { if (-not $Quiet) { $hp }; continue }
       if ($o.holdPromotion) { Hold "HOLD $($o.task): promotion held ($($o.holdPromotion)); release: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
       if ($o.discover) {
         if (-not @($KitConf.TrackerRepos).Count -and -not @($o.mrs).Count) { if (-not $Quiet) { "CONFIG $($o.task): -Discover needs ""trackerRepos"" in kit.local.json (or register MRs: bossy.ps1 track add -Task $($o.task) -Mrs <repo>!<iid>)" } }
@@ -963,7 +953,7 @@ switch ($Action) {
       $failed = @($states.GetEnumerator() | Where-Object { $_.Value -match 'pipeline (failed|canceled)|closed|conflict' })
       if ($failed) { if (-not $Quiet) { "ATTENTION $($o.task): $(($failed | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ', ')" }; continue }
       if (@($states.Values | Where-Object { $_ -ne 'merged' }).Count) { continue }
-      if ($planned = @(Get-KitPlannedAreas $o.task $o.planReleased)) { Hold "HOLD $($o.task): MRs merged, planned area(s) $($planned -join ', ') not delivered yet (a later batch or wave); dropped for good: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
+      if ($planned = @(Get-KitPlannedAreas $o.task $o.planReleased)) { if ($hp = HeldPast $o) { if (-not $Quiet) { $hp }; continue }; Hold "HOLD $($o.task): MRs merged, planned area(s) $($planned -join ', ') not delivered yet (a later batch or wave); dropped for good: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
       $held =@(Get-ChildItem $wavesDir -Filter '*.json' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-6) } | ForEach-Object {
           $w = Get-Content $_.FullName -Raw | ConvertFrom-Json
           if (@($w.running).Count) { & $KitCmd.orch report -Run $w.run *> $null; $w = Get-Content $_.FullName -Raw | ConvertFrom-Json }
