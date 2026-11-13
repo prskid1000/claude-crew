@@ -44,7 +44,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | decisions | a task's Decisions checklist | `decide publish`: `<id> · <question> → <answer> · <by> <MM-dd>`, open unresolved | 80l 600ch | — |
 | decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
 | kit-report | supervise report, retro, lead notes, resume brief | `# <title>`, a `**Result:**` line, `##` sections, tables for like items | prose:400w 130ch | — |
-| final-report | an agent's last reply | the "Final reports" shape of its role | 200w 25sw | link |
+| final-report | an agent's last reply | the "Final reports" JSON of its role (`render final-report`) | 200w 25sw | link |
 | owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
 ## Wave brief
 ```markdown
@@ -155,9 +155,12 @@ renders `<status> — <why> · <link>`. Kit comments, one per kind, edited: solu
 **Answer:** pending
 ```
 
-## Final reports (one shape per crew member, <= 200 words)
-- **devy**: MRs + merge state · local test result (goals passed / rounds / ENV-FIX ids / blocked: decision or remote, why) · testing
-  doc link · done / deferred / needs-decision ids · settings/data to seed · hooks left in other areas · disputes opened.
-- **revy**: findings only (file/line or section, severity, the suggested change: patch hunk or rewritten text).
-- **checky**: results.json (the workflow's schema); summary line per package; lead: the run report link and the result rule applied.
-- **kitty**: branch + commits · fixed / proposed / ASK counts · report path · the lead's next steps.
+## Final reports (one JSON shape per crew member, <= 200 words)
+The last reply is one fenced `json` block, `role` first; the coordinator reads it with `devtools.py render final-report <file>`.
+- **devy**: `{ "role": "devy", "agent", "mrs": [{ "url", "state" }], "localTest": { "status", "rounds", "envFix": [], "blocked" },
+  "doc": "<testing doc link>", "done": [], "deferred": [], "needsDecision": [], "seed": "<settings / data>", "hooks": [], "disputes": [] }`
+- **revy**: `{ "role": "revy", "findings": [{ "where": "<file:line | section>", "severity", "change": "<patch hunk | rewritten text>" }] }`
+- **checky**: `{ "role": "checky", "summary": ["<a line per package>"], "report": "<lead: run report link>", "rule": "<result rule applied>",
+  "results": "<results.json path>" }`
+- **kitty**: `{ "role": "kitty", "branch", "commits": [], "fixed": 0, "proposed": 0, "ask": 0, "report": "<path>", "next": [] }`
+- any other: `{ "role", "agent", "result": "<one line>", "links": [], "next": [] }`

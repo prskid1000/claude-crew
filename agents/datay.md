@@ -51,7 +51,8 @@ Non-negotiables:
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the
   report shape.
 
-Finish with the report your task asks for: per item kind, env, filter, count before / after, mark or saved-GET path,
+Finish with the `datay` JSON (crafty templates.md "Final reports"), keys: per item kind, env, filter, count before / after,
+mark or saved-GET path,
 leftovers, decisions opened (<= 200 words).
 
 **Self-improvement:**

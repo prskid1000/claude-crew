@@ -28,7 +28,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L45 config · L79 run · L167 tracker · L370 git host · L453 MR · L620 merge · L900 docs · L1055 publish · L1413 render ·
-  L1664 plugins · L1678 keepboth · L1697 selftest · L2109 CLI
+  L1679 plugins · L1693 keepboth · L1712 selftest · L2124 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1630,7 +1630,7 @@ def render_status(s):
 
 
 SPEC_NEEDS = {'mr-body': ('type', 'change', 'summary'), 'mr-title': ('type', 'change'), 'commit': ('type', 'change'),
-              'comment-solution': ('solution',), 'comment-status': ('status', 'why')}
+              'comment-solution': ('solution',), 'comment-status': ('status', 'why'), 'final-report': ('role',)}
 
 
 def spec_gaps(s, kind):
@@ -1638,8 +1638,23 @@ def spec_gaps(s, kind):
     return [k for k in SPEC_NEEDS.get(kind, ()) if not s.get(k)] + [f'changes[{i}].text' for i, c in enumerate(s.get('changes') or []) if not c.get('text')]
 
 
+# templates.md "Final reports": each role's JSON keys in reading order (any other crew member: the generic shape)
+REPORT_KEYS = {'devy': ('mrs', 'localTest', 'doc', 'done', 'deferred', 'needsDecision', 'seed', 'hooks', 'disputes'),
+               'revy': ('findings',), 'checky': ('summary', 'report', 'rule', 'results'),
+               'kitty': ('branch', 'commits', 'fixed', 'proposed', 'ask', 'report', 'next'), '*': ('result', 'links', 'next')}
+
+
+def render_report(s):
+    """A crew member's final report (role JSON) as one line per key: lists joined with ' · ', objects as 'key value' pairs."""
+    val = lambda v: ' · '.join(val(x) for x in v) if isinstance(v, list) else ' '.join(f'{k} {val(x)}' for k, x in v.items() if x not in (None, '', [])) \
+        if isinstance(v, dict) else str(v)
+    keys = REPORT_KEYS.get(s.get('role'), REPORT_KEYS['*'])
+    keys = list(keys) + [k for k in s if k not in keys and k not in ('role', 'agent')]   # never drop a key: listed ones first
+    return '\n'.join([f'**{s.get("role", "agent")}** {s.get("agent", "")}'.rstrip()] + [f'**{k}:** {val(s[k])}' for k in keys if s.get(k) not in (None, '', [], {})]) + '\n'
+
+
 RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': render_commit, 'comment-solution': render_solution,
-             'comment-status': render_status}   # devtools.py render <kind> <spec.json>; comment / finish --spec
+             'comment-status': render_status, 'final-report': render_report}   # devtools.py render <kind> <spec.json>; comment / finish --spec
 
 
 def spec_text(path, kind, task=''):

@@ -44,7 +44,8 @@ numbers, diffs); unsupported claims called out.
 **module** (one folder, feature or service; findings only): <kit>/skills/crafty/module-audit.md (goody `module-audit`;
 missing -> return `module audits is a goody: run kitbag.py goody add module-audit`).
 
-Report only real problems, each with file/line (or section), severity and a suggested change (patch hunk or rewritten text):
+Report only real problems as the `revy` JSON (crafty templates.md "Final reports"), each with file/line (or section), severity
+and a suggested change (patch hunk or rewritten text):
 **blocking** = bugs, data loss, regressions, breaking API/DTO changes, missing rollback, security, removed inputs/features,
 untested changed logic, an unasked user-visible behaviour change · **should-fix** = real but not dangerous · **nit** = only
 when it changes readability materially.

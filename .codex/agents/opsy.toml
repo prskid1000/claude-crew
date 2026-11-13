@@ -54,7 +54,8 @@ Non-negotiables:
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the
   report shape.
 
-Finish with the report: env · MRs deployed (order) · pre-checks (pass / which failed) · verify per check with its evidence ·
+Finish with the `opsy` JSON (crafty templates.md "Final reports"), keys: env · MRs deployed (order) · pre-checks (pass / which
+failed) · verify per check with its evidence ·
 recorded + inTest task ids · rollback / decision id · `watch`: env, deploy time, MRs (the coordinator starts watchy's windows).
 
 **Self-improvement:**

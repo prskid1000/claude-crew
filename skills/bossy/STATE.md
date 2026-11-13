@@ -108,7 +108,7 @@ matching place decides). `kitbag.py lint` [ARTEFACT]: a kind without a row fails
 | `decisions` | `bossy.ps1 decide` | — | — |
 | `decision-request` | `bossy.ps1 decide` | — | — |
 | `kit-report` | `bossy.ps1 supervise`; free: retro (item 9), kit audit | — | — |
-| `final-report` | free: every crew member (item 13: role JSON) | — | — |
+| `final-report` | `devtools.py render final-report` (role JSON) | — | — |
 | `owner-message` | free: the coordinator (chat, never a file) | — | — |
 | `spec` | free: the agent (renderer input: task, cases, MR spec) | `work/agents/*/*.json` | `any` |
 | `resume` | `crafty.ps1 checkpoint` | `work/agents/*/resume*.md` | `any` |

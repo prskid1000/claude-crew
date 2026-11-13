@@ -196,5 +196,9 @@ $td = Join-Path $wd 'todo.md'; $t1 = & $py -X utf8 $KB state todo add $td R1 're
 $t2 = & $py -X utf8 $KB state todo done $td R1 'kit abc1234' 2>&1; $t3 = & $py -X utf8 $KB state todo add $td R2 'again' 'x' 2>&1; $t3c = $LASTEXITCODE
 $tl0 = & $py -X utf8 $KB state todo lint $td 2>&1; $tl0c = $LASTEXITCODE; Add-Content $td '- [ ] free text item'; $tl1 = & $py -X utf8 $KB state todo lint $td 2>&1; $tl1c = $LASTEXITCODE
 Expect "state todo: add / done render '- [ ] <code> · <desc> · <ref>', a dup code refused; lint fails on a free line ($tl0c $tl1c)" ((Gold ((Get-Content -Raw $td) -replace '(?m)^- \[ \] free text item\r?\n?', '') "# Kit to-do`n`n- [x] R1 · render the wave brief · kit abc1234`n- [ ] R2 · retro report · item 9") -and $t3c -ne 0 -and $tl0c -eq 0 -and $tl1c -eq 1 -and "$tl1" -match 'TODO-SHAPE - \[ \] free text item')
+# ---- final reports (item 13): a role's JSON, rendered by the coordinator; no key ever dropped
+Set-JsonFile "$wd/fr.json" ([ordered]@{ role = 'devy'; agent = 'X1'; disputes = @(); mrs = @([ordered]@{ url = 'https://g/r/-/merge_requests/5'; state = 'MERGED' }); localTest = [ordered]@{ status = 'PASS'; rounds = 2 }; done = @('S01', 'S02'); extra = 'kept' })
+Set-JsonFile "$wd/fr2.json" ([ordered]@{ role = 'opsy'; env = 'staging'; verify = 'ok' }); $fr = Dt render final-report "$wd/fr.json"; $fr2 = Dt render final-report "$wd/fr2.json"
+Expect 'render final-report: the role''s keys in order, empty ones dropped, other keys kept; any role renders' ((Gold $fr.out "**devy** X1`n**mrs:** url https://g/r/-/merge_requests/5 state MERGED`n**localTest:** status PASS rounds 2`n**done:** S01 · S02`n**extra:** kept") -and (Gold $fr2.out "**opsy**`n**env:** staging`n**verify:** ok"))
 Remove-TestKit $k
 Complete-Tests

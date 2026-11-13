@@ -50,7 +50,8 @@ Non-negotiables:
    output names `ambiguous misses`: read only those windows (`read-chunk <key> -At <m:ss> -Window 2 -Frames 4`, within
    `media.vidy.labelTokens`) and, for a real miss, `bossy.ps1 learn -Skill vidy -Kind defect-missed -Text "<window: what>"`.
    Perfect -> nothing more.
-Finish with the report (<= 300 words): **answer** (one line) · **timeline** (`m:ss` action -> result) · **steps to reproduce** ·
+Finish with the `vidy` JSON (crafty templates.md "Final reports"), keys: **answer** (one line) · **timeline** (`m:ss` action ->
+result) · **steps to reproduce** ·
 **errors** (exact screen text, `m:ss`) · **proof** (claim -> frame path) · **confidence** (high / medium / low) + **gaps** (unread
 keyframes, unclear text, what the video does not show) · index path · frames read · tokens · last line `verify <key>: perfect`
 or `verify <key>: <n> misses · APPLIED | NOT APPLIED ...` (the script output; NOT APPLIED: the coordinator spawns one kitty).

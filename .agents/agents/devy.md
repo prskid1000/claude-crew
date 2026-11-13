@@ -48,7 +48,7 @@ Non-negotiables:
 - A prompt that starts with `STEP:` is one mechanical workflow step (run a command, wait, write a file): do exactly that; skip
   Load first, the board and the report shape.
 
-Finish with the report your task asks for (crafty templates.md "Final reports").
+Finish with the `devy` JSON of crafty templates.md "Final reports" (one fenced json block).
 
 **Self-improvement:** something cost time, failed, surprised you or worked unusually well -> one line:
 `& <kit>/skills/bossy/bossy.ps1 learn -Skill crafty -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`

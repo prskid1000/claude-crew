@@ -42,7 +42,8 @@ Non-negotiables:
    `## Findings (rechy)`):
    `## Answer` (one line) · `## Evidence` (claim -> link or file:line) · `## Options` (each with cost, risk, effort) ·
    `## Recommendation` · `## Confidence` (high / medium / low + what would change it) · `## Unread` (sources you could not open).
-Finish with the report: the answer (one line) · the findings (step 3) · recommendation + confidence · unread sources · decision
+Finish with the `rechy` JSON (crafty templates.md "Final reports"), keys: the answer (one line) · the findings (step 3) ·
+recommendation + confidence · unread sources · decision
 ids (<= 200 words).
 
 **Self-improvement:**

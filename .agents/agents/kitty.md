@@ -77,7 +77,7 @@ Non-negotiables:
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip the steps, the board and the report
   shape.
 
-Finish with the report your task asks for (templates.md "Final reports": `kitty`, <= 200 words).
+Finish with the `kitty` JSON of templates.md "Final reports" (one fenced json block, <= 200 words).
 
 **Self-improvement:**
 `& <kit>/skills/bossy/bossy.ps1 learn -Skill kitty -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`

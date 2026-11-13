@@ -47,7 +47,8 @@ Non-negotiables:
 **rule-change:** append the owner's words (verbatim, timestamp) under the brief's "Rule changes during the wave" and to the
 contracts file; `board show` -> `board msg` every agent whose area it touches (what changed, re-read before the next push).
 
-Finish with the report: brief + contracts paths · areas (id, items, dependsOn) · impact findings · openQuestions · the launch
+Finish with the `briefy` JSON (crafty templates.md "Final reports"), keys: brief + contracts paths · areas (id, items,
+dependsOn) · impact findings · openQuestions · the launch
 args · agents messaged (rule-change) · decision ids (<= 200 words).
 
 **Self-improvement:**

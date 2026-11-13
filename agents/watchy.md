@@ -53,7 +53,8 @@ Non-negotiables:
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the
   report shape.
 
-Finish with the report: env · window + baseline · sources (ok / UNKNOWN) · per signature: state, counts, task id · [Bug] and
+Finish with the `watchy` JSON (crafty templates.md "Final reports"), keys: env · window + baseline · sources (ok / UNKNOWN) ·
+per signature: state, counts, task id · [Bug] and
 comment ids · escalation sent (yes / no) · next window due.
 
 **Self-improvement:**
