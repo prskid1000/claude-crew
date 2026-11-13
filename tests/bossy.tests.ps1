@@ -188,7 +188,7 @@ Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')
 & $J @{} (Join-Path $k 'skills/crafty/kit.local.json')   # a configured kit: lib.ps1 skips its load-time git lookup
 "`n## zz-test`n- a core lesson" | Add-Content (Join-Path $k 'LESSONS.md')
 $lr = Invoke-TestScript $O learn -Skill revy -Kind idea -Text 'x'; $r1 = pwsh @np $O learn -Read -Skill zz-test | Out-String; $lx = Invoke-TestScript $O learn -Skill revy -Lesson 'y'
-Expect 'learn: record + -Read in core; lesson tools without kit-admin = its one line, exit 1' ($lr.out -match 'recorded \(revy/idea\)' -and $r1 -match 'a core lesson' -and $lx.code -eq 1 -and $lx.out.Trim() -eq 'learn -Stats / -History / -Lesson / -Bump / -Fixed / -Trim is a goody: run kitbag.py goody add kit-admin')
+Expect 'learn: record + -Read in core; lesson tools without kit-admin = its one line, exit 1' ($lr.out -match 'recorded \(revy/idea\)' -and $r1 -match 'a core lesson' -and $lx.code -eq 1 -and $lx.out.Trim() -eq 'learn -Stats / -History / -When / -Bump / -Fixed / -Trim is a goody: run kitbag.py goody add kit-admin')
 $j1 = pwsh @np $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C:/wt/x7' | Out-String
 $j2 = pwsh @np $O board join -Type revy -Agent R7 -Run w7 | Out-String
 $null = pwsh @np $O board msg -Agent R7 -To X7 -Text 'I need a.ts'

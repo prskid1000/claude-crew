@@ -26,7 +26,7 @@ $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-s
 "# Lead notes: r1`n**Result:** 2 in, 1 left out · target ``local```n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| P1 | flag ``x`` ON | ready |" | Set-Content $pf
 $tj = Get-Content (Join-Path $src 'workflows/tidy.js') -Raw
 Expect 'retro + lead notes: tidy renders the retro (devtools.py render retro), checky names the lead-notes headings; a lead-notes sample passes' ($tj -match 'devtools\.py render retro' -and
-  (Get-Content (Join-Path $src 'agents/checky.md') -Raw) -match '# Lead notes: .*## Prerequisites' -and (Test-Prose kit-report $pf))
+  (Get-Content (Join-Path $src 'agents/checky.md') -Raw) -match '(?s)# Lead notes: .*## Prerequisites' -and (Test-Prose kit-report $pf))
 "Hi, I hope this is basically fine, merged successfully`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
 $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
 Expect 'prose: filler (the whole banned list), missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match '"I hope"' -and $out -match '"successfully"' -and $out -match 'missing sections' -and $out -match '4 bullets')

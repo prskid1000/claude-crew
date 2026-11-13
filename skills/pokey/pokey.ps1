@@ -899,8 +899,9 @@ foreach ($tid in @($cand.Keys)) {
     $it.target = "$($hit.target)"; if ($hit.localEnv) { $it.localEnv = "$($hit.localEnv)" }
   } else { $it.target = "$($jb.target)" }
   # 4. live: every MR deployed on the target (N/A, MANUAL count as in); a local env: its own check (lead)
-  if (-not $it.localEnv -and (Get-Command Invoke-Deployed -ErrorAction SilentlyContinue)) {
-    $dep = @(Invoke-Deployed -Mrs $mrs -Target $it.target -Json | ConvertFrom-Json)
+  $depFn = Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue   # goody deploys
+  if (-not $it.localEnv -and $depFn) {
+    $dep = @(& $depFn -Mrs $mrs -Target $it.target -Json | ConvertFrom-Json)
     $notLive = @($dep | Where-Object { $_.state -notmatch '^(DEPLOYED|N/A|MANUAL)' })
     if ($notLive.Count) { & $out "not live on $($it.target): $(@($notLive | ForEach-Object { "$($_.mr) $($_.state)" }) -join ', ')"; continue }
   }

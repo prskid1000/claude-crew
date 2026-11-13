@@ -62,7 +62,7 @@ const res = await agent(`Kind retro (judge): you maintain the kit (${C}). The sc
 Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line needs its source to decide).
 
 1. Lessons (& ${C}/skills/bossy/bossy.ps1 learn): a "Signal groups" line with "-> lesson" = -Skill <s> -Bump "<words of that lesson>";
- a group without one = -Skill <s> -Lesson "<one line, <= 50 words, how to avoid it> (n×)" (org- or project-specific: add -Project <name>, it goes to LESSONS.local.md);
+ a group without one = -Skill <s> -When "<situation>" -Do "<how to avoid it>" -Why "<the cost seen>" (one line <= 50 words) (org- or project-specific: add -Project <name>, it goes to LESSONS.local.md);
  a single signal only when it is a clear win or a hard failure; a "seen again" line = a regression: list it as a script-change proposal.
  Then -Skill <s> -Trim for every skill you touched (never delete lessons by hand).
 2. Rules: a lesson at (3×) or more and still true -> a short rule in its SKILL.md or rules/*.md, then learn -Skill <s> -Fixed "<words>".

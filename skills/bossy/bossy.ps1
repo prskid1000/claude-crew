@@ -1,7 +1,7 @@
 <#
 bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skills/bossy/bossy.ps1 <verb> [args]
   board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool] [-Kind] [-Ref]   agent board, messages
-  learn -Skill -Kind -Text | -Read | -Show (-Lesson | -Bump | -Fixed | -Trim | -Stats | -History: goody kit-admin)   signals, lessons
+  learn -Skill -Kind -Text | -Read | -Show (-When -Do -Why | -Bump | -Fixed | -Trim | -Stats | -History: goody kit-admin)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Check -ArgsFile (buildy item tasks) | -Done -RunId|-Run | -List [-Brief]
   recover [-RunId <id> | -Run <runs>] [-Hours 24] [-MaxSeconds 150] [-Everyone]   stopped runs: state, resume brief, exact resume call
   pause -Run <run> | -All [-Reason] [-Wait <min>] [-Everyone] | -Status · resume -Run <run> | -All [-Wait <min>] [-Hours 24] [-MaxSeconds 150] [-Everyone]
@@ -1869,7 +1869,7 @@ function Invoke-Learn {
     [string]$Lesson, [string]$When, [string]$Do, [string]$Why, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
   )
   if ($Stats -or $History -or $Lesson -or $When -or $Fixed -or $Bump -or $Trim) {   # the retro's tools (kitty, /tidy)
-    $admin = Assert-KitExtra Invoke-LearnAdmin 'learn -Stats / -History / -Lesson / -Bump / -Fixed / -Trim' 'kit-admin'; & $admin @PSBoundParameters; return
+    $admin = Assert-KitExtra Invoke-LearnAdmin 'learn -Stats / -History / -When / -Bump / -Fixed / -Trim' 'kit-admin'; & $admin @PSBoundParameters; return
   }
   $file = Get-KitPath signals -Create
   if ($Show) { if (Test-Path $file) { Get-Content $file -Tail $Last | ForEach-Object { $s = $_ | ConvertFrom-Json; '{0} {1,-13} {2,-15} {3}{4}' -f ([datetime]$s.at).ToString('yyyy-MM-dd HH:mm'), $s.skill, $s.kind, $s.text, $(if ($s.ref) { " [$($s.ref)]" }) } }; return }
