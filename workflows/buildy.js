@@ -194,7 +194,7 @@ ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug locally BEFORE fixing: goal
  the AI doc's Rounds table and republishes it (--label "loop round <n>").
 - ENV GAP (Docker down, empty local index, a model limit; no ENV-FIX closes it), its tests run in the MR pipeline:
  NOT_TESTED_LOCAL + pipeline link in the AI doc; localTest FAIL + envGap true (merged on green CI). A product failure: envGap false.
-- Every goal PASS: crafty.ps1 checkpoint -Agent <id> -Run ${RUN} -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR body"),
+- Every goal PASS: crafty.ps1 checkpoint -Agent <id> -Run ${RUN} -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR spec"),
  then devtools.py finish <task> cases solution.md review --ai cases (docs from the cases spec),
  then devtools.py mr again with both links (edits it). A fix round (review, CI, failedTesting): a new AI doc round, then the same
  commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc, never an earlier round removed. Do NOT merge (the workflow

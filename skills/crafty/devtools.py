@@ -7,7 +7,9 @@
   `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec
  python -X utf8 devtools.py cases add|result|round|render <task> ...   the task's test cases (one spec, "render" section):
   goals file, AI doc and human doc rendered from it, never hand-written
- python -X utf8 devtools.py mr <worktree> "<title>" <body.md> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch
+ python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch: title
+  (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec; the old form `mr <wt> "<title>" <body.md>` still works
+ python -X utf8 devtools.py render mr-title|mr-body|commit <spec.json>   print an artefact rendered from its spec (crafty.ps1 wt commit -Spec)
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
@@ -25,8 +27,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L43 config · L77 run · L165 tracker · L368 git host · L451 MR · L618 merge · L898 docs · L1053 publish · L1411 render ·
-  L1560 plugins · L1574 keepboth · L1593 selftest · L2007 CLI
+Sections: L45 config · L79 run · L167 tracker · L370 git host · L453 MR · L620 merge · L900 docs · L1055 publish · L1413 render ·
+  L1617 plugins · L1631 keepboth · L1650 selftest · L2062 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -449,7 +451,7 @@ def target_of(worktree):
 
 
 # ---- MR: open a merge / pull request
-MR_SECTIONS = ('## Summary', '## Changes', '## How tested', '## Risks', '## Links')  # templates.md "MR body"
+MR_SECTIONS = ('## Summary', '## Changes', '## How tested', '## Risks', '## Links')  # templates.md "MR spec"
 FOOTER = '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
 
 
@@ -461,7 +463,7 @@ def _verified_gaps(body_md):
 
 
 def _how_tested_table(body_md):
-    """True when '## How tested' starts with a Markdown table (templates.md "MR body": | Check | Result |)."""
+    """True when '## How tested' starts with a Markdown table (templates.md "MR spec": | Check | Result |)."""
     return bool(re.search(r'(?m)^## How tested[^\n]*\n\s*\|', body_md))
 
 
@@ -524,7 +526,7 @@ def refresh_mr_docs(tid, host=None):
 def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
-        print(f'[mr] body is missing {missing} - templates.md "MR body"', file=sys.stderr)
+        print(f'[mr] body is missing {missing} - templates.md "MR spec"', file=sys.stderr)
     for kind in ('mr-title', 'mr-body'):   # the limits first: 29 refusals came from guessing them
         if lim := prose_limits(kind):
             print(f'[prose] {lim}', file=sys.stderr)
@@ -532,9 +534,9 @@ def mr_create(worktree, title, body_md, tgt=None):
     prose_gate('mr-body', body_md)
     if _verified_gaps(body_md):
         print('[mr] "## How tested" has neither a "Not run: <gate and why>" nor a "Pure logic: <spec file or node output>" line'
-             ' - say what was not run (or "Not run: nothing") - see templates.md "MR body"', file=sys.stderr)
+             ' - say what was not run (or "Not run: nothing") - see templates.md "MR spec"', file=sys.stderr)
     if '## How tested' in body_md and not _how_tested_table(body_md):
-        print('[mr] "## How tested" is not a table: use "| Check | Result |" rows (templates.md "MR body")', file=sys.stderr)
+        print('[mr] "## How tested" is not a table: use "| Check | Result |" rows (templates.md "MR spec")', file=sys.stderr)
     link = TASK_LINK.get(TRACKER_TYPE)
     if link and link not in body_md:
         print(f'[mr] body has no tracker ({TRACKER_TYPE}) task link', file=sys.stderr)
@@ -555,7 +557,7 @@ def mr_create(worktree, title, body_md, tgt=None):
     ui = _ui_line_missing(worktree, tgt, body_md)
     if ui:
         print(f'[mr] the diff touches templates/styles ({", ".join(ui[:3])}{" ..." if len(ui) > 3 else ""}) but "## How tested" has no'
-         ' "UI: <committed spec or screenshot link>" line (or "UI: not a UI change") - templates.md "MR body"', file=sys.stderr)
+         ' "UI: <committed spec or screenshot link>" line (or "UI: not a UI change") - templates.md "MR spec"', file=sys.stderr)
     ex = _host('mr.list', type=host, repo=proj, state='opened', source_branch=src)   # one MR per branch: a re-run edits it
     old = next((x for x in ex if isinstance(x, dict) and x.get('web_url')), None) if isinstance(ex, list) else None
     if old:
@@ -1557,6 +1559,61 @@ def cases_cmd(a):
     return 0
 
 
+def fmt_line(f, s):
+    """A title / subject format ({type} {scope} {change} {task} {tag} {code} {repo}): empty () and a dangling ' -' dropped."""
+    vals = {'tag': TAG, **{k: v for k, v in s.items() if v}}
+    out = re.sub(r'\{(\w+)\}', lambda m: str(vals.get(m.group(1), '')), f)
+    return re.sub(r'\s{2,}', ' ', re.sub(r'\s+-\s*(?=\(|$)', ' ', re.sub(r'\s*\(\s*\)', '', out))).strip()
+
+
+def render_title(s):
+    """MR / PR title: kit.local.json mrTitleFormat (templates.md kind mr-title)."""
+    return fmt_line(CFG.get('mrTitleFormat') or '{type}({scope}): {change} ({task})', s)
+
+
+def render_commit(s):
+    """Commit message: commitFormat subject, a bullet per change, trailers (e.g. Co-Authored-By) after a blank line."""
+    body = [f'- {c["text"]}' + (f' (`{c["technical"]}`)' if c.get('technical') else '') for c in s.get('changes') or [] if c.get('text')]
+    return '\n'.join([fmt_line(CFG.get('commitFormat') or '{type}({scope}): {change}', s)] + ([''] + body if body else []) + ([''] + list(s['trailers']) if s.get('trailers') else [])) + '\n'
+
+
+def render_mr_body(s):
+    """templates.md "MR spec" from an MR spec; the Local env row from the loop checkpoint when the spec has none."""
+    t = s.get('task') or ''
+    url = s.get('taskUrl') or (t and (_tracker('url', t) or '').strip().splitlines()[-1:] or [''])[0]
+    loop = s.get('localEnv') or (f'{s.get("env") or "local"}: {local_pass(t)[1]}' if t and local_pass(t)[1] else 'none')
+    checks = s.get('checksRun') or []
+    rows = [['Checks', ' · '.join(f'{c["name"]} {"✅" if str(c.get("result", "")).upper() in ("PASS", "OK", "0", "") else "❌ " + str(c["result"])}' for c in checks) or 'none'],
+            ['Local env', loop], ['Not run', s.get('notRun') or 'nothing'], ['UI', s.get('ui') or 'not a UI change'],
+            ['Pure logic', s.get('pureLogic') or 'none'], ['Regression', s.get('regression') or 'not a fix']]
+    risks = [f'- {r["text"]}' for r in s.get('risks') or [] if r.get('text')] + [f'- **Behaviour limits:** {s.get("limits") or "none"}', f'- **Needs after deploy:** {s.get("afterDeploy") or "none"}']
+    sib = s.get('siblings') or []
+    return '\n\n'.join(['## Summary', (f'[{t}]({url}) — ' if t and url else f'{t} — ' if t else '') + str(s.get('summary') or s.get('change') or ''),
+                        '## Changes', '\n'.join(f'- {c["text"]}' + (f' · **Technical:** `{c["technical"]}`' if c.get('technical') else '') for c in s.get('changes') or []) or '- none',
+                        '## How tested', _table(['Check', 'Result'], rows), '## Risks', '\n'.join(risks), '## Links',
+                        f'- **Sibling MRs:** {", ".join(sib)} (merge order: producers first)' if sib else '- **Sibling MRs:** none']) + '\n'
+
+
+def mr_gaps(s, kind='mr-body'):
+    return [k for k in ('type', 'change') + (('summary',) if kind == 'mr-body' else ()) if not s.get(k)] + [f'changes[{i}].text' for i, c in enumerate(s.get('changes') or []) if not c.get('text')]
+
+
+RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': render_commit}   # devtools.py render <kind> <spec.json>
+
+
+def render_cmd(a):
+    """render <kind> <spec.json>: the artefact's text on stdout (kinds: RENDERERS); refused on spec gaps."""
+    if len(a) < 2 or a[0] not in RENDERERS:
+        print(f'usage: devtools.py render {"|".join(RENDERERS)} <spec.json>', file=sys.stderr)
+        return 2
+    s = json.loads(open(a[1], encoding='utf-8-sig').read())
+    if gaps := (mr_gaps(s, a[0]) if a[0] in ('mr-title', 'mr-body', 'commit') else []):
+        raise SystemExit(f'{a[0]} spec refused: missing {", ".join(gaps)} (devtools.py "render")')
+    sys.stdout.flush()
+    sys.stdout.buffer.write((RENDERERS[a[0]](s).rstrip('\n') + '\n').encode('utf-8'))   # LF on every OS (a commit message, a golden file)
+    return 0
+
+
 # ---- plugins: skills/crafty/adapters/*.py (installed goodies)
 def load_plugins(folder=os.path.join(KIT, 'adapters')):
     """Each skills/crafty/adapters/*.py (an installed goody) gets this module in register(dt) and adds adapters or verbs."""
@@ -1741,11 +1798,9 @@ def selftest():
     finally:
         g['_run'] = run0
     expect('a 300-char tracker text goes via a temp file, then is removed', sent[1:] == ['x' * 300] and not os.path.exists(sent[0]))
-    tf = os.path.join(KIT, 'templates.md')
-    mrt = re.search(r'(?ms)^## MR body\n.*?```markdown\n(.*?)```', open(tf, encoding='utf-8').read()).group(1) if os.path.isfile(tf) else '## How tested\n| Check | Result |\n'
-    expect('MR body: the template\'s How tested is a table, Links has bold labels and a [text](url) doc link the merge gate reads; a bullet list is flagged',
-           _how_tested_table(mrt) and not _how_tested_table('## How tested\n- tests pass\n')
-           and (not os.path.isfile(tf) or ('- **Testing doc:** [open](<url>)' in mrt and DOC_LINK.search(mrt.replace('<url>', 'https://d/1')))))
+    mrt = with_doc_lines(render_mr_body({'type': 'feat', 'change': 'x', 'summary': 'y', 'localEnv': 'none'}), '')[0] + '- Testing doc: https://d/1\n'
+    expect('MR body: the rendered How tested is a table, all sections in order, a doc link the merge gate reads; a bullet list is flagged',
+           _how_tested_table(mrt) and not _how_tested_table('## How tested\n- tests pass\n') and all(h in mrt for h in MR_SECTIONS) and DOC_LINK.search(mrt))
     cfg0 = dict(CFG); CFG.clear(); CFG['gitHostType'] = 'github'
     expect('gitHostType, no gitHost: any origin', host_kind('git.corp.example') == 'github'); CFG.update(cfg0)
     _report_selftest(expect)
@@ -2012,8 +2067,8 @@ def _cli():
     if cmd in VERBS:   # a plugin verb parses its own arguments
         stamp_fn(VERBS[cmd])
         sys.exit(VERBS[cmd](a[1:]) or 0)
-    if cmd == 'cases':   # parses its own arguments
-        sys.exit(cases_cmd(a[1:]))
+    if cmd in ('cases', 'render'):   # parse their own arguments
+        sys.exit((cases_cmd if cmd == 'cases' else render_cmd)(a[1:]))
     if cmd == 'lbcheck':
         extra_missing('devtools.py lbcheck (Liquibase check)', 'liquibase')
     if cmd == 'findings':
@@ -2022,12 +2077,13 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
-    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override') if cmd in ('comment', 'finish', 'mr') else ('--override',) if cmd == 'merge' else ():
+    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override', '--spec') if cmd in ('comment', 'finish', 'mr') else ('--override',) if cmd == 'merge' else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
         elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, not "unknown option"
             print(f'devtools.py {cmd}: {f} needs a value (an empty variable?)\n' + '\n'.join(ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)), file=sys.stderr)
             sys.exit(2)
+    ARITY['mr'] = 1 if opt.get('--spec') else 3
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
     PROSE_OK = opt.get('--prose-ok') or ''
     OVERRIDE = opt.get('--override') or ''
@@ -2052,7 +2108,13 @@ def _cli():
         rc = lambda p, k: cases_file(a[1], k) if p == 'cases' else p   # rendered from the task's cases spec
         finish(a[1], rc(a[2], 'human'), _body(a[3]), *(a[4:5] or ['review']), ai=rc(opt.get('--ai'), 'ai'))
         print('done')
+    elif cmd == 'mr' and opt.get('--spec'):   # title + body rendered (devtools.py "render"); a 2nd positional = target
+        s = json.loads(open(opt['--spec'], encoding='utf-8-sig').read())
+        if gaps := mr_gaps(s):
+            raise SystemExit(f'mr spec refused: missing {", ".join(gaps)}')
+        print(mr_create(a[1], render_title(s), render_mr_body(s), *(a[2:3] or [])))
     elif cmd == 'mr':
+        print('WARN devtools.py mr: a hand-written title / body; render them: mr <wt> --spec <mr.json> (templates.md "MR spec")', file=sys.stderr)
         print(mr_create(a[1], a[2], _body(a[3]), *(a[4:5] or [])))
     elif cmd == 'followups':   # each finding to its MR (an unnamed MR: every MR)
         items, urls = json.load(open(a[1], encoding='utf-8')), a[2:]

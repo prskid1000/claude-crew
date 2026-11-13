@@ -86,5 +86,53 @@ $pmText = if (Test-Path -LiteralPath $pm.out) { Get-Content -Raw $pm.out } else 
 Expect "cases: the goals file is refused for publishing; the rendered AI doc publishes unchanged (markdown) and as html ($($pm.code) $($ph.code))" ($pg.code -ne 0 -and $pg.out -match 'local goals file' -and $pm.code -eq 0 -and (Gold $pmText $ai) -and $ph.code -eq 0 -and (Get-Content -Raw $ph.out) -match '>400 \| bad sort<')
 Set-JsonFile "$wd/bad.json" @{ title = 'x'; cases = @(@{ id = 'B1'; type = 'happy'; check = 'T9' }) }; $bad = Dt cases add T3 "$wd/bad.json"; $br = Dt cases render T3 ai
 Expect "cases: a wrong type or an unknown check is named on add and refused on render ($($br.code))" ($bad.out -match "type 'happy'" -and $br.code -ne 0 -and $br.out -match "check 'T9'")
+# ---- MR title / body / commit from one spec (item 2): one renderer, any git host
+$ms = @{ task = 'T1'; taskUrl = 'https://tr/t/T1'; type = 'feat'; scope = 'orders'; change = 'sort orders by date'; code = 'P1'; repo = 'web'; summary = 'Orders sort newest first.'
+  changes = @(@{ text = 'Orders list sorts by date'; technical = 'OrderService.sort' }); checksRun = @(@{ name = 'check quick'; result = 'PASS' }, @{ name = 'tests OrderSortTest'; result = 'PASS' })
+  localEnv = 'local r3: round 2 PASS'; risks = @(@{ text = 'old clients keep id order' }); siblings = @('api!4'); trailers = @('Co-Authored-By: A <a@b>') }
+Set-JsonFile "$wd/mr.json" $ms
+$mt = Dt render mr-title "$wd/mr.json"; $mb = Dt render mr-body "$wd/mr.json"; $mc = Dt render commit "$wd/mr.json"
+Expect "render mr-title / commit: default formats (templates.md mr-title, Conventional Commits), bullets, trailer ($($mt.out))" ($mt.out -eq 'feat(orders): sort orders by date (T1)' -and (Gold $mc.out "feat(orders): sort orders by date`n`n- Orders list sorts by date (``OrderService.sort``)`n`nCo-Authored-By: A <a@b>"))
+Expect 'render mr-body: golden text (templates.md "MR spec": sections, How tested table, risks, links)' (Gold $mb.out @"
+## Summary
+
+[T1](https://tr/t/T1) — Orders sort newest first.
+
+## Changes
+
+- Orders list sorts by date · **Technical:** ``OrderService.sort``
+
+## How tested
+
+| Check | Result |
+|---|---|
+| Checks | check quick ✅ · tests OrderSortTest ✅ |
+| Local env | local r3: round 2 PASS |
+| Not run | nothing |
+| UI | not a UI change |
+| Pure logic | none |
+| Regression | not a fix |
+
+## Risks
+
+- old clients keep id order
+- **Behaviour limits:** none
+- **Needs after deploy:** none
+
+## Links
+
+- **Sibling MRs:** api!4 (merge order: producers first)
+"@)
+Set-JsonFile "$k/skills/crafty/kit.local.json" @{ mrTitleFormat = '{type}: {change} - {code} ({tag}{task}) ({repo})'; commitFormat = '{repo}: {change}'; tracker = @{ branchTag = 'X-' } }
+$mt2 = Dt render mr-title "$wd/mr.json"; $ms.code = ''; Set-JsonFile "$wd/mr2.json" $ms; $mt3 = Dt render mr-title "$wd/mr2.json"; $mc2 = Dt render commit "$wd/mr2.json"; Remove-Item "$k/skills/crafty/kit.local.json"
+Expect "render: mrTitleFormat / commitFormat from kit config; an empty placeholder drops its ' -' and () ($($mt2.out) | $($mt3.out))" ($mt2.out -eq 'feat: sort orders by date - P1 (X-T1) (web)' -and $mt3.out -eq 'feat: sort orders by date (X-T1) (web)' -and $mc2.out -match '^web: sort orders by date\r?\n')
+Set-JsonFile "$wd/mr3.json" @{ type = 'feat' }; $mg = Dt render mr-body "$wd/mr3.json"; $mm = Dt mr $wd --spec "$wd/mr3.json"
+Expect "render / mr --spec: a spec without change or summary is refused, nothing opened ($($mg.code) $($mm.code))" ($mg.code -ne 0 -and $mg.out -match 'missing change, summary' -and $mm.code -ne 0 -and $mm.out -match 'mr spec refused')
+$hp = Join-Path (Kd) 'hosts.py'; [IO.File]::WriteAllText($hp, "import sys, json; sys.path.insert(0, sys.argv[1]); import devtools as d`nsent = {}`nfor h in ('gitlab', 'github'):`n    d.remote = lambda wt, h=h: (h, 'g/web'); d._run = lambda *a, **k: 'f/T1-x'; d.prior_gate = d.task_of_branch = lambda *a: None`n    d._ui_line_missing = lambda *a: []; d._host = lambda verb, **a: [] if verb == 'mr.list' else sent.setdefault(a['type'], a) and {'web_url': 'u'}`n    s = json.load(open(sys.argv[2], encoding='utf-8')); d.mr_create('wt', d.render_title(s), d.render_mr_body(s), 'main')`nprint(sent['gitlab']['title'] == sent['github']['title'] and sent['gitlab']['body'] == sent['github']['body'] and 'How tested' in sent['github']['body'])`n")
+$hr = & $py -X utf8 $hp (Split-Path $DT) "$wd/mr.json" 2>&1 | Select-Object -Last 1
+Expect "mr --spec: the same title and body reach every git-host adapter (gitlab, github) ($hr)" ("$hr".Trim() -eq 'True')
+$gr = Join-Path (Kd) 'cr'; New-Item -ItemType Directory -Force $gr | Out-Null; git -C $gr init -q; 'x' | Set-Content "$gr/a.txt"
+$wc = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') wt commit -Dir $gr -Spec "$wd/mr.json" 2>&1 | Out-String; $wcm = git -C $gr log -1 --format=%B
+Expect "crafty.ps1 wt commit -Spec: the commit message is the rendered one ($($wcm -join ' '))" (Gold ($wcm -join "`n") $mc.out)
 Remove-TestKit $k
 Complete-Tests

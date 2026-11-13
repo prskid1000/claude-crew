@@ -33,14 +33,14 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D check -Dir <wt>/<module>   #    compile + typecheck + lint (gated)
 & $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched   #    targeted + every test of the touched files
 & $D check -Dir <wt>/<module> -Step migrations   #    if you touched migrations: ISSUES 0
-& $D wt commit -Dir <wt> -Message "feat(scope): ..."   #    hooks run
+& $D wt commit -Dir <wt> -Spec mr.json   #    hooks run
 #   5. LOCAL TEST LOOP (envy SKILL.md "Local testing"): deploy, lease, run every goal; a failed goal or bug (yours, checky's)
 #      -> back to 3 until 0 open bugs (max 3 rounds; then FAIL + failing goals: a stronger round, then the
 #      coordinator); never BLOCKED for an env reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting,
 #      pause" -> stop checks there until "deploy done", then re-run; 0 bugs, every goal met -> release -> 6
 & $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
-python <kit>/skills/crafty/devtools.py mr <wt> "<title>" body.md   # 6. MR ("MR body"); after finish: again, both links
+python <kit>/skills/crafty/devtools.py mr <wt> --spec mr.json   # 6. MR (templates.md "MR spec"); after finish: again, both links
 python <kit>/skills/crafty/devtools.py finish <task> cases solution.md review --ai cases   # human doc, links block, comment, status
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...

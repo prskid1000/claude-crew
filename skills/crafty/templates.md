@@ -32,9 +32,9 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | testing-ai | the AI testing doc (the local loop record; `cases render ai`) | setup line, case table, Rounds table | 2500w 25sw | expected |
 | qa-report | the QA run report (an "<env> run" section of the human doc) | header table, Tasks table, Results table (Check, Result, Observed, Evidence: images inline), failures in detail | prose:900w each:15b 25sw | id verdict evidence |
 | result-note | a results.json `observed` / `what_was_done` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
-| mr-title | MR / PR title | `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
+| mr-title | MR / PR title ("MR spec") | `mrTitleFormat`, default `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
 | mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |
-| commit | commit message | subject; blank line; body bullets | first:72ch 12l 100ch | conv |
+| commit | commit message ("MR spec") | `commitFormat` subject; blank line; body bullets | first:72ch 12l 100ch | conv |
 | merge-commit | a merge commit (deploy merge, target into a branch) | subject naming both branches; blank line; why | 12l 100ch | — |
 | task-name | tracker task name | `[Feature/Bug/Chore] <area> — <outcome>` | 1l 100ch | — |
 | task-description | tracker task text (`tracker create -Spec`) | Problem, Goal, Items, Acceptance, Links | 200w each:6b | link |
@@ -122,32 +122,18 @@ impact edges), each human check run by a case naming it (`check`); a bug fix: a 
 every `qa.matrix` variant (`matrix`); a failing case is FAIL, never "pre-existing"; a `qa.notLocal` stub path NOT_TESTED_LOCAL,
 never PASS; a result needs an evidence link (screenshot, request / response JSON, run output: `devtools.py evidence`).
 
-## MR body
-`devtools.py mr` checks it (kind `mr-body`): sections in this order, limits from "Writing standards".
-```markdown
-## Summary
-[<task id>](<task URL>) — <one-line goal and outcome>
-## Changes
-- <behaviour change, user terms> · **Technical:** `<files / endpoints / migrations>`
-## How tested
-| Check | Result |
-|---|---|
-| Checks | check quick ✅ · tests `<names>` ✅ · touched-class tests ✅ · migrations ISSUES 0 ✅ |
-| Local env | <env> r<n>: goals G1-Gn PASS (testing-goals doc) |
-| Not run | <what, why> (or "nothing") |
-| UI | <committed spec or screenshot link> (or "not a UI change") |
-| Pure logic | <spec file> (or "none") |
-| Regression | `<test>` red before the fix, green after (or "not a fix"); changed methods without a test: <names> (or "none") |
-## Risks
-- <deferred item — reason>
-- **Behaviour limits:** <not handled>
-- **Needs after deploy:** <settings / data> (or "none")
-## Links
-- **Testing doc:** [open](<url>)
-- **Sibling MRs:** <refs> (merge order: producers first)
+## MR spec (title, body, commit)
+One spec renders the MR title (`mrTitleFormat`), body (## Summary, ## Changes, ## How tested table, ## Risks, ## Links) and the
+commit (`commitFormat` subject + change bullets + trailers): `devtools.py mr <wt> --spec mr.json`, `crafty.ps1 wt commit -Dir <wt>
+-Spec mr.json`, `devtools.py render mr-title|mr-body|commit mr.json` to read it first. Local env row: the loop checkpoint
+(`checkpoint -Step loop -Evidence`) unless `localEnv`; the testing doc lines: `devtools.py finish` (merge refuses without).
+```json
+{ "task": "<id>", "type": "feat|fix|refactor", "scope": "", "change": "<subject>", "code": "<item code>", "repo": "", "summary": "<one-line goal and outcome>",
+  "changes": [{ "text": "<behaviour change, user terms>", "technical": "<files / endpoints / migrations>" }],
+  "checksRun": [{ "name": "check quick | tests <names> | migrations", "result": "PASS" }], "notRun": "<what, why>", "ui": "<spec or screenshot link>",
+  "pureLogic": "<spec file>", "regression": "<test> red before, green after; untested changed methods", "risks": [{ "text": "<deferred item — reason>" }],
+  "limits": "", "afterDeploy": "<settings / data>", "siblings": ["<refs, producers first>"], "trailers": ["<org / harness trailer lines>"] }
 ```
-An MR opens with `Testing doc: pending`; `devtools.py mr` adds the link after the loop PASS; merge refuses a task-linked MR
-without it.
 
 ## Task solution comment
 ```markdown

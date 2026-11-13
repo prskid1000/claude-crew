@@ -1,6 +1,6 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
- wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit [-ProseOk '<why>'] [-AllowEmpty]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate)
+ wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate)
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L965 check · L1268 pipes · L1325 guard · L2095 dir ·
-  L2105 checkpoint · L2130 prior · L2168 tracker · L2190 task spec · L2339 host
+Sections: L21 init · L27 sweep · L175 wt · L471 stack · L651 gate · L966 check · L1269 pipes · L1326 guard · L2096 dir ·
+  L2106 checkpoint · L2131 prior · L2169 tracker · L2191 task spec · L2340 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -177,7 +177,7 @@ function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
+  [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
   [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
@@ -362,6 +362,7 @@ switch ($Action) {
   'commit' {
     $Dir = Resolve-Wt $Dir
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
+    if ($Spec) { $Message = (@(python -X utf8 $KitCmd.devtools render commit $Spec 2>&1) -join "`n").TrimEnd(); if ($LASTEXITCODE) { throw "commit spec: $Message" } }   # commitFormat subject + change bullets
     if (-not $Message -or -not $Message.Trim()) { throw "commit needs -Message '<subject>' or -MessageFile <file> (multi-line: write it to `$(crafty.ps1 dir -Agent <id> -Name commit-msg.txt) with the Write tool, then -MessageFile <that path>)" }
     # a hand-made worktree lacks .husky/_ and hook deps
     $common = (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim()
