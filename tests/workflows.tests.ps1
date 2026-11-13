@@ -53,6 +53,7 @@ run(args, agentLost, _n, _n, pipeline).then(() => {
  console.log(`re-review:${rv.length === 2 && /RE-REVIEW after fix round 1/.test(rv[1].prompt) && /null check missing/.test(rv[1].prompt) && si > calls.indexOf(rv[1])}`)
  console.log(`follow-ups:${calls.some((c) => c.label === 'followups:X1' && /rename y/.test(c.prompt) && / followups \S+ https:\/\/h\/g\/api/.test(c.prompt))}`)
  console.log(`wt-dedup:${calls[si].prompt.includes('(worktrees: C:/wt/x1)')}`)
+ console.log(`steps-ref:${/skills\/crafty\/SKILL\.md/.test(calls.find((c) => c.label === 'build:X1').prompt)}`)
  console.log(`hold:${lost === 1 && ti >= 0 && /^No report came back[\s\S]*-HoldPromotion 'deferred items: A2'/.test(calls[ti].prompt)}`)   // track redone once
  const m = /-Run '([^']+)'/.exec(calls.find((c) => c.label === 'record-args').prompt)
  console.log(`run:${m ? m[1] : 'none'}`)
@@ -60,7 +61,8 @@ run(args, agentLost, _n, _n, pipeline).then(() => {
 '@
 $res = Invoke-Js dw-review $jsr $wfd
 $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
-Expect-Each $res 'buildy: #' 're-review', 'follow-ups', 'hold', 'wt-dedup' -Show 5
+Expect-Each $res 'buildy: #' 're-review', 'follow-ups', 'hold', 'wt-dedup', 'steps-ref' -Show 5
+Expect 'buildy: devy steps (crafty D3): a person''s deferred step = kind: people' ((Get-Content (Join-Path $src 'skills/crafty/SKILL.md') -Raw) -match 'D3\. \*\*Deferred[^\n]*\n[^\n]*`kind: people`')
 # buildy: still blocking after fix round 2 -> a decide ask, no merge
 $jsb = $jsr -replace "severity: reviews\+\+ \? 'nit' : 'blocking'", "severity: 'blocking', n: reviews++" -replace "if \(/\^ship:/", "if (/^decide:/.test(o.label)) return { ok: true, output: 'DECISION d1 pending' }`n if (/^ship:/" -replace "(?s)run\(args, agentLost, _n, _n, pipeline\)\.then.*", @'
 run(args, agent, _n, _n, pipeline).then((o) => console.log(`ask:${calls.filter((c) => c.label === 'fix:X1').length === 2 && calls.filter((c) => c.label === 'review:X1').length === 3 && calls.some((c) => c.label === 'decide:X1' && /Still blocking after 2 fix rounds/.test(c.prompt)) && !calls.some((c) => c.label === 'ship:X1') && calls.some((c) => c.label === 'followups:X1')

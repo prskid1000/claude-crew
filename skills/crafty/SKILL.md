@@ -4,8 +4,8 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 ---
 
 **Load when:** changing code in a workspace repo: `devy` from a brief, or directly for one small change.
-**Not when:** coordinating -> `bossy`; testing deployed work -> `pokey`; reviews/audits -> `revy`; local env admin -> `envy`.
-**Hands off to:** `envy` (steps 2, 5: reproduce, test), coordinator (merge, deploy), testers via human testing doc (step 6).
+**Not when:** coordinating -> `bossy`; deployed work -> `pokey`; reviews/audits -> `revy`; local env admin -> `envy`.
+**Hands off to:** `envy` (steps 2, 5), coordinator (merge, deploy), testers via human testing doc (step 6).
 **Files** (every file in this folder; read or run each only at its step):
 
 | File | Read / run at |
@@ -56,7 +56,9 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - D2. **ENV-FIX**: a local-env fix only the coordinator may do (`up`/`down`/`refresh`/`drop`, shared DB repair): `& $O decide ask
   -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, stop THAT item (`needsEnvFix`), continue the others.
   `localTest` BLOCKED only for an owner decision or a remote-only dependency (`blockedKind`, `blockedReason`).
-- No `localEnv` configured for your repo: step 5 = the automated tests only; say "local env: none" in the MR and the report.
+- D3. **Deferred** item that is a person's step, no code ("the team labels a sheet"):
+  `kind: people` (holds no promotion).
+- No `localEnv` for your repo: step 5 = the automated tests only; "local env: none" in the MR and the report.
   `envy` (steps 2, 5, `$L`) is the goody `local-env`: `localEnv` set but `skills/envy/` missing ->
   `kitbag.py goody sync` once, else the same as no `localEnv`.
 
@@ -105,8 +107,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
   every render path) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
   endpoint and delete stale known-bug blocks in the same MR.
 - **Text files:** write with the Write tool, change with Edit, pass file paths (`devtools.py doc <file>`, MR body from a file);
-  never heredocs / sed / string-replace for text with backslashes, quotes or CRLF. Files over ~8 KB or holding backticks, quotes
-  or backslashes: the Write tool (or a scratchpad file passed to the interpreter), never a Bash heredoc (unexpected EOF, mangled).
+  never heredocs / sed / string-replace for text with backticks, backslashes, quotes or CRLF, or over ~8 KB (unexpected EOF,
+  mangled); a scratchpad file passed to the interpreter is fine.
 - **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
   (`repos[].migrations.check`, else Liquibase: goody `liquibase`; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
@@ -126,6 +128,6 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - **Evidence:** UI -> screenshots, backend -> `pokey.ps1 api -Save` JSON (names: pokey SKILL.md "Evidence"); never production;
   a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.
 
-**Learn:** something cost time, failed or worked unusually well ->
+**Learn:** something cost time, failed or worked well ->
 `& $O learn -Skill crafty -Kind <kind> -Text "<what + fix>"`.
 A guard hook block names the right command.
