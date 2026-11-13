@@ -190,7 +190,7 @@ $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
 $r1 = @(Get-KitSuperviseFlagsDeploys -AutoFix); $r2 = @(Get-KitSuperviseFlagsDeploys -AutoFix)
 "fresh:$((& $acts $r1) -match '^DEPLOY ASK stage: 2 MR\(s\) .*new since hold aa11: api!2' -and -not (& $acts $r2) -and ($r2.info -join ';') -match 'held by owner: aa11')"
 & $word 'd-20260101000100-coordinator-bb22' 'yes, deploy stage'; $r = @(Get-KitSuperviseFlagsDeploys)
-"yes:$((& $acts $r) -match '^DEPLOY ASK stage' -and ($r.info -join ';') -match '^deploy ready: stage')"
+"yes:$((& $acts $r) -match '^DEPLOY ASK stage' -and @($r.info -match '^deploy ready: stage').Count -eq 1)"
 & $word 'd-20260101000200-opsy-stage-cc33' "wait: retry $($now.AddMinutes(30).ToString('HH:mm'))" 'host stayed busy' 0; $r = @(Get-KitSuperviseFlagsDeploys)
 "wait:$(-not (& $acts $r) -and ($r.info -join ';') -eq "deploy stage waiting: host busy, retry $($now.AddMinutes(30).ToString('HH:mm')) (cc33)")"
 $now = $now.AddMinutes(31); $r = @(Get-KitSuperviseFlagsDeploys)
