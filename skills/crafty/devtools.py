@@ -3,7 +3,10 @@
 
  python -X utf8 devtools.py comment <taskId> <file.md | "text"> [kind] [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
  python -X utf8 devtools.py finish <taskId> <testing.md|url> <solution.md> [review] --ai <ai.md|url> [--prose-ok "<why>"]   both docs (human + AI)
-  by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status
+  by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status;
+  `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec
+ python -X utf8 devtools.py cases add|result|round|render <task> ...   the task's test cases (one spec, "render" section):
+  goals file, AI doc and human doc rendered from it, never hand-written
  python -X utf8 devtools.py mr <worktree> "<title>" <body.md> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
@@ -22,8 +25,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L40 config · L74 run · L162 tracker · L365 git host · L448 MR · L615 merge · L895 docs · L1050 publish · L1408 plugins ·
-  L1422 keepboth · L1441 selftest · L1856 CLI
+Sections: L43 config · L77 run · L165 tracker · L368 git host · L451 MR · L618 merge · L898 docs · L1053 publish · L1411 render ·
+  L1560 plugins · L1574 keepboth · L1593 selftest · L2007 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -34,7 +37,7 @@ from datetime import datetime
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
-from kitbag import kit_path, locked, audited, stamp_fn, state_read, state_write, task_index, read_tracking, kitlog   # one path map, lock, call log, goody usage stamps for all kit scripts
+from kitbag import kit_path, locked, audited, stamp_fn, state_read, state_write, task_index, task_file, read_tracking, kitlog   # one path map, lock, call log, goody usage stamps for all kit scripts
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -321,7 +324,7 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     """Both docs (human + AI) published by key, the description's links block, one solution comment, status (never backwards)."""
     ai = ai or _pub_read(f'{tid}:testing-ai').get('url')
     if not ai:
-        raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Testing doc (AI)"); both docs are linked on every task. Nothing was written.')
+        raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); both docs are linked on every task. Nothing was written.')
     solution_md = no_doc_links(solution_md)   # doc links live only in the description
     prose_gate('comment-solution', solution_md)   # before doc, describe, status
     if not os.path.isfile(guide):   # a URL: the local-loop gate still holds
@@ -1205,10 +1208,10 @@ def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', hu
         ran = [h for h in hid if any(has(h, i) and RAN.match(r or '') for i, r, _, _ in rows + earlier)]
         _warn_earlier(where, {'are human checks no AI row ran': [r[0] for r in hold if r[0] not in ran]})
         if unran := [r[0] for r in hnew if r[0] and r[0] != '#' and r[0] not in ran]:
-            add = ' '.join(f'"| A<n> ({h}) | positive | <step> | <expected> | <PASS or FAIL, once run> | <evidence link> |"' for h in unran)
+            add = ', '.join(f'{{"id": "A<n>", "type": "positive", "check": "{h}", ...}}' for h in unran)
             out.append(f'human check(s) {", ".join(unran)} have no AI row that ran them: the loop runs each'
-                       ' (its AI row\'s # cell names it: "A3 (T2)")' + (f'; add the row(s) {add} to the AI doc, then republish it:'
-                       f' python -X utf8 devtools.py doc "<title>" <ai.md> --key {tid}:testing-ai' if tid else ''))
+                       ' (its AI row\'s # cell names it: "A3 (T2)")' + (f'; devtools.py cases add {tid} with case(s) {add}, cases result once run,'
+                       f' then devtools.py doc "<title>" cases --key {tid}:testing-ai' if tid else ''))
         orphan = [i for i, r, _, _ in rows if local(r) and not any(has(h, i) for h in hid)]
         if orphan:
             out.append(f'row(s) {", ".join(orphan)} are NOT_TESTED_LOCAL but no human check carries them:'
@@ -1271,12 +1274,12 @@ def _check_doc(kind, scope, path, body, prior=()):
     """testing-doc (human, positive cases, after the loop PASS) / testing-ai (the local loop record, every case): their tables;
     row rules judge only rows not in a published round (prior: their bodies), so one agent's round passes on a shared doc."""
     if GOALS_MARK.search(body):
-        raise SystemExit(f'{path} is the local goals file (templates.md "Testing goals"): never published; publish the AI doc'
-                         ' ("Testing doc (AI)") and, after the loop PASS, the human doc. Nothing was published.')
+        raise SystemExit(f'{path} is the local goals file (templates.md "Test cases"): never published; publish the AI doc'
+                         ' (`doc "<title>" cases --key <task>:testing-ai`) and, after the loop PASS, the human doc. Nothing was published.')
     tb, name, tpl = (CHECKS_TABLE, '| # | Steps | Expected | Result | Evidence |', 'Human testing doc') if kind == 'testing-doc' else \
         (AI_TABLE, '| # | Type | Steps / API call + payload | Expected | Result | Evidence |', 'Testing doc (AI)')
     if not tb.search(body):
-        raise SystemExit(f'{path} has no case table "{name}" (templates.md "{tpl}"). Nothing was published.')
+        raise SystemExit(f'{path} has no case table "{name}" (templates.md "Test cases"). Nothing was published.')
     neg = re.search(r'(?im)^\|[^\n]*\|\s*negative\s*\|', body)
     if kind == 'testing-doc' and neg:
         raise SystemExit(f'{path} has a negative row: the human doc holds positive cases only; negative ones go in the AI doc. Nothing was published.')
@@ -1285,7 +1288,7 @@ def _check_doc(kind, scope, path, body, prior=()):
                          ' (local evidence lives in the AI doc). Nothing was published.')
     if kind == 'testing-ai':
         if not neg:
-            raise SystemExit(f'{path} has no negative row: the AI doc covers every positive and negative case (templates.md "{tpl}"). Nothing was published.')
+            raise SystemExit(f'{path} has no negative row: the AI doc covers every positive and negative case (templates.md "Test cases"). Nothing was published.')
         fresh, earlier = split_rows(body, prior)
         _warn_earlier(f'{scope}:{kind}', {'lack an Evidence link': bare_evidence([r[:3] for r in earlier])})
         bare = bare_evidence([r[:3] for r in fresh])
@@ -1332,12 +1335,12 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
             had, have = _round_rows(rounds[-1]['body']) if rounds else None, _round_rows(body)
             if have is None and (not rounds or had is not None):
                 raise SystemExit(f'{path} has no Rounds table "| Round | Date | Cases run | Result | Bugs found | Fix commit | Retest |" (templates.md'
-                                 ' "Testing doc (AI)"): one row per loop round. Nothing was published.')
+                                 ' "Test cases"): one row per loop round. Nothing was published.')
             lost = [r for r in had or [] if r not in have]
             if lost:
                 raise SystemExit(f'{path} dropped Rounds row(s) {", ".join(lost)} of the published doc: rounds are appended, earlier rows stay. Nothing was published.')
             if have is None:
-                print(f'[publish] {key}: no Rounds table (a doc from before it): add one from templates.md "Testing doc (AI)"', file=sys.stderr)
+                print(f'[publish] {key}: no Rounds table (a doc from before it): add one from templates.md "Test cases"', file=sys.stderr)
         new = {'at': time.strftime('%Y-%m-%d %H:%M'), 'seq': time.time(), 'label': label, 'ext': os.path.splitext(path)[1].lower(), 'body': body}
         stale = bool(rounds and runs) and _after(runs[-1], rounds[-1])
         if run is not None:
@@ -1403,6 +1406,155 @@ def _command(a):
 
 R['command'] = {'publish': _command}
 # adapter-end:report
+
+
+# ---- render: agent-written artefacts from small specs (one renderer per kind; agents never write the Markdown)
+# lists merged by key on update; any other key replaces
+SPEC_KEYS = {'checks': 'id', 'qualities': 'id', 'unchanged': 'id', 'cases': 'id', 'rounds': 'round', 'switches': 'setting',
+             'outOfScope': 'item', 'changes': 'text', 'risks': 'text', 'mrs': 'url', 'checksRun': 'name'}
+CASE_TYPES = ('positive', 'negative', 'edge', 'regression', 'repro')
+
+
+def merge_spec(old, new):
+    """new into old: SPEC_KEYS lists by key (an entry's fields merged), other keys replaced; None deletes."""
+    out = dict(old or {})
+    for k, v in (new or {}).items():
+        key = SPEC_KEYS.get(k)
+        if v is None:
+            out.pop(k, None)
+        elif key and isinstance(v, list):
+            by = {str(e.get(key)): dict(e) for e in out.get(k) or [] if isinstance(e, dict)}
+            for e in v:
+                by[str(e.get(key))] = {**by.get(str(e.get(key)), {}), **e}
+            out[k] = list(by.values())
+        else:
+            out[k] = v
+    return out
+
+
+def _cell(v):
+    """A table cell: one line, pipes escaped."""
+    return re.sub(r'\s*\n\s*', ' ', ' · '.join(map(str, v)) if isinstance(v, list) else str(v if v is not None else '')).replace('|', '\\|').strip()
+
+
+def _table(head, rows):
+    return '\n'.join(['| ' + ' | '.join(head) + ' |', '|' + '---|' * len(head)] + ['| ' + ' | '.join(_cell(c) for c in r) + ' |' for r in rows])
+
+
+def _ev(cid, ev):
+    """Evidence: an image URL inline, another URL as a link named by its file, text as is."""
+    name = lambda u: re.sub(r'[?#].*', '', u).rstrip('/').rsplit('/', 1)[-1] or 'link'
+    return ' · '.join(f'![{cid}]({e})' if re.match(r'https?://\S+\.(png|jpe?g|gif|webp)(\?\S*)?$', e, re.I) else f'[{name(e)}]({e})'
+                      if re.match(r'https?://\S+$', e) else e for e in (str(x).strip() for x in (ev if isinstance(ev, list) else [ev] if ev else [])))
+
+
+def _verdict(results):
+    rs = [str(r).upper() for r in results if r]
+    return 'FAIL' if any(r.startswith('FAIL') for r in rs) else 'PASS' if rs and len(rs) == len(results) and all(r.startswith('PASS') for r in rs) else ''
+
+
+def cases_gaps(c):
+    """A cases spec's shape errors (the doc gates judge the rendered text)."""
+    ids = [x.get('id') for k in ('checks', 'qualities', 'unchanged') for x in c.get(k) or []]
+    out = [f'case {x.get("id") or "?"}: type {x.get("type")!r} (one of {"/".join(CASE_TYPES)})' for x in c.get('cases') or [] if x.get('type') not in CASE_TYPES]
+    out += [f'case {x["id"]}: check {x["check"]!r} is no checks/qualities/unchanged id' for x in c.get('cases') or [] if x.get('check') and x['check'] not in ids]
+    out += [f'{k}: an entry without {SPEC_KEYS[k]}' for k in ('checks', 'cases') for x in c.get(k) or [] if not x.get(SPEC_KEYS[k])]
+    return out + ([] if c.get('title') else ['title'])
+
+
+def render_cases(c, kind, tid=''):
+    """The goals file, AI doc or human doc (templates.md "Test cases") from one cases spec."""
+    cases, head = c.get('cases') or [], f'{tid} {c.get("title", "")}'.strip()
+    of = lambda cid: [x for x in cases if x.get('check') == cid]
+    rnd = c.get('rounds') or []
+    if kind == 'goals':
+        row = lambda g, gid: [gid, g.get('goal') or g.get('expected') or g.get('steps', ''), g.get('how') or ', '.join(x['id'] for x in of(g['id'])),
+                              g.get('rule') or g.get('expected', ''), _verdict([x.get('result') for x in of(g['id'])]) if of(g['id']) else '']
+        goals = [row(g, f'G{i} ({g["id"]})') for i, g in enumerate(c.get('checks') or [], 1)] + [row(g, g['id']) for k in ('qualities', 'unchanged') for g in c.get(k) or []]
+        plan = c.get('plan') or {}
+        return '\n\n'.join([f'# Testing goals: {head}', f'Change: {c.get("change", "")}. Repos/MRs: {_cell(c.get("repos", ""))}. Local env: {c.get("env", "none")}, services {_cell(c.get("services", "none"))}.',
+                          '## Goals (what must be true)', 'Before merge (each human check; Q = a stated quality, measured):',
+                          _table(['#', 'Goal', 'How checked', 'Pass rule', 'Result'], goals), '## Test plan (automated)']
+                         + [f'- {k}: {_cell(v)}' for k, v in plan.items()] + ['## Data needed', c.get('data') or 'none', '## Reproduction (bugs)', c.get('repro') or 'not a bug',
+                         '## Rounds', _table(['Round', 'What failed', 'Fix'], [[r.get('round'), r.get('bugs') or 'none', r.get('fix') or ''] for r in rnd])]) + '\n'
+    if kind == 'ai':
+        rows = [[f'{x["id"]} ({x["check"]})' if x.get('check') else x['id'], x.get('type'), x.get('steps', ''), x.get('expected', ''), x.get('result') or '',
+                 _ev(x['id'], x.get('evidence'))] for x in cases]
+        return '\n\n'.join([f'# Testing doc (AI): {head}', f'Setup and cleanup: {c.get("setup") or "none"}.', 'Cases:',
+                          _table(['#', 'Type', 'Steps / API call + payload', 'Expected', 'Result', 'Evidence'], rows)]
+                         + ([f'Matrix: {_cell(c["matrix"])}'] if c.get('matrix') else [])
+                         + ['Rounds (one per round, appended):', _table(['Round', 'Date', 'Cases run', 'Result', 'Bugs found', 'Fix commit', 'Retest'],
+                            [[r.get(k, '') for k in ('round', 'date', 'cases', 'result', 'bugs', 'fix', 'retest')] for r in rnd])]) + '\n'
+    if kind != 'human':
+        raise SystemExit(f'cases render: kind {kind!r}: goals | ai | human')
+    areas = {}
+    for t in c.get('checks') or []:
+        areas.setdefault(t.get('area') or 'Checks', []).append([t['id'], t.get('steps', ''), t.get('expected', ''), '', ''])
+    sw, oos = c.get('switches') or [], c.get('outOfScope') or []
+    return '\n\n'.join([f'# Testing: {c.get("title", "")}', _table(['', ''], [['Tasks', c.get('tasks') or tid], ['Environment', c.get('environment') or ''],
+                      ['Logins', c.get('logins') or ''], ['Test data', c.get('testData') or '']]), '## What changed', c.get('whatChanged') or c.get('change', ''),
+                      '## Before you start / Feature switches'] + (['Set these first, restore them after:', _table(['Setting', 'Where', 'Value'],
+                      [[s.get('setting'), s.get('where', ''), s.get('value', '')] for s in sw])] if sw else ['none'])
+                     + ['## Checks'] + [f'{a}:\n\n' + _table(['#', 'Steps', 'Expected', 'Result', 'Evidence'], r) for a, r in areas.items()]
+                     + ['## Out of scope'] + ([_table(['Item', 'Why'], [[o.get('item'), o.get('why', '')] for o in oos])] if oos else ['none'])
+                     + ['## Result (testers)', 'All checks pass -> close the task. A check of this change fails or could not be tested -> failedTesting with the'
+                        ' check ids and why. A defect outside this change -> one [Bug] task under the original ask.']) + '\n'
+
+
+def cases_file(tid, kind):
+    """<task>'s cases spec rendered to work/docs/<task>-<kind>.md -> its path (refused on spec gaps)."""
+    c = (state_read(task_file(tid)) or {}).get('cases')
+    if not c:
+        raise SystemExit(f'task {tid} has no cases spec: devtools.py cases add {tid} <spec.json> first')
+    if gaps := cases_gaps(c):
+        raise SystemExit(f'cases spec of {tid}: ' + '; '.join(gaps))
+    out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', f'{tid}-{kind}') + '.md')
+    with open(out, 'w', encoding='utf-8', newline='\n') as fh:
+        fh.write(render_cases(c, kind, tid))
+    return out
+
+
+def cases_cmd(a):
+    """cases add <task> <spec.json|JSON> · result <task> <id> <PASS|FAIL|...> [<evidence> ...] · round <task> [--fix <sha>] [--bugs <t>]
+    [--retest <t>] · render <task> goals|ai|human -> the rendered file's path."""
+    if len(a) < 2 or a[0] not in ('add', 'result', 'round', 'render'):
+        print(cases_cmd.__doc__, file=sys.stderr)
+        return 2
+    verb, tid, rest = a[0], a[1], a[2:]
+    if verb == 'render':
+        print(cases_file(tid, rest[0] if rest else 'ai'))
+        return 0
+    opt = {rest[i][2:]: rest[i + 1] for i in range(len(rest) - 1) if rest[i] in ('--fix', '--bugs', '--retest')}
+    if verb == 'add':
+        new = json.loads(open(rest[0], encoding='utf-8-sig').read() if rest and os.path.isfile(rest[0]) else (rest or ['{}'])[0])
+    elif verb == 'result':
+        if len(rest) < 2:
+            raise SystemExit('cases result <task> <case id> <PASS|FAIL|NOT_TESTED_LOCAL ...> [<evidence link> ...]')
+        new = {'cases': [{'id': rest[0], 'result': rest[1], **({'evidence': rest[2:]} if rest[2:] else {})}]}
+    gaps = []
+
+    def change(x):
+        nonlocal gaps
+        c = x.get('cases') or {}
+        if verb == 'result' and rest[0] not in [k.get('id') for k in c.get('cases') or []]:
+            raise SystemExit(f'cases result: {tid} has no case {rest[0]} (cases add it first)')
+        if verb == 'round':
+            ran = [k for k in c.get('cases') or [] if k.get('result')]
+            cnt = {}
+            for k in ran:
+                w = str(k['result']).split()[0].upper()
+                cnt[w] = cnt.get(w, 0) + 1
+            n = len(c.get('rounds') or []) + 1
+            c = merge_spec(c, {'rounds': [{'round': n, 'date': time.strftime('%Y-%m-%d'), 'cases': ', '.join(k['id'] for k in ran),
+                                           'result': ', '.join(f'{v} {w}' for w, v in cnt.items()), 'bugs': opt.get('bugs') or 'none',
+                                           'fix': opt.get('fix') or '', 'retest': opt.get('retest') or ''}]})
+        else:
+            c = merge_spec(c, new)
+        gaps = cases_gaps(c)
+        x['cases'] = c
+    task_index(tid, change)
+    print(f'cases {tid}: {verb} ok' + (f' (render refuses until fixed: {"; ".join(gaps)})' if gaps else ''))
+    return 0
 
 
 # ---- plugins: skills/crafty/adapters/*.py (installed goodies)
@@ -1625,11 +1777,10 @@ def _publish_selftest(expect, refused):
         human, ai = w(os.path.join(tmp, 'h.md'), doc), w(os.path.join(tmp, 'a.md'), aidoc)
         tf = os.path.join(KIT, 'templates.md')
         if os.path.isfile(tf):   # a full kit (goody test kits copy scripts only)
-            tpl = open(tf, encoding='utf-8').read()
-            blk = lambda n: re.search(rf'(?ms)^## {re.escape(n)}\n.*?```markdown\n(.*?)```', tpl).group(1)
-            expect('templates: the AI doc has negative rows and its case table; the human doc has positive rows only',
-                   '| negative |' in blk('Testing doc (AI)') and AI_TABLE.search(blk('Testing doc (AI)')) and ROUNDS_TABLE.search(blk('Testing doc (AI)')) and CHECKS_TABLE.search(blk('Human testing doc'))
-                   and 'negative' not in blk('Human testing doc').lower())
+            cs = {'title': 'X', 'checks': [{'id': 'T1', 'steps': 's', 'expected': 'e'}], 'cases': [{'id': 'A1', 'type': 'negative', 'steps': 's', 'expected': 'e'}]}
+            ra, rh = render_cases(cs, 'ai'), render_cases(cs, 'human')
+            expect('cases render: the AI doc has negative rows, its case and Rounds tables; the human doc positive checks only',
+                   '| negative |' in ra and AI_TABLE.search(ra) and ROUNDS_TABLE.search(ra) and CHECKS_TABLE.search(rh) and 'negative' not in rh.lower())
             long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
                    not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))
@@ -1767,7 +1918,7 @@ def _publish_selftest(expect, refused):
         refused('finish: no AI doc -> refused, nothing written', lambda: finish('T8', human, '**Solution** — x'), 'no AI testing doc')
         refused('finish: a human check no AI row ran -> refused', lambda: finish('T9', w(os.path.join(tmp, 'h4.md'), hm2), '**Solution** — x', ai=a2p), 'T2 have no AI row')
         refused('finish: the refusal names the AI row and the doc command per check', lambda: finish('T9', w(os.path.join(tmp, 'h4.md'), hm2), '**Solution** — x', ai=a2p),
-                '"| A<n> (T2) | positive | <step> | <expected> | <PASS or FAIL, once run> | <evidence link> |" to the AI doc, then republish it: python -X utf8 devtools.py doc "<title>" <ai.md> --key T9:testing-ai')
+                'devtools.py cases add T9 with case(s) {"id": "A<n>", "type": "positive", "check": "T2", ...}, cases result once run, then devtools.py doc "<title>" cases --key T9:testing-ai')
         a5 = w(os.path.join(tmp, 'a5.md'), a2.replace('| A3 | edge | GET /list, no rows | 200, [] | | |', '| A3 | edge | GET /list, no rows | 200, [] | NOT_TESTED_LOCAL | |'))
         with contextlib.redirect_stderr(io.StringIO()):
             publish('T5:testing-ai', 'X', a5)
@@ -1861,6 +2012,8 @@ def _cli():
     if cmd in VERBS:   # a plugin verb parses its own arguments
         stamp_fn(VERBS[cmd])
         sys.exit(VERBS[cmd](a[1:]) or 0)
+    if cmd == 'cases':   # parses its own arguments
+        sys.exit(cases_cmd(a[1:]))
     if cmd == 'lbcheck':
         extra_missing('devtools.py lbcheck (Liquibase check)', 'liquibase')
     if cmd == 'findings':
@@ -1896,7 +2049,8 @@ def _cli():
         print(comment(a[1], _text(a[2]), a[3] if len(a) > 3 else 'comment-status'))
     elif cmd == 'finish':
         prior_gate(a[1], '', f'devtools.py finish {a[1]}')
-        finish(a[1], a[2], _body(a[3]), *(a[4:5] or ['review']), ai=opt.get('--ai'))
+        rc = lambda p, k: cases_file(a[1], k) if p == 'cases' else p   # rendered from the task's cases spec
+        finish(a[1], rc(a[2], 'human'), _body(a[3]), *(a[4:5] or ['review']), ai=rc(opt.get('--ai'), 'ai'))
         print('done')
     elif cmd == 'mr':
         print(mr_create(a[1], a[2], _body(a[3]), *(a[4:5] or [])))
@@ -1915,6 +2069,8 @@ def _cli():
         sys.exit(selftest())
     elif cmd == 'doc':
         title, path = a[1], a[2]
+        if path == 'cases' and (opt.get('--key') or '').rpartition(':')[2] in ('testing-doc', 'testing-ai'):   # rendered from the cases spec
+            path = cases_file(opt['--key'].rpartition(':')[0], {'testing-doc': 'human', 'testing-ai': 'ai'}[opt['--key'].rpartition(':')[2]])
         if os.path.isfile(title) and not os.path.isfile(path):   # swapped order: doc <file> "<title>"
             title, path = path, title
         if not os.path.isfile(path):

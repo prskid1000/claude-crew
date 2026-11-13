@@ -27,9 +27,9 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D wt new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>; & $D wt sync -Dir <wt>   # 1. worktree, latest target
 #   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it in the testing-goals doc
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
-#   4. FIRST (templates.md): the human doc's checks from the request (never the code), goals.md (local), the AI doc;
-#      automated tests (Rules > Tests); each loop round:
-#      devtools.py doc "<title>" ai.md --key <task>:testing-ai --label "round <n>"
+#   4. FIRST (templates.md "Test cases"): the task's cases spec, human checks from the request (never the code):
+#      devtools.py cases add <task> cases.json; automated tests (Rules > Tests); each loop round: cases result / round, then
+#      devtools.py doc "<title>" cases --key <task>:testing-ai --label "round <n>"
 & $D check -Dir <wt>/<module>   #    compile + typecheck + lint (gated)
 & $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched   #    targeted + every test of the touched files
 & $D check -Dir <wt>/<module> -Step migrations   #    if you touched migrations: ISSUES 0
@@ -41,7 +41,7 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
 python <kit>/skills/crafty/devtools.py mr <wt> "<title>" body.md   # 6. MR ("MR body"); after finish: again, both links
-python <kit>/skills/crafty/devtools.py finish <task> testing.md solution.md review --ai ai.md   # human doc, links block, comment, status
+python <kit>/skills/crafty/devtools.py finish <task> cases solution.md review --ai cases   # human doc, links block, comment, status
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic)

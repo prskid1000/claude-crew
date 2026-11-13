@@ -95,7 +95,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   mask real customer data.
 
 ## Human testing doc (a person tests by hand)
-- H0. `bossy.ps1 learn -Read -Skill pokey`; the doc: the task's testing doc (`crafty/templates.md` "Human testing doc");
+- H0. `bossy.ps1 learn -Read -Skill pokey`; the doc: the task's testing doc (`crafty/templates.md` "Test cases");
   missing or incomplete for this change: write it from that template first.
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.

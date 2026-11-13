@@ -128,7 +128,7 @@ Expect "Invoke-KitVerb: crash exit 1, bad parameter 2 ($vk)" (-not $vk)
 $mw = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Message, [string[]]`$Mrs) ""`$Message|`$(`$Mrs -join '+')"" }; Invoke-KitVerb Invoke-M @('-Message', 'fix', 'the', 'bug', '-Mrs', 'a!1', 'b!2')"
 Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw)" ("$mw".Trim() -eq 'fix the bug|a!1+b!2')
 $out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | Out-String
-Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
+Expect "devtools selftest $(@($out -split "`n" | Where-Object { $_ -match '^FAIL|Traceback|Error:' }) -join ' ')" ($LASTEXITCODE -eq 0)
 $DT = Join-Path $k 'skills/crafty/devtools.py'
 $dv = & $py -X utf8 $DT 2>&1 | Out-String; $dvc = $LASTEXITCODE; $dmiss = & $py -X utf8 $DT doc t (Join-Path $k 'none.md') 2>&1 | Out-String; $ddc = $LASTEXITCODE; $dai = & $py -X utf8 $DT finish t a b review --ai 2>&1 | Out-String
 Expect "devtools: no verb = the verb list, exit 0; a missing doc file or a bare --ai = usage, exit 2 ($dvc $ddc)" ($dvc -eq 0 -and $dv -match '^devtools\.py verbs: .*\bfinish\b' -and $ddc -eq 2 -and $dmiss -match 'file not found' -and $dmiss -notmatch 'Traceback' -and $dai -match '--ai needs a value')

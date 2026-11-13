@@ -195,9 +195,9 @@ ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug locally BEFORE fixing: goal
 - ENV GAP (Docker down, empty local index, a model limit; no ENV-FIX closes it), its tests run in the MR pipeline:
  NOT_TESTED_LOCAL + pipeline link in the AI doc; localTest FAIL + envGap true (merged on green CI). A product failure: envGap false.
 - Every goal PASS: crafty.ps1 checkpoint -Agent <id> -Run ${RUN} -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR body"),
- then the human doc (positive cases) + the AI doc (every case) and devtools.py finish <task> testing.md solution.md review --ai ai.md,
+ then devtools.py finish <task> cases solution.md review --ai cases (docs from the cases spec),
  then devtools.py mr again with both links (edits it). A fix round (review, CI, failedTesting): a new AI doc round, then the same
- commands update the same docs, comment and MR after its own PASS; never a new doc, never an earlier round removed. Do NOT merge (the workflow
+ commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc, never an earlier round removed. Do NOT merge (the workflow
  does): merged=false, mergeState OPEN.`
 
 function buildPrompt(a) {
@@ -221,7 +221,7 @@ function synth(a) {
 function postMergePrompt(a, r) {
  return continuePrompt(a, r, `RESUME, ONLY THE HUMAN TESTING DOC: every MR below is MERGED (host-verified at recovery); build, review, CI and merge are done: never redo them, open no branch or MR.
 ${r.mrs.map((m) => `- ${m.url}`).join('\n')}
-Write the human doc and the AI doc and run devtools.py finish <task> testing.md solution.md review --ai ai.md (updates the task's docs, never new ones). Report these MRs merged=true, testerGuide = the human doc link.`)
+Complete the cases spec (devtools.py cases add / result), run devtools.py finish <task> cases solution.md review --ai cases (updates the task's docs, never new ones). Report these MRs merged=true, testerGuide = the human doc link.`)
 }
 function continuePrompt(a, r, why) {
  return `${WHY}

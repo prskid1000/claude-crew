@@ -27,9 +27,9 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | history | one retired lesson (`learn -History`; an older LESSONS.local.md `## History`) | `- <date> <what was retired / merged> -> <where it lives now>` | 1l 50w 300ch | — |
 | wave-brief | what a wave builds, by whom | the "Wave brief" template | 600w each:12b 130ch | id path |
 | bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
-| testing-goals | local goals file (`goals.md`), never published | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
-| testing-doc | the human testing doc (positive cases; env evidence) | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected |
-| testing-ai | the AI testing doc (the local loop record) | the "Testing doc (AI)" template: setup line, case table | 2500w 25sw | expected |
+| testing-goals | local goals file, never published (`cases render goals`) | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
+| testing-doc | the human testing doc (positive cases; env evidence; `cases render human`) | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected |
+| testing-ai | the AI testing doc (the local loop record; `cases render ai`) | setup line, case table, Rounds table | 2500w 25sw | expected |
 | qa-report | the QA run report (an "<env> run" section of the human doc) | header table, Tasks table, Results table (Check, Result, Observed, Evidence: images inline), failures in detail | prose:900w each:15b 25sw | id verdict evidence |
 | result-note | a results.json `observed` / `what_was_done` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
 | mr-title | MR / PR title | `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
@@ -101,89 +101,26 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 ```
 `<run>.resume.md`: per area, done (skipped) / missing (run) steps, MRs, tracker, doc.
 
-## Testing goals
-devy writes it FIRST (crafty step 4): local `goals.md`, never published, the AI doc's seed.
-Docs: tables for checks and facts, an intro line above each; cells keep prose limits.
-```markdown
-# Testing goals: <task id> <title>
-Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (envy.ps1 status), services <the leased ones>.
-## Goals (what must be true)
-Before merge (each human check; Q = a stated quality, measured):
-| # | Goal | How checked | Pass rule | Result |
-|---|---|---|---|---|
-| G1 (T1) | <behaviour> | <steps; `<TestClass#method>` / api.ps1 / browser / phone> | <exact values, messages, status codes> | |
-| Q1 | <"prominent", "< 10 s"> | <`contrast()`, `layoutIssues()`, 5 timings> | <ratio >= 3, 0 issues, p95 <= 10 s> | |
-| U1 | <unchanged behaviour that must stay> | | | |
-## Test plan (automated)
-- Unit: <new/changed logic -> test names> · Regression: <each fixed bug -> test, red before / green after>
-- Integration/API: <endpoints touched -> tests> · UI/component: <screens touched -> specs, where the stack supports it>
-- Run: check -Step test -Tests <names> -Touched · e2e specs run: <list> because <reason> | e2e NOT_TESTED: <reason>
-## Data needed
-<fixtures / seed records / settings / roles / switches ON, via the API, prefixed with your id; real sizes: longest names, busiest day>
-## Reproduction (bugs)
-<steps, logs, DB state, evidence files; the first local check re-runs it after the fix>
-## Rounds
-| Round | What failed | Fix |
-|---|---|---|
+## Test cases (goals file, AI doc, human doc)
+devy writes ONE spec per task (crafty step 4), never the three docs: `devtools.py cases add <task> <spec.json>` (merged by id),
+each loop round `cases result <task> <id> PASS|FAIL|NOT_TESTED_LOCAL <evidence link> ...` + `cases round <task> --fix <sha>
+--bugs "<what>"`; `cases render <task> goals|ai|human` prints the file (goals: local, never published). Publish: `devtools.py doc
+"<title>" cases --key <task>:testing-ai --label "round <n>"` each round; after the loop PASS `devtools.py finish <task> cases
+solution.md review --ai cases`.
+```json
+{ "title": "", "change": "<one line, user terms>", "repos": ["<refs>"], "env": "<env> r<n>", "services": "<leased>", "setup": "<data via the API, prefixed; cleanup>",
+  "data": "", "repro": "<bugs: steps, logs, DB state>", "plan": { "unit": "", "regression": "", "api": "", "ui": "", "run": "" }, "matrix": "<qa.matrix line>",
+  "checks": [{ "id": "T1", "area": "<screen>", "steps": "1. <step> 2. <step>", "expected": "<exact, from the shipped code>" }],
+  "qualities": [{ "id": "Q1", "goal": "<'prominent', '< 10 s'>", "how": "<contrast(), 5 timings>", "rule": "<p95 <= 10 s>" }], "unchanged": [{ "id": "U1", "goal": "" }],
+  "cases": [{ "id": "A1", "type": "positive|negative|edge|regression|repro", "check": "T1", "steps": "<API call + payload / screen, selector>", "expected": "", "result": "", "evidence": ["<link>"] }],
+  "switches": [{ "setting": "", "where": "", "value": "" }], "outOfScope": [{ "item": "", "why": "" }], "tasks": "", "environment": "", "logins": "<keys>", "testData": "", "whatChanged": "" }
 ```
-
-## Testing doc (AI)
-The local test record, by devy from `goals.md`: a row per positive, negative, edge and regression case (invalid input, role
-denials, boundaries, empty data, concurrency, nearby features, impact edges), its # cell naming its human check
-(`A1 (T1)`); a bug fix: a `repro` row (merge refuses without); UI rows at every `qa.matrix` variant (`matrix()`; `Matrix:` line). A failing case is FAIL, never
-"pre-existing"; a `qa.notLocal` (stubbed) path is NOT_TESTED_LOCAL, never PASS. Each round fills Result and Evidence (images
-inline, request / response + link), adds its Rounds row: `devtools.py doc --key <task>:testing-ai --label "loop round <n>"`
-(same link; refused: no negative row or Rounds table, a dropped row, a Result without an Evidence link).
-```markdown
-# Testing doc (AI): <task id> <title>
-Setup and cleanup: <data created via the API (prefixed), feature switches, logins by key; what is deleted after>.
-Cases:
-| # | Type | Steps / API call + payload | Expected | Result | Evidence |
-|---|---|---|---|---|---|
-| A1 | positive | `POST /x {"a": 1}` as <role>; screen <name>, selector `<css>` | 201, body.a = 1; row shown | PASS | ![A1: row shown](<shot>) |
-| A2 | negative | same as <role without the right> | 403 `<message>` | PASS | `403 {"error": ...}` [json](<link>) |
-| A3 | edge | <empty / boundary / concurrent> | <exact> | | |
-| A4 | regression | <nearby feature> | unchanged: <exact> | | |
-Rounds (one per round, appended; bugs (yours, checky's) go back to the code until 0 are open):
-| Round | Date | Cases run | Result | Bugs found | Fix commit | Retest |
-|---|---|---|---|---|---|---|
-| 1 | <yyyy-MM-dd> | A1-A4 | 3 PASS, 1 FAIL | A3: <what broke> | <sha> | A3 PASS in round 2 |
-```
-
-## Human testing doc
-A person's steps: POSITIVE cases only, drafted at crafty step 4 from the request (task text, acceptance, stated qualities
-measured), not the code; the loop runs each. Result / Evidence stay EMPTY (deployed-env evidence). `devtools.py
-finish` publishes it as `<task>:testing-doc` after the loop PASS (refused: no case table, a negative row, an image, a filled
-cell, a check no AI row ran); a fix round updates it after its PASS. Testers and /testy follow it (pokey H1-H3, L1); each
-env run (`pokey.ps1 finalize` or a person) fills Result / Evidence in a dated "<env> run <date>"
-section (earlier runs kept).
-```markdown
-# Testing: <feature / change>
-| | |
-|---|---|
-| Tasks | <task links> |
-| Environment | <test env name, build / MRs deployed> |
-| Logins | <user keys from targets.local.json; never passwords> |
-| Test data | <records to use, or how to create them> |
-## What changed
-<one paragraph in user terms; what must not change>
-## Before you start / Feature switches
-Set these first, restore them after:
-| Setting | Where | Value |
-|---|---|---|
-## Checks
-<screen / area>:
-| # | Steps | Expected | Result | Evidence |
-|---|---|---|---|---|
-| T1 | 1. <step> 2. Run `<command>` / open `<path>` | <exact result from the shipped code (final diff), never the brief> | | |
-## Out of scope
-Not tested, and why (a qa.outOfScope channel: "out of scope for agent QA: <channel>"):
-| Item | Why |
-|---|---|
-## Result (testers)
-All checks pass -> close the task. A check of this change fails or could not be tested -> failedTesting with the check ids
-and why. A defect outside this change -> one [Bug] task under the original ask.
-```
+The gates judge the rendered text: `checks` = the human doc, POSITIVE only, from the request (task, acceptance, stated qualities), never the
+code, Result / Evidence empty (an env run fills them: pokey finalize or a person, a dated "<env> run" section); `cases` = every
+positive, negative, edge and regression case (invalid input, role denials, boundaries, empty data, concurrency, nearby features,
+impact edges), each human check run by a case naming it (`check`); a bug fix: a `repro` case (merge refuses without); UI cases at
+every `qa.matrix` variant (`matrix`); a failing case is FAIL, never "pre-existing"; a `qa.notLocal` stub path NOT_TESTED_LOCAL,
+never PASS; a result needs an evidence link (screenshot, request / response JSON, run output: `devtools.py evidence`).
 
 ## MR body
 `devtools.py mr` checks it (kind `mr-body`): sections in this order, limits from "Writing standards".
