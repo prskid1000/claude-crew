@@ -105,7 +105,7 @@ function Format-KitTriage($Tri) {
   $rows = @($Tri.rows); $kinds = @('fix', 'defer', 'duplicate', 'already fixed')
   $cnt = { param($s, $k) @($rows | Where-Object { ($null -eq $s -or $_.sev -eq $s) -and ($null -eq $k -or (Get-KitItemKind $_.decision) -eq $k) }).Count }
   $sevs = @($rows | ForEach-Object sev | Select-Object -Unique | Sort-Object { Get-KitSevRank $_ })
-  $l = @("**Triage** ($($Tri.source)): $($rows.Count) = $(@($kinds | Where-Object { & $cnt $null $_ } | ForEach-Object { "$(& $cnt $null $_) $_" }) -join ' · ')", '',
+  $l = @("**Triage**: $($rows.Count) = $(@($kinds | Where-Object { & $cnt $null $_ } | ForEach-Object { "$(& $cnt $null $_) $_" }) -join ' · ')", '',
     "| Severity | $($kinds -join ' | ') | Total |", "|---$('|---' * ($kinds.Count + 1))|")
   foreach ($s in $sevs) { $l += "| $s | $(@($kinds | ForEach-Object { & $cnt $s $_ }) -join ' | ') | $(& $cnt $s $null) |" }
   $l += "| **Total** | $(@($kinds | ForEach-Object { & $cnt $null $_ }) -join ' | ') | **$($rows.Count)** |"
