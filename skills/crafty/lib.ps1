@@ -1554,10 +1554,10 @@ function Set-KitTaskChecklist([string]$Task, [string]$Name, $Items) {
   if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { Set-TrackerDescription $Task $nd }
 }
 # checklist item "<id> · <plain words> · <URLs>" (links and a status suffix out of the words); task specs: crafty.ps1 "task spec"
-function Format-KitCell([string]$Text) { ("$Text" -replace '\s+', ' ' -replace '\|', '/').Trim() }   # one line, never cut (Writing standards: text wraps, never truncates)
+function ConvertTo-KitOneLine([string]$Text) { ("$Text" -replace '\s+', ' ' -replace '\|', '/').Trim() }   # one line, never cut (Writing standards: text wraps, never truncates)
 function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
   $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'
-  (@($Id, (Format-KitCell $Desc), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
+  (@($Id, (ConvertTo-KitOneLine $Desc), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
 function ConvertTo-KitSpecItems($Spec) { @($Spec.items | Where-Object { $_.code } | ForEach-Object { [pscustomobject]@{ text = (Format-KitItemText "$($_.code)" "$($_.desc)" @($_.mrs)); done = [bool]$_.done } }) }
 # a parent's Items: its spec items + one per subtask "<code> · <name without [Kind]> · <URL>", ticked once closed; code: the
 # subtask's spec, the parent spec's subtasks[{ id, code }], $CodeOf (rollup areas), else its id
@@ -1770,7 +1770,7 @@ function Format-KitDecisionItems($Rows, [string]$Link, [string]$Task) {
   $dup = @($Rows | Group-Object { ("$($_.id)" -split '-')[-1] } | Where-Object Count -gt 1 | ForEach-Object Name)
   $sid = { param($i) $p = "$i" -split '-'; if ($p[-1] -in $dup) { $p[-2..-1] -join '-' } else { $p[-1] } }   # the checklist keys items by it: a clash takes the agent part too
   $day = { param($r) try { ([datetimeoffset]"$($r.at)").ToString('MM-dd') } catch { '' } }
-  $q = { param($r) $t = ("$($r.question)" -replace "\s*\($([regex]::Escape($Task))\)", '').Trim(); if ($t -match '^(.{4,}?\?)(\s|$)') { $t = $Matches[1] }; if ($t.Length -gt 80) { $t = ($t.Substring(0, 79) -replace '\s+\S*$', '') + '…' }; $t }
+  $q = { param($r) $t = ("$($r.question)" -replace "\s*\($([regex]::Escape($Task))\)", '').Trim(); if ($t -match '^(.{4,}?\?)(\s|$)') { $t = $Matches[1] }; $t }
   $a = { param($r) ("$($r.answer)" -replace '\s*\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?\)', '' -replace '\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?;\s*', '(').Trim() }   # "(owner, <date>)": the item says both
   foreach ($r in @($Rows | Where-Object { $_.status -eq 'pending' -or ($_.status -eq 'answered' -and $_.answer) })) {
     $f = $sup["$($r.id)"]; $hop = 0; while ($sup.ContainsKey("$f") -and $hop++ -lt 20) { $f = $sup["$f"] }
