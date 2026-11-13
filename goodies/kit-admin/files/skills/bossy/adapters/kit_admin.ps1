@@ -2,10 +2,10 @@
 kit_admin.ps1 (goody kit-admin): kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   prepush · precommit                       the kit's git hooks (.githooks install this goody when it is missing)
   learn -Stats | -History [-Grep] [-Last]   signals since the last retro, retired lessons
-  learn -Skill <s> -Lesson "<text>" [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
+  learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L99 health · L108 prepush · L172 precommit
+Sections: L12 learn · L101 health · L110 prepush · L174 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -14,9 +14,11 @@ function Invoke-LearnAdmin {
   param(
     [string]$Skill, [string]$Kind, [string]$Text, [string]$Ref, [string]$Source,
     [switch]$Show, [int]$Last = 30, [switch]$Stats, [switch]$Read, [switch]$History, [string]$Grep,
-    [string]$Lesson, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
+    [string]$Lesson, [string]$When, [string]$Do, [string]$Why, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
   )
   $file = Get-KitPath signals -Create
+  if ($When -or $Do -or $Why) { if (-not ($When -and $Do -and $Why)) { 'learn: -When, -Do and -Why together'; exit 2 }; $Lesson = "$($When.Trim()) -> $($Do.Trim().TrimEnd('.')) ($($Why.Trim().Trim('()')))" }   # LESSONS.md shape
+  if ($Lesson -and ("- $($Lesson.Trim() -replace '^-\s*')" -notmatch '^- \S.*? -> \S.*\((?!\d+[x×]\)).+?\)')) { 'learn: a lesson is "<when> -> <do> (<why>)": -When -Do -Why render it'; exit 2 }
   $pub = Join-Path $KitConf.Kit 'LESSONS.md'; $loc = Join-Path $KitConf.Kit 'LESSONS.local.md'
   if ($Stats) {
     $since = Get-KitRetroSince

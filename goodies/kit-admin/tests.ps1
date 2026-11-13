@@ -87,13 +87,14 @@ Expect 'kit-admin: precommit rewrites and stages a stale Sections: map' (@(git -
 $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE
 Expect 'kit-admin: learn -Bump miss exits 1, LESSONS.md lock released' ($bc -eq 1 -and -not (Test-Path (Join-Path $kc 'LESSONS.md.lock')))
 '{ "orgTerms": ["Acmecorp"] }' | Set-Content (Join-Path $kc 'skills/crafty/kit.local.json')
-$null = & $lo -Skill revy -Lesson '(2×) a generic lesson'; $null = & $lo -Skill revy -Lesson 'an Acmecorp lesson'
+$null = & $lo -Skill revy -When 'a generic case' -Do 'a generic lesson' -Why 'test'; $null = & $lo -Skill revy -When 'an Acmecorp case' -Do 'an Acmecorp lesson' -Why 'org'
+$null = & $lo -Skill revy -Lesson 'free text, no shape'; $freeCode = $LASTEXITCODE
 $r1 = & $lo -Read -Skill revy
-Expect 'kit-admin: learn -Lesson generic -> LESSONS.md, org term -> LESSONS.local.md' ($r1 -match 'a generic lesson' -and $r1 -match '\(local\)' -and (Get-Content (Join-Path $kc 'LESSONS.local.md') -Raw) -match 'Acmecorp' -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'Acmecorp')
-$null = & $lo -Skill revy -Lesson 'an ascii counted lesson (1x)'; $null = & $lo -Skill revy -Bump 'ascii counted'
-Expect 'kit-admin: learn -Bump counts an ASCII (1x) up to (2×)' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match 'an ascii counted lesson \(2×\)')
+Expect 'kit-admin: learn -When -Do -Why renders ''- <when> -> <do> (<why>)'': generic -> LESSONS.md, org term -> LESSONS.local.md; a free -Lesson refused (2)' ($freeCode -eq 2 -and $r1 -notmatch 'free text' -and $r1 -match '- a generic case -> a generic lesson \(test\)' -and $r1 -match '\(local\)' -and (Get-Content (Join-Path $kc 'LESSONS.local.md') -Raw) -match 'Acmecorp' -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'Acmecorp')
+$null = & $lo -Skill revy -Lesson 'an ascii case -> an ascii counted lesson (why) (1x)'; $null = & $lo -Skill revy -Bump 'ascii counted'
+Expect 'kit-admin: learn -Bump counts an ASCII (1x) up to (2×)' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match 'an ascii counted lesson \(why\) \(2×\)')
 $null = & $lo -Skill revy -Fixed 'a generic lesson'; $hi = & $lo -History -Grep 'a generic lesson'; $st = & $lo -Stats
-Expect 'kit-admin: learn -Fixed moves the line out, -History lists it, -Stats counts signals' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) \(2×\) a generic lesson' -and $st -match 'signals since last retro')
+Expect 'kit-admin: learn -Fixed moves the line out, -History lists it, -Stats counts signals' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) a generic case -> a generic lesson \(test\)' -and $st -match 'signals since last retro')
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests
