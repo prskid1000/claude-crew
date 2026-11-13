@@ -18,6 +18,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- wt commit refused (prose or lint finding) -> fix it and commit before any wt sync (uncommitted review-fix edits were lost across a sync). (1x)
 - A contract claims an old consumer ignores a new param -> test it against the deployed consumer (one call on staging) before merge (kwargs-strict handlers reject unknown params). (2x)
 - A long kit verb (bossy deploy request, waits) via Bash -> start it with run_in_background or a timeout over 120 s, then read the output file (a foreground call cut at 120 s loses the plan). (1x)
 - After `wt new` -> check the dependency links (node_modules, linkPaths) exist before editing; missing: save the diff, recreate with `wt new` (a worktree without them fails wt remove and can empty the folder). (1×)
@@ -98,6 +99,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- Working after a push in a merged clean worktree -> run every later command with absolute paths into it, never cd then a command that falls back to the live clone (cleanup swept the worktree: hard failure). (1x)
 - Reading ISO times with ConvertFrom-Json -> compare as DateTimeOffset or keep them text (-AsHashtable, then ToString('o')) (DateTime interpolation drops fraction and offset: same-second ties broke ordering). (1×)
 - A goody test that creates and drops tenants fails once in a parallel kit-tests run -> rerun that area alone before calling it a regression (areas share the machine). (2x)
 - A test string holds a regex -> put it in a here-string or a variable (an unbalanced paren in a single-quoted string inside a double-quoted subexpression does not parse). (2x)
@@ -127,4 +129,5 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 ## opsy
 ## watchy
 ## rechy
+- A Drive .xlsx / .docx -> download once with gws drive files get alt=media --output, dump to one text file, read that file once (re-reading the binary wasted calls). (1x)
 - Checking an adapter against a vendor API -> read the vendor reference (an llms.txt index lists .md pages) and diff request and response shapes field by field (adapters drifted from the vendor). (1x)
