@@ -9,7 +9,7 @@ Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L15 builds · L47 supervise · L251 shells · L380 page · L868 usage · L1094 release · L1133 lines · L1166 cleanup ·
-  L1202 launch · L1280 pause · L1398 sessions · L1450 ci tasks
+  L1202 launch · L1280 pause · L1398 sessions · L1450 ci tasks · L1502 the kit origin's main and goodies
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1498,4 +1498,20 @@ function Get-KitPlannedAreas([string]$TaskId, $Since) {
       foreach ($pa in @($pr.args.agents | Where-Object { $_.id -and $_.items })) {
         if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"]) { "$($pa.id)" }
       } }) | Select-Object -Unique
+}
+# ---- the kit origin's main and goodies: no force push or delete, direct push on (branch.protect; never product repos)
+function Set-KitOriginProtection {
+  $kit = $KitConf.Kit; $gl, $gh = $env:GITLAB_HOST, $env:GH_HOST
+  $lines = if ("$(git -C $kit remote get-url origin 2>$null)" -notmatch '^(?:\w+://)?(?:[^@/]+@)?(?<h>[^/:\\]{2,})(?::\d+)?[:/](?<r>[^:\\]+?)(?:\.git)?/?$') { 'origin failed: no origin remote with a host' } else {
+    $h, $repo, $t = $Matches.h, $Matches.r, (Get-HostKind $Matches.h)
+    if ($t -eq 'gitlab') { $env:GITLAB_HOST = $h } elseif ($t -eq 'github') { $env:GH_HOST = $h }
+    foreach ($b in 'main', 'goodies') {
+      if (-not (git -C $kit rev-parse --verify -q "refs/remotes/origin/$b" 2>$null)) { "$b failed: origin/$b not fetched (git fetch origin)"; continue }
+      $r = try { Invoke-HostVerb 'branch.protect' @{ type = $t; repo = $repo; branch = $b } -NoMemo } catch { "failed: $_" }
+      "$b $(if ($r) { $r } else { "failed: set it by hand on $h/$repo (force push off, deletion off, direct push on)" })"
+    }
+  }
+  $env:GITLAB_HOST, $env:GH_HOST = $gl, $gh
+  Set-Content (Get-KitPath kit-protect -Create) $lines
+  $lines | ForEach-Object { "protect: $_" }
 }

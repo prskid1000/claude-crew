@@ -17,16 +17,15 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   release -Agent <id>[,<id>] [-Reason]   every lease of those agents (lanes, env + layers, GPU, builds, tabs), logged in .state/leases.jsonl
   storage [-Drive] [-Since 24h|7d] [-Folders] [-Scan]   free space per drive, folder sizes, rescues (.state/storage)
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
-  report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
+  report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Only <ids>] [-Skip <id>=<why>; ...] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
   deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L32 init · L49 board · L225 budget · L254 launch · L487 recover · L573 pause · L584 resume · L647 program · L698 param ·
-  L704 track · L1021 supervise · L1325 report · L1404 audit · L1464 storage · L1674 bugbrief · L1776 cleanup · L1860 learn ·
-  L1891 decide · L2025 health · L2087 retro due · L2097 tidy · L2166 the kit origin's main and goodies · L2182 setup ·
-  L2249 guard-sendmessage
+Sections: L31 init · L48 board · L224 budget · L253 launch · L486 recover · L572 pause · L583 resume · L646 program · L697 param ·
+  L703 track · L1020 supervise · L1324 report · L1403 audit · L1463 storage · L1673 bugbrief · L1779 cleanup · L1863 learn ·
+  L1894 decide · L2028 health · L2090 retro due · L2100 tidy · L2169 setup · L2236 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1680,6 +1679,7 @@ param(
   [string[]]$Hints = @(),
   [string]$Range,
   [string[]]$Mandate = @(),
+  [string[]]$Only = @(), [string]$Skip = '',   # the coordinator's override: fix only these check ids; 'id=why; id=why' left out
   [switch]$Complex
 )
 $ErrorActionPreference = 'Stop'
@@ -1697,6 +1697,9 @@ $checks = @(Get-KitFailedChecks $texts)   # description, comments newest first
 $saw = ($desc -replace '\s+', ' ').Trim()   # no checks (watchy [Bug]): task is the check
 if (-not $checks) { $checks = @([pscustomobject]@{ id = $Task; screen = [string]$j.name; saw = $saw.Substring(0, [math]::Min(300, $saw.Length)) }) }
 if (-not $Agent) { $Agent = "B-$Task" }
+$Only = @(Split-KitList $Only); $skipWhy = @{}; foreach ($sk in @($Skip -split ';' | Where-Object { $_.Trim() })) { $skId, $skWhy = $sk -split '=', 2; $skipWhy[$skId.Trim()] = "$skWhy".Trim() }
+$notHere = @($checks | Where-Object { $skipWhy.ContainsKey($_.id) -or ($Only.Count -and $_.id -notin $Only) }); $checks = @($checks | Where-Object { $_ -notin $notHere })
+if (-not $checks.Count) { throw "bugbrief: -Only / -Skip leave no check of $Task" }
 
 $runItem = $null
 foreach ($fin in Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter finalize.json -ErrorAction SilentlyContinue) {
@@ -1737,7 +1740,7 @@ $origLine
 
 ## Failed checks
 $(($checks | ForEach-Object { "- **$($_.id)** — $($_.screen): $($_.saw)" }) -join "`n")
-$(if ($Hints) { "`n## Coordinator notes`n" + (($Hints | ForEach-Object { "- $_" }) -join "`n") + "`n" })
+$(if ($notHere) { "`n## Not yours (coordinator)`n" + (($notHere | ForEach-Object { "- **$($_.id)** — $(if ($skipWhy[$_.id]) { $skipWhy[$_.id] } else { 'outside -Only' })" }) -join "`n") + "`n" })$(if ($Hints) { "`n## Coordinator notes`n" + (($Hints | ForEach-Object { "- $_" }) -join "`n") + "`n" })
 Fix every check above (root cause + test) or prove it stale/expected with evidence. Fix only these checks. A check you cannot
 fix here (another area or repo) needs a follow-up tracker task (cause, proposed fix) linked in a comment on $Task before your MR is done.
 Product calls: the reference behaviour or a recorded decision, named. Additive only: users the fix does not target see no change
@@ -2163,22 +2166,6 @@ if ($Json) { $o | ConvertTo-Json -Compress; return }
 "DIGEST $file"; "AT $($o.at)"; "WORK $work ($($o.groups) group(s) of 2+)$(if ($stamped) { '; nothing to judge: last retro stamped' })"; "MINUTES $min"; $o.steps | ForEach-Object { "  $_" }
 }
 
-# ---- the kit origin's main and goodies: no force push or delete, direct push on (branch.protect; never product repos)
-function Set-KitOriginProtection {
-  $kit = $KitConf.Kit; $gl, $gh = $env:GITLAB_HOST, $env:GH_HOST
-  $lines = if ("$(git -C $kit remote get-url origin 2>$null)" -notmatch '^(?:\w+://)?(?:[^@/]+@)?(?<h>[^/:\\]{2,})(?::\d+)?[:/](?<r>[^:\\]+?)(?:\.git)?/?$') { 'origin failed: no origin remote with a host' } else {
-    $h, $repo, $t = $Matches.h, $Matches.r, (Get-HostKind $Matches.h)
-    if ($t -eq 'gitlab') { $env:GITLAB_HOST = $h } elseif ($t -eq 'github') { $env:GH_HOST = $h }
-    foreach ($b in 'main', 'goodies') {
-      if (-not (git -C $kit rev-parse --verify -q "refs/remotes/origin/$b" 2>$null)) { "$b failed: origin/$b not fetched (git fetch origin)"; continue }
-      $r = try { Invoke-HostVerb 'branch.protect' @{ type = $t; repo = $repo; branch = $b } -NoMemo } catch { "failed: $_" }
-      "$b $(if ($r) { $r } else { "failed: set it by hand on $h/$repo (force push off, deletion off, direct push on)" })"
-    }
-  }
-  $env:GITLAB_HOST, $env:GH_HOST = $gl, $gh
-  Set-Content (Get-KitPath kit-protect -Create) $lines
-  $lines | ForEach-Object { "protect: $_" }
-}
 # ---- setup: install / repair (idempotent)
 function Invoke-Setup {
 param([switch]$Exclude, [switch]$Quiet, [switch]$WriteLocal)
