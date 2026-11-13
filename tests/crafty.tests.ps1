@@ -185,13 +185,18 @@ Remove-Item "$k/skills/crafty/kit.local.json"
 # gate: half the file cache counts; the queue head starts after 20 min above a 5% floor
 $gt = @'
 . $args[0]
-"kinds:$((@('py -m unittest', 'py t/test_a.py', 'echo running tests', 'ng test', 'mvn package -DskipTests', 'mvn verify', 'npx tsc --noEmit -p cypress/tsconfig.json', 'npx cypress run') | ForEach-Object { Get-GateKind $_ }) -join ',' -eq 'python,python,other,ng-test,maven,maven-test,typecheck,e2e')"
+"kinds:$((@('py -m unittest', 'py t/test_a.py', 'echo running tests', 'ng test', 'mvn package -DskipTests', 'mvn verify', 'npx tsc --noEmit -p cypress/tsconfig.json', 'npx cypress run', 'docker compose -f a.yml up -d', 'npx playwright test') | ForEach-Object { Get-GateKind $_ }) -join ',' -eq 'python,python,other,ng-test,maven,maven-test,typecheck,cypress,docker,e2e')"
+$pk = Join-Path $args[1] 'gate-pkg'; New-Item -ItemType Directory -Force $pk | Out-Null; '{"scripts":{"test:api":"cypress run --spec x","test":"jest"},"devDependencies":{"@testcontainers/mysql":"1"}}' | Set-Content "$pk/package.json"
+$pm = Join-Path $args[1] 'gate-pom/mod'; New-Item -ItemType Directory -Force $pm | Out-Null; '<artifactId>testcontainers</artifactId>' | Set-Content "$pm/pom.xml"
+"pkgkind:$((Get-GateKind 'yarn test:api' $pk) -eq 'cypress' -and (Get-GateKind 'yarn test' $pk) -eq 'js-test' -and (Test-GateContainers $pk) -and (Test-GateContainers (Split-Path $pm)) -and -not (Test-GateContainers (New-Item -ItemType Directory -Force (Join-Path $args[1] 'gate-none')).FullName))"
+function docker { $global:LASTEXITCODE = 0; "1.5GiB / 15GiB`n512MiB / 15GiB`n0B / 0B" }
+"ctrgb:$((Get-GateContainerGB) -eq 2)"
 "histcmd:$((Get-GateHistCmd 'mvn -f C:\w\a\p.xml' 'C:/W/a') -eq 'mvn -f .\p.xml' -and (Get-GateHistCmd ('x' * 200) 'C:\w').Length -eq 120)"
 "cache:$((Get-GateAvailGB ([pscustomobject]@{ AvailGB = 13.6; CacheGB = 21 })) -eq 24.1)"
 "keep:$((Test-GateStart 11 10 0 64) -and -not (Test-GateStart 9 10 5 64))"
 "starved:$((Test-GateStart 4 10 25 64) -and -not (Test-GateStart 2 10 25 64))"
 '@
-Expect-Each (Invoke-PsTest 'gate-test' $gt @($D)) 'gate: #' 'cache', 'keep', 'starved', 'kinds', 'histcmd'
+Expect-Each (Invoke-PsTest 'gate-test' $gt @($D, $k)) 'gate: #' 'cache', 'keep', 'starved', 'kinds', 'histcmd', 'pkgkind', 'ctrgb'
 $na = Join-Path $k 'skills/crafty/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na

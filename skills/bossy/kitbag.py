@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1289 audit ·
-  L1398 registry · L1739 prose · L1890 sections · L2020 budget · L2044 goodies · L2551 state lint · L2623 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1019 README graph · L1121 lint command · L1294 audit ·
+  L1403 registry · L1744 prose · L1895 sections · L2025 budget · L2049 goodies · L2556 state lint · L2628 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1226,9 +1226,13 @@ const rows = () => innerWidth < 1280 ? [] : [...document.querySelectorAll('body 
   const kids = [...g.children].filter((c) => c.getClientRects().length && !/absolute|fixed/.test(getComputedStyle(c).position))
   if (kids.length < 2 || !kids.some((c) => c.matches('[data-fit],details'))) return []
   const end = g.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth), rs = []   // a row: items whose heights overlap (a margin shifts one top)
-  for (const c of kids) { const r = c.getBoundingClientRect(), row = rs.find((x) => r.top < x.bottom - 1 && r.bottom > x.top + 1); if (row) { row.right = Math.max(row.right, r.right); row.bottom = Math.max(row.bottom, r.bottom); row.ids.push(c.id || c.className) } else rs.push({ top: r.top, bottom: r.bottom, right: r.right, ids: [c.id || c.className] }) }
+  const nm = (c) => ((c.querySelector('.k,summary,h3') || {}).textContent || c.id || c.className).trim().replace(/\s+/g, ' ').slice(0, 30)
+  for (const c of kids) { const r = c.getBoundingClientRect(), it = { n: nm(c), h: r.height, k: c.classList[0] || c.tagName }, row = rs.find((x) => r.top < x.bottom - 1 && r.bottom > x.top + 1); if (row) { row.right = Math.max(row.right, r.right); row.bottom = Math.max(row.bottom, r.bottom); row.ids.push(c.id || c.className); row.its.push(it) } else rs.push({ top: r.top, bottom: r.bottom, right: r.right, ids: [c.id || c.className], its: [it] }) }
   const last = rs.reduce((a, x) => (x.right < a.right ? x : a)), short = Math.round(end - last.right)
-  return short >= 24 ? [{ el: 'rows', why: `a card row ends ${short} px short of its box (an empty column)`, text: `${g.className || g.tagName}: ${last.ids.join(', ')}`.slice(0, 120) }] : []
+  // vertical: different cards side by side end within 48 px of each other (a list of like items, one class, may differ)
+  const tall = rs.filter((x) => x.its.length > 1 && new Set(x.its.map((i) => i.k)).size > 1).map((x) => ({ x, d: Math.round(Math.max(...x.its.map((i) => i.h)) - Math.min(...x.its.map((i) => i.h))) })).filter((y) => y.d > 48)
+  return (short >= 24 ? [{ el: 'rows', why: `a card row ends ${short} px short of its box (an empty column)`, text: `${g.className || g.tagName}: ${last.ids.join(', ')}`.slice(0, 120) }] : [])
+    .concat(tall.map((y) => ({ el: 'rows', why: `card heights in one row differ by ${y.d} px (max 48): restructure the row`, text: y.x.its.map((i) => `${i.n} ${Math.round(i.h)} px`).join(' | ').slice(0, 160) })))
 })
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
 const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
@@ -1236,7 +1240,8 @@ try {
   for (const width of ws.split(',').map(Number)) for (const theme of ['light', 'dark']) for (const [si, clicks] of JSON.parse(st).entries()) {
     const ctx = await b.createBrowserContext(), page = await ctx.newPage(), clipped = []
     const touch = width < 600   // a phone width: touch emulation (pointer: coarse) and taps
-    await page.setViewport({ width, height: touch ? 844 : 900, hasTouch: touch })   // no isMobile: a page without a viewport meta would lay out at 980 px; await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }])
+    await page.setViewport({ width, height: touch ? 844 : 900, hasTouch: touch })   // no isMobile: a page without a viewport meta would lay out at 980 px
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }])   // its own line: in the comment above it never ran (both shots one theme)
     await page.goto(pathToFileURL(file).href, { waitUntil: 'load' })
     for (const sel of clicks) await (touch ? page.tap(sel) : page.click(sel)).catch((e) => clipped.push({ el: sel, why: `${touch ? 'tap' : 'click'} failed: ${e.message}`, text: '' }))
     await new Promise((r) => setTimeout(r, 400))   // panels slide in, layouts settle

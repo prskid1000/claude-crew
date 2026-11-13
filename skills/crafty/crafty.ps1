@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L934 check · L1237 pipes · L1294 guard · L2051 dir ·
-  L2061 checkpoint · L2086 prior · L2124 tracker · L2146 task spec · L2295 host
+Sections: L21 init · L27 sweep · L175 wt · L470 stack · L650 gate · L965 check · L1268 pipes · L1325 guard · L2095 dir ·
+  L2105 checkpoint · L2130 prior · L2168 tracker · L2190 task spec · L2339 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -664,8 +664,9 @@ $script:GateKinds = [ordered]@{
   'gradle' = @('gradle(w|w\.bat)?\b', 3.5)
   'rn-bundle' = @('export:embed|react-native bundle|expo export', 3)
   'typecheck' = @('^\s*((npx|yarn|pnpm)\s+(exec\s+)?)?(vue-)?tsc\b[^&|;]*--noEmit', 2)   # before e2e: tsc -p cypress/tsconfig.json is no e2e run
-  'e2e' = @('cypress|playwright|\b(npm|yarn|pnpm|bun)\s+(run\s+)?e2e\b', 3.5)
-  'docker' = @('\bdocker(-compose)?\s+(compose\s+)?(build|run|up)\b', 3)   # through gate -Cmd only: the guard does not force it yet
+  'cypress' = @('cypress', 5)   # 3.5 GB runner + its browser
+  'e2e' = @('playwright|\b(npm|yarn|pnpm|bun)\s+(run\s+)?e2e\b', 3.5)
+  'docker' = @('\bdocker(\.exe)?"?\s+(compose\s+(-\S+(\s+(?!-)\S+)?\s+)*)?(build|run|up|buildx\s+build)\b|\bdocker-compose(\.exe)?\s+(-\S+(\s+(?!-)\S+)?\s+)*(build|run|up)\b', 3)
   'ng-test' = @('\bng test\b|\bkarma\b', 3)
   'web-build' = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)
   'maven-test' = @('^(?!.*-D(skipTests|maven\.test\.skip)\b).*\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
@@ -679,7 +680,26 @@ $script:GateKinds = [ordered]@{
   'python' = @('pytest|mypy|ruff|compileall|-m unittest\b|\btest_\w*\.py\b', 1.5)
   'go' = @('go (build|test|vet)', 2)
 }
-function Get-GateKind([string]$c) { foreach ($k in $script:GateKinds.Keys) { if ($c -match $script:GateKinds[$k][0]) { return $k } }; 'other' }
+function Get-GateKind([string]$c, [string]$Dir = '') {
+  # a package script is its body: yarn test:api running Cypress is a cypress run
+  $sb = if ($Dir -and $c -match '^\s*(npm|yarn|pnpm|bun)\s+(run\s+)?([\w:.-]+)') { try { "$((Get-Content -LiteralPath (Join-Path $Dir 'package.json') -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable).scripts[$Matches[3]])" } catch { '' } }
+  if ($sb -match 'cypress\s+run') { return 'cypress' }
+  foreach ($t in @($c, $sb) | Where-Object { $_ }) { foreach ($k in $script:GateKinds.Keys) { if ($t -match $script:GateKinds[$k][0]) { return $k } } }; 'other'
+}
+# testcontainers in the module's build files: the run starts containers whose RAM sits outside its process tree
+function Test-GateContainers([string]$Dir) {
+  $fs = @(@(@('build.gradle', 'build.gradle.kts', 'gradle/libs.versions.toml', 'pyproject.toml', 'requirements.txt', 'requirements-dev.txt', 'package.json') | ForEach-Object { Join-Path $Dir $_ } | Where-Object { Test-Path -LiteralPath $_ }) +
+    @(Get-ChildItem -LiteralPath $Dir -Filter pom.xml -Recurse -Depth 2 -File -ErrorAction SilentlyContinue | ForEach-Object FullName))   # a parent pom: its modules' poms
+  $fs.Count -gt 0 -and @(Select-String -LiteralPath $fs -SimpleMatch 'testcontainers' -List -ErrorAction SilentlyContinue).Count -gt 0
+}
+# RAM of running containers (docker stats); $null when the engine is down
+function Get-GateContainerGB {
+  $r = Invoke-KitExe 'docker' @('stats', '--no-stream', '--format', '{{.MemUsage}}') 15
+  if ($r.code -ne 0) { return $null }
+  $u = @{ B = 1; KIB = 1KB; MIB = 1MB; GIB = 1GB; KB = 1e3; MB = 1e6; GB = 1e9 }
+  $sum = 0.0; foreach ($l in @("$($r.out)" -split '\r?\n')) { if ($l -match '^\s*([\d.]+)\s*([KMG]i?B|B)\b') { $sum += [double]$Matches[1] * $u[$Matches[2].ToUpper()] } }
+  $sum / 1GB
+}
 # relative: worktree paths differ per agent
 function Get-GateHistCmd([string]$Cmd, [string]$Dir) {
   $c = $Cmd; foreach ($d in @([IO.Path]::GetFullPath($Dir).TrimEnd('\', '/')) | ForEach-Object { $_; $_.Replace('\', '/') } | Select-Object -Unique) { $c = [regex]::Replace($c, [regex]::Escape($d) + '(?=[\\/\s"'']|$)', '.', 'IgnoreCase') }
@@ -738,8 +758,11 @@ New-Item -ItemType Directory -Force $ledger | Out-Null
 $histFile = Join-Path $ledger 'history.json'
 function Read-History { try { Get-Content $histFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} } }
 
-$kind = Get-GateKind $Cmd
+$kind = Get-GateKind $Cmd $Dir
 $default = if ($script:GateKinds.Contains($kind)) { $script:GateKinds[$kind][1] } else { 2 }
+# containers: learned peaks hold their RAM (docker stats growth); until then +2 GB (a MySQL + an Elasticsearch)
+$ctr = $kind -eq 'docker' -or (($kind -match 'test|cypress|e2e|dotnet|^go$' -or ($kind -eq 'python' -and $Cmd -match 'pytest|unittest|\btest_')) -and (Test-GateContainers $Dir))
+if ($ctr -and $kind -ne 'docker') { $default += 2 }
 $project = Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf
 $top = (git -C $Dir rev-parse --show-toplevel 2>$null)
 if ($top) {
@@ -752,6 +775,7 @@ if ($top) {
 $histKey = "$kind|$project"
 $hist = Read-History
 $samples = @($hist[$histKey] | Where-Object { $_ })
+if ($kind -eq 'cypress' -and $samples.Count -lt 2) { $samples = @($samples) + @($hist["e2e|$project"] | Where-Object { $_ -and "$($_.cmd)" -match 'cypress' }) }   # learned before the cypress kind split from e2e
 $peaks = @($samples | ForEach-Object { [double]$_.gb })
 $secs = @($samples | ForEach-Object { [double]$_.sec } | Sort-Object)
 # small builds may backfill past a starving head
@@ -899,17 +923,24 @@ while ((Get-Date) -lt $deadline) {
 } finally { Remove-Item $myTicket -ErrorAction SilentlyContinue }
 if (-not $proc) { if ($waitLearned) { Add-KitParamObs 'gate.waitMinutes' $WaitMinutes '' 'timeout' 90 }; Write-Host "[gate] could not start within $WaitMinutes min"; exit 3 }
 $sw = [Diagnostics.Stopwatch]::StartNew(); $peak = 0.0   # double: Max(int, double) would truncate
+$c0 = if ($ctr) { Get-GateContainerGB }; $ctrPeak = 0.0; $tick = 0
 try {
   $null = $proc.Handle   # keeps ExitCode readable
-  while (-not $proc.HasExited -and $sw.Elapsed.TotalHours -lt 24) { $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id)); Start-Sleep -Seconds 5 }
+  while (-not $proc.HasExited -and $sw.Elapsed.TotalHours -lt 24) {
+    $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id))
+    if ($null -ne $c0 -and ($tick++ % 3) -eq 2 -and $null -ne ($cn = Get-GateContainerGB)) { $ctrPeak = [math]::Max($ctrPeak, $cn - $c0) }
+    Start-Sleep -Seconds 5
+  }
   $proc.WaitForExit(); $code = $proc.ExitCode
+  if ($null -ne $c0 -and $null -ne ($cn = Get-GateContainerGB)) { $ctrPeak = [math]::Max($ctrPeak, $cn - $c0) }   # compose up -d: its containers outlive the command
+  $peak += $ctrPeak
 } finally {
   $why = try { "$((Get-Content $entry -Raw | ConvertFrom-Json).reclaimed)" } catch { '' }   # supervise -AutoFix marks the build it stops
   Remove-Item $entry -ErrorAction SilentlyContinue; Write-KitLeaseLog release build "$kind $(Split-Path $Dir -Leaf)" $buildLease $(if ($why) { $why } else { "ended, exit $code" })
 }
 if ($why) { Write-Host "[gate] stopped by the kit: $why (exit $code)" }   # a killed build teaches neither time nor peak
 if ($kind -ne 'emulator' -and -not $why) { Add-KitParamObs 'gate.waitMinutes' $sw.Elapsed.TotalMinutes -Default 90 }   # learns build time, not wait time
-Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); waitSec = $waitSec })
+Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); ctrGB = [math]::Round($ctrPeak, 2); waitSec = $waitSec })
 if ($peak -gt 0.2 -and $kind -ne 'emulator' -and -not $why) {
   # oom: exit 137 / 134 near its reservation
   if ($NeedGB -le 0) { Add-KitParamObs 'gate.needGB' $peak $histKey $(if ($code -eq 0) { 'ok' } elseif ($code -in 134, 137 -and $peak -ge 0.9 * $reserved) { 'oom' } else { 'fail' }) $estimate }
@@ -921,7 +952,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator' -and -not $why) {
       $txt = if (Test-Path $histFile) { Get-Content $histFile -Raw -ErrorAction Stop } else { '' }
       $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -ErrorAction Stop } else { @{} }
       if ($h -is [hashtable]) {
-        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; wait = $waitSec; cmd = (Get-GateHistCmd $Cmd $Dir) } | Select-Object -Last 10)
+        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; wait = $waitSec; ctr = [math]::Round($ctrPeak, 2); cmd = (Get-GateHistCmd $Cmd $Dir) } | Select-Object -Last 10)
         $h | ConvertTo-Json -Depth 3 | Set-Content "$histFile.tmp" -ErrorAction Stop
         Move-Item "$histFile.tmp" $histFile -Force -ErrorAction Stop
       }
@@ -1296,7 +1327,7 @@ function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-process self-test)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  $da = 'default desktop app'; $sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'
+  $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
@@ -1466,7 +1497,15 @@ if ($SelfTest) {
   @('P', '$g = Join-Path "{KIT}" ''goodies/task-rollup/GOODY.md''; & $g', $true, $rt), @('P', '$f = "{KIT}/README.md"; Start-Process -FilePath $f', $true, $rt),
   @('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('G', '{CR}\NOTICE', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
   @('B', "git log \`n  -- docs/readme.md; git diff \`n  skills/crafty/crafty.ps1", $false, $rt),
-  @('P', '$py = ''C:/x/python.exe''; & $py a.py; Get-Content "{CR}/NOTICE"; "{KIT}/README.md" | Out-Null; cd "{KIT}"; .\.githooks\pre-commit.ps1', $false, $rt)
+  @('P', '$py = ''C:/x/python.exe''; & $py a.py; Get-Content "{CR}/NOTICE"; "{KIT}/README.md" | Out-Null; cd "{KIT}"; .\.githooks\pre-commit.ps1', $false, $rt),
+  # pytest and docker builds / runs / compose up: through the gate; a grep, --version or a gated call is not a run
+  @('B', 'cd api && pytest tests/test_a.py -q', $true, $mg), @('P', '& "C:\v\python.exe" -X utf8 -m pytest t', $true, $mg), @('B', 'uv run pytest', $true, $mg),
+  @('B', 'docker compose -f a.yml -f b.yml up -d --wait', $true, $mg), @('P', 'docker build -t x .', $true, $mg), @('B', 'docker-compose up', $true, $mg),
+  @('P', '& "C:\Program Files\Py\python.exe" -m pytest t', $true, $mg), @('B', 'FOO=1 timeout 300 pytest -x', $true, $mg), @('B', 'nohup pytest &', $true, $mg),
+  @('B', 'sudo docker run x', $true, $mg), @('B', 'docker --context ci image build .', $true, $mg), @('B', 'docker container run x', $true, $mg),
+  @('B', 'grep -rn pytest requirements.txt; pytest --version; pytest -h; docker ps; docker compose logs api', $false, $mg),
+  @('B', 'rg "foo|pytest" src; grep -E "(pytest|docker run)" a; git commit -m "fix; pytest runs"; echo x | grep -n "; docker build" f', $false, $mg),
+  @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''docker compose up -d''', $false, $mg)
   )
   $gh = 'browser on Windows'   # Git for Windows help is HTML; elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
@@ -2022,10 +2061,15 @@ if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitComm
   }
 }
 $gated = $cmd -match 'crafty\.ps1["'']?\s+(gate|check)\b|phoney\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'
-$heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
+# pytest / docker at a command's start (a grep or a message is no run): quoted tool paths unwrapped, other quotes emptied, wrappers skipped
+$hv = [regex]::Replace([regex]::Replace((StripDocs $raw), '"[^"]*[\\/]((?:python[\d.]*|py|pytest|docker(?:-compose)?)(?:\.exe)?)"', '$1'), '"(?:[^"\\]|\\.)*"|''[^'']*''', '""')
+$hvAt = '(^|[;&|(\n]|\bthen\b|\bdo\b)\s*(&\s*)?((\w+=\S*|sudo|env|time|nohup|exec|setsid|timeout\s+\S+)\s+)*(\S*[\\/])?'
+$heavy =$cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
         $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
         $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or
-        $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b|(pnpm|bun)\s+(run\s+)?(build|test)\b)'
+        $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b|(pnpm|bun)\s+(run\s+)?(build|test)\b)' -or
+        ($hv -match ($hvAt + '((uv|poetry|pipenv|hatch|pdm)\s+run\s+)?(pytest|py\.test|(py|python[\d.]*)(\.exe)?(\s+-\S+(\s+(?!-)[^\s;&|]+)?)*?\s+-m\s+pytest)(\.exe)?(?=\s|$|[;&|)])') -and $hv -notmatch 'pytest[^|;&\n]*\s(--version|--help|-h|--collect-only|--co)\b') -or
+        ($hv -match ($hvAt + '(docker(\.exe)?\s+(--?\w[\w-]*(\s+(?!-)[^\s;&|]+)?\s+)*(compose\s+(-\S+(\s+(?!-)[^\s;&|]+)?\s+)*(build|run|up)|build|run|(buildx|image|container)\s+(build|run))|docker-compose(\.exe)?\s+(-\S+(\s+(?!-)[^\s;&|]+)?\s+)*(build|run|up))\b') -and $hv -notmatch 'docker[^|;&\n]*\s(--help|-h)\b')
 # e2e only via check -Step e2e (else the whole suite)
 $e2eRx = '\b(cypress\s+run|playwright\s+test)\b|\b(npm|yarn|pnpm|bun)\s+(run\s+)?(e2e|cypress|playwright)\b(?![:-](open|verify|install|lint)\b)(?!\s+(install|verify|info|cache|open|codegen|show-report)\b)'
 if (@($cmd -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_ -match $e2eRx -and $_ -notmatch 'crafty\.ps1["'']?\s+check\b' }).Count) {

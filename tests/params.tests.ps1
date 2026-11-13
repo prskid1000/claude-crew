@@ -227,11 +227,11 @@ Expect 'cleanup: a log over 5000 lines rotates while a writer holds it; 5000 lin
 $gtOut = Invoke-PsTest 'gatestats' @'
 $null = . $args[0] 6>$null; $t = (Get-Date).Date.AddHours(1); $b = { param($ev, $m, $o, $k, $x) Write-KitLog builds $ev ([ordered]@{ at = $t.AddMinutes($m).ToString('o'); owner = $o; kind = $k; project = 'api' } + $x) }
 & $b start 0 a maven-test @{ needGB = 3 }; & $b end 2 a maven-test @{ sec = 120; waitSec = 60 }; & $b end 5 localenv-x maven @{ sec = 30; waitSec = 0 }
-$g = Get-KitGateStats $t.AddHours(1); $m = @($g.rows | Where-Object name -eq 'maven test')[0]
+$g = Get-KitGateStats $t.AddHours(1) @([pscustomobject]@{ name = 'browser rm·web'; gb = 1.25 }, [pscustomobject]@{ name = 'browser hm'; gb = 0.5 }, [pscustomobject]@{ name = 'phone p1'; gb = 2 }); $m = @($g.rows | Where-Object name -eq 'maven test')[0]
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); mem = @{ AvailGB = 20 }; stats = [pscustomobject]@{ keepFree = 10; gate = $g; now = @{ seats = 1; seatsMax = 4 } } })
-"$($g.running) $(@($g.rows.name -match '^(env deploy|maven)' | Sort-Object) -join ',') $($m.done)/$($m.waitMax)/$($m.peakGB)/$(@($m.segs).Count) $($h -match "<span class=gn>maven test</span>" -and $h -match "$($g.today)<small> builds today")"
+"$($g.running) $(@($g.rows.name -match '^(env deploy|maven)' | Sort-Object) -join ',') $($m.done)/$($m.waitMax)/$($m.peakGB)/$(@($m.segs).Count) $($h -match "<span class=gn>maven test</span>" -and $h -match "$($g.today)<small> builds today") $($h -match 'test browsers 2 \(1\.8 GB, leased\)')"
 '@ @($O)   # other areas' gated checks of this test kit add rows of their own
-Expect "gate card: history counts a build between sweeps, a row per kind ($gtOut)" ("$gtOut" -eq '0 env deploy,maven test 1/1/3/1 True')
+Expect "gate card: history counts a build between sweeps, a row per kind; browsers in the lease row ($gtOut)" ("$gtOut" -eq '0 env deploy,maven test 1/1/3/1 True True')
 # board: the same name in a live session 5 min after its beat = a parallel agent
 $j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"
 $e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-KitPidStart $PID }; $e3.beat = (Get-Date).AddMinutes(-5).ToString('o'); & $J $e3 $f3

@@ -183,7 +183,7 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 - machine and resources: memory (used / total meter with a 7-day peak tick, 24 h sparkline), every watched disk in one tile
   (free GB, fill rate, "full in" under 72 h, used / size meter with a 7-day peak tick, 7-day free sparkline marking the low; a
   flagged drive coloured and first), build gate from its history (running, queued, builds today, longest
-  wait; RAM dots promised / free; a row per kind with today's count, waits, RAM and a 24 h busy strip) + QA seats, phone lanes, emulators; resources and leases: each a 24 h
+  wait; RAM dots promised / free; a row per kind with today's count, waits, RAM and a 24 h busy strip) + QA seats, phone lanes, emulators, test browsers (leases, never gated); resources and leases: each a 24 h
   RAM sparkline (its scale in the caption) and a lease timeline per holder; a shared always-on service (`shared` row) is never
   an orphan, a leasable one with no live holder is tinted; shells;
 - usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
