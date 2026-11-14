@@ -32,7 +32,8 @@ $heldRow = Join-Path (TkPath $k board -Create) 'kt-held.json'; & $J @{ agent = '
 $tgt = Join-Path (Kd) 'shared'; New-Item -ItemType Directory -Force "$tgt", "$sw/skel-srepo/sub", "$sw/note-srepo" | Out-Null; 'keep' | Set-Content "$tgt/f.txt"; 'mine' | Set-Content "$sw/note-srepo/n.txt"
 $null = New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path "$sw/skel-srepo/sub/node_modules" -Value $tgt
 foreach ($f in Get-ChildItem $sw -Recurse -Force -Attributes !ReparsePoint) { $f.LastWriteTime = (Get-Date).AddDays(-1) }
-$swOut = pwsh @np $swBossy cleanup -WorktreesOnly -WorktreeRoot $sw -Detail 2>&1 | Out-String; $swBr = @(git -C $sr for-each-ref --format='%(refname:short)' refs/heads) -join ','
+$swKl = "$k/skills/crafty/kit.local.json"; $swKlNew = -not (Test-Path $swKl); if ($swKlNew) { & $J @{ protectedBranchesBase = @('main', 'staging/*') } $swKl }   # legacy-like base
+$swOut = pwsh @np $swBossy cleanup -WorktreesOnly -WorktreeRoot $sw -Detail 2>&1 | Out-String; if ($swKlNew) { Remove-Item $swKl }; $swBr = @(git -C $sr for-each-ref --format='%(refname:short)' refs/heads) -join ','
 $swRm = @(1, 2 | ForEach-Object { "$(pwsh @np $swCrafty wt remove -Dir "$sw/wt-srepo" -Root $sw 2>&1) rc=$LASTEXITCODE" }); Remove-Item -LiteralPath $heldRow
 Expect "sweep: merged, mr7, wt-srepo + f/wt gone; main, staging/x, f/open, f/local, checkpointed wt2, link target, note kept; skeleton gone; counts; wt remove after: gone, exit 0 ($swBr | $($swRm -join ' | '))" ($swBr -eq 'f/local,f/open,f/wt2,main,staging/x' -and -not (Test-Path "$sw/skel-srepo") -and (Test-Path "$tgt/f.txt") -and (Test-Path "$sw/note-srepo/n.txt") -and
   (Test-Path "$sw/wt2-srepo") -and $swOut -match 'wt2-srepo: held by a board agent' -and
