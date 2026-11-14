@@ -555,7 +555,7 @@ function Format-KitSuperviseHtml($j) {
   $when = { param($x) $tx = & $toTime $x; if ($tx) { "<span class=tm>$($tx.ToString($(if ($tx.Date -eq $at.Date) { 'HH:mm' } else { 'MM-dd HH:mm' }))) · </span><span class=ago data-t='$($tx.ToString('o'))' title='$($tx.ToString('yyyy-MM-dd HH:mm'))'>$(& $ago $x)</span>" } else { '<span class=m>—</span>' } }   # .ago: the page JS recounts it live
   $minAgo = { param($v) if ("$v" -match '^\s*(\d+(?:\.\d+)?)(?: min)?\s*$') { & $when $at.AddMinutes(-[double]$Matches[1]) } else { & $e $v } }   # sweep-relative minutes -> a live age
   $stCls = { param($s) if ("$s" -match 'STUCK') { 's-stuck' } elseif ("$s" -match '^ACTIVE') { 's-act' } elseif ("$s" -match '^FINISHED') { 's-fin' } else { 's-oth' } }
-  # sparkline (40 px): y max / min labelled at the chart's left edge, a dot on the now value; caption = what, window, now, the low / peak value; $lo = 0: the scale starts at 0; under 2 values: none
+  # sparkline (40 px): max / min labelled left, a dot on now; caption = what, window, now, low / peak; $lo = 0: scale from 0; < 2 values: none
   $spark = { param($vals, [string]$cls, [string]$what, [string]$mark = '', $lo = $null, [string]$unit = '') $vals = @($vals | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ }); if ($vals.Count -lt 2) { return '' }
     $mx = ($vals | Measure-Object -Maximum).Maximum; $mn = if ($null -ne $lo) { [double]$lo } else { ($vals | Measure-Object -Minimum).Minimum }; $xs = { param($i) & $n1 (100 * $i / ($vals.Count - 1)) }
     $yv = { param($v) if ($mx -eq $mn) { 20 } else { 38 - 34 * ($v - $mn) / ($mx - $mn) } }
@@ -569,7 +569,7 @@ function Format-KitSuperviseHtml($j) {
     "<div class=mtr><span class=mb role=img aria-label='$(& $e $cap)'><i class=$tone style='width:$(& $w $v)%'></i>$(if ($null -ne $peak) { "<b class=pk style='left:$(& $w ([double]$peak))%'></b>" })</span><span class=mc>$(& $e $cap)</span></div>" }
   $bar = { param([double]$v, [double]$max, [string]$label, [string]$tone = '') if ($max -le 0) { return '' }; $pc = [math]::Min(100, 100 * $v / $max); $bc = if ($tone) { $tone } elseif ($pc -ge 100) { 'act' } elseif ($pc -ge 80) { 'watch' } else { 'sage' }
     "<span class=bar><i class=$bc style='width:$(& $n1 $pc)%'></i></span><span class=bl>$(& $e $label)</span>" }
-  # every section and sub-section folds: "<title> (<count>)" in its summary (@{ h = html }: icons); count 0 = the summary line only; open state kept per id (page JS)
+  # every section folds: "<title> (<count>)" summary; count 0 = summary only; open state kept per id (page JS)
   $fold = { param([string]$id, [string]$title, $count, [string]$inner, [switch]$Open, [string]$tag = 'h3', [string]$cls = '', [string]$extra = '') $none = "$count" -eq '0'
     "<details class='sec $cls$(if ($none) { ' none' })' id=sec-$id$(if ($Open -and -not $none) { ' open' })><summary><$tag>$(& $e $title)</$tag>$(if ("$count" -ne '') { "<span class=cnt>($(if ($count -is [hashtable]) { $count.h } else { & $e $count }))</span>" })$extra</summary>$(if (-not $none) { "<div class=bd>$inner</div>" })</details>" }
   $section = { param([string]$id, [string]$title, $count, [string]$inner, [switch]$Open, [string]$extra = '') & $fold $id $title $count $inner -Open:$Open -tag h2 -cls top -extra $extra }
@@ -608,7 +608,7 @@ function Format-KitSuperviseHtml($j) {
     @('build|compile|\btests?\b', 'M14 4l6 6-3 3-6-6zM11 7L3 15l3 3 8-8'), @('deploy|release', 'M12 2c4 3 5 8 3 13H9C7 10 8 5 12 2zM9 15l-3 4h3M15 15l3 4h-3M12 8h.01'),
     @('\bMR\b|task|tracker|promot|merge|decision', 'M5 12l4 4 10-10'), @('kit|lint|retro|param', 'M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2'),
     @('agent|shell', 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7v5l3 2'), @('.', 'M5 21V4h12l-2 4 2 4H5'))
-  # a flag text over 25 words: a one-line summary (paths to their leaf, long parentheses folded) that opens to the full text, every word kept (owner, 2026-11-13)
+  # a flag over 25 words: a one-line summary that opens to the full text (owner, 2026-11-13)
   $brief = { param([string]$t) $s = $t -replace '\([^()]{40,}\)', '(…)' -replace '(?:[A-Za-z]:)?(?:[^\s:()]*[\\/]){2,}([^\s\\/:()]+)', '$1'; $wd = @($s -split '\s+' | Where-Object { $_ }); if ($wd.Count -gt 25) { ($wd[0..24] -join ' ') + ' …' } else { $s } }
   $long = { param([string]$t) if (@($t -split '\s+' | Where-Object { $_ }).Count -le 25) { return & $e $t }; "<details class=lx><summary>$(& $e (& $brief $t))</summary><div class=lf>$(& $e $t)</div></details>" }
   $card ={ param($f) $c = Get-KitFlagCells $f; $lv = if ($f.level -eq 'ACT') { 'ACT' } else { 'WATCH' }; $ic = @($fIco | Where-Object { "$($c.kind) $($c.problem)" -match "(?i)$($_[0])" })[0]
@@ -682,13 +682,13 @@ function Format-KitSuperviseHtml($j) {
   # QA seats as slots (filled = taken), up to 24; the numbers stay in the tile
   $dots = { param($u, $m) $u = [int]$u; $m = [math]::Min(24, [int]$m); if ($m -le 0) { return '' }; "<div class=dots role=img aria-label='$u of $m QA seats taken'>$(@(1..$m | ForEach-Object { "<i$(if ($_ -le $u) { ' class=on' })></i>" }) -join '')</div>" }
   $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) }); $memPk = & $agg { $_.mem } max; $usedGB = if ($tot -and $null -ne $memPct) { $tot * [double]$memPct / 100 }
-  # build gate: a row per kind from its history (running, queued, today, waits, RAM promised, a 24 h busy strip); RAM capacity dots; QA seats, phone lanes, emulators
+  # build gate: a row per kind from its history; RAM capacity dots; QA seats, phone lanes, emulators
   $gs = $st.gate; $gateOld = 
 (& $nowCard 'Build gate · QA seats' "$(& $icv run 'running builds' (& $fmt $nw.gr))$(& $icv queue 'queued builds' (& $fmt $nw.gq))$(& $trend $nw.gq $pv.gq -1)<small> · seats </small>$(& $fmt $nw.seats)<small> / $(& $fmt $nw.seatsMax)</small>" "longest wait $(& $fmt $nw.gw) min" "7 days peak wait $(& $agg { $_.gw } max) min · seats $(& $agg { $_.seats } max)" $(if ($nw.gw -ge 30) { 'hot' } elseif ($nw.gq -ge 6) { 'warn' }) "$(& $dots $nw.seats $nw.seatsMax)$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queue, 24 h' 'peak' 0)")
   $gateCard = if (-not $gs) { $gateOld } else {
     $fl = [math]::Max(0, [double]$j.mem.AvailGB - [double]$st.keepFree); $gb = [math]::Min(24, [int][math]::Ceiling([double]$gs.ram + $fl))   # 1 dot = 1 GB: promised to running builds, then free above the floor
     $ramDots = if ($gb -gt 0) { "<div class=dots role=img aria-label='RAM for builds: $(& $n1 $gs.ram) GB promised, $(& $n1 $fl) GB free above the floor'>$(@(1..$gb | ForEach-Object { "<i$(if ($_ -le [math]::Round([double]$gs.ram)) { ' class=on' })></i>" }) -join '')</div><div class=s>RAM: $(& $n1 $gs.ram) GB promised · $(& $n1 $fl) GB free above the $(& $n1 $st.keepFree) GB floor</div>" }
-    # one line per kind: name · hourly heatmap (24 clock hours, shade = busy min on a square-root scale: a short build still shows, the last = now) · a number column each (running, queued, today, wait avg / peak, RAM)
+    # one line per kind: name · 24 h heatmap (square-root shade: a short build still shows) · running, queued, today, waits, RAM
     # under one header row (hour labels, icons); zeros dimmed (owner, 2026-11-13)
     $gCols = @(@('run', 'running builds', ''), @('queue', 'queued builds', ''), @('today', 'builds today', ''), @('wait', 'wait avg, min', 'avg'), @('wait', 'wait peak, min', 'peak'), @('ram', 'RAM GB: now, or up to (24 h peak)', 'GB'))
     $h0 = try { [datetime]$gs.h0 } catch { $null }; if (-not $h0) { $h0 = $at.Date.AddHours($at.Hour - 23) }
@@ -724,7 +724,7 @@ function Format-KitSuperviseHtml($j) {
     "<div class=st data-fit><div class=k>Flags auto-FIXED</div><div class=v>$(& $fmt (& $fxPct 0 $hist.Count))<small>%</small>$(if ($half) { & $trend (& $fxPct $half $hist.Count) (& $fxPct 0 $half) 1 })</div><div class=w>$(($fxFixed | Measure-Object -Sum).Sum) of $(($fxRaised | Measure-Object -Sum).Sum) flags, last $($hist.Count) sweeps</div></div>")
   $UP = Format-KitUsageHtml $st.usage
   # a resource card: its RAM over 24 h (sweep samples' res) as a sparkline; a leasable one also its holders as a timeline (a colour per holder, idle empty);
-  # a shared always-on service (row.shared, e.g. an external DB) is never an orphan; a leasable one with no live holder (none, in grace, no lease) is: released after idle.graceMinutes
+  # a shared service (row.shared) is never an orphan; a leasable one with no live holder is (released after idle.graceMinutes)
   $resCard = { param($r) $nm = "$($r.name)"; $pts = @(@($l24 | Where-Object { [datetime]$_.at -lt $at } | ForEach-Object { $x = if ($_.res) { $_.res.$nm }; [pscustomobject]@{ gb = $(if ($x) { [double]$x.gb } else { 0 }); by = "$(if ($x) { $x.by })".Trim(); at = $_.at } }) + [pscustomobject]@{ gb = [double]$r.gb; by = "$($r.by)".Trim(); at = $at })
     $by = "$($r.by)".Trim(); $orphan = -not $r.shared -and $by -match '^$|\(grace|^no lease$'; $hs = @($pts.by | Where-Object { $_ } | Select-Object -Unique)
     $tl = if (-not $r.shared -and $pts.Count -ge 2) { "<div class=lt role=img aria-label='$(& $e "holders, 24 h: $(if ($hs.Count) { $hs -join ', ' } else { 'none' })")'>$(@(for ($i = 0; $i -lt $pts.Count; $i++) { $h0 = $pts[$i].by; $k = $i; while ($k + 1 -lt $pts.Count -and $pts[$k + 1].by -eq $h0) { $k++ }
@@ -746,7 +746,7 @@ function Format-KitSuperviseHtml($j) {
   $shellHtml = (& $table $shCols @($shRows | ForEach-Object { $sr = $_; , @(@($sr.pid, $sr.owner, @{ h = & $shAge $sr.age }, $sr.state) + @(if ($shDirOn) { & $shDir $sr }) + @(& $cmdCell "$($sr.cmd)") + @(if ($shNextOn) { "$($sr.next)" })) })) -replace '^<div class=tw><table>', "<div class=tw><table><colgroup>$(@($shWidths | ForEach-Object { "<col style='width:$_'>" }) -join '')</colgroup>"
   $setRows = @(if ($st.settings) { $st.settings.PSObject.Properties | ForEach-Object { , @($_.Name, $_.Value) } })
   $chg = @($st.changes | Where-Object { $_ }); [array]::Reverse($chg); $prm = @($st.params | Where-Object { $_ }); $hm = { param($x) if ($x) { try { ([datetime]$x).ToString('MM-dd HH:mm') } catch { "$x" } } else { '' } }   # '' keeps the cell: an empty result drops it from the row
-  # Tuning: every tunable once (params + supervise.* settings), grouped by area; source = default / local config / learned (its learned-from note); the last 10 changes inside
+  # Tuning: every tunable once, by area; source = default / local config / learned; the last 10 changes inside
   $tv = { param($v) if ($null -eq $v) { '' } elseif ($v -is [string] -or $v -is [ValueType]) { "$v" } else { $v | ConvertTo-Json -Compress -Depth 4 } }
   # state (· suffix: config) -> words; pinned / frozen / shadow stay their own word (a shadow is a proposal, not applied)
   $tSrc = { param([string]$s, [string]$note, $dflt) if ($s -match '· |config|override|local') { "local config$(if ("$dflt" -ne '') { " (default $dflt)" })" } elseif ($s -match '^(live|approved|learned)') { "learned ($s$(if ($note) { ", $note" }))" } elseif ($s -match '^default') { 'default' } else { "$s$(if ($note) { " ($note)" })" } }
@@ -795,7 +795,7 @@ function Format-KitSuperviseHtml($j) {
     "<div class=tb><input id=q type=search placeholder='Filter  ( / )' aria-label='Filter the page'><button id=ar class=ib type=button aria-pressed=true aria-label='Auto-refresh every 60 s' title='Auto-refresh every 60 s'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round /></svg></button><button id=tt class=ib type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
   # each number once, in the order the owner acts on: flags, live agents, runs, machine; usage, top steps and the kit's own state folded in Kit internals
   $nRes = @($j.resources | Where-Object { $_ }).Count; $nSh = @($j.shells | Where-Object { $_ }).Count
-  # one folded band (owner, 2026-11-13): Usage, Top steps, Activity, Upkeep, Tuning; its header repeats no number of the page (each sub-fold carries its own)
+  # one folded band (owner, 2026-11-13); its header repeats no number of the page
   $intHtml = (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + (& $fold 'top' 'Top 5 steps, 7 days' $(if ($UP.top) { $UP.topN } else { 0 }) $UP.top -cls sub) + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $UP.kitRuns + $setHtml
   # open by default: flags, agents, runs, machine and resources; Kit internals folded (the page remembers each band and sub-section)
   # Shells: a fold only when one runs; none = one muted word in the Resources header
@@ -812,7 +812,7 @@ function Get-KitSupervisePageCss {
   $dark = '--bg:#0c0c0c;--sf:#161b16;--sf2:#212a21;--fg:#d8dee9;--mt:#8a948a;--ln:#2e3a2e;--sage:#79a86a;--sage2:#9fd48c;--act:#dc9089;--watch:#e0ce8a;--slate:#8fbbd4;--plum:#c495d4;--sh:0 4px 20px rgba(0,0,0,0.45)'
   ':root{--bg:#f4f7f4;--sf:#ffffff;--sf2:#eaefea;--fg:#1a221a;--mt:#5e6c5e;--ln:#d5dfd5;--sage:#647c64;--sage2:#79a86a;--act:#ce8f8a;--watch:#c4b06a;--slate:#5f93a8;--plum:#a074b0;--sh:0 1px 3px rgba(26,34,26,.06),0 1px 2px rgba(26,34,26,.04)}' +
   "[data-theme=dark]{$dark}@media(prefers-color-scheme:dark){:root:not([data-theme=light]){$dark}}" +
-  # no scrollbars (owner 2026-11-09): wheel, touch and keys still scroll; JS marks overflowing boxes .sc and the edges with more content (u d l r) -> faded by the mask
+  # no scrollbars (owner 2026-11-09): JS marks overflowing boxes .sc and their edges with more content (u d l r): faded by the mask
   '*{box-sizing:border-box;scrollbar-width:none}::-webkit-scrollbar{display:none}html{touch-action:manipulation}.sc{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;--u:0px;--d:0px;--l:0px;--r:0px;mask:linear-gradient(#0000,#000 var(--u),#000 calc(100% - var(--d)),#0000),linear-gradient(90deg,#0000,#000 var(--l),#000 calc(100% - var(--r)),#0000);mask-composite:intersect}' +
   '.sc.u{--u:28px}.sc.d{--d:28px}.sc.l{--l:28px}.sc.r{--r:28px}.sc:focus-visible{outline:2px solid var(--sage);outline-offset:-2px}' +
   '#tip{position:fixed;z-index:9;max-width:min(360px,90vw);padding:6px 9px;border-radius:8px;background:var(--fg);color:var(--bg);font-size:12px;box-shadow:var(--sh);pointer-events:none;word-break:break-word}' +
@@ -825,7 +825,7 @@ function Get-KitSupervisePageCss {
   'input[type=search],button{min-height:40px}button{min-width:40px;justify-content:center;font:inherit;font-size:12px;color:var(--mt);background:var(--sf);border:1px solid var(--ln);border-radius:8px;padding:6px 10px;cursor:pointer;display:inline-flex;align-items:center}button:hover{color:var(--fg)}button[aria-pressed=true]{color:var(--sage2)}' +
   '.chip{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.03em;background:var(--sf2);color:var(--mt);white-space:nowrap}.chip::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.85}' +
   '.chip.ok,.s-act{color:var(--sage2);background:color-mix(in srgb,var(--sage) 17%,transparent)}.chip.warn,.s-oth,.lv.WATCH{color:color-mix(in srgb,var(--watch) 55%,var(--fg));background:color-mix(in srgb,var(--watch) 16%,transparent)}.chip.bad,.s-stuck,.lv.ACT{color:color-mix(in srgb,var(--act) 55%,var(--fg));background:color-mix(in srgb,var(--act) 15%,transparent)}.s-fin{color:color-mix(in srgb,var(--slate) 55%,var(--fg));background:color-mix(in srgb,var(--slate) 14%,transparent)}' +
-  # compact (owner 2026-11-13): 8-12 px gaps, every card as tall as its content (grids align to the top, never stretch; ui-check fails a [data-fit] box with 24+ px blank below its content)
+  # compact (owner 2026-11-13): 8-12 px gaps, cards as tall as their content (ui-check fails a [data-fit] box with 24+ px blank)
   '.wrap{max-width:1800px;margin:0 auto;padding:10px 20px 24px}.cg{display:flex;flex-wrap:wrap;gap:var(--cgap,8px);align-items:flex-start}.cg>*{flex:1 1 max(min(100%,var(--cmin,200px)),calc((100% - (var(--cmax,99) - 1) * var(--cgap,8px)) / var(--cmax,99)));min-width:0;box-sizing:border-box}' +
   'details.sec{background:var(--sf);border:1px solid var(--ln);border-radius:10px;box-shadow:var(--sh);margin-top:10px}.st .k{font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.07em;font-weight:600}' +
   '.spark{display:block;width:100%;height:22px;margin-top:4px}.spark .l{fill:none;stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round}.spark .a{fill:currentColor;opacity:.12}' +
@@ -860,7 +860,7 @@ function Get-KitSupervisePageCss {
   '.dks{--cgap:6px}.dk .v{font-size:17px}.dn0{font-weight:650}.tr{font-size:11.5px;font-weight:600;margin-left:8px;letter-spacing:0}.tr.good{color:var(--sage2)}.tr.bad{color:color-mix(in srgb,var(--act) 55%,var(--fg))}.tr.eq{color:var(--mt)}' +
   '.ci{border:1px solid var(--ln);border-radius:8px;padding:6px 10px;min-width:0}.ci .sm,.tn{overflow-wrap:anywhere}.ci .bar{display:block;width:100%;margin:4px 0 2px}.bl:empty{display:none}' +
   'footer{margin-top:12px;text-align:center;font-size:11.5px;color:var(--mt)}[hidden]{display:none!important}' +
-  # graphs: captioned sparklines (a dashed tick marks the low / peak), meters with a 7-day peak tick, lease timelines (a colour per holder), the agents-by-state bar, flag icons
+  # graphs: sparklines, meters (7-day peak tick), lease timelines, the agents-by-state bar, flag icons
   '.spk{margin:4px 0 0}.spw{position:relative}.spk .spark{margin-top:0;height:40px}.ya{position:absolute;left:2px;font-size:10px;line-height:1;color:var(--mt);background:color-mix(in srgb,var(--sf) 70%,transparent);padding:0 2px;border-radius:2px}.ya.hi{top:0}.ya.lo{bottom:0}.nd{position:absolute;right:0;width:7px;height:7px;margin-bottom:-3.5px;border-radius:50%;background:currentColor}.spk figcaption,.mc{display:block;font-size:10.5px;line-height:1.3;color:var(--mt)}.spark .mk{stroke:var(--fg);stroke-width:1;stroke-dasharray:2 2;vector-effect:non-scaling-stroke}' +
   '.mtr{display:flex;align-items:center;gap:8px;margin-top:3px}.mtr .mc{flex:none}.st .k small{text-transform:none;letter-spacing:0;font-weight:500}.mb{flex:1;position:relative;display:block;height:6px;border-radius:3px;background:var(--sf2)}.mb i{display:block;height:100%;border-radius:3px;background:var(--slate)}.mb i.act{background:var(--act)}.mb i.watch{background:var(--watch)}.mb .pk{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;border-radius:1px;background:var(--fg)}' +
   '.lt{display:flex;height:5px;margin-top:3px;border-radius:2px;overflow:hidden;background:var(--sf2)}.lt i{display:block}.lt .h0{background:var(--sage)}.lt .h1{background:var(--slate)}.lt .h2{background:var(--plum)}.lt .h3{background:var(--watch)}.lt .hx{background:none}' +
