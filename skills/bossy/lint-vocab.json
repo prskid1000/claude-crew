@@ -1,0 +1,29 @@
+{
+ "_readme": "kitbag.py lint ARCH-* vocabulary (kit-admin.md lint codes). families: words matched case-insensitive as whole words; default = ARCH-DEFAULT, enum = ARCH-ENUM (3+ distinct quoted values of one family in one file), lesson = ARCH-LESSON. vendorApi / platform: regexes on comment-stripped code lines. A line with `arch-ok: <reason>` or inside legacy-defaults:start / :end markers is skipped.",
+ "families": {
+  "vendors": {"default": true, "lesson": true, "words": ["gitlab", "github", "bitbucket", "gitea", "jira", "clickup", "youtrack", "azure devops", "confluence", "notion", "gdocs", "new relic", "newrelic", "nrql", "sentry", "datadog", "jenkins", "aws", "gws", "glab", "slack", "whatsapp"]},
+  "stacks": {"default": true, "lesson": true, "words": ["spring", "springframework", "elasticsearch", "liquibase", "flyway", "hibernate", "jhipster", "maven", "gradle", "angular", "react-native", "mysql", "mysqldump", "postgres", "systemd", "systemctl", "elastic beanstalk"]},
+  "statuses": {"default": true, "enum": true, "words": ["in test", "promoted", "failedTesting", "failed testing", "for review", "in review", "inTest"]},
+  "production": {"default": true, "words": ["prod", "production", "critical"]},
+  "markers": {"default": true, "words": ["[Unit Test]", "Unit Test", "CU-", "GH-", "GL-", "admin", "tenant_id", "access_token"]},
+  "lanes": {"enum": true, "words": ["web", "api", "app"]},
+  "deployKinds": {"enum": true, "words": ["branch", "awsStack", "ssh", "manual", "laneApk"]},
+  "trackerTypes": {"enum": true, "words": ["clickup", "jira", "linear", "youtrack", "azure", "github", "gitlab"]},
+  "hostTypes": {"enum": true, "words": ["gitlab", "github", "bitbucket", "gitea", "azure"]}
+ },
+ "vendorApi": [
+  "(?:^|[;|({=&]\\s*|\\bthen\\s+|^\\s*)&?\\s*['\"]?(?:glab|gh)['\"]?\\s+(?:api|mr|pr|ci|run|repo|issue|auth|release)\\b",
+  "/api/v4/",
+  "/repos/[{$<]",
+  "\\bprojects/[{$<:][^ ]*merge_requests",
+  "/rest/api/\\d",
+  "\\bsystemctl\\s+(?:restart|start|stop|is-active|show|status)\\b",
+  "(?:^|[;|(&]\\s*|\\s&\\s*|^\\s*)['\"]?(?:mysql|mysqldump)['\"]?\\s+-",
+  "(?:^|[;|(&]\\s*|^\\s*)['\"]?liquibase['\"]?\\s+(?:update|rollback|status|--)",
+  "\\bschtasks(?:\\.exe)?\\s+/"
+ ],
+ "platform": {
+  "calls": ["\\bschtasks\\b", "\\bGet-CimInstance\\b", "\\bGet-WmiObject\\b", "\\bGet-WinEvent\\b", "\\bwmic\\b", "\\breg(?:\\.exe)?\\s+(?:query|add|delete)\\b", "\\btaskkill\\b", "\\bmklink\\b", "\\bcmd(?:\\.exe)?['\"]?\\s+/[cdsk]", "-WindowStyle\\s+\\w", "['\"][\\w.-]+\\.(?:cmd|bat)['\"]", "\\bos\\.startfile\\(", "\\bwinreg\\b", "\\bctypes\\.windll\\b", "CREATE_NO_WINDOW"],
+  "guard": "\\$KitIsWindows|\\$KitIsMac|\\$IsWindows|\\$IsLinux|\\$IsMacOS|Win32NT|\\bos\\.name\\b|\\bsys\\.platform\\b|\\bplatform\\.system\\(|\\bprocess\\.platform\\b"
+ }
+}

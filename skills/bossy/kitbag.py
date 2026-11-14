@@ -19,8 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L633 lint · L1033 README graph · L1136 lint command · L1351 audit ·
-  L1467 registry · L1808 prose · L1959 sections · L2089 budget · L2103 migrate · L2168 plugins · L2222 state lint · L2410 main
+Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1036 README graph · L1139 lint command · L1355 audit ·
+  L1471 registry · L1803 arch lint · L2006 prose · L2157 sections · L2287 budget · L2301 migrate · L2366 plugins ·
+  L2420 state lint · L2608 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -283,7 +284,6 @@ BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template'
 PATHS_JSON = 'skills/crafty/kit.example.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/crafty/lib.ps1', 'skills/crafty/devtools.py', 'skills/pokey/browser.mjs', 'skills/bossy/kitbag.py', 'skills/crafty/spec.mjs'}
 TEXT_EXT = ('.md', '.ps1', '.psm1', '.py', '.js', '.mjs', '.json', '.html', '.txt', '.sh', '.yml', '.yaml', '.ini')
-MIGRATION_LINE = 'one-time migration 2026-11-14'   # lint retired-word check: the owner keeps that one line until the live clone ran it
 JUNK_EXT = ('.apk', '.aab', '.log', '.zip', '.tmp')
 RESERVED = {'nul', 'con', 'prn', 'aux'}
 BLOCKS = ('Load when', 'Not when', 'Hands off to', 'Files')
@@ -899,7 +899,7 @@ def lint(k, g=None, org_terms=None):
         for i, line in enumerate(k.texts.get(f, '').splitlines()):
             if re.search(r'Start-Process\s+(?:-FilePath\s+)?\S*(?:pwsh|powershell|cmd)', line, re.I) and not re.search(r'WindowStyle|NoNewWindow|@hide', line) \
                     and not re.match(r"\s*(#|@\(\s*')", line):
-                bad('HIDDEN-WINDOW', f'{f}:{i + 1}', 'starts a shell without -WindowStyle Hidden / -NoNewWindow: a console window opens on the desktop')
+                bad('HIDDEN-WINDOW', f'{f}:{i + 1}', 'starts a shell without -WindowStyle Hidden / -NoNewWindow: a console window opens on the desktop')   # arch-ok: message text
     # ---- every lease or hold is written with its holder (README "Leases")
     for f in counted:
         if f.endswith('.ps1') and not f.startswith(('tests/',) + GENERATED):
@@ -1002,6 +1002,9 @@ def lint(k, g=None, org_terms=None):
     # ---- registry, schemas, old names, agent types, scaffold stubs
     registry_lint(k, bad)
     params_lint(k, bad)
+    for c, w, m in arch_lint(k):   # the rest print as WARN (cmd_lint)
+        if c in ARCH_COUNTED or c == 'ARCH-VOCAB':
+            bad(c, w, m)
     # ---- PS-CASE on the .ps1 files changed vs origin/main (audit scan: every file, as a WARN)
     rc, o, _ = git(k.dir, 'diff', '--name-only', 'origin/main', '--')
     for f in (o.splitlines() if rc == 0 else []):
@@ -1020,13 +1023,13 @@ def lint(k, g=None, org_terms=None):
             for t, rx in pats:
                 if rx.search(text):
                     bad('ORG-TERM', where, f'contains org term "{t}"')
-    # ---- the retired optional-part word, in every tracked text file (one migration line allowed until the live clone ran it)
+    # ---- the retired optional-part word, in every tracked text file
     retired = re.compile(r'(?i)\bgood(?:y|ies)\b')
     for f in tracked(k.dir):
         if not (f.endswith(TEXT_EXT) or f.startswith(('.githooks/', '.github/'))) or not osp.isfile(osp.join(k.dir, f)):
             continue
         for i, line in enumerate((k.texts.get(f) or read(osp.join(k.dir, f)) or '').split('\n')):
-            if retired.search(line) and MIGRATION_LINE not in line:
+            if retired.search(line):
                 bad('RETIRED-WORD', f'{f}:{i + 1}', 'the retired optional-part word: name the file, adapter or feature instead')
     return probs
 
@@ -1155,7 +1158,8 @@ def cmd_lint(a):
     if '--json' in flags:
         with open(flags['--json'], 'w', encoding='utf-8') as fh:
             json.dump([{'code': c, 'where': w, 'problem': m} for c, w, m in problems], fh, indent=1)
-    warns = [] if '--summary' in flags else literal_warns(k, '--ratchet' in flags)   # not counted (3a: WARN; an error later)
+    warns = [] if '--summary' in flags else literal_warns(k, '--ratchet' in flags) + \
+        [p for p in arch_lint(k) if p[0] not in ARCH_COUNTED | {'ARCH-VOCAB'}]   # not counted (WARN; an error later)
     if '--summary' in flags:
         if problems:
             c, w, m = problems[0]
@@ -1795,6 +1799,200 @@ def literal_warns(k, ratchet=False):
     base = base or {}
     return [('PARAM-LITERAL', f, f'{len(v)} tunable literal(s), baseline {base.get(f, 0)}: lines {", ".join(map(str, v[:8]))}{" ..." if len(v) > 8 else ""} '
              f'-> a {PARAMS_JSON} key + Get-KitParam') for f, v in sorted(sites.items()) if len(v) > base.get(f, 0)]
+
+# ---- arch lint: ARCH-* (core stays neutral: defaults, enums, vendor calls, platform calls, lessons, dead keys); vocab in VOCAB_JSON
+VOCAB_JSON = 'skills/bossy/lint-vocab.json'
+ARCH_COUNTED = {'ARCH-DEAD-KEY'}   # codes counted as problems; the rest print as WARN until the tree is clean (add a code to flip it)
+CODE_EXT = ('.ps1', '.py', '.js', '.mjs')
+
+def word_rx(words):
+    """Whole-word, case-insensitive alternation; a word ending in punctuation (CU-, [Unit Test]) needs no trailing boundary."""
+    alt = '|'.join(re.escape(w) + (r'(?![\w-])' if re.match(r'.*\w$', w) else '') for w in sorted(words, key=len, reverse=True))
+    return re.compile(r'(?<![\w-])(?:' + alt + ')', re.I) if words else None
+
+def code_line(line, cm):
+    """The line without its trailing comment (a comment marker inside quotes is data)."""
+    q = None
+    for i, ch in enumerate(line):
+        if q:
+            q = None if ch == q else q
+        elif ch in '\'"`':
+            q = ch
+        elif line.startswith(cm, i) and (cm != '#' or i == 0 or line[i - 1] in ' \t;{(') and not line.startswith('#requires', i):
+            return line[:i]
+    return line
+
+def arch_lines(f, text):
+    """[(line no, code without comment, raw line)] minus lines with `arch-ok: <why>` and lines inside legacy-defaults:start / :end."""
+    cm = {'.ps1': '#', '.py': '#'}.get(osp.splitext(f)[1], '//')
+    if f.endswith('.ps1'):
+        text = re.sub(r'<#.*?#>', lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
+    elif f.endswith('.py'):   # docstrings (a string alone as a statement) are prose, not calls
+        import tokenize
+        ls, prev = text.split('\n'), tokenize.NEWLINE
+        try:
+            for t in tokenize.generate_tokens(io.StringIO(text).readline):
+                if t.type == tokenize.STRING and prev in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.NL):
+                    for j in range(t.start[0] - 1, t.end[0]):
+                        ls[j] = ''
+                if t.type not in (tokenize.COMMENT, tokenize.NL):
+                    prev = t.type
+        except (tokenize.TokenError, SyntaxError, IndentationError):
+            pass
+        text = '\n'.join(ls)
+    out, skip = [], False
+    for n, raw in enumerate(text.split('\n'), 1):
+        if 'legacy-defaults:start' in raw:
+            skip = True
+        elif 'legacy-defaults:end' in raw:
+            skip = False
+        elif not skip and not re.search(r'arch-ok:\s*\S', raw):
+            out.append((n, code_line(raw, cm) if f.endswith(CODE_EXT) else raw, raw))
+    return out
+
+def default_expr(s):
+    """The default expression at the start of s: up to an unbalanced ) ] }, or ; | at depth 0 (quotes kept)."""
+    d, q = 0, None
+    for i, ch in enumerate(s):
+        if q:
+            q = None if ch == q else q
+        elif ch in '\'"':
+            q = ch
+        elif ch in '([{':
+            d += 1
+        elif ch in ')]}':
+            d -= 1
+            if d < 0:
+                return s[:i]
+        elif ch in ';|' and d == 0 and not s.startswith('||', i):
+            return s[:i]
+    return s
+
+DEFAULT_RX = {'.ps1': (re.compile(r"Get-KitSetting\s+['\"]([\w.]+)['\"]\s+"), re.compile(r'')),   # (config read, default lead-in)
+  '.py': (re.compile(r"""\.get\(\s*['"]([\w.]+)['"]\s*"""), re.compile(r',\s*|\)\s*or\s+')),   # lines that name a *CFG only
+  '.js': (re.compile(r"\b(?:cfg|conf|config|kitConf|CFG)\w*(?:\?\.|\.)([\w?.]+)\s*"), re.compile(r'(?:\|\||\?\?)\s*'))}
+
+def arch_lint(k):
+    """ARCH-* problems [(code, where, msg)]. Exempt: tests/, ports, *.local.*, vendor-named files (basename holds a vendor / stack
+    word), `arch-ok: <why>` lines, legacy-defaults blocks; ENUM and VENDOR-API also adapters/ (DEFAULT, PLATFORM: core moved there too)."""
+    if getattr(k, 'arch', None) is not None:
+        return k.arch
+    voc, err = load_json(osp.join(k.dir, VOCAB_JSON))
+    probs = k.arch = []
+    if err:
+        probs.append(('ARCH-VOCAB', VOCAB_JSON, f'{err}: the ARCH-* rules need it'))
+        return probs
+    fams = voc.get('families') or {}
+    rx_of = {n: word_rx(x.get('words') or []) for n, x in fams.items()}
+    vendor_words = [w for n in ('vendors', 'stacks') for w in (fams.get(n) or {}).get('words', [])]
+    named = lambda f: any(re.sub(r'[\s-]', '', w.lower()) in re.sub(r'[\s_-]', '', osp.basename(f).lower()) for w in vendor_words)
+    base = [f for f in k.files if not f.startswith(('tests/',) + GENERATED) and '.local.' not in f and f != VOCAB_JSON]
+    code = [f for f in base if f.endswith(CODE_EXT)]
+    core = [f for f in code if '/adapters/' not in f and not named(f)]
+    lines = {f: arch_lines(f, k.texts.get(f) or read(osp.join(k.dir, f))) for f in code}
+    selftest = re.compile(r"^\s*@\(\s*'")   # guard self-test rows hold command text as data
+    # ARCH-DEFAULT: a config key's default literal names a vendor, stack, status, env or org marker
+    drx = [rx_of[n] for n, x in fams.items() if x.get('default') and rx_of[n]]
+    for f in [f for f in code if not named(f)]:
+        rx, lead = DEFAULT_RX.get('.js' if f.endswith('.mjs') else osp.splitext(f)[1])
+        for n, c, _ in lines[f]:
+            for m in (rx.finditer(c) if not f.endswith('.py') or re.search(r'\w*CFG\b', c) else ()):
+                if m.group(1).isupper() or not (t := lead.match(c, m.end())):   # upper case: an env var, not a config key
+                    continue
+                expr = default_expr(c[t.end():])
+                lits = [a or b for a, b in re.findall(r"'([^']*)'|\"([^\"]*)\"", expr) if not re.match(r'^<[^>]*>$', a or b)]
+                hit = sorted({h.group(0) for lit in lits for r in drx for h in r.finditer(lit)}, key=str.lower)
+                if hit:
+                    probs.append(('ARCH-DEFAULT', f'{f}:{n}', f'{m.group(1)}: default names {", ".join(hit)}: neutral code default '
+                                  '(off / none / empty), the value in kit.local.json (kitbag.py migrate legacy row)'))
+    # ARCH-ENUM: 3+ values of one vocab family in one file, no `registry:` comment on or above the line
+    for f in core:
+        raw = (k.texts.get(f) or '').split('\n')
+        for fam, x in fams.items():
+            if not x.get('enum'):
+                continue
+            words = {w.lower(): w for w in x.get('words') or []}
+            seen = {}
+            for n, c, _ in lines[f]:
+                if 'registry:' in raw[n - 1] or (n > 1 and 'registry:' in raw[n - 2]):
+                    continue
+                for a, b in re.findall(r"'([^'\n]{1,30})'|\"([^\"\n]{1,30})\"", c):
+                    if (a or b).lower() in words:
+                        seen.setdefault(words[(a or b).lower()], n)
+            if len(seen) >= 3:
+                first = min(seen.values())
+                probs.append(('ARCH-ENUM', f'{f}:{first}', f'{len(seen)} {fam} values ({", ".join(f"{w}:{n}" for w, n in sorted(seen.items(), key=lambda t: t[1]))}): '
+                              'one registry (adapter kind / config key), or a `registry: <where>` comment on the line'))
+    # ARCH-VENDOR-API: vendor CLI / REST calls belong in adapters/ or vendor-named files
+    vrx = [re.compile(p, re.I) for p in voc.get('vendorApi') or []]
+    for f in core:
+        for n, c, _ in lines[f]:
+            if not selftest.match(c) and (h := next((m for r in vrx if (m := r.search(c))), None)):
+                call = h.group(0).strip(' \t;|({=&\'"')[:40]
+                probs.append(('ARCH-VENDOR-API', f'{f}:{n}', f'vendor call "{call}": move it to an adapter verb '
+                              '(skills/<skill>/adapters/<vendor>.ps1|py) and call the verb'))
+    # ARCH-PLATFORM: a Windows-only call needs a platform check on its line, an enclosing block header or an earlier early-exit
+    plat = voc.get('platform') or {}
+    prx, grd = [re.compile(p, re.I) for p in plat.get('calls') or []], re.compile(plat.get('guard') or r'(?!)')
+    for f in [f for f in code if not re.search(r'(?i)windows|win32|schtasks', osp.basename(f))]:   # arch-ok: platform-named files
+        ls = lines[f]
+        for i, (n, c, _) in enumerate(ls):
+            if selftest.match(c) or not (h := next((m for r in prx if (m := r.search(c))), None)) or grd.search(c):
+                continue
+            if not arch_guarded(f, ls, i, grd):
+                probs.append(('ARCH-PLATFORM', f'{f}:{n}', f'Windows-only "{h.group(0).strip()[:30]}" without a platform check: '
+                              'wrap it in if ($KitIsWindows) / os.name == "nt" with an other-OS branch'))
+    # ARCH-LESSON: tracked lessons and rules name a vendor or stack -> LESSONS.local.md / a rules/*.local.md
+    lrx = word_rx([w for x in fams.values() if x.get('lesson') for w in x.get('words') or []])
+    for f in [f for f in base if f == 'LESSONS.md' or re.match(r'rules/[^/]+\.md$', f)]:
+        for n, c, _ in arch_lines(f, k.texts.get(f) or ''):
+            if lrx and (ws := sorted({m.group(0).lower() for m in lrx.finditer(c)})):
+                probs.append(('ARCH-LESSON', f'{f}:{n}', f'names {", ".join(ws)}: a vendor / stack lesson goes in '
+                              + ('LESSONS.local.md (bossy.ps1 learn writes org lessons there)' if f == 'LESSONS.md' else 'a rules/*.local.md')))
+    # ARCH-DEAD-KEY: a key kit.example.json documents (sample or _doc) that no script reads
+    probs += dead_keys(k)
+    return probs
+
+def arch_guarded(f, ls, i, grd):
+    """A platform check on an enclosing block header (braces; py: indentation) or an early exit before line i, within its function."""
+    py = f.endswith('.py')
+    indent = lambda s: len(s) - len(s.lstrip())
+    tot, top, cur = 0, 0, indent(ls[i][1])   # braces: walking up, a line that lifts the open-brace total to a new high encloses line i
+    for n, c, _ in reversed(ls[max(0, i - 80):i]):
+        if not c.strip():
+            continue
+        plain = re.sub(r"'[^']*'|\"[^\"]*\"", '', c)
+        tot += plain.count('{') - plain.count('}')
+        opener = (indent(c) < cur) if py else tot > top
+        if opener:
+            cur, top = indent(c), max(top, tot)
+        if grd.search(c) and (opener or re.search(r'\b(return|exit|continue|throw|raise)\b', c)):
+            return True
+        if re.match(r'\s*(function\s|def\s|class\s)', c) and (opener or not py):
+            return False
+    return False
+
+def dead_keys(k):
+    """ARCH-DEAD-KEY: dotted keys of the kit.example.json sample and _doc names; read = the full key or its last part quoted or as
+    a member (.x) in a code file or .githooks/ (tests and the example itself are no readers)."""
+    ex, err = load_json(osp.join(k.dir, PATHS_JSON))
+    if err or not isinstance(ex, dict):
+        return []
+    keys = dict.fromkeys(key_paths(ex))
+    for d in (ex.get('_doc') or {}):
+        for x in re.split(r'[,\s]+', d):
+            if re.match(r'^[A-Za-z][\w.]*$', x):
+                keys.setdefault(x)
+    readers = '\n'.join(k.texts.get(f) or read(osp.join(k.dir, f)) for f in k.files
+                        if (f.endswith(CODE_EXT) or f.startswith('.githooks/')) and not f.startswith(('tests/',) + GENERATED))
+    probs = []
+    for key in keys:
+        leaf = key.rsplit('.', 1)[-1]
+        if not re.match(r'^[A-Za-z_]\w*$', leaf):
+            continue   # a data name in a map (model id, host), not a config key
+        if not re.search(r"""['"`](?:""" + re.escape(key) + '|' + re.escape(leaf) + r""")['"`.]|[.$]""" + re.escape(leaf) + r'\b', readers):
+            probs.append(('ARCH-DEAD-KEY', PATHS_JSON, f'"{key}" is documented but no script reads it: drop it (and its README row) or read it'))
+    return probs
 
 def _sub_file(kit, rel, fn):   # kitbag_scaffold.py and kitbag_admin.py edit kit files with it, keeping line endings
     p = osp.join(kit, rel)

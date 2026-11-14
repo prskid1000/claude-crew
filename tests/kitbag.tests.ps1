@@ -93,13 +93,13 @@ Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp
 Add-Content (Join-Path $kc 'skills/crafty/templates.md') "`nsee last-${oldSk}s" -Encoding utf8
 Add-Content (Join-Path $kc 'README.md') '', 'run `skills/gone/y.ps1`' -Encoding utf8
 $ngw = 'Go' + 'odies'   # built: the retired word never sits in a kit file
-Set-Content (Join-Path $kc '.githooks/ng') "$ngw here`nthe $ngw line kept (one-time migration 2026-11-14)" -Encoding utf8; git -C $kc add -f .githooks/ng
+Set-Content (Join-Path $kc '.githooks/ng') "$ngw here`nthe $ngw line kept (one-time migration)" -Encoding utf8; git -C $kc add -f .githooks/ng
 $qa2 = Join-Path $kc 'skills/pokey/pokey.ps1'; @(Get-Content $qa2) | Where-Object { $_ -notmatch '^#Requires' } | Set-Content $qa2 -Encoding utf8; Add-Content $qa2 "Start-Process $('pw' + 'sh') -ArgumentList x"   # PS-VERSION, HIDDEN-WINDOW
 $rv = "$kc/agents/revy.md"; (Get-Content $rv -Raw) -replace 'Show me', 'X' | Set-Content $rv -NoNewline
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 Expect 'kitbag lint: MANIFEST (Character), AGENT-TYPE, LOG-DIRECT, PS-VERSION, HIDDEN-WINDOW, OLD-NAME (also last-<old>s), REF-DANGLING, RUNTIME-MAP rp() name missing from KP' ($l2 -match "RUNTIME-MAP\s+workflows/tidy\.js: rp\('agents'\) is not in const KP" -and $l2 -match 'HIDDEN-WINDOW\s+skills/pokey/pokey\.ps1:\d+' -and $l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match 'LOG-DIRECT\s+workflows/tidy\.js:\d+' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/crafty/templates\.md.*$oldSk" -and
   $l2 -match 'MANIFEST\s+agents/revy\.md: the Character block differs' -and $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -match 'PS-VERSION\s+skills/pokey/pokey\.ps1')
-Expect 'kitbag lint: RETIRED-WORD flags the retired word in any tracked file (case-insensitive, .githooks too); the one-time migration line is exempt' ($l2 -match 'RETIRED-WORD\s+\.githooks/ng:1' -and $l2 -notmatch 'RETIRED-WORD\s+\.githooks/ng:2')
+Expect 'kitbag lint: RETIRED-WORD flags the retired word in any tracked file (case-insensitive, .githooks too), no dated exemption line' ($l2 -match 'RETIRED-WORD\s+\.githooks/ng:1' -and $l2 -match 'RETIRED-WORD\s+\.githooks/ng:2')
 # budget: start tokens per role vs 12000 (lint START-BUDGET); repo and tests totals are INFO; a doc no skill leads to = ORPHAN-DOC
 $b2 = & $py -X utf8 $KT2 budget 2>&1 | Out-String
 Add-Content (Join-Path $kc 'agents/rechy.md') ('#' * 40000), 'First read `skills/crafty/lib.ps1` end to end.'; Set-Content (Join-Path $kc 'zz-orphan.md') '# Orphan'

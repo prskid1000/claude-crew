@@ -18,7 +18,7 @@ description: "Load when: you are the main session routed here: launching or supe
 | `params.registry.json` | a timeout, wait or limit is added or changed (every tunable key: learned or fixed); `bossy.ps1 param show` |
 | `adapters/*.ps1` | dot-sourced by bossy.ps1: E1 `supervise`, `board show`, `recover`, `cleanup`, `launch -Check`, `storage`, `track`, `deploy`, `heartbeat`, hooks |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge`, `<kit>/.githooks/post-rewrite` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
-| `kitbag.py` (+ the `kitbag_*.py` it loads), `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
+| `kitbag.py` (+ the `kitbag_*.py` it loads, `lint-vocab.json` its ARCH-* words), `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 | `kit-admin.md` | K1-K3: `kitty` step 0, `revy` kind kit |
 | `deploys.md` | E5: `opsy` deploy steps |
 
