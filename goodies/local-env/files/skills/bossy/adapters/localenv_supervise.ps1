@@ -3,7 +3,7 @@ localenv_supervise.ps1 (goody local-env): the local env in bossy.ps1 supervise, 
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L9 logs · L44 rows · L66 pause · L78 spike · L105 flags · L162 waits
+Sections: L9 logs · L44 rows · L66 pause · L78 spike · L105 flags · L163 waits
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -138,6 +138,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       $fl = @($td.failed | Where-Object { $_ }); [pscustomobject]@{ level = 'ACT'; what = "TRAIN STALLED: $($ev.env) train $($td.id) in '$($td.phase)' ended $(([datetime]$td.at).ToString('HH:mm')): $($td.why); $(@($td.requests).Count) request(s) requeued$(if ($fl.Count) { ", $($fl -join ', ') failed (stalled twice or died 3 times)" })"
         action = "& $($KitCmd.local) status -Env $($ev.env) (the next train runs them); $(if ($fl.Count) { 'failed: their agents look at the build log and redeploy; ' })repeats: kitty kind env with envy.ps1 logs -Env $($ev.env)" }
     }
+    if ($hr = $ev.halfRestored) { [pscustomobject]@{ level = 'ACT'; what = "HALF-RESTORED: $($ev.env) restore to $($hr.mark) failed part way $(([datetime]$hr.at).ToString('HH:mm')): $($hr.why)"; action = "nobody tests on it: kitty kind env, envy.ps1 restore -Env $($ev.env) -Mark $($hr.mark) again (or seed)" } }
     $kf = $ev.keepFreeGB; $was = $last["$($ev.env)/keepFreeGB"]; if ($null -ne $kf) { $seenEnv["$($ev.env)/keepFreeGB"] = [double]$kf }   # a failed / older status has no floor: nothing cached
     if ($null -ne $kf -and $null -ne $was -and [math]::Abs([double]$kf - [double]$was) -ge 1) { [pscustomobject]@{ level = 'INFO'; what = "RAM FLOOR: $($ev.env) keep-free moved $was -> $kf GB ($($ev.keepFree))"; action = 'Nothing to do (learned from 24 h of free RAM; localEnv.keepFreeGB fixes it).' } }
     if ($ev.marks) {

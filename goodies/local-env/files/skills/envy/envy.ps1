@@ -17,9 +17,9 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L30 config · L227 state · L274 layer drops · L346 leases · L472 code · L504 migrations ·
-  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1056 seed · L1136 processes · L1517 daemon ·
-  L1976 cleanup · L2048 doctor · L2101 verbs
+Sections: L30 config · L227 state · L274 layer drops · L346 leases · L473 code · L505 migrations ·
+  L651 shared builds (opt-in services[].shareBuild true · L830 hooks · L902 marks · L1059 seed · L1139 processes · L1520 daemon ·
+  L1980 cleanup · L2052 doctor · L2105 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -365,6 +365,7 @@ function Prune($st) {
       if ([int]$r.stalls -ge $(if ($stall) { 2 } else { 3 })) { $r.status = 'done'; $r.result = @{ outcome = 'failed'; message = "train stalled or died $($r.stalls) times: $why" }; $failed += $r.id } else { $r.status = 'queued' }
     } }
     $st.trainDead = @{ id = $t.id; phase = $t.phase; why = $why; at = (Now); requests = @($t.requests); failed = $failed }   # supervise: TRAIN STALLED
+    if ("$($t.phase)" -match '^restore to (\S+): \d+ structure') { $st.halfRestored = @{ mark = $Matches[1]; at = (Now); why = "train $($t.id) died in '$($t.phase)': $why" } }
     Event $e 'train-dead' @{ id = $t.id; pid = $t.pid; phase = $t.phase; why = $why; failed = $failed }
     $st.train = $null
   }
@@ -1024,7 +1025,9 @@ function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$Us
       $script:RestoreFallback += @($j.fallback | Where-Object { $_ })
       if ($j.error -or -not $j.verified) { return "structure back to mark $($s.mark) failed: $(if ($j.error) { $j.error } else { "still differs: $(@($j.differs) -join ', ')" })" }
     }
-    foreach ($k in @($plan.drops)) { $null = Invoke-DbSql $e "DROP TABLE IF EXISTS ``$(($k -split '\.', 2) -join '`.`')``" }
+    # one session with FK checks off: tables made after the mark reference each other (parent before child failed: mysql 3730)
+    $dropList = @($plan.drops | ForEach-Object { '`' + (($_ -split '\.', 2) -join '`.`') + '`' }) -join ', '
+    if ($dropList) { $null = Invoke-DbSql $e "SET FOREIGN_KEY_CHECKS = 0; DROP TABLE IF EXISTS $dropList; SET FOREIGN_KEY_CHECKS = 1" }
     foreach ($k in @($plan.objectDrops)) { $t, $n = $k -split ':', 2; $null = Invoke-DbSql $e "DROP $t IF EXISTS ``$(($n -split '\.', 2) -join '`.`')``" }
     foreach ($o in @($plan.objects)) { $null = Invoke-DbFb $e 'objects' @('--dir', $o.dir, '--names', (@($o.names) -join ','), '--apply') -Fail }
     $ex = @($script:RestoreFallback | ForEach-Object table)
@@ -1766,8 +1769,9 @@ function Run-Restore($st, $req) {
   foreach ($s in $stop) { Stop-Svc $e $s "restore to $($m.name)" }
   Phase "restore to $($m.name): $(@($plan.steps).Count + @($plan.drops).Count + @($plan.renames).Count) structure step(s), $($plan.statements) row change(s)" $all @($envRepos.Keys)
   $p2 = try { Get-RestorePlan $e $m $schemas $tag } catch { $null }   # writers stopped: the end position is final
-  $err = if (-not $p2 -or @($p2.refused).Count) { "plan after stopping the writers: $(if ($p2) { @($p2.refused | Select-Object -First 3) -join '; ' } else { 'failed' }); the DB is unchanged by the kit" } else { $plan = $p2; Invoke-RestoreDb $e $m $schemas $plan -UseTool:([bool]$req.useTool) }
+  $err = if (-not $p2 -or @($p2.refused).Count) { "plan after stopping the writers: $(if ($p2) { @($p2.refused | Select-Object -First 3) -join '; ' } else { 'failed' }); the DB is unchanged by the kit" } else { $plan = $p2; try { Invoke-RestoreDb $e $m $schemas $plan -UseTool:([bool]$req.useTool) } catch { "restore crashed part way (the DB is half-restored): $("$_".Split("`n")[0])" } }
   if ($err -match 'the DB is unchanged') { & $back }   # the live code runs on the unchanged DB again
+  Update-State $e { param($x) $x.halfRestored = if ($err -and $err -notmatch 'the DB is unchanged') { @{ mark = $m.name; at = (Now); why = $err } } else { $null } }   # status + supervise ACT until a restore passes
   [array]::Reverse($stop)
   foreach ($s in $stop) {
     $art = if ($artifacts[$s.name]) { $artifacts[$s.name] } else { (Read-State $e).services[$s.name].artifact }
@@ -2194,6 +2198,7 @@ function Show-Status([string]$env1) {
     train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); waitSince = $st.train.waitSince; requests = @($st.train.requests).Count
       quietMin = TrainQuietMin $st.train $env1; stallMin = $script:TrainStallMin } })
     trainDead = $(if ($st.trainDead -and ((Get-Date) - [datetime]$st.trainDead.at).TotalHours -lt 2) { [pscustomobject]$st.trainDead })
+    halfRestored = $(if ($st.halfRestored) { [pscustomobject]$st.halfRestored })
     queue = @($st.requests | Where-Object status -eq 'queued' | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch)" })
     services = @($svc)
     leases = @($st.leases.Keys | ForEach-Object { $l = $st.leases[$_]; [pscustomobject]@{ agent = $_; services = @($l.services); until = $(if ($l.owner) { ([datetime]$l.until).ToString('HH:mm') }); release = $l.release; note = $l.note; graceLeft = $l.graceLeft
@@ -2219,6 +2224,7 @@ function Show-Status([string]$env1) {
   if ($Json) { return $o }
   "== $env1  release $($o.release)$(if ($o.releasedAt) { " ($(([datetime]$o.releasedAt).ToString('HH:mm')))" })   controller: $($o.loop)   keep-free $($o.keepFree)   last used $($o.lastUsed)"
   if ($o.train) { "  TRAIN $($o.train.id): $($o.train.phase)$(if ($o.train.waitingFor.Count) { " - waiting for $($o.train.waitingFor -join ', ')" }) ($($o.train.requests) request(s); quiet $($o.train.quietMin)/$($o.train.stallMin) min)" }
+  if ($o.halfRestored) { "  HALF-RESTORED to $($o.halfRestored.mark) at $(([datetime]$o.halfRestored.at).ToString('HH:mm')): $($o.halfRestored.why)" }
   if ($o.trainDead) { "  TRAIN $($o.trainDead.id) ended $(([datetime]$o.trainDead.at).ToString('HH:mm')): $($o.trainDead.why); requeued$(if (@($o.trainDead.failed).Count) { ", failed: $(@($o.trainDead.failed) -join ', ')" })" }
   if ($o.queue) { "  queued: $($o.queue -join '; ')" }
   if ($o.due) { "  on the next lease: $($o.due -join '; ')" }
