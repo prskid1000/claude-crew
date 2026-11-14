@@ -59,8 +59,10 @@ INSERT INTO fa.o VALUES (1, 'a é', 1.5), (2, NULL, 2), (3, 'c', 3); INSERT INTO
     Q 'CREATE TABLE fa.DATABASECHANGELOG (id varchar(255))'
     $oldPath = $env:PATH; $env:PATH = "$bin$([IO.Path]::PathSeparator)$env:PATH"
     try {
-      $lt = & { . $L3; $pf = Join-Path (Kd) 'pending.sql'; $u = Invoke-EnvLiquibase s $repo @(LiquibaseSchemas s) 'update-sql' $pf
-        $t = @((Invoke-DbFb s 'touched' @('--files', $pf)).items); $g = Invoke-EnvLiquibase s $repo @(LiquibaseSchemas s) 'tag --tag=release-3'
+      $lt = & { . $L3; $pf = Join-Path (Kd) 'pending.sql'
+        $set = [pscustomobject]@{ name = 'default'; tool = 'liquibase'; changelog = "$repo/db/changelog/master.xml"; searchPath = $null; schemas = @(LiquibaseSchemas s) }
+        $u = Invoke-MigVerb liquibase pendingSql @{ e = 's'; set = $set; out = $pf }
+        $t = @((Invoke-DbFb s 'touched' @('--files', $pf)).items); $g = Invoke-MigVerb liquibase tag @{ e = 's'; set = $set; tag = 'release-3' }
         "$(@(LiquibaseSchemas s) -join ',')|$u|$($t.table):$($t.kind):$($t.columns)|$g" }
     } finally { $env:PATH = $oldPath }
     $ll = @(Get-Content $lbl -ErrorAction SilentlyContinue)
@@ -120,16 +122,16 @@ CREATE TABLE adm.reg (id int primary key, name varchar(40), det_id int null);
 CREATE TABLE adm.det (id int primary key, reg_id int, foreign key (reg_id) references adm.reg (id));
 ALTER TABLE adm.reg ADD FOREIGN KEY (det_id) REFERENCES adm.det (id);
 CREATE TABLE adm.det_prof (id int primary key, det_id int, foreign key (det_id) references adm.det (id));
-CREATE TABLE adm.log (id int primary key auto_increment, tenant_name varchar(40)); CREATE TABLE adm.stat (id int primary key auto_increment, tenant_id int);
+CREATE TABLE adm.log (id int primary key auto_increment, org_label varchar(40)); CREATE TABLE adm.stat (id int primary key auto_increment, org_ref int);
 CREATE TABLE adm.users (id int primary key, login varchar(40)); CREATE TABLE adm.user_auth (user_id int, role varchar(10), foreign key (user_id) references adm.users (id));
 INSERT INTO adm.reg (id, name) VALUES (1, 't1'), (2, 't2'), (3, 't3keep'); INSERT INTO adm.det VALUES (11, 1), (12, 2); UPDATE adm.reg SET det_id = 11 WHERE id = 1; UPDATE adm.reg SET det_id = 12 WHERE id = 2;
-INSERT INTO adm.det_prof VALUES (21, 11), (22, 12); INSERT INTO adm.log (tenant_name) VALUES ('t1'), ('t2'); INSERT INTO adm.stat (tenant_id) VALUES (1), (2), (3);
+INSERT INTO adm.det_prof VALUES (21, 11), (22, 12); INSERT INTO adm.log (org_label) VALUES ('t1'), ('t2'); INSERT INTO adm.stat (org_ref) VALUES (1), (2), (3);
 INSERT INTO adm.users VALUES (1, 'alice'), (2, 'bob'), (3, 'carol'); INSERT INTO adm.user_auth VALUES (1, 'a'), (2, 'b'), (3, 'c');
 CREATE TABLE t1.u (login varchar(40)); INSERT INTO t1.u VALUES ('alice'), ('bob'); CREATE TABLE t2.u (login varchar(40)); INSERT INTO t2.u VALUES ('bob');
 CREATE TABLE t3keep.u (login varchar(40)); INSERT INTO t3keep.u VALUES ('carol'); CREATE TABLE orph.x (a int);
 "@
   & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb'); expect = @{ max_connections = '151'; sort_buffer_size = '1M' } }
-          tenants = @{ schema = 'adm'; table = 'reg'; key = 'id'; name = 'name'; tables = @('log', 'stat', 'nosuch'); users = @{ table = 'users'; key = 'login'; tenantTable = 'u' }; keep = @('t3keep'); verify = 'echo {tenant}' } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
+          tenants = @{ model = 'schema'; idColumns = @('org_ref'); nameColumns = @('org_label'); schema = 'adm'; table = 'reg'; key = 'id'; name = 'name'; tables = @('log', 'stat', 'nosuch'); users = @{ table = 'users'; key = 'login'; tenantTable = 'u' }; keep = @('t3keep'); verify = 'echo {tenant}' } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
   $tl = Px $L3 tenant list -Env s 2>&1 | Out-String
   $kr = Px $L3 tenant drop -Env s -Name t3keep 2>&1 | Out-String; $krc = $LASTEXITCODE
   $dry = Px $L3 tenant drop -Env s -Name t1 -DryRun 2>&1 | Out-String; $cnt = { "$(Q 'SELECT (SELECT COUNT(*) FROM adm.reg) + (SELECT COUNT(*) FROM adm.det) + (SELECT COUNT(*) FROM adm.det_prof) + (SELECT COUNT(*) FROM adm.log) + (SELECT COUNT(*) FROM adm.stat) + (SELECT COUNT(*) FROM adm.users) + (SELECT COUNT(*) FROM adm.user_auth)')" }
@@ -138,7 +140,7 @@ CREATE TABLE t3keep.u (login varchar(40)); INSERT INTO t3keep.u VALUES ('carol')
   '{"leases":{"L9":{"services":["api"],"agent":"L9","owner":true,"until":"2999-01-01T00:00:00"}}}' | Set-Content $sf3
   $lr = Px $L3 tenant drop -Env s -Name t1 2>&1 | Out-String; $lrc = $LASTEXITCODE; Remove-Item $sf3
   $d1 = Px $L3 tenant drop -Env s -Name t1 2>&1 | Out-String; $d1c = $LASTEXITCODE
-  $after = "$(Q "SELECT GROUP_CONCAT(name ORDER BY id) FROM adm.reg")|$(Q 'SELECT GROUP_CONCAT(id ORDER BY id) FROM adm.det')|$(Q 'SELECT GROUP_CONCAT(id ORDER BY id) FROM adm.det_prof')|$(Q "SELECT GROUP_CONCAT(tenant_name) FROM adm.log")|$(Q 'SELECT GROUP_CONCAT(tenant_id ORDER BY tenant_id) FROM adm.stat')|$(Q 'SELECT GROUP_CONCAT(login ORDER BY id) FROM adm.users')|$(Q 'SELECT GROUP_CONCAT(user_id ORDER BY user_id) FROM adm.user_auth')|$(Q "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 't1'")"
+  $after = "$(Q "SELECT GROUP_CONCAT(name ORDER BY id) FROM adm.reg")|$(Q 'SELECT GROUP_CONCAT(id ORDER BY id) FROM adm.det')|$(Q 'SELECT GROUP_CONCAT(id ORDER BY id) FROM adm.det_prof')|$(Q "SELECT GROUP_CONCAT(org_label) FROM adm.log")|$(Q 'SELECT GROUP_CONCAT(org_ref ORDER BY org_ref) FROM adm.stat')|$(Q 'SELECT GROUP_CONCAT(login ORDER BY id) FROM adm.users')|$(Q 'SELECT GROUP_CONCAT(user_id ORDER BY user_id) FROM adm.user_auth')|$(Q "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 't1'")"
   $d2 = Px $L3 tenant drop -Env s -Name t2 2>&1 | Out-String; $users2 = "$(Q 'SELECT GROUP_CONCAT(login ORDER BY id) FROM adm.users')"
   $ex = @(& { . $L3; Get-DbExpectDoctor s } | ForEach-Object what)
   # refusals that keep data: a composite FK to a planned table, a staying tenant whose users cannot be read, a keepFrom file missing
@@ -147,7 +149,7 @@ CREATE TABLE t3keep.u (login varchar(40)); INSERT INTO t3keep.u VALUES ('carol')
   $cf = (Px $L3 tenant drop -Env s -Name tc 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $cfc = $LASTEXITCODE; $tcLeft = "$(Q "SELECT COUNT(*) FROM adm.reg WHERE name = 'tc'")"
   Q "DROP TABLE adm.cc; CREATE DATABASE tu; RENAME TABLE t3keep.u TO t3keep.u0; CREATE VIEW t3keep.u AS SELECT login FROM t3keep.u0; DROP TABLE t3keep.u0"
   $uf = (Px $L3 tenant drop -Env s -Name tc 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $ufc = $LASTEXITCODE
-  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') }; tenants = @{ schema = 'adm'; table = 'reg'; keepFrom = @('{kit}/no-such-file.txt') } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
+  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') }; tenants = @{ model = 'schema'; idColumns = @('org_ref'); nameColumns = @('org_label'); schema = 'adm'; table = 'reg'; key = 'id'; name = 'name'; keepFrom = @('{kit}/no-such-file.txt') } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
   $kf = (Px $L3 tenant list -Env s 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $kfc = $LASTEXITCODE
   Expect "tenant drop refuses (data kept): a composite FK ($cfc, tc rows $tcLeft), unreadable users of a staying tenant ($ufc), a missing keepFrom file ($kfc)" ($cfc -eq 1 -and $cf -match 'composite key' -and $tcLeft -eq '1' -and $ufc -eq 1 -and $uf -match 'users of t3keep are unreadable' -and $kfc -eq 1 -and $kf -match 'tenants\.keepFrom .*does not exist')
   Expect "tenant list: keep / drop with sizes, a schema without a registry row shown ($(($tl -split "`n" | Where-Object { $_ -match 't1|t3keep|orph' }) -join ' / '))" ($tl -match 'DROP\s+t1\s' -and $tl -match 'KEEP\s+t3keep\s.*tenants\.keep' -and $tl -match 'DROP\s+orph\s.*schema without a registry row' -and $tl -notmatch '\sadm\s|\sfa\s.*registry')
@@ -160,12 +162,12 @@ CREATE TABLE t3keep.u (login varchar(40)); INSERT INTO t3keep.u VALUES ('carol')
   Q @"
 CREATE DATABASE iadm; CREATE DATABASE srcadm; CREATE DATABASE srct; CREATE DATABASE tpl;
 CREATE TABLE iadm.reg (id int primary key auto_increment, name varchar(40), pool_id int, det_id int null, marker varchar(40));
-CREATE TABLE iadm.det (id int primary key auto_increment, tenant_id int, prof int, label varchar(40), foreign key (tenant_id) references iadm.reg (id));
+CREATE TABLE iadm.det (id int primary key auto_increment, org_ref int, prof int, label varchar(40), foreign key (org_ref) references iadm.reg (id));
 ALTER TABLE iadm.reg ADD FOREIGN KEY (det_id) REFERENCES iadm.det (id);
-CREATE TABLE iadm.mig (id int primary key auto_increment, tenant_id int, tenant_name varchar(40), cl varchar(40));
-CREATE TABLE iadm.log (id int primary key auto_increment, tenant_id int, foreign key (tenant_id) references iadm.reg (id));
+CREATE TABLE iadm.mig (id int primary key auto_increment, org_ref int, org_label varchar(40), cl varchar(40));
+CREATE TABLE iadm.log (id int primary key auto_increment, org_ref int, foreign key (org_ref) references iadm.reg (id));
 INSERT INTO iadm.reg (id, name, pool_id) VALUES (5, 'tpl', 7); INSERT INTO iadm.det VALUES (9, 5, 3, 'tpl'); UPDATE iadm.reg SET det_id = 9; INSERT INTO iadm.mig VALUES (2, 5, 'tpl', 'c-old'); INSERT INTO iadm.log VALUES (1, 5);
-CREATE TABLE srcadm.reg (id int primary key, name varchar(40)); CREATE TABLE srcadm.mig (id int primary key, tenant_id int, tenant_name varchar(40), cl varchar(40));
+CREATE TABLE srcadm.reg (id int primary key, name varchar(40)); CREATE TABLE srcadm.mig (id int primary key, org_ref int, org_label varchar(40), cl varchar(40));
 INSERT INTO srcadm.reg VALUES (40, 'srct'); INSERT INTO srcadm.mig VALUES (1, 40, 'srct', 'c-src');
 CREATE TABLE srct.customer (id int primary key auto_increment, name varchar(12), email varchar(80), notes text);
 CREATE TABLE srct.app_user (id int primary key auto_increment, login varchar(50), password_hash varchar(60));
@@ -173,8 +175,8 @@ INSERT INTO srct.customer VALUES (1, 'Ann Real', 'Ann@Real.org', 'mail ann@real.
 CREATE VIEW srct.v AS SELECT c.id, c.name FROM srct.customer c;
 "@
   $src1 = @{ host = '127.0.0.1'; port = $port; user = 'root'; requireReadOnly = $false; adminSchema = 'srcadm' }
-  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') }
-          tenants = @{ schema = 'iadm'; table = 'reg'; key = 'id'; name = 'name'; tables = @('mig'); keep = @('tpl'); verify = 'echo {tenant}'
+  & $J @{ masking = @{ rules = @{ 'customer.name' = 'name' } }; localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') }
+          tenants = @{ model = 'schema'; idColumns = @('org_ref'); nameColumns = @('org_label'); schema = 'iadm'; table = 'reg'; key = 'id'; name = 'name'; tables = @('mig'); keep = @('tpl'); verify = 'echo {tenant}'
             import = @{ template = 'tpl'; skipTables = @('log'); set = @{ 'mig.cl' = '{source:mig.cl}'; 'reg.marker' = 'x-{tenant}' }; profiles = @{ p = @{ passwordHash = 'H'; keepValues = @('admin') } }
               sources = @{ s1 = $src1; wr = @{ host = '127.0.0.1'; port = $port; user = 'root' }; mk = @{ host = '127.0.0.1'; port = $port; user = 'root'; prod = $true }; 'rm-prod' = $src1
                 cr = @{ creds = "echo {`"host`":`"127.0.0.1`",`"port`":$port,`"user`":`"nouser`",`"password`":`"pw-secret-x`"}" } } } } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
@@ -188,7 +190,7 @@ CREATE VIEW srct.v AS SELECT c.id, c.name FROM srct.customer c;
   $im = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt -Mask p 2>&1 | Out-String; $imc = $LASTEXITCODE
   $nid = "$(Q "SELECT id FROM iadm.reg WHERE name = 'newt'")"
   $vw = "$(Q 'SELECT GROUP_CONCAT(name ORDER BY id) = (SELECT GROUP_CONCAT(name ORDER BY id) FROM newt.customer) FROM newt.v')|$(Q "SELECT GROUP_CONCAT(DISTINCT TABLE_SCHEMA) FROM information_schema.VIEW_TABLE_USAGE WHERE VIEW_SCHEMA = 'newt'")"
-  $reg = "$(Q "SELECT CONCAT_WS(',', r.pool_id, r.marker, d.tenant_id = r.id, d.prof, d.label, m.tenant_id = r.id, m.tenant_name, m.cl) FROM iadm.reg r JOIN iadm.det d ON d.id = r.det_id JOIN iadm.mig m ON m.tenant_id = r.id WHERE r.name = 'newt'")|$(Q "SELECT COUNT(*) FROM iadm.log")|$(Q "SELECT CONCAT_WS(',', r.det_id, m.cl) FROM iadm.reg r JOIN iadm.mig m ON m.tenant_id = r.id WHERE r.name = 'tpl'")"
+  $reg = "$(Q "SELECT CONCAT_WS(',', r.pool_id, r.marker, d.org_ref = r.id, d.prof, d.label, m.org_ref = r.id, m.org_label, m.cl) FROM iadm.reg r JOIN iadm.det d ON d.id = r.det_id JOIN iadm.mig m ON m.org_ref = r.id WHERE r.name = 'newt'")|$(Q "SELECT COUNT(*) FROM iadm.log")|$(Q "SELECT CONCAT_WS(',', r.det_id, m.cl) FROM iadm.reg r JOIN iadm.mig m ON m.org_ref = r.id WHERE r.name = 'tpl'")"
   $cdat = @(Q "SELECT CONCAT_WS(',', c.name, c.email, c.notes) FROM newt.customer c ORDER BY id"); $udat = @(Q 'SELECT CONCAT_WS(",", login, password_hash) FROM newt.app_user ORDER BY id')
   $ce = ($cdat[0] -split ',')[1]
   Expect "tenant import: masked copy loaded, registered from the template (cycle, idColumns, name columns, set, {source:..}; skipTables not cloned; template kept), a template-name value renamed, a view under -As reads the copy, verify ran, then seed -Check (its own fixtures miss: exit 1) ($imc | $vw | $reg | $($cdat -join ' ; ') | $($udat -join ' ; '))" ($imc -eq 1 -and $im -match 'tenant newt imported: 2 table\(s\)' -and $im -match 'tenant newt : verify ok' -and $im -match 'seed -Check: 1/2 ok' -and $im -match 'seed -Check not green' -and $vw -eq '1|newt' -and $reg -eq '7,x-newt,1,3,newt,1,newt,c-src|1|9,c-old' -and $ce -match '^u[0-9a-f]{12}@example\.com$' -and $cdat[0] -match "mail $([regex]::Escape($ce))$" -and $udat[1] -eq "$ce,H" -and $udat[0] -eq 'admin,H' -and "$cdat$udat" -notmatch '(?i)real\.org|Ann Real')
@@ -199,7 +201,7 @@ CREATE VIEW srct.v AS SELECT c.id, c.name FROM srct.customer c;
   # a registration that fails (a set column the table lacks) rolls the registry back and drops the new schema
   $kj = Join-Path $k3 'skills/crafty/kit.local.json'; $kc = Get-Content $kj -Raw | ConvertFrom-Json; $kc.localEnv.envs.s.tenants.import.set | Add-Member 'reg.nosuch' 'x'; $kc | ConvertTo-Json -Depth 20 | Set-Content $kj
   $ifl = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt3 -Mask p 2>&1 | Out-String; $iflc = $LASTEXITCODE
-  $gone3 = "$(Q "SELECT (SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'newt3') + (SELECT COUNT(*) FROM iadm.reg WHERE name = 'newt3') + (SELECT COUNT(*) FROM iadm.mig WHERE tenant_name = 'newt3')")"
+  $gone3 = "$(Q "SELECT (SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'newt3') + (SELECT COUNT(*) FROM iadm.reg WHERE name = 'newt3') + (SELECT COUNT(*) FROM iadm.mig WHERE org_label = 'newt3')")"
   Expect "tenant import: a failed registration leaves no schema and no registry row ($iflc | $gone3)" ($iflc -eq 1 -and $ifl -match 'failed, its schema dropped again, its registry rows rolled back' -and $gone3 -eq '0')
   # db.bufferPool: a live lease grows the pool (chunk-aligned), idle shrinks it back; db.expect leaves the pool to it; the doctor row
   & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; bufferPool = @{ busyMB = 200; idleMB = 128 }; expect = @{ innodb_buffer_pool_size = '1G' } } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8

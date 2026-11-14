@@ -1,17 +1,25 @@
 #Requires -Version 7
-# Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# liquibase: crafty.ps1 check -Step migrations on Liquibase XML masters -> devtools.py lbcheck per master (the one under the
-# checked folder first); LBCHECK_CHANGED = changelog files touched since -Since. Returns the worst exit code (-Show: prints the commands).
-# the repo's changelog masters: XML (lbcheck reads them) or, -Other, the YAML / JSON / SQL ones it cannot (UNRUN)
+# Usage: dot-sourced by lib.ps1 and envy.ps1 from adapters/. Exit codes: none here (its verbs exit through their callers).
+# liquibase.ps1: the Liquibase migration adapter (kind migration, name liquibase; selected by migrations.tool,
+# repos[].migrations.tool or localEnv db.migrations.tool / sets[].tool).
+# Verbs: check @{ top; dir; since; show } -> exit code (crafty.ps1 check -Step migrations: devtools.py lbcheck per master)
+#   discover @{ e; dirs; registry } -> one set (several masters: ambiguous) · pendingSql @{ e; set; out } -> $null | error
+#   tag / rollback @{ e; set; tag } -> $null | error · resetEdited @{ e; envRepos; cur; newLayers } -> notes
+#   missingRoutines @{ e } -> { schema, names, files } · historyScopes @{ e } -> the env scopes holding DATABASECHANGELOG
+# A set: { name, tool, repo, base, changelog, dir, searchPath, schemas, registry, ambiguous }; searchPath default: the nearest
+# 'resources' folder above the changelog (classpath-relative includes), else the changelog's folder.
+# Sections: L12 crafty.ps1 check · L46 local env (envy.ps1)
+# ---- crafty.ps1 check: the repo's changelog masters: XML (lbcheck reads them) or, -Other, the YAML / JSON / SQL ones it cannot (UNRUN)
 function Get-LiquibaseMasters([string]$Top, [switch]$Other) {
   @(git -C $Top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' -and ($_ -match '\.xml$') -ne $Other })
 }
-function Invoke-LiquibaseCheck([string]$Top, [string[]]$Masters, [string]$Since, [switch]$Show) {
+# LBCHECK_CHANGED = changelog files (repo-relative paths) touched since -Since; the masters under -Dir (the checked folder) first
+function Invoke-LiquibaseCheck([string]$Top, [string[]]$Masters, [string]$Since, [string]$Dir, [switch]$Show) {
   $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
-  $env:LBCHECK_CHANGED = (@(git -C $Top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $Top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique) -join '|'
+  $env:LBCHECK_CHANGED = (@(git -C $Top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $Top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | Select-Object -Unique) -join '|'
   $rc = 0
   $mine = @($Masters | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $Top $_)) })
-  $under = @($mine | Where-Object { $_.StartsWith($st.dir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) })
+  $under = if ($Dir) { @($mine | Where-Object { $_.StartsWith([IO.Path]::GetFullPath($Dir).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) }) } else { @() }
   if ($under.Count) { $mine = $under }
   foreach ($full in $mine) {
     $a = @($KitCmd.devtools, 'lbcheck', $full, $Since)
@@ -22,17 +30,146 @@ function Invoke-LiquibaseCheck([string]$Top, [string[]]$Masters, [string]$Since,
   }
   if (-not $Show) { $rc }
 }
-# local env (envy dot-sources this file): the Liquibase CLI on one env schema. db.migrateSql unset -> update-sql (the
-# pending changeSets' SQL: the tables a release slices); db.rollback "liquibase" (opt-in) -> tag release-<n> before a release's
-# migrations, rollback to it on restore. The changelog = the repo's master under the service folder (as check finds it).
-function Get-LiquibaseMaster([string]$Dir) {
-  if (-not $Dir -or -not (Test-Path -LiteralPath $Dir)) { return $null }
-  $rel = @(git -C $Dir ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' 2>$null | Where-Object { $_ -match '(?i)liquibase|changelog' })[0]
-  if ($rel) { [IO.Path]::GetFullPath((Join-Path $Dir $rel)) }
+# the check verb: masters lbcheck reads, other tools' files and YAML / SQL masters = UNRUN (exit 5 when nothing else ran)
+function Invoke-LiquibaseRepoCheck($a) {
+  $top = $a.top
+  $masters = @(Get-LiquibaseMasters $top)
+  $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(migrations?|migrate|flyway|alembic|prisma)/(.+/)?[^/]+\.(sql|py|[cm]?[jt]s|rb|php|exs?|cs|go|java|kt)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$|\.Designer\.cs$|ModelSnapshot\.cs$' })
+  $other = @(Get-LiquibaseMasters $top -Other) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
+  if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
+  if (-not $masters) { if ($other.Count) { return 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; return 0 }
+  if ($a.show) { Invoke-LiquibaseCheck -Top $top -Masters $masters -Since $a.since -Dir $a.dir -Show; return 0 }
+  $rc = Invoke-LiquibaseCheck -Top $top -Masters $masters -Since $a.since -Dir $a.dir
+  if (-not $rc -and $other.Count) { 5 } else { $rc }
 }
-# -> the command line ($null: no master or no CLI); the password comes from LIQUIBASE_COMMAND_PASSWORD
-function Get-LiquibaseCmd([string]$Dir, [string]$Jdbc, [string]$User, [string]$Verb) {
-  $m = Get-LiquibaseMaster $Dir; $exe = 'liquibase'   # TODO-PARAM (fixed default)
-  if (-not $m -or -not (Get-Command $exe -ErrorAction SilentlyContinue)) { return $null }
-  "$exe --search-path=`"$(Split-Path $m)`" --changelog-file=`"$(Split-Path $m -Leaf)`" --url=`"$Jdbc`" --username=`"$User`" $Verb"
+
+# ---- local env (envy.ps1): the Liquibase CLI per set and schema
+# every changelog master under $Dir (git-tracked), full paths
+function Get-LiquibaseMasterFiles([string]$Dir) {
+  if (-not $Dir -or -not (Test-Path -LiteralPath $Dir)) { return @() }
+  @(git -C $Dir ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' 2>$null | Where-Object { $_ -match '(?i)liquibase|changelog' } | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $Dir $_)) })
+}
+function Get-LiquibaseSearchPath([string]$Master) {
+  $d = Split-Path $Master
+  for ($p = $d; $p -and (Split-Path $p); $p = Split-Path $p) { if ((Split-Path $p -Leaf) -ieq 'resources') { return $p } }
+  $d
+}
+# -> the command line ($null: no master or no CLI); --changelog-file relative to --search-path; the password from LIQUIBASE_COMMAND_PASSWORD
+function Get-LiquibaseCmd([string]$Master, [string]$SearchPath, [string]$Jdbc, [string]$User, [string]$Verb) {
+  $exe = 'liquibase'   # TODO-PARAM (fixed default)
+  if (-not $Master -or -not (Test-Path -LiteralPath $Master) -or -not (Get-Command $exe -ErrorAction SilentlyContinue)) { return $null }
+  if (-not $SearchPath) { $SearchPath = Get-LiquibaseSearchPath $Master }
+  $rel = [IO.Path]::GetRelativePath($SearchPath, $Master).Replace('\', '/')
+  "$exe --search-path=`"$SearchPath`" --changelog-file=`"$rel`" --url=`"$Jdbc`" --username=`"$User`" $Verb"
+}
+# the env scopes Liquibase manages (a DATABASECHANGELOG table)
+function LiquibaseSchemas([string]$e) {
+  $in = @(EnvSchemas $e | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '; if (-not $in) { return @() }
+  @(Invoke-DbSql $e "SELECT TABLE_SCHEMA FROM information_schema.TABLES WHERE LOWER(TABLE_NAME) = 'databasechangelog' AND TABLE_SCHEMA IN ($in) ORDER BY 1" | ForEach-Object { $_[0] })
+}
+# the Liquibase CLI with one set's changelog on each schema (in order); -Out: stdout of the first schema to that file -> $null or the error
+function Invoke-EnvLiquibase([string]$e, $set, [string[]]$schemas, [string]$verb, [string]$out) {
+  $db = (Get-EnvCfg $e).db; $v = EnvVars $e ([pscustomobject]@{})
+  if ($db.passwordEnv -and $v[[string]$db.passwordEnv]) { $v['LIQUIBASE_COMMAND_PASSWORD'] = $v[[string]$db.passwordEnv] }
+  $done = @()
+  foreach ($sc in $schemas) {
+    $cmd = Get-LiquibaseCmd $set.changelog $set.searchPath ("$($db.jdbc)".Replace('{schema}', $sc)) "$($db.user)" $verb
+    if (-not $cmd) { return "liquibase: changelog $($set.changelog) missing or no liquibase CLI on PATH" }
+    $log = LogFile $e 'db'; Add-Content $log "== $(Now) liquibase $verb ($sc, set $($set.name))"
+    $redir = if ($out) { " > `"$out`"" } else { '' }
+    $code = Invoke-Shell "$cmd$redir" $log $v 1800
+    if ($code) { return "liquibase $verb on $sc failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 3) -join ' | ')$(if ($done.Count) { "; PARTLY: already done on $($done -join ', ')" })" }
+    $out = ''; $done += $sc
+  }
+  $null
+}
+# discovery without db.migrations.sets: one set over every master the env's service folders hold; several -> ambiguous
+function Get-LiquibaseDiscoveredSet($a) {
+  $e = $a.e; $m = @(@($a.dirs) | ForEach-Object { Get-LiquibaseMasterFiles $_.dir } | Select-Object -Unique)
+  if (-not $m.Count) { return @() }
+  $base = @(@($a.dirs) | Where-Object { $m[0].StartsWith([IO.Path]::GetFullPath($_.dir), [StringComparison]::OrdinalIgnoreCase) })[0]
+  $sc = @(LiquibaseSchemas $e)
+  [pscustomobject]@{ name = 'default'; tool = 'liquibase'; repo = $base.repo; base = $base.dir; changelog = $m[0]; dir = $null; searchPath = Get-LiquibaseSearchPath $m[0]; schemas = $sc
+    registry = [bool]($a.registry -and $a.registry -in $sc); ambiguous = $(if ($m.Count -gt 1) { @($m | ForEach-Object { Split-Path $_ -Leaf }) } else { @() }); masters = $m }
+}
+# Liquibase changeSets of one file text: "<author>:<id>" -> body, whitespace collapsed (XML and formatted SQL)
+function Get-ChangeSetBlocks([string]$Text) {
+  $sets = @{}
+  foreach ($m in [regex]::Matches("$Text", '(?s)<changeSet\b(?<a>[^>]*?)(?:/>|>(?<b>.*?)</changeSet>)')) {
+    $a = $m.Groups['a'].Value; $id = if ($a -match '\bid\s*=\s*"(?<v>[^"]*)"') { $Matches.v }; $au = if ($a -match '\bauthor\s*=\s*"(?<v>[^"]*)"') { $Matches.v }
+    if ($id) { $sets["${au}:$id"] = ($m.Value -replace '>\s+<', '><' -replace '\s+', ' ').Trim() }
+  }
+  $parts = [regex]::Split("$Text", '(?im)^(?=--\s*changeset\s)')
+  foreach ($p in $parts) { if ($p -match '(?i)^--\s*changeset\s+(?<au>[^:\s]+):(?<id>\S+)') { $sets["$($Matches.au):$($Matches.id)"] = ($p -replace '\s+', ' ').Trim() } }
+  $sets
+}
+# changeSets whose text differs between two builds of a layer and that the target does not hold yet (unmerged)
+function Get-EditedChangeSets([string]$Old, [string]$New, [string]$Merged) {
+  $o = Get-ChangeSetBlocks $Old; $n = Get-ChangeSetBlocks $New; $t = Get-ChangeSetBlocks $Merged
+  @($n.Keys | Where-Object { $o.ContainsKey($_) -and $o[$_] -ne $n[$_] -and -not $t.ContainsKey($_) } | Sort-Object | ForEach-Object { $k = $_ -split ':', 2; [pscustomobject]@{ author = $k[0]; id = $k[1] } })
+}
+# a rebuilt layer edited an applied changeSet: Liquibase would stop on the checksum; MD5SUM NULL (recomputed on the next run) -> notes
+function Reset-LiquibaseEdited([string]$e, $envRepos, $cur, $newLayers) {
+  foreach ($rn in @($newLayers.Keys)) {
+    $wt = $envRepos[$rn].wt; $tgt = "origin/$($envRepos[$rn].target)"
+    foreach ($l in @($newLayers[$rn] | Where-Object { $_.migrations })) {
+      $prev = @($cur[$rn] | Where-Object { $_.branch -eq $l.branch -and $_.sha -and $_.sha -ne $l.sha })[0]; if (-not $prev) { continue }
+      foreach ($f in @(git -C $wt diff --name-only $prev.sha $l.sha 2>$null | Where-Object { $_ -match $script:MigPattern -or $_ -match '\.sql$' })) {
+        $ids = @(Get-EditedChangeSets "$(git -C $wt show "$($prev.sha):$f" 2>$null)" "$(git -C $wt show "$($l.sha):$f" 2>$null)" "$(git -C $wt show "${tgt}:$f" 2>$null)")
+        if (-not $ids.Count) { continue }
+        if (-not (Get-Command Invoke-DbSql -ErrorAction SilentlyContinue)) { "checksums of edited changeSets in $f ($($l.branch)) not reset: needs adapters/db_presets.ps1"; continue }
+        $leaf = Split-Path $f -Leaf; $like = '%/' + ($leaf -replace '([\\%_])', '\$1'); $bad = @()
+        $scs = @(@(try { Resolve-MigSets $e } catch { @() }) | ForEach-Object { @($_.schemas) } | Where-Object { $_ } | Select-Object -Unique); if (-not $scs.Count) { $scs = @(LiquibaseSchemas $e) }
+        foreach ($sc in $scs) {
+          try { foreach ($c in $ids) { $null = Invoke-DbSql $e "UPDATE $(SqlId $sc).DATABASECHANGELOG SET MD5SUM = NULL WHERE ID = $(SqlQ $c.id) AND AUTHOR = $(SqlQ $c.author) AND (FILENAME = $(SqlQ $leaf) OR FILENAME LIKE $(SqlQ $like))" } }
+          catch { $bad += "$sc ($("$_".Split("`n")[0]))" }
+        }
+        "$rn $($l.branch): changeSet(s) $(@($ids | ForEach-Object { "$($_.author):$($_.id)" }) -join ', ') of $leaf changed since the last build (unmerged): MD5SUM reset; the edited DDL is NOT re-applied (restore -Release, or a new changeSet, when its effect changed)$(if ($bad.Count) { "; FAILED on $($bad -join ', ')" })"
+      }
+    }
+  }
+}
+# a DATABASECHANGELOG FILENAME as a key: lower case, '/' separators, no classpath: prefix or leading '/'
+function ConvertTo-LiquibaseFileKey([string]$f) { ($f.Replace('\', '/') -replace '^(?i)classpath\*?:', '').TrimStart('/').ToLower() }
+# routines a schema's executed changeSet files create (rollback blocks left out) that it lacks -> @{ schema; names; files }, per set:
+# its files keyed by their path under the set's search path, matched to FILENAME by the full path (one leaf name in two folders differs)
+function Get-LiquibaseMissingRoutines([string]$e) {
+  foreach ($ms in @(Resolve-MigSets $e | Where-Object { $_.tool -eq 'liquibase' })) {
+    $roots = if (@($ms.masters).Count -gt 1) { @($ms.masters | ForEach-Object { Get-LiquibaseSearchPath $_ } | Select-Object -Unique) } elseif ($ms.searchPath) { @($ms.searchPath) } elseif ($ms.changelog) { @(Get-LiquibaseSearchPath $ms.changelog) } elseif ($ms.dir) { @($ms.dir) } else { @() }
+    $made = @{}
+    foreach ($root in @($roots | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
+      foreach ($f in Get-ChildItem -LiteralPath $root -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {
+        $t = [IO.File]::ReadAllText($f.FullName); if ($t -notmatch '(?i)\b(PROCEDURE|FUNCTION)\b') { continue }
+        $t = $t -replace '(?is)<rollback>.*?</rollback>|--rollback[^\n]*', ''
+        $last = [ordered]@{}   # in file order: a backfill procedure created, called, then dropped is no routine the schema keeps
+        foreach ($m in [regex]::Matches($t, '(?i)\b(CREATE)\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(|\bDROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?(\w+)')) {
+          if ($m.Groups[1].Success) { $last[$m.Groups[2].Value.ToLower()] = 'c' } else { $last[$m.Groups[3].Value.ToLower()] = 'd' } }
+        $c = @($last.Keys | Where-Object { $last[$_] -eq 'c' }); $d = @($last.Keys | Where-Object { $last[$_] -eq 'd' })
+        if ($c.Count -or $d.Count) { $made[(ConvertTo-LiquibaseFileKey ([IO.Path]::GetRelativePath($root, $f.FullName)))] = @{ create = $c; drop = $d } }
+      }
+    }
+    if (-not $made.Count) { continue }
+    $find = { param([string]$fn) $k = ConvertTo-LiquibaseFileKey $fn; if ($made.ContainsKey($k)) { return $made[$k] }
+      $hit = @($made.Keys | Where-Object { $k.EndsWith("/$_") -or $_.EndsWith("/$k") }); if ($hit.Count -eq 1) { $made[$hit[0]] } }   # absolute or shorter recorded paths
+    foreach ($s in @($ms.schemas)) {
+      $want = [ordered]@{}
+      foreach ($r in @(Invoke-DbSql $e "SELECT FILENAME, MAX(ORDEREXECUTED) o FROM ``$s``.DATABASECHANGELOG WHERE EXECTYPE IN ('EXECUTED', 'RERAN') GROUP BY FILENAME ORDER BY o")) {
+        $m = & $find ([string]$r[0]); if (-not $m) { continue }
+        foreach ($n in $m.create) { $want[$n] = [string]$r[0] }; foreach ($n in $m.drop) { $want.Remove($n) }
+      }
+      $have = @(Invoke-DbSql $e "SELECT LOWER(ROUTINE_NAME) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = '$($s.Replace("'", "''"))'" | ForEach-Object { $_[0] })
+      $gone = @($want.Keys | Where-Object { $_ -notin $have })
+      if ($gone.Count) { @{ schema = $s; names = $gone; files = @($gone | ForEach-Object { $want[$_] } | Select-Object -Unique) } }
+    }
+  }
+}
+Register-KitAdapter migration liquibase @{
+  check           = { param($a) Invoke-LiquibaseRepoCheck $a }
+  discover        = { param($a) Get-LiquibaseDiscoveredSet $a }
+  pendingSql      = { param($a) Invoke-EnvLiquibase $a.e $a.set @(@($a.set.schemas)[0]) 'update-sql' $a.out }
+  tag             = { param($a) Invoke-EnvLiquibase $a.e $a.set @($a.set.schemas) "tag --tag=$($a.tag)" }
+  rollback        = { param($a) Invoke-EnvLiquibase $a.e $a.set @($a.set.schemas) "rollback --tag=$($a.tag)" }
+  resetEdited     = { param($a) Reset-LiquibaseEdited $a.e $a.envRepos $a.cur $a.newLayers }
+  missingRoutines = { param($a) Get-LiquibaseMissingRoutines $a.e }
+  historyScopes   = { param($a) LiquibaseSchemas $a.e }
 }

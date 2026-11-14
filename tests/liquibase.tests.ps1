@@ -31,7 +31,14 @@ $repo = Join-Path (Kd) 'lb-repo'; $lb = Join-Path $repo 'config/liquibase'; New-
  <changeSet id="b5" author="t"><tagDatabase tag="t5"/></changeSet>
 </databaseChangeLog>
 '@ | Set-Content "$lb/changelog/20240102000000_b.xml"
-$DT = Join-Path $k 'skills/crafty/devtools.py'
+$DT = Join-Path $k 'skills/crafty/devtools.py'; $cfgf = Join-Path $k 'skills/crafty/kit.local.json'
+# default (migrations.lbcheck unset): lenient, only a table / column created again without <preConditions>; no stamp pattern: since 0 = all
+$out = & $py -X utf8 $DT lbcheck "$lb/master.xml" 0 2>&1 | Out-String
+Expect "lbcheck default: only the re-added column, no rollback / tagDatabase rules ($(($out -split "`n" | Select-Object -Last 1).Trim()))" ($LASTEXITCODE -eq 1 -and $out -match 'b1: addColumn orders\.note already exists' -and $out -notmatch 'b2:|b3:|b4:' -and $out -match 'ISSUES 1')
+$out = & $py -X utf8 $DT lbcheck "$lb/master.xml" 20240102000000 2>&1 | Out-String
+Expect 'lbcheck default: no stamp pattern and nothing changed -> nothing reported' ($LASTEXITCODE -eq 0 -and $out -match 'ISSUES 0')
+# the legacy rule set (what kitbag.py migrate writes for an older kit.local.json)
+& $J @{ migrations = @{ tool = 'liquibase'; lbcheck = @{ requireRollback = $true; tagDatabaseAlone = $true; stampPattern = '(\d{14})'; roots = @('^(.*?)[\\/]config[\\/]liquibase[\\/]', '^(.*[\\/]resources)[\\/]') } } } $cfgf 8
 $out = & $py -X utf8 $DT lbcheck "$lb/master.xml" 20240102000000 2>&1 | Out-String
 Expect 'lbcheck: re-added column, missing rollback, empty "not reversible" rollback, a rollback beside tagDatabase (alone: fine)' ($LASTEXITCODE -eq 1 -and $out -match 'b1: addColumn orders\.note already exists' -and
   $out -match 'b2: dropColumn without a <rollback>' -and $out -match 'b3: marked not reversible' -and
@@ -44,5 +51,11 @@ Expect 'lbcheck without a master: usage, exit 2' ($LASTEXITCODE -eq 2 -and $out 
 git -C $repo init -q; git -C $repo -c core.autocrlf=false add -A; git -C $repo -c user.name=t -c user.email=t@t commit -q -m lb
 $out = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') check -Dir $repo -Step migrations -Since 20240102000000 2>&1 | Out-String
 Expect 'check -Step migrations runs lbcheck through the plugin' ($LASTEXITCODE -eq 1 -and $out -match '\[check\] liquibase:' -and $out -match 'ISSUES 4')
+Set-Content $cfgf '{}'
+$out = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') check -Dir $repo -Step migrations -Since 20240102000000 2>&1 | Out-String
+Expect 'check -Step migrations: migrations.tool unset = none, not checked, exit 0' ($LASTEXITCODE -eq 0 -and $out -match 'no migration tool configured' -and $out -notmatch 'ISSUES')
+& $J @{ migrations = @{ tool = 'flyway' } } $cfgf 8
+$out = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') check -Dir $repo -Step migrations -Since 20240102000000 2>&1 | Out-String
+Expect 'check -Step migrations: a tool with no kit adapter = UNRUN, exit 5' ($LASTEXITCODE -eq 5 -and $out -match 'migration tool flyway has no kit check')
 Remove-TestKit $k
 Complete-Tests

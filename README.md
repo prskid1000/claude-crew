@@ -231,7 +231,7 @@ dashboard checks a one-row header at desktop width, a text label on every bar an
 | `devices` | {"type": "android"} | type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: swarm-ios.ps1 |
 | `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; containers for deploy intest; env per path |
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge: NOT_MERGED held for approval |
-| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = its own check (else adapters/liquibase.ps1; another tool: UNRUN); exclusiveTests: README Leases; regenerate: wt sync conflicts -&gt; target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = no MR pipelines (CI on deploy branches): pipes no-ci, devtools.py merge on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual, from, paths, serves: bossy deploys.md |
+| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = its own check, else the migrations.tool adapter (envy db.md); exclusiveTests: README Leases; regenerate: wt sync conflicts -&gt; target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = no MR pipelines (CI on deploy branches): pipes no-ci, devtools.py merge on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual, from, paths, serves: bossy deploys.md |
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs, reports (gdocs) |
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2,… | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (big, idle or growing app: one ASK), ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): base of NEXT=&lt;n&gt; (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent (no named wait) / flat-CPU shell = STUCK; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: each section's cadence |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
@@ -492,7 +492,10 @@ flowchart LR
   skills_envy_SKILL_md -->|"Steps 1-6; owner verbs: Rules"| skills_envy_envy_ps1["envy.ps1"]
   skills_envy_SKILL_md -->|"#quot;Train and leases#quot;, #quot;Lanes#quot;, #quot;Config#quot; (shape +…"| skills_envy_reference_md["reference.md"]
   skills_envy_SKILL_md -->|"#quot;DB marks, restore, seed#quot;, #quot;DB temp#quot;, #quot;DB…"| skills_envy_db_md["db.md"]
-  skills_envy_SKILL_md -->|"dot-sourced by envy.ps1 when db.engine is set:…"| skills_envy_adapters_db_presets_ps1["db_presets.ps1"]
+  skills_envy_SKILL_md -->|"kind db-engine: each engine's presets and verbs…"| skills_envy_adapters_db_engines_ps1["db_engines.ps1"]
+  skills_envy_SKILL_md -->|"dot-sourced by envy.ps1: db hooks from the…"| skills_envy_adapters_db_presets_ps1["db_presets.ps1"]
+  skills_envy_SKILL_md -->|"kind tenant-model (tenants.model, default none)…"| skills_envy_adapters_tenant_models_ps1["tenant_models.ps1"]
+  skills_envy_SKILL_md -->|"the schema tenant model: list, drop, import…"| skills_envy_adapters_tenant_schema_ps1["tenant_schema.ps1"]
   skills_envy_SKILL_md -->|"run by envy.ps1 restore, release slices, the…"| skills_envy_adapters_db_flashback_py["db_flashback.py"]
 ```
 <!-- kit-graph:end -->

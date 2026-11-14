@@ -974,23 +974,22 @@ def guard_cmd(a, db, schemas):
 
 # ---- mask: one schema from a source server (mysqldump, streamed: never stored unmasked) or a dump file -> a masked SQL file;
 #      each value masked by sha256(salt, value): the same value gives the same mask in every table (joins and logins stay)
-FIRST = 'Alex Sam Chris Jo Robin Kim Lee Pat Max Ash Drew Jamie Morgan Casey Taylor Jordan Riley Quinn Avery Charlie Ellis Frankie Harper Jesse Kai Logan Noel Reese Rowan Sage Shay Skyler Toby Val Wren Blake Dana Emery Finley Hayden'.split()
-LAST = 'Smith Jones Brown Taylor Wilson Evans Thomas Johnson Roberts Walker Wright Robinson Thompson White Hughes Edwards Green Hall Wood Harris Clarke Jackson Turner Hill Moore Cooper Ward King Baker Harrison Morris Lee Martin Allen Bell Carter Mason Parker Shaw Young'.split()
-STREETS = 'High Street,Station Road,Church Lane,Mill Road,Park Avenue,Victoria Road,Green Lane,Manor Way,Kings Road,Queens Drive,Oak Close,Bridge Street'.split(',')
-PERSONAL = [   # the built-in profile 'personal': table.column globs (lower case, first match wins) -> kind; text columns only
+# generic name pools (masking.names { first, last, streets } replaces them: e.g. a region's own names)
+FIRST = 'Alex Sam Chris Jo Robin Kim Lee Pat Max Ash Drew Jamie Morgan Casey Taylor Jordan Riley Quinn Avery Charlie'.split()
+LAST = 'Doe Roe Poe Lane Park Reed Fox Gray Stone Wells Hart Snow Rivers Hill Brook Field Cole Dale Frost Lake'.split()
+STREETS = 'Main Street,First Avenue,Second Avenue,Park Road,Oak Lane,Elm Street,Lake Drive,Hill Road'.split(',')
+PERSONAL = [   # the built-in profile 'personal': table.column globs (lower case, first match wins) -> kind; text columns only; generic
+    # column names only: an app's own ones (its key / audit columns, name columns of exact tables) go in masking.rules
     ('*.*password*', 'password'), ('*.*passwd*', 'password'), ('*.*token*', 'hash'), ('*.*secret*', 'hash'), ('*.*api_key*', 'hash'),
-    ('*.mfa_key', 'hash'), ('*.reset_key', 'hash'), ('*.activation_key', 'hash'),
     ('*.*email*', 'email'), ('*.*e_mail*', 'email'), ('*.login', 'login'), ('*.username', 'login'), ('*.user_name', 'login'),
-    ('*.created_by', 'login'), ('*.last_modified_by', 'login'), ('*.modified_by', 'login'), ('*.updated_by', 'login'),
     ('*.*phone*', 'shape'), ('*.*mobile*', 'shape'), ('*.*fax*', 'shape'), ('*.tel', 'shape'), ('*.telephone*', 'shape'), ('*.ip_address', 'shape'),
     ('*.first_name', 'first'), ('*.firstname', 'first'), ('*.forename', 'first'), ('*.given_name', 'first'),
     ('*.last_name', 'last'), ('*.lastname', 'last'), ('*.surname', 'last'), ('*.family_name', 'last'),
     ('*.full_name', 'name'), ('*.fullname', 'name'), ('*.contact_name', 'name'), ('*.contact_person', 'name'), ('*.person_name', 'name'),
     ('*.*address*', 'address'), ('*.street*', 'address'),
-    ('*.postcode', 'shape'), ('*.post_code', 'shape'), ('*.postal_code', 'shape'), ('*.zip', 'shape'), ('*.zipcode', 'shape'), ('*.zip_code', 'shape'),
-    ('customer.name', 'name'), ('contact.name', 'name'), ('employee.name', 'name'), ('driver.name', 'name'), ('user.name', 'name'), ('person.name', 'name')]   # exact tables: lookups such as customer_type.name stay
+    ('*.postcode', 'shape'), ('*.post_code', 'shape'), ('*.postal_code', 'shape'), ('*.zip', 'shape'), ('*.zipcode', 'shape'), ('*.zip_code', 'shape')]
 KINDS = {'keep', 'null', 'fixed', 'password', 'hash', 'email', 'login', 'shape', 'first', 'last', 'name', 'address', 'text'}
-LOGINS = {'admin', 'system', 'anonymousUser', 'user'}   # login kind: service accounts kept (with keepValues)
+LOGINS = set()   # login kind: service accounts kept (masking.logins, and keepValues)
 EMAIL = re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}')
 CELL = re.compile(r"'(?:[^'\\]|\\.)*'|[^,()']+", re.S)
 SQL_UNESC = {'0': '\0', "'": "'", '"': '"', 'b': '\b', 'n': '\n', 'r': '\r', 't': '\t', 'Z': '\x1a', '\\': '\\'}
@@ -1000,10 +999,14 @@ class Masker:
     def __init__(s, prof):
         import fnmatch
         s.fn = fnmatch.fnmatchcase
-        own = prof.get('rules') or {}
-        own = list(own.items()) if isinstance(own, dict) else [tuple(r) for r in own]
-        s.rules = [(k.lower(), v if isinstance(v, dict) else {'kind': v}) for k, v in own]
-        if prof.get('extends', 'personal') == 'personal': s.rules += [(k, {'kind': v}) for k, v in PERSONAL]
+        kit = prof.get('_kit') or {}   # kit.local.json masking: rules (after the profile's, before the built-in), logins, names
+        rows = lambda x: list(x.items()) if isinstance(x, dict) else [tuple(r) for r in x or []]
+        ext = prof.get('extends', 'personal') == 'personal'   # masking.rules extend the built-in profile only
+        s.rules = [(k.lower(), v if isinstance(v, dict) else {'kind': v}) for k, v in rows(prof.get('rules')) + (rows(kit.get('rules')) if ext else [])]
+        if ext: s.rules += [(k, {'kind': v}) for k, v in PERSONAL]
+        s.logins = set(kit.get('logins') or LOGINS)
+        nm = kit.get('names') or {}
+        s.first, s.last, s.streets = nm.get('first') or FIRST, nm.get('last') or LAST, nm.get('streets') or STREETS
         bad = [f'{k}: {r.get("kind")}' for k, r in s.rules if r.get('kind') not in KINDS]
         if bad: raise ValueError(f'unknown mask kind ({", ".join(bad)}); kinds: {", ".join(sorted(KINDS))}')
         s.salt = str(prof.get('salt') or 'kit-mask').encode()
@@ -1030,17 +1033,17 @@ class Masker:
             return s.pw
         if k == 'hash': return (d.hex() * 4)[:max(len(v), 8)]
         if k == 'email': return s.email(v)
-        if k == 'login': return v if v in LOGINS or not v.strip() else s.email(v) if '@' in v else 'user_' + s.h('login', v.strip().lower()).hex()[:10]
+        if k == 'login': return v if v in s.logins or not v.strip() else s.email(v) if '@' in v else 'user_' + s.h('login', v.strip().lower()).hex()[:10]
         if k == 'shape':   # digits -> digits, letters -> letters (same case), the rest kept: formats and lengths stay
             out, i = [], 0
             for c in v:
                 b = d[i % len(d)]; i += 1
                 out.append(chr(48 + b % 10) if c.isdigit() else chr((65 if c.isupper() else 97) + b % 26) if c.isascii() and c.isalpha() else c)
             return ''.join(out)
-        if k == 'first': return FIRST[d[0] % len(FIRST)]
-        if k == 'last': return LAST[d[1] % len(LAST)]
-        if k == 'name': return f'{FIRST[d[0] % len(FIRST)]} {LAST[d[1] % len(LAST)]}'
-        if k == 'address': return f'{1 + d[2] % 199} {STREETS[d[3] % len(STREETS)]}'
+        if k == 'first': return s.first[d[0] % len(s.first)]
+        if k == 'last': return s.last[d[1] % len(s.last)]
+        if k == 'name': return f'{s.first[d[0] % len(s.first)]} {s.last[d[1] % len(s.last)]}'
+        if k == 'address': return f'{1 + d[2] % 199} {s.streets[d[3] % len(s.streets)]}'
         return 'masked ' + d.hex()[:8]   # text
 
     def table(s, t, lines):

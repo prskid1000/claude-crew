@@ -4,19 +4,21 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L45 rows · L67 pause · L79 spike · L106 flags · L164 waits · L175 cpu
+Sections: L10 logs · L47 rows · L69 pause · L81 spike · L108 flags · L166 waits · L177 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
 # new error lines per log since its last size (ERROR SPIKE); level words case-sensitive: "WARN ... Error while" is no error.
 # Classes: expected (4xx of negative tests: bad.request, not found, validation) apart; else startup > connection > 5xx > error;
 # dep = the host:port a connection line names (a startup failure caused by a dependency that was down)
+# generic defaults; localEnv.logClasses { expected, startup, connection, 5xx } replaces a class (a framework's own words)
 $script:KitLogClasses = [ordered]@{
-  expected   = '(?i)\bbad\.request\b|\bnot[ .]found\b|\bvalidation\b|MethodArgumentNotValid|ConstraintViolation|\b(BadRequest|NotFound|AccessDenied|Unauthorized|Forbidden)\w*\b|\b(status|HTTP/\S+)\W+4\d\d\b'
-  startup    = '(?i)Application run failed|APPLICATION FAILED TO START|failed to start|BeanCreationException|\brolling back\b|\brollback\b'
-  connection = '(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|\b(elasticsearch|search|mysql|redis|kafka|rabbit\w*)\b.{0,40}\b(not reachable|unreachable|refused|timed? ?out|down)\b'
+  expected   = '(?i)\bbad[ .]request\b|\bnot[ .]found\b|\bvalidation\b|\b(status|HTTP/\S+)\W+4\d\d\b'
+  startup    = '(?i)failed to start|\b(start(up)?|boot|run) failed\b|could not start'
+  connection = '(?i)connection refused|ECONNREFUSED|ConnectException|UnknownHostException|could not connect|connection (timed out|reset)'
   '5xx'      = '(?i)\b(status|HTTP/\S+)\W+5\d\d\b'
 }
+foreach ($__k in @($script:KitLogClasses.Keys)) { $__v = Get-KitSetting "localEnv.logClasses.$__k" $null; if ($__v) { $script:KitLogClasses[$__k] = [string]$__v } }
 function Get-KitLogErrors([string[]]$Files, $Sizes) {
   if (-not $Sizes) { $Sizes = @{} }   # first round: no sizes yet
   foreach ($x in $Files) {

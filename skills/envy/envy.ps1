@@ -8,7 +8,8 @@ Verbs: envs · status · doctor · deploy · wait · use · release · promote �
        merged, gone or orphan ones)
        (owner) up -Services [-Owner] · unhold · restart -Services · down · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
        [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] | import -From <source> -Tenant <schema>
-       [-As <name>] -Mask <profile> [-DryRun] · cleanup [-Quick] [-DryRun] ·
+       [-As <name>] -Mask <profile> [-DryRun] (tenants.model; adapters/tenant_models.ps1) · cleanup [-Quick] [-DryRun] ·
+       <verb> an adapter registers (kind envy-verb) ·
        _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
 Lanes (envs.<env>.lanes.max > 1): -Env <env> = the agent's lane, else (deploy / use / task) the least busy one with room;
   -Lane <k> pins one; -Env <env><k> names one.
@@ -16,11 +17,13 @@ In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.ext
 Out: text; status -Json, envs -Json.
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / seed not green / db presets missing · 2 usage
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
-DB parts: db.engine presets, marks, slices, restore, the cascade guard, tenant = adapters/db_presets.ps1; db.rollback = any tool
-  command or "liquibase" (crafty/adapters/liquibase.ps1; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L32 config · L229 state · L276 layer drops · L348 leases · L476 code · L508 migrations ·
-  L654 shared builds (opt-in services[].shareBuild true · L833 hooks · L905 marks · L1062 seed · L1142 processes · L1523 daemon ·
-  L1983 cleanup · L2055 doctor · L2108 verbs
+DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engine); marks, slices, restore, the cascade guard
+  (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
+  db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
+  name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
+Sections: L35 config · L233 state · L280 layer drops · L352 leases · L480 code · L512 migrations ·
+  L515 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L661 shared builds (opt-in services[].shareBuild true ·
+  L840 hooks · L912 marks · L1094 seed · L1151 processes · L1532 daemon · L1992 cleanup · L2064 doctor · L2117 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -105,9 +108,10 @@ $script:KeepReleases = [int](Opt 'keepReleases' 2)   # staged builds kept per se
 # a start's ready line (services[].readyPattern first): health is checked at once, not at the next 5 s poll (TODO-PARAM)
 $script:ReadyPattern = [string](Opt 'readyPattern' '(?i)\bStarted \S+ in [\d.]+ seconds|Application startup complete|Server running at|Compiled successfully|ready in [\d.]+ ?m?s|Now listening on|Listening on')
 $script:MigPattern = [string](Opt 'migrationPattern' '(?i)^(?!.*\.(md|txt|rst|adoc)$)(.*/)?(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)')
-# adapters/ files are dot-sourced (db_presets.ps1 fills unset db hooks)
-foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue) { . $__adapter.FullName }
-$__lb = Join-Path (Split-Path $PSScriptRoot) 'crafty/adapters/liquibase.ps1'; if (Test-Path -LiteralPath $__lb) { . $__lb }   # liquibase: db.migrateSql default, db.rollback "liquibase"
+# adapters/ files are dot-sourced in name order (db_engines.ps1 registers the engines db_presets.ps1 fills unset db hooks from)
+foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | Sort-Object Name) { . $__adapter.FullName }
+$__lb = Join-Path (Split-Path $PSScriptRoot) 'crafty/adapters/liquibase.ps1'; if (Test-Path -LiteralPath $__lb) { . $__lb }   # the liquibase migration adapter (lib.ps1 loads it too; a test kit may hold envy alone)
+foreach ($__k in 'db-engine', 'tenant-model', 'migration', 'envy-verb') { if (-not $KitAdapters[$__k]) { $KitAdapters[$__k] = @{} } }   # a kind nobody registered: lookups find nothing, never a null index
 $script:OomPattern = 'JavaScript heap out of memory|Reached heap limit'   # also scanned in running services' logs
 $script:FailPattern = [string](Opt 'failPattern' "APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module|$script:OomPattern|java\.lang\.OutOfMemoryError")
 function Now { (Get-Date).ToString('o') }
@@ -508,87 +512,90 @@ function HasMigrations([string]$checkout, [string]$target, [string]$sha) { $d = 
 # ---- migrations: a layer or a target change with migrations changes the shared DB; its release mark keeps what its DDL destroys
 #      (slices: the CREATE text of each touched table, + the rows of a dropped / retyped column or a dropped table); restore undoes it
 function MigRoot([string]$e) { Join-Path (Get-KitPath localenv -Create) "slices/$e" }
-# tables / columns the migrations between $base and $head of repo $rn change: db.migrateSql (the tool's dry-run SQL, run in the
-# repo's service folder of the env worktree), else every table the changed migration files name (a superset)
-function Get-MigTouched([string]$e, [string]$rn, [string]$base, [string]$head) {
-  $r = (EnvRepos $e)[$rn]; $db = (Get-EnvCfg $e).db; $files = @()
-  $s = @(EnvServices $e | Where-Object { $_.repo -and (RepoOf $e $_) -eq $rn })[0]; $dir = if ($s) { SvcDir $e $s } else { $r.wt }
-  $lbs = if (-not $db.migrateSql -and (Get-Command Get-LiquibaseCmd -ErrorAction SilentlyContinue)) { @(LiquibaseSchemas $e)[0] }
-  if ($lbs) {   # liquibase: the pending changeSets' SQL of the first schema Liquibase manages (the others run the same changelog)
-    $f = Join-Path (MigRoot $e) "pending-$rn.sql"; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
-    $err = Invoke-EnvLiquibase $e $dir @($lbs) 'update-sql' $f
-    if (-not $err -and (Test-Path $f) -and (Get-Item $f).Length) { $files = @($f) }
-  } elseif ($db.migrateSql) {
-    $f = Join-Path (MigRoot $e) "pending-$rn.sql"; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
-    $code = Invoke-Shell "$(Expand-Placeholders ([string]$db.migrateSql) $e $(if ($s) { $s } else { [pscustomobject]@{ port = '' } }) $dir '') > `"$f`"" (LogFile $e 'migrations') (EnvVars $e ([pscustomobject]@{})) 600
-    if (-not $code -and (Test-Path $f)) { $files = @($f) }
-  }
-  if (-not $files.Count) {
-    $files = @(git -C $r.wt diff --name-only "$base...$head" 2>$null | Where-Object { $_ -match $script:MigPattern -or $_ -match '(^|/)((deploy|revert)/[^/]+|\d+[_.-][^/]*)\.sql$|(^|/)versions/\w+\.py$' } | ForEach-Object { Join-Path $r.wt $_ } | Where-Object { Test-Path -LiteralPath $_ })
-  }
-  if (-not $files.Count) { return @{ items = @(); unknown = $true; via = 'nothing found' } }
-  $j = Invoke-DbFb $e 'touched' @('--files', ($files -join ','))
-  @{ items = @($j.items); unknown = -not @($j.items).Count; via = $(if ($files[0] -like '*pending-*') { if ($lbs) { 'liquibase update-sql' } else { 'db.migrateSql' } } else { "$($files.Count) migration file(s)" }) }
+# ---- migration tool (kind migration; crafty/adapters/<tool>.ps1): db.migrations { tool, sets, runAt, cmd }; tool default
+#      migrations.tool, else the adapter db.rollback names, else none (no tool verbs: touched tables from the changed files)
+function Get-MigTool([string]$e) {
+  $db = (Get-EnvCfg $e).db; $t = if ($db.migrations.tool) { $db.migrations.tool } else { Get-KitSetting 'migrations.tool' $null }
+  if (-not $t -and $db.rollback -and $KitAdapters['migration']["$($db.rollback)".ToLower()]) { $t = $db.rollback }
+  if ($t) { "$t".ToLower() } else { 'none' }
 }
-# the env schemas Liquibase manages (a DATABASECHANGELOG table)
-function LiquibaseSchemas([string]$e) {
-  $in = @(EnvSchemas $e | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '; if (-not $in) { return @() }
-  @(Invoke-DbSql $e "SELECT TABLE_SCHEMA FROM information_schema.TABLES WHERE LOWER(TABLE_NAME) = 'databasechangelog' AND TABLE_SCHEMA IN ($in) ORDER BY 1" | ForEach-Object { $_[0] })
+function Test-MigVerb([string]$tool, [string]$verb) { $ad = $KitAdapters['migration'][$tool]; [bool]($ad -and $ad[$verb] -is [scriptblock]) }
+function Invoke-MigVerb([string]$tool, [string]$verb, [hashtable]$a) { if (-not (Test-MigVerb $tool $verb)) { throw "migration ${tool}: verb $verb not implemented" }; & $KitAdapters['migration'][$tool][$verb] $a $verb }
+# the tenant registry's scope (tenants.registry.schema or tenants.schema): tagged first, rolled back last
+function Get-RegistryScope([string]$e) { $t = (Get-EnvCfg $e).tenants; if ($t.registry) { $t = $t.registry }; if ($t.schema) { [string]$t.schema } }
+# the env's migration sets: db.migrations.sets [{ name, tool, repo, changelog | dir, searchPath, schemas | schemasQuery, registry }]
+# (paths relative to the repo's service folder), else the tool's discover verb -> { name, tool, repo, base, changelog, dir, searchPath,
+# schemas, registry, ambiguous (several masters, no sets: tag / rollback / touched refuse) }
+function Resolve-MigSets([string]$e) {
+  $tool = Get-MigTool $e; $cfg = (Get-EnvCfg $e).db.migrations; $reg = Get-RegistryScope $e
+  $dirs = @(EnvServices $e | Where-Object { $_.repo } | ForEach-Object { try { [pscustomobject]@{ repo = RepoOf $e $_; dir = SvcDir $e $_ } } catch { } } | Where-Object { $_ -and $_.dir })
+  $sets = @($cfg.sets | Where-Object { $_ })
+  if (-not $sets.Count) { if ($tool -eq 'none' -or -not (Test-MigVerb $tool 'discover')) { return @() }; return @(Invoke-MigVerb $tool 'discover' @{ e = $e; dirs = $dirs; registry = $reg }) }
+  foreach ($s in $sets) {
+    $rel = [string]$(if ($s.changelog) { $s.changelog } else { $s.dir }); $cand = @($dirs | Where-Object { -not $s.repo -or $_.repo -eq $s.repo })
+    $b = @($cand | Where-Object { $rel -and (Test-Path -LiteralPath (Join-Path $_.dir $rel)) })[0]; if (-not $b) { $b = $cand[0] }   # not checked out yet: the first
+    $full = { param($x) if ($x -and $b) { [IO.Path]::GetFullPath((Join-Path $b.dir ([string]$x))) } }
+    $sc = @($s.schemas | Where-Object { $_ } | ForEach-Object { "$_" }); if ($s.schemasQuery) { $sc += @(Invoke-DbSql $e ([string]$s.schemasQuery) | ForEach-Object { $_[0] }) }
+    $sc = @($sc | Where-Object { $_ } | Select-Object -Unique)
+    [pscustomobject]@{ name = [string]$s.name; tool = $(if ($s.tool) { "$($s.tool)".ToLower() } else { $tool }); repo = $b.repo; base = $b.dir; changelog = & $full $s.changelog; dir = & $full $s.dir
+      searchPath = & $full $s.searchPath; schemas = $sc; registry = [bool]($s.registry -or ($reg -and $reg -in $sc)); ambiguous = @(); masters = @() }
+  }
 }
-# the Liquibase CLI in $dir on each schema; -Out: stdout of the first schema to that file -> $null or the error
-function Invoke-EnvLiquibase([string]$e, [string]$dir, [string[]]$schemas, [string]$verb, [string]$out) {
-  $db = (Get-EnvCfg $e).db; $v = EnvVars $e ([pscustomobject]@{})
-  if ($db.passwordEnv -and $v[[string]$db.passwordEnv]) { $v['LIQUIBASE_COMMAND_PASSWORD'] = $v[[string]$db.passwordEnv] }
+# sets in run order: the registry's set and scope first (tag), last with -Rollback; several masters without sets refuse
+function Get-OrderedMigSets([string]$e, [switch]$Rollback) {
+  $sets = @(Resolve-MigSets $e); $amb = @($sets | Where-Object { @($_.ambiguous).Count })
+  if ($amb.Count) { throw "several migration masters ($(@($amb | ForEach-Object { $_.ambiguous }) -join ', ')) and no db.migrations.sets: refused (one set per master: name, changelog, schemas | schemasQuery)" }
+  $reg = Get-RegistryScope $e; $o = @(@($sets | Where-Object registry) + @($sets | Where-Object { -not $_.registry }))
+  foreach ($s in $o) { $x = @(@($s.schemas | Where-Object { $_ -eq $reg }) + @($s.schemas | Where-Object { $_ -ne $reg })); if ($Rollback) { [array]::Reverse($x) }; $s.schemas = $x }
+  if ($Rollback) { [array]::Reverse($o) }
+  , $o
+}
+# db.rollback names the tool (or "tool"): its tag before a release's migrations, its rollback on restore -UseToolRollback
+function Test-MigToolRollback([string]$e) { $rb = "$((Get-EnvCfg $e).db.rollback)".ToLower(); $t = Get-MigTool $e; [bool]($rb -and $t -ne 'none' -and $rb -in 'tool', $t -and (Test-MigVerb $t 'tag')) }
+function Invoke-MigTagRollback([string]$e, [string]$verb, [string]$tag) {
+  $sets = try { @(Get-OrderedMigSets $e -Rollback:($verb -eq 'rollback')) } catch { return "$_" }
+  if (-not $sets.Count) { return "no migration set (db.migrations.tool $(Get-MigTool $e))" }
   $done = @()
-  foreach ($sc in $schemas) {
-    $cmd = Get-LiquibaseCmd $dir ("$($db.jdbc)".Replace('{schema}', $sc)) "$($db.user)" $verb
-    if (-not $cmd) { return "liquibase: no master changelog under $dir or no liquibase CLI on PATH" }
-    $log = LogFile $e 'db'; Add-Content $log "== $(Now) liquibase $verb ($sc)"
-    $redir = if ($out) { " > `"$out`"" } else { '' }
-    $code = Invoke-Shell "$cmd$redir" $log $v 1800
-    if ($code) { return "liquibase $verb on $sc failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 3) -join ' | ')$(if ($done.Count) { "; PARTLY: already done on $($done -join ', ')" })" }
-    $out = ''; $done += $sc
+  foreach ($s in $sets) {
+    $err = try { Invoke-MigVerb $s.tool $verb @{ e = $e; set = $s; tag = $tag } } catch { "$_" }
+    if ($err) { return "$err$(if ($done.Count) { "; PARTLY: already done on set(s) $($done -join ', ')" })" }
+    $done += $s.name
   }
   $null
 }
-# the dir of the first service whose folder holds a Liquibase master (tags and rollbacks run there)
-function LiquibaseDir([string]$e) { @(EnvServices $e | Where-Object { $_.repo } | ForEach-Object { try { SvcDir $e $_ } catch { } } | Where-Object { $_ -and (Get-LiquibaseMaster $_) })[0] }
-# Liquibase changeSets of one file text: "<author>:<id>" -> body, whitespace collapsed (XML and formatted SQL)
-function Get-ChangeSetBlocks([string]$Text) {
-  $sets = @{}
-  foreach ($m in [regex]::Matches("$Text", '(?s)<changeSet\b(?<a>[^>]*?)(?:/>|>(?<b>.*?)</changeSet>)')) {
-    $a = $m.Groups['a'].Value; $id = if ($a -match '\bid\s*=\s*"(?<v>[^"]*)"') { $Matches.v }; $au = if ($a -match '\bauthor\s*=\s*"(?<v>[^"]*)"') { $Matches.v }
-    if ($id) { $sets["${au}:$id"] = ($m.Value -replace '>\s+<', '><' -replace '\s+', ' ').Trim() }
-  }
-  $parts = [regex]::Split("$Text", '(?im)^(?=--\s*changeset\s)')
-  foreach ($p in $parts) { if ($p -match '(?i)^--\s*changeset\s+(?<au>[^:\s]+):(?<id>\S+)') { $sets["$($Matches.au):$($Matches.id)"] = ($p -replace '\s+', ' ').Trim() } }
-  $sets
-}
-# changeSets whose text differs between two builds of a layer and that the target does not hold yet (unmerged)
-function Get-EditedChangeSets([string]$Old, [string]$New, [string]$Merged) {
-  $o = Get-ChangeSetBlocks $Old; $n = Get-ChangeSetBlocks $New; $t = Get-ChangeSetBlocks $Merged
-  @($n.Keys | Where-Object { $o.ContainsKey($_) -and $o[$_] -ne $n[$_] -and -not $t.ContainsKey($_) } | Sort-Object | ForEach-Object { $k = $_ -split ':', 2; [pscustomobject]@{ author = $k[0]; id = $k[1] } })
-}
-# a rebuilt layer edited an applied changeSet: Liquibase would stop on the checksum; MD5SUM NULL (recomputed on the next run) -> notes
-function Reset-EditedChecksums([string]$e, $envRepos, $cur, $newLayers) {
-  foreach ($rn in @($newLayers.Keys)) {
-    $wt = $envRepos[$rn].wt; $tgt = "origin/$($envRepos[$rn].target)"
-    foreach ($l in @($newLayers[$rn] | Where-Object { $_.migrations })) {
-      $prev = @($cur[$rn] | Where-Object { $_.branch -eq $l.branch -and $_.sha -and $_.sha -ne $l.sha })[0]; if (-not $prev) { continue }
-      foreach ($f in @(git -C $wt diff --name-only $prev.sha $l.sha 2>$null | Where-Object { $_ -match $script:MigPattern -or $_ -match '\.sql$' })) {
-        $ids = @(Get-EditedChangeSets "$(git -C $wt show "$($prev.sha):$f" 2>$null)" "$(git -C $wt show "$($l.sha):$f" 2>$null)" "$(git -C $wt show "${tgt}:$f" 2>$null)")
-        if (-not $ids.Count) { continue }
-        if (-not (Get-Command Invoke-DbSql -ErrorAction SilentlyContinue)) { "checksums of edited changeSets in $f ($($l.branch)) not reset: needs adapters/db_presets.ps1"; continue }
-        $leaf = Split-Path $f -Leaf; $like = '%/' + ($leaf -replace '([\\%_])', '\$1'); $bad = @()
-        foreach ($sc in @(LiquibaseSchemas $e)) {
-          try { foreach ($c in $ids) { $null = Invoke-DbSql $e "UPDATE $(SqlId $sc).DATABASECHANGELOG SET MD5SUM = NULL WHERE ID = $(SqlQ $c.id) AND AUTHOR = $(SqlQ $c.author) AND (FILENAME = $(SqlQ $leaf) OR FILENAME LIKE $(SqlQ $like))" } }
-          catch { $bad += "$sc ($("$_".Split("`n")[0]))" }
-        }
-        "$rn $($l.branch): changeSet(s) $(@($ids | ForEach-Object { "$($_.author):$($_.id)" }) -join ', ') of $leaf changed since the last build (unmerged): MD5SUM reset; the edited DDL is NOT re-applied (restore -Release, or a new changeSet, when its effect changed)$(if ($bad.Count) { "; FAILED on $($bad -join ', ')" })"
-      }
+# tables / columns the migrations between $base and $head of repo $rn change: db.migrateSql (the tool's dry-run SQL, run in the
+# repo's service folder of the env worktree), else each set's pendingSql (its first scope), else every table the changed migration
+# files name (a superset; files under a set's dir count too)
+function Get-MigTouched([string]$e, [string]$rn, [string]$base, [string]$head) {
+  $r = (EnvRepos $e)[$rn]; $db = (Get-EnvCfg $e).db; $files = @(); $via = @()
+  $s = @(EnvServices $e | Where-Object { $_.repo -and (RepoOf $e $_) -eq $rn })[0]; $dir = if ($s) { SvcDir $e $s } else { $r.wt }
+  $sets = @(if (-not $db.migrateSql -and (Get-MigTool $e) -ne 'none') { Resolve-MigSets $e | Where-Object { -not $_.repo -or $_.repo -eq $rn } })
+  if (@($sets | Where-Object { @($_.ambiguous).Count }).Count) { throw "several migration masters ($(@($sets.ambiguous) -join ', ')) in $rn and no db.migrations.sets: the touched tables are unknown" }
+  if ($db.migrateSql) {
+    $f = Join-Path (MigRoot $e) "pending-$rn.sql"; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+    $code = Invoke-Shell "$(Expand-Placeholders ([string]$db.migrateSql) $e $(if ($s) { $s } else { [pscustomobject]@{ port = '' } }) $dir '') > `"$f`"" (LogFile $e 'migrations') (EnvVars $e ([pscustomobject]@{})) 600
+    if (-not $code -and (Test-Path $f)) { $files = @($f); $via = @('db.migrateSql') }
+  } else {
+    foreach ($ms in @($sets | Where-Object { @($_.schemas).Count -and (Test-MigVerb $_.tool 'pendingSql') })) {   # the pending SQL of the set's first scope (the others run the same changelog)
+      $f = Join-Path (MigRoot $e) "pending-$rn-$(ConvertTo-KitSlug $ms.name).sql"; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+      $err = try { Invoke-MigVerb $ms.tool 'pendingSql' @{ e = $e; set = $ms; out = $f } } catch { "$_" }
+      if (-not $err -and (Test-Path $f) -and (Get-Item $f).Length) { $files += $f; $via += "$($ms.tool) update-sql$(if ($ms.name -ne 'default') { " ($($ms.name))" })" }
     }
   }
+  if (-not $files.Count) {
+    $setDirs = @($sets | Where-Object { $_.dir -and $r.wt } | ForEach-Object { [IO.Path]::GetRelativePath($r.wt, $_.dir).Replace('\', '/').TrimEnd('/') + '/' } | Where-Object { $_ -notmatch '^\.\./' })
+    $files = @(git -C $r.wt diff --name-only "$base...$head" 2>$null | Where-Object { $f0 = $_; $_ -match $script:MigPattern -or $_ -match '(^|/)((deploy|revert)/[^/]+|\d+[_.-][^/]*)\.sql$|(^|/)versions/\w+\.py$' -or @($setDirs | Where-Object { $f0.StartsWith($_) }).Count } | ForEach-Object { Join-Path $r.wt $_ } | Where-Object { Test-Path -LiteralPath $_ })
+    $via = @("$($files.Count) migration file(s)")
+  }
+  if (-not $files.Count) { return @{ items = @(); unknown = $true; via = 'nothing found' } }
+  $j = Invoke-DbFb $e 'touched' @('--files', ($files -join ','))
+  @{ items = @($j.items); unknown = -not @($j.items).Count; via = ($via -join ', ') }
 }
+# the tool's resetEdited verb: a rebuilt layer edited an applied migration unit (liquibase: changeSet checksums reset) -> notes
+function Reset-EditedChecksums([string]$e, $envRepos, $cur, $newLayers) {
+  $tool = Get-MigTool $e; if (Test-MigVerb $tool 'resetEdited') { Invoke-MigVerb $tool 'resetEdited' @{ e = $e; envRepos = $envRepos; cur = $cur; newLayers = $newLayers } }
+}
+
 # restore.after: derived state outside the DB (marker resets, reindex, cache clears); after a restore, and before a release with
 # migrations starts unless the hook says "onMigrations": false
 function Invoke-RestoreAfter([string]$e, [string]$mark, [switch]$Migrations) {
@@ -906,12 +913,32 @@ function Test-Smoke([string]$e) {
 # migrations recorded after it rolled back, its code started (db.engine mysql / mariadb: adapters/db_presets.ps1)
 $script:MarkMax = [int](Opt 'marks.max' 60)   # TODO-PARAM (fixed default)
 function MarksOn([string]$e) { [bool](Get-Command Test-DbMarks -ErrorAction SilentlyContinue) -and (Test-DbMarks $e) }
-# the env's schemas: db.schemas (names) + db.schemasQuery (one name per row), else db.name
-function EnvSchemas([string]$e) {
+# the env's data scopes (schemas / databases): db.schemas (names) + db.schemasQuery (one name per row), else db.name; + the tenant
+# model's scopes verb (adapters/tenant_models.ps1), when it has one
+function Get-DataScopes([string]$e) {
   $db = (Get-EnvCfg $e).db; $s = @($db.schemas | Where-Object { $_ } | ForEach-Object { "$_" })
   if ($db.schemasQuery) { $s += @(Invoke-DbSql $e ([string]$db.schemasQuery) | ForEach-Object { $_[0] }) }
   if (-not $s.Count -and $db.name) { $s = @("$($db.name)") }
+  $m = "$((Get-EnvCfg $e).tenants.model)".ToLower(); $ad = if ($m) { $KitAdapters['tenant-model'][$m] }
+  if ($ad -and $ad.scopes -is [scriptblock]) { $s += @(& $ad.scopes @{ e = $e } 'scopes') }
   @($s | Where-Object { $_ } | Select-Object -Unique)
+}
+function EnvSchemas([string]$e) { Get-DataScopes $e }
+# a restore's scopes: the mark's own (recorded when it was taken), else today's; a scope of the mark gone since (a dropped tenant)
+# refuses while the registry scope is restored (its rows would come back without their data); scopes made after it: a warning
+function Get-MarkScopes([string]$e, $m) {
+  $now = @(Get-DataScopes $e); $script:ScopeWarn = @()
+  if (-not @($m.schemas).Count) { return $now }
+  $gone = @($m.schemas | Where-Object { $_ -notin $now }); $reg = Get-RegistryScope $e
+  if ($gone.Count -and $reg -and $reg -in @($m.schemas)) { throw "scope(s) $($gone -join ', ') of mark $($m.name) are gone since (dropped after it): a restore would bring back their $reg rows without their data - refused (re-import them, or restore to a later mark)" }
+  $new = @($now | Where-Object { $_ -notin @($m.schemas) }); if ($new.Count) { $script:ScopeWarn = @("scope(s) $($new -join ', ') made after mark $($m.name): left as they are$(if ($reg) { " (their $reg rows go: the tenant verb list shows them)" })") }
+  @($m.schemas | Where-Object { $_ -notin $gone })
+}
+# restore -Schemas: the registry scope is in it whenever a tenant scope is (else that tenant's registry rows stay as they are now)
+function Test-RestoreScopes([string]$e, [string[]]$schemas) {
+  $reg = Get-RegistryScope $e
+  if ($reg -and $reg -notin $schemas -and @($schemas | Where-Object { $_ -ne $reg }).Count -and (Get-DataScopes $e) -contains $reg) { throw "restore -Schemas $($schemas -join ',') leaves out the registry scope ${reg}: their registry rows would not come back - refused (add $reg)" }
+  $schemas
 }
 # kind: release | use | owner | baseline; $repos = the code it stands for (default: the live release)
 # the env's own DB service (a service it runs on db.port, e.g. a lane's copy); down = nothing writes: marks wait, watchdog rests
@@ -924,10 +951,15 @@ function New-Mark([string]$e, [string]$name, [string]$kind, $repos, [int]$releas
     Update-State $e { param($x) $x.pendingMarks = @(@($x.pendingMarks) | Where-Object { $_ -and $_.name -ne $name }) + @(@{ name = $name; kind = $kind; repos = $repos; release = $release }) }
     return $name
   }
+  $sch = try { @(Get-DataScopes $e) } catch { @() }
+  if ((Get-Command Test-CascadeGuard -ErrorAction SilentlyContinue) -and (Test-CascadeGuard $e)) {   # a scope no earlier mark had (a tenant added since): its triggers before the position
+    $last = @(@((Read-State $e).marks) | Where-Object { $_ -and @($_.schemas).Count } | Select-Object -Last 1)[0]
+    if ($last -and @($sch | Where-Object { $_ -notin @($last.schemas) }).Count) { try { $null = Install-DbGuard $e } catch { } }
+  }
   $pos = Get-DbPos $e
   Update-State $e { param($x)
     $code = if ($repos) { $repos } else { $x.release.repos }
-    $m = @{ name = $name; kind = $kind; at = (Now); pos = $pos; release = $(if ($release -ge 0) { $release } else { [int]$x.release.n }); repos = ($code | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable) }
+    $m = @{ name = $name; kind = $kind; at = (Now); pos = $pos; schemas = $sch; release = $(if ($release -ge 0) { $release } else { [int]$x.release.n }); repos = ($code | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable) }
     $all = @(@($x.marks) | Where-Object { $_ -and $_.name -ne $name }) + @($m)
     $x.marks = @(@($all | Where-Object { $_.kind -ne 'baseline' } | Select-Object -Last $script:MarkMax) + @($all | Where-Object kind -eq 'baseline' | Select-Object -Last 2) | Sort-Object { [datetime]$_.at })
   }
@@ -1018,7 +1050,7 @@ function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$Us
   try {
     if ($UseTool -or "$($db.restoreVia)" -eq 'tool-then-kit') {
       if (-not $db.rollback) { return 'restoreVia tool-then-kit needs db.rollback' }
-      $err = if ("$($db.rollback)" -eq 'liquibase' -and (Get-Command Get-LiquibaseCmd -ErrorAction SilentlyContinue)) { Invoke-EnvLiquibase $e (LiquibaseDir $e) @(LiquibaseSchemas $e) "rollback --tag=release-$($m.release)" }
+      $err = if (Test-MigToolRollback $e) { Invoke-MigTagRollback $e 'rollback' "release-$($m.release)" }
         else { Invoke-Hook $e 'rollback' @{ mark = $m.name; release = "$($m.release)"; tag = "release-$($m.release)" } }
       if ($err) { return $(if ($err -match '; PARTLY: ') { "db.rollback failed part way (the DB is partly rolled back; restore again or seed): $err" } else { "db.rollback failed, the DB is unchanged by the kit: $err" }) }
     }
@@ -1076,33 +1108,10 @@ function Test-SeedItem([string]$e, $it) {
   $want = if ($it.check.expect) { [string]$it.check.expect } else { '^[1-9]\d*$' }
   @{ state = $(if (-not $v -or $v -eq '0') { 'missing' } elseif ($v -notmatch $want) { 'drift' } else { 'ok' }); got = $v }
 }
-# Liquibase: routines a schema's executed changeSet files create (rollback blocks left out) that it lacks -> @{ schema; names; files }
-# (a restore fallback or a tenant reset dropped them while DATABASECHANGELOG kept the rows, so Liquibase never runs them again)
-function Get-MissingRoutines([string]$e) {
-  if (-not (Get-Command Get-LiquibaseMaster -ErrorAction SilentlyContinue)) { return }
-  $dir = LiquibaseDir $e; if (-not $dir) { return }
-  $made = @{}
-  foreach ($f in Get-ChildItem -LiteralPath (Split-Path (Get-LiquibaseMaster $dir)) -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {
-    $t = [IO.File]::ReadAllText($f.FullName); if ($t -notmatch '(?i)\b(PROCEDURE|FUNCTION)\b') { continue }
-    $t = $t -replace '(?is)<rollback>.*?</rollback>|--rollback[^\n]*', ''
-    $last = [ordered]@{}   # in file order: a backfill procedure created, called, then dropped is no routine the schema keeps
-    foreach ($m in [regex]::Matches($t, '(?i)\b(CREATE)\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(|\bDROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?(\w+)')) {
-      if ($m.Groups[1].Success) { $last[$m.Groups[2].Value.ToLower()] = 'c' } else { $last[$m.Groups[3].Value.ToLower()] = 'd' } }
-    $c = @($last.Keys | Where-Object { $last[$_] -eq 'c' }); $d = @($last.Keys | Where-Object { $last[$_] -eq 'd' })
-    if ($c.Count -or $d.Count) { $made[$f.Name.ToLower()] = @{ create = $c; drop = $d } }
-  }
-  if (-not $made.Count) { return }
-  foreach ($s in @(LiquibaseSchemas $e)) {
-    $want = [ordered]@{}
-    foreach ($r in @(Invoke-DbSql $e "SELECT FILENAME, MAX(ORDEREXECUTED) o FROM ``$s``.DATABASECHANGELOG WHERE EXECTYPE IN ('EXECUTED', 'RERAN') GROUP BY FILENAME ORDER BY o")) {
-      $m = $made[(Split-Path ([string]$r[0]) -Leaf).ToLower()]; if (-not $m) { continue }
-      foreach ($n in $m.create) { $want[$n] = [string]$r[0] }; foreach ($n in $m.drop) { $want.Remove($n) }
-    }
-    $have = @(Invoke-DbSql $e "SELECT LOWER(ROUTINE_NAME) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = '$($s.Replace("'", "''"))'" | ForEach-Object { $_[0] })
-    $gone = @($want.Keys | Where-Object { $_ -notin $have })
-    if ($gone.Count) { @{ schema = $s; names = $gone; files = @($gone | ForEach-Object { $want[$_] } | Select-Object -Unique) } }
-  }
-}
+# the tool's missingRoutines verb: routines a scope's applied migrations create that it lacks -> @{ schema; names; files }
+# (a restore fallback or a tenant reset dropped them while the history table kept the rows, so the tool never runs them again)
+function Get-MissingRoutines([string]$e) { $tool = Get-MigTool $e; if (Test-MigVerb $tool 'missingRoutines') { Invoke-MigVerb $tool 'missingRoutines' @{ e = $e } } }
+
 # -Tables (a restore's fallback): only the items whose tables name one of them (schema.table or table) and what they need; none named: all
 function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
   $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { throw "[$e] no seed file $f (envs.$e.seed)" }
@@ -1349,7 +1358,7 @@ function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
 }
 # a start waits for its dependsOn to be HEALTHY (a train may restart one meanwhile; one whose own start still waits for room
 # is waited for past startMinutes); a start that fails on a dependency connection waits for them again and retries once
-$script:DepFailPattern = '(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|whilst connecting to|\bES client\b|elasticsearch.{0,40}(unreachable|refused|not reachable|timed? ?out)'   # TODO-PARAM (fixed default)
+$script:DepFailPattern = [string](Opt 'logClasses.dependency' '(?i)connection refused|ECONNREFUSED|ConnectException|UnknownHostException|could not connect|connection (timed out|reset)')   # a dependency down at start (localEnv.logClasses.dependency)
 # a dependency that is down and that nobody starts is claimed (status waiting, waitFor dep: the loop leaves it) and started here
 # a train's DB steps (marks, slices, migration checks, the guard, a restore) on a lane whose own DB service rests: a start in
 # progress is waited for, else the train starts it (-Latest: a start that got there first wins) -> its lines; throws when it fails
@@ -1665,7 +1674,7 @@ function Run-Train {
     $svcs = @($switch | Where-Object { (RepoOf $e $_) -in $set })
     if ($relMark -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) {
       foreach ($s in $svcs) { Stop-Svc $e $s 'rollback: DB restore' }
-      $rm = Find-Mark (Read-State $e) $relMark 0; $sch = @(EnvSchemas $e)
+      $rm = Find-Mark (Read-State $e) $relMark 0; $sch = try { @(Get-MarkScopes $e $rm) } catch { @(Get-DataScopes $e) }
       $err = try { $rp = Get-RestorePlan $e $rm $sch "rb-$tag"; if (@($rp.refused).Count) { "refused: $(@($rp.refused | Select-Object -First 3) -join '; ')" } else { Invoke-RestoreDb $e $rm $sch $rp } } catch { "$_".Split("`n")[0] }
       $notes.Add($(if ($err) { "db restore to mark $relMark FAILED, the DB keeps the migrations' changes: $err" } else { "db restored to mark $relMark (structure from its slices, rows by flashback)" })); $flag.restored = $true; $flag.fallback = -not $err -and @($script:RestoreFallback).Count
     }
@@ -1693,8 +1702,8 @@ function Run-Train {
   if ($ok.Count -and (MarksOn $e)) {   # the DB before this release's code first runs: restore -Release / a rollback come back here
     $code = @{}; foreach ($k in $st2.release.repos.Keys) { $code[$k] = $st2.release.repos[$k] }; foreach ($k in $repoOut.Keys) { $code[$k] = $repoOut[$k] }
     $relMark = try { New-Mark $e "release-$newN" 'release' $code $newN } catch { $notes.Add("mark release-$newN failed (no restore point): $("$_".Split("`n")[0])"); $null }
-    if ($relMark -and $migRepos.Count -and "$((Get-EnvCfg $e).db.rollback)" -eq 'liquibase' -and (Get-Command Get-LiquibaseCmd -ErrorAction SilentlyContinue)) {   # opt-in tool rollback: its tag
-      $te = Invoke-EnvLiquibase $e (LiquibaseDir $e) @(LiquibaseSchemas $e) "tag --tag=release-$newN"; if ($te) { $notes.Add("liquibase tag release-$newN failed (restore -UseToolRollback cannot use it): $te") }
+    if ($relMark -and $migRepos.Count -and (Test-MigToolRollback $e)) {   # opt-in tool rollback: its tag (the registry's set and scope first)
+      $te = Invoke-MigTagRollback $e 'tag' "release-$newN"; if ($te) { $notes.Add("$(Get-MigTool $e) tag release-$newN failed (restore -UseToolRollback cannot use it): $te") }
     }
     if ($relMark -and $migRepos.Count) {
       Phase "slices before the migrations of $($migRepos -join ', ')" $block @($affected)
@@ -1731,7 +1740,7 @@ function Run-Train {
     $sf = Test-Smoke $e
     if ($sf) { $rb = @($ok | Where-Object { $_ -notin $keptRepos }); if ($rb.Count) { & $rollback $rb "smoke check failed: $sf" }; if ($keptRepos.Count) { $notes.Add("smoke check failed with $($keptRepos -join ', ') waiting for a dependency (kept): $sf") } }
   }
-  if ($migRepos.Count -and (MarksOn $e)) {   # migrations may add / change cascading foreign keys or the child columns the guard copies
+  if ($migRepos.Count -and (MarksOn $e) -and (Test-CascadeGuard $e)) {   # migrations may add / change cascading foreign keys or the child columns the guard copies
     try { $g = Install-DbGuard $e; if ($g.installed -or $g.removed) { $notes.Add("cascade guard after the migrations: $($g.installed) trigger(s) installed, $($g.removed) removed") } }
     catch { $notes.Add("cascade guard re-install failed (a restore past a cascading delete seeds the child tables): $("$_".Split("`n")[0])") }
   }
@@ -1748,7 +1757,7 @@ function Run-Restore($st, $req) {
   $back = { foreach ($k in @($repoOut.Keys)) { $null = Sync-Repo $e $envRepos[$k] @(Layers $st $k) -NoFetch -Base "$($st.release.repos[$k].targetSha)" }; $repoOut.Clear(); $artifacts.Clear() }
   $refuse = { param($why) & $back; $results[$req.id] = @{ outcome = 'refused'; message = "nothing changed: $why" }; Record-Train }
   $m = try { Find-Mark $st $req.mark 0 } catch { & $refuse "$_"; return }
-  $schemas = @($req.schemas | Where-Object { $_ }); if (-not $schemas.Count) { $schemas = @(EnvSchemas $e) }
+  $schemas = @($req.schemas | Where-Object { $_ }); if (-not $schemas.Count) { $schemas = try { @(Get-MarkScopes $e $m) } catch { & $refuse "$_".Split("`n")[0]; return }; foreach ($w in @($script:ScopeWarn)) { $notes.Add($w) } }
   Phase "restore to $($m.name): plan"
   try { Ensure-DbUp $e ([int]$st.release.n) } catch { & $refuse "the db service did not start: $("$_".Split("`n")[0])"; return }
   $plan = try { Get-RestorePlan $e $m $schemas $tag } catch { & $refuse "plan failed: $("$_".Split("`n")[0])"; return }
@@ -2105,11 +2114,18 @@ function Get-Doctor([string]$e) {
   }
   @($r)
 }
-# ---- verbs: owner / brief asks; calls return within -Wait min (8)
+# ---- verbs: owner / brief asks; calls return within -Wait min (8). Adapters add verbs (kind envy-verb: @{ run = { ... }; ops = @(..) },
+#      run inside Invoke-LocalEnv with its parameters and helpers in scope; e.g. tenant in adapters/tenant_models.ps1)
+$script:EnvyVerbs = @('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')
+function Test-EnvyVerb([string]$v) {
+  $reg = if ($KitAdapters['envy-verb']) { @($KitAdapters['envy-verb'].Keys) } else { @() }
+  if ($v -in $script:EnvyVerbs -or $v -in $reg) { return $true }
+  throw "unknown verb '$v' (verbs: $(@($script:EnvyVerbs + $reg | Where-Object { $_ -notlike '_*' }) -join ', '); adapters/*.ps1 add more: kind envy-verb)"
+}
 function Invoke-LocalEnv {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'tenant', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
-  [Parameter(Position = 1)][ValidateSet('', 'list', 'drop', 'import')][string]$Op = '',
+  [Parameter(Mandatory, Position = 0)][ValidateScript({ Test-EnvyVerb $_ })][string]$Action,
+  [Parameter(Position = 1)][string]$Op = '',   # a registered verb's operation (tenant list | drop | import)
   [string]$From, [string]$Tenant, [string]$As, [string]$Mask,
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
@@ -2278,10 +2294,11 @@ switch ($Action) {
     if (-not (MarksOn $e)) { throw "[$e] restore needs marks: db.engine mysql or mariadb (adapters/db_presets.ps1)" }
     if (-not $Mark -and $Release -lt 0) { throw 'restore needs -Mark <name> or -Release <n> (envy.ps1 mark -Env <env> lists them)' }
     $st = Read-State $e; $m = Find-Mark $st $Mark $Release
-    $sch = if ($Schemas.Count) { $Schemas } else { @(EnvSchemas $e) }
+    $sch = if ($Schemas.Count) { Test-RestoreScopes $e $Schemas } else { @(Get-MarkScopes $e $m) }
     if ($DryRun) {
       $p = Get-RestorePlan $e $m $sch "dryrun-$(Get-Date -Format 'yyyyMMddHHmmss')"
       "[$e] restore to $($m.name) ($($m.kind), $(([datetime]$m.at).ToString('yyyy-MM-dd HH:mm')), release $($m.release)) - dry run, nothing changes:"
+      if (-not $Schemas.Count) { foreach ($w in @($script:ScopeWarn)) { "  WARN $w" } }
       RestorePlanText $p | ForEach-Object { "  $_" }
       foreach ($rn in @($m.repos.Keys)) { $mr = $m.repos[$rn]; "  code $rn : $("$($mr.targetSha)".Substring(0, [math]::Min(9, "$($mr.targetSha)".Length))) + $(@($mr.layers | Where-Object { $_ }).Count) layer(s): $(@($mr.layers | Where-Object { $_ } | ForEach-Object branch) -join ', ')" }
       if (@($p.refused).Count) { exit 1 }; return
@@ -2290,36 +2307,10 @@ switch ($Action) {
     "[$e] restore to $($m.name) queued as $rid (holders are told to pause)"; Exit-Request (Wait-Request $rid)
   }
   'seed' { Invoke-Seed $e -Check:$Check; if ($script:SeedBad) { exit 1 } }
-  'tenant' {   # owner / coordinator: list = keep / drop with sizes; drop -Name a,b [-DryRun] (adapters/db_presets.ps1)
-    if (-not (Get-Command Invoke-TenantDrop -ErrorAction SilentlyContinue)) { throw "[$e] tenant needs db.engine mysql / mariadb (adapters/db_presets.ps1)" }
-    if ($Op -eq 'drop') {
-      $tn = @(Split-KitList $Name); if (-not $tn.Count) { throw 'tenant drop needs -Name <tenant>[,<tenant>]' }
-      Invoke-TenantDrop $e $tn -DryRun:$DryRun; return
-    }
-    if ($Op -eq 'import') {   # then the services of tenants.import.restart start under a hold (migrations at start), tenants.verify, seed -Check
-      if (-not (Get-Command Invoke-TenantImport -ErrorAction SilentlyContinue)) { throw "[$e] tenant import needs adapters/db_presets.ps1 (missing or outdated)" }
-      Invoke-TenantImport $e -From $From -Tenant $Tenant -As $As -Mask $Mask -DryRun:$DryRun
-      if ($DryRun) { return }
-      $nt = if ($As) { $As } else { $Tenant }; $tc = (Get-EnvCfg $e).tenants
-      $rs = @($tc.import.restart | Where-Object { $_ })
-      if ($rs.Count) {
-        $names = @(Closure $e $rs); $Wait = [math]::Max($Wait, 30)   # TODO-PARAM (fixed default): migrations of every tenant run at start
-        foreach ($s in @(EnvServices $e | Where-Object { $_.name -in $rs -and (Managed $_) -and (Healthy $e $_) })) { Stop-Svc $e $s 'tenant import: migrations run at start' }
-        Update-State $e { param($x) foreach ($s in $rs) { Clear-StartBackoff $x.services[$s] 'tenant import' }; $x.holds[$Agent] = @{ services = $names } + (New-KitLease $Agent $Session); $x.suppress = $null }
-        Ensure-Loop
-        try { $up = Wait-Up $names } finally { Update-State $e { param($x) $x.holds.Remove($Agent) } }
-        if (-not $up) { throw "[$e] tenant $nt imported, but $($rs -join ', ') did not come up: envy.ps1 logs -Env $e -Service $($rs[0])" }
-        "[$e] $($rs -join ', ') restarted: migrations ran for $nt"
-      } else { "[$e] tenants.import.restart unset: restart the services that run migrations (envy.ps1 restart -Env $e -Services <svc>)" }
-      if ($tc.verify) {
-        $code = Invoke-Shell (Expand-Placeholders ([string]$tc.verify) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '').Replace('{tenant}', $nt) (LogFile $e 'tenant') (EnvVars $e ([pscustomobject]@{})) 120
-        if ($code) { throw "[$e] tenant $nt imported, but tenants.verify fails ($(Get-ShellWhy $code): $((@($script:ShellOut) | Select-Object -Last 1) -join ' | '))" }; "[$e] tenant $nt : verify ok"
-      }
-      if (-not (Test-Path -LiteralPath (SeedFile $e))) { "[$e] no seed file $(SeedFile $e): seed -Check skipped"; return }
-      Invoke-Seed $e -Check; if ($script:SeedBad) { "[$e] tenant $nt imported; seed -Check not green: point the seed file at it, then envy.ps1 seed -Env $e"; exit 1 }
-      return
-    }
-    foreach ($x in Get-TenantList $e) { '  {0,-5} {1,-28} {2,9:N1} MB  {3}' -f $(if ($x.keep) { 'KEEP' } else { 'DROP' }), $x.name, $x.mb, $(if ($x.keep) { $x.keep } elseif (-not $x.registry) { 'schema without a registry row' } else { 'nobody keeps it' }) }
+  default {   # a verb an adapter registered (kind envy-verb)
+    $vd = $KitAdapters['envy-verb'][$Action]
+    if (@($vd.ops).Count -and $Op -and $Op -notin @($vd.ops)) { throw "$Action $Op : unknown ($(@($vd.ops) -join ', '))" }
+    & $vd.run
   }
   'cleanup' { Invoke-EnvCleanup -Quick:$Quick -DryRun:$DryRun }   # owner / coordinator: orphans of envs no longer configured; -Quick: old releases + cleanup.quick
   'teardown' {   # owner: the cascade guard's triggers and journal schema removed (doctor installs them again)
@@ -2486,8 +2477,8 @@ switch ($Action) {
     foreach ($q in @(Get-DbTempUse $e)) { '{0} {1} {2} {3}' -f $q.id, $q.gb.ToString([Globalization.CultureInfo]::InvariantCulture), $q.secs, (Protect-KitText $q.query) }
   }
   'logs' {
-    if (-not $Services) {   # no -Service: api, else the env's only service, else the list (a usage line, never a crash)
-      $sn = @(EnvServices $e | ForEach-Object name); $Services = @(if ('api' -in $sn) { 'api' } elseif ($sn.Count -eq 1) { $sn[0] })
+    if (-not $Services) {   # no -Service: localEnv.defaultService (when the env runs it), else the env's only service, else the list (a usage line, never a crash)
+      $sn = @(EnvServices $e | ForEach-Object name); $dsv = [string](Opt 'defaultService' ''); $Services = @(if ($dsv -and $dsv -in $sn) { $dsv } elseif ($sn.Count -eq 1) { $sn[0] })
       if (-not $Services) { "logs needs -Service: one of $($sn -join ', ') (envy.ps1 logs -Env $e -Service <name>)"; exit 2 }
     }
     Touch-Lease $e $Agent; $f = LogFile $e $Services[0]; if (Test-Path $f) { Read-LogTail $f $Tail $Grep $Since } else { "no log yet: $f" } }
