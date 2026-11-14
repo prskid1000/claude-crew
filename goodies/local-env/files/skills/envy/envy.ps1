@@ -2067,6 +2067,7 @@ function Get-Doctor([string]$e) {
     $dir = try { SvcDir $e $s } catch { & $add 'FAIL' "$($s.name): $("$_".Split("`n")[0])"; continue }
     foreach ($k in 'start', 'build') { if ($s.$k) { $cmds["$($s.name).$k"] = Expand-Placeholders ([string]$s.$k) $e $s $dir '' } }
     $v = try { EnvVars $e $s } catch { @{} }
+    foreach ($rk in @($s.requiredEnv | Where-Object { $_ -and -not "$($v[[string]$_])".Trim() })) { & $add 'FAIL' "$($s.name): requiredEnv $rk is not set (env file, envs.$e.env or the service's env)" }   # a missing key starts a service that fails later (e.g. a 401)
     $jh = if ($v.JAVA_HOME) { $v.JAVA_HOME } elseif ("$($s.start) $($s.build)" -match '\b(java|mvnw?|gradlew?)\b') { $env:JAVA_HOME } else { $null }
     if ($jh -and -not (Test-Path -LiteralPath (Join-Path $jh 'bin'))) { & $add 'FAIL' "$($s.name): JAVA_HOME $jh has no bin folder" }
     if ($s.reactor) { $rm = try { Get-ReactorModules $e $s } catch { $null }; if ($rm.skip.Count) { & $add 'WARN' "$($s.name).reactor: $($rm.skip -join ', ') not built (their parent is outside $($rm.me)'s chain: Maven default plugins); they come from the local repository" } }

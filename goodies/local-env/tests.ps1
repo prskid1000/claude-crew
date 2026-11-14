@@ -96,9 +96,10 @@ $sh = & { . $L3; $t0 = Get-Date; $q = Invoke-Hook t query @{ sql = 'select 1' };
 Expect "hooks: timeoutSec bounds a hook, a missing command fails fast as misconfigured (smoke too), defaults ($sh)" ($sh -eq 'True|True|True|1/1800')
 # doctor: a hook script that does not exist = FAIL (deploy stops), localhost health = WARN; health = an IPv4 127.0.0.1 connect
 $miss = Join-Path (Kd) 'no-such-hook.ps1'
-& $J @{ localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'api'; start = 'echo api'; port = 41004; health = 'http://localhost:41004/h' }); db = @{ snapshot = "pwsh -NoProfile -File `"$miss`" -Name {snapshot}"; restore = 'echo r' } } } } } $cf3 8
+& $J @{ localEnv = @{ envs = @{ t = @{ env = @{ KIT_REQ_SET1 = 'x' }; services = @(@{ name = 'api'; start = 'echo api'; port = 41004; health = 'http://localhost:41004/h'; requiredEnv = @('KIT_REQ_SET1', 'KIT_REQ_MISS1') }); db = @{ snapshot = "pwsh -NoProfile -File `"$miss`" -Name {snapshot}"; restore = 'echo r' } } } } } $cf3 8
 $dr = Px $L3 doctor -Env t 2>&1 | Out-String; $dc = $LASTEXITCODE; $dp = Px $L3 deploy -Env t -Branch nope 2>&1 | Out-String; $dpc = $LASTEXITCODE
 Expect "doctor: missing hook script FAIL (exit 1), localhost WARN; deploy stops on it ($dc/$dpc)" ($dc -eq 1 -and $dr -match 'FAIL t: db\.snapshot: script .*no-such-hook\.ps1 does not exist' -and $dr -match 'WARN t: api: http://localhost:41004/h uses localhost' -and $dpc -eq 1 -and $dp -match 'deploy stopped')
+Expect "doctor: a requiredEnv key missing = FAIL, a set one passes" ($dr -match 'FAIL t: api: requiredEnv KIT_REQ_MISS1 is not set' -and $dr -notmatch 'requiredEnv KIT_REQ_SET1')
 $v4 = & { . $L3; $l4 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $l4.Start(); $p4 = $l4.LocalEndpoint.Port
   $l6 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::IPv6Loopback, 0); $l6.Start(); $p6 = $l6.LocalEndpoint.Port
   try { "$(Test-PortListening $p4)|$(Test-PortListening $p6)" } finally { $l4.Stop(); $l6.Stop() } }

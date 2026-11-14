@@ -84,8 +84,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   `restart`. `services[].shareBuild` true (a build that reads no per-lane value): a lane stages another lane's recorded copy
   of the same code and build config, no build. Seed: the env's seed file; `{lane}` in it (e.g. `-Target local-shop{lane}`).
 - Config: envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`,
-  `smoke`) merge by `name`. `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health and `db.expect` ({ server
-  variable: value }); `deploy` stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100; per service too).
+  `smoke`) merge by `name`. `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health, `db.expect` ({ server
+  variable: value }) and `services[].requiredEnv` (variable names each lane must set, e.g. an integration key); `deploy` stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100; per service too).
 - **Speed and disk** (per service): `static` = the folder its `build` writes: the train builds once per release, the kit's
   static server serves a staged copy (unknown routes -> index.html; no dev server). `prepare` = a command after each sync whose
   edits are committed locally on `localenv/<env>` (a build cache at `{cache}`, outside the repo). `unpack` = a command that
