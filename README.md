@@ -242,6 +242,7 @@ dashboard checks a one-row header at desktop width, a text label on every bar an
 | `runtimes` |  | runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match |
 | `media` |  | evidence videos -&gt; text index (pokey media.md) |
 | `gpu` |  | exclusive.&lt;kind&gt;.processes (regex): one kind on the GPU at a time; unset: no limit |
+| `configVersion` | 2 | older: migrate adds old defaults |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
 | `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command / a vendor adapter. statuses: logical -&gt; board names (list: first set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; ciTaskPattern: CI-raised test task names, closed when their job passes. Examples: _examples, adapter headers. |

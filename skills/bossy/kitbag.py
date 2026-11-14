@@ -20,8 +20,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1036 README graph · L1139 lint command · L1355 audit ·
-  L1471 registry · L1803 arch lint · L2006 prose · L2157 sections · L2287 budget · L2301 migrate · L2366 plugins ·
-  L2420 state lint · L2608 main
+  L1471 registry · L1803 arch lint · L2006 prose · L2157 sections · L2287 budget · L2301 migrate · L2407 plugins ·
+  L2461 state lint · L2649 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -2359,9 +2359,50 @@ def cmd_migrate(a):
             fh.write('\n'.join(keep).rstrip('\n') + '\n')
         os.replace(ex + '.tmp', ex)
         done.insert(0, f'.git/info/exclude: {len(listed)} install line(s) dropped')
+    if osp.isfile(cfg_path):
+        bad, added = migrate_config(cfg_path)
+        if bad:
+            print(f'kitbag migrate: {bad}: configVersion unchanged (run it again)', file=sys.stderr)
+            return 1
+        done += [f'skills/crafty/kit.local.json: "{k}" set to the pre-{CONFIG_VERSION} default' for k in added]
     for x in done:
         print(f'kitbag migrate: {x}')
     return 0
+
+# Neutral defaults since configVersion 2 (2026-11-14): an older kit.local.json gets the value that reproduces the old default,
+# once, for each key it does not set; a new one (setup -WriteLocal: kit.example.json) starts at CONFIG_VERSION.
+CONFIG_VERSION = 2
+# legacy-defaults:start
+LEGACY_DEFAULTS = {}
+# legacy-defaults:end
+
+def migrate_config(path):
+    """(error, [dotted keys added]): LEGACY_DEFAULTS into a kit.local.json older than CONFIG_VERSION; keys it sets win."""
+    cfg, err = load_json(path)
+    if err or not isinstance(cfg, dict):
+        return f'{osp.basename(path)} unreadable', []
+    if int(cfg.get('configVersion') or 1) >= CONFIG_VERSION:
+        return None, []
+    added = []
+    for dotted, value in LEGACY_DEFAULTS.items():
+        cur, parts = cfg, dotted.split('.')
+        for part in parts[:-1]:
+            if not isinstance(cur.get(part), dict):
+                if part in cur:   # a scalar where an object is due: the clone's own choice, left alone
+                    cur = None
+                    break
+                cur[part] = {}
+            cur = cur[part]
+        if cur is not None and parts[-1] not in cur:
+            cur[parts[-1]] = value
+            added.append(dotted)
+    cfg['configVersion'] = CONFIG_VERSION
+    text = read(path)
+    indent = len(re.search(r'\n( *)"', text).group(1)) if re.search(r'\n( *)"', text) else 2
+    with open(path + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
+        fh.write(json.dumps(cfg, indent=indent, ensure_ascii=False) + '\n')
+    os.replace(path + '.tmp', path)
+    return None, added
 
 # ---- plugins: skills/bossy/kitbag_<name>.py modules add commands, audit verbs, args and lint hooks
 PLUGINS = {}      # command -> handler, from the plugins (skills/bossy/kitbag_<name>.py)
