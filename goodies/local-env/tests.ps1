@@ -518,6 +518,12 @@ $rpOut = & { . $ckL
   $mr = @(Get-MissingRoutines t)
   "drops=$($rp.objectDrops -join ',')|tdrops=$($rp.drops -join ',')|fb=$(@($rp.fallback.table) -join ',')|warn=$(@($rp.warnings).Count)|missing=$(@($mr | ForEach-Object { "$($_.schema):$($_.names -join '+')" }) -join ',')" }
 Expect "localenv: restore keeps objects / seeds tables of a schema re-created after the mark; seed finds routines an executed changeSet made that are gone ($rpOut)" ($rpOut -eq 'drops=PROCEDURE:s2.p9|tdrops=s2.t2|fb=s1.t1|warn=1|missing=s1:p1')
+# restore: mark~end is recorded undone only after the row flashback applied (a failed one left it recorded: the next restore skipped it)
+$fbOut = foreach ($ok in $false, $true) { & { . $ckL; $script:rec = 0
+    function Read-State { @{ marks = @(); undone = @() } }; function Get-EnvCfg { @{ db = @{} } }; function Invoke-DbSql { }; function Get-DbPos { 'b.000009:1' }
+    function Invoke-DbFlashback { @{ applied = $ok; error = 'disk full'; fallback = @(); refused = @() } }; function Update-State { $script:rec++ }; function Remove-MarkSlices { }; function Event { }
+    "$(Invoke-RestoreDb t @{ pos = 'b.000008:50'; name = 'm1' } @('s1') @{ to = 'b.000009:1'; steps = @(); objects = @(); renames = @(); drops = @(); objectDrops = @() })|$script:rec" } }
+Expect "localenv: restore records mark~end undone only after the row flashback applied ($($fbOut -join ' / '))" ($fbOut[0] -eq 'row flashback failed: disk full|0' -and $fbOut[1] -eq '|1')
 Remove-TestKit $ck
 # lanes: lane 1 = the env unchanged, lane k = <env><k>: managed ports + (k-1) x portStep, {lane} / {port:<svc>} / ":<port>" rewritten,
 # envs.<env><k> overrides one lane (its db port follows); -Env <env> keeps an agent on its lane, else the least busy one; -Lane pins

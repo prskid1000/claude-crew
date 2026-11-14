@@ -19,7 +19,7 @@ Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = 
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L30 config · L227 state · L274 layer drops · L346 leases · L472 code · L504 migrations ·
   L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1056 seed · L1134 processes · L1515 daemon ·
-  L1974 cleanup · L2046 doctor · L2098 verbs
+  L1974 cleanup · L2046 doctor · L2099 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1032,8 +1032,8 @@ function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$Us
     try { $fb = Invoke-DbFlashback $e -From $m.pos -To $plan.to -Schemas $schemas -Skip @($st.undone) -Exclude $ex -Apply } catch { $noRows = (Get-DbPos $e) -eq $preFb; return "row flashback failed: $("$_".Split("`n")[0])" }
     $script:RestoreFallback += @($fb.fallback | Where-Object { $_ -and $_.table -notin $ex })
     if (@($fb.refused).Count) { return "row flashback refused: $(@($fb.refused | Select-Object -First 3) -join '; ')" }
-    $noRows = $false
     if (-not $fb.applied) { return "row flashback failed: $($fb.error)" }
+    $noRows = $false   # recorded undone only now: a failed flashback recorded it and the next restore skipped the range
   } finally {
     foreach ($x in $ev) { try { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` ENABLE" } catch { } }
     $end = Get-DbPos $e
