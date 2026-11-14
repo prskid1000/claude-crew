@@ -177,7 +177,7 @@ switch ($Action) {
     $mine = Norm $Worktree
     $others = @(Active | Where-Object { $_.session -ne $Session -and (@($_.worktrees | ForEach-Object { Norm $_ }) -contains $mine) })
     if ($others) { $others | ForEach-Object { "OTHER WRITER: $($_.agent) (session $($_.session), status $($_.status), beat $(([datetime]$_.beat).ToString('HH:mm')))" }; exit 1 }
-    if ($Session) { Update-BoardEntry (Join-Path $dir "$Session.json") { param($x) if (@($x.worktrees | ForEach-Object { Norm $_ }) -notcontains $mine) { $x.worktrees = @(@($x.worktrees) + $Worktree) }; $x } }   # claimed: cleanup keeps it
+    if ($Session) { Update-BoardEntry (Join-Path $dir "$Session.json") { param($x) if (@($x.worktrees | ForEach-Object { Norm $_ }) -notcontains $mine) { $x | Add-Member -Force NoteProperty worktrees @(@(Split-KitList $x.worktrees) + $Worktree) }; $x } }   # claimed: cleanup keeps it
     'ok: no other active agent claims this worktree'; exit 0
   }
   'leave' {

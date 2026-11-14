@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L142 record-args · L161 budget · L180 build-prompt · L261 ship-prompt · L284 plan · L300 spike ·
-//   L313 local-loop · L386 stages · L527 ship · L638 deploy · L653 learn
+//   L313 local-loop · L386 stages · L527 ship · L641 deploy · L656 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -64,7 +64,7 @@ const STEPS = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker']
 const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
 const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported${MODE === 'duel' ? ' (duel is a goody: run kitbag.py goody add duel)' : ''}`)
-// unknown or removed args: refused, never dropped (agents see only the brief and agents[])
+// unknown or removed args: refused, never dropped
 const unk = (o, keys, pre = '') => Object.keys(o).filter((k) => !keys.split(' ').includes(k)).map((k) => pre + k)
 const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex holdMerge learn batch kitDir runtimeDir run'), ...A.agents.flatMap((a) => unk(a, 'id items area note kind complex model effort dependsOn migrations branch branches', `agents.${a.id}.`))]
 if (badArgs.length) throw new Error(`buildy.js args refused: unknown ${badArgs.join(', ')}; free text: agents[].note or the brief`)
@@ -305,7 +305,7 @@ ${OQ.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 Append one block per question under "## Findings (rechy)" at the bottom of the brief: answer, evidence, recommendation, confidence
 (an owner choice: its decide ask id). Return ok=true when every question is answered (else ok=false: the open ones and decide ids), output = one line per question.`,
   { label: 'spike', phase: 'Spike', schema: OK_SCHEMA, agentType: 'rechy', ...pick('spike') })
- // devy never builds on an open question: the coordinator settles it, then launches next
+ // no devy on an open question: the coordinator settles it
  if (!(sp && sp.ok)) { const why = sp ? sp.output : 'rechy returned nothing'; log(`SPIKE OPEN: ${why} - no devy started`); return { spikeOpen: why, next: nextCall(A.agents, { openQuestions: undefined }) } }
  log(`spike: ${OQ.length} open question(s) answered in the brief`)
 }
@@ -356,7 +356,7 @@ function normLocal(r) {
 }
 // BLOCKED, or a FAIL beyond env gaps (envGap: no fix rounds; review, CI, merge)
 const holdsMerge = (lt) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap))
-// local loop: FAIL -> `retries` build-model rounds, then ONE stronger one (MODELS.retest)
+// local loop: FAIL -> `retries` rounds, then ONE on MODELS.retest
 async function localLoop(a, r, retries, stage) {
  for (let h = 0; r && r.handoff && h < 3; h++) {   // budget handoff -> a fresh devy
   log(`${a.id}: HANDOFF at its budget (${r.handoff}): a fresh devy continues`)
@@ -386,7 +386,7 @@ fix (THE DEV FLOW step 3), never a reason to stop.`), { label: `local-strong:${a
 // ---- stages: build -> review -> fix per area
 const results = await pipeline(
  A.agents,
- // Build: code + goals + local loop; a dead agent (API timeout, usage limit) is retried once
+ // Build: code, goals, local loop; a dead agent is retried once
  (a) => settleOnThrow(a, async () => {
   if (skips(a, 'build')) {
    const r0 = synth(a)
@@ -396,7 +396,7 @@ const results = await pipeline(
    return { ...mergeReports(r0, r2, 'Post-merge'), mrs: r0.mrs, localTest: r0.localTest, resumed: 'merged' }
   }
   const open = await producersOpen(a)
-  if (open.length) { const why = `producer(s) ${open.join(', ')} not MERGED: not started; relaunch outcome.next once merged`; log(`${a.id}: ${why}`); return { id: a.id, error: why, blocked: why, producerWait: true } }
+  if (open.length) { const why = `producer(s) ${open.join(', ')} not MERGED: not started (outcome.afterMerge)`; log(`${a.id}: ${why}`); return { id: a.id, error: why, blocked: why, waitFor: open } }
   return releasing(a, 'Build', async () => {
   let r = await agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
   if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt status, the board, your branch), continue.'), { label: `build-retry:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) }) }
@@ -404,7 +404,7 @@ const results = await pipeline(
   return localLoop(a, r, LOCAL_RETRIES, 'Build')
   })
  }),
- // Decide: decisions wait for the answer, ENV-FIX for the fix (<= ENV_FIX_CYCLES per area)
+ // Decide: wait for answers and ENV-FIXes (<= ENV_FIX_CYCLES)
  (r, a) => settleOnThrow(a, async () => {
   if (!r || r.error || r.budgetStopped || !((r.needsDecision || []).length || (r.needsEnvFix || []).length)) return r
   return releasing(a, 'Decide', async () => {
@@ -533,7 +533,7 @@ async function ciGate(a, r) {
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
   fix: 'Reproduce the failing job locally through the gate (crafty.ps1 check), fix the cause, push, green pipeline.' }))
 }
-// re-review should-fix / nit findings -> each MR's "## Follow-ups" (devtools.py followups)
+// re-review should-fix / nit findings -> MR "## Follow-ups"
 async function followUps(a, r, soft) {
  const file = `${rp('agents')}/${a.id}/followups.json`, mrs = r.mrs.filter((m) => !m.merged)
  const has = (f, u) => new RegExp(u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)').test(String(f.mr || ''))   // as devtools.py followups
@@ -562,7 +562,7 @@ async function askBlocking(a, r, open) {
  if (id) decisions.push({ agent: a.id, item: r.mrs.map((m) => m.url).join(' '), decisionId: id[1], question: `still blocking: ${q}` })
  return id ? id[1] : ''
 }
-// a consumer builds and merges only on merged producers (merges under way polled): the open ones
+// open producer ids (merges under way polled): a consumer builds and merges after them
 async function producersOpen(a) {
  if (!DEPS[a.id].length) return []
  const prods = await Promise.all(DEPS[a.id].map((id) => SETTLED[id].p))
@@ -630,9 +630,12 @@ const outcome = {
  testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, guide: x.report.testerGuide || 'MISSING' })),
  budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop, handoffs: out.filter((x) => /Handoff:/.test((x.report || {}).summary || '')).map((x) => x.id) },
 }
-// unfinished areas (budget stop) and areas beyond args.batch continue in a ready relaunch
-const leftover = [...out.filter((x) => x.budgetStopped || x.producerWait).map((x) => A0.agents.find((g) => g.id === x.id)).filter(Boolean), ...(BATCH ? A0.agents.slice(BATCH) : [])]
+// budget-stopped areas and those beyond args.batch: a ready relaunch
+const leftover = [...out.filter((x) => x.budgetStopped).map((x) => A0.agents.find((g) => g.id === x.id)).filter(Boolean), ...(BATCH ? A0.agents.slice(BATCH) : [])]
 if (leftover.length) { outcome.next = nextCall(leftover, out.some((x) => x.budgetStopped) ? { mode: 'resume' } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
+// relaunched once the waitFor producers merged
+const held = out.filter((x) => x.waitFor)
+if (held.length) outcome.afterMerge = { waitFor: uniq(held.flatMap((x) => x.waitFor)), next: nextCall(held.map((x) => A0.agents.find((g) => g.id === x.id))) }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 
 // ---- deploy: merged work joins the deploy batch (goody deploys); never deploys (trigger: bossy E5)
