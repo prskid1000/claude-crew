@@ -1257,7 +1257,7 @@ const stray = () => [...document.querySelectorAll('body *')].flatMap((e) => {
   return out
 })
 const rows = () => innerWidth < 1280 ? [] : [...document.querySelectorAll('body *')].flatMap((g) => {
-  const cs = getComputedStyle(g); if (!(/grid/.test(cs.display) || (/flex/.test(cs.display) && cs.flexWrap === 'wrap')) || !g.getClientRects().length || g.closest('details:not([open])')) return []
+  const cs = getComputedStyle(g); if (!(/grid/.test(cs.display) || (/flex/.test(cs.display) && cs.flexWrap === 'wrap')) || !g.getClientRects().length || g.closest('details:not([open])') || g.classList.contains('msn')) return []   // packed masonry: own heights by design (the masonry gap check covers it)
   const kids = [...g.children].filter((c) => c.getClientRects().length && !/absolute|fixed/.test(getComputedStyle(c).position))
   if (!kids.length || !kids.some((c) => c.matches('[data-fit],details,article,figure,.ci,.st'))) return []
   if (kids.length < 2) { const r = kids[0].getBoundingClientRect(), short = Math.round(g.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth) - r.right)   // a lone card in a grid row
