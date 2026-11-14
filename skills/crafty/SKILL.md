@@ -49,7 +49,7 @@ python <kit>/skills/crafty/devtools.py finish <task> cases solution.json review 
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic)
-& $O deploy request -Mrs <repo>!<iid>,... -Run <run>   # 8. deploy batch, silently (goody deploys; never deploy, never ask)
+& $O deploy request -Mrs <repo>!<iid>,... -Run <run>   # 8. deploy batch, silently (never deploy, never ask)
 & $O board leave -Session <token> -Status done   # 9. final report (templates.md "Final reports")
 ```
 - D1. **Decision pause**: about to change user-visible behaviour the task did not ask for (internal logic with the same
@@ -63,8 +63,6 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
 - D3. **Deferred** person's step, no code:
   `kind: people` (holds no promotion).
 - No `localEnv` for your repo: step 5 = automated tests only; "local env: none" in MR and report.
-  `envy` (steps 2, 5, `$L`) = goody `local-env`: `localEnv` set, `skills/envy/` missing -> `kitbag.py goody sync`
-  once, else as no `localEnv`.
 
 **Rules**
 - **Board:** `join` first (DUPLICATE -> stop, write nothing); `beat -Session <t> -Status "<doing>"` before builds
@@ -76,8 +74,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   directly; waiting and killed builds are normal. Tool timeout 600000 ms, or `run_in_background` bounded
   (timeout or loop cap, no stdin read; killed before `leave`). A gate still queued when you must stop: push, Draft MR with
   `Not run: <gate>`, report NOT_MERGED. No dev servers by hand (the local env runs them), at most one headless browser; phones
-  only through `phoney.ps1 acquire` (never `up`/`down`; goody `android-swarm`); Docker / WSL / VMs: `crafty.ps1 runtime use
-  -Name <r>` first, `release` when done (goody `runtimes`; the guard leases if you forget).
+  only through `phoney.ps1 acquire` (never `up`/`down`); Docker / WSL / VMs: `crafty.ps1 runtime use
+  -Name <r>` first, `release` when done (the guard leases if you forget).
 - **Tests:** `testing.md` (ship, shape, place, run; reviewers check them).
 - **Commits:** subject per `commitStyle` (default Conventional Commits) + any attribution trailer your harness or org
   asks for; `wt commit` only; never `--no-verify`, never type a hook's marker, never change shared git config or `git stash`.
@@ -101,7 +99,7 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   scratchpad file passed to the interpreter is fine.
 - **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
-  (`repos[].migrations.check`, else Liquibase: goody `liquibase`; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
+  (`repos[].migrations.check`, else Liquibase: `adapters/liquibase.ps1`; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
   leftover table, a missing user): report it, never "fix" the shared DB by hand.
 - **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before the local test loop and before every push (a scope
   change stamped after your head commit is still yours; append-only if you write to it); one MR per repo, title with

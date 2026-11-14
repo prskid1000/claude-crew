@@ -4,7 +4,7 @@
 Everything above this line is shared with Codex and Antigravity (README "Install" lists what does not port).
 - **Hooks** (`settings.json`): PreToolUse `crafty.ps1 guard` (Bash, PowerShell, file edits) and `bossy.ps1 guard-sendmessage` (SendMessage);
   SessionStart `bossy.ps1 health` (git state, gates, stopped runs, lint, ports, retro / audit nudges) and `bossy.ps1 cleanup -IfDue
-  -Quiet` (async). Codex / Antigravity ports: goody `ports` (`kitbag.py port`).
+  -Quiet` (async). Codex / Antigravity ports: `kitbag.py port`.
 - **Skills** (`skills/*/SKILL.md`): loaded by name through the Skill tool. Launch workflows by path:
   `Workflow({ scriptPath: "<kit>/workflows/<name>.js", args })` (named lookup fails after a `cd`).
 - **Heartbeat** (bossy E1): while a run or agent is live, ONE recurring durable cron (CronList; none -> the `CronCreate` call

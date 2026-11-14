@@ -101,7 +101,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 ## kitty
 - Working after a push in a merged clean worktree -> run every later command with absolute paths into it, never cd then a command that falls back to the live clone (cleanup swept the worktree: hard failure). (1x)
 - Reading ISO times with ConvertFrom-Json -> compare as DateTimeOffset or keep them text (-AsHashtable, then ToString('o')) (DateTime interpolation drops fraction and offset: same-second ties broke ordering). (1×)
-- A goody test that creates and drops tenants fails once in a parallel kit-tests run -> rerun that area alone before calling it a regression (areas share the machine). (2x)
+- A local-env test that creates and drops tenants fails once in a parallel kit-tests run -> rerun that area alone before calling it a regression (areas share the machine). (2x)
 - A test string holds a regex -> put it in a here-string or a variable (an unbalanced paren in a single-quoted string inside a double-quoted subexpression does not parse). (2x)
 - Kit tests clean up -> remove only the fake files they wrote, never a whole folder (Remove-Item adapters -Recurse broke the bossy area for 2 days when a core function moved into adapters/). (1×)
 - Scripted replace pairs in PowerShell -> wrap each concatenation in parentheses (the comma binds tighter than +: @('a', 'b' + 'c') has 3 items). (1x)

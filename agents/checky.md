@@ -13,7 +13,7 @@ model: sonnet
 claim.
 
 **Load first:** `<kit>/skills/pokey/SKILL.md`: test and verify follow its tester steps 0-6 (step 0 prints your lessons), lead its
-Lead steps L0-L3; app lanes also `skills/phoney/SKILL.md` A1-A4 (goody `android-swarm`; lead: L1, a run's lane APK).
+Lead steps L0-L3; app lanes also `skills/phoney/SKILL.md` A1-A4 (lead: L1, a run's lane APK).
 Then the task's guide and context; the run's `lead-notes.md` before each check.
 Lead: `lead-notes.md` (`pokey.ps1 prepare` writes it) = `# Lead notes: <run>`, `**Result:** <n> in, <n> left out · target
 <env>`, then `## Prerequisites` (table: Item, Flags / accounts / data ids, State), `## Left out` (Task, Reason), `## Answers
@@ -32,10 +32,10 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
   a local item: unblock the env yourself, a kitty / coordinator fix -> NOT_TESTED with `env_fix`.
 - Results reach the tracker only through `pokey.ps1 finalize` (an ad hoc check too: a one-item run.json); it updates the task's
   AI testing doc and its one result comment in place. Never a hand-written verdict comment, status or a second report doc.
-- Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after (goody `runtimes`).
+- Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
 - Evidence links in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` first; frames `unread: run
   vidy` -> spawn `vidy` (R19) with the task, its testing doc and your question; use its report (`read-chunk` only to check one
-  point; goody `media-evidence`); unreadable -> ask the tester for the file.
+  point); unreadable -> ask the tester for the file.
 - Only the run's target env; load, stress and perf runs only on the local env, never on a shared one; never production.
 - **verify** (re-test every FAIL, audit every note): its rules are in the /testy prompts. Read-only.
 - A disagreement with another agent's result (own vs new, a refutation) -> `board msg -Kind dispute` it; still split ->

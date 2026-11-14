@@ -25,7 +25,7 @@ adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters
   step reads it; scripts are run (their header prints usage), never named as text to read.
 - **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files
   row; mentions do not count; every edge has its reason.
-- **Generic** [ORG-TERM]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`
+- **Generic** [ORG-TERM, RETIRED-WORD]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`
   (today's behaviour as default), org rules -> `rules/*.local.md`, org lessons -> `LESSONS.local.md`.
 
 ## Shapes

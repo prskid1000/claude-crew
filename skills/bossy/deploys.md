@@ -1,4 +1,4 @@
-# Deploy batch (bossy E5, goody deploys)
+# Deploy batch (bossy E5)
 A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env; the env's newest deploy word a no
 or a wait (`decide record -Gate deploy -Item <env> -Answer "no ..." | "wait: retry HH:mm"`): one muted held / waiting line, no
 ask, until a later yes or an MR the no did not cover (an env-wide no, "all / never / keep ... held", or kit.local.json

@@ -16,7 +16,7 @@ Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md`; 
 - Chat to owner: dense text only (`<thing> <state/action> <reason>` -> next step); no Mermaid, SVG gauges or box art in chat turns. Visuals live in dashboard (supervise-report.html) and report artifacts:
   text wraps, never truncates; a changed page ships after `kitbag.py ui-check <page>` passes, shots read.
 - **Corrections:** a correction applies to its whole group: when the owner corrects one output, format or behaviour, fix every
-  sibling the same way (all adapters, goodies, templates, ports, docs that produce or describe it), a test each; list what changed.
+  sibling the same way (all adapters, templates, ports, docs that produce or describe it), a test each; list what changed.
 
 ## The two flows
 - **Dev** (every code change): code -> testing-goals doc -> reproduce / debug + test on the local env (loop) -> review, merge,
@@ -52,7 +52,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R15 | Data work: a run's test data to clean up, a build or test failing on setup data, a migration's data review, local DB marks / restores / seed, a backfill, a data check | `datay` agent (kind cleanup / fixture / migration / localdb / backfill / check) | — (the agent holds its steps) |
 | R16 | Watch a deployed env: errors, logs or monitoring after a deploy, a nightly error sweep, an owner's error screenshot or report | `watchy` agent (kind window / sweep / triage) | — (the agent loads `pokey`) |
 | R17 | Research before building or deciding: compare options, pick a library, is X free / licensed / supported, how Y works; no code change | `rechy` agent (kind question / compare / library / licence / spike) | — (the agent holds its steps) |
-| R19 | Understand a video, screen recording or screenshot (a tester's or user's link or file): what it shows, what was done, where it failed | `vidy` agent (kind question / index; goody `media-evidence`) | — (the agent loads `pokey`) |
+| R19 | Understand a video, screen recording or screenshot (a tester's or user's link or file): what it shows, what was done, where it failed | `vidy` agent (kind question / index) | — (the agent loads `pokey`) |
 | R18 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
 
 - **Crew** (the only agent types, spawned only through these targets; names, roles and characters: `kit.example.json`
@@ -64,7 +64,7 @@ the **Target**. A mixed request is split and each part routed on its own.
   Each loads its skill first; its Character shapes judgement, tone and how it argues a dispute or debate, never a rule or the
   Writing standards. Step 0 of every agent reads the board (who is alive here); a disagreement: /buildy `disputes`, a
   debate or `board msg`, still split -> the owner decides (`decide ask`, both sides). Codex / Antigravity: the ported agents,
-  workflows and mechanics are in AGENTS.override.md / GEMINI.md (goody `ports`).
+  workflows and mechanics are in AGENTS.override.md / GEMINI.md (`kitbag.py port`).
 - **Autonomous:** user invocation is the standing opt-in. The coordinator and agents run all routed steps (worktrees, checks, edits, local test loops, reviews, CI, merging) without approval pauses. A request running in a workflow is never launched twice: add via contracts.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
   the person says `deploy <env>`, then `opsy` runs it end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
@@ -80,7 +80,7 @@ These rules hold whatever the route:
   them); parallel work in worktrees (`crafty.ps1 wt`), commits with `crafty.ps1 wt commit`; never install packages into linked
   `node_modules` / `.venv`. The guard hook blocks `git stash`, `--no-verify` and ungated builds. Rebase (`wt sync`) before
   editing, pushing and merging; merge only on a green pipeline, producers before consumers.
-- Phones only through `skills/phoney/phoney.ps1 acquire` (goody `android-swarm`). Every kit resource (env service,
+- Phones only through `skills/phoney/phoney.ps1 acquire`. Every kit resource (env service,
   browser tab, phone, build) has a holder: lease only what your item declares, release when done; no live holder for
   `idle.graceMinutes` -> released (README "Leases").
 - Browsers are headless by default (`skills/pokey/browser.mjs`); a visible browser only when the owner asks to watch.
@@ -94,7 +94,6 @@ These rules hold whatever the route:
   `%TEMP%` itself or a main checkout (shared: the guard denies body / desc files there).
 - The kit learns: every agent reads its lessons at step 0 (`bossy.ps1 learn -Read -Skill <skill>`) and records surprises with
   `bossy.ps1 learn`.
-- A script prints `<feature> is a goody: run kitbag.py goody add <name>` -> run that in `<kit>` (README "Goodies"), then retry.
 - **The main session coordinating agents** loads `bossy` and follows its Events table (heartbeat, decisions, `deploy <env>`,
   recovery after a restart, HEAL, LEARN, retro, kit commits).
 

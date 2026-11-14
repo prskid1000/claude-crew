@@ -21,7 +21,7 @@ it; supervise lints recent files each beat: BAD = WATCH).
 ## Indexes (not the tracker's comments)
 - `.state/tasks/<id>.json`: `track` (MRs in merge order, mergeAfter, onMerged, done: `bossy.ps1 track`), `docs.<kind>` (url,
   key, type: `devtools.py doc --key <id>:<kind>`), `comments.<kind>` (the comment `tracker comment -Kind` edits), `envRuns[]`
-  (env, run, code, pass, fail, notTested, doc: `pokey.ps1 finalize`), `cases` (`devtools.py cases`); goody task-rollup: `rollup` (a parent: sections, milestones,
+  (env, run, code, pass, fail, notTested, doc: `pokey.ps1 finalize`), `cases` (`devtools.py cases`); `rollup` (`task_rollup.ps1`; a parent: sections, milestones,
   `closeAsk` = its one close-parent decision, `parentClosed`), `itemIds` / `itemsFrom` / `itemsSig` / `itemsFinal` (the Items checklist).
 - `<qa run>/index.json`: `items.<code>` -> tasks, doc, pubKey, pass, fail (`pokey.ps1 finalize`); a build run:
   `work/waves/<run>.json` (`bossy.ps1 report`).
@@ -52,9 +52,9 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `pauses` | `bossy.ps1 pause / resume` | `dir v1: at run state` | keep |
 | `programs` | `bossy.ps1 program` | `dir v1: updated` | keep |
 | `browser-ports` | `browser.mjs` | `json v0` | keep |
-| `ports-deployed` | goody `ports` (`kitbag.py port`) | `json v1: files` | rewritten each deploy |
+| `ports-deployed` | `kitbag.py port` | `json v1: files` | rewritten each deploy |
 | `owner-apps` | `bossy.ps1 supervise` | `json v0` | keep |
-| `runtimes` | goody `runtimes` | `dir v0: leases` | keep |
+| `runtimes` | `crafty.ps1 runtime` | `dir v0: leases` | keep |
 | `locks` | `lib.ps1` (`repos[].exclusiveTests`) | `json v0: held waiting` | keep |
 | `board` | `bossy.ps1 board` | `dir v1: agent session run beat status` | 14 d |
 | `launches` | `bossy.ps1 launch`, workflows (`args-*`) | `dir=self-*.json v1: script run args` | 3 d |

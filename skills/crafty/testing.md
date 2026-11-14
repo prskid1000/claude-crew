@@ -11,7 +11,7 @@ Read by devy at steps 4-5 and revy (kinds mr, kit, config). Any stack; reviewers
   test made; settings and cleanup in before/after hooks registered before the mutation; cleanup accepts 2xx/404 only,
   the MR lists leftovers.
 - **Place:** next to the repo's existing tests (its convention wins; `crafty.ps1 stack` shows the runner; a web project without a
-  unit-test target: goody `node-spec`; `kit.local.json` `tests.<stack>.testFor` maps a source name to its test names for
+  unit-test target: `skills/crafty/spec.mjs`; `kit.local.json` `tests.<stack>.testFor` maps a source name to its test names for
   `-Touched`). node-spec cannot bundle code needing framework DI or a linker (forms, router, store, injectable services):
   move the logic into a pure helper the component calls, spec that helper (never a local copy), list the wiring as a live check.
 - **Run:** `check -Step test -Tests <new tests> -Touched` before every push (full suites, `-AllTests`: the coordinator's

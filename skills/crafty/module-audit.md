@@ -1,4 +1,4 @@
-# Module audit (revy kind module; goody module-audit)
+# Module audit (revy kind module)
 
 One folder, feature or service; findings only, no code changes. `<kit>` = the workspace's `.claude` folder.
 
