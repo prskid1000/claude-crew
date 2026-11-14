@@ -21,6 +21,7 @@ rules/*.local.md
 /memory/
 /agent-memory-local/
 /scheduled_tasks.lock
+/scheduled_tasks.json
 /worktrees/
 
 # installs, caches, build output

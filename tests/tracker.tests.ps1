@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tracker.tests.ps1: task texts rendered from a spec (crafty.ps1 "task spec": description, Items / Decisions checklists, the
-parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap, unknown workflow args, tracker comment -Spec, the online check.
+parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap, unknown workflow args, tracker comment -Spec, the online check, the heartbeat cron line and the OS timer's place in supervise (goody os-timer).
 Usage: pwsh -NoProfile -File <kit>/tests/tracker.tests.ps1 (or tests/kit-tests.ps1 -Area tracker).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -108,5 +108,19 @@ Expect "workflows refuse unknown args ($ua)" ("$ua" -match 'buildy\.js args refu
 $onl = & { . $O; Remove-Item Env:KIT_OFFLINE -ErrorAction SilentlyContinue; $ls = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $ls.Start(); $lp = $ls.LocalEndpoint.Port
   try { "$(Test-KitOnline localhost 3000 $lp)|$(Test-KitOnline 127.0.0.1 3000 $lp)" } finally { $ls.Stop() }; "$(Test-KitOnline 127.0.0.1 1000 $lp)" }
 Expect "online check: any address counts, a closed port is offline ($onl)" ("$onl" -eq 'True|True False')
+# (cap move) heartbeat (owner 2026-11-14: the sweep stopped with every session): one durable recurring cron, the OS timer's sweeps never count as the coordinator's
+$hb = Invoke-PsTest beat-cron @'
+. $args[0]; $al = Get-KitBeatArmLine; "arm:$($al -match "^CronList has no heartbeat -> CronCreate cron '\*/\d+ \* \* \* \*', recurring: true, durable: true, prompt " -and (Get-KitBeatPrompt) -notmatch 're-arm|one-shot')"
+function Read-KitJsonFiles { @([pscustomobject]@{ status = 'working'; beat = (Get-Date).ToString('o') }) }; function Get-KitLastActivity { Get-Date }
+Write-KitAtomic (Get-KitPath supervise-state -Create) (@{ nextBeat = 5; coordAt = (Get-Date).AddMinutes(-40).ToString('o'); report = @{ at = (Get-Date).ToString('o') } } | ConvertTo-Json)
+"coord:$((Get-KitBeatOverdue) -match '^heartbeat OVERDUE 2[45] min: .*CronCreate')"
+'@ @($O)
+Expect-Each $hb 'heartbeat: # (arm: the CronCreate call, recurring + durable, the prompt has no re-arm; coord: overdue counts the coordinator''s sweeps against heartbeatMinutes, not the OS timer''s)' 'arm', 'coord'
+$hs = Invoke-TestScript $O heartbeat status
+Expect "heartbeat status without goody os-timer: the goody stop line, exit 1 ($($hs.code))" ($hs.code -eq 1 -and $hs.out -match 'goody add os-timer')
+$lk = Join-Path (TkPath $k cache -Create) 'supervise.lock'
+& $J @{ session = 'os-timer'; at = (Get-Date).ToString('o'); pid = 1 } $lk; $sv1 = Px $O supervise -Session coord-a | Out-String
+& $J @{ session = 'coord-a'; at = (Get-Date).ToString('o'); pid = 1 } $lk; $sv2 = Px $O supervise -Session os-timer | Out-String
+Expect 'supervise: a session never steps aside for the OS timer; the OS timer steps aside for a session' ($sv1 -notmatch 'steps aside' -and $sv2 -match 'steps aside')
 Remove-TestKit $k
 Complete-Tests

@@ -45,7 +45,7 @@ Expect "board: a quiet same-agent row is STALE (no DUPLICATE); leave -Agent -Run
   @(Get-ChildItem $bd -Filter *.json | ForEach-Object { Read-Json $_.FullName } | Where-Object { $_.agent -eq 'solo' -and $_.status -eq 'left' }).Count -eq 1)
 # health: the beat supervise asked for passed while agents live
 & $J @{ nextBeat = 15; report = @{ at = (Get-Date).AddMinutes(-40).ToString('o') } } (TkPath $k supervise-state -Create)
-$hb = & { . (Lib); Get-KitBeatOverdue; Remove-Item (Join-Path (Get-KitPath board) '*.json'); "none:$(-not (Get-KitBeatOverdue))" }
+$hb = & { . $O; Get-KitBeatOverdue; Remove-Item (Join-Path (Get-KitPath board) '*.json'); "none:$(-not (Get-KitBeatOverdue))" }
 Expect "health: an overdue heartbeat says by how much while agents live, nothing when none ($hb)" ("$hb" -match 'heartbeat OVERDUE 2[45] min: last beat \d\d:\d\d, next was due \d\d:\d\d' -and "$hb" -match 'none:True')
 # devtools: finish promotes a tracked open task now; the prior gate passes a tracked sibling task, stops an unknown one
 $fy = Join-Path (Kd) 'flow.py'; [IO.File]::WriteAllText($fy, @'

@@ -153,8 +153,9 @@ Claude's per-agent tool lists (all tools load; the guard covers both), Artifacts
 Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Codex outside Plan mode.
 
 ## Using it
-- Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`; its stderr `NEXT=<n>`
-  sets the next one, 5-30 min by state) writes the dashboard ("Live supervisor dashboard" below; alone: `bossy.ps1 status
+- Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`: a recurring durable
+  session cron, plus the opt-in OS timer `bossy.ps1 heartbeat install|uninstall|status` that runs it with no session open, goody
+  `os-timer`) writes the dashboard ("Live supervisor dashboard" below; alone: `bossy.ps1 status
   [-Watch]`). Its stdout (`supervise.output`): `html` (default) = the page link, one line per ACT /
   WATCH and auto-fix, a count line; `chat` = the tables; `both`. `supervise.publish` (unset = off): a pwsh command run detached
   after each write, `$env:KIT_SUPERVISE_HTML` = the page (e.g. upload it as a private page; its bytes never pass through the

@@ -1,12 +1,12 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L68 state · L137 config · L217 OS · L414 leases · L858 status · L1102 supervise sweep ·
-  L1173 supervise report · L1269 tracker · L1592 prior · L1608 ask bugs · L1813 git-host · L1973 kitlog · L2093 params ·
-  L2398 entry-scripts
+Sections: L10 paths · L68 state · L137 config · L217 OS · L414 leases · L849 status · L1093 supervise sweep ·
+  L1164 supervise report · L1260 tracker · L1583 prior · L1599 ask bugs · L1804 git-host · L1964 kitlog · L2084 params ·
+  L2389 entry-scripts
 #>
 #Requires -Version 7
-try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output (`& python`, git) UTF-8 (· → £ é), never the OEM code page; a console too
+try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitEntry = $MyInvocation.PSCommandPath   # the script that dot-sourced this file (Resolve-KitExtra runs it again)
@@ -445,17 +445,8 @@ function Get-KitBeatMinutes {
   $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
   if ($s.nextBeat -and $s.report.at -and ((Get-Date) - [datetime]$s.report.at).TotalMinutes -lt 2 * [double]$s.nextBeat) { [double]$s.nextBeat } else { [double](Get-KitParam 'supervise.heartbeatMinutes') }
 }
-# health: the beat supervise asked for passed while agents live (a one-shot dies with a restart or a busy session)
-function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
-  $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
-  if (-not $s.report.at -or -not $s.nextBeat) { return }
-  $last = [datetime]$s.report.at; $due = $last.AddMinutes([double]$s.nextBeat); $late = [int]($Now - $due).TotalMinutes
-  $bm = [double](Get-KitParam 'idle.beatMinutes')
-  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and $_.beat -and ($Now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') -and ($a = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($Now - $a).TotalMinutes -lt $bm })   # board Active or writing its transcript
-  if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now, then arm one one-shot (bossy E1)" }
-}
-# heartbeat prompt (bossy E1)
-function Get-KitBeatPrompt { "Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief. Act on every ACT and WATCH line; re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min. Reply = 1-4 lines of the actions taken this beat, plus one line only when an ACT needs the owner; never paste the stdout (detail: supervise-report.html) (bossy E1)." }
+# bossy E1 prompt and cron call (a one-shot died with each restart)
+function Get-KitBeatPrompt { "Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief. Act on every ACT and WATCH line; no live run or agent left: stop this heartbeat. Reply = 1-4 lines of the actions taken this beat, plus one line only when an ACT needs the owner; never paste the stdout (detail: supervise-report.html) (bossy E1)." }
 # base = learned heartbeatMinutes (15: how often new ACTs appear); drifts back halfway per beat
 # Act / EnvFix = NEW since the last sweep: an ACT left open (owner's call, being fixed) keeps the normal pace
 function Get-KitNextBeat([double]$Prev, [double]$Base, [int]$Act, [int]$EnvFix, [bool]$Storage, [int]$BuildFails, [int]$Agents, [int]$Live, [int]$Running) {
@@ -1161,7 +1152,7 @@ function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scr
     if (-not $busy) {
       Remove-Item -LiteralPath "$base.out", "$base.err" -Force -ErrorAction SilentlyContinue
       $fileArgs = @('-NoProfile', '-NonInteractive', '-File', "`"$Script`"") + @($A | ForEach-Object { if ("$_" -match '\s') { "`"$_`"" } else { "$_" } })
-      # Windows: -Redirect* inherits the caller's stdout (a -Brief call hung 120+ s): a hidden pwsh runs the job
+      # Windows: -Redirect* inherits the caller's stdout (a -Brief hung 120+ s): a hidden pwsh runs it
       $sq = { param($s) "'$("$s" -replace '([\u2018-\u201B''])', '$1$1')'" }   # PowerShell reads the smart quotes as ' too
       $bc = "(Start-Process pwsh -ArgumentList $(@($fileArgs | ForEach-Object { & $sq $_ }) -join ',') -NoNewWindow -PassThru -RedirectStandardOutput $(& $sq "$base.out") -RedirectStandardError $(& $sq "$base.err")).WaitForExit()"
       $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-EncodedCommand', ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bc))) -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $fileArgs -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
@@ -2243,7 +2234,7 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
       $e.fresh = [int]$e.fresh + 1; if (-not ($e.fresh % 5)) { & $enq $o.key $ctx 'n:5' }
       $hr = ([datetime]$o.at).ToString('yyyy-MM-ddTHH'); if ($e.lastHour -and $e.lastHour -ne $hr) { & $enq $o.key $ctx 'hourly' }; $e.lastHour = $hr
       if ($o.lb -and $e.lb -and $o.lb -ne $e.lb) { & $enq $o.key $ctx 'load' }; if ($o.lb) { $e.lb = "$($o.lb)" }
-      # failure (timeout, oom, short; not a failed build): one safe step now; a timeout-class key moves only by the 10% rule (RFC 6298)
+      # failure (timeout, oom, short; not a failed build): one safe step; a timeout-class key moves by the 10% rule (RFC 6298)
       if ($o.r -in 'timeout', 'oom', 'short' -and [double]$e.d -gt 0) { & $enq $o.key $ctx 'fail'; $e.lastFail = $st.cursor }
       if ($o.r -eq 'timeout' -and $sp.class -eq 'timeout') {
         $okv = [double[]]@($e.obs | Where-Object { $_[2] -eq 'ok' } | ForEach-Object { [double]$_[1] })
