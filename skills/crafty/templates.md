@@ -113,7 +113,7 @@ solution.md review --ai cases`.
 The gates judge the rendered text: `checks` = the human doc, POSITIVE only, from the request (task, acceptance, stated qualities), never the
 code, Result / Evidence empty (an env run fills them: pokey finalize or a person, a dated "<env> run" section); `cases` = every
 positive, negative, edge and regression case (invalid input, role denials, boundaries, empty data, concurrency, nearby features,
-impact edges), each human check run by a case naming it (`check`); a bug fix: a `repro` case (merge refuses without); UI cases at
+impact edges), each human check run by a case naming it (`check`); a bug fix: a `repro` case (`process.gates.bugFix` `builtin:reproRow`: merge refuses without); UI cases at
 every `qa.matrix` variant (`matrix`); a failing case is FAIL, never "pre-existing"; a `qa.notLocal` stub path NOT_TESTED_LOCAL,
 never PASS; a result needs an evidence link (screenshot, request / response JSON, run output: `devtools.py evidence`).
 
@@ -121,7 +121,7 @@ never PASS; a result needs an evidence link (screenshot, request / response JSON
 One spec renders the MR title (`mrTitleFormat`), body (## Summary, ## Changes, ## How tested table, ## Risks, ## Links) and the
 commit (`commitFormat` subject + change bullets + trailers): `devtools.py mr <wt> --spec mr.json`, `crafty.ps1 wt commit -Dir <wt>
 -Spec mr.json`, `devtools.py render mr-title|mr-body|commit mr.json` to read it first. Local env row: the loop checkpoint
-(`checkpoint -Step loop -Evidence`) unless `localEnv`; the testing doc lines: `devtools.py finish` (merge refuses without).
+(`checkpoint -Step loop -Evidence`) unless `localEnv`; the testing doc lines: `devtools.py finish` (`process.gates.merge` `builtin:testingDocs`: merge refuses without).
 ```json
 { "task": "<id>", "type": "feat|fix|refactor", "scope": "", "change": "<subject>", "code": "<item code>", "repo": "", "summary": "<one-line goal and outcome>",
   "changes": [{ "text": "<behaviour change, user terms>", "technical": "<files / endpoints / migrations>" }],

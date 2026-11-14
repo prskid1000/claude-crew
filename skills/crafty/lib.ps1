@@ -1,15 +1,16 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L67 state · L136 config · L216 OS · L413 leases · L802 status · L1046 supervise sweep ·
-  L1117 supervise report · L1213 tracker · L1543 prior · L1559 ask bugs · L1764 git-host · L1924 kitlog · L2044 params ·
-  L2349 entry-scripts
+Sections: L10 paths · L68 state · L142 config · L222 OS · L419 leases · L808 status · L1052 supervise sweep ·
+  L1123 supervise report · L1219 tracker · L1567 prior · L1583 ask bugs · L1768 process · L1796 git-host · L1956 kitlog ·
+  L2076 params · L2381 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
+$script:KitVocab = try { Get-Content (Join-Path $PSScriptRoot 'vocab.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }   # statuses, tracker vendors, docs (devtools.py reads it too)
 function Get-KitRuntime { $rt = if ($env:CLAUDE_RUNTIME) { if ([IO.Path]::IsPathRooted($env:CLAUDE_RUNTIME) -or -not $script:KitRoot) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $env:CLAUDE_RUNTIME } } elseif ($script:KitRoot -and $script:KitRoot -notin '/', '\') { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir }; if (-not $rt -or $rt -in '/', '\') { throw "Get-KitRuntime: bad runtime '$rt'" }; $rt }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   $m = $script:KitPathMap
@@ -116,8 +117,13 @@ function Remove-KitGoneTask([string]$Id, $Err) {
 function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][hashtable]$Fields) {
   Update-KitTracking { param($t) if ($t.tasks[$Task]) { foreach ($k in $Fields.Keys) { $t.tasks[$Task][$k] = $Fields[$k] } } }
 }
-# a task's tracker id in a branch or MR title (tracker.branchTag)
-function Get-KitTaskTagRx { if ($KitConf.TrackerTag) { "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)" } else { '' } }
+# a task's tracker id in a branch or MR title: tracker.branchRx, else branchTag, else the vendor's vocab.json branchRx / idPattern ('' = none)
+function Get-KitTaskTagRx {
+  $rx = [string](Get-KitSetting 'tracker.branchRx' ''); if ($rx) { return $rx }
+  if ($KitConf.TrackerTag) { return "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)" }
+  $v = $script:KitVocab.trackers.($KitConf.TrackerType)
+  if ($v.branchRx) { "$($v.branchRx)" } elseif ($v.idPattern) { "(?<![A-Za-z0-9])(?<id>$($v.idPattern))(?![A-Za-z0-9])" } else { '' }
+}
 # repo!iid in some task's track: repos match on last path segment, via repoAliases
 function Test-KitMrTracked([string]$Repo, [string]$Iid, $Tracking) {
   if (-not $Tracking) { $Tracking = Read-KitTracking }
@@ -157,7 +163,7 @@ function Get-KitSetting([string]$Path, $Default) {
 $__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }) })
 $__trLp = [string](Get-KitSetting 'tracker.statusLabelPrefix' 'status:')   # github / gitlab status labels
 $__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'none' })).ToLower()
-$__trTag = [string](Get-KitSetting 'tracker.branchTag' $(switch ($__trType) { 'clickup' { 'CU-' } 'github' { 'GH-' } 'gitlab' { 'GL-' } default { '' } }))
+$__trTag = [string](Get-KitSetting 'tracker.branchTag' "$($script:KitVocab.trackers.$__trType.branchTag)")
 $__repos = Get-KitValue 'reposRoot' $__ws
 $__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__repos-wt")) | Where-Object { $_ } | Select-Object -Unique)
 $KitConf = [pscustomobject]@{
@@ -1220,17 +1226,15 @@ function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
 $__trRepo = [string](Get-KitSetting 'tracker.repo' '')
 $__trNoneDir = Get-KitPath tracker-none
 
-$__trStatus = [ordered]@{
-  open = @('open', 'to do'); inProgress = @('in progress'); review = @('for review', 'in review'); promoted = @('promoted')
-  inTest = @('in test', 'for test'); failedTesting = @('failed testing', 'test failed'); closed = @('closed', 'complete', 'done')
-}
-$__trCfgSt = Get-KitSetting 'tracker.statuses' $null
-if ($__trCfgSt) { foreach ($__p in $__trCfgSt.PSObject.Properties) { $__trStatus[$__p.Name] = @($__p.Value | ForEach-Object { [string]$_ }) } }
+# logical statuses: vocab.json statuses (devtools.py reads the same), tracker.statuses per key; null / [] = that transition is skipped
+$__trStatus = [ordered]@{}
+foreach ($__src in @($script:KitVocab.statuses, (Get-KitSetting 'tracker.statuses' $null))) { if ($__src) { foreach ($__p in $__src.PSObject.Properties) { $__trStatus[$__p.Name] = @($__p.Value | Where-Object { "$_".Trim() } | ForEach-Object { [string]$_ }) } } }
 
 function Resolve-TrackerStatus([string]$Status) {
-  foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { return @($__trStatus[$k])[0] } }
+  foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { return "$(@($__trStatus[$k])[0])" } }   # '' = the status is off
   $Status
 }
+function Test-TrackerStatusOff([string]$Status) { foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { return -not @($__trStatus[$k]).Count } }; $false }
 function Test-TrackerStatus([string]$Status, [string[]]$Logical) {
   foreach ($l in $Logical) { foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $l -and (@($__trStatus[$k]) | Where-Object { $_ -ieq "$Status".Trim() })) { return $true } } }
   $false
@@ -1407,9 +1411,10 @@ function Invoke-KitOutbox([switch]$DryRun) {
   }
 }
 function Set-TrackerStatus([string]$Id, [string]$Status) {
-  # promoted needs both doc links; an unread task fails closed (KIT_DOC_GATE=1: also tracker none)
-  if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and ($__trType -ne 'none' -or $env:KIT_DOC_GATE -eq '1') -and (Test-KitTaskDocLink $Id) -ne $true) {
-    throw "tracker: $Id not set to $Status`: its description lacks 'Testing doc (human):' and 'Testing doc (AI):' links (devtools.py finish writes them) or the task could not be read"
+  if (Test-TrackerStatusOff $Status) { Write-Host "tracker: $Id status $Status skipped (tracker.statuses.$Status is null)"; return }
+  # promoted: process.gates.promote (builtin:testingDocs: the doc links; an unread task fails closed)
+  if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and -not ($pg = Test-KitProcessGate promote @{ task = $Id; status = $Status }).ok) {
+    throw "tracker: $Id not set to $Status`: $($pg.why)"
   }
   Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }
 }
@@ -1469,8 +1474,27 @@ function Get-TrackerOwner {
 }
 # missing labels of a task text (templates.md task-description; -Subtask: Items too); a [Bug] keeps its own shape
 function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask) {
-  if (-not "$Text".Trim()) { return @('a description') }; if ($Name -match '^\W*Bug\]' -or "$Name".TrimStart().StartsWith([string](Get-KitSetting 'tracker.bugPrefix' '[Bug]'), 'OrdinalIgnoreCase')) { return @() }
-  @(foreach ($lb in @('Problem', 'Goal') + @(if ($Subtask) { 'Items|Bugs' }) + @('Acceptance', 'Links')) { if ($Text -notmatch "(?im)^(?:\s*\d+[.)])?\W{0,6}(?:$lb)\b(?:\s+\w+){0,2}(?:\s*\([^)\r\n]*\))?\W{0,3}(?::|\s+[-–—]|\s*$)") { ($lb -split '\|')[0] } })
+  if (-not "$Text".Trim()) { return @('a description') }; if (Test-KitBugName $Name) { return @() }
+  @(foreach ($sec in @(Get-KitTaskTemplate)) { if ("$($sec.required)" -eq 'subtask' -and -not $Subtask) { continue }; if ("$($sec.required)" -eq 'False') { continue }
+      $lb = (@($sec.label) + @($sec.alt) | Where-Object { $_ } | ForEach-Object { [regex]::Escape("$_") }) -join '|'
+      if ($Text -notmatch "(?im)^(?:\s*\d+[.)])?\W{0,6}(?:$lb)\b(?:\s+\w+){0,2}(?:\s*\([^)\r\n]*\))?\W{0,3}(?::|\s+[-–—]|\s*$)") { "$($sec.label)" } })
+}
+# tracker.kindPrefixes (kind -> name prefix; bug: tracker.bugPrefix), tracker.nameFormat, tracker.taskTemplate: today's kit shapes by default
+function Get-KitKindPrefix([string]$Kind) {
+  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $p = if ($kp) { @($kp.PSObject.Properties | Where-Object { $_.Name -ieq $Kind } | ForEach-Object { "$($_.Value)" })[0] }
+  if ($p) { $p } elseif ($Kind -ieq 'bug') { [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]') } elseif ($Kind) { "[$Kind]" } else { '' }
+}
+function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kindPrefixes besides bug; default [Feature] [Chore])
+  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { $kp.PSObject.Properties.Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
+  $n = "$Name".TrimStart(); [bool]@($ks | Where-Object { $n.StartsWith((Get-KitKindPrefix $_), 'OrdinalIgnoreCase') }).Count
+}
+function Test-KitBugName([string]$Name) { $p = Get-KitKindPrefix 'bug'; $n = "$Name".TrimStart(); ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) -or $n -match '^\W*Bug\]' }
+function Get-KitTaskTemplate {
+  $t = @(Get-KitSetting 'tracker.taskTemplate' $null | Where-Object { $_ -and $_.label })
+  if ($t.Count) { return $t }
+  @([pscustomobject]@{ key = 'problem'; label = 'Problem'; required = $true }, [pscustomobject]@{ key = 'goal'; label = 'Goal'; required = $true },
+    [pscustomobject]@{ key = 'items'; label = 'Items'; alt = 'Bugs'; required = 'subtask' }, [pscustomobject]@{ key = 'acceptance'; label = 'Acceptance'; required = $true },
+    [pscustomobject]@{ key = 'links'; label = 'Links'; required = $true })
 }
 # -NewTask '<why>' skips the duplicate check (logged); -Related: tasks the owner named this session
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related) {
@@ -1496,7 +1520,7 @@ function Set-KitDescSection([string]$Desc, [string]$Name, [string]$Body, [string
   $ae = "<!-- /kit:$After -->"; $k = if ($After) { $d.IndexOf($ae) } else { -1 }
   if ($k -ge 0) { $p = $k + $ae.Length; return $d.Substring(0, $p) + "`n`n$block" + $d.Substring($p) }
   $lines = @($d -split "`n"); $last = 0
-  for ($x = 0; $x -lt $lines.Count; $x++) { if ($lines[$x] -match '(?i)^\W{0,3}Testing doc \(') { $last = $x + 1 } elseif ($lines[$x].Trim()) { break } }
+  $drx = Get-KitDocLabelRx; for ($x = 0; $x -lt $lines.Count; $x++) { if ($drx -and $lines[$x] -match $drx) { $last = $x + 1 } elseif ($lines[$x].Trim()) { break } }
   (@((@($lines | Select-Object -First $last) -join "`n").Trim(), $block, (@($lines | Select-Object -Skip $last) -join "`n").Trim()) | Where-Object { $_ }) -join "`n`n"
 }
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '): adapter verb checklist, else a <!-- kit:<name> --> description section
@@ -1569,14 +1593,14 @@ function Get-KitDefectSigs($Check) {
   @(@(@($fl | ForEach-Object Value) + @($url)) | Select-Object -Unique)
 }
 # a QA collector [Bug]: text opens with a kit:bug marker or title says "— new defects (n)"; a hand-made [Bug] takes no sections
-function Test-KitBugCollector($Task) { "$($Task.name)" -match '[—-]\s*new defects(\s*\(\d+\))?(:|\s*$)' -or "$($Task.description)".TrimStart() -match '^[^\r\n]*\\?\[kit:bug:[^\]\r\n]+?\\?\][ \t]*(\r?\n|$)' }
+function Test-KitBugCollector($Task) { "$($Task.name)" -match "[—-]\s*$([regex]::Escape([string](Get-KitSetting 'tracker.bugCollectorTitle' 'new defects')))(\s*\(\d+\))?(:|\s*$)" -or "$($Task.description)".TrimStart() -match '^[^\r\n]*\\?\[kit:bug:[^\]\r\n]+?\\?\][ \t]*(\r?\n|$)' }
 # $Defects: [{ label; sig = @(); md; group }]; -Id: the [Bug] this source wrote before; -Mine: its whole unmarked text is this source's
 function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head, [object[]]$Defects, [string]$List, [string]$Assignee, [string]$Priority = '2', [string]$Id, [switch]$Mine) {
   $Key = ("$Key" -replace '[^\w.-]+', '_').Trim('_'); if (-not $Key) { throw 'Add-KitAskBug: -Key (the section key) is required' }
   if ($Key.Length -gt 80) { $Key = $Key.Substring(0, 70) + '-' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Key))).Substring(0, 8) }
   Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-bug-$("$(if ($Ask) { $Ask } else { $Key })" -replace '[^\w.-]', '_')") {
     $open = { param($i) if (-not $i) { return }; Clear-TrackerMemo $i; $v = Get-TrackerTask $i; if ($v.name -and -not (Test-TrackerStatus "$($v.status)" 'closed')) { $v } }
-    $pre = [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]')
+    $pre = Get-KitKindPrefix 'bug'
     $put = { param($bug)
       $text = "$($bug.description)".TrimEnd()   # markers read back markdown-escaped too ("\[kit:bug:a\_b\]")
       $ms = @([regex]::Matches($text, '(?m)^[^\r\n]*\\?\[kit:bug:(?<k>[^\]\r\n]+?)\\?\][ \t]*\r?$'))
@@ -1741,11 +1765,19 @@ function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {
     [pscustomobject]@{ question = $d.question; header = $h.Substring(0, [math]::Min(12, $h.Length)); multiSelect = $false
       options = @(Get-KitDecisionOrder $d | Select-Object -First 4 | ForEach-Object { [pscustomobject]@{ label = "$($_.key): $($_.label)$(if ($_.recommended) { ' (Recommended)' })" -replace '^: ', ''; description = $_.description } }) } }) }
 }
+# ---- process: testing docs (process.docs, else vocab.json); gates: adapters/process_gates.ps1 Test-KitProcessGate
+function Get-KitProcessDocs {   # process.docs (an empty list = none), else vocab.json docs; required defaults to true
+  $d = if ($__cfg -and $__cfg.process -and $__cfg.process.PSObject.Properties.Name -contains 'docs') { $__cfg.process.docs } else { $script:KitVocab.docs }
+  @(foreach ($x in @($d)) { if ($x.key -and $x.label) { [pscustomobject]@{ key = "$($x.key)"; label = "$($x.label)"; mrLabel = $(if ($x.mrLabel) { "$($x.mrLabel)" } else { "$($x.label)" })
+          linkRx = $(if ($x.linkRx) { "$($x.linkRx)" } else { [regex]::Escape("$($x.label)") }); headerRx = "$($x.headerRx)"; required = $x.required -ne $false } } })
+}
+function Get-KitDocLabelRx { $l = @(Get-KitProcessDocs | ForEach-Object { [regex]::Escape($_.label) }); if ($l.Count) { "(?i)^\W{0,3}(?:$($l -join '|'))\W{0,3}:" } else { '' } }
+# every required doc linked in the task description: $true / $false / $null (unread = unknown, never "no doc")
 function Test-KitTaskDocLink([string]$Task) {
-  try { $tt = Get-TrackerTask $Task } catch { return $null }   # unread = unknown, never "no doc"
+  try { $tt = Get-TrackerTask $Task } catch { return $null }
   if (-not $tt -or -not $tt.name) { return $null }
   $d = [string]$tt.description
-  ($d -match '(?im)^\W{0,3}Testing doc \(human\)\W{0,3}:[ \t*_]*[^\s*_]') -and ($d -match '(?im)^\W{0,3}Testing doc \(AI\)\W{0,3}:[ \t*_]*[^\s*_]')   # an empty bold label is no link
+  -not @(Get-KitProcessDocs | Where-Object required | Where-Object { $d -notmatch "(?im)^\W{0,3}$([regex]::Escape($_.label))\W{0,3}:[ \t*_]*[^\s*_]" }).Count   # an empty bold label is no link
 }
 # this request's mandate only (a stored one is older words); sonnet unless -Complex
 function Get-BugWfArgs($Brief, $RunName, $Agent, $Items, $Area, [string[]]$Mandate, [bool]$Complex, $KitDir) {

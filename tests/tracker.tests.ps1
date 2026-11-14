@@ -49,6 +49,20 @@ Expect "task spec: a checklist adapter and the description fallback get the same
 Expect "task spec: a local path (links or any text) is refused, a link must be a full URL ($($ts.bad) | $($ts.bad2))" ($ts.bad -match "full URL instead of '\.\./brief" -and $ts.bad2 -match 'local path')
 Expect 'task spec update: merged by item code (renamed in place, ticked, added), testing-doc links and kit sections kept' ($ts.ud -match '(?s)^\*\*Testing doc \(human\):\*\* \[open\]\(https://h\)\n\n.*<!-- kit:delivery -->\nD\n<!-- /kit:delivery -->\n\n<!-- kit:triage -->\nT\n<!-- /kit:triage -->.*- S01 ·[^\n]+\n- C01 · Chat, renamed\n- W01 · Web tab\n' -and $ts.ud -match '- \[x\] C01 · Chat, renamed' -and $ts.ud -match '- \[ \] W01 · Web tab')
 Expect "task spec: a subtask goes on its parent's Items checklist '<code> · <name> · <URL>' ($($ts.sub))" ($ts.pd -match '- \[ \] SUB1 · Sub one · \S+' -and $ts.pd -match '- \[ \] PL1 · Plain one · \S+' -and $ts.pd -match '(?m)^- PL1 · Plain one$' -and $ts.pd -match '- \[ \] S01 · ' -and $ts.sub -match '1/4 done')
+# tracker vocabulary from config: kindPrefixes, nameFormat, taskTemplate labels, process.docs labels; a subtask's required sections follow the template
+Set-JsonFile "$k/skills/crafty/kit.local.json" @{ tracker = @{ kindPrefixes = @{ feature = 'FEAT:'; bug = 'DEFECT:' }; nameFormat = '{prefix} {title} ({code})'
+    taskTemplate = @(@{ key = 'problem'; label = 'Context'; required = $true }, @{ key = 'goal'; label = 'Outcome'; required = $true }, @{ key = 'items'; label = 'Work'; required = 'subtask' }, @{ key = 'acceptance'; label = 'Done when'; required = $true }, @{ key = 'links'; label = 'Refs'; required = $false }) }
+  process = @{ docs = @(@{ key = 'testing-doc'; label = 'QA plan' }) } }
+$tv = Invoke-PsTest taskvocab @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'
+$sp = @{ kind = 'feature'; title = 'Cart'; code = 'C1'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A'; desc = 'a' }); acceptance = @('x'); links = @('https://t/1'); docs = @{ 'testing-doc' = 'https://d/q' } }
+$r = ConvertTo-KitTaskRender $sp ''
+"name:$($r.name)"; "desc:$($r.description -replace "`n", '\n')"
+"gaps:$((Get-KitTaskTextGaps 'x' "Context: a`nOutcome: b`nDone when: c" -Subtask) -join ',')|$((Get-KitTaskTextGaps 'DEFECT: y' 'z' -Subtask).Count)|$(Test-KitKindName 'FEAT: z')|$(Test-KitKindName '[Feature] z')"
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
+Remove-Item "$k/skills/crafty/kit.local.json"
+$tvd = "$($tv -match '^desc:')"
+Expect "tracker vocabulary: kindPrefixes + nameFormat name, taskTemplate labels, process.docs labels in the description; template gaps (subtask Work, Refs optional), a bug prefix skips them ($($tv -join ' | '))" ($tv -contains 'name:FEAT: Cart (C1)' -and $tvd.StartsWith('desc:**QA plan:** [open](https://d/q)\n\n**Context:** p.\n\n**Outcome:** g.\n\n**Work:**\n- A · a\n\n**Done when:**\n- x\n\n**Refs:** https://t/1') -and $tv -contains 'gaps:Work|0|True|False')
 # non-ASCII end to end, long text never cut: a command-adapter tracker, crafty.ps1 run with no console (stdout in the OEM code page before the fix)
 $fakeTr = Join-Path (Kd) 'fake-tracker.ps1'; Set-Content $fakeTr -Encoding utf8 @'
 param($Verb, $Id, $Text)

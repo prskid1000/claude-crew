@@ -968,9 +968,9 @@ switch ($Action) {
       if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o -Run; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
-      # both docs linked first; unread = held
+      # process.gates.promote first (builtin:testingDocs: the docs linked); unread = held
       $ciTask = Get-KitCiTask $o.task   # a CI job's task: the job passing again is its test, no testing docs
-      if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and (Test-KitTaskDocLink $o.task) -ne $true) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, no testing-doc link (human + AI) or the task is unread: not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
+      if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and -not ($pg = Test-KitProcessGate promote @{ task = $o.task }).ok) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, $(if ($pg.how -eq 'builtin:testingDocs') { 'no testing-doc link (human + AI) or the task is unread' } else { "process.gates.promote refused ($($pg.how)): $($pg.why)" }): not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
       $setFailed = $false
       foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }

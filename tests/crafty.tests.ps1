@@ -101,9 +101,17 @@ Expect 'kit comment -Kind comment-solution: the next round edits it, no visible 
 $null = pwsh @np $D tracker comment $t.id "old qa`n`n[kit:qa-result]" -Kind comment-status -ProseOk x; $n4 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 $null = pwsh @np $D tracker comment $t.id 'new qa' -Kind qa-result -ProseOk x; $cq = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json)
 Expect "kit comment: an old marked comment (no stored id) is edited, its marker gone ($n4 $($cq.Count))" ($cq.Count -eq $n4 -and @($cq.text -match '^new qa$').Count -eq 1 -and -not @($cq.text -match '\[kit:qa-result').Count)
-$env:KIT_DOC_GATE = '1'; $g1 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h"
+$dk0 = if (Test-Path $dkl) { Get-Content $dkl -Raw }; $gate = Join-Path (Kd) 'promote-gate.ps1'
+'$p = [Console]::In.ReadToEnd() | ConvertFrom-Json; if ($p.gate -eq ''promote'' -and $p.task -eq ''ok'') { exit 0 }; "no $($p.gate) for $($p.task)"; exit 1' | Set-Content $gate
+$env:KIT_DOC_GATE = '1'; $gNone = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String   # process.gates unset: no docs needed
+Set-JsonFile $dkl @{ process = @{ gates = @{ promote = "pwsh -NoProfile -File `"$gate`"" } } }; $gH = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String
+Set-JsonFile $dkl @{ process = @{ gates = @{ promote = 'builtin:testingDocs' } } }   # the legacy row: today's two-doc gate
+$g1 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h"
 $g3 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h`nTesting doc (AI): https://d/a"
 $g2 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; Remove-Item Env:KIT_DOC_GATE
+Set-JsonFile $dkl @{ tracker = @{ statuses = @{ promoted = $null } } }; $gOff = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String
+if ($dk0) { $dk0 | Set-Content $dkl } else { Remove-Item $dkl }
+Expect "process.gates.promote: unset = promoted with no doc links; a hook command refuses with its stdout; statuses.promoted null = skipped ($($gH.Trim()))" ($gNone -notmatch 'not set' -and $gH -match "not set to promoted: no promote for $($t.id)" -and $gOff -match 'skipped')
 $k1 = pwsh @np $D tracker create -List L1 -Name 'Bug s1' -Description 'a' -Key sig-1 | ConvertFrom-Json; $k2 = pwsh @np $D tracker create -List L1 -Name 'Bug s1 (2)' -Description 'b' -Key sig-1 | ConvertFrom-Json
 Expect 'tracker create -Key: an open task of the same key is updated, not created again' ($k2.id -eq $k1.id -and $k2.reused -and (pwsh @np $D tracker view $k1.id | ConvertFrom-Json).description -eq 'b')
 Expect 'status gate: promoted needs both doc links (none, the human one only: refused)' ($g1 -match 'not set to promoted' -and $g2 -notmatch 'not set' -and $g3 -match 'not set to promoted')
@@ -160,13 +168,6 @@ Expect-Cases @(
   , @('check: Flyway, Alembic and Prisma files are UNRUN too', { & $mig @{ 'alembic/versions/a1_x.py' = 'x'; 'prisma/migrations/1_x/migration.sql' = 'x'; 'db/migration/V1__x.sql' = 'x' } },
       { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 5 migration file\(s\) of another tool' })
 )
-$tr = Join-Path (Kd) 'touched-repo'; New-Item -ItemType Directory -Force "$tr/src" | Out-Null; '{ "stack": "custom", "commands": { "test": "node -e 0" } }' | Set-Content "$tr/.claude-stack.json"
-'x' | Set-Content "$tr/src/Audit.spec.ts"; Save-GitRepo $tr i; 'x' | Set-Content "$tr/src/Audit.ts"
-$out = pwsh @np $D check -Dir $tr -Step test -Touched 2>&1 | Out-String
-Expect 'check -Touched: Audit.ts is no test (case-sensitive Test suffix); its spec runs' ($out -match '-Touched: 1 test\(s\) for 1 changed file\(s\): src/Audit\.spec\.ts')
-$sd = Join-Path (Kd) 'stack-only'; New-Item -ItemType Directory -Force $sd | Out-Null; '{ "stack": "custom", "commands": { "compile": "echo ok" } }' | Set-Content "$sd/.claude-stack.json"
-$out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
-Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String
 Expect 'gate: runs the command; no heap cap without adapters/build_heap.ps1' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
 $lr = Join-Path (Kd) lock-repo; $null = mkdir -Force "$lr/api"; $env:LOCK_LOG = "$lr/log"

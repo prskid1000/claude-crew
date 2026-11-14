@@ -20,6 +20,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 | `spec.mjs` | step 4: `check -Step test` runs it for a web project with no unit-test target |
 | `module-audit.md` | `revy` kind module (`devtools.py findings`) |
 | `kit.example.json` | setup (`bossy.ps1 setup -WriteLocal`; keys: README "Configuration"); `_paths`: every state path |
+| `vocab.json` | built-in defaults (statuses, tracker vendor ids and links, testing docs); config keys override them |
 
 ## Steps (every devy; your brief wins where it differs)
 ```powershell
@@ -109,7 +110,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
 - **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once the MR, both docs and
   the solution comment are posted -> `promoted` by `track` when all merge -> `inTest` after the deploy (coordinator)). Never set
-  `inTest` or `closed` yourself; `promoted` needs both doc links, only atop the description, never in a comment.
+  `inTest` or `closed` yourself; `promoted` passes `process.gates.promote` (`builtin:testingDocs`: both doc links,
+  only atop the description, never in a comment).
 - **Publish once per key:** docs and evidence via `devtools.py doc|evidence --key <task|run>:<kind>` (same link, a dated
   section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one; decisions: `bossy.ps1 decide` only);
   `devtools.py mr` edits the open MR.
