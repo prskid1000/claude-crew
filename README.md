@@ -169,7 +169,7 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 - header, one row from 1100 px: staleness (amber past 2x NEXT, red past 4x), next sweep, jump links, ACT / WATCH counts, filter
   (`/`), auto-refresh 60 s and light / dark icon buttons;
 Each number appears once, in the order the owner acts on (owner 2026-11-13). Every section and sub-section is a `<details>` whose
-summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, agents, runs, test runs, machine and resources,
+summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, agents, runs, machine and resources,
 usage; top steps and kit internals folded; the page keeps each one the owner toggles (localStorage `kc-open`). Tables show 10
 rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; the header holds
 jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
@@ -181,8 +181,6 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   each run by its label (mandate or area; run id in the tooltip), kind chip, resumed, steps as a bar, tokens, est. cost, merged
   MRs, elapsed, the context budget bar while running or past 80%, and its steps (role, model, in / out / cache, elapsed, tool
   calls, result, round, retry);
-- test runs (7 days, `qa-runs/*/*/results.json` by its write day): checks per day as stacked bars (PASS, FAIL, NOT_TESTED,
-  OUT_OF_SCOPE muted; a click lists that day's runs) and the NOT_TESTED causes;
 - machine and resources: memory (used / total meter with a 7-day peak tick, 24 h sparkline), every watched disk in one tile
   (free GB, fill rate, "full in" under 72 h, used / size meter with a 7-day peak tick, 7-day free sparkline marking the low; a
   flagged drive coloured and first) in one row; CPU (% of the machine from the CPU time of one process snapshot per sweep, 24 h):
@@ -204,7 +202,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   a model table (steps, tokens, est. cost, cost share bar, avg time); per step type (avg / p50 / p90), sessions when 2+;
 - kit internals (kit tuning and history only): Activity tiles, each number once with its history as a labelled graph (workflow
   steps now + a chip per running run, 24 h step line; branches · worktrees per repo + 7-day lines; sweep time, 24 h with the
-  7-day average; agents failed, 7 daily bars; flags auto-fixed, % per sweep; `—` = no source), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
+  7-day average; agents failed, 7 daily bars; test runs (`qa-runs/*/*/results.json` by its write day): checks · pass %
+  (OUT_OF_SCOPE left out), 7 daily stacked bars (PASS, FAIL, NOT_TESTED, OUT_OF_SCOPE) and the NOT_TESTED causes in one line; flags auto-fixed, % per sweep; `—` = no source), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
   default / local config / learned with its note · changed · why), the last 10 learned changes on top.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
