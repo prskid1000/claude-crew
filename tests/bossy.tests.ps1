@@ -59,7 +59,7 @@ $rj = Read-Json (Join-Path $ld 'wf_t1.json'); $rj.holderPid = 999999; & $J $rj (
 $l = pwsh @np $O launch -List -Brief | Out-String
 $rc = pwsh @np $O recover | Out-String
 Expect 'launch -List / recover: stopped run resumes with exact args' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf-t1.resume.md')))
-Expect 'recover: RESUME line has the recorded args byte for byte' ($rc.Contains("resumeFromRunId: 'wf_t1', args: $full })"))
+Expect 'recover: RESUME line has the recorded args byte for byte' ($rc.Contains("resumeFromRunId: 'wf_t1', args: $full })") -and $rc -match 'RESUME \(refused: its session ended')
 $bwt = Join-Path (Kd) 'bwt'
 $j1 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt | Out-String; $s1 = if ($j1 -match 'SESSION (\S+)') { $Matches[1] }
 $j2 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt -Resume | Out-String
@@ -101,7 +101,7 @@ $null = Invoke-Track run -Detail
 Update-KitTracking { param($t) $t.tasks['t5'].done = $false }
 $null = Invoke-Track run -Detail
 "skip:$(-not @($global:sets | Where-Object { $_ -like 't5=*' }).Count)"
-"once:$($d5 -and -not @($global:cmts | Where-Object { $_.id -eq 't5' }).Count)"   # no MRs comment, no merged comment
+"once:$($d5 -and -not @($global:cmts | Where-Object { $_.id -eq 't5' }).Count)"   # no MRs or merged comment
 $h = Invoke-Track add -Task t6 -Mrs 'g/web!8' -HoldPromotion 'deferred A2' | Out-String
 $r1 = Invoke-Track run -Detail | Out-String
 $c1 = [int][bool](Read-KitTracking).tasks['t6'].done
@@ -174,7 +174,7 @@ $null = python -X utf8 "$k/skills/bossy/kitbag.py" budget; $env:KIT_RUN = $env:K
 Expect 'kitlog: call lines (ps1 + py) masked; audit -Since 7 (days) merges the streams' ($au -match '(?s)^audit run r-9: [3-9] events.*bossy\.ps1 decide list -> rc 0.*learn kitty/idea -> Bearer \[redacted\] token=\[redacted\] \[email\].*kitbag\.py budget')
 $nt = @'
 . $args[0]
-$env:KIT_NET_TRIES = '1'   # a tracker whose CLI fails as $global:trFails says: network, then fine, then a real error
+$env:KIT_NET_TRIES = '1'   # a tracker CLI failing per $global:trFails: network, then fine, then a real error
 Register-KitAdapter 'tracker' 'fake' @{ status = { param($a) if ($global:trFails) { throw $global:trFails }; 'ok' } }; Initialize-KitTracker -Type fake
 $global:trFails = 'dial tcp: lookup api.example: no such host'
 $q = Set-TrackerStatus 'o/r#9' 'inTest' 3>$null; "queued:$("$q" -match '^QUEUED' -and (Test-Path (Get-KitPath outbox)))"
@@ -221,8 +221,6 @@ $hr = & { . $O; $n = Get-Date
   $q = @{}; $a = Get-KitSilentRun 'wf1' 60 $q $n; $b = Get-KitSilentRun 'wf1' 61 $q $n; $c = Get-KitSilentRun 'wf2' 3 $q $n; $null = Get-KitSilentRun 'wf1' 2 $q $n; $d = Get-KitSilentRun 'wf1' 50 $q $n
   "$($a.skip -and $a.flag.what -match 'silent 2 days')|$($b.skip -and -not $b.flag)|$(-not $c.skip)|$([bool]$d.flag)" }
 Expect 'supervise: a run silent 2+ days is flagged once, then skipped' ($hr -eq 'True|True|True|True')
-$jr = & { . $O; $s = @(@{ agentId = 'a1'; label = 'build:X1' }, @{ agentId = 'a2'; label = 'build:X1' }, @{ agentId = 'a3'; label = 'review:X1' }, @{ agentId = 'a4'; label = 'test:Q1@2' }, @{ agentId = 'a5'; label = 'test:Q1' }, @{ agentId = 'a6'; label = 'test:Q1' }); (@(Get-JournalRunning $s @('a3')) | ForEach-Object agentId) -join ',' }
-Expect 'journal: running = no result, not superseded by a later finished start or a restart of the label' ($jr -eq 'a4,a6')
 # crash, pause, resume (MR states: a fake git host)
 $DV = Join-Path $k 'skills/crafty/crafty.ps1'; $cw = Join-Path (Kd) 'cwt'; New-Item -ItemType Directory -Force $cw | Out-Null; 'a' | Set-Content "$cw/a.txt"; Save-GitRepo $cw base
 $cs = if ((Px $O board join -Agent C1 -Run cr -Claims $cw | Out-String) -match 'SESSION (\S+)') { $Matches[1] }
@@ -239,7 +237,8 @@ $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters')
 'Register-KitAdapter ''git-host'' ''gitlab'' @{ ''mr.get'' = { param($a) [pscustomobject]@{ iid = $a.n; state = $(if ($a.n -eq ''6'') { ''merged'' } else { ''opened'' }); sha = ''s'' } } }; Register-KitAdapter ''tracker'' ''none'' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = ''n''; status = ''promoted'' } }; comments = { @() } }' | Set-Content "$ad/fakehost.ps1"
 $sw = [Diagnostics.Stopwatch]::StartNew(); $hh = Px $O health | Out-String; $hs = $sw.Elapsed.TotalSeconds
 $env:KIT_OFFLINE = '1'; $off = Invoke-TestScript $O resume -All; $env:KIT_OFFLINE = '0'
-$rs = Px $O resume -All | Out-String; $ag = TkPath $k agents
+$wr = Join-Path (Kd) 'wr'; $c1w = "$wr/c1-wip"; New-Item -ItemType Directory -Force $c1w | Out-Null; 'a' | Set-Content "$c1w/a.txt"; Save-GitRepo $c1w base; 'u' | Set-Content "$c1w/u.txt"; $env:CLAUDE_WT_ROOT = $wr
+$rs = Px $O resume -All | Out-String; $ag = TkPath $k agents; Remove-Item Env:CLAUDE_WT_ROOT
 $b1 = Get-Content "$ag/c1/resume-cr-brief.md" -Raw; $b2 = Get-Content "$ag/c2/resume-cr-brief.md" -Raw; $rj = Px $O board join -Agent C1 -Run cr -Resume | Out-String
 $bad = @(Get-ChildItem (TkPath $k work) -Recurse -Filter '*.json' | Where-Object { try { $null = Get-Content $_.FullName -Raw | ConvertFrom-Json; $false } catch { $true } })
 Expect 'crash: agent killed holding the board lock -> health marks it crashed, no lock left, state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt 60 -and -not (Test-Path "$bf.lock") -and -not $bad.Count)
@@ -247,7 +246,7 @@ Expect 'resume offline: says so, exit 1, nothing relaunched' ($off.code -eq 1 -a
 Expect 'resume after a crash: brief at the next step, done verified, diff kept; join: CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match '\| b\.txt \|' -and (Test-Prose kit-report "$ag/c1/resume-cr-brief.md") -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
 $rl = @($rs -split "`n" | Where-Object { $_ -match 'RELAUNCH .*finished steps skipped' } | ForEach-Object { ($_ -replace '^.*args: (\{.*\}) \}\)\s*$', '$1') | ConvertFrom-Json -AsHashtable })
 Expect 'resume after MR opened: starts at review, MR verified; an all-merged run still relaunches' ($b2 -match 'Start AT step: review' -and $b2 -match 'merge_requests/5 \| MR opened' -and $rs -match '(?s)run cm.*all 1 MR\(s\) merged: the relaunch')
-Expect 'recover: host + tracker state -> RELAUNCH skip list (open: build; merged + promoted: all), brief item table' ($rl.Count -eq 2 -and $rl[0].mode -eq 'resume' -and
+Expect 'recover: host + tracker state -> RELAUNCH skip list (open: build; merged + promoted: all), brief item table' ($rl.Count -eq 2 -and $rs -match 'UNCOMMITTED: C1 \S+c1-wip \(1 file\(s\)\): the' -and $rl[0].mode -eq 'resume' -and
   "$($rl.resume.C2.skip)" -eq 'build' -and "$($rl.resume.C1.state)" -eq 'start' -and "$($rl.resume.C3.skip)" -eq 'build review ci merge testing-doc tracker' -and
   (Get-Content (Join-Path (TkPath $k launches) 'cm.resume.md') -Raw) -match '\| tsk123 g/api!6 \| done \| build, .*, tracker \|  \| g/api!6 merged \| promoted')
 $ps = if ((Px $O board join -Agent P1 -Run pr | Out-String) -match 'SESSION (\S+)') { $Matches[1] }; $null = Px $O board join -Agent P2 -Run pr; $null = & $self buildy.js pr '{"brief":"C:/b/pr.md"}'

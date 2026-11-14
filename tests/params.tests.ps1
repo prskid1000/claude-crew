@@ -233,5 +233,8 @@ $e3 = Read-Json $f3; $e3.beat = (Get-Date).AddMinutes(-40).ToString('o'); $e3 | 
 $j5 = pwsh @np $O board join -Agent BY -Run rb | Out-String; Expect "board: beat 40 min old, transcript fresh = alive: BY-3" ($j5 -match 'you are BY-3' -and $j5 -notmatch 'TAKEOVER')
 # track's cleanup after a merge: the learned idle hours (2 h), never 0 (a fresh worktree has no commit = merged: it went)
 Expect "track cleanup: -WorktreeIdleHours = cleanup.worktreeIdleHours (default 2 h), never 0" ((Get-Content (Join-Path $src 'skills/bossy/params.registry.json') -Raw) -match '"cleanup\.worktreeIdleHours": "config default=2 unit=h"' -and (Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -match "'-WorktreeIdleHours', ""\`$\(Get-KitParam cleanup\.worktreeIdleHours\)""")
+# journal (moved from bossy.tests for its cap)
+$jr = & { . $O; $s = @(@{ agentId = 'a1'; label = 'build:X1' }, @{ agentId = 'a2'; label = 'build:X1' }, @{ agentId = 'a3'; label = 'review:X1' }, @{ agentId = 'a4'; label = 'test:Q1@2' }, @{ agentId = 'a5'; label = 'test:Q1' }, @{ agentId = 'a6'; label = 'test:Q1' }); (@(Get-JournalRunning $s @('a3')) | ForEach-Object agentId) -join ',' }
+Expect 'journal: running = no result, not superseded by a later finished start or a restart of the label' ($jr -eq 'a4,a6')
 Remove-TestKit $k
 Complete-Tests
