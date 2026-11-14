@@ -204,7 +204,7 @@ Remove-Item $kl
 # pokey.ps1 api: auth kinds, -Save, -ContentType, paths
 $Q = Join-Path $k 'skills/pokey/pokey.ps1'
 $api = Start-TestApi; $apiPort = $api.port
-$T = { param($a, $sub) @{ api = "http://127.0.0.1:$apiPort$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
+$T = { param($a, $sub) @{ api = "http://127.0.0.1:$apiPort$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{}; tokenField = 'access_token' }
 & $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/pokey/targets.local.json') 6
 $ok = foreach ($x in 'tl/l', 'tt/x') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
 Expect "api auth login + none ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"')

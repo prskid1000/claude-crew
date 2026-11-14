@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L65 setup · L175 config · L354 recover · L499 release · L550 cost · L656 registry · L660 scan
+Sections: L16 helpers · L65 setup · L175 config · L354 recover · L499 release · L550 cost · L657 registry · L661 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -577,6 +577,7 @@ function mock(label) {
   case 'prep': case 'prep-retry': return { ok: true, record: 'ok', prep: JSON.stringify({ work: 3, groups: 1, sec: 20, steps: ['signals'], digest: '/ws/.claude/<runtime>/logs/retros/digest.md', at: '2026-01-01T00:00:00', minutes: 30 }) }
   case 'analyse': return { proposals: [{ file: `${kit}/skills/crafty/LESSONS.md`, change: 'add-lesson', text: 'x', evidence: '2 signals', occurrences: 2, confidence: 'high' }] }
   case 'apply': return { applied: ['x'], proposedForApproval: [], rejected: [], report: 'r.md' }
+  case 'record-args': case 'record-args-retry': return { ok: true, output: 'RECORDED\nCONFIG {"roles":{"api":"producer","app":"consumer"},"qaLanes":{"web":{"kind":"web","parallel":5,"followUp":"app"},"api":{"kind":"api","parallel":5,"followUp":"app"},"app":{"kind":"app","devices":"android"}}}' }
   default: return 'ok'
  }
 }

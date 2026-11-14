@@ -931,20 +931,20 @@ Write-KitAtomic "$RunDir/run.json" ($r | ConvertTo-Json -Depth 8)
 "added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir/run.json - launch: Workflow testy { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"
 }
 
-# the tester guide doc: process.docs entry qa.guideDoc (unset: the only / last entry); no process.docs = none (the task text guides)
+# the tester guide doc: the process docs (lib.ps1 Get-KitProcessDocs) entry qa.guideDoc (unset: the first); none = the task text guides
 function Get-QaGuideDocSpec {
-  $docs = @(Get-KitSetting 'process.docs' @() | Where-Object { $_ -and $_.key })
+  $docs = @(Get-KitProcessDocs)
   if (-not $docs.Count) { return $null }
   $want = [string](Get-KitSetting 'qa.guideDoc' '')
-  $d = if ($want) { @($docs | Where-Object { "$($_.key)" -eq $want })[0] } else { $docs[-1] }
-  if (-not $d) { throw "qa.guideDoc '$want' is not a process.docs key ($(@($docs.key) -join ', '))" }
-  [pscustomobject]@{ key = [string]$d.key; label = [string]$(if ($d.label) { $d.label } else { $d.key }); rx = [string]$(if ($d.headerRx) { $d.headerRx } else { [regex]::Escape([string]$(if ($d.label) { $d.label } else { $d.key })) }) }
+  $at = if ($want) { [array]::IndexOf(@($docs.key), $want) } else { 0 }
+  if ($at -lt 0) { throw "qa.guideDoc '$want' is not a process docs key ($(@($docs.key) -join ', '))" }
+  $d = $docs[$at]; [pscustomobject]@{ key = $d.key; label = $d.label; rx = $d.linkRx; legacy = @('human', 'ai')[[Math]::Min($at, 1)] }
 }
-# the guide doc's URL: a "<label>: [x](url)" line in the task text, else the tracking file's docs.<key>
+# the guide doc's URL: a "<label>: [x](url)" line in the task text, else the tracking file's docs.<key> (older records: docs.human / docs.ai)
 function Get-QaGuideDocUrl([string]$Description, $Track, $Spec) {
   if (-not $Spec) { return $null }
-  if ($Description -match "(?m)(?:$($Spec.rx))[:*\s]*\[[^\]]*\]\((?<u>https?://[^)\s]+)\)") { return $Matches.u }
-  $v = if ($Track.docs) { $Track.docs.($Spec.key) }; if ($v) { "$v" }
+  if ($Description -match "(?im)(?:$($Spec.rx)):\*{0,2}\s*\[[^\]]*\]\((?<u>https?://[^)\s]+)\)") { return $Matches.u }
+  $v = if ($Track.docs) { $x = $Track.docs.($Spec.key); if (-not $x) { $x = $Track.docs.($Spec.legacy) }; $x }; if ($v) { "$v" }
 }
 
 # ---- prepare: a test-only run from a job (SKILL.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it

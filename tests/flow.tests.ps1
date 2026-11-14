@@ -74,6 +74,7 @@ $Q = Join-Path $k 'skills/pokey/pokey.ps1'
 $pa = Px $Q api GET '/x' -Target nosuch 2>&1 | Out-String; $pb = Px $Q api '/x' '/y' -Target nosuch 2>&1 | Out-String
 Expect "pokey api: <METHOD> <path> positional (reaches the targets file), a second path refused" ($pa -notmatch 'positional parameter|missing -Path' -and $pa -match 'targets\.local\.json' -and $pb -match "a second positional '/y'")
 # pokey seat claims and seats: live holders keep theirs, dead or unknown ones are taken over (moved from pokey.tests: its cap)
+& $J @{ qa = @{ lanes = @{ web = @{ kind = 'web' }; api = @{ kind = 'api' } } } } (Join-Path $k 'skills/crafty/kit.local.json')
 $sd = TkPath $k qa-seats; $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force (Join-Path $sd 'claims'), $crd, (Join-Path $sd 'seats') | Out-Null
 $myStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); $ago7h = (Get-Date).AddHours(-7).ToString('s')
 & $J @{ run = 'CL'; code = 'C1'; owner = 'w9'; since = $ago7h; holderPid = $PID; holderStart = $myStart } (Join-Path $sd 'claims/CL__C1.json')
@@ -98,7 +99,7 @@ const r = u([{ url: 'https://h/g/a/-/merge_requests/1', merged: true }, { url: '
 Expect "buildy: duplicate MRs collapse, MERGED only when every copy is ($uq)" ("$uq" -eq 'true')
 # pokey api errors (moved from pokey.tests: its cap)
 & $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tx = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'key' }; users = @{ admin = 1 } } } } (Join-Path $k 'skills/pokey/targets.local.json') 5
-$ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 -Save "$(Kd)/q.json" 2>&1 | Out-String; $ac = $LASTEXITCODE; $bs = Px $Q api -Target tq -Path '/x' -Save "Q-T1_01`b_poll" 2>&1 | Out-String; $gx = Invoke-PsTest gx ". `$args[0]; function Invoke-ApiExtra { param(`$Path, `$Target, `$Save, `$OutDir) `"`$OutDir|`$Save`" }; Invoke-Api /x -Target tx -Save D:/z/q.json" @($Q)
+$ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 -Save "$(Kd)/q.json" 2>&1 | Out-String; $ac = $LASTEXITCODE; $bs = Px $Q api -Target tq -Path '/x' -Save "Q-T1_01`b_poll" 2>&1 | Out-String; $gx = Invoke-PsTest gx ". `$args[0]; Register-KitAdapter api-auth key @{ invoke = { param(`$a) `"`$(`$a.OutDir)|`$(`$a.Save)`" } }; Invoke-Api /x -Target tx -Save D:/z/q.json" @($Q)
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 $nu = Px $Q api -Target tx -As ghost -Path '/x' 2>&1 | Out-String; $nuc = $LASTEXITCODE
 Expect 'api: a user missing from the target exits 2 NO-USER (not retried), known users named, no stack trace' ($nuc -eq 2 -and $nu -match "NO-USER 'ghost' in target tx \(not retried" -and $nu -match 'Known: admin' -and $nu -notmatch 'Exception|at line')

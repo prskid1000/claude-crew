@@ -68,9 +68,9 @@ $ppAgain = @(pwsh -NoProfile -File $PKp prepare -Job $pjob 2>&1); $ppAgainCode =
 $null = New-Item -ItemType Directory -Force "$wd/qa-runs/$pDay-empty/guides"; $pjobEmpty = $pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-empty'
 $ppEmpty = @(pwsh -NoProfile -File $PKp prepare -Job $pjobEmpty 2>&1); $ppEmptyCode = $LASTEXITCODE
 Expect "prepare: a run folder with files is refused (exit 1, no -2 suffix); an empty one is reused and RUN printed ($ppAgainCode $ppEmptyCode $($ppEmpty[-2]))" ($ppAgainCode -eq 1 -and "$ppAgain" -match 'exists with files' -and -not (Test-Path "$wd/qa-runs/$pDay-stg-2") -and $ppEmptyCode -eq 0 -and "$($ppEmpty[-1])" -match "^RUN .*qa-runs/$pDay-empty""")
-Remove-Item $kl
+Set-JsonFile $kl @{ process = @{ docs = @() } }   # [] = no docs (unset: the built-in pair, vocab.json)
 $ppNd = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-nodoc') 2>&1); $ndRun = ("$($ppNd[-1])" -replace '^RUN ') | ConvertFrom-Json
-Expect "prepare, no process.docs: no doc needed, the task text is the guide, lane = the first qa.lanes lane (web) ($($ppNd[-2]))" (@($ndRun.items).Count -eq 2 -and -not @($ndRun.left).Count -and (Get-Content -Raw $ndRun.items[1].guideFile) -match 'No testing doc configured' -and $ndRun.items[0].lane -eq 'web')
+Expect "prepare, process.docs []: no doc needed, the task text is the guide, lane = the first qa.lanes lane (web) ($($ppNd[-2]))" (@($ndRun.items).Count -eq 2 -and -not @($ndRun.left).Count -and (Get-Content -Raw $ndRun.items[1].guideFile) -match 'No testing doc configured' -and $ndRun.items[0].lane -eq 'web')
 # browser.mjs defaultUser: no 'admin' default (as pokey.ps1 api)
 if (Use-BrowserKit) {
   $du = "import { defaultUser } from '$((Join-Path $k 'skills/pokey/browser.mjs').Replace('\', '/') -replace '^', 'file:///')'`nconst two = { users: { a: 1, b: 2 } }`nlet e = ''; try { defaultUser(two, 'tt') } catch (x) { e = x.message }`nconsole.log([defaultUser({ users: { solo: 1 } }), defaultUser({ ...two, defaultUser: 'b' }), defaultUser({}), /several users/.test(e)].join('|'))"

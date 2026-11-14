@@ -156,7 +156,7 @@ const _ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', re
 const _res = (code, checks) => ({ code, checks, findings: [], setup_changes: [], data_created: [] })
 const _rep = (localTest, more = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...more })
 const _merged = (n) => ({ mrs: [{ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged: true, mergeState: 'MERGED' }] })
-const _rec = () => ({ ok: true, output: 'RECORDED' })
+const _rec = () => ({ ok: true, output: 'RECORDED\nCONFIG {"roles":{"api":"producer","app":"consumer"},"qaLanes":{"web":{"kind":"web","parallel":5,"followUp":"app"},"api":{"kind":"api","parallel":5,"followUp":"app"},"app":{"kind":"app","devices":"android"}}}' })   // the legacy lanes + roles
 const _ok = (output) => ({ ok: true, output, signals: 0, lessonsChanged: [] })
 // a recording agent: calls = { label, model, prompt }; record-args RECORDED, ci green, else fn's answer or _ok(dflt)
 const _mock = (fn, dflt = '') => { const calls = []; return { calls, agent: async (prompt, o) => { calls.push({ label: o.label, model: o.model, prompt })
