@@ -23,9 +23,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goodies os-timer, ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L31 init · L48 board · L224 budget · L253 launch · L485 recover · L572 pause · L583 resume · L650 program · L701 param ·
-  L707 track · L1024 supervise · L1324 report · L1403 audit · L1463 storage · L1673 bugbrief · L1780 cleanup · L1864 learn ·
-  L1895 decide · L2029 health · L2093 retro due · L2103 tidy · L2172 setup · L2239 guard-sendmessage
+Sections: L31 init · L48 board · L225 budget · L254 launch · L486 recover · L573 pause · L584 resume · L651 program · L702 param ·
+  L708 track · L1025 supervise · L1325 report · L1404 audit · L1464 storage · L1674 bugbrief · L1781 cleanup · L1865 learn ·
+  L1896 decide · L2030 health · L2094 retro due · L2104 tidy · L2173 setup · L2240 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -177,6 +177,7 @@ switch ($Action) {
     $mine = Norm $Worktree
     $others = @(Active | Where-Object { $_.session -ne $Session -and (@($_.worktrees | ForEach-Object { Norm $_ }) -contains $mine) })
     if ($others) { $others | ForEach-Object { "OTHER WRITER: $($_.agent) (session $($_.session), status $($_.status), beat $(([datetime]$_.beat).ToString('HH:mm')))" }; exit 1 }
+    if ($Session) { Update-BoardEntry (Join-Path $dir "$Session.json") { param($x) if (@($x.worktrees | ForEach-Object { Norm $_ }) -notcontains $mine) { $x.worktrees = @(@($x.worktrees) + $Worktree) }; $x } }   # claimed: cleanup keeps it
     'ok: no other active agent claims this worktree'; exit 0
   }
   'leave' {

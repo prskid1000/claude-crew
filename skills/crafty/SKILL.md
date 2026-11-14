@@ -64,8 +64,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
 
 **Rules**
 - **Board:** `join` first (DUPLICATE for your id -> stop without writing); `beat -Session <t> -Status "<doing>"` before builds
-  and pushes; `check -Worktree <wt> -Session <t>` before each commit (another writer -> stop, tell the coordinator); `leave` at
-  the end.
+  and pushes; `check -Worktree <wt> -Session <t>` before each commit (claims it: cleanup keeps it; another writer -> stop,
+  tell the coordinator); `leave` at the end.
 - **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; never install into
   a linked `node_modules`/`.venv`; `wt sync` before editing, before every push, before merging; `wt remove` when done.
 - **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never a build or test tool

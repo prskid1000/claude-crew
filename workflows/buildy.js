@@ -13,12 +13,12 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L141 record-args · L160 budget · L179 build-prompt · L260 ship-prompt · L283 plan · L299 spike ·
-//   L312 local-loop · L385 stages · L524 ship · L639 deploy · L654 learn
+// Sections: L18 args · L142 record-args · L161 budget · L180 build-prompt · L261 ship-prompt · L284 plan · L300 spike ·
+//   L313 local-loop · L386 stages · L527 ship · L638 deploy · L653 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
- agents: [{ id: 'X1', items: 'A3, A4', area, note, kind, branch(es), complex, model, effort, dependsOn: ['X0'] (producers merged first),
+ agents: [{ id: 'X1', items: 'A3, A4', area, note, kind, branch(es), complex, model, effort, dependsOn: ['X0'] (builds once its producers MERGED),
   migrations: true (datay reviews them) }],
  openQuestions: ['<question>'] (Spike: rechy answers them in the brief first; one open -> spikeOpen),
  mandate: ['<the owner words, verbatim>'], mode: 'feature' | 'bugfix' (repro first) | 'resume',
@@ -54,6 +54,7 @@ const cyclic = (id, seen = []) => seen.includes(id) || DEPS[id].some((p) => cycl
 for (const id of Object.keys(DEPS)) if (cyclic(id)) throw new Error(`agents[].dependsOn has a cycle through ${id}`)
 const SETTLED = {}
 for (const a of A.agents) { let res; SETTLED[a.id] = { p: new Promise((r) => { res = r }), done: (x) => res(x) } }
+const MERGED_SEEN = new Set()   // producer MRs seen merged
 // blocking finding; REREVIEW: the fix for an empty review
 const BLOCK = (mrs, problem, fix) => ({ mr: mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking', problem, fix }), REREVIEW = 'Re-run the review (one-off revy, kind mr), then merge.'
 const consumersOf = (id) => A.agents.filter((c) => DEPS[c.id].includes(id)).map((c) => c.id)
@@ -182,7 +183,7 @@ const modelOf = (a) => ({ ...(a.model ? { model: a.model } : pick(isComplex(a) ?
 
 function depNote(a) {
  const ps = DEPS[a.id], cs = consumersOf(a.id)
- return (ps.length ? `MERGE ORDER: you consume area(s) ${ps.join(', ')}: the workflow merges your MRs after theirs. Name the producer MRs in your MR description.\n` : '') +
+ return (ps.length ? `MERGE ORDER: you consume area(s) ${ps.join(', ')} (merged before you started): name their MRs in your MR description.\n` : '') +
   (cs.length ? `MERGE ORDER: area(s) ${cs.join(', ')} consume your work: open your MRs early and say which MR carries the contract.\n` : '')
 }
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses); this run's commands:
@@ -394,6 +395,8 @@ const results = await pipeline(
    const r2 = await agent(postMergePrompt(a, r0), { label: `postmerge:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
    return { ...mergeReports(r0, r2, 'Post-merge'), mrs: r0.mrs, localTest: r0.localTest, resumed: 'merged' }
   }
+  const open = await producersOpen(a)
+  if (open.length) { const why = `producer(s) ${open.join(', ')} not MERGED: not started; relaunch outcome.next once merged`; log(`${a.id}: ${why}`); return { id: a.id, error: why, blocked: why, producerWait: true } }
   return releasing(a, 'Build', async () => {
   let r = await agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
   if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt status, the board, your branch), continue.'), { label: `build-retry:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) }) }
@@ -559,42 +562,38 @@ async function askBlocking(a, r, open) {
  if (id) decisions.push({ agent: a.id, item: r.mrs.map((m) => m.url).join(' '), decisionId: id[1], question: `still blocking: ${q}` })
  return id ? id[1] : ''
 }
-// a consumer re-checks its producers each slice: all merged -> merge; failed / closed -> WAIT
-async function producersMerged(a, wait) {
+// a consumer builds and merges only on merged producers (merges under way polled): the open ones
+async function producersOpen(a) {
+ if (!DEPS[a.id].length) return []
+ const prods = await Promise.all(DEPS[a.id].map((id) => SETTLED[id].p))
+ const unmerged = (i) => !prods[i] || !prods[i].report || !prods[i].report.mrs.length ? [{ url: '' }] : prods[i].report.mrs.filter((m) => !m.merged && !MERGED_SEEN.has(nu(m.url)))
+ let wait = DEPS[a.id].flatMap((id, i) => unmerged(i))
+ if (!wait.every((m) => m.url && ['SCHEDULED', 'WAIT'].includes(m.mergeState) && !isHeld(m))) wait = []
  for (let t = 0; t < WAIT_SLICES && wait.length; t++) {
   const w = await runStep(`& ${DEV} pipes -Mrs ${wait.map((m) => m.url).join(',')} -MaxMinutes 9 -UntilMerged`, `producer-wait:${a.id}`, 'Fix', { ok: 'when it prints JSON', slow: true, whole: true })
   let st
   try { st = JSON.parse((w && w.output) || '').mrs || [] } catch (e) { break }
-  wait = wait.filter((m) => !st.some((s) => nu(s.mr) === nu(m.url) && s.status === 'merged'))
-  if (!wait.length) log(`${a.id}: producer MR(s) merged: merging its own`)
+  for (const s of st) if (s.status === 'merged') MERGED_SEEN.add(nu(s.mr))
+  wait = wait.filter((m) => !MERGED_SEEN.has(nu(m.url)))
   if (st.some((s) => ['failed', 'canceled', 'closed', 'bad-url'].includes(s.status))) break
  }
- return wait
+ return DEPS[a.id].filter((id, i) => unmerged(i).length)
 }
 async function ship(a, x) {
  const held = x.report.mrs.filter((m) => !m.merged && isHeld(m))
  if (held.length) log(`${a.id}: ${held.length} MR(s) held for approval (holdMerge): ${held.map((m) => m.url).join(', ')}`)
  if (!toShip(x.report).length) return x
- let wait = []
- if (DEPS[a.id].length) {
-  log(`${a.id}: waiting for producer area(s) ${DEPS[a.id].join(', ')} before merging`)
-  const prods = await Promise.all(DEPS[a.id].map((id) => SETTLED[id].p))
-  const missing = DEPS[a.id].filter((id, i) => !prods[i] || !prods[i].report || !prods[i].report.mrs.length)
-  if (missing.length) return { ...x, shipFindings: [BLOCK(x.report.mrs, `Producer area(s) ${missing.join(', ')} reported no MRs: not merged (merge order).`, 'Ship the producer first, then merge these.')], mergeOrderHeld: true }
-  wait = prods.flatMap((p) => p.report.mrs.filter((m) => !m.merged))
-  // only merges under way (scheduled, waiting on a producer) can merge by waiting
-  if (wait.every((m) => ['SCHEDULED', 'WAIT'].includes(m.mergeState) && !isHeld(m))) wait = await producersMerged(a, wait)
- }
+ const late = await producersOpen(a)   // resumed: no build gate
+ if (late.length) return { ...x, shipFindings: [BLOCK(x.report.mrs, `Producer(s) ${late.join(', ')} not merged: nor these (merge order).`, 'Merge the producer, then these.')], mergeOrderHeld: true }
  // the workflow registers the order; devtools.py merge then answers WAIT
  const open = toShip(x.report), cons = open.filter(isConsumer)
- const pairs = [...wait.flatMap((p) => open.map((c) => `${c.url}>${p.url}`)), ...cons.flatMap((c) => open.filter((p) => !isConsumer(p)).map((p) => `${c.url}>${p.url}`))]
+ const pairs = cons.flatMap((c) => open.filter((p) => !isConsumer(p)).map((p) => `${c.url}>${p.url}`))
  if (pairs.length) {
   const reg = await runStep(`& ${ORCH} track add -Task <task id: the MR title after the tracker tag, else the branch> -Mrs '${(cons[0] || open[0]).url}' -MergeAfter '${pairs.join(',')}'`,
    `order:${a.id}`, 'Fix', { ok: 'when its last line lists "merge-after:"' })
   if (!reg || !reg.ok || !/merge-after:/.test(reg.output)) return { ...x, mergeOrderHeld: true, shipFindings: [BLOCK(open, `Merge order not registered (${reg ? reg.output : 'the step returned nothing'}): nothing merged.`, `bossy.ps1 track add -Task <id> -MergeAfter '${pairs.join(',')}', then devtools.py merge`)] }
  }
- const r3 = wait.length ? { mrs: open.map((m) => ({ url: m.url, merged: false, mergeState: 'WAIT' })), summary: `waiting for producer MR(s) ${wait.map((m) => m.url).join(', ')}` }
-  : await agentOrRedo(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
+ const r3 = await agentOrRedo(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
  if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
  const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'MERGED' : 'OPEN')]))
  const mrs = uniqMr(x.report.mrs).map((m) => { const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN'); return { ...m, mergeState: s, merged: s === 'MERGED' } })
@@ -612,7 +611,7 @@ async function ship(a, x) {
 
 const out = results.filter(Boolean)
 for (const x of out) {
- if (x.error) { log(`${x.id}: ERROR ${x.error}`); continue }
+ if (x.error) { if (!x.blocked) log(`${x.id}: ERROR ${x.error}`); continue }
  const r = x.report
  log(`${x.id}: ${r.mrs.filter((m) => m.merged).length}/${r.mrs.length} MRs merged, scheduled ${r.mrs.filter((m) => m.mergeState === 'SCHEDULED').length}, local ${(r.localTest || {}).status || '?'}, done ${r.done.length}, deferred ${r.deferred.length}${x.blocked ? `, BLOCKED (${x.blocked})` : ''}`)
 }
@@ -632,7 +631,7 @@ const outcome = {
  budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop, handoffs: out.filter((x) => /Handoff:/.test((x.report || {}).summary || '')).map((x) => x.id) },
 }
 // unfinished areas (budget stop) and areas beyond args.batch continue in a ready relaunch
-const leftover = [...out.filter((x) => x.budgetStopped).map((x) => A0.agents.find((g) => g.id === x.id)).filter(Boolean), ...(BATCH ? A0.agents.slice(BATCH) : [])]
+const leftover = [...out.filter((x) => x.budgetStopped || x.producerWait).map((x) => A0.agents.find((g) => g.id === x.id)).filter(Boolean), ...(BATCH ? A0.agents.slice(BATCH) : [])]
 if (leftover.length) { outcome.next = nextCall(leftover, out.some((x) => x.budgetStopped) ? { mode: 'resume' } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 

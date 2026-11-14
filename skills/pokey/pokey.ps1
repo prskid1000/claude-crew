@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   a missing goody or api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L26 report · L125 seat · L192 api · L360 finalize · L795 results · L827 retest · L867 prepare
+Sections: L26 report · L125 seat · L192 api · L360 finalize · L795 results · L828 retest · L868 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -805,12 +805,13 @@ if ($Action -eq 'hold') {   # supervise + workers read it; the time is the scrip
 }
 # -Patch { set: { <id>: { <field>: <value> } }, add: [<rows>], top: { findings, setup_changes, data_created } }
 $p = $Patch | ConvertFrom-Json -AsHashtable; $f = Join-Path $dir 'results.json'
+$pAdd = @($p['add'] | Where-Object { $null -ne $_ })   # by index: a missing key read as .add is the hashtable's Add method
 if (-not (Test-Path -LiteralPath $f)) { throw "results patch: no $f (the tester writes it first)" }
 $r = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable
-$bad = @(foreach ($c in @($p.add) + @($p.set.Values)) { if ($c) { $c.Keys | Where-Object { $_ -notin $script:ResultRowKeys } } }) | Select-Object -Unique
+$bad = @(foreach ($c in $pAdd + @($p.set.Values)) { if ($c) { $c.Keys | Where-Object { $_ -notin $script:ResultRowKeys } } }) | Select-Object -Unique
 if ($bad.Count) { throw "results patch refused: unknown row key(s) $($bad -join ', ') (testy.js CHECKS_SCHEMA); nothing written" }
 # an add row without id or a set value that is no object crashed (ContainsKey(null)): say how to change a field
-if (@(@($p.add) | Where-Object { $_ -and -not ($_ -is [Collections.IDictionary] -and "$($_.id)") }).Count -or ($p.set -and -not ($p.set -is [Collections.IDictionary] -and -not @($p.set.Values | Where-Object { $_ -isnot [Collections.IDictionary] }).Count))) {
+if (@($pAdd | Where-Object { $_ -and -not ($_ -is [Collections.IDictionary] -and "$($_.id)") }).Count -or ($p.set -and -not ($p.set -is [Collections.IDictionary] -and -not @($p.set.Values | Where-Object { $_ -isnot [Collections.IDictionary] }).Count))) {
   throw "results patch refused: add rows need an id; to change fields of a check use set: { <id>: { <field>: <value> } }; nothing written" }
 $seen = @{}; foreach ($c in $r.checks) {   # unique ids as the workflow makes them (testy.js run-item): a, b ... suffix, guideId
   $id = "$(if ($c.id) { $c.id } else { 'check' })"; $n = $id; $k = 1; while ($seen.ContainsKey($n)) { $n = "$id$([char](97 + $k++))" }
@@ -818,10 +819,10 @@ $seen = @{}; foreach ($c in $r.checks) {   # unique ids as the workflow makes th
 $setIds = if ($p.set) { @($p.set.Keys) } else { @() }
 $miss = @(foreach ($id in $setIds) { if (-not $seen.ContainsKey($id)) { $id } else { foreach ($kv in $p.set[$id].GetEnumerator()) { $seen[$id][$kv.Key] = $kv.Value } } })
 if ($miss.Count) { throw "results patch refused: no check $($miss -join ', ') in $f; nothing written" }
-foreach ($c in @($p.add)) { if ($c) { if ($seen.ContainsKey($c.id)) { foreach ($kv in $c.GetEnumerator()) { $seen[$c.id][$kv.Key] = $kv.Value } } else { $r.checks += $c; $seen[$c.id] = $c } } }
+foreach ($c in $pAdd) { if ($c) { if ($seen.ContainsKey($c.id)) { foreach ($kv in $c.GetEnumerator()) { $seen[$c.id][$kv.Key] = $kv.Value } } else { $r.checks += $c; $seen[$c.id] = $c } } }
 if ($p.top) { foreach ($kv in $p.top.GetEnumerator()) { $r[$kv.Key] = $kv.Value } }
 Write-KitAtomic $f ($r | ConvertTo-Json -Depth 8)
-"patched $Code`: $($setIds.Count) changed, $(@($p.add | Where-Object { $_ }).Count) added, $(@($r.checks).Count) checks"
+"patched $Code`: $($setIds.Count) changed, $($pAdd.Count) added, $(@($r.checks).Count) checks"
 }
 
 # ---- retest: RETEST item for a live fix (same -Code replaces it)

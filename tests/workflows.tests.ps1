@@ -76,23 +76,24 @@ const o1 = await run({ brief: 'C:/b/w.md', ..._kl, batch: 1, agents: [{ id: 'X0'
 console.log(`batch-next:${!!(await run(o1.next.args, _pass, _n, _n, pipeline).catch(_err))}`)
 '@
 Expect-Each (Invoke-Js dw-next $jsn $wfd) 'buildy: #' 'batch-next' -Show 5
-# buildy: the workflow sets merge pairs; no ship agent behind an unmerged producer
+# buildy dependsOn: a producer WAIT never merging = no consumer build
 $jsm = @'
 const mr = (r, s) => ({ url: `u/${r}/-/merge_requests/1`, repo: r, merged: false, mergeState: s }), lt = { status: 'PASS' }
 const { calls, agent } = _mock((p, o) => ({ 'build:F1': _rep(lt, { mrs: [mr('py')] }), 'build:F2': _rep(lt, { mrs: [mr('java'), mr('web')] }), 'ship:F1': _rep(lt, { mrs: [mr('py', 'WAIT')] }),
  'order:F2': { ok: true, output: 'merge-after: x' } }[o.label] || (/^review/.test(o.label) ? { findings: [] } : undefined)), '[]')
 const o = await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'F1' }, { id: 'F2', dependsOn: ['F1'] }] }, agent, _n, _n, pipeline)
-const L = calls.map((c) => c.label), ord = calls[L.indexOf('order:F2')].prompt.replace(/\/-\/merge_requests\/1/g, '')
-console.log(`order:${/u\/java>u\/py/.test(ord) && /u\/web>u\/java/.test(ord) && !L.includes('order:F1') && !L.includes('ship:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'WAIT')}`)
+const L = calls.map((c) => c.label)
+console.log(`gate:${L.includes('producer-wait:F2') && !L.includes('build:F2') && o.blocked.some((b) => b.agent === 'F2' && /F1 not MERGED/.test(b.why)) && o.next.args.agents.map((g) => g.id).join() === 'F2'}`)
 '@
-Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy merge order: #' 'order' -Show 9
-# buildy: the producer merges during the wait -> the consumer area merges itself in the same run
-$jsw = $jsm -replace "'order:F2':", "'producer-wait:F2': { ok: true, output: '{""done"":true,""mrs"":[{""mr"":""u/py/-/merge_requests/1"",""status"":""merged""}]}' }, 'ship:F2': _rep(lt, { mrs: [mr('java', 'MERGED'), mr('web', 'MERGED')] }), 'order:F2':" -replace '(?s)console\.log\(`order:.*', @'
-console.log(`consumer-merges:${/pipes -Mrs u\/py\S* -MaxMinutes 9 -UntilMerged/.test(calls[L.indexOf('producer-wait:F2')].prompt) && L.indexOf('ship:F2') > L.indexOf('producer-wait:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'MERGED')}`)
+Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy dependsOn: #' 'gate' -Show 9
+# the producer merges in the wait: the consumer builds and merges
+$jsw = $jsm -replace "'order:F2':", "'producer-wait:F2': { ok: true, output: '{""done"":true,""mrs"":[{""mr"":""u/py/-/merge_requests/1"",""status"":""merged""}]}' }, 'ship:F2': _rep(lt, { mrs: [mr('java', 'MERGED'), mr('web', 'MERGED')] }), 'order:F2':" -replace '(?s)console\.log\(`gate:.*', @'
+const ord = calls[L.indexOf('order:F2')].prompt.replace(/\/-\/merge_requests\/1/g, '')
+console.log(`consumer-merges:${/pipes -Mrs u\/py\S* -MaxMinutes 9 -UntilMerged/.test(calls[L.indexOf('producer-wait:F2')].prompt) && L.indexOf('build:F2') > L.indexOf('producer-wait:F2') && /u\/web>u\/java/.test(ord) && !/>u\/py/.test(ord) && o.agents[1].report.mrs.every((m) => m.mergeState === 'MERGED')}`)
 '@
-$jsx = $jsm -replace "mr\('py', 'WAIT'\)", "mr('py', 'NOT_MERGED')" -replace '(?s)console\.log\(`order:.*', "console.log(``no-poll:`${!L.includes('producer-wait:F2') && !L.includes('ship:F2')}``)`n"
+$jsx = $jsm -replace "mr\('py', 'WAIT'\)", "mr('py', 'NOT_MERGED')" -replace '(?s)console\.log\(`gate:.*', "console.log(``no-poll:`${!L.includes('producer-wait:F2') && !L.includes('build:F2')}``)`n"
 Expect-Each (Invoke-Js dw-pwait $jsw $wfd) 'buildy merge order: #' 'consumer-merges' -Show 9
-Expect-Each (Invoke-Js dw-nopoll $jsx $wfd) 'buildy merge order: a producer that will not merge by waiting (NOT_MERGED): #' 'no-poll' -Show 9
+Expect-Each (Invoke-Js dw-nopoll $jsx $wfd) 'buildy merge order: a producer NOT_MERGED is not polled: #' 'no-poll' -Show 9
 # buildy: mode duel is a goody (refused, named); a removed arg is refused, never ignored
 $jso = @'
 const base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }, err = (a) => run(a, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)

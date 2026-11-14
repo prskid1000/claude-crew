@@ -174,6 +174,8 @@ Expect "testy.js resultsPatch: only the changed fields and added rows (dup ids a
 Expect "pokey.ps1 results patch: deltas merged by id (dup ids made unique, guideId), rows added, unknown key / id refused, nothing written ($($pr.Trim()))" ($pr -match '1 changed, 1 added, 4 checks' -and (@($after.checks.id) -join ',') -eq 'T1,T2,T2b,T1n' -and $after.checks[1].verify -match "it's real" -and $after.checks[2].guideId -eq 'T2' -and $pb -match 'unknown row key\(s\) color' -and @((Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json).checks).Count -eq 4)
 $pn = foreach ($bp in '{"add":[{"observed":"x"}]}', '{"set":{"T1":"PASS"}}') { pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch $bp 2>&1 | Out-String }
 Expect 'results patch: an add row without id or a set value no object = refused with the set shape, no crash' (@($pn | Where-Object { $_ -match 'add rows need an id; to change fields of a check use set' }).Count -eq 2)
+$ps = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch '{"set":{"T2":{"observed":"set only"}}}' 2>&1 | Out-String   # no add key: .add was the hashtable's Add method (L20)
+Expect "results patch: a set-only patch (no add key) applies ($($ps.Trim()))" ($ps -match '1 changed, 0 added' -and @((Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json).checks | Where-Object { $_.id -eq 'T2' -and $_.observed -eq 'set only' }).Count -eq 1)
 Expect "pokey.ps1 results hold: held.json from arguments, the script's UTC time ($($hj.at))" ($hj.held -eq "env: it's down" -and $hj.envFix.id -eq 'd-1' -and $hj.summary -eq 'W1: pass 1/3' -and (Get-Content -Raw "$rd/W1/held.json") -match '"at": "\d{4}-\d\d-\d\dT[\d:.]+Z"')
 # review fixes: a round counts only the cases run in it, a result replaces the evidence, _del removes; () and non-ASCII survive formats
 $null = Dt cases result T1 A2 FAIL; $null = Dt cases round T1 --bugs 'A2: 500'; Set-JsonFile "$wd/del.json" @{ cases = @(@{ id = 'A2'; _del = $true }) }; $null = Dt cases add T1 "$wd/del.json"
@@ -229,14 +231,6 @@ $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; age
 "$($h -match 'Finished today</h3><span class=cnt>\(1\)' -and $h -match '<td>k3 \(kitty\)') $($h -match '<span class=hw>pin 744</span>') $($h -match '<li class=f>RAM FLOOR: rm, hm moved 8 GB \(why\)</li>') $(([regex]::Matches($h, 'track add -Task')).Count) $($h -match "<h2>Machine and resources</h2></summary>") $($h -match "lgd t-sage dd'")"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join ' '
 Expect "supervise page: stale STOPPED agent finished, one hold item whole, notes grouped, release once, no machine header count, legend not a chart dot ($dashFix)" ($dashFix -eq 'True True True 1 True True')
-# ---- board messages (item 14): { kind, to, text, ref }, checked by board msg
-$bossyPs = Join-Path $k 'skills/bossy/bossy.ps1'
-$bm1 = pwsh -NoProfile -File $bossyPs board msg -Agent m1 -To m2 -Kind dispute -Ref 'web!5' -Text 'own, not new' 2>&1 | Out-String
-$null = pwsh -NoProfile -File $bossyPs board msg -Agent m1 -To m2 -Kind gossip -Text x 2>&1; $bmKindCode = $LASTEXITCODE
-$null = pwsh -NoProfile -File $bossyPs board msg -Agent m1 -To m2 -Text ('y' * 2001) 2>&1; $bmLongCode = $LASTEXITCODE
-$bmRow = Get-Content -Raw (Join-Path (TkPath $k board) 'inbox/m2.jsonl') | ConvertFrom-Json
-$bmIn = pwsh -NoProfile -File $bossyPs board inbox -Agent m2 2>&1 | Out-String
-Expect "board msg: the row is { at, from, to, kind, text, ref, read }; an unknown kind and a text over 2000 chars refused (2); inbox shows kind and ref ($($bmIn.Trim()))" ($bm1 -match 'sent to m2' -and (@($bmRow.PSObject.Properties.Name) -join ',') -eq 'at,from,to,kind,text,ref,read' -and $bmKindCode -eq 2 -and $bmLongCode -eq 2 -and $bmIn -match 'from m1 \[dispute\]: own, not new \(ref web!5\)')
 # ---- prepare (item 4): pokey.ps1 prepare = L1 selection by script: run.json, lead-notes skeleton, Left out; the last line RUN <json>
 $env:KIT_TRACKER_TYPE = 'none'; $PKp = Join-Path $k 'skills/pokey/pokey.ps1'
 $mkTask = { param($Name, $Desc) (pwsh -NoProfile -File $craftyPs tracker create -Name $Name -Description $Desc -NewTask fixture 2>$null | ConvertFrom-Json).id }
@@ -258,7 +252,7 @@ $ppEmpty = @(pwsh -NoProfile -File $PKp prepare -Job $pjobEmpty 2>&1); $ppEmptyC
 Expect "prepare: a run folder with files is refused (exit 1, no -2 suffix); an empty one is reused and RUN printed ($ppAgainCode $ppEmptyCode $($ppEmpty[-2]))" ($ppAgainCode -eq 1 -and "$ppAgain" -match 'exists with files' -and -not (Test-Path "$wd/qa-runs/$pDay-stg-2") -and $ppEmptyCode -eq 0 -and "$($ppEmpty[-1])" -match "^RUN .*qa-runs/$pDay-empty""")
 $env:KIT_TRACKER_TYPE = $null
 # ---- lessons and signals (items 7, 18): one lesson shape (lint), signals <= 400 chars with a fixed key set (state lint)
-$null = pwsh -NoProfile -File $bossyPs learn -Skill kitty -Kind idea -Text ('z' * 401) 2>&1; $sigLongCode = $LASTEXITCODE
+$bossyPs = Join-Path $k 'skills/bossy/bossy.ps1'; $null = pwsh -NoProfile -File $bossyPs learn -Skill kitty -Kind idea -Text ('z' * 401) 2>&1; $sigLongCode = $LASTEXITCODE
 $null = pwsh -NoProfile -File $bossyPs learn -Skill kitty -Kind idea -Text 'short one' 2>&1
 Add-Content (TkPath $k signals) '{"at":"2026-11-13T10:00:00Z","skill":"kitty","kind":"idea","text":"x","colour":"red"}'
 $sigLint = @(& $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json | Where-Object name -eq 'signals' | ForEach-Object problem) -join ' '

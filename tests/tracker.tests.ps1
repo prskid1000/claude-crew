@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tracker.tests.ps1: task texts rendered from a spec (crafty.ps1 "task spec": description, Items / Decisions checklists, the
-parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap, unknown workflow args, tracker comment -Spec, the online check, the heartbeat cron line and the OS timer's place in supervise (goody os-timer).
+parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap, unknown workflow args, tracker comment -Spec, board msg, board check claims, the online check, the heartbeat cron line and the OS timer's place in supervise (goody os-timer).
 Usage: pwsh -NoProfile -File <kit>/tests/tracker.tests.ps1 (or tests/kit-tests.ps1 -Area tracker).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -10,6 +10,18 @@ $k = New-TestKit tracker; $KT = Join-Path $k 'skills/bossy/kitbag.py'; $O = Join
 function KtPy($code) { python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kitbag as k; $code" }
 $lp = KtPy "s = {'limits': '', 'format': '', 'required': []}; print([len(k.prose_check(kd, t, s, [])) for kd, t in (('comment-status', 'see ~/notes/a.md'), ('task-description', 'D:\\x\\y.md'), ('decisions', 'https://h/a/b.md ``common/agent-core``'), ('mr-body', '~/x.md'), ('task-description', 'GET /users/5 and /home/dashboard'))])"
 Expect "prose: a local path in a tracker text (task-*, comment-*, decisions) is a finding; a URL, repo path or route is not, other kinds unchecked ($lp)" ("$lp".Trim() -eq '[1, 1, 0, 0, 0]')
+# (cap move) board messages: { kind, to, text, ref }, checked by board msg
+$bm1 = pwsh -NoProfile -File $O board msg -Agent m1 -To m2 -Kind dispute -Ref 'web!5' -Text 'own, not new' 2>&1 | Out-String
+$null = pwsh -NoProfile -File $O board msg -Agent m1 -To m2 -Kind gossip -Text x 2>&1; $bmKindCode = $LASTEXITCODE
+$null = pwsh -NoProfile -File $O board msg -Agent m1 -To m2 -Text ('y' * 2001) 2>&1; $bmLongCode = $LASTEXITCODE
+$bmRow = Get-Content -Raw (Join-Path (TkPath $k board) 'inbox/m2.jsonl') | ConvertFrom-Json
+$bmIn = pwsh -NoProfile -File $O board inbox -Agent m2 2>&1 | Out-String
+Expect "board msg: the row is { at, from, to, kind, text, ref, read }; an unknown kind and a text over 2000 chars refused (2); inbox shows kind and ref ($($bmIn.Trim()))" ($bm1 -match 'sent to m2' -and (@($bmRow.PSObject.Properties.Name) -join ',') -eq 'at,from,to,kind,text,ref,read' -and $bmKindCode -eq 2 -and $bmLongCode -eq 2 -and $bmIn -match 'from m1 \[dispute\]: own, not new \(ref web!5\)')
+# (cap move) board check claims the worktree on the caller's row (cleanup's sweep keeps live claims); twice = one claim; another agent: OTHER WRITER
+$cwt = Join-Path (Kd) 'cwt'; $jw = pwsh -NoProfile -File $O board join -Agent CW -Run cw | Out-String; $sw1 = if ($jw -match 'SESSION (\S+)') { $Matches[1] }
+foreach ($n in 1, 2) { $null = pwsh -NoProfile -File $O board check -Worktree $cwt -Session $sw1 }
+$jw2 = pwsh -NoProfile -File $O board join -Agent CW2 -Run cw | Out-String; $cwo = pwsh -NoProfile -File $O board check -Worktree $cwt -Session $(if ($jw2 -match 'SESSION (\S+)') { $Matches[1] }) | Out-String; $cwc = $LASTEXITCODE
+Expect "board check: claims the worktree once on the caller's row; a second agent gets OTHER WRITER ($cwo)" ("$((Get-Content (Join-Path (TkPath $k board) "$sw1.json") -Raw | ConvertFrom-Json).worktrees)" -eq $cwt -and $cwc -eq 1 -and $cwo -match 'OTHER WRITER: CW ')
 # task spec (crafty.ps1 "task spec"): one renderer; a checklist adapter and the description fallback get the same items
 $ts = Invoke-PsTest taskspec @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'; Copy-Item $args[1] (Join-Path $script:KitRoot 'skills/crafty')   # templates.md: the prose check
