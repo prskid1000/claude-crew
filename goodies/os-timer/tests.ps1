@@ -15,6 +15,7 @@ $ob = Invoke-PsTest os-beat @'
 Register-KitAdapter 'scheduler' 'fake' @{ 'install' = { param($a) $script:there = $true }; 'uninstall' = { param($a) $script:there = $false }; 'status' = { param($a) @{ installed = $script:there; state = 'Ready'; every = 15 } } }
 "off:$((Get-KitOsBeatHealth) -match '^OS heartbeat off: .* heartbeat install$')"
 $__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ osTimer = 'fake' } }; $i = Set-KitOsBeat $true 15; $s = Read-KitOsBeat; "inst:$($i -match '^installed: fake task claude-crew-heartbeat-[0-9a-f]{8}, every 15 min' -and $s.installed -and $script:there)"
+"schema:$(($w = Get-Content -LiteralPath (Get-KitOsBeatFile) -Raw | ConvertFrom-Json).updated -and $w.schemaVersion -eq 1)"   # STATE.md programs: dir v1, updated required (L21)
 "fresh:$(-not (Get-KitOsBeatHealth))"
 $s.at = (Get-Date).AddHours(-2).ToString('o'); Write-KitAtomic (Get-KitOsBeatFile) ($s | ConvertTo-Json)
 "stale:$((Get-KitOsBeatHealth) -match '^OS heartbeat stale: last tick never \(installed \d\d-\d\d \d\d:\d\d\), task Ready')"
@@ -28,7 +29,7 @@ function Get-KitActivePause($Run) { [pscustomobject]@{ reason = 'power off' } };
 $__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ osTimer = $false } }; Remove-Item (Get-KitOsBeatFile)
 "false:$((Get-KitOsBeatAdapter) -eq 'none' -and -not (Get-KitOsBeatHealth))"
 '@ @($O)
-Expect-Each $ob 'os-timer: # (off: the install line; inst; fresh: quiet; stale; gone: reinstalled; removed: quiet; tick: supervise as os-timer; paused: skipped; false: adapter none, quiet)' 'off', 'inst', 'fresh', 'stale', 'gone', 'removed', 'tick', 'paused', 'false'
+Expect-Each $ob 'os-timer: # (off: the install line; inst; schema: updated + schemaVersion; fresh: quiet; stale; gone: reinstalled; removed: quiet; tick: supervise as os-timer; paused: skipped; false: adapter none, quiet)' 'off', 'inst', 'schema', 'fresh', 'stale', 'gone', 'removed', 'tick', 'paused', 'false'
 # the CLI verbs reach the goody; a paused kit's tick never starts supervise; status of a never-installed timer exits 1
 $pd = TkPath $k pauses -Create; & $J @{ at = (Get-Date).ToString('o'); reason = 'owner pause'; run = '*'; state = 'paused' } (Join-Path $pd 'pause-t.json')
 $tk = Invoke-TestScript $O heartbeat tick; $st = Invoke-TestScript $O heartbeat status

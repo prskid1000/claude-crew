@@ -53,7 +53,7 @@ function Set-KitOsBeat([bool]$On, [double]$Minutes) {
   if ($On -and (Test-Path -LiteralPath (Join-Path $KitConf.Kit '.git') -PathType Leaf)) { return "UNKNOWN: $($KitConf.Kit) is a worktree (gone after its push): install from the live kit clone" }
   try { Invoke-KitAdapter scheduler $ad $(if ($On) { 'install' } else { 'uninstall' }) $a } catch { return "UNKNOWN: $ad $(if ($On) { 'install' } else { 'uninstall' }) failed: $_" }
   $s = Read-KitOsBeat; $s.installed = $On; $s.adapter = $ad; $s.name = $a.name; $s.minutes = $a.minutes; $s.at = (Get-Date).ToString('o')
-  Write-KitAtomic (Get-KitOsBeatFile) ($s | ConvertTo-Json)
+  Write-KitState (Get-KitOsBeatFile) $s
   if ($On) { "installed: $ad task $($a.name), every $($a.minutes) min: bossy.ps1 heartbeat tick (supervise -AutoFix -Brief; skips while paused)" } else { "removed: $ad task $($a.name); health stays quiet (back: bossy.ps1 heartbeat install)" }
 }
 # the task's run: a paused kit skips; supervise in a child (its -Brief exits); no model call anywhere
@@ -65,7 +65,7 @@ function Invoke-KitOsBeatTick {
     $last = @("$($r.out)" -split "`r?`n" | Where-Object { $_.Trim() })[-1]
     $s.result = if ($r.timedOut) { 'timed out after 300 s' } elseif ($r.code) { "exit $($r.code): $last" } elseif ("$($r.out)" -match 'steps aside') { 'stepped aside: a session supervises' } else { "ok: $last" }
   }
-  Write-KitAtomic (Get-KitOsBeatFile) ($s | ConvertTo-Json); $s.result
+  Write-KitState (Get-KitOsBeatFile) $s; $s.result
 }
 function Invoke-KitOsBeat {
 param([Parameter(Position = 0, Mandatory)][ValidateSet('install', 'uninstall', 'status', 'tick')][string]$Action, [double]$Minutes = 0)
