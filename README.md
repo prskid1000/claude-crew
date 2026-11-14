@@ -44,11 +44,11 @@ flowchart LR
 | Agent | Job | Kinds / roles | Used in | Can't | Character |
 |---|---|---|---|---|---|
 | `devy` | builder: makes or changes anything in product repos through the dev flow | feature · fix · refactor · migration · config · doc · tests · spike · repro | /buildy, R5, R6 | deploy, merge into deploy branches, edit the kit | pragmatic builder: "Small, tested, shipped." |
-| `revy` | reviewer: reviews anything and suggests concrete changes | mr · kit · doc · qa · plan · module · config | /buildy, R13, R14 | edit anything (suggests only) | sceptical, blunt: "Show me the test." |
+| `revy` | reviewer: reviews anything and suggests concrete changes | mr · kit · doc · qa · plan · module · config · dispute | /buildy, R13, R14 | edit anything (suggests only) | sceptical, blunt: "Show me the test." |
 | `checky` | tester: tests or verifies anything, always with evidence | task · smoke · regression · repro · data · perf · claim (roles: lead / test / verify) | /testy, R10 | edit code, leave its target, load shared envs | paranoid, evidence-obsessed: "Screenshot or it didn't happen." |
 | `kitty` | kit caretaker: the kit and the machine setup | build · fix · audit · retro · setup · env · recover · docs | /tidy, R2, R3 | touch product repos | tidy and frugal: "Measure before and after." |
 | `briefy` | brief writer: /buildy brief, contracts, impact check, rule changes | brief · bugfix · rule-change | R5, E8 | write code, launch runs | exacting planner: "Who owns this field?" |
-| `rechy` | researcher: cited answers before building or deciding | question · compare · library · licence · spike | /buildy, R17 | edit anything but its findings | skeptical librarian: "Cite it or drop it." |
+| `rechy` | researcher: cited answers before building or deciding | question · compare · library · licence · spike · debate | /buildy, R17 | edit anything but its findings | skeptical librarian: "Cite it or drop it." |
 | `datay` | data guardian: test data, local DB, migration data, backfills | cleanup · fixture · migration · localdb · backfill · check | /buildy, R15, E2, E7 | write production, edit code or the kit | meticulous archivist: "Mark it, count it, then touch it." |
 | `opsy` | deploy pilot: deploys on a person's word, verifies, rolls back | deploy · rollback · status · secret | R7, E5 | deploy without a person's word, edit code | cautious pilot: "Checklist first." |
 | `watchy` | on-call watcher: errors of deployed envs, one [Bug] per issue | window · sweep · triage | R16, E15 | change systems, deploy, move tasks | calm on-call engineer: "What changed, and since when?" |
@@ -69,7 +69,7 @@ Board and disagreements: AGENTS.md "Crew".
 <!-- kit-graph:start table-workflows -->
 | Workflow | Covers | Crew | Router row |
 |---|---|---|---|
-| `/buildy` | any multi-item build: features, fixes, refactors, migrations, bug waves, resume, duels | `rechy`, `devy`, `revy`, `datay`, `kitty` | R5 |
+| `/buildy` | any multi-item build: features, fixes, refactors, migrations, bug waves, resume, disputes, debates | `rechy`, `devy`, `revy`, `datay`, `kitty` | R5 |
 | `/testy` | any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env | `checky`, `kitty` | R8 |
 | `/tidy` | kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest + upkeep, no LLM), then one kitty: lessons + rule updates | `kitty` | R4 |
 <!-- kit-graph:end -->
@@ -344,7 +344,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kitbag.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 471000 · all tests 122000 · files: 37 content + 9 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 471000 · all tests 134000 · files: 37 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, a goody's in `goodies/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name
@@ -392,6 +392,7 @@ flowchart LR
   AGENTS_md --> workflows_buildy_js
   AGENTS_md --> workflows_testy_js
   AGENTS_md --> workflows_tidy_js
+  workflows_buildy_js -->|"spawns"| agents_briefy_md
   workflows_buildy_js -->|"spawns"| agents_datay_md
   workflows_buildy_js -->|"spawns"| agents_devy_md
   workflows_buildy_js -->|"spawns"| agents_kitty_md

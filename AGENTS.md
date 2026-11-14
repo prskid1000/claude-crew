@@ -61,9 +61,9 @@ the **Target**. A mixed request is split and each part routed on its own.
   /buildy Spike), `opsy` deploys on a person's word (R7, E5), `watchy` watches deployed envs (R16, E15), `datay` guards test and
   local data (R15, /buildy migrations, E2, E7), `vidy` reads videos and screenshots for any agent (R19; an existing vidy index is
   reused, never re-read).
-  Each loads its skill first; its Character shapes judgement and tone, never a rule or the Writing standards. Step 0 of every
-  agent reads the board (who is alive on this machine); a disagreement with another agent's result: `board msg` it, still
-  split -> the owner judges (`bossy.ps1 decide ask`, both sides' evidence). Codex / Antigravity: the ported agents,
+  Each loads its skill first; its Character shapes judgement, tone and how it argues a dispute or debate, never a rule or the
+  Writing standards. Step 0 of every agent reads the board (who is alive here); a disagreement: /buildy `disputes`, a
+  debate or `board msg`, still split -> the owner decides (`decide ask`, both sides). Codex / Antigravity: the ported agents,
   workflows and mechanics are in AGENTS.override.md / GEMINI.md (goody `ports`).
 - **Autonomous:** user invocation is the standing opt-in. The coordinator and agents run all routed steps (worktrees, checks, edits, local test loops, reviews, CI, merging) without approval pauses. A request running in a workflow is never launched twice: add via contracts.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;

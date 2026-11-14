@@ -117,6 +117,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Reviewing an MR in a main checkout -> read diffs with `git show <sha>:path` or `git diff <base>...<sha>`, never git checkout there (a main checkout may sit on a detached head others use). (2x)
 
 ## Decisions
+- 2026-11-14 Debate: context Characters unseen, 0 disputes in 448 msgs · decision (owner) Characters, disputes, trigger debates: core, never trimmed for caps; the owner decides splits · consequences buildy.js disputes + debate, rechy / revy kinds debate / dispute, lint MANIFEST, workflow cap 16500.
 - 2026-10-21 Kit size cap: context 400k tokens · decision (owner, replaces "no function removed") total <= 200k: drop dead code, duplication, features; optional parts on the `goodies` branch (`kitbag.py goody add <name>`); never minified · consequences cap 200000, lint BUDGET / BUDGET-CAP.
 - 2026-10-16 Deploys: context agents proposed deploys · decision `deploy.trigger: owner` (owner): nobody asks or proposes; a person says `deploy <env>`, the coordinator deploys at once · consequences supervise has no DEPLOY ASK under owner.
 - 2026-10-16 Crew: context many agent types · decision 4 agents devy, revy, checky, kitty (owner) · consequences lint AGENT-TYPE / NON-CREW; old names only in `_manifest.renamed`.

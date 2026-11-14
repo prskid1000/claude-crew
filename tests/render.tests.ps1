@@ -260,10 +260,10 @@ $shape = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KB)')
 Expect "learn: -Text over 400 chars refused (2); signals: a key outside the schema is drift; LESSON-SHAPE wants '<when> -> <do> (<why>)', a count is no why ($shape)" ($sigLongCode -eq 2 -and $sigLint -match 'drift: key\(s\) colour' -and "$shape".Trim() -eq '[True, False, False, True]')
 # ---- wave brief (item 6): one spec -> brief + contracts + /buildy args
 Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13'; items = 'T-1 epic'; decisions = 'none'; localEnv = 'r3'; testEnv = 'stg'; kitDir = 'K'
-  repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true })
+  repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true; debate = [ordered]@{ item = 'A2'; options = 'A: x', 'B: y' } })
   contracts = @([ordered]@{ name = 'GET /orders?sort'; type = 'query'; producer = 'X2'; consumers = 'X1'; order = 'X2 first'; compatible = $true }); openQuestions = @([ordered]@{ question = 'Which index?'; blocks = 'A2'; answers = 'rechy' }); mandate = @('sort orders'); mode = 'feature' })
 $wbo = Dt render wave-brief "$wd/wb.json" "$wd/wb.md"; $wbArgs = Get-Content -Raw "$wd/wb.args.json" | ConvertFrom-Json
-Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold (Get-Content -Raw "$wd/wb.md") @"
+Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped, debate kept), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold (Get-Content -Raw "$wd/wb.md") @"
 # Wave brief: orders-sort, 2026-11-13
 **Read first:** ``K/skills/crafty/SKILL.md``; this brief wins where they differ.
 **Items:** T-1 epic · **Decisions:** none; final, don't re-ask (a NEW choice -> crafty D1).
@@ -288,7 +288,7 @@ Which index? · blocks A2 · answers: rechy
 none yet
 ## Rule changes during the wave (newest last)
 "@) -and (Gold (Get-Content -Raw "$wd/wb.contracts.md") "# Contracts: orders-sort`n| Field / endpoint | Type | Producer | Consumers | Merge / deploy order | Backward-compatible |`n|---|---|---|---|---|---|`n| GET /orders?sort | query | X2 | X1 | X2 first | yes |`n## Rule changes during the wave (newest last)") -and
-  $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
+  $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true,"debate":{"item":"A2","options":["A: x","B: y"]}}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
 foreach ($n in 'a', 'b', 'c') { Set-JsonFile "$wd/s$n.json" @{ title = $n; checks = @(@{ id = $(if ($n -eq 'c') { 'S2' } else { 'S1' }) }) } }
 $s = foreach ($n in 'AA:a', 'BB:b', 'BB:c') { $env:CLAUDE_AGENT, $f = $n -split ':'; Dt cases add T7 "$wd/s$f.json" }; $env:CLAUDE_AGENT = $null
 Expect 'cases add, shared task: another agent''s id refused, its title kept' ($s[1].out -match 'S1 \(AA\) belong to another' -and $s[2].out -match "title kept \('a', set by AA")

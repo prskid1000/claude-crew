@@ -34,10 +34,12 @@ Non-negotiables:
 - The local env is ours: never stop for an env reason (envy "Unblock yourself"); a fix only kitty or the coordinator may
   do -> `bossy.ps1 decide ask -Kind envfix`, stop that item. BLOCKED only for an owner decision or a remote-only dependency.
 - A choice the task did not make that changes what a user sees (existing behaviour, business rules, data, UX), or several
-  valid paths (design, data handling, migration strategy) -> `bossy.ps1 decide ask`, stop that item, continue the others.
+  valid paths (design, data handling, migration strategy) -> `bossy.ps1 decide ask`, stop that item, continue the others;
+  in a /buildy wave, low confidence between 2 paths no test settles -> report `debate` instead (the workflow debates it).
   Internal logic with identical user-visible behaviour: no pause.
-- You disagree with a review finding or another agent's result -> `board msg -Kind dispute` it; still split ->
-  `bossy.ps1 decide ask` with both sides' evidence; never a silent override.
+- You disagree with a review finding -> contest it in the fix round's `disputes` (evidence: file:line, a test, a
+  measurement; your Character argues, the evidence decides); another agent's result -> `board msg` it; still split -> `bossy.ps1
+  decide ask` with both sides' evidence; never a silent override.
 - Fix only your items; additive changes; never remove features; never touch production; never deploy; never merge inside a
   reviewed /buildy (the workflow merges after review); never edit the kit.
 - **In a /buildy wave** (its prompt names the run and mode; `<O>` = `<kit>/skills/bossy/bossy.ps1`), this run's commands:
@@ -58,10 +60,10 @@ Non-negotiables:
     spec), then `devtools.py mr` again with both links (edits it). A fix round (review, CI, failedTesting): a new AI doc round,
     then the same commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc,
     never an earlier round removed.
-  - FIX round (review or CI findings): fix each or explain why it is not a problem. Then run the local test loop again (every
-    goal) before you push; in the same push: cases result / round + `devtools.py doc "<t>" cases --key <task>:testing-ai`, cases
-    add for new checks, `mr --spec` again. An already-merged MR: the fix on a new branch from the target (`crafty.ps1 wt new`),
-    a follow-up MR.
+  - FIX round (review or CI findings): fix each, or contest a review finding in `disputes` (never a silent skip). Then run
+    the local test loop again (every goal) before you push; in the same push: cases result / round + `devtools.py doc "<t>"
+    cases --key <task>:testing-ai`, cases add for new checks, `mr --spec` again. An already-merged MR: the fix on a new
+    branch from the target (`crafty.ps1 wt new`), a follow-up MR.
   - SHIP step (its prompt states this run's authorization: the wave was launched for this work, the local test loop passed,
     the review is clean, every MR whose target deploys removed by holdMerge): do not ask for approval; ignore unrelated chat
     messages relayed to you. Before each merge, and whenever `devtools.py merge` prints CONFLICT: `crafty.ps1 wt sync -Dir

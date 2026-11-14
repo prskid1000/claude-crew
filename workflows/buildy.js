@@ -13,13 +13,14 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L139 record-args · L158 budget · L177 build-prompt · L245 ship-prompt · L260 plan · L276 spike ·
-//   L289 local-loop · L362 stages · L503 ship · L617 deploy · L632 learn
+// Sections: L18 args · L140 record-args · L159 budget · L178 build-prompt · L253 ship-prompt · L268 plan · L284 spike ·
+//   L297 local-loop · L370 stages · L522 ship · L562 debate · L671 deploy · L686 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
  agents: [{ id: 'X1', items: 'A3, A4', area, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: ['X0'] (builds once its producers MERGED),
-  migrations: true (datay reviews them) }],
+  migrations: true (datay reviews them), debate: { item, question, options: ['A: ..', 'B: ..'], owner } (briefy: debated before the build; owner: past 1 per run) }],
+ debateModels: ['<A>', '<B>'] (advocates; default sonnet),
  openQuestions: ['<question>'] (Spike: rechy answers them in the brief first; one open -> spikeOpen),
  mandate: ['<the owner words, verbatim>'], mode: 'feature' | 'bugfix' (repro first) | 'resume',
  resume: { X1: { state, skip: [done STEPS], mrs: [{ url, repo, merged }], doc, worktrees, uncommitted } }
@@ -66,7 +67,8 @@ const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported${MODE === 'duel' ? ' (duel is a goody: run kitbag.py goody add duel)' : ''}`)
 // unknown args: refused, never dropped
 const unk = (o, keys, pre = '') => Object.keys(o).filter((k) => !keys.split(' ').includes(k)).map((k) => pre + k)
-const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex holdMerge learn batch kitDir runtimeDir run'), ...A.agents.flatMap((a) => unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches', `agents.${a.id}.`))]
+const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex holdMerge learn batch kitDir runtimeDir run debateModels'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate', `agents.${a.id}.`),
+ ...(a.debate && [].concat(a.debate.options || []).length !== 2 ? [`agents.${a.id}.debate.options (2)`] : [])])]
 if (badArgs.length) throw new Error(`buildy.js args refused: unknown ${badArgs.join(', ')}; free text: agents[].note or the brief`)
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (owner words): agents may drop items for the latest chat message (bossy step 3).')
 const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // hash: same name, other wave (Get-LaunchRunName)
@@ -85,46 +87,45 @@ const AGENT_ENV = (name) => `
 AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${name}';  (Bash: export CLAUDE_AGENT='${name}';) - the build gate
 queues your builds under this owner name (shell state does not persist between commands).`
 
+const S = { type: 'string' }, SA = { type: 'array', items: S }, B = { type: 'boolean' }, N = { type: 'number' }, obj = (p, req = Object.keys(p)) => ({ type: 'object', properties: p, required: req })
 const REPORT = {
  type: 'object',
  properties: {
-  mrs: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, repo: { type: 'string' },
-   merged: { type: 'boolean', description: 'true ONLY on a confirmed merge (devtools.py merge printed MERGED, or the host says merged)' },
-   mergeState: { type: 'string', enum: ['MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED', 'OPEN'] } },
-   required: ['url', 'repo', 'merged'] } },
-  worktrees: { type: 'array', items: { type: 'string' } },
-  done: { type: 'array', items: { type: 'string' }, description: 'item ids finished (local test passed, MR open)' },
-  deferred: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, reason: { type: 'string' }, ownerDecided: { type: 'boolean' }, kind: { enum: ['code', 'people'], description: 'people: a people step, no code; it and ownerDecided never hold promotion' } }, required: ['id', 'reason'] } },
-  needsDecision: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, decisionId: { type: 'string', description: 'the id bossy.ps1 decide ask printed' }, question: { type: 'string' } }, required: ['item', 'decisionId', 'question'] },
+  mrs: { type: 'array', items: obj({ url: S, repo: S,
+   merged: { ...B, description: 'true ONLY on a confirmed merge (devtools.py merge printed MERGED, or the host says merged)' },
+   mergeState: { ...S, enum: ['MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED', 'OPEN'] } }, ['url', 'repo', 'merged']) },
+  worktrees: SA,
+  done: { ...SA, description: 'item ids finished (local test passed, MR open)' },
+  deferred: { type: 'array', items: obj({ id: S, reason: S, ownerDecided: B, kind: { enum: ['code', 'people'], description: 'people: a people step, no code; it and ownerDecided never hold promotion' } }, ['id', 'reason']) },
+  needsDecision: { type: 'array', items: obj({ item: S, decisionId: { ...S, description: 'the id bossy.ps1 decide ask printed' }, question: S }),
    description: 'items you stopped for an owner decision (bossy.ps1 decide ask); [] when none' },
-  needsEnvFix: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, envFixId: { type: 'string', description: 'the id bossy.ps1 decide ask -Kind envfix printed' }, need: { type: 'string' } }, required: ['item', 'envFixId', 'need'] },
+  debate: { type: 'array', items: obj({ item: S, question: S, options: SA }), description: 'items stopped at 2 valid paths ("A: ..", "B: ..") you cannot pick with confidence, no test settles: the workflow debates, the owner decides; []' },
+  disputes: { type: 'array', items: obj({ finding: S, evidence: S }), description: 'fix round: findings you contest ("<file>:<line>" as listed; evidence: file:line, a test, a measurement); []' },
+  needsEnvFix: { type: 'array', items: obj({ item: S, envFixId: { ...S, description: 'the id bossy.ps1 decide ask -Kind envfix printed' }, need: S }),
    description: 'items stopped for a local-env fix only the coordinator may do (up/down/refresh/drop, shared DB repair); [] when none' },
   localTest: { type: 'object', properties: {
-   status: { type: 'string', enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS = every goal passed locally, clean logs; FAIL = goals failing; BLOCKED = ONLY an owner decision or a remote-only dependency (blockedKind); NONE = no local env (automated tests only)' },
-   blockedKind: { type: 'string', enum: ['decision', 'remote'], description: 'BLOCKED only: decision = waits for the owner (decide ask); remote = needs a system only reachable remotely' },
-   blockedReason: { type: 'string', description: 'BLOCKED only: the decision id or the remote dependency' },
-   envGap: { type: 'boolean', description: 'FAIL only: true = every failing goal is an ENV GAP (THE DEV FLOW); a product failure: false' },
-   env: { type: 'string', description: '<env> r<n>, or "none: <why>"' }, rounds: { type: 'number' },
-   failing: { type: 'array', items: { type: 'string' }, description: 'goal ids still failing, with one line each' },
-   goalsDoc: { type: 'string', description: 'cases render <task> goals path' } }, required: ['status', 'env', 'rounds', 'failing', 'goalsDoc'] },
-  needsLiveCheck: { type: 'array', items: { type: 'string' } },
-  testerGuide: { type: 'string', description: 'link of the published human testing doc (devtools.py finish links it and the AI doc on the task; the MR body too)' },
-  seed: { type: 'array', items: { type: 'string' }, description: 'settings/data to seed after deploy' },
-  foreignHooks: { type: 'array', items: { type: 'string' } },
-  summary: { type: 'string', description: '<=200 words; MR merge state lives in mrs[].mergeState' },
-  handoff: { type: 'string', description: 'only at your budget handoff (board beat printed HANDOFF): the resume brief path; a fresh devy continues' },
+   status: { ...S, enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS = every goal passed locally, clean logs; FAIL = goals failing; BLOCKED = ONLY an owner decision or a remote-only dependency (blockedKind); NONE = no local env (automated tests only)' },
+   blockedKind: { ...S, enum: ['decision', 'remote'], description: 'BLOCKED only: decision = waits for the owner (decide ask); remote = needs a system only reachable remotely' },
+   blockedReason: { ...S, description: 'BLOCKED only: the decision id or the remote dependency' },
+   envGap: { ...B, description: 'FAIL only: true = every failing goal is an ENV GAP (THE DEV FLOW); a product failure: false' },
+   env: { ...S, description: '<env> r<n>, or "none: <why>"' }, rounds: N,
+   failing: { ...SA, description: 'goal ids still failing, with one line each' },
+   goalsDoc: { ...S, description: 'cases render <task> goals path' } }, required: ['status', 'env', 'rounds', 'failing', 'goalsDoc'] },
+  needsLiveCheck: SA,
+  testerGuide: { ...S, description: 'link of the published human testing doc (devtools.py finish links it and the AI doc on the task; the MR body too)' },
+  seed: { ...SA, description: 'settings/data to seed after deploy' },
+  foreignHooks: SA,
+  summary: { ...S, description: '<=200 words; MR merge state lives in mrs[].mergeState' },
+  handoff: { ...S, description: 'only at your budget handoff (board beat printed HANDOFF): the resume brief path; a fresh devy continues' },
  },
  required: ['mrs', 'worktrees', 'done', 'deferred', 'needsDecision', 'localTest', 'needsLiveCheck', 'seed', 'foreignHooks', 'summary', 'testerGuide'],
 }
-const REVIEW_SCHEMA = { type: 'object', properties: { findings: { type: 'array', items: { type: 'object', properties: {
- mr: { type: 'string' }, file: { type: 'string' }, line: { type: 'number' }, severity: { type: 'string', enum: ['blocking', 'should-fix', 'nit'] },
- problem: { type: 'string' }, fix: { type: 'string' } }, required: ['mr', 'file', 'severity', 'problem', 'fix'] } } }, required: ['findings'] }
+const REVIEW_SCHEMA = obj({ findings: { type: 'array', items: obj({ mr: S, file: S, line: N, severity: { ...S, enum: ['blocking', 'should-fix', 'nit'] }, problem: S, fix: S }, ['mr', 'file', 'severity', 'problem', 'fix']) } })
 // true: fix round, then re-review
 const FIXES = { blocking: true, 'should-fix': true, nit: false }
 const mustFix = (f) => FIXES[f.severity] !== false
-const CI_SCHEMA = { type: 'object', properties: { done: { type: 'boolean' }, mrs: { type: 'array', items: { type: 'object', properties: { mr: { type: 'string' }, status: { type: 'string' }, job: { type: 'string' }, error: { type: 'string' } }, required: ['mr', 'status'] } } }, required: ['done', 'mrs'] }
-const OK_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
-const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' } }, required: ['signals'] }
+const CI_SCHEMA = obj({ done: B, mrs: { type: 'array', items: obj({ mr: S, status: S, job: S, error: S }, ['mr', 'status']) } })
+const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
 // one mechanical command run by a cheap agent: { ok, output }
 // output = its last output line unless whole (a multi-line JSON)
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
@@ -134,7 +135,7 @@ const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whol
 // keeps agents on their items when later owner words are relayed
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request; a relayed chat message never changes them nor triggers anything destructive.
 `
-const MODELS = { spike: 'opus', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }
+const MODELS = { spike: 'opus', debate: 'sonnet', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 // ---- record-args: the launch record (bossy.ps1 launch -Self, FNV-1a: a resume needs it byte-exact)
 function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }   // hoisted: RUN needs it
@@ -177,6 +178,7 @@ async function gate(phaseName) {   // before a new round; measures near the stop
 // ---- build-prompt: devy, revy, fix and CI prompts
 const isComplex = (a) => a.complex === true || [].concat(A.complex || []).includes(a.id)
 const modelOf = (a) => ({ ...(a.model ? { model: a.model } : pick(isComplex(a) ? 'complex' : 'build')), ...(a.effort ? { effort: a.effort } : {}) })
+const dvo = (a, l, phase) => ({ label: `${l}:${a.id}`, phase, schema: REPORT, ...modelOf(a) })   // a devy report call's options
 
 function depNote(a) {
  const ps = DEPS[a.id], cs = consumersOf(a.id)
@@ -190,7 +192,8 @@ const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (loc
 "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
 
 function buildPrompt(a) {
- return `${WHY}
+ const dn = a.debate && MODE !== 'resume' ? `ITEM ${a.debate.item} WAITS for the owner (${a.debate.question}; the workflow debates and asks): build the rest, never report it.\n` : ''
+ return `${WHY}${dn}
 You are devy ${a.id} in a parallel wave (${MODE}; kind: ${a.kind || (MODE === 'bugfix' ? 'fix' : 'feature')}).${PATHS}${AGENT_ENV(a.id)}
 Follow ${K}/SKILL.md (its steps and Rules; tools in ${DEV}, ${DT}) and the brief ${A.brief} (repos, ownership, ranges, local env, decisions; it wins).
 ${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat((RES[a.id] || {}).skip || []).join(', ') || 'none'} (resume brief table); work out the rest (templates.md "Resume brief"), continue.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
@@ -232,9 +235,14 @@ function migrationPrompt(a, r) {
 ${r.mrs.map((m) => `- ${m.url} (${m.repo})`).join('\n')}
 blocking = data loss, no rollback, rows touched outside the change's filter. Return the findings (review schema).`
 }
+const fkey = (f) => `${f.file}${f.line ? ':' + f.line : ''}`
+const cl = (s, n) => String(s || '').replace(/["'`$\r\n]+/g, ' ').replace(/,/g, ';').slice(0, n)   // a quoted pwsh arg; no option split
+const ANSWERS = obj({ answers: { type: 'array', items: obj({ finding: S, verdict: { enum: ['withdrawn', 'upheld'] }, evidence: S, why: S }, ['finding', 'verdict', 'evidence']) } })
+const DEB = { used: 0 }, DM = [].concat(A.debateModels || [])
 function fixPrompt(a, r, findings) {
- return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
-${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
+ return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix): fix each, or CONTEST a review
+finding you can disprove in disputes[] (evidence: file:line, a test, a measurement; revy answers once, still split: the owner decides); never skip one silently:
+${findings.map((f) => `- ${f.mr} ${fkey(f)}: ${f.problem} -> ${f.fix}`).join('\n')}
 Then your agent definition's "In a /buildy wave" FIX round.`)
 }
 function ciPrompt(r, a) {
@@ -259,7 +267,7 @@ Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: n
 
 // ---- plan: the budget gate before any agent
 const OQ = MODE === 'resume' ? [] : [].concat(A.openQuestions || []).map(String).filter(Boolean)
-const PLAN = [...(OQ.length ? [`rechy/${MODELS.spike}:1`] : []), ...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,${a.migrations ? `datay/${MODELS.review}:1,` : ''}step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
+const PLAN = [...(OQ.length ? [`rechy/${MODELS.spike}:1`] : []), ...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,${a.migrations ? `datay/${MODELS.review}:1,` : ''}${a.debate ? `rechy/${MODELS.debate}:5,revy/${MODELS.review}:1,` : ''}step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
  `step/haiku:2,kitty/${MODELS.learn}:1`].join(',')
 if (A.agents.every(allDone)) { log('RESUME: every area is done (MRs merged, tracker and testing doc set): nothing to run'); return { resumedDone: A.agents.map((a) => ({ agent: a.id, mrs: RES[a.id].mrs || [] })) } }
 const REC = await recordArgs('buildy', RUN, A0, 'Build', PLAN), GAPS = REC.match(/^TASKS REFUSED .*$/gm)
@@ -306,7 +314,7 @@ function mergeReports(x, r2, note) {
  const mrs = [...r2.mrs, ...x.mrs.filter((m) => !r2.mrs.some((n) => nu(n.url) === nu(m.url)))]
  return { ...x, ...r2, mrs, worktrees: uniqPath([...(x.worktrees || []), ...(r2.worktrees || [])]), done: uniq([...(x.done || []), ...(r2.done || [])]),
   deferred: byId([...(x.deferred || []), ...(r2.deferred || [])]).filter((d) => !(r2.done || []).includes(d.id)),
-  needsDecision: byKey([...(x.needsDecision || []), ...(r2.needsDecision || [])], 'decisionId'), needsEnvFix: byKey([...(x.needsEnvFix || []), ...(r2.needsEnvFix || [])], 'envFixId'), needsLiveCheck: uniq([...(x.needsLiveCheck || []), ...(r2.needsLiveCheck || [])]),
+  needsDecision: byKey([...(x.needsDecision || []), ...(r2.needsDecision || [])], 'decisionId'), debate: byKey([...(x.debate || []), ...(r2.debate || [])], 'item'), needsEnvFix: byKey([...(x.needsEnvFix || []), ...(r2.needsEnvFix || [])], 'envFixId'), needsLiveCheck: uniq([...(x.needsLiveCheck || []), ...(r2.needsLiveCheck || [])]),
   seed: uniq([...(x.seed || []), ...(r2.seed || [])]), foreignHooks: uniq([...(x.foreignHooks || []), ...(r2.foreignHooks || [])]),
   testerGuide: r2.testerGuide && !/^none/i.test(r2.testerGuide) ? r2.testerGuide : x.testerGuide, summary: `${x.summary}\n\n${note}: ${r2.summary}` }
 }
@@ -336,7 +344,7 @@ const holdsMerge = (lt) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'F
 async function localLoop(a, r, retries, stage) {
  for (let h = 0; r && r.handoff && h < 3; h++) {   // budget handoff -> a fresh devy
   log(`${a.id}: HANDOFF at its budget (${r.handoff}): a fresh devy continues`)
-  const r2 = await agent(continuePrompt(a, r, `HANDOFF: the previous devy reached its budget; read its resume brief ${r.handoff} first and continue from there.`), { label: `handoff:${a.id}`, phase: stage, schema: REPORT, agentType: 'devy', ...modelOf(a) })
+  const r2 = await agent(continuePrompt(a, r, `HANDOFF: the previous devy reached its budget; read its resume brief ${r.handoff} first and continue from there.`), { ...dvo(a, 'handoff', stage), agentType: 'devy' })
   r = mergeReports({ ...r, handoff: '' }, r2, 'Handoff')
  }
  r = normLocal(r)
@@ -345,7 +353,7 @@ async function localLoop(a, r, retries, stage) {
   if (!(await gate(stage))) return { ...r, budgetStopped: true }
   log(`${a.id}: local test FAILED (${(r.localTest.failing || []).join('; ')}) - local round ${i + 2}`)
   const r2 = await agent(continuePrompt(a, r, `Your local test loop still FAILS: ${(r.localTest.failing || []).join('; ')}. Debug locally (logs, DB state, debugger), fix, redeploy and re-run every goal.`),
-   { label: `local:${a.id}`, phase: stage, schema: REPORT, agentType: 'devy', ...modelOf(a) })
+   { ...dvo(a, 'local', stage), agentType: 'devy' })
   r = normLocal(mergeReports(r, r2, `Local round ${i + 2}`))
  }
  if (r.localTest && r.localTest.status === 'FAIL' && holdsMerge(r.localTest) && MODELS.retest) {
@@ -353,7 +361,7 @@ async function localLoop(a, r, retries, stage) {
   log(`${a.id}: local test still FAILS - one stronger fix round on ${MODELS.retest}`)
   const r2 = await agent(continuePrompt(a, r, `STRONGER FIX ROUND: earlier rounds could not make these goals pass: ${(r.localTest.failing || []).join('; ')}.
 Start from the evidence (logs, DB state, the reproduction), find the root cause, fix, redeploy and re-run every goal. An env problem is ours to
-fix (THE DEV FLOW step 3), never a reason to stop.`), { label: `local-strong:${a.id}`, phase: stage, schema: REPORT, agentType: 'devy', ...modelOf(a), model: MODELS.retest, effort: MODELS.retestEffort || 'high' })
+fix (THE DEV FLOW step 3), never a reason to stop.`), { ...dvo(a, 'local-strong', stage), agentType: 'devy', model: MODELS.retest, effort: MODELS.retestEffort || 'high' })
   r = normLocal(mergeReports(r, r2, 'Stronger fix round'))
  }
  return r
@@ -368,26 +376,33 @@ const results = await pipeline(
    const r0 = synth(a)
    log(`${a.id}: resumed, skipped: ${[].concat(RES[a.id].skip).join(', ')}`)
    if (r0.resumed !== 'merged' || skips(a, 'testing-doc')) return r0
-   const r2 = await agent(postMergePrompt(a, r0), { label: `postmerge:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
+   const r2 = await agent(postMergePrompt(a, r0), { ...dvo(a, 'postmerge', 'Build'), agentType: 'devy' })
    return { ...mergeReports(r0, r2, 'Post-merge'), mrs: r0.mrs, localTest: r0.localTest, resumed: 'merged' }
   }
   const open = await producersOpen(a)
   if (open.length) { const why = `producer(s) ${open.join(', ')} not MERGED: not started (outcome.afterMerge)`; log(`${a.id}: ${why}`); return { id: a.id, error: why, blocked: why, waitFor: open } }
   return releasing(a, 'Build', async () => {
-  let r = await agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
-  if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt status, the board, your branch), continue.'), { label: `build-retry:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) }) }
+  const dbt = a.debate && MODE !== 'resume' ? debateOrAsk(a, { ...a.debate, trigger: 'brief' }, 'Build') : null   // beside the build
+  let r = await agent(buildPrompt(a), { ...dvo(a, 'build', 'Build'), agentType: 'devy' })
+  if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt status, the board, your branch), continue.'), { ...dvo(a, 'build-retry', 'Build'), agentType: 'devy' }) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
-  return localLoop(a, r, LOCAL_RETRIES, 'Build')
+  const o = await localLoop(a, r, LOCAL_RETRIES, 'Build'), dq = await dbt, it = (a.debate || {}).item
+  return !dbt ? o : dq ? { ...o, needsDecision: [...(o.needsDecision || []), { item: it, decisionId: dq, question: a.debate.question }] } : { ...o, deferred: [...(o.deferred || []), { id: it, reason: 'debate and ask failed: the coordinator decides' }] }
   })
  }),
  // Decide: wait for answers and ENV-FIXes (<= ENV_FIX_CYCLES)
  (r, a) => settleOnThrow(a, async () => {
-  if (!r || r.error || r.budgetStopped || !((r.needsDecision || []).length || (r.needsEnvFix || []).length)) return r
+  if (!r || r.error || r.budgetStopped || !((r.needsDecision || []).length || (r.needsEnvFix || []).length || (r.debate || []).length)) return r
   return releasing(a, 'Decide', async () => {
   let cur = r, envCycles = 0
   const asked = new Set()
-  // resumes may raise decisions / env fixes, rerun the local loop
+  // resumes may raise decisions / env fixes / debates, rerun the local loop
   for (let round = 0; round < 8; round++) {
+   for (const q of cur.debate || []) {   // devy's low confidence -> a debate or an A/B ask
+    const id = await debateOrAsk(a, { ...q, trigger: 'low confidence' }, 'Decide'), k = id ? 'needsDecision' : 'deferred'
+    cur = { ...cur, [k]: [...(cur[k] || []), id ? { item: q.item, decisionId: id, question: q.question } : { id: q.item, reason: 'debate and ask failed: the coordinator decides' }] }
+   }
+   cur = { ...cur, debate: [] }
    const fixes = cur.needsEnvFix || []
    const decs = (cur.needsDecision || []).filter((d) => !asked.has(d.decisionId))
    if (!fixes.length && !decs.length) break
@@ -410,7 +425,7 @@ const results = await pipeline(
     if (!answered.length) continue
     if (!(await gate('Decide'))) { cur = { ...cur, budgetStopped: true }; break }
     const r2 = await agent(continuePrompt(a, cur, `The coordinator fixed the local env:\n${answered.map((f) => `- item ${f.item} (${f.envFixId}): ${f.ans}`).join('\n')}\nContinue those items (local test loop, MR, testing doc).`),
-     { label: `envfix-resume:${a.id}`, phase: 'Decide', schema: REPORT, agentType: 'devy', ...modelOf(a) })
+     { ...dvo(a, 'envfix-resume', 'Decide'), agentType: 'devy' })
     cur = await localLoop(a, mergeReports(cur, r2, 'After ENV-FIX'), LOCAL_RETRIES, 'Decide')
     continue
    }
@@ -422,7 +437,7 @@ const results = await pipeline(
     if (!ans) { cur = { ...cur, deferred: byId([...(cur.deferred || []), { id: d.item, reason: `needs decision ${d.decisionId} (no answer within the wait)` }]) }; continue }
     if (!(await gate('Decide'))) { cur = { ...cur, budgetStopped: true }; break }
     const r2 = await agent(continuePrompt(a, cur, `The owner answered decision ${d.decisionId} for item ${d.item}: ${ans}\nFinish item ${d.item} accordingly (testing goals, local test loop, MR, testing doc).`),
-     { label: `resume:${a.id}`, phase: 'Decide', schema: REPORT, agentType: 'devy', ...modelOf(a) })
+     { ...dvo(a, 'resume', 'Decide'), agentType: 'devy' })
     cur = await localLoop(a, mergeReports(cur, r2, `Decision ${d.decisionId}`), LOCAL_RETRIES, 'Decide')
    }
   }
@@ -454,26 +469,30 @@ const results = await pipeline(
   if (blocking.length) {
    if (!(await gate('Fix'))) return { ...x, budgetStopped: true }
    log(`${a.id}: ${blocking.length} blocking finding(s) / failed pipeline(s) -> fix round`)
-   const r2 = await agent(fixPrompt(a, r, blocking), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...modelOf(a) })
+   const r2 = await agent(fixPrompt(a, r, blocking), { ...dvo(a, 'fix', 'Fix'), agentType: 'devy' })
    if (!r2) return { ...x, findings: [...findings, ...blocking], fixed: false, stopped: true }
    x = { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: true, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(r, r2, 'Fix round'), 0, 'Fix')) }
    const lt2 = x.report.localTest || {}
    if (holdsMerge(lt2)) return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
-   // re-review: blocking holds the merge (a round, then a decision); rest -> Follow-ups
-   let open = findings.filter(mustFix), soft = []
+   // re-review: blocking holds the merge (a round, then a decision); rest -> Follow-ups; contested findings: settleDisputes
+   const gone = [], decided = new Map()   // finding key -> 'A' | 'B' | a pending decision id
+   const settle = async (rep, l) => { const k = await settleDisputes(a, rep, l, decided); gone.push(...l.filter((f) => !k.includes(f))); x = { ...x, findings: x.findings.filter((f) => !gone.includes(f)) }; return k }
+   let open = await settle(r2, findings.filter(mustFix)), soft = []
    const held = async (y, more = []) => ({ ...x, ...y, fixed: false, findings: [...x.findings, ...open], ...((soft.length || more.length) && { followUps: await followUps(a, x.report, [...soft, ...more]) }) })
    for (let round = 1; open.length; round++) {
-    const rr = `\nRE-REVIEW after fix round ${round}: check that these findings are resolved and that the fix added no new problem:\n${open.map((f) => `- ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join('\n')}`
+    const rr = `\nRE-REVIEW after fix round ${round}: check that these findings are resolved and that the fix added no new problem:\n${open.map((f) => `- ${fkey(f)}: ${f.problem}`).join('\n')}${gone.length ? `\nSettled in a dispute, never raise again: ${gone.map(fkey).join(', ')}` : ''}`
     const [rv2, mv2] = await Promise.all([agent(reviewPrompt(a, x.report) + rr, { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
      a.migrations ? agent(migrationPrompt(a, x.report) + rr, { label: `migration-review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'datay', ...pick('review') }) : {}])
     const again = [rv2, mv2].flatMap((v) => v ? (v.findings || []) : [BLOCK(x.report.mrs, 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', REREVIEW)])
     soft.push(...again.filter((f) => f.severity !== 'blocking')); open = again.filter((f) => f.severity === 'blocking')
     if (!open.length) break
-    if (round >= 2 || !rv2 || !mv2) { const d = await askBlocking(a, x.report, open); return held(d ? { decisionAsked: d } : {}, d ? open : []) }   // no reviewer: nothing to fix; asked: option A's Follow-ups now
+    if (round >= 2 || !rv2 || !mv2) { const d = await askBlocking(a, x.report, open, decided); return held(d ? { decisionAsked: d } : {}, d ? open : []) }   // no reviewer: nothing to fix; asked: option A's Follow-ups now
     if (!(await gate('Fix'))) return held({ budgetStopped: true })
     log(`${a.id}: re-review: ${open.length} blocking finding(s) -> one last fix round`)
-    const r4 = await agent(fixPrompt(a, x.report, open), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...modelOf(a) })
+    const ownB = [...decided].filter(([, v]) => v === 'B').map(([k]) => k)
+    const r4 = await agent(fixPrompt(a, x.report, open) + (ownB.length ? `\nThe owner decided these stay: fix them, no dispute: ${ownB.join(', ')}` : ''), { ...dvo(a, 'fix', 'Fix'), agentType: 'devy' })
     if (!r4) return held({ stopped: true })
+    open = await settle(r4, open)
     x = { ...x, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(x.report, r4, 'Fix round 2'), 0, 'Fix')) }
     const lt3 = x.report.localTest || {}
     if (holdsMerge(lt3)) return held({ blocked: `local test ${lt3.status} after fix round 2` })
@@ -528,15 +547,50 @@ Return ok=true when it exits 0, output = its full output.`, { label: `followups:
  if (!st || !st.ok) { log(`${a.id}: WARNING Follow-ups not written (${st ? st.output : 'the step returned nothing'}): add them by hand`); return soft.map((f) => ({ ...f, written: false })) }
  return soft
 }
-// blocking after 2 fix rounds: an owner decision, never a silent "not merged"
-async function askBlocking(a, r, open) {
- const q = open.map((f) => `${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join(' / ').replace(/["'`$\r\n]+/g, ' ').slice(0, 400)
- const s = await runStep(`& ${ORCH} decide ask -Run ${RUN} -Agent ${a.id} -Item '${r.mrs.map((m) => m.url).join(' ')}' -Question "Still blocking after 2 fix rounds: ${q}" -Options "A: merge by hand, the finding goes to Follow-ups","B: hold, fix it by hand" -Recommend B`,
-  `decide:${a.id}`, 'Fix', { ok: 'when it prints DECISION <id>' })
- const id = ((s && s.output) || '').match(/DECISION (\S+)/)
- log(`${a.id}: re-review still blocking after 2 fix rounds (${open.length}): ${id ? `decision ${id[1]} asked` : 'WARNING decide ask failed'} - not merged`)
- if (id) decisions.push({ agent: a.id, item: r.mrs.map((m) => m.url).join(' '), decisionId: id[1], question: `still blocking: ${q}` })
- return id ? id[1] : ''
+// blocking after 2 fix rounds: an owner decision with both sides, never a silent "not merged"
+async function askBlocking(a, r, open, decided) {
+ const pend = open.map((f) => decided.get(fkey(f))).filter((v) => v && !['A', 'B'].includes(v))
+ if (pend.length === open.length) { log(`${a.id}: still blocking; the owner's answer to ${pend[0]} is pending - not merged`); return pend[0] }   // asked already
+ const mrs = r.mrs.map((m) => m.url).join(' '), q = cl(open.map((f) => `${fkey(f)}: ${f.problem}`).join(' / '), 400)
+ const dv = cl(open.map((f) => ((r.disputes || []).find((d) => d.finding === fkey(f)) || {}).evidence).filter(Boolean).join('; ') || (r.summary || '').split('\n').pop(), 200)
+ const id = await debateOrAsk(a, { item: mrs, question: `Still blocking after 2 fix rounds: ${q}`, trigger: 'rejected twice', recommend: 'B',
+  options: [`A: merge by hand, the finding goes to Follow-ups (devy: ${dv})`, `B: hold, fix it by hand (revy: ${cl(open[0].fix, 150)})`] }, 'Fix')
+ log(`${a.id}: re-review still blocking after 2 fix rounds (${open.length}): ${id ? `decision ${id} asked` : 'WARNING decide ask failed'} - not merged`)
+ if (id) decisions.push({ agent: a.id, item: mrs, decisionId: id, question: `still blocking: ${q}` })
+ return id
+}
+// ---- debate: devy contests a finding, revy answers once; still split, or another trigger -> a debate or an A/B ask; the owner decides
+async function settleDisputes(a, rep, open, decided) {
+ const of = (d) => open.find((f) => fkey(f) === d.finding), ds = ((rep && rep.disputes) || []).filter((d) => d && d.evidence && of(d) && !decided.has(d.finding))   // once per finding
+ if (!ds.length) return open
+ log(`${a.id}: devy contests ${ds.length} finding(s) -> one revy answer`)
+ const v = await agent(`Kind dispute: devy ${a.id} contests your findings on ${rep.mrs.map((m) => m.url).join(', ')}; answer as your agent definition says.${PATHS}
+${ds.map((d) => `- ${d.finding}: ${of(d).problem} | devy: ${d.evidence}`).join('\n')}`, { label: `dispute:${a.id}`, phase: 'Review', schema: ANSWERS, agentType: 'revy', ...pick('review') })
+ for (const d of ds) {   // all asks first, then the waits side by side
+  const ans = ((v && v.answers) || []).find((x) => x.finding === d.finding) || {}, q = `Dispute on ${d.finding}: ${cl(of(d).problem, 200)} (revy: ${cl(ans.why, 150)})`
+  if (ans.verdict === 'withdrawn') { decided.set(d.finding, 'A'); continue }
+  const id = await debateOrAsk(a, { item: d.finding, question: q, trigger: 'dispute', recommend: 'B', options: [`A: devy - no fix: ${d.evidence}`, `B: revy - fix it: ${ans.evidence || of(d).fix}`] }, 'Review')
+  if (id) { decisions.push({ agent: a.id, item: d.finding, decisionId: id, question: q }); decided.set(d.finding, id) }
+ }
+ await Promise.all([...decided].filter(([k, v]) => ds.some((d) => d.finding === k) && !['A', 'B'].includes(v)).map(async ([k, id]) => {
+  const w = (await waitAnswer(id, `dispute-wait:${a.id}`, WAIT_SLICES)) || '', ch = (/ANSWERED \S+:\s*(A|devy)\b/i.test(w) && 'A') || (/ANSWERED \S+:\s*(B|revy)\b/i.test(w) && 'B')
+  if (ch) decided.set(k, ch)   // other words: still pending
+ }))
+ return open.filter((f) => decided.get(fkey(f)) !== 'A')
+}
+// a debate while the run's slot is free (1 per run; owner: always) and the budget allows: one rechy moderator spawns fresh
+// advocates and revy (its agent definition); else, or failed: a plain A/B ask
+async function debateOrAsk(a, d, ph) {
+ const arg = `-Item '${cl(d.item, 200)}' -Question "${cl(d.question, 400)}" -Options ${[].concat(d.options).slice(0, 2).map((o) => `"${cl(o, 300)}"`).join(',')}`
+ const did = (s) => (((s && s.output) || '').match(/DECISION (\S+)/) || [])[1] || ''
+ if ((d.owner || !DEB.used++) && await gate(ph)) {
+  const mod = await agent(`Kind debate: & ${ORCH} debate start -Run ${RUN} -Agent ${a.id} ${arg} -Why '${d.trigger}'${d.owner ? ' -Owner' : ''}, then moderate the file it prints
+as your agent definition says (advocate models: ${DM.join(', ') || MODELS.debate}); output = that file.${PATHS}`, { label: `debate:${a.id}`, phase: ph, schema: OK_SCHEMA, agentType: 'rechy', ...pick('debate') })
+  const id = did(mod && mod.ok && await runStep(`& ${ORCH} debate ask -File '${mod.output}'`, `debate-ask:${a.id}`, ph, { ok: 'when it prints DECISION <id>' }))
+  log(`${a.id}: debate (${d.trigger}) on ${d.item}: ${id ? `decision ${id}` : 'failed, plain ask'}`)
+  if (id) return id
+ }
+ return did(await runStep(`& ${ORCH} decide ask -Run ${RUN} -Agent ${a.id} ${arg}${d.recommend ? ` -Recommend ${d.recommend}` : ''}`, `decide:${a.id}`, ph, { ok: 'when it prints DECISION <id>' }))
 }
 // open producer ids (polled): consumers build and merge after them
 async function producersOpen(a) {

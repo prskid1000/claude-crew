@@ -20,12 +20,13 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Only <ids>] [-Skip <id>=<why>; ...] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
   deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist
+  debate start -Item -Question -Options "A: ..","B: .." [-Run] [-Why] [-Owner] | brief -File -Side A|B|revy -Round <n> | ask -File   a written debate (1 per run; rechy kind debate), its table + decide ask
   heartbeat (goodies os-timer, ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L31 init · L48 board · L225 budget · L254 launch · L486 recover · L573 pause · L584 resume · L651 program · L702 param ·
-  L708 track · L1025 supervise · L1326 report · L1405 audit · L1465 storage · L1468 bugbrief · L1575 cleanup · L1659 learn ·
-  L1690 decide · L1824 health · L1888 retro due · L1898 tidy · L1967 setup · L2034 guard-sendmessage
+Sections: L32 init · L49 board · L226 budget · L255 launch · L487 recover · L574 pause · L585 resume · L652 program · L703 param ·
+  L709 track · L1026 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1576 cleanup · L1660 learn ·
+  L1691 decide · L1825 debate · L1869 health · L1933 retro due · L1943 tidy · L2012 setup · L2079 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1821,6 +1822,50 @@ function Invoke-Decide {
   }
 }
 
+# ---- debate: a written debate on a trigger (agents/rechy.md kind debate moderates); the owner decides from its table
+function Invoke-Debate {
+  param([Parameter(Position = 0)][ValidateSet('start', 'brief', 'ask')][string]$Action, [string]$File, [string]$Run, [string]$Agent = 'coordinator',
+    [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Why = 'owner', [switch]$Owner, [ValidateSet('A', 'B', 'revy')][string]$Side = 'A', [int]$Round = 0)
+  $dir = Join-Path (Get-KitPath decisions -Create) debates; $null = New-Item -ItemType Directory -Force $dir
+  $read = { if (-not ($File -and (Test-Path -LiteralPath $File))) { "debate $Action`: no file '$File' (debate start prints it)"; exit 2 }; Get-Content -LiteralPath $File -Raw | ConvertFrom-Json }
+  switch ($Action) {
+    'start' {
+      $opts = @($Options | ForEach-Object { "$_" -split ',(?=\s*[AB]\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+      if (-not ($Item -and $Question -and $opts.Count -eq 2 -and $opts[0] -match '^A\s*:' -and $opts[1] -match '^B\s*:')) { 'usage: debate start -Item <item> -Question "<q>" -Options "A: <label>","B: <label>" [-Run <run>] [-Agent <id>] [-Why <trigger>] [-Owner]'; exit 2 }
+      $own = $Owner -or $Why -eq 'owner'
+      $had = @(Read-KitJsonFiles $dir | Where-Object { $Run -and $_.run -eq $Run -and -not $_.owner })
+      if ($had.Count -and -not $own) { "REFUSED: run $Run had its debate ($($had[0].id)); 1 per run unless the owner asks (-Owner): ask A/B with decide ask"; exit 1 }
+      $id = "debate-$(Get-Date -Format yyyyMMddHHmmss)-$([guid]::NewGuid().ToString('N').Substring(0, 4))"; $f = Join-Path $dir "$id.json"
+      Write-KitState $f ([ordered]@{ id = $id; run = $Run; agent = $Agent; item = $Item; question = $Question; options = $opts; trigger = $Why; owner = [bool]$own })
+      "DEBATE $f"
+    }
+    'brief' {
+      $d = & $read; $role = if ($Side -eq 'revy') { 'revy' } else { 'rechy' }
+      $char = [regex]::Match("$(Get-Content (Join-Path $KitConf.Kit "agents/$role.md") -Raw -ErrorAction SilentlyContinue)",'(?ms)^\*\*Character:\*\*.*?(?=\r?\n\s*\r?\n)').Value -replace '\s*\r?\n\s*', ' '
+      "DEBATE $($d.id) ($($d.trigger)), item $($d.item): $($d.question)"; @($d.options) | ForEach-Object { "  $_" }
+      "You are $(if ($Side -eq 'revy') { 'revy, the summariser (no vote, no new option)' } else { "the advocate of option $Side, fresh this round" }). $char (Re-read it each round: it shapes how you argue, never a rule.)"
+      'Read-only: code, docs, data, a check through crafty.ps1 check; no edits, no builds of your own; <= 250 words; evidence = file:line, a link, a test or a measurement.'
+      $(switch ("$Side$Round") {
+          { $_ -match '^[AB]0$' } { "ROUND 0 (blind: you have not seen the other case): argue option $Side only. Return {label, change (what a user sees), cost, risk, effort, evidence: []}." }
+          { $_ -match '^[AB]1$' } { 'ROUND 1, the last: the other option''s round-0 JSON is in your prompt. Return {against}: the strongest point against it, evidence only (no rhetoric, no repeat of your case).' }
+          'revy1' { 'SUMMARY: check each side''s evidence (open every file:line). Return {recommend: A|B, why: one line naming the deciding evidence, settleBy: one read-only check (a test, a query, a measurement) that would settle it, else empty}.' }
+          'revy2' { 'ROUND 2 (only to settle it): run the settleBy check once. Return {recommend, why, test: "<command> -> <result line>"}. Hard stop.' }
+          default { "debate brief: no part for -Side $Side -Round $Round (A|B 0-1, revy 1-2)"; exit 2 } })
+    }
+    'ask' {
+      $d = & $read; $rows = @($d.rows); $v = $d.verdict
+      if ($rows.Count -ne 2 -or "$($v.recommend)" -notmatch '^[AB]$') { "debate ask: $File needs rows (A, B) and verdict.recommend A|B (agents/rechy.md kind debate step 4)"; exit 2 }
+      $cell = { param($s) ((@($s) -join ' · ') -replace '[|\r\n]+', ' / ').Trim() }
+      $t = @("## Debate $($d.id) ($($d.trigger)): $($d.question)", '| Option | User-visible change | Cost | Risk | Effort | Evidence | Strongest point against |', '|---|---|---|---|---|---|---|') +
+        @($rows | ForEach-Object { "| $($_.option): $(& $cell $_.label) | $(& $cell $_.change) | $(& $cell $_.cost) | $(& $cell $_.risk) | $(& $cell $_.effort) | $(& $cell $_.evidence) | $(& $cell $_.against) |" }) +
+        "**revy recommends $($v.recommend):** $(& $cell $v.why)$(if ($v.test) { " · test: $(& $cell $v.test)" })"
+      $md = $File -replace '\.json$', '.md'; Set-Content -LiteralPath $md ($t -join "`n") -Encoding utf8; $t
+      $opt = { param($r) ("$($r.option): $($r.label) — $($r.change); cost $($r.cost); risk $($r.risk); effort $($r.effort); against: $($r.against)" -replace ',(?=\s*\w+\s*:)', ';') -replace '[\r\n]+', ' ' }
+      Invoke-Decide ask -Run $d.run -Agent $d.agent -Item $d.item -Question "$($d.question) (debate table: $md)" -Options @($rows | ForEach-Object { & $opt $_ }) -Recommend $v.recommend
+    }
+  }
+}
+
 # ---- health: SessionStart hook; no network
 function Invoke-Health {
 param([switch]$Flow, [switch]$Fetch, [switch]$Checks)
@@ -2072,6 +2117,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'tidy' { Invoke-KitVerb Invoke-Tidy $__rest }
     'deploy' { $null = Assert-KitExtra Invoke-Deploy 'bossy.ps1 deploy' 'deploys'; Invoke-KitVerb Invoke-Deploy $__rest }
     'decide' { Invoke-KitVerb Invoke-Decide $__rest }
+    'debate' { Invoke-KitVerb Invoke-Debate $__rest }
     'recover' { Invoke-KitVerb Invoke-Recover $__rest }
     'pause' { Invoke-KitVerb Invoke-Pause $__rest }
     'resume' { Invoke-KitVerb Invoke-Resume $__rest }

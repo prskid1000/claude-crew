@@ -1796,7 +1796,7 @@ def wave_files(s, brief_path):
     con = '\n'.join([f'# Contracts: {s["name"]}', _table(['Field / endpoint', 'Type', 'Producer', 'Consumers', 'Merge / deploy order', 'Backward-compatible'],
                      [[str(c.get(k) or '') for k in ('name', 'type', 'producer', 'consumers', 'order')] + ['yes' if c.get('compatible') else 'no'] for c in s.get('contracts') or []])
                      if s.get('contracts') else 'none', '## Rule changes during the wave (newest last)']) + '\n'
-    keep = ('id', 'items', 'area', 'paths', 'note', 'complex', 'model', 'effort', 'dependsOn', 'migrations')
+    keep = ('id', 'items', 'area', 'paths', 'note', 'complex', 'model', 'effort', 'dependsOn', 'migrations', 'debate')
     args = {'brief': brief_path.replace('\\', '/'), 'agents': [{k: a[k] for k in keep if a.get(k) not in (None, '', [], False)} for a in s['agents']],
             'mode': s.get('mode') or 'feature', 'mandate': s['mandate'],
             'openQuestions': [q['question'] for q in s.get('openQuestions') or [] if (q.get('answers') or '') == 'rechy'],

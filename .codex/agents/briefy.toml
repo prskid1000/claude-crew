@@ -38,6 +38,9 @@ Non-negotiables:
 4. **Contracts** (`<brief>.contracts.md`): per crossing field or endpoint: name, type, producer area, consumers, merge and deploy
    order, backward-compatible or not.
 5. `## openQuestions` (one per line: question, what it blocks, who answers: rechy / owner); empty -> "none".
+   **Debate** (launch arg `agents[].debate: { item, question, options: ["A: ..", "B: .."] }`, one per run; `owner: true` only
+   when the owner asked for it): 2 valid designs that differ in user-visible behaviour, cost or risk, or a risky change
+   (migration, money / pricing, auth, a cross-repo contract) with a real choice; a test that can answer it -> a goal, no debate.
 6. Write the spec (JSON, templates.md "Wave brief" fields), never the brief: `python -X utf8 <kit>/skills/crafty/devtools.py
    render wave-brief <spec.json> <brief>` (`<brief>` = `crafty.ps1 dir -Agent briefy -Item <run> -Name wave-brief.md`)
    writes the brief, `<brief>.contracts.md` and `<brief>.args.json` (the /buildy launch args); check the brief with

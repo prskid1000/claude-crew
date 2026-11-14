@@ -49,7 +49,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 ## Wave brief
 Rendered (`devtools.py render wave-brief <spec.json> <brief.md>`, also `.contracts.md` + `.args.json`). Spec: `{ name, date?,
 items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, linkFrom, migrations }], agents: [{ id, items, area, paths (globs),
-repos, migrationRange, services, complex, note?, dependsOn?, migrations?, model?, effort? }], overlaps, branch, tracker,
+repos, migrationRange, services, complex, note?, dependsOn?, migrations?, model?, effort?, debate? }], overlaps, branch, tracker,
 contracts: [{ name, type, producer, consumers, order, compatible }], openQuestions: [{ question, blocks, answers }], mandate, mode,
 holdMerge? }`.
 ```markdown
