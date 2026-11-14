@@ -3,22 +3,26 @@
 # gitlab: GitLab / self-hosted GitLab through the glab CLI: git host (MRs, merge, auto-merge, branch.protect), CI
 # (pipelines, jobs, logs) and tracker (issues; status = a <tracker.statusLabelPrefix><name> label, closed = closed issue).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Enc, __Del, __CiStat, __Tr*).
-# Sections: L7 glab · L11 git-host · L33 ci · L43 tracker
+# Sections: L7 glab · L13 git-host · L37 ci · L49 tracker
 # ---- glab: host and API calls
 # glab reads GITLAB_HOST: a self-hosted GitLab (git host or tracker) sets it before the first call
 function __GlEnv { if (-not $env:GITLAB_HOST -and $KitConf.GitHost -and $KitConf.GitHost -ne 'gitlab.com' -and ($script:HostType -eq 'gitlab' -or $script:__trType -eq 'gitlab')) { $env:GITLAB_HOST = $KitConf.GitHost } }
 function __Gp($a, [string]$Rest, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$Json, [switch]$Res) { __GlEnv; __Cli glab "projects/$(__Enc $a.repo)$Rest" $Method $Fields -Json:$Json -Res:$Res }
+# a job's failure_reason -> the kit's reason: script | timeout | infra | canceled | unknown ('' when it did not fail)
+function __GlReason([string]$R) { switch -Regex ($R) { '^$' { '' } '^script_failure$' { 'script' } 'timeout' { 'timeout' } '^(runner_|ci_quota|api_|scheduler_|data_integrity|archived_|unmet_prereq|missing_dependency|stale_schedule|no_matching_runner|environment_creation|deployment_rejected|stuck)' { 'infra' } 'cancel' { 'canceled' } default { 'unknown' } } }
 # ---- git-host: merge requests, repository, branch protection
 # adapter:git-host/gitlab: glab api
 Register-KitAdapter 'git-host' 'gitlab' @{
   'mr.get' = { param($a) __Gp $a "/merge_requests/$($a.n)" }
-  'mr.list' = { param($a) @(__Gp $a "/merge_requests?$(($a.Keys | Where-Object { $_ -notin 'repo', 'type' } | Sort-Object | ForEach-Object { "$_=$(__Enc $a[$_])" }) -join '&')") }
+  'mr.list' = { param($a) $q = @{} + $a; if ($q.searchIn) { $q['in'] = $q.searchIn }; $q.Remove('searchIn')   # searchIn: title | title,source_branch (GitLab in=)
+    @(__Gp $a "/merge_requests?$(($q.Keys | Where-Object { $_ -notin 'repo', 'type' } | Sort-Object | ForEach-Object { "$_=$(__Enc $q[$_])" }) -join '&')") }
   'mr.changes' = { param($a) __Gp $a "/merge_requests/$($a.n)/changes" }
   'mr.create' = { param($a) __Gp $a "/merge_requests" 'POST' @{ source_branch = $a.source; target_branch = $a.target; title = $a.title; description = $a.body; remove_source_branch = (__Del $a); squash = $a.method -eq 'squash' } -Json }
   'mr.update' = { param($a) __Gp $a "/merge_requests/$($a.n)" 'PUT' @{ title = $a.title; description = $a.body } -Json }   # devtools.py mr re-run: the open MR
   'mr.merge' = { param($a) $f = @{ squash = "$($a.method -eq 'squash')".ToLower(); should_remove_source_branch = "$((__Del $a))".ToLower() }; if ($a.sha) { $f.sha = $a.sha }; if ($a.auto) { $f.merge_when_pipeline_succeeds = 'true' }; __Gp $a "/merge_requests/$($a.n)/merge" 'PUT' $f }
   'mr.unauto' = { param($a) __Gp $a "/merge_requests/$($a.n)/cancel_merge_when_pipeline_succeeds" 'POST' }
   'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/-/merge_requests/$($a.n)" }
+  'whoami' = { param($a) __GlEnv; [string](__Cli glab 'user').username }
   'repo.base' = { param($a) __Gp $a "/repository/merge_base?refs[]=$(__Enc $a.a)&refs[]=$(__Enc $a.b)" }
   'repo.commit' = { param($a) __Gp $a "/repository/commits/$(__Enc $a.ref)" }
   'repo.compare' = { param($a) __Gp $a "/repository/compare?from=$(__Enc $a.from)&to=$(__Enc $a.to)$(if ($a.straight) { '&straight=true' })" }
@@ -34,8 +38,10 @@ Register-KitAdapter 'git-host' 'gitlab' @{
 # adapter:ci/gitlab
 Register-KitAdapter 'ci' 'gitlab' @{
   'runs' = { param($a) @(__Gp $a "/pipelines?ref=$(__Enc $a.ref)$(if ($a.sha) { "&sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)") }
-  'jobs' = { param($a) @(__Gp $a "/pipelines/$($a.id)/jobs?per_page=100") }
-  'log' = { param($a) __Gp $a "/jobs/$($a.id)/trace" }
+  'jobs' = { param($a) @(__Gp $a "/pipelines/$($a.id)/jobs?per_page=100" | Where-Object { $_ } | ForEach-Object { $_ | Add-Member -Force NoteProperty reason (__GlReason "$($_.failure_reason)") -PassThru }) }
+  'log' = { param($a) $l = __Gp $a "/jobs/$($a.id)/trace"; if ($null -eq $l) { return $null }; ((@($l) -join "`n") -split "`n" | ForEach-Object { $_ -replace '^\S+Z \d+O ', '' }) -join "`n" }   # runner timestamp prefix off
+  # https://<host>/<path>/-/jobs/<id> and /-/pipelines/<id> in a text (a CI-raised task) -> @{ url; job; run }
+  'parseUrl' = { param($a) $j = [regex]::Match("$($a.text)", '(?<url>https?://[^\s)\]]+?/jobs/(?<id>\d+))'); $p = [regex]::Match("$($a.text)", '/pipelines/(?<id>\d+)'); @{ url = $j.Groups['url'].Value; job = $j.Groups['id'].Value; run = $p.Groups['id'].Value } }
   'status' = { param($a) $p = @(__Gp $a "/pipelines?sha=$($a.sha)&per_page=1")[0]; if ($p.id) { __CiStat $p.id $p.status } }
   'config' = { param($a) $p = __Gp $a ''; if (-not $p.id) { return $null }; if ($p.only_allow_merge_if_pipeline_succeeds -or $p.ci_config_path -or $p.auto_devops_enabled) { return $true }
     $r = __Gp $a "/repository/files/.gitlab-ci.yml?ref=$(__Enc $a.ref)" -Res; if (-not $r.code) { $true } elseif ("$($r.out)$($r.err)" -match '\b404\b' -and "$($r.out)$($r.err)" -notmatch 'file_name') { $false } else { $null } }

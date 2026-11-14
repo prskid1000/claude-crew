@@ -1,8 +1,8 @@
 #Requires -Version 7
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
-# deploys: pokey.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
-# Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Api, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L118 deployed
+# deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
+# Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
+# Sections: L6 shell · L15 probe · L78 kinds · L199 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -44,12 +44,12 @@ function SshState($s, $sha) {
   $awk = 'NR == FNR { if (length($0) > 66) a[substr($0, 67)] = substr($0, 1, 64); next } length($0) > 66 { p = substr($0, 67); if (!(p in a)) print "not installed: " p; else if (a[p] != substr($0, 1, 64)) print "differs: " p }'
   $sh = @(
     '{'
-    "R=$(Sq ([string]$s.repoDir).TrimEnd('/')); SUB=$(Sq $sub); A=$(Sq ([string]$s.appDir).TrimEnd('/')); X=($xs); SU=$(if ($s.sudo -ne $false) { "'sudo -n'" })"
+    "R=$(Sq ([string]$s.repoDir).TrimEnd('/')); SUB=$(Sq $sub); A=$(Sq ([string]$s.appDir).TrimEnd('/')); X=($xs); SU=$(if (Test-KitSshSudo $s) { "'sudo -n'" })"   # ssh.sudo (else deploy.ssh.sudo) true: sudo -n (default none)
     'H=sha256sum; command -v sha256sum >/dev/null || H="shasum -a 256"'
     'echo "HEAD=$(git -C "$R" rev-parse --short HEAD 2>/dev/null) $(git -C "$R" log -1 --format=%cI HEAD 2>/dev/null)"'
     $(if ($s.shaFile) { "echo `"DSHA=`$(`$SU cat $(Sq $s.shaFile) 2>/dev/null | head -c 64)`"" })
     "if git -C `"`$R`" merge-base --is-ancestor $sha HEAD 2>/dev/null; then echo ANC=yes; else echo ANC=no; fi"
-    $(if ($s.service) { "echo `"SVC=`$(systemctl show -p ActiveEnterTimestamp --value $(Sq $s.service) 2>/dev/null)`"" })
+    $(if ($s.service -and ($sc = Get-KitSshServiceCmd $s 'since' $s.service)) { "echo `"SVC=`$($sc 2>/dev/null)`"" })   # ssh.manager's start time
     'skip() { local c pat cs; IFS=/ read -ra cs <<< "$1"; for c in "${cs[@]}"; do for pat in "${X[@]}"; do [[ $c == $pat ]] && return 0; done; done; return 1; }'
     'cd "$R" 2>/dev/null || { echo RC=2; echo "DIFF=cannot cd to $R"; exit 0; }'
     '$SU test -d "$A" 2>/dev/null || { echo RC=2; echo "DIFF=$SU test -d $A failed (no app dir / passwordless sudo: ssh.sudo false)"; exit 0; }'
@@ -75,7 +75,88 @@ function SshState($s, $sha) {
   }
   $memo[$k] = $res; if (-not $memo.ContainsKey($hk)) { $memo[$hk] = $res }; $res
 }
-# ---- kinds: ssh, awsStack, probe, tag, manual
+# ---- kinds: the deploy-kind registry (README "Adapters"): Register-KitAdapter 'deploy-kind' <name> @{ <verb> = { param($a) } }, $a.d = the
+# deploys[] row. Verbs: isDeployed (a row; runs inside Invoke-Deployed: its $sha, $s8, $mr, $p, $r, Row, OnRef, LocalAncestor, Hv),
+# lastDeploy (@{ at; source } | $null; $a.repo, $a.name), isRunning ($true | $false | $null), restart (deploys.ps1 deploy restart), plan (a hint line).
+# A verb a kind lacks = UNKNOWN. deploys[].kind names one; else the row's keys pick it (laneApk, ssh, tag, probe, manual, awsStack, command, branch = ci-job).
+function Get-KitDeployKind($d) {
+  if ($d.kind) { return "$($d.kind)" }
+  foreach ($k in 'laneApk', 'ssh', 'tag', 'probe', 'manual', 'awsStack', 'command') { if ($d.$k) { return $k } }
+  if ($d.branch) { 'ci-job' } else { '' }
+}
+# a deploy-kind verb; $null = the kind lacks it (UNKNOWN), never another kind's check
+function Invoke-KitDeployKind($d, [string]$Verb, [hashtable]$A = @{}) {
+  $k = Get-KitDeployKind $d; $ad = $KitAdapters['deploy-kind'][$k]
+  if (-not $ad -or -not $ad.ContainsKey($Verb)) { return $null }
+  & $ad[$Verb] (@{ d = $d } + $A) $Verb
+}
+# ssh.manager: systemd | docker | pm2 | custom (ssh.restartCmd / statusCmd / sinceCmd, {svc} = the service); none = no restart, no status
+function Get-KitSshServiceCmd($s, [string]$Verb, [string]$Svc) {
+  $m = "$($s.manager)".ToLower(); if (-not $m -and ($s.restartCmd -or $s.statusCmd)) { $m = 'custom' }; if (-not $m) { $m = ([string](Get-KitSetting 'deploy.ssh.manager' '')).ToLower() }
+  $t = switch ($m) {
+    'systemd' { @{ restart = 'systemctl restart {svc}'; status = 'systemctl is-active {svc}'; since = 'systemctl show -p ActiveEnterTimestamp --value {svc}' }[$Verb] }
+    'docker' { @{ restart = 'docker restart {svc}'; status = "docker inspect -f '{{.State.Status}}' {svc}"; since = "docker inspect -f '{{.State.StartedAt}}' {svc}" }[$Verb] }
+    'pm2' { @{ restart = 'pm2 restart {svc}'; status = 'pm2 pid {svc}'; since = '' }[$Verb] }
+    'custom' { [string]$s."$($Verb)Cmd" }
+    default { '' } }
+  if ($t) { $t.Replace('{svc}', (Sq $Svc)) } else { '' }
+}
+# ssh.sudo, else deploy.ssh.sudo (default false)
+function Test-KitSshSudo($s) { if ($null -ne $s.sudo) { $s.sudo -eq $true } else { (Get-KitSetting 'deploy.ssh.sudo' $false) -eq $true } }
+# deploys[].command: { isDeployed, lastDeploy, isRunning, restart } command lines ({sha} {target} {branch} {repo} {mr} {service}); isDeployed
+# prints DEPLOYED / NOT-DEPLOYED (yes / no) or the live commit; lastDeploy an ISO time; isRunning yes / no
+function __DkCmd($d, [string]$Verb, [hashtable]$A) { Invoke-KitCommand 'deploy-kind' $d.command $Verb (@{ target = "$($d.target)"; branch = "$($d.branch)" } + $A) }
+# adapter:deploy-kind/command
+Register-KitAdapter 'deploy-kind' 'command' @{
+  isDeployed = { param($a) $d = $a.d; $o = "$(__DkCmd $d 'isDeployed' @{ sha = $sha; repo = "$($r.name)"; mr = $ref })".Trim()
+    if (-not $o) { return Row $d 'UNKNOWN' "command isDeployed gave no answer (deploys[].command.isDeployed)" }
+    if ($o -match '^(?i)(DEPLOYED|yes|true)\b') { return Row $d 'DEPLOYED' "command: $o" }
+    if ($o -match '^(?i)(NOT-DEPLOYED|no|false)\b') { return Row $d 'NOT-DEPLOYED' "command: $o" }
+    $c = [regex]::Match($o, '\b[0-9a-f]{7,40}\b').Value; if (-not $c) { return Row $d 'UNKNOWN' "command isDeployed: $o" }
+    $on = LocalAncestor $r.checkout $sha $c; if ($null -eq $on) { $on = OnRef $p $mr $sha $c }
+    Row $d $(if ($on) { 'DEPLOYED' } else { 'NOT-DEPLOYED' }) "live commit $c $(if ($on) { 'holds' } else { 'lacks' }) $s8" }
+  lastDeploy = { param($a) $o = "$(__DkCmd $a.d 'lastDeploy' @{})".Trim(); $at = try { [datetime]$o } catch { $null }; if ($at) { @{ at = $at; source = "command $($a.d.target)" } } }
+  isRunning = { param($a) $o = "$(__DkCmd $a.d 'isRunning' @{})".Trim(); if ($o -match '^(?i)(yes|true|running)\b') { $true } elseif ($o) { $false } else { $null } }
+  restart = { param($a) __DkCmd $a.d 'restart' @{ service = "$($a.service)" } }
+}
+# CI deploy job on deploys[].branch (deploys[].job, a -like pattern): the MR on the branch and a green job run that holds it
+# adapter:deploy-kind/ci-job
+Register-KitAdapter 'deploy-kind' 'ci-job' @{
+  isDeployed = { param($a) $d = $a.d
+    if (-not (OnRef $p $mr $sha $d.branch)) { return NotLiveRow $p $ref $d "not on $($d.branch) yet" }
+    $hit = $null
+    # a run older than the merge cannot hold it
+    foreach ($pl in @(Hv 'ci.runs' @{ ref = $d.branch; per_page = 10 }) | Where-Object { $_ -and (-not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at) }) {
+      if ($pl.sha -ne $sha -and -not (OnRef $p $mr $sha $pl.sha $d.branch)) { continue }   # the checkout answers first; jobs only for a run that holds it
+      $job = @(Hv 'ci.jobs' @{ id = $pl.id }) | Where-Object { $_.name -like $d.job } | Select-Object -First 1   # matrix names
+      if ((ConvertTo-KitCiState "$($job.status)") -eq 'success') { $hit = $job; break }
+    }
+    if ($hit) { Row $d 'DEPLOYED' "$($d.job) finished $($hit.finished_at)" } else { NotLiveRow $p $ref $d "on $($d.branch), but no successful $($d.job) includes it yet" } }
+  # newest first: the first green run = the last deploy; a running / pending one before it = a deploy in flight (manual / scheduled are not)
+  lastDeploy = { param($a) foreach ($pl in @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; ref = $a.d.branch; per_page = 5 })) { if ((ConvertTo-KitCiState "$($pl.status)") -eq 'success') { return @{ at = ([datetime]$(if ($pl.updated_at) { $pl.updated_at } else { $pl.created_at })).ToLocalTime(); source = "CI $($a.name) $($a.d.branch)" } } } }
+  isRunning = { param($a) foreach ($pl in @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; ref = $a.d.branch; per_page = 5 })) { $w = __CiWord "$($pl.status)"; if ($w -eq 'success') { return $false }; if ($w -in 'running', 'pending') { return $true } }; $false }
+  plan = { param($a) "merge into $($a.d.branch); CI job $($a.d.job) deploys (bossy.ps1 deploy merge -To $($a.d.target) -Mr)" }
+}
+# deploys[].branch reached through a deploy MR (bossy.ps1 deploy merge -Mr); live = on that branch (no job to wait for)
+# adapter:deploy-kind/branch-mr
+Register-KitAdapter 'deploy-kind' 'branch-mr' @{
+  isDeployed = { param($a) $d = $a.d; if (OnRef $p $mr $sha $d.branch) { Row $d 'DEPLOYED' "on $($d.branch)" } else { NotLiveRow $p $ref $d "not on $($d.branch) yet" } }
+  plan = { param($a) "deploy MR into $($a.d.branch) (bossy.ps1 deploy merge -To $($a.d.target) -Mr)" }
+}
+# adapter:deploy-kind/ssh
+Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; restart = { param($a) Invoke-DeployRestartSsh $a.d.target $a.d $a.service } }
+# adapter:deploy-kind/tag
+Register-KitAdapter 'deploy-kind' 'tag' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "tag $($a.d.tag) (bossy.ps1 deploy merge -To $($a.d.target) -Push)" } }
+# adapter:deploy-kind/probe
+Register-KitAdapter 'deploy-kind' 'probe' @{ isDeployed = { param($a) Test-DeployedExtra $a.d } }
+# adapter:deploy-kind/manual
+Register-KitAdapter 'deploy-kind' 'manual' @{ isDeployed = { param($a) Test-DeployedExtra $a.d } }
+# adapter:deploy-kind/awsStack
+Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-DeployedExtra $a.d } }
+# adapter:deploy-kind/laneApk
+Register-KitAdapter 'deploy-kind' 'laneApk' @{ isDeployed = { param($a) Test-LaneApkDeployed $a.d } }
+# adapter-end:deploy-kind
+# isDeployed of ssh, awsStack, probe, tag, manual
 function Test-DeployedExtra($d) {
   if ($d.ssh) {   # host HEAD holds the merge AND files match
     $s = $d.ssh; $st = SshState $s $sha
@@ -86,7 +167,7 @@ function Test-DeployedExtra($d) {
       $d8 = $ds.Substring(0, [math]::Min(8, $ds.Length)); $bh = if ($d.branch) { "$(RefSha $p $d.branch)" }
       $lag = if (-not $d.branch) { '' } elseif (-not $bh) { "; $($d.branch) head unknown (git host)" } elseif (-not $bh.StartsWith($ds, 'OrdinalIgnoreCase')) { "; $($d.branch) is at $($bh.Substring(0, [math]::Min(8, $bh.Length))): a deploy pending or failed" }
       $on = if ($sha -eq $ds) { $true } else { LocalAncestor $r.checkout $sha $ds }
-      if ($null -eq $on) { $mb = (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$ds").id; if (-not $mb) { return Row $d 'UNKNOWN' "git host did not answer whether $d8 ($($s.shaFile)) holds $s8" }; $on = $mb -eq $sha }   # a failed call is not 'not deployed'
+      if ($null -eq $on) { $mb = (Hv 'repo.base' @{ a = $sha; b = $ds }).id; if (-not $mb) { return Row $d 'UNKNOWN' "git host did not answer whether $d8 ($($s.shaFile)) holds $s8" }; $on = $mb -eq $sha }   # a failed call is not 'not deployed'
       return Row $d $(if ($on) { 'DEPLOYED' } else { 'NOT-DEPLOYED' }) "deployed commit $d8 ($($s.shaFile)) $(if ($on) { 'holds' } else { 'lacks' }) $s8$lag"
     }
     if ($st.rc -gt 1 -and -not $st.head) { return Row $d 'UNKNOWN' "host checkout unreadable: $(($st.diff | Select-Object -First 2) -join '; ')" }   # a wrong repoDir is not 'not deployed'
@@ -121,33 +202,34 @@ function Test-DeployedExtra($d) {
 function Invoke-Deployed {
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines, [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout); -TimeoutSec: past it the MRs left are UNKNOWN (the first is always checked)
 $ErrorActionPreference = 'SilentlyContinue'
-$group = $KitConf.GitlabGroup
+
 $repos = @(Get-KitValue 'repos' @())
 function Row($d, $s, $x) { [pscustomobject]@{ mr = $ref; target = $d.target; state = $s; detail = $x; branch = "$($mr.target_branch)" } }   # branch: deploy plan's feeds check needs no host call
 function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
 # memoised: supervise asks per round
 $memo = @{}
-function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = Invoke-HostApi $path }; $memo[$path] }
+# one host verb on this MR's repo ($p = its host path), memoised by verb + args
+function Hv([string]$Verb, [hashtable]$A = @{}) { $A = @{ repo = $p } + $A; $k = "$Verb|$(($A.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&')"; if (-not $memo.ContainsKey($k)) { $memo[$k] = Invoke-HostVerb $Verb $A }; $memo[$k] }
 # a ref -> its commit sha (one memoised host call per branch); a full sha as is
-function RefSha($p, $ref) { if ($ref -match '^[0-9a-f]{40}$') { $ref } else { (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))").id } }
+function RefSha($p, $ref) { if ($ref -match '^[0-9a-f]{40}$') { $ref } else { (Hv 'repo.commit' @{ ref = $ref }).id } }
 # the local checkout answers when it holds both commits (ms, not a host call each); else the host
 function IsAncestor($p, $sha, $ref) {
   if ($sha -eq $ref) { return $true }
   if (($at = RefSha $p $ref) -and $null -ne ($on = LocalAncestor $r.checkout $sha $at)) { return $on }
-  (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha
+  (Hv 'repo.base' @{ a = $sha; b = $ref }).id -eq $sha
 }
 # squash / cherry-pick: live if no file differs from $ref
 function ContentOn($p, $mr, $sha, $ref) {
   # cheap guard: a ref older than the merge (a pipeline sha: its date from the checkout when it has it)
   $cd = if ($ref -match '^[0-9a-f]{40}$' -and $r.checkout -and (Test-Path $r.checkout)) { "$(git -C $r.checkout show -s --format=%cI "$ref^{commit}" 2>$null)".Trim() }
-  $head = if ($cd) { @{ id = $ref; committed_date = $cd } } else { Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))" }
+  $head = if ($cd) { @{ id = $ref; committed_date = $cd } } else { Hv 'repo.commit' @{ ref = $ref } }
   if (-not $head -or ($mr.merged_at -and [datetimeoffset]$head.committed_date -lt [datetimeoffset]$mr.merged_at)) { return $false }
   if (-not (IsAncestor $p $sha $mr.target_branch)) { return $false }
-  $files = @((Api "projects/$p/merge_requests/$($mr.iid)/changes?access_raw_diffs=true").changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
+  $files = @((Hv 'mr.changes' @{ n = $mr.iid }).changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
   if (-not $files.Count) { return $false }
   $tip = RefSha $p $mr.target_branch
   if ($head.id -and $tip -and $null -ne ($same = LocalSame $r.checkout $head.id $tip $files)) { return $same }
-  $cmp = Api "projects/$p/repository/compare?from=$([uri]::EscapeDataString($ref))&to=$([uri]::EscapeDataString($mr.target_branch))&straight=true"
+  $cmp = Hv 'repo.compare' @{ from = $ref; to = $mr.target_branch; straight = 'true' }
   if (-not $cmp -or $cmp.compare_timeout -or $cmp.overflow) { return $false }   # a capped diff list (3000 of 6552 files) proves nothing
   -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
 }
@@ -155,14 +237,14 @@ function ContentOn($p, $mr, $sha, $ref) {
 function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
   if (-not $branch -or -not $mr.merged_at) { return $false }
   $after = ([datetimeoffset]$mr.merged_at).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
-  foreach ($dm in @(Api "projects/$p/merge_requests?state=merged&target_branch=$([uri]::EscapeDataString($branch))&updated_after=$after&per_page=50") | Where-Object { $_ -and $_.iid -ne $mr.iid }) {
+  foreach ($dm in @(Hv 'mr.list' @{ state = 'merged'; target_branch = $branch; updated_after = $after; per_page = 50 }) | Where-Object { $_ -and $_.iid -ne $mr.iid }) {
     $land = @($dm.merge_commit_sha, $dm.squash_commit_sha) | Where-Object { $_ } | Select-Object -First 1
     if ($land -and $dm.sha -and (IsAncestor $p $sha $dm.sha) -and (IsAncestor $p $land $ref)) { return $true }
   }
   $false
 }
 # NOT-DEPLOYED only if the host answers, else UNKNOWN
-function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($d.branch))")) { Row $d 'UNKNOWN' "the git host did not answer for $($d.branch): try again" } else { Row $d 'NOT-DEPLOYED' $detail } }
+function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Hv 'repo.commit' @{ ref = $d.branch })) { Row $d 'UNKNOWN' "the git host did not answer for $($d.branch): try again" } else { Row $d 'NOT-DEPLOYED' $detail } }
 function OnRef($p, $mr, $sha, $ref, $branch = $ref) { (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref) }
 # $null if the checkout or either commit is missing
 function LocalAncestor($dir, $sha, $commit) {
@@ -188,8 +270,8 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>, <group>/<repo>!<iid> or an MR URL' }; continue }
   $r = Repo $Matches.repo; $iid = $Matches.iid
   if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }
-  $p = [uri]::EscapeDataString($(if ($group) { "$group/$($r.name)" } else { $r.name })); $ref = "$($r.name)!$iid"
-  $mr = Api "projects/$p/merge_requests/$iid"
+  $p = Get-HostProject $r.name -Raw; $ref = "$($r.name)!$iid"   # gitHostGroup/<repo>
+  $mr = Hv 'mr.get' @{ n = $iid }
   if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
   if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
   # fast-forward: the MR head sha landed
@@ -202,24 +284,13 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   foreach ($d in $deps) {
     if ($d.from -and $mr.target_branch -and $mr.target_branch -notin @($d.from) -and $mr.target_branch -ne $d.branch) { Row $d 'N/A' "n/a for $($d.target): merged into $($mr.target_branch), not $(@($d.from) -join ' / ')"; continue }   # before any probe (ssh, pipelines)
     if (@(Get-DeployPaths $d).Count) {   # an MR outside the target's paths is n/a there: no ssh, no NOT-DEPLOYED
-      $ch = Api "projects/$p/merge_requests/$iid/changes?access_raw_diffs=true"; $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
+      $ch = Hv 'mr.changes' @{ n = $iid }; $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
       if ($files.Count -and -not $ch.overflow -and @($ch.changes).Count -lt 100 -and -not (Test-DeployTouched $d $files)) { Row $d 'N/A' "n/a for $($d.target): changes nothing under $((Get-DeployPaths $d) -join ', ')"; continue }   # a partial list proves nothing
     }
-    if ($d.laneApk) {   # app repo: the lane APK's commit
-      Test-LaneApkDeployed $d
-      continue
-    }
-    if ($d.ssh -or $d.awsStack -or $d.probe -or $d.tag -or $d.manual) { Test-DeployedExtra $d; continue }
-    if (-not (OnRef $p $mr $sha $d.branch)) { NotLiveRow $p $ref $d "not on $($d.branch) yet"; continue }
-    $hit = $null
-    # a pipeline older than the merge cannot hold it
-    foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
-      if ($pl.sha -ne $sha -and -not (OnRef $p $mr $sha $pl.sha $d.branch)) { continue }   # the checkout answers first; jobs only for a pipeline that holds it
-      $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -like $d.job } | Select-Object -First 1   # matrix names
-      if ($job.status -eq 'success') { $hit = $job; break }
-    }
-    if ($hit) { Row $d 'DEPLOYED' "$($d.job) finished $($hit.finished_at)" }
-    else { NotLiveRow $p $ref $d "on $($d.branch), but no successful $($d.job) includes it yet" }
+    # the row's deploy kind answers (registry above); a kind without isDeployed, or none, = UNKNOWN
+    $kd = Get-KitDeployKind $d
+    $kRow = try { Invoke-KitDeployKind $d 'isDeployed' } catch { Row $d 'UNKNOWN' "deploy kind ${kd}: $($_.Exception.Message)" }
+    if ($kRow) { $kRow } else { Row $d 'UNKNOWN' $(if ($kd) { "deploy kind $kd has no isDeployed check (README ""Adapters"" deploy-kind)" } else { 'no deploy kind: set deploys[].kind or branch + job, ssh, probe, tag, awsStack, manual, command' }) }
   }
 } } | ForEach-Object { $out.Add($_); if ($Lines) { $_ | ConvertTo-Json -Depth 3 -Compress } }
 $miss = @($out | Where-Object { $_.state -notin 'DEPLOYED', 'N/A' })   # N/A: the MR has nothing for that target

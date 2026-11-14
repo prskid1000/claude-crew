@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L29 sweep · L177 wt · L495 stack · L675 gate · L991 check · L1304 pipes · L1361 guard · L2187 dir ·
-  L2197 checkpoint · L2226 prior · L2264 tracker · L2286 task spec · L2444 scope · L2486 host
+Sections: L23 init · L29 sweep · L177 wt · L495 stack · L675 gate · L991 check · L1304 pipes · L1361 guard · L2190 dir ·
+  L2200 checkpoint · L2229 prior · L2267 tracker · L2289 task spec · L2447 scope · L2489 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1823,8 +1823,10 @@ foreach ($seg in DeleteSegments $raw) {
 }
 # a bare remove leaves junction skeletons no repo lists, and the branch
 if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+("[^"]*"|\S+)\s+)*worktree\s+remove\b') { Deny "kit guard: use & $($KitCmd.dev) wt remove -Dir <worktree>: it unlinks shared folders first, prunes and deletes the branch once nothing is lost (a bare git worktree remove leaves junctions behind)" }
+# host CLIs from the git-host adapters (lib.ps1 Get-KitHostCli: exe, MR noun, option names), not literals
+$hostClis = @(Get-KitHostCli); $hcExe = (@($hostClis.exe | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) }) -join '|'); $hcNoun = (@($hostClis.noun | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) }) -join '|')
 # an MR fetched into a local branch (mr8520) outlives its reader
-if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*fetch\b[^;&|\n]*\b(merge-requests|pull)/\d+/head:(?!refs/remotes/)\S' -or $raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?(glab|gh)(\.exe)?\s+(mr|pr)\s+checkout\b') {
+if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*fetch\b[^;&|\n]*\b(merge-requests|pull)/\d+/head:(?!refs/remotes/)\S' -or ($hcExe -and $raw -match "(?m)(^|[;&|(\n])\s*(\S*[\\/])?($hcExe)(\.exe)?\s+($hcNoun)\s+checkout\b")) {
   Deny 'kit guard: that makes a local branch from an MR, which outlives you: git fetch origin merge-requests/<n>/head (GitHub: pull/<n>/head), then read FETCH_HEAD (git diff origin/<target>...FETCH_HEAD); to change it: crafty.ps1 wt new' }
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }
@@ -1922,10 +1924,10 @@ function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
 }
 if (($ds = Find-DriveRootSearch $raw $tn)) { Deny "kit guard: that $($ds[0]) searches a whole drive ($($ds[1])): it runs for hours at full CPU and outlives you (an orphaned find / starved every local-env start). Search a scoped path: the Glob / Grep tools on the repo, the kit or ~/.claude (e.g. Glob **/SKILL.md in ~/.claude/skills), or name the folder (find <repo> -name x)." }
 $hl = "GUI windows on the owner's screen are not allowed (headless rule)."
-if ($cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?(gh|glab)(\.exe)?\s+(browse\b(?![^|;&\r\n]*\s(-n|--no-browser)\b)|(?!(run|workflow)\s)[^|;&\r\n]*\s(--web|-w)(?=[\s=;|&)]|$))') { Deny "gh / glab --web, -w and gh browse open the owner's browser: read it in the terminal (gh pr view <n>, glab mr view <n>, --json). $hl" }
+if ($hcExe -and $cmd -match "(?m)(^|[;&|({\n]|\`$\()\s*(\S*[\\/])?($hcExe)(\.exe)?\s+" + '(browse\b(?![^|;&\r\n]*\s(-n|--no-browser)\b)|(?!(run|workflow)\s)[^|;&\r\n]*\s(--web|-w)(?=[\s=;|&)]|$))') { Deny "gh / glab --web, -w and gh browse open the owner's browser: read it in the terminal (gh pr view <n>, glab mr view <n>, --json). $hl" }
 # raw MR create / merge skips track add (KIT_NO_TASK=<reason>)
-$mrRx = '(?m)(?:^|[;&|({\n]|\$\()\s*(?:&\s*)?(?:\w+=(?:"[^"]*"|''[^'']*''|\S*)\s+)*(?:\S*[\\/])?(?<tool>glab|gh)(?:\.exe)?\s+(?:mr|pr)\s+(?<verb>create|new|merge)\b'
-if ($KitConf.TrackerType -ne 'none' -and $cmd -match $mrRx) {
+$mrRx = '(?m)(?:^|[;&|({\n]|\$\()\s*(?:&\s*)?(?:\w+=(?:"[^"]*"|''[^'']*''|\S*)\s+)*(?:\S*[\\/])?(?<tool>' + $hcExe + ')(?:\.exe)?\s+(?:' + $hcNoun + ')\s+(?<verb>create|new|merge)\b'
+if ($KitConf.TrackerType -ne 'none' -and $hcExe -and $cmd -match $mrRx) {
   # same-length copies: $mrJ joins continuations, $mrM blanks data
   $blank = { param($m) [regex]::Replace($m.Value, '[^\r\n]', ' ') }
   $mrJ = [regex]::Replace($raw, '[\\`](?=\r?\n)\r?\n', { param($m) ' ' * $m.Length })
@@ -1956,17 +1958,18 @@ if ($KitConf.TrackerType -ne 'none' -and $cmd -match $mrRx) {
         $cx = ($cm.Groups[1].Value + $cm.Groups[2].Value + $cm.Groups[3].Value) -replace '^/([A-Za-z])(?=/|$)', '$1:'; $gd = if ([IO.Path]::IsPathRooted($cx)) { $cx } elseif ($gd) { Join-Path $gd $cx } }
       if ($mm.Groups['verb'].Value -ne 'merge') {
         if (-not $tagRx) { continue }
-        $src = OptVal $ws '-s', '--source-branch', '-H', '--head'; if (-not $src -and $gd) { $src = "$(git -C $gd branch --show-current 2>$null)".Trim() }
-        if (Test-KitDeployMr $(if ($gd) { "$(git -C $gd remote get-url origin 2>$null)" -replace '\.git$' -replace '.*[/:]' }) $src (OptVal $ws '-b', '--target-branch', '-B', '--base')) { continue }   # a deploy MR: no task
-        if ("$(OptVal $ws '-t', '--title') $src" -notmatch $tagRx) { Deny "kit guard: this MR names no tracker task ($tag<id> in neither its title nor its source branch '$src'): the owner never sees it on the task. Open it with python -X utf8 $($KitCmd.devtools) mr <wt> '<title>' <body.md> from a $tag<id> branch, or put $tag<id> in the title; $esc." }
+        $src = OptVal $ws @($hostClis.source | Select-Object -Unique); if (-not $src -and $gd) { $src = "$(git -C $gd branch --show-current 2>$null)".Trim() }
+        if (Test-KitDeployMr $(if ($gd) { "$(git -C $gd remote get-url origin 2>$null)" -replace '\.git$' -replace '.*[/:]' }) $src (OptVal $ws @($hostClis.target | Select-Object -Unique))) { continue }   # a deploy MR: no task
+        if ("$(OptVal $ws @($hostClis.title | Select-Object -Unique)) $src" -notmatch $tagRx) { Deny "kit guard: this MR names no tracker task ($tag<id> in neither its title nor its source branch '$src'): the owner never sees it on the task. Open it with python -X utf8 $($KitCmd.devtools) mr <wt> '<title>' <body.md> from a $tag<id> branch, or put $tag<id> in the title; $esc." }
         continue
       }
-      if ($tool -eq 'gh' -and $ws -contains '--disable-auto') { continue }
-      $valued = if ($tool -eq 'gh') { '-R', '--repo', '-b', '--body', '-F', '--body-file', '-t', '--subject', '--match-head-commit', '-A', '--author-email' } else { '-R', '--repo', '-m', '--message', '--squash-message', '--sha' }
+      $hc = @($hostClis | Where-Object { $_.exe -eq $tool })[0]
+      if ($hc.noAuto -and $ws -contains $hc.noAuto) { continue }
+      $valued = @($hc.valued)
       $target = $null; for ($j = 0; $j -lt $ws.Count; $j++) { if ($ws[$j] -cin $valued) { $j++; continue }; if ($ws[$j] -like '-*') { continue }; $target = $ws[$j]; break }
       $repo = OptVal $ws '-R', '--repo'; $n = $null
       if (($u = ConvertFrom-MrUrl "$target")) { $repo = $u.repo; $n = $u.n } elseif ("$target" -match '^!?(\d+)$') { $n = $Matches[1] }
-      if (-not $n) { Deny "kit guard: $tool $(if ($tool -eq 'gh') { 'pr' } else { 'mr' }) merge needs the MR number (merge <iid>), so the guard can check that a task tracks it; $esc." }
+      if (-not $n) { Deny "kit guard: $tool $($hc.noun) merge needs the MR number (merge <iid>), so the guard can check that a task tracks it; $esc." }
       if (-not $repo -and $gd -and "$(git -C $gd remote get-url origin 2>$null)".Trim() -match '^(?:\w+://(?:[^@/]+@)?[^/]+/|[^@]+@[^:]+:)(?<p>.+?)(?:\.git)?/?$') { $repo = $Matches.p -replace '/_git/', '/' }
       if (-not (Test-KitMrTracked "$repo" $n)) {
         $h = if ($repo) { try { Invoke-HostVerb 'mr.get' @{ repo = "$repo"; n = $n } } catch { $null } }

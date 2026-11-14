@@ -25,8 +25,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L43 board · L220 budget · L250 launch · L490 recover · L577 pause · L588 resume · L655 program · L706 param ·
-  L712 track · L1029 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1580 cleanup · L1664 learn ·
-  L1695 decide · L1829 debate · L1873 health · L1936 retro due · L1946 tidy · L2012 setup · L2105 guard-sendmessage
+  L712 track · L1028 supervise · L1326 report · L1405 audit · L1465 storage · L1468 bugbrief · L1579 cleanup · L1663 learn ·
+  L1694 decide · L1828 debate · L1872 health · L1935 retro due · L1945 tidy · L2011 setup · L2104 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -716,9 +716,8 @@ function Find-TaskMrs($task, $repos = $KitConf.TrackerRepos) {
   $tagged = "$($KitConf.TrackerTag)$task"
   @(foreach ($r in @($repos)) {
       $pp = ProjPath $r; if (-not $pp) { continue }
-      $enc = $pp -replace '/', '%2F'
-      @(@(Invoke-HostApi "projects/$enc/merge_requests?search=$([uri]::EscapeDataString($tagged))&in=title&state=all&per_page=50") +
-        @(Invoke-HostApi "projects/$enc/merge_requests?state=all&per_page=100" | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
+      @(@(Invoke-HostVerb 'mr.list' @{ repo = $pp; search = $tagged; searchIn = 'title'; state = 'all'; per_page = 50 }) +
+        @(Invoke-HostVerb 'mr.list' @{ repo = $pp; state = 'all'; per_page = 100 } | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
         Where-Object { $_ -and $_.iid -and $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" }
     }) | Select-Object -Unique
 }
@@ -727,7 +726,7 @@ function Get-TaskMrBranches([string[]]$Tasks) {
   foreach ($ref in @(@($Tasks | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { Find-TaskMrs $_ }) | Select-Object -Unique)) {
     if ("$ref" -notmatch '^(?<r>[^!]+)!(?<i>\d+)$') { continue }
     $repo = $Matches.r; $iid = $Matches.i; $pp = ProjPath $repo; if (-not $pp) { continue }
-    $m = Invoke-HostApi "projects/$($pp -replace '/', '%2F')/merge_requests/$iid"
+    $m = Invoke-HostVerb 'mr.get' @{ repo = $pp; n = $iid }
     if ($m.target_branch) { [pscustomobject]@{ ref = $ref; repo = $repo; branch = [string]$m.target_branch } }
   }
 }
@@ -764,7 +763,7 @@ function Load($t) { $x = Read-KitState (Get-KitTaskFile $t); $o = if ($x.track -
 function TaskOfMr($ref) {
   if (-not $KitConf.TrackerTag -or $ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return '' }
   $proj = ProjPath $Matches.repo; if (-not $proj) { return '' }
-  $m = Invoke-HostApi "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)"
+  $m = Invoke-HostVerb 'mr.get' @{ repo = $proj; n = $Matches.iid }
   foreach ($s in @($m.title, $m.source_branch)) { if ("$s" -match (Get-KitTaskTagRx)) { return (NormTask $Matches.id) } }
   ''
 }
@@ -825,10 +824,10 @@ function MrState($ref) { if (-not $script:mrMemo.ContainsKey($ref)) { $script:mr
 function MrState0($ref) {
   if ($ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return 'bad-ref' }
   $proj = ProjPath $Matches.repo
-  if (-not $proj) { return 'bad-ref (use <group/repo>!<iid>, or set "gitlabGroup" in kit.local.json)' }
-  $m = Invoke-HostApi "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)"
+  if (-not $proj) { return 'bad-ref (use <group/repo>!<iid>, or set "gitHostGroup" in kit.local.json)' }
+  $m = Invoke-HostVerb 'mr.get' @{ repo = $proj; n = $Matches.iid }
   if (-not $m) { return 'unknown' }
-  if ($m.state -eq 'opened' -and $m.head_pipeline.status -in 'failed', 'canceled') { return "opened (pipeline $($m.head_pipeline.status))" }
+  if ($m.state -eq 'opened' -and $m.head_pipeline -and ($ps = ConvertTo-KitCiState "$($m.head_pipeline.status)") -in 'failed', 'canceled') { return "opened (pipeline $ps)" }
   if ($m.state -eq 'opened' -and ($m.has_conflicts -or $m.detailed_merge_status -eq 'conflict')) { return 'opened (conflict)' }
   $m.state
 }
@@ -860,8 +859,8 @@ switch ($Action) {
       foreach ($pair in @($MergeAfter -split '\s*,\s*' | Where-Object { $_ })) {
         $p = $pair -split '>', 2; if ($p.Count -ne 2 -or (NormRef $p[0]) -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { continue }
         $pp = ProjPath $Matches.repo; $ci = $Matches.iid; if (-not $pp -or (MrState (NormRef $p[1])) -eq 'merged') { continue }
-        $enc = $pp -replace '/', '%2F'; $m = Invoke-HostApi "projects/$enc/merge_requests/$ci"
-        if ($m.merge_when_pipeline_succeeds) { $null = Invoke-HostApi "projects/$enc/merge_requests/$ci/cancel_merge_when_pipeline_succeeds" -Method POST; "NOTE: cancelled the scheduled merge of $(NormRef $p[0]): it merges after $(NormRef $p[1])" }
+        $m = Invoke-HostVerb 'mr.get' @{ repo = $pp; n = $ci }
+        if ($m.merge_when_pipeline_succeeds) { $null = Invoke-HostVerb 'mr.unauto' @{ repo = $pp; n = $ci }; "NOTE: cancelled the scheduled merge of $(NormRef $p[0]): it merges after $(NormRef $p[1])" }
       }
     }
     if ($o.done -and @($o.mrs).Count -gt $before) { $o.done = $false; $o.reopenedAt = (Get-Date).ToString('o'); foreach ($k in $script:doneFields) { $o.Remove($k) } }
@@ -878,18 +877,18 @@ switch ($Action) {
       $keep = @{}
       foreach ($ref in @($am.Keys)) {
         if ($ref -notmatch '^(?<proj>.+)!(?<iid>\d+)$') { continue }
-        $amProj = $Matches.proj; $enc = $amProj -replace '/', '%2F'; $iid = $Matches.iid
-        $m = Invoke-HostApi "projects/$enc/merge_requests/$iid"
+        $amProj = $Matches.proj; $iid = $Matches.iid
+        $m = Invoke-HostVerb 'mr.get' @{ repo = $amProj; n = $iid }
         if (-not $m) { $keep[$ref] = $am[$ref]; continue }
         if ($m.state -ne 'opened') { continue }
         $keep[$ref] = $am[$ref]
-        if ($m.merge_when_pipeline_succeeds -or $m.draft -or $m.has_conflicts -or $m.detailed_merge_status -eq 'conflict' -or $m.head_pipeline.status -in 'failed', 'canceled') { continue }
-        # no head pipeline: GitLab would merge at once
+        $hp = if ($m.head_pipeline) { ConvertTo-KitCiState "$($m.head_pipeline.status)" }
+        if ($m.merge_when_pipeline_succeeds -or $m.draft -or $m.has_conflicts -or $m.detailed_merge_status -eq 'conflict' -or $hp -in 'failed', 'canceled') { continue }
+        # no head pipeline: the host would merge at once
         if (-not $m.head_pipeline) { continue }
         if ((ProducerOpen $amProj $iid) -or (InFlight "$(($amProj -split '/')[-1])!$iid")) { continue }
-        $fl = @{}   # repos[] mergeMethod / deleteBranch
-        if ($m.head_pipeline.status -ne 'success') { $fl.merge_when_pipeline_succeeds = 'true' }
-        $r = Invoke-HostApi "projects/$enc/merge_requests/$iid/merge" -Method PUT -Fields $fl
+        # repos[] mergeMethod / deleteBranch; not green yet: merge when green
+        $r = Invoke-HostVerb 'mr.merge' @{ repo = $amProj; n = $iid; sha = $null; auto = ($hp -ne 'success') }
         "re-armed merge-when-green for $ref (it was dropped, probably by a push after scheduling): $(if ($r.state -eq 'merged') { 'merged' } elseif ($r.merge_when_pipeline_succeeds) { 'scheduled' } else { 'FAILED - check the MR' })"
       }
       # devtools.py may add meanwhile
@@ -1186,8 +1185,8 @@ if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands
 if ($AutoFix -and (Within 'tracker checks')) {
   # an agent with the MR branch checked out is on it
   function OwnerOf($repo, $iid) {
-    $proj = if ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$repo" } else { $repo }
-    $src = try { (Invoke-HostApi "projects/$([uri]::EscapeDataString($proj))/merge_requests/$iid").source_branch } catch { $null }   # a vendor host adapter throws
+    $proj = if ($KitConf.GitHostGroup) { "$($KitConf.GitHostGroup)/$repo" } else { $repo }
+    $src = try { (Invoke-HostVerb 'mr.get' @{ repo = $proj; n = $iid }).source_branch } catch { $null }   # a vendor host adapter throws
     if (-not $src) { return $null }
     foreach ($e in @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 30 })) {
       foreach ($w in @($e.worktrees)) {

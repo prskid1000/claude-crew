@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L67 state · L136 config · L216 OS · L413 leases · L802 status · L1046 supervise sweep ·
-  L1117 supervise report · L1213 tracker · L1543 prior · L1559 ask bugs · L1764 git-host · L1924 kitlog · L2044 params ·
-  L2349 entry-scripts
+Sections: L10 paths · L67 state · L136 config · L217 OS · L414 leases · L803 status · L1047 supervise sweep ·
+  L1118 supervise report · L1214 tracker · L1544 prior · L1560 ask bugs · L1765 git-host · L1951 kitlog · L2071 params ·
+  L2376 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -167,8 +167,9 @@ $KitConf = [pscustomobject]@{
   ConfigFile = $__cfgFile
   ReposRoot = $__repos
   WorktreeRoots = $__wtRoots
-  GitHost = [string](Get-KitValue 'gitHost' 'gitlab.com')
-  GitlabGroup = [string](Get-KitValue 'gitlabGroup' '')
+  GitHost = [string](Get-KitValue 'gitHost' '')   # none: repos[].checkout's origin, else unknown
+  GitHostGroup = [string](Get-KitValue 'gitHostGroup' (Get-KitValue 'gitlabGroup' ''))   # gitlabGroup: its old name
+  GitlabGroup = [string](Get-KitValue 'gitHostGroup' (Get-KitValue 'gitlabGroup' ''))   # alias
   TrackerRepos = @(Get-KitValue 'trackerRepos' @())
   RepoAliases = (Get-KitValue 'repoAliases' $null)
   ProtectedBranches = @(Get-KitValue 'protectedBranches' @())     # besides main/master/develop/release/*
@@ -1762,9 +1763,12 @@ function Get-KitQaRunGap([string]$RunDir) {
 }
 
 # ---- git-host: git-host + ci adapters (README "Adapters"); Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... }
-function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' { 'github' } 'bitbucket' { 'bitbucket' } 'dev\.azure\.com|visualstudio\.com' { 'azure' } 'gitea|forgejo|codeberg' { 'gitea' } default { 'gitlab' } } }
+# host name -> adapter; '' = unknown (self-hosted on its own name: set gitHostType)
+function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' { 'github' } 'bitbucket' { 'bitbucket' } 'dev\.azure\.com|visualstudio\.com' { 'azure' } 'gitea|forgejo|codeberg' { 'gitea' } 'gitlab' { 'gitlab' } default { '' } } }
 if (-not (Get-KitValue 'gitHost' '') -and ($__o = @(@(Get-KitValue 'repos' @()).checkout | Where-Object { $_ -and (Test-Path $_) })[0]) -and "$(git -C $__o remote get-url origin 2>$null)" -match '^(?:\w+://)?(?:[^@/]+@)?(?:ssh\.)?([^/:]+)') { $KitConf.GitHost = $Matches[1] }
 $script:HostType = ([string](Get-KitValue 'gitHostType' (Get-HostKind $KitConf.GitHost))).ToLower()
+# gitHost unset, no checkout origin: the vendor's public host
+if (-not $KitConf.GitHost -and ($__hd = @{ gitlab = 'gitlab.com'; github = 'github.com'; bitbucket = 'bitbucket.org'; azure = 'dev.azure.com' }[$script:HostType])) { $KitConf.GitHost = $__hd }
 $script:MrSegRx = '(?:-/merge_requests|pulls?|pull-requests|pullrequest)'
 function ConvertFrom-MrUrl([string]$Url) {
   if ($Url -notmatch '^https?://(?<h>[^/\s]+)/(?<p>[^\s?#]+?)/(?<s>-/merge_requests|pulls?|pull-requests|pullrequest)/(?<n>\d+)') { return $null }
@@ -1829,14 +1833,19 @@ Register-KitAdapter 'git-host' 'command' @{ '*' = { param($a, $v) Invoke-KitComm
 # adapter:ci/command: ci.commands.<verb>
 Register-KitAdapter 'ci' 'command' @{ '*' = { param($a, $v) Invoke-KitCommand 'ci' (Get-KitSetting 'ci.commands' $null) $v $a } }
 # adapter:ci/none
-Register-KitAdapter 'ci' 'none' @{ 'runs' = { @() }; 'jobs' = { @() }; 'log' = { '' }; 'status' = { $null }; 'config' = { $false } }
+Register-KitAdapter 'ci' 'none' @{ 'runs' = { @() }; 'jobs' = { @() }; 'log' = { '' }; 'status' = { $null }; 'config' = { $false }; 'failure' = { $null }; 'parseUrl' = { @{} } }
 # adapter-end:ci
 
 $global:KitHostMemo = if ($global:KitHostMemo) { $global:KitHostMemo } else { @{} }
+# a CI word -> .state: running | success | failed | canceled | pending | none
+function ConvertTo-KitCiState([string]$Word) { if (-not "$Word".Trim()) { 'none' } else { $w = __CiWord $Word; if ($w -in 'success', 'failed', 'canceled', 'running') { $w } elseif ($w -eq 'skipped') { 'none' } else { 'pending' } } }
+function __HostState($o) { foreach ($x in @($o | Where-Object { $_ -is [psobject] -and $_.PSObject.Properties['status'] })) { $x | Add-Member -Force NoteProperty state (ConvertTo-KitCiState "$($x.status)") }; $o }
 function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   $t = ([string]$(if ($A.type) { $A.type } else { $script:HostType })).ToLower()
+  # no host known: UNKNOWN (null), one hint, never a vendor's call
+  $ci = if ($t) { Get-KitCiType $A.repo $t } else { ([string](Get-KitSetting 'ci.type' '')).ToLower() }
+  if (-not $(if ($Verb -like 'ci.*') { $ci } else { $t })) { if (-not $script:KitHostWarned) { $script:KitHostWarned = $true; Write-Warning 'githost: unknown git host: set gitHostType (gitlab | github | bitbucket | gitea | azure | command) in kit.local.json' }; $global:KitHostFailed = $true; return $null }
   if ($Verb -in 'mr.merge', 'mr.create' -and -not $A.method) { $A.method = [string](Get-RepoConf $A.repo 'mergeMethod' 'squash') }
-  $ci = Get-KitCiType $A.repo $t
   $kind, $name, $v2 = if ($Verb -like 'ci.*') { 'ci', $ci, $Verb.Substring(3) } else { 'git-host', $t, $Verb }
   $mk = "$name|$Verb|$(($A.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&')"
   if ($Verb -in 'mr.create', 'mr.update', 'mr.merge', 'mr.unauto') { $global:KitHostMemo.Clear() }
@@ -1844,11 +1853,31 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
     $cached = Get-KitMemo $global:KitHostMemo $mk 90 { $null }
     if ($null -ne $cached) { return $cached }
   }
-  $v = Invoke-KitAdapter $kind $name $v2 $A
+  $ad = $KitAdapters[$kind][$name]
+  # core fallbacks: ci.failure, mr.parseRef
+  $v = if ($Verb -eq 'ci.failure' -and $ad -and -not $ad.ContainsKey('failure')) { Get-KitCiFailure $A }
+  elseif ($Verb -eq 'mr.parseRef' -and $ad -and -not $ad.ContainsKey('mr.parseRef')) { ConvertFrom-KitMrRef "$($A.ref)" }
+  else { Invoke-KitAdapter $kind $name $v2 $A }
   if ($Verb -eq 'mr.get' -and $v.state -eq 'opened' -and ($t -ne 'gitlab' -or $ci -ne 'gitlab')) { $v | Add-Member -Force head_pipeline (Invoke-HostVerb 'ci.status' @{ type = $t; repo = $A.repo; sha = $v.sha; ref = $v.source_branch; n = $A.n } -NoMemo:$NoMemo) }
+  if ($Verb -in 'ci.runs', 'ci.jobs', 'ci.status') { $null = __HostState $v } elseif ($Verb -in 'mr.get', 'mr.list') { foreach ($m in @($v | Where-Object { $_.head_pipeline })) { $null = __HostState $m.head_pipeline } }
   if ($Verb -notin 'mr.create', 'mr.update', 'mr.merge', 'mr.unauto' -and $null -ne $v) { $global:KitHostMemo[$mk] = @{ at = Get-Date; v = $v; ok = $v } }
   $v
 }
+# ci.failure: run $A.id's first failed job
+function Get-KitCiFailure([hashtable]$A) {
+  $h = @{ repo = $A.repo; type = $A.type }; $j = @(@(Invoke-HostVerb 'ci.jobs' ($h + @{ id = $A.id })) | Where-Object { $_ -and (ConvertTo-KitCiState "$($_.status)") -eq 'failed' })[0]; if (-not $j) { return $null }
+  $log = "$(Invoke-HostVerb 'ci.log' ($h + @{ id = $j.id }))" -replace '\x1b\[[0-9;]*m' -split "`n"
+  [pscustomobject]@{ job = "$($j.name)"; id = $j.id; url = "$($j.web_url ?? $j.url)"; reason = "$($j.reason ?? 'unknown')"; raw = "$($j.failure_reason)"; excerpt = @($log -match '(?i)error|fail|invalid|exception' | Select-Object -Last 8) -join "`n" }
+}
+# mr.parseRef: MR URL or [<group>/]<repo>!<n> -> @{ repo; n; type }
+function ConvertFrom-KitMrRef([string]$Ref) { $r = "$Ref".Trim(); if ($u = ConvertFrom-MrUrl $r) { $u } elseif ($r -match '^(?<repo>[\w./-]+)[!#](?<n>\d+)$') { @{ repo = (Get-HostProject $Matches.repo -Raw); n = $Matches.n; type = $script:HostType } } }
+# MR CLIs the guard checks (exe, MR noun, option names); gitHostApi.hostCli adds more
+$script:KitHostCli = [ordered]@{
+  gitlab = @{ exe = 'glab'; noun = 'mr'; source = '-s', '--source-branch'; target = '-b', '--target-branch'; title = '-t', '--title'; valued = '-R', '--repo', '-m', '--message', '--squash-message', '--sha' }
+  github = @{ exe = 'gh'; noun = 'pr'; source = '-H', '--head'; target = '-B', '--base'; title = '-t', '--title'; valued = '-R', '--repo', '-b', '--body', '-F', '--body-file', '-t', '--subject', '--match-head-commit', '-A', '--author-email'; noAuto = '--disable-auto' }
+}
+function Get-KitHostCli { @($script:KitHostCli.Values) + @(@(__HostSet 'hostCli' @()) | Where-Object exe | ForEach-Object { $h = @{}; $_.PSObject.Properties | ForEach-Object { $h[$_.Name] = $_.Value }; $h }) }
+# LEGACY shim: a GitLab REST path -> a host verb (crafty.ps1 scope still calls it)
 function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) {
   if ($Path -notmatch '^projects/(?<p>[^/?]+)/?(?<rest>[^?]*)\??(?<q>.*)$') { Write-Warning "githost: no verb for $Path"; return $null }
   $a = __Query $Matches.q; $a.repo = [uri]::UnescapeDataString($Matches.p); $v = $null
@@ -1885,10 +1914,8 @@ function Add-KitMrIgnore([string[]]$Mrs, [string]$Reason) {
     foreach ($r in $Mrs) { $m[$r] = [ordered]@{ reason = $Reason; at = (Get-Date).ToString('o') } }; Write-KitState $f ([ordered]@{ mrs = $m }) }
   $Mrs | ForEach-Object { "ignored $_ ($Reason): the untracked-MR watch skips it" }
 }
-# this machine's git-host CLI login; '' = unknown
-function Get-KitHostUser {
-  switch ($script:HostType) { 'gitlab' { if (Get-Command __GlEnv -ErrorAction SilentlyContinue) { __GlEnv }; [string](__Cli glab 'user').username } 'github' { [string](__Cli gh 'user').login } default { '' } }
-}
+# this machine's host login (verb whoami); '' = unknown
+function Get-KitHostUser { [string]$(try { Invoke-HostVerb 'whoami' @{} -NoMemo } catch { '' }) }
 # deploy MR (no task): a protected or deploy/* source, or a repos[].deploys[].branch target other than the task target
 function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
   if ($Source -match ('^(?:main|master|develop|release/.+|deploy/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + ([regex]::Escape($_) -replace '\\\*', '.+') }) -join '') + ')$')) { return $true }

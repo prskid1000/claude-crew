@@ -145,7 +145,7 @@ $null = Add-TrackerComment m1 'a person''s note'; $KitConf.TrackerTag = 'CU-'
 $c = @(Get-TrackerComments m1)
 "mrs:$($c.Count -eq 1 -and $c[0].text -eq 'a person''s note')"
 $tb = Invoke-Track add -Task b1 -Mrs 'g/web!12'
-"tb:$($tb -match 'names m1; registering under -Task b1' -and (Invoke-Track show -Task b1) -match '^b1 : g/web!12 \| open$')"
+"tb:$($tb -match 'names m1; registering under -Task b1' -and (Invoke-Track show -Task b1) -match '^b1 : g/web!12 \| done$')"
 "ref:$((& $args[1] tracker comment m1 "MRs (merge order)`n- x !1") -match 'refused: no MRs comment' -and $LASTEXITCODE -eq 1)"
 '@) @($O, $D)
 Expect "track add: no MRs comment written (MR links live in the Items checklist), a person's comment kept ($mc)" ("$mc" -match 'mrs:True')

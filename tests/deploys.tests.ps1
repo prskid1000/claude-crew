@@ -5,11 +5,12 @@ Usage: pwsh -NoProfile -File tests/deploys.tests.ps1 (New-TestKit gets the deplo
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
+$env:KIT_TEST_SHIM = Join-Path $PSScriptRoot 'hostverb-shim.ps1'   # GitLab-path mocks behind host verbs
 $TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit deploys; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Path $k '.state/tracking.json'
 $cfgF = Join-Path $k 'skills/crafty/kit.local.json'; $dep = { Px $O deploy @args }
 $J0 = $J; $J = { param($o, $f, [int]$d = 8) if ($f -eq $tf) { Remove-Item (Join-Path $k '.state/tasks'), (Join-Path $k '.state/automerge.json') -Recurse -Force -ErrorAction SilentlyContinue }; & $J0 $o $f $d }   # a tracking.json fixture replaces the state it moved into
-& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }, @{ target = 'live'; production = $true }, @{ target = 'preprod'; production = $false }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } $cfgF
+& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }, @{ target = 'live'; production = $true }, @{ target = 'preprod'; production = $false }) }); deploy = @{ productionPattern = '(?i)prod|critical'; trigger = 'ask'; minIntervalHours = @{ default = 4 } } } $cfgF
 $null = New-Item -ItemType Directory -Force (Split-Path $tf); & $J @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('api!1'); done = $true; doneAt = (Get-Date).ToString('s') }; t2 = @{ task = 't2'; mrs = @('api!2'); done = $false } }; automerge = @{} } $tf
 $fx = Join-Path (Kd) 'deploy-fixture.json'
 & $J @{ mrs = @{ 'api!1' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) }; 'api!2' = @{ rows = @(@{ target = 'stage'; state = 'DEPLOYED'; detail = 'live' }) }; 'api!3' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) } }; lastCi = @{ stage = (Get-Date).AddHours(-6).ToString('s') } } $fx
@@ -114,6 +115,7 @@ exit 1
 $ua = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
+. $env:KIT_TEST_SHIM
 $KitCmd.qa = $args[1]; $c1 = $args[2]; $c2 = $args[3]; $env:FAKE_ASKED = $args[4]; $env:FAKE_PENDING = Join-Path (Get-KitPath deploys -Create) 'pending.json'; Remove-Item $env:FAKE_PENDING -ErrorAction SilentlyContinue
 function Invoke-HostApi([string]$Path) {
   if ($Path -match 'merge_requests\?') { if ($Path -match 'page=1') { @([pscustomobject]@{ iid = 1; merge_commit_sha = $c1; target_branch = 'main' }, [pscustomobject]@{ iid = 2; merge_commit_sha = $c2; target_branch = 'main' }) }; return }
@@ -230,6 +232,7 @@ ConvertTo-Json -Compress @('a-st', 'b-st' | ForEach-Object { @{ mr = $m; target 
 $ug = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
+. $env:KIT_TEST_SHIM
 $KitCmd.qa = $args[1]
 function Get-TrackerTask($id) { [pscustomobject]@{ id = $id; name = "n$id"; status = 'promoted' } }; function Test-TrackerStatus { $true }
 function Set-TrackerStatus { }; function Add-TrackerComment { $global:kc += 'appended' }; function Set-TrackerKitComment($i, $kd) { $global:kc += "$i|$kd" }; $global:kc = @()

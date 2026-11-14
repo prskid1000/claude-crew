@@ -90,7 +90,7 @@ $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
 $global:sets = @(); $global:cmts = @()
 $global:q = 0; function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { if ($Path -match 'search=') { $global:q++ }; [pscustomobject]@{ state = 'merged' } }
-function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }   # no git-host adapter in the core
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -eq 'mr.list' -and $A.search) { $global:q++ }; [pscustomobject]@{ state = 'merged' } }   # no git-host adapter in the core
 function Get-TrackerTask($id) { [pscustomobject]@{ status = 'promoted'; subtasks = @() } }
 function Set-TrackerStatus($id, $s) { $global:sets += "$id=$s" }
 function Add-TrackerComment($id, $text) { $global:cmts += [pscustomobject]@{ id = $id; text = $text } }
@@ -186,7 +186,7 @@ try { $null = Set-TrackerStatus 'o/r#9' 'inTest'; 'real:False' } catch { "real:$
 '@
 $res = Invoke-PsTest 'outbox-test' $nt @(Lib)
 Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')
-& $J @{} (Join-Path $k 'skills/crafty/kit.local.json')   # a configured kit: lib.ps1 skips its load-time git lookup
+& $J @{ gitHostType = 'gitlab' } (Join-Path $k 'skills/crafty/kit.local.json')   # no load-time git lookup
 "`n## zz-test`n- a core lesson" | Add-Content (Join-Path $k 'LESSONS.md')
 $lr = Invoke-TestScript $O learn -Skill revy -Kind idea -Text 'x'; $r1 = pwsh @np $O learn -Read -Skill zz-test | Out-String; 
 Expect 'learn: record + -Read in core' ($lr.out -match 'recorded \(revy/idea\)' -and $r1 -match 'a core lesson')

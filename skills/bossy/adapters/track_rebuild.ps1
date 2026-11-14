@@ -17,9 +17,8 @@ function Invoke-TrackRebuild {
   $since = (Get-Date).AddDays(-14).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   $found = @{}
   foreach ($r in $repos) {
-    $pp = ProjPath $r; if (-not $pp) { "skip $r : use <group/repo> or set ""gitlabGroup"""; continue }
-    $q = "projects/$($pp -replace '/', '%2F')/merge_requests?search=$([uri]::EscapeDataString($tag))&in=title,source_branch&state=all&updated_after=$since&per_page=100"
-    foreach ($m in @(Invoke-HostApi $q) | Where-Object { $_ -and $_.state -ne 'closed' }) {
+    $pp = ProjPath $r; if (-not $pp) { "skip $r : use <group/repo> or set ""gitHostGroup"""; continue }
+    foreach ($m in @(Invoke-HostVerb 'mr.list' @{ repo = $pp; search = $tag; searchIn = 'title,source_branch'; state = 'all'; updated_after = $since; per_page = 100 }) | Where-Object { $_ -and $_.state -ne 'closed' }) {
       if ("$($m.source_branch) $($m.title)" -notmatch "(?i)$([regex]::Escape($tag))(?<id>[A-Za-z0-9]+)") { continue }
       $id = $Matches.id
       if (-not $found[$id]) { $found[$id] = @{ mrs = @(); states = @() } }
