@@ -206,5 +206,8 @@ Expect 'api: a Git Bash path (C:/Program Files/Git/x) is sent as /x' ($pg -match
 Expect 'api: the first bare arg is -Path; none -> exit 2 with the usage line' ($pp -match 'HTTP 200' -and $puc -eq 2 -and $pu -match 'Usage: api -Target')$api.proc.Kill()
 $ke = try { & { $k = $null; Kd } } catch { "$_" }; $re = try { & { . (Lib); $script:KitRoot = '/'; Get-KitRuntime } } catch { "$_" }
 Expect "path guards ($ke|$re)" ($ke -match 'Kd:' -and $re -match 'bad runtime')
+# cell cuts (back from workflows.tests for its cap)
+$ec = & { . (Lib); "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")$((Format-KitCell "add -HoldPromotion ''" -Exact) -eq "add -HoldPromotion ''")" }
+Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
 Remove-TestKit $k
 Complete-Tests

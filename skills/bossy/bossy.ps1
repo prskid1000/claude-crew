@@ -439,7 +439,7 @@ function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $nu
   $add = { param($repo, $n, $by) if ($repo -and $n -and $c["$repo!$n"].by -ne 'pin') { if (-not $c["$repo!$n"] -or $by -ne 'task') { $c["$repo!$n"] = @{ repo = $repo; n = "$n"; by = $by } } } }
   foreach ($u in @($Stored | ForEach-Object { ConvertFrom-MrUrl $_ } | Where-Object { $_ })) { & $add $u.repo $u.n pin }
   foreach ($u in @($Reported | ForEach-Object { ConvertFrom-MrUrl $_ } | Where-Object { $_ })) { & $add $u.repo $u.n report }
-  foreach ($m in [regex]::Matches($txt, '([\w./-]+)!(\d+)')) { $mp = Get-HostProject $m.Groups[1].Value -Raw; if (-not $c["$mp!$($m.Groups[2].Value)"]) { & $add $mp $m.Groups[2].Value mention } }   # a note names any MR: counts only on an area branch
+  foreach ($m in [regex]::Matches($txt, '([\w./-]+)!(\d+)')) { $mp = Get-HostProject $m.Groups[1].Value -Raw; if (-not $c["$mp!$($m.Groups[2].Value)"]) { & $add $mp $m.Groups[2].Value mention } }   # a note names any MR: pinned on an area branch; no branch known: a task MR
   $kb = @{}   # repo -> area branches
   if ((Test-KitOnlineOnce)) {
     $global:KitHostFailed = $false
@@ -451,11 +451,11 @@ function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $nu
     $fail = [bool]$global:KitHostFailed
   } elseif ($c.Count -or $tasks.Count -or @($Wts | Where-Object branch).Count) { $fail = $true }
   $mrs = @(foreach ($k in $c.Keys) { $h = if ((Test-KitOnlineOnce)) { Get-KitOnce "mr:$k" { try { Invoke-HostVerb 'mr.get' $c[$k] } catch { $null } } }
-      [pscustomobject]@{ ref = $k; url = $(if ($h.web_url) { $h.web_url } else { $k }); repo = ($c[$k].repo -split '/')[-1]; state = $(if ($h.state) { "$($h.state)" } else { 'UNKNOWN' }); text = "$($h.source_branch) $($h.title)"; body = "$($h.description)$($h.body)"; pin = $c[$k].by -in 'pin', 'report', 'mention'; by = $c[$k].by; branch = "$($h.source_branch)"; rp = $c[$k].repo; created = $h.created_at } })
+      [pscustomobject]@{ ref = $k; url = $(if ($h.web_url) { $h.web_url } else { $k }); repo = ($c[$k].repo -split '/')[-1]; state = $(if ($h.state) { "$($h.state)" } else { 'UNKNOWN' }); text = "$($h.source_branch) $($h.title)"; body = "$($h.description)$($h.body)"; pin = $c[$k].by -in 'pin', 'report'; by = $c[$k].by; branch = "$($h.source_branch)"; rp = $c[$k].repo; created = $h.created_at } })
   # area branch MRs only (task ids span areas); unreadable = unknown
   foreach ($m in @($mrs | Where-Object { $_.by -in 'pin', 'branch' -and $_.branch })) { $kb[$m.rp] = @($kb[$m.rp]) + $m.branch }
   $any = @(@($Ag.branch) + @($Ag.branches) | Where-Object { $_ })
-  $mrs = @($mrs | Where-Object { $b = @(@($kb[$_.rp]) + $any | Where-Object { $_ }); if ($_.by -eq 'mention') { return $_.branch -and $_.branch -in $b }; $_.by -in 'pin', 'branch' -or -not $_.branch -or $_.branch -in $b -or (-not $b.Count -and $_.branch -notin $Others) })
+  $mrs = @($mrs | Where-Object { $b = @(@($kb[$_.rp]) + $any | Where-Object { $_ }); if ($_.by -eq 'mention') { $_.pin = $_.branch -and $_.branch -in $b; return $_.pin -or ($_.branch -and -not $b.Count -and $_.branch -notin $Others) }; $_.by -in 'pin', 'branch' -or -not $_.branch -or $_.branch -in $b -or (-not $b.Count -and $_.branch -notin $Others) })
   $mrs = @($mrs | Where-Object { $_.state -ne 'closed' -and ($_.pin -or -not $Since -or -not $_.created -or [datetimeoffset]$_.created -ge ([datetimeoffset]$Since).AddMinutes(-10)) })   # offsets: host UTC, launches local
   $wip = @($Wts | Where-Object { $_.dirty -or $_.unpushed -ne '0' }).Count   # merged work ignores it: squash leaves the branch ahead
   $prev = ''; $its = @("$($Ag.items)" -split ',(?![^()]*\))' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object { $t = @(& $tid $_)[0]; if ($t) { $prev = $t } else { $t = $prev }; [pscustomobject]@{ item = $_; task = $t } })   # '<task> a, b': b is the same task
