@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L43 login · L123 browsers · L166 tabs · L254 session · L294 actions · L393 ui checks · L415 evidence
+// Sections: L17 config · L43 login · L123 browsers · L166 tabs · L254 session · L299 actions · L398 ui checks · L420 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -252,11 +252,16 @@ export function releaseOnExit(done) {
 }
 export const relogin = (s) => ensureLogin(s.page, s.target, s.tenant, s.as, s.key)
 // ---- session: your logged-in tab
-// your own logged-in tab
-export async function session({ target, tenant, as = 'admin' } = {}) {
+export function defaultUser(t, name = '') {
+  const u = Object.keys(t.users || {}), d = t.defaultUser || readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}).api?.defaultUser || (u.length == 1 && u[0])
+  if (d || !u.length) return d || ''
+  throw new Error(`target ${name}: several users: { as } or defaultUser`)
+}
+export async function session({ target, tenant, as } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
   if (pin.length && !pin.includes(tn)) throw new Error(`target '${tn}' is not this QA run's target (${pin.join(', ')})`)
   const t0 = targetOf(target)
+  as = as || defaultUser(t0, tn)
   tenant = tenant ?? t0.defaultTenant ?? ''
   const t = { ...t0, web: fill(t0.web || '', '', '', tenant) }, bo = browserOpts(t0), eng = process.env.KIT_BROWSER_ENGINE || bo.engine
   const key = sessionKey(tn, tenant, as), VIEW = { width: Number(bo.width), height: Number(bo.height) }

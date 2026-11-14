@@ -110,7 +110,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   passwords), `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
   gdocs, git host).
 - L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/testy.js`; one
-  item per testing doc: `{code, title, guideFile, lane: web|api|app, target?, services? (local: leased),
+  item per testing doc: `{code, title, guideFile, lane: a qa.lanes name, target?, services? (local: leased),
   subtasks:[{id,name,mrs}], retest?, only?}`),
   guides exported to text. Deploy check: `pokey.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos: `lead-notes.md`; not
   deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, baseline data (by id;
