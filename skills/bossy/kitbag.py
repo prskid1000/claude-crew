@@ -9,7 +9,7 @@
   python -X utf8 kitbag.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
   python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (goody kit-admin)
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
-  python -X utf8 kitbag.py budget [show] · budget raise [-Tests] -Reason "<why>"   # the kit total (-Tests: tests/) vs its cap; raise: goody kit-admin
+  python -X utf8 kitbag.py budget [show]   # start tokens per role vs START_CAP (lint START-BUDGET); repo and tests totals (INFO)
   python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers | state todo add|done|lint <file> ...   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
   python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
   python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N] [--dry-run]
@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L636 lint · L1034 README graph · L1136 lint command · L1333 audit ·
-  L1450 registry · L1791 prose · L1942 sections · L2072 budget · L2096 goodies · L2621 state lint · L2806 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L632 lint · L1031 README graph · L1133 lint command · L1330 audit ·
+  L1447 registry · L1788 prose · L1939 sections · L2069 budget · L2083 goodies · L2608 state lint · L2793 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -243,30 +243,7 @@ GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 ASSETS = ('assets/',)   # outside the token budget and the file caps
 # caps: content = read by agents / people; plumbing = read only by git, CI, harness
 PLUMBING = ('LICENSE', '.gitignore', '.gitattributes', '.githooks/', '.github/', 'settings.json')
-CAP_BASE = 200000   # _manifest.caps.totalTokens: only `budget raise` steps from here (x1.1, rounded to 1k; lint BUDGET-CAP)
-TEST_CAP = 33000    # _manifest.caps.testTokens default: tests/ (lint BUDGET-TESTS)
-TRIM_FIRST = 'trim first (dense prose, dedupe; never golf that hurts reading); if impossible: kitbag.py budget raise -Reason "<why trimming cannot make room>"'
-
-def cap_next(c):
-    return int(round(c * 1.1 / 1000)) * 1000
-
-def cap_problem(kdir, cap, key='totalTokens'):
-    """None, or why `cap` is not a budget-raise step of caps.<key> (totalTokens: from CAP_BASE; both: at most one step above the
-    last commit's cap)."""
-    c = CAP_BASE
-    while key == 'totalTokens' and c < cap:
-        c = cap_next(c)
-    if key == 'totalTokens' and c != cap:
-        return f'totalTokens {cap} is not a raise step ({CAP_BASE} x 1.1, rounded to 1k, per step): change it only with kitbag.py budget raise'
-    rc, head, _ = git(kdir, 'show', f'HEAD:{PATHS_JSON}', timeout=30)
-    try:
-        old = (json.loads(head).get('_manifest', {}).get('caps') or {}).get(key) if rc == 0 else None
-    except ValueError:
-        old = None
-    if isinstance(old, int) and cap > old and cap != cap_next(old):
-        how = 'budget raise -Tests' if key == 'testTokens' else 'budget raise'
-        return f'{key} {old} -> {cap} is not one raise step: one kitbag.py {how} per commit ({old} -> {cap_next(old)})'
-    return None
+START_CAP = 12000   # what one role loads at start (always-loaded + its agent file + its skill + its lessons; lint START-BUDGET)
 
 def size_tokens(kdir, f):   # git blob size (LF: a CRLF checkout must not count more)
     t = read(os.path.join(kdir, f))
@@ -280,9 +257,26 @@ def counted_files(kdir):
     return [x for x in o.split('\n') if x and not x.startswith(GENERATED + ASSETS) and osp.isfile(osp.join(kdir, x))] if rc == 0 else []
 
 def split_total(sizes):
-    """(kit total, tests total) of {file: tokens}: the kit total is what agents load; tests/ never is (own cap testTokens)."""
+    """(repo total, tests total) of {file: tokens}: INFO only; what agents load is capped per role (start_rows)."""
     tests = sum(n for f, n in sizes.items() if f.startswith('tests/'))
     return sum(sizes.values()) - tests, tests
+
+def start_rows(k):
+    """[(role, always, own)]: tokens a role loads at start: always-loaded files + every skill description, then its agent file,
+    its skill and both LESSONS.md sections. Everything else loads later, through a pointer (progressive)."""
+    tok = lambda s: (len(s.encode('utf-8')) + 3) // 4
+    ftok = lambda rel: tok(read(osp.join(k.dir, rel)) or '')   # the file as stored (k.texts inlines CLAUDE.md's @AGENTS.md)
+    rules = [f for f in k.files if re.match(r'rules/[^/]+\.md$', f) and not f.endswith('.local.md') and 'paths' not in frontmatter(k.texts.get(f, ''))]
+    always = ftok('CLAUDE.md') + ftok('AGENTS.md') + sum(ftok(r) for r in rules)
+    always += sum(tok(frontmatter(k.texts.get(f'skills/{s}/SKILL.md', '')).get('description', '')) for s in k.skills)
+    lessons = k.texts.get('LESSONS.md') or ''
+    section_tok = lambda name: tok((re.search(r'^## ' + re.escape(name) + r'\n(.*?)(?=^## |\Z)', lessons, re.S | re.M) or [''])[0])
+    rows = []
+    for agent, m in (manifest(k.dir).get('agents') or {}).items():
+        skill = m.get('skill') or ''
+        own = ftok(f'agents/{agent}.md') + (ftok(f'skills/{skill}/SKILL.md') if skill else 0) + sum(section_tok(x) for x in {agent, skill} if x)
+        rows.append((agent, always, own))
+    return rows
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
   'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'tests': 9000}
@@ -629,8 +623,10 @@ def graph(k):
         return seen
     structural = reach(entries, lambda typ: typ != 'mention')
     anyhow = reach(structural, lambda typ: True)
+    from_skill = reach([f for f, n in nodes.items() if n['kind'] == 'skill'], lambda typ: typ != 'mention')   # lint ORPHAN-DOC
     for f, n in nodes.items():
         n['reach'] = 'entry' if f in entries else 'structural' if f in structural else 'mention-only' if f in anyhow else 'none'
+        n['from_skill'] = f in from_skill
     return {'nodes': nodes, 'edges': edges}
 
 # ---- lint: the checks (problem codes: kit-admin.md, goody kit-admin)
@@ -808,23 +804,23 @@ def lint(k, g=None, org_terms=None):
     # ---- file caps (ports excluded), per group
     counted = counted_files(k.dir) or [x for x in k.files if not x.startswith(GENERATED)]
     plumbing = [x for x in counted if x.startswith(PLUMBING)]
-    content = [x for x in counted if x not in plumbing and not x.startswith('tests/')]   # tests/: a file per area, own budget
+    content = [x for x in counted if x not in plumbing and x.endswith('.md')]   # docs agents or people read; scripts run, never read
     caps = manifest(k.dir).get('caps') or {}
-    if not all(isinstance(caps.get(x), int) for x in ('content', 'plumbing', 'totalTokens', 'testTokens')):
-        bad('MANIFEST', PATHS_JSON, '_manifest.caps needs integer content, plumbing, totalTokens and testTokens')
-        caps = {'content': 30, 'plumbing': 8, 'totalTokens': CAP_BASE, 'testTokens': TEST_CAP, **caps}
+    if not all(isinstance(caps.get(x), int) for x in ('content', 'plumbing')):
+        bad('MANIFEST', PATHS_JSON, '_manifest.caps needs integer content and plumbing')
+        caps = {'content': 30, 'plumbing': 8, **caps}
     cap_c, cap_p = caps['content'], caps['plumbing']
     if len(content) > cap_c:
-        bad('FILE-CAP', 'kit', f'{len(content)} content files (cap {cap_c}: docs, agents, workflows, skills, scripts, config examples; '
-         'ports excluded): merge files (kit-admin.md "Hard rules", goody kit-admin)')
+        bad('FILE-CAP', 'kit', f'{len(content)} docs (cap {cap_c}: .md files outside .githooks / .github; ports excluded): merge docs '
+         '(kit-admin.md "Hard rules")')
     if len(plumbing) > cap_p:
         bad('PLUMBING-CAP', 'kit', f'{len(plumbing)} plumbing files (cap {cap_p}: LICENSE, .gitignore, .gitattributes, .githooks/*, '
          f'.github/*, settings.json): {", ".join(plumbing)}')
-    # ---- token budgets: per file type, total
-    for cap_key in ('totalTokens', 'testTokens'):
-        cap_bad = cap_problem(k.dir, caps[cap_key], cap_key)
-        if cap_bad:
-            bad('BUDGET-CAP', PATHS_JSON, cap_bad)
+    # ---- token budgets: per role at start, per file type
+    for role, always, own in start_rows(k):
+        if always + own > START_CAP:
+            bad('START-BUDGET', f'agents/{role}.md', f'{role} loads {always + own} tokens at start (always-loaded {always} + own {own}; cap '
+                f'{START_CAP}): move detail behind a pointer (a doc its skill names at the step that needs it)')
     def btype(f):
         b = osp.basename(f)
         if f in ('CLAUDE.md', 'AGENTS.md'):
@@ -854,17 +850,18 @@ def lint(k, g=None, org_terms=None):
     always = sum(sizes.get(f, 0) for f in ('CLAUDE.md', 'AGENTS.md') + tuple(f for f in counted if re.match(r'rules/[^/]+\.md$', f) and 'paths' not in frontmatter(k.texts.get(f, ''))))
     if always > BUDGETS['always']:
         over.append(('always-loaded (CLAUDE.md + AGENTS.md + rules)', always, BUDGETS['always']))
-    total, tests = split_total(sizes)
-    cap_t = caps['totalTokens']
-    if total > cap_t:
-        over.append(('kit total', total, cap_t))
-    if tests > caps['testTokens']:
-        bad('BUDGET-TESTS', 'tests', f"{tests} tokens (cap {caps['testTokens']}): merge duplicate cases, share setup in tests/harness.ps1")
-    if over:
-        top = ', '.join(f'{f} {n}' for f, n in sorted(sizes.items(), key=lambda x: -x[1])[:5])
-        for f, n, cap in over:
-            fix = TRIM_FIRST if f == 'kit total' else 'trim it (dense prose, dedupe) or move text to a file with room'
-            bad('BUDGET', f, f'{n} tokens (cap {cap}): {fix}; top consumers: {top}')
+    for f, n, cap in over:
+        fix = 'move a self-contained block to an area file with room' if f.startswith('tests/') else 'trim it (dense prose, dedupe) or move text to a file with room'
+        bad('BUDGET', f, f'{n} tokens (cap {cap}): {fix}')
+    # ---- ORPHAN-DOC: a doc outside the start set is found through a skill (its Files index, or a doc that one leads to)
+    for f, n in sorted(g['nodes'].items()):
+        if f.endswith('.md') and n['kind'] in ('reference', 'template', 'other', 'config') and not n['local'] and not n.get('from_skill') \
+           and f != 'README.md' and not f.startswith(('.githooks/', '.github/')):
+            bad('ORPHAN-DOC', f, 'no SKILL.md pointer leads here: name it in the Files index of the skill whose step reads it')
+    for f in k.files:   # scripts are run (their --help, header, output), never loaded as reading
+        for i, line in enumerate((k.texts.get(f, '') if f.endswith('.md') and f != 'LESSONS.md' else '').split('\n')):
+            if re.search(r'(?i)\b(read|open|load)s?\b[^.`]{0,20}`[^`]+\.(ps1|py|mjs|js)`', line):
+                bad('SCRIPT-READ', f'{f}:{i + 1}', 'a doc names a script as text to read: say which verb to run (its header prints the usage)')
     # ---- CI workflow YAML (an invalid one fails its run in 0 s)
     for f in counted:
         if re.match(r'\.github/workflows/[^/]+\.ya?ml$', f):
@@ -1080,7 +1077,7 @@ def readme_sections(k, g):
             rows.append(f"| `{key}` | {cell({a: b for a, b in v.items() if not a.startswith('_')})} | {cell(v.get('_readme', ''), 999)} |")
     out['table-config'] = ['| Key | Example / default | Meaning |', '|---|---|---|'] + rows
     caps = man.get('caps') or {}
-    out['table-caps'] = [' · '.join(f'{n} {v}' for n, v in BUDGETS.items()) + f" · total {caps.get('totalTokens')} · all tests {caps.get('testTokens')} · files: {caps.get('content')} content + {caps.get('plumbing')} plumbing"]
+    out['table-caps'] = [' · '.join(f'{n} {v}' for n, v in BUDGETS.items()) + f" · start per role {START_CAP} · files:{caps.get('content')} content + {caps.get('plumbing')} plumbing"]
     ma, mw = man.get('agents') or {}, man.get('workflows') or {}   # crew hero: who starts whom
     out['crew'] = ['flowchart LR', f'  OW([{mq("owner")}]) -->|{mq("asks, says deploy env")}| CO[{mq("coordinator: Router + Events")}]'] + [
      x for w, m in mw.items() for x in [f"  CO -->|{mq(m.get('router', ''))}| W_{w}[/{mq(w)}/]"] + [f'  W_{w} -->|{mq("spawns")}| A_{c}({mq(c)})' for c in m.get('crew', [])]] + [
@@ -2069,29 +2066,19 @@ def cmd_sections(a):
         left += len(probs)
     return 1 if left else 0
 
-# ---- budget: the kit total vs its cap
+# ---- budget: start tokens per role vs START_CAP; repo and tests totals as INFO
 def cmd_budget(a):
-    """kitbag.py budget [show]: the kit total (agent-loaded files) vs _manifest.caps.totalTokens, tests/ vs caps.testTokens.
-    budget raise [-Tests] -Reason "<why trimming cannot make room>" (x1.1 per step, only while over the cap; -Tests: testTokens) is in
-    the kit-admin goody."""
-    kit = KIT_DIR
-    flags, rest = parse_opts(a, {'-Reason', '-reason', '--reason'})
-    total, tests = split_total({f: size_tokens(kit, f) for f in counted_files(kit)})
-    caps = manifest(kit).get('caps') or {}
-    cap, cap_t = caps.get('totalTokens', CAP_BASE), caps.get('testTokens', TEST_CAP)
-    if not rest or rest[0] == 'show':
-        print(f'kit total {total} of cap {cap} ({total * 100 // cap}%) · tests {tests} of cap {cap_t}; next raise step {cap_next(cap)}')
-        return 0
-    if rest[0] == 'raise':   # -Tests: caps.testTokens, the same x1.1 step
-        raise_cap, t_cap = PLUGINS.get('budget raise'), '-Tests' in flags or '--tests' in flags
-        if raise_cap and t_cap and 'key' not in raise_cap.__code__.co_varnames[:raise_cap.__code__.co_argcount]:
-            print('budget raise -Tests: goody kit-admin is older than this core: kitbag.py goody sync', file=sys.stderr)
-            return 2
-        if not raise_cap:
-            return need_extra('kitbag.py budget raise', 'kit-admin')
-        return stamp_fn(raise_cap) or (raise_cap(kit, tests, cap_t, flags, key='testTokens') if t_cap else raise_cap(kit, total, cap, flags))
-    print(cmd_budget.__doc__, file=sys.stderr)
-    return 2
+    """kitbag.py budget [show]: start tokens per role (always-loaded + own) vs START_CAP, then INFO lines: repo and tests totals."""
+    _, rest = parse_opts(a)
+    if rest and rest[0] != 'show':
+        print(cmd_budget.__doc__, file=sys.stderr)
+        return 2
+    k = load(KIT_DIR)
+    for role, always, own in start_rows(k):
+        print(f'{role:8} start {always + own:6} of {START_CAP} (always-loaded {always} + own {own})')
+    total, tests = split_total({f: size_tokens(KIT_DIR, f) for f in counted_files(KIT_DIR)})
+    print(f'INFO repo total {total} tokens · tests {tests} (no cap: agents load per role, then through pointers)')
+    return 0
 
 # ---- goodies: optional parts on the origin's `goodies` branch, installed local-only (README "Goodies")
 # goodies/<name>/GOODY.md: what + "Needed when: `<config key>` = `<value>`"; files in goodies/<name>/files/<kit path>

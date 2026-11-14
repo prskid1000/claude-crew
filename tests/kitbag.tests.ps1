@@ -211,17 +211,14 @@ $l5 = (& $ex lint --no-flow).out; $null = & $ex goody list; $t5 = & $ex goody te
 $t6 = & $ex goody test big --ref refs/remotes/origin/goodies; $t7 = & $ex goody test big --ref no-such-branch
 Expect 'sections: lint flags an installed goody''s file (fix on the goodies branch); goody test (--ref: that branch) flags the branch''s files; an unknown goody or ref = exit 2' ($l5 -match 'SECTION-MAP\s+skills/bossy/kitbag_demo\.py: no section markers.*\(goody demo: fix it on the goodies branch\)' -and $t5.code -eq 1 -and $t5.out -match 'FAIL SECTION-MAP skills/big\.ps1' -and (& $ex goody test nope).code -eq 2 -and
   $t6.code -eq 1 -and $t6.out -match 'FAIL SECTION-MAP skills/big\.ps1' -and $t7.code -eq 2 -and $t7.out -match '--ref no-such-branch is no branch')
-# budget raise is in kit-admin (its tests); a manual cap edit is lint BUDGET-CAP
-$bj = Join-Path $kc 'skills/crafty/kit.example.json'; $b1 = & $py -X utf8 $KT2 budget raise -Reason x 2>&1 | Out-String; $c1 = $LASTEXITCODE
-(Get-Content $bj -Raw) -replace '"totalTokens": \d+', '"totalTokens": 999000' | Set-Content $bj -NoNewline; $l3 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-Expect 'budget raise without kit-admin: exit 2 + the goody line; a manual cap edit = BUDGET-CAP' ($c1 -eq 2 -and $b1 -match 'goody add kit-admin' -and $l3 -match 'BUDGET-CAP')
-# tests/ stay outside the kit total (agents never load them), under their own cap testTokens
-$rb = 'kit total (\d+) of cap \d+ \(\d+%\) . tests (\d+) of cap \d+'; $b2 = & $py -X utf8 $KT2 budget 2>&1 | Out-String
-Set-Content (Join-Path $kc 'tests/zz.tests.ps1') ('#' * 140000) -NoNewline; git -C $kc add tests/zz.tests.ps1
-$b3 = & $py -X utf8 $KT2 budget 2>&1 | Out-String; $l4 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-$m2 = [regex]::Match($b2, $rb); $m3 = [regex]::Match($b3, $rb)
-Expect "budget: +35000 test tokens add to tests, not the kit total; over testTokens = BUDGET-TESTS, a file over 9000 = BUDGET ($($b3.Trim()))" ($m2.Success -and $m3.Success -and
-  $m2.Groups[1].Value -eq $m3.Groups[1].Value -and [int]$m3.Groups[2].Value - [int]$m2.Groups[2].Value -eq 35000 -and $l4 -match 'BUDGET-TESTS\s+tests: \d+ tokens \(cap \d+\)' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 9000\)')
+# budget: start tokens per role vs 12000 (lint START-BUDGET); repo and tests totals are INFO; a doc no skill leads to = ORPHAN-DOC
+$b2 = & $py -X utf8 $KT2 budget 2>&1 | Out-String
+Add-Content (Join-Path $kc 'agents/rechy.md') ('#' * 40000), 'First read `skills/crafty/lib.ps1` end to end.'; Set-Content (Join-Path $kc 'zz-orphan.md') '# Orphan'
+Set-Content (Join-Path $kc 'tests/zz.tests.ps1') ('#' * 140000) -NoNewline; git -C $kc add tests/zz.tests.ps1 zz-orphan.md
+$l4 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
+Expect "budget: a start line per role + INFO totals; START-BUDGET over 12000; a test file over 9000 = BUDGET, no total cap; ORPHAN-DOC ($($b2.Trim()))" ($b2 -match '(?m)^rechy\s+start\s+\d+ of 12000' -and
+  $b2 -match 'INFO repo total \d+ tokens . tests \d+' -and $l4 -match 'START-BUDGET\s+agents/rechy\.md: rechy loads \d+ tokens at start' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 9000\)' -and
+  $l4 -notmatch 'BUDGET-TESTS|BUDGET-CAP|kit total' -and $l4 -match 'ORPHAN-DOC\s+zz-orphan\.md' -and $l4 -match 'SCRIPT-READ\s+agents/rechy\.md:\d+')
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 # section maps: lint SECTION-MAP / SECTION-UNMAPPED, audit SECTION-BIG, sections --fix
 $sp = Join-Path $k 'sec.py'; @'

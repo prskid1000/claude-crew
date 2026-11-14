@@ -118,7 +118,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 
 ## Decisions
 - 2026-11-14 Debate: context Characters unseen, 0 disputes in 448 msgs · decision (owner) Characters, disputes, trigger debates: core, never trimmed for caps; the owner decides splits · consequences buildy.js disputes + debate, rechy / revy kinds debate / dispute, lint MANIFEST, workflow cap 16500.
-- 2026-10-21 Kit size cap: context 400k tokens · decision (owner, replaces "no function removed") total <= 200k: drop dead code, duplication, features; optional parts on the `goodies` branch (`kitbag.py goody add <name>`); never minified · consequences cap 200000, lint BUDGET / BUDGET-CAP.
+- 2026-11-14 Kit size: context a whole-kit cap kept parts off main · decision (owner, supersedes 2026-10-21) all on main, vendor adapters run when config selects them; a role starts <= 12k tokens, the rest via SKILL.md pointers; repo total INFO · consequences lint START-BUDGET, ORPHAN-DOC.
 - 2026-10-16 Deploys: context agents proposed deploys · decision `deploy.trigger: owner` (owner): nobody asks or proposes; a person says `deploy <env>`, the coordinator deploys at once · consequences supervise has no DEPLOY ASK under owner.
 - 2026-10-16 Crew: context many agent types · decision 4 agents devy, revy, checky, kitty (owner) · consequences lint AGENT-TYPE / NON-CREW; old names only in `_manifest.renamed`.
 - 2026-10-16 NOT_TESTED: context untested checks closed tasks · decision one stronger retry, then failedTesting on shared envs; local items ENV-FIX, never failedTesting (owner).
