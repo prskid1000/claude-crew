@@ -44,15 +44,15 @@ $ex = Join-Path $kc 'skills/crafty/kit.example.json'; $t = [IO.File]::ReadAllTex
 [IO.File]::WriteAllText($ex, ($t -replace '(?s)^\{', "{`n `"zzDeadKey`": 1, `"zzLiveKey`": 2,"))
 $l1 = & $py -X utf8 $KT3 lint --no-flow 2>&1 | Out-String
 $cnt = { param($rx) @([regex]::Matches($l1, $rx)).Count }
-Expect "ARCH-DEFAULT: a vendor default is a WARN with file:line; neutral, arch-ok, legacy block and vendor-named files pass" ($l1 -match 'WARN ARCH-DEFAULT skills/crafty/zz_arch\.ps1:2: zz\.hit: default names gitlab' -and
-  $l1 -match 'WARN ARCH-DEFAULT skills/crafty/zz_arch\.py:3: zzTag: default names CU-' -and (& $cnt 'ARCH-DEFAULT skills/crafty/zz_arch\.ps1') -eq 1 -and $l1 -notmatch 'ARCH-DEFAULT skills/crafty/zz_gitlab')
+Expect "ARCH-DEFAULT: a vendor default is a problem with file:line; neutral, arch-ok, legacy block and vendor-named files pass" ($l1 -match '(?m)^ARCH-DEFAULT\s+skills/crafty/zz_arch\.ps1:2: zz\.hit: default names gitlab' -and
+  $l1 -match '(?m)^ARCH-DEFAULT\s+skills/crafty/zz_arch\.py:3: zzTag: default names CU-' -and (& $cnt 'ARCH-DEFAULT\s+skills/crafty/zz_arch\.ps1') -eq 1 -and $l1 -notmatch 'ARCH-DEFAULT\s+skills/crafty/zz_gitlab')
 Expect 'ARCH-ENUM: web/api/app in one file = WARN; a registry: comment and adapters/ pass' ($l1 -match 'WARN ARCH-ENUM\s+skills/crafty/zz_arch\.ps1:5: 3 lanes values' -and
   $l1 -notmatch 'deployKinds values \(awsStack:6' -and $l1 -notmatch 'ARCH-ENUM\s+skills/crafty/adapters/zz_arch')
-Expect 'ARCH-VENDOR-API: glab api in core = WARN; adapters/ and a py docstring pass' ($l1 -match 'WARN ARCH-VENDOR-API skills/crafty/zz_arch\.ps1:7: vendor call "glab api' -and
-  $l1 -notmatch 'ARCH-VENDOR-API skills/crafty/(adapters/zz_arch|zz_arch\.py)')
-Expect 'ARCH-PLATFORM: Get-CimInstance / os.startfile unguarded = WARN; inside if ($KitIsWindows) / os.name and a docstring pass' ($l1 -match 'WARN ARCH-PLATFORM skills/crafty/zz_arch\.ps1:8:' -and
-  $l1 -notmatch 'ARCH-PLATFORM skills/crafty/zz_arch\.ps1:10:' -and $l1 -match 'ARCH-PLATFORM skills/crafty/zz_arch\.py:7:' -and $l1 -notmatch 'ARCH-PLATFORM skills/crafty/zz_arch\.py:[26]:')
-Expect 'ARCH-LESSON: liquibase in tracked LESSONS.md = WARN; a rules/*.local.md passes' ($l1 -match 'WARN ARCH-LESSON LESSONS\.md:\d+: names liquibase' -and $l1 -notmatch 'ARCH-LESSON rules/zz\.local\.md')
+Expect 'ARCH-VENDOR-API: glab api in core = a problem; adapters/ and a py docstring pass' ($l1 -match '(?m)^ARCH-VENDOR-API\s+skills/crafty/zz_arch\.ps1:7: vendor call "glab api' -and
+  $l1 -notmatch 'ARCH-VENDOR-API\s+skills/crafty/(adapters/zz_arch|zz_arch\.py)')
+Expect 'ARCH-PLATFORM: Get-CimInstance / os.startfile unguarded = a problem; inside if ($KitIsWindows) / os.name and a docstring pass' ($l1 -match '(?m)^ARCH-PLATFORM\s+skills/crafty/zz_arch\.ps1:8:' -and
+  $l1 -notmatch 'ARCH-PLATFORM\s+skills/crafty/zz_arch\.ps1:10:' -and $l1 -match 'ARCH-PLATFORM\s+skills/crafty/zz_arch\.py:7:' -and $l1 -notmatch 'ARCH-PLATFORM\s+skills/crafty/zz_arch\.py:[26]:')
+Expect 'ARCH-LESSON: liquibase in tracked LESSONS.md = a problem; a rules/*.local.md passes' ($l1 -match '(?m)^ARCH-LESSON\s+LESSONS\.md:\d+: names liquibase' -and $l1 -notmatch 'ARCH-LESSON\s+rules/zz\.local\.md')
 Expect "ARCH-DEAD-KEY: a documented key no script reads is a counted problem (exit $LASTEXITCODE); a read key passes" ($LASTEXITCODE -eq 1 -and
   $l1 -match '(?m)^ARCH-DEAD-KEY\s+skills/crafty/kit\.example\.json: "zzDeadKey"' -and $l1 -notmatch 'ARCH-DEAD-KEY.*zzLiveKey')
 Remove-Item (Join-Path $kc 'skills/bossy/lint-vocab.json')

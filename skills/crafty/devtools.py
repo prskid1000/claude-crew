@@ -29,8 +29,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L47 config · L102 run · L190 tracker · L342 process · L493 git host · L554 scope · L633 MR · L817 merge · L1142 docs ·
-  L1295 publish · L1656 render · L2019 plugins · L2033 keepboth · L2052 selftest · L2551 CLI
+Sections: L47 config · L102 run · L190 tracker · L342 process · L493 git host · L560 scope · L639 MR · L823 merge · L1149 docs ·
+  L1302 publish · L1663 render · L2026 plugins · L2040 keepboth · L2059 selftest · L2558 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -85,7 +85,7 @@ def py_rx(rx):
 
 GWS = shutil.which('gws')
 RCFG = CFG.get('reports') or {}
-REPORT_TYPE = (os.environ.get('KIT_REPORT_TYPE') or RCFG.get('type') or ('gdocs' if GWS else 'markdown')).lower()
+REPORT_TYPE = (os.environ.get('KIT_REPORT_TYPE') or RCFG.get('type') or 'markdown').lower()
 ADAPTERS = {'report': {}}   # kind -> name -> {verb: fn(a)}
 VERBS = {}                  # plugin CLI verbs: name -> fn(argv) -> exit code
 
@@ -491,10 +491,15 @@ def finish(tid, guide, solution_md, status='review', ai=None):
 
 
 # ---- git host: lib.ps1 git-host adapters via crafty.ps1 host
-GITLAB_HOST = CFG.get('gitHost') or 'gitlab.com'
-GITHUB_HOST = CFG.get('githubHost') or 'github.com'
+GITLAB_HOST = CFG.get('gitHost') or ''   # unset: gitHostType names any origin host (as lib.ps1)
+GITHUB_HOST = CFG.get('githubHost') or 'github.com'   # arch-ok: github's public host name, not a choice
 if CFG.get('gitHost') and not os.environ.get('GITLAB_HOST'):   # else glab api outside a checkout hits gitlab.com
     os.environ['GITLAB_HOST'] = CFG['gitHost']
+
+
+def host_group():
+    """gitHostGroup (gitlabGroup: its older name, still read): the group / owner of short refs <repo>!<iid>."""
+    return CFG.get('gitHostGroup') or CFG.get('gitlabGroup') or ''
 
 
 def host_kind(host):
@@ -504,8 +509,9 @@ def host_kind(host):
         return CFG['gitHostType']
     if host == GITHUB_HOST:
         return 'github'
+    # registry: git-host adapters: lib.ps1 Get-HostKind (same detection)
     return next((k for k, rx in (('github', 'github'), ('bitbucket', 'bitbucket'), ('azure', r'dev\.azure\.com|visualstudio\.com'),
-                  ('gitea', 'gitea|forgejo|codeberg')) if re.search(rx, host)), 'gitlab')
+                  ('gitea', 'gitea|forgejo|codeberg'), ('gitlab', 'gitlab')) if re.search(rx, host or '')), '')   # unknown: '' (no vendor guess)
 
 
 def remote(worktree):
@@ -686,8 +692,8 @@ def _ref_path(host, repo):
     """A tracked ref's repo -> its host path: as is with a '/', gitlabGroup/<repo>, else the origin of repos[] <repo>'s checkout."""
     if '/' in repo:
         return repo
-    if host == 'gitlab' and CFG.get('gitlabGroup'):
-        return f"{CFG['gitlabGroup']}/{repo}"
+    if host == 'gitlab' and host_group():
+        return f"{host_group()}/{repo}"
     co = next((r.get('checkout') for r in CFG.get('repos') or [] if isinstance(r, dict) and repo in [r.get('name')] + list(r.get('aliases') or [])), '')
     return remote(co)[1] if co and os.path.isdir(co) else repo
 
@@ -855,8 +861,9 @@ def _failed(H, hp, iid):
     """PIPELINE_FAILED text; only infra failure_reasons on the failed jobs -> retry the same sha, not a code fix."""
     hp = hp if isinstance(hp, dict) else {}
     jobs = H('ci.jobs', id=str(hp['id'])) if hp.get('id') else []
-    why = sorted({str(j.get('failure_reason') or '') for j in jobs if isinstance(j, dict) and j.get('status') == 'failed'}) if isinstance(jobs, list) else []
-    if why and all(w in INFRA for w in why):
+    bad = [j for j in jobs if isinstance(j, dict) and j.get('status') == 'failed'] if isinstance(jobs, list) else []
+    why = sorted({str(j.get('failure_reason') or j.get('reason') or '') for j in bad})   # reason: the ci adapter's normalised word
+    if bad and all(j.get('reason') == 'infra' or str(j.get('failure_reason') or '') in INFRA for j in bad):
         return f'INFRA {", ".join(why)}: retry on the same sha; no code change\nPIPELINE_FAILED'
     return f'pipeline {hp.get("status")} on !{iid}: fix it, do not merge\nPIPELINE_FAILED'
 
@@ -890,7 +897,7 @@ def _final(H, iid, put, st, proj):
 def _norm_ref(ref):
     """'web!12', quoted ref, MR/PR URL or alias -> (repo, iid) as bossy.ps1 track stores them."""
     r = str(ref or '').strip().strip('\'"')
-    group = CFG.get('gitlabGroup') or ''
+    group = host_group()
     m = re.search(r'://[^/]+/(?P<p>[\w./-]+?)/(?:-/merge_requests|pulls?|pull-requests|pullrequest)/(?P<i>\d+)', r)
     if m:
         p = m.group('p').replace('/_git/', '/')
@@ -919,7 +926,7 @@ def _host_mr_state(host, proj, repo, iid):
     if '/' in repo:
         path = repo
     else:
-        group = CFG.get('gitlabGroup') if host == 'gitlab' else ''
+        group = host_group() if host == 'gitlab' else ''
         path = f"{group or proj.rsplit('/', 1)[0]}/{repo}"
     m = _host('mr.get', type=host, repo=path, n=str(iid))
     return str(m.get('state') or '') if isinstance(m, dict) else ''

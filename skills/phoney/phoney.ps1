@@ -14,7 +14,7 @@ Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
 Sections: L24 config · L106 phone · L305 build · L449 install · L475 launch · L487 avd · L573 up · L670 down · L700 events ·
-  L756 slim
+  L757 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -739,8 +739,9 @@ if ($Action -eq 'start') {
   $wm = "$(& $adb -s $Serial shell wm size)"; $size = if ($wm -match '(\d+)x(\d+)') { @([int]$Matches[1], [int]$Matches[2]) } else { @(1080, 2400) }
   $lp = (& $adb -s $Serial shell getevent -lp) -join "`n"; $max = foreach ($ax in 'X', 'Y') { if ($lp -match "ABS_MT_POSITION_$ax\s*:.*?max (\d+)") { [int]$Matches[1] } else { 0 } }
   $touch = "$(& $adb -s $Serial shell settings get system show_touches)".Trim(); & $adb -s $Serial shell settings put system show_touches 1 | Out-Null   # taps show in the video too
-  $ge = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', 'getevent', '-lt' -RedirectStandardOutput "$st/getevent.txt" -PassThru -WindowStyle Hidden
-  $ui = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', 'uiautomator', 'events' -RedirectStandardOutput "$st/ui.txt" -PassThru -WindowStyle Hidden
+  $winHidden = if ($KitIsWindows) { @{ WindowStyle = 'Hidden' } } else { @{} }   # -WindowStyle is Windows-only
+  $ge = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', 'getevent', '-lt' -RedirectStandardOutput "$st/getevent.txt" -PassThru @winHidden
+  $ui = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', 'uiautomator', 'events' -RedirectStandardOutput "$st/ui.txt" -PassThru @winHidden
   @{ uptime = $up; at = $at; size = $size; max = @($max); touch = $touch; pids = @($ge.Id, $ui.Id) } | ConvertTo-Json | Set-Content "$st/state.json"
   "events: capturing on $Serial (show taps on) -> phoney.ps1 events stop -Serial $Serial -Out <the recording>"; return
 }

@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L48 supervise · L254 shells · L388 page · L868 release · L907 lines · L940 cleanup · L980 launch ·
-  L1058 pause · L1176 heartbeat · L1191 sessions · L1243 ci tasks ·
-  L1298 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L258 shells · L392 page · L872 release · L911 lines · L944 cleanup · L984 launch ·
+  L1062 pause · L1180 heartbeat · L1195 sessions · L1247 ci tasks ·
+  L1302 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -32,7 +32,11 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
   if (-not $cmd -or $WaitMin -lt 10) { return }
   $stamp = Join-Path (Get-KitPath cache -Create) 'cache-flush.stamp'
   if ((Test-Path $stamp) -and ($Now - (Get-Item $stamp).LastWriteTime).TotalMinutes -lt 30) { return }
-  $cacheGB = try { (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop).SystemCacheResidentBytes / 1GB } catch { 0 }   # \Memory\System Cache Resident Bytes
+  $cacheGB = try {
+    if ($KitIsWindows) { (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop).SystemCacheResidentBytes / 1GB }   # \Memory\System Cache Resident Bytes
+    elseif (Test-Path /proc/meminfo) { [double](([regex]::Match((Get-Content /proc/meminfo -Raw), '(?m)^Cached:\s+(\d+)')).Groups[1].Value) / 1MB }   # kB
+    else { 0 }
+  } catch { 0 }
   if ($cacheGB -lt 0.25 * $Mem.TotalGB) { return }
   Set-Content $stamp $Now.ToString('o')
   $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-Command', $cmd) $TimeoutSec
@@ -368,8 +372,8 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
       $flags.Add([pscustomobject]@{ level = 'INFO'; what = "auto-fixed: killed shell $($p.Id) of $($o.name) ($why): $short"; action = 'Nothing to do.' }); continue
     }
     $shellState = @($(if ($ownerGone -or $gone) { 'ORPHAN' }), $(if ($stuck) { 'STUCK' }) | Where-Object { $_ }) -join ', '; if (-not $shellState) { $shellState = 'running' }
-    $tk = "taskkill /PID $($p.Id) /T /F"
-    $next = if ($shellState -eq 'running') { '' } elseif ($o.coordinator) { "yours: stop it (KillShell) or $tk" } elseif ($ownerGone) { "supervise -AutoFix kills it next sweep; now: $tk" } elseif ($o.live -or $busy) { "board msg $($o.name) to end it (live agent or busy tree: no taskkill)" } else { "$($o.name) ends it, else $tk" }
+    $tk = if ($KitIsWindows) { "taskkill /PID $($p.Id) /T /F" } else { "kill -TERM $($p.Id)" }
+    $next = if ($shellState -eq 'running') { '' } elseif ($o.coordinator) { "yours: stop it (KillShell) or $tk" } elseif ($ownerGone) { "supervise -AutoFix kills it next sweep; now: $tk" } elseif ($o.live -or $busy) { "board msg $($o.name) to end it (live agent or busy tree: no taskkill)" } else { "$($o.name) ends it, else $tk" }   # arch-ok: hint text, $tk is per OS
     $rows.Add([pscustomobject]@{ pid = $p.Id; short = $short; cmd = $cmd; owner = $o.name; age = [math]::Round($age); state = $shellState; next = $next; dir = $dir })
     $s60 = $short.Substring(0, [math]::Min(60, $short.Length))
     if ($shellState -ne 'running') { $flags.Add([pscustomobject]@{ level = 'WATCH'; kind = "SHELL $shellState"; who = $o.name; age = "$([int]$age) min"; problem = "pid $($p.Id) $s60`: $why"; what = "SHELL $shellState pid $($p.Id) of $($o.name) ($s60): $why"; action = $next }) }

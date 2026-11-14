@@ -670,8 +670,8 @@ $out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.
 $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # logical name (tracker.statuses)
 $isLocal = [string]$(if ($item.localEnv) { $item.localEnv } else { $run.localEnv })   # local env item (ENV-FIX)
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
-# trackers that file an issue without a list / project (qa.bugTrackersWithoutList)
-$canCreate = [bool]$bugList -or $KitConf.TrackerType -in @(Get-KitSetting 'qa.bugTrackersWithoutList' @('github', 'gitlab', 'none'))
+# trackers that file an issue without a list / project: none, and vocab.json trackers.<type>.listless
+$canCreate = [bool]$bugList -or $KitConf.TrackerType -eq 'none' -or [bool]$(if ($KitVocab) { $KitVocab.trackers.($KitConf.TrackerType).listless })
 # own vs new: tester's 'defect' wins, else a check id matching qa.newDefectIdRx ('' = none) is new; a knownBug FAIL is neither (tracked elsewhere)
 $script:NewDefectRx = [string](Get-KitSetting 'qa.newDefectIdRx' '')
 function Test-KnownBug($c) { [bool]"$($c.knownBug)".Trim() }

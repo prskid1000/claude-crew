@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L67 state · L141 config · L222 OS · L419 leases · L808 status · L1052 supervise sweep · L1123 tracker ·
-  L1471 prior · L1487 ask bugs · L1672 process · L1700 git-host · L1886 kitlog · L2006 params · L2311 entry-scripts
+  L1472 prior · L1488 ask bugs · L1673 process · L1701 git-host · L1887 kitlog · L2007 params · L2312 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -159,7 +159,7 @@ function Get-KitSetting([string]$Path, $Default) {
   if ($cur -is [array]) { if (-not $cur.Count) { return $Default } } elseif ($null -eq $cur -or "$cur" -eq '') { return $Default }   # a list of objects stringifies to ''
   $cur
 }
-$__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }) })
+$__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' 'markdown' })
 $__trLp = [string](Get-KitSetting 'tracker.statusLabelPrefix' 'status:')   # github / gitlab status labels
 $__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'none' })).ToLower()
 $__trTag = [string](Get-KitSetting 'tracker.branchTag' "$($script:KitVocab.trackers.$__trType.branchTag)")
@@ -1254,6 +1254,7 @@ Register-KitAdapter 'tracker' 'none' @{
 # adapter-end:tracker
 # adapters/*.ps1 register before the tracker type is resolved; a vendor file (names below) loads only when config selects one
 # of its names: the tracker here, git host and ci once the host type is known (Import-KitVendorAdapters below)
+# registry: vendor adapter files: crafty/adapters/<vendor>.ps1
 $script:KitVendorOf = @{ github = 'github'; gitlab = 'gitlab'; bitbucket = 'bitbucket'; azure_devops = 'azure'; gitea = 'gitea'; ci_jenkins = 'jenkins'
   tracker_azure = 'azure'; tracker_clickup = 'clickup'; tracker_jira = @('jira', 'jira-server'); tracker_linear = 'linear'; tracker_youtrack = 'youtrack' }
 function Import-KitVendorAdapters([string[]]$Want) {   # the file paths to dot-source (at script scope: functions stay defined)

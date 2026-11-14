@@ -49,7 +49,7 @@
    "command": { "type": "command", "commands": { "view": "mytracker show {id} --json", "status": "mytracker move {id} {status}", "comment": "mytracker note {id} {text}" } }
   }
  },
- "reports": { "_readme": "type: markdown, html (a kept file) | command ('<cli> {title} {path} {parent}' prints the URL); gdocs (Google Doc + Drive evidence via gws; default with gws), pdf, confluence, notion: adapters. share (gdocs): anyone (default) | domain:<domain> | none", "type": "markdown" },
+ "reports": { "_readme": "type: markdown, html (a kept file) | command ('<cli> {title} {path} {parent}' prints the URL); gdocs (Google Doc + Drive evidence via gws), pdf, confluence, notion: adapters. share (gdocs): anyone (default) | domain:<domain> | none", "type": "markdown" },
  "driveParent": "<Drive folder or shared-drive id (gdocs)>",
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels QA never tests (OUT_OF_SCOPE). targets: /testy select groups (target: '<group>'): a task's env: the first rule matching lists / repos / nameRegex / pathRegex (localEnv: live = in its running release). seatGB: RAM per QA seat. matrix: UI cases run at viewports (WxH) x fontScales x themes (app-set). notLocal: [{ name, match: row regex }] deps no local env runs (PASS -> NOT_TESTED_LOCAL). qualityWords: stated-quality regex ('' = off). lanes: {<n>: {kind, parallel, followUp, devices}}.", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. email>"],
   "matrix": { "viewports": [] }, "notLocal": [],

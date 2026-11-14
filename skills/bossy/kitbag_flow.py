@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L72 parts · L157 control · L330 parse · L632 link · L861 cycles · L937 pack · L1074 page · L1531 command
+Sections: L17 rules · L73 parts · L158 control · L331 parse · L633 link · L862 cycles · L938 pack · L1075 page · L1532 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -61,6 +61,7 @@ DOC_BOUND = re.compile(r'(?:at most|max(?:imum)?|up to|<=|≤)\s*(\d+)\s*(\w+)|(
      r'every\s+(\d+)\s*(\w+)|\b(weekly|daily|hourly|once|twice)\b', re.I)
 OUTCOMES = ('PASS', 'FAIL', 'BLOCKED', 'NONE', 'NOT_TESTED', 'PASS_WITH_NOTE', 'OUT_OF_SCOPE', 'LIVE', 'REFUSED', 'REJECTED', 'ROLLED BACK',
    'NOTICE', 'ACT', 'WATCH', 'INFO', 'MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED',
+   # registry: flow words: crafty/vocab.json statuses + the kit result words
    'closed', 'failedTesting', 'failed testing', 'in test', 'promoted', '[Bug]', 'merged', 'held', 'deferred', 'blocked')
 TERMINAL = {'PASS', 'closed', 'merged', 'MERGED', 'promoted', 'in test', 'LIVE', 'INFO', 'OUT_OF_SCOPE', 'NONE', 'PASS_WITH_NOTE'}
 OUT_RX = re.compile(r'(?<![\w-])(' + '|'.join(re.escape(o) for o in sorted(OUTCOMES, key=len, reverse=True)) + r')(?![\w-])')

@@ -24,9 +24,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L32 init · L43 board · L220 budget · L250 launch · L490 recover · L577 pause · L588 resume · L655 program · L706 param ·
-  L712 track · L1028 supervise · L1326 report · L1405 audit · L1465 storage · L1468 bugbrief · L1579 cleanup · L1663 learn ·
-  L1694 decide · L1828 debate · L1872 health · L1935 retro due · L1945 tidy · L2011 setup · L2104 guard-sendmessage
+Sections: L32 init · L43 board · L220 budget · L250 launch · L491 recover · L578 pause · L589 resume · L656 program · L707 param ·
+  L713 track · L1029 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1580 cleanup · L1664 learn ·
+  L1695 decide · L1829 debate · L1873 health · L1936 retro due · L1946 tidy · L2012 setup · L2105 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -471,6 +471,7 @@ function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $nu
       $guess = -not $mine.Count -and $loose.Count -and $its.Count -gt 1
       if (-not $mine.Count -and $its.Count -eq 1) { $mine = $loose }
       $tk = if ($t) { Get-KitOnce $t { try { Get-TrackerTask $t } catch { $null } } }; $ts = "$($tk.status)"
+      # registry: logical statuses: crafty/vocab.json statuses
       $late = $ts -and (Test-TrackerStatus $ts 'promoted', 'inTest', 'closed')   # dev steps done (failedTesting: back to dev)
       $rx = '(?i)testing doc(?: \(human\))?\W{0,6}(https?://[^\s)\]"<>]+)'   # description links block is current: read first
       $doc = if ($t -and -not $late) { if ("$($tk.description) $(@($mine.body) -join ' ')" -match $rx) { $Matches[1] } else {
@@ -2012,8 +2013,8 @@ if ($Json) { $o | ConvertTo-Json -Compress; return }
 # vendor CLI + OS-only allows: generated into settings.local.json from the configured adapters (settings.json stays generic)
 function Get-KitAllowCatalogue {
   [ordered]@{
-    'host:gitlab' = @('PowerShell(glab mr *)', 'PowerShell(glab api *)', 'PowerShell(glab auth status*)')
-    'host:github' = @('PowerShell(gh pr *)', 'PowerShell(gh auth status*)')
+    'host:gitlab' = @('PowerShell(glab mr *)', 'PowerShell(glab api *)', 'PowerShell(glab auth status*)')   # arch-ok: allow pattern
+    'host:github' = @('PowerShell(gh pr *)', 'PowerShell(gh auth status*)')   # arch-ok: allow pattern
     'report:gdocs' = @('PowerShell(gws drive files export *)')
     'os:windows' = @('PowerShell(& *.claude\skills\*)', "PowerShell(& '*.claude\skills\*)", 'PowerShell(python *.claude\skills\*)')
   }

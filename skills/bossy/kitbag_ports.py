@@ -129,7 +129,7 @@ def detached(cmd, windows):
     """agy runs hooks synchronously: the slow cleanup starts hidden in the background and the hook prints {} at once."""
     if windows:
         inner = cmd.split(' ', 1)[1].replace("'", "''")
-        return f"pwsh -NoProfile -NonInteractive -WindowStyle Hidden -Command Start-Process pwsh -WindowStyle Hidden -ArgumentList '{inner}'; '{{}}'"
+        return f"pwsh -NoProfile -NonInteractive -WindowStyle Hidden -Command Start-Process pwsh -WindowStyle Hidden -ArgumentList '{inner}'; '{{}}'"   # arch-ok: Windows branch
     return f"nohup {cmd} >/dev/null 2>&1 & echo {{}}"   # agy runs it with sh -c
 
 def codex_config_text(kit=".claude"):

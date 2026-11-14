@@ -122,6 +122,15 @@ Expect "kitbag migrate: install blocks out, other exclude lines kept, an untrack
 Add-Content $mgx "# kitbag $mgw duel", '/notes/mine.txt', "# kitbag $mgw end"; '{ broken' | Set-Content (Join-Path $kc 'skills/crafty/kit.local.json')
 $mg3 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String; $mg3c = $LASTEXITCODE
 Expect "kitbag migrate: an unreadable kit.local.json changes nothing, exit 1 ($($mg3.Trim()))" ($mg3c -eq 1 -and (Test-Path "$kc/notes/mine.txt") -and (Get-Content $mgx -Raw) -match "kitbag $mgw duel")
+# configVersion: an older kit.local.json gets the old defaults once (its own values win); a new one and a second run: nothing
+$mgf = Join-Path $kc 'skills/crafty/kit.local.json'; $mgn = Join-Path (Split-Path $kc) 'new.local.json'
+& $J @{ localOnly = @('notes'); deploy = @{ productionPattern = '(?i)live' }; localEnv = @{ envs = @{} } } $mgf
+$mg4 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String; $mc4 = Get-Content $mgf -Raw | ConvertFrom-Json; $mg5 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String
+& $J @{ localOnly = @('notes') } $mgf; $null = & $py -X utf8 $KT2 migrate 2>&1; $mc6 = Get-Content $mgf -Raw | ConvertFrom-Json
+& $J @{ configVersion = 2; localOnly = @('notes') } $mgf; $null = & $py -X utf8 $KT2 migrate 2>&1; $mc7 = Get-Content $mgf -Raw | ConvertFrom-Json
+Expect "kitbag migrate: configVersion < 2 gets the old defaults (own values kept, local-env keys only with a localEnv), once; 2 = none ($(($mg4 -split "`n").Count) lines)" ($mc4.configVersion -eq 2 -and
+  $mc4.process.gates.merge -eq 'builtin:testingDocs' -and $mc4.deploy.productionPattern -eq '(?i)live' -and $mc4.deploy.ssh.manager -eq 'systemd' -and $mc4.localEnv.defaults.tenants.model -eq 'schema' -and
+  $mg4 -match '"qa\.lanes" set to the pre-2 default' -and -not $mg5.Trim() -and $mc6.qa.lanes.app.kind -eq 'app' -and -not $mc6.masking -and -not $mc6.localEnv -and -not $mc7.process -and -not $mc7.qa)
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 # section maps: lint SECTION-MAP / SECTION-UNMAPPED, audit SECTION-BIG, sections --fix
 $sp = Join-Path $k 'sec.py'; @'

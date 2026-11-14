@@ -20,8 +20,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1357 audit ·
-  L1473 registry · L1805 arch lint · L2008 prose · L2159 sections · L2289 budget · L2303 migrate · L2409 plugins ·
-  L2463 state lint · L2651 main
+  L1473 registry · L1805 arch lint · L2008 prose · L2159 sections · L2289 budget · L2303 migrate · L2451 plugins ·
+  L2505 state lint · L2693 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -1804,7 +1804,7 @@ def literal_warns(k, ratchet=False):
 
 # ---- arch lint: ARCH-* (core stays neutral: defaults, enums, vendor calls, platform calls, lessons, dead keys); vocab in VOCAB_JSON
 VOCAB_JSON = 'skills/bossy/lint-vocab.json'
-ARCH_COUNTED = {'ARCH-DEAD-KEY'}   # codes counted as problems; the rest print as WARN until the tree is clean (add a code to flip it)
+ARCH_COUNTED = {'ARCH-DEAD-KEY', 'ARCH-DEFAULT', 'ARCH-VENDOR-API', 'ARCH-PLATFORM', 'ARCH-LESSON'}   # counted; ARCH-ENUM stays WARN (vendor dispatch tables name vendors)
 CODE_EXT = ('.ps1', '.py', '.js', '.mjs')
 
 def word_rx(words):
@@ -2375,7 +2375,44 @@ def cmd_migrate(a):
 # once, for each key it does not set; a new one (setup -WriteLocal: kit.example.json) starts at CONFIG_VERSION.
 CONFIG_VERSION = 2
 # legacy-defaults:start
-LEGACY_DEFAULTS = {}
+LEGACY_DEFAULTS = {   # dotted key -> the pre-2 default (README "Configuration" has the neutral one)
+    'gitHost': 'gitlab.com',
+    'protectedBranchesBase': ['main', 'master', 'develop', 'release/*', 'staging', 'staging/*', 'production', 'production/*', 'prod/*', 'hotfix/*', 'critical/*'],
+    'process.gates': {'promote': 'builtin:testingDocs', 'merge': 'builtin:testingDocs', 'finish': 'builtin:testingDocs', 'mrBody': 'builtin:testingDocs', 'bugFix': 'builtin:reproRow'},
+    'mr.footer': '\U0001f916 Generated with [Claude Code](https://claude.com/claude-code)',
+    'tracker.ciTaskPattern': r'^\W*\[[^\]]*Unit Test\]',
+    'deploy.productionPattern': '(?i)prod|critical',
+    'deploy.ssh.manager': 'systemd',
+    'deploy.ssh.sudo': True,
+    'api.defaultUser': 'admin',
+    'api.tokenFields': ['access_token'],
+    'qa.newDefectIdRx': r'^X\d',
+    'qa.holdCauses': ['env-data', 'phone-only', 'tool-down', 'no-mail-sandbox'],
+    'qa.lanes': {'web': {'kind': 'web', 'parallel': 5, 'followUp': 'app'}, 'api': {'kind': 'api', 'parallel': 5, 'followUp': 'app'}, 'app': {'kind': 'app', 'devices': 'android'}},
+    'devices.avd': {'api': 'android-36.1', 'device': 'pixel_10_pro', 'tag': 'google_apis_playstore'},
+    'cleanup.idleDaemons': [{'process': r'^java(\.exe)?$', 'match': 'GradleDaemon|KotlinCompileDaemon', 'label': 'Gradle daemon', 'busyKinds': 'android|gradle'}],
+    'storage.db.maxGB': 5,
+    'migrations.tool': 'liquibase',
+    'migrations.lbcheck': {'requireRollback': True, 'tagDatabaseAlone': True, 'stampPattern': r'(\d{14})',
+                           'roots': [r'^(.*?)[\\/]config[\\/]liquibase[\\/]', r'^(.*[\\/]resources)[\\/]']},
+    'localEnv.defaultService': 'api',
+    'localEnv.defaults.db.cascadeGuard': True,
+    'localEnv.defaults.tenants': {'model': 'schema', 'key': 'id', 'name': 'name', 'idColumns': ['tenant_id'], 'nameColumns': ['tenant_name'],
+                                  'keepFrom': ['builtin:kit-config', 'builtin:targets', 'builtin:seed']},
+    'localEnv.logClasses': {
+        'expected': r'(?i)\bbad\.request\b|\bnot[ .]found\b|\bvalidation\b|MethodArgumentNotValid|ConstraintViolation|\b(BadRequest|NotFound|AccessDenied|Unauthorized|Forbidden)\w*\b|\b(status|HTTP/\S+)\W+4\d\d\b',
+        'startup': r'(?i)Application run failed|APPLICATION FAILED TO START|failed to start|BeanCreationException|\brolling back\b|\brollback\b',
+        'connection': r'(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|\b(elasticsearch|search|mysql|redis|kafka|rabbit\w*)\b.{0,40}\b(not reachable|unreachable|refused|timed? ?out|down)\b',
+        'dependency': r'(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|whilst connecting to|\bES client\b|elasticsearch.{0,40}(unreachable|refused|not reachable|timed? ?out)'},
+    'masking.rules': {'*.mfa_key': 'hash', '*.reset_key': 'hash', '*.activation_key': 'hash', '*.created_by': 'login', '*.last_modified_by': 'login',
+                      '*.modified_by': 'login', '*.updated_by': 'login', 'customer.name': 'name', 'contact.name': 'name', 'employee.name': 'name',
+                      'driver.name': 'name', 'user.name': 'name', 'person.name': 'name'},
+    'masking.logins': ['admin', 'system', 'anonymousUser', 'user'],
+    'masking.names': {
+        'first': 'Alex Sam Chris Jo Robin Kim Lee Pat Max Ash Drew Jamie Morgan Casey Taylor Jordan Riley Quinn Avery Charlie Ellis Frankie Harper Jesse Kai Logan Noel Reese Rowan Sage Shay Skyler Toby Val Wren Blake Dana Emery Finley Hayden'.split(),
+        'last': 'Smith Jones Brown Taylor Wilson Evans Thomas Johnson Roberts Walker Wright Robinson Thompson White Hughes Edwards Green Hall Wood Harris Clarke Jackson Turner Hill Moore Cooper Ward King Baker Harrison Morris Lee Martin Allen Bell Carter Mason Parker Shaw Young'.split(),
+        'streets': 'High Street,Station Road,Church Lane,Mill Road,Park Avenue,Victoria Road,Green Lane,Manor Way,Kings Road,Queens Drive,Oak Close,Bridge Street'.split(',')},
+}
 # legacy-defaults:end
 
 def migrate_config(path):
@@ -2386,7 +2423,12 @@ def migrate_config(path):
     if int(cfg.get('configVersion') or 1) >= CONFIG_VERSION:
         return None, []
     added = []
-    for dotted, value in LEGACY_DEFAULTS.items():
+    legacy = dict(LEGACY_DEFAULTS)
+    if shutil.which('gws'):   # reports.type was gdocs where the gws CLI ran, else markdown (today's default)
+        legacy['reports.type'] = 'gdocs'
+    for dotted, value in legacy.items():
+        if dotted.split('.')[0] in ('localEnv', 'masking') and 'localEnv' not in cfg:   # no local env: nothing used them
+            continue
         cur, parts = cfg, dotted.split('.')
         for part in parts[:-1]:
             if not isinstance(cur.get(part), dict):

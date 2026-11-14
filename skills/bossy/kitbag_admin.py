@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L65 setup · L175 config · L354 recover · L499 release · L550 cost · L657 registry · L661 scan
+Sections: L16 helpers · L65 setup · L176 config · L357 recover · L502 release · L553 cost · L660 registry · L664 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -148,6 +148,7 @@ def cmd_setup(kit, fix):
         if not shutil.which(exe):
             out('ACT', 'SETUP-CLI', exe, 'not on PATH (the kit needs it)')
     tt = (os.environ.get('KIT_TRACKER_TYPE') or get(cfg, 'tracker.type') or 'none').lower()
+    # registry: tracker + git-host adapters: crafty/adapters/<vendor>.ps1 headers (CLIs, env vars)
     need = {'clickup': ['clickup'], 'github': ['gh'], 'gitlab': ['glab'], 'jira': [], 'none': []}.get(tt, [])
     # as lib.ps1 Get-HostKind: by name only, no vendor default (unknown: the config step asks for gitHostType)
     hk = get(cfg, 'gitHostType') or next((k for k, rx in (('github', 'github'), ('bitbucket', 'bitbucket'), ('azure', r'dev\.azure|visualstudio'), ('gitea', 'gitea|forgejo|codeberg'), ('gitlab', 'gitlab')) if re.search(rx, str(get(cfg, 'gitHost') or ''))), '')
@@ -245,6 +246,7 @@ def _deploy_kinds():
 def deploy_kind(d):
     if d.get('kind'):
         return str(d['kind'])
+    # registry: deploy kinds: pokey/adapters/deployed_checks.ps1 (kind deploy-kind)
     return next((k for k in ('laneApk', 'ssh', 'tag', 'probe', 'manual', 'awsStack', 'command') if d.get(k)), 'ci-job' if d.get('branch') else '')
 
 def config_rules(kit, c):
@@ -334,6 +336,7 @@ def targets_rules(t):
     if t.get('default') and t['default'] not in tg:
         out('ACT', 'CONFIG-VALUE', 'targets.local.json default', 'names no entry of targets')
     for n, v in tg.items():
+        # registry: targets.local.json target fields (kit.example.json localFiles)
         if not (v or {}).get('web') and not (v or {}).get('api'):
             out('ASK', 'CONFIG-NEED', f'targets.local.json targets.{n}', 'needs web and/or api base URL')
         if not (v or {}).get('users'):

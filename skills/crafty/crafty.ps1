@@ -1931,7 +1931,7 @@ function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
 }
 if (($ds = Find-DriveRootSearch $raw $tn)) { Deny "kit guard: that $($ds[0]) searches a whole drive ($($ds[1])): it runs for hours at full CPU and outlives you (an orphaned find / starved every local-env start). Search a scoped path: the Glob / Grep tools on the repo, the kit or ~/.claude (e.g. Glob **/SKILL.md in ~/.claude/skills), or name the folder (find <repo> -name x)." }
 $hl = "GUI windows on the owner's screen are not allowed (headless rule)."
-if ($hcExe -and $cmd -match "(?m)(^|[;&|({\n]|\`$\()\s*(\S*[\\/])?($hcExe)(\.exe)?\s+" + '(browse\b(?![^|;&\r\n]*\s(-n|--no-browser)\b)|(?!(run|workflow)\s)[^|;&\r\n]*\s(--web|-w)(?=[\s=;|&)]|$))') { Deny "gh / glab --web, -w and gh browse open the owner's browser: read it in the terminal (gh pr view <n>, glab mr view <n>, --json). $hl" }
+if ($hcExe -and $cmd -match "(?m)(^|[;&|({\n]|\`$\()\s*(\S*[\\/])?($hcExe)(\.exe)?\s+" + '(browse\b(?![^|;&\r\n]*\s(-n|--no-browser)\b)|(?!(run|workflow)\s)[^|;&\r\n]*\s(--web|-w)(?=[\s=;|&)]|$))') { Deny "the git-host CLI's --web, -w and browse open the owner's browser: read it in the terminal (its view verb, --json). $hl" }
 # raw MR create / merge skips track add (KIT_NO_TASK=<reason>)
 $mrRx = '(?m)(?:^|[;&|({\n]|\$\()\s*(?:&\s*)?(?:\w+=(?:"[^"]*"|''[^'']*''|\S*)\s+)*(?:\S*[\\/])?(?<tool>' + $hcExe + ')(?:\.exe)?\s+(?:' + $hcNoun + ')\s+(?<verb>create|new|merge)\b'
 if ($KitConf.TrackerType -ne 'none' -and $hcExe -and $cmd -match $mrRx) {
