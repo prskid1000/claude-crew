@@ -209,5 +209,9 @@ Expect "path guards ($ke|$re)" ($ke -match 'Kd:' -and $re -match 'bad runtime')
 # cell cuts (back from workflows.tests for its cap)
 $ec = & { . (Lib); "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")$((Format-KitCell "add -HoldPromotion ''" -Exact) -eq "add -HoldPromotion ''")" }
 Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
+# goody sync on a live clone: refused while another agent beats on the board; the caller itself does not count
+git init -q $k; & $J @{ agent = 'GS1'; status = 'working'; beat = (Get-Date).ToString('o') } (Join-Path (TkPath $k board -Create) 'GS1-x.json')
+$gs = foreach ($me in '', 'GS1') { $env:KIT_AGENT = $me; "$(& $py -X utf8 "$k/skills/bossy/kitbag.py" goody sync 2>&1)|$LASTEXITCODE" }; Remove-Item Env:KIT_AGENT -ErrorAction SilentlyContinue
+Expect "goody sync: refused on the live clone while another agent is live ($($gs[0]))" ($gs[0] -match 'refused on the live clone while 1 other agent\(s\) are live \(GS1\).*\|1$' -and $gs[1] -notmatch 'refused on the live clone')
 Remove-TestKit $k
 Complete-Tests

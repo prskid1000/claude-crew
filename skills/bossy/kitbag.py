@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L33 paths · L84 state · L139 kitlog · L238 load · L635 lint · L1033 README graph · L1135 lint command · L1332 audit ·
-  L1441 registry · L1782 prose · L1933 sections · L2063 budget · L2087 goodies · L2594 state lint · L2779 main
+  L1441 registry · L1782 prose · L1933 sections · L2063 budget · L2087 goodies · L2612 state lint · L2797 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -2520,8 +2520,22 @@ def extra_write(kit, verb, names, auto=False):
     return 0
 
 
+def live_board_agents(minutes=20):
+    """Board agents with a beat in the last <minutes>, not left or crashed; the caller (KIT_AGENT) aside."""
+    bd, me, out = kit_path('board'), os.environ.get('KIT_AGENT', ''), []
+    for n in (os.listdir(bd) if osp.isdir(bd) else []):
+        try:
+            e = json.load(open(osp.join(bd, n), encoding='utf-8-sig')) if n.endswith('.json') else {}
+            fresh = datetime.datetime.now().astimezone() - datetime.datetime.fromisoformat(e.get('beat') or '1970-01-01T00:00:00+00:00') < datetime.timedelta(minutes=minutes)
+        except (OSError, ValueError, TypeError):
+            continue
+        if fresh and e.get('status') != 'left' and not e.get('crashed') and e.get('agent') and e.get('agent') != me:
+            out.append(e['agent'])
+    return sorted(set(out))
+
+
 def cmd_extra(a):
-    """kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N]
+    """kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync [--force: live clone, agents live] | test [<name>] [--ref <branch>] | prune [--days N]
     [--dry-run] (--auto: installed on demand, unlisted; --ref: an unpushed goodies branch's files; prune: unused > N days, default 30,
     and no Needed when matches)"""
     kit = KIT_DIR
@@ -2542,6 +2556,10 @@ def cmd_extra(a):
     # offline: the last fetch answers; check / test fetch only if never fetched (check runs at SessionStart)
     if verb in ('list', 'add', 'sync') or (git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0] and (verb != 'test' or installed)):
         git(kit, 'fetch', '-q', 'origin', f'+refs/heads/goodies:{EXTRAS_REF}', timeout=60)
+    if verb == 'sync' and osp.isdir(osp.join(kit, '.git')) and '--force' not in flags and (busy := live_board_agents()):
+        print(f'kitbag goody sync: refused on the live clone while {len(busy)} other agent(s) are live ({", ".join(busy[:6])}): '
+              'their goody scripts would change mid-step; sync when the board is empty (bossy.ps1 board show), or --force', file=sys.stderr)
+        return 1
     if verb in ('sync', 'add', 'remove'):   # one writer: the post-merge hook's background sync races a manual one
         with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):   # a sync may take minutes
             return extra_write(kit, verb, names, '--auto' in flags)
