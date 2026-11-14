@@ -96,11 +96,12 @@ Expect-Each (Invoke-Js dw-nopoll $jsx $wfd) 'buildy merge order: a producer that
 # buildy: mode duel is a goody (refused, named); a removed arg is refused, never ignored
 $jso = @'
 const base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }, err = (a) => run(a, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)
-const e = await err({ ...base, mode: 'duel' }), r = await err({ ...base, review: false })
+const e = await err({ ...base, mode: 'duel' }), r = await err({ ...base, review: false }), g = await err({ ...base, agents: [{ id: 'X1', items: 'A1', notes: 'n' }] })
 console.log(`duel-refused:${/duel is a goody: run kitbag.py goody add duel/.test(e)}`)
 console.log(`removed-arg:${/buildy\.js args refused: unknown review/.test(r)}`)
+console.log(`agent-key:${/refused: unknown agents\.X1\.notes/.test(g)}`)
 '@
-Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-arg' -Show 5
+Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-arg', 'agent-key' -Show 5
 # buildy deploy batch: skipped without the deploys goody, else parsed
 $jsdp = @'
 const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
