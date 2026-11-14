@@ -3,6 +3,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 (adds the git-ignored LESSONS.local.md). Retired lines: `bossy.ps1 learn -History` (git + `.state`). Managed by `bossy.ps1 learn` (`-When -Do -Why`).
 
 ## bossy
+- supervise flags a SHELL ORPHAN whose owner agent still shows on the board -> check the board row and its last beat before taskkill /T; kill only when the agent is gone (taskkill /T on checky-R2 pid 32160 cut a live agent)
 - Two products' web items in one wave -> batch one product's web items, release its web, then launch the other's; testers run API checks first (two local web services, ~8-10 GB each, do not fit beside QA browsers and the keep-free floor). (4×)
 - A consumer MR waits on producer MRs -> register EVERY producer with `bossy.ps1 track add -MergeAfter '<web>!<iid>><api>!<iid>'` before any merge, read the printed list back, confirm API MRs merged before QA, never merge a consumer by hand (a consumer merged first broke QA). (9×)
 - The owner asks to explain or plan -> answer or plan, never launch a wave (a 9-agent wave once built nothing). (4×)
@@ -60,6 +61,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
+- a test run lasts longer than a few minutes (full cypress) -> start it detached with Start-Process and a log file, never as a Bash run_in_background child (a 3.5 h cypress run died at 42 min with the shell, no exit line)
 - publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames)
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
 - A PASS_WITH_NOTE whose observed text describes a defect (clipped control, wrong data) -> make it a FAIL; re-read every note before closing (a defect passed as a note once). (1x)
@@ -100,6 +102,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- a kit test reads durable state (.state/leases.jsonl) or a block moves into a new adapters/*.ps1 -> redirect .state in the test harness and add new files to tests/harness.ps1 New-TestKit list (torn lease lines from the running kit and missing files failed moved tests)
+- a multi-line program or a > or // argument to python from Git Bash (pyenv shim, MSYS conversion) -> write a .py into crafty.ps1 dir, run it and pass selectors from pwsh (cut programs, stray files, 4 flaky FAILs, a dropped slash)
 - counting a property that may be null in PowerShell -> use @($x.prop | Where-Object { $_ }).Count or test $null first; @($null).Count is 1 (deploy plan printed OUT-OF-AREA for every MR, supervise info on an empty cache)
 - Working after a push in a merged clean worktree -> run every later command with absolute paths into it, never cd then a command that falls back to the live clone (cleanup swept the worktree: hard failure). (1x)
 - Reading ISO times with ConvertFrom-Json -> compare as DateTimeOffset or keep them text (-AsHashtable, then ToString('o')) (DateTime interpolation drops fraction and offset: same-second ties broke ordering). (1×)
