@@ -14,9 +14,11 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0 (and H0, L0): `bossy.ps1 learn -Read -Skill pokey` |
-| `pokey.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and their goodies) |
-| `<kit>/skills/crafty/crafty.ps1` | step 3 (`check -Step e2e`); L1 Selection (`tracker list/view/owner`; a local env: `envy.ps1 status -Env`, goody `local-env`) |
+| `pokey.ps1` | steps 1-4, 6; L1, L3 (verbs: its header) |
+| `<kit>/skills/crafty/crafty.ps1` | step 3 (`check -Step e2e`); L1 Selection (`tracker list/view/owner`; a local env: `envy.ps1 status -Env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
+| `adapters/*`, `video.py` | used by the `pokey.ps1` / `browser.mjs` verb that needs them |
+| `media.md` | task videos (`pokey.ps1 evidence`) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
 ## Tester / verifier steps (test environment only, never production)
@@ -27,7 +29,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
 1. **Seat + board:** `pokey.ps1 seat acquire` (exit 4 = still waiting: run it again);
    `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
-   report. Phones: `phoney.ps1 acquire|release` (goody `android-swarm`; keep it through waits < 30 min). Local env
+   report. Phones: `phoney.ps1 acquire|release` (keep it through waits < 30 min). Local env
    "pause": stop its checks; "deploy done": re-run them.
 2. **Deployed?** Before any FAIL: `pokey.ps1 deployed -Mrs <repo>!<iid>,...` per repo of the task; not deployed -> NOT_TESTED
    "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
@@ -39,7 +41,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command;
    e2e: `check -Step e2e` (the change's specs).
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
-   `pokey.ps1 annotate`: goody `android-swarm`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
+   `pokey.ps1 annotate`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
    -Next <next check id> -Evidence "<verdict> <file>"` (a restart starts at that check; a beat's PAUSE line says what to do).
 5. **Verdict per check — defects are never notes:**
    - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
@@ -112,7 +114,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   subtasks:[{id,name,mrs}], retest?, only?}`),
   guides exported to text. Deploy check: `pokey.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos: `lead-notes.md`; not
   deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, baseline data (by id;
-  local env: `seed -Check`, goody `local-env`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
+  local env: `seed -Check`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
   **Selection** (`pokey.ps1 prepare -Job <job JSON>` runs steps 1-5, the workflow's Prepare step; by hand the same):
   1. Folder = `runFolder`, date placeholders (`<yyyy-MM-dd-HHmmss>`) expanded; one with files is refused, an empty one reused.
      Candidates: `crafty.ps1 tracker list <container> <status>` per `lists` (empty: `trackerLists`, else `tracker.list` /
@@ -125,7 +127,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
      `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none
      -> left out.
   4. Live: test env -> `pokey.ps1 deployed -Mrs <MRs> -Target <t>`, DEPLOYED or N/A (MANUAL resolved): in; local env (`localEnv`)
-     -> in; the lead runs `envy.ps1 status -Env <env>` (goody `local-env`) first. Else left out with the state.
+     -> in; the lead runs `envy.ps1 status -Env <env>` first. Else left out with the state.
   5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
      `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
 - L2. Launch `/testy { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,

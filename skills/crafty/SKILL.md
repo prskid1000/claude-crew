@@ -17,6 +17,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 | `lib.ps1` | dot-sourced by every kit script; never run by hand |
 | `devtools.py` | steps 6-7, rebase conflicts (`keepboth`) |
 | `adapters/*` | loaded by `lib.ps1` / `devtools.py`; a vendor one (tracker, git host, ci, report) only when config selects it |
+| `spec.mjs` | step 4: `check -Step test` runs it for a web project with no unit-test target |
 | `module-audit.md` | `revy` kind module (`devtools.py findings`) |
 | `kit.example.json` | setup (`bossy.ps1 setup -WriteLocal`; keys: README "Configuration"); `_paths`: every state path |
 

@@ -45,8 +45,8 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R8 | Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents | `/testy` | `bossy` |
 | R9 | A person tests by hand from a human testing doc | `pokey` → H steps | — |
 | R10 | Test, check or verify one thing outside a running workflow: a deployed change, one screen or endpoint, a smoke after a deploy, a regression sweep, a user-report reproduction, perf on the local env, an "is X live / true?" claim | `checky` agent (role test; kind task / smoke / regression / repro / perf / claim) | — (the agent loads `pokey`) |
-| R11 | The local env outside a running flow: inspect, reproduce or debug on it | `envy` skill (goody `local-env`) | — |
-| R12 | Phones or APKs outside a running flow: build the lane or local-env APK, a manual lease | `phoney` skill (goody `android-swarm`) | — |
+| R11 | The local env outside a running flow: inspect, reproduce or debug on it | `envy` skill | — |
+| R12 | Phones or APKs outside a running flow: build the lane or local-env APK, a manual lease | `phoney` skill | — |
 | R13 | Review something already written, outside a running workflow: open merge/pull requests, a kit commit, a brief, a testing or QA doc, a plan, a config, tracker texts | `revy` agent (kind mr / kit / doc / qa / plan / config) | — (the agent loads `crafty` Rules) |
 | R14 | Static audit of one module's code for bugs, performance or tech debt, without changing code | `revy` agent (kind module) | — |
 | R15 | Data work: a run's test data to clean up, a build or test failing on setup data, a migration's data review, local DB marks / restores / seed, a backfill, a data check | `datay` agent (kind cleanup / fixture / migration / localdb / backfill / check) | — (the agent holds its steps) |

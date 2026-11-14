@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L10 paths · L68 state · L137 config · L217 OS · L414 leases · L849 status · L1093 supervise sweep ·
-  L1164 supervise report · L1260 tracker · L1583 prior · L1599 ask bugs · L1804 git-host · L1964 kitlog · L2084 params ·
-  L2389 entry-scripts
+  L1164 supervise report · L1260 tracker · L1590 prior · L1606 ask bugs · L1811 git-host · L1971 kitlog · L2091 params ·
+  L2396 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1391,8 +1391,15 @@ Register-KitAdapter 'tracker' 'none' @{
   'owner' = { param($a) $a.name }
 }
 # adapter-end:tracker
-# goodies register their adapters before the tracker type is resolved
-$script:KitAdapterFiles = @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName)
+# adapters/*.ps1 register before the tracker type is resolved; a vendor file (names below) loads only when config selects one
+# of its names: the tracker here, git host and ci once the host type is known (Import-KitVendorAdapters below)
+$script:KitVendorOf = @{ github = 'github'; gitlab = 'gitlab'; bitbucket = 'bitbucket'; azure_devops = 'azure'; gitea = 'gitea'; ci_jenkins = 'jenkins'
+  tracker_azure = 'azure'; tracker_clickup = 'clickup'; tracker_jira = @('jira', 'jira-server'); tracker_linear = 'linear'; tracker_youtrack = 'youtrack' }
+function Import-KitVendorAdapters([string[]]$Want) {   # the file paths to dot-source (at script scope: functions stay defined)
+  @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | Where-Object {
+    $v = $script:KitVendorOf[$_.BaseName]; $_.FullName -notin $script:KitAdapterFiles -and (-not $v -or @($v | Where-Object { $_ -in $Want }).Count) } | ForEach-Object FullName)
+}
+$script:KitAdapterFiles = @(); $script:KitAdapterFiles = Import-KitVendorAdapters @($__trType)
 foreach ($__plugin in $script:KitAdapterFiles) { . $__plugin }
 Initialize-KitTracker
 
@@ -2398,12 +2405,13 @@ $KitCmd = [pscustomobject]@{
   orch     = Join-Path $KitConf.Kit 'skills/bossy/bossy.ps1'
   kitbag  = Join-Path $KitConf.Kit 'skills/bossy/kitbag.py'
 }
-# a configured adapter no installed goody brings: installed on demand, then loaded
-$__hostSet = (Get-KitValue 'gitHostType' '') -or (Get-KitValue 'gitHost' '') -or @(Get-KitValue 'repos' @()).Count   # no host configured: no git-host goody to fetch
-foreach ($__need in @(@('tracker', $script:__trType), @('git-host', $(if ($__hostSet) { $script:HostType })), @('ci', ([string](Get-KitSetting 'ci.type' '')).ToLower()))) {
-  if (-not $__need[1] -or $__need[1] -in 'host', 'none' -or $KitAdapters[$__need[0]][$__need[1]] -or "$script:__verb" -match '^(guard|guard-sendmessage|health)$') { continue }   # hooks stay fast
-  if (Install-KitExtra (Get-KitExtraName $__need[0] $__need[1])) {
-    foreach ($__plugin in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName | Where-Object { $_ -notin $script:KitAdapterFiles })) { . $__plugin; $script:KitAdapterFiles += $__plugin }
-  }
+# the git host and ci vendor adapters config selects (host type known now; ci: ci.type and each repos[].ci), and the kit
+# origin's host (supervise protects its main branch): read from .git/config, no git process on every script start
+function Get-KitOriginKind {
+  $gd = Join-Path $KitConf.Kit '.git'
+  if (Test-Path -LiteralPath $gd -PathType Leaf) { $gd = ((Get-Content -LiteralPath $gd -Raw) -replace '^gitdir:\s*', '').Trim() -replace '[\\/]worktrees[\\/][^\\/]+$', '' }
+  $cf = Join-Path $gd 'config'
+  if ((Test-Path -LiteralPath $cf) -and (Get-Content -LiteralPath $cf -Raw) -match '(?m)^\[remote "origin"\]\s*(?:^\s+\w+ = .*\r?\n)*?^\s+url = (\S+)') { Get-HostKind $Matches[1] }
 }
-Add-KitExtraUse $script:KitEntry   # a goody's entry script (envy.ps1, phoney.ps1) in use
+$__vendorWant = @($script:HostType, (Get-KitOriginKind), ([string](Get-KitSetting 'ci.type' '')).ToLower()) + @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.ci)".ToLower() } | Where-Object { $_ })
+foreach ($__plugin in (Import-KitVendorAdapters $__vendorWant)) { . $__plugin; $script:KitAdapterFiles += $__plugin }

@@ -134,7 +134,7 @@
    "vidy": { "job": "video reader: exact screen text, timed answers", "kinds": ["question", "index", "segment"], "roles": [], "skill": "pokey", "tools": "all", "usedIn": ["R19"], "cant": "edit code, tracker, kit",
     "character": { "traits": "frame-by-frame witness", "bias": "the screen beats the narration", "catchphrase": "Which frame shows it?", "never": "paraphrases text or claims an unseen step" } }
   },
-  "skills": ["crafty", "bossy", "pokey"],
+  "skills": ["crafty", "bossy", "pokey", "envy", "phoney"],
   "workflows": {
    "buildy": { "covers": "any multi-item build: features, fixes, refactors, migrations, bug waves, resume, disputes, debates", "crew": ["rechy", "devy", "revy", "datay", "kitty"], "router": "R5" },
    "testy": { "covers": "any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env", "crew": ["checky", "kitty"], "router": "R8" },
@@ -149,7 +149,7 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
-  "caps": { "content": 22, "plumbing": 9 },
+  "caps": { "content": 28, "plumbing": 9 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/crafty/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },
