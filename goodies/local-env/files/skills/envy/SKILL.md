@@ -100,7 +100,19 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   nameColumns, users { table, key, tenantTable, tenantKey }, keep, keepFrom, verify }; mysql / mariadb): kept = `keep` or a
   name in `keepFrom` (default kit.local.json, targets.local.json, the seed file; { file, keys }); refused while a lease, hold or
   train is on; per tenant one transaction (the registry row, its FK children, `tables` rows by id / name column, users no
-  staying tenant has), then the schema; 0 references left checked, smoke + `verify` ({tenant}) per kept tenant. `cleanup
+  staying tenant has), then the schema; 0 references left checked, smoke + `verify` ({tenant}) per kept tenant.
+  `tenant import -From <source> -Tenant <schema> [-As <name>] -Mask <profile> [-DryRun]` (`tenants.import`: { sources { <name>: {
+  creds (a command printing JSON host, port, user, password) | host, port, user, passwordEnv; prod; requireReadOnly (true);
+  adminSchema; maxMB (500) } }, template, skipTables, set { "<table>.<column>": "<value | {tenant} | {source:<table>.<column>}>" },
+  profiles { <name>: { extends ('personal', built in: names, emails, phones, addresses, logins, secrets by column name; '' =
+  none), rules { "<table>.<column> glob": kind | { kind, value } } (keep, null, fixed, password, hash, email, login, shape, first,
+  last, name, address, text), skipData, passwordHash, salt, keepValues, keepDomains, scanEmails (true) } }, restart, prodPattern,
+  cacheHours (24) }): refused for a source marked prod or matching `prodPattern`, a writable one (`@@read_only` 0), a schema over
+  `maxMB`, a taken name, or while a lease, hold or train is on; the schema is streamed through the mask (never stored unmasked;
+  per value deterministic: the same email, login or name masks alike in every table), loaded as `<name>`, registered by cloning
+  the `template` tenant's registry rows (new ids, name columns and text values equal to the template's name = `<name>`, `set` on top)
+  in one transaction (a failure drops the new schema and its registry rows); then `restart` services start under a hold (migrations), `verify`, `seed -Check`. Lanes (own DB copies): import
+  on each lane (`-Env <env><k>`: the masked dump is cached `cacheHours`, the source is read once). `cleanup
   [-Quick] [-DryRun]`: env worktrees (uncommitted ones kept), logs, run files and `cleanup.dataRoots` children no env uses;
   `-Quick` adds old releases and `cleanup.quick` [ { name, paths, olderThanDays, cmd } ] (never what runs).
 - Secrets: `<kit>/.state/localenv/<env>.env` (dotenv) only. Dependencies are linked from one install per target, never installed

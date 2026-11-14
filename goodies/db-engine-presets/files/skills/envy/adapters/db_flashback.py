@@ -15,9 +15,13 @@
   guard --schemas a,b [--remove]: the cascade guard: BEFORE DELETE / key-UPDATE triggers on parents of CASCADE / SET NULL
       foreign keys copy the child rows (whole tree) into kit_journal mirrors (binlogged); --remove: triggers + kit_journal gone
   touched --files <f,..>: tables / columns the SQL (a tool's dry-run output) or migration files change -> slice spec items
+  mask --schema <s> | --in <dump.sql> --out <file.sql> [--profile <json>]: one schema (mysqldump from --host, password KIT_SRC_PWD,
+      streamed: never stored unmasked) masked by the profile (rules table.column glob -> kind, extends the built-in 'personal';
+      skipData, passwordHash, salt, keepValues, keepDomains, scanEmails); DEFINER clauses dropped
 Common: --host --port --user (password: MYSQL_PWD) [--mysql <exe>] [--mysqlbinlog <exe>] [--mysqldump <exe>]. Out: JSON.
 Exit codes: 0 ok · 1 refused or failed · 2 usage.
-Sections: L36 binlog · L269 row events · L401 flashback · L658 touched · L695 slices · L756 structure · L850 objects · L902 guard
+Sections: L40 binlog · L273 row events · L405 flashback · L662 touched · L699 slices · L760 structure · L854 objects ·
+  L906 guard · L975 mask
 """
 import argparse, base64, gzip, hashlib, json, os, re, struct, subprocess, sys, tempfile, zlib
 
@@ -968,18 +972,193 @@ def guard_cmd(a, db, schemas):
     return {'installed': len(trig) - kept, 'kept': kept, 'removed': len(gone), 'parents': len(parents), 'triggers': len(trig)}
 
 
+# ---- mask: one schema from a source server (mysqldump, streamed: never stored unmasked) or a dump file -> a masked SQL file;
+#      each value masked by sha256(salt, value): the same value gives the same mask in every table (joins and logins stay)
+FIRST = 'Alex Sam Chris Jo Robin Kim Lee Pat Max Ash Drew Jamie Morgan Casey Taylor Jordan Riley Quinn Avery Charlie Ellis Frankie Harper Jesse Kai Logan Noel Reese Rowan Sage Shay Skyler Toby Val Wren Blake Dana Emery Finley Hayden'.split()
+LAST = 'Smith Jones Brown Taylor Wilson Evans Thomas Johnson Roberts Walker Wright Robinson Thompson White Hughes Edwards Green Hall Wood Harris Clarke Jackson Turner Hill Moore Cooper Ward King Baker Harrison Morris Lee Martin Allen Bell Carter Mason Parker Shaw Young'.split()
+STREETS = 'High Street,Station Road,Church Lane,Mill Road,Park Avenue,Victoria Road,Green Lane,Manor Way,Kings Road,Queens Drive,Oak Close,Bridge Street'.split(',')
+PERSONAL = [   # the built-in profile 'personal': table.column globs (lower case, first match wins) -> kind; text columns only
+    ('*.*password*', 'password'), ('*.*passwd*', 'password'), ('*.*token*', 'hash'), ('*.*secret*', 'hash'), ('*.*api_key*', 'hash'),
+    ('*.mfa_key', 'hash'), ('*.reset_key', 'hash'), ('*.activation_key', 'hash'),
+    ('*.*email*', 'email'), ('*.*e_mail*', 'email'), ('*.login', 'login'), ('*.username', 'login'), ('*.user_name', 'login'),
+    ('*.created_by', 'login'), ('*.last_modified_by', 'login'), ('*.modified_by', 'login'), ('*.updated_by', 'login'),
+    ('*.*phone*', 'shape'), ('*.*mobile*', 'shape'), ('*.*fax*', 'shape'), ('*.tel', 'shape'), ('*.telephone*', 'shape'), ('*.ip_address', 'shape'),
+    ('*.first_name', 'first'), ('*.firstname', 'first'), ('*.forename', 'first'), ('*.given_name', 'first'),
+    ('*.last_name', 'last'), ('*.lastname', 'last'), ('*.surname', 'last'), ('*.family_name', 'last'),
+    ('*.full_name', 'name'), ('*.fullname', 'name'), ('*.contact_name', 'name'), ('*.contact_person', 'name'), ('*.person_name', 'name'),
+    ('*.*address*', 'address'), ('*.street*', 'address'),
+    ('*.postcode', 'shape'), ('*.post_code', 'shape'), ('*.postal_code', 'shape'), ('*.zip', 'shape'), ('*.zipcode', 'shape'), ('*.zip_code', 'shape'),
+    ('customer.name', 'name'), ('contact.name', 'name'), ('employee.name', 'name'), ('driver.name', 'name'), ('user.name', 'name'), ('person.name', 'name')]   # exact tables: lookups such as customer_type.name stay
+KINDS = {'keep', 'null', 'fixed', 'password', 'hash', 'email', 'login', 'shape', 'first', 'last', 'name', 'address', 'text'}
+LOGINS = {'admin', 'system', 'anonymousUser', 'user'}   # login kind: service accounts kept (with keepValues)
+EMAIL = re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}')
+CELL = re.compile(r"'(?:[^'\\]|\\.)*'|[^,()']+", re.S)
+SQL_UNESC = {'0': '\0', "'": "'", '"': '"', 'b': '\b', 'n': '\n', 'r': '\r', 't': '\t', 'Z': '\x1a', '\\': '\\'}
+
+
+class Masker:
+    def __init__(s, prof):
+        import fnmatch
+        s.fn = fnmatch.fnmatchcase
+        own = prof.get('rules') or {}
+        own = list(own.items()) if isinstance(own, dict) else [tuple(r) for r in own]
+        s.rules = [(k.lower(), v if isinstance(v, dict) else {'kind': v}) for k, v in own]
+        if prof.get('extends', 'personal') == 'personal': s.rules += [(k, {'kind': v}) for k, v in PERSONAL]
+        bad = [f'{k}: {r.get("kind")}' for k, r in s.rules if r.get('kind') not in KINDS]
+        if bad: raise ValueError(f'unknown mask kind ({", ".join(bad)}); kinds: {", ".join(sorted(KINDS))}')
+        s.salt = str(prof.get('salt') or 'kit-mask').encode()
+        s.pw = prof.get('passwordHash')
+        s.keep = set(prof.get('keepValues') or [])
+        s.domains = {d.lower() for d in (prof.get('keepDomains') or ['example.com', 'example.org', 'example.net', 'example.test'])}
+        s.skip = [x.lower() for x in prof.get('skipData') or []]
+        s.scan = prof.get('scanEmails', True)
+        s.cols, s.plan, s.count, s.emails, s.rows, s.skipped, s.schema = {}, {}, {}, 0, 0, set(), None
+
+    def h(s, kind, v): return hashlib.sha256(s.salt + b'\0' + kind.encode() + b'\0' + v.encode('utf-8', 'surrogateescape')).digest()
+
+    def email(s, v):
+        if '@' not in v or v in s.keep or v.split('@')[-1].lower() in s.domains: return v
+        return 'u' + s.h('email', v.strip().lower()).hex()[:12] + '@example.com'
+
+    def value(s, rule, v):
+        k = rule['kind']; d = s.h(k, v)
+        if k == 'keep' or v in s.keep: return v
+        if k == 'null': return None
+        if k == 'fixed': return str(rule.get('value', ''))
+        if k == 'password':
+            if not s.pw: raise ValueError('the profile masks a password column: set its passwordHash (the hash of the local test password)')
+            return s.pw
+        if k == 'hash': return (d.hex() * 4)[:max(len(v), 8)]
+        if k == 'email': return s.email(v)
+        if k == 'login': return v if v in LOGINS or not v.strip() else s.email(v) if '@' in v else 'user_' + s.h('login', v.strip().lower()).hex()[:10]
+        if k == 'shape':   # digits -> digits, letters -> letters (same case), the rest kept: formats and lengths stay
+            out, i = [], 0
+            for c in v:
+                b = d[i % len(d)]; i += 1
+                out.append(chr(48 + b % 10) if c.isdigit() else chr((65 if c.isupper() else 97) + b % 26) if c.isascii() and c.isalpha() else c)
+            return ''.join(out)
+        if k == 'first': return FIRST[d[0] % len(FIRST)]
+        if k == 'last': return LAST[d[1] % len(LAST)]
+        if k == 'name': return f'{FIRST[d[0] % len(FIRST)]} {LAST[d[1] % len(LAST)]}'
+        if k == 'address': return f'{1 + d[2] % 199} {STREETS[d[3] % len(STREETS)]}'
+        return 'masked ' + d.hex()[:8]   # text
+
+    def table(s, t, lines):
+        """a CREATE TABLE block -> the columns, the rule per text column"""
+        cols = []
+        for l in lines[1:]:
+            m = re.match(r'\s*`((?:[^`]|``)+)`\s+(\w+)(?:\((\d+)\))?', l)
+            if m: cols.append((m.group(1).replace('``', '`'), m.group(2).lower(), int(m.group(3)) if m.group(3) else None))
+        s.cols[t] = cols
+        s.plan[t] = {}
+        for c, typ, n in cols:
+            if typ not in ('char', 'varchar', 'tinytext', 'text', 'mediumtext', 'longtext'): continue
+            r = next((r for k, r in s.rules if s.fn(f'{t.lower()}.{c.lower()}', k)), None)
+            if r and r['kind'] != 'keep': s.plan[t][c] = (r, n)
+
+    def cell(s, raw, rule, n):
+        if not raw.startswith("'"): return raw   # NULL, numbers, 0x...
+        v = re.sub(r'\\(.)', lambda x: SQL_UNESC.get(x.group(1), x.group(1)), raw[1:-1], flags=re.S)
+        if rule:
+            m = s.value(rule, v)
+            if m is None: return 'NULL'
+            if n: m = m[:n]
+        elif s.scan and '@' in v:
+            m = EMAIL.sub(lambda x: s.email(x.group(0)), v)
+            if m != v: s.emails += 1
+        else: return raw
+        return "'" + m.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r').replace('\0', '\\0').replace('\x1a', '\\Z') + "'"
+
+    def insert(s, line):
+        m = re.match(r"INSERT INTO `((?:[^`]|``)+)`\s*(\(([^)]*)\))?\s*VALUES\s*", line)
+        if not m: return line
+        t = m.group(1).replace('``', '`')
+        if any(s.fn(t.lower(), g) for g in s.skip): s.skipped.add(t); return None
+        names = [x.strip().strip('`') for x in m.group(3).split(',')] if m.group(2) else [c for c, _, _ in s.cols.get(t, [])]
+        plan = s.plan.get(t, {})
+        if not plan and not s.scan: return line
+        rules = [plan.get(c, (None, None)) for c in names]
+        out, i, n = [], m.end(), len(line)
+        while i < n and line[i] == '(':
+            i += 1; cells = []
+            while True:
+                c = CELL.match(line, i)
+                if not c: raise ValueError(f'mask: cannot read a row of {t} at column {len(cells) + 1}')
+                k = len(cells); r, w = rules[k] if k < len(rules) else (None, None)
+                cells.append(s.cell(c.group(0), r, w))
+                if r: s.count[f'{t}.{names[k]}'] = s.count.get(f'{t}.{names[k]}', 0) + 1
+                i = c.end()
+                if line[i] == ',': i += 1; continue
+                if line[i] == ')': i += 1; break
+                raise ValueError(f'mask: unexpected {line[i]!r} in a row of {t}')
+            out.append('(' + ','.join(cells) + ')'); s.rows += 1
+            if i < n and line[i] == ',': i += 1
+        return line[:m.end()] + ','.join(out) + line[i:]
+
+    def run(s, src, dst):
+        """src: dump lines (str); dst: a writable text file. -> True once the dump's end line was seen"""
+        block, done = None, False
+        for line in src:
+            if block is not None:
+                block.append(line)
+                if line.startswith(')'): s.table(block[0], block); block = None
+            elif line.startswith('CREATE TABLE `'):
+                t = re.match(r'CREATE TABLE `((?:[^`]|``)+)`', line).group(1).replace('``', '`'); block = [t]
+            elif line.startswith('INSERT INTO `'):
+                line = s.insert(line)
+                if line is not None: dst.write(line)
+                continue
+            elif line.startswith('-- Dump completed'): done = True
+            line = re.sub(r'DEFINER=`(?:[^`]|``)*`@`(?:[^`]|``)*`', '', line)   # the source's users do not exist here
+            if s.schema: line = line.replace(q(s.schema) + '.', '')   # view / routine bodies name the source schema: the copy loads under another name
+            dst.write(line)
+        return done
+
+
+def mask_cmd(a):
+    prof = json.load(open(a.profile, encoding='utf-8')) if a.profile else {}
+    mk = Masker(prof); mk.schema = a.schema
+    part = a.out + '.part'
+    try:
+        with open(part, 'w', encoding='utf-8', errors='surrogateescape', newline='') as dst:
+            if a.__dict__['in']:
+                with open(a.__dict__['in'], encoding='utf-8', errors='surrogateescape', newline='') as src: done = mk.run(src, dst)
+            else:
+                if not a.schema: raise ValueError('mask needs --schema (or --in <dump>)')
+                env = dict(os.environ, MYSQL_PWD=os.environ.get('KIT_SRC_PWD', ''))   # the source's password, never an argument
+                cmd = [a.mysqldump, '-h', a.host, '-P', str(a.port), '-u', a.user, '--single-transaction', '--skip-lock-tables', '--no-tablespaces',
+                       '--routines', '--triggers', '--hex-blob', '--skip-dump-date', '--set-gtid-purged=OFF', '--default-character-set=utf8mb4', a.schema]
+                with tempfile.TemporaryFile() as err:
+                    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, env=env)
+                    try:
+                        import io
+                        done = mk.run(io.TextIOWrapper(p.stdout, encoding='utf-8', errors='surrogateescape', newline=''), dst)
+                        if p.wait(timeout=7200): err.seek(0); raise RuntimeError(f'mysqldump {a.schema}: exit {p.returncode}: {err.read().decode(errors="replace").strip()[-300:]}')
+                    finally:
+                        if p.poll() is None: p.kill(); p.wait()
+        if not done: raise RuntimeError('the dump ended without its "-- Dump completed" line: not read whole, nothing kept')
+        os.replace(part, a.out)
+    finally:
+        if os.path.exists(part): os.remove(part)
+    return {'file': os.path.abspath(a.out), 'bytes': os.path.getsize(a.out), 'tables': len(mk.cols), 'rows': mk.rows, 'masked': mk.count,
+            'emailsInText': mk.emails, 'skippedData': sorted(mk.skipped)}
+
+
 # ---- cli
 def main(argv):
     ap = argparse.ArgumentParser(prog='db_flashback.py', fromfile_prefix_chars='@')   # @<file>: options one per line, past the command-line limit
-    ap.add_argument('cmd', choices=['plan', 'apply', 'slice', 'structure', 'objects', 'guard', 'touched'])
-    for o in ('--from', '--to', '--schemas', '--host', '--port', '--user', '--skip', '--out', '--spec', '--dir', '--tables', '--files', '--exclude', '--objects', '--names'): ap.add_argument(o)
+    ap.add_argument('cmd', choices=['plan', 'apply', 'slice', 'structure', 'objects', 'guard', 'touched', 'mask'])
+    for o in ('--from', '--to', '--schemas', '--host', '--port', '--user', '--skip', '--out', '--spec', '--dir', '--tables', '--files', '--exclude', '--objects', '--names', '--schema', '--profile', '--in'): ap.add_argument(o)
     ap.add_argument('--tool', default=TOOL); ap.add_argument('--batch', type=int, default=1000)   # TODO-PARAM (fixed default)
     ap.add_argument('--order', default='global'); ap.add_argument('--apply', action='store_true'); ap.add_argument('--remove', action='store_true')
     ap.add_argument('--mysqlbinlog', default='mysqlbinlog'); ap.add_argument('--mysql', default='mysql'); ap.add_argument('--mysqldump', default='mysqldump')
     a = ap.parse_args(argv)
     if a.cmd == 'touched': print(json.dumps(touched_cmd(a))); return 0
-    if not a.user: ap.print_usage(sys.stderr); return 2
+    if not a.user and not (a.cmd == 'mask' and a.__dict__['in']) or a.cmd == 'mask' and not a.out: ap.print_usage(sys.stderr); return 2
     a.host, a.port = a.host or '127.0.0.1', a.port or '3306'
+    if a.cmd == 'mask':
+        try: print(json.dumps(mask_cmd(a), indent=1)); return 0
+        except (RuntimeError, OSError, subprocess.TimeoutExpired, ValueError, KeyError, IndexError) as e: print(json.dumps({'error': f'{type(e).__name__}: {e}'})); return 1
     db = Db(a)
     try:
         if a.cmd in ('apply', 'structure', 'objects') and a.apply or a.cmd == 'apply': triggers_heal(db)

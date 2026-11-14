@@ -33,6 +33,47 @@ $clog = Join-Path $k2 'add-col.xml'
 Set-Content $clog '<databaseChangeLog><changeSet id="1"><sql>ALTER TABLE t1 ADD COLUMN c2 TEXT NULL</sql><rollback><sql>ALTER TABLE t1 DROP COLUMN c2</sql></rollback></changeSet><changeSet id="2"><dropColumn tableName="t3" columnName="c4"/><rollback><dropColumn tableName="t5" columnName="c6"/></rollback></changeSet><changeSet id="3"><rollback changeSetId="2"/><dropTable tableName="t7"/></changeSet></databaseChangeLog>'
 $tch = @((& $py -X utf8 (Join-Path $PSScriptRoot 'files/skills/envy/adapters/db_flashback.py') touched --files $clog | ConvertFrom-Json).items | ForEach-Object { "$($_.table):$($_.kind):$($_.columns -join '+')" }) -join ','
 Expect "touched: an added column is a create; a <rollback> body names nothing ($tch)" ($tch -eq 't1:create:,t3:column:c4,t7:table:')
+# mask (tenant import): deterministic per value (one email = one mask in every table and run), logins without @ and keepValues
+# kept, password -> passwordHash, varchar lengths kept, emails in text masked, skipData drops rows, DEFINER gone, a cut dump kept nothing
+$mdir = Join-Path $k2 'mask'; New-Item -ItemType Directory -Force $mdir | Out-Null; $dump = Join-Path $mdir 'in.sql'; $mprof = Join-Path $mdir 'p.json'
+$dumpText = @"
+CREATE TABLE ``customer`` (
+  ``id`` bigint NOT NULL AUTO_INCREMENT,
+  ``name`` varchar(12) DEFAULT NULL,
+  ``email`` varchar(254) DEFAULT NULL,
+  ``phone`` varchar(20) DEFAULT NULL,
+  ``address_id`` bigint DEFAULT NULL,
+  ``notes`` text,
+  PRIMARY KEY (``id``)
+) ENGINE=InnoDB;
+INSERT INTO ``customer`` VALUES (1,'Bob O\'Neil Jr','Bob@Shop.co.uk','+44 7700 900123',5,'call bob@shop.co.uk, it\'s ok'),(2,NULL,'keep@example.com','0123',NULL,'a\nb');
+CREATE TABLE ``app_user`` (
+  ``id`` bigint NOT NULL AUTO_INCREMENT,
+  ``login`` varchar(50) NOT NULL,
+  ``password_hash`` varchar(60) NOT NULL,
+  PRIMARY KEY (``id``)
+) ENGINE=InnoDB;
+INSERT INTO ``app_user`` VALUES (1,'admin','`$2a`$x'),(2,'bob@shop.co.uk','`$2a`$y'),(3,'jsmith','`$2a`$z');
+CREATE TABLE ``mail_audit`` (
+  ``id`` bigint NOT NULL,
+  ``body`` text,
+  PRIMARY KEY (``id``)
+) ENGINE=InnoDB;
+INSERT INTO ``mail_audit`` VALUES (1,'to bob@shop.co.uk');
+/*!50003 CREATE*/ /*!50017 DEFINER=``ro``@``%``*/ /*!50003 TRIGGER ``t1`` BEFORE INSERT ON ``customer`` FOR EACH ROW SET NEW.id = NEW.id */;;
+-- Dump completed
+"@
+[IO.File]::WriteAllText($dump, $dumpText.Replace("`r`n", "`n")); '{ "passwordHash": "H", "keepValues": ["admin"], "skipData": ["mail_*"] }' | Set-Content $mprof
+$fbPy = Join-Path $PSScriptRoot 'files/skills/envy/adapters/db_flashback.py'
+$mj = foreach ($n in 1, 2) { & $py -X utf8 $fbPy mask --in $dump --out (Join-Path $mdir "out$n.sql") --profile $mprof | ConvertFrom-Json }
+$o1 = Get-Content (Join-Path $mdir 'out1.sql') -Raw; $o2 = Get-Content (Join-Path $mdir 'out2.sql') -Raw
+$em = [regex]::Matches($o1, 'u[0-9a-f]{12}@example\.com') | ForEach-Object Value | Select-Object -Unique
+$cu = [regex]::Match($o1, "INSERT INTO ``customer`` VALUES \(1,'([^']*)'").Groups[1].Value
+Expect "mask: deterministic (2 runs equal), one email = one mask across tables and text ($(@($em) -join ',')), admin kept, password = H, name cut to varchar(12) ('$cu'), skipData rows gone, DEFINER gone ($($mj[0].masked.'customer.email') / $($mj[0].skippedData -join ','))" ($o1 -eq $o2 -and @($em).Count -eq 1 -and $o1 -notmatch '(?i)shop\.co\.uk' -and $o1 -match "\(1,'admin','H'\)" -and $o1 -match "\(3,'user_[0-9a-f]{10}','H'\)" -and $o1 -match "'keep@example\.com'" -and $cu.Length -le 12 -and $cu -ne 'Bob O\''Neil Jr' -and $o1 -notmatch 'INSERT INTO `mail_audit`' -and $o1 -notmatch 'DEFINER' -and $o1 -match "it\\'s ok" -and $o1 -match ',5,' -and @($mj[0].skippedData) -contains 'mail_audit')
+[IO.File]::WriteAllText($dump, ($dumpText -replace '-- Dump completed', '').Replace("`r`n", "`n"))
+$cut = & $py -X utf8 $fbPy mask --in $dump --out (Join-Path $mdir 'cut.sql') --profile $mprof | ConvertFrom-Json; $cutc = $LASTEXITCODE
+'{ "rules": { "customer.notes": "nosuchkind" } }' | Set-Content $mprof; $bk = & $py -X utf8 $fbPy mask --in $dump --out (Join-Path $mdir 'bk.sql') --profile $mprof | ConvertFrom-Json
+Expect "mask: a dump without its end line keeps no file; an unknown kind fails ($cutc | $($bk.error))" ($cutc -eq 1 -and $cut.error -match 'Dump completed' -and -not (Test-Path (Join-Path $mdir 'cut.sql')) -and $bk.error -match 'unknown mask kind')
 Remove-TestKit $k2
 # an exit 0 with no output (the mysql client under CPU load lost FKs, tables, rows): a read retries then fails, a write fails at once
 if ($IsWindows) {
@@ -282,6 +323,52 @@ CREATE TABLE t3keep.u (login varchar(40)); INSERT INTO t3keep.u VALUES ('carol')
   Expect "tenant drop: registry + FK children (cycle) + listed tables + only users no staying tenant has + schema; 0 left; kept tenants verified ($after)" ($d1c -eq 0 -and $after -eq 't2,t3keep|12|22|t2|2,3|bob,carol|2,3|0' -and $d1 -match '0 references left' -and $d1 -match 'kept tenant t3keep : verify ok')
   Expect "tenant drop: a user goes once no staying tenant has it ($users2)" ($users2 -eq 'carol' -and $d2 -match 'tenant t2 dropped')
   Expect "doctor: db.expect differs -> WARN with the server setting; equal -> nothing ($($ex -join ' / '))" ($ex.Count -eq 1 -and $ex[0] -match 'db sort_buffer_size = 262144, db\.expect 1M')
+  # tenant import: prod / writable sources refused, a dry run reads no data, then a masked copy loaded and registered from the
+  # template (new ids, FK cycle and idColumns followed, name columns, set + {source:..}, skipTables), a taken name refused, the dump reused
+  Q @"
+CREATE DATABASE iadm; CREATE DATABASE srcadm; CREATE DATABASE srct; CREATE DATABASE tpl;
+CREATE TABLE iadm.reg (id int primary key auto_increment, name varchar(40), pool_id int, det_id int null, marker varchar(40));
+CREATE TABLE iadm.det (id int primary key auto_increment, tenant_id int, prof int, label varchar(40), foreign key (tenant_id) references iadm.reg (id));
+ALTER TABLE iadm.reg ADD FOREIGN KEY (det_id) REFERENCES iadm.det (id);
+CREATE TABLE iadm.mig (id int primary key auto_increment, tenant_id int, tenant_name varchar(40), cl varchar(40));
+CREATE TABLE iadm.log (id int primary key auto_increment, tenant_id int, foreign key (tenant_id) references iadm.reg (id));
+INSERT INTO iadm.reg (id, name, pool_id) VALUES (5, 'tpl', 7); INSERT INTO iadm.det VALUES (9, 5, 3, 'tpl'); UPDATE iadm.reg SET det_id = 9; INSERT INTO iadm.mig VALUES (2, 5, 'tpl', 'c-old'); INSERT INTO iadm.log VALUES (1, 5);
+CREATE TABLE srcadm.reg (id int primary key, name varchar(40)); CREATE TABLE srcadm.mig (id int primary key, tenant_id int, tenant_name varchar(40), cl varchar(40));
+INSERT INTO srcadm.reg VALUES (40, 'srct'); INSERT INTO srcadm.mig VALUES (1, 40, 'srct', 'c-src');
+CREATE TABLE srct.customer (id int primary key auto_increment, name varchar(12), email varchar(80), notes text);
+CREATE TABLE srct.app_user (id int primary key auto_increment, login varchar(50), password_hash varchar(60));
+INSERT INTO srct.customer VALUES (1, 'Ann Real', 'Ann@Real.org', 'mail ann@real.org'), (2, 'Bo', NULL, NULL); INSERT INTO srct.app_user VALUES (1, 'admin', 'x'), (2, 'ann@real.org', 'y');
+CREATE VIEW srct.v AS SELECT c.id, c.name FROM srct.customer c;
+"@
+  $src1 = @{ host = '127.0.0.1'; port = $port; user = 'root'; requireReadOnly = $false; adminSchema = 'srcadm' }
+  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') }
+          tenants = @{ schema = 'iadm'; table = 'reg'; key = 'id'; name = 'name'; tables = @('mig'); keep = @('tpl'); verify = 'echo {tenant}'
+            import = @{ template = 'tpl'; skipTables = @('log'); set = @{ 'mig.cl' = '{source:mig.cl}'; 'reg.marker' = 'x-{tenant}' }; profiles = @{ p = @{ passwordHash = 'H'; keepValues = @('admin') } }
+              sources = @{ s1 = $src1; wr = @{ host = '127.0.0.1'; port = $port; user = 'root' }; mk = @{ host = '127.0.0.1'; port = $port; user = 'root'; prod = $true }; 'rm-prod' = $src1
+                cr = @{ creds = "echo {`"host`":`"127.0.0.1`",`"port`":$port,`"user`":`"nouser`",`"password`":`"pw-secret-x`"}" } } } } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
+  $icr = Px $L3 tenant import -Env s -From cr -Tenant srct -As crt -Mask p -DryRun 2>&1 | Out-String; $icrc = $LASTEXITCODE
+  Expect "tenant import: a creds command's JSON is the login (it reached the server as nouser), its password never shown ($icrc | $($icr.Trim()))" ($icrc -eq 1 -and $icr -match "Access denied for user 'nouser'" -and $icr -notmatch 'pw-secret-x')
+  $ip = foreach ($f0 in 'mk', 'rm-prod', 'wr') { $o = Px $L3 tenant import -Env s -From $f0 -Tenant srct -As newt -Mask p 2>&1 | Out-String; "$LASTEXITCODE $(if ($o -match 'production') { 'prod' } elseif ($o -match 'writable') { 'writable' } else { $o })" }
+  $idry = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt -Mask p -DryRun 2>&1 | Out-String; $idryc = $LASTEXITCODE; $nodata = "$(Q "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'newt'")"
+  '{"leases":{"L9":{"services":["api"],"agent":"L9","owner":true,"until":"2999-01-01T00:00:00"}}}' | Set-Content $sf3
+  $ilr = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt -Mask p 2>&1 | Out-String; $ilrc = $LASTEXITCODE; Remove-Item $sf3
+  Expect "tenant import refuses a prod source (prod: true, a prod name), a writable one, and while a lease is on; a dry run plans with no data read ($($ip -join ' / ') | $ilrc)" ("$ip" -eq '1 prod 1 prod 1 writable' -and $ilrc -eq 1 -and $ilr -match 'in use \(L9\)' -and $idryc -eq 0 -and $idry -match 'srct -> newt .* registry rows from tpl \(' -and $idry -match 'det 1' -and $idry -match 'mig 1' -and $idry -notmatch 'log \d' -and $nodata -eq '0')
+  $im = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt -Mask p 2>&1 | Out-String; $imc = $LASTEXITCODE
+  $nid = "$(Q "SELECT id FROM iadm.reg WHERE name = 'newt'")"
+  $vw = "$(Q 'SELECT GROUP_CONCAT(name ORDER BY id) = (SELECT GROUP_CONCAT(name ORDER BY id) FROM newt.customer) FROM newt.v')|$(Q "SELECT GROUP_CONCAT(DISTINCT TABLE_SCHEMA) FROM information_schema.VIEW_TABLE_USAGE WHERE VIEW_SCHEMA = 'newt'")"
+  $reg = "$(Q "SELECT CONCAT_WS(',', r.pool_id, r.marker, d.tenant_id = r.id, d.prof, d.label, m.tenant_id = r.id, m.tenant_name, m.cl) FROM iadm.reg r JOIN iadm.det d ON d.id = r.det_id JOIN iadm.mig m ON m.tenant_id = r.id WHERE r.name = 'newt'")|$(Q "SELECT COUNT(*) FROM iadm.log")|$(Q "SELECT CONCAT_WS(',', r.det_id, m.cl) FROM iadm.reg r JOIN iadm.mig m ON m.tenant_id = r.id WHERE r.name = 'tpl'")"
+  $cdat = @(Q "SELECT CONCAT_WS(',', c.name, c.email, c.notes) FROM newt.customer c ORDER BY id"); $udat = @(Q 'SELECT CONCAT_WS(",", login, password_hash) FROM newt.app_user ORDER BY id')
+  $ce = ($cdat[0] -split ',')[1]
+  Expect "tenant import: masked copy loaded, registered from the template (cycle, idColumns, name columns, set, {source:..}; skipTables not cloned; template kept), a template-name value renamed, a view under -As reads the copy, verify ran, then seed -Check (its own fixtures miss: exit 1) ($imc | $vw | $reg | $($cdat -join ' ; ') | $($udat -join ' ; '))" ($imc -eq 1 -and $im -match 'tenant newt imported: 2 table\(s\)' -and $im -match 'tenant newt : verify ok' -and $im -match 'seed -Check: 1/2 ok' -and $im -match 'seed -Check not green' -and $vw -eq '1|newt' -and $reg -eq '7,x-newt,1,3,newt,1,newt,c-src|1|9,c-old' -and $ce -match '^u[0-9a-f]{12}@example\.com$' -and $cdat[0] -match "mail $([regex]::Escape($ce))$" -and $udat[1] -eq "$ce,H" -and $udat[0] -eq 'admin,H' -and "$cdat$udat" -notmatch '(?i)real\.org|Ann Real')
+  $again = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt -Mask p 2>&1 | Out-String; $againc = $LASTEXITCODE
+  $im2 = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt2 -Mask p 2>&1 | Out-String
+  $same = "$(Q 'SELECT GROUP_CONCAT(email ORDER BY id) FROM newt.customer')" -eq "$(Q 'SELECT GROUP_CONCAT(email ORDER BY id) FROM newt2.customer')"
+  Expect "tenant import: a taken name is refused ($againc); a second import reuses the masked dump, same masks ($same)" ($againc -eq 1 -and $again -match 'newt exists here' -and $im2 -match 'masked dump reused' -and $im2 -match 'tenant newt2 imported' -and $same)
+  # a registration that fails (a set column the table lacks) rolls the registry back and drops the new schema
+  $kj = Join-Path $k3 'skills/crafty/kit.local.json'; $kc = Get-Content $kj -Raw | ConvertFrom-Json; $kc.localEnv.envs.s.tenants.import.set | Add-Member 'reg.nosuch' 'x'; $kc | ConvertTo-Json -Depth 20 | Set-Content $kj
+  $ifl = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt3 -Mask p 2>&1 | Out-String; $iflc = $LASTEXITCODE
+  $gone3 = "$(Q "SELECT (SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'newt3') + (SELECT COUNT(*) FROM iadm.reg WHERE name = 'newt3') + (SELECT COUNT(*) FROM iadm.mig WHERE tenant_name = 'newt3')")"
+  Expect "tenant import: a failed registration leaves no schema and no registry row ($iflc | $gone3)" ($iflc -eq 1 -and $ifl -match 'failed, its schema dropped again, its registry rows rolled back' -and $gone3 -eq '0')
   # db.bufferPool: a live lease grows the pool (chunk-aligned), idle shrinks it back; db.expect leaves the pool to it; the doctor row
   & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; bufferPool = @{ busyMB = 200; idleMB = 128 }; expect = @{ innodb_buffer_pool_size = '1G' } } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
   $poolMB = { param($w) for ($i = 0; $i -lt 40 -and -not ([double](Q 'SELECT @@innodb_buffer_pool_size / 1048576') -eq $w -and "$(Q "SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_resize_status'")" -notmatch 'Resiz'); $i++) { Start-Sleep -Milliseconds 250 }; [double](Q 'SELECT @@innodb_buffer_pool_size / 1048576') }

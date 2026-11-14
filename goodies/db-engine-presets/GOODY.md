@@ -6,8 +6,9 @@
   exactly falls back to seed), the cascade guard (journal triggers on CASCADE / SET NULL parents) and the touched-tables parser
   (`db.migrateSql` output or migration files); mysql: the temp watchdog (`db.tempMaxGB`), `dbtemp`, temp-cap doctor rows, the busy / idle buffer pool
   (`db.bufferPool`: envy SKILL.md "DB buffer pool");
-  `db.expect` doctor rows; `tenant list | drop` (`tenants`: local tenants dropped with their admin rows, users and schema).
+  `db.expect` doctor rows; `tenant list | drop` (`tenants`: local tenants dropped with their admin rows, users and schema);
+  `tenant import` (`tenants.import`: one tenant schema from a read-only non-production source, masked, registered from a template).
   Other engines: marks unsupported.
 Needed when: `localEnv.envs.*.db` = `*`, `localEnv.defaults.db` = `*`
 - Wiring: `skills/envy/adapters/db_presets.ps1` (dot-sourced by `envy.ps1`, goody `local-env`) + `db_flashback.py`
-  (`plan|apply|slice|structure|objects|guard|touched`). Tests: `tests.ps1` (a scratch mysqld of its own when `mysqld` is on PATH).
+  (`plan|apply|slice|structure|objects|guard|touched|mask`). Tests: `tests.ps1` (a scratch mysqld of its own when `mysqld` is on PATH).

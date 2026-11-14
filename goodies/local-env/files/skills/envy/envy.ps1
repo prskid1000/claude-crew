@@ -7,7 +7,8 @@ Verbs: envs · status · doctor · deploy · wait · use · release · promote �
        seed [-Check] · drop -Agent <id> [-Note <why>] | -Stale [-DryRun] (bossy.ps1 release / supervise: layers of a finished agent,
        merged, gone or orphan ones)
        (owner) up -Services [-Owner] · unhold · restart -Services · down · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
-       [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] · cleanup [-Quick] [-DryRun] ·
+       [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] | import -From <source> -Tenant <schema>
+       [-As <name>] -Mask <profile> [-DryRun] · cleanup [-Quick] [-DryRun] ·
        _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
 Lanes (envs.<env>.lanes.max > 1): -Env <env> = the agent's lane, else (deploy / use / task) the least busy one with room;
   -Lane <k> pins one; -Env <env><k> names one.
@@ -17,9 +18,9 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L30 config · L227 state · L274 layer drops · L346 leases · L473 code · L505 migrations ·
-  L651 shared builds (opt-in services[].shareBuild true · L830 hooks · L902 marks · L1059 seed · L1139 processes · L1520 daemon ·
-  L1980 cleanup · L2052 doctor · L2105 verbs
+Sections: L31 config · L228 state · L275 layer drops · L347 leases · L474 code · L506 migrations ·
+  L652 shared builds (opt-in services[].shareBuild true · L831 hooks · L903 marks · L1060 seed · L1140 processes · L1521 daemon ·
+  L1981 cleanup · L2053 doctor · L2106 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -2106,7 +2107,8 @@ function Get-Doctor([string]$e) {
 function Invoke-LocalEnv {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'tenant', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
-  [Parameter(Position = 1)][ValidateSet('', 'list', 'drop')][string]$Op = '',
+  [Parameter(Position = 1)][ValidateSet('', 'list', 'drop', 'import')][string]$Op = '',
+  [string]$From, [string]$Tenant, [string]$As, [string]$Mask,
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
@@ -2291,6 +2293,29 @@ switch ($Action) {
     if ($Op -eq 'drop') {
       $tn = @(Split-KitList $Name); if (-not $tn.Count) { throw 'tenant drop needs -Name <tenant>[,<tenant>]' }
       Invoke-TenantDrop $e $tn -DryRun:$DryRun; return
+    }
+    if ($Op -eq 'import') {   # then the services of tenants.import.restart start under a hold (migrations at start), tenants.verify, seed -Check
+      if (-not (Get-Command Invoke-TenantImport -ErrorAction SilentlyContinue)) { throw "[$e] tenant import needs the goody db-engine-presets (an update: kitbag.py goody sync)" }
+      Invoke-TenantImport $e -From $From -Tenant $Tenant -As $As -Mask $Mask -DryRun:$DryRun
+      if ($DryRun) { return }
+      $nt = if ($As) { $As } else { $Tenant }; $tc = (Get-EnvCfg $e).tenants
+      $rs = @($tc.import.restart | Where-Object { $_ })
+      if ($rs.Count) {
+        $names = @(Closure $e $rs); $Wait = [math]::Max($Wait, 30)   # TODO-PARAM (fixed default): migrations of every tenant run at start
+        foreach ($s in @(EnvServices $e | Where-Object { $_.name -in $rs -and (Managed $_) -and (Healthy $e $_) })) { Stop-Svc $e $s 'tenant import: migrations run at start' }
+        Update-State $e { param($x) foreach ($s in $rs) { Clear-StartBackoff $x.services[$s] 'tenant import' }; $x.holds[$Agent] = @{ services = $names } + (New-KitLease $Agent $Session); $x.suppress = $null }
+        Ensure-Loop
+        try { $up = Wait-Up $names } finally { Update-State $e { param($x) $x.holds.Remove($Agent) } }
+        if (-not $up) { throw "[$e] tenant $nt imported, but $($rs -join ', ') did not come up: envy.ps1 logs -Env $e -Service $($rs[0])" }
+        "[$e] $($rs -join ', ') restarted: migrations ran for $nt"
+      } else { "[$e] tenants.import.restart unset: restart the services that run migrations (envy.ps1 restart -Env $e -Services <svc>)" }
+      if ($tc.verify) {
+        $code = Invoke-Shell (Expand-Placeholders ([string]$tc.verify) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '').Replace('{tenant}', $nt) (LogFile $e 'tenant') (EnvVars $e ([pscustomobject]@{})) 120
+        if ($code) { throw "[$e] tenant $nt imported, but tenants.verify fails ($(Get-ShellWhy $code): $((@($script:ShellOut) | Select-Object -Last 1) -join ' | '))" }; "[$e] tenant $nt : verify ok"
+      }
+      if (-not (Test-Path -LiteralPath (SeedFile $e))) { "[$e] no seed file $(SeedFile $e): seed -Check skipped"; return }
+      Invoke-Seed $e -Check; if ($script:SeedBad) { "[$e] tenant $nt imported; seed -Check not green: point the seed file at it, then envy.ps1 seed -Env $e"; exit 1 }
+      return
     }
     foreach ($x in Get-TenantList $e) { '  {0,-5} {1,-28} {2,9:N1} MB  {3}' -f $(if ($x.keep) { 'KEEP' } else { 'DROP' }), $x.name, $x.mb, $(if ($x.keep) { $x.keep } elseif (-not $x.registry) { 'schema without a registry row' } else { 'nobody keeps it' }) }
   }
