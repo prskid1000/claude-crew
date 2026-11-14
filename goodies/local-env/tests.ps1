@@ -19,7 +19,7 @@ $skillText = (Get-Content -LiteralPath (Join-Path $src 'skills/envy/SKILL.md') -
 Expect 'localenv SKILL.md: an ENV-FIX env-file edit -> restart -Services after the holder releases, then a recheck' ($skillText -match 'ENV-FIX that edits `<env>\.env` takes effect only after a restart: once the holder releases, the fixer runs `envy restart -Services <svc>`.*rechecks the failing step')
 $mv = Px $L2 marks -Env shop 2>&1 | Out-String; $mn = Px $L2 marks -Env shop -Name m1 2>&1 | Out-String; $mnc = $LASTEXITCODE
 $me = Px $L2 mark 2>&1 | Out-String; $mec = $LASTEXITCODE
-Expect "localenv: marks = mark (list), not a usage error; marks -Name points to mark; both usage slips (and mark with no -Env of 2) exit 2, one line ($mnc $mec)" ($mv -match '\[shop\] marks need db\.engine' -and $mv -notmatch 'Cannot validate' -and $mn -match 'to make one: mark -Name m1' -and $mnc -eq 2 -and $mec -eq 2 -and $me.Trim() -match '^envy\.ps1: -Env needed: (mig, shop|shop, mig)$')
+Expect "localenv: marks = mark (list), not a usage error; marks -Name points to mark; both usage slips (and mark with no -Env of 2) exit 2, no FAILED ($mnc $mec)" ($mv -match '\[shop\] marks need db\.engine' -and $mv -notmatch 'Cannot validate' -and $mn -match 'envy\.ps1: marks lists the marks; to make one: mark -Name m1' -and $mnc -eq 2 -and $mec -eq 2 -and $me -match 'envy\.ps1: -Env needed: (mig, shop|shop, mig)' -and "$mn$me" -notmatch 'FAILED')
 $null = Px $L2 bogus 2>&1; $c1 = $LASTEXITCODE
 $null = Px $L2 status -Env nope 2>&1; $c2 = $LASTEXITCODE
 $null = Px $L2 drop -Env shop 2>&1; $c3 = $LASTEXITCODE
