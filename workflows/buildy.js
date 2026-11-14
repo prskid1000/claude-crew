@@ -8,7 +8,7 @@ export const meta = {
   { title: 'Decide', detail: 'items paused for an owner decision or an ENV-FIX resume after the answer' },
   { title: 'Review', detail: 'one revy per devy (+ datay on an area with migrations) + CI pipelines' },
   { title: 'Fix', detail: 'a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; others -> MR Follow-ups); merge in order, register the tracker task' },
-  { title: 'Deploy', detail: 'merged work joins the deploy batch (goody deploys); a person says deploy <env>, never asked' },
+  { title: 'Deploy', detail: 'merged work joins the deploy batch (bossy.ps1 deploy); a person says deploy <env>, never asked' },
   { title: 'Learn', detail: 'signals from this wave, cleanup (/tidy turns them into lessons)' },
  ],
 }
@@ -64,7 +64,7 @@ const RES = MODE === 'resume' && A.resume && typeof A.resume === 'object' ? A.re
 const STEPS = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker']
 const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
 const allDone = (a) => STEPS.every((s) => skips(a, s))
-if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported${MODE === 'duel' ? ' (duel is a goody: run kitbag.py goody add duel)' : ''}`)
+if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported`)
 // unknown args: refused, never dropped
 const unk = (o, keys, pre = '') => Object.keys(o).filter((k) => !keys.split(' ').includes(k)).map((k) => pre + k)
 const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex holdMerge learn batch kitDir runtimeDir run debateModels'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate', `agents.${a.id}.`),
@@ -668,14 +668,14 @@ const held = out.filter((x) => x.waitFor)
 if (held.length) outcome.afterMerge = { waitFor: uniq(held.flatMap((x) => x.waitFor)), next: nextCall(held.map((x) => A0.agents.find((g) => g.id === x.id))) }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 
-// ---- deploy: merged work joins the deploy batch (goody deploys); never deploys (trigger: bossy E5)
+// ---- deploy: merged work joins the deploy batch (bossy.ps1 deploy); never deploys (trigger: bossy E5)
 phase('Deploy')
 const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const DEPLOYS = `${KIT}/skills/bossy/adapters/deploys.ps1`
 const dp = shipped.length ? await runStep(`# record the merged MRs as pending only: this step deploys nothing and asks nobody
 if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
  'deploy-batch', 'Deploy', { whole: true }) : null
-if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: the deploys goody is not installed (merged work waits for a person)')
+if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: no deploys adapter in this kit (merged work waits for a person)')
 else if (shipped.length) {
  try { outcome.deployBatch = JSON.parse((dp && dp.output) || '[]') } catch (e) { outcome.deployBatch = { raw: dp ? dp.output : 'deploy-batch agent returned nothing' } }
  const ask = Array.isArray(outcome.deployBatch) && outcome.deployBatch.some((p) => p && p.trigger === 'ask')

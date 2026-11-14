@@ -1,5 +1,5 @@
 <#
-runtimes.ps1 (goody runtimes): leases on machine runtimes agents start (a container engine, a WSL distro, a VM), so the kit
+runtimes.ps1: leases on machine runtimes agents start (a container engine, a WSL distro, a VM), so the kit
 stops what it started once the last agent is done; a runtime the kit did not start is never stopped.
   & <kit>/skills/crafty/crafty.ps1 runtime use -Name <runtime> [-Agent <a>] [-Session <board session>]   lease; down -> start it
   & <kit>/skills/crafty/crafty.ps1 runtime release [-Name <runtime>] [-Agent <a>] [-Session <s>]   drop the lease; last one + kit-started -> down

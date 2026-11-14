@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody node-spec): spec.mjs without the project's esbuild exits 2 and says why; --help prints its header.
-Usage: pwsh -NoProfile -File goodies/node-spec/tests.ps1 -Kit <kit> (spec.mjs comes from files/ beside this file).
+node-spec.tests.ps1: spec.mjs without the project's esbuild exits 2 and says why; --help prints its header.
+Usage: pwsh -NoProfile -File <kit>/tests/node-spec.tests.ps1 [-Kit <kit>] (or tests/kit-tests.ps1 -Area node-spec).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))

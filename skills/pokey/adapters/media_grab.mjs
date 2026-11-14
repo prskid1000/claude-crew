@@ -1,4 +1,4 @@
-// media_grab.mjs (goody media-evidence): a public page's media in a throw-away headless browser (fresh profile, no login).
+// media_grab.mjs (media evidence): a public page's media in a throw-away headless browser (fresh profile, no login).
 //   node media_grab.mjs <url> video [timeoutMs]              -> {"media": ["<m3u8 / mpd / mp4 url>", ...], "poster": "..."}
 //   node media_grab.mjs <url> image <selector> <out file>    -> {"image": "<src>", "file": "<out file>", "bytes": n}
 // Called by video.py (fetchers jam-public, image). Exit codes: 0 ok · 1 nothing found / page failed · 2 usage.

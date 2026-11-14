@@ -1,5 +1,5 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-"""Goody report-pdf: reports.type pdf = the HTML printed by a headless Chrome / Chromium / Edge (or reports.pdfCommand with
+"""Report adapter pdf: reports.type pdf = the HTML printed by a headless Chrome / Chromium / Edge (or reports.pdfCommand with
 {in} {out}), kept like markdown. Loaded by devtools.py from skills/crafty/adapters/."""
 import os, shutil, subprocess, sys
 from pathlib import Path

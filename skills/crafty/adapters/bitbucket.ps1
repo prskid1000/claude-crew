@@ -1,8 +1,8 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Goody bitbucket: Bitbucket Cloud git host + Bitbucket Pipelines CI (gitHostType / ci bitbucket).
-# Dot-sourced by lib.ps1 from skills/crafty/adapters/ (kitbag.py goody add bitbucket); helpers come from lib.ps1.
-# helpers only this goody uses (kept out of the core lib.ps1)
+# bitbucket: Bitbucket Cloud git host + Bitbucket Pipelines CI (gitHostType / ci bitbucket).
+# Dot-sourced by lib.ps1 from skills/crafty/adapters/ when config selects bitbucket; helpers come from lib.ps1.
+# helpers only this adapter uses (kept out of the core lib.ps1)
 function __DiffFile($New, $Old = $null) { [pscustomobject]@{ new_path = "$New"; old_path = "$(if ($Old) { $Old } else { $New })" } }
 function __KitAuto([string]$Repo, [string]$N, [switch]$Drop) { Update-KitTracking { param($t) if ($Drop) { $t.automerge.Remove("$Repo!$N") } else { $t.automerge["$Repo!$N"] = (Get-Date).ToString('s') } } }
 function __Rest([string]$Base, [string]$Env, [string]$Auth, [string]$Method, [string]$Path, $Body, [switch]$Probe) {

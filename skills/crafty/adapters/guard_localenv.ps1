@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# local-env (goody): crafty.ps1 guard rules: a localenv/<env> branch is never pushed; dev servers start in the shared local env, not by hand.
+# local-env: crafty.ps1 guard rules: a localenv/<env> branch is never pushed; dev servers start in the shared local env, not by hand.
 Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
     $cmd = $a.cmd
     foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {

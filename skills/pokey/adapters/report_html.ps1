@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
-# report-gdocs (goody): the styled HTML QA report (colour chips, zebra tables, gallery) for Google Docs import. pokey.ps1 finalize
+# report-gdocs: the styled HTML QA report (colour chips, zebra tables, gallery) for Google Docs import. pokey.ps1 finalize
 # writes report.html with Build-QaReport and publishes it instead of report.md when this file is present (dot-sourced).
 # Sections: L6 helpers · L33 build
 # ---- helpers: HTML escape, palette, chips, images

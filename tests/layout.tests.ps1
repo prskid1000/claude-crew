@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks, run records (resumed run liveness, re-bind); the
-supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage); testy's goody guards; tracked ports current.
+supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage); testy's envy / phoney calls; tracked ports current.
 Usage: pwsh -NoProfile -File <kit>/tests/layout.tests.ps1 (or tests/kit-tests.ps1 -Area layout).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -185,7 +185,7 @@ $jvTx = Join-Path (Kd) 'JV.jsonl'; '{}' | Set-Content $jvTx; $jvB = TkPath $k bo
 foreach ($jvE in @{ session = 's-JVz'; agent = 'JV'; run = 'rr'; type = '' }, @{ session = 's-JV'; agent = 'JV'; run = ''; type = 'devy' }, @{ session = 's-KZ1'; agent = 'KZ'; run = 'r1'; status = 'left' }, @{ session = 's-KZ2'; agent = 'KZ'; run = 'r2' }) { $jvR = @{ type = 'devy'; status = 'working'; beat = $jvNow; joined = $jvNow; transcript = $jvTx }; foreach ($kv in $jvE.GetEnumerator()) { $jvR[$kv.Key] = $kv.Value }; & $J $jvR (Join-Path $jvB "$($jvE.session).json") }   # KZ: left, re-joined live
 $jv = Invoke-PsTest 'dupjoin' '$null = . $args[0] 6>$null; @(Get-KitStatusRows | Where-Object { $_.name -match "^(JV|KZ) " } | ForEach-Object { "$($_.name)/$($_.run)" }) -join ","' @($O)
 Expect "status: two board entries of one agent on one transcript = one row, the typed one, a live re-join over its left twin ($jv)" ((@("$jv".Trim() -split ',') | Sort-Object) -join ',' -eq 'JV (devy)/,KZ (devy)/r2')
-# testy: envy / phoney calls guarded (goodies): a missing one prints the goody line; the prompt names goody sync
+# testy: the prompts call envy.ps1 use and phoney.ps1 acquire directly
 $js3b = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
@@ -194,14 +194,13 @@ const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', la
  items: [_item('P1', 'app')] }
 run(args, agent, _n, _n, null).then(() => {
  const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release-Falcon') || {}).prompt || ''
- const guard = (s, x) => tp.includes(`if (Test-Path 'C:/kit/skills/${s}') { & 'C:/kit/skills/${s}' `) && tp.includes(`else { '${x} is a goody: run kitbag.py goody add ${x}' }`)
- console.log(`local-guard:${guard('envy/envy.ps1', 'local-env') && /goody sync \(or goody add local-env\)/.test(tp)}`)
- console.log(`phone-guard:${guard('phoney/phoney.ps1', 'android-swarm') && /goody sync \(or goody add android-swarm\)/.test(tp)}`)
+ console.log(`local-call:${tp.includes("& 'C:/kit/skills/envy/envy.ps1' use -Env shop -Services ") && !/Test-Path/.test(tp)}`)
+ console.log(`phone-call:${tp.includes("& 'C:/kit/skills/phoney/phoney.ps1' acquire -Agent qa-w1-Falcon -Lane Falcon")}`)
  console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy goodies: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8
-# tracked ports current (GEMINI.md went stale after a commit): kitbag.py port --check, workspace copies aside; 2 = no ports goody
+Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts: #' 'local-call', 'phone-call', 'release-guard' -Show 8
+# tracked ports current (GEMINI.md went stale after a commit): kitbag.py port --check, workspace copies aside; 2 = ports unavailable
 $pck = python -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') port --check 2>&1 | Out-String; $pckc = $LASTEXITCODE; $pst = @([regex]::Matches($pck, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -notmatch '\(workspace copy\)$' })
 Expect "port: the tracked ports (.codex, .agents, GEMINI.md) match a fresh generation: run kitbag.py port before committing ($($pst -join ', '))" ($pckc -eq 2 -or -not $pst.Count)
 Remove-TestKit $k

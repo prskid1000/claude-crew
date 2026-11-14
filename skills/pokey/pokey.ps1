@@ -1,22 +1,22 @@
 <#
 pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/pokey/pokey.ps1 <verb> [args]
   seat acquire|release|status ...                  memory seat + item claim
-  deployed -Mrs <repo>!<iid>,... [-Target <t>,..] [-Detail] [-Json] [-TimeoutSec <deploy.deployedTimeoutSec>]  live on a test env? (goody deploys)
+  deployed -Mrs <repo>!<iid>,... [-Target <t>,..] [-Detail] [-Json] [-TimeoutSec <deploy.deployedTimeoutSec>]  live on a test env?
   api -Target <t> -As <user> -Method <M> -Path '/...' (or api <M> '/...') [-Body <json>] [-ContentType <type>] [-Save <name | full path> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check] [-FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish; ends EXIT=<n> (a crash too)
-  annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
-  evidence fetch|index|read-chunk|frames|write-vision|label|verify|tune|feedback|bench|status <link | key> ...   videos -> text index (goody media-evidence)
+  annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   red boxes on a screenshot
+  evidence fetch|index|read-chunk|frames|write-vision|label|verify|tune|feedback|bench|status <link | key> ...   videos -> text index
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
   prepare -Job <job JSON | file> | -RunDir <run>   L1 selection: run.json, lead-notes.md, Left out; last line RUN <run JSON>
   lead-notes add -RunDir <run> -Code <code> -Text '<question or answer>'   one line under "## Answers (newest last)"
   results patch|hold -RunDir <run> -Code <code> [-Patch '<{set, add, top} JSON>'] [-Why <w> -Summary <s> -EnvFix <json>]   the workflow's deltas / held.json
-  ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL; goody android-swarm)
+  ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage,
-  a missing goody or api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
-Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
-  api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L26 report · L125 seat · L192 api · L360 finalize · L795 results · L828 retest · L868 prepare
+  api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
+Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
+  HTML report), ui_ios, media evidence (evidence).
+Sections: L26 report · L125 seat · L192 api · L359 finalize · L794 results · L827 retest · L867 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -190,7 +190,7 @@ switch ($Action) {
 }
 }
 # ---- api: a target's API as a test user
-# '<target><k>' = lane k of a local env (goody local-env, envy.ps1 envs -Json): the base target, its lane-1 URL ports moved to lane k's
+# '<target><k>' = lane k of a local env (envy.ps1 envs -Json): the base target, its lane-1 URL ports moved to lane k's
 function Get-LaneTarget($cfg, [string]$name) {
   $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
   if ($name -notmatch '^(?<b>.+?)(?<k>\d+)$' -or -not $cfg.targets.($Matches.b) -or -not (Test-Path -LiteralPath $envy)) { return $null }
@@ -235,7 +235,7 @@ if ($Save -match '^([A-Za-z]:[\\/]|\\\\).*[^\\/]$') {
 }
 $Save = $Save -replace '(?i)\.json$', ''
 if ($saveIn -and $Save -notmatch '^[^\\/:*?"<>|]+$') { throw "-Save '$saveIn' is not a file name (none of \ / : * ? `" < > |, not empty): a name, or a full file path; the folder goes in -OutDir" }
-# the api-auth goody gets the cleaned values
+# api_auth.ps1 gets the cleaned values
 if ($saveIn) { $PSBoundParameters['Save'] = $Save }; if ($OutDir) { $PSBoundParameters['OutDir'] = $OutDir }
 # a bound hashtable became a relative folder
 if ($OutDir -and -not [IO.Path]::IsPathRooted($OutDir)) { throw "-OutDir must be an absolute folder path, got '$OutDir' (a variable holding an object? PowerShell names are case-insensitive: `$o is `$O)" }
@@ -262,9 +262,8 @@ if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has
 $base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
 $a = $t.auth
-if ("$($a.type)" -notin '', 'login', 'none' -or $a.cert -or $a.refreshField) {   # other auth kinds: goody api-auth
-  if ($ext = Get-Command Invoke-ApiExtra -ErrorAction SilentlyContinue) { return & $ext @PSBoundParameters }
-  throw "auth type '$($a.type)'$(if ($a.cert) { ' + client cert' })$(if ($a.refreshField) { ' + refresh token' }) of target $Target is a goody: run kitbag.py goody add api-auth"
+if ("$($a.type)" -notin '', 'login', 'none' -or $a.cert -or $a.refreshField) {   # other auth kinds: adapters/api_auth.ps1
+  return Invoke-ApiExtra @PSBoundParameters
 }
 
 function Fill($s) { ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant) }
@@ -582,7 +581,7 @@ function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId -and $rtype -eq 'gdocs') { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
 $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] -and [IO.Path]::GetExtension([string]$_) -match $script:EvidenceExt } | ForEach-Object { "$($c.id): $_" } })
 if ($missing.Count) { throw "$Code`: $($missing.Count) evidence file(s) cited but not uploaded - nothing was published: $($missing -join '; '). Check the upload output above, then re-run." }
-$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # goody report-gdocs
+$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # adapters/report_html.ps1
 if ($html) { & $html -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8 }
 
 $cells = @{}
@@ -906,7 +905,7 @@ foreach ($tid in @($cand.Keys)) {
     $it.target = "$($hit.target)"; if ($hit.localEnv) { $it.localEnv = "$($hit.localEnv)" }
   } else { $it.target = "$($jb.target)" }
   # 4. live: every MR deployed on the target (N/A, MANUAL count as in); a local env: its own check (lead)
-  $depFn = Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue   # goody deploys
+  $depFn = Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue   # adapters/deployed_checks.ps1
   if (-not $it.localEnv -and $depFn) {
     $dep = @(& $depFn -Mrs $mrs -Target $it.target -Json | ConvertFrom-Json)
     $notLive = @($dep | Where-Object { $_.state -notmatch '^(DEPLOYED|N/A|MANUAL)' })
@@ -942,20 +941,14 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
     'api' { Invoke-KitVerb Invoke-Api $__rest }
     'finalize' { $KitVerbOnError = { 'EXIT=1' }; Invoke-KitVerb Invoke-Finalize $__rest }   # a crash exits 1 (Invoke-KitVerb), EXIT=1 first
-    { $_ -in 'deployed', 'annotate', 'evidence' } {   # goodies (adapters/)
-      $fn = @{ deployed = 'Invoke-Deployed'; annotate = 'Invoke-Annotate'; evidence = 'Invoke-Evidence' }[$__verb]
-      if (Get-Command $fn -ErrorAction SilentlyContinue) { Invoke-KitVerb $fn $__rest }
-      else { $xn = @{ deployed = 'deploys'; annotate = 'android-swarm'; evidence = 'media-evidence' }[$__verb]; Resolve-KitExtra $xn; [Console]::Error.WriteLine("pokey.ps1 $__verb is a goody: run kitbag.py goody add $xn"); exit 2 }
-    }
+    'deployed' { Invoke-KitVerb Invoke-Deployed $__rest }   # adapters/deployed_checks.ps1
+    'annotate' { Invoke-KitVerb Invoke-Annotate $__rest }   # adapters/annotate.ps1
+    'evidence' { Invoke-KitVerb Invoke-Evidence $__rest }   # skills/crafty/adapters/video.ps1
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
     'prepare' { Invoke-KitVerb Invoke-Prepare $__rest; exit 0 }   # pwsh -File would exit with a helper's git code (128); a crash exits 1 inside
     'lead-notes' { Invoke-KitVerb Invoke-LeadNotes $__rest }
     'results' { Invoke-KitVerb Invoke-Results $__rest }
-    'ui' {   # goody android-swarm
-      if (Get-Command Invoke-Ui -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Ui $__rest }
-      elseif ((Get-KitSetting 'devices.type' 'android') -eq 'none') { 'no devices (devices.type none): app checks are NOT_TESTED'; exit 1 }
-      else { [Console]::Error.WriteLine('pokey.ps1 ui (phone lanes) is a goody: run kitbag.py goody add android-swarm'); exit 2 }
-    }
+    'ui' { Invoke-KitVerb Invoke-Ui $__rest }   # adapters/ui_android.ps1
     { $_ -in '-h', '--help', 'help', '-?' } { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 0 }
     default { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 2 }   # the header only
   }

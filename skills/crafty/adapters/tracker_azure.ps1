@@ -1,9 +1,9 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Goody tracker-azure: Azure Boards tracker (tracker.type azure).
-# Dot-sourced by lib.ps1 from skills/crafty/adapters/ (kitbag.py goody add tracker-azure); helpers come from lib.ps1.
+# tracker-azure: Azure Boards tracker (tracker.type azure).
+# Dot-sourced by lib.ps1 from skills/crafty/adapters/ when tracker.type is azure; helpers come from lib.ps1.
 # Sections: L6 helpers · L18 rest · L26 html · L52 tracker
-# ---- helpers: only this goody uses them (kept out of the core lib.ps1)
+# ---- helpers: only this adapter uses them (kept out of the core lib.ps1)
 function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$File, [string]$CType) {
   if ($__trDry) { Write-Host "DRYRUN: $Method $Uri$(if ($null -ne $Body) { '  body=' + (__TrShort ($Body | ConvertTo-Json -Depth 20 -Compress)) })$(if ($File) { "  file=$File" })"; return $null }
   if (-not ($File -or $CType)) {

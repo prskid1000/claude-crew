@@ -1,10 +1,10 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody ports): TOML / YAML escaping, LF output, port_deploy keeps user files, ports.targets transitions and cleanup, port --check clean on a kit copy.
-Usage: kitbag.py goody test ports (the plugin comes from files/ beside this file)
+ports.tests.ps1: TOML / YAML escaping, LF output, port_deploy keeps user files, ports.targets transitions and cleanup, port --check clean on a kit copy.
+Usage: pwsh -NoProfile -File <kit>/tests/ports.tests.ps1 (or tests/kit-tests.ps1 -Area ports).
 Exit codes: 0 pass · 1 a check failed.
 #>
-. (Join-Path $PSScriptRoot 'harness.ps1')   # kitbag.py goody test: the kit's harness
+. (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/bossy/adapters/heartbeat.ps1', 'skills/bossy/kitbag_ports.py')   # copied into every New-TestKit kit
 $plugin = Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/kitbag_ports.py'
 $res = @(& $py -X utf8 (Join-Path $PSScriptRoot 'ports_test.py') (Join-Path $src 'skills/bossy/kitbag.py') $plugin 2>&1)

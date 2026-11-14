@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/tracker-linear.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody tracker-linear on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call fails). Run from a kit clone:
-#   pwsh goodies/tracker-linear/tests.ps1 [-Kit <kit>]   -> a PASS / FAIL line per tracker type; exit 1 on a failure
+# tests/tracker-linear.tests.ps1: tracker-linear on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call fails). Run from a kit clone:
+#   pwsh -NoProfile -File tests/tracker-linear.tests.ps1 [-Kit <kit>]   -> a PASS / FAIL line per tracker type; exit 1 on a failure
 param([string]$Kit = (Split-Path $PSScriptRoot))
 . (Join-Path $Kit 'skills/crafty/lib.ps1'); . (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/tracker_linear.ps1')
 $global:log = [Collections.Generic.List[string]]::new(); $global:failed = 0

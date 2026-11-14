@@ -258,20 +258,20 @@ await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs
 '@
   Expect-Each $res 'browser.mjs tabs: #' 'waits', 'ninth', 'fails', 'orphans', 'sweep'
   Expect 'browser.mjs: never logs out' ((Read-Text "$qk/browser.mjs") -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600')
-  # fixture app: form login, relogin (Chrome); sso-steps / other engines name their goody
+  # fixture app: form login, relogin (Chrome); firefox without Playwright: its install line
+  $null = mkdir -Force "$qk/adapters"; cp "$src/skills/pokey/adapters/engine-playwright.mjs" "$qk/adapters"
   $res = NodeT auth ($LoginApp + @'
 const [TF, SLOW] = process.argv.slice(2), F = { '#u': '{user}', '#c': '123456' }, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]
 writeFileSync(TF, JSON.stringify({ default: 'form', targets: { form: { web, webLogin: { path: '/login', fields: F, submit: 'button' }, users: U },
   sso: { web, webLogin: { type: 'sso-steps', steps }, users: U }, ff: { web, browser: { engine: 'firefox' }, webLogin: {}, users: U } } }))
 const { b, home, out } = await login()
-await out('goodies', async () => /goody add browser-engines/.test(await b.session({ target: 'ff' }).then(() => '', (e) => e.message)))
+await out('engines', async () => /browser\.engine firefox: npm i playwright-core/.test(await b.session({ target: 'ff' }).then(() => '', (e) => e.message)))
 process.env.KIT_QA_TARGETS = 'x'; await out('pin', () => b.session({ target: 'form' }).then(() => false, (e) => /QA run's target/.test(e.message))); delete process.env.KIT_QA_TARGETS
 // a real headless Chrome only with KIT_TESTS_SLOW (seconds each)
-if (SLOW) await out('webext', async () => /goody add web-login-types/.test(await b.session({ target: 'sso' }).then(() => '', (e) => e.message)))
 if (SLOW) await out('chrome', async () => { const s = await b.session({ tenant: 'a' }), r = s.key === 'form|a|admin' && await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
 process.exit(0)
 '@) "$qk/targets.local.json" $(if ($env:KIT_TESTS_SLOW) { '1' } else { '' })
-  Expect-Each $res 'browser.mjs login: #' (@('goodies', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'webext', 'chrome' }))
+  Expect-Each $res 'browser.mjs login: #' (@('engines', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'chrome' }))
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/pokey)' }
 New-Task 'PF' 'Ask F'; New-Task 'TF' 'Task F' 'PF'; $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TF'; checks = , @('X1', 'FAIL', 'new') })
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"

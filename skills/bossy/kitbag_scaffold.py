@@ -1,10 +1,10 @@
-"""kitbag goody kit-admin (scaffold): add, rename or remove a kit part with its registry entry, Router / Events row and a test stub.
+"""kitbag_scaffold.py (plugin): add, rename or remove a kit part with its registry entry, Router / Events row and a test stub.
 
   python -X utf8 skills/bossy/kitbag.py new agent|skill|workflow|rule|event|config-key <name> [--crew <agent>] [--skill <skill>]
   python -X utf8 skills/bossy/kitbag.py new adapter <kind> <name> · new adr <title>
   python -X utf8 skills/bossy/kitbag.py rename agent|skill|workflow|rule|event|config-key <old> <new> · remove <kind> <name>
 
-Installed by `kitbag.py goody add kit-admin`; kitbag.py loads it and shares its own names (read, manifest, section, port).
+kitbag.py loads it and shares its own names (read, manifest, section, port).
 Exit codes: 0 ok · 1 references left after rename / remove · 2 usage error.
 Sections: L16 helpers · L72 new · L237 shared · L265 rename · L386 remove
 """
@@ -238,7 +238,7 @@ return r || {{ ok: false, summary: 'the agent returned nothing' }}
 def _regen(kit):
     """After new / rename / remove: the ports and README's generated sections follow the registry at once."""
     with contextlib.redirect_stdout(io.StringIO()):
-        PLUGINS.get('port', lambda a: 0)([])   # the ports goody, when installed
+        PLUGINS.get('port', lambda a: 0)([])   # kitbag_ports.py, when present
     k2 = load(kit)
     p = osp.join(kit, 'README.md')
     old = read(p)

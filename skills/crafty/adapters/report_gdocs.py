@@ -1,5 +1,5 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-"""Goody report-gdocs: reports.type gdocs = a Google Doc through the gws CLI (Markdown converted to HTML first), shared per
+"""Report adapter gdocs: reports.type gdocs = a Google Doc through the gws CLI (Markdown converted to HTML first), shared per
 reports.share (anyone (default) | domain:<domain> | none); evidence = a Drive folder (reports.driveParent / driveParent), one
 image src per file. Loaded by devtools.py from skills/crafty/adapters/."""
 import json, os, re, sys

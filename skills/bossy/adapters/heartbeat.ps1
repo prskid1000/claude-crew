@@ -1,5 +1,5 @@
 <#
-heartbeat.ps1 (goody ports): the bossy E1 timer for Codex, which has no timer tool; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
+heartbeat.ps1: the bossy E1 timer for Codex, which has no timer tool; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 heartbeat -Thread <Codex session id> [-Minutes <n>]   one detached pwsh waits n min (default: the learned
     heartbeat), then `codex queue` puts the E1 prompt into that session; arming again replaces the armed one
   bossy.ps1 heartbeat -Stop   nothing runs any more: the armed timer goes

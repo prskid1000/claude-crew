@@ -1,15 +1,14 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L68 state · L137 config · L217 OS · L414 leases · L849 status · L1093 supervise sweep ·
-  L1164 supervise report · L1260 tracker · L1590 prior · L1606 ask bugs · L1811 git-host · L1971 kitlog · L2091 params ·
-  L2396 entry-scripts
+Sections: L10 paths · L67 state · L136 config · L216 OS · L413 leases · L802 status · L1046 supervise sweep ·
+  L1117 supervise report · L1213 tracker · L1543 prior · L1559 ask bugs · L1764 git-host · L1924 kitlog · L2044 params ·
+  L2349 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
-$script:KitEntry = $MyInvocation.PSCommandPath   # the script that dot-sourced this file (Resolve-KitExtra runs it again)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
 function Get-KitRuntime { $rt = if ($env:CLAUDE_RUNTIME) { if ([IO.Path]::IsPathRooted($env:CLAUDE_RUNTIME) -or -not $script:KitRoot) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $env:CLAUDE_RUNTIME } } elseif ($script:KitRoot -and $script:KitRoot -notin '/', '\') { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir }; if (-not $rt -or $rt -in '/', '\') { throw "Get-KitRuntime: bad runtime '$rt'" }; $rt }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
@@ -777,9 +776,8 @@ if (-not $global:KitAdapters) { $global:KitAdapters = @{} }
 function Register-KitAdapter([string]$Kind, [string]$Name, [hashtable]$Verbs) { if (-not $KitAdapters[$Kind]) { $KitAdapters[$Kind] = @{} }; $KitAdapters[$Kind][$Name] = $Verbs }
 function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtable]$a = @{}) {
   $ad = $KitAdapters[$Kind][$Name]; $f = if (-not $ad) { $null } elseif ($ad.ContainsKey($Verb)) { $ad[$Verb] } else { $ad['*'] }
-  if (-not $ad -and $Name) { throw (Get-KitExtraLine $Kind $Name) }
+  if (-not $ad -and $Name) { throw "$Kind ${Name}: no such adapter (README ""Adapters"")" }
   if (-not $f) { Write-Warning "$Kind ($Name): no adapter or verb $Verb (README ""Adapters"")"; return $null }
-  if ($f.File) { Add-KitExtraUse $f.File }   # a goody's adapter in use
   & $f $a $Verb
 }
 # a config command line -> argv: quotes group, {name} = $a.name
@@ -801,51 +799,6 @@ function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   $t = [Environment]::GetEnvironmentVariable($Env); if (-not $t) { return @{} }
   @{ Authorization = switch ($Kind) { 'basic' { 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($(if ($t -match ':') { $t } else { ":$t" }))) } 'token' { "token $t" } default { "Bearer $t" } } }
 }
-# ----- goodies (kitbag.py goody add <name>): adapters a config names but the kit does not ship; files land in skills/crafty/adapters/
-$script:KitExtraOf = @{ 'tracker/jira-server' = 'tracker-jira'; 'git-host/bitbucket' = 'bitbucket'; 'ci/bitbucket' = 'bitbucket'
-  'tracker/gitlab' = 'gitlab'; 'git-host/gitlab' = 'gitlab'; 'ci/gitlab' = 'gitlab'
-  'tracker/github' = 'github'; 'git-host/github' = 'github'; 'ci/github' = 'github'
-  'git-host/azure' = 'azure-devops'; 'ci/azure' = 'azure-devops'; 'git-host/gitea' = 'gitea'; 'ci/gitea' = 'gitea' }
-function Get-KitExtraName([string]$Kind, [string]$Name) { if ($script:KitExtraOf["$Kind/$Name"]) { $script:KitExtraOf["$Kind/$Name"] } else { "$Kind-$Name" } }
-function Get-KitExtraLine([string]$Kind, [string]$Name) { "$Kind $Name is a goody: run kitbag.py goody add $(Get-KitExtraName $Kind $Name)" }
-# `kitbag.py goody add <name> --auto` (prune drops it once unused); KIT_EXTRA_AUTO=0 off; a failed try waits 1 h
-function Install-KitExtra([string]$Name) {
-  if (-not $Name -or $env:KIT_EXTRA_AUTO -eq '0' -or -not (Test-Path -LiteralPath $KitCmd.kitbag)) { return $false }
-  $try = Join-Path (Get-KitPath extras-used -Create) "_try-$Name"
-  if ((Test-Path -LiteralPath $try) -and ((Get-Date) - [IO.File]::GetLastWriteTime($try)).TotalMinutes -lt 60) { return $false }   # TODO-PARAM (fixed default)
-  $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', $KitCmd.kitbag, 'goody', 'add', $Name, '--auto') 180   # kitbag's lock serializes two installers
-  Write-KitLog calls extra-auto @{ extra = $Name; code = $r.code }
-  if ($r.code) { [IO.File]::WriteAllText($try, ''); Write-Warning "goody ${Name}: install on demand failed ($(@("$($r.err)$($r.out)" -split "`n" | Where-Object { $_.Trim() })[0]))"; return $false }
-  [Console]::Error.WriteLine("goody ${Name}: installed on demand"); $true
-}
-# installs the goody and reruns the verb once; returns only when it could not
-function Resolve-KitExtra([string]$Name) {
-  if (-not $script:KitEntry -or $env:KIT_EXTRA_RETRY -eq $Name -or -not (Install-KitExtra $Name)) { return }
-  $env:KIT_EXTRA_RETRY = $Name
-  $again = @(@($script:__verb | Where-Object { $_ }) + @($script:__rest))   # a variable: @(...) inline would pass one array
-  # to the host: callers capture this function's output ($null = Assert-KitExtra ...)
-  try { & $script:KitEntry @again | ForEach-Object { Write-Host $(if ($_ -is [string]) { $_ } else { ($_ | Out-String).TrimEnd() }) }; $code = $LASTEXITCODE } finally { $env:KIT_EXTRA_RETRY = $null }
-  exit $code
-}
-# daily usage stamp per loaded goody file, for kitbag.py goody prune
-function Add-KitExtraUse([string[]]$Files) {
-  try {
-    $d = Get-KitPath extras-used; if (-not [IO.Directory]::Exists($d)) { $null = [IO.Directory]::CreateDirectory($d) }; $today = [datetime]::Today
-    foreach ($f in $Files) {
-      if (-not $f -or -not $f.StartsWith($script:KitRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
-      $s = Join-Path $d ($f.Substring($script:KitRoot.Length).TrimStart('\', '/') -replace '[\\/]', '__')
-      if (-not [IO.File]::Exists($s) -or [IO.File]::GetLastWriteTime($s) -lt $today) { [IO.File]::WriteAllText($s, '') }
-    }
-  } catch {}   # a stamp never fails a verb
-}
-# /tidy prep: kitbag.py goody prune; -Days default: learned goodies.pruneDays
-function Invoke-ExtrasPrune([double]$Days = 0, [switch]$DryRun) {
-  $gp = Get-Command Get-KitParam -ErrorAction SilentlyContinue   # the learned-parameter framework, when installed
-  if (-not $Days) { $Days = if ($gp) { try { [double](& $gp 'goodies.pruneDays' 30) } catch { 30 } } else { 30 } }   # TODO-PARAM (fixed default)
-  $pa = @('-X', 'utf8', $KitCmd.kitbag, 'goody', 'prune', '--days', "$Days") + @(if ($DryRun) { '--dry-run' })
-  & (Get-Python) @pa
-}
-
 # ---- status: one row per agent and workflow run, from files only; no LLM, no network
 # <Claude project dir>/<session>/subagents/workflows/<run>
 function Get-KitWorkflowDirs([string]$Session) {
@@ -1360,7 +1313,7 @@ function __TrOsFullName {
   ([string]$n).Trim()
 }
 # ----- backends: $a = id, text, status (tracker name), logical, name, list, parent, assignee, priority, file, leaf
-# tracker clickup, github: goodies tracker-clickup, github
+# tracker clickup, github: adapters/tracker_clickup.ps1, adapters/github.ps1
 # adapter:tracker/command: tracker.commands.<verb> = a CLI line, {placeholders} = $a keys; prints the kit's JSON
 Register-KitAdapter 'tracker' 'command' @{ '*' = { param($a, $v)
     $c = Get-KitSetting 'tracker.commands' $null; if ($v -in 'url', 'owner' -and -not $c.$v) { return $(if ($v -eq 'url') { $a.id } else { $a.name }) }
@@ -1856,8 +1809,8 @@ function __CiJob($Id, $Name, $Status, $FinishedAt = $null) { $o = [ordered]@{ id
 function __CiStat($Id, $Status) { if ($Status) { [pscustomobject]@{ id = $Id; status = $Status } } }
 function __CommitObj($Sha, $Date = $null) { if ($Sha) { $o = [ordered]@{ id = $Sha }; if ($Date) { $o.committed_date = $Date }; [pscustomobject]$o } }
 
-# git hosts: goodies gitlab, github, bitbucket, azure-devops, gitea
-# MR objects: __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (goodies github, gitea)
+# git hosts: adapters/gitlab, github, bitbucket, azure_devops, gitea (.ps1)
+# MR objects: __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (github, gitea)
 function __Mr([hashtable]$H) {
   $o = [ordered]@{ iid = $null; title = ''; state = ''; source_branch = ''; target_branch = ''; sha = ''; merge_commit_sha = $null; squash_commit_sha = $null; merged_at = $null; created_at = $null
     updated_at = $null; draft = $false; has_conflicts = $false; detailed_merge_status = ''; merge_when_pipeline_succeeds = $false; web_url = ''; head_pipeline = $null }
@@ -2046,7 +1999,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $Tokens = @($Tokens)
   $src = $MyInvocation.PSCommandPath
   $help = { if ($src -and (Test-Path $src)) { (Get-Content $src -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1' | Write-Output }; exit 0 }
-  $fnc = Get-Command $Fn; if ($fnc.ScriptBlock.File) { Add-KitExtraUse $fnc.ScriptBlock.File }   # a verb a goody brings
+  $fnc = Get-Command $Fn
   $meta = $fnc.Parameters
   $own = @($meta.Keys | Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
   $script:KitScript = if ($src) { Split-Path $src -Leaf } else { '' }; $sub = "$($Tokens[0])" -match '^[a-z][\w-]*$'; $script:KitVerb = (($Fn -replace '^Invoke-', '') + $(if ($sub) { " $($Tokens[0])" })).ToLower()

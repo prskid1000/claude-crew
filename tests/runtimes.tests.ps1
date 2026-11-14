@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/runtimes.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody runtimes (fake isUp / up / down lines on a flag file): lease, start, stop, an owner-started runtime stays,
-# the guard's auto lease, supervise -AutoFix on a dead holder. Run: kitbag.py goody test runtimes
+# tests/runtimes.tests.ps1: runtimes (fake isUp / up / down lines on a flag file): lease, start, stop, an owner-started runtime stays,
+# the guard's auto lease, supervise -AutoFix on a dead holder. Usage: pwsh -NoProfile -File tests/runtimes.tests.ps1
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/container_tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit rt; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'

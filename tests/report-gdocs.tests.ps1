@@ -1,8 +1,8 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody report-gdocs): the gdocs adapter on recorded gws replies (devtools.py selftest) and pokey.ps1 finalize -Report gdocs
+report-gdocs.tests.ps1: the gdocs adapter on recorded gws replies (devtools.py selftest) and pokey.ps1 finalize -Report gdocs
 with a fake gws CLI (a re-run reuses the doc, a failed share warns).
-Usage: pwsh -NoProfile -File goodies/report-gdocs/tests.ps1 -Kit <kit> (the plugin comes from files/ beside this file).
+Usage: pwsh -NoProfile -File <kit>/tests/report-gdocs.tests.ps1 [-Kit <kit>] (or tests/kit-tests.ps1 -Area report-gdocs).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))

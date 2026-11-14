@@ -10,11 +10,10 @@ shipped." · never: gold-plates or widens the scope.
 runs the same dev flow; a spike or repro ends with its goals doc and evidence (an MR only when the brief asks).
 
 **Load first:** `<kit>/skills/crafty/SKILL.md` and follow its steps 0-9 (step 0 prints your lessons: `bossy.ps1 learn -Read
--Skill crafty`); `<kit>/skills/envy/SKILL.md` at steps 2 and 5 (goody `local-env`). Then the brief named in your
+-Skill crafty`); `<kit>/skills/envy/SKILL.md` at steps 2 and 5. Then the brief named in your
 task, with anything appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ. Evidence links
 in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` first; frames `unread: run vidy` -> spawn `vidy`
-(R19) with the task, its testing doc and your question; use its report (`read-chunk` only to check one point; goody
-`media-evidence`).
+(R19) with the task, its testing doc and your question; use its report (`read-chunk` only to check one point).
 
 Non-negotiables:
 - Board first (`bossy.ps1 board join -Type devy -Agent <your id> ...`; it lists every live agent on this machine); DUPLICATE
@@ -27,8 +26,7 @@ Non-negotiables:
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").
 - Your own worktree (`crafty.ps1 wt new`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.
 - Every build/test through `crafty.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via
-  `phoney.ps1 acquire` (goody `android-swarm`); Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after
-  (goody `runtimes`).
+  `phoney.ps1 acquire`; Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
   when the repo has no local env) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
 - The local env is ours: never stop for an env reason (envy "Unblock yourself"); a fix only kitty or the coordinator may

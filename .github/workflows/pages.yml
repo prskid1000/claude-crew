@@ -21,9 +21,8 @@ jobs:
           python-version: '3.12'
       - name: 'Lint with the flow checks (0 problems: an unresolved verb or a cycle gap fails here, not on the page)'
         run: |
-          python -X utf8 skills/bossy/kitbag.py goody add flow-map
           python -X utf8 skills/bossy/kitbag.py lint
-      - name: Build the page (public files only; the page is the flow-map goody)
+      - name: Build the page (public files only; the page comes from skills/bossy/kitbag_flow.py)
         run: python -X utf8 skills/bossy/kitbag.py flow --public --out _site/index.html
       - name: Org-term scan (only when the ORG_TERMS secret is set)
         env:

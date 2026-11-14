@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody flow-map): the flow model's loop checks; the plugin loads from files/ beside this file.
-Usage: pwsh -NoProfile -File goodies/flow-map/tests.ps1 -Kit <kit with skills/bossy/kitbag.py>
+flow-map.tests.ps1: the flow model's loop checks (skills/bossy/kitbag_flow.py) and the kit-flow page.
+Usage: pwsh -NoProfile -File <kit>/tests/flow-map.tests.ps1 [-Kit <kit with skills/bossy/kitbag.py>] (or tests/kit-tests.ps1 -Area flow-map).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -32,11 +32,11 @@ d = flow.model(k, [])
 flow.write(sys.argv[4], dict(d, home='https://example.org/kit', readme='https://example.org/kit#readme'), {})   # the page, for kitbag.py ui-check and the behaviour check
 c = collections.Counter(m.group(0) for i in d['issues'] for m in [re.search(r'(fp|real|marked)\.\w+', i['text'])] if m)
 print(' '.join(f'{f}={c.get(f, 0)}' for f in T), 'deliberate=' + str(sum(1 for i in d['deliberate'] if 'marked.ps1' in i['text'])))
-V = {'tool.py': "def cmd_lint(a):\n    pass\n\nCOMMANDS = {'lint': cmd_lint, 'audit': cmd_lint}\nFORMATS = {'json': cmd_lint}\nEXTRA_OF = {'flow': 'flow-map',\n  'port': 'ports'}\n",
+V = {'tool.py': "def cmd_lint(a):\n    pass\n\nCOMMANDS = {'lint': cmd_lint, 'audit': cmd_lint}\nFORMATS = {'json': cmd_lint}\n",
      'a.ps1': "function Invoke-Board { }\nswitch ($__verb) {\n  'board' {\n    if ($x) { Invoke-KitVerb Invoke-Board $r }\n  }\n"
        "  'two' { switch ($m) { 'x' {1}  default {2} } }\n  'deploy' { $null = Assert-KitExtra Invoke-Deploy 'a.ps1 deploy' 'deploys'; Invoke-KitVerb Invoke-Deploy $r }\n"
        "  { $_ -in 'deployed', 'annotate' } {\n    Invoke-KitVerb $fn $r\n  }\n  default { exit 2 }\n}\n",
-     'doc.md': '# d\n- `tool.py lint`, `tool.py audit scan`, `tool.py port`, `a.ps1 board`, `a.ps1 deploy request`, `a.ps1 annotate`, `a.ps1 nope`, `tool.py json`\n'}
+     'doc.md': '# d\n- `tool.py lint`, `tool.py audit scan`, `a.ps1 board`, `a.ps1 deploy request`, `a.ps1 annotate`, `a.ps1 nope`, `tool.py json`\n'}
 k = types.SimpleNamespace(files=list(V), texts=V, dir=sys.argv[2], skills=[], agents={}, workflows={})
 print('verbs=' + ','.join(sorted(i['text'].split(':')[0] for i in flow.model(k, [])['issues'] if i['code'] == 'UNRESOLVED')))
 tool = "function Invoke-Go { Set-Content run.json '{}' }\nswitch ($__verb) {\n  'go' { Invoke-KitVerb Invoke-Go $r }\n  default { exit 2 }\n}\n"
@@ -54,7 +54,7 @@ Remove-Item $f -Force
 # the page: no clipped label, no node or label off-screen or overlapping (window.uiBoxes) at 1366 / 900 / 390, light + dark,
 # as loaded, with each side tab open (key included) and in the Detail and Everything views
 $uiRt = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-rt-$PID"; Set-Item Env:CLAUDE_RUNTIME $uiRt   # own shots and stamp, never the kit's
-$uiKit = @($Kit, $env:KIT_TEST_CORE) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'skills/pokey/node_modules/puppeteer-core')) } | Select-Object -First 1   # goody test's kit copy has no node_modules: the core's
+$uiKit = @($Kit) | Where-Object { Test-Path (Join-Path $_ 'skills/pokey/node_modules/puppeteer-core') } | Select-Object -First 1   # no node_modules: the page checks skip
 $kb = { param($w, $c) @(& $py -X utf8 (Join-Path $uiKit 'skills/bossy/kitbag.py') ui-check $pgOut --widths $w --click $c 2>&1); $LASTEXITCODE }   # desktop clicks; a phone taps (its level buttons sit in the menu)
 $ui = @(if ($uiKit) { & $kb '1366,900' '.ri[data-t=key];.ri[data-t=issues];.ri[data-t=loops];.ri[data-t=trace];.ri[data-t=code];#lv .b:nth-child(2);#lv .b:nth-child(3);#ix'; & $kb 390 '#vw;#vw,#mn,#lv .b:nth-child(3);.ri[data-t=key];#lst .li' } else { 'SKIP flow-map page check: no puppeteer-core in the kit' })   # @(): a bare string's [-1] is its last letter
 # behaviour on the fixture page: what a person and a screen reader meet first (title, intro, buttons, deep links, keys, phone list, contrast)
@@ -109,7 +109,7 @@ $checks += [ordered]@{
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
   'run-then-read is a loop from a script, never from a test file, a doc step or one read-modify-write' = $res -match 'scc-tests=0 scc-driver=1 scc-doc=0 scc-rmw=0'
-  'verbs from COMMANDS / EXTRA_OF tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'
+  'verbs from COMMANDS tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'
 }
 $fails = 0
 foreach ($c in $checks.GetEnumerator()) { if ($c.Value) { "PASS flow-map: $($c.Key)" } else { "FAIL flow-map: $($c.Key)"; $fails++ } }

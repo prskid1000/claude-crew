@@ -1,8 +1,8 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody os-timer): install / uninstall / status through a fake scheduler adapter, health (off, fresh, stale, gone ->
+tests/os-timer.tests.ps1: install / uninstall / status through a fake scheduler adapter, health (off, fresh, stale, gone ->
 reinstalled, removed, osTimer false), the tick (supervise as session os-timer; skips while paused), the CLI verbs once installed.
-Usage: kitbag.py goody test os-timer (next to the kit's tests/harness.ps1; New-TestKit gets this goody's files).
+Usage: pwsh -NoProfile -File tests/os-timer.tests.ps1 (copies adapters/os_timer.ps1 into its test kit).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit)
@@ -30,7 +30,7 @@ $__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ osTimer = $false } };
 "false:$((Get-KitOsBeatAdapter) -eq 'none' -and -not (Get-KitOsBeatHealth))"
 '@ @($O)
 Expect-Each $ob 'os-timer: # (off: the install line; inst; schema: updated + schemaVersion; fresh: quiet; stale; gone: reinstalled; removed: quiet; tick: supervise as os-timer; paused: skipped; false: adapter none, quiet)' 'off', 'inst', 'schema', 'fresh', 'stale', 'gone', 'removed', 'tick', 'paused', 'false'
-# the CLI verbs reach the goody; a paused kit's tick never starts supervise; status of a never-installed timer exits 1
+# the CLI verbs reach os_timer.ps1; a paused kit's tick never starts supervise; status of a never-installed timer exits 1
 $pd = TkPath $k pauses -Create; & $J @{ at = (Get-Date).ToString('o'); reason = 'owner pause'; run = '*'; state = 'paused' } (Join-Path $pd 'pause-t.json')
 $tk = Invoke-TestScript $O heartbeat tick; $st = Invoke-TestScript $O heartbeat status
 Expect "os-timer: heartbeat tick while paused = skipped; heartbeat status of a never-installed timer exits 1 ($($tk.code) $($st.code))" ($tk.out -match 'skipped: paused \(owner pause\)' -and $tk.code -eq 0 -and $st.code -eq 1 -and $st.out -match '^heartbeat: (not installed|UNKNOWN)')

@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
-# android-swarm (goody): pokey.ps1 ui on a leased Android phone and the laneApk kind of pokey.ps1 deployed (dot-sourced from adapters/).
+# android-swarm: pokey.ps1 ui on a leased Android phone and the laneApk kind of pokey.ps1 deployed (dot-sourced from adapters/).
 # Test-LaneApkDeployed runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, Row, OnRef, LocalAncestor.
 # Sections: L7 deployed laneApk · L27 ui
 
@@ -32,8 +32,7 @@ $adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'
 $dt = Get-KitSetting 'devices.type' 'android'
 if ($dt -eq 'none') { 'no devices (devices.type none): app checks are NOT_TESTED'; exit 1 }
 if ($dt -eq 'ios') {
-  if ($ext = Get-Command Invoke-UiIos -ErrorAction SilentlyContinue) { return & $ext @PSBoundParameters }
-  [Console]::Error.WriteLine('devices.type ios is a goody: run kitbag.py goody add ios-simulator'); exit 1
+  return Invoke-UiIos @PSBoundParameters
 }
 $tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
 $xmlLocal = Join-Path (Get-KitPath android-tmp -Create) "ui_$tag.xml"

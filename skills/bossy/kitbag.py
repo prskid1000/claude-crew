@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""kitbag.py: the kit's own tooling in one file - lint, README graph, audit stamp, prose, budget, goodies (and their commands).
+"""kitbag.py: the kit's own tooling in one file - lint, README graph, audit stamp, prose, budget; plugins (kitbag_<name>.py) add commands.
 
   python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn] [--no-flow] [--ratchet] [--org-terms <kit.local.json | a,b>] [--json <out>]
-  python -X utf8 kitbag.py flow --readme [<kit>]       # README graph sections (the interactive page: goody flow-map)
-  python -X utf8 kitbag.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (goody ports)
-  python -X utf8 kitbag.py audit stamp | scan [--kit <dir>] [--json <file>]   # stamp resets the audit nudge; scan: goody kit-admin
-  python -X utf8 kitbag.py cost  [<kit>] [--steps] [--json]   # start tokens per agent, workflow prompts (goody kit-admin)
+  python -X utf8 kitbag.py flow --readme [<kit>]       # README graph sections (the interactive page: kitbag_flow.py)
+  python -X utf8 kitbag.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (kitbag_ports.py)
+  python -X utf8 kitbag.py audit stamp | scan [--kit <dir>] [--json <file>]   # stamp resets the audit nudge; scan: kitbag_admin.py
+  python -X utf8 kitbag.py cost  [<kit>] [--steps] [--json]   # start tokens per agent, workflow prompts (kitbag_admin.py)
   python -X utf8 kitbag.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
-  python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (goody kit-admin)
+  python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (kitbag_admin.py)
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show]   # start tokens per role vs START_CAP (lint START-BUDGET); repo and tests totals (INFO)
+  python -X utf8 kitbag.py migrate         # one-time: retired install records out (.githooks/post-merge runs it)
   python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers | state todo add|done|lint <file> ...   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
   python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
-  python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N] [--dry-run]
 
-lint problem codes: each message says what is wrong and the fix; skills/bossy/kit-admin.md (goody kit-admin) lists them.
+lint problem codes: each message says what is wrong and the fix; skills/bossy/kit-admin.md lists them.
 audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK | WARN | INFO.
-Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
-error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
+Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
+a non-kit dir).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L635 lint · L1034 README graph · L1136 lint command · L1334 audit ·
-  L1451 registry · L1792 prose · L1943 sections · L2073 budget · L2087 goodies · L2612 state lint · L2797 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1034 README graph · L1137 lint command · L1335 audit ·
+  L1451 registry · L1792 prose · L1943 sections · L2073 budget · L2087 migrate · L2143 plugins · L2197 state lint · L2382 main
 """
-import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
+import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
 from collections import defaultdict, deque
 from pathlib import Path
@@ -284,6 +284,7 @@ BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template'
 PATHS_JSON = 'skills/crafty/kit.example.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/crafty/lib.ps1', 'skills/crafty/devtools.py', 'skills/pokey/browser.mjs', 'skills/bossy/kitbag.py', 'skills/crafty/spec.mjs'}
 TEXT_EXT = ('.md', '.ps1', '.psm1', '.py', '.js', '.mjs', '.json', '.html', '.txt', '.sh', '.yml', '.yaml', '.ini')
+MIGRATION_LINE = 'one-time migration 2026-11-14'   # lint retired-word check: the owner keeps that one line until the live clone ran it
 JUNK_EXT = ('.apk', '.aab', '.log', '.zip', '.tmp')
 RESERVED = {'nul', 'con', 'prn', 'aux'}
 BLOCKS = ('Load when', 'Not when', 'Hands off to', 'Files')
@@ -411,8 +412,6 @@ def load(kit):
         return False
 
     allf, junk, repo_files = [], [], []
-    # goody files are not kit files unless the core tracks them (a goody folded into the core before sync swapped it)
-    goodies = {f for files in installed_extras(k.dir).values() for f in files} - set(tracked(k.dir))
     for d, dirs, fs in os.walk(k.dir):
         top = osp.relpath(d, k.dir) == '.'
         skip = SKIP_DIRS if top else SKIP_DIRS - {'.runtime', '.state', '.claude-runtime', 'worktrees', 'memory'}   # runtime, harness worktrees, memory: kit root only
@@ -421,7 +420,7 @@ def load(kit):
             rel = osp.relpath(osp.join(d, f), k.dir).replace('\\', '/')
             if rel.split('/')[0] in REPO_ONLY:
                 repo_files.append(rel)
-            elif rel == '.git' or rel in goodies:   # a worktree's .git file
+            elif rel == '.git':   # a worktree's .git file
                 continue
             elif f.lower() in RESERVED:
                 junk.append((rel, 'reserved-name file (delete it)'))
@@ -632,7 +631,7 @@ def graph(k):
         n['from_skill'] = f in from_skill
     return {'nodes': nodes, 'edges': edges}
 
-# ---- lint: the checks (problem codes: kit-admin.md, goody kit-admin)
+# ---- lint: the checks (problem codes: kit-admin.md)
 def js_code(src):
     """Workflow source with comments and string/template literals removed (to look at code only)."""
     out, i, n, st = [], 0, len(src), None
@@ -668,7 +667,6 @@ def lint(k, g=None, org_terms=None):
         bad('ROUTER-MISSING', 'CLAUDE.md', 'no "## Router" section')
         router = ''
     targets = set(k.skills) | {'/' + w for w in k.workflows} | set(k.agents)
-    known = known_extras(k.dir)   # None: goodies branch never fetched (CI), names unchecked
     rows = table_rows(router)
     if not rows:
         bad('ROUTER-MISSING', 'CLAUDE.md', 'the Router section has no table rows')
@@ -677,8 +675,7 @@ def lint(k, g=None, org_terms=None):
             bad('ROUTER-TARGET', 'router', f'row needs # | conditions | target: {" | ".join(cells)[:60]}')
             continue
         found = {t for t in targets if re.search(r'`' + re.escape(t) + r'[`\s]', cells[2])}
-        # a goody's skill (installed or not) is a target too: "`<skill>` skill (goody `<goody>`)"
-        if len(found) + (1 if re.search(r'\bdirect\b|org row|`[\w-]+` skill \(goody `[\w-]+`\)', cells[2], re.I) else 0) != 1:
+        if len(found) + (1 if re.search(r'\bdirect\b|org row', cells[2], re.I) else 0) != 1:
             bad('ROUTER-TARGET', 'router', f'row {cells[0]}: exactly one target expected, got {sorted(found) or "none"}')
     routed = router + '\n' + k.org_rows
     for s in k.skills:
@@ -754,11 +751,7 @@ def lint(k, g=None, org_terms=None):
         if not f.endswith('.md') or f.endswith('LESSONS.md'):
             continue
         fdir, sk = osp.dirname(f), skill_of(f)
-        # a line naming its goody (goody `<name>`) may cite that goody's files (never kit files)
-        lines = [x for x in k.texts.get(f, '').split('\n') if not EXTRA_NOTE.search(x)]
-        for x in sorted({n for n in EXTRA_NOTE.findall(k.texts.get(f, '')) if known is not None and n not in known}):
-            bad('REF-DANGLING', f, f'goody `{x}`: no such goody on origin/goodies (kitbag.py goody list)')
-        for tok in re.findall(r'`([^`\n]+)`', '\n'.join(lines)):
+        for tok in re.findall(r'`([^`\n]+)`', k.texts.get(f, '')):
             t = (tok.strip().split() or [''])[0].replace('\\', '/')
             t = re.sub(r'^(<workspace>/)?\.claude/|^<kit>/', '', t).rstrip('.,;:)')
             if not re.search(ext, t) or skip.search(t) or re.match(r'^([A-Za-z]:)?/', t):
@@ -876,16 +869,15 @@ def lint(k, g=None, org_terms=None):
             continue
         head = '\n'.join(k.texts.get(f, '').splitlines()[:40])
         if not re.search(r'Exit codes?:', head, re.I) or not re.search(r'usage|verbs?:|\bpython\b|\bpwsh\b|^\s*[#/]*\s*&\s', head, re.I | re.M):
-            bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (kit-admin.md "Script header", goody kit-admin)')
+            bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (kit-admin.md "Script header")')
     # ---- section maps: "Sections:" line vs markers; every function and verb in a section
-    extra_of = {p: n for n, ps in installed_extras(k.dir).items() for p in ps if p not in counted}   # installed goodies' files too
     # Windows PowerShell 5 misreads BOM-less UTF-8 and pwsh 7 syntax: the line stops it with a clear message
-    for f in [x for x in list(counted) + sorted(extra_of) if x.endswith('.ps1') and not x.startswith(GENERATED)]:
+    for f in [x for x in counted if x.endswith('.ps1') and not x.startswith(GENERATED)]:
         if not re.search(r'^#requires\s+-version\s+7', read(osp.join(k.dir, f)), re.I | re.M):
-            bad('PS-VERSION', f, 'no "#Requires -Version 7" line (Windows PowerShell 5 cannot run kit scripts)' + (f' (goody {extra_of[f]}: fix it on the goodies branch)' if f in extra_of else ''))
-    for f in sec_files(list(counted) + sorted(extra_of)):
+            bad('PS-VERSION', f, 'no "#Requires -Version 7" line (Windows PowerShell 5 cannot run kit scripts)')
+    for f in sec_files(list(counted)):
         for c, w, m in sec_check(f, read(osp.join(k.dir, f)))[0]:
-            bad(c, w, m + (f' (goody {extra_of[f]}: fix it on the goodies branch)' if f in extra_of else ''))
+            bad(c, w, m)
     # ---- nothing opens on the desktop without --open / -Open
     rx_open = {'.py': r'os\.startfile\(|webbrowser\.open|\[\s*[\'"](?:xdg-open|open)[\'"]',
        '.ps1': r'^\s*(?:Invoke-Item|ii)\s|Start-Process\s+(?:-FilePath\s+)?[\'"]?(?:https?://|[^\s\'"]+\.(?:html?|md|pdf|png|jpe?g|txt|csv|log)\b)|\bcmd(?:\.exe)?\s+/c\s+start\b|^\s*(?:start|explorer(?:\.exe)?)\s+\S',
@@ -900,7 +892,7 @@ def lint(k, g=None, org_terms=None):
             if re.match(r'\s*(#|//|@\(\s*'')', line) or not re.search(rx_open[ext], line):   # comments, guard self-test data
                 continue
             if not re.search(r'--open|\$Open\b|open_it|opts\.open', '\n'.join(ls[max(0, i - 5):i + 1])):
-                bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (kit-admin.md "Shapes", goody kit-admin)')
+                bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (kit-admin.md "Shapes")')
     # ---- a shell started without a hidden window opens a console on the owner's screen
     for f in counted:
         if not f.endswith('.ps1') or f.startswith(GENERATED):
@@ -1029,6 +1021,14 @@ def lint(k, g=None, org_terms=None):
             for t, rx in pats:
                 if rx.search(text):
                     bad('ORG-TERM', where, f'contains org term "{t}"')
+    # ---- the retired optional-part word, in every tracked text file (one migration line allowed until the live clone ran it)
+    retired = re.compile(r'(?i)\bgood(?:y|ies)\b')
+    for f in tracked(k.dir):
+        if not (f.endswith(TEXT_EXT) or f.startswith(('.githooks/', '.github/'))) or not osp.isfile(osp.join(k.dir, f)):
+            continue
+        for i, line in enumerate((k.texts.get(f) or read(osp.join(k.dir, f)) or '').split('\n')):
+            if retired.search(line) and MIGRATION_LINE not in line:
+                bad('RETIRED-WORD', f'{f}:{i + 1}', 'the retired optional-part word: name the file, adapter or feature instead')
     return probs
 
 # ---- README graph: Mermaid and tables; pre-commit keeps them current
@@ -1064,8 +1064,8 @@ def readme_sections(k, g):
      f"{(m.get('character') or {}).get('traits', '')}: \"{(m.get('character') or {}).get('catchphrase', '')}\" |" for a, m in (man.get('agents') or {}).items()]
     out['table-workflows'] = ['| Workflow | Covers | Crew | Router row |', '|---|---|---|---|'] + [
      f"| `/{w}` | {m.get('covers', '')} | {', '.join('`' + c + '`' for c in m.get('crew', []))} | {m.get('router', '')} |" for w, m in (man.get('workflows') or {}).items()]
-    out['table-adapters'] = ['| Kind | Selected by | Interface (verbs) | Built in | Code |', '|---|---|---|---|---|'] + [
-     f"| {n} | `{a.get('config', '')}` | {a.get('verbs', '')} | {', '.join(a.get('names', '').split())} | `{a.get('file', '')}` |" for n, a in (man.get('adapters') or {}).items() if isinstance(a, dict)]
+    out['table-adapters'] = ['| Kind | Selected by | Interface (verbs) | Built in | Vendor (config-selected) | Code |', '|---|---|---|---|---|---|'] + [
+     f"| {n} | `{a.get('config', '')}` | {a.get('verbs', '')} | {', '.join(a.get('names', '').split())} | {', '.join(a.get('vendors', '').split())} | `{a.get('file', '')}` |" for n, a in (man.get('adapters') or {}).items() if isinstance(a, dict)]
     bd = ((json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}').get('budget') or {}).get('defaults') or {})   # per-tool budget defaults
     out['table-budget'] = ['| Tool / window | Budget | Source |', '|---|---|---|'] + [f"| {n} | {v.get('tokens') or str(v.get('fraction')) + ' x window'} | {v.get('source', '')} |" for n, v in bd.items()]
     ex = json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}')   # config table: each key's _readme, else its _doc row
@@ -1126,9 +1126,10 @@ def write_readme(kit):
         print('kitbag flow: README.md graph sections updated')
 
 def cmd_flow(a):
-    """flow --readme [<kit>]; any other flow call draws the page, which the flow-map goody provides."""
+    """flow --readme [<kit>]; any other flow call draws the page (the kitbag_flow.py plugin replaces this command)."""
     if '--readme' not in a:
-        return need_extra('the kit-flow page (kitbag.py flow)', 'flow-map')
+        print(__doc__)
+        return 2
     flags, rest = parse_opts(a)
     write_readme(osp.abspath(rest[0] if rest else KIT_DIR))
     return 0
@@ -1150,7 +1151,7 @@ def cmd_lint(a):
     kit = osp.abspath(rest[0] if rest else KIT_DIR)
     k = load(kit)
     problems = lint(k, graph(k), org_terms_of(flags['--org-terms']) if '--org-terms' in flags else None)
-    for hook in LINT_HOOKS:   # installed goodies (flow-map: FLOW-* issues)
+    for hook in LINT_HOOKS:   # plugins (kitbag_flow.py: FLOW-* issues)
         hook(k, problems, flags)
     if '--json' in flags:
         with open(flags['--json'], 'w', encoding='utf-8') as fh:
@@ -1331,13 +1332,13 @@ def cmd_ui_check(a):
     print('kitbag ui-check: no clipped text; now read each shot (overlap, gaps, contrast) before the commit')
     return 0
 
-# ---- audit: findings, shared helpers, stamp (scan: goody kit-admin)
+# ---- audit: findings, shared helpers, stamp (scan: kitbag_admin.py)
 # user-named subtrees (or samples): never "missing"
 USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples',
   'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets', 'runtimes')
 AUTOMATIC = {'input', 'args', 'matches', 'error', 'host', 'home', 'pid', 'pwd', 'profile', 'this', 'event', 'sender', 'ofs',
    'psitem', 'iswindows', 'islinux', 'ismacos', 'executioncontext', 'myinvocation', 'psboundparameters', 'lastexitcode'}
-AUDIT_VERBS = {'stamp': lambda kit, flags: cmd_stamp(kit)}   # goody kit-admin adds setup, config, recover, scan
+AUDIT_VERBS = {'stamp': lambda kit, flags: cmd_stamp(kit)}   # kitbag_admin.py adds setup, config, recover, scan
 findings = []
 
 def out(level, code, where, what, fix=''):
@@ -1436,7 +1437,6 @@ def audit_main(a):
     flags, _ = parse_opts(a[1:], {'--kit', '--json'})
     # scan: this file's kit (the worktree being changed); other verbs: the live clone
     kit = osp.abspath(flags.get('--kit') or (KIT_DIR if verb == 'scan' else main_clone(KIT_DIR)))
-    stamp_fn(AUDIT_VERBS[verb])
     AUDIT_VERBS[verb](kit, flags)
     order = {'FIX': 0, 'ACT': 1, 'ASK': 2, 'WARN': 3, 'INFO': 4}
     for x in sorted(findings, key=lambda x: (order[x['level']], x['code'], x['where'])):
@@ -1449,7 +1449,7 @@ def audit_main(a):
     return 1 if n['ACT'] or n['ASK'] else 0
 
 # ---- registry: _manifest lists crew parts and caps, lint checks files and front matter (JSON Schema subset) against it
-TODO = 'TODO(new)'   # stub left by kitbag.py new (goody kit-admin); lint TODO-STUB refuses it
+TODO = 'TODO(new)'   # stub left by kitbag.py new (kitbag_scaffold.py); lint TODO-STUB refuses it
 SCHEMAS = {
  'skill': {'type': 'object', 'required': ['name', 'description'], 'additionalProperties': False,
    'properties': {'name': {'type': 'string', 'pattern': r'^[a-z][a-z0-9-]*$'},
@@ -1558,8 +1558,8 @@ def adapter_blocks(text, kind):
 
 
 def adapter_lint(k, man, bad):
-    """ADAPTER: each core name has every verb of its kind ('*' = all); a configured name that is no core adapter is a goody
-    (`goody check` reports it)."""
+    """ADAPTER: each built-in name has every verb of its kind ('*' = all); vendor adapters (`vendors`) register from
+    adapters/*.ps1, not adapter blocks: not checked here."""
     for kind, a in (man.get('adapters') or {}).items():
         if not isinstance(a, dict):
             continue
@@ -1582,7 +1582,7 @@ def adapter_lint(k, man, bad):
             b = blocks.get(n)
             miss = [] if b is None or "'*'" in b else [v for v in a['verbs'].split() if not re.search(rf"""['"]{re.escape(v)}['"]|\b{re.escape(v)}\s*=(?!=)""", b)]
             if b is None or miss:
-                bad('ADAPTER', f, f'{kind}/{n}: {miss or "no block"} (a core adapter needs every verb)')
+                bad('ADAPTER', f, f'{kind}/{n}: {miss or "no block"} (a built-in adapter needs every verb)')
 
 
 def registry_lint(k, bad):
@@ -1780,7 +1780,7 @@ def literal_warns(k, ratchet=False):
     return [('PARAM-LITERAL', f, f'{len(v)} tunable literal(s), baseline {base.get(f, 0)}: lines {", ".join(map(str, v[:8]))}{" ..." if len(v) > 8 else ""} '
              f'-> a {PARAMS_JSON} key + Get-KitParam') for f, v in sorted(sites.items()) if len(v) > base.get(f, 0)]
 
-def _sub_file(kit, rel, fn):   # goody kit-admin (scaffold, admin) edits kit files with it, keeping line endings
+def _sub_file(kit, rel, fn):   # kitbag_scaffold.py and kitbag_admin.py edit kit files with it, keeping line endings
     p = osp.join(kit, rel)
     with open(p, encoding='utf-8', newline='') as fh:
         raw = fh.read()
@@ -1945,7 +1945,7 @@ SEC_MIN, SEC_BIG, SEC_WIDTH = 8000, 600, 130   # bytes (~2,000 tokens) that need
 SEC_CM = {'.ps1': '#', '.py': '#', '.js': '//', '.mjs': '//'}
 SEC_FN = {'.ps1': r'function\s+([\w-]+)', '.py': r'(?:async\s+)?(?:def|class)\s+(\w+)',
   '.js': r'(?:export\s+)?(?:async\s+)?function\s*\*?\s*(\w+)|(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>'}   # column 0 only
-SEC_EXTRA = re.compile(r'Assert-KitExtra|Get-Command|extra_missing|need_extra')   # a verb an installed goody handles
+SEC_INDIRECT = re.compile(r'Assert-Kit\w+|Get-Command|Invoke-KitVerb')   # a handler looked up by name (an adapter's function)
 
 def sec_files(files):
     return [f for f in files if osp.splitext(f)[1] in SEC_CM and not f.startswith(('tests/',) + GENERATED)]
@@ -2036,7 +2036,7 @@ def sec_check(f, text):
     probs += [('SECTION-UNMAPPED', f'{f}:{ln}', f'{nm} sits before the first section marker: move it into a section or add a marker above it')
               for nm, ln in fns.items() if ln < marks[0][0]]
     for verb, body, ln in sec_verbs(ext, lines):
-        if not SEC_EXTRA.search(body) and not any(re.search(r'(?<![\w-])' + re.escape(fn) + r'(?![\w-])', body) for fn in fns):
+        if not SEC_INDIRECT.search(body) and not any(re.search(r'(?<![\w-])' + re.escape(fn) + r'(?![\w-])', body) for fn in fns):
             probs.append(('SECTION-UNMAPPED', f'{f}:{ln}', f'verb "{verb}" calls no function of this file: give it a handler in a section'))
     return probs, (nl.join(lines[:i] + want + lines[j + 1:]) if want != lines[i:j + 1] else None)
 
@@ -2084,84 +2084,65 @@ def cmd_budget(a):
     print(f'INFO repo total {total} tokens · tests {tests} (no cap: agents load per role, then through pointers)')
     return 0
 
-# ---- goodies: optional parts on the origin's `goodies` branch, installed local-only (README "Goodies")
-# goodies/<name>/GOODY.md: what + "Needed when: `<config key>` = `<value>`"; files in goodies/<name>/files/<kit path>
-EXTRAS_REF = 'refs/remotes/origin/goodies'
-EXCLUDE_MARK = '# kitbag goody '
-OS_NAME = {'win32': 'windows', 'darwin': 'macos'}.get(sys.platform, 'linux')   # `<os>` OS in a Needed when line
-EXTRA_NOTE = re.compile(r'\bgoody `([\w-]+)`')   # core text citing a goody's part names it: lint skips that line's paths
-EXTRA_OF = {'flow': 'flow-map', 'port': 'ports', 'new': 'kit-admin', 'rename': 'kit-admin', 'remove': 'kit-admin', 'cost': 'kit-admin',
-  'release': 'kit-admin', 'audit scan': 'kit-admin', 'audit setup': 'kit-admin', 'audit config': 'kit-admin', 'audit recover': 'kit-admin'}
-PLUGINS = {}      # command -> handler, from installed goodies (skills/bossy/kitbag_<name>.py)
+# ---- migrate: one-time cleanup of the retired local-install path (2026-11-14); .githooks/post-merge runs it after a pull
+BLOCK_LINE = re.compile(r'^# kitbag (\w+) (\S+)$')   # `# kitbag <marker> <part>` ... `# kitbag <marker> end` blocks in .git/info/exclude
+
+def cmd_migrate(a):
+    """kitbag.py migrate: drops the retired install blocks from .git/info/exclude (shared by every worktree), deletes the
+    files they listed that git no longer tracks (never a kit.local.json localOnly path), the install-use stamps
+    (<state>/extras-used) and this kit's kit.local.json key named after the blocks' marker. Idempotent; silent when done."""
+    kit, done = KIT_DIR, []
+    rc, ex, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude', timeout=20)
+    lines = read(ex).split('\n') if rc == 0 and ex and osp.isfile(ex) else []
+    keep, listed, marker, inside = [], [], '', False
+    for line in lines:
+        m = BLOCK_LINE.match(line.strip())
+        if m:
+            marker, inside = m.group(1), m.group(2) != 'end'
+            continue
+        if inside and line.strip():
+            listed.append(line.strip().lstrip('/'))
+            continue
+        inside = False
+        keep.append(line)
+    if marker:
+        with open(ex + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write('\n'.join(keep).rstrip('\n') + '\n')
+        os.replace(ex + '.tmp', ex)
+        done.append(f'.git/info/exclude: {len(listed)} install line(s) dropped')
+    cfg_path = osp.join(kit, 'skills', 'crafty', 'kit.local.json')
+    cfg = (load_json(cfg_path)[0] if osp.isfile(cfg_path) else None) or {}
+    local = [str(p).replace('\\', '/').strip('/') for p in (cfg.get('localOnly') or []) if isinstance(cfg, dict)]
+    now = set(tracked(kit))
+    for rel in sorted(set(listed)):
+        if rel in now or any(rel == p or rel.startswith(p + '/') for p in local) or not osp.isfile(osp.join(kit, rel)):
+            continue
+        os.remove(osp.join(kit, rel))
+        d = osp.dirname(osp.join(kit, rel))
+        while osp.normcase(d) != osp.normcase(kit) and osp.isdir(d) and not os.listdir(d):
+            os.rmdir(d)
+            d = osp.dirname(d)
+        done.append(f'{rel}: removed (no longer part of the kit)')
+    stamps = osp.join(kit, MAP.get('stateDir', '.state'), 'extras-used')
+    if osp.isdir(stamps):
+        shutil.rmtree(stamps, ignore_errors=True)
+        done.append(f'{osp.relpath(stamps, kit)}: removed')
+    key = marker[:-1] + 'ies' if marker.endswith('y') else marker + 's'   # the kit.local.json list named after the marker
+    if marker and isinstance(cfg, dict) and key in cfg:
+        text = read(cfg_path)
+        indent = len(re.search(r'\n( *)"', text).group(1)) if re.search(r'\n( *)"', text) else 2
+        cfg.pop(key)
+        with open(cfg_path + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write(json.dumps(cfg, indent=indent, ensure_ascii=False) + '\n')
+        os.replace(cfg_path + '.tmp', cfg_path)
+        done.append(f'skills/crafty/kit.local.json: key "{key}" removed')
+    for x in done:
+        print(f'kitbag migrate: {x}')
+    return 0
+
+# ---- plugins: skills/bossy/kitbag_<name>.py modules add commands, audit verbs, args and lint hooks
+PLUGINS = {}      # command -> handler, from the plugins (skills/bossy/kitbag_<name>.py)
 LINT_HOOKS = []   # (kit, problems, flags) -> None: adds problems
-# goodies merged (old -> new) or folded into the core / retired (None): sync swaps installed and listed old ones
-MERGED_EXTRAS = {'annotate': 'android-swarm', 'emulator-windows': 'android-swarm', 'app-kinds': 'android-swarm', 'deployed-checks': 'deploys',
-  'deploy-merge': 'deploys', 'container-tests': 'runtimes', 'qa-html-report': 'report-gdocs', 'board-disputes': 'duel', 'scaffold': 'kit-admin',
-  'tracker-gitlab': 'gitlab', 'supervise-resources': None, 'posix': None, 'migration-classify': None}
-
-def known_extras(kit, ref=EXTRAS_REF):
-    """Names of the goodies on the fetched goodies branch (or `ref`); None when it was never fetched."""
-    rc, o, _ = git(kit, 'ls-tree', '-d', '--name-only', ref, 'goodies/')
-    return {x.split('/')[-1] for x in o.split('\n') if x} if rc == 0 else None
-
-def need_extra(feature, name):
-    print(f'{feature} is a goody: run kitbag.py goody add {name}', file=sys.stderr)
-    return 2
-
-def exclude_path(kit):
-    rc, p, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude', timeout=20)
-    return p if rc == 0 and p else None
-
-def exclude_blocks(kit):
-    """{name: [kit paths]} of every `# kitbag goody <name>` ... `# kitbag goody end` block in .git/info/exclude (shared by
-    every worktree of the clone); a block also ends at a blank line or the next block."""
-    p = exclude_path(kit)
-    blocks, name = {}, None
-    for line in (read(p) if p else '').split('\n'):
-        if line.startswith(EXCLUDE_MARK):
-            name = line[len(EXCLUDE_MARK):].strip()
-            name = None if name == 'end' else name
-            if name:
-                blocks[name] = []
-        elif name and line.strip():
-            blocks[name].append(line.strip().lstrip('/'))
-        else:
-            name = None
-    return blocks
-
-def installed_extras(kit):
-    """{name: [kit paths]} of the goodies whose files are in this kit."""
-    return {n: paths for n, paths in exclude_blocks(kit).items() if paths and all(osp.isfile(osp.join(kit, x)) for x in paths)}
-
-def set_exclude(kit, name, paths):
-    """Replace the goody's block in .git/info/exclude (paths None: drop it); every other line stays."""
-    p = exclude_path(kit)
-    lines, inside = [], False
-    for line in read(p).split('\n') if p and osp.isfile(p) else []:
-        if inside and (line.startswith(EXCLUDE_MARK) or not line.strip()):
-            inside = False
-            if line == f'{EXCLUDE_MARK}end':
-                continue
-        if line == f'{EXCLUDE_MARK}{name}':
-            inside = True
-        if not inside:
-            lines.append(line)
-    text = '\n'.join(lines).rstrip('\n') + '\n'
-    if paths:
-        text += f'{EXCLUDE_MARK}{name}\n' + ''.join(f'/{x}\n' for x in paths) + f'{EXCLUDE_MARK}end\n'
-    os.makedirs(osp.dirname(p), exist_ok=True)
-    with open(p + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:   # atomic: readers never see half a file
-        fh.write(text)
-    os.replace(p + '.tmp', p)
-
-def worktrees(kit):
-    return [x[len('worktree '):] for x in git(kit, 'worktree', 'list', '--porcelain')[1].split('\n') if x.startswith('worktree ')]
-
-def extra_files(kit, name):
-    """[(path on the goodies branch, kit path)] of one goody."""
-    prefix = f'goodies/{name}/files/'
-    rc, o, _ = git(kit, 'ls-tree', '-r', '--name-only', EXTRAS_REF, '--', prefix)
-    return [(x, x[len(prefix):]) for x in o.split('\n') if x.startswith(prefix) and '__pycache__/' not in x] if rc == 0 else []
 
 def config_values(cfg, dotted):
     """Every value at a dotted path; `*` walks every key or list item."""
@@ -2189,404 +2170,8 @@ def local_config(kit, fname):
     p = local_config_path(kit, fname)
     return (load_json(p)[0] or {}) if p else {}
 
-def listed_goodies(cfg):
-    return cfg.get('goodies') or []
-
-def set_listed(kit, name, on):
-    """kit.local.json `goodies`: names sync always installs (a fresh clone gets them back); goody add lists, remove unlists.
-    Only this kit's own file: an add in a worktree never edits the live clone's config."""
-    p = osp.join(kit, 'skills', 'crafty', 'kit.local.json')
-    if not osp.isfile(p):
-        return
-    with locked(p):
-        cfg = load_json(p)[0]
-        names = list(listed_goodies(cfg)) if isinstance(cfg, dict) else None
-        if names is None or (name in names) == on:
-            return
-        cfg['goodies'] = sorted(set(names) | {name}) if on else [x for x in names if x != name]
-        indent = len(re.search(r'\n( *)"', read(p)).group(1)) if re.search(r'\n( *)"', read(p)) else 2
-        with open(p + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
-            fh.write(json.dumps(cfg, indent=indent, ensure_ascii=False) + '\n')
-        os.replace(p + '.tmp', p)
-
-def extras_needed(kit, every=False):
-    """[(name, feature)]: goodies this install asks for that are not installed: kit.local.json `goodies`, and GOODY.md "Needed when[ (<file>, ...)]:" lines:
-    `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set; `~` instead of `=`:
-    the value contains it), `<path>` exists (a kit file, the kit's own need), `<glob>` in a repo (a repos[].checkout tracks
-    such a file), `<os>` OS (windows, linux, macos) or origin ~ `<text>` (the kit's or a repo's origin URL); prose-only lines never install. every: installed ones too."""
-    have = set() if every else set(installed_extras(kit))
-    rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when', EXTRAS_REF, '--', 'goodies/')
-    need, configs = [], {'kit.local.json': local_config(kit, 'kit.local.json')}
-    listed = listed_goodies(configs['kit.local.json'])
-    need += [(x, 'kit.local.json goodies') for x in listed if isinstance(x, str) and x not in have and extra_files(kit, x)]
-    for line in o.split('\n') if rc == 0 else []:
-        m = re.match(r'^[^:]+:goodies/([\w-]+)/GOODY\.md:\d+:Needed when(?: \(([\w.-]+\.json)[^)]*\))?:(.*)$', line)
-        if not m or m.group(1) in have:
-            continue
-        name, fname, rule = m.group(1), m.group(2) or 'kit.local.json', m.group(3)
-        cfg = configs.setdefault(fname, local_config(kit, fname))
-        for key, op, wants in re.findall(r'`([\w.*-]+)`\s*(=|is|~)\s*((?:`[^`]+`\s*\|?\s*)+)', rule):
-            wants = re.findall(r'`([^`]+)`', wants)
-            values = [str(v).lower() for v in config_values(cfg, key) if v not in (None, '', [], {})]
-            match = (lambda w: any(w.lower() in v for v in values)) if op == '~' else (lambda w: w.lower() in values)   # ~ = contains
-            hit = next((w for w in wants if (w == '*' and values) or match(w)), None)
-            if hit:
-                need.append((name, f'{key} "{hit}"'))
-        need += [(name, f'{p} exists') for p in re.findall(r'`([^`\s]+)`\s+exists', rule)   # a worktree: the main clone answers
-                 if any(osp.exists(osp.join(base, p)) for base in (kit, main_clone(kit)))]
-        need += [(name, f'{p} in a repo') for p in re.findall(r'`([^`\s]+)`\s+in a repo', rule) if repo_tracks(configs['kit.local.json'], p)]
-        need += [(name, f'{x} OS') for x in re.findall(r'`(\w+)`\s+OS\b', rule) if x == OS_NAME]
-        need += [(name, f'origin ~ {x}') for x in re.findall(r'(?<![`\w])origin\s*~\s*`([^`]+)`', rule) if any(x.lower() in u for u in origins(kit, configs['kit.local.json']))]
-    hx = host_extra(kit, configs['kit.local.json'])   # an unrecognised self-hosted origin still needs the gitlab adapter
-    need += [(hx, "the repos' git host")] if hx and hx not in have and extra_files(kit, hx) else []
-    return sorted(set(need))
-
-ORIGINS = []   # origin hosts of the kit and configured repos, lowercase, read once per run
-
-HOST_RE = re.compile(r'^(?:\w+://)?(?:[^@/]+@)?(?:ssh\.)?([^/:]+)')   # lib.ps1 reads the origin host the same way
-
-def origins(kit, cfg):
-    """The origin hosts of the kit and the configured repos (the host only: a path that names another host never matches)."""
-    if not ORIGINS:
-        dirs = [kit] + [c for c in config_values(cfg, 'repos.*.checkout') if isinstance(c, str) and osp.isdir(c)]
-        urls = [git(d, 'remote', 'get-url', 'origin', timeout=20)[1].lower() for d in dirs]
-        ORIGINS.extend(m.group(1) if m else '' for m in (HOST_RE.match(u) for u in urls))   # one per dir, the kit first
-    return ORIGINS
-
-HOST_EXTRA = (('github', 'github'), ('bitbucket', 'bitbucket'), ('dev.azure.com', 'azure-devops'), ('visualstudio.com', 'azure-devops'),
-  ('gitea', 'gitea'), ('forgejo', 'gitea'), ('codeberg', 'gitea'))   # lib.ps1 Get-HostKind; any other host = gitlab
-
-def host_extra(kit, cfg):
-    """The git-host goody of the product repos when config leaves the type to the host (lib.ps1: unknown host = gitlab); None without repos."""
-    if cfg.get('gitHostType') or not config_values(cfg, 'repos.*.checkout'):
-        return None
-    host = str(cfg.get('gitHost') or next(iter(origins(kit, cfg)[1:]), '')).lower()
-    return next((x for h, x in HOST_EXTRA if h in host), 'gitlab') if host else None
-
-REPO_FILES = {}   # checkout -> tracked paths: one git ls-files per repo and run
-
-def repo_tracks(cfg, pattern):
-    """A configured repo (kit.local.json repos[].checkout) tracks a file named like the glob, at any depth."""
-    for c in config_values(cfg, 'repos.*.checkout'):
-        if isinstance(c, str) and c not in REPO_FILES:
-            REPO_FILES[c] = git(c, 'ls-files', timeout=30)[1].split('\n') if osp.isdir(c) else []
-        if isinstance(c, str) and any(fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(f, '*/' + pattern) for f in REPO_FILES[c]):
-            return True
-    return False
-
-def stale_extras(kit, installed):
-    """Installed goodies whose files differ from the fetched goodies branch (git blob ids: bytes as stored)."""
-    stale = []
-    for name, paths in installed.items():
-        rc, o, _ = git(kit, 'ls-tree', '-r', EXTRAS_REF, '--', f'goodies/{name}/files/')
-        want = {x.split('\t')[1][len(f'goodies/{name}/files/'):]: x.split()[2] for x in o.split('\n') if '\t' in x and '__pycache__/' not in x} if rc == 0 else {}
-        have = dict(zip(paths, git(kit, 'hash-object', '--no-filters', '--', *paths)[1].split('\n')))
-        if want and want != have:
-            stale.append(name)
-    return stale
-
-def add_extra(kit, name, installed, verb='installed'):
-    """Write one goody's files from the fetched branch and register them local-only; 0 ok, 1 refused, 2 no such goody."""
-    files = extra_files(kit, name)
-    if not files:
-        print(f'kitbag goody add: no goody "{name}" on origin/goodies (kitbag.py goody list)', file=sys.stderr)
-        return 2
-    # only its own files (installed, or in its exclude block though a later version changed the list) are overwritten
-    mine, tracked_files = set(installed.get(name, [])) | set(exclude_blocks(kit).get(name, [])), set(tracked(kit))
-    clash = sorted(rel for _, rel in files if rel in tracked_files or (osp.exists(osp.join(kit, rel)) and rel not in mine))
-    if clash:
-        print(f'kitbag goody add {name}: refused - it would overwrite {clash}', file=sys.stderr)
-        return 1
-    for rel in mine - {rel for _, rel in files}:   # a file the new version dropped
-        if osp.isfile(osp.join(kit, rel)) and rel not in tracked_files:
-            os.remove(osp.join(kit, rel))
-    for src, rel in files:
-        blob = subprocess.run(['git', '-C', kit, 'show', f'{EXTRAS_REF}:{src}'], capture_output=True, timeout=60).stdout   # bytes as stored
-        os.makedirs(osp.dirname(osp.join(kit, rel)), exist_ok=True)
-        with open(osp.join(kit, rel) + '.tmp', 'wb') as fh:   # atomic: a loading script never reads half a file
-            fh.write(blob)
-        os.replace(osp.join(kit, rel) + '.tmp', osp.join(kit, rel))
-    set_exclude(kit, name, [rel for _, rel in files])
-    print(f'goody {name}: {verb} {len(files)} file(s), local-only (never pushed): {", ".join(rel for _, rel in files)}')
-    return 0
-
-def extra_sync(kit):
-    """Install every goody this install needs (extras_needed); refresh installed ones the branch changed, only while the kit
-    is not behind origin/main (a newer goody may need newer core: the pull comes first). Silent when nothing to do."""
-    fetched = not git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0]
-    current = git(kit, 'merge-base', '--is-ancestor', 'origin/main', 'HEAD')[0] == 0
-    if not fetched:
-        print('kitbag goody sync: the goodies branch was never fetched (offline?): nothing installed', file=sys.stderr)
-        return 1
-    if current:
-        migrate_extras(kit)
-    rc, installed = 0, installed_extras(kit)
-    for name in sorted({n for n, _ in extras_needed(kit)}):
-        rc = max(rc, add_extra(kit, name, installed))
-    if current:
-        for name in stale_extras(kit, installed):
-            rc = max(rc, add_extra(kit, name, installed, 'updated'))
-    return rc
-
-def migrate_extras(kit):
-    """MERGED_EXTRAS gone from the goodies branch: the old files go, a listed old name is listed as the new one (sync installs it)."""
-    known, blocks = known_extras(kit) or set(), exclude_blocks(kit)
-    listed = listed_goodies(local_config(kit, 'kit.local.json'))
-    for old, new in MERGED_EXTRAS.items():
-        if old in known or (old not in blocks and old not in listed):
-            continue
-        if old in blocks:
-            drop_extra(kit, old, blocks[old], f'merged into {new}' if new else 'now in the core')
-        set_listed(kit, old, False)
-        if new and (old in listed or old in blocks):   # installed by hand (unlisted) too: its new home stays installed
-            set_listed(kit, new, True)
-
-def local_only(kit):
-    """kit.local.json localOnly paths (the kit's, else its main clone's): org-only files no goody owns."""
-    try:
-        lj = osp.join(kit, 'skills', 'crafty', 'kit.local.json')
-        lj = lj if osp.isfile(lj) else osp.join(main_clone(kit), 'skills', 'crafty', 'kit.local.json')
-        return [p.replace('\\', '/').strip('/') for p in json.loads(read(lj) or '{}').get('localOnly', [])]
-    except (ValueError, OSError, AttributeError):
-        return []
-
-def drop_extra(kit, name, paths, why=''):
-    """Delete a goody's untracked files here (and the folders it brought); its exclude block goes once no worktree has them
-    untracked (a worktree behind a core fold still needs the block: an unignored file there would block its pull). Paths
-    still in localOnly stay: never deleted, their block lines kept."""
-    tracked_files = set(tracked(kit))   # another block's files (the goody it merged into) are not this one's
-    lo = local_only(kit)
-    keep = [x for x in paths if any(x == p or x.startswith(p + '/') for p in lo)]
-    mine = [x for x in paths if x not in keep and x not in {p for n, b in exclude_blocks(kit).items() if n != name for p in b}]
-    here = [x for x in mine if x not in tracked_files and osp.isfile(osp.join(kit, x))]
-    for rel in here:
-        os.remove(osp.join(kit, rel))
-        d = osp.dirname(osp.join(kit, rel))
-        while d != kit and osp.isdir(d) and not os.listdir(d):
-            os.rmdir(d)
-            d = osp.dirname(d)
-    loose = lambda w, x: osp.isfile(osp.join(w, x)) and git(w, 'ls-files', '--error-unmatch', '--', x)[0] != 0
-    elsewhere = [w for w in worktrees(kit) if any(loose(w, x) for x in mine)]
-    if not elsewhere:
-        set_exclude(kit, name, keep or None)
-    elif not here and why:   # another worktree still runs this migration: say nothing
-        return here
-    print(f'goody {name}: removed {len(here)} file(s)' + (f' ({why})' if why else '') + (f'; still installed in {", ".join(elsewhere)}' if elsewhere else ''))
-    return here
-
-PRUNE_DAYS = 30   # TODO-PARAM (fixed default): goodies.pruneDays; tidy prep passes the learned value as --days
-
-def use_stamp(rel):
-    """<state>/extras-used/<kit path, / as __>: touched once a day by the code that loads the file (lib.ps1 Add-KitExtraUse)."""
-    return osp.join(kit_path('extras-used', kit=KIT_DIR), rel.replace('/', '__'))
-
-def stamp_fn(fn):
-    """The usage stamp of the file that defines fn (a plugin's command, verb or adapter), when it lies in the kit."""
-    f = osp.abspath(getattr(getattr(fn, '__code__', None), 'co_filename', '') or '')
-    if f.lower().startswith(KIT_DIR.lower() + os.sep) and osp.basename(f) not in ('kitbag.py', 'devtools.py'):
-        stamp_use([osp.relpath(f, KIT_DIR).replace(os.sep, '/')])
-
-def stamp_use(paths):
-    """Touch the usage stamps of goody files a command just used, at most once a day; never fails."""
-    with contextlib.suppress(OSError):
-        os.makedirs(kit_path('extras-used', kit=KIT_DIR), exist_ok=True)
-        day = datetime.datetime.combine(datetime.date.today(), datetime.time()).timestamp()
-        for rel in paths:
-            if not osp.isfile(use_stamp(rel)) or osp.getmtime(use_stamp(rel)) < day:
-                open(use_stamp(rel), 'w', encoding='utf-8').close()
-
-def extra_prune(kit, days, dry):
-    """Drop installed goodies unused for more than <days> (newest stamp of their files, else when installed) that no Needed when
-    line asks for and kit.local.json `goodies` does not list; one line each."""
-    try:
-        days = float(days)
-    except ValueError:
-        print(f'kitbag goody prune: --days {days!r} is not a number', file=sys.stderr)
-        return 2
-    if git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0]:   # no Needed when lines: every goody would look unneeded
-        print('kitbag goody prune: the goodies branch was never fetched (kitbag.py goody list): nothing pruned', file=sys.stderr)
-        return 1
-    want = {n for n, _ in extras_needed(kit, every=True)}
-    listed = set(listed_goodies(local_config(kit, 'kit.local.json')))
-    now, gone = time.time(), 0
-    for name, paths in sorted(installed_extras(kit).items()):
-        if name in want or name in listed:
-            continue
-        seen = [osp.getmtime(use_stamp(p)) for p in paths if osp.isfile(use_stamp(p))] or [osp.getmtime(osp.join(kit, p)) for p in paths]
-        idle = (now - max(seen)) / 86400
-        if idle > days:
-            gone += 1
-            print(f'goody {name}: unused {idle:.0f} d, no config needs it' + (' (dry run: kept)' if dry else ''))
-            if not dry:
-                drop_extra(kit, name, paths, 'pruned')
-    if not gone:
-        print(f'kitbag goody prune: nothing unused > {days:g} d')
-    return 0
-
-# tests.ps1 dot-sourcing a sibling harness.ps1 gets the kit's harness; its test kits get the goody's files
-HARNESS_SHIM = """. '<kit>/tests/harness.ps1'
-$script:NewCoreTestKit = ${function:New-TestKit}
-function New-TestKit([string]$name) { $k = & $script:NewCoreTestKit $name; if (Test-Path '<files>') { Copy-Item '<files>/*' $k -Recurse -Force }; $k }
-"""
-
-def goody_overlay(kit, files, to, ref=EXTRAS_REF):
-    """A git copy of the kit like an installed one (tracked files committed; installed goodies' files and the goody's own
-    branch files on top, excluded; the tested branch as origin/goodies): tests read the branch's files, never the kit's copy."""
-    rc, o, _ = git(kit, 'ls-files')
-    for rel in (o.split('\n') if rc == 0 else []):
-        if rel and osp.isfile(osp.join(kit, rel)):
-            os.makedirs(osp.dirname(osp.join(to, rel)), exist_ok=True)
-            shutil.copy2(osp.join(kit, rel), osp.join(to, rel))
-    for args in (('init', '-q'), ('add', '-A'), ('-c', 'user.name=goody-test', '-c', 'user.email=goody-test@localhost', 'commit', '-q', '-m', 'core'),
-                 ('fetch', '-q', kit, f'+{ref}:{EXTRAS_REF}')):   # goody list / check read the branch
-        git(to, *args)
-    extra = [p for paths in installed_extras(kit).values() for p in paths]
-    for rel in extra:
-        os.makedirs(osp.dirname(osp.join(to, rel)), exist_ok=True)
-        shutil.copy2(osp.join(kit, rel), osp.join(to, rel))
-    for r, _, fs in os.walk(files):
-        for x in fs:
-            rel = osp.relpath(osp.join(r, x), files)
-            extra.append(rel.replace('\\', '/'))
-            os.makedirs(osp.dirname(osp.join(to, rel)), exist_ok=True)
-            shutil.copy2(osp.join(r, x), osp.join(to, rel))
-    with open(osp.join(to, '.git', 'info', 'exclude'), 'a', encoding='utf-8') as fh:
-        fh.write(''.join(f'/{x}\n' for x in sorted(set(extra))))
-    return to
-
-def extra_test(kit, names, ref=EXTRAS_REF):
-    """Run each installed goody's tests.ps1 (it stays on the goodies branch) against a git copy of this kit with the branch's
-    goody files (goody_overlay), in parallel, and check its scripts' section maps (lint SECTION-*); harness output."""
-    if not shutil.which('pwsh'):
-        print('FAIL goody test: pwsh 7 is not on PATH\n1 failure(s)')
-        return 1
-    runs = []
-    for name in names:
-        zipped = subprocess.run(['git', '-C', kit, 'archive', '--format=zip', ref, f'goodies/{name}'], capture_output=True, timeout=60).stdout
-        tmp = tempfile.mkdtemp(prefix=f'extra-{name}-')
-        with contextlib.suppress(zipfile.BadZipFile):   # no such goody: an empty archive
-            zipfile.ZipFile(io.BytesIO(zipped)).extractall(tmp)
-        here, p = osp.join(tmp, 'goodies', name), None
-        files = osp.join(here, 'files')   # its scripts' section maps, as lint checks them once installed
-        sec = ''.join(f'FAIL {c} {w}: {m}\n' for r, _, fs in os.walk(files) for x in fs
-                      for rel in sec_files([osp.relpath(osp.join(r, x), files).replace('\\', '/')]) for c, w, m in sec_check(rel, read(osp.join(r, x)))[0])
-        if osp.isfile(osp.join(here, 'tests.ps1')):
-            src = goody_overlay(kit, files, osp.join(tmp, 'kit'), ref)
-            if osp.isfile(osp.join(src, 'tests', 'harness.ps1')) and not osp.exists(osp.join(here, 'harness.ps1')):
-                with open(osp.join(here, 'harness.ps1'), 'w', encoding='utf-8') as fh:   # a test written to sit next to the harness
-                    fh.write(HARNESS_SHIM.replace('<kit>', src.replace("'", "''")).replace('<files>', files.replace("'", "''")))
-            cmd = ['pwsh', '-NoProfile', '-File', osp.join(here, 'tests.ps1'), '-Kit', src]
-            d = osp.dirname(sys.executable)   # no python shim (chcp: shared console code page)
-            env = dict(os.environ, KIT_TEST_CORE=kit, PATH=(d + os.pathsep if d else '') + os.environ.get('PATH', ''))   # KIT_TEST_CORE: node_modules
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', env=env)
-        runs.append((name, tmp, sec, p))
-    fails = 0
-    for name, tmp, sec, p in runs:
-        try:
-            o = sec + (p.communicate(timeout=300)[0] if p else '')
-        except subprocess.TimeoutExpired:
-            p.kill()
-            o = sec + 'FAIL timed out after 300 s\n'
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-        failed = len(re.findall(r'(?m)^FAIL ', o)) or (1 if p and p.returncode else 0)
-        fails += failed
-        if p or sec:   # a goody without tests.ps1 shows only map problems
-            print(f'== goody {name}\n{o.rstrip()}\n-- goody {name}: {len(re.findall(r"(?m)^PASS ", o))} pass, {failed} fail')   # its own count: never read as the next one's
-    print(f'{fails} failure(s)')
-    return 1 if fails else 0
-
-def extra_write(kit, verb, names, auto=False):
-    """goody sync | add <name> [--auto: unlisted] | remove <name>, under the caller's lock."""
-    if verb == 'sync':
-        return extra_sync(kit)
-    installed = installed_extras(kit)
-    name = names[0]
-    if name in MERGED_EXTRAS and name not in (known_extras(kit) or set()):
-        print(f'kitbag goody {verb}: {name} is ' + (f'part of {MERGED_EXTRAS[name]} now: kitbag.py goody {verb} {MERGED_EXTRAS[name]}' if MERGED_EXTRAS[name] else 'in the core now'), file=sys.stderr)
-        return 2
-    if verb == 'add':
-        rc = add_extra(kit, name, installed)
-        if rc == 0 and not auto:   # on demand (lib.ps1 Install-KitExtra): unlisted, so goody prune can drop it
-            set_listed(kit, name, True)
-        return rc
-    tracked_files = set(tracked(kit))
-    paths = [x for x in exclude_blocks(kit).get(name) or [rel for _, rel in extra_files(kit, name)] if x not in tracked_files]
-    set_listed(kit, name, False)
-    if not any(osp.isfile(osp.join(kit, x)) for x in paths):
-        print(f'kitbag goody remove: {name} is not installed in {kit}', file=sys.stderr)
-        return 1
-    drop_extra(kit, name, paths)
-    return 0
-
-
-def live_board_agents(minutes=20):
-    """Board agents with a beat in the last <minutes>, not left or crashed; the caller (KIT_AGENT) aside."""
-    bd, me, out = kit_path('board'), os.environ.get('KIT_AGENT', ''), []
-    for n in (os.listdir(bd) if osp.isdir(bd) else []):
-        try:
-            e = json.load(open(osp.join(bd, n), encoding='utf-8-sig')) if n.endswith('.json') else {}
-            fresh = datetime.datetime.now().astimezone() - datetime.datetime.fromisoformat(e.get('beat') or '1970-01-01T00:00:00+00:00') < datetime.timedelta(minutes=minutes)
-        except (OSError, ValueError, TypeError):
-            continue
-        if fresh and e.get('status') != 'left' and not e.get('crashed') and e.get('agent') and e.get('agent') != me:
-            out.append(e['agent'])
-    return sorted(set(out))
-
-
-def cmd_extra(a):
-    """kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync [--force: live clone, agents live] | test [<name>] [--ref <branch>] | prune [--days N]
-    [--dry-run] (--auto: installed on demand, unlisted; --ref: an unpushed goodies branch's files; prune: unused > N days, default 30,
-    and no Needed when matches)"""
-    kit = KIT_DIR
-    flags, rest = parse_opts(a, {'--days', '--ref'})
-    verb, names = (rest[0] if rest else 'list'), rest[1:]
-    ref = flags.get('--ref') if verb == 'test' else None
-    if ref is True or (ref and git(kit, 'rev-parse', '-q', '--verify', f'{ref}^{{commit}}')[0]):
-        print(f'kitbag goody test: --ref {ref} is no branch or commit here', file=sys.stderr)
-        return 2
-    want = {'add': 1, 'remove': 1, 'test': len(names[:1])}.get(verb, 0)
-    if verb == 'prune' and not names:
-        with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):
-            return extra_prune(kit, flags.get('--days', PRUNE_DAYS), '--dry-run' in flags)
-    if verb not in ('list', 'add', 'remove', 'check', 'sync', 'test') or len(names) != want or ('--auto' in flags and verb != 'add'):
-        print(cmd_extra.__doc__, file=sys.stderr)
-        return 2
-    installed = installed_extras(kit)
-    # offline: the last fetch answers; check / test fetch only if never fetched (check runs at SessionStart)
-    if verb in ('list', 'add', 'sync') or (git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0] and (verb != 'test' or installed)):
-        git(kit, 'fetch', '-q', 'origin', f'+refs/heads/goodies:{EXTRAS_REF}', timeout=60)
-    if verb == 'sync' and osp.isdir(osp.join(kit, '.git')) and '--force' not in flags and (busy := live_board_agents()):
-        print(f'kitbag goody sync: refused on the live clone while {len(busy)} other agent(s) are live ({", ".join(busy[:6])}): '
-              'their goody scripts would change mid-step; sync when the board is empty (bossy.ps1 board show), or --force', file=sys.stderr)
-        return 1
-    if verb in ('sync', 'add', 'remove'):   # one writer: the post-merge hook's background sync races a manual one
-        with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):   # a sync may take minutes
-            return extra_write(kit, verb, names, '--auto' in flags)
-    if verb == 'test':
-        if names and names[0] not in (known_extras(kit, ref or EXTRAS_REF) or set()):
-            print(f'kitbag goody test: no goody "{names[0]}" on {ref or "origin/goodies"} (kitbag.py goody list)', file=sys.stderr)
-            return 2
-        return extra_test(kit, names or sorted(installed), ref or EXTRAS_REF)
-    if verb == 'check':
-        need = extras_needed(kit)
-        for name, feature in need:
-            print(f'{feature} is a goody: run kitbag.py goody add {name}')
-        return 1 if need else 0
-    if verb == 'list':
-        rc, o, err = git(kit, 'ls-tree', '-d', '--name-only', EXTRAS_REF, 'goodies/')
-        if rc:
-            print(f'kitbag goody: no goodies branch on origin ({err})', file=sys.stderr)
-            return 1
-        for path in o.split('\n'):
-            name = path.split('/')[-1]
-            text = git(kit, 'show', f'{EXTRAS_REF}:{path}/GOODY.md')[1]
-            what = next((x.strip() for x in text.split('\n') if x.strip() and not x.startswith('#')), '')
-            print(f"{'*' if name in installed else ' '} {name:20} {what[:100]}")
-        return 0
-
 def load_plugins():
-    """Load installed kitbag goodies: each sees this module's names, adds COMMANDS, AUDIT_VERBS, ARGS and a lint_hook."""
+    """Load the plugins (kitbag_<name>.py): each sees this module's names, adds COMMANDS, AUDIT_VERBS, ARGS and a lint_hook."""
     here = osp.dirname(osp.abspath(__file__))
     for fname in sorted(os.listdir(here)):
         if not re.match(r'kitbag_[\w-]+\.py$', fname):
@@ -2597,8 +2182,8 @@ def load_plugins():
         mod.__dict__.update(shared)
         try:
             spec.loader.exec_module(mod)
-        except Exception as e:   # a broken goody must not break lint (the commit gate)
-            print(f'kitbag: goody {fname} not loaded: {e}', file=sys.stderr)
+        except Exception as e:   # a broken plugin must not break lint (the commit gate)
+            print(f'kitbag: plugin {fname} not loaded: {e}', file=sys.stderr)
             continue
         own = {n: v for n, v in vars(mod).items() if n not in shared or v is not shared[n]}   # what the plugin itself defines
         PLUGINS.update(own.get('COMMANDS', {}))
@@ -2798,10 +2383,10 @@ def collections_counter(items):
 # per command: switches, value flags, kit dir positional? (`lint --help` once became a kit dir)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
-  'budget': ({'-Tests', '--tests'}, {'-Reason', '-reason', '--reason'}, False), 'goody': ({'--auto', '--dry-run'}, {'--days', '--ref'}, False), 'sections': ({'--fix'}, set(), False),
+  'budget': (set(), set(), False), 'migrate': (set(), set(), False), 'sections': ({'--fix'}, set(), False),
   'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False)}
-NAMED_ARGS = ('prose', 'budget', 'goody', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check')   # positionals: files, verbs or names, never a kit dir
-COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'goody': cmd_extra, 'sections': cmd_sections, 'state': cmd_state, 'ui-check': cmd_ui_check}
+NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check')   # positionals: files, verbs or names, never a kit dir
+COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'migrate': cmd_migrate, 'sections': cmd_sections, 'state': cmd_state, 'ui-check': cmd_ui_check}
 
 def parse_opts(a, valued=()):
     """(flags, positionals) of arguments check_args accepted: a switch maps to True, a value flag to its value."""
@@ -2822,18 +2407,11 @@ def is_kit(d):
     return osp.isdir(osp.join(d, 'skills')) and any(osp.isfile(osp.join(d, f)) for f in ('AGENTS.md', 'CLAUDE.md'))
 
 def check_args(cmd, rest):
-    """None = go on; else the exit code: --help/-h prints usage (0); an unknown command or flag, a non-kit dir or a missing goody is 2."""
+    """None = go on; else the exit code: --help/-h prints usage (0); an unknown command or flag, a non-kit dir is 2 (a plugin's command without its file: unknown)."""
     if cmd in ('-h', '--help', 'help') or (cmd in ARGS and any(x in ('-h', '--help') for x in rest)):
         print(__doc__)
         return 0
     verb = rest[0] if cmd == 'audit' and rest else ''
-    if (cmd == 'audit' and f'audit {verb}' in EXTRA_OF and verb not in AUDIT_VERBS) or \
-       (cmd in EXTRA_OF and cmd not in PLUGINS and not (cmd == 'flow' and '--readme' in rest)):
-        name = EXTRA_OF[f'audit {verb}' if verb else cmd]
-        if os.environ.get('KIT_EXTRA_AUTO') != '0' and os.environ.get('KIT_EXTRA_RETRY') != name and cmd_extra(['add', name, '--auto']) == 0:
-            print(f'goody {name}: installed on demand', file=sys.stderr)   # the same command again, the goody loaded
-            return subprocess.run([sys.executable, '-X', 'utf8', osp.abspath(__file__)] + sys.argv[1:], env=dict(os.environ, KIT_EXTRA_RETRY=name)).returncode
-        return need_extra(f'kitbag.py {cmd} {verb}'.strip(), name)
     if cmd not in ARGS or (cmd == 'audit' and verb not in AUDIT_VERBS):
         print(__doc__)
         return 2
@@ -2864,6 +2442,4 @@ if __name__ == '__main__':
     load_plugins()
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ('', [])
     rc = check_args(cmd, rest)
-    if rc is None and cmd in PLUGINS:
-        stamp_fn(PLUGINS[cmd])
     sys.exit(rc if rc is not None else audited('kitbag.py', sys.argv[1:], lambda: (PLUGINS.get(cmd) or COMMANDS[cmd])(rest)))

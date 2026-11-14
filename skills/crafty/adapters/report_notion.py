@@ -1,5 +1,5 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-"""Goody report-notion: reports.type notion = a child page of reports.parent via REST (env NOTION_TOKEN): heading, paragraph,
+"""Report adapter notion: reports.type notion = a child page of reports.parent via REST (env NOTION_TOKEN): heading, paragraph,
 bulleted, table and code blocks, 100 per call. Readers = the parent page's sharing."""
 import html, json, os, re
 
@@ -26,7 +26,7 @@ def _cells(line):
 
 
 def _blocks(text):
-    blocks, code, lines, i = [], None, text.splitlines() + ['```'], -1   # the goody fence closes an open code block
+    blocks, code, lines, i = [], None, text.splitlines() + ['```'], -1   # the added fence closes an open code block
     while i + 1 < len(lines):
         i += 1
         line = lines[i]

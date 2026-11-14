@@ -1,6 +1,6 @@
 export const meta = {
  name: 'tidy',
- description: 'Kit upkeep by kitty (kind retro) in 2-5 min: one script step (bossy.ps1 tidy prep: digest of signals, guard blocks, script errors, builds, runs, lint, goodies, params + the upkeep: goodies sync / prune, param learn, cleanup, worktree prune, signal counting), then one kitty judges the digest: lessons, rule edits, script proposals',
+ description: 'Kit upkeep by kitty (kind retro) in 2-5 min: one script step (bossy.ps1 tidy prep: digest of signals, guard blocks, script errors, builds, runs, lint, params + the upkeep: param learn, cleanup, worktree prune, signal counting), then one kitty judges the digest: lessons, rule edits, script proposals',
  whenToUse: 'A /buildy or /testy finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective',
  phases: [
   { title: 'Prep', detail: 'one STEP: launch record + bossy.ps1 tidy prep (no LLM work)' },

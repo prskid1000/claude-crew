@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# runtimes (goody): before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
+# runtimes: before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
 # -AllTests), crafty.ps1 check leases a configured runtimes.<docker|podman> (started when down), else asks `<engine> info`; none -> exit 4.
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests.
 function Test-DockerForContainerTests {

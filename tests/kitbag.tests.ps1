@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-kitbag.tests.ps1: kitbag.py prose, lint, goodies, budget; kit-wide script checks (port, cost, release: their goodies' tests).
+kitbag.tests.ps1: kitbag.py prose, lint, budget; kit-wide script checks (port, cost, release: ports / kit-admin tests).
 Usage: pwsh -NoProfile -File <kit>/tests/kitbag.tests.ps1 (or tests/kit-tests.ps1 -Area kitbag).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -31,7 +31,7 @@ Expect 'retro + lead notes: tidy renders the retro (devtools.py render retro), c
 $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
 Expect 'prose: filler (the whole banned list), missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match '"I hope"' -and $out -match '"successfully"' -and $out -match 'missing sections' -and $out -match '4 bullets')
 $rd = Get-Content (Join-Path $src 'README.md') -Raw; $sec = { param($h) ($rd -split '(?m)^## ' | Where-Object { $_.StartsWith($h) }) -join '' }
-Expect 'README keeps what other files cite it for: Install (not ported, Org router rows), Goodies (fast-forward), Using it (supervise.output)' ((& $sec 'Install') -match 'Not ported' -and (& $sec 'Install') -match 'Org router rows' -and (& $sec 'Goodies') -match 'fast-forward' -and (& $sec 'Using it') -match 'supervise\.output')
+Expect 'README keeps what other files cite it for: Install (not ported, Org router rows), Using it (supervise.output)' ((& $sec 'Install') -match 'Not ported' -and (& $sec 'Install') -match 'Org router rows' -and (& $sec 'Using it') -match 'supervise\.output')
 $out = KtPy "sys.exit(k.audited('x.py', ['v'], lambda: int('zz')))" 2>&1 | Out-String
 Expect "audited: an uncaught error prints one line (script verb: type: why (at file:line)), exit 1 ($LASTEXITCODE)" ($LASTEXITCODE -eq 1 -and $out -match 'x\.py v: ValueError: .*zz.*\(at <string>:1\)' -and $out -notmatch 'Traceback')
 $out = KtPy "g = []; k.kitlog = lambda *a: g.append(a[2]); k.audited('x', ['v'], lambda: (print('usage: x\nx: error: no verb', file=sys.stderr), sys.exit(2))); print(g[-1])" 2>&1 | Out-String
@@ -75,30 +75,26 @@ ok_main = kt.main_clone(str(tmp)) == str(tmp)
 # lint measures PROSE against the linted kit's templates.md (k.dir), not the script's kit
 src = open(sys.argv[1], encoding='utf-8').read()
 ok_prose = 'writing_standards(k.dir)' in src and 'writing_standards(KIT)' not in src
-# the repos' git host goody: an unrecognised self-hosted host = gitlab, a github host = github, gitHostType set = config decides
-cfg = {'repos': [{'checkout': str(tmp)}]}
-kt.ORIGINS[:] = ['github.com', 'git.acme.example']; h1 = kt.host_extra(str(tmp), cfg)
-kt.ORIGINS[:] = ['github.com', 'github.acme.example']; h2 = kt.host_extra(str(tmp), cfg)
-ok_host = (h1, h2, kt.host_extra(str(tmp), dict(cfg, gitHostType='gitlab')), kt.host_extra(str(tmp), {})) == ('gitlab', 'github', None, None)
-hosts = [kt.HOST_RE.match(u).group(1) for u in ('git@github.com:o/r.git', 'https://gitlab.acme.example/g/github-mirror.git', 'ssh://git@ssh.dev.azure.com/v3/o/p/r')]
-ok_host = ok_host and hosts == ['github.com', 'gitlab.acme.example', 'dev.azure.com']   # origin ~ `v`: the host only
-print(f'kitbag-misc:{ok_main and ok_prose and ok_host}')
+print(f'kitbag-misc:{ok_main and ok_prose}')
 '@
 $kf = Join-Path ([IO.Path]::GetTempPath()) "kt-test-$PID.py"; Set-Content $kf $ktt -Encoding utf8
 $res = @(& $py -X utf8 $kf (Join-Path $src 'skills/bossy/kitbag.py') 2>&1); Remove-Item $kf -Force
 Expect-Each $res 'kitbag: #' 'kitbag-misc'
-# a throw-away git copy of the kit with a local origin: goodies, lint codes, budget
-$kc = New-GitKitCopy (Join-Path ([IO.Path]::GetTempPath()) "kit-reg-$PID"); $KT2 = Join-Path $kc 'skills/bossy/kitbag.py'; $og = Join-Path (Split-Path $kc) 'origin.git'
+# a throw-away git copy of the kit: lint codes, budget
+$kc = New-GitKitCopy (Join-Path ([IO.Path]::GetTempPath()) "kit-reg-$PID"); $KT2 = Join-Path $kc 'skills/bossy/kitbag.py'
 # lint codes on the copy
 $oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
 Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })`nappendFileSync('a.jsonl', x)`nconst f = rp('agents')" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
 Add-Content (Join-Path $kc 'skills/crafty/templates.md') "`nsee last-${oldSk}s" -Encoding utf8
 Add-Content (Join-Path $kc 'README.md') '', 'run `skills/gone/y.ps1`' -Encoding utf8
+$ngw = 'Go' + 'odies'   # built: the retired word never sits in a kit file
+Set-Content (Join-Path $kc '.githooks/ng') "$ngw here`nthe $ngw line kept (one-time migration 2026-11-14)" -Encoding utf8; git -C $kc add -f .githooks/ng
 $qa2 = Join-Path $kc 'skills/pokey/pokey.ps1'; @(Get-Content $qa2) | Where-Object { $_ -notmatch '^#Requires' } | Set-Content $qa2 -Encoding utf8; Add-Content $qa2 "Start-Process $('pw' + 'sh') -ArgumentList x"   # PS-VERSION, HIDDEN-WINDOW
 $rv = "$kc/agents/revy.md"; (Get-Content $rv -Raw) -replace 'Show me', 'X' | Set-Content $rv -NoNewline
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 Expect 'kitbag lint: MANIFEST (Character), AGENT-TYPE, LOG-DIRECT, PS-VERSION, HIDDEN-WINDOW, OLD-NAME (also last-<old>s), REF-DANGLING, RUNTIME-MAP rp() name missing from KP' ($l2 -match "RUNTIME-MAP\s+workflows/tidy\.js: rp\('agents'\) is not in const KP" -and $l2 -match 'HIDDEN-WINDOW\s+skills/pokey/pokey\.ps1:\d+' -and $l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match 'LOG-DIRECT\s+workflows/tidy\.js:\d+' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/crafty/templates\.md.*$oldSk" -and
   $l2 -match 'MANIFEST\s+agents/revy\.md: the Character block differs' -and $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -match 'PS-VERSION\s+skills/pokey/pokey\.ps1')
+Expect 'kitbag lint: RETIRED-WORD flags the retired word in any tracked file (case-insensitive, .githooks too); the one-time migration line is exempt' ($l2 -match 'RETIRED-WORD\s+\.githooks/ng:1' -and $l2 -notmatch 'RETIRED-WORD\s+\.githooks/ng:2')
 # budget: start tokens per role vs 12000 (lint START-BUDGET); repo and tests totals are INFO; a doc no skill leads to = ORPHAN-DOC
 $b2 = & $py -X utf8 $KT2 budget 2>&1 | Out-String
 Add-Content (Join-Path $kc 'agents/rechy.md') ('#' * 40000), 'First read `skills/crafty/lib.ps1` end to end.'; Set-Content (Join-Path $kc 'zz-orphan.md') '# Orphan'
@@ -107,6 +103,17 @@ $l4 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 Expect "budget: a start line per role + INFO totals; START-BUDGET over 12000; a test file over 9000 = BUDGET, no total cap; ORPHAN-DOC ($($b2.Trim()))" ($b2 -match '(?m)^rechy\s+start\s+\d+ of 12000' -and
   $b2 -match 'INFO repo total \d+ tokens . tests \d+' -and $l4 -match 'START-BUDGET\s+agents/rechy\.md: rechy loads \d+ tokens at start' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 9000\)' -and
   $l4 -notmatch 'BUDGET-TESTS|BUDGET-CAP|kit total' -and $l4 -match 'ORPHAN-DOC\s+zz-orphan\.md' -and $l4 -match 'SCRIPT-READ\s+agents/rechy\.md:\d+')
+# migrate: the retired install blocks leave .git/info/exclude; a listed file git no longer tracks goes, tracked and localOnly ones
+# stay; the use stamps and the config key named after the marker go; a second run prints nothing (words built: no retired word here)
+$mgw = 'go' + 'ody'; $mgKey = 'go' + 'odies'; $mgx = git -C $kc rev-parse --path-format=absolute --git-path info/exclude
+Add-Content $mgx "# kitbag $mgw duel", '/skills/old/x.ps1', '/README.md', '/notes/mine.txt', "# kitbag $mgw end", '/keep-me.txt'
+New-Item -ItemType Directory -Force "$kc/skills/old", "$kc/notes", "$kc/.state/extras-used" | Out-Null; 'x' | Set-Content "$kc/skills/old/x.ps1"; 'm' | Set-Content "$kc/notes/mine.txt"
+& $J @{ localOnly = @('notes'); $mgKey = @('duel') } (Join-Path $kc 'skills/crafty/kit.local.json')
+$mg1 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String; $mg2 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String
+$mgEx = Get-Content $mgx -Raw; $mgCfg = Get-Content (Join-Path $kc 'skills/crafty/kit.local.json') -Raw | ConvertFrom-Json
+Expect "kitbag migrate: install blocks out, other exclude lines kept, an untracked listed file removed, tracked + localOnly kept, stamps + config key gone, then silent ($($mg1.Trim() -replace '\s+', ' '))" ($mgEx -notmatch "kitbag $mgw" -and
+  $mgEx -match '(?m)^/keep-me\.txt' -and -not (Test-Path "$kc/skills/old") -and (Test-Path "$kc/README.md") -and (Test-Path "$kc/notes/mine.txt") -and -not (Test-Path "$kc/.state/extras-used") -and
+  -not $mgCfg.PSObject.Properties[$mgKey] -and @($mgCfg.localOnly).Count -eq 1 -and -not $mg2.Trim())
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 # section maps: lint SECTION-MAP / SECTION-UNMAPPED, audit SECTION-BIG, sections --fix
 $sp = Join-Path $k 'sec.py'; @'
@@ -140,8 +147,8 @@ $cbUnit = & { . (Lib); "$(Test-KitBugCollector ([pscustomobject]@{ name = '[Bug]
 Expect "tracker bug: a hand-made [Bug] under the ask never takes a section; a new collector does ($($cbFirst.action) $($cbSecond.action) $cbUnit)" ($cbFirst.action -eq 'created' -and $cbFirst.id -ne $cbHand -and $cbSecond.id -eq $cbFirst.id -and $cbSecond.action -eq 'appended' -and (pwsh @np $cbD tracker view $cbHand | ConvertFrom-Json).description -eq 'hand scope' -and $cbUnit -eq 'FalseTrueTrue')
 Remove-Item Env:KIT_TRACKER_TYPE
 Remove-TestKit $k
-$pg = [IO.File]::ReadAllText((Join-Path $src '.github/workflows/pages.yml')); $ia = $pg.IndexOf('goody add flow-map'); $il = $pg.IndexOf('kitbag.py lint')
-Expect 'pages.yml: lint runs the flow checks (flow-map added first, no --no-flow), so an issue the page would show fails CI' ($ia -ge 0 -and $il -gt $ia -and $pg -notmatch '--no-flow')
+$pg = [IO.File]::ReadAllText((Join-Path $src '.github/workflows/pages.yml')); $il = $pg.IndexOf('kitbag.py lint')
+Expect 'pages.yml: lint runs the flow checks (no --no-flow), so an issue the page would show fails CI' ($il -ge 0 -and $pg -notmatch '--no-flow')
 $cpNoAgent = @(Get-ChildItem "$src/agents/*.md", "$src/skills/*/SKILL.md", "$src/workflows/*.js" | Select-String -Pattern '(crafty\.ps1|\$D) checkpoint (?!-Agent )' | ForEach-Object { "$($_.Filename):$($_.LineNumber)" })
 Expect "every documented checkpoint call names -Agent (crafty.ps1 exits 2 without it): $($cpNoAgent -join ', ')" (-not $cpNoAgent.Count)
 Complete-Tests

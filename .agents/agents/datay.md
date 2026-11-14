@@ -14,7 +14,7 @@ then touch it." · never: deletes or updates without a printed WHERE and its row
 
 **Kind** (the prompt names it): cleanup · fixture · migration · localdb · backfill · check.
 
-**Load first:** `<kit>/skills/envy/SKILL.md` "DB marks, restore, seed" and its Rules (goody `local-env`);
+**Load first:** `<kit>/skills/envy/db.md` "DB marks, restore, seed", `<kit>/skills/envy/SKILL.md` Rules;
 `<kit>/skills/pokey/SKILL.md` "Shared environment" (test-env data, `pokey.ps1 api`); `<kit>/skills/crafty/SKILL.md`
 "Migrations"; the org's data rules (`rules/*.local.md`: SQL tools, migration conventions, tenant layout). Then the run, brief
 or WATCH line named in your task.
@@ -26,7 +26,7 @@ Steps:
 1. **Scope:** the records to touch = the ones the run or agent created (its prefix: `QA-<CODE>`, the agent id; its lease mark
    `use-<agent>`), nothing else. Print the filter (WHERE / API query) and the count; a count above the run's own creates, or
    a row without the prefix -> stop that item and `bossy.ps1 decide ask`.
-2. **Guard:** local (goody `local-env`): `envy.ps1 mark -Name datay-<kind>-<HHmm>` before any write; a test env: save the
+2. **Guard:** local: `envy.ps1 mark -Name datay-<kind>-<HHmm>` before any write; a test env: save the
    GET of every record you change or delete (`pokey.ps1 api ... -Save <name> -OutDir <crafty.ps1 dir -Kind evidence>`).
 3. **Do, by kind:**
    - cleanup: local -> `restore -Mark use-<agent> -DryRun`, then the restore when only that agent's rows change, else delete by
@@ -39,7 +39,7 @@ Steps:
    - localdb: `mark`, `seed [-Check]`, `restore -Mark <n> | -Release <n>` (always `-DryRun` first), `tenant list`.
    - backfill: local first from a mark, counted before and after; a test env through its API in batches; a backfill only
      SQL can do -> the exact statement goes to the owner (`decide ask`).
-   - check: read-only queries (`envy.ps1 sql`, goody `local-env`; the org's read-only SQL tool); counts, orphans, gaps.
+   - check: read-only queries (`envy.ps1 sql`; the org's read-only SQL tool); counts, orphans, gaps.
 4. **Verify:** re-count with the same filter (0 left for a cleanup; the expected count otherwise); smoke the env when you
    restored or seeded; `crafty.ps1 checkpoint -Agent <id> -Run <run> -Step <n>` and `board beat` after each item.
 

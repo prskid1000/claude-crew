@@ -1,10 +1,10 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody track-rebuild): offline, on a throw-away test kit with this goody's files.
-Usage: kitbag.py goody test track-rebuild (tests/kit-tests.ps1 -Area goodies runs every installed goody)
+tests/track-rebuild.tests.ps1: bossy.ps1 track -Rebuild, offline, on a throw-away test kit with adapters/track_rebuild.ps1.
+Usage: pwsh -NoProfile -File tests/track-rebuild.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
-. (Join-Path $PSScriptRoot 'harness.ps1')   # kitbag.py goody test: the kit's harness; New-TestKit adds this goody's files
+. (Join-Path $PSScriptRoot 'harness.ps1')   # New-TestKit adds $TestKitFiles
 $TestKitFiles = @('skills/bossy/adapters/track_rebuild.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit track-rebuild; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $out = pwsh @np $O track -Rebuild 2>&1 | Out-String

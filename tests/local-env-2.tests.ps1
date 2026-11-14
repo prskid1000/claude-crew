@@ -4,9 +4,9 @@ local-env-2.tests.ps1: envy.ps1 dependency waits, trains, deferred requests, idl
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-2.tests.ps1 (tests/kit-tests.ps1 -Area local-env-2 runs it with the other areas).
 Exit codes: 0 pass · 1 a check failed.
 #>
-param([string]$Kit)   # kitbag.py goody test passes the kit; else this file sits next to <kit>/tests/harness.ps1
+param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
-# the goody's script is not in the core test kit: copy it in
+# envy.ps1 is not in the core test kit: copy it in
 function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; $kd }
 # a test kit of its own: each scenario below writes the config it needs
 $k3 = New-LocalEnvKit le3; $k = $k3; $L3 = Join-Path $k3 'skills/envy/envy.ps1'; $cf3 = Join-Path $k3 'skills/crafty/kit.local.json'
@@ -61,7 +61,7 @@ $wk = & { . $L3; [double]$Wait = 4; function Ensure-Loop { }   # the verb's Wait
   $script:wr = @(); function Wait-Request { $script:wr += "$($Wait.GetType().Name)=$Wait" }
   Wake-Deferred dp -UntilDone; "$($script:wr -join ',')|$((Read-State dp).requests[0].status)" }
 Expect "up -Wait 4: Wake-Deferred -UntilDone leaves the verb's [double]`$Wait to Wait-Request (no SwitchParameter clash) ($wk)" ($wk -eq 'Double=4|queued')
-# the loop reloads when a goody adapter it dot-sources changes, not only kit.local.json / envy.ps1 / lib.ps1
+# the loop reloads when an adapter it dot-sources changes, not only kit.local.json / envy.ps1 / lib.ps1
 $ls0 = & { . $L3; Get-LoopStamp }; $adp = New-Item -ItemType Directory -Force (Join-Path $k3 'skills/envy/adapters'); Set-Content (Join-Path $adp 'zz-test.ps1') '# test'
 $ls1 = & { . $L3; Get-LoopStamp }; Remove-Item (Join-Path $adp 'zz-test.ps1')
 Expect "loop: an adapter added or changed changes the loop stamp ($ls1)" ($ls0 -match 'envy\.ps1=\d+' -and $ls0 -match 'lib\.ps1=\d+' -and $ls0 -match 'kit\.local\.json=\d+' -and $ls1 -match 'zz-test\.ps1=\d+' -and $ls0 -ne $ls1)

@@ -1,8 +1,8 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody tracker-clickup): the ClickUp tracker on recorded clickup CLI answers (an unknown call fails): view, status,
+tests/tracker-clickup.tests.ps1: the ClickUp tracker on recorded clickup CLI answers (an unknown call fails): view, status,
 comment, create (assignee looked up, parent kept, no list: the parent's), list; a dry-run comment from a file.
-Usage: pwsh -NoProfile -File goodies/tracker-clickup/tests.ps1 [-Kit <kit>] (the adapter comes from files/ beside this file).
+Usage: pwsh -NoProfile -File tests/tracker-clickup.tests.ps1 [-Kit <kit>] (the adapter comes from files/ beside this file).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -49,5 +49,5 @@ $cl = $global:log -join "`n"
 $pass = $ck -match '3 change' -and $cl -match '(?m)^task checklist item edit K1 i1 --name A1 · High · new$' -and $cl -match '(?m)^task checklist item add K1 A2 · Low · two$' -and $cl -match '(?m)^task checklist item resolve K1 i1$' -and $cl -notmatch 'i9|checklist add C1'
 if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: checklist renames, adds and resolves the kit's items by id, a person's item untouched ($ck)"
-"$failed failure(s)"   # the per-extra count: kitbag.py goody test prints only the total
+"$failed failure(s)"   # this file's count (kit-tests.ps1 prints the total)
 exit [int]($failed -gt 0)

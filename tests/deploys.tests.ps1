@@ -1,8 +1,7 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody deploys): deploy plan / request / record batching, trigger owner vs ask, UNKNOWN on a failed check.
-Usage: pwsh -NoProfile -File goodies/deploys/tests.ps1 (kitbag.py goody test deploys: next to the kit's tests/harness.ps1; New-TestKit
-gets this goody's files).
+tests/deploys.tests.ps1: deploy plan / request / record batching, trigger owner vs ask, UNKNOWN on a failed check.
+Usage: pwsh -NoProfile -File tests/deploys.tests.ps1 (New-TestKit gets the deploys adapters: $TestKitFiles).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')

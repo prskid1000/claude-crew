@@ -98,14 +98,14 @@ $u = 'https://h/g/s/r/-/merge_requests/4', 'https://github.com/o/r/pull/5', 'htt
 "mr-urls:$("$u" -eq 'gitlab:g/s/r!4 github:o/r!5 bitbucket:w/r!6 azure:o/p/r!7')"
 $m = Invoke-HostVerb 'mr.get' @{ type = 'command'; repo = 'o/cmd'; n = '4' }; "command:$($m.iid -eq 4 -and $m.title -eq 'o/cmd')"
 $e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; $g = try { Invoke-HostVerb 'mr.get' @{ repo = 'o/r'; n = '1' } } catch { "$_" }   # unknown host = gitlab
-"extra-line:$($e -eq 'git-host github is a goody: run kitbag.py goody add github' -and $g -eq 'git-host gitlab is a goody: run kitbag.py goody add gitlab')"
+"no-adapter:$($e -eq 'git-host github: no such adapter (README "Adapters")' -and $g -eq 'git-host gitlab: no such adapter (README "Adapters")')"
 "ci-object:$(try { $null = Invoke-HostVerb 'ci.status' @{ type = 'command'; repo = 'o/cmd' }; $true } catch {})"
 '@
 $ka = New-TestKit adapters; $cmdf = Join-Path (Split-Path $ka) 'host-cmd.ps1'; Set-Content $cmdf '[ordered]@{ iid = [int]$args[1]; state = ''merged''; title = $args[0] } | ConvertTo-Json -Compress'
 & $J @{ gitHost = 'git.example'; repos = @(@{ name = 'cmd'; ci = @{ mrPipelines = $false } }); gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/crafty/kit.local.json') 5
 $f = Join-Path (Kd) 'githost-test.ps1'; Set-Content $f $gh
 $res = @(pwsh @np $f (Join-Path $ka 'skills/crafty/lib.ps1') 2>&1)
-Expect-Each $res 'git host: #' 'mr-urls', 'command', 'extra-line', 'ci-object'
+Expect-Each $res 'git host: #' 'mr-urls', 'command', 'no-adapter', 'ci-object'
 & $J @{ gitHost = 'git.example'; gitHostType = 'command'; repos = @(@{ name = 'cmd'; ci = @{ mrPipelines = $false } }); gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/crafty/kit.local.json') 5
 $hostRefDir = Join-Path (Kd) 'hostref'; git init -q $hostRefDir; git -C $hostRefDir remote add origin https://git.example/o/cmd.git; $kaCrafty = Join-Path $ka 'skills/crafty/crafty.ps1'
 Push-Location $hostRefDir; $hostRefOut = @(@('cmd!4'), @('g/cmd!5'), @('cmd', '6'), @('7') | % { (pwsh @np $kaCrafty host mr.get @_ | ConvertFrom-Json).title }); $hostBad = pwsh @np $kaCrafty host mr.get 'not a ref' 2>&1 | Out-String; $hostBadCode = $LASTEXITCODE; Pop-Location

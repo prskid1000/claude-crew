@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/web-login-types.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# tests.ps1 (goodies web-login-types + browser-engines): totp, sso-steps over Playwright chromium, shared cookie, the firefox hint.
+# tests/web-login-types.tests.ps1: totp, sso-steps over Playwright chromium, shared cookie, the firefox hint.
 # Next to <kit>/tests/harness.ps1 (browser.mjs, its login fixture app; pin and plain form login: core tests); b.totp comes from adapters/web-login.mjs.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/pokey/adapters/web-login.mjs')   # copied into every New-TestKit kit
@@ -21,7 +21,7 @@ for (const k of ['sso', 'shared']) await out(k, async () => { const s = await b.
 await out('hint', () => b.session({ target: 'ff' }).then(() => false, (e) => /playwright install firefox/.test(e.message)))
 process.exit(0)
 '@) "$qk/targets.local.json" $(if (-not $nopw) { $pwm })
-  foreach ($x in 'totp', 'totp-login', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright or no goody browser-engines)" } else { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") } }
+  foreach ($x in 'totp', 'totp-login', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright)" } else { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") } }
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/pokey)' }
 Remove-TestKit $k
 Complete-Tests

@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 flow.tests.ps1: dev-flow plumbing: bossy.ps1 track add / run (task ids, promotion), board join / leave, health's overdue beat;
-devtools.py finish / prior gate; pokey.ps1 api, goody verbs and seats (from pokey.tests: its cap); buildy.js MR dedupe (moved
+devtools.py finish / prior gate; pokey.ps1 api and seats (from pokey.tests: its cap); buildy.js MR dedupe (moved
 from bossy.tests: its cap); decide publish (the task's Decisions checklist); pause -Status, finished runs closed, recover's
 time budget (from bossy.tests: its cap).
 Usage: pwsh -NoProfile -File <kit>/tests/flow.tests.ps1 (or tests/kit-tests.ps1 -Area flow).
@@ -9,7 +9,7 @@ Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit flow; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Path $k '.state/tracking.json'
-$env:KIT_TRACKER_TYPE = 'clickup'   # tag CU- (type only: no clickup call, no goody)
+$env:KIT_TRACKER_TYPE = 'clickup'   # tag CU- (type only: no clickup call)
 $out = pwsh @np $O track add -Task 0 -Mrs 'web!1' 2>&1 | Out-String
 Expect "track: placeholder task '0' refused" ($LASTEXITCODE -ne 0 -and $out -match 'needs a real -Task id')
 & $J @{ tasks = @{ old1 = @{ task = 'old1'; mrs = @('api!9'); done = $true } } } $tf   # a tracking.json from before tasks/
@@ -95,16 +95,14 @@ Expect 'wt commit: an over-long subject is refused on stderr with its findings' 
 $uq = node -e "const s = require('fs').readFileSync(process.argv[1], 'utf8'); eval(s.match(/^const nu = .*$/m)[0] + '\n' + s.match(/^const uniqMr = .*$/m)[0] + '\nglobalThis.u = uniqMr');
 const r = u([{ url: 'https://h/g/a/-/merge_requests/1', merged: true }, { url: 'https://h/g/a/-/merge_requests/1/', merged: false }, { url: 'https://h/g/a/-/merge_requests/2', merged: true }]); console.log(r.length === 2 && !r[0].merged && r[1].merged)" (Join-Path $src 'workflows/buildy.js')
 Expect "buildy: duplicate MRs collapse, MERGED only when every copy is ($uq)" ("$uq" -eq 'true')
-# pokey api errors and goody verbs (moved from pokey.tests: its cap)
+# pokey api errors (moved from pokey.tests: its cap)
 & $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tx = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'key' }; users = @{ admin = 1 } } } } (Join-Path $k 'skills/pokey/targets.local.json') 5
 $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 -Save "$(Kd)/q.json" 2>&1 | Out-String; $ac = $LASTEXITCODE; $bs = Px $Q api -Target tq -Path '/x' -Save "Q-T1_01`b_poll" 2>&1 | Out-String; $gx = Invoke-PsTest gx ". `$args[0]; function Invoke-ApiExtra { param(`$Path, `$Target, `$Save, `$OutDir) `"`$OutDir|`$Save`" }; Invoke-Api /x -Target tx -Save D:/z/q.json" @($Q)
-$uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the goody android-swarm
-$xo = foreach ($verbName in 'deployed', 'annotate') { $verbOut = Px $Q $verbName 2>&1 | Out-String; "$LASTEXITCODE $verbOut".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 $nu = Px $Q api -Target tx -As ghost -Path '/x' 2>&1 | Out-String; $nuc = $LASTEXITCODE
 Expect 'api: a user missing from the target exits 2 NO-USER (not retried), known users named, no stack trace' ($nuc -eq 2 -and $nu -match "NO-USER 'ghost' in target tx \(not retried" -and $nu -match 'Known: admin' -and $nu -notmatch 'Exception|at line')
-Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
-Expect 'api -Save: a full path is split (api-auth goody too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
+Expect 'api: no answer exits 1 (status shown); web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $wo -match 'no api URL')
+Expect 'api -Save: a full path is split (api_auth.ps1 too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
 $api = Start-TestApi; & $J @{ targets = @{ tb = @{ api = "http://127.0.0.1:$($api.port)"; auth = @{ type = 'login'; path = '/bad' }; users = @{ admin = 'u', 'K9' } } } } (Join-Path $k 'skills/pokey/targets.local.json') 6
 $lb = (Px $Q api -Target tb -Path '/l' 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $api.proc.Kill(); $lh = Px $Q api -Target tb -Path '/l' 2>&1 | Out-String
 (Get-Item (Join-Path $k 'skills/pokey/targets.local.json')).LastWriteTime = Get-Date; $lr = Px $Q api -Target tb -Path '/l' 2>&1 | Out-String
@@ -190,7 +188,7 @@ $ck1 = Px $O launch -Check -ArgsFile $sbArgs 2>&1 | Out-String; $ck1c = $LASTEXI
 $null = Px $crPath tracker describe $sbPar "the ask`n<!-- kit:delivery -->`nx`n<!-- /kit:delivery -->"; $null = Px $crPath tracker scope -Task $sbTop -Add '**Items:** B1'
 $ck2 = Px $O launch -Check -ArgsFile $sbArgs 2>&1 | Out-String; $ck2c = $LASTEXITCODE
 $null = Invoke-PsTest bare '. $args[0]; $null = Set-TrackerDescription $args[1] bare' @((Lib), $sbSub);$ck3 = Px $O launch -Self -Script buildy.js -Run wave-c -ArgsFile $sbArgs 2>&1 | Out-String
-Expect "launch -Check / -Self: TASKS REFUSED with the fix per gap, then ok ($ck1c $ck2c)" ($ck1c -eq 1 -and $ck1 -match "TASKS REFUSED ${sbSub}: parent $sbPar has no delivery section: bossy.ps1 track rollup -Task $sbPar" -and $ck1 -match 'goody add task-rollup' -and
+Expect "launch -Check / -Self: TASKS REFUSED with the fix per gap, then ok ($ck1c $ck2c)" ($ck1c -eq 1 -and $ck1 -match "TASKS REFUSED ${sbSub}: parent $sbPar has no delivery section: bossy.ps1 track rollup -Task $sbPar" -and
   $ck1 -match "TASKS REFUSED ${sbTop}: its description lacks Items .*tracker scope -Task $sbTop" -and $ck2c -eq 0 -and $ck2 -match 'TASKS ok: 1 area' -and $ck3 -match 'RECORDED' -and $ck3 -match "TASKS REFUSED ${sbSub}: its description lacks Problem, Goal, Items, Acceptance, Links")
 # pause without -Wait: back in seconds, the wait runs in the background; -Status says when it is safe
 $qs = if ((Px $O board join -Agent Q1 -Run pq | Out-String) -match 'SESSION (\S+)') { $Matches[1] }; $null = Px $O launch -RunId wf_pq -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/pq.md"}' 2>&1

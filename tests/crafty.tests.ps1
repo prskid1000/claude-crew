@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-crafty.tests.ps1: crafty.ps1 wt / check / gate / guard goody notes, lib.ps1 tracker adapters, devtools.py (git host: sessions.tests.ps1).
+crafty.tests.ps1: crafty.ps1 wt / check / gate / guard adapter notes, lib.ps1 tracker adapters, devtools.py (git host: sessions.tests.ps1).
 Usage: pwsh -NoProfile -File <kit>/tests/crafty.tests.ps1 (or tests/kit-tests.ps1 -Area crafty).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -145,7 +145,7 @@ if ($IsWindows) {
   [IO.File]::WriteAllText("$sh/t.py", $sq); $so = & $py -X utf8 "$sh/t.py" (Split-Path $DT) "$sh\g.cmd" "$sh\p.cmd" 2>&1 | Out-String
   Expect "devtools: a .cmd shim gets RM<>HM |&^% intact (node direct), another shim refuses it ($so)" ($so -match [regex]::Escape('["RM<>HM |&^% \"q\""]') -and $so -match 'REFUSED p\.cmd is a cmd\.exe shim')
 }
-# migrations: own check, Liquibase (goody), else UNRUN
+# migrations: own check, else UNRUN (Liquibase: liquibase.tests.ps1)
 $ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
 '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
 Save-GitRepo $ud init
@@ -155,21 +155,16 @@ Expect-Cases @(
       { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 2 migration file\(s\) of another tool' -and $r.out -match '000000_x\.php' -and $r.out -notmatch 'CHANGELOG' })
   , @('check: Flyway, Alembic and Prisma files are UNRUN too', { & $mig @{ 'alembic/versions/a1_x.py' = 'x'; 'prisma/migrations/1_x/migration.sql' = 'x'; 'db/migration/V1__x.sql' = 'x' } },
       { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 5 migration file\(s\) of another tool' })
-  , @('check: Liquibase without the goody is UNRUN with the goody line', { & $mig @{ 'config/liquibase/master.xml' = '<databaseChangeLog/>' } }, { param($r) $r.code -eq 5 -and $r.out -match 'goody add liquibase' })
 )
 $tr = Join-Path (Kd) 'touched-repo'; New-Item -ItemType Directory -Force "$tr/src" | Out-Null; '{ "stack": "custom", "commands": { "test": "node -e 0" } }' | Set-Content "$tr/.claude-stack.json"
 'x' | Set-Content "$tr/src/Audit.spec.ts"; Save-GitRepo $tr i; 'x' | Set-Content "$tr/src/Audit.ts"
 $out = pwsh @np $D check -Dir $tr -Step test -Touched 2>&1 | Out-String
 Expect 'check -Touched: Audit.ts is no test (case-sensitive Test suffix); its spec runs' ($out -match '-Touched: 1 test\(s\) for 1 changed file\(s\): src/Audit\.spec\.ts')
-$wd = Join-Path (Kd) 'web-no-tests'; New-Item -ItemType Directory -Force $wd | Out-Null
-'{ "name": "w", "devDependencies": { "typescript": "5" } }' | Set-Content "$wd/package.json"; '{}' | Set-Content "$wd/tsconfig.json"
-$out = pwsh -NoProfile -File $D check -Dir $wd -Step test -Tests x.spec.ts 2>&1 | Out-String
-Expect 'check: no test target and no goody node-spec = UNRUN with the goody line' ($LASTEXITCODE -eq 5 -and $out -match 'goody add node-spec')
 $sd = Join-Path (Kd) 'stack-only'; New-Item -ItemType Directory -Force $sd | Out-Null; '{ "stack": "custom", "commands": { "compile": "echo ok" } }' | Set-Content "$sd/.claude-stack.json"
 $out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
 Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String
-Expect 'gate: runs the command; no heap cap without the goody build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
+Expect 'gate: runs the command; no heap cap without adapters/build_heap.ps1' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
 $lr = Join-Path (Kd) lock-repo; $null = mkdir -Force "$lr/api"; $env:LOCK_LOG = "$lr/log"
 '{ "stack": "custom", "commands": { "test": "node t.js {tests}" } }' | Set-Content "$lr/api/.claude-stack.json"
 'const f=require("fs"),a=w=>f.appendFileSync(process.env.LOCK_LOG,w);a("s");setTimeout(()=>a("e"),1500)' | Set-Content "$lr/api/t.js"
@@ -200,8 +195,7 @@ Expect-Each (Invoke-PsTest 'gate-test' $gt @($D, $k)) 'gate: #' 'cache', 'keep',
 $na = Join-Path $k 'skills/crafty/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na
-$rt = Invoke-TestScript $D runtime status
-Expect "guard: a goody's note is context, no decision; runtime without its goody exits 1 ($gn)" ($gn -match '"additionalContext":"lease noted"' -and $gn -notmatch 'permissionDecision' -and $rt.code -eq 1 -and $rt.out -match 'goody add runtimes')
+Expect "guard: an adapter's note is context, no decision ($gn)" ($gn -match '"additionalContext":"lease noted"' -and $gn -notmatch 'permissionDecision')
 $lw = New-LinkedKit 'main kit' @{ tracker = @{ type = 'jira' }; zz = @(@{ p = 'q' }) }
 $tt = pwsh -NoProfile -Command ". '$lw/skills/crafty/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; (Get-KitSetting 'zz' 'dflt').p; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
 Expect 'lib: a linked worktree reads the main clone''s kit.local.json (a list of one object stays a list); fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match '(?m)^q\r?$' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')

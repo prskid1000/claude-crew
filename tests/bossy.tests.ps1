@@ -1,24 +1,26 @@
 #Requires -Version 7
 <#
-bossy.tests.ps1: bossy.ps1 decide, launch, board, supervise, learn, budget, setup (goodies: deploys, kit-admin, supervise-resources).
+bossy.tests.ps1: bossy.ps1 decide, launch, board, supervise, learn, budget, setup (adapters: supervise_resources).
 Usage: pwsh -NoProfile -File <kit>/tests/bossy.tests.ps1 (or tests/kit-tests.ps1 -Area bossy).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit orch; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Path $k '.state/tracking.json'
 $lw = New-LinkedKit 'kit main' @{ localOnly = @('secret.txt') } 'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1'
-$mk = "$(Kd)/kit main"; Add-Content "$mk/.git/info/exclude" "# >>> kit localOnly (managed by an older setup)`n/old.txt`n# <<< kit localOnly"
+$mk = "$(Kd)/kit main"; Add-Content "$mk/.git/info/exclude" "# >>> kit localOnly (managed by an older setup)`n/old.txt`n# <<< kit localOnly`n/mine.txt"
 $kx = (pwsh @np "$lw/skills/bossy/bossy.ps1" setup -Exclude 2>&1 | Out-String)
-Expect 'setup -Exclude in a kit worktree: excludes to the main clone (older block replaced), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '/old\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
-git -C $mk remote add origin https://github.com/o/r.git; foreach ($b in 'main', 'goodies') { git -C $mk update-ref "refs/remotes/origin/$b" HEAD }
-$po = Invoke-PsTest kit-protect @'
+Expect 'setup -Exclude in a kit worktree: excludes to the main clone (older block replaced, own lines kept), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '/old\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -match '/mine\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
+git -C $mk remote add origin https://github.com/o/r.git; git -C $mk update-ref refs/remotes/origin/main HEAD
+$protect = @'
 $null = . $args[0] 6>$null; $global:seen = @()
-Register-KitAdapter 'git-host' 'github' @{ 'branch.protect' = { param($a) $global:seen += "$($a.repo)#$($a.branch)"; if ($a.branch -eq 'main') { 'set' } } }
+Register-KitAdapter 'git-host' 'github' @{ 'branch.protect' = { param($a) $global:seen += "$($a.repo)#$($a.branch)"; if ($args[1] -ne 'fail') { 'set' } } }
 Set-KitOriginProtection; $global:seen -join ' '
-'@ @("$mk/skills/bossy/bossy.ps1") | Out-String
+'@
+$po = Invoke-PsTest kit-protect ($protect -replace '\$args\[1\]', "'ok'") @("$mk/skills/bossy/bossy.ps1") | Out-String
+$pf = Invoke-PsTest kit-protect-fail ($protect -replace '\$args\[1\]', "'fail'") @("$mk/skills/bossy/bossy.ps1") | Out-String
 $ph = pwsh @np "$mk/skills/bossy/bossy.ps1" health 2>&1 | Out-String
-Expect 'setup: protects origin main + goodies (fake host), no verb -> by-hand line; health shows it' ($po -match 'protect: main set' -and
-  $po -match 'goodies failed: set it by hand on github\.com/o/r' -and $po -match 'o/r#main o/r#goodies' -and $ph -match 'protection: goodies failed')
+Expect 'setup: protects origin main only (fake host), no verb -> by-hand line; health shows it' ($po -match 'protect: main set' -and $po -match 'o/r#main\s*$' -and
+  $pf -match 'main failed: set it by hand on github\.com/o/r' -and $ph -match 'protection: main failed')
 $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -ErrorAction SilentlyContinue
 $ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
@@ -43,10 +45,6 @@ $ak = Px $O decide list -Ask -Json | ConvertFrom-Json; $fy = Px $O decide list -
 $null = Px $O board check -Session s1 2>&1; $bc = $LASTEXITCODE
 $hp = Px (Join-Path $k 'skills/bossy/bossy.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
 Expect 'decide: unique ids, -Ask payload, -Fyi list; board check w/o -Worktree exit 2; setup --help exit 0' ($i1 -ne $i2 -and "$($ak.ids)" -eq $i1 -and $ak.questions[0].header -eq 'A1' -and $ak.questions[0].options[0].label -eq 'B: b (Recommended)' -and $fy -match "^1\. qA2 \(``$i2``\): B b \(recommended\) · A a" -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'coordinator \+ kit commands' -and $hp -notmatch 'setup:')
-$dx2 = Px $O deploy plan 2>&1 | Out-String; $dxc = $LASTEXITCODE
-$pp = Px $O precommit 2>&1 | Out-String; $ppc = $LASTEXITCODE
-$tr = Px $O track rollup 2>&1 | Out-String; $trc = $LASTEXITCODE
-Expect 'no goody: its line, exit 1' ("$ppc$dxc$trc" -eq '111' -and "$pp$dx2$tr" -replace '\s+', ' ' -match '^(\S+ \S+ is a goody: run kitbag.py goody add \S+ ){3}$' -and "$pp$dx2$tr" -match '(?s)kit-admin.+deploys.+task-rollup')
 $ld = TkPath $k launches -Create
 # launch -Self <script> <run> <json> [fnv] [args]
 $self = { param($s, $run, $json, $fnv) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv ($fnv ?? (& { . $O; Get-KitFnv $json })) @args | Out-String }
@@ -142,7 +140,7 @@ $w0 = Get-Date; $sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session m
 $sr = Get-Content (TkPath $k supervise-report) -Raw; Stop-Process -Id (Read-Json (Join-Path (TkPath $k background) 'slow.json')).pid -ErrorAction SilentlyContinue
 Expect "supervise: a 20 s background child never holds the caller; sweep <= 25 s, each section <= 12.5 s (wall $([int]$ws) s)" ($ws -lt 20 -and $sr -match 'sweep: (\d+) s' -and [int]$Matches[1] -le 25 -and -not @((Read-Json (TkPath $k supervise-state)).sweep.cost.PSObject.Properties.Value -gt 12.5).Count)
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
-Expect 'supervise: a goody hook adds sweep line, flag, row, owner line, RAM need; kit-report shape' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
+Expect 'supervise: an adapter hook adds sweep line, flag, row, owner line, RAM need; kit-report shape' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
   $sr -match '^# Supervise report .*\n\*\*Result:\*\* \d+ ACT · \d+ WATCH' -and $sr -match "\| ACT \| DECISION $i1 \(blocking.*AskUserQuestion.*-Ask -Json" -and $sr -match "DECISION 1 FYI: $i2 \|" -and (Test-Prose kit-report (TkPath $k supervise-report))); Remove-Item "$ad/fake.ps1", "$ad/slow.ps1"   # the core adapter stays
 $lt = Join-Path (Kd) 'lk.json'; $old = { '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5) }   # a 5-min-old lock
 & $old; $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
@@ -187,8 +185,8 @@ $res = Invoke-PsTest 'outbox-test' $nt @(Lib)
 Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')
 & $J @{} (Join-Path $k 'skills/crafty/kit.local.json')   # a configured kit: lib.ps1 skips its load-time git lookup
 "`n## zz-test`n- a core lesson" | Add-Content (Join-Path $k 'LESSONS.md')
-$lr = Invoke-TestScript $O learn -Skill revy -Kind idea -Text 'x'; $r1 = pwsh @np $O learn -Read -Skill zz-test | Out-String; $lx = Invoke-TestScript $O learn -Skill revy -Lesson 'y'
-Expect 'learn: record + -Read in core; lesson tools without kit-admin = its one line, exit 1' ($lr.out -match 'recorded \(revy/idea\)' -and $r1 -match 'a core lesson' -and $lx.code -eq 1 -and $lx.out.Trim() -eq 'learn -Stats / -History / -When / -Bump / -Fixed / -Trim is a goody: run kitbag.py goody add kit-admin')
+$lr = Invoke-TestScript $O learn -Skill revy -Kind idea -Text 'x'; $r1 = pwsh @np $O learn -Read -Skill zz-test | Out-String; 
+Expect 'learn: record + -Read in core' ($lr.out -match 'recorded \(revy/idea\)' -and $r1 -match 'a core lesson')
 $j1 = pwsh @np $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C:/wt/x7' | Out-String
 $j2 = pwsh @np $O board join -Type revy -Agent R7 -Run w7 | Out-String
 $null = pwsh @np $O board msg -Agent R7 -To X7 -Text 'I need a.ts'
@@ -198,7 +196,7 @@ $dx = Invoke-TestScript $O board dispute -Agent X7 -With R7
 $ad = Join-Path $k 'skills/bossy/adapters'; New-Item -ItemType Directory -Force $ad | Out-Null
 'function Invoke-TrackRebuild { "fake rebuild $Force" }' | Set-Content (Join-Path $ad 'fake.ps1'); 'this is { not powershell' | Set-Content (Join-Path $ad 'broken.ps1')
 $ld = Invoke-TestScript $O track -Rebuild -Force; Remove-Item "$ad/fake.ps1", "$ad/broken.ps1"
-Expect 'goodies: a missing one = its one line, exit 1; an adapter file loads (sees its caller''s params); a broken one only warns' ($dx.code -eq 1 -and $dx.out.Trim() -eq 'board dispute is a goody: run kitbag.py goody add duel' -and $ld.code -eq 0 -and $ld.out -match 'fake rebuild True' -and $ld.out -match 'adapter broken\.ps1')
+Expect 'board dispute: usage error naming /buildy, exit 2; an adapter file loads (sees its caller''s params); a broken one only warns' ($dx.code -eq 2 -and $dx.out -match 'no such verb; disputes run inside /buildy' -and $ld.code -eq 0 -and $ld.out -match 'fake rebuild True' -and $ld.out -match 'adapter broken\.ps1')
 $bj = { param([string[]]$a) Px $O budget @a -Json | ConvertFrom-Json }
 $cx = Join-Path (Kd) 'codex'; New-Item -ItemType Directory -Force $cx | Out-Null
 '{"models":[{"slug":"gpt-5.5","context_window":272000,"effective_context_window_percent":95}]}' | Set-Content "$cx/models_cache.json"; 'model = "gpt-5.5"' | Set-Content "$cx/config.toml"

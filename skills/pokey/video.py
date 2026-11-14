@@ -1,4 +1,4 @@
-"""video.py (goody media-evidence): the whole video flow in one script: tester evidence links (videos, recordings, screenshots)
+"""video.py: the whole video flow in one script: tester evidence links (videos, recordings, screenshots)
 -> a cheap time-indexed text index + frames on demand; the vidy agent reads the keyframes and writes them back. pokey.ps1 evidence
 <verb> passes its arguments here (-Name or --name, any case):
   fetch <link> [--refresh] [--json]                                   link -> local file + sidecars (one lock per video)
@@ -15,7 +15,7 @@
                                                   the detector gate: synthetic clips + crf-36 variants + the cached corpus
   Stages alone: select <link> · detect|transcribe|vision|build <key> · needs <key> transcribe · window <start> <end>
   --duration <s> [--at t --window s] (tests) · paths <key>.
-In: kit.local.json `media` (GOODY.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media_grab.mjs: headless grabs), gws,
+In: kit.local.json `media` (pokey media.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media_grab.mjs: headless grabs), gws,
 env JIRA_*, CLAUDE_AGENT. Out: text, JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable
 link, busy, stage failed) · 2 usage.
 Sections: L33 config · L149 fetchers · L404 probe · L423 detect · L1680 transcribe · L1800 vision · L1903 index · L2025 read ·

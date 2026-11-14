@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by bossy.ps1 from adapters/. Exit codes: none here (its verbs exit through bossy.ps1).
-# Goody deploys (kitbag.py goody add deploys): bossy.ps1 deploy merge, dot-sourced by bossy.ps1.
+# deploys: bossy.ps1 deploy merge, dot-sourced by bossy.ps1.
 # Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env>-<date> pushed, MR squash off, merged on green),
 # or tags it (deploys[].tag; -Push pushes the tag). A deploy branch itself is never pushed to.
 # Sections: L7 merge · L71 mr

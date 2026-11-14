@@ -1,5 +1,5 @@
 // ui_checks.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
-// ui_checks.mjs (goody ui-checks): layout faults and contrast for any web UI, selector-free; browser.mjs re-exports both.
+// ui_checks.mjs: layout faults and contrast for any web UI, selector-free; browser.mjs re-exports both.
 //   const b = await import('file:///<kit>/skills/pokey/browser.mjs'); await b.layoutIssues(s.page); await b.contrast(s.page, '.icon')
 
 // controls another element covers (hit test at the centre of the first line box), text boxes overlapping, text cut by an overflow

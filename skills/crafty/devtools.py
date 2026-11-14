@@ -27,11 +27,10 @@
  python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
  python -X utf8 devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
-Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
- findings: goody module-audit).
-Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L48 config · L82 run · L170 tracker · L378 git host · L439 scope · L518 MR · L690 merge · L980 docs · L1135 publish ·
-  L1495 render · L1851 plugins · L1865 keepboth · L1884 selftest · L2323 CLI
+Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
+Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
+Sections: L47 config · L81 run · L169 tracker · L377 git host · L438 scope · L517 MR · L689 merge · L979 docs · L1132 publish ·
+  L1492 render · L1848 plugins · L1862 keepboth · L1881 selftest · L2320 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -42,7 +41,7 @@ from datetime import datetime
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
-from kitbag import kit_path, locked, audited, stamp_fn, state_read, state_write, task_index, task_file, read_tracking, kitlog   # one path map, lock, call log, goody usage stamps for all kit scripts
+from kitbag import kit_path, locked, audited, state_read, state_write, task_index, task_file, read_tracking, kitlog   # one path map, lock, call log for all kit scripts
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -74,9 +73,9 @@ def _todo(verb):
     raise SystemExit(f'adapter verb {verb} is a stub (kitbag.py new adapter): implement it first')
 
 
-def extra_missing(feature, name):
-    """The one line an agent acts on: install the goody, retry."""
-    print(f'{feature} is a goody: run kitbag.py goody add {name}', file=sys.stderr)
+def no_report_adapter():
+    """reports.type names no adapter (built in or skills/crafty/adapters/report_<type>.py): exit 3."""
+    print(f'reports.type {REPORT_TYPE}: no such report adapter (kit.example.json _manifest.adapters.report)', file=sys.stderr)
     sys.exit(3)
 
 # ---- run: CLI calls and their arguments
@@ -1109,9 +1108,8 @@ def _html_of(a):
 def make_doc(title, path, parent=None, url=None):
     """Publish via reports.type -> URL or kept path; parent: a remote id or a folder to keep it in; url: an earlier publish of
     this doc, updated in place where the adapter can."""
-    ad = ADAPTERS['report'].get(REPORT_TYPE) or extra_missing(f'reports.type {REPORT_TYPE}', f'report-{REPORT_TYPE}')
+    ad = ADAPTERS['report'].get(REPORT_TYPE) or no_report_adapter()
     keep = parent if parent and os.path.isdir(parent) else None
-    stamp_fn(ad['publish'])
     return ad['publish']({'title': title, 'path': path, 'parent': None if keep else parent, 'keep': keep, 'url': url})
 
 
@@ -1119,11 +1117,10 @@ def make_evidence(name, files, folder=None, parent=None, key=None):
     """Host evidence files -> {folderId, folderLink, label, files}; {} = they stay in the run folder; key: reuse its folder."""
     ad = ADAPTERS['report'].get(REPORT_TYPE)
     if ad is None:   # evidence stays in the run folder; say why once
-        print(f'reports.type {REPORT_TYPE} is a goody: run kitbag.py goody add report-{REPORT_TYPE}', file=sys.stderr)
+        print(f'reports.type {REPORT_TYPE}: no such report adapter, evidence stays in the run folder', file=sys.stderr)
     fn = (ad or {}).get('evidence')
     if not fn:
         return {}
-    stamp_fn(fn)
     rec = _pub_read(key) if key else {}
     out = fn({'name': name, 'files': files, 'folder': folder or rec.get('folderId'), 'parent': parent})
     if key and out.get('folderId'):
@@ -1471,7 +1468,7 @@ def relayout(ref):
     return url
 
 
-R = ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): goody report-gdocs
+R = ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): adapters/report_gdocs.py
 # adapter:report/markdown: the file, kept (an earlier publish: the same file)
 R['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'], a.get('url'))}
 # adapter:report/html: Markdown -> HTML (md_to_html), kept
@@ -1848,9 +1845,9 @@ def render_cmd(a):
     return 0
 
 
-# ---- plugins: skills/crafty/adapters/*.py (installed goodies)
+# ---- plugins: skills/crafty/adapters/*.py
 def load_plugins(folder=os.path.join(KIT, 'adapters')):
-    """Each skills/crafty/adapters/*.py (an installed goody) gets this module in register(dt) and adds adapters or verbs."""
+    """Each skills/crafty/adapters/*.py (a plugin) gets this module in register(dt) and adds adapters or verbs."""
     this = sys.modules[__name__]
     for path in sorted(glob.glob(os.path.join(folder, '*.py'))):
         spec = importlib.util.spec_from_file_location('kit_plugin_' + os.path.splitext(os.path.basename(path))[0], path)
@@ -2082,7 +2079,7 @@ def _publish_selftest(expect, refused):
                  + rt + '| 1 | 2026-10-29 | A1-A3 | 2 PASS, 1 FAIL | A3: 500 | abc123 | round 2 |\n')
         human, ai = w(os.path.join(tmp, 'h.md'), doc), w(os.path.join(tmp, 'a.md'), aidoc)
         tf = os.path.join(KIT, 'templates.md')
-        if os.path.isfile(tf):   # a full kit (goody test kits copy scripts only)
+        if os.path.isfile(tf):   # a full kit (a test kit may copy scripts only)
             cs = {'title': 'X', 'checks': [{'id': 'T1', 'steps': 's', 'expected': 'e'}], 'cases': [{'id': 'A1', 'type': 'negative', 'steps': 's', 'expected': 'e'}]}
             ra, rh = render_cases(cs, 'ai'), render_cases(cs, 'human')
             expect('cases render: the AI doc has negative rows, its case and Rounds tables; the human doc positive checks only',
@@ -2312,7 +2309,7 @@ def _report_selftest(expect):
             with _c.redirect_stderr(err):
                 make_doc('T', md)
         except SystemExit as e:
-            expect('a report type that is not installed: exit 3 + the goody add line', e.code == 3 and 'kitbag.py goody add report-no-such-type' in err.getvalue())
+            expect('a report type with no adapter: exit 3 + one line naming it', e.code == 3 and 'reports.type no-such-type: no such report adapter' in err.getvalue())
         for name, adapter in ADAPTERS['report'].items():
             if adapter.get('selftest'):
                 use(name, {}); adapter['selftest'](expect, tmp, md)
@@ -2326,16 +2323,11 @@ def _cli():
     a = sys.argv[1:]
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
-        stamp_fn(VERBS[cmd])
         sys.exit(VERBS[cmd](a[1:]) or 0)
     if cmd == 'cases':   # cases and render parse their own arguments; one arm each: lint's flow finds the verb
         sys.exit(cases_cmd(a[1:]))
     if cmd == 'render':
         sys.exit(render_cmd(a[1:]))
-    if cmd == 'lbcheck':
-        extra_missing('devtools.py lbcheck (Liquibase check)', 'liquibase')
-    if cmd == 'findings':
-        extra_missing('devtools.py findings (module audits)', 'module-audit')
     # --help never becomes an id; unknown flags and missing args are usage errors
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}

@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/ts-typecheck.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody ts-typecheck: a huge tsc baseline is UNRUN, an error in a changed file fails. Run: kitbag.py goody test ts-typecheck
+# tests/ts-typecheck.tests.ps1: ts-typecheck: a huge tsc baseline is UNRUN, an error in a changed file fails. Usage: pwsh -NoProfile -File tests/ts-typecheck.tests.ps1
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/ts_typecheck.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit ts; $D = Join-Path $k 'skills/crafty/crafty.ps1'

@@ -74,11 +74,11 @@ def cmd_setup(kit, fix):
     for n in ('work', 'cache', 'logs'):
         if not osp.isdir(kit_path(n, kit=kit)):
             need_setup.append(f'runtime folder {n}/ missing')
-    pf = kit_path('kit-protect', kit=kit)   # bossy.ps1 setup records the kit origin's main / goodies protection
+    pf = kit_path('kit-protect', kit=kit)   # bossy.ps1 setup records the kit origin's main branch protection
     st = [x for x in open(pf, encoding='utf-8', errors='replace').read().split('\n') if x.strip()] if osp.isfile(pf) else []
     bad = [x for x in st if not re.match(r'^\S+ (ok|set|skip)', x)] if st else ['unchecked']
     if bad:
-        need_setup.append('origin main / goodies protection: ' + ', '.join(bad))
+        need_setup.append('origin main protection: ' + ', '.join(bad))
     if need_setup:
         if fix:
             rc, o, e = pwsh(setup_ps, 'setup', timeout=120)
@@ -180,7 +180,7 @@ def cmd_config(kit, fill):
         if not isinstance(loc, dict):
             out('ACT', 'CONFIG-FILE', loc_rel, 'top level must be a JSON object')
             continue
-        if not isinstance(ex, dict):   # no core example (a goody's, e.g. android-swarm GOODY.md): its own rules only
+        if not isinstance(ex, dict):   # no example file (swarm.config.json, targets.local.json): its own rules only
             if loc_rel.endswith('swarm.config.json'): swarm_rules(loc)
             elif loc_rel.endswith('targets.local.json'): targets_rules(loc)
             else: out('ACT', 'CONFIG-FILE', loc_rel, 'no example to compare with')
@@ -232,7 +232,7 @@ def config_rules(kit, c):
     """Values a feature in use needs and no default can supply: ASK the lead (key paths only, never values)."""
     tt = (os.environ.get('KIT_TRACKER_TYPE') or get(c, 'tracker.type') or 'none').lower()
     tn = ((manifest(kit).get('adapters') or {}).get('tracker') or {}).get('names', 'none').split()
-    for f in glob.glob(osp.join(kit, 'skills', '*', 'adapters', '*')):   # installed goodies add their names (adapter:tracker/<name>)
+    for f in glob.glob(osp.join(kit, 'skills', '*', 'adapters', '*')):   # vendor adapters add their names (adapter:tracker/<name>)
         tn += re.findall(r'adapter:tracker/([\w-]+)', read(f))
     if tt not in tn:
         out('ACT', 'CONFIG-VALUE', 'kit.local.json tracker.type', 'not one of ' + ' / '.join(tn))
@@ -669,7 +669,7 @@ def cmd_scan(kit):
     terms = (load_json(local)[0] or {}).get('orgTerms') if osp.isfile(local) else None
     for code, where, problem in lint(k, graph(k), terms):
         out('ACT', ('GENERIC-' if code == 'ORG-TERM' else 'LINT-') + code, where, problem)
-    if osp.samefile(kit, KIT_DIR) and 'port' in PLUGINS:   # ports (goody ports) are checked for the kit this file lives in
+    if osp.samefile(kit, KIT_DIR) and 'port' in PLUGINS:   # ports (kitbag_ports.py) are checked for the kit this file lives in
         with contextlib.redirect_stdout(io.StringIO()) as said:
             stale = PLUGINS['port'](['--check'])
         if stale:

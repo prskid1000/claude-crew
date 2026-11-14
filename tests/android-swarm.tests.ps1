@@ -1,11 +1,11 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody android-swarm): phoney.ps1 phone lanes (acquire, reverse, release, AVD, build, lanes on demand), pokey.ps1 ui on a fake
-adb, the deploys[] laneApk check. iOS: goody ios-simulator.
-Usage: kitbag.py goody test android-swarm (tests/kit-tests.ps1 -Area goodies runs every installed goody).
+tests/android-swarm.tests.ps1: phoney.ps1 phone lanes (acquire, reverse, release, AVD, build, lanes on demand), pokey.ps1 ui on a fake
+adb, the deploys[] laneApk check. iOS: swarm-ios.ps1.
+Usage: pwsh -NoProfile -File tests/android-swarm.tests.ps1 (or tests/kit-tests.ps1 -Area android-swarm).
 Exit codes: 0 pass · 1 a check failed.
 #>
-param([string]$Kit)   # kitbag.py goody test passes the kit; else this file sits next to <kit>/tests/harness.ps1
+param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 # swarm: -Reverse 8080,8081 = 2 ports, whole lease; release holds '__stopping__' until down ends; avd; build command
 $swt = @'
@@ -104,7 +104,7 @@ Expect "deployed laneApk: no stamp UNKNOWN, merged commit in the APK DEPLOYED ($
 Remove-TestKit $k
 
 # gpu.exclusive: another kind holding the GPU -> up boots no emulator ("waiting for GPU", the acquire queue retries)
-$k = New-TestKit swarm-gpu; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force   # the installed goody: -Kit runs give a core-only test kit
+$k = New-TestKit swarm-gpu; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force   # New-TestKit copies no phoney files
 & $J @{ gpu = @{ exclusive = @{ emulator = @{}; 'gpu-job' = @{} } } } (Join-Path $k 'skills/crafty/kit.local.json')
 $vis = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -WindowStyle Hidden
 $gt = Join-Path (Kd) 'gpu-up'; New-Item -ItemType Directory -Force $gt | Out-Null

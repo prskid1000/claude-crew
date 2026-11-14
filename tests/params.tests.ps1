@@ -114,7 +114,7 @@ Expect "net: a timeout is observed at the learned value, not the x1.5 back-off (
 Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); a dead writer's count lock is cleared; spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False:False' -and $nr -contains 'spent:True')
 Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' ')); Codex spend = last token_count" ($nr -contains 'tx:112' -and $nr -contains 'spend:75' -and $nr -contains 'spend2:10')
 Expect 'Antigravity SessionStart: injectSteps (empty: []); no blocking decision: ids []' ($nr -contains 'ss:{"injectSteps":[{"systemMessage":{"systemMessage":"hi"}}]}|{"injectSteps":[]}|{"ids":[],"questions":[]}')
-# health: the python checks (lint, port --check, goody check) run in the background; the next session shows their lines
+# health: the python checks (lint, port --check) run in the background; the next session shows their lines
 $hcw = { $r = Read-Json (Join-Path (TkPath $k background) 'health-checks.json'); for ($i = 0; $i -lt 300 -and (& { . (Lib); Test-KitPid $r.pid $r.start }); $i++) { Start-Sleep -Milliseconds 100 } }
 '# a' | Set-Content "$k/AGENTS.md"; $hh = Px $O health | Out-String; & $hcw   # a kit folder: lint has lines
 $hc = (Get-Content (Join-Path (TkPath $k background) 'health-checks.out') -Raw) -replace '\s+', ' '; $hh2 = Px $O health | Out-String; & $hcw; Remove-Item "$k/AGENTS.md"

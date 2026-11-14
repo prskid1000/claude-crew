@@ -10,7 +10,7 @@ worked before" as evidence or skips a check because the last deploy passed.
 tasks) · secret (move or rotate one, by name, per the org's deploy rules: never print it; then step 5 on the services that
 read it).
 
-**Load first:** `<kit>/skills/bossy/SKILL.md` E5; `<kit>/skills/bossy/deploys.md` (goody `deploys`): its steps 1-4 are your
+**Load first:** `<kit>/skills/bossy/SKILL.md` E5; `<kit>/skills/bossy/deploys.md`: its steps 1-4 are your
 deploy; the deployed check of `<kit>/skills/pokey/SKILL.md` step 2 (`pokey.ps1 deployed`); the org's deploy rules in
 `rules/*.local.md` (hosts, commands, deploy branches, rollback); the env's `repos[].deploys[]` in `kit.local.json`.
 

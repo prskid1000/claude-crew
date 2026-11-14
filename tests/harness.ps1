@@ -12,7 +12,7 @@ foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-It
 $np = '-NoProfile', '-File'   # pwsh @np <script>
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $env:PYTHONIOENCODING = 'utf-8'   # child output (· …) read as UTF-8 under any console code page
-$env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'; $env:KIT_STORAGE_SCAN = '0'; $env:KIT_EXTRA_AUTO = '0'; $env:KIT_KEEP_DAEMONS = '1'   # Wait-KitPoll fake clock; test builds are tiny: never queue for RAM; no drive scans; no goody installed on demand; no daemon kills
+$env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'; $env:KIT_STORAGE_SCAN = '0'; $env:KIT_KEEP_DAEMONS = '1'   # Wait-KitPoll fake clock; test builds are tiny: never queue for RAM; no drive scans; no daemon kills
 $env:TEMP = $env:TMP = Join-Path ([IO.Path]::GetTempPath()) "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # own temp: never the machine's build-gate queue
 # `pwsh -NoProfile -File <kit script>` runs in this process (0.07 s, not 0.7 s), seen as a child sees it (streams, exit code, cwd,
 # env, globals); stdin readers, gate / check / guard and KIT_TESTS_SPAWN=1: real processes
@@ -129,7 +129,7 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
 }
 # browser.mjs + the kit's puppeteer-core linked ($false: none); NodeT <name> <js> [args]: $js after m = await import(BM)
 function Use-BrowserKit {
-  $nm = "$(if ($env:KIT_TEST_CORE) { $env:KIT_TEST_CORE } else { $src })/skills/pokey/node_modules"; if (-not (Test-Path "$nm/puppeteer-core")) { return $false }
+  $nm = "$src/skills/pokey/node_modules"; if (-not (Test-Path "$nm/puppeteer-core")) { return $false }
   Copy-Item "$src/skills/pokey/browser.mjs" "$k/skills/pokey"; New-Item -ItemType Junction -Path "$k/skills/pokey/node_modules" -Value (Resolve-Path $nm).Path | Out-Null; $true
 }
 # NodeT head: login app at `web` (/login form; /sso-app -> /idp on localhost; a 6-digit c logs in; posts counted; gen++ logs out)
@@ -154,7 +154,7 @@ function NodeT($n, $js) { $f = Join-Path (Kd) "$n.mjs"; [IO.File]::WriteAllText(
 $jsLib = @'
 const _ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
 const _res = (code, checks) => ({ code, checks, findings: [], setup_changes: [], data_created: [] })
-const _rep = (localTest, goody = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...goody })
+const _rep = (localTest, more = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...more })
 const _merged = (n) => ({ mrs: [{ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged: true, mergeState: 'MERGED' }] })
 const _rec = () => ({ ok: true, output: 'RECORDED' })
 const _ok = (output) => ({ ok: true, output, signals: 0, lessonsChanged: [] })

@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
-# annotate (goody): pokey.ps1 annotate -In <image> -Rect 'x,y,w,h[,label]' [-Out <file> | -Copy]: red boxes on a PNG / JPEG
+# annotate: pokey.ps1 annotate -In <image> -Rect 'x,y,w,h[,label]' [-Out <file> | -Copy]: red boxes on a PNG / JPEG
 # (Windows, System.Drawing); image px (web: CSS px x DPR). Dot-sourced by pokey.ps1 from adapters/.
 function Invoke-Annotate {
 param([Parameter(Mandatory)][string]$In, [string]$Out, [string[]]$Rect = @(), [switch]$Copy)

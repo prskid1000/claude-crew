@@ -200,8 +200,7 @@ $api = Start-TestApi; $apiPort = $api.port
 $T = { param($a, $sub) @{ api = "http://127.0.0.1:$apiPort$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
 & $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/pokey/targets.local.json') 6
 $ok = foreach ($x in 'tl/l', 'tt/x') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
-$xo = Px $Q api -Target tc -Path '/c' 2>&1 | Out-String; $xc = $LASTEXITCODE
-Expect "api auth login + none; other kinds name their goody ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"' -and $xc -eq 1 -and $xo -match 'is a goody: run kitbag\.py goody add api-auth')
+Expect "api auth login + none ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"')
 foreach ($e in 'pdf', 'txt', 'empty') { $null = Px $Q api -Target tt -Path "/$e" -Save "S-$e" -OutDir (Kd) 2>&1 }; $bo = @(Get-ChildItem (Kd) -Filter 'S-*.body*').Name -join ' '
 Expect "api -Save: octet-stream sniffed, empty body: no file ($bo)" ($bo -ceq 'S-pdf.body.pdf S-txt.body.txt')
 Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
@@ -213,9 +212,5 @@ Expect "path guards ($ke|$re)" ($ke -match 'Kd:' -and $re -match 'bad runtime')
 # cell cuts (back from workflows.tests for its cap)
 $ec = & { . (Lib); "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")$((Format-KitCell "add -HoldPromotion ''" -Exact) -eq "add -HoldPromotion ''")" }
 Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
-# goody sync on a live clone: refused while another agent beats on the board; the caller itself does not count
-git init -q $k; & $J @{ agent = 'GS1'; status = 'working'; beat = (Get-Date).ToString('o') } (Join-Path (TkPath $k board -Create) 'GS1-x.json')
-$gs = foreach ($me in '', 'GS1') { $env:KIT_AGENT = $me; "$(& $py -X utf8 "$k/skills/bossy/kitbag.py" goody sync 2>&1)|$LASTEXITCODE" }; Remove-Item Env:KIT_AGENT -ErrorAction SilentlyContinue
-Expect "goody sync: refused on the live clone while another agent is live ($($gs[0]))" ($gs[0] -match 'refused on the live clone while 1 other agent\(s\) are live \(GS1\).*\|1$' -and $gs[1] -notmatch 'refused on the live clone')
 Remove-TestKit $k
 Complete-Tests

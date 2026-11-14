@@ -1,11 +1,11 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody kit-admin): recover --fix keeps unmerged worktrees; release tags SemVer; budget raise steps x1.1 only over the
+kit-admin.tests.ps1: recover --fix keeps unmerged worktrees; release tags SemVer; budget raise steps x1.1 only over the
 cap; cost lists every crew agent; learn lesson tools (-Lesson, -Bump, -Fixed, -History, -Stats; core tests the line without it).
-Usage: kitbag.py goody test kit-admin (the plugin comes from files/ beside this file)
+Usage: pwsh -NoProfile -File <kit>/tests/kit-admin.tests.ps1 (or tests/kit-tests.ps1 -Area kit-admin).
 Exit codes: 0 pass · 1 a check failed.
 #>
-. (Join-Path $PSScriptRoot 'harness.ps1')   # kitbag.py goody test: the kit's harness
+. (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/bossy/adapters/kit_admin.ps1', 'skills/bossy/kit-admin.md', 'skills/bossy/kitbag_admin.py', 'skills/bossy/kitbag_scaffold.py')   # copied into every New-TestKit kit
 $root = Join-Path ([IO.Path]::GetTempPath()) "kit-admin-$PID"; $kc = New-GitKitCopy $root -Push
 $KT = Join-Path $kc 'skills/bossy/kitbag.py'
@@ -17,22 +17,20 @@ Get-ChildItem $wt -Force | ForEach-Object { $_.LastWriteTime = (Get-Date).AddHou
 $out = & $py -X utf8 $KT audit recover --fix --kit $kc 2>&1 | Out-String
 Expect 'kit-admin: recover --fix keeps a detached worktree with unmerged commits (listed as RECOVER-HALF); a resume brief or workflow args file is no launch record' ((Test-Path (Join-Path $wt 'unmerged.txt')) -and $out -match 'RECOVER-HALF' -and $out -notmatch 'wf-x\.resume\.md|args-buildy-x')
 git -C $kc worktree remove --force $wt 2>&1 | Out-Null
-# config: a goody's tracker name counts (adapter:tracker/<name>), a goody-owned local file (swarm.config.json) is no CONFIG-FILE; scan: sub-keys named plainly in a README row are documented
+# config: a vendor adapter's tracker name counts (adapter:tracker/<name>), a local file with no example (swarm.config.json) is no CONFIG-FILE; scan: sub-keys named plainly in a README row are documented
 $cad = Join-Path $kc 'skills/crafty/adapters'; New-Item -ItemType Directory -Force $cad, (Join-Path $kc 'skills/phoney') | Out-Null; '# adapter:tracker/zzt' | Set-Content (Join-Path $cad 'tracker_zzt.ps1')
 Set-JsonFile (Join-Path $kc 'skills/crafty/kit.local.json') @{ tracker = @{ type = 'zzt' } }; '{"lanes": []}' | Set-Content (Join-Path $kc 'skills/phoney/swarm.config.json')
 $cfo = & $py -X utf8 $KT audit config --kit $kc 2>&1 | Out-String; $sco = & $py -X utf8 $KT audit scan --kit $kc 2>&1 | Out-String
-Expect "kit-admin: config knows installed tracker names and goody-owned files; scan reads plain sub-keys ($(($cfo + $sco) -split "`n" -match 'CONFIG-(VALUE|FILE|UNDOC)' -join ' '))" ($cfo -notmatch 'CONFIG-VALUE.+tracker\.type|CONFIG-FILE.+swarm' -and $sco -notmatch 'CONFIG-UNDOC kit\.example\.json supervise\.heartbeatMinutes')
+Expect "kit-admin: config knows vendor tracker names and example-less local files; scan reads plain sub-keys ($(($cfo + $sco) -split "`n" -match 'CONFIG-(VALUE|FILE|UNDOC)' -join ' '))" ($cfo -notmatch 'CONFIG-VALUE.+tracker\.type|CONFIG-FILE.+swarm' -and $sco -notmatch 'CONFIG-UNDOC kit\.example\.json supervise\.heartbeatMinutes')
 Remove-Item (Join-Path $cad 'tracker_zzt.ps1'), (Join-Path $kc 'skills/crafty/kit.local.json'), (Join-Path $kc 'skills/phoney/swarm.config.json') -ErrorAction SilentlyContinue
-# prepush: a pushed file a goody's exclude block lists = LOCAL FILE, unless that goody left origin/goodies (folded into the core)
+# prepush: a pushed git-ignored file = LOCAL FILE; a file an old `# kitbag <kind> <name>` exclude block lists (now tracked) is not
 $ad = Join-Path $kc 'skills/bossy/adapters'; New-Item -ItemType Directory -Force $ad, (Join-Path $kc 'notes') | Out-Null
 Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/kit_admin.ps1') $ad
 $xf = git -C $kc rev-parse --path-format=absolute --git-path info/exclude
-Add-Content $xf "`n# kitbag goody kit-admin`n/skills/bossy/adapters/kit_admin.ps1`n# kitbag goody end`n# kitbag goody live-x`n/notes/l.txt`n# kitbag goody end`n# kitbag goody gone-x`n/notes/g.txt`n# kitbag goody end"
-$xr = Join-Path $root 'xr'; New-Item -ItemType Directory -Force "$xr/goodies/live-x" | Out-Null; 'x' | Set-Content "$xr/goodies/live-x/GOODY.md"; Save-GitRepo $xr 'feat: live-x'
-git -C $kc fetch -q $xr '+HEAD:refs/remotes/origin/goodies' 2>&1 | Out-Null
+Add-Content $xf "`n`n/notes/l.txt`n`n# kitbag part old-x`n/notes/g.txt`n# kitbag part end"
 $base = git -C $kc rev-parse HEAD; 'l' | Set-Content (Join-Path $kc 'notes/l.txt'); 'g' | Set-Content (Join-Path $kc 'notes/g.txt'); git -C $kc add -f notes/l.txt notes/g.txt; git -C $kc commit -qm 'feat: notes'
 $pp = "refs/heads/main $(git -C $kc rev-parse HEAD) refs/heads/main $base" | pwsh -NoProfile -File (Join-Path $kc 'skills/bossy/bossy.ps1') prepush 2>&1 | Out-String
-Expect "kit-admin: prepush flags a live goody's file, not a folded goody's block ($(($pp -split "`n" | Where-Object { $_ -match 'LOCAL FILE' }) -join ' '))" ($pp -match 'LOCAL FILE\s+notes/l\.txt' -and $pp -notmatch 'notes/g\.txt')
+Expect "kit-admin: prepush flags a git-ignored file, not one an old kitbag exclude block lists ($(($pp -split "`n" | Where-Object { $_ -match 'LOCAL FILE' }) -join ' '))" ($pp -match 'LOCAL FILE\s+notes/l\.txt' -and $pp -notmatch 'notes/g\.txt')
 git -C $kc reset -q --hard $base
 # release: the next SemVer from Conventional Commits
 $rel = & $py -X utf8 $KT release 2>&1 | Out-String
@@ -58,8 +56,8 @@ $O = Join-Path $kc 'skills/bossy/bossy.ps1'; $lo = { pwsh -NoProfile -File $O le
 $au = & { . $O; Get-KitHealthLinesAudit }; $st = & { . (Join-Path $kc 'skills/crafty/lib.ps1'); Get-KitPath last-kitty-audit -Create }; (Get-Date).ToString('s') | Set-Content $st; $au2 = & { . $O; Get-KitHealthLinesAudit }
 Expect 'kit-admin: health nudges a never-run kitty audit, quiet right after one' ("$au" -match 'Kit audit due \(last never, every 7 days\)' -and -not $au2)
 'edited' | Add-Content (Join-Path $kc 'README.md'); $ue = & { . $O; Test-UnstagedEdits $kc 'README.md' }; git -C $kc checkout -q -- README.md
-$pc = pwsh -NoProfile -File $O precommit 2>&1 | Out-String
-Expect 'kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them)' ($ue -and $pc -notmatch 'is a goody' -and $pc -match 'pre-commit')
+$pc = pwsh -NoProfile -File $O precommit 2>&1 | Out-String; $pcc = $LASTEXITCODE   # a clean copy: nothing to say, exit 0
+Expect "kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them) ($pcc $($pc.Trim()))" ($ue -and $pcc -eq 0 -and $pc -notmatch 'not recognized|Exception')
 $sx = Join-Path $kc 'skills/sx.ps1'; "<#`nSections: L9 a`n#>`n# ---- a: x`n" | Set-Content $sx -NoNewline; git -C $kc add -- skills/sx.ps1; $null = pwsh -NoProfile -File $O precommit 2>&1
 Expect 'kit-admin: precommit rewrites and stages a stale Sections: map' (@(git -C $kc show :skills/sx.ps1) -contains 'Sections: L4 a'); git -C $kc rm -qf -- skills/sx.ps1
 $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE

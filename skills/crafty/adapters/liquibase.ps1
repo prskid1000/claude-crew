@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# liquibase (goody): crafty.ps1 check -Step migrations on Liquibase XML masters -> devtools.py lbcheck per master (the one under the
+# liquibase: crafty.ps1 check -Step migrations on Liquibase XML masters -> devtools.py lbcheck per master (the one under the
 # checked folder first); LBCHECK_CHANGED = changelog files touched since -Since. Returns the worst exit code (-Show: prints the commands).
 # the repo's changelog masters: XML (lbcheck reads them) or, -Other, the YAML / JSON / SQL ones it cannot (UNRUN)
 function Get-LiquibaseMasters([string]$Top, [switch]$Other) {
@@ -22,7 +22,7 @@ function Invoke-LiquibaseCheck([string]$Top, [string[]]$Masters, [string]$Since,
   }
   if (-not $Show) { $rc }
 }
-# local env (goody local-env dot-sources this file): the Liquibase CLI on one env schema. db.migrateSql unset -> update-sql (the
+# local env (envy dot-sources this file): the Liquibase CLI on one env schema. db.migrateSql unset -> update-sql (the
 # pending changeSets' SQL: the tables a release slices); db.rollback "liquibase" (opt-in) -> tag release-<n> before a release's
 # migrations, rollback to it on restore. The changelog = the repo's master under the service folder (as check finds it).
 function Get-LiquibaseMaster([string]$Dir) {

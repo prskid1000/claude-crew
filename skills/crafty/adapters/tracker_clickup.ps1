@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Goody tracker-clickup: ClickUp as the kit tracker through the clickup CLI (tracker.type clickup; tracker.list = the list id of
+# tracker-clickup: ClickUp as the kit tracker through the clickup CLI (tracker.type clickup; tracker.list = the list id of
 # new tasks; tracker.statuses = the list's status names). Dot-sourced by lib.ps1 before the tracker type is resolved.
 function __TrClickupMemberId([string]$Who) {
   if (-not $Who) { return $null }

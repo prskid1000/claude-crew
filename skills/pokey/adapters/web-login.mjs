@@ -1,5 +1,5 @@
 // web-login.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
-// web-login-types (goody): webLogin.type sso-steps (steps: goto, fill {sel: val}, click, wait sel|ms, waitUrl) | script (.mjs:
+// web-login-types: webLogin.type sso-steps (steps: goto, fill {sel: val}, click, wait sel|ms, waitUrl) | script (.mjs:
 // default async ({ page, user, pass, tenant, target, totp })) | storageState (file: cookies, origins); {totp} from users[as][2].
 // Imported by browser.mjs login() from adapters/; h = its helpers { nav, step, applyState, onLogin, fill, here }.
 import { createHmac } from 'node:crypto'

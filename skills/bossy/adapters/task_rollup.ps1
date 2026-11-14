@@ -1,5 +1,5 @@
 <#
-task_rollup.ps1 (goody task-rollup): a parent task's delivery status, triage and subtask Items checklists, all script-built,
+task_rollup.ps1: a parent task's delivery status, triage and subtask Items checklists, all script-built,
 dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>[;<another>]]   -From stores the run's triage (item
     table + agents) in the parent's task state; then rebuilds and writes what changed; a task without subtasks: its Items only
@@ -11,11 +11,10 @@ Update-KitParentItems), each subtask's "Items" checklist (adapter verb checklist
 one comment per milestone (all merged, deployed to <env>, all closed).
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L20 triage · L69 render · L147 rollup · L242 items · L287 close
+Sections: L19 triage · L68 render · L146 rollup · L241 items · L286 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
-if (-not ((Get-Command Update-KitParentItems -ErrorAction Ignore) -and (Get-Command ConvertTo-KitOneLine -ErrorAction Ignore))) { throw 'goody task-rollup needs a newer kit core (lib.ps1 Update-KitParentItems, ConvertTo-KitOneLine): git pull the kit, then kitbag.py goody sync' }
 
 # ---- triage: the brief's item table (columns ID, Area or Owner area; Sev, Decision, Decision id, Ports, Title or the last column) + agents
 function ConvertFrom-KitMdTables([string]$Text) {

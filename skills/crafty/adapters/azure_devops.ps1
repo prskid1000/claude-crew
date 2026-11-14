@@ -1,8 +1,8 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Goody azure-devops: Azure DevOps Repos git host + Azure Pipelines CI (gitHostType / ci azure).
-# Dot-sourced by lib.ps1 from skills/crafty/adapters/ (kitbag.py goody add azure-devops); helpers come from lib.ps1.
-# helpers only this goody uses (kept out of the core lib.ps1)
+# azure-devops: Azure DevOps Repos git host + Azure Pipelines CI (gitHostType / ci azure).
+# Dot-sourced by lib.ps1 from skills/crafty/adapters/ when config selects azure; helpers come from lib.ps1.
+# helpers only this adapter uses (kept out of the core lib.ps1)
 function __DiffFile($New, $Old = $null) { [pscustomobject]@{ new_path = "$New"; old_path = "$(if ($Old) { $Old } else { $New })" } }
 function __Rest([string]$Base, [string]$Env, [string]$Auth, [string]$Method, [string]$Path, $Body, [switch]$Probe) {
   $u = "$(__HostSet 'url' $Base)/$Path"; $h = Get-KitAuth ([string](__HostSet 'tokenEnv' $Env)) $(if ($Auth -eq 'auto') { if ("$([Environment]::GetEnvironmentVariable([string](__HostSet 'tokenEnv' $Env)))" -match ':') { 'basic' } else { 'bearer' } } else { $Auth })

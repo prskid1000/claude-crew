@@ -1,8 +1,8 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/deployed-checks.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# tests.ps1 (goody deployed-checks): probe cmd / url / tag / regex and the ssh script. Next to <kit>/tests/harness.ps1.
+# tests/deployed-checks.tests.ps1: probe cmd / url / tag / regex and the ssh script. Next to <kit>/tests/harness.ps1.
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1', 'skills/pokey/adapters/ui_android.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $kl = Join-Path $k 'skills/crafty/kit.local.json'
 $gr = Join-Path (Kd) 'pr'; git init -q $gr; git -C $gr commit -qm a --allow-empty; git -C $gr tag v1; $s1 = git -C $gr rev-parse HEAD; git -C $gr commit -qm b --allow-empty; $s2 = git -C $gr rev-parse HEAD
 $api = Start-TestApi $s1; $P = $api.port   # the probe url target
@@ -34,13 +34,13 @@ $null = pwsh -NoProfile -File $craftyQ tracker status $tPrep 'in test' 2>&1
 $prepJob = @{ runFolder = "$(Kd)/qa-runs/<yyyy-MM-dd>-dep"; tasks = @($tPrep); target = 'stg'; kitDir = $k } | ConvertTo-Json -Compress
 $prepOut = @(pwsh -NoProfile -File $Q prepare -Job $prepJob 2>&1); $prepCode = $LASTEXITCODE; $env:KIT_TRACKER_TYPE = $null
 $prepRun = try { "$($prepOut[-1])" -replace '^RUN ' | ConvertFrom-Json } catch { $null }
-Expect "prepare with the deploys goody: exit 0, RUN line, run.json; the not-live task left out ($prepCode $($prepOut[-2]))" ($prepCode -eq 0 -and $prepRun -and (Test-Path "$($prepRun.runDir)/run.json") -and $prepRun.left[0].reason -match 'not live on stg: nope!1 BAD-REF')
+Expect "prepare with deployed_checks.ps1: exit 0, RUN line, run.json; the not-live task left out ($prepCode $($prepOut[-2]))" ($prepCode -eq 0 -and $prepRun -and (Test-Path "$($prepRun.runDir)/run.json") -and $prepRun.left[0].reason -match 'not live on stg: nope!1 BAD-REF')
 $dj = @($dl | ForEach-Object { try { "$_" | ConvertFrom-Json } catch {} } | Where-Object state -eq 'BAD-REF')
 Expect "deployed -Lines: one JSON row per line, exit 1 when not all deployed ($dlc $($dl.Count))" ($dlc -eq 1 -and $dl.Count -eq 2 -and $dj.Count -eq 2 -and $dj[1].mr -eq 'zz!1')
 foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'logs', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
 Expect "deployed ssh: one ssh per host, a later MR's ancestry read locally; a hung ssh ends at deploy.sshTimeoutSeconds ($($res -match '^(host|bound):'))" (@($res) -contains 'host:True' -and @($res) -contains 'bound:True')
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
-Expect 'deployed: a laneApk deploy without the goody android-swarm is UNKNOWN with the goody line' ("$res" -match 'UNKNOWN\s+web!5\s+phones\s+deploys\[\] laneApk is a goody: run kitbag\.py goody add android-swarm')
+Expect 'deployed: a laneApk deploy with no lane APK stamp is UNKNOWN, naming phoney.ps1 build' ("$res" -match 'UNKNOWN\s+web!5\s+phones\s+no lane APK stamp .*phoney\.ps1 build')
 # a squash-merged deploy MR counts; an unanswered git host is UNKNOWN, not NOT-DEPLOYED
 $t = @'
 . $args[0]; $ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast

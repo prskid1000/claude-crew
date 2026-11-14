@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
-# api-auth (goody): pokey.ps1 api with auth types basic, query, cookie (+ CSRF), token, command (HMAC / SigV4 signer), client cert,
+# api-auth: pokey.ps1 api with auth types basic, query, cookie (+ CSRF), token, command (HMAC / SigV4 signer), client cert,
 # refresh tokens. pokey.ps1 api hands every call to Invoke-ApiExtra when this file is present (dot-sourced from adapters/).
 # Sections: L6 shell · L8 request · L48 helpers · L52 login · L83 call
 # ---- shell: one shell line per OS

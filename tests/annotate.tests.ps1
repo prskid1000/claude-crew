@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/annotate.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody annotate: a labelled box is drawn into a copy. Run: kitbag.py goody test annotate
+# tests/annotate.tests.ps1: annotate: a labelled box is drawn into a copy. Usage: pwsh -NoProfile -File tests/annotate.tests.ps1
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/android_sdk.ps1', 'skills/phoney/SKILL.md', 'skills/phoney/adapters/app_kinds.ps1', 'skills/phoney/adapters/arrange.ps1', 'skills/phoney/phoney.ps1', 'skills/pokey/adapters/annotate.ps1', 'skills/pokey/adapters/ui_android.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit annotate; $Q = Join-Path $k 'skills/pokey/pokey.ps1'

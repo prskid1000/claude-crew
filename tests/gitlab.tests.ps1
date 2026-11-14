@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/gitlab.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody gitlab on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call fails): tracker, git host,
-# branch.protect. Run from a kit clone: pwsh goodies/gitlab/tests.ps1 [-Kit <kit>] -> PASS / FAIL lines; exit 1 on a failure
+# tests/gitlab.tests.ps1: gitlab on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call fails): tracker, git host,
+# branch.protect. Run from a kit clone: pwsh -NoProfile -File tests/gitlab.tests.ps1 [-Kit <kit>] -> PASS / FAIL lines; exit 1 on a failure
 param([string]$Kit = (Split-Path $PSScriptRoot))
 . (Join-Path $Kit 'skills/crafty/lib.ps1'); . (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/gitlab.ps1')
 $global:log = [Collections.Generic.List[string]]::new(); $global:failed = 0
@@ -35,7 +35,7 @@ $global:calls = [Collections.Generic.List[string]]::new(); $global:post = ''
 function glab { $p = "$($args -join ' ')"; $global:calls.Add("glab $p"); $global:LASTEXITCODE = 0
   if ($p -match '-X POST projects/o%2Fr/protected') { $global:post = $p; return '{}' }
   switch -Regex ($p) { 'branches/main$' { '{"allow_force_push":false}'; return } 'branches/dev$' { '{"allow_force_push":true}'; return }
-    'branches/(\w+)$' { $global:LASTEXITCODE = 1; Write-Error "glab: $(@{ goodies = '404 Not Found'; locked = '403 Forbidden' }[$Matches[1]] ?? '401 Unauthorized')"; return } }
+    'branches/(\w+)$' { $global:LASTEXITCODE = 1; Write-Error "glab: $(@{ release = '404 Not Found'; locked = '403 Forbidden' }[$Matches[1]] ?? '401 Unauthorized')"; return } }
   '{"iid":5,"state":"merged"}' }
 $script:HostType = 'gitlab'
 $m = Invoke-HostApi 'projects/g%2Fr/merge_requests/5'
@@ -46,8 +46,8 @@ $null = Invoke-HostApi 'projects/g%2Fr/merge_requests/5'; $n = $global:calls.Cou
 Check 'host: a repeated read is memoised' ($global:calls.Count -eq $n)
 $null = Invoke-HostVerb 'mr.merge' @{ type = 'gitlab'; repo = 'g/r'; n = 5; method = 'merge' }
 Check 'host: a deploy MR (method merge) merges with squash off' ($global:calls[-1] -like '*merge_requests/5/merge*squash=false*')
-$v = foreach ($b in 'main', 'dev', 'goodies', 'locked', 'auth') { "$b=$(Invoke-HostVerb 'branch.protect' @{ type = 'gitlab'; repo = 'o/r'; branch = $b } -NoMemo 2>$null)" }
-Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;goodies=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
+$v = foreach ($b in 'main', 'dev', 'release', 'locked', 'auth') { "$b=$(Invoke-HostVerb 'branch.protect' @{ type = 'gitlab'; repo = 'o/r'; branch = $b } -NoMemo 2>$null)" }
+Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;release=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
 $null = Invoke-HostVerb 'mr.update' @{ type = 'gitlab'; repo = 'o/r'; n = 5; title = 't'; body = 'b' } -NoMemo
 Check 'host: mr.update edits the open MR (PUT, devtools.py mr re-run)' ($global:calls[-1] -like 'glab api -X PUT projects/o%2Fr/merge_requests/5 *')
 exit [int]($global:failed -gt 0)

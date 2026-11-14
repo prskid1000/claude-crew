@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
-tests-deploy-restart.ps1 (goody deploys, deploy restart): a fake ssh on PATH answers busy / free; offline.
-Usage: kitbag.py goody test deploys (its tests.ps1 runs this file)
+tests/deploy-restart.tests.ps1: a fake ssh on PATH answers busy / free; offline.
+Usage: pwsh -NoProfile -File tests/deploy-restart.tests.ps1 (its tests.ps1 runs this file)
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')

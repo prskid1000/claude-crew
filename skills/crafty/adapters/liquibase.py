@@ -1,5 +1,5 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-"""Goody liquibase: `devtools.py lbcheck <master.xml> [since]`, the Liquibase sanity check `crafty.ps1 check -Step migrations` runs
+"""Liquibase plugin: `devtools.py lbcheck <master.xml> [since]`, the Liquibase sanity check `crafty.ps1 check -Step migrations` runs
 for a repo without its own `repos[].migrations.check`. Loaded by devtools.py from skills/crafty/adapters/."""
 import os, re, sys
 import xml.etree.ElementTree as ET

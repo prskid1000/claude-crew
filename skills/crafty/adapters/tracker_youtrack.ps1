@@ -1,8 +1,8 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Goody tracker-youtrack: YouTrack tracker (tracker.type youtrack).
-# Dot-sourced by lib.ps1 from skills/crafty/adapters/ (kitbag.py goody add tracker-youtrack); helpers come from lib.ps1.
-# helpers only this goody uses (kept out of the core lib.ps1)
+# tracker-youtrack: YouTrack tracker (tracker.type youtrack).
+# Dot-sourced by lib.ps1 from skills/crafty/adapters/ when tracker.type is youtrack; helpers come from lib.ps1.
+# helpers only this adapter uses (kept out of the core lib.ps1)
 function __TrBase([string]$Env) { $v = [Environment]::GetEnvironmentVariable($Env); if ($v) { $v.TrimEnd('/') } else { "<$Env>" } }
 function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$File, [string]$CType) {
   if ($__trDry) { Write-Host "DRYRUN: $Method $Uri$(if ($null -ne $Body) { '  body=' + (__TrShort ($Body | ConvertTo-Json -Depth 20 -Compress)) })$(if ($File) { "  file=$File" })"; return $null }

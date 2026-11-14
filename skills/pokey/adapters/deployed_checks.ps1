@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
-# deploys (goody): pokey.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
+# deploys: pokey.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Api, OnRef, LocalAncestor.
 # Sections: L6 shell · L15 probe · L78 kinds · L118 deployed
 # ---- shell: one shell line per OS
@@ -116,8 +116,8 @@ function Test-DeployedExtra($d) {
 }
 
 # ---- deployed: pokey.ps1 deployed, an MR live per test env
-# pokey.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk: goody
-# android-swarm; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
+# pokey.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk:
+# ui_android.ps1; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
 function Invoke-Deployed {
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines, [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout); -TimeoutSec: past it the MRs left are UNKNOWN (the first is always checked)
 $ErrorActionPreference = 'SilentlyContinue'
@@ -206,8 +206,7 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
       if ($files.Count -and -not $ch.overflow -and @($ch.changes).Count -lt 100 -and -not (Test-DeployTouched $d $files)) { Row $d 'N/A' "n/a for $($d.target): changes nothing under $((Get-DeployPaths $d) -join ', ')"; continue }   # a partial list proves nothing
     }
     if ($d.laneApk) {   # app repo: the lane APK's commit
-      if ($ext = Get-Command Test-LaneApkDeployed -ErrorAction SilentlyContinue) { & $ext $d }
-      else { Row $d 'UNKNOWN' 'deploys[] laneApk is a goody: run kitbag.py goody add android-swarm' }
+      Test-LaneApkDeployed $d
       continue
     }
     if ($d.ssh -or $d.awsStack -or $d.probe -or $d.tag -or $d.manual) { Test-DeployedExtra $d; continue }

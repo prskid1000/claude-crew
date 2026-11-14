@@ -1,12 +1,12 @@
 // browser.mjs: headless-browser library to test any web app (import it; usage below). Exit codes: none (a library).
 // targets.local.json: web, webLogin, users, browser: one shared headless Chrome (puppeteer) per target+tenant+user, a tab each.
 // Logins shared via the session file (web storage + cookies), locked; never log out.
-// webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Goodies (adapters/, kitbag.py goody
-// add): web-login-types (sso-steps, script, storageState, totp), browser-engines (browser.engine chromium | firefox | webkit).
+// webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Adapters
+// (adapters/): web-login-types (sso-steps, script, storageState, totp), browser-engines (browser.engine chromium | firefox | webkit).
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L43 login · L127 browsers · L170 tabs · L258 session · L298 actions · L397 ui checks · L419 evidence
+// Sections: L17 config · L43 login · L123 browsers · L166 tabs · L254 session · L294 actions · L393 ui checks · L415 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -60,12 +60,8 @@ function watch(page, apiPattern) {
 }
 
 const fill = (s, user, pass, tenant) => String(s).replace(/\{(user|pass|tenant)\}/g, (_, k) => ({ user, pass, tenant })[k] || '')
-// an optional part from adapters/ (kitbag.py goody add <goody>), else one clear line
-async function adapter(file, what, goody) {
-  const f = join(__HERE, 'adapters', file)
-  if (!existsSync(f)) throw new Error(`${what} is a goody: run kitbag.py goody add ${goody}`)
-  return import(pathToFileURL(f).href)
-}
+// a part from adapters/, loaded on first use (its packages, e.g. playwright, only then)
+const adapter = (file) => import(pathToFileURL(join(__HERE, 'adapters', file)).href)
 const nav = (page, u, waitUntil = 'domcontentloaded') => page.goto(u, { waitUntil, timeout: 90000 }).catch(() => {})
 // off-host (an IdP) or the login path = a login page
 const loginPath = (t) => t.webLogin.path || '/login'
@@ -94,8 +90,8 @@ async function step(page, s, f) {
 async function login(page, t, tenant, as) {
   const L = t.webLogin, type = L.type || 'form', [user, pass, otp] = t.users[as] || []
   if (!user) throw new Error(`no user "${as}" in this target`)
-  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types and TOTP codes: the goody
-    const ext = await adapter('web-login.mjs', `webLogin.type ${type}${type === 'form' ? ' with {totp}' : ''}`, 'web-login-types')
+  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types and TOTP codes: adapters/web-login.mjs
+    const ext = await adapter('web-login.mjs')
     await ext.login({ page, t, tenant, user, pass, otp, type }, { nav, step, applyState, onLogin, fill, here: __HERE })
   } else {
     await nav(page, t.web + (L.path || '/'), 'networkidle2')
@@ -267,7 +263,7 @@ export async function session({ target, tenant, as = 'admin' } = {}) {
   BASE = t.web
   let browser, page, port = null
   const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
-  if (eng !== 'chrome') ({ browser, page } = await (await adapter('engine-playwright.mjs', `browser.engine ${eng}`, 'browser-engines')).pwPage(eng, bo, VIEW))
+  if (eng !== 'chrome') ({ browser, page } = await (await adapter('engine-playwright.mjs')).pwPage(eng, bo, VIEW))
   else {
     if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
     port = await sessionPort(tn, tenant, as)
@@ -355,7 +351,7 @@ export async function clickText(page, label, { nth = 0, within = 'body', exact =
 }
 
 const mid = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 })
-// per-action log {at, action, target, box}: record()'s sidecar anchors a video's keyframes (goody media-evidence)
+// per-action log {at, action, target, box}: record()'s sidecar anchors a video's keyframes (pokey.ps1 evidence)
 const act = (page, action, target, b = null, text = '') => { (page.__acts ||= []).push({ at: Date.now(), action, target: String(target), ...(b && { box: [b.x, b.y, b.width, b.height].map(Math.round) }), ...(text && { text: String(text).slice(0, 120) }) }) }
 // nth match, scrolled in, with its box
 export async function pick(page, selector, nth = 0, what = 'element') {
@@ -394,7 +390,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   return page.evaluate((e) => e.value, el)
 }
 
-// ---- ui checks: qa.matrix variants; layout and contrast checks (goody ui-checks)
+// ---- ui checks: qa.matrix variants; layout and contrast checks (adapters/ui_checks.mjs)
 // fn({ viewport, fontScale, theme, tag }) per variant of kit.local.json qa.matrix ([] = axis off); fn sets the app's own font scale / theme
 export async function matrix(s, fn, { matrix: m = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}).qa?.matrix || {} } = {}) {
   const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()
@@ -412,9 +408,9 @@ export async function matrix(s, fn, { matrix: m = readJson(join(__HERE, '..', 'c
   return out
 }
 // layoutIssues(page, { scope, ignore }): covered controls, overlapping text, clipped text; contrast(page, selector, { min }): WCAG
-// ratio, pass; both in goody ui-checks (adapters/ui_checks.mjs)
-export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs', 'layoutIssues', 'ui-checks')).layoutIssues(...a)
-export const contrast = async (...a) => (await adapter('ui_checks.mjs', 'contrast', 'ui-checks')).contrast(...a)
+// ratio, pass; both in adapters/ui_checks.mjs
+export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs')).layoutIssues(...a)
+export const contrast = async (...a) => (await adapter('ui_checks.mjs')).contrast(...a)
 
 // ---- evidence: marks, network logs, screenshots, token
 // evidence names (pokey SKILL.md "Evidence"); same literal as pokey.ps1 $script:EvidenceName

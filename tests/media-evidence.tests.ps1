@@ -1,9 +1,9 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody media-evidence): fetcher selection, read window math, the cache + per-video lock, the local-stt lease wait, the vidy frames path,
+tests/media-evidence.tests.ps1: fetcher selection, read window math, the cache + per-video lock, the local-stt lease wait, the vidy frames path,
 the index format on a generated video (ffmpeg + OpenCV; skipped without them), unreadable links.
-Usage: pwsh -NoProfile -File goodies/media-evidence/tests.ps1 (kitbag.py goody test media-evidence: next to the kit's
-tests/harness.ps1; New-TestKit gets this goody's files). Exit codes: 0 pass · 1 a check failed.
+Usage: pwsh -NoProfile -File tests/media-evidence.tests.ps1 (New-TestKit gets the media files: $TestKitFiles).
+Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/video.ps1', 'skills/pokey/adapters/media_grab.mjs', 'skills/pokey/video.py')   # copied into every New-TestKit kit
@@ -188,7 +188,7 @@ http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()
 } else { 'SKIP media index: ffmpeg or OpenCV missing' }
 
 # the loop by script (zero tokens): label = the oracle's held states, verify = oracle vs keyframes -> feedback (perfect: passed,
-# nothing more), tune = a parameter search that applies only at corpus recall 1.0; no media or label file is ever in the goody
+# nothing more), tune = a parameter search that applies only at corpus recall 1.0; no media or label file is ever tracked
 if ($ff -and $cv) {
   $null = Invoke-TestScript $Q evidence index $mp4 -Json   # its media came back (evicted above)
   $lb = Invoke-TestScript $Q evidence label $j1.key; $st = try { $lb.out | ConvertFrom-Json } catch { @() }
@@ -203,8 +203,8 @@ if ($ff -and $cv) {
   $pj = Get-Content (Join-Path $mdir 'params.json') -Raw | ConvertFrom-Json
   Expect "media tune: 2 trials, every corpus clip at 1.0 -> params applied (active), learn signal ($(($tn.out -split "`n" | Select-String 'APPLIED') -join ' '))" ($tn.code -eq 0 -and $tn.out -match '(?m)^APPLIED ' -and $pj.active -and $pj.evals -eq 2)
 }
-$gl = @(git -C (Split-Path (Split-Path $PSScriptRoot)) ls-files 2>$null | Where-Object { $_ -match '^goodies/media-evidence/' }) + @(Get-ChildItem $PSScriptRoot -Recurse -File | ForEach-Object { $_.Name })
-Expect "media goody: no video, image or label JSON among its files ($(@($gl).Count) files)" (-not @($gl | Where-Object { $_ -match '\.(mp4|webm|mkv|mov|avi|jpe?g|png|gif)$|labels?\.json$|corpus\.json$|feedback\.jsonl$|\.gt\.json$' }).Count)
+$gl = @(git -C (Split-Path $PSScriptRoot) ls-files -- skills/pokey skills/crafty/adapters tests 2>$null)
+Expect "media files: no video, image or label JSON tracked in skills/pokey, skills/crafty/adapters, tests ($(@($gl).Count) files)" (-not @($gl | Where-Object { $_ -match '\.(mp4|webm|mkv|mov|avi|jpe?g|png|gif)$|labels?\.json$|corpus\.json$|feedback\.jsonl$|\.gt\.json$' }).Count)
 # the detector gate: 11 synthetic clips + 6 crf-36 variants, generated here (never committed): recall and key recall 1.000,
 # precision >= 0.85, the 30 s loading = one event with <= 3 frames, a dark highlight is no toast, a ticking timer is no event and
 # a toast over a page change is one, no frame kept twice; KIT_MEDIA_CORPUS (a corpus.json) adds a local corpus
@@ -230,6 +230,6 @@ if ($ff -and $cv) {
   Expect "media detect.deltaShare: crops cut images and tokens at recall 1.0 ($(($dl | ForEach-Object { $_ -join '/' }) -join ' vs '))" ($dl[0][0] -eq '1.0' -and $dl[0][2] -lt $dl[1][2] -and $dl[0][3] -lt $dl[1][3] -and $dl[1][2] -eq $dl[1][1])
 }
 $sv = Invoke-TestScript (Join-Path $k 'skills/bossy/bossy.ps1') supervise
-Expect 'media: supervise runs with the goody loaded (no local-ai line when idle)' ($sv.out -notmatch 'local-stt:' -and $sv.out -notmatch 'Get-KitSuperviseGuardLocalAi')
+Expect 'media: supervise runs with video.ps1 loaded (no local-ai line when idle)' ($sv.out -notmatch 'local-stt:' -and $sv.out -notmatch 'Get-KitSuperviseGuardLocalAi')
 Remove-TestKit $k
 Complete-Tests

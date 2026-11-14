@@ -13,7 +13,7 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
 3. **Decide** -- items paused for an owner decision or an ENV-FIX resume after the answer
 4. **Review** -- one revy per devy (+ datay on an area with migrations) + CI pipelines
 5. **Fix** -- a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; others -> MR Follow-ups); merge in order, register the tracker task
-6. **Deploy** -- merged work joins the deploy batch (goody deploys); a person says deploy <env>, never asked
+6. **Deploy** -- merged work joins the deploy batch (bossy.ps1 deploy); a person says deploy <env>, never asked
 7. **Learn** -- signals from this wave, cleanup (/tidy turns them into lessons)
 
 ## Owner decisions

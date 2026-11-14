@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/ui-checks.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# tests.ps1 (goody ui-checks): layoutIssues finds a covered control, overlapping text and clipped text (not scrolled-away rows);
+# tests/ui-checks.tests.ps1: layoutIssues finds a covered control, overlapping text and clipped text (not scrolled-away rows);
 # contrast gives the WCAG ratio for text and an SVG icon. A real headless Chrome; next to <kit>/tests/harness.ps1.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/pokey/adapters/ui_checks.mjs')   # copied into every New-TestKit kit

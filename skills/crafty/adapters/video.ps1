@@ -1,5 +1,5 @@
 <#
-video.ps1 (goody media-evidence): the PowerShell side of the video flow: `pokey.ps1 evidence <verb>` passes through to
+video.ps1 (media evidence): the PowerShell side of the video flow: `pokey.ps1 evidence <verb>` passes through to
 skills/pokey/video.py (fetch, index, read-chunk, frames, write-vision, status: its header), and the local STT server lease.
   & <kit>/skills/pokey/pokey.ps1 evidence <verb> [args]     -> python video.py <verb> [args] (exit code passed on)
   & <kit>/skills/pokey/pokey.ps1 evidence stt <key> [-WaitMinutes 30] [-Agent a] [-Refresh]   (video.py index calls it) the
@@ -91,7 +91,7 @@ function Invoke-Evidence {
     Invoke-KitVideoStt "$($a[1])" $wait $agent -Refresh:($a -contains '-Refresh') | ConvertTo-Json -Compress; return
   }
   if ("$($a[0])" -eq 'status') { $s = Get-KitLocalAiState 'local-stt'; "local-stt: $(if ($s.leases.Count) { "held by $(@($s.leases.agent) -join ', ')" } else { 'free' }); $($s.waiting.Count) waiting" }
-  $vp = Join-Path $KitConf.Kit 'skills/pokey/video.py'; Add-KitExtraUse $vp
+  $vp = Join-Path $KitConf.Kit 'skills/pokey/video.py'
   & (Get-Python) -X utf8 $vp @a
   exit $LASTEXITCODE
 }

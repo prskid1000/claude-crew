@@ -1,6 +1,6 @@
 <#
 # Usage: dot-sourced by bossy.ps1 from adapters/. Exit codes: none here (its verbs exit through bossy.ps1).
-localenv_supervise.ps1 (goody local-env): the local env in bossy.ps1 supervise, dot-sourced by bossy.ps1 (skills/bossy/adapters/):
+localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bossy.ps1 (skills/bossy/adapters/):
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).

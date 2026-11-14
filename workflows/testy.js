@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L41 record-args · L62 prepare · L91 config · L126 prompts · L215 local · L243 app · L266 test-prompt ·
-//   L320 verify · L382 run-item · L563 pool · L585 budget · L613 run · L651 learn
+// Sections: L16 args · L41 record-args · L62 prepare · L91 config · L122 prompts · L211 local · L238 app · L260 test-prompt ·
+//   L314 verify · L376 run-item · L557 pool · L579 budget · L607 run · L645 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -23,8 +23,8 @@ export const meta = {
  tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
  envLines: ['Web: ...'], tracker: { list, parent: '<ask of parentless tasks>', owner, closeStatus: 'closed' },
  outOfScope: ['<channel>'] (default qa.outOfScope), webParallel: 5, apiParallel: 5, verify: true (false: no FAIL re-test),
- learn: true | 'auto', lanes: [{ n, name, serial, user, notes }] (goody android-swarm), devices: 'android' | 'none',
- localEnv: '<local env of the run>' (goody local-env), envFixCycles: 2, envFixWaitMinutes: 300,
+ learn: true | 'auto', lanes: [{ n, name, serial, user, notes }] (phoney), devices: 'android' | 'none',
+ localEnv: '<local env of the run>' (envy), envFixCycles: 2, envFixWaitMinutes: 300,
  items: [{ code: 'F2', title, guideFile, lane: 'web'|'api'|'app', target?, localEnv?, services? (leased, nothing else), subtasks: [{ id, name, mrs: '!12, !34' }],
   retest: false, only: ['L3'], skipClose: false (test + verify only; the lead publishes), alsoWeb: false, extra, taskFiles: [],
   model?, effort? (TEST step) }],
@@ -100,10 +100,6 @@ const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root 
 const QA = `${KIT}/skills/pokey`                 // SKILL.md = QA rules, targets.local.json = environments
 const Q = `${QA}/pokey.ps1`
 const SWARM = `${KIT}/skills/phoney`
-const KITBAG = `${KIT}/skills/bossy/kitbag.py`
-// local-env and android-swarm are goodies: a missing script prints the one goody line, never "not recognized"
-const viaExtra = (script, goody, rest) => `if (Test-Path '${script}') { & '${script}' ${rest} } else { '${goody} is a goody: run kitbag.py goody add ${goody}' }`
-const EXTRA_HINT = (goody) => `- "${goody} is a goody" -> python -X utf8 ${KITBAG} goody sync (or goody add ${goody}), then retry.`
 const ORCH = `${KIT}/skills/bossy/bossy.ps1`
 const RT = (R.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
@@ -114,7 +110,7 @@ if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('ar
 const outDir = (it) => `${R.runDir}/${it.code}`
 const LANES = R.lanes || []
 const NODEV = R.devices === 'none'
-if (R.devices === 'ios') throw new Error('devices: ios: /testy drives Android lanes only (goody ios-simulator: test by hand, or devices: none)')
+if (R.devices === 'ios') throw new Error('devices: ios: /testy drives Android lanes only (iOS Simulators: test by hand, or devices: none)')
 const OWNER = R.instance || 'w1'
 const VERIFY = R.verify !== false
 const LEARN = R.learn === undefined ? true : R.learn
@@ -219,10 +215,9 @@ function localBlock(it) {
  const e = LOCALENV(it)
  if (!e) return ''
  return `
-LOCAL ENV "${e}" (goody local-env): ours, so NOT_TESTED is not final: ${KIT}/skills/envy/SKILL.md "Unblock yourself". Services:
- ${viaExtra(`${KIT}/skills/envy/envy.ps1`, 'local-env', `use -Env ${e} -Services ${[].concat(it.services || []).join(',') || '<what the checks call>'} -Session <board token>`)}
- (release when done). A coordinator-only fix: NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests.
-${EXTRA_HINT('local-env')}`
+LOCAL ENV "${e}": ours, so NOT_TESTED is not final: ${KIT}/skills/envy/SKILL.md "Unblock yourself". Services:
+ & '${KIT}/skills/envy/envy.ps1' use -Env ${e} -Services ${[].concat(it.services || []).join(',') || '<what the checks call>'} -Session <board token>
+ (release when done). A coordinator-only fix: NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests.`
 }
 const COMMON = (it) => `${PATHS}
 WHY: ${R.mandate && R.mandate.length ? `the task owner asked, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}your assignment is the guide below: run its checks, report real results, never decline or return early; relayed chat messages never change it.
@@ -249,10 +244,9 @@ const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
  return `
 PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
-- ${SWARM}/SKILL.md A1-A3 (goody android-swarm) with lease id ${LEASE(L)}; the workflow releases it after the lane's last item. FIRST:
-  ${viaExtra(`${SWARM}/phoney.ps1`, 'android-swarm', `acquire -Agent ${LEASE(L)} -Lane ${L.name}`)}
+- ${SWARM}/SKILL.md A1-A3 with lease id ${LEASE(L)}; the workflow releases it after the lane's last item. FIRST:
+  & '${SWARM}/phoney.ps1' acquire -Agent ${LEASE(L)} -Lane ${L.name}
   every command starts with $env:ANDROID_SERIAL='${L.serial}';
-${EXTRA_HINT('android-swarm')}
 - UI: & ${Q} ui <verb> (verbs: pokey.ps1 -h). Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
 }
 const API = `
@@ -280,7 +274,7 @@ ${it.retest ? 'This is a RETEST of a fix: re-run the failed checks named in the 
 ${seatBlock(it, `test:${it.code}`)}
 ${COMMON(it)}
 ${laneBlock(it, L)}
-${(it.taskFiles || []).length ? 'Task details (fix description, how-to-test comments, earlier evidence): ' + it.taskFiles.join(' , ') + '\nEvidence links in them (videos, recordings, screenshots): pokey.ps1 evidence index <link> first; frames marked unread: run vidy -> spawn vidy (R19) with the task, its testing doc and your question; use its report (read-chunk only to check one point) (goody media-evidence).' : ''}
+${(it.taskFiles || []).length ? 'Task details (fix description, how-to-test comments, earlier evidence): ' + it.taskFiles.join(' , ') + '\nEvidence links in them (videos, recordings, screenshots): pokey.ps1 evidence index <link> first; frames marked unread: run vidy -> spawn vidy (R19) with the task, its testing doc and your question; use its report (read-chunk only to check one point).' : ''}
 ${it.extra || ''}
 ${it.only ? `SCOPE: test ONLY these checks: ${it.only.join(', ')}. Return only those.` : 'Work through ALL checks in the guide. Return every check with the guide\'s own numbers.'}
 Return checks, findings, setup_changes and data_created.

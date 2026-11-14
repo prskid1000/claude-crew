@@ -94,16 +94,16 @@ console.log(`consumer-merges:${/pipes -Mrs u\/py\S* -MaxMinutes 9 -UntilMerged/.
 $jsx = $jsm -replace "mr\('py', 'WAIT'\)", "mr('py', 'NOT_MERGED')" -replace '(?s)console\.log\(`gate:.*', "console.log(``no-poll:`${!L.includes('producer-wait:F2') && !L.includes('build:F2')}``)`n"
 Expect-Each (Invoke-Js dw-pwait $jsw $wfd) 'buildy merge order: #' 'consumer-merges' -Show 9
 Expect-Each (Invoke-Js dw-nopoll $jsx $wfd) 'buildy dependsOn: NOT_MERGED, no poll: #' 'no-poll' -Show 9
-# buildy: mode duel is a goody (refused, named); a removed arg is refused, never ignored
+# buildy: an unknown mode (duel) is refused; a removed arg is refused, never ignored
 $jso = @'
 const base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }, err = (a) => run(a, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)
 const e = await err({ ...base, mode: 'duel' }), r = await err({ ...base, review: false }), g = await err({ ...base, agents: [{ id: 'X1', items: 'A1', notes: 'n' }] })
-console.log(`duel-refused:${/duel is a goody: run kitbag.py goody add duel/.test(e)}`)
+console.log(`mode-refused:${/^args\.mode 'duel' is not supported$/.test(e)}`)
 console.log(`removed-arg:${/buildy\.js args refused: unknown review/.test(r)}`)
 console.log(`agent-key:${/refused: unknown agents\.X1\.notes/.test(g)}`)
 '@
-Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-arg', 'agent-key' -Show 5
-# buildy deploy batch: skipped without the deploys goody, else parsed
+Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'mode-refused', 'removed-arg', 'agent-key' -Show 5
+# buildy deploy batch: skipped without adapters/deploys.ps1, else parsed
 $jsdp = @'
 const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
  return _pass(p, o) }
@@ -111,7 +111,7 @@ const base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
 const logs = [], seen = []
 const a = await run(base, mk('NO-DEPLOYS', seen), (m) => logs.push(m), _n, pipeline)
 const b = await run(base, mk('[{"target":"t1","trigger":"owner"}]', []), _n, _n, pipeline)
-console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /deploys goody is not installed/.test(l)) && seen[0].includes("Test-Path 'C:/kit/skills/bossy/adapters/deploys.ps1'")}`)
+console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /no deploys adapter in this kit/.test(l)) && seen[0].includes("Test-Path 'C:/kit/skills/bossy/adapters/deploys.ps1'")}`)
 console.log(`deploy-batch:${Array.isArray(b.deployBatch) && b.deployBatch[0].target === 't1'}`)
 '@
 Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: #' 'deploy-skip', 'deploy-batch' -Show 5

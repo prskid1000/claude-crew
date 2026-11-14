@@ -1,8 +1,8 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody task-rollup): triage parsing, the delivery / triage Markdown, the marker splice (owner text kept), and a parent
+tests/task-rollup.tests.ps1: triage parsing, the delivery / triage Markdown, the marker splice (owner text kept), and a parent
 rollup end to end on tracker none with a recorded git host: sections, Items, milestones; a second run writes nothing.
-Usage: kitbag.py goody test task-rollup (next to the kit's tests/harness.ps1; New-TestKit gets this goody's files).
+Usage: pwsh -NoProfile -File tests/task-rollup.tests.ps1 (copies adapters/task_rollup.ps1 into its test kit).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit)

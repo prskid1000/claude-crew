@@ -1,33 +1,28 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody db-engine-presets): db.engine aliases + presets fill unset hooks; with mysqld on PATH, on a scratch server of its
+tests/db-engine-presets.tests.ps1: db.engine aliases + presets fill unset hooks; with mysqld on PATH, on a scratch server of its
 own (never the env's DB): marks, a flashback round trip over 2 schemas (checksums equal the mark's), no binlog writes, a second
 restore over an undone range, FK order + orphan check (that table falls back), no-PK duplicates, a cascade without the guard (child
 seeded), the guard (3-level tree, SET NULL, ON UPDATE CASCADE, app triggers not fired), teardown, slices (dropped / retyped column,
 index, FK, dropped and new table, view / procedure, a trigger table changed by DDL), DDL with no slice (falls back), db.rollback only on opt-in, dry run, mark expiry,
-the temp watchdog + doctor rows; the goody check line; a client exit 0 without output (the end marker).
-Usage: kitbag.py goody test db-engine-presets, or pwsh -File goodies/db-engine-presets/tests.ps1 -Kit <kit> (needs the goody local-env).
+the temp watchdog + doctor rows; a client exit 0 without output (the end marker).
+Usage: pwsh -NoProfile -File tests/db-engine-presets.tests.ps1 [-Kit <kit>].
 Exit codes: 0 pass · 1 fail.
 #>
 param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 function New-PresetKit([string]$n) {
   $kd = New-TestKit $n; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy/adapters')
-  $branchEnvy = Join-Path $PSScriptRoot '../local-env/files/skills/envy/envy.ps1'   # a goodies checkout: its envy.ps1, not the kit's installed one
-  Copy-Item $(if (Test-Path $branchEnvy) { $branchEnvy } else { Join-Path $src 'skills/envy/envy.ps1' }) (Split-Path $d)
+  Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $d)
   Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/envy/adapters/*') $d -Force   # this branch's files, also when run by hand
   $kd
 }
-if (-not (Test-Path (Join-Path $src 'skills/envy/envy.ps1'))) { 'SKIP db-engine-presets (needs the goody local-env)'; Complete-Tests }
 $k2 = New-PresetKit le2; $L2 = Join-Path $k2 'skills/envy/envy.ps1'
 & $J @{ localEnv = @{ envs = @{ shop = @{ services = @(); db = @{ engine = 'PostgreSQL'; name = 'shop'; user = 'u' } }; my = @{ services = @(); db = @{ engine = 'mysql'; user = 'r'; exec = 'own' } } } } } (Join-Path $k2 'skills/crafty/kit.local.json') 6
 $pr = & { . $L2; "$($script:LE.envs.shop.db.engine)|$($script:LE.envs.shop.db.query)|$($script:LE.envs.my.db.exec)|$($script:LE.envs.my.db.jdbc)|$(Test-DbMarks shop)$(Test-DbMarks my)" }
 Expect "presets: db.engine aliases, unset hooks filled, own hooks kept, marks only for mysql / mariadb ($pr)" ($pr -match '^postgres\|psql -h 127\.0\.0\.1 -p 5432 -U u -d shop -At -c "\{sql\}"\|own\|jdbc:mysql://127\.0\.0\.1:3306/\{schema\}\?.+\|FalseTrue$')
 $pk = & { . $L2; "$(Test-DbPosBefore 'h-bin.000002:900' 'h-bin.000010:4')$(Test-DbPosBefore 'b.000003:50' 'b.000003:40')" }
 Expect "marks: positions compare in binlog order, file number first ($pk)" ($pk -eq 'TrueFalse')
-# the config line: db.engine in kit.local.json asks for this goody (kitbag.py goody check)
-$need = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$src/skills/bossy'); import kitbag as k; k.local_config = lambda kit, f: {'localEnv': {'defaults': {'db': {'engine': 'mysql'}}}} if f == 'kit.local.json' else {}; k.installed_extras = lambda kit: {}; print(','.join(n for n, _ in k.extras_needed(r'$src')))" 2>&1
-Expect "kitbag goody check: localEnv.defaults.db.engine mysql needs db-engine-presets ($need)" ("$need" -match '(^|,)db-engine-presets(,|$)')
 # touched: a changeSet's <rollback> never runs forward (its DROP COLUMN of an added column made the slice SELECT a missing column)
 $clog = Join-Path $k2 'add-col.xml'
 Set-Content $clog '<databaseChangeLog><changeSet id="1"><sql>ALTER TABLE t1 ADD COLUMN c2 TEXT NULL</sql><rollback><sql>ALTER TABLE t1 DROP COLUMN c2</sql></rollback></changeSet><changeSet id="2"><dropColumn tableName="t3" columnName="c4"/><rollback><dropColumn tableName="t5" columnName="c6"/></rollback></changeSet><changeSet id="3"><rollback changeSetId="2"/><dropTable tableName="t7"/></changeSet></databaseChangeLog>'

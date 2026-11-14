@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody scaffold): new / rename / remove / new adr / rename event + config-key on a throw-away git copy of the kit.
-Usage: pwsh -NoProfile -File goodies/scaffold/tests.ps1 -Kit <kit>   (the plugin comes from files/ beside this file)
+scaffold.tests.ps1: new / rename / remove / new adr / rename event + config-key on a throw-away git copy of the kit.
+Usage: pwsh -NoProfile -File <kit>/tests/scaffold.tests.ps1 [-Kit <kit>] (or tests/kit-tests.ps1 -Area scaffold).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
 $kc = Join-Path ([IO.Path]::GetTempPath()) "kit-scaffold-$PID\.claude"; New-Item -ItemType Directory -Force $kc | Out-Null
 foreach ($f in @(git -C $Kit ls-files)) { $s1 = Join-Path $Kit $f; if (Test-Path $s1) { $d = Join-Path $kc (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
-# the copy holds tracked files only: the ports goody (rename regenerates ports through it) comes from $Kit when installed there
+# the plugins are copied from this kit and git-ignored in the copy (rename regenerates ports through kitbag_ports.py)
 $plug = @((Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/kitbag_scaffold.py'), (Join-Path $Kit 'skills/bossy/kitbag_ports.py')) | Where-Object { Test-Path $_ }
 foreach ($p in $plug) { Copy-Item $p (Join-Path $kc 'skills/bossy'); "/skills/bossy/$(Split-Path $p -Leaf)" | Add-Content (Join-Path $kc '.gitignore') }
 $ports = $plug.Count -eq 2

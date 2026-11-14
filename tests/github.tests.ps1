@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/github.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody github on recorded gh answers (gh mocked). Run: kitbag.py goody test github
-#   (or pwsh goodies/github/tests.ps1 next to a copy of tests/harness.ps1) -> a PASS / FAIL line per check; exit 1 on a failure
+# tests/github.tests.ps1: github on recorded gh answers (gh mocked). Usage: pwsh -NoProfile -File tests/github.tests.ps1
+#   (or pwsh -NoProfile -File tests/github.tests.ps1 next to a copy of tests/harness.ps1) -> a PASS / FAIL line per check; exit 1 on a failure
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/github.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit github; $D = Join-Path $k 'skills/crafty/crafty.ps1'
@@ -16,7 +16,7 @@ function gh { $script:calls.Add("gh $($args -join ' ')"); $global:LASTEXITCODE =
   'abc/check-runs' { '{"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"failure","details_url":"https://github.com/o/r/actions/runs/11/job/3"}]}'; break }
   'zzz/status$' { '{"statuses":[{"state":"pending","context":"jenkins"}]}'; break }
   'branches/main/protection' { '{"allow_force_pushes":{"enabled":false},"allow_deletions":{"enabled":false}}'; break }
-  'branches/goodies/protection' { '{"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":false}}'; break }
+  'branches/release/protection' { '{"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":false}}'; break }
   'branches/(new|locked)/protection' { $global:LASTEXITCODE = 1; Write-Error $(if ($Matches[1] -eq 'new') { 'gh: Branch not protected (HTTP 404)' } else { 'gh: Not Found (HTTP 404)' }); break }
   'compare/' { '{"merge_base_commit":{"sha":"base1"},"files":[{"filename":"a.txt"}]}'; break }
   'actions/runs\?' { '{"workflow_runs":[{"id":11,"head_sha":"m8","created_at":"2026-10-15T11:00:00Z","conclusion":"success"}]}'; break }
@@ -32,7 +32,7 @@ $p = @(Invoke-HostApi 'projects/o%2Fr/pipelines?ref=staging&per_page=10'); $j = 
 $null = Invoke-HostApi 'projects/o%2Fr/merge_requests/7/merge' -Method PUT -Fields @{ merge_when_pipeline_succeeds = 'true' }; "gh-auto:$(@($script:calls | ? { $_ -like 'gh pr merge 7 -R o/r --squash --delete-branch --auto' }).Count -eq 1)"
 $l = @(Invoke-HostVerb 'mr.list' @{ repo = 'o/r'; state = 'opened'; source_branch = 'f/z' }); "gh-list-head:$($l.Count -eq 1 -and $l[0].iid -eq 9)"
 $s = Invoke-HostVerb 'ci.status' @{ repo = 'o/r'; sha = 'zzz' } -NoMemo; "gh-status-external:$($s.status -eq 'pending')"
-$pm = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'main' } -NoMemo; $px = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'goodies' } -NoMemo; $pn = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'new' } -NoMemo; $pl = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'locked' } -NoMemo
+$pm = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'main' } -NoMemo; $px = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'release' } -NoMemo; $pn = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'new' } -NoMemo; $pl = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'locked' } -NoMemo
 "gh-protect:$($pm -eq 'ok' -and $px -like 'failed: protected but force push*' -and $pn -eq 'set' -and $pl -like 'skip: no admin rights*' -and @($script:calls -match 'PUT repos/o/r/branches/new/protection').Count)"
 $null = Invoke-HostVerb 'mr.merge' @{ repo = 'o/r'; n = 7; method = 'merge' }; "gh-deploy-merge:$(@($script:calls | ? { $_ -like 'gh pr merge 7 -R o/r --merge*' -and $_ -notlike '*--squash*' }).Count -eq 1)"
 '@

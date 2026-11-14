@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# gitlab (goody): GitLab / self-hosted GitLab through the glab CLI: git host (MRs, merge, auto-merge, branch.protect), CI
+# gitlab: GitLab / self-hosted GitLab through the glab CLI: git host (MRs, merge, auto-merge, branch.protect), CI
 # (pipelines, jobs, logs) and tracker (issues; status = a <tracker.statusLabelPrefix><name> label, closed = closed issue).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Enc, __Del, __CiStat, __Tr*).
 # Sections: L7 glab · L11 git-host · L33 ci · L43 tracker

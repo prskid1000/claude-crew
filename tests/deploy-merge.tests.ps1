@@ -1,15 +1,14 @@
 #Requires -Version 7
 <#
-tests-deploy-merge.ps1 (goody deploys, deploy merge): offline, on a throw-away test kit with this goody's files.
-Usage: kitbag.py goody test deploys (its tests.ps1 runs this file)
+tests/deploy-merge.tests.ps1: bossy.ps1 deploy merge, offline, on a throw-away test kit with the deploys adapters.
+Usage: pwsh -NoProfile -File tests/deploy-merge.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
-. (Join-Path $PSScriptRoot 'harness.ps1')   # kitbag.py goody test: the kit's harness; New-TestKit adds this goody's files
+. (Join-Path $PSScriptRoot 'harness.ps1')   # New-TestKit adds $TestKitFiles
 $TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit deploy-merge; $O = Join-Path $k 'skills/bossy/bossy.ps1'
-# deploy merge is a verb of the deploys goody: its adapter from the kit, else nothing to test
+# deploy merge is a verb of adapters/deploys.ps1
 $dpa = Join-Path $src 'skills/bossy/adapters/deploys.ps1'
-if (-not (Test-Path $dpa)) { 'SKIP deploy merge (needs the goody deploys)'; Remove-TestKit $k; Complete-Tests }
 Copy-Item $dpa (Join-Path $k 'skills/bossy/adapters'); $r = Join-Path (Kd) 'git'
 $env:CLAUDE_WT_ROOT = "$r/wt"
 git init -q --bare "$r/origin.git"; git clone -q "$r/origin.git" "$r/repo" 2>$null

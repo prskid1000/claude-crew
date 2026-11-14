@@ -1,8 +1,8 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody liquibase): lbcheck on a small changelog (an existing column added again, a changeSet without rollback, an
+liquibase.tests.ps1: lbcheck on a small changelog (an existing column added again, a changeSet without rollback, an
 empty "not reversible" rollback, a rollback beside tagDatabase) and crafty.ps1 check -Step migrations running it.
-Usage: pwsh -NoProfile -File goodies/liquibase/tests.ps1 -Kit <kit> (the plugin comes from files/ beside this file).
+Usage: pwsh -NoProfile -File <kit>/tests/liquibase.tests.ps1 [-Kit <kit>] (or tests/kit-tests.ps1 -Area liquibase).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -43,6 +43,6 @@ Expect 'lbcheck without a master: usage, exit 2' ($LASTEXITCODE -eq 2 -and $out 
 '{ "stack": "custom", "commands": { "compile": "echo ok" } }' | Set-Content "$repo/.claude-stack.json"
 git -C $repo init -q; git -C $repo -c core.autocrlf=false add -A; git -C $repo -c user.name=t -c user.email=t@t commit -q -m lb
 $out = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') check -Dir $repo -Step migrations -Since 20240102000000 2>&1 | Out-String
-Expect 'check -Step migrations runs lbcheck through the goody' ($LASTEXITCODE -eq 1 -and $out -match '\[check\] liquibase:' -and $out -match 'ISSUES 4')
+Expect 'check -Step migrations runs lbcheck through the plugin' ($LASTEXITCODE -eq 1 -and $out -match '\[check\] liquibase:' -and $out -match 'ISSUES 4')
 Remove-TestKit $k
 Complete-Tests

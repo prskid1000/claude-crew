@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by phoney.ps1 from adapters/. Exit codes: none here (its verbs exit through phoney.ps1).
-# android-swarm (goody): phoney.ps1 build presets for app.kind flutter, maui, capacitor, and the Expo prebuild (android/ generated
+# android-swarm: phoney.ps1 build presets for app.kind flutter, maui, capacitor, and the Expo prebuild (android/ generated
 # when missing). Dot-sourced by phoney.ps1 from adapters/; app.buildCmd + app.artifact override a preset.
 function Set-AppKindPreset($app) {
   $pre = @{ flutter = 'flutter build apk --release|build/app/outputs/flutter-apk/app-release.apk'; maui = 'dotnet publish -f {tfm} -c Release|bin/Release/*/publish/*-Signed.apk'

@@ -4,9 +4,9 @@ local-env-3.tests.ps1: envy.ps1 stale layers and release, supervise rows and log
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-3.tests.ps1 (tests/kit-tests.ps1 -Area local-env-3 runs it with the other areas).
 Exit codes: 0 pass · 1 a check failed.
 #>
-param([string]$Kit)   # kitbag.py goody test passes the kit; else this file sits next to <kit>/tests/harness.ps1
+param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
-# the goody's script is not in the core test kit: copy it in
+# envy.ps1 is not in the core test kit: copy it in
 function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; $kd }
 # a test kit of its own: each scenario below writes the config it needs
 $k3 = New-LocalEnvKit le3; $k = $k3; $L3 = Join-Path $k3 'skills/envy/envy.ps1'; $cf3 = Join-Path $k3 'skills/crafty/kit.local.json'
@@ -43,7 +43,7 @@ $null = & { . $L3; Update-State t { param($x) $x.loop = @{ pid = 999999; beat = 
     $x.train = @{ id = 't9'; pid = $PID; pstart = (Get-Date).AddDays(-1).ToString('o'); phase = 'merging and building'; at = (Now); requests = @('r1') } } }   # the 10-hour train: its pid now another process's
 $sj = Px $L3 status -Env t -Json 2>$null | Out-String; $sq1 = & { . $L3; "$(@((Read-State t).requests)[0].status)|$($null -eq (Read-State t).train)" }
 Remove-TestKit $k3
-# supervise rows from this goody (skills/bossy/adapters/localenv_supervise.ps1): idle vs leased down services, new log errors
+# supervise rows from skills/bossy/adapters/localenv_supervise.ps1: idle vs leased down services, new log errors
 $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') $ad
 $supBossy = Join-Path $k 'skills/bossy/bossy.ps1'
 $er = & { . $supBossy; Get-KitEnvRows @([pscustomobject]@{ env = 'e'; services = @([pscustomobject]@{ service = 'api'; state = 'down'; why = 'idle for 15 min' }, [pscustomobject]@{ service = 'web'; state = 'down'; why = 'crashed' }, [pscustomobject]@{ service = 'search'; state = 'waiting (CPU)' }); leases = @([pscustomobject]@{ agent = 'a1'; services = @('web', 'search') }); holds = @() }) (Get-Date) }

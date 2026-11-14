@@ -31,7 +31,7 @@ You never change code, branches, docs or tracker state;
 1. The diff: `git -C <wt> fetch origin`, `git -C <wt> diff origin/<target>...<MR head sha>`, a kit
    commit `git -C <wt> show <sha>`.
 2. The surrounding code (a main checkout is fine for reading), the repo's `CLAUDE.md` conventions, the author's testing-goals doc.
-3. Check against the items asked and crafty Rules (kit: `kit-admin.md`, goody `kit-admin`; lint). Tests: new/changed logic
+3. Check against the items asked and crafty Rules (kit: `kit-admin.md`; lint). Tests: new/changed logic
    has unit tests; each fixed bug a regression test; touched endpoints integration/API tests; touched screens UI tests where the
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at
    boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none").
@@ -50,8 +50,7 @@ per finding open devy's evidence (the file:line, run the test, redo the measurem
 with counter-evidence of the same kind and `why` = one-line recommendation to the owner (it decides a split). A debate summary
 (`bossy.ps1 debate brief -Side revy`): no vote, the deciding evidence only.
 
-**module** (one folder, feature or service; findings only): <kit>/skills/crafty/module-audit.md (goody `module-audit`;
-missing -> return `module audits is a goody: run kitbag.py goody add module-audit`).
+**module** (one folder, feature or service; findings only): <kit>/skills/crafty/module-audit.md.
 
 Report only real problems as the `revy` JSON (crafty templates.md "Final reports"), each with file/line (or section), severity
 and a suggested change (patch hunk or rewritten text):

@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Goody stack-presets: crafty.ps1 stack presets for Android Gradle, .NET (SDK and legacy MSBuild), Go, Rust, CMake and Make.
-# Dot-sourced by lib.ps1 from skills/crafty/adapters/ (kitbag.py goody add stack-presets); crafty.ps1 stack calls 'detect'
+# stack-presets: crafty.ps1 stack presets for Android Gradle, .NET (SDK and legacy MSBuild), Go, Rust, CMake and Make.
+# Dot-sourced by lib.ps1 from skills/crafty/adapters/; crafty.ps1 stack calls 'detect'
 # when no core stack (maven, gradle, angular, node, python) matches: $a.dir, $a.commands (filled) -> the stack name.
 Register-KitAdapter 'stack' 'presets' @{ 'detect' = { param($a)
   $d = $a.dir; $c = $a.commands; $s = $null

@@ -9,7 +9,7 @@ Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L15 builds · L47 supervise · L253 shells · L387 page · L867 release · L906 lines · L939 cleanup · L975 launch ·
-  L1053 pause · L1171 heartbeat · L1186 sessions · L1238 ci tasks · L1290 the kit origin's main and goodies
+  L1053 pause · L1171 heartbeat · L1186 sessions · L1238 ci tasks · L1290 the kit origin's main
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -168,7 +168,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   foreach ($r in $rows) { if ($graceRows.ContainsKey($r.name)) { $r.by = "$($r.by) (grace $($graceRows[$r.name]) min)" }; $r }
   foreach ($x in @(Read-KitLog leases $now | Where-Object { $_.event -eq 'reclaim' -and $_.kind -in 'env', 'tab' })) { & $flag 'INFO' "auto-fixed: reclaimed $($x.kind) $($x.name) of $($x.agent) ($($x.reason))" 'Nothing to do.' }   # the env and tab sweeps above log, not print
   $need = [double](@(@($queue | ForEach-Object { [double]$_.need }) + 0) | Measure-Object -Maximum).Maximum
-  if ($need) { [pscustomobject]@{ ramNeed = $need } }   # bossy.ps1 names the biggest rows of every goody
+  if ($need) { [pscustomobject]@{ ramNeed = $need } }   # bossy.ps1 names the biggest rows of every adapter
 }
 
 # kit to-do (bossy K1): open "- [ ]" lines in <agents>/kitty/kit-*.md and no kitty on the board = nobody works them
@@ -909,7 +909,7 @@ function Get-KitBoardLinesResources {
   foreach ($o in @(Read-KitJsonFiles (Join-Path (Get-KitPath qa-seats) 'seats'))) { "  seat: $($o.agent) $($o.kind) $($o.need) GB since $($o.since)$(if ((Test-KitHolder $o) -eq $false) { ' (holder gone)' })" }
   foreach ($ev in @(Get-KitLocalEnvStatus)) { foreach ($l in @($ev.leases | Where-Object { $_ })) { "  lease: $($ev.env) $($l.agent) on $(@($l.services) -join ', ') $(if ($l.until) { "until $($l.until)" } else { 'while live' })" } }
 }
-# envy.ps1 status -Json (goody local-env): the env's own report, never its files
+# envy.ps1 status -Json: the env's own report, never its files
 function Get-KitLocalEnvStatus {
   if (-not $KitCmd.local -or -not (Test-Path $KitCmd.local)) { return }
   $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') 60
@@ -1024,13 +1024,13 @@ function Clear-KitPauseFor([string]$Run) {
     "PAUSE $(Split-Path $p.file -Leaf) ($($p.reason)) released for run ${Run}: it was launched again"
   }
 }
-# every task: a description with an Items list (a [Bug] its own shape), written as its Items checklist (goody task-rollup); a subtask
+# every task: a description with an Items list (a [Bug] its own shape), written as its Items checklist (adapters/task_rollup.ps1); a subtask
 # the whole template and a parent with the delivery section, rolled up from the brief dir's item table when it has one.
 # One "TASKS REFUSED" line per gap; an unread task is skipped; -Check (-File) writes nothing
 function Test-KitLaunchTasks($A, [string]$File, [string]$RunName = '') {
   if ($File) { $A = try { Get-Content -LiteralPath $File -Raw | ConvertFrom-Json -AsHashtable } catch { 'usage: launch -Check -ArgsFile <buildy args .json>'; exit 2 } }
   $ids = @(@($A.agents) | ForEach-Object { @("$($_.task)") + @(Get-KitItemTasks "$($_.items)") } | ForEach-Object { NormTask $_ } | Where-Object { $_ } | Select-Object -Unique -First 20)
-  $bd = if ($A.brief) { Split-Path ([string]$A.brief) }; $gc = { param($n) Get-Command $n -ErrorAction SilentlyContinue }   # goody task-rollup
+  $bd = if ($A.brief) { Split-Path ([string]$A.brief) }; $gc = { param($n) Get-Command $n -ErrorAction SilentlyContinue }   # adapters/task_rollup.ps1
   $roll = & $gc Invoke-TaskRollup; $itemsFn = & $gc Update-KitTaskItems; $triFn = & $gc Read-KitTriage; $par = @{}; $read = 0
   $out = @(foreach ($id in $ids) {
       $t = try { Get-TrackerTask $id } catch { $null }; if (-not $t.name) { continue }; $read++; $p = "$($t.parent)"
@@ -1041,7 +1041,7 @@ function Test-KitLaunchTasks($A, [string]$File, [string]$RunName = '') {
       if (-not $p -or $par.ContainsKey($p)) { continue }
       $pt = try { Get-TrackerTask $p } catch { $null }; $par[$p] = 1; if (-not $pt.name -or "$($pt.description)" -match '<!-- kit:delivery -->') { continue }
       if ($roll -and $triFn -and -not $File -and $bd -and @((& $triFn $bd).rows).Count) { & $roll -Task $p -From $bd -Quiet; Clear-TrackerMemo $p; if ("$((Get-TrackerTask $p).description)" -match '<!-- kit:delivery -->') { continue } }
-      "TASKS REFUSED ${id}: parent $p has no delivery section: bossy.ps1 track rollup -Task $p -From <brief dir with an item table (ID, Area columns)>$(if (-not $roll) { ' (goody task-rollup: kitbag.py goody add task-rollup)' })"
+      "TASKS REFUSED ${id}: parent $p has no delivery section: bossy.ps1 track rollup -Task $p -From <brief dir with an item table (ID, Area columns)>"
     })
   if ($ids.Count -and -not $read) { $out += "TASKS UNKNOWN: none of $($ids.Count) item task(s) read from the tracker: not checked" }
   $claims = Get-KitTaskClaims $(if ($RunName) { $RunName } else { Get-LaunchRunName $A })   # any session's live run: one run per task
@@ -1142,7 +1142,7 @@ function Complete-KitPause([string]$Pf, [double]$Wait) {
     foreach ($kv in @{ confirmed = $a.session -notin @($open.session); next = $ck.next; checkpoint = $ck; worktrees = @($dirs | ForEach-Object { Get-KitWtState $_ }) }.GetEnumerator()) { $a | Add-Member -Force NoteProperty $kv.Key $kv.Value }
   }
   if (& $resumed) { "pause $Pf was resumed meanwhile: nothing stopped"; return }
-  $hooks = @(Invoke-KitHooks Invoke-KitPause)   # goody local-env: stops unheld services
+  $hooks = @(Invoke-KitHooks Invoke-KitPause)   # localenv_supervise.ps1: stops unheld services
   if (& $resumed) { "resumed while the local env stopped: start what the run needs again (envy.ps1 up)" }
   # only this finisher's fields onto the current record: a resume's state / released written meanwhile stay
   Invoke-KitLocked $Pf { $now = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json; if ($now.state -ne 'resumed') { $now.state = 'paused'; foreach ($kv in @{ finishedAt = (Get-Date).ToString('o'); notes = @($hooks | ForEach-Object { "$_" }); agents = @($rec.agents) }.GetEnumerator()) { $now | Add-Member -Force NoteProperty $kv.Key $kv.Value }; Write-KitState $Pf $now } }
@@ -1287,13 +1287,13 @@ function Get-KitPlannedAreas([string]$TaskId, $Since) {
         if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"]) { "$($pa.id)" }
       } }) | Select-Object -Unique
 }
-# ---- the kit origin's main and goodies: no force push or delete, direct push on (branch.protect; never product repos)
+# ---- the kit origin's main: no force push or delete, direct push on (branch.protect; never product repos)
 function Set-KitOriginProtection {
   $kit = $KitConf.Kit; $gl, $gh = $env:GITLAB_HOST, $env:GH_HOST
   $lines = if ("$(git -C $kit remote get-url origin 2>$null)" -notmatch '^(?:\w+://)?(?:[^@/]+@)?(?<h>[^/:\\]{2,})(?::\d+)?[:/](?<r>[^:\\]+?)(?:\.git)?/?$') { 'origin failed: no origin remote with a host' } else {
     $h, $repo, $t = $Matches.h, $Matches.r, (Get-HostKind $Matches.h)
     if ($t -eq 'gitlab') { $env:GITLAB_HOST = $h } elseif ($t -eq 'github') { $env:GH_HOST = $h }
-    foreach ($b in 'main', 'goodies') {
+    foreach ($b in 'main') {
       if (-not (git -C $kit rev-parse --verify -q "refs/remotes/origin/$b" 2>$null)) { "$b failed: origin/$b not fetched (git fetch origin)"; continue }
       $r = try { Invoke-HostVerb 'branch.protect' @{ type = $t; repo = $repo; branch = $b } -NoMemo } catch { "failed: $_" }
       "$b $(if ($r) { $r } else { "failed: set it by hand on $h/$repo (force push off, deletion off, direct push on)" })"

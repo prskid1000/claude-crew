@@ -1,14 +1,8 @@
 #!/bin/sh
 # Kit pre-push gate (enabled by bossy.ps1 setup: git config core.hooksPath .githooks): blocks a push that carries an org term or a
-# git-ignored / local-only file, or stale generated ports (kitbag.py port --check, goody ports). Logic: skills/bossy/bossy.ps1 prepush (goody kit-admin; pwsh 7 + python). Exit 1 = blocked.
-# The kit is this hook's own checkout: a goodies checkout (no skills/) forwards here from its own .githooks/pre-push.
+# git-ignored / local-only file, or stale generated ports (kitbag.py port --check). Logic: skills/bossy/bossy.ps1 prepush (pwsh 7 + python). Exit 1 = blocked.
+# The kit is this hook's own checkout.
 root="$(cd "$(dirname "$0")/.." && pwd)"
-# its logic is the goody kit-admin (bossy.ps1 prepush / precommit): installed here first when missing (a fresh clone, a new worktree)
-if [ ! -f "$root/skills/bossy/adapters/kit_admin.ps1" ]; then
-  for p in python python3 py; do
-    if command -v "$p" >/dev/null 2>&1 && "$p" -c '' >/dev/null 2>&1; then "$p" -X utf8 "$root/skills/bossy/kitbag.py" goody add kit-admin </dev/null >&2; break; fi
-  done
-fi
 if command -v pwsh >/dev/null 2>&1; then
   exec pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$root/skills/bossy/bossy.ps1" prepush "$@"
 fi

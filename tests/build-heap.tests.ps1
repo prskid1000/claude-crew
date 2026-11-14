@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/build-heap.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody build-heap: Gradle gets -Dorg.gradle.jvmargs, Maven MAVEN_OPTS, Node NODE_OPTIONS. Run: kitbag.py goody test build-heap
+# tests/build-heap.tests.ps1: build-heap: Gradle gets -Dorg.gradle.jvmargs, Maven MAVEN_OPTS, Node NODE_OPTIONS. Usage: pwsh -NoProfile -File tests/build-heap.tests.ps1
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/build_heap.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit heap; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $bd = Join-Path (Kd) 'b'; New-Item -ItemType Directory -Force $bd | Out-Null

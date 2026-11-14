@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by phoney.ps1 from adapters/. Exit codes: none here (its verbs exit through phoney.ps1).
-# android-swarm (goody): phoney.ps1 arrange + up places visible emulator windows in a row on the main monitor (Windows,
+# android-swarm: phoney.ps1 arrange + up places visible emulator windows in a row on the main monitor (Windows,
 # lanes with headless: false or up -ShowAll). Dot-sourced by phoney.ps1 from adapters/.
 # ---- arrange: place emulator windows (Windows; run by up)
 function Invoke-Arrange {

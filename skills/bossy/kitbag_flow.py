@@ -1,10 +1,10 @@
-"""kitbag goody flow-map: the interactive kit-flow page and the FLOW-* lint checks (loop bounds, unresolved commands).
+"""kitbag_flow.py (plugin): the interactive kit-flow page and the FLOW-* lint checks (loop bounds, unresolved commands).
 
   python -X utf8 skills/bossy/kitbag.py flow [<kit>] [--out <file.html>] [--readme] [--open] [--public]
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
-Installed by `kitbag.py goody add flow-map`; kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1066 page · L1523 command
+kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
+Sections: L17 rules · L72 parts · L157 control · L330 parse · L632 link · L861 cycles · L937 pack · L1074 page · L1531 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -17,7 +17,7 @@ ARGS = {'flow': ({'--readme', '--open', '--public'}, {'--out'}, True)}
 # ---- rules: patterns for refs, control flow, loops, outcomes
 # Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
 # Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
-VER = 11
+VER = 12
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 FN = {'ps1': re.compile(r'^\s*function\s+([\w-]+)'),
@@ -330,6 +330,10 @@ def spans_of(lines, lg):
 # ---- parse: parts per file kind
 def parse_code(p, f, text):
     lg, base = lang(f), osp.basename(f)
+    if re.match(r'skills/bossy/kitbag_\w+\.py$', f):   # a plugin's commands run as kitbag.py <verb>
+        base = 'kitbag.py'
+    elif re.match(r'skills/crafty/adapters/\w+\.py$', f):   # adapters/*.py register devtools.py verbs
+        base = 'devtools.py'
     lines = text.split('\n')
     live = strip_code(text, lg).split('\n')
     tlive = strip_code(text, lg, keep_tpl=True).split('\n') if lg == 'js' else live
@@ -367,19 +371,23 @@ def parse_code(p, f, text):
         m = re.search(r'Invoke-KitVerb\s+([\w-]+)\s+@\(\$args\)', l)   # args passed on: the function's verbs are the script's
         if m:
             impl[m.group(1)] = (f, base)
-        m = re.match(r"\s*(COMMANDS|[A-Z_]*VERBS|[A-Z_]*EXTRA[A-Z_]*)\s*=\s*\{", l) if lg == 'py' else None   # verb tables: COMMANDS (verb: fn), EXTRA_OF (verb: 'goody')
+        m = re.search(r"\bVERBS\['([\w-]+)'\]\s*=\s*([a-z_]\w*)", l) if lg == 'py' else None   # a plugin's register(): dt.VERBS['v'] = fn
+        if m:
+            cid = p.part(f'{f}#>{m.group(1)}', f'{base} {m.group(1)}', 'cmd', i + 1, l.strip())
+            p.ref('impl', cid, m.group(2), i + 1)
+            impl.setdefault(m.group(2), (cid, f'{base} {m.group(1)}'))
+        m = re.match(r"\s*(COMMANDS|[A-Z_]*VERBS)\s*=\s*\{", l) if lg == 'py' else None   # verb tables: COMMANDS (verb: fn)
         tbl = ''
         for j in range(i, min(len(lines), i + 12)) if m else ():
             tbl += live[j] + '\n'
             if tbl.count('{') <= tbl.count('}'):
                 break
-        for v, fn, ex in re.findall(r"'([\w -]+)':\s*(?:([a-z_]\w*)\s*(?=[,}])|'([\w-]+)')", '\n'.join(lines[i:i + tbl.count('\n')]) if m else ''):
-            if fn and not any(nm == fn for _, _, nm in sp) or ex and 'EXTRA' not in m.group(1):
+        for v, fn in re.findall(r"'([\w -]+)':\s*([a-z_]\w*)\s*(?=[,}])", '\n'.join(lines[i:i + tbl.count('\n')]) if m else ''):
+            if not any(nm == fn for _, _, nm in sp):
                 continue
-            cid = p.part(f'{f}#>{v}', f'{base} {v}', 'cmd', i + 1, l.strip() if fn else f'goody {ex}: {l.strip()}')
-            if fn:
-                p.ref('impl', cid, fn, i + 1)
-                impl.setdefault(fn, (cid, f'{base} {v}'))
+            cid = p.part(f'{f}#>{v}', f'{base} {v}', 'cmd', i + 1, l.strip())
+            p.ref('impl', cid, fn, i + 1)
+            impl.setdefault(fn, (cid, f'{base} {v}'))
     # ps1 dispatch: each case of `switch ($__verb)` is a verb (`'v' {` or `{ $_ -in 'a', 'b' } {`); its function = the case's first Invoke-KitVerb
     for i, l in enumerate(lines):
         if lg != 'ps1' or not re.match(r'\s*switch\s*\(\s*\$__verb\s*\)\s*\{', l):

@@ -1,20 +1,18 @@
 #Requires -Version 7
 <#
-db-engine-presets-2.tests.ps1 (goody db-engine-presets, part 2): on a scratch mysqld of its own: liquibase touched tables, review cases
+tests/db-engine-presets-2.tests.ps1: on a scratch mysqld of its own: liquibase touched tables, review cases
 (shared FK names, statement DML, FLOAT, views, killed-run triggers), the temp watchdog + doctor rows, tenant drop / import, db.bufferPool.
-Usage: pwsh -NoProfile -File <kit>/tests/db-engine-presets-2.tests.ps1 (tests/kit-tests.ps1 -Area db-engine-presets-2; needs the goody local-env).
+Usage: pwsh -NoProfile -File <kit>/tests/db-engine-presets-2.tests.ps1 (or tests/kit-tests.ps1 -Area db-engine-presets-2).
 Exit codes: 0 pass · 1 fail.
 #>
 param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 function New-PresetKit([string]$n) {
   $kd = New-TestKit $n; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy/adapters')
-  $branchEnvy = Join-Path $PSScriptRoot '../local-env/files/skills/envy/envy.ps1'   # a goodies checkout: its envy.ps1, not the kit's installed one
-  Copy-Item $(if (Test-Path $branchEnvy) { $branchEnvy } else { Join-Path $src 'skills/envy/envy.ps1' }) (Split-Path $d)
+  Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $d)
   Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/envy/adapters/*') $d -Force   # this branch's files, also when run by hand
   $kd
 }
-if (-not (Test-Path (Join-Path $src 'skills/envy/envy.ps1'))) { 'SKIP db-engine-presets (needs the goody local-env)'; Complete-Tests }
 # ---- a scratch mysqld (own data dir and port, binlog ROW / FULL): never the env's server
 $mysqld = Get-Command mysqld -ErrorAction SilentlyContinue
 if (-not $mysqld -or -not (Get-Command mysqlbinlog -ErrorAction SilentlyContinue)) { 'SKIP flashback round trip (no mysqld / mysqlbinlog on PATH)'; Complete-Tests }
@@ -49,8 +47,8 @@ INSERT INTO fa.o VALUES (1, 'a é', 1.5), (2, NULL, 2), (3, 'c', 3); INSERT INTO
   $seedf = & { . $L3; SeedFile s }; New-Item -ItemType Directory -Force (Split-Path $seedf) | Out-Null
   & $J @{ items = @(@{ name = 'cc-5'; tables = @('fb.cc'); check = @{ sql = 'SELECT COUNT(*) FROM fb.cc WHERE id = 5' }; create = @{ cmd = "mysql -h 127.0.0.1 -P $port -u root -e `"INSERT INTO fb.cc VALUES (5, 1)`"" } }, @{ name = 'other'; tables = @('fa.x'); check = @{ sql = 'SELECT 0' } }) } $seedf 6
   $doc = Px $L3 doctor -Env s 2>&1 | Out-String
-  # goody liquibase: update-sql (the pending changeSets) -> touched tables; tag / rollback run only on the schemas it manages
-  $lbs = Join-Path $PSScriptRoot '../liquibase/files/skills/crafty/adapters/liquibase.ps1'
+  # adapters/liquibase.ps1: update-sql (the pending changeSets) -> touched tables; tag / rollback run only on the schemas it manages
+  $lbs = Join-Path $src 'skills/crafty/adapters/liquibase.ps1'
   if (Test-Path $lbs) {
     New-Item -ItemType Directory -Force (Join-Path $k3 'skills/crafty/adapters') | Out-Null; Copy-Item $lbs (Join-Path $k3 'skills/crafty/adapters')
     $bin = Join-Path (Kd) 'lbbin'; $lbl = Join-Path (Kd) 'lb.log'; New-Item -ItemType Directory -Force $bin | Out-Null

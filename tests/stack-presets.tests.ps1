@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/stack-presets.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody stack-presets: crafty.ps1 stack finds Android Gradle, .NET, Go, Rust, CMake and Make projects. Run from a kit clone:
-#   pwsh goodies/stack-presets/tests.ps1 [-Kit <kit>]   -> a PASS / FAIL line per stack; exit 1 on a failure
+# tests/stack-presets.tests.ps1: stack-presets: crafty.ps1 stack finds Android Gradle, .NET, Go, Rust, CMake and Make projects. Run from a kit clone:
+#   pwsh -NoProfile -File tests/stack-presets.tests.ps1 [-Kit <kit>]   -> a PASS / FAIL line per stack; exit 1 on a failure
 param([string]$Kit = (Split-Path $PSScriptRoot))
 . (Join-Path $Kit 'skills/crafty/lib.ps1'); . (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/stack_presets.ps1')
 $root = Join-Path ([IO.Path]::GetTempPath()) "stack-presets-$PID"; $fail = 0

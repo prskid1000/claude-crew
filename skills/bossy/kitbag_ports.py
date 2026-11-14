@@ -1,4 +1,4 @@
-"""kitbag goody ports: Codex / Antigravity ports of the kit's agents, hooks, rules, skills and workflows.
+"""kitbag_ports.py (plugin): Codex / Antigravity ports of the kit's agents, hooks, rules, skills and workflows.
 
   python -X utf8 skills/bossy/kitbag.py port [--check | --deploy]
 
@@ -375,7 +375,7 @@ def make_link(src, dst):
         os.symlink(src, dst, target_is_directory=True)
 
 def skill_links():
-    """{link name: kit skill dir} for every skill (installed goodies and local skills too)."""
+    """{link name: kit skill dir} for every skill (local skills too)."""
     return {p.parent.name: p.parent for p in sorted((KIT / 'skills').glob('*/SKILL.md'))}
 
 # ---- targets: kit.local.json ports.targets picks the workspace copies (the kit's own ports are always generated)

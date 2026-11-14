@@ -1,6 +1,6 @@
 <#
 phoney.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.type: android (emulators, default) | none
-(verbs refuse; app checks NOT_TESTED) | ios (goody ios-simulator: this script forwards to swarm-ios.ps1).
+(verbs refuse; app checks NOT_TESTED) | ios (this script forwards to swarm-ios.ps1).
   pwsh 7: & <kit>/skills/phoney/phoney.ps1 <verb> [args]
   acquire -Agent <id> [-Lane <name>] [-Holder <board code>] [-Apk local|<path>] [-Reverse <port>,..] [-NoInstall]   lease a phone
   ensure -Agent <id> · release -Agent <id> [-Keep] · status
@@ -11,8 +11,8 @@ phoney.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.
   events start|stop -Serial <s> [-Out <recording>]   taps, clicks, typing -> <recording>.events.json (swarm.config.json events: true)
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
-Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs a goody) · 2 usage error.
-Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); goody ios-simulator.
+Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
+Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
 Sections: L24 config · L104 phone · L303 build · L447 install · L473 launch · L485 avd · L571 up · L668 down · L698 events ·
   L754 slim
 #>
@@ -35,7 +35,7 @@ function Get-SwarmConfig {
   if (-not $c.app.apkGlob) { $v = if ($c.app.buildTask -match 'Release') { 'release' } else { 'debug' }; $c.app | Add-Member -Force apkGlob "$(if ($c.app.kind -eq 'kmp') { 'composeApp' } else { 'app' })/build/outputs/apk/$v/*.apk" }
   # Gradle kinds (react-native, native, kmp) or app.buildCmd + app.artifact; other presets: adapters/app_kinds.ps1 (Set-AppKindPreset)
   if ($c.app.kind -notin 'react-native', 'native', 'kmp' -and -not ($c.app.buildCmd -and $c.app.artifact)) {
-    if ($ext = Get-Command Set-AppKindPreset -ErrorAction SilentlyContinue) { & $ext $c.app } else { throw "app.kind $($c.app.kind) is a goody: run kitbag.py goody add android-swarm" }
+    Set-AppKindPreset $c.app
   }
   foreach ($k in @{ permissions = @(); localReverse = @(); localManifests = @('src/debugOptimized/AndroidManifest.xml', 'src/debug/AndroidManifest.xml') }.GetEnumerator()) { if (-not $c.app.($k.Key)) { $c.app | Add-Member -Force $k.Key $k.Value } }
   $sdk = Get-AndroidSdk
@@ -321,7 +321,7 @@ $gate = ({ & $KitCmd.dev gate @args })
 $gw = if ($KitIsWindows) { 'gradlew.bat' } else { 'gradlew' }   # the gate runs .\gradlew.bat or ./gradlew
 $cmd = [string]$c.app.buildCmd   # a non-Gradle kind (Get-SwarmConfig presets) or a custom command: no Gradle / Java steps
 if (-not $cmd -and ($ext = Get-Command Invoke-AppPrebuild -ErrorAction SilentlyContinue)) { & $ext $AppDir $gw }   # adapters/app_kinds.ps1: Expo apps generate android/
-$android = if ($cmd) { $AppDir } elseif (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android') (an Expo app: kitbag.py goody add android-swarm)" }
+$android = if ($cmd) { $AppDir } elseif (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android') (an Expo app: adapters/app_kinds.ps1 runs its prebuild)" }
 
 $branch = (git -C $AppDir rev-parse --abbrev-ref HEAD).Trim()
 $dirty = (git -C $AppDir status --porcelain -- . | Measure-Object).Count
@@ -657,7 +657,7 @@ Invoke-KitLocked $c.state {
   $prev = try { @(Get-Content $c.state -Raw -ErrorAction Stop | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
   ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
 }
-if (-not $Headless -and ($arrange = Get-Command Invoke-Arrange -ErrorAction SilentlyContinue) -and @($all | Where-Object { $_.name -in $Lanes -and ($ShowAll -or $_.headless -eq $false -or ($null -eq $_.headless -and $c.headless -eq $false)) }).Count) {   # goody emulator-windows; windows appear late
+if (-not $Headless -and ($arrange = Get-Command Invoke-Arrange -ErrorAction SilentlyContinue) -and @($all | Where-Object { $_.name -in $Lanes -and ($ShowAll -or $_.headless -eq $false -or ($null -eq $_.headless -and $c.headless -eq $false)) }).Count) {   # adapters/arrange.ps1; windows appear late
   foreach ($i in 1..3) { Wait-KitPoll 4; & $arrange | Out-Null }
   & $arrange | Out-Host
 }
@@ -780,11 +780,7 @@ A 'echo slimmed > /sdcard/.qa-slimmed' | Out-Null
 
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
   $dt = Get-KitSetting 'devices.type' 'android'
-  if ($dt -eq 'ios') {   # goody ios-simulator: its full variant runs
-    $ios = Join-Path $PSScriptRoot 'swarm-ios.ps1'
-    if (Test-Path $ios) { & $ios @args; exit $LASTEXITCODE }
-    [Console]::Error.WriteLine('devices.type ios is a goody: run kitbag.py goody add ios-simulator'); exit 1
-  }
+  if ($dt -eq 'ios') { & (Join-Path $PSScriptRoot 'swarm-ios.ps1') @args; exit $LASTEXITCODE }   # its full variant runs
   if ($__verb -notmatch '^(-|help$)' -and $dt -eq 'none') { 'no device lanes: devices.type none; app checks are NOT_TESTED'; exit 1 }
   switch ($__verb) {
     { $_ -in 'acquire', 'ensure', 'release', 'status' } { Invoke-KitVerb Invoke-Phone (@($__verb) + $__rest) }
@@ -796,7 +792,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'down' { Invoke-KitVerb Invoke-Down $__rest }
     'slim' { Invoke-KitVerb Invoke-Slim $__rest }
     'events' { Invoke-KitVerb Invoke-Events $__rest }
-    'arrange' { if (Get-Command Invoke-Arrange -ErrorAction SilentlyContinue) { Invoke-KitVerb 'Invoke-Arrange' $__rest } else { [Console]::Error.WriteLine('arrange is a goody: run kitbag.py goody add android-swarm'); exit 1 } }
+    'arrange' { Invoke-KitVerb 'Invoke-Arrange' $__rest }
     { $_ -in '-h', '--help', 'help', '-?' } { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 0 }
     default { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }
   }

@@ -1,16 +1,13 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody module-audit): devtools.py findings schema / validate / summary on a good and a broken finding; without the
-plugin `findings` prints the goody line (exit 3).
-Usage: pwsh -NoProfile -File goodies/module-audit/tests.ps1 -Kit <kit> (the plugin comes from files/ beside this file).
+module-audit.tests.ps1: devtools.py findings schema / validate / summary on a good and a broken finding.
+Usage: pwsh -NoProfile -File <kit>/tests/module-audit.tests.ps1 [-Kit <kit>] (or tests/kit-tests.ps1 -Area module-audit).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
 . (Join-Path $Kit 'tests/harness.ps1')
 $k = New-TestKit module-audit
 $DT = Join-Path $k 'skills/crafty/devtools.py'
-$out = & $py -X utf8 $DT findings schema 2>&1 | Out-String
-Expect 'findings without the goody: exit 3 + the goody line' ($LASTEXITCODE -eq 3 -and $out -match 'goody add module-audit')
 New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters') | Out-Null
 Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/module_audit.py') (Join-Path $k 'skills/crafty/adapters')
 $out = & $py -X utf8 $DT findings schema 2>&1 | Out-String

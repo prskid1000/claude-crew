@@ -1,6 +1,6 @@
 <#
-kit_admin.ps1 (goody kit-admin): kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
-  prepush · precommit                       the kit's git hooks (.githooks install this goody when it is missing)
+kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
+  prepush · precommit                       the kit's git hooks (.githooks)
   learn -Stats | -History [-Grep] [-Last]   signals since the last retro, retired lessons
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
@@ -124,10 +124,10 @@ if ($revs.Count) {
   if ($files.Count) {
     # pwsh piping appends CR
     $ign = @(for ($i = 0; $i -lt $files.Count; $i += 100) { git -C $root check-ignore --no-index -- @($files[$i..([math]::Min($i + 99, $files.Count - 1))]) 2>$null })
-    # a goody folded into the core (gone from origin/goodies): its `# kitbag goody` block stays until every worktree synced
+    # old `# kitbag <kind> <name>` exclude blocks list files the kit now tracks (kitbag.py migrate drops them after the pull)
     $xb = @(); $xn = ''; foreach ($l in @(Get-Content -LiteralPath (git -C $root rev-parse --path-format=absolute --git-path info/exclude) -ErrorAction SilentlyContinue)) {
-      if ($l -match '^# kitbag goody (.+)$') { $xn = $Matches[1].Trim(); if ($xn -eq 'end') { $xn = '' } } elseif (-not $l.Trim()) { $xn = '' }
-      elseif ($xn) { git -C $root cat-file -e "refs/remotes/origin/goodies:goodies/$xn/GOODY.md" 2>$null; if ($LASTEXITCODE) { $xb += $l.Trim().TrimStart('/') } } }
+      if ($l -match '^# kitbag \S+ (.+)$') { $xn = $Matches[1].Trim(); if ($xn -eq 'end') { $xn = '' } } elseif (-not $l.Trim()) { $xn = '' }
+      elseif ($xn) { $xb += $l.Trim().TrimStart('/') } }
     $ign = @($ign | Where-Object { $_ -notin $xb })
     foreach ($f in $ign) { $hits += "LOCAL FILE  $f is git-ignored or local-only (.gitignore / .git/info/exclude) but a pushed commit carries it: git rm --cached it and amend" }
   }
@@ -160,7 +160,7 @@ else {
 }
 
 $py = Get-Python
-if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kitbag port --check 2>&1; if ($LASTEXITCODE -eq 1) { Write-Host "pre-push: warning: ports differ (optional; run kitbag.py port if deploying to codex/gemini)" } }   # 2: the ports goody is not installed
+if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kitbag port --check 2>&1; if ($LASTEXITCODE -eq 1) { Write-Host "pre-push: warning: ports differ (optional; run kitbag.py port if deploying to codex/gemini)" } }   # 2: kitbag.py port is unavailable
 
 if ($hits.Count) {
   Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
@@ -190,7 +190,7 @@ function Invoke-PreCommit {
     & $py -X utf8 $KitCmd.kitbag sections --fix @($sec | ForEach-Object { Join-Path $root $_ }) | Out-Null
     foreach ($f in $sec) { if (Test-UnstagedEdits $root $f) { git -C $root add -- $f; Write-Host "pre-commit: Sections: map of $f regenerated and staged" } }
   }
-  & $py -X utf8 $KitCmd.kitbag port 2>$null | Out-Null   # silent without the ports goody
+  & $py -X utf8 $KitCmd.kitbag port 2>$null | Out-Null   # silent: ports are optional
   if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
     git -C $root add -- .codex .agents GEMINI.md
     Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and deployed to workspace'

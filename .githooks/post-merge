@@ -1,13 +1,13 @@
 #!/bin/sh
 # Kit post-merge hook (enabled by bossy.ps1 setup: core.hooksPath .githooks; post-rewrite runs it after pull --rebase): after git
-# pull / merge, in the background, installs or updates the goodies the config needs (kitbag.py goody sync), redeploys the
-# workspace-root ports (kitbag.py port --deploy, goody ports: ports.targets), then regenerates the kit-flow page (kitbag.py flow).
-# Never opens it, never fails the merge.
+# pull / merge runs the one-time layout migration (kitbag.py migrate: old install records out; quick, idempotent), then in the
+# background redeploys the workspace-root ports (kitbag.py port --deploy: ports.targets) and regenerates the kit-flow page
+# (kitbag.py flow). Never opens it, never fails the merge.
 root="$(git rev-parse --show-toplevel)"
 for p in python python3 py; do
   if command -v "$p" >/dev/null 2>&1 && "$p" -c '' >/dev/null 2>&1; then   # a store stub is on PATH but does not run
-    # background, port and page after the sync (a flow run during it installed flow-map a second time, racing the sync)
-    (("$p" -X utf8 "$root/skills/bossy/kitbag.py" goody sync; [ -f "$root/skills/bossy/kitbag_ports.py" ] && "$p" -X utf8 "$root/skills/bossy/kitbag.py" port --deploy; "$p" -X utf8 "$root/skills/bossy/kitbag.py" flow) >/dev/null 2>&1 &)
+    "$p" -X utf8 "$root/skills/bossy/kitbag.py" migrate >&2 </dev/null
+    (("$p" -X utf8 "$root/skills/bossy/kitbag.py" port --deploy; "$p" -X utf8 "$root/skills/bossy/kitbag.py" flow) >/dev/null 2>&1 &)
     break
   fi
 done

@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/azure-devops.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# Tests of the goody azure-devops on recorded REST answers (Invoke-KitHttp mocked). Run from a kit clone:
-#   pwsh goodies/azure-devops/tests.ps1 [-Kit <kit>]   -> a PASS / FAIL line per check; exit 1 on a failure
+# tests/azure-devops.tests.ps1: azure-devops on recorded REST answers (Invoke-KitHttp mocked). Run from a kit clone:
+#   pwsh -NoProfile -File tests/azure-devops.tests.ps1 [-Kit <kit>]   -> a PASS / FAIL line per check; exit 1 on a failure
 param([string]$Kit = (Split-Path $PSScriptRoot))
 . (Join-Path $Kit 'skills/crafty/lib.ps1'); . (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/azure_devops.ps1')
 $__cfg = '{"gitHost":"git.example","repos":[{"name":"jkrepo","ci":"jenkins"}],"ci":{"url":"https://ci.example","job":"job/{repo}"}}' | ConvertFrom-Json

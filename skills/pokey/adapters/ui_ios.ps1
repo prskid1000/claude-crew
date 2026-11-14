@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
-# ios-simulator (goody): pokey.ps1 ui on iOS Simulators (devices.type ios; $env:KIT_DEVICE = udid): shot, openurl, log. pokey.ps1 ui hands
+# ios-simulator: pokey.ps1 ui on iOS Simulators (devices.type ios; $env:KIT_DEVICE = udid): shot, openurl, log. pokey.ps1 ui hands
 # every call to Invoke-UiIos when this file is present (dot-sourced from adapters/).
 function Invoke-UiIos {
 param([Parameter(Position = 0)][string]$Action = 'dump', [Parameter(Position = 1)][string]$Arg = '', [Parameter(Position = 2)][string]$Arg2 = '',

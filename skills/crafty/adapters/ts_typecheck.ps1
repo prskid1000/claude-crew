@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# ts-typecheck (goody): crafty.ps1 check -Step typecheck for tsc. TS5103 (a TypeScript too new for the tsconfig) -> one retry with a
+# ts-typecheck: crafty.ps1 check -Step typecheck for tsc. TS5103 (a TypeScript too new for the tsconfig) -> one retry with a
 # temp tsconfig (ignoreDeprecations); errors count only in changed files (+ config errors); > 200 baseline errors = UNRUN (exit 5).
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $log, Hash12, Get-ChangedFiles, Get-WtTarget.
 # TS5103: one retry with a temp tsconfig; fail only on changed files + config errors

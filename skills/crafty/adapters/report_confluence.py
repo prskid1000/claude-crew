@@ -1,5 +1,5 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-"""Goody report-confluence: reports.type confluence = a page via REST. Env CONFLUENCE_URL (wiki base), CONFLUENCE_TOKEN (bearer;
+"""Report adapter confluence: reports.type confluence = a page via REST. Env CONFLUENCE_URL (wiki base), CONFLUENCE_TOKEN (bearer;
 + CONFLUENCE_EMAIL: basic); reports.space, reports.parent (page id). Readers = the space / parent page permissions."""
 import base64, json, os, re, sys
 

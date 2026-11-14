@@ -1,5 +1,5 @@
 <#
-os_timer.ps1 (goody os-timer): the OS heartbeat: supervise -AutoFix -Brief every supervise.heartbeatMinutes with no session open
+os_timer.ps1: the OS heartbeat: supervise -AutoFix -Brief every supervise.heartbeatMinutes with no session open
 (the page, auto-fixes and flags stay fresh between sessions); dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 heartbeat install [-Minutes <n>] | uninstall | status | tick   tick = the task's run: skips while paused (pause -All),
     never a model call; status exits 1 when missing or stale (no tick for 2 intervals)

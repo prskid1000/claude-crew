@@ -1,5 +1,5 @@
 // engine-playwright.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
-// browser-engines (goody): browser.engine chromium | firefox | webkit (or KIT_BROWSER_ENGINE) through Playwright, a browser per
+// browser-engines: browser.engine chromium | firefox | webkit (or KIT_BROWSER_ENGINE) through Playwright, a browser per
 // process (KIT_PLAYWRIGHT = module path); puppeteer method names mapped. Imported by browser.mjs session() from adapters/.
 import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'

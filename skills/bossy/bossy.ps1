@@ -1,7 +1,7 @@
 <#
 bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skills/bossy/bossy.ps1 <verb> [args]
   board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool] [-Kind] [-Ref]   agent board, messages
-  learn -Skill -Kind -Text | -Read | -Show (-When -Do -Why | -Bump | -Fixed | -Trim | -Stats | -History: goody kit-admin)   signals, lessons
+  learn -Skill -Kind -Text | -Read | -Show (-When -Do -Why | -Bump | -Fixed | -Trim | -Stats | -History)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Check -ArgsFile (buildy item tasks) | -Done -RunId|-Run | -List [-Brief]
   recover [-RunId <id> | -Run <runs>] [-Hours 24] [-MaxSeconds 150] [-Everyone]   stopped runs: state, resume brief, exact resume call
   pause -Run <run> | -All [-Reason] [-Wait <min>] [-Everyone] | -Status · resume -Run <run> | -All [-Wait <min>] [-Hours 24] [-MaxSeconds 150] [-Everyone]
@@ -10,7 +10,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Usage] [-Json]   agent budget, run cap + spend; -Usage: page usage
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged and every launched area delivered (add: at once; -HoldPromotion '' releases)
-    | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists (goody task-rollup)
+    | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
     one row per resource: holder, since, last seen, last used (files only)
@@ -19,14 +19,14 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Only <ids>] [-Skip <id>=<why>; ...] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
-  deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist
+  deploy plan|request|record|intest ... · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist
   debate start -Item -Question -Options "A: ..","B: .." [-Run] [-Why] [-Owner] | brief -File -Side A|B|revy -Round <n> | ask -File   a written debate (1 per run; rechy kind debate), its table + decide ask
-  heartbeat (goodies os-timer, ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
-Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
+  heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit   hooks and install
+Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L32 init · L49 board · L226 budget · L255 launch · L487 recover · L574 pause · L585 resume · L652 program · L703 param ·
-  L709 track · L1026 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1576 cleanup · L1660 learn ·
-  L1691 decide · L1825 debate · L1869 health · L1933 retro due · L1943 tidy · L2012 setup · L2079 guard-sendmessage
+Sections: L32 init · L43 board · L220 budget · L249 launch · L481 recover · L568 pause · L579 resume · L646 program · L697 param ·
+  L703 track · L1020 supervise · L1318 report · L1397 audit · L1457 storage · L1460 bugbrief · L1567 cleanup · L1651 learn ·
+  L1682 decide · L1816 debate · L1860 health · L1923 retro due · L1933 tidy · L1999 setup · L2065 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -35,15 +35,9 @@ $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1')
 # a broken adapter must not take every verb and hook down
 foreach ($adapter in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue)) { try { . $adapter.FullName } catch { [Console]::Error.WriteLine("adapter $($adapter.Name): $_") } }
-# a goody not installed: one clear line, not a crash
-function Assert-KitExtra([string]$Function, [string]$Feature, [string]$Extra) {
-  $fn = Get-Command $Function -CommandType Function -ErrorAction SilentlyContinue; if ($fn) { Add-KitExtraUse $fn.ScriptBlock.File; return $fn }
-  Resolve-KitExtra $Extra   # installs it and reruns the verb
-  "$Feature is a goody: run kitbag.py goody add $Extra"; exit 1
-}
-# goody hooks <Prefix>* (adapters/*.ps1) see the caller's variables
+# adapter hooks <Prefix>* (adapters/*.ps1) see the caller's variables
 function Invoke-KitHooks([string]$Prefix, [hashtable]$Arguments = @{}) {
-  foreach ($hook in @(Get-Command "$Prefix*" -CommandType Function -ErrorAction SilentlyContinue)) { Add-KitExtraUse $hook.ScriptBlock.File; if ($kitSweep) { Start-KitSweepPhase $kitSweep $hook.Name }; & $hook @Arguments }
+  foreach ($hook in @(Get-Command "$Prefix*" -CommandType Function -ErrorAction SilentlyContinue)) { if ($kitSweep) { Start-KitSweepPhase $kitSweep $hook.Name }; & $hook @Arguments }
 }
 
 # ---- board: who is alive; one writer per worktree
@@ -829,10 +823,10 @@ function MrState0($ref) {
   if ($m.state -eq 'opened' -and ($m.has_conflicts -or $m.detailed_merge_status -eq 'conflict')) { return 'opened (conflict)' }
   $m.state
 }
-# MR links: the task's Items checklist (goody task-rollup), no MRs comment
+# MR links: the task's Items checklist (adapters/task_rollup.ps1), no MRs comment
 function Set-KitTaskMrItems($id) { if ($fn = Get-Command Update-KitTaskItems -ErrorAction Ignore) { try { $null = & $fn $id (Get-TrackerTask $id) -Force } catch { Write-Warning "Items of ${id} not updated: $_" } } }
 switch ($Action) {
-  'rebuild' { $rebuildFn = Assert-KitExtra Invoke-TrackRebuild 'track rebuild' 'track-rebuild'; & $rebuildFn }   # not $rebuild: that is the -Rebuild switch
+  'rebuild' { Invoke-TrackRebuild }
   'add' {
     $given = $Task; $Task = NormTask $Task
     $refs = @(@($Mrs -split '\s*,\s*') | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
@@ -1005,9 +999,9 @@ switch ($Action) {
     if ($script:merged) {
       Start-Detached (Resolve-Tool pwsh) @('-NoProfile', '-NonInteractive', '-File', $(if ($KitIsWindows) { "`"$($KitCmd.orch)`"" } else { $KitCmd.orch }), 'cleanup', '-WorktreesOnly', '-WorktreeIdleHours', "$(Get-KitParam cleanup.worktreeIdleHours)", '-Quiet')
     }
-    try { Invoke-KitHooks Invoke-KitTrackRollup @{ Quiet = $Quiet } } catch { "ROLLUP hook failed: $("$_".Split("`n")[0])" }   # goody task-rollup: parents' delivery sections
+    try { Invoke-KitHooks Invoke-KitTrackRollup @{ Quiet = $Quiet } } catch { "ROLLUP hook failed: $("$_".Split("`n")[0])" }   # adapters/task_rollup.ps1: parents' delivery sections
   }
-  'rollup' { $rollFn = Assert-KitExtra Invoke-TaskRollup 'track rollup' 'task-rollup'; & $rollFn -Task $Task -From $From -Quiet:$Quiet }
+  'rollup' { Invoke-TaskRollup -Task $Task -From $From -Quiet:$Quiet }
 }
 }
 
@@ -1164,7 +1158,7 @@ $nAct = [math]::Max($active.Count, @(Get-KitLiveTranscripts $now 10 '*').Count) 
 Phase 'memory'; $mem = Get-SysMem; $pct = [int](100 * (1 - $mem.AvailGB / $mem.TotalGB)); L "memory: $pct% used, $([math]::Round($mem.AvailGB, 1)) GB available"
 $state.load = @{ at = $now.ToString('o'); availGB = $mem.AvailGB; cpu = (Get-SysCpu); agents = $nAct + $wfAgents.Count }   # for Get-KitLoadTags
 $keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($mem.TotalGB * 0.15)))) }
-# goody hooks see $now, $mem, $keepFree, Within, Left; return {level,what,action} flag, {name,by,gb} row, {info} owner line, {ramNeed} GB, a sweep line
+# adapter hooks see $now, $mem, $keepFree, Within, Left; return {level,what,action} flag, {name,by,gb} row, {info} owner line, {ramNeed} GB, a sweep line
 $res = [Collections.Generic.List[object]]::new(); $script:ownerInfo = @(Get-KitParamChanges $(if ($state.settingsSeen) { [datetime]$state.settingsSeen } else { $now.AddHours(-1) })); if ($AutoFix -and $me -ne 'os-timer') { $state.settingsSeen = $now.ToString('o') }; $script:ramNeed = 0   # SETTINGS changed since last beat
 function Add-KitResult($x) { if ($x -is [string]) { L $x } elseif ($x.level) { Set-ActSection $x.level $x.what; [void]$flags.Add($x) } elseif ($x.info) { $script:ownerInfo += $x.info } elseif ($x.ramNeed) { $script:ramNeed = [math]::Max($script:ramNeed, [double]$x.ramNeed) } elseif ($x.name) { $res.Add($x) } }
 # machine guards first (build gate, cache flush, phones, QA seats)
@@ -1179,12 +1173,12 @@ if (Within 'state files') {   # unreadable state files (STATE.md)
 Phase 'guard log'; $blocks = @(Read-KitLog guard $now.AddHours(-1) | Where-Object event -eq 'deny')
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: bossy.ps1 audit -Since 1h shows them; add a contracts note or a lesson so they stop.' }
 
-# 4. -AutoFix: tracker, outbox, cleanup (inTest: deploys goody hook)
+# 4. -AutoFix: tracker, outbox, cleanup (inTest: deploys adapter hook)
 if ($AutoFix -and (Within 'tracker checks')) {
   # an agent with the MR branch checked out is on it
   function OwnerOf($repo, $iid) {
     $proj = if ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$repo" } else { $repo }
-    $src = try { (Invoke-HostApi "projects/$([uri]::EscapeDataString($proj))/merge_requests/$iid").source_branch } catch { $null }   # a goody host adapter throws
+    $src = try { (Invoke-HostApi "projects/$([uri]::EscapeDataString($proj))/merge_requests/$iid").source_branch } catch { $null }   # a vendor host adapter throws
     if (-not $src) { return $null }
     foreach ($e in @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 30 })) {
       foreach ($w in @($e.worktrees)) {
@@ -1269,12 +1263,9 @@ if ($blk.Count) {   # native question tool, 4 per call
 }
 if ($fyi.Count) { Flag 'WATCH' "DECISION $($fyi.Count) FYI: $(@($fyi.id) -join ', ')" "In your report: decide list -Fyi; the owner's '1 A, 2 B' -> decide answer per number" @{ kind = 'DECISION FYI'; who = @($fyi.agent) -join ', '; problem = @($fyi.question) -join ' / ' } }
 
-# 7. goodies' checks: result shapes as in section 3
+# 7. adapters' checks: result shapes as in section 3
 foreach ($x in @(Invoke-KitHooks Get-KitSuperviseFlags @{ AutoFix = $AutoFix })) { Add-KitResult $x }
 if ($script:ramNeed -and $mem.AvailGB -lt $keepFree + $script:ramNeed) { Flag 'ACT' "RAM: $([math]::Round($mem.AvailGB, 1)) GB free < floor $keepFree + the largest waiting build $($script:ramNeed) GB" "Free the biggest: $((@($res | Where-Object { $_.gb } | Sort-Object { -$_.gb } | Select-Object -First 3 | ForEach-Object { "$($_.name) $([math]::Round($_.gb, 1)) GB" })) -join '; ')" }
-# goodies the config needs (offline: last fetched branch)
-$need = if ((Within 'goodies') -and (Get-Command (Get-Python) -ErrorAction SilentlyContinue)) { @(& (Get-Python) -X utf8 $KitCmd.kitbag goody check 2>$null) }
-if ($need) { Flag 'ACT' "missing goodies: $($need -join '; ')" "python -X utf8 $($KitCmd.kitbag) goody sync (between runs: it may update installed goodies)" }
 
 # 8. retro due, budgets
 Phase 'retro'; if (-not $runTotal) {
@@ -1367,7 +1358,7 @@ $addressed = @($findings | Where-Object { $_.severity -ne 'nit' -and $agents[$_.
 $open = @($findings | Where-Object { $_.severity -ne 'nit' -and -not $agents[$_.agent].fixedRound })
 # host state wins
 foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if ($u = ConvertFrom-MrUrl $m.url) {
-  $h = try { Invoke-HostVerb 'mr.get' $u } catch { $null }   # a goody host adapter throws
+  $h = try { Invoke-HostVerb 'mr.get' $u } catch { $null }   # a vendor host adapter throws
   if ($h.state -in 'merged', 'opened', 'closed') { $m.merged = $h.state -eq 'merged'; $m.mergeState = if ($m.merged) { 'MERGED' } elseif ($h.state -eq 'closed') { 'NOT_MERGED' } elseif ($h.merge_when_pipeline_succeeds) { 'SCHEDULED' } else { 'OPEN' } } } } }
 $out = [ordered]@{ run = $Run; at = (Get-Date).ToString('o'); running = $running; stopped = $cut0; agents = $agents; openFindings = $open; qa = $qa; learn = $learn }
 $wavesDir = Get-KitPath waves -Create
@@ -1528,7 +1519,7 @@ $runName = "bugfix-$($Task)"
 $md = @"
 # Bug-fix brief: $($j.name)
 
-Follow ``$claude/skills/crafty/templates.md`` "Bug-fix brief", ``$claude/skills/crafty/SKILL.md`` and ``$claude/skills/envy/SKILL.md`` "Debug locally" (goody local-env).
+Follow ``$claude/skills/crafty/templates.md`` "Bug-fix brief", ``$claude/skills/crafty/SKILL.md`` and ``$claude/skills/envy/SKILL.md`` "Debug locally".
 This brief wins where they differ.
 
 Task: $($j.url) — checks $ids to fix. **Reproduce each check on the local env FIRST** (template steps 1-4).
@@ -1556,7 +1547,7 @@ $($rows -join "`n")
 Branches ``fix/$($KitConf.TrackerTag)$Task-<slug>``; worktree prefix ``$slugAgent``; board run ``$runName``. Tracker (``$claude/skills/crafty/crafty.ps1 tracker``):
 in progress → review (bossy.ps1 track sets promoted when all merge). The workflow merges after review: do NOT merge yourself.
 Register: ``$claude/skills/bossy/bossy.ps1 track add -Task $Task -Discover``.
-Phones (app bugs, goody android-swarm): the local-env APK (``phoney.ps1 build -Local``, ``phoney.ps1 acquire -Agent $Agent -Apk local``); release it when done.
+Phones (app bugs): the local-env APK (``phoney.ps1 build -Local``, ``phoney.ps1 acquire -Agent $Agent -Apk local``); release it when done.
 "@
 $dir = Get-KitPath briefs -Create
 $out = Join-Path $dir "$Task.md"
@@ -1657,7 +1648,7 @@ if (-not $Quiet) { $summary; $groups | ForEach-Object { '{0,9:N1} MB {1,5} x  {2
 $global:LASTEXITCODE = 0
 }
 
-# ---- learn: signals + LESSONS.md (edits, -Stats, -History: goody kit-admin)
+# ---- learn: signals + LESSONS.md (edits, -Stats, -History: adapters/kit_admin.ps1)
 # lessons as LF lines; a "## <name>" section as [start, end)
 function Read-KitLessonLines([string]$Path) { if (Test-Path $Path) { , [Collections.Generic.List[string]]@(([IO.File]::ReadAllText($Path) -replace "`r", '') -split "`n") } else { , [Collections.Generic.List[string]]::new() } }
 function Find-KitLessonSection($Lines, [string]$Name) { $s = $Lines.IndexOf("## $Name"); if ($s -lt 0) { return $null }; $e = $s + 1; while ($e -lt $Lines.Count -and $Lines[$e] -notmatch '^## ') { $e++ }; , @($s, $e) }
@@ -1669,7 +1660,7 @@ function Invoke-Learn {
     [string]$Lesson, [string]$When, [string]$Do, [string]$Why, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
   )
   if ($Stats -or $History -or $Lesson -or $When -or $Fixed -or $Bump -or $Trim) {   # the retro's tools (kitty, /tidy)
-    $admin = Assert-KitExtra Invoke-LearnAdmin 'learn -Stats / -History / -When / -Bump / -Fixed / -Trim' 'kit-admin'; & $admin @PSBoundParameters; return
+    Invoke-LearnAdmin @PSBoundParameters; return
   }
   $file = Get-KitPath signals -Create
   if ($Show) { if (Test-Path $file) { Get-Content $file -Tail $Last | ForEach-Object { $s = $_ | ConvertFrom-Json; '{0} {1,-13} {2,-15} {3}{4}' -f ([datetime]$s.at).ToString('yyyy-MM-dd HH:mm'), $s.skill, $s.kind, $s.text, $(if ($s.ref) { " [$($s.ref)]" }) } }; return }
@@ -1873,14 +1864,13 @@ $ErrorActionPreference = 'SilentlyContinue'
 $kit = $KitConf.Kit
 $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
 if ($Checks) {   # 6-7 s: background, health shows the last run
-  if ($py) { "$(& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null)"; foreach ($c in 'port --deploy', 'port --check', 'goody check') { & $py -X utf8 $KitCmd.kitbag @($c -split ' ') 2>$null } }
+  if ($py) { "$(& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null)"; foreach ($c in 'port --deploy', 'port --check') { & $py -X utf8 $KitCmd.kitbag @($c -split ' ') 2>$null } }
   exit 0
 }
 if ($Flow -or $Fetch) {
   if ($Fetch -and (Test-Path (Join-Path $kit '.git'))) {
     git -C $kit fetch --quiet 2>$null
     # async: a failure = one hook-error line
-    if ($py) { $sync = & $py -X utf8 $KitCmd.kitbag goody sync 2>&1; if ($LASTEXITCODE) { Write-KitLog calls hook-error @{ error = "goody sync failed: $($sync -join ' ')" } } }
     $null = Test-KitWake   # reboot or wake: re-evaluate learned params
   }
   if ($Flow -and $py) { & $py -X utf8 $KitCmd.kitbag flow $kit | Out-Null }
@@ -1903,7 +1893,7 @@ if (Test-Path (Join-Path $kit '.git')) {
   if ((git -C $kit config core.hooksPath 2>$null) -ne '.githooks') { $parts += "pre-push gate off (run: pwsh -File $($KitCmd.orch) setup)" }
   $pf = Get-KitPath kit-protect
   $st = if (Test-Path $pf) { @(Get-Content $pf | Where-Object { $_ }) }; $bad = if (-not $st) { 'unchecked' } else { @($st | Where-Object { $_ -notmatch '^\S+ (ok|set|skip)' }) }
-  if ($bad) { $parts += "origin main / goodies protection: $($bad -join ', ') (run: bossy.ps1 setup)" }
+  if ($bad) { $parts += "origin main protection: $($bad -join ', ') (run: bossy.ps1 setup)" }
   if ($parts) { $msgs += "kit: " + ($parts -join '; ') }
 } else {
   $msgs += "kit: $kit is not a git clone of the kit repo (install: README Install)"
@@ -1922,10 +1912,10 @@ if (-not $hook -or $hook.source -ne 'compact') {
 if ($py) { $msgs += @(Invoke-KitBackground 'health checks' $KitCmd.orch @('health', '-Checks')) }
 $od = @(Get-KitBeatOverdue); $msgs += $od   # after a compaction too
 if (-not $od.Count -and ($stopped.Count -or @(Read-KitJsonFiles (Get-KitPath board) | Where-Object status -NotIn 'left', 'crashed').Count)) { $msgs += "heartbeat: $(Get-KitBeatArmLine)" }
-$msgs += @(Invoke-KitHooks Get-KitOsBeatHealth)   # goody os-timer
+$msgs += @(Invoke-KitHooks Get-KitOsBeatHealth)   # adapters/os_timer.ps1
 if ($rs = Get-KitRepoSweep) { $msgs += "repos ($(([datetime]$rs.at).ToString('MM-dd HH:mm')) sweep): $(@($rs.repos | ForEach-Object { "$($_.repo) $($_.branches) branches · $($_.worktrees) worktrees$(if ($_.removable) { " · $($_.removable) to clean" })$(if ($_.kept) { " · $($_.kept) kept" })" }) -join '; ') (kept = unpushed, open or dirty: bossy.ps1 cleanup -DryRun -Detail)" }
 if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
-$msgs += @(Invoke-KitHooks Get-KitHealthLines)   # goody kit-admin: weekly audit nudge
+$msgs += @(Invoke-KitHooks Get-KitHealthLines)   # adapters/kit_admin.ps1: weekly audit nudge
 Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }) $hook
 exit 0
 }
@@ -1963,13 +1953,10 @@ $idle = if ($busy) { "skip: $($busy.Count) live board agent(s) ($(@($busy.agent 
 $opt = { param([string]$Fn, [scriptblock]$Call) $c = Get-Command $Fn -CommandType Function -ErrorAction SilentlyContinue; if ($c) { & $Call $c } else { "skip: $Fn not in this kit yet" } }   # function from another kit change
 
 # upkeep: a failed step is listed, the rest still run
-& $run 'goodies sync' { if ($idle) { $idle } elseif ($DryRun) { 'skip: dry run' } else { & $py 'goody', 'sync' } }
-& $run 'goodies prune' { if ($idle) { $idle } else { & $opt Invoke-ExtrasPrune { param($c) & $c -DryRun:$DryRun } } }
 & $run 'param learn' { if ($DryRun) { 'skip: dry run' } else { & $opt Invoke-ParamLearn { param($c) & $c } } }
 & $run 'cleanup' { Invoke-Cleanup -DryRun:$DryRun | Select-Object -First 6 }
 & $run 'worktree prune' { $ga = @('-C', $KitConf.Kit, 'worktree', 'prune', '-v') + @(if ($DryRun) { '-n' }); git @ga 2>&1; if (-not $?) { throw 'git worktree prune failed' } }
 & $run 'lint' { $l = @(& (Get-Python) -X utf8 $KitCmd.kitbag lint --warn --no-flow 2>&1 | ForEach-Object { "$_" }); @($l | Where-Object { $_ -like 'kitbag lint:*' }) + @($l | Where-Object { $_ -notlike 'kitbag lint:*' } | Select-Object -First 10) }   # count first: digest keeps the head
-& $run 'goodies' { @(& $py 'goody', 'list' | Where-Object { $_ -match '^\*\s+(\S+)' } | ForEach-Object { $Matches[1] }) -join ', ' }
 
 $sig = @(Get-Content (Get-KitPath signals) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} })
 $new = @($sig | Where-Object { $_.kind -ne 'retired' -and [datetime]$_.at -gt $since })
@@ -2071,7 +2058,6 @@ foreach ($k in $want.Keys) {
   if ($WriteLocal) { $want[$k] | ConvertTo-Json -Depth 20 | Set-Content $f -Encoding utf8; Say "wrote $k from kit.example.json: fill in the <...> values (git-ignored)" }
   else { Say "to do: $k is missing (setup -WriteLocal writes it from kit.example.json, then fill it in)" }
 }
-if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { foreach ($x in @(& (Get-Python) -X utf8 $KitCmd.kitbag goody sync 2>&1)) { Say $x } }
 if (Test-Path "$kit/../.codex") { Say 'codex: approve the kit hooks once (/hooks)' }
 Say 'kit ready.'
 }
@@ -2100,7 +2086,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
   if ($__verb -in '-h', '--help', 'help', '-?') { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 0 }
   switch ($__verb) {
     'board' {
-      if ($__rest[0] -in 'dispute', 'disputes') { $null = Assert-KitExtra Invoke-BoardDispute 'board dispute' 'duel'; Invoke-KitVerb Invoke-BoardDispute $__rest }
+      if ($__rest[0] -in 'dispute', 'disputes') { [Console]::Error.WriteLine('bossy.ps1 board dispute: no such verb; disputes run inside /buildy (devy fix round disputes[], revy answers once)'); exit 2 }
       else { Invoke-KitVerb Invoke-Board $__rest }
     }
     'learn' { Invoke-KitVerb Invoke-Learn $__rest }
@@ -2115,7 +2101,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'bugbrief' { Invoke-KitVerb Invoke-BugBrief $__rest }
     'cleanup' { Invoke-KitVerb Invoke-Cleanup $__rest }
     'tidy' { Invoke-KitVerb Invoke-Tidy $__rest }
-    'deploy' { $null = Assert-KitExtra Invoke-Deploy 'bossy.ps1 deploy' 'deploys'; Invoke-KitVerb Invoke-Deploy $__rest }
+    'deploy' { Invoke-KitVerb Invoke-Deploy $__rest }
     'decide' { Invoke-KitVerb Invoke-Decide $__rest }
     'debate' { Invoke-KitVerb Invoke-Debate $__rest }
     'recover' { Invoke-KitVerb Invoke-Recover $__rest }
@@ -2124,12 +2110,12 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'program' { Invoke-KitVerb Invoke-Program $__rest }
     'param' { Invoke-KitVerb Invoke-Param $__rest }
     'budget' { Invoke-KitVerb Invoke-Budget $__rest }
-    'heartbeat' { $fn, $gd = if ("$__rest" -match '^(install|uninstall|status|tick)\b') { 'Invoke-KitOsBeat', 'os-timer' } else { 'Invoke-Heartbeat', 'ports' }; $null = Assert-KitExtra $fn 'bossy.ps1 heartbeat' $gd; Invoke-KitVerb $fn $__rest }
+    'heartbeat' { $fn = if ("$__rest" -match '^(install|uninstall|status|tick)\b') { 'Invoke-KitOsBeat' } else { 'Invoke-Heartbeat' }; Invoke-KitVerb $fn $__rest }
     'health' { Invoke-KitVerb Invoke-Health $__rest }
     'setup' { Invoke-KitVerb Invoke-Setup $__rest }
     'guard-sendmessage' { Invoke-KitVerb Invoke-GuardSendMessage $__rest }
-    'prepush' { $null = Assert-KitExtra Invoke-PrePush 'bossy.ps1 prepush' 'kit-admin'; Invoke-KitVerb Invoke-PrePush $__rest }
-    'precommit' { $null = Assert-KitExtra Invoke-PreCommit 'bossy.ps1 precommit' 'kit-admin'; Invoke-KitVerb Invoke-PreCommit $__rest }
+    'prepush' { Invoke-KitVerb Invoke-PrePush $__rest }
+    'precommit' { Invoke-KitVerb Invoke-PreCommit $__rest }
     default { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 2 }
   }
 }

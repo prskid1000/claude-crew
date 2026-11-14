@@ -4,9 +4,9 @@ local-env.tests.ps1: envy.ps1 usage, leases, config, shell commands, doctor, log
 Usage: pwsh -NoProfile -File <kit>/tests/local-env.tests.ps1 (tests/kit-tests.ps1 -Area local-env); more envy checks: local-env-2/3/4.
 Exit codes: 0 pass · 1 a check failed.
 #>
-param([string]$Kit)   # kitbag.py goody test passes the kit; else this file sits next to <kit>/tests/harness.ps1
+param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
-# the goody's script is not in the core test kit: copy it in
+# envy.ps1 is not in the core test kit: copy it in
 function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; $kd }
 # localenv usage errors exit 2; a start-lock timeout throws, never runs unlocked
 $k2 = New-LocalEnvKit le2; $L2 = Join-Path $k2 'skills/envy/envy.ps1'

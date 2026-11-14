@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Goody ci-jenkins: Jenkins CI (ci jenkins).
-# Dot-sourced by lib.ps1 from skills/crafty/adapters/ (kitbag.py goody add ci-jenkins); helpers come from lib.ps1.
+# ci-jenkins: Jenkins CI (ci jenkins).
+# Dot-sourced by lib.ps1 from skills/crafty/adapters/ when config selects jenkins; helpers come from lib.ps1.
 # adapter:ci/jenkins: Jenkins REST (ci.url, ci.job = the multibranch job path, default "job/{repo}"; env ci.tokenEnv = JENKINS_TOKEN "user:api-token"); run id = <branch>#<build>
 function __Jk([string]$Repo, [string]$Ref, [string]$Tail) {
   $job = ([string](Get-KitSetting 'ci.job' 'job/{repo}')) -replace '\{repo\}', (("$Repo" -split '/')[-1])

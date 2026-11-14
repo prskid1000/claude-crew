@@ -13,11 +13,11 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
  checkpoint -Agent <id> [-Run <run>] -Step <step> [-Evidence] [-Dir <wt>] [-Next] | -Read  resume point (bossy.ps1 pause / resume)
- runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
+ runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L29 sweep · L177 wt · L493 stack · L673 gate · L989 check · L1306 pipes · L1363 guard · L2190 dir ·
-  L2200 checkpoint · L2229 prior · L2267 tracker · L2289 task spec · L2447 scope · L2489 host
+Sections: L23 init · L29 sweep · L177 wt · L493 stack · L673 gate · L989 check · L1302 pipes · L1359 guard · L2185 dir ·
+  L2195 checkpoint · L2224 prior · L2262 tracker · L2284 task spec · L2442 scope · L2484 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -138,7 +138,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     if (-not $ctx[$rp].keep) { $ctx[$rp].keep = Get-KitKeepBranchRx $rp }
     if ($br -and $br -match $ctx[$rp].keep) { continue }   # env / default worktrees: their owners'
     if (git -C $d status --porcelain 2>$null) { & $keep "$d$(if ($br) { " ($br)" })" 'uncommitted files'; if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($idleH / 24)) d: kept (never deleted; commit or remove it by hand)" }; continue }
-    # an unclaimed deploymerge-* (goody deploys) idle idle.graceMinutes, min 60 (CI waits write nothing): blocks the next merge
+    # an unclaimed deploymerge-* (bossy.ps1 deploy merge) idle idle.graceMinutes, min 60 (CI waits write nothing): blocks the next merge
     $dm = $w.Name -like 'deploymerge-*' -and $d.ToLower() -notin $claimed -and $newest -and ($now - $newest).TotalMinutes -ge [math]::Max(60, [double](Get-KitParam 'idle.graceMinutes'))
     if (-not $dm -and $idleH -lt $IdleHours) { & $keep "$d ($br)" "active, changed $([int]($idleH * 60)) min ago"; continue }
     if (-not (Invoke-GitFetch -Dir $d)) { & $keep $d 'git fetch failed'; continue }
@@ -565,7 +565,7 @@ function Get-Stack($d) {
   }
   elseif (Has $d 'build.gradle', 'build.gradle.kts', 'settings.gradle*') {
     $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
-    # Android: goody stack-presets
+    # Android: adapters/stack_presets.ps1
     $android = [bool](Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ErrorAction SilentlyContinue | Select-Object -First 1)
     if (-not $android) {
       $s = 'gradle'
@@ -638,10 +638,10 @@ function Get-Stack($d) {
     if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
-  # goody stack-presets
+  # adapters/stack_presets.ps1
   foreach ($plugin in @($KitAdapters.stack.Values | Where-Object { $_ })) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
-  if (-not $s -and -not $ovr.stack -and ($android -or (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile'))) { throw (Get-KitExtraLine 'stack' 'presets') }
+  if (-not $s -and -not $ovr.stack -and ($android -or (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile'))) { throw "stack: no preset detects $d (a .claude-stack.json sets one; README ""Adapters"")" }
   if (-not $s -and -not $ovr.stack) { return $null }   # an override's stack alone counts
 
   if ($ovr) {
@@ -699,7 +699,7 @@ $script:GateKinds = [ordered]@{
   'native' = @('cmake --build|\bmake\b', 3)
   'js-test' = @('jest|vitest', 2)
   'tsc-lint' = @('\btsc\b|eslint', 2)
-  'local-ai' = @('video\.py"? transcribe\b', 2)   # goody media-evidence: -NeedGB = the STT server's RAM
+  'local-ai' = @('video\.py"? transcribe\b', 2)   # pokey.ps1 evidence: -NeedGB = the STT server's RAM
   'python' = @('pytest|mypy|ruff|compileall|-m unittest\b|\btest_\w*\.py\b', 1.5)
   'go' = @('go (build|test|vet)', 2)
 }
@@ -814,7 +814,7 @@ function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) 
 $estimate = Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB   # default of learned gate.needGB per kind|project
 $need = if ($NeedGB -gt 0) { $NeedGB } else { [math]::Min((Get-SysMem).TotalGB * 0.6, [double](Get-KitParam 'gate.needGB' $estimate $histKey)) }
 
-# goody build-heap: heap cap from learned peak, floor under pressure
+# adapters/build_heap.ps1: heap cap from learned peak, floor under pressure
 $heap = 0; $heapFloor = 0; $heapTool = $null
 if (($hp = Get-Command Get-GateHeap -ErrorAction SilentlyContinue) -and ($h = & $hp $kind $peaks $NeedGB $need)) { $heap = $h.heap; $heapFloor = $h.floor; $need = $h.need; $heapTool = $h.tool }
 
@@ -1090,12 +1090,12 @@ function Get-TestLock([string[]]$Names) {
     }
   }
 }
-# repos[].migrations.check, else goody liquibase; other tools = UNRUN (exit 5)
+# repos[].migrations.check, else adapters/liquibase.ps1; other tools = UNRUN (exit 5)
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
   $chk = (Get-CheckRepo).conf.migrations.check
   if ($chk) { if ($Show) { "migrations : $chk"; exit 0 }; Write-Host "[check] migrations: $chk"; & $KitCmd.dev gate -Dir $top -Cmd $chk; exit $LASTEXITCODE }
-  $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue   # goody liquibase
+  $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue
   $lbm = Get-Command Get-LiquibaseMasters -ErrorAction SilentlyContinue
   $masters = @(if ($lbm) { & $lbm $top } else { git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' } })
   # other tools (Flyway, Alembic, Prisma): no kit check
@@ -1103,7 +1103,6 @@ if ($Step -eq 'migrations') {
   $other = @(if ($lbm) { & $lbm $top -Other }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
-  if (-not $lb) { Resolve-KitExtra liquibase; Write-Host '[check] migrations UNRUN: the Liquibase check is a goody: run kitbag.py goody add liquibase'; exit $(if ($Show) { 0 } else { 5 }) }
   if ($Show) { & $lb -Top $top -Masters $masters -Since $Since -Show; exit 0 }
   $rc = & $lb -Top $top -Masters $masters -Since $Since
   exit $(if (-not $rc -and $other.Count) { 5 } else { $rc })
@@ -1203,8 +1202,6 @@ foreach ($s in $steps) {
   if (-not $cmd -and $s -eq 'test' -and (Test-Path -LiteralPath (Join-Path $st.dir 'package.json'))) { $cmd = "node `"$($KitCmd.spec)`" {tests}" }
   if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
   if ($s -eq 'test' -and $cmd -match 'spec\.mjs' -and -not $Show) {
-    # no unit-test target: goody node-spec
-    if (-not (Test-Path -LiteralPath $KitCmd.spec)) { Write-Host '[check] test UNRUN: the node spec runner is a goody: run kitbag.py goody add node-spec'; exit 5 }
     if ($RealAngular) { $cmd += ' --real-angular' }
   }
   if ($Touched -and $s -eq 'test') {
@@ -1240,7 +1237,7 @@ foreach ($s in $steps) {
     }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
-  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue }   # goody runtimes
+  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue }   # adapters/container_tests.ps1
   if ($ct) {
     $rc = & $ct
     if ($rc -and -not $Show) { exit $rc }
@@ -1277,8 +1274,8 @@ foreach ($s in $steps) {
   }
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }
   if ($Show) { "$s : $cmd"; continue }
-  $unrun = $false; $runLog = $runText = $null   # goody ts-typecheck: a huge tsc baseline = unrun (exit 5)
-  $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }   # goody ts-typecheck
+  $unrun = $false; $runLog = $runText = $null   # adapters/ts_typecheck.ps1: a huge tsc baseline = unrun (exit 5)
+  $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }
   if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else {
     $lk = if ($s -eq 'test') { Get-TestLock @($Tests -split '[,\s]+' | Where-Object { $_ }) }
@@ -1291,7 +1288,6 @@ foreach ($s in $steps) {
       if ($runLog) { $runText = Get-Content -LiteralPath $runLog -Raw -Encoding utf8 -ErrorAction SilentlyContinue; if ($runText) { Write-Host $runText.TrimEnd() }; Remove-Item -LiteralPath $runLog -ErrorAction SilentlyContinue } }
   }
   $ran++
-  if ($rc -and $s -eq 'typecheck' -and $cmd -match '\btsc\b' -and -not $tc) { Write-Host '[check] errors outside your changes fail here: the baseline split is a goody: run kitbag.py goody add ts-typecheck' }
   $stale = if ($rc -and $runLog) { @(Get-PyStaleModules $st.dir $pyRun $runText $tl) } else { @() }   # 24 of 39 python builds failed on the env, not the code
   if ($stale.Count) { Write-PyStaleEnv $st.dir $pyRun $stale; Write-Host "[check] exit 5: $s UNRUN (stale-env, test exit $rc)"; exit 5 }
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
@@ -1472,19 +1468,18 @@ if ($SelfTest) {
   @('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
   @('B', 'git push origin HEAD:main', $false, 'force-push'),
   @('B', 'git push -fu origin main', $true, 'force-push'),
-  @('B', 'git -C "{KIT}" push origin --force-with-lease HEAD:goodies', $true, $pb),
-  @('P', 'git -C "{KIT}" push origin ":goodies"', $true, $pb),
-  @('B', 'cd "{KIT}" && git push origin --delete "goodies"', $true, $pb),
+  @('P', 'git -C "{KIT}" push origin ":main"', $true, $pb),
+  @('B', 'cd "{KIT}" && git push origin --delete "main"', $true, $pb),
   @('P', 'Set-Location -Path "{KIT}"; git push -d origin main', $true, $pb),
   @('P', 'Push-Location "{KIT}"; git push --mirror origin', $true, $pb),
-  @('B', 'git -C "{KIT}" branch -D goodies', $true, $pb),
-  @('B', 'git -C "{KIT}" branch -f goodies HEAD~1', $true, $pb),
-  @('P', 'git -C "{KIT}" branch -dr origin/goodies', $true, $pb),
-  @('P', 'git -C "{KIT}" update-ref -d refs/remotes/origin/goodies', $true, $pb),
-  @('B', 'git -C "{KIT}" push -u origin HEAD:goodies; git -C "{KIT}" branch --show-current', $false, $pb),
+  @('B', 'git -C "{KIT}" branch -D main', $true, $pb),
+  @('B', 'git -C "{KIT}" branch -f main HEAD~1', $true, $pb),
+  @('P', 'git -C "{KIT}" branch -dr origin/main', $true, $pb),
+  @('P', 'git -C "{KIT}" update-ref -d refs/remotes/origin/main', $true, $pb),
+  @('B', 'git -C "{KIT}" push -u origin HEAD:main; git -C "{KIT}" branch --show-current', $false, $pb),
   @('B', 'git -C "{KIT}" push origin --delete kit/build-x; git -C "{KIT}" branch -D kit/main-x', $false, $pb),
   @('B', 'git -C /nowhere/repo push origin --delete main; git -C /nowhere/repo branch -D develop', $false, $pb),
-  @('B', 'git -C /nowhere/repo push origin --force-with-lease HEAD:goodies', $false, $pb),
+  @('B', 'git -C /nowhere/repo push origin --force-with-lease HEAD:release', $false, $pb),
   @('P', 'git -C "{KIT}" commit -m "never git push origin --delete main"', $false, $pb),
   @('B', 'git commit -n -m "x"', $true, $hk),
   @('B', 'git -c core.hooksPath=/dev/null commit -m x', $true, $hk),
@@ -1528,11 +1523,11 @@ if ($SelfTest) {
   @('P', '& D:/k/skills/crafty/crafty.ps1 check -Dir web -Step e2e', $false, 'e2e runs go through'), @('B', 'crafty.ps1 check -Dir w -Step test; npx cypress run', $true, 'e2e runs go through'),
   @('B', 'npx tsc -p cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through'),
   # a file path as the command (G = Antigravity run_command; Codex sends Bash, also with PowerShell text)
-  @('B', '"{KIT}/goodies/task-rollup/GOODY.md"', $true, $rt), @('B', '{CR}/NOTICE', $true, $rt), @('B', 'cd "{CR}" && ./NOTICE', $true, $rt),
+  @('B', '"{KIT}/skills/bossy/SKILL.md"', $true, $rt), @('B', '{CR}/NOTICE', $true, $rt), @('B', 'cd "{CR}" && ./NOTICE', $true, $rt),
   @('B', 'start {CR}/NOTICE', $true, $rt), @('B', '& "{CR}\NOTICE"', $true, $rt), @('B', 'cd x; "./tool.ps1" -A', $true, $rt),
   @('B', 'cd "{CR}" && ./run; bash .githooks/pre-push; cat "{KIT}/README.md"; echo "a; ./x.md"; ls {KIT}', $false, $rt),
   @('P', '& "{CR}/NOTICE"', $true, $rt), @('P', '& "{KIT}"', $true, $rt), @('P', 'Set-Location "{CR}"; .\NOTICE', $true, $rt),
-  @('P', '$g = Join-Path "{KIT}" ''goodies/task-rollup/GOODY.md''; & $g', $true, $rt), @('P', '$f = "{KIT}/README.md"; Start-Process -FilePath $f', $true, $rt),
+  @('P', '$g = Join-Path "{KIT}" ''skills/bossy/SKILL.md''; & $g', $true, $rt), @('P', '$f = "{KIT}/README.md"; Start-Process -FilePath $f', $true, $rt),
   @('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('G', '{CR}\NOTICE', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
   @('B', "git log \`n  -- docs/readme.md; git diff \`n  skills/crafty/crafty.ps1", $false, $rt),
   @('P', '$py = ''C:/x/python.exe''; & $py a.py; Get-Content "{CR}/NOTICE"; "{KIT}/README.md" | Out-Null; cd "{KIT}"; .\.githooks\pre-commit.ps1', $false, $rt),
@@ -2139,19 +2134,19 @@ if ($cmd) {
     if ($w -match '(^|[\\/])sed(\.exe)?$' -and @($tk | Where-Object { $_ -match '^(-[a-zA-Z]*i\S*|--in-place\S*)$' }).Count) { foreach ($h in $pa) { if (($cf = CrlfKitFile $h $cur)) { Deny "sed -i rewrites $cf (a tracked CRLF kit file) to LF: use the Edit tool" } } }
   }
 }
-# kit main and goodies: never forced, deleted or moved
+# kit main: never forced, deleted or moved
 if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitCommon (Split-Path (Split-Path $K)))) {
   $dirs = @([regex]::Matches($raw, '(?:\s-C|\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location))\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))') | ForEach-Object { $x = $_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value; if ([IO.Path]::IsPathRooted($x)) { $x } else { Join-Path $here $x } })
   if (@(@($(if ($dirs) { $dirs } else { $here })) | Where-Object { (GitCommon $_) -eq $kg }).Count) {
     $u = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs
-    $pr = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(main|goodies)$'
+    $pr = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(main)$'
     foreach ($m in [regex]::Matches($u, '\bgit\b[^|;&]*\b(push\b|branch\b|update-ref\b)[^|;&]*')) {
       $p = $m.Value; $tk = -split $p; $hit = @($tk | ForEach-Object { if ($_ -match $pr) { $Matches[1] } })[0]
       $bad = switch ($m.Groups[1].Value) {
         'push' { $p -match '--mirror|--prune' -or ($hit -and ($p -match '--force|--delete|\s-[a-zA-Z]*[fd][a-zA-Z]*(?=\s|$)' -or @($tk | Where-Object { $_ -match '^[+:]' -and $_ -match $pr }).Count)) }
         'branch' { $hit -and $p -match '\s(-[a-zA-Z]*[dDfMm][a-zA-Z]*|--delete|--force|--move)(?=\s|$)' }
         default { [bool]$hit } }
-      if ($bad) { Deny "$(if ($hit) { $hit } else { 'main / goodies' }): a protected kit branch: fast-forward pushes only (rebase on origin first); never force-push, delete or move it (README ""Goodies"")." }
+      if ($bad) { Deny "$(if ($hit) { $hit } else { 'main' }): a protected kit branch: fast-forward pushes only (rebase on origin first); never force-push, delete or move it." }
     }
   }
 }
@@ -2179,7 +2174,7 @@ $bgNote = $null; if ($in.tool_input.run_in_background -eq $true) {
     $(if ($raw -match '(?m)(^\s*|[;&(]\s*)cat\s*(>\s*\S+\s*)?($|[;&|)])') { 'cat with no file reads stdin' }),
     $(if ($raw -match '\bpython\d*(\.exe)?\s+-(\s|$)' -and $raw -notmatch '\bpython\d*(\.exe)?\s+-\s*<|\|\s*python') { 'python - reads its script from stdin' }) | Where-Object { $_ })
   if ($bgWhy) { $bgNote = @("kit guard: this background shell may never end ($($bgWhy -join '; ')): bound it (timeout <s> <cmd>, a loop counter), no stdin reads; supervise flags hung shells (Shells table)") } }
-# goody rules (Register-KitAdapter 'guard') last: notes only follow commands that run
+# adapter rules (Register-KitAdapter 'guard') last: notes only follow commands that run
 $notes = foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
 LayoutCheck; $notes = @(@($notes) + $script:layoutNote + $bgNote | Where-Object { $_ })
 if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
@@ -2522,7 +2517,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
     'tracker' { Invoke-KitVerb Invoke-Tracker $__rest }
     'host' { Invoke-KitVerb Invoke-Host $__rest }
     'scope' { Invoke-KitVerb Invoke-Scope $__rest }
-    'runtime' { if (Get-Command Invoke-Runtime -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Runtime $__rest } else { [Console]::Error.WriteLine('crafty.ps1 runtime is a goody: run kitbag.py goody add runtimes'); exit 1 } }
+    'runtime' { Invoke-KitVerb Invoke-Runtime $__rest }
     default { Get-Content $PSCommandPath -TotalCount 18 | Select-Object -Skip 1; exit $(if ($__verb -in '-h', '--help', 'help', '-?') { 0 } else { 2 }) }
   }
 }

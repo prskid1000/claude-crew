@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# build-heap (goody): heap caps for the JVM (Maven, Gradle) and Node builds crafty.ps1 gate starts: the learned peak x 1.25 (no
+# build-heap: heap caps for the JVM (Maven, Gradle) and Node builds crafty.ps1 gate starts: the learned peak x 1.25 (no
 # history: gate.startHeapGB.<maven|gradle|node>), at least gate.heapMinGB; an inherited -Xmx / --max-old-space-size is replaced.
 # Dot-sourced from skills/crafty/adapters/; Invoke-Gate calls both functions.
 function Get-GateHeap([string]$Kind, [double[]]$Peaks, [double]$NeedGB, [double]$Need) {
