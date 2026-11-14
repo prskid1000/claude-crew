@@ -29,7 +29,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L46 config · L80 run · L168 tracker · L375 git host · L458 MR · L625 merge · L905 docs · L1060 publish · L1420 render ·
-  L1775 plugins · L1789 keepboth · L1808 selftest · L2225 CLI
+  L1775 plugins · L1789 keepboth · L1808 selftest · L2230 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -334,14 +334,14 @@ def finish(tid, guide, solution_md, status='review', ai=None):
         ok, ev = local_pass(tid)
         if not ok:
             raise SystemExit(f'finish {tid}: the local test loop is {"at " + repr(ev) if ev else "not recorded"}, not PASS (crafty.ps1 checkpoint -Step loop -Item {tid} -Evidence "round <n> PASS"). Nothing was written.')
-    t = task(tid)
+    t, ts = task(tid), state_read(task_file(tid[len(TAG):] if TAG and tid.startswith(TAG) else tid)) or {}   # state keys carry no tag
     rd = lambda f: open(f, encoding='utf-8').read()
     rounds = _pub_read(f'{tid}:testing-ai').get('rounds') or []
     ai_md = rd(ai) if os.path.isfile(ai) else ((rounds or [{}])[-1].get('body') or '')
     own = rounds[:-1] if rounds and rounds[-1].get('body') == ai_md else rounds   # the newest round, already published, is the caller's
     gaps = case_gaps(ai_md, rd(guide) if os.path.isfile(guide) else None, t.get('description') or '', [r['body'] for r in own],
                      f'finish {tid}', [r['body'] for r in _pub_read(f'{tid}:testing-doc').get('rounds') or []], tid,
-                     {str(e.get('id')) for e in ((state_read(task_file(tid)) or {}).get('cases') or {}).get('checks') or []
+                     {str(e.get('id')) for e in (ts.get('cases') or {}).get('checks') or []
                       if isinstance(e, dict) and e.get('by') and me_agent() and e['by'] != me_agent()}) if ai_md.strip() else []
     if gaps:
         raise SystemExit(f'finish {tid}: ' + '; '.join(gaps) + '. Fix the AI doc (run the cases), then finish again. Nothing was written.')
@@ -349,7 +349,7 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     md = t.get('description') or ''
     new = links_block(md, guide_url, ai_url)
     # failed lookup: describing would wipe the description
-    if (state_read(task_file(tid)) or {}).get('spec') and all(re.match(r'https?://', u) for u in (guide_url, ai_url)):   # a spec-rendered task refuses describe: the links go into its spec
+    if ts.get('spec') and all(re.match(r'https?://', u) for u in (guide_url, ai_url)):   # a spec-rendered task refuses describe: the links go into its spec
         _tracker('update', tid, '-Spec', json.dumps({'docs': {'human': guide_url, 'ai': ai_url}}) + '\n')   # \n: via a file, quotes kept
     elif t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
@@ -2182,8 +2182,13 @@ def _publish_selftest(expect, refused):
         calls.clear(); finish('T6', human, '**Solution** — x', ai='https://x/ai-doc')
         expect('finish: an unreadable AI doc (a URL) skips the case checks', any(a[0] == 'comment' for a in calls))
         task_index('T6', lambda x: x.update(spec={'title': 't'})); _pub_update('T6:testing-doc', url='https://x/h'); calls.clear()
-        finish('T6', 'https://x/h', '**Solution** — x', ai='https://x/ai-doc')
-        expect('finish on a spec-rendered task: links into its spec (tracker update), never describe', [a[0] for a in calls if a[0] in ('update', 'describe')] == ['update'])
+        w(os.path.join(kp('agents'), 'd1', 'resume.json'), json.dumps({'steps': [{'step': 'loop', 'item': 'CU-T6', 'evidence': 'round 1 PASS', 'at': '2026-10-29T10:00:00'}]}))
+        g['TAG'], tg = 'CU-', g['TAG']
+        try:
+            finish('CU-T6', 'https://x/h', '**Solution** — x', ai='https://x/ai-doc')
+        finally:
+            g['TAG'] = tg
+        expect('finish on a spec-rendered task (tagged id too): links into its spec (tracker update), never describe', [a[0] for a in calls if a[0] in ('update', 'describe')] == ['update'])
     finally:
         ADAPTERS['report']['markdown'].pop('evidence', None)
         g.update(saved); shutil.rmtree(tmp, ignore_errors=True)
