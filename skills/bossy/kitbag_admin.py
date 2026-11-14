@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L58 setup · L167 config · L326 recover · L471 release · L522 cost · L628 registry · L632 scan
+Sections: L16 helpers · L65 setup · L175 config · L354 recover · L499 release · L550 cost · L656 registry · L660 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -15,10 +15,17 @@ import os.path as osp
 
 # ---- helpers: example config, pwsh, the live kit
 OWN = KIT_DIR
-# (example file or localFiles entry, local file, what it holds)
-PAIRS = [('skills/crafty/kit.example.json', 'skills/crafty/kit.local.json', 'org settings (tracker, repos, reports, ...)'),
-  ('localFiles:skills/pokey/targets.local.json', 'skills/pokey/targets.local.json', 'QA targets and test logins (secrets)'),
-  ('localFiles:skills/phoney/swarm.config.json', 'skills/phoney/swarm.config.json', 'Android emulator lanes')]
+# (example file or localFiles entry, local file, what it holds): kit.example.json, each of its localFiles, phoney's lanes file (no example)
+def _pairs():
+    try:
+        with open(osp.join(OWN, 'skills/crafty/kit.example.json'), encoding='utf-8') as f:
+            lf = json.load(f).get('localFiles') or {}
+    except (OSError, ValueError):
+        lf = {}
+    return ([('skills/crafty/kit.example.json', 'skills/crafty/kit.local.json', 'org settings (tracker, repos, reports, ...)')]
+            + [(f'localFiles:{p}', p, re.split(r'[.:;(]', str((v or {}).get('_readme') or p))[0].strip() if isinstance(v, dict) else p) for p, v in lf.items()]
+            + [('localFiles:skills/phoney/swarm.config.json', 'skills/phoney/swarm.config.json', 'Android emulator lanes')])
+PAIRS = _pairs()
 
 def example_of(ex_rel):
     ex, err = load_json(osp.join(OWN, 'skills/crafty/kit.example.json'))
@@ -142,7 +149,8 @@ def cmd_setup(kit, fix):
             out('ACT', 'SETUP-CLI', exe, 'not on PATH (the kit needs it)')
     tt = (os.environ.get('KIT_TRACKER_TYPE') or get(cfg, 'tracker.type') or 'none').lower()
     need = {'clickup': ['clickup'], 'github': ['gh'], 'gitlab': ['glab'], 'jira': [], 'none': []}.get(tt, [])
-    hk = get(cfg, 'gitHostType') or next((k for k, rx in (('github', 'github'), ('bitbucket', 'bitbucket'), ('azure', r'dev\.azure|visualstudio'), ('gitea', 'gitea|forgejo|codeberg')) if re.search(rx, str(get(cfg, 'gitHost') or ''))), 'gitlab')
+    # as lib.ps1 Get-HostKind: by name only, no vendor default (unknown: the config step asks for gitHostType)
+    hk = get(cfg, 'gitHostType') or next((k for k, rx in (('github', 'github'), ('bitbucket', 'bitbucket'), ('azure', r'dev\.azure|visualstudio'), ('gitea', 'gitea|forgejo|codeberg'), ('gitlab', 'gitlab')) if re.search(rx, str(get(cfg, 'gitHost') or ''))), '')
     host_cli = {'github': 'gh', 'gitlab': 'glab'}.get(hk)   # REST hosts need a token, no CLI
     for v in {'bitbucket': ['BITBUCKET_TOKEN'], 'azure': ['AZURE_DEVOPS_EXT_PAT'], 'gitea': ['GITEA_TOKEN']}.get(hk, []):
         if not os.environ.get(v):
@@ -228,9 +236,23 @@ def cmd_config(kit, fill):
         if top not in documented and f'`{top}' not in doc:
             out('ACT', 'CONFIG-UNDOC', where, f'script reads kit.local.json "{key}", not documented in README "Configuration" (nor kit.example.json)')
 
+# deploy kinds = the registry (Register-KitAdapter 'deploy-kind' <name> in skills/*/adapters/*.ps1); a row's kind as Get-KitDeployKind
+def _deploy_kinds():
+    ks = []
+    for f in sorted(glob.glob(osp.join(OWN, 'skills', '*', 'adapters', '*.ps1'))):
+        ks += [k for k in re.findall(r"Register-KitAdapter 'deploy-kind' '([\w-]+)'", read(f)) if k not in ks]
+    return ks
+def deploy_kind(d):
+    if d.get('kind'):
+        return str(d['kind'])
+    return next((k for k in ('laneApk', 'ssh', 'tag', 'probe', 'manual', 'awsStack', 'command') if d.get(k)), 'ci-job' if d.get('branch') else '')
+
 def config_rules(kit, c):
     """Values a feature in use needs and no default can supply: ASK the lead (key paths only, never values)."""
-    tt = (os.environ.get('KIT_TRACKER_TYPE') or get(c, 'tracker.type') or 'none').lower()
+    dks = _deploy_kinds()
+    if not c.get('gitHostType') and not c.get('gitHost') and not any(isinstance(r, dict) and r.get('checkout') for r in c.get('repos') or []):
+        out('ASK', 'CONFIG-NEED', 'kit.local.json gitHostType', 'git host unknown (no gitHostType, gitHost or repos[].checkout origin): gitlab / github / bitbucket / gitea / azure / command')
+    tt =(os.environ.get('KIT_TRACKER_TYPE') or get(c, 'tracker.type') or 'none').lower()
     tn = ((manifest(kit).get('adapters') or {}).get('tracker') or {}).get('names', 'none').split()
     for f in glob.glob(osp.join(kit, 'skills', '*', 'adapters', '*')):   # vendor adapters add their names (adapter:tracker/<name>)
         tn += re.findall(r'adapter:tracker/([\w-]+)', read(f))
@@ -273,11 +295,17 @@ def config_rules(kit, c):
             if not isinstance(d, dict) or not d.get('target'):
                 out('ACT', 'CONFIG-NEED', dw, 'needs a target')
                 continue
-            kinds = [k for k in ('branch', 'awsStack', 'ssh', 'manual', 'laneApk') if d.get(k)]
-            if not kinds:
-                out('ASK', 'CONFIG-NEED', dw, 'no way to check it: branch + job, awsStack + region, ssh {...}, manual or laneApk')
-            if d.get('branch') and not d.get('job'):
+            kind = deploy_kind(d)
+            if not kind:
+                out('ASK', 'CONFIG-NEED', dw, f'no way to check it: kind ({" / ".join(dks)}) or its keys (branch + job, awsStack + region, ssh {{...}}, probe, tag, manual, command, laneApk)')
+            elif kind not in dks:
+                out('ACT', 'CONFIG-VALUE', f'{dw}.kind', f'{kind} is not one of {" / ".join(dks)}')
+            if kind == 'ci-job' and not d.get('job'):
                 out('ASK', 'CONFIG-NEED', f'{dw}.job', 'branch deploys need the CI job name')
+            if kind != 'laneApk' and d.get('production') is None and not get(c, 'deploy.productionPattern'):
+                out('ASK', 'CONFIG-NEED', f'{dw}.production', 'neither deploys[].production nor deploy.productionPattern: the target counts as a test env (set production true / false)')
+            if kind == 'command' and not isinstance(d.get('command'), dict):
+                out('ASK', 'CONFIG-NEED', f'{dw}.command', 'kind command needs { isDeployed, lastDeploy, isRunning, restart } command lines')
             if d.get('awsStack') and not d.get('region'):
                 out('ASK', 'CONFIG-NEED', f'{dw}.region', 'awsStack deploys need the region')
             s = d.get('ssh')

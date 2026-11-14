@@ -6,14 +6,14 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L207 deploy · L377 restart · L410 supervise
+Sections: L14 helpers · L93 intest · L207 deploy · L378 restart · L426 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
 . (Join-Path $PSScriptRoot '../../pokey/adapters/deployed_checks.ps1')   # Get-DeployPaths, Test-DeployTouched: one paths rule for plan, intest, deployed
 # ---- helpers: test-env filter, MR refs
-# not a test env: deploys[].production, else productionPattern on the name; -Lanes: + laneApk
-function Get-NoTestRx([switch]$Lanes) { $rx = Get-KitSetting 'deploy.productionPattern' '(?i)prod|critical'; $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
+# not a test env: deploys[].production, else deploy.productionPattern on the name (no default: nothing is production by name); -Lanes: + laneApk
+function Get-NoTestRx([switch]$Lanes) { $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $rx -and $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
 # <alias>!<iid> -> <repo name>!<iid>
 function Get-CanonMr([string]$m) {
   if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }
@@ -25,7 +25,7 @@ function Get-MrTargetBranch([string]$Mr, $Fx) {
   $c = Get-CanonMr (ConvertTo-MrRef $Mr); if ($Fx) { return ($Fx.mrs.$Mr ?? $Fx.mrs.$c).targetBranch }
   if (-not $script:KitMrTb) { $script:KitMrTb = @{} }
   if ($script:KitMrTb.ContainsKey($c)) { return $script:KitMrTb[$c] }
-  $rn, $iid = $c -split '!', 2; $v = try { (Invoke-HostApi "projects/$(Get-HostProject (($rn -split '/')[-1]))/merge_requests/$iid").target_branch } catch { $null }
+  $rn, $iid = $c -split '!', 2; $v = try { (Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject (($rn -split '/')[-1]) -Raw); n = $iid }).target_branch } catch { $null }
   if ($v) { $script:KitMrTb[$c] = $v }; $v   # a failed lookup is retried next time
 }
 # the targets an MR feeds: its repo's deploys, less those whose from (branches) lacks its target branch or whose paths (globs)
@@ -43,7 +43,7 @@ function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until, [switch]$NoPaths)
   $deps = @($deps | Where-Object { -not $_.from -or -not $tb -or $tb -in @($_.from) })
   $files = @(); $cut = $false
   if (-not $NoPaths -and @($deps | Where-Object { @(Get-DeployPaths $_).Count }).Count) {
-    $ch = if ($Fx) { [pscustomobject]@{ changes = @($fm.paths | ForEach-Object { [pscustomobject]@{ new_path = $_ } }); overflow = $fm.overflow } } else { try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid/changes?access_raw_diffs=true" } catch { } }
+    $ch = if ($Fx) { [pscustomobject]@{ changes = @($fm.paths | ForEach-Object { [pscustomobject]@{ new_path = $_ } }); overflow = $fm.overflow } } else { try { Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $rn -Raw); n = $iid } } catch { } }
     $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
     $cut = [bool]$ch.overflow -or @($ch.changes).Count -ge 100   # gitlab overflow, github's first page: the list is partial
   }
@@ -58,13 +58,13 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
   foreach ($rp in $Repos) {
     if ((Get-Date) -gt $Until) { break }
     $dir = [string]$rp.checkout
-    $deps = @($rp.deploys | Where-Object { $_.target -in $Targets -and $_.branch -and $_.job -and -not ($_.ssh -or $_.awsStack -or $_.probe -or $_.tag -or $_.manual -or $_.laneApk) })
+    $deps = @($rp.deploys | Where-Object { $_.target -in $Targets -and $_.branch -and $_.job -and (Get-KitDeployKind $_) -eq 'ci-job' })
     $want = @{}; foreach ($m in $Mrs) { $c = Get-CanonMr (ConvertTo-MrRef $m); if ($c -match "^$([regex]::Escape($rp.name))!(\d+)$") { $want[$Matches[1]] = $m } }
     if (-not $want.Count -or -not $deps.Count -or -not $dir -or -not (Test-Path $dir)) { continue }
-    $p = Get-HostProject $rp.name; $shaOf = @{}; $tb = @{}; $got = @{}; $det = @{}
+    $p = Get-HostProject $rp.name -Raw; $shaOf = @{}; $tb = @{}; $got = @{}; $det = @{}
     $after = (Get-Date).AddDays( - ($Days + 1)).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     for ($pg = 1; $pg -le 5 -and $shaOf.Count -lt $want.Count -and (Get-Date) -lt $Until; $pg++) {   # newest first; an MR not listed is probed as before
-      $page = @(try { Invoke-HostApi "projects/$p/merge_requests?state=merged&updated_after=$after&order_by=updated_at&per_page=100&page=$pg" } catch { }) | Where-Object { $_ }
+      $page = @(try { Invoke-HostVerb 'mr.list' @{ repo = $p; state = 'merged'; updated_after = $after; order_by = 'updated_at'; per_page = 100; page = $pg } } catch { }) | Where-Object { $_ }
       foreach ($x in $page) { $s = @($x.squash_commit_sha, $x.merge_commit_sha, $x.sha) | Where-Object { $_ } | Select-Object -First 1; if ($s -and $want.ContainsKey("$($x.iid)")) { $shaOf["$($x.iid)"] = $s; if ($x.target_branch) { $tb[$x.target_branch] = 1 } } }
       if ($page.Count -lt 100) { break }
     }
@@ -75,9 +75,9 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
     foreach ($d in $deps) {
       if ((Get-Date) -gt $Until) { break }
       $base = $null
-      foreach ($pl in @(try { Invoke-HostApi "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10" } catch { }) | Where-Object { $_ -and $_.sha }) {
-        $job = @(try { Invoke-HostApi "projects/$p/pipelines/$($pl.id)/jobs?per_page=100" } catch { }) | Where-Object { $_.name -like $d.job } | Select-Object -First 1
-        if ($job.status -eq 'success') { $base = [string]$pl.sha; break }
+      foreach ($pl in @(try { Invoke-HostVerb 'ci.runs' @{ repo = $p; ref = $d.branch; per_page = 10 } } catch { }) | Where-Object { $_ -and $_.sha }) {
+        $job = @(try { Invoke-HostVerb 'ci.jobs' @{ repo = $p; id = $pl.id } } catch { }) | Where-Object { $_.name -like $d.job } | Select-Object -First 1
+        if ((ConvertTo-KitCiState "$($job.status)") -eq 'success') { $base = [string]$pl.sha; break }
       }
       if (-not $base) { continue }
       $out = @($known | git -C $dir rev-list --stdin "^$base" 2>$null); if ($LASTEXITCODE) { continue }   # commits the base lacks
@@ -101,7 +101,7 @@ $track = (Read-KitTracking).tasks
 foreach ($m in @($FromMrs | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ })) {
   $c = Get-CanonMr (ConvertTo-MrRef $m); $rn, $iid = $c -split '!', 2
   $own = @($track.Keys | Where-Object { $_ -notmatch '!|\s' -and @($track[$_].mrs | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) }) -contains $c })
-  if (-not $own.Count -and ($rx = Get-KitTaskTagRx) -and "$(try { (Invoke-HostApi "projects/$(Get-HostProject (($rn -split '/')[-1]))/merge_requests/$iid").title } catch { })" -match $rx) { $own = @($Matches.id) }
+  if (-not $own.Count -and ($rx = Get-KitTaskTagRx) -and "$(try { (Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject (($rn -split '/')[-1]) -Raw); n = $iid }).title } catch { })" -match $rx) { $own = @($Matches.id) }
   Out-Line "MAP   $c -> $(if ($own.Count) { $own -join ', ' } else { 'no task (untracked, no tag in its title)' })"; $Task = @(@($Task) + $own)
 }
 if ($FromMrs.Count -and -not $Task.Count) { return }
@@ -133,7 +133,7 @@ $pathMemo = @{}
 function Get-MrPaths([string]$mr) {
   if ($pathMemo.ContainsKey($mr)) { return $pathMemo[$mr] }
   $repo, $iid = $mr -split '!'
-  $res = Invoke-HostApi "projects/$(Get-HostProject $repo)/merge_requests/$iid/changes"
+  $res = Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $repo -Raw); n = $iid }
   $pathMemo[$mr] = @($res.changes | ForEach-Object { $_.new_path } | Where-Object { $_ })
   $pathMemo[$mr]
 }
@@ -153,7 +153,7 @@ foreach ($id in $cand.Keys) {
   if (-not $mrs.Count -and $KitConf.TrackerRepos) {
     $tag = "$($KitConf.TrackerTag)$id"
     foreach ($r in @($KitConf.TrackerRepos)) {
-      $res = Invoke-HostApi "projects/$(Get-HostProject $r)/merge_requests?search=$([uri]::EscapeDataString($tag))&state=merged&per_page=20"
+      $res = Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $r -Raw); search = $tag; state = 'merged'; per_page = 20 }
       foreach ($m in @($res)) { if ($m.iid -and ("$($m.title) $($m.source_branch)" -match [regex]::Escape($tag))) { $mrs += "$r!$($m.iid)" } }
     }
     $mrs = @($mrs | Select-Object -Unique)
@@ -337,13 +337,14 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $running = $false
     if ($fx) { if ($fx.lastCi.$t) { $ci = [datetime]$fx.lastCi.$t; if (-not $last -or $ci -gt $last) { $last = $ci; $src = 'CI' } } }
     else {
-      foreach ($r in $repos) { foreach ($d in @($r.deploys | Where-Object { $_.target -eq $t -and $_.branch -and $_.job })) {
-          $p = Get-HostProject $r.name
-          $pls = try { @(Invoke-HostApi "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=5") } catch { if (-not $hostErr) { $hostErr = "$($_.Exception.Message)" }; @() }
-          foreach ($pl in $pls) {
-            if ($pl.status -in 'running', 'pending', 'created') { $running = $true; continue }
-            if ($pl.status -eq 'success') { $at = ([datetime]$(if ($pl.updated_at) { $pl.updated_at } else { $pl.created_at })).ToLocalTime(); if (-not $last -or $at -gt $last) { $last = $at; $src = "CI $($r.name) $($d.branch)" }; break }
-          } } }
+      # each deploy row's kind: lastDeploy (@{ at; source }) and isRunning (a deploy in flight); a kind without them adds nothing
+      foreach ($r in $repos) { foreach ($d in @($r.deploys | Where-Object { $_.target -eq $t -and ((Get-KitDeployKind $_) -ne 'ci-job' -or ($_.branch -and $_.job)) })) {
+          $ka = @{ repo = (Get-HostProject $r.name -Raw); name = "$($r.name)" }
+          try {
+            if (Invoke-KitDeployKind $d 'isRunning' $ka) { $running = $true }
+            $ld = Invoke-KitDeployKind $d 'lastDeploy' $ka; if ($ld.at -and (-not $last -or [datetime]$ld.at -gt $last)) { $last = [datetime]$ld.at; $src = "$($ld.source)" }
+          } catch { if (-not $hostErr) { $hostErr = "$($_.Exception.Message)" } }
+        } }
     }
     $h = & $winOf $t
     $next = if ($last) { $last.AddHours($h) } else { $null }
@@ -376,30 +377,45 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
 
 # ---- restart: services of an ssh deploy, gated by its busy check in the same shell, right before each restart
 # deploys[].ssh.busy: a host shell command whose output = live work (e.g. a running agent turn); busy -> wait, re-check, bounded
+# the row's deploy kind restarts (ssh: below; command: deploys[].command.restart); a kind without restart is refused
 function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMinutes = 20, [int]$RecheckSeconds = 120, [switch]$Ungated) {
   foreach ($t in $Targets) {
     $d = @(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -eq $t } | Select-Object -First 1
-    if (-not $d.ssh.host) { "deploy restart: $t has no repos[].deploys[].ssh (host, key, service): restart it by the org's deploy rules"; exit 2 }
+    $kd = if ($d) { Get-KitDeployKind $d }
+    if ($kd -eq 'ssh' -or -not $d -or -not $KitAdapters['deploy-kind'][$kd].restart) {
+      if (-not $d.ssh.host) { "deploy restart: $t has no repos[].deploys[].ssh (host, key, service) and its kind ($(if ($kd) { $kd } else { 'none' })) has no restart: restart it by the org's deploy rules"; exit 2 }
+      Invoke-DeployRestartSsh $t $d $Service $WaitMinutes $RecheckSeconds -Ungated:$Ungated; continue
+    }
+    $global:KitHostFailed = $false; $o = Invoke-KitDeployKind $d 'restart' @{ service = $Service }
+    if ($null -eq $o -or $global:KitHostFailed) { "FAILED deploy restart ${t}: deploy kind $kd restart gave no answer"; exit 1 }
+    Write-KitLog deploy-log restart ([ordered]@{ target = $t; services = @(Split-KitList @($Service)); gated = $false; kind = $kd }); "RESTARTED ${t} (deploy kind $kd): $o"
+  }
+}
+# ssh rows: ssh.manager's restart / status commands (systemd | docker | pm2 | custom), ssh.sudo true = sudo -n
+function Invoke-DeployRestartSsh([string]$t, $d, [string]$Service, [int]$WaitMinutes = 20, [int]$RecheckSeconds = 120, [switch]$Ungated) {
+  if ($true) {
     $s = $d.ssh; $svcs = @(Split-KitList @($(if ($Service) { $Service } else { $s.service })))
     if (-not $svcs.Count) { "deploy restart: no -Service and no deploys[].ssh.service for $t"; exit 2 }
+    if (-not (Get-KitSshServiceCmd $s 'restart' 'x')) { "REFUSED deploy restart ${t}: deploys[].ssh has no manager (systemd | docker | pm2) or restartCmd: set one; nothing restarted"; exit 2 }
     if (-not $s.busy -and -not $Ungated) { "REFUSED deploy restart ${t}: no deploys[].ssh.busy (a shell command that prints live work on the host, e.g. running agent turns): set it, or -Ungated when nothing on $($s.host) can be cut; nothing restarted"; exit 2 }
     $end = (Get-Date).AddMinutes($WaitMinutes); $done = @(); $sec = [int](Get-KitParam 'deploy.sshTimeoutSeconds'); $key = [string]$s.key -replace '^~', $HOME
     while ($true) {
       $left = @($svcs | Where-Object { $_ -notin $done })
       $sh = @(
-        "SU=$(if ($s.sudo -ne $false) { "'sudo -n'" })"
+        "SU=$(if (Test-KitSshSudo $s) { "'sudo -n'" })"
         foreach ($v in $left) {   # the busy check runs immediately before each restart: no gap for a new turn to start unseen
           if ($s.busy) { "B=`$(sh -c $(Sq $s.busy) </dev/null 2>/dev/null); if [ -n `"`$B`" ]; then echo BUSY=1; printf '%s\n' `"`$B`" | head -n 5 | sed 's/^/LIVE=/'; exit 0; fi" }
-          "`$SU systemctl restart $(Sq $v); R=`$?; echo `"DONE=$v `$R`"; echo `"ACTIVE=$v `$(systemctl is-active $(Sq $v) 2>/dev/null)`"; [ `$R -eq 0 ] || exit 0"   # a failed restart stops the rest
+          $st = Get-KitSshServiceCmd $s 'status' $v
+          "`$SU $(Get-KitSshServiceCmd $s 'restart' $v); R=`$?; echo `"DONE=$v `$R`"; echo `"ACTIVE=$v $(if ($st) { "`$($st 2>/dev/null)" })`"; [ `$R -eq 0 ] || exit 0"   # a failed restart stops the rest
         }
         'echo END=1'
       ) -join "`n"
       $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh))
       $lines = @(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', "ConnectTimeout=$([math]::Min(15, $sec))", '-o', 'StrictHostKeyChecking=accept-new', $s.host, "echo $b64 | base64 -d | bash")) ($sec + 120))
-      foreach ($x in @($lines -match '^DONE=')) { $nm, $rc = ($x -replace '^DONE=', '') -split ' ', 2; if ("$rc".Trim() -ne '0') { "FAILED deploy restart ${t}: systemctl restart $nm exit $rc on $($s.host)$(if ($done) { " (restarted before: $($done -join ', '))" })"; exit 1 }; $done += $nm }
+      foreach ($x in @($lines -match '^DONE=')) { $nm, $rc = ($x -replace '^DONE=', '') -split ' ', 2; if ("$rc".Trim() -ne '0') { "FAILED deploy restart ${t}: $(@("$($s.manager)", [string](Get-KitSetting 'deploy.ssh.manager' ''), 'custom' | Where-Object { $_ })[0].ToLower()) restart $nm exit $rc on $($s.host)$(if ($done) { " (restarted before: $($done -join ', '))" })"; exit 1 }; $done += $nm }
       $act = @($lines -match '^ACTIVE=' -replace '^ACTIVE=', '')
       if ($lines -match '^END=1') { Write-KitLog deploy-log restart ([ordered]@{ target = $t; services = $svcs; gated = (-not $Ungated) }); "RESTARTED ${t}: $($svcs -join ', ') on $($s.host) ($($act -join '; '))$(if ($Ungated) { ' (ungated)' })"; break }
-      if (-not ($lines -match '^BUSY=1')) { "UNKNOWN deploy restart ${t}: no answer from $($s.host) (ssh failed or timed out)$(if ($done) { "; restarted: $($done -join ', ')" }); restart state unknown: check systemctl on the host before a retry"; exit 1 }
+      if (-not ($lines -match '^BUSY=1')) { "UNKNOWN deploy restart ${t}: no answer from $($s.host) (ssh failed or timed out)$(if ($done) { "; restarted: $($done -join ', ')" }); restart state unknown: check the services on the host before a retry"; exit 1 }
       $live = @($lines -match '^LIVE=' -replace '^LIVE=', '') -join ' | '
       if ((Get-Date).AddSeconds($RecheckSeconds) -gt $end) { "REFUSED deploy restart ${t}: live work on $($s.host) after $WaitMinutes min ($live); $(if ($done) { "restarted: $($done -join ', '), not: " } else { 'not restarted: ' })$(@($svcs | Where-Object { $_ -notin $done }) -join ', ') (bossy.ps1 decide ask)"; exit 3 }
       "BUSY ${t}: live work on $($s.host) ($live): re-check in $RecheckSeconds s (until $($end.ToString('HH:mm')))"; Start-Sleep $RecheckSeconds

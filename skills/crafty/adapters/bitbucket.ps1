@@ -32,6 +32,7 @@ Register-KitAdapter 'git-host' 'bitbucket' @{
   }
   'mr.unauto' = { param($a) __KitAuto $a.repo $a.n -Drop; __BbMr (__Bb "repositories/$($a.repo)/pullrequests/$($a.n)") }
   'mr.url' = { param($a) "https://bitbucket.org/$($a.repo)/pull-requests/$($a.n)" }
+  'whoami' = { param($a) $u = __Bb 'user'; [string]$(if ($u.username) { $u.username } else { $u.nickname }) }
   'repo.base' = { param($a) $c = __Bb "repositories/$($a.repo)/merge-base/$(__Enc $a.a)..$(__Enc $a.b)"; __CommitObj $c.hash }
   'repo.commit' = { param($a) $c = __Bb "repositories/$($a.repo)/commit/$(__Enc $a.ref)"; __CommitObj $c.hash $c.date }
   'repo.compare' = { param($a) $c = __Bb "repositories/$($a.repo)/diffstat/$(__Enc $a.to)..$(__Enc $a.from)?pagelen=100"; if ($c) { [pscustomobject]@{ diffs = @($c.values | ForEach-Object { __DiffFile "$($_.new.path)$(if (-not $_.new) { $_.old.path })" "$($_.old.path)$(if (-not $_.old) { $_.new.path })" }) } } }

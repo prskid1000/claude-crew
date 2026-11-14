@@ -5,6 +5,7 @@ Usage: pwsh -NoProfile -File tests/deploy-restart.tests.ps1 (its tests.ps1 runs 
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
+$env:KIT_TEST_SHIM = Join-Path $PSScriptRoot 'hostverb-shim.ps1'   # GitLab-path mocks behind host verbs
 $TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit deploy-restart; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 foreach ($f in 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/adapters/deploy_merge.ps1', 'skills/pokey/adapters/deployed_checks.ps1') {
@@ -16,13 +17,15 @@ Set-Content (Join-Path $bin 'fakessh.ps1') @'
 $b64 = (("$($args[-1])" -split ' ')[1]); $sh = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64))
 $n = @(Get-ChildItem (Split-Path $env:FAKE_SSH_LOG) -Filter 'ssh.log.*').Count; Set-Content "$env:FAKE_SSH_LOG.$n" $sh
 if ($sh -match 'BUSY=1' -and ($env:FAKE_SSH_MODE -eq 'busy' -or ($env:FAKE_SSH_MODE -eq 'once' -and $n -eq 0))) { 'BUSY=1'; 'LIVE=4242 00:21 claude -p run' }
-else { foreach ($m in [regex]::Matches($sh, "systemctl restart '([^']+)'")) { $v = $m.Groups[1].Value; "DONE=$v 0"; "ACTIVE=$v active" }; 'END=1' }
+else { foreach ($m in [regex]::Matches($sh, "(?:systemctl|docker) restart '([^']+)'")) { $v = $m.Groups[1].Value; "DONE=$v 0"; "ACTIVE=$v active" }; 'END=1' }
 '@
 if ($KitIsWindows -or $IsWindows) { Set-Content (Join-Path $bin 'ssh.cmd') "@`"$pwshExe`" -NoProfile -File `"%~dp0fakessh.ps1`" %*" }
 else { $sp = Join-Path $bin 'ssh'; [IO.File]::WriteAllText($sp, "#!/bin/sh`nexec `"$pwshExe`" -NoProfile -File `"`$(dirname `"`$0`")/fakessh.ps1`" `"`$@`"`n"); chmod +x $sp }
 $path0 = $env:PATH; $env:PATH = "$bin$([IO.Path]::PathSeparator)$env:PATH"; $env:FAKE_SSH_LOG = $sshLog
 $kl = Join-Path $k 'skills/crafty/kit.local.json'
-& $J @{ repos = @(@{ name = 'svc'; deploys = @(@{ target = 'svc-stage'; ssh = @{ host = 'u@h1'; key = 'k.pem'; service = 'app,app-worker'; busy = 'pgrep -fa agent-turn' } }, @{ target = 'nobusy'; ssh = @{ host = 'u@h2'; service = 'app' } }) }) } $kl
+& $J @{ repos = @(@{ name = 'svc'; deploys = @(@{ target = 'svc-stage'; ssh = @{ host = 'u@h1'; key = 'k.pem'; service = 'app,app-worker'; busy = 'pgrep -fa agent-turn' } }, @{ target = 'nobusy'; ssh = @{ host = 'u@h2'; service = 'app' } },
+  @{ target = 'dock'; ssh = @{ host = 'u@h3'; service = 'web'; manager = 'docker'; sudo = $false } }, @{ target = 'bare'; ssh = @{ host = 'u@h4'; service = 'web'; manager = 'none' } },
+  @{ target = 'kube'; production = $false; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output rolled-{service}" } }) }); deploy = @{ ssh = @{ manager = 'systemd'; sudo = $true } } } $kl   # LEGACY deploy.ssh
 $logs = { @(Get-ChildItem (Kd) -Filter 'ssh.log.*' | Sort-Object Name | ForEach-Object { Get-Content $_.FullName -Raw }) }
 $clear = { Get-ChildItem (Kd) -Filter 'ssh.log.*' | Remove-Item }
 
@@ -41,6 +44,14 @@ $rn = Px $O deploy restart -Env nobusy 2>&1 | Out-String; $rnc = $LASTEXITCODE
 $ru = Px $O deploy restart -Env nobusy -Ungated 2>&1 | Out-String; $ruc = $LASTEXITCODE
 Expect "deploy restart: no ssh.busy = REFUSED exit 2 without ssh; -Ungated restarts ($($rn.Trim()) $rnc | $($ru.Trim()) $ruc)" ($rnc -eq 2 -and $rn -match 'no deploys\[\]\.ssh\.busy' -and @(& $logs).Count -eq 1 -and $ruc -eq 0 -and $ru -match 'RESTARTED nobusy: app on u@h2 .*\(ungated\)')
 Expect 'deploy restart: a failed restart stops the host script before the next service; the busy command reads no stdin' ($lb[0] -match '\[ \$R -eq 0 \] \|\| exit 0' -and $lb[0] -match "sh -c 'pgrep -fa agent-turn' </dev/null")
+# ssh.manager docker: docker restart / inspect, no systemctl, no sudo; manager none: refused; kind command (kubectl-like): its restart line, no ssh
+& $clear
+$rd = Px $O deploy restart -Env dock -Ungated 2>&1 | Out-String; $rdc = $LASTEXITCODE; $ld = @(& $logs)
+Expect "deploy restart: ssh.manager docker restarts with docker, no systemctl, no sudo ($($rd.Trim()) $rdc)" ($rdc -eq 0 -and $rd -match 'RESTARTED dock: web on u@h3' -and $ld.Count -eq 1 -and $ld[0] -match "docker restart 'web'" -and $ld[0] -match 'docker inspect' -and $ld[0] -notmatch 'systemctl|sudo -n')
+$rbr = Px $O deploy restart -Env bare -Ungated 2>&1 | Out-String; $rbrc = $LASTEXITCODE
+Expect "deploy restart: ssh.manager none = REFUSED exit 2, no ssh ($($rbr.Trim()))" ($rbrc -eq 2 -and $rbr -match 'has no manager' -and @(& $logs).Count -eq 1)
+$rk = Px $O deploy restart -Env kube -Service web 2>&1 | Out-String; $rkc = $LASTEXITCODE
+Expect "deploy restart: kind command runs its restart line, no ssh ($($rk.Trim()) $rkc)" ($rkc -eq 0 -and $rk -match 'RESTARTED kube \(deploy kind command\): rolled-web' -and @(& $logs).Count -eq 1)
 $rx = Px $O deploy restart -Env nope 2>&1 | Out-String; $rxc = $LASTEXITCODE
 Expect "deploy restart: an unknown target or one without ssh = usage, exit 2 ($($rx.Trim()))" ($rxc -eq 2 -and $rx -match 'nope has no repos\[\]\.deploys\[\]\.ssh')
 

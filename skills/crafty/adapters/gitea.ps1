@@ -22,6 +22,7 @@ Register-KitAdapter 'git-host' 'gitea' @{
     $m = __GhMr (__Gt "repos/$($a.repo)/pulls/$($a.n)"); if ($m -and $a.auto -and $m.state -eq 'opened') { $m.merge_when_pipeline_succeeds = $true }; $m }
   'mr.unauto' = { param($a) $null = __Gt "repos/$($a.repo)/pulls/$($a.n)/merge" 'DELETE'; __GhMr (__Gt "repos/$($a.repo)/pulls/$($a.n)") }
   'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/pulls/$($a.n)" }
+  'whoami' = { param($a) [string](__Gt 'user').login }
   'repo.base' = { param($a) $c = __Gt "repos/$($a.repo)/compare/$(__Enc $a.b)...$(__Enc $a.a)"; if ($null -eq $c) { return $null }
     __CommitObj $(if (-not $c.total_commits) { $a.a } else { @(@($c.commits) | Sort-Object { $_.created })[0].parents[0].sha }) }
   'repo.commit' = { param($a) $c = @(__Gt "repos/$($a.repo)/commits?sha=$(__Enc $a.ref)&limit=1&stat=false")[0]; __CommitObj $c.sha $c.commit.committer.date }

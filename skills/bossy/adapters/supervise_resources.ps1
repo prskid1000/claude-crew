@@ -9,7 +9,7 @@ Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L15 builds · L47 supervise · L253 shells · L387 page · L867 release · L906 lines · L939 cleanup · L975 launch ·
-  L1053 pause · L1171 heartbeat · L1186 sessions · L1238 ci tasks · L1290 the kit origin's main
+  L1053 pause · L1171 heartbeat · L1186 sessions · L1238 ci tasks · L1293 the kit origin's main
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1239,11 +1239,14 @@ function Get-KitStepAgeHandoff($Me, [string]$Session) {
 # a test-only task raised by a CI job (tracker.ciTaskPattern on its name): its description names the job URL, its pipeline and the
 # Branch it failed on; that job passing again on that branch with the task's MRs in = its test (no testing docs, no person)
 function Get-KitCiTask([string]$Task) {
-  $rx = [string](Get-KitSetting 'tracker.ciTaskPattern' '^\W*\[[^\]]*Unit Test\]'); $tt = try { Get-TrackerTask $Task } catch { $null }
-  if (-not $rx -or "$($tt.name)" -notmatch $rx) { return $null }
+  $rx = [string](Get-KitSetting 'tracker.ciTaskPattern' '')   # none = off (no task is CI-raised)
+  if (-not $rx) { return $null }
+  $tt = try { Get-TrackerTask $Task } catch { $null }
+  if ("$($tt.name)" -notmatch $rx) { return $null }
   $d = "$($tt.description)" -replace '\\(?=[_*])', ''
-  $jm = [regex]::Match($d, '(?<url>https?://[^\s)\]]+?/jobs/(?<id>\d+))'); $pm = [regex]::Match($d, '/pipelines/(?<id>\d+)'); $bm = [regex]::Match($d, '(?im)^\W*Branch\W*:\W*(?<b>[\w./-]+)')
-  [pscustomobject]@{ url = $jm.Groups['url'].Value; job = $jm.Groups['id'].Value; run = $pm.Groups['id'].Value; branch = $bm.Groups['b'].Value }
+  $ju = Invoke-HostVerb 'ci.parseUrl' @{ text = $d }   # the CI adapter reads its own job / run URLs; a CI without it: no job (bad)
+  $bm = [regex]::Match($d, '(?im)^\W*Branch\W*:\W*(?<b>[\w./-]+)')
+  [pscustomobject]@{ url = "$($ju.url)"; job = "$($ju.job)"; run = "$($ju.run)"; branch = $bm.Groups['b'].Value }
 }
 # pass = a newer run of the same job on the branch whose commit holds every merged MR of the job's repo; wait = none yet / still running
 function Test-KitCiTaskJob($Ci, [string[]]$Mrs) {
@@ -1258,7 +1261,7 @@ function Test-KitCiTaskJob($Ci, [string[]]$Mrs) {
   foreach ($run in @(Invoke-HostVerb 'ci.runs' @{ repo = $repo; ref = $Ci.branch } | Where-Object { [long]$_.id -gt [long]$Ci.run } | Sort-Object { [long]$_.id } -Descending)) {
     if (@($shas | Where-Object { "$((Invoke-HostVerb 'repo.base' @{ repo = $repo; a = $_; b = $run.sha }).id)" -ne $_ }).Count) { continue }   # the fix not in this commit yet
     $jb = @(Invoke-HostVerb 'ci.jobs' @{ repo = $repo; id = $run.id }) | Where-Object name -eq $name | Select-Object -First 1; if (-not $jb -or (__CiWord "$($jb.status)") -in 'skipped', 'manual') { continue }   # not run there: an older run decides
-    $url = if ($jb.web_url) { "$($jb.web_url)" } else { $Ci.url -replace "/jobs/$($Ci.job)\b", "/jobs/$($jb.id)" }
+    $url = if ($jb.web_url) { "$($jb.web_url)" } elseif ($jb.url) { "$($jb.url)" } else { "$($Ci.url)" }
     switch (__CiWord "$($jb.status)") { 'success' { return @{ state = 'pass'; name = $name; url = $url } } { $_ -in 'failed', 'canceled' } { return @{ state = 'fail'; why = "CI job $name $($jb.status) again on $($Ci.branch) with the fix in: $url" } } default { return @{ state = 'wait'; why = "CI job $name $($jb.status) on $($Ci.branch): $url" } } }
   }
   @{ state = 'wait'; why = "no run of CI job $name on $($Ci.branch) with $(@($Mrs) -join ', ') in yet" }

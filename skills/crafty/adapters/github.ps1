@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # github: GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L6 gh · L17 tracker · L65 git-host · L100 ci
+# Sections: L6 gh · L17 tracker · L65 git-host · L101 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -86,6 +86,7 @@ Register-KitAdapter 'git-host' 'github' @{
   }
   'mr.unauto' = { param($a) $null = __Gh @('pr', 'merge', $a.n, '-R', $a.repo, '--disable-auto'); __GhPr $a }
   'mr.url' = { param($a) "https://$(__GhHost)/$($a.repo)/pull/$($a.n)" }
+  'whoami' = { param($a) __GhEnv; [string](__Cli gh 'user').login }
   'repo.base' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.a)...$(__Enc $a.b)"; __CommitObj $c.merge_base_commit.sha }
   'repo.commit' = { param($a) $c = __GhApi "repos/$($a.repo)/commits/$(__Enc $a.ref)"; __CommitObj $c.sha $c.commit.committer.date }
   'repo.compare' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.from)...$(__Enc $a.to)"; if ($c) { [pscustomobject]@{ diffs = (__Files $c.files) } } }
@@ -103,6 +104,8 @@ Register-KitAdapter 'ci' 'github' @{
   'runs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs?branch=$(__Enc $a.ref)$(if ($a.sha) { "&head_sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)").workflow_runs) | Where-Object { $_ } | ForEach-Object { __CiRun $_.id $_.head_sha (__CiWord ($_.conclusion ?? $_.status)) $_.created_at $_.updated_at }) }
   'jobs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs/$($a.id)/jobs?per_page=100").jobs) | Where-Object { $_ } | ForEach-Object { __CiJob $_.id $_.name (__CiWord ($_.conclusion ?? $_.status)) $_.completed_at }) }
   'log' = { param($a) __GhApi "repos/$($a.repo)/actions/jobs/$($a.id)/logs" }
+  # .../actions/runs/<run>/job/<job> in a text -> @{ url; job; run }
+  'parseUrl' = { param($a) $m = [regex]::Match("$($a.text)", '(?<url>https?://[^\s)\]]+?/actions/runs/(?<run>\d+)/job(?:s)?/(?<id>\d+))'); @{ url = $m.Groups['url'].Value; job = $m.Groups['id'].Value; run = $m.Groups['run'].Value } }
   'status' = { param($a) if (-not $a.sha) { return $null }
     $cr = @((__GhApi "repos/$($a.repo)/commits/$($a.sha)/check-runs?per_page=100").check_runs | Where-Object { $_ }); $cs = @((__GhApi "repos/$($a.repo)/commits/$($a.sha)/status").statuses | Where-Object { $_ })
     $st = __CiRoll (@($cr | ForEach-Object { if ($_.status -ne 'completed') { 'running' } else { __CiWord $_.conclusion } }) + @($cs | ForEach-Object { __CiWord $_.state })); if (-not $st) { return $null }
