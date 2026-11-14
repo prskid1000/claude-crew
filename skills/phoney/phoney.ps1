@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L104 phone · L303 build · L447 install · L473 launch · L485 avd · L571 up · L668 down · L698 events ·
-  L754 slim
+Sections: L24 config · L106 phone · L305 build · L449 install · L475 launch · L487 avd · L573 up · L670 down · L700 events ·
+  L756 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -30,7 +30,7 @@ function Get-SwarmConfig {
   $c = Get-Content $f -Raw | ConvertFrom-Json
   if (-not $c.avdDir) { $c | Add-Member -Force avdDir $(if ($env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME } else { "$HOME/.android/avd" }) }
   $c | Add-Member -Force kind ([string](Get-KitSetting 'devices.type' 'android'))
-  if (-not $c.app.kind) { $c.app | Add-Member -Force kind 'react-native' }
+  if (-not $c.app.kind) { $c.app | Add-Member -Force kind 'native' }   # react-native, kmp, flutter, maui, capacitor: set app.kind
   if (-not $c.app.buildTask) { $c.app | Add-Member -Force buildTask $(if ($c.app.kind -in 'native', 'kmp') { 'assembleDebug' } else { 'assembleRelease' }) }
   if (-not $c.app.apkGlob) { $v = if ($c.app.buildTask -match 'Release') { 'release' } else { 'debug' }; $c.app | Add-Member -Force apkGlob "$(if ($c.app.kind -eq 'kmp') { 'composeApp' } else { 'app' })/build/outputs/apk/$v/*.apk" }
   # Gradle kinds (react-native, native, kmp) or app.buildCmd + app.artifact; other presets: adapters/app_kinds.ps1 (Set-AppKindPreset)
@@ -49,7 +49,9 @@ function Get-SwarmConfig {
   $c | Add-Member -Force apkDir $apkDir
   $c | Add-Member -Force appFile (Join-Path $apkDir 'app.apk')
   $abi = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64-v8a' } else { 'x86_64' }   # the host's own ABI: no translation
-  $av = @{ abi = $abi; api = 'android-36.1'; device = 'pixel_10_pro'; tag = 'google_apis_playstore'; gpu = 'host' }   # gpu: emulator -gpu (swiftshader = CPU rendering, no GPU memory)
+  # lane AVD: neutral defaults < kit.local.json devices.avd < swarm.config.json avd; gpu: emulator -gpu (swiftshader = CPU rendering, no GPU memory)
+  $av = @{ abi = $abi; api = 'android-35'; device = 'pixel_7'; tag = 'google_apis'; gpu = 'host' }
+  $ka = Get-KitSetting 'devices.avd' $null; if ($ka) { foreach ($p in $ka.PSObject.Properties) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }
   if ($c.avd) { foreach ($p in $c.avd.PSObject.Properties) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }; $c | Add-Member -Force avd ([pscustomobject]$av)
   $c | Add-Member -Force state (Join-Path $out 'swarm.json')
   $script:SwarmCfg = $c; $c
@@ -348,7 +350,7 @@ if (-not $NoUpdate -and $branch -ne 'HEAD') {
         "dependencies changed ($($lockChanged -join ', ')): installing in $pkgDir"
         Push-Location $pkgDir; try {   # frozen install (pnpm, yarn 1 / 2+, bun, npm)
           $ic = if (Test-Path 'pnpm-lock.yaml') { 'pnpm install --frozen-lockfile' } elseif (Test-Path 'yarn.lock') { if (Test-Path '.yarnrc.yml') { 'yarn install --immutable' } else { 'yarn install --frozen-lockfile' } } elseif ((Test-Path 'bun.lockb') -or (Test-Path 'bun.lock')) { 'bun install --frozen-lockfile' } else { 'npm ci' }
-          Invoke-Expression "$ic 2>&1" | Select-Object -Last 2
+          $icArgv = @(Split-KitCommand $ic @{}); & $icArgv[0] @($icArgv | Select-Object -Skip 1) 2>&1 | Select-Object -Last 2   # argv: a config string is never evaluated
         } finally { Pop-Location }
       }
     }

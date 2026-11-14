@@ -16,13 +16,27 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 report · L125 seat · L192 api · L359 finalize · L794 results · L827 retest · L867 prepare
+Sections: L26 lanes · L40 report · L139 seat · L208 api · L423 finalize · L860 results · L893 retest · L950 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1')
 foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue) { . $__adapter.FullName }
+# ---- lanes: qa.lanes { <lane>: { kind, parallel, followUp, devices } }; unset = one lane web (kind web)
+function Get-QaLanes {
+  $cfg = Get-KitSetting 'qa.lanes' $null; $o = [ordered]@{}
+  if ($cfg) { foreach ($p in $cfg.PSObject.Properties) { $o[$p.Name] = [pscustomobject]@{ name = $p.Name; kind = [string]$(if ($p.Value.kind) { $p.Value.kind } else { $p.Name }) } } }
+  if (-not $o.Count) { $o['web'] = [pscustomobject]@{ name = 'web'; kind = 'web' } }
+  $o
+}
+# a lane name (or a configured lane's kind) -> its lane; unknown -> a throw naming the configured lanes
+function Resolve-QaLane([string]$Name) {
+  $ls = Get-QaLanes
+  if ($ls.Contains($Name)) { return $ls[$Name] }
+  $byKind = @($ls.Values | Where-Object { $_.kind -eq $Name })[0]; if ($byKind) { return $byKind }
+  throw "unknown lane '$Name': configured lanes (kit.local.json qa.lanes) are $(@($ls.Keys) -join ', ')"
+}
 # ---- report: Markdown (tracker comments, report file)
 function TaskLink($id) { if (Get-Command Get-TrackerUrl -ErrorAction SilentlyContinue) { Get-TrackerUrl $id } else { "$id" } }
 
@@ -126,14 +140,16 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
 function Invoke-Seat {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status')][string]$Action,
-  [string]$Agent, [ValidateSet('web', 'api', 'app')][string]$Kind = 'web',
+  [string]$Agent, [string]$Kind = '',   # a qa.lanes lane name or kind; '' = the first lane
   [string]$RunDir, [string]$Code, [string]$Owner = 'w1',
   [int]$WaitMinutes = 8, [double]$KeepFreeGB = 0   # 0 = the gate's floor (gate.keepFreeGB)
 )
 $ErrorActionPreference = 'Stop'
 $dir = Get-KitPath qa-seats; $seats = Join-Path $dir 'seats'; $claims = Join-Path $dir 'claims'
 New-Item -ItemType Directory -Force $seats, $claims | Out-Null
-$need = [double](Get-KitSetting "qa.seatGB.$Kind" @{ web = (Get-KitParam 'qa.seatGB' -Context web); api = 0.4; app = 0.4 }[$Kind])
+$ln = if ($Kind) { Resolve-QaLane $Kind } else { @((Get-QaLanes).Values)[0] }; $Kind = $ln.name
+# seatGB by lane name, then lane kind; browser kinds (web, desktop) the learned web seat, no-browser kinds 0.4
+$need = [double](Get-KitSetting "qa.seatGB.$($ln.name)" (Get-KitSetting "qa.seatGB.$($ln.kind)" $(if ($ln.kind -in 'web', 'desktop') { Get-KitParam 'qa.seatGB' -Context web } else { 0.4 })))
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-qa-seats')
 function Locked([scriptblock]$b) {
   $got = $false
@@ -205,13 +221,43 @@ function Get-LaneTarget($cfg, [string]$name) {
   }
   $null
 }
+# the user when -As is not given: target defaultUser, kit api.defaultUser, the target's only user; several and none chosen = $null
+function Resolve-ApiUser($t) {
+  $names = @($t.users.PSObject.Properties.Name)
+  foreach ($d in @([string]$t.defaultUser, [string](Get-KitSetting 'api.defaultUser' ''))) { if ($d) { return $d } }
+  if ($names.Count -eq 1) { return $names[0] }
+  if (-not $names.Count) { return '' }
+  $null
+}
+# auth.preset (built-in field sets) under the target's own auth fields
+$script:ApiAuthPresets = @{
+  oauth2 = @{ type = 'login'; contentType = 'form'; tokenField = 'access_token'; refreshField = 'refresh_token' }
+  oidc   = @{ type = 'login'; tokenField = 'id_token' }
+}
+function Resolve-ApiAuth($a) {
+  $o = [ordered]@{}
+  $pn = [string]$a.preset
+  if ($pn) { $p = $script:ApiAuthPresets[$pn]; if (-not $p) { throw "auth.preset '$pn' unknown (built in: $(@($script:ApiAuthPresets.Keys | Sort-Object) -join ', '))" }; foreach ($k in $p.Keys) { $o[$k] = $p[$k] } }
+  if ($a) { foreach ($p in $a.PSObject.Properties) { if ($null -ne $p.Value -and "$($p.Value)" -ne '') { $o[$p.Name] = $p.Value } } }
+  [pscustomobject]$o
+}
+# the token in a login answer: auth.tokenField, else kit api.tokenFields in order ([] = none); a bare string answer is the token
+function Get-ApiLoginToken($a, [string]$Content) {
+  $j = try { $Content | ConvertFrom-Json -ErrorAction Stop } catch { $null }
+  if ($j -is [string]) { return $j }
+  if ($null -eq $j) { $s = "$Content".Trim(); if ($s -and $s -notmatch '[\s<{]') { return $s }; return $null }
+  $fields = @(if ($a.tokenField) { [string]$a.tokenField } else { @(Get-KitSetting 'api.tokenFields' @()) | Where-Object { $_ } })
+  if (-not $fields.Count) { throw "the login answer is JSON but no token field is set: targets.local.json auth.tokenField or auth.preset ($(@($script:ApiAuthPresets.Keys | Sort-Object) -join ', ')), or kit.local.json api.tokenFields (answer fields: $(@($j.PSObject.Properties.Name | Select-Object -First 12) -join ', '))" }
+  foreach ($f in $fields) { $v = $j; foreach ($k in $f.Split('.')) { $v = $v.$k }; if ($v) { return [string]$v } }
+  $null
+}
 function Invoke-Api {
 param(
   [string]$Method = 'GET',
   [Parameter(Mandatory, Position = 0)][string]$Path,
   [string]$Body = $null,
   [string]$Target = $null,
-  [string]$As = 'admin',
+  [string]$As = '',                 # '' = Resolve-ApiUser
   [string]$Tenant = $null,
   [string]$Save = $null,            # without .json
   [string]$OutDir = $null,          # default: <runtime>/work/evidence
@@ -235,7 +281,7 @@ if ($Save -match '^([A-Za-z]:[\\/]|\\\\).*[^\\/]$') {
 }
 $Save = $Save -replace '(?i)\.json$', ''
 if ($saveIn -and $Save -notmatch '^[^\\/:*?"<>|]+$') { throw "-Save '$saveIn' is not a file name (none of \ / : * ? `" < > |, not empty): a name, or a full file path; the folder goes in -OutDir" }
-# api_auth.ps1 gets the cleaned values
+# a local auth-kind hook gets the cleaned values
 if ($saveIn) { $PSBoundParameters['Save'] = $Save }; if ($OutDir) { $PSBoundParameters['OutDir'] = $OutDir }
 # a bound hashtable became a relative folder
 if ($OutDir -and -not [IO.Path]::IsPathRooted($OutDir)) { throw "-OutDir must be an absolute folder path, got '$OutDir' (a variable holding an object? PowerShell names are case-insensitive: `$o is `$O)" }
@@ -253,59 +299,77 @@ $t = $cfg.targets.$Target
 if (-not $t) { $t = Get-LaneTarget $cfg $Target }
 if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')$(if ($Target -match '\d$') { ' (a local env lane <target><k>: its base target must point at lane 1 ports; envy.ps1 envs)' })" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
+$a = Resolve-ApiAuth $t.auth
+$kind = "$($a.type)"; if (-not $kind) { $kind = 'login' }
+if (-not $As -and $kind -ne 'none') {
+  $who0 = Resolve-ApiUser $t   # [string]$As would turn $null into ''
+  if ($null -eq $who0) { "NO-USER target $Target has several users and none is chosen (not retried): pass -As <user>, or set targets.local.json targets.$Target.defaultUser or kit.local.json api.defaultUser. Known: $($t.users.PSObject.Properties.Name -join ', ')"; exit 2 }
+  $As = $who0
+}
 $u = @($t.users.$As)
-if (-not $t.users.$As -and $t.auth.type -ne 'none') {   # not @(...).Count: @($null).Count is 1
+if (-not $t.users.$As -and $kind -ne 'none') {   # not @(...).Count: @($null).Count is 1
   $holders = @($cfg.targets.PSObject.Properties | Where-Object { $_.Name -ne $Target -and $_.Value.users.$As } | ForEach-Object Name)   # names only, never values
   # exit 2, not a throw: a missing user never appears on retry (163x loop)
   "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $($t.users.PSObject.Properties.Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"; exit 2 }
+$ext = Get-Command 'Get-ApiAuthHeaders' -ErrorAction SilentlyContinue   # adapters/api_auth.ps1: basic, cookie, command
+$core = 'login', 'none', 'token', 'query'
+if ($kind -notin $core -and -not ($ext -and $kind -in 'basic', 'cookie', 'command')) {
+  # a local auth kind: Register-KitAdapter api-auth <type> @{ invoke = { param($a) ... } } in adapters/*.local.ps1; $a = the bound params
+  if ($KitAdapters['api-auth'] -and $KitAdapters['api-auth'][$kind]) { $bp = @{}; foreach ($kv in $PSBoundParameters.GetEnumerator()) { $bp[$kv.Key] = $kv.Value }; $bp.As = $As; $bp.Target = $Target; return Invoke-KitAdapter 'api-auth' $kind 'invoke' $bp }
+  throw "target '$Target' auth.type '$kind' unknown: $($core -join ', ')$(if ($ext) { ', basic, cookie, command' } else { ' (basic, cookie, command: adapters/api_auth.ps1)' })" }
 if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has no api URL (web-only: use browser.mjs)" }
 $base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
-$a = $t.auth
-if ("$($a.type)" -notin '', 'login', 'none' -or $a.cert -or $a.refreshField) {   # other auth kinds: adapters/api_auth.ps1
-  return Invoke-ApiExtra @PSBoundParameters
-}
+if ($kind -eq 'query') { $uri += "$(if ($uri -match '\?') { '&' } else { '?' })$($a.param)=$([uri]::EscapeDataString([string]$u[1]))" }
+$tls = if ($a.cert) { @{ Certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([string]$a.cert, [string]$a.certPass) } } else { @{} }
 
 function Fill($s) { ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant) }
-function Get-Field($o, $path) { foreach ($k in $path.Split('.')) { $o = $o.$k }; $o }
 
 $tokDir = Get-KitPath tokens -Create
 $cache = Join-Path $tokDir ("$Target-$Tenant-$As.txt" -replace '[^\w.\-]', '_')
 $failMark = "$cache.refused"   # a refused login holds its user until targets.local.json changes: no lockout storm (6x Bad credentials)
 $who = "LOGIN-FAIL target=$Target tenant='$Tenant' user=$As"
-function Login {
+$script:rt = $null
+# cache: token (cookie kind: the Cookie header) + refresh token
+function Login([switch]$Refresh) {
   $fm = Get-Item -LiteralPath $failMark -ErrorAction SilentlyContinue
-  if ($fm -and $fm.LastWriteTime -gt (Get-Item -LiteralPath $cfgFile).LastWriteTime -and ((Get-Date) - $fm.LastWriteTime).TotalMinutes -lt [double](Get-KitParam 'api.loginHoldMinutes')) {
+  if (-not $Refresh -and $fm -and $fm.LastWriteTime -gt (Get-Item -LiteralPath $cfgFile).LastWriteTime -and ((Get-Date) - $fm.LastWriteTime).TotalMinutes -lt [double](Get-KitParam 'api.loginHoldMinutes')) {
     throw "$who`: not retried, refused at $($fm.LastWriteTime.ToString('HH:mm')) ($(Get-Content -LiteralPath $failMark -Raw)); fix targets.local.json targets.$Target.users.$As, then retry (api.loginHoldMinutes)" }
   $b = [ordered]@{}; foreach ($p in $a.body.PSObject.Properties) { $b[$p.Name] = if ($p.Value -is [string]) { Fill $p.Value } else { $p.Value } }
+  if ($Refresh) { $cid = $b.client_id; $b = [ordered]@{ grant_type = 'refresh_token'; refresh_token = $script:rt }; if ($cid) { $b.client_id = $cid } }
   $lu = Fill $(if ($a.path -match '^https?://') { $a.path } else { $base + $a.path })
-  $form = $a.contentType -eq 'form'
-  $r = try { Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -ConnectionTimeoutSeconds 60 } catch {
-    $lc = [int]$_.Exception.Response.StatusCode; if ($lc -notin 401, 403) { throw }   # a bad login names where to look (23x a bare 401 body)
+  $form = $a.contentType -eq 'form' -or $Refresh
+  $r = try { Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -ConnectionTimeoutSeconds 60 -SessionVariable ws @tls } catch {
+    $lc = [int]$_.Exception.Response.StatusCode; if ($Refresh -or $lc -notin 401, 403) { throw }   # a bad login names where to look (23x a bare 401 body)
     if ($lc -eq 401) { Set-Content -LiteralPath $failMark "HTTP $lc" -NoNewline }   # 403 may be a WAF or rate limit: no hold
     throw "$who`: login refused (HTTP $lc): check targets.local.json targets.$Target.users.$As (password; the user's tenant: -Tenant) and auth.path. $(-join ("$($_.ErrorDetails.Message)" -replace '\s+', ' ' -replace $(if ($u[1]) { [regex]::Escape([string]$u[1]) } else { '(?!)' }), '[redacted]')[0..199])" }
-  $tok = Get-Field ($r.Content | ConvertFrom-Json) $(if ($a.tokenField) { $a.tokenField } else { 'access_token' })
-  if (-not $tok) { throw "login to $Target as $As returned no token" }
+  if ($kind -eq 'cookie') { $tok = (@($ws.Cookies.GetAllCookies()) | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' }
+  else {
+    $tok = Get-ApiLoginToken $a ([string]$r.Content)
+    if ($a.refreshField) { $j = $r.Content | ConvertFrom-Json; $nrt = $j; foreach ($k in ([string]$a.refreshField).Split('.')) { $nrt = $nrt.$k }; if ($nrt) { $script:rt = $nrt } }   # a refresh answer may omit it: keep the old one
+  }
+  if (-not $tok) { throw "login to $Target as $As returned no token$(if ($a.tokenField) { " (auth.tokenField $($a.tokenField))" })" }
   Remove-Item -LiteralPath $failMark -ErrorAction SilentlyContinue
-  $tok | Set-Content $cache -NoNewline
+  "$tok`n$script:rt" | Set-Content $cache -NoNewline
   $tok
 }
-# login: header template (default bearer)
 function AuthHeaders($tok) {
-  if ($a.type -ne 'login') { return @{} }
+  if ($kind -in 'basic', 'cookie', 'command') { return Get-ApiAuthHeaders -Auth $a -User $u -Token $tok -Method $Method -Uri $uri -Body $Body -Fill ${function:Fill} }
+  if ($kind -in 'none', 'query') { return @{} }
   $n, $v = "$(if ($a.header) { $a.header } else { 'Authorization: Bearer {token}' })".Split(':', 2)
   @{ $n.Trim() = $v.Trim().Replace('{token}', $tok) }
 }
-$tok = $null; $login = $a.type -eq 'login'
-if ($login) { $tok = if (Test-Path $cache) { "$(Get-Content $cache -Raw)".Trim() }; if (-not $tok) { $tok = Login } }   # empty cache file: log in again
+$tok = $null; $login = $kind -in 'login', 'cookie'
+if ($login) { $tok, $script:rt = if (Test-Path $cache) { @(Get-Content $cache) + '' }; if (-not "$tok".Trim()) { $tok = Login } }   # empty cache file: log in again
+elseif ($kind -eq 'token') { $tok = if ($a.token) { $a.token } else { [string]$u[1] } }
 
 function Call($tk) {
   $h = AuthHeaders $tk; foreach ($k in $Headers.Keys) { $h[$k] = $Headers[$k] }
   if ($Tenant -and $t.tenantHeader) { $h[$t.tenantHeader] = $Tenant }
-  $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = $ContentType }
+  $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = $ContentType } + $tls
   if ($Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body) }
   $script:sentHeaders = $h
-  function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match $KitLogMap.secretKey) { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
+  function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match $KitLogMap.secretKey -or $kv.Key -match '(?i)cookie') { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
   try { $r = Invoke-WebRequest @p; $hm = HeaderMap $r.Headers.GetEnumerator(); return @([int]$r.StatusCode, $r.Content, [string]$hm['content-type'], $hm) }
   catch {
     $resp = $_.Exception.Response
@@ -314,7 +378,7 @@ function Call($tk) {
 }
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $res = Call $tok
-if ($res[0] -eq 401 -and $login) { $tok = Login; $sw.Restart(); $res = Call $tok }   # token expired: once more
+if ($res[0] -eq 401 -and $login) { $tok = if ($script:rt) { try { Login -Refresh } catch { Login } } else { Login }; $sw.Restart(); $res = Call $tok }   # token expired: once more
 $sw.Stop()
 $status, $content, $ctype, $rhead = $res
 if ($content -is [byte[]]) {
@@ -606,12 +670,14 @@ $out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.
 $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # logical name (tracker.statuses)
 $isLocal = [string]$(if ($item.localEnv) { $item.localEnv } else { $run.localEnv })   # local env item (ENV-FIX)
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
-$canCreate = [bool]$bugList -or $KitConf.TrackerType -in 'github', 'gitlab', 'none'   # clickup/jira need a list/project
-# own vs new: tester's 'defect' wins, else X = new; a knownBug FAIL is neither (tracked elsewhere)
+# trackers that file an issue without a list / project (qa.bugTrackersWithoutList)
+$canCreate = [bool]$bugList -or $KitConf.TrackerType -in @(Get-KitSetting 'qa.bugTrackersWithoutList' @('github', 'gitlab', 'none'))
+# own vs new: tester's 'defect' wins, else a check id matching qa.newDefectIdRx ('' = none) is new; a knownBug FAIL is neither (tracked elsewhere)
+$script:NewDefectRx = [string](Get-KitSetting 'qa.newDefectIdRx' '')
 function Test-KnownBug($c) { [bool]"$($c.knownBug)".Trim() }
-function Test-NewDefect($c) { if (Test-KnownBug $c) { return $false }; if ("$($c.defect)" -in 'new', 'own') { return "$($c.defect)" -eq 'new' }; [string]$c.id -match '^X\d' }
+function Test-NewDefect($c) { if (Test-KnownBug $c) { return $false }; if ("$($c.defect)" -in 'new', 'own') { return "$($c.defect)" -eq 'new' }; [bool]$script:NewDefectRx -and [string]$c.id -match $script:NewDefectRx }
 # bossy.ps1 bugbrief parses "### <id> — <screen>" + "**Saw:**"
-$script:NtHold = 'env-data', 'phone-only', 'tool-down', 'no-mail-sandbox'   # NOT_TESTED causes no developer can fix
+$script:NtHold = @(Get-KitSetting 'qa.holdCauses' @() | Where-Object { $_ } | ForEach-Object { "$_" })   # NOT_TESTED causes no developer can fix: status kept, the owner decides
 function Format-Check($c) {
   $ev = (@($c.evidence) | Where-Object { $_ } | ForEach-Object { if ($map.files[$_]) { "[$_]($($map.files[$_].link))" } else { $_ } }) -join ', '
   "### $($c.id) — $($c.screen)$(if ($c.flaky) { ' (flaky)' })`n**Steps:** $($c.what_was_done)`n`n**Saw:** $($c.observed)$(if ($c.cause) { " (cause: $($c.cause))" })`n`n**Independent re-test:** $(if ($c.verify) { $c.verify } else { 'not re-tested' })`n`n**Evidence:** $(if ($ev) { $ev } else { 'none' })`n"
@@ -828,9 +894,10 @@ Write-KitAtomic $f ($r | ConvertTo-Json -Depth 8)
 function Invoke-Retest {
 param(
   [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][string]$Code,
-  [string]$Title, [string]$Mrs = '', [string[]]$Only, [ValidateSet('web', 'api', 'app')][string]$Lane = 'web'
+  [string]$Title, [string]$Mrs = '', [string[]]$Only, [string]$Lane = ''   # a qa.lanes lane; '' = the first lane
 )
 $ErrorActionPreference = 'Stop'
+$Lane = if ($Lane) { (Resolve-QaLane $Lane).name } else { @((Get-QaLanes).Keys)[0] }
 # -Only arrives as one string
 $Only = @(Split-KitList $Only)
 $t = Get-TrackerTask $Task
@@ -864,6 +931,22 @@ Write-KitAtomic "$RunDir/run.json" ($r | ConvertTo-Json -Depth 8)
 "added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir/run.json - launch: Workflow testy { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"
 }
 
+# the tester guide doc: process.docs entry qa.guideDoc (unset: the only / last entry); no process.docs = none (the task text guides)
+function Get-QaGuideDocSpec {
+  $docs = @(Get-KitSetting 'process.docs' @() | Where-Object { $_ -and $_.key })
+  if (-not $docs.Count) { return $null }
+  $want = [string](Get-KitSetting 'qa.guideDoc' '')
+  $d = if ($want) { @($docs | Where-Object { "$($_.key)" -eq $want })[0] } else { $docs[-1] }
+  if (-not $d) { throw "qa.guideDoc '$want' is not a process.docs key ($(@($docs.key) -join ', '))" }
+  [pscustomobject]@{ key = [string]$d.key; label = [string]$(if ($d.label) { $d.label } else { $d.key }); rx = [string]$(if ($d.headerRx) { $d.headerRx } else { [regex]::Escape([string]$(if ($d.label) { $d.label } else { $d.key })) }) }
+}
+# the guide doc's URL: a "<label>: [x](url)" line in the task text, else the tracking file's docs.<key>
+function Get-QaGuideDocUrl([string]$Description, $Track, $Spec) {
+  if (-not $Spec) { return $null }
+  if ($Description -match "(?m)(?:$($Spec.rx))[:*\s]*\[[^\]]*\]\((?<u>https?://[^)\s]+)\)") { return $Matches.u }
+  $v = if ($Track.docs) { $Track.docs.($Spec.key) }; if ($v) { "$v" }
+}
+
 # ---- prepare: a test-only run from a job (SKILL.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it
 function Invoke-Prepare {
 param([string]$Job, [string]$RunDir)
@@ -884,6 +967,7 @@ foreach ($tid in @($jb.tasks | Where-Object { $_ })) { $cand["$tid"] = '' }
 foreach ($tid in @($jb.exclude | Where-Object { $_ })) { $cand.Remove("$tid") }
 $owner = if ($jb.mine) { "$(Get-TrackerOwner)" }
 $tgtRules = Get-KitSetting "qa.targets.$($jb.target)" $null
+$gSpec = Get-QaGuideDocSpec
 $items = [Collections.Generic.List[object]]::new(); $left = [Collections.Generic.List[object]]::new(); $byDoc = @{}
 foreach ($tid in @($cand.Keys)) {
   $tk = Get-TrackerTask $tid; $nm = "$($tk.name)"
@@ -893,11 +977,12 @@ foreach ($tid in @($cand.Keys)) {
   # 2. MRs (tracking, else MR links in the description) and the human testing doc
   $tf = Get-KitTaskFile $tid; $trk = if (Test-Path -LiteralPath $tf) { Get-Content -LiteralPath $tf -Raw | ConvertFrom-Json }
   $mrs = @(@($trk.track.mrs) | Where-Object { $_ }); if (-not $mrs.Count) { $mrs = @([regex]::Matches("$($tk.description)", 'https?://\S+?/(?:-/merge_requests|pulls?|pull-requests)/\d+') | ForEach-Object { $mu = ConvertFrom-MrUrl $_.Value; if ($mu) { "$(($mu.repo -split '/')[-1])!$($mu.n)" } } | Select-Object -Unique) }
-  $doc = if ("$($tk.description)" -match '(?m)Testing doc \(human\):\*{0,2}\s*\[[^\]]*\]\((?<u>https?://[^)\s]+)\)') { $Matches.u } elseif ($trk.docs.human) { "$($trk.docs.human)" }
+  $doc = Get-QaGuideDocUrl "$($tk.description)" $trk $gSpec
   if (-not $mrs.Count) { & $out 'no MRs (tracking or task links)'; continue }
-  if (-not $doc) { & $out 'no "Testing doc (human):" link'; continue }
+  if ($gSpec -and -not $doc) { & $out "no `"$($gSpec.label):`" link"; continue }
+  if (-not $doc) { $doc = "task:$tid" }   # no guide doc configured (process.docs): the task text is the guide
   # 3. target: the job's target names a targets.local.json entry, else the first qa.targets rule that matches
-  $it = [ordered]@{ code = ''; title = $nm; guideFile = ''; lane = 'web'; subtasks = @([ordered]@{ id = $tid; name = $nm; mrs = ($mrs -join ', ') }) }
+  $it = [ordered]@{ code = ''; title = $nm; guideFile = ''; lane = @((Get-QaLanes).Keys)[0]; subtasks = @([ordered]@{ id = $tid; name = $nm; mrs = ($mrs -join ', ') }) }
   if ($tgtRules) {
     $repoNames = @($mrs | ForEach-Object { ($_ -split '!')[0] })
     $hit = @($tgtRules) | Where-Object { (-not $_.lists -or @($_.lists) -contains $cand[$tid]) -and (-not $_.repos -or @($repoNames | Where-Object { @($_.repos) -contains $_ }).Count) -and (-not $_.nameRegex -or $nm -match $_.nameRegex) } | Select-Object -First 1
@@ -913,8 +998,10 @@ foreach ($tid in @($cand.Keys)) {
   }
   if ($byDoc[$doc]) { $byDoc[$doc].subtasks += $it.subtasks[0]; continue }   # tasks sharing a doc = one item
   $it.code = "T$($items.Count + 1)"; $gf = "$dir/guides/$($it.code).md"; $kept = Join-Path (Get-KitPath docs) "$($tid)_testing-doc.md"
-  if (Test-Path -LiteralPath $kept) { Copy-Item -LiteralPath $kept $gf } else { Set-Content -LiteralPath $gf -Encoding utf8 "# Guide: $nm`n`nHuman testing doc: $doc (no kept copy: read the doc itself, fully, before the first check)" }
-  $it.guideFile = $gf; $it.guideUrl = $doc; $items.Add($it); $byDoc[$doc] = $it
+  if (Test-Path -LiteralPath $kept) { Copy-Item -LiteralPath $kept $gf }
+  elseif ($doc -like 'task:*') { Set-Content -LiteralPath $gf -Encoding utf8 "# Guide: $nm`n`nNo testing doc configured (process.docs): test what the task text below asks.`n`n$($tk.description)" }
+  else { Set-Content -LiteralPath $gf -Encoding utf8 "# Guide: $nm`n`n$($gSpec.label): $doc (no kept copy: read the doc itself, fully, before the first check)" }
+  $it.guideFile = $gf; if ($doc -notlike 'task:*') { $it.guideUrl = $doc }; $items.Add($it); $byDoc[$doc] = $it
 }
 # 5. run.json + lead-notes.md (fixed headings; testers and the lead append with lead-notes add)
 $run = [ordered]@{ title = "$($jb.target): $(@($items | ForEach-Object title) -join '; ')"; target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }

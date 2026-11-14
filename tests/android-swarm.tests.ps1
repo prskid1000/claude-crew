@@ -125,6 +125,19 @@ Set-Content '$gt/adb.cmd' "@echo off``r``necho 1``r``nexit /b 0" -Encoding ascii
 Stop-Process -Id $vis.Id -Force -ErrorAction SilentlyContinue
 Expect-Each $gu 'swarm gpu: another kind holding the GPU -> no lane boot, a software-rendered lane boots: #' @('blocked', 'software') -Show 8
 Remove-Item $gt -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
+# defaults: app.kind native; AVD neutral < kit.local.json devices.avd < swarm.config.json avd; installs by argv, no Invoke-Expression
+$k = New-TestKit swarm-defaults; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force; Copy-Item (Join-Path $src 'skills/crafty/adapters/android_sdk.ps1') (New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters'))
+& $J @{ devices = @{ avd = @{ device = 'd9' } } } (Join-Path $k 'skills/crafty/kit.local.json')
+& $J @{ lanes = @(); app = @{ package = 'x' }; avd = @{ api = 'a99' } } (Join-Path $k 'skills/phoney/swarm.config.json')
+$sd = Invoke-PsTest 'swarm-defaults' @"
+Set-Item Env:CLAUDE_RUNTIME '$(Join-Path (Kd) 'sd-rt')'; . '$(Join-Path $k 'skills/phoney/phoney.ps1')'
+`$c = Get-SwarmConfig
+"defaults:`$(`$c.app.kind) `$(`$c.app.buildTask) `$(`$c.avd.device) `$(`$c.avd.api) `$(`$c.avd.tag)"
+"argv:`$((Split-KitCommand 'yarn install --frozen-lockfile' @{}) -join '|')"
+"@
+$noIex = @('phoney.ps1', 'swarm-ios.ps1' | Where-Object { (Get-Content (Join-Path $src "skills/phoney/$_") -Raw) -match 'Invoke-Expression' })
+Expect "phoney defaults: kind native (assembleDebug), devices.avd under swarm avd, neutral tag; argv installs, no Invoke-Expression ($sd $noIex)" ("$sd" -match 'defaults:native assembleDebug d9 a99 google_apis' -and "$sd" -match 'argv:yarn\|install\|--frozen-lockfile' -and -not $noIex.Count)
+Remove-TestKit $k
 
 # gpu.exclusive.emulator.minFreeMB (2048): 1500 MB free -> waits (supervise shows it), then refuses naming the GPU users; 3000 boots; no nvidia-smi skips
 $k = New-TestKit swarm-vram; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force

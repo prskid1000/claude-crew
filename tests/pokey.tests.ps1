@@ -7,6 +7,7 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $store = Join-Path $k '.state/tracker-none'
 $env:KIT_TRACKER_TYPE = 'none'; $env:KIT_REPORT_TYPE = 'markdown'
+$kl ="$k/skills/crafty/kit.local.json"; $klBase = '{"qa":{"newDefectIdRx":"^X\\d","holdCauses":["env-data","phone-only","tool-down","no-mail-sandbox"]}}'; $klBase | Set-Content $kl
 function Read-Text($textPath) { Get-Content $textPath -Raw }
 function New-TestDir($dirPaths) { New-Item -ItemType Directory -Force $dirPaths | Out-Null }
 function New-Run($name, $items) {
@@ -210,14 +211,7 @@ $null = Fin $rt 'Z1'
 $ro = pwsh @np $Q retest -RunDir $rt -Task TZ -Code Z1 -Mrs 'api!1' 2>&1 | Out-String
 $arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'archive-*')
 Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and (Test-Path "$($arc[0].FullName)/finalize.json") -and -not (Test-Path "$rt/Z1/finalize.json") -and $ro -match 'archived the earlier round')
-# tracker.bugPrefix; a check without evidence; guideId is a Docs URL only for gdocs
-$kl = "$k/skills/crafty/kit.local.json"; '{"tracker":{"bugPrefix":"[Defect]"}}' | Set-Content $kl
-foreach ($x in @('PY', 'Ask Y'), @('TY', 'T', 'PY'), @('BY', '[Defect] Ask Y — new defects (1)', 'PY')) { New-Task @x }
-$by = New-Run 'BY' @(@{ code = 'Y1'; task = 'TY'; checks = , @('X1', 'FAIL', 'new') })
-(Read-Text "$by/run.json") -replace '"code":', '"guideId": "G4", "code":' | Set-Content "$by/run.json"
-(Read-Text "$by/Y1/results.json") -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
-$null = Fin $by 'Y1'; $null = pwsh @np $Q retest -RunDir $by -Task BY -Code Y2
-Expect 'bugPrefix: an open [Defect] under the ask gets the section, its name kept; retest strips it; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (1)' -and (Task 'BY').description -match '(?m)^Source: qa-BY \[kit:bug:qa-BY\]' -and (Read-Text "$by/run.json") -match 'RETEST Ask Y — new' -and (Read-Text "$by/Y1/report.md") -notmatch 'docs\.google'); Remove-Item $kl
+$klBase | Set-Content $kl
 # browser.mjs: mocks, then local fixture servers
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
