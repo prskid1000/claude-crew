@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1034 README graph · L1137 lint command · L1335 audit ·
-  L1451 registry · L1792 prose · L1943 sections · L2073 budget · L2087 migrate · L2143 plugins · L2197 state lint · L2382 main
+  L1451 registry · L1792 prose · L1943 sections · L2073 budget · L2087 migrate · L2152 plugins · L2206 state lint · L2391 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -270,7 +270,7 @@ def start_rows(k):
     always = ftok('CLAUDE.md') + ftok('AGENTS.md') + sum(ftok(r) for r in rules)
     always += sum(tok(frontmatter(k.texts.get(f'skills/{s}/SKILL.md', '')).get('description', '')) for s in k.skills)
     lessons = k.texts.get('LESSONS.md') or ''
-    section_tok = lambda name: tok((re.search(r'^## ' + re.escape(name) + r'\n(.*?)(?=^## |\Z)', lessons, re.S | re.M) or [''])[0])
+    section_tok = lambda name: tok((re.search(r'^## ' + re.escape(name) + r'\r?\n(.*?)(?=^## |\Z)', lessons, re.S | re.M) or [''])[0])
     rows = []
     for agent, m in (manifest(k.dir).get('agents') or {}).items():
         skill = m.get('skill') or ''
@@ -2094,28 +2094,31 @@ def cmd_migrate(a):
     kit, done = KIT_DIR, []
     rc, ex, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude', timeout=20)
     lines = read(ex).split('\n') if rc == 0 and ex and osp.isfile(ex) else []
-    keep, listed, marker, inside = [], [], '', False
+    keep, listed, markers, inside = [], [], set(), False
     for line in lines:
         m = BLOCK_LINE.match(line.strip())
         if m:
-            marker, inside = m.group(1), m.group(2) != 'end'
+            markers.add(m.group(1))
+            inside = m.group(2) != 'end'
             continue
         if inside and line.strip():
             listed.append(line.strip().lstrip('/'))
             continue
         inside = False
         keep.append(line)
-    if marker:
-        with open(ex + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
-            fh.write('\n'.join(keep).rstrip('\n') + '\n')
-        os.replace(ex + '.tmp', ex)
-        done.append(f'.git/info/exclude: {len(listed)} install line(s) dropped')
     cfg_path = osp.join(kit, 'skills', 'crafty', 'kit.local.json')
-    cfg = (load_json(cfg_path)[0] if osp.isfile(cfg_path) else None) or {}
-    local = [str(p).replace('\\', '/').strip('/') for p in (cfg.get('localOnly') or []) if isinstance(cfg, dict)]
-    now = set(tracked(kit))
+    cfg, cfg_err = load_json(cfg_path) if osp.isfile(cfg_path) else ({}, None)
+    rc_ls, ls, _ = git(kit, 'ls-files')
+    if listed and (rc_ls or not ls.strip() or cfg_err or not isinstance(cfg, dict)):   # never guess what is tracked or local-only
+        print('kitbag migrate: git ls-files or kit.local.json unreadable: nothing changed (run it again)', file=sys.stderr)
+        return 1
+    cfg = cfg if isinstance(cfg, dict) else {}
+    local = [str(p).replace('\\', '/').strip('/') for p in (cfg.get('localOnly') or [])]
+    now, root = set(ls.split('\n')), osp.abspath(kit)
     for rel in sorted(set(listed)):
-        if rel in now or any(rel == p or rel.startswith(p + '/') for p in local) or not osp.isfile(osp.join(kit, rel)):
+        path = osp.abspath(osp.join(kit, rel))
+        if rel in now or any(rel == p or rel.startswith(p + '/') or fnmatch.fnmatch(rel, p) for p in local) or \
+           osp.commonpath([root, path]) != root or not osp.isfile(path):
             continue
         os.remove(osp.join(kit, rel))
         d = osp.dirname(osp.join(kit, rel))
@@ -2127,15 +2130,21 @@ def cmd_migrate(a):
     if osp.isdir(stamps):
         shutil.rmtree(stamps, ignore_errors=True)
         done.append(f'{osp.relpath(stamps, kit)}: removed')
-    key = marker[:-1] + 'ies' if marker.endswith('y') else marker + 's'   # the kit.local.json list named after the marker
-    if marker and isinstance(cfg, dict) and key in cfg:
+    keys = [k for k in (x[:-1] + 'ies' if x.endswith('y') else x + 's' for x in sorted(markers)) if k in cfg]   # the list named after a marker
+    if keys:
         text = read(cfg_path)
         indent = len(re.search(r'\n( *)"', text).group(1)) if re.search(r'\n( *)"', text) else 2
-        cfg.pop(key)
+        for key in keys:
+            cfg.pop(key)
+            done.append(f'skills/crafty/kit.local.json: key "{key}" removed')
         with open(cfg_path + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
             fh.write(json.dumps(cfg, indent=indent, ensure_ascii=False) + '\n')
         os.replace(cfg_path + '.tmp', cfg_path)
-        done.append(f'skills/crafty/kit.local.json: key "{key}" removed')
+    if markers:   # last: a failed step above leaves the blocks for the next run
+        with open(ex + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write('\n'.join(keep).rstrip('\n') + '\n')
+        os.replace(ex + '.tmp', ex)
+        done.insert(0, f'.git/info/exclude: {len(listed)} install line(s) dropped')
     for x in done:
         print(f'kitbag migrate: {x}')
     return 0

@@ -114,6 +114,9 @@ $mgEx = Get-Content $mgx -Raw; $mgCfg = Get-Content (Join-Path $kc 'skills/craft
 Expect "kitbag migrate: install blocks out, other exclude lines kept, an untracked listed file removed, tracked + localOnly kept, stamps + config key gone, then silent ($($mg1.Trim() -replace '\s+', ' '))" ($mgEx -notmatch "kitbag $mgw" -and
   $mgEx -match '(?m)^/keep-me\.txt' -and -not (Test-Path "$kc/skills/old") -and (Test-Path "$kc/README.md") -and (Test-Path "$kc/notes/mine.txt") -and -not (Test-Path "$kc/.state/extras-used") -and
   -not $mgCfg.PSObject.Properties[$mgKey] -and @($mgCfg.localOnly).Count -eq 1 -and -not $mg2.Trim())
+Add-Content $mgx "# kitbag $mgw duel", '/notes/mine.txt', "# kitbag $mgw end"; '{ broken' | Set-Content (Join-Path $kc 'skills/crafty/kit.local.json')
+$mg3 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String; $mg3c = $LASTEXITCODE
+Expect "kitbag migrate: an unreadable kit.local.json changes nothing, exit 1 ($($mg3.Trim()))" ($mg3c -eq 1 -and (Test-Path "$kc/notes/mine.txt") -and (Get-Content $mgx -Raw) -match "kitbag $mgw duel")
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 # section maps: lint SECTION-MAP / SECTION-UNMAPPED, audit SECTION-BIG, sections --fix
 $sp = Join-Path $k 'sec.py'; @'

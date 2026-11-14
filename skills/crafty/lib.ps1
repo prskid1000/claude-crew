@@ -2358,13 +2358,17 @@ $KitCmd = [pscustomobject]@{
   orch     = Join-Path $KitConf.Kit 'skills/bossy/bossy.ps1'
   kitbag  = Join-Path $KitConf.Kit 'skills/bossy/kitbag.py'
 }
-# the git host and ci vendor adapters config selects (host type known now; ci: ci.type and each repos[].ci), and the kit
-# origin's host (supervise protects its main branch): read from .git/config, no git process on every script start
-function Get-KitOriginKind {
-  $gd = Join-Path $KitConf.Kit '.git'
+# the git host and ci vendor adapters config selects (host type known now; ci: ci.type and each repos[].ci), plus the host
+# kind of the kit's and each repos[].checkout's origin (an MR on another host, the kit's main protection): read from
+# .git/config (the host part only), no git process on every script start
+function Get-KitOriginKind([string]$Dir = $KitConf.Kit) {
+  $gd = Join-Path $Dir '.git'
   if (Test-Path -LiteralPath $gd -PathType Leaf) { $gd = ((Get-Content -LiteralPath $gd -Raw) -replace '^gitdir:\s*', '').Trim() -replace '[\\/]worktrees[\\/][^\\/]+$', '' }
   $cf = Join-Path $gd 'config'
-  if ((Test-Path -LiteralPath $cf) -and (Get-Content -LiteralPath $cf -Raw) -match '(?m)^\[remote "origin"\]\s*(?:^\s+\w+ = .*\r?\n)*?^\s+url = (\S+)') { Get-HostKind $Matches[1] }
+  if ((Test-Path -LiteralPath $cf) -and (Get-Content -LiteralPath $cf -Raw) -match '(?m)^\[remote "origin"\]\s*(?:^\s+\w+ = .*\r?\n)*?^\s+url = (\S+)' -and
+    $Matches[1] -match '^(?:\w+://)?(?:[^@/]+@)?(?<h>[^/:\\]{2,})') { Get-HostKind $Matches.h }
 }
-$__vendorWant = @($script:HostType, (Get-KitOriginKind), ([string](Get-KitSetting 'ci.type' '')).ToLower()) + @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.ci)".ToLower() } | Where-Object { $_ })
+$__vendorWant = @($script:HostType, (Get-KitOriginKind), ([string](Get-KitSetting 'ci.type' '')).ToLower()) + @(@(Get-KitValue 'repos' @()) | ForEach-Object {
+  $rc = $_.ci; "$(if ($rc -is [string]) { $rc } else { $rc.type })".ToLower()   # repos[].ci: a name or { type, ... }
+  if ($_.checkout -and (Test-Path -LiteralPath $_.checkout)) { Get-KitOriginKind $_.checkout } } | Where-Object { $_ })
 foreach ($__plugin in (Import-KitVendorAdapters $__vendorWant)) { . $__plugin; $script:KitAdapterFiles += $__plugin }
