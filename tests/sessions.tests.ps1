@@ -208,6 +208,7 @@ Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: usage,
 $ciTrack = Invoke-PsTest track-ci @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
+$__cfg = if ($__cfg) { $__cfg } else { [pscustomobject]@{} }; $__cfg | Add-Member -Force process ([pscustomobject]@{ gates = [pscustomobject]@{ promote = 'builtin:testingDocs' } })   # the legacy row: a plain task keeps the doc gate
 $KitConf.TrackerType = 'fake'; $global:st = 'open'; $global:kc = @(); $global:jobSt = 'running'; $global:tname = '[Backend Unit Test] Stale tests'
 $jobUrl = 'https://h/g/api/-/jobs/'
 function Get-TrackerTask($id) { [pscustomobject]@{ name = $global:tname; status = $global:st; subtasks = @(); description = "**Pipeline:** [x](https://h/g/api/-/pipelines/100)`n**Branch:** staging/x @ abc`n**Job:** [x](${jobUrl}7)" } }

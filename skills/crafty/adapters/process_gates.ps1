@@ -29,7 +29,7 @@ function Test-KitProcessGate([Parameter(Mandatory)][ValidateSet('promote', 'merg
   & $res ($r.code -eq 0) $(if ("$($r.out)".Trim() -or $r.code -eq 0) { $r.out } else { "process.gates.$Gate hook exit $($r.code): $($r.err)" })
 }
 Register-KitAdapter 'process-gate' 'testingDocs' @{
-  promote = { param($a) if ($__trType -eq 'none' -and $env:KIT_DOC_GATE -ne '1') { return @{ ok = $true } }   # no tracker: nothing to read (KIT_DOC_GATE=1: tests)
+  promote = { param($a) if ($KitConf.TrackerType -eq 'none' -and $env:KIT_DOC_GATE -ne '1') { return @{ ok = $true } }   # no tracker: nothing to read (KIT_DOC_GATE=1: tests)
     $l = Test-KitTaskDocLink "$($a.task)"; $need = (@(Get-KitProcessDocs | Where-Object required | ForEach-Object { "'$($_.label):'" }) -join ' and ')
     @{ ok = $l -eq $true; why = $(if ($l -ne $true) { "its description lacks $need links (devtools.py finish writes them) or the task could not be read" }) } }
 }
