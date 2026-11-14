@@ -20,6 +20,8 @@ Expect 'localenv SKILL.md: an ENV-FIX env-file edit -> restart -Services after t
 $mv = Px $L2 marks -Env shop 2>&1 | Out-String; $mn = Px $L2 marks -Env shop -Name m1 2>&1 | Out-String; $mnc = $LASTEXITCODE
 $me = Px $L2 mark 2>&1 | Out-String; $mec = $LASTEXITCODE
 Expect "localenv: marks = mark (list), not a usage error; marks -Name points to mark; both usage slips (and mark with no -Env of 2) exit 2, no FAILED ($mnc $mec)" ($mv -match '\[shop\] marks need db\.engine' -and $mv -notmatch 'Cannot validate' -and $mn -match 'envy\.ps1: marks lists the marks; to make one: mark -Name m1' -and $mnc -eq 2 -and $mec -eq 2 -and $me -match 'envy\.ps1: -Env needed: (mig, shop|shop, mig)' -and "$mn$me" -notmatch 'FAILED')
+$dw = Px $L2 localenv marks -Env shop 2>&1 | Out-String
+Expect "localenv: a doubled 'localenv' action word is dropped; mark with no -Env prints a full example" ($dw -match '\[shop\] marks need db\.engine' -and $dw -notmatch 'Cannot validate' -and $me -match 'e\.g\. envy\.ps1 mark -Env (mig|shop) -Name <name>; list: envy\.ps1 marks -Env')
 $null = Px $L2 bogus 2>&1; $c1 = $LASTEXITCODE
 $null = Px $L2 status -Env nope 2>&1; $c2 = $LASTEXITCODE
 $null = Px $L2 drop -Env shop 2>&1; $c3 = $LASTEXITCODE

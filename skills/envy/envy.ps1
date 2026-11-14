@@ -18,12 +18,13 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 DB parts: db.engine presets, marks, slices, restore, the cascade guard, tenant = adapters/db_presets.ps1; db.rollback = any tool
   command or "liquibase" (crafty/adapters/liquibase.ps1; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L31 config · L228 state · L275 layer drops · L347 leases · L475 code · L507 migrations ·
-  L653 shared builds (opt-in services[].shareBuild true · L832 hooks · L904 marks · L1061 seed · L1141 processes · L1522 daemon ·
-  L1982 cleanup · L2054 doctor · L2107 verbs
+Sections: L32 config · L229 state · L276 layer drops · L348 leases · L476 code · L508 migrations ·
+  L654 shared builds (opt-in services[].shareBuild true · L833 hooks · L905 marks · L1062 seed · L1142 processes · L1523 daemon ·
+  L1983 cleanup · L2055 doctor · L2108 verbs
 #>
 #Requires -Version 7
-$__verb = if ($args.Count) { [string]$args[0] } else { '' }
+$__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
+$__verb = if ($__envyArgs.Count) { [string]$__envyArgs[0] } else { '' }
 . (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1')
 # library (dot-sourced by the CLI and _daemon); state per env: Get-KitPath localenv /<env>.json (Update-State)
 $ErrorActionPreference = 'Stop'
@@ -2124,7 +2125,7 @@ if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
-if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
+if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
 if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 $e = $EnvName
 # db.engine without its presets (adapters/db_presets.ps1 missing): stop before anything changes
@@ -2518,9 +2519,9 @@ switch ($Action) {
 }
 
 if ($MyInvocation.InvocationName -eq '.') { }   # dot-sourced (tests): functions only
-elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($args | Select-Object -Skip 1) }
+elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($__envyArgs | Select-Object -Skip 1) }
 elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }
 else {   # usage errors exit 2; any other crash exits 1 (Invoke-KitVerb)
   $KitVerbOnError = { param($e) $m = "$($e.Exception.Message)"; if ($m -match 'unknown env|-Env needed|No local environments configured|needs -|marks lists the marks') { [Console]::Error.WriteLine("envy.ps1: $m"); exit 2 } }
-  Invoke-KitVerb Invoke-LocalEnv @($args)
+  Invoke-KitVerb Invoke-LocalEnv @($__envyArgs)
 }

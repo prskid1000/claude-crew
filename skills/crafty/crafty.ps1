@@ -1,6 +1,6 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
- wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate;
+ wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty] [-Paths <p,..> (stages only them)]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate;
    new -Scope '<glob>,..' (brief agents[].paths): commit refuses files outside, -ScopeOk <decision id> = the owner's scope word)
  scope [-Mrs <refs> [-Json]] [-Days 7]  -Mrs: each MR's source / test files + OUT-OF-AREA vs its logged area; none: one WATCH line for MRs merged outside it
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L29 sweep · L177 wt · L493 stack · L673 gate · L989 check · L1302 pipes · L1359 guard · L2185 dir ·
-  L2195 checkpoint · L2224 prior · L2262 tracker · L2284 task spec · L2442 scope · L2484 host
+Sections: L23 init · L29 sweep · L177 wt · L495 stack · L675 gate · L991 check · L1304 pipes · L1361 guard · L2187 dir ·
+  L2197 checkpoint · L2226 prior · L2264 tracker · L2286 task spec · L2444 scope · L2486 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -186,7 +186,7 @@ function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
+  [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [string[]]$Paths, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
   [string]$Scope, [string]$ScopeOk, [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
@@ -397,7 +397,9 @@ switch ($Action) {
       if (Test-Path (Join-Path $Dir '.husky')) { $c = @('-c', 'core.hooksPath=.husky') }
       else { Write-Warning "core.hooksPath=$hp missing here: hooks would be skipped" }
     }
-    if (-not $NoStage) { git -C $Dir add -A }
+    $stagePaths = @(Split-KitList $Paths)   # -Paths: a split commit stages only its group, the next group stays out
+    if ($stagePaths.Count -and $NoStage) { throw 'commit: -Paths or -NoStage, not both' }
+    if ($stagePaths.Count) { git -C $Dir add -A -- @($stagePaths); if ($LASTEXITCODE) { throw "commit -Paths: git add failed for $($stagePaths -join ', ')" } } elseif (-not $NoStage) { git -C $Dir add -A }
     if (($area = @(Meta $Dir 'scope' | Where-Object { $_ })).Count) {   # the branch's diff and this commit stay in the brief area
       $at = Meta $Dir 'target'; $br = (git -C $Dir rev-parse --abbrev-ref HEAD).Trim()
       $out = @(Get-KitScopeOutside @(@(if ($at) { git -C $Dir -c core.quotepath=false diff --name-only "origin/$at...HEAD" }) + @(git -C $Dir -c core.quotepath=false diff --cached --name-only) | Select-Object -Unique) $area)

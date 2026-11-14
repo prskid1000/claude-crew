@@ -40,6 +40,11 @@ $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
 Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
 $wc = KtPy "k.load_json = lambda p: ({'commitStyle': 'free'}, 0); print(k.words('日本 wörd ok'), k.commit_rx())"
 Expect 'prose: CJK per char, any script''s words; commitStyle free' ("$wc" -eq '4 \S')
+$um = Join-Path (Split-Path $k) 'unmerged'; $null = git init -q -b main $um; $gu = @('-C', $um, '-c', 'user.name=t', '-c', 'user.email=t@t')
+'a' | Set-Content "$um/c.md"; $null = git @gu add -A; $null = git @gu commit -qm a; $null = git @gu checkout -qb side; 'b' | Set-Content "$um/c.md"; $null = git @gu commit -qam b
+$null = git @gu checkout -q main; 'c' | Set-Content "$um/c.md"; $null = git @gu commit -qam c; $null = git @gu merge side 2>&1
+$tu = KtPy "print(k.tracked(r'$um'), len(k.counted_files(r'$um')))"
+Expect "lint file lists: an unmerged file (3 index stages) counts once ($tu)" ("$tu" -eq "['c.md'] 1" -and @(git -C $um ls-files).Count -eq 3)
 $kpv = KtPy "import os; a = k.kit_param('uiCheck.timeoutSec'); os.environ['KIT_PARAM_UICHECK_TIMEOUTSEC'] = '5'; print(a, k.kit_param('uiCheck.timeoutSec'))"
 Expect "kit_param: the registry default, KIT_PARAM_<KEY> wins ($kpv)" ("$kpv" -eq '600.0 5.0')
 $yq = KtPy "print(len(k.yaml_problems('steps:\n  - name: Lint: x\n')) > 0, k.yaml_problems('steps:\n  - name: \'Lint: x\'\n  - run: |\n      a: b\n'), k.old_name_rx('pokey').search('see skills/pokey/pokey.ps1') is not None)"

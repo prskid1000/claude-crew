@@ -71,5 +71,7 @@ $null = & $lo -Skill revy -Lesson 'an ascii case -> an ascii counted lesson (why
 Expect 'kit-admin: learn -Bump counts an ASCII (1x) up to (2×)' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match 'an ascii counted lesson \(why\) \(2×\)')
 $null = & $lo -Skill revy -Fixed 'a generic lesson'; $hi = & $lo -History -Grep 'a generic lesson'; $st = & $lo -Stats
 Expect 'kit-admin: learn -Fixed moves the line out, -History lists it, -Stats counts signals' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) a generic case -> a generic lesson \(test\)' -and $st -match 'signals since last retro')
+$splitOne = @("a`nb" -split "`n", -1).Count; $kaText = (Get-Content (Join-Path $src 'skills/bossy/kit-admin.md') -Raw) -replace '\s+', ' '
+Expect "kit-admin.md Script pitfalls: -split with limit -1 returns one element ($splitOne): no limit" ($splitOne -eq 1 -and $kaText -match '`-split` limit -1 = one element: no limit')
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 Complete-Tests

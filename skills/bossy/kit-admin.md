@@ -82,7 +82,7 @@ deliberate); pre-push blocks stale ports, org terms and local files; commit with
 pwsh 7: case-insensitive variables (`$L` = `$l`); `-File x.ps1 -List a,b` passes one string (`Split-KitList`); short helper names
 that are aliases (`r`, `rd`, `h`, `del`, `diff`: an alias beats a function and can delete files); `[IO.File]` resolves against the
 process directory; `exit` in a dot-sourced file ends the caller; `SilentlyContinue` hides throws; native commands never throw
-(`$LASTEXITCODE`). Python: `encoding='utf-8'`, `shutil.which` for shims, timeouts. JS workflows: no `Date.now()` / `new Date()`,
+(`$LASTEXITCODE`); `-split` limit -1 = one element: no limit. Python: `encoding='utf-8'`, `shutil.which` for shims, timeouts. JS workflows: no `Date.now()` / `new Date()`,
 LF only, every `agentType` a crew literal in the `agent()` call (lint AGENT-TYPE).
 
 ## Rule examples

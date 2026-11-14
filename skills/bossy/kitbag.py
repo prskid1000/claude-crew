@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1034 README graph · L1137 lint command · L1335 audit ·
-  L1451 registry · L1792 prose · L1943 sections · L2073 budget · L2087 migrate · L2152 plugins · L2206 state lint · L2391 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L633 lint · L1033 README graph · L1136 lint command · L1351 audit ·
+  L1467 registry · L1808 prose · L1959 sections · L2089 budget · L2103 migrate · L2168 plugins · L2222 state lint · L2410 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -253,8 +253,7 @@ def size_tokens(kdir, f):   # git blob size (LF: a CRLF checkout must not count 
 
 def counted_files(kdir):
     """Tracked files the budget counts: all but the generated ports and assets (a deletion not staged yet is gone)."""
-    rc, o, _ = git(kdir, 'ls-files')
-    return [x for x in o.split('\n') if x and not x.startswith(GENERATED + ASSETS) and osp.isfile(osp.join(kdir, x))] if rc == 0 else []
+    return [x for x in tracked(kdir) if not x.startswith(GENERATED + ASSETS) and osp.isfile(osp.join(kdir, x))]
 
 def split_total(sizes):
     """(repo total, tests total) of {file: tokens}: INFO only; what agents load is capped per role (start_rows)."""
@@ -1166,6 +1165,9 @@ def cmd_lint(a):
             print(f'{c:15} {w}: {m}')
         for c, w, m in warns:
             print(f'WARN {c:10} {w}: {m}')
+        unmerged = {x.split('\t', 1)[-1] for x in git(kit, 'ls-files', '-u')[1].splitlines() if x}
+        if unmerged:   # said once, not per stage entry
+            print(f'kitbag lint: rebase / merge in progress: {len(unmerged)} unmerged file(s), each counted once; resolve, then lint again')
         print(f'kitbag lint: {len(problems)} problem(s) in {kit} ({len(k.files)} files, {len(k.skills)} skills, '
          f'{len(k.workflows)} workflows, {len(k.agents)} agents)')
     for c, w, m in ui_check_warns(kit):   # stderr: the pre-commit hook drops lint's stdout
@@ -1270,10 +1272,24 @@ const rows = () => innerWidth < 1280 ? [] : [...document.querySelectorAll('body 
   // an even grid (every card one width) that wrapped may end its last row short: leftover, no empty column; one short row still is
   const ws = kids.map((c) => c.getBoundingClientRect().width), even = /grid/.test(cs.display) && rs.length > 1 && Math.max(...ws) - Math.min(...ws) < 1
   const last = rs.reduce((a, x) => (x.right < a.right ? x : a)), short = even ? 0 : Math.round(end - last.right)
-  // vertical: different cards side by side end within 48 px of each other (a list of like items, one class, may differ)
-  const tall = rs.filter((x) => x.its.length > 1 && new Set(x.its.map((i) => i.k)).size > 1).map((x) => ({ x, d: Math.round(Math.max(...x.its.map((i) => i.h)) - Math.min(...x.its.map((i) => i.h))) })).filter((y) => y.d > 48)
+  // vertical: like tiles (one class) side by side end within 48 px of each other; tiles of different classes may differ (a fixed-height trend beside flag cards)
+  const tall = rs.flatMap((x) => [...new Set(x.its.map((i) => i.k))].map((k) => x.its.filter((i) => i.k === k)).filter((g) => g.length > 1)).map((g) => ({ g, d: Math.round(Math.max(...g.map((i) => i.h)) - Math.min(...g.map((i) => i.h))) })).filter((y) => y.d > 48)
   return (short >= 24 ? [{ el: 'rows', why: `a card row ends ${short} px short of its box (an empty column)`, text: `${g.className || g.tagName}: ${last.ids.join(', ')}`.slice(0, 120) }] : [])
-    .concat(tall.map((y) => ({ el: 'rows', why: `card heights in one row differ by ${y.d} px (max 48): restructure the row`, text: y.x.its.map((i) => `${i.n} ${Math.round(i.h)} px`).join(' | ').slice(0, 160) })))
+    .concat(tall.map((y) => ({ el: 'rows', why: `card heights in one row differ by ${y.d} px (max 48): restructure the row`, text: y.g.map((i) => `${i.n} ${Math.round(i.h)} px`).join(' | ').slice(0, 160) })))
+})
+// an svg drawn over a sibling tile (a stretched flex tile's svg sized from its aspect ratio), any width: svg boxes vs the other tiles of its grid / flex box
+const svgs = () => [...document.querySelectorAll('body *')].flatMap((g) => {
+  if (!/grid|flex/.test(getComputedStyle(g).display) || !g.getClientRects().length) return []
+  const kids = [...g.children].filter((c) => c.getClientRects().length && !/absolute|fixed/.test(getComputedStyle(c).position)), out = []
+  for (const c of kids) for (const s of c.querySelectorAll('svg')) {
+    if (s.parentElement.closest('svg') || !s.getClientRects().length) continue
+    const r = s.getBoundingClientRect().toJSON()   // what shows: cut by each clipping box up to its tile
+    for (let e = s.parentElement; e; e = e === c ? null : e.parentElement) if (getComputedStyle(e).overflow !== 'visible') { const q = e.getBoundingClientRect(); r.left = Math.max(r.left, q.left); r.top = Math.max(r.top, q.top); r.right = Math.min(r.right, q.right); r.bottom = Math.min(r.bottom, q.bottom) }
+    r.width = r.right - r.left; r.height = r.bottom - r.top; if (r.width <= 0 || r.height <= 0) continue
+    for (const o of kids) { if (o === c) continue; const q = o.getBoundingClientRect()
+      if (r.left + 1 < q.right && q.left + 1 < r.right && r.top + 1 < q.bottom && q.top + 1 < r.bottom) out.push({ el: 'svg', why: `svg ${Math.round(r.width)}x${Math.round(r.height)} px in one tile draws over a sibling tile (size it from its tile: absolute inset 0)`, text: `${String(c.className || c.tagName)} x ${String(o.className || o.tagName)}`.slice(0, 120) }) }
+  }
+  return out
 })
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
 const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
@@ -1289,7 +1305,7 @@ try {
     const base = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}`, height = await page.evaluate(() => document.documentElement.scrollHeight)
     await page.screenshot({ path: `${base}.png`, fullPage: true })   // as the owner sees it: the page's own open / closed defaults
     const hs = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (hs > 1) clipped.push({ el: 'page', why: `horizontal page scroll ${hs} px (a wide table scrolls in its own box)`, text: '' })
-    clipped.push(...await page.evaluate(layout), ...await page.evaluate(rows), ...await page.evaluate(cols), ...await page.evaluate(stray),...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
+    clipped.push(...await page.evaluate(layout), ...await page.evaluate(rows), ...await page.evaluate(svgs), ...await page.evaluate(cols), ...await page.evaluate(stray),...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
     await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
     res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped }); await ctx.close()
   }
@@ -1298,7 +1314,7 @@ console.log(JSON.stringify(res))'''
 
 def cmd_ui_check(a):
     """ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']: PAGE_JS (light + dark; each --click state after
-    the page as loaded); exit 1 on clipped text, a failed click, a layout box (window.uiBoxes) off-screen or overlapping or a [data-fit]
+    the page as loaded); exit 1 on clipped text, a failed click, a layout box (window.uiBoxes) off-screen or overlapping, an svg over a sibling tile or a [data-fit]
     card with 24+ px blank below its content or a card row 24+ px short of its box at 1280+ px, 0 = pass + stamp."""
     flags, rest = parse_opts(a, {'--widths', '--click'})
     widths = str(flags.get('--widths') or '1920,1366,900,390')
@@ -1388,8 +1404,8 @@ def git_ignored(kit, rels):
     return set(o.split('\0')) - {''} if rc in (0, 1) else set()
 
 def tracked(kit):
-    rc, o, _ = git(kit, 'ls-files')
-    return o.splitlines() if rc == 0 else []
+    rc, o, _ = git(kit, 'ls-files')   # an unmerged file (a rebase with conflicts) has one entry per stage: once each
+    return list(dict.fromkeys(x for x in o.splitlines() if x)) if rc == 0 else []
 
 def strip_ps_comments(text):
     text = re.sub(r'<#.*?#>', lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
@@ -2276,8 +2292,11 @@ def todo_cmd(a):
     code = a[2] if len(a) > 2 else ''
     at = next((i for i, x in enumerate(lines) if re.match(rf'^- \[[ x]\] {re.escape(code)} · ', x)), None)
     if verb == 'add':
-        if len(a) < 5 or '·' in a[3] or at is not None:
-            raise SystemExit('state todo add <file> <code> "<desc, no ·>" <ref>: a new code, a desc, a ref (task, commit, file:line)')
+        why = ('missing ' + ', '.join(['code', 'desc', 'ref'][len(a) - 2:]) if len(a) < 5 else 'desc holds a ·' if '·' in a[3]
+               else f'code {code} is already in {f}' if at is not None else '')
+        if why:   # name the slip and show a filled line: agents guessed the shape 3x
+            raise SystemExit(f'state todo add: {why}; usage: state todo add <file> <code> "<desc, no ·>" <ref> (task, commit, file:line)\n'
+                             '  e.g. kitbag.py state todo add todo.md L1 "lint skips unmerged entries" kitbag.py:812')
         lines.insert(len(lines) - (1 if lines[-1] == '' else 0), f'- [ ] {code} · {a[3]} · {a[4]}')
     elif at is None:
         raise SystemExit(f'state todo done: no item {code} in {f}')

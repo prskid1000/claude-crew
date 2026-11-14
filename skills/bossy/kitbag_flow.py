@@ -17,7 +17,7 @@ ARGS = {'flow': ({'--readme', '--open', '--public'}, {'--out'}, True)}
 # ---- rules: patterns for refs, control flow, loops, outcomes
 # Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
 # Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
-VER = 12
+VER = 13
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 FN = {'ps1': re.compile(r'^\s*function\s+([\w-]+)'),
@@ -368,7 +368,7 @@ def parse_code(p, f, text):
             if m.group(2):
                 p.ref('impl', cid, m.group(2), i + 1)
                 impl.setdefault(m.group(2), (f, base))
-        m = re.search(r'Invoke-KitVerb\s+([\w-]+)\s+@\(\$args\)', l)   # args passed on: the function's verbs are the script's
+        m = re.search(r'Invoke-KitVerb\s+([\w-]+)\s+@\(\$\w*[aA]rgs\)', l)   # args passed on (envy: $__envyArgs): the function's verbs are the script's
         if m:
             impl[m.group(1)] = (f, base)
         m = re.search(r"\bVERBS\['([\w-]+)'\]\s*=\s*([a-z_]\w*)", l) if lg == 'py' else None   # a plugin's register(): dt.VERBS['v'] = fn

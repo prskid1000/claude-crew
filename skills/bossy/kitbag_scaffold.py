@@ -250,7 +250,7 @@ def _regen(kit):
 def _references(kit, word, skip=()):
     rx = old_name_rx(word)
     hits = []
-    for f in _git(kit, 'ls-files').stdout.splitlines():
+    for f in tracked(kit):
         if f.startswith(GENERATED) or f in skip or not (f.lower().endswith(TEXT_EXT) or '.' not in osp.basename(f)):
             continue
         t = read(osp.join(kit, f))
@@ -302,7 +302,7 @@ def _rename_id(kit, kind, old, new):
             if old not in ln:
                 print(f'WARN nested read? {ln[:160]} (renamed only dotted {old}: check by hand)')
     rx = re.compile(r'(?<![\w.-])' + re.escape(old) + r'(?![\w-]|\.\w)')
-    for f in _git(kit, 'ls-files').stdout.splitlines():
+    for f in tracked(kit):
         p = osp.join(kit, f)
         if f.startswith(GENERATED) or f == PATHS_JSON or not f.lower().endswith(TEXT_EXT) or not osp.isfile(p):
             continue
@@ -344,7 +344,7 @@ def cmd_rename(a):
         except OSError as x:
             sys.exit(f'kitbag rename: {src} -> {dst} failed: {r.stderr.strip()} / {x}')
     rx = old_name_rx(old)
-    for f in _git(kit, 'ls-files').stdout.splitlines():
+    for f in tracked(kit):
         if f.startswith(GENERATED) or not (f.lower().endswith(TEXT_EXT) or '.' not in osp.basename(f)) or not osp.isfile(osp.join(kit, f)):
             continue
         if f == PATHS_JSON:
