@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L29 sweep · L177 wt · L495 stack · L675 gate · L991 check · L1300 pipes · L1357 guard · L2186 dir ·
-  L2196 checkpoint · L2225 prior · L2263 tracker · L2285 task spec · L2443 scope · L2485 host
+Sections: L23 init · L29 sweep · L183 wt · L504 stack · L686 gate · L1002 check · L1311 pipes · L1368 guard · L2198 dir ·
+  L2208 checkpoint · L2237 prior · L2275 tracker · L2297 task spec · L2464 scope · L2506 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -45,10 +45,16 @@ function Get-KitWorktrees([string]$Repo) {   # git worktree list as objects; bra
     elseif ($cur -and $l -like 'HEAD *') { $cur.head = $l.Substring(5) }
   }
 }
-# never deleted: main/master/develop, release, staging, production, hotfix, critical, localenv; protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
+# linkDefaults: [{ markers: [<file>], dir }] a worktree links from its source (dir node_modules: the node farm); unset = node_modules + .venv
+function Get-DepLinkDefaults {
+  $l = @(Get-KitSetting 'linkDefaults' $null | Where-Object { $_.dir -and @($_.markers).Count })
+  if ($l.Count -or ($__cfg -and $__cfg.PSObject.Properties.Name -contains 'linkDefaults')) { return $l }   # [] = link nothing
+  @([pscustomobject]@{ markers = @('package.json'); dir = 'node_modules' }, [pscustomobject]@{ markers = @('pyproject.toml', 'requirements.txt'); dir = '.venv' })
+}
+# never deleted: protectedBranchesBase (default main/master/develop/release/*), localenv/* (envy's env branches); protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
 function Get-KitKeepBranchRx([string]$Repo) {
   $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
-  $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @('main', 'master', 'develop', 'release/*', 'staging', 'staging/*', 'production', 'production/*', 'prod/*', 'hotfix/*', 'critical/*') }
+  $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @(Get-KitSetting 'protectedBranchesBase' @('main', 'master', 'develop', 'release/*')) }
   $all = @($base) + 'localenv/*' + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
   '^(' + (@($all | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape("$_") -replace '\\\*', '.+' }) -join '|') + ')$'
 }
@@ -147,7 +153,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
       if ($bv.delete -and ($idleH -ge 24 -or $bv.why -notlike 'local copy*')) { $bv.why } elseif ($old -and $bv.why -match 'upstream \S+ gone') { "upstream gone, idle $wtDays d+ (branch kept: $($bv.why))" } else { & $keep "$d ($br)" $bv.why; $null }
     } else {
       $hd = "$(git -C $d rev-parse HEAD 2>$null)".Trim()
-      $dep = @(foreach ($n in 'node_modules', '.venv') { $i = Get-Item -LiteralPath (Join-Path $d $n) -Force -ErrorAction SilentlyContinue; if ($i -and -not $i.LinkType -and -not (Test-Path -LiteralPath (Join-Path $i.FullName '.kit-farm.json'))) { $n } })
+      $dep = @(foreach ($n in @(Get-DepLinkDefaults | ForEach-Object dir)) { $i = Get-Item -LiteralPath (Join-Path $d $n) -Force -ErrorAction SilentlyContinue; if ($i -and -not $i.LinkType -and -not (Test-Path -LiteralPath (Join-Path $i.FullName '.kit-farm.json'))) { $n } })
       if ($dep) { & $keep $d "detached, its own $($dep -join ' + ') install (a dependency store)"; $null }
       elseif ($idleH -ge 24 -and "$(git -C $d for-each-ref --contains $hd --count=1 --format='%(refname)' refs/remotes/origin 2>$null)".Trim()) { 'detached HEAD on the host' }
       else { & $keep $d 'detached: HEAD on no remote branch, or idle < 24 h'; $null }
@@ -249,7 +255,14 @@ function DepHash($pkgJson) {
   (@('dependencies', 'devDependencies') | ForEach-Object { if ($p.$_) { $p.$_.PSObject.Properties | Sort-Object Name | ForEach-Object { "$($_.Name)@$($_.Value)" } } }) -join ';'
 }
 function Add-DepLinks($path, $src, $target) {
-  $made = @()
+  $made = @(); $ld = @(Get-DepLinkDefaults)
+  foreach ($e in @($ld | Where-Object { $_.dir -ne 'node_modules' })) {
+    foreach ($mk in (git -C $path ls-files -- @(@($e.markers) | ForEach-Object { $_; "*/$_" }) | Where-Object { $_ -notmatch 'node_modules/' })) {
+      $rel = Split-Path $mk; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel $e.dir); $to = Join-Path $path (Join-Path $rel $e.dir)
+      if ((Test-Path $from) -and -not (Test-Path $to)) { New-DirLink $to $from; $made += $to }
+    }
+  }
+  if (-not @($ld | Where-Object { $_.dir -eq 'node_modules' }).Count) { return $made }
   foreach ($pj in (git -C $path ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
     $rel = Split-Path $pj; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $path (Join-Path $rel 'node_modules')
     if ((Test-Path $from) -and -not (Test-Path $to)) {
@@ -258,10 +271,6 @@ function Add-DepLinks($path, $src, $target) {
       if ($a -ne $b) { Write-Warning "$pj deps differ from ${src}: linked node_modules may be wrong.$(if ($target) { " Use -LinkFrom <a $target checkout with matching installs>." })" }
       if (($old = Get-StaleDepsNote $from)) { Write-Warning $old }
     }
-  }
-  foreach ($py in (git -C $path ls-files -- 'pyproject.toml' '*/pyproject.toml' 'requirements.txt' '*/requirements.txt')) {
-    $rel = Split-Path $py; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel '.venv'); $to = Join-Path $path (Join-Path $rel '.venv')
-    if ((Test-Path $from) -and -not (Test-Path $to)) { New-DirLink $to $from; $made += $to }
   }
   $made
 }
@@ -375,7 +384,7 @@ switch ($Action) {
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
     if ($Spec) {   # commitFormat subject + change bullets; python prints UTF-8, stdout only
       if ($Message) { throw 'commit: -Spec or -Message / -MessageFile, not both' }
-      $out = @(python -X utf8 $KitCmd.devtools render commit $Spec 2>$null); $code = $LASTEXITCODE; $why = if ($code) { @(python -X utf8 $KitCmd.devtools render commit $Spec 2>&1) -join ' ' }
+      $out = @(& (Get-Python) -X utf8 $KitCmd.devtools render commit $Spec 2>$null); $code = $LASTEXITCODE; $why = if ($code) { @(& (Get-Python) -X utf8 $KitCmd.devtools render commit $Spec 2>&1) -join ' ' }
       if ($code) { throw "commit spec: $why" }; $Message = ($out -join "`n").TrimEnd()
     }
     if (-not $Message -or -not $Message.Trim()) { throw "commit needs -Message '<subject>' or -MessageFile <file> (multi-line: write it to `$(crafty.ps1 dir -Agent <id> -Name commit-msg.txt) with the Write tool, then -MessageFile <that path>)" }
@@ -530,7 +539,8 @@ function TsProject($d) {
   $null
 }
 
-function NodeSpecCmd { "node `"$($KitCmd.spec)`" {tests}" }
+# tests.fallbackRunner: a TS project with no test runner; unset = the kit's spec.mjs, 'none' = no test step, else a command with {tests}
+function NodeSpecCmd { $f = "$(Get-KitSetting 'tests.fallbackRunner' '')".Trim(); if ($f -eq 'none') { $null } elseif ($f) { $f } else { "node `"$($KitCmd.spec)`" {tests}" } }
 
 function Get-NodeTools($d) {
   $pkg = ReadJson (Join-Path $d 'package.json')
@@ -640,8 +650,9 @@ function Get-Stack($d) {
     if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
-  # adapters/stack_presets.ps1
-  foreach ($plugin in @($KitAdapters.stack.Values | Where-Object { $_ })) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
+  # adapters/stack_presets.ps1; stack.presets: the stack adapter names to try (unset = all, [] = none: only core stacks + .claude-stack.json)
+  $on = Get-KitSetting 'stack.presets' $null; $raw = $__cfg.stack -and $__cfg.stack.PSObject.Properties.Name -contains 'presets'
+  foreach ($plugin in @(@(if ($KitAdapters.stack) { $KitAdapters.stack.GetEnumerator() }) | Where-Object { $_.Value -and (-not $raw -or @($on) -contains $_.Key) } | ForEach-Object Value)) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
   if (-not $s -and -not $ovr.stack -and ($android -or (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile'))) { throw "stack: no preset detects $d (a .claude-stack.json sets one; README ""Adapters"")" }
   if (-not $s -and -not $ovr.stack) { return $null }   # an override's stack alone counts
@@ -1946,7 +1957,7 @@ if ($KitConf.TrackerType -ne 'none' -and $hcExe -and $cmd -match $mrRx) {
       , $ws.ToArray()
     }
     function OptVal([string[]]$ws, [string[]]$names) { for ($j = 0; $j -lt $ws.Count; $j++) { foreach ($n in $names) { if ($ws[$j] -ceq $n -and $j + 1 -lt $ws.Count) { return $ws[$j + 1] }; if ($ws[$j].StartsWith("$n=")) { return $ws[$j].Substring($n.Length + 1) } } } }
-    $tagRx = Get-KitTaskTagRx; $tag = $KitConf.TrackerTag; $esc = 'no task at all: KIT_NO_TASK=<reason> <command> (logged)'
+    $tagRx = Get-KitTaskTagRx; $tag = if ($KitConf.TrackerTag) { "$($KitConf.TrackerTag)<id>" } else { "a task id ($tagRx)" }; $esc = 'no task at all: KIT_NO_TASK=<reason> <command> (logged)'
     foreach ($mm in [regex]::Matches($mrM, $mrRx)) {
       $ws = CliWords $mrJ ($mm.Index + $mm.Length); $tool = $mm.Groups['tool'].Value
       # last cd before it, else the hook's cwd
@@ -1956,7 +1967,7 @@ if ($KitConf.TrackerType -ne 'none' -and $hcExe -and $cmd -match $mrRx) {
         if (-not $tagRx) { continue }
         $src = OptVal $ws @($hostClis.source | Select-Object -Unique); if (-not $src -and $gd) { $src = "$(git -C $gd branch --show-current 2>$null)".Trim() }
         if (Test-KitDeployMr $(if ($gd) { "$(git -C $gd remote get-url origin 2>$null)" -replace '\.git$' -replace '.*[/:]' }) $src (OptVal $ws @($hostClis.target | Select-Object -Unique))) { continue }   # a deploy MR: no task
-        if ("$(OptVal $ws @($hostClis.title | Select-Object -Unique)) $src" -notmatch $tagRx) { Deny "kit guard: this MR names no tracker task ($tag<id> in neither its title nor its source branch '$src'): the owner never sees it on the task. Open it with python -X utf8 $($KitCmd.devtools) mr <wt> '<title>' <body.md> from a $tag<id> branch, or put $tag<id> in the title; $esc." }
+        if ("$(OptVal $ws @($hostClis.title | Select-Object -Unique)) $src" -notmatch $tagRx) { Deny "kit guard: this MR names no tracker task ($tag in neither its title nor its source branch '$src'): the owner never sees it on the task. Open it with python -X utf8 $($KitCmd.devtools) mr <wt> '<title>' <body.md> from a branch with $tag, or put $tag in the title; $esc." }
         continue
       }
       $hc = @($hostClis | Where-Object { $_.exe -eq $tool })[0]
@@ -2160,9 +2171,10 @@ $heavy =$cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)
         $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or
         $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b|(pnpm|bun)\s+(run\s+)?(build|test)\b)' -or
         ($hv -match ($hvAt + '((uv|poetry|pipenv|hatch|pdm)\s+run\s+)?(pytest|py\.test|(py|python[\d.]*)(\.exe)?(\s+-\S+(\s+(?!-)[^\s;&|]+)?)*?\s+-m\s+pytest)(\.exe)?(?=\s|$|[;&|)])') -and $hv -notmatch 'pytest[^|;&\n]*\s(--version|--help|-h|--collect-only|--co)\b') -or
-        ($hv -match ($hvAt + '(docker(\.exe)?\s+(--?\w[\w-]*(\s+(?!-)[^\s;&|]+)?\s+)*(compose\s+(-\S+(\s+(?!-)[^\s;&|]+)?\s+)*(build|run|up)|build|run|(buildx|image|container)\s+(build|run))|docker-compose(\.exe)?\s+(-\S+(\s+(?!-)[^\s;&|]+)?\s+)*(build|run|up))\b') -and $hv -notmatch 'docker[^|;&\n]*\s(--help|-h)\b')
-# e2e only via check -Step e2e (else the whole suite)
-$e2eRx = '\b(cypress\s+run|playwright\s+test)\b|\b(npm|yarn|pnpm|bun)\s+(run\s+)?(e2e|cypress|playwright)\b(?![:-](open|verify|install|lint)\b)(?!\s+(install|verify|info|cache|open|codegen|show-report)\b)'
+        ($hv -match ($hvAt + '(docker(\.exe)?\s+(--?\w[\w-]*(\s+(?!-)[^\s;&|]+)?\s+)*(compose\s+(-\S+(\s+(?!-)[^\s;&|]+)?\s+)*(build|run|up)|build|run|(buildx|image|container)\s+(build|run))|docker-compose(\.exe)?\s+(-\S+(\s+(?!-)[^\s;&|]+)?\s+)*(build|run|up))\b') -and $hv -notmatch 'docker[^|;&\n]*\s(--help|-h)\b') -or
+        @(@(Get-KitSetting 'guard.heavyPatterns' @()) | Where-Object { $_ -and $cmd -match $_ }).Count   # a stack's own heavy commands (bazel build, sbt test, ...)
+# e2e only via check -Step e2e (else the whole suite); guard.e2ePatterns: more e2e runners
+$e2eRx = '\b(cypress\s+run|playwright\s+test)\b|\b(npm|yarn|pnpm|bun)\s+(run\s+)?(e2e|cypress|playwright)\b(?![:-](open|verify|install|lint)\b)(?!\s+(install|verify|info|cache|open|codegen|show-report)\b)' + (@(@(Get-KitSetting 'guard.e2ePatterns' @()) | Where-Object { $_ } | ForEach-Object { "|(?:$_)" }) -join '')
 if (@($cmd -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_ -match $e2eRx -and $_ -notmatch 'crafty\.ps1["'']?\s+check\b' }).Count) {
   Deny "e2e runs go through & $($KitCmd.dev) check -Dir <module> -Step e2e: only the specs related to the change (the whole suite: -AllTests, on the owner's word)."
 }
@@ -2302,21 +2314,29 @@ function Merge-KitTaskSpec($Old, $New) {
 }
 # what a spec lacks (a [Bug] keeps its own shape: name + problem)
 function Test-KitTaskSpec($Spec) {
-  $bug = "$($Spec.kind)" -match '(?i)^bug$' -or "$($Spec.title)" -match '^\W*Bug\]'
+  $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")
   @(if (-not "$($Spec.title)".Trim()) { 'title' }; if (-not "$($Spec.problem)".Trim()) { 'problem' }
     if (-not $bug) { if (-not "$($Spec.goal)".Trim()) { 'goal' }; if (-not (@($Spec.items) + @($Spec.subtasks) | Where-Object { $_.code }).Count) { 'items[{code, desc}] (or subtasks)' }; if (-not @($Spec.acceptance | Where-Object { $_ }).Count) { 'acceptance' } }
-    foreach ($ln in @($Spec.links) + @($Spec.docs.human, $Spec.docs.ai) + @($Spec.items | ForEach-Object { @($_.mrs) })) { $u = if ($ln -is [Collections.IDictionary]) { $ln.url } else { "$ln" }; if ($u -and $u -notmatch '^https?://\S+$') { "a full URL instead of '$u'" } })
+    foreach ($ln in @($Spec.links) + @(if ($Spec.docs -is [Collections.IDictionary]) { @($Spec.docs.Values) } else { @($Spec.docs.human, $Spec.docs.ai) }) +@($Spec.items | ForEach-Object { @($_.mrs) })) { $u = if ($ln -is [Collections.IDictionary]) { $ln.url } else { "$ln" }; if ($u -and $u -notmatch '^https?://\S+$') { "a full URL instead of '$u'" } })
 }
-function Get-KitSpecName($Spec) { $t = "$($Spec.title)".Trim(); if ($Spec.kind -and $t -notmatch '^\[') { "[$($Spec.kind)] $t" } else { $t } }
-# the description: testing-doc links (only once they exist), Problem, Goal, Items (one line per item / subtask), Acceptance, Links
+# tracker.nameFormat ({prefix} {title} {kind} {code}); prefix = tracker.kindPrefixes[kind]; a title already "[...]" stays
+function Get-KitSpecName($Spec) {
+  $t = "$($Spec.title)".Trim(); if (-not $Spec.kind -or $t -match '^\[') { return $t }
+  $v = @{ prefix = (Get-KitKindPrefix "$($Spec.kind)"); title = $t; kind = "$($Spec.kind)"; code = "$($Spec.code)" }
+  ([regex]::Replace([string](Get-KitSetting 'tracker.nameFormat' '{prefix} {title}'), '\{(\w+)\}', { param($m) [string]$v[$m.Groups[1].Value] }) -replace '\s{2,}', ' ').Trim()
+}
+# a spec doc's link: docs.<doc key>, or the legacy docs.human / docs.ai of the first two process docs
+function Get-KitSpecDocUrl($Spec, $Doc, [int]$At) { $u = $Spec.docs."$($Doc.key)"; if (-not $u) { $u = $Spec.docs.(@('human', 'ai')[$At]) }; "$u" }
+# the description: doc links (process.docs, only once they exist), then tracker.taskTemplate sections (Problem, Goal, Items, Acceptance, Links)
 function Format-KitTaskText($Spec) {
-  $ln = @(); if ($Spec.docs.human) { $ln += "**Testing doc (human):** [open]($($Spec.docs.human))", '' }; if ($Spec.docs.ai) { $ln += "**Testing doc (AI):** [open]($($Spec.docs.ai))", '' }
-  $ln += "**Problem:** $("$($Spec.problem)".Trim())", ''; if ($Spec.goal) { $ln += "**Goal:** $("$($Spec.goal)".Trim())", '' }
+  $ln = @(); $dk = @(Get-KitProcessDocs); for ($i = 0; $i -lt $dk.Count; $i++) { if ($u = Get-KitSpecDocUrl $Spec $dk[$i] $i) { $ln += "**$($dk[$i].label):** [open]($u)", '' } }
+  $lb = @{}; foreach ($s in Get-KitTaskTemplate) { $lb["$($s.key)"] = "$($s.label)" }; $L = { param($k, $d) if ($lb.ContainsKey($k)) { $lb[$k] } else { $d } }
+  $ln += "**$(& $L problem Problem):** $("$($Spec.problem)".Trim())", ''; if ($Spec.goal) { $ln += "**$(& $L goal Goal):** $("$($Spec.goal)".Trim())", '' }
   $its = @(@($Spec.items) + @($Spec.subtasks) | Where-Object { $_.code } | ForEach-Object { "- $(Format-KitItemText "$($_.code)" "$($_.desc)" @())" })
-  if ($its.Count) { $ln += @('**Items:**') + $its + '' }
-  $ac = @($Spec.acceptance | Where-Object { $_ } | ForEach-Object { "- $_" }); if ($ac.Count) { $ln += @('**Acceptance:**') + $ac + '' }
+  if ($its.Count) { $ln += @("**$(& $L items Items):**") + $its + '' }
+  $ac = @($Spec.acceptance | Where-Object { $_ } | ForEach-Object { "- $_" }); if ($ac.Count) { $ln += @("**$(& $L acceptance Acceptance):**") + $ac + '' }
   $lk = @($Spec.links | Where-Object { $_ } | ForEach-Object { if ($_ -is [Collections.IDictionary]) { "[$(if ($_.text) { $_.text } else { $_.url })]($($_.url))" } else { "$_" } })
-  if ($lk.Count) { $ln += "**Links:** $($lk -join ' · ')" }
+  if ($lk.Count) { $ln += "**$(& $L links Links):** $($lk -join ' · ')" }
   ($ln -join "`n").TrimEnd()
 }
 # the rendered task: name, description, checklists (Items: items with MR URLs; Decisions: templates.md decisions)
@@ -2335,7 +2355,8 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
   if ($DryRun) { return $r }
   if ($Task) {   # kept from the live text: testing-doc links the spec lacks (devtools.py finish writes them), kit sections (rollup)
     Clear-TrackerMemo $Task; $cur = "$((Get-TrackerTask $Task).description)" -replace "`r`n", "`n"; $nd = $r.description
-    $docs = @($cur -split "`n" | Where-Object { $_ -match '^\*\*Testing doc \((human|AI)\):\*\*' -and $nd -notmatch "Testing doc \($($Matches[1])\)" }); if ($docs.Count) { $nd = (($docs -join "`n`n") + "`n`n" + $nd) }
+    $lbs = @(Get-KitProcessDocs | ForEach-Object label)
+    $docs = @($cur -split "`n" | Where-Object { $l = $_; @($lbs | Where-Object { $l.StartsWith("**$($_):**") -and -not $nd.Contains("$($_):") }).Count }); if ($docs.Count) { $nd = (($docs -join "`n`n") + "`n`n" + $nd) }
     $ms = @([regex]::Matches($cur, '(?s)<!-- kit:([\w-]+) -->\n(.*?)\n<!-- /kit:\1 -->')); [array]::Reverse($ms)   # each lands on top: last first keeps their order
     foreach ($m in $ms) { $nd = Set-KitDescSection $nd $m.Groups[1].Value $m.Groups[2].Value '' }
     $null = Set-TrackerName $Task $r.name; $null = Set-TrackerDescription $Task $nd; $id = $Task
@@ -2388,7 +2409,7 @@ function Invoke-Tracker {
       if ($__sp -and -not "$__ct".Trim()) {   # -Spec: rendered as -Kind (templates.md "Comment spec")
         if (-not $__k) { $__k = 'comment-status' }
         $__sf = Join-Path (Get-KitTemp) "tracker-spec-$PID.json"; Write-KitAtomic $__sf ($__sp | ConvertTo-Json -Depth 10)   # a file: inline JSON loses its quotes on the way to python
-        try { $__ct = (@(python -X utf8 $KitCmd.devtools render $__k $__sf "$__sf.md" 2>&1) | ForEach-Object { "$_" }) -join "`n"; $__rc = $LASTEXITCODE; if (-not $__rc) { $__ct = (Get-Content -LiteralPath "$__sf.md" -Raw -Encoding utf8).TrimEnd() } }   # the out file keeps UTF-8 (stdout: console code page)
+        try { $__ct = (@(& (Get-Python) -X utf8 $KitCmd.devtools render $__k $__sf "$__sf.md" 2>&1) | ForEach-Object { "$_" }) -join "`n"; $__rc = $LASTEXITCODE; if (-not $__rc) { $__ct = (Get-Content -LiteralPath "$__sf.md" -Raw -Encoding utf8).TrimEnd() } }   # the out file keeps UTF-8 (stdout: console code page)
         finally { Remove-Item -LiteralPath $__sf, "$__sf.md" -ErrorAction SilentlyContinue }
         if ($__rc) { "tracker comment refused: -Spec does not render as ${__k}: $__ct"; exit 2 } }
       if (-not "$__ct".Trim()) { "tracker comment refused: no text: pass <text>, -Text, -File or -Spec <file | '{...}'>"; exit 2 }
@@ -2413,7 +2434,7 @@ function Invoke-Tracker {
     'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> (merged by key into the stored spec)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id) }
     'create' {   # -Spec: rendered (crafty.ps1 "task spec"); free text only for a [Bug] (its own shape); -Key: updates that key's open task
       if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
-      if ((($__trOpt.Parent -and $__trOpt.Parent -ne '-') -or $__trOpt.Name -match '^\s*\[(Feature|Chore)\]') -and @(Get-KitTaskTextGaps $__trOpt.Name 'x').Count) { "tracker create refused: a kit task's text (a subtask or a [Kind] name) is rendered from a spec: tracker create -Spec <json> (crafty.ps1 ""task spec""); free text only for a [Bug]"; exit 1 }
+      if ((($__trOpt.Parent -and $__trOpt.Parent -ne '-') -or (Test-KitKindName $__trOpt.Name)) -and @(Get-KitTaskTextGaps $__trOpt.Name 'x').Count) { "tracker create refused: a kit task's text (a subtask or a [Kind] name) is rendered from a spec: tracker create -Spec <json> (crafty.ps1 ""task spec""); free text only for a [Bug]"; exit 1 }
       $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
       $ot = if ($old.id) { Get-TrackerTask $old.id }

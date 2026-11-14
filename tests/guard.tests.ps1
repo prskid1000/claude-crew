@@ -48,7 +48,14 @@ $env:KIT_TRACKER_TYPE = 'none'; $j = @{ tool_name = 'Bash'; cwd = $shop; tool_in
 "no-tracker:$(-not ((& $d guard -Json $j) -join '' -match 'deny'))"; $env:KIT_TRACKER_TYPE = $null
 "logged:$(@(Read-KitLog guard (Get-Date).AddMinutes(-5) | Where-Object { $_.event -eq 'no-task' -and $_.reason -eq 'hotfix, no task' }).Count -eq 1)"
 '@ @($D, $k, $shop, $plain)
+& $J @{ tracker = @{ type = 'jira' } } $kl   # no branchTag: the vendor idPattern (the guard was silently off for jira / linear / azure / youtrack)
+$gj = Invoke-PsTest 'guard-mr-jira' @'
+$d, $plain = $args
+foreach ($c in @(@('j-none', 'glab mr create --title "fix: x" --fill'), @('j-title', 'glab mr create -t "fix: x (SHOP-42)" -s fix/plain'), @('j-head', 'gh pr create -H feature/SHOP-7-cart -t x'))) {
+  $j = @{ tool_name = 'Bash'; cwd = $plain; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress; "$($c[0]):$((& $d guard -Json $j) -join '' -match '"permissionDecision":"deny"')" }
+'@ @($D, $plain)
 Remove-Item $kl
+Expect "guard MR task link, tracker jira: no id denied, SHOP-42 in the title or branch passes ($($gj -join ' '))" (($gj -join ' ') -eq 'j-none:True j-title:False j-head:False')
 Expect-Each $mg 'guard MR task link: # (c-*: create needs TT-<id> in branch or title; m-*: merge needs the MR tracked; escape: KIT_NO_TASK)' @('c-plain', 'c-branch', 'c-title', 'c-head', 'm-tracked', 'm-url', 'm-untracked', 'm-other-repo', 'm-no-number', 'm-cd', 'escape', 'quoted', 'heredoc', 'in-quotes', 'continued', 'no-tracker', 'logged', 'c-deploy', 'm-deploy') 19
 # agents' background shells: owner from its transcript (Agent-tool meta, workflow journal, main session = coordinator); -AutoFix kills
 $sh = Invoke-PsTest 'shells' @'

@@ -34,5 +34,8 @@ $null = pwsh @np $O learn -Skill crafty -When 'a vendor CLI 404s' -Do 'use its A
 $pub = Get-Content (Join-Path $k 'LESSONS.md') -Raw; $loc = Get-Content (Join-Path $k 'LESSONS.local.md') -Raw
 Expect "lessons: -Read shows both files; org term / -Project lessons land in LESSONS.local.md ($($w1.Trim()))" ($rd -match 'pub when' -and $rd -match '\(local\)[\s\S]*loc when' -and $w1 -match 'org term: written to LESSONS.local.md' -and $loc -match 'Acme host 502' -and $loc -match 'vendor CLI 404s' -and $pub -notmatch 'Acme|vendor CLI')
 Remove-Item (Join-Path $k 'skills/crafty/kit.local.json')
+"`n## zz-test`n- a core lesson" | Add-Content (Join-Path $k 'LESSONS.md')
+$lr = Invoke-TestScript $O learn -Skill revy -Kind idea -Text 'x'; $r1 = pwsh @np $O learn -Read -Skill zz-test | Out-String; 
+Expect 'learn: record + -Read in core' ($lr.out -match 'recorded \(revy/idea\)' -and $r1 -match 'a core lesson')
 Remove-TestKit $k
 Complete-Tests

@@ -119,6 +119,7 @@ function Get-TrackerTask($id) { $global:n13 += $id -eq 't13'; [pscustomobject]@{
 $r12 = @(Invoke-Track add -Task t12 -Mrs 'g/web!2' -HoldPromotion Z1) + @(Invoke-Track run -Detail) | Out-String
 $null = Invoke-Track add -Task t13 -Mrs 'g/web!7' -HoldPromotion Z; $global:n13 = 0; $r13 = 1, 2 | % { Invoke-Track run -Detail } | Out-String
 "stalehold:$($r12 -match "DONE t12: status 'closed'.+ \(Z1\)" -and $r12 -notmatch 'HOLD t12' -and (Read-KitTracking).tasks['t12'].done -and ([regex]::Matches($r13, 'HOLD t13')).Count -eq 2 -and !$global:n13)"
+$__cfg = if ($__cfg) { $__cfg } else { [pscustomobject]@{} }; $__cfg | Add-Member -Force process ([pscustomobject]@{ gates = [pscustomobject]@{ promote = 'builtin:testingDocs' } })   # the legacy row
 $KitConf.TrackerType = 'fake'; $global:tdesc = 'Testing doc (human): https://d/h'; function Get-TrackerTask($id) { [pscustomobject]@{ name = 'n'; status = 'review'; subtasks = @(); description = $global:tdesc } }
 $null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invoke-Track run | Out-String; $s0 = @($global:sets)
 $global:tdesc += "`nTesting doc (AI): https://d/g"; $null = Invoke-Track run; $unk = & { function Get-TrackerTask { throw 'down' }; Test-KitTaskDocLink t9 }
@@ -187,9 +188,6 @@ try { $null = Set-TrackerStatus 'o/r#9' 'inTest'; 'real:False' } catch { "real:$
 $res = Invoke-PsTest 'outbox-test' $nt @(Lib)
 Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')
 & $J @{ gitHostType = 'gitlab' } (Join-Path $k 'skills/crafty/kit.local.json')   # no load-time git lookup
-"`n## zz-test`n- a core lesson" | Add-Content (Join-Path $k 'LESSONS.md')
-$lr = Invoke-TestScript $O learn -Skill revy -Kind idea -Text 'x'; $r1 = pwsh @np $O learn -Read -Skill zz-test | Out-String; 
-Expect 'learn: record + -Read in core' ($lr.out -match 'recorded \(revy/idea\)' -and $r1 -match 'a core lesson')
 $j1 = pwsh @np $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C:/wt/x7' | Out-String
 $j2 = pwsh @np $O board join -Type revy -Agent R7 -Run w7 | Out-String
 $null = pwsh @np $O board msg -Agent R7 -To X7 -Text 'I need a.ts'

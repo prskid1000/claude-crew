@@ -2,8 +2,8 @@
 `origin` remote, the MR target from its crafty.ps1 wt record. Tracker reads and status changes: crafty.ps1 tracker.
 
  python -X utf8 devtools.py comment <taskId> --spec <c.json> [comment-solution|comment-status] (templates.md "Comment spec"; <file.md | "text"> [kind] warns) [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
- python -X utf8 devtools.py finish <taskId> <testing.md|url> <solution.md> [review] --ai <ai.md|url> [--prose-ok "<why>"]   both docs (human + AI)
-  by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status;
+ python -X utf8 devtools.py finish <taskId> <testing.md|url|-> <solution.md> [review] [--ai <ai.md|url>] [--prose-ok "<why>"]   the docs given
+  (process.gates.finish builtin:testingDocs: both, human + AI) by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status;
   `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec
  python -X utf8 devtools.py cases add|result|round|render <task> ...   the task's test cases (one spec, "render" section):
   goals file, AI doc and human doc rendered from it, never hand-written
@@ -29,8 +29,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L47 config · L81 run · L169 tracker · L377 git host · L438 scope · L517 MR · L689 merge · L979 docs · L1132 publish ·
-  L1492 render · L1848 plugins · L1862 keepboth · L1881 selftest · L2320 CLI
+Sections: L47 config · L102 run · L190 tracker · L342 process · L493 git host · L554 scope · L633 MR · L817 merge · L1142 docs ·
+  L1295 publish · L1656 render · L2019 plugins · L2033 keepboth · L2052 selftest · L2551 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -62,6 +62,27 @@ try:
     CFG = json.load(open(_cfg_file(), encoding='utf-8'))
 except Exception:
     CFG = {}
+try:   # vocab.json: the built-in vocabulary lib.ps1 reads too (statuses, tracker vendors, testing docs)
+    VOCAB = json.load(open(os.path.join(KIT, 'vocab.json'), encoding='utf-8'))
+except Exception:
+    VOCAB = {}
+
+
+def cfg(path, default=None):
+    """kit.local.json value at a dotted path; missing / None / '' -> default (lib.ps1 Get-KitSetting)."""
+    cur = CFG
+    for p in path.split('.'):
+        if not isinstance(cur, dict) or p not in cur:
+            return default
+        cur = cur[p]
+    return default if cur is None or cur == '' or cur == [] else cur
+
+
+def py_rx(rx):
+    """A .NET regex (named groups (?<n>...)) -> Python's (?P<n>...)."""
+    return re.sub(r'\(\?<(?=[A-Za-z_])', '(?P<', rx or '')
+
+
 GWS = shutil.which('gws')
 RCFG = CFG.get('reports') or {}
 REPORT_TYPE = (os.environ.get('KIT_REPORT_TYPE') or RCFG.get('type') or ('gdocs' if GWS else 'markdown')).lower()
@@ -219,7 +240,28 @@ def prose(kind, text):
 PROSE_OK = ''   # --prose-ok "<why>": a format the brief fixes; the findings still print
 OVERRIDE = ''   # --override "<why>": past the prior-work gate, logged
 SCOPE, SCOPE_OK = '', ''   # --scope "<globs>" (mr, merge): the area; --scope-ok <decision id>: a person's scope word, logged
-TAG = (CFG.get('tracker') or {}).get('branchTag') or {'clickup': 'CU-', 'github': 'GH-', 'gitlab': 'GL-'}.get(TRACKER_TYPE, '')
+def vendor():
+    """The tracker vendor's built-in vocabulary (vocab.json trackers.<tracker.type>)."""
+    return (VOCAB.get('trackers') or {}).get(TRACKER_TYPE) or {}
+
+
+TAG = cfg('tracker.branchTag') or vendor().get('branchTag') or ''
+
+
+def branch_rx():
+    """lib.ps1 Get-KitTaskTagRx: tracker.branchRx, else branchTag, else the vendor's branchRx / idPattern ('' = none); group id."""
+    v = vendor()
+    rx = cfg('tracker.branchRx') or (rf'(?i){re.escape(TAG)}(?<id>[A-Za-z0-9]+)' if TAG else v.get('branchRx') or
+                                     (rf'(?<![A-Za-z0-9])(?<id>{v["idPattern"]})(?![A-Za-z0-9])' if v.get('idPattern') else ''))
+    return py_rx(rx)
+
+
+def statuses():
+    """Logical status -> board names: vocab.json statuses, tracker.statuses per key (a name or a list; null = off: [])."""
+    out = {k: list(v) if isinstance(v, list) else [v] for k, v in (VOCAB.get('statuses') or {}).items()}
+    for k, v in ((CFG.get('tracker') or {}).get('statuses') or {}).items():
+        out[k] = [str(n) for n in (v if isinstance(v, list) else [v]) if n not in (None, '')]
+    return out
 
 
 def prior_gate(task, repo, what):
@@ -257,8 +299,9 @@ def prior_gate(task, repo, what):
 
 
 def task_of_branch(branch):
-    m = re.search(rf'(?i){re.escape(TAG)}([A-Za-z0-9]+)', branch or '') if TAG else None
-    return m.group(1) if m else ''
+    rx = branch_rx()
+    m = re.search(rx, branch or '') if rx else None
+    return (m.group('id') if 'id' in m.re.groupindex else m.group(1 if m.re.groups else 0)) if m else ''
 
 
 def prose_limits(kind):
@@ -296,18 +339,75 @@ def comment(tid, text, kind='comment-status'):
     return _tracker('comment', tid, text, '-Kind', kind, '-ProseOk', f'devtools.py checked it ({kind})')
 
 
-LINK_LINE = re.compile(r'(?im)^[ \t]*(\*\*)?(Testing doc( \((human|AI)\))?|Testing goals \(AI\))(\*\*)?[ \t]*:[^\n]*\n?(?:[ \t]*\n)*')
+# ---- process: gates + testing docs (lib.ps1 Test-KitProcessGate is the twin; README "Configuration" process)
+def docs():
+    """process.docs (an empty list = none), else vocab.json docs -> [{key, label, mrLabel, linkRx, headerRx, required}]."""
+    pc = CFG.get('process') if isinstance(CFG.get('process'), dict) else {}
+    out = []
+    for d in (pc['docs'] if 'docs' in pc else VOCAB.get('docs')) or []:
+        if isinstance(d, dict) and d.get('key') and d.get('label'):
+            out.append({'key': d['key'], 'label': d['label'], 'mrLabel': d.get('mrLabel') or d['label'], 'linkRx': d.get('linkRx') or re.escape(d['label']),
+                        'headerRx': py_rx(d.get('headerRx') or ''), 'required': d.get('required') is not False})
+    return out
 
 
-def links_block(desc, human, ai):
-    """The description with one fixed links block on top (bold labels, web links as [open](url)); every older testing-doc line removed."""
+def _label_alts():
+    """Every doc label (+ mrLabel) as one regex alternation, longest first ('' when no docs)."""
+    return '|'.join(sorted({re.escape(x) for d in docs() for x in (d['label'], d['mrLabel'])}, key=len, reverse=True))
+
+
+def gate_how(gate):
+    """process.gates.<gate>: '' (unset: pass) | builtin:<name> | a command line."""
+    return str(cfg(f'process.gates.{gate}', '') or '').strip()
+
+
+BUILTIN_GATES = {}   # adapter kind process-gate: builtin name -> {gate: fn(payload) -> (ok, why)}
+
+
+def process_gate(gate, payload):
+    """lib.ps1 Test-KitProcessGate -> (ok, why, how): unset = pass; builtin:<name>; else the command with the payload JSON on stdin
+    (exit 0 = pass, stdout = why). Callable payload values reach built-ins only."""
+    how = gate_how(gate)
+    if not how:
+        return True, '', 'none'
+    m = re.match(r'^builtin:([\w-]+)$', how)
+    if m:
+        fn = (BUILTIN_GATES.get(m.group(1)) or {}).get(gate)
+        if not fn:
+            return False, f'process.gates.{gate} = {how}: no such built-in for this gate in devtools.py', how
+        ok, why = fn(payload)
+        return bool(ok), str(why or ''), how
+    argv = [a or b or c for a, b, c in re.findall(r'"([^"]*)"|\'([^\']*)\'|(\S+)', how)]
+    exe = shutil.which(argv[0]) or argv[0]
+    try:
+        r = subprocess.run([exe] + argv[1:], input=json.dumps({**{k: v for k, v in payload.items() if not callable(v)}, 'gate': gate}, default=str),
+                           capture_output=True, text=True, encoding='utf-8', timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f'process.gates.{gate} hook failed: {e}', how
+    out = (r.stdout or '').strip()
+    return r.returncode == 0, out or ('' if r.returncode == 0 else f'process.gates.{gate} hook exit {r.returncode}: {(r.stderr or "").strip()[:300]}'), how
+
+
+def link_line_rx():
+    """A description's doc-link line (any process doc label, the old 'Testing goals (AI)' too) and the blank lines after it."""
+    alts = '|'.join(x for x in (_label_alts(), r'Testing goals \(AI\)') if x)
+    return re.compile(r'(?im)^[ \t]*(\*\*)?(' + alts + r')(\*\*)?[ \t]*:[^\n]*\n?(?:[ \t]*\n)*')
+
+
+def links_block(desc, *urls):
+    """The description with one fixed links block on top (bold labels, web links as [open](url)); every older doc-link line removed.
+    urls: one {doc key: url} dict, or urls in process.docs order (human, AI by default)."""
     md = lambda u: f'[open]({u})' if re.match(r'https?://\S+$', u or '') else u
-    return f'**Testing doc (human):** {md(human)}\n\n**Testing doc (AI):** {md(ai)}\n\n' + LINK_LINE.sub('', desc or '').lstrip()   # a blank line: Markdown joins adjacent lines
+    dk = docs()
+    by = urls[0] if len(urls) == 1 and isinstance(urls[0], dict) else {d['key']: u for d, u in zip(dk, urls)}
+    head = ''.join(f'**{d["label"]}:** {md(by[d["key"]])}\n\n' for d in dk if by.get(d['key']))
+    return head + link_line_rx().sub('', desc or '').lstrip()   # a blank line: Markdown joins adjacent lines
 
 
 def no_doc_links(md):
-    """A comment without testing-doc links: a 'Testing doc: x' field at a line start or after ' · ' goes, up to the next ' · '."""
-    md = re.sub(r'(?im)(?:^[ \t]*|[ \t]+·[ \t]*)(?:\*\*)?Testing (?:doc|goals)(?: \((?:human|AI)\))?(?:\*\*)?[ \t]*:[^\n]*?(?=[ \t]+·[ \t]|$)', '', md or '')
+    """A comment without doc links: a '<doc label>: x' field at a line start or after ' · ' goes, up to the next ' · '."""
+    alts = '|'.join(x for x in (_label_alts(), r'Testing goals(?: \(AI\))?') if x)
+    md = re.sub(r'(?im)(?:^[ \t]*|[ \t]+·[ \t]*)(?:\*\*)?(?:' + alts + r')(?:\*\*)?[ \t]*:[^\n]*?(?=[ \t]+·[ \t]|$)', '', md or '')
     md = re.sub(r'(?m)^[ \t]*·[ \t]*', '', md)
     return re.sub(r'\n{3,}', '\n\n', '\n'.join(ln for ln in md.split('\n') if ln.strip() or not ln)).strip() + '\n' if md.strip() else ''
 
@@ -325,18 +425,18 @@ def _doc_url(tid, kind, doc):
     return doc
 
 
-def finish(tid, guide, solution_md, status='review', ai=None):
-    """Both docs (human + AI) published by key, the description's links block, one solution comment, status (never backwards)."""
-    ai = ai or _pub_read(f'{tid}:testing-ai').get('url')
+def _finish_strict(p):
+    """builtin:testingDocs for finish: both docs given, the local loop PASS (a guide URL), the AI doc's case gaps."""
+    tid, guide, ai = p['task'], p.get('guide'), p.get('ai')
     if not ai:
-        raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); both docs are linked on every task. Nothing was written.')
-    solution_md = no_doc_links(solution_md)   # doc links live only in the description
-    prose_gate('comment-solution', solution_md)   # before doc, describe, status
+        return False, 'no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); both docs are linked on every task'
+    if not guide:
+        return False, 'no human testing doc (finish <task> <testing.md|url> ...); both docs are linked on every task'
     if not os.path.isfile(guide):   # a URL: the local-loop gate still holds
         ok, ev = local_pass(tid)
         if not ok:
-            raise SystemExit(f'finish {tid}: the local test loop is {"at " + repr(ev) if ev else "not recorded"}, not PASS (crafty.ps1 checkpoint -Step loop -Item {tid} -Evidence "round <n> PASS"). Nothing was written.')
-    t, ts = task(tid), state_read(task_file(tid[len(TAG):] if TAG and tid.startswith(TAG) else tid)) or {}   # state keys carry no tag
+            return False, f'the local test loop is {"at " + repr(ev) if ev else "not recorded"}, not PASS (crafty.ps1 checkpoint -Step loop -Item {tid} -Evidence "round <n> PASS")'
+    t, ts = p['t'], p['ts']
     rd = lambda f: open(f, encoding='utf-8').read()
     rounds = _pub_read(f'{tid}:testing-ai').get('rounds') or []
     ai_md = rd(ai) if os.path.isfile(ai) else ((rounds or [{}])[-1].get('body') or '')
@@ -345,25 +445,41 @@ def finish(tid, guide, solution_md, status='review', ai=None):
                      f'finish {tid}', [r['body'] for r in _pub_read(f'{tid}:testing-doc').get('rounds') or []], tid,
                      {str(e.get('id')) for e in (ts.get('cases') or {}).get('checks') or []
                       if isinstance(e, dict) and e.get('by') and me_agent() and e['by'] != me_agent()}) if ai_md.strip() else []
-    if gaps:
-        raise SystemExit(f'finish {tid}: ' + '; '.join(gaps) + '. Fix the AI doc (run the cases), then finish again. Nothing was written.')
-    ai_url, guide_url = _doc_url(tid, 'testing-ai', ai), _doc_url(tid, 'testing-doc', guide)
+    return (False, '; '.join(gaps) + '. Fix the AI doc (run the cases), then finish again') if gaps else (True, '')
+
+
+def finish(tid, guide, solution_md, status='review', ai=None):
+    """The docs given (human + AI; process.gates.finish builtin:testingDocs: both required) published by key, the description's
+    links block, one solution comment, status (never backwards). guide '-' = none."""
+    ai = ai or _pub_read(f'{tid}:testing-ai').get('url')
+    guide = None if guide in (None, '', '-') else guide
+    solution_md = no_doc_links(solution_md)   # doc links live only in the description
+    if gate_how('finish') == 'builtin:testingDocs' and not ai:   # before the prose gate, as always
+        raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); both docs are linked on every task. Nothing was written.')
+    prose_gate('comment-solution', solution_md)   # before doc, describe, status
+    t, ts = task(tid), state_read(task_file(tid[len(TAG):] if TAG and tid.startswith(TAG) else tid)) or {}   # state keys carry no tag
+    ok, why, how = process_gate('finish', {'task': tid, 'guide': guide, 'ai': ai, 'status': status, 't': t, 'ts': ts})
+    if not ok:
+        raise SystemExit(f'finish {tid}: {why}{"" if how.startswith("builtin:") else f" (process.gates.finish {how})"}. Nothing was written.')
+    ai_url = _doc_url(tid, 'testing-ai', ai) if ai else ''
+    guide_url = _doc_url(tid, 'testing-doc', guide) if guide else ''
     md = t.get('description') or ''
-    new = links_block(md, guide_url, ai_url)
+    new = links_block(md, {'testing-doc': guide_url, 'testing-ai': ai_url})
+    given = {k: u for k, u in (('human', guide_url), ('ai', ai_url)) if u}
     # failed lookup: describing would wipe the description
-    if ts.get('spec') and all(re.match(r'https?://', u) for u in (guide_url, ai_url)):   # a spec-rendered task refuses describe: the links go into its spec
-        _tracker('update', tid, '-Spec', json.dumps({'docs': {'human': guide_url, 'ai': ai_url}}) + '\n')   # \n: via a file, quotes kept
+    if ts.get('spec') and given and all(re.match(r'https?://', u) for u in given.values()):   # a spec-rendered task refuses describe: the links go into its spec
+        _tracker('update', tid, '-Spec', json.dumps({'docs': given}) + '\n')   # \n: via a file, quotes kept
     elif t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
     comment(tid, solution_md, 'comment-solution')
-    try:   # after the tracker writes: a host error must not fail finish
-        for ref in refresh_mr_docs(tid):
-            print(f'[finish] {ref}: testing doc lines written', file=sys.stderr)
-    except Exception as e:
-        print(f'[finish] {tid}: MR testing doc lines not written ({e}): devtools.py merge writes them, or devtools.py mr', file=sys.stderr)
-    cs = (CFG.get('tracker') or {}).get('statuses') or {}   # a name or a list of names (lib.ps1 tracker statuses)
-    past = [str(n).lower() for k in ('promoted', 'inTest', 'closed') for n in ([cs[k]] if isinstance(cs.get(k), str) else cs.get(k) or
-            {'promoted': ['promoted'], 'inTest': ['in test', 'for test'], 'closed': ['closed', 'complete', 'done']}[k])]
+    if gate_how('mrBody') == 'builtin:testingDocs':
+        try:   # after the tracker writes: a host error must not fail finish
+            for ref in refresh_mr_docs(tid):
+                print(f'[finish] {ref}: testing doc lines written', file=sys.stderr)
+        except Exception as e:
+            print(f'[finish] {tid}: MR testing doc lines not written ({e}): devtools.py merge writes them, or devtools.py mr', file=sys.stderr)
+    cs = statuses()   # the same list lib.ps1 reads
+    past = [str(n).lower() for k in ('promoted', 'inTest', 'closed') for n in cs.get(k) or []]
     if str(t.get('status', '')).strip().lower() in past:   # a fix round after the merge: links and comment only
         print(f'[finish] {tid} is {t.get("status")}: status kept (never backwards)', file=sys.stderr)
     else:
@@ -515,8 +631,8 @@ def target_of(worktree):
 
 
 # ---- MR: open a merge / pull request
-MR_SECTIONS = ('## Summary', '## Changes', '## How tested', '## Risks', '## Links')  # templates.md "MR spec"
-FOOTER = '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
+MR_SECTIONS = tuple(f'## {s}' for s in cfg('mr.sections', ['Summary', 'Changes', 'How tested', 'Risks', 'Links']))  # templates.md "MR spec"
+FOOTER = str(cfg('mr.footer', '') or '')   # a line every MR body ends with (default none)
 
 
 def _verified_gaps(body_md):
@@ -531,7 +647,7 @@ def _how_tested_table(body_md):
     return bool(re.search(r'(?m)^## How tested[^\n]*\n\s*\|', body_md))
 
 
-UI_FILES = re.compile(r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/layout[^/]*/[^/]+\.xml$', re.I)
+UI_FILES = re.compile(py_rx(cfg('mr.uiFilesRx', r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/layout[^/]*/[^/]+\.xml$')), re.I)
 
 
 def _ui_line_missing(worktree, tgt, body_md):
@@ -542,21 +658,28 @@ def _ui_line_missing(worktree, tgt, body_md):
     return [f for f in out.splitlines() if UI_FILES.search(f.strip())]
 
 
-TASK_LINK = {'clickup': 'clickup.com', 'github': '/issues/', 'gitlab': '/issues/', 'jira': '/browse/', 'jira-server': '/browse/',
-             'linear': 'linear.app', 'azure': '_workitems', 'youtrack': '/issue/'}
+def task_link():
+    """A tracker task link's fragment in an MR body: tracker.urlFragment, else the vendor's (vocab.json)."""
+    return cfg('tracker.urlFragment') or vendor().get('urlFragment') or ''
 
 
-DOC_LABEL = {'testing-doc': re.compile(r'(?i)^[ \t>*_|-]*testing doc(?! \(ai\))[^:\n]{0,12}:'), 'testing-ai': re.compile(r'(?i)^[ \t>*_|-]*testing doc \(ai\)[ \t*_]*:')}
+def doc_label_rx(d):
+    return re.compile(r'(?i)^[ \t>*_|-]*' + d['linkRx'] + ':')
+
+
+def doc_link_rx(d):
+    return re.compile(r'(?im)^[ \t>*_|-]*' + d['linkRx'] + r':[ \t*_|]*(\[[^\]\n]*\]\()?(https?://|[A-Za-z]:[\\/])\S')
 
 
 def with_doc_lines(body, tid):
-    """(body, missing): both "Testing doc" lines from <tid>'s published records (devtools.py merge needs them; older lines of a
-    published kind replaced), under "## Links" or above the footer; missing = the kinds with no record."""
-    urls = {k: _pub_read(f'{tid}:{k}').get('url') for k in DOC_LABEL}
-    lines = [ln for ln in (body or '').split('\n') if not any(u and DOC_LABEL[k].match(ln) for k, u in urls.items())]
-    add = [f'- Testing doc{" (AI)" if k == "testing-ai" else ""}: {u}' for k, u in urls.items() if u]
-    at = next((i + 1 for i, ln in enumerate(lines) if ln.strip() == '## Links'), next((i for i, ln in enumerate(lines) if FOOTER in ln), len(lines)))
-    return '\n'.join(lines[:at] + add + lines[at:]) if add else body, [k for k, u in urls.items() if not u]
+    """(body, missing): each process doc's "<mrLabel>: <url>" line from <tid>'s published records (older lines of a published kind
+    replaced), under "## Links" or above the footer; missing = the required doc keys with no record."""
+    dk = docs()
+    urls = {d['key']: _pub_read(f'{tid}:{d["key"]}').get('url') for d in dk}
+    lines = [ln for ln in (body or '').split('\n') if not any(urls[d['key']] and doc_label_rx(d).match(ln) for d in dk)]
+    add = [f'- {d["mrLabel"]}: {urls[d["key"]]}' for d in dk if urls[d['key']]]
+    at = next((i + 1 for i, ln in enumerate(lines) if ln.strip() == '## Links'), next((i for i, ln in enumerate(lines) if FOOTER and FOOTER in ln), len(lines)))
+    return '\n'.join(lines[:at] + add + lines[at:]) if add else body, [d['key'] for d in dk if d['required'] and not urls[d['key']]]
 
 
 def _ref_path(host, repo):
@@ -601,19 +724,24 @@ def mr_create(worktree, title, body_md, tgt=None):
              ' - say what was not run (or "Not run: nothing") - see templates.md "MR spec"', file=sys.stderr)
     if '## How tested' in body_md and not _how_tested_table(body_md):
         print('[mr] "## How tested" is not a table: use "| Check | Result |" rows (templates.md "MR spec")', file=sys.stderr)
-    link = TASK_LINK.get(TRACKER_TYPE)
+    link = task_link()
     if link and link not in body_md:
         print(f'[mr] body has no tracker ({TRACKER_TYPE}) task link', file=sys.stderr)
-    if FOOTER not in body_md:
+    if FOOTER and FOOTER not in body_md:
         body_md = body_md.rstrip() + '\n\n' + FOOTER + '\n'
     host, proj = remote(worktree)
     src = _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
     prior_gate(task_of_branch(src), proj, f'devtools.py mr {src}')
-    if task_of_branch(src):   # doc lines merge needs, from published records; a missing doc fails here, not at merge
+    how = gate_how('mrBody')
+    if task_of_branch(src) and how == 'builtin:testingDocs':   # doc lines merge needs, from published records; a missing doc fails here, not at merge
         body_md, nodoc = with_doc_lines(body_md, task_of_branch(src))
         for k in nodoc:
             print(f'[mr] WARNING: task {task_of_branch(src)} has no published {k} doc: devtools.py merge refuses this MR until it has one;'
                   f' after the local loop PASS: devtools.py finish (it adds the line to this MR)', file=sys.stderr)
+    elif how and not how.startswith('builtin:'):   # a hook checks the body: a refusal is a warning (merge gates it)
+        ok, why, _ = process_gate('mrBody', {'task': task_of_branch(src), 'branch': src, 'title': title, 'body': body_md})
+        if not ok:
+            print(f'[mr] WARNING: process.gates.mrBody: {why}', file=sys.stderr)
     tgt = tgt or target_of(worktree)
     if not tgt:
         raise SystemExit('no target: no crafty.ps1 wt record, no kit.local.json repos[].target for this repo and no origin/HEAD'
@@ -666,7 +794,7 @@ def followups(findings, url):
     if not isinstance(mr, dict) or not mr.get('title'):
         raise SystemExit(f'followups: {url} not readable: {str(mr)[:200]}')
     body, key = str(mr.get('description') or mr.get('body') or '').replace('\r\n', '\n'), lambda s: re.sub(r'\W+', ' ', s.split(': ', 1)[-1]).strip().lower()
-    sec = re.search(r'(?ms)^## Follow-ups[ \t]*\n(.*?)(?=^## |^' + re.escape(FOOTER) + r'|\Z)', body)
+    sec = re.search(r'(?ms)^## Follow-ups[ \t]*\n(.*?)(?=^## |' + (f'^{re.escape(FOOTER)}|' if FOOTER else '') + r'\Z)', body)
     seen, new = {key(b) for b in re.findall(r'(?m)^- (.+)$', sec.group(1) if sec else '')}, []
     for f in findings:
         b = f"{f.get('severity') or 'should-fix'}: `{f.get('file') or '-'}{':' + str(f['line']) if f.get('line') else ''}`: {' '.join(str(f.get('problem') or '').split())[:300]}"
@@ -678,7 +806,7 @@ def followups(findings, url):
     if sec:
         body = body[:sec.end(1)].rstrip('\n') + '\n' + add + '\n' + body[sec.end(1):].lstrip('\n')
     else:
-        cut = body.rfind(FOOTER) if FOOTER in body else len(body)
+        cut = body.rfind(FOOTER) if FOOTER and FOOTER in body else len(body)
         body = body[:cut].rstrip() + '\n\n## Follow-ups\n' + add + ('\n' + body[cut:] if cut < len(body) else '')
     up = _host('mr.update', type=host, repo=proj, n=iid, title=mr['title'], body=body)
     if not (isinstance(up, dict) and up.get('web_url')):
@@ -702,9 +830,10 @@ def _remember_automerge(ref):
 
 MERGE_WORDS = ('MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED')
 RESOLVE = 'crafty.ps1 wt sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again'
-DOC_LINK = re.compile(r'(?im)^[ \t>*_|-]*testing doc(?! \(ai\))[^:\n]{0,12}:[ \t*_|]*(\[[^\]\n]*\]\()?(https?://|[A-Za-z]:[\\/])\S')
-AI_LINK = re.compile(DOC_LINK.pattern.replace('testing doc(?! \\(ai\\))[^:\\n]{0,12}', 'testing doc \\(ai\\)[ \\t*_]*'))
-NO_DOC = re.compile(r'(?im)^[ \t>*_-]*testing doc[ \t*_]*:[ \t*_]*(none|n/?a)[ \t.]*($|[|;,(\u00b7])')   # one line; 'none yet, link below' passes
+def no_doc_rx():
+    """'<first required doc's mrLabel>: none' on one line ('none yet, link below' passes); None when no doc is required."""
+    d = next((x for x in docs() if x['required']), None)
+    return re.compile(r'(?im)^[ \t>*_-]*' + re.escape(d['mrLabel']) + r'[ \t*_]*:[ \t*_]*(none|n/?a)[ \t.]*($|[|;,(\u00b7])') if d else None
 
 
 def merge_word(res):
@@ -855,25 +984,61 @@ def _mr_task(m, proj, iid):
         (lambda r: r and r[1] == iid and _same_repo(r[0], proj))(_norm_ref(y)) for y in (x or {}).get('mrs') or [])), '')
 
 
-BUG_FIX = re.compile(r'(?im)^(?:bug)?fix/|^fix(?:\([^)]*\))?!?:|\[bug\]')   # branch fix/..., title fix(...): or [Bug]
+def bug_fix_rx():
+    """process.bugFixRx, else a bug-fix branch (tracker.bugBranchRx: fix/ bugfix/), a fix(...): title or the bug kind prefix ([Bug])."""
+    bp = ((CFG.get('tracker') or {}).get('kindPrefixes') or {}).get('bug') or cfg('tracker.bugPrefix', '[Bug]')
+    return re.compile(py_rx(cfg('process.bugFixRx') or (r'(?im)^(?:' + cfg('tracker.bugBranchRx', 'fix/|bugfix/') + r')|^fix(?:\([^)]*\))?!?:|' + re.escape(bp))))
+
+
 REPRO = re.compile(r'(?i)\brepro(?:duc\w*|s)?\b')
 
 
+def _repro_row(p):
+    """builtin:reproRow for bugFix: the AI testing doc of a bug fix's task has a repro row (no task / no stored rounds: unknown, passes)."""
+    tid = p.get('task')
+    rounds = [str(r.get('body') or '') for r in (_pub_read(f'{tid}:testing-ai').get('rounds') or [])] if tid else []
+    return (True, '') if not rounds or any(REPRO.search(b) for b in rounds) else (False, f'bug fix of task {tid} with no local reproduction in its AI testing doc')
+
+
 def _repro_gap(m, proj, iid):
-    """NOT_MERGED text when a bug fix's AI testing doc holds no local reproduction (a devy merged a [Bug] fix on unit tests only);
-    '' when no bug fix, no task, no stored doc rounds (a linked URL: unknown) or --override."""
-    if not BUG_FIX.search(f"{m.get('source_branch') or ''}\n{m.get('title') or ''}"):
+    """NOT_MERGED text when process.gates.bugFix refuses a bug fix (builtin:reproRow: its AI testing doc holds no local reproduction;
+    a devy merged a [Bug] fix on unit tests only); '' when no bug fix, the gate passes or --override."""
+    if not gate_how('bugFix') or not bug_fix_rx().search(f"{m.get('source_branch') or ''}\n{m.get('title') or ''}"):
         return ''
     tid = _mr_task(m, proj, iid)
-    rounds = [str(r.get('body') or '') for r in (_pub_read(f'{tid}:testing-ai').get('rounds') or [])] if tid else []
-    if not rounds or any(REPRO.search(b) for b in rounds):
+    ok, why, how = process_gate('bugFix', {'task': tid, 'mr': f'{proj}!{iid}', 'branch': m.get('source_branch') or '', 'title': m.get('title') or ''})
+    if ok:
         return ''
     if OVERRIDE:
         kitlog('calls', 'repro-override', {'task': tid, 'mr': f'{proj}!{iid}', 'reason': OVERRIDE})
         return ''
-    return (f'!{iid}: bug fix of task {tid} with no local reproduction in its AI testing doc: reproduce it first (envy SKILL.md "Debug locally"),'
+    if how != 'builtin:reproRow':
+        return f'!{iid}: process.gates.bugFix ({how}): {why}; --override "<why>" passes, logged\nNOT_MERGED'
+    return (f'!{iid}: {why}: reproduce it first (envy SKILL.md "Debug locally"),'
             f' add a "repro" row (the bug before the fix, the same steps after; not reproducible locally: the row says why),'
             f' devtools.py doc --key {tid}:testing-ai, merge again; --override "<why>" passes, logged\nNOT_MERGED')
+
+
+def _merge_docs(m, proj, iid, H, body):
+    """builtin:testingDocs for merge -> NOT_MERGED text or '': a task MR (a tracker task link in its body) links every required doc
+    (written here from the published records), and its first doc line never says "none"."""
+    req = [d for d in docs() if d['required']]
+    link = task_link()
+    if link and link in body and not all(doc_link_rx(d).search(body) for d in req):   # a task's MR: the docs linked first
+        tid = _mr_task(m, proj, iid)
+        new, nodoc = with_doc_lines(body, tid) if tid else (body, [d['key'] for d in req])
+        if nodoc or not isinstance(H('mr.update', title=m.get('title') or '', body=new), dict):   # body fixed here: 4 runs lost merges to it
+            return (f'!{iid}: a task MR without {" and ".join(chr(34) + d["mrLabel"] + ": <url>" + chr(34) for d in req)} lines (task {tid or "unknown"}: no published {" / ".join(nodoc) or "doc write"});'
+                    f' after the local loop PASS: devtools.py finish (it writes them), merge again\nNOT_MERGED')
+        _progress(f'!{iid}: testing doc lines written from task {tid}\'s published docs'); body = new
+    nd = no_doc_rx()
+    if nd and nd.search(body):   # merged 3x with no doc: testers had nothing to follow (a published doc replaced "none" above)
+        return (f'!{iid}: the MR body says "{req[0]["mrLabel"]}: none"; every change gets a human testing doc: write it, devtools.py doc, '
+                f'put its link in the MR body, merge again\nNOT_MERGED')
+    return ''
+
+
+BUILTIN_GATES.update({'testingDocs': {'finish': _finish_strict}, 'reproRow': {'bugFix': _repro_row}})   # merge / mrBody testingDocs: inline (host calls)
 
 
 def _auto_merge(worktree, iid, max_wait):
@@ -914,16 +1079,14 @@ def _auto_merge(worktree, iid, max_wait):
         if no := scope_refusal(files, globs, m.get('source_branch') or '', ref, 'merge'):
             return f'!{iid}: {no}\nNOT_MERGED'
     body = str(m.get('description') or m.get('body') or '').replace('\r\n', '\n')
-    if TASK_LINK.get(TRACKER_TYPE, '\0') in body and not (DOC_LINK.search(body) and AI_LINK.search(body)):   # a task's MR: both docs linked first
-        tid = _mr_task(m, proj, iid)
-        new, nodoc = with_doc_lines(body, tid) if tid else (body, list(DOC_LABEL))
-        if nodoc or not isinstance(H('mr.update', title=m.get('title') or '', body=new), dict):   # body fixed here: 4 runs lost merges to it
-            return (f'!{iid}: a task MR without "Testing doc: <url>" and "Testing doc (AI): <url>" lines (task {tid or "unknown"}: no published {" / ".join(nodoc) or "doc write"});'
-                    f' after the local loop PASS: devtools.py finish (it writes them), merge again\nNOT_MERGED')
-        _progress(f'!{iid}: testing doc lines written from task {tid}\'s published docs'); body = new
-    if NO_DOC.search(body):   # merged 3x with no doc: testers had nothing to follow (a published doc replaced "none" above)
-        return (f'!{iid}: the MR body says "Testing doc: none"; every change gets a human testing doc: write it, devtools.py doc, '
-                f'put its link in the MR body, merge again\nNOT_MERGED')
+    if gate_how('merge') == 'builtin:testingDocs':
+        if no := _merge_docs(m, proj, iid, H, body):
+            return no
+    elif gate_how('merge'):   # a hook: the MR facts on stdin
+        ok, why, how = process_gate('merge', {'task': _mr_task(m, proj, iid), 'mr': f'{proj}!{iid}', 'branch': m.get('source_branch') or '',
+                                              'target': m.get('target_branch') or '', 'title': m.get('title') or '', 'body': body})
+        if not ok:
+            return f'!{iid}: process.gates.merge ({how}): {why}\nNOT_MERGED'
     if gap := _repro_gap(m, proj, iid):
         return gap
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
@@ -1359,6 +1522,7 @@ def _check_doc(kind, scope, path, body, prior=()):
                          ' (`doc "<title>" cases --key <task>:testing-ai`) and, after the loop PASS, the human doc. Nothing was published.')
     tb, name, tpl = (CHECKS_TABLE, '| # | Steps | Expected | Result | Evidence |', 'Human testing doc') if kind == 'testing-doc' else \
         (AI_TABLE, '| # | Type | Steps / API call + payload | Expected | Result | Evidence |', 'Testing doc (AI)')
+    tb = next((re.compile(d['headerRx']) for d in docs() if d['key'] == kind and d['headerRx']), tb)   # process.docs[].headerRx
     if not tb.search(body):
         raise SystemExit(f'{path} has no case table "{name}" (templates.md "Test cases"). Nothing was published.')
     neg = re.search(r'(?im)^\|[^\n]*\|\s*negative\s*\|', body)
@@ -1723,13 +1887,20 @@ def render_solution(s):
     tr = ((read_tracking().get('tasks') or {}).get(t[len(TAG):] if TAG and t.startswith(TAG) else t) or {}) if t else {}
     mrs = s.get('mrs') or [f'{m} ({"MERGED" if tr.get("allMergedAt") else "OPEN"})' for m in tr.get('mrs') or []]
     proof = s.get('localProof') or (t and local_pass(t)[1]) or 'none'
-    return (f'**Solution:** {s.get("solution", "")}\n**MRs:** {" · ".join(mrs) or "none"} · **Local proof:** {proof}\n'
-            f'**After deploy:** {s.get("afterDeploy") or "nothing"} · **Deferred:** {s.get("deferred") or "none"}\n')
+    return comment_template('comment-solution', '**Solution:** {solution}\n**MRs:** {mrs} · **Local proof:** {localProof}\n**After deploy:** {afterDeploy} · **Deferred:** {deferred}\n',
+                            {**s, 'solution': s.get('solution', ''), 'mrs': ' · '.join(mrs) or 'none', 'localProof': proof,
+                             'afterDeploy': s.get('afterDeploy') or 'nothing', 'deferred': s.get('deferred') or 'none'})
 
 
 def render_status(s):
     """comment-status: `<status> — <why> · <link>`."""
-    return f'{s.get("status", "")} — {s.get("why", "")}' + (f' · {s["link"]}' if s.get('link') else '') + '\n'
+    return comment_template('comment-status', '{status} — {why}{linkPart}\n', {**s, 'linkPart': f' · {s["link"]}' if s.get('link') else ''})
+
+
+def comment_template(kind, default, vals):
+    """tracker.commentTemplates.<kind> (else default) with each {field} filled from vals ('' when absent)."""
+    tpl = str(((CFG.get('tracker') or {}).get('commentTemplates') or {}).get(kind) or default)
+    return re.sub(r'\{(\w+)\}', lambda m: '' if vals.get(m.group(1)) is None else str(vals[m.group(1)]), tpl)
 
 
 SPEC_NEEDS = {'mr-body': ('type', 'change', 'summary'), 'mr-title': ('type', 'change'), 'commit': ('type', 'change'),
@@ -1895,14 +2066,17 @@ def selftest():
             fn(); expect(what, False)
         except SystemExit as e:
             expect(what, text in str(e))
+    g0 = globals()   # today's two-doc process = the legacy config rows (kit.local.json process.gates, mr.footer); neutral checks below
+    LEGACY_GATES = {'promote': 'builtin:testingDocs', 'merge': 'builtin:testingDocs', 'finish': 'builtin:testingDocs', 'mrBody': 'builtin:testingDocs', 'bugFix': 'builtin:reproRow'}
+    CFG['process'] = {'gates': dict(LEGACY_GATES)}; g0['FOOTER'] = '\U0001f916 Generated with [Claude Code](https://claude.com/claude-code)'
     refused('a missing body file is refused', lambda: _body('no-such-body.md'), 'file not found')
     expect('multi-line body text passes', _body('a\nb') == 'a\nb')
     refused('merge: a repo name instead of a worktree folder is refused', lambda: remote('no-such-checkout-x1'), 'not a folder')
     page = md_to_html('![shot 1](https://x/a.png "260") [link](https://y)\n![b](c.png)')
     expect('md_to_html: images with width (default 600) and captions, links stay links', '<img src="https://x/a.png" width="260"><br><i>shot 1</i>' in page
            and '<img src="c.png" width="600">' in page and '<a href="https://y">link</a>' in page)
-    spec_only = ['rm/api/cypress/**', 'rm/api/package.json']   # incident 2026-11-14: a spec-only area's MR changed product files
-    diff = ['rm/api/cypress/e2e/inv.cy.js', 'rm/api/package.json', 'rm/api/src/main/java/InventoryService.java', 'rm/api/cypress.config.js']
+    spec_only = ['svc/api/cypress/**', 'svc/api/package.json']   # incident 2026-11-14: a spec-only area's MR changed product files
+    diff = ['svc/api/cypress/e2e/inv.cy.js', 'svc/api/package.json', 'svc/api/src/main/java/InventoryService.java', 'svc/api/cypress.config.js']
     expect('scope: files outside the area globs are named (** any depth, an exact file, a sibling is outside)',
            scope_outside(diff, spec_only) == diff[2:] and scope_outside(diff, []) == [] and scope_outside(['a/b/c.ts'], ['a/']) == []
            and scope_outside(['a/x.ts', 'a/b/x.ts'], ['a/*.ts']) == ['a/b/x.ts'] and scope_outside(['x/test/y.ts', 'test/z.ts'], ['**/test/**']) == [])
@@ -1916,7 +2090,7 @@ def selftest():
            and scope_of(td, '', 'api!6', lg) == [] and scope_of(td, 'a/**, b/', 'api!5', lg) == ['a/**', 'b/'])
     shutil.rmtree(td, ignore_errors=True)
     wb = {'name': 'w', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}
-    expect('wave brief: an area\'s paths are in the brief and the /buildy args', 'rm/api/cypress/**' in render_wave_brief(wb)
+    expect('wave brief: an area\'s paths are in the brief and the /buildy args', 'svc/api/cypress/**' in render_wave_brief(wb)
            and json.loads(wave_files(wb, 'b.md')['b.args.json'])['agents'][0]['paths'] == spec_only)
 
     fd, path = tempfile.mkstemp(suffix='.json')
@@ -1997,6 +2171,22 @@ def selftest():
         expect(f'merge: a task MR without doc lines (or "none") gets them from the published docs and merges; finish writes them into tracked open MRs; a doc not published: NOT_MERGED naming it ({rf}, {miss})',
                rf == 'MERGED' and rfin and up and '## Links\n- Testing doc: https://d/testing-doc\n- Testing doc (AI): https://d/testing-ai\n' in up[0] and 'pending' not in up[0]
                and merge_word(rn) == 'NOT_MERGED' and 'testing-ai' in rn and nm and miss == ['testing-ai'] and 'Testing doc: https://d/testing-doc' in wl and 'pending' not in wl)
+        # neutral: process.gates unset -> no doc lines, no "none" refusal, no repro gate; a hook gate refuses with its stdout
+        g['CFG']['process'] = {}; g['TRACKER_TYPE'] = 'clickup'; g['TAG'] = 'CU-'
+        g['_pub_read'] = lambda key: {}
+        calls.clear(); g['_host'] = tb('https://app.clickup.com/t/T7\n- Testing doc: none'); n1 = merge_word(auto_merge('.', '7')); n1u = [v for v, _ in calls if v == 'mr.update']
+        calls.clear(); g['_host'] = fb(); n2 = merge_word(auto_merge('.', '7'))
+        hk = os.path.join(tempfile.mkdtemp(), 'gate.py')
+        with open(hk, 'w', encoding='utf-8') as fh:
+            fh.write('import json, sys\np = json.load(sys.stdin)\nprint(p["gate"] + " says no to " + p["mr"])\nsys.exit(0 if p["branch"].startswith("ok/") else 1)\n')
+        g['CFG']['process'] = {'gates': {'merge': f'"{sys.executable}" "{hk}"'}}
+        calls.clear(); g['_host'] = tb('x'); n3 = auto_merge('.', '7'); n3m = not merged()
+        hok = process_gate('merge', {'mr': 'g/r!7', 'branch': 'ok/x'})
+        shutil.rmtree(os.path.dirname(hk), ignore_errors=True)
+        g['CFG']['process'] = {'gates': dict(LEGACY_GATES)}
+        g['_pub_read'], g['TAG'], g['TRACKER_TYPE'] = pr0, tag0, tt0
+        expect(f'process.gates unset: a task MR with no / "none" doc lines and a bug fix with no repro row merge, no body rewrite; a hook gate refuses with its stdout, exit 0 passes ({n1}, {n2}, {n3!r})',
+               n1 == 'MERGED' and not n1u and n2 == 'MERGED' and merge_word(n3) == 'NOT_MERGED' and 'merge says no to g/r!7' in n3 and n3m and hok[0] and hok[2].endswith(f'"{hk}"'))
         calls.clear(); g['_host'] = fake(cfg=False)
         expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
         repos0 = CFG.get('repos'); CFG['repos'] = [{'name': 'r', 'ci': {'mrPipelines': False}}]
@@ -2048,13 +2238,54 @@ def selftest():
     expect('a 300-char tracker text goes via a temp file, then is removed', sent[1:] == ['x' * 300] and not os.path.exists(sent[0]))
     mrt = with_doc_lines(render_mr_body({'type': 'feat', 'change': 'x', 'summary': 'y', 'localEnv': 'none'}), '')[0] + '- Testing doc: https://d/1\n'
     expect('MR body: the rendered How tested is a table, all sections in order, a doc link the merge gate reads; a bullet list is flagged',
-           _how_tested_table(mrt) and not _how_tested_table('## How tested\n- tests pass\n') and all(h in mrt for h in MR_SECTIONS) and DOC_LINK.search(mrt))
+           _how_tested_table(mrt) and not _how_tested_table('## How tested\n- tests pass\n') and all(h in mrt for h in MR_SECTIONS) and doc_link_rx(docs()[0]).search(mrt))
     cfg0 = dict(CFG); CFG.clear(); CFG['gitHostType'] = 'github'
     expect('gitHostType, no gitHost: any origin', host_kind('git.corp.example') == 'github'); CFG.update(cfg0)
+    _process_selftest(expect, LEGACY_GATES)
     _report_selftest(expect)
     _publish_selftest(expect, refused)
     print(f'{fails} failure(s)')
     return 1 if fails else 0
+
+
+def _process_selftest(expect, legacy):
+    """process gates and tracker vocabulary: neutral (unset) vs today's legacy rows; one source of statuses; vendor branch ids."""
+    g, cfg0 = globals(), json.loads(json.dumps(CFG))
+    keep = {k: g[k] for k in ('TRACKER_TYPE', 'TAG', 'local_pass', '_pub_read')}
+    try:
+        g['local_pass'], g['_pub_read'] = (lambda t: (None, '')), (lambda k: {})
+        CFG['process'] = {}
+        p = {'task': 'T1', 'guide': None, 'ai': None, 't': {}, 'ts': {}}
+        neutral = [process_gate(x, p)[0] for x in ('promote', 'merge', 'finish', 'bugFix', 'mrBody')]
+        CFG['process'] = {'gates': dict(legacy)}
+        strict = process_gate('finish', p)
+        CFG['process'] = {'gates': dict(legacy), 'docs': []}
+        nodocs = links_block('**Testing doc (human):** x\n\nbody', {'testing-doc': 'https://h'})
+        CFG['process'] = {'gates': {'merge': 'builtin:noSuch'}}
+        unknown = process_gate('merge', p)
+        expect(f'process gates: unset = all five pass with no docs; legacy finish refuses without the AI doc; an unknown built-in refuses; '
+               f'process.docs [] = no links block ({strict[1][:40]!r})', all(neutral) and not strict[0] and 'no AI testing doc' in strict[1]
+               and nodocs == '**Testing doc (human):** x\n\nbody' and not unknown[0] and 'no such built-in' in unknown[1])
+        CFG['tracker'] = {'statuses': {'promoted': None, 'inTest': 'deployed'}}
+        st = statuses()
+        expect('statuses: one source (vocab.json) per key overridden; null = off ([]); a name = a list',
+               st['promoted'] == [] and st['inTest'] == ['deployed'] and st['closed'] == ['closed', 'complete', 'done'])
+        CFG['tracker'] = {}; g['TRACKER_TYPE'], g['TAG'] = 'jira', ''
+        j = (task_of_branch('feature/SHOP-42-cart'), task_of_branch('feature/cart'), task_link())
+        g['TRACKER_TYPE'] = 'azure'
+        a = (task_of_branch('feature/1234-cart'), task_of_branch('AB#77 fix'))
+        CFG['tracker'] = {'branchRx': r'(?<id>TCK\d+)'}
+        c = task_of_branch('x/TCK9-y')
+        expect(f'branch ids: jira from the vendor idPattern, azure branchRx, tracker.branchRx wins ({j}, {a}, {c})',
+               j == ('SHOP-42', '', '/browse/') and a == ('1234', '77') and c == 'TCK9')
+        CFG['tracker'] = {'commentTemplates': {'comment-status': '[{status}] {why}\n'}}
+        expect('tracker.commentTemplates: a kind renders from its template; default unchanged',
+               render_status({'status': 'blocked', 'why': 'x'}) == '[blocked] x\n' and render_solution({'solution': 's'}).startswith('**Solution:** s\n'))
+        CFG['tracker'] = {'bugBranchRx': 'hotfix/', 'kindPrefixes': {'bug': '[Defect]'}}
+        b = bug_fix_rx()
+        expect('bug fix: tracker.bugBranchRx + the bug kind prefix', bool(b.search('hotfix/x')) and not b.search('fix/x') and bool(b.search('[Defect] y')))
+    finally:
+        CFG.clear(); CFG.update(cfg0); g.update(keep)
 
 
 def _publish_selftest(expect, refused):

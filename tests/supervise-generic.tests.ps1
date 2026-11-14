@@ -33,5 +33,33 @@ $script:KitGateLabels = $null; $__cfg = [pscustomobject]@{ gate = [pscustomobjec
 "labels:$((Get-KitGateGroup 'zig' 'x') -eq 'zig build' -and (Get-KitGateGroup 'maven-test' 'x') -eq 'all maven' -and (Get-KitGateGroup 'ng-test' 'x') -eq 'js tests')"
 '@ @($O, (Kd))
 Expect-Each $gen 'resources generic: #' 'none', 'own', 'busy', 'caches', 'cachedef', 'labels-def', 'labels' -Show 6
+# a CI-raised test task (tracker.ciTaskPattern): track add of its merged fix MR promotes it with no testing docs, holds while the
+# named job runs again on its branch, closes it with ONE qa-result comment linking the passing job; a plain task keeps the doc gate
+$ciTrack = Invoke-PsTest track-ci @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+$__cfg = if ($__cfg) { $__cfg } else { [pscustomobject]@{} }; $__cfg | Add-Member -Force process ([pscustomobject]@{ gates = [pscustomobject]@{ promote = 'builtin:testingDocs' } })   # the legacy row: a plain task keeps the doc gate
+$KitConf.TrackerType = 'fake'; $global:st = 'open'; $global:kc = @(); $global:jobSt = 'running'; $global:tname = '[Backend Unit Test] Stale tests'
+$jobUrl = 'https://h/g/api/-/jobs/'
+function Get-TrackerTask($id) { [pscustomobject]@{ name = $global:tname; status = $global:st; subtasks = @(); description = "**Pipeline:** [x](https://h/g/api/-/pipelines/100)`n**Branch:** staging/x @ abc`n**Job:** [x](${jobUrl}7)" } }
+function Set-TrackerStatus($id, $s) { $global:st = $s }
+function Set-TrackerKitComment($id, $kind, $text) { $global:kc += "$kind|$text" }
+function Get-TrackerComments($id) { @() }
+function Start-Process { }
+function ProjPath($r) { "g/$r" }
+$__cfg | Add-Member -Force NoteProperty tracker ([pscustomobject]@{ ciTaskPattern = '^\W*\[[^\]]*Unit Test\]' })   # LEGACY tracker.ciTaskPattern
+function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
+  switch ($Verb) { 'ci.parseUrl' { $j = [regex]::Match("$($A.text)", '(?<u>https?://\S+?/jobs/(?<id>\d+))'); @{ url = $j.Groups['u'].Value; job = $j.Groups['id'].Value; run = [regex]::Match("$($A.text)", '/pipelines/(\d+)').Groups[1].Value } }
+    'mr.get' { [pscustomobject]@{ state = 'merged'; merge_commit_sha = 'm1' } } 'ci.runs' { @([pscustomobject]@{ id = 101; sha = 's1' }, [pscustomobject]@{ id = 99; sha = 's0' }) } 'repo.base' { [pscustomobject]@{ id = 'm1' } }
+    'ci.jobs' { if ("$($A.id)" -eq '100') { @([pscustomobject]@{ id = 7; name = 'unit-x'; status = 'failed' }) } else { @([pscustomobject]@{ id = 9; name = 'unit-x'; status = $global:jobSt; web_url = "${jobUrl}9" }) } } default { $null } } }
+$a1 = Invoke-Track add -Task ci1 -Mrs 'api!5' -Detail | Out-String; $s1 = "$global:st|$((Read-KitTracking).tasks['ci1'].done)"
+$global:jobSt = 'success'; $r2 = Invoke-Track run -Task ci1 | Out-String
+"wait:$($s1 -eq 'promoted|False' -and $a1 -match 'HOLD ci1: CI task not closed: CI job unit-x running on staging/x')"
+"closed:$($global:st -eq 'closed' -and (Read-KitTracking).tasks['ci1'].done -and $r2 -match 'DONE ci1: all 1 MRs merged, CI job unit-x passed on staging/x -> closed' -and @($global:kc).Count -eq 1 -and $global:kc[0] -match '^qa-result\|QA: PASS . CI job unit-x passed on staging/x with \S*api!5 merged: https://h/g/api/-/jobs/9$')"
+$global:tname = 'Plain fix'; $global:st = 'open'; $p3 = Invoke-Track add -Task ci2 -Mrs 'api!6' | Out-String
+"plain:$($global:st -eq 'open' -and $p3 -match 'ATTENTION ci2: MRs merged, no testing-doc link' -and $null -eq (Get-KitCiTask ci2))"
+'@ @($O)
+Expect-Each $ciTrack 'track: CI task # (wait: track add of a merged MR promotes at once, holds while the job runs again; closed: job passed -> closed + one qa-result comment with the job link; plain: no pattern match = the testing-doc gate)' @('wait', 'closed', 'plain') 3
 Remove-TestKit $k
 Complete-Tests
