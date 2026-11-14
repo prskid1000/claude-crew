@@ -114,13 +114,13 @@ foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('P', 'gi
 Remove-Item Env:KIT_GUARD_SELFTEST_ACTIVE
 Expect "guard: localenv/ pushes and hand-started dev servers denied, the rest allowed ($($bad -join ' | '))" (-not $bad.Count)
 # a rebuilt layer edited an applied, unmerged changeSet: its MD5SUM is nulled (merged and unchanged ones untouched); restore.after runs with the release mark
-$ck = New-LocalEnvKit lecs; $ckL = Join-Path $ck 'skills/envy/envy.ps1'; $ckr = Join-Path $ck 'repo'; git init -q -b main $ckr
+$ck = New-LocalEnvKit lecs; $ckL = Join-Path $ck 'skills/envy/envy.ps1'; $ckr = Join-Path $ck 'repo'; git init -q -b main $ckr; New-Item -ItemType Directory -Force (Join-Path $ck 'skills/crafty/adapters') | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/liquibase.ps1') (Join-Path $ck 'skills/crafty/adapters')
 $ckx = { param($body) Set-Content (Join-Path $ckr 'changelog/c1.xml') "<databaseChangeLog>$body</databaseChangeLog>"; git -C $ckr add .; git -C $ckr -c user.name=t -c user.email=t@t commit -qm x; "$(git -C $ckr rev-parse HEAD)".Trim() }
 New-Item -ItemType Directory -Force (Join-Path $ckr 'changelog') | Out-Null
 $null = & $ckx '<changeSet id="m1" author="a"><sql>select 1</sql></changeSet>'; git -C $ckr update-ref refs/remotes/origin/main HEAD
 $ckp = & $ckx '<changeSet id="m1" author="a"><sql>select 1</sql></changeSet><changeSet author="a" id="l1"><sql>select 2</sql></changeSet><changeSet id="l2" author="a"><sql>x</sql></changeSet>'
 $ckn = & $ckx '<changeSet id="m1" author="a"><sql>select 1</sql></changeSet><changeSet author="a" id="l1"><sql>select 3</sql></changeSet><changeSet id="l2" author="a">  <sql>x</sql></changeSet>'
-Set-JsonFile (Join-Path $ck 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ t = @{ services = @(); restore = @{ after = @(@{ name = 'marker'; cmd = 'echo reset {mark}' }, @{ name = 'slow'; cmd = 'echo reindex'; onMigrations = $false }) } } } } } 8
+Set-JsonFile (Join-Path $ck 'skills/crafty/kit.local.json') @{ migrations = @{ tool = 'liquibase' }; localEnv = @{ envs = @{ t = @{ services = @(); restore = @{ after = @(@{ name = 'marker'; cmd = 'echo reset {mark}' }, @{ name = 'slow'; cmd = 'echo reindex'; onMigrations = $false }) } } } } } 8
 $cks = & { . $ckL; $global:ckSql = @(); function Invoke-DbSql { $global:ckSql += $args[1] }; function LiquibaseSchemas { 's1' }; function SqlId($n) { "``$n``" }; function SqlQ($v) { "'$v'" }
   $pure = @(Get-EditedChangeSets '<changeSet id="x" author="b">1</changeSet>' '<changeSet id="x" author="b">2</changeSet>' '<changeSet id="x" author="b">1</changeSet>').Count
   $sqlNotes = @(Reset-EditedChecksums t @{ r = @{ wt = $ckr; target = 'main' } } @{ r = @(@{ branch = 'b'; sha = $ckp; migrations = $true }) } @{ r = @(@{ branch = 'b'; sha = $ckn; migrations = $true }) })
@@ -143,7 +143,7 @@ $rpOut = & { . $ckL
         @{ schema = 's2'; table = 't2'; kind = 'create'; at = 'b.000008:300' },
         @{ schema = 's2'; table = 'p9'; kind = 'object'; object = 'PROCEDURE'; op = 'CREATE'; at = 'b.000008:400'; sql = 'CREATE PROCEDURE p9' }) } }
   $rp = Get-RestorePlan t @{ pos = 'b.000008:50' } @('s1', 's2') ''
-  function Get-LiquibaseMaster { Join-Path $ckr 'changelog/c1.xml' }; function LiquibaseDir { $ckr }; function LiquibaseSchemas { 's1', 's2' }
+  function Resolve-MigSets { [pscustomobject]@{ name = 'default'; tool = 'liquibase'; searchPath = $ckr; changelog = $null; dir = $null; masters = @(); schemas = @('s1', 's2') } }   # FILENAME matched by its path under the search path
   function Invoke-DbSql([string]$e, [string]$sql) {
     if ($sql -match 'DATABASECHANGELOG') { , @('config/changelog/c2.xml', '5'); , @('config/changelog/c3.xml', '9'); , @('config/changelog/c4.xml', '11') }
     elseif ($sql -match "'s2'") { , @('p1') } }

@@ -176,13 +176,16 @@ INSERT INTO fb.tp VALUES (1, 'one'), (2, 'two'); INSERT INTO fb.tc VALUES (10, 1
 INSERT INTO fb.tg (cid, d, ts, j, b, e, st, f, dd, t, y, bl, ch) VALUES (10, 1.5, '2026-01-01 01:02:03.456', '{"a": 1}', b'101', 'y', 'a,b', 1.5, 2.25, '01:02:03.45', 2026, x'00ff', 'ab'), (11, -2.25, NULL, '[1]', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL), (20, 0, NOW(3), NULL, b'1', NULL, '', 0, 0, '-01:00:00', 1999, '', '');
 INSERT INTO fb.ts VALUES (100, 1), (200, 2);
 '@
+  $doc0 = Px $L3 doctor -Env s 2>&1 | Out-String; $cg0 = "$(Q "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_NAME LIKE 'kit\_cg\_%'")"
+  Expect "cascade guard off by default (db.cascadeGuard unset): doctor installs no trigger ($cg0)" ($cg0 -eq '0' -and $doc0 -notmatch 'cascade guard: \d+ trigger')
+  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb'); cascadeGuard = $true } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
   $doc = Px $L3 doctor -Env s 2>&1 | Out-String
   $sum4 = { (Q 'CHECKSUM TABLE fb.tp, fb.tc, fb.tg, fb.ts, fb.tlog') -join ' | ' }; $c4 = & $sum4; $l4 = "$(Q 'SELECT COUNT(*) FROM fb.tlog')"
   $null = Px $L3 mark -Env s -Name tree 2>&1
   Q "UPDATE fb.tp SET v = 'TWO' WHERE id = 2; DELETE FROM fb.tp WHERE id = 1; UPDATE fb.tp SET id = 3 WHERE id = 2; INSERT INTO fb.tg (cid, d) VALUES (20, 9)"
   $gone = "$(Q 'SELECT COUNT(*) FROM fb.tg')|$(Q 'SELECT COUNT(*) FROM fb.ts WHERE pid IS NULL')|$(Q 'SELECT COUNT(*) FROM fb.tlog')"
   $tr = & { . $L3; $m = Find-Mark (Read-State s) 'tree' 0; $p = Get-RestorePlan s $m @('fb') 'tree'; "$(@($p.fallback).Count)|$(Invoke-RestoreDb s $m @('fb') $p)" }
-  Expect "cascade guard: doctor installs it; a 3-level CASCADE tree, SET NULL and ON UPDATE CASCADE children back exactly ($($doc -replace '\s+', ' '); $gone -> $tr)" ($doc -match 'cascade guard: 4 trigger\(s\) installed' -and $gone -eq '2|2|6' -and $tr -eq '0|' -and (& $sum4) -eq $c4)
+  Expect "cascade guard: doctor installs it; a 3-level CASCADE tree, SET NULL and ON UPDATE CASCADE children back exactly ($($doc -replace '\s+', ' '); $gone -> $tr; $(& $sum4) vs $c4)" ($doc -match 'cascade guard: 4 trigger\(s\) installed' -and $gone -eq '2|2|6' -and $tr -eq '0|' -and (& $sum4) -eq $c4)
   Expect "app triggers: the undo runs as row events, no trigger fires (log rows $l4 -> $(Q 'SELECT COUNT(*) FROM fb.tlog'))" ("$(Q 'SELECT COUNT(*) FROM fb.tlog')" -eq $l4)
   $td = Px $L3 teardown -Env s 2>&1 | Out-String
   Expect "teardown: the guard's triggers and its journal schema removed ($($td.Trim()))" ($td -match 'removed: 4 trigger' -and "$(Q "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_NAME LIKE 'kit\_cg\_%'")" -eq '0' -and "$(Q "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'kit_journal'")" -eq '0')

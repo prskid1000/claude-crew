@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L29 sweep · L177 wt · L495 stack · L675 gate · L991 check · L1304 pipes · L1361 guard · L2190 dir ·
-  L2200 checkpoint · L2229 prior · L2267 tracker · L2289 task spec · L2447 scope · L2489 host
+Sections: L23 init · L29 sweep · L177 wt · L495 stack · L675 gate · L991 check · L1300 pipes · L1357 guard · L2186 dir ·
+  L2196 checkpoint · L2225 prior · L2263 tracker · L2285 task spec · L2443 scope · L2485 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1092,22 +1092,18 @@ function Get-TestLock([string[]]$Names) {
     }
   }
 }
-# repos[].migrations.check, else adapters/liquibase.ps1; other tools = UNRUN (exit 5)
+# repos[].migrations.check, else the migration adapter of repos[].migrations.tool / migrations.tool (default none: no check);
+# a tool without a check verb = UNRUN (exit 5)
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
-  $chk = (Get-CheckRepo).conf.migrations.check
+  $mc = (Get-CheckRepo).conf.migrations; $chk = $mc.check
   if ($chk) { if ($Show) { "migrations : $chk"; exit 0 }; Write-Host "[check] migrations: $chk"; & $KitCmd.dev gate -Dir $top -Cmd $chk; exit $LASTEXITCODE }
-  $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue
-  $lbm = Get-Command Get-LiquibaseMasters -ErrorAction SilentlyContinue
-  $masters = @(if ($lbm) { & $lbm $top } else { git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' } })
-  # other tools (Flyway, Alembic, Prisma): no kit check
-  $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(migrations?|migrate|flyway|alembic|prisma)/(.+/)?[^/]+\.(sql|py|[cm]?[jt]s|rb|php|exs?|cs|go|java|kt)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$|\.Designer\.cs$|ModelSnapshot\.cs$' })
-  $other = @(if ($lbm) { & $lbm $top -Other }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
-  if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
-  if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
-  if ($Show) { & $lb -Top $top -Masters $masters -Since $Since -Show; exit 0 }
-  $rc = & $lb -Top $top -Masters $masters -Since $Since
-  exit $(if (-not $rc -and $other.Count) { 5 } else { $rc })
+  $mt = "$(if ($mc.tool) { $mc.tool } else { Get-KitSetting 'migrations.tool' 'none' })".ToLower()
+  if ($mt -eq 'none') { Write-Host '[check] migrations: no migration tool configured (kit.local.json migrations.tool, repos[].migrations.tool or .check) - not checked'; exit 0 }
+  $mad = if ($KitAdapters['migration']) { $KitAdapters['migration'][$mt] }
+  if (-not $mad -or -not ($mad.check -is [scriptblock])) { Write-Host "[check] migrations UNRUN: migration tool $mt has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR."; exit 5 }
+  $rc = & $mad.check @{ top = $top; dir = $st.dir; since = $Since; show = [bool]$Show } 'check'
+  if ($Show) { exit 0 }; exit ([int]$rc)
 }
 
 # e2e: diff's specs only; none: NOT_TESTED (exit 5)
