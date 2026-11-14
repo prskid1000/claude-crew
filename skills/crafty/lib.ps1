@@ -1462,7 +1462,7 @@ function Set-TrackerStatus([string]$Id, [string]$Status) {
   }
   Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }
 }
-function Add-TrackerComment([string]$Id, [string]$Text) { if (-not "$Id".Trim()) { throw 'tracker comment: no task id (a tracker CLI would guess it from the branch name)' }; $t = __TrText $Text; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }
+function Add-TrackerComment([string]$Id, [string]$Text) { if (-not "$Id".Trim()) { throw 'tracker comment: no task id (a tracker CLI would guess it from the branch name)' }; $t = __TrText $Text; if (-not "$t".Trim()) { throw "tracker comment: empty text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }
 function __Set-TrackerStatus([string]$Id, [string]$Status) { Clear-TrackerMemo $Id; __TrA 'status' @{ id = $Id; status = (Resolve-TrackerStatus $Status); logical = $Status } }
 function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'comment' @{ id = $Id; text = (__TrText $Text) } }
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }
@@ -1476,7 +1476,7 @@ function Get-TrackerHeadComments([string]$Id, [string]$Heading, [scriptblock]$Ma
 # -Heading: found by heading, not this kit copy's index (agents run from several copies), under a machine-wide lock
 function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Heading, [scriptblock]$Match) {
   if ($Heading) { return Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-comment-$("$Id-$Kind" -replace '[^\w.-]', '_')") { Set-TrackerHeadComment $Id $Kind $Text $Heading $Match } }
-  $body = (__TrText "$Text").TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit'); $sig = Get-KitCommentSig $body
+  $body = (__TrText "$Text").TrimEnd(); if (-not $body.Trim()) { throw "tracker comment: empty $Kind text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit'); $sig = Get-KitCommentSig $body
   $keep = { param($cid) try { Update-KitTaskIndex $Id { param($x) if ($cid) { $x.comments[$Kind] = "$cid"; $x.comments.Remove("$Kind#text") } else { $x.comments["$Kind#text"] = $sig } } } catch { } }
   $ix = (Read-KitState (Get-KitTaskFile $Id)).comments; if ($ix -isnot [Collections.IDictionary]) { $ix = @{} }; $known = "$($ix.$Kind)"; $last = "$($ix["$Kind#text"])"
   if ($known -and $edit) { try { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $known; text = $body } } catch { Write-KitLog calls comment-index-stale @{ task = $Id; kind = $Kind; error = "$_" } } }
@@ -1491,7 +1491,7 @@ function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Headi
 # $Text may be a scriptblock run under the lock, so a writer never drops another's MRs
 function Set-TrackerHeadComment([string]$Id, [string]$Kind, $Text, [string]$Heading, [scriptblock]$Match) {
   if ($Text -is [scriptblock]) { $Text = & $Text }; if (-not "$Text".Trim()) { return }
-  $body = (__TrText "$Text").TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]; if (-not $ad) { throw "tracker: no adapter for type '$__trType'" }
+  $body = (__TrText "$Text").TrimEnd(); if (-not $body.Trim()) { throw "tracker comment: empty $Kind text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; $ad = $KitAdapters['tracker'][$__trType]; if (-not $ad) { throw "tracker: no adapter for type '$__trType'" }
   $all = @(Get-TrackerHeadComments $Id $Heading $Match)   # a failed read throws: a duplicate is worse than a late one
   $first = $all | Select-Object -First 1; $extra = @($all | Select-Object -Skip 1)
   if ($first -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $first.id; text = $body }; $cid = $first.id }

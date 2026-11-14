@@ -29,7 +29,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L46 config · L80 run · L168 tracker · L371 git host · L454 MR · L621 merge · L901 docs · L1056 publish · L1414 render ·
-  L1735 plugins · L1749 keepboth · L1768 selftest · L2180 CLI
+  L1744 plugins · L1758 keepboth · L1777 selftest · L2189 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1702,9 +1702,18 @@ RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': rend
              'comment-status': render_status, 'final-report': render_report, 'retro': render_retro, 'wave-brief': render_wave_brief}   # devtools.py render <kind> <spec.json>; comment / finish --spec
 
 
+def load_spec(src):
+    """A spec: a JSON file path or the JSON itself (starts with '{')."""
+    if str(src).lstrip().startswith('{'):
+        return json.loads(src)
+    if not os.path.isfile(src):
+        raise SystemExit(f'no such spec file {src} (pass a file path or inline JSON)')
+    return json.loads(open(src, encoding='utf-8-sig').read())
+
+
 def spec_text(path, kind, task=''):
     """A spec file rendered as kind (refused on gaps); task fills the spec's task when it has none."""
-    s = json.loads(open(path, encoding='utf-8-sig').read())
+    s = load_spec(path)
     s = {'task': task, **s} if task else s
     if gaps := spec_gaps(s, kind):
         raise SystemExit(f'{kind} spec refused: missing {", ".join(gaps)} (templates.md "Comment spec" / "MR spec")')
@@ -1721,7 +1730,7 @@ def render_cmd(a):
         print('usage: devtools.py render wave-brief <spec.json> <brief.md> (contracts + /buildy args land beside it)', file=sys.stderr)
         return 2
     if len(a) > 2:   # an out file: written, its path printed
-        extra = wave_files(json.loads(open(a[1], encoding='utf-8-sig').read()), a[2]) if a[0] == 'wave-brief' else {}
+        extra = wave_files(load_spec(a[1]), a[2]) if a[0] == 'wave-brief' else {}
         for path, body in {a[2]: txt, **extra}.items():
             with open(path, 'w', encoding='utf-8', newline='\n') as fh:
                 fh.write(body)
@@ -2238,7 +2247,7 @@ def _cli():
     elif cmd == 'mr' and opt.get('--spec'):   # title + body rendered (devtools.py "render"); a 2nd positional = target
         if len(a) > 3:
             raise SystemExit('mr --spec <mr.json>: no title or body arguments (both are rendered); only <worktree> [target]')
-        s = json.loads(open(opt['--spec'], encoding='utf-8-sig').read())
+        s = load_spec(opt['--spec'])
         if gaps := spec_gaps(s, 'mr-body'):
             raise SystemExit(f'mr spec refused: missing {", ".join(gaps)}')
         print(mr_create(a[1], render_title(s), render_mr_body(s), *(a[2:3] or [])))

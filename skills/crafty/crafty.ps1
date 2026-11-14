@@ -4,7 +4,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only for a [Bug]), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only for a [Bug]), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
  pipes [-Mrs <url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 sweep · L175 wt · L483 stack · L663 gate · L979 check · L1296 pipes · L1353 guard · L2180 dir ·
-  L2190 checkpoint · L2219 prior · L2257 tracker · L2279 task spec · L2428 host
+  L2190 checkpoint · L2219 prior · L2257 tracker · L2279 task spec · L2437 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2364,7 +2364,9 @@ function Invoke-Tracker {
     elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Add -Signature -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
-  $__sp = if ($__trOpt.Spec) { if (-not (Test-Path -LiteralPath $__trOpt.Spec -PathType Leaf)) { "tracker: no such spec file $($__trOpt.Spec)"; exit 2 }; Get-Content -LiteralPath $__trOpt.Spec -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable }   # `skills/crafty/crafty.ps1` "task spec"
+  $__sp = if ($__trOpt.Spec) {   # `skills/crafty/crafty.ps1` "task spec": a file or inline JSON
+    $__sj = if ("$($__trOpt.Spec)".TrimStart().StartsWith('{')) { $__trOpt.Spec } elseif (Test-Path -LiteralPath $__trOpt.Spec -PathType Leaf) { Get-Content -LiteralPath $__trOpt.Spec -Raw -Encoding utf8 } else { "tracker: no such spec file $($__trOpt.Spec) (pass a file path or inline JSON '{...}')"; exit 2 }
+    try { $__sj | ConvertFrom-Json -AsHashtable } catch { "tracker: -Spec is not valid JSON: $($_.Exception.Message)"; exit 2 } }
   if ($__trOpt.File) { if (-not (Test-Path -LiteralPath $__trOpt.File -PathType Leaf)) { "tracker: no such file $($__trOpt.File)"; exit 2 }; $__trOpt.Text = Get-Content -LiteralPath $__trOpt.File -Raw -Encoding utf8; if (-not $__trOpt.Description) { $__trOpt.Description = $__trOpt.Text } }
   Initialize-KitTracker -Type $__trOpt.Type -DryRun:([bool]$__trOpt.DryRun)
   $ErrorActionPreference = 'Stop'
@@ -2377,6 +2379,13 @@ function Invoke-Tracker {
     'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> (read it: tracker view <id>)'; exit 2 }; Set-TrackerStatus $__id $__x }   # an empty status set Open
     'comment' {   # -Kind required (keyed kinds edit in place); over prose limits = refused
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = "$($__trOpt.Kind)"
+      if ($__sp -and -not "$__ct".Trim()) {   # -Spec: rendered as -Kind (templates.md "Comment spec")
+        if (-not $__k) { $__k = 'comment-status' }
+        $__sf = Join-Path (Get-KitTemp) "tracker-spec-$PID.json"; Write-KitAtomic $__sf ($__sp | ConvertTo-Json -Depth 10)   # a file: inline JSON loses its quotes on the way to python
+        try { $__ct = (@(python -X utf8 $KitCmd.devtools render $__k $__sf "$__sf.md" 2>&1) | ForEach-Object { "$_" }) -join "`n"; $__rc = $LASTEXITCODE; if (-not $__rc) { $__ct = (Get-Content -LiteralPath "$__sf.md" -Raw -Encoding utf8).TrimEnd() } }   # the out file keeps UTF-8 (stdout: console code page)
+        finally { Remove-Item -LiteralPath $__sf, "$__sf.md" -ErrorAction SilentlyContinue }
+        if ($__rc) { "tracker comment refused: -Spec does not render as ${__k}: $__ct"; exit 2 } }
+      if (-not "$__ct".Trim()) { "tracker comment refused: no text: pass <text>, -Text, -File or -Spec <file | '{...}'>"; exit 2 }
       if ($__k -like 'mrs-*' -or (Test-KitHeadText $__ct $script:KitMrsHeading)) { "tracker comment refused: no MRs comment: MR links live in the task's Items checklist (bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] writes them)"; exit 1 }
       if ($__k -eq 'comment-decisions' -or (Test-KitDecisionText $__ct)) { "tracker comment refused: decisions live in the task's Decisions checklist, rendered from the decision records: bossy.ps1 decide ask|record|answer (it republishes), or decide publish -Task $__id [-Link <plan url>]"; exit 1 }
       if (-not $__k) { "tracker comment refused: -Kind required (templates.md ""Writing standards""): comment-solution | qa-result | comment-intest | watch-<env> edit their one comment in place; comment-status and the rest append"; exit 2 }

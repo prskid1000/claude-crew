@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tracker.tests.ps1: task texts rendered from a spec (crafty.ps1 "task spec": description, Items / Decisions checklists, the
-parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap, unknown workflow args.
+parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap, unknown workflow args, tracker comment -Spec, the online check.
 Usage: pwsh -NoProfile -File <kit>/tests/tracker.tests.ps1 (or tests/kit-tests.ps1 -Area tracker).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -93,9 +93,20 @@ $sg = & { . (Lib); $h = ConvertTo-KitBugNorm 'see src/my\_mod.py:12 and vector.p
   (Get-KitDefectSigs ([pscustomobject]@{ observed = 'connect api.example.com:443 refused; https://app.example/#/orders/7?x=1 and https://app.example/#top'; cause = '' })) -join ' ' }
 $kb = pwsh @np $D tracker bug -Parent $ak -Key 'watch-stg-err [x]' -Name '[Bug] k' -File "$bk/w3.md" -Signature 'zz.py:1' -List L1 | ConvertFrom-Json; $kc = pwsh @np $D tracker bug -Parent $ak -Key 'watch-stg-err [x]' -Name '[Bug] k' -File "$bk/w3.md" -Signature 'zz.py:1' -List L1 | ConvertFrom-Json
 Expect "bug signatures: whole matches, escaped read-back, no host:port, hash routes kept; a key with ] stays one section ($($sg -join ' | '))" ($sg[0] -eq 'TrueFalseFalseFalseTrue' -and $sg[1] -eq 'https://app.example/#/orders/7' -and ([regex]::Matches((pwsh @np $D tracker view $kc.id | ConvertFrom-Json).description, 'kit:bug:watch-stg-err_x')).Count -eq 1 -and $kb.id -eq $kc.id)
+# (cap move) tracker comment -Spec: a file or inline JSON, rendered; no text never reaches a CLI (it opened an editor)
+'{"status":"closed","why":"W0 done: lanes use staging sql_mode.","link":"https://github.com/o/r/commit/fd14532"}' | Set-Content "$bk/cs.json"
+$sf = pwsh @np $D tracker comment $ak -Kind comment-status -Spec "$bk/cs.json" 2>&1 | Out-String; $sfc = $LASTEXITCODE
+$si = pwsh @np $D tracker comment $ak -Kind comment-status -Spec '{"status":"in test","why":"deployed.","link":"https://h/x/-/merge_requests/3"}' 2>&1 | Out-String; $sic = $LASTEXITCODE
+$sm = pwsh @np $D tracker comment $ak -Kind comment-status -Spec "$bk/none.json" 2>&1 | Out-String; $smc = $LASTEXITCODE
+$se = pwsh @np $D tracker comment $ak -Kind comment-status 2>&1 | Out-String; $sec = $LASTEXITCODE; $st = @((pwsh @np $D tracker comments $ak | ConvertFrom-Json).text)
+Expect "tracker comment -Spec (file, inline JSON) renders '<status> — <why> · <link>'; a missing file names inline JSON; no text refused ($sfc $sic $smc $sec $sf)" ($sfc -eq 0 -and $sic -eq 0 -and @($st -match '^closed — W0 done.* · https://github\.com/o/r/commit/fd14532').Count -eq 1 -and @($st -match '^in test — deployed\. · https://h/').Count -eq 1 -and $smc -eq 2 -and $sm -match 'file path or inline JSON' -and $sec -eq 2 -and $se -match 'no text')
 Remove-Item Env:KIT_TRACKER_TYPE
 # (cap move) an unknown workflow arg is refused, never dropped (a coordinator's notes reached no tester)
 $ua = foreach ($w in @(@('buildy', "{ brief: 'b', agents: [{ id: 'X1', items: 'A1' }], notes: 'n' }"), @('testy', "{ runDir: 'r', notes: 'n' }"), @('testy', "{ skipClose: 1, driveParent: 'd' }"), @('tidy', "{ notes: 'n' }"))) { Invoke-Js "ua-$($w[0])" "run($($w[1]), _n, _n, _n).catch(_err)" (Join-Path $src "workflows/$($w[0]).js") }
 Expect "workflows refuse unknown args ($ua)" ("$ua" -match 'buildy\.js args refused: unknown notes;' -and "$ua" -match 'testy\.js args refused: unknown notes; free text for testers goes in args\.context' -and "$ua" -match 'tidy\.js args refused: unknown notes' -and "$ua" -notmatch 'unknown (skipClose|driveParent)')
+# (cap move) online check: every resolved address at once (localhost = ::1 + 127.0.0.1, only IPv4 listens); a closed port is offline
+$onl = & { . $O; Remove-Item Env:KIT_OFFLINE -ErrorAction SilentlyContinue; $ls = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $ls.Start(); $lp = $ls.LocalEndpoint.Port
+  try { "$(Test-KitOnline localhost 3000 $lp)|$(Test-KitOnline 127.0.0.1 3000 $lp)" } finally { $ls.Stop() }; "$(Test-KitOnline 127.0.0.1 1000 $lp)" }
+Expect "online check: any address counts, a closed port is offline ($onl)" ("$onl" -eq 'True|True False')
 Remove-TestKit $k
 Complete-Tests
