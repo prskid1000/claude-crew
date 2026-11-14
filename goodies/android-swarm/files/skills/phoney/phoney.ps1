@@ -192,7 +192,7 @@ switch ($Action) {
         $up = @($free | Where-Object { Running $_ }); $booting = @($free | Where-Object { -not (Running $_) -and ((& $adb devices) -match "^$([regex]::Escape((LaneSerial $_)))\s") })
         $pick = if ($up) { $up[0] } elseif ($booting) { $booting[0] } else { $free[0] }
         $new = @{ lane = $pick.name; serial = (LaneSerial $pick); since = (Get-Date).ToString('s'); holder = $Holder } + (New-KitLease $Agent '' $(if ($Agent -eq 'manual') { 240 }))   # no live holder for idle.graceMinutes: reclaimed
-        Save-Json $new (Join-Path $dir "$($pick.name).json"); Write-KitLeaseLog acquire lane $pick.name $new
+        Save-Json $new (Join-Path $dir "$($pick.name).json"); $lg = $new.Clone(); $lg.at = $since; Write-KitLeaseLog acquire lane $pick.name $lg   # logged since = when it began to wait (supervise lease waits)
         $pick
       }
       if (-not $got) {

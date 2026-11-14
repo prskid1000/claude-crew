@@ -18,9 +18,9 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L31 config · L228 state · L275 layer drops · L347 leases · L474 code · L506 migrations ·
-  L652 shared builds (opt-in services[].shareBuild true · L831 hooks · L903 marks · L1060 seed · L1140 processes · L1521 daemon ·
-  L1981 cleanup · L2053 doctor · L2106 verbs
+Sections: L31 config · L228 state · L275 layer drops · L347 leases · L475 code · L507 migrations ·
+  L653 shared builds (opt-in services[].shareBuild true · L832 hooks · L904 marks · L1061 seed · L1141 processes · L1522 daemon ·
+  L1982 cleanup · L2054 doctor · L2107 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -419,7 +419,8 @@ function Send-LeaseNotice([string]$e, [string[]]$keys, [string]$text) {
 # a train waits for the leases on what it changes at most leaseMinutes (one clock per train); then it tells every holder and goes on
 $script:Preempted = @(); $script:LeaseWait0 = $null; $script:DoneWord = 'deploy'
 function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[]]$skipAgents) {
-  $said = $null
+  $said = $null; $held = @(); $w0 = $null   # this call's holders and wait start: one lease-wait event when it ends (supervise lease waits)
+  $logWait = { if ($held.Count) { Event $e 'lease-wait' @{ services = @($services); holders = @($held); min = [math]::Round(((Get-Date) - $w0).TotalMinutes, 1) } } }
   while ($true) {
     $o = @{ who = @() }
     Update-State $e { param($x)
@@ -429,13 +430,13 @@ function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[
       if ($o.who.Count -and -not $script:LeaseWait0) { $script:LeaseWait0 = Get-Date }   # one clock per train, from the first blocking lease
       if ($x.train) { $x.train.waitingFor = @($o.who); $x.train.waitSince = $(if ($script:LeaseWait0) { $script:LeaseWait0.ToString('o') }) }
     }
-    if (-not $o.who.Count) { return }
-    $waited = ((Get-Date) - $script:LeaseWait0).TotalMinutes; $on = @(@($services) + @($repos) | Where-Object { $_ }) -join ', '
+    if (-not $o.who.Count) { & $logWait; return }
+    $held = @(@($held) + @($o.who) | Select-Object -Unique); if (-not $w0) { $w0 = Get-Date }; $waited = ((Get-Date) - $script:LeaseWait0).TotalMinutes; $on = @(@($services) + @($repos) | Where-Object { $_ }) -join ', '
     if ($waited -ge $script:LeaseMin) {
       Send-LeaseNotice $e $o.who "deploy of $on starting (a train waited $([int]$waited) min, leaseMinutes $($script:LeaseMin)): pause your checks there; resume after 'deploy done'"
       $script:Preempted = @(@($script:Preempted) + @($o.who) | Select-Object -Unique)
       "[$e] told $($o.who -join ', ') after $([int]$waited) min: deploying while their leases stay"
-      return
+      & $logWait; return
     }
     $msg = "waiting for lease(s) of $($o.who -join ', ') on $on (at most $($script:LeaseMin) min)"; if ($msg -ne $said) { "[$e] $msg"; $said = $msg }
     Start-Sleep 5

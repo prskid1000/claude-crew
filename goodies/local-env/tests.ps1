@@ -166,8 +166,8 @@ $lw = & { . $L3; $t0 = Get-Date; $a = @(Wait-Leases t @('api') @() @()); $fast =
   Update-State t { param($x) $x.leases = @{ H1 = @{ services = @('api'); agent = 'H1'; holderPid = $PID; lastUse = (Now) } } }
   $b = @(Wait-Leases t @('api') @() @()) -join ' '; $st = Read-State t
   $inbox = Join-Path (Get-KitPath board) 'inbox/h1.jsonl'
-  "$fast|$($b -match 'told H1')|$([bool]$st.leases.H1)|$($st.notices.H1.text -match 'deploy of api starting')|$((Test-Path $inbox) -and (Get-Content $inbox -Raw) -match 'pause')|$($script:Preempted -join ',')" }
-Expect "leases: no holder -> no wait; held -> wait bound, holder told (inbox + notice), lease kept ($lw)" ($lw -eq 'True|True|True|True|True|H1')
+  "$fast|$($b -match 'told H1')|$([bool]$st.leases.H1)|$($st.notices.H1.text -match 'deploy of api starting')|$((Test-Path $inbox) -and (Get-Content $inbox -Raw) -match 'pause')|$($script:Preempted -join ',')|$(@(@(Read-KitLog env (Get-Date).AddMinutes(-5) | Where-Object event -eq 'lease-wait')[-1].holders) -join ',')" }
+Expect "leases: no holder -> no wait; held -> wait bound, holder told (inbox + notice), lease kept, one lease-wait event naming it ($lw)" ($lw -eq 'True|True|True|True|True|H1|H1')
 $lq = & { . $L3; Update-State t { param($x) $x.leases = @{ Q1 = @{ services = @('api'); agent = 'Q1'; holderPid = $PID; lastUse = (Now) } }; $x.requests = @(@{ id = 'r9'; kind = 'deploy'; agent = 'Q1'; status = 'queued' }) }
   $t0 = Get-Date; $c = @(Wait-Leases t @('api') @() @()) -join ' '; "$(((Get-Date) - $t0).TotalSeconds -lt 5)|$($c -notmatch 'Q1')" }
 Expect "leases: a holder whose own deploy waits in the queue behind this train is not waited for ($lq)" ($lq -eq 'True|True')
@@ -423,6 +423,8 @@ $er = & { . $O; Get-KitEnvRows @([pscustomobject]@{ env = 'e'; services = @([psc
 Expect 'supervise: a down service with no lease is idle (no row, no flag); a leased one shows; a leased start waiting for room is no down row' (@($er.rows).Count -eq 1 -and $er.rows[0].name -match 'web' -and $er.rows[0].name -notmatch 'api' -and -not @($er.flags).Count)
 $sh = & { . $O; (Get-KitEnvRows @(foreach ($n in 'rm', 'hm') { [pscustomobject]@{ env = $n; services = @([pscustomobject]@{ service = 'mysql'; state = 'up (external)'; port = 3306; gb = 1.6 }); leases = @([pscustomobject]@{ agent = "a-$n"; services = @('mysql') }); holds = @() } }) (Get-Date)).rows | ForEach-Object { "$($_.name)|$($_.by)|$($_.gb)|$($_.shared)" } }
 Expect "supervise rows: one service on one port shared by several envs = one row, holders merged, RAM once, shared (always on, never an orphan) ($sh)" (@($sh).Count -eq 1 -and $sh -eq 'mysql (rm, hm)|a-rm, a-hm|1.6|True')
+$cg = & { . $O; $sf = Join-Path (Get-KitPath localenv -Create) 'rx.json'; @{ services = @{ api = @{ status = 'up'; pid = $PID; pstart = (Get-KitPidStart $PID) }; web = @{ status = 'down'; pid = $PID }; db = @{ status = 'up'; pid = 999999 } } } | ConvertTo-Json -Depth 4 | Set-Content $sf; @(Get-KitCpuGroupsLocalEnv | ForEach-Object { "$($_.name)=$($_.pid -eq $PID)" }) -join ','; Remove-Item $sf }
+Expect "supervise CPU groups: one per running service with a live pid, named '<env> · <service>' ($cg)" ($cg -eq 'rx · api=True')
 $lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . $O; Get-KitLogErrors @($lg) @{} })
 Add-Content $lg "ERROR one`nTraceback (most recent call last)`nWARN cache: Error while deleting x`nTypeError: x is not a function`nGET /a status: 503`nfine"
 $s2 = @(& { . $O; Get-KitLogErrors @($lg) @{ (Resolve-Path $lg).Path = $s1[0].size } })

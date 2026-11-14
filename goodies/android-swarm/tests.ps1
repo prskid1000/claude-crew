@@ -71,11 +71,12 @@ $cp = Start-Process pwsh -ArgumentList '-NoProfile', '-File', $PSCommandPath, $a
 for ($i = 0; $i -lt 60 -and -not (Test-Path (Join-Path (Get-KitPath phones) 'L3.json')); $i++) { Start-Sleep -Milliseconds 500 }
 $null = Invoke-KitVerb Invoke-Phone @('release', '-Agent', 'A'); $null = $cp.WaitForExit(120000)
 $cj = @(Get-Content "$tmp/c.out" | Where-Object { $_ -match '^\{' })[-1] | ConvertFrom-Json
-"scale:$($a.lane -eq 'L1' -and $b.lane -eq 'L2' -and $cj.lane -eq 'L1' -and (@(Get-Content "$tmp/boots.txt") -join ',') -eq 'L1,L2')"
+$lc = @(Get-Content (Get-KitLogFile leases) | ConvertFrom-Json | Where-Object { $_.agent -eq 'C' -and $_.event -eq 'acquire' })[-1]   # its log line: since = when it began to wait
+"scale:$($a.lane -eq 'L1' -and $b.lane -eq 'L2' -and $cj.lane -eq 'L1' -and (@(Get-Content "$tmp/boots.txt") -join ',') -eq 'L1,L2' -and [datetime]$lc.since -lt [datetime]$lc.at)"
 '@
 $lf2 = "$([IO.Path]::GetTempPath())lanes-test-$PID"; New-Item -ItemType Directory -Force $lf2 | Out-Null; Set-Content "$lf2.ps1" $lsc
 $res = @(Px "$lf2.ps1" (Join-Path $src 'skills/phoney/phoney.ps1') $lf2 2>&1)
-Expect "swarm: lanes on demand, a waiting request takes a lane freed meanwhile, no extra boot ($(@($res | Where-Object { "$_" -match '^scale:' })))" ($res -contains 'scale:True')
+Expect "swarm: lanes on demand, a waiting request takes a lane freed meanwhile (logged since = its wait start), no extra boot ($(@($res | Where-Object { "$_" -match '^scale:' })))" ($res -contains 'scale:True')
 Remove-Item "$lf2.ps1", $lf2 -Recurse -Force -ErrorAction SilentlyContinue
 # pokey.ps1 ui (adapters/ui_android.ps1): a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
 $k = New-TestKit swarm-qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'

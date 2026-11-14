@@ -1,9 +1,9 @@
 <#
 localenv_supervise.ps1 (goody local-env): the local env in bossy.ps1 supervise, dot-sourced by bossy.ps1 (skills/bossy/adapters/):
-env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits.
+env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L9 logs · L44 rows · L66 pause · L78 spike · L105 flags · L163 waits
+Sections: L9 logs · L44 rows · L66 pause · L78 spike · L105 flags · L163 waits · L174 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -170,4 +170,9 @@ function Get-KitStatusWaitLocalEnv {
       [pscustomobject]@{ agent = $r.agent; why = "$($f.BaseName) $($r.kind) $($r.id)$(if ($r.status -ne 'in-train') { " $($r.status)" })$(if ($st.train) { ", train $($st.train.id) $($st.train.phase -replace '^waiting for', 'waits for')" })"; at = $r.at; next = "envy.ps1 wait -Env $($f.BaseName) -Id $($r.id); a hung train: TRAIN STALLED" }
     }
   }
+}
+# ---- cpu: CPU per lane service on the supervise page (Update-KitCpuStats hook): its process tree root, pid + start checked
+function Get-KitCpuGroupsLocalEnv {
+  foreach ($f in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -File -ErrorAction SilentlyContinue)) { $s = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { continue }
+    foreach ($p in @($s.services.PSObject.Properties | Where-Object { $_.Value.pid -and $_.Value.status -eq 'up' })) { if (Test-KitPid $p.Value.pid $p.Value.pstart) { [pscustomobject]@{ name = "$($f.BaseName) · $($p.Name)"; pid = [int]$p.Value.pid } } } }
 }
