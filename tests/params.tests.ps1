@@ -7,6 +7,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/params.tests.ps1 (or tests/kit-tests.ps
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
+$env:KIT_TEST_SHIM = Join-Path $PSScriptRoot 'hostverb-shim.ps1'   # GitLab-path mocks behind host verbs
 $k = New-TestKit params; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 & $J @{ logs = @{ keepDays = 30 } } "$k/skills/crafty/kit.local.json"
 # program state (moved from bossy.tests for its cap), before the param tests change the kit
@@ -175,7 +176,7 @@ Expect "tidy digest: QA reports are per item; the items without one named, an em
 $lg = Invoke-PsTest 'track-lag' @'
 . $args[0]; $KitConf.GitlabGroup = 'g'; $global:st = @{ t1 = 'Open'; t2 = 'for review'; t3 = 'for review'; t4 = 'for review' }
 Register-KitAdapter 'tracker' 'fake' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = 'n'; status = $global:st[$a.id] } }; status = { param($a) $global:st[$a.id] = $a.status; 'ok' } }; Initialize-KitTracker -Type fake
-function Invoke-HostApi($p) { @{ state = $(if ($p -match '/1$') { 'opened' } else { 'merged' }) } }
+function Invoke-HostApi($p) { @{ state = $(if ($p -match '/1$') { 'opened' } else { 'merged' }) } }; . $env:KIT_TEST_SHIM
 $ago = (Get-Date).AddHours(-2).ToString('s'); Update-KitTracking { param($all) $all.tasks.t1 = @{ task = 't1'; mrs = @('web!1') }; foreach ($i in 2..4) { $all.tasks["t$i"] = @{ task = "t$i"; mrs = @("web!$i"); mergedSeenAt = $ago } }
   $all.tasks.t2.holdPromotion = $all.tasks.t4.holdPromotion = 'agent stopped'; $all.tasks.t4.lagLine = 'LAG t4: cached'; $all.tasks.t4.lagAt = (Get-Date).ToString('s') }
 Invoke-Track run -Detail; "t1:$($global:st.t1)"

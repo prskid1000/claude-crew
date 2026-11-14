@@ -8,6 +8,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/flow.tests.ps1 (or tests/kit-tests.ps1 
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
+$env:KIT_TEST_SHIM = Join-Path $PSScriptRoot 'hostverb-shim.ps1'   # GitLab-path mocks behind host verbs
 $k = New-TestKit flow; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Path $k '.state/tracking.json'
 $env:KIT_TRACKER_TYPE = 'clickup'   # tag CU- (type only: no clickup call)
 $out = pwsh @np $O track add -Task 0 -Mrs 'web!1' 2>&1 | Out-String
@@ -33,7 +34,7 @@ $dr = pwsh @np $O track run -Detail 2>&1 | Out-String; $tasks = & $trk
 Expect "track: an MR ref as -Task refused, a title -> its tagged id; run drops an MR-ref task, moves a title one with its hold ($mc)" ($mc -ne 0 -and $mr -match 'needs a real -Task id' -and
   $ti -match 'tracking ab12cd : web!4' -and $dr -match 'ATTENTION web!5: no tracker id, dropped: register its MRs: bossy\.ps1 track add -Task <id> -Mrs web!5' -and -not $tasks.ContainsKey('web!5') -and
   $dr -match 'MOVED fix x \(CU-mv1\) \(web\): no tracker id; its MRs track under mv1' -and $tasks.mv1.holdPromotion -eq 'h' -and (@($tasks.mv1.mrs) -join ',') -eq 'web!6')
-$tb = pwsh -NoProfile -Command ". '$O'; `$KitConf.TrackerTag = 'CU-'; `$KitConf.TrackerRepos = @('web'); `$KitConf.GitlabGroup = 'g'; function Invoke-HostApi(`$p) { if (`$p -match 'search=') { @{ iid = 5; state = 'merged' } } elseif (`$p -match 'merge_requests/5$') { @{ target_branch = 'rel/x' } } }; Get-TaskMrBranches 'abc', '' | ForEach-Object { `"`$(`$_.ref) `$(`$_.repo)@`$(`$_.branch)`" }"
+$tb = pwsh -NoProfile -Command ". '$O'; `$KitConf.TrackerTag = 'CU-'; `$KitConf.TrackerRepos = @('web'); `$KitConf.GitlabGroup = 'g'; function Invoke-HostApi(`$p) { if (`$p -match 'search=') { @{ iid = 5; state = 'merged' } } elseif (`$p -match 'merge_requests/5$') { @{ target_branch = 'rel/x' } } }; . `$env:KIT_TEST_SHIM; Get-TaskMrBranches 'abc', '' | ForEach-Object { `"`$(`$_.ref) `$(`$_.repo)@`$(`$_.branch)`" }"
 Expect "bugbrief: the original task's MRs give repo@target" ($tb -eq 'web!5 web@rel/x')
 Remove-Item Env:KIT_TRACKER_TYPE
 # board: a quiet row of the same agent is STALE, not DUPLICATE; leave finds a lost token by -Agent
