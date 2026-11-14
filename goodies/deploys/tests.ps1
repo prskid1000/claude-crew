@@ -15,6 +15,9 @@ $fx = Join-Path (Kd) 'deploy-fixture.json'
 & $J @{ mrs = @{ 'api!1' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) }; 'api!2' = @{ rows = @(@{ target = 'stage'; state = 'DEPLOYED'; detail = 'live' }) }; 'api!3' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) } }; lastCi = @{ stage = (Get-Date).AddHours(-6).ToString('s') } } $fx
 $plan = { @(& $dep plan -Offline $fx -Json | ConvertFrom-Json) }; $p = & $plan
 Expect 'deploy plan: production by name / flag / false; one ASK batch for stage' (($p.target -join ',') -eq 'stage,preprod' -and $p[0].target -eq 'stage' -and $p[0].status -eq 'ASK' -and (@($p[0].mrs.mr) -join ',') -eq 'api!1')
+$fxs = Join-Path (Kd) 'deploy-fixture-scope.json'; $fo = Read-Json $fx; $fo | Add-Member -Force NoteProperty scope @(@{ mr = 'api!1'; files = 3; source = @('src/Inv.java'); test = 2; globs = @('cypress/**'); outside = @('src/Inv.java') }); & $J $fo $fxs
+$sj = @(& $dep plan -Offline $fxs -Json | ConvertFrom-Json)[0].mrs[0]; $st = & $dep plan -Offline $fxs | Out-String
+Expect "deploy plan: each MR's source / test file counts; an OUT-OF-AREA MR named with its files (incident 2026-11-14)" ($sj.files -eq 3 -and "$($sj.outOfArea)" -eq 'src/Inv.java' -and $st -match '3 file\(s\): 1 source, 2 test' -and $st -match 'OUT-OF-AREA: api!1 changes 1 file\(s\) outside its area \(cypress/\*\*\): src/Inv\.java')
 $null = & $dep request -Mrs 'https://git.example.com/g/api/-/merge_requests/3' -Run w2 -Offline $fx; $p = & $plan
 Expect 'deploy request: another session''s MR joins the same batch' ((@($p[0].mrs.mr | Sort-Object) -join ',') -eq 'api!1,api!3')
 $pcf = Join-Path (TkPath $k deploys -Create) 'plan-cache.json'; $bgp = Join-Path (TkPath $k background -Create) (& { . (Lib); ConvertTo-KitSlug 'bossy.ps1 deploy plan' })
@@ -153,6 +156,8 @@ $now = Get-Date; $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
 "none:$(-not (Test-Path $pc) -and -not $r.Count)"
 $script:planOut = @('[{"target":"stage","status":"READY","mrs":[{"mr":"api!1"}]}]'); $r = @(Get-KitSuperviseFlagsDeploys)
 "good:$(($r.info -join ';') -match '^deploy ready: stage \(1 MR\(s\)\) \(waits for a person.s deploy <env>\)$')"
+Remove-Item $pc; $script:planOut = @('[{"target":"stage","status":"READY","mrs":[{"mr":"api!1","outOfArea":["src/A.java"]}]}]'); $r = @(Get-KitSuperviseFlagsDeploys)
+"oa:$(($r.info -join ';') -match '^deploy batch has OUT-OF-AREA MR\(s\): api!1 \(1 file\(s\) outside its area\) .*;deploy ready: stage')"
 $now = (Get-Date).AddMinutes(90); $script:calls = 0; $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
 "stale:$($script:calls -eq 1 -and ($r.info -join ';') -match 'deploy ready: stage .*plan 9\d min old, refresh pending' -and [int]($now - [datetime](Get-Content $pc -Raw | ConvertFrom-Json).asked).TotalMinutes -eq 90)"   # no output: the last ask's run still goes
 $script:planOut = @('WATCH background x failed: boom'); $r = @(Get-KitSuperviseFlagsDeploys)
@@ -173,7 +178,7 @@ $a1 = @($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*win
 @{ at = $now.AddMinutes(-90).ToString('o'); ready = @(); ask = $null } | ConvertTo-Json | Set-Content $pc; $r = @(Get-KitSuperviseFlagsDeploys)   # no batch: no empty ask
 "ask:$([bool]$a1 -and -not @($r | Where-Object { "$($_.what)" -match '^DEPLOY ASK' }).Count)"
 '@
-Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names (#)' @('none', 'good', 'stale', 'watch', 'empty', 'live', 'intest', 'ask')
+Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names (#)' @('none', 'good', 'oa', 'stale', 'watch', 'empty', 'live', 'intest', 'ask')
 $ht = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]

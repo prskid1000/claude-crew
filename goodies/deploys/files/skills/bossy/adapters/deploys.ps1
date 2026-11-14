@@ -1,12 +1,12 @@
 <#
 deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
-  bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec <deploy.deployedTimeoutSec, 100>]   merged-not-deployed MRs per test env, trigger, window
+  bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec <deploy.deployedTimeoutSec, 100>]   merged-not-deployed MRs per test env, trigger, window; per MR its source / test files and OUT-OF-AREA (crafty.ps1 scope)
   bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L207 deploy · L367 restart · L400 supervise
+Sections: L14 helpers · L93 intest · L207 deploy · L377 restart · L410 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -353,12 +353,22 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $status = if ($why -and -not $batch.Count) { 'UNKNOWN' } elseif (-not $batch.Count) { 'NOTHING' } elseif ($running) { 'DEPLOYING' } elseif ($trigger -ne 'ask') { 'READY' } elseif ($next -and (Get-Date) -lt $next) { 'WAIT' } else { 'ASK' }
     [pscustomobject]@{ target = $t; status = $status; trigger = $trigger; last = $(if ($last) { $last.ToString('s') }); lastSource = $src; windowHours = $h; nextAllowed = $(if ($next) { $next.ToString('s') }); mrs = $batch; why = $why; pending = @($pend | ForEach-Object { "$($_.run) $($_.at)" }) }
   }
+  # each batch MR's source / test files and OUT-OF-AREA (its diff outside its brief area; crafty.ps1 scope): seen before anyone says deploy <env>
+  $bm = @($plan | ForEach-Object { @($_.mrs) } | ForEach-Object mr | Where-Object { $_ } | Select-Object -Unique); $scopeOf = @{}
+  if ($bm.Count -and ($fx -or (Test-Path -LiteralPath (Get-KitPath scope-log)))) {   # areas in use (devtools.py mr / merge log them); 30 s at most
+    $sr = if ($fx) { @($fx.scope) } else { $sx = Invoke-KitExe (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source @('-NoProfile', '-NonInteractive', '-File', $KitCmd.dev, 'scope', '-Mrs', ($bm -join ','), '-Json') 30; if (-not $sx.code) { try { @("$($sx.out)" | ConvertFrom-Json) } catch { @() } } }   # an older core (no scope verb) or a timeout: no columns
+    foreach ($s in @($sr | Where-Object { $_.mr })) { $scopeOf["$($s.mr)"] = $s }
+    foreach ($b in @($plan | ForEach-Object { @($_.mrs) })) { if ($s = $scopeOf["$($b.mr -replace '^.*/')"]) { $b | Add-Member -Force NoteProperty files ([int]$s.files); $b | Add-Member -Force NoteProperty source @($s.source); $b | Add-Member -Force NoteProperty test ([int]$s.test); $b | Add-Member -Force NoteProperty outOfArea @($s.outside); $b | Add-Member -Force NoteProperty globs @($s.globs) } }
+  }
   if ($idle) { [Console]::Error.WriteLine("deploy plan: $idle open task(s) idle over $Days days left out (-Days widens)") }
   if ($Json) { ConvertTo-Json @($plan) -Depth 6; return }
   foreach ($p in $plan) {
     $when = switch ($p.status) { 'WAIT' { " until $(([datetime]$p.nextAllowed).ToString('yyyy-MM-dd HH:mm')) (one deploy per $($p.windowHours) h)" } 'ASK' { ': ask the owner ONCE with this batch' } 'READY' { ": waits for a person's 'deploy $($p.target)' (deploy.trigger owner: nobody asks)" } 'UNKNOWN' { ": the deploy check failed: $($p.why) (plan again)" } 'DEPLOYING' { ': a deploy pipeline runs now (wait, then plan again)' } default { '' } }
     "DEPLOY $($p.target): $($p.status)$when | last $(if ($p.last) { "$(([datetime]$p.last).ToString('yyyy-MM-dd HH:mm')) ($($p.lastSource))" } else { 'unknown' })"
-    foreach ($b in $p.mrs) { "  - $($b.mr)$(if ($b.task) { " task $($b.task)" }) $($b.state): $($b.detail) [$($b.why)]" }
+    foreach ($b in $p.mrs) {
+      "  - $($b.mr)$(if ($b.task) { " task $($b.task)" }) $($b.state): $($b.detail) [$($b.why)]$(if ($b.files) { " · $($b.files) file(s): $(@($b.source).Count) source, $($b.test) test" })"
+      if (($bo = @($b.outOfArea | Where-Object { $_ })).Count) { "    OUT-OF-AREA: $($b.mr) changes $($bo.Count) file(s) outside its area ($(@($b.globs) -join ', ')): $($bo -join ', ')" }
+    }
   }
   if (-not @($plan).Count) { 'no test deploy targets in kit.local.json repos[].deploys' }
   if ($hostErr) { "last deploy unknown: $hostErr" }   # once, not per target
@@ -497,7 +507,8 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     }
     if ($null -ne $plan) {
       $mrsOf = [ordered]@{}; foreach ($p in @($plan | Where-Object { $_.status -in 'READY', 'ASK' -and $_.target })) { $mrsOf["$($p.target)"] = @(@($p.mrs) | ForEach-Object mr) }
-      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { $now.ToString('o') }); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object { $_.status -eq 'ASK' -and $_.target -and @($_.mrs).Count } | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }); mrsOf = [pscustomobject]$mrsOf; held = $cache.held }
+      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { $now.ToString('o') }); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object { $_.status -eq 'ASK' -and $_.target -and @($_.mrs).Count } | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }); mrsOf = [pscustomobject]$mrsOf; held = $cache.held
+        outOfArea = @($plan | ForEach-Object { @($_.mrs) } | Where-Object { $_.outOfArea } | ForEach-Object { "$($_.mr) ($(@($_.outOfArea).Count) file(s) outside its area)" } | Select-Object -Unique) }
     }
     if ($asked -and $cache -and $null -eq $plan -and $cache.asked -and -not @($out -match '^WATCH ').Count) { $asked = $null }   # no output: the run of the last ask still goes, keep its time
     if ($asked -and $cache) { $cache | Add-Member -Force NoteProperty asked $asked; $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8 }
@@ -518,5 +529,6 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
   if ($null -eq $holds) { $holds = Get-KitDeployHolds $pcd $pcf $now }
   $age = if ($pcd.at) { [int]($now - [datetime]$pcd.at).TotalMinutes } else { 0 }
   $stale = if ($age -ge 60) { "; plan $age min old, refresh pending" } else { '' }
+  if (($oa = @($pcd.outOfArea | Where-Object { $_ })).Count) { [pscustomobject]@{ info = "deploy batch has OUT-OF-AREA MR(s): $($oa -join ', ') (bossy.ps1 deploy plan lists the files; tell the owner before any deploy <env>)" } }
   foreach ($r in @($pcd.ready | Where-Object { $_ })) { $h = $holds["$r" -replace '\s*\(\d+ MR\(s\)\)$']; [pscustomobject]@{ info = $(if ($h.state -in 'held', 'waiting') { "deploy $($h.text)" } else { "deploy ready: $r (waits for a person's deploy <env>$stale)" }) } }
 }
