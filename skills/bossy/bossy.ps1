@@ -21,12 +21,12 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
   deploy plan|request|record|intest ... · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist
   debate start -Item -Question -Options "A: ..","B: .." [-Run] [-Why] [-Owner] | brief -File -Side A|B|revy -Round <n> | ask -File   a written debate (1 per run; rechy kind debate), its table + decide ask
-  heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit   hooks and install
+  heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L43 board · L220 budget · L250 launch · L490 recover · L577 pause · L588 resume · L655 program · L706 param ·
-  L712 track · L1029 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1576 cleanup · L1660 learn ·
-  L1691 decide · L1825 debate · L1869 health · L1932 retro due · L1942 tidy · L2008 setup · L2074 guard-sendmessage
+  L712 track · L1029 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1580 cleanup · L1664 learn ·
+  L1695 decide · L1829 debate · L1873 health · L1936 retro due · L1946 tidy · L2012 setup · L2105 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1214,7 +1214,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   }
   foreach ($l in @(Invoke-KitOutbox)) { Flag $(if ($l -match '^GAVE UP') { 'ACT' } else { 'INFO' }) $(if ($l -match '^SENT') { "auto-fixed: outbox $l" } else { "outbox: $l" }) 'A tracker write lost to the network: do it by hand (crafty.ps1 tracker).' }
   foreach ($gone in $stale | Where-Object { (& $quiet $_).TotalHours -ge 2 -and $_.agent -notin $liveNames }) { & $markLeft $gone }   # a long workflow step beats nothing
-  # idle Gradle / Kotlin daemons hold GBs
+  # idle daemons (cleanup.idleDaemons) hold GBs
   if ($pct -ge 85) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
 }
@@ -1523,6 +1523,10 @@ $rows = foreach ($spec in $Repos) {
   "| $($repo.name) | ``$($repo.checkout)`` | ``$(if ($branch) { $branch } else { $repo.target })`` | $deps |"
 }
 $ids = ($checks | ForEach-Object id) -join ', '
+# only what the config declares: a migration tool (repos[].migrations, db.migrations) or -Range; an app lane (qa.lanes kind app)
+$briefRepos = @($Repos | ForEach-Object { RepoName ($_ -split '@')[0] })
+$mig = [bool]$Range -or [bool](Get-KitSetting 'db.migrations' $null) -or [bool]@($cfg.repos | Where-Object { $_.migrations -and $_.name -in $briefRepos }).Count
+$lanes = Get-KitSetting 'qa.lanes' $null; $app = [bool]@(if ($lanes) { $lanes.PSObject.Properties | Where-Object { $_.Name -notlike '_*' -and "$($_.Value.kind)" -eq 'app' } }).Count
 $slugAgent = $Agent.ToLower()
 $runName = "bugfix-$($Task)"
 $md = @"
@@ -1549,14 +1553,14 @@ Product calls: the reference behaviour or a recorded decision, named. Additive o
 $($rows -join "`n")
 
 ## Ownership
-| Agent | Bug task | Items | Migration range |
-|---|---|---|---|
-| $Agent | $Task | $ids | $(if ($Range) { $Range } else { 'ask the coordinator if you need one' }) |
+| Agent | Bug task | Items |$(if ($mig) { ' Migration range |' })
+|---|---|---|$(if ($mig) { '---|' })
+| $Agent | $Task | $ids |$(if ($mig) { " $(if ($Range) { $Range } else { 'ask the coordinator if you need one' }) |" })
 
 Branches ``fix/$($KitConf.TrackerTag)$Task-<slug>``; worktree prefix ``$slugAgent``; board run ``$runName``. Tracker (``$claude/skills/crafty/crafty.ps1 tracker``):
 in progress → review (bossy.ps1 track sets promoted when all merge). The workflow merges after review: do NOT merge yourself.
 Register: ``$claude/skills/bossy/bossy.ps1 track add -Task $Task -Discover``.
-Phones (app bugs): the local-env APK (``phoney.ps1 build -Local``, ``phoney.ps1 acquire -Agent $Agent -Apk local``); release it when done.
+$(if ($app) { "Phones (app bugs): the local-env APK (``phoney.ps1 build -Local``, ``phoney.ps1 acquire -Agent $Agent -Apk local``); release it when done." })
 "@
 $dir = Get-KitPath briefs -Create
 $out = Join-Path $dir "$Task.md"
@@ -1600,7 +1604,7 @@ function Old($item, $hours) {
 $notes = @()
 
 if (-not $WorktreesOnly) {
-Invoke-KitHooks Invoke-KitCleanup   # test browsers, profiles, idle Gradle / Kotlin daemons
+Invoke-KitHooks Invoke-KitCleanup   # test browsers, profiles, idle daemons (cleanup.idleDaemons)
 
 # retention: kit.example.json _paths.keep; live browser locks, pending decisions stay
 $pm = $script:KitPathMap
@@ -2006,8 +2010,33 @@ if ($Json) { $o | ConvertTo-Json -Compress; return }
 }
 
 # ---- setup: install / repair (idempotent)
+# vendor CLI + OS-only allows: generated into settings.local.json from the configured adapters (settings.json stays generic)
+function Get-KitAllowCatalogue {
+  [ordered]@{
+    'host:gitlab' = @('PowerShell(glab mr *)', 'PowerShell(glab api *)', 'PowerShell(glab auth status*)')
+    'host:github' = @('PowerShell(gh pr *)', 'PowerShell(gh auth status*)')
+    'report:gdocs' = @('PowerShell(gws drive files export *)')
+    'os:windows' = @('PowerShell(& *.claude\skills\*)', "PowerShell(& '*.claude\skills\*)", 'PowerShell(python *.claude\skills\*)')
+  }
+}
+function Set-KitAllowList {
+  $gd = "$(git -C $KitConf.Kit rev-parse --path-format=absolute --git-dir 2>$null)".Trim(); $cd = "$(git -C $KitConf.Kit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
+  if ($gd -and $cd -and $gd -ne $cd) { return 'allow: a linked kit worktree - generated only in the main clone' }
+  $cat = Get-KitAllowCatalogue
+  $on = @("host:$($script:HostType)", "report:$($KitConf.ReportType)") + @(if ($KitIsWindows) { 'os:windows' })
+  $want = @($on | Where-Object { $cat.Contains($_) } | ForEach-Object { $cat[$_] }); $all = @($cat.Values | ForEach-Object { $_ })
+  $sl = Join-Path $KitConf.Kit 'settings.local.json'
+  $s = if (Test-Path -LiteralPath $sl) { try { Get-Content -LiteralPath $sl -Raw | ConvertFrom-Json -AsHashtable } catch { $null } } else { @{} }
+  if ($null -eq $s) { return 'allow: settings.local.json is not valid JSON: allow-list not written (fix the file, then re-run setup -Allow)' }
+  if (-not $s['permissions']) { $s['permissions'] = [ordered]@{} }
+  $old = @($s['permissions']['allow'] | Where-Object { $_ })
+  $new = @(@($old | Where-Object { $_ -notin $all -or $_ -in $want }) + @($want | Where-Object { $_ -notin $old }))   # own entries kept; stale generated ones dropped
+  if (($old -join "`n") -eq ($new -join "`n")) { return $null }
+  $s['permissions']['allow'] = $new; [IO.File]::WriteAllText($sl, ($s | ConvertTo-Json -Depth 20))
+  "allow: $($want.Count) generated entr$(if ($want.Count -eq 1) { 'y' } else { 'ies' }) in settings.local.json ($(@($on | Where-Object { $cat.Contains($_) }) -join ', '))"
+}
 function Invoke-Setup {
-param([switch]$Exclude, [switch]$Quiet, [switch]$WriteLocal)
+param([switch]$Exclude, [switch]$Quiet, [switch]$WriteLocal, [switch]$Allow)
 $ErrorActionPreference = 'Stop'
 $kit = $KitConf.Kit
 function Say($s) { if (-not $Quiet) { $s } }
@@ -2047,6 +2076,7 @@ function Update-Exclude {
   if ($new -ne $old) { [IO.File]::WriteAllText($ex, $new); "excluded $($paths.Count) localOnly path(s) in $ex" }
 }
 
+if ($Allow) { $a = Set-KitAllowList; if ($a) { Say $a }; exit 0 }
 if ($Exclude) { $r = Update-Exclude; if ($r) { Say $r }; $m = Set-Memory; if ($m) { Say $m }; exit 0 }
 
 if (-not (Test-Path (Join-Path $kit '.git'))) { Write-Warning "$kit is not a git clone: install per README ""Install""" }
@@ -2056,6 +2086,7 @@ else {
   $r = Update-Exclude; if ($r) { Say $r }
 }
 $m = Set-Memory; if ($m) { Say $m }
+$al = Set-KitAllowList; if ($al) { Say $al }
 foreach ($n in 'work', 'cache', 'logs') { $null = Get-KitPath $n -Create }
 Say "runtime: $(Get-KitPath runtime) (work/ cache/ logs/; disposable)"
 $ex = Get-Content (Join-Path $kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json

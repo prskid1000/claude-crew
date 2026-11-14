@@ -10,7 +10,7 @@ $lw = New-LinkedKit 'kit main' @{ localOnly = @('secret.txt') } 'skills/bossy/bo
 $mk = "$(Kd)/kit main"; Add-Content "$mk/.git/info/exclude" "# >>> kit localOnly (managed by an older setup)`n/old.txt`n# <<< kit localOnly`n/mine.txt"
 $kx = (pwsh @np "$lw/skills/bossy/bossy.ps1" setup -Exclude 2>&1 | Out-String)
 Expect 'setup -Exclude in a kit worktree: excludes to the main clone (older block replaced, own lines kept), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '/old\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -match '/mine\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
-git -C $mk remote add origin https://github.com/o/r.git; git -C $mk update-ref refs/remotes/origin/main HEAD
+git -C $mk remote add origin https://github.com/o/r.git; git -C $mk update-ref refs/remotes/origin/main HEAD; git -C $mk symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main; git -C $mk update-ref refs/remotes/origin/trunk HEAD
 $protect = @'
 $null = . $args[0] 6>$null; $global:seen = @()
 Register-KitAdapter 'git-host' 'github' @{ 'branch.protect' = { param($a) $global:seen += "$($a.repo)#$($a.branch)"; if ($args[1] -ne 'fail') { 'set' } } }
@@ -21,6 +21,9 @@ $pf = Invoke-PsTest kit-protect-fail ($protect -replace '\$args\[1\]', "'fail'")
 $ph = pwsh @np "$mk/skills/bossy/bossy.ps1" health 2>&1 | Out-String
 Expect 'setup: protects origin main only (fake host), no verb -> by-hand line; health shows it' ($po -match 'protect: main set' -and $po -match 'o/r#main\s*$' -and
   $pf -match 'main failed: set it by hand on github\.com/o/r' -and $ph -match 'protection: main failed')
+$pr = $protect -replace '\$args\[1\]', "'ok'"; $pk = Invoke-PsTest kpk ($pr -replace 'Set-KitO', '$$__cfg = [pscustomobject]@{ kitBranch = ''trunk'' }; Set-KitO') @("$mk/skills/bossy/bossy.ps1") | Out-String
+git -C $mk symbolic-ref --delete refs/remotes/origin/HEAD; $pn = Invoke-PsTest kpn $pr @("$mk/skills/bossy/bossy.ps1") | Out-String
+Expect 'setup: protects kitBranch, else origin/HEAD, else a failed line' ($pk -match 'o/r#trunk\s*$' -and $pn -match 'protect: failed: no origin/HEAD' -and $pn -notmatch '#main')
 $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -ErrorAction SilentlyContinue
 $ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
