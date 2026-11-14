@@ -19,11 +19,15 @@ $beatRx = 'Get-KitBeatPrompt \{ "Run & .+? supervise -AutoFix -Brief\. (.+?)" \}
 $libBeat = if ((Get-Content (Join-Path $src 'skills/crafty/lib.ps1') -Raw) -match $beatRx) { $Matches[1] }
 $portBeat = & $py -X utf8 -c "import ast, sys; t = ast.parse(open(sys.argv[1], encoding='utf-8').read()); print(next(ast.literal_eval(n.value) for n in t.body if isinstance(n, ast.Assign) and getattr(n.targets[0], 'id', '') == 'E1_PROMPT'))" $plugin
 Expect 'ports: E1 heartbeat prompt = lib.ps1 Get-KitBeatPrompt word for word, no stdout paste' ($libBeat -and "$portBeat".EndsWith($libBeat) -and "$portBeat" -notmatch 'verbatim')
-# port --check on a copy of the kit (not named .claude: no workspace copy is compared)
+# port then port --check on a copy of the kit (not named .claude: no workspace copy is compared). main's committed ports may
+# predate this branch's plugin (main's pre-push checks those): reported, not failed
 $root = Join-Path ([IO.Path]::GetTempPath()) "ports-kit-$PID"; $kc = Join-Path $root 'kit'
 Copy-KitTree $kc
 Copy-Item $plugin (Join-Path $kc 'skills/bossy')
-$ck = & $py -X utf8 (Join-Path $kc 'skills/bossy/kitbag.py') port --check 2>&1 | Out-String; $cc = $LASTEXITCODE
+$kbp = Join-Path $kc 'skills/bossy/kitbag.py'
+$null = & $py -X utf8 $kbp port --check 2>&1; $main = if ($LASTEXITCODE) { "main's ports predate this plugin: regenerate on main" } else { "main's ports current" }
+$pt = & $py -X utf8 $kbp port 2>&1 | Out-String; $pc = $LASTEXITCODE
+$ck = & $py -X utf8 $kbp port --check 2>&1 | Out-String; $cc = $LASTEXITCODE
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
-Expect "ports: port --check is clean on the kit's own ports (exit $cc $($ck.Trim()))" ($cc -eq 0)
+Expect "ports: port, then port --check is clean (idempotent, byte-stable) on a kit copy; $main (exit $pc/$cc $($ck.Trim()) $(if ($pc) { $pt.Trim() }))" ($pc -eq 0 -and $cc -eq 0)
 Complete-Tests
