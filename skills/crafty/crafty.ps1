@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L971 check · L1288 pipes · L1345 guard · L2162 dir ·
-  L2172 checkpoint · L2201 prior · L2239 tracker · L2261 task spec · L2410 host
+Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L971 check · L1288 pipes · L1345 guard · L2172 dir ·
+  L2182 checkpoint · L2211 prior · L2249 tracker · L2271 task spec · L2420 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1533,7 +1533,9 @@ if ($SelfTest) {
   @('P', 'gci D:\ -r -Include *.md', $true, $dr), @('P', 'where.exe /r C:\ claude.exe', $true, $dr), @('P', 'rg --files D:\', $true, $dr), @('B', 'find //c/.. -name x', $true, $dr), @('B', 'rg --max-columns 5 x / src', $true, $dr), @('B', 'rg --max-columns 5 / src', $false, $dr),
   @('B', 'find . -name x; find ~/.claude/skills -name SKILL.md; find /d/Codebase/cursor -maxdepth 2 -name pom.xml; ls /; ls -la /c', $false, $dr),
   @('B', "grep -rn / src; rg -n `"/`" skills; grep -e x /etc/hosts; git commit -m `"never find / -name x`"; cat > n.md <<'EOF'`nfind / -name x`nEOF", $false, $dr),
-  @('P', 'Get-ChildItem -Recurse D:\Codebase\.claude\skills -Filter SKILL.md; Get-ChildItem C:\; where.exe git; rg -l x C:\Users\x\.claude', $false, $dr)
+  @('P', 'Get-ChildItem -Recurse D:\Codebase\.claude\skills -Filter SKILL.md; Get-ChildItem C:\; where.exe git; rg -l x C:\Users\x\.claude', $false, $dr),
+  @('B', 'cd / && find . -name x', $true, $dr), @('B', 'cd /c; grep -rn x', $true, $dr), @('P', 'Set-Location C:\; gci -Recurse -Filter x', $true, $dr), @('B', 'find . -name "*.md" -exec grep -rl x / \;', $true, $dr),
+  @('B', 'cd / && ls; cd ~/src && find . -name x; find . -exec grep -l x {} +; cd /d/repo && rg x', $false, $dr), @('P', 'Set-Location C:\; where.exe git; Get-ChildItem', $false, $dr)
   )
   $gh = 'browser on Windows'   # Git for Windows help is HTML; elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
@@ -1862,9 +1864,11 @@ function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
   if ($depth -gt 3) { return }
   $rootRx = '^(/+(\.\.?/*)*\*?|/+(mnt/|cygdrive/)?[a-zA-Z]/*(\.\.?/*)*\*?|[a-zA-Z]:[\\/]*|[a-zA-Z]:[\\/]+[^\\/]*[*?][^\\/]*|\\+)$'
   if ($tool -eq 'Bash') { $text = [regex]::Replace($text, '(?ms)<<-?\s*([''"]?)(\w+)\1([^\n]*)\n(.*?)^\s*\2\s*$', { param($hd) '<<doc' + $hd.Groups[3].Value }) }
+  $atRoot = $false   # cd / then find . = the drive
   foreach ($seg in (Split-CommandSegments $text $tool)) {
     if (-not ($seg -match $segRx)) { continue }
     $rest = $Matches[3]; $leaf = ($Matches[2].Trim('''"') -replace '^.*[\\/]', '' -replace '\.(exe|cmd)$', '').ToLower()
+    if ($leaf -match '^(cd|pushd|chdir|sl|set-location)$') { $atRoot = "$(@([regex]::Matches($rest, '"[^"]*"|''[^'']*''|\S+') | ForEach-Object { $_.Value.Trim('''"') } | Where-Object { $_ -notmatch '^-' -and -not ($tool -eq 'cmd' -and $_ -match '^/\w$') })[0])" -match $rootRx; continue }
     if ($leaf -match '^((ba|z|da)?sh|pwsh|powershell)$') {
       $inTool = if ($leaf -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }
       foreach ($im in [regex]::Matches($rest, '(?:^|\s)(?:-c|-Command)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) { if (($hit = Find-DriveRootSearch ($im.Groups[1].Value + $im.Groups[2].Value) $inTool ($depth + 1))) { return $hit } }
@@ -1872,10 +1876,15 @@ function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
     }
     $words = @([regex]::Matches($rest, '"[^"]*"|''[^'']*''|\S+') | ForEach-Object { $_.Value.Trim('''"') })
     if ($leaf -eq 'cmd') { $ci = [array]::FindIndex([string[]]$words, [Predicate[string]] { param($w) $w -match '^/+[ck]$' }); if ($ci -ge 0 -and ($hit = Find-DriveRootSearch ($words[($ci + 1)..($words.Count)] -join ' ') 'cmd' ($depth + 1))) { return $hit }; continue }
-    $paths = @()
+    $paths = @(); $scan = $true
     if ($leaf -eq 'find') {   # paths come before the first expression word
       $i = 0; while ($i -lt $words.Count -and $words[$i] -cmatch '^-([HLP]|O\d|D)$') { $i += 1 + [int]($words[$i] -eq '-D') }
       while ($i -lt $words.Count -and $words[$i] -notmatch '^(-|\\?\(|!)') { $paths += $words[$i]; $i++ }
+      for (; $i -lt $words.Count; $i++) {   # -exec grep -r x / runs a search of its own
+        if ($words[$i] -notmatch '^-(exec|execdir|ok|okdir)$') { continue }
+        $sub = @(); for ($i++; $i -lt $words.Count -and $words[$i] -notmatch '^(\\?;|\+|\\)$'; $i++) { $sub += $words[$i] }
+        if (($hit = Find-DriveRootSearch ($sub -join ' ') 'Bash' ($depth + 1))) { return $hit }
+      }
     } elseif ($leaf -match '^([ef]?grep|rg|ag|ack|fd)$') {   # pattern first unless -e / -f / --files
       if ($leaf -match 'grep' -and -not ($words -cmatch '^(-[a-zA-Z]*[rR][a-zA-Z]*|--(dereference-)?recursive|--directories=recurse)$')) { continue }
       $pos = @(); $given = $false
@@ -1888,10 +1897,11 @@ function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
       $paths = if ($given) { $pos } else { @($pos | Select-Object -Skip 1) }
     } elseif ($leaf -match '^(ls|dir|gci|get-childitem)$') {
       $rec = @($words | Where-Object { $_ -cmatch '^(-[a-zA-Z]*R[a-zA-Z]*|--recursive)$' -or $_ -match '^(/s|-rec\w*)$' -or ($tool -ne 'Bash' -and $_ -match '^-r$') }).Count
-      if ($rec) { $paths = @($words | Where-Object { $_ -notmatch '^-' }) }
+      $scan = $rec -gt 0; if ($rec) { $paths = @(for ($i = 0; $i -lt $words.Count; $i++) { if ($words[$i] -match '^-(filter|include|exclude|depth|attributes)$') { $i++ } elseif ($words[$i] -notmatch '^-') { $words[$i] } }) }
     } elseif ($leaf -eq 'where') {
-      $ri = [array]::FindIndex([string[]]$words, [Predicate[string]] { param($w) $w -match '^/r$' }); if ($ri -ge 0 -and $ri + 1 -lt $words.Count) { $paths = @($words[$ri + 1]) }
-    }
+      $ri = [array]::FindIndex([string[]]$words, [Predicate[string]] { param($w) $w -match '^/r$' }); $scan = $ri -ge 0; if ($scan -and $ri + 1 -lt $words.Count) { $paths = @($words[$ri + 1]) }
+    } else { $scan = $false }
+    if ($atRoot -and $scan -and ($rel = @(@($paths | Where-Object { $_ -match '^(\.[\\/]*|\*)$' }) + @(if (-not $paths.Count) { '.' }))[0])) { return @($leaf, "$rel after cd to a drive root") }
     if (($root = @($paths | Where-Object { $_ -match $rootRx })[0])) { return @($leaf, $root) }
   }
 }
