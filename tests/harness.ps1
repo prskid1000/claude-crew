@@ -80,8 +80,8 @@ function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git 
 # a throw-away kit copy (the scripts the tests run) in %TEMP%; one per area file
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
-  foreach ($f in 'skills/crafty/lib.ps1', 'skills/crafty/kit.example.json', 'skills/crafty/crafty.ps1', 'skills/crafty/devtools.py', 'skills/pokey/pokey.ps1',
-      'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1', 'skills/bossy/adapters/supervise_stats.ps1', 'skills/bossy/adapters/usage.ps1', 'skills/bossy/adapters/storage.ps1', 'skills/bossy/kitbag.py', 'skills/bossy/params.registry.json', 'LESSONS.md') {
+  foreach ($f in @('skills/crafty/lib.ps1', 'skills/crafty/kit.example.json', 'skills/crafty/crafty.ps1', 'skills/crafty/devtools.py', 'skills/pokey/pokey.ps1',
+      'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1', 'skills/bossy/adapters/supervise_stats.ps1', 'skills/bossy/adapters/usage.ps1', 'skills/bossy/adapters/storage.ps1', 'skills/bossy/kitbag.py', 'skills/bossy/params.registry.json', 'LESSONS.md') + @($TestKitFiles | Where-Object { $_ })) {   # $TestKitFiles: the area's own scripts
     $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path $src $f) $d
   }
   $k

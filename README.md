@@ -344,7 +344,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 lessons; lint START-BUDGET), per file (lint BUDGET), docs reached only through a SKILL.md pointer (lint ORPHAN-DOC); scripts are
 run, never named as files to read. `kitbag.py budget` prints each role's start and the repo / tests totals (INFO, no cap):
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · start per role 12000 · files:20 content + 9 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · start per role 12000 · files:22 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, a goody's in `goodies/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name
@@ -417,17 +417,27 @@ flowchart LR
   skills_bossy_SKILL_md -->|"every event row (verbs: its header); hooks:…"| skills_bossy_bossy_ps1["bossy.ps1"]
   skills_bossy_SKILL_md -->|"a script's state file changes; an agent needs a…"| skills_bossy_STATE_md["STATE.md"]
   skills_bossy_SKILL_md -->|"a timeout, wait or limit is added or changed…"| skills_bossy_params_registry_json["params.registry.json"]
-  skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_supervise_resources_ps1["supervise_resources.ps1"]
-  skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_supervise_stats_ps1["supervise_stats.ps1"]
-  skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_usage_ps1["usage.ps1"]
-  skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_storage_ps1["storage.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_heartbeat_ps1["heartbeat.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_kit_admin_ps1["kit_admin.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_os_timer_ps1["os_timer.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_storage_ps1["storage.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_supervise_resources_ps1["supervise_resources.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_supervise_stats_ps1["supervise_stats.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_task_rollup_ps1["task_rollup.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_track_rebuild_ps1["track_rebuild.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_usage_ps1["usage.ps1"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_pre_commit["pre-commit"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_pre_push["pre-push"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_post_merge["post-merge"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_post_rewrite["post-rewrite"]
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_py["kitbag.py"]
+  skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_admin_py["kitbag_admin.py"]
+  skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_flow_py["kitbag_flow.py"]
+  skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_ports_py["kitbag_ports.py"]
+  skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_scaffold_py["kitbag_scaffold.py"]
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| README_md["README.md"]
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| tests_kit_tests_ps1["kit-tests.ps1"]
+  skills_bossy_SKILL_md -->|"K1-K3: kitty step 0, revy kind kit"| skills_bossy_kit_admin_md["kit-admin.md"]
 ```
 <!-- kit-graph:end -->
 
@@ -441,6 +451,8 @@ flowchart LR
   skills_crafty_SKILL_md -->|"steps 1-5, CI wait (pipes), the PreToolUse hook…"| skills_crafty_crafty_ps1["crafty.ps1"]
   skills_crafty_SKILL_md -->|"dot-sourced by every kit script; never run by…"| skills_crafty_lib_ps1["lib.ps1"]
   skills_crafty_SKILL_md -->|"steps 6-7, rebase conflicts (keepboth)"| skills_crafty_devtools_py["devtools.py"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_module_audit_py["module_audit.py"]
+  skills_crafty_SKILL_md -->|"revy kind module (devtools.py findings)"| skills_crafty_module_audit_md["module-audit.md"]
   skills_crafty_SKILL_md -->|"setup (bossy.ps1 setup -WriteLocal; keys:…"| skills_crafty_kit_example_json["kit.example.json"]
 ```
 <!-- kit-graph:end -->

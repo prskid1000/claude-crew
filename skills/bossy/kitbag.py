@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L632 lint · L1031 README graph · L1133 lint command · L1330 audit ·
-  L1447 registry · L1788 prose · L1939 sections · L2069 budget · L2083 goodies · L2608 state lint · L2793 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L635 lint · L1034 README graph · L1136 lint command · L1334 audit ·
+  L1451 registry · L1792 prose · L1943 sections · L2073 budget · L2087 goodies · L2612 state lint · L2797 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -608,6 +608,9 @@ def graph(k):
     for tgt in hook_targets:
         if 'settings.json' in nodes:
             edges[('settings.json', tgt)] = 'hook'
+    for f in nodes:   # tests/kit-tests.ps1 runs every tests/*.tests.ps1 (a glob, no names)
+        if re.match(r'tests/[^/]+\.tests\.ps1$', f):
+            add('tests/kit-tests.ps1', f, 'calls')
     entries = [f for f in ('CLAUDE.md',) if f in nodes] or [f for f, n in nodes.items() if n['kind'] == 'root']   # ONE root
     out = defaultdict(list)
     for (a, b), typ in edges.items():
@@ -1243,7 +1246,8 @@ const cols = () => innerWidth < 1280 ? [] : [...document.querySelectorAll('body 
 const stray = () => [...document.querySelectorAll('body *')].flatMap((e) => {
   if (e.closest('svg,#tip,script,style') || !e.getClientRects().length) return []   // a closed fold's body has no box; its summary is checked
   const cs = getComputedStyle(e), r = e.getBoundingClientRect(), out = []
-  if (cs.position === 'absolute' && e.parentElement) { const p = e.parentElement.getBoundingClientRect(), tol = 6
+  if (r.right <= 0 || r.bottom <= 0) return []   // parked off-screen on purpose: screen-reader-only text (.sr)
+  if (cs.position === 'absolute' && cs.zIndex === 'auto' && e.parentElement) { const p = e.parentElement.getBoundingClientRect(), tol = 6   // a z-index = an overlay (menu, popover)
     if (r.left < p.left - tol || r.right > p.right + tol || r.top < p.top - tol || r.bottom > p.bottom + tol) out.push({ el: 'stray', why: `absolute element ${Math.round(r.left)},${Math.round(r.top)} outside its parent box ${Math.round(p.left)}-${Math.round(p.right)} x ${Math.round(p.top)}-${Math.round(p.bottom)}`, text: `${e.tagName.toLowerCase()}.${String(e.className)} in ${String(e.parentElement.className || e.parentElement.tagName)}`.slice(0, 120) }) }
   if (![...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) return out
   if (r.right > innerWidth + 1 && !e.closest('.sc,.tw')) out.push({ el: 'clip', why: `text ends ${Math.round(r.right - innerWidth)} px past the window edge`, text: (e.innerText || '').trim().slice(0, 80) })
@@ -1653,7 +1657,7 @@ def registry_lint(k, bad):
             m = rx.search(t)
             if m:
                 bad('OLD-NAME', f'{f}:{t.count(chr(10), 0, m.start()) + 1}', f'old name "{o}" (now "{olds[o]}"): no aliases, update the reference')
-        if TODO in t and f != 'skills/bossy/kitbag.py':   # the templates live here
+        if TODO in t and f not in ('skills/bossy/kitbag.py', 'skills/bossy/kitbag_scaffold.py'):   # the templates live here
             bad('TODO-STUB', f'{f}:{t.count(chr(10), 0, t.index(TODO)) + 1}', f'{TODO} stub left: fill it in')
         ln = lambda m: f'{f}:{t.count(chr(10), 0, m.start()) + 1}'
         for m in re.finditer(r'business[- ]logic change', t, re.I):   # the rule is what a user sees, not where the code sits

@@ -13,12 +13,13 @@ description: "Load when: you are the main session routed here: launching or supe
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `bossy.ps1 learn -Read -Skill bossy` |
-| `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (goody `kit-admin`; run by `.githooks`) |
+| `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (run by `.githooks`) |
 | `STATE.md` | a script's state file changes; an agent needs a task's doc / comment / MR / env-run links (`.state/tasks/<id>.json`) |
 | `params.registry.json` | a timeout, wait or limit is added or changed (every tunable key: learned or fixed); `bossy.ps1 param show` |
-| `adapters/supervise_resources.ps1`, `adapters/supervise_stats.ps1`, `adapters/usage.ps1`, `adapters/storage.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`, `launch -Check`, `storage`: dot-sourced by bossy.ps1 |
+| `adapters/*.ps1` | dot-sourced by bossy.ps1: E1 `supervise`, `board show`, `recover`, `cleanup`, `launch -Check`, `storage`, `track`, `deploy`, `heartbeat`, hooks |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge`, `<kit>/.githooks/post-rewrite` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
-| `kitbag.py`, `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
+| `kitbag.py` (+ the `kitbag_*.py` it loads), `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
+| `kit-admin.md` | K1-K3: `kitty` step 0, `revy` kind kit |
 
 ## One orchestration model (both flows)
 State every run shares (STATE.md): launch record (`bossy.ps1 launch`), agent board (`board`), tracking (`track`),
@@ -80,8 +81,8 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 | E8 | The owner changes a rule or scope mid-run | `briefy` kind rule-change: appends to brief AND contracts file (QA: `lead-notes.md`), `board msg` to each agent it touches; agents re-read before every push / check |
 | E9 | The owner asks for something destructive while runs go on | do it yourself after they finish |
 | E10 | A run finished or stopped (pause, `launch -Done`: their signals are recorded then), supervise says "retro due", or signals piled up | launch /tidy yourself, no owner ask, once no other workflow of this session runs (one retro covers several runs) |
-| E11 | HEAL: guard block wrong, script crash, workaround, kit friction; a line `<feature> is a goody: run kitbag.py goody add <name>` | the goody line: `kitbag.py goody sync` (between runs) or the line's `goody add`, retry. Else spawn `kitty` (kind fix; K1-K3); re-tests, gets `revy` review, pushes and retires lesson (`learn -Fixed`) |
-| E12 | LEARN: something cost time, failed or surprised you | `bossy.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-When -Do -Why`, goody `kit-admin`); 3x -> script check / default |
+| E11 | HEAL: guard block wrong, script crash, workaround, kit friction | spawn `kitty` (kind fix; K1-K3); re-tests, gets `revy` review, pushes and retires lesson (`learn -Fixed`) |
+| E12 | LEARN: something cost time, failed or surprised you | `bossy.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-When -Do -Why`); 3x -> script check / default |
 | E13 | SessionStart kit line (git state, gates, lint, ports, stopped runs, retro/audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` when idle; audit due -> spawn ONE `kitty` (kind audit); pulls live clone when idle, relays ASK list |
 | E14 | A new repo or stack joins | `crafty.ps1 stack -Dir <module>`; wrong commands -> `.claude-stack.json`; conventions -> `rules/*.local.md` (README "Rule examples") |
 | E15 | opsy reported `watch` (a deploy recorded), the nightly timer, or a watchy `ROLLBACK?` board msg | `watch`: one-shot timers +15 min, +2 h, +24 h, each spawning `watchy` kind window; nightly: one `watchy` kind sweep (model haiku); `ROLLBACK?` -> `decide ask` (roll back / fix forward / keep); the owner's answer -> `opsy` kind rollback |

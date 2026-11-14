@@ -16,14 +16,14 @@ if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
 $pyReal = foreach ($p in 'python', 'python3') { if (Get-Command $p -ErrorAction SilentlyContinue) { & $p -c 'import sys; print(sys.executable)' 2>$null | Select-Object -Last 1; break } }
 if ($pyReal) { $env:PATH = (Split-Path $pyReal) + [IO.Path]::PathSeparator + $env:PATH }
 # one file per area; each dot-sources harness.ps1
-$files = 'bossy.tests.ps1', 'crafty.tests.ps1', 'pokey.tests.ps1', 'kitbag.tests.ps1', 'workflows.tests.ps1', 'supervise.tests.ps1', 'params.tests.ps1', 'guard.tests.ps1', 'layout.tests.ps1', 'flow.tests.ps1', 'sessions.tests.ps1', 'tracker.tests.ps1', 'render.tests.ps1', 'dashboard.tests.ps1', 'debate.tests.ps1'
+$files = @(Get-ChildItem $PSScriptRoot -Filter '*.tests.ps1' | Sort-Object Name | ForEach-Object Name)
 $all = @($files | ForEach-Object { $_ -replace '\.tests\.ps1$' }) + 'goodies'
 $areas = if ($Area -contains 'all') { $all } else { @($Area | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
 $unknown = @($areas | Where-Object { $_ -notin $all })
 if (-not $areas -or $unknown) { Write-Error "kit-tests.ps1: unknown or no area(s) '$($unknown -join ', ')'; known: $($all -join ', ')" -ErrorAction Continue; exit 2 }
 
 $started = Get-Date
-$results = $areas | ForEach-Object -ThrottleLimit $areas.Count -Parallel {
+$results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {
   $clock = [Diagnostics.Stopwatch]::StartNew()
   $out = if ($_ -eq 'goodies') { python -X utf8 (Join-Path (Split-Path $using:PSScriptRoot) 'skills/bossy/kitbag.py') goody test 2>&1 | Out-String }
     else { pwsh -NoProfile -File (Join-Path $using:PSScriptRoot "$_.tests.ps1") 2>&1 | Out-String }

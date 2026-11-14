@@ -16,6 +16,8 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 | `crafty.ps1` | steps 1-5, CI wait (`pipes`), the PreToolUse hook (`guard`) |
 | `lib.ps1` | dot-sourced by every kit script; never run by hand |
 | `devtools.py` | steps 6-7, rebase conflicts (`keepboth`) |
+| `adapters/*` | loaded by `lib.ps1` / `devtools.py`; a vendor one (tracker, git host, ci, report) only when config selects it |
+| `module-audit.md` | `revy` kind module (`devtools.py findings`) |
 | `kit.example.json` | setup (`bossy.ps1 setup -WriteLocal`; keys: README "Configuration"); `_paths`: every state path |
 
 ## Steps (every devy; your brief wins where it differs)
