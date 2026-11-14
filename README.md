@@ -337,7 +337,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kitbag.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 471000 · all tests 122000 · files: 33 content + 9 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 471000 · all tests 122000 · files: 36 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, a goody's in `goodies/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name
@@ -385,13 +385,11 @@ flowchart LR
   AGENTS_md --> workflows_buildy_js
   AGENTS_md --> workflows_testy_js
   AGENTS_md --> workflows_tidy_js
-  workflows_buildy_js -->|"spawns"| agents_checky_md
   workflows_buildy_js -->|"spawns"| agents_datay_md
   workflows_buildy_js -->|"spawns"| agents_devy_md
   workflows_buildy_js -->|"spawns"| agents_kitty_md
   workflows_buildy_js -->|"spawns"| agents_rechy_md
   workflows_buildy_js -->|"spawns"| agents_revy_md
-  workflows_buildy_js -->|"spawns"| agents_vidy_md
   workflows_testy_js -->|"spawns"| agents_checky_md
   workflows_testy_js -->|"spawns"| agents_kitty_md
   workflows_testy_js -->|"spawns"| agents_vidy_md
@@ -412,6 +410,8 @@ flowchart LR
   skills_bossy_SKILL_md -->|"a script's state file changes; an agent needs a…"| skills_bossy_STATE_md["STATE.md"]
   skills_bossy_SKILL_md -->|"a timeout, wait or limit is added or changed…"| skills_bossy_params_registry_json["params.registry.json"]
   skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_supervise_resources_ps1["supervise_resources.ps1"]
+  skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_usage_ps1["usage.ps1"]
+  skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_storage_ps1["storage.ps1"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_pre_commit["pre-commit"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_pre_push["pre-push"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_post_merge["post-merge"]
@@ -428,6 +428,7 @@ flowchart LR
   skills_crafty_SKILL_md["crafty"]
   skills_crafty_SKILL_md -->|"step 0 (bossy.ps1 learn -Read -Skill crafty)"| LESSONS_md["LESSONS.md"]
   skills_crafty_SKILL_md -->|"#quot;Writing standards#quot; whenever you write; steps 4…"| skills_crafty_templates_md["templates.md"]
+  skills_crafty_SKILL_md -->|"steps 4-5 (Rules #gt; Tests: what to test, how,…"| skills_crafty_testing_md["testing.md"]
   skills_crafty_SKILL_md -->|"steps 1-5, CI wait (pipes), the PreToolUse hook…"| skills_crafty_crafty_ps1["crafty.ps1"]
   skills_crafty_SKILL_md -->|"dot-sourced by every kit script; never run by…"| skills_crafty_lib_ps1["lib.ps1"]
   skills_crafty_SKILL_md -->|"steps 6-7, rebase conflicts (keepboth)"| skills_crafty_devtools_py["devtools.py"]

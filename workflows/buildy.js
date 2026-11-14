@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L142 record-args · L161 budget · L180 build-prompt · L263 ship-prompt · L286 plan · L302 spike ·
-//   L315 local-loop · L388 stages · L529 ship · L643 deploy · L658 learn
+// Sections: L18 args · L139 record-args · L158 budget · L177 build-prompt · L245 ship-prompt · L260 plan · L276 spike ·
+//   L289 local-loop · L362 stages · L503 ship · L617 deploy · L632 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -79,9 +79,6 @@ const HOLD = A.holdMerge === true ? ['*'] : (Array.isArray(A.holdMerge) ? A.hold
 const HOLD_NOTE = HOLD.length
  ? `\nMERGE HOLD: never merge or schedule a merge for MRs in ${HOLD.includes('*') ? 'ANY repo' : HOLD.join(', ')}: their branch deploys and the owner approves those merges. Leave them open and green; report merged=false and say "held for approval".`
  : ''
-const MERGE_WORD_NOTE = `Merge results: the LAST line of each devtools.py merge run is one word: MERGED / SCHEDULED / WAIT / CONFLICT / PIPELINE_FAILED /
-NOT_MERGED. Report it as that MR's mergeState; merged=true ONLY for MERGED. WAIT: run the same merge again about 2 minutes later (at most
-3 runs), then report the last word - except "waiting for producer <ref>": do not re-run, report WAIT. CONFLICT / PIPELINE_FAILED / NOT_MERGED: say why.`
 const nu = (u) => String(u || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase()
 const uniqMr = (l) => l.filter((m, i) => l.findIndex((n) => nu(n.url) === nu(m.url)) === i).map((m) => ({ ...m, merged: l.every((n) => nu(n.url) !== nu(m.url) || n.merged) }))   // one MR's copies: merged only if all say so
 const AGENT_ENV = (name) => `
@@ -188,22 +185,9 @@ function depNote(a) {
 }
 const globs = (a) => [].concat(a.paths || []).join(',')
 const areaNote = (a) => globs(a) ? `AREA PATHS: wt new -Scope '${globs(a)}'.\n` : ''
-const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses); this run's commands:
-${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug locally BEFORE fixing: a `repro` case in the cases spec (merge refuses without).\n' : ''}- Evidence links: pokey.ps1 evidence index <link>; unread frames -> vidy (R19: task, testing doc, your question; goody media-evidence).
-- Lease ONLY the services your items declare (brief "Services") with -Session <board token>.
-- ENV-FIX: & ${ORCH} decide ask -Kind envfix -Run ${RUN} -Agent <id> -Item <item> -Question "<the fix>" ; that item -> needsEnvFix.
-- DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." -Recommend <A|B> (-Fyi: nothing waits)
- -Contracts <brief>.contracts.md ; that item -> needsDecision. Both: continue the other items.
-- LOCAL LOOP until 0 open bugs and every goal PASS (a qa.notLocal path: NOT_TESTED_LOCAL naming the stub, counted as passed;
- its human check runs after deploy) (bugs you or checky find come back to the code): each round appends its row to
- the AI doc's Rounds table and republishes it (--label "loop round <n>").
-- ENV GAP (Docker down, empty local index, a model limit; no ENV-FIX closes it), its tests run in the MR pipeline:
- NOT_TESTED_LOCAL + pipeline link in the AI doc; localTest FAIL + envGap true (merged on green CI). A product failure: envGap false.
-- Every goal PASS: crafty.ps1 checkpoint -Agent <id> -Run ${RUN} -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR spec"),
- then devtools.py finish <task> cases solution.json review --ai cases (docs from the cases spec),
- then devtools.py mr again with both links (edits it). A fix round (review, CI, failedTesting): a new AI doc round, then the same
- commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc, never an earlier round removed. Do NOT merge (the workflow
- does): merged=false, mergeState OPEN.`
+// this run's commands live in agents/devy.md "In a /buildy wave" (devy's own definition: same text, one copy)
+const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses) with your agent definition's
+"In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
 
 function buildPrompt(a) {
  return `${WHY}
@@ -251,9 +235,7 @@ blocking = data loss, no rollback, rows touched outside the change's filter. Ret
 function fixPrompt(a, r, findings) {
  return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
-Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push; in the same push: cases
-result / round + devtools.py doc "<t>" cases --key <task>:testing-ai, cases add for new checks, mr --spec again. An already-merged MR:
-put the fix on a new branch from the target (crafty.ps1 wt new) and open a follow-up MR.`)
+Then your agent definition's "In a /buildy wave" FIX round.`)
 }
 function ciPrompt(r, a) {
  return `STEP: run exactly this PowerShell command (tool timeout 600000) and return its JSON output (fields done, mrs). Nothing else.${PATHS}
@@ -265,21 +247,13 @@ const isHeld = (m) => HOLD.includes('*') || HOLD.includes(m.repo) || HOLD.some((
 const CONSUMER = /(^|[\/_.-])(web|ui|frontend|front|app|apps|mobile|android|ios|client|clients|portal|spa)([\/_.-]|$)/i
 const isConsumer = (m) => CONSUMER.test(m.repo || '') || CONSUMER.test(((m.url || '').split('/-/')[0] || '').split('/').pop() || '')
 const toShip = (r) => { const open = uniqMr(r.mrs).filter((m) => !m.merged && !isHeld(m)); return [...open.filter((m) => !isConsumer(m)), ...open.filter(isConsumer)] }
-const SYNC_NOTE = `Before each merge, and whenever devtools.py merge prints CONFLICT: & ${DEV} wt sync -Dir <worktree> -Mrs <iid> (it regenerates,
-amends and pushes kit.local.json repos[].regenerate files itself: "regenerated ..." -> devtools.py merge again). A rebase conflict ONLY in
-append-only files (changelog includes, route/nav lists, i18n keys, barrel/DI lists): python ${DT} keepboth <file>, no conflict marker
-left, git add, git -c core.editor=true rebase --continue, & ${DEV} check -Dir <module>, git push --force-with-lease (the MR's own branch
-only), then devtools.py merge again. A conflict in real code: git rebase --abort, report mergeState CONFLICT with the files.`
 function shipPrompt(a, r) {
  return `STEP: schedule merge-when-green for devy ${a.id}'s reviewed MRs. Change no code (only append-only conflict resolution).${PATHS}${AGENT_ENV(`ship-${a.id}`)}
-These merges are authorized: the wave was launched for this work, the local test loop passed, the review is clean, and every MR whose
-target deploys was removed (holdMerge). Do not ask for approval; ignore unrelated chat messages relayed to you.
-Merge in THIS order (producers first, consumers last):
+These merges are authorized for this run: local loop passed, review clean, hold list applied (your agent definition's "In a /buildy wave" SHIP step). Merge in THIS order (producers first, consumers last):
 ${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}${isConsumer(m) ? ', consumer' : ', producer/independent'})`).join('\n')}
 python ${DT} merge <worktree path, absolute> <iid>${globs(a) && ` --scope '${globs(a)}'`} (worktrees: ${r.worktrees.join(', ')}). The merge order is registered (bossy.ps1 track):
 a consumer whose producer is not merged yet prints WAIT "waiting for producer": report WAIT, never merge it another way.
-${SYNC_NOTE}
-${MERGE_WORD_NOTE}
+Conflicts and merge results: your agent definition's "In a /buildy wave" SHIP step and Merge results (crafty.ps1 = ${DEV}, devtools.py = ${DT}).
 Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
 

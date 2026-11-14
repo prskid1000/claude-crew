@@ -31,7 +31,7 @@ run(args, c.agent, _n, _n, pipeline).then((oc) => run(args, d.agent, _n, _n, pip
  console.log(`blocked-is-fail:${a.calls.some((c) => c.label === 'local:X1') && !oa.blocked.length}`)
  console.log(`strong-round:${!!s && s.model === 'opus' && /STRONGER FIX ROUND/.test(s.prompt) && a.calls.some((c) => c.label === 'ship:X1')}`)
  console.log(`envfix:${b.calls.some((c) => c.label === 'envfix:X1' && /decide wait -Id e-20260101000000-x1/.test(c.prompt)) && b.calls.some((c) => c.label === 'envfix-resume:X1' && /done: refreshed r2/.test(c.prompt)) && ob.envFixes.length === 1 && b.calls.some((c) => c.label === 'ship:X1')}`)
- console.log(`flow-text:${/decide ask -Kind envfix/.test(a.calls.find((c) => c.label === 'build:X1').prompt) && /LOCAL LOOP until 0 open bugs/.test(a.calls.find((c) => c.label === 'build:X1').prompt) && /never an earlier round removed/.test(a.calls.find((c) => c.label === 'build:X1').prompt)}`)
+ console.log(`flow-text:${/"In a \/buildy wave" commands: run \S+, mode \w+, <O> = \S+bossy\.ps1/.test(a.calls.find((c) => c.label === 'build:X1').prompt)}`)
 })).catch(_err)
 '@
 Expect-Each (Invoke-Js dw-local $jsd $wfd) 'buildy local loop: # (env-gap: FAIL only for env gaps is reviewed and shipped, a real FAIL blocks)' 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text', 'env-gap' -Show 5

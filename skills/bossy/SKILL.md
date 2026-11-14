@@ -14,10 +14,10 @@ row.
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `bossy.ps1 learn -Read -Skill bossy` |
-| `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (goody `kit-admin`; `.githooks` install it) |
+| `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (goody `kit-admin`; run by `.githooks`) |
 | `STATE.md` | a script's state file changes; an agent needs a task's doc / comment / MR / env-run links (`.state/tasks/<id>.json`) |
 | `params.registry.json` | a timeout, wait or limit is added or changed (every tunable key: learned or fixed); `bossy.ps1 param show` |
-| `adapters/supervise_resources.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`, `launch -Check`: dot-sourced by bossy.ps1 (resources, sessions) |
+| `adapters/supervise_resources.ps1`, `adapters/usage.ps1`, `adapters/storage.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`, `launch -Check`, `storage`: dot-sourced by bossy.ps1 |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge`, `<kit>/.githooks/post-rewrite` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
 | `kitbag.py`, `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 
@@ -26,10 +26,10 @@ State every run shares (STATE.md): launch record (`bossy.ps1 launch`), agent boa
 decisions (`decide`), contracts (`<brief>.contracts.md` or `<runDir>/lead-notes.md`), the run report (`report -Run <id>`), agent
 checkpoints (`crafty.ps1 checkpoint`), your own program state (`bossy.ps1 program set|get -Program <name>`: phases -> runs, MRs,
 synced; never only in the session: a heartbeat after a restart reads it). Both
-workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they differ only in their steps.
+workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`.
 What happened when, who called what: `bossy.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
 line per step, call, build, block, signal, decision, deploy; never read journals or logs). Tunables (lease grace,
-timeouts, gate memory, heartbeat, budgets) learn live: `bossy.ps1 param show` (supervise -AutoFix learns). Launch by path:
+timeouts, gate memory, heartbeat, budgets) learn live in supervise -AutoFix: `bossy.ps1 param show`. Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })` with `kitDir` (absolute); buildy / testy: `mandate` (owner's words).
 
 **Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change;

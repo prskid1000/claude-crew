@@ -163,5 +163,25 @@ console.log([/AREA PATHS: wt new -Scope 'specs\/\*\*'/.test(p('build')), /merge 
 '@ (Join-Path $src 'workflows/buildy.js')
 Expect "buildy: agents[].paths reach the build (wt new -Scope) and ship (merge --scope) prompts ($ap)" ("$ap".Trim() -eq 'true true')
 Expect "wt commit: area files pass; a file outside is refused naming it; the owner's scope word (decide record -Gate scope) lets it through ($e1 $e2 $e3)" ($e1 -eq 0 -and $e2 -eq 1 -and $c2 -match 'commit refused: 1 file\(s\) outside the area \(specs/\*\*\): src/Inv\.java' -and $e3 -eq 0 -and (git -C $sr log -1 --format=%s) -eq 'fix: change the service')
+# (cap moves from guard) malformed hook input, a body file in the shared temp root, background loops
+$D = Join-Path $k 'skills/crafty/crafty.ps1'
+$gbad = '{not json' | Px $D guard | Out-String
+$gnone = '' | Px $D guard | Out-String
+Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
+$gt = (@{ tool_name = 'Write'; tool_input = @{ file_path = '/tmp/mr-body.md' } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
+Expect 'guard: a Write of a body file to the shared temp root is denied, naming crafty.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
+$bgc = foreach ($c in @('until curl -s x; do sleep 5; done', 1), @("cd x; cat > /dev/null; python - <<'EOF'`nEOF", 1), @('until x; do sleep 5; done', 0), @('timeout 5 curl x; until curl -s x; do sleep 2; done', 1), @('git log | cat', 1), @("python - <<'PY'`nprint(1)`nPY", 1), @('for i in $(seq 1 20); do sleep 5; done', 1), @('timeout 600 bash -c "until x; do sleep 5; done"', 1), @("cat <<'EOF' > n.md`nx`nEOF", 1)) {
+  "$(((@{ tool_name = 'Bash'; tool_input = @{ command = $c[0]; run_in_background = [bool]$c[1] } } | ConvertTo-Json -Compress) | Px $D guard | Out-String) -match 'background shell may never end')" }
+Expect "guard: a background sleep loop with no bound or a stdin read gets a note; bounded, foreground or a heredoc into a file: none ($bgc)" (($bgc -join ' ') -eq 'True True False True False False False False False')
+# (cap move from kitbag) load(): git excludes
+$giK = Join-Path (Kd) 'gi-kit'; New-Item -ItemType Directory -Force "$giK/skills/crafty", "$giK/skills/orgskill" | Out-Null; git -C $giK init -q
+'x' | Set-Content "$giK/kept.md"; 'x' | Set-Content "$giK/stray.json"; 'x' | Set-Content "$giK/skills/orgskill/SKILL.md"; '{"localOnly":["skills/orgskill"]}' | Set-Content "$giK/skills/crafty/kit.local.json"
+"stray.json`nskills/orgskill/" | Add-Content "$giK/.git/info/exclude"
+$giF = KtPy "print(','.join(k.load(r'$giK').files))"
+Expect 'load: a .git/info/exclude stray is no kit file (org-term scan); a localOnly overlay stays' ($giF -match 'kept\.md' -and $giF -match 'orgskill/SKILL\.md' -and $giF -notmatch 'stray')
+$bl = Px $O board list 2>&1 | Out-String; $blc = $LASTEXITCODE; $bsh = Px $O board show 2>&1 | Out-String
+Expect "board list = board show (an agent's guess), exit 0 ($blc)" ($blc -eq 0 -and $bl -eq $bsh -and $bl -match 'board \(active agents\)')
+# (cap move from workflows) buildy prompts point devy at its own wave commands
+Expect 'devy.md "In a /buildy wave": the commands buildy prompts point to' ((Get-Content (Join-Path $src 'agents/devy.md') -Raw) -match '(?s)In a /buildy wave.*decide ask -Kind envfix.*LOCAL LOOP until 0 open bugs.*never an earlier round removed.*FIX round.*SHIP step.*PIPELINE_FAILED')
 Remove-TestKit $k
 Complete-Tests

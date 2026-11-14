@@ -30,45 +30,45 @@ it; supervise lints recent files each beat: BAD = WATCH).
 Schema: `<form>[=<glob>] v<n>: <required keys> [+ <allowed keys>]` (a list: another key = drift, BAD); a `<name>:<part>` row = another file kind in that folder; form json (one object), dir (one JSON per key, default `*.json`), jsonl (one
 object a line; the last is checked), text; v0 = no schemaVersion yet.
 
-| Name | Owner | Schema | Lifecycle | Change (2026-10-30) |
-|---|---|---|---|---|
-| `tasks` | `lib.ps1` `Update-KitTracking` / `Update-KitTaskIndex`, `devtools.py publish`, `pokey.ps1 finalize` | `dir v1: task` | keep | new: replaces `tracking` |
-| `tracking` | none (legacy) | `json v0: tasks` | read until the first tracking write moves it into `tasks` and deletes it | cleanup deletes `.migrated` |
-| `automerge` | `devtools.py merge`, `bossy.ps1 track run` | `json v1: refs` | an entry until its MR merges | new (was in `tracking`) |
-| `mr-ignore` | `bossy.ps1 track ignore` | `json v1: mrs` | keep | new |
-| `published` | `devtools.py publish`, `crafty.ps1 tracker create -Key` | `dir v1: key` | keep | schemaVersion |
-| `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) | trigger queue, boot / wake |
-| `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) | new |
-| `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep | new |
-| `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) | cleanup trims |
-| `decisions-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` | cleanup trims |
-| `deploy-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` | cleanup trims |
-| `scope-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` | new |
-| `leases` | `kitlog` | `jsonl v0: at event kind` | keep, capped | none |
-| `outbox` | tracker writes | `jsonl v0: at` | until replayed | none |
-| `audit` | `kitlog` streams | `text v0` | 30 d | none |
-| `last-retro` | `bossy.ps1 tidy done` | `text v0` | keep | offset |
-| `last-kitty-audit` | `kitbag.py audit stamp` | `text v0` | keep | none |
-| `pauses` | `bossy.ps1 pause / resume` | `dir v1: at run state` | keep | schemaVersion |
-| `programs` | `bossy.ps1 program` | `dir v1: updated` | keep | `updated` required |
-| `browser-ports` | `browser.mjs` | `json v0` | keep | none |
-| `ports-deployed` | goody `ports` (`kitbag.py port`) | `json v1: files` | rewritten each deploy | new: the workspace copies it wrote |
-| `owner-apps` | `bossy.ps1 supervise` | `json v0` | keep | none |
-| `runtimes` | goody `runtimes` | `dir v0: leases` | keep | none |
-| `locks` | `lib.ps1` (`repos[].exclusiveTests`) | `json v0: held waiting` | keep | none |
-| `board` | `bossy.ps1 board` | `dir v1: agent session run beat status` | 14 d | schemaVersion; file-safe session |
-| `launches` | `bossy.ps1 launch`, workflows (`args-*`) | `dir=self-*.json v1: script run args` | 3 d | schemaVersion |
-| `agents` | `crafty.ps1 checkpoint` | `dir=*/resume*.json v1: agent run steps` | 7 d | schemaVersion, ISO |
-| `decisions` | `bossy.ps1 decide` | `dir v2: id status question + kind run agent item options blocking contracts at task mrs answer by answeredAt recommend commit parentId gate source usedAt usedBy supersedes` | 14 d | `options` {key label description recommended}, `blocking`; gate words: `gate`, `source`, `usedAt` |
-| `qa-runs` | `testy.js`, `pokey.ps1 finalize` | `dir=*/index.json v1: run items` | 14 d | new `index.json` |
-| `qa-runs:run` | `pokey.ps1 prepare`, `retest` | `dir=*/run.json v0: title runDir items + kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent` | 14 d | new keys: allowed |
-| `qa-runs:results` | the tester (testy.js CHECKS_SCHEMA), `pokey.ps1 results patch` | `dir=*/*/results.json v0: code checks + findings setup_changes data_created skipped handoff` | 14 d | new |
-| `qa-runs:held` | `pokey.ps1 results hold` | `dir=*/*/held.json v0: code held at + envFix summary` | 14 d | new |
-| `qa-runs:bugs` | `pokey.ps1 finalize` | `dir=*/bugs.json v0: groups + groups` | 14 d | new |
-| `qa-runs:cells` | `pokey.ps1 finalize` | `dir=*/*/cells.json v0` | 14 d | new: check id -> { result, evidence } |
-| `waves` | `bossy.ps1 report` | `dir v0: run` | 14 d | none |
-| `supervise-state` | `bossy.ps1 supervise` | `json v0` | 30 d | ISO |
-| `live-steps` | `bossy.ps1 supervise` | `json v0: at` | 30 d | none |
+| Name | Owner | Schema | Lifecycle |
+|---|---|---|---|
+| `tasks` | `lib.ps1` `Update-KitTracking` / `Update-KitTaskIndex`, `devtools.py publish`, `pokey.ps1 finalize` | `dir v1: task` | keep |
+| `tracking` | none (legacy) | `json v0: tasks` | read until the first tracking write moves it into `tasks` and deletes it |
+| `automerge` | `devtools.py merge`, `bossy.ps1 track run` | `json v1: refs` | an entry until its MR merges |
+| `mr-ignore` | `bossy.ps1 track ignore` | `json v1: mrs` | keep |
+| `published` | `devtools.py publish`, `crafty.ps1 tracker create -Key` | `dir v1: key` | keep |
+| `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) |
+| `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) |
+| `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep |
+| `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) |
+| `decisions-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` |
+| `deploy-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` |
+| `scope-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` |
+| `leases` | `kitlog` | `jsonl v0: at event kind` | keep, capped |
+| `outbox` | tracker writes | `jsonl v0: at` | until replayed |
+| `audit` | `kitlog` streams | `text v0` | 30 d |
+| `last-retro` | `bossy.ps1 tidy done` | `text v0` | keep |
+| `last-kitty-audit` | `kitbag.py audit stamp` | `text v0` | keep |
+| `pauses` | `bossy.ps1 pause / resume` | `dir v1: at run state` | keep |
+| `programs` | `bossy.ps1 program` | `dir v1: updated` | keep |
+| `browser-ports` | `browser.mjs` | `json v0` | keep |
+| `ports-deployed` | goody `ports` (`kitbag.py port`) | `json v1: files` | rewritten each deploy |
+| `owner-apps` | `bossy.ps1 supervise` | `json v0` | keep |
+| `runtimes` | goody `runtimes` | `dir v0: leases` | keep |
+| `locks` | `lib.ps1` (`repos[].exclusiveTests`) | `json v0: held waiting` | keep |
+| `board` | `bossy.ps1 board` | `dir v1: agent session run beat status` | 14 d |
+| `launches` | `bossy.ps1 launch`, workflows (`args-*`) | `dir=self-*.json v1: script run args` | 3 d |
+| `agents` | `crafty.ps1 checkpoint` | `dir=*/resume*.json v1: agent run steps` | 7 d |
+| `decisions` | `bossy.ps1 decide` | `dir v2: id status question + kind run agent item options blocking contracts at task mrs answer by answeredAt recommend commit parentId gate source usedAt usedBy supersedes` | 14 d |
+| `qa-runs` | `testy.js`, `pokey.ps1 finalize` | `dir=*/index.json v1: run items` | 14 d |
+| `qa-runs:run` | `pokey.ps1 prepare`, `retest` | `dir=*/run.json v0: title runDir items + kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent` | 14 d |
+| `qa-runs:results` | the tester (testy.js CHECKS_SCHEMA), `pokey.ps1 results patch` | `dir=*/*/results.json v0: code checks + findings setup_changes data_created skipped handoff` | 14 d |
+| `qa-runs:held` | `pokey.ps1 results hold` | `dir=*/*/held.json v0: code held at + envFix summary` | 14 d |
+| `qa-runs:bugs` | `pokey.ps1 finalize` | `dir=*/bugs.json v0: groups + groups` | 14 d |
+| `qa-runs:cells` | `pokey.ps1 finalize` | `dir=*/*/cells.json v0` | 14 d |
+| `waves` | `bossy.ps1 report` | `dir v0: run` | 14 d |
+| `supervise-state` | `bossy.ps1 supervise` | `json v0` | 30 d |
+| `live-steps` | `bossy.ps1 supervise` | `json v0: at` | 30 d |
 
 ## Artefacts (drift guard)
 Every agent-written kind (templates.md "Writing standards" + run files), its writer (a renderer, or `free: <who> (<plan>)`), place

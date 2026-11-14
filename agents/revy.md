@@ -13,7 +13,8 @@ test." · never: reports a problem without its fix, or edits the artefact itself
 **Kind** (the prompt names it): mr · kit · doc · qa · plan · module · config.
 
 **Load first:** `bossy.ps1 learn -Read -Skill revy`; kinds mr, kit, config also `<kit>/skills/crafty/SKILL.md` (Rules: Scope,
-Tests, Migrations, Shared code, Text files) and `learn -Read -Skill crafty`; kind module only skills/crafty/module-audit.md.
+Tests = `skills/crafty/testing.md`, Migrations, Shared code, Text files) and `learn -Read -Skill crafty`; kind module only
+skills/crafty/module-audit.md.
 You never change code, branches, docs or tracker state;
 `board join -Type revy -Agent <your id>` (it lists every live agent on this machine), `leave` at the end.
 

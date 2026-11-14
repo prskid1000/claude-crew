@@ -19,8 +19,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L33 paths · L84 state · L139 kitlog · L238 load · L635 lint · L1033 README graph · L1135 lint command · L1332 audit ·
-  L1441 registry · L1782 prose · L1933 sections · L2063 budget · L2087 goodies · L2612 state lint · L2797 main
+Sections: L33 paths · L84 state · L139 kitlog · L238 load · L636 lint · L1034 README graph · L1136 lint command · L1333 audit ·
+  L1450 registry · L1791 prose · L1942 sections · L2072 budget · L2096 goodies · L2621 state lint · L2806 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -439,9 +439,6 @@ def load(kit):
     k.repo_files = sorted(repo_files)
     k.junk = junk
     k.local_rules = [f for f in k.all if re.match(r'rules/[^/]+\.local\.md$', f)]
-    # published files + local overlay (local skills, project profiles); not configs, state, shims
-    k.files = sorted(f for f in k.all if (not ignored(f) or f in k.local_rules))
-    k.fileset = set(k.files)
     try:
         lj = osp.join(k.dir, 'skills', 'crafty', 'kit.local.json')
         if not osp.isfile(lj):
@@ -450,6 +447,10 @@ def load(kit):
         k.local_only = [p.replace('\\', '/').rstrip('/') for p in cfg.get('localOnly', [])]
     except ValueError:
         k.local_only = []
+    # published files + local overlay (local skills, project profiles); not configs, state, shims, other git-excluded strays
+    gi = git_ignored(k.dir, k.all)
+    k.files = sorted(f for f in k.all if f in k.local_rules or not (ignored(f) or (f in gi and not is_overlay(k, f))))
+    k.fileset = set(k.files)
     k.skills = sorted({f.split('/')[1] for f in k.files if re.match(r'skills/[^/]+/SKILL\.md$', f)})
     k.agents = {f[7:-3]: f for f in k.files if re.match(r'agents/[^/]+\.md$', f)}
     k.workflows = {f[10:-3]: f for f in k.files if re.match(r'workflows/[^/]+\.js$', f)}
@@ -1375,6 +1376,14 @@ def key_paths(d, prefix=''):
         yield p
         if isinstance(v, dict) and not any(p == m or p.startswith(m + '.') for m in USER_MAPS):
             yield from key_paths(v, p + '.')
+
+def git_ignored(kit, rels):
+    """The rels git ignores (.gitignore, .git/info/exclude, core.excludesFile); empty when kit is no repo's top folder."""
+    rc, top, _ = git(kit, 'rev-parse', '--show-toplevel')
+    if rc or osp.normcase(osp.realpath(top)) != osp.normcase(osp.realpath(kit)):
+        return set()
+    rc, o, _ = run(['git', '-C', kit, 'check-ignore', '-z', '--stdin'], stdin='\0'.join(rels))
+    return set(o.split('\0')) - {''} if rc in (0, 1) else set()
 
 def tracked(kit):
     rc, o, _ = git(kit, 'ls-files')

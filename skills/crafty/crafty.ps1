@@ -1222,7 +1222,7 @@ foreach ($s in $steps) {
     $sel = @($found | Where-Object { $_ } | ForEach-Object { if ($byName) { [IO.Path]::GetFileNameWithoutExtension($_) } else { [IO.Path]::GetRelativePath($st.dir, $_) -replace '\\', '/' } } | Select-Object -Unique)
     Write-Host "[check] -Touched: $($sel.Count) test(s) for $($chg.Count) changed file(s)$(if ($sel.Count) { ': ' + ($sel -join ', ') })"
     if ($sel.Count) { $Tests = (@(@($Tests -split '[,\s]+' | Where-Object { $_ }) + $sel) | Select-Object -Unique) -join ',' }
-    elseif (-not $Tests) { Write-Host '[check] -Touched: no test file matches the changes: add tests (crafty Rules > Tests) or pass -Tests'; exit 1 }
+    elseif (-not $Tests) { Write-Host '[check] -Touched: no test file matches the changes: add tests (skills/crafty/testing.md) or pass -Tests'; exit 1 }
   }
   if ($cmd -match '\{tests\}') {
     if (-not $Tests -and -not $AllTests) { throw "-Step test needs -Tests '<names or paths>' (or -AllTests)" }

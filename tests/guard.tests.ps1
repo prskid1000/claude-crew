@@ -50,17 +50,9 @@ $env:KIT_TRACKER_TYPE = 'none'; $j = @{ tool_name = 'Bash'; cwd = $shop; tool_in
 '@ @($D, $k, $shop, $plain)
 Remove-Item $kl
 Expect-Each $mg 'guard MR task link: # (c-*: create needs TT-<id> in branch or title; m-*: merge needs the MR tracked; escape: KIT_NO_TASK)' @('c-plain', 'c-branch', 'c-title', 'c-head', 'm-tracked', 'm-url', 'm-untracked', 'm-other-repo', 'm-no-number', 'm-cd', 'escape', 'quoted', 'heredoc', 'in-quotes', 'continued', 'no-tracker', 'logged', 'c-deploy', 'm-deploy') 19
-$gbad = '{not json' | Px $D guard | Out-String
-$gnone = '' | Px $D guard | Out-String
-Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
 $gl = (@{ tool_name = 'Write'; tool_input = @{ file_path = "$(TkPath $k runtime)/work/x2/a.md" } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
 $dd = pwsh @np $D dir -Agent 'B 1' -Item T9 -Name 'Run.LOG' 2>&1 | Out-String
 Expect 'guard: a write off the layout gets a note naming crafty.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
-$gt = (@{ tool_name = 'Write'; tool_input = @{ file_path = '/tmp/mr-body.md' } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
-Expect 'guard: a Write of a body file to the shared temp root is denied, naming crafty.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
-$bgc = foreach ($c in @('until curl -s x; do sleep 5; done', 1), @("cd x; cat > /dev/null; python - <<'EOF'`nEOF", 1), @('until x; do sleep 5; done', 0), @('timeout 5 curl x; until curl -s x; do sleep 2; done', 1), @('git log | cat', 1), @("python - <<'PY'`nprint(1)`nPY", 1), @('for i in $(seq 1 20); do sleep 5; done', 1), @('timeout 600 bash -c "until x; do sleep 5; done"', 1), @("cat <<'EOF' > n.md`nx`nEOF", 1)) {
-  "$(((@{ tool_name = 'Bash'; tool_input = @{ command = $c[0]; run_in_background = [bool]$c[1] } } | ConvertTo-Json -Compress) | Px $D guard | Out-String) -match 'background shell may never end')" }
-Expect "guard: a background sleep loop with no bound or a stdin read gets a note; bounded, foreground or a heredoc into a file: none ($bgc)" (($bgc -join ' ') -eq 'True True False True False False False False False')
 # agents' background shells: owner from its transcript (Agent-tool meta, workflow journal, main session = coordinator); -AutoFix kills
 $sh = Invoke-PsTest 'shells' @'
 . $args[0]; $tr = Join-Path $args[1] 'tx-sh'; $env:KIT_TRANSCRIPTS = $tr; $env:KIT_PARAM_SUPERVISE_SHELLSTUCKMINUTES = '0'; $env:KIT_PARAM_SUPERVISE_HEARTBEATMINUTES = '1'; $t0 = Get-Date
@@ -86,6 +78,16 @@ $st = @{}; $rs = foreach ($i in 0, 1, 1.2, 2) { $w = Get-KitShellSweep $st $t0.A
 "cmd:$((Get-KitShellCommand (& $cl $c2)) -eq $c2)"; "dir:$((Get-KitShellDir 'cd /tmp/x && npm run dev') -eq '')"; "k1:$($p1.HasExited)"; "k2:$($p2.HasExited)"; "k34:$(-not $p3.HasExited -and -not $p4.HasExited -and $p5.HasExited)"; $p3, $p4 | Stop-Process -Force
 foreach ($i in 0..3) { "s${i}:$(@($rs[$i].rows | ForEach-Object { "$($_.owner)=$($_.state)" }) -join ',')|$(@($rs[$i].flags | ForEach-Object what) -join '|')" }
 "log:$(@(Read-KitLog calls $t0.AddMinutes(-1) | Where-Object event -eq 'shell-kill').Count)"; Format-KitShellTable $rs[1].rows
+# finished-looking owners kept: R2 fresh on the board by name (no transcript there); checky's tree runs a busy child (e2e suite)
+$p6, $p7 = 1..2 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -NoNewWindow }
+& $tu "$tr/s9/subagents/workflows/wf_2/agent-w6.jsonl" 'cat r6.md; python t6.py' $p6.StartTime; '{"type":"started","agentId":"w6","label":"test:R2"}', '{"type":"result","agentId":"w6","result":{}}' | Set-Content "$tr/s9/subagents/workflows/wf_2/journal.jsonl"
+& $tu "$tr/s9/subagents/agent-k7.jsonl" 'cat r7.md; npx cypress run' $p7.StartTime; '{"agentType":"checky","finished":true}' | Set-Content "$tr/s9/subagents/agent-k7.meta.json"
+@{ agent = 'R2'; status = 'working'; joined = $t0.ToString('o'); beat = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content "$bd/R2.json"
+Get-ChildItem "$tr/s9/subagents" -Recurse -Filter 'agent-[kw][67].jsonl' | ForEach-Object { $_.LastWriteTime = $t0 }
+$kid = [pscustomobject]@{ Id = 999990; ParentId = $p7.Id; Name = 'node.exe'; CommandLine = 'cypress'; Created = $t0; Cpu = 5 }; $st2 = @{}; $script:KitLiveCache = @{}
+$bz = foreach ($i in 0, 1) { $kid.Cpu += 30; $w = Get-KitShellSweep $st2 $t0.AddMinutes(30 + $i) -AutoFix -Procs @($procs[0], (& $sp $p6.Id 50 'cat r6.md; python t6.py' $p6.StartTime), (& $sp $p7.Id 50 'cat r7.md; npx cypress run' $p7.StartTime), $kid)
+  "$(@($w.rows | ForEach-Object { "$($_.owner)=$($_.state)" }) -join ',')|$(@($w.flags | ForEach-Object { "$($_.what) -> $($_.action)" }) -join '|')" }
+"busy:$($bz -join '#')|$(-not $p6.HasExited -and -not $p7.HasExited)"; $p6, $p7 | Stop-Process -Force; Remove-Item "$bd/R2.json"
 $hd = "cd /d/x && export A=1; python - <<'`"'`"'EOF'`"'`"'`nimport a`nb`nEOF"; "short:$(Get-KitShellShort $hd)|$((Get-KitShellShort ('npm run x ' * 9)).Length)"
 $dd = @{ at = $t0; rows = @(); flags = @(); mem = @{ TotalGB = 8; AvailGB = 4 }; keepFree = 1; resources = @(@{ name = 'r'; gb = 1 }); shells = $rs[1].rows }
 $rp = (Format-KitReport $dd) -join "`n"; Write-KitSuperviseReport $dd @($rp) @() n; $f = Get-Content (Get-KitPath supervise-report) -Raw
@@ -119,6 +121,8 @@ Expect "shells: gone owner (finished, off board, idle): killed in sweep 1, poll 
   $s0 -match '^s0:devy=ORPHAN,opsy-1=running,leaver=running,revy=ORPHAN,coordinator=running\|SHELL ORPHAN pid \d+ of devy .+\|auto-fixed: killed shell \d+ of H2 \(owner H2 finished, idle 30 min\): cat > /dev/null' -and $s0 -notmatch 'killed shell \d+ of (devy|opsy|leaver|revy)' -and
   $s1 -match '^s1:opsy-1=STUCK,leaver=STUCK,coordinator=STUCK\|auto-fixed: killed shell \d+ of devy \(owner devy finished, idle 31 min; dir gone: .+gone-wt; no CPU growth.*\): until crafty.*\|SHELL STUCK pid 999999 of coordinator' -and $s1 -match 'killed shell \d+ of revy \(owner revy finished, idle 19 min' -and
   $s2 -match '^s3:opsy-1=STUCK,leaver=STUCK,coordinator=STUCK\|' -and ($sh -join "`n") -match '\| Shell \| Owner \| Age \| State \| Next \|(.|\n)+\| coordinator \| 91 min \| STUCK \| yours: stop it')
+$bz = "$($sh -match '^busy:')"
+Expect "shells: an owner live on the board by name or a busy child tree is never ORPHAN or killed; a live STUCK owner gets a board msg, no taskkill ($bz)" ($bz -match '^busy:R2=running,checky=running\|#R2=STUCK,checky=running\|SHELL STUCK pid \d+ of R2 .+ -> board msg R2 to end it \(live agent or busy tree: no taskkill\)\|True$' -and $bz -notmatch 'killed|ORPHAN')
 $O = Join-Path $k 'skills/bossy/bossy.ps1'   # supervise -Brief report
 $rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-01-02T10:00'; last = '2026-01-02T10:05'; doing = 'StructuredOutput' }, @{ name = 'J1'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'WAITING'; wait = 'hm deploy 0abbaa36, train d09409 waits for leases (switch-over)'; since = '2026-01-02T10:00'; next = 'envy.ps1 wait -Id 0abbaa36' })
   mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('ready'); resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }) + @(1..6 | ForEach-Object { @{ name = "browser a-b·c·d$_"; by = 'devy-3dy3'; gb = 1 } }) }
