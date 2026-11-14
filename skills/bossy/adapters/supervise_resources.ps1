@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L253 shells · L382 page · L918 usage · L1145 release · L1184 lines · L1217 cleanup ·
-  L1253 launch · L1331 pause · L1449 sessions · L1501 ci tasks · L1553 the kit origin's main and goodies
+Sections: L15 builds · L47 supervise · L253 shells · L382 page · L918 usage · L1141 release · L1180 lines · L1213 cleanup ·
+  L1249 launch · L1327 pause · L1445 sessions · L1497 ci tasks · L1549 the kit origin's main and goodies
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -793,10 +793,10 @@ function Format-KitSuperviseHtml($j) {
     "var sp=JSON.parse(S.getItem('kc-sp')||'{}'),y=S.getItem('kc-y');S.removeItem('kc-sp');S.removeItem('kc-y');d.querySelectorAll('details.sec').forEach(function(s){s.querySelectorAll(SC).forEach(function(e,i){var v=sp[s.id+i];if(v){e.scrollTop=v[0];e.scrollLeft=v[1]}})});ca();if(y)scrollTo(0,+y)})()"   # after collapse + filter: the layout is final
   $head = "<header class=top><div class=brand>$mark<span>claude-crew</span><small>Supervisor</small></div><div class=meta><span id=age class=chip title='Last sweep $($at.ToString('yyyy-MM-dd HH:mm'))' data-at='$($at.ToString('o'))' data-next='$(& $e $nextMin)'></span><span id=nx title='$(& $e $j.next)' data-due='$($at.AddMinutes([double]$nextMin).ToString('HH:mm'))' data-tail='$(& $e $nxTail)'>next $($at.AddMinutes([double]$nextMin).ToString('HH:mm'))</span></div><nav class=jl aria-label='Sections'>$((@(@('flags', 'Flags'), @('agents', 'Agents'), @('runs', 'Runs'), @('machine', 'Machine'), @('internals', 'Kit internals')) | ForEach-Object { "<a href='#sec-$($_[0])'>$($_[1])</a>" }) -join '')<span class='chip lv ACT'>$nAct ACT</span><span class='chip lv WATCH'>$nWatch WATCH</span></nav><div class=sp></div>" +
     "<div class=tb><input id=q type=search placeholder='Filter  ( / )' aria-label='Filter the page'><button id=ar class=ib type=button aria-pressed=true aria-label='Auto-refresh every 60 s' title='Auto-refresh every 60 s'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round /></svg></button><button id=tt class=ib type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
-  # each number once, in the order the owner acts on: flags, live agents, runs, machine; usage, top steps and the kit's own state folded in Kit internals
+  # each number once, in the order the owner acts on: flags, live agents, runs, machine; usage and the kit's own state folded in Kit internals
   $nRes = @($j.resources | Where-Object { $_ }).Count; $nSh = @($j.shells | Where-Object { $_ }).Count
   # one folded band (owner, 2026-11-13); its header repeats no number of the page
-  $intHtml = (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + (& $fold 'top' 'Top 5 steps, 7 days' $(if ($UP.top) { $UP.topN } else { 0 }) $UP.top -cls sub) + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $UP.kitRuns + $setHtml
+  $intHtml = (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $setHtml
   # open by default: flags, agents, runs, machine and resources; Kit internals folded (the page remembers each band and sub-section)
   # Shells: a fold only when one runs; none = one muted word in the Resources header
   $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $nRes "<div class=sxb>$resHtml</div>" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
@@ -896,8 +896,8 @@ function Get-KitSupervisePageCss {
   '.hm{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px;height:14px}.hm i{border-radius:2px;background:color-mix(in srgb,var(--slate) var(--a),var(--sf2));cursor:default}.hm i.nw{box-shadow:inset 0 0 0 1.5px var(--sage2)}.hm i:hover{box-shadow:inset 0 0 0 1.5px var(--fg)}' +
   '.hrs{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px}.hrs b{font-weight:500;white-space:nowrap}.hrs b.nw{text-align:right;color:var(--sage2)}.hk{font-size:10.5px;color:var(--mt);margin-top:4px}' +
   '@media(max-width:699px){.gks{grid-template-columns:minmax(0,1fr)}.gk{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:2px 6px}.gk>.gn,.gk>.gs,.gk>.gs0{grid-column:1/-1}.gh>.gn,.gh>.gc{display:none}.gk:not(.gh)>.gc .ic{display:inline-block;margin-right:2px}}' +
-  '.uc .sy{max-height:clamp(200px,36dvh,360px)}.uc .tw>table:not(.ag),.ut .tw>table:not(.ag){min-width:0}.uc :is(th,td){padding:3px 4px}.uc td{overflow-wrap:normal}.ut td:first-child,.us td:first-child,.ur td:first-child{overflow-wrap:anywhere}:is(.uc,.us) .sy td,.us td{white-space:normal}.ua td:first-child{white-space:nowrap}' +
-  '@media(min-width:641px){.ua :is(th,td):not(:first-child),.ut :is(th,td):nth-child(n+4),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.ru :is(th,td):nth-child(n+4):nth-child(-n+7),:is(.ur,.um) :is(th,td):not(:first-child){text-align:right}}' +
+  '.uc .sy{max-height:clamp(200px,36dvh,360px)}.uc .tw>table:not(.ag){min-width:0}.uc :is(th,td){padding:3px 4px}.uc td{overflow-wrap:normal}.us td:first-child,.ur td:first-child{overflow-wrap:anywhere}:is(.uc,.us) .sy td,.us td{white-space:normal}.ua td:first-child{white-space:nowrap}' +
+  '@media(min-width:641px){.ua :is(th,td):not(:first-child),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.ru :is(th,td):nth-child(n+4):nth-child(-n+7),:is(.ur,.um) :is(th,td):not(:first-child){text-align:right}}' +
   '.tw>table:not(.ag){min-width:520px}@media(max-width:640px){.ag .tm{display:none}.ag .ago{white-space:nowrap}.wrap{padding:8px}header.top{padding:6px 10px;position:static}.hs{display:none}.tb{width:100%}input[type=search]{flex:1;width:auto}' +
   # phone: a table row = a card, two fields a line (label above value), low-value columns ('~') hidden
   '.tw>table:not(.ag){min-width:0}.tw>table:not(.ag) tr:first-child{display:none}.tw>table:not(.ag),.tw>table:not(.ag) :is(tbody,tr,td){display:block;width:auto}.tw>table:not(.ag) tr{border-bottom:1px solid var(--ln);padding:4px 0}' +
@@ -1051,7 +1051,6 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
   foreach ($k in @($cache.Keys)) { if (-not $seen[$k]) { $cache.Remove($k) } }   # older than $Days: dropped
   $grp = { param([string]$by) @($steps | Where-Object { $_.$by -and $_.tok } | Group-Object $by | ForEach-Object { $g = @($_.Group); [pscustomobject]@{ k = $_.Name; n = $g.Count; sum = [long]($g | Measure-Object tok -Sum).Sum; cost = $(if (@($g | Where-Object { $null -ne $_.cost }).Count) { [math]::Round((@($g | Where-Object { $null -ne $_.cost }) | Measure-Object cost -Sum).Sum, 2) }); avg = [long]($g | Measure-Object tok -Average).Average; p50 = (Get-KitPct $g.tok 0.5); p90 = (Get-KitPct $g.tok 0.9); avgMin = $(if (@($g.min | Where-Object { $null -ne $_ }).Count) { [math]::Round(($g.min | Where-Object { $null -ne $_ } | Measure-Object -Average).Average, 1) }); p90Min = (Get-KitPct $g.min 0.9) } } | Sort-Object { -$_.avg * $_.n }) }
   $wf = @($steps | Where-Object run); $ended = @($wf | Where-Object result -in 'pass', 'empty', 'fail', 'stopped')   # stopped: ended with no result
-  $top = { param([double]$h) @($steps | Where-Object { $_.type -ne 'coordinator' -and ($Now - [datetime]$_.at).TotalHours -le $h } | Sort-Object { -$_.tok } | Select-Object -First 5 | ForEach-Object { [pscustomobject]@{ label = $(if ($_.run) { "$($_.label) · $($_.run)" } else { $_.label }); role = $_.role; model = $_.model; tok = $_.tok; min = $_.min; at = $_.at } }) }
   $hostMrs = Get-KitUsageHostMrs $since $Now $all.host
   $dayRows = @(foreach ($dk in $dayKeys) { $ds = @($steps | Where-Object { $_.dayc[$dk] }); $tk = 0L; $dc = [Collections.Generic.List[double]]::new()
       foreach ($x in $ds) { $dv = @($x.dayc[$dk]); $tk += [long]$dv[0]; if ($null -ne $dv[1]) { $dc.Add([double]$dv[1]) } }
@@ -1062,7 +1061,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
     merged = $(if ($hostMrs) { [pscustomobject]@{ source = 'host'; user = $hostMrs.user; n = @($hostMrs.mrs).Count } } else { [pscustomobject]@{ source = 'workflows'; user = ''; n = @($wf.mrs | Where-Object { $_ } | Select-Object -Unique).Count } })
     byType = (& $grp type); byRole = (& $grp role); byModel = (& $grp model)
     rates = [pscustomobject]@{ n = $ended.Count; empty = @($ended | Where-Object result -eq 'empty').Count; fail = @($ended | Where-Object result -eq 'fail').Count; stopped = @($ended | Where-Object result -eq 'stopped').Count; stuck = @($wf | Where-Object result -eq 'stuck').Count; running = @($wf | Where-Object result -eq 'running').Count }
-    top24 = (& $top 24); top7 = (& $top (24 * $Days)); days = $dayRows }
+    days = $dayRows }
   try { Write-KitAtomic $cf (@{ files = $cache; host = $hostMrs } | ConvertTo-Json -Depth 7 -Compress); Write-KitAtomic ($cf -replace '\.json$', '.result.json') ($usageOut | ConvertTo-Json -Depth 10 -Compress) } catch {}
   $usageOut
   } finally { $lkh.Dispose(); Remove-Item -LiteralPath $lk -Force -ErrorAction SilentlyContinue }
@@ -1073,7 +1072,7 @@ function Read-KitUsageResult { try { Get-Content -LiteralPath ((Get-KitPath usag
 # outcomes bar, 7-day chart, role and model tables with share bars), top 5 steps (7 days, today marked), internals (per step type, sessions when 2+)
 # called by Format-KitSuperviseHtml: its helpers ($e $n1 $grid $table $bar $trend $at) by dynamic scope
 function Format-KitUsageHtml($U) {
-  if (-not $U -or -not @($U.days).Count) { return [pscustomobject]@{ runs = ''; runsN = $null; kitRuns = ''; usage = '<p class=empty>No usage yet: bossy.ps1 budget -Usage runs each sweep.</p>'; top = ''; internals = '' } }
+  if (-not $U -or -not @($U.days).Count) { return [pscustomobject]@{ runs = ''; runsN = $null; usage = '<p class=empty>No usage yet: bossy.ps1 budget -Usage runs each sweep.</p>'; internals = '' } }
   $tk = { param($v) if ($null -eq $v) { '—' } elseif ([double]$v -ge 1e9) { "$(& $n1 ([math]::Round([double]$v / 1e9, 2)))B" } elseif ([double]$v -ge 1e6) { "$(& $n1 ([double]$v / 1e6))M" } elseif ([double]$v -ge 1e3) { "$([math]::Round([double]$v / 1e3))k" } else { "$([long]$v)" } }
   $usd = { param($v) if ($null -eq $v) { '—' } else { '$' + ([double]$v).ToString($(if ([double]$v -ge 1000) { '#,0' } else { '0.00' }), [cultureinfo]::InvariantCulture) } }
   $mn = { param($v) if ($null -eq $v) { '—' } elseif ([double]$v -ge 90) { "$(& $n1 ([double]$v / 60)) h" } else { "$(& $n1 $v) min" } }
@@ -1121,8 +1120,8 @@ function Format-KitUsageHtml($U) {
       "<details class='ru f'><summary><span class=gn0 title='$(& $e "$($r.run) · $($r.id)")'>$(& $e $lb)</span><span class='chip k-$(& $e (& $kindOf $r))'>$(& $e (& $kindOf $r))</span>$(if ($resumed["$($r.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(if ($r.status -eq 'running') { "<span class='chip s-act'>running</span>" })$(& $segBar $r)" +
       "<span class=m>$(& $tk $r.tok) tokens · $(& $usd $r.cost) · $(& $mn $r.wall)</span>$(if ([int]$r.merged) { "<span class='chip s-act'>$($r.merged) merged</span>" })$(if ($r.cap -and ($r.status -eq 'running' -or $bp -ge 0.8)) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" $(if ($bp -ge 0.8) { 'watch' }) })</summary>" +   # budget = context spend (budget -Run), not billed tokens
       "<div class=sy>$(& $table 'Step', 'Role', '~Model', 'Tokens', '~In / out / cache r / w', 'Elapsed', '~Tools', 'Result', '~Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok })))</div></details>" }
-  # dev and QA runs: running ones on top, then one fold per day (today open) with its one-line sum; kit upkeep runs (tidy, retro): kit internals
-  $devRuns = @($runs | Where-Object { (& $kindOf $_) -ne 'kit' }); $kitRuns = @($runs | Where-Object { (& $kindOf $_) -eq 'kit' })
+  # dev and QA runs: running ones on top, then one fold per day (today open) with its one-line sum; kit runs (tidy, retro) not shown
+  $devRuns = @($runs | Where-Object { (& $kindOf $_) -ne 'kit' })
   $dayOf = { param($r) try { ([datetimeoffset]"$(if ($r.started) { $r.started } else { $r.at })").LocalDateTime.ToString('yyyy-MM-dd') } catch { '' } }
   $daySum = { param($g) "$($g.Count) runs · $(($g | Measure-Object done -Sum).Sum) steps · $(& $tk ($g | Measure-Object tok -Sum).Sum) tokens · $(& $usd (($g | Where-Object { $null -ne $_.cost } | Measure-Object cost -Sum).Sum)) · $(($g | Measure-Object merged -Sum).Sum) merged" }
   $shown = @($devRuns | Where-Object status -ne 'running' | Sort-Object { "$($_.at)" } -Descending | Select-Object -First 25)   # newest 25 ended with their step tables: the page stays light
@@ -1130,17 +1129,14 @@ function Format-KitUsageHtml($U) {
       $dn = if ($g.Name -eq $at.ToString('yyyy-MM-dd')) { 'Today' } elseif ($g.Name -eq $at.AddDays(-1).ToString('yyyy-MM-dd')) { 'Yesterday' } elseif ($g.Name) { $g.Name.Substring(5) } else { 'Undated' }
       $old = @($g.Group | Where-Object { $shown -notcontains $_ }).Count
       & $fold "runs-$($g.Name)" $dn (& $daySum @($g.Group)) ((@($g.Group | Where-Object { $shown -contains $_ } | ForEach-Object { & $runRow $_ }) -join '') + $(if ($old) { "<p class=m>$old older run(s): supervise-report.json</p>" })) -Open:($dn -eq 'Today') -cls sub }) -join '')
-  $kitRunHtml = & $fold 'kit-runs' 'Upkeep runs (tidy, retro)' $kitRuns.Count "<div class='rus sy'>$(@($kitRuns | ForEach-Object { & $runRow $_ }) -join '')</div>" -cls sub
-  $today = $at.ToString('yyyy-MM-dd')
-  $topT = & $table 'Step', 'Role', 'Model', 'Tokens', 'Elapsed' @($U.top7 | Where-Object { $_ } | ForEach-Object { , @(@{ h = "$(& $e $_.label)$(if ("$($_.at)".StartsWith($today)) { " <span class='chip s-act'>today</span>" })" }, $_.role, ("$($_.model)" -replace '^claude-'), (& $tk $_.tok), (& $mn $_.min)) })
   $aggT = "<div class='uc ua'><h4>tokens avg / p50 / p90 · time = elapsed</h4><div class=sy>$(& $table 'Key', 'N', 'Avg', '~p50', '~p90', 'Avg time', '~p90 time' @($U.byType | Where-Object { $_ } | ForEach-Object { , @($_.k, $_.n, (& $tk $_.avg), (& $tk $_.p50), (& $tk $_.p90), (& $mn $_.avgMin), (& $mn $_.p90Min)) }))</div></div>"
   # one session = its role row already; 2+ = a folded split per session
   $sess = $(if ($cos.Count -ge 2) { "<details class=ru><summary>Coordinator sessions ($($cos.Count))</summary><div class='sy us'>$(& $table 'Session', 'Tokens', 'Est. cost', 'Elapsed', 'Model' @($cos | ForEach-Object { , @($_.session, (& $tk $_.tok), (& $usd $_.cost), (& $mn $_.min), ("$($_.model)" -replace '^claude-')) }))</div></details>" }) +
     $(if ($bgs.Count -ge 2) { "<details class=ru><summary>Agents outside workflows, by session ($($bgs.Count))</summary><div class='sy us'>$(& $table 'Session', 'Agents', 'Tokens', 'Est. cost', 'Roles' @($bgs | ForEach-Object { , @($_.session, $_.n, (& $tk $_.tok), (& $usd $_.cost), $_.roles) }))</div></details>" })
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
-  [pscustomobject]@{ runsN = @{ h = "<span class='iv$(if (-not $nRunning) { ' z' })'>$(Format-KitIcon run 'running runs')$nRunning</span> · $($devRuns.Count) in 7 days" }; kitRuns = $kitRunHtml; runs = $(if ($runHtml) { "<div class='rus sy'>$runHtml</div>" } else { '<p class=empty>None</p>' })
+  [pscustomobject]@{ runsN = @{ h = "<span class='iv$(if (-not $nRunning) { ' z' })'>$(Format-KitIcon run 'running runs')$nRunning</span> · $($devRuns.Count) in 7 days" }; runs = $(if ($runHtml) { "<div class='rus sy'>$runHtml</div>" } else { '<p class=empty>None</p>' })
     usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })$kpis<div class=ug>$chart<div class=ucol>$ocCard$modelT</div>$roleT</div>$(& $fold 'steps' 'Per step type' @($U.byType | Where-Object { $_ }).Count "$aggT$sess" -cls sub)"   # folded: the page fits ~3 screens at 1366
-    top = "<div class=ut>$topT</div>"; topN = @($U.top7 | Where-Object { $_ }).Count; usageN = "$(& $tk $td.tok) tokens today" }
+    usageN = "$(& $tk $td.tok) tokens today" }
 }
 # ---- release: every lease of an agent (release, board leave, workflows after each stage); idempotent
 # live gated builds of $Agent ('*' = all): its gate owner name, or a dir inside one of its worktrees (the owner may be a worktree name)

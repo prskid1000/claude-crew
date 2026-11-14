@@ -136,10 +136,10 @@ $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object 
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } })
 $cardGrid = @("class=ug><details class='sec sub st uc' id=sec-u-days open><summary><h4>Per day", "<div class=ucol><details class='sec sub st uc ", "Per model</h4>", "class='sec sub st uc ur' id=sec-u-roles open><summary><h4>Per role", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
-# the right-align nth-child ranges assume these column counts: step type 7, top-5 5, role 7, model 6, run steps 9
+# the right-align nth-child ranges assume these column counts: step type 7, role 7, model 6, run steps 9
 $thCount = { param($open) ([regex]::Match($h, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
-$colCounts = "$(& $thCount "class='uc ua'>") $(& $thCount '<div class=ut>') $(& $thCount "class='sec sub st uc ur'") $(& $thCount "class='sec sub st uc um'") $(& $thCount "class='ru f'>")"
-"$($h -notmatch 'Tokens today') $($h -match "class='ru f'") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 5 7 6 9')"
+$colCounts = "$(& $thCount "class='uc ua'>") $(& $thCount "class='sec sub st uc ur'") $(& $thCount "class='sec sub st uc um'") $(& $thCount "class='ru f'>")"
+"$($h -notmatch 'Tokens today') $($h -match "class='ru f'") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 7 6 9' -and $h -notmatch 'class=ut>')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")
 Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; runs, steps, outcomes, cost, card grids ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.001272|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True True')
