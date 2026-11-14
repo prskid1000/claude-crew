@@ -295,6 +295,9 @@ none yet
 ## Rule changes during the wave (newest last)
 "@) -and (Gold (Get-Content -Raw "$wd/wb.contracts.md") "# Contracts: orders-sort`n| Field / endpoint | Type | Producer | Consumers | Merge / deploy order | Backward-compatible |`n|---|---|---|---|---|---|`n| GET /orders?sort | query | X2 | X1 | X2 first | yes |`n## Rule changes during the wave (newest last)") -and
   $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
+foreach ($n in 'a', 'b', 'c') { Set-JsonFile "$wd/s$n.json" @{ title = $n; checks = @(@{ id = $(if ($n -eq 'c') { 'S2' } else { 'S1' }) }) } }
+$s = foreach ($n in 'AA:a', 'BB:b', 'BB:c') { $env:CLAUDE_AGENT, $f = $n -split ':'; Dt cases add T7 "$wd/s$f.json" }; $env:CLAUDE_AGENT = $null
+Expect 'cases add, shared task: another agent''s id refused, its title kept' ($s[1].out -match 'S1 \(AA\) belong to another' -and $s[2].out -match "title kept \('a', set by AA")
 $nf = Dt render commit (Join-Path $wd 'nope.json')
 Expect 'render: a missing spec file = usage (exit 2), no traceback' ($nf.code -eq 2 -and $nf.out -match 'no such spec file' -and $nf.out -notmatch 'Traceback')
 Remove-TestKit $k

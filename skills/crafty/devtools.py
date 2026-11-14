@@ -28,8 +28,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L46 config · L80 run · L168 tracker · L371 git host · L454 MR · L621 merge · L901 docs · L1056 publish · L1414 render ·
-  L1745 plugins · L1759 keepboth · L1778 selftest · L2190 CLI
+Sections: L46 config · L80 run · L168 tracker · L375 git host · L458 MR · L625 merge · L905 docs · L1060 publish · L1420 render ·
+  L1775 plugins · L1789 keepboth · L1808 selftest · L2225 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -185,7 +185,7 @@ def _tracker(*args):
                 tmp.append(p)
                 x = p
             argv.append(x)
-        w = bool(argv) and argv[0] in ('status', 'comment', 'describe', 'create', 'rename', 'attach')
+        w = bool(argv) and argv[0] in ('status', 'comment', 'describe', 'create', 'rename', 'attach', 'update')
         return _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'tracker', *argv], check=w, write=w)
     finally:
         for p in tmp:
@@ -340,14 +340,18 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     ai_md = rd(ai) if os.path.isfile(ai) else ((rounds or [{}])[-1].get('body') or '')
     own = rounds[:-1] if rounds and rounds[-1].get('body') == ai_md else rounds   # the newest round, already published, is the caller's
     gaps = case_gaps(ai_md, rd(guide) if os.path.isfile(guide) else None, t.get('description') or '', [r['body'] for r in own],
-                     f'finish {tid}', [r['body'] for r in _pub_read(f'{tid}:testing-doc').get('rounds') or []], tid) if ai_md.strip() else []
+                     f'finish {tid}', [r['body'] for r in _pub_read(f'{tid}:testing-doc').get('rounds') or []], tid,
+                     {str(e.get('id')) for e in ((state_read(task_file(tid)) or {}).get('cases') or {}).get('checks') or []
+                      if isinstance(e, dict) and e.get('by') and me_agent() and e['by'] != me_agent()}) if ai_md.strip() else []
     if gaps:
         raise SystemExit(f'finish {tid}: ' + '; '.join(gaps) + '. Fix the AI doc (run the cases), then finish again. Nothing was written.')
     ai_url, guide_url = _doc_url(tid, 'testing-ai', ai), _doc_url(tid, 'testing-doc', guide)
     md = t.get('description') or ''
     new = links_block(md, guide_url, ai_url)
     # failed lookup: describing would wipe the description
-    if t.get('id') and t.get('name') and new != md:
+    if (state_read(task_file(tid)) or {}).get('spec') and all(re.match(r'https?://', u) for u in (guide_url, ai_url)):   # a spec-rendered task refuses describe: the links go into its spec
+        _tracker('update', tid, '-Spec', json.dumps({'docs': {'human': guide_url, 'ai': ai_url}}) + '\n')   # \n: via a file, quotes kept
+    elif t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
     comment(tid, solution_md, 'comment-solution')
     try:   # after the tracker writes: a host error must not fail finish
@@ -853,7 +857,7 @@ def _auto_merge(worktree, iid, max_wait):
     st = (m.get('head_pipeline') or {}).get('status')
     if st in ('failed', 'canceled'):
         return _failed(H, m.get('head_pipeline'), iid)
-    # no CI config -> merge now (merge-when-green would wait forever); CI + no pipeline 5 min after the MR update -> NOT_MERGED
+    # no CI config -> merge now (merge-when-green waits forever); CI, no pipeline 5 min after the MR update -> NOT_MERGED
     no_ci = False
     if st is None:
         if no_mr_pipelines(proj):
@@ -921,7 +925,7 @@ def _cells(row):
     return [c.strip() for c in re.split(r'(?<!\\)\|', r[:-1] if r.endswith('|') and not r.endswith('\\|') else r)]   # \| stays inside its cell
 
 
-# inline styles only (no <code> / <col> / classes): Google Docs' HTML import keeps just span / cell styles and header widths
+# inline styles only: Google Docs' HTML import keeps just span / cell styles and header widths
 CODE_CSS = "font-family:'Roboto Mono';font-size:9pt;background-color:#f1f3f4"
 CELL_CSS = 'vertical-align:top;padding:4pt'
 HEAD_CSS = CELL_CSS + ';background-color:#e8eaed'
@@ -970,7 +974,7 @@ def md_to_html(md, title=''):
         t = re.sub(r'`([^`]+)`', lambda m: code.append(m[1]) or f'\0{len(code) - 1}\0', t)
         t = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', t)
         t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
-        # images before links: ![alt](url "width px"); in a table cell: cell-fit (cap px), stacked, each linked
+        # images before links: ![alt](url "width px"); in a cell: cell-fit, stacked, each linked
         t = re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;(\d+)&quot;|\s+"(\d+)")?\)', lambda m: img(m, cap), t)
         t = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2">\1</a>', t)
         return re.sub(r'\0(\d+)\0', lambda m: f'<span style="{CODE_CSS}">{code[int(m[1])]}</span>', t)
@@ -1053,7 +1057,7 @@ def make_evidence(name, files, folder=None, parent=None, key=None):
     return out
 
 
-# ---- publish: one artefact per key (<task or run>:<kind>), same id and link every round; .state/published/
+# ---- publish: one artefact per key (<task or run>:<kind>), same link every round; .state/published/
 PUB_KINDS = {'testing-doc': 'append', 'testing-ai': 'append', 'qa-report': 'append'}   # other kinds: replace
 GOALS_MARK = re.compile(r'(?m)^#{1,2} (Testing goals\b|Goals \(what must be true\))')   # templates.md "Testing goals"
 CHECKS_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*Steps\s*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence\s*\|')   # "Human testing doc" (positive cases)
@@ -1147,7 +1151,7 @@ PRE_EXISTING = re.compile(r'(?i)\b(known|ignored?|waived?|accepted|not (our|my|t
                           r'failure|error|overlap|problem|broken|behaviou?r)|\b(unrelated to|not caused by) (this|the) (change|task)\b')
 RAN = re.compile(r'(?i)^[\W_]*(pass|not[ _]tested[ _]local)')   # a Result that ran (markup allowed)
 THRESHOLD = re.compile(r'(?i)(>=|<=|[<>≥≤=]|\b(at least|at most|max|min)\b)\s*\d')   # a measured Expected
-# a quality to measure: a word after a requirement cue, or a bound with a unit; qa.qualityWords overrides ('' = off)
+# a quality to measure: a word after a requirement cue or a bound with a unit; qa.qualityWords overrides ('' = off)
 QUALITY = (r'(?i)\b(must|should|needs? to|has to|to be|so that|make[sd]?)\W+(\w+\W+){0,3}?(?P<w>fast(er)?|instant(ly)?|prominent|eye-catching|shiny|noticeable|'
            r'readable|legible)\b|(?:<|<=|≤|under|within|below|less than|at most)\s*(?P<n>\d+(?:\.\d+)?)\s*(?:ms|s|sec\w*|min\w*|px|%)(?!\w)')
 
@@ -1166,7 +1170,7 @@ def _warn_earlier(where, earlier):
                   ' their owner fixes them in a later round', file=sys.stderr)
 
 
-def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', human_prior=(), tid=''):
+def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', human_prior=(), tid='', skip=()):
     """AI doc rule breaks of the rows this round adds or changes (prior / human_prior = published round bodies; earlier rows
     and checks: WARN only), each
     naming its fix (pre-existing waiver, qa.notLocal PASS, qa.matrix gap); with the human doc and task: a human check no AI row
@@ -1210,7 +1214,9 @@ def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', hu
         has = lambda h, i: re.search(rf'(?<![\w-]){re.escape(h)}(?![\w-])', i)   # the AI row's # cell names it: "A3 (T2)"
         ran = [h for h in hid if any(has(h, i) and RAN.match(r or '') for i, r, _, _ in rows + earlier)]
         _warn_earlier(where, {'are human checks no AI row ran': [r[0] for r in hold if r[0] not in ran]})
-        if unran := [r[0] for r in hnew if r[0] and r[0] != '#' and r[0] not in ran]:
+        if wait := [r[0] for r in hnew if r[0] in skip and r[0] not in ran]:   # another agent's: its finish runs them
+            print(f'[{where}] human check(s) {", ".join(wait)} belong to other agents: WAIT', file=sys.stderr)
+        if unran := [r[0] for r in hnew if r[0] and r[0] != '#' and r[0] not in ran and r[0] not in skip]:
             add = ', '.join(f'{{"id": "A<n>", "type": "positive", "check": "{h}", ...}}' for h in unran)
             out.append(f'human check(s) {", ".join(unran)} have no AI row that ran them: the loop runs each'
                        ' (its AI row\'s # cell names it: "A3 (T2)")' + (f'; devtools.py cases add {tid} with case(s) {add}, cases result once run,'
@@ -1397,7 +1403,7 @@ R['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'],
 R['html'] = {'publish': lambda a: keep_doc(a['title'], _html_of(a), a['keep'], a.get('url'))}
 
 
-# adapter:report/command: reports.command with {title} {path} {parent} {url} (an earlier publish: update it); last output word = the URL
+# adapter:report/command: reports.command {title} {path} {parent} {url} (earlier publish: update); last output word = URL
 def _command(a):
     c = RCFG.get('command') or sys.exit('reports.type command needs reports.command')
     for k, v in (('title', a['title']), ('path', a['path']), ('parent', a['parent'] or a['keep'] or ''), ('url', a.get('url') or '')):
@@ -1524,8 +1530,30 @@ def cases_file(tid, kind):
     return out
 
 
+def me_agent():
+    return os.environ.get('CLAUDE_AGENT') or os.environ.get('KIT_AGENT') or ''
+
+
+def own_spec(old, new, replace=False):
+    """cases add on a shared task: entries tagged by the caller; another agent's id refused, its title / change kept."""
+    me, by, _ = me_agent(), old.get('by'), new.pop('by', None)
+    for k in ('cases', 'checks', 'qualities', 'unchanged') if me else ():
+        es = [e for e in new.get(k) or [] if isinstance(e, dict)]
+        theirs = {str(e.get('id')): e['by'] for e in old.get(k) or [] if isinstance(e, dict) and e.get('by') not in (None, me)}
+        if clash := [f'{e["id"]} ({theirs[str(e["id"])]})' for e in es if str(e.get('id')) in theirs]:
+            raise SystemExit(f'cases add: {k} id(s) {", ".join(clash)} belong to another agent: use your own ids ({me}-<id>). Nothing was written.')
+        for e in es:
+            e.setdefault('by', me)
+    if me and not by:
+        new['by'] = me   # the first adder owns the top-level fields
+    elif me and by != me and not replace:
+        for k in [k for k in new if k not in SPEC_KEYS and old.get(k) not in (None, '', new[k])]:
+            print(f'cases add: {k} kept ({str(old[k])[:60]!r}, set by {by}; --replace to change it)', file=sys.stderr)
+            new.pop(k)
+
+
 def cases_cmd(a):
-    """cases add <task> <spec.json|JSON> · result <task> <id> <PASS|FAIL|...> [<evidence> ...] · round <task> [--fix <sha>] [--bugs <t>]
+    """cases add <task> <spec.json|JSON> [--replace] · result <task> <id> <PASS|FAIL|...> [<evidence> ...] · round <task> [--fix <sha>] [--bugs <t>]
     [--retest <t>] · render <task> goals|ai|human -> the rendered file's path."""
     if len(a) < 2 or a[0] not in ('add', 'result', 'round', 'render'):
         print(cases_cmd.__doc__, file=sys.stderr)
@@ -1568,6 +1596,8 @@ def cases_cmd(a):
                                            'result': ', '.join(f'{v} {w}' for w, v in cnt.items()), 'bugs': opt.get('bugs') or 'none',
                                            'fix': opt.get('fix') or '', 'retest': opt.get('retest') or ''}]})
         else:
+            if verb == 'add':   # a shared task: one wave agent never rewrites another's title or ids
+                own_spec(c, new, '--replace' in rest)
             c = merge_spec(c, new)
         gaps = cases_gaps(c)
         x['cases'] = c
@@ -1640,7 +1670,7 @@ def spec_gaps(s, kind):
     return [k for k in SPEC_NEEDS.get(kind, ()) if not s.get(k)] + [f'changes[{i}].text' for i, c in enumerate(s.get('changes') or []) if not c.get('text')]
 
 
-# templates.md "Final reports": each role's JSON keys in reading order (any other crew member: the generic shape)
+# templates.md "Final reports": each role's JSON keys in reading order (others: the generic shape)
 REPORT_KEYS = {'devy': ('mrs', 'localTest', 'doc', 'done', 'deferred', 'needsDecision', 'seed', 'hooks', 'disputes'),
                'revy': ('findings',), 'checky': ('summary', 'report', 'rule', 'results'),
                'kitty': ('branch', 'commits', 'fixed', 'proposed', 'ask', 'report', 'next'), '*': ('result', 'links', 'next')}
@@ -2037,6 +2067,8 @@ def _publish_selftest(expect, refused):
             hg = [case_gaps('# AI\n' + ait + row('P1 (T2)', 's', 'PASS'), hm, '', (), 'x', [doc]) for hm in (hm3, hm3.replace('| T2 | 2. Sort.', '| T2 | 2. Sort first.'))]
         expect('case_gaps: an earlier human check (another agent\'s, T1) no AI row ran only WARNs; a new or changed one no row ran fails',
                not hg[0] and not hg[1] and case_gaps('# AI\n' + ait + row('P1', 's', 'PASS'), hm3, '', (), 'x', [doc])[0].startswith('human check(s) T2 have'))
+        expect('case_gaps: a new human check another wave agent owns (skip) = WAIT, no gap',
+               not [g for g in case_gaps('# AI\n' + ait + row('P1', 's', 'PASS'), hm3, '', (), 'x', [doc], skip={'T2'}) if 'T2' in g])
         refused('testing-ai: a new UI row missing qa.matrix on a shared doc -> refused',lambda: publish('TS:testing-ai', 'X', mine(row('P4', 's', 'PASS', '![b](https://i/b.png)'))), 'UI cases miss qa.matrix')
         g['CFG'] = {**CFG, 'qa': {}}
         os.makedirs(os.path.join(kp('agents'), 'd1'))
@@ -2149,6 +2181,9 @@ def _publish_selftest(expect, refused):
         w(os.path.join(kp('agents'), 'd1', 'resume.json'), json.dumps({'steps': [{'step': 'loop', 'item': 'T6', 'evidence': 'round 1 PASS', 'at': '2026-10-29T10:00:00'}]}))
         calls.clear(); finish('T6', human, '**Solution** — x', ai='https://x/ai-doc')
         expect('finish: an unreadable AI doc (a URL) skips the case checks', any(a[0] == 'comment' for a in calls))
+        task_index('T6', lambda x: x.update(spec={'title': 't'})); _pub_update('T6:testing-doc', url='https://x/h'); calls.clear()
+        finish('T6', 'https://x/h', '**Solution** — x', ai='https://x/ai-doc')
+        expect('finish on a spec-rendered task: links into its spec (tracker update), never describe', [a[0] for a in calls if a[0] in ('update', 'describe')] == ['update'])
     finally:
         ADAPTERS['report']['markdown'].pop('evidence', None)
         g.update(saved); shutil.rmtree(tmp, ignore_errors=True)
