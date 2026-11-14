@@ -1,6 +1,8 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
- wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate)
+ wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate;
+   new -Scope '<glob>,..' (brief agents[].paths): commit refuses files outside, -ScopeOk <decision id> = the owner's scope word)
+ scope [-Mrs <refs> [-Json]] [-Days 7]  -Mrs: each MR's source / test files + OUT-OF-AREA vs its logged area; none: one WATCH line for MRs merged outside it
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
@@ -14,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L483 stack · L663 gate · L979 check · L1296 pipes · L1353 guard · L2180 dir ·
-  L2190 checkpoint · L2219 prior · L2257 tracker · L2279 task spec · L2437 host
+Sections: L23 init · L29 sweep · L177 wt · L493 stack · L673 gate · L989 check · L1306 pipes · L1363 guard · L2190 dir ·
+  L2200 checkpoint · L2229 prior · L2267 tracker · L2289 task spec · L2447 scope · L2489 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -185,7 +187,7 @@ param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
   [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
-  [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json
+  [string]$Scope, [string]$ScopeOk, [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
@@ -337,6 +339,7 @@ switch ($Action) {
     elseif ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch on origin: checked out" }
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
+    if ($Scope) { Meta $path 'scope' (@(Split-KitList $Scope -Sep '\s*,\s*') -join "`n"); "area:     $Scope (wt commit, devtools.py mr / merge refuse files outside)" }   # brief agents[].paths
     $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
     $links = @(Add-DepLinks $path $src $Target)
     # linkPaths: git-ignored files
@@ -395,6 +398,13 @@ switch ($Action) {
       else { Write-Warning "core.hooksPath=$hp missing here: hooks would be skipped" }
     }
     if (-not $NoStage) { git -C $Dir add -A }
+    if (($area = @(Meta $Dir 'scope' | Where-Object { $_ })).Count) {   # the branch's diff and this commit stay in the brief area
+      $at = Meta $Dir 'target'; $br = (git -C $Dir rev-parse --abbrev-ref HEAD).Trim()
+      $out = @(Get-KitScopeOutside @(@(if ($at) { git -C $Dir -c core.quotepath=false diff --name-only "origin/$at...HEAD" }) + @(git -C $Dir -c core.quotepath=false diff --cached --name-only) | Select-Object -Unique) $area)
+      if ($out.Count -and -not ($ScopeOk -and "$(pwsh -NoProfile -File $KitCmd.orch decide check -Id $ScopeOk -Gate scope -Item $br -MaxHours 720)" -match '^WORD ')) {
+        [Console]::Error.WriteLine("commit refused: $($out.Count) file(s) outside the area ($($area -join ', ')): $(($out | Select-Object -First 12) -join ', '). Revert them (a product bug in a test-only area: pin today's behaviour, decide ask); an owner-approved exception: bossy.ps1 decide record -Gate scope -Item $br ..., then -ScopeOk <id>"); exit 1
+      }
+    }
     # merge subjects name branches
     $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
     $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
@@ -2434,6 +2444,48 @@ function Invoke-Tracker {
   }
 }
 
+# ---- scope: brief area globs (agents[].paths) vs a diff: wt commit, deploy plan (-Mrs), supervise (merged MRs); devtools.py glob_rx, the same rule
+function ConvertTo-KitGlobRx([string]$Glob) {   # ** any folders, * and ? in one name, a trailing / all below
+  $g = ($Glob.Trim() -replace '\\', '/') -replace '^\./'; if ($g.EndsWith('/')) { $g += '**' }
+  '^' + (@([regex]::Split($g, '(\*\*/?|\*|\?)') | ForEach-Object { switch -CaseSensitive ($_) { '**/' { '(?:.*/)?' } '**' { '.*' } '*' { '[^/]*' } '?' { '[^/]' } default { [regex]::Escape($_) } } }) -join '') + '\z'
+}
+function Get-KitScopeOutside([string[]]$Files, [string[]]$Globs) {   # no globs: no area, nothing outside
+  $rx = @($Globs | Where-Object { "$_".Trim() } | ForEach-Object { ConvertTo-KitGlobRx $_ }); if (-not $rx.Count) { return @() }
+  @($Files | Where-Object { $f = $_; $_ -and -not @($rx | Where-Object { $f -cmatch $_ }).Count })
+}
+$script:KitTestPathRx = '(?i)(^|/)(tests?|__tests__|specs?|cypress|e2e|fixtures?)/|[._-](test|spec|cy)\.\w+$|Tests?\.\w+$|(^|/)test_[^/]+\.py$'
+function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
+  $now = Get-Date; $log = @(Read-KitLog scope-log $now.AddDays(-30)); $areas = [ordered]@{}; $seen = @{}
+  foreach ($x in $log) { if ($x.event -eq 'area' -and $x.mr) { $areas["$($x.mr)"] = $x } elseif ($x.event -eq 'checked') { $seen["$($x.mr)"] = $x } }
+  $crew = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).BaseName
+  $words = @(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object { $_.gate -eq 'scope' -and $_.status -eq 'answered' -and ("$($_.by)" -split '[-_ :]')[0] -notin $crew })
+  $lifted = { param($c) @($words | Where-Object { ($_.item -and $_.item -in "$($c.branch)", "$($c.mr)") -or "$($c.mr)" -in @($_.mrs) }).Count -gt 0 }   # a person's scope word
+  $filesOf = { param($m) $rn, $iid = $m -split '!', 2; $ch = try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid/changes" } catch { $null }; @($ch.changes | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique) }
+  if ($Mrs) {   # each MR's source / test files and its area (deploy plan: the owner sees them before saying deploy)
+    $rows = foreach ($m in @(Split-KitList $Mrs)) {
+      $k = if ($m -match '([^/]+)/(?:-/)?(?:merge_requests|pulls?|pull-requests|pullrequest)/(\d+)') { "$($Matches[1])!$($Matches[2])" } else { $m -replace '^.*/' }
+      $f = @(& $filesOf $k); $a = $areas[$k]
+      [pscustomobject]@{ mr = $k; files = $f.Count; source = @($f | Where-Object { $_ -notmatch $script:KitTestPathRx }); test = @($f | Where-Object { $_ -match $script:KitTestPathRx }).Count; globs = @(if ($a) { $a.globs })
+        outside = @(if ($a -and -not (& $lifted ([pscustomobject]@{ mr = $k; branch = $a.branch }))) { Get-KitScopeOutside $f @($a.globs) }) }
+    }
+    if ($Json) { ConvertTo-Json @($rows) -Depth 4; return }
+    foreach ($r in $rows) { "$($r.mr): $(if ($r.files) { "$($r.files) file(s), $(@($r.source).Count) source, $($r.test) test" } else { 'files unknown (no change list)' })$(if (@($r.outside).Count) { " · OUT-OF-AREA: $(@($r.outside).Count) outside $($r.globs -join ', '): $(@($r.outside) -join ', ')" })" }
+    return
+  }
+  # post-hoc: MRs merged within -Days whose area was logged (devtools.py mr / merge), each merged one checked once ('checked')
+  $hits = foreach ($a in @($areas.Values | Where-Object { [datetime]$_.at -ge $now.AddDays(-$Days) })) {
+    if (-not ($c = $seen["$($a.mr)"])) {
+      $rn, $iid = "$($a.mr)" -split '!', 2; $m = try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid" } catch { $null }
+      if ($m.state -ne 'merged' -or -not ($f = @(& $filesOf "$($a.mr)")).Count) { continue }   # open: devtools.py merge checks it; unknown: next round
+      $c = [ordered]@{ mr ="$($a.mr)"; branch = "$($a.branch)"; globs = @($a.globs); outside = @(Get-KitScopeOutside $f @($a.globs)); mergedAt = "$($m.merged_at)" }
+      Write-KitLog scope-log checked $c
+    }
+    if (-not @($c.outside).Count -or ($c.mergedAt -and ($now - [datetime]$c.mergedAt).TotalDays -gt $Days) -or (& $lifted $c)) { continue }
+    "$($c.mr) ($(@($c.outside).Count) file(s) outside $(@($c.globs) -join ', '): $((@($c.outside) | Select-Object -First 4) -join ', '))"
+  }
+  if (@($hits).Count) { "WATCH OUT-OF-AREA merged: $(@($hits) -join '; ') | Tell the owner before any deploy of it: a revert MR, or their yes: decide record -Gate scope -Item <branch> (then supervise -Ack)." } else { 'scope: no merged MR outside its area' }
+}
+
 # ---- host: git-host / ci adapters for devtools.py
 # a bare MR ref (MR URL, [group/]repo!iid, "repo iid", iid = the current folder's origin) -> @{ repo; n [; type] }, else $null
 function ConvertFrom-MrRef([string[]]$Ref) {
@@ -2469,7 +2521,8 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
     'prior' { Invoke-KitVerb Invoke-Prior $__rest }
     'tracker' { Invoke-KitVerb Invoke-Tracker $__rest }
     'host' { Invoke-KitVerb Invoke-Host $__rest }
+    'scope' { Invoke-KitVerb Invoke-Scope $__rest }
     'runtime' { if (Get-Command Invoke-Runtime -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Runtime $__rest } else { [Console]::Error.WriteLine('crafty.ps1 runtime is a goody: run kitbag.py goody add runtimes'); exit 1 } }
-    default { Get-Content $PSCommandPath -TotalCount 16 | Select-Object -Skip 1; exit $(if ($__verb -in '-h', '--help', 'help', '-?') { 0 } else { 2 }) }
+    default { Get-Content $PSCommandPath -TotalCount 18 | Select-Object -Skip 1; exit $(if ($__verb -in '-h', '--help', 'help', '-?') { 0 } else { 2 }) }
   }
 }

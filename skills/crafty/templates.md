@@ -48,7 +48,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
 ## Wave brief
 Rendered (`devtools.py render wave-brief <spec.json> <brief.md>`, also `.contracts.md` + `.args.json`). Spec: `{ name, date?,
-items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, linkFrom, migrations }], agents: [{ id, items, area,
+items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, linkFrom, migrations }], agents: [{ id, items, area, paths (globs),
 repos, migrationRange, services, complex, note?, dependsOn?, migrations?, model?, effort? }], overlaps, branch, tracker,
 contracts: [{ name, type, producer, consumers, order, compatible }], openQuestions: [{ question, blocks, answers }], mandate, mode,
 holdMerge? }`.
@@ -62,9 +62,9 @@ holdMerge? }`.
 |---|---|---|---|---|
 | <repo> | `<repos root>/<repo>` | `main` | | <tool / none> |
 ## Agents
-| Agent | Items | Area (screens / packages / files) | Repos | Migration range | Services (leased, nothing else) | Complex? |
-|---|---|---|---|---|---|---|
-| X1 | <ids> | <area> | <repos> | <range or —> | <api; api-only items: no web> | <yes: why / no> |
+| Agent | Items | Area (screens / packages / files) | Paths (enforced) | Repos | Migration range | Services (leased, nothing else) | Complex? |
+|---|---|---|---|---|---|---|---|
+| X1 | <ids> | <area> | `<repo-relative glob>`, .. or any | <repos> | <range or —> | <api; api-only items: no web> | <yes: why / no> |
 
 **Overlaps:** <who touches what in a shared file> · **Contracts:** <field / endpoint X1 adds, X2 consumes after X1 merges>
 **Branch:** `f/<tag><task>-<slug>`, worktree name = agent id · **Tracker:** task under <epic> in <list>, assigned to <user>.

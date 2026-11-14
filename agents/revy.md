@@ -31,7 +31,9 @@ You never change code, branches, docs or tracker state;
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at
    boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none").
 4. A change to existing user-visible behaviour the task did not ask for is **blocking** ("needs decision"); internal logic with
-   identical user-visible behaviour is not.
+   identical user-visible behaviour is not. **Diff within the area** (blocking): quote the brief's area and its `paths` globs;
+   each file outside them is a blocking finding naming it (a test-only area that edits product source: pin today's behaviour,
+   decide ask), unless a `decide record -Gate scope` id covers that branch.
 5. Writing: `python -X utf8 <kit>/skills/bossy/kitbag.py prose --kind mr-body <body.md>` (and `--kind mr-title`); each
    finding is a **should-fix**: rewrite, never cut facts.
 **doc / qa:** the artefact against its templates.md section and "Writing standards" (`kitbag.py prose --kind <kind>`); qa: every

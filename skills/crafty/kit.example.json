@@ -196,7 +196,7 @@
   "durable": {
    "signals": "learning.jsonl", "last-retro": "learning.stamp", "last-kitty-audit": "kitty-audit.stamp",
    "kit-protect": "kit-protect.txt", "tracking": "tracking.json",
-   "deploy-log": "deploys.jsonl", "decisions-log": "decisions.jsonl", "audit": "audit/",
+   "deploy-log": "deploys.jsonl", "decisions-log": "decisions.jsonl", "scope-log": "scopes.jsonl", "audit": "audit/",
    "outbox": "outbox.jsonl", "pauses": "pauses/", "programs": "programs/",
    "tracker-none": "tracker-none/", "published": "published/",
    "localenv-env": "localenv/",
@@ -204,12 +204,12 @@
    "extras-used": "extras-used/", "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl"
   },
   "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kitbag.py kitlog): every log line: at, run, agent, task, script, verb, event + fields, secrets masked. A durable name's stream writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl (merged by bossy.ps1 audit).",
-   "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log", "params", "params-changes", "logs-summary", "leases"],
+   "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log", "scope-log", "params", "params-changes", "logs-summary", "leases"],
    "secretKey": "(?i)token|passw|secret|api[-_]?key|authoriz|cookie|credential|private[-_]?key|^pwd$|^pass$",
    "mask": [["\\b(bearer|basic)\\s+(?=[\\w.~+/=-]*\\d)[\\w.~+/=-]{12,}", "$1 [redacted]"], ["(?-i:\\b(glpat-|gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[\\w-]{8,})", "[redacted]"],
     ["\\beyJ[\\w-]{6,}\\.[\\w-]{6,}\\.[\\w-]+", "[redacted]"], ["(?i)\\b((?:access_|api_?|auth_?|id_)?token|passw\\w*|secret|api[-_]?key|pwd)([\"']?\\s*[=:]\\s*)(\"[^\"]*\"|'[^']*'|[^\\s&;,]+)", "$1$2[redacted]"],
     ["://[^/\\s:@]+:[^/\\s@]+@", "://[redacted]@"], ["[\\w.+-]+@[\\w-]+(\\.[\\w-]+)*\\.[A-Za-z]{2,}\\b", "[email]"]] },
-  "keep": { "_readme": "cleanup: hours an entry of the path stays after its last write ([hours, newest N kept]); unnamed entries: 72 h in the runtime root, 336 h in work/, 720 h in cache/ and logs/ (.state: never). Agents write only under crafty.ps1 dir (agents/<id>/, evidence/<item>/).",
+  "keep": { "_readme": "cleanup: hours an entry of the path stays after its last write ([hours, newest N kept]); unnamed entries: 72 h in the runtime root, 336 h in work/, 720 h in cache/ and logs/ (.state: never).",
    "sessions": 8, "tokens": 8, "android-tmp": 72, "shots": 72, "launches": 72, "agents": 168, "node-spec": 168, "apks": [72, 3], "evidence": 336, "waves": 336, "board": 336,
    "qa-seats": 336, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "audit": 720, "retros": 2160, "kitty-audits": 2160, "media": 168, "background": 72 }
  }

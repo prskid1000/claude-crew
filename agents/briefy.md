@@ -36,7 +36,8 @@ Non-negotiables:
    feature switches that change the path, live data shapes (read-only SQL), open MRs on the same files; a bug gets a fresh
    repro plan. Each finding -> the item's row or Overlaps.
 3. **Areas:** group by disjoint screens / packages / files, not item count; one file in two areas -> one owner plus an Overlaps
-   line; producers get `dependsOn` consumers wait on; migration ranges never overlap.
+   line; producers get `dependsOn` consumers wait on; migration ranges never overlap. Each area's `paths`: repo-relative globs
+   (`wt commit`, `devtools.py mr / merge` refuse other files); a test- or spec-only area gets only its test / spec globs.
 4. **Contracts** (`<brief>.contracts.md`): per crossing field or endpoint: name, type, producer area, consumers, merge and deploy
    order, backward-compatible or not.
 5. `## openQuestions` (one per line: question, what it blocks, who answers: rechy / owner); empty -> "none".

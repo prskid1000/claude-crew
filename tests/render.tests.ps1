@@ -273,10 +273,10 @@ Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty
 |---|---|---|---|---|
 | web | R/web | main |  | none |
 ## Agents
-| Agent | Items | Area (screens / packages / files) | Repos | Migration range | Services (leased, nothing else) | Complex? |
-|---|---|---|---|---|---|---|
-| X1 | A1 | orders screen | web |  | api | yes: new grid |
-| X2 | A2 | api sort | api |  |  | no |
+| Agent | Items | Area (screens / packages / files) | Paths (enforced) | Repos | Migration range | Services (leased, nothing else) | Complex? |
+|---|---|---|---|---|---|---|---|
+| X1 | A1 | orders screen | any | web |  | api | yes: new grid |
+| X2 | A2 | api sort | any | api |  |  | no |
 
 **Overlaps:** none · **Contracts:** ``orders-sort.contracts.md`` (1 crossing)
 **Branch:** ``f/<tag><task>-<slug>``, worktree name = agent id · **Tracker:** —.

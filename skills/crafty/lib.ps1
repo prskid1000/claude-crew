@@ -2358,7 +2358,7 @@ function Invoke-KitParamVerb([string]$Action, [string]$Key, [string]$Value, [str
 }
 # lines older than logs.keepDays (2 x the longest retro gap, >= 30 d) roll into logs-summary.jsonl per stream and month; retired
 # lessons stay raw (tidy compares against them); one shared handle keeps lines appended meanwhile
-$script:KitLogTrim = @{ 'signals' = @('skill', 'kind', 'text'); 'decisions-log' = @('event', 'agent', 'question'); 'deploy-log' = @('event', 'target', 'note') }
+$script:KitLogTrim = @{ 'signals' = @('skill', 'kind', 'text'); 'decisions-log' = @('event', 'agent', 'question'); 'deploy-log' = @('event', 'target', 'note'); 'scope-log' = @('event', 'mr') }
 function Invoke-KitLogTrim([switch]$DryRun, [datetime]$Now = (Get-KitNow)) {
   $rs = Get-KitPath last-retro; if (-not $DryRun -and (Test-Path -LiteralPath $rs)) { try { Add-KitParamObs 'logs.keepDays' ($Now - [datetime](Get-Content -LiteralPath $rs -Raw).Trim()).TotalDays 'signals' } catch {} }
   $sumF = Get-KitPath logs-summary -Create; $seen = @{}; foreach ($l in @(Get-Content -LiteralPath $sumF -ErrorAction SilentlyContinue)) { $o = try { $l | ConvertFrom-Json } catch { $null }; if ($o) { $seen["$($o.stream)|$($o.period)|$($o.from)|$($o.to)|$($o.n)"] = 1 } }

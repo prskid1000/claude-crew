@@ -1,48 +1,49 @@
 # Kit state (`.state/` durable, `.runtime/` disposable)
-Read by kitty when a script's state changes, revy (kind kit), agents needing a task's links ("Indexes").
+Read by kitty on a state change, revy (kind kit), agents needing a task's links ("Indexes").
 Paths: `kit.example.json` `_paths` (`Get-KitPath` / `kit_path`); schemas: the Inventory below (`kitbag.py state lint` parses
-it; supervise runs it each beat on recent files: a BAD file = WATCH).
+it; supervise lints recent files each beat: BAD = WATCH).
 
 ## Rules
-- **One file per key** (task, session, decision, run, publish key); a shared map only when one writer owns it.
+- **One file per key** (task, session, decision, run, publish key); a shared map only with one owning writer.
 - **Writes:** `Write-KitState` (lib.ps1) / `state_write` (kitbag.py): temp file + move, `schemaVersion`, `updated`,
   `holder` {agent, session, pid, pidStart, holderPid, holderStart}; read-modify-write inside `Invoke-KitLocked` / `locked()`
-  on that file. Log lines only through kitlog (`Write-KitLog`, `kitlog()`).
-- **Reads:** `Read-KitState` / `state_read`: `$null` / `None` when missing or broken, never a throw; unknown fields kept.
-- **Times:** ISO 8601 with offset (`ToString('o')`, `isoformat()`); readers accept the old offset-less form.
+  on that file. Log lines: kitlog only (`Write-KitLog`, `kitlog()`).
+- **Reads:** `Read-KitState` / `state_read`: `$null` / `None` when missing or broken, never throws; unknown fields kept.
+- **Times:** ISO 8601 with offset (`ToString('o')`, `isoformat()`); readers accept offset-less ones.
 - **Ids:** stable, file-safe: session `<agent>-<8 hex>`, decision `d-<yyyyMMddHHmmss>-<agent>-<4>`, task = tracker id, run =
   workflow run name.
-- **Format:** JSON for scripts; markdown only for people (`resume-<run>.md`, resume briefs, reports): templates.md kind `kit-report`.
+- **Format:** JSON for scripts; markdown only for people (`resume-<run>.md`, resume briefs, reports: templates.md `kit-report`).
 - **Change a schema:** bump `v<n>` in its row and the writer; readers accept `n-1`. A new file: a `_paths` name + a row.
-  Deleting state still in use: the owner decides (`bossy.ps1 decide ask`).
-- **Lifecycle:** `.runtime` ages out by `_paths.keep` (`bossy.ps1 cleanup`); in `.state` cleanup only trims the logs the Inventory
-  says (`Invoke-KitLogTrim`) and deletes `tracking.json.migrated`.
+  Deleting state in use: the owner decides.
+- **Lifecycle:** `.runtime` ages out by `_paths.keep` (`bossy.ps1 cleanup`); in `.state` it only trims the Inventory's logs
+  (`Invoke-KitLogTrim`), deletes `tracking.json.migrated`.
 
-## Indexes (read these, not the tracker's comments)
+## Indexes (not the tracker's comments)
 - `.state/tasks/<id>.json`: `track` (MRs in merge order, mergeAfter, onMerged, done: `bossy.ps1 track`), `docs.<kind>` (url,
   key, type: `devtools.py doc --key <id>:<kind>`), `comments.<kind>` (the comment `tracker comment -Kind` edits), `envRuns[]`
-  (env, run, code, pass, fail, notTested, doc: `pokey.ps1 finalize`), `cases` (the test cases spec: `devtools.py cases`); goody task-rollup: `rollup` (a parent: sections, milestones,
+  (env, run, code, pass, fail, notTested, doc: `pokey.ps1 finalize`), `cases` (`devtools.py cases`); goody task-rollup: `rollup` (a parent: sections, milestones,
   `closeAsk` = its one close-parent decision, `parentClosed`), `itemIds` / `itemsFrom` / `itemsSig` / `itemsFinal` (the Items checklist).
 - `<qa run>/index.json`: `items.<code>` -> tasks, doc, pubKey, pass, fail (`pokey.ps1 finalize`); a build run:
   `work/waves/<run>.json` (`bossy.ps1 report`).
 
 ## Inventory
 Schema: `<form>[=<glob>] v<n>: <required keys> [+ <allowed keys>]` (a list: another key = drift, BAD); a `<name>:<part>` row = another file kind in that folder; form json (one object), dir (one JSON per key, default `*.json`), jsonl (one
-object a line; the last is checked), text; v0 = written before this file (no schemaVersion yet).
+object a line; the last is checked), text; v0 = no schemaVersion yet.
 
 | Name | Owner | Schema | Lifecycle | Change (2026-10-30) |
 |---|---|---|---|---|
 | `tasks` | `lib.ps1` `Update-KitTracking` / `Update-KitTaskIndex`, `devtools.py publish`, `pokey.ps1 finalize` | `dir v1: task` | keep | new: replaces `tracking` |
 | `tracking` | none (legacy) | `json v0: tasks` | read until the first tracking write moves it into `tasks` and deletes it | cleanup deletes `.migrated` |
 | `automerge` | `devtools.py merge`, `bossy.ps1 track run` | `json v1: refs` | an entry until its MR merges | new (was in `tracking`) |
-| `mr-ignore` | `bossy.ps1 track ignore` | `json v1: mrs` | keep | new: MRs the untracked-MR watch skips |
+| `mr-ignore` | `bossy.ps1 track ignore` | `json v1: mrs` | keep | new |
 | `published` | `devtools.py publish`, `crafty.ps1 tracker create -Key` | `dir v1: key` | keep | schemaVersion |
 | `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) | trigger queue, boot / wake |
 | `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) | new |
-| `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep | new: trimmed months |
+| `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep | new |
 | `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) | cleanup trims |
 | `decisions-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` | cleanup trims |
 | `deploy-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` | cleanup trims |
+| `scope-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` | new |
 | `leases` | `kitlog` | `jsonl v0: at event kind` | keep, capped | none |
 | `outbox` | tracker writes | `jsonl v0: at` | until replayed | none |
 | `audit` | `kitlog` streams | `text v0` | 30 d | none |

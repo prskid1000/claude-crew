@@ -18,12 +18,12 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- A spec-only (test-only) area finds a product bug -> pin today's behaviour in the spec, report BACKEND FIX + `decide ask`, never edit product source (a spec-only area's MR changed 4 service / repository files, passed review and CI, and reached a test env). (1x)
 - wt commit refused (prose or lint finding) -> fix it and commit before any wt sync (uncommitted review-fix edits were lost across a sync). (1x)
 - A contract claims an old consumer ignores a new param -> test it against the deployed consumer (one call on staging) before merge (kwargs-strict handlers reject unknown params). (2x)
 - A long kit verb (bossy deploy request, waits) via Bash -> start it with run_in_background or a timeout over 120 s, then read the output file (a foreground call cut at 120 s loses the plan). (1x)
 - After `wt new` -> check the dependency links (node_modules, linkPaths) exist before editing; missing: save the diff, recreate with `wt new` (a worktree without them fails wt remove and can empty the folder). (1×)
 - Shipping an MR -> after the local PASS run `devtools.py finish` first, then `mr` with both doc links (take the link finish printed), then merge (merge refuses a body without the Testing doc lines; a gws timeout may move the AI doc). (3×)
-- An MR body says "changed methods without a test: none" -> check it against the diff: every changed wiring or entry method needs a test or is listed (the core logic alone was tested once: hard miss). (1x)
 - Code reads cloud secrets or creds -> lazy-load them and run unit tests once with creds unset before the MR (import-time reads pass on a laptop and fail on a clean CI container). (1x)
 - Wave branches of one task -> pass `--override` with the wave id to devtools finish and mr on each sibling branch (the prior-work gate refuses siblings until it counts the batch as one task). (2x) (2×)
 - Writing a shared task doc (one testing-ai key, many wave agents) -> read the current doc first, keep every other area's section and Rounds rows, write patches with the Edit tool or a file (heredoc python collapses backslash-n; areas lost rows). (4x)
@@ -37,7 +37,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Running a script -> always through its interpreter (`python -X utf8 x.py`, `node x.mjs`, `& x.ps1` / `pwsh -File`) (`& x.py` or `.\x.py` opens the Windows association, an editor on the owner's screen; the guard denies it, doc openers, `--web`, `gh browse` too).
 - Before merge -> confirm a pipeline exists for the MR head; none (rules skipped): trigger one or report NOT_MERGED with the reason (agents waited silently on no pipeline). (2x)
 - Asking for re-review or merge after review fixes -> push the commit first and check the host's MR head sha equals the local HEAD (reviews ran on the old head). (2x)
-- Any claim in the MR body or goals doc (PASS, cleanup added, red before the fix, "no gate exists") -> name its proof from the final head (test, grep, request) and update the goals doc before done (a compile error was called a red test). (5×)
+- Any claim in the MR body or goals doc (PASS, cleanup added, red before the fix, "no gate exists", "untested methods: none") -> name its proof from the final head (test, grep, request) and update the goals doc before done (a compile error was called a red test). (6×)
 - An FK on an old table -> count orphan refs first (local env and a replica), clean them in an earlier changeSet (MySQL rechecks every row on the table copy, 1452; a failed DDL leaves a half-added column). (2×)
 - Gating a feature -> gate only what it introduced, on the flag, in the shared method (grep every caller); on/off tests; status gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in another service ship OFF (gates leaked into old paths). (14×)
 - Linked shared deps older than the target fail typecheck / build / Jest -> keep the earlier local result, no reinstall, CI decides (a reinstall breaks every linked worktree). (7×)

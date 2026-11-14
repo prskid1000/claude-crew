@@ -31,8 +31,9 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
    producers before consumers (`repos[].role`), plus every "deploy after / before" in the MR bodies, briefs and
    `<brief>.contracts.md`; migrations of the batch listed; the credentials, roles and secrets the deploy needs exist (names
    only, never print a value); the host reachable; a service restart cuts no live work there (the busy check of the org's deploy
-   rules: busy -> wait, re-check, bounded). A check that fails or cannot run -> `bossy.ps1 decide ask` with the evidence;
-   never deploy past it.
+   rules: busy -> wait, re-check, bounded); each MR's source / test file counts from the plan, and every `OUT-OF-AREA` MR (diff
+   outside its brief area) quoted in the report. A check that fails or cannot run, or an OUT-OF-AREA MR without a `decide
+   record -Gate scope` word -> `bossy.ps1 decide ask` with the evidence; never deploy past it.
 4. **Deploy** per the org's deploy rules, in the order of step 3; a deploy branch only through a deploy MR, never a push to it
    (the guard denies it): `bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr -Mrs <refs> -Decision <id>` (squash off,
    merged on green); wait for each deploy pipeline (`crafty.ps1 pipes`); a failed job -> stop, step 6. A restart by hand only

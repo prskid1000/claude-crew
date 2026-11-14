@@ -56,18 +56,18 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
 - D2. **ENV-FIX**: a local-env fix only the coordinator may do (`up`/`down`/`refresh`/`drop`, shared DB repair): `& $O decide ask
   -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, stop THAT item (`needsEnvFix`), continue the others.
   `localTest` BLOCKED only for an owner decision or a remote-only dependency (`blockedKind`, `blockedReason`).
-- D3. **Deferred** item that is a person's step, no code ("the team labels a sheet"):
+- D3. **Deferred** person's step, no code:
   `kind: people` (holds no promotion).
-- No `localEnv` for your repo: step 5 = the automated tests only; "local env: none" in the MR and report.
-  `envy` (steps 2, 5, `$L`) is the goody `local-env`: `localEnv` set but `skills/envy/` missing ->
-  `kitbag.py goody sync` once, else the same as no `localEnv`.
+- No `localEnv` for your repo: step 5 = automated tests only; "local env: none" in MR and report.
+  `envy` (steps 2, 5, `$L`) = goody `local-env`: `localEnv` set, `skills/envy/` missing -> `kitbag.py goody sync`
+  once, else as no `localEnv`.
 
 **Rules**
-- **Board:** `join` first (DUPLICATE for your id -> stop without writing); `beat -Session <t> -Status "<doing>"` before builds
+- **Board:** `join` first (DUPLICATE -> stop, write nothing); `beat -Session <t> -Status "<doing>"` before builds
   and pushes; `check -Worktree <wt> -Session <t>` before each commit (claims it: cleanup keeps it; another writer -> stop,
   tell the coordinator); `leave` at the end.
-- **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; never install into
-  a linked `node_modules`/`.venv`; `wt sync` before editing, before every push, before merging; `wt remove` when done.
+- **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; `wt sync` before
+  editing, before every push, before merging; `wt remove` when done.
 - **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never a build or test tool
   directly; waiting and killed builds are normal. Tool timeout 600000 ms, or `run_in_background` bounded
   (timeout or loop cap, no stdin read; killed before `leave`). A gate still queued when you must stop: push, Draft MR with
@@ -99,16 +99,18 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   steps 1-5. `board join` prints CHECKPOINT: start at that step; verify the done ones, never redo them; keep an uncommitted
   diff. `board beat` prints PAUSE (do what it says; a gate line `stopped by the kit: PAUSE` = that build or test is not done:
   checkpoint `-Next 'redo: <step>'`, never a fix round).
-- **Scope:** only your items; additive changes (optional fields, new endpoints/params, flags); never remove features or inputs;
-  DTOs not entities in APIs; foreign files only as one-line hooks you list; decisions in the brief are final, a NEW one -> D1.
+- **Scope:** your items, in the brief's area `paths` (`wt commit`, `devtools.py mr / merge` refuse others; exception: owner's
+  `decide record -Gate scope` id, `-ScopeOk`/`--scope-ok`); additive (optional fields, new params, flags); never
+  remove features or inputs; DTOs not entities in APIs; foreign files: listed one-line hooks in `paths`;
+  decisions in the brief are final, a NEW one -> D1.
 - **Shared code:** before changing a shared helper, hook, service, formatter, validator, default or global style, grep every
   caller; overrides opt-in; key shared formatters by field; a round-trip test; list callers in the MR and the testing goals.
   A fix on one path: grep every other path that writes, serves or proxies the same data (sibling services, other products,
   every render path) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
   endpoint and delete stale known-bug blocks in the same MR.
 - **Text files:** write with the Write tool, change with Edit, pass file paths (MR, commit, test docs: specs);
-  never heredocs / sed / string-replace for text with backticks, backslashes, quotes or CRLF, or over ~8 KB (unexpected EOF,
-  mangled); a scratchpad file passed to the interpreter is fine.
+  never heredocs / sed / string-replace for text with backticks, backslashes, quotes or CRLF, or over ~8 KB (mangled); a
+  scratchpad file passed to the interpreter is fine.
 - **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
   (`repos[].migrations.check`, else Liquibase: goody `liquibase`; exit 5 = UNRUN: say so in the MR). Local env DB drift (a

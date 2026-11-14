@@ -14,6 +14,8 @@
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
+ mr / merge [--scope "<glob>,.."] [--scope-ok <decision id>]: a diff outside the area (--scope, else the wt new -Scope record)
+  is refused naming the files (merge: the host's diff); --scope-ok = a person's decide record -Gate scope -Item <branch>, logged
  python -X utf8 devtools.py merge <worktree> <iid> [--override "<why>"]   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
   whose AI testing doc has no local reproduction; --override passes, logged)
@@ -28,8 +30,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L46 config · L80 run · L168 tracker · L375 git host · L458 MR · L625 merge · L905 docs · L1060 publish · L1420 render ·
-  L1775 plugins · L1789 keepboth · L1808 selftest · L2230 CLI
+Sections: L48 config · L82 run · L170 tracker · L378 git host · L439 scope · L518 MR · L690 merge · L980 docs · L1135 publish ·
+  L1495 render · L1851 plugins · L1865 keepboth · L1884 selftest · L2323 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -217,6 +219,7 @@ def prose(kind, text):
 
 PROSE_OK = ''   # --prose-ok "<why>": a format the brief fixes; the findings still print
 OVERRIDE = ''   # --override "<why>": past the prior-work gate, logged
+SCOPE, SCOPE_OK = '', ''   # --scope "<globs>" (mr, merge): the area; --scope-ok <decision id>: a person's scope word, logged
 TAG = (CFG.get('tracker') or {}).get('branchTag') or {'clickup': 'CU-', 'github': 'GH-', 'gitlab': 'GL-'}.get(TRACKER_TYPE, '')
 
 
@@ -423,15 +426,72 @@ def _mr_api(host, proj, iid):
     return lambda verb, **a: _host(verb, **{'type': host, 'repo': proj, 'n': str(iid), **a})
 
 
+def wt_record(worktree, key):
+    """A crafty.ps1 wt new record (<git dir>/claude-<key>) as its lines; None when absent."""
+    gd = _run(['git', '-C', worktree, 'rev-parse', '--git-dir'])
+    f = os.path.join(gd if os.path.isabs(gd) else os.path.join(worktree, gd), f'claude-{key}')
+    if os.path.exists(f):
+        with open(f, encoding='utf-8-sig') as fh:
+            return [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
+    return None
+
+
+# ---- scope: an area's path globs (brief agents[].paths); a diff outside them is refused (lib.ps1 Get-KitScopeOutside: same rule)
+def glob_rx(g):
+    """A repo-relative area glob as a regex: ** any folders, * and ? within one name, a trailing / = everything below."""
+    g = re.sub(r'^\./', '', g.strip().replace('\\', '/'))
+    g = g + '**' if g.endswith('/') else g
+    return re.compile(''.join({'**/': '(?:.*/)?', '**': '.*', '*': '[^/]*', '?': '[^/]'}.get(p, re.escape(p)) for p in re.split(r'(\*\*/?|\*|\?)', g)) + r'\Z')
+
+
+def scope_outside(files, globs):
+    """The files no glob matches ([] when there are no globs: no area, no check)."""
+    rx = [glob_rx(g) for g in globs if g.strip()]
+    return [f for f in files if rx and not any(r.match(f) for r in rx)]
+
+
+def scope_of(worktree, given='', mr='', log=None):
+    """Area globs: --scope (comma list), else the worktree's wt new -Scope record, else the MR's last scope-log area (a deferred
+    merge from the main checkout: bossy.ps1 track run); [] = no area."""
+    if given or (rec := wt_record(worktree, 'scope')):
+        return [g.strip() for g in given.split(',') if g.strip()] if given else rec
+    try:
+        lines = open(log or kit_path('scope-log'), encoding='utf-8').read().splitlines() if mr else []
+    except OSError:
+        lines = []
+    areas = [x for x in (json.loads(ln) for ln in lines if f'"{mr}"' in ln) if x.get('event') == 'area' and x.get('mr') == mr]
+    return list(areas[-1].get('globs') or []) if areas else []
+
+
+def scope_refusal(files, globs, branch, ref='', what='mr'):
+    """'' when the files stay in the area or --scope-ok names a person's scope word for this branch / MR; else the refusal."""
+    out = scope_outside(files, globs)
+    if not out:
+        return ''
+    if SCOPE_OK:
+        orch = os.path.join(KIT_DIR, 'skills', 'bossy', 'bossy.ps1')
+        for k in [['-Item', branch]] + ([['-Mrs', ref]] if ref else []):
+            if _run([PWSH, '-NoProfile', '-NonInteractive', '-File', orch, 'decide', 'check', '-Id', SCOPE_OK, '-Gate', 'scope', '-MaxHours', '720', *k], write=False).startswith('WORD '):
+                kitlog('calls', 'scope-override', {'what': what, 'branch': branch, 'mr': ref, 'decision': SCOPE_OK, 'outside': out[:20]})
+                return ''
+    return (f'{what} refused: {len(out)} file(s) outside the area ({", ".join(globs)}): {", ".join(out[:12])}{" ..." if len(out) > 12 else ""}.'
+            f' Revert them (a product bug in a test-only area: pin today\'s behaviour, decide ask); an owner-approved exception:'
+            f' bossy.ps1 decide record -Gate scope -Item {branch} ..., then --scope-ok <id>')
+
+
+def scope_note(url, globs, branch):
+    """The MR's area in the durable scope log: deploy plan and supervise compare its merged diff with it."""
+    m = re.search(r'([^/]+)/(?:-/)?(?:merge_requests|pulls?|pull-requests|pullrequest)/(\d+)', url or '')
+    if globs and m:
+        kitlog('scope-log', 'area', {'mr': f'{m.group(1)}!{m.group(2)}', 'url': url, 'branch': branch, 'globs': globs})
+
+
 def target_of(worktree):
     """MR target: the worktree's record (crafty.ps1 wt new), else kit.local.json repos[].target, else origin/HEAD.
     A fallback is printed (stderr) with its source; None when all three are missing."""
-    gd = _run(['git', '-C', worktree, 'rev-parse', '--git-dir'])
-    gd = gd if os.path.isabs(gd) else os.path.join(worktree, gd)
-    f = os.path.join(gd, 'claude-target')
-    if os.path.exists(f):
-        with open(f, encoding='utf-8-sig') as fh:
-            return fh.read().strip() or None
+    rec = wt_record(worktree, 'target')
+    if rec is not None:
+        return (rec or [None])[0]
     # repos[]: checkout = this main checkout, or name/alias = remote repo name
     common = _run(['git', '-C', worktree, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
     main = os.path.normcase(os.path.dirname(os.path.normpath(common))) if os.path.isdir(common) else ''
@@ -559,6 +619,9 @@ def mr_create(worktree, title, body_md, tgt=None):
     if not tgt:
         raise SystemExit('no target: no crafty.ps1 wt record, no kit.local.json repos[].target for this repo and no origin/HEAD'
                   ' - pass it as the 4th argument (git remote set-head origin --auto fixes origin/HEAD)')
+    globs = scope_of(worktree, SCOPE)
+    if globs and (no := scope_refusal(_run(['git', '-C', worktree, '-c', 'core.quotepath=false', 'diff', '--name-only', f'origin/{tgt}...HEAD']).splitlines(), globs, src)):
+        raise SystemExit(no)
     ui = _ui_line_missing(worktree, tgt, body_md)
     if ui:
         print(f'[mr] the diff touches templates/styles ({", ".join(ui[:3])}{" ..." if len(ui) > 3 else ""}) but "## How tested" has no'
@@ -569,6 +632,7 @@ def mr_create(worktree, title, body_md, tgt=None):
         up = _host('mr.update', type=host, repo=proj, n=old.get('iid') or old.get('number'), title=title, body=body_md)
         if not (isinstance(up, dict) and up.get('web_url')):
             print(f'[mr] {old["web_url"]} is open from {src}; its body was not updated (git host has no mr.update: {str(up)[:200]}) - edit it by hand', file=sys.stderr)
+        scope_note(old['web_url'], globs, src)
         return old['web_url']
     m = _host('mr.create', type=host, repo=proj, source=src, target=tgt, title=title, body=body_md)
     url = m.get('web_url') if isinstance(m, dict) else None
@@ -579,6 +643,7 @@ def mr_create(worktree, title, body_md, tgt=None):
             print(f'[mr] an open MR from {src} already exists (a previous call opened it): {url} - update its description if needed', file=sys.stderr)
     if not url:
         raise SystemExit(f'MR not created: {str(m)[:500]}')
+    scope_note(url, globs, src)
     return url
 
 
@@ -839,6 +904,16 @@ def _auto_merge(worktree, iid, max_wait):
         return f'!{iid}: no MR state from the git host for {proj} (auth status? network? path?); reply: {str(raw)[:300]}\nWAIT'
     if m.get('state') != 'opened':
         return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
+    ref = f'{proj.rsplit("/", 1)[-1]}!{iid}'
+    if globs := scope_of(worktree, SCOPE, ref):   # the host's diff, not the worktree's: what merges is checked
+        ch = H('mr.changes')
+        ch = ch if isinstance(ch, dict) else {}
+        files = sorted({p for c in ch.get('changes') or [] for p in (c.get('new_path'), c.get('old_path')) if p})
+        if ch.get('overflow') or not files or (len(files) >= 100 and host != 'gitlab'):   # unpaged lists stop at 100: never read a cut list as in-area
+            files.append('<the host change list is empty or cut: merge by hand or --scope-ok>')
+        scope_note(m.get('web_url') or '', globs, m.get('source_branch') or '')
+        if no := scope_refusal(files, globs, m.get('source_branch') or '', ref, 'merge'):
+            return f'!{iid}: {no}\nNOT_MERGED'
     body = str(m.get('description') or m.get('body') or '').replace('\r\n', '\n')
     if TASK_LINK.get(TRACKER_TYPE, '\0') in body and not (DOC_LINK.search(body) and AI_LINK.search(body)):   # a task's MR: both docs linked first
         tid = _mr_task(m, proj, iid)
@@ -1706,8 +1781,9 @@ def render_wave_brief(s):
         f'**Items:** {s.get("items") or "—"} · **Decisions:** {s.get("decisions") or "none"}; final, don\'t re-ask (a NEW choice -> crafty D1).',
         f'**Local env:** {s.get("localEnv") or "none"} · **Test env after deploy:** {s.get("testEnv") or "—"} (never production).',
         '## Repos', _table(['Repo', 'Main checkout', 'Target', 'Link deps from', 'Migrations'], rows(('repo', 'checkout', 'target', 'linkFrom', 'migrations'), s.get('repos') or [])),
-        '## Agents', _table(['Agent', 'Items', 'Area (screens / packages / files)', 'Repos', 'Migration range', 'Services (leased, nothing else)', 'Complex?'],
-                            [r + [yn(a.get('complex'))] for r, a in zip(rows(('id', 'items', 'area', 'repos', 'migrationRange', 'services'), s['agents']), s['agents'])]), '',
+        '## Agents', _table(['Agent', 'Items', 'Area (screens / packages / files)', 'Paths (enforced)', 'Repos', 'Migration range', 'Services (leased, nothing else)', 'Complex?'],
+                            [r[:3] + [', '.join(f'`{g}`' for g in a.get('paths') or []) or 'any'] + r[3:] + [yn(a.get('complex'))]
+                             for r, a in zip(rows(('id', 'items', 'area', 'repos', 'migrationRange', 'services'), s['agents']), s['agents'])]), '',
         f'**Overlaps:** {s.get("overlaps") or "none"} · **Contracts:** `{s["name"]}.contracts.md` ({len(s.get("contracts") or [])} crossing)',
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, worktree name = agent id · **Tracker:** {s.get("tracker") or "—"}.',
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
@@ -1720,7 +1796,7 @@ def wave_files(s, brief_path):
     con = '\n'.join([f'# Contracts: {s["name"]}', _table(['Field / endpoint', 'Type', 'Producer', 'Consumers', 'Merge / deploy order', 'Backward-compatible'],
                      [[str(c.get(k) or '') for k in ('name', 'type', 'producer', 'consumers', 'order')] + ['yes' if c.get('compatible') else 'no'] for c in s.get('contracts') or []])
                      if s.get('contracts') else 'none', '## Rule changes during the wave (newest last)']) + '\n'
-    keep = ('id', 'items', 'area', 'note', 'complex', 'model', 'effort', 'dependsOn', 'migrations')
+    keep = ('id', 'items', 'area', 'paths', 'note', 'complex', 'model', 'effort', 'dependsOn', 'migrations')
     args = {'brief': brief_path.replace('\\', '/'), 'agents': [{k: a[k] for k in keep if a.get(k) not in (None, '', [], False)} for a in s['agents']],
             'mode': s.get('mode') or 'feature', 'mandate': s['mandate'],
             'openQuestions': [q['question'] for q in s.get('openQuestions') or [] if (q.get('answers') or '') == 'rechy'],
@@ -1828,6 +1904,23 @@ def selftest():
     page = md_to_html('![shot 1](https://x/a.png "260") [link](https://y)\n![b](c.png)')
     expect('md_to_html: images with width (default 600) and captions, links stay links', '<img src="https://x/a.png" width="260"><br><i>shot 1</i>' in page
            and '<img src="c.png" width="600">' in page and '<a href="https://y">link</a>' in page)
+    spec_only = ['rm/api/cypress/**', 'rm/api/package.json']   # incident 2026-11-14: a spec-only area's MR changed product files
+    diff = ['rm/api/cypress/e2e/inv.cy.js', 'rm/api/package.json', 'rm/api/src/main/java/InventoryService.java', 'rm/api/cypress.config.js']
+    expect('scope: files outside the area globs are named (** any depth, an exact file, a sibling is outside)',
+           scope_outside(diff, spec_only) == diff[2:] and scope_outside(diff, []) == [] and scope_outside(['a/b/c.ts'], ['a/']) == []
+           and scope_outside(['a/x.ts', 'a/b/x.ts'], ['a/*.ts']) == ['a/b/x.ts'] and scope_outside(['x/test/y.ts', 'test/z.ts'], ['**/test/**']) == [])
+    no = scope_refusal(diff, spec_only, 'f/t1-specs', what='merge')
+    expect('scope: the refusal names the files, the area and the decision path', 'merge refused: 2 file(s)' in no and 'InventoryService.java' in no
+           and '-Gate scope -Item f/t1-specs' in no and scope_refusal(diff[:2], spec_only, 'b') == '')
+    td = tempfile.mkdtemp(); lg = os.path.join(td, 'scopes.jsonl')
+    with open(lg, 'w', encoding='utf-8') as fh:
+        fh.write(''.join(json.dumps({'event': 'area', 'mr': 'api!5', 'globs': g}) + '\n' for g in (['old/**'], spec_only)) + '{"event": "area", "mr": "api!55", "globs": ["x"]}\n')
+    expect('scope: a deferred merge (no record, no --scope) takes the MR\'s last logged area', scope_of(td, '', 'api!5', lg) == spec_only
+           and scope_of(td, '', 'api!6', lg) == [] and scope_of(td, 'a/**, b/', 'api!5', lg) == ['a/**', 'b/'])
+    shutil.rmtree(td, ignore_errors=True)
+    wb = {'name': 'w', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}
+    expect('wave brief: an area\'s paths are in the brief and the /buildy args', 'rm/api/cypress/**' in render_wave_brief(wb)
+           and json.loads(wave_files(wb, 'b.md')['b.args.json'])['agents'][0]['paths'] == spec_only)
 
     fd, path = tempfile.mkstemp(suffix='.json')
     with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -2229,7 +2322,7 @@ def _report_selftest(expect):
 
 # ---- CLI: argument checks, verb dispatch
 def _cli():
-    global REPORT_TYPE, PROSE_OK, OVERRIDE
+    global REPORT_TYPE, PROSE_OK, OVERRIDE, SCOPE, SCOPE_OK
     a = sys.argv[1:]
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
@@ -2247,7 +2340,7 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
-    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override', '--spec') if cmd in ('comment', 'finish', 'mr') else ('--override',) if cmd == 'merge' else ():
+    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok') if cmd == 'merge' else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
         elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, not "unknown option"
@@ -2257,6 +2350,7 @@ def _cli():
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
     PROSE_OK = opt.get('--prose-ok') or ''
     OVERRIDE = opt.get('--override') or ''
+    SCOPE, SCOPE_OK = opt.get('--scope') or '', opt.get('--scope-ok') or ''
     if PROSE_OK:
         print(f'[prose] --prose-ok: {PROSE_OK}', file=sys.stderr)
     if not cmd:   # agents call it bare to see the verbs: no usage error
