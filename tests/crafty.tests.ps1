@@ -233,6 +233,9 @@ Expect 'params: past 2x one WATCH; param approve lifts it' ($pr -contains 'ask:4
 Expect "params: a timeout of a timeout key moves nothing (RFC 6298); no hold; -10% a day after 5 new observations ($(@($pr -match '^(fail|hold|down1|wait5|down2|beat):') -join ' '))" ($pr -contains 'fail:60' -and $pr -contains 'hold:31.89' -and $pr -contains 'down1:28.7' -and $pr -contains 'wait5:28.7' -and $pr -contains 'down2:25.83')
 Expect 'params: 2+ new ACTs halve the beat (AIMD), an overnight gap is censored; a holder back after grace = short (once); show: last change + next risky step' ($pr -contains 'beat:7.5' -and $pr -contains 'censor:1' -and $pr -contains 'back:False:1' -and "$pr" -match 'last change \d\d-\d\d \d\d:\d\d down: .*next risky step from')
 Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
+$sd = Join-Path (Kd) 'sd'; $yi = "$sd/node_modules/.yarn-integrity"; $null = New-Item -Force $yi, "$sd/yarn.lock"; (Get-Item $yi).LastWriteTime = (Get-Date).AddDays(-2)
+$st = & { . $D; Get-StaleDepsNote "$sd/node_modules"; (Get-Item $yi).LastWriteTime = Get-Date; "|$(Get-StaleDepsNote "$sd/node_modules")|" }
+Expect 'wt new: a dep source installed before its lock file changed is named, a fresh one not' ("$st" -match 'before yarn\.lock changed.*\|\|$')
 Remove-TestKit $k
 # ---- OS helpers on Linux / macOS
 $k = New-TestKit posix

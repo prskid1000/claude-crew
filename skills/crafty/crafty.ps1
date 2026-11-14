@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L175 wt · L475 stack · L655 gate · L971 check · L1288 pipes · L1345 guard · L2172 dir ·
-  L2182 checkpoint · L2211 prior · L2249 tracker · L2271 task spec · L2420 host
+Sections: L21 init · L27 sweep · L175 wt · L483 stack · L663 gate · L979 check · L1296 pipes · L1353 guard · L2180 dir ·
+  L2190 checkpoint · L2219 prior · L2257 tracker · L2279 task spec · L2428 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -173,6 +173,13 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
   [pscustomobject]@{ actions = @($actions); kept = @($kept); notes = @($notes) }
 }
 # ---- wt: a worktree per agent; deps linked, never installed
+# a lock file newer than the install: packages added since are missing (fails at runtime, not at link time)
+function Get-StaleDepsNote([string]$nmDir) {
+  $at = @(@('.yarn-integrity', '.package-lock.json', '.modules.yaml') | ForEach-Object { Get-Item -LiteralPath (Join-Path $nmDir $_) -Force -ErrorAction SilentlyContinue } | Sort-Object LastWriteTime)[-1]
+  if (-not $at) { $at = Get-Item -LiteralPath $nmDir -Force -ErrorAction SilentlyContinue }; if (-not $at) { return }
+  $new = @(@('yarn.lock', 'package-lock.json', 'pnpm-lock.yaml', 'package.json') | ForEach-Object { Get-Item -LiteralPath (Join-Path (Split-Path $nmDir) $_) -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt $at.LastWriteTime.AddMinutes(1) })
+  if ($new.Count) { "$nmDir was installed $($at.LastWriteTime.ToString('yyyy-MM-dd HH:mm')), before $($new[0].Name) changed ($($new[0].LastWriteTime.ToString('yyyy-MM-dd HH:mm'))): packages added since are missing; reinstall that source (frozen lockfile), then link" }
+}
 function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep')][string]$Action,
@@ -247,6 +254,7 @@ function Add-DepLinks($path, $src, $target) {
       $null = Set-NodeModules $to $from $src $path; $made += $to
       $a = DepHash (Join-Path $path $pj); $b = DepHash (Join-Path $src $pj)
       if ($a -ne $b) { Write-Warning "$pj deps differ from ${src}: linked node_modules may be wrong.$(if ($target) { " Use -LinkFrom <a $target checkout with matching installs>." })" }
+      if (($old = Get-StaleDepsNote $from)) { Write-Warning $old }
     }
   }
   foreach ($py in (git -C $path ls-files -- 'pyproject.toml' '*/pyproject.toml' 'requirements.txt' '*/requirements.txt')) {
