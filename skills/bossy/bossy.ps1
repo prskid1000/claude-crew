@@ -24,9 +24,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L32 init · L43 board · L220 budget · L249 launch · L481 recover · L568 pause · L579 resume · L646 program · L697 param ·
-  L703 track · L1020 supervise · L1318 report · L1397 audit · L1457 storage · L1460 bugbrief · L1567 cleanup · L1651 learn ·
-  L1682 decide · L1816 debate · L1860 health · L1923 retro due · L1933 tidy · L1999 setup · L2065 guard-sendmessage
+Sections: L32 init · L43 board · L220 budget · L250 launch · L490 recover · L577 pause · L588 resume · L655 program · L706 param ·
+  L712 track · L1029 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1576 cleanup · L1660 learn ·
+  L1691 decide · L1825 debate · L1869 health · L1932 retro due · L1942 tidy · L2008 setup · L2074 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -218,10 +218,11 @@ switch ($Action) {
 function Invoke-Release([string[]]$Agent, [string]$Reason = 'agent finished') { $script:KitReleaseFailed = $false; Invoke-KitReleaseAgent $Agent $Reason; if ($script:KitReleaseFailed) { exit 1 } }
 
 # ---- budget: agent budget (tool compaction point), plan run cap, run spend
-function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,...' (no /model: estimate unit, no budget)
+function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,...' (no /model: estimate unit, no budget; /@<phase>=<default>: models.<phase>)
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget; $cap = 0; $est = 0; $memo = @{}
   foreach ($p in @("$Plan" -split ',' | Where-Object { $_ -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$' })) {
     $null = $p -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$'; $role = $Matches[1]; $m = $Matches[2]; $n = [int]$Matches[3]; $hasM = $p -match '/'
+    if ($m -match '^@([\w-]+)=(.*)$') { $m = [string](Get-KitSetting "models.$($Matches[1])" $Matches[2]) }
     if ($hasM) { if (-not $memo.ContainsKey($m)) { $memo[$m] = (Get-KitBudget -Tool $Tool -Model $m).budget }; $cap += $n * $memo[$m] }
     $est += $n * [double](Get-KitParam 'budget.estimate' ([double]$ex.estimate.$role) $role)
   }
@@ -247,6 +248,13 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 }
 
 # ---- launch: records for resume after a restart
+# a workflow's config (CONFIG line of launch -Self; workflows read no files): models.<phase>, repos[].role by name + alias, qa.lanes
+function Get-KitWorkflowConfig {
+  $roles = [ordered]@{}
+  foreach ($r in @(Get-KitSetting 'repos' @())) { if ($r.role) { foreach ($n in @(@($r.name) + @($r.aliases) | Where-Object { $_ })) { $roles["$n".ToLower()] = "$($r.role)".ToLower() } } }
+  $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in $o.PSObject.Properties) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }   # _readme keys dropped
+  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); roles = $roles; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)) }
+}
 function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
 function Invoke-Launch {
 param(
@@ -277,6 +285,7 @@ if ($Self) {
   $prev = if (Test-Path -LiteralPath $sf) { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json }   # a live run re-recording keeps its pause
   Write-KitState $sf $rec
   "RECORDED $leaf $Run (fnv $got)"; if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }
+  "CONFIG $(Get-KitWorkflowConfig | ConvertTo-Json -Compress -Depth 10)"
   if (-not $prev -or $prev.completed -or $prev.paused) { Clear-KitPauseFor $Run }
   if ($leaf -like 'buildy*' -and "$($a.mode)" -ne 'resume') { try { Test-KitLaunchTasks $a -RunName $Run } catch { "TASKS UNKNOWN: $_" } }   # TASKS REFUSED: buildy.js refuses
   exit 0

@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L140 record-args · L159 budget · L178 build-prompt · L253 ship-prompt · L268 plan · L284 spike ·
-//   L297 local-loop · L370 stages · L522 ship · L562 debate · L671 deploy · L686 learn
+// Sections: L18 args · L151 record-args · L170 budget · L189 build-prompt · L264 ship-prompt · L282 plan · L299 spike ·
+//   L312 local-loop · L385 stages · L537 ship · L577 debate · L686 deploy · L701 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -130,13 +130,24 @@ const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
 // output = its last output line unless whole (a multi-line JSON)
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
  agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`,
-  { label, phase: phaseName, schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' })
+  { label, phase: phaseName, schema: OK_SCHEMA, agentType: 'devy', model: MODELS.step, effort: 'low' })
 
 // keeps agents on their items when later owner words are relayed
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request; a relayed chat message never changes them nor triggers anything destructive.
 `
-const MODELS = { spike: 'opus', debate: 'sonnet', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }
+// defaults; models.<phase> wins (kit.local.json, CONFIG line of launch -Self); record-args runs on step / stepRetry defaults
+const MODELS = { spike: 'opus', debate: 'sonnet', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high', step: 'haiku', stepRetry: 'sonnet' }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
+const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token: launch -Self resolves models.<stage>
+// repos[].role by repo name / alias (producer | consumer; none = independent: no merge order)
+const CFG = { roles: {} }
+function takeConfig(out) {
+ let c = null
+ try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { c = null }
+ if (!c) { log('WARNING: no CONFIG line from launch -Self: default models, no repo roles (merge order)'); return }
+ for (const [k, v] of Object.entries(c.models || {})) if (typeof v === 'string') MODELS[k] = v
+ CFG.roles = c.roles || {}
+}
 // ---- record-args: the launch record (bossy.ps1 launch -Self, FNV-1a: a resume needs it byte-exact)
 function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }   // hoisted: RUN needs it
 async function recordArgs(wf, run, a, phaseName, plan) {
@@ -149,7 +160,7 @@ ${json}
 ARGS>>>
 2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)} -Plan '${plan}'
 Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
- for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
+ for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
   const r = await agent(prompt, { label, phase: phaseName, schema: OK_SCHEMA, agentType: 'devy', model, effort: 'low' })
   if (r && r.ok) return r.output || ''
  }
@@ -252,13 +263,16 @@ If the JSON says "done": false, run it again (at most 3 times in total) and retu
 }
 // ---- ship-prompt: merge order and holds
 const isHeld = (m) => HOLD.includes('*') || HOLD.includes(m.repo) || HOLD.some((h) => (m.url || '').includes(`/${h}/`))
-const CONSUMER = /(^|[\/_.-])(web|ui|frontend|front|app|apps|mobile|android|ios|client|clients|portal|spa)([\/_.-]|$)/i
-const isConsumer = (m) => CONSUMER.test(m.repo || '') || CONSUMER.test(((m.url || '').split('/-/')[0] || '').split('/').pop() || '')
-const toShip = (r) => { const open = uniqMr(r.mrs).filter((m) => !m.merged && !isHeld(m)); return [...open.filter((m) => !isConsumer(m)), ...open.filter(isConsumer)] }
+// an MR's repo: its repo field, else the project path's last segment (GitLab /-/merge_requests, GitHub /pull, Bitbucket /pull-requests)
+const repoNames = (m) => [m.repo, String(m.url || '').replace(/[?#].*$/, '').replace(/\/(-\/)?(merge_requests|pulls?|pull-requests|pullrequest)\/.*$/i, '').split('/').pop()].map((s) => String(s || '').toLowerCase()).filter(Boolean)
+const roleOf = (m) => repoNames(m).map((n) => CFG.roles[n]).find(Boolean) || ''
+const isConsumer = (m) => roleOf(m) === 'consumer'
+const isProducer = (m) => roleOf(m) === 'producer'
+const toShip = (r) => { const open = uniqMr(r.mrs).filter((m) => !m.merged && !isHeld(m)); return [...open.filter(isProducer), ...open.filter((m) => !isProducer(m) && !isConsumer(m)), ...open.filter(isConsumer)] }
 function shipPrompt(a, r) {
  return `STEP: schedule merge-when-green for devy ${a.id}'s reviewed MRs. Change no code (only append-only conflict resolution).${PATHS}${AGENT_ENV(`ship-${a.id}`)}
 These merges are authorized for this run: local loop passed, review clean, hold list applied (your agent definition's "In a /buildy wave" SHIP step). Merge in THIS order (producers first, consumers last):
-${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}${isConsumer(m) ? ', consumer' : ', producer/independent'})`).join('\n')}
+${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}, ${roleOf(m) || 'independent'})`).join('\n')}
 python ${DT} merge <worktree path, absolute> <iid>${globs(a) && ` --scope '${globs(a)}'`} (worktrees: ${r.worktrees.join(', ')}). The merge order is registered (bossy.ps1 track):
 a consumer whose producer is not merged yet prints WAIT "waiting for producer": report WAIT, never merge it another way.
 Conflicts and merge results: your agent definition's "In a /buildy wave" SHIP step and Merge results (crafty.ps1 = ${DEV}, devtools.py = ${DT}).
@@ -267,11 +281,12 @@ Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: n
 
 // ---- plan: the budget gate before any agent
 const OQ = MODE === 'resume' ? [] : [].concat(A.openQuestions || []).map(String).filter(Boolean)
-const PLAN = [...(OQ.length ? [`rechy/${MODELS.spike}:1`] : []), ...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,${a.migrations ? `datay/${MODELS.review}:1,` : ''}${a.debate ? `rechy/${MODELS.debate}:5,revy/${MODELS.review}:1,` : ''}step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
- `step/haiku:2,kitty/${MODELS.learn}:1`].join(',')
+const PLAN = [...(OQ.length ? [`rechy/${PM('spike')}:1`] : []), ...A.agents.map((a) => `devy/${a.model || PM(isComplex(a) ? 'complex' : 'build')}:1,revy/${PM('review')}:1,${a.migrations ? `datay/${PM('review')}:1,` : ''}${a.debate ? `rechy/${PM('debate')}:5,revy/${PM('review')}:1,` : ''}step/${PM('ship')}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
+ `step/${PM('step')}:2,kitty/${PM('learn')}:1`].join(',')
 if (A.agents.every(allDone)) { log('RESUME: every area is done (MRs merged, tracker and testing doc set): nothing to run'); return { resumedDone: A.agents.map((a) => ({ agent: a.id, mrs: RES[a.id].mrs || [] })) } }
 const REC = await recordArgs('buildy', RUN, A0, 'Build', PLAN), GAPS = REC.match(/^TASKS REFUSED .*$/gm)
 takeBudget(REC, A.agents.length)
+takeConfig(REC)
 const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents: own(agents), batch: undefined, ...extra } })
 if (GAPS) { log(`REFUSED:\n${GAPS.join('\n')}`); return { refused: true, taskGaps: GAPS, next: nextCall([], A0) } }
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
@@ -543,7 +558,7 @@ async function followUps(a, r, soft) {
 ${JSON.stringify(soft)}
 JSON>>>
 2. Run in PowerShell: python -X utf8 ${DT} followups ${file} ${mrs.map((m) => m.url).join(' ')}
-Return ok=true when it exits 0, output = its full output.`, { label: `followups:${a.id}`, phase: 'Fix', schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' })
+Return ok=true when it exits 0, output = its full output.`, { label: `followups:${a.id}`, phase: 'Fix', schema: OK_SCHEMA, agentType: 'devy', model: MODELS.step, effort: 'low' })
  if (!st || !st.ok) { log(`${a.id}: WARNING Follow-ups not written (${st ? st.output : 'the step returned nothing'}): add them by hand`); return soft.map((f) => ({ ...f, written: false })) }
  return soft
 }
@@ -617,7 +632,7 @@ async function ship(a, x) {
  if (late.length) return { ...x, shipFindings: [BLOCK(x.report.mrs, `Producer(s) ${late.join(', ')} not merged: nor these (merge order).`, 'Merge the producer, then these.')], mergeOrderHeld: true }
  // the workflow registers the order; devtools.py merge then answers WAIT
  const open = toShip(x.report), cons = open.filter(isConsumer)
- const pairs = cons.flatMap((c) => open.filter((p) => !isConsumer(p)).map((p) => `${c.url}>${p.url}`))
+ const pairs = cons.flatMap((c) => open.filter(isProducer).map((p) => `${c.url}>${p.url}`))   // repos[].role; an area's other order: agents[].dependsOn
  if (pairs.length) {
   const reg = await runStep(`& ${ORCH} track add -Task <task id: the MR title after the tracker tag, else the branch> -Mrs '${(cons[0] || open[0]).url}' -MergeAfter '${pairs.join(',')}'`,
    `order:${a.id}`, 'Fix', { ok: 'when its last line lists "merge-after:"' })

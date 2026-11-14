@@ -1,18 +1,18 @@
 export const meta = {
  name: 'testy',
- description: 'Any test run (tracker selection, smoke after a deploy, regression sweep, retest; local or a test env) by checky lead / test / verify: test deployed tasks against their human testing docs (web + API pools, device lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
+ description: 'Any test run (tracker selection, smoke after a deploy, regression sweep, retest; local or a test env) by checky lead / test / verify: test deployed tasks against their human testing docs (a pool per test lane, device lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
  whenToUse: 'Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents',
  phases: [
   { title: 'Prepare', detail: 'args.select only: pokey.ps1 prepare (L1 selection) writes run.json + lead-notes.md; tasks not live are left out' },
-  { title: 'Test', detail: 'one checky (role test) per guide: web/API pool in parallel, app guides one per phone' },
+  { title: 'Test', detail: 'one checky (role test) per guide: a pool per qa.lanes lane in parallel, device lanes one guide per device' },
   { title: 'Verify', detail: 'checky verify: note audit, stronger retry of NOT_TESTED, ENV-FIX cycles for local items, independent re-test of every FAIL' },
   { title: 'Close', detail: 'checky lead: report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask' },
   { title: 'Learn', detail: 'signals from this run, cleanup (/tidy turns them into lessons)' },
  ],
 }
 
-// Sections: L16 args · L41 record-args · L62 prepare · L91 config · L122 prompts · L211 local · L238 app · L260 test-prompt ·
-//   L314 verify · L376 run-item · L557 pool · L579 budget · L607 run · L645 learn
+// Sections: L16 args · L52 record-args · L73 prepare · L102 config · L133 prompts · L221 local · L248 app · L277 test-prompt ·
+//   L331 verify · L393 run-item · L574 pool · L596 budget · L626 run · L672 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -22,10 +22,10 @@ export const meta = {
 { runDir: '<runtime>/work/qa-runs/<date>-<name>', kitDir: '<abs .claude>', title: '<doc names, bug titles>', target: '<targets name>',
  tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
  envLines: ['Web: ...'], tracker: { list, parent: '<ask of parentless tasks>', owner, closeStatus: 'closed' },
- outOfScope: ['<channel>'] (default qa.outOfScope), webParallel: 5, apiParallel: 5, verify: true (false: no FAIL re-test),
+ outOfScope: ['<channel>'] (default qa.outOfScope), <lane>Parallel (webParallel, apiParallel): a lane's parallel cap, verify: true (false: no FAIL re-test),
  learn: true | 'auto', lanes: [{ n, name, serial, user, notes }] (phoney), devices: 'android' | 'none',
  localEnv: '<local env of the run>' (envy), envFixCycles: 2, envFixWaitMinutes: 300,
- items: [{ code: 'F2', title, guideFile, lane: 'web'|'api'|'app', target?, localEnv?, services? (leased, nothing else), subtasks: [{ id, name, mrs: '!12, !34' }],
+ items: [{ code: 'F2', title, guideFile, lane: '<qa.lanes name>' (default: the first; unknown: refused), target?, localEnv?, services? (leased, nothing else), subtasks: [{ id, name, mrs: '!12, !34' }],
   retest: false, only: ['L3'], skipClose: false (test + verify only; the lead publishes), alsoWeb: false, extra, taskFiles: [],
   model?, effort? (TEST step) }],
 } */
@@ -38,6 +38,17 @@ const ARG_KEYS = 'select name only instance batch runtimeDir envFixWaitMinutes t
 const badArgs = Object.keys(ARGS0).filter((k) => !ARG_KEYS.includes(k))
 if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.join(', ')}; free text for testers goes in args.context`)
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
+// test = sonnet, never the session model; close, hold, steps, learn = haiku. models.<phase> wins (kit.local.json, CONFIG line of launch -Self)
+const MODELS = { test: 'sonnet', verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high', step: 'haiku', stepRetry: 'sonnet' }
+// test lanes: qa.lanes { <lane>: { kind, parallel, followUp, devices } }; unset = one web lane
+let QL = { web: { kind: 'web', parallel: 5 } }
+function takeConfig(out) {
+ let c = null
+ try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { c = null }
+ if (!c) { log('WARNING: no CONFIG line from launch -Self: default models, one web lane'); return }
+ for (const [k, v] of Object.entries(c.models || {})) if (typeof v === 'string') MODELS[k] = v
+ if (c.qaLanes && typeof c.qaLanes === 'object' && Object.keys(c.qaLanes).length) QL = c.qaLanes
+}
 // ---- record-args: the launch record (a resume needs it byte-exact)
 // launch record first (bossy.ps1 launch -Self, FNV-1a); runDir rides along once known
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
@@ -51,7 +62,7 @@ ${json}
 ARGS>>>
 2. Run in PowerShell (pwsh 7): & ${K0}/skills/bossy/bossy.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
 Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
- for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
+ for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
   const r = await agent(prompt, { label, phase: phaseName, schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'checky', model, effort: 'low' })
   if (r && r.ok) return r.output || ''
  }
@@ -62,7 +73,7 @@ if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? '
 // ---- prepare: pokey.ps1 prepare builds the run (args.select, pokey L1) or prints a built one (runDir); one STEP, last line RUN <json>
 const q0 = (s) => String(s).replace(/'/g, "''")
 const prepStep = async (cmd, label) => {
- for (const [lb, model] of [[label, 'haiku'], [`${label}-retry`, 'sonnet']]) {
+ for (const [lb, model] of [[label, MODELS.step], [`${label}-retry`, MODELS.stepRetry]]) {
   const got = await agent(`STEP: run exactly this in PowerShell (pwsh 7; tool timeout 600000) and return ok=true when it exits 0 (else ok=false) with its LAST output line (it starts with "RUN "), unchanged, as output; nothing else:${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}\n${cmd}`,
    { label: lb, phase: 'Prepare', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'checky', model, effort: 'low' })
   try { const f = JSON.parse(String((got && got.output) || '').trim().replace(/^RUN /, '')); if (f && Array.isArray(f.items)) return f } catch (e) { /* retried on sonnet */ }
@@ -122,7 +133,7 @@ const RUNNAME = String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run
 // ---- prompts: seats, models, schemas
 // pokey.ps1 seat: parallel counts are caps; free memory sets concurrency
 function seatBlock(it, label) {
- const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
+ const kind = kindOf(it)
  return `
 AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}'; $env:KIT_QA_TARGETS='${[tgt(it), ...[].concat(R.alsoTargets || [])].filter(Boolean).join(',')}';  (Bash: export the same) - pokey.ps1 api refuses other targets; the build/memory
 gate queues your work under this owner name (shell state does not persist between commands).
@@ -132,9 +143,8 @@ SEAT (memory + item claim) - your FIRST command, before anything else:
  exit 3 / "ALREADY" = another worker owns or finished this item: stop immediately and return { code: "${it.code}", skipped: true, checks: [] }.
  Your LAST command before returning (also on errors): & ${Q} seat release -Agent "${label}"`
 }
-// test (+ lead prepare) = sonnet, never the session model; close, hold, release, follow-ups, learn = haiku
-const MODELS = { test: 'sonnet', verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
+const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token: launch -Self resolves models.<stage>
 // it.model/effort win; else MODELS.test
 function modelFor(it) {
  if (it.model) return { model: it.model, ...(it.effort ? { effort: it.effort } : {}) }
@@ -206,7 +216,7 @@ const FINAL_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, ou
 // output = its last output line unless whole (a multi-line JSON)
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
  agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`,
-  { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'checky', model: 'haiku', effort: 'low' })
+  { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'checky', model: MODELS.step, effort: 'low' })
 
 // ---- local: env and web / API blocks
 // an item may name its own env (it.target)
@@ -252,10 +262,17 @@ PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.us
 const API = `
 API-ONLY LANE: pokey.ps1 api only (exit 1 on HTTP >= 400: judge the status against Expected); save request/response evidence for every check.`
 
+// an item's lane (default: the first qa.lanes entry), its config and kind; a lane with devices runs one item per device
+const laneOf = (it) => (it && it.lane) || Object.keys(QL)[0]
+const laneCfg = (it) => QL[laneOf(it)] || {}
+const kindOf = (it) => laneCfg(it).kind || laneOf(it)
 function laneBlock(it, L) {
- if (it.lane === 'app') return appBlock(L) + (it.alsoWeb ? WEB(it) + '\nThis package also has web/API checks: test those with the browser helper too.' : '')
- if (it.lane === 'api') return API
- return WEB(it)
+ const k = kindOf(it)
+ if (L) return appBlock(L) + (it.alsoWeb ? WEB(it) + '\nThis package also has web/API checks: test those with the browser helper too.' : '')
+ if (k === 'api') return API
+ if (k === 'web') return WEB(it)
+ return `
+LANE "${laneOf(it)}" (kind ${k}): drive it with the tools ${QA}/SKILL.md names for this kind; save evidence for every check.`
 }
 // ---- test-prompt: test and audit prompts
 // finalize -Check publishes nothing: it renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites the results file
@@ -548,7 +565,7 @@ ${CHECK(it, ` -ExpectChecks ${res.checks.length}`)} (publishes nothing). Exit 1:
   return { code: it.code, summary: line, result: res, eventful: true, envFix, envFixOpen: holdLocal, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
  }
  let fin = await agent(finalPrompt(it, res, written), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('close'), effort: 'low' })
- if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res, written), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', model: 'sonnet' })
+ if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res, written), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', model: MODELS.stepRetry })
  log(line + (fin && fin.ok ? '' : ' [NOT PUBLISHED - the coordinator runs pokey.ps1 finalize for it (pokey L3)]'))
  const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduce|inconclusive/.test(`${c.observed || ''} ${c.verify || ''}`)) || !(fin && fin.ok)
  return { code: it.code, summary: line, finalize: fin, eventful, envFix, unpublished: !(fin && fin.ok), result: fin && fin.ok ? undefined : res, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
@@ -556,17 +573,17 @@ ${CHECK(it, ` -ExpectChecks ${res.checks.length}`)} (publishes nothing). Exit 1:
 
 // ---- pool: one worker per slot
 // web and API pools run in parallel; app guides run one per phone
-async function pool(list, size, offset, laneOf) {
+async function pool(list, size, offset, deviceOf) {
  const out = []
  let next = 0
  const worker = async (w) => {
   while (next < list.length) {
    const k = next++
    if (!(await gate('Test'))) { STOPPED.push(list[k].code); continue }
-   out[k] = await runItem(list[k], offset + k, laneOf ? laneOf(w) : null).catch((e) => ({ code: list[k].code, error: String(e) }))
+   out[k] = await runItem(list[k], offset + k, deviceOf ? deviceOf(w) : null).catch((e) => ({ code: list[k].code, error: String(e) }))
   }
   // app lane done: every lease of its id (phone shuts down unless someone waits; env, GPU, builds, tabs), logged in leases.jsonl
-  const L = laneOf ? laneOf(w) : null
+  const L = deviceOf ? deviceOf(w) : null
   if (L && L.name) {
    await runStep(`& ${ORCH} release -Agent '${LEASE(L)}' -Reason 'agent finished'`, `release-${L.name}`, 'Close').catch(() => null)
    log(`lane ${L.name} (${L.serial}) released`)
@@ -582,8 +599,10 @@ const BATCH = R.batch > 0 && R.items.length > R.batch ? R.batch : 0
 const LATER = BATCH ? R.items.slice(BATCH).map((it) => it.code) : [], STOPPED = []
 if (BATCH) R = { ...R, items: R.items.slice(0, BATCH) }
 const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }
-const PLAN = [...R.items.map((it) => `checky/${modelFor(it).model || ''}:1,checky/${MODELS.verify}:1,step/${MODELS.close}:1,item:1`), `step/haiku:3,kitty/${MODELS.learn}:1`].join(',')
-try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(await recordArgs(RUN0, R.runDir, 'Test', PLAN)) || [])[1])); BUD.unit = BUD.estimate / R.items.length } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
+const PLAN = [...R.items.map((it) => `checky/${it.model || PM('test')}:1,checky/${PM('verify')}:1,step/${PM('close')}:1,item:1`), `step/${PM('step')}:3,kitty/${PM('learn')}:1`].join(',')
+const REC = await recordArgs(RUN0, R.runDir, 'Test', PLAN)
+takeConfig(REC)
+try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(REC) || [])[1])); BUD.unit = BUD.estimate / R.items.length } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
 const nextCall = (only, extra) => ({ scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, ...(only && { only }), ...(ARGS0.lanes && { lanes: ARGS0.lanes }), ...(ARGS0.instance && { instance: ARGS0.instance }), ...extra } })
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  const batch = Math.max(1, Math.floor(R.items.length * BUD.stopAt * BUD.cap / BUD.estimate))
@@ -604,39 +623,47 @@ async function gate(phaseName) {   // before a new item; measures only near the 
  if (BUD.spent >= BUD.stopAt * BUD.cap && !BUD.stop) { BUD.stop = true; log(`BUDGET: spent ${BUD.spent} of the cap ${BUD.cap}: running items finish, no new one starts; the rest -> next`) }
  return !BUD.stop
 }
-// ---- run: web, API and app pools; follow-ups
-const web = R.items.filter((it) => (it.lane || 'web') === 'web')
-const api = R.items.filter((it) => it.lane === 'api')
-const app = R.items.filter((it) => it.lane === 'app')
-if (app.length && !LANES.length && !NODEV) throw new Error('app items need args.lanes (one per lane + its login; agents lease and boot them) or devices: none')
+// ---- run: one pool per qa.lanes lane (parallel), device lanes one item per device (in turn); follow-ups
+const LN = Object.keys(QL)
+const odd = R.items.filter((it) => !(laneOf(it) in QL))
+if (odd.length) throw new Error(`testy.js: unknown lane(s) ${[...new Set(odd.map(laneOf))].join(', ')} (items ${odd.map((it) => it.code).join(', ')}): qa.lanes has ${LN.join(', ')}`)
+const lanes = LN.map((n, i) => ({ n, i, c: QL[n], items: R.items.filter((it) => laneOf(it) === n) }))
+const par = (l) => R[`${l.n}Parallel`] || l.c.parallel || 5
+const devLanes = lanes.filter((l) => l.c.devices && l.items.length)
+if (devLanes.length && !LANES.length && !NODEV) throw new Error(`${devLanes.map((l) => l.n).join(', ')} items need args.lanes (one per device + its login; agents lease and boot them) or devices: none`)
 log(`verify ${VERIFY ? 'on' : 'off'}, learn ${LEARN}`)
-log(`run ${R.runDir}: web ${web.length} (x${R.webParallel || 5}), api ${api.length} (x${R.apiParallel || 5}), app ${app.length} (${LANES.length} phones)`)
+log(`run ${R.runDir}: ${lanes.map((l) => `${l.n} ${l.items.length} (${l.c.devices ? `${LANES.length} devices` : `x${par(l)}`})`).join(', ')}`)
 
-const parts = await Promise.all([
- web.length ? pool(web, R.webParallel || 5, 0) : [],
- api.length ? pool(api, R.apiParallel || 5, 100) : [],
- app.length && !NODEV ? pool(app, LANES.length, 200, laneFor) : [],
-])
+const devicePools = async () => { const out = []; for (const l of NODEV ? [] : devLanes) out.push(...await pool(l.items, LANES.length, l.i * 100, laneFor)); return out }   // in turn: one lease per device
+const parts = await Promise.all([...lanes.filter((l) => !l.c.devices && l.items.length).map((l) => pool(l.items, par(l), l.i * 100)), devicePools()])
 const all = parts.flat().filter(Boolean)
-if (NODEV && app.length) log(`NOT_TESTED (devices none; tasks stay open): ${app.map((it) => it.code).join(', ')}`)
+if (NODEV && devLanes.length) log(`NOT_TESTED (devices none; tasks stay open): ${devLanes.flatMap((l) => l.items.map((it) => it.code)).join(', ')}`)
 
-// App follow-ups: PENDING web/api checks -> app item <code>A, in run.json first (finalize reads it)
-for (const r of LANES.length ? [] : all.filter((x) => x.pending && x.pending.length)) log(`${r.code}: PENDING ${r.pending.join(', ')} need a device lane, args.lanes is empty: the task stays open (add lanes, pokey.ps1 retest)`)
-const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length).map((r) => {
- const it = R.items.find((x) => x.code === r.code)
- if (!it || it.lane === 'app' || R.items.some((x) => x.code === `${it.code}A`)) return null
- return { ...it, code: `${it.code}A`, title: `${it.title} — app checks ${r.pending.join(', ')}`, lane: 'app', only: r.pending,
+// follow-ups: PENDING checks -> an item <code><Lane initial> on the lane's followUp lane, in run.json first (finalize reads it)
+const fuLane = (it) => { const t = laneCfg(it).followUp; return t && t in QL ? t : '' }
+const pend = all.filter((x) => x.pending && x.pending.length).map((r) => ({ r, it: R.items.find((x) => x.code === r.code) })).filter((p) => p.it)
+for (const { r, it } of pend.filter((p) => !fuLane(p.it) || (QL[fuLane(p.it)].devices && !LANES.length))) {
+ if (fuLane(it)) log(`${r.code}: PENDING ${r.pending.join(', ')} need a device lane, args.lanes is empty: the task stays open (add lanes, pokey.ps1 retest)`)
+ else if (!laneCfg(it).devices) log(`${r.code}: PENDING ${r.pending.join(', ')}: lane ${laneOf(it)} has no followUp lane (qa.lanes): the task stays open (pokey.ps1 retest)`)
+}
+const followUps = pend.filter((p) => fuLane(p.it) && !(QL[fuLane(p.it)].devices && !LANES.length)).map(({ r, it }) => {
+ const t = fuLane(it), code = `${it.code}${t[0].toUpperCase()}`, dev = !!QL[t].devices
+ if (R.items.some((x) => x.code === code)) return null
+ return { ...it, code, title: `${it.title} — ${t} checks ${r.pending.join(', ')}`, lane: t, only: r.pending,
   taskFiles: [...(it.taskFiles || []), `${outDir(it)}/results.json`],
-  extra: `${it.extra || ''} The web/API pass (${it.code}) left ${r.pending.join(', ')} PENDING for a device: test exactly those on your phone. Earlier results: ${outDir(it)}/results.json.` }
-}).filter(Boolean) : []
+  extra: `${it.extra || ''} The ${laneOf(it)} pass (${it.code}) left ${r.pending.join(', ')} PENDING for ${dev ? 'a device' : `the ${t} lane`}: test exactly those${dev ? ' on your phone' : ''}. Earlier results: ${outDir(it)}/results.json.` }
+}).filter(Boolean)
 if (followUps.length) {
  await agent(`STEP: append these items to the "items" array of ${R.runDir}/run.json without changing anything else, in PowerShell:
 $f = '${R.runDir}/run.json'; $j = Get-Content $f -Raw | ConvertFrom-Json; $new = '${JSON.stringify(followUps).replace(/'/g, "''")}' | ConvertFrom-Json
 foreach ($n in $new) { if (-not ($j.items | Where-Object code -eq $n.code)) { $j.items += $n } }
 [IO.File]::WriteAllText($f, ($j | ConvertTo-Json -Depth 20))
-Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, agentType: 'checky', model: 'haiku', effort: 'low' })
- log(`app follow-ups for PENDING checks: ${followUps.map((f) => `${f.code} (${f.only.join(', ')})`).join('; ')}`)
- all.push(...(await pool(followUps, LANES.length, 300, laneFor)).filter(Boolean))
+Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, agentType: 'checky', model: MODELS.step, effort: 'low' })
+ log(`follow-ups for PENDING checks: ${followUps.map((f) => `${f.code} (${f.only.join(', ')})`).join('; ')}`)
+ for (const [j, t] of [...new Set(followUps.map((f) => f.lane))].entries()) {
+  const fl = followUps.filter((f) => f.lane === t)
+  all.push(...(await (QL[t].devices ? pool(fl, LANES.length, (LN.length + j) * 100, laneFor) : pool(fl, par({ n: t, c: QL[t] }), (LN.length + j) * 100))).filter(Boolean))
+ }
 }
 await measure('Test')
 if (LANES.length) await runStep(`& ${ORCH} release -Agent '${LANES.map(LEASE).join(',')}' -Reason 'agent finished'`, 'release-lanes', 'Close').catch(() => null)   // backstop: idempotent
