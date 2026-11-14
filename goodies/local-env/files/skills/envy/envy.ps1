@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L30 config · L227 state · L274 layer drops · L346 leases · L472 code · L504 migrations ·
-  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1056 seed · L1134 processes · L1515 daemon ·
-  L1974 cleanup · L2046 doctor · L2099 verbs
+  L650 shared builds (opt-in services[].shareBuild true · L829 hooks · L901 marks · L1056 seed · L1136 processes · L1517 daemon ·
+  L1976 cleanup · L2048 doctor · L2101 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1079,8 +1079,10 @@ function Get-MissingRoutines([string]$e) {
   foreach ($f in Get-ChildItem -LiteralPath (Split-Path (Get-LiquibaseMaster $dir)) -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {
     $t = [IO.File]::ReadAllText($f.FullName); if ($t -notmatch '(?i)\b(PROCEDURE|FUNCTION)\b') { continue }
     $t = $t -replace '(?is)<rollback>.*?</rollback>|--rollback[^\n]*', ''
-    $c = @([regex]::Matches($t, '(?i)\bCREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(') | ForEach-Object { $_.Groups[1].Value.ToLower() })
-    $d = @([regex]::Matches($t, '(?i)\bDROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?(\w+)') | ForEach-Object { $_.Groups[1].Value.ToLower() } | Where-Object { $_ -notin $c })
+    $last = [ordered]@{}   # in file order: a backfill procedure created, called, then dropped is no routine the schema keeps
+    foreach ($m in [regex]::Matches($t, '(?i)\b(CREATE)\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(|\bDROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?(\w+)')) {
+      if ($m.Groups[1].Success) { $last[$m.Groups[2].Value.ToLower()] = 'c' } else { $last[$m.Groups[3].Value.ToLower()] = 'd' } }
+    $c = @($last.Keys | Where-Object { $last[$_] -eq 'c' }); $d = @($last.Keys | Where-Object { $last[$_] -eq 'd' })
     if ($c.Count -or $d.Count) { $made[$f.Name.ToLower()] = @{ create = $c; drop = $d } }
   }
   if (-not $made.Count) { return }

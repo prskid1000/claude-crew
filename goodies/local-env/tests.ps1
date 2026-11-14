@@ -500,6 +500,7 @@ Expect "localenv: an edited unmerged changeSet gets MD5SUM NULL (merged / whites
 # "created after the mark"; ALTER DATABASE changes nothing); seed -Check: a routine an executed changeSet file made, now gone = DRIFT
 Set-Content (Join-Path $ckr 'changelog/c2.xml') '<changeSet id="p" author="a"><sql>DROP PROCEDURE IF EXISTS `p1`;</sql><sql>CREATE DEFINER=`root`@`localhost` PROCEDURE `p1`(in a int) BEGIN END</sql><sql>CREATE FUNCTION p2(a int) RETURNS int RETURN 1</sql><rollback>DROP PROCEDURE p1</rollback></changeSet>'
 Set-Content (Join-Path $ckr 'changelog/c3.xml') '<changeSet id="q" author="a"><sql>DROP FUNCTION IF EXISTS p2</sql><rollback>CREATE FUNCTION p2(a int) RETURNS int RETURN 1</rollback></changeSet>'
+Set-Content (Join-Path $ckr 'changelog/c4.xml') '<changeSet id="b" author="a"><sql>CREATE PROCEDURE `p3`() BEGIN END</sql><sql>CALL `p3`()</sql><sql>DROP PROCEDURE IF EXISTS `p3`</sql></changeSet>'   # a backfill: made, run, dropped
 $rpOut = & { . $ckL
   function DbPosKey([string]$fp) { $f, $p = $fp -split ':(?=\d+$)'; @([long]([regex]::Match($f, '\d+$').Value), [long]$p) }
   function Test-DbPosBefore([string]$a, [string]$b) { $x = DbPosKey $a; $y = DbPosKey $b; $x[0] -lt $y[0] -or ($x[0] -eq $y[0] -and $x[1] -lt $y[1]) }
@@ -513,7 +514,7 @@ $rpOut = & { . $ckL
   $rp = Get-RestorePlan t @{ pos = 'b.000008:50' } @('s1', 's2') ''
   function Get-LiquibaseMaster { Join-Path $ckr 'changelog/c1.xml' }; function LiquibaseDir { $ckr }; function LiquibaseSchemas { 's1', 's2' }
   function Invoke-DbSql([string]$e, [string]$sql) {
-    if ($sql -match 'DATABASECHANGELOG') { , @('config/changelog/c2.xml', '5'); , @('config/changelog/c3.xml', '9') }
+    if ($sql -match 'DATABASECHANGELOG') { , @('config/changelog/c2.xml', '5'); , @('config/changelog/c3.xml', '9'); , @('config/changelog/c4.xml', '11') }
     elseif ($sql -match "'s2'") { , @('p1') } }
   $mr = @(Get-MissingRoutines t)
   "drops=$($rp.objectDrops -join ',')|tdrops=$($rp.drops -join ',')|fb=$(@($rp.fallback.table) -join ',')|warn=$(@($rp.warnings).Count)|missing=$(@($mr | ForEach-Object { "$($_.schema):$($_.names -join '+')" }) -join ',')" }
