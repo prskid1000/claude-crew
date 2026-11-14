@@ -196,9 +196,9 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   login: MRs reported by workflows), review + fix share; cost and tokens per day as lines (a time series is never bars); workflow steps by outcome as one stacked
   bar; a role table (coordinator and agents outside workflows included: steps, tokens, share bar, est. cost, avg / p90 time),
   a model table (steps, tokens, est. cost, cost share bar, avg time); per step type (avg / p50 / p90), sessions when 2+;
-- kit internals (kit tuning and history only): kit activity tiles (workflow steps now, branches, sweep time, runs, agents
-  spawned / finished / failed, average duration, deploys, decisions, lessons, auto-fixed %: today vs yesterday, 7 days vs the 7
-  before; `—` = no source), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
+- kit internals (kit tuning and history only): Activity tiles, each number once with its history as a labelled graph (workflow
+  steps now + a chip per running run, 24 h step line; branches · worktrees per repo + 7-day lines; sweep time, 24 h with the
+  7-day average; agents failed, 7 daily bars; flags auto-fixed, % per sweep; `—` = no source), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
   default / local config / learned with its note · changed · why), the last 10 learned changes on top.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
