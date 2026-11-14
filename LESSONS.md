@@ -19,6 +19,10 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 
 ## crafty
 - A spec-only (test-only) area finds a product bug -> pin today's behaviour in the spec, report BACKEND FIX + `decide ask`, never edit product source (a spec-only area's MR changed 4 service / repository files, passed review and CI, and reached a test env). (1x)
+- devtools.py finish on a parent task whose description is rendered from a spec -> update the description with crafty.ps1 tracker update -Spec before finish; finish must skip describe on spec-rendered tasks (finish failed 3x at tracker describe after docs and MRs were already posted)
+- looking for a skill, script or file -> Glob / Grep the kit, ~/.claude or the repo; never a whole-drive find (an orphaned whole-drive find held the shell and disk)
+- a changeSet sits in DATABASECHANGELOG but its routine or table is missing on the lane tenant -> restore the lane DB to a pre-changeSet mark and restart the api so it reruns; never delete the changelog row alone (W2d lost 2 rounds)
+- a shared rm lane fails specs that passed before (another wave agent ran setup specs on it) -> ask for an ENV-FIX restore to the lane mark (envy.ps1 restore -Mark <mark>) or a lane alone, then rerun once (B lost 3 rounds rerunning on a dirty lane)
 - wt commit refused (prose or lint finding) -> fix it and commit before any wt sync (uncommitted review-fix edits were lost across a sync). (1x)
 - A contract claims an old consumer ignores a new param -> test it against the deployed consumer (one call on staging) before merge (kwargs-strict handlers reject unknown params). (2x)
 - A long kit verb (bossy deploy request, waits) via Bash -> start it with run_in_background or a timeout over 120 s, then read the output file (a foreground call cut at 120 s loses the plan). (1x)
@@ -54,12 +58,9 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Moving a job off the request path -> grep its other callers, build the new data before deleting the old (swap in one locked step), scope retries; readiness = the health endpoint answering (data went missing between the steps). (4×)
 - Mocking a producer -> fixtures from captured payloads, replay write semantics (PATCH deep-merge), dumped SQL read-only on a replica, flag-off golden from origin/<target>, call the real method, dates server-side (mocks hid producer behaviour). (18×)
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
-- UI lifecycle changes -> a structural spec over real templates for placement bugs; a destroyed guard after every await, unregister on destroy; list mutations through one resolve-active helper; check new transient states against the template (async callbacks hit destroyed components). (8×)
-- A cross-repo contract -> quote producer validation verbatim; the producer accepts both spellings and opens its MR first; never invent limits or endpoints; a producer DTO change ships with its consumer in the same wave (invented limits broke consumers). (19×)
-- Tightening validation -> grep every client caller for its real encoding; list each old-accepted input as tested or stated as newly rejected (clients sent encodings the new rule refused). (6×)
-- A form rebuilds a payload from visible fields -> prefill from the record; the API never clears absent fields; never bind the raw entity on PUT; keep the stored derived value after a lookup; never overwrite a typed user draft (stored values were wiped). (7×)
 
 ## pokey
+- publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames)
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
 - A PASS_WITH_NOTE whose observed text describes a defect (clipped control, wrong data) -> make it a FAIL; re-read every note before closing (a defect passed as a note once). (1x)
 - A node QA script -> wrap it in try/finally s.done(); after a hard kill run `bossy.ps1 release -Agent <id>` (leased tabs, 8 max, made session() hang silently). (2x)
@@ -99,12 +100,13 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- counting a property that may be null in PowerShell -> use @($x.prop | Where-Object { $_ }).Count or test $null first; @($null).Count is 1 (deploy plan printed OUT-OF-AREA for every MR, supervise info on an empty cache)
 - Working after a push in a merged clean worktree -> run every later command with absolute paths into it, never cd then a command that falls back to the live clone (cleanup swept the worktree: hard failure). (1x)
 - Reading ISO times with ConvertFrom-Json -> compare as DateTimeOffset or keep them text (-AsHashtable, then ToString('o')) (DateTime interpolation drops fraction and offset: same-second ties broke ordering). (1×)
 - A local-env test that creates and drops tenants fails once in a parallel kit-tests run -> rerun that area alone before calling it a regression (areas share the machine). (2x)
 - A test string holds a regex -> put it in a here-string or a variable (an unbalanced paren in a single-quoted string inside a double-quoted subexpression does not parse). (2x)
 - Kit tests clean up -> remove only the fake files they wrote, never a whole folder (Remove-Item adapters -Recurse broke the bossy area for 2 days when a core function moved into adapters/). (1×)
-- Scripted replace pairs in PowerShell -> wrap each concatenation in parentheses (the comma binds tighter than +: @('a', 'b' + 'c') has 3 items). (1x)
+- Scripted replace pairs in PowerShell -> wrap each concatenation in parentheses (the comma binds tighter than +: @('a', 'b' + 'c') has 3 items). (2×)
 - Profiling a live supervise -> use a scratch copy; back up supervise-state, lock, report and .runtime/work/deploys/plan-cache.json first, restore after (a live profile overwrote them). (1×)
 - Naming a scripted edit helper or a new kit function -> check the name with Get-Command / `git grep 'function <Name>'`, full verb-noun names only (an alias Rd = Remove-Item deleted README.md and lib.ps1; a second Format-KitCell replaced the first). (2x)
 - Writing a file that holds regex or Windows paths -> use the Write tool (Bash heredocs in this harness mangle backslashes). (2x)
