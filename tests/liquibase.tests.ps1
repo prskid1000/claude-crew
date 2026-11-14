@@ -57,5 +57,22 @@ Expect 'check -Step migrations: migrations.tool unset = none, not checked, exit 
 & $J @{ migrations = @{ tool = 'flyway' } } $cfgf 8
 $out = pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') check -Dir $repo -Step migrations -Since 20240102000000 2>&1 | Out-String
 Expect 'check -Step migrations: a tool with no kit adapter = UNRUN, exit 5' ($LASTEXITCODE -eq 5 -and $out -match 'migration tool flyway has no kit check')
+$D = Join-Path $k 'skills/crafty/crafty.ps1'; $dkl = $cfgf; Remove-Item $dkl -ErrorAction SilentlyContinue
+# other tools' migration files: none = not checked; the liquibase adapter (legacy migrations.tool) lists them UNRUN
+$ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
+'{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
+Save-GitRepo $ud init
+$mig = { param([hashtable]$f) foreach ($p in $f.Keys) { New-Item -Force "$ud/$p" -Value $f[$p] | Out-Null }; Save-GitRepo $ud add; Invoke-TestScript $D check -Dir $ud -Step migrations }
+$r0 = & $mig @{ 'db/migrate/20240101000000_x.rb' = 'def change; end' }
+Expect "check: migrations.tool unset (none): not checked, exit 0 ($($r0.code))" ($r0.code -eq 0 -and $r0.out -match 'no migration tool configured')
+# the liquibase adapter (migrations.tool liquibase, the legacy value): other tools' files are UNRUN
+$dk0 = if (Test-Path $dkl) { Get-Content $dkl -Raw }; $dkj = if ($dk0) { $dk0 | ConvertFrom-Json -AsHashtable } else { @{} }; $dkj.migrations = @{ tool = 'liquibase' }; & $J $dkj $dkl 8
+Expect-Cases @(
+  , @('check: migrations without a kit check or tool are UNRUN (exit 5), docs skipped', { & $mig @{ 'db/migrate/20240101000000_x.rb' = 'def change; end'; 'CHANGELOG.md' = 'x'; 'database/migrations/2024_01_01_000000_x.php' = '<?php' } },
+      { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 2 migration file\(s\) of another tool' -and $r.out -match '000000_x\.php' -and $r.out -notmatch 'CHANGELOG' })
+  , @('check: Flyway, Alembic and Prisma files are UNRUN too', { & $mig @{ 'alembic/versions/a1_x.py' = 'x'; 'prisma/migrations/1_x/migration.sql' = 'x'; 'db/migration/V1__x.sql' = 'x' } },
+      { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 5 migration file\(s\) of another tool' })
+)
+if ($dk0) { Set-Content $dkl $dk0 } else { Remove-Item $dkl -ErrorAction SilentlyContinue }
 Remove-TestKit $k
 Complete-Tests
