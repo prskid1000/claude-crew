@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L10 paths · L67 state · L136 config · L217 OS · L414 leases · L803 status · L1047 supervise sweep ·
-  L1118 supervise report · L1214 tracker · L1544 prior · L1560 ask bugs · L1765 git-host · L1952 kitlog · L2072 params ·
-  L2377 entry-scripts
+  L1118 supervise report · L1214 tracker · L1544 prior · L1560 ask bugs · L1765 git-host · L1951 kitlog · L2071 params ·
+  L2376 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1843,9 +1843,8 @@ function __HostState($o) { foreach ($x in @($o | Where-Object { $_ -is [psobject
 function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   $t = ([string]$(if ($A.type) { $A.type } else { $script:HostType })).ToLower()
   # no host known: UNKNOWN (null), one hint, never a vendor's call
-  $ci = if ($t) { Get-KitCiType $A.repo $t } else { ([string](Get-KitSetting 'ci.type' '')).ToLower() }; $hint = 'set gitHostType (gitlab | github | bitbucket | gitea | azure | command) in kit.local.json'
-  if (-not $(if ($Verb -like 'ci.*') { $ci } else { $t })) { if (-not $script:KitHostWarned) { $script:KitHostWarned = $true; Write-Warning "githost: unknown git host: $hint" }; $global:KitHostFailed = $true; return $null }
-  if ($Verb -notlike 'ci.*' -and -not $KitAdapters['git-host'][$t]) { throw "githost: gitHostType '$t' has no adapter: $hint" }
+  $ci = if ($t) { Get-KitCiType $A.repo $t } else { ([string](Get-KitSetting 'ci.type' '')).ToLower() }
+  if (-not $(if ($Verb -like 'ci.*') { $ci } else { $t })) { if (-not $script:KitHostWarned) { $script:KitHostWarned = $true; Write-Warning 'githost: unknown git host: set gitHostType (gitlab | github | bitbucket | gitea | azure | command) in kit.local.json' }; $global:KitHostFailed = $true; return $null }
   if ($Verb -in 'mr.merge', 'mr.create' -and -not $A.method) { $A.method = [string](Get-RepoConf $A.repo 'mergeMethod' 'squash') }
   $kind, $name, $v2 = if ($Verb -like 'ci.*') { 'ci', $ci, $Verb.Substring(3) } else { 'git-host', $t, $Verb }
   $mk = "$name|$Verb|$(($A.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&')"
