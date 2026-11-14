@@ -4,7 +4,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 
 ## bossy
 - supervise flags a SHELL ORPHAN whose owner agent still shows on the board -> check the board row and its last beat before taskkill /T; kill only when the agent is gone (taskkill /T on checky-R2 pid 32160 cut a live agent)
-- Two products' web items in one wave -> batch one product's web items, release its web, then launch the other's; testers run API checks first (two local web services, ~8-10 GB each, do not fit beside QA browsers and the keep-free floor). (4×)
 - A consumer MR waits on producer MRs -> register EVERY producer with `bossy.ps1 track add -MergeAfter '<web>!<iid>><api>!<iid>'` before any merge, read the printed list back, confirm API MRs merged before QA, never merge a consumer by hand (a consumer merged first broke QA). (9×)
 - The owner asks to explain or plan -> answer or plan, never launch a wave (a 9-agent wave once built nothing). (4×)
 - Reporting or acting on an MR's state -> take it from devtools.py merge output or the host, reconcile before consumer merges or promotes (an agent's prose said merged while it was only scheduled for green). (8×)
@@ -22,13 +21,10 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A spec-only (test-only) area finds a product bug -> pin today's behaviour in the spec, report BACKEND FIX + `decide ask`, never edit product source (a spec-only area's MR changed 4 service / repository files, passed review and CI, and reached a test env). (1x)
 - devtools.py finish on a parent task whose description is rendered from a spec -> update the description with crafty.ps1 tracker update -Spec before finish; finish must skip describe on spec-rendered tasks (finish failed 3x at tracker describe after docs and MRs were already posted)
 - looking for a skill, script or file -> Glob / Grep the kit, ~/.claude or the repo; never a whole-drive find (an orphaned whole-drive find held the shell and disk)
-- a changeSet sits in DATABASECHANGELOG but its routine or table is missing on the lane tenant -> restore the lane DB to a pre-changeSet mark and restart the api so it reruns; never delete the changelog row alone (W2d lost 2 rounds)
-- a shared rm lane fails specs that passed before (another wave agent ran setup specs on it) -> ask for an ENV-FIX restore to the lane mark (envy.ps1 restore -Mark <mark>) or a lane alone, then rerun once (B lost 3 rounds rerunning on a dirty lane)
 - wt commit refused (prose or lint finding) -> fix it and commit before any wt sync (uncommitted review-fix edits were lost across a sync). (1x)
 - A contract claims an old consumer ignores a new param -> test it against the deployed consumer (one call on staging) before merge (kwargs-strict handlers reject unknown params). (2x)
 - A long kit verb (bossy deploy request, waits) via Bash -> start it with run_in_background or a timeout over 120 s, then read the output file (a foreground call cut at 120 s loses the plan). (1x)
 - After `wt new` -> check the dependency links (node_modules, linkPaths) exist before editing; missing: save the diff, recreate with `wt new` (a worktree without them fails wt remove and can empty the folder). (1×)
-- Shipping an MR -> after the local PASS run `devtools.py finish` first, then `mr` with both doc links (take the link finish printed), then merge (merge refuses a body without the Testing doc lines; a gws timeout may move the AI doc). (3×)
 - Code reads cloud secrets or creds -> lazy-load them and run unit tests once with creds unset before the MR (import-time reads pass on a laptop and fail on a clean CI container). (1x)
 - Wave branches of one task -> pass `--override` with the wave id to devtools finish and mr on each sibling branch (the prior-work gate refuses siblings until it counts the batch as one task). (2x) (2×)
 - Writing a shared task doc (one testing-ai key, many wave agents) -> read the current doc first, keep every other area's section and Rounds rows, write patches with the Edit tool or a file (heredoc python collapses backslash-n; areas lost rows). (4x)
@@ -43,12 +39,9 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Before merge -> confirm a pipeline exists for the MR head; none (rules skipped): trigger one or report NOT_MERGED with the reason (agents waited silently on no pipeline). (2x)
 - Asking for re-review or merge after review fixes -> push the commit first and check the host's MR head sha equals the local HEAD (reviews ran on the old head). (2x)
 - Any claim in the MR body or goals doc (PASS, cleanup added, red before the fix, "no gate exists", "untested methods: none") -> name its proof from the final head (test, grep, request) and update the goals doc before done (a compile error was called a red test). (6×)
-- An FK on an old table -> count orphan refs first (local env and a replica), clean them in an earlier changeSet (MySQL rechecks every row on the table copy, 1452; a failed DDL leaves a half-added column). (2×)
 - Gating a feature -> gate only what it introduced, on the flag, in the shared method (grep every caller); on/off tests; status gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in another service ship OFF (gates leaked into old paths). (14×)
 - Linked shared deps older than the target fail typecheck / build / Jest -> keep the earlier local result, no reinstall, CI decides (a reinstall breaks every linked worktree). (7×)
-- Git host 500/502, CI gateway timeout or merge's `INFRA <reason>` -> retry the failed JOB on the same sha (`glab api -X POST projects/<id>/jobs/<job>/retry`), merge only after green, no code change (`glab ci retry` 404s; infra is not a code fault). (6×)
 - Resuming an area -> `crafty.ps1 wt status`, `git log origin/<target>..<branch>`, the host's MR state; vanished worktree: `wt new` on the same branch; rebase, re-run targeted tests, keep the goals file; takeovers skip the testing doc (a stopped agent may have merged). (11×)
-- An LLM or MCP-path answer changes -> sample 5 fresh chats on an env with the MCP URL before merge, or mark needsLiveCheck with the env (unit tests cannot judge live answers). (3×)
 - A task may span repos and target branches -> run `git log --grep <task>` on each target before worktrees; the brief's repo table lists them all (a second branch's work was missed). (4×)
 - A precondition fails in an API handler -> use the validation helpers that return 400 and grep every call site (a generic runtime error maps to HTTP 500; the UI shows the server's 400 text). (3×)
 - A task or queue payload carries secrets (headers, env, tokens) -> keep them in process memory only, store NULL, chmod db files on open; grep host env var NAMES before removing a fallback (secrets reached a db, WAL, log or temp file). (2×)
@@ -61,7 +54,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
-- a test run lasts longer than a few minutes (full cypress) -> start it detached with Start-Process and a log file, never as a Bash run_in_background child (a 3.5 h cypress run died at 42 min with the shell, no exit line)
+- a test run lasts longer than a few minutes (a full e2e suite) -> start it detached with Start-Process and a log file, never as a Bash run_in_background child (a 3.5 h e2e run died at 42 min with the shell, no exit line)
 - publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames)
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
 - A PASS_WITH_NOTE whose observed text describes a defect (clipped control, wrong data) -> make it a FAIL; re-read every note before closing (a defect passed as a note once). (1x)
@@ -71,7 +64,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Writing QA observed and verify text -> sentences of <= 25 words, <= 40 words per observed text, before evidence -Check (so the first -Check passes). (3×) (2×)
 - An API check -> replay the body the real client sends (from the web UI network log or the client source), never a hand-built body (a richer hand body passed while the UI request wrote wrong data: defect missed). (1x)
 - A PowerShell helper param -> never reuse a script variable name in any case (`$o` is `$O`); use distinct names (the helper ran with the wrong value: hard failure). (1x)
-- A NOT_TESTED undeployed check whose MR sits in a running deploy job -> wait on that job (glab api jobs/<id>), then test (failing the task was premature). (1x)
 - Passing `pokey.ps1 api -OutDir` -> take it from `crafty.ps1 dir` in a distinctly named variable (a reused case-insensitive name, $o is $O, sent a number: refused 9x). (9x)
 - Report -Check fails on prose limits -> shorten the observed wording only, keep every evidence name and file reference (renamed references broke the report). (2x) (3×)
 - Before every publish -> run `pokey.ps1 finalize -Check` (it catches missing or renamed evidence references: no broken report goes out). (1x)
@@ -90,7 +82,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Capture (timing) checks -> time per screen and page type, wait for pageSize rows before timing, re-run once at low load before FAIL; a capture blocking past its cap is FAIL with the profile saved (load spikes gave false FAILs). (9×)
 - An item is skipped -> write its reason into run.json (skips without a reason were lost). (2×)
 - A server-side config check (model, temperature, fallback) from the API lane -> verify the deployed code and its unit tests, name unseen env overrides; unprovable: NOT_TESTED with cause (the API cannot show config).
-- Proving cross-product token refusal -> by unit test or the deployed key, after checking the separate service is deployed (a test env's signing key can differ from repo config).
 - Library overlays (dropdowns, date pickers, virtual lists) -> hover dropdowns need `hoverSel`, date pickers a cell click, virtual lists the overlay scrolled; paginate and wait for the first row's id to change (overlays render outside the component). (2×)
 
 ## envy
@@ -136,5 +127,4 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 ## opsy
 ## watchy
 ## rechy
-- A Drive .xlsx / .docx -> download once with gws drive files get alt=media --output, dump to one text file, read that file once (re-reading the binary wasted calls). (1x)
 - Checking an adapter against a vendor API -> read the vendor reference (an llms.txt index lists .md pages) and diff request and response shapes field by field (adapters drifted from the vendor). (1x)
