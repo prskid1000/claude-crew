@@ -9,14 +9,14 @@ Exit codes: 0 ok · 1 install / uninstall / tick failed, status missing or stale
 Sections: L12 os timer
 #>
 #Requires -Version 7
-# ---- os timer: adapter scheduler (windows built; cron, launchd name the exact by-hand step)
+# ---- os timer: adapter scheduler (windows Task Scheduler, cron, launchd; verbs install, uninstall, status)
 function Get-KitOsBeatAdapter { $v = "$(Get-KitSetting 'supervise.osTimer' '')".Trim().ToLower(); if ($v -eq 'false') { 'none' } elseif ($v -and $v -ne 'true') { $v } elseif ($KitIsWindows) { 'windows' } elseif ($IsMacOS) { 'launchd' } else { 'cron' } }
 # one task per kit folder: several workspaces share a machine
 function Get-KitOsBeatArgs([double]$Minutes) {
   $pw = (Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -First 1).Source; if (-not $pw) { $pw = 'pwsh' }
-  $tick = "-NoProfile -NonInteractive -File `"$($KitCmd.orch)`" heartbeat tick"
+  $argv = @('-NoProfile', '-NonInteractive', '-File', "$($KitCmd.orch)", 'heartbeat', 'tick'); $tick = "-NoProfile -NonInteractive -File `"$($KitCmd.orch)`" heartbeat tick"
   @{ name = "claude-crew-heartbeat-$([Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes("$($KitConf.Kit)".ToLower()))).Substring(0, 8).ToLower())"
-     minutes = [int][math]::Max(1, $Minutes); pwsh = $pw; tick = $tick; command = "`"$pw`" $tick" }
+     minutes = [int][math]::Max(1, $Minutes); pwsh = $pw; tick = $tick; argv = $argv; command = "`"$pw`" $tick" }
 }
 # adapter:scheduler/windows: Task Scheduler, this user while logged on; conhost --headless: no console flash; runs on battery, catches up after sleep
 Register-KitAdapter 'scheduler' 'windows' @{
@@ -30,17 +30,50 @@ Register-KitAdapter 'scheduler' 'windows' @{
     $i = $t | Get-ScheduledTaskInfo; $rep = "$(@($t.Triggers)[0].Repetition.Interval)"
     @{ installed = $true; state = "$($t.State)"; lastRun = $(if ($i.LastRunTime.Year -gt 2000) { $i.LastRunTime }); lastResult = $i.LastTaskResult; nextRun = $i.NextRunTime; every = $(if ($rep -match '^PT(?:(\d+)H)?(?:(\d+)M)?$') { 60 * [int]$Matches[1] + [int]$Matches[2] }) } }
 }
-# adapter:scheduler/cron: not built yet: names the crontab line
-Register-KitAdapter 'scheduler' 'cron' @{
-  'install' = { param($a) throw "cron adapter not built: crontab -e, add: */$($a.minutes) * * * * $($a.command) # $($a.name)" }
-  'uninstall' = { param($a) throw "cron adapter not built: crontab -e, delete the line ending # $($a.name)" }
-  'status' = { param($a) @{ installed = $null; state = "UNKNOWN (cron adapter not built: crontab -l | grep $($a.name))" } }
+# adapter:scheduler/cron: one crontab line per kit folder, tagged # <name>; crontab - replaces the table
+function Invoke-KitSchedCmd([string]$Exe, [string[]]$ArgList = @(), [string]$Stdin = $null) {   # tests replace it: no real scheduling
+  $o = if ($null -ne $Stdin) { $Stdin | & $Exe @ArgList 2>&1 } else { & $Exe @ArgList 2>&1 }; @{ code = $LASTEXITCODE; out = "$(($o | Out-String))".Trim() }
 }
-# adapter:scheduler/launchd: not built yet: names the LaunchAgent
+function Get-KitCronLines([string]$Name) { $r = Invoke-KitSchedCmd 'crontab' @('-l'); @(if ($r.code -eq 0) { "$($r.out)" -split "`r?`n" | Where-Object { $_ -and $_ -notmatch "#\s*$([regex]::Escape($Name))\s*$" } }) }   # no table yet: exit 1
+function Get-KitCronSpec([int]$Minutes) { if ($Minutes -lt 60) { "*/$Minutes * * * *" } else { "0 */$([math]::Max(1, [int][math]::Round($Minutes / 60))) * * *" } }
+Register-KitAdapter 'scheduler' 'cron' @{
+  'install' = { param($a) $t = @(Get-KitCronLines $a.name) + "$(Get-KitCronSpec $a.minutes) $($a.command) >/dev/null 2>&1 # $($a.name)"
+    $r = Invoke-KitSchedCmd 'crontab' @('-') (($t -join "`n") + "`n"); if ($r.code) { throw "crontab - exit $($r.code): $($r.out)" } }
+  'uninstall' = { param($a) $r = Invoke-KitSchedCmd 'crontab' @('-') ((@(Get-KitCronLines $a.name) -join "`n") + "`n"); if ($r.code) { throw "crontab - exit $($r.code): $($r.out)" } }
+  'status' = { param($a) $r = Invoke-KitSchedCmd 'crontab' @('-l'); $l = @("$($r.out)" -split "`r?`n" | Where-Object { $_ -match "#\s*$([regex]::Escape($a.name))\s*$" })[0]
+    if (-not $l) { return @{ installed = $false; state = 'no crontab line' } }
+    @{ installed = $true; state = 'Ready'; every = $(if ($l -match '^\*/(\d+) ') { [int]$Matches[1] } elseif ($l -match '^0 \*/(\d+) ') { 60 * [int]$Matches[1] }) } }
+}
+# adapter:scheduler/launchd: a LaunchAgent plist (StartInterval), launchctl load -w / unload
+function Get-KitLaunchAgentDir { Join-Path $HOME 'Library/LaunchAgents' }   # tests replace it
+function Get-KitLaunchPlist($a) {
+  $x = { param($s) [Security.SecurityElement]::Escape("$s") }
+  $argv = (@($a.pwsh) + @($a.argv) | ForEach-Object { "    <string>$(& $x $_)</string>" }) -join "`n"
+  @"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$(& $x $a.name)</string>
+  <key>ProgramArguments</key>
+  <array>
+$argv
+  </array>
+  <key>StartInterval</key><integer>$(60 * $a.minutes)</integer>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>
+"@
+}
 Register-KitAdapter 'scheduler' 'launchd' @{
-  'install' = { param($a) throw "launchd adapter not built: write ~/Library/LaunchAgents/$($a.name).plist (StartInterval $(60 * $a.minutes), ProgramArguments: $($a.command)), then launchctl load it" }
-  'uninstall' = { param($a) throw "launchd adapter not built: launchctl unload ~/Library/LaunchAgents/$($a.name).plist, then delete it" }
-  'status' = { param($a) @{ installed = $null; state = "UNKNOWN (launchd adapter not built: launchctl list | grep $($a.name))" } }
+  'install' = { param($a) $d = Get-KitLaunchAgentDir; $p = Join-Path $d "$($a.name).plist"; New-Item -ItemType Directory -Force $d | Out-Null
+    if (Test-Path -LiteralPath $p) { $null = Invoke-KitSchedCmd 'launchctl' @('unload', $p) }
+    [IO.File]::WriteAllText($p, ((Get-KitLaunchPlist $a) -replace "`r`n", "`n")); $r = Invoke-KitSchedCmd 'launchctl' @('load', '-w', $p); if ($r.code) { throw "launchctl load exit $($r.code): $($r.out)" } }
+  'uninstall' = { param($a) $p = Join-Path (Get-KitLaunchAgentDir) "$($a.name).plist"
+    if (Test-Path -LiteralPath $p) { $null = Invoke-KitSchedCmd 'launchctl' @('unload', '-w', $p); Remove-Item -LiteralPath $p -Force } }
+  'status' = { param($a) $p = Join-Path (Get-KitLaunchAgentDir) "$($a.name).plist"; $r = Invoke-KitSchedCmd 'launchctl' @('list', $a.name)
+    if ($r.code -or -not (Test-Path -LiteralPath $p)) { return @{ installed = $false; state = $(if (Test-Path -LiteralPath $p) { 'plist not loaded' } else { 'no plist' }) } }
+    @{ installed = $true; state = 'Ready'; every = $(if ((Get-Content -LiteralPath $p -Raw) -match '<key>StartInterval</key><integer>(\d+)</integer>') { [int]([int]$Matches[1] / 60) }) } }
 }
 # adapter:scheduler/none: supervise.osTimer false
 Register-KitAdapter 'scheduler' 'none' @{ '*' = { param($a, $verb) if ($verb -eq 'status') { @{ installed = $false; state = 'off (supervise.osTimer false)' } } else { throw 'supervise.osTimer is false in kit.local.json' } } }
