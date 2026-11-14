@@ -172,6 +172,8 @@ $pb = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch '{"set
 $ph = pwsh -NoProfile -File $PK results hold -RunDir $rd -Code W1 -Why "env: it's down" -Summary 'W1: pass 1/3' -EnvFix '{"id":"d-1","state":"open"}' 2>&1 | Out-String; $hj = Get-Content -Raw "$rd/W1/held.json" | ConvertFrom-Json
 Expect "testy.js resultsPatch: only the changed fields and added rows (dup ids as the workflow names them), none when nothing changed ($($cmds -join ' || '))" ("$($cmds[0])" -match "^& 'pokey\.ps1' results patch -RunDir 'RD' -Code W1 -Patch '\{" -and $pj -match '"set":\{"T2":\{"verify":"re-test: confirmed \(it.s real\)"\}\}' -and $pj -match '"add":\[\{"id":"T1n"' -and $pj -notmatch 'T2b|"T1":' -and "$($cmds[1])" -eq 'NONE=""')
 Expect "pokey.ps1 results patch: deltas merged by id (dup ids made unique, guideId), rows added, unknown key / id refused, nothing written ($($pr.Trim()))" ($pr -match '1 changed, 1 added, 4 checks' -and (@($after.checks.id) -join ',') -eq 'T1,T2,T2b,T1n' -and $after.checks[1].verify -match "it's real" -and $after.checks[2].guideId -eq 'T2' -and $pb -match 'unknown row key\(s\) color' -and @((Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json).checks).Count -eq 4)
+$pn = foreach ($bp in '{"add":[{"observed":"x"}]}', '{"set":{"T1":"PASS"}}') { pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch $bp 2>&1 | Out-String }
+Expect 'results patch: an add row without id or a set value no object = refused with the set shape, no crash' (@($pn | Where-Object { $_ -match 'add rows need an id; to change fields of a check use set' }).Count -eq 2)
 Expect "pokey.ps1 results hold: held.json from arguments, the script's UTC time ($($hj.at))" ($hj.held -eq "env: it's down" -and $hj.envFix.id -eq 'd-1' -and $hj.summary -eq 'W1: pass 1/3' -and (Get-Content -Raw "$rd/W1/held.json") -match '"at": "\d{4}-\d\d-\d\dT[\d:.]+Z"')
 # review fixes: a round counts only the cases run in it, a result replaces the evidence, _del removes; () and non-ASCII survive formats
 $null = Dt cases result T1 A2 FAIL; $null = Dt cases round T1 --bugs 'A2: 500'; Set-JsonFile "$wd/del.json" @{ cases = @(@{ id = 'A2'; _del = $true }) }; $null = Dt cases add T1 "$wd/del.json"
@@ -293,5 +295,7 @@ none yet
 ## Rule changes during the wave (newest last)
 "@) -and (Gold (Get-Content -Raw "$wd/wb.contracts.md") "# Contracts: orders-sort`n| Field / endpoint | Type | Producer | Consumers | Merge / deploy order | Backward-compatible |`n|---|---|---|---|---|---|`n| GET /orders?sort | query | X2 | X1 | X2 first | yes |`n## Rule changes during the wave (newest last)") -and
   $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
+$nf = Dt render commit (Join-Path $wd 'nope.json')
+Expect 'render: a missing spec file = usage (exit 2), no traceback' ($nf.code -eq 2 -and $nf.out -match 'no such spec file' -and $nf.out -notmatch 'Traceback')
 Remove-TestKit $k
 Complete-Tests

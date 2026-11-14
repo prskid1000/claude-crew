@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   a missing goody or api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L26 report · L125 seat · L192 api · L360 finalize · L795 results · L824 retest · L864 prepare
+Sections: L26 report · L125 seat · L192 api · L360 finalize · L795 results · L827 retest · L867 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -809,6 +809,9 @@ if (-not (Test-Path -LiteralPath $f)) { throw "results patch: no $f (the tester 
 $r = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable
 $bad = @(foreach ($c in @($p.add) + @($p.set.Values)) { if ($c) { $c.Keys | Where-Object { $_ -notin $script:ResultRowKeys } } }) | Select-Object -Unique
 if ($bad.Count) { throw "results patch refused: unknown row key(s) $($bad -join ', ') (testy.js CHECKS_SCHEMA); nothing written" }
+# an add row without id or a set value that is no object crashed (ContainsKey(null)): say how to change a field
+if (@(@($p.add) | Where-Object { $_ -and -not ($_ -is [Collections.IDictionary] -and "$($_.id)") }).Count -or ($p.set -and -not ($p.set -is [Collections.IDictionary] -and -not @($p.set.Values | Where-Object { $_ -isnot [Collections.IDictionary] }).Count))) {
+  throw "results patch refused: add rows need an id; to change fields of a check use set: { <id>: { <field>: <value> } }; nothing written" }
 $seen = @{}; foreach ($c in $r.checks) {   # unique ids as the workflow makes them (testy.js run-item): a, b ... suffix, guideId
   $id = "$(if ($c.id) { $c.id } else { 'check' })"; $n = $id; $k = 1; while ($seen.ContainsKey($n)) { $n = "$id$([char](97 + $k++))" }
   if ($n -ne $id) { $c.guideId = $id }; $c.id = $n; $seen[$n] = $c }

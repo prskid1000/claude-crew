@@ -29,7 +29,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L46 config · L80 run · L168 tracker · L371 git host · L454 MR · L621 merge · L901 docs · L1056 publish · L1414 render ·
-  L1744 plugins · L1758 keepboth · L1777 selftest · L2189 CLI
+  L1745 plugins · L1759 keepboth · L1778 selftest · L2190 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1707,7 +1707,8 @@ def load_spec(src):
     if str(src).lstrip().startswith('{'):
         return json.loads(src)
     if not os.path.isfile(src):
-        raise SystemExit(f'no such spec file {src} (pass a file path or inline JSON)')
+        print(f'no such spec file {src} (pass a file path or inline JSON)', file=sys.stderr)
+        raise SystemExit(2)   # a usage error, not a traceback
     return json.loads(open(src, encoding='utf-8-sig').read())
 
 
