@@ -1,15 +1,16 @@
 <#
 supervise_resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): build gate holders and queue, test locks, repeated build failures, the file cache flush (gate.cacheFlush),
-phone leases, env leases, QA seats and claims, test browsers and their profiles, idle Gradle / Kotlin daemons, the RAM rows of
+phone leases, env leases, QA seats and claims, test browsers and their profiles, idle daemons (cleanup.idleDaemons), the RAM rows of
 the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), the report page (dashboard + Statistics from the logs; supervise.output, publish), seats and leases in board show and recover, the status resource rows, STUCK, pause and silent-run flags, release (every lease of an agent), launch: pauses it releases, a buildy launch's item tasks (-Self / -Check), stop-learn; sessions: several coordinators (run
 owners for pause / resume / recover, a stepped-aside session's own flags, task claims), the step-age handoff.
 Its hooks run inside the bossy.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L253 shells · L387 page · L867 release · L906 lines · L939 cleanup · L975 launch ·
-  L1053 pause · L1171 heartbeat · L1186 sessions · L1238 ci tasks · L1290 the kit origin's main
+Sections: L16 builds · L48 supervise · L254 shells · L388 page · L868 release · L907 lines · L940 cleanup · L980 launch ·
+  L1058 pause · L1176 heartbeat · L1191 sessions · L1243 ci tasks ·
+  L1295 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -937,7 +938,7 @@ function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind 
   Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
 }
 # ---- cleanup: idle resources
-# holderless test browsers, idle / surplus browser profiles, idle Gradle / Kotlin daemons
+# holderless test browsers, idle / surplus browser profiles, idle daemons (cleanup.idleDaemons)
 function Invoke-KitCleanupResources {
   $profiles = Get-KitPath chrome-profiles
   $chromes = Get-SysProcs -Name '(?i)^(chrome|msedge|chromium(-browser)?|chrome-headless-shell|headless_shell|google chrome|microsoft edge|firefox|MiniBrowser|WebKitWebProcess)(\.exe)?$' | Where-Object { $_.CommandLine -match '--?headless|-juggler' -and $_.CommandLine -match [regex]::Escape($profiles) }
@@ -963,11 +964,15 @@ function Invoke-KitCleanupResources {
         [pscustomobject]@{ dir = $_; used = $(if ($ls) { $ls.LastWriteTime } else { $_.LastWriteTime }) } } | Sort-Object used -Descending)
     foreach ($x in @($left | Select-Object -Skip $maxProfiles)) { if ($x.dir.Name -notin $inUse) { Gone $x.dir.FullName "browser profile beyond the newest $maxProfiles (cleanup.maxBrowserProfiles)" } }
   }
-  $gradleBusy = @(Get-ChildItem (Join-Path $tmp 'claude-build-gate') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' |
-    ForEach-Object { try { $e = Get-Content $_.FullName -Raw | ConvertFrom-Json; if ($e.kind -match 'android|gradle' -and (Test-KitPid $e.pid $e.start)) { $e } } catch {} }).Count
-  if (-not $gradleBusy -and -not $env:KIT_KEEP_DAEMONS) {   # tests: their own gate dir cannot see the machine's builds
-    foreach ($d in Get-SysProcs -Name '^java(\.exe)?$' | Where-Object { $_.CommandLine -match 'GradleDaemon|KotlinCompileDaemon' }) {
-      if (($now - $d.Created).TotalMinutes -gt 10) { [void]$actions.Add(("stopped idle {0} pid {1} ({2:N1} GB)" -f $(if ($d.CommandLine -match 'Kotlin') { 'Kotlin daemon' } else { 'Gradle daemon' }), $d.Id, ($d.WorkingSet / 1GB))); $script:freed += [long]$d.WorkingSet; if (-not $DryRun) { Stop-SysProcess $d.Id } }
+  # cleanup.idleDaemons [{ process, match, label, busyKinds }]: stopped after 10 min while no gate build of busyKinds runs (unset: none)
+  $gl = Join-Path $tmp 'claude-build-gate'
+  foreach ($dm in @(Get-KitSetting 'cleanup.idleDaemons' @()) | Where-Object { $_ -and $_.match }) {
+    if ($env:KIT_KEEP_DAEMONS) { break }   # tests: their own gate dir cannot see the machine's builds
+    $busy = $dm.busyKinds -and @(Get-ChildItem $gl -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' |
+      ForEach-Object { try { $e = Get-Content $_.FullName -Raw | ConvertFrom-Json; if ($e.kind -match $dm.busyKinds -and (Test-KitPid $e.pid $e.start)) { $e } } catch {} }).Count
+    if ($busy) { continue }
+    foreach ($d in Get-SysProcs -Name $(if ($dm.process) { "$($dm.process)" } else { '.' }) | Where-Object { $_.CommandLine -match $dm.match }) {
+      if (($now - $d.Created).TotalMinutes -gt 10) { [void]$actions.Add(("stopped idle {0} pid {1} ({2:N1} GB)" -f $(if ($dm.label) { $dm.label } else { $dm.match }), $d.Id, ($d.WorkingSet / 1GB))); $script:freed += [long]$d.WorkingSet; if (-not $DryRun) { Stop-SysProcess $d.Id } }
     }
   }
 }
@@ -1287,13 +1292,15 @@ function Get-KitPlannedAreas([string]$TaskId, $Since) {
         if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"]) { "$($pa.id)" }
       } }) | Select-Object -Unique
 }
-# ---- the kit origin's main: no force push or delete, direct push on (branch.protect; never product repos)
+# ---- the kit origin's default branch (kitBranch, else origin/HEAD): no force push or delete, direct push on (branch.protect; never product repos)
 function Set-KitOriginProtection {
   $kit = $KitConf.Kit; $gl, $gh = $env:GITLAB_HOST, $env:GH_HOST
   $lines = if ("$(git -C $kit remote get-url origin 2>$null)" -notmatch '^(?:\w+://)?(?:[^@/]+@)?(?<h>[^/:\\]{2,})(?::\d+)?[:/](?<r>[^:\\]+?)(?:\.git)?/?$') { 'origin failed: no origin remote with a host' } else {
     $h, $repo, $t = $Matches.h, $Matches.r, (Get-HostKind $Matches.h)
     if ($t -eq 'gitlab') { $env:GITLAB_HOST = $h } elseif ($t -eq 'github') { $env:GH_HOST = $h }
-    foreach ($b in 'main') {
+    $kb = "$(Get-KitSetting 'kitBranch' '')".Trim(); if (-not $kb) { $kb = "$(git -C $kit symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/' }   # the kit's default branch
+    if (-not $kb) { 'failed: no origin/HEAD (git remote set-head origin -a) and no kitBranch in kit.local.json' }
+    foreach ($b in @($kb | Where-Object { $_ })) {
       if (-not (git -C $kit rev-parse --verify -q "refs/remotes/origin/$b" 2>$null)) { "$b failed: origin/$b not fetched (git fetch origin)"; continue }
       $r = try { Invoke-HostVerb 'branch.protect' @{ type = $t; repo = $repo; branch = $b } -NoMemo } catch { "failed: $_" }
       "$b $(if ($r) { $r } else { "failed: set it by hand on $h/$repo (force push off, deletion off, direct push on)" })"

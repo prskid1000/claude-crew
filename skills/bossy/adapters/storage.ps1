@@ -81,8 +81,8 @@ function Invoke-KitStorageTick([switch]$Force) {
     $v = Get-KitDiskVerdict (Get-KitStorageSamples $d.name 40) $c ([double]$(if ($st.normal -and $st.normal[$d.name]) { $st.normal[$d.name] } else { 0.1 })) $d.kit ((Get-KitBeatMinutes) * 60 - 60)
     $out += $v | Add-Member -PassThru NoteProperty drive $d.name | Add-Member -PassThru NoteProperty root $d.root | Add-Member -PassThru NoteProperty kit $d.kit
   }
-  $q = @(Get-KitDbQueries $c); $max = [double]$(if ($c.db.maxGB) { $c.db.maxGB } else { 5 })   # owner: no query above 5 GB of temp
-  $top = @($q | Sort-Object gb -Descending)[0]; if ($top -and $top.gb -gt $max) { $null = Stop-KitDbQuery $c $top "temp above $max GB"; $q = @($q | Where-Object id -ne $top.id) }
+  $q = @(Get-KitDbQueries $c); $max = if ($c.db -and $c.db.maxGB) { [double]$c.db.maxGB } else { 0 }   # storage.db.maxGB: temp cap a query may hold (unset: no cap)
+  $top = @($q | Sort-Object gb -Descending)[0]; if ($max -gt 0 -and $top -and $top.gb -gt $max) { $null = Stop-KitDbQuery $c $top "temp above $max GB"; $q = @($q | Where-Object id -ne $top.id) }
   foreach ($v in $out | Where-Object rescue) { Invoke-KitDiskRescue $c $v $q }
   $out
 }
@@ -98,10 +98,15 @@ function Invoke-KitDiskRescue($C, $V, $Q) {
   Write-KitLog disk rescue ([ordered]@{ drive = $V.drive; free = $V.free; rate = $V.rate; ttf = "$($V.ttf)"; lines = $lines })
   Start-KitStorageScan $V.drive
 }
+# scan candidates (missing ones skipped): storage.toolCaches, ~ = home, {localAppData}; default = common caches of many stacks
+function Get-KitToolCaches([string]$H, [string]$La) {
+  $d = @('~/.gradle', '~/.m2', '~/.cache', '~/.nuget', '~/.npm', '~/.cargo', '~/.docker', '{localAppData}/Yarn', '{localAppData}/npm-cache', '{localAppData}/pip', '{localAppData}/Docker', '{localAppData}/Temp')
+  @(Get-KitSetting 'storage.toolCaches' $d) | Where-Object { $_ -and ($La -or "$_" -notmatch '\{localAppData\}') } | ForEach-Object { "$_" -replace '^~(?=[\\/]|$)', $H.Replace('$', '$$') -replace '\{localAppData\}', $La.Replace('$', '$$') }
+}
 function Get-KitStorageDefaults([string]$Root) {
   $h = [Environment]::GetFolderPath('UserProfile'); $la = [Environment]::GetFolderPath('LocalApplicationData'); $ra = [Environment]::GetFolderPath('ApplicationData')
   $c = @($h, $la, $ra, [IO.Path]::GetTempPath(), [Environment]::GetFolderPath('CommonApplicationData'), (Get-KitRuntime)) + @($KitConf.WorktreeRoots) +
-    @('.gradle', '.m2', '.cache', '.nuget', '.npm', '.cargo', '.docker' | ForEach-Object { Join-Path $h $_ }) + @('Yarn', 'npm-cache', 'pip', 'Docker', 'Temp' | ForEach-Object { Join-Path $la $_ }) +
+    @(Get-KitToolCaches $h $la) +
     @(if ($KitIsWindows -and $env:windir) { Get-ChildItem (Join-Path $env:windir 'ServiceProfiles') -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'AppData\Local\Temp' } })   # service temp dirs (db tmpdir; admin only)
   @(@($c) + @((Get-KitStorageConf).watch) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container -ErrorAction SilentlyContinue) } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') } | Where-Object { $_.StartsWith($Root.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) } | Sort-Object -Unique)
 }

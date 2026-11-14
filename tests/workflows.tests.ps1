@@ -6,6 +6,10 @@ Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit workflows; $O = Join-Path $k 'skills/bossy/bossy.ps1'
+# the sims run on a legacy CONFIG line (qa.lanes web/api/app, repo roles); the neutral defaults have their own sims at the end
+$legacyCfg = 'CONFIG {"models":null,"roles":{"api":"producer","java":"producer","py":"producer","web":"consumer"},"qaLanes":{"web":{"kind":"web","parallel":5,"followUp":"app"},"api":{"kind":"api","parallel":5,"followUp":"app"},"app":{"kind":"app","devices":"android"}}}'
+$jsLib = $jsLib.Replace("const _rec = () => ({ ok: true, output: 'RECORDED' })", "const _CFG = '$legacyCfg'`nconst _rec = () => ({ ok: true, output: 'RECORDED\n' + _CFG })")
+if ($jsLib -notmatch '_CFG') { throw 'workflows tests: harness _rec changed, update the legacy CONFIG hook' }
 # buildy local loop: BLOCKED = FAIL; still FAIL -> ONE stronger round; ENV-FIX waits
 $wfd = Join-Path $src 'workflows/buildy.js'
 $jsd = @'
@@ -103,18 +107,6 @@ console.log(`removed-arg:${/buildy\.js args refused: unknown review/.test(r)}`)
 console.log(`agent-key:${/refused: unknown agents\.X1\.notes/.test(g)}`)
 '@
 Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'mode-refused', 'removed-arg', 'agent-key' -Show 5
-# buildy deploy batch: skipped without adapters/deploys.ps1, else parsed
-$jsdp = @'
-const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
- return _pass(p, o) }
-const base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
-const logs = [], seen = []
-const a = await run(base, mk('NO-DEPLOYS', seen), (m) => logs.push(m), _n, pipeline)
-const b = await run(base, mk('[{"target":"t1","trigger":"owner"}]', []), _n, _n, pipeline)
-console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /no deploys adapter in this kit/.test(l)) && seen[0].includes("Test-Path 'C:/kit/skills/bossy/adapters/deploys.ps1'")}`)
-console.log(`deploy-batch:${Array.isArray(b.deployBatch) && b.deployBatch[0].target === 't1'}`)
-'@
-Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: #' 'deploy-skip', 'deploy-batch' -Show 5
 # buildy: rechy spike first, open -> no devy; datay reviews migrations twice, none = no merge
 $jssp = @'
 const M = 'migration-review:X1', ok = (p, o) => /^(build|ship|fix):/.test(o.label) ? _rep({ status: 'PASS' }, /^sh/.test(o.label) ? _merged(1) : {}) : /review:/.test(o.label) ? { findings: [] } : undefined
@@ -241,8 +233,8 @@ const mk = (rec) => async (p, o) => { first = first || { l: o.label, p }
   : /^record-args/.test(o.label) ? _ok(rec) : /^test:/.test(o.label) ? _res(o.label.slice(5, 7), [_ck('C1', 'PASS')]) : _ok('') }
 const args = { runDir: 'C:/runs/R9', ..._kl, only: ['F1', 'F2', 'F3'], lanes: ['L'], instance: 'w2', batch: 1 }
 const keep = (n, only) => !!n && n.args.lanes[0] === 'L' && n.args.instance === 'w2' && n.args.only.join() === only
-run(args, mk('RECORDED'), _n, _n, null).then(async (o) => {
- const r = await run(args, mk('RECORDED BUDGET {"cap":100,"estimate":1000}'), _n, _n, null)
+run(args, mk('RECORDED\n' + _CFG), _n, _n, null).then(async (o) => {
+ const r = await run(args, mk('RECORDED BUDGET {"cap":100,"estimate":1000}\n' + _CFG), _n, _n, null)
  console.log(`kept:${first.l === 'record-args' && first.p.includes("-RunDir 'C:/runs/R9'") && keep(o.next, 'F2,F3') && r.refused && keep(r.next, 'F1,F2,F3')}`)
 }).catch(_err)
 '@

@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1036 README graph · L1139 lint command · L1355 audit ·
-  L1471 registry · L1803 arch lint · L2006 prose · L2157 sections · L2287 budget · L2301 migrate · L2407 plugins ·
-  L2461 state lint · L2649 main
+Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1357 audit ·
+  L1473 registry · L1805 arch lint · L2008 prose · L2159 sections · L2289 budget · L2303 migrate · L2409 plugins ·
+  L2463 state lint · L2651 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -279,7 +279,7 @@ def start_rows(k):
     return rows
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-  'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'tests': 9000}
+  'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 9500, 'tests': 9000}
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/crafty/kit.example.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/crafty/lib.ps1', 'skills/crafty/devtools.py', 'skills/pokey/browser.mjs', 'skills/bossy/kitbag.py', 'skills/crafty/spec.mjs'}
@@ -836,6 +836,8 @@ def lint(k, g=None, org_terms=None):
             return 'templates'
         if f.startswith('workflows/'):
             return 'workflow'
+        if f == PATHS_JSON:   # every config key's sample + doc, read on demand (never at start)
+            return 'config'
         if f.endswith('.md'):
             return 'template'
         ext = osp.splitext(f)[1][1:]
