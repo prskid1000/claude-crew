@@ -2369,6 +2369,6 @@ function Get-KitOriginKind([string]$Dir = $KitConf.Kit) {
     $Matches[1] -match '^(?:\w+://)?(?:[^@/]+@)?(?<h>[^/:\\]{2,})') { Get-HostKind $Matches.h }
 }
 $__vendorWant = @($script:HostType, (Get-KitOriginKind), ([string](Get-KitSetting 'ci.type' '')).ToLower()) + @(@(Get-KitValue 'repos' @()) | ForEach-Object {
-  $rc = $_.ci; "$(if ($rc -is [string]) { $rc } else { $rc.type })".ToLower()   # repos[].ci: a name or { type, ... }
+  $__repoCi = $_.ci; "$(if ($__repoCi -is [string]) { $__repoCi } else { $__repoCi.type })".ToLower()   # repos[].ci: a name or { type, ... }
   if ($_.checkout -and (Test-Path -LiteralPath $_.checkout)) { Get-KitOriginKind $_.checkout } } | Where-Object { $_ })
 foreach ($__plugin in (Import-KitVendorAdapters $__vendorWant)) { . $__plugin; $script:KitAdapterFiles += $__plugin }
