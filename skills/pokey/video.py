@@ -2098,7 +2098,7 @@ def read(key, start=None, end=None, at=None, win=None, around_error=False, frame
     return lines
 
 # ---- bench: synthetic clips with exact ground truth, the regression corpus, feedback (vidy's verify phase)
-SYNTH = 2   # bump when a synthetic clip changes: cached clips are rebuilt
+SYNTH = 3   # bump when a synthetic clip changes: cached clips are rebuilt
 KEY_ITEMS = ('toast:', 'modal:', 'val:', 'st:', 'sel:', 'badge:4', 'r7:amt', 'r15:appr', 'step:Step 2', 'banner', 'det:', 'row:new', 'Rep:', 'Bra:', 'Cha:', 'title:')
 SYNTH_Q = ('scroll', 'toast', 'modal', 'typing', 'page', 'dark')   # also encoded at crf 36 (q-<name>)
 
@@ -2141,7 +2141,7 @@ def synth(out, name, crf=None):
         if rec:
             add(f, 'title:' + title, b)
         cv2.rectangle(img, (0, 56), (220, H), (40, 40, 42) if dark else (232, 234, 238), -1)
-        for k, m in enumerate(['Dashboard', 'Orders', 'Invoices', 'Drivers', 'Settings']):
+        for k, m in enumerate(['Dashboard', 'Orders', 'Invoices', 'Members', 'Settings']):
             bb = text(img, m, 24, 100 + 40 * k, 0.6, (150, 150, 150) if dark else (60, 60, 60))
             if rec:
                 add(f, 'menu:' + m, bb)
@@ -2150,7 +2150,7 @@ def synth(out, name, crf=None):
 
     def lines(img, f, pre, n, y0=110, rec=True):
         for k in range(n):
-            b = text(img, f'{pre} {k + 1:02d}: Order {2000 + k * 7} - Depot road 6B - GBP {113 + k * 13.5:.2f}', 260, y0 + k * 34)
+            b = text(img, f'{pre} {k + 1:02d}: Order {2000 + k * 7} - Main street 6 - EUR {113 + k * 13.5:.2f}', 260, y0 + k * 34)
             if rec and b[1] >= 56 and b[3] <= img.shape[0]:
                 add(f, f'{pre}:{k + 1}', b)
 
@@ -2159,7 +2159,7 @@ def synth(out, name, crf=None):
         doc = np.full((4300, W - 220, 3), 250, np.uint8)
         rows = []
         for k in range(120):
-            s_ = f'Row {k + 1:03d}: Order {2000 + k * 7} - Depot road 6B - GBP {113 + k * 13.5:.2f}'
+            s_ = f'Row {k + 1:03d}: Order {2000 + k * 7} - Main street 6 - EUR {113 + k * 13.5:.2f}'
             cv2.putText(doc, s_, (40, 60 + k * 34), F, 0.6, (40, 40, 40), 1, cv2.LINE_AA)
             (tw, th_), b = cv2.getTextSize(s_, F, 0.6, 1)
             rows.append((k + 1, 40, 60 + k * 34 - th_ - 2, 40 + tw, 60 + k * 34 + b))
@@ -2213,10 +2213,10 @@ def synth(out, name, crf=None):
             chrome(img, 'Invoices' if inv else 'Orders', W, f, dark=True)
             for k in range(18):
                 pre = 'Inv' if inv else 'Ord'
-                add(f, f'{pre}:{k + 1}', text(img, f'{pre} {k + 1:02d}: Order {2000 + k * 7} - GBP {113 + k * 13.5:.2f}', 260, 110 + k * 34, 0.6, (170, 170, 170)))
+                add(f, f'{pre}:{k + 1}', text(img, f'{pre} {k + 1:02d}: Order {2000 + k * 7} - EUR {113 + k * 13.5:.2f}', 260, 110 + k * 34, 0.6, (170, 170, 170)))
             if inv:
                 cv2.rectangle(img, (1400, 860), (1900, 1010), (70, 70, 74), -1)
-                add(f, 'panel:total', text(img, 'Total due: GBP 4,120.50', 1420, 900, 0.65, (220, 220, 220)))
+                add(f, 'panel:total', text(img, 'Total due: EUR 4,120.50', 1420, 900, 0.65, (220, 220, 220)))
             cv2.rectangle(img, (1400, 270), (1600, 320), (60, 140, 60), -1)
             add(f, 'btn:save', text(img, 'Save', 1470, 303, 0.7, (255, 255, 255), 2))
             text(img, f'REC 00:{int(t):02d}', W // 2 - 50, H - 12, 0.6, (200, 200, 200))   # the ticker: never an item
@@ -2236,12 +2236,12 @@ def synth(out, name, crf=None):
 
         def r(t, f):
             img = blank(W, H)
-            chrome(img, 'Drivers', W, f)
-            lines(img, f, 'Drv', 15, rec=not (4 <= t < 9.15))
+            chrome(img, 'Members', W, f)
+            lines(img, f, 'Mbr', 15, rec=not (4 <= t < 9.15))
             if t >= 9.15:
-                add(f, 'row:new', text(img, 'Drv 16: New driver Salvatori added', 260, 620, 0.6, (20, 120, 20)))
+                add(f, 'row:new', text(img, 'Mbr 16: New member Salvatori added', 260, 620, 0.6, (20, 120, 20)))
             cv2.rectangle(img, (1400, 270), (1600, 320), (160, 90, 60), -1)
-            b = text(img, 'Add driver', 1440, 303, 0.7, (255, 255, 255), 2)
+            b = text(img, 'Add member', 1440, 303, 0.7, (255, 255, 255), 2)
             if not (4 <= t < 9.15):
                 add(f, 'btn:add', b)
             if 4 <= t < 9.15:
@@ -2252,11 +2252,11 @@ def synth(out, name, crf=None):
                 x0, y0 = (W - mw) // 2, (H - mh) // 2
                 cv2.rectangle(m, (x0, y0), (x0 + mw, y0 + mh), (255, 255, 255), -1)
                 if u >= 0.95:
-                    add(f, 'modal:title', text(m, 'Add driver', x0 + 30, y0 + 50, 0.9, (30, 30, 30), 2))
+                    add(f, 'modal:title', text(m, 'Add member', x0 + 30, y0 + 50, 0.9, (30, 30, 30), 2))
                     add(f, 'modal:name', text(m, 'Name:  Salvatori', x0 + 30, y0 + 130, 0.65))
-                    add(f, 'modal:lic', text(m, 'Licence no:', x0 + 30, y0 + 190, 0.65))
+                    add(f, 'modal:lic', text(m, 'Member no:', x0 + 30, y0 + 190, 0.65))
                     if t >= 7:
-                        add(f, 'modal:err', text(m, 'Licence no is a required field', x0 + 30, y0 + 230, 0.6, (30, 30, 210)))
+                        add(f, 'modal:err', text(m, 'Member no is a required field', x0 + 30, y0 + 230, 0.6, (30, 30, 210)))
                     cv2.rectangle(m, (x0 + mw - 180, y0 + mh - 80), (x0 + mw - 30, y0 + mh - 30), (60, 140, 60), -1)
                     add(f, 'modal:ok', text(m, 'Save', x0 + mw - 135, y0 + mh - 45, 0.7, (255, 255, 255), 2))
                 img = m if t < 9 else cv2.addWeighted(m, u, img, 1 - u, 0)
@@ -2333,14 +2333,14 @@ def synth(out, name, crf=None):
             elif t >= 4.1:   # 4.0-4.1: a white flash
                 chrome(img, 'Order 2001', W, f, rec=t >= 5.0)
                 if t >= 4.4:
-                    for k, s_ in enumerate(['Customer: Example Foods Ltd', 'Collection: 21/10/2026 09:00 AB1 2CD', 'Delivery: 21/10/2026 17:00 EF3 4GH', 'Rate: GBP 604.80', 'Status: Approved']):
+                    for k, s_ in enumerate(['Customer: Example Foods Ltd', 'Start: 21/10/2026 09:00 Room 12', 'End: 21/10/2026 17:00 Room 34', 'Rate: EUR 604.80', 'Status: Approved']):
                         b = text(img, s_, 260, 120 + 40 * k, 0.7, (30, 30, 30))
                         if t >= 5.0:
                             add(f, f'det:{k}', b)
                 if t >= 5.0:
                     cv2.rectangle(img, (1000, 120), (1700, 600), (180, 200, 220), -1)
                     cv2.line(img, (1000, 120), (1700, 600), (120, 140, 160), 3)
-                    add(f, 'det:map', text(img, 'Route map', 1300, 370, 0.9, (60, 60, 60), 2))
+                    add(f, 'det:map', text(img, 'Site map', 1300, 370, 0.9, (60, 60, 60), 2))
                 cv2.rectangle(img, (260, 360), (420, 400), (120, 120, 120), -1)
                 b = text(img, 'Back', 300, 388, 0.7, (255, 255, 255), 2)
                 if t >= 5.0:
@@ -2368,7 +2368,7 @@ def synth(out, name, crf=None):
                 y0 = 110 + k * 40
                 if k == 3 and t >= 8:   # a selected row: +10 grey levels
                     cv2.rectangle(img, (240, y0 - 26), (1300, y0 + 12), (40, 40, 40), -1)
-                add(f, f'set:{k}', text(img, f'Setting {k + 1:02d}: notifications for depot {k + 3}', 260, y0, 0.6, (110, 110, 110)))
+                add(f, f'set:{k}', text(img, f'Setting {k + 1:02d}: notifications for group {k + 3}', 260, y0, 0.6, (110, 110, 110)))
             if t >= 8:
                 add(f, 'sel:row4', [240, 204, 1300, 242])
             st = 'Saving...' if 4 <= t < 5 else ('Saved' if t >= 5 else '')
@@ -2392,7 +2392,7 @@ def synth(out, name, crf=None):
             for k in range(40):
                 amt = '1,240.50' if k == 7 and t >= 4 else '1,204.50'
                 stt = 'Approved' if k == 15 and t >= 8 else 'Pending'
-                b = text(img, f'INV-{5231600 + k}   13/10/2026   GBP {amt}   {stt}', 300, 140 + k * 26, 0.5)
+                b = text(img, f'INV-{5231600 + k}   13/10/2026   EUR {amt}   {stt}', 300, 140 + k * 26, 0.5)
                 add(f, f'r{k}' + (':amt' if k == 7 and t >= 4 else '') + (':appr' if k == 15 and t >= 8 else ''), b)
             pointer(img, *at(t, keys))
             return img
