@@ -8,8 +8,8 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L15 builds · L47 supervise · L253 shells · L387 page · L911 release · L950 lines · L983 cleanup · L1019 launch ·
-  L1097 pause · L1215 heartbeat · L1230 sessions · L1282 ci tasks · L1334 the kit origin's main and goodies
+Sections: L15 builds · L47 supervise · L253 shells · L387 page · L867 release · L906 lines · L939 cleanup · L975 launch ·
+  L1053 pause · L1171 heartbeat · L1186 sessions · L1238 ci tasks · L1290 the kit origin's main and goodies
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -427,40 +427,6 @@ function Get-KitSuperviseNow([string[]]$Lines, [double]$GraceMinutes = 10) {
   }
   [pscustomobject]$o
 }
-# page + .json, written atomically; returns its path; failure: a WATCH and '' (tables print)
-# the gate's card row of a build: kind (crafty.ps1 GateKinds) to a plain group; a local env's build = env deploy
-function Get-KitGateGroup([string]$Kind, [string]$Who) {
-  if ($Who -match 'localenv-') { return 'env deploy' }
-  switch -regex ($Kind) { '^maven-test$' { 'maven test' } '^maven$' { 'maven build' } '^(web-build|rn-bundle)$' { 'web build' } '^(typecheck|tsc-lint)$' { 'typecheck / lint' }
-    '^(js-test|ng-test)$' { 'js tests' } '^python$' { 'python' } '^(e2e|cypress)$' { 'cypress / e2e' } '^docker$' { 'docker' } '^(android-build|android-test|gradle)$' { 'android' } '^emulator$' { 'emulator' } default { 'other' } }
-}
-# the gate from its builds log (24 h), not a sweep sample (one missed a build between sweeps):
-# per group running / queued now, done today, avg / peak wait, RAM promised, an hourly heatmap (24 clock hours, the last = the current one:
-# @(builds ended, busy min, max wait min) each, h0 = the first hour); phone lanes and emulators
-function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
-  $h0 = $Now.Date.AddHours($Now.Hour - 23); $from = $h0; $led = Join-Path (Get-KitTemp) 'claude-build-gate'; $rd = { param($f) try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
-  $at = { param($v) if ($v -is [datetime]) { $v } else { try { [datetime]"$v" } catch { $null } } }
-  $run = @(Get-ChildItem $led -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { & $rd $_.FullName } | Where-Object { $_ -and $_.pid -and (Test-KitPid $_.pid $_.start) })
-  $que = @(Get-ChildItem (Join-Path $led 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { & $rd $_.FullName } | Where-Object { $_ })
-  $ends = @(Read-KitLog builds $from | Where-Object { $_.event -eq 'end' -and (& $at $_.at) })
-  $g = [ordered]@{}; $row = { param($n) if (-not $g.Contains($n)) { $g[$n] = [ordered]@{ name = $n; running = 0; queued = 0; done = 0; waits = [Collections.Generic.List[double]]::new(); ram = 0.0; peakGB = 0.0; hours = @(0..23 | ForEach-Object { , @(0, 0.0, 0.0) }) } }; $g[$n] }
-  # busy minutes spread over the clock hours a build overlapped; its count and wait go to the hour it ended in
-  $busy = { param($r, [datetime]$s1, [datetime]$e1) for ($hi = [math]::Max(0, [int][math]::Floor(($s1 - $h0).TotalHours)); $hi -le [math]::Min(23, [int][math]::Floor(($e1 - $h0).TotalHours)); $hi++) {
-      $hs = $h0.AddHours($hi); $ov = ([datetime]::new([math]::Min($e1.Ticks, $hs.AddHours(1).Ticks)) - [datetime]::new([math]::Max($s1.Ticks, $hs.Ticks))).TotalMinutes; if ($ov -gt 0) { $r.hours[$hi][1] += $ov } } }
-  foreach ($x in $ends) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.project)"); $e1 = & $at $x.at; $s1 = $e1.AddSeconds(-[double]$x.sec); $wm = [double]$x.waitSec / 60
-    if ($e1 -ge $Now.Date) { $r.done++; $r.waits.Add($wm) }; & $busy $r $s1 $e1; $hi = [int][math]::Floor(($e1 - $h0).TotalHours); if ($hi -ge 0 -and $hi -le 23) { $r.hours[$hi][0]++; $r.hours[$hi][2] = [math]::Max($r.hours[$hi][2], $wm) } }
-  foreach ($x in @(Read-KitLog builds $Now.Date | Where-Object { $_.event -eq 'start' })) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.project)"); $r.peakGB = [math]::Max($r.peakGB, [double]$x.needGB) }
-  foreach ($x in $run) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.dir)"); $r.running++; $r.ram += [double]$x.need; $s1 = & $at $x.started; if ($s1) { & $busy $r $s1 $Now } }
-  foreach ($x in $que) { (& $row (Get-KitGateGroup "$($x.kind)" "$($x.owner)")).queued++ }
-  $rows = @($g.Values | ForEach-Object { [pscustomobject]@{ name = $_.name; running = $_.running; queued = $_.queued; done = $_.done; ram = [math]::Round($_.ram, 1); peakGB = [math]::Round($_.peakGB, 1)
-        waitAvg = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Average).Average, 1) } else { 0 }); waitMax = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Maximum).Maximum, 1) } else { 0 })
-        hours = @($_.hours | ForEach-Object { , @([int]$_[0], [math]::Round($_[1], 1), [math]::Round($_[2], 1)) }) } } | Sort-Object { - ($_.running * 1000 + $_.queued * 100 + $_.done) })
-  $lanes = @(try { (Get-Content (Join-Path $KitConf.Kit 'skills/phoney/swarm.config.json') -Raw -ErrorAction Stop | ConvertFrom-Json).lanes } catch { })
-  [pscustomobject]@{ h0 = $h0.ToString('o'); running = $run.Count; queued = $que.Count; today = [int](($rows | Measure-Object done -Sum).Sum); waitMax = [double](@($rows.waitMax) + 0 | Measure-Object -Maximum).Maximum
-    ram = [math]::Round([double](($run | Measure-Object need -Sum).Sum), 1); rows = $rows
-    lanes = $lanes.Count; leased = @($lanes | Where-Object { $_.name -and (Test-Path (Join-Path (Get-KitPath phones) "$($_.name).json")) }).Count; emulators = @($Resources | Where-Object { "$($_.name)" -like 'phone *' }).Count
-    browsers = @($Resources | Where-Object { "$($_.name)" -like 'browser *' }).Count; browserGB = [math]::Round([double](@($Resources | Where-Object { "$($_.name)" -like 'browser *' } | ForEach-Object { [double]$_.gb }) + 0 | Measure-Object -Sum).Sum, 1) }   # leases, never gated
-}
 # effective supervise.* settings: kit.example.json defaults, kit.local.json overrides (with the default), supervise.* params
 function Get-KitSuperviseSettings($Params = @()) {
   $out = [ordered]@{}; $js = { param($v) if ($v -is [string] -or $v -is [ValueType]) { $v } else { $v | ConvertTo-Json -Compress -Depth 4 } }
@@ -472,6 +438,7 @@ function Get-KitSuperviseSettings($Params = @()) {
       $out[$k] = [pscustomobject]@{ value = $(if ($p.Name -eq 'publish') { '(set)' } else { & $js $p.Value }); source = 'local'; default = $(if ($was -and "$($was.value)" -ne "$(& $js $p.Value)") { $was.value }) } } }
   [pscustomobject]$out
 }
+# page + .json, written atomically; returns its path; failure: a WATCH and '' (tables print)
 function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $rk = @{ ACT = 0; WATCH = 1; INFO = 2 }
   $p = [IO.Path]::ChangeExtension((Get-KitPath supervise-report -Create), '.html'); $pj = [IO.Path]::ChangeExtension($p, '.json')
@@ -496,6 +463,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
             learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); changed = $_.changed; why = $_.why } } } catch { }) }
   $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
   $stats.gate = try { Get-KitGateStats $d.at @($d.resources) } catch { $null }
+  $stats.waits = try { Get-KitLeaseWaits $d.at } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 9)
   Write-KitAtomic $p (Format-KitSuperviseHtml $j)
@@ -546,7 +514,7 @@ function Format-KitSuperviseHtml($j) {
   $stCls = { param($s) if ("$s" -match 'STUCK') { 's-stuck' } elseif ("$s" -match '^ACTIVE') { 's-act' } elseif ("$s" -match '^FINISHED') { 's-fin' } else { 's-oth' } }
   # sparkline (40 px): max / min left, a dot on now; caption = what, now, low / peak; $lo = 0: from 0; < 2 values: none
   # $avg: a dotted line ("<avgLabel> <v>"); -Step: step line; -NoNow: the headline shows now
-  $spark = { param($vals, [string]$cls, [string]$what, [string]$mark = '', $lo = $null, [string]$unit = '', $avg = $null, [string]$avgLabel = 'avg', [switch]$Step, [switch]$NoNow) $vals = @($vals | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ }); if ($vals.Count -lt 2) { return '' }
+  $spark = { param($vals, [string]$cls, [string]$what, [string]$mark = '', $lo = $null, [string]$unit = '', $avg = $null, [string]$avgLabel = 'avg', [switch]$Step, [switch]$NoNow) $vals = @($vals | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ }); if ($vals.Count -lt 2) { return "<div class=nod>$(& $e $what): no trend yet</div>" }
     $mx = ($vals | Measure-Object -Maximum).Maximum; $mn = if ($null -ne $lo) { [double]$lo } else { ($vals | Measure-Object -Minimum).Minimum }; $xs = { param($i) & $n1 (100 * $i / ($vals.Count - 1)) }
     if ($null -ne $avg) { $mx = [math]::Max($mx, [double]$avg); $mn = [math]::Min($mn, [double]$avg) }
     $yv = { param($v) if ($mx -eq $mn) { 20 } else { 38 - 34 * ($v - $mn) / ($mx - $mn) } }
@@ -571,7 +539,7 @@ function Format-KitSuperviseHtml($j) {
     "<div class=tw><table><tr>$(@(for ($ci = 0; $ci -lt $cn.Count; $ci++) { "<th$(if ($lo[$ci]) { ' class=lo' })>$(& $e $cn[$ci])</th>" }) -join '')</tr>$(@(for ($ri = 0; $ri -lt $rs.Count; $ri++) { $r = $rs[$ri]; "<tr class=$(if ($ri -ge 10) { "'f more'" } else { 'f' })>$(@(for ($ci = 0; $ci -lt @($r).Count; $ci++) { $cv = @($r)[$ci]; $dk = "data-k='$(& $e $cn[$ci])'$(if ($lo[$ci]) { ' class=lo' })"; if ($cv -is [hashtable]) { "<td $dk>$($cv.h)</td>" } else { "<td $dk>$((& $e $cv) -replace '([|/\\])', '$1<wbr>')</td>" } }) -join '')</tr>" }) -join '')</table>$(if ($rs.Count -gt 10) { "<button type=button class=sa data-n=$($rs.Count)>Show all ($($rs.Count))</button>" })</div>" }   # <wbr>: keys and paths break at | / \, never mid-word
   # short-item lists (cards, tiles, bars): one auto-fill grid, min width per item, at most $max across (README "Using it");
   # masonry (data-mas) except the machine row, whose tiles stretch to one height
-  $grid = { param([string]$cls, [string]$min, [object[]]$items, [int]$max = 0, [string]$tag = 'div') "<$tag class='cg $cls' style='--cmin:$min$(if ($max) { ";--cmax:$max" })'$(if ($cls -notmatch '\bmach\b') { ' data-mas' })>$(@($items | Where-Object { $_ }) -join '')</$tag>" }
+  $grid = { param([string]$cls, [string]$min, [object[]]$items, [int]$max = 0, [string]$tag = 'div') "<$tag class='cg $cls' style='--cmin:$min$(if ($max) { ";--cmax:$max" })'$(if ($cls -notmatch '\bmach\b') { " data-mas$(if ($cls -match '\b(stats|res)\b') { ' data-fill' })" })>$(@($items | Where-Object { $_ }) -join '')</$tag>" }
   # a value behind its icon (the icon's title names it): no repeated words; $z: a zero is dimmed
   $icv = { param([string]$ico, [string]$label, $v, [string]$unit = '') "<span class='iv$(if ("$v" -match '^[0—]$') { ' z' })'>$(Format-KitIcon $ico $label)$v$(if ($unit) { "<small>$unit</small>" })</span>" }
   $item = { param([string]$name, [string]$sub, [string]$inner = '', [string]$tail = '') "<div class='ci f' title='$(& $e "$name · $sub")'><div class=tn>$(& $e $name)$tail</div><div class=sm>$(& $e $sub)</div>$inner</div>" }   # a grid card: name (+ an icon value), one line, an optional full-width bar
@@ -661,36 +629,14 @@ function Format-KitSuperviseHtml($j) {
   # QA seats as slots (filled = taken), up to 24; the numbers stay in the tile
   $dots = { param($u, $m) $u = [int]$u; $m = [math]::Min(24, [int]$m); if ($m -le 0) { return '' }; "<div class=dots role=img aria-label='$u of $m QA seats taken'>$(@(1..$m | ForEach-Object { "<i$(if ($_ -le $u) { ' class=on' })></i>" }) -join '')</div>" }
   $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) }); $memPk = & $agg { $_.mem }; $usedGB = if ($tot -and $null -ne $memPct) { $tot * [double]$memPct / 100 }
-  # build gate: a row per kind from its history; RAM capacity dots; QA seats, phone lanes, emulators
-  $gs = $st.gate; $gateOld = 
-(& $nowCard 'Build gate · QA seats' "$(& $icv run 'running builds' (& $fmt $nw.gr))$(& $icv queue 'queued builds' (& $fmt $nw.gq))<small> · seats </small>$(& $fmt $nw.seats)<small> / $(& $fmt $nw.seatsMax)</small>" "longest wait $(& $fmt $nw.gw) min · 7-day peak $(& $agg { $_.gw }) min" '' $(if ($nw.gw -ge 30) { 'hot' } elseif ($nw.gq -ge 6) { 'warn' }) "$(& $dots $nw.seats $nw.seatsMax)$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queue, 24 h' 'peak' 0)")
-  $gateCard = if (-not $gs) { $gateOld } else {
-    $fl = [math]::Max(0, [double]$j.mem.AvailGB - [double]$st.keepFree); $gb = [math]::Min(24, [int][math]::Ceiling([double]$gs.ram + $fl))   # 1 dot = 1 GB: promised to running builds, then free above the floor
-    $ramDots = if ($gb -gt 0) { "<div class=dots role=img aria-label='RAM for builds: $(& $n1 $gs.ram) GB promised, $(& $n1 $fl) GB free above the floor'>$(@(1..$gb | ForEach-Object { "<i$(if ($_ -le [math]::Round([double]$gs.ram)) { ' class=on' })></i>" }) -join '')</div><div class=s>RAM: $(& $n1 $gs.ram) GB promised · $(& $n1 $fl) GB free above the $(& $n1 $st.keepFree) GB floor</div>" }
-    # one line per kind: name · 24 h heatmap (square-root shade: a short build still shows) · running, queued, today, waits, RAM
-    # under one header row (hour labels, icons); zeros dimmed (owner, 2026-11-13)
-    $gCols = @(@('run', 'running builds', ''), @('queue', 'queued builds', ''), @('today', 'builds today', ''), @('wait', 'wait avg, min', 'avg'), @('wait', 'wait peak, min', 'peak'), @('ram', 'RAM GB: now, or up to (24 h peak)', 'GB'))
-    $h0 = try { [datetime]$gs.h0 } catch { $null }; if (-not $h0) { $h0 = $at.Date.AddHours($at.Hour - 23) }
-    $hLab = @(for ($hi = 0; $hi -lt 21; $hi++) { if ($h0.AddHours($hi).Hour % 6 -eq 0) { "<b style='grid-column:$($hi + 1)/span 2'>$($h0.AddHours($hi).ToString('HH'))</b>" } }) + "<b class=nw style='grid-column:23/span 2'>now</b>"
-    $gHead = "<div class='gk gh'><span class=gn>kind · hour</span><span class='gs0 hrs' aria-hidden=true>$($hLab -join '')</span>$(@($gCols | ForEach-Object { "<span class=gc>$(Format-KitIcon $_[0] $_[1])$(if ($_[2]) { "<small>$($_[2])</small>" })</span>" }) -join '')</div>"
-    $heat = { param($kr, [string]$nm) $hs = @($kr.hours); "<span class='gs hm' role=img aria-label='$(& $e "$nm, builds per hour, last 24 h")'>$(@(for ($hi = 0; $hi -lt 24; $hi++) { $hv = if ($hi -lt $hs.Count) { @($hs[$hi]) } else { @(0, 0, 0) }; $bm = [double]$hv[1]
-          "<i$(if ($hi -eq 23) { ' class=nw' }) style='--a:$(if ($bm -gt 0) { & $n1 ([math]::Round(25 + 75 * [math]::Sqrt([math]::Min(1, $bm / 60)))) } else { 0 })%' title='$(& $e "$($h0.AddHours($hi).ToString('HH:00'))$(if ($hi -eq 23) { ' (now)' }) · $nm · $([int]$hv[0]) builds · $(& $n1 $bm) build-min · max wait $(& $n1 $hv[2]) min")'></i>" }) -join '')</span>" }
-    $kRows = @($gs.rows | Where-Object { $_ } | ForEach-Object { $kr = $_; $nm = "$($kr.name)"
-        $ram = if ([double]$kr.ram) { @((& $n1 $kr.ram), "$(& $n1 $kr.ram) GB now", ' nw') } elseif ([double]$kr.peakGB) { @("≤$(& $n1 $kr.peakGB)", "up to $(& $n1 $kr.peakGB) GB", '') } else { @('—', 'no RAM sample', ' z') }
-        $vals = @("$([int]$kr.running)", "$([int]$kr.queued)", "$([int]$kr.done)", (& $n1 $kr.waitAvg), (& $n1 $kr.waitMax))
-        $w = "$($vals[0]) running · $($vals[1]) queued · $($vals[2]) today · wait avg $($vals[3]) / peak $($vals[4]) min · $($ram[1])"
-        # each cell carries its icon too: shown only under 700 px, where a row sits far from the header row
-        $cells = @(for ($ci = 0; $ci -lt 5; $ci++) { "<span class='gc$(if ($vals[$ci] -eq '0') { ' z' })' title='$(& $e "${nm}: $($vals[$ci]) $($gCols[$ci][1])")'>$(Format-KitIcon $gCols[$ci][0] $gCols[$ci][1])$($vals[$ci])</span>" }) + "<span class='gc$($ram[2])' title='$(& $e "${nm}: $($ram[1])")'>$(Format-KitIcon ram 'RAM GB')$(& $e $ram[0])</span>"
-        "<div class=gk><span class=gn title='$(& $e "${nm}: $w")'>$(& $e $nm)</span>$(& $heat $kr $nm)$($cells -join '')</div>" })
-    "<div class='st $(if ($gs.waitMax -ge 30) { 'hot' } elseif ($gs.queued -ge 6) { 'warn' })' data-fit><div class=k>Build gate · QA seats</div><div class=v>$(& $icv run 'running builds' (& $fmt $gs.running))$(& $icv queue 'queued builds' (& $fmt $gs.queued))$(& $icv today 'builds today' (& $fmt $gs.today))$(& $icv wait 'longest wait today' (& $n1 $gs.waitMax) ' min')</div>" +
-    "<div class=gl><div>$(if ($kRows.Count) { "<div class=gks>$gHead$($kRows -join '')</div><div class=hk>shade = busy minutes in that hour · outlined = now · tap a cell for builds and waits</div>" } else { '<div class=s>no gated build in 24 h</div>' })</div>" +
-    "<div class=gp>$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queued builds, 24 h' 'peak' 0)$ramDots$(& $dots $nw.seats $nw.seatsMax)<div class=s>QA seats $(& $fmt $nw.seats) / $(& $fmt $nw.seatsMax)</div>$(if ($gs.lanes) { "<div class=s>phone lanes $($gs.leased) / $($gs.lanes) leased · emulators $($gs.emulators) running</div>" })$(if ($gs.browsers) { "<div class=s>test browsers $($gs.browsers) ($(& $n1 $gs.browserGB) GB, leased)</div>" })</div></div></div>" }
+  # build gate: a row per kind from its history (adapters/supervise_stats.ps1)
+  $gateCard = Format-KitGateCard $st.gate
   # rows of like height (owner, 2026-11-13): Memory | Disks, then the Build gate full width
   $machCards = @(
     (& $nowCard 'Memory' "$(& $fmt $memPct)<small>% used</small>" "$(if ($usedGB) { "$(& $n1 $usedGB) / $(& $n1 $tot) GB used · " })$(& $fmt $memFree) GB free · floor $(& $fmt $st.keepFree) GB" "" $(if ($memPct -ge 90) { 'hot' } elseif ($memPct -ge 75) { 'warn' }) "$(if ($usedGB) { & $meter $usedGB $tot "$(if ($memPk -ne '—') { "tick = 7-day peak $memPk%" } else { "of $(& $n1 $tot) GB" })" 'slate' $(if ($memPk -ne '—') { $tot * [double]$memPk / 100 }) })$(& $spark @($l24 | ForEach-Object mem) 'slate' 'used %, 24 h' 'peak' $null '%')"),
     "<div class='st $(if ($dkRows.tone -contains 'hot') { 'hot' } elseif (@($dkRows | Where-Object tone).Count) { 'warn' })' data-fit><div class=k>Disks$(if ($lv.Count) { '<small> · tick = 7-day peak use</small>' })</div>$(if ($dkRows.Count) { & $grid dks 190px @($dkRows.h) 2 } else { '<div class=v>—</div><div class=s>no sample</div>' })</div>",
     $gateCard)
-  $machineHtml = "<div class=mcol>$(& $grid 'stats mach' 300px @($machCards[0], $machCards[1]) 2)$($machCards[2])</div>"
+  $machineHtml = "<div class=mcol>$(& $grid 'stats mach' 300px @($machCards[0], $machCards[1]) 2)$(Format-KitCpuCard $st.cpu)$($machCards[2])</div>"
   # Activity (owner, 2026-11-14): actionable tiles, each number once, history as labelled graphs
   $nst = @($nw.stale | Where-Object { $_ }); $runOf = @{}; foreach ($ur in @($st.usage.runs | Where-Object { $_.id })) { $runOf["$($ur.id)"] = $ur }
   $wfTile = if ($nw) { "<div class='st$(if ($nst.Count) { ' warn' })' data-fit><div class=k>Workflow steps now</div><div class=v>$(& $icv run 'running steps' (& $fmt $nw.run))<small>running$(if ($null -ne $nw.total) { " · </small>$($nw.done)/$($nw.total)<small> steps" })</small></div><div class=rch>" +
@@ -749,7 +695,7 @@ function Format-KitSuperviseHtml($j) {
       & $fold "tg-$($g.Name)" $g.Name $g.Count ('<div class=tw><table class=tun><tr><th>Key</th><th>Context</th><th>Value</th><th>Source</th><th class=lo>Changed</th><th class=hs>Why</th></tr>' + (@($g.Group | Sort-Object key, ctx | ForEach-Object { "<tr class=f><td data-k=Key>$((& $e $_.key) -replace '\.', '.<wbr>')</td><td data-k=Context>$(& $e $_.ctx)</td><td data-k=Value>$((& $e $_.val) -replace '([,/|])', '$1<wbr>')</td><td data-k=Source>$(& $e $_.src)</td><td data-k=Changed class=lo>$(& $e $_.chg)</td><td data-k=Why class=hs>$(& $e $_.why)</td></tr>" }) -join '') + '</table></div>') -tag h4 -cls 'sub f' -extra $(if ($gs) { "<span class='chip'>$(& $e $gs)</span>" }) }) -join '')
   $chgL = if ($chg.Count) { "<h4 class=sh4>Recent changes</h4>" + (& $grid info 280px @($chg | Select-Object -First 10 | ForEach-Object { "<li class=f>$(& $e "$(& $hm $_.at) $($_.key)$(if ("$($_.ctx)" -notin '', '_') { " [$($_.ctx)]" }) $($_.from) -> $($_.to)$(if ($_.why) { ": $($_.why)" })")</li>" }) 0 ul) }
   $setHtml = & $fold 'tuning' 'Tuning' $tun.Count "$chgL<div class=fx>$tunT</div>" -cls sub
-  $css = Get-KitSupervisePageCss
+  $css = (Get-KitSupervisePageCss) + (Get-KitStatsCss)
   $fav = if ($mark) { "<link rel=icon href='data:image/svg+xml,$([Uri]::EscapeDataString($mark))'>" }
   $js = "(function(){var d=document,L=localStorage,S=sessionStorage,r=d.documentElement,a=d.getElementById('age'),t=new Date(a.dataset.at),n=+a.dataset.next||15,nx=d.getElementById('nx'),same=S.getItem('kc-at')==a.dataset.at;S.setItem('kc-at',a.dataset.at);" +   # same: a reload brought no new sweep
     "function ag(m){return m<1?'now':m<60?m+' min':m<1440?Math.floor(m/60)+' h '+m%60+' min':Math.floor(m/1440)+' d'}function u(){var w=Date.now(),m=Math.round((w-t)/6e4),o=Math.round((t-w)/6e4+n);a.textContent='updated '+(m<1?'just now':m<60?m+' min ago':m<2880?Math.round(m/60)+' h ago':Math.round(m/1440)+' d ago');a.className='chip '+(m>4*n?'bad':m>2*n?'warn':'ok');" +
@@ -768,13 +714,21 @@ function Format-KitSuperviseHtml($j) {
     "function ca(){d.querySelectorAll(SC).forEach(cu)}ca();addEventListener('resize',ca);d.addEventListener('toggle',ca,true);q.addEventListener('input',ca);" +
     # masonry (owner, 2026-11-13): a card grid ([data-mas]) packs cards in order into the shortest column; one column = plain flow
     # heights at the packed width (.msm), inner grids first; run twice (inner grids pack before outer ones)
-    "function ms(){[].slice.call(d.querySelectorAll('[data-mas]')).reverse().forEach(function(g){var it=[].filter.call(g.children,function(c){return!c.hidden});g.classList.remove('msn','msm');it.forEach(function(c){c.style.gridColumn=c.style.gridRow=''});if(!g.clientWidth||it.length<2)return;" +
-    "var cs=getComputedStyle(g),gp=parseFloat(cs.columnGap)||8,mn=parseFloat(cs.getPropertyValue('--cmin'))||200,mx=parseInt(cs.getPropertyValue('--cmax'))||99,n=Math.max(1,Math.min(mx,it.length,Math.floor((g.clientWidth+gp)/(mn+gp))));if(n<2)return;g.style.setProperty('--mc',n);g.classList.add('msm');" +
-    "var hs=it.map(function(c){return c.getBoundingClientRect().height});g.classList.remove('msm');g.classList.add('msn');var tp=[];for(var i=0;i<n;i++)tp.push(0);it.forEach(function(c,j){var h=Math.ceil(hs[j]+gp),k=tp.indexOf(Math.min.apply(0,tp));c.style.gridColumn=k+1;c.style.gridRow=(tp[k]+1)+' / span '+h;tp[k]+=h})})}ms();ms();addEventListener('resize',ms);d.addEventListener('toggle',ms,true);q.addEventListener('input',ms);" +
+    # a tile grid ([data-fill], owner 2026-11-14): of up to 3 column counts the one with the least empty area wins, then in each column the lowest
+    # tile ending in a graph (else the last tile) stretches to the tallest column (.msl: that graph takes the room, capped; no gap under a short tile)
+    "function pk(g,it,n,gp){g.style.setProperty('--mc',n);g.classList.add('msm');var hs=it.map(function(c){return c.getBoundingClientRect().height}),tp=[],pl=[],i;g.classList.remove('msm');for(i=0;i<n;i++)tp.push(0);it.forEach(function(c,j){var h=Math.ceil(hs[j]+gp),k=tp.indexOf(Math.min.apply(0,tp));pl.push([k,tp[k],h]);tp[k]+=h});" +
+    "var mh=Math.max.apply(0,tp),em=0;tp.forEach(function(t){em+=(mh-t)*(g.clientWidth-(n-1)*gp)/n});return{n:n,pl:pl,tp:tp,mh:mh,em:em}}" +
+    "function ms(){[].slice.call(d.querySelectorAll('[data-mas]')).reverse().forEach(function(g){var it=[].filter.call(g.children,function(c){return!c.hidden});g.classList.remove('msn','msm');it.forEach(function(c){c.style.gridColumn=c.style.gridRow=c.style.marginBottom='';c.classList.remove('msl')});if(!g.clientWidth||it.length<2)return;" +
+    "var cs=getComputedStyle(g),gp=parseFloat(cs.columnGap)||8,mn=parseFloat(cs.getPropertyValue('--cmin'))||200,mx=parseInt(cs.getPropertyValue('--cmax'))||99,n=Math.max(1,Math.min(mx,it.length,Math.floor((g.clientWidth+gp)/(mn+gp))));if(n<2)return;" +
+    "var fill=g.hasAttribute('data-fill'),b=pk(g,it,n,gp);if(fill)for(var m=n-1;m>=Math.max(2,n-2);m--){var r=pk(g,it,m,gp);if(r.em<b.em*0.8)b=r}g.style.setProperty('--mc',b.n);g.classList.add('msn');var la={};" +
+    "it.forEach(function(c,j){var p=b.pl[j];c.style.gridColumn=p[0]+1;c.style.gridRow=(p[1]+1)+' / span '+p[2];(la[p[0]]=la[p[0]]||[]).push(j)});if(fill)Object.keys(la).forEach(function(k){var js=la[k],ex=b.mh-b.tp[k],t=js[js.length-1],sh=0;js.forEach(function(j){var l=it[j].lastElementChild;if(l&&l.matches('.spk,.dbr'))t=j});" +
+    "js.forEach(function(j){var c=it[j],p=b.pl[j];if(j==t){c.style.gridRow=(p[1]+1)+' / span '+(p[2]+ex);c.style.marginBottom=gp+'px';c.classList.add('msl');sh=ex}else if(sh)c.style.gridRow=(p[1]+1+sh)+' / span '+p[2]})})})}" +
+    "ms();ms();addEventListener('resize',ms);d.addEventListener('toggle',ms,true);q.addEventListener('input',ms);" +
     "window.uiChecks=function(){var o=[],h=d.querySelector('header.top');if(innerWidth>=1100&&h.offsetHeight>48)o.push({el:'header.top',why:'header '+h.offsetHeight+' px tall: one row at desktop width',text:''});d.querySelectorAll('.bar,.mb,.sb,.lt,.sbh,svg.spark').forEach(function(b){var n=b.nextElementSibling;if(b.getClientRects().length&&!(b.getAttribute('aria-label')||b.getAttribute('title')||n&&n.textContent.trim()))o.push({el:b.getAttribute('class'),why:'a bar without a text label',text:''})});" +
     "if(innerWidth>=1100)d.querySelectorAll('[data-row]').forEach(function(w){var hs=[].map.call(w.children,function(c){return c.getBoundingClientRect().height}).filter(function(h){return h>0}),g=hs.length>1?Math.max.apply(0,hs)-Math.min.apply(0,hs):0;if(g>48)o.push({el:w.className,why:'sibling heights differ by '+Math.round(g)+' px (max 48)',text:''})});" +   # dashboard-design.md: a row's siblings within 48 px
     "d.querySelectorAll('[data-mas]').forEach(function(g){var it=[].filter.call(g.children,function(c){return c.getClientRects().length}).map(function(c){var r=c.getBoundingClientRect();return{l:Math.round(r.left),t:r.top,b:r.bottom}}),ls=[],g0=g.getBoundingClientRect().top;it.forEach(function(x){if(ls.indexOf(x.l)<0)ls.push(x.l)});if(ls.length<2)return;" +
     "it.forEach(function(x){ls.forEach(function(l){if(l==x.l)return;var bt=g0;it.forEach(function(y){if(y.l==l&&y.t<x.t-1)bt=Math.max(bt,y.b)});if(x.t-bt>48)o.push({el:g.className,why:'a card starts '+Math.round(x.t-bt)+' px below free space in another column (max 48): pack the grid',text:''})})})});" +   # card grids: no card under a column with 48+ px free above it
+    "d.querySelectorAll('[data-fill].msn').forEach(function(g){var bt={};[].forEach.call(g.children,function(c){if(!c.getClientRects().length)return;var r=c.getBoundingClientRect(),l=Math.round(r.left);bt[l]=Math.max(bt[l]||0,r.bottom)});var v=Object.keys(bt).map(function(k){return bt[k]}),df=v.length>1?Math.round(Math.max.apply(0,v)-Math.min.apply(0,v)):0;if(df>48)o.push({el:g.className,why:'tile columns end '+df+' px apart (max 48): the last tile of each column stretches',text:''})});" +   # one tile row, one height
     "d.querySelectorAll('details.top').forEach(function(s){var c=s.querySelector(':scope>summary>.cnt'),b=s.querySelector(':scope>.bd');if(!c||!b)return;(c.textContent.match(/[$]?\d[\d.,]*(%|[kMB]\b|\s?GB\b)|[$]\d[\d.,]*/g)||[]).forEach(function(v){var t=b.textContent,i=t.indexOf(v),hit=false;for(;i>=0&&!hit;i=t.indexOf(v,i+1))hit=!/[\d.]/.test(t.charAt(i-1))&&!/[\d.]/.test(t.charAt(i+v.length));if(hit)o.push({el:s.id,why:'headline value '+v+' in the band header and again inside it',text:c.textContent.trim()})})});return o};" +   # each number once: a band header never repeats a value its body shows
     "d.addEventListener('click',function(x){var c=x.target.closest('code.cp');if(!c)return;x.preventDefault();try{navigator.clipboard.writeText(c.textContent).then(function(){c.classList.add('ok');setTimeout(function(){c.classList.remove('ok')},1200)})}catch(e){}},true);" +   # a release command: click copies, the row stays as it is
     "var tp=d.createElement('div');tp.id='tip';tp.setAttribute('role','tooltip');tp.hidden=true;d.body.appendChild(tp);" +
@@ -783,15 +737,17 @@ function Format-KitSuperviseHtml($j) {
     "d.addEventListener('click',function(x){sh(x.target.closest('button')?null:x.target.closest('[title],.hit,circle.val'))});" +
     "d.addEventListener('focusin',function(x){sh(x.target.closest('button')?null:x.target.closest('[title]'))});" +
     "var sp=JSON.parse(S.getItem('kc-sp')||'{}'),y=S.getItem('kc-y');S.removeItem('kc-sp');S.removeItem('kc-y');d.querySelectorAll('details.sec').forEach(function(s){s.querySelectorAll(SC).forEach(function(e,i){var v=sp[s.id+i];if(v){e.scrollTop=v[0];e.scrollLeft=v[1]}})});ca();if(y)scrollTo(0,+y)})()"   # after collapse + filter: the layout is final
-  $head = "<header class=top><div class=brand>$mark<span>claude-crew</span><small>Supervisor</small></div><div class=meta><span id=age class=chip title='Last sweep $($at.ToString('yyyy-MM-dd HH:mm'))' data-at='$($at.ToString('o'))' data-next='$(& $e $nextMin)'></span><span id=nx title='$(& $e $j.next)' data-due='$($at.AddMinutes([double]$nextMin).ToString('HH:mm'))' data-tail='$(& $e $nxTail)'>next $($at.AddMinutes([double]$nextMin).ToString('HH:mm'))</span></div><nav class=jl aria-label='Sections'>$((@(@('flags', 'Flags'), @('agents', 'Agents'), @('runs', 'Runs'), @('machine', 'Machine'), @('internals', 'Kit internals')) | ForEach-Object { "<a href='#sec-$($_[0])'>$($_[1])</a>" }) -join '')<span class='chip lv ACT'>$nAct ACT</span><span class='chip lv WATCH'>$nWatch WATCH</span></nav><div class=sp></div>" +
+  $head = "<header class=top><div class=brand>$mark<span>claude-crew</span><small>Supervisor</small></div><div class=meta><span id=age class=chip title='Last sweep $($at.ToString('yyyy-MM-dd HH:mm'))' data-at='$($at.ToString('o'))' data-next='$(& $e $nextMin)'></span><span id=nx title='$(& $e $j.next)' data-due='$($at.AddMinutes([double]$nextMin).ToString('HH:mm'))' data-tail='$(& $e $nxTail)'>next $($at.AddMinutes([double]$nextMin).ToString('HH:mm'))</span></div><nav class=jl aria-label='Sections'>$((@(@('flags', 'Flags'), @('agents', 'Agents'), @('runs', 'Runs'), @('qa', 'QA'), @('machine', 'Machine'), @('internals', 'Kit internals')) | ForEach-Object { "<a href='#sec-$($_[0])'>$($_[1])</a>" }) -join '')<span class='chip lv ACT'>$nAct ACT</span><span class='chip lv WATCH'>$nWatch WATCH</span></nav><div class=sp></div>" +
     "<div class=tb><input id=q type=search placeholder='Filter  ( / )' aria-label='Filter the page'><button id=ar class=ib type=button aria-pressed=true aria-label='Auto-refresh every 60 s' title='Auto-refresh every 60 s'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round /></svg></button><button id=tt class=ib type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
   # each number once, in acting order, open: flags, live agents, runs, machine, resources; Kit internals one folded band (owner, 2026-11-13)
-  $nRes = @($j.resources | Where-Object { $_ }).Count; $nSh = @($j.shells | Where-Object { $_ }).Count
+  $nRes = @($j.resources | Where-Object { $_ }).Count; $nSh = @($j.shells | Where-Object { $_ }).Count; $nQa = @($st.qa.days | ForEach-Object { @($_.runs | Where-Object { $_ }).run } | Select-Object -Unique).Count
   $intHtml = (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $setHtml
   # Shells: a fold only when one runs; none = one muted word in the Resources header
-  $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $nRes "<div class=sxb>$resHtml</div>" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
+  $nWait = @($st.waits.rows | Where-Object { $_ }).Count   # lease waits open the fold even with nothing held
+  $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $(if ($nRes -or -not $nWait) { $nRes } else { @{ h = '0 held' } }) "$(Format-KitWaitCard $st.waits)<div class=sxb>$resHtml</div>" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open) + (& $section 'agents' 'Agents' $agCnt $agentHtml -Open -extra $agBar) +
     (& $section 'runs' 'Runs, 7 days' $(if ($UP.runs) { $UP.runsN } else { 0 }) $UP.runs -Open) +
+    (& $section 'qa' 'Test runs, 7 days' $nQa $(if ($nQa) { Format-KitQaBand $st.qa }) -Open) +
     (& $section 'machine' 'Machine and resources' '' $mrHtml -Open) +
     (& $section 'internals' 'Kit internals' '' $intHtml) +
     "<p id=nm class=empty hidden>No match.</p><footer>Written by bossy.ps1 supervise each sweep (no model tokens) · data: supervise-report.json · times local (UTC$($at.ToString('zzz')))</footer></main>"
@@ -878,12 +834,12 @@ function Get-KitSupervisePageCss {
   '.lcl{position:absolute;inset:0;pointer-events:none}.lcl b{position:absolute;transform:translate(-50%,-9px);display:flex;flex-direction:column;align-items:center;font-size:10.5px;font-weight:600;line-height:1.15;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--fg)}.lcl b small{font-size:10px;font-weight:500;color:var(--mt)}.lcl b.x{color:var(--sage2)}' +
   '.lcx{position:relative;height:16px;margin-top:3px;border-top:1px solid var(--ln);font-size:10.5px;color:var(--mt);font-variant-numeric:tabular-nums}.lcx span{position:absolute;top:2px;transform:translateX(-50%);white-space:nowrap}.lcx span.x{color:var(--fg);font-weight:650}' +
   '.lk{font-style:normal;font-size:11px}.lk::before{content:"";display:inline-block;width:16px;height:0;border-top:2px solid var(--c);margin-right:5px;vertical-align:3px}.lk.dash::before{border-top-style:dashed}.lk.avg::before{border-top:1px dotted var(--mt)}' +
-  '.mcol{display:grid;gap:var(--cgap,8px);min-width:0}.cg.mach{align-items:stretch}.mach>.st{display:flex;flex-direction:column}.mach>.st>.spk:last-child{margin-top:auto}' +
+  '.mcol{display:grid;gap:var(--cgap,8px);min-width:0}.cg.mach{align-items:stretch}.mach>.st{display:flex;flex-direction:column}.mach>.st>:last-child{margin-top:auto}' +
   # one line per kind on every width from 700 px (kind · hourly heatmap · numbers, aligned: .gk is display:contents); the side panel 300 px, wrapping
   '.gl{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:8px 20px;align-items:start}@media(max-width:900px){.gl{grid-template-columns:minmax(0,1fr)}}.gp{display:grid;gap:4px;margin-top:6px;min-width:0}.gp .s{overflow-wrap:anywhere}' +
   '.gks{display:grid;grid-template-columns:max-content minmax(120px,1fr) repeat(6,max-content);gap:5px 12px;align-items:center;margin-top:6px;font-size:11.5px}.gk{display:contents}.gn{font-weight:600;white-space:nowrap}.gc{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.gc.z,.iv.z{color:color-mix(in srgb,var(--mt) 70%,var(--bg))}.iv.z .ic{color:inherit}.gk:not(.gh)>.gc .ic{display:none}.gc.nw,.gk:not(.gh)>.gc:nth-child(3):not(.z){color:var(--sage2);font-weight:650}.gk:not(.gh)>.gc:nth-child(4):not(.z){color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:650}.gh>*{color:var(--mt);font-size:10.5px;font-weight:600}.gh>.gc{display:inline-flex;justify-content:flex-end;align-items:center;gap:2px}.ic{width:13px;height:13px;flex:none;vertical-align:-2px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--mt)}.ic.i-run{color:var(--sage2)}.ic.i-queue{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.ic.i-stuck{color:color-mix(in srgb,var(--act) 55%,var(--fg))}.iv{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;margin-right:10px}.st .v .ic{width:15px;height:15px}.cnt .iv{margin-right:6px}.tn .iv{float:right;margin:0 0 0 8px;font-size:12px;color:var(--mt)}' +
   # hourly heatmap: 24 cells, shade = busy share of the hour (--a), the current hour outlined; hour labels in the header row
-  ':is(.msn,.msm){display:grid!important;grid-template-columns:repeat(var(--mc),minmax(0,1fr));align-items:start}.msn{grid-auto-rows:1px;row-gap:0!important}:is(.msn,.msm)>*{align-self:start!important;margin:0}' +
+  ':is(.msn,.msm){display:grid!important;grid-template-columns:repeat(var(--mc),minmax(0,1fr));align-items:start}.msn{grid-auto-rows:1px;row-gap:0!important}:is(.msn,.msm)>*{align-self:start!important;margin:0}.msn>.msl{align-self:stretch!important;display:flex;flex-direction:column}.msl>:last-child{margin-top:auto}.msl>:is(.spk,.dbr):last-child{flex:1 1 auto;display:flex;flex-direction:column;max-height:170px}.msl>.spk:last-child>.spw{flex:1;min-height:40px}.msl>.spk:last-child .spark{position:absolute;inset:0;width:100%;height:100%}.msl>.dbr:last-child>.dbw{flex:1;height:auto;min-height:46px}' +
   # a long flag text: its summary opens the full text (click or tap; the filter opens a matching one)
   'details.lx>summary{display:inline;padding:0;min-height:0;cursor:pointer}details.lx>summary::after{content:" · full text";border:0;width:auto;height:auto;transform:none;margin:0;color:var(--sage2);font-size:11px}details.lx[open]>summary::after{content:" · less"}.lf{margin-top:3px;padding:4px 6px;border-radius:6px;background:var(--sf2);overflow-wrap:anywhere}' +
   '.hm{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px;height:14px}.hm i{border-radius:2px;background:color-mix(in srgb,var(--slate) var(--a),var(--sf2));cursor:default}.hm i.nw{box-shadow:inset 0 0 0 1.5px var(--sage2)}.hm i:hover{box-shadow:inset 0 0 0 1.5px var(--fg)}' +

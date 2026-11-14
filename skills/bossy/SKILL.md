@@ -3,13 +3,12 @@ name: bossy
 description: "Load when: you are the main session routed here: launching or supervising /buildy, /testy or /tidy, a coordinator event (workflow finished, supervise flag, stopped agents, decision, a person's deploy <env>, QA results, SessionStart kit line, a restart), or a kit change. Not when: you are a crew agent (devy -> crafty, checky -> pokey); one small change -> crafty, directly."
 ---
 
-**Load when** (all must hold): you are the main session; the router matched a coordinator, dev-flow, test-only, deploy or kit
-row.
+**Load when** (all hold): the main session; the router matched a coordinator, dev-flow, test-only, deploy or kit row.
 **Not when:** you are `devy` -> `crafty`; `checky` -> `pokey`; `revy` / `kitty` -> their agent steps; one small change ->
 `crafty`.
 **Hands off to:** `/buildy` (spawns `devy` + `revy`), `/testy` (spawns `checky` lead / test / verify), `/tidy`
 (`kitty`), one `kitty` (kit changes, audits, ENV-FIX), the owner (decisions, duel verdicts).
-**Files** (read or run each only at its step or event row):
+**Files** (each only at its step or event row):
 
 | File | Read / run at |
 |---|---|
@@ -17,7 +16,7 @@ row.
 | `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (goody `kit-admin`; run by `.githooks`) |
 | `STATE.md` | a script's state file changes; an agent needs a task's doc / comment / MR / env-run links (`.state/tasks/<id>.json`) |
 | `params.registry.json` | a timeout, wait or limit is added or changed (every tunable key: learned or fixed); `bossy.ps1 param show` |
-| `adapters/supervise_resources.ps1`, `adapters/usage.ps1`, `adapters/storage.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`, `launch -Check`, `storage`: dot-sourced by bossy.ps1 |
+| `adapters/supervise_resources.ps1`, `adapters/supervise_stats.ps1`, `adapters/usage.ps1`, `adapters/storage.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`, `launch -Check`, `storage`: dot-sourced by bossy.ps1 |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge`, `<kit>/.githooks/post-rewrite` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
 | `kitbag.py`, `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 

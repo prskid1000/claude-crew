@@ -169,7 +169,7 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 - header, one row from 1100 px: staleness (amber past 2x NEXT, red past 4x), next sweep, jump links, ACT / WATCH counts, filter
   (`/`), auto-refresh 60 s and light / dark icon buttons;
 Each number appears once, in the order the owner acts on (owner 2026-11-13). Every section and sub-section is a `<details>` whose
-summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, agents, runs, machine and resources,
+summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, agents, runs, test runs, machine and resources,
 usage; top steps and kit internals folded; the page keeps each one the owner toggles (localStorage `kc-open`). Tables show 10
 rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; the header holds
 jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
@@ -181,12 +181,18 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   each run by its label (mandate or area; run id in the tooltip), kind chip, resumed, steps as a bar, tokens, est. cost, merged
   MRs, elapsed, the context budget bar while running or past 80%, and its steps (role, model, in / out / cache, elapsed, tool
   calls, result, round, retry);
+- test runs (7 days, `qa-runs/*/*/results.json` by its write day): checks per day as stacked bars (PASS, FAIL, NOT_TESTED,
+  OUT_OF_SCOPE muted; a click lists that day's runs) and the NOT_TESTED causes;
 - machine and resources: memory (used / total meter with a 7-day peak tick, 24 h sparkline), every watched disk in one tile
   (free GB, fill rate, "full in" under 72 h, used / size meter with a 7-day peak tick, 7-day free sparkline marking the low; a
-  flagged drive coloured and first) in one row; build gate full width from its history (running, queued, builds today, longest
+  flagged drive coloured and first) in one row; CPU (% of the machine from the CPU time of one process snapshot per sweep, 24 h):
+  a sparkline per lane service process tree (goody `local-env` hook `Get-KitCpuGroups*`) and the machine (from idle time), red
+  over 80% between two sweeps 5+ min apart, then the top other processes (10%+: name, pid, owner agent, now, 24 h peak); build gate full width from its history (running, queued, builds today, longest
   wait; a row per kind: an hourly heatmap of the last 24 clock hours (shade = busy minutes, the current hour outlined, a cell's
   tooltip: builds, busy min, max wait) and running, queued, today, wait avg / peak, RAM as number columns under one icon header
-  row, zeros dimmed; side panel: queued builds sparkline, RAM dots promised / free, QA seats, phone lanes, emulators, test browsers (leases, never gated)); resources and leases: each a 24 h
+  row, zeros dimmed; side panel: queued builds sparkline, RAM dots promised / free, QA seats, phone lanes, emulators, test browsers (leases, never gated)); resources and leases: lease waits in the gate's style (a row per resource,
+  24 h heatmap of minutes waited, tooltip waits / minutes / longest / who; from the leases log's acquire `since` = wait start,
+  the builds log, local-env `lease-wait` events and the open queues), then each resource a 24 h
   RAM sparkline (its scale in the caption) and a lease timeline per holder; a shared always-on service (`shared` row) is never
   an orphan, a leasable one with no live holder is tinted; shells;
 - usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
@@ -204,7 +210,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: a wrapping row, a min width per item,
 optional max across, top-aligned, the last row's items grow; card grids pack as masonry: each card in page order into the
-shortest column), never one full-width row per item; repeated words (running, queued, today, wait, RAM) are one icon set
+shortest column; a tile grid (`data-fill`) takes the column count, of up to 3, with the least empty area, and each column's
+last tile stretches to the tallest, its last graph growing (capped at 170 px; under 2 points: "no trend yet")), never one full-width row per item; repeated words (running, queued, today, wait, RAM) are one icon set
 (`Format-KitIcon`, a title and aria-label each); a flag text over 25 words shows a one-line summary that opens to the full text;
 tables only for many-column rows; 8-12 px gaps, every card
 as tall as its content. Content never truncates; it wraps (every kit page: `kitbag.py ui-check <page>` fails on clipped text at
@@ -337,7 +344,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kitbag.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 471000 · all tests 122000 · files: 36 content + 9 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 471000 · all tests 122000 · files: 37 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, a goody's in `goodies/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name
@@ -410,6 +417,7 @@ flowchart LR
   skills_bossy_SKILL_md -->|"a script's state file changes; an agent needs a…"| skills_bossy_STATE_md["STATE.md"]
   skills_bossy_SKILL_md -->|"a timeout, wait or limit is added or changed…"| skills_bossy_params_registry_json["params.registry.json"]
   skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_supervise_resources_ps1["supervise_resources.ps1"]
+  skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_supervise_stats_ps1["supervise_stats.ps1"]
   skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_usage_ps1["usage.ps1"]
   skills_bossy_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_bossy_adapters_storage_ps1["storage.ps1"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_pre_commit["pre-commit"]

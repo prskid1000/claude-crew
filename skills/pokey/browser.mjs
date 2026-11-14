@@ -181,7 +181,7 @@ function leftBoard(agent) {   // all its board entries say left
   return es.length > 0 && es.every((e) => e.status === 'left')
 }
 const tabId = async (p) => p.__tid || (p.__tid = await (async () => { const c = await p.createCDPSession(); try { return (await c.send('Target.getTargetInfo')).targetInfo.targetId } finally { await c.detach().catch(() => {}) } })())
-// a learned kit parameter, as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, kit.local.json <key> / <key>.<ctx> (a pin), a param pin, the learned value, else def
+// a learned kit parameter, as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, kit.local.json <key> / <key>.<ctx> (a pin), a param pin, learned, else def
 export function kitParam(key, def, ctx = '') {
   const env = process.env['KIT_PARAM_' + key.replace(/\W/g, '_').toUpperCase()]; if (env) return +env
   const cfg = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}), at = (p) => p.split('.').reduce((o, k) => o?.[k], cfg)
@@ -209,14 +209,14 @@ async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bo
   saveJson(f, keep)
   return { live, closed }
 }
-// a free tab slot, atomic: count + open + register under one lock; waits <= waitMs, then fails clearly
+// a free tab slot, atomic: count + open + register under one lock; waits <= waitMs (logged as since), then fails
 export async function openTab(browser, key, { agent = process.env.CLAUDE_AGENT || `pid-${process.pid}`, waitMs = TAB_WAIT_MS } = {}) {
   const end = Date.now() + waitMs
   for (;;) {
     const page = await withLock(`tabs-${keyFile(key)}`, async () => {
       if ((await sweep(browser, key)).live >= MAX_TABS) return null
       const p = await browser.newPage(), f = tabsFile(key), reg = readJson(f, {})
-      reg[await tabId(p)] = { agent, pid: process.pid, at: Date.now() }; reg._key = key; delete reg._idle; leaseLog('acquire', key, { agent, at: Date.now() })
+      reg[await tabId(p)] = { agent, pid: process.pid, at: Date.now() }; reg._key = key; delete reg._idle; leaseLog('acquire', key, { agent, at: end - waitMs })
       saveJson(f, reg)
       return p
     })

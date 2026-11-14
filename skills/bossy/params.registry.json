@@ -42,5 +42,5 @@
   "gate.maxHours": "config default=24 unit=h",
   "track.holdCheckMinutes": "config default=30 unit=min"
  },
- "_literals": {"skills/bossy/adapters/storage.ps1": 4, "skills/bossy/adapters/supervise_resources.ps1": 11, "skills/bossy/adapters/usage.ps1": 1, "skills/bossy/bossy.ps1": 36, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 9, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 33, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
+ "_literals": {"skills/bossy/adapters/storage.ps1": 4, "skills/bossy/adapters/supervise_resources.ps1": 11, "skills/bossy/adapters/supervise_stats.ps1": 3, "skills/bossy/adapters/usage.ps1": 1, "skills/bossy/bossy.ps1": 36, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 9, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 33, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
 }
