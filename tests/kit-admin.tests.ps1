@@ -69,6 +69,8 @@ $r1 = & $lo -Read -Skill revy
 Expect 'kit-admin: learn -When -Do -Why renders ''- <when> -> <do> (<why>)'': generic -> LESSONS.md, org term -> LESSONS.local.md; a free -Lesson refused (2)' ($freeCode -eq 2 -and $r1 -notmatch 'free text' -and $r1 -match '- a generic case -> a generic lesson \(test\)' -and $r1 -match '\(local\)' -and (Get-Content (Join-Path $kc 'LESSONS.local.md') -Raw) -match 'Acmecorp' -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'Acmecorp')
 $null = & $lo -Skill revy -Lesson 'an ascii case -> an ascii counted lesson (why) (1x)'; $null = & $lo -Skill revy -Bump 'ascii counted'
 Expect 'kit-admin: learn -Bump counts an ASCII (1x) up to (2×)' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match 'an ascii counted lesson \(why\) \(2×\)')
+$null = & $lo -Skill revy -Lesson "an overlong case $('padword ' * 50)-> refuse it (why)" 3>$null; $longCode = $LASTEXITCODE
+Expect "kit-admin: learn refuses a lesson over the templates.md lesson word cap (2), nothing written ($longCode)" ($longCode -eq 2 -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'an overlong case')
 $null = & $lo -Skill revy -Fixed 'a generic lesson'; $hi = & $lo -History -Grep 'a generic lesson'; $st = & $lo -Stats
 Expect 'kit-admin: learn -Fixed moves the line out, -History lists it, -Stats counts signals' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) a generic case -> a generic lesson \(test\)' -and $st -match 'signals since last retro')
 $splitOne = @("a`nb" -split "`n", -1).Count; $kaText = (Get-Content (Join-Path $src 'skills/bossy/kit-admin.md') -Raw) -replace '\s+', ' '

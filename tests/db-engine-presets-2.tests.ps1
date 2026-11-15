@@ -158,13 +158,14 @@ CREATE TABLE t3keep.u (login varchar(40)); INSERT INTO t3keep.u VALUES ('carol')
   Expect "tenant drop: a user goes once no staying tenant has it ($users2)" ($users2 -eq 'carol' -and $d2 -match 'tenant t2 dropped')
   Expect "doctor: db.expect differs -> WARN with the server setting; equal -> nothing ($($ex -join ' / '))" ($ex.Count -eq 1 -and $ex[0] -match 'db sort_buffer_size = 262144, db\.expect 1M')
   # tenant import: prod / writable sources refused, a dry run reads no data, then a masked copy loaded and registered from the
-  # template (new ids, FK cycle and idColumns followed, name columns, set + {source:..}, skipTables), a taken name refused, the dump reused
+  # template (new ids, FK cycle and idColumns followed, name columns, set + {source:..}, skipTables), a taken name refused, the dump reused;
+  # det / mig hold a unique tenant key (the real registries' uk_*_tenant_id): the new id goes in at insert, never after
   Q @"
 CREATE DATABASE iadm; CREATE DATABASE srcadm; CREATE DATABASE srct; CREATE DATABASE tpl;
 CREATE TABLE iadm.reg (id int primary key auto_increment, name varchar(40), pool_id int, det_id int null, marker varchar(40));
-CREATE TABLE iadm.det (id int primary key auto_increment, org_ref int, prof int, label varchar(40), foreign key (org_ref) references iadm.reg (id));
+CREATE TABLE iadm.det (id int primary key auto_increment, org_ref int, prof int, label varchar(40), unique key (org_ref), foreign key (org_ref) references iadm.reg (id));
 ALTER TABLE iadm.reg ADD FOREIGN KEY (det_id) REFERENCES iadm.det (id);
-CREATE TABLE iadm.mig (id int primary key auto_increment, org_ref int, org_label varchar(40), cl varchar(40));
+CREATE TABLE iadm.mig (id int primary key auto_increment, org_ref int, org_label varchar(40), cl varchar(40), unique key (org_ref));
 CREATE TABLE iadm.log (id int primary key auto_increment, org_ref int, foreign key (org_ref) references iadm.reg (id));
 INSERT INTO iadm.reg (id, name, pool_id) VALUES (5, 'tpl', 7); INSERT INTO iadm.det VALUES (9, 5, 3, 'tpl'); UPDATE iadm.reg SET det_id = 9; INSERT INTO iadm.mig VALUES (2, 5, 'tpl', 'c-old'); INSERT INTO iadm.log VALUES (1, 5);
 CREATE TABLE srcadm.reg (id int primary key, name varchar(40)); CREATE TABLE srcadm.mig (id int primary key, org_ref int, org_label varchar(40), cl varchar(40));

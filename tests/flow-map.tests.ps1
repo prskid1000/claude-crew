@@ -46,6 +46,12 @@ for name, S in [('tests', {'tool.ps1': tool, 'tests/t.tests.ps1': runread}), ('d
                 ('rmw', {'rmw.ps1': "$j = Get-Content run.json\n" + '#' * 100 + "\nSet-Content run.json $j\n"})]:   # a script is a loop; a test, a doc, a read-modify-write never
     k = types.SimpleNamespace(files=list(S), texts=S, dir=sys.argv[2], skills=[], agents={}, workflows={})
     print(f'scc-{name}=' + str(sum(1 for c in flow.model(k, [])['cycles'] if c['kind'] == 'scc')))
+import hashlib, json, os   # a cache from an older parser (same file text, old key) is dropped, never reused
+cp = os.path.join(sys.argv[2], f'kit-flow-cache-{os.getpid()}.json'); S = {'fp.py': T['fp.py']}
+with open(cp, 'w') as fh: json.dump({'v': flow.VER, 'files': {'fp.py': {'h': hashlib.sha1(S['fp.py'].encode()).hexdigest(), 'p': {'parts': [], 'refs': []}}}}, fh)
+flow.model(types.SimpleNamespace(files=list(S), texts=S, dir=sys.argv[2], skills=[], agents={}, workflows={}), [], cp)
+with open(cp) as fh: v = json.load(fh)
+os.remove(cp); print('cachekey=' + str(v['v'] == flow.PARSER_KEY != str(flow.VER) and bool(v['files']['fp.py']['p']['parts'])))
 '@
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
 $pgOut = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-$PID.html"
@@ -107,6 +113,7 @@ $checks += [ordered]@{
   'the key docks as a side tab (a bottom sheet on phones), never a panel over the graph' = $pg -match "key: \['key', 'Key'\]" -and $pg -notmatch 'id="leg"'
   "no false loop issues ($res)" = $res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0'
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
+  'the flow cache key holds the parser hash: an old-parser cache is re-parsed' = $res -match 'cachekey=True'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
   'run-then-read is a loop from a script, never from a test file, a doc step or one read-modify-write' = $res -match 'scc-tests=0 scc-driver=1 scc-doc=0 scc-rmw=0'
   'verbs from COMMANDS tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'

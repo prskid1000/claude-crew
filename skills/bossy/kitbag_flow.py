@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L73 parts · L158 control · L331 parse · L633 link · L862 cycles · L938 pack · L1075 page · L1532 command
+Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L867 cycles · L943 pack · L1080 page · L1537 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -18,6 +18,11 @@ ARGS = {'flow': ({'--readme', '--open', '--public'}, {'--out'}, True)}
 # Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
 # Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
 VER = 13
+try:   # the cache key adds this file's own hash: a parser edit drops stale parses without a VER bump
+    with open(__file__, 'rb') as _src:
+        PARSER_KEY = f'{VER}:{hashlib.sha1(_src.read()).hexdigest()[:12]}'
+except (OSError, NameError):
+    PARSER_KEY = str(VER)
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 FN = {'ps1': re.compile(r'^\s*function\s+([\w-]+)'),
@@ -640,8 +645,8 @@ def model(k, problems, cache_path=None):
                 cache = json.load(fh)
         except (OSError, ValueError):
             cache = {}
-    if cache.get('v') != VER:
-        cache = {'v': VER, 'files': {}}
+    if cache.get('v') != PARSER_KEY:
+        cache = {'v': PARSER_KEY, 'files': {}}
     parsed = {}
     for f in k.files:
         t = k.texts.get(f, '')

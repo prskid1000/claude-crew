@@ -94,7 +94,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 
 ## kitty
 - a kit test reads durable state (.state/leases.jsonl) or a block moves into a new adapters/*.ps1 -> redirect .state in the test harness and add new files to tests/harness.ps1 New-TestKit list (torn lease lines from the running kit and missing files failed moved tests)
-- a multi-line program or a > or // argument to python from Git Bash (pyenv shim, MSYS conversion) -> write a .py into crafty.ps1 dir, run it and pass selectors from pwsh (cut programs, stray files, 4 flaky FAILs, a dropped slash)
+- a multi-line program or a > or // argument to python from Git Bash (pyenv shim, MSYS conversion) -> write a .py into crafty.ps1 dir, run it and pass selectors from pwsh (cut programs, stray files, 4 flaky FAILs, a dropped slash) (3×)
 - counting a property that may be null in PowerShell -> use @($x.prop | Where-Object { $_ }).Count or test $null first; @($null).Count is 1 (deploy plan printed OUT-OF-AREA for every MR, supervise info on an empty cache)
 - Working after a push in a merged clean worktree -> run every later command with absolute paths into it, never cd then a command that falls back to the live clone (cleanup swept the worktree: hard failure). (1x)
 - Reading ISO times with ConvertFrom-Json -> compare as DateTimeOffset or keep them text (-AsHashtable, then ToString('o')) (DateTime interpolation drops fraction and offset: same-second ties broke ordering). (1×)
@@ -105,7 +105,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Profiling a live supervise -> use a scratch copy; back up supervise-state, lock, report and .runtime/work/deploys/plan-cache.json first, restore after (a live profile overwrote them). (1×)
 - Naming a scripted edit helper or a new kit function -> check the name with Get-Command / `git grep 'function <Name>'`, full verb-noun names only (an alias Rd = Remove-Item deleted README.md and lib.ps1; a second Format-KitCell replaced the first). (2x)
 - Writing a file that holds regex or Windows paths -> use the Write tool (Bash heredocs in this harness mangle backslashes). (2x)
-- Editing a CRLF kit file -> the Edit tool or pwsh ReadAllText / Replace / WriteAllText, never sed -i from Git Bash (it rewrites LF). (1x) (3×)
+- Editing a CRLF kit file -> the Edit tool or pwsh ReadAllText / Replace / WriteAllText, never sed -i from Git Bash (it rewrites LF). (11×)
 - Naming a test variable -> never reuse a name of the area file or the harness in any case (q vs Q, $sRc vs $src) (pwsh names are case-insensitive). (3×)
 - Adding agents/<x>.md -> update the router row, reach mentions and manifest in the same commit (pre-commit lint ROUTER-UNROUTED, REACH-MENTION, MANIFEST blocks a lone file). (3x)
 - Kit token cap work -> measure the whole pass's headroom first (one trim plan), then one file per agent, never trim a file another agent edits, prove each trim by token or AST equality (parallel trims collided). (4×)

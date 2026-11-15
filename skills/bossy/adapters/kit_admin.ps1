@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L101 health · L110 prepush · L174 precommit
+Sections: L12 learn · L102 health · L111 prepush · L175 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -19,6 +19,7 @@ function Invoke-LearnAdmin {
   $file = Get-KitPath signals -Create
   if ($When -or $Do -or $Why) { if (-not ($When -and $Do -and $Why)) { 'learn: -When, -Do and -Why together'; exit 2 }; $Lesson = "$($When.Trim()) -> $($Do.Trim().TrimEnd('.')) ($($Why.Trim().Trim('()')))" }   # LESSONS.md shape
   if ($Lesson -and ("- $($Lesson.Trim() -replace '^-\s*')" -notmatch '^- \S.*? -> \S.*\((?!\d+[x×]\)).+?\)')) { 'learn: a lesson is "<when> -> <do> (<why>)": -When -Do -Why render it'; exit 2 }
+  if ($Lesson -and @(Test-KitProse lesson "- $($Lesson.Trim() -replace '^-\s*')").Count) { 'learn: lesson refused: over the templates.md "Writing standards" lesson cap (warning above); shorten it'; exit 2 }   # lint would flag it after the write
   $pub = Join-Path $KitConf.Kit 'LESSONS.md'; $loc = Join-Path $KitConf.Kit 'LESSONS.local.md'
   if ($Stats) {
     $since = Get-KitRetroSince

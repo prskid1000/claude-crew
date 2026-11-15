@@ -35,7 +35,7 @@ function DbConn([string]$e) {
 function Invoke-MySqlStatement([string]$e, [string]$sql, [int]$Sec = 120) {
   $c = DbConn $e; $endMark = '__kit_rows_end__'; $read = $sql -match '^\s*(SELECT|SHOW|WITH)\b' -and $sql -notmatch '(?i)\b(INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|TRUNCATE|CALL|KILL|SET|OUTFILE|DUMPFILE)\b|;\s*\S'
   for ($try = 1; ; $try++) {
-    $r = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe $c.mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '-N', '-B', '-e', "$($sql.TrimEnd().TrimEnd(';')); SELECT '$endMark'") $Sec }
+    $r = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe $c.mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '-N', '-B') $Sec -In "$($sql.TrimEnd().TrimEnd(';'));`nSELECT '$endMark';`n" }   # stdin, never -e: a long statement overflows the command line
     if ($r.code) { throw "mysql: $(if ($r.err) { $r.err } else { $r.out })" }
     $lines = @("$($r.out)" -split "`r?`n" | Where-Object { $_ })
     if ($lines.Count -and $lines[-1] -eq $endMark) { break }

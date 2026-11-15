@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L67 state · L141 config · L222 OS · L419 leases · L808 status · L1052 supervise sweep · L1123 tracker ·
-  L1472 prior · L1488 ask bugs · L1673 process · L1701 git-host · L1887 kitlog · L2007 params · L2312 entry-scripts
+Sections: L9 paths · L67 state · L141 config · L222 OS · L419 leases · L812 status · L1056 supervise sweep · L1127 tracker ·
+  L1476 prior · L1492 ask bugs · L1677 process · L1705 git-host · L1891 kitlog · L2011 params · L2316 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -612,14 +612,14 @@ function Get-KitSuperviseGuardGpu([switch]$AutoFix) {
   if ($h.Count -or $st.waiting.Count) { "gpu: $(if ($h.Count) { "held by $(@($h | ForEach-Object { "$($_.kind) $($_.holder)" }) -join ', ')" } else { 'free' })$(@($st.waiting | ForEach-Object { "; waiting for GPU: $($_.kind) $($_.holder) (held by $($_.heldBy))" }) -join '')" }
 }
 
-function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw, [string]$Cwd) {   # -Raw: the argument string as is (cmd.exe /s /c "<command>")
+function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw, [string]$Cwd, [string]$In) {   # -Raw: the argument string as is (cmd.exe /s /c "<command>"); -In: stdin text (long SQL: the command line caps at 32k)
   $res = { param($c, $o, $e, $t = $false) [pscustomobject]@{ code = $c; out = $o; err = $e; timedOut = $t } }
   $cmd = Get-Command $Exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($cmd.CommandType -eq 'ExternalScript') { $app = Get-Command $Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($app) { $cmd = $app } }   # an npm .ps1 shim: its .cmd keeps the timeout
   if (-not $cmd) { return & $res 127 '' "$Exe is not on PATH" }
   if ($cmd.CommandType -ne 'Application') {
     if ($Cwd) { Push-Location -LiteralPath $Cwd }
-    try { $o = @(& $Exe @A 2>&1); $c = [int]$LASTEXITCODE } finally { if ($Cwd) { Pop-Location } }
+    try { $o = @(if ($PSBoundParameters.ContainsKey('In')) { $In | & $Exe @A 2>&1 } else { & $Exe @A 2>&1 }); $c = [int]$LASTEXITCODE } finally { if ($Cwd) { Pop-Location } }
     $so = @(); $se = @()
     foreach ($x in $o) { if ($x -is [Management.Automation.ErrorRecord]) { $se += "$x" } else { $so += "$x" } }
     return & $res $c ($so -join "`n") ($se -join "`n")
@@ -629,8 +629,12 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [strin
   if ($Cwd) { $si.WorkingDirectory = $Cwd }
   $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
   $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+  $feed = $PSBoundParameters.ContainsKey('In'); if ($feed) { $si.RedirectStandardInput = $true; $si.StandardInputEncoding = [Text.UTF8Encoding]::new($false) }
   $p = [Diagnostics.Process]::Start($si)
-  $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()
+  $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()   # readers first: a full stdout pipe would block the stdin write
+  if ($feed) {   # async + timed: a child that never reads stdin (no connection) must not hang the write; it may also exit before reading it all
+    try { if (-not $p.StandardInput.WriteAsync($In).Wait($TimeoutSec * 1000)) { try { $p.Kill($true) } catch {}; return & $res -1 '' "$Exe timed out after $TimeoutSec s (stdin not read)" $true }; $p.StandardInput.Close() } catch [IO.IOException] {} catch [AggregateException] {}
+  }
   if (-not $p.WaitForExit($TimeoutSec * 1000)) { try { $p.Kill($true) } catch {}; return & $res -1 '' "$Exe timed out after $TimeoutSec s" $true }
   $p.WaitForExit()
   & $res $p.ExitCode $so.Result.TrimEnd() $se.Result.TrimEnd()

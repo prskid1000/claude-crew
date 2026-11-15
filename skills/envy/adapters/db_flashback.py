@@ -76,7 +76,7 @@ class Db:
     def rows(s, sql):
         """read-only statements; under CPU load the client can exit 0 with no output at all: an end marker tells 0 rows from lost ones"""
         for _ in range(3):
-            r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '-e', f"{sql.rstrip().rstrip(';')}; SELECT '{ROWS_END}'"], capture_output=True, timeout=600)
+            r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B'], input=f"{sql.rstrip().rstrip(';')};\nSELECT '{ROWS_END}';\n".encode(), capture_output=True, timeout=600)   # stdin: no command-line cap
             if r.returncode: raise RuntimeError(f'mysql: {r.stderr.decode(errors="replace").strip()[-300:]}')
             out = [l for l in r.stdout.decode('utf-8', errors='replace').splitlines() if l]
             if out and out[-1] == ROWS_END: break

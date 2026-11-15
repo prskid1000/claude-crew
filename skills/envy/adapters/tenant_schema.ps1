@@ -153,7 +153,7 @@ function Get-ImportSource([string]$e, [string]$from) {
 }
 # read-only statements on the source -> rows (the end marker as in Invoke-DbSql)
 function Invoke-SrcSql($c, [string]$e, [string]$sql) {
-  $r = With-Env @{ MYSQL_PWD = $c.password } { Invoke-KitExe (DbConn $e).mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '--default-character-set=utf8mb4', '-N', '-B', '-e', "$sql; SELECT '__kit_rows_end__'") 300 }   # TODO-PARAM (fixed default)
+  $r = With-Env @{ MYSQL_PWD = $c.password } { Invoke-KitExe (DbConn $e).mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '--default-character-set=utf8mb4', '-N', '-B') 300 -In "$($sql.TrimEnd().TrimEnd(';'));`nSELECT '__kit_rows_end__';`n" }   # TODO-PARAM (fixed default); stdin: no command-line cap
   if ($r.code) { throw "source mysql: $(Protect-KitText "$($r.err)".Split("`n")[-1])" }
   $lines = @("$($r.out)" -split "`r?`n" | Where-Object { $_ })
   if (-not $lines.Count -or $lines[-1] -ne '__kit_rows_end__') { throw "source mysql: exit 0 without the end marker: $($sql.Substring(0, [math]::Min(80, $sql.Length)))" }
@@ -164,7 +164,7 @@ function Invoke-SrcSql($c, [string]$e, [string]$sql) {
 function Get-TenantCloneSql([string]$e, [string]$tpl, [string]$as, $set) {
   $t = TenantCfg $e; $ic = Get-ImportCfg $e; $adm = [string]$t.schema; $key = $t.key; $nm = $t.name
   $idc = @($t.idColumns); $nmc = @($t.nameColumns)
-  $steps = @((Get-TenantPlan $e $tpl @() -NoUsers).steps | Where-Object { -not $_.missing -and $_.table -notin @($ic.skipTables) -and $_.rows })
+  $steps = @((Get-TenantPlan $e $tpl @() -NoUsers).steps | Where-Object { -not $_.missing -and $_.table -notin @($ic.skipTables) -and $_.rows } | Sort-Object -Stable { $_.table -ne $t.table })   # the tenant row first: a child's unique tenant FK gets the new id at insert
   $fks = @(Invoke-DbSql $e "SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = $(SqlQ $adm) AND REFERENCED_TABLE_SCHEMA = $(SqlQ $adm) AND REFERENCED_TABLE_NAME IS NOT NULL")
   $rows = [Collections.Generic.List[object]]::new(); $map = @{}; $sql = [Collections.Generic.List[string]]::new(); $sql.Add('SET FOREIGN_KEY_CHECKS = 0'); $sql.Add('START TRANSACTION')
   foreach ($s in $steps) {
@@ -175,19 +175,25 @@ function Get-TenantCloneSql([string]$e, [string]$tpl, [string]$as, $set) {
     $txt = @($cols | Where-Object { $_[3] -match 'char|text' } | ForEach-Object { [string]$_[0] })   # a text value equal to the template's name names the new tenant
     $old = @(Invoke-DbSql $e "SELECT $(SqlId $pc) FROM $(SqlId $adm).$(SqlId $s.table) WHERE $($s.where)" | ForEach-Object { $_[0] })
     if ($rows.Count + $old.Count -gt 200) { throw "[$e] tenant import: the template $tpl has over 200 registry rows to clone ($($s.table)): add log / history tables to tenants.import.skipTables" }   # TODO-PARAM (fixed default)
+    $refs = @(foreach ($fk in $fks | Where-Object { $_[0] -eq $s.table }) { , @($fk[1], $fk[2]) })   # FK and idColumns values follow the cloned rows they point at
+    $refs += @($plain | Where-Object { $_ -in $idc -and $_ -notin @($refs | ForEach-Object { $_[0] }) } | ForEach-Object { , @($_, [string]$t.table) })
     foreach ($o in $old | Where-Object { -not $map["$($s.table)|$_"] }) {   # a table reached twice (an FK and tenants.tables): each row once
-      $v = "@kit_k$($rows.Count)"; $map["$($s.table)|$o"] = $v
-      $sel = @($plain | ForEach-Object { if ($_ -in $nmc -or ($s.table -eq $t.table -and $_ -eq $nm)) { SqlQ $as } elseif ($_ -in $txt) { "IF($(SqlId $_) = $(SqlQ $tpl), $(SqlQ $as), $(SqlId $_))" } else { SqlId $_ } })
+      $v = "@kit_k$($rows.Count)"; $map["$($s.table)|$o"] = $v; $seen = @{}
+      $sel = @(foreach ($pcol in $plain) {
+        $ref = $null; foreach ($rf in $refs) { if ($rf[0] -eq $pcol) { $ref = $rf; break } }
+        $to = @(if ($ref) { $rows | Where-Object table -eq $ref[1] })
+        if ($pcol -in $nmc -or ($s.table -eq $t.table -and $pcol -eq $nm)) { SqlQ $as }
+        elseif ($to.Count) { $seen[$pcol] = $to.Count; "CASE $(SqlId $pcol) $(@($to | ForEach-Object { "WHEN $(SqlQ $_.old) THEN $($_.var)" }) -join ' ') ELSE $(SqlId $pcol) END" }   # at insert: a unique key on it never sees the template's id
+        elseif ($pcol -in $txt) { "IF($(SqlId $pcol) = $(SqlQ $tpl), $(SqlQ $as), $(SqlId $pcol))" } else { SqlId $pcol }
+      })
       $sql.Add("INSERT INTO $(SqlId $adm).$(SqlId $s.table) ($(@($plain | ForEach-Object { SqlId $_ }) -join ', ')) SELECT $($sel -join ', ') FROM $(SqlId $adm).$(SqlId $s.table) WHERE $(SqlId $pc) = $(SqlQ $o)")
-      $sql.Add("SET $v = LAST_INSERT_ID()"); $rows.Add(@{ table = $s.table; pk = $pc; old = $o; var = $v; cols = $plain })
+      $sql.Add("SET $v = LAST_INSERT_ID()"); $rows.Add(@{ table = $s.table; pk = $pc; old = $o; var = $v; cols = $plain; refs = $refs; seen = $seen })
     }
   }
   if (-not @($rows | Where-Object table -eq $t.table).Count) { throw "[$e] tenant import: template $tpl has no $adm.$($t.table) row" }
-  foreach ($r in $rows) {   # references to cloned rows follow them (the template's values were copied)
-    $refs = @(foreach ($fk in $fks | Where-Object { $_[0] -eq $r.table }) { , @($fk[1], $fk[2]) })
-    $refs += @($r.cols | Where-Object { $_ -in $idc -and $_ -notin @($refs | ForEach-Object { $_[0] }) } | ForEach-Object { , @($_, [string]$t.table) })
-    foreach ($ref in $refs) {
-      $to = @($rows | Where-Object table -eq $ref[1]); if (-not $to.Count) { continue }
+  foreach ($r in $rows) {   # references to rows cloned after this one (a cycle): an update; rows known at insert are mapped already, never twice
+    foreach ($ref in $r.refs) {
+      $to = @($rows | Where-Object table -eq $ref[1] | Select-Object -Skip ([int]$r.seen[$ref[0]])); if (-not $to.Count) { continue }
       $sql.Add("UPDATE $(SqlId $adm).$(SqlId $r.table) SET $(SqlId $ref[0]) = CASE $(SqlId $ref[0]) $(@($to | ForEach-Object { "WHEN $(SqlQ $_.old) THEN $($_.var)" }) -join ' ') ELSE $(SqlId $ref[0]) END WHERE $(SqlId $r.pk) = $($r.var)")
     }
   }

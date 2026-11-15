@@ -23,6 +23,9 @@ $pr = & { . $L2; "$($script:LE.envs.shop.db.engine)|$($script:LE.envs.shop.db.qu
 Expect "presets: db.engine aliases, unset hooks filled, own hooks kept, marks only for mysql / mariadb ($pr)" ($pr -match '^postgres\|psql -h 127\.0\.0\.1 -p 5432 -U u -d shop -At -c "\{sql\}"\|own\|jdbc:mysql://127\.0\.0\.1:3306/\{schema\}\?.+\|FalseTrue$')
 $pk = & { . $L2; "$(Test-DbPosBefore 'h-bin.000002:900' 'h-bin.000010:4')$(Test-DbPosBefore 'b.000003:50' 'b.000003:40')" }
 Expect "marks: positions compare in binlog order, file number first ($pk)" ($pk -eq 'TrueFalse')
+# long SQL goes on stdin (Invoke-KitExe -In): 200k chars arrive whole; a child that never reads stdin times out, no hang
+$kxIn = & { . $L2; $big = 'x' * 200000; "$((Invoke-KitExe $py @('-c', 'import sys; print(len(sys.stdin.read()))') 30 -In $big).out)|$((Invoke-KitExe $py @('-c', 'import time; time.sleep(30)') 3 -In $big).timedOut)" }
+Expect "Invoke-KitExe -In: stdin whole (200000), a non-reader times out ($kxIn)" ($kxIn -eq '200000|True')
 # touched: a changeSet's <rollback> never runs forward (its DROP COLUMN of an added column made the slice SELECT a missing column)
 $clog = Join-Path $k2 'add-col.xml'
 Set-Content $clog '<databaseChangeLog><changeSet id="1"><sql>ALTER TABLE t1 ADD COLUMN c2 TEXT NULL</sql><rollback><sql>ALTER TABLE t1 DROP COLUMN c2</sql></rollback></changeSet><changeSet id="2"><dropColumn tableName="t3" columnName="c4"/><rollback><dropColumn tableName="t5" columnName="c6"/></rollback></changeSet><changeSet id="3"><rollback changeSetId="2"/><dropTable tableName="t7"/></changeSet></databaseChangeLog>'
