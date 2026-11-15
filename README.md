@@ -8,7 +8,8 @@
 
 A multi-agent dev + QA kit for Claude Code (ports for Codex and Antigravity) for **any project type**: any stack, migration tool,
 local env shape, test env, deploy mechanism and tracker. Org specifics live only in git-ignored config
-(`skills/crafty/kit.local.json`, `rules/*.local.md`); the kit assumes no tenants, no web + API + app trio, no database.
+(`skills/crafty/kit.local.json`, `rules/*.local.md`). Core defaults assume no tenants, no web + API + app trio, no database
+engine, migration tool, testing docs or deploy mechanism: each is a built-in or adapter that runs only when config selects it.
 Every diagram is generated at pre-commit (`kitbag.py flow --readme`) from the manifest, Router and flow model.
 
 ## The crew
@@ -243,16 +244,21 @@ dashboard checks a one-row header at desktop width, a text label on every bar an
 | `runtimes` |  | runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match |
 | `media` |  | evidence videos -&gt; text index (pokey media.md) |
 | `gpu` |  | exclusive.&lt;kind&gt;.processes (regex): one kind on the GPU at a time; unset: no limit |
+| `process` |  | gates.&lt;promote/merge/finish/bugFix/mrBody&gt;: unset = pass, builtin:testingDocs / builtin:reproRow, or a hook command (payload JSON on stdin, exit 0 = pass); docs[] {key, label, linkRx, headerRx, required} (unset: vocab.json pair, [] = none); bugFixRx |
+| `mr` |  | footer: last line of every MR body ("" = none); sections, uiFilesRx: devtools.py render |
+| `protectedBranchesBase`, `linkDefaults`, `stack.presets` |  | branches the sweep never deletes (main/master/develop/release/*); dep folders wt new links; false = no built-in stack presets |
+| `api`, `auth` |  | api.defaultUser (none: a target with one user uses it, several refuse), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 / oidc |
+| `masking`, `migrations` |  | masking.rules {table.column glob: kind}, logins, names {first, last, streets} (envy db.md); migrations.tool (none), lbcheck.*, historyTables (envy db.md) |
 | `configVersion` | 2 | below 2: migrate adds old defaults |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
-| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command / a vendor adapter. statuses: logical -&gt; board names (list: first set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; ciTaskPattern: CI-raised test task names, closed when their job passes. Examples: _examples, adapter headers. |
+| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command / a vendor adapter. statuses: logical -&gt; board names (list: first set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json). Examples: _examples, adapter headers. |
 | `reports` | {"type": "markdown"} | type: markdown, html (a kept file) / command ('&lt;cli&gt; {title} {path} {parent}' prints the URL); gdocs (Google Doc + Drive evidence via gws), pdf, confluence, notion: adapters. share (gdocs): anyone (default) / domain:&lt;domain&gt; / none |
-| `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "outOfScope": ["&lt;a… | shutterText / confirmText: camera label regexes. outOfScope: channels QA never tests (OUT_OF_SCOPE). targets: /testy select groups (target: '&lt;group&gt;'): a task's env: the first rule matching lists / repos / nameRegex / pathRegex (localEnv: live = in its running release). seatGB: RAM per QA seat. matrix: UI cases run at viewports (WxH) x fontScales x themes (app-set). notLocal: [{ name, match: row regex }] deps no local env runs (PASS -&gt; NOT_TESTED_LOCAL). qualityWords: stated-quality regex ('' = off). lanes: {&lt;n&gt;: {kind, parallel, followUp, devices}}. |
+| `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "outOfScope": ["&lt;a… | lanes {&lt;lane&gt;: {kind, parallel, followUp, devices}} (unset: one web lane); newDefectIdRx, holdCauses (none), guideDoc (first process doc). shutterText / confirmText: camera label regexes. outOfScope: channels QA never tests (OUT_OF_SCOPE). targets: /testy select groups (target: '&lt;group&gt;'): a task's env: the first rule matching lists / repos / nameRegex / pathRegex (localEnv: live = in its running release). seatGB: RAM per QA seat. matrix: UI cases run at viewports (WxH) x fontScales x themes (app-set). notLocal: [{ name, match: row regex }] deps no local env runs (PASS -&gt; NOT_TESTED_LOCAL). qualityWords: stated-quality regex ('' = off). lanes: {&lt;n&gt;: {kind, parallel, followUp, devices}}. |
 | `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: a person says deploy &lt;env&gt;) / ask (one batched ask per env, at most one per minIntervalHours: a number or per target + default); planTimeoutSec bounds supervise's plan per env (late = UNKNOWN); hold: [&lt;env&gt;] never asked; productionPattern, branchPrefix, mergeMethod, commitTemplate, ssh: bossy deploys.md. |
 | `net` | {"timeoutSec": 60} | timeoutSec per git-host / tracker CLI call; transient errors retry; lost tracker writes wait in .state/outbox.jsonl (supervise replays) |
 | `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack: testFor = test names -Touched derives from a changed file's base name ({name}). e2e (check -Step e2e; module globs): specs (default *.cy.*, e2e/*.spec, *.e2e.*), map[] {dir?, paths, specs}, else folder, name, import, route; run[] {dir, cmd?, env?, split?: folder} per module. |
-| `guard` | {"layout": "warn"} | layout: warn (default) / block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt). |
+| `guard` | {"layout": "warn"} | heavyPatterns / e2ePatterns: commands that need the gate. layout: warn (default) / block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt). |
 | `ports` | {"targets": "both"} | kitbag.py port targets: both / codex / antigravity / none |
 | `memory` | {"keepDefault": false} | keepDefault: false = auto memory in &lt;kit&gt;/memory/ (git-ignored); true = the user's. |
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off). |
@@ -277,6 +283,13 @@ Vendor adapters sit in `skills/crafty/adapters/` and load only when config selec
 | report | `reports.type` | publish | markdown, html, command | gdocs, pdf, confluence, notion | `skills/crafty/devtools.py` |
 | ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | `skills/crafty/lib.ps1` |
 | transcript | `board tool` | root last | claude, codex, antigravity, none |  | `skills/crafty/lib.ps1` |
+| deploy-kind | `repos[].deploys[] (kind)` | isDeployed | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | `skills/pokey/adapters/deployed_checks.ps1` |
+| process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | `skills/crafty/adapters/process_gates.ps1` |
+| db-engine | `localEnv db.engine` | query exec jdbc |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb | `skills/envy/adapters/db_engines.ps1` |
+| tenant-model | `localEnv tenants.model` | list drop import footprint scopes |  | none, schema, database, column | `skills/envy/adapters/tenant_models.ps1` |
+| migration | `migrations.tool` | check discover pendingSql tag rollback resetEdited missingRoutines historyScopes |  | liquibase | `skills/crafty/adapters/liquibase.ps1` |
+| envy-verb | `adapters/*.local.ps1` | ops run |  | tenant | `skills/envy/adapters/tenant_models.ps1` |
+| api-auth | `targets auth.type` | invoke |  |  | `skills/pokey/pokey.ps1` |
 <!-- kit-graph:end -->
 
 ## Layout, state and safety

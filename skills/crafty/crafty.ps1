@@ -2477,7 +2477,7 @@ function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
   $crew = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).BaseName
   $words = @(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object { $_.gate -eq 'scope' -and $_.status -eq 'answered' -and ("$($_.by)" -split '[-_ :]')[0] -notin $crew })
   $lifted = { param($c) @($words | Where-Object { ($_.item -and $_.item -in "$($c.branch)", "$($c.mr)") -or "$($c.mr)" -in @($_.mrs) }).Count -gt 0 }   # a person's scope word
-  $filesOf = { param($m) $rn, $iid = $m -split '!', 2; $ch = try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid/changes" } catch { $null }; @($ch.changes | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique) }
+  $filesOf = { param($m) $rn, $iid = $m -split '!', 2; $ch = try { Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $rn -Raw); n = $iid } } catch { $null }; @($ch.changes | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique) }
   if ($Mrs) {   # each MR's source / test files and its area (deploy plan: the owner sees them before saying deploy)
     $rows = foreach ($m in @(Split-KitList $Mrs)) {
       $k = if ($m -match '([^/]+)/(?:-/)?(?:merge_requests|pulls?|pull-requests|pullrequest)/(\d+)') { "$($Matches[1])!$($Matches[2])" } else { $m -replace '^.*/' }
@@ -2492,7 +2492,7 @@ function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
   # post-hoc: MRs merged within -Days whose area was logged (devtools.py mr / merge), each merged one checked once ('checked')
   $hits = foreach ($a in @($areas.Values | Where-Object { [datetime]$_.at -ge $now.AddDays(-$Days) })) {
     if (-not ($c = $seen["$($a.mr)"])) {
-      $rn, $iid = "$($a.mr)" -split '!', 2; $m = try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid" } catch { $null }
+      $rn, $iid = "$($a.mr)" -split '!', 2; $m = try { Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject $rn -Raw); n = $iid } } catch { $null }
       if ($m.state -ne 'merged' -or -not ($f = @(& $filesOf "$($a.mr)")).Count) { continue }   # open: devtools.py merge checks it; unknown: next round
       $c = [ordered]@{ mr ="$($a.mr)"; branch = "$($a.branch)"; globs = @($a.globs); outside = @(Get-KitScopeOutside $f @($a.globs)); mergedAt = "$($m.merged_at)" }
       Write-KitLog scope-log checked $c

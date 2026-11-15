@@ -8,8 +8,8 @@ Exit codes: 0 pass · 1 a check failed.
 $k = New-TestKit workflows; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # the sims run on a legacy CONFIG line (qa.lanes web/api/app, repo roles); the neutral defaults have their own sims at the end
 $legacyCfg = 'CONFIG {"models":null,"roles":{"api":"producer","java":"producer","py":"producer","web":"consumer"},"qaLanes":{"web":{"kind":"web","parallel":5,"followUp":"app"},"api":{"kind":"api","parallel":5,"followUp":"app"},"app":{"kind":"app","devices":"android"}}}'
-$jsLib = $jsLib.Replace("const _rec = () => ({ ok: true, output: 'RECORDED' })", "const _CFG = '$legacyCfg'`nconst _rec = () => ({ ok: true, output: 'RECORDED\n' + _CFG })")
-if ($jsLib -notmatch '_CFG') { throw 'workflows tests: harness _rec changed, update the legacy CONFIG hook' }
+$jsLib = [regex]::Replace($jsLib, "(?m)^const _CFG = '.*?'(?=\s)", { "const _CFG = '$legacyCfg'" })
+if ($jsLib -notmatch [regex]::Escape("const _CFG = '$legacyCfg'")) { throw 'workflows tests: harness _CFG changed, update the legacy CONFIG hook' }
 # buildy local loop: BLOCKED = FAIL; still FAIL -> ONE stronger round; ENV-FIX waits
 $wfd = Join-Path $src 'workflows/buildy.js'
 $jsd = @'

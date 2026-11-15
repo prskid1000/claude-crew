@@ -25,8 +25,10 @@ adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters
   step reads it; scripts are run (their header prints usage), never named as text to read.
 - **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files
   row; mentions do not count; every edge has its reason.
-- **Generic** [ORG-TERM, RETIRED-WORD]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`
-  (today's behaviour as default), org rules -> `rules/*.local.md`, org lessons -> `LESSONS.local.md`.
+- **Generic** [ORG-TERM, RETIRED-WORD]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`,
+  org rules -> `rules/*.local.md`, org lessons -> `LESSONS.local.md`.
+- **Neutral** [ARCH-*, `lint-vocab.json`]: defaults off / none; vendor calls in `adapters/`; Windows calls checked; vendor
+  lessons local. A changed default = a `kitbag.py migrate` LEGACY_DEFAULTS row.
 
 ## Shapes
 - **Script** [SCRIPT-HEADER, PS-VERSION, RUNTIME-RAW, RUNTIME-MAP, DESKTOP-OPEN, SECTION-MAP, SECTION-UNMAPPED]: one entry file per area with
@@ -44,9 +46,7 @@ adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters
   `kit.example.json` sample. **Hook**: `pwsh` exec form, SessionStart < 2 s, slow work async.
 
 ## Before every push
-`agents/kitty.md` step 8: `kitbag.py lint` (0 problems, 0 counted flow issues), `port` + `port --check`,
-`tests/kit-tests.ps1 [-Area <area>]` (areas in parallel), `lint --org-terms <kit.local.json>`, `cost --steps` after a workflow
-change. pre-commit regenerates README graph sections, staged scripts' `Sections:` maps and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
+`agents/kitty.md` step 8 (lint, ports, tests, org terms, cost). pre-commit regenerates README graph sections, staged scripts' `Sections:` maps and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
 deliberate); pre-push blocks stale ports, org terms and local files; commit with `crafty.ps1 wt commit`.
 
 ## kitty steps 1-3 (`$A` = `python -X utf8 <wt>/skills/bossy/kitbag.py audit`)

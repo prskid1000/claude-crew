@@ -1357,7 +1357,7 @@ def cmd_ui_check(a):
 # ---- audit: findings, shared helpers, stamp (scan: kitbag_admin.py)
 # user-named subtrees (or samples): never "missing"
 USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples',
-  'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets', 'runtimes')
+  'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets', 'qa.lanes', 'masking.rules', 'runtimes')
 AUTOMATIC = {'input', 'args', 'matches', 'error', 'host', 'home', 'pid', 'pwd', 'profile', 'this', 'event', 'sender', 'ofs',
    'psitem', 'iswindows', 'islinux', 'ismacos', 'executioncontext', 'myinvocation', 'psboundparameters', 'lastexitcode'}
 AUDIT_VERBS = {'stamp': lambda kit, flags: cmd_stamp(kit)}   # kitbag_admin.py adds setup, config, recover, scan
