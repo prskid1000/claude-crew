@@ -135,7 +135,7 @@ commit (`commitFormat` subject + change bullets + trailers): `devtools.py mr <wt
 comment-solution `{ "solution": "<what was wrong / built, and the fix>", "mrs": ["<ref (MERGED|OPEN)>"], "localProof": "", "afterDeploy":
 "", "deferred": "<item — reason>" }` (mrs: the task's tracking, localProof: the loop checkpoint when left out) renders `**Solution:**
 ...` / `**MRs:** ... · **Local proof:** ...` / `**After deploy:** ... · **Deferred:** ...`; comment-status `{ "status", "why", "link" }`
-renders `<status> — <why> · <link>`. Kit comments, one per kind, edited: solution, QA result (MR URLs: Items); doc links: crafty "Tracker".
+renders `<status> — <why> · <link>`. Every MR ref in a comment or MR body renders as `[repo!n](<full URL>)` (host `mr.url`). Kit comments, one per kind, edited: solution, QA result (MR URLs: Items); doc links: crafty "Tracker".
 
 ## Decision request
 `bossy.ps1 decide ask` writes it to the contracts file; structured options feed the question tools (bossy E4).

@@ -49,7 +49,7 @@ python <kit>/skills/crafty/devtools.py mr <wt> --spec mr.json   # 6. MR (templat
 python <kit>/skills/crafty/devtools.py finish <task> cases solution.json review --ai cases   # human doc, links block, comment, status
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
-& $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic)
+& $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic); no task: & $D tracker create -Spec <json> ("task spec")
 & $O deploy request -Mrs <repo>!<iid>,... -Run <run>   # 8. deploy batch, silently (never deploy, never ask)
 & $O board leave -Session <token> -Status done   # 9. final report (templates.md "Final reports")
 ```

@@ -1045,7 +1045,7 @@ function Test-KitLaunchTasks($A, [string]$File, [string]$RunName = '') {
       $t = try { Get-TrackerTask $id } catch { $null }; if (-not $t.name) { continue }; $read++; $p = "$($t.parent)"
       $gap = @(Get-KitTaskTextGaps $t.name $t.description -Subtask | Where-Object { $p -or $_ -in 'a description', 'Items' })   # the owner's own task: Items only
       if ((Read-KitState (Get-KitTaskFile $id)).itemsSig) { $gap = @($gap | Where-Object { $_ -ne 'Items' }) }   # a kit checklist
-      if ($gap.Count) { "TASKS REFUSED ${id}: its description lacks $($gap -join ', ') (templates.md task-description): $(if ($p) { "crafty.ps1 tracker describe $id -File <md>" } else { "crafty.ps1 tracker scope -Task $id -Add '**Items:** <ids>' (the owner's text stays)" })" }
+      if ($gap.Count) { "TASKS REFUSED ${id}: its description lacks $($gap -join ', ') (templates.md task-description): $(if ($p) { "crafty.ps1 tracker update $id -Spec <json> (crafty.ps1 'task spec')" } else { "crafty.ps1 tracker scope -Task $id -Add '**Items:** <ids>' (the owner's text stays)" })" }
       elseif ($itemsFn -and -not $File) { try { & $itemsFn $id $t } catch { "ITEMS $id failed: $("$_".Split("`n")[0])" } }
       if (-not $p -or $par.ContainsKey($p)) { continue }
       $pt = try { Get-TrackerTask $p } catch { $null }; $par[$p] = 1; if (-not $pt.name -or "$($pt.description)" -match '<!-- kit:delivery -->') { continue }
@@ -1279,7 +1279,7 @@ function Test-KitCiTaskJob($Ci, [string[]]$Mrs) {
 function Close-KitCiTask([string]$Task, $Ci, [string[]]$Mrs) {
   $cj = Test-KitCiTaskJob $Ci $Mrs; if ($cj.state -ne 'pass') { return @{ state = $cj.state; why = "CI task not closed: $($cj.why)" } }
   try { $null = Set-TrackerStatus $Task 'closed' } catch { return @{ state = 'error'; why = "could not set status 'closed' (retried next run): $_" } }
-  try { $null = Set-TrackerKitComment $Task 'qa-result' "QA: PASS · CI job $($cj.name) passed on $($Ci.branch) with $(@($Mrs) -join ', ') merged: $($cj.url)" } catch { Write-Warning "QA comment of $Task not written: $_" }
+  try { $null = Set-TrackerKitComment $Task 'qa-result' "QA: PASS · CI job $($cj.name) passed on $($Ci.branch) with $(@($Mrs | ForEach-Object { Format-KitMrLink $_ }) -join ', ') merged: $($cj.url)" } catch { Write-Warning "QA comment of $Task not written: $_" }
   @{ state = 'closed'; why = "all $(@($Mrs).Count) MRs merged, CI job $($cj.name) passed on $($Ci.branch) -> closed" }
 }
 # track (bossy.ps1): launched areas (track.planHours) no wave report lists done: a later batch or budget cut

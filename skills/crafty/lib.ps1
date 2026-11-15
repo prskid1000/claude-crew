@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L67 state · L141 config · L222 OS · L419 leases · L812 status · L1056 supervise sweep · L1127 tracker ·
-  L1476 prior · L1492 ask bugs · L1677 process · L1705 git-host · L1891 kitlog · L2011 params · L2316 entry-scripts
+  L1476 prior · L1492 ask bugs · L1677 process · L1705 git-host · L1897 kitlog · L2017 params · L2322 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1810,6 +1810,12 @@ function Get-KitCiFailure([hashtable]$A) {
   [pscustomobject]@{ job = "$($j.name)"; id = $j.id; url = "$($j.web_url ?? $j.url)"; reason = "$($j.reason ?? 'unknown')"; raw = "$($j.failure_reason)"; excerpt = @($log -match '(?i)error|fail|invalid|exception' | Select-Object -Last 8) -join "`n" }
 }
 # mr.parseRef: MR URL or [<group>/]<repo>!<n> -> @{ repo; n; type }
+# an MR ref or URL -> [repo!n](full URL) (owner: tracker comments and MR bodies link full URLs); no URL: the ref as is (devtools.py mr_link)
+function Format-KitMrLink([string]$Ref) {
+  $r = "$Ref".Trim(); $p = ConvertFrom-KitMrRef $r; if (-not $p) { return $r }
+  $u = if ($r -match '^https?://') { $r } else { try { "$(Invoke-HostVerb 'mr.url' @{ repo = $p.repo; n = $p.n })".Trim() } catch { '' } }
+  if ($u -notmatch '^https?://[^/\s]+/\S+$') { return $r }; "[$(if ($r -match '^https?://') { "$(($p.repo -split '/')[-1])!$($p.n)" } else { $r })]($u)"
+}
 function ConvertFrom-KitMrRef([string]$Ref) { $r = "$Ref".Trim(); if ($u = ConvertFrom-MrUrl $r) { $u } elseif ($r -match '^(?<repo>[\w./-]+)[!#](?<n>\d+)$') { @{ repo = (Get-HostProject $Matches.repo -Raw); n = $Matches.n; type = $script:HostType } } }
 # MR CLIs the guard checks (exe, MR noun, option names); gitHostApi.hostCli adds more
 $script:KitHostCli = [ordered]@{
@@ -1883,7 +1889,7 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
   # cells are cut at 90 chars: full commands in the report's "All flags"
   [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
-    action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)'; refs = $refs }
+    action = "Link each to its task: $($adds -join '; ')$(if ($adds -match '<task>') { " (no task yet: & $($KitCmd.dev) tracker create -Spec <json> (crafty.ps1 'task spec'), never free text)" }); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)'; refs = $refs }
 }
 
 function Get-KitRepoSweep { try { Get-Content -LiteralPath (Get-KitPath repo-sweep) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null } }   # the last cleanup's counts per repo

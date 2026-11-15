@@ -107,7 +107,7 @@ $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); 
 Expect "gate card: history counts a build between sweeps, a row per kind, its busy minutes in the hours it spans; browsers in the lease row ($gtOut)" ("$gtOut" -eq '0 env deploy,maven test 1/1/3/22/10,50 True True')
 # crafty.ps1 tracker bug (lib.ps1 Add-KitAskBug)
 $D = Join-Path $k 'skills/crafty/crafty.ps1'; $env:KIT_TRACKER_TYPE = 'none'; $bk = Kd
-$ak = (pwsh @np $D tracker create -List L1 -Name 'Ask help routing' -Description 'a' -NewTask fixture | ConvertFrom-Json).id
+$ak = (pwsh @np $D tracker create -Key fx-tracker-110 -List L1 -Name 'Ask help routing' -Description 'a' -NewTask fixture | ConvertFrom-Json).id
 'help answers link other product pages (vector.py:120)' | Set-Content "$bk/w1.md"; 'second defect' | Set-Content "$bk/w2.md"; 'same root cause' | Set-Content "$bk/w3.md"
 $tbg = { param($key, $name, $file, $sig) pwsh @np $D tracker bug -Parent $ak -Key $key -Name $name -File "$bk/$file" -Signature $sig -List L1 | ConvertFrom-Json }
 $b1 = & $tbg watch-stg-a '[Bug] Ask help — new defects (1)' w1.md 'vector.py:120'; $b2 = & $tbg qa-run1 '[Bug] staging run — new defects' w2.md 'other.py:9'
@@ -119,6 +119,14 @@ $sg = & { . (Lib); $h = ConvertTo-KitBugNorm 'see src/my\_mod.py:12 and vector.p
   (Get-KitDefectSigs ([pscustomobject]@{ observed = 'connect api.example.com:443 refused; https://app.example/#/orders/7?x=1 and https://app.example/#top'; cause = '' })) -join ' ' }
 $kb = pwsh @np $D tracker bug -Parent $ak -Key 'watch-stg-err [x]' -Name '[Bug] k' -File "$bk/w3.md" -Signature 'zz.py:1' -List L1 | ConvertFrom-Json; $kc = pwsh @np $D tracker bug -Parent $ak -Key 'watch-stg-err [x]' -Name '[Bug] k' -File "$bk/w3.md" -Signature 'zz.py:1' -List L1 | ConvertFrom-Json
 Expect "bug signatures: whole matches, escaped read-back, no host:port, hash routes kept; a key with ] stays one section ($($sg -join ' | '))" ($sg[0] -eq 'TrueFalseFalseFalseTrue' -and $sg[1] -eq 'https://app.example/#/orders/7' -and ([regex]::Matches((pwsh @np $D tracker view $kc.id | ConvertFrom-Json).description, 'kit:bug:watch-stg-err_x')).Count -eq 1 -and $kb.id -eq $kc.id)
+# only the keyed defect path takes free text (owner, 2026-11-15: a free-text [Bug] for merged MRs); describe never drops a section
+$fbFree = pwsh @np $D tracker create -List L1 -Name '[Bug] merged MRs untracked' -NewTask x -Description 'free text' 2>&1 | Out-String; $fbFreec = $LASTEXITCODE
+'{"kind":"Bug","title":"merged MRs untracked","list":"L1","newTask":"x","problem":"two merged MRs had no task","links":["https://git.example/r/-/merge_requests/5"]}' | Set-Content "$bk/fb.json"; $fbSp = (pwsh @np $D tracker create -Spec "$bk/fb.json" | ConvertFrom-Json).id
+$fbDs = pwsh @np $D tracker describe $fbSp 'free text' 2>&1 | Out-String; $fbDsc = $LASTEXITCODE; $fbSec = "**Problem:** p`n**Goal:** g`n**Acceptance:** a`n**Links:** https://x.example/2"
+$fbOwn = (pwsh @np $D tracker create -List L1 -Key fb-own -Name 'Owner shaped' -NewTask x -Description $fbSec | ConvertFrom-Json).id
+$fbDo = pwsh @np $D tracker describe $fbOwn 'just text' 2>&1 | Out-String; $fbDoc = $LASTEXITCODE; $null = pwsh @np $D tracker describe $fbOwn "**Testing doc (human):** [open](https://x.example/h)`n`n$fbSec"; $fbKeep = $LASTEXITCODE
+$fbE = (pwsh @np $D tracker create -List L1 -Key fb-empty -Name 'Owner empty' -NewTask x -Description ' ' | ConvertFrom-Json).id; $null = pwsh @np $D tracker describe $fbE '**Testing doc (human):** [open](https://x.example/h)'; $fbKeep += $LASTEXITCODE
+Expect "tracker create: free text without -Key ([Bug] too) refused, pointing at -Spec; a [Bug] spec and tracker bug -Key pass; describe: refused on a spec task or when it drops a section, links on top pass ($fbFreec $fbDsc $fbDoc $fbKeep)" ($fbFreec -eq 1 -and $fbFree -match 'rendered from a spec: tracker create -Spec <json>' -and $fbSp -and $b1.id -and $fbDsc -eq 1 -and $fbDs -match 'tracker update' -and $fbDoc -eq 1 -and $fbDo -match 'lacks Problem.*tracker update' -and $fbKeep -eq 0)
 # (cap move) tracker comment -Spec: a file or inline JSON, rendered; no text never reaches a CLI (it opened an editor)
 '{"status":"closed","why":"W0 done: lanes use staging sql_mode.","link":"https://github.com/o/r/commit/fd14532"}' | Set-Content "$bk/cs.json"
 $sf = pwsh @np $D tracker comment $ak -Kind comment-status -Spec "$bk/cs.json" 2>&1 | Out-String; $sfc = $LASTEXITCODE

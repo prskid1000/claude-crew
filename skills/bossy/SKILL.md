@@ -35,7 +35,8 @@ timeouts, gate memory, heartbeat, budgets) learn live in supervise -AutoFix: `bo
 
 **Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change;
 steps: AGENTS.md "The two flows"): merged work waits silently (`deploy request`) until a person says `deploy <env>` -> E5.
-Your own small or urgent fix (R6) still goes through a task (existing or new): `devtools.py mr`, `track add` before the merge.
+Your own small or urgent fix (R6) still goes through a task (existing or new): `devtools.py mr`, `track add` before the merge;
+a new task (merged MRs too): `crafty.ps1 tracker create -Spec`, never free text.
 
 Only these dev paths need you (the workflow handles the rest: `workflows/buildy.js`):
 

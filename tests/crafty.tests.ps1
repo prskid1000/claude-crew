@@ -69,13 +69,13 @@ try {
     $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $pue -match 'Usage: pipes' -and $cr.run -eq 'adhoc-c9' -and (Test-Prose kit-report (Join-Path (TkPath $k agents) 'c9/resume-adhoc-c9.md')))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 $env:KIT_TRACKER_TYPE = 'none'
-$t = pwsh @np $D tracker create -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
+$t = pwsh @np $D tracker create -Key fx-crafty-72 -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
 $null = pwsh @np $D tracker status $t.id failedTesting; $sNo = pwsh @np $D tracker status $t.id 2>&1 | Out-String; $stCode = $LASTEXITCODE
 $l = @(pwsh @np $D tracker list L1 failedTesting | ConvertFrom-Json)
 Expect 'tracker none: create, status failedTesting, list; status without a word = usage, rc 2, unchanged' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id -and $stCode -eq 2 -and $sNo -match 'usage: tracker status')
-$d2 = (pwsh @np $D tracker create -List L1 -Name 'Invoice export button' -Description 'd' | ConvertFrom-Json).id
-$d1 = pwsh @np $D tracker create -List L1 -Name 'Invoice export button broken' -Description 'd' 2>&1 | Out-String; $c1 = $LASTEXITCODE
-$d3 = (pwsh @np $D tracker create -List L1 -Name 'Invoice export copy' -Description 'd' -NewTask 'another screen' | ConvertFrom-Json).id; $null = pwsh @np $D tracker scope -Task $t.id -Add 'also X'
+$d2 = (pwsh @np $D tracker create -Key fx-crafty-76 -List L1 -Name 'Invoice export button' -Description 'd' | ConvertFrom-Json).id
+$d1 = pwsh @np $D tracker create -Key fx-crafty-77 -List L1 -Name 'Invoice export button broken' -Description 'd' 2>&1 | Out-String; $c1 = $LASTEXITCODE
+$d3 = (pwsh @np $D tracker create -Key fx-crafty-78 -List L1 -Name 'Invoice export copy' -Description 'd' -NewTask 'another screen' | ConvertFrom-Json).id; $null = pwsh @np $D tracker scope -Task $t.id -Add 'also X'
 Expect 'check before create: a near-duplicate is refused (extend it: tracker scope), another title and -NewTask pass; scope appends' ($c1 -eq 1 -and $d1 -match "(?s)duplicate of $d2.*tracker scope" -and $d2 -and $d3 -and (pwsh @np $D tracker view $t.id | Out-String) -match 'Scope \(extended .*also X')
 & $J @{ tracker = @{ type = 'fake'; statuses = @{ inTest = @('in test', 'for test') } } } "$k/skills/crafty/kit.local.json"
 $tl = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = `$null; . '$(Lib)'; Register-KitAdapter 'tracker' 'fake' @{ list = { param(`$a) if (`$a.status -ne 'in test') { __TrRow 'T1' n `$a.status @() } } }; (Get-TrackerTasks L1 inTest).id -join ','" 2>$null; Remove-Item "$k/skills/crafty/kit.local.json"

@@ -235,7 +235,7 @@ $env:KIT_TRACKER_TYPE = 'none'
 . $env:KIT_TEST_SHIM
 $KitCmd.qa = $args[1]
 function Get-TrackerTask($id) { [pscustomobject]@{ id = $id; name = "n$id"; status = 'promoted' } }; function Test-TrackerStatus { $true }
-function Set-TrackerStatus { }; function Add-TrackerComment { $global:kc += 'appended' }; function Set-TrackerKitComment($i, $kd) { $global:kc += "$i|$kd" }; $global:kc = @()
+function Set-TrackerStatus { }; function Add-TrackerComment { $global:kc += 'appended' }; function Set-TrackerKitComment($i, $kd, $tx) { $global:kc += "$i|$kd"; $global:kt = $tx }; $global:kc = @()
 $tbs = @{ 1 = 'st/b'; 2 = 'st/b'; 3 = 'st/b'; 4 = 'main'; 5 = 'main' }; $fs = @{ 1 = 'a/x.java'; 4 = @('b/api/x.java', 'a/docs/r.md'); 5 = 'common/lib/x.java' }
 function Invoke-HostApi([string]$Path) { $i = [int]($Path -replace '^.*merge_requests/(\d+).*$', '$1'); if ($Path -match '/changes(\?|$)') { [pscustomobject]@{ changes = @(@($fs[$i]) | ForEach-Object { [pscustomobject]@{ new_path = $_ } }) } } else { [pscustomobject]@{ target_branch = $tbs[$i] } } }
 Write-KitLog deploy-log record ([ordered]@{ target = 'b-st'; mrs = @('jc!2'); by = 'opsy' }); Write-KitLog deploy-log record ([ordered]@{ target = 'a-st'; mrs = @('jc!3'); by = 'opsy' })   # the wrong target proves nothing
@@ -246,7 +246,7 @@ function Has($n, $rx) { [bool]@($o | Where-Object { $_ -match "^$n=$rx" }).Count
 "wait:$(Has 3 'WAIT .*jc!3 not live on: b-st \(NOT-DEPLOYED: not on b-st yet\)')"
 "paths:$(Has 4 'MARK .*jc!4 on b-st\b')"
 "shared:$(Has 5 'WAIT .*jc!5 not live on: a-st \(NOT-DEPLOYED: not on a-st yet\)')"
-$null = Invoke-MarkInTest -Task t1 -Apply -Quiet; "keyed:$("$global:kc" -eq 't1|comment-intest')"
+$null = Invoke-MarkInTest -Task t1 -Apply -Quiet; "keyed:$("$global:kc" -eq 't1|comment-intest' -and $global:kt -match '\[jc!1\]\(https://git\.example/\S*jc/-/merge_requests/1\) on b-st')"
 $fs = Format-KitInTestSummary 63 62 1 14 $false ([ordered]@{ 'moved to in test' = @('a'); 'already closed' = @('b', 'c'); 'not deployed yet' = @('d'); 'blocked' = @('e: no status') })
 "summary:$($fs -eq 'mark-in-test: 63 task(s) checked (62 promoted by the kit in 14 d, subtasks included, 1 more assigned to you in trackerLists): 1 moved to in test, 2 already closed, 1 not deployed yet, 1 blocked (e: no status)')"
 '@

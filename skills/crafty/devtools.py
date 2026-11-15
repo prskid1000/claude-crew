@@ -30,7 +30,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L47 config · L102 run · L190 tracker · L342 process · L493 git host · L560 scope · L639 MR · L823 merge · L1149 docs ·
-  L1302 publish · L1663 render · L2026 plugins · L2040 keepboth · L2059 selftest · L2558 CLI
+  L1302 publish · L1663 render · L2053 plugins · L2067 keepboth · L2086 selftest · L2585 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1884,15 +1884,42 @@ def render_mr_body(s):
     return '\n\n'.join(['## Summary', (f'[{t}]({url}) — ' if t and url else f'{t} — ' if t else '') + str(s.get('summary') or s.get('change') or ''),
                         '## Changes', '\n'.join(f'- {c["text"]}' + (f' · **Technical:** `{c["technical"]}`' if c.get('technical') else '') for c in s.get('changes') or []) or '- none',
                         '## How tested', _table(['Check', 'Result'], rows), '## Risks', '\n'.join(risks), '## Links',
-                        f'- **Sibling MRs:** {", ".join(sib)} (merge order: producers first)' if sib else '- **Sibling MRs:** none']) + '\n'
+                        f'- **Sibling MRs:** {", ".join(link_refs(x) for x in sib)} (merge order: producers first)' if sib else '- **Sibling MRs:** none']) + '\n'
 
+
+
+_MR_URLS = {}
+
+
+def mr_link(ref):
+    """repo!iid -> [repo!iid](full MR URL) via the git-host adapter's mr.url (owner: comments and MR bodies link full URLs,
+    never a bare ref); no URL (unknown repo, no host): the ref as is. lib.ps1 Format-KitMrLink, the same."""
+    r = _norm_ref(ref)
+    if not r:
+        return str(ref)
+    if not _MR_URLS.get(r):   # a failed lookup is not cached
+        host = host_kind(GITLAB_HOST)
+        try:
+            out = _host('mr.url', type=host, repo=_ref_path(host, r[0]), n=r[1]) if host else ''
+        except (Exception, SystemExit) as e:   # a host error never fails the render: the ref stays
+            print(f'[render] {ref}: no MR URL ({str(e)[:120]})', file=sys.stderr)
+            out = ''
+        u = (str(out.get('raw') or '') if isinstance(out, dict) else str(out or '')).strip().splitlines()
+        _MR_URLS[r] = u[-1].strip() if u and re.match(r'^https?://[^/\s]+/\S+$', u[-1].strip()) else ''
+    return f'[{ref}]({_MR_URLS[r]})' if _MR_URLS[r] else str(ref)
+
+
+def link_refs(text):
+    """Every bare MR ref (repo!iid) in a rendered text -> its full-URL link; refs inside a link or a `code span` stay."""
+    rx = r'(?<![\[\w/.!-])([\w.-]+(?:/[\w.-]+)*!\d+)(?![\w\]])'
+    return ''.join(p if p.startswith('`') else re.sub(rx, lambda m: mr_link(m.group(1)), p) for p in re.split(r'(`[^`]*`)', str(text or '')))
 
 
 def render_solution(s):
     """templates.md "Comment spec" comment-solution: MRs (merge state) from the task's tracking, the local proof from the loop checkpoint."""
     t = s.get('task') or ''
     tr = ((read_tracking().get('tasks') or {}).get(t[len(TAG):] if TAG and t.startswith(TAG) else t) or {}) if t else {}
-    mrs = s.get('mrs') or [f'{m} ({"MERGED" if tr.get("allMergedAt") else "OPEN"})' for m in tr.get('mrs') or []]
+    mrs = [link_refs(m) for m in s.get('mrs') or [f'{m} ({"MERGED" if tr.get("allMergedAt") else "OPEN"})' for m in tr.get('mrs') or []]]
     proof = s.get('localProof') or (t and local_pass(t)[1]) or 'none'
     return comment_template('comment-solution', '**Solution:** {solution}\n**MRs:** {mrs} · **Local proof:** {localProof}\n**After deploy:** {afterDeploy} · **Deferred:** {deferred}\n',
                             {**s, 'solution': s.get('solution', ''), 'mrs': ' · '.join(mrs) or 'none', 'localProof': proof,
@@ -1901,7 +1928,7 @@ def render_solution(s):
 
 def render_status(s):
     """comment-status: `<status> — <why> · <link>`."""
-    return comment_template('comment-status', '{status} — {why}{linkPart}\n', {**s, 'linkPart': f' · {s["link"]}' if s.get('link') else ''})
+    return comment_template('comment-status', '{status} — {why}{linkPart}\n', {**s, 'why': link_refs(s.get('why')), 'linkPart': f' · {link_refs(s["link"])}' if s.get('link') else ''})
 
 
 def comment_template(kind, default, vals):

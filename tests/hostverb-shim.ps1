@@ -17,6 +17,7 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
     'ci.runs' { Invoke-HostApi "$p/pipelines?ref=$(& $e $A.ref)&per_page=$(if ($A.per_page) { $A.per_page } else { 20 })" }
     'ci.jobs' { Invoke-HostApi "$p/pipelines/$($A.id)/jobs?per_page=100" }
     'ci.log' { Invoke-HostApi "$p/jobs/$($A.id)/trace" }
+    'mr.url' { "https://git.example/$($A.repo)/-/merge_requests/$($A.n)" }   # as adapters/gitlab.ps1
     default { $null }
   }
   if ($Verb -like 'ci.*') { foreach ($x in @($v | Where-Object { $_ -is [psobject] -and $_.PSObject.Properties['status'] })) { $x | Add-Member -Force NoteProperty state (ConvertTo-KitCiState "$($x.status)") } }

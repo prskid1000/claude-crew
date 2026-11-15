@@ -6,6 +6,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/render.tests.ps1 (or tests/kit-tests.ps
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
+$TestKitFiles = @('skills/crafty/adapters/gitlab.ps1')   # mr.url: full MR links
 $k = New-TestKit render; $DT = Join-Path $k 'skills/crafty/devtools.py'; $wd = Join-Path (Kd) 'w'; New-Item -ItemType Directory -Force $wd | Out-Null
 function Dt { $o = & $py -X utf8 $DT @args 2>&1 | Out-String; [pscustomobject]@{ out = $o.Trim(); code = $LASTEXITCODE } }
 function Gold($a, $b) { ("$a" -replace "`r`n", "`n").TrimEnd() -eq ("$b" -replace "`r`n", "`n").TrimEnd() }
@@ -189,6 +190,10 @@ Set-JsonFile "$wd/sol.json" @{ solution = 'orders sorted by id; now by date'; mr
 Set-JsonFile "$wd/st.json" @{ status = 'blocked'; why = 'needs the owner''s sort rule'; link = 'https://t/d1' }; Set-JsonFile "$wd/st2.json" @{ status = 'blocked' }
 $cs1 = Dt render comment-solution "$wd/sol.json"; $cs2 = Dt render comment-status "$wd/st.json"; $cs3 = Dt render comment-status "$wd/st2.json"
 Expect 'render comment-solution / comment-status: golden text; a status without why refused' ((Gold $cs1.out "**Solution:** orders sorted by id; now by date`n**MRs:** web!5 (MERGED) · api!4 (OPEN) · **Local proof:** local r3: round 2 PASS`n**After deploy:** nothing · **Deferred:** export sort — next sprint") -and $cs2.out -eq "blocked — needs the owner's sort rule · https://t/d1" -and $cs3.code -ne 0 -and $cs3.out -match 'missing why')
+# owner, 2026-11-15: a configured host turns every bare MR ref into a full-URL link (solution, status, MR body siblings)
+Set-JsonFile "$k/skills/crafty/kit.local.json" @{ gitHostType = 'gitlab'; gitHost = 'git.example'; gitlabGroup = 'g' }; Set-JsonFile "$wd/st3.json" @{ status = 'promoted'; why = 'web!5 merged'; link = 'api!4' }
+$lu = { param($r, $n) "[$r!$n](https://git.example/g/$r/-/merge_requests/$n)" }; $cs4 = Dt render comment-solution "$wd/sol.json"; $cs5 = Dt render comment-status "$wd/st3.json"; $mb2 = Dt render mr-body "$wd/mr.json"; Remove-Item "$k/skills/crafty/kit.local.json"
+Expect "render with a git host: MR refs are full-URL links in comment-solution, comment-status and the MR body's siblings ($($cs5.out))" ($cs4.out.Contains("**MRs:** $(& $lu web 5) (MERGED) · $(& $lu api 4) (OPEN)") -and $cs5.out.Contains("promoted — $(& $lu web 5) merged · $(& $lu api 4)") -and $mb2.out.Contains("**Sibling MRs:** $(& $lu api 4) (merge order"))
 # ---- run-file schemas (items 10, 17, 19): required + allowed keys; another key = drift (BAD, supervise WATCH)
 $qr = TkPath $k qa-runs -Create; New-Item -ItemType Directory -Force "$qr/r3/A1" | Out-Null
 Set-JsonFile "$qr/r3/A1/results.json" @{ code = 'A1'; checks = @(); colour = 'red' }; Set-JsonFile "$qr/r3/run.json" @{ title = 't'; runDir = 'r3'; items = @() }

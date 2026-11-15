@@ -62,7 +62,7 @@ Board and disagreements: AGENTS.md "Crew".
   ships it (`deploy.trigger`).
 - `/testy`: checky lead / test / verify per testing doc; the result rule closes the task, fails it back to dev or files one [Bug].
 - Every task the kit builds: rendered from a spec (`skills/crafty/crafty.ps1` "task spec": description, Items and Decisions checklists, its
-  line on the parent's Items; `tracker create` refuses free text but a [Bug]), both testing-doc links before promoted; a parent with every subtask closed closes only on the owner's
+  line on the parent's Items; `tracker create` refuses free text but a keyed QA / watch defect, `tracker describe` one that drops a section), both testing-doc links before promoted; a parent with every subtask closed closes only on the owner's
   answer to its one close ask.
 - Tasks move through logical tracker statuses (`tracker.statuses` maps them to your board's names). The local env: one shared
   instance per env, branches as layers. WIP commits after every dev-flow step: a fresh agent loses nothing after a crash. The kit

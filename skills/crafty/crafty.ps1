@@ -6,7 +6,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only for a [Bug]), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
  pipes [-Mrs <url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
@@ -17,7 +17,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L23 init · L29 sweep · L183 wt · L504 stack · L686 gate · L1002 check · L1311 pipes · L1368 guard · L2198 dir ·
-  L2208 checkpoint · L2237 prior · L2275 tracker · L2297 task spec · L2464 scope · L2506 host
+  L2208 checkpoint · L2237 prior · L2275 tracker · L2297 task spec · L2471 scope · L2513 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2432,9 +2432,11 @@ function Invoke-Tracker {
     }
     'render' { if (-not $__sp) { 'usage: tracker render -Spec <json>'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -DryRun) }
     'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> (merged by key into the stored spec)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id) }
-    'create' {   # -Spec: rendered (crafty.ps1 "task spec"); free text only for a [Bug] (its own shape); -Key: updates that key's open task
+    'create' {   # -Spec: rendered (crafty.ps1 "task spec"); free text only for a keyed QA / watch defect (-Key: updates that key's open task)
       if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
-      if ((($__trOpt.Parent -and $__trOpt.Parent -ne '-') -or (Test-KitKindName $__trOpt.Name)) -and @(Get-KitTaskTextGaps $__trOpt.Name 'x').Count) { "tracker create refused: a kit task's text (a subtask or a [Kind] name) is rendered from a spec: tracker create -Spec <json> (crafty.ps1 ""task spec""); free text only for a [Bug]"; exit 1 }
+      $__specHint = 'tracker create -Spec <json> (crafty.ps1 "task spec": kind, title, problem, goal, items, acceptance, links)'
+      if (-not $__trOpt.Key) { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (tracker bug -Key, tracker create -Key <env>-<signature>)"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs
+      if ((($__trOpt.Parent -and $__trOpt.Parent -ne '-') -or (Test-KitKindName $__trOpt.Name)) -and @(Get-KitTaskTextGaps $__trOpt.Name 'x').Count) { "tracker create refused: a kit task's text (a subtask or a [Kind] name) is rendered from a spec: $__specHint; free text only for a keyed [Bug]"; exit 1 }
       $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
       $ot = if ($old.id) { Get-TrackerTask $old.id }
@@ -2453,7 +2455,12 @@ function Invoke-Tracker {
     'scope' { $__s = if ($__trOpt.Task) { $__trOpt.Task } else { $__id }; if (-not ($__s -and $__trOpt.Add)) { "usage: tracker scope -Task <id> -Add '<item>'"; exit 2 }; Add-TrackerScope $__s $__trOpt.Add }
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
-    'describe' { if ((Read-KitState (Get-KitTaskFile $__id)).spec) { "tracker describe refused: $__id is rendered from its spec: tracker update $__id -Spec <json with the changed keys>"; exit 1 }; Set-TrackerDescription $__id $(if ($__x) { $__x } else { $__trOpt.Description }) }
+    'describe' { if ((Read-KitState (Get-KitTaskFile $__id)).spec) { "tracker describe refused: $__id is rendered from its spec: tracker update $__id -Spec <json with the changed keys>"; exit 1 }
+      $__nd = if ($__x) { $__x } else { $__trOpt.Description }; $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # spec-less: free text may not drop a template section ('x': no [Bug] exemption)
+      $__oldG = @(Get-KitTaskTextGaps 'x' "$($__ot.description)" -Subtask:$__sub); if ($__oldG -contains 'a description') { $__oldG = @(Get-KitTaskTemplate | ForEach-Object { "$($_.label)" }) }   # empty today: nothing to lose
+      $__lost = @(Get-KitTaskTextGaps 'x' $__nd -Subtask:$__sub | Where-Object { $_ -notin $__oldG })
+      if ($__lost.Count) { "tracker describe refused: the text lacks $($__lost -join ', ') (templates.md task-description): render it from a spec: tracker update $__id -Spec <json> (crafty.ps1 ""task spec""; doc links and kit sections stay)"; exit 1 }
+      Set-TrackerDescription $__id $__nd }
     'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
