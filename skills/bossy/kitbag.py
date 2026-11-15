@@ -1888,7 +1888,7 @@ def arch_lint(k):
     rx_of = {n: word_rx(x.get('words') or []) for n, x in fams.items()}
     vendor_words = [w for n in ('vendors', 'stacks') for w in (fams.get(n) or {}).get('words', [])]
     named = lambda f: any(re.sub(r'[\s-]', '', w.lower()) in re.sub(r'[\s_-]', '', osp.basename(f).lower()) for w in vendor_words)
-    base = [f for f in k.files if not f.startswith(('tests/',) + GENERATED) and '.local.' not in f and f != VOCAB_JSON]
+    base = [f for f in k.files if not f.startswith(('tests/',) + GENERATED) and not is_overlay(k, f) and f != VOCAB_JSON]   # org-only files (localOnly, *.local.*) are the org's own
     code = [f for f in base if f.endswith(CODE_EXT)]
     core = [f for f in code if '/adapters/' not in f and not named(f)]
     lines = {f: arch_lines(f, k.texts.get(f) or read(osp.join(k.dir, f))) for f in code}
