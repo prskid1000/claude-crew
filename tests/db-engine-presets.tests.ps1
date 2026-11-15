@@ -5,7 +5,7 @@ own (never the env's DB): marks, a flashback round trip over 2 schemas (checksum
 restore over an undone range, FK order + orphan check (that table falls back), no-PK duplicates, a cascade without the guard (child
 seeded), the guard (3-level tree, SET NULL, ON UPDATE CASCADE, app triggers not fired), teardown, slices (dropped / retyped column,
 index, FK, dropped and new table, view / procedure, a trigger table changed by DDL), DDL with no slice (falls back), db.rollback only on opt-in, dry run, mark expiry,
-the temp watchdog + doctor rows; a client exit 0 without output (the end marker).
+the temp watchdog + doctor rows; a client exit 0 without output (the end marker); tenant drop never takes a staying tenant's rows.
 Usage: pwsh -NoProfile -File tests/db-engine-presets.tests.ps1 [-Kit <kit>].
 Exit codes: 0 pass · 1 fail.
 #>
@@ -216,6 +216,30 @@ INSERT INTO fb.ts VALUES (100, 1), (200, 2);
     $a1 = Invoke-RestoreDb s $m @('fa', 'fb') (Get-RestorePlan s $m @('fa', 'fb') 'o1'); $t1 = Test-Path $rbf; Q "INSERT INTO fb.k VALUES (12, 'y')"
     $a2 = Invoke-RestoreDb s $m @('fa', 'fb') (Get-RestorePlan s $m @('fa', 'fb') 'o2') -UseTool; "$a1|$t1|$a2|$(Test-Path $rbf)" }
   Expect "restore: the default never calls db.rollback; -UseTool calls it, then the kit's revert ($tr)" ($tr -eq '|False||True' -and "$(Q 'SELECT COUNT(*) FROM fb.k WHERE a IN (11, 12)')" -eq '0')
+  # an idColumns column whose FK points at another table (det_id) is not matched against registry ids: pa's registry id 1 = pb's
+  # det id 1; a shared profile and a shared user stay; a planned row pointing only at staying rows blocks the drop (dry run shows
+  # it) unless that row's tenant is dropped in the same call (pc's mixed row -> pd's det)
+  Q @"
+CREATE DATABASE adm2; CREATE DATABASE pa; CREATE DATABASE pb; CREATE DATABASE pc; CREATE DATABASE pd; CREATE TABLE adm2.reg (id int primary key, name varchar(40)); CREATE TABLE adm2.prof (id int primary key);
+CREATE TABLE adm2.det (id int primary key, reg_id int, prof_id int, foreign key (reg_id) references adm2.reg (id), foreign key (prof_id) references adm2.prof (id));
+CREATE TABLE adm2.det_prof (det_id int, prof_id int, foreign key (det_id) references adm2.det (id), foreign key (prof_id) references adm2.prof (id));
+CREATE TABLE adm2.mixed (id int primary key, reg_id int, det_id int, foreign key (det_id) references adm2.det (id));
+CREATE TABLE adm2.users (id int primary key, login varchar(40)); CREATE TABLE adm2.ulink (reg_id int, user_id int, foreign key (reg_id) references adm2.reg (id), foreign key (user_id) references adm2.users (id));
+INSERT INTO adm2.reg VALUES (1, 'pa'), (2, 'pb'), (3, 'pc'), (4, 'pd'); INSERT INTO adm2.prof VALUES (1); INSERT INTO adm2.det VALUES (2, 1, 1), (1, 2, 1), (3, 4, 1); INSERT INTO adm2.det_prof VALUES (2, 1), (1, 1);
+INSERT INTO adm2.mixed VALUES (1, 1, 1), (2, 3, 3); INSERT INTO adm2.users VALUES (1, 'bob'), (2, 'alice'); INSERT INTO adm2.ulink VALUES (1, 1);
+CREATE TABLE pa.u (login varchar(40)); INSERT INTO pa.u VALUES ('alice'), ('bob'); CREATE TABLE pb.u (login varchar(40)); INSERT INTO pb.u VALUES ('bob');
+"@
+  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') }; tenants = @{ model = 'schema'; idColumns = @('reg_id', 'det_id'); schema = 'adm2'; table = 'reg'; key = 'id'; name = 'name'; tables = @('det', 'det_prof', 'mixed'); users = @{ table = 'users'; key = 'login'; tenantTable = 'u' }; keep = @('pb') } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
+  $pfd = (Px $L3 tenant drop -Env s -Name pa -DryRun 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $pfdc = $LASTEXITCODE
+  $pfr = (Px $L3 tenant drop -Env s -Name pa 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $pfrc = $LASTEXITCODE; $pfLeft = "$(Q 'SELECT (SELECT COUNT(*) FROM adm2.reg) + (SELECT COUNT(*) FROM adm2.det) + (SELECT COUNT(*) FROM adm2.det_prof) + (SELECT COUNT(*) FROM adm2.mixed) + (SELECT COUNT(*) FROM adm2.ulink)')"
+  $pcd = (Px $L3 tenant drop -Env s -Name pc -DryRun 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $pcdc = $LASTEXITCODE
+  $pcpd = Px $L3 tenant drop -Env s -Name 'pc,pd' 2>&1 | Out-String; $pcpdc = $LASTEXITCODE
+  Q 'DELETE FROM adm2.mixed WHERE id = 1'
+  $pfo = Px $L3 tenant drop -Env s -Name pa 2>&1 | Out-String; $pfoc = $LASTEXITCODE
+  $pfAfter = "$(Q 'SELECT GROUP_CONCAT(name) FROM adm2.reg')|$(Q 'SELECT GROUP_CONCAT(id) FROM adm2.det')|$(Q "SELECT GROUP_CONCAT(CONCAT(det_id, '-', prof_id)) FROM adm2.det_prof")|$(Q 'SELECT COUNT(*) FROM adm2.prof')|$(Q 'SELECT GROUP_CONCAT(login) FROM adm2.users')|$(Q 'SELECT COUNT(*) FROM adm2.ulink')|$(Q 'SELECT COUNT(*) FROM adm2.mixed')"
+  Expect "tenant drop: a planned row pointing only at a staying tenant's row blocks it, dry run shows it, nothing deleted ($pfdc/$pfrc, rows $pfLeft)" ($pfdc -eq 1 -and $pfd -match 'BLOCKED, rows of staying tenants: mixed 1 \(det_id -> det: a row that stays\)' -and $pfrc -eq 1 -and $pfr -match 'nothing deleted' -and $pfLeft -eq '12')
+  Expect "tenant drop: a row pointing at a tenant dropped in the same call is not blocked ($pcdc/$pcpdc)" ($pcdc -eq 1 -and $pcd -match 'BLOCKED.*mixed 1' -and $pcpdc -eq 0 -and $pcpd -match 'tenant pc dropped' -and $pcpd -match 'tenant pd dropped')
+  Expect "tenant drop: another table's ids in an idColumns column never match registry ids; a shared profile and user stay, the user link goes ($pfAfter)" ($pfoc -eq 0 -and $pfAfter -eq 'pb|1|1-1|1|bob|0|0' -and $pfo -match 'tenant pa dropped')
 } finally {
   if ($srv -and -not $srv.HasExited) { & mysqladmin -h 127.0.0.1 -P $port -u root shutdown 2>&1 | Out-Null; $null = $srv.WaitForExit(30000); if (-not $srv.HasExited) { Stop-Process -Id $srv.Id -Force } }
   Remove-Item $data -Recurse -Force -ErrorAction SilentlyContinue

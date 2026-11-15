@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none here (its verbs exit through envy.ps1).
 # tenant_schema.ps1: the schema tenant model (one schema per tenant + a registry; mysql / mariadb)
-# Sections: L5 tenants · L129 tenant import
+# Sections: L5 tenants · L152 tenant import
 # ---- tenants: local tenants nobody keeps dropped (envs.<env>.tenants; mysql / mariadb): admin rows (the registry row, its FK
 #      children found in information_schema, tenants.tables by idColumns / nameColumns), users no other tenant has, the schema
 # tenants.registry { schema, table, key, name, idColumns, nameColumns } (flat tenants.* keys: the older shape); no default column names
@@ -55,7 +55,8 @@ function Get-TenantPlan([string]$e, [string]$name, [string[]]$others, [switch]$N
   $cols = @{}; foreach ($r in & $q "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = $(SqlQ $adm)") { if (-not $cols[$r[0]]) { $cols[$r[0]] = @() }; $cols[$r[0]] += $r[1] }
   $idc = @($t.idColumns); $nmc = @($t.nameColumns)
   foreach ($tb in @($t.tables | Where-Object { $_ -and $_ -ne $t.table })) {
-    $w = @(@($cols[$tb] | Where-Object { $_ -in $idc } | ForEach-Object { SqlIn $_ $ids }) + @($cols[$tb] | Where-Object { $_ -in $nmc } | ForEach-Object { SqlIn $_ @($name) }) | Where-Object { $_ -ne '1 = 0' })
+    $other = @($fks | Where-Object { $_[0] -eq $tb -and $_[2] -ne $t.table } | ForEach-Object { $_[1] })   # an id column whose FK points at another table holds that table's ids, not registry ids: the FK walk reaches it
+    $w = @(@($cols[$tb] | Where-Object { $_ -in $idc -and $_ -notin $other } | ForEach-Object { SqlIn $_ $ids }) + @($cols[$tb] | Where-Object { $_ -in $nmc } | ForEach-Object { SqlIn $_ @($name) }) | Where-Object { $_ -ne '1 = 0' })
     if ($w.Count) { & $push $tb ($w -join ' OR ') } elseif (-not $cols[$tb]) { $steps.Add(@{ table = $tb; missing = $true }) }
   }
   if ($t.users -and $t.users.table -and -not $NoUsers) {   # admin users of this tenant's own user table that no staying tenant schema has
@@ -76,6 +77,23 @@ function Get-TenantPlan([string]$e, [string]$name, [string[]]$others, [switch]$N
   $mb = @(& $q "SELECT ROUND(IFNULL(SUM(DATA_LENGTH + INDEX_LENGTH), 0) / 1048576, 1), COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = $(SqlQ $name)")[0]
   $schema = [bool]@(& $q "SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = $(SqlQ $name)").Count
   @{ name = $name; ids = $ids; steps = @($steps); schema = $schema; mb = [double]$mb[0]; tables = [int]$mb[1] }
+}
+# rows of $steps whose every FK into a table $all deletes from points at a row that stays (another tenant's row) -> 'table n (why)'
+function Get-TenantForeign([string]$e, $steps, $all) {
+  $adm = [string](TenantCfg $e).schema; $planned = @($all | Where-Object { -not $_.missing })
+  $fks = @(Invoke-DbSql $e "SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME, CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = $(SqlQ $adm) AND REFERENCED_TABLE_SCHEMA = $(SqlQ $adm) AND REFERENCED_TABLE_NAME IS NOT NULL" 600)
+  $multi = @{}; foreach ($g in $fks | Group-Object { "$($_[0])|$($_[4])" } | Where-Object Count -gt 1) { $multi[$g.Name] = $true }
+  @(foreach ($s in $steps | Where-Object { -not $_.missing -and $_.rows }) {
+    $nn = @(); $in = @(); $why = @()
+    foreach ($fk in $fks | Where-Object { $_[0] -eq $s.table -and -not $multi["$($_[0])|$($_[4])"] }) {
+      $pw = @($planned | Where-Object table -eq $fk[2] | ForEach-Object { "($($_.where))" }); if (-not $pw.Count) { continue }
+      $c = SqlId $fk[1]; $nn += "$c IS NOT NULL"; $why += "$($fk[1]) -> $($fk[2])"
+      $in += "COALESCE($c IN (SELECT $(SqlId $fk[3]) FROM $(SqlId $adm).$(SqlId $fk[2]) WHERE ($($pw -join ' OR ')) AND $(SqlId $fk[3]) IS NOT NULL), 0)"
+    }
+    if (-not $in.Count) { continue }   # one FK to a planned row is enough (a link row of this tenant and a shared user stays deletable)
+    $nf = [int]@(Invoke-DbSql $e "SELECT COUNT(*) FROM $(SqlId $adm).$(SqlId $s.table) WHERE ($($s.where)) AND ($($nn -join ' OR ')) AND NOT ($($in -join ' OR '))" 600)[0][0]
+    if ($nf) { "$($s.table) $nf ($($why -join ', '): a row that stays)" }
+  })
 }
 # every tenant of the env (the registry + schemas no env's registry or admin names) with its keep reason and size
 function Get-TenantList([string]$e) {
@@ -100,11 +118,18 @@ function Invoke-TenantDrop([string]$e, [string[]]$names, [switch]$DryRun) {
   $st = Read-State $e
   if (-not $DryRun -and ($st.train -or $st.leases.Count -or $st.holds.Count)) { throw "[$e] tenant drop refused: the env is in use ($(@(@($st.leases.Keys) + @($st.holds.Keys) + @($(if ($st.train) { "train $($st.train.id)" }))) -join ', ')): run it with no lease, hold or train" }
   $stay = @($list | Where-Object { $_.name -notin $names } | ForEach-Object name)
-  if (-not $DryRun) { $mk = try { New-Mark $e "before-tenant-drop-$($names -join '-')" 'owner' } catch { $null }; if ($mk) { "[$e] mark ${mk}: envy.ps1 restore -Env $e -Mark $mk brings the dropped tenant(s) back" } }
+  $plans = @{}; foreach ($n in $names) { $plans[$n] = Get-TenantPlan $e $n $stay }   # every plan before any delete: one blocked tenant stops them all
+  $all = @(foreach ($n in $names) { $plans[$n].steps }); foreach ($n in $names) { $plans[$n].foreign = @(Get-TenantForeign $e $plans[$n].steps $all) }   # rows of tenants dropped together are not foreign
   foreach ($n in $names) {
-    $p = Get-TenantPlan $e $n $stay; $del = @($p.steps | Where-Object { -not $_.missing })
-    "[$e] tenant $n : schema $(if ($p.schema) { "$($p.mb) MB in $($p.tables) table(s)" } else { 'gone' }); admin rows: $(if ($del.Count) { @($del | ForEach-Object { "$($_.table) $($_.rows)" }) -join ', ' } else { 'none' })$(if (@($p.steps | Where-Object missing).Count) { "; not in $adm : $(@($p.steps | Where-Object missing | ForEach-Object table) -join ', ')" })"
-    if ($DryRun) { continue }
+    $p = $plans[$n]; $del = @($p.steps | Where-Object { -not $_.missing })
+    "[$e] tenant $n : schema $(if ($p.schema) { "$($p.mb) MB in $($p.tables) table(s)" } else { 'gone' }); admin rows: $(if ($del.Count) { @($del | ForEach-Object { "$($_.table) $($_.rows)" }) -join ', ' } else { 'none' })$(if (@($p.steps | Where-Object missing).Count) { "; not in $adm : $(@($p.steps | Where-Object missing | ForEach-Object table) -join ', ')" })$(if ($p.foreign.Count) { "; BLOCKED, rows of staying tenants: $($p.foreign -join ', ')" })"
+  }
+  $blk = @($names | Where-Object { $plans[$_].foreign.Count })
+  if ($blk.Count) { throw "[$e] tenant drop refused, nothing deleted: the plan of $($blk -join ', ') reaches rows pointing at rows that stay (a tenants.idColumns column holding another table's ids?): fix tenants.tables / idColumns or drop by hand" }
+  if ($DryRun) { return }
+  $mk = try { New-Mark $e "before-tenant-drop-$($names -join '-')" 'owner' } catch { $null }; if ($mk) { "[$e] mark ${mk}: envy.ps1 restore -Env $e -Mark $mk brings the dropped tenant(s) back" }
+  foreach ($n in $names) {
+    $p = $plans[$n]; $del = @($p.steps | Where-Object { -not $_.missing })
     $sql = (@('SET FOREIGN_KEY_CHECKS = 0', 'START TRANSACTION') + @(for ($i = $del.Count - 1; $i -ge 0; $i--) { "DELETE FROM $(SqlId $adm).$(SqlId $del[$i].table) WHERE $($del[$i].where)" }) + @('COMMIT', 'SET FOREIGN_KEY_CHECKS = 1')) -join '; '
     $null = Invoke-DbSql $e $sql 1800   # one transaction: an error rolls it all back (the client exits before COMMIT)
     if ($p.schema) { $null = Invoke-DbSql $e "DROP DATABASE IF EXISTS $(SqlId $n)" 1800 }
@@ -113,9 +138,7 @@ function Invoke-TenantDrop([string]$e, [string[]]$names, [switch]$DryRun) {
     Event $e 'tenant-drop' @{ tenant = $n; mb = $p.mb; rows = @($del | ForEach-Object { "$($_.table)=$($_.rows)" }); left = $left; schemaGone = $gone }
     if ($left.Count -or -not $gone) { throw "[$e] tenant $n : references left in $($left -join ', ')$(if (-not $gone) { '; the schema is still there' })" }
     "[$e] tenant $n dropped: $(@($del | Measure-Object rows -Sum).Sum) admin row(s), $($p.mb) MB; 0 references left"
-    $stay = @($stay | Where-Object { $_ -ne $n })
   }
-  if ($DryRun) { return }
   $sf = Test-Smoke $e; if ($sf) { throw "[$e] tenant drop: smoke check failed after it: $sf" }
   $okv = [Collections.Generic.List[string]]::new()
   $bad = @(foreach ($k in @($list | Where-Object { $t.verify -and $_.keep -and $_.registry } | ForEach-Object name)) {

@@ -78,8 +78,9 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
 - Kept = `keep` or a name in `keepFrom` (default none; files, { file, keys }, `builtin:kit-config` / `builtin:targets` /
   `builtin:seed`); no keep source refuses. Drop takes a mark first.
 - Drop: refused while a lease, hold or train is on; per tenant one transaction (the registry row, its FK children, `tables`
-  rows by id / name column, users no staying tenant has), then the schema; 0 references left checked, smoke + `verify`
-  ({tenant}) per kept tenant.
+  rows by id / name column (an id column with an FK to another table: only through that FK), users no staying tenant has),
+  then the schema; 0 references left checked, smoke + `verify` ({tenant}) per kept tenant. A planned row pointing at a row
+  that stays: `BLOCKED` in the dry run, the whole drop refused.
 - `tenant import -From <source> -Tenant <schema> [-As <name>] -Mask <profile> [-DryRun]`. Config `tenants.import`:
   - `sources` { <name>: { creds (a command printing JSON host, port, user, password) | host, port, user, passwordEnv; prod;
     requireReadOnly (true); adminSchema; maxMB (500) } }, `template`, `skipTables`,
