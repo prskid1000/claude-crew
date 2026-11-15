@@ -22,8 +22,8 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L35 config · L233 state · L280 layer drops · L352 leases · L480 code · L512 migrations ·
-  L515 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L661 shared builds (opt-in services[].shareBuild true ·
-  L840 hooks · L912 marks · L1094 seed · L1151 processes · L1532 daemon · L1992 cleanup · L2064 doctor · L2117 verbs
+  L515 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L663 shared builds (opt-in services[].shareBuild true ·
+  L842 hooks · L914 marks · L1096 seed · L1153 processes · L1534 daemon · L1994 cleanup · L2066 doctor · L2119 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -530,13 +530,15 @@ function Resolve-MigSets([string]$e) {
   $tool = Get-MigTool $e; $cfg = (Get-EnvCfg $e).db.migrations; $reg = Get-RegistryScope $e
   $dirs = @(EnvServices $e | Where-Object { $_.repo } | ForEach-Object { try { [pscustomobject]@{ repo = RepoOf $e $_; dir = SvcDir $e $_ } } catch { } } | Where-Object { $_ -and $_.dir })
   $sets = @($cfg.sets | Where-Object { $_ })
+  $hist = $null   # scopes holding the tool's history table: a registry row without its schema or history is no scope to tag
+  if ($sets.Count -and $tool -ne 'none' -and (Test-MigVerb $tool 'historyScopes')) { $hist = try { @(Invoke-MigVerb $tool 'historyScopes' @{ e = $e }) } catch { $null } }
   if (-not $sets.Count) { if ($tool -eq 'none' -or -not (Test-MigVerb $tool 'discover')) { return @() }; return @(Invoke-MigVerb $tool 'discover' @{ e = $e; dirs = $dirs; registry = $reg }) }
   foreach ($s in $sets) {
     $rel = [string]$(if ($s.changelog) { $s.changelog } else { $s.dir }); $cand = @($dirs | Where-Object { -not $s.repo -or $_.repo -eq $s.repo })
     $b = @($cand | Where-Object { $rel -and (Test-Path -LiteralPath (Join-Path $_.dir $rel)) })[0]; if (-not $b) { $b = $cand[0] }   # not checked out yet: the first
     $full = { param($x) if ($x -and $b) { [IO.Path]::GetFullPath((Join-Path $b.dir ([string]$x))) } }
     $sc = @($s.schemas | Where-Object { $_ } | ForEach-Object { "$_" }); if ($s.schemasQuery) { $sc += @(Invoke-DbSql $e ([string]$s.schemasQuery) | ForEach-Object { $_[0] }) }
-    $sc = @($sc | Where-Object { $_ } | Select-Object -Unique)
+    $sc = @($sc | Where-Object { $_ -and ($null -eq $hist -or $_ -in $hist) } | Select-Object -Unique)
     [pscustomobject]@{ name = [string]$s.name; tool = $(if ($s.tool) { "$($s.tool)".ToLower() } else { $tool }); repo = $b.repo; base = $b.dir; changelog = & $full $s.changelog; dir = & $full $s.dir
       searchPath = & $full $s.searchPath; schemas = $sc; registry = [bool]($s.registry -or ($reg -and $reg -in $sc)); ambiguous = @(); masters = @() }
   }
@@ -924,20 +926,20 @@ function Get-DataScopes([string]$e) {
   @($s | Where-Object { $_ } | Select-Object -Unique)
 }
 function EnvSchemas([string]$e) { Get-DataScopes $e }
-# a restore's scopes: the mark's own (recorded when it was taken), else today's; a scope of the mark gone since (a dropped tenant)
-# refuses while the registry scope is restored (its rows would come back without their data); scopes made after it: a warning
+# a restore's scopes: the mark's own (recorded when it was taken) that still exist, else today's; a scope gone since (a dropped
+# tenant) or made after it: a warning line (restore output), never a refusal (a drop then a restore is the normal data flow)
 function Get-MarkScopes([string]$e, $m) {
   $now = @(Get-DataScopes $e); $script:ScopeWarn = @()
   if (-not @($m.schemas).Count) { return $now }
   $gone = @($m.schemas | Where-Object { $_ -notin $now }); $reg = Get-RegistryScope $e
-  if ($gone.Count -and $reg -and $reg -in @($m.schemas)) { throw "scope(s) $($gone -join ', ') of mark $($m.name) are gone since (dropped after it): a restore would bring back their $reg rows without their data - refused (re-import them, or restore to a later mark)" }
-  $new = @($now | Where-Object { $_ -notin @($m.schemas) }); if ($new.Count) { $script:ScopeWarn = @("scope(s) $($new -join ', ') made after mark $($m.name): left as they are$(if ($reg) { " (their $reg rows go: the tenant verb list shows them)" })") }
+  if ($gone.Count -and $reg -and $reg -in @($m.schemas)) { $script:ScopeWarn += "scope(s) $($gone -join ', ') of mark $($m.name) are gone since: their $reg rows come back without their data (re-import them, or drop them again)" }
+  $new = @($now | Where-Object { $_ -notin @($m.schemas) }); if ($new.Count) { $script:ScopeWarn += "scope(s) $($new -join ', ') made after mark $($m.name): left as they are$(if ($reg) { " (their $reg rows go: the tenant verb list shows them)" })" }
   @($m.schemas | Where-Object { $_ -notin $gone })
 }
-# restore -Schemas: the registry scope is in it whenever a tenant scope is (else that tenant's registry rows stay as they are now)
+# restore -Schemas without the registry scope: that tenant's registry rows stay as they are now (a warning line)
 function Test-RestoreScopes([string]$e, [string[]]$schemas) {
-  $reg = Get-RegistryScope $e
-  if ($reg -and $reg -notin $schemas -and @($schemas | Where-Object { $_ -ne $reg }).Count -and (Get-DataScopes $e) -contains $reg) { throw "restore -Schemas $($schemas -join ',') leaves out the registry scope ${reg}: their registry rows would not come back - refused (add $reg)" }
+  $reg = Get-RegistryScope $e; $script:ScopeWarn = @()
+  if ($reg -and $reg -notin $schemas -and @($schemas | Where-Object { $_ -ne $reg }).Count -and (Get-DataScopes $e) -contains $reg) { $script:ScopeWarn += "restore -Schemas $($schemas -join ',') leaves out the registry scope ${reg}: their registry rows stay as they are now (add $reg to restore them too)" }
   $schemas
 }
 # kind: release | use | owner | baseline; $repos = the code it stands for (default: the live release)
@@ -954,7 +956,7 @@ function New-Mark([string]$e, [string]$name, [string]$kind, $repos, [int]$releas
   $sch = try { @(Get-DataScopes $e) } catch { @() }
   if ((Get-Command Test-CascadeGuard -ErrorAction SilentlyContinue) -and (Test-CascadeGuard $e)) {   # a scope no earlier mark had (a tenant added since): its triggers before the position
     $last = @(@((Read-State $e).marks) | Where-Object { $_ -and @($_.schemas).Count } | Select-Object -Last 1)[0]
-    if ($last -and @($sch | Where-Object { $_ -notin @($last.schemas) }).Count) { try { $null = Install-DbGuard $e } catch { } }
+    if ($last -and @($sch | Where-Object { $_ -notin @($last.schemas) }).Count) { try { $null = Install-DbGuard $e } catch { Write-Warning "[$e] mark ${name}: cascade guard not reinstalled for the new scope(s): $("$_".Split("`n")[0])" } }
   }
   $pos = Get-DbPos $e
   Update-State $e { param($x)
@@ -2298,11 +2300,12 @@ switch ($Action) {
     if ($DryRun) {
       $p = Get-RestorePlan $e $m $sch "dryrun-$(Get-Date -Format 'yyyyMMddHHmmss')"
       "[$e] restore to $($m.name) ($($m.kind), $(([datetime]$m.at).ToString('yyyy-MM-dd HH:mm')), release $($m.release)) - dry run, nothing changes:"
-      if (-not $Schemas.Count) { foreach ($w in @($script:ScopeWarn)) { "  WARN $w" } }
+      foreach ($w in @($script:ScopeWarn)) { "  WARN $w" }
       RestorePlanText $p | ForEach-Object { "  $_" }
       foreach ($rn in @($m.repos.Keys)) { $mr = $m.repos[$rn]; "  code $rn : $("$($mr.targetSha)".Substring(0, [math]::Min(9, "$($mr.targetSha)".Length))) + $(@($mr.layers | Where-Object { $_ }).Count) layer(s): $(@($mr.layers | Where-Object { $_ } | ForEach-Object branch) -join ', ')" }
       if (@($p.refused).Count) { exit 1 }; return
     }
+    foreach ($w in @($script:ScopeWarn)) { "[$e] WARN $w" }
     $rid = New-Request @{ kind = 'restore'; branch = $m.name; mark = $m.name; schemas = $sch; useTool = [bool]$UseToolRollback }
     "[$e] restore to $($m.name) queued as $rid (holders are told to pause)"; Exit-Request (Wait-Request $rid)
   }

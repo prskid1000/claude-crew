@@ -240,6 +240,7 @@ function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string
   if ($DryRun) { return }
   $dir = Join-Path (Get-KitPath cache -Create) 'tenant-import'; New-Item -ItemType Directory -Force $dir | Out-Null
   $pk = $prof | ConvertTo-Json -Depth 10 | ConvertFrom-Json; $mcf = Get-KitSetting 'masking' $null; if ($mcf) { $pk | Add-Member _kit $mcf -Force }   # masking.rules / logins / names: the org's columns and values
+  if (-not $mcf.rules) { Write-Warning "[$e] tenant import: no kit.local.json masking.rules: only the generic column names (password, token, email, phone, name, address ...) are masked; add the app's own (audit columns, name columns of exact tables) there (envy db.md)" }
   $pj = $pk | ConvertTo-Json -Depth 10 -Compress   # the cache key: the profile + the masker's own code (a kit update masks again)
   $ph = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pj + (Get-FileHash -LiteralPath $script:DbFlashbackPy).Hash))).Substring(0, 8).ToLower()
   $file = Join-Path $dir "$From-$Tenant-$Mask-$ph.sql"; $hours = if ($ic.cacheHours) { [double]$ic.cacheHours } else { 24 }   # TODO-PARAM (fixed default)

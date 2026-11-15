@@ -29,7 +29,7 @@ function Get-SwarmConfig {
   if (-not (Test-Path $f)) { throw "Missing $f - bossy.ps1 setup -WriteLocal writes it; then set 'app'" }
   $c = Get-Content $f -Raw | ConvertFrom-Json
   if (-not $c.avdDir) { $c | Add-Member -Force avdDir $(if ($env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME } else { "$HOME/.android/avd" }) }
-  $c | Add-Member -Force kind ([string](Get-KitSetting 'devices.type' 'android'))
+  $c | Add-Member -Force kind ([string](Get-KitSetting 'devices.type' 'none'))
   if (-not $c.app.kind) { $c.app | Add-Member -Force kind 'native' }   # react-native, kmp, flutter, maui, capacitor: set app.kind
   if (-not $c.app.buildTask) { $c.app | Add-Member -Force buildTask $(if ($c.app.kind -in 'native', 'kmp') { 'assembleDebug' } else { 'assembleRelease' }) }
   if (-not $c.app.apkGlob) { $v = if ($c.app.buildTask -match 'Release') { 'release' } else { 'debug' }; $c.app | Add-Member -Force apkGlob "$(if ($c.app.kind -eq 'kmp') { 'composeApp' } else { 'app' })/build/outputs/apk/$v/*.apk" }
@@ -782,7 +782,7 @@ A 'echo slimmed > /sdcard/.qa-slimmed' | Out-Null
 }
 
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
-  $dt = Get-KitSetting 'devices.type' 'android'
+  $dt = Get-KitSetting 'devices.type' 'none'
   if ($dt -eq 'ios') { & (Join-Path $PSScriptRoot 'swarm-ios.ps1') @args; exit $LASTEXITCODE }   # its full variant runs
   if ($__verb -notmatch '^(-|help$)' -and $dt -eq 'none') { 'no device lanes: devices.type none; app checks are NOT_TESTED'; exit 1 }
   switch ($__verb) {

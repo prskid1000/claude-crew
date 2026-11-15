@@ -26,7 +26,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L43 board · L220 budget · L250 launch · L491 recover · L578 pause · L589 resume · L656 program · L707 param ·
   L713 track · L1029 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1580 cleanup · L1664 learn ·
-  L1695 decide · L1829 debate · L1873 health · L1936 retro due · L1946 tidy · L2012 setup · L2105 guard-sendmessage
+  L1695 decide · L1829 debate · L1873 health · L1936 retro due · L1946 tidy · L2012 setup · L2106 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -2023,7 +2023,8 @@ function Set-KitAllowList {
   $gd = "$(git -C $KitConf.Kit rev-parse --path-format=absolute --git-dir 2>$null)".Trim(); $cd = "$(git -C $KitConf.Kit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
   if ($gd -and $cd -and $gd -ne $cd) { return 'allow: a linked kit worktree - generated only in the main clone' }
   $cat = Get-KitAllowCatalogue
-  $on = @("host:$($script:HostType)", "report:$($KitConf.ReportType)") + @(if ($KitIsWindows) { 'os:windows' })
+  $kitHost = if ("$(git -C $KitConf.Kit remote get-url origin 2>$null)" -match '^(?:\w+://)?(?:[^@/]+@)?([^/:]+)') { Get-HostKind $Matches[1] }   # the kit's own releases (kitbag.py release)
+  $on = @(@("host:$($script:HostType)", "host:$kitHost", "report:$($KitConf.ReportType)") + @(if ($KitIsWindows) { 'os:windows' }) | Select-Object -Unique)
   $want = @($on | Where-Object { $cat.Contains($_) } | ForEach-Object { $cat[$_] }); $all = @($cat.Values | ForEach-Object { $_ })
   $sl = Join-Path $KitConf.Kit 'settings.local.json'
   $s = if (Test-Path -LiteralPath $sl) { try { Get-Content -LiteralPath $sl -Raw | ConvertFrom-Json -AsHashtable } catch { $null } } else { @{} }

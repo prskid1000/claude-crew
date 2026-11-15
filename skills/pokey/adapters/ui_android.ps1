@@ -29,7 +29,7 @@ function Invoke-Ui {
 param([Parameter(Position = 0)][string]$Action = 'dump', [Parameter(Position = 1)][string]$Arg = '', [Parameter(Position = 2)][string]$Arg2 = '',
       [Parameter(Position = 3)][string]$Arg3 = '', [Parameter(Position = 4)][string]$Arg4 = '')
 $adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'))   # ANDROID_HOME / ANDROID_SDK_ROOT / OS default
-$dt = Get-KitSetting 'devices.type' 'android'
+$dt = Get-KitSetting 'devices.type' 'none'
 if ($dt -eq 'none') { 'no devices (devices.type none): app checks are NOT_TESTED'; exit 1 }
 if ($dt -eq 'ios') {
   return Invoke-UiIos @PSBoundParameters

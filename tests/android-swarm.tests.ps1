@@ -79,7 +79,7 @@ $res = @(Px "$lf2.ps1" (Join-Path $src 'skills/phoney/phoney.ps1') $lf2 2>&1)
 Expect "swarm: lanes on demand, a waiting request takes a lane freed meanwhile (logged since = its wait start), no extra boot ($(@($res | Where-Object { "$_" -match '^scale:' })))" ($res -contains 'scale:True')
 Remove-Item "$lf2.ps1", $lf2 -Recurse -Force -ErrorAction SilentlyContinue
 # pokey.ps1 ui (adapters/ui_android.ps1): a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
-$k = New-TestKit swarm-qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'
+$k = New-TestKit swarm-qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; & $J @{ devices = @{ type = 'android' } } (Join-Path $k 'skills/crafty/kit.local.json')   # devices.type default: none
 foreach ($f in 'skills/pokey/adapters/ui_android.ps1', 'skills/crafty/adapters/android_sdk.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $k (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }   # Get-AndroidSdk lives in android_sdk.ps1
 $null = Px $Q ui bogus 2>&1; $uc = $LASTEXITCODE
 $ud = Join-Path (Kd) 'ui'; New-Item -ItemType Directory -Force "$ud/platform-tools" | Out-Null
@@ -193,7 +193,7 @@ Expect-Each $ev 'swarm events: #' @('off', 'parsed') -Show 6
 Remove-TestKit $k
 # reaper: supervise -AutoFix, no phoney call, reclaims the lane of a holder that left the board (its holder pid = the live session
 # process) and stops it (emu kill); leases.jsonl gets one reclaim and one down line; phoney.ps1 status shows last used
-$k = New-TestKit swarm-reap; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force
+$k = New-TestKit swarm-reap; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force; & $J @{ devices = @{ type = 'android' } } (Join-Path $k 'skills/crafty/kit.local.json')
 $rp = Join-Path (Kd) 'reap'; New-Item -ItemType Directory -Force "$rp/platform-tools", "$k/skills/crafty/adapters" | Out-Null; $ab = "$rp/platform-tools/adb.cmd"
 Set-Content "$k/skills/crafty/adapters/android_sdk.ps1" "function Get-AndroidSdk { '$rp' }; function Get-ExeName([string]`$Name) { `"`$Name.cmd`" }"   # the fake adb, never the machine's
 Set-Content $ab "@echo off`r`necho %* >> `"$rp/adb.log`"`r`nif `"%3`"==`"emu`" (type nul > `"$rp/killed`")`r`nif `"%1`"==`"devices`" (echo List of devices attached& if not exist `"$rp/killed`" echo emulator-5556`tdevice)`r`nexit /b 0" -Encoding ascii

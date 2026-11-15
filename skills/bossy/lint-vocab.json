@@ -5,6 +5,7 @@
   "stacks": {"default": true, "lesson": true, "words": ["spring", "springframework", "elasticsearch", "liquibase", "flyway", "hibernate", "jhipster", "maven", "gradle", "angular", "react-native", "mysql", "mysqldump", "postgres", "systemd", "systemctl", "elastic beanstalk"]},
   "statuses": {"default": true, "enum": true, "words": ["in test", "promoted", "failedTesting", "failed testing", "for review", "in review", "inTest"]},
   "production": {"default": true, "words": ["prod", "production", "critical"]},
+  "platforms": {"default": true, "words": ["android", "ios", "kmp"]},
   "markers": {"default": true, "words": ["[Unit Test]", "Unit Test", "CU-", "GH-", "GL-", "admin", "tenant_id", "access_token"]},
   "lanes": {"enum": true, "words": ["web", "api", "app"]},
   "deployKinds": {"enum": true, "words": ["branch", "awsStack", "ssh", "manual", "laneApk"]},

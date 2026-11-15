@@ -130,12 +130,13 @@ console.log(`resume-skip:${!L.some((l) => /:(D|M|O)$/.test(l) && /^build/.test(l
 console.log(`resume-done:${d.calls.length === 0 && od.resumedDone[0].agent === 'D'}`)
 '@
 Expect-Each (Invoke-Js dw-resume $jsrs $wfd) 'buildy resume: #' 'resume-skip', 'resume-done' -Show 5
+$asCfg = Join-Path $k 'skills/crafty/kit.local.json'; & $J @{ gitHost = 'gitlab.com' } $asCfg   # the pre-2 default host (no host: no adapter)
 $as = & { . $O; $env:KIT_OFFLINE = '0'; function Find-TaskMrs { 'g/api!7' }
   Register-KitAdapter 'git-host' 'gitlab' @{ 'mr.get' = { param($a) [pscustomobject]@{ iid = $a.n; state = 'merged'; title = 'fx9abc'; source_branch = 'f-x'; description = 'Testing doc: https://d/1'; created_at = (Get-Date).ToUniversalTime().AddDays(-2) } } }
   Register-KitAdapter 'tracker' 'none' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = 'n'; status = 'failed testing' } }; comments = { @() } }
   $f = { param($i, $d, $b) Get-KitAreaState ([pscustomobject]@{ id = 'F'; items = $i; branch = $b }) @() @() (Get-Date).AddDays($d) }
   $o, $n, $g = (& $f 'fx9abc' 0), (& $f 'fx9abc' -3), (& $f 'A3, A4 g/api!2' 0 f-x); "$($o.state)|$($o.skip.Count)|$($n.state)|$($n.skip -join ',')|$($n.items[0].doc)|$($g.state)" }
-Remove-Item Env:KIT_OFFLINE
+Remove-Item Env:KIT_OFFLINE; Remove-Item $asCfg
 Expect 'recover area state: MR older than the run = earlier work; failedTesting = dev; doc link from the MR; a loose MR, 2 items = unknown' ($as -eq 'start|0|merged|build,review,ci,merge,testing-doc|https://d/1|unknown')
 # launch records: a fix round supersedes the launch; launch -Done -RunId closes both
 $ld = TkPath $k launches -Create; $self = { param($s, $run, $json) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv (& { . $O; Get-KitFnv $json }) @args | Out-String }

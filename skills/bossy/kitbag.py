@@ -20,8 +20,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1357 audit ·
-  L1473 registry · L1805 arch lint · L2008 prose · L2159 sections · L2289 budget · L2303 migrate · L2451 plugins ·
-  L2505 state lint · L2693 main
+  L1473 registry · L1805 arch lint · L2008 prose · L2159 sections · L2289 budget · L2303 migrate · L2463 plugins ·
+  L2517 state lint · L2705 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -2389,6 +2389,7 @@ LEGACY_DEFAULTS = {   # dotted key -> the pre-2 default (README "Configuration" 
     'qa.newDefectIdRx': r'^X\d',
     'qa.holdCauses': ['env-data', 'phone-only', 'tool-down', 'no-mail-sandbox'],
     'qa.lanes': {'web': {'kind': 'web', 'parallel': 5, 'followUp': 'app'}, 'api': {'kind': 'api', 'parallel': 5, 'followUp': 'app'}, 'app': {'kind': 'app', 'devices': 'android'}},
+    'devices.type': 'android',
     'devices.avd': {'api': 'android-36.1', 'device': 'pixel_10_pro', 'tag': 'google_apis_playstore'},
     'cleanup.idleDaemons': [{'process': r'^java(\.exe)?$', 'match': 'GradleDaemon|KotlinCompileDaemon', 'label': 'Gradle daemon', 'busyKinds': 'android|gradle'}],
     'storage.db.maxGB': 5,
@@ -2437,9 +2438,20 @@ def migrate_config(path):
                     break
                 cur[part] = {}
             cur = cur[part]
-        if cur is not None and parts[-1] not in cur:
+        if cur is None:
+            continue
+        if parts[-1] not in cur:
             cur[parts[-1]] = value
             added.append(dotted)
+        elif isinstance(value, dict) and isinstance(cur[parts[-1]], dict) and dotted not in USER_MAPS:   # a partial object: its missing fields
+            for k, v in value.items():
+                if k not in cur[parts[-1]]:
+                    cur[parts[-1]][k] = v
+                    added.append(f'{dotted}.{k}')
+    host = str(cfg.get('gitHost') or '')
+    if host and not cfg.get('gitHostType') and not re.search(r'github|bitbucket|dev\.azure|visualstudio|gitea|forgejo|codeberg|gitlab', host, re.I):
+        cfg['gitHostType'] = 'gitlab'   # an unnamed host was GitLab before; now unknown hosts need a type
+        added.append('gitHostType')
     cfg['configVersion'] = CONFIG_VERSION
     text = read(path)
     indent = len(re.search(r'\n( *)"', text).group(1)) if re.search(r'\n( *)"', text) else 2
