@@ -5,10 +5,11 @@
 # Verbs: check @{ top; dir; since; show } -> exit code (crafty.ps1 check -Step migrations: devtools.py lbcheck per master)
 #   discover @{ e; dirs; registry } -> one set (several masters: ambiguous) · pendingSql @{ e; set; out } -> $null | error
 #   tag / rollback @{ e; set; tag } -> $null | error · resetEdited @{ e; envRepos; cur; newLayers } -> notes
-#   missingRoutines @{ e } -> { schema, names, files } · historyScopes @{ e } -> the env scopes holding DATABASECHANGELOG
+#   missingRoutines @{ e; schema } -> { schema, names, files, changeSets } · rerunRoutines @{ e; schema } -> notes (their history rows deleted)
+#   historyScopes @{ e } -> the env scopes holding DATABASECHANGELOG
 # A set: { name, tool, repo, base, changelog, dir, searchPath, schemas, registry, ambiguous }; searchPath default: the nearest
 # 'resources' folder above the changelog (classpath-relative includes), else the changelog's folder.
-# Sections: L12 crafty.ps1 check · L46 local env (envy.ps1)
+# Sections: L13 crafty.ps1 check · L47 local env (envy.ps1)
 # ---- crafty.ps1 check: the repo's changelog masters: XML (lbcheck reads them) or, -Other, the YAML / JSON / SQL ones it cannot (UNRUN)
 function Get-LiquibaseMasters([string]$Top, [switch]$Other) {
   @(git -C $Top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' -and ($_ -match '\.xml$') -ne $Other })
@@ -131,12 +132,14 @@ function Reset-LiquibaseEdited([string]$e, $envRepos, $cur, $newLayers) {
 }
 # a DATABASECHANGELOG FILENAME as a key: lower case, '/' separators, no classpath: prefix or leading '/'
 function ConvertTo-LiquibaseFileKey([string]$f) { ($f.Replace('\', '/') -replace '^(?i)classpath\*?:', '').TrimStart('/').ToLower() }
-# routines a schema's executed changeSet files create (rollback blocks left out) that it lacks -> @{ schema; names; files }, per set:
-# its files keyed by their path under the set's search path, matched to FILENAME by the full path (one leaf name in two folders differs)
-function Get-LiquibaseMissingRoutines([string]$e) {
+# routines a schema's executed changeSet files create (rollback blocks left out) that it lacks -> @{ schema; names; files; changeSets }, per
+# set (-Schema: that one only): its files keyed by their path under the set's search path, matched to FILENAME by the full path (one leaf
+# name in two folders differs); changeSets = @{ file; author; id } of the changeSets whose text creates a missing routine
+function Get-LiquibaseMissingRoutines([string]$e, [string]$Schema) {
   foreach ($ms in @(Resolve-MigSets $e | Where-Object { $_.tool -eq 'liquibase' })) {
     $roots = if (@($ms.masters).Count -gt 1) { @($ms.masters | ForEach-Object { Get-LiquibaseSearchPath $_ } | Select-Object -Unique) } elseif ($ms.searchPath) { @($ms.searchPath) } elseif ($ms.changelog) { @(Get-LiquibaseSearchPath $ms.changelog) } elseif ($ms.dir) { @($ms.dir) } else { @() }
-    $made = @{}
+    $made = @{}; $rc = '(?i)\bCREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\('; $rd = '(?i)\bDROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?(\w+)'
+    $ro = '(?is)^\s*(?:<!\[CDATA\[)?\s*(?:DROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?\w+`?\s*;?\s*)*(?:CREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\b.*)?(?:\]\]>)?\s*$'
     foreach ($root in @($roots | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
       foreach ($f in Get-ChildItem -LiteralPath $root -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {
         $t = [IO.File]::ReadAllText($f.FullName); if ($t -notmatch '(?i)\b(PROCEDURE|FUNCTION)\b') { continue }
@@ -145,22 +148,49 @@ function Get-LiquibaseMissingRoutines([string]$e) {
         foreach ($m in [regex]::Matches($t, '(?i)\b(CREATE)\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(|\bDROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?(\w+)')) {
           if ($m.Groups[1].Success) { $last[$m.Groups[2].Value.ToLower()] = 'c' } else { $last[$m.Groups[3].Value.ToLower()] = 'd' } }
         $c = @($last.Keys | Where-Object { $last[$_] -eq 'c' }); $d = @($last.Keys | Where-Object { $last[$_] -eq 'd' })
-        if ($c.Count -or $d.Count) { $made[(ConvertTo-LiquibaseFileKey ([IO.Path]::GetRelativePath($root, $f.FullName)))] = @{ create = $c; drop = $d } }
+        $by = @{}   # routine -> the last XML changeSet creating it: key, creates, drops, only (nothing but routine DROP / CREATE: safe to re-run)
+        foreach ($b in [regex]::Matches($t, '(?is)<changeSet\b([^>]*)>(.*?)</changeSet>')) {
+          $id = if ($b.Groups[1].Value -match '\bid\s*=\s*"([^"]*)"') { $Matches[1] }; $au = if ($b.Groups[1].Value -match '\bauthor\s*=\s*"([^"]*)"') { $Matches[1] }
+          $cr = @([regex]::Matches($b.Groups[2].Value, $rc) | ForEach-Object { $_.Groups[1].Value.ToLower() }); if (-not $id -or -not $cr.Count) { continue }
+          $rest = $b.Groups[2].Value -replace '(?is)<comment>.*?</comment>|<validCheckSum>.*?</validCheckSum>|<preConditions\b.*?</preConditions>', ''
+          $rest = [regex]::Replace($rest, '(?is)<(sql|createProcedure)\b[^>]*>(.*?)</\1>', { param($x) if ($x.Groups[2].Value -match $ro) { '' } else { $x.Value } })
+          $cs = @{ key = "${au}:$id"; creates = $cr; drops = @([regex]::Matches($b.Groups[2].Value, $rd) | ForEach-Object { $_.Groups[1].Value.ToLower() }); only = -not $rest.Trim() }
+          foreach ($n in $cr) { $by[$n] = $cs }
+        }
+        if ($c.Count -or $d.Count) { $made[(ConvertTo-LiquibaseFileKey ([IO.Path]::GetRelativePath($root, $f.FullName)))] = @{ create = $c; drop = $d; by = $by } }
       }
     }
     if (-not $made.Count) { continue }
     $find = { param([string]$fn) $k = ConvertTo-LiquibaseFileKey $fn; if ($made.ContainsKey($k)) { return $made[$k] }
       $hit = @($made.Keys | Where-Object { $k.EndsWith("/$_") -or $_.EndsWith("/$k") }); if ($hit.Count -eq 1) { $made[$hit[0]] } }   # absolute or shorter recorded paths
-    foreach ($s in @($ms.schemas)) {
-      $want = [ordered]@{}
+    foreach ($s in @($ms.schemas | Where-Object { -not $Schema -or $_ -eq $Schema })) {
+      $want = [ordered]@{}; $from = @{}
       foreach ($r in @(Invoke-DbSql $e "SELECT FILENAME, MAX(ORDEREXECUTED) o FROM ``$s``.DATABASECHANGELOG WHERE EXECTYPE IN ('EXECUTED', 'RERAN') GROUP BY FILENAME ORDER BY o")) {
         $m = & $find ([string]$r[0]); if (-not $m) { continue }
-        foreach ($n in $m.create) { $want[$n] = [string]$r[0] }; foreach ($n in $m.drop) { $want.Remove($n) }
+        foreach ($n in $m.create) { $want[$n] = [string]$r[0]; $from[$n] = $m.by[$n] }; foreach ($n in $m.drop) { $want.Remove($n) }
       }
       $have = @(Invoke-DbSql $e "SELECT LOWER(ROUTINE_NAME) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = '$($s.Replace("'", "''"))'" | ForEach-Object { $_[0] })
       $gone = @($want.Keys | Where-Object { $_ -notin $have })
-      if ($gone.Count) { @{ schema = $s; names = $gone; files = @($gone | ForEach-Object { $want[$_] } | Select-Object -Unique) } }
+      # a changeSet re-runs whole: only one that holds nothing but routine DROP / CREATE, each routine it creates missing or dropped first
+      $cs = [ordered]@{}; $keep = [ordered]@{}
+      foreach ($n in $gone) {
+        $x = $from[$n]; if (-not $x) { $keep[$n] = 'no XML changeSet creates it'; continue }
+        $busy = @($x.creates | Where-Object { $_ -notin $gone -and $_ -notin $x.drops })
+        if (-not $x.only) { $keep[$n] = "$($x.key) holds more than routine DDL" } elseif ($busy.Count) { $keep[$n] = "$($x.key) also creates $($busy -join ', ') (present)" }
+        else { $au, $id = $x.key -split ':', 2; $cs["$($want[$n])|$($x.key)"] = [pscustomobject]@{ file = $want[$n]; author = $au; id = $id } }
+      }
+      if ($gone.Count) { @{ schema = $s; names = $gone; files = @($gone | ForEach-Object { $want[$_] } | Select-Object -Unique); changeSets = @($cs.Values); kept = $keep } }
     }
+  }
+}
+# one schema's missing routines: the history rows of the changeSets that create them deleted, so the next migration run creates them
+# again (a copy whose source lacks them while its DATABASECHANGELOG says they ran) -> notes
+function Reset-LiquibaseMissingRoutines([string]$e, [string]$Schema) {
+  foreach ($g in @(Get-LiquibaseMissingRoutines $e $Schema)) {
+    foreach ($n in @($g.kept.Keys)) { "routine $n missing in $($g.schema): its history row kept ($($g.kept[$n])): create it by hand or with a new changeSet" }
+    $w = @($g.changeSets | ForEach-Object { "(FILENAME = $(SqlQ $_.file) AND AUTHOR = $(SqlQ $_.author) AND ID = $(SqlQ $_.id))" }); if (-not $w.Count) { continue }
+    $null = Invoke-DbSql $e "DELETE FROM $(SqlId $g.schema).DATABASECHANGELOG WHERE $($w -join ' OR ')"
+    "routines $(@($g.names | Where-Object { $_ -notin @($g.kept.Keys) }) -join ', ') missing in $($g.schema): $($w.Count) changeSet row(s) deleted from DATABASECHANGELOG; the next migration run creates them"
   }
 }
 Register-KitAdapter migration liquibase @{
@@ -170,6 +200,7 @@ Register-KitAdapter migration liquibase @{
   tag             = { param($a) Invoke-EnvLiquibase $a.e $a.set @($a.set.schemas) "tag --tag=$($a.tag)" }
   rollback        = { param($a) Invoke-EnvLiquibase $a.e $a.set @($a.set.schemas) "rollback --tag=$($a.tag)" }
   resetEdited     = { param($a) Reset-LiquibaseEdited $a.e $a.envRepos $a.cur $a.newLayers }
-  missingRoutines = { param($a) Get-LiquibaseMissingRoutines $a.e }
+  missingRoutines = { param($a) Get-LiquibaseMissingRoutines $a.e $a.schema }
+  rerunRoutines   = { param($a) Reset-LiquibaseMissingRoutines $a.e $a.schema }
   historyScopes   = { param($a) LiquibaseSchemas $a.e }
 }

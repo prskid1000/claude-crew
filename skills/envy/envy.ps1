@@ -23,7 +23,7 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L35 config · L233 state · L280 layer drops · L352 leases · L480 code · L512 migrations ·
   L515 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L663 shared builds (opt-in services[].shareBuild true ·
-  L842 hooks · L914 marks · L1096 seed · L1153 processes · L1534 daemon · L1994 cleanup · L2066 doctor · L2119 verbs
+  L842 hooks · L914 marks · L1096 seed · L1155 processes · L1536 daemon · L1996 cleanup · L2068 doctor · L2121 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -1113,6 +1113,8 @@ function Test-SeedItem([string]$e, $it) {
 # the tool's missingRoutines verb: routines a scope's applied migrations create that it lacks -> @{ schema; names; files }
 # (a restore fallback or a tenant reset dropped them while the history table kept the rows, so the tool never runs them again)
 function Get-MissingRoutines([string]$e) { $tool = Get-MigTool $e; if (Test-MigVerb $tool 'missingRoutines') { Invoke-MigVerb $tool 'missingRoutines' @{ e = $e } } }
+# rerunRoutines: one scope's missing routines made pending again -> notes
+function Reset-MissingRoutines([string]$e, [string]$s) { $tool = Get-MigTool $e; if (Test-MigVerb $tool 'rerunRoutines') { Invoke-MigVerb $tool 'rerunRoutines' @{ e = $e; schema = $s } } }
 
 # -Tables (a restore's fallback): only the items whose tables name one of them (schema.table or table) and what they need; none named: all
 function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {

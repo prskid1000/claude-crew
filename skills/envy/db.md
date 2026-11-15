@@ -8,7 +8,7 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
 ## Migration tool (kind migration)
 - `db.migrations.tool` (else top-level `migrations.tool`; default none: no tool verbs, touched tables from changed files).
   `liquibase` = `crafty/adapters/liquibase.ps1` (verbs check, discover, pendingSql, tag, rollback, resetEdited,
-  missingRoutines, historyScopes).
+  missingRoutines, rerunRoutines, historyScopes).
 - `db.migrations.sets` [ { name, tool, repo, changelog | dir, searchPath, schemas | schemasQuery, registry } ] (paths relative
   to the repo's service folder): one per changelog master. Unset: the tool discovers one; several masters then refuse tag /
   rollback / touched. Tag runs the registry's set and scope first, rollback last.
@@ -94,7 +94,8 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
 - The schema is streamed through the mask (never stored unmasked; per value deterministic: the same email, login or name
   masks alike in every table), loaded as `<name>`, registered by cloning the `template` tenant's registry rows (new ids;
   name columns and text values equal to the template's name = `<name>`; `set` on top) in one transaction (a failure drops
-  the new schema and its registry rows); a mark before the load, `restore.after` hooks (marker resets), the cascade guard;
+  the new schema and its registry rows); routines, triggers and events come with it (DEFINER dropped); a routine the source
+  lacks while its history says it ran is made pending (tool verb `rerunRoutines`); a mark before the load, `restore.after` hooks (marker resets), the cascade guard;
   then `db.migrations.runAt`, `verify`, `seed -Check`. `tenants.import.register`: builtin:clone (default) or a command
   ({tenant} {template} {source}).
 - Lanes (own DB copies): import on each lane (`-Env <env><k>`); the masked dump is cached `cacheHours`, the source is read once.

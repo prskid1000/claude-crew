@@ -175,6 +175,19 @@ CREATE TABLE srct.app_user (id int primary key auto_increment, login varchar(50)
 INSERT INTO srct.customer VALUES (1, 'Ann Real', 'Ann@Real.org', 'mail ann@real.org'), (2, 'Bo', NULL, NULL); INSERT INTO srct.app_user VALUES (1, 'admin', 'x'), (2, 'ann@real.org', 'y');
 CREATE VIEW srct.v AS SELECT c.id, c.name FROM srct.customer c;
 "@
+  # routine / trigger / event bodies with a line that starts like dump data (INSERT INTO `) load as written, DEFINER dropped
+  Q @"
+DELIMITER //
+CREATE PROCEDURE srct.p_add(IN n varchar(12))
+BEGIN
+INSERT INTO ``customer`` (name) VALUES (n);
+END//
+CREATE FUNCTION srct.f_one() RETURNS int DETERMINISTIC RETURN 1//
+CREATE TRIGGER srct.tr_cu BEFORE INSERT ON srct.customer FOR EACH ROW SET NEW.notes = IFNULL(NEW.notes, 'via trigger')//
+CREATE EVENT srct.ev_noop ON SCHEDULE EVERY 1 DAY DISABLE DO
+INSERT INTO ``customer`` (name) VALUES ('ev')//
+DELIMITER ;
+"@
   $src1 = @{ host = '127.0.0.1'; port = $port; user = 'root'; requireReadOnly = $false; adminSchema = 'srcadm' }
   & $J @{ masking = @{ rules = @{ 'customer.name' = 'name' } }; localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') }
           tenants = @{ model = 'schema'; idColumns = @('org_ref'); nameColumns = @('org_label'); schema = 'iadm'; table = 'reg'; key = 'id'; name = 'name'; tables = @('mig'); keep = @('tpl'); verify = 'echo {tenant}'
@@ -199,6 +212,9 @@ CREATE VIEW srct.v AS SELECT c.id, c.name FROM srct.customer c;
   $im2 = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt2 -Mask p 2>&1 | Out-String
   $same = "$(Q 'SELECT GROUP_CONCAT(email ORDER BY id) FROM newt.customer')" -eq "$(Q 'SELECT GROUP_CONCAT(email ORDER BY id) FROM newt2.customer')"
   Expect "tenant import: a taken name is refused ($againc); a second import reuses the masked dump, same masks ($same)" ($againc -eq 1 -and $again -match 'newt exists here' -and $im2 -match 'masked dump reused' -and $im2 -match 'tenant newt2 imported' -and $same)
+  $objs = "$(Q "SELECT CONCAT_WS(',', (SELECT GROUP_CONCAT(ROUTINE_NAME ORDER BY ROUTINE_NAME) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = 'newt'), (SELECT GROUP_CONCAT(TRIGGER_NAME) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = 'newt'), (SELECT GROUP_CONCAT(EVENT_NAME) FROM information_schema.EVENTS WHERE EVENT_SCHEMA = 'newt' AND EVENT_DEFINITION LIKE '%''ev''%'))")"
+  $call = "$(Q "CALL newt.p_add('Zed'); SELECT CONCAT_WS(',', notes, newt.f_one()) FROM newt.customer WHERE name = 'Zed'")"
+  Expect "tenant import: routines, triggers and events come with the schema; a body line starting INSERT INTO `` loads as code, its literals unmasked ($objs | $call)" ($objs -eq 'f_one,p_add,tr_cu,ev_noop' -and $call -eq 'via trigger,1')
   # a registration that fails (a set column the table lacks) rolls the registry back and drops the new schema
   $kj = Join-Path $k3 'skills/crafty/kit.local.json'; $kc = Get-Content $kj -Raw | ConvertFrom-Json; $kc.localEnv.envs.s.tenants.import.set | Add-Member 'reg.nosuch' 'x'; $kc | ConvertTo-Json -Depth 20 | Set-Content $kj
   $ifl = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt3 -Mask p 2>&1 | Out-String; $iflc = $LASTEXITCODE

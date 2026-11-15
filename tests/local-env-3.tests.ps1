@@ -150,6 +150,21 @@ $rpOut = & { . $ckL
   $mr = @(Get-MissingRoutines t)
   "drops=$($rp.objectDrops -join ',')|tdrops=$($rp.drops -join ',')|fb=$(@($rp.fallback.table) -join ',')|warn=$(@($rp.warnings).Count)|missing=$(@($mr | ForEach-Object { "$($_.schema):$($_.names -join '+')" }) -join ',')" }
 Expect "localenv: restore keeps objects / seeds tables of a schema re-created after the mark; seed finds routines an executed changeSet made that are gone ($rpOut)" ($rpOut -eq 'drops=PROCEDURE:s2.p9|tdrops=s2.t2|fb=s1.t1|warn=1|missing=s1:p1')
+# rerunRoutines (a tenant import whose source lacks routines its history says ran): only the last changeSet creating a missing routine,
+# and only when it holds nothing but routine DROP / CREATE and every routine it creates is missing or dropped first; the rest kept
+$rrDir = Join-Path $ck 'rr'; New-Item -ItemType Directory -Force (Join-Path $rrDir 'cl') | Out-Null
+Set-Content (Join-Path $rrDir 'cl/r.xml') '<databaseChangeLog><changeSet id="r0" author="a"><sql>CREATE PROCEDURE r1() BEGIN END</sql></changeSet><changeSet id="r1" author="a"><comment>v2</comment><sql>DROP PROCEDURE IF EXISTS `r1`;</sql><sql endDelimiter=";;">CREATE PROCEDURE `r1`() BEGIN SELECT 1; END;;</sql></changeSet><changeSet id="o" author="a"><sql>select 1</sql></changeSet></databaseChangeLog>'
+Set-Content (Join-Path $rrDir 'cl/m.xml') '<databaseChangeLog><changeSet id="m" author="a"><sql>CREATE PROCEDURE r2() BEGIN END</sql><sql>CREATE PROCEDURE r3() BEGIN END</sql></changeSet></databaseChangeLog>'
+Set-Content (Join-Path $rrDir 'cl/t.xml') '<databaseChangeLog><changeSet id="t" author="a"><sql>ALTER TABLE x ADD c int</sql><sql>CREATE PROCEDURE r4() BEGIN END</sql></changeSet></databaseChangeLog>'
+$rrOut = & { . $ckL; $global:rrDel = @()
+  function Resolve-MigSets { [pscustomobject]@{ name = 'default'; tool = 'liquibase'; searchPath = $rrDir; changelog = $null; dir = $null; masters = @(); schemas = @('s1', 's2') } }
+  function SqlId($n) { "``$n``" }; function SqlQ($v) { "'$v'" }   # adapters/db_engines.ps1 is not in this test kit
+  function Invoke-DbSql([string]$e, [string]$sql) {
+    if ($sql -match '^DELETE') { $global:rrDel += @($sql) }
+    elseif ($sql -match 'DATABASECHANGELOG') { , @('cl/r.xml', '1'); , @('cl/m.xml', '2'); , @('cl/t.xml', '3') }
+    elseif ($sql -match "'s1'") { , @('r3') } }
+  "$(@(Reset-MissingRoutines t s1) -join ' / ')" }
+Expect "localenv: rerunRoutines deletes only the last routine-only changeSet of a missing routine (r1), keeps one that also creates a present routine (r2) or holds other DDL (r4), in that schema only ($($global:rrDel -join ' ; ') | $rrOut)" ($global:rrDel.Count -eq 1 -and $global:rrDel[0] -eq "DELETE FROM ``s1``.DATABASECHANGELOG WHERE (FILENAME = 'cl/r.xml' AND AUTHOR = 'a' AND ID = 'r1')" -and $rrOut -match 'routine r2 missing in s1: its history row kept \(a:m also creates r3 \(present\)\)' -and $rrOut -match 'routine r4 missing in s1: its history row kept \(a:t holds more than routine DDL\)' -and $rrOut -match 'routines r1 missing in s1: 1 changeSet row\(s\) deleted')
 # restore: mark~end is recorded undone only after the row flashback applied (a failed one left it recorded: the next restore skipped it)
 $fbOut = foreach ($ok in $false, $true) { & { . $ckL; $script:rec = 0
     function Read-State { @{ marks = @(); undone = @() } }; function Get-EnvCfg { @{ db = @{} } }; function Invoke-DbSql { }; function Get-DbPos { 'b.000009:1' }

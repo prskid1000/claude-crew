@@ -17,7 +17,7 @@
   touched --files <f,..>: tables / columns the SQL (a tool's dry-run output) or migration files change -> slice spec items
   mask --schema <s> | --in <dump.sql> --out <file.sql> [--profile <json>]: one schema (mysqldump from --host, password KIT_SRC_PWD,
       streamed: never stored unmasked) masked by the profile (rules table.column glob -> kind, extends the built-in 'personal';
-      skipData, passwordHash, salt, keepValues, keepDomains, scanEmails); DEFINER clauses dropped
+      skipData, passwordHash, salt, keepValues, keepDomains, scanEmails); routines, triggers, events kept (bodies unmasked); DEFINER clauses dropped
 Common: --host --port --user (password: MYSQL_PWD) [--mysql <exe>] [--mysqlbinlog <exe>] [--mysqldump <exe>]. Out: JSON.
 Exit codes: 0 ok · 1 refused or failed · 2 usage.
 Sections: L40 binlog · L273 row events · L405 flashback · L662 touched · L699 slices · L760 structure · L854 objects ·
@@ -1100,9 +1100,12 @@ class Masker:
 
     def run(s, src, dst):
         """src: dump lines (str); dst: a writable text file. -> True once the dump's end line was seen"""
-        block, done = None, False
+        block, done, body = None, False, False
         for line in src:
-            if block is not None:
+            if body:   # a routine / trigger / event body: its INSERT INTO / CREATE TABLE lines are code, never dump data
+                if line.rstrip('\r\n') == 'DELIMITER ;': body = False
+            elif line.rstrip('\r\n') == 'DELIMITER ;;': body = True
+            elif block is not None:
                 block.append(line)
                 if line.startswith(')'): s.table(block[0], block); block = None
             elif line.startswith('CREATE TABLE `'):
@@ -1130,7 +1133,7 @@ def mask_cmd(a):
                 if not a.schema: raise ValueError('mask needs --schema (or --in <dump>)')
                 env = dict(os.environ, MYSQL_PWD=os.environ.get('KIT_SRC_PWD', ''))   # the source's password, never an argument
                 cmd = [a.mysqldump, '-h', a.host, '-P', str(a.port), '-u', a.user, '--single-transaction', '--skip-lock-tables', '--no-tablespaces',
-                       '--routines', '--triggers', '--hex-blob', '--skip-dump-date', '--set-gtid-purged=OFF', '--default-character-set=utf8mb4', a.schema]
+                       '--routines', '--triggers', '--events', '--hex-blob', '--skip-dump-date', '--set-gtid-purged=OFF', '--default-character-set=utf8mb4', a.schema]
                 with tempfile.TemporaryFile() as err:
                     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, env=env)
                     try:

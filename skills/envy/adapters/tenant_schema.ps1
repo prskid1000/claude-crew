@@ -286,6 +286,8 @@ function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string
     throw "[$e] tenant import of $As failed, its schema dropped again, ${left}: $why"
   }
   Event $e 'tenant-import' @{ tenant = $As; from = "$From/$Tenant"; mask = $Mask; tables = $want; registry = $plan.counts }
+  # routines come with the dump; one the source itself lacks while its history says it ran is made pending, before the migration run below
+  try { foreach ($n in @(Reset-MissingRoutines $e $As)) { "[$e] $n" } } catch { "[$e] missing routines of $As not checked: $("$_".Split("`n")[0]) (seed -Check lists them)" }
   foreach ($n in @(Invoke-RestoreAfter $e "tenant-import-$As" -Migrations)) { "[$e] $n" }   # e.g. a migration skip marker the template's rows carried
   if (Test-CascadeGuard $e) { try { $g = Install-DbGuard $e; "[$e] cascade guard: $($g.installed) trigger(s) installed, $($g.kept) kept" } catch { "[$e] cascade guard not installed on $As : $("$_".Split("`n")[0])" } }
   "[$e] tenant $As imported: $want table(s), registry $adm.$($t.table) id $($nid[0][0]) ($($plan.counts -join ', '))"

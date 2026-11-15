@@ -287,7 +287,7 @@ Vendor adapters sit in `skills/crafty/adapters/` and load only when config selec
 | process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | `skills/crafty/adapters/process_gates.ps1` |
 | db-engine | `localEnv db.engine` | query exec jdbc |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb | `skills/envy/adapters/db_engines.ps1` |
 | tenant-model | `localEnv tenants.model` | list drop import footprint scopes |  | none, schema, database, column | `skills/envy/adapters/tenant_models.ps1` |
-| migration | `migrations.tool` | check discover pendingSql tag rollback resetEdited missingRoutines historyScopes |  | liquibase | `skills/crafty/adapters/liquibase.ps1` |
+| migration | `migrations.tool` | check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes |  | liquibase | `skills/crafty/adapters/liquibase.ps1` |
 | envy-verb | `adapters/*.local.ps1` | ops run |  | tenant | `skills/envy/adapters/tenant_models.ps1` |
 | api-auth | `targets auth.type` | invoke |  |  | `skills/pokey/pokey.ps1` |
 <!-- kit-graph:end -->
