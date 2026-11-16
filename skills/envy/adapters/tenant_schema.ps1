@@ -8,10 +8,10 @@
 function TenantCfg([string]$e) {
   $t = (Get-EnvCfg $e).tenants; $r = if ($t.registry) { $t.registry } else { $t }
   if (-not (Test-DbMarks $e) -or -not $r.schema -or -not $r.table) { throw "[$e] tenant needs db.engine mysql / mariadb and envs.$e.tenants.registry { schema, table, key, name } (envy SKILL.md)" }
-  $miss = @(@('key', 'name') | Where-Object { -not $r.$_ }); if ($miss.Count) { throw "[$e] tenants.registry needs $($miss -join ', '): the registry's id and name columns (no defaults)" }
+  $miss = @(@('key', 'name') | Where-Object { -not (Get-KitMember $r $_) }); if ($miss.Count) { throw "[$e] tenants.registry needs $($miss -join ', '): the registry's id and name columns (no defaults)" }
   $o = $t | ConvertTo-Json -Depth 20 | ConvertFrom-Json
-  foreach ($k in 'schema', 'table', 'key', 'name') { $o | Add-Member $k ([string]$r.$k) -Force }
-  foreach ($k in 'idColumns', 'nameColumns') { $o | Add-Member $k @($r.$k | Where-Object { $_ } | ForEach-Object { "$_" }) -Force }
+  foreach ($k in 'schema', 'table', 'key', 'name') { $o | Add-Member $k ([string](Get-KitMember $r $k)) -Force }
+  foreach ($k in 'idColumns', 'nameColumns') { $o | Add-Member $k @((Get-KitMember $r $k) | Where-Object { $_ } | ForEach-Object { "$_" }) -Force }
   $o
 }
 function SqlIn([string]$col, $vals) { if (-not @($vals).Count) { return '1 = 0' }; "$(SqlId $col) IN ($((@($vals) | Select-Object -Unique | ForEach-Object { SqlQ "$_" }) -join ', '))" }
@@ -35,7 +35,7 @@ function Get-TenantKeep([string]$e, [string[]]$names) {
     if (-not (Test-Path -LiteralPath $file)) { if (-not $bi) { throw "[$e] tenants.keepFrom $file does not exist: fix the path (a keep source must be readable)" }; continue }
     $read++
     $text = Get-Content -LiteralPath $file -Raw
-    if ($src -isnot [string] -and $src.keys) { $j = $text | ConvertFrom-Json; $text = (@($j.PSObject.Properties | Where-Object Name -match ([string]$src.keys) | ForEach-Object { $_.Value | ConvertTo-Json -Depth 20 }) -join "`n") }
+    if ($src -isnot [string] -and $src.keys) { $j = $text | ConvertFrom-Json; $text = (@((Get-KitProps $j) | Where-Object Name -match ([string]$src.keys) | ForEach-Object { $_.Value | ConvertTo-Json -Depth 20 }) -join "`n") }
     foreach ($n in $names) { if (-not $why[$n] -and $text -match "(?i)(?<![\w-])$([regex]::Escape($n))(?![\w-])") { $why[$n] = "named in $(Split-Path $file -Leaf)" } }
   }
   if (-not $read -and -not @($t.keep | Where-Object { $_ }).Count) { throw "[$e] tenant: no keep source (tenants.keep empty, no keepFrom file readable): refused, nothing would be kept" }
@@ -157,8 +157,8 @@ function Get-ImportProdRe($ic) { if ($ic.prodPattern) { [string]$ic.prodPattern 
 # source credentials by name: creds = a command printing JSON { host, port, user | username, password } (never shown), or host /
 # port / user + passwordEnv (a variable of the env file); refused when marked prod or its name / host matches prodPattern
 function Get-ImportSource([string]$e, [string]$from) {
-  $ic = Get-ImportCfg $e; $s = $ic.sources.$from; $pp = Get-ImportProdRe $ic
-  if (-not $s) { throw "[$e] no import source '$from' (tenants.import.sources: $(@($ic.sources.PSObject.Properties.Name) -join ', '))" }
+  $ic = Get-ImportCfg $e; $s = (Get-KitMember $ic.sources $from); $pp = Get-ImportProdRe $ic
+  if (-not $s) { throw "[$e] no import source '$from' (tenants.import.sources: $(@((Get-KitProps $ic.sources).Name) -join ', '))" }
   if ($s.prod -or $from -match $pp) { throw "[$e] tenant import refused: source '$from' is production (prod: true or the name matches prodPattern); only test / staging copies are imported" }
   $c = @{ host = "$($s.host)"; port = "$($s.port)"; user = "$($s.user)"; password = ''; cfg = $s }
   if ($s.creds) {
@@ -236,7 +236,7 @@ function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string
   if (-not $As) { $As = $Tenant }
   foreach ($x in $Tenant, $As) { if ($x -notmatch '^[A-Za-z0-9_]{1,64}\z') { throw "tenant import: '$x' is no plain schema name (letters, digits, _)" } }
   $t = TenantCfg $e; $ic = Get-ImportCfg $e; $adm = [string]$t.schema; $key = $t.key; $nm = $t.name
-  $prof = if ($ic.profiles.$Mask) { $ic.profiles.$Mask } elseif ($Mask -eq 'personal') { [pscustomobject]@{} } else { throw "[$e] no mask profile '$Mask' (tenants.import.profiles: $(@($ic.profiles.PSObject.Properties.Name) -join ', '); built in: personal)" }
+  $prof = if ((Get-KitMember $ic.profiles $Mask)) { (Get-KitMember $ic.profiles $Mask) } elseif ($Mask -eq 'personal') { [pscustomobject]@{} } else { throw "[$e] no mask profile '$Mask' (tenants.import.profiles: $(@((Get-KitProps $ic.profiles).Name) -join ', '); built in: personal)" }
   $tpl = [string]$ic.template; if (-not $tpl) { throw "[$e] tenant import needs tenants.import.template (a local tenant whose registry rows are cloned)" }
   $c = Get-ImportSource $e $From
   $reg = @(Get-TenantRows $e)
@@ -254,7 +254,7 @@ function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string
   $idc = @($t.idColumns); $nmc = @($t.nameColumns)
   $set = [ordered]@{}; $srcAdm = if ($c.cfg.adminSchema) { [string]$c.cfg.adminSchema } else { $adm }
   $sid = @(Invoke-SrcSql $c $e "SELECT $(SqlId $key) FROM $(SqlId $srcAdm).$(SqlId $t.table) WHERE $(SqlId $nm) = $(SqlQ $Tenant)" | ForEach-Object { $_[0] })
-  foreach ($p in @($ic.set.PSObject.Properties)) {   # {tenant} = the new name; {source:<table>.<column>} = that value of the tenant's source registry rows
+  foreach ($p in @((Get-KitProps $ic.set))) {   # {tenant} = the new name; {source:<table>.<column>} = that value of the tenant's source registry rows
     $v = $p.Value
     if ($v -is [string] -and $v -match '^\{source:(\w+)\.(\w+)\}$') {
       $tb = $Matches[1]; $col = $Matches[2]
@@ -272,7 +272,7 @@ function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string
   $pk = $prof | ConvertTo-Json -Depth 10 | ConvertFrom-Json; $mcf = Get-KitSetting 'masking' $null; if ($mcf) { $pk | Add-Member _kit $mcf -Force }   # masking.rules / logins / names: the org's columns and values
   if (-not $mcf.rules) { Write-Warning "[$e] tenant import: no kit.local.json masking.rules: only the generic column names (password, token, email, phone, name, address ...) are masked; add the app's own (audit columns, name columns of exact tables) there (envy db.md)" }
   $pj = $pk | ConvertTo-Json -Depth 10 -Compress   # the cache key: source + tenant + the profile and masking config only (a kit or masker update reuses the copy; migrations bring its schema up to date)
-  $ph = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pj))).Substring(0, 8).ToLower()
+  $ph = (Get-KitHash $pj SHA256).Substring(0, 8).ToLower()
   $pre = "$From-$Tenant-$Mask-"; $file = Join-Path $dir "$pre$ph.sql"; $hours = [double]$(if ($ic.cacheHours) { $ic.cacheHours } else { 0 })   # 0: never expires
   $usable = { param($f) (Test-Path -LiteralPath $f) -and (-not $hours -or ((Get-Date) - (Get-Item -LiteralPath $f).LastWriteTime).TotalHours -lt $hours) }
   $saved = @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -match "^$([regex]::Escape($pre))[0-9a-f]{8}\.sql\z" } | Sort-Object LastWriteTime -Descending)
@@ -287,7 +287,7 @@ function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string
     $m = try { $r.out | ConvertFrom-Json } catch { $null }
     if ($r.code -or -not $m -or $m.error) { throw "[$e] tenant import: dump + mask failed: $(if ($m.error) { $m.error } else { "exit $($r.code) $(@("$($r.err)" -split "`n")[-1])" })" }
     foreach ($o in $saved | Where-Object FullName -ne $file) { Remove-Item -LiteralPath $o.FullName, "$($o.FullName).profile.json", "$($o.FullName).meta.json" -Force -ErrorAction SilentlyContinue }   # one copy per source + tenant + profile
-    "[$e] masked dump: $($m.tables) table(s), $($m.rows) row(s), $([math]::Round($m.bytes / 1MB, 1)) MB; masked $(@($m.masked.PSObject.Properties).Count) column(s), $($m.emailsInText) text value(s) with emails$(if (@($m.skippedData).Count) { "; data skipped: $(@($m.skippedData) -join ', ')" })"
+    "[$e] masked dump: $($m.tables) table(s), $($m.rows) row(s), $([math]::Round($m.bytes / 1MB, 1)) MB; masked $(@((Get-KitProps $m.masked)).Count) column(s), $($m.emailsInText) text value(s) with emails$(if (@($m.skippedData).Count) { "; data skipped: $(@($m.skippedData) -join ', ')" })"
   }
   $want = [int]$sz[2]; $db = DbConn $e
   & $busy   # the dump can take minutes: a lease may have started since

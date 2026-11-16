@@ -116,7 +116,7 @@ Register-KitAdapter 'tracker' 'jira' @{
     if (-not $a.name) { return }
     $cl = $__trType -eq 'jira'; $k = if ($cl) { 'accountId' } else { 'name' }
     $m = @(__TrJira 'GET' "user/search?$(if ($cl) { 'query' } else { 'username' })=$([uri]::EscapeDataString($a.name))" $null) | Where-Object { $_.displayName -eq $a.name } | Select-Object -First 1
-    [string]$(if ($m) { $m.$k } else { (__TrJira 'GET' 'myself' $null).$k })
+    [string]$(if ($m) { (Get-KitMember $m $k) } else { (Get-KitMember (__TrJira 'GET' 'myself' $null) $k) })
   }
 }
 # adapter:tracker/jira-server: Server / Data Center = jira verbs on REST v2 (JIRA_TOKEN bearer or email + token)

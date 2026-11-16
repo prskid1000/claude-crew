@@ -22,7 +22,7 @@ function Get-CanonMr([string]$m) {
 }
 # an MR's target branch, one host call per MR and process; $null = unknown
 function Get-MrTargetBranch([string]$Mr, $Fx) {
-  $c = Get-CanonMr (ConvertTo-MrRef $Mr); if ($Fx) { return ($Fx.mrs.$Mr ?? $Fx.mrs.$c).targetBranch }
+  $c = Get-CanonMr (ConvertTo-MrRef $Mr); if ($Fx) { return ((Get-KitMember $Fx.mrs $Mr) ?? (Get-KitMember $Fx.mrs $c)).targetBranch }
   if (-not $script:KitMrTb) { $script:KitMrTb = @{} }
   if ($script:KitMrTb.ContainsKey($c)) { return $script:KitMrTb[$c] }
   $rn, $iid = $c -split '!', 2; $v = try { (Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject (($rn -split '/')[-1]) -Raw); n = $iid }).target_branch } catch { $null }
@@ -36,7 +36,7 @@ function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until, [switch]$NoPaths)
   $deps = @(@($Repos | Where-Object { $_.name -eq $rn } | Select-Object -First 1).deploys | Where-Object { $_.target })
   $filt = @($deps | Where-Object { $_.from -or @(Get-DeployPaths $_).Count }).Count
   if ((-not $filt -and @($deps | Where-Object branch).Count -lt 2) -or ($Until -and (Get-Date) -gt $Until)) { return @($deps.target | Select-Object -Unique) }
-  $fm = if ($Fx) { $Fx.mrs.$Mr ?? $Fx.mrs.$c }
+  $fm = if ($Fx) { (Get-KitMember $Fx.mrs $Mr) ?? (Get-KitMember $Fx.mrs $c) }
   $tb = Get-MrTargetBranch $Mr $Fx
   $own = @($deps | Where-Object { $_.branch -and $_.branch -eq $tb }); if ($own.Count) { return @($own.target | Select-Object -Unique) }
   if (-not $filt) { return @($deps.target | Select-Object -Unique) }
@@ -273,7 +273,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   # no network = UNKNOWN, no hang
   $rows = @{}; $failOf = @{}   # target -> why its check gave no rows (timeout, crash): that target is UNKNOWN, the others stand
   $rowsOf = { param($m) if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] } }
-  if ($fx) { foreach ($m in $cand.Keys) { $rows[$m] = @($fx.mrs.$m.rows) } }
+  if ($fx) { foreach ($m in $cand.Keys) { $rows[$m] = @((Get-KitMember $fx.mrs $m).rows) } }
   elseif ($cand.Count) {
     $lim = [math]::Max(2, $TimeoutSec); $t0 = Get-Date   # 100 (default): a foreground call ends under a 120 s tool timeout; supervise passes deploy.planTimeoutSec
     $until = $t0.AddSeconds([math]::Max($lim * 0.9, $lim - 10))   # one deadline for all; the rest of the plan fits in the remainder
@@ -324,7 +324,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   }
   $trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower()
   $win = Get-KitSetting 'deploy.minIntervalHours' 4
-  $winOf = { param($t) if ($win -is [psobject] -and $win.PSObject.Properties.Name -contains $t) { [double]$win.$t } elseif ($win -is [psobject] -and $win.PSObject.Properties.Name -contains 'default') { [double]$win.default } elseif ($win -is [psobject]) { 4 } else { [double]$win } }
+  $winOf = { param($t) if ($win -is [psobject] -and (Get-KitProps $win).Name -contains $t) { [double](Get-KitMember $win $t) } elseif ($win -is [psobject] -and (Get-KitProps $win).Name -contains 'default') { [double]$win.default } elseif ($win -is [psobject]) { 4 } else { [double]$win } }
   $logged = if (Test-Path $log) { @(Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
   $hostErr = $null
   $recOf = @{}; foreach ($x in $logged) { foreach ($m in @($x.mrs)) { $recOf["$(Get-CanonMr (ConvertTo-MrRef $m))|$($x.target)"] = 1 } }   # MANUAL (no check can see it): a recorded deploy is the proof
@@ -335,7 +335,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $l = @($logged | Where-Object { $_.target -eq $t } | Sort-Object { [datetime]$_.at }) | Select-Object -Last 1
     if ($l) { $last = [datetime]$l.at; $src = "kit log ($($l.by))" }
     $running = $false
-    if ($fx) { if ($fx.lastCi.$t) { $ci = [datetime]$fx.lastCi.$t; if (-not $last -or $ci -gt $last) { $last = $ci; $src = 'CI' } } }
+    if ($fx) { if ((Get-KitMember $fx.lastCi $t)) { $ci = [datetime](Get-KitMember $fx.lastCi $t); if (-not $last -or $ci -gt $last) { $last = $ci; $src = 'CI' } } }
     else {
       # each deploy row's kind: lastDeploy (@{ at; source }) and isRunning (a deploy in flight); a kind without them adds nothing
       foreach ($r in $repos) { foreach ($d in @($r.deploys | Where-Object { $_.target -eq $t -and ((Get-KitDeployKind $_) -ne 'ci-job' -or ($_.branch -and $_.job)) })) {
@@ -462,8 +462,8 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
     elseif ($kind -in 'no', 'noAll') {
       $by = if ($d.by) { $d.by } else { 'owner' }
       if ($kind -eq 'noAll') { $hold[$t] = [pscustomobject]@{ target = $t; state = 'held'; sid = $sid; new = @(); text = "$t held by $($by): $sid" }; continue }
-      $known = $Cache.mrsOf -and @($Cache.mrsOf.PSObject.Properties.Name) -contains $t   # an old cache without MR lists: held, nothing snapshotted
-      $mrs = @(@($Cache.mrsOf.$t) | Where-Object { $_ }); $snap = $Cache.held.$t; $mine = $snap -and "$($snap.id)" -eq "$($d.id)"
+      $known = $Cache.mrsOf -and @((Get-KitProps $Cache.mrsOf).Name) -contains $t   # an old cache without MR lists: held, nothing snapshotted
+      $mrs = @(@((Get-KitMember $Cache.mrsOf $t)) | Where-Object { $_ }); $snap = (Get-KitMember $Cache.held $t); $mine = $snap -and "$($snap.id)" -eq "$($d.id)"
       $cov = @(@($d.mrs) + @(if ($mine) { $snap.mrs } elseif (-not @($d.mrs).Count) { $mrs }) | Where-Object { $_ } | ForEach-Object { Get-CanonMr "$_" })
       $new = @($mrs | Where-Object { (Get-CanonMr "$_") -notin $cov })
       if ($known -and ((-not $mine -and -not @($d.mrs).Count) -or ($Fold -and $new.Count))) {

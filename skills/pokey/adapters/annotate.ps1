@@ -7,12 +7,12 @@ param([Parameter(Mandatory)][string]$In, [string]$Out, [string[]]$Rect = @(), [s
 $ErrorActionPreference = 'Stop'
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'annotate needs Windows (System.Drawing): elsewhere mark() before shot(), or name the element in the check note' }
 $Rect = @(Split-KitList $Rect ';')   # one box each, its commas stay
-Add-Type -AssemblyName System.Drawing
 $src = (Resolve-Path $In).Path
 if (-not $Out -and $Copy) { $Out = Join-Path (Split-Path $src) ("{0}-marked{1}" -f [IO.Path]::GetFileNameWithoutExtension($src), [IO.Path]::GetExtension($src)) }
 if (-not $Out) { $Out = $src }
-$ms = New-Object IO.MemoryStream(, [IO.File]::ReadAllBytes($src))   # read fully: the file may be overwritten
-$img0 = [Drawing.Image]::FromStream($ms)
+$img0 = [Drawing.Image]::FromFile($src)   # disposed before the save: $Out may be $src
+$g = $null
+try {
 $bmp = New-Object Drawing.Bitmap $img0.Width, $img0.Height
 $g = [Drawing.Graphics]::FromImage($bmp)
 $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
@@ -31,7 +31,7 @@ foreach ($r in $Rect) {
     $g.DrawString($p[4], $font, [Drawing.Brushes]::White, $lx + 4 * $k, $ly + $k)
   }
 }
-$g.Dispose(); $img0.Dispose(); $ms.Dispose()
+} finally { if ($g) { $g.Dispose() }; $img0.Dispose() }   # a bad -Rect must not leave $src locked
 $bmp.Save($Out, $(if ($Out -match '\.jpe?g$') { [Drawing.Imaging.ImageFormat]::Jpeg } else { [Drawing.Imaging.ImageFormat]::Png })); $bmp.Dispose()
 "annotated $Out ($(@($Rect).Count) rect)"
 }

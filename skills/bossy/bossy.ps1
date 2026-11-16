@@ -225,7 +225,7 @@ function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,.
     $null = $p -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$'; $role = $Matches[1]; $m = $Matches[2]; $n = [int]$Matches[3]; $hasM = $p -match '/'
     if ($m -match '^@([\w-]+)=(.*)$') { $m = [string](Get-KitSetting "models.$($Matches[1])" $Matches[2]) }
     if ($hasM) { if (-not $memo.ContainsKey($m)) { $memo[$m] = (Get-KitBudget -Tool $Tool -Model $m).budget }; $cap += $n * $memo[$m] }
-    $est += $n * [double](Get-KitParam 'budget.estimate' ([double]$ex.estimate.$role) $role)
+    $est += $n * [double](Get-KitParam 'budget.estimate' ([double](Get-KitMember $ex.estimate $role)) $role)
   }
   [pscustomobject]@{ cap = [int]$cap; estimate = [int]$est; perModel = $memo }
 }
@@ -253,7 +253,7 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 function Get-KitWorkflowConfig {
   $roles = [ordered]@{}
   foreach ($r in @(Get-KitSetting 'repos' @())) { if ($r.role) { foreach ($n in @(@($r.name) + @($r.aliases) | Where-Object { $_ })) { $roles["$n".ToLower()] = "$($r.role)".ToLower() } } }
-  $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in $o.PSObject.Properties) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }   # _readme keys dropped
+  $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }   # _readme keys dropped
   [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); roles = $roles; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)) }
 }
 function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
@@ -464,7 +464,7 @@ function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $nu
   $mrs = @($mrs | Where-Object { $_.state -ne 'closed' -and ($_.pin -or -not $Since -or -not $_.created -or [datetimeoffset]$_.created -ge ([datetimeoffset]$Since).AddMinutes(-10)) })   # offsets: host UTC, launches local
   $wip = @($Wts | Where-Object { $_.dirty -or $_.unpushed -ne '0' }).Count   # merged work ignores it: squash leaves the branch ahead
   $prev = ''; $its = @("$($Ag.items)" -split ',(?![^()]*\))' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object { $t = @(& $tid $_)[0]; if ($t) { $prev = $t } else { $t = $prev }; [pscustomobject]@{ item = $_; task = $t } })   # '<task> a, b': b is the same task
-  $reg = (Read-KitTracking).tasks; if (-not $reg) { $reg = @{} }; $nr = { param($r) $x = "$r" -replace '^.*/', ''; if ($x -match '^(?<r>[\w.-]+)!(?<n>\d+)$' -and $KitConf.RepoAliases.($Matches.r)) { "$($KitConf.RepoAliases.($Matches.r))!$($Matches.n)" } else { $x } }   # track add's ref form; tracked = tracker step done
+  $reg = (Read-KitTracking).tasks; if (-not $reg) { $reg = @{} }; $nr = { param($r) $x = "$r" -replace '^.*/', ''; if ($x -match '^(?<r>[\w.-]+)!(?<n>\d+)$' -and (Get-KitMember $KitConf.RepoAliases ($Matches.r))) { "$((Get-KitMember $KitConf.RepoAliases ($Matches.r)))!$($Matches.n)" } else { $x } }   # track add's ref form; tracked = tracker step done
   $hit = { param($m, $t) $t -and $m.text -match "(?i)(?<![a-z0-9])$([regex]::Escape($t))(?![a-z0-9])" }
   $loose = @($mrs | Where-Object { $m = $_; -not @($its | Where-Object { & $hit $m $_.task }).Count })
   $items = @(foreach ($it in $its) {
@@ -519,7 +519,7 @@ foreach ($s in $runs) {
   $own = @{}; $rep = @{}; $dirs = @{}; $ours = @{}; $cks = @{}; $sib = @{}
   for ($ix = 0; $ix -lt $agents.Count; $ix++) { $ag = $agents[$ix]
     $ck = @(@($lin.runs) | ForEach-Object { Get-KitCheckpoint $ag.id "$_" } | Where-Object { $_ -and $_.run -in $lin.runs })[0]; if (-not $ck) { $ck = Get-KitCheckpoint $ag.id }; $cks[$ix] = $ck; $ours[$ix] = $ck -and (-not $ck.run -or $ck.run -in $lin.runs); $pre = "$($ag.id)".ToLower()
-    $own[$ix] = @(@(if ($ours[$ix]) { $ck.steps | Where-Object step -eq 'mr' | ForEach-Object evidence }) | Where-Object { $_ }); $rep[$ix] = @($waves | ForEach-Object { $_.($ag.id).mrs.url } | Where-Object { $_ })
+    $own[$ix] = @(@(if ($ours[$ix]) { $ck.steps | Where-Object step -eq 'mr' | ForEach-Object evidence }) | Where-Object { $_ }); $rep[$ix] = @($waves | ForEach-Object { (Get-KitMember $_ ($ag.id)).mrs.url } | Where-Object { $_ })
     $at = @(Get-KitItemTasks "$($ag.items)")   # agent ids repeat across runs
     $dirs[$ix] = @(@(@(foreach ($root in $KitConf.WorktreeRoots) { Get-ChildItem $root -Directory -Filter "$pre-*" -ErrorAction SilentlyContinue | ForEach-Object FullName }) + @($board | Where-Object agent -eq $ag.id | ForEach-Object { $_.worktrees }) + @(if ($ours[$ix]) { $ck.worktrees }) |
       Where-Object { $d = "$_"; $d -and (Test-Path -LiteralPath $d -PathType Container) -and @($KitConf.WorktreeRoots | Where-Object { $d.Replace('\', '/').TrimEnd('/') -like "$("$_".Replace('\', '/').TrimEnd('/'))/*" }).Count } | ForEach-Object { (Get-Item -LiteralPath "$_").FullName.TrimEnd('\', '/') } | Sort-Object -Unique) |   # linked worktrees only
@@ -582,7 +582,7 @@ function Get-KitWtState([string]$Dir) {
   [pscustomobject]@{ dir = $Dir; branch = "$(git -C $Dir branch --show-current 2>$null)".Trim(); head = "$(git -C $Dir rev-parse --short HEAD 2>$null)".Trim(); dirty = @(git -C $Dir status --porcelain 2>$null | ForEach-Object { "$_".Substring(3) }) }
 }
 function Set-KitLaunchField([string[]]$Files, [string]$Name, $Value) {
-  foreach ($x in @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if ($null -eq $Value) { $j.PSObject.Properties.Remove($Name) } else { $j | Add-Member -Force NoteProperty $Name $Value }; Write-KitState $x $j } }
+  foreach ($x in @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if ($null -eq $Value) { $j.PSObject.Members.Remove($Name) } else { $j | Add-Member -Force NoteProperty $Name $Value }; Write-KitState $x $j } }
 }
 # back in seconds, -Status, the finisher: supervise_resources.ps1 "pause"
 function Invoke-Pause { param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish, [switch]$Everyone) Start-KitPause @PSBoundParameters }
@@ -736,7 +736,7 @@ function Get-TaskMrBranches([string[]]$Tasks) {
 function NormRef($r) {
   $r = "$r".Trim().Trim("'", '"'); if ($u = ConvertFrom-MrUrl $r) { $r = "$($u.repo)!$($u.n)" }
   if ($g = $KitConf.GitlabGroup) { $r = $r -replace "^(?i)$([regex]::Escape($g))/(?=[\w./-]+!\d+$)" }
-  if ($r -match '^([\w.-]+)!(\d+)$' -and ($al = $KitConf.RepoAliases.($Matches[1]))) { "$al!$($Matches[2])" } else { $r }
+  if ($r -match '^([\w.-]+)!(\d+)$' -and ($al = (Get-KitMember $KitConf.RepoAliases ($Matches[1])))) { "$al!$($Matches[2])" } else { $r }
 }
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' } }   # group/repo!n too
 function Invoke-Track {
@@ -804,7 +804,7 @@ function InFlight($ref) {
   foreach ($f in Get-ChildItem $wavesDir -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-12) }) {
     $w = Get-Content $f.FullName -Raw | ConvertFrom-Json
     if (-not @($w.running).Count) { continue }
-    foreach ($p in $w.agents.PSObject.Properties) {
+    foreach ($p in (Get-KitProps $w.agents)) {
       if (@($p.Value.mrs | ForEach-Object { "$($_.url)$_" }) -match $pat) {
         $lbl = @($w.running) | Where-Object { $_ -match "^(build|review|fix|ship|ci):$([regex]::Escape($p.Name))$" } | Select-Object -First 1
         if ($lbl) {
@@ -1531,7 +1531,7 @@ $ids = ($checks | ForEach-Object id) -join ', '
 # only what the config declares: a migration tool (repos[].migrations, db.migrations) or -Range; an app lane (qa.lanes kind app)
 $briefRepos = @($Repos | ForEach-Object { RepoName ($_ -split '@')[0] })
 $mig = [bool]$Range -or [bool](Get-KitSetting 'db.migrations' $null) -or [bool]@($cfg.repos | Where-Object { $_.migrations -and $_.name -in $briefRepos }).Count
-$lanes = Get-KitSetting 'qa.lanes' $null; $app = [bool]@(if ($lanes) { $lanes.PSObject.Properties | Where-Object { $_.Name -notlike '_*' -and "$($_.Value.kind)" -eq 'app' } }).Count
+$lanes = Get-KitSetting 'qa.lanes' $null; $app = [bool]@(if ($lanes) { (Get-KitProps $lanes) | Where-Object { $_.Name -notlike '_*' -and "$($_.Value.kind)" -eq 'app' } }).Count
 $slugAgent = $Agent.ToLower()
 $runName = "bugfix-$($Task)"
 $md = @"
@@ -1613,7 +1613,7 @@ Invoke-KitHooks Invoke-KitCleanup   # test browsers, profiles, idle daemons (cle
 
 # retention: kit.example.json _paths.keep; live browser locks, pending decisions stay
 $pm = $script:KitPathMap
-foreach ($p in @($pm.keep.PSObject.Properties | Where-Object Name -notlike '_*')) {
+foreach ($p in @((Get-KitProps $pm.keep) | Where-Object Name -notlike '_*')) {
   $v = @($p.Value); $n = if ($v.Count -gt 1) { [int]$v[1] } else { 0 }
   foreach ($i in @(Get-ChildItem (Get-KitPath $p.Name) -Force | Where-Object { $_.Name -notmatch '^tabs-|\.lock$' -and -not ($p.Name -eq 'decisions' -and (Get-Content $_.FullName -Raw) -match '"status":\s*"pending"') } | Sort-Object LastWriteTime -Descending | Select-Object -Skip $n)) { if (Old $i $v[0]) { Gone $i.FullName "$($p.Name) > $($v[0]) h" } }
 }
@@ -1621,12 +1621,12 @@ foreach ($p in @($pm.keep.PSObject.Properties | Where-Object Name -notlike '_*')
 foreach ($r in Get-ChildItem (Get-KitPath qa-runs) -Directory | Where-Object { Old $_ 168 }) { $all = Old $r 720
   foreach ($sub in Get-ChildItem $r.FullName -Recurse -Directory | Where-Object Name -in 'shots', 'evidence', 'scripts') { if ($all -or (Test-Path (Join-Path $sub.Parent.FullName 'report.md'))) { Gone $sub.FullName 'QA run media (7 d published / 30 d)' } } }
 # unnamed: root 72 h, work/ 336 h, cache/ logs/ 720 h; durable listed only
-$known = @{}; foreach ($r in @($pm.runtime.PSObject.Properties.Value)) { $s = ([string]$r).TrimEnd('/') -split '/'; $known[$s[0]] = 1; if ($s.Count -gt 1) { $known["$($s[0])/$($s[1])"] = 1 } }
+$known = @{}; foreach ($r in @((Get-KitProps $pm.runtime).Value)) { $s = ([string]$r).TrimEnd('/') -split '/'; $known[$s[0]] = 1; if ($s.Count -gt 1) { $known["$($s[0])/$($s[1])"] = 1 } }
 $rt = Get-KitRuntime
 foreach ($i in Get-ChildItem $rt -Force) { if (-not $known[$i.Name] -and (Old $i 72)) { Gone $i.FullName 'not in the layout (runtime root)' } }
 foreach ($top in 'work', 'cache', 'logs') { $h = if ($top -eq 'work') { 336 } else { 720 }
   foreach ($i in Get-ChildItem (Join-Path $rt $top) -Force | Where-Object Name -notmatch '\.lock$') { if (-not $known["$top/$($i.Name)"] -and (Old $i $h)) { Gone $i.FullName "not in the layout ($top/)" } } }
-$dk = @($pm.durable.PSObject.Properties.Value | ForEach-Object { (([string]$_).TrimEnd('/') -split '/')[0] })
+$dk = @((Get-KitProps $pm.durable).Value | ForEach-Object { (([string]$_).TrimEnd('/') -split '/')[0] })
 $sd = Split-Path (Get-KitPath tracking); $odd = @(Get-ChildItem $sd -Force | Where-Object { $_.Name -notin $dk -and $_.Name -notmatch '\.(lock|bad-.*)$' })
 if ($odd) { $notes += "durable state not in the layout (kept; move or delete by hand): $(@($odd | ForEach-Object Name) -join ', ')" }
 
@@ -1649,7 +1649,7 @@ try { $sw = $(if ($DryRun) { & $KitCmd.dev wt sweep -Root $rootList -IdleHours $
 
 if (-not $WorktreesOnly) {
 $envLogs = [IO.Path]::GetFullPath((Get-KitPath localenv-logs))   # local env rotates these (logMaxMB): a rewrite races the writer
-foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File -Recurse | ForEach-Object FullName | Where-Object { -not $_.StartsWith($envLogs, [StringComparison]::OrdinalIgnoreCase) }) + @($script:KitLogMap.streams | Where-Object { $pm.durable.$_ -and -not $script:KitLogTrim.ContainsKey($_) } | ForEach-Object { Get-KitPath $_ }))) {
+foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File -Recurse | ForEach-Object FullName | Where-Object { -not $_.StartsWith($envLogs, [StringComparison]::OrdinalIgnoreCase) }) + @($script:KitLogMap.streams | Where-Object { (Get-KitMember $pm.durable $_) -and -not $script:KitLogTrim.ContainsKey($_) } | ForEach-Object { Get-KitPath $_ }))) {
   # shared read: a writer may hold it
   $over = try { $lr = [IO.StreamReader]::new([IO.File]::Open($f, 'Open', 'Read', 'ReadWrite, Delete')); try { $ln = 0; while ($ln -le 5000 -and $null -ne $lr.ReadLine()) { $ln++ }; $ln -gt 5000 } finally { $lr.Dispose() } } catch { $false }
   if ($over) { if (-not $DryRun) { Invoke-KitLocked $f { $keep = Get-Content $f -Tail 5000; Set-Content $f $keep } }; [void]$actions.Add([pscustomobject]@{ mb = 0; why = 'rotated to 5000 lines'; path = $f }) }
@@ -2098,7 +2098,7 @@ Say "runtime: $(Get-KitPath runtime) (work/ cache/ logs/; disposable)"
 $ex = Get-Content (Join-Path $kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json
 $want = [ordered]@{ 'skills/crafty/kit.local.json' = ($ex | Select-Object -Property * -ExcludeProperty localFiles, _paths, _manifest, _doc) }
 Remove-KitLearnedKeys $want['skills/crafty/kit.local.json']
-foreach ($p in $ex.localFiles.PSObject.Properties) { $want[$p.Name] = $p.Value }
+foreach ($p in (Get-KitProps $ex.localFiles)) { $want[$p.Name] = $p.Value }
 foreach ($k in $want.Keys) {
   $f = Join-Path $kit $k; if (Test-Path $f) { continue }
   if ($WriteLocal) { $want[$k] | ConvertTo-Json -Depth 20 | Set-Content $f -Encoding utf8; Say "wrote $k from kit.example.json: fill in the <...> values (git-ignored)" }

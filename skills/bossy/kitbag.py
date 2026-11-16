@@ -20,8 +20,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1377 audit ·
-  L1493 registry · L1825 arch lint · L2028 prose · L2179 sections · L2309 budget · L2323 migrate · L2483 plugins ·
-  L2537 state lint · L2725 main
+  L1493 registry · L1825 arch lint · L2058 prose · L2209 sections · L2339 budget · L2353 migrate · L2513 plugins ·
+  L2567 state lint · L2755 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -1824,7 +1824,7 @@ def literal_warns(k, ratchet=False):
 
 # ---- arch lint: ARCH-* (core stays neutral: defaults, enums, vendor calls, platform calls, lessons, dead keys); vocab in VOCAB_JSON
 VOCAB_JSON = 'skills/bossy/lint-vocab.json'
-ARCH_COUNTED = {'ARCH-DEAD-KEY', 'ARCH-DEFAULT', 'ARCH-VENDOR-API', 'ARCH-PLATFORM', 'ARCH-LESSON'}   # counted; ARCH-ENUM stays WARN (vendor dispatch tables name vendors)
+ARCH_COUNTED = {'ARCH-DEAD-KEY', 'ARCH-DEFAULT', 'ARCH-VENDOR-API', 'ARCH-PLATFORM', 'ARCH-LESSON', 'ARCH-SBLOG'}   # counted; ARCH-ENUM stays WARN (vendor dispatch tables name vendors)
 CODE_EXT = ('.ps1', '.py', '.js', '.mjs')
 
 def word_rx(words):
@@ -1971,9 +1971,39 @@ def arch_lint(k):
             if lrx and (ws := sorted({m.group(0).lower() for m in lrx.finditer(c)})):
                 probs.append(('ARCH-LESSON', f'{f}:{n}', f'names {", ".join(ws)}: a vendor / stack lesson goes in '
                               + ('LESSONS.local.md (bossy.ps1 learn writes org lessons there)' if f == 'LESSONS.md' else 'a rules/*.local.md')))
+    # ARCH-SBLOG: pwsh 7 writes a script's whole text to the event log (4104) on every load when it holds a flagged word (any
+    # case, comments too) or a $o.$name member; the kit's .ps1 load on every tool call (guard hook)
+    sb = voc.get('sbLog') or {}
+    sbf = [f for f in code if f.endswith('.ps1') and f.startswith('skills/') and not f.startswith(tuple(sb.get('exempt') or ['\0']))]
+    for f in sbf:
+        t = (k.texts.get(f) or read(osp.join(k.dir, f))).lower()
+        for w in sb.get('words') or []:
+            if (i := t.find(w.lower())) >= 0:
+                probs.append(('ARCH-SBLOG', f'{f}:{t.count(chr(10), 0, i) + 1}', f'"{w}": pwsh logs this whole script on every load: '
+                              'a non-flagged equivalent, or the call in skills/crafty/flagged.ps1'))
+    for f, n, src in sblog_members(k, sbf):
+        probs.append(('ARCH-SBLOG', f'{f}:{n}', f'{src}: a dynamic member makes pwsh log this whole script on every load: Get-KitMember / Set-KitMember'))
     # ARCH-DEAD-KEY: a key kit.example.json documents (sample or _doc) that no script reads
     probs += dead_keys(k)
     return probs
+
+PS_MEMBERS = r'''$out = @(foreach ($f in $env:KIT_SB_FILES -split '\|') { $tk = $null; $er = $null; $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$tk, [ref]$er)
+  foreach ($h in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.MemberExpressionAst] -and $n.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst] }, $true))) {
+    @{ file = $f; line = $h.Extent.StartLineNumber; src = ($h.Extent.Text -split "`n")[0].Substring(0, [Math]::Min(40, ($h.Extent.Text -split "`n")[0].Length)) } } })
+ConvertTo-Json -InputObject $out -Compress'''
+
+def sblog_members(k, files):
+    """[(file, line, text)] of member accesses with a computed name ($o.$k, $o.($x), $o."$k", [t]::$m): pwsh's own parser (none without pwsh)."""
+    pw = shutil.which('pwsh')
+    if not files or not pw:
+        return []
+    import base64
+    r = subprocess.run([pw, '-NoProfile', '-NonInteractive', '-EncodedCommand', base64.b64encode(PS_MEMBERS.encode('utf-16-le')).decode()], capture_output=True,
+                       text=True, encoding='utf-8', timeout=120, env=dict(os.environ, KIT_SB_FILES='|'.join(osp.join(k.dir, f) for f in files)))
+    try:
+        return [(osp.relpath(h['file'], k.dir).replace('\\', '/'), int(h['line']), h['src']) for h in json.loads(r.stdout or '[]')]
+    except (ValueError, KeyError, TypeError):
+        return []
 
 def arch_guarded(f, ls, i, grd):
     """A platform check on an enclosing block header (braces; py: indentation) or an early exit before line i, within its function."""

@@ -7,11 +7,11 @@
 # Sections: L18 engine dispatch · L29 marks · L77 temp · L117 pool
 $script:DbPresets = @{}   # engine -> { port, query, exec, jdbc, passwordEnv, marks } (envy.ps1 checks it is loaded)
 foreach ($__en in @($KitAdapters['db-engine'].Keys)) { $__a = $KitAdapters['db-engine'][$__en]; $script:DbPresets[$__en] = @{ port = $__a.defaultPort; query = $__a.query; exec = $__a.exec; jdbc = $__a.jdbc; passwordEnv = $__a.passwordEnv; marks = [bool]$__a.supportsMarks } }
-foreach ($n in $(if ($script:LE.envs) { @($script:LE.envs.PSObject.Properties.Name) })) {
-  $db = $script:LE.envs.$n.db; if ($db.engine -and $script:DbAlias["$($db.engine)".ToLower()]) { $db.engine = $script:DbAlias["$($db.engine)".ToLower()] }; $p = if ($db.engine) { $script:DbPresets["$($db.engine)".ToLower()] }; if (-not $p) { continue }
+foreach ($n in $(if ($script:LE.envs) { @((Get-KitProps $script:LE.envs).Name) })) {
+  $db = (Get-KitMember $script:LE.envs $n).db; if ($db.engine -and $script:DbAlias["$($db.engine)".ToLower()]) { $db.engine = $script:DbAlias["$($db.engine)".ToLower()] }; $p = if ($db.engine) { $script:DbPresets["$($db.engine)".ToLower()] }; if (-not $p) { continue }
   $port = if ($db.port) { $db.port } else { $p.port }; $h = if ($db.host) { $db.host } else { '127.0.0.1' }
   $v = @{ H = $h; P = $port; U = "$($db.user)"; N = "$($db.name)"; URI = $(if ($db.uri) { $db.uri } else { "mongodb://${h}:$port/$($db.name)" }) }
-  foreach ($__pk in 'query', 'exec', 'jdbc', 'passwordEnv') { if ($p.$__pk -and -not $db.$__pk) { $c = $p.$__pk; foreach ($x in $v.Keys) { $c = $c.Replace("{$x}", "$($v[$x])") }; $db | Add-Member $__pk $c -Force } }   # $__pk: a dot-sourcing test keeps its $k
+  foreach ($__pk in 'query', 'exec', 'jdbc', 'passwordEnv') { if ((Get-KitMember $p $__pk) -and -not (Get-KitMember $db $__pk)) { $c = (Get-KitMember $p $__pk); foreach ($x in $v.Keys) { $c = $c.Replace("{$x}", "$($v[$x])") }; $db | Add-Member $__pk $c -Force } }   # $__pk: a dot-sourcing test keeps its $k
 }
 
 $script:DbFlashbackPy = Join-Path $PSScriptRoot 'db_flashback.py'
@@ -143,7 +143,7 @@ function Get-DbPoolDoctor([string]$e) {
 # doctor rows: db.expect { <server variable>: <value> } = the server settings the env wants (buffer pool, redo log, flush, ...)
 function Get-DbExpectDoctor([string]$e) {
   $x = (Get-EnvCfg $e).db.expect; if (-not (Test-DbMarks $e) -or -not $x) { return }
-  $want = @{}; foreach ($p in @($x.PSObject.Properties | Where-Object { $_.Name -notlike '_*' -and -not ($_.Name -eq 'innodb_buffer_pool_size' -and (Get-EnvCfg $e).db.bufferPool) })) { $want[$p.Name] = "$($p.Value)" }   # db.bufferPool owns the pool
+  $want = @{}; foreach ($p in @((Get-KitProps $x) | Where-Object { $_.Name -notlike '_*' -and -not ($_.Name -eq 'innodb_buffer_pool_size' -and (Get-EnvCfg $e).db.bufferPool) })) { $want[$p.Name] = "$($p.Value)" }   # db.bufferPool owns the pool
   if (-not $want.Count) { return }
   $cur = @{}; try { foreach ($r in Invoke-DbSql $e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ($(@($want.Keys | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '))") { $cur[$r[0]] = $r[1] } }
   catch { [pscustomobject]@{ level = 'WARN'; what = "db.expect: $("$_".Split("`n")[0])" }; return }

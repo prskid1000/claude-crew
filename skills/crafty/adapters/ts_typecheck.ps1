@@ -54,7 +54,7 @@ function Invoke-Typecheck([string]$TcCmd) {
   $tsb = Join-Path (Get-KitPath tsbuild -Create) "$hash.ts5103.tsbuildinfo"
   $tsc = if ($bin) { "`"$bin`"" } else { 'npx tsc' }
   Write-Host "[check] typecheck TS5103 fallback: temp tsconfig (ignoreDeprecations $ver), $(if ($bin) { $bin } else { 'npx tsc' })"
-  $fbCmd = "$tsc -p `"$tmp`" --noEmit --pretty false --incremental --tsBuildInfoFile `"$tsb`" >> `"$log`" 2>&1"
+  $fbCmd = "$tsc -p `"$tmp`" $script:TscNoOutput --pretty false --incremental --tsBuildInfoFile `"$tsb`" >> `"$log`" 2>&1"
   $fbStart = [DateTimeOffset]::Now
   try {
     $tsCfg | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $tmp -Encoding utf8

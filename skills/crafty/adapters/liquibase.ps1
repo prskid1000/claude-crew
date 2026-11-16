@@ -142,9 +142,9 @@ function Get-LiquibaseMissingRoutines([string]$e, [string]$Schema) {
     $ro = '(?is)^\s*(?:<!\[CDATA\[)?\s*(?:DROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?\w+`?\s*;?\s*)*(?:CREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\b.*)?(?:\]\]>)?\s*$'
     foreach ($root in @($roots | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
       # the parse per root is cached by the last commit under it and this parser's code (seed -Check re-read the whole tree each run); uncommitted or untracked changes: no cache
-      $lbVer = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$((Get-Command Get-LiquibaseMissingRoutines).ScriptBlock)"))).Substring(0, 12)
+      $lbVer = (Get-KitHash ("$((Get-Command Get-LiquibaseMissingRoutines).ScriptBlock)") SHA256).Substring(0, 12)
       $lbSha = "$(git -C $root log -1 --format=%H -- . 2>$null)".Trim(); if ($LASTEXITCODE -or "$(git -C $root status --porcelain -- . 2>$null)".Trim()) { $lbSha = '' }
-      $lbCacheFile = Join-Path (Get-KitPath cache -Create) "liquibase-routines-$([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(([IO.Path]::GetFullPath($root)).ToLower()))).Substring(0, 12)).json"
+      $lbCacheFile = Join-Path (Get-KitPath cache -Create) "liquibase-routines-$((Get-KitHash (([IO.Path]::GetFullPath($root)).ToLower()) SHA256).Substring(0, 12)).json"
       $lbHit = if ($lbSha) { try { $lbJson = Get-Content -LiteralPath $lbCacheFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable; if ($lbJson.key -eq "$lbVer|$lbSha") { $lbJson.made } } catch { $null } }
       if ($null -ne $lbHit) { foreach ($lbKv in $lbHit.GetEnumerator()) { $made[$lbKv.Key] = $lbKv.Value }; continue }
       $lbMine = @{}

@@ -105,7 +105,7 @@ switch ($Action) {
     $wav = $Arg
     if (-not $Arg -or (-not (Test-Path -LiteralPath $Arg) -and -not $KitIsWindows)) { 'usage: pokey.ps1 ui mic <16-bit PCM wav | phrase (Windows)> [timeout s]'; exit 2 }
     if (-not (Test-Path -LiteralPath $wav)) {
-      Add-Type -AssemblyName System.Speech; $sp = [System.Speech.Synthesis.SpeechSynthesizer]::new(); $wav = Join-Path (Get-KitPath android-tmp -Create) "mic_$tag.wav"
+      $sp = [System.Speech.Synthesis.SpeechSynthesizer]::new(); $wav = Join-Path (Get-KitPath android-tmp -Create) "mic_$tag.wav"
       $sp.SetOutputToWaveFile($wav, [System.Speech.AudioFormat.SpeechAudioFormatInfo]::new(16000, 'Sixteen', 'Mono')); $sp.Speak($Arg); $sp.Dispose()
     }
     $ini = foreach ($d in @([IO.Path]::GetTempPath(), $env:XDG_RUNTIME_DIR, "$HOME/Library/Caches/TemporaryItems") | Where-Object { $_ }) { Get-ChildItem (Join-Path $d 'avd/running') -Filter 'pid_*.ini' -ErrorAction SilentlyContinue }

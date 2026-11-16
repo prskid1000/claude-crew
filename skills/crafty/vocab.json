@@ -1,5 +1,6 @@
 {
- "_readme": "Built-in vocabulary lib.ps1 and devtools.py both read (one source): logical statuses, tracker vendor ids and links, the default testing docs. kit.local.json keys override it (tracker.*, process.docs).",
+ "_readme": "Built-in vocabulary lib.ps1 and devtools.py both read (one source): logical statuses, tracker vendor ids and links, the default testing docs, words a .ps1 must not hold (pwsh would log the script: tscNoOutput). kit.local.json keys override it (tracker.*, process.docs).",
+ "tscNoOutput": "--noEmit",
  "statuses": {"open": ["open", "to do"], "inProgress": ["in progress"], "review": ["for review", "in review"], "promoted": ["promoted"], "inTest": ["in test", "for test"], "failedTesting": ["failed testing", "test failed"], "closed": ["closed", "complete", "done"]},
  "trackers": {"clickup": {"branchTag": "CU-", "urlFragment": "clickup.com"}, "github": {"listless": true, "branchTag": "GH-", "urlFragment": "/issues/"}, "gitlab": {"listless": true, "branchTag": "GL-", "urlFragment": "/issues/"}, "jira": {"idPattern": "[A-Z][A-Z0-9_]+-\\d+", "urlFragment": "/browse/"}, "jira-server": {"idPattern": "[A-Z][A-Z0-9_]+-\\d+", "urlFragment": "/browse/"}, "linear": {"idPattern": "[A-Z][A-Z0-9]+-\\d+", "urlFragment": "linear.app"}, "youtrack": {"idPattern": "[A-Z][A-Z0-9_]+-\\d+", "urlFragment": "/issue/"}, "azure": {"branchRx": "(?i)(?:\\bAB#|(?:^|/)(?=\\d+[-_]))(?<id>\\d+)", "urlFragment": "_workitems"}},
  "docs": [

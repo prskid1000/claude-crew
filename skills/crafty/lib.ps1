@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L67 state · L141 config · L222 OS · L435 leases · L834 status · L1090 supervise sweep · L1168 tracker ·
-  L1517 prior · L1533 ask bugs · L1718 process · L1746 git-host · L1938 kitlog · L2058 params · L2363 entry-scripts
+Sections: L9 paths · L82 state · L156 config · L237 OS · L450 leases · L849 status · L1105 supervise sweep · L1183 tracker ·
+  L1532 prior · L1548 ask bugs · L1733 git-host · L1925 kitlog · L2045 params · L2350 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -10,12 +10,27 @@ try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }  
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
 $script:KitVocab = try { Get-Content (Join-Path $PSScriptRoot 'vocab.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }   # statuses, tracker vendors, docs (devtools.py reads it too)
+# pwsh 7 logs the full text of a script it finds suspicious (event 4104) on every load: kit scripts stay free of
+# lint-vocab.json "sbLog" words and of $o.$name members (kitbag lint SBLOG), so property access goes through these two
+function Get-KitProps($InputObject) { if ($null -ne $InputObject) { $InputObject.PSObject.Members.Match('*', [System.Management.Automation.PSMemberTypes]'AliasProperty,CodeProperty,Property,NoteProperty,ScriptProperty,InferredProperty') } }
+function Get-KitMember($InputObject, [string]$Name) {   # = $InputObject.$Name (keys, members, member enumeration one level flat)
+  if ($InputObject -is [System.Collections.IDictionary] -and $InputObject.Contains($Name)) { return , $InputObject[$Name] }
+  if ($null -eq $InputObject) { return , $null }
+  $m = $InputObject.PSObject.Members[$Name]; if ($m) { return , $m.Value }
+  if ($InputObject -is [System.Collections.IEnumerable] -and $InputObject -isnot [string] -and $InputObject -isnot [System.Collections.IDictionary]) { $all = @(foreach ($item in $InputObject) { $v = Get-KitMember $item $Name; $v }); if ($all.Count -eq 1) { return , $all[0] }; if ($all.Count) { return , $all } }
+  , $null
+}
+function Set-KitMember($InputObject, [string]$Name, $Value) {   # = $InputObject.$Name = $Value
+  if ($InputObject -is [System.Collections.IDictionary]) { $InputObject[$Name] = $Value } else { $InputObject.PSObject.Members[$Name].Value = $Value }
+}
+function Get-KitHash([string]$Text, [ValidateSet('MD5', 'SHA1', 'SHA256')][string]$Algorithm = 'SHA256') { & (Join-Path $script:KitLibDir 'flagged.ps1') hash -Text $Text -Algorithm $Algorithm }   # upper hex of the UTF-8 bytes
+$script:KitLibDir = $PSScriptRoot
 function Get-KitRuntime { $rt = if ($env:CLAUDE_RUNTIME) { if ([IO.Path]::IsPathRooted($env:CLAUDE_RUNTIME) -or -not $script:KitRoot) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $env:CLAUDE_RUNTIME } } elseif ($script:KitRoot -and $script:KitRoot -notin '/', '\') { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir }; if (-not $rt -or $rt -in '/', '\') { throw "Get-KitRuntime: bad runtime '$rt'" }; $rt }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   $m = $script:KitPathMap
   if ($Name -eq 'runtime') { $p = Get-KitRuntime; $dir = $true }
-  elseif ($m.runtime.PSObject.Properties.Name -contains $Name) { $rel = [string]$m.runtime.$Name; $p = Join-Path (Get-KitRuntime) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
-  elseif ($m.durable.PSObject.Properties.Name -contains $Name) { if (-not $script:KitRoot -or $script:KitRoot -in '/', '\') { throw 'Get-KitPath: bad KitRoot' }; $rel = [string]$m.durable.$Name; $p = Join-Path (Join-Path $script:KitRoot $m.stateDir) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
+  elseif ((Get-KitProps $m.runtime).Name -contains $Name) { $rel = [string](Get-KitMember $m.runtime $Name); $p = Join-Path (Get-KitRuntime) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
+  elseif ((Get-KitProps $m.durable).Name -contains $Name) { if (-not $script:KitRoot -or $script:KitRoot -in '/', '\') { throw 'Get-KitPath: bad KitRoot' }; $rel = [string](Get-KitMember $m.durable $Name); $p = Join-Path (Join-Path $script:KitRoot $m.stateDir) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
   else { throw "Get-KitPath: unknown name '$Name' (see skills/crafty/kit.example.json _paths)" }
   if (-not $p -or $p -in '/', '\' -or $p -match '^[A-Za-z]:[\\/]?$') { throw "Get-KitPath: root '$p'" }
   if ($Create) { New-Item -ItemType Directory -Force $(if ($dir) { $p } else { Split-Path $p }) | Out-Null }
@@ -86,7 +101,7 @@ function Update-KitTaskIndex([Parameter(Mandatory)][string]$Task, [Parameter(Man
 function Read-KitTracking([switch]$Strict) {
   $t = @{ tasks = @{}; automerge = @{} }; $f = Get-KitPath tracking
   if (Test-Path -LiteralPath $f) {
-    try { $old = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable; foreach ($s in 'tasks', 'automerge') { if ($old.$s -is [Collections.IDictionary]) { foreach ($k in @($old.$s.Keys)) { $t.$s[$k] = $old.$s[$k] } } } }
+    try { $old = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable; foreach ($s in 'tasks', 'automerge') { if ((Get-KitMember $old $s) -is [Collections.IDictionary]) { foreach ($k in @((Get-KitMember $old $s).Keys)) { (Get-KitMember $t $s)[$k] = (Get-KitMember $old $s)[$k] } } } }
     catch { $m = "tracking: $f is not valid JSON ($_)"; if ($Strict) { Copy-Item $f "$f.bad-$(Get-Date -Format yyyyMMddHHmmss)" -Force; throw "$m - fix or remove it; not writing" }; Write-Warning $m }
   }
   foreach ($g in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
@@ -120,13 +135,13 @@ function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Manda
 function Get-KitTaskTagRx {
   $rx = [string](Get-KitSetting 'tracker.branchRx' ''); if ($rx) { return $rx }
   if ($KitConf.TrackerTag) { return "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)" }
-  $v = $script:KitVocab.trackers.($KitConf.TrackerType)
+  $v = (Get-KitMember $script:KitVocab.trackers ($KitConf.TrackerType))
   if ($v.branchRx) { "$($v.branchRx)" } elseif ($v.idPattern) { "(?<![A-Za-z0-9])(?<id>$($v.idPattern))(?![A-Za-z0-9])" } else { '' }
 }
 # repo!iid in some task's track: repos match on last path segment, via repoAliases
 function Test-KitMrTracked([string]$Repo, [string]$Iid, $Tracking) {
   if (-not $Tracking) { $Tracking = Read-KitTracking }
-  $al = @{}; if ($KitConf.RepoAliases) { foreach ($p in $KitConf.RepoAliases.PSObject.Properties) { $al[$p.Name.ToLower()] = [string]$p.Value } }
+  $al = @{}; if ($KitConf.RepoAliases) { foreach ($p in (Get-KitProps $KitConf.RepoAliases)) { $al[$p.Name.ToLower()] = [string]$p.Value } }
   $names = { param($r) $l = ("$r".TrimEnd('/') -split '/')[-1].ToLower(); @($l) + @(if ($al[$l]) { ($al[$l] -split '/')[-1].ToLower() }) }
   $want = @(& $names $Repo)
   foreach ($x in @($Tracking.tasks.Values)) {
@@ -149,12 +164,12 @@ if (-not (Test-Path $__cfgFile)) {
   if ($__cd) { $__alt = Join-Path (Split-Path $__cd) 'skills/crafty/kit.local.json'; if (Test-Path $__alt) { $__cfgFile = $__alt } }
 }
 if (Test-Path $__cfgFile) { try { $__cfg = Get-Content $__cfgFile -Raw | ConvertFrom-Json } catch { Write-Warning "ignoring $__cfgFile (invalid JSON): $_" } }
-function Get-KitValue([string]$Name, $Default) { if ($__cfg -and $null -ne $__cfg.$Name -and "$($__cfg.$Name)" -ne '') { return $__cfg.$Name }; $Default }   # arrays stay whole
+function Get-KitValue([string]$Name, $Default) { if ($__cfg -and $null -ne (Get-KitMember $__cfg $Name) -and "$((Get-KitMember $__cfg $Name))" -ne '') { return (Get-KitMember $__cfg $Name) }; $Default }   # arrays stay whole
 function Get-KitSetting([string]$Path, $Default) {
   $cur = $__cfg
   foreach ($part in $Path -split '\.') {
-    if ($null -eq $cur -or -not ($cur.PSObject.Properties.Name -contains $part)) { return $Default }
-    $cur = $cur.$part
+    if ($null -eq $cur -or -not ((Get-KitProps $cur).Name -contains $part)) { return $Default }
+    $cur = (Get-KitMember $cur $part)
   }
   if ($cur -is [array]) { if (-not $cur.Count) { return $Default } } elseif ($null -eq $cur -or "$cur" -eq '') { return $Default }   # a list of objects stringifies to ''
   $cur
@@ -162,7 +177,7 @@ function Get-KitSetting([string]$Path, $Default) {
 $__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' 'markdown' })
 $__trLp = [string](Get-KitSetting 'tracker.statusLabelPrefix' 'status:')   # github / gitlab status labels
 $__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'none' })).ToLower()
-$__trTag = [string](Get-KitSetting 'tracker.branchTag' "$($script:KitVocab.trackers.$__trType.branchTag)")
+$__trTag = [string](Get-KitSetting 'tracker.branchTag' "$((Get-KitMember $script:KitVocab.trackers $__trType).branchTag)")
 $__repos = Get-KitValue 'reposRoot' $__ws
 $__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__repos-wt")) | Where-Object { $_ } | Select-Object -Unique)
 $KitConf = [pscustomobject]@{
@@ -263,7 +278,7 @@ function Get-SysCpu {
 # the file cache is freed only under RAM pressure, which a gate never allows: half of it counts as available
 function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [double]$Mem.CacheGB, 1) }
 # bossy.ps1 storage disk-rescue hold on a kit drive: crafty.ps1 gate holds new builds
-function Get-KitDiskHold { $hs = try { (Get-Content -LiteralPath (Join-Path (Get-KitPath storage) 'state.json') -Raw -ErrorAction Stop | ConvertFrom-Json).rescues } catch { $null }; @($hs.PSObject.Properties.Value | Where-Object { $_.kit -and ((Get-Date) - [datetime]$_.at).TotalMinutes -lt [double](Get-KitSetting 'storage.holdMinutes' 60) })[0] }
+function Get-KitDiskHold { $hs = try { (Get-Content -LiteralPath (Join-Path (Get-KitPath storage) 'state.json') -Raw -ErrorAction Stop | ConvertFrom-Json).rescues } catch { $null }; @((Get-KitProps $hs).Value | Where-Object { $_.kit -and ((Get-Date) - [datetime]$_.at).TotalMinutes -lt [double](Get-KitSetting 'storage.holdMinutes' 60) })[0] }
 # after 20 min waiting, a start needs only a hard floor
 function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
   $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3, $TotalGB * 0.05))
@@ -333,7 +348,7 @@ function Stop-KitProcessTree([Diagnostics.Process]$Proc) {
 }
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0) {
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
-  $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { $ex.defaults.$n } }
+  $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { (Get-KitMember $ex.defaults $n) } }
   $envs = @(Get-ChildItem env: | ForEach-Object Name)
   if (-not $Tool) {
     $Tool = if ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' }
@@ -504,7 +519,7 @@ function Set-KitLeaseReleased([string]$Agent, $R) {
 }
 # leasing again within 3 graces of a grace release: it was alive, grace too short
 function Test-KitLeaseBack([string]$Agent) {
-  $r = if ($Agent) { (Read-KitParams).released.$Agent }; if (-not $r) { return }; $now = Get-KitNow; $gap = ($now - [datetime]$r.at).TotalMinutes
+  $r = if ($Agent) { (Get-KitMember (Read-KitParams).released $Agent) }; if (-not $r) { return }; $now = Get-KitNow; $gap = ($now - [datetime]$r.at).TotalMinutes
   if ($gap -le 3 * [double]$r.grace) { Add-KitParamObs 'idle.graceMinutes' ([double]$r.quiet + $gap) '' 'short' 10 }
   Set-KitLeaseReleased $Agent $null
 }
@@ -542,7 +557,7 @@ function Save-KitGpuState([string]$File, $St) {
 }
 function Get-KitGpuHolders($St = (Get-KitGpuState)) {
   $ex = Get-KitSetting 'gpu.exclusive' $null; if (-not $ex) { return @() }
-  @($St.leases) + @(foreach ($k in @($ex.PSObject.Properties.Name)) { $rx = "$($ex.$k.processes)"; if ($rx) { Get-SysProcs -Name $rx -NoCommandLine | ForEach-Object { @{ kind = $k; holder = "$($_.Name) pid $($_.Id)"; pid = $_.Id } } } })
+  @($St.leases) + @(foreach ($k in @((Get-KitProps $ex).Name)) { $rx = "$((Get-KitMember $ex $k).processes)"; if ($rx) { Get-SysProcs -Name $rx -NoCommandLine | ForEach-Object { @{ kind = $k; holder = "$($_.Name) pid $($_.Id)"; pid = $_.Id } } } })
 }
 # procs parsed from the table: --query-compute-apps omits graphics (G) users such as emulators
 function Get-KitGpuProbe {
@@ -575,7 +590,7 @@ function Get-KitGpuBusy([string]$Kind, [int]$MinFreeMB = 0) {
 }
 # -MinFreeMB: default for gpu.exclusive.<kind>.minFreeMB, waited on even for unlisted kinds
 function Use-KitGpu([string]$Kind, [string]$Holder, [int]$ProcessId = $PID, [double]$WaitMinutes = 30, [int]$MinFreeMB = 0) {
-  $ex = Get-KitSetting 'gpu.exclusive' $null; $listed = $ex -and $Kind -in @($ex.PSObject.Properties.Name)
+  $ex = Get-KitSetting 'gpu.exclusive' $null; $listed = $ex -and $Kind -in @((Get-KitProps $ex).Name)
   $min = if ($MinFreeMB -gt 0) { [int](Get-KitSetting "gpu.exclusive.$Kind.minFreeMB" $MinFreeMB) } else { 0 }
   if (-not $listed -and $min -le 0) { return $true }
   $me = @{ kind = $Kind; holder = $Holder; pid = $ProcessId; pidStart = (Get-KitPidStart $ProcessId); at = (Get-Date).ToString('o') }
@@ -815,7 +830,7 @@ function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtab
 # a config command line -> argv: quotes group, {name} = $a.name
 function Split-KitCommand([string]$Line, [hashtable]$a) { @([regex]::Matches($Line, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { [regex]::Replace($_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value, '\{(\w+)\}', { param($m) [string]$a[$m.Groups[1].Value] }) }) }
 function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$a) {
-  $line = [string]$(if ($Commands) { $Commands.$Verb }); if (-not $line) { Write-Warning "$Kind (command): no commands.$Verb in kit.local.json"; return $null }
+  $line = [string]$(if ($Commands) { (Get-KitMember $Commands $Verb) }); if (-not $line) { Write-Warning "$Kind (command): no commands.$Verb in kit.local.json"; return $null }
   $t = Split-KitCommand $line $a
   $r = Invoke-KitRetry { Invoke-KitNetExe $t[0] @($t | Select-Object -Skip 1) } -Connect:($Verb -match 'create|merge|comment|attach|publish')
   if ($r.code) { $global:KitHostFailed = $true; Write-Warning "$Kind (command) $Verb failed (exit $($r.code)): $($r.err)"; return $null }
@@ -1093,7 +1108,7 @@ function New-KitSweep([datetime]$Deadline, $State) {
   $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary] -or $sw.v -ne 2) { $sw.cost = @{} }   # v2: costs exclude ungated work
   foreach ($jk in @($sw.cost.Keys | Where-Object { "$_" -match '^\S+\.ps1(\s+\S+){3}' })) { $sw.cost.Remove($jk) }   # old per-job keys
   $every = @{ 'cleanup' = 30; 'deploy checks' = 10; 'stale layers' = 15 }   # only one-shot sections: standing flags would vanish off-round
-  $cf = Get-KitSetting 'supervise.sectionMinutes' $null; if ($cf) { foreach ($p in @($cf.PSObject.Properties | Where-Object MemberType -eq NoteProperty)) { $v = 0.0; if ([double]::TryParse("$($p.Value)", [ref]$v)) { $every[$p.Name] = $v } } }
+  $cf = Get-KitSetting 'supervise.sectionMinutes' $null; if ($cf) { foreach ($p in @((Get-KitProps $cf) | Where-Object MemberType -eq NoteProperty)) { $v = 0.0; if ([double]::TryParse("$($p.Value)", [ref]$v)) { $every[$p.Name] = $v } } }
   [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); last = $(if ($sw.last -is [Collections.IDictionary]) { $sw.last } else { @{} }); every = $every; always = @('tracker checks'); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
 }
 # an ungated phase (~<name>): reported, never charged to the prior section
@@ -1137,7 +1152,7 @@ function Get-KitSweepMode([string[]]$A) {
 # past max(10 x cost, 30 min) = hung, stopped; empty result with errors = WATCH
 function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scriptblock]$OnSeconds, [double]$Cost = 0) {
   $d = Get-KitPath background -Create; $sl = ConvertTo-KitSlug $Name
-  if ($sl.Length -gt 100) { $sl = $sl.Substring(0, 80) + '-' + [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($sl))).Substring(0, 12) }   # stay within MAX_PATH
+  if ($sl.Length -gt 100) { $sl = $sl.Substring(0, 80) + '-' + (Get-KitHash $sl SHA1).Substring(0, 12) }   # stay within MAX_PATH
   $base = Join-Path $d $sl; $res = @{ out = @() }
   Invoke-KitLocked "$base.json" {
     $run = try { Get-Content -LiteralPath "$base.json" -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
@@ -1159,7 +1174,7 @@ function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scr
       # Windows: -Redirect* inherits the caller's stdout (a -Brief hung 120+ s): a hidden pwsh runs it
       $sq = { param($s) "'$("$s" -replace '([\u2018-\u201B''])', '$1$1')'" }   # PowerShell reads the smart quotes as ' too
       $bc = "(Start-Process pwsh -ArgumentList $(@($fileArgs | ForEach-Object { & $sq $_ }) -join ',') -NoNewWindow -PassThru -RedirectStandardOutput $(& $sq "$base.out") -RedirectStandardError $(& $sq "$base.err")).WaitForExit()"
-      $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-EncodedCommand', ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bc))) -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $fileArgs -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
+      $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-ec', ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bc))) -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $fileArgs -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
       Write-KitAtomic "$base.json" (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id); at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress)
     }
   }
@@ -1177,7 +1192,7 @@ $__trNoneDir = Get-KitPath tracker-none
 
 # logical statuses: vocab.json statuses (devtools.py reads the same), tracker.statuses per key; null / [] = that transition is skipped
 $__trStatus = [ordered]@{}
-foreach ($__src in @($script:KitVocab.statuses, (Get-KitSetting 'tracker.statuses' $null))) { if ($__src) { foreach ($__p in $__src.PSObject.Properties) { $__trStatus[$__p.Name] = @($__p.Value | Where-Object { "$_".Trim() } | ForEach-Object { [string]$_ }) } } }
+foreach ($__src in @($script:KitVocab.statuses, (Get-KitSetting 'tracker.statuses' $null))) { if ($__src) { foreach ($__p in (Get-KitProps $__src)) { $__trStatus[$__p.Name] = @($__p.Value | Where-Object { "$_".Trim() } | ForEach-Object { [string]$_ }) } } }
 
 function Resolve-TrackerStatus([string]$Status) {
   foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { return "$(@($__trStatus[$k])[0])" } }   # '' = the status is off
@@ -1260,7 +1275,7 @@ function __TrOsFullName {
   $n = ''
   if ($IsWindows -or $env:OS -eq 'Windows_NT') {
     try { $n = (Get-LocalUser $env:USERNAME -ErrorAction Stop).FullName } catch {}
-    if (-not $n) { try { Add-Type -AssemblyName System.DirectoryServices.AccountManagement; $n = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current.DisplayName } catch {} }
+    if (-not $n) { try { $n = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current.DisplayName } catch {} }
   } else { try { $n = ((getent passwd $env:USER) -split ':')[4] -split ',' | Select-Object -First 1 } catch {} }
   if (-not $n) { try { $n = git config --global user.name } catch {} }
   ([string]$n).Trim()
@@ -1269,7 +1284,7 @@ function __TrOsFullName {
 # tracker clickup, github: adapters/tracker_clickup.ps1, adapters/github.ps1
 # adapter:tracker/command: tracker.commands.<verb> = a CLI line, {placeholders} = $a keys; prints the kit's JSON
 Register-KitAdapter 'tracker' 'command' @{ '*' = { param($a, $v)
-    $c = Get-KitSetting 'tracker.commands' $null; if ($v -in 'url', 'owner' -and -not $c.$v) { return $(if ($v -eq 'url') { $a.id } else { $a.name }) }
+    $c = Get-KitSetting 'tracker.commands' $null; if ($v -in 'url', 'owner' -and -not (Get-KitMember $c $v)) { return $(if ($v -eq 'url') { $a.id } else { $a.name }) }
     if ($__trDry) { Write-Host "DRYRUN: tracker command $v $(__TrShort ($a | ConvertTo-Json -Compress))"; return }
     Invoke-KitCommand 'tracker' $c $v $a } }
 # adapter:tracker/none: local store (.state/tracker-none) + log
@@ -1384,7 +1399,7 @@ function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Headi
   if ($Heading) { return Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-comment-$("$Id-$Kind" -replace '[^\w.-]', '_')") { Set-TrackerHeadComment $Id $Kind $Text $Heading $Match } }
   $body = (__TrText "$Text").TrimEnd(); if (-not $body.Trim()) { throw "tracker comment: empty $Kind text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit'); $sig = Get-KitCommentSig $body
   $keep = { param($cid) try { Update-KitTaskIndex $Id { param($x) if ($cid) { $x.comments[$Kind] = "$cid"; $x.comments.Remove("$Kind#text") } else { $x.comments["$Kind#text"] = $sig } } } catch { } }
-  $ix = (Read-KitState (Get-KitTaskFile $Id)).comments; if ($ix -isnot [Collections.IDictionary]) { $ix = @{} }; $known = "$($ix.$Kind)"; $last = "$($ix["$Kind#text"])"
+  $ix = (Read-KitState (Get-KitTaskFile $Id)).comments; if ($ix -isnot [Collections.IDictionary]) { $ix = @{} }; $known = "$((Get-KitMember $ix $Kind))"; $last = "$($ix["$Kind#text"])"
   if ($known -and $edit) { try { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $known; text = $body } } catch { Write-KitLog calls comment-index-stale @{ task = $Id; kind = $Kind; error = "$_" } } }
   $old = @(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and ("$($_.text)" -match ('\\?\[kit:' + [regex]::Escape($Kind) + '\\?\]\s*$') -or ($last -and (Get-KitCommentSig $_.text) -eq $last)) } | Select-Object -Last 1
   if ($old -and $edit) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $old.id; text = $body }; & $keep $old.id; return $r }
@@ -1431,11 +1446,11 @@ function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask) {
 }
 # tracker.kindPrefixes (kind -> name prefix; bug: tracker.bugPrefix), tracker.nameFormat, tracker.taskTemplate: today's kit shapes by default
 function Get-KitKindPrefix([string]$Kind) {
-  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $p = if ($kp) { @($kp.PSObject.Properties | Where-Object { $_.Name -ieq $Kind } | ForEach-Object { "$($_.Value)" })[0] }
+  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $p = if ($kp) { @((Get-KitProps $kp) | Where-Object { $_.Name -ieq $Kind } | ForEach-Object { "$($_.Value)" })[0] }
   if ($p) { $p } elseif ($Kind -ieq 'bug') { [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]') } elseif ($Kind) { "[$Kind]" } else { '' }
 }
 function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kindPrefixes besides bug; default [Feature] [Chore])
-  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { $kp.PSObject.Properties.Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
+  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { (Get-KitProps $kp).Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
   $n = "$Name".TrimStart(); [bool]@($ks | Where-Object { $n.StartsWith((Get-KitKindPrefix $_), 'OrdinalIgnoreCase') }).Count
 }
 function Test-KitBugName([string]$Name) { $p = Get-KitKindPrefix 'bug'; $n = "$Name".TrimStart(); ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) -or $n -match '^\W*Bug\]' }
@@ -1547,7 +1562,7 @@ function Test-KitBugCollector($Task) { "$($Task.name)" -match "[—-]\s*$([regex
 # $Defects: [{ label; sig = @(); md; group }]; -Id: the [Bug] this source wrote before; -Mine: its whole unmarked text is this source's
 function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head, [object[]]$Defects, [string]$List, [string]$Assignee, [string]$Priority = '2', [string]$Id, [switch]$Mine) {
   $Key = ("$Key" -replace '[^\w.-]+', '_').Trim('_'); if (-not $Key) { throw 'Add-KitAskBug: -Key (the section key) is required' }
-  if ($Key.Length -gt 80) { $Key = $Key.Substring(0, 70) + '-' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Key))).Substring(0, 8) }
+  if ($Key.Length -gt 80) { $Key = $Key.Substring(0, 70) + '-' + (Get-KitHash $Key SHA256).Substring(0, 8) }
   Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-bug-$("$(if ($Ask) { $Ask } else { $Key })" -replace '[^\w.-]', '_')") {
     $open = { param($i) if (-not $i) { return }; Clear-TrackerMemo $i; $v = Get-TrackerTask $i; if ($v.name -and -not (Test-TrackerStatus "$($v.status)" 'closed')) { $v } }
     $pre = Get-KitKindPrefix 'bug'
@@ -1715,34 +1730,6 @@ function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {
     [pscustomobject]@{ question = $d.question; header = $h.Substring(0, [math]::Min(12, $h.Length)); multiSelect = $false
       options = @(Get-KitDecisionOrder $d | Select-Object -First 4 | ForEach-Object { [pscustomobject]@{ label = "$($_.key): $($_.label)$(if ($_.recommended) { ' (Recommended)' })" -replace '^: ', ''; description = $_.description } }) } }) }
 }
-# ---- process: testing docs (process.docs, else vocab.json); gates: adapters/process_gates.ps1 Test-KitProcessGate
-function Get-KitProcessDocs {   # process.docs (an empty list = none), else vocab.json docs; required defaults to true
-  $d = if ($__cfg -and $__cfg.process -and $__cfg.process.PSObject.Properties.Name -contains 'docs') { $__cfg.process.docs } else { $script:KitVocab.docs }
-  @(foreach ($x in @($d)) { if ($x.key -and $x.label) { [pscustomobject]@{ key = "$($x.key)"; label = "$($x.label)"; mrLabel = $(if ($x.mrLabel) { "$($x.mrLabel)" } else { "$($x.label)" })
-          linkRx = $(if ($x.linkRx) { "$($x.linkRx)" } else { [regex]::Escape("$($x.label)") }); headerRx = "$($x.headerRx)"; required = $x.required -ne $false } } })
-}
-function Get-KitDocLabelRx { $l = @(Get-KitProcessDocs | ForEach-Object { [regex]::Escape($_.label) }); if ($l.Count) { "(?i)^\W{0,3}(?:$($l -join '|'))\W{0,3}:" } else { '' } }
-# every required doc linked in the task description: $true / $false / $null (unread = unknown, never "no doc")
-function Test-KitTaskDocLink([string]$Task) {
-  try { $tt = Get-TrackerTask $Task } catch { return $null }
-  if (-not $tt -or -not $tt.name) { return $null }
-  $d = [string]$tt.description
-  -not @(Get-KitProcessDocs | Where-Object required | Where-Object { $d -notmatch "(?im)^\W{0,3}$([regex]::Escape($_.label))\W{0,3}:[ \t*_]*[^\s*_]" }).Count   # an empty bold label is no link
-}
-# this request's mandate only (a stored one is older words); sonnet unless -Complex
-function Get-BugWfArgs($Brief, $RunName, $Agent, $Items, $Area, [string[]]$Mandate, [bool]$Complex, $KitDir) {
-  if (-not $Mandate) { Write-Warning "no -Mandate: replace the placeholder with the owner's words of this request (agents drop items for later chat messages without them)" }
-  $a = [ordered]@{ id = $Agent; items = $Items; area = $Area.Substring(0, [math]::Min(160, $Area.Length)) }; if ($Complex) { $a.complex = $true }
-  [ordered]@{ brief = $Brief; run = $RunName; mode = 'bugfix'; kitDir = ($KitDir -replace '\\', '/'); mandate = @(if ($Mandate) { $Mandate } else { "<the owner's words of this request, verbatim>" }); agents = @($a) }
-}
-# finalize writes <run>/<item>/report.md per tested item (none at the run root)
-function Get-KitQaRunGap([string]$RunDir) {
-  $items = @(Get-ChildItem -LiteralPath $RunDir -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'results.json') })
-  if (-not $items.Count) { return ', no item tested' }
-  $miss = @($items | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName 'report.md')) } | ForEach-Object Name)
-  if ($miss.Count) { ", no report: $($miss -join ', ')" } else { '' }
-}
-
 # ---- git-host: git-host + ci adapters (README "Adapters"); Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... }
 # host name -> adapter; '' = unknown (self-hosted on its own name: set gitHostType)
 function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' { 'github' } 'bitbucket' { 'bitbucket' } 'dev\.azure\.com|visualstudio\.com' { 'azure' } 'gitea|forgejo|codeberg' { 'gitea' } 'gitlab' { 'gitlab' } default { '' } } }
@@ -1762,7 +1749,7 @@ function Get-HostProject([string]$Repo, [switch]$Raw) {
 }
 function Get-RepoConf([string]$Repo, [string]$Key, $Default) {
   $n = ("$Repo" -split '/')[-1]
-  foreach ($r in @(Get-KitValue 'repos' @())) { if (($r.name -in $n, $Repo -or @($r.aliases) -contains $n) -and "$($r.$Key)" -ne '') { return $r.$Key } }
+  foreach ($r in @(Get-KitValue 'repos' @())) { if (($r.name -in $n, $Repo -or @($r.aliases) -contains $n) -and "$((Get-KitMember $r $Key))" -ne '') { return (Get-KitMember $r $Key) } }
   $Default
 }
 # repos[].ci: a CI type string or an object ({ type, mrPipelines }); only the type names the adapter
@@ -1820,7 +1807,7 @@ Register-KitAdapter 'ci' 'none' @{ 'runs' = { @() }; 'jobs' = { @() }; 'log' = {
 $global:KitHostMemo = if ($global:KitHostMemo) { $global:KitHostMemo } else { @{} }
 # a CI word -> .state: running | success | failed | canceled | pending | none
 function ConvertTo-KitCiState([string]$Word) { if (-not "$Word".Trim()) { 'none' } else { $w = __CiWord $Word; if ($w -in 'success', 'failed', 'canceled', 'running') { $w } elseif ($w -eq 'skipped') { 'none' } else { 'pending' } } }
-function __HostState($o) { foreach ($x in @($o | Where-Object { $_ -is [psobject] -and $_.PSObject.Properties['status'] })) { $x | Add-Member -Force NoteProperty state (ConvertTo-KitCiState "$($x.status)") }; $o }
+function __HostState($o) { foreach ($x in @($o | Where-Object { $_ -is [psobject] -and $_.PSObject.Members['status'] })) { $x | Add-Member -Force NoteProperty state (ConvertTo-KitCiState "$($x.status)") }; $o }
 function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   $t = ([string]$(if ($A.type) { $A.type } else { $script:HostType })).ToLower()
   # no host known: UNKNOWN (null), one hint, never a vendor's call
@@ -1863,7 +1850,7 @@ $script:KitHostCli = [ordered]@{
   gitlab = @{ exe = 'glab'; noun = 'mr'; source = '-s', '--source-branch'; target = '-b', '--target-branch'; title = '-t', '--title'; valued = '-R', '--repo', '-m', '--message', '--squash-message', '--sha' }
   github = @{ exe = 'gh'; noun = 'pr'; source = '-H', '--head'; target = '-B', '--base'; title = '-t', '--title'; valued = '-R', '--repo', '-b', '--body', '-F', '--body-file', '-t', '--subject', '--match-head-commit', '-A', '--author-email'; noAuto = '--disable-auto' }
 }
-function Get-KitHostCli { @($script:KitHostCli.Values) + @(@(__HostSet 'hostCli' @()) | Where-Object exe | ForEach-Object { $h = @{}; $_.PSObject.Properties | ForEach-Object { $h[$_.Name] = $_.Value }; $h }) }
+function Get-KitHostCli { @($script:KitHostCli.Values) + @(@(__HostSet 'hostCli' @()) | Where-Object exe | ForEach-Object { $h = @{}; (Get-KitProps $_) | ForEach-Object { $h[$_.Name] = $_.Value }; $h }) }
 # LEGACY shim: a GitLab REST path -> a host verb (crafty.ps1 scope still calls it)
 function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) {
   if ($Path -notmatch '^projects/(?<p>[^/?]+)/?(?<rest>[^?]*)\??(?<q>.*)$') { Write-Warning "githost: no verb for $Path"; return $null }
@@ -1943,14 +1930,14 @@ function Protect-KitValue($v, [int]$d = 0) {
   if ($v -is [string]) { return Protect-KitText $v }
   $isD = $v -is [Collections.IDictionary]
   if (($isD -or $v -is [Management.Automation.PSCustomObject]) -and $d -lt 5) {
-    $o = [ordered]@{}; foreach ($k in @(if ($isD) { $v.Keys } else { $v.PSObject.Properties.Name })) { $x = $null; if ($isD) { $x = $v[$k] } else { $x = $v.$k }   # not $(...): it unrolls a one-item list
+    $o = [ordered]@{}; foreach ($k in @(if ($isD) { $v.Keys } else { (Get-KitProps $v).Name })) { $x = $null; if ($isD) { $x = $v[$k] } else { $x = (Get-KitMember $v $k) }   # not $(...): it unrolls a one-item list
       $o["$k"] = if ("$k" -match $script:KitLogMap.secretKey) { '[redacted]' } else { Protect-KitValue $x ($d + 1) } }; return $o }
   if ($v -is [Collections.IEnumerable] -and $d -lt 5) { return , @($v | ForEach-Object { Protect-KitValue $_ ($d + 1) }) }
   Protect-KitText "$v"
 }
 function Get-KitLogFile([string]$Stream, [datetime]$Day = (Get-Date), [switch]$Create) {
   if ($Stream -notin $script:KitLogMap.streams) { throw "kitlog: unknown stream '$Stream' (kit.example.json _paths.log.streams)" }
-  if ($script:KitPathMap.durable.PSObject.Properties.Name -contains $Stream) { return Get-KitPath $Stream -Create:$Create }
+  if ((Get-KitProps $script:KitPathMap.durable).Name -contains $Stream) { return Get-KitPath $Stream -Create:$Create }
   $p = Join-Path (Get-KitPath audit) "$($Day.ToString('yyyy-MM-dd'))/$Stream.jsonl"; if ($Create) { New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null }; $p
 }
 # params, else the board entry (-Session, -Dir, -Worktree), else KIT_AGENT / KIT_RUN
@@ -1980,7 +1967,7 @@ function Write-KitLog([Parameter(Mandatory)][string]$Stream, [string]$Event = ''
 # a bad line is skipped
 function Read-KitLog([string[]]$Stream = $script:KitLogMap.streams, [datetime]$Since = (Get-Date).AddDays(-1)) {
   foreach ($s in $Stream) {
-    $files = if ($script:KitPathMap.durable.PSObject.Properties.Name -contains $s) { Get-KitPath $s } else { Get-ChildItem (Get-KitPath audit) -Directory -ErrorAction SilentlyContinue | Where-Object Name -ge $Since.ToString('yyyy-MM-dd') | Sort-Object Name | ForEach-Object { Join-Path $_.FullName "$s.jsonl" } }
+    $files = if ((Get-KitProps $script:KitPathMap.durable).Name -contains $s) { Get-KitPath $s } else { Get-ChildItem (Get-KitPath audit) -Directory -ErrorAction SilentlyContinue | Where-Object Name -ge $Since.ToString('yyyy-MM-dd') | Sort-Object Name | ForEach-Object { Join-Path $_.FullName "$s.jsonl" } }
     foreach ($f in @($files | Where-Object { Test-Path -LiteralPath $_ })) {
       foreach ($l in Get-Content -LiteralPath $f) { $o = try { $l | ConvertFrom-Json } catch { $null }; if ($o.at -and [datetime]$o.at -ge $Since) { $o | Add-Member -Force NoteProperty stream $s; $o } }
     }
@@ -2061,13 +2048,13 @@ function Get-KitNow { if ($env:KIT_NOW) { [datetime]$env:KIT_NOW } else { Get-Da
 # entry: '<how> q=.95 k=1.5 up=.25 down=.1 min=5 safe=up gate=accuracy class=timeout sample=10 default=60 unit=s floor=1 ceil=9' or
 # an object; how config = fixed default, never learned
 function Get-KitParamSpec([string]$Key) {
-  $r = if ($script:KitParamReg) { $script:KitParamReg.$Key }; if (-not $r) { return $null }
+  $r = if ($script:KitParamReg) { (Get-KitMember $script:KitParamReg $Key) }; if (-not $r) { return $null }
   $o = @{ how = 'quantile'; q = 0.95; k = 1.5; up = 0.25; down = 0.1; min = 5; safe = 'up'; gate = ''; class = ''; sample = 1; spec = "$r" }
   if ($r -is [string]) { $w = @($r -split '\s+'); $o.how = $w[0]; foreach ($x in $w | Select-Object -Skip 1) { $kv = $x -split '=', 2; $o[$kv[0]] = if ($kv[1] -match '^[\d.]+$') { [double]$kv[1] } else { $kv[1] } } }
-  else { foreach ($p in $r.PSObject.Properties) { $o[$p.Name] = $p.Value }; if ($r.kind -and $r.kind -ne 'learn') { $o.how = 'config' }; $o.spec = $r | ConvertTo-Json -Compress }
+  else { foreach ($p in (Get-KitProps $r)) { $o[$p.Name] = $p.Value }; if ($r.kind -and $r.kind -ne 'learn') { $o.how = 'config' }; $o.spec = $r | ConvertTo-Json -Compress }
   $o.down = [math]::Min(0.1, $o.down); $o   # a risky step (toward failures): at most 10%
 }
-function Get-KitParamKeys([switch]$Learned) { @(if ($script:KitParamReg) { $script:KitParamReg.PSObject.Properties.Name | Where-Object { -not $Learned -or (Get-KitParamSpec $_).how -ne 'config' } }) }
+function Get-KitParamKeys([switch]$Learned) { @(if ($script:KitParamReg) { (Get-KitProps $script:KitParamReg).Name | Where-Object { -not $Learned -or (Get-KitParamSpec $_).how -ne 'config' } }) }
 function Read-KitParams([switch]$Strict) {   # -Strict (writers): a broken file throws, never overwritten
   $f = Get-KitPath param-state; if ($Strict -and -not (Test-Path -LiteralPath $f)) { return @{} }
   try { $s = Get-Content -LiteralPath $f -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable; if ($s) { $s } else { @{} } } catch { if ($Strict) { throw "param state $f unreadable: $_" }; @{} }
@@ -2076,8 +2063,8 @@ function Read-KitParams([switch]$Strict) {   # -Strict (writers): a broken file 
 function Resolve-KitParam([string]$Key, $Default, [string]$Context, $St) {
   $ev = [Environment]::GetEnvironmentVariable('KIT_PARAM_' + ($Key -replace '\W', '_').ToUpper()); if ($ev) { return @([double]$ev, 'env') }
   foreach ($p in @($Key) + @(if ($Context) { "$Key.$Context" })) { $c = Get-KitSetting $p $null; if ($null -ne $c -and ($c -is [ValueType] -or $c -is [string])) { return @($c, 'pin (kit.local.json)') } }
-  $pn = $St.pins."$Key|$Context"; if ($null -eq $pn) { $pn = $St.pins."$Key|" }; if ($null -ne $pn) { return @($pn.value, 'pin') }   # a pin without context: every context
-  $e = $St.byKey.$Key.$(if ($Context) { $Context } else { '_' })
+  $pn = (Get-KitMember $St.pins "$Key|$Context"); if ($null -eq $pn) { $pn = (Get-KitMember $St.pins "$Key|") }; if ($null -ne $pn) { return @($pn.value, 'pin') }   # a pin without context: every context
+  $e = (Get-KitMember (Get-KitMember $St.byKey $Key) $(if ($Context) { $Context } else { '_' }))
   if ($null -ne $e.value -and "$(Get-KitSetting 'params.learning' 'on')" -eq 'on') { return @([double]$e.value, 'learned') }
   @($Default, $(if ($null -ne $e.rec) { 'default (learned in shadow)' } else { 'default' }))
 }
@@ -2276,7 +2263,7 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
   $script:KitParamMemo.Clear(); $flags
 }
 # setup -WriteLocal leaves learned keys out of kit.local.json (a value there pins)
-function Add-KitSpendObs($E, [string]$R = 'ok') { $d = $script:KitExample.budget.estimate.([string]$E.type); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type $R $d } }   # R short: a handoff (the estimate was too low)
+function Add-KitSpendObs($E, [string]$R = 'ok') { $d = (Get-KitMember $script:KitExample.budget.estimate ([string]$E.type)); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type $R $d } }   # R short: a handoff (the estimate was too low)
 function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now, [hashtable]$Sec = @{}, [string[]]$Done = $null) {   # returns the ACT keys new since the last sweep
   # Sec: ACT key -> sweep section; Done: finished sections; an unfinished one (skipped, cut short, off-round) keeps its last ACTs, adds none
   $was = @($State.acts | Where-Object { $_ }); $ps = if ($State.actSec -is [Collections.IDictionary]) { $State.actSec } else { @{} }
@@ -2292,7 +2279,7 @@ function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now, [hashtable]$Sec 
   $State.acts = @($Acts | Where-Object { $_ -notin $held }) + $carry; $State.actSec = @{}
   foreach ($k in $State.acts) { $s = if ($Sec[$k]) { $Sec[$k] } else { $ps[$k] }; if ($s) { $State.actSec[$k] = $s } }; $fresh
 }
-function Remove-KitLearnedKeys($Cfg) { foreach ($pk in @(Get-KitParamKeys -Learned)) { $o = $Cfg; $pp = $pk -split '\.'; foreach ($x in $pp[0..($pp.Count - 2)]) { $o = $o.$x }; if ($o) { $o.PSObject.Properties.Remove($pp[-1]) } } }
+function Remove-KitLearnedKeys($Cfg) { foreach ($pk in @(Get-KitParamKeys -Learned)) { $o = $Cfg; $pp = $pk -split '\.'; foreach ($x in $pp[0..($pp.Count - 2)]) { $o = (Get-KitMember $o $x) }; if ($o) { $o.PSObject.Members.Remove($pp[-1]) } } }
 # bossy.ps1 param verbs (audited in history and params-changes.jsonl)
 function Invoke-KitParamVerb([string]$Action, [string]$Key, [string]$Value, [string]$Context, [switch]$Json) {
   $st = Read-KitParams; $reg = @(Get-KitParamKeys)
@@ -2300,8 +2287,8 @@ function Invoke-KitParamVerb([string]$Action, [string]$Key, [string]$Value, [str
   if ($Action -eq 'show') {
     $hm = { param($t) if ($t) { ([datetime]$t).ToString('MM-dd HH:mm') } }
     $rows = foreach ($k in @($reg | Where-Object { -not $Key -or $_ -eq $Key })) { $sp = Get-KitParamSpec $k
-      $cs = @(if ($st.byKey.$k) { $st.byKey.$k.Keys | Where-Object { -not $Context -or $_ -eq $Context } }); if (-not $cs.Count) { $rv = Resolve-KitParam $k $sp.default $Context $st; [pscustomobject]@{ key = $k; ctx = '_'; how = $sp.spec; default = $sp.default; effective = $rv[0]; source = $rv[1]; n = 0; state = $(if ($sp.how -eq 'config') { 'config' } elseif ($rv[1] -like 'pin*') { 'pinned' } else { 'default' }) }; continue }
-      foreach ($c in $cs) { $e = $st.byKey.$k[$c]; $rv = Resolve-KitParam $k $e.d $(if ($c -ne '_') { $c }) $st; $q = $st.queue."$k|$c"
+      $cs = @(if ((Get-KitMember $st.byKey $k)) { (Get-KitMember $st.byKey $k).Keys | Where-Object { -not $Context -or $_ -eq $Context } }); if (-not $cs.Count) { $rv = Resolve-KitParam $k $sp.default $Context $st; [pscustomobject]@{ key = $k; ctx = '_'; how = $sp.spec; default = $sp.default; effective = $rv[0]; source = $rv[1]; n = 0; state = $(if ($sp.how -eq 'config') { 'config' } elseif ($rv[1] -like 'pin*') { 'pinned' } else { 'default' }) }; continue }
+      foreach ($c in $cs) { $e = (Get-KitMember $st.byKey $k)[$c]; $rv = Resolve-KitParam $k $e.d $(if ($c -ne '_') { $c }) $st; $q = (Get-KitMember $st.queue "$k|$c")
         [pscustomobject]@{ key = $k; ctx = $c; how = $sp.spec; default = $e.d; learned = $e.rec; effective = $rv[0]; source = $rv[1]; n = [int]$e.n; conf = $e.conf; p50 = $e.p50; p90 = $e.p90; max = $e.max; clamp = [bool]$e.clamp; changed = $e.changed; dir = $e.dir; why = $e.why; frozen = $e.frozen; nextRisky = @(@($(if ($e.changed) { ([datetime]$e.changed).AddDays(1) }), $(if ($e.hold) { [datetime]$e.hold }), (Get-KitNow)) | Sort-Object)[-1].ToString('o'); obsNeeded = [math]::Max(0, 5 - [int]$e.fresh); shadowLeft = [math]::Max(0, [math]::Ceiling([double](Get-KitSetting 'params.shadowDays' 14) - ((Get-KitNow) - [datetime]$e.since).TotalDays))
           cadence = $e.cad.min; due = $e.cad.due; trigger = $(if ($q) { "queued: $(@($q.why) -join ',')" } else { "$($e.cad.lastTrig)" -replace ' \S+$' }); byLoad = $e.byLoad; loadP90 = @(@($e.byLoad.Keys) | Sort-Object | ForEach-Object { "$_ $($e.byLoad[$_].p90)" }) -join ', '
           state = $(if ($rv[1] -like 'pin*' -or $rv[1] -eq 'env') { 'pinned' } elseif ($e.frozen -and [datetime]$e.frozen -gt (Get-KitNow)) { 'frozen' } elseif ($rv[1] -eq 'learned') { 'live' } elseif ($null -ne $e.rec) { 'shadow' } else { 'default' }) } } }
@@ -2347,8 +2334,8 @@ function Invoke-KitLogTrim([switch]$DryRun, [datetime]$Now = (Get-KitNow)) {
           if (-not $o.at -or [datetime]$o.at -ge $cut -or ($sn -eq 'signals' -and $o.kind -eq 'retired')) { $keep.Add($l) } else { $old.Add($o) } }
         if ($DryRun -or -not $old.Count) { return }
         foreach ($g in @($old | Group-Object { ([datetime]$_.at).ToString('yyyy-MM') })) {
-          $cnt = [ordered]@{}; foreach ($x in $g.Group) { $kk = "$($x.($by[0]))$(if ($x.($by[1])) { "/$($x.($by[1]))" })"; $cnt[$kk] = [int]$cnt[$kk] + 1 }
-          $facts = @($g.Group | Where-Object { "$($_.($by[2]))" } | Group-Object { "$($_.($by[2]))" } | Sort-Object Count -Descending | Select-Object -First 5 | ForEach-Object { $t = $_.Name; "$($_.Count)x $($t.Substring(0, [math]::Min(160, $t.Length)))" })
+          $cnt = [ordered]@{}; foreach ($x in $g.Group) { $kk = "$((Get-KitMember $x ($by[0])))$(if ((Get-KitMember $x ($by[1]))) { "/$((Get-KitMember $x ($by[1])))" })"; $cnt[$kk] = [int]$cnt[$kk] + 1 }
+          $facts = @($g.Group | Where-Object { "$((Get-KitMember $_ ($by[2])))" } | Group-Object { "$((Get-KitMember $_ ($by[2])))" } | Sort-Object Count -Descending | Select-Object -First 5 | ForEach-Object { $t = $_.Name; "$($_.Count)x $($t.Substring(0, [math]::Min(160, $t.Length)))" })
           $ats = @($g.Group | ForEach-Object { [datetime]$_.at } | Sort-Object); $from = $ats[0].ToString('o'); $to = $ats[-1].ToString('o')
           if (-not $seen["$sn|$($g.Name)|$from|$to|$($g.Count)"]) { Write-KitLog logs-summary summary ([ordered]@{ at = $Now.ToString('o'); stream = $sn; period = $g.Name; n = $g.Count; from = $from; to = $to; by = $cnt; facts = $facts }) }
         }

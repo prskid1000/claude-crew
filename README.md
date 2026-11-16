@@ -444,6 +444,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"steps 4-5 (Rules #gt; Tests: what to test, how,…"| skills_crafty_testing_md["testing.md"]
   skills_crafty_SKILL_md -->|"steps 1-5, CI wait (pipes), the PreToolUse hook…"| skills_crafty_crafty_ps1["crafty.ps1"]
   skills_crafty_SKILL_md -->|"dot-sourced by every kit script; never run by…"| skills_crafty_lib_ps1["lib.ps1"]
+  skills_crafty_SKILL_md -->|"run by lib.ps1 / envy.ps1 for the calls pwsh…"| skills_crafty_flagged_ps1["flagged.ps1"]
   skills_crafty_SKILL_md -->|"steps 6-7, rebase conflicts (keepboth)"| skills_crafty_devtools_py["devtools.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_android_sdk_ps1["android_sdk.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_azure_devops_ps1["azure_devops.ps1"]

@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-lint-arch.tests.ps1: kitbag.py lint ARCH-* rules (lint-vocab.json): DEFAULT, ENUM, VENDOR-API, PLATFORM, LESSON, DEAD-KEY; a hit and a
+lint-arch.tests.ps1: kitbag.py lint ARCH-* rules (lint-vocab.json): DEFAULT, ENUM, VENDOR-API, PLATFORM, LESSON, DEAD-KEY, SBLOG (+ pwsh's own check, Get-KitMember / Get-KitProps / Get-KitHash); a hit and a
 pass each, on a throw-away git copy of the kit (fixture scripts, a lesson, example keys).
 Usage: pwsh -NoProfile -File <kit>/tests/lint-arch.tests.ps1 (or tests/kit-tests.ps1 -Area lint-arch).
 Exit codes: 0 pass · 1 a check failed.
@@ -37,6 +37,9 @@ def run(p):
 '@
 Set-Content (Join-Path $kc 'skills/crafty/zz_arch.py') $fy -Encoding utf8
 Set-Content (Join-Path $kc 'skills/crafty/adapters/zz_arch.ps1') "#Requires -Version 7`n`$v = glab api projects/1`n`$l = @('web', 'api', 'app')" -Encoding utf8
+# ARCH-SBLOG fixtures: a flagged word (a comment counts) and a computed member name; a quoted literal member and phoney/ pass
+Set-Content (Join-Path $kc 'skills/crafty/zz_sb.ps1') "#Requires -Version 7`n# loop the PSObject.Properties`n`$x = `$o.`$k`n`$y = `$o.'lit'" -Encoding utf8
+Set-Content (Join-Path $kc 'skills/phoney/zz_sb.ps1') "#Requires -Version 7`n# loop the PSObject.Properties`n`$x = `$o.`$k" -Encoding utf8
 Set-Content (Join-Path $kc 'skills/crafty/zz_gitlab.ps1') "#Requires -Version 7`n`$a = Get-KitSetting 'zz.vendor' 'gitlab'" -Encoding utf8
 Add-Content (Join-Path $kc 'LESSONS.md') "`n## zz`n- a migration fails -> run liquibase status first (it hides the lock)" -Encoding utf8
 $null = New-Item -ItemType Directory -Force (Join-Path $kc 'rules'); Set-Content (Join-Path $kc 'rules/zz.local.md') "# zz`nliquibase lock: release it" -Encoding utf8
@@ -59,6 +62,24 @@ Expect 'ARCH-LESSON: liquibase in tracked LESSONS.md = a problem; a rules/*.loca
   $l1 -notmatch 'ARCH-LESSON\s+rules/zz\.local\.md' -and $l1 -notmatch 'ARCH-LESSON\s+rules/zz-org\.md' -and $l1 -match '(?m)^ARCH-LESSON\s+rules/zz-pub\.md:\d+: names spring')
 Expect "ARCH-DEAD-KEY: a documented key no script reads is a counted problem (exit $LASTEXITCODE); a read key passes" ($LASTEXITCODE -eq 1 -and
   $l1 -match '(?m)^ARCH-DEAD-KEY\s+skills/crafty/kit\.example\.json: "zzDeadKey"' -and $l1 -notmatch 'ARCH-DEAD-KEY.*zzLiveKey')
+Expect 'ARCH-SBLOG: a flagged word (in a comment too) and $o.$k in skills/ are counted problems with file:line; a literal member and the exempt phoney/ pass' ($l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:2: "Properties"' -and
+  $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:3: \$o\.\$k' -and (& $cnt 'ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1') -eq 2 -and $l1 -notmatch 'ARCH-SBLOG\s+skills/phoney/')
+# pwsh's own check (internal; absent on another version: SKIP): no lint-scoped kit script is logged on load
+$sbCheck = [System.Management.Automation.ScriptBlock].GetMethod('CheckSuspiciousContent', [System.Reflection.BindingFlags]'NonPublic,Static')
+$sbVoc = (Get-Content -Raw (Join-Path $PSScriptRoot '../skills/bossy/lint-vocab.json') | ConvertFrom-Json).sbLog
+$sbHot = @(git -C (Join-Path $PSScriptRoot '..') ls-files 'skills/*.ps1' | Where-Object { $sf = $_; -not @($sbVoc.exempt | Where-Object { $sf.StartsWith($_) }).Count })
+if ($sbCheck) {
+  $sbHit = @(foreach ($sf in $sbHot) { $sa = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot "../$sf"), [ref]$null, [ref]$null); if ($sh = $sbCheck.Invoke($null, @($sa))) { "$sf <- $(($sh -split "`n")[0])" } })
+  Expect "pwsh script-block logging: none of the $($sbHot.Count) lint-scoped skills/ scripts is flagged ($($sbHit -join '; '))" ($sbHot.Count -gt 20 -and -not $sbHit.Count)
+} else { 'SKIP pwsh script-block check (no CheckSuspiciousContent on this pwsh)' }
+# the helpers that replace $o.$k / .PSObject.Properties / inline hashing keep the old results
+. (Join-Path $PSScriptRoot '../skills/crafty/lib.ps1')
+$sbJ = '{"a":1,"b":[1,2],"c":[5],"d":[],"e":null,"arr":[{"x":1},{"y":2},{"x":3}]}' | ConvertFrom-Json; $sbH = @{ k = @(1) }; $sbArr = @([pscustomobject]@{ a = @(1, 2) }, [pscustomobject]@{ b = 1 }, [pscustomobject]@{ a = 7 })
+$sbSame = @(foreach ($sc in @(@($sbJ, 'a'), @($sbJ, 'b'), @($sbJ, 'c'), @($sbJ, 'd'), @($sbJ, 'e'), @($sbJ, 'zz'), @($sbJ.arr, 'x'), @($sbArr, 'a'), @($sbH, 'k'), @($sbH, 'Count'), @($null, 'a'))) {
+  $sn = $sc[1]; (ConvertTo-Json -InputObject @($sc[0].$sn) -Compress) -eq (ConvertTo-Json -InputObject @((Get-KitMember $sc[0] $sn)) -Compress) })
+$sbP = [pscustomobject]@{ v = 1 }; Set-KitMember $sbP 'v' 5
+Expect 'Get-KitMember = $o.$k (scalars, arrays, empty, null, member enumeration one level flat, hashtables); Set-KitMember; Get-KitProps = PSObject property order; Get-KitHash = SHA256 hex' (-not @($sbSame | Where-Object { -not $_ }).Count -and
+  $sbP.v -eq 5 -and (@(Get-KitProps $sbJ).Name -join ',') -eq 'a,b,c,d,e,arr' -and -not @(Get-KitProps $null).Count -and (Get-KitHash 'abc') -eq 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD' -and (Get-KitHash 'abc' MD5) -eq '900150983CD24FB0D6963F7D28E17F72')
 Remove-Item (Join-Path $kc 'skills/bossy/lint-vocab.json')
 $l2 = & $py -X utf8 $KT3 lint --no-flow 2>&1 | Out-String
 Expect 'ARCH-VOCAB: a missing lint-vocab.json is a counted problem' ($l2 -match '(?m)^ARCH-VOCAB\s+skills/bossy/lint-vocab\.json: missing')

@@ -15,7 +15,7 @@ $script:KitGateBuiltinLabels = @(@('maven test', '^maven-test$'), @('maven build
   @('js tests', '^(js-test|ng-test)$'), @('python', '^python$'), @('cypress / e2e', '^(e2e|cypress)$'), @('docker', '^docker$'), @('android', '^(android-build|android-test|gradle)$'), @('emulator', '^emulator$'))
 function Get-KitGateGroup([string]$Kind, [string]$Who) {
   if ($Who -match 'localenv-') { return 'env deploy' }
-  if (-not $script:KitGateLabels) { $gl = Get-KitSetting 'gate.labels' $null; $script:KitGateLabels = @(@(if ($gl) { foreach ($p in $gl.PSObject.Properties) { if ($p.Name -notlike '_*' -and $p.Value) { , @($p.Name, "$($p.Value)") } } }) + $script:KitGateBuiltinLabels) }   # cached per process
+  if (-not $script:KitGateLabels) { $gl = Get-KitSetting 'gate.labels' $null; $script:KitGateLabels = @(@(if ($gl) { foreach ($p in (Get-KitProps $gl)) { if ($p.Name -notlike '_*' -and $p.Value) { , @($p.Name, "$($p.Value)") } } }) + $script:KitGateBuiltinLabels) }   # cached per process
   foreach ($l in $script:KitGateLabels) { if ($l[0] -and $Kind -match $l[1]) { return $l[0] } }
   'other'
 }
@@ -107,7 +107,7 @@ function Update-KitCpuStats($Prior, [datetime]$Now = (Get-Date), $Shells = @()) 
   if ($dt -ge 60 -and $dt -le 7200) {   # an older snapshot gives a long average: no sample
     $cores = [math]::Max(1, [Environment]::ProcessorCount); $pa = $Prior.acc; $pct = @{}; $byId = @{}; $kids = @{}
     foreach ($p in $procs) { $byId[$p.Id] = $p; if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.Generic.List[int]]::new() }; $kids[$p.ParentId].Add($p.Id)
-      $was = if ($pa) { $pa."$(& $key $p)" }; $base = if ($null -ne $was) { [double]$was } elseif ($p.Created -and [datetime]$p.Created -gt $prevAt) { 0 } else { $null }
+      $was = if ($pa) { (Get-KitMember $pa "$(& $key $p)") }; $base = if ($null -ne $was) { [double]$was } elseif ($p.Created -and [datetime]$p.Created -gt $prevAt) { 0 } else { $null }
       if ($null -ne $base) { $v = 100 * ([double]$p.Cpu - $base) / $dt / $cores; if ($v -gt 0.05) { $pct[$p.Id] = $v } } }
     $tree = { param([int]$id) $seen = @{}; $todo = [Collections.Generic.Queue[int]]::new(); $todo.Enqueue($id); while ($todo.Count) { $i = $todo.Dequeue(); if ($seen.ContainsKey($i) -or -not $byId.ContainsKey($i)) { continue }; $seen[$i] = 1; foreach ($c in @($kids[$i])) { if ($c -ne $i) { $todo.Enqueue($c) } } }; @($seen.Keys) }
     $inG = @{}; $g = [ordered]@{}
@@ -167,11 +167,11 @@ function Format-KitCpuCard($cpu) {
   $ss = @($cpu.samples | Where-Object { $_ }); $last = if ($ss.Count) { $ss[-1] }
   $hot = { param($v, $s) [double]$v -gt 80 -and [int]$s -ge 300 }   # TODO-PARAM (fixed default: 80% for 5+ min)
   if (-not $ss.Count) { return "<div class='st cpu' data-fit><div class=k>CPU · 24 h</div><div class=s>no sample yet: the next sweep compares CPU time with this one</div></div>" }
-  $names = @($ss | ForEach-Object { if ($_.g -is [Collections.IDictionary]) { @($_.g.Keys) } elseif ($_.g) { @($_.g.PSObject.Properties.Name) } } | Select-Object -Unique | Sort-Object)   # this sweep's sample: a dictionary; older ones: from JSON
+  $names = @($ss | ForEach-Object { if ($_.g -is [Collections.IDictionary]) { @($_.g.Keys) } elseif ($_.g) { @((Get-KitProps $_.g).Name) } } | Select-Object -Unique | Sort-Object)   # this sweep's sample: a dictionary; older ones: from JSON
   $one = { param([string]$nm, $vals, [string]$sub) $now = [double]@($vals)[-1]; $pk = [double](@($vals) + 0 | Measure-Object -Maximum).Maximum
     $tn = if (& $hot $now $last.s) { 'hot' } elseif ($pk -gt 80) { 'warn' } else { '' }
     "<div class='cpi f $tn' title='$(& $e "${nm}: now $(& $n1 $now)% · 24 h peak $(& $n1 $pk)%")'><div class=tn>$(& $e $nm)<span class=cv>$(& $n1 $now)<small>%</small></span></div>$(& $spark $vals $(if ($tn -eq 'hot') { 'act' } elseif ($tn) { 'watch' } else { 'slate' }) "$sub, 24 h" 'peak' 0 '%' -NoNow)</div>" }
-  $items = @(& $one 'whole machine' @($ss | ForEach-Object { [double]$_.all }) 'CPU %') + @(foreach ($nm in $names) { & $one $nm @($ss | ForEach-Object { if ($_.g -and $null -ne $_.g.$nm) { [double]$_.g.$nm } else { 0 } }) 'CPU %' })
+  $items = @(& $one 'whole machine' @($ss | ForEach-Object { [double]$_.all }) 'CPU %') + @(foreach ($nm in $names) { & $one $nm @($ss | ForEach-Object { if ($_.g -and $null -ne (Get-KitMember $_.g $nm)) { [double](Get-KitMember $_.g $nm) } else { 0 } }) 'CPU %' })
   $tops = @($ss | ForEach-Object { $s0 = $_; @($_.top | Where-Object { $_ }) | ForEach-Object { [pscustomobject]@{ k = "$($_.pid)|$($_.n)"; n = $_.n; pid = $_.pid; p = [double]$_.p; o = "$($_.o)"; c = "$($_.c)"; at = $s0.at; s = $s0.s; nowS = [bool]($s0 -eq $last) } } } | Group-Object k | ForEach-Object { $gp = @($_.Group | Sort-Object { [datetime]$_.at }); $pk = ($gp | Measure-Object p -Maximum).Maximum
       [pscustomobject]@{ n = $gp[-1].n; pid = $gp[-1].pid; o = @($gp.o | Where-Object { $_ })[-1]; c = $gp[-1].c; now = $(if ($gp[-1].nowS) { $gp[-1].p }); pk = $pk; hot = [bool]@($gp | Where-Object { & $hot $_.p $_.s }).Count; last = $gp[-1].at } } | Sort-Object { - $_.pk } | Select-Object -First 8)
   $topHtml = if ($tops.Count) { "<div class=cpt><div class=sh4>Top other processes (10%+ of the machine between two sweeps)</div>" + (@($tops | ForEach-Object { "<div class='cpo f$(if ($_.hot) { ' hot' })' title='$(& $e $(if ($_.c) { $_.c } else { $_.n }))'><span class=cn0>$(& $e $_.n) <small>pid $($_.pid)$(if ($_.o) { " · $($_.o)" })</small></span><span class=gc>now $(if ($null -ne $_.now) { "$(& $n1 $_.now)%" } else { '—' })</span><span class=gc>24 h peak $(& $n1 $_.pk)%</span></div>" }) -join '') + '</div>' } else { '<div class=s>no other process over 10% of the machine in 24 h</div>' }
@@ -181,15 +181,15 @@ function Format-KitCpuCard($cpu) {
 function Format-KitQaTile($qa, [datetime]$At = (Get-Date)) {
   $ds = @($qa.days | Where-Object { $_ }); $tot = { param($d) [int]$d.pass + [int]$d.fail + [int]$d.nt + [int]$d.oos }
   $kinds = @(@('pass', 'PASS', 'q-p'), @('fail', 'FAIL', 'q-f'), @('nt', 'NOT_TESTED', 'q-n'), @('oos', 'OUT_OF_SCOPE', 'q-o'))
-  $sm = @{}; foreach ($kd in $kinds) { $kn = $kd[0]; $sm[$kn] = [int](@($ds | ForEach-Object { [int]$_.$kn }) + 0 | Measure-Object -Sum).Sum }
+  $sm = @{}; foreach ($kd in $kinds) { $kn = $kd[0]; $sm[$kn] = [int](@($ds | ForEach-Object { [int](Get-KitMember $_ $kn) }) + 0 | Measure-Object -Sum).Sum }
   $n = $sm.pass + $sm.fail + $sm.nt + $sm.oos; if (-not $n) { return }
   $inScope = $sm.pass + $sm.fail + $sm.nt; $pct = if ($inScope) { "$([math]::Round(100 * $sm.pass / $inScope))<small>% pass</small>" } else { '—<small> pass</small>' }   # OUT_OF_SCOPE never counts against the pass rate
   $mx = [math]::Max(1, (@($ds | ForEach-Object { & $tot $_ }) + 0 | Measure-Object -Maximum).Maximum); $ic = [cultureinfo]::InvariantCulture; $today = $At.ToString('yyyy-MM-dd')
   $cols = @(foreach ($d in $ds) { $t = & $tot $d; $dl = try { ([datetime]$d.day).ToString('ddd dd', $ic) } catch { $d.day }
-      "<span class='dbc$(if (-not $t) { ' z' })' title='$(& $e "$dl · $(@($d.runs).Count) runs · $(@($kinds | ForEach-Object { "$([int]$d.($_[0])) $($_[1])" }) -join ' · ')")'><b>$(if ($t) { $t } else { '—' })</b><i class=qs style='height:calc((100% - 12px) * $(& $n1 (100 * $t / $mx)) / 100)'>$(@($kinds | Where-Object { [int]$d.($_[0]) } | ForEach-Object { "<i class=$($_[2]) style='flex:$([int]$d.($_[0]))'></i>" }) -join '')</i></span>" })
+      "<span class='dbc$(if (-not $t) { ' z' })' title='$(& $e "$dl · $(@($d.runs).Count) runs · $(@($kinds | ForEach-Object { "$([int](Get-KitMember $d ($_[0]))) $($_[1])" }) -join ' · ')")'><b>$(if ($t) { $t } else { '—' })</b><i class=qs style='height:calc((100% - 12px) * $(& $n1 (100 * $t / $mx)) / 100)'>$(@($kinds | Where-Object { [int](Get-KitMember $d ($_[0])) } | ForEach-Object { "<i class=$($_[2]) style='flex:$([int](Get-KitMember $d ($_[0])))'></i>" }) -join '')</i></span>" })
   $axis = @($ds | ForEach-Object { if ($_.day -eq $today) { '<span class=x>today</span>' } else { "<span>$(try { ([datetime]$_.day).ToString('ddd', $ic) } catch { $_.day })</span>" } }) -join ''
   $legend = @($kinds | Where-Object { $sm[$_[0]] } | ForEach-Object { "<span class=ql><i class=$($_[2])></i>$($_[1]) $($sm[$_[0]])</span>" }) -join ''
-  $cz = @($qa.causes.PSObject.Properties | Where-Object { [int]$_.Value } | Sort-Object { - [int]$_.Value } | ForEach-Object { "$(& $e $_.Name) $([int]$_.Value)" })
+  $cz = @((Get-KitProps $qa.causes) | Where-Object { [int]$_.Value } | Sort-Object { - [int]$_.Value } | ForEach-Object { "$(& $e $_.Name) $([int]$_.Value)" })
   "<div class=st data-fit><div class=k>Test runs, 7 days</div><div class=v>$n<small> checks · </small>$pct</div>$(if ($cz.Count) { "<div class=s>NOT_TESTED: $($cz -join ' · ')</div>" })" +
   "<figure class='dbr qbr'><div class=dbw role=img aria-label='checks per day, 7 days'>$($cols -join '')</div><div class=dbx>$axis</div><figcaption>$legend</figcaption></figure></div>"
 }

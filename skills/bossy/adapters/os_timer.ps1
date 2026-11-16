@@ -15,7 +15,7 @@ function Get-KitOsBeatAdapter { $v = "$(Get-KitSetting 'supervise.osTimer' '')".
 function Get-KitOsBeatArgs([double]$Minutes) {
   $pw = (Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -First 1).Source; if (-not $pw) { $pw = 'pwsh' }
   $argv = @('-NoProfile', '-NonInteractive', '-File', "$($KitCmd.orch)", 'heartbeat', 'tick'); $tick = "-NoProfile -NonInteractive -File `"$($KitCmd.orch)`" heartbeat tick"
-  @{ name = "claude-crew-heartbeat-$([Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes("$($KitConf.Kit)".ToLower()))).Substring(0, 8).ToLower())"
+  @{ name = "claude-crew-heartbeat-$((Get-KitHash ("$($KitConf.Kit)".ToLower()) SHA1).Substring(0, 8).ToLower())"
      minutes = [int][math]::Max(1, $Minutes); pwsh = $pw; tick = $tick; argv = $argv; command = "`"$pw`" $tick" }
 }
 # adapter:scheduler/windows: Task Scheduler, this user while logged on; conhost --headless: no console flash; runs on battery, catches up after sleep

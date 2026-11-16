@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L29 sweep · L183 wt · L504 stack · L686 gate · L1002 check · L1311 pipes · L1368 guard · L2216 dir ·
-  L2226 checkpoint · L2255 prior · L2293 tracker · L2315 task spec · L2491 scope · L2538 host
+Sections: L23 init · L30 sweep · L184 wt · L505 stack · L687 gate · L1003 check · L1312 pipes · L1369 guard · L2217 dir ·
+  L2227 checkpoint · L2256 prior · L2294 tracker · L2316 task spec · L2492 scope · L2539 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -26,6 +26,7 @@ $__rest = @($args | Select-Object -Skip 1)
 # an abandoned gate mutex is ours
 function Lock-Gate($m) { try { $m.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $true } }
 . (Join-Path $PSScriptRoot 'lib.ps1')
+$script:TscNoOutput = [string]$script:KitVocab.tscNoOutput   # unset: no typecheck command
 # ---- sweep: worktrees and local branches of every repo (wt remove, cleanup); nothing unpushed, dirty or held goes
 # one checkout per repo: repos[].checkout, git checkouts under reposRoot, the kit
 function Get-KitRepoDirs {
@@ -48,7 +49,7 @@ function Get-KitWorktrees([string]$Repo) {   # git worktree list as objects; bra
 # linkDefaults: [{ markers: [<file>], dir }] a worktree links from its source (dir node_modules: the node farm); unset = node_modules + .venv
 function Get-DepLinkDefaults {
   $l = @(Get-KitSetting 'linkDefaults' $null | Where-Object { $_.dir -and @($_.markers).Count })
-  if ($l.Count -or ($__cfg -and $__cfg.PSObject.Properties.Name -contains 'linkDefaults')) { return $l }   # [] = link nothing
+  if ($l.Count -or ($__cfg -and (Get-KitProps $__cfg).Name -contains 'linkDefaults')) { return $l }   # [] = link nothing
   @([pscustomobject]@{ markers = @('package.json'); dir = 'node_modules' }, [pscustomobject]@{ markers = @('pyproject.toml', 'requirements.txt'); dir = '.venv' })
 }
 # never deleted: protectedBranchesBase (default main/master/develop/release/*), localenv/* (envy's env branches); protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
@@ -144,7 +145,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     if (-not $ctx[$rp].keep) { $ctx[$rp].keep = Get-KitKeepBranchRx $rp }
     if ($br -and $br -match $ctx[$rp].keep) { continue }   # env / default worktrees: their owners'
     if (git -C $d status --porcelain 2>$null) { & $keep "$d$(if ($br) { " ($br)" })" 'uncommitted files'; if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($idleH / 24)) d: kept (never deleted; commit or remove it by hand)" }; continue }
-    # an unclaimed deploymerge-* (bossy.ps1 deploy merge) idle idle.graceMinutes, min 60 (CI waits write nothing): blocks the next merge
+    # an unclaimed deploymerge-* (deploy merge) idle idle.graceMinutes (min 60; CI waits write nothing) blocks the next merge
     $dm = $w.Name -like 'deploymerge-*' -and $d.ToLower() -notin $claimed -and $newest -and ($now - $newest).TotalMinutes -ge [math]::Max(60, [double](Get-KitParam 'idle.graceMinutes'))
     if (-not $dm -and $idleH -lt $IdleHours) { & $keep "$d ($br)" "active, changed $([int]($idleH * 60)) min ago"; continue }
     if (-not (Invoke-GitFetch -Dir $d)) { & $keep $d 'git fetch failed'; continue }
@@ -252,7 +253,7 @@ function Sync-Generated($d, $t, $head0) {
 function Meta($d, $k, $v) { $f = Join-Path (GitDir $d) "claude-$k"; if ($PSBoundParameters.ContainsKey('v')) { Write-KitAtomic $f "$v`n" } elseif (Test-Path $f) { Get-Content $f } }
 function DepHash($pkgJson) {
   try { $p = Get-Content $pkgJson -Raw | ConvertFrom-Json } catch { return '' }
-  (@('dependencies', 'devDependencies') | ForEach-Object { if ($p.$_) { $p.$_.PSObject.Properties | Sort-Object Name | ForEach-Object { "$($_.Name)@$($_.Value)" } } }) -join ';'
+  (@('dependencies', 'devDependencies') | ForEach-Object { if ((Get-KitMember $p $_)) { (Get-KitProps (Get-KitMember $p $_)) | Sort-Object Name | ForEach-Object { "$($_.Name)@$($_.Value)" } } }) -join ';'
 }
 function Add-DepLinks($path, $src, $target) {
   $made = @(); $ld = @(Get-DepLinkDefaults)
@@ -323,7 +324,7 @@ switch ($Action) {
     }
     if (-not $LinkFrom) {
       if ($r) {
-        $cand = if ($r.linkFromByTarget -and $r.linkFromByTarget.$Target) { $r.linkFromByTarget.$Target } elseif ($r.linkFrom -and $Target -eq $r.target) { $r.linkFrom } else { $null }
+        $cand = if ($r.linkFromByTarget -and (Get-KitMember $r.linkFromByTarget $Target)) { (Get-KitMember $r.linkFromByTarget $Target) } elseif ($r.linkFrom -and $Target -eq $r.target) { $r.linkFrom } else { $null }
         if ($cand -and -not (Test-Path $cand)) { throw "kit.local.json dep source $cand ($(Split-Path $Repo -Leaf), target $Target) is missing: create it (git worktree add --detach <path> origin/$Target + frozen-lockfile install) or fix kit.local.json" }
         if ($cand) { $LinkFrom = $cand; "linking dependencies from $cand (kit.local.json, target $Target)" }
       }
@@ -450,7 +451,7 @@ switch ($Action) {
     # prune, then the branch when nothing is lost (merged, upstream gone, on the host): lib.ps1 "sweep"
     $finish = { param($rp, $br) git -C $rp worktree prune 2>$null
       if ($br) { try { $bv = Get-KitBranchVerdict $rp $br @{} -IdleHours 0; if ($bv.delete) { git -C $rp branch -D $br 2>$null | Out-Null; "deleted branch $br ($($bv.why))" } else { "kept branch ${br}: $($bv.why)" } } catch { "kept branch ${br}: verdict failed ($($_.Exception.Message))" } } }
-    if (-not (Test-Path -LiteralPath $Dir)) {   # removed already (a second call, by hand): prune + branch; a path outside the roots and unknown = typo
+    if (-not (Test-Path -LiteralPath $Dir)) {   # removed already: prune + branch; unknown and outside the roots = typo
       if ($reg) { & $finish $reg.repo $reg.wt.branch; "already gone: $Dir (record pruned in $($reg.repo))"; exit 0 }
       if ($inRoot) { "already gone: $Dir (no folder, no repo lists it)"; exit 0 }
       throw "no such folder: $Dir (and no repo lists it as a worktree)"
@@ -490,7 +491,7 @@ switch ($Action) {
       foreach ($u in $farmUndo) { $src = $u[1][0]; $wtr = $u[1][1]; $null = Set-NodeModules $u[0] $src (git -C $Dir rev-parse --path-format=absolute --git-common-dir | Split-Path) $wtr }
       throw "git worktree remove failed for $Dir (links restored): $(($gitSaid | Where-Object { $_.Trim() }) -join ' ' -replace '\s+', ' '); fix that, or -Force"
     }
-    # git dropped the record but a locked file kept the folder: never restore links into it (a junction skeleton no sweep could see)
+    # git dropped the record, a locked file kept the folder: no links back into it (a skeleton no sweep sees)
     if (Test-Path -LiteralPath $full) { $lv = Get-KitLeftoverVerdict $full $repoDirs; if (-not $lv.delete) { "left $Dir in place: $($lv.why)" } else { try { Remove-KitLeftover $full } catch { "left $Dir in place: $($_.Exception.Message)" } } }
     & $finish $main $br
     "removed $Dir"
@@ -545,8 +546,8 @@ function NodeSpecCmd { $f = "$(Get-KitSetting 'tests.fallbackRunner' '')".Trim()
 function Get-NodeTools($d) {
   $pkg = ReadJson (Join-Path $d 'package.json')
   $deps = @()
-  foreach ($k in 'dependencies', 'devDependencies') { if ($pkg.$k) { $deps += $pkg.$k.PSObject.Properties.Name } }
-  $scripts = if ($pkg.scripts) { $pkg.scripts.PSObject.Properties.Name } else { @() }
+  foreach ($k in 'dependencies', 'devDependencies') { if ((Get-KitMember $pkg $k)) { $deps += (Get-KitProps (Get-KitMember $pkg $k)).Name } }
+  $scripts = if ($pkg.scripts) { (Get-KitProps $pkg.scripts).Name } else { @() }
   $jestCfg = @('jest-unit.config.json', 'jest.config.js', 'jest.config.ts', 'jest.config.json', 'jest.config.cjs', 'jest.config.mjs') | Where-Object { Test-Path (Join-Path $d $_) } | Select-Object -First 1
   [pscustomobject]@{
     Deps = $deps; Scripts = $scripts
@@ -590,14 +591,14 @@ function Get-Stack($d) {
   elseif (Test-Path (Join-Path $d 'angular.json')) {
     $s = 'angular'; $n = Get-NodeTools $d; $deps = @('node_modules')
     $tsc = if (Test-Path (Join-Path $d 'tsconfig.app.json')) { 'tsconfig.app.json' } else { 'tsconfig.json' }
-    $c.typecheck = "npx tsc -p $tsc --noEmit"
+    if ($script:TscNoOutput) { $c.typecheck = "npx tsc -p $tsc $script:TscNoOutput" }
     $c.build = 'npx ng build --configuration production'
     $ngTest = $null
     try {
       $aj = Get-Content (Join-Path $d 'angular.json') -Raw | ConvertFrom-Json
-      $bt = foreach ($p in $aj.projects.PSObject.Properties) { $b = if ($p.Value.architect.build) { $p.Value.architect.build } else { $p.Value.targets.build }; if ($b) { $b; break } }
-      if ($bt -and -not ($bt.configurations -and $bt.configurations.PSObject.Properties.Name -contains 'production')) { $c.build = 'npx ng build' }
-      foreach ($p in $aj.projects.PSObject.Properties) {
+      $bt = foreach ($p in (Get-KitProps $aj.projects)) { $b = if ($p.Value.architect.build) { $p.Value.architect.build } else { $p.Value.targets.build }; if ($b) { $b; break } }
+      if ($bt -and -not ($bt.configurations -and (Get-KitProps $bt.configurations).Name -contains 'production')) { $c.build = 'npx ng build' }
+      foreach ($p in (Get-KitProps $aj.projects)) {
         $t = if ($p.Value.architect.test) { $p.Value.architect.test } elseif ($p.Value.targets.test) { $p.Value.targets.test } else { $null }
         if ($t) { $ngTest = [string]$t.builder; break }
       }
@@ -613,7 +614,7 @@ function Get-Stack($d) {
     $n = Get-NodeTools $d; $deps = @('node_modules')
     $s = if ($n.Deps -contains 'react-native') { 'react-native' } elseif ($n.Deps -contains 'next') { 'node-next' } elseif ($n.Deps -contains 'react') { 'node-react' } else { 'node' }
     $pm = Get-NodePm $d
-    if ($n.Ts) { $tp = TsProject $d; $c.typecheck = if ($tp) { "npx tsc -p $tp --noEmit" } else { 'npx tsc --noEmit' } }
+    if ($n.Ts -and $script:TscNoOutput) { $tp = TsProject $d; $c.typecheck = if ($tp) { "npx tsc -p $tp $script:TscNoOutput" } else { "npx tsc $script:TscNoOutput" } }
     if ($n.Vitest) { $c.test = 'npx vitest run {tests}' }
     elseif ($n.Jest) { $c.test = 'npx jest ' + $(if ($n.JestCfg) { "--config $($n.JestCfg) " } else { '' }) + '{tests} --no-watchman --forceExit' }
     elseif ($n.Scripts -contains 'test') { $c.test = NodeRun $pm 'test' '{tests}' }
@@ -651,7 +652,7 @@ function Get-Stack($d) {
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
   # adapters/stack_presets.ps1; stack.presets: the stack adapter names to try (unset = all, [] = none: only core stacks + .claude-stack.json)
-  $on = Get-KitSetting 'stack.presets' $null; $raw = $__cfg.stack -and $__cfg.stack.PSObject.Properties.Name -contains 'presets'
+  $on = Get-KitSetting 'stack.presets' $null; $raw = $__cfg.stack -and (Get-KitProps $__cfg.stack).Name -contains 'presets'
   foreach ($plugin in @(@(if ($KitAdapters.stack) { $KitAdapters.stack.GetEnumerator() }) | Where-Object { $_.Value -and (-not $raw -or @($on) -contains $_.Key) } | ForEach-Object Value)) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
   if (-not $s -and -not $ovr.stack -and ($android -or (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile'))) { throw "stack: no preset detects $d (a .claude-stack.json sets one; README ""Adapters"")" }
@@ -659,7 +660,7 @@ function Get-Stack($d) {
 
   if ($ovr) {
     if ($ovr.stack) { $s = $ovr.stack }
-    if ($ovr.commands) { foreach ($p in $ovr.commands.PSObject.Properties) { $c[$p.Name] = $p.Value } }
+    if ($ovr.commands) { foreach ($p in (Get-KitProps $ovr.commands)) { $c[$p.Name] = $p.Value } }
     if ($ovr.deps) { $deps = @($ovr.deps) }
   }
   [pscustomobject]@{ stack = $s; dir = $d; deps = $deps; commands = [pscustomobject]$c }
@@ -679,7 +680,7 @@ if (-not $hit) { throw "No known stack under $Dir (up to the git root): add a .c
 if ($Json) { $hit | ConvertTo-Json -Depth 4 }
 else {
   "stack: $($hit.stack)   dir: $($hit.dir)"
-  $hit.commands.PSObject.Properties | Where-Object Value | ForEach-Object { '  {0,-9} {1}' -f $_.Name, $_.Value }
+  (Get-KitProps $hit.commands) | Where-Object Value | ForEach-Object { '  {0,-9} {1}' -f $_.Name, $_.Value }
 }
 }
 
@@ -699,7 +700,7 @@ $script:GateKinds = [ordered]@{
   'android-test' = @('gradlew.*\btest|connectedAndroidTest|lintDebug', 6)
   'gradle' = @('gradle(w|w\.bat)?\b', 3.5)
   'rn-bundle' = @('export:embed|react-native bundle|expo export', 3)
-  'typecheck' = @('^\s*((npx|yarn|pnpm)\s+(exec\s+)?)?(vue-)?tsc\b[^&|;]*--noEmit', 2)   # before e2e: tsc -p cypress/tsconfig.json is no e2e run
+  'typecheck' = @("^\s*((npx|yarn|pnpm)\s+(exec\s+)?)?(vue-)?tsc\b[^&|;]*$([regex]::Escape($script:TscNoOutput))", 2)   # before e2e: tsc -p cypress/tsconfig.json is no e2e run
   'cypress' = @('cypress', 5)   # 3.5 GB runner + its browser
   'e2e' = @('playwright|\b(npm|yarn|pnpm|bun)\s+(run\s+)?e2e\b', 3.5)
   'docker' = @('\bdocker(\.exe)?"?\s+(compose\s+(-\S+(\s+(?!-)\S+)?\s+)*)?(build|run|up|buildx\s+build)\b|\bdocker-compose(\.exe)?\s+(-\S+(\s+(?!-)\S+)?\s+)*(build|run|up)\b', 3)
@@ -1037,7 +1038,7 @@ function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
   Write-Host "[check] stale-env: $($Stale -join ', ') (the venv lacks them: not a test failure)"
   foreach ($m in @($Stale | Where-Object { -not $hits[$_] })) { Write-Host "[check] stale-env: no requirements.txt line for $m`: add its package (the import name may differ), then install" }
   $quoted = @($hits.Values | Where-Object { $_ } | ForEach-Object { '"' + $_ + '"' }) -join ' '; if (-not $quoted) { return }
-  $cons = Join-Path (Get-KitPath logs -Create) "constraints-$([Convert]::ToHexString([Security.Cryptography.MD5]::HashData([Text.Encoding]::UTF8.GetBytes($Dir.ToLower()))).Substring(0, 12)).txt"; $pins -replace '\[[^\]]*\]' | Set-Content -LiteralPath $cons -Encoding utf8
+  $cons = Join-Path (Get-KitPath logs -Create) "constraints-$((Get-KitHash ($Dir.ToLower()) MD5).Substring(0, 12)).txt"; $pins -replace '\[[^\]]*\]' | Set-Content -LiteralPath $cons -Encoding utf8
   Write-Host "[check] ENV-FIX to kitty (shared venv, when no build uses it; never run it from a worktree): `"$venvPy`" -m pip install -c `"$cons`" $quoted"
 }
 function Invoke-Check {
@@ -1056,7 +1057,7 @@ $ErrorActionPreference = 'Stop'
 $script:anyUnrun = $false
 $k = $PSScriptRoot
 $st = & $KitCmd.dev stack -Dir $Dir -Json | ConvertFrom-Json
-function Hash12([string]$s) { [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))).Replace('-', '').Substring(0, 12) }
+function Hash12([string]$s) { (Get-KitHash $s MD5).Substring(0, 12) }
 Write-Host "[check] $($st.stack) in $($st.dir)"
 
 # @{upstream} alone = the pushed branch: misses commits
@@ -1190,7 +1191,7 @@ if ($Step -eq 'e2e') {
     foreach ($s in $why.Keys) { $r = $why[$s]; Write-Host "  $s <- $(($r | Select-Object -First 3) -join '; ')$(if ($r.Count -gt 3) { " (+$($r.Count - 3) more)" })" }
     foreach ($s in $why.Keys) { $fd = if ($split) { & $fold $s } else { if (-not $groups.Contains('')) { $groups[''] = [Collections.Generic.List[string]]::new() }; '' }; $groups[$fd].Add($s) }
   }
-  $envs = [ordered]@{}; if ($recipe.env) { foreach ($p in $recipe.env.PSObject.Properties) { $envs[$p.Name] = "$($p.Value)" } }
+  $envs = [ordered]@{}; if ($recipe.env) { foreach ($p in (Get-KitProps $recipe.env)) { $envs[$p.Name] = "$($p.Value)" } }
   $runs = @(foreach ($fd in $groups.Keys) { $ss = @($groups[$fd]); $(if (-not $ss.Count) { $cmd } else { $cmd.Replace('{specs}', $(if ($cmd -match '--spec[=\s]+"?\{specs\}') { $ss -join ',' } else { $ss -join ' ' })) }) })
   if (-not $runs.Count) { Write-Host "[check] e2e NOT_TESTED: no spec file found (tests.e2e.specs)"; exit 5 }
   if ($Show) { if ($envs.Count) { "e2e env: $(@($envs.Keys | ForEach-Object { "$_=$($envs[$_])" }) -join ' ')" }; foreach ($r in $runs) { "e2e : $r" }; exit 0 }
@@ -1207,7 +1208,7 @@ if ($Step -eq 'e2e') {
 $steps = if ($Step -eq 'quick') { 'compile', 'typecheck', 'lint' } else { @($Step) }
 $ran = 0
 foreach ($s in $steps) {
-  $cmd = $st.commands.$s
+  $cmd = (Get-KitMember $st.commands $s)
   if (-not $cmd -and $s -eq 'test' -and (Test-Path -LiteralPath (Join-Path $st.dir 'package.json'))) { $cmd = "node `"$($KitCmd.spec)`" {tests}" }
   if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
   if ($s -eq 'test' -and $cmd -match 'spec\.mjs' -and -not $Show) {
@@ -1289,7 +1290,7 @@ foreach ($s in $steps) {
   else {
     $lk = if ($s -eq 'test') { Get-TestLock @($Tests -split '[,\s]+' | Where-Object { $_ }) }
     if ($lk -and -not (Use-KitLock "$($lk.lock)" $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Split-Path (Get-CheckRepo).top -Leaf }) $st.dir)) { Write-Host "[check] test not started: lock $($lk.lock) still held by $($script:KitLockRefused.holder) (repos[].exclusiveTests); retry when it ends"; exit 3 }
-    # a python test run's output goes to a log too: its "No module named" lines tell a stale venv from a failed test
+    # python test output is logged too: "No module named" tells a stale venv from a failed test
     $runLog = if ($s -eq 'test' -and $pyRun) { Join-Path (Get-KitPath logs -Create) "check-$(Hash12 $st.dir.ToLower())-$PID.log" }   # per run: parallel checks of one dir
     if ($runLog) { Write-Host "[check] test output goes to $runLog and prints when the run ends"; $env:PYTHONUTF8 = '1' }
     try { & $KitCmd.dev gate -Dir $st.dir -Cmd $(if ($runLog) { "($cmd) > `"$runLog`" 2>&1" } else { $cmd }); $rc = $LASTEXITCODE } finally {
@@ -1731,7 +1732,7 @@ function OffLayout([string]$p, [string]$base) {
   $p = [IO.Path]::GetFullPath(($p -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'))
   foreach ($r in $layout) {
     $rel = [IO.Path]::GetRelativePath($r[0], $p).Replace('\', '/'); if ($rel -match '^\.\.(/|$)|^\.$' -or [IO.Path]::IsPathRooted($rel)) { continue }
-    if (-not @($script:KitPathMap.($r[1]).PSObject.Properties.Value | ForEach-Object { ([string]$_).TrimEnd('/') } | Where-Object { $rel -eq $_ -or ($_ -notin 'work', 'cache', 'logs' -and $rel.StartsWith("$_/")) }).Count) { "$($r[1])/$rel" }
+    if (-not @((Get-KitProps (Get-KitMember $script:KitPathMap ($r[1]))).Value | ForEach-Object { ([string]$_).TrimEnd('/') } | Where-Object { $rel -eq $_ -or ($_ -notin 'work', 'cache', 'logs' -and $rel.StartsWith("$_/")) }).Count) { "$($r[1])/$rel" }
   }
 }
 # Deny here, outside captured output
@@ -2344,7 +2345,7 @@ function Get-KitSpecName($Spec) {
   ([regex]::Replace([string](Get-KitSetting 'tracker.nameFormat' '{prefix} {title}'), '\{(\w+)\}', { param($m) [string]$v[$m.Groups[1].Value] }) -replace '\s{2,}', ' ').Trim()
 }
 # a spec doc's link: docs.<doc key>, or the legacy docs.human / docs.ai of the first two process docs
-function Get-KitSpecDocUrl($Spec, $Doc, [int]$At) { $u = $Spec.docs."$($Doc.key)"; if (-not $u) { $u = $Spec.docs.(@('human', 'ai')[$At]) }; "$u" }
+function Get-KitSpecDocUrl($Spec, $Doc, [int]$At) { $u = (Get-KitMember $Spec.docs "$($Doc.key)"); if (-not $u) { $u = (Get-KitMember $Spec.docs (@('human', 'ai')[$At])) }; "$u" }
 # the description: doc links (process.docs, only once they exist), then tracker.taskTemplate sections (Problem, Goal, Items, Acceptance, Links)
 function Format-KitTaskText($Spec) {
   $ln = @(); $dk = @(Get-KitProcessDocs); for ($i = 0; $i -lt $dk.Count; $i++) { if ($u = Get-KitSpecDocUrl $Spec $dk[$i] $i) { $ln += "**$($dk[$i].label):** [open]($u)", '' } }
@@ -2371,7 +2372,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
   $r = ConvertTo-KitTaskRender $sp $Task
   $pf = @(if (-not $Spec.proseOk) { Test-KitProse -Kind task-description -Text "$($r.name)`n`n$($r.description)`n`n$(@($r.decisions.text) -join "`n")" }); if ($pf.Count) { throw "tracker spec refused: $($pf.Count) prose finding(s): $($pf -join '; ')" }
   if ($DryRun) { return $r }
-  if ($Task) {   # kept from the live text: testing-doc links the spec lacks (devtools.py finish writes them), kit sections (rollup)
+  if ($Task) {   # kept from the live text: doc links the spec lacks (devtools.py finish), rollup sections
     Clear-TrackerMemo $Task; $cur = "$((Get-TrackerTask $Task).description)" -replace "`r`n", "`n"; $nd = $r.description
     $lbs = @(Get-KitProcessDocs | ForEach-Object label)
     $docs = @($cur -split "`n" | Where-Object { $l = $_; @($lbs | Where-Object { $l.StartsWith("**$($_):**") -and -not $nd.Contains("$($_):") }).Count }); if ($docs.Count) { $nd = (($docs -join "`n`n") + "`n`n" + $nd) }
@@ -2451,10 +2452,10 @@ function Invoke-Tracker {
     }
     'render' { if (-not $__sp) { 'usage: tracker render -Spec <json>'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -DryRun) }
     'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> (merged by key into the stored spec)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id) }
-    'create' {   # -Spec: rendered (crafty.ps1 "task spec"); free text only for a keyed QA / watch defect (-Key: updates that key's open task)
+    'create' {   # -Spec: rendered ("task spec"); free text only for a keyed QA / watch defect (-Key updates its open task)
       if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
       $__specHint = 'tracker create -Spec <json> (crafty.ps1 "task spec": kind, title, problem, goal, items, acceptance, links)'
-      if ("$($__trOpt.Key)" -notmatch '^(qa|watch)-') { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (-Key qa-<run> or watch-<env>-<signature>$(if ($__trOpt.Key) { "; '$($__trOpt.Key)' is neither" }))"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs; 2026-11-16: a made-up key bypassed the spec
+      if ("$($__trOpt.Key)" -notmatch '^(qa|watch)-') { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (-Key qa-<run> or watch-<env>-<signature>$(if ($__trOpt.Key) { "; '$($__trOpt.Key)' is neither" }))"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs; 2026-11-16: a made-up key skipped the spec
       if ((($__trOpt.Parent -and $__trOpt.Parent -ne '-') -or (Test-KitKindName $__trOpt.Name)) -and @(Get-KitTaskTextGaps $__trOpt.Name 'x').Count) { "tracker create refused: a kit task's text (a subtask or a [Kind] name) is rendered from a spec: $__specHint; free text only for a keyed [Bug]"; exit 1 }
       $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }

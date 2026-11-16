@@ -23,7 +23,7 @@ function Get-KitLogErrors([string[]]$Files, $Sizes) {
   if (-not $Sizes) { $Sizes = @{} }   # first round: no sizes yet
   foreach ($x in $Files) {
     $i = Get-Item $x -ErrorAction SilentlyContinue; if (-not $i) { continue }
-    $from = [long]$Sizes.($i.FullName); if (-not $Sizes.Contains($i.FullName)) { $from = $i.Length } elseif ($from -gt $i.Length) { $from = 0 }   # rotated: from 0
+    $from = [long](Get-KitMember $Sizes ($i.FullName)); if (-not $Sizes.Contains($i.FullName)) { $from = $i.Length } elseif ($from -gt $i.Length) { $from = 0 }   # rotated: from 0
     $from = [math]::Max($from, $i.Length - 1MB)
     $new = if ($i.Length -gt $from) { $s = [IO.File]::Open($i.FullName, 'Open', 'Read', 'ReadWrite, Delete'); try { [void]$s.Seek($from, 'Begin'); [IO.StreamReader]::new($s).ReadToEnd() } finally { $s.Dispose() } } else { '' }
     $hits = @($new -split "`r?`n" | Where-Object { $_ -cmatch '\b(ERROR|FATAL)\b|Exception\b|Traceback|^\s*\w*Error:|(?i:\b(status|HTTP/\S+)\W+5\d\d\b)' })
@@ -177,5 +177,5 @@ function Get-KitStatusWaitLocalEnv {
 # ---- cpu: CPU per lane service on the supervise page (Update-KitCpuStats hook): its process tree root, pid + start checked
 function Get-KitCpuGroupsLocalEnv {
   foreach ($f in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -File -ErrorAction SilentlyContinue)) { $s = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { continue }
-    foreach ($p in @($s.services.PSObject.Properties | Where-Object { $_.Value.pid -and $_.Value.status -eq 'up' })) { if (Test-KitPid $p.Value.pid $p.Value.pstart) { [pscustomobject]@{ name = "$($f.BaseName) · $($p.Name)"; pid = [int]$p.Value.pid } } } }
+    foreach ($p in @((Get-KitProps $s.services) | Where-Object { $_.Value.pid -and $_.Value.status -eq 'up' })) { if (Test-KitPid $p.Value.pid $p.Value.pstart) { [pscustomobject]@{ name = "$($f.BaseName) · $($p.Name)"; pid = [int]$p.Value.pid } } } }
 }

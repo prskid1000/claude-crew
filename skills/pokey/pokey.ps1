@@ -26,7 +26,7 @@ foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filte
 # ---- lanes: qa.lanes { <lane>: { kind, parallel, followUp, devices } }; unset = one lane web (kind web)
 function Get-QaLanes {
   $cfg = Get-KitSetting 'qa.lanes' $null; $o = [ordered]@{}
-  if ($cfg) { foreach ($p in $cfg.PSObject.Properties) { $o[$p.Name] = [pscustomobject]@{ name = $p.Name; kind = [string]$(if ($p.Value.kind) { $p.Value.kind } else { $p.Name }) } } }
+  if ($cfg) { foreach ($p in (Get-KitProps $cfg)) { $o[$p.Name] = [pscustomobject]@{ name = $p.Name; kind = [string]$(if ($p.Value.kind) { $p.Value.kind } else { $p.Name }) } } }
   if (-not $o.Count) { $o['web'] = [pscustomobject]@{ name = 'web'; kind = 'web' } }
   $o
 }
@@ -159,7 +159,7 @@ function Locked([scriptblock]$b) {
 function Safe($s) { $s -replace '[^\w.-]', '_' }
 # README "Leases"; no holder fields: 6 h
 function LeaseLive($o, [string]$file) {
-  if ($null -eq $o.PSObject.Properties['holderPid']) { return ((Get-Date) - [datetime]$o.since).TotalHours -lt 6 }
+  if ($null -eq $o.PSObject.Members['holderPid']) { return ((Get-Date) - [datetime]$o.since).TotalHours -lt 6 }
   $v = [pscustomobject]@{ agent = "$($o.lease)"; holderPid = $o.holderPid; holderStart = $o.holderStart; seen = $o.seen }
   $live = Update-KitLease $v; $o | Add-Member -Force seen $v.seen; Write-KitAtomic $file ($o | ConvertTo-Json); $live
 }
@@ -209,21 +209,21 @@ switch ($Action) {
 # '<target><k>' = lane k of a local env (envy.ps1 envs -Json): the base target, its lane-1 URL ports moved to lane k's
 function Get-LaneTarget($cfg, [string]$name) {
   $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
-  if ($name -notmatch '^(?<b>.+?)(?<k>\d+)$' -or -not $cfg.targets.($Matches.b) -or -not (Test-Path -LiteralPath $envy)) { return $null }
-  $base = $cfg.targets.($Matches.b); $k = [int]$Matches.k; $urls = [string](@($base.web, $base.api) -join ' ')
+  if ($name -notmatch '^(?<b>.+?)(?<k>\d+)$' -or -not (Get-KitMember $cfg.targets ($Matches.b)) -or -not (Test-Path -LiteralPath $envy)) { return $null }
+  $base = (Get-KitMember $cfg.targets ($Matches.b)); $k = [int]$Matches.k; $urls = [string](@($base.web, $base.api) -join ' ')
   $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $envy, 'envs', '-Json') 60; $lanes = try { @($r.out | ConvertFrom-Json) } catch { @() }
   foreach ($g in @($lanes | Where-Object { $_.lane -eq 1 })) {
-    $one = @($g.ports.PSObject.Properties | Where-Object { $urls -match ":$($_.Value)(?!\d)" }); $lk = @($lanes | Where-Object { $_.group -eq $g.group -and $_.lane -eq $k })[0]
+    $one = @((Get-KitProps $g.ports) | Where-Object { $urls -match ":$($_.Value)(?!\d)" }); $lk = @($lanes | Where-Object { $_.group -eq $g.group -and $_.lane -eq $k })[0]
     if (-not $one.Count -or -not $lk) { continue }
     $t = $base | ConvertTo-Json -Depth 10 | ConvertFrom-Json
-    foreach ($f in 'web', 'api') { if ($t.$f) { foreach ($p in $one) { $t.$f = [regex]::Replace([string]$t.$f, ":$($p.Value)(?!\d)", ":$($lk.ports.($p.Name))") } } }
+    foreach ($f in 'web', 'api') { if ((Get-KitMember $t $f)) { foreach ($p in $one) { Set-KitMember $t $f ([regex]::Replace([string](Get-KitMember $t $f), ":$($p.Value)(?!\d)", ":$((Get-KitMember $lk.ports ($p.Name)))")) } } }
     return $t
   }
   $null
 }
 # the user when -As is not given: target defaultUser, kit api.defaultUser, the target's only user; several and none chosen = $null
 function Resolve-ApiUser($t) {
-  $names = @($t.users.PSObject.Properties.Name)
+  $names = @((Get-KitProps $t.users).Name)
   foreach ($d in @([string]$t.defaultUser, [string](Get-KitSetting 'api.defaultUser' ''))) { if ($d) { return $d } }
   if ($names.Count -eq 1) { return $names[0] }
   if (-not $names.Count) { return '' }
@@ -238,7 +238,7 @@ function Resolve-ApiAuth($a) {
   $o = [ordered]@{}
   $pn = [string]$a.preset
   if ($pn) { $p = $script:ApiAuthPresets[$pn]; if (-not $p) { throw "auth.preset '$pn' unknown (built in: $(@($script:ApiAuthPresets.Keys | Sort-Object) -join ', '))" }; foreach ($k in $p.Keys) { $o[$k] = $p[$k] } }
-  if ($a) { foreach ($p in $a.PSObject.Properties) { if ($null -ne $p.Value -and "$($p.Value)" -ne '') { $o[$p.Name] = $p.Value } } }
+  if ($a) { foreach ($p in (Get-KitProps $a)) { if ($null -ne $p.Value -and "$($p.Value)" -ne '') { $o[$p.Name] = $p.Value } } }
   [pscustomobject]$o
 }
 # the token in a login answer: auth.tokenField, else kit api.tokenFields in order ([] = none); a bare string answer is the token
@@ -247,8 +247,8 @@ function Get-ApiLoginToken($a, [string]$Content) {
   if ($j -is [string]) { return $j }
   if ($null -eq $j) { $s = "$Content".Trim(); if ($s -and $s -notmatch '[\s<{]') { return $s }; return $null }
   $fields = @(if ($a.tokenField) { [string]$a.tokenField } else { @(Get-KitSetting 'api.tokenFields' @()) | Where-Object { $_ } })
-  if (-not $fields.Count) { throw "the login answer is JSON but no token field is set: targets.local.json auth.tokenField or auth.preset ($(@($script:ApiAuthPresets.Keys | Sort-Object) -join ', ')), or kit.local.json api.tokenFields (answer fields: $(@($j.PSObject.Properties.Name | Select-Object -First 12) -join ', '))" }
-  foreach ($f in $fields) { $v = $j; foreach ($k in $f.Split('.')) { $v = $v.$k }; if ($v) { return [string]$v } }
+  if (-not $fields.Count) { throw "the login answer is JSON but no token field is set: targets.local.json auth.tokenField or auth.preset ($(@($script:ApiAuthPresets.Keys | Sort-Object) -join ', ')), or kit.local.json api.tokenFields (answer fields: $(@((Get-KitProps $j).Name | Select-Object -First 12) -join ', '))" }
+  foreach ($f in $fields) { $v = $j; foreach ($k in $f.Split('.')) { $v = (Get-KitMember $v $k) }; if ($v) { return [string]$v } }
   $null
 }
 function Invoke-Api {
@@ -295,22 +295,22 @@ if (-not $Target) { $Target = $cfg.default }
 # a QA run pins its targets (KIT_QA_TARGETS)
 $pin = @("$env:KIT_QA_TARGETS" -split '[,\s]+' | Where-Object { $_ })
 if ($pin.Count -and $Target -notin $pin) { throw "target '$Target' is not this QA run's target ($($pin -join ', ')): a run tests only its own env (run.json target / alsoTargets)" }
-$t = $cfg.targets.$Target
+$t = (Get-KitMember $cfg.targets $Target)
 if (-not $t) { $t = Get-LaneTarget $cfg $Target }
-if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')$(if ($Target -match '\d$') { ' (a local env lane <target><k>: its base target must point at lane 1 ports; envy.ps1 envs)' })" }
+if (-not $t) { throw "Unknown target '$Target'. Known: $((Get-KitProps $cfg.targets).Name -join ', ')$(if ($Target -match '\d$') { ' (a local env lane <target><k>: its base target must point at lane 1 ports; envy.ps1 envs)' })" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $a = Resolve-ApiAuth $t.auth
 $kind = "$($a.type)"; if (-not $kind) { $kind = 'login' }
 if (-not $As -and $kind -ne 'none') {
   $who0 = Resolve-ApiUser $t   # [string]$As would turn $null into ''
-  if ($null -eq $who0) { "NO-USER target $Target has several users and none is chosen (not retried): pass -As <user>, or set targets.local.json targets.$Target.defaultUser or kit.local.json api.defaultUser. Known: $($t.users.PSObject.Properties.Name -join ', ')"; exit 2 }
+  if ($null -eq $who0) { "NO-USER target $Target has several users and none is chosen (not retried): pass -As <user>, or set targets.local.json targets.$Target.defaultUser or kit.local.json api.defaultUser. Known: $((Get-KitProps $t.users).Name -join ', ')"; exit 2 }
   $As = $who0
 }
-$u = @($t.users.$As)
-if (-not $t.users.$As -and $kind -ne 'none') {   # not @(...).Count: @($null).Count is 1
-  $holders = @($cfg.targets.PSObject.Properties | Where-Object { $_.Name -ne $Target -and $_.Value.users.$As } | ForEach-Object Name)   # names only, never values
+$u = @((Get-KitMember $t.users $As))
+if (-not (Get-KitMember $t.users $As) -and $kind -ne 'none') {   # not @(...).Count: @($null).Count is 1
+  $holders = @((Get-KitProps $cfg.targets) | Where-Object { $_.Name -ne $Target -and (Get-KitMember $_.Value.users $As) } | ForEach-Object Name)   # names only, never values
   # exit 2, not a throw: a missing user never appears on retry (163x loop)
-  "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $($t.users.PSObject.Properties.Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"; exit 2 }
+  "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $((Get-KitProps $t.users).Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"; exit 2 }
 $ext = Get-Command 'Get-ApiAuthHeaders' -ErrorAction SilentlyContinue   # adapters/api_auth.ps1: basic, cookie, command
 $core = 'login', 'none', 'token', 'query'
 if ($kind -notin $core -and -not ($ext -and $kind -in 'basic', 'cookie', 'command')) {
@@ -321,7 +321,7 @@ if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has
 $base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
 if ($kind -eq 'query') { $uri += "$(if ($uri -match '\?') { '&' } else { '?' })$($a.param)=$([uri]::EscapeDataString([string]$u[1]))" }
-$tls = if ($a.cert) { @{ Certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([string]$a.cert, [string]$a.certPass) } } else { @{} }
+$tls = if (-not $a.cert) { @{} } elseif ("$($a.certPass)") { @{ Certificate = Get-PfxCertificate -LiteralPath ([string]$a.cert) -Password (ConvertTo-SecureString ([string]$a.certPass) -AsPlainText -Force) } } else { @{ Certificate = Get-PfxCertificate -LiteralPath ([string]$a.cert) -NoPromptForPassword } }
 
 function Fill($s) { ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant) }
 
@@ -335,7 +335,7 @@ function Login([switch]$Refresh) {
   $fm = Get-Item -LiteralPath $failMark -ErrorAction SilentlyContinue
   if (-not $Refresh -and $fm -and $fm.LastWriteTime -gt (Get-Item -LiteralPath $cfgFile).LastWriteTime -and ((Get-Date) - $fm.LastWriteTime).TotalMinutes -lt [double](Get-KitParam 'api.loginHoldMinutes')) {
     throw "$who`: not retried, refused at $($fm.LastWriteTime.ToString('HH:mm')) ($(Get-Content -LiteralPath $failMark -Raw)); fix targets.local.json targets.$Target.users.$As, then retry (api.loginHoldMinutes)" }
-  $b = [ordered]@{}; foreach ($p in $a.body.PSObject.Properties) { $b[$p.Name] = if ($p.Value -is [string]) { Fill $p.Value } else { $p.Value } }
+  $b = [ordered]@{}; foreach ($p in (Get-KitProps $a.body)) { $b[$p.Name] = if ($p.Value -is [string]) { Fill $p.Value } else { $p.Value } }
   if ($Refresh) { $cid = $b.client_id; $b = [ordered]@{ grant_type = 'refresh_token'; refresh_token = $script:rt }; if ($cid) { $b.client_id = $cid } }
   $lu = Fill $(if ($a.path -match '^https?://') { $a.path } else { $base + $a.path })
   $form = $a.contentType -eq 'form' -or $Refresh
@@ -346,7 +346,7 @@ function Login([switch]$Refresh) {
   if ($kind -eq 'cookie') { $tok = (@($ws.Cookies.GetAllCookies()) | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' }
   else {
     $tok = Get-ApiLoginToken $a ([string]$r.Content)
-    if ($a.refreshField) { $j = $r.Content | ConvertFrom-Json; $nrt = $j; foreach ($k in ([string]$a.refreshField).Split('.')) { $nrt = $nrt.$k }; if ($nrt) { $script:rt = $nrt } }   # a refresh answer may omit it: keep the old one
+    if ($a.refreshField) { $j = $r.Content | ConvertFrom-Json; $nrt = $j; foreach ($k in ([string]$a.refreshField).Split('.')) { $nrt = (Get-KitMember $nrt $k) }; if ($nrt) { $script:rt = $nrt } }   # a refresh answer may omit it: keep the old one
   }
   if (-not $tok) { throw "login to $Target as $As returned no token$(if ($a.tokenField) { " (auth.tokenField $($a.tokenField))" })" }
   Remove-Item -LiteralPath $failMark -ErrorAction SilentlyContinue
@@ -402,7 +402,7 @@ if ($Save) {
   # redact secrets at any depth (_paths.log.secretKey)
   function Redact($o) {
     if ($o -is [System.Collections.IDictionary]) { foreach ($k in @($o.Keys)) { $o[$k] = if ("$k" -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $o[$k] } }; return , $o }
-    if ($o -is [System.Management.Automation.PSCustomObject]) { foreach ($p in $o.PSObject.Properties) { $p.Value = if ($p.Name -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $p.Value } }; return $o }
+    if ($o -is [System.Management.Automation.PSCustomObject]) { foreach ($p in (Get-KitProps $o)) { $p.Value = if ($p.Name -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $p.Value } }; return $o }
     if ($o -is [array]) { return , @($o | ForEach-Object { Redact $_ }) }
     $o
   }
@@ -459,9 +459,9 @@ $vChanged = @(if (-not $Check) { foreach ($vf in $vText.Keys) {   # re-uploaded 
 $lost = [Collections.Generic.List[object]]::new()   # listed but found nowhere
 # -FixNames log: rewritten results may name old files
 $renLog = "$D/evidence-renames.json"; $renamed = @{}; $remap = [ordered]@{}
-if (Test-Path -LiteralPath $renLog) { (Get-Content -LiteralPath $renLog -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $renamed[$_.Name] = [string]$_.Value } }
+if (Test-Path -LiteralPath $renLog) { (Get-KitProps (Get-Content -LiteralPath $renLog -Raw | ConvertFrom-Json)) | ForEach-Object { $renamed[$_.Name] = [string]$_.Value } }
 foreach ($c in @($res.checks)) {
-  if ($null -eq $c.PSObject.Properties['evidence']) { $c | Add-Member NoteProperty evidence @() }
+  if ($null -eq $c.PSObject.Members['evidence']) { $c | Add-Member NoteProperty evidence @() }
   $c.evidence = @(@($c.evidence) | Where-Object { $_ -and [string]$_ -notmatch '\.(mjs|cjs|js|jsx|ts|tsx|java|kt|ps1|py|sh)$|\s' } | ForEach-Object {
       $e = [string]$_; $leaf = Split-Path $e -Leaf
       $nw = $renamed[$leaf]
@@ -618,7 +618,7 @@ function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-War
 
 # 1. Evidence: report type host (gdocs: Drive) or the run folder
 $map = [ordered]@{ folderId = $prev.folderId; folderLink = $prev.folderLink; files = [ordered]@{}; local = $false; label = $null }
-if ($prev.folderId) { foreach ($pf in $prev.files.PSObject.Properties) { if ($pf.Name -notin $vChanged) { $map.files[$pf.Name] = $pf.Value } } }
+if ($prev.folderId) { foreach ($pf in (Get-KitProps $prev.files)) { if ($pf.Name -notin $vChanged) { $map.files[$pf.Name] = $pf.Value } } }
 # one report + evidence folder per task (else per run item)
 $pubKey = if (@($item.subtasks).Count -eq 1) { [string]@($item.subtasks)[0].id } else { "$(Split-Path $RunDir -Leaf)-$Code" }
 $ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype, '--key', "${pubKey}:evidence")
@@ -633,7 +633,7 @@ if ($evRc) { throw "evidence upload ($rtype) failed (exit $evRc): $((@($evErr) +
 $ev = ($ev | Out-String) | ConvertFrom-Json
 if ($ev.folderId) {
   $map.folderId = $ev.folderId; $map.label = $ev.label; if ($ev.folderLink) { $map.folderLink = $ev.folderLink }
-  foreach ($pf in $ev.files.PSObject.Properties) { $map.files[$pf.Name] = $pf.Value }
+  foreach ($pf in (Get-KitProps $ev.files)) { $map.files[$pf.Name] = $pf.Value }
 } else {
   $map = [ordered]@{ folderId = $null; folderLink = $D; files = [ordered]@{}; local = $true; label = 'Run folder' }
   foreach ($x in $files) { $map.files[$x.Name] = @{ id = $null; link = "$($x.Directory.Name)/$($x.Name)"; path = $x.FullName } }
@@ -671,7 +671,7 @@ $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # lo
 $isLocal = [string]$(if ($item.localEnv) { $item.localEnv } else { $run.localEnv })   # local env item (ENV-FIX)
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
 # trackers that file an issue without a list / project: none, and vocab.json trackers.<type>.listless
-$canCreate = [bool]$bugList -or $KitConf.TrackerType -eq 'none' -or [bool]$(if ($KitVocab) { $KitVocab.trackers.($KitConf.TrackerType).listless })
+$canCreate = [bool]$bugList -or $KitConf.TrackerType -eq 'none' -or [bool]$(if ($KitVocab) { (Get-KitMember $KitVocab.trackers ($KitConf.TrackerType)).listless })
 # own vs new: tester's 'defect' wins, else a check id matching qa.newDefectIdRx ('' = none) is new; a knownBug FAIL is neither (tracked elsewhere)
 $script:NewDefectRx = [string](Get-KitSetting 'qa.newDefectIdRx' '')
 function Test-KnownBug($c) { [bool]"$($c.knownBug)".Trim() }
@@ -709,14 +709,14 @@ function Get-Ask($st) {
 # one [Bug] per ask and run (bugs.json, mutex); edits only its own
 function Add-NewDefects($st, [object[]]$defects) {
   $ask = Get-Ask $st; $key = if ($ask.id) { $ask.id } else { '-' }
-  $h = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
+  $h = (Get-KitHash ($RunDir.ToLower()) SHA256).Substring(0, 16)
   $mx = [Threading.Mutex]::new($false, "Global\kit-bugs-$h")
   $own = $true; try { $own = $mx.WaitOne(1000 * [int](Get-KitParam 'qa.bugsLockSec')) } catch [Threading.AbandonedMutexException] { $own = $true }   # abandoned = ours now
   if (-not $own) { $mx.Dispose(); throw "bugs.json of $RunDir is locked by another finalize for $(Get-KitParam 'qa.bugsLockSec') s (qa.bugsLockSec): re-run finalize -Code $Code" }
   try {
     $f = "$RunDir/bugs.json"
     $all = if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { $null }
-    $groups = [ordered]@{}; if ($all.groups) { foreach ($p in $all.groups.PSObject.Properties) { $groups[$p.Name] = $p.Value } }
+    $groups = [ordered]@{}; if ($all.groups) { foreach ($p in (Get-KitProps $all.groups)) { $groups[$p.Name] = $p.Value } }
     $s = if ($groups.Contains($key)) { $groups[$key] } else { [pscustomobject]@{ id = $null; url = $null; entries = @() } }
     $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
     $grp = "New defects while testing $(if (($tl = TaskLink $st.id)) { "[$($st.name)]($tl)" } else { "$($st.name) ($($st.id))" }), package ``$Code``"
@@ -782,7 +782,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
 }
 # one tracker step per run (siblings deadlocked)
-$fh = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
+$fh = (Get-KitHash ($RunDir.ToLower()) SHA256).Substring(0, 16)
 $fmx = [Threading.Mutex]::new($false, "Global\kit-finalize-$fh")
 $fOwn = $true; try { $fOwn = $fmx.WaitOne(1000 * [int](Get-KitParam 'qa.finalizeLockSec')) } catch [Threading.AbandonedMutexException] { $fOwn = $true }
 if (-not $fOwn) { $fmx.Dispose(); throw "another finalize of $RunDir held the tracker step for $(Get-KitParam 'qa.finalizeLockSec') s (qa.finalizeLockSec): re-run finalize -Code $Code" }
@@ -791,7 +791,7 @@ try {
 foreach ($st in @($item.subtasks)) {
   $mine = @($checks | Where-Object { $_.subtask_id -eq $st.id })
   if (-not $mine.Count -and @($item.subtasks).Count -eq 1) { $mine = $checks }
-  $dupOf = if ($item.dups) { [string]$item.dups.($st.id) } else { '' }   # run.json dups share the primary's checks
+  $dupOf = if ($item.dups) { [string](Get-KitMember $item.dups ($st.id)) } else { '' }   # run.json dups share the primary's checks
   if (-not $mine.Count -and $dupOf) { $mine = @($checks | Where-Object { $_.subtask_id -eq $dupOf }) }
   $allFails = @($mine | Where-Object { $_.result -eq 'FAIL' })
   $knownFails = @($allFails | Where-Object { Test-KnownBug $_ })
@@ -944,15 +944,15 @@ function Get-QaGuideDocSpec {
 function Get-QaGuideDocUrl([string]$Description, $Track, $Spec) {
   if (-not $Spec) { return $null }
   if ($Description -match "(?im)(?:$($Spec.rx)):\*{0,2}\s*\[[^\]]*\]\((?<u>https?://[^)\s]+)\)") { return $Matches.u }
-  $v = if ($Track.docs) { $x = $Track.docs.($Spec.key); if (-not $x) { $x = $Track.docs.($Spec.legacy) }; $x }; if ($v) { "$v" }
+  $v = if ($Track.docs) { $x = (Get-KitMember $Track.docs ($Spec.key)); if (-not $x) { $x = (Get-KitMember $Track.docs ($Spec.legacy)) }; $x }; if ($v) { "$v" }
 }
 
 # ---- prepare: a test-only run from a job (SKILL.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it
 function Invoke-Prepare {
 param([string]$Job, [string]$RunDir)
 $ErrorActionPreference = 'Stop'
-$emit = { param($Run) "RUN $(ConvertTo-Json -InputObject $Run -Depth 8 -Compress)" }   # the workflow reads this one line
-if ($RunDir) { $rf = Join-Path $RunDir 'run.json'; if (-not (Test-Path -LiteralPath $rf)) { throw "no run.json in $RunDir" }; return & $emit (Get-Content -LiteralPath $rf -Raw -Encoding utf8 | ConvertFrom-Json) }
+$printRun = { param($Run) "RUN $(ConvertTo-Json -InputObject $Run -Depth 8 -Compress)" }   # the workflow reads this one line
+if ($RunDir) { $rf = Join-Path $RunDir 'run.json'; if (-not (Test-Path -LiteralPath $rf)) { throw "no run.json in $RunDir" }; return & $printRun (Get-Content -LiteralPath $rf -Raw -Encoding utf8 | ConvertFrom-Json) }
 if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run>'; exit 2 }
 $jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
 if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
@@ -1013,7 +1013,7 @@ $ln = @("# Lead notes: $(Split-Path $dir -Leaf)", "**Result:** $($items.Count) i
   @($left | ForEach-Object { "| $($_.id) $(& $cell $_.name) | $(& $cell $_.reason) |" }) + @('', '## Answers (newest last)', '')
 Write-KitAtomic "$dir/lead-notes.md" (($ln -join "`n") + "`n")
 "prepared $dir`: $($items.Count) item(s), $($left.Count) left out"
-& $emit $run
+& $printRun $run
 }
 # testers ask and the lead answers in lead-notes.md: one line each under "## Answers (newest last)"
 function Invoke-LeadNotes {

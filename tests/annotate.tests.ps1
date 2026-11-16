@@ -9,6 +9,8 @@ if ($IsWindows) {
   $out = Px $Q annotate -In $png -Rect '10,40,50,30,Save button' -Copy 2>&1 | Out-String
   $m = [Drawing.Bitmap]::new((Join-Path (Kd) 'shot-marked.png')); $px = $m.GetPixel(10, 50); $m.Dispose()
   Expect "annotate: -Copy writes <name>-marked.png with a red box ($out)" ($out -match 'annotated .*shot-marked\.png \(1 rect\)' -and $px.R -gt 150 -and $px.G -lt 100)
+  $badOut = Px $Q annotate -In $png -Rect 'a,b,c,d' 2>&1 | Out-String; $unlocked = try { [IO.File]::Open($png, 'Open', 'ReadWrite', 'None').Dispose(); $true } catch { $false }
+  Expect "annotate: a bad -Rect fails and leaves the image unlocked ($($badOut.Trim()))" ($badOut -notmatch 'annotated ' -and $unlocked)
 } else { 'SKIP annotate (Windows only)' }
 Remove-TestKit $k
 Complete-Tests

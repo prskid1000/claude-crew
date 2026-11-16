@@ -15,6 +15,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 | `testing.md` | steps 4-5 (Rules > Tests: what to test, how, where, when) |
 | `crafty.ps1` | steps 1-5, CI wait (`pipes`), the PreToolUse hook (`guard`) |
 | `lib.ps1` | dot-sourced by every kit script; never run by hand |
+| `flagged.ps1` | run by `lib.ps1` / `envy.ps1` for the calls pwsh logs a script for (hash, IPv4 list); never by hand |
 | `devtools.py` | steps 6-7, rebase conflicts (`keepboth`) |
 | `adapters/*` | loaded by `lib.ps1` / `devtools.py`; a vendor one (tracker, git host, ci, report) only when config selects it |
 | `spec.mjs` | step 4: `check -Step test` runs it for a web project with no unit-test target |

@@ -22,7 +22,7 @@ $codex = (Get-Command codex -ErrorAction SilentlyContinue | Select-Object -First
 if (-not $codex) { 'heartbeat: UNKNOWN: codex is not on PATH, nothing armed'; exit 1 }
 $msg = "$(Get-KitBeatPrompt) Re-arm: bossy.ps1 heartbeat -Thread $Thread -Minutes <its stderr NEXT=n>"
 $cmd = "Start-Sleep -Seconds $([int]($Minutes * 60)); & '$codex' queue --thread '$Thread' --message '$($msg -replace "'", "''")'"
-$a = @('-NoProfile', '-NonInteractive', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd)))   # no quoting through Start-Process
+$a = @('-NoProfile', '-NonInteractive', '-ec', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd)))   # no quoting through Start-Process
 $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $a -PassThru }
 Write-KitAtomic $f (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id); thread = $Thread; due = (Get-Date).AddMinutes($Minutes).ToString('o') } | ConvertTo-Json)
 "heartbeat: armed, $Minutes min, Codex session $Thread (pid $($p.Id))"

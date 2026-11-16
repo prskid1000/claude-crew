@@ -79,7 +79,7 @@ function Get-KitMrNamedIds([string[]]$Ids, $Mv) {
 }
 # a task's tracked MR refs, one per MR (bossy.ps1 NormRef: old state may hold <group>/<repo>!<iid> next to <repo>!<iid>)
 function Get-KitTrackRefs($Mrs) { $nr = Get-Command NormRef -ErrorAction Ignore; @(@($Mrs) | Where-Object { $_ } | ForEach-Object { if ($nr) { NormRef $_ } else { "$_" } } | Select-Object -Unique) }
-function Get-KitRollupHash([string]$Text) { [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes("$Text"))) }
+function Get-KitRollupHash([string]$Text) { (Get-KitHash $Text SHA1) }
 # checklist item text, ConvertTo-KitOneLine: lib.ps1 Format-KitItemText (task spec)
 # an Items piece's text naming triage ids -> their titles (plain words), else the text itself
 function Get-KitItemDesc([string]$Desc, $Rows) {

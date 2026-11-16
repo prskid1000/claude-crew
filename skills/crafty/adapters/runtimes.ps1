@@ -14,7 +14,7 @@ Sections: L16 state · L45 leases · L90 verb · L136 supervise
 #>
 #Requires -Version 7
 # ---- state: names, state file, probes
-function Get-KitRuntimeNames { $r = Get-KitSetting 'runtimes' $null; if ($r) { @($r.PSObject.Properties.Name | Where-Object { $_ -notlike '_*' -and $r.$_.isUp }) } }
+function Get-KitRuntimeNames { $r = Get-KitSetting 'runtimes' $null; if ($r) { @((Get-KitProps $r).Name | Where-Object { $_ -notlike '_*' -and (Get-KitMember $r $_).isUp }) } }
 function Get-KitRuntimeFile([string]$Name) { Join-Path (Get-KitPath runtimes -Create) "$Name.json" }
 function Get-KitRuntimeState([string]$Name) {
   $s = try { Get-Content (Get-KitRuntimeFile $Name) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
@@ -67,7 +67,7 @@ function Use-KitRuntime([string]$Name, [string]$Agent, [string]$Session, [switch
   $line = Get-KitSetting "runtimes.$Name.up" ''
   if (-not $line) { return "runtime ${Name}: not running; leased by $Agent (no runtimes.$Name.up: your command starts it, the kit stops it after the last release)" }
   if ($NoWait) {   # the guard: a hook must answer in seconds
-    Start-Detached 'pwsh' @('-NoProfile', '-NonInteractive', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$env:WSL_UTF8 = '1'; $line")))
+    Start-Detached 'pwsh' @('-NoProfile', '-NonInteractive', '-ec', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$env:WSL_UTF8 = '1'; $line")))
     return "runtime ${Name}: was not running: starting it ($line); leased by $Agent"
   }
   $r = Invoke-KitRuntimeCmd $line 300

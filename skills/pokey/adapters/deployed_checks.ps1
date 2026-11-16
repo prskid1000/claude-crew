@@ -17,7 +17,7 @@ function Test-DeployTouched($d, [string[]]$Files) {
 function Probe($d, $r) {
   if ($d.tag) { git -C $r.checkout fetch -q --tags 2>$null; return @(git -C $r.checkout tag --sort=-creatordate 2>$null | Where-Object { $_ -match $d.tag })[0] }
   $o = if ($d.probe -match '^https?://') { try { (Invoke-WebRequest $d.probe -ConnectionTimeoutSeconds 30).Content } catch { '' } } else { (Invoke-Sh $d.probe) -join "`n" }
-  if ($d.probeField) { try { $j = $o | ConvertFrom-Json; foreach ($k in $d.probeField.Split('.')) { $j = $j.$k }; $o = "$j" } catch { $o = '' } }
+  if ($d.probeField) { try { $j = $o | ConvertFrom-Json; foreach ($k in $d.probeField.Split('.')) { $j = (Get-KitMember $j $k) }; $o = "$j" } catch { $o = '' } }
   if ($d.probeRegex) { $m = [regex]::Match("$o", [string]$d.probeRegex); return $(if ($m.Success) { $m.Groups[1].Value } else { '' }) }
   [regex]::Match("$o", '\b[0-9a-f]{7,40}\b').Value
 }
@@ -81,7 +81,7 @@ function SshState($s, $sha) {
 # A verb a kind lacks = UNKNOWN. deploys[].kind names one; else the row's keys pick it (laneApk, ssh, tag, probe, manual, awsStack, command, branch = ci-job).
 function Get-KitDeployKind($d) {
   if ($d.kind) { return "$($d.kind)" }
-  foreach ($k in 'laneApk', 'ssh', 'tag', 'probe', 'manual', 'awsStack', 'command') { if ($d.$k) { return $k } }
+  foreach ($k in 'laneApk', 'ssh', 'tag', 'probe', 'manual', 'awsStack', 'command') { if ((Get-KitMember $d $k)) { return $k } }
   if ($d.branch) { 'ci-job' } else { '' }
 }
 # a deploy-kind verb; $null = the kind lacks it (UNKNOWN), never another kind's check
@@ -97,7 +97,7 @@ function Get-KitSshServiceCmd($s, [string]$Verb, [string]$Svc) {
     'systemd' { @{ restart = 'systemctl restart {svc}'; status = 'systemctl is-active {svc}'; since = 'systemctl show -p ActiveEnterTimestamp --value {svc}' }[$Verb] }
     'docker' { @{ restart = 'docker restart {svc}'; status = "docker inspect -f '{{.State.Status}}' {svc}"; since = "docker inspect -f '{{.State.StartedAt}}' {svc}" }[$Verb] }
     'pm2' { @{ restart = 'pm2 restart {svc}'; status = 'pm2 pid {svc}'; since = '' }[$Verb] }
-    'custom' { [string]$s."$($Verb)Cmd" }
+    'custom' { [string](Get-KitMember $s "$($Verb)Cmd") }
     default { '' } }
   if ($t) { $t.Replace('{svc}', (Sq $Svc)) } else { '' }
 }

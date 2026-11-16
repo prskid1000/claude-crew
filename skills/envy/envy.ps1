@@ -21,9 +21,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L35 config · L233 state · L280 layer drops · L352 leases · L480 code · L512 migrations ·
-  L515 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L663 shared builds (opt-in services[].shareBuild true ·
-  L840 hooks · L912 marks · L1092 seed · L1159 processes · L1538 daemon · L1998 cleanup · L2070 doctor · L2123 verbs
+Sections: L35 config · L230 state · L277 layer drops · L349 leases · L477 code · L509 migrations ·
+  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds (opt-in services[].shareBuild true ·
+  L837 hooks · L909 marks · L1089 seed · L1156 processes · L1535 daemon · L1995 cleanup · L2067 doctor · L2120 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -38,8 +38,8 @@ $script:LE = Get-KitValue 'localEnv' $null
 function Merge-Cfg($base, $over) {
   if ($null -eq $base) { return $over }; if ($null -eq $over) { return $base }
   if ($base -is [pscustomobject] -and $over -is [pscustomobject]) {
-    $o = [ordered]@{}; foreach ($p in $base.PSObject.Properties) { $o[$p.Name] = $p.Value }
-    foreach ($p in $over.PSObject.Properties) { $o[$p.Name] = Merge-Cfg $o[$p.Name] $p.Value }
+    $o = [ordered]@{}; foreach ($p in (Get-KitProps $base)) { $o[$p.Name] = $p.Value }
+    foreach ($p in (Get-KitProps $over)) { $o[$p.Name] = Merge-Cfg $o[$p.Name] $p.Value }
     return [pscustomobject]$o
   }
   $named = { param($l) $l -is [array] -and $l.Count -and -not @($l | Where-Object { $_ -isnot [pscustomobject] -or -not $_.name }).Count }   # [] clears
@@ -52,26 +52,26 @@ function Merge-Cfg($base, $over) {
 # envs.<env> = localEnv.defaults <- envs.<extends> <- its own keys; a copy per env (presets write into it)
 function Resolve-EnvCfg([string]$n, [string[]]$seen = @()) {
   if ($n -in $seen) { throw "localEnv.envs.$n.extends loops ($(@($seen + $n) -join ' -> '))" }
-  $own = $script:LE.envs.$n; if (-not $own) { throw "localEnv.envs.$($seen[-1]).extends names '$n', which is no env" }
+  $own = (Get-KitMember $script:LE.envs $n); if (-not $own) { throw "localEnv.envs.$($seen[-1]).extends names '$n', which is no env" }
   $base = if ($own.extends) { Resolve-EnvCfg ([string]$own.extends) (@($seen) + $n) } else { $script:LE.defaults }
   $mine = $own | Select-Object * -ExcludeProperty extends
   Merge-Cfg ($base | ConvertTo-Json -Depth 20 | ConvertFrom-Json) ($mine | ConvertTo-Json -Depth 20 | ConvertFrom-Json)
 }
 # every string of a config (objects, lists), rewritten by $fix
 function Update-CfgText($o, [scriptblock]$fix) {
-  if ($o -is [pscustomobject]) { foreach ($p in @($o.PSObject.Properties)) { if ($p.Value -is [string]) { $p.Value = & $fix $p.Value } else { Update-CfgText $p.Value $fix } } }
+  if ($o -is [pscustomobject]) { foreach ($p in @((Get-KitProps $o))) { if ($p.Value -is [string]) { $p.Value = & $fix $p.Value } else { Update-CfgText $p.Value $fix } } }
   elseif ($o -is [array]) { for ($i = 0; $i -lt $o.Count; $i++) { if ($o[$i] -is [string]) { $o[$i] = & $fix $o[$i] } else { Update-CfgText $o[$i] $fix } } }
 }
 # lane $k of env $g (lanes { max, portStep }; lane 1 = $g, lane k = $g<k>), every lane the same way: ports of services the env
 # runs + (k-1) x portStep, then envs.<g><k> keys ($over), then every string: {lane} ('' / k), {port:<svc>}, ":<old port>" -> new
 function Get-LaneCfg($base, [string]$g, [int]$k, $over) {
   $c = $base | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $off = ($k - 1) * [int]$(if ($base.lanes.portStep) { $base.lanes.portStep } else { 100 })
-  foreach ($s in @($c.services | Where-Object { $_ -and -not ($_.external -and -not $_.start) })) { foreach ($pk in 'port', 'debugPort') { if ($s.$pk) { $s.$pk = [int]$s.$pk + $off } } }
+  foreach ($s in @($c.services | Where-Object { $_ -and -not ($_.external -and -not $_.start) })) { foreach ($pk in 'port', 'debugPort') { if ((Get-KitMember $s $pk)) { Set-KitMember $s $pk ([int](Get-KitMember $s $pk) + $off) } } }
   if ($over) { $c = Merge-Cfg $c ($over | Select-Object * -ExcludeProperty extends | ConvertTo-Json -Depth 20 | ConvertFrom-Json) }
   $map = @{}; $ports = @{}
   foreach ($s in @($c.services | Where-Object { $_.name })) {
     $b = @($base.services | Where-Object name -eq $s.name)[0]; if ($s.port) { $ports[[string]$s.name] = "$($s.port)" }
-    foreach ($pk in 'port', 'debugPort') { if ($b.$pk -and $s.$pk -and "$($b.$pk)" -ne "$($s.$pk)") { $map["$($b.$pk)"] = "$($s.$pk)" } }
+    foreach ($pk in 'port', 'debugPort') { if ((Get-KitMember $b $pk) -and (Get-KitMember $s $pk) -and "$((Get-KitMember $b $pk))" -ne "$((Get-KitMember $s $pk))") { $map["$((Get-KitMember $b $pk))"] = "$((Get-KitMember $s $pk))" } }
   }
   $lane = if ($k -gt 1) { "$k" } else { '' }
   Update-CfgText $c { param([string]$t)
@@ -82,10 +82,10 @@ function Get-LaneCfg($base, [string]$g, [int]$k, $over) {
   $c | Add-Member group $g -Force; $c | Add-Member lane $k -Force; $c
 }
 if ($script:LE.envs) {
-  $__envs = [ordered]@{}; $__res = [ordered]@{}; foreach ($__n in @($script:LE.envs.PSObject.Properties.Name)) { $__res[$__n] = Resolve-EnvCfg $__n }
+  $__envs = [ordered]@{}; $__res = [ordered]@{}; foreach ($__n in @((Get-KitProps $script:LE.envs).Name)) { $__res[$__n] = Resolve-EnvCfg $__n }
   $__lanes = @{}; foreach ($__n in $__res.Keys) { for ($__k = 2; $__k -le [int]$__res[$__n].lanes.max; $__k++) { $__lanes["$__n$__k"] = $true } }
   foreach ($__n in @($__res.Keys | Where-Object { -not $__lanes.ContainsKey($_) })) {   # envs.<env><k> of a laned env: that lane's keys, no env of its own
-    for ($__k = 1; $__k -le [math]::Max(1, [int]$__res[$__n].lanes.max); $__k++) { $__ln = if ($__k -gt 1) { "$__n$__k" } else { $__n }; $__envs[$__ln] = Get-LaneCfg $__res[$__n] $__n $__k $(if ($__k -gt 1) { $script:LE.envs.$__ln }) }
+    for ($__k = 1; $__k -le [math]::Max(1, [int]$__res[$__n].lanes.max); $__k++) { $__ln = if ($__k -gt 1) { "$__n$__k" } else { $__n }; $__envs[$__ln] = Get-LaneCfg $__res[$__n] $__n $__k $(if ($__k -gt 1) { (Get-KitMember $script:LE.envs $__ln) }) }
   }
   $script:LE.envs = [pscustomobject]$__envs
   # a static service runs from a staged copy of its built files, like an artifact
@@ -115,9 +115,9 @@ foreach ($__k in 'db-engine', 'tenant-model', 'migration', 'envy-verb') { if (-n
 $script:OomPattern = 'JavaScript heap out of memory|Reached heap limit'   # also scanned in running services' logs
 $script:FailPattern = [string](Opt 'failPattern' "APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module|$script:OomPattern|java\.lang\.OutOfMemoryError")
 function Now { (Get-Date).ToString('o') }
-function EnvNames { if ($script:LE -and $script:LE.envs) { @($script:LE.envs.PSObject.Properties.Name) } else { @() } }
-function Get-EnvCfg([string]$e) { $c = $script:LE.envs.$e; if (-not $c) { throw "unknown env '$e' (configured: $((EnvNames) -join ', '))" }; $c }
-function LaneNames([string]$e) { $g = (Get-EnvCfg $e).group; @(EnvNames | Where-Object { $script:LE.envs.$_.group -eq $g }) }   # lane order
+function EnvNames { if ($script:LE -and $script:LE.envs) { @((Get-KitProps $script:LE.envs).Name) } else { @() } }
+function Get-EnvCfg([string]$e) { $c = (Get-KitMember $script:LE.envs $e); if (-not $c) { throw "unknown env '$e' (configured: $((EnvNames) -join ', '))" }; $c }
+function LaneNames([string]$e) { $g = (Get-EnvCfg $e).group; @(EnvNames | Where-Object { (Get-KitMember $script:LE.envs $_).group -eq $g }) }   # lane order
 function Get-RepoCfg([string]$name) {
   $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1
   if (-not $r) { throw "repo '$name' is not in kit.local.json repos[] (name or alias)" }
@@ -131,7 +131,7 @@ function Managed($s) { -not ($s.external -and -not $s.start) }
 function Test-PortClash {
   $by = @{}
   foreach ($n in EnvNames) {
-    foreach ($s in @($script:LE.envs.$n.services | Where-Object { $_ -and $_.port })) {
+    foreach ($s in @((Get-KitMember $script:LE.envs $n).services | Where-Object { $_ -and $_.port })) {
       foreach ($pp in @(@{ p = $s.port; w = "$n/$($s.name)"; x = [bool]$s.external; c = [string]$s.start }, $(if ($s.debugPort) { @{ p = $s.debugPort; w = "$n/$($s.name) (debug)"; x = $false; c = '' } })) | Where-Object { $_ }) {
         $by["$($pp.p)"] = @(@($by["$($pp.p)"]) + @([pscustomobject]@{ who = $pp.w; external = $pp.x; start = $pp.c }) | Where-Object { $_ })
       }
@@ -145,7 +145,7 @@ function Test-PortClash {
 }
 function EnvRepos([string]$e) {
   $map = [ordered]@{}
-  $items = @(EnvServices $e) + @(if ((Get-EnvCfg $e).tasks) { (Get-EnvCfg $e).tasks.PSObject.Properties.Value })
+  $items = @(EnvServices $e) + @(if ((Get-EnvCfg $e).tasks) { (Get-KitProps (Get-EnvCfg $e).tasks).Value })
   foreach ($s in $items | Where-Object { $_.repo }) {
     $r = Get-RepoCfg $s.repo
     $t = if ($s.target) { [string]$s.target } else { [string]$r.target }
@@ -171,10 +171,7 @@ function Dependents([string]$e, [string[]]$names) { @(EnvServices $e | Where-Obj
 $script:lanIp = $null
 function LanIp {
   if (-not $script:lanIp) {
-    $script:lanIp = [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
-      Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -notin 'Loopback', 'Tunnel' } |
-      ForEach-Object { $_.GetIPProperties().UnicastAddresses } | Where-Object { $_.Address.AddressFamily -eq 'InterNetwork' } |
-      ForEach-Object { "$($_.Address)" } | Where-Object { $_ -notmatch '^(169\.254|127\.)' } | Select-Object -First 1
+    $script:lanIp = & (Join-Path (Split-Path $PSScriptRoot) 'crafty/flagged.ps1') ipv4 | Where-Object { $_ -notmatch '^(169\.254|127\.)' } | Select-Object -First 1
     if (-not $script:lanIp) { $script:lanIp = '127.0.0.1' }
   }
   $script:lanIp
@@ -208,7 +205,7 @@ function EnvVars([string]$e, $item) {
       if ($l -match '^\s*(export\s+)?([A-Za-z_][\w.]*)\s*=\s*(.*?)\s*$') { $v[$Matches[2]] = $Matches[3] -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1' }
     }
   }
-  foreach ($src in @((Get-EnvCfg $e).env, $item.env) | Where-Object { $_ }) { foreach ($p in $src.PSObject.Properties) { $v[$p.Name] = "$($p.Value)" } }
+  foreach ($src in @((Get-EnvCfg $e).env, $item.env) | Where-Object { $_ }) { foreach ($p in (Get-KitProps $src)) { $v[$p.Name] = "$($p.Value)" } }
   $dir = if ($item.repo -or $item.dir) { SvcDir $e $item } else { $KitConf.Workspace }
   foreach ($k in @($v.Keys)) { $v[$k] = Expand-Placeholders $v[$k] $e $item $dir '' }
   $v
@@ -487,7 +484,7 @@ function Ensure-Worktree([string]$e, $r) {
 }
 function Sync-DepLinks([string]$e, $r) {
   $c = $r.cfg
-  $src = if ($c.linkFromByTarget -and $c.linkFromByTarget.($r.target)) { [string]$c.linkFromByTarget.($r.target) } elseif ($c.linkFrom -and $r.target -eq $c.target) { [string]$c.linkFrom } else { [string]$c.checkout }
+  $src = if ($c.linkFromByTarget -and (Get-KitMember $c.linkFromByTarget ($r.target))) { [string](Get-KitMember $c.linkFromByTarget ($r.target)) } elseif ($c.linkFrom -and $r.target -eq $c.target) { [string]$c.linkFrom } else { [string]$c.checkout }
   if (-not (Test-Path $src)) { Write-Warning "[$e] dependency source $src for $($r.name) @ $($r.target) does not exist"; return }
   $src = (Resolve-Path $src).Path
   foreach ($pj in (git -C $r.wt ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
@@ -670,7 +667,7 @@ function BuildKey([string]$e, $s) {
   $n = 0; while ($n -lt 10 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv prepare*') { $n++ }   # lane paths only ({cache}, {env}, {dir}, {wt})
   $tree = "$(git -C $wt rev-parse "HEAD~$n^{tree}" 2>$null)".Trim(); if ($LASTEXITCODE -or -not $tree) { return $null }
   $cfg = [ordered]@{ tree = $tree; dir = "$($s.dir)"; build = "$($s.build)"; artifact = "$($s.artifact)"; static = "$($s.static)"; unpack = "$($s.unpack)"; prepare = "$($s.prepare)"; reactor = @($s.reactor); env = $s.env }
-  [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes(($cfg | ConvertTo-Json -Depth 8 -Compress)))).ToLower()
+  (Get-KitHash ($cfg | ConvertTo-Json -Depth 8 -Compress) SHA1).ToLower()
 }
 # -> @{ lane; dir; path } of another lane's recorded copy with this key (keyed when it was built), else nothing; never throws
 function Find-SharedBuild([string]$e, $s, [string]$key) {
@@ -776,7 +773,7 @@ function Remove-OldReleases([string]$e, $s, [string]$root, [switch]$DryRun) {
   if ($DryRun) { return @($old.FullName) }
   $old | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; @($old.FullName)
   $store = Join-Path $root '_lib'; if (-not (Test-Path -LiteralPath $store)) { return }
-  $refs = @{}; foreach ($m in Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | ForEach-Object { Join-Path $_.FullName '.libs.json' } | Where-Object { Test-Path -LiteralPath $_ }) { foreach ($p in (Get-Content -LiteralPath $m -Raw | ConvertFrom-Json).PSObject.Properties) { $refs["$($p.Value)"] = $true } }
+  $refs = @{}; foreach ($m in Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | ForEach-Object { Join-Path $_.FullName '.libs.json' } | Where-Object { Test-Path -LiteralPath $_ }) { foreach ($p in (Get-KitProps (Get-Content -LiteralPath $m -Raw | ConvertFrom-Json))) { $refs["$($p.Value)"] = $true } }
   Get-ChildItem -LiteralPath $store -File | Where-Object { -not $refs[$_.BaseName] } | Remove-Item -Force -ErrorAction SilentlyContinue   # no release links it
 }
 # services[].unpack: a command that unpacks {artifact} into {out} (a runnable file of the artifact's type + its libraries under
@@ -853,13 +850,13 @@ function Invoke-Shell([string]$cmd, [string]$log, $vars, [int]$TimeoutSec = 1800
 function Get-ShellWhy([int]$code) { if ($code -eq -1) { 'timed out' } elseif ($code -in $script:Misconfigured) { "misconfigured (exit ${code}: command not found or bad usage; envy.ps1 doctor)" } else { "exit $code" } }
 function HookTimeout([string]$e, [string]$name) {
   $t = (Get-EnvCfg $e).db.timeoutSec
-  if ($t -is [pscustomobject]) { $t = $t.$name }
+  if ($t -is [pscustomobject]) { $t = (Get-KitMember $t $name) }
   if ($t) { return [int]$t }
   if ($name -in 'query', 'tag') { 120 } elseif ($name -eq 'applied') { 300 } else { 1800 }   # TODO-PARAM (fixed default)
 }
 function Get-HookCmd([string]$e, [string]$name, [hashtable]$vars = @{}) {
   $db = (Get-EnvCfg $e).db
-  $cmd = if ($db.$name) { Expand-Placeholders ([string]$db.$name) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' }
+  $cmd = if ((Get-KitMember $db $name)) { Expand-Placeholders ([string](Get-KitMember $db $name)) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' }
   if (-not $cmd) { return $null }
   foreach ($k in $vars.Keys) { $cmd = $cmd.Replace("{$k}", "$($vars[$k])") }
   $cmd
@@ -887,11 +884,11 @@ function Test-Smoke([string]$e) {
       } elseif ($c.login) {   # POST login.body (JSON; ${VAR} = env file values) to login.url: a token in the reply passes; login.get: then a GET with it
         $lv = EnvVars $e ([pscustomobject]@{}); $none = [pscustomobject]@{ port = '' }
         $x = { param($t) [regex]::Replace((Expand-Placeholders "$t" $e $none $KitConf.Workspace ''), '\$\{(\w+)\}', { param($mm) "$($lv[$mm.Groups[1].Value])" }) }
-        $body = [ordered]@{}; foreach ($pp in @($c.login.body.PSObject.Properties)) { $body[$pp.Name] = if ($pp.Value -is [string]) { & $x $pp.Value } else { $pp.Value } }
+        $body = [ordered]@{}; foreach ($pp in @((Get-KitProps $c.login.body))) { $body[$pp.Name] = if ($pp.Value -is [string]) { & $x $pp.Value } else { $pp.Value } }
         $u = & $x $c.login.url
         try {
           $r = Invoke-RestMethod $u -Method Post -Body ($body | ConvertTo-Json -Compress) -ContentType 'application/json' -TimeoutSec 30 -SkipCertificateCheck
-          $tok = @($(if ($c.login.token) { $r.$($c.login.token) } else { $r.id_token; $r.access_token; $r.token }) | Where-Object { $_ })[0]
+          $tok = @($(if ($c.login.token) { (Get-KitMember $r $($c.login.token)) } else { $r.id_token; $r.access_token; $r.token }) | Where-Object { $_ })[0]
           $why = if (-not $tok) { "$u : login returned no token" } else { $null }
           if ($tok -and $c.login.get) { $null = Invoke-RestMethod (& $x $c.login.get) -Headers @{ Authorization = "Bearer $tok" } -TimeoutSec 30 -SkipCertificateCheck }
         } catch { $why = "$u : $($_.Exception.Message)" }
@@ -1364,7 +1361,7 @@ function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
   Start-Detached -FilePath $pwsh -ArgumentList $a -WorkingDirectory $dir -Log $log
   Start-Sleep 1; (Get-SysProcs | Where-Object { $_.CommandLine -match [regex]::Escape($match) } | Select-Object -First 1).Id
 }
-# a start waits for its dependsOn to be HEALTHY (one still waiting for room: past startMinutes); a dependency connection failure: wait, retry once
+# a start waits for its dependsOn to be HEALTHY (one waiting for room: past startMinutes); dependency connection failure: wait, retry once
 $script:DepFailPattern = [string](Opt 'logClasses.dependency' '(?i)connection refused|ECONNREFUSED|ConnectException|UnknownHostException|could not connect|connection (timed out|reset)')   # a dependency down at start (localEnv.logClasses.dependency)
 # a dependency that is down and that nobody starts is claimed (status waiting, waitFor dep: the loop leaves it) and started here
 # a train's DB steps (marks, slices, migration checks, the guard, a restore) on a lane whose own DB service rests: a start in
@@ -2010,7 +2007,7 @@ function Get-EnvOrphans {
   }
   $known = '^(loop|train(-\w+)?|db|smoke|migrations|seed|restore|events|tenant)$'
   $mine = { param([string]$base) if ($base -eq 'cleanup-quick') { return $true }; foreach ($n in $envs) { if ($base.StartsWith("$n-")) { $rest = $base.Substring($n.Length + 1) -replace '^(start|aot|task)-', '' -replace '-build$', ''
-        return ($rest -match $known -or $rest -in @(EnvServices $n).name -or ($base -match "^$([regex]::Escape($n))-task-" -and (Get-EnvCfg $n).tasks.$rest)) } }; $false }
+        return ($rest -match $known -or $rest -in @(EnvServices $n).name -or ($base -match "^$([regex]::Escape($n))-task-" -and (Get-KitMember (Get-EnvCfg $n).tasks $rest))) } }; $false }
   foreach ($f in Get-ChildItem -LiteralPath (Get-KitPath localenv-logs -Create) -File -ErrorAction SilentlyContinue) {
     $b = $f.Name -replace '(\.(log|prev|wrapper|jsonl))+$', ''
     if (-not (& $mine $b) -and ((Get-Date) - $f.LastWriteTime).TotalDays -ge 1) { & $add 'log' $f.FullName 'no configured env or service writes it' $false }
@@ -2022,7 +2019,7 @@ function Get-EnvOrphans {
     foreach ($sd in Get-ChildItem -LiteralPath $d.FullName -Directory) { if ($sd.Name -notin @(EnvServices $d.Name).name) { & $add 'run' $sd.FullName "env $($d.Name) has no service $($sd.Name)" $false } }
   }
   $none = [pscustomobject]@{ port = '' }
-  $text = (@(foreach ($n in $envs) { foreach ($s in EnvServices $n) { foreach ($k in 'start', 'build', 'dataDir') { if ($s.$k) { Expand-Placeholders ([string]$s.$k) $n $s $KitConf.Workspace '' } }; foreach ($v in @($s.env.PSObject.Properties.Value)) { "$v" } } }; ($script:LE | ConvertTo-Json -Depth 20).Replace('\\', '\')) -join "`n").Replace('\', '/').ToLower()   # + every config value (db, stop, ...)
+  $text = (@(foreach ($n in $envs) { foreach ($s in EnvServices $n) { foreach ($k in 'start', 'build', 'dataDir') { if ((Get-KitMember $s $k)) { Expand-Placeholders ([string](Get-KitMember $s $k)) $n $s $KitConf.Workspace '' } }; foreach ($v in @((Get-KitProps $s.env).Value)) { "$v" } } }; ($script:LE | ConvertTo-Json -Depth 20).Replace('\\', '\')) -join "`n").Replace('\', '/').ToLower()   # + every config value (db, stop, ...)
   foreach ($root in @($script:LE.cleanup.dataRoots) | Where-Object { $_ }) {   # a folder, or { dir, match }: only children whose name matches (an install folder holds more)
     $rp = Expand-Placeholders ([string]$(if ($root -is [string]) { $root } else { $root.dir })) '' $none $KitConf.Workspace ''; $mt = if ($root -isnot [string] -and $root.match) { [string]$root.match } else { '.' }
     foreach ($c in Get-ChildItem -LiteralPath $rp -Directory -ErrorAction SilentlyContinue | Where-Object Name -match $mt) { if (-not $text.Contains($c.FullName.Replace('\', '/').ToLower())) { & $add 'data' $c.FullName "no env service names it (cleanup.dataRoots $rp)" $false } }
@@ -2067,13 +2064,13 @@ function Test-ReadOnlySql([string]$q) {
   $q -match '(?i)^\s*(select|show|describe|desc|explain|with|pragma)\b|^\s*db\.\w+\.(find|findOne|count\w*|aggregate|distinct)\(' -and $q -notmatch '["`]|;\s*\S' -and
     $q -notmatch '(?i)\b(insert|update|delete|drop|alter|create|truncate|replace|merge|grant|revoke|rename|call|exec|execute|set|load|copy|attach|into|out)\b|\.(insert|update|delete|drop|remove)\w*\('
 }
-# ---- doctor: what an env needs before it runs (doctor verb; deploy stops on a FAIL): config, env file, scripts, JAVA_HOME, builds, ports, health
+# ---- doctor: what an env needs to run (doctor verb; deploy stops on a FAIL): config, env file, scripts, JAVA_HOME, builds, ports, health
 function Get-Doctor([string]$e) {
   $c = Get-EnvCfg $e; $r = [Collections.Generic.List[object]]::new()
   $add = { param($lvl, $what) $r.Add([pscustomobject]@{ level = $lvl; env = $e; what = $what }) }
   foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
   if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired: remove the key" }
-  foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne $c.db.$_ }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
+  foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne (Get-KitMember $c.db $_) }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
   $dbDown = DbSvcDown $e   # a lane DB that starts with a lease: its checks wait for it
   if ($dbDown) { & $add OK "db service $((DbSvc $e).name) is down (it starts with a lease): db checks skipped" }
   elseif (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e) + @(if (Get-Command Get-DbExpectDoctor -ErrorAction SilentlyContinue) { Get-DbExpectDoctor $e }) + @(if (Get-Command Get-DbPoolDoctor -ErrorAction SilentlyContinue) { Get-DbPoolDoctor $e })) { & $add $x.level $x.what } }
@@ -2085,11 +2082,11 @@ function Get-Doctor([string]$e) {
   $f = if ($c.envFile) { [string]$c.envFile } else { Join-Path (Get-KitPath localenv-env) "$($c.group).env" }   # a lane's own file is optional
   if (-not (Test-Path -LiteralPath $f)) { & $add $(if ($c.envFile) { 'FAIL' } else { 'WARN' }) "env file $f is missing$(if (-not $c.envFile) { ' (secrets go there)' })" }
   $cmds = [ordered]@{}; $none = [pscustomobject]@{ port = '' }
-  foreach ($p in @($c.db.PSObject.Properties | Where-Object { $_.Value -is [string] -and $_.Name -notmatch '^(_|engine$|name$|user$|host$|uri$|jdbc$|passwordEnv$|schemasQuery$|afterRevert$|flashbackExclude$|bin$)' -and $_.Value -ne 'liquibase' })) { $cmds["db.$($p.Name)"] = Expand-Placeholders $p.Value $e $none $KitConf.Workspace '' }
+  foreach ($p in @((Get-KitProps $c.db) | Where-Object { $_.Value -is [string] -and $_.Name -notmatch '^(_|engine$|name$|user$|host$|uri$|jdbc$|passwordEnv$|schemasQuery$|afterRevert$|flashbackExclude$|bin$)' -and $_.Value -ne 'liquibase' })) { $cmds["db.$($p.Name)"] = Expand-Placeholders $p.Value $e $none $KitConf.Workspace '' }
   foreach ($m in @($c.smoke | Where-Object { $_.cmd })) { $cmds["smoke '$($m.name)'"] = Expand-Placeholders ([string]$m.cmd) $e $none $KitConf.Workspace '' }
   foreach ($s in EnvServices $e) {
     $dir = try { SvcDir $e $s } catch { & $add 'FAIL' "$($s.name): $("$_".Split("`n")[0])"; continue }
-    foreach ($k in 'start', 'build') { if ($s.$k) { $cmds["$($s.name).$k"] = Expand-Placeholders ([string]$s.$k) $e $s $dir '' } }
+    foreach ($k in 'start', 'build') { if ((Get-KitMember $s $k)) { $cmds["$($s.name).$k"] = Expand-Placeholders ([string](Get-KitMember $s $k)) $e $s $dir '' } }
     $v = try { EnvVars $e $s } catch { @{} }
     foreach ($rk in @($s.requiredEnv | Where-Object { $_ -and -not "$($v[[string]$_])".Trim() })) { & $add 'FAIL' "$($s.name): requiredEnv $rk is not set (env file, envs.$e.env or the service's env)" }   # a missing key starts a service that fails later (e.g. a 401)
     $jh = if ($v.JAVA_HOME) { $v.JAVA_HOME } elseif ("$($s.start) $($s.build)" -match '\b(java|mvnw?|gradlew?)\b') { $env:JAVA_HOME } else { $null }
@@ -2151,7 +2148,7 @@ if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup' -and
 if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 $e = $EnvName
 # db.engine without its presets (adapters/db_presets.ps1 missing): stop before anything changes
-$needs = @(foreach ($n in @($e)) { $c = $script:LE.envs.$n; if ($c.db.engine -and -not $script:DbPresets) { "env $n (db.engine): db.engine presets missing: restore adapters/db_presets.ps1" } })
+$needs = @(foreach ($n in @($e)) { $c = (Get-KitMember $script:LE.envs $n); if ($c.db.engine -and -not $script:DbPresets) { "env $n (db.engine): db.engine presets missing: restore adapters/db_presets.ps1" } })
 if ($needs.Count -and $Action -in 'deploy', 'drop', 'refresh', 'promote', 'mark', 'restore', 'seed', 'teardown', 'tenant') { [Console]::Error.WriteLine("envy.ps1: $($needs[0])"); exit 1 }
 
 function Ensure-Loop {
@@ -2279,7 +2276,7 @@ switch ($Action) {
     foreach ($n in EnvNames) {
       $ln = @(LaneNames $n); "$n$(if ($ln.Count -gt 1) { " (lane $((Get-EnvCfg $n).lane) of $($ln[0]); -Env $($ln[0]) picks one)" })$(if ((Get-EnvCfg $n).description) { " - $((Get-EnvCfg $n).description)" })"
       foreach ($s in EnvServices $n) { '  {0,-14} {1,-28}{2}{5}{3}{4}' -f $s.name, $(if ($s.repo) { "$($s.repo)/$($s.dir)" } else { 'external' }), $(if ($s.port) { "  :$($s.port)" }), $(if ($s.dependsOn) { "  needs $(@($s.dependsOn) -join ',')" }), $(if ($s.hot) { '  hot' } elseif ($s.static) { '  static (built files)' } elseif ($s.artifact) { '  runs from artifact' }), $(if ($s.debugPort) { "  debug :$($s.debugPort)" }) }
-      if ((Get-EnvCfg $n).tasks) { "  tasks: $((Get-EnvCfg $n).tasks.PSObject.Properties.Name -join ', ')" }
+      if ((Get-EnvCfg $n).tasks) { "  tasks: $((Get-KitProps (Get-EnvCfg $n).tasks).Name -join ', ')" }
     }
   }
   'status' { $names = if ($EnvName) { @($EnvName) } else { EnvNames }; if ($Agent -ne 'main') { foreach ($n in $names) { Touch-Lease $n $Agent } }
@@ -2442,8 +2439,8 @@ switch ($Action) {
     "[$e] $Branch promoted locally in $($o.hit -join ', ') (release $((Read-State $e).release.n))"
   }
   'task' {
-    $t = (Get-EnvCfg $e).tasks.$Task
-    if (-not $t) { throw "env $e has no task '$Task' ($(((Get-EnvCfg $e).tasks.PSObject.Properties.Name) -join ', '))" }
+    $t = (Get-KitMember (Get-EnvCfg $e).tasks $Task)
+    if (-not $t) { throw "env $e has no task '$Task' ($(((Get-KitProps (Get-EnvCfg $e).tasks).Name) -join ', '))" }
     $rn = (Get-RepoCfg $t.repo).name; $key = "$Agent/task"; Wake-Deferred $e -UntilDone
     $until = (Get-Date).AddMinutes($Wait); $o = @{}
     while ($true) {
