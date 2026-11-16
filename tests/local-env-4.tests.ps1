@@ -127,5 +127,10 @@ Expect "lanes: a lane seeds from its env's seed file; {lane} expands at run time
 $lt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); $tc = [pscustomobject]@{ targets = [pscustomobject]@{ 'local-shop' = [pscustomobject]@{ api = 'http://127.0.0.1:8080/x'; web = 'http://127.0.0.1:4200' } } }
   $t2 = Get-LaneTarget $tc 'local-shop2'; "$($t2.api)|$($t2.web)|$($null -eq (Get-LaneTarget $tc 'other2'))|$((Get-LaneTarget $tc 'local-shop3').api)" }
 Expect "lanes: pokey target <target><k> = the base target with lane k's ports ($lt)" ($lt -eq 'http://127.0.0.1:8180/x|http://127.0.0.1:4200|True|http://127.0.0.1:8280/x')
-Remove-TestKit $laneKit
+# status of every env: one process snapshot and one lease-log read for the call (supervise ran both per env: 7-17 s)
+$stKit = New-LocalEnvKit lestat; Set-JsonFile (Join-Path $stKit 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ a = @{ services = @(@{ name = 'w'; port = 7001; start = 'echo' }) }; b = @{ services = @(@{ name = 'v'; port = 7002; start = 'echo' }) } } } } 8
+$ss = & { . (Join-Path $stKit 'skills/envy/envy.ps1'); $global:snapN = 0; function Get-KitProcSnap { $global:snapN++; @{ kids = @{}; procs = @{} } }
+  $n = @(Invoke-LocalEnv status -Json | ConvertFrom-Json).Count; "$n envs, $global:snapN snapshot(s), lease log parsed once: $([object]::ReferenceEquals((Get-KitLeaseLast), (Get-KitLeaseLast)))" }
+Expect "envy status: every env reads the call's one process snapshot and lease log ($ss)" ("$ss" -eq '2 envs, 1 snapshot(s), lease log parsed once: True')
+Remove-TestKit $stKit; Remove-TestKit $laneKit
 Complete-Tests

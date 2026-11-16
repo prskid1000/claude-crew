@@ -159,8 +159,8 @@ Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Code
   `adapters/os_timer.ps1`) writes the dashboard ("Live supervisor dashboard" below; alone: `bossy.ps1 status
   [-Watch]`). Its stdout (`supervise.output`): `html` (default) = the page link, one line per ACT /
   WATCH and auto-fix, a count line; `chat` = the tables; `both`. `supervise.publish` (unset = off): a pwsh command run detached
-  after each write, `$env:KIT_SUPERVISE_HTML` = the page (e.g. upload it as a private page; its bytes never pass through the
-  model). After a restart: `bossy.ps1 resume -All`.
+  after each write, `$env:KIT_SUPERVISE_HTML` = the page, `$env:KIT_SUPERVISE_RUNS` = its run pages folder (linked as
+  `supervise-runs/`: upload both; the bytes never pass through the model). After a restart: `bossy.ps1 resume -All`.
   Every script prints its usage without arguments.
 
 ## Live supervisor dashboard

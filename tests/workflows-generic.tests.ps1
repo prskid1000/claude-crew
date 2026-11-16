@@ -69,5 +69,20 @@ Use @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm'; migrations = @{
 "declared:$($t -match '\| Items \| Migration range \|' -and $t -match '\| ask the coordinator if you need one \|' -and $t -match 'phoney\.ps1 acquire -Agent B-g1 -Apk local')"
 '@ @($O)
 Expect-Each $bbg 'bugbrief generic: #' 'neutral', 'declared' -Show 5
+# testy: the prompts call envy.ps1 use and phoney.ps1 acquire directly
+$js3b = @'
+const { calls, agent } = _mock((prompt, o) => {
+ if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
+})
+const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
+ items: [_item('P1', 'app')] }
+run(args, agent, _n, _n, null).then(() => {
+ const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release-Falcon') || {}).prompt || ''
+ console.log(`local-call:${tp.includes("& 'C:/kit/skills/envy/envy.ps1' use -Env shop -Services ") && !/Test-Path/.test(tp)}`)
+ console.log(`phone-call:${tp.includes("& 'C:/kit/skills/phoney/phoney.ps1' acquire -Agent qa-w1-Falcon -Lane Falcon")}`)
+ console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
+}).catch(_err)
+'@
+Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts: #' 'local-call', 'phone-call', 'release-guard' -Show 8
 Remove-TestKit $k
 Complete-Tests

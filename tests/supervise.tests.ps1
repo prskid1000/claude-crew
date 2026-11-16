@@ -60,6 +60,12 @@ Expect "status: one row per state, transcripts first ($($st -join ' // '))" ((& 
   (& $sv 'S6 (devy)' 'WAITING: GPU, held by vision x') -and (& $sv 'S7 (devy)' 'FINISHED: turn complete \| .* exec_ command: npm test') -and (& $sv 'S8 (devy)' 'STOPPED \(killed\) \| .* run_command: Run unit tests') -and
   @($st -match '^transcripts read: claude 2\.9, codex 0\.157\.0$').Count -and @($st -match '^\[WATCH\] STUCK S3 \(devy\) \(sr\): no progress for 30 min').Count -and
   @(pwsh @np $O status -Json | ConvertFrom-Json | Where-Object { $_.name -eq 'S2 (devy)' -and $_.state -eq 'WAITING' }).Count)
+# Doing · next with no agent report: workflow phase (journal) + next phase (script meta), checkpoint step / round / evidence + next, the newest tool's file; tail cached by size + time
+& $wj wf_s4 sph @(@{ type = 'started'; agentId = 'p1'; label = 'build:PH1'; phase = 'Build' }) 0 @{ script = (Join-Path $src 'workflows/buildy.js') }
+$null = & $tx "$(Split-Path $wd)/wf_s4/agent-p1.jsonl" '{"type":"assistant","message":{"content":[{"type":"text","text":"Fixing the gate.\nmore"},{"type":"tool_use","name":"Edit","input":{"file_path":"D:\\r\\skills\\crafty\\lib.ps1"}}]}}' 0
+& $se PH1 @{ run = 'sph' }; foreach ($ckN in 1, 2) { $null = pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') checkpoint -Agent PH1 -Run sph -Step loop -Item PH1 -Evidence 'PASS 7/9' }
+$dn = Invoke-PsTest 'doing' '. $args[0]; $r = @(Get-KitStatusRows | Where-Object { $_.run -eq "sph" } | Sort-Object name); @($r | ForEach-Object { "$($_.name)=$($_.doing)=$($_.next)" }) -join "|"; @((Get-Content (Get-KitPath transcript-tails) -Raw | ConvertFrom-Json -AsHashtable).Values | Where-Object { $_.say -eq "Fixing the gate." }).Count; "$(Get-KitNextPhase $args[1] Test)|$(Get-KitNextPhase $args[1] Learn)"' @($O, (Join-Path $src 'workflows/testy.js'))
+Expect "status Doing · next: phase, checkpoint round, file, next step (testy: meta phases only); tail cached ($($dn -join ' // '))" ("$($dn[0])" -eq 'PH1 (devy)=Build · loop round 2 · PH1 · PASS 7/9 · Edit lib.ps1 · skills/crafty=next: mr|sph (workflow)=Build · build:PH1=next: Decide' -and "$($dn[1])" -eq '1' -and "$($dn[2])" -eq 'Verify|')
 & $wj wf_t1 sel @(@{ type = 'started'; agentId = 't1'; label = 'test:W7' }) 0; $t1 = "$(Split-Path $wd)/wf_t1/agent-t1"; $null = & $tx "$t1.jsonl" '{}' 1
 & $J @{ agentType = 'checky' } "$t1.meta.json"; & $se W7 @{ run = 'qrun'; type = 'checky'; beat = (& $ago 30); joined = (& $ago 0) }; & $se W7z @{ agent = 'W7'; run = 'zz'; beat = (& $ago 30) }
 $st = Invoke-PsTest 'anyrun' '. $args[0]; Format-KitStatusTable (Get-KitStatusRows)' @($O)
@@ -117,31 +123,6 @@ Remove-TestKit $k
 # ---- resources (adapters/supervise_resources.ps1)
 $k = New-TestKit sres
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
-# gate.cacheFlush: starved gate + big cache -> 1 flush / 30 min; failing command = 1 WATCH
-$cft = @'
-$env:KIT_TRACKER_TYPE = 'none'
-. $args[0]
-function Get-KitSetting($Key, $Default) { if ($Key -eq 'gate.cacheFlush') { 'flush-now' } else { $Default } }
-function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 20GB } }
-$global:runs = 0; function Invoke-KitExe($Exe, $A, $TimeoutSec) { $global:runs++; [pscustomobject]@{ code = 0; out = ''; err = ''; timedOut = $false } }
-function Get-SysMem { [pscustomobject]@{ TotalGB = 64; AvailGB = 9 } }
-$m = [pscustomobject]@{ TotalGB = 64; AvailGB = 3 }; $n = Get-Date
-$a = Invoke-KitCacheFlush 12 $m $n; $b = Invoke-KitCacheFlush 12 $m $n
-"once:$($a.what -eq 'auto-fixed: file cache flush: available 3 -> 9 GB' -and -not $b -and $global:runs -eq 1)"
-Remove-Item (Join-Path (Get-KitPath cache) 'cache-flush.stamp')
-"short:$(-not (Invoke-KitCacheFlush 5 $m $n) -and $global:runs -eq 1)"
-function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 4GB } }
-"small:$(-not (Invoke-KitCacheFlush 12 $m $n) -and $global:runs -eq 1)"
-function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 20GB } }
-function Invoke-KitExe($Exe, $A, $TimeoutSec) { [pscustomobject]@{ code = 1; out = ''; err = 'Access is denied.'; timedOut = $false } }
-$fl = Invoke-KitCacheFlush 12 $m $n
-"fail:$($fl.level -eq 'WATCH' -and $fl.what -match 'exit 1: Access is denied')"
-Remove-Item (Join-Path (Get-KitPath cache) 'cache-flush.stamp'); function Invoke-KitExe($Exe, $A, $TimeoutSec) { [pscustomobject]@{ code = 0; out = ''; err = ''; timedOut = $false } }
-$global:polls = 0; function Get-SysMem { $global:polls++; [pscustomobject]@{ TotalGB = 64; AvailGB = 3 } }   # no gain: polls only within its budget
-$nb = Invoke-KitCacheFlush 12 $m $n 2
-"budget:$($global:polls -eq 1 -and $nb.what -match 'available 3 -> 3 GB')"
-'@
-Expect-Each (Invoke-PsTest 'cache-flush' $cft @($O)) 'cache flush: #' @('once', 'short', 'small', 'fail', 'budget')
 # a gone session's QA seat + claims freed in ONE line; board show lists seats and env leases
 $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $dp.WaitForExit()
 $qs = TkPath $k qa-seats -Create; foreach ($x in 'seats/s1', 'claims/r1__A1', 'claims/r1__A2') { Set-JsonFile (Join-Path $qs "$x.json") @{ agent = 'test:Q9'; holderPid = $dp.Id } }

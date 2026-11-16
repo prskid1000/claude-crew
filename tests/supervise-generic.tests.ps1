@@ -62,4 +62,29 @@ $global:tname = 'Plain fix'; $global:st = 'open'; $p3 = Invoke-Track add -Task c
 '@ @($O)
 Expect-Each $ciTrack 'track: CI task # (wait: track add of a merged MR promotes at once, holds while the job runs again; closed: job passed -> closed + one qa-result comment with the job link; plain: no pattern match = the testing-doc gate)' @('wait', 'closed', 'plain') 3
 Remove-TestKit $k
+# gate.cacheFlush: starved gate + big cache -> 1 flush / 30 min; failing command = 1 WATCH
+$cft = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+function Get-KitSetting($Key, $Default) { if ($Key -eq 'gate.cacheFlush') { 'flush-now' } else { $Default } }
+function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 20GB } }
+$global:runs = 0; function Invoke-KitExe($Exe, $A, $TimeoutSec) { $global:runs++; [pscustomobject]@{ code = 0; out = ''; err = ''; timedOut = $false } }
+function Get-SysMem { [pscustomobject]@{ TotalGB = 64; AvailGB = 9 } }
+$m = [pscustomobject]@{ TotalGB = 64; AvailGB = 3 }; $n = Get-Date
+$a = Invoke-KitCacheFlush 12 $m $n; $b = Invoke-KitCacheFlush 12 $m $n
+"once:$($a.what -eq 'auto-fixed: file cache flush: available 3 -> 9 GB' -and -not $b -and $global:runs -eq 1)"
+Remove-Item (Join-Path (Get-KitPath cache) 'cache-flush.stamp')
+"short:$(-not (Invoke-KitCacheFlush 5 $m $n) -and $global:runs -eq 1)"
+function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 4GB } }
+"small:$(-not (Invoke-KitCacheFlush 12 $m $n) -and $global:runs -eq 1)"
+function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 20GB } }
+function Invoke-KitExe($Exe, $A, $TimeoutSec) { [pscustomobject]@{ code = 1; out = ''; err = 'Access is denied.'; timedOut = $false } }
+$fl = Invoke-KitCacheFlush 12 $m $n
+"fail:$($fl.level -eq 'WATCH' -and $fl.what -match 'exit 1: Access is denied')"
+Remove-Item (Join-Path (Get-KitPath cache) 'cache-flush.stamp'); function Invoke-KitExe($Exe, $A, $TimeoutSec) { [pscustomobject]@{ code = 0; out = ''; err = ''; timedOut = $false } }
+$global:polls = 0; function Get-SysMem { $global:polls++; [pscustomobject]@{ TotalGB = 64; AvailGB = 3 } }   # no gain: polls only within its budget
+$nb = Invoke-KitCacheFlush 12 $m $n 2
+"budget:$($global:polls -eq 1 -and $nb.what -match 'available 3 -> 3 GB')"
+'@
+Expect-Each (Invoke-PsTest 'cache-flush' $cft @($O)) 'cache flush: #' @('once', 'short', 'small', 'fail', 'budget')
 Complete-Tests

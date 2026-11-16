@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L258 shells · L392 page · L872 release · L911 lines · L944 cleanup · L984 launch ·
-  L1062 pause · L1180 heartbeat · L1195 sessions · L1247 ci tasks ·
-  L1302 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L258 shells · L392 page · L883 release · L922 lines · L955 cleanup · L995 launch ·
+  L1073 pause · L1191 heartbeat · L1206 sessions · L1258 ci tasks ·
+  L1313 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -471,11 +471,14 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $stats.waits = try { Get-KitLeaseWaits $d.at } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 9)
-  Write-KitAtomic $p (Format-KitSuperviseHtml $j)
+  $runPages = @{}; Write-KitAtomic $p (Format-KitSuperviseHtml $j $runPages)
+  $rpd = Join-Path (Split-Path $p) 'supervise-runs'; $null = New-Item -ItemType Directory -Force $rpd   # a run's step table, linked from its row
+  foreach ($rk in $runPages.Keys) { $rpf = Join-Path $rpd "$rk.html"; if (-not (Test-Path -LiteralPath $rpf) -or [IO.File]::ReadAllText($rpf) -cne $runPages[$rk]) { Write-KitAtomic $rpf $runPages[$rk] } }   # an ended run's page: written once
+  Get-ChildItem -LiteralPath $rpd -Filter '*.html' -File -ErrorAction SilentlyContinue | Where-Object { -not $runPages.ContainsKey($_.BaseName) } | Remove-Item -Force -ErrorAction SilentlyContinue   # runs no longer shown
   $pub = [string](Get-KitSetting 'supervise.publish' '')   # the bytes never pass through the model
   if ($pub.Trim()) {   # encoded: Windows strips the double quotes of a joined -Command line
     $sp = @{ FilePath = 'pwsh'; ArgumentList = @('-NoProfile', '-NonInteractive', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($pub))); ErrorAction = 'Stop' }; if ($KitIsWindows) { $sp.WindowStyle = 'Hidden' }
-    $env:KIT_SUPERVISE_HTML = $p; try { Start-Process @sp | Out-Null } catch { Write-Warning "supervise.publish failed to start: $($_.Exception.Message)" } finally { Remove-Item Env:KIT_SUPERVISE_HTML -ErrorAction SilentlyContinue } }
+    $env:KIT_SUPERVISE_HTML = $p; $env:KIT_SUPERVISE_RUNS = $rpd; try { Start-Process @sp | Out-Null } catch { Write-Warning "supervise.publish failed to start: $($_.Exception.Message)" } finally { Remove-Item Env:KIT_SUPERVISE_HTML, Env:KIT_SUPERVISE_RUNS -ErrorAction SilentlyContinue } }
   $p
   } catch { $w = [pscustomobject]@{ level = 'WATCH'; what = "supervise page failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Write-KitSuperviseHtml.' }; $d.flags = @($d.flags) + $w; if ($flags -is [Collections.IList]) { [void]$flags.Add($w) }; '' }   # $flags: the supervise verb's list (-Json, plain)
 }
@@ -509,8 +512,8 @@ function Format-KitIcon([string]$Name, [string]$Label = $Name) {
     'today' { "<path fill=none d='M3 8.6l3.2 3.1L13 4.6'/>" } 'wait' { "<circle fill=none cx=8 cy=8 r=6 /><path fill=none d='M8 4.6V8l2.3 1.6'/>" } 'stuck' { "<path fill=none d='M8 2.2l6.3 11.3H1.7zM8 6.6v3.2M8 11.6v.1'/>" }
     'ram' { "<rect fill=none x=4 y=4 width=8 height=8 rx=1.2 /><path fill=none d='M6 1.6V4M10 1.6V4M6 12v2.4M10 12v2.4M1.6 6H4M1.6 10H4M12 6h2.4M12 10h2.4'/>" } default { throw "Format-KitIcon: unknown icon '$Name'" } }
   $l = [Net.WebUtility]::HtmlEncode($Label); "<svg class='ic i-$Name hit' viewBox='0 0 16 16' role=img aria-label='$l'><title>$l</title>$p</svg>" }
-# pure (tests feed a sample); values HtmlEncoded; inline CSS / JS / SVG only: no request leaves the page
-function Format-KitSuperviseHtml($j) {
+# pure (tests feed a sample); values HtmlEncoded; inline CSS / JS / SVG only: no request leaves the page; $Pages: filled with run id -> run page
+function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $iv = [cultureinfo]::InvariantCulture; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $n1 = { param($x) ([double]$x).ToString('0.#', $iv) }
   $toTime = { param($x) if ($x) { try { [datetime]$x } catch { $null } } }; $at = & $toTime $j.at; if (-not $at) { $at = Get-Date }
   $ago = { param($x) $tx = & $toTime $x; if (-not $tx) { return '' }; $m = [int][math]::Max(0, ($at - $tx).TotalMinutes); if ($m -lt 1) { 'now' } elseif ($m -lt 60) { "$m min" } elseif ($m -lt 1440) { "$([math]::Floor($m / 60)) h $($m % 60) min" } else { "$([math]::Floor($m / 1440)) d" } }
@@ -737,6 +740,8 @@ function Format-KitSuperviseHtml($j) {
     "d.querySelectorAll('[data-fill].msn').forEach(function(g){var bt={};[].forEach.call(g.children,function(c){if(!c.getClientRects().length)return;var r=c.getBoundingClientRect(),l=Math.round(r.left);bt[l]=Math.max(bt[l]||0,r.bottom)});var v=Object.keys(bt).map(function(k){return bt[k]}),df=v.length>1?Math.round(Math.max.apply(0,v)-Math.min.apply(0,v)):0;if(df>48)o.push({el:g.className,why:'tile columns end '+df+' px apart (max 48): the last tile of each column stretches',text:''})});" +   # one tile row, one height
     "d.querySelectorAll('details.top').forEach(function(s){var c=s.querySelector(':scope>summary>.cnt'),b=s.querySelector(':scope>.bd');if(!c||!b)return;(c.textContent.match(/[$]?\d[\d.,]*(%|[kMB]\b|\s?GB\b)|[$]\d[\d.,]*/g)||[]).forEach(function(v){var t=b.textContent,i=t.indexOf(v),hit=false;for(;i>=0&&!hit;i=t.indexOf(v,i+1))hit=!/[\d.]/.test(t.charAt(i-1))&&!/[\d.]/.test(t.charAt(i+v.length));if(hit)o.push({el:s.id,why:'headline value '+v+' in the band header and again inside it',text:c.textContent.trim()})})});return o};" +   # each number once: a band header never repeats a value its body shows
     "d.addEventListener('click',function(x){var c=x.target.closest('code.cp');if(!c)return;x.preventDefault();try{navigator.clipboard.writeText(c.textContent).then(function(){c.classList.add('ok');setTimeout(function(){c.classList.remove('ok')},1200)})}catch(e){}},true);" +   # a release command: click copies, the row stays as it is
+    "var oc0=S.getItem('kc-oc');if(oc0&&d.querySelector('.ocb[data-oc=`"'+oc0+'`"]')){r.dataset.ocf=oc0;d.querySelectorAll('.ocb').forEach(function(o){o.setAttribute('aria-pressed',o.dataset.oc==oc0)})}" +   # kept across the 60 s reload
+    "d.addEventListener('click',function(x){var b=x.target.closest('.ocb');if(!b)return;var k=b.dataset.oc,on=r.dataset.ocf!=k;if(on)r.dataset.ocf=k;else delete r.dataset.ocf;try{if(on)S.setItem('kc-oc',k);else S.removeItem('kc-oc')}catch(e){}d.querySelectorAll('.ocb').forEach(function(o){o.setAttribute('aria-pressed',on&&o.dataset.oc==k)});if(on){var s=d.getElementById('sec-runs');if(s){s.open=true;s.scrollIntoView({block:'start'})}}ms();ca()});" +   # outcome legend: only the runs with a step in it
     "var tp=d.createElement('div');tp.id='tip';tp.setAttribute('role','tooltip');tp.hidden=true;d.body.appendChild(tp);" +
     "function sh(el){var s=el&&(el.getAttribute('title')||(el.querySelector(':scope>title')||{}).textContent);if(!s){tp.hidden=true;return}tp.textContent=s;tp.hidden=false;var b=el.getBoundingClientRect(),w=tp.offsetWidth,g=tp.offsetHeight;tp.style.left=Math.max(4,Math.min(innerWidth-w-4,b.left))+'px';tp.style.top=(b.bottom+g+6>innerHeight?b.top-g-6:b.bottom+6)+'px'}" +
     "d.addEventListener('scroll',function(x){var e=x.target;if(e.matches&&e.matches(SC))cu(e);tp.hidden=true},true);" +   # touch has no hover: a tap shows the title
@@ -747,7 +752,8 @@ function Format-KitSuperviseHtml($j) {
     "<div class=tb><input id=q type=search placeholder='Filter  ( / )' aria-label='Filter the page'><button id=ar class=ib type=button aria-pressed=true aria-label='Auto-refresh every 60 s' title='Auto-refresh every 60 s'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round /></svg></button><button id=tt class=ib type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
   # each number once, in acting order, open: flags, live agents, runs, machine, resources; Kit internals one folded band (owner, 2026-11-13)
   $nRes = @($j.resources | Where-Object { $_ }).Count; $nSh = @($j.shells | Where-Object { $_ }).Count
-  $intHtml = (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $setHtml
+  $intHtml = (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + $UP.internals + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $setHtml
+  if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'><p><a class=rk href='../supervise-report.html'>Supervisor</a></p>$($UP.pages[$pk])</main></body></html>" } }
   # Shells: a fold only when one runs; none = one muted word in the Resources header
   $nWait = @($st.waits.rows | Where-Object { $_ }).Count   # lease waits open the fold even with nothing held
   $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $(if ($nRes -or -not $nWait) { $nRes } else { @{ h = '0 held' } }) "$(Format-KitWaitCard $st.waits)<div class=sxb>$resHtml</div>" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
@@ -828,6 +834,11 @@ function Get-KitSupervisePageCss {
   # Usage: scroll boxes (sticky header), runs one line each, the chart's past days slate
   'h4{font-size:11.5px;font-weight:600;color:var(--mt);margin:0 0 4px}.sy{max-height:clamp(200px,42dvh,440px);overflow:auto}.sy>.tw{overflow:visible}.sy th{position:sticky;top:0;z-index:1;background:var(--sf)}.sy td{white-space:nowrap}.sy td:first-child{white-space:normal}td{font-variant-numeric:tabular-nums}' +
   '.ru{border:1px solid var(--ln);border-radius:8px;margin:0 0 4px}.ru>summary{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:4px 10px;min-height:32px;background:var(--sf2);border-radius:8px;font-size:12.5px;cursor:pointer}.ru[open]>summary{border-radius:8px 8px 0 0}.ru>summary .bar{margin:0}.ru>.sy,.ru>.tw{padding:0 4px 4px}' +
+  # a running run: one line (.rh, as a run summary); ended runs: one short line each; .rk = the run page link; .ocb: the outcome filter
+  '.ru>.rh{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:4px 10px;min-height:32px;background:var(--sf2);border-radius:8px;font-size:12.5px}.ru>.rh .bar{margin:0;background:var(--sf)}.rk{font-size:12px;color:var(--sage2);margin-left:auto}' +
+  '.rfl{list-style:none;margin:6px 0 0;padding:0}.rfl>li{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:3px 6px;border-bottom:1px solid var(--ln);font-size:12.5px}.rfl .tm{color:var(--mt);font-variant-numeric:tabular-nums}.rpg h1{font-size:18px;margin:4px 0 8px}' +
+  '.ocb{font:inherit;color:inherit;background:none;border:1px solid transparent;border-radius:6px;padding:1px 5px;cursor:pointer}.ocb b{margin-left:4px}.ocb[aria-pressed=true]{border-color:var(--sage);background:var(--sf2)}' +
+  ((@('pass', 'empty', 'fail', 'stopped', 'running', 'stuck') | ForEach-Object { "[data-ocf=$_] #sec-runs [data-oc]:not([data-oc~=$_])" }) -join ',') + '{display:none}#tip{white-space:pre-line}' +
   # usage cards: the chart beside outcome bar + model table, the role table full width; none stretches
   '.ug{display:grid;gap:8px;margin-top:8px;align-items:start;grid-template-columns:minmax(0,1fr)}.ucol{display:grid;gap:8px;min-width:0}.uc{padding:6px 10px;min-width:0}.ru>summary .bar{background:var(--sf)}' +
   '@media(min-width:1100px){.ug{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}.ur{grid-column:1/-1}}' +   # no empty column: Per role spans the row or fills the third
@@ -851,7 +862,7 @@ function Get-KitSupervisePageCss {
   '.hrs{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px}.hrs b{font-weight:500;white-space:nowrap}.hrs b.nw{text-align:right;color:var(--sage2)}.hk{font-size:10.5px;color:var(--mt);margin-top:4px}' +
   '@media(max-width:699px){.gks{grid-template-columns:minmax(0,1fr)}.gk{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:2px 6px}.gk>.gn,.gk>.gs,.gk>.gs0{grid-column:1/-1}.gh>.gn,.gh>.gc{display:none}.gk:not(.gh)>.gc .ic{display:inline-block;margin-right:2px}}' +
   '.uc .sy{max-height:clamp(200px,36dvh,360px)}.uc .tw>table:not(.ag){min-width:0}.uc :is(th,td){padding:3px 4px}.uc td{overflow-wrap:normal}.us td:first-child,.ur td:first-child{overflow-wrap:anywhere}:is(.uc,.us) .sy td,.us td{white-space:normal}.ua td:first-child{white-space:nowrap}' +
-  '@media(min-width:641px){.ua :is(th,td):not(:first-child),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.ru :is(th,td):nth-child(n+4):nth-child(-n+7),:is(.ur,.um) :is(th,td):not(:first-child){text-align:right}}' +
+  '@media(min-width:641px){.ua :is(th,td):not(:first-child),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.rst :is(th,td):nth-child(n+4):nth-child(-n+7),:is(.ur,.um) :is(th,td):not(:first-child){text-align:right}}' +
   '.tw>table:not(.ag){min-width:520px}@media(max-width:640px){.ag .tm{display:none}.ag .ago{white-space:nowrap}.wrap{padding:8px}header.top{padding:6px 10px;position:static}.hs{display:none}.tb{width:100%}input[type=search]{flex:1;width:auto}' +
   # phone: a table row = a card, two fields a line (label above value), low-value columns ('~') hidden
   '.tw>table:not(.ag){min-width:0}.tw>table:not(.ag) tr:first-child{display:none}.tw>table:not(.ag),.tw>table:not(.ag) :is(tbody,tr,td){display:block;width:auto}.tw>table:not(.ag) tr{border-bottom:1px solid var(--ln);padding:4px 0}' +

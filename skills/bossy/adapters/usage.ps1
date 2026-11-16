@@ -159,11 +159,11 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
 }
 # the last budget -Usage result (the page, a run that finds the lock taken)
 function Read-KitUsageResult { try { Get-Content -LiteralPath ((Get-KitPath usage-cache) -replace '\.json$', '.result.json') -Raw -ErrorAction Stop | ConvertFrom-Json -Depth 12 } catch { $null } }
-# the page's usage parts (budget -Usage result), each number once: runs (one line each, steps folded), usage (today tiles, step
-# outcomes bar, 7-day chart, role and model tables with share bars), top 5 steps (7 days, today marked), internals (per step type, sessions when 2+)
+# the page's usage parts (budget -Usage result), each number once: runs (running: one full line each; ended: one short line each),
+# usage (tiles, step outcomes bar, 7-day chart with runs, role and model tables), internals (per step type, sessions when 2+), pages (run id -> its step table)
 # called by Format-KitSuperviseHtml: its helpers ($e $n1 $grid $table $bar $trend $at) by dynamic scope
 function Format-KitUsageHtml($U) {
-  if (-not $U -or -not @($U.days).Count) { return [pscustomobject]@{ runs = ''; runsN = $null; usage = '<p class=empty>No usage yet: bossy.ps1 budget -Usage runs each sweep.</p>'; internals = '' } }
+  if (-not $U -or -not @($U.days).Count) { return [pscustomobject]@{ runs = ''; runsN = $null; usage = '<p class=empty>No usage yet: bossy.ps1 budget -Usage runs each sweep.</p>'; internals = ''; pages = @{} } }
   $tk = { param($v) if ($null -eq $v) { '—' } elseif ([double]$v -ge 1e9) { "$(& $n1 ([math]::Round([double]$v / 1e9, 2)))B" } elseif ([double]$v -ge 1e6) { "$(& $n1 ([double]$v / 1e6))M" } elseif ([double]$v -ge 1e3) { "$([math]::Round([double]$v / 1e3))k" } else { "$([long]$v)" } }
   $usd = { param($v) if ($null -eq $v) { '—' } else { '$' + ([double]$v).ToString($(if ([double]$v -ge 1000) { '#,0' } else { '0.00' }), [cultureinfo]::InvariantCulture) } }
   $mn = { param($v) if ($null -eq $v) { '—' } elseif ([double]$v -ge 90) { "$(& $n1 ([double]$v / 60)) h" } else { "$(& $n1 $v) min" } }
@@ -176,9 +176,10 @@ function Format-KitUsageHtml($U) {
   $card = { param([string]$label, [string]$v, [string]$sub, [string]$w, [string]$cls = '') "<div class='st $cls' data-fit><div class=k>$(& $e $label)</div><div class=v>$v</div>$(if ($sub) { "<div class=s title='$(& $e $sub)'>$(& $e $sub)</div>" })$(if ($w) { "<div class=w>$(& $e $w)</div>" })</div>" }
   $pct = { param($a, $b) if ([double]$b) { [math]::Round(100 * [double]$a / [double]$b) } }
   # step outcomes: one stacked bar, counts in its legend (a part-of-whole with 4-6 parts reads better as one bar than a donut)
-  $oc = @(@(@('pass', ([double]$rt.n - $rt.empty - $rt.fail - $rt.stopped), 'sage'), @('empty', $rt.empty, 'watch'), @('failed', $rt.fail, 'act'), @('stopped', $rt.stopped, 'slate'), @('running', $rt.running, 'mt'), @('stuck', $rt.stuck, 'plum')) | Where-Object { [double]$_[1] -gt 0 })
+  $oc = @(@(@('pass', ([double]$rt.n - $rt.empty - $rt.fail - $rt.stopped), 'sage', 'pass'), @('empty', $rt.empty, 'watch', 'empty'), @('failed', $rt.fail, 'act', 'fail'), @('stopped', $rt.stopped, 'slate', 'stopped'), @('running', $rt.running, 'mt', 'running'), @('stuck', $rt.stuck, 'plum', 'stuck')) | Where-Object { [double]$_[1] -gt 0 })
   $ocAll = [double](($oc | ForEach-Object { [double]$_[1] } | Measure-Object -Sum).Sum)
-  $ocHtml = "<div class=sb role=img aria-label='workflow steps by outcome'>$(@($oc | ForEach-Object { "<i style='width:$(& $n1 (100 * [double]$_[1] / $ocAll))%;background:var(--$($_[2]))' title='$($_[0]): $([int]$_[1])'></i>" }) -join '')</div><ul class=ocl>$(@($oc | ForEach-Object { "<li><i style='background:var(--$($_[2]))'></i>$($_[0]) <b>$([int]$_[1])</b></li>" }) -join '')</ul>"
+  # a legend item is a button: it shows only the runs with a step in that outcome (page JS + .ocf CSS), a second click shows all
+  $ocHtml = "<div class=sb role=img aria-label='workflow steps by outcome'>$(@($oc | ForEach-Object { "<i style='width:$(& $n1 (100 * [double]$_[1] / $ocAll))%;background:var(--$($_[2]))' title='$($_[0]): $([int]$_[1])'></i>" }) -join '')</div><ul class=ocl>$(@($oc | ForEach-Object { "<li><button type=button class=ocb data-oc=$($_[3]) aria-pressed=false title='Show the runs with a $($_[0]) step'><i style='background:var(--$($_[2]))'></i>$($_[0]) <b>$([int]$_[1])</b></button></li>" }) -join '')</ul>"
   # today's tokens and cost: the Per day chart's labelled today point (no tile repeats them)
   $kpis = & $grid stats 170px @(
     $(if ($onHost) { $hn = [int]$hm.n; & $card 'Tokens per merged MR' "$(if ($hn) { & $tk ($allTok / $hn) } else { '—' })" "$hn MR(s) merged on the git host by $($hm.user) · $merged reported by workflows · $items item(s)" 'all tokens' }
@@ -187,12 +188,6 @@ function Format-KitUsageHtml($U) {
   $ocCard = & $fold 'u-outcome' 'Workflow steps by outcome' ([int]$ocAll) $ocHtml -Open -tag h4 -cls "sub st uc $(if ($rt.stuck -or $rt.fail) { 'warn' })"
   # 7 days as lines (owner: no bar charts): est. cost = the solid filled line (left scale), tokens = the dashed line (right scale), a value
   # label per dot, today highlighted, the dotted 7-day average; the 7-day total once, in the title
-  $dpts = @(for ($i = 0; $i -lt $dy.Count; $i++) { $d0 = $dy[$i]; $isToday = $i -eq $dy.Count - 1
-      @{ label = $(if ($isToday) { 'today' } else { "$($d0.day)".Substring(5) }); x = $isToday; tip = "$($d0.day)$(if ($isToday) { ' (today)' }): $(& $tk $d0.tok) tokens · est. $(& $usd $d0.cost) · $($d0.runs) run(s) · $($d0.merged) MR(s) merged" } })
-  $cAvg = & $avg 'cost'; $cMax = [double](@($dy | ForEach-Object { [double]$_.cost }) + 0 | Measure-Object -Maximum).Maximum; $tMax = [double](@($dy | ForEach-Object { [double]$_.tok }) + 0 | Measure-Object -Maximum).Maximum
-  $lines = Format-KitLineChart $dpts @(@{ vals = @($dy | ForEach-Object { if ($null -eq $_.cost) { $null } else { [double]$_.cost } }); tone = 'sage'; style = 'solid'; area = $true; fmt = { param($v) if ($null -eq $v) { '—' } else { '$' + [math]::Round([double]$v) } } },
-    @{ vals = @($dy | ForEach-Object { [double]$_.tok }); tone = 'slate'; style = 'dash'; fmt = { param($v) & $tk $v } }) "est. cost and tokens per day, $($dy.Count) days" 150 $cAvg -Labels
-  $chart = & $fold 'u-days' 'Per day' "$(& $tk (& $sum 'tok')) tokens · $(& $usd (& $sum 'cost')) in 7 days" -Open -tag h4 -cls 'sub st uc' -inner "$lines<div class=ax><span><i class='lk t-sage solid'>est. cost (left, 0-$(& $usd $cMax))</i> <i class='lk t-slate dash'>tokens (right, 0-$(& $tk $tMax))</i></span>$(if ($cAvg) { "<span><i class='lk avg'>7-day avg $(& $usd $cAvg) (budget.prices)</i></span>" })</div>$(if ($unp.Count) { "<p class=m>not priced: $(& $e (@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', '))</p>" })"
   # role and model: one table each, the share as an inline bar (exact values in the cells, the bar for the comparison)
   $roles = @($U.byRole | Where-Object { $_ } | Sort-Object { -[double]$_.sum }); $rAll = [double](($roles | Measure-Object sum -Sum).Sum)
   $roleT = & $fold 'u-roles' 'Per role (coordinator, workflows, agents outside them)' $roles.Count -Open -tag h4 -cls 'sub st uc ur' -inner "$(& $table 'Role', '~Steps', 'Tokens', 'Share', 'Est. cost', '~Avg time', '~p90 time' @($roles | ForEach-Object { , @($_.k, $_.n, (& $tk $_.sum), @{ h = "<span>$(& $bar ([double]$_.sum) $rAll "$(& $pct $_.sum $rAll)%" 'slate')</span>" }, (& $usd $_.cost), (& $mn $_.avgMin), (& $mn $_.p90Min)) }))"
@@ -205,25 +200,46 @@ function Format-KitUsageHtml($U) {
   # steps by outcome in one bar (pass, empty, failed, running, stuck, stopped), each part titled with its count
   $segBar = { param($r) $tot = [math]::Max(1, [int]$r.total); $ps = @(foreach ($o in @(@('pass', 'sage'), @('empty', 'watch'), @('fail', 'act'), @('running', 'slate'), @('stuck', 'plum'), @('stopped', 'mt'))) { $n = @($r.steps | Where-Object result -eq $o[0]).Count; if ($n) { [pscustomobject]@{ k = $o[0]; c = $o[1]; n = $n } } })
     "<span class='bar sb3' title='$(& $e (@($ps | ForEach-Object { "$($_.k) $($_.n)" }) -join ' · '))'>$(@($ps | ForEach-Object { "<i class=$($_.c) style='width:$(& $n1 (100 * $_.n / $tot))%'></i>" }) -join '')</span><span class=bl>$($r.done)/$($r.total) steps</span>" }
-  $runRow = { param($r) $bp = if ($r.cap) { [double]$r.spent / [double]$r.cap } else { 0 }; $lb = if ("$($r.label)".Trim()) { $r.label } else { $r.run }
-      "<details class='ru f'><summary><span class=gn0 title='$(& $e "$($r.run) · $($r.id)")'>$(& $e $lb)</span><span class='chip k-$(& $e (& $kindOf $r))'>$(& $e (& $kindOf $r))</span>$(if ($resumed["$($r.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(if ($r.status -eq 'running') { "<span class='chip s-act'>running</span>" })$(& $segBar $r)" +
-      "<span class=m>$(& $tk $r.tok) tokens · $(& $usd $r.cost) · $(& $mn $r.wall)</span>$(if ([int]$r.merged) { "<span class='chip s-act'>$($r.merged) merged</span>" })$(if ($r.cap -and ($r.status -eq 'running' -or $bp -ge 0.8)) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" $(if ($bp -ge 0.8) { 'watch' }) })</summary>" +   # budget = context spend (budget -Run), not billed tokens
-      "<div class=sy>$(& $table 'Step', 'Role', '~Model', 'Tokens', '~In / out / cache r / w', 'Elapsed', '~Tools', 'Result', '~Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok })))</div></details>" }
-  # dev and QA runs: running ones on top, then one fold per day (today open) with its one-line sum; kit runs (tidy, retro) not shown
+  $lbOf = { param($r) if ("$($r.label)".Trim()) { $r.label } else { $r.run } }
+  $ocOf = { param($r) (@($r.steps | ForEach-Object { "$($_.result)" } | Where-Object { $_ } | Select-Object -Unique) -join ' ') }   # data-oc: the outcome legend filters rows by it
+  $pageOf = { param($r) "supervise-runs/$([Uri]::EscapeDataString("$($r.id)")).html" }   # Write-KitSuperviseHtml writes $Pages next to the page
+  $head = { param($r) $bp = if ($r.cap) { [double]$r.spent / [double]$r.cap } else { 0 }
+    "<span class=gn0 title='$(& $e "$($r.run) · $($r.id)")'>$(& $e (& $lbOf $r))</span><span class='chip k-$(& $e (& $kindOf $r))'>$(& $e (& $kindOf $r))</span>$(if ($resumed["$($r.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(if ($r.status -eq 'running') { "<span class='chip s-act'>running</span>" })$(& $segBar $r)" +
+    "<span class=m>$(& $tk $r.tok) tokens · $(& $usd $r.cost) · $(& $mn $r.wall)</span>$(if ([int]$r.merged) { "<span class='chip s-act'>$($r.merged) merged</span>" })$(if ($r.cap -and ($r.status -eq 'running' -or $bp -ge 0.8)) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" $(if ($bp -ge 0.8) { 'watch' }) })" }   # budget = context spend (budget -Run), not billed tokens
+  # a run's result: the worst step outcome (an ended run has no running step)
+  $resOf = { param($r) $rs0 = @($r.steps | ForEach-Object result); $nf = @($rs0 | Where-Object { $_ -eq 'fail' }).Count
+    if ($rs0 -contains 'stuck') { @('stuck', 's-stuck') } elseif ($nf) { @("$nf failed", 's-stuck') } elseif ($rs0 -contains 'stopped') { @('stopped', 's-oth') } else { @('done', 's-act') } }
+  # dev and QA runs: running ones one line each on top; ended ones one short line each (the numbers: the Per day chart's tooltips, the steps: the run page)
   $devRuns = @($runs | Where-Object { (& $kindOf $_) -ne 'kit' })
   $dayOf = { param($r) try { ([datetimeoffset]"$(if ($r.started) { $r.started } else { $r.at })").LocalDateTime.ToString('yyyy-MM-dd') } catch { '' } }
-  $daySum = { param($g) "$($g.Count) runs · $(($g | Measure-Object done -Sum).Sum) steps · $(& $tk ($g | Measure-Object tok -Sum).Sum) tokens · $(& $usd (($g | Where-Object { $null -ne $_.cost } | Measure-Object cost -Sum).Sum)) · $(($g | Measure-Object merged -Sum).Sum) merged" }
-  $shown = @($devRuns | Where-Object status -ne 'running' | Sort-Object { "$($_.at)" } -Descending | Select-Object -First 25)   # newest 25 ended with their step tables: the page stays light
-  $runHtml = (@($devRuns | Where-Object status -eq 'running' | ForEach-Object { & $runRow $_ }) -join '') + (@(foreach ($g in @($devRuns | Where-Object status -ne 'running' | Group-Object { & $dayOf $_ } | Sort-Object Name -Descending)) {
-      $dn = if ($g.Name -eq $at.ToString('yyyy-MM-dd')) { 'Today' } elseif ($g.Name -eq $at.AddDays(-1).ToString('yyyy-MM-dd')) { 'Yesterday' } elseif ($g.Name) { $g.Name.Substring(5) } else { 'Undated' }
-      $old = @($g.Group | Where-Object { $shown -notcontains $_ }).Count
-      & $fold "runs-$($g.Name)" $dn (& $daySum @($g.Group)) ((@($g.Group | Where-Object { $shown -contains $_ } | ForEach-Object { & $runRow $_ }) -join '') + $(if ($old) { "<p class=m>$old older run(s): supervise-report.json</p>" })) -Open:($dn -eq 'Today') -cls sub }) -join '')
+  $shown = @($devRuns | Where-Object status -ne 'running' | Sort-Object { "$($_.at)" } -Descending | Select-Object -First 25)   # newest 25 ended: the page stays light
+  $runHtml = (@($devRuns | Where-Object status -eq 'running' | ForEach-Object { "<div class='ru f' data-oc='$(& $ocOf $_)'><div class=rh>$(& $head $_)<a class=rk href='$(& $pageOf $_)'>steps</a></div></div>" }) -join '') +
+    $(if ($shown.Count) { "<ul class=rfl>$(@($shown | ForEach-Object { $rr = & $resOf $_; $dk = & $dayOf $_
+      "<li class=f data-oc='$(& $ocOf $_)'><span class=tm>$(if ($dk) { $dk.Substring(5) })</span><span class=gn0 title='$(& $e "$($_.run) · $($_.id)")'>$(& $e (& $lbOf $_))</span><span class='chip k-$(& $e (& $kindOf $_))'>$(& $e (& $kindOf $_))</span>$(if ($resumed["$($_.id)"]) { "<span class='chip s-oth'>resumed</span>" })<span class='chip $($rr[1])'>$(& $e $rr[0])</span>$(if ([int]$_.merged) { "<span class='chip s-act'>$($_.merged) merged</span>" })<a class=rk href='$(& $pageOf $_)'>steps</a></li>" }) -join '')</ul>" }) +
+    $(if ($devRuns.Count - @($devRuns | Where-Object status -eq 'running').Count -gt $shown.Count) { "<p class=m>$($devRuns.Count - @($devRuns | Where-Object status -eq 'running').Count - $shown.Count) older run(s): supervise-report.json</p>" })
+  # a run page per shown run: its step table (Write-KitSuperviseHtml writes them; MRs, findings, QA: bossy.ps1 report -Run)
+  $pages = [ordered]@{}; foreach ($r in @(@($devRuns | Where-Object status -eq 'running') + $shown)) { $pages["$($r.id)"] = "<div class='ru'><div class=rh>$(& $head $r)</div></div>" +
+      "<div class='sy rst'>$((& $table 'Step', 'Role', '~Model', 'Tokens', '~In / out / cache r / w', 'Elapsed', '~Tools', 'Result', '~Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok }))) -replace "<tr class='f more'>", '<tr class=f>' -replace '<button type=button class=sa[^>]*>[^<]*</button>')</div>" +
+      "<p class=m>MRs, review findings, QA: <code>bossy.ps1 report -Run $(& $e $r.run) -Detail</code></p>" }
+  # 7 days as lines (owner: no bar charts): est. cost = the solid filled line (left scale), tokens = the dashed line, runs started = the dotted
+  # line, a value label per dot, today highlighted, the dotted 7-day average; a point's tooltip lists that day's runs; the 7-day total once, in the title
+  $byDay = @{}; foreach ($r in $devRuns) { $dk = & $dayOf $r; if ($dk) { $byDay[$dk] = @(@($byDay[$dk] | Where-Object { $_ }) + $r) } }
+  $runTip = { param($r) "$(& $lbOf $r) ($(& $kindOf $r)$(if ($r.status -eq 'running') { ', running' })): $($r.done)/$($r.total) steps · $(& $tk $r.tok) tokens · $(& $usd $r.cost)$(if ([int]$r.merged) { " · $($r.merged) merged" })" }
+  $dpts = @(for ($i = 0; $i -lt $dy.Count; $i++) { $d0 = $dy[$i]; $isToday = $i -eq $dy.Count - 1; $dr = @($byDay["$($d0.day)"] | Where-Object { $_ })
+      @{ label = $(if ($isToday) { 'today' } else { "$($d0.day)".Substring(5) }); x = $isToday; tip = "$($d0.day)$(if ($isToday) { ' (today)' }): $(& $tk $d0.tok) tokens · est. $(& $usd $d0.cost) · $($d0.merged) MR(s) merged$(if ($dr.Count) { "`n$($dr.Count) run(s) started:$(@($dr | ForEach-Object { "`n- $(& $runTip $_)" }) -join '')" })" } })
+  $cAvg = & $avg 'cost'; $cMax = [double](@($dy | ForEach-Object { [double]$_.cost }) + 0 | Measure-Object -Maximum).Maximum; $tMax = [double](@($dy | ForEach-Object { [double]$_.tok }) + 0 | Measure-Object -Maximum).Maximum
+  $rnV = @($dy | ForEach-Object { [double]@($byDay["$($_.day)"] | Where-Object { $_ }).Count }); $rMax = [double](@($rnV) + 0 | Measure-Object -Maximum).Maximum
+  $lines = Format-KitLineChart $dpts @(@{ vals = @($dy | ForEach-Object { if ($null -eq $_.cost) { $null } else { [double]$_.cost } }); tone = 'sage'; style = 'solid'; area = $true; fmt = { param($v) if ($null -eq $v) { '—' } else { '$' + [math]::Round([double]$v) } } },
+    @{ vals = @($dy | ForEach-Object { [double]$_.tok }); tone = 'slate'; style = 'dash'; fmt = { param($v) & $tk $v } },
+    $(if ($rMax) { @{ vals = $rnV; tone = 'plum'; style = 'dot'; max = [math]::Max(1, $rMax) * 1.25; fmt = { param($v) "$([int]$v) run$(if ([int]$v -ne 1) { 's' })" } } })) "est. cost, tokens and runs started per day, $($dy.Count) days" 150 $cAvg -Labels
+  $chart = & $fold 'u-days' 'Per day' "$(& $tk (& $sum 'tok')) tokens · $(& $usd (& $sum 'cost')) in 7 days" -Open -tag h4 -cls 'sub st uc' -inner "$lines<div class=ax><span><i class='lk t-sage solid'>est. cost (left, 0-$(& $usd $cMax))</i> <i class='lk t-slate dash'>tokens (right, 0-$(& $tk $tMax))</i>$(if ($rMax) { " <i class='lk t-plum dot'>runs started (point: that day's runs)</i>" })</span>$(if ($cAvg) { "<span><i class='lk avg'>7-day avg $(& $usd $cAvg) (budget.prices)</i></span>" })</div>$(if ($unp.Count) { "<p class=m>not priced: $(& $e (@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', '))</p>" })"
   $aggT = "<div class='uc ua'><h4>tokens avg / p50 / p90 · time = elapsed</h4><div class=sy>$(& $table 'Key', 'N', 'Avg', '~p50', '~p90', 'Avg time', '~p90 time' @($U.byType | Where-Object { $_ } | ForEach-Object { , @($_.k, $_.n, (& $tk $_.avg), (& $tk $_.p50), (& $tk $_.p90), (& $mn $_.avgMin), (& $mn $_.p90Min)) }))</div></div>"
   # one session = its role row already; 2+ = a folded split per session
   $sess = $(if ($cos.Count -ge 2) { "<details class=ru><summary>Coordinator sessions ($($cos.Count))</summary><div class='sy us'>$(& $table 'Session', 'Tokens', 'Est. cost', 'Elapsed', 'Model' @($cos | ForEach-Object { , @($_.session, (& $tk $_.tok), (& $usd $_.cost), (& $mn $_.min), ("$($_.model)" -replace '^claude-')) }))</div></details>" }) +
     $(if ($bgs.Count -ge 2) { "<details class=ru><summary>Agents outside workflows, by session ($($bgs.Count))</summary><div class='sy us'>$(& $table 'Session', 'Agents', 'Tokens', 'Est. cost', 'Roles' @($bgs | ForEach-Object { , @($_.session, $_.n, (& $tk $_.tok), (& $usd $_.cost), $_.roles) }))</div></details>" })
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
   [pscustomobject]@{ runsN = @{ h = "<span class='iv$(if (-not $nRunning) { ' z' })'>$(Format-KitIcon run 'running runs')$nRunning</span> · $($devRuns.Count) in 7 days" }; runs = $(if ($runHtml) { "<div class='rus sy'>$runHtml</div>" } else { '<p class=empty>None</p>' })
-    usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })$kpis<div class=ug>$chart<div class=ucol>$ocCard$modelT</div>$roleT</div>$(& $fold 'steps' 'Per step type' @($U.byType | Where-Object { $_ }).Count "$aggT$sess" -cls sub)"   # folded: the page fits ~3 screens at 1366
+    usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })$kpis<div class=ug>$chart<div class=ucol>$ocCard$modelT</div>$roleT</div>"
+    internals = (& $fold 'steps' 'Per step type' @($U.byType | Where-Object { $_ }).Count "$aggT$sess" -cls sub); pages = $pages   # internals: a Kit internals fold beside Usage (owner, 2026-11-16)
     usageN = "$(& $tk $td.tok) tokens today" }
 }

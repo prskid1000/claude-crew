@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L67 state · L141 config · L222 OS · L435 leases · L832 status · L1076 supervise sweep · L1147 tracker ·
-  L1496 prior · L1512 ask bugs · L1697 process · L1725 git-host · L1917 kitlog · L2037 params · L2342 entry-scripts
+Sections: L9 paths · L67 state · L141 config · L222 OS · L435 leases · L834 status · L1090 supervise sweep · L1161 tracker ·
+  L1510 prior · L1526 ask bugs · L1711 process · L1739 git-host · L1931 kitlog · L2051 params · L2356 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -522,8 +522,10 @@ function Write-KitLeaseLog([string]$Event, [string]$Kind, [string]$Name, $Lease 
 function Invoke-KitLeaseReason([string]$Reason, [scriptblock]$Body) { $o = $env:KIT_LEASE_REASON; $env:KIT_LEASE_REASON = $Reason; try { & $Body } finally { $env:KIT_LEASE_REASON = $o } }
 # "<kind>|<name>" -> its newest release / reclaim line (status "last used")
 function Get-KitLeaseLast {
-  $m = @{}; $lf = Get-KitLogFile leases
-  if (Test-Path -LiteralPath $lf) { foreach ($x in Get-Content -LiteralPath $lf) { $o = try { $x | ConvertFrom-Json } catch { $null }; if ($o.event -in 'release', 'reclaim') { $m["$($o.kind)|$($o.name)"] = $o } } }
+  $m = @{}; $lf = Get-KitLogFile leases; $fi = Get-Item -LiteralPath $lf -ErrorAction SilentlyContinue; $sig = "$lf|$($fi.Length)|$($fi.LastWriteTimeUtc.Ticks)"
+  if ($script:KitLeaseLast -and $script:KitLeaseLast.sig -eq $sig) { return $script:KitLeaseLast.m }   # one parse per log change (envy status: per env, 0.2 s each)
+  $script:KitLeaseLast = @{ sig = $sig; m = $m }
+  if ($fi) { foreach ($x in Get-Content -LiteralPath $lf) { $o = try { $x | ConvertFrom-Json } catch { $null }; if ($o.event -in 'release', 'reclaim') { $m["$($o.kind)|$($o.name)"] = $o } } }
   $m
 }
 function Format-KitLeaseLast($o) { if ($o) { "$(([datetime]$o.at).ToString('MM-dd HH:mm')) by $(if ($o.agent) { $o.agent } else { '?' }) ($(if ("$($o.reason)" -like "$($o.event)*") { $o.reason } else { "$($o.event)$(if ($o.reason) { ": $($o.reason)" })" }))" } else { 'never' } }
@@ -873,7 +875,7 @@ function Read-KitTranscriptTail([string]$File, [string]$Want, [scriptblock]$Each
   $fi = if ($File) { Get-Item -LiteralPath $File -ErrorAction SilentlyContinue }; if (-not $fi) { return $null }
   $fs = [IO.File]::Open($fi.FullName, 'Open', 'Read', 'ReadWrite')
   try { $n = [int][math]::Min($fs.Length, 512KB); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $null = $fs.Read($b, 0, $n) } finally { $fs.Dispose() }
-  $s = [pscustomobject]@{ file = $fi.FullName; at = $fi.LastWriteTime; tool = ''; what = ''; ended = $null; killed = $false; version = ''; raw = [Text.Encoding]::UTF8.GetString($b) }
+  $s = [pscustomobject]@{ file = $fi.FullName; at = $fi.LastWriteTime; tool = ''; what = ''; say = ''; ended = $null; killed = $false; version = ''; outs = @(); raw = [Text.Encoding]::UTF8.GetString($b) }
   $lines = @($s.raw -split "`r?`n" | Select-Object -Skip $(if ($n -lt $fi.Length) { 1 } else { 0 }))   # the first line of a cut tail is partial
   for ($i = $lines.Count - 1; $i -ge 0; $i--) {
     if ($lines[$i] -notmatch $Want) { continue }
@@ -884,12 +886,17 @@ function Read-KitTranscriptTail([string]$File, [string]$Want, [scriptblock]$Each
 # adapter:transcript/claude: <project dir>/<session>/subagents/**/agent-*.jsonl; its named task *.output files = progress
 Register-KitAdapter 'transcript' 'claude' @{
   'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }); filter = '*.jsonl' } }
-  'last' = { param($a) $s = Read-KitTranscriptTail $a.file '"tool_use"' { param($o, $s) $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' })[-1]
-      if ($u) { $s.tool = "$($u.name)"; $s.what = "$($u.input.description)" }; [bool]$u }
+  'last' = { param($a) $seen = @{ n = 0 }   # after the newest tool call: up to 3 older assistant records for its one-line text
+    $s = Read-KitTranscriptTail $a.file '"tool_use"|"type":"text"' { param($o, $s) if ($o.type -ne 'assistant') { return [bool]$s.tool -and ++$seen.n -ge 3 }
+      $c = @($o.message.content); $tx = $null
+      if (-not $s.tool) { $u = @($c | Where-Object { $_.type -eq 'tool_use' })[-1]; if (-not $u) { return $false }; $s.tool = "$($u.name)"; $s.what = Get-KitToolWhat $u; $tx = @($c[0..([array]::IndexOf($c, $u))] | Where-Object { $_.type -eq 'text' })[-1] }
+      else { $tx = @($c | Where-Object { $_.type -eq 'text' })[-1] }
+      $ln = "$(@("$($tx.text)" -split "`r?`n" | Where-Object { $_.Trim() })[0])".Trim(); if ($ln) { $ln = Protect-KitText $ln; $s.say = $(if ($ln.Length -gt 160) { $ln.Substring(0, 159) + '…' } else { $ln }); return $true }
+      ++$seen.n -ge 3 }
     if (-not $s) { return }; if ($s.raw -match '"version":"([^"]+)"') { $s.version = "claude $($Matches[1])" }
     $end = "$(@($s.raw -split "`r?`n" | Where-Object { $_.Trim() })[-1])"; $s.ended = $end -match '"role":"assistant"' -and $end -match '"stop_reason":"end_turn"'   # last record = final answer
     $outs = foreach ($m in [regex]::Matches($s.raw, 'tasks(?:\\\\|/)\w+\.output')) { $i = $s.raw.LastIndexOfAny([char[]]'"<> ', $m.Index) + 1; $s.raw.Substring($i, $m.Index + $m.Length - $i) -replace '\\\\', '\' }   # scan back: a forward regex backtracks for seconds
-    foreach ($o in @($outs | Select-Object -Unique)) { $f = Get-Item -LiteralPath $o -ErrorAction SilentlyContinue; if ($f -and $f.LastWriteTime -gt $s.at) { $s.at = $f.LastWriteTime } }
+    $s.outs = @($outs | Select-Object -Unique); foreach ($o in $s.outs) { $f = Get-Item -LiteralPath $o -ErrorAction SilentlyContinue; if ($f -and $f.LastWriteTime -gt $s.at) { $s.at = $f.LastWriteTime } }
     $s }
 }
 # adapter:transcript/codex: $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl; line 1 session_meta; newest task_complete = turn ended
@@ -921,7 +928,7 @@ function Get-KitTranscriptKind([string]$Tool) { if (-not $Tool) { 'claude' } els
 # liveness (STUCK rows, stale board rows, lease grace, shell owners): newest board beat or transcript (+ task output) write
 function Get-KitLastActivity([string]$Tx, $Entry, [string]$Tool) {
   $fi = if ($Tx) { Get-Item -LiteralPath $Tx -ErrorAction SilentlyContinue }   # one tail read per transcript write (sweeps ask per step, shell, lease)
-  $t = if ($fi) { Get-KitLiveCached "tx:$($fi.FullName)" { Invoke-KitAdapter transcript (Get-KitTranscriptKind $Tool) last @{ file = $Tx } } }
+  $t = if ($fi) { Get-KitLiveCached "tx:$($fi.FullName)" { Get-KitTailCached (Get-KitTranscriptKind $Tool) $Tx } }
   @(@($t.at) + @($(if ($Entry.beat) { try { [datetime]$Entry.beat } catch {} })) | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1]
 }
 # first that holds: STOPPED · FINISHED · WAITING · ACTIVE (progress within $StuckMin) · STUCK
@@ -945,9 +952,9 @@ function Get-KitLiveTranscripts([datetime]$Now, [double]$Minutes, [string]$Kind 
 # rows: board entries, workflow runs (2 h after last write, 48 h unfinished), running steps no entry covers (windows inline)
 function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   $stuck = [double](Get-KitParam 'supervise.stuckMinutes'); $rows = [Collections.Generic.List[object]]::new(); $script:KitTxVersions = @{}
-  $last = { param($tool, $file) $t = if ($file) { Invoke-KitAdapter transcript (Get-KitTranscriptKind $tool) last @{ file = $file } }; if ($t.version) { $script:KitTxVersions[($t.version -split ' ')[0]] = $t.version }; $t }
+  $last = { param($tool, $file) $t = if ($file) { Get-KitTailCached (Get-KitTranscriptKind $tool) $file }; if ($t.version) { $script:KitTxVersions[($t.version -split ' ')[0]] = $t.version }; $t }
   $max = { param([object[]]$T) @($T | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1] }
-  $doing = { param($t) if ($t.tool) { "$($t.tool)$(if ($t.what) { ": $($t.what)" })" } }
+  $doing = { param($t, [string]$stepNow) Format-KitDoing $t $stepNow }; $nextPh = { param([string]$scr, [string]$ph) Get-KitNextPhase $scr $ph }   # Doing · next: adapters/supervise_report.ps1
   $outcome = { param($st) if ("$($st.result.summary)") { "$($st.result.summary)" } else { 'done' } }
   $tok = { param($n) if ($n -ge 1e6) { '{0:0.#}M' -f ($n / 1e6) } else { '{0:0}k' -f ($n / 1e3) } }
   # waits: "<run>/<agent>" or "/<agent>" -> why, since, next
@@ -980,7 +987,8 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $run = @(@($lr | ForEach-Object run) + $runOf[$w.Name] + $w.Name | Where-Object { $_ })[0]
     if (-not @($lr).Count) { $lr = @(@($rec) + @($launch | Where-Object { $_.run -eq $run -and $_.cap }) | Where-Object { $_ }) }   # its self record: script, tokens spent, cap
     foreach ($s in $started) {
-      $st = [pscustomobject]@{ label = [string]$s.label; run = $run; result = $res[$s.agentId].result; tf = Join-Path $w.FullName "agent-$($s.agentId).jsonl"; tx = $null; covered = $false; jt = $jt }
+      $st = [pscustomobject]@{ label = [string]$s.label; run = $run; result = $res[$s.agentId].result; tf = Join-Path $w.FullName "agent-$($s.agentId).jsonl"; tx = $null; covered = $false; jt = $jt
+        phase = [string]$s.phase; script = "$(@($lr.script | Where-Object { $_ })[0])" }
       if ($live -and $s -in $running) { $st.tx = & $last 'claude' $st.tf; $seen.Add($st.tx.at); $runSteps.Add($st)
         $st | Add-Member -Force NoteProperty created (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime
         $st | Add-Member -Force NoteProperty type $(try { (Get-Content ($st.tf -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json).agentType } catch { '' })
@@ -989,11 +997,14 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     }
     $errs = @($res.Values | Where-Object { $_.result.error }).Count; $spent = @($lr.spent | Where-Object { $_ })[0]; $cap = @($lr.cap | Where-Object { $_ })[0]
     $cw = @(foreach ($x in @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) })) { & $waitOf $run @(LabelNames $x.label) })   # every running step waits = the run waits
+    $rsNow = @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) }); $phNow = @($rsNow.phase | Where-Object { $_ } | Select-Object -Unique)   # Doing: phase · running steps; next: the phase after
     $wp = if ($paused) { [pscustomobject]@{ why = 'owner pause'; at = @($lr.paused)[0]; next = "bossy.ps1 resume -Run $run" } } elseif (-not $running.Count) { & $waitOf $run @() } elseif ($cw.Count -eq $running.Count) { [pscustomobject]@{ why = "$($cw[0].why)$(if ($cw.Count -gt 1) { ", $($cw.Count) steps" })"; at = @($cw.at | Sort-Object)[0]; next = $cw[0].next } }
     $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$run (workflow)"; run = $run; left = $(if ($live) { $running.Count } else { 0 })
           task = "$(@($lr.script | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf })[0]) $($w.Name) · steps $($res.Count)/$($started.Count)$(if ($spent) { " · $(& $tok $spent) tokens$(if ($cap) { " of $(& $tok $cap)" })" })"
           stopped = $gone; done = $(if ($fin) { "$($res.Count)/$($started.Count) steps$(if ($errs) { ", $errs error(s)" })" })
-          wait = $wp.why; waitAt = $wp.at; waitNext = $wp.next; last = & $max $seen; started = $w.CreationTime; ended = $jt; next = '' }) $Now $stuck))
+          wait = $wp.why; waitAt = $wp.at; waitNext = $wp.next; last = & $max $seen; started = $w.CreationTime; ended = $jt
+          doing = $(if ($live -and $rsNow.Count) { (@(($phNow -join ', '), (@($rsNow.label) -join ', ')) | Where-Object { $_ }) -join ' · ' })
+          next = $(if ($live -and $phNow.Count) { $scr0 = "$(@($rsNow.script | Where-Object { $_ })[0])"; $np = & $nextPh $scr0 "$($phNow[-1])"; if ($np) { "next: $np" } }) }) $Now $stuck))
   }
   # a running step of the same name is that agent now (resume or env-fix after its entry left)
   $trk = (Read-KitTracking).tasks; $txCache = @{}; $byTx = @{}
@@ -1012,20 +1023,23 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $w = if ($e.paused -and -not $on) { [pscustomobject]@{ why = 'owner pause'; at = $e.paused; next = "bossy.ps1 resume -Run $($e.run)" } } else { & $waitOf $e.run @($e.agent) }
     if (-not $w -and "$($e.status)" -match '^(?i)wait' -and ($Now - [datetime]$e.beat).TotalMinutes -lt $stuck) { $w = [pscustomobject]@{ why = "$($e.status)"; at = $e.beat; next = '' } }   # its own words (e.g. waiting for area X1) while it beats
     $tn = foreach ($i in "$($e.items)" -split '[,\s]+') { $o = if ($i -and $trk) { $trk[$i] }; if ($o -and -not $o.done) { "track $i`: $(@($o.mrs).Count) MR(s) until promoted$(if ($o.holdPromotion) { " (held: $($o.holdPromotion))" })"; break } }
+    $ck = if ($e.status -ne 'left') { Get-KitCheckpointNow "$($e.agent)" "$($e.run)" }; $ph = if ($on) { $st.phase }; $npOn = if ($on) { & $nextPh $st.script $st.phase }
     $dupKey = "$($e.agent)|$($t.file)"; $twin = if ($t.file) { $byTx[$dupKey] }
     if ($twin) { if ($twin.state -notmatch '^(FIN|STOP)' -or $e.status -eq 'left') { continue }; [void]$rows.Remove($twin) }   # joined twice: one row, live wins
     $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$($e.agent) ($($e.type))"; run = $e.run; session = $e.session; tx = $t.file; task = (@($(if ($on) { $st.label }), $e.items, $e.run) | Where-Object { $_ }) -join ' · '
           stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
           done = $(if ($on) { '' } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
-          wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at); doing = & $doing $t; started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
-          next = $(if ($e.handoffBrief) { "a fresh $($e.type) from $(Split-Path "$($e.handoffBrief)" -Leaf)" } elseif ($tn) { $tn } elseif ("$($e.status)" -notin 'working', 'left') { "$($e.status)" }) }) $Now $stuck))
+          wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at); doing = & $doing $t ((@($ph, $ck.step) | Where-Object { $_ }) -join ' · '); started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
+          next = $(if ($e.handoffBrief) { "a fresh $($e.type) from $(Split-Path "$($e.handoffBrief)" -Leaf)" } elseif ($tn) { $tn } elseif ("$($e.status)" -notin 'working', 'left') { "$($e.status)" } elseif ($ck.next -and $ck.next -ne 'none') { "next: $($ck.next)" } elseif ($npOn) { "next: $npOn" }) }) $Now $stuck))
     $byTx[$dupKey] = $rows[$rows.Count - 1]
   }
   foreach ($st in @($runSteps | Where-Object { -not $_.covered })) {
     $w = & $waitOf $st.run @(LabelNames $st.label); $ty = try { (Get-Content ($st.tf -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json).agentType } catch { '' }
     $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$((($st.label -split ':', 2)[-1] -split '@')[0]) ($(if ($ty) { $ty } else { 'step' }))"; run = $st.run; task = "$($st.label) · $($st.run)"
-          wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = $(if ($st.tx) { $st.tx.at } else { $st.jt }); doing = & $doing $st.tx; started = (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime; next = '' }) $Now $stuck))
+          wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = $(if ($st.tx) { $st.tx.at } else { $st.jt }); doing = & $doing $st.tx $st.phase; started = (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime
+          next = $(if ($np = & $nextPh $st.script $st.phase) { "next: $np" } else { '' }) }) $Now $stuck))
   }
+  Save-KitTailCache
   @($rows)
 }
 # Claude Code wraps cells only at spaces and draws cards when a word does not fit

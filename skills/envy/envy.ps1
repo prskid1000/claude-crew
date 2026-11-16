@@ -530,7 +530,7 @@ function Resolve-MigSets([string]$e) {
   $tool = Get-MigTool $e; $cfg = (Get-EnvCfg $e).db.migrations; $reg = Get-RegistryScope $e
   $dirs = @(EnvServices $e | Where-Object { $_.repo } | ForEach-Object { try { [pscustomobject]@{ repo = RepoOf $e $_; dir = SvcDir $e $_ } } catch { } } | Where-Object { $_ -and $_.dir })
   $sets = @($cfg.sets | Where-Object { $_ })
-  $hist = $null   # scopes holding the tool's history table: a registry row without its schema or history is no scope to tag
+  $hist = $null   # scopes holding the tool's history table: a registry row without schema or history is none
   if ($sets.Count -and $tool -ne 'none' -and (Test-MigVerb $tool 'historyScopes')) { $hist = try { @(Invoke-MigVerb $tool 'historyScopes' @{ e = $e }) } catch { $null } }
   if (-not $sets.Count) { if ($tool -eq 'none' -or -not (Test-MigVerb $tool 'discover')) { return @() }; return @(Invoke-MigVerb $tool 'discover' @{ e = $e; dirs = $dirs; registry = $reg }) }
   foreach ($s in $sets) {
@@ -738,7 +738,7 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
     for ($i = 2; $to -in $live; $i++) { $to = Join-Path (Get-KitPath localenv) "run/$e/$($s.name)/$tag-$i" }   # a running copy is never replaced
     Remove-Item -LiteralPath $to -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $to | Out-Null
     $bk = $script:BuildKeys[$s.name]; $sh = $script:SharedStage[$s.name]; $shared = [bool]$sh; $shLane = $null; $script:BuildKeys.Remove($s.name); $script:SharedStage.Remove($s.name)   # one build, one stage
-    for ($try = 0; $sh -and $try -lt 3; $try++) {   # another lane's copy of the same build (its AOT cache belongs to its file); pruned meanwhile: the next one
+    for ($try = 0; $sh -and $try -lt 3; $try++) {   # another lane's copy of the same build (its AOT cache goes with its file); pruned meanwhile: the next
       try {
         if (-not (Test-Path -LiteralPath $sh.path)) { throw 'gone' }
         Get-ChildItem -LiteralPath $sh.dir -Force | Where-Object Name -ne 'app.aot' | Copy-Item -Destination $to -Recurse -Force
@@ -1171,7 +1171,7 @@ $script:ListenSnap = $null
 function Test-ListenRow($c) { "$($c.State)" -eq 'Listen' -or ([int]$c.RemotePort -eq 0 -and "$($c.RemoteAddress)" -in '0.0.0.0', '::') }
 function Get-PortPids([int]$Port) {
   if ($KitIsWindows) {
-    if (-not $script:ListenSnap -or ((Get-Date) - $script:ListenSnap.at).TotalSeconds -gt 2) {
+    if (-not $script:ListenSnap -or ((Get-Date) - $script:ListenSnap.at).TotalSeconds -gt $(if ($script:StatusSnap) { 60 } else { 2 })) {
       $m = @{}; foreach ($c in @(Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object { Test-ListenRow $_ })) { $k = "$($c.LocalPort)"; if (-not $m[$k]) { $m[$k] = [Collections.Generic.List[int]]::new() }; if (-not $m[$k].Contains([int]$c.OwningProcess)) { $m[$k].Add([int]$c.OwningProcess) } }
       $script:ListenSnap = @{ at = Get-Date; ports = $m }
     }
@@ -1366,7 +1366,7 @@ $script:DepFailPattern = [string](Opt 'logClasses.dependency' '(?i)connection re
 # a dependency that is down and that nobody starts is claimed (status waiting, waitFor dep: the loop leaves it) and started here
 # a train's DB steps (marks, slices, migration checks, the guard, a restore) on a lane whose own DB service rests: a start in
 # progress is waited for, else the train starts it (-Latest: a start that got there first wins) -> its lines; throws when it fails
-function Test-SvcStartLive([string]$e, [string]$name) {   # a start in progress: owned starting, a live claim (room, lock, dep) or the loop's worker before it claims
+function Test-SvcStartLive([string]$e, [string]$name) {   # a start in progress: owned starting, a live claim (room, lock, dep) or the loop's worker pre-claim
   $x = (Read-State $e).services[$name]
   if (($x.status -eq 'starting' -and (Owned $x)) -or ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart))) { return $true }
   [bool]@(Get-SysProcs | Where-Object { "$($_.CommandLine)" -match "$([regex]::Escape("_daemon -Env $e -Start $name"))(\s|$)" }).Count
@@ -1520,7 +1520,7 @@ function Add-SeedBaseline([string]$e, [string]$by) {
 function Invoke-DbChores([string]$e, $st, [hashtable]$at) {
   if (DbSvcDown $e) { return }
   if (((Get-Date) - $at.temp).TotalSeconds -ge 60 -and (Get-Command Invoke-DbTempWatch -ErrorAction SilentlyContinue) -and (Test-DbTemp $e)) {
-    $at.temp = Get-Date   # the connection using the most temp above db.tempMaxGB is killed; a connection gone before the KILL: said
+    $at.temp = Get-Date   # the top temp user above db.tempMaxGB is killed; one gone before the KILL: said
     try { foreach ($k in @(Invoke-DbTempWatch $e)) { $k; Event $e 'db-kill' @{ by = 'watchdog'; what = $k } } } catch { "db temp watchdog: $("$_".Split("`n")[0])" }
   }
   if (((Get-Date) - $at.pool).TotalSeconds -ge 60 -and (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue)) {   # adapters/db_presets.ps1, db.bufferPool
@@ -1845,7 +1845,7 @@ if ($Aot) {   # AOT training worker: one run for one artifact, gated, off the lo
   try { Invoke-AotTrain $e (Svc $e $Aot) $Artifact } catch { Say "aot training of $Aot failed: $("$_".Split("`n")[0])" }
   exit
 }
-if ($Start) {   # start worker: one service start (RAM wait, start lock, health) off the loop, so beats, prune and idle stops go on
+if ($Start) {   # start worker: one service start (RAM wait, lock, health) off the loop: beats, prune, idle stops go on
   $s = Svc $e $Start
   try {
     if (Healthy $e $s) { Say "start of ${Start}: already up"; Update-State $e { param($z) if ($z.services[$Start] -and $z.services[$Start].status -ne 'up') { $z.services[$Start].status = 'up' } } }
@@ -2203,7 +2203,7 @@ function Wait-Up([string[]]$names) {
 
 function Show-Status([string]$env1) {
   $script:e = $env1; if (Test-Path (StateFile $env1)) { Update-State $env1 { param($x) Prune $x } }; $st = Read-State $env1; Prune $st   # the prune persists: status and supervise reclaim
-  $all = Get-KitProcSnap
+  $all = $script:StatusSnap ?? (Get-KitProcSnap)
   $svc = foreach ($s in EnvServices $env1) {
     $x = $st.services[$s.name]; $h = Healthy $env1 $s
     $ids = if ($h) { SvcPids $env1 $s $st $all } else { @() }
@@ -2280,7 +2280,9 @@ switch ($Action) {
       if ((Get-EnvCfg $n).tasks) { "  tasks: $((Get-EnvCfg $n).tasks.PSObject.Properties.Name -join ', ')" }
     }
   }
-  'status' { $names = if ($EnvName) { @($EnvName) } else { EnvNames }; if ($Agent -ne 'main') { foreach ($n in $names) { Touch-Lease $n $Agent } }; $out = foreach ($n in $names) { Show-Status $n }; if ($Json) { $out | ConvertTo-Json -Depth 8 } else { $out } }
+  'status' { $names = if ($EnvName) { @($EnvName) } else { EnvNames }; if ($Agent -ne 'main') { foreach ($n in $names) { Touch-Lease $n $Agent } }
+    $script:StatusSnap = Get-KitProcSnap
+    $out = foreach ($n in $names) { Show-Status $n }; if ($Json) { $out | ConvertTo-Json -Depth 8 } else { $out } }
   'doctor' {
     $rows = @(foreach ($n in $(if ($EnvName) { @($EnvName) } else { EnvNames })) { $d = @(Get-Doctor $n); if ($d.Count) { $d } else { [pscustomobject]@{ level = 'OK'; env = $n; what = 'nothing to fix' } } })
     if ($Json) { $rows | ConvertTo-Json -Depth 4 } else { $rows | ForEach-Object { '{0,-4} {1}: {2}' -f $_.level, $_.env, $_.what } }
@@ -2351,7 +2353,7 @@ switch ($Action) {
     foreach ($rn in @($mig.Keys | Where-Object { $mig[$_] })) { "[$e]   $rn MIGRATIONS: they change the shared local DB$(if (MarksOn $e) { '; the release mark keeps what their DDL destroys (envy.ps1 migrations -Env ' + $e + ' -Branch ' + $Branch + ' lists the tables)' })" }
     Exit-Request (Wait-Request $rid)
   }
-  'drop' {   # -Agent (bossy.ps1 release): every layer of a finished agent; -Stale (supervise): merged, gone or orphan layers of every env
+  'drop' {   # -Agent (release): a finished agent's layers; -Stale (supervise): merged, gone or orphan layers of all envs
     if ($Stale) { foreach ($n in $(if ($EnvName) { @($EnvName) } else { EnvNames })) { $e = $n; $sl = @(Get-StaleLayers $n -DryRun:$DryRun); if ($DryRun) { $sl | ForEach-Object { "[$n] stale $($_.why)" } } elseif ($sl.Count) { Add-LayerDrops $n $sl } }; return }
     if (-not $Branch -and $PSBoundParameters.ContainsKey('Agent')) {
       if (Test-Parked $Agent) { "[$e] layers of $Agent kept: it paused or handed off"; return }
@@ -2406,7 +2408,7 @@ switch ($Action) {
     Update-State $e { param($x) if ($x.holds[$Agent]) { $left = @($x.holds[$Agent].services | Where-Object { $Services -and $_ -notin (Closure $e $Services) }); if ($left.Count) { $x.holds[$Agent].services = $left } else { $x.holds.Remove($Agent) } } }
     Event $e 'unhold' @{ agent = $Agent; services = @($Services) }; "[$e] hold of $Agent $(if ($Services) { "on $($Services -join ', ') " })removed: services stop after their idle grace"
   }
-  'restart' {   # down would end the leases and stop dependents: this stops only -Services, the controller starts them again
+  'restart' {   # down would end leases and stop dependents: this stops -Services only; the controller restarts them
     if (-not $Services) { throw 'restart needs -Services <svc,..>' }
     $order = @(EnvServices $e | Where-Object { $_.name -in $Services -and (Managed $_) }); [array]::Reverse($order)
     foreach ($s in $order) { if (Healthy $e $s) { Stop-Svc $e $s 'restarted' }; "[$e] $($s.name) restarting$(if ((Read-State $e).services[$s.name].artifact) { " from $((Read-State $e).services[$s.name].artifact)" })" }
@@ -2482,7 +2484,7 @@ switch ($Action) {
     foreach ($q in @(Get-DbTempUse $e)) { '{0} {1} {2} {3}' -f $q.id, $q.gb.ToString([Globalization.CultureInfo]::InvariantCulture), $q.secs, (Protect-KitText $q.query) }
   }
   'logs' {
-    if (-not $Services) {   # no -Service: localEnv.defaultService (when the env runs it), else the env's only service, else the list (a usage line, never a crash)
+    if (-not $Services) {   # no -Service: localEnv.defaultService (when running), else the only service, else a usage line (never a crash)
       $sn = @(EnvServices $e | ForEach-Object name); $dsv = [string](Opt 'defaultService' ''); $Services = @(if ($dsv -and $dsv -in $sn) { $dsv } elseif ($sn.Count -eq 1) { $sn[0] })
       if (-not $Services) { "logs needs -Service: one of $($sn -join ', ') (envy.ps1 logs -Env $e -Service <name>)"; exit 2 }
     }

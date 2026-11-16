@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
-# supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file.
-# Sections: L5 supervise report
+# supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next.
+# Sections: L5 supervise report · L101 transcript tails
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -98,3 +98,35 @@ function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$
     @('', '## Sweep', '', '```text') + $Sweep + '```' |
     Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
 }
+# ---- transcript tails: the board's Doing detail, cached per transcript (lib.ps1 Get-KitStatusRows)
+# what a tool call works on (board "Doing"): its description, else a file name + its folder tail, a workflow / skill name, a search pattern, the command
+function Get-KitToolWhat($U) { $i = $U.input; $pt = { param($p) $ps = @("$p" -split '[\\/]' | Where-Object { $_ }); if ($ps.Count -gt 1) { "$($ps[-1]) · $(@($ps | Select-Object -SkipLast 1 | Select-Object -Last 2) -join '/')" } else { "$p" } }
+  $w = if ("$($i.description)".Trim()) { "$($i.description)" } elseif ($i.file_path -or $i.notebook_path) { "$($U.name) $(& $pt "$($i.file_path)$($i.notebook_path)")" } elseif ($i.scriptPath) { "$($U.name) $([IO.Path]::GetFileNameWithoutExtension("$($i.scriptPath)"))" }
+    elseif ($i.skill) { "$($U.name) $($i.skill)" } elseif ($i.pattern) { "$($U.name) $($i.pattern)$(if ($i.path) { " in $(& $pt $i.path)" })" } elseif ($i.command) { "$($i.command)" } else { '' }
+  $w = Protect-KitText ("$w" -replace '\s+', ' ').Trim(); if ($w.Length -gt 160) { $w.Substring(0, 159) + '…' } else { $w } }   # masked before the cut: a command can hold a secret
+# a transcript's parsed tail, cached per file by size + write time (a sweep re-reads only grown transcripts; task outputs still rechecked); claude only
+function Get-KitTailCached([string]$Kind, [string]$File) {
+  if ($Kind -ne 'claude' -or -not $File) { return $(if ($File) { Invoke-KitAdapter transcript $Kind last @{ file = $File } }) }
+  if ($null -eq $script:KitTailCache) { $script:KitTailCache = try { Get-Content -LiteralPath (Get-KitPath transcript-tails) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($script:KitTailCache -isnot [hashtable]) { $script:KitTailCache = @{} } }
+  $fi = Get-Item -LiteralPath $File -ErrorAction SilentlyContinue; if (-not $fi) { return }
+  $sig = "$($fi.Length)|$($fi.LastWriteTimeUtc.Ticks)"; $c = $script:KitTailCache[$fi.FullName]
+  if ($c -and "$($c.sig)" -eq $sig) { $s = [pscustomobject]@{ file = $fi.FullName; at = $fi.LastWriteTime; tool = "$($c.tool)"; what = "$($c.what)"; say = "$($c.say)"; ended = [bool]$c.ended; killed = $false; version = "$($c.version)"; outs = @($c.outs) }
+    foreach ($o in $s.outs) { $f = Get-Item -LiteralPath $o -ErrorAction SilentlyContinue; if ($f -and $f.LastWriteTime -gt $s.at) { $s.at = $f.LastWriteTime } }; return $s }
+  $s = Invoke-KitAdapter transcript claude last @{ file = $File }; if (-not $s) { return }
+  $script:KitTailCache[$fi.FullName] = @{ sig = $sig; tool = $s.tool; what = $s.what; say = $s.say; ended = [bool]$s.ended; version = $s.version; outs = @($s.outs); seen = (Get-Date).ToString('o') }; $script:KitTailDirty = $true; $s
+}
+function Save-KitTailCache { if (-not $script:KitTailDirty) { return }; $old = (Get-Date).AddDays(-1)
+  foreach ($k in @($script:KitTailCache.Keys)) { if ([datetime]"$($script:KitTailCache[$k].seen)" -lt $old -or -not (Test-Path -LiteralPath $k)) { $script:KitTailCache.Remove($k) } }   # a day unseen or gone: dropped
+  try { Write-KitAtomic (Get-KitPath transcript-tails -Create) ($script:KitTailCache | ConvertTo-Json -Depth 4 -Compress); $script:KitTailDirty = $false } catch { } }
+# Doing (no agent reports it): "<phase / checkpoint step> · <what now>"; what now = the newest tool call's description or file, else its one-line text
+function Format-KitDoing($T, [string]$StepNow) { $now0 = if ($T.what) { if ("$($T.what)".StartsWith("$($T.tool) ")) { "$($T.what)" } else { "$($T.tool): $($T.what)" } } elseif ($T.say) { "$($T.tool): $($T.say)" } elseif ($T.tool) { "$($T.tool)" }
+  (@($StepNow, $now0) | Where-Object { "$_".Trim() }) -join ' · ' }
+# an agent's checkpoint of this run: its last step (round = the step's count, item, a short evidence) and next
+function Get-KitCheckpointNow([string]$Agent, [string]$Run) { $c = try { Read-KitState (Get-KitCheckpointFile $Agent $Run) } catch { $null }; if (-not $c -or -not @($c.steps).Count -or ($Run -and "$($c.run)" -ne $Run) -or $c.done) { return }
+  $l = @($c.steps)[-1]; $rd = @($c.steps | Where-Object { "$($_.step)" -eq "$($l.step)" }).Count
+  [pscustomobject]@{ step = Protect-KitText ((@("$($l.step)$(if ($rd -gt 1) { " round $rd" })", $l.item, $(if ("$($l.evidence)".Length -le 40) { $l.evidence })) | Where-Object { "$_".Trim() }) -join ' · '); next = Protect-KitText "$($c.next)" } }
+# a workflow's phases (meta.phases titles of its script, read once per process): the phase after $Phase
+function Get-KitNextPhase([string]$Script, [string]$Phase) { if (-not $Script -or -not $Phase) { return }; if ($null -eq $script:KitPhases) { $script:KitPhases = @{} }
+  if (-not $script:KitPhases.ContainsKey($Script)) { $pf = if (Test-Path -LiteralPath $Script) { $Script } else { Join-Path $script:KitRoot "workflows/$(Split-Path $Script -Leaf)" }
+    $script:KitPhases[$Script] = @(try { [regex]::Matches(((Get-Content -LiteralPath $pf -TotalCount 40 -ErrorAction Stop) -join "`n"), "(?m)^\s*\{\s*title: '([^']+)'") | ForEach-Object { $_.Groups[1].Value } } catch { }) }
+  $ps = @($script:KitPhases[$Script]); $pi = [array]::IndexOf($ps, $Phase); if ($pi -ge 0 -and $pi + 1 -lt $ps.Count) { $ps[$pi + 1] } }
