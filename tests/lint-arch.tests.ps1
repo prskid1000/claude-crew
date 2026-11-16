@@ -40,6 +40,9 @@ Set-Content (Join-Path $kc 'skills/crafty/adapters/zz_arch.ps1') "#Requires -Ver
 # ARCH-SBLOG fixtures: a flagged word (a comment counts) and a computed member name; a quoted literal member and phoney/ pass
 Set-Content (Join-Path $kc 'skills/crafty/zz_sb.ps1') "#Requires -Version 7`n# loop the PSObject.Properties`n`$x = `$o.`$k`n`$y = `$o.'lit'" -Encoding utf8
 Set-Content (Join-Path $kc 'skills/phoney/zz_sb.ps1') "#Requires -Version 7`n# loop the PSObject.Properties`n`$x = `$o.`$k" -Encoding utf8
+# inline pwsh text in a .py (a literal and a named constant) and a cdxml cmdlet are counted; a git -c pair passes
+$sbPy = "import subprocess`nPS_ZZ = '''`$a = 1`n`$b = [Runtime.InteropServices.Marshal]'''`nsubprocess.run(['pwsh', '-EncodedCommand', PS_ZZ])`nsubprocess.run(['pwsh', '-Command', 'Get-NetTCPConnection'])`nsubprocess.run(['git', '-c', 'x.GetField=1'])`nsubprocess.run(['pwsh', '-Command', f'& {{ Add-Type {PS_ZZ} }}'])"
+Set-Content (Join-Path $kc 'skills/crafty/zz_sbi.py') $sbPy -Encoding utf8
 Set-Content (Join-Path $kc 'skills/crafty/zz_gitlab.ps1') "#Requires -Version 7`n`$a = Get-KitSetting 'zz.vendor' 'gitlab'" -Encoding utf8
 Add-Content (Join-Path $kc 'LESSONS.md') "`n## zz`n- a migration fails -> run liquibase status first (it hides the lock)" -Encoding utf8
 $null = New-Item -ItemType Directory -Force (Join-Path $kc 'rules'); Set-Content (Join-Path $kc 'rules/zz.local.md') "# zz`nliquibase lock: release it" -Encoding utf8
@@ -79,6 +82,8 @@ Expect "ARCH-DEAD-KEY: a documented key no script reads is a counted problem (ex
   $l1 -match '(?m)^ARCH-DEAD-KEY\s+skills/crafty/kit\.example\.json: "zzDeadKey"' -and $l1 -notmatch 'ARCH-DEAD-KEY.*zzLiveKey')
 Expect 'ARCH-SBLOG: a flagged word (in a comment too) and $o.$k in skills/ are counted problems with file:line; a literal member and the exempt phoney/ pass' ($l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:2: "Properties"' -and
   $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:3: \$o\.\$k' -and (& $cnt 'ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1') -eq 2 -and $l1 -notmatch 'ARCH-SBLOG\s+skills/phoney/')
+Expect 'ARCH-SBLOG: inline -Command / -EncodedCommand text in a .py (literal or constant, at its line) and a cdxml cmdlet count; git -c passes' ($l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:3: "InteropServices"' -and
+  $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:5: "Get-NetTCPConnection": a cdxml' -and $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:7: "Add-Type"' -and (& $cnt 'ARCH-SBLOG\s+skills/crafty/zz_sbi\.py') -eq 4)
 # pwsh's own check (internal; absent on another version: SKIP): no lint-scoped kit script is logged on load
 $sbCheck = [System.Management.Automation.ScriptBlock].GetMethod('CheckSuspiciousContent', [System.Reflection.BindingFlags]'NonPublic,Static')
 $sbVoc = (Get-Content -Raw (Join-Path $PSScriptRoot '../skills/bossy/lint-vocab.json') | ConvertFrom-Json).sbLog
@@ -86,6 +91,10 @@ $sbHot = @(git -C (Join-Path $PSScriptRoot '..') ls-files 'skills/*.ps1' | Where
 if ($sbCheck) {
   $sbHit = @(foreach ($sf in $sbHot) { $sa = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot "../$sf"), [ref]$null, [ref]$null); if ($sh = $sbCheck.Invoke($null, @($sa))) { "$sf <- $(($sh -split "`n")[0])" } })
   Expect "pwsh script-block logging: none of the $($sbHot.Count) lint-scoped skills/ scripts is flagged ($($sbHit -join '; '))" ($sbHot.Count -gt 20 -and -not $sbHit.Count)
+  $sbPyDir = Join-Path $PSScriptRoot '../skills/bossy'; $sbPyFiles = @(git -C (Join-Path $PSScriptRoot '..') ls-files 'skills/*.py' | ForEach-Object { Join-Path $PSScriptRoot "../$_" })
+  $sbInline = @(& $py -X utf8 -c "import sys, json; sys.path.insert(0, sys.argv[1]); import kitbag; print(json.dumps([s for f in sys.argv[2:] for _, s in kitbag.sblog_inline(open(f, encoding='utf-8').read())]))" $sbPyDir @sbPyFiles | ConvertFrom-Json)
+  $sbInHit = @(foreach ($st in $sbInline) { $sa = [System.Management.Automation.Language.Parser]::ParseInput($st, [ref]$null, [ref]$null); if ($sh = $sbCheck.Invoke($null, @($sa))) { "$($st.Substring(0, [Math]::Min(30, $st.Length))) <- $sh" } })
+  Expect "pwsh script-block logging: none of the $($sbInline.Count) inline -Command texts in skills/*.py is flagged ($($sbInHit -join '; '))" (@($sbInline | Where-Object { $_.Length -gt 40 }).Count -ge 2 -and -not $sbInHit.Count)
 } else { 'SKIP pwsh script-block check (no CheckSuspiciousContent on this pwsh)' }
 # the helpers that replace $o.$k / .PSObject.Properties / inline hashing keep the old results
 . (Join-Path $PSScriptRoot '../skills/crafty/lib.ps1')

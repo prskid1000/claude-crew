@@ -20,8 +20,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L34 paths · L88 state · L143 kitlog · L242 load · L636 lint · L1041 README graph · L1144 lint command · L1380 audit ·
-  L1496 registry · L1828 arch lint · L2070 prose · L2221 sections · L2351 budget · L2365 migrate · L2525 plugins ·
-  L2579 state lint · L2767 main
+  L1496 registry · L1828 arch lint · L2095 prose · L2246 sections · L2376 budget · L2390 migrate · L2550 plugins ·
+  L2604 state lint · L2792 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1724,7 +1724,7 @@ $pred = { param($n)
     if ($n.GetCommandName() -in 'Get-KitSetting', 'Get-KitValue', 'Opt', 'Start-Sleep') { return [bool]@($el | Select-Object -Skip 1 | Where-Object { & $num $_ }).Count }
     for ($i = 1; $i -lt $el.Count - 1; $i++) { if ($el[$i] -is "$L.CommandParameterAst" -and $el[$i].ParameterName -match '(?i)^(TimeoutSec|Seconds|Minutes|Milliseconds|\w+TimeoutSeconds)$' -and (& $num $el[$i + 1])) { return $true } }
     return $false }
-  if ($n -is "$L.InvokeMemberExpressionAst" -and "$($n.Member)" -match '^(Add|From)(Milliseconds|Seconds|Minutes|Hours|Days)$|^(WaitOne|WaitForExit)$') { return [bool]@($n.Arguments | Where-Object { & $num $_ }).Count }
+  if ($n -is "$L.MemberExpressionAst" -and $null -ne $n.Arguments -and "$($n.Member)" -match '^(Add|From)(Milliseconds|Seconds|Minutes|Hours|Days)$|^(WaitOne|WaitForExit)$') { return [bool]@($n.Arguments | Where-Object { & $num $_ }).Count }
   if ($n -is "$L.BinaryExpressionAst" -and "$($n.Operator)" -match '^I?(gt|ge|lt|le)$') { foreach ($s in @(@($n.Left, $n.Right), @($n.Right, $n.Left))) { if ($s[0] -is "$L.MemberExpressionAst" -and "$($s[0].Member)" -match '^Total(Milliseconds|Seconds|Minutes|Hours|Days)$' -and (& $num $s[1])) { return $true } } }
   $false }
 $out = @(foreach ($f in $env:KIT_LIT_FILES -split '\|') { $tk = $null; $er = $null; $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$tk, [ref]$er)
@@ -1986,13 +1986,19 @@ def arch_lint(k):
     # ARCH-SBLOG: pwsh 7 writes a script's whole text to the event log (4104) on every load when it holds a flagged word (any
     # case, comments too) or a $o.$name member; the kit's .ps1 load on every tool call (guard hook)
     sb = voc.get('sbLog') or {}
-    sbf = [f for f in code if f.endswith('.ps1') and f.startswith('skills/') and not f.startswith(tuple(sb.get('exempt') or ['\0']))]
-    for f in sbf:
-        t = (k.texts.get(f) or read(osp.join(k.dir, f))).lower()
+    ex = tuple(sb.get('exempt') or ['\0'])
+    sbf = [f for f in code if f.endswith('.ps1') and f.startswith('skills/') and not f.startswith(ex)]
+    cdx = re.compile(sb['cdxml'], re.I) if sb.get('cdxml') else None
+    pys = [(f, n, s) for f in code if f.endswith('.py') and f.startswith('skills/') and not f.startswith(ex) for n, s in sblog_inline(k.texts.get(f) or read(osp.join(k.dir, f)))]
+    for f, n0, t in [(f, 1, k.texts.get(f) or read(osp.join(k.dir, f))) for f in sbf] + pys:
+        where = 'this whole script' if n0 == 1 and f.endswith('.ps1') else 'this inline -Command text'
         for w in sb.get('words') or []:
-            if (i := t.find(w.lower())) >= 0:
-                probs.append(('ARCH-SBLOG', f'{f}:{t.count(chr(10), 0, i) + 1}', f'"{w}": pwsh logs this whole script on every load: '
+            if (i := t.lower().find(w.lower())) >= 0:
+                probs.append(('ARCH-SBLOG', f'{f}:{n0 + t.count(chr(10), 0, i)}', f'"{w}": pwsh logs {where} on every load: '
                               'a non-flagged equivalent, or the call in skills/crafty/flagged.ps1'))
+        if cdx and (m := cdx.search(t)):
+            probs.append(('ARCH-SBLOG', f'{f}:{n0 + t.count(chr(10), 0, m.start())}', f'"{m.group(0)}": a cdxml module cmdlet; pwsh logs its generated module '
+                          'code in every process that loads it: netstat / .NET sockets, or run it only off the hot path'))
     for f, n, src in sblog_members(k, sbf):
         probs.append(('ARCH-SBLOG', f'{f}:{n}', f'{src}: a dynamic member makes pwsh log this whole script on every load: Get-KitMember / Set-KitMember'))
     # ARCH-DEAD-KEY: a key kit.example.json documents (sample or _doc) that no script reads
@@ -2003,6 +2009,25 @@ PS_MEMBERS = r'''$out = @(foreach ($f in $env:KIT_SB_FILES -split '\|') { $tk = 
   foreach ($h in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.MemberExpressionAst] -and $n.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst] }, $true))) {
     @{ file = $f; line = $h.Extent.StartLineNumber; src = ($h.Extent.Text -split "`n")[0].Substring(0, [Math]::Min(40, ($h.Extent.Text -split "`n")[0].Length)) } } })
 ConvertTo-Json -InputObject $out -Compress'''
+
+def sblog_inline(t):
+    """[(line, text)] of pwsh script text a .py hands to -Command / -EncodedCommand: a literal or a module constant it names."""
+    try:
+        tree = ast.parse(t)
+    except SyntaxError:
+        return []
+    consts = {n.targets[0].id: n.value for n in tree.body if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+              and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)}
+    out = {}
+    for n in ast.walk(tree):
+        for a, b in zip(getattr(n, 'elts', []) if isinstance(n, (ast.List, ast.Tuple)) else [], (getattr(n, 'elts', None) or [None])[1:]):
+            if isinstance(a, ast.Constant) and str(a.value).lower() in {'-command', '-encodedcommand'}:
+                codec = {id(y) for z in ast.walk(b) if isinstance(z, ast.Call) and getattr(z.func, 'attr', '') in ('encode', 'decode') for y in z.args}   # 'utf-16-le'
+                for x in ast.walk(b):
+                    c = consts.get(x.id) if isinstance(x, ast.Name) else x if isinstance(x, ast.Constant) and isinstance(x.value, str) and id(x) not in codec else None
+                    if c is not None:
+                        out[(c.lineno, c.col_offset)] = c.value   # several pieces can share a line (f-string parts, 'a' + 'b')
+    return [(p[0], v) for p, v in sorted(out.items())]
 
 def sblog_members(k, files):
     """[(file, line, text)] of member accesses with a computed name ($o.$k, $o.($x), $o."$k", [t]::$m): pwsh's own parser (none without pwsh)."""

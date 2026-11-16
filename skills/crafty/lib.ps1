@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L82 state · L156 config · L237 OS · L451 leases · L850 status · L1106 supervise sweep · L1184 tracker ·
-  L1513 prior · L1529 ask bugs · L1714 git-host · L1906 kitlog · L2026 params · L2331 entry-scripts
+Sections: L9 paths · L82 state · L156 config · L237 OS · L457 leases · L856 status · L1112 supervise sweep · L1190 tracker ·
+  L1519 prior · L1535 ask bugs · L1720 git-host · L1912 kitlog · L2032 params · L2337 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -308,6 +308,12 @@ function ConvertFrom-PsElapsed([string]$e) {
   $d = 0; if ($e -match '^(\d+)-(.*)$') { $d = [int]$Matches[1]; $e = $Matches[2] }
   $s = 0; foreach ($x in $e -split ':') { $s = $s * 60 + [int]$x }
   (Get-Date).AddSeconds(-($s + 86400 * $d))
+}
+# Windows TCP rows (v4 + v6) from netstat -ano: the NetTCPIP cdxml cmdlets get logged (event 4104) in every process
+function Get-KitTcpRows {
+  @(foreach ($l in @(netstat -ano 2>$null)) { $f = "$l".Trim() -split '\s+'
+    if ($f.Count -eq 5 -and $f[0] -eq 'TCP' -and $f[4] -match '^\d+$' -and $f[2] -match '^\[?(.*?)\]?:(\d+)$') {
+      [pscustomobject]@{ LocalPort = [int]($f[1] -replace '^.*:'); RemoteAddress = $Matches[1]; RemotePort = [int]$Matches[2]; State = $f[3]; OwningProcess = [int]$f[4] } } })
 }
 function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster on Windows, no CommandLine/Created
   $all = if ($KitIsWindows) {

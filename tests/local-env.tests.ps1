@@ -111,6 +111,9 @@ Expect "health: listening means an IPv4 127.0.0.1 connect; a ::1-only server is 
 $lr = & { . $L3; $rows = @([pscustomobject]@{ State = 'Listen'; RemoteAddress = '0.0.0.0'; RemotePort = 0 }, [pscustomobject]@{ State = $null; RemoteAddress = '0.0.0.0'; RemotePort = 0 },
     [pscustomobject]@{ State = $null; RemoteAddress = '::'; RemotePort = 0 }, [pscustomobject]@{ State = 'Established'; RemoteAddress = '127.0.0.1'; RemotePort = 9201 }); ($rows | ForEach-Object { Test-ListenRow $_ }) -join '|' }
 Expect "listen table: a listener with state 0 (no remote end) still counts; a connection does not ($lr)" ($lr -eq 'True|True|True|False')
+$nt = & { . $L3; $l4 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $l4.Start(); $p4 = $l4.LocalEndpoint.Port
+  try { $r = @(Get-KitTcpRows | Where-Object LocalPort -eq $p4); "$(@($r | Where-Object { Test-ListenRow $_ }).Count)|$(@($r.OwningProcess) -contains $PID)" } finally { $l4.Stop() } }
+if ($IsWindows) { Expect "listen table from netstat: an open listener is a listen row owned by this process ($nt)" ($nt -eq '1|True') }
 # running services' logs: only new out-of-memory lines count; logs -Grep / -Since read from the end
 $lg = Join-Path (Kd) 'svc.log'; "$((Get-Date).AddMinutes(-90).ToString('yyyy-MM-dd HH:mm:ss')) old ERROR x`n<--- JS stacktrace --->`nFATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory" | Set-Content $lg
 $om = & { . $L3; $pos = @{}; $a = Find-NewLogLine $lg $script:OomPattern $pos; Add-Content $lg "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) new ERROR y"; Add-Content $lg 'FATAL ERROR: Reached heap limit again'

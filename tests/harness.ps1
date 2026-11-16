@@ -97,7 +97,8 @@ function Start-TestMySql([switch]$Binlog) {
   $fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $tmPort = $fp.LocalEndpoint.Port; $fp.Stop()   # an OS-picked free port: 3390+ raced parallel runs
   $tmLog = if ($Binlog) { '--log-bin=binlog --server-id=1 --binlog-row-metadata=FULL --sync-binlog=0' } else { '--skip-log-bin' }
   $tmProc = Start-Process $tmExe -ArgumentList "--no-defaults `"--datadir=$tmData`" --port=$tmPort --bind-address=127.0.0.1 --mysqlx=OFF $tmCheap $tmLog" -WindowStyle Hidden -PassThru
-  for ($i = 0; $i -lt 60 -and -not (Test-NetConnection 127.0.0.1 -Port $tmPort -InformationLevel Quiet -WarningAction SilentlyContinue); $i++) { Start-Sleep 1 }
+  $tmUp = { $tc = [Net.Sockets.TcpClient]::new(); try { $tc.ConnectAsync('127.0.0.1', $tmPort).Wait(1000) -and $tc.Connected } catch { $false } finally { $tc.Dispose() } }   # Test-NetConnection loads the NetTCPIP cdxml modules (event 4104)
+  for ($i = 0; $i -lt 60 -and -not (& $tmUp); $i++) { Start-Sleep 1 }
   $tmSrv = [pscustomobject]@{ proc = $tmProc; port = $tmPort; data = $tmData }
   if ($i -ge 60) { Stop-TestMySql $tmSrv; throw "Start-TestMySql: mysqld not listening on $tmPort after 60 s" }
   $tmSrv

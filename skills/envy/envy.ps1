@@ -465,7 +465,7 @@ function Get-IdleServices([string]$e, $st, $need, [string[]]$block, [string]$pre
 $script:EstabSnap = $null
 function ClientPids([int]$port, [int[]]$exclude, [switch]$Any) {
   $pids = if ($KitIsWindows) {
-      if (-not $script:EstabSnap -or ((Get-Date) - $script:EstabSnap.at).TotalSeconds -gt 2) { $script:EstabSnap = @{ at = Get-Date; c = @(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | Select-Object RemotePort, OwningProcess) } }
+      if (-not $script:EstabSnap -or ((Get-Date) - $script:EstabSnap.at).TotalSeconds -gt 2) { $script:EstabSnap = @{ at = Get-Date; c = @(Get-KitTcpRows | Where-Object { $_.OwningProcess -and $_.RemotePort -and $_.State -notmatch '^(TIME_|CLOSE|FIN_|LAST_|SYN_)' }) } }   # localized: counts
       @($script:EstabSnap.c | Where-Object RemotePort -eq $port | ForEach-Object OwningProcess) }
     elseif (Resolve-Tool ss) { @([regex]::Matches("$(ss -tnpH state established "( dport = :$port )" 2>$null)", 'pid=(\d+)') | ForEach-Object { [int]$_.Groups[1].Value }) }
     elseif (Resolve-Tool lsof) { @(lsof -nP "-iTCP@127.0.0.1:$port" -sTCP:ESTABLISHED -Fp 2>$null | Where-Object { $_ -match '^p\d+$' } | ForEach-Object { [int]$_.Substring(1) }) }
@@ -1166,14 +1166,14 @@ function Get-SysCpu {
   $sum = (ps -A -o %cpu= 2>$null | ForEach-Object { [double]"$_".Trim() } | Measure-Object -Sum).Sum
   [math]::Min(100, [math]::Round($sum / [Environment]::ProcessorCount, 0))
 }
-# one listen-table snapshot per 2 s (Get-NetTCPConnection is slow); Stop-Svc drops it
+# one listen-table snapshot per 2 s (netstat takes ~0.2 s); Stop-Svc drops it
 $script:ListenSnap = $null
 # a listener = state Listen or no remote end (some Windows boots report state 0)
 function Test-ListenRow($c) { "$($c.State)" -eq 'Listen' -or ([int]$c.RemotePort -eq 0 -and "$($c.RemoteAddress)" -in '0.0.0.0', '::') }
 function Get-PortPids([int]$Port) {
   if ($KitIsWindows) {
     if (-not $script:ListenSnap -or ((Get-Date) - $script:ListenSnap.at).TotalSeconds -gt $(if ($script:StatusSnap) { 60 } else { 2 })) {
-      $m = @{}; foreach ($c in @(Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object { Test-ListenRow $_ })) { $k = "$($c.LocalPort)"; if (-not $m[$k]) { $m[$k] = [Collections.Generic.List[int]]::new() }; if (-not $m[$k].Contains([int]$c.OwningProcess)) { $m[$k].Add([int]$c.OwningProcess) } }
+      $m = @{}; foreach ($c in @(Get-KitTcpRows | Where-Object { Test-ListenRow $_ })) { $k = "$($c.LocalPort)"; if (-not $m[$k]) { $m[$k] = [Collections.Generic.List[int]]::new() }; if (-not $m[$k].Contains([int]$c.OwningProcess)) { $m[$k].Add([int]$c.OwningProcess) } }
       $script:ListenSnap = @{ at = Get-Date; ports = $m }
     }
     return @($script:ListenSnap.ports["$Port"] | Where-Object { $_ })
