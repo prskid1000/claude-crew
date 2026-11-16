@@ -145,7 +145,7 @@
   "workflows": {
    "buildy": { "covers": "any multi-item build: features, fixes, refactors, migrations, bug waves, resume, disputes, debates", "crew": ["rechy", "devy", "revy", "datay", "kitty"], "router": "R5" },
    "testy": { "covers": "any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env", "crew": ["checky", "kitty"], "router": "R8" },
-   "tidy": { "covers": "kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest + upkeep, no LLM), then one kitty: lessons + rule updates", "crew": ["kitty"], "router": "R4" }
+   "tidy": { "covers": "kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest of signals and task outcomes, standing-rule asks from repeated owner answers, upkeep; no LLM), then one kitty: lessons + rule updates", "crew": ["kitty"], "router": "R4" }
   },
   "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R19", "R18"],
   "events": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14", "E15"],
@@ -205,7 +205,7 @@
    "agents": "work/agents/", "node-spec": "cache/node-spec/", "apks": "cache/android-swarm/apk/",
    "retros": "logs/retros/", "kitty-audits": "logs/kitty-audits/", "localenv": "work/localenv/",
    "localenv-logs": "logs/localenv/",
-   "localenv-history": "cache/localenv-history.json", "media": "cache/media/"
+   "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt"
   },
   "durable": {
    "signals": "learning.jsonl", "last-retro": "learning.stamp", "last-kitty-audit": "kitty-audit.stamp",
@@ -215,10 +215,10 @@
    "tracker-none": "tracker-none/", "published": "published/",
    "localenv-env": "localenv/",
    "browser-ports": "browser-ports.json", "ports-deployed": "ports-deployed.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "locks": "runtimes/locks.json", "storage": "storage/",
-   "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl"
+   "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl", "outcomes": "outcomes.jsonl", "standing-rules": "standing-rules.json"
   },
   "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kitbag.py kitlog): every log line: at, run, agent, task, script, verb, event + fields, secrets masked. A durable name's stream writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl (merged by bossy.ps1 audit).",
-   "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log", "scope-log", "params", "params-changes", "logs-summary", "leases"],
+   "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log", "scope-log", "params", "params-changes", "logs-summary", "leases", "outcomes"],
    "secretKey": "(?i)token|passw|secret|api[-_]?key|authoriz|cookie|credential|private[-_]?key|^pwd$|^pass$",
    "mask": [["\\b(bearer|basic)\\s+(?=[\\w.~+/=-]*\\d)[\\w.~+/=-]{12,}", "$1 [redacted]"], ["(?-i:\\b(glpat-|gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[\\w-]{8,})", "[redacted]"],
     ["\\beyJ[\\w-]{6,}\\.[\\w-]{6,}\\.[\\w-]+", "[redacted]"], ["(?i)\\b((?:access_|api_?|auth_?|id_)?token|passw\\w*|secret|api[-_]?key|pwd)([\"']?\\s*[=:]\\s*)(\"[^\"]*\"|'[^']*'|[^\\s&;,]+)", "$1$2[redacted]"],

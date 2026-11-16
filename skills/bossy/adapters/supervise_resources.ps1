@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L258 shells · L392 page · L883 release · L922 lines · L955 cleanup · L1016 launch ·
-  L1094 pause · L1212 heartbeat · L1227 sessions · L1279 ci tasks ·
-  L1334 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L258 shells · L392 page · L888 release · L927 lines · L960 cleanup · L1021 launch ·
+  L1099 pause · L1217 heartbeat · L1232 sessions · L1284 ci tasks ·
+  L1339 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -752,7 +752,12 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "<div class=tb><input id=q type=search placeholder='Filter  ( / )' aria-label='Filter the page'><button id=ar class=ib type=button aria-pressed=true aria-label='Auto-refresh every 60 s' title='Auto-refresh every 60 s'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round /></svg></button><button id=tt class=ib type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
   # each number once, in acting order, open: flags, live agents, runs, machine, resources; Kit internals one folded band (owner, 2026-11-13)
   $nRes = @($j.resources | Where-Object { $_ }).Count; $nSh = @($j.shells | Where-Object { $_ }).Count
-  $intHtml = (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + $UP.internals + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $setHtml
+  # outcomes (adapters/outcomes.ps1): QA first pass per area, one labelled bar each
+  $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats } catch { $null } }
+  $ocHtml = if ($oc.n) { "<p class=sm>$(& $e "$($oc.n) task(s): QA first pass $($oc.firstPass)/$($oc.qaN), came back $($oc.cameBack)$(if ($null -ne $oc.p50Promoted) { ", p50 $($oc.p50Promoted) h to promoted" })")</p>" +
+    (@($oc.areas | Select-Object -First 8 | ForEach-Object { $rt = if ($_.qaN) { $_.firstPass / $_.qaN } else { 1 }
+      "<p>$(& $e "$($_.area): $($_.n) task(s) · came back $($_.cameBack) · fix rounds $($_.rounds)")</p>" + (& $meter $_.firstPass ([math]::Max(1, $_.qaN)) "first pass $($_.firstPass)/$($_.qaN)" $(if ($rt -ge 0.8) { 'sage' } elseif ($rt -ge 0.5) { 'watch' } else { 'act' })) }) -join '') }   # the long text wraps above, the bar's caption stays short
+  $intHtml = (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + $UP.internals + (& $fold 'outcomes' 'Outcomes, 30 days' $(if ($oc.n) { $oc.n } else { 0 }) $ocHtml -cls sub) + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $setHtml
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'><p><a class=rk href='../supervise-report.html'>Supervisor</a></p>$($UP.pages[$pk])</main></body></html>" } }
   # Shells: a fold only when one runs; none = one muted word in the Resources header
   $nWait = @($st.waits.rows | Where-Object { $_ }).Count   # lease waits open the fold even with nothing held

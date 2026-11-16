@@ -72,7 +72,7 @@ Board and disagreements: AGENTS.md "Crew".
 |---|---|---|---|
 | `/buildy` | any multi-item build: features, fixes, refactors, migrations, bug waves, resume, disputes, debates | `rechy`, `devy`, `revy`, `datay`, `kitty` | R5 |
 | `/testy` | any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env | `checky`, `kitty` | R8 |
-| `/tidy` | kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest + upkeep, no LLM), then one kitty: lessons + rule updates | `kitty` | R4 |
+| `/tidy` | kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest of signals and task outcomes, standing-rule asks from repeated owner answers, upkeep; no LLM), then one kitty: lessons + rule updates | `kitty` | R4 |
 <!-- kit-graph:end -->
 
 ## Budget and handoff
@@ -201,7 +201,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   login: MRs reported by workflows), review + fix share; cost and tokens per day as lines (a time series is never bars); workflow steps by outcome as one stacked
   bar; a role table (coordinator and agents outside workflows included: steps, tokens, share bar, est. cost, avg / p90 time),
   a model table (steps, tokens, est. cost, cost share bar, avg time); per step type (avg / p50 / p90), sessions when 2+;
-- kit internals (kit tuning and history only): Activity tiles, each number once with its history as a labelled graph (workflow
+- kit internals (kit tuning and history only): Outcomes, 30 days (`.state/outcomes.jsonl`: per repo a labelled QA first-pass
+  bar, tasks, came back, fix rounds), Activity tiles, each number once with its history as a labelled graph (workflow
   steps now + a chip per running run, 24 h step line; branches · worktrees per repo + 7-day lines; sweep time, 24 h with the
   7-day average; agents failed, 7 daily bars; test runs (`qa-runs/*/*/results.json` by its write day): checks · pass %
   (OUT_OF_SCOPE left out), 7 daily stacked bars (PASS, FAIL, NOT_TESTED, OUT_OF_SCOPE) and the NOT_TESTED causes in one line; flags auto-fixed, % per sweep; `—` = no source), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
@@ -412,6 +413,7 @@ flowchart LR
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_kit_admin_ps1["kit_admin.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_localenv_supervise_ps1["localenv_supervise.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_os_timer_ps1["os_timer.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_outcomes_ps1["outcomes.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_storage_ps1["storage.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_supervise_resources_ps1["supervise_resources.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_supervise_stats_ps1["supervise_stats.ps1"]

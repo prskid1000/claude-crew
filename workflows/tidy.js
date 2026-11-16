@@ -1,6 +1,6 @@
 export const meta = {
  name: 'tidy',
- description: 'Kit upkeep by kitty (kind retro) in 2-5 min: one script step (bossy.ps1 tidy prep: digest of signals, guard blocks, script errors, builds, runs, lint, params + the upkeep: param learn, cleanup, worktree prune, signal counting), then one kitty judges the digest: lessons, rule edits, script proposals',
+ description: 'Kit upkeep by kitty (kind retro) in 2-5 min: one script step (bossy.ps1 tidy prep: digest of signals, task outcomes, guard blocks, script errors, builds, runs, lint, params + the upkeep, standing-rule asks: param learn, cleanup, worktree prune, signal counting), then one kitty judges the digest: lessons, rule edits, script proposals',
  whenToUse: 'A /buildy or /testy finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective',
  phases: [
   { title: 'Prep', detail: 'one STEP: launch record + bossy.ps1 tidy prep (no LLM work)' },
@@ -68,6 +68,8 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
  a single signal only when it is a clear win or a hard failure; a "seen again" line = a regression: list it as a script-change proposal.
  Then -Skill <s> -Trim for every skill you touched (never delete lessons by hand).
 2. Rules: a lesson at (3×) or more and still true -> a short rule in its SKILL.md or rules/*.md, then learn -Skill <s> -Fixed "<words>".
+ "Outcomes" lines (results, not friction): a repeat cause or an area / agent with most fix rounds -> a lesson (-Skill of the step that failed) or a rule edit for the brief or check that would have caught it.
+ "Standing rules proposed": the script already asked the owner (one decide ask); never apply one. An approved rule that holds for any org -> propose it as a kit rule edit.
 3. Scripts, defaults, templates (guard blocks, script errors, slow builds, failed upkeep steps): ${A.applyScripts ? 'apply the smallest fix, re-parse every changed .ps1 ([System.Management.Automation.Language.Parser]::ParseFile) and node --check every changed .js/.mjs; revert one that breaks.' : 'list each with the exact edit (file, function, new value); do not apply.'}
 4. The report is rendered, never hand-written: write retro.json { "date", "applied": [{ "change", "file", "count" }], "proposed":
  [{ "proposal", "edit" }], "rejected": [{ "signal", "why" }], "lint" } (ids, paths, commands in backticks), then python -X utf8

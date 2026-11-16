@@ -40,6 +40,9 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) |
 | `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) |
 | `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep |
+| `outcomes` | `kitlog` (`adapters/outcomes.ps1`: supervise, `tidy prep`) | `jsonl v0: at task stage` | keep (append-only, one row per task state change) |
+| `standing-rules` | `bossy.ps1 decide rules`, `decide answer` (its ask) | `json v1: rules` | keep (approved ones -> `rules/standing-rules.local.md`) |
+| `outcomes-sweep` | `adapters/outcomes.ps1` | `text v0` | 30 d |
 | `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) |
 | `decisions-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` |
 | `deploy-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` |

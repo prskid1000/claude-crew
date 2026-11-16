@@ -20,14 +20,14 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Only <ids>] [-Skip <id>=<why>; ...] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
-  deploy plan|request|record|intest ... · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist
+  deploy plan|request|record|intest ... · decide ask|list|answer|wait|record|check|publish|rules ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist; standing rules
   debate start -Item -Question -Options "A: ..","B: .." [-Run] [-Why] [-Owner] | brief -File -Side A|B|revy -Round <n> | ask -File   a written debate (1 per run; rechy kind debate), its table + decide ask
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1333 report · L1412 audit · L1472 storage · L1475 bugbrief · L1586 cleanup · L1670 learn ·
-  L1701 decide · L1835 debate · L1879 health · L1942 retro due · L1952 tidy · L2018 setup · L2115 guard-sendmessage
+  L715 track · L1032 supervise · L1333 report · L1413 audit · L1473 storage · L1476 bugbrief · L1587 cleanup · L1671 learn ·
+  L1702 decide · L1841 debate · L1885 health · L1948 retro due · L1958 tidy · L2030 setup · L2127 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1356,7 +1356,8 @@ foreach ($x in $results) {
         $nd = @($x.r.deferred | Where-Object { $_ }); $ndIds = @($nd | ForEach-Object id)
         $agents[$id] = [ordered]@{ mrs = $mrs; done = @(@($p.done) + @($x.r.done) | Where-Object { $_ } | Select-Object -Unique)
           deferred = @(@($p.deferred | Where-Object { $_ -and $_.id -notin $ndIds }) + $nd)
-          needsLiveCheck = @(@($p.needsLiveCheck) + @($x.r.needsLiveCheck) | Where-Object { $_ } | Select-Object -Unique); fixedRound = ($kind -eq 'fix' -or [bool]$p.fixedRound) }
+          needsLiveCheck = @(@($p.needsLiveCheck) + @($x.r.needsLiveCheck) | Where-Object { $_ } | Select-Object -Unique); fixedRound = ($kind -eq 'fix' -or [bool]$p.fixedRound)
+          localRounds = [int]$p.localRounds + [int]$x.r.localTest.rounds }   # outcomes.jsonl fix rounds
         if (-not $mrs.Count -and $x.r.summary) { $agents[$id].note = ([string]$x.r.summary).Substring(0, [math]::Min(300, ([string]$x.r.summary).Length)) }
       }
       elseif (-not $p) { $agents[$id] = [ordered]@{ mrs = @(); done = @(); deferred = @(); needsLiveCheck = @(); note = ([string]$x.r).Substring(0, [math]::Min(300, ([string]$x.r).Length)) } }
@@ -1711,14 +1712,14 @@ function Publish-KitDecisions([string]$Task, [string]$Link) {
   "PUBLISHED decisions of $Task ($(@($items | Where-Object { $_.done -and $_.text -notmatch ' → superseded by |^plan · ' }).Count) in force, $(@($items | Where-Object { -not $_.done }).Count) open): $(if ("$r") { "$r" } else { 'checklist updated' })"
 }
 function Invoke-Decide {
-  param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check', 'publish')][string]$Action = 'list',
+  param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check', 'publish', 'rules')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
     [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
     [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
     [string]$Gate = '',   # record: one of $kitGates; check -Id: a non-gate word is ignored
     [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use,
-    [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish)
+    [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish, [switch]$Propose, [string]$Approve, [string]$Revoke)
   $dir = Get-KitPath decisions -Create; $kitGates = @('deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'data', 'scope', 'other')
   # a gate word is a person's: an agent or the coordinator as -By is none
   $crewNames = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue | ForEach-Object BaseName)
@@ -1744,6 +1745,8 @@ function Invoke-Decide {
         kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
         options = $opts; recommend = $Recommend; blocking = -not $Fyi; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('o')
         task = $resolvedTask; mrs = $mrsClean; commit = $Commit; parentId = $ParentId; gate = $(if ($Gate -in $kitGates) { $Gate }) }
+      $sr = if (Get-Command Get-KitStandingRuleAnswer -ErrorAction SilentlyContinue) { Get-KitStandingRuleAnswer ([pscustomobject]$o) }   # an owner-approved standing rule answers it (adapters/outcomes.ps1)
+      if ($sr) { $o.status = 'answered'; $o.answer = $sr[0]; $o.by = "standing rule $($sr[1])"; $o.source = 'rule'; $o.answeredAt = $o.at }
       & $save ([pscustomobject]$o)
       if ($resolvedTask) {
         Update-KitTracking { param($t) if ($t.tasks[$resolvedTask]) { $t.tasks[$resolvedTask].decisions = @(@($t.tasks[$resolvedTask].decisions) + $o.id | Select-Object -Unique) } }
@@ -1752,6 +1755,7 @@ function Invoke-Decide {
         & $note $Contracts "## ENV-FIX NEEDED $($o.id) ($Agent, item $Item)$(if ($resolvedTask) { " [Task: $resolvedTask]" })`n$Question`nDone: pending (the coordinator appends it below)"
         "ENV-FIX $($o.id) pending: the coordinator fixes the local env; item $Item waits. Wait: bossy.ps1 decide wait -Id $($o.id)"; return
       }
+      if ($sr) { & $note $Contracts "DECISION $($o.id) ANSWERED by standing rule $($sr[1]): $($sr[0])"; "DECISION $($o.id) ANSWERED by standing rule $($sr[1]): $($sr[0]) (the owner revokes: decide rules -Revoke $($sr[1])). Wait: bossy.ps1 decide wait -Id $($o.id)"; $null = & $pub $resolvedTask $false; return }
       $txt = (Format-KitDecision ([pscustomobject]$o)) -join "`n"; $null = Test-KitProse -Kind decision-request -Text $txt; & $note $Contracts $txt
       "DECISION $($o.id) pending: $(if ($Fyi) { "FYI, item $Item goes on" } else { "item $Item stops (needs decision); continue your other items" }). Wait: bossy.ps1 decide wait -Id $($o.id)"
       $null = & $pub $resolvedTask $false   # its open item; the DECISION line stays last
@@ -1774,8 +1778,10 @@ function Invoke-Decide {
       & $save $o
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
+      if ($o.item -eq 'standing-rules' -and $By -notmatch $crewRx -and (Get-Command Set-KitStandingRuleAnswer -ErrorAction SilentlyContinue)) { Set-KitStandingRuleAnswer $Id $Answer $By }   # approved -> rules/standing-rules.local.md
       if ($o.kind -ne 'envfix') { & $pub "$($o.task)" $false }   # a known task only: -Item A2 / staging / 3 is no tracker task
     }
+    'rules' { Invoke-KitStandingRules -Propose:$Propose -Approve $Approve -Revoke $Revoke -By $By -Json:$Json }
     'publish' {
       $pt = NormTask $Task; if (-not $pt) { 'usage: decide publish -Task <id> [-Link <plan / brief url>]   (the Decisions checklist of the task, items updated in place)'; exit 2 }
       $pr = Publish-KitDecisions $pt $Link; $pr; if ($pr -match '^(SKIP|NONE) ') { exit 1 }
@@ -1816,7 +1822,7 @@ function Invoke-Decide {
           $mrOk = -not $wantMrs.Count -or -not @($wantMrs | Where-Object { $_ -notin @($rec.mrs) }).Count
           $gateOk = if ($Id) { $rec.id -eq $Id -and ($rec.gate -or $Item -or $wantMrs.Count) -and (-not $rec.gate -or $Gate -notin $kitGates -or $rec.gate -eq $Gate) } else { $rec.gate -eq $Gate }          $gateOk -and $itemOk -and $mrOk })
       foreach ($d in $found) {
-        if ($d.by -match $crewRx) { $why += "$($d.id) answered by agent $($d.by)"; continue }
+        if ($d.by -match $crewRx -or $d.source -eq 'rule') { $why += "$($d.id) answered by $($d.by), no person"; continue }
         if ($d.usedAt) { $why += "$($d.id) already used by $($d.usedBy) at $($d.usedAt)"; continue }
         if ([datetime]$d.answeredAt -lt $since) { $why += "$($d.id) older than $MaxHours h"; continue }
         if ($Use) {   # under the record's lock: two agents never both use one word
@@ -1975,6 +1981,8 @@ $opt = { param([string]$Fn, [scriptblock]$Call) $c = Get-Command $Fn -CommandTyp
 & $run 'param learn' { if ($DryRun) { 'skip: dry run' } else { & $opt Invoke-ParamLearn { param($c) & $c } } }
 & $run 'cleanup' { Invoke-Cleanup -DryRun:$DryRun | Select-Object -First 6 }
 & $run 'worktree prune' { $ga = @('-C', $KitConf.Kit, 'worktree', 'prune', '-v') + @(if ($DryRun) { '-n' }); git @ga 2>&1; if (-not $?) { throw 'git worktree prune failed' } }
+& $run 'outcomes' { if ($DryRun) { 'skip: dry run' } else { & $opt Update-KitOutcomes { param($c) "$(& $c) new row(s)" } } }
+& $run 'standing rules' { if ($DryRun) { 'skip: dry run' } else { & $opt Invoke-KitStandingRules { param($c) & $c -Propose } } }
 & $run 'lint' { $l = @(& (Get-Python) -X utf8 $KitCmd.kitbag lint --warn --no-flow 2>&1 | ForEach-Object { "$_" }); @($l | Where-Object { $_ -like 'kitbag lint:*' }) + @($l | Where-Object { $_ -notlike 'kitbag lint:*' } | Select-Object -First 10) }   # count first: digest keeps the head
 
 $sig = @(Get-Content (Get-KitPath signals) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} })
@@ -1991,7 +1999,9 @@ $envF = & $by env 'fail'
 $runs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and [datetime]$_.at -gt $since } | Sort-Object { [datetime]$_.at })
 $qa = @(Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)
 $lp = if ("$(@($steps | Where-Object step -eq 'lint').out)" -match '(\d+) problem') { [int]$Matches[1] } else { 0 }
-$work = $new.Count + $deny.Count + $errs.Count + $back.Count + $lp + @($steps | Where-Object state -eq 'failed').Count   # failed steps, lint: the judge sees them
+$oc = @(if (Get-Command Get-KitOutcomeLines -ErrorAction SilentlyContinue) { Get-KitOutcomeLines })
+$srs = @(if (Get-Command Read-KitStandingRules -ErrorAction SilentlyContinue) { if ($DryRun) { Get-KitDecisionPatterns | ForEach-Object { "candidate: asked `"$(& $cut $_.question)`" -> `"$(& $cut $_.answer 90)`" ($(@($_.evidence) -join ', '))" } } else { Read-KitStandingRules | Where-Object status -eq 'proposed' | ForEach-Object { "$($_.id) (ask $($_.askId)): asked `"$(& $cut $_.question)`" -> `"$(& $cut $_.answer 90)`"" } } })
+$work = $new.Count + $deny.Count + $errs.Count + $back.Count + $lp + @($steps | Where-Object state -eq 'failed').Count + @($oc | Where-Object { $_ -like 'cause *' }).Count + $srs.Count   # failed steps, lint, repeat causes, rule proposals: the judge sees them
 $min = 3; $gp = Get-Command Get-KitParam -CommandType Function -ErrorAction SilentlyContinue; if ($gp) { $min = [double](& $gp 'tidy.judgeMinutes' 3) }   # TODO-PARAM (fixed default)
 $hit = { param($g) "$(& $cut $g.text)$(if ($g.refs) { " refs $($g.refs -join ',')" })$(if ($g.lesson) { " -> lesson ($($g.score)): $(& $cut $g.lesson 90)" })" }
 $top = { param($Items, [scriptblock]$Key, [int]$Max = 10) @($Items | Group-Object $Key | Sort-Object Count -Descending | Select-Object -First $Max | ForEach-Object { "$($_.Count)x $($_.Name)" }) }
@@ -2000,6 +2010,8 @@ $d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the l
 & $part 'Signal groups (2+ = lesson candidate; a matched lesson = bump it)' @($groups | Where-Object n -ge 2 | Select-Object -First 25 | ForEach-Object { "$($_.n)x $($_.skill) [$($_.kinds)] $(& $hit $_)" })
 & $part 'Single signals' @($groups | Where-Object n -lt 2 | Select-Object -First 30 | ForEach-Object { "$($_.skill) [$($_.kinds)] $(& $hit $_)" })
 & $part 'Retired lessons seen again (regression candidates)' @($back | Select-Object -First 10)
+& $part 'Outcomes, 30 days (worst areas, most fix rounds, repeat causes: lesson or rule candidates)' $oc
+& $part 'Standing rules proposed (owner answers repeated 3+ times; the owner approves in one decide ask)' $srs
 & $part 'Guard blocks' (& $top $deny { & $cut $_.why 110 })
 & $part 'Script errors (crash or usage)' (& $top $errs { "$($_.script) $($_.verb): $(if ($_.error) { & $cut $_.error 90 } else { "exit $($_.rc), message on stderr only (not a crash)" })" })
 & $part 'Builds per kind (gate)' @($bld | Group-Object kind | ForEach-Object { $q = @($_.Group.sec | ForEach-Object { [double]$_ } | Sort-Object); "$($_.Name): $($_.Count), $(@($_.Group | Where-Object { "$($_.code)" -ne '0' }).Count) failed, p50 $($q[[int][math]::Floor(($q.Count - 1) / 2)]) s, max $($q[-1]) s, wait max $(($_.Group.waitSec | Measure-Object -Maximum).Maximum) s, peak max $(($_.Group.peakGB | Measure-Object -Maximum).Maximum) GB" })
