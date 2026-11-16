@@ -13,7 +13,10 @@ $np = '-NoProfile', '-File'   # pwsh @np <script>
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $env:PYTHONIOENCODING = 'utf-8'   # child output (· …) read as UTF-8 under any console code page
 $env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'; $env:KIT_STORAGE_SCAN = '0'; $env:KIT_KEEP_DAEMONS = '1'   # Wait-KitPoll fake clock; test builds are tiny: never queue for RAM; no drive scans; no daemon kills
-$env:TEMP = $env:TMP = Join-Path ([IO.Path]::GetTempPath()) "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # own temp: never the machine's build-gate queue
+$tmpMap = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths   # not lib.ps1: its adapters would register in this process
+$tmpRoot = Join-Path (Join-Path $src $tmpMap.runtimeDir) $tmpMap.runtime.tmp.TrimEnd('/'); New-Item -ItemType Directory -Force $tmpRoot | Out-Null   # the source kit's <runtime>/tmp (CLAUDE_RUNTIME unset above)
+$env:TEMP = $env:TMP = $env:TMPDIR = Join-Path $tmpRoot "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # GetTempPath, python tempfile, node tmpdir of every test
+$env:GIT_CEILING_DIRECTORIES = $tmpRoot   # a non-git test kit under it never finds the kit's own repo
 # `pwsh -NoProfile -File <kit script>` runs in this process (0.07 s, not 0.7 s), seen as a child sees it (streams, exit code, cwd,
 # env, globals); stdin readers, gate / check / guard and KIT_TESTS_SPAWN=1: real processes
 $pwshExe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
@@ -208,5 +211,6 @@ const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => 
 function Invoke-Js($name, $js, $wf) { $f = Join-Path (Kd) "$name.mjs"; [IO.File]::WriteAllText($f, ($jsLib + "`n" + $js).Replace('__BODY__', ([IO.File]::ReadAllText($wf) -replace '(?m)^export const meta', 'const meta'))); @(node $f 2>&1) }
 function Complete-Tests {
   if ($env:KIT_TESTS_TIME) { $script:times | Sort-Object s -Descending | Select-Object -First 8 | ForEach-Object { 'TIME {0,5:N1} s  {1}' -f $_.s, $_.what } }
+  Set-Location $src; Remove-Item -LiteralPath (Join-Path $tmpRoot "kit-tests-$PID") -Recurse -Force -ErrorAction SilentlyContinue   # this area's own scratch; a held file: cleanup ages it out (_paths.keep tmp)
   "$script:fails failure(s)"; exit [int]($script:fails -gt 0)
 }

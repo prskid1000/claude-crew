@@ -5,7 +5,7 @@ phone leases, env leases, QA seats and claims, test browsers and their profiles,
 the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), the report page (dashboard + Statistics from the logs; supervise.output, publish), seats and leases in board show and recover, the status resource rows, STUCK, pause and silent-run flags, release (every lease of an agent), launch: pauses it releases, a buildy launch's item tasks (-Self / -Check), stop-learn; sessions: several coordinators (run
 owners for pause / resume / recover, a stepped-aside session's own flags, task claims), the step-age handoff.
 Its hooks run inside the bossy.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
-Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
+Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L16 builds · L52 supervise · L258 shells · L392 page · L888 release · L927 lines · L960 cleanup · L1021 launch ·
@@ -85,7 +85,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $rows = [Collections.Generic.List[object]]::new(); $graceRows = @{}
 
   # build gate: holders, queue, repeated failures; a holder in its grace shows its minutes left
-  $ledger = Join-Path (Get-KitTemp) 'claude-build-gate'
+  $ledger = Get-KitGateLedger
   $queue = @(Get-ChildItem (Join-Path $ledger 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { $t = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($t -and (Test-KitPid $t.pid $t.start)) { $t } })
   $builds = @(Get-ChildItem $ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { $t = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($t -and (Test-KitPid $t.pid $t.start)) { $t } })
   foreach ($t in @($builds | Where-Object { $_.gate })) {   # holder = its gate process (then its owner agent)
@@ -223,7 +223,7 @@ function Test-KitNoMrs($Started, $Results, [string]$Label, $Result, [string]$Sum
 }
 # status rows: agents waiting for the build gate, a test lock or a phone lane
 function Get-KitStatusWaitResources {
-  foreach ($t in @(Get-ChildItem (Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.owner -and (Test-KitPid $_.pid $_.start) })) {
+  foreach ($t in @(Get-ChildItem (Join-Path (Get-KitGateLedger) 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.owner -and (Test-KitPid $_.pid $_.start) })) {
     [pscustomobject]@{ agent = $t.owner; why = "build gate: RAM for $($t.kind)"; at = $t.since; next = 'the gate starts it when RAM frees' }
   }
   foreach ($w in @((Get-KitLockState).waiting)) { [pscustomobject]@{ agent = $w.holder; why = "test lock $($w.lock)"; at = $w.at; next = 'crafty.ps1 check takes it when its holder ends' } }
@@ -889,7 +889,7 @@ function Format-KitSuperviseOut($d, $Shown, [string]$Path) {
 # live gated builds of $Agent ('*' = all): its gate owner name, or a dir inside one of its worktrees (the owner may be a worktree name)
 function Get-KitAgentBuilds([string]$Agent, [string[]]$Dirs = @()) {
   $in = { param($p) foreach ($w in $Dirs) { if ($w -and "$p".TrimEnd('\', '/').StartsWith($w.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) { return $true } }; $false }
-  foreach ($bf in @(Get-ChildItem (Join-Path (Get-KitTemp) 'claude-build-gate') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json')) {
+  foreach ($bf in @(Get-ChildItem (Get-KitGateLedger)-Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json')) {
     $t = try { Get-Content $bf.FullName -Raw | ConvertFrom-Json } catch { continue }
     if (($Agent -eq '*' -or $t.owner -eq $Agent -or (& $in $t.dir)) -and (Test-KitPid $t.pid $t.start)) { $t | Add-Member -Force NoteProperty file $bf.FullName; $t }   # a reused pid is not ours
   }
@@ -985,7 +985,7 @@ function Invoke-KitCleanupResources {
     foreach ($x in @($left | Select-Object -Skip $maxProfiles)) { if ($x.dir.Name -notin $inUse) { Gone $x.dir.FullName "browser profile beyond the newest $maxProfiles (cleanup.maxBrowserProfiles)" } }
   }
   # cleanup.idleDaemons [{ process, match, label, busyKinds }]: stopped after 10 min while no gate build of busyKinds runs (unset: none)
-  $gl = Join-Path $tmp 'claude-build-gate'
+  $gl = Get-KitGateLedger
   foreach ($dm in @(Get-KitSetting 'cleanup.idleDaemons' @()) | Where-Object { $_ -and $_.match }) {
     if ($env:KIT_KEEP_DAEMONS) { break }   # tests: their own gate dir cannot see the machine's builds
     $busy = $dm.busyKinds -and @(Get-ChildItem $gl -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' |

@@ -28,7 +28,7 @@ function Split-KitHours([datetime]$H0, [datetime]$S, [datetime]$E, [scriptblock]
 # per group running / queued now, done today, avg / peak wait, RAM promised, an hourly heatmap (24 clock hours, the last = the current one:
 # @(builds ended, busy min, max wait min) each, h0 = the first hour); phone lanes and emulators
 function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
-  $h0 = $Now.Date.AddHours($Now.Hour - 23); $from = $h0; $led = Join-Path (Get-KitTemp) 'claude-build-gate'; $rd = { param($f) try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
+  $h0 = $Now.Date.AddHours($Now.Hour - 23); $from = $h0; $led = Get-KitGateLedger; $rd = { param($f) try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
   $at = { param($v) if ($v -is [datetime]) { $v } else { try { [datetime]"$v" } catch { $null } } }
   $run = @(Get-ChildItem $led -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { & $rd $_.FullName } | Where-Object { $_ -and $_.pid -and (Test-KitPid $_.pid $_.start) })
   $que = @(Get-ChildItem (Join-Path $led 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { & $rd $_.FullName } | Where-Object { $_ })

@@ -108,7 +108,7 @@ switch ($Action) {
       $sp = [System.Speech.Synthesis.SpeechSynthesizer]::new(); $wav = Join-Path (Get-KitPath android-tmp -Create) "mic_$tag.wav"
       $sp.SetOutputToWaveFile($wav, [System.Speech.AudioFormat.SpeechAudioFormatInfo]::new(16000, 'Sixteen', 'Mono')); $sp.Speak($Arg); $sp.Dispose()
     }
-    $ini = foreach ($d in @([IO.Path]::GetTempPath(), $env:XDG_RUNTIME_DIR, "$HOME/Library/Caches/TemporaryItems") | Where-Object { $_ }) { Get-ChildItem (Join-Path $d 'avd/running') -Filter 'pid_*.ini' -ErrorAction SilentlyContinue }
+    $ini = foreach ($d in @([IO.Path]::GetTempPath(), $env:XDG_RUNTIME_DIR, "$HOME/Library/Caches/TemporaryItems") | Where-Object { $_ }) { Get-ChildItem (Join-Path $d 'avd/running') -Filter 'pid_*.ini' -ErrorAction SilentlyContinue }   # arch-ok: the emulator writes its pid file to the OS temp; read only
     $ini = $ini | Where-Object { Get-Process -Id ($_.BaseName -replace '^pid_') -ErrorAction SilentlyContinue } | Sort-Object LastWriteTime -Descending   # a crashed emulator leaves its file
     $kv = $ini | ForEach-Object { $h = @{}; Get-Content $_.FullName | ForEach-Object { $k, $v = $_ -split '=', 2; $h[$k] = $v }; $h } | Where-Object { $_['port.serial'] -eq $port -and $_['grpc.port'] } | Select-Object -First 1
     if (-not $kv) { "mic: no gRPC endpoint for emulator-$port (booted by an older phoney.ps1 or with -no-audio): phoney.ps1 avd reset -Lanes <lane> -Level recreate"; exit 1 }

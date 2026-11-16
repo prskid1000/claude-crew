@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L82 state · L156 config · L237 OS · L450 leases · L849 status · L1105 supervise sweep · L1183 tracker ·
-  L1512 prior · L1528 ask bugs · L1713 git-host · L1905 kitlog · L2025 params · L2330 entry-scripts
+Sections: L9 paths · L82 state · L156 config · L237 OS · L451 leases · L850 status · L1106 supervise sweep · L1184 tracker ·
+  L1513 prior · L1529 ask bugs · L1714 git-host · L1906 kitlog · L2026 params · L2331 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -238,7 +238,8 @@ function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = 
 $KitIsWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $KitIsMac = (-not $KitIsWindows) -and ($PSVersionTable.OS -match 'Darwin' -or ((Test-Path variable:IsMacOS) -and $IsMacOS))
 
-function Get-KitTemp { [IO.Path]::GetTempPath().TrimEnd([char]'\', [char]'/') }
+function Get-KitTemp { Get-KitPath tmp -Create }   # kit scratch in <runtime>/tmp (cleanup: _paths.keep), never the OS temp (lint ARCH-TEMP)
+function New-KitTempFile([string]$Extension = '.tmp') { $f = Join-Path (Get-KitTemp) "kit-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))$Extension"; [IO.File]::WriteAllText($f, ''); $f }
 
 function Get-ExeName([string]$Name) { if ($KitIsWindows) { "$Name.exe" } else { $Name } }
 
@@ -456,7 +457,7 @@ function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes 
   if ($ProcessId) { $l.pid = $ProcessId; $l.pidStart = Get-KitPidStart $ProcessId }; $l
 }
 $script:KitLiveCache = @{}
-function Get-KitGateLedger { Join-Path (Get-KitTemp) 'claude-build-gate' }   # one <pid>.json per running gated command (crafty.ps1 gate)
+function Get-KitGateLedger { Get-KitPath build-gate }   # one <pid>.json per running gated command (crafty.ps1 gate)
 function Get-KitLiveCached([string]$k, [scriptblock]$b) { $c = $script:KitLiveCache[$k]; if (-not $c -or ((Get-Date) - $c.at).TotalSeconds -gt 15) { $c = @{ at = Get-Date; v = (& $b) }; $script:KitLiveCache[$k] = $c }; $c.v }
 function Test-KitLive($l) {
   $now = Get-Date; $bm = [double](Get-KitParam 'idle.beatMinutes'); $a = "$($l.agent)"
@@ -1225,7 +1226,7 @@ function __TrJson([string]$Out) {
   if ($null -eq $i) { return $null }
   try { $Out.Substring($i) | ConvertFrom-Json } catch { $null }
 }
-function __TrTemp([string]$Text) { $f = [IO.Path]::GetTempFileName(); [IO.File]::WriteAllText($f, $Text, (New-Object Text.UTF8Encoding $false)); $f }
+function __TrTemp([string]$Text) { $f = New-KitTempFile;[IO.File]::WriteAllText($f, $Text, (New-Object Text.UTF8Encoding $false)); $f }
 function __TrStub([string]$Id) { [pscustomobject]@{ id = $Id; name = ''; status = ''; url = (Get-TrackerUrl $Id); parent = $null; assignees = @(); subtasks = @(); list = ''; description = '' } }
 function __TrDate($d) { if ($d -match '^\d{10,}$') { [DateTimeOffset]::FromUnixTimeMilliseconds([long]$d).UtcDateTime.ToString('s') } elseif ($d) { ([datetime]$d).ToUniversalTime().ToString('s') } else { '' } }
 function __TrPrio([string]$p) { switch ($p) { '1' { 'urgent' } '2' { 'high' } '3' { 'normal' } '4' { 'low' } default { $p } } }
@@ -1742,7 +1743,7 @@ function __HostSet([string]$Key, $Default) { Get-KitSetting "gitHostApi.$Key" $D
 function __Cli([string]$Exe, [string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$Json, [switch]$Res) {
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { return $null }
   $a = @('api'); if ($Method -ne 'GET') { $a += @('-X', $Method) }; $a += $Path; $f = $null
-  if ($Json) { $f = [IO.Path]::GetTempFileName(); [IO.File]::WriteAllText($f, ($Fields | ConvertTo-Json -Compress -Depth 10)); $a += @('-H', 'Content-Type: application/json', '--input', $f) }
+  if ($Json) { $f = New-KitTempFile '.json';[IO.File]::WriteAllText($f, ($Fields | ConvertTo-Json -Compress -Depth 10)); $a += @('-H', 'Content-Type: application/json', '--input', $f) }
   else { foreach ($k in $Fields.Keys) { $a += @('-f', "$k=$($Fields[$k])") } }
   try { $r = Invoke-KitRetry { Invoke-KitNetExe $Exe $a } -Connect:($Method -ne 'GET') } finally { if ($f) { Remove-Item $f -Force -ErrorAction SilentlyContinue } }
   if ($Res) { return $r }

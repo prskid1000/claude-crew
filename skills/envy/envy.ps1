@@ -1322,7 +1322,7 @@ function Get-KeepFree {
 function KeepFreeGB { [double](Get-KeepFree).gb }
 function Pressure {
   if ((Get-GateAvailGB (Get-SysMem)) -lt (KeepFreeGB)) { return 'RAM below the keep-free floor' }
-  $q = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'queue'
+  $q = Join-Path (Get-KitGateLedger) 'queue'
   $w = @(Get-ChildItem $q -Filter *.json -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -gt 1 -and $(try { $tk = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json; Test-KitPid $tk.pid $tk.start } catch { $false }) })
   if ($w.Count) { return "$($w.Count) gated build(s) waiting for RAM" }
   # a start waiting for RAM in any env: idle unleased services elsewhere make room (the caller stops them biggest first);

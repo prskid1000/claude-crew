@@ -19,11 +19,11 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1377 audit ·
-  L1493 registry · L1825 arch lint · L2058 prose · L2209 sections · L2339 budget · L2353 migrate · L2513 plugins ·
-  L2567 state lint · L2755 main
+Sections: L34 paths · L88 state · L143 kitlog · L242 load · L636 lint · L1041 README graph · L1144 lint command · L1380 audit ·
+  L1496 registry · L1828 arch lint · L2070 prose · L2221 sections · L2351 budget · L2365 migrate · L2525 plugins ·
+  L2579 state lint · L2767 main
 """
-import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
+import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
 from collections import defaultdict, deque
 from pathlib import Path
@@ -54,6 +54,9 @@ def kit_path(name, create=False, kit=None):
     if create:
         os.makedirs(p if is_dir else osp.dirname(p), exist_ok=True)
     return p
+
+with contextlib.suppress(OSError):   # a read-only kit keeps the OS default rather than failing every import
+    tempfile.tempdir = kit_path('tmp', create=True)   # every tempfile.* call of a kit script (it imports kitbag): <runtime>/tmp, never the OS temp
 
 @contextlib.contextmanager
 def locked(path, stale=120):
@@ -1824,7 +1827,7 @@ def literal_warns(k, ratchet=False):
 
 # ---- arch lint: ARCH-* (core stays neutral: defaults, enums, vendor calls, platform calls, lessons, dead keys); vocab in VOCAB_JSON
 VOCAB_JSON = 'skills/bossy/lint-vocab.json'
-ARCH_COUNTED = {'ARCH-DEAD-KEY', 'ARCH-DEFAULT', 'ARCH-VENDOR-API', 'ARCH-PLATFORM', 'ARCH-LESSON', 'ARCH-SBLOG'}   # counted; ARCH-ENUM stays WARN (vendor dispatch tables name vendors)
+ARCH_COUNTED = {'ARCH-DEAD-KEY', 'ARCH-DEFAULT', 'ARCH-VENDOR-API', 'ARCH-PLATFORM', 'ARCH-LESSON', 'ARCH-SBLOG', 'ARCH-TEMP'}   # counted; ARCH-ENUM stays WARN (vendor dispatch tables name vendors)
 CODE_EXT = ('.ps1', '.py', '.js', '.mjs')
 
 def word_rx(words):
@@ -1964,6 +1967,15 @@ def arch_lint(k):
             if not arch_guarded(f, ls, i, grd):
                 probs.append(('ARCH-PLATFORM', f'{f}:{n}', f'Windows-only "{h.group(0).strip()[:30]}" without a platform check: '
                               'wrap it in if ($KitIsWindows) / os.name == "nt" with an other-OS branch'))
+    # ARCH-TEMP: kit scratch lives in <runtime>/tmp (Get-KitTemp / New-KitTempFile, kitPath('tmp'); kitbag sets tempfile.tempdir)
+    trx, pyt = [re.compile(p) for p in voc.get('osTemp') or []], re.compile(r'\btempfile\.\w+|\bgettempdir\(|\bfrom\s+tempfile\s+import\b')
+    for f in code:
+        kb = osp.basename(f).startswith('kitbag') or re.search(r'^\s*(?:from kitbag import|import kitbag)', k.texts.get(f) or read(osp.join(k.dir, f)), re.M)
+        for n, c, _ in lines[f]:
+            h = None if selftest.match(c) else next((m for r in trx if (m := r.search(c))), None) or (pyt.search(c) if f.endswith('.py') and not kb else None)
+            if h:
+                probs.append(('ARCH-TEMP', f'{f}:{n}', f'OS temp "{h.group(0)[:30]}": Get-KitTemp / New-KitTempFile (lib.ps1), kitPath(\'tmp\') (node), '
+                              'import kitbag (python tempfile then lands in <runtime>/tmp); an external tool\'s own temp: `arch-ok: <why>` on the line'))
     # ARCH-LESSON: tracked lessons and rules name a vendor or stack -> LESSONS.local.md / a rules/*.local.md
     lrx = word_rx([w for x in fams.values() if x.get('lesson') for w in x.get('words') or []])
     for f in [f for f in base if f == 'LESSONS.md' or re.match(r'rules/[^/]+\.md$', f)]:

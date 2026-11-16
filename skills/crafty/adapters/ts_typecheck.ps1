@@ -96,7 +96,7 @@ function Split-TypecheckErrors($out2, [int]$rc, [string]$GateCmd, $Since) {
 $script:TypecheckUnrunAbove = 200
 
 function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
-  $hf = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'history.json'
+  $hf = Join-Path (Get-KitGateLedger) 'history.json'
   if (-not (Test-Path -LiteralPath $hf)) { return }
   $pre = if ($GateCmd.Length -gt 60) { $GateCmd.Substring(0, 60) } else { $GateCmd }
   $fromUtc = $Since.UtcDateTime.AddSeconds(-2)

@@ -588,7 +588,7 @@ $all = @($c.lanes)
 $Lanes = @(Split-KitList $Lanes)
 if (-not $Lanes) { $Lanes = @($all | Select-Object -First $(if ($Count -gt 0) { $Count } else { $all.Count }) | ForEach-Object name) }
 $gate = ({ & $KitCmd.dev gate @args })
-$ledger = Join-Path (Get-KitTemp) 'claude-build-gate'; New-Item -ItemType Directory -Force $ledger | Out-Null
+$ledger = Get-KitGateLedger; New-Item -ItemType Directory -Force $ledger | Out-Null
 function FreeGB { Get-FreeGB }
 function Turn($what, $gb) { & $gate -Dir $c.dir -Cmd "exit 0 #$what $name" -NeedGB $gb -WaitMinutes $(if ($env:KIT_SWARM_TURN_MIN) { [int]$env:KIT_SWARM_TURN_MIN } else { 30 }) | Select-Object -Last 1 | Out-Host; if ($LASTEXITCODE) { Write-Warning "$name not started: no memory turn within 30 min" }; -not $LASTEXITCODE }   # fair turn + memory
 

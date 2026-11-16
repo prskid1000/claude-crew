@@ -205,7 +205,8 @@
    "agents": "work/agents/", "node-spec": "cache/node-spec/", "apks": "cache/android-swarm/apk/",
    "retros": "logs/retros/", "kitty-audits": "logs/kitty-audits/", "localenv": "work/localenv/",
    "localenv-logs": "logs/localenv/",
-   "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt"
+   "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt",
+   "tmp": "tmp/", "build-gate": "work/build-gate/"
   },
   "durable": {
    "signals": "learning.jsonl", "last-retro": "learning.stamp", "last-kitty-audit": "kitty-audit.stamp",
@@ -225,6 +226,6 @@
     ["://[^/\\s:@]+:[^/\\s@]+@", "://[redacted]@"], ["[\\w.+-]+@[\\w-]+(\\.[\\w-]+)*\\.[A-Za-z]{2,}\\b", "[email]"]] },
   "keep": { "_readme": "cleanup: hours an entry of the path stays after its last write ([hours, newest N kept]); unnamed entries: 72 h in the runtime root, 336 h in work/, 720 h in cache/ and logs/ (.state: never).",
    "sessions": 8, "tokens": 8, "android-tmp": 72, "shots": 72, "launches": 72, "agents": 168, "node-spec": 168, "apks": [72, 3], "evidence": 336, "waves": 336, "board": 336,
-   "qa-seats": 336, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "audit": 720, "retros": 2160, "kitty-audits": 2160, "media": 168, "background": 72 }
+   "qa-seats": 336, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "audit": 720, "retros": 2160, "kitty-audits": 2160, "media": 168, "background": 72, "tmp": 24 }
  }
 }

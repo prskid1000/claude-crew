@@ -790,7 +790,7 @@ if ($Cmd -match '\bjest\b' -and $Cmd -notmatch 'maxWorkers|runInBand|\s-i(\s|$)'
 if ($Cmd -match '\bvitest\b' -and $Cmd -notmatch 'maxWorkers|maxThreads') { $Cmd = "$Cmd --maxWorkers=2" }
 if ($Cmd -match '\bpytest\b' -and $Cmd -match '\s-n\s+auto') { $Cmd = $Cmd -replace '\s-n\s+auto', ' -n 2' }
 
-$ledger = Join-Path (Get-KitTemp) 'claude-build-gate'
+$ledger = Get-KitGateLedger
 New-Item -ItemType Directory -Force $ledger | Out-Null
 $histFile = Join-Path $ledger 'history.json'
 function Read-History { try { Get-Content $histFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} } }
@@ -1686,7 +1686,7 @@ function RuntimeKind([string]$tok, [string]$base) {
 function RuntimeKinds([string]$seg, [string]$base) {
   $n = ($seg -replace '\\', '/') -replace '(?<![\w:])/([A-Za-z])/', '$1:/'
   if ($n -match ([regex]::Escape($rtFull.Replace('\', '/')) + '(?=[/''"\s;|)]|$)')) { 'kit' }   # a kit path with spaces
-  [regex]::Matches($seg, "(?i)(?<![\w.-])[^\s'""=]*?(?<![\w.-])$([regex]::Escape($rtLeaf))(?=[\\/'""\s;|)]|$)") | ForEach-Object { RuntimeKind $_.Value $base }
+  [regex]::Matches($seg, "(?i)(?<![\w.-])[^\s'""=]*(?<![\w.-])$([regex]::Escape($rtLeaf))(?=[\\/'""\s;|)]|$)") | ForEach-Object { RuntimeKind $_.Value $base }
 }
 $segBase = $here
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
@@ -1704,7 +1704,7 @@ function MainScratch([string]$p, [string]$base) {
 }
 foreach ($e in $edits) { if (MainScratch $e $here) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $scratchWhy" } }
 # shared temp body / desc files got swapped between agents
-$tmpRoots = @('/tmp', $env:TEMP, $env:TMP, [IO.Path]::GetTempPath()) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') } | Select-Object -Unique
+$tmpRoots = @('/tmp', $env:TEMP, $env:TMP, [IO.Path]::GetTempPath()) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') } | Select-Object -Unique   # arch-ok: guard deny list
 $tmpRx = '(?i)(?:^|[\s''"=<>(,@])(?:' + ((@($tmpRoots | ForEach-Object { [regex]::Escape($_) }) + '\$env:(?:TEMP|TMP)', '%(?:TEMP|TMP)%', '\$\{?TMPDIR\}?') -join '|') + ')[\\/](?<f>[^\s''"\\/;|&)]*(?:body|desc|comment|summary|message|msg)[^\s''"\\/;|&)]*)(?=$|[\s''";|&)])'
 $tmpHit = @(@($edits | Where-Object { $_ } | ForEach-Object { " $_" }) + $(if ($cmd) { $cmd }) | ForEach-Object { if ($_ -match $tmpRx) { $Matches.f } })
 if ($tmpHit) { $raw = "$($in.tool_name) $($tmpHit[0])"; Deny "kit guard: $($tmpHit[0]) is in the shared temp root (other agents use the same names): write it under & $($KitCmd.dev) dir -Agent <id> -Name $($tmpHit[0])" }

@@ -206,7 +206,7 @@ $kq = Join-Path (Kd) 'kq'; $null = New-Item -ItemType Directory -Force $kq; 'x' 
 $null = Px $O board join -Agent Q2 -Run pk -Claims $kq; $ca = $env:CLAUDE_AGENT; Remove-Item Env:CLAUDE_AGENT -ErrorAction SilentlyContinue
 try {
   $bj = Start-ThreadJob { & $using:pwshExe -NoProfile -File $using:crPath gate -Dir $using:kq -Cmd 'pwsh -NoProfile -Command Start-Sleep 300' 2>&1 | Out-String }
-  $gl = Join-Path $env:TEMP 'claude-build-gate'; for ($i = 0; $i -lt 150 -and -not @(Get-ChildItem $gl -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json').Count; $i++) { Start-Sleep -Milliseconds 200 }
+  $gl = TkPath $k build-gate; for ($i = 0; $i -lt 150 -and -not @(Get-ChildItem $gl -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json').Count; $i++) { Start-Sleep -Milliseconds 200 }
   $sw = [Diagnostics.Stopwatch]::StartNew(); $kp = Px $O pause -Run pk -Reason 'power off' | Out-String; $kb = $bj | Wait-Job -Timeout 60 | Receive-Job; $kt = $sw.Elapsed.TotalSeconds
   $kg = Invoke-TestScript $crPath gate -Dir $kq -Cmd 'echo never'; $env:CLAUDE_AGENT = 'ZZ'; $ko = Invoke-TestScript $crPath gate -Dir (Kd) -Cmd 'echo free'; Remove-Item Env:CLAUDE_AGENT
   $null = Px $crPath checkpoint -Agent Q2 -Run pk -Step build -Next 'redo: test' -Dir $kq

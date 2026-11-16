@@ -46,6 +46,18 @@ $null = New-Item -ItemType Directory -Force (Join-Path $kc 'rules'); Set-Content
 # an org-only rule (kit.local.json localOnly + .git/info/exclude) may name its stack; a published one may not
 foreach ($zr in 'zz-org', 'zz-pub') { Set-Content (Join-Path $kc "rules/$zr.md") "# $zr`nspring beans: inject by constructor" -Encoding utf8 }
 & $J @{ localOnly = @('rules/zz-org.md') } (Join-Path $kc 'skills/crafty/kit.local.json'); Add-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) '/rules/zz-org.md'
+# ARCH-TEMP fixtures: OS temp in pwsh / python / node = a hit; Get-KitTemp, arch-ok, a guard self-test row, python importing kitbag pass
+$ftp = @'
+#Requires -Version 7
+$a = [IO.Path]::GetTempPath()
+$b = Get-KitTemp   # never $env:TEMP
+$c = $env:TEMP   # arch-ok: an external tool's file
+  @('B', 'cp body.md /tmp/w1-run/body.md', $false)
+'@
+Set-Content (Join-Path $kc 'skills/crafty/zz_tmp.ps1') $ftp -Encoding utf8
+Set-Content (Join-Path $kc 'skills/crafty/zz_tmp.py') "import tempfile`nd = tempfile.mkdtemp()" -Encoding utf8
+Set-Content (Join-Path $kc 'skills/crafty/zz_tmpk.py') "from kitbag import kit_path`nimport tempfile`nd = tempfile.mkdtemp()" -Encoding utf8
+Set-Content (Join-Path $kc 'skills/crafty/zz_tmp.mjs') "import { tmpdir } from 'node:os'`nconst d = tmpdir()" -Encoding utf8
 $ex = Join-Path $kc 'skills/crafty/kit.example.json'; $t = [IO.File]::ReadAllText($ex)
 [IO.File]::WriteAllText($ex, ($t -replace '(?s)^\{', "{`n `"zzDeadKey`": 1, `"zzLiveKey`": 2,"))
 $l1 = & $py -X utf8 $KT3 lint --no-flow 2>&1 | Out-String
@@ -58,6 +70,9 @@ Expect 'ARCH-VENDOR-API: glab api in core = a problem; adapters/ and a py docstr
   $l1 -notmatch 'ARCH-VENDOR-API\s+skills/crafty/(adapters/zz_arch|zz_arch\.py)')
 Expect 'ARCH-PLATFORM: Get-CimInstance / os.startfile unguarded = a problem; inside if ($KitIsWindows) / os.name and a docstring pass' ($l1 -match '(?m)^ARCH-PLATFORM\s+skills/crafty/zz_arch\.ps1:8:' -and
   $l1 -notmatch 'ARCH-PLATFORM\s+skills/crafty/zz_arch\.ps1:10:' -and $l1 -match 'ARCH-PLATFORM\s+skills/crafty/zz_arch\.py:7:' -and $l1 -notmatch 'ARCH-PLATFORM\s+skills/crafty/zz_arch\.py:[26]:')
+Expect 'ARCH-TEMP: GetTempPath / python tempfile without kitbag / node tmpdir() = a problem; Get-KitTemp, a comment, arch-ok, a guard self-test row, a kitbag importer pass' (
+  $l1 -match '(?m)^ARCH-TEMP\s+skills/crafty/zz_tmp\.ps1:2: OS temp' -and $l1 -match '(?m)^ARCH-TEMP\s+skills/crafty/zz_tmp\.py:2:' -and $l1 -match '(?m)^ARCH-TEMP\s+skills/crafty/zz_tmp\.mjs:2:' -and
+  (& $cnt 'ARCH-TEMP\s+skills/crafty/zz_tmp\.ps1') -eq 1 -and $l1 -notmatch 'ARCH-TEMP\s+skills/crafty/zz_tmpk\.py' -and (& $cnt '(?m)^ARCH-TEMP\s') -eq 3)
 Expect 'ARCH-LESSON: liquibase in tracked LESSONS.md = a problem; a rules/*.local.md and a localOnly / excluded rule pass, a published rule fails' ($l1 -match '(?m)^ARCH-LESSON\s+LESSONS\.md:\d+: names liquibase' -and
   $l1 -notmatch 'ARCH-LESSON\s+rules/zz\.local\.md' -and $l1 -notmatch 'ARCH-LESSON\s+rules/zz-org\.md' -and $l1 -match '(?m)^ARCH-LESSON\s+rules/zz-pub\.md:\d+: names spring')
 Expect "ARCH-DEAD-KEY: a documented key no script reads is a counted problem (exit $LASTEXITCODE); a read key passes" ($LASTEXITCODE -eq 1 -and

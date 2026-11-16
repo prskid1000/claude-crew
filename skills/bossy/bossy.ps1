@@ -26,8 +26,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1333 report · L1413 audit · L1473 storage · L1476 bugbrief · L1587 cleanup · L1671 learn ·
-  L1702 decide · L1841 debate · L1885 health · L1948 retro due · L1958 tidy · L2030 setup · L2127 guard-sendmessage
+  L715 track · L1032 supervise · L1333 report · L1413 audit · L1473 storage · L1476 bugbrief · L1587 cleanup · L1672 learn ·
+  L1703 decide · L1842 debate · L1886 health · L1949 retro due · L1959 tidy · L2031 setup · L2128 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1588,7 +1588,7 @@ if ($tracked) { "already tracked: $Task" } else {
 function Invoke-Cleanup {
 param([switch]$DryRun, [switch]$IfDue, [switch]$Quiet, [switch]$WorktreesOnly, [string[]]$WorktreeRoot = @(), [double]$WorktreeIdleHours = 2, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
-$tmp = Get-KitTemp
+$osTmp = [IO.Path]::GetTempPath().TrimEnd([char]'\', [char]'/')   # arch-ok: reads the OS temp (Claude's own temp, kit leftovers from before <runtime>/tmp)
 if (-not $WorktreeRoot) { $WorktreeRoot = $KitConf.WorktreeRoots }
 $mark = Get-KitPath last-cleanup -Create
 if ($IfDue -and (Test-Path $mark) -and ((Get-Date) - [datetime](Get-Content $mark -Raw).Trim()).TotalHours -lt 20) { exit 0 }
@@ -1632,14 +1632,15 @@ $dk = @((Get-KitProps $pm.durable).Value | ForEach-Object { (([string]$_).TrimEn
 $sd = Split-Path (Get-KitPath tracking); $odd = @(Get-ChildItem $sd -Force | Where-Object { $_.Name -notin $dk -and $_.Name -notmatch '\.(lock|bad-.*)$' })
 if ($odd) { $notes += "durable state not in the layout (kept; move or delete by hand): $(@($odd | ForEach-Object Name) -join ', ')" }
 
-foreach ($f in Get-ChildItem (Join-Path $tmp 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json') {
+foreach ($f in Get-ChildItem (Get-KitGateLedger) -Filter '*.json' | Where-Object Name -ne 'history.json') {
   try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json; if (-not (Test-KitPid $e.pid $e.start)) { Gone $f.FullName 'dead gate entry' } } catch {}
 }
 
-$ct = if ($DryRun) { [long](Size (Join-Path $tmp 'claude')) }; if ($ct) { $notes += "Claude session temp (outside the kit, not managed): $([math]::Round($ct / 1MB)) MB in $(Join-Path $tmp 'claude')" }
+$ct = if ($DryRun) { [long](Size (Join-Path $osTmp 'claude')) }; if ($ct) { $notes += "Claude session temp (outside the kit, not managed): $([math]::Round($ct / 1MB)) MB in $(Join-Path $osTmp 'claude')" }
 
-foreach ($f in Get-ChildItem $tmp -Force | Where-Object { $_.Name -match '^(kit-|claude-kit-|wfc\.js$|gradletest$|report-preview\.html$|gate-debug\.ps1$|bad-findings\.json$|audit-test$|kitshots$|tsc\d\.log$|claude-wt-selftest$)' }) {
-  if (Old $f 24) { Gone $f.FullName 'kit test leftover' }
+# legacy: kit files in the OS temp (before <runtime>/tmp; the old build-gate ledger); 24 h idle so a not-yet-pulled kit copy keeps its live ones
+foreach ($f in Get-ChildItem $osTmp -Force | Where-Object { $_.Name -match '^(kit-|claude-kit-|claude-build-gate$|wfc\.js$|gradletest$|report-preview\.html$|gate-debug\.ps1$|bad-findings\.json$|audit-test$|kitshots$|tsc\d\.log$|claude-wt-selftest$)' }) {
+  if (Old $f 24) { Gone $f.FullName 'kit leftover in the OS temp (legacy)' }
 }
 
 }

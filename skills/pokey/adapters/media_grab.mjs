@@ -4,7 +4,7 @@
 // Called by video.py (fetchers jam-public, image). Exit codes: 0 ok · 1 nothing found / page failed · 2 usage.
 import puppeteer from 'puppeteer-core'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { kitPath } from '../browser.mjs'
 import { join } from 'node:path'
 
 const [url, mode, a3, a4] = process.argv.slice(2)
@@ -14,7 +14,7 @@ const exe = [process.env.CHROME_PATH, ...PF.map((d) => `${d}/Google/Chrome/Appli
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((p) => p && existsSync(p))
 if (!exe) { console.log(JSON.stringify({ error: 'no Chrome/Edge found; set CHROME_PATH' })); process.exit(1) }
 const MEDIA = /\.(m3u8|mpd)(\?|$)|\.(mp4|webm|mov)(\?|$)/i
-const profile = mkdtempSync(join(tmpdir(), 'media-grab-'))
+const profile = mkdtempSync(join(kitPath('tmp', { create: true }), 'media-grab-'))   // <runtime>/tmp, never the OS temp
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let browser, code = 0
 try {

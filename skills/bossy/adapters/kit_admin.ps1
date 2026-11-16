@@ -143,7 +143,7 @@ else {
   $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
   if (-not $py) { $hits += 'PYTHON      python is not installed: the org-term scan (kitbag.py lint) cannot run' }
   else {
-    $out = Join-Path ([IO.Path]::GetTempPath()) "kit-prepush-$PID.json"
+    $out = Join-Path (Get-KitTemp) "kit-prepush-$PID.json"
     & $py -X utf8 $KitCmd.kitbag lint $root --warn --no-flow --org-terms ($terms -join ',') --json $out | Out-Null
     if (-not (Test-Path $out)) { $hits += "LINT        kitbag.py lint failed (exit $LASTEXITCODE, no JSON): the org-term scan of the working tree did not run" }
     $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue
@@ -196,7 +196,7 @@ function Invoke-PreCommit {
     git -C $root add -- .codex .agents GEMINI.md
     Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and deployed to workspace'
   }
-  $out = Join-Path ([IO.Path]::GetTempPath()) "kit-precommit-$PID.json"
+  $out = Join-Path (Get-KitTemp) "kit-precommit-$PID.json"
   & $py -X utf8 $KitCmd.kitbag lint $root --no-flow --json $out | Out-Null
   if ($LASTEXITCODE -gt 1 -or -not (Test-Path $out)) { Write-Host "pre-commit: BLOCKED - kitbag lint did not run (exit $LASTEXITCODE, no JSON)" -ForegroundColor Red; exit 1 }
   $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue

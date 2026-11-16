@@ -526,7 +526,7 @@ $stIds = @(@($item.subtasks) | ForEach-Object { [string]$_.id })
 $docSib = [bool]@(@($run.items) | Where-Object { $_.code -ne $Code -and @(@($_.subtasks) | Where-Object { [string]$_.id -in $stIds }).Count }).Count
 $docGaps = { if (-not $hDoc) { return }
   $gc = @{}; foreach ($c in @($res.checks)) { $gc[[string]$c.id] = @{ result = [string]$c.result; case = "$($c.case)"; screen = "$($c.screen)" } }
-  $gf = [IO.Path]::GetTempFileName(); [IO.File]::WriteAllText($gf, (ConvertTo-Json $gc -Depth 3), [Text.UTF8Encoding]::new($false))
+  $gf = New-KitTempFile '.json'; [IO.File]::WriteAllText($gf, (ConvertTo-Json $gc -Depth 3), [Text.UTF8Encoding]::new($false))
   $gapAll = @(& (Get-Python) -X utf8 $KitCmd.devtools docgaps --key "${pubKey}:testing-doc" --run $gf --run-id $runKey 2>&1); $gapRc = $LASTEXITCODE; Remove-Item -LiteralPath $gf -ErrorAction SilentlyContinue
   if ($gapRc) { throw "devtools.py docgaps failed (exit $gapRc): $((@($gapAll) | Select-Object -Last 3) -join ' | ')" }   # never read as "every row covered"
   @($gapAll | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] -and "$_".Trim() } | ForEach-Object { "$_".Trim() }) }
@@ -660,7 +660,7 @@ if ($prev.folderId) { foreach ($pf in (Get-KitProps $prev.files)) { if ($pf.Name
 $ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype, '--key', "${runKey}:evidence")
 if ($run.driveParent) { $ea += '--parent', [string]$run.driveParent }   # run.json wins, else kit.local.json
 if ($prev.folderId) { $ea += '--folder', [string]$prev.folderId }
-$lf = [IO.Path]::GetTempFileName()   # 80+ long paths broke the command-line limit
+$lf = New-KitTempFile '.txt'   # 80+ long paths broke the command-line limit
 [IO.File]::WriteAllLines($lf, [string[]]@($files | Where-Object { -not $map.files[$_.Name] } | ForEach-Object FullName))
 $evAll = @(& (Get-Python) -X utf8 $KitCmd.devtools @ea --files-from $lf 2>&1); $evRc = $LASTEXITCODE; Remove-Item -LiteralPath $lf -ErrorAction SilentlyContinue
 $ev = @($evAll | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] }); $evErr = @($evAll | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })

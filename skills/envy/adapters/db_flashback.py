@@ -20,10 +20,12 @@
       skipData, passwordHash, salt, keepValues, keepDomains, scanEmails); routines, triggers, events kept (bodies unmasked); DEFINER clauses dropped
 Common: --host --port --user (password: MYSQL_PWD) [--mysql <exe>] [--mysqlbinlog <exe>] [--mysqldump <exe>]. Out: JSON.
 Exit codes: 0 ok · 1 refused or failed · 2 usage.
-Sections: L40 binlog · L273 row events · L405 flashback · L662 touched · L699 slices · L760 structure · L854 objects ·
-  L906 guard · L975 mask
+Sections: L42 binlog · L275 row events · L407 flashback · L664 touched · L701 slices · L762 structure · L856 objects ·
+  L908 guard · L977 mask
 """
 import argparse, base64, gzip, hashlib, json, os, re, struct, subprocess, sys, tempfile, zlib
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'bossy'))
+from kitbag import kit_path   # tempfile.* lands in <runtime>/tmp (kitbag sets it)
 
 SYSTEM = {'mysql', 'sys', 'performance_schema', 'information_schema'}
 JOURNAL = 'kit_journal'   # the cascade guard's schema: one mirror table per cascaded child, cg_map, cg_fail
@@ -514,7 +516,7 @@ def cascade_gaps(rows, m, ddl):
     return out
 
 
-def suspended_file(db): return os.path.join(tempfile.gettempdir(), f'kit-triggers-suspended-{db.a.host}-{db.a.port}.json')
+def suspended_file(db): return os.path.join(kit_path('localenv', create=True), f'triggers-suspended-{db.a.host}-{db.a.port}.json')   # a killed run's record: no tmp age-out
 
 
 def triggers_off(db, tables):

@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, board join in a live session (parallel, quiet, -Resume).
+bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
 Usage: pwsh -NoProfile -File <kit>/tests/bossy-generic.tests.ps1 (or tests/kit-tests.ps1 -Area bossy-generic).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -50,5 +50,17 @@ $j6 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b6 = pwsh @np $O b
 Expect "board: a quiet row of a live session is not taken over ($j6)" ($j6 -notmatch 'TAKEOVER' -and $j6 -match "QUIET: session $s3" -and $b6 -notmatch 'TAKEN')
 $e3 = Read-Json $f3; $e3.beat = (Get-Date).AddMinutes(-45).ToString('o'); & $J $e3 $f3; $j7 = pwsh @np $O board join -Agent BY -Run rb -Resume | Out-String
 Expect "board: -Resume without claims takes a quiet row of a live session ($j7)" ($j7 -match "TAKEOVER: replaced session $s3 \(-Resume;")
+# kit scratch: <runtime>/tmp for pwsh and python, the gate ledger in the runtime; cleanup ages tmp out and sweeps legacy kit files from the OS temp
+$ktParts = & { . (Lib); $kf = New-KitTempFile '.json'; @((Get-KitTemp), $kf, (Test-Path $kf), (Get-KitGateLedger), (Get-KitRuntime)) }
+Expect 'kit scratch: Get-KitTemp = <runtime>/tmp, New-KitTempFile makes a file there, the build-gate ledger = <runtime>/work/build-gate (never the OS temp)' (
+  $ktParts[0] -eq (Join-Path $ktParts[4] 'tmp') -and (Split-Path $ktParts[1]) -eq $ktParts[0] -and $ktParts[1] -like '*.json' -and $ktParts[2] -and $ktParts[3] -eq (Join-Path $ktParts[4] 'work/build-gate'))
+$pyTmp = "$(& $py -X utf8 -c "import sys; sys.path.insert(0, r'$k/skills/bossy'); import kitbag, tempfile; print(tempfile.mkdtemp())")".Trim()
+Expect 'kit scratch (python): importing kitbag sends tempfile.* to <runtime>/tmp' ((Split-Path $pyTmp) -eq $ktParts[0] -and (Test-Path $pyTmp))
+$osT = [IO.Path]::GetTempPath()   # the harness's own temp stands in for the OS temp
+foreach ($p in @("$(TkPath $k tmp -Create)/kit-1-old.tmp", "$osT/kit-legacy-z/a.txt", "$osT/kit-legacy-z", "$osT/claude-build-gate")) { if (-not (Test-Path $p)) { New-Item -Force -ItemType $(if ($p -match '\.\w+$') { 'File' } else { 'Directory' }) $p | Out-Null }; (Get-Item $p).LastWriteTime = (Get-Date).AddDays(-2) }
+New-Item -Force -ItemType Directory "$osT/kit-fresh-z" | Out-Null
+$cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
+Expect 'cleanup: kit scratch (<runtime>/tmp) ages out at 24 h; the OS temp only loses kit leftovers idle 24 h (kit-*, the old gate ledger)' ($cd -match '1 x\s+tmp > 24 h .*kit-1-old\.tmp' -and
+  $cd -match '2 x\s+kit leftover in the OS temp \(legacy\)')   # kit-legacy-z + claude-build-gate; kit-fresh-z and the fresh test kit stay
 Remove-TestKit $k
 Complete-Tests

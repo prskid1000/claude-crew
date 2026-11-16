@@ -15,7 +15,7 @@ function Get-KitStorageConf {
 # fixed drives; kit = holds workspace, .runtime, temp, profile, worktree root or watch[]
 function Get-KitDrives {
   $ds = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady -and $_.TotalSize -gt 1GB -and "$($_.DriveFormat)" -notmatch '^(squashfs|tmpfs|overlay|iso9660|udf|devtmpfs|ramfs)$' })
-  $kp = @(@($KitConf.Workspace, (Get-KitRuntime), [IO.Path]::GetTempPath(), [Environment]::GetFolderPath('UserProfile')) + @($KitConf.WorktreeRoots) + @(Get-KitSetting 'storage.watch' @()) | Where-Object { $_ } | ForEach-Object { try { [IO.Path]::GetFullPath("$_") } catch {} })
+  $kp = @(@($KitConf.Workspace, (Get-KitRuntime), [IO.Path]::GetTempPath(), [Environment]::GetFolderPath('UserProfile')) + @($KitConf.WorktreeRoots) + @(Get-KitSetting 'storage.watch' @()) | Where-Object { $_ } | ForEach-Object { try { [IO.Path]::GetFullPath("$_") } catch {} })   # arch-ok: the OS temp's drive is watched, nothing written
   $roots = @($ds | ForEach-Object { $_.RootDirectory.FullName } | Sort-Object Length -Descending)
   $kr = @($kp | ForEach-Object { $p = $_; @($roots | Where-Object { $p.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) })[0] })
   @($ds | ForEach-Object { [pscustomobject]@{ name = $(if ($KitIsWindows) { $_.Name.Substring(0, 1) } else { $_.Name }); root = $_.RootDirectory.FullName; free = [math]::Round($_.AvailableFreeSpace / 1GB, 2); size = [math]::Round($_.TotalSize / 1GB, 2); kit = $_.RootDirectory.FullName -in $kr } })
@@ -105,7 +105,7 @@ function Get-KitToolCaches([string]$H, [string]$La) {
 }
 function Get-KitStorageDefaults([string]$Root) {
   $h = [Environment]::GetFolderPath('UserProfile'); $la = [Environment]::GetFolderPath('LocalApplicationData'); $ra = [Environment]::GetFolderPath('ApplicationData')
-  $c = @($h, $la, $ra, [IO.Path]::GetTempPath(), [Environment]::GetFolderPath('CommonApplicationData'), (Get-KitRuntime)) + @($KitConf.WorktreeRoots) +
+  $c = @($h, $la, $ra, [IO.Path]::GetTempPath(), [Environment]::GetFolderPath('CommonApplicationData'), (Get-KitRuntime)) + @($KitConf.WorktreeRoots) +   # arch-ok: the OS temp is a scan candidate, nothing written
     @(Get-KitToolCaches $h $la) +
     @(if ($KitIsWindows -and $env:windir) { Get-ChildItem (Join-Path $env:windir 'ServiceProfiles') -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'AppData\Local\Temp' } })   # service temp dirs (db tmpdir; admin only)
   @(@($c) + @((Get-KitStorageConf).watch) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container -ErrorAction SilentlyContinue) } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') } | Where-Object { $_.StartsWith($Root.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) } | Sort-Object -Unique)
