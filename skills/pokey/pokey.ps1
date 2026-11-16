@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L139 seat · L208 api · L423 finalize · L860 results · L893 retest · L950 prepare
+Sections: L26 lanes · L40 report · L153 seat · L222 api · L437 finalize · L894 results · L927 retest · L984 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -63,21 +63,33 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   function MdEsc($t) { ([string]$t -replace '\|', '\|' -replace "`r?`n", ' ').Trim() }
   # gdocs src or link; title = width px (md_to_html)
   function MdImg($f) { $u = if ($Map.files[$f].src) { $Map.files[$f].src } else { $Map.files[$f].link }; "![$(if ($f -match '^[A-Za-z0-9]+-([A-Za-z]*\d+[a-z]?)_') { "$($Matches[1]): " })$(Caption $f)]($(([string]$u) -replace ' ', '%20') `"$(ImgWidth $f)`")" }
-  # preview 8 JSON fields / 3 log lines; newlines split the row
-  function Peek($f) {
+  # preview: an api call "<METHOD> <path> -> <status>" first, then the fields whose value the check's notes name, then the first
+  # ones (meta, headers skipped) / 3 log lines; -Line: one span (the human doc's row); newlines split the row
+  function Peek($f, $c, [switch]$Line) {
     $p = @("$D/shots/$f", "$D/evidence/$f") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $p -or $f -notmatch '\.(json|log|txt)$') { return '' }
-    $ln = [Collections.Generic.List[string]]::new()
+    $ln = [Collections.Generic.List[string]]::new(); $max = if ($Line) { 2 } else { 8 }
     if ($f -match '\.json$') {
+      $hits = [Collections.Generic.List[string]]::new(); $first = [Collections.Generic.List[string]]::new(); $seen = @{ n = 0 }
+      $notes = "$($c.observed) $($c.what_was_done)"
       function Walk($v, $at) {
-        if ($ln.Count -ge 8) { return }
-        if ($v -is [Collections.IDictionary]) { foreach ($key in $v.Keys) { Walk $v[$key] "$at$(if ($at) { '.' })$key" } }
+        if ($seen.n++ -gt 3000 -or ($first.Count -ge $max -and $hits.Count -ge 3)) { return }
+        if ($v -is [Collections.IDictionary]) { foreach ($key in $v.Keys) { if ($key -notin 'meta', 'headers') { Walk $v[$key] "$at$(if ($at) { '.' })$key" } } }
         elseif ($v -is [Collections.IList]) { $n = 0; foreach ($x in $v) { if ($n -ge 3) { break }; Walk $x "$at[$n]"; $n++ } }
-        else { $s = "$v" -replace '\s+', ' '; $ln.Add("$at`: $($s.Substring(0, [math]::Min(60, $s.Length)))") }
+        else {
+          $s = "$v" -replace '\s+', ' '; $one = "$at`: $($s.Substring(0, [math]::Min(60, $s.Length)))"
+          if ($first.Count -lt $max) { $first.Add($one) }
+          if ($v -isnot [bool] -and $s.Length -ge 3 -and $hits.Count -lt 3 -and $notes.Contains($s)) { $hits.Add($one) }
+        }
       }
       $jv = try { Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -AsHashtable } catch { $null }
-      Walk $jv ''
-    } else { @(Get-Content -LiteralPath $p | Where-Object { $_.Trim() } | Select-Object -Last 3) | ForEach-Object { $ln.Add($_.Substring(0, [math]::Min(120, $_.Length))) } }
+      if ($jv -is [Collections.IDictionary] -and $jv.request -is [Collections.IDictionary] -and $jv.response -is [Collections.IDictionary]) {   # pokey.ps1 api
+        $u = [string]$jv.request.url; $path = try { ([uri]$u).PathAndQuery } catch { $u }
+        $ln.Add("$($jv.request.method) $($path.Substring(0, [math]::Min(80, $path.Length))) -> $($jv.response.status)"); Walk $jv.response.body 'body'
+      } else { Walk $jv '' }
+      foreach ($x in @(@($hits) + @($first | Where-Object { $_ -notin $hits }) | Select-Object -First $(if ($Line -and $hits.Count) { $hits.Count } else { $max }))) { $ln.Add($x) }
+    } else { @(Get-Content -LiteralPath $p | Where-Object { $_.Trim() } | Select-Object -Last $(if ($Line) { 1 } else { 3 })) | ForEach-Object { $ln.Add($_.Substring(0, [math]::Min(120, $_.Length))) } }
+    if ($Line) { return '`' + ((@($ln) -join ' · ') -replace '[`|]', "'") + '`' }
     (@($ln) | ForEach-Object { '`' + ($_ -replace '[`|]', "'") + '`' }) -join '<br>'
   }
   function Lnk($f) { if ($Map.files[$f]) { "[$f]($(([string]$Map.files[$f].link) -replace ' ', '%20'))" } else { $f } }
@@ -105,11 +117,13 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   }
   $o.Add(''); $o.Add('## Results'); $o.Add(''); $o.Add('Each check, its evidence inline:'); $o.Add(''); $o.Add('| Check | Result | Observed | Evidence |'); $o.Add('|---|---|---|---|')
   foreach ($c in $checks) {    $saw = if ($c.result -eq 'FAIL') { '[details](#' + ("$($c.id) — $($c.screen)".ToLower() -replace '[^\w\- ]', '' -replace ' ', '-') + ')' } else { MdEsc $c.observed }
-    $evc = (@($c.evidence | Where-Object { $_ }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$' -and $Map.files[$_]) { MdImg $_ } elseif ($pk = Peek $_) { "$pk<br>[full file]($(([string]$Map.files[$_].link) -replace ' ', '%20'))" } else { "file: $(Lnk $_)" } }) -join '<br>'
+    $evc = (@($c.evidence | Where-Object { $_ }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$' -and $Map.files[$_]) { MdImg $_ } elseif ($pk = Peek $_ $c) { "$pk<br>[full file]($(([string]$Map.files[$_].link) -replace ' ', '%20'))" } else { "file: $(Lnk $_)" } }) -join '<br>'
     $vt = @(([string]$c.verify -replace ' \| ', ' · ') -split '\s+' | Where-Object { $_ }); $rt = if ($vt.Count) { " (re-test: $(MdEsc (($vt | Select-Object -First 20) -join ' '))$(if ($vt.Count -gt 20) { ' …' }))" }
     $kb = "$($c.knownBug)".Trim(); $kn = if ($kb -and $c.result -eq 'FAIL') { " (known: [$(MdEsc $kb)]($(TaskLink $kb)))" } else { '' }   # FAIL (known: <task id>)
     $o.Add("| **$(MdEsc $c.id)** $(MdEsc $c.screen) | $($label[[string]$c.result])$kn$rt | $saw | $evc |")
-    if ($null -ne $Cells) { $Cells[[string]$c.id] = @{ result = ([string]$c.result -replace '_', ' ') + $(if ($kn) { " (known: $kb)" }); evidence = $evc } }   # the human doc's row
+    if ($null -ne $Cells) {   # the human doc's row (devtools.py _row_cells: by id, case or screen); one line per file
+      $hev = (@($c.evidence | Where-Object { $_ }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$' -and $Map.files[$_]) { MdImg $_ } elseif (($pk = Peek $_ $c -Line) -and $Map.files[$_]) { "$pk [$(Caption $_)]($(([string]$Map.files[$_].link) -replace ' ', '%20'))" } else { "file: $(Lnk $_)" } }) -join '<br>'
+      $Cells[[string]$c.id] = @{ result = ([string]$c.result -replace '_', ' ') + $(if ($kn) { " (known: $kb)" }); evidence = $hev; case = "$($c.case)"; screen = "$($c.screen)" } }
   }
   if ($fails.Count) {
     $o.Add(''); $o.Add('## Failures in detail')
@@ -443,6 +457,9 @@ $run = Get-Content "$RunDir/run.json" -Raw | ConvertFrom-Json
 $item = @($run.items) | Where-Object { $_.code -eq $Code } | Select-Object -First 1
 if (-not $item) { throw "no item $Code in $RunDir/run.json" }
 $D = "$RunDir/$Code"
+# one report per task (else per run item); a human testing doc of the task gets this run's Result / Evidence per row
+$pubKey = if (@($item.subtasks).Count -eq 1) { [string]@($item.subtasks)[0].id } else { "$(Split-Path $RunDir -Leaf)-$Code" }
+$hDoc = Test-Path -LiteralPath (Join-Path (Get-KitPath published) "$($pubKey -replace '[^\w.-]+', '_')_testing-doc.json")
 $res = Get-Content (Join-Path $D $Results) -Raw | ConvertFrom-Json
 if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
   $m = "$Code`: $Results has $(@($res.checks).Count) check(s), the workflow sent $ExpectChecks - a truncated copy; nothing published. Write the JSON again, complete."
@@ -502,6 +519,16 @@ $knownBad = { $tested = @(@($item.subtasks) | ForEach-Object { ([string]$_.id).T
   elseif ($kb.TrimStart('#') -in $tested) { "$($c.id): knownBug $kb is a tested task (its own failure: defect own)" }
   elseif (-not "$($kt.name)".Trim()) { "$($c.id): knownBug $kb not found in the tracker" }
   elseif ((Test-TrackerStatus "$($kt.status)" 'closed') -or "$($kt.status)" -ieq 'closed') { "$($c.id): knownBug $kb is closed (reopen it, or defect new)" } }) }
+# human doc rows no check of this run covers (devtools.py docgaps: id, case or a screen starting with the row id); a sibling item on the task: WARN
+$stIds = @(@($item.subtasks) | ForEach-Object { [string]$_.id })
+$docSib = [bool]@(@($run.items) | Where-Object { $_.code -ne $Code -and @(@($_.subtasks) | Where-Object { [string]$_.id -in $stIds }).Count }).Count
+$docGaps = { if (-not $hDoc) { return }
+  $gc = @{}; foreach ($c in @($res.checks)) { $gc[[string]$c.id] = @{ result = [string]$c.result; case = "$($c.case)"; screen = "$($c.screen)" } }
+  $gf = [IO.Path]::GetTempFileName(); [IO.File]::WriteAllText($gf, (ConvertTo-Json $gc -Depth 3), [Text.UTF8Encoding]::new($false))
+  $gapAll = @(& (Get-Python) -X utf8 $KitCmd.devtools docgaps --key "${pubKey}:testing-doc" --run $gf 2>&1); $gapRc = $LASTEXITCODE; Remove-Item -LiteralPath $gf -ErrorAction SilentlyContinue
+  if ($gapRc) { throw "devtools.py docgaps failed (exit $gapRc): $((@($gapAll) | Select-Object -Last 3) -join ' | ')" }   # never read as "every row covered"
+  @($gapAll | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] -and "$_".Trim() } | ForEach-Object { "$_".Trim() }) }
+$gapWhy = "human testing doc row(s) no check of this run covers (each row's Result / Evidence comes from the checks with its id, ""case"": ""<row id>"" or a screen starting with it): give those checks the row id, or add a NOT_TESTED check per row with why"
 if ($Check) {
   # standard name, else setup form
   $ids = @(@($res.checks) | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -Unique | Sort-Object Length -Descending)
@@ -588,6 +615,11 @@ if ($Check) {
   $preEx = @(@($res.checks) | Where-Object { $_.result -match '^PASS' -and "$($_.observed)" -match '(?i)\b(known|ignored?|waived?|accepted|not (our|my|this)|out of scope)\b.{0,40}pre-?existing|pre-?existing\b.{0,30}\b(bug|defect|issue|failure|error|overlap|problem|broken|behaviou?r)|\b(unrelated to|not caused by) (this|the) (change|task)\b' } | ForEach-Object { [string]$_.id })
   if ($preEx.Count) { $fail = $true; "$Code pre-existing check: a check of the doc is the task's own: a defect in it is FAIL (defect own; outside the change: new), never waived as pre-existing: $($preEx -join ', ')" }
   $kbBad = @(& $knownBad); if ($kbBad.Count) { $fail = $true; "$Code known-bug check: $($kbBad -join '; ')" }
+  # OUT_OF_SCOPE only for a qa.outOfScope channel (run.json outOfScope wins), named in the check; an unbuilt app / web part runs on the local env
+  $oosCh = @(@(if ($null -ne $run.outOfScope) { $run.outOfScope } else { Get-KitSetting 'qa.outOfScope' @() }) | Where-Object { "$_".Trim() } | ForEach-Object { "$_".Trim() })
+  $oosBad = @(@($res.checks) | Where-Object { $_.result -eq 'OUT_OF_SCOPE' } | Where-Object { $t = "$($_.screen) $($_.what_was_done) $($_.observed)"; -not @($oosCh | Where-Object { $t -match "(?i)\b$([regex]::Escape($_))\b" }).Count } | ForEach-Object { [string]$_.id })
+  if ($oosBad.Count) { $fail = $true; "$Code scope check: OUT_OF_SCOPE is only for a qa.outOfScope channel ($(if ($oosCh.Count) { $oosCh -join ', ' } else { 'none set' })), named in the check: $($oosBad -join ', '). A part with no build on the target: test it on the local env (phoney.ps1 build -Local + a lane, a ""local run""); no lane can run it -> NOT_TESTED phone-only (the owner decides)" }
+  $gaps = @(& $docGaps); if ($gaps.Count) { if (-not $docSib) { $fail = $true }; "$Code doc check$(if ($docSib) { ' WARN (a sibling item tests the same task)' }): $($gaps -join ', '): $gapWhy" }
   if ($badTypes.Count) {
     $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
     $badTypes | ForEach-Object { "  $_" }
@@ -595,8 +627,8 @@ if ($Check) {
   $pr = @(& $prose)
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
   $prRun = @(& $proseRun); if ($prRun.Count) { "$Code prose WARN (run.json / bugs.json, shared by every package: fix there; does not hold this close):"; $prRun | ForEach-Object { "  $_" } }
-  if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count -or $kbBad.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: $checkCmd"; 'EXIT=1'; exit 1 }
-  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"
+  if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count -or $kbBad.Count -or $oosBad.Count -or ($gaps.Count -and -not $docSib)) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: $checkCmd"; 'EXIT=1'; exit 1 }
+  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose$(if ($hDoc) { ', every human doc row covered' }))"
   if ($publishAfter) { $pass = @{} + $PSBoundParameters; foreach ($k in 'FixNames', 'Check') { $pass.Remove($k) }; Invoke-Finalize @pass; return }
   'EXIT=0'; exit 0
 }
@@ -607,6 +639,9 @@ $pr = @(& $prose)
 if ($pr.Count) { throw "${prWhy}, then re-run - nothing was published: $($pr -join '; ')" }
 $kbBad = @(& $knownBad)
 if ($kbBad.Count) { throw "$Code known-bug check: $($kbBad -join '; ') - nothing was published. Fix knownBug in results.json (or drop it: defect own / new), then re-run." }
+$gaps = @(& $docGaps)
+if ($gaps.Count -and -not $docSib) { throw "$Code doc check: $($gaps -join ', '): $gapWhy - nothing was published." }
+if ($gaps.Count) { Write-Warning "$Code doc check: $($gaps -join ', ') stay empty until a sibling item of the task covers them" }
 $fin = "$D/finalize.json"
 $prev = if ((Test-Path $fin) -and -not $Force) { Get-Content $fin -Raw | ConvertFrom-Json } else { $null }
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
@@ -619,9 +654,9 @@ function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-War
 # 1. Evidence: report type host (gdocs: Drive) or the run folder
 $map = [ordered]@{ folderId = $prev.folderId; folderLink = $prev.folderLink; files = [ordered]@{}; local = $false; label = $null }
 if ($prev.folderId) { foreach ($pf in (Get-KitProps $prev.files)) { if ($pf.Name -notin $vChanged) { $map.files[$pf.Name] = $pf.Value } } }
-# one report + evidence folder per task (else per run item)
-$pubKey = if (@($item.subtasks).Count -eq 1) { [string]@($item.subtasks)[0].id } else { "$(Split-Path $RunDir -Leaf)-$Code" }
-$ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype, '--key', "${pubKey}:evidence")
+# evidence folder per run item: never the task's dev-loop folder (<task>:evidence holds the local test files)
+$runKey = "$(Split-Path $RunDir -Leaf)-$Code"
+$ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype, '--key', "${runKey}:evidence")
 if ($run.driveParent) { $ea += '--parent', [string]$run.driveParent }   # run.json wins, else kit.local.json
 if ($prev.folderId) { $ea += '--folder', [string]$prev.folderId }
 $lf = [IO.Path]::GetTempFileName()   # 80+ long paths broke the command-line limit
@@ -652,11 +687,10 @@ $cells = @{}
 $md = Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl -Cells $cells
 $md | Out-File "$D/report.md" -Encoding utf8
 $kept = $prev.doc -match '^https?://' -and $prev.doc -notmatch '/d//' -and "$($prev.report)" -in '', $rtype
-# human testing doc: per-row results + "<env> run"; else report by key
-$hDoc = Test-Path -LiteralPath (Join-Path (Get-KitPath published) "$($pubKey -replace '[^\w.-]+', '_')_testing-doc.json")
+# human testing doc: per-row results + "<env> run" (a re-publish of this item replaces its own; rows: the newest run covering each); else report by key
 if ($kept) { $docUrl = $prev.doc }   # a re-run keeps the posted report
 else {   # devtools doc; kept-file types stay in $D
-  $pa = if ($hDoc) { [IO.File]::WriteAllText("$D/cells.json", (ConvertTo-Json $cells -Depth 4), [Text.UTF8Encoding]::new($false)); @("$D/report.md", '--key', "${pubKey}:testing-doc", '--run', "$D/cells.json") }
+  $pa = if ($hDoc) { [IO.File]::WriteAllText("$D/cells.json", (ConvertTo-Json $cells -Depth 4), [Text.UTF8Encoding]::new($false)); @("$D/report.md", '--key', "${pubKey}:testing-doc", '--run', "$D/cells.json", '--run-id', $runKey) }
     else { @("$D/report.$(if ($html -and $rtype -eq 'gdocs') { 'html' } else { 'md' })", '--key', "${pubKey}:qa-report") }
   $o = & (Get-Python) -X utf8 $KitCmd.devtools doc "$title $Code - Test Results ($Date)" $pa[0] $(if ($map.folderId) { $map.folderId } else { $D }) --type $rtype @($pa | Select-Object -Skip 1) --label "$(if ($item.target) { $item.target } else { $run.target })" 2>&1 | ForEach-Object { "$_" }
   $docUrl = if (-not $LASTEXITCODE) { @($o)[-1].Trim() } elseif ("$o" -match '(\S+) was uploaded but not shared') { Write-Warning "$o"; $Matches[1] }
@@ -859,7 +893,7 @@ $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, faile
 
 # ---- results: results.json written once (the tester); the workflow's changes as deltas by check id; held.json by the script
 # a row's keys: testy.js CHECKS_SCHEMA + the keys the workflow adds (kitbag lint RESULT-KEYS keeps them in step)
-$script:ResultRowKeys = 'id', 'subtask_id', 'screen', 'result', 'defect', 'knownBug', 'signature', 'cause', 'env_fix', 'what_was_done', 'observed', 'evidence', 'attempts', 'window', 'guideId', 'verify', 'flaky'
+$script:ResultRowKeys = 'id', 'subtask_id', 'case', 'screen', 'result', 'defect', 'knownBug', 'signature', 'cause', 'env_fix', 'what_was_done', 'observed', 'evidence', 'attempts', 'window', 'guideId', 'verify', 'flaky'
 function Invoke-Results {
 param([Parameter(Mandatory, Position = 0)][ValidateSet('patch', 'hold')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Code,
   [string]$Patch, [string]$Why, [string]$Summary, [string]$EnvFix)
@@ -948,6 +982,12 @@ function Get-QaGuideDocUrl([string]$Description, $Track, $Spec) {
 }
 
 # ---- prepare: a test-only run from a job (SKILL.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it
+# deploy rows -> not live / local parts: an MR with no build on the target (NO-TARGET) next to a live one runs on the local env
+function Split-QaLiveParts($Dep) {
+  $notLive = @($Dep | Where-Object { $_.state -notmatch '^(DEPLOYED|N/A|MANUAL)' }); $noTgt = @($notLive | Where-Object { $_.state -eq 'NO-TARGET' })
+  if ($noTgt.Count -and $noTgt.Count -eq $notLive.Count -and @($Dep | Where-Object { $_.state -match '^DEPLOYED' }).Count) { return @{ notLive = @(); local = @($noTgt | ForEach-Object { "$($_.mr)" }) } }
+  @{ notLive = $notLive; local = @() }
+}
 function Invoke-Prepare {
 param([string]$Job, [string]$RunDir)
 $ErrorActionPreference = 'Stop'
@@ -993,7 +1033,7 @@ foreach ($tid in @($cand.Keys)) {
   $depFn = Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue   # adapters/deployed_checks.ps1
   if (-not $it.localEnv -and $depFn) {
     $dep = @(& $depFn -Mrs $mrs -Target $it.target -Json | ConvertFrom-Json)
-    $notLive = @($dep | Where-Object { $_.state -notmatch '^(DEPLOYED|N/A|MANUAL)' })
+    $lp = Split-QaLiveParts $dep; $notLive = $lp.notLive; if ($lp.local.Count) { $it.localParts = $lp.local }
     if ($notLive.Count) { & $out "not live on $($it.target): $(@($notLive | ForEach-Object { "$($_.mr) $($_.state)" }) -join ', ')"; continue }
   }
   if ($byDoc[$doc]) { $byDoc[$doc].subtasks += $it.subtasks[0]; continue }   # tasks sharing a doc = one item

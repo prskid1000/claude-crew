@@ -84,6 +84,10 @@ def selftest(expect, tmp, md):
         tb = _blocks('| A | B |\n|---|---|\n| x \\| y | 1<br>2 |\n| z |\nafter')
         expect('notion: a Markdown table = one table block (header row, cells padded, <br> -> line break)', [b['type'] for b in tb] == ['table', 'paragraph']
                and tb[0]['table']['table_width'] == 2 and [[c[0]['text']['content'] if c else '' for c in r['table_row']['cells']] for r in tb[0]['table']['children']] == [['A', 'B'], ['x | y', '1\n2'], ['z', '']])
+        rb = next(b for b in _blocks(open(dt.sample_run_doc(tmp), encoding='utf-8').read()) if b['type'] == 'table')
+        row = [c[0]['text']['content'] if c else '' for c in rb['table']['children'][1]['table_row']['cells']]
+        expect('notion: an env run fills the human doc row: result with check ids, each check\'s evidence (image link, JSON excerpt + link) on its own line',
+               row[0] == 'T1' and row[3] == 'PASS (V1, V2)' and 'https://img/v1.png' in row[4] and 'GET /a -> 200' in row[4] and 'https://f/v2' in row[4] and '\n' in row[4])
     finally:
         _http = saved
         os.environ.clear(); os.environ.update(env0)

@@ -42,6 +42,10 @@ def selftest(expect, tmp, md):
         expect('confluence: a storage page under reports.parent, bearer auth', u == 'https://ex.atlassian.net/wiki/spaces/QA/pages/65601/T'
                and url.endswith('/wiki/rest/api/content') and b['ancestors'] == [{'id': '42'}] and '<hr/>' in b['body']['storage']['value']
                and hd['Authorization'] == 'Bearer tk')
+        calls.clear(); publish({'title': 'T', 'path': dt.sample_run_doc(tmp), 'parent': None, 'keep': None})
+        sv = calls[0][2]['body']['storage']['value']
+        expect('confluence: an env run fills the human doc row: result with check ids, the screenshot inline (closed img), the JSON excerpt + link',
+               re.search(r'>T1</td>.*PASS \(V1, V2\)</td>.*<img [^>]*src="https://img/v1\.png"[^>]*/>.*GET /a -&gt; 200.*href="https://f/v2"', sv, re.S) is not None)
     finally:
         _http, dt.RCFG = saved, rcfg0
         os.environ.clear(); os.environ.update(env0)

@@ -22,15 +22,17 @@
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
   publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
   (same text: none; human doc: earlier rounds no env run tested show as one "Replaced drafts (not tested): <dates>" line)
-  --run <cells.json> (pokey finalize, key <task>:testing-doc): fills the human doc's Result / Evidence + a dated "<env> run" section
+  --run <cells.json> [--run-id <id>] (pokey finalize, key <task>:testing-doc): fills each human doc row's Result / Evidence from the
+  checks that cover it (id, `case`, or a screen starting with the row id) + a dated "<env> run" section (same --run-id: replaced)
+ python -X utf8 devtools.py docgaps --key <task>:testing-doc --run <cells.json>   the human doc's row ids no run check covers, one per line
  python -X utf8 devtools.py relayout <key|doc url> ...   republish a --key doc with the current layout (cell-fit images): same rows and link
  python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
  python -X utf8 devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L47 config · L102 run · L190 tracker · L342 process · L493 git host · L560 scope · L639 MR · L823 merge · L1149 docs ·
-  L1302 publish · L1663 render · L2053 plugins · L2067 keepboth · L2086 selftest · L2585 CLI
+Sections: L49 config · L104 run · L192 tracker · L344 process · L495 git host · L562 scope · L641 MR · L825 merge · L1151 docs ·
+  L1304 publish · L1718 render · L2108 plugins · L2122 keepboth · L2141 selftest · L2659 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1386,6 +1388,52 @@ def _table_rows(md, cells=None, full=False):
     return rows, '\n'.join(out)
 
 
+def _refs(c):
+    """The human-doc rows a run check covers: its `case` (ids), else its screen's leading row id ('T1 Bulk ...')."""
+    r = c.get('case') if isinstance(c, dict) else None
+    if r:
+        return [x for x in (r if isinstance(r, list) else re.split(r'[\s,;]+', str(r))) if x]
+    m = re.match(r'\s*([A-Za-z]*\d+[a-z]?)\b', str((c or {}).get('screen') or '')) if isinstance(c, dict) else None
+    return [m.group(1)] if m else []
+
+
+def _row_cells(md, cells):
+    """A run's cells {check id: {result, evidence, case, screen}} -> cells per human-doc row id: the row's own check, else every check
+    that covers it (_refs) in one cell: FAIL > NOT TESTED > PENDING > PASS (out-of-scope ones count only alone), check ids named."""
+    out, nat = {}, lambda x: [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', x[0])]
+    for rid, *_ in _table_rows(md)[0]:
+        by = sorted(((cid, c) for cid, c in cells.items() if cid == rid or rid in _refs(c)), key=nat)
+        if not by:
+            continue
+        if len(by) == 1 and by[0][0] == rid:   # the row's own check alone: its cell as is
+            out[rid] = cells[rid]
+            continue
+        res = [str(c.get('result') or '').upper() for _, c in by]
+        live = [x for x in res if not x.startswith('OUT OF SCOPE')] or res
+        word = next((w for w in ('FAIL', 'NOT TESTED', 'PENDING') if any(x.startswith(w) for x in live)), None) or (
+            'OUT OF SCOPE' if all(x.startswith('OUT OF SCOPE') for x in res) else 'PASS' if all(x.startswith('PASS') for x in live) else 'NOT TESTED')   # an empty / unknown result never reads PASS
+        out[rid] = {'result': f'{word} ({", ".join(cid for cid, _ in by)})',
+                    'evidence': '<br>'.join(f'**{cid}** {c.get("result") or ""}: {c.get("evidence") or "none"}' for cid, c in by)}
+    return out
+
+
+def run_gaps(md, cells):
+    """Human-doc rows no check of a run covers (pokey finalize refuses them)."""
+    filled = _row_cells(md, cells or {})
+    return [rid for rid, *_ in _table_rows(md)[0] if rid not in filled]
+
+
+def sample_run_doc(tmp):
+    """Report adapter selftests: a human doc whose T1 row an env run filled from checks V1 (screen) + V2 (case) -> its path."""
+    body = '# Testing: X\n\n| # | Steps | Expected | Result | Evidence |\n|---|---|---|---|---|\n| T1 | open a | a shown | | |\n'
+    cells = {'V1': {'result': 'PASS', 'evidence': '![V1: List](https://img/v1.png "260")', 'screen': 'T1 list'},
+             'V2': {'result': 'PASS', 'evidence': '`GET /a -> 200 · po: X1` [Resp](https://f/v2)', 'case': 'T1'}}
+    p = os.path.join(tmp, 'run-doc.md')
+    with open(p, 'w', encoding='utf-8') as fh:
+        fh.write(_table_rows(body, _row_cells(body, cells))[1])
+    return p
+
+
 NO_RUN = re.compile(r'(?is)\s*(|[—–-]|(n/?a|not[ _]tested([ _]local)?|untested|out[ _]of[ _]scope|skip(ped)?|pending|blocked)\b.*)')
 EVIDENCE_LINK = re.compile(r'(?i)https?://|!\[|<img\b')
 # a waiver, not data; same regex: pokey.ps1 $preEx
@@ -1505,7 +1553,11 @@ def _compose(title, rounds, runs=(), kind=''):
     rest become one 'Replaced drafts (not tested): <dates>' line; one round, no run = unchanged. -> (text, ext)"""
     top = rounds[-1]
     if runs and top['ext'] == '.md' and _after(runs[-1], top):
-        top = dict(top, body=_table_rows(top['body'], runs[-1].get('cells') or {})[1])
+        filled = {}   # each row from the newest run that covers it (an env run, a local run of the app part, a sibling item)
+        for r in runs:
+            if _after(r, top):
+                filled.update(_row_cells(top['body'], r.get('cells') or {}))
+        top = dict(top, body=_table_rows(top['body'], filled)[1])
     ran = {max(i for i, r in enumerate(rounds) if i == 0 or _after(u, r)) for u in runs}   # each run tested the newest round before it
     shown = [i for i in range(len(rounds) - 1) if kind != 'testing-doc' or i in ran]
     days = sorted({rounds[i]['at'][:10] for i in range(len(rounds) - 1) if i not in shown})
@@ -1559,11 +1611,12 @@ def _check_doc(kind, scope, path, body, prior=()):
                          ' Nothing was published.')
 
 
-def publish(key, title, path, parent=None, mode=None, label='', run=None):
+def publish(key, title, path, parent=None, mode=None, label='', run=None, run_id=''):
     """Publish or update by key: the first call creates the doc, later calls update the same doc (append: a dated round on top,
-    earlier rounds below; replace: the new text only). run = {id: {result, evidence}} of a deployed-env run (pokey finalize on
-    <task>:testing-doc): fills the human doc's Result / Evidence and adds the report as a dated '<env> run' section; no human
-    doc yet -> the report is published as <scope>:qa-report."""
+    earlier rounds below; replace: the new text only). run = {check id: {result, evidence, case, screen}} of a deployed-env run
+    (pokey finalize on <task>:testing-doc): fills the human doc's Result / Evidence per row (_row_cells) and adds the report as a
+    dated '<env> run' section; run_id: a re-publish of the same run replaces its section; no human doc yet -> the report is
+    published as <scope>:qa-report."""
     scope, _, kind = key.rpartition(':')
     if not scope or not kind:
         raise SystemExit(f'--key {key!r}: use <task or run>:<kind>, e.g. 86abc:testing-doc')
@@ -1596,7 +1649,9 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
         new = {'at': time.strftime('%Y-%m-%d %H:%M'), 'seq': time.time(), 'label': label, 'ext': os.path.splitext(path)[1].lower(), 'body': body}
         stale = bool(rounds and runs) and _after(runs[-1], rounds[-1])
         if run is not None:
-            runs.append(dict(new, cells=run))
+            runs = [r for r in runs if not (run_id and r.get('id') == run_id)] + [dict(new, cells=run, **({'id': run_id} if run_id else {}))]
+            if rounds and (gap := run_gaps(rounds[-1]['body'], run)):
+                print(f'[publish] {key}: row(s) {", ".join(gap)} no check of this run covers stay empty', file=sys.stderr)
         elif kind in ('testing-doc', 'testing-ai') and rounds and rounds[-1]['body'] == body and not stale:
             pass   # same text again (finish after the last loop round): no new round
         else:
@@ -2476,6 +2531,25 @@ def _publish_selftest(expect, refused):
         expect('a fix round after a run: a fresh version on top, both runs, the tested round 2 whole; the untested round 1 stays a date',
                u3 == u1 and '| T3 | 1. Open the list. | Newest first. | | |' in hb3 and hb3.count('## stg run ') == 2 and hb3.index('| T3 |') < hb3.index('## stg run ')
                < hb3.index('## Round 2') and '## Round 1' not in hb3 and hb3.count('Replaced drafts (not tested)') == 1)
+        vr = {'V1': {'result': 'PASS', 'evidence': '![V1: list](https://img/v1.png)', 'screen': 'T3 list'}, 'V2': {'result': 'PASS', 'evidence': '`GET /l -> 200` [l](https://f/l)', 'case': 'T3'},
+              'A1': {'result': 'OUT OF SCOPE', 'evidence': '', 'screen': 'App only'}}
+        with contextlib.redirect_stderr(io.StringIO()):
+            publish('T9:testing-doc', 'X', rep, label='stg', run=vr, run_id='R1-Q1')
+            u4 = publish('T9:testing-doc', 'X', rep, label='stg', run=dict(vr, V2=dict(vr['V2'], result='FAIL')), run_id='R1-Q1')
+        hb4 = open(u4, encoding='utf-8').read()
+        expect('markdown: run checks V1 (screen "T3 ...") + V2 (case T3) fill row T3 (FAIL > PASS, ids named, each evidence); the same --run-id replaces its section',
+               u4 == u1 and '| T3 | 1. Open the list. | Newest first. | FAIL (V1, V2) | **V1** PASS: ![V1: list](https://img/v1.png)<br>**V2** FAIL: `GET /l -> 200` [l](https://f/l) |' in hb4
+               and hb4.count('## stg run ') == 3)
+        with contextlib.redirect_stderr(io.StringIO()):
+            hb5 = open(publish('T9:testing-doc', 'X', rep, label='local', run={'L1': {'result': 'PASS', 'evidence': 'x', 'screen': 'App only'}}, run_id='R2-Q1'), encoding='utf-8').read()
+        expect('a later run that covers other rows (a local run of the app part) keeps each row from the newest run covering it; both sections kept',
+               '| FAIL (V1, V2) |' in hb5 and hb5.count('## stg run ') == 3 and hb5.count('## local run ') == 1)
+        rt = '| # | Steps | Result | Evidence |\n|---|---|---|---|\n| T1 | a | | |\n'
+        expect('_row_cells: a row\'s own check next to a FAIL variant reads FAIL (ids in natural order); an unknown result never reads PASS',
+               _row_cells(rt, {'V10': {'result': 'PASS', 'case': 'T1'}, 'V2': {'result': 'FAIL', 'case': 'T1'}, 'T1': {'result': 'PASS'}})['T1']['result'] == 'FAIL (T1, V2, V10)'
+               and _row_cells(rt, {'V1': {'result': '', 'case': 'T1'}, 'V2': {'result': 'PASS', 'case': 'T1'}})['T1']['result'] == 'NOT TESTED (V1, V2)')
+        expect('run_gaps: a row no check covers (id, case or screen) is named; a covered one is not',
+               run_gaps(open(os.path.join(tmp, 'h3.md'), encoding='utf-8').read(), {'A1': {'result': 'PASS', 'screen': 'App only'}}) == ['T3'] and not run_gaps(open(os.path.join(tmp, 'h3.md'), encoding='utf-8').read(), vr))
         nr = publish('T7:testing-doc', 'X', rep, run={})
         expect('a run without a human doc: the report is published by <task>:qa-report', _pub_read('T7:qa-report').get('url') == nr)
         legacy = ''.join(f'Testing doc: [https://d/{i}](https://d/{i})\n\n' for i in range(7)) + 'Testing goals (AI): x\nThe ask.\n'
@@ -2595,9 +2669,9 @@ def _cli():
         sys.exit(render_cmd(a[1:]))
     # --help never becomes an id; unknown flags and missing args are usage errors
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
-    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
+    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'docgaps': 0, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
-    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok') if cmd == 'merge' else ():
+    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--run-id', '--override') if cmd in ('doc', 'evidence', 'docgaps') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok') if cmd == 'merge' else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
         elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, not "unknown option"
@@ -2674,8 +2748,14 @@ def _cli():
         if (opt.get('--key') or '').rpartition(':')[2] in ('testing-doc', 'testing-ai') and not opt.get('--run'):   # a dev round's task doc
             prior_gate(opt['--key'].rpartition(':')[0], '', f"devtools.py doc --key {opt['--key']}")
         print(publish(opt['--key'], title, path, *(a[3:4] or [None]), mode=opt.get('--mode'), label=opt.get('--label') or '',
-                      run=json.load(open(opt['--run'], encoding='utf-8-sig')) if opt.get('--run') else None) if opt.get('--key')
+                      run=json.load(open(opt['--run'], encoding='utf-8-sig')) if opt.get('--run') else None, run_id=opt.get('--run-id') or '') if opt.get('--key')
               else make_doc(title, path, *(a[3:4] or [])))
+    elif cmd == 'docgaps':
+        if not (opt.get('--key') and opt.get('--run')):
+            print('devtools.py docgaps --key <task>:testing-doc --run <cells.json>', file=sys.stderr)
+            sys.exit(2)
+        rounds = _pub_read(opt['--key']).get('rounds') or []
+        print('\n'.join(run_gaps(rounds[-1]['body'], json.load(open(opt['--run'], encoding='utf-8-sig'))) if rounds else []))
     elif cmd == 'relayout':
         for ref in a[1:]:
             print(relayout(ref))

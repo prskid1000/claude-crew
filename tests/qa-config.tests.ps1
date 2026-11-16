@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
-qa-config.tests.ps1: pokey.ps1 config-driven QA rules: neutral finalize defaults (qa.newDefectIdRx, qa.holdCauses), qa.lanes,
-prepare (process.docs guide doc, qa.guideDoc; none = the task text guides).
+qa-config.tests.ps1: pokey.ps1 config-driven QA rules: neutral finalize defaults (qa.newDefectIdRx, qa.holdCauses), qa.lanes, the human testing doc fill
+(rows from the checks that cover them, refused gaps), prepare (process.docs guide doc, qa.guideDoc; none = the task text guides).
 Usage: pwsh -NoProfile -File <kit>/tests/qa-config.tests.ps1 (or tests/kit-tests.ps1 -Area qa-config).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -19,7 +19,7 @@ function New-Run($name, $items) {
   $d
 }
 function Gold($a, $b) { ("$a" -replace "`r`n", "`n").TrimEnd() -eq ("$b" -replace "`r`n", "`n").TrimEnd() }
-function Fin($d, $c) { Px $Q finalize -RunDir $d -Code $c 2>&1 | Out-String }
+function Fin($d, $c) { Px $Q finalize -RunDir $d -Code $c @args 2>&1 | Out-String }
 function Read-Text($f) { Get-Content $f -Raw }
 function Task($id) { Read-Json (Join-Path $store "$id.json") }
 function Rec($d, $c) { (Read-Json "$d/$c/finalize.json").subtasks[0] }
@@ -77,6 +77,53 @@ if (Use-BrowserKit) {
   Set-Content "$(Kd)/du.mjs" $du; $duo = node "$(Kd)/du.mjs" 2>&1 | Out-String
   Expect "browser defaultUser: one user = it; target defaultUser; none = ''; several, none chosen -> refused ($duo)" ($duo.Trim() -eq 'solo|b||true')
 }
+# a task with a human testing doc (Result / Evidence empty): finalize on the env fills them (same doc) + a dated "<env> run" section
+$ad = "$(Kd)/TAI-h.md"; New-Item -ItemType Directory -Force (Split-Path $ad), "$k/.state/published" | Out-Null; Set-Content $ad 'v1'
+& $J @{ key = 'TAI:testing-doc'; url = $ad; rounds = @(@{ at = '2026-10-29 10:00'; label = ''; ext = '.md'; body = "# Testing: X`n| # | Steps | Expected | Result | Evidence |`n|---|---|---|---|---|`n| C1 | open a | a shown | | |`n| C2 | open b | b shown | | |" }) } "$k/.state/published/TAI_testing-doc.json"
+$ai = New-Run 'AI' @(@{ code = 'Q1'; task = 'TAI'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) }); New-Item -ItemType Directory -Force "$ai/Q1/shots" | Out-Null
+[IO.File]::WriteAllBytes("$ai/Q1/shots/Q1-C1_01_a.png", [byte[]](1, 2)); $rj = Read-Json "$ai/Q1/results.json"; $rj.checks[0].evidence = @('Q1-C1_01_a.png'); & $J $rj "$ai/Q1/results.json"
+$null = Fin $ai Q1; $at = Read-Text $ad; $ti = Read-Json (Join-Path (TkPath $k tasks) 'TAI.json')
+Expect 'finalize: run index (items.Q1) and task index (envRuns, docs.testing-doc) written' ((Read-Json "$ai/index.json").items.Q1.tasks -contains 'TAI' -and
+  $ti.envRuns[0].code -eq 'Q1' -and $ti.envRuns[0].fail -eq 1 -and $ti.docs.'testing-doc'.url -eq $ad)
+Expect 'finalize: the human doc (same file) gets the env Result / Evidence per row and a dated "<env> run" section; no report doc' ((Read-Json "$ai/Q1/finalize.json").doc -eq $ad -and
+  $at -match '\| C1 \| open a \| a shown \| PASS \| !\[C1: A\]' -and $at -match '\| C2 \| open b \| b shown \| FAIL \|' -and $at -match '## t run 20' -and -not (Test-Path "$k/.state/published/TAI_qa-report.json"))
+# variant checks (V1: screen "C1 ...", V2: case C2) fill the doc rows; an api file previews "<METHOD> <path> -> <status>" + the field the notes name; the run's own folder
+$vd = "$(Kd)/TVA-h.md"; Set-Content $vd 'v1'
+& $J @{ key = 'TVA:testing-doc'; url = $vd; rounds = @(@{ at = '2026-10-29 10:00'; label = ''; ext = '.md'; body = "# Testing: X`n| # | Steps | Expected | Result | Evidence |`n|---|---|---|---|---|`n| C1 | open a | a shown | | |`n| C2 | open b | b shown | | |" }) } "$k/.state/published/TVA_testing-doc.json"
+$vr = New-Run 'VA' @(@{ code = 'Q2'; task = 'TVA'; checks = @(@('V1', 'PASS'), @('V2', 'NOT_TESTED')) }); New-Item -ItemType Directory -Force "$vr/Q2/evidence" | Out-Null
+& $J @{ meta = @{ code = 'Q2' }; request = @{ method = 'GET'; url = 'https://h/api/orders/7?x=1' }; response = @{ status = 200; headers = @{ h = 'PO-77' }; body = @{ id = 7; po = 'PO-77' } } } "$vr/Q2/evidence/Q2-V1_01_order.json"
+$rj = Read-Json "$vr/Q2/results.json"; $rj.checks[0].screen = 'C1 open a'; $rj.checks[0].observed = 'order po PO-77 vs PO-77'; $rj.checks[0].evidence = @('Q2-V1_01_order.json')
+$rj.checks[1] | Add-Member case 'C2'; $rj.checks[1] | Add-Member cause 'env-data'; & $J $rj "$vr/Q2/results.json"
+$dtDir = Join-Path $k 'skills/crafty'; Move-Item "$dtDir/devtools.py" "$dtDir/devtools_real.py"
+Set-Content "$dtDir/devtools.py" -Encoding utf8 ("import sys, os, runpy, json`nhere = os.path.dirname(os.path.abspath(__file__)); a = sys.argv`nif a[1] == 'evidence':`n" + @'
+    open(os.path.join(here, 'ev-key.txt'), 'w').write(a[a.index('--key') + 1])
+    ff = [os.path.basename(x) for x in open(a[a.index('--files-from') + 1], encoding='utf-8-sig').read().splitlines() if x.strip()]
+    print(json.dumps({'folderId': 'F', 'folderLink': 'https://f/F', 'files': {n: {'id': n, 'link': 'https://f/' + n, 'src': 'https://img/' + n} for n in ff}}))
+'@ + "`nelse:`n    a[0] = os.path.join(here, 'devtools_real.py'); runpy.run_path(a[0], run_name='__main__')")
+try { $null = Fin $vr Q2 -NoTracker } finally { Remove-Item "$dtDir/devtools.py"; Move-Item "$dtDir/devtools_real.py" "$dtDir/devtools.py" }
+$vt = Read-Text $vd
+Expect 'finalize: variant checks fill their doc rows (ids named, api excerpt + link per file); evidence uploads under the run item key, never <task>:evidence' (
+  $vt -match '\| C1 \| open a \| a shown \| PASS \(V1\) \| \*\*V1\*\* PASS: `GET /api/orders/7\?x=1 -> 200 · body\.po: PO-77` \[Order\]\(https://f/Q2-V1_01_order\.json\) \|' -and
+  $vt -match '\| C2 \| open b \| b shown \| NOT TESTED \(V2\) \|' -and (Read-Text "$dtDir/ev-key.txt") -eq 'VA-Q2:evidence')
+# a human doc row no check covers: -Check exits 1 naming it, publishing refuses
+$gr = New-Run 'GA' @(@{ code = 'G1'; task = 'TAI'; checks = , @('C1', 'PASS') })
+$go = Fin $gr G1 -Check; $grc = $LASTEXITCODE; $gp = Fin $gr G1 -NoTracker
+Expect "finalize -Check: a human doc row no check covers -> EXIT=1 naming it; publish refuses, nothing published (rc $grc)" ($grc -eq 1 -and $go -match 'G1 doc check: C2: human testing doc row' -and $gp -match 'G1 doc check: C2' -and -not (Test-Path "$gr/G1/finalize.json"))
+# OUT_OF_SCOPE only for a qa.outOfScope channel named in the check (run.json outOfScope wins); an unbuilt app part is not one
+$os = New-Run 'OS' @(@{ code = 'O1'; task = 'TOS'; checks = @(@('C1', 'OUT_OF_SCOPE'), @('C2', 'OUT_OF_SCOPE')) })
+$rn = Read-Json "$os/run.json"; $rn | Add-Member outOfScope @('slack'); & $J $rn "$os/run.json"
+$rj = Read-Json "$os/O1/results.json"; $rj.checks[0].observed = 'phone-only: app MR not deployed to a lane'; $rj.checks[1].observed = 'Slack message: channel out of scope'; & $J $rj "$os/O1/results.json"
+$oo = Fin $os O1 -Check; $orc = $LASTEXITCODE
+Expect "finalize -Check: OUT_OF_SCOPE without a qa.outOfScope channel (phone-only) -> EXIT=1 naming it and the local-env path; a named channel passes (rc $orc)" (
+  $orc -eq 1 -and $oo -match 'O1 scope check: OUT_OF_SCOPE is only for a qa.outOfScope channel \(slack\), named in the check: C1\. ' -and $oo -match 'build -Local')
+$lpScript = @'
+. $args[0]; $row = { param($m, $s) [pscustomobject]@{ mr = $m; state = $s } }
+$pa = Split-QaLiveParts @((& $row 'api!1' 'DEPLOYED'), (& $row 'app!2' 'NO-TARGET')); $pb = Split-QaLiveParts @(& $row 'app!2' 'NO-TARGET')
+$pc = Split-QaLiveParts @((& $row 'api!1' 'NOT-DEPLOYED'), (& $row 'app!2' 'NO-TARGET')); $pd = Split-QaLiveParts @((& $row 'doc!3' 'N/A'), (& $row 'app!2' 'NO-TARGET'))
+"$($pa.local)|$($pa.notLive.Count)|$($pb.notLive.Count)|$($pc.notLive.Count)|$($pc.local.Count)|$($pd.notLive.Count)"
+'@
+$lpo = "$(Invoke-PsTest 'live-parts' $lpScript @($Q))"
+Expect "prepare: an app MR with no build on the target next to a deployed one -> localParts (local env), not left out; alone, next to a not-deployed or only an N/A MR -> left out ($lpo)" ($lpo.Trim() -eq 'app!2|0|1|2|0|1')
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE -ErrorAction SilentlyContinue
 Remove-TestKit $k
 Complete-Tests

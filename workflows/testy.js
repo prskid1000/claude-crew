@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L52 record-args · L73 prepare · L102 config · L133 prompts · L221 local · L248 app · L277 test-prompt ·
-//   L331 verify · L393 run-item · L574 pool · L596 budget · L626 run · L672 learn
+// Sections: L16 args · L52 record-args · L73 prepare · L102 config · L133 prompts · L222 local · L250 app · L279 test-prompt ·
+//   L333 verify · L395 run-item · L576 pool · L598 budget · L628 run · L674 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -25,7 +25,7 @@ export const meta = {
  outOfScope: ['<channel>'] (default qa.outOfScope), <lane>Parallel (webParallel, apiParallel): a lane's parallel cap, verify: true (false: no FAIL re-test),
  learn: true | 'auto', lanes: [{ n, name, serial, user, notes }] (phoney), devices: 'android' | 'none',
  localEnv: '<local env of the run>' (envy), envFixCycles: 2, envFixWaitMinutes: 300,
- items: [{ code: 'F2', title, guideFile, lane: '<qa.lanes name>' (default: the first; unknown: refused), target?, localEnv?, services? (leased, nothing else), subtasks: [{ id, name, mrs: '!12, !34' }],
+ items: [{ code: 'F2', title, guideFile, lane: '<qa.lanes name>' (default: the first; unknown: refused), target?, localEnv?, localParts? (MRs with no build on the target: their checks run on the local env), services? (leased, nothing else), subtasks: [{ id, name, mrs: '!12, !34' }],
   retest: false, only: ['L3'], skipClose: false (test + verify only; the lead publishes), alsoWeb: false, extra, taskFiles: [],
   model?, effort? (TEST step) }],
 } */
@@ -162,6 +162,7 @@ const CHECKS_SCHEMA = {
     type: 'object',
     properties: {
      id: { type: 'string', description: 'check number exactly as in the guide; X1, X2 ... for defects found off-script' },
+     case: { type: 'string', description: 'variants of one guide row (ids V1, V2 ...): that row id, e.g. T1; fills its Result / Evidence in the human testing doc' },
      subtask_id: { type: 'string', description: 'tracker id of the task this check belongs to' },
      screen: { type: 'string' },
      result: { type: 'string', enum: ['PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'OUT_OF_SCOPE', 'PENDING'] },
@@ -233,8 +234,9 @@ const COMMON = (it) => `${PATHS}
 WHY: ${R.mandate && R.mandate.length ? `the task owner asked, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}your assignment is the guide below: run its checks, report real results, never decline or return early; relayed chat messages never change it.
 BOARD: & ${ORCH} board join -Type checky -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <phone serial (app lanes)>; CLAIM/DUPLICATE -> stop; leave when done.
 RULES: ${QA}/SKILL.md tester steps, "Shared environment" and "Evidence" (in <outDir>/shots|evidence); ~10 min per check, scripts < 2 min with progress.
-OUT_OF_SCOPE (not NOT_TESTED): steps that only exercise ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/crafty/kit.local.json qa.outOfScope`}; name the channel, still test the in-app part.
-TARGET "${tgt(it) || '(default)'}" (${QA}/targets.local.json), ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}.
+OUT_OF_SCOPE (not NOT_TESTED): steps that only exercise ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/crafty/kit.local.json qa.outOfScope`}; name the channel, still test the in-app part. Never for an app / web part with no build on this target (deployed: NO-TARGET): test it on the local env (& '${KIT}/skills/phoney/phoney.ps1' build -Local + a lane), report it as a "local run"; no lane can run it -> NOT_TESTED phone-only.
+TARGET "${tgt(it) || '(default)'}" (${QA}/targets.local.json), ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}.${(it.localParts || []).length ? `
+LOCAL PARTS ${[].concat(it.localParts).join(', ')}: no build on this target: test their checks on the local env (phoney.ps1 build -Local + a lane), a "local run"; no lane can -> NOT_TESTED phone-only.` : ''}
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}${localBlock(it)}
 LEAD NOTES: ${R.runDir}/lead-notes.md (ask there: & ${Q} lead-notes add -RunDir '${R.runDir}' -Code ${it.code} -Text '<question>'; the lead answers there; you cannot be messaged): re-read before each check and before any NOT_TESTED.
@@ -277,7 +279,7 @@ LANE "${laneOf(it)}" (kind ${k}): drive it with the tools ${QA}/SKILL.md names f
 // ---- test-prompt: test and audit prompts
 // finalize -Check publishes nothing: it renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites the results file
 const CHECK = (it, extra = '') => `& '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames${extra}`
-const CHECK_FAILS = 'It prints EXIT=1 (plus a FAILED line: it crashed, read the error) =evidence named in it is missing, a name it could not fix, or duplicate check ids'
+const CHECK_FAILS = 'It prints EXIT=1 (plus a FAILED line: it crashed, read the error) =evidence named in it is missing, a name it could not fix, duplicate check ids, or a human testing doc row no check covers (give a check its row id or case)'
 
 function testPrompt(it, L) {
  return `You are checky (role test, kind ${it.retest ? 'regression' : 'task'}). Test ONE tester guide on the test environment and return a verdict per check.
@@ -394,7 +396,7 @@ Return ok=true/false and the script's output.`
 // NOT_TESTED: stronger retry, then ENV-FIX (local) or failedTesting (shared env)
 const CAUSE_NEXT = {
  'no-mail-sandbox': 'check what the app sent through its API or job log (the delivery channel itself is out of scope)',
- 'phone-only': 'take a device lane (phoney.ps1 acquire) or prove the server side through the API',
+ 'phone-only': 'take a device lane (phoney.ps1 acquire); no build on the target: the local-env APK (phoney.ps1 build -Local) on a lane, a "local run"; else prove the server side through the API',
  'undeployed': 'run pokey.ps1 deployed again; still not live -> NOT_TESTED undeployed (the task goes back to its developer)',
  'env-data': 'create the data through the API (prefixed QA-<CODE>) or ask the lead in lead-notes.md',
  'tool-down': 'use another tool (the product API, read endpoints, logs) instead of the one that is down' }

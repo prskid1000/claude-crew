@@ -23,14 +23,12 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 
 ## Tester / verifier steps (test environment only, never production)
 0. `bossy.ps1 learn -Read -Skill pokey`; [Bug] / task: `crafty.ps1 prior` (FOUND: tracker scope);
-   read the guide (testing doc), the run's `context` / `contextFiles`.
-   Check SQL/MCP tools once; a tool down alone is never NOT_TESTED (use read APIs).
+   read the guide, the run's `context` / `contextFiles`. Check SQL/MCP tools once; a tool down is never NOT_TESTED (read APIs).
    Only the run's target (run.json `target`, `alsoTargets`; `pokey.ps1 api` refuses others): a local run never calls a shared env;
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
 1. **Seat + board:** `pokey.ps1 seat acquire` (exit 4 = still waiting: run it again);
-   `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
-   report. Phones: `phoney.ps1 acquire|release` (keep it through waits < 30 min). Local env
-   "pause": stop its checks; "deploy done": re-run them.
+   `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop, report.
+   Phones: `phoney.ps1 acquire|release` (kept through waits < 30 min). Local env "pause": stop its checks; "deploy done": re-run.
 2. **Deployed?** Before any FAIL: `pokey.ps1 deployed -Mrs <repo>!<iid>,...` per repo of the task; not deployed -> NOT_TESTED
    "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
 3. **Test each check:** API
@@ -39,10 +37,10 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`): UI checks
    at each `qa.matrix` variant (`matrix()`) + `layoutIssues()`; stated qualities measured (`contrast()`, timings);
    app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command;
-   e2e: `check -Step e2e` (the change's specs).
+   e2e: `check -Step e2e` (the change's specs). Check id = guide row id; row variants (V1, V2): `case: <row id>`.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `pokey.ps1 annotate`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
-   -Next <next check id> -Evidence "<verdict> <file>"` (a restart starts at that check; a beat's PAUSE line says what to do).
+   -Next <next check id> -Evidence "<verdict> <file>"` (a restart resumes there; obey a beat's PAUSE line).
 5. **Verdict per check — defects are never notes:**
    - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
      (b) cosmetic difference, (c) Expected blocked by platform limit or imprecise wording (check code/lead, quote both),
@@ -61,12 +59,12 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      ONE stronger retry (`models.retest`, told your blocker); still NOT_TESTED -> failedTesting; never for "no time".
    - **Local env item** (`localEnv`): no cause is final (envy "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
      with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
-   - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, every answer with its UTC time; set
-     `attempts` and `window`; a verifier must recreate them to refute.
-   - **Flaky**: a FAIL with saved evidence that a re-test does not reproduce stays FAIL, `flaky: true` (own ->
-     failedTesting, new -> [Bug] tagged flaky); never PASS_WITH_NOTE.
-   - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
-     not counted; its in-app part is still tested.
+   - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, each answer's UTC time; set
+     `attempts`, `window`; a verifier recreates them to refute.
+   - **Flaky**: a FAIL a re-test does not reproduce stays FAIL, `flaky: true` (own -> failedTesting, new -> [Bug] tagged
+     flaky); never PASS_WITH_NOTE.
+   - **OUT_OF_SCOPE**: only a `qa.outOfScope` channel (run.json `outOfScope` wins), its in-app part tested. A part with no
+     build on the target (NO-TARGET): the local env (`phoney.ps1 build -Local` + a lane), a "local run"; no lane: NOT_TESTED.
    - **PENDING**: tested later in another lane (the workflow adds `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
    limits: 40 words per observed or finding, 25 per sentence, 900 per report; same for run.json `envLines`), run `pokey.ps1
@@ -101,9 +99,8 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   missing or incomplete for this change: write it from that template first.
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
-- H3. Result rule (above): all pass -> close the task (`crafty.ps1 tracker status <task> closed` + a comment with the evidence);
-  own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw, the evidence; a new defect ->
-  `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "[Bug] <ask> — <defect>"`: steps, saw, expected, evidence.
+- H3. Result rule (above), each with a comment (check ids, saw, evidence) `crafty.ps1 tracker status <task> closed|failedTesting`;
+  a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "[Bug] <ask> — <defect>"`.
 
 ## Lead steps (a test-only run; bossy T1-T4)
 - L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
@@ -126,8 +123,8 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   3. Target: `target` names a `targets.local.json` entry -> every item; else `kit.local.json` `qa.targets.<target>` = rules
      `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none
      -> left out.
-  4. Live: test env -> `pokey.ps1 deployed -Mrs <MRs> -Target <t>`, DEPLOYED or N/A (MANUAL resolved): in; local env (`localEnv`)
-     -> in; the lead runs `envy.ps1 status -Env <env>` first. Else left out with the state.
+  4. Live: test env -> `pokey.ps1 deployed -Mrs <MRs> -Target <t>`, DEPLOYED or N/A (MANUAL resolved): in (NO-TARGET next to a
+     live MR: `localParts`, local env); `localEnv` -> in after `envy.ps1 status -Env <env>`. Else left out with the state.
   5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
      `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
 - L2. Launch `/testy { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,
