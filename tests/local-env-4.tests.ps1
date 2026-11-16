@@ -119,8 +119,8 @@ $lk2 = & { . $lkL; $g = Join-Path $env:TEMP "lebk-$PID"; Remove-Item $g -Recurse
   function RepoOf { 'w' }; function EnvRepos([string]$e) { @{ w = [pscustomobject]@{ wt = (Join-Path $g $e) } } }
   $s = [pscustomobject]@{ name = 'web'; repo = 'w'; build = 'b'; static = 'dist'; shareBuild = $true }; $off = [pscustomobject]@{ name = 'web'; repo = 'w'; build = 'b'; static = 'dist' }
   $other = [pscustomobject]@{ name = 'web'; repo = 'w'; build = 'b --prod'; static = 'dist'; shareBuild = $true }
-  $ka = BuildKey a $s; $kb = BuildKey b $s; $kc = BuildKey c $s; $kd = BuildKey a $other; $own = BuildKey a $off; $ownB = BuildKey b $off
-  function Opt($k, $d) { if ($k -eq 'reuseBuilds') { $false } else { $d } }; $offK = BuildKey a $off
+  $ka = BuildKey a $s; $kb = BuildKey b $s; $kc = BuildKey c $s; $kd = BuildKey a $other; $offK = BuildKey a $off
+  function Opt($k, $d) { if ($k -eq 'reuseBuilds') { $true } else { $d } }; $own = BuildKey a $off; $ownB = BuildKey b $off
   Remove-Item $g -Recurse -Force -ErrorAction SilentlyContinue
   "$($ka.Length)|$($ka -eq $kb)|$($ka -eq $kc)|$($ka -eq $kd)|$($own.Length)|$($own -ne $ka -and $own -ne $ownB)|$($null -eq $offK)" }
 $lso = & { . $lkL; $api = [pscustomobject]@{ name = 'api'; repo = 'w'; build = 'b'; artifact = 'x.jar' }
@@ -130,7 +130,7 @@ $lso = & { . $lkL; $api = [pscustomobject]@{ name = 'api'; repo = 'w'; build = '
   foreach ($l in 'shop', 'shop2') { Update-State $l { param($x) $x.Remove('builds') } }
   "$($null -eq $none)|$($hit.lane)" }
 Expect "lanes: without shareBuild only the lane's own recorded copy of a build is reused ($lso)" ($lso -eq 'True|shop2')
-Expect "lanes: the build key = the code without its prepare commits + the build config; without shareBuild a lane-only key (prepare commits count; reuseBuilds false: none) ($lk2)" ($lk2 -eq '40|True|False|False|40|True|True')
+Expect "lanes: the build key = the code without its prepare commits + the build config; without shareBuild none, unless reuseBuilds: a lane-only key (prepare commits count) ($lk2)" ($lk2 -eq '40|True|False|False|40|True|True')
 $lsd = & { . $lkL; $none = [pscustomobject]@{ port = '' }; "$(Split-Path (SeedFile shop2) -Leaf)|$(Expand-Placeholders 'pokey -Target local-shop{lane}' shop2 $none '' '')|$(Expand-Placeholders 'local-shop{lane}' shop $none '' '')" }
 Expect "lanes: a lane seeds from its env's seed file; {lane} expands at run time too (seed commands) ($lsd)" ($lsd -eq 'shop.seed.json|pokey -Target local-shop2|local-shop')
 $lt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); $tc = [pscustomobject]@{ targets = [pscustomobject]@{ 'local-shop' = [pscustomobject]@{ api = 'http://127.0.0.1:8080/x'; web = 'http://127.0.0.1:4200' } } }

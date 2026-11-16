@@ -22,7 +22,7 @@ $areas = if ($Area -contains 'all') { $all } else { @($Area | ForEach-Object { $
 $unknown = @($areas | Where-Object { $_ -notin $all })
 if (-not $areas -or $unknown) { Write-Error "kit-tests.ps1: unknown or no area(s) '$($unknown -join ', ')'; known: $($all -join ', ')" -ErrorAction Continue; exit 2 }
 # areas on a scratch DB server run in 'all' only when a path they test changed since origin/main (-Full / KIT_TESTS_FULL=1: always)
-$dbRx = '^(skills/envy/|skills/crafty/lib\.ps1|tests/(harness\.ps1|db-engine-presets))'; $onChange = @{ 'db-engine-presets' = $dbRx; 'db-engine-presets-2' = $dbRx }
+$dbRx = '^(skills/envy/|skills/crafty/(lib\.ps1|adapters/)|tests/(harness\.ps1|kit-tests\.ps1|db-engine-presets))'; $onChange = @{ 'db-engine-presets' = $dbRx; 'db-engine-presets-2' = $dbRx }
 if ($Area -contains 'all' -and -not ($Full -or $env:KIT_TESTS_FULL)) {
   $kitDir = Split-Path $PSScriptRoot; $base = "$(git -C $kitDir merge-base HEAD origin/main 2>$null)".Trim()
   $changed = if ($base) { @(git -C $kitDir diff --name-only $base 2>$null) + @(git -C $kitDir ls-files --others --exclude-standard 2>$null) }

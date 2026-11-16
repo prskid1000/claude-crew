@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L106 phone · L306 build · L450 install · L476 launch · L488 avd · L574 up · L673 down · L703 events ·
-  L760 slim
+Sections: L24 config · L112 phone · L312 build · L456 install · L482 launch · L494 avd · L580 up · L678 down · L708 events ·
+  L765 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -55,6 +55,12 @@ function Get-SwarmConfig {
   if ($c.avd) { foreach ($p in $c.avd.PSObject.Properties) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }; $c | Add-Member -Force avd ([pscustomobject]$av)
   $c | Add-Member -Force state (Join-Path $out 'swarm.json')
   $script:SwarmCfg = $c; $c
+}
+# a Quick Boot save rewrites GBs on every close: keep the golden snapshot (devices.snapshotSave false) unless a cold boot or it is
+# older than the emulator or the AVD config (rejected: it would cold-boot for good)
+function SnapshotFlag($c, [string]$name, [bool]$cold) {
+  $snap = Get-Item (Join-Path $c.avdDir "$name.avd/snapshots/default_boot/snapshot.pb") -ErrorAction SilentlyContinue
+  if (-not $cold -and $snap -and -not (Get-KitSetting 'devices.snapshotSave' $false) -and -not @(Get-Item $c.emulator, (Join-Path $c.avdDir "$name.avd/config.ini") -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $snap.LastWriteTime).Count) { '-no-snapshot-save' }
 }
 function EmuProcs($port) { Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$port\b" } }
 function LaneSerial($l) { "emulator-$($l.port)" }
@@ -619,8 +625,7 @@ foreach ($name in $Lanes) {
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     # mic = pokey.ps1 ui mic (gRPC injectAudio on 127.0.0.1 with a token); injected audio reaches the guest only with -allow-host-audio
     $a = @('-avd', $name, '-port', $l.port, '-grpc', ($l.port + 3000), '-grpc-use-token', '-allow-host-audio', '-gpu', $c.avd.gpu, '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
-    # a Quick Boot save rewrites GBs on every close: save only the first (golden) snapshot unless devices.snapshotSave
-    if (-not (Get-KitSetting 'devices.snapshotSave' $false) -and (Test-Path (Join-Path $c.avdDir "$name.avd/snapshots/default_boot"))) { $a += '-no-snapshot-save' }
+    $a += @(SnapshotFlag $c $name $ColdBoot)
     $noWin = $Headless -or -not ($ShowAll -or $l.headless -eq $false -or ($null -eq $l.headless -and $c.headless -eq $false))   # window only with -ShowAll or headless: false
     if ($noWin) { $a += '-no-window' }
     # WMI: not our child (survives tool timeouts); SW_HIDE, CREATE_NO_WINDOW

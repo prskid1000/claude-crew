@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L82 state · L156 config · L237 OS · L457 leases · L856 status · L1112 supervise sweep · L1190 tracker ·
-  L1519 prior · L1535 ask bugs · L1720 git-host · L1925 kitlog · L2045 params · L2350 entry-scripts
+Sections: L9 paths · L98 state · L172 config · L253 OS · L473 leases · L872 status · L1128 supervise sweep · L1206 tracker ·
+  L1535 prior · L1551 ask bugs · L1736 git-host · L1941 kitlog · L2061 params · L2366 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -69,6 +69,22 @@ function Test-KitMoveUnsupported([Exception]$Err) {
     if ($e -is [IO.IOException] -or $e -is [UnauthorizedAccessException]) { return $false }
   }
   $false
+}
+# $From's files into $To without copies: hard links to $From (-Release: files never rewritten; -Skip names) or to one copy per
+# SHA1 in $Store (-Move: taken from $From), listed in $To/.libs.json; -Link $false or no hard links there: copies
+function Add-KitLinkedFiles([string]$From, [string]$To, [string]$Store, [switch]$Release, [switch]$Move, [string[]]$Skip = @(), [bool]$Link = $true) {
+  $map = [ordered]@{}; $hs = @{}; if ($Link -and -not $Release) { foreach ($l in @(& (Join-Path $script:KitLibDir 'flagged.ps1') filehash -Text $From)) { $hs[$l.Substring(41)] = $l.Substring(0, 40) } }
+  foreach ($f in @(Get-ChildItem -LiteralPath $From -File -Recurse -Force)) {
+    $rel = [IO.Path]::GetRelativePath($From, $f.FullName); $src = $f.FullName; if ($rel -in $Skip) { continue }
+    $dst = Join-Path $To $rel; [void][IO.Directory]::CreateDirectory((Split-Path $dst))
+    if ($Link -and -not $Release) {
+      $h = $hs[$rel]; if (-not $h) { $h = (Get-FileHash -LiteralPath $src -Algorithm SHA1).Hash }
+      $src = Join-Path $Store "$h$($f.Extension)"; $map[$rel] = $h
+      if (-not (Test-Path -LiteralPath $src)) { [void][IO.Directory]::CreateDirectory($Store); & $(if ($Move) { 'Move-Item' } else { 'Copy-Item' }) -LiteralPath $f.FullName $src }
+    }
+    try { if (-not $Link) { throw 'copy' }; $null = New-Item -ItemType HardLink -Path $dst -Target $src -ErrorAction Stop } catch { Copy-Item -LiteralPath $src $dst -Force }
+  }
+  if ($map.Count) { ConvertTo-Json -InputObject $map | Set-Content -LiteralPath (Join-Path $To '.libs.json') -Encoding utf8 }
 }
 # kit-made names (crafty.ps1 dir, briefs, checkpoints, snapshots)
 function ConvertTo-KitSlug([string]$Text) { ("$Text".ToLower() -replace '[^a-z0-9.]+', '-').Trim('-.') }

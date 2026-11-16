@@ -22,8 +22,8 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L35 config · L230 state · L277 layer drops · L349 leases · L477 code · L509 migrations ·
-  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds · L840 hooks · L912 marks · L1092 seed ·
-  L1159 processes · L1538 daemon · L1998 cleanup · L2070 doctor · L2123 verbs
+  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds · L830 hooks · L902 marks · L1082 seed ·
+  L1149 processes · L1528 daemon · L1988 cleanup · L2060 doctor · L2113 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -661,7 +661,7 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
 $script:BuildKeys = @{}; $script:SharedStage = @{}
 function BuildKey([string]$e, $s) {
   $sb = $s.shareBuild -eq $true
-  if (-not ($sb -or (Opt 'reuseBuilds' $true)) -or -not $s.build -or -not $s.repo -or -not ($s.artifact -or $s.static)) { return $null }
+  if (-not ($sb -or (Opt 'reuseBuilds' $false)) -or -not $s.build -or -not $s.repo -or -not ($s.artifact -or $s.static)) { return $null }
   $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; if (-not $wt -or -not (Test-Path -LiteralPath (Join-Path $wt '.git'))) { return $null }
   $n = 0; while ($sb -and $n -lt 10 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv prepare*') { $n++ }   # lane paths only ({cache}, {env}, {dir}, {wt})
   $tree = "$(git -C $wt rev-parse "HEAD~$n^{tree}" 2>$null)".Trim(); if ($LASTEXITCODE -or -not $tree) { return $null }
@@ -728,8 +728,8 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
   foreach ($s in EnvServices $e | Where-Object { ($_.artifact -or $_.static) -and (RepoOf $e $_) -eq $rn }) {
     $dir = SvcDir $e $s; $t0 = Get-Date
     $to = Join-Path (Get-KitPath localenv -Create) "run/$e/$($s.name)/$tag"
-    $live = @((Read-State $e).services.Values | ForEach-Object { ReleaseDirOf (Split-Path $to) "$($_.artifact)" })
-    for ($i = 2; $to -in $live; $i++) { $to = Join-Path (Get-KitPath localenv) "run/$e/$($s.name)/$tag-$i" }   # a running copy is never replaced
+    $live = @((Read-State $e).services.Values | ForEach-Object { ReleaseDirOf (Split-Path $to) "$($_.artifact)" }) + $script:SharedStage[$s.name].dir
+    for ($i = 2; $to -in $live; $i++) { $to = Join-Path (Get-KitPath localenv) "run/$e/$($s.name)/$tag-$i" }   # a running copy or the one staged from is never replaced
     Remove-Item -LiteralPath $to -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $to | Out-Null
     $bk = $script:BuildKeys[$s.name]; $sh = $script:SharedStage[$s.name]; $shared = [bool]$sh; $shLane = $null; $script:BuildKeys.Remove($s.name); $script:SharedStage.Remove($s.name)   # one build, one stage
     for ($try = 0; $sh -and $try -lt 3; $try++) {   # pruned meanwhile: the next
@@ -754,7 +754,7 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
         try { $out[$s.name] = Expand-Artifact $e $s $f.FullName $to }
         catch { $why = "$_".Split("`n")[0]; Write-Host "[$e] $($s.name): $why - staged the plain artifact instead"; Event $e 'unpack-fallback' @{ service = $s.name; tag = $tag; why = $why }; Get-ChildItem -LiteralPath $to -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
       }
-      if (-not $out[$s.name]) { if (Opt 'stageLinks' $true) { Move-Item -LiteralPath $f.FullName $to -Force } else { Copy-Item $f.FullName $to -Force }; $out[$s.name] = Join-Path $to $f.Name }
+      if (-not $out[$s.name]) { if ((Opt 'stageLinks' $true) -and -not @(EnvServices $e | Where-Object { $_.name -ne $s.name -and "$($_.artifact)" -eq $s.artifact -and (SvcDir $e $_) -eq $dir }).Count) { Move-Item -LiteralPath $f.FullName $to -Force } else { Copy-Item $f.FullName $to -Force }; $out[$s.name] = Join-Path $to $f.Name }
     }
     $bo = $out[$s.name]
     if ($bk) { Update-State $e { param($x) if ($x.builds -isnot [hashtable]) { $x.builds = @{} }; $x.builds[$s.name] = @(@(@($x.builds[$s.name]) | Where-Object { $_ -and $_.key -ne $bk }) + @(@{ key = $bk; dir = $to; path = $bo; at = (Now) }) | Select-Object -Last 3) } }
@@ -763,18 +763,8 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
   }
   $out
 }
-# stageLinks: hard links to a release's files (no app.aot), else to _lib (one file per hash, -Move: taken; .libs.json)
-function Add-ReleaseFiles([string]$from, [string]$to, [switch]$Release, [switch]$Move) {
-  $map = [ordered]@{}; $store = Join-Path (Split-Path $to) '_lib'; $link = Opt 'stageLinks' $true
-  foreach ($f in @(Get-ChildItem -LiteralPath $from -File -Recurse -Force)) {
-    $rel = [IO.Path]::GetRelativePath($from, $f.FullName); $src = $f.FullName; if ($Release -and $rel -eq 'app.aot') { continue }
-    $dst = Join-Path $to $rel; [void][IO.Directory]::CreateDirectory((Split-Path $dst))
-    if ($link -and -not $Release) { $h = (Get-FileHash -LiteralPath $src -Algorithm SHA1).Hash; $src = Join-Path $store "$h$($f.Extension)"; $map[$rel] = $h
-      if (-not (Test-Path -LiteralPath $src)) { [void][IO.Directory]::CreateDirectory($store); & $(if ($Move) { 'Move-Item' } else { 'Copy-Item' }) -LiteralPath $f.FullName $src } }
-    try { if (-not $link) { throw 'copy' }; $null = New-Item -ItemType HardLink -Path $dst -Target $src -ErrorAction Stop } catch { Copy-Item -LiteralPath $src $dst -Force }
-  }
-  if ($map.Count) { ConvertTo-Json -InputObject $map | Set-Content -LiteralPath (Join-Path $to '.libs.json') -Encoding utf8 }
-}
+# localEnv.stageLinks: a release links, never copies (lib.ps1 Add-KitLinkedFiles; store <service>/_lib, no AOT cache)
+function Add-ReleaseFiles([string]$from, [string]$to, [switch]$Release, [switch]$Move) { Add-KitLinkedFiles $from $to (Join-Path (Split-Path $to) '_lib') -Release:$Release -Move:$Move -Skip 'app.aot' -Link (Opt 'stageLinks' $true) }
 # the release folder an artifact path lies in (artifact = a file in it, or the folder itself)
 function ReleaseDirOf([string]$root, [string]$art) { if (-not $art) { return $null }; $rel = [IO.Path]::GetRelativePath($root, $art); if ($rel -match '^\.\.') { return $null }; Join-Path $root (($rel -split '[\\/]')[0]) }
 # -> the release folders past keepReleases that no service runs from (removed; -DryRun: listed only)

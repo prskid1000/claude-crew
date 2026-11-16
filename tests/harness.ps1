@@ -99,7 +99,7 @@ function Start-TestMySql([switch]$Binlog) {
   if (-not (Test-Path (Join-Path $tmTpl 'mysql.ibd'))) {
     $tmNew = "$tmTpl-$PID"; Remove-Item $tmNew -Recurse -Force -ErrorAction SilentlyContinue
     & $tmExe --no-defaults --initialize-insecure "--datadir=$tmNew" --skip-log-bin @($tmCheap -split ' ') 2>&1 | Out-Null
-    try { [IO.Directory]::Move($tmNew, $tmTpl) } catch { Remove-Item $tmNew -Recurse -Force -ErrorAction SilentlyContinue }   # a parallel area made it first
+    try { if (-not (Test-Path (Join-Path $tmNew 'mysql.ibd'))) { throw 'init failed' }; [IO.Directory]::Move($tmNew, $tmTpl) } catch { Remove-Item $tmNew -Recurse -Force -ErrorAction SilentlyContinue }   # init failed, or a parallel area made it first
   }
   Copy-Item $tmTpl $tmData -Recurse -Force
   $fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $tmPort = $fp.LocalEndpoint.Port; $fp.Stop()   # an OS-picked free port: 3390+ raced parallel runs

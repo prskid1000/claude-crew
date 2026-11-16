@@ -213,9 +213,15 @@ $ro = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') release -Agent X1 | Out-S
 Expect "swarm release: an ended agent's lane freed and stopped ($($ro.Trim()))" (-not (Test-Path (Join-Path (TkPath $k phones) 'Falcon.json')) -and (Get-Content "$rp/adb.log" -Raw) -match 'emu kill' -and
   "$($last[0].event)/$($last[0].agent)/$($last[0].reason) $($last[1].event)" -eq 'release/X1/agent finished down')
 Remove-Item $rp -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
-$snapLine = @'
-if (-not (Get-KitSetting 'devices.snapshotSave' $false) -and (Test-Path (Join-Path $c.avdDir "$name.avd/snapshots/default_boot"))) { $a += '-no-snapshot-save' }
-'@
-$snapIn = @('phoney.ps1', 'swarm-ios.ps1' | Where-Object { (Get-Content (Join-Path $src "skills/phoney/$_") -Raw).Contains($snapLine.Trim()) })
-Expect "swarm up: -no-snapshot-save once the golden Quick Boot snapshot exists, unless devices.snapshotSave ($($snapIn -join ', '))" ($snapIn.Count -eq 2)
+# Quick Boot: the first close saves the golden snapshot, later ones never; a cold boot or a newer emulator / AVD config saves again
+foreach ($snapScript in 'phoney.ps1', 'swarm-ios.ps1') {
+  $snapRes = & { $rt = Join-Path ([IO.Path]::GetTempPath()) "snp-$PID"; Set-Item Env:CLAUDE_RUNTIME $rt; . (Join-Path $src "skills/phoney/$snapScript")
+    $av = Join-Path $rt 'avd'; $sd = New-Item -ItemType Directory -Force (Join-Path $av 'L1.avd/snapshots/default_boot'); $emu = Join-Path $rt 'emulator.exe'; $ini = Join-Path $av 'L1.avd/config.ini'
+    foreach ($f in $emu, $ini) { Set-Content $f 'x'; (Get-Item $f).LastWriteTime = (Get-Date).AddDays(-2) }
+    $c = [pscustomobject]@{ avdDir = $av; emulator = $emu }; $none = "$(SnapshotFlag $c L1 $false)"
+    Set-Content (Join-Path $sd 'snapshot.pb') 'g'; $golden = "$(SnapshotFlag $c L1 $false)"; $cold = "$(SnapshotFlag $c L1 $true)"
+    (Get-Item $emu).LastWriteTime = Get-Date; $upgraded = "$(SnapshotFlag $c L1 $false)"
+    Remove-Item $rt -Recurse -Force -ErrorAction SilentlyContinue; "$none|$golden|$cold|$upgraded" }
+  Expect "swarm up ($snapScript): -no-snapshot-save only with a golden snapshot newer than the emulator and the AVD config, never on a cold boot ($snapRes)" ($snapRes -eq '|-no-snapshot-save||')
+}
 Complete-Tests
