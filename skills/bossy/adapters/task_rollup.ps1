@@ -216,7 +216,7 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
       foreach ($it in $items) { $nm = @($mrs | Where-Object { @($_.ids) -contains $it.id }); if (@($nm | Where-Object state -ne 'merged').Count) {   # a fix-round MR re-opens it until merged
           $it.done = $false; if (@($nm | Where-Object state -eq 'merged').Count -and -not $hd.Contains($it.id)) { $hd[$it.id] = "fix round $($nm.Count)" } } }
       $items = @(Set-KitItemHolds $items $hd); $hn = Get-KitHeldNote $hd
-      $isig = Get-KitRollupHash (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
+      $isig = Get-KitRollupHash (@($script:KitItemsSigV) + @($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
       if ($isig -ne "$($sx.itemsSig)") { try { $null = Set-KitItemsChecklist $sb.id $items; Update-KitTaskIndex $sb.id { param($x) $x.itemsSig = $isig; $x.itemsFrom = 'triage'; $x.heldNote = $hn }; $did.Add("items $($sb.id)") } catch { $did.Add("items $($sb.id) FAILED: $("$_".Split("`n")[0])") } }
     }
     [pscustomobject]@{ id = $sb.id; name = $sb.name; url = $sb.url; status = $sb.status; area = "$($ag.area)"; order = $(if ($ag) { [int]$ag.order } else { 999 })
@@ -296,7 +296,7 @@ function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
   $hd = if ($one) { [ordered]@{} } else { Get-KitItemHolds $Task $items $trk }
   foreach ($it in $items) { $no = @($om.Keys | Where-Object { @($om[$_]) -contains $it.id }).Count; if ($no) { $it.done = $false; $nmg = @($mc.Keys | Where-Object { @($mc[$_]) -contains $it.id }).Count; if ($nmg -and -not $hd.Contains($it.id)) { $hd[$it.id] = "fix round $($nmg + $no)" } } }
   $items = @(Set-KitItemHolds $items $hd); $hn = Get-KitHeldNote $hd
-  $sig = Get-KitRollupHash (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
+  $sig = Get-KitRollupHash (@($script:KitItemsSigV) + @($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
   if ($look -or $Force) { Update-KitTaskIndex $Task { param($y) $y.itemsReadAt = (Get-Date).ToString('o'); $y.itemsMrs = $mc; $y.itemsOpenMrs = $om } }; if ($sig -eq "$($x.itemsSig)") { return }
   $null = Set-KitItemsChecklist $Task $items; $fin = -not @($items | Where-Object { -not $_.done }).Count
   Update-KitTaskIndex $Task { param($y) $y.itemsSig = $sig; $y.itemsFrom = 'desc'; $y.itemIds = $ids; $y.itemDesc = $dsc; $y.itemsMrs = $mc; $y.itemsFinal = $fin; $y.heldNote = $hn }
