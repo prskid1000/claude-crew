@@ -7,9 +7,9 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit orch; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Path $k '.state/tracking.json'
 $lw = New-LinkedKit 'kit main' @{ localOnly = @('secret.txt') } 'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1'
-$mk = "$(Kd)/kit main"; Add-Content "$mk/.git/info/exclude" "# >>> kit localOnly (managed by an older setup)`n/old.txt`n# <<< kit localOnly`n/mine.txt"
+$mk = "$(Kd)/kit main"; Add-Content "$mk/.git/info/exclude" "# >>> kit localOnly (managed by an older setup)`n/old.txt`n# <<< kit localOnly`n/mine.txt`n/skills/bossy/bossy.ps1"
 $kx = (pwsh @np "$lw/skills/bossy/bossy.ps1" setup -Exclude 2>&1 | Out-String)
-Expect 'setup -Exclude in a kit worktree: excludes to the main clone (older block replaced, own lines kept), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '/old\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -match '/mine\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
+Expect 'setup -Exclude in a kit worktree: main clone excludes (old block replaced, own lines kept, tracked line dropped), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '(?m)/old\.txt|^/skills/bossy/bossy\.ps1' -and (Get-Content "$mk/.git/info/exclude" -Raw) -match '/mine\.txt' -and $kx -match 'dropped .*/skills/bossy/bossy\.ps1' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
 git -C $mk remote add origin https://github.com/o/r.git; git -C $mk update-ref refs/remotes/origin/main HEAD; git -C $mk symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main; git -C $mk update-ref refs/remotes/origin/trunk HEAD
 $protect = @'
 $null = . $args[0] 6>$null; $global:seen = @()

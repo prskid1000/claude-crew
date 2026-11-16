@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L65 setup · L176 config · L357 recover · L502 release · L553 cost · L660 registry · L664 scan
+Sections: L16 helpers · L65 setup · L186 config · L367 recover · L512 release · L563 cost · L670 registry · L674 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -78,6 +78,16 @@ def cmd_setup(kit, fix):
     miss = [p for p in ((cfg or {}).get('localOnly') or []) if f"/{p.replace(chr(92), '/').strip('/')}" not in excl]
     if miss:
         need_setup.append(f'{len(miss)} localOnly path(s) not in .git/info/exclude')
+    # lines outside setup's managed block: hiding a tracked file blocks pushes; others are nobody's (localOnly owns the list)
+    for ln in re.sub(r'(?s)# >>> kit localOnly.*?# <<< kit localOnly', '', excl).splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith('#'):
+            continue
+        rc, hid, _ = git(kit, 'ls-files', '-c', '-i', f'--exclude={ln}')
+        if rc == 0 and hid.strip():
+            need_setup.append(f'.git/info/exclude line {ln} hides tracked file(s) {", ".join(hid.split()[:3])} (pre-push refuses them)')
+        else:
+            out('INFO', 'SETUP-EXCLUDE', ex, f'line {ln} is not in kit.local.json localOnly', 'add it to localOnly, or delete the line')
     for n in ('work', 'cache', 'logs'):
         if not osp.isdir(kit_path(n, kit=kit)):
             need_setup.append(f'runtime folder {n}/ missing')

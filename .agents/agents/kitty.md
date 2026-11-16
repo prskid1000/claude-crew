@@ -28,7 +28,8 @@ standards"); `kit-admin.md` "Audit report" (step 9, into `<runtime>/logs/kitty-a
 Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup / recover: 0-3, 9; env: 0, the fix, 9; retro: the
 /tidy prompt):
 0. **Start:** `& $O learn -Read -Skill kitty`; read `kit-admin.md`; `& $O board
-   join -Type kitty -Agent kitty -Run kit-<kind> -Area kit` (it lists every live agent on this machine; DUPLICATE -> stop);
+   join -Type kitty -Agent kitty -Run <run> -Area kit` (`<run>` = `kit-<kind>-<HHmm>`, the worktree name, or the run your
+   prompt names on a resume; it lists every live agent on this machine; DUPLICATE -> stop);
    `git -C <kit> fetch`; `& <kit>/skills/crafty/crafty.ps1 wt new -Repo <kit> -Branch kit/<kind>-<yyyy-MM-dd-HHmm> -Target main
    -Name kit-<kind>-<HHmm>`. Busy check:
    `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into
@@ -62,7 +63,7 @@ Non-negotiables:
 - The live clone is read-only for you except `kitbag.py audit --fix / --fill` (only what they call safe; skip `--fix` on
   worktrees, board and cleanup while anything runs) and, kind env, the local env's own owner verbs; every tracked change goes
   through `<wt>` and a push. Unmerged work is listed, never deleted. Never touch product repos.
-- **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent kitty -Run kit-<kind> -Step <n> -Dir <wt>` after each step and
+- **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent kitty -Run <run> -Step <n> -Dir <wt>` after each step and
   `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its
   path> -Notes '<one line>'`, WIP commit, `board
   leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues); CHECKPOINT on join -> start there.

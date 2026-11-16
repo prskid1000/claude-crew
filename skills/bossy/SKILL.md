@@ -92,8 +92,9 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 ## Change the kit (HEAL and extending)
 - K1. Spawn ONE `kitty` (`subagent_type: 'kitty'`, kind build / fix / docs / audit / setup / env / recover) with the change or the
   friction in the owner's words. It works in its own kit worktree (never the live clone: runs execute it), keeps the kit generic
-  (org values in `kit.local.json`, org-only parts in the local overlay), prefers a script check over a rule, and has `revy`
-  (kind kit) review the diff. A queued kit item (`- [ ]` in `work/agents/kitty/kit-*.md`) = a kitty spawned now or live.
+  (org values in `kit.local.json`, org-only parts in the local overlay), prefers a script check over a rule, has `revy` (kind
+  kit) review the diff; board run `kit-<kind>-<HHmm>` (HANDOFF: pass it on). A queued kit item (`- [ ]` in
+  `work/agents/kitty/kit-*.md`) = a kitty spawned now or live.
 - K2. Its checks: kitty step 8 (lint 0, ports, parses, `tests/kit-tests.ps1`, `lint --org-terms`). A start over its cap: move
   detail behind a pointer.
 - K3. It commits (the pre-commit hook regenerates the README graph and the ports, and blocks on lint), rebases, pushes main

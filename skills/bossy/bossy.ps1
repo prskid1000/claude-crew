@@ -25,9 +25,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L33 init · L44 board · L221 budget · L251 launch · L492 recover · L579 pause · L590 resume · L657 program · L708 param ·
-  L714 track · L1031 supervise · L1332 report · L1411 audit · L1471 storage · L1474 bugbrief · L1585 cleanup · L1669 learn ·
-  L1700 decide · L1834 debate · L1878 health · L1941 retro due · L1951 tidy · L2017 setup · L2111 guard-sendmessage
+Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
+  L715 track · L1032 supervise · L1333 report · L1412 audit · L1472 storage · L1475 bugbrief · L1586 cleanup · L1670 learn ·
+  L1701 decide · L1835 debate · L1879 health · L1942 retro due · L1952 tidy · L2018 setup · L2115 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -117,8 +117,9 @@ switch ($Action) {
       $alive = $o.pid -and (Test-KitPid $o.pid $o.pidStart)
       $age = ($now - [datetime]$o.beat).TotalMinutes
       $shared = @(@(Split-KitList $o.worktrees | ForEach-Object { Norm $_ }) | Where-Object { $_ -and $_ -in $myClaims })
-      $why = if ((Test-KitHolder $o) -eq $false) { "its session process $($o.holderPid) is gone (crash or restart)" } elseif (-not $alive -and $age -ge 3) { "no heartbeat for $([int]$age) min" } elseif ($Resume -and $shared.Count) { "-Resume on $($shared -join ', ')" } else { $null }
-      if (-not $why) { continue }
+      $holderLive = Test-KitHolder $o   # agents of one session share its process: a live holder never loses its row to age, only to -Resume
+      $why = if ($holderLive -eq $false) { "its session process $($o.holderPid) is gone (crash or restart)" } elseif (-not $alive -and $age -ge 3 -and $null -eq $holderLive) { "no heartbeat for $([int]$age) min" } elseif ($Resume -and ($shared.Count -or -not $myClaims.Count)) { "-Resume$(if ($shared.Count) { " on $($shared -join ', ')" })" } else { $null }
+      if (-not $why) { if ($age -ge 3) { $notes += "QUIET: session $($o.session) of a live session process, last beat $(([datetime]$o.beat).ToString('HH:mm')): kept (a crashed one: join -Resume)" }; continue }
       try {
         Update-BoardEntry $o.file { param($j) $j.status = 'left'; $j | Add-Member -Force NoteProperty takenOverBy $tok; $j | Add-Member -Force NoteProperty takenOverAt $now.ToString('o'); $j }
         $notes += "TAKEOVER: replaced session $($o.session) ($why; joined $(([datetime]$o.joined).ToString('HH:mm')), last beat $(([datetime]$o.beat).ToString('HH:mm')))"
@@ -571,7 +572,7 @@ foreach ($s in $runs) {
 if (-not $runs.Count) { 'no stopped workflow runs' }
 foreach ($q in Get-OrphanQaItems -Hours $Hours) { "== QA $($q.run): tested, never published: $($q.codes -join ', ')$(if ($q.fails) { " (unverified FAIL in $($q.fails -join ', '): checky first)" })"; foreach ($c in $q.codes) { "  & $($KitCmd.qa) finalize -RunDir '$($q.dir)' -Code $c" } }
 Invoke-KitHooks Get-KitRecoverLines   # env and phone leases with no live holder
-foreach ($b in @(Get-KitHandoffs $Hours)) { "== HANDOFF $($b.agent) ($($b.run)): a fresh $(if ($b.type) { $b.type } else { 'agent' }) with the same -Agent and -Run continues from $($b.handoffBrief) (a workflow agent: its workflow starts it)" }
+foreach ($b in @(Get-KitHandoffs $Hours)) { "== HANDOFF $($b.agent) ($($b.run)): a fresh $(if ($b.type) { $b.type } else { 'agent' }) with -Agent $($b.agent) -Run $($b.run) continues from $($b.handoffBrief) (a workflow agent: its workflow starts it)" }
 foreach ($l in @(Invoke-KitOutbox -DryRun)) { "== tracker outbox: $l (bossy.ps1 supervise -AutoFix replays it)" }
 "== heartbeat: $(Get-KitBeatArmLine)"
 }
@@ -1289,7 +1290,7 @@ Phase 'retro'; if (-not $runTotal) {
   if ($due) { Flag 'ACT' "retro due: $due, $finished dev/QA run(s) finished or stopped since, no workflow running" "E10, no owner ask: Workflow({ scriptPath: '$($KitConf.Kit -replace '\\', '/')/workflows/tidy.js', args: { kitDir: '$($KitConf.Kit -replace '\\', '/')' } })" }
 }
 foreach ($e in $active | Where-Object { $_.budget -and $_.spend -ge $_.handoff }) { Flag 'WATCH' "$($e.agent) ($($e.run)) past its handoff point: $($e.spend) of $($e.budget) tokens" 'It hands off at its next beat; silent 20 min -> stop it, continue fresh (bossy.ps1 recover).' @{ kind = 'BUDGET'; who = "$($e.agent) ($($e.run))"; problem = "past its handoff point: $($e.spend) of $($e.budget) tokens" } }
-foreach ($h in Get-KitHandoffs 24 | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -ge 15 }) { Flag 'ACT' "HANDOFF $($h.agent) ($($h.run)) $([int]($now - [datetime]$h.beat).TotalMinutes) min ago, no fresh agent yet" "Spawn a fresh $(if ($h.type) { $h.type } else { 'agent' }) (same -Agent, -Run): continue from $($h.handoffBrief)" @{ kind = 'HANDOFF'; who = "$($h.agent) ($($h.run))"; age = "$([int]($now - [datetime]$h.beat).TotalMinutes) min"; problem = 'handed off, no fresh agent yet' } }
+foreach ($h in Get-KitHandoffs 24 | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -ge 15 }) { Flag 'ACT' "HANDOFF $($h.agent) ($($h.run)) $([int]($now - [datetime]$h.beat).TotalMinutes) min ago, no fresh agent yet" "Spawn a fresh $(if ($h.type) { $h.type } else { 'agent' }) (-Agent $($h.agent) -Run $($h.run) in its prompt): continue from $($h.handoffBrief)" @{ kind = 'HANDOFF'; who = "$($h.agent) ($($h.run))"; age = "$([int]($now - [datetime]$h.beat).TotalMinutes) min"; problem = 'handed off, no fresh agent yet' } }
 foreach ($sf in @(Get-ChildItem (Get-KitPath launches) -Filter 'self-*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-12) } | Sort-Object LastWriteTime -Descending | Select-Object -First 3)) {
   $o = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json } catch { $null }; if (-not $o.cap -or $o.completed -or -not (Within 'run budgets')) { continue }
   $sp = try { @(Invoke-Bounded $KitCmd.orch @('budget', '-Run', $o.run, '-Json')) -join '' | ConvertFrom-Json } catch { $null }
@@ -1897,11 +1898,11 @@ if ($Flow -or $Fetch) {
 
 $msgs = @()
 if (Test-Path (Join-Path $kit '.git')) {
-  try { & $KitCmd.orch setup -Exclude -Quiet | Out-Null } catch {}
+  $exOut = try { @(& $KitCmd.orch setup -Exclude) } catch { @() }
   $st = @(git -C $kit status --porcelain=v1 --branch 2>$null)
   $head = [string]($st | Select-Object -First 1)
   $changes = @($st | Select-Object -Skip 1).Count
-  $parts = @()
+  $parts = @($exOut | Where-Object { "$_" -like 'dropped *' } | ForEach-Object { "$_ (pre-push refused them)" })
   if ($changes) { $parts += "$changes uncommitted change(s) (commit + push them, or list org-only paths in kit.local.json localOnly)" }
   if ($head -match '\.\.\.(?<up>\S+)') {
     $up = $Matches.up
@@ -2076,10 +2077,13 @@ function Update-Exclude {
   $end = '# <<< kit localOnly'
   $old = if (Test-Path $ex) { Get-Content $ex -Raw } else { '' }
   $rest = [regex]::Replace($old, '(?s)\r?\n?# >>> kit localOnly[^\n]*.*?' + [regex]::Escape($end) + '\r?\n?', "`n").TrimEnd()
+  # a line outside the block that hides a tracked file blocks pushes (pre-push LOCAL FILE): never ours to keep
+  $dropped = @(); $rest = (@($rest -split '\r?\n' | Where-Object { $ln = $_.Trim(); if ($ln -and -not $ln.StartsWith('#') -and @(git -C $kit ls-files -c -i "--exclude=$ln" 2>$null).Count) { $dropped += $ln; $false } else { $true } }) -join "`n").TrimEnd()
   $block = if ($paths.Count) { "$begin`n" + (($paths | ForEach-Object { "/$_" }) -join "`n") + "`n$end" } else { '' }
   $new = (@($rest, $block) | Where-Object { $_ }) -join "`n`n"
   $new = if ($new) { $new + "`n" } else { '' }
   if ($new -ne $old) { [IO.File]::WriteAllText($ex, $new); "excluded $($paths.Count) localOnly path(s) in $ex" }
+  if ($dropped) { "dropped .git/info/exclude line(s) hiding tracked files: $($dropped -join ', ')" }
 }
 
 if ($Allow) { $a = Set-KitAllowList; if ($a) { Say $a }; exit 0 }

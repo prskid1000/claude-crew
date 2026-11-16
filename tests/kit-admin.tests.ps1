@@ -31,6 +31,8 @@ Add-Content $xf "`n`n/notes/l.txt`n`n# kitbag part old-x`n/notes/g.txt`n# kitbag
 $base = git -C $kc rev-parse HEAD; 'l' | Set-Content (Join-Path $kc 'notes/l.txt'); 'g' | Set-Content (Join-Path $kc 'notes/g.txt'); git -C $kc add -f notes/l.txt notes/g.txt; git -C $kc commit -qm 'feat: notes'
 $pp = "refs/heads/main $(git -C $kc rev-parse HEAD) refs/heads/main $base" | pwsh -NoProfile -File (Join-Path $kc 'skills/bossy/bossy.ps1') prepush 2>&1 | Out-String
 Expect "kit-admin: prepush flags a git-ignored file, not one an old kitbag exclude block lists ($(($pp -split "`n" | Where-Object { $_ -match 'LOCAL FILE' }) -join ' '))" ($pp -match 'LOCAL FILE\s+notes/l\.txt' -and $pp -notmatch 'notes/g\.txt')
+Add-Content $xf '/notes/none.txt'; $asu = & $py -X utf8 $KT audit setup --kit $kc 2>&1 | Out-String
+Expect "kit-admin: audit setup names an exclude line hiding a tracked file (fix: bossy.ps1 setup) and one not in localOnly" ($asu -match 'SETUP-INSTALL.+line /notes/l\.txt hides tracked file\(s\) notes/l\.txt.+bossy\.ps1 setup' -and $asu -match 'SETUP-EXCLUDE.+line /notes/none\.txt is not in kit\.local\.json localOnly')
 git -C $kc reset -q --hard $base
 # release: the next SemVer from Conventional Commits
 $rel = & $py -X utf8 $KT release 2>&1 | Out-String

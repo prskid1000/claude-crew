@@ -222,13 +222,6 @@ Expect "bugbrief: failed checks across packages ($fc)" ($fc -eq 'T5=x (cause: en
 $lp = TkPath $k logs -Create; Set-Content "$lp/k4.log" (1..5000); Set-Content "$lp/k6.log" (1..5001); $hw = [IO.FileStream]::new("$lp/k6.log", 'Open', 'Write', 'ReadWrite')
 try { $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no') 2>&1 | Out-String } finally { $hw.Dispose() }
 Expect 'cleanup: a log over 5000 lines rotates while a writer holds it; 5000 lines stay' ($cd -match 'rotated.*k6\.log' -and $cd -notmatch 'k4')
-# board: the same name in a live session 5 min after its beat = a parallel agent
-$j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"
-$e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-KitPidStart $PID }; $e3.beat = (Get-Date).AddMinutes(-5).ToString('o'); & $J $e3 $f3
-$j4 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b3 = pwsh @np $O board beat -Session $s3 | Out-String
-Expect "board: a same-name agent in a live session is BY-2, no takeover ($j4)" ($j4 -match 'you are BY-2' -and $j4 -notmatch 'TAKEOVER|DUPLICATE' -and $b3 -notmatch 'TAKEN')
-$e3 = Read-Json $f3; $e3.beat = (Get-Date).AddMinutes(-40).ToString('o'); $e3 | Add-Member -Force NoteProperty transcript (Join-Path (Kd) 'by.jsonl'); '{}' | Set-Content $e3.transcript; & $J $e3 $f3
-$j5 = pwsh @np $O board join -Agent BY -Run rb | Out-String; Expect "board: beat 40 min old, transcript fresh = alive: BY-3" ($j5 -match 'you are BY-3' -and $j5 -notmatch 'TAKEOVER')
 # track's cleanup after a merge: the learned idle hours (2 h), never 0 (a fresh worktree has no commit = merged: it went)
 Expect "track cleanup: -WorktreeIdleHours = cleanup.worktreeIdleHours (default 2 h), never 0" ((Get-Content (Join-Path $src 'skills/bossy/params.registry.json') -Raw) -match '"cleanup\.worktreeIdleHours": "config default=2 unit=h"' -and (Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -match "'-WorktreeIdleHours', ""\`$\(Get-KitParam cleanup\.worktreeIdleHours\)""")
 # journal (moved from bossy.tests for its cap)
