@@ -49,7 +49,7 @@ Expect "lanes: unset -> only web (app refused, list named); a configured desktop
 Remove-Item $kl -ErrorAction SilentlyContinue
 # ---- prepare (item 4): pokey.ps1 prepare = L1 selection by script: run.json, lead-notes skeleton, Left out; the last line RUN <json>
 $PKp = Join-Path $k 'skills/pokey/pokey.ps1'
-$mkTask = { param($Name, $Desc) (pwsh -NoProfile -File $craftyPs tracker create -Key "fx-$Name" -Name $Name -Description $Desc -NewTask fixture 2>$null | ConvertFrom-Json).id }
+$mkTask = { param($Name, $Desc) (pwsh -NoProfile -File $craftyPs tracker create -Key "qa-fx-$Name" -Name $Name -Description $Desc -NewTask fixture 2>$null | ConvertFrom-Json).id }
 $tA = & $mkTask '[Bug] Orders sort' "**Testing doc (human):** [open](https://docs.example/h1)`n`nMR: https://git.example/g/web/-/merge_requests/5"
 $tB = & $mkTask '[Bug] No doc' 'MR: https://git.example/g/web/-/merge_requests/6'
 $tC = & $mkTask '[Bug] Excluded' "**Testing doc (human):** [open](https://docs.example/h3)`n`nMR: https://git.example/g/web/-/merge_requests/7"

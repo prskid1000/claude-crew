@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L67 state · L141 config · L222 OS · L419 leases · L812 status · L1056 supervise sweep · L1127 tracker ·
-  L1476 prior · L1492 ask bugs · L1677 process · L1705 git-host · L1897 kitlog · L2017 params · L2322 entry-scripts
+Sections: L9 paths · L67 state · L141 config · L222 OS · L435 leases · L832 status · L1076 supervise sweep · L1147 tracker ·
+  L1496 prior · L1512 ask bugs · L1697 process · L1725 git-host · L1917 kitlog · L2037 params · L2342 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -315,6 +315,22 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
 }
 
 function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
+# a tree deepest first, the root last: Kill($true) ends the root first, and a pwsh child still starting then found its stdout pipe
+# closed (FailFast "No process is on the other end of the pipe" = a modal "Unknown Hard Error" popup); Kill($true) last takes stragglers
+function Stop-KitProcessTree([Diagnostics.Process]$Proc) {
+  if (-not $Proc) { return }
+  if ($KitIsWindows) {
+    try {
+      $snap = Get-KitProcSnap; $order = [Collections.Generic.List[Diagnostics.Process]]::new(); $queue = [Collections.Generic.Queue[Diagnostics.Process]]::new(); $queue.Enqueue($Proc)
+      while ($queue.Count) { $node = $queue.Dequeue()
+        foreach ($kidId in @($snap.kids[$node.Id] | Where-Object { $_ -and $_ -ne $node.Id })) {
+          $kidProc = try { [Diagnostics.Process]::GetProcessById($kidId) } catch { $null }
+          if ($kidProc -and $(try { $kidProc.StartTime -ge $node.StartTime } catch { $false })) { $order.Add($kidProc); $queue.Enqueue($kidProc) } } }   # a reused parent id is no child
+      for ($ix = $order.Count - 1; $ix -ge 0; $ix--) { try { $order[$ix].Kill() } catch {} }
+    } catch {}
+  }
+  try { $Proc.Kill($true) } catch {}
+}
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0) {
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
   $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { $ex.defaults.$n } }
@@ -633,9 +649,9 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [strin
   $p = [Diagnostics.Process]::Start($si)
   $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()   # readers first: a full stdout pipe would block the stdin write
   if ($feed) {   # async + timed: a child that never reads stdin (no connection) must not hang the write; it may also exit before reading it all
-    try { if (-not $p.StandardInput.WriteAsync($In).Wait($TimeoutSec * 1000)) { try { $p.Kill($true) } catch {}; return & $res -1 '' "$Exe timed out after $TimeoutSec s (stdin not read)" $true }; $p.StandardInput.Close() } catch [IO.IOException] {} catch [AggregateException] {}
+    try { if (-not $p.StandardInput.WriteAsync($In).Wait($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s (stdin not read)" $true }; $p.StandardInput.Close() } catch [IO.IOException] {} catch [AggregateException] {}
   }
-  if (-not $p.WaitForExit($TimeoutSec * 1000)) { try { $p.Kill($true) } catch {}; return & $res -1 '' "$Exe timed out after $TimeoutSec s" $true }
+  if (-not $p.WaitForExit($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s" $true }
   $p.WaitForExit()
   & $res $p.ExitCode $so.Result.TrimEnd() $se.Result.TrimEnd()
 }
@@ -762,13 +778,17 @@ function Resolve-Tool {
 
 function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
 
-function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
-  $kt = $KitCmd.kitbag; if (-not $kt -or -not (Test-Path $kt)) { return @() }
+# -WarnSkip: a check that could not run (no kitbag.py, no python, no JSON) warns instead of passing silently
+function Test-KitProse([string]$Kind, [string]$Text, [string]$Path, [switch]$WarnSkip) {
+  $skip = { param($why) if ($WarnSkip) { Write-Warning "[prose] $Kind`: not checked: $why (kitbag.py prose --kind $Kind)" }; @() }
+  $kt = $KitCmd.kitbag; if (-not $kt -or -not (Test-Path $kt)) { return (& $skip "kitbag.py not found ($kt)") }
+  $pyExe = try { Get-Python } catch { $null }; if (-not $pyExe) { return (& $skip 'python not found') }
   $tmp = $null
   if (-not $Path) { $tmp = Join-Path (Get-KitTemp) "kit-prose-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 6)).md"; [IO.File]::WriteAllText($tmp, $Text); $Path = $tmp }
   $lec = $global:LASTEXITCODE   # kitbag's exit 1 on findings is no exit code of the caller
-  try { $r = & (Get-Python) -X utf8 $kt prose --kind $Kind $Path --json 2>$null | ConvertFrom-Json } catch { $r = $null } finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }; $global:LASTEXITCODE = $lec }
-  $found = @(if ($r) { $r.findings })
+  try { $r = & $pyExe -X utf8 $kt prose --kind $Kind $Path --json 2>$null | ConvertFrom-Json; $prc = $global:LASTEXITCODE } catch { $r = $null; $prc = "$_" } finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }; $global:LASTEXITCODE = $lec }
+  if (-not $r) { return (& $skip "kitbag.py prose gave no JSON (exit $prc)") }
+  $found = @($r.findings | Where-Object { $_ })
   foreach ($f in $found) { Write-Warning "[prose] $Kind`: $f (templates.md ""Writing standards"": rewrite, nothing was cut)" }
   $found
 }

@@ -8,11 +8,11 @@ Exit codes: 0 pass · 1 a check failed.
 $k = New-TestKit supgen; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # storage.db.maxGB unset: no temp cap, a 7 GB query is not killed; 5 = killed (LEGACY value)
 $sd = Join-Path (Kd) 'sdb'; New-Item -ItemType Directory -Force $sd | Out-Null
-'"43 7 30 SELECT big"' | Set-Content "$sd/use.ps1"; 'param($i) Add-Content (Join-Path $PSScriptRoot killed.txt) $i' | Set-Content "$sd/kill.ps1"
+# use / kill are shell builtins (cmd or sh): a pwsh fake missed the 5 s hook limit under a loaded suite (timed out -> db skipped 5 min)
 $cap = Invoke-PsTest storage-cap @'
-$null = . $args[0] 6>$null; $sd = $args[1]; $db = @{ use = "pwsh -NoProfile -File `"$sd/use.ps1`""; kill = "pwsh -NoProfile -File `"$sd/kill.ps1`" {id}" }
+$null = . $args[0] 6>$null; $sd = $args[1]; $db = @{ use = 'echo 43 7 30 SELECT big'; kill = "echo {id} >> `"$sd/killed.txt`"" }
 $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$db } }; $null = Invoke-KitStorageTick -Force; "nocap:$(-not (Test-Path "$sd/killed.txt"))"
-$db.maxGB = 5; $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$db } }; $null = Invoke-KitStorageTick -Force; "cap:$((Get-Content "$sd/killed.txt") -eq '43')"
+$db.maxGB = 5; $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$db } }; $null = Invoke-KitStorageTick -Force; "cap:$("$(Get-Content "$sd/killed.txt")".Trim() -eq '43')"
 '@ @($O, $sd)
 Expect-Each $cap 'storage db cap: #' 'nocap', 'cap' -Show 4
 # generic: idle daemons only from cleanup.idleDaemons (busyKinds hold them), tool caches from storage.toolCaches, gate.labels before built-in kinds

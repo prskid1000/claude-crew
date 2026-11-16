@@ -30,7 +30,7 @@ function Invoke-BoundedSsh([string[]]$A, [int]$Sec) {
   $si = [Diagnostics.ProcessStartInfo]::new($c.Source); foreach ($x in $A) { $si.ArgumentList.Add($x) }
   $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
   $pr = [Diagnostics.Process]::Start($si); $so = $pr.StandardOutput.ReadToEndAsync(); $null = $pr.StandardError.ReadToEndAsync()
-  if (-not $pr.WaitForExit($Sec * 1000)) { try { $pr.Kill($true) } catch {}; return @() }
+  if (-not $pr.WaitForExit($Sec * 1000)) { Stop-KitProcessTree $pr; return @() }
   @(if ($so.Wait(2000)) { $so.Result -split "`r?`n" | Where-Object { $_ } })
 }
 function SshState($s, $sha) {

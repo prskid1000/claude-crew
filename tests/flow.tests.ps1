@@ -160,7 +160,7 @@ Expect 'prior gate: a tagged MR of the task is its own (finish, mr in its repo: 
 $gc = { git -C $gr -c user.name=t -c user.email=t@t @args }; & $gc checkout -q -b TK-11-a; & $gc commit -q --allow-empty -m 'TK-11 wip'; & $gc checkout -q main; & $gc commit -q --allow-empty -m 'TK-11 fix'
 Set-Content $lf "'[{""state"":""merged"",""target_branch"":""main"",""source_branch"":""TK-11-a""},{""iid"":7,""state"":""merged"",""target_branch"":""stg"",""source_branch"":""TK-11-b""}]'"; $p11 = pwsh @np $D prior -Task 11 -Repo $gr | Out-String; Set-Content $lf "'[]'"
 Expect 'prior gate: merged into target = fix round' ($p11 -match 'FOUND mr pr pr!7' -and $p11 -notmatch 'pr!6|TK-11-a|commit')
-$env:KIT_TRACKER_TYPE = 'none'; $crPath = Join-Path $k 'skills/crafty/crafty.ps1'; $dt = (Px $crPath tracker create -Key fx-flow-163 -List L1 -Name 'Decide me' -Description 'd' | ConvertFrom-Json).id
+$env:KIT_TRACKER_TYPE = 'none'; $crPath = Join-Path $k 'skills/crafty/crafty.ps1'; $dt = (Px $crPath tracker create -Key qa-fx-flow-163 -List L1 -Name 'Decide me' -Description 'd' | ConvertFrom-Json).id
 $null = pwsh -NoProfile -Command ". '$(Lib)'; Add-TrackerComment '$dt' ""Decisions``nship it"""   # a person's comment under the same heading
 $dAsk = { param($dq, $di) ((Px $O decide ask -Run w2 -Agent X5 -Item $di -Question $dq -Options 'A: s3','B: db' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1').Trim() }
 $da = & $dAsk 'Where? Long tail' $dt; $dn = Px $O decide answer -Id $da -Answer 'A: s3 (owner, 2026-11-10)' | Out-String; $d1 = Px $O decide publish -Task $dt | Out-String
@@ -174,17 +174,17 @@ $sid = { param($i) ("$i".Trim() -split '-')[-1] }; $dv = @("- \[x\] $(& $sid $db
 Expect "decide: an unknown task (never indexed, item A2) or -NoPublish posts nothing, publish indexes it; ask / answer / record update ONE Decisions checklist by short id (answered resolved, pending open, same question or -Supersedes -> 'superseded by <id>'); no decisions comment, a person's 'Decisions' comment untouched ($ct)" ($dn -notmatch 'PUBLISHED' -and $d1 -match 'PUBLISHED' -and $dx -notmatch 'PUBLISHED' -and -not $cm.Count -and @($all.text -match '^Decisions\r?\nship it$').Count -eq 1 -and $ct -match '<!-- kit:decisions -->\r?\n\*\*Decisions\*\*' -and -not @($dv | Where-Object { $ct -notmatch $_ }).Count -and $ct -notmatch 'Ignored|Item code'); $env:KIT_TRACKER_TYPE = 'clickup'
 # tracker create -Parent: the subtask template or refused, a [Bug] its own text; -NewTask under a parent logs matched [] (no WATCH)
 $env:KIT_TRACKER_TYPE = 'none'; $sbSpec = Join-Path (Kd) 'sb-spec.json'
-$sbPar = (Px $crPath tracker create -Key fx-flow-177 -List L1 -Name 'Launch parent ask' -Description 'the ask' | ConvertFrom-Json).id
-$sb0 = Px $crPath tracker create -Key fx-flow-178 -List L1 -Name 'Phase two api' -Parent $sbPar -NewTask 'planned phase' 2>&1 | Out-String; $sb0c = $LASTEXITCODE
-$sb1 = Px $crPath tracker create -List L1 -Name '[Feature] Phase two api' -Description "**Problem:** p`n**Goal:** g" -Key sb-1 2>&1 | Out-String; $sb1c = $LASTEXITCODE
+$sbPar = (Px $crPath tracker create -Key qa-fx-flow-177 -List L1 -Name 'Launch parent ask' -Description 'the ask' | ConvertFrom-Json).id
+$sb0 = Px $crPath tracker create -Key qa-fx-flow-178 -List L1 -Name 'Phase two api' -Parent $sbPar -NewTask 'planned phase' 2>&1 | Out-String; $sb0c = $LASTEXITCODE
+$sb1 = Px $crPath tracker create -List L1 -Name '[Feature] Phase two api' -Description "**Problem:** p`n**Goal:** g" -Key qa-sb-1 2>&1 | Out-String; $sb1c = $LASTEXITCODE
 Set-JsonFile $sbSpec @{ title = 'Phase two api'; list = 'L1'; parent = $sbPar; newTask = 'planned phase'; problem = 'p'; goal = 'g'; items = @(@{ code = 'A1'; desc = 'first' }, @{ code = 'A2'; desc = 'second' }); acceptance = @('a'); links = @('https://x.example/1') }
 $sbSub = (Px $crPath tracker create -Spec $sbSpec | ConvertFrom-Json).id
-$sbBug = (Px $crPath tracker create -List L1 -Name '[Bug] ask — crash' -Parent $sbPar -NewTask x -Key sb-bug -Description 'steps, saw, expected' | ConvertFrom-Json).id
+$sbBug = (Px $crPath tracker create -List L1 -Name '[Bug] ask — crash' -Parent $sbPar -NewTask x -Key qa-sb-bug -Description 'steps, saw, expected' | ConvertFrom-Json).id
 $sbLog = pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog calls (Get-Date).AddMinutes(-9) | Where-Object { `$_.event -eq 'prior-override' -and `$_.parent -eq '$sbPar' } | ForEach-Object { `"`$(`$null -ne `$_.PSObject.Properties['matched'])/`$(@(`$_.matched | Where-Object { `$_ }).Count)`" }) -join ','"
 Expect "tracker create: a subtask or a [Kind] task in free text refused (rc 1: -Spec; -Key too); a spec and a keyed [Bug] pass; -NewTask logs matched [] ($sb0c $sb1c $sbLog)" ($sb0c -eq 1 -and $sb0 -match 'rendered from a spec: tracker create -Spec' -and
   $sb1c -eq 1 -and $sb1 -match 'tracker create -Spec' -and $sbSub -and $sbBug -and "$sbLog".Trim() -eq 'True/0,True/0')
 # launch -Check / -Self (buildy): every item task an Items list (the owner's task: scope), a subtask the template + a parent delivery section
-$sbTop = (Px $crPath tracker create -Key fx-flow-187 -List L1 -Name 'Own task no items' -Description 'the owner text' | ConvertFrom-Json).id
+$sbTop = (Px $crPath tracker create -Key qa-fx-flow-187 -List L1 -Name 'Own task no items' -Description 'the owner text' | ConvertFrom-Json).id
 $sbArgs = Join-Path (Kd) 'chk-args.json'; [IO.File]::WriteAllText($sbArgs, (@{ brief = (Join-Path (Kd) 'wave-c.md'); agents = @(@{ id = 'X1'; items = "$sbSub, $sbTop" }) } | ConvertTo-Json -Depth 4 -Compress))
 $ck1 = Px $O launch -Check -ArgsFile $sbArgs 2>&1 | Out-String; $ck1c = $LASTEXITCODE
 $null = Px $crPath tracker describe $sbPar "the ask`n<!-- kit:delivery -->`nx`n<!-- /kit:delivery -->"; $null = Px $crPath tracker scope -Task $sbTop -Add '**Items:** B1'

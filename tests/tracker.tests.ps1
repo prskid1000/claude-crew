@@ -107,7 +107,7 @@ $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); 
 Expect "gate card: history counts a build between sweeps, a row per kind, its busy minutes in the hours it spans; browsers in the lease row ($gtOut)" ("$gtOut" -eq '0 env deploy,maven test 1/1/3/22/10,50 True True')
 # crafty.ps1 tracker bug (lib.ps1 Add-KitAskBug)
 $D = Join-Path $k 'skills/crafty/crafty.ps1'; $env:KIT_TRACKER_TYPE = 'none'; $bk = Kd
-$ak = (pwsh @np $D tracker create -Key fx-tracker-110 -List L1 -Name 'Ask help routing' -Description 'a' -NewTask fixture | ConvertFrom-Json).id
+$ak = (pwsh @np $D tracker create -Key qa-fx-tracker-110 -List L1 -Name 'Ask help routing' -Description 'a' -NewTask fixture | ConvertFrom-Json).id
 'help answers link other product pages (vector.py:120)' | Set-Content "$bk/w1.md"; 'second defect' | Set-Content "$bk/w2.md"; 'same root cause' | Set-Content "$bk/w3.md"
 $tbg = { param($key, $name, $file, $sig) pwsh @np $D tracker bug -Parent $ak -Key $key -Name $name -File "$bk/$file" -Signature $sig -List L1 | ConvertFrom-Json }
 $b1 = & $tbg watch-stg-a '[Bug] Ask help — new defects (1)' w1.md 'vector.py:120'; $b2 = & $tbg qa-run1 '[Bug] staging run — new defects' w2.md 'other.py:9'
@@ -123,10 +123,16 @@ Expect "bug signatures: whole matches, escaped read-back, no host:port, hash rou
 $fbFree = pwsh @np $D tracker create -List L1 -Name '[Bug] merged MRs untracked' -NewTask x -Description 'free text' 2>&1 | Out-String; $fbFreec = $LASTEXITCODE
 '{"kind":"Bug","title":"merged MRs untracked","list":"L1","newTask":"x","problem":"two merged MRs had no task","links":["https://git.example/r/-/merge_requests/5"]}' | Set-Content "$bk/fb.json"; $fbSp = (pwsh @np $D tracker create -Spec "$bk/fb.json" | ConvertFrom-Json).id
 $fbDs = pwsh @np $D tracker describe $fbSp 'free text' 2>&1 | Out-String; $fbDsc = $LASTEXITCODE; $fbSec = "**Problem:** p`n**Goal:** g`n**Acceptance:** a`n**Links:** https://x.example/2"
-$fbOwn = (pwsh @np $D tracker create -List L1 -Key fb-own -Name 'Owner shaped' -NewTask x -Description $fbSec | ConvertFrom-Json).id
+$fbOwn = (pwsh @np $D tracker create -List L1 -Key qa-fb-own -Name 'Owner shaped' -NewTask x -Description $fbSec | ConvertFrom-Json).id
 $fbDo = pwsh @np $D tracker describe $fbOwn 'just text' 2>&1 | Out-String; $fbDoc = $LASTEXITCODE; $null = pwsh @np $D tracker describe $fbOwn "**Testing doc (human):** [open](https://x.example/h)`n`n$fbSec"; $fbKeep = $LASTEXITCODE
-$fbE = (pwsh @np $D tracker create -List L1 -Key fb-empty -Name 'Owner empty' -NewTask x -Description ' ' | ConvertFrom-Json).id; $null = pwsh @np $D tracker describe $fbE '**Testing doc (human):** [open](https://x.example/h)'; $fbKeep += $LASTEXITCODE
+$fbE = (pwsh @np $D tracker create -List L1 -Key qa-fb-empty -Name 'Owner empty' -NewTask x -Description ' ' | ConvertFrom-Json).id; $null = pwsh @np $D tracker describe $fbE '**Testing doc (human):** [open](https://x.example/h)'; $fbKeep += $LASTEXITCODE
 Expect "tracker create: free text without -Key ([Bug] too) refused, pointing at -Spec; a [Bug] spec and tracker bug -Key pass; describe: refused on a spec task or when it drops a section, links on top pass ($fbFreec $fbDsc $fbDoc $fbKeep)" ($fbFreec -eq 1 -and $fbFree -match 'rendered from a spec: tracker create -Spec <json>' -and $fbSp -and $b1.id -and $fbDsc -eq 1 -and $fbDs -match 'tracker update' -and $fbDoc -eq 1 -and $fbDo -match 'lacks Problem.*tracker update' -and $fbKeep -eq 0)
+$kyMade = pwsh @np $D tracker create -List L1 -Key made-up-1 -Name 'Made up' -NewTask x -Description 'free text' 2>&1 | Out-String; $kyMadec = $LASTEXITCODE
+$kyBug = pwsh @np $D tracker bug -Parent $ak -Key run-9 -Name '[Bug] x' -File "$bk/w3.md" -List L1 2>&1 | Out-String; $kyBugc = $LASTEXITCODE
+$kyWatch = (pwsh @np $D tracker create -List L1 -Key watch-stg-sig9 -Name '[Bug] stg — sig9' -NewTask x -Description 'free text' | ConvertFrom-Json).id
+Expect "tracker create / bug: free text only under a qa- / watch- key; a made-up key refused naming -Spec ($kyMadec $kyBugc)" ($kyMadec -eq 1 -and $kyMade -match "'made-up-1' is neither.*" -and $kyMade -match 'tracker create -Spec' -and $kyBugc -eq 1 -and $kyBug -match 'tracker create -Spec' -and $kyWatch -and $fbOwn)
+$kyDocs = @(Select-String -Path @(git -C $src ls-files -- 'skills/*.md' 'agents/*.md' 'workflows/*.js' | ForEach-Object { Join-Path $src $_ }) -Pattern 'tracker (create|bug)\b[^`]*?-Key (\S+)' -AllMatches | ForEach-Object { $_.Matches } | Where-Object { $_.Groups[2].Value -notmatch '^(qa|watch)-' } | ForEach-Object { $_.Value })
+Expect "kit docs: every tracker create / bug -Key they teach starts qa- or watch- ($($kyDocs -join ' ; '))" (-not $kyDocs.Count)
 # (cap move) tracker comment -Spec: a file or inline JSON, rendered; no text never reaches a CLI (it opened an editor)
 '{"status":"closed","why":"W0 done: lanes use staging sql_mode.","link":"https://github.com/o/r/commit/fd14532"}' | Set-Content "$bk/cs.json"
 $sf = pwsh @np $D tracker comment $ak -Kind comment-status -Spec "$bk/cs.json" 2>&1 | Out-String; $sfc = $LASTEXITCODE

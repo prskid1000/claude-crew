@@ -17,7 +17,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L23 init · L29 sweep · L183 wt · L504 stack · L686 gate · L1002 check · L1311 pipes · L1368 guard · L2198 dir ·
-  L2208 checkpoint · L2237 prior · L2275 tracker · L2297 task spec · L2471 scope · L2513 host
+  L2208 checkpoint · L2237 prior · L2275 tracker · L2297 task spec · L2472 scope · L2514 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1023,7 +1023,7 @@ print(' '.join(x for x in sorted(t) if gone(x)))
   $psi = [Diagnostics.ProcessStartInfo]::new($pyExe); foreach ($x in @('-X', 'utf8', '-', $mode) + $items) { $psi.ArgumentList.Add($x) }   # stdin: a .bat shim (pyenv) mangles a multi-line -c
   $psi.WorkingDirectory = $Dir; $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $psi.RedirectStandardOutput = $psi.RedirectStandardError = $true
   $pr = try { [Diagnostics.Process]::Start($psi) } catch { return @() }; $pr.StandardInput.Write($probe); $pr.StandardInput.Close(); $outTask = $pr.StandardOutput.ReadToEndAsync(); $null = $pr.StandardError.ReadToEndAsync()
-  if (-not $pr.WaitForExit(1000 * [int](Get-KitParam 'check.importProbeSec'))) { try { $pr.Kill($true) } catch { }; return @() }
+  if (-not $pr.WaitForExit(1000 * [int](Get-KitParam 'check.importProbeSec'))) { Stop-KitProcessTree $pr; return @() }
   @("$($outTask.Result)".Trim() -split '\s+' | Where-Object { $_ })
 }
 # stale-env hint: each module's requirements.txt line, the file's plain pins as constraints (a full -r rebuilt other pins, 2026-11-12)
@@ -2435,7 +2435,7 @@ function Invoke-Tracker {
     'create' {   # -Spec: rendered (crafty.ps1 "task spec"); free text only for a keyed QA / watch defect (-Key: updates that key's open task)
       if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
       $__specHint = 'tracker create -Spec <json> (crafty.ps1 "task spec": kind, title, problem, goal, items, acceptance, links)'
-      if (-not $__trOpt.Key) { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (tracker bug -Key, tracker create -Key <env>-<signature>)"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs
+      if ("$($__trOpt.Key)" -notmatch '^(qa|watch)-') { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (-Key qa-<run> or watch-<env>-<signature>$(if ($__trOpt.Key) { "; '$($__trOpt.Key)' is neither" }))"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs; 2026-11-16: a made-up key bypassed the spec
       if ((($__trOpt.Parent -and $__trOpt.Parent -ne '-') -or (Test-KitKindName $__trOpt.Name)) -and @(Get-KitTaskTextGaps $__trOpt.Name 'x').Count) { "tracker create refused: a kit task's text (a subtask or a [Kind] name) is rendered from a spec: $__specHint; free text only for a keyed [Bug]"; exit 1 }
       $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
@@ -2449,7 +2449,8 @@ function Invoke-Tracker {
       __TrOut $nt
     }
     'bug' {   # ONE open QA collector [Bug] per ask (lib.ps1 Add-KitAskBug)
-      if (-not ($__trOpt.Key -and $__trOpt.Name -and $__trOpt.Text)) { "usage: tracker bug -Parent <ask> -Key <section key> -Name '<[Bug] title>' -File <md> [-Signature 'a|b'] [-List] [-Assignee] [-Priority]"; exit 2 }
+      if (-not ($__trOpt.Key -and $__trOpt.Name -and $__trOpt.Text)) { "usage: tracker bug -Parent <ask> -Key <qa-<run> | watch-<env>-<signature>> -Name '<[Bug] title>' -File <md> [-Signature 'a|b'] [-List] [-Assignee] [-Priority]"; exit 2 }
+      if ($__trOpt.Key -notmatch '^(qa|watch)-') { "tracker bug refused: -Key '$($__trOpt.Key)' is no QA / watch defect key (qa-<run>, watch-<env>-<signature>); any other task: tracker create -Spec <json> (crafty.ps1 ""task spec"")"; exit 1 }
       __TrOut (Add-KitAskBug -Ask $__trOpt.Parent -Key $__trOpt.Key -Name $__trOpt.Name -List $__trOpt.List -Assignee $__trOpt.Assignee -Priority $(if ($__trOpt.Priority) { $__trOpt.Priority } else { '2' }) -Defects @([pscustomobject]@{ label = $__trOpt.Key; sig = @("$($__trOpt.Signature)" -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ }); md = $__trOpt.Text; group = '' }))
     }
     'scope' { $__s = if ($__trOpt.Task) { $__trOpt.Task } else { $__id }; if (-not ($__s -and $__trOpt.Add)) { "usage: tracker scope -Task <id> -Add '<item>'"; exit 2 }; Add-TrackerScope $__s $__trOpt.Add }

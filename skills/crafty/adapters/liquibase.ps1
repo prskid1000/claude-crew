@@ -141,6 +141,13 @@ function Get-LiquibaseMissingRoutines([string]$e, [string]$Schema) {
     $made = @{}; $rc = '(?i)\bCREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\('; $rd = '(?i)\bDROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?(\w+)'
     $ro = '(?is)^\s*(?:<!\[CDATA\[)?\s*(?:DROP\s+(?:PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?`?\w+`?\s*;?\s*)*(?:CREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\b.*)?(?:\]\]>)?\s*$'
     foreach ($root in @($roots | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
+      # the parse per root is cached by the last commit under it and this parser's code (seed -Check re-read the whole tree each run); uncommitted or untracked changes: no cache
+      $lbVer = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$((Get-Command Get-LiquibaseMissingRoutines).ScriptBlock)"))).Substring(0, 12)
+      $lbSha = "$(git -C $root log -1 --format=%H -- . 2>$null)".Trim(); if ($LASTEXITCODE -or "$(git -C $root status --porcelain -- . 2>$null)".Trim()) { $lbSha = '' }
+      $lbCacheFile = Join-Path (Get-KitPath cache -Create) "liquibase-routines-$([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(([IO.Path]::GetFullPath($root)).ToLower()))).Substring(0, 12)).json"
+      $lbHit = if ($lbSha) { try { $lbJson = Get-Content -LiteralPath $lbCacheFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable; if ($lbJson.key -eq "$lbVer|$lbSha") { $lbJson.made } } catch { $null } }
+      if ($null -ne $lbHit) { foreach ($lbKv in $lbHit.GetEnumerator()) { $made[$lbKv.Key] = $lbKv.Value }; continue }
+      $lbMine = @{}
       foreach ($f in Get-ChildItem -LiteralPath $root -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {
         $t = [IO.File]::ReadAllText($f.FullName); if ($t -notmatch '(?i)\b(PROCEDURE|FUNCTION)\b') { continue }
         $t = $t -replace '(?is)<rollback>.*?</rollback>|--rollback[^\n]*', ''
@@ -157,8 +164,10 @@ function Get-LiquibaseMissingRoutines([string]$e, [string]$Schema) {
           $cs = @{ key = "${au}:$id"; creates = $cr; drops = @([regex]::Matches($b.Groups[2].Value, $rd) | ForEach-Object { $_.Groups[1].Value.ToLower() }); only = -not $rest.Trim() }
           foreach ($n in $cr) { $by[$n] = $cs }
         }
-        if ($c.Count -or $d.Count) { $made[(ConvertTo-LiquibaseFileKey ([IO.Path]::GetRelativePath($root, $f.FullName)))] = @{ create = $c; drop = $d; by = $by } }
+        if ($c.Count -or $d.Count) { $lbMine[(ConvertTo-LiquibaseFileKey ([IO.Path]::GetRelativePath($root, $f.FullName)))] = @{ create = $c; drop = $d; by = $by } }
       }
+      foreach ($lbKv in $lbMine.GetEnumerator()) { $made[$lbKv.Key] = $lbKv.Value }
+      if ($lbSha) { try { [ordered]@{ key = "$lbVer|$lbSha"; root = $root; made = $lbMine } | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath $lbCacheFile -Encoding utf8 } catch {} }
     }
     if (-not $made.Count) { continue }
     $find = { param([string]$fn) $k = ConvertTo-LiquibaseFileKey $fn; if ($made.ContainsKey($k)) { return $made[$k] }

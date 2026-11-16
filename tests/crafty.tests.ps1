@@ -69,13 +69,13 @@ try {
     $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $pue -match 'Usage: pipes' -and $cr.run -eq 'adhoc-c9' -and (Test-Prose kit-report (Join-Path (TkPath $k agents) 'c9/resume-adhoc-c9.md')))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 $env:KIT_TRACKER_TYPE = 'none'
-$t = pwsh @np $D tracker create -Key fx-crafty-72 -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
+$t = pwsh @np $D tracker create -Key qa-fx-crafty-72 -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
 $null = pwsh @np $D tracker status $t.id failedTesting; $sNo = pwsh @np $D tracker status $t.id 2>&1 | Out-String; $stCode = $LASTEXITCODE
 $l = @(pwsh @np $D tracker list L1 failedTesting | ConvertFrom-Json)
 Expect 'tracker none: create, status failedTesting, list; status without a word = usage, rc 2, unchanged' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id -and $stCode -eq 2 -and $sNo -match 'usage: tracker status')
-$d2 = (pwsh @np $D tracker create -Key fx-crafty-76 -List L1 -Name 'Invoice export button' -Description 'd' | ConvertFrom-Json).id
-$d1 = pwsh @np $D tracker create -Key fx-crafty-77 -List L1 -Name 'Invoice export button broken' -Description 'd' 2>&1 | Out-String; $c1 = $LASTEXITCODE
-$d3 = (pwsh @np $D tracker create -Key fx-crafty-78 -List L1 -Name 'Invoice export copy' -Description 'd' -NewTask 'another screen' | ConvertFrom-Json).id; $null = pwsh @np $D tracker scope -Task $t.id -Add 'also X'
+$d2 = (pwsh @np $D tracker create -Key qa-fx-crafty-76 -List L1 -Name 'Invoice export button' -Description 'd' | ConvertFrom-Json).id
+$d1 = pwsh @np $D tracker create -Key qa-fx-crafty-77 -List L1 -Name 'Invoice export button broken' -Description 'd' 2>&1 | Out-String; $c1 = $LASTEXITCODE
+$d3 = (pwsh @np $D tracker create -Key qa-fx-crafty-78 -List L1 -Name 'Invoice export copy' -Description 'd' -NewTask 'another screen' | ConvertFrom-Json).id; $null = pwsh @np $D tracker scope -Task $t.id -Add 'also X'
 Expect 'check before create: a near-duplicate is refused (extend it: tracker scope), another title and -NewTask pass; scope appends' ($c1 -eq 1 -and $d1 -match "(?s)duplicate of $d2.*tracker scope" -and $d2 -and $d3 -and (pwsh @np $D tracker view $t.id | Out-String) -match 'Scope \(extended .*also X')
 & $J @{ tracker = @{ type = 'fake'; statuses = @{ inTest = @('in test', 'for test') } } } "$k/skills/crafty/kit.local.json"
 $tl = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = `$null; . '$(Lib)'; Register-KitAdapter 'tracker' 'fake' @{ list = { param(`$a) if (`$a.status -ne 'in test') { __TrRow 'T1' n `$a.status @() } } }; (Get-TrackerTasks L1 inTest).id -join ','" 2>$null; Remove-Item "$k/skills/crafty/kit.local.json"
@@ -112,7 +112,7 @@ $g2 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; Remove-Item E
 Set-JsonFile $dkl @{ tracker = @{ statuses = @{ promoted = $null } } }; $gOff = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String
 if ($dk0) { $dk0 | Set-Content $dkl } else { Remove-Item $dkl }
 Expect "process.gates.promote: unset = promoted with no doc links; a hook command refuses with its stdout; statuses.promoted null = skipped ($($gH.Trim()))" ($gNone -notmatch 'not set' -and $gH -match "not set to promoted: no promote for $($t.id)" -and $gOff -match 'skipped')
-$k1 = pwsh @np $D tracker create -List L1 -Name 'Bug s1' -Description 'a' -Key sig-1 | ConvertFrom-Json; $k2 = pwsh @np $D tracker create -List L1 -Name 'Bug s1 (2)' -Description 'b' -Key sig-1 | ConvertFrom-Json
+$k1 = pwsh @np $D tracker create -List L1 -Name 'Bug s1' -Description 'a' -Key qa-sig-1 | ConvertFrom-Json; $k2 = pwsh @np $D tracker create -List L1 -Name 'Bug s1 (2)' -Description 'b' -Key qa-sig-1 | ConvertFrom-Json
 Expect 'tracker create -Key: an open task of the same key is updated, not created again' ($k2.id -eq $k1.id -and $k2.reused -and (pwsh @np $D tracker view $k1.id | ConvertFrom-Json).description -eq 'b')
 Expect 'status gate: promoted needs both doc links (none, the human one only: refused)' ($g1 -match 'not set to promoted' -and $g2 -notmatch 'not set' -and $g3 -match 'not set to promoted')
 Remove-Item Env:KIT_TRACKER_TYPE
@@ -235,5 +235,12 @@ if ($IsWindows) { 'SKIP posix (Linux / macOS only)' } else {
 }
 $gf = Invoke-PsTest gitfetch '. $args[0]; $d = $args[1]; git init -q $d; git -C $d remote add origin "$d-o.git"; Invoke-GitFetch $d 10 3>$null; git init -q --bare "$d-o.git"; Invoke-GitFetch $d 10' @((Lib), (Join-Path (Kd) 'gf'))
 Expect 'Invoke-GitFetch: a failed fetch is not memoized' (($gf -join ',') -eq 'False,True')
+if ($IsWindows) {   # Stop-KitProcessTree: the child first, the root last (a root killed first left a starting pwsh child a closed pipe: FailFast popup)
+  $tkF = Join-Path (Kd) 'tree-parent.ps1'; Set-Content $tkF '$treeOut = pwsh -NoProfile -Command "Start-Sleep 60"; $treeOut'
+  $tkP = Start-Process pwsh -ArgumentList '-NoProfile', '-File', $tkF -PassThru -WindowStyle Hidden; $tkC = $null
+  for ($i = 0; $i -lt 150 -and -not $tkC; $i++) { $tkC = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($tkP.Id) AND Name='pwsh.exe'" -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $tkC) { Start-Sleep -Milliseconds 200 } }
+  $tkCp = Get-Process -Id $tkC.ProcessId; $null = $tkCp.Handle; & { . (Lib); Stop-KitProcessTree $tkP }; $null = $tkP.WaitForExit(10000); $null = $tkCp.WaitForExit(10000)
+  Expect "Stop-KitProcessTree: a pwsh child and its root gone, the child first ($($tkCp.ExitTime.ToString('HH:mm:ss.fff')) <= $($tkP.ExitTime.ToString('HH:mm:ss.fff')))" ($tkP.HasExited -and $tkCp.HasExited -and $tkCp.ExitTime -le $tkP.ExitTime)
+}
 Remove-TestKit $k
 Complete-Tests

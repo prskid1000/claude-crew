@@ -71,6 +71,9 @@ $null = & $lo -Skill revy -Lesson 'an ascii case -> an ascii counted lesson (why
 Expect 'kit-admin: learn -Bump counts an ASCII (1x) up to (2×)' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match 'an ascii counted lesson \(why\) \(2×\)')
 $null = & $lo -Skill revy -Lesson "an overlong case $('padword ' * 50)-> refuse it (why)" 3>$null; $longCode = $LASTEXITCODE
 Expect "kit-admin: learn refuses a lesson over the templates.md lesson word cap (2), nothing written ($longCode)" ($longCode -eq 2 -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'an overlong case')
+$kbPy = Join-Path $kc 'skills/bossy/kitbag.py'; Move-Item $kbPy "$kbPy.off"
+$nocap = & $lo -Skill revy -Lesson 'an unchecked case -> written with a warning (no kitbag)'; Move-Item "$kbPy.off" $kbPy
+Expect "kit-admin: learn warns when kitbag.py cannot check the lesson word cap, the lesson still written ($($nocap.Trim()))" ($nocap -match '\[prose\] lesson: not checked: kitbag\.py not found' -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match 'an unchecked case')
 $null = & $lo -Skill revy -Fixed 'a generic lesson'; $hi = & $lo -History -Grep 'a generic lesson'; $st = & $lo -Stats
 Expect 'kit-admin: learn -Fixed moves the line out, -History lists it, -Stats counts signals' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) a generic case -> a generic lesson \(test\)' -and $st -match 'signals since last retro')
 $splitOne = @("a`nb" -split "`n", -1).Count; $kaText = (Get-Content (Join-Path $src 'skills/bossy/kit-admin.md') -Raw) -replace '\s+', ' '

@@ -19,7 +19,7 @@ function Invoke-LearnAdmin {
   $file = Get-KitPath signals -Create
   if ($When -or $Do -or $Why) { if (-not ($When -and $Do -and $Why)) { 'learn: -When, -Do and -Why together'; exit 2 }; $Lesson = "$($When.Trim()) -> $($Do.Trim().TrimEnd('.')) ($($Why.Trim().Trim('()')))" }   # LESSONS.md shape
   if ($Lesson -and ("- $($Lesson.Trim() -replace '^-\s*')" -notmatch '^- \S.*? -> \S.*\((?!\d+[x×]\)).+?\)')) { 'learn: a lesson is "<when> -> <do> (<why>)": -When -Do -Why render it'; exit 2 }
-  if ($Lesson -and @(Test-KitProse lesson "- $($Lesson.Trim() -replace '^-\s*')").Count) { 'learn: lesson refused: over the templates.md "Writing standards" lesson cap (warning above); shorten it'; exit 2 }   # lint would flag it after the write
+  if ($Lesson -and @(Test-KitProse lesson "- $($Lesson.Trim() -replace '^-\s*')" -WarnSkip).Count) { 'learn: lesson refused: over the templates.md "Writing standards" lesson cap (warning above); shorten it'; exit 2 }   # lint would flag it after the write
   $pub = Join-Path $KitConf.Kit 'LESSONS.md'; $loc = Join-Path $KitConf.Kit 'LESSONS.local.md'
   if ($Stats) {
     $since = Get-KitRetroSince

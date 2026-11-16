@@ -70,33 +70,37 @@ $fRepos = @(foreach ($n in 'bad', 'slow', 'good', 'part', 'crash', 'many') { @{ 
 & $J @{ tasks = @{ u = @{ task = 'u'; mrs = @(@(foreach ($n in 'bad', 'slow', 'good', 'part', 'crash', 'two') { "$n!1"; "$n!2" }) + @(1..9 | ForEach-Object { "many!$_" }) + @('fr!1', 'fr!2')); done = $false } }; automerge = @{} } $tf
 $fq = Join-Path (Kd) 'fake-deployed.ps1'
 Set-Content $fq @'
-$t = $args[[array]::IndexOf($args, '-Target') + 1]; $ms = @($args[[array]::IndexOf($args, '-Mrs') + 1] -split ','); Add-Content $env:FAKE_LOG "$t|$($ms -join ',')"
+$t = $args[[array]::IndexOf($args, '-Target') + 1]; $ms = @($args[[array]::IndexOf($args, '-Mrs') + 1] -split ','); Set-Content (Join-Path $env:FAKE_LOG "$PID.txt") "$t|$($ms -join ',')"   # one file per child: parallel appends to one file tore lines
 if ($t -eq 'good') { Set-Content $env:FAKE_TO $args[[array]::IndexOf($args, '-TimeoutSec') + 1] }
-if ($t -eq 'slow') { Start-Sleep 30 }
+if ($t -eq 'slow' -and $env:FAKE_HANG) { Start-Sleep 120 }
 if ($t -eq 'bad') { 'pokey.ps1: usage error'; exit 2 }
 foreach ($y in $t -split ',') { "{`"mr`":`"$($ms[0])`",`"target`":`"$y`",`"state`":`"NOT-DEPLOYED`",`"detail`":`"x`"}" }
-if ($t -eq 'part') { Start-Sleep 30 }; if ($t -eq 'crash') { exit 3 }   # <repo>!1 checked, <repo>!2 never
+if ($t -eq 'part' -and $env:FAKE_HANG) { Start-Sleep 120 }; if ($t -eq 'crash') { exit 3 }   # <repo>!1 checked, <repo>!2 never
 if ($t -match ',') { "{`"mr`":`"$($ms[1])`",`"target`":`"$t`",`"state`":`"UNKNOWN`",`"detail`":`"deadline`"}"; exit 1 }   # a row for no one target
 foreach ($y in $t -split ',') { "{`"mr`":`"$($ms[1])`",`"target`":`"$y`",`"state`":`"DEPLOYED`",`"detail`":`"live`"}" }
 '@ -Encoding utf8
 $ut = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
-$KitCmd.qa = $args[1]; $env:FAKE_TO = $args[2]; $env:FAKE_LOG = $args[3]; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitMrTb = @{ 'fr!1' = 'y-main'; 'fr!2' = 'y-main' }
-$p = @(Invoke-Deploy plan -Json -TimeoutSec 4 | ConvertFrom-Json); $s = @{}; foreach ($x in $p) { $s[$x.target] = $x }
+$KitCmd.qa = $args[1]; $env:FAKE_TO = $args[2]; $env:FAKE_LOG = $args[3]; $null = New-Item -ItemType Directory -Force $env:FAKE_LOG; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitMrTb = @{ 'fr!1' = 'y-main'; 'fr!2' = 'y-main' }
+# no child hangs here: the plan ends when the last one exits, so a cold pwsh start under a loaded suite (4 s deadline: children killed unlogged) cannot cut it
+$p = @(Invoke-Deploy plan -Json -TimeoutSec 100 | ConvertFrom-Json); $s = @{}; foreach ($x in $p) { $s[$x.target] = $x }
 "bad:$($s.bad.status -eq 'UNKNOWN' -and $s.bad.why -match 'exit 2 on bad')"
-"slow:$($s.slow.status -eq 'UNKNOWN' -and $s.slow.why -match 'timed out after 4 s on slow')"
 "good:$($s.good.status -eq 'READY' -and (@($s.good.mrs.mr) -join ',') -eq 'good!1')"
-"part:$($s.part.status -eq 'READY' -and (@($s.part.mrs.mr) -join ',') -eq 'part!1' -and $s.part.why -match 'part!2: not checked: .*timed out after 4 s on part')"
 "feeds:$($s.fa.status -eq 'NOTHING' -and -not $s.fa.why -and $s.fb.status -eq 'READY' -and $s.fb.why -match 'fr!2: deadline')"
 "crash:$($s.crash.status -eq 'READY' -and $s.crash.why -match 'crash!2: not checked: pokey\.ps1 deployed exit 3 on crash')"
-"parallel:$($sw.Elapsed.TotalSeconds -lt 20)"
-"childcap:$((Get-Content $env:FAKE_TO) -as [int] -in 0..3)"
-$lg = @(Get-Content $env:FAKE_LOG); "slices:$((@($lg | Where-Object { $_ -like 'many|*' } | ForEach-Object { @(($_ -split '\|')[1] -split ',').Count }) -join ',') -eq '4,4,1')";"perrepo:$($lg.Count -eq 10 -and $lg -contains 'ta,tb|two!1,two!2' -and $s.ta.status -eq 'READY' -and $s.tb.status -eq 'READY' -and $s.ta.why -match 'two!2: deadline' -and $s.tb.why -match 'two!2: deadline')"
-Remove-Item $env:FAKE_LOG; $null = Invoke-Deploy plan -Env tb -Json -TimeoutSec 4; "needed:$((@(Get-Content $env:FAKE_LOG) -join ';') -eq 'tb|two!1,two!2')"
-$null = Invoke-Deploy plan -TimeoutSec 4   # text mode: each row on stderr as it comes
+"childcap:$((Get-Content $env:FAKE_TO) -as [int] -in 1..88)"
+# children run side by side and log in finish order: the slice sizes compare sorted
+$lg = @(Get-ChildItem $env:FAKE_LOG -File | Get-Content); "slices:$((@($lg | Where-Object { $_ -like 'many|*' } | ForEach-Object { @(($_ -split '\|')[1] -split ',').Count } | Sort-Object -Descending) -join ',') -eq '4,4,1')";"perrepo:$($lg.Count -eq 10 -and $lg -contains 'ta,tb|two!1,two!2' -and $s.ta.status -eq 'READY' -and $s.tb.status -eq 'READY' -and $s.ta.why -match 'two!2: deadline' -and $s.tb.why -match 'two!2: deadline')"
+Remove-Item (Join-Path $env:FAKE_LOG '*'); $null = Invoke-Deploy plan -Env tb -Json -TimeoutSec 100; "needed:$((@(Get-ChildItem $env:FAKE_LOG -File | Get-Content) -join ';') -eq 'tb|two!1,two!2')"
+# slow / part hang until killed: the deadline (15 s -> 13.5 s) leaves part time to print its first row under load
+$env:FAKE_HANG = '1'; $sw = [Diagnostics.Stopwatch]::StartNew(); $p = @(Invoke-Deploy plan -Json -TimeoutSec 15 | ConvertFrom-Json); $s = @{}; foreach ($x in $p) { $s[$x.target] = $x }
+"slow:$($s.slow.status -eq 'UNKNOWN' -and $s.slow.why -match 'timed out after 15 s on slow')"
+"part:$($s.part.status -eq 'READY' -and (@($s.part.mrs.mr) -join ',') -eq 'part!1' -and $s.part.why -match 'part!2: not checked: .*timed out after 15 s on part')"
+"parallel:$($sw.Elapsed.TotalSeconds -lt 60)"
+$null = Invoke-Deploy plan -TimeoutSec 15   # text mode: each row on stderr as it comes, a hanging env's too
 '@
-$res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq, (Join-Path (Kd) 'child-timeout.txt'), (Join-Path (Kd) 'child-calls.txt'))
+$res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq, (Join-Path (Kd) 'child-timeout.txt'), (Join-Path (Kd) 'child-calls'))
 Expect-Each $res 'deploy plan: one run per repo (slices of 4+ MRs) in parallel with only the targets each MR needs, a failed one UNKNOWN; a timeout keeps the rows already checked; each child gets the time left as -TimeoutSec (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel', 'childcap', 'perrepo', 'needed', 'slices', 'feeds')
 $all = $res -join "`n"
 Expect 'deploy plan: each NOT-DEPLOYED row printed as its check ends (a slow env''s too), DEPLOYED / UNKNOWN only counted per state' ($all -match '(?m)^\s+part!1 @ part: NOT-DEPLOYED x' -and $all -notmatch '(?m)^\s+good!2 @ good: DEPLOYED live' -and $all -match 'deploy plan probes: DEPLOYED \d+ · NOT-DEPLOYED \d+')

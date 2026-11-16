@@ -150,6 +150,17 @@ $rpOut = & { . $ckL
   $mr = @(Get-MissingRoutines t)
   "drops=$($rp.objectDrops -join ',')|tdrops=$($rp.drops -join ',')|fb=$(@($rp.fallback.table) -join ',')|warn=$(@($rp.warnings).Count)|missing=$(@($mr | ForEach-Object { "$($_.schema):$($_.names -join '+')" }) -join ',')" }
 Expect "localenv: restore keeps objects / seeds tables of a schema re-created after the mark; seed finds routines an executed changeSet made that are gone ($rpOut)" ($rpOut -eq 'drops=PROCEDURE:s2.p9|tdrops=s2.t2|fb=s1.t1|warn=1|missing=s1:p1')
+# missingRoutines: the changelog parse is cached by the last commit under the search path; a new commit or an uncommitted edit parses again
+git -C $ckr add -A; git -C $ckr -c user.name=t -c user.email=t@t commit -qm routines
+$rcOut = & { . $ckL
+  function Resolve-MigSets { [pscustomobject]@{ name = 'default'; tool = 'liquibase'; searchPath = $ckr; changelog = $null; dir = $null; masters = @(); schemas = @('s1') } }
+  function Invoke-DbSql([string]$e, [string]$sql) { if ($sql -match 'DATABASECHANGELOG') { , @('config/changelog/c2.xml', '5'); , @('config/changelog/c3.xml', '9') } }
+  $rcNames = { (@(Get-MissingRoutines t | ForEach-Object { "$($_.names -join '+')" }) -join ',') }
+  $rcA = & $rcNames; $rcFiles = @(Get-ChildItem (Get-KitPath cache) -Filter 'liquibase-routines-*.json')
+  $rcJ = Get-Content $rcFiles[0].FullName -Raw | ConvertFrom-Json -AsHashtable; $rcJ.made['changelog/c2.xml'].create = @('p1', 'pz'); $rcJ | ConvertTo-Json -Depth 8 | Set-Content $rcFiles[0].FullName
+  $rcB = & $rcNames; Add-Content (Join-Path $ckr 'changelog/c2.xml') ' '; $rcC = & $rcNames
+  git -C $ckr -c user.name=t -c user.email=t@t commit -qam touch; $rcD = & $rcNames; "$rcA|$rcB|$rcC|$rcD|$($rcFiles.Count)" }
+Expect "liquibase missingRoutines: the parse is reused while the changelog commit stays, parsed again on an edit or a new commit ($rcOut)" ($rcOut -eq 'p1|p1+pz|p1|p1|1')
 # rerunRoutines (a tenant import whose source lacks routines its history says ran): only the last changeSet creating a missing routine,
 # and only when it holds nothing but routine DROP / CREATE and every routine it creates is missing or dropped first; the rest kept
 $rrDir = Join-Path $ck 'rr'; New-Item -ItemType Directory -Force (Join-Path $rrDir 'cl') | Out-Null

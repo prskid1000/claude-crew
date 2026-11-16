@@ -30,7 +30,7 @@ Steps (evidence to `crafty.ps1 dir -Agent <id> -Kind evidence -Item <env>-<windo
    bug -Parent <ask> -Key watch-<env>-<signature> -Name '<that title>' -File <entry.md> -Signature '<file:line>|<error
    text>|<URL>'` (the open collector under the ask, any agent's, gets the entry, never a hand-made [Bug]; a known
    signature = a duplicate line, never a second task); no suspect MR -> one `[Bug] <env> — <signature>`
-   (`tracker create -Key <env>-<signature>` reuses an open one); `known` -> a comment with the new counts on its task.
+   (`tracker create -Key watch-<env>-<signature>` reuses an open one); `known` -> a comment with the new counts on its task.
    Evidence per entry: the query, counts now vs baseline, the sample, the time range, the suspect MR. Comments with
    `-Kind watch-<env>` (the next window edits it); a report doc with `devtools.py doc --key <env>:watch-<kind>`. Never closes,
    reopens or moves a task.

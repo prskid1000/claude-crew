@@ -102,8 +102,8 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
 - H3. Result rule (above): all pass -> close the task (`crafty.ps1 tracker status <task> closed` + a comment with the evidence);
-  own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw and the evidence; a new defect
-  -> `crafty.ps1 tracker create -Parent <ask> -Key <ask>-<defect> -Name "[Bug] <ask> — <defect>"`: steps, saw, expected, evidence.
+  own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw, the evidence; a new defect ->
+  `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "[Bug] <ask> — <defect>"`: steps, saw, expected, evidence.
 
 ## Lead steps (a test-only run; bossy T1-T4)
 - L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
