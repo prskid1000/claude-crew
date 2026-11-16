@@ -101,6 +101,11 @@ if ($IsWindows) {
   Expect "flashback options past the command-line limit ($($bigSchemas.Length) chars) reach db_flashback.py through an @file ($el)" ("$el" -match '^db_flashback\.py guard: \w+Error: ' -and "$el" -notmatch 'too long')
   Remove-TestKit $k4
 }
+# the test helper: a read without the end marker is asked again; a write batch is never re-run (it may have run: a re-run hides the flake)
+$tmq = & { $script:tmCalls = 0; function mysql { $script:tmCalls++; $global:LASTEXITCODE = 0; if ($script:tmCalls -eq 1) { 'lost' } else { 'r'; '__kit_rows_end__' } }
+  $tmCut = '\):.*'; "$(Invoke-TestMySql 'SELECT 1' 1):$script:tmCalls"; $script:tmCalls = 0
+  try { Invoke-TestMySql 'CREATE TABLE t (a int); INSERT INTO t VALUES (1)' 1 } catch { (("$_" -replace $tmCut, ')') + ":$script:tmCalls") } }
+Expect "Invoke-TestMySql: a lost read retried once, a lost write throws at once ($($tmq -join ' | '))" (($tmq -join ' | ') -eq 'r:2 | mysql: exit 0 without the end marker (a write: not re-run, it may have run):1')
 
 # ---- a scratch mysqld (own data dir and port, binlog ROW / FULL): never the env's server
 $mysqld = Get-Command mysqld -ErrorAction SilentlyContinue
@@ -113,10 +118,7 @@ $srv = Start-Process $mysqld.Source -ArgumentList "--no-defaults `"--datadir=$da
 try {
   for ($i = 0; $i -lt 60 -and -not (Test-NetConnection 127.0.0.1 -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue); $i++) { Start-Sleep 1 }
   $env:MYSQL_PWD = ''
-  function Q([string]$sql) {   # the end marker as in Invoke-DbSql: an exit 0 without output under load is retried, never 0 rows
-    foreach ($try in 1..3) { $o = @("$($sql.TrimEnd().TrimEnd(';'));`nSELECT '__kit_rows_end__';" | mysql -h 127.0.0.1 -P $port -u root --default-character-set=utf8mb4 -N -B 2>&1); if ($LASTEXITCODE) { throw "$o" }
-      if ($o.Count -and $o[-1] -eq '__kit_rows_end__') { return $o | Select-Object -SkipLast 1 } }
-    throw "mysql: no output 3 times: $sql" }
+  function Q([string]$sql) { Invoke-TestMySql $sql $port }
   Q @"
 CREATE DATABASE fa; CREATE DATABASE fb;
 CREATE TABLE fa.t (id int primary key auto_increment, s varchar(40), d decimal(8,2), f double, dt datetime(3), ts timestamp(2) null, dd date, tm time, j json, e enum('x','y'), st set('a','b','c'), b blob, u int unsigned, bt bit(4), g int as (char_length(s)) virtual, n text) charset utf8mb4;
@@ -193,10 +195,8 @@ INSERT INTO fb.ts VALUES (100, 1), (200, 2);
   $td = Px $L3 teardown -Env s 2>&1 | Out-String
   Expect "teardown: the guard's triggers and its journal schema removed ($($td.Trim()))" ($td -match 'removed: 4 trigger' -and "$(Q "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_NAME LIKE 'kit\_cg\_%'")" -eq '0' -and "$(Q "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'kit_journal'")" -eq '0')
   # structure: a release mark keeps slices of what its migration destroys; restore = structure back, then rows
-  # idempotent: Q re-runs the whole batch when the end marker is lost ("Table 'v1' already exists")
   $obj = "CREATE OR REPLACE VIEW fa.v1 AS SELECT id, note FROM fa.o; DROP PROCEDURE IF EXISTS fa.pr; CREATE PROCEDURE fa.pr() SELECT 1; CREATE TABLE IF NOT EXISTS fa.olog (n int auto_increment primary key, id int); DROP TRIGGER IF EXISTS fa.tr_o; CREATE TRIGGER fa.tr_o AFTER UPDATE ON fa.o FOR EACH ROW INSERT INTO fa.olog (id) VALUES (NEW.id)"
-  Q $obj; $rr = try { Q $obj; 'ok' } catch { "$_" }
-  Expect "objects setup: a retried batch runs again without error ($rr)" ($rr -eq 'ok')
+  Q $obj
   $sum3 = { (Q 'CHECKSUM TABLE fa.o, fa.r, fa.olog') -join ' | ' }; $c3 = & $sum3; $cr3 = (Q 'SHOW CREATE TABLE fa.o') -join ''; $ob3 = { "$((Q 'SHOW CREATE VIEW fa.v1') -join '')|$((Q 'SHOW CREATE PROCEDURE fa.pr') -join '')" }; $o3 = & $ob3
   $sv = & { . $L3; $n = New-Mark s 'release-7' 'release'; $sl = Save-Slices s $n @{ api = @{ items = @(@{ table = 'o'; kind = 'column'; columns = @('note', 'qty', 'added_later') }, @{ table = 'r'; kind = 'table'; columns = @() }); unknown = $false } }; "$n|$($sl.bytes)" }
   Q "ALTER TABLE fa.r DROP FOREIGN KEY fk_r_o; DROP VIEW fa.v1; ALTER TABLE fa.o DROP INDEX ix_note, DROP COLUMN note, MODIFY qty int, ADD COLUMN extra int DEFAULT 5; DROP TABLE fa.r; CREATE TABLE fa.neu (id int primary key); INSERT INTO fa.neu VALUES (1); UPDATE fa.o SET qty = 9 WHERE id = 2; INSERT INTO fa.o (id, qty) VALUES (4, 4); DROP PROCEDURE fa.pr; CREATE PROCEDURE fa.pr() SELECT 2; CREATE VIEW fa.v2 AS SELECT 1 AS x"

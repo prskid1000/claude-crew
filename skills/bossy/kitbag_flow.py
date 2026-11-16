@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L867 cycles · L943 pack · L1080 page · L1537 command
+Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L867 cycles · L943 pack · L1080 page · L1540 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -1361,6 +1361,8 @@ function walk(start) {
 function runTrace(start) { trace = walk(start); tIdx = 0; show(trace.map(s => s.n)); const ids = new Set(trace.map(s => s.via).filter(Boolean)); fE = new Set(VE.filter(v => [...ids].some(e => rep(N[e.s]) === v.a && rep(N[e.t]) === v.b)));
  fitTo([...focus]); tab('trace') }
 function stepTo(i) { if (!trace) return; tIdx = Math.max(0, Math.min(trace.length - 1, i)); sel = trace[tIdx].n; center(rep(sel) || sel); if (curTab === 'trace') tab('trace'); else draw() }
+let sizing = 0;   // pending side-panel resizes: size once the width transition ended (a loaded machine runs it late)
+const sizeLater = () => { sizing++; setTimeout(() => { sizing--; if (side.getAnimations().some(a => a.playState === 'running')) return sizeLater(); size() }, 200) };
 const side = $('#side'), sb = $('#sb'), esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
 const svgI = (name, col, s = 16) => `<svg class="ico" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${col || 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${IC[name]}"/></svg>`;
 const TABS = {code: ['code', 'Code'], trace: ['route', 'Trace'], loops: ['loop', 'Loops'], issues: ['warn', 'Issues'], key: ['key', 'Key']};   // the key docks in the side panel (a bottom sheet on phones), never over the graph
@@ -1369,8 +1371,8 @@ if (!D.issues.length) { delete TABS.issues; if (curTab === 'issues') curTab = 'c
 for (const t in TABS) { const d = document.createElement('button'); d.className = 'ri'; d.dataset.t = t; d.title = TABS[t][1] + (t === 'issues' ? (D.dirty ? ' (uncommitted work: commit is blocked until 0)' : '') : ''); d.setAttribute('aria-label', d.title); d.setAttribute('aria-pressed', 'false'); d.innerHTML = svgI(TABS[t][0], null, 20) + (t === 'issues' && D.issues.length ? `<span class="badge">${D.issues.length}</span>` : t === 'loops' ? `<span class="badge" style="background:var(--lp)">${D.cycles.length}</span>` : '');
  d.onclick = () => sideOpen && curTab === t ? closeSide() : openSide(t); $('#rail').append(d) }
 const narrow = () => matchMedia('(max-width:640px)').matches;   // phones: the side panel is a bottom sheet over the graph
-function openSide(t) { curTab = t; LS.set('tab', t); if (!sideOpen) { sideOpen = true; side.style.width = sideW + 'px'; side.classList.add('open'); LS.set('open', true) } tab(t); setTimeout(size, 200) }
-function closeSide() { sideOpen = false; side.style.width = '0'; side.classList.remove('open'); LS.set('open', false); document.querySelectorAll('.ri').forEach(r => { r.classList.remove('on'); r.setAttribute('aria-pressed', 'false') }); setTimeout(size, 200) }
+function openSide(t) { curTab = t; LS.set('tab', t); if (!sideOpen) { sideOpen = true; side.style.width = sideW + 'px'; side.classList.add('open'); LS.set('open', true) } tab(t); sizeLater() }
+function closeSide() { sideOpen = false; side.style.width = '0'; side.classList.remove('open'); LS.set('open', false); document.querySelectorAll('.ri').forEach(r => { r.classList.remove('on'); r.setAttribute('aria-pressed', 'false') }); sizeLater() }
 const fl = n => D.files[n.g].id + (n.ln ? ':' + n.ln : '');
 const row = (n, title, extra, cls, fn) => { const d = document.createElement('div'); d.className = 'li ' + (cls || ''); d.innerHTML = (extra || '') + (n ? svgI(KD[n.kk][1], n.col) : '') + `<span class="t">${title}<span class="f">${n ? esc(fl(n)) : ''}</span></span>`; d.onclick = fn;
  d.tabIndex = 0; d.setAttribute('role', 'button'); d.onkeydown = e => { if (e.target === d && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fn() } }; return d };   // a row holds a select (trace decisions): a div with the button role, not a <button>
@@ -1440,7 +1442,7 @@ function code(n) {
 }
 $('#grip').onpointerdown = e => { e.preventDefault(); side.classList.add('drag'); const mv = ev => { sideW = Math.max(280, Math.min(innerWidth * .7, innerWidth - 44 - ev.clientX)); side.style.width = sideW + 'px'; size(); if (sel) center(rep(sel) || sel) };
  const up = () => { side.classList.remove('drag'); LS.set('w', sideW); removeEventListener('pointermove', mv); removeEventListener('pointerup', up) }; addEventListener('pointermove', mv); addEventListener('pointerup', up) };
-$('#grip').ondblclick = () => { sideW = 420; side.style.width = sideW + 'px'; LS.set('w', sideW); setTimeout(size, 200) };
+$('#grip').ondblclick = () => { sideW = 420; side.style.width = sideW + 'px'; LS.set('w', sideW); sizeLater() };
 ['Overview', 'Detail', 'Everything'].forEach((t, i) => { const b = document.createElement('button'); b.className = 'b'; b.textContent = t; b.onclick = () => setLevel(i); $('#lv').append(b) });
 function menu(id, items, state, label) { const dd = $(id), m = dd.querySelector('.menu'); dd.firstElementChild.onclick = e => { e.stopPropagation(); document.querySelectorAll('.dd').forEach(x => x !== dd && x.classList.remove('open')); dd.classList.toggle('open'); ddAria() };
  m.onclick = e => e.stopPropagation();
@@ -1521,6 +1523,7 @@ rebuild(); for (let i = 0; i < 420; i++) tick(); alpha = 0; size(); if (LS.get('
 fillList(''); setList(LS.get('view', narrow() ? 'list' : 'graph') === 'list'); setIntro(LS.get('intro', true));
 if (!fromHash() && home) { sel = home; neigh(home); toHash() }   // a first look: the coordinator and its links
 // ui-check layout hook: drawn node and label boxes in page px, and the free area they must stay inside (kitbag.py ui-check)
+window.uiBusy = () => sizing > 0 || alpha > .02;   // kitbag.py ui-check waits while a resize is pending or the layout still moves
 window.uiBoxes = () => { const m = $('#main').getBoundingClientRect(), [a, b, c, d] = free(), P = (x, y) => [x * sc + tx + m.left, y * sc + ty + m.top];
  if (listMode && narrow()) return {view: [a + m.left, b + m.top, c + m.left, d + m.top], boxes: []};   // the list covers the graph
  const out = VN.map(n => { const r = dr(n), [x, y] = P(n.x - r, n.y - r); return {id: 'node ' + n.l, key: 'n' + n.i, b: [x, y, 2 * r * sc, 2 * r * sc]} });

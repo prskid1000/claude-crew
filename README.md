@@ -219,7 +219,8 @@ as tall as its content. Content never truncates; it wraps (every kit page: `kitb
 24+ px short of its box at 1280+ px (an empty column), on a canvas page's
 `window.uiBoxes()` node or label off-screen or overlapping, and on each issue a page's own `window.uiChecks()` returns: the
 dashboard checks a one-row header at desktop width, a text label on every bar and sparkline, and no card under a column with
-48+ px free above it).
+48+ px free above it). It checks a page at rest, never after a fixed sleep: fonts loaded, finite animations done, each toggle event
+run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 
 ## Configuration
 `skills/crafty/kit.local.json`, every key optional; the table is generated from `kit.example.json` (`_readme` / `_doc`).

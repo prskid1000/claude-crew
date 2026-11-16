@@ -24,10 +24,7 @@ $srv = Start-Process $mysqld.Source -ArgumentList "--no-defaults `"--datadir=$da
 try {
   for ($i = 0; $i -lt 60 -and -not (Test-NetConnection 127.0.0.1 -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue); $i++) { Start-Sleep 1 }
   $env:MYSQL_PWD = ''
-  function Q([string]$sql) {   # the end marker as in Invoke-DbSql: an exit 0 without output under load is retried, never 0 rows
-    foreach ($try in 1..3) { $o = @("$($sql.TrimEnd().TrimEnd(';'));`nSELECT '__kit_rows_end__';" | mysql -h 127.0.0.1 -P $port -u root --default-character-set=utf8mb4 -N -B 2>&1); if ($LASTEXITCODE) { throw "$o" }
-      if ($o.Count -and $o[-1] -eq '__kit_rows_end__') { return $o | Select-Object -SkipLast 1 } }
-    throw "mysql: no output 3 times: $sql" }
+  function Q([string]$sql) { Invoke-TestMySql $sql $port }
   Q @"
 CREATE DATABASE fa; CREATE DATABASE fb;
 CREATE TABLE fa.t (id int primary key auto_increment, s varchar(40), d decimal(8,2), f double, dt datetime(3), ts timestamp(2) null, dd date, tm time, j json, e enum('x','y'), st set('a','b','c'), b blob, u int unsigned, bt bit(4), g int as (char_length(s)) virtual, n text) charset utf8mb4;
