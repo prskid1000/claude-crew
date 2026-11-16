@@ -22,8 +22,8 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L35 config · L230 state · L277 layer drops · L349 leases · L477 code · L509 migrations ·
-  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds · L830 hooks · L902 marks · L1082 seed ·
-  L1149 processes · L1528 daemon · L1988 cleanup · L2060 doctor · L2113 verbs
+  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds · L833 hooks · L905 marks · L1085 seed ·
+  L1152 processes · L1531 daemon · L1991 cleanup · L2063 doctor · L2116 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -763,8 +763,11 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
   }
   $out
 }
-# localEnv.stageLinks: a release links, never copies (lib.ps1 Add-KitLinkedFiles; store <service>/_lib, no AOT cache)
-function Add-ReleaseFiles([string]$from, [string]$to, [switch]$Release, [switch]$Move) { Add-KitLinkedFiles $from $to (Join-Path (Split-Path $to) '_lib') -Release:$Release -Move:$Move -Skip 'app.aot' -Link (Opt 'stageLinks' $true) }
+# localEnv.stageLinks: a release links, never copies (flagged.ps1 linkfiles; store <service>/_lib); off: copies, no AOT cache
+function Add-ReleaseFiles([string]$from, [string]$to, [switch]$Release, [switch]$Move) {
+  if (Opt 'stageLinks' $true) { & (Join-Path $script:KitLibDir 'flagged.ps1') linkfiles -Text $from -To $to -Release:$Release -Move:$Move; return }
+  $null = New-Item -ItemType Directory -Force $to; Copy-Item (Join-Path $from '*') $to -Recurse -Force -Exclude 'app.aot'
+}
 # the release folder an artifact path lies in (artifact = a file in it, or the folder itself)
 function ReleaseDirOf([string]$root, [string]$art) { if (-not $art) { return $null }; $rel = [IO.Path]::GetRelativePath($root, $art); if ($rel -match '^\.\.') { return $null }; Join-Path $root (($rel -split '[\\/]')[0]) }
 # -> the release folders past keepReleases that no service runs from (removed; -DryRun: listed only)
