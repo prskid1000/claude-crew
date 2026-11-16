@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L29 sweep · L183 wt · L504 stack · L686 gate · L1002 check · L1311 pipes · L1368 guard · L2198 dir ·
-  L2208 checkpoint · L2237 prior · L2275 tracker · L2297 task spec · L2473 scope · L2520 host
+Sections: L23 init · L29 sweep · L183 wt · L504 stack · L686 gate · L1002 check · L1311 pipes · L1368 guard · L2216 dir ·
+  L2226 checkpoint · L2255 prior · L2293 tracker · L2315 task spec · L2491 scope · L2538 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1707,6 +1707,22 @@ $tmpRoots = @('/tmp', $env:TEMP, $env:TMP, [IO.Path]::GetTempPath()) | Where-Obj
 $tmpRx = '(?i)(?:^|[\s''"=<>(,@])(?:' + ((@($tmpRoots | ForEach-Object { [regex]::Escape($_) }) + '\$env:(?:TEMP|TMP)', '%(?:TEMP|TMP)%', '\$\{?TMPDIR\}?') -join '|') + ')[\\/](?<f>[^\s''"\\/;|&)]*(?:body|desc|comment|summary|message|msg)[^\s''"\\/;|&)]*)(?=$|[\s''";|&)])'
 $tmpHit = @(@($edits | Where-Object { $_ } | ForEach-Object { " $_" }) + $(if ($cmd) { $cmd }) | ForEach-Object { if ($_ -match $tmpRx) { $Matches.f } })
 if ($tmpHit) { $raw = "$($in.tool_name) $($tmpHit[0])"; Deny "kit guard: $($tmpHit[0]) is in the shared temp root (other agents use the same names): write it under & $($KitCmd.dev) dir -Agent <id> -Name $($tmpHit[0])" }
+# files at a drive root or outside every root outlive their agent
+$uh = [Environment]::GetFolderPath('UserProfile')
+$writeRoots = @(@($wsRoot, $script:KitRoot, (Get-KitRuntime), (Split-Path (Get-KitPath tracking)), $KitConf.ReposRoot) + @($KitConf.WorktreeRoots) + $mainRoots + @($tmpRoots) +
+  @(@(Get-KitSetting 'guard.writeRoots' @()) | ForEach-Object { "$_" -replace '^~(?=[\\/]|$)', $uh }) + "$uh/.claude" + "$uh/Downloads" |
+  Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') } | Where-Object { $_ } | Select-Object -Unique)
+function StrayWrite([string]$p, [string]$base) {
+  if (-not $p -or $p -match '[$%*?<>|`]|^[A-Za-z]:(?![\\/]|$)|^(nul|-)$' -or ($IsWindows -and $p -match '^[\\/](?![A-Za-z]([\\/]|$))')) { return }
+  $p = ($p -replace '^~(?=[\\/]|$)', $uh) -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'
+  if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return }; $p = Join-Path $base $p }
+  $f = [IO.Path]::GetFullPath($p); $r0 = [IO.Path]::GetPathRoot($f); if ($f.Length -gt $r0.Length) { $f = $f.TrimEnd('\', '/') }; $par = [IO.Path]::GetDirectoryName($f)
+  if (@($writeRoots | Where-Object { Under $f $_ }).Count) { return }
+  if (-not $par -or $par -eq $r0) { return 'writes at a drive root' }
+  if (-not (Test-Path -LiteralPath $f) -and -not (GitCommon $par)) { 'is a new file outside the workspace and every repo' }
+}
+$rootWhy = "agent files go under & $($KitCmd.dev) dir -Agent <id> -Name <file>; an owner-asked place: guard.writeRoots"
+foreach ($e in $edits) { if (($sk = StrayWrite $e $here)) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $sk ($rootWhy)" } }
 # runtime / state writes need a _paths name (guard.layout)
 $layout = @(@((Get-KitRuntime), 'runtime'), @((Split-Path (Get-KitPath tracking)), 'durable'))
 function OffLayout([string]$p, [string]$base) {
@@ -1825,8 +1841,10 @@ foreach ($seg in DeleteSegments $raw) {
   $wrote = @([regex]::Matches($seg, '(?<![\d&>])>{1,2}(?!&)\s*(?<t>\S+)') | ForEach-Object { $_.Groups['t'].Value })
   if ($seg -match '(^|[\s(`])(cp|mv|Copy-Item|Move-Item)\s') { $wrote += ($seg.TrimEnd() -split '\s+')[-1] }
   if ($seg -match '(^|[\s(`])(?<v>mkdir|md|New-Item|ni|touch|tee|Out-File|Set-Content|Add-Content)\s+(?<a>.*)$') { $wrote += @($Matches.a -split '\s+' | Where-Object { $_ -and $_ -notmatch '^-' }) }
+  $wrote += @([regex]::Matches($seg, '(?i)::(Write|Append)All\w*\(\s*(?<t>[^,\s)]+)') | ForEach-Object { $_.Groups['t'].Value })
   if (@($wrote | ForEach-Object { RuntimeKinds " $($_.Trim('''"'))" $segBase }) -contains 'stray') { Deny "kit guard: that writes $strayWhy" }
   foreach ($x in $wrote) { if (MainScratch $x.Trim('''"') $segBase) { Deny "kit guard: $x $scratchWhy" } }
+  foreach ($x in $wrote -match '[\\/.]') { if (($sk = StrayWrite $x.Trim('''"') $segBase)) { Deny "kit guard: $x $sk ($rootWhy)" } }
 }
 # a bare remove leaves junction skeletons no repo lists, and the branch
 if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+("[^"]*"|\S+)\s+)*worktree\s+remove\b') { Deny "kit guard: use & $($KitCmd.dev) wt remove -Dir <worktree>: it unlinks shared folders first, prunes and deletes the branch once nothing is lost (a bare git worktree remove leaves junctions behind)" }

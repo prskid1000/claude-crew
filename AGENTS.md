@@ -90,7 +90,8 @@ These rules hold whatever the route:
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by
   name (`Get-KitPath`); never elsewhere in the kit. Your own files (notes, bodies, diffs, logs, evidence outside a QA run) go
   only where `crafty.ps1 dir -Agent <id> [-Item <task>] [-Name <file>]` (or `-Kind evidence -Item <task>`) says, never in `/tmp`,
-  `%TEMP%` itself or a main checkout (shared: the guard denies body / desc files there).
+  `%TEMP%` itself, a main checkout, a drive root or outside the workspace (the guard denies body / desc files in temp, new
+  files at a main checkout's top, at a drive root or outside every kit / repo root; owner-asked places: `guard.writeRoots`).
 - The kit learns: every agent reads its lessons at step 0 (`bossy.ps1 learn -Read -Skill <skill>`) and records surprises with
   `bossy.ps1 learn`.
 - **The main session coordinating agents** loads `bossy` and follows its Events table (heartbeat, decisions, `deploy <env>`,

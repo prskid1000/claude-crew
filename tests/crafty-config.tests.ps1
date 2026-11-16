@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-crafty-config.tests.ps1: crafty.ps1 stack / check config: -Touched, .claude-stack.json, switches (stack.presets, tests.fallbackRunner, protectedBranchesBase, linkDefaults, guard.heavyPatterns / e2ePatterns).
+crafty-config.tests.ps1: crafty.ps1 stack / check config: -Touched, .claude-stack.json, switches (stack.presets, tests.fallbackRunner, protectedBranchesBase, linkDefaults, guard.heavyPatterns / e2ePatterns); guard stray writes (drive root, outside every root, guard.writeRoots).
 Usage: pwsh -NoProfile -File <kit>/tests/crafty-config.tests.ps1 (or tests/kit-tests.ps1 -Area crafty-config).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -39,5 +39,24 @@ $hn = (pwsh @np $D guard -Json (& $gj 'bazel build //app') 2>&1) -join '' -match
 Expect "config switches: unset = presets on, spec.mjs, base main/master/develop/release, node_modules+.venv; set = presets off, no fallback, the legacy branch list, no links, guard extras deny ($s0 | $s1 | $s2 | $hb $he $hn)" (
   $s0 -match '^stack=go\|spec=node .*spec\.mjs.* \{tests\}\|keep=True,False,False\|links=node_modules\+\.venv$' -and $s1 -match '^stack=none\|spec=null\|keep=True,True,True\|links=( .*no preset detects|$)' -and
   $s2 -match '^stack=go\|spec=npx mocha \{tests\}' -and $hb -and $he -and -not $hn)
+# (cap move from guard) stray writes (D:\tmpj.txt, D:\c.md): a new file at a drive root or outside every root is denied per write pattern; guard.writeRoots lets an owner-asked place through
+$swr = Invoke-PsTest 'guard-stray' @'
+$d, $kd = $args; $dq = [IO.Path]::GetPathRoot($kd); $dm = '/' + $dq.Substring(0, 1).ToLower(); $sf = "kit-stray-$PID"; $dr = 'at a drive root'; $ou = 'outside the workspace'
+$cases = @(@('Bash', "crafty.ps1 wt new x > $dq$sf.txt", $dr), @('Bash', "pokey.ps1 deployed > $dm/$sf.txt", $dr), @('Bash', "echo x >> `"$dq$sf.md`"", $dr),
+  @('Bash', "git log | tee $dq$sf.txt", $dr), @('Bash', "cp a.txt $dq", $dr), @('Bash', "cd $dm/ && git log > $sf.txt", $dr),
+  @('PowerShell', "git log | Out-File -FilePath $dq$sf.txt", $dr), @('PowerShell', "Set-Content -Path $dq$sf.txt -Value 1", $dr),
+  @('PowerShell', "[IO.File]::WriteAllText('$dq$sf.txt', 'x')", $dr), @('Write', "$dq$sf.md", $dr), @('Bash', "echo x > ~/$sf.txt", $ou), @('Write', "~/$sf/notes.md", $ou),
+  @('Bash', "cat $dq$sf.txt; git -C $dq status 2>/dev/null >/dev/null; echo x > nul; echo a > x:y; ls $dm > $kd/$sf.txt; echo x > ~/.claude/$sf/n.md", ''),
+  @('PowerShell', "Get-Content $dq$sf.txt; 'x' | Out-File ~/Downloads/$sf.html; git log > $kd/$sf.txt; 1 > `$null", ''), @('Write', "~/Downloads/$sf.html", ''),
+  @('PowerShell', "New-Item -ItemType Directory -Force -Path $kd/o; git log | Out-File -Encoding utf8 $kd/a.txt", '', $dq))   # option values from a cwd outside every root
+foreach ($c in $cases) {
+  $ti = if ($c[0] -eq 'Write') { @{ file_path = $c[1] } } else { @{ command = $c[1] } }
+  $o = (& $d guard -Json (@{ tool_name = $c[0]; cwd = $(if ($c[3]) { $c[3] } else { $kd }); tool_input = $ti } | ConvertTo-Json -Compress)) -join ''
+  $ok = if ($c[2]) { $o -match '"deny"' -and $o -match ([regex]::Escape($c[2]) + '.*dir -Agent') } else { $o -notmatch '"deny"' }; if (-not $ok) { "FAIL $($c[0]) $($c[1]) -> $o" }
+}
+$kl = "$kd/skills/crafty/kit.local.json"; '{"guard":{"writeRoots":["~/' + $sf + '"]}}' | Set-Content $kl
+if (((& $d guard -Json (@{ tool_name = 'Write'; cwd = $kd; tool_input = @{ file_path = "~/$sf/notes.md" } } | ConvertTo-Json -Compress)) -join '') -match '"deny"') { 'FAIL writeRoots' }; Remove-Item $kl
+'@ @($D, $k)
+Expect "guard: new files at a drive root or outside every root denied (redirect, tee, cp, cd + redirect, Out-File, Set-Content, WriteAllText, Write); reads, /dev/null, nul, kit, ~/.claude, Downloads, guard.writeRoots pass ($swr)" (-not "$swr".Trim())
 Remove-TestKit $k
 Complete-Tests
