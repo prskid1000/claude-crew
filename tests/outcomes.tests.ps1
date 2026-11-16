@@ -6,7 +6,7 @@ Usage: pwsh -NoProfile -File tests/outcomes.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/adapters/outcomes.ps1')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/bossy/adapters/outcomes.ps1') + @('github', 'gitlab', 'bitbucket', 'gitea', 'azure_devops', 'tracker_clickup', 'tracker_jira', 'tracker_linear', 'tracker_youtrack', 'tracker_azure' | ForEach-Object { "skills/crafty/adapters/$_.ps1" })   # copied into every New-TestKit kit (the link tests: each host and tracker adapter)
 $k = New-TestKit outcomes; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $fx = Join-Path $k 'fx.ps1'   # runs adapter functions on the test kit
 Set-Content $fx "param([string]`$Code)`n. '$k/skills/crafty/lib.ps1'; . '$k/skills/bossy/adapters/outcomes.ps1'; Invoke-Expression `$Code"
@@ -25,8 +25,37 @@ Expect 'outcomes: one row per task, a second sweep with no change writes none' (
 Expect 'outcomes: first pass, came back, rounds, a [Bug] under it, spend split, hours' (-not $r1.qaFirstPass -and $r1.cameBack -and $r1.stage -eq 'passed' -and $r1.localRounds -eq 3 -and $r1.reviewFix -eq 1 -and $r1.bugs -eq 1 -and $r1.spend -eq 500 -and $r1.hPromoted -eq 4 -and $r1.area -eq 'api,web')
 $lines = pwsh @np $fx 'Get-KitOutcomeLines' | Out-String
 Expect 'outcomes summary: totals, worst area, agent rounds, a repeat cause' ($lines -match 'QA first pass 0/1, came back 1' -and $lines -match 'area api: 2 task\(s\)' -and $lines -match 'agent A1: 3 fix round' -and $lines -match 'cause 2x: local loop refused')
+& $put tasks 't3.json' @{ task = 't3'; spec = @{ kind = 'Feature' }; track = @{ mrs = @('cs!4'); created = '2026-11-02T10:00:00+00:00' }; envRuns = @(); updated = (Get-Date).ToString('o') }   # a repo with no QA'd task: the "other" bar
+$null = pwsh @np $fx 'Update-KitOutcomes'
 $oh = & { . $O; Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o') }) } | Out-String
-Expect 'dashboard: Kit internals has the Outcomes fold, one labelled first-pass bar per area' ($oh -match 'id=sec-outcomes' -and $oh -match "aria-label='first pass 0/1'" -and $oh -match 'api: 2 task\(s\)')
+$fvMiss = @([regex]::Matches($oh, "data-ft='#oc-tasks' data-fv='([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Where-Object { $oh -notmatch "<li data-fk='([^']* )?$([regex]::Escape($_))( [^']*)?'>" })
+Expect "dashboard: every repo segment's filter value names a listed task, the other bar too ($fvMiss)" (-not $fvMiss.Count -and $oh -match 'other \(cs\) <b>1</b>')
+$bDay, $cDay = '2026-11-02T10:00:00+00:00', '2026-11-04T10:00:00+00:00' | ForEach-Object { ([datetimeoffset]$_).LocalDateTime.ToString('yyyy-MM-dd') }
+$ocRaw = Get-Content (TkPath $k outcomes) -Raw
+Expect 'outcome rows: promoted, closed and came-back times (UTC text; the earliest of reopen, a failing run, a [Bug])' ($ocRaw -match '"task":"t1".*"doneAt":"2026-11-01T14:00:00Z","closedAt":"2026-11-04T10:00:00Z","backAt":"2026-11-02T10:00:00Z"')
+Expect 'dashboard: Kit internals has the Delivery fold, a stacked bar per repo, each segment labelled, clickable, its tasks listed by repo:bucket and day' ($oh -match 'id=sec-delivery' -and $oh -match '<span class=obn>api <b>2</b></span>' -and $oh -match "aria-label='api &#183; came back: 1' data-ft='#oc-tasks' data-fv='api:back'[^>]*>1</i>" -and $oh -match "aria-label='api &#183; not tested yet: 1'" -and $oh -match "<li data-fk='api:back web:back d$cDay d$bDay'>" -and $oh -match 'id=oc-tasks class=.ftl uc.><p class=fclr hidden>')
+# buckets: came back first, then not tested, then passed by fix rounds (none recorded: no wave names the task)
+$bk = pwsh @np $fx "@(@{ cameBack = `$true; stage = 'passed' }, @{ stage = 'deployed' }, @{ stage = 'passed' }, @{ stage = 'passed'; agents = @('A'); localRounds = 1 }, @{ stage = 'passed'; agents = @('A'); localRounds = 2; reviewFix = 0 }, @{ stage = 'passed'; agents = @('A'); localRounds = 3; reviewFix = 2 }) | ForEach-Object { Get-KitOutcomeBucket ([pscustomobject]`$_) }"
+Expect "outcome buckets: back, wait, rounds not recorded, 0, 1, 3+ ($bk)" ("$bk" -eq 'back wait rna r0 r1 r3')
+# a test run's QA chip: its env runs by name (<date>-<time>-<name>), else its tasks' runs inside its window
+$qa = pwsh @np $fx "`$ix = @([pscustomobject]@{ task = 'q1'; envRuns = @([pscustomobject]@{ run = '2026-11-13-210657-p4-retest'; pass = 5; fail = 1; notTested = 0; at = '2026-11-13T21:30:00' }) }, [pscustomobject]@{ task = 'q2'; envRuns = @([pscustomobject]@{ run = 'other'; pass = 2; fail = 0; notTested = 1; at = '2026-11-13T21:20:00' }, [pscustomobject]@{ run = 'old'; pass = 9; fail = 0; notTested = 0; at = '2026-11-01T10:00:00' }) })
+  `$q = Get-KitRunQa ([pscustomobject]@{ qaName = 'p4-retest'; tasks = @('q2'); started = '2026-11-13T21:00:00'; at = '2026-11-13T21:40:00' }) `$ix; `"`$(`$q.pass) `$(`$q.fail) `$(`$q.nt) `$(`$q.failed -join ',') `$(`$q.untested -join ',')`""
+Expect "test run QA: 7 pass 1 fail 1 not tested, q1 failed testing, q2 untested, the old run of q2 left out ($qa)" ("$qa" -eq '7 1 1 q1 q2')
+# links per adapter: the git host's mr.url and the tracker's url; display text = repo!n (gitlab, azure) or repo#n, an alias named by its repo; no web URL (tracker none) = text
+$lk = foreach ($c in @(@('gitlab', 'clickup', 'api!7', 'abc123', 'backend!7 https://git.example/backend/-/merge_requests/7|abc123 https://app.clickup.com/t/abc123'),
+    @('github', 'jira', 'grp/backend!7', 'AB-1', 'backend#7 https://git.example/grp/backend/pull/7|AB-1 https://jira.test/browse/AB-1'),
+    @('bitbucket', 'linear', 'grp/backend!7', 'AB-1', 'backend#7 https://bitbucket.org/grp/backend/pull-requests/7|AB-1 https://linear.app/acme/issue/AB-1'),
+    @('gitea', 'youtrack', 'grp/backend!7', 'AB-1', 'backend#7 https://git.example/grp/backend/pulls/7|AB-1 https://yt.test/issue/AB-1'),
+    @('azure', 'azure', 'org/proj/backend!7', '42', 'backend!7 https://dev.azure.com/org/proj/_git/backend/pullrequest/7|42 https://dev.azure.com/acme/web/_workitems/edit/42'),
+    @('gitlab', 'github', 'https://git.example/grp/backend/-/merge_requests/8', '12', 'backend!8 https://git.example/grp/backend/-/merge_requests/8|12 https://github.com/grp/issues-repo/issues/12'),
+    @('gitlab', 'gitlab', 'grp/backend!7', '12', 'backend!7 https://git.example/grp/backend/-/merge_requests/7|12 https://git.example/grp/issues-repo/-/issues/12'),
+    @('gitlab', 'none', 'grp/backend!7', 't-9', 'backend!7 https://git.example/grp/backend/-/merge_requests/7|t-9 '))) {
+  & $J @{ gitHostType = $c[0]; gitHost = $(if ($c[0] -notin 'bitbucket', 'azure') { 'git.example' }); repos = @(@{ name = 'backend'; aliases = @('api') }); tracker = @{ type = $c[1]; repo = 'grp/issues-repo'; org = 'acme'; project = 'web' } } (Join-Path $k 'skills/crafty/kit.local.json')
+  $env:JIRA_BASE_URL = 'https://jira.test'; $env:YOUTRACK_URL = 'https://yt.test'
+  $got = pwsh @np $fx "`$m = Get-KitMrLink '$($c[2])'; `$t = Get-KitTaskLink '$($c[3])'; `"`$(`$m.text) `$(`$m.url)|`$(`$t.text) `$(`$t.url)`""
+  if ("$got" -ne $c[4]) { "$($c[0])/$($c[1]): $got" } }
+Remove-Item (Join-Path $k 'skills/crafty/kit.local.json'), Env:JIRA_BASE_URL, Env:YOUTRACK_URL -ErrorAction SilentlyContinue
+Expect "page links per git host (gitlab github bitbucket gitea azure) and tracker (clickup jira linear youtrack azure github gitlab none) ($lk)" (-not $lk)
 Remove-Item (Join-Path (TkPath $k waves) 'wf_1.json'); (Get-Item (Join-Path (TkPath $k tasks) 't2.json')).LastWriteTime = (Get-Date).AddMinutes(1)
 $n3 = pwsh @np $fx 'Update-KitOutcomes'
 Expect 'outcomes: an aged-out wave report never shrinks the rounds (no new row)' ("$n3" -eq '0')

@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L82 state · L156 config · L237 OS · L457 leases · L856 status · L1112 supervise sweep · L1190 tracker ·
-  L1519 prior · L1535 ask bugs · L1720 git-host · L1912 kitlog · L2032 params · L2337 entry-scripts
+  L1519 prior · L1535 ask bugs · L1720 git-host · L1925 kitlog · L2045 params · L2350 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1831,7 +1831,20 @@ function Format-KitMrLink([string]$Ref) {
   $u = if ($r -match '^https?://') { $r } else { try { "$(Invoke-HostVerb 'mr.url' @{ repo = $p.repo; n = $p.n })".Trim() } catch { '' } }
   if ($u -notmatch '^https?://[^/\s]+/\S+$') { return $r }; "[$(if ($r -match '^https?://') { "$(($p.repo -split '/')[-1])!$($p.n)" } else { $r })]($u)"
 }
-function ConvertFrom-KitMrRef([string]$Ref) { $r = "$Ref".Trim(); if ($u = ConvertFrom-MrUrl $r) { $u } elseif ($r -match '^(?<repo>[\w./-]+)[!#](?<n>\d+)$') { @{ repo = (Get-HostProject $Matches.repo -Raw); n = $Matches.n; type = $script:HostType } } }
+function ConvertFrom-KitMrRef([string]$Ref) { $r = "$Ref".Trim(); if ($u = ConvertFrom-MrUrl $r) { $u } elseif ($r -match '^(?<repo>[\w./-]+)[!#](?<n>\d+)$') { $rp = $Matches.repo; $rn = $Matches.n; @{ repo = (Get-HostProject $(if ($rp.Contains('/')) { $rp } else { Get-KitRepoName $rp }) -Raw); n = $rn; type = $script:HostType } } }   # an alias ref names its repo
+# page links (dashboard, run pages): an MR ref or URL -> @{ text = <repo>!<n> (gitlab, azure) or <repo>#<n>; url = host mr.url } and a task id
+# -> @{ text = id; url = tracker url }; url '' when the adapter gives no web URL (tracker none: a file path), so the page shows plain text
+function Get-KitMrLink([string]$Ref) {
+  $r = "$Ref".Trim(); $p = ConvertFrom-KitMrRef $r; if (-not $p) { return @{ text = $r; url = '' } }
+  $u = if ($r -match '^https?://') { $r } else { try { "$(Invoke-HostVerb 'mr.url' @{ repo = $p.repo; n = $p.n })".Trim() } catch { '' } }
+  @{ text = "$(Get-KitRepoName (("$($p.repo)" -split '/')[-1]))$(if ("$($p.type)" -in 'gitlab', 'azure') { '!' } else { '#' })$($p.n)"; url = $(if ($u -match '^https?://[^/\s]+/\S+$') { $u } else { '' }) }
+}
+function Get-KitTaskLink([string]$Id) { $i = "$Id".Trim(); $u = if ($i) { try { "$(Get-TrackerUrl $i)".Trim() } catch { '' } }; @{ text = $i; url = $(if ($u -match '^https?://[^/\s]+/\S+$') { $u } else { '' }) } }
+# a repo alias or host path leaf -> the repos[] name (api -> backend); unknown: as given
+function Get-KitRepoName([string]$Name) {
+  if (-not $script:KitRepoNames) { $script:KitRepoNames = @{}; foreach ($rp in @(Get-KitValue 'repos' @())) { foreach ($n in @(@($rp.name) + @($rp.aliases) | Where-Object { $_ })) { $script:KitRepoNames["$n".ToLower()] = "$($rp.name)" } } }
+  $k = "$Name".Trim(); if ($script:KitRepoNames.ContainsKey($k.ToLower())) { $script:KitRepoNames[$k.ToLower()] } else { $k }
+}
 # MR CLIs the guard checks (exe, MR noun, option names); gitHostApi.hostCli adds more
 $script:KitHostCli = [ordered]@{
   gitlab = @{ exe = 'glab'; noun = 'mr'; source = '-s', '--source-branch'; target = '-b', '--target-branch'; title = '-t', '--title'; valued = '-R', '--repo', '-m', '--message', '--squash-message', '--sha' }

@@ -7,11 +7,12 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L13 outcomes · L78 summary · L106 patterns · L141 rules
+Sections: L13 outcomes · L82 summary · L191 patterns · L226 rules
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
-$script:KitOutcomeKeys = @('kind', 'parent', 'area', 'agents', 'stage', 'mrs', 'qaRuns', 'qaFirstPass', 'qaFails', 'bugs', 'cameBack', 'localRounds', 'reviewFix', 'decisions', 'hPromoted', 'hClosed', 'spend')
+$script:KitOutcomeKeys = @('kind', 'parent', 'area', 'agents', 'stage', 'mrs', 'qaRuns', 'qaFirstPass', 'qaFails', 'bugs', 'cameBack', 'localRounds', 'reviewFix', 'decisions', 'hPromoted', 'hClosed', 'spend', 'doneAt', 'closedAt', 'backAt')
+function ConvertTo-KitOutcomeIso($At) { if (-not $At) { return $null }; try { ([datetimeoffset]$At).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ') } catch { $null } }   # UTC text: sorts and compares as a string
 function Get-KitOutcomeHours($From, $To) { if (-not $From -or -not $To) { return $null }; try { [math]::Round(([datetime]$To - [datetime]$From).TotalHours, 1) } catch { $null } }
 # a person's answer, not an agent's, a standing rule's or a superseded one
 function Get-KitOwnerAnswers {
@@ -24,7 +25,8 @@ function Get-KitOwnerAnswers {
 function Get-KitOutcomeContext {
   $c = @{ ix = @{}; agents = @{}; local = @{}; review = @{}; bugs = @{}; decisions = @{}; spend = @{} }
   foreach ($x in @(Read-KitJsonFiles (Get-KitPath tasks))) { if ($x.task) { $c.ix["$($x.task)"] = $x } }
-  foreach ($x in $c.ix.Values) { if ($x.parent -and ("$($x.spec.kind)" -match '(?i)bug' -or "$($x.spec.title)" -match '^\[Bug\]')) { $c.bugs["$($x.parent)"] = [int]$c.bugs["$($x.parent)"] + 1 } }
+  $c.bugAt = @{}
+  foreach ($x in $c.ix.Values) { if ($x.parent -and ("$($x.spec.kind)" -match '(?i)bug' -or "$($x.spec.title)" -match '^\[Bug\]')) { $p = "$($x.parent)"; $c.bugs[$p] = [int]$c.bugs[$p] + 1; $b = ConvertTo-KitOutcomeIso $x.track.created; if ($b -and (-not $c.bugAt[$p] -or $b -lt $c.bugAt[$p])) { $c.bugAt[$p] = $b } } }
   foreach ($w in @(Read-KitJsonFiles (Get-KitPath waves))) {
     foreach ($p in @(Get-KitProps $w.agents)) { foreach ($t in @($p.Value.done | Where-Object { $_ })) {
       $c.agents[$t] = @(@($c.agents[$t]) + $p.Name | Where-Object { $_ } | Select-Object -Unique)
@@ -44,12 +46,14 @@ function Get-KitTaskOutcome($Ix, $Ctx) {
   $fails = @($runs | Where-Object { [int]$_.fail -gt 0 }).Count; $bugs = [int]$Ctx.bugs[$t]
   $stage = if ($last) { if ([int]$last.fail) { 'failedTesting' } elseif (& $clean $last) { 'passed' } else { 'untested' } } elseif (@($tr.liveOn | Where-Object { $_ }).Count) { 'deployed' } elseif ($tr.done) { 'promoted' } elseif (@($tr.mrs | Where-Object { $_ }).Count) { 'review' } else { 'open' }
   [ordered]@{ task = $t; kind = "$($Ix.spec.kind)"; parent = "$($Ix.parent)"
-    area = @(@($tr.mrs | Where-Object { $_ }) | ForEach-Object { ("$_" -split '!')[0] } | Sort-Object -Unique) -join ','
+    area = @(@($tr.mrs | Where-Object { $_ }) | ForEach-Object { Get-KitRepoName ((("$_" -split '[!#]')[0] -split '/')[-1]) } | Sort-Object -Unique) -join ','
     agents = @($Ctx.agents[$t] | Where-Object { $_ }); stage = $stage; mrs = @($tr.mrs | Where-Object { $_ }).Count; qaRuns = $runs.Count
     qaFirstPass = $(if ($runs.Count) { [bool](& $clean $runs[0]) } else { $null }); qaFails = $fails; bugs = $bugs
     cameBack = [bool]($tr.reopenedAt -or $fails -or $bugs); localRounds = [int]$Ctx.local[$t]; reviewFix = [int]$Ctx.review[$t]
     decisions = [int]$Ctx.decisions[$t]; hPromoted = $(if ($tr.done) { Get-KitOutcomeHours $tr.created $tr.doneAt })
     hClosed = $(if ($stage -eq 'passed') { Get-KitOutcomeHours $tr.created $last.at }); spend = [int][math]::Round([double]$Ctx.spend[$t])
+    doneAt = $(if ($tr.done) { ConvertTo-KitOutcomeIso $tr.doneAt }); closedAt = $(if ($stage -eq 'passed') { ConvertTo-KitOutcomeIso $last.at })   # the day chart's points
+    backAt = @(@(ConvertTo-KitOutcomeIso $tr.reopenedAt) + @($runs | Where-Object { [int]$_.fail -gt 0 } | ForEach-Object { ConvertTo-KitOutcomeIso $_.at }) + @($Ctx.bugAt[$t]) | Where-Object { $_ } | Sort-Object)[0]
     seen = $(if ($Ix.updated) { ([datetime]$Ix.updated).ToString('o') }) }   # the task's last change (window); not in the row signature
 }
 function Read-KitOutcomeRows { $f = Get-KitPath outcomes; if (Test-Path -LiteralPath $f) { foreach ($l in [IO.File]::ReadAllLines($f)) { try { $l | ConvertFrom-Json } catch {} } } }
@@ -62,7 +66,7 @@ function Update-KitOutcomes([switch]$All) {
   $ctx = Get-KitOutcomeContext
   $n = Invoke-KitLocked (Get-KitPath outcomes -Create) {   # supervise and tidy prep: one sweep at a time, else duplicate rows
   $prev = @{}; foreach ($r in @(Read-KitOutcomeRows)) { if ($r.task) { $prev["$($r.task)"] = $r } }
-  $n = 0; $sig = { param($o) ($script:KitOutcomeKeys | ForEach-Object { "$(@(Get-KitMember $o $_ | ForEach-Object { $_ }) -join ',')" }) -join '|' }
+  $n = 0; $sig = { param($o) ($script:KitOutcomeKeys | ForEach-Object { "$(@(Get-KitMember $o $_ | ForEach-Object { if ($_ -is [datetime]) { ConvertTo-KitOutcomeIso $_ } else { $_ } }) -join ',')" }) -join '|' }   # a read-back row holds times as DateTime
   foreach ($ix in $ctx.ix.Values) {
     $row = Get-KitTaskOutcome $ix $ctx; $p = $prev[$row.task]
     if ($p) { foreach ($k in 'localRounds', 'reviewFix', 'decisions', 'spend') { $row[$k] = [math]::Max([int]$row[$k], [int](Get-KitMember $p $k)) }; $row.agents = @(@($p.agents) + @($row.agents) | Where-Object { $_ } | Select-Object -Unique) }
@@ -79,7 +83,8 @@ function Get-KitSuperviseFlagsOutcomes([switch]$AutoFix) { try { $null = Update-
 function Get-KitOutcomeStats([int]$Days = 30) {   # TODO-PARAM (fixed default)
   $since = (Get-Date).AddDays(-$Days); $last = @{}
   foreach ($r in @(Read-KitOutcomeRows)) { $w = @($r.seen, $r.at | Where-Object { $_ })[0]; if ($r.task) { if ($w -and [datetime]$w -ge $since) { $last["$($r.task)"] = $r } else { $last.Remove("$($r.task)") } } }
-  $rows = @($last.Values); $qa = @($rows | Where-Object { [int]$_.qaRuns -gt 0 })
+  $rows = @($last.Values); foreach ($r in $rows) { $r.area = @("$($r.area)" -split ',' | Where-Object { $_ } | ForEach-Object { Get-KitRepoName $_ } | Sort-Object -Unique) -join ',' }   # rows written before alias names
+  $qa = @($rows | Where-Object { [int]$_.qaRuns -gt 0 })
   $rounds = { param($r) [math]::Max(0, [int]$r.localRounds - 1) + [int]$r.reviewFix }
   $hp = @($rows | Where-Object { $null -ne $_.hPromoted } | ForEach-Object { [double]$_.hPromoted } | Sort-Object)
   $areas = @($rows | ForEach-Object { $r = $_; foreach ($a in @("$($r.area)" -split ',' | Where-Object { $_ })) { [pscustomobject]@{ area = $a; r = $r } } } | Group-Object area | ForEach-Object {
@@ -91,8 +96,88 @@ function Get-KitOutcomeStats([int]$Days = 30) {   # TODO-PARAM (fixed default)
     ForEach-Object { [pscustomobject]@{ agent = $_.Name; tasks = $_.Count; rounds = [int](@($_.Group.n) | Measure-Object -Sum).Sum } } | Where-Object rounds | Sort-Object { -$_.rounds }, agent)
   $why = @(foreach ($w in @(Read-KitJsonFiles (Get-KitPath waves) | Where-Object { $_.at -and [datetime]$_.at -ge $since })) { foreach ($p in @(Get-KitProps $w.agents)) { foreach ($d in @($p.Value.deferred | Where-Object { $_.reason })) { [pscustomobject]@{ skill = 'outcome'; kind = "$($d.kind)"; text = "$($d.reason)"; ref = "$($w.run)/$($p.Name)" } } } })
   $causes = @(Get-KitSignalGroups $why @() 0.3 | Where-Object { $_.n -ge 2 } | Sort-Object { -$_.n })   # TODO-PARAM (fixed default)
+  # dashboard: one bucket per task, a stacked bar per repo, KPIs with weekly points (the task's promoted day, else its last change)
+  $tasks = @(foreach ($r in $rows) { [pscustomobject]@{ id = "$($r.task)"; repos = @("$($r.area)" -split ',' | Where-Object { $_ }); bucket = (Get-KitOutcomeBucket $r); rounds = $(if (@($r.agents | Where-Object { $_ }).Count) { & $rounds $r })
+      week = [int][math]::Floor(((Get-Date) - [datetime]@($r.doneAt, $r.seen, $r.at | Where-Object { $_ })[0]).TotalDays / 7); closedAt = (ConvertTo-KitOutcomeIso $r.closedAt); backAt = (ConvertTo-KitOutcomeIso $r.backAt)
+      firstPass = [bool]$r.qaFirstPass; qa = [int]$r.qaRuns -gt 0; back = [bool]$r.cameBack; hPromoted = $r.hPromoted } })
+  $repos = @($tasks | ForEach-Object { $t = $_; foreach ($rp in $t.repos) { [pscustomobject]@{ repo = $rp; t = $t } } } | Group-Object repo | ForEach-Object {
+      $g = @($_.Group.t); $b = [ordered]@{}; foreach ($k in $script:KitOutcomeBuckets.Keys) { $b[$k] = @($g | Where-Object bucket -eq $k | ForEach-Object id) }
+      [pscustomobject]@{ repo = $_.Name; n = $g.Count; tested = @($g | Where-Object { $_.bucket -ne 'wait' }).Count; buckets = $b } } | Sort-Object { -$_.n }, repo)
+  $med = { param($v) $s = @($v | Sort-Object); if ($s.Count) { $s[[int][math]::Floor(($s.Count - 1) / 2)] } }   # lower median, as p50Promoted
+  $kpi = { param($ts) $q = @($ts | Where-Object qa); $bq = @($ts | Where-Object { $_.qa -or $_.back }); $rd = @($ts | Where-Object { $null -ne $_.rounds } | ForEach-Object { [double]$_.rounds }); $h = @($ts | Where-Object { $null -ne $_.hPromoted } | ForEach-Object { [double]$_.hPromoted })
+    [pscustomobject]@{ first = $(if ($q.Count) { [math]::Round(100 * @($q | Where-Object firstPass).Count / $q.Count) }); firstOf = "$(@($q | Where-Object firstPass).Count)/$($q.Count)"
+      back = $(if ($bq.Count) { [math]::Round(100 * @($bq | Where-Object back).Count / $bq.Count) }); backOf = "$(@($bq | Where-Object back).Count)/$($bq.Count)"
+      rounds = (& $med $rd); roundsOf = $rd.Count; hours = (& $med $h); hoursOf = $h.Count } }
+  $weeks = [int][math]::Ceiling($Days / 7)
   [pscustomobject]@{ days = $Days; n = $rows.Count; qaN = $qa.Count; firstPass = @($qa | Where-Object qaFirstPass).Count; cameBack = @($rows | Where-Object cameBack).Count
-    p50Promoted = $(if ($hp.Count) { $hp[[int][math]::Floor(($hp.Count - 1) / 2)] }); areas = $areas; agents = $agents; causes = $causes }
+    p50Promoted = $(if ($hp.Count) { $hp[[int][math]::Floor(($hp.Count - 1) / 2)] }); areas = $areas; agents = $agents; causes = $causes
+    tasks = $tasks; repos = $repos; kpi = (& $kpi $tasks); weekly = @(for ($w = $weeks - 1; $w -ge 0; $w--) { & $kpi @($tasks | Where-Object week -eq $w) }) }
+}
+# a test run's QA outcome from the task index: its env runs named <date>[-<time>]-<name>, else its tasks' env runs inside its window
+function Get-KitRunQa($Run, $Ix) {
+  $from = try { [datetime]$Run.started } catch { $null }; $to = try { ([datetime]$Run.at).AddMinutes(60) } catch { $null }
+  $hit = @(foreach ($x in @($Ix)) { foreach ($er in @($x.envRuns | Where-Object { $_ })) {
+        $named = $Run.qaName -and "$($er.run)" -match "^\d{4}-\d\d-\d\d(-\d{6})?-$([regex]::Escape("$($Run.qaName)"))$"
+        $inWin = "$($x.task)" -in @($Run.tasks) -and $from -and $er.at -and [datetime]$er.at -ge $from -and [datetime]$er.at -le $to
+        if ($named -or $inWin) { [pscustomobject]@{ task = "$($x.task)"; pass = [int]$er.pass; fail = [int]$er.fail; nt = [int]$er.notTested } } } })
+  if (-not $hit.Count) { return $null }
+  [pscustomobject]@{ pass = [int]($hit | Measure-Object pass -Sum).Sum; fail = [int]($hit | Measure-Object fail -Sum).Sum; nt = [int]($hit | Measure-Object nt -Sum).Sum
+    closed = @($hit | Where-Object { -not $_.fail -and -not $_.nt -and $_.pass } | ForEach-Object task | Select-Object -Unique); failed = @($hit | Where-Object fail | ForEach-Object task | Select-Object -Unique)
+    untested = @($hit | Where-Object { -not $_.fail -and $_.nt } | ForEach-Object task | Select-Object -Unique) }
+}
+# the dashboard's Delivery fold (owner, 2026-11-16: graphs over text, Outcomes + runs in one panel): KPI tiles with weekly lines, the
+# per-day chart (runs started, MRs merged, tasks closed, came back; a day click filters the lists), a stacked bar per repo (a segment
+# click lists its tasks), $QaTile (QA checks per day), the task list; called by Format-KitSuperviseHtml: its helpers by dynamic scope; $UP = Format-KitUsageHtml
+function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
+  $bk = $script:KitOutcomeBuckets; $tone = @{ r0 = 'sage'; r1 = 'slate'; r2 = 'watch'; r3 = 'plum'; rna = 'pale'; back = 'act'; wait = 'none' }
+  $pc = { param($v) if ($null -eq $v) { '—' } else { "$v<small>%</small>" } }
+  $wk = @($S.weekly)
+  $tile = { param($label, $v, $sub, $vals, $cls, $what) "<div class='st dk' data-fit><div class=k>$(& $e $label)</div><div class=v>$v</div><div class=s>$(& $e $sub)</div>$(& $spark $vals $cls $what -NoNow)</div>" }
+  $k = $S.kpi; $wTxt = "per week, $($wk.Count) weeks"
+  $tiles = & $grid 'stats dlt' 150px @(
+    (& $tile 'QA first pass' (& $pc $k.first) "$($k.firstOf) tasks QA'd clean on the first run" @($wk | ForEach-Object first) 'sage' $wTxt),
+    (& $tile 'Came back' (& $pc $k.back) "$($k.backOf) reopened, failed testing or a [Bug] under them" @($wk | ForEach-Object back) 'act' $wTxt),
+    (& $tile 'Median fix rounds' $(if ($null -ne $k.rounds) { & $n1 $k.rounds } else { '—' }) "over $($k.roundsOf) tasks with a wave report" @($wk | ForEach-Object rounds) 'slate' $wTxt),
+    (& $tile 'Hours to promoted' $(if ($null -ne $k.hours) { "$(& $n1 $k.hours)<small> h p50</small>" } else { '—' }) "over $($k.hoursOf) promoted tasks" @($wk | ForEach-Object hours) 'plum' $wTxt),
+    $UP.tpm) 5
+  # per day (the usage window): a point per day, its tooltip the day's runs and counts; a click filters the task list and the runs to that day
+  $dy = @($UP.days | Where-Object { $_ }); $dayOf = { param($iso) if ($iso) { try { ([datetimeoffset]$iso).LocalDateTime.ToString('yyyy-MM-dd') } catch { '' } } }
+  $closed = @{}; $back = @{}; foreach ($t in @($S.tasks)) { if ($c = & $dayOf $t.closedAt) { $closed[$c] = @(@($closed[$c]) + $t.id | Where-Object { $_ }) }; if ($b = & $dayOf $t.backAt) { $back[$b] = @(@($back[$b]) + $t.id | Where-Object { $_ }) } }
+  $chart = if ($dy.Count) {
+    $runsV = @($dy | ForEach-Object { [double]@($UP.dayRuns["$($_.day)"] | Where-Object { $_ }).Count }); $mrV = @($dy | ForEach-Object { [double]$_.merged })
+    $clV = @($dy | ForEach-Object { [double]@($closed["$($_.day)"]).Where({ $_ }).Count }); $bkV = @($dy | ForEach-Object { [double]@($back["$($_.day)"]).Where({ $_ }).Count })
+    $all = [math]::Max(1, [double](@($runsV + $mrV + $clV + $bkV) | Measure-Object -Maximum).Maximum) * 1.1
+    $pts = @(for ($i = 0; $i -lt $dy.Count; $i++) { $dk = "$($dy[$i].day)"; $today = $i -eq $dy.Count - 1; $rr = @($UP.dayRuns[$dk] | Where-Object { $_ })
+        @{ label = $(if ($today) { 'today' } else { $dk.Substring(5) }); x = $today; fv = "d$dk"
+          tip = "$dk$(if ($today) { ' (today)' }): $($mrV[$i]) MR(s) merged · $($clV[$i]) task(s) closed · $($bkV[$i]) came back · $($rr.Count) run(s) started$(@($rr | Select-Object -First 6 | ForEach-Object { "`n- $(if ("$($_.label)".Trim()) { $_.label } else { $_.run }) ($(if ($_.kind) { $_.kind } else { 'run' }))" }) -join '')$(if ($rr.Count -gt 6) { "`n+ $($rr.Count - 6) more" })`nclick: show that day's tasks and runs" } })
+    $fmt = { param($one, $many) { param($v) "$([int]$v) $(if ([int]$v -eq 1) { $one } else { $many })" }.GetNewClosure() }
+    Format-KitLineChart $pts @(@{ vals = $mrV; tone = 'sage'; style = 'solid'; area = $true; max = $all; name = 'MRs merged'; fmt = (& $fmt 'MR' 'MRs') },
+      @{ vals = $clV; tone = 'slate'; style = 'dash'; max = $all; name = 'tasks closed'; fmt = (& $fmt 'closed' 'closed') },
+      @{ vals = $bkV; tone = 'act'; style = 'solid'; max = $all; name = 'came back'; fmt = (& $fmt 'back' 'back'); inline = $true },
+      @{ vals = $runsV; tone = 'plum'; style = 'dot'; max = $all; name = 'runs started'; fmt = (& $fmt 'run' 'runs') }) "MRs merged, tasks closed, came back and runs started per day, $($dy.Count) days" 170 -Labels -Filter '#oc-tasks,#sec-runs' }
+  # a stacked bar per repo with a QA'd task (the rest: one "other" bar), each segment its count; the legend once
+  $rp = @($S.repos | Where-Object tested); $rest = @($S.repos | Where-Object { -not $_.tested }); $restNames = @($rest.repo)
+  if ($rest.Count) { $ob = [ordered]@{}; foreach ($kk in $bk.Keys) { $ob[$kk] = @($rest | ForEach-Object { @($_.buckets[$kk]) } | Where-Object { $_ } | Select-Object -Unique) }; $rp += [pscustomobject]@{ repo = 'other'; who = (@($rest.repo) -join ', '); n = [int]($rest | Measure-Object n -Sum).Sum; buckets = $ob } }
+  $bars = @($rp | ForEach-Object { $r = $_; $nm = if ($r.who) { "other ($($r.who))" } else { $r.repo }
+      $segs = @(foreach ($kk in $bk.Keys) { $ids = @($r.buckets[$kk] | Where-Object { $_ }); if (-not $ids.Count) { continue }
+          $lab = "$nm · $($bk[$kk])"; $tip = "$lab`: $($ids.Count) task(s)`n$(@($ids | Select-Object -First 12) -join ', ')$(if ($ids.Count -gt 12) { " +$($ids.Count - 12)" })`nclick: list them"
+          "<i class='ob-$($tone[$kk])' style='flex-grow:$($ids.Count)' tabindex=0 role=button data-tip='$(& $e $tip)' aria-label='$(& $e "$lab`: $($ids.Count)")' data-ft='#oc-tasks' data-fv='$(& $e "$($r.repo):$kk")' data-fl='$(& $e $lab)'>$($ids.Count)</i>" })
+      "<div class=obr><span class=obn>$(& $e $nm) <b>$($r.n)</b></span><span class=obar>$($segs -join '')</span></div>" })
+  $leg = "<ul class='ocl obl'>$(@($bk.Keys | ForEach-Object { "<li><i class='ob-$($tone[$_])'></i>$(& $e $bk[$_])</li>" }) -join '')</ul>"
+  $noMr = @($S.tasks | Where-Object { -not $_.repos.Count }).Count
+  $barsCard = "<div class='uc obc'><h4>Tasks per repo by outcome</h4>$($bars -join '')$leg$(if ($noMr) { "<p class=m>$noMr task(s) without an MR not shown</p>" })</div>"
+  # the tasks behind a click (a segment: repo + bucket, a grouped repo as "other"; a day: closed or came back that day); hidden until a filter is set
+  $rows = @($S.tasks | Where-Object { $_.repos.Count -or $_.closedAt -or $_.backAt } | ForEach-Object { $t = $_
+      $fk = @(@($t.repos | ForEach-Object { "$(if ($_ -in $restNames) { 'other' } else { $_ }):$($t.bucket)" }) + @(if ($c = & $dayOf $t.closedAt) { "d$c" }) + @(if ($b = & $dayOf $t.backAt) { "d$b" }) | Select-Object -Unique) -join ' '
+      "<li data-fk='$(& $e $fk)'>$(& $taskA $t.id)<span class='chip ob-$($tone[$t.bucket])'>$(& $e $bk[$t.bucket])</span><span class=m>$(& $e ($t.repos -join ', '))</span></li>" })
+  $list = "<div id=oc-tasks class='ftl uc'><p class=fclr hidden>Tasks: <b></b> <button type=button>Clear</button></p><ul class=otl>$($rows -join '')</ul></div>"
+  "$tiles<div class='ug dlv'>$(if ($chart) { "<div class='uc dlc'><h4>Delivered per day</h4>$chart</div>" })<div class=ucol>$barsCard$QaTile</div></div>$list"
+}
+# bucket order = the bar's segment order: passed QA by fix rounds before it (n/a: no wave report names the task), came back, not tested yet
+$script:KitOutcomeBuckets = [ordered]@{ r0 = 'passed, 0 fix rounds'; r1 = 'passed, 1 round'; r2 = 'passed, 2 rounds'; r3 = 'passed, 3+ rounds'; rna = 'passed, rounds not recorded'; back = 'came back'; wait = 'not tested yet' }
+function Get-KitOutcomeBucket($R) {
+  if ($R.cameBack) { return 'back' }; if ("$($R.stage)" -ne 'passed') { return 'wait' }; if (-not @($R.agents | Where-Object { $_ }).Count) { return 'rna' }
+  $n = [math]::Max(0, [int]$R.localRounds - 1) + [int]$R.reviewFix; if ($n -ge 3) { 'r3' } else { "r$n" }
 }
 function Get-KitOutcomeLines([int]$Days = 30) {   # TODO-PARAM (fixed default)
   $s = Get-KitOutcomeStats $Days; if (-not $s.n) { return }

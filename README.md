@@ -177,11 +177,10 @@ jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time
 of two fields a line, low-value columns hidden; tone-coloured text is mixed toward the foreground (WCAG AA in both themes):
 - flags as cards in masonry columns (an icon per kind, the next step, ACT first; auto-fixed folded); a side panel: flags per
   sweep (last `supervise.historySweeps`, lines: ACT solid, WATCH dashed, FIXED dotted) and the other INFO lines folded as notes;
-- live agents grouped by run (a stacked bar by state in the summary): state chip, task, the leases it holds, since, last progress, doing / next; "Finished today" folded;
-- runs (dev and QA, 7 days): running ones on top, then one fold per day (today open; runs, steps, tokens, est. cost, merged),
-  each run by its label (mandate or area; run id in the tooltip), kind chip, resumed, steps as a bar, tokens, est. cost, merged
-  MRs, elapsed, the context budget bar while running or past 80%, and its steps (role, model, in / out / cache, elapsed, tool
-  calls, result, round, retry);
+- live agents grouped by run (a stacked bar by state in the summary): each running run on one line above them (label, kind,
+  steps bar, tokens, est. cost, budget bar, its tasks and MRs linked), then state chip, task (a known task id or MR ref linked),
+  the leases it holds, since, last progress, doing / next; "Finished today" folded; task and MR links come from the tracker
+  (`url`) and git host (`mr.url`) adapters (text: the id, `repo!n` or `repo#n` per host; no web URL: plain text);
 - machine and resources: memory (used / total meter with a 7-day peak tick, 24 h sparkline), every watched disk in one tile
   (free GB, fill rate, "full in" under 72 h, used / size meter with a 7-day peak tick, 7-day free sparkline marking the low; a
   flagged drive coloured and first) in one row; CPU (% of the machine from the CPU time of one process snapshot per sweep, 24 h):
@@ -197,15 +196,23 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 - usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
   sweep reads the transcripts' usage fields incrementally, cached by `_paths` `usage-cache`): tokens and est. cost today vs
   the 7-day average (`budget.prices`: USD per M tokens [in, out, cache read, cache write 5 min, 1 h] per model id or alias;
-  unknown models listed as not priced), tokens per merged MR (the git host's merged MRs of this login, cached 2 beats; no
-  login: MRs reported by workflows), review + fix share; cost and tokens per day as lines (a time series is never bars); workflow steps by outcome as one stacked
-  bar; a role table (coordinator and agents outside workflows included: steps, tokens, share bar, est. cost, avg / p90 time),
-  a model table (steps, tokens, est. cost, cost share bar, avg time); per step type (avg / p50 / p90), sessions when 2+;
-- kit internals (kit tuning and history only): Outcomes, 30 days (`.state/outcomes.jsonl`: per repo a labelled QA first-pass
-  bar, tasks, came back, fix rounds), Activity tiles, each number once with its history as a labelled graph (workflow
+  unknown models listed as not priced), review + fix share; cost and tokens per day as lines (a time series is never bars); workflow steps by outcome as one stacked
+  bar; Spend: one row per role (coordinator and agents outside workflows included: steps, tokens, share bar, est. cost,
+  avg / p90 time, model mix as a stacked bar), its step types (avg / p50 / p90 tokens, avg / p90 time) folded under it, the
+  model totals once as the mix legend; sessions when 2+;
+- kit internals: Delivery, 30 days (`.state/outcomes.jsonl`, one row per task change): tiles with a weekly line each (QA first
+  pass %, came back %, median fix rounds, p50 hours to promoted; tokens per merged MR: the git host's merged MRs of this login,
+  cached 2 beats, no login: MRs reported by workflows, a daily line); a per-day chart (MRs merged, tasks closed, came back,
+  runs started; labelled points, a day's tooltip lists its runs, a click filters the task list and the runs to that day,
+  legend buttons hide a line); a stacked bar per repo (repo names through `repos[].aliases`; passed QA by fix rounds 0 / 1 / 2 /
+  3+ / not recorded (no wave report names the task), came back, not tested yet; each segment its count, a click lists its
+  tasks; repos with no QA'd task: one "other" bar); test runs (`qa-runs/*/*/results.json` by its write day): checks · pass %
+  (OUT_OF_SCOPE left out), 7 daily stacked bars (PASS, FAIL, NOT_TESTED, OUT_OF_SCOPE) and the NOT_TESTED causes in one line;
+  then the ended dev and QA runs of 7 days, one line each: label (mandate, area, a test run's name and target, or the
+  record-args run name; run id in the tooltip), kind, resumed, what it did (a test run's QA checks pass / fail / not tested,
+  MRs merged, steps errored with the steps named), its tasks and MRs linked, and its steps page; Activity tiles, each number once with its history as a labelled graph (workflow
   steps now + a chip per running run, 24 h step line; branches · worktrees per repo + 7-day lines; sweep time, 24 h with the
-  7-day average; agents failed, 7 daily bars; test runs (`qa-runs/*/*/results.json` by its write day): checks · pass %
-  (OUT_OF_SCOPE left out), 7 daily stacked bars (PASS, FAIL, NOT_TESTED, OUT_OF_SCOPE) and the NOT_TESTED causes in one line; flags auto-fixed, % per sweep; `—` = no source), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
+  7-day average; agents failed, 7 daily bars; flags auto-fixed, % per sweep; `—` = no source), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
   default / local config / learned with its note · changed · why), the last 10 learned changes on top.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of

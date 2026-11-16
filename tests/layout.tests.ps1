@@ -138,11 +138,11 @@ Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Ra
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
 $pgs = @{}; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } }) $pgs
-$cardGrid = @("class=ug><details class='sec sub st uc' id=sec-u-days open><summary><h4>Per day", "<div class=ucol><details class='sec sub st uc ", "Per model</h4>", "class='sec sub st uc ur' id=sec-u-roles open><summary><h4>Per role", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
-# the right-align nth-child ranges assume these column counts: step type 7, role 7, model 6, run steps 9
+$cardGrid = @("class=ug><details class='sec sub st uc' id=sec-u-days open><summary><h4>Per day", "<div class=ucol><details class='sec sub st uc ", "class='sec sub st uc ur' id=sec-u-spend open><summary><h4>Spend per role", "<span class='sb mix'", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
+# the right-align nth-child ranges assume these column counts: step types under a role 7, run steps 9
 $thCount = { param($open, $in = $h) ([regex]::Match($in, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
-$colCounts = "$(& $thCount "class='uc ua'>") $(& $thCount "class='sec sub st uc ur'") $(& $thCount "class='sec sub st uc um'") $(& $thCount "class='sy rst'>" @($pgs.Values)[0])"
-"$($h -notmatch 'Tokens today') $($h -match "class='ru f'|<li class=f data-oc" -and $h -match '<button type=button class=ocb data-oc=fail') $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 7 6 9' -and $h -notmatch 'class=ut>')"
+$colCounts = "$(& $thCount "class='tw sty'>") $(& $thCount "class='sy rst'>" @($pgs.Values)[0])"
+"$($h -notmatch 'Tokens today') $($h -match "class='ru f'|<li class=f data-oc" -and $h -match '<button type=button class=ocb data-oc=fail') $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 9' -and $h -notmatch 'class=ut>|Per model|Per step type')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")
 Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; runs, steps, outcomes, cost, card grids ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.001272|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True True')
@@ -169,7 +169,7 @@ $b1 = @($s | Where-Object label -eq 'build:A')[0]; $cst = { param($l) [math]::Ro
 "$res|$($b1.in)|$(& $cst 'build:A')|$(& $cst 'review:A')|$(& $cst 'check:A')|$(@($u.unpriced).model -join ',')|$($u.rates.n) $($u.rates.fail) $($u.rates.empty) $($u.rates.stopped)"
 "$(@($u.days)[-1].runs)|$(@($u.runs).Count)|$($u.coord[0].tok) $([math]::Round((Get-KitUsageCost @(100, 10, 0, 1000, 1000) 'claude-opus-5-5'), 4))|$(@($u.days)[-1].tok)|$($u.merged.source) $($u.merged.n) $(@($u.days)[-1].merged)"
 $pgu = @{}; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $u } }) $pgu
-"$($h -match "data-k='Role'>coordinator<") $($h -match 'class=lch' -and $h -match '>today</span>' -and $h -notmatch 'class=dch') $(([regex]::Matches($h, "class='st uc dn'|class=gauge|viewBox='0 0 42 42'")).Count) $($h -match 'not priced: gpt-x') $($h -match '1 MR\(s\) merged on the git host by me') $((@($pgu.Values) -join '') -match "'Elapsed'|>Elapsed<")"
+"$($h -match 'class=srn>coordinator<') $($h -match "class='lch lgw'" -and $h -match '>today</span>' -and $h -notmatch 'class=dch') $(([regex]::Matches($h, "class='st uc dn'|class=gauge|viewBox='0 0 42 42'")).Count) $($h -match 'not priced: gpt-x') $($h -match '1 MR\(s\) merged on the git host by me') $((@($pgu.Values) -join '') -match "'Elapsed'|>Elapsed<")"
 $pm = @(Get-KitUsageParts (Update-KitUsageFile "$($args[1])/main-1.jsonl" $null ([ref][long]1GB)) @((Get-Date).ToString('yyyy-MM-dd')) | ForEach-Object model | Sort-Object) -join ','
 function Invoke-HostVerb { throw 'host down' }; $hp = Get-KitUsageHostMrs (Get-Date).Date (Get-Date) @{ at = '2020-01-01T00:00:00'; since = 'x'; mrs = @(1) }
 $cf = Get-KitPath usage-cache; $cj = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable; foreach ($kv in @($cj.files.GetEnumerator())) { if ($kv.Key -like '*agent-b3*') { $kv.Value.v = 2 } }; $cj | ConvertTo-Json -Depth 7 | Set-Content $cf
