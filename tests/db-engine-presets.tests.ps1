@@ -243,4 +243,6 @@ CREATE TABLE pa.u (login varchar(40)); INSERT INTO pa.u VALUES ('alice'), ('bob'
 }
 $tmLeft = @(Get-Process mysqld, mariadbd -ErrorAction SilentlyContinue | Where-Object { "$($_.CommandLine)" -match "$([regex]::Escape((Split-Path $tmSrv.data -Leaf)))\b" }).Count
 Expect "Stop-TestMySql: no mysqld (monitor or worker) left on its data dir, the dir gone, outside %TEMP% ($tmLeft left, $($tmSrv.data))" ($tmLeft -eq 0 -and -not (Test-Path $tmSrv.data) -and -not $tmSrv.data.StartsWith([IO.Path]::GetTempPath()))
+$tmTpls = @(Get-ChildItem (Split-Path $tmSrv.data) -Directory -Filter 'mysqld-template-*' | Where-Object { Test-Path (Join-Path $_.FullName 'mysql.ibd') })
+Expect "Start-TestMySql: data dirs are copies of one initialized template per mysqld build, kept for the next server ($($tmTpls.Count))" ($tmTpls.Count -ge 1)
 Complete-Tests

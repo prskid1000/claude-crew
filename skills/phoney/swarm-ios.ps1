@@ -11,8 +11,8 @@ ios (Simulators, macOS) | none (verbs refuse; app checks NOT_TESTED).
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
-Sections: L21 config · L104 phone · L300 build · L449 install · L476 launch · L490 avd · L577 up · L667 down · L697 slim ·
-  L724 arrange
+Sections: L21 config · L104 phone · L300 build · L449 install · L476 launch · L490 avd · L577 up · L669 down · L699 slim ·
+  L726 arrange
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -617,6 +617,8 @@ foreach ($name in $Lanes) {
     $ini = Join-Path $c.avdDir "$name.avd/emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     $a = @('-avd', $name, '-port', $l.port, '-no-audio', '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
+    # a Quick Boot save rewrites GBs on every close: save only the first (golden) snapshot unless devices.snapshotSave
+    if (-not (Get-KitSetting 'devices.snapshotSave' $false) -and (Test-Path (Join-Path $c.avdDir "$name.avd/snapshots/default_boot"))) { $a += '-no-snapshot-save' }
     $noWin = $Headless -or -not ($ShowAll -or $l.headless -eq $false -or ($null -eq $l.headless -and $c.headless -eq $false))   # window only with -ShowAll or headless: false
     if ($noWin) { $a += '-no-window' }
     # WMI: not our child (survives tool timeouts); SW_HIDE, CREATE_NO_WINDOW

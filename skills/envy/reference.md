@@ -76,9 +76,12 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
   staged copy (unknown routes -> index.html; no dev server).
 - `prepare` = a command after each sync whose edits are committed locally on `localenv/<env>` (a build cache at `{cache}`,
   outside the repo).
-- `unpack` = a command that unpacks `{artifact}` into `{out}`: each library under `unpackLib` (lib) kept once by content hash,
-  hard-linked into each release (it fails: the plain artifact is staged, event `unpack-fallback`, doctor warns).
+- `unpack` = a command that unpacks `{artifact}` into `{out}` (it fails: the plain artifact is staged, event `unpack-fallback`,
+  doctor warns).
 - `keepReleases` (2) staged per service + the ones running.
+- `stageLinks` (true): a release copies nothing: the artifact is moved out of the build; unpacked and static files are kept
+  once per content hash in `_lib` and hard-linked; another release's files hard-linked. `reuseBuilds` (true): a lane
+  re-stages its own copy of the same tree + config instead of building (`shareBuild` reuses other lanes' too).
 - `aotTrain` ({aotFile}): one gated background run per artifact after it is up; `{aot}` in `start` = `aotUse`
   (`-XX:AOTCache="{aotFile}"`) once it exists.
 - `{reactor}` in `build` = `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs; only modules whose parent is

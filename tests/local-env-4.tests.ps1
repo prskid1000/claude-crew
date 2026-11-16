@@ -103,10 +103,11 @@ $lsb = & { . $lkL; $web = [pscustomobject]@{ name = 'web'; repo = 'w'; build = '
   $run = Get-KitPath localenv -Create; $src = Join-Path $run 'run/shop/web/r7'; New-Item -ItemType Directory -Force $src | Out-Null; Set-Content (Join-Path $src 'index.html') 'one'; Set-Content (Join-Path $src 'app.aot') 'x'
   Update-State shop { param($x) $x.builds = @{ web = @(@{ key = 'k1'; dir = $src; path = $src }) } }
   $err = Build-Repo shop2 'w' 6>$null; $to = (Stage-Artifacts shop2 'w' 'r1').web; $rec = @((Read-State shop2).builds.web)[-1]
+  $noOwn = { Update-State shop2 { param($x) $x.Remove('builds') } }; & $noOwn   # its own copy would win (own lane first)
   $null = Build-Repo shop2 'w' 6>$null; Remove-Item -LiteralPath $src -Recurse -Force   # pruned between build and stage
   $src3 = Join-Path $run 'run/shop3/web/r2'; New-Item -ItemType Directory -Force $src3 | Out-Null; Set-Content (Join-Path $src3 'index.html') 'three'
   Update-State shop3 { param($x) $x.builds = @{ web = @(@{ key = 'k1'; dir = $src3; path = $src3 }) } }
-  $to2 = (Stage-Artifacts shop2 'w' 'r2').web
+  $to2 = (Stage-Artifacts shop2 'w' 'r2').web; & $noOwn
   $null = Build-Repo shop2 'w' 6>$null; Remove-Item -LiteralPath $src3 -Recurse -Force
   $gone = try { $null = Stage-Artifacts shop2 'w' 'r3'; 'staged' } catch { "$_" -match 'gone since the build step' }
   foreach ($l in 'shop', 'shop2', 'shop3') { Update-State $l { param($x) $x.Remove('builds') } }
@@ -118,10 +119,18 @@ $lk2 = & { . $lkL; $g = Join-Path $env:TEMP "lebk-$PID"; Remove-Item $g -Recurse
   function RepoOf { 'w' }; function EnvRepos([string]$e) { @{ w = [pscustomobject]@{ wt = (Join-Path $g $e) } } }
   $s = [pscustomobject]@{ name = 'web'; repo = 'w'; build = 'b'; static = 'dist'; shareBuild = $true }; $off = [pscustomobject]@{ name = 'web'; repo = 'w'; build = 'b'; static = 'dist' }
   $other = [pscustomobject]@{ name = 'web'; repo = 'w'; build = 'b --prod'; static = 'dist'; shareBuild = $true }
-  $ka = BuildKey a $s; $kb = BuildKey b $s; $kc = BuildKey c $s; $kd = BuildKey a $other
+  $ka = BuildKey a $s; $kb = BuildKey b $s; $kc = BuildKey c $s; $kd = BuildKey a $other; $own = BuildKey a $off; $ownB = BuildKey b $off
+  function Opt($k, $d) { if ($k -eq 'reuseBuilds') { $false } else { $d } }; $offK = BuildKey a $off
   Remove-Item $g -Recurse -Force -ErrorAction SilentlyContinue
-  "$($ka.Length)|$($ka -eq $kb)|$($ka -eq $kc)|$($ka -eq $kd)|$($null -eq (BuildKey a $off))" }
-Expect "lanes: the build key = the code without its prepare commits + the build config; only shareBuild true has one ($lk2)" ($lk2 -eq '40|True|False|False|True')
+  "$($ka.Length)|$($ka -eq $kb)|$($ka -eq $kc)|$($ka -eq $kd)|$($own.Length)|$($own -ne $ka -and $own -ne $ownB)|$($null -eq $offK)" }
+$lso = & { . $lkL; $api = [pscustomobject]@{ name = 'api'; repo = 'w'; build = 'b'; artifact = 'x.jar' }
+  $run = Get-KitPath localenv -Create; $mine = Join-Path $run 'run/shop2/api/r1'; $theirs = Join-Path $run 'run/shop/api/r1'; New-Item -ItemType Directory -Force $mine, $theirs | Out-Null
+  Update-State shop { param($x) $x.builds = @{ api = @(@{ key = 'k9'; dir = $theirs; path = $theirs }) } }; $none = Find-SharedBuild shop2 $api 'k9'
+  Update-State shop2 { param($x) $x.builds = @{ api = @(@{ key = 'k9'; dir = $mine; path = $mine }) } }; $hit = Find-SharedBuild shop2 $api 'k9'
+  foreach ($l in 'shop', 'shop2') { Update-State $l { param($x) $x.Remove('builds') } }
+  "$($null -eq $none)|$($hit.lane)" }
+Expect "lanes: without shareBuild only the lane's own recorded copy of a build is reused ($lso)" ($lso -eq 'True|shop2')
+Expect "lanes: the build key = the code without its prepare commits + the build config; without shareBuild a lane-only key (prepare commits count; reuseBuilds false: none) ($lk2)" ($lk2 -eq '40|True|False|False|40|True|True')
 $lsd = & { . $lkL; $none = [pscustomobject]@{ port = '' }; "$(Split-Path (SeedFile shop2) -Leaf)|$(Expand-Placeholders 'pokey -Target local-shop{lane}' shop2 $none '' '')|$(Expand-Placeholders 'local-shop{lane}' shop $none '' '')" }
 Expect "lanes: a lane seeds from its env's seed file; {lane} expands at run time too (seed commands) ($lsd)" ($lsd -eq 'shop.seed.json|pokey -Target local-shop2|local-shop')
 $lt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); $tc = [pscustomobject]@{ targets = [pscustomobject]@{ 'local-shop' = [pscustomobject]@{ api = 'http://127.0.0.1:8080/x'; web = 'http://127.0.0.1:4200' } } }

@@ -2,12 +2,13 @@
 <#
 kit-tests.ps1: offline kit tests (throw-away kit copies, local git repos, mocked CLIs, no real services).
 Runs tests/<area>.tests.ps1 files in parallel, one pwsh each; each area file also runs on its own.
-Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|bossy|crafty|pokey|kitbag|workflows|supervise|params|guard|layout|flow|sessions|tracker|render|dashboard|debate|<any tests/<area>.tests.ps1>[,...]] [-Slow]
+Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|bossy|crafty|pokey|kitbag|workflows|supervise|params|guard|layout|flow|sessions|tracker|render|dashboard|debate|<any tests/<area>.tests.ps1>[,...]] [-Slow] [-Full]
+ -Full: also the scratch-DB areas whose code did not change since origin/main (all skips them; KIT_TESTS_FULL=1).
  -Slow: also the checks that need real tools and take seconds each (KIT_TESTS_SLOW=1, e.g. a real headless Chrome).
 Outputs: each area's PASS / FAIL lines, its time, TEST-DUP lines (one case name in two places), a recap of the failed checks, then a total.
 Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 #>
-param([string[]]$Area = 'all', [switch]$Slow)
+param([string[]]$Area = 'all', [switch]$Slow, [switch]$Full)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
 # the real python first on PATH: a shim (pyenv-win python.bat runs chcp) flips the console code page all areas share, and a
@@ -20,6 +21,13 @@ $all = @($files | ForEach-Object { $_ -replace '\.tests\.ps1$' })
 $areas = if ($Area -contains 'all') { $all } else { @($Area | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
 $unknown = @($areas | Where-Object { $_ -notin $all })
 if (-not $areas -or $unknown) { Write-Error "kit-tests.ps1: unknown or no area(s) '$($unknown -join ', ')'; known: $($all -join ', ')" -ErrorAction Continue; exit 2 }
+# areas on a scratch DB server run in 'all' only when a path they test changed since origin/main (-Full / KIT_TESTS_FULL=1: always)
+$dbRx = '^(skills/envy/|skills/crafty/lib\.ps1|tests/(harness\.ps1|db-engine-presets))'; $onChange = @{ 'db-engine-presets' = $dbRx; 'db-engine-presets-2' = $dbRx }
+if ($Area -contains 'all' -and -not ($Full -or $env:KIT_TESTS_FULL)) {
+  $kitDir = Split-Path $PSScriptRoot; $base = "$(git -C $kitDir merge-base HEAD origin/main 2>$null)".Trim()
+  $changed = if ($base) { @(git -C $kitDir diff --name-only $base 2>$null) + @(git -C $kitDir ls-files --others --exclude-standard 2>$null) }
+  if ($base) { foreach ($a in @($areas | Where-Object { $onChange[$_] -and -not @($changed -match $onChange[$_]).Count })) { "SKIP $a`: no change in what it tests (-Full runs it)"; $areas = @($areas | Where-Object { $_ -ne $a }) } }
+}
 
 $started = Get-Date
 $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {

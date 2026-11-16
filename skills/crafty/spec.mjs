@@ -12,7 +12,7 @@
 // Exit codes: 0 all passed · 1 a failure / bundle error / NOT RUN spec · 2 no esbuild, no spec found or usage error.
 // Sections: L21 kit paths · L26 spec shim · L162 registry · L223 runner · L270 angular · L327 jsdom · L369 main
 import Module, { createRequire } from 'node:module'
-import { existsSync, readFileSync, readdirSync, statSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -384,11 +384,15 @@ for (const spec of uniq) {
  }
  const out = join(outRoot, rel.replace(/[\\/:]/g, '__') + '.cjs')
  try {
-  await esbuild.build({
+  const built = await esbuild.build({
    entryPoints: [spec], outfile: out, bundle: true, platform: 'node', format: 'cjs', target: `node${process.versions.node.split('.')[0]}`,
    sourcemap: 'inline', logLevel: 'silent', absWorkingDir: dir, ...(tsconfig ? { tsconfig } : {}),
-   plugins: realAngular ? [] : [ngStub],
+   plugins: realAngular ? [] : [ngStub], write: false,
   })
+  // the bundle (MBs, inline source map) is written only when its bytes changed: re-runs of the same spec rewrote it each time
+  const bytes = Buffer.from(built.outputFiles[0].contents)
+  let same = false; try { same = readFileSync(out).equals(bytes) } catch {}
+  if (!same) writeFileSync(out, bytes)
  } catch (e) {
   total.errors++
   say(`BUNDLE ERROR ${rel}`)

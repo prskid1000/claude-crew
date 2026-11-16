@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L867 cycles · L943 pack · L1080 page · L1540 command
+Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L870 cycles · L946 pack · L1083 page · L1543 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -636,7 +636,7 @@ def parse(f, text):
     return {'parts': p.parts, 'refs': p.refs}
 
 # ---- link: the model, edges, issues
-def model(k, problems, cache_path=None):
+def model(k, problems, cache_path=None, write=True):
     """The page data: files, nodes, edges (with back-edge / loop flags), cycles, issues."""
     cache = {}
     if cache_path and osp.isfile(cache_path):
@@ -645,7 +645,8 @@ def model(k, problems, cache_path=None):
                 cache = json.load(fh)
         except (OSError, ValueError):
             cache = {}
-    if cache.get('v') != PARSER_KEY:
+    dirty = cache.get('v') != PARSER_KEY   # rewrite only when a parse changed: the cache is MBs and every lint ran it
+    if dirty:
         cache = {'v': PARSER_KEY, 'files': {}}
     parsed = {}
     for f in k.files:
@@ -660,9 +661,11 @@ def model(k, problems, cache_path=None):
         c = cache['files'].get(f)
         if not c or c['h'] != h:
             c = cache['files'][f] = {'h': h, 'p': parse(f, t)}
+            dirty = True
         parsed[f] = c['p']
+    dirty = dirty or len(cache['files']) != len(parsed)
     cache['files'] = {f: v for f, v in cache['files'].items() if f in parsed}
-    if cache_path:
+    if cache_path and dirty and write:
         try:
             os.makedirs(osp.dirname(cache_path), exist_ok=True)
             with open(cache_path, 'w', encoding='utf-8') as fh:
@@ -1549,7 +1552,8 @@ def default_out(kit):
 def page_data(k, problems, kit=None):
     """Page model: the parts inside every file, the edges between them, loops, issues."""
     live = live_root(kit or k.dir)
-    data = model(k, problems, kit_path('kit-flow-cache', kit=live))
+    ro = os.environ.get('KIT_FLOW_CACHE_RO')   # tests: the source kit's cache, read only (each throw-away kit wrote MBs)
+    data = model(k, problems, ro or kit_path('kit-flow-cache', kit=live), write=not ro)
     data['kit'], data['_texts'] = live.replace('\\', '/'), {f: k.texts.get(f, '') for f in k.files}
     return data
 

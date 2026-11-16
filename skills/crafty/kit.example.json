@@ -4,7 +4,7 @@
   "gitHost, gitHostType, githubHost, gitHostGroup": "git host (no default), owner in <repo>!<n> (was gitlabGroup)",
   "reposRoot, worktreeRoots, repoAliases, protectedBranches": "checkouts (default the workspace), worktrees (<repos>-wt); short repo names; branches never force-pushed; `protectedBranchesMode` extend (replace: without main/master/develop)",
   "commitStyle, mrTitleFormat, commitFormat, locale.testCommentPattern, locale.proseTerms": "subject rule conventional (free / a regex); formats: devtools.py render; English defaults: testing comment, prose required words ({expected: regex, ...})",
-  "devices": "type: none (default: verbs refuse, app checks NOT_TESTED) / android / ios (swarm-ios.ps1); avd {api, device, tag}",
+  "devices": "type: none (default: verbs refuse, app checks NOT_TESTED) / android / ios (swarm-ios.ps1); avd {api, device, tag}; snapshotSave (false: Quick Boot keeps the first snapshot, no multi-GB save on each close)",
   "trackerRepos, trackerLists, productTargets": "repos searched for a task's MRs; containers for deploy intest; env per path",
   "holdMerge": "repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge: NOT_MERGED held for approval",
   "repos": "role producer / consumer; migrations.check = its own check, else the migrations.tool adapter (envy db.md); exclusiveTests: README Leases; regenerate: wt sync conflicts -> target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = no MR pipelines (CI on deploy branches): pipes no-ci, devtools.py merge on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual, from, paths, serves; kind: bossy deploys.md",
@@ -105,7 +105,7 @@
   "skills/pokey/targets.local.json": {
    "_readme": "One entry per TEST environment (never production), local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: pokey adapters/api_auth.ps1; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
    "default": "my-staging",
-   "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000 },
+   "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000, "diskCache": false },
    "targets": {
     "my-staging": {
      "web": "https://staging.example.com", "api": "https://staging-api.example.com", "apiPattern": "/api/", "defaultTenant": "", "tenantHeader": "",

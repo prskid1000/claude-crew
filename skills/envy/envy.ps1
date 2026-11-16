@@ -22,8 +22,8 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L35 config · L230 state · L277 layer drops · L349 leases · L477 code · L509 migrations ·
-  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds (opt-in services[].shareBuild true ·
-  L837 hooks · L909 marks · L1089 seed · L1156 processes · L1535 daemon · L1995 cleanup · L2067 doctor · L2120 verbs
+  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds · L840 hooks · L912 marks · L1092 seed ·
+  L1159 processes · L1538 daemon · L1998 cleanup · L2070 doctor · L2123 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -657,21 +657,21 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
   }
   @{ kept = $kept; dropped = $dropped; targetSha = $base }
 }
-# ---- shared builds (opt-in services[].shareBuild true: a build whose output depends on its code and its own config only, e.g. a
-# web bundle that reads no per-lane value): lanes of one env stage another lane's recorded copy of the same code (the worktree tree
-# without its prepare commits) and the same build config, no build
+# ---- shared builds: a recorded copy of the same code + build config is staged, no build (reuseBuilds: own lane; shareBuild: any)
 $script:BuildKeys = @{}; $script:SharedStage = @{}
 function BuildKey([string]$e, $s) {
-  if ($s.shareBuild -ne $true -or -not $s.build -or -not $s.repo -or -not ($s.artifact -or $s.static)) { return $null }
+  $sb = $s.shareBuild -eq $true
+  if (-not ($sb -or (Opt 'reuseBuilds' $true)) -or -not $s.build -or -not $s.repo -or -not ($s.artifact -or $s.static)) { return $null }
   $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; if (-not $wt -or -not (Test-Path -LiteralPath (Join-Path $wt '.git'))) { return $null }
-  $n = 0; while ($n -lt 10 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv prepare*') { $n++ }   # lane paths only ({cache}, {env}, {dir}, {wt})
+  $n = 0; while ($sb -and $n -lt 10 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv prepare*') { $n++ }   # lane paths only ({cache}, {env}, {dir}, {wt})
   $tree = "$(git -C $wt rev-parse "HEAD~$n^{tree}" 2>$null)".Trim(); if ($LASTEXITCODE -or -not $tree) { return $null }
   $cfg = [ordered]@{ tree = $tree; dir = "$($s.dir)"; build = "$($s.build)"; artifact = "$($s.artifact)"; static = "$($s.static)"; unpack = "$($s.unpack)"; prepare = "$($s.prepare)"; reactor = @($s.reactor); env = $s.env }
+  if (-not $sb) { $cfg.lane = $e }
   (Get-KitHash ($cfg | ConvertTo-Json -Depth 8 -Compress) SHA1).ToLower()
 }
-# -> @{ lane; dir; path } of another lane's recorded copy with this key (keyed when it was built), else nothing; never throws
+# -> @{ lane; dir; path } of a recorded copy with this key (this lane first), else nothing; never throws
 function Find-SharedBuild([string]$e, $s, [string]$key) {
-  foreach ($l in @(LaneNames $e | Where-Object { $_ -ne $e })) {
+  foreach ($l in @($e; if ($s.shareBuild -eq $true) { LaneNames $e | Where-Object { $_ -ne $e } })) {
     try { $st = Read-State $l; $hit = @(@(if ($st.builds -is [hashtable]) { $st.builds[$s.name] }) | Where-Object { $_ -and $_.key -eq $key -and $_.path -and (Test-Path -LiteralPath "$($_.path)") })[-1] } catch { continue }
     if ($hit) { return @{ lane = $l; dir = "$($hit.dir)"; path = "$($hit.path)" } }
   }
@@ -697,10 +697,9 @@ function Build-Repo([string]$e, [string]$rn) {
   }
   $null
 }
-# a release's runnable copy per service (the env worktree builds on while it serves): the artifact file, its unpacked form
-# (services[].unpack) or the built files of a static service; keepReleases kept per service plus the ones in use
+# a release = a runnable copy per service (the worktree builds on while it serves); keepReleases + the ones in use kept
 # {reactor}: services[].reactor module globs built in one reactor with the service's module ('-f <aggregator> -pl <module> -am');
-# only modules in its parent chain (others miss its pluginManagement: they come from the local repository, doctor lists them)
+# only modules in its parent chain (others lack its pluginManagement: from the local repository, doctor lists them)
 function Get-PomParents([string]$pom) {   # groupId:artifactId of each parent found on disk (relativePath, default ../pom.xml)
   for ($i = 0; $i -lt 8 -and (Test-Path -LiteralPath $pom); $i++) {
     $x = try { [xml](Get-Content -LiteralPath $pom -Raw) } catch { break }; $p = $x.project.parent; if (-not $p) { break }
@@ -733,36 +732,48 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
     for ($i = 2; $to -in $live; $i++) { $to = Join-Path (Get-KitPath localenv) "run/$e/$($s.name)/$tag-$i" }   # a running copy is never replaced
     Remove-Item -LiteralPath $to -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $to | Out-Null
     $bk = $script:BuildKeys[$s.name]; $sh = $script:SharedStage[$s.name]; $shared = [bool]$sh; $shLane = $null; $script:BuildKeys.Remove($s.name); $script:SharedStage.Remove($s.name)   # one build, one stage
-    for ($try = 0; $sh -and $try -lt 3; $try++) {   # another lane's copy of the same build (its AOT cache goes with its file); pruned meanwhile: the next
+    for ($try = 0; $sh -and $try -lt 3; $try++) {   # pruned meanwhile: the next
       try {
         if (-not (Test-Path -LiteralPath $sh.path)) { throw 'gone' }
-        Get-ChildItem -LiteralPath $sh.dir -Force | Where-Object Name -ne 'app.aot' | Copy-Item -Destination $to -Recurse -Force
+        Add-ReleaseFiles $sh.dir $to -Release
         $rel = [IO.Path]::GetRelativePath($sh.dir, $sh.path); $out[$s.name] = if ($rel -eq '.') { $to } else { Join-Path $to $rel }; $shLane = $sh.lane; break
       } catch { Get-ChildItem -LiteralPath $to -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; $sh = Find-SharedBuild $e $s $bk }
     }
     if ($out[$s.name]) { }
-    elseif ($shared) { throw "[$e] $($s.name): the other lanes' copies of this build are gone since the build step (pruned): deploy again (it builds then)" }
+    elseif ($shared) { throw "[$e] $($s.name): the recorded copies of this build are gone since the build step (pruned): deploy again (it builds then)" }
     elseif ($s.static) {
       $src = Join-Path $dir $s.static
       if (-not (Test-Path -LiteralPath $src -PathType Container)) { throw "[$e] $($s.name): no built files in $src after the build (static)" }
-      Copy-Item (Join-Path $src '*') $to -Recurse -Force; $out[$s.name] = $to
+      Add-ReleaseFiles $src $to; $out[$s.name] = $to
     } else {
       $excl = if ($s.artifactExclude) { [string]$s.artifactExclude } else { 'original|sources|javadoc|plain' }
       $f = Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue | Where-Object Name -notmatch $excl | Sort-Object LastWriteTime -Descending | Select-Object -First 1
       if (-not $f) { throw "[$e] $($s.name): no artifact matches $($s.artifact) in $dir after the build" }
       $out[$s.name] = $null
-      if ($s.unpack) {   # an unpack that fails falls back to the plain artifact: the release still goes live, the event says why
+      if ($s.unpack) {   # a failed unpack: the plain artifact goes live, the event says why
         try { $out[$s.name] = Expand-Artifact $e $s $f.FullName $to }
         catch { $why = "$_".Split("`n")[0]; Write-Host "[$e] $($s.name): $why - staged the plain artifact instead"; Event $e 'unpack-fallback' @{ service = $s.name; tag = $tag; why = $why }; Get-ChildItem -LiteralPath $to -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
       }
-      if (-not $out[$s.name]) { Copy-Item $f.FullName $to -Force; $out[$s.name] = Join-Path $to $f.Name }
+      if (-not $out[$s.name]) { if (Opt 'stageLinks' $true) { Move-Item -LiteralPath $f.FullName $to -Force } else { Copy-Item $f.FullName $to -Force }; $out[$s.name] = Join-Path $to $f.Name }
     }
     $bo = $out[$s.name]
-    if ($bk) { Update-State $e { param($x) if ($x.builds -isnot [hashtable]) { $x.builds = @{} }; $x.builds[$s.name] = @(@(@($x.builds[$s.name]) | Where-Object { $_ -and $_.key -ne $bk }) + @(@{ key = $bk; dir = $to; path = $bo; at = (Now) }) | Select-Object -Last 3) } }   # other lanes look here
+    if ($bk) { Update-State $e { param($x) if ($x.builds -isnot [hashtable]) { $x.builds = @{} }; $x.builds[$s.name] = @(@(@($x.builds[$s.name]) | Where-Object { $_ -and $_.key -ne $bk }) + @(@{ key = $bk; dir = $to; path = $bo; at = (Now) }) | Select-Object -Last 3) } }
     Event $e 'stage' @{ service = $s.name; tag = $tag; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); unpacked = [bool]$s.unpack; shared = $shLane }
     $null = Remove-OldReleases $e $s (Split-Path $to)
   }
   $out
+}
+# stageLinks: hard links to a release's files (no app.aot), else to _lib (one file per hash, -Move: taken; .libs.json)
+function Add-ReleaseFiles([string]$from, [string]$to, [switch]$Release, [switch]$Move) {
+  $map = [ordered]@{}; $store = Join-Path (Split-Path $to) '_lib'; $link = Opt 'stageLinks' $true
+  foreach ($f in @(Get-ChildItem -LiteralPath $from -File -Recurse -Force)) {
+    $rel = [IO.Path]::GetRelativePath($from, $f.FullName); $src = $f.FullName; if ($Release -and $rel -eq 'app.aot') { continue }
+    $dst = Join-Path $to $rel; [void][IO.Directory]::CreateDirectory((Split-Path $dst))
+    if ($link -and -not $Release) { $h = (Get-FileHash -LiteralPath $src -Algorithm SHA1).Hash; $src = Join-Path $store "$h$($f.Extension)"; $map[$rel] = $h
+      if (-not (Test-Path -LiteralPath $src)) { [void][IO.Directory]::CreateDirectory($store); & $(if ($Move) { 'Move-Item' } else { 'Copy-Item' }) -LiteralPath $f.FullName $src } }
+    try { if (-not $link) { throw 'copy' }; $null = New-Item -ItemType HardLink -Path $dst -Target $src -ErrorAction Stop } catch { Copy-Item -LiteralPath $src $dst -Force }
+  }
+  if ($map.Count) { ConvertTo-Json -InputObject $map | Set-Content -LiteralPath (Join-Path $to '.libs.json') -Encoding utf8 }
 }
 # the release folder an artifact path lies in (artifact = a file in it, or the folder itself)
 function ReleaseDirOf([string]$root, [string]$art) { if (-not $art) { return $null }; $rel = [IO.Path]::GetRelativePath($root, $art); if ($rel -match '^\.\.') { return $null }; Join-Path $root (($rel -split '[\\/]')[0]) }
@@ -776,20 +787,12 @@ function Remove-OldReleases([string]$e, $s, [string]$root, [switch]$DryRun) {
   $refs = @{}; foreach ($m in Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | ForEach-Object { Join-Path $_.FullName '.libs.json' } | Where-Object { Test-Path -LiteralPath $_ }) { foreach ($p in (Get-KitProps (Get-Content -LiteralPath $m -Raw | ConvertFrom-Json))) { $refs["$($p.Value)"] = $true } }
   Get-ChildItem -LiteralPath $store -File | Where-Object { -not $refs[$_.BaseName] } | Remove-Item -Force -ErrorAction SilentlyContinue   # no release links it
 }
-# services[].unpack: a command that unpacks {artifact} into {out} (a runnable file of the artifact's type + its libraries under
-# unpackLib, default lib); each library file is kept once by content hash in <service>/_lib and hard-linked into the release
+# services[].unpack: unpacks {artifact} into {out}: a runnable file of its type + libraries
 function Expand-Artifact([string]$e, $s, [string]$file, [string]$to) {
-  $cmd = (Expand-Placeholders ([string]$s.unpack) $e $s (SvcDir $e $s) $file).Replace('{out}', $to)
-  $code = Invoke-Shell $cmd (LogFile $e "$($s.name)-build") (EnvVars $e $s) ([int](Get-KitParam 'localEnv.buildTimeoutSec'))
+  $tmp = Join-Path (Split-Path $to) '_unpack'; Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  $code = Invoke-Shell (Expand-Placeholders ([string]$s.unpack) $e $s (SvcDir $e $s) $file).Replace('{out}', $tmp) (LogFile $e "$($s.name)-build") (EnvVars $e $s) ([int](Get-KitParam 'localEnv.buildTimeoutSec'))
   if ($code) { throw "[$e] $($s.name): unpack failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 3) -join ' | ')" }
-  $store = Join-Path (Split-Path $to) '_lib'; New-Item -ItemType Directory -Force $store | Out-Null; $map = [ordered]@{}
-  foreach ($j in @(Get-ChildItem -LiteralPath (Join-Path $to $(if ($s.unpackLib) { [string]$s.unpackLib } else { 'lib' })) -File -Recurse -ErrorAction SilentlyContinue)) {
-    $h = (Get-FileHash -LiteralPath $j.FullName -Algorithm SHA1).Hash.ToLower(); $keep = Join-Path $store "$h$($j.Extension)"
-    if (Test-Path -LiteralPath $keep) { Remove-Item -LiteralPath $j.FullName -Force } else { Move-Item -LiteralPath $j.FullName $keep }
-    try { New-Item -ItemType HardLink -Path $j.FullName -Target $keep -ErrorAction Stop | Out-Null } catch { Copy-Item -LiteralPath $keep $j.FullName }   # no hard links there: a copy
-    $map[[IO.Path]::GetRelativePath($to, $j.FullName)] = $h
-  }
-  ConvertTo-Json -InputObject $map | Set-Content -LiteralPath (Join-Path $to '.libs.json') -Encoding utf8
+  Add-ReleaseFiles $tmp $to -Move; Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
   $run = Get-ChildItem -LiteralPath $to -File | Where-Object Extension -eq ([IO.Path]::GetExtension($file)) | Select-Object -First 1
   if (-not $run) { throw "[$e] $($s.name): unpack left no $([IO.Path]::GetExtension($file)) file in $to" }
   $run.FullName

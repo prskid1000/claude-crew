@@ -203,6 +203,8 @@ $arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'archive-*')
 Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and (Test-Path "$($arc[0].FullName)/finalize.json") -and -not (Test-Path "$rt/Z1/finalize.json") -and $ro -match 'archived the earlier round')
 $klBase | Set-Content $kl
 # browser.mjs: mocks, then local fixture servers
+$bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
+Expect 'browser.mjs: Chrome starts with no disk cache or component downloads unless browser.diskCache' ($bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1', '--disable-component-update', '--disable-background-networking']"))
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
   $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +

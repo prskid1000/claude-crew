@@ -52,6 +52,9 @@ with open(cp, 'w') as fh: json.dump({'v': flow.VER, 'files': {'fp.py': {'h': has
 flow.model(types.SimpleNamespace(files=list(S), texts=S, dir=sys.argv[2], skills=[], agents={}, workflows={}), [], cp)
 with open(cp) as fh: v = json.load(fh)
 os.remove(cp); print('cachekey=' + str(v['v'] == flow.PARSER_KEY != str(flow.VER) and bool(v['files']['fp.py']['p']['parts'])))
+kf = types.SimpleNamespace(files=list(S), texts=S, dir=sys.argv[2], skills=[], agents={}, workflows={})   # unchanged parses: no rewrite; write=False: never
+flow.model(kf, [], cp); os.utime(cp, ns=(10**15, 10**15)); t0 = os.stat(cp).st_mtime_ns; flow.model(kf, [], cp); same = os.stat(cp).st_mtime_ns == t0; os.remove(cp)
+flow.model(kf, [], cp, write=False); print('cachewrite=' + str(same and not os.path.exists(cp)))
 '@
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
 $pgOut = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-$PID.html"
@@ -114,6 +117,7 @@ $checks += [ordered]@{
   "no false loop issues ($res)" = $res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0'
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
   'the flow cache key holds the parser hash: an old-parser cache is re-parsed' = $res -match 'cachekey=True'
+  'the flow cache is rewritten only when a parse changed; a read-only cache (tests) is never written' = $res -match 'cachewrite=True'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
   'run-then-read is a loop from a script, never from a test file, a doc step or one read-modify-write' = $res -match 'scc-tests=0 scc-driver=1 scc-doc=0 scc-rmw=0'
   'verbs from COMMANDS tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'

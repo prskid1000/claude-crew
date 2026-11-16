@@ -98,7 +98,7 @@ $sg = & { . $L3; function RepoOf { 'r' }
   Update-State t { param($x) $x.services.api = @{ status = 'up'; artifact = $again.api } }; $old = @(Remove-OldReleases t (Svc t api) $root -DryRun | ForEach-Object { Split-Path $_ -Leaf }) -join ','
   Update-State t { param($x) $x.services.web = @{ status = 'down' } }
   "$($again.web -like '*r4-d-2')/$keep/$old|$dirs|$store|$links|$(Split-Path $r3.api -Leaf)|$(Test-Path (Join-Path $r3.web 'main.js'))|$((StartCmd t (Svc t web) $r3.web) -match 'static-server\.mjs')|$($a0 -notmatch 'AOTCache')|$($a1 -match '-XX:AOTCache=')" }
-Expect "stage: libraries once (hard links), 2 releases + the one in use kept, store pruned; a running copy is never replaced (-2), old ones listed by -DryRun; static files staged + served by the kit; {aot} once cached ($sg)" ($sg -eq 'True/True/r1-a|r1-a,r3-c,r4-d|3|HardLink|app.jar|True|True|True|True')
+Expect "stage: unpacked files once per content hash (hard links; the runnable too), 2 releases + the one in use kept, store pruned; a running copy is never replaced (-2), old ones listed by -DryRun; static files staged + served by the kit; {aot} once cached ($sg)" ($sg -eq 'True/True/r1-a|r1-a,r3-c,r4-d|4|HardLink|app.jar|True|True|True|True')
 $sv = & { . $L3; $fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $port = $fp.LocalEndpoint.Port; $fp.Stop()   # a free port: a fixed one collides with parallel runs
   $srv = Start-Process node -ArgumentList "`"$(StaticServer)`" `"$(Join-Path $wtd 'web/dist/app')`" $port" -PassThru -WindowStyle Hidden
   try { for ($i = 0; $i -lt 120 -and -not (Test-PortListening $port); $i++) { Start-Sleep -Milliseconds 250 }
@@ -117,9 +117,19 @@ Expect "build: {reactor} -> -f <aggregator> -pl <service module> -am over the mo
 # a failed unpack stages the plain artifact (event unpack-fallback); the loop restarts on an edited kit.local.json between trains
 $uf = & { . $L3; function RepoOf { 'r' }; $script:evs = @(); function Event($e, $k, $d) { $script:evs += $k }
   function Svc0 { [pscustomobject]@{ name = 'api'; dir = (Join-Path $wtd 'api'); artifact = 'target/app-*.jar'; unpack = 'exit 3' } }; function EnvServices { Svc0 }
-  $r = Stage-Artifacts t r 'r9-f' 6>$null; "$((Split-Path $r.api -Leaf) -eq 'app-1.jar' -and (Get-Content $r.api) -eq 'fat')|$($script:evs -contains 'unpack-fallback')" }
+  $r = Stage-Artifacts t r 'r9-f' 6>$null; "$((Split-Path $r.api -Leaf) -eq 'app-1.jar' -and (Get-Content $r.api) -eq 'fat')|$($script:evs -contains 'unpack-fallback')|$(-not (Test-Path (Join-Path $wtd 'api/target/app-1.jar')))" }
 $ls = Get-Content (Join-Path $src 'skills/envy/envy.ps1') -Raw
-Expect "stage: a failed unpack -> the plain artifact + unpack-fallback; loop: kit.local.json or envy.ps1 / lib.ps1 mtime -> a fresh loop between trains ($uf)" ($uf -eq 'True|True' -and $ls -match '\$cfgNow = Get-LoopStamp' -and $ls -match 'if \(-not \$st\.train -and \$cfgNow -ne \$cfgAt -and' -and $ls -match 'if \(\$reload\) \{ \$null = Start-Pwsh')
+Expect "stage: a failed unpack -> the plain artifact (moved out of the build, no copy) + unpack-fallback; loop: kit.local.json or envy.ps1 / lib.ps1 mtime -> a fresh loop between trains ($uf)" ($uf -eq 'True|True|True' -and $ls -match '\$cfgNow = Get-LoopStamp' -and $ls -match 'if \(-not \$st\.train -and \$cfgNow -ne \$cfgAt -and' -and $ls -match 'if \(\$reload\) \{ \$null = Start-Pwsh')
+# stageLinks: build output stored once per content hash and hard-linked; a staged release's files linked, its AOT cache not; off: copies
+$sl = & { . $L3; $b = Join-Path $ud 'sl/build'; $root = Join-Path $ud 'sl/run'; New-Item -ItemType Directory -Force (Join-Path $b 'a'), $root | Out-Null
+  'same' | Set-Content (Join-Path $b 'a/v.js'); 'one' | Set-Content (Join-Path $b 'main.js')
+  $lj = { param($r) $p = Join-Path $root "$r/.libs.json"; if (Test-Path $p) { Get-Content $p -Raw | ConvertFrom-Json -AsHashtable } else { @{} } }
+  Add-ReleaseFiles $b (Join-Path $root 'r1'); 'two' | Set-Content (Join-Path $b 'main.js'); Add-ReleaseFiles $b (Join-Path $root 'r2'); $m1 = & $lj r1; $m2 = & $lj r2
+  'aot' | Set-Content (Join-Path $root 'r2/app.aot'); Add-ReleaseFiles (Join-Path $root 'r2') (Join-Path $root 'r3') -Release
+  function Opt($k, $d) { if ($k -eq 'stageLinks') { $false } else { $d } }; Add-ReleaseFiles $b (Join-Path $root 'r4'); $m4 = & $lj r4
+  $lt = { param($p) "$((Get-Item (Join-Path $root $p)).LinkType)" }
+  "$($m1.Count)|$($m1['a\v.js'] -eq $m2['a\v.js'] -or $m1['a/v.js'] -eq $m2['a/v.js'])|$(@(Get-ChildItem (Join-Path $root '_lib') -File).Count)|$(& $lt 'r2/a/v.js')|$(Get-Content (Join-Path $root 'r3/main.js'))|$(& $lt 'r3/main.js')|$(Test-Path (Join-Path $root 'r3/app.aot'))|$($m4.Count)|$(& $lt 'r4/main.js')" }
+Expect "stage links: build files once per content hash (3 stored for 2 releases, .libs.json lists them), hard-linked; a release's files linked without app.aot; stageLinks false: plain copies ($sl)" ($sl -eq '2|True|3|HardLink|two|HardLink|False|0|')
 # cleanup: logs / run files / data folders / env worktrees no configured env uses are orphans; -DryRun deletes nothing
 & $J @{ localEnv = @{ cleanup = @{ dataRoots = @(@{ dir = (Join-Path $ud 'data'); match = 'sb1|^t$' }); quick = @(@{ name = 'old q'; paths = @("$ud/q/*"); olderThanDays = 1; cmd = 'echo q' }) }; envs = @{ t = @{ db = @{ datadir = (Join-Path $ud 'data/keepsb1') }; services = @(@{ name = 'api'; start = "run -Epath.data=$(Join-Path $ud 'data/t')"; port = 41017 }) } } } } $cf3 8
 $co = & { . $L3; $lgd = Get-KitPath localenv-logs -Create; foreach ($n in 't-api.log', 't-api.log.prev', 't-sb1-api.log', 't-loop.log', 'x-web.log') { Set-Content (Join-Path $lgd $n) 1; (Get-Item (Join-Path $lgd $n)).LastWriteTime = (Get-Date).AddDays(-2) }

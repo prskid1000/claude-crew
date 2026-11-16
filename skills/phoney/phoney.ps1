@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L106 phone · L305 build · L449 install · L475 launch · L487 avd · L573 up · L670 down · L700 events ·
-  L757 slim
+Sections: L24 config · L106 phone · L306 build · L450 install · L476 launch · L488 avd · L574 up · L673 down · L703 events ·
+  L760 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -178,15 +178,16 @@ switch ($Action) {
     while (-not $got) {
       $got = Locked {
         if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf }   # heartbeat
-        $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
+        $ls = @{}; foreach ($x in $c.lanes) { $ls[$x.name] = Lease $x.name }   # one locked read per lane a round (3 made each lock churn)
+        $mine = @($c.lanes | Where-Object { $ls[$_.name].agent -eq $Agent } | Select-Object -First 1)
         if ($mine) {   # already ours (offline too)
           $script:had = $true
           if ($Holder) { $lf = Join-Path $dir "$($mine[0].name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; if ($o.holder -ne $Holder) { $o | Add-Member -Force holder $Holder; Save-Json $o $lf } }
           return $mine[0]
         }
         # fair: oldest waiter a free lane satisfies first
-        foreach ($ln in $lanes) { $o = Lease $ln.name; $lf = Join-Path $dir "$($ln.name).json"; if (-not $o -or $o.agent -in '__stopping__', 'manual') { continue }; $s0 = "$($o.seen)"; if (Update-KitLease $o) { if ("$($o.seen)" -ne $s0) { Save-Json $o $lf }; continue }; Remove-Item $lf -Force; Write-KitLeaseLog reclaim lane $ln.name $o "reclaim: no live holder for $($o.graceMin) min"; "reclaimed $($ln.name) from $($o.agent): no live holder for $(Get-KitSetting 'idle.graceMinutes' 10) min" | Write-Host }
-        $free = @($lanes | Where-Object { -not (Lease $_.name) })
+        foreach ($ln in $lanes) { $o = $ls[$ln.name]; $lf = Join-Path $dir "$($ln.name).json"; if (-not $o -or $o.agent -in '__stopping__', 'manual') { continue }; $s0 = "$($o.seen)"; if (Update-KitLease $o) { if ("$($o.seen)" -ne $s0) { Save-Json $o $lf }; continue }; Remove-Item $lf -Force; $ls[$ln.name] = $null; Write-KitLeaseLog reclaim lane $ln.name $o "reclaim: no live holder for $($o.graceMin) min"; "reclaimed $($ln.name) from $($o.agent): no live holder for $(Get-KitSetting 'idle.graceMinutes' 10) min" | Write-Host }
+        $free = @($lanes | Where-Object { -not $ls[$_.name] })
         if (-not $free) { return $null }
         $ahead = @(Waiters | Where-Object { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date $since) -and (-not $_.lane -or $free.name -contains $_.lane) })
         if ($ahead.Count -ge $free.Count) { return $null }
@@ -618,6 +619,8 @@ foreach ($name in $Lanes) {
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     # mic = pokey.ps1 ui mic (gRPC injectAudio on 127.0.0.1 with a token); injected audio reaches the guest only with -allow-host-audio
     $a = @('-avd', $name, '-port', $l.port, '-grpc', ($l.port + 3000), '-grpc-use-token', '-allow-host-audio', '-gpu', $c.avd.gpu, '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
+    # a Quick Boot save rewrites GBs on every close: save only the first (golden) snapshot unless devices.snapshotSave
+    if (-not (Get-KitSetting 'devices.snapshotSave' $false) -and (Test-Path (Join-Path $c.avdDir "$name.avd/snapshots/default_boot"))) { $a += '-no-snapshot-save' }
     $noWin = $Headless -or -not ($ShowAll -or $l.headless -eq $false -or ($null -eq $l.headless -and $c.headless -eq $false))   # window only with -ShowAll or headless: false
     if ($noWin) { $a += '-no-window' }
     # WMI: not our child (survives tool timeouts); SW_HIDE, CREATE_NO_WINDOW
@@ -667,7 +670,7 @@ if ($Mode -ne 'None' -and $out) { & $KitCmd.swarm install -Serials $out.serial }
 "swarm.json written; free RAM now $(FreeGB) GB"
 }
 
-# ---- down: stop lanes (snapshot saved, reverses removed, browser.mjs browsers killed)
+# ---- down: stop lanes (snapshot saved only without -no-snapshot-save, reverses removed, browser.mjs browsers killed)
 function Invoke-Down {
 param([string[]]$Lanes, [switch]$KeepBrowsers)
 $Lanes = @(Split-KitList $Lanes)

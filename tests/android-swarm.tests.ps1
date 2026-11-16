@@ -213,4 +213,9 @@ $ro = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') release -Agent X1 | Out-S
 Expect "swarm release: an ended agent's lane freed and stopped ($($ro.Trim()))" (-not (Test-Path (Join-Path (TkPath $k phones) 'Falcon.json')) -and (Get-Content "$rp/adb.log" -Raw) -match 'emu kill' -and
   "$($last[0].event)/$($last[0].agent)/$($last[0].reason) $($last[1].event)" -eq 'release/X1/agent finished down')
 Remove-Item $rp -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
+$snapLine = @'
+if (-not (Get-KitSetting 'devices.snapshotSave' $false) -and (Test-Path (Join-Path $c.avdDir "$name.avd/snapshots/default_boot"))) { $a += '-no-snapshot-save' }
+'@
+$snapIn = @('phoney.ps1', 'swarm-ios.ps1' | Where-Object { (Get-Content (Join-Path $src "skills/phoney/$_") -Raw).Contains($snapLine.Trim()) })
+Expect "swarm up: -no-snapshot-save once the golden Quick Boot snapshot exists, unless devices.snapshotSave ($($snapIn -join ', '))" ($snapIn.Count -eq 2)
 Complete-Tests

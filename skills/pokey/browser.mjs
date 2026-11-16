@@ -1,4 +1,4 @@
-// browser.mjs: headless-browser library to test any web app (import it; usage below). Exit codes: none (a library).
+// browser.mjs: headless-browser library to test any web app (usage below). Exit codes: none.
 // targets.local.json: web, webLogin, users, browser: one shared headless Chrome (puppeteer) per target+tenant+user, a tab each.
 // Logins shared via the session file (web storage + cookies), locked; never log out.
 // webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Adapters
@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L43 login · L123 browsers · L166 tabs · L254 session · L299 actions · L398 ui checks · L420 evidence
+// Sections: L17 config · L43 login · L123 browsers · L166 tabs · L254 session · L300 actions · L399 ui checks · L421 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -177,7 +177,7 @@ function leftBoard(agent) {   // all its board entries say left
   return es.length > 0 && es.every((e) => e.status === 'left')
 }
 const tabId = async (p) => p.__tid || (p.__tid = await (async () => { const c = await p.createCDPSession(); try { return (await c.send('Target.getTargetInfo')).targetInfo.targetId } finally { await c.detach().catch(() => {}) } })())
-// a learned kit parameter, as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, kit.local.json <key> / <key>.<ctx> (a pin), a param pin, learned, else def
+// as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, a kit.local.json / param pin (<key>[.<ctx>]), learned, else def
 export function kitParam(key, def, ctx = '') {
   const env = process.env['KIT_PARAM_' + key.replace(/\W/g, '_').toUpperCase()]; if (env) return +env
   const cfg = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}), at = (p) => p.split('.').reduce((o, k) => o?.[k], cfg)
@@ -188,7 +188,7 @@ export function kitParam(key, def, ctx = '') {
   return v ?? def
 }
 const GRACE_MS = 60000 * kitParam('idle.graceMinutes', 10)
-// close tabs with no live holder for idle.graceMinutes (caller holds the tabs lock); an unregistered tab counts from first sight
+// close tabs with no live holder for idle.graceMinutes (caller has the tabs lock); unregistered tabs count from first sight
 async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bossy.ps1 release)
   const f = tabsFile(key), reg = readJson(f, {}), keep = { _key: key }, now = Date.now()   // _key: file names lose '__' vs '|'
   let live = 0, closed = 0
@@ -226,7 +226,7 @@ export async function closeTab(page, key) {
   await page.close().catch(() => {})
   await withLock(`tabs-${keyFile(key)}`, async () => { const f = tabsFile(key), reg = readJson(f, {}); if (reg[id]) leaseLog('release', key, reg[id]); delete reg[id]; saveJson(f, reg) }).catch(() => {})
 }
-// orphan tabs of every shared browser (supervise -AutoFix), or every tab of `agent` (bossy.ps1 release); a failed connect keeps the registry
+// orphan tabs of every shared browser (supervise -AutoFix), or all of `agent`'s (bossy.ps1 release); a failed connect keeps the registry
 export async function sweepAll(agent = '') {
   const d = kitPath('sessions', { create: true }), ports = readJson(kitPath('browser-ports'), {})
   let closed = 0
@@ -276,7 +276,8 @@ export async function session({ target, tenant, as } = {}) {
     try { browser = await conn() } catch { browser = await withLock(`chrome-${keyFile(key)}`, async () => {   // one spawn per port
       try { return await conn() } catch {}
       let b; const dir = `${PROFILES}/${keyFile(key)}`; mkdirSync(dir, { recursive: true })
-      spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { detached: true, stdio: 'ignore' }).unref()
+      spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, '--no-first-run',
+        ...(bo.diskCache ? [] : ['--disk-cache-size=1', '--disable-component-update', '--disable-background-networking']), 'about:blank'], { detached: true, stdio: 'ignore' }).unref()
       for (let i = 0; i < 40 && !b; i++) { await sleep(500); try { b = await conn() } catch {} }
       if (!b) throw new Error(`could not start Chrome on port ${port}`)
       return b
@@ -396,7 +397,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 }
 
 // ---- ui checks: qa.matrix variants; layout and contrast checks (adapters/ui_checks.mjs)
-// fn({ viewport, fontScale, theme, tag }) per variant of kit.local.json qa.matrix ([] = axis off); fn sets the app's own font scale / theme
+// fn({ viewport, fontScale, theme, tag }) per variant of kit.local.json qa.matrix ([] = axis off); fn sets the app's font scale / theme
 export async function matrix(s, fn, { matrix: m = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}).qa?.matrix || {} } = {}) {
   const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()
   try {
@@ -412,7 +413,7 @@ export async function matrix(s, fn, { matrix: m = readJson(join(__HERE, '..', 'c
   } finally { if (v0) await s.page.setViewport(v0) }
   return out
 }
-// layoutIssues(page, { scope, ignore }): covered controls, overlapping text, clipped text; contrast(page, selector, { min }): WCAG
+// layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG
 // ratio, pass; both in adapters/ui_checks.mjs
 export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs')).layoutIssues(...a)
 export const contrast = async (...a) => (await adapter('ui_checks.mjs')).contrast(...a)
@@ -453,7 +454,7 @@ export async function shot(page, file, { full = false, selector = null } = {}) {
   return file
 }
 
-// a screen recording (.mp4 or .webm by the name; ffmpeg on PATH) + <file>.events.json (the actions since start): stop() ends both
+// a screen recording (.mp4 / .webm by name; ffmpeg on PATH) + <file>.events.json (actions since start): stop() ends both
 export async function record(s, file) {
   checkName(file)
   const acts = (s.page.__acts ||= []), from = acts.length, start = Date.now()

@@ -17,6 +17,7 @@ $tmpMap = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | 
 $tmpRoot = Join-Path (Join-Path $src $tmpMap.runtimeDir) $tmpMap.runtime.tmp.TrimEnd('/'); New-Item -ItemType Directory -Force $tmpRoot | Out-Null   # the source kit's <runtime>/tmp (CLAUDE_RUNTIME unset above)
 $env:TEMP = $env:TMP = $env:TMPDIR = Join-Path $tmpRoot "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # GetTempPath, python tempfile, node tmpdir of every test
 $env:GIT_CEILING_DIRECTORIES = $tmpRoot   # a non-git test kit under it never finds the kit's own repo
+$env:KIT_FLOW_CACHE_RO = Join-Path (Join-Path $src $tmpMap.runtimeDir) $tmpMap.runtime.'kit-flow-cache'   # flow parses: the source kit's cache, read only (each test kit wrote MBs)
 # `pwsh -NoProfile -File <kit script>` runs in this process (0.07 s, not 0.7 s), seen as a child sees it (streams, exit code, cwd,
 # env, globals); stdin readers, gate / check / guard and KIT_TESTS_SPAWN=1: real processes
 $pwshExe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
@@ -93,7 +94,14 @@ function Start-TestMySql([switch]$Binlog) {
   $tmRoot = & { . (Join-Path $src 'skills/crafty/lib.ps1'); Join-Path (Get-KitPath work) 'tests' }   # the source kit's runtime
   $tmData = Join-Path $tmRoot "mysqld-$PID"; Remove-Item $tmData -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $tmRoot | Out-Null
   $tmCheap = '--innodb-redo-log-capacity=8M --innodb-doublewrite=OFF --innodb-flush-log-at-trx-commit=2'
-  & $tmExe --no-defaults --initialize-insecure "--datadir=$tmData" --skip-log-bin @($tmCheap -split ' ') 2>&1 | Out-Null
+  # one initialized template per mysqld build, copied: an --initialize wrote 151 MB in 4.5 s, the copy 79 MB in 0.2 s
+  $tmTpl = Join-Path $tmRoot "mysqld-template-$((Get-Item $tmExe).LastWriteTimeUtc.Ticks)"
+  if (-not (Test-Path (Join-Path $tmTpl 'mysql.ibd'))) {
+    $tmNew = "$tmTpl-$PID"; Remove-Item $tmNew -Recurse -Force -ErrorAction SilentlyContinue
+    & $tmExe --no-defaults --initialize-insecure "--datadir=$tmNew" --skip-log-bin @($tmCheap -split ' ') 2>&1 | Out-Null
+    try { [IO.Directory]::Move($tmNew, $tmTpl) } catch { Remove-Item $tmNew -Recurse -Force -ErrorAction SilentlyContinue }   # a parallel area made it first
+  }
+  Copy-Item $tmTpl $tmData -Recurse -Force
   $fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $tmPort = $fp.LocalEndpoint.Port; $fp.Stop()   # an OS-picked free port: 3390+ raced parallel runs
   $tmLog = if ($Binlog) { '--log-bin=binlog --server-id=1 --binlog-row-metadata=FULL --sync-binlog=0' } else { '--skip-log-bin' }
   $tmProc = Start-Process $tmExe -ArgumentList "--no-defaults `"--datadir=$tmData`" --port=$tmPort --bind-address=127.0.0.1 --mysqlx=OFF $tmCheap $tmLog" -WindowStyle Hidden -PassThru
