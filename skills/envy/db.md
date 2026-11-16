@@ -81,10 +81,10 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
   rows by id / name column (an id column with an FK to another table: only through that FK), users no staying tenant has),
   then the schema; 0 references left checked, smoke + `verify` ({tenant}) per kept tenant. A planned row pointing at a row
   that stays: `BLOCKED` in the dry run, the whole drop refused.
-- `tenant import -From <source> -Tenant <schema> [-As <name>] -Mask <profile> [-DryRun]`. Config `tenants.import`:
+- `tenant import -From <source> -Tenant <schema> [-As <name>] -Mask <profile> [-DryRun] [-Refresh]`. Config `tenants.import`:
   - `sources` { <name>: { creds (a command printing JSON host, port, user, password) | host, port, user, passwordEnv; prod;
     requireReadOnly (true); adminSchema; maxMB (500) } }, `template`, `skipTables`,
-    `set` { "<table>.<column>": "<value | {tenant} | {source:<table>.<column>}>" }, `restart`, `prodPattern`, `cacheHours` (24).
+    `set` { "<table>.<column>": "<value | {tenant} | {source:<table>.<column>}>" }, `restart`, `prodPattern`, `cacheHours` (unset: never expires).
   - `profiles` { <name>: { extends ('personal', built in: names, emails, phones, addresses, logins, secrets by column name;
     '' = none), rules { "<table>.<column> glob": kind | { kind, value } } (keep, null, fixed, password, hash, email, login,
     shape, first, last, name, address, text), skipData, passwordHash, salt, keepValues, keepDomains, scanEmails (true) } }.
@@ -99,4 +99,9 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
   lacks while its history says it ran is made pending (tool verb `rerunRoutines`); a mark before the load, `restore.after` hooks (marker resets), the cascade guard;
   then `db.migrations.runAt`, `verify`, `seed -Check`. `tenants.import.register`: builtin:clone (default) or a command
   ({tenant} {template} {source}).
-- Lanes (own DB copies): import on each lane (`-Env <env><k>`); the masked dump is cached `cacheHours`, the source is read once.
+- Saved copy: one masked dump per source + tenant + profile config (`profiles.<p>` + `masking`; a kit or masker update keeps it:
+  the migrations bring its schema up to date), reused until `-Refresh` or `cacheHours`; the source is read only with no usable
+  copy (on reuse only its metadata: read-only, size, charset, `set` values). Profile config changed: the old copy is reused with a warning (no unmasked copy is kept to re-mask from); `-Refresh`
+  masks a new one. Lanes (own DB copies): import on each lane (`-Env <env><k>`), one source read.
+- A failed load or registration deletes only the registry rows it inserted (auto-increment id above the max before it; a
+  plan row pointing at a staying tenant's row: left, named); a template plan reaching other tenants' rows is refused.

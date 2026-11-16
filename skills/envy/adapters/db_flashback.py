@@ -1124,7 +1124,7 @@ class Masker:
 def mask_cmd(a):
     prof = json.load(open(a.profile, encoding='utf-8')) if a.profile else {}
     mk = Masker(prof); mk.schema = a.schema
-    part = a.out + '.part'
+    part = f'{a.out}.{os.getpid()}.part'   # one per run: two lanes dumping the same key never interleave
     try:
         with open(part, 'w', encoding='utf-8', errors='surrogateescape', newline='') as dst:
             if a.__dict__['in']:

@@ -150,7 +150,7 @@ function Invoke-TenantDrop([string]$e, [string[]]$names, [switch]$DryRun) {
 }
 
 # ---- tenant import: one tenant schema from a read-only, non-production source (tenants.import.sources), masked by a profile
-#      (db_flashback.py mask, cached per source + tenant + profile), loaded as a new schema, registered by cloning the registry
+#      (db_flashback.py mask, saved per source + tenant + profile config, reused until -Refresh), loaded as a new schema, registered by cloning the registry
 #      rows of tenants.import.template (new ids, name columns = the new name, tenants.import.set on top)
 function Get-ImportCfg([string]$e) { $t = TenantCfg $e; if (-not $t.import -or -not $t.import.sources) { throw "[$e] tenant import needs envs.$e.tenants.import { sources, template, profiles, register } (envy SKILL.md)" }; $t.import }
 function Get-ImportProdRe($ic) { if ($ic.prodPattern) { [string]$ic.prodPattern } else { '(?i)(^|[^a-z])(prod|production|live)([^a-z]|$)' } }
@@ -188,6 +188,7 @@ function Get-TenantCloneSql([string]$e, [string]$tpl, [string]$as, $set) {
   $t = TenantCfg $e; $ic = Get-ImportCfg $e; $adm = [string]$t.schema; $key = $t.key; $nm = $t.name
   $idc = @($t.idColumns); $nmc = @($t.nameColumns)
   $steps = @((Get-TenantPlan $e $tpl @() -NoUsers).steps | Where-Object { -not $_.missing -and $_.table -notin @($ic.skipTables) -and $_.rows } | Sort-Object -Stable { $_.table -ne $t.table })   # the tenant row first: a child's unique tenant FK gets the new id at insert
+  $fr = @(Get-TenantForeign $e $steps $steps); if ($fr.Count) { throw "[$e] tenant import refused: the template $tpl's plan reaches rows of other tenants ($($fr -join ', ')): an id clash in tenants.tables / idColumns; fix them or skipTables" }   # never copy another tenant's rows
   $fks = @(Invoke-DbSql $e "SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = $(SqlQ $adm) AND REFERENCED_TABLE_SCHEMA = $(SqlQ $adm) AND REFERENCED_TABLE_NAME IS NOT NULL")
   $rows = [Collections.Generic.List[object]]::new(); $map = @{}; $sql = [Collections.Generic.List[string]]::new(); $sql.Add('SET FOREIGN_KEY_CHECKS = 0'); $sql.Add('START TRANSACTION')
   foreach ($s in $steps) {
@@ -230,7 +231,7 @@ function Get-TenantCloneSql([string]$e, [string]$tpl, [string]$as, $set) {
 }
 # import: refused for a production or writable source, a taken name, a missing template, a schema over maxMB, or while any lease,
 # hold or train is on; -DryRun: the checks and the plan, no data read; a failed load or registration drops the new schema again
-function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string]$As, [string]$Mask, [switch]$DryRun) {
+function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string]$As, [string]$Mask, [switch]$DryRun, [switch]$Refresh) {
   if (-not $From -or -not $Tenant -or -not $Mask) { throw 'tenant import needs -From <source> -Tenant <schema> -Mask <profile> [-As <name>]' }
   if (-not $As) { $As = $Tenant }
   foreach ($x in $Tenant, $As) { if ($x -notmatch '^[A-Za-z0-9_]{1,64}\z') { throw "tenant import: '$x' is no plain schema name (letters, digits, _)" } }
@@ -270,27 +271,37 @@ function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string
   $dir = Join-Path (Get-KitPath cache -Create) 'tenant-import'; New-Item -ItemType Directory -Force $dir | Out-Null
   $pk = $prof | ConvertTo-Json -Depth 10 | ConvertFrom-Json; $mcf = Get-KitSetting 'masking' $null; if ($mcf) { $pk | Add-Member _kit $mcf -Force }   # masking.rules / logins / names: the org's columns and values
   if (-not $mcf.rules) { Write-Warning "[$e] tenant import: no kit.local.json masking.rules: only the generic column names (password, token, email, phone, name, address ...) are masked; add the app's own (audit columns, name columns of exact tables) there (envy db.md)" }
-  $pj = $pk | ConvertTo-Json -Depth 10 -Compress   # the cache key: the profile + the masker's own code (a kit update masks again)
-  $ph = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pj + (Get-FileHash -LiteralPath $script:DbFlashbackPy).Hash))).Substring(0, 8).ToLower()
-  $file = Join-Path $dir "$From-$Tenant-$Mask-$ph.sql"; $hours = if ($ic.cacheHours) { [double]$ic.cacheHours } else { 24 }   # TODO-PARAM (fixed default)
-  if ((Test-Path -LiteralPath $file) -and ((Get-Date) - (Get-Item -LiteralPath $file).LastWriteTime).TotalHours -lt $hours) { "[$e] masked dump reused: $file (under $hours h old; the source is not read again)" }
-  else {
+  $pj = $pk | ConvertTo-Json -Depth 10 -Compress   # the cache key: source + tenant + the profile and masking config only (a kit or masker update reuses the copy; migrations bring its schema up to date)
+  $ph = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pj))).Substring(0, 8).ToLower()
+  $pre = "$From-$Tenant-$Mask-"; $file = Join-Path $dir "$pre$ph.sql"; $hours = [double]$(if ($ic.cacheHours) { $ic.cacheHours } else { 0 })   # 0: never expires
+  $usable = { param($f) (Test-Path -LiteralPath $f) -and (-not $hours -or ((Get-Date) - (Get-Item -LiteralPath $f).LastWriteTime).TotalHours -lt $hours) }
+  $saved = @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -match "^$([regex]::Escape($pre))[0-9a-f]{8}\.sql\z" } | Sort-Object LastWriteTime -Descending)
+  $use = if ($Refresh) { $null } elseif (& $usable $file) { $file } else { @($saved | Where-Object { & $usable $_.FullName } | ForEach-Object FullName)[0] }
+  if ($use) {
+    if ($use -ne $file) { Write-Warning "[$e] tenant import: the saved copy $(Split-Path $use -Leaf) was masked with another config of profile $Mask or an older kit (no unmasked copy is kept to re-mask from): reused as is; -Refresh reads $From again with the current profile" }
+    $file = $use; $mf = "$file.meta.json"; $sz[2] = if (Test-Path -LiteralPath $mf) { [int](Get-Content -LiteralPath $mf -Raw | ConvertFrom-Json).tables } else { -1 }   # the copy's own table count (the source may have drifted); -1: none saved yet, the load sets it
+    "[$e] masked dump reused: $file (the source is not read again; -Refresh re-reads it)"
+  } else {
     $pf = "$file.profile.json"; [IO.File]::WriteAllText($pf, $pj, [Text.UTF8Encoding]::new($false))
     $r = With-Env @{ KIT_SRC_PWD = $c.password } { Invoke-KitExe (Get-Python) @('-X', 'utf8', $script:DbFlashbackPy, 'mask', '--schema', $Tenant, '--out', $file, '--profile', $pf, '--host', $c.host, '--port', $c.port, '--user', $c.user, '--mysqldump', (DbConn $e).mysqldump) 7200 }   # TODO-PARAM (fixed default)
     $m = try { $r.out | ConvertFrom-Json } catch { $null }
     if ($r.code -or -not $m -or $m.error) { throw "[$e] tenant import: dump + mask failed: $(if ($m.error) { $m.error } else { "exit $($r.code) $(@("$($r.err)" -split "`n")[-1])" })" }
+    foreach ($o in $saved | Where-Object FullName -ne $file) { Remove-Item -LiteralPath $o.FullName, "$($o.FullName).profile.json", "$($o.FullName).meta.json" -Force -ErrorAction SilentlyContinue }   # one copy per source + tenant + profile
     "[$e] masked dump: $($m.tables) table(s), $($m.rows) row(s), $([math]::Round($m.bytes / 1MB, 1)) MB; masked $(@($m.masked.PSObject.Properties).Count) column(s), $($m.emailsInText) text value(s) with emails$(if (@($m.skippedData).Count) { "; data skipped: $(@($m.skippedData) -join ', ')" })"
   }
   $want = [int]$sz[2]; $db = DbConn $e
   & $busy   # the dump can take minutes: a lease may have started since
   $mk = try { New-Mark $e "before-tenant-import-$As" 'owner' } catch { $null }; if ($mk) { "[$e] mark ${mk}: envy.ps1 restore -Env $e -Mark $mk takes the import back" }
   $regCmd = if ($ic.register -and "$($ic.register)" -ne 'builtin:clone') { (Expand-Placeholders ([string]$ic.register) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '').Replace('{tenant}', $As).Replace('{template}', $tpl).Replace('{source}', "$From/$Tenant") }
+  $ai = @(Invoke-DbSql $e "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = $(SqlQ $adm) AND COLUMN_KEY = 'PRI' AND EXTRA LIKE '%auto_increment%'")
+  $top = @{}; if ($ai.Count) { foreach ($r in Invoke-DbSql $e (@($ai | ForEach-Object { "SELECT $(SqlQ $_[0]), $(SqlQ $_[1]), IFNULL(MAX($(SqlId $_[1])), 0) FROM $(SqlId $adm).$(SqlId $_[0])" }) -join ' UNION ALL ')) { $top[$r[0]] = @{ pk = $r[1]; max = $r[2] } } }   # rows above these ids are the ones this import inserts
   try {
     $null = Invoke-DbSql $e "CREATE DATABASE $(SqlId $As) CHARACTER SET $(SqlQ $cs[0][0]) COLLATE $(SqlQ $cs[0][1])"
     $ld = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe $db.mysql @('-h', $db.host, '-P', $db.port, '-u', $db.user, '--default-character-set=utf8mb4', $As, '-e', "source $($file.Replace('\', '/'))") 7200 }   # TODO-PARAM (fixed default)
     if ($ld.code) { throw "load failed: $(@("$($ld.err)" -split "`n" | Where-Object { $_ })[-1])" }
     $have = [int]@(Invoke-DbSql $e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = $(SqlQ $As) AND TABLE_TYPE = 'BASE TABLE'")[0][0]
-    if ($have -ne $want) { throw "load incomplete: $have of $want table(s)" }
+    if ($have -ne $want -and ($want -ge 0 -or -not $have)) { throw "load incomplete: $have of $want table(s)" }
+    if (-not (Test-Path -LiteralPath "$file.meta.json")) { [IO.File]::WriteAllText("$file.meta.json", (@{ tables = $have } | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false)); $want = $have }   # the copy's table count, from a verified load
     if ($regCmd) { $rc = Invoke-Shell $regCmd (LogFile $e 'tenant') (EnvVars $e ([pscustomobject]@{})) 600; if ($rc) { throw "tenants.import.register failed ($(Get-ShellWhy $rc)): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" } }   # TODO-PARAM (fixed default)
     else { $null = Invoke-DbSql $e $plan.sql 600 }   # TODO-PARAM (fixed default)
     $nid = @(Invoke-DbSql $e "SELECT $(SqlId $key) FROM $(SqlId $adm).$(SqlId $t.table) WHERE $(SqlId $nm) = $(SqlQ $As)")
@@ -298,11 +309,16 @@ function Invoke-TenantImport([string]$e, [string]$From, [string]$Tenant, [string
   } catch {
     $why = "$_".Split("`n")[0]
     $left = 'its registry rows rolled back'
-    try {   # registry rows that committed (a failed check after COMMIT) go the way tenant drop takes them; only what this import made
+    try {   # registry rows that committed (a failed check after COMMIT): only rows this import inserted (id above the max before it), never one another tenant has or points at
       if (@(Get-TenantRows $e | Where-Object name -eq $As).Count) {
-        $del = @((Get-TenantPlan $e $As @() -NoUsers).steps | Where-Object { -not $_.missing -and $_.rows })
+        $plan0 = @((Get-TenantPlan $e $As @() -NoUsers).steps | Where-Object { -not $_.missing -and $_.rows })
+        $del = @(foreach ($s in $plan0 | Where-Object { $top[$_.table] }) { $w = "($($s.where)) AND $(SqlId $top[$s.table].pk) > $($top[$s.table].max)"; @{ table = $s.table; where = $w; rows = [int]@(Invoke-DbSql $e "SELECT COUNT(*) FROM $(SqlId $adm).$(SqlId $s.table) WHERE $w")[0][0] } })
+        $fr = @(Get-TenantForeign $e $del $del)
+        if ($fr.Count) { throw "rows of staying tenants in its plan ($($fr -join ', '))" }
+        $del = @($del | Where-Object rows)
         $null = Invoke-DbSql $e ((@('SET FOREIGN_KEY_CHECKS = 0', 'START TRANSACTION') + @(for ($i = $del.Count - 1; $i -ge 0; $i--) { "DELETE FROM $(SqlId $adm).$(SqlId $del[$i].table) WHERE $($del[$i].where)" }) + @('COMMIT', 'SET FOREIGN_KEY_CHECKS = 1')) -join '; ') 600
-        $left = 'its registry rows deleted'
+        $rest = @((Get-TenantPlan $e $As @() -NoUsers).steps | Where-Object { -not $_.missing -and $_.rows } | ForEach-Object table)
+        $left = "its registry rows deleted$(if ($rest.Count) { " but rows in $($rest -join ', ') (not inserted above the ids before it, or no auto-increment key): check them by hand" })"
       }
     } catch { $left = "its registry rows are left: envy.ps1 tenant drop -Env $e -Name $As ($("$_".Split("`n")[0]))" }
     try { $null = Invoke-DbSql $e "DROP DATABASE IF EXISTS $(SqlId $As)" 600 } catch { }   # only the schema this import created

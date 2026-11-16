@@ -5,7 +5,7 @@
 #   engine whose databases are schemas; column = one shared scope, tenants = the values of tenants.column { table, column } (list
 #   only); none = no tenant verbs (every other verb works on the db scope: db.schemas / db.schemasQuery / db.name).
 # Verbs: list @{ e } -> { name, registry, keep, mb } · drop @{ e; names; dryRun } -> lines · import @{ e; from; tenant; as; mask;
-#   dryRun } -> lines · footprint @{ e; name } -> { steps, schema, mb } · scopes @{ e } -> extra data scopes (optional).
+#   dryRun; refresh } -> lines · footprint @{ e; name } -> { steps, schema, mb } · scopes @{ e } -> extra data scopes (optional).
 # A model without a verb refuses it ("tenant-model <m>: verb <v> not implemented"). A local adapter adds a model the same way.
 function Get-TenantModel([string]$e) { $m = "$((Get-EnvCfg $e).tenants.model)".ToLower(); if ($m) { $m } else { 'none' } }
 function Invoke-TenantModel([string]$e, [string]$Verb, [hashtable]$a = @{}) {
@@ -19,7 +19,7 @@ Register-KitAdapter tenant-model none @{}
     list      = { param($a) Get-TenantList $a.e }
     footprint = { param($a) Get-TenantPlan $a.e $a.name @() -NoUsers }
     drop      = { param($a) Invoke-TenantDrop $a.e $a.names -DryRun:([bool]$a.dryRun) }
-    import    = { param($a) Invoke-TenantImport $a.e -From $a.from -Tenant $a.tenant -As $a.as -Mask $a.mask -DryRun:([bool]$a.dryRun) } }
+    import    = { param($a) Invoke-TenantImport $a.e -From $a.from -Tenant $a.tenant -As $a.as -Mask $a.mask -DryRun:([bool]$a.dryRun) -Refresh:([bool]$a.refresh) } }
   Register-KitAdapter tenant-model schema $schema
   Register-KitAdapter tenant-model database $schema.Clone() }
 Register-KitAdapter tenant-model column @{
@@ -28,7 +28,7 @@ Register-KitAdapter tenant-model column @{
     @(Invoke-DbSql $e "SELECT DISTINCT $($c.column) FROM $($c.table)" | ForEach-Object { "$($_[0])" } | Where-Object { $_ -and $_ -ne 'NULL' } | ForEach-Object {
         [pscustomobject]@{ name = $_; registry = $true; keep = $(if ($_ -in @($t.keep)) { 'tenants.keep' }); mb = 0 } }) } }
 
-# ---- envy.ps1 tenant: list = keep / drop with sizes; drop -Name a,b [-DryRun]; import -From -Tenant [-As] -Mask [-DryRun]
+# ---- envy.ps1 tenant: list = keep / drop with sizes; drop -Name a,b [-DryRun]; import -From -Tenant [-As] -Mask [-DryRun] [-Refresh]
 #      (runs inside Invoke-LocalEnv: its parameters and helpers are in scope)
 Register-KitAdapter envy-verb tenant @{ ops = @('list', 'drop', 'import'); run = {
   if ($Op -eq 'drop') {
@@ -36,7 +36,7 @@ Register-KitAdapter envy-verb tenant @{ ops = @('list', 'drop', 'import'); run =
     Invoke-TenantModel $e 'drop' @{ names = $tn; dryRun = [bool]$DryRun }; return
   }
   if ($Op -eq 'import') {   # then migrations for the new tenant (db.migrations.runAt: start = tenants.import.restart services, cmd = db.migrations.cmd), tenants.verify, seed -Check
-    Invoke-TenantModel $e 'import' @{ from = $From; tenant = $Tenant; as = $As; mask = $Mask; dryRun = [bool]$DryRun }
+    Invoke-TenantModel $e 'import' @{ from = $From; tenant = $Tenant; as = $As; mask = $Mask; dryRun = [bool]$DryRun; refresh = [bool]$Refresh }
     if ($DryRun) { return }
     $nt = if ($As) { $As } else { $Tenant }; $tc = (Get-EnvCfg $e).tenants; $mg = (Get-EnvCfg $e).db.migrations
     $rs = @($tc.import.restart | Where-Object { $_ })

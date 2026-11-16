@@ -212,6 +212,15 @@ DELIMITER ;
   $im2 = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt2 -Mask p 2>&1 | Out-String
   $same = "$(Q 'SELECT GROUP_CONCAT(email ORDER BY id) FROM newt.customer')" -eq "$(Q 'SELECT GROUP_CONCAT(email ORDER BY id) FROM newt2.customer')"
   Expect "tenant import: a taken name is refused ($againc); a second import reuses the masked dump, same masks ($same)" ($againc -eq 1 -and $again -match 'newt exists here' -and $im2 -match 'masked dump reused' -and $im2 -match 'tenant newt2 imported' -and $same)
+  # the saved copy outlives a masker (kit) change; a changed profile config warns and reuses it; -Refresh reads the source again, one copy kept
+  Add-Content (Join-Path $k3 'skills/envy/adapters/db_flashback.py') '# a kit update'
+  $imp = { param($as) Px $L3 tenant import -Env s -From s1 -Tenant srct -As $as -Mask p @args 2>&1 | Out-String }
+  $cdir = if ($im2 -match 'reused: (.+?\.sql) ') { Split-Path $Matches[1] }; Remove-Item (Join-Path $cdir '*.meta.json')   # a copy saved before meta files: reused, its first load writes one
+  $ikit = & $imp newt5; $ikit += "meta $(@(Get-ChildItem $cdir -Filter '*.meta.json').Count)"
+  $kjp = Join-Path $k3 'skills/crafty/kit.local.json'; $kcp = Get-Content $kjp -Raw | ConvertFrom-Json; $kcp.localEnv.envs.s.tenants.import.profiles.p | Add-Member keepDomains @('example.org'); $kcp | ConvertTo-Json -Depth 20 | Set-Content $kjp
+  $iwarn = & $imp newt6; $irefr = & $imp newt7 -Refresh
+  $nsave = @(Get-ChildItem $cdir -Filter 's1-srct-p-*.sql').Count
+  Expect "tenant import: a masker change reuses the copy (no meta: its load writes it), a profile change warns and reuses it, -Refresh re-reads ($nsave | $ikit | $iwarn | $irefr)" ($ikit -match 'dump reused[^\n]+\n(.|\n)+newt5 imported(.|\n)+meta 1$' -and $iwarn -match 'another config of profile p(.|\n)+dump reused(.|\n)+newt6 imported' -and $irefr -notmatch 'reused' -and $irefr -match 'masked dump: \d+ table(.|\n)+newt7 imported' -and $nsave -eq 1)
   $objs = "$(Q "SELECT CONCAT_WS(',', (SELECT GROUP_CONCAT(ROUTINE_NAME ORDER BY ROUTINE_NAME) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = 'newt'), (SELECT GROUP_CONCAT(TRIGGER_NAME) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = 'newt'), (SELECT GROUP_CONCAT(EVENT_NAME) FROM information_schema.EVENTS WHERE EVENT_SCHEMA = 'newt' AND EVENT_DEFINITION LIKE '%''ev''%'))")"
   $call = "$(Q "CALL newt.p_add('Zed'); SELECT CONCAT_WS(',', notes, newt.f_one()) FROM newt.customer WHERE name = 'Zed'")"
   Expect "tenant import: routines, triggers and events come with the schema; a body line starting INSERT INTO `` loads as code, its literals unmasked ($objs | $call)" ($objs -eq 'f_one,p_add,tr_cu,ev_noop' -and $call -eq 'via trigger,1')
@@ -220,6 +229,16 @@ DELIMITER ;
   $ifl = Px $L3 tenant import -Env s -From s1 -Tenant srct -As newt3 -Mask p 2>&1 | Out-String; $iflc = $LASTEXITCODE
   $gone3 = "$(Q "SELECT (SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'newt3') + (SELECT COUNT(*) FROM iadm.reg WHERE name = 'newt3') + (SELECT COUNT(*) FROM iadm.mig WHERE org_label = 'newt3')")"
   Expect "tenant import: a failed registration leaves no schema and no registry row ($iflc | $gone3)" ($iflc -eq 1 -and $ifl -match 'failed, its schema dropped again, its registry rows rolled back' -and $gone3 -eq '0')
+  # a registration that fails after commit, its new id held by another tenant's row (an id clash): only the rows it inserted go
+  Q "ALTER TABLE iadm.reg AUTO_INCREMENT = 90; INSERT INTO iadm.mig (org_ref, org_label, cl) VALUES (90, 'other', 'keep-me')"
+  $kc.localEnv.envs.s.tenants.import | Add-Member register "mysql -h 127.0.0.1 -P $port -u root -e `"INSERT INTO iadm.reg (name) VALUES ('newt4')`" && exit 1"; $kc | ConvertTo-Json -Depth 20 | Set-Content $kj
+  $icl = & $imp newt4; $kept4 = "$(Q "SELECT CONCAT_WS(',', (SELECT COUNT(*) FROM iadm.reg WHERE name = 'newt4'), (SELECT COUNT(*) FROM iadm.mig WHERE cl = 'keep-me'))")"
+  Expect "tenant import: a failed import with an id clash deletes its own registry row, the other tenant's row stays ($kept4 | $icl)" ($icl -match 'dropped again, its registry rows deleted' -and $kept4 -eq '0,1')
+  # the template's plan reaching another tenant's row (a row of tpl's id pointing at newt's det): refused, nothing copied
+  Q "CREATE TABLE iadm.lnk (id int primary key auto_increment, org_ref int, det_ref int, foreign key (det_ref) references iadm.det (id)); INSERT INTO iadm.lnk (org_ref, det_ref) SELECT 5, det_id FROM iadm.reg WHERE name = 'newt'"
+  $kc.localEnv.envs.s.tenants.import.PSObject.Properties.Remove('register'); $kc.localEnv.envs.s.tenants.tables = @('mig', 'lnk'); $kc | ConvertTo-Json -Depth 20 | Set-Content $kj
+  $icg = & $imp newt8 -DryRun
+  Expect "tenant import: a template plan reaching another tenant's row is refused ($icg)" ($icg -match 'plan reaches rows of other tenants \(lnk 1')
   # db.bufferPool: a live lease grows the pool (chunk-aligned), idle shrinks it back; db.expect leaves the pool to it; the doctor row
   & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; bufferPool = @{ busyMB = 200; idleMB = 128 }; expect = @{ innodb_buffer_pool_size = '1G' } } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
   $poolMB = { param($w) for ($i = 0; $i -lt 40 -and -not ([double](Q 'SELECT @@innodb_buffer_pool_size / 1048576') -eq $w -and "$(Q "SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_resize_status'")" -notmatch 'Resiz'); $i++) { Start-Sleep -Milliseconds 250 }; [double](Q 'SELECT @@innodb_buffer_pool_size / 1048576') }
