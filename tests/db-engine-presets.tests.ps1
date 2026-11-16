@@ -103,9 +103,9 @@ if ($IsWindows) {
 }
 # the test helper: a read without the end marker is asked again; a write batch is never re-run (it may have run: a re-run hides the flake)
 $tmq = & { $script:tmCalls = 0; function mysql { $script:tmCalls++; $global:LASTEXITCODE = 0; if ($script:tmCalls -eq 1) { 'lost' } else { 'r'; '__kit_rows_end__' } }
-  $tmCut = '\):.*'; "$(Invoke-TestMySql 'SELECT 1' 1):$script:tmCalls"; $script:tmCalls = 0
+  $tmCut = '\):.*'; "$(Invoke-TestMySql 'SELECT 1' 1):$script:tmCalls"; $script:tmCalls = 0; "$(Invoke-TestMySql 'SHOW CREATE TABLE fa.o' 1):$script:tmCalls"; $script:tmCalls = 0
   try { Invoke-TestMySql 'CREATE TABLE t (a int); INSERT INTO t VALUES (1)' 1 } catch { (("$_" -replace $tmCut, ')') + ":$script:tmCalls") } }
-Expect "Invoke-TestMySql: a lost read retried once, a lost write throws at once ($($tmq -join ' | '))" (($tmq -join ' | ') -eq 'r:2 | mysql: exit 0 without the end marker (a write: not re-run, it may have run):1')
+Expect "Invoke-TestMySql: a lost read (SHOW CREATE too) retried once, a lost write throws at once ($($tmq -join ' | '))" (($tmq -join ' | ') -eq 'r:2 | r:2 | mysql: exit 0 without the end marker (a write: not re-run, it may have run):1')
 
 # ---- a scratch mysqld (own data dir and port, binlog ROW / FULL): never the env's server
 $mysqld = Get-Command mysqld -ErrorAction SilentlyContinue

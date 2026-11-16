@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1371 audit ·
-  L1487 registry · L1819 arch lint · L2022 prose · L2173 sections · L2303 budget · L2317 migrate · L2477 plugins ·
-  L2531 state lint · L2719 main
+Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1374 audit ·
+  L1490 registry · L1822 arch lint · L2025 prose · L2176 sections · L2306 budget · L2320 migrate · L2480 plugins ·
+  L2534 state lint · L2722 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -1207,17 +1207,19 @@ def ui_check_warns(kit):
 PAGE_JS = r'''import puppeteer from 'puppeteer-core'
 import { pathToFileURL } from 'node:url'
 const [bm, file, ws, st, out, stem] = process.argv.slice(1), { CHROME } = await import(bm)
-// every <details> open; resolves once each toggle event ran (a page re-lays out on toggle, after the listeners it registered first)
-const openAll = () => new Promise((done) => { const ds = [...document.querySelectorAll('details')].filter((d) => !d.open); let left = ds.length; if (!left) return done()
-  document.addEventListener('toggle', function seen() { if (--left === 0) { document.removeEventListener('toggle', seen, true); done() } }, true); ds.forEach((d) => { d.open = true }) })
-// the page at rest, never a fixed sleep (a loaded machine runs late): fonts in, finite animations / transitions done, the page's own
-// window.uiBusy() false (its pending timers), then 2 frames; 300 rounds max, then it fails loudly
-const settle = async () => { const frame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)))
+// every <details> open; resolves once each one's own toggle event ran (a page re-lays out on toggle: its capture and earlier listeners
+// run first); one the page closed again or removed is not waited for
+const openAll = () => new Promise((done) => { const wait = new Set([...document.querySelectorAll('details')].filter((d) => !d.open)); if (!wait.size) return done()
+  const chk = () => { for (const d of wait) if (!d.open || !d.isConnected) wait.delete(d); if (!wait.size) done() }
+  for (const d of wait) d.addEventListener('toggle', () => { wait.delete(d); chk() }, { once: true })
+  wait.forEach((d) => { d.open = true }); setTimeout(chk, 0) })
+// the page at rest, never a fixed sleep (a loaded machine runs late): fonts in, finite time-based animations / transitions done, the
+// page's own window.uiBusy() false (its pending timers), then 2 frames (250 ms each without rAF); 300 rounds max, then it fails loudly
+const settle = async () => { const frame = () => new Promise((r) => { let n = 0; const f = () => n++ || r(); requestAnimationFrame(() => setTimeout(f, 0)); setTimeout(f, 250) })
   await document.fonts.ready
   for (let i = 0; i < 300; i++) { await frame(); await frame()
-    const run = document.getAnimations().filter((a) => a.playState === 'running' && a.effect && a.effect.getComputedTiming().endTime !== Infinity)
-    if (!run.length && !(typeof window.uiBusy === 'function' && window.uiBusy())) return 0
-    await Promise.all(run.map((a) => a.finished.catch(() => 0))) }
+    const run = document.getAnimations().filter((a) => a.playState === 'running' && a.timeline instanceof DocumentTimeline && a.effect && a.effect.getComputedTiming().endTime !== Infinity)
+    if (!run.length && !(typeof window.uiBusy === 'function' && window.uiBusy())) return 0 }
   return 1 }
 const scan = () => {
   const res = [], name = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '')
@@ -1318,12 +1320,13 @@ try {
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }])   // its own line: in the comment above it never ran (both shots one theme)
     await page.goto(pathToFileURL(file).href, { waitUntil: 'load' })
     for (const sel of clicks) await (touch ? page.tap(sel) : page.click(sel)).catch((e) => clipped.push({ el: sel, why: `${touch ? 'tap' : 'click'} failed: ${e.message}`, text: '' }))
-    if (await page.evaluate(settle)) clipped.push({ el: 'page', why: 'never settled: animations or window.uiBusy() still running after 600 frames', text: '' })
+    const rest = async (when) => { if (await page.evaluate(settle)) clipped.push({ el: 'page', why: `never settled ${when}: an animation or window.uiBusy() still running after 600 frames`, text: '' }) }
+    await rest('as loaded or clicked')
     const base = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}`, height = await page.evaluate(() => document.documentElement.scrollHeight)
     await page.screenshot({ path: `${base}.png`, fullPage: true })   // as the owner sees it: the page's own open / closed defaults
     const hs = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (hs > 1) clipped.push({ el: 'page', why: `horizontal page scroll ${hs} px (a wide table scrolls in its own box)`, text: '' })
     clipped.push(...await page.evaluate(layout), ...await page.evaluate(rows), ...await page.evaluate(svgs), ...await page.evaluate(cols), ...await page.evaluate(stray))
-    await page.evaluate(openAll); await page.evaluate(settle)
+    await page.evaluate(openAll); await rest('with every details open')
     clipped.push(...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
     await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
     res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped }); await ctx.close()
