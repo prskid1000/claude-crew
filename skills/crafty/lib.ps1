@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L82 state · L156 config · L237 OS · L450 leases · L849 status · L1105 supervise sweep · L1183 tracker ·
-  L1532 prior · L1548 ask bugs · L1733 git-host · L1925 kitlog · L2045 params · L2350 entry-scripts
+  L1512 prior · L1528 ask bugs · L1713 git-host · L1905 kitlog · L2025 params · L2330 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1488,31 +1488,11 @@ function Set-KitDescSection([string]$Desc, [string]$Name, [string]$Body, [string
   $drx = Get-KitDocLabelRx; for ($x = 0; $x -lt $lines.Count; $x++) { if ($drx -and $lines[$x] -match $drx) { $last = $x + 1 } elseif ($lines[$x].Trim()) { break } }
   (@((@($lines | Select-Object -First $last) -join "`n").Trim(), $block, (@($lines | Select-Object -Skip $last) -join "`n").Trim()) | Where-Object { $_ }) -join "`n`n"
 }
-# a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '): adapter verb checklist, else a <!-- kit:<name> --> description section
-function Set-KitTaskChecklist([string]$Task, [string]$Name, $Items) {
-  $ad = $KitAdapters['tracker'][$__trType]
-  if ($ad -and $ad.ContainsKey('checklist')) { return __TrA 'checklist' @{ id = $Task; name = $Name; items = @($Items | ForEach-Object { @{ text = $_.text; done = [bool]$_.done } }) } }
-  Clear-TrackerMemo $Task; $tk = Get-TrackerTask $Task; if (-not $tk.name) { throw "tracker read of $Task failed" }
-  $nd = Set-KitDescSection $tk.description $Name.ToLower() ((@("**$Name**") + @($Items | ForEach-Object { "- [$(if ($_.done) { 'x' } else { ' ' })] $($_.text)" })) -join "`n") ''
-  if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { Set-TrackerDescription $Task $nd }
-}
 # checklist item "<id> · <plain words> · <URLs>" (links and a status suffix out of the words); task specs: crafty.ps1 "task spec"
 function ConvertTo-KitOneLine([string]$Text) { ("$Text" -replace '\s+', ' ' -replace '\|', '/').Trim() }   # one line, never cut (Writing standards: text wraps, never truncates)
 function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
   $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'
   (@($Id, (ConvertTo-KitOneLine $Desc), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
-function ConvertTo-KitSpecItems($Spec) { @($Spec.items | Where-Object { $_.code } | ForEach-Object { [pscustomobject]@{ text = (Format-KitItemText "$($_.code)" "$($_.desc)" @($_.mrs)); done = [bool]$_.done } }) }
-# a parent's Items: its spec items + one per subtask "<code> · <name without [Kind]> · <URL>", ticked once closed; code: the
-# subtask's spec, the parent spec's subtasks[{ id, code }], $CodeOf (rollup areas), else its id
-function Update-KitParentItems([string]$Parent, $Pt, [hashtable]$CodeOf = @{}) {
-  if (-not $Pt) { Clear-TrackerMemo $Parent; $Pt = Get-TrackerTask $Parent }; $subs = @($Pt.subtasks | Where-Object { $_.id }); if (-not $subs.Count) { return }
-  $px = Read-KitState (Get-KitTaskFile $Parent); $items = @(ConvertTo-KitSpecItems $px.spec) + @(foreach ($s in $subs) { $sc = (Read-KitState (Get-KitTaskFile $s.id)).spec.code
-      if (-not $sc) { $sc = @($px.spec.subtasks | Where-Object { "$($_.id)" -eq "$($s.id)" } | ForEach-Object code)[0] }
-      [pscustomobject]@{ text = (Format-KitItemText $(if ($sc) { "$sc" } elseif ($CodeOf[$s.id]) { "$($CodeOf[$s.id])" } else { "$($s.id)" }) ("$($s.name)" -replace '^\s*\[[^\]]*\]\s*') @($s.url)); done = [bool](Test-TrackerStatus "$($s.status)" 'closed') } })
-  $sig = ConvertTo-KitLetters (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join ';'); if ($sig -eq "$($px.parentItemsSig)") { return }
-  $null = Set-KitTaskChecklist $Parent 'Items' $items; Update-KitTaskIndex $Parent { param($x) $x.parentItemsSig = $sig; $x.itemsFrom = 'subtasks' }
-  "parent items ${Parent}: $(@($items | Where-Object done).Count)/$($items.Count) done"
-}
 function Set-TrackerName([string]$Id, [string]$Name) { Clear-TrackerMemo $Id; __TrA 'rename' @{ id = $Id; name = $Name } }
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }

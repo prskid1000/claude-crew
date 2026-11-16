@@ -7,12 +7,14 @@ dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 track forget-item -Task <id> -Item <code>[,<code>]   items deleted on the tracker stay deleted (task state itemsDropped)
 Reads: task state (.state/tasks: track), the git host (Invoke-HostVerb mr.get / mr.url; merged MRs cached for good),
 the deploy log, the tracker (parent + its subtasks, one view per read). Writes (tracker adapter, only on a diff): the parent
-description between <!-- kit:delivery --> / <!-- kit:triage --> markers, the parent's "Items" checklist (one per subtask, lib.ps1
+description between <!-- kit:delivery --> / <!-- kit:triage --> markers, the parent's "Items" checklist (one per subtask, crafty adapters/task_items.ps1
 Update-KitParentItems), each subtask's "Items" checklist (adapter verb checklist, else an <!-- kit:items --> description section),
 one comment per milestone (all merged, deployed to <env>, all closed).
+An item ticks only when done: its MRs merged, no open fix-round MR naming it, not held (crafty adapters/task_items.ps1: deferred, held,
+an area not delivered); else unticked with ' · <reason>'; checklists are pruned of stale kit lines and repeats.
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L20 triage · L69 render · L148 rollup · L245 items · L291 close
+Sections: L22 triage · L71 render · L150 rollup · L252 items · L306 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -99,7 +101,7 @@ function Get-KitSubItems($Tri, [string]$Area, [string[]]$DoneIds, [bool]$AllDone
       if (-not $own.Count) { $ar = @($DescMap.Keys | Where-Object { "$($DescMap[$_])" -match "(?<![\w-])$([regex]::Escape($rid))(?![\w-])" }); $own = @($Mrs | Where-Object { $mi = @($_.ids); @($ar | Where-Object { $mi -contains $_ }).Count }) }
       if (-not $own.Count -and $AllDone -and $k -eq 'fix') { $own = @($Mrs) }
       $text = Format-KitItemText $rid $d @($own | ForEach-Object url)
-      [pscustomobject]@{ id = $rid; sev = "$($_.sev)"; text = $text; fix = ($k -eq 'fix'); done = ($k -eq 'fix' -and ($AllDone -or $DoneIds -contains $rid)) } })
+      [pscustomobject]@{ id = $rid; sev = "$($_.sev)"; area = "$($_.area)"; text = $text; fix = ($k -eq 'fix'); done = ($k -eq 'fix' -and ($AllDone -or $DoneIds -contains $rid)) } })
 }
 # counts of severity x decision, then the items not in this wave (per-subtask ids live in the delivery tables)
 function Format-KitTriage($Tri) {
@@ -157,9 +159,10 @@ function Get-KitDeployIndex {
 # what the local state says about a parent's subtasks: equal + fresh -> no read
 function Get-KitRollupLocalSig($Ro, [string[]]$Subs, $Tracking) {
   $lf = Get-Item -LiteralPath (Get-KitPath deploy-log) -ErrorAction SilentlyContinue
-  Get-KitRollupHash ((@($Subs | Sort-Object | ForEach-Object { $tr = $Tracking[$_]; "$_=$(@($tr.mrs) -join ',')/$($tr.done)" }) + "$($lf.Length)" + ($Ro.triage | ConvertTo-Json -Depth 6 -Compress)) -join '|')
+  $pa = Get-Command Get-KitPlannedAreas -ErrorAction Ignore   # holds and undelivered areas untick items (crafty adapters/task_items.ps1)
+  Get-KitRollupHash ((@($Subs | Sort-Object | ForEach-Object { $tr = $Tracking[$_]; "$_=$(@($tr.mrs) -join ',')/$($tr.done)/$($tr.holdPromotion)/$(if ($pa -and $tr) { @(Get-KitPlannedAreas $_ $tr.planReleased) -join ',' })" }) + "$($lf.Length)" + ($Ro.triage | ConvertTo-Json -Depth 6 -Compress)) -join '|')
 }
-function Set-KitItemsChecklist([string]$Task, $Items) { Set-KitTaskChecklist $Task 'Items' $Items }   # lib.ps1: checklist verb, else a description section
+function Set-KitItemsChecklist([string]$Task, $Items) { Set-KitTaskChecklist $Task 'Items' $Items -Prune }   # crafty adapters/task_items.ps1
 function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $ix = Read-KitState (Get-KitTaskFile $Parent); $ro = if ($ix.rollup -is [Collections.IDictionary]) { $ix.rollup } else { @{} }
   $trk = (Read-KitTracking).tasks; $known = @($ro.subtasks | Where-Object { $_ })
@@ -209,8 +212,12 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
       $tid = @($items.id); $items += @(@($sx.itemIds) | Where-Object { $_ -and $tid -notcontains $_ } | ForEach-Object { $di = $_; $nm = @($mrs | Where-Object { @($_.ids) -contains $di })
           [pscustomobject]@{ id = $di; sev = ''; text = (Format-KitItemText $di (Get-KitItemDesc "$($sx.itemDesc[$di])" $tri.rows) $(if ($nm.Count) { @($nm.url) } elseif ($merged) { @($mrs.url) })); fix = $false; done = ($merged -or ($nm.Count -and -not @($nm | Where-Object state -ne 'merged').Count)) } })
       $items = @($items | Where-Object { @($sx.itemsDropped) -notcontains $_.id })   # track forget-item: removed on the tracker, stays removed
+      $hd = Get-KitItemHolds $sb.id @($items | ForEach-Object { [pscustomobject]@{ id = $_.id; area = $_.area; desc = $_.text } }) $trk
+      foreach ($it in $items) { $nm = @($mrs | Where-Object { @($_.ids) -contains $it.id }); if (@($nm | Where-Object state -ne 'merged').Count) {   # a fix-round MR re-opens it until merged
+          $it.done = $false; if (@($nm | Where-Object state -eq 'merged').Count -and -not $hd.Contains($it.id)) { $hd[$it.id] = "fix round $($nm.Count)" } } }
+      $items = @(Set-KitItemHolds $items $hd); $hn = Get-KitHeldNote $hd
       $isig = Get-KitRollupHash (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
-      if ($isig -ne "$($sx.itemsSig)") { try { $null = Set-KitItemsChecklist $sb.id $items; Update-KitTaskIndex $sb.id { param($x) $x.itemsSig = $isig; $x.itemsFrom = 'triage' }; $did.Add("items $($sb.id)") } catch { $did.Add("items $($sb.id) FAILED: $("$_".Split("`n")[0])") } }
+      if ($isig -ne "$($sx.itemsSig)") { try { $null = Set-KitItemsChecklist $sb.id $items; Update-KitTaskIndex $sb.id { param($x) $x.itemsSig = $isig; $x.itemsFrom = 'triage'; $x.heldNote = $hn }; $did.Add("items $($sb.id)") } catch { $did.Add("items $($sb.id) FAILED: $("$_".Split("`n")[0])") } }
     }
     [pscustomobject]@{ id = $sb.id; name = $sb.name; url = $sb.url; status = $sb.status; area = "$($ag.area)"; order = $(if ($ag) { [int]$ag.order } else { 999 })
       repo = $(if ($ag.repo) { $ag.repo } elseif ($mrs.Count) { $mrs[0].repo } else { 'other' }); mrs = $mrs; merged = $merged; envs = $envs; items = $items
@@ -224,7 +231,7 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $desc = "$($pt.description)"; $nd = $desc -replace "`r`n", "`n"; $changed = @()
   foreach ($k in $want.Keys) { $h = Get-KitRollupHash $want[$k]; if ($sec[$k] -ne $h -or $nd.IndexOf("<!-- kit:$k -->") -lt 0) { $nd = Set-KitDescSection $nd $k $want[$k] $(if ($k -eq 'triage') { 'delivery' }); $sec[$k] = $h; $changed += $k } }
   if ($changed.Count) { try { $null = Set-TrackerDescription $Parent $nd; $did.Add("description ($($changed -join ', '))") } catch { $did.Add("description FAILED: $("$_".Split("`n")[0])"); foreach ($k in $changed) { $sec.Remove($k) } } }
-  $codeOf = @{}; foreach ($k in $areaOf.Keys) { $codeOf[$k] = "$($areaOf[$k].area)" }   # the parent's Items, one per subtask (lib.ps1), after the description write
+  $codeOf = @{}; foreach ($k in $areaOf.Keys) { $codeOf[$k] = "$($areaOf[$k].area)" }   # the parent's Items, one per subtask (crafty adapters/task_items.ps1), after the description write
   $pio = try { Update-KitParentItems $Parent $pt $codeOf } catch { "parent items FAILED: $("$_".Split("`n")[0])" }; if ($pio) { $did.Add("$pio") }
   $ms = @($ro.milestones | Where-Object { $_ }); $kit = @($rows | Where-Object { $_.area -or $trk.ContainsKey($_.id) }); $n = $kit.Count   # only subtasks the kit tracks or triaged
   $due = [ordered]@{}
@@ -262,29 +269,37 @@ function Get-KitDescItems([string]$Text) {
       if ($id -and -not $seen[$id]) { $seen[$id] = 1; [pscustomobject]@{ id = $id; text = $r.Trim() } } })
 }
 # no Items list: ONE item "MRs · <task name> · <MR URLs>" carries the links; -Force: a final checklist is written again (track add)
+# a final (all ticked) list opens again: a hold, an MR never read, an open MR naming items (a fix round)
+function Test-KitItemsReopen($X) {
+  $c = if ($X.itemsMrs -is [Collections.IDictionary]) { $X.itemsMrs } else { @{} }; $o = if ($X.itemsOpenMrs -is [Collections.IDictionary]) { $X.itemsOpenMrs } else { @{} }
+  [bool]($X.track.holdPromotion -or @(Get-KitTrackRefs $X.track.mrs | Where-Object { -not $c.Contains("$_") -and -not $o.Contains("$_") }).Count -or @($o.Values | Where-Object { @($_).Count }).Count) }
 function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
-  $x = Read-KitState (Get-KitTaskFile $Task); if ($x.itemsFrom -in 'triage', 'subtasks' -or ($x.itemsFinal -and -not $Force)) { return }
+  $x = Read-KitState (Get-KitTaskFile $Task); if ($x.itemsFrom -in 'triage', 'subtasks' -or ($x.itemsFinal -and -not $Force -and -not (Test-KitItemsReopen $x))) { return }
   $dsc = @{}; if ($T) { foreach ($e in @(Get-KitDescItems $T.description)) { $dsc[$e.id] = $e.text } } elseif ($x.itemDesc -is [Collections.IDictionary]) { foreach ($k in $x.itemDesc.Keys) { $dsc[$k] = $x.itemDesc[$k] } }
-  $ids = @(@(if ($T) { Get-KitDescItemIds $T.description } else { $x.itemIds }) | Where-Object { $_ -and @($x.itemsDropped) -notcontains $_ }); $tr = (Read-KitTracking).tasks[$Task]
+  $ids = @(@(if ($T) { Get-KitDescItemIds $T.description } else { $x.itemIds }) | Where-Object { $_ -and @($x.itemsDropped) -notcontains $_ }); $trk = (Read-KitTracking).tasks; $tr = $trk[$Task]
   if (-not $ids.Count -and @($x.itemsDropped | Where-Object { $_ }).Count) { return }   # every item forgotten: no MRs line either
   $one = -not $ids.Count -or "$ids" -eq 'MRs'; if ($one) { if (-not @($tr.mrs).Count) { return }; $ids = @('MRs'); if ($T.name) { $dsc.MRs = $T.name } }
   $mc = @{}; if ($x.itemsMrs -is [Collections.IDictionary]) { foreach ($k in $x.itemsMrs.Keys) { $mc[$k] = $x.itemsMrs[$k] } }; $named = @{}
+  $om = @{}; if ($x.itemsOpenMrs -is [Collections.IDictionary]) { foreach ($k in $x.itemsOpenMrs.Keys) { $om[$k] = $x.itemsOpenMrs[$k] } }   # open MRs: the ids they name (fix rounds)
   $look = -not $x.itemsReadAt -or ((Get-Date) - [datetime]$x.itemsReadAt).TotalMinutes -ge [double](Get-KitSetting 'track.rollupMinutes' 30)
   foreach ($ref in @(Get-KitTrackRefs $tr.mrs)) {
-    if (($look -or $Force) -and -not $mc.Contains("$ref") -and "$ref" -match '^(?<r>[^!]+)!(?<i>\d+)$') {   # merged MRs only, each read once
+    if (($look -or $Force -or -not $om.Contains("$ref")) -and -not $mc.Contains("$ref") -and "$ref" -match '^(?<r>[^!]+)!(?<i>\d+)$') {   # merged MRs only, each read once
       $pp = ProjPath $Matches.r; $mv = if ($pp) { try { Invoke-HostVerb 'mr.get' @{ repo = $pp; n = $Matches.i } } catch { } }
-      if ("$($mv.state)" -eq 'merged') { $mc["$ref"] = @(Get-KitMrNamedIds $ids $mv) }
+      if ("$($mv.state)" -eq 'merged') { $mc["$ref"] = @(Get-KitMrNamedIds $ids $mv); $om.Remove("$ref") } elseif ("$($mv.state)" -eq 'opened') { $om["$ref"] = @(Get-KitMrNamedIds $ids $mv) } elseif ($mv.state) { $om["$ref"] = @() }   # closed: names nothing, read again on the next look
     }
     $u = if ("$ref" -match '^(?<r>[^!]+)!(?<i>\d+)$' -and ($pp = ProjPath $Matches.r)) { try { Invoke-HostVerb 'mr.url' @{ repo = $pp; n = $Matches.i } } catch { } }
     foreach ($y in @(if ($one) { 'MRs' } else { $mc["$ref"] })) { if ($y) { $named[$y] = @($named[$y]) + @($u) | Where-Object { $_ } } }
   }
   $all = @(Get-KitTrackRefs $tr.mrs | ForEach-Object { if ("$_" -match '^(?<r>[^!]+)!(?<i>\d+)$' -and ($pp = ProjPath $Matches.r)) { try { Invoke-HostVerb 'mr.url' @{ repo = $pp; n = $Matches.i } } catch { } } })
   $allIn = $one -and @(Get-KitTrackRefs $tr.mrs).Count -and -not @(Get-KitTrackRefs $tr.mrs | Where-Object { -not $mc.Contains("$_") }).Count   # the one MRs item: resolved once every MR merged, even linked late (an Items list: by the ids its MRs name)
-  $items = @($ids | ForEach-Object { [pscustomobject]@{ text = (Format-KitItemText $_ $dsc[$_] $(if ($named[$_]) { $named[$_] } elseif ($tr.done -or $allIn) { $all })); done = [bool]($tr.done -or $allIn -or (-not $one -and $named.Contains($_))) } })
+  $items = @($ids | ForEach-Object { [pscustomobject]@{ id = $_; desc = "$($dsc[$_])"; text = (Format-KitItemText $_ $dsc[$_] $(if ($named[$_]) { $named[$_] } elseif ($tr.done -or $allIn) { $all })); done = [bool]($tr.done -or $allIn -or (-not $one -and $named.Contains($_))) } })
+  $hd = if ($one) { [ordered]@{} } else { Get-KitItemHolds $Task $items $trk }
+  foreach ($it in $items) { $no = @($om.Keys | Where-Object { @($om[$_]) -contains $it.id }).Count; if ($no) { $it.done = $false; $nmg = @($mc.Keys | Where-Object { @($mc[$_]) -contains $it.id }).Count; if ($nmg -and -not $hd.Contains($it.id)) { $hd[$it.id] = "fix round $($nmg + $no)" } } }
+  $items = @(Set-KitItemHolds $items $hd); $hn = Get-KitHeldNote $hd
   $sig = Get-KitRollupHash (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
-  if ($look -or $Force) { Update-KitTaskIndex $Task { param($y) $y.itemsReadAt = (Get-Date).ToString('o'); $y.itemsMrs = $mc } }; if ($sig -eq "$($x.itemsSig)") { return }
+  if ($look -or $Force) { Update-KitTaskIndex $Task { param($y) $y.itemsReadAt = (Get-Date).ToString('o'); $y.itemsMrs = $mc; $y.itemsOpenMrs = $om } }; if ($sig -eq "$($x.itemsSig)") { return }
   $null = Set-KitItemsChecklist $Task $items; $fin = -not @($items | Where-Object { -not $_.done }).Count
-  Update-KitTaskIndex $Task { param($y) $y.itemsSig = $sig; $y.itemsFrom = 'desc'; $y.itemIds = $ids; $y.itemDesc = $dsc; $y.itemsMrs = $mc; $y.itemsFinal = $fin }
+  Update-KitTaskIndex $Task { param($y) $y.itemsSig = $sig; $y.itemsFrom = 'desc'; $y.itemIds = $ids; $y.itemDesc = $dsc; $y.itemsMrs = $mc; $y.itemsFinal = $fin; $y.heldNote = $hn }
   "items ${Task}: $(@($items | Where-Object done).Count)/$($items.Count) done"
 }
 
@@ -331,7 +346,7 @@ function Invoke-KitForgetItems([string]$Task, [string[]]$Item) {
 function Invoke-KitTrackRollupHook([switch]$Quiet) {
   $parents = [ordered]@{}; $look = 0
   foreach ($g in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue)) { $x = Read-KitState $g.FullName; if ($x.task -and $x.rollup -is [Collections.IDictionary]) { $parents["$($x.task)"] = 1 }
-    if ($x.task -and $x.itemsFrom -eq 'desc' -and -not $x.itemsFinal) { $o = try { Update-KitTaskItems "$($x.task)" } catch { "ITEMS $($x.task) failed: $("$_".Split("`n")[0])" }; if ($o -and -not $Quiet) { $o } } }
+    if ($x.task -and $x.itemsFrom -eq 'desc' -and (-not $x.itemsFinal -or (Test-KitItemsReopen $x))) { $o = try { Update-KitTaskItems "$($x.task)" } catch { "ITEMS $($x.task) failed: $("$_".Split("`n")[0])" }; if ($o -and -not $Quiet) { $o } } }
   foreach ($t in @((Read-KitTracking).tasks.Values | Where-Object { $_.task -and -not $_.done })) {
     $x = Read-KitState (Get-KitTaskFile $t.task)
     if ($x -and $x.Contains('parent')) { if ($x.parent) { $parents["$($x.parent)"] = 1 }; continue }

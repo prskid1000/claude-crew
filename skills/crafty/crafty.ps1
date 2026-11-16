@@ -2315,7 +2315,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 }
 # ---- task spec: agents pass facts (JSON), never task markdown; tracker create|update <id>|render -Spec <json> renders the
 # description (testing-doc lines once the docs exist, Problem, Goal, Items `- <code> · <desc>`, Acceptance, Links), the Items checklist
-# `<code> · <desc> · <MR URLs>`, Decisions (lib.ps1 Format-KitDecisionItems) and the parent's Items (lib.ps1 Update-KitParentItems),
+# `<code> · <desc> · <MR URLs>`, Decisions (lib.ps1 Format-KitDecisionItems) and the parent's Items (adapters/task_items.ps1),
 # the same through every tracker adapter. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
 # { text, url }], docs: { human, ai }, decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], proseOk }.
@@ -2362,7 +2362,7 @@ function Format-KitTaskText($Spec) {
 function ConvertTo-KitTaskRender($Spec, [string]$Task) {
   $dec = @($Spec.decisions | Where-Object { $_.id } | ForEach-Object { [ordered]@{ id = "$($_.id)"; question = "$($_.question)"; answer = "$($_.answer)"; by = "$($_.by)"; at = "$($_.at)"; status = $(if ($_.answer) { 'answered' } else { 'pending' }) } })
   [pscustomobject]@{ name = (Get-KitSpecName $Spec); description = (Format-KitTaskText $Spec)
-    items = @(ConvertTo-KitSpecItems $Spec)
+    items = @(ConvertTo-KitSpecItems $Spec $Task)
     decisions = @(if ($dec.Count) { Format-KitDecisionItems $dec '' $Task }) }
 }
 # create (no -Task) or update by key (-Task: merged into its stored spec); refused on gaps or prose findings (a local path is one)

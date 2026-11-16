@@ -49,5 +49,12 @@ $cl = $global:log -join "`n"
 $pass = $ck -match '3 change' -and $cl -match '(?m)^task checklist item edit K1 i1 --name A1 · High · new$' -and $cl -match '(?m)^task checklist item add K1 A2 · Low · two$' -and $cl -match '(?m)^task checklist item resolve K1 i1$' -and $cl -notmatch 'i9|checklist add C1'
 if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: checklist renames, adds and resolves the kit's items by id, a person's item untouched ($ck)"
+$global:log.Clear(); $global:fx['task view C1 --jq .checklists'] = ('[{"id":"K1","name":"Items","items":[{"id":"i1","name":"A1 · x · u","resolved":true},{"id":"i2","name":"A2 · y","resolved":true},{"id":"i3","name":"A2 · y","resolved":true},{"id":"i4","name":"P1-JS-01 · other task · u","resolved":true},{"id":"i9","name":"a person''s · note","resolved":false}]}]')
+$global:fx['task checklist item remove K1'] = 'ok'
+$ck = try { __TrA 'checklist' @{ id = 'C1'; name = 'Items'; prune = $true; items = @(@{ text = 'A1 · x · u · held: real-API check'; done = $false }, @{ text = 'A2 · y'; done = $true }) } } catch { "$_" }
+$cl = $global:log -join "`n"
+$pass = $cl -match '(?m)^task checklist item remove K1 i1$' -and $cl -match '(?m)^task checklist item add K1 A1 · x · u · held: real-API check$' -and $cl -match '(?m)^task checklist item remove K1 i3$' -and $cl -match '(?m)^task checklist item remove K1 i4$' -and $cl -notmatch 'remove K1 i[29]|resolve K1 i2'
+if (-not $pass) { $failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: checklist unticks a resolved item (remove + add: no unresolve verb); prune drops a kit line not wanted and a repeat, a person's line kept ($ck)"
 "$failed failure(s)"   # this file's count (kit-tests.ps1 prints the total)
 exit [int]($failed -gt 0)

@@ -143,5 +143,37 @@ $fx = & {
 Expect "rollup: a subtask never gets another subtask's area rows or the rows its '(ports X)' words name ($($fx.h1 -replace '\s+', ' '))" ($fx.h1 -match '(?m)^- \[ \] HM-S01 · ' -and $fx.h1 -match '(?m)^- \[ \] HM-C01 · ' -and $fx.h1 -notmatch '(?m)^- \[.\] P1-' -and $fx.r1 -match '(?m)^- \[ \] P1-JS-01 · RM tables' -and $fx.r1 -notmatch 'HM-')
 Expect "track forget-item: the item stays out of the next rollup; stored as itemsDropped ($($fx.fo))" ($fx.h2 -notmatch '(?m)^- \[.\] HM-C01' -and $fx.h2 -match '(?m)^- \[ \] HM-S01 · ' -and $fx.dropped -eq 'HM-C01' -and $fx.fo -match 'HM-C01 dropped')
 Expect "track forget-item of every item: no 'MRs' line instead; a cut '(ports X (y…' value names nothing ($($fx.zo) | $($fx.cut))" (-not $fx.zo -and $fx.zd -notmatch 'kit:items' -and $fx.cut -eq 0)
+# counts match the task state (owner, 2026-11-16): held / deferred / undelivered / fix-round items unticked with a suffix; parent line too
+$hx = & {
+  $env:KIT_TRACKER_TYPE = 'none'; . (Join-Path $k 'skills/bossy/bossy.ps1') 6>$null; $view = { param($i) __TrA 'view' @{ id = $i } }
+  $b5 = Join-Path (Kd) 'brief-e'; New-Item -ItemType Directory -Force $b5 | Out-Null
+  Set-Content (Join-Path $b5 'items.md') "| ID | Area | Title |`n|---|---|---|`n| HM-S01 | HS | HM tables |`n| HM-C01 | HC | HM chat |`n| HM-W01 | HW | Setup page: Try chat, Chat now |`n| HM-V01 | HV | Validation |`n| HM-T01 | HT | Triggers |"
+  $p = (__TrA 'create' @{ name = 'Hold parent' }).id; $hm = (__TrA 'create' @{ name = '[Feature] HM P1'; parent = $p; description = "**Items:**`n- HM-S01`n- HM-C01`n- HM-W01`n- HM-V01`n- HM-T01" }).id; $sib = (__TrA 'create' @{ name = 'Sibling'; parent = $p }).id
+  Set-JsonFile (Join-Path $b5 'rollup-agents.json') @{ agents = @(@{ id = 'HM-P1'; task = $hm }) }
+  Update-KitTaskIndex $hm { param($x) $x.track = @{ task = $hm; mrs = @('api-repo!31', 'api-repo!32'); done = $false; holdPromotion = "deferred items: HM-C01 real-API check, Try chat / Chat now, cypress specPattern, OTHER-9, S3 bucket check, $sib" } }
+  Update-KitTaskIndex $sib { param($x) $x.track = @{ task = $sib; mrs = @(); done = $false; holdPromotion = 'deferred items: HM-T01 needs data' } }
+  $null = __TrNone $hm 'st' { param($o) $o.status = 'closed' }
+  function ProjPath($r) { "g/$r" }; function Get-KitPlannedAreas($T, $S) { if ($T -eq $hm -and -not $global:hxDone) { 'HV' } }
+  function Invoke-HostVerb([string]$Verb, [hashtable]$A) { if ($Verb -eq 'mr.url') { return "https://git/$($A.repo)/$($A.n)" }
+    @{ '31' = @{ state = 'merged'; merged_at = '2026-11-16T09:00:00Z'; title = 'feat: HM-S01 HM-C01 HM-W01 HM-V01 HM-T01' }; '32' = @{ state = $(if ($global:hxDone) { 'merged' } else { 'opened' }); merged_at = '2026-11-16T10:00:00Z'; title = 'fix: HM-S01 round 2' }
+      '41' = @{ state = 'merged'; title = 'fix: A1 A2' }; '42' = @{ state = 'opened'; title = 'fix: A1 again' }; '51' = @{ state = 'merged'; title = 'fix: B1' }; '52' = @{ state = 'opened'; title = 'fix: B1 round 2' } }["$($A.n)"] }
+  $global:hxDone = $false; $null = Invoke-TaskRollup -Task $p -From $b5; $h1 = (& $view $hm).description; $p1 = (& $view $p).description
+  $spi = @(ConvertTo-KitSpecItems @{ items = @(@{ code = 'HM-C01'; desc = 'HM chat'; done = $true }, @{ code = 'HM-X01'; desc = 'x'; done = $true }) } $hm) | ForEach-Object { "$($_.done)|$($_.text)" }
+  $it = (__TrA 'create' @{ name = 'Own list'; description = "**Items (ids):** A1, A2" }).id; Update-KitTaskIndex $it { param($x) $x.track = @{ task = $it; mrs = @('api-repo!41', 'api-repo!42'); done = $false; holdPromotion = 'deferred items: A2 later' } }
+  $i1 = Update-KitTaskItems $it (& $view $it) -Force; $d1 = (& $view $it).description
+  $fz = (__TrA 'create' @{ name = 'Final list'; description = "**Items (ids):** B1" }).id; Update-KitTaskIndex $fz { param($x) $x.track = @{ task = $fz; mrs = @('api-repo!51'); done = $true } }
+  $f0 = "$(Update-KitTaskItems $fz (& $view $fz) -Force) $((Read-KitState (Get-KitTaskFile $fz)).itemsFinal)"; Update-KitTaskIndex $fz { param($x) $x.track.mrs = @('api-repo!51', 'api-repo!52') }
+  $f1 = "$(@(Invoke-KitTrackRollupHook) -join ' ') $((Read-KitState (Get-KitTaskFile $fz)).itemsFinal)"; $fd = (& $view $fz).description
+  $global:hxDone = $true; Update-KitTaskIndex $hm { param($x) $x.track.Remove('holdPromotion') }; Update-KitTaskIndex $sib { param($x) $x.track.Remove('holdPromotion') }
+  $null = Invoke-TaskRollup -Task $p; [pscustomobject]@{ h1 = $h1; p1 = $p1; i1 = "$i1"; d1 = $d1; h2 = (& $view $hm).description; p2 = (& $view $p).description; hm = $hm; spi = @($spi) -join ' / '; f0 = $f0; f1 = $f1; fd = $fd }
+}
+Expect "items held: a 'deferred items' id -> its reason, a phrase in one item's words -> that item, another task's hold naming it, an undelivered launch area; unticked with ' · <reason>' ($($hx.h1 -replace '\s+', ' '))" (
+  $hx.h1 -match '(?m)^- \[ \] HM-C01 · HM chat · \S+ · held: real-API check$' -and $hx.h1 -match '(?m)^- \[ \] HM-W01 · [^\n]* · held: Try chat / Chat now$' -and $hx.h1 -match '(?m)^- \[ \] HM-T01 · [^\n]* · held: needs data$' -and $hx.h1 -match '(?m)^- \[ \] HM-V01 · [^\n]* · not delivered: HV$')
+Expect "items held: a fix-round MR (open, naming a merged item) unticks it ('fix round 2'); an unmatched reason = one 'held' line; other ids and tasks skipped" ($hx.h1 -match '(?m)^- \[ \] HM-S01 · [^\n]* · fix round 2$' -and $hx.h1 -match '(?m)^- \[ \] held · cypress specPattern; S3 bucket check$' -and $hx.h1 -notmatch 'OTHER-9|Sibling' -and @([regex]::Matches($hx.h1, '(?m)^- \[')).Count -eq 6)
+Expect "parent Items: a held subtask's line unticked even when closed, ' · held: <ids>' ($(($hx.p1 -split "`n" | Select-String 'HM-P1') -join ' '))" ($hx.p1 -match "(?m)^- \[ \] HM-P1 · HM P1 · \S*$($hx.hm)\S* · held: HM-C01, HM-W01, HM-V01, HM-T01, HM-S01$")
+Expect "items (own Items list, task spec): a hold and a fix-round MR untick with the same suffixes ($($hx.i1) | $($hx.spi))" ($hx.spi -eq 'False|HM-C01 · HM chat · held: real-API check / True|HM-X01 · x / False|held · Try chat / Chat now; cypress specPattern; S3 bucket check' -and $hx.i1 -match '0/2 done' -and $hx.d1 -match '(?m)^- \[ \] A1 · [^\n]*· fix round 2$' -and $hx.d1 -match '(?m)^- \[ \] A2 · [^\n]*· held: later$')
+Expect "items: a final (all ticked) list opens again when a fix-round MR is registered: the item unticked, not final ($($hx.f0) | $($hx.f1))" ($hx.f0 -match '1/1 done True$' -and $hx.f1 -match '0/1 done False$' -and $hx.fd -match '(?m)^- \[ \] B1 · [^
+]*· fix round 2$')
+Expect "items released (hold dropped, area delivered, fix MR merged): all ticked, suffixes and the held line gone, parent line ticked" ($hx.h2 -notmatch '- \[ \]|held|fix round|not delivered' -and $hx.h2 -match '(?m)^- \[x\] HM-S01 · ' -and $hx.p2 -match "(?m)^- \[x\] HM-P1 · HM P1 · \S*$($hx.hm)\S*$")
 Remove-TestKit $k
 Complete-Tests

@@ -467,6 +467,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_runtimes_ps1["runtimes.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_stack_presets_ps1["stack_presets.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_supervise_report_ps1["supervise_report.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_task_items_ps1["task_items.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_azure_ps1["tracker_azure.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_clickup_ps1["tracker_clickup.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_jira_ps1["tracker_jira.ps1"]
