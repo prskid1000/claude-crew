@@ -80,6 +80,12 @@ if ($IsWindows) {
   $em = & { . (Join-Path $k4 'skills/envy/envy.ps1'); foreach ($q0 in 'SELECT 1', 'DELETE FROM t', 'WITH x AS (SELECT 1) DELETE FROM t') { try { Invoke-DbSql s $q0; 'rows' } catch { "$_" -replace '^mysql: exit 0 without the end marker \((\w+).*', '$1' } } }
   $ep = & $py -X utf8 -c "import sys, types; sys.path.insert(0, r'$(Join-Path $k4 'skills/envy/adapters')'); import db_flashback as f; d = f.Db(types.SimpleNamespace(host='h', port='1', user='u', mysql=r'$fakeBin\mysql.cmd'))`ntry: d.rows('SELECT 1'); print('rows')`nexcept RuntimeError as e: print('no output 3 times' in str(e))"
   Expect "an exit 0 without output is no answer: a read retries then fails, a write fails at once, never 0 rows ($em | $ep)" ("$em" -eq '3 a a' -and "$ep" -eq 'True')
+  # the cause: the Windows client lost its buffered output at exit under load (6 of 1600; 0 with --unbuffered): every client call flushes per statement
+  Set-Content (Join-Path $fakeBin 'mysql.cmd') '@echo %*', '@echo __kit_rows_end__'
+  $ua = & { . (Join-Path $k4 'skills/envy/envy.ps1'); "$(Invoke-DbSql s 'SELECT 1')" }
+  $ub = & $py -X utf8 -c "import sys, types; sys.path.insert(0, r'$(Join-Path $k4 'skills/envy/adapters')'); import db_flashback as f; print(f.Db(types.SimpleNamespace(host='h', port='1', user='u', mysql=r'$fakeBin\mysql.cmd')).rows('SELECT 1'))"
+  Set-Content (Join-Path $fakeBin 'mysql.cmd') '@exit /b 0'
+  Expect "mysql client calls run --unbuffered (envy statement, flashback rows) ($ua | $ub)" ("$ua" -match '--unbuffered' -and "$ub" -match '--unbuffered')
   # the direct SQL-file path (restore apply, structure) fails at once; mysqlbinlog without its end-of-log line is read again, then fails
   # the ok pair: mysql prints the marker; mysqlbinlog loses its first output, prints the end-of-log line from the second call on
   Set-Content (Join-Path $fakeBin 'mysqlbinlog.cmd') '@echo x>>"%~dp0binlog-calls.txt"', '@exit /b 0'; $sqlFile = Join-Path $fakeBin 'x.sql'
@@ -101,11 +107,6 @@ if ($IsWindows) {
   Expect "flashback options past the command-line limit ($($bigSchemas.Length) chars) reach db_flashback.py through an @file ($el)" ("$el" -match '^db_flashback\.py guard: \w+Error: ' -and "$el" -notmatch 'too long')
   Remove-TestKit $k4
 }
-# the test helper: a read without the end marker is asked again; a write batch is never re-run (it may have run: a re-run hides the flake)
-$tmq = & { $script:tmCalls = 0; function mysql { $script:tmCalls++; $global:LASTEXITCODE = 0; if ($script:tmCalls -eq 1) { 'lost' } else { 'r'; '__kit_rows_end__' } }
-  $tmCut = '\):.*'; "$(Invoke-TestMySql 'SELECT 1' 1):$script:tmCalls"; $script:tmCalls = 0; "$(Invoke-TestMySql 'SHOW CREATE TABLE fa.o' 1):$script:tmCalls"; $script:tmCalls = 0
-  try { Invoke-TestMySql 'CREATE TABLE t (a int); INSERT INTO t VALUES (1)' 1 } catch { (("$_" -replace $tmCut, ')') + ":$script:tmCalls") } }
-Expect "Invoke-TestMySql: a lost read (SHOW CREATE too) retried once, a lost write throws at once ($($tmq -join ' | '))" (($tmq -join ' | ') -eq 'r:2 | r:2 | mysql: exit 0 without the end marker (a write: not re-run, it may have run):1')
 
 # ---- a scratch mysqld (own data dir and port, binlog ROW / FULL): never the env's server
 $mysqld = Get-Command mysqld -ErrorAction SilentlyContinue

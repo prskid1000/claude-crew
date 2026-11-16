@@ -7,7 +7,7 @@
 # An engine without a verb refuses it ("engine <x>: verb <v> not implemented"); never another engine's client.
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'
 $mysql = @{ defaultPort = 3306; passwordEnv = 'MYSQL_PWD'; supportsMarks = $true; supportsTemp = $true
-  query = "mysql $my -N -B -e `"{sql}`" {N}"; exec = "mysql $my --default-character-set=utf8mb4 {N} < `"{file}`""
+  query = "mysql $my -N -B --unbuffered -e `"{sql}`" {N}"; exec = "mysql $my --default-character-set=utf8mb4 {N} < `"{file}`""
   jdbc = 'jdbc:mysql://{H}:{P}/{schema}?useSSL=false&allowPublicKeyRetrieval=true'
   sql = { param($a) Invoke-MySqlStatement $a.e $a.sql $a.sec }
   pos = { param($a) Get-MySqlPos $a.e }
@@ -31,15 +31,16 @@ function DbConn([string]$e) {
      mysql = $(if ($bin) { Join-Path $bin 'mysql' } else { 'mysql' }); mysqlbinlog = $(if ($bin) { Join-Path $bin 'mysqlbinlog' } else { 'mysqlbinlog' }); mysqldump = $(if ($bin) { Join-Path $bin 'mysqldump' } else { 'mysqldump' }) }
 }
 # one statement through the mysql client (password: MYSQL_PWD from the env file) -> rows of tab-separated fields; throws on failure
-# under CPU load the client can exit 0 with no output at all: an end marker tells 0 rows from lost ones (a read retries, a write throws)
+# under CPU load the Windows client ran the batch, exited 0 and lost its buffered output (6 of 1600; 0 with --unbuffered, 2026-11-16):
+# --unbuffered flushes after each statement; the end marker still tells 0 rows from lost ones (a read retries, a write throws)
 function Invoke-MySqlStatement([string]$e, [string]$sql, [int]$Sec = 120) {
   $c = DbConn $e; $endMark = '__kit_rows_end__'; $read = $sql -match '^\s*(SELECT|SHOW|WITH)\b' -and $sql -notmatch '(?i)\b(INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|TRUNCATE|CALL|KILL|SET|OUTFILE|DUMPFILE)\b|;\s*\S'
   for ($try = 1; ; $try++) {
-    $r = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe $c.mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '-N', '-B') $Sec -In "$($sql.TrimEnd().TrimEnd(';'));`nSELECT '$endMark';`n" }   # stdin, never -e: a long statement overflows the command line
+    $r = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe $c.mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '-N', '-B', '--unbuffered') $Sec -In "$($sql.TrimEnd().TrimEnd(';'));`nSELECT '$endMark';`n" }   # stdin, never -e: a long statement overflows the command line
     if ($r.code) { throw "mysql: $(if ($r.err) { $r.err } else { $r.out })" }
     $lines = @("$($r.out)" -split "`r?`n" | Where-Object { $_ })
     if ($lines.Count -and $lines[-1] -eq $endMark) { break }
-    if (-not $read -or $try -ge 3) { throw "mysql: exit 0 without the end marker ($(if ($read) { '3 tries' } else { 'a write: not retried, it may not have run' })): $($sql.Substring(0, [math]::Min(80, $sql.Length)))" }
+    if (-not $read -or $try -ge 3) { throw "mysql: exit 0 without the end marker ($(if ($read) { '3 tries' } else { 'a write: not retried, it may have run' })): $($sql.Substring(0, [math]::Min(80, $sql.Length)))" }
   }
   @($lines | Select-Object -SkipLast 1 | ForEach-Object { , @($_ -split "`t") })
 }

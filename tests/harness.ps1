@@ -75,10 +75,10 @@ function Set-JsonFile([string]$Path, $Obj, [int]$Depth = 8) {
 $J = { param($o, $f, [int]$d = 8) Set-JsonFile $f $o $d }
 function Test-Prose($Kind, $File) { $null = python -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') prose --kind $Kind $File; $LASTEXITCODE -eq 0 }   # vs the source kit's templates.md
 function Read-Json($Path) { Get-Content $Path -Raw | ConvertFrom-Json }
-# a scratch mysqld batch with the end marker of Invoke-MySqlStatement: a lost read is asked again, a lost write throws (a re-run write is no repro)
+# a scratch mysqld batch as Invoke-MySqlStatement runs it (--unbuffered, the end marker): a lost read is asked again, a lost write throws (a re-run write is no repro)
 function Invoke-TestMySql([string]$Sql, [string]$Port) {
   $tmRead = $Sql -match '^\s*(SELECT|SHOW|WITH|CHECKSUM)\b' -and ($Sql -replace '(?i)^\s*SHOW\s+CREATE\s+\w+', 'SHOW') -notmatch '(?i)\b(INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|TRUNCATE|CALL|KILL|SET|INTO|OUTFILE|DUMPFILE|GRANT|RENAME|LOAD|FLUSH|LOCK)\b|;\s*\S'
-  foreach ($tmTry in 1..3) { $tmOut = @("$($Sql.TrimEnd().TrimEnd(';'));`nSELECT '__kit_rows_end__';" | mysql -h 127.0.0.1 -P $Port -u root --default-character-set=utf8mb4 -N -B 2>&1); if ($LASTEXITCODE) { throw "$tmOut" }
+  foreach ($tmTry in 1..3) { $tmOut = @("$($Sql.TrimEnd().TrimEnd(';'));`nSELECT '__kit_rows_end__';" | mysql -h 127.0.0.1 -P $Port -u root --default-character-set=utf8mb4 -N -B --unbuffered 2>&1); if ($LASTEXITCODE) { throw "$tmOut" }
     if ($tmOut.Count -and $tmOut[-1] -eq '__kit_rows_end__') { return $tmOut | Select-Object -SkipLast 1 }
     if (-not $tmRead) { throw "mysql: exit 0 without the end marker (a write: not re-run, it may have run): $($Sql.Substring(0, [math]::Min(80, $Sql.Length)))" } }
   throw "mysql: a read without the end marker 3 times: $Sql" }

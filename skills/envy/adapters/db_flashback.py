@@ -74,9 +74,9 @@ class Db:
     def __init__(s, a): s.a = a
     def base(s, exe): return [exe, '-h', s.a.host, '-P', str(s.a.port), '-u', s.a.user]
     def rows(s, sql):
-        """read-only statements; under CPU load the client can exit 0 with no output at all: an end marker tells 0 rows from lost ones"""
+        """read-only statements; --unbuffered: under CPU load the client lost its buffered output at exit (db_engines.ps1); the end marker tells 0 rows from lost ones"""
         for _ in range(3):
-            r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B'], input=f"{sql.rstrip().rstrip(';')};\nSELECT '{ROWS_END}';\n".encode(), capture_output=True, timeout=600)   # stdin: no command-line cap
+            r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '--unbuffered'], input=f"{sql.rstrip().rstrip(';')};\nSELECT '{ROWS_END}';\n".encode(), capture_output=True, timeout=600)   # stdin: no command-line cap
             if r.returncode: raise RuntimeError(f'mysql: {r.stderr.decode(errors="replace").strip()[-300:]}')
             out = [l for l in r.stdout.decode('utf-8', errors='replace').splitlines() if l]
             if out and out[-1] == ROWS_END: break
@@ -88,9 +88,9 @@ class Db:
         without it as the last output raises, never retried (writes)"""
         with open(path, 'a', encoding='utf-8', newline='\n') as fh: fh.write(f"\nDELIMITER ;\nSELECT '{ROWS_END}';\n")
         with open(path, 'rb') as fh:
-            r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '--comments'], stdin=fh, capture_output=True, timeout=7200)
+            r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '--unbuffered', '--comments'], stdin=fh, capture_output=True, timeout=7200)
         if not r.returncode and not r.stdout.rstrip().endswith(ROWS_END.encode()):
-            raise RuntimeError('mysql: exit 0 without the end marker: the statements may not have run (a restore: earlier batches may be committed; plan again)')
+            raise RuntimeError('mysql: exit 0 without the end marker: the statements may have run (a restore: earlier batches may be committed; plan again)')
         return r
     def script(s, sql):
         """statements (DELIMITER lines allowed; the last one terminated) through a temp file; raises on failure"""
@@ -747,7 +747,7 @@ def slice_cmd(a, db):
             for c in [] if x['noPk'] else [c for c in it.get('columns') or [] if c.lower() in have]:   # a column not there yet holds nothing
                 f = os.path.join(a.out, f'{base}.{hashlib.sha1(c.encode()).hexdigest()[:8]}.tsv.gz')
                 sel = ', '.join(f'HEX(CAST({q(k)} AS BINARY))' for k in x['pk']) + f', HEX(CAST({q(c)} AS BINARY)), {q(c)} IS NULL'
-                stream_gz(db.base(a.mysql) + ['-N', '-B', '-e', f"SELECT {sel} FROM {q(sch)}.{q(t)}; SELECT '{ROWS_END}'"], f, ROWS_END.encode(), f'slice {sch}.{t}.{c}')
+                stream_gz(db.base(a.mysql) + ['-N', '-B', '--unbuffered', '-e', f"SELECT {sel} FROM {q(sch)}.{q(t)}; SELECT '{ROWS_END}'"], f, ROWS_END.encode(), f'slice {sch}.{t}.{c}')
                 x['columns'][c] = os.path.basename(f); total += os.path.getsize(f)
         items.append(x)
     objs = objects_of(db, [x for x in (a.objects or '').split(',') if x]) if a.objects else []

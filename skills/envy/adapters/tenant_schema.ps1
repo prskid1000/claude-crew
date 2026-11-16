@@ -176,7 +176,7 @@ function Get-ImportSource([string]$e, [string]$from) {
 }
 # read-only statements on the source -> rows (the end marker as in Invoke-DbSql)
 function Invoke-SrcSql($c, [string]$e, [string]$sql) {
-  $r = With-Env @{ MYSQL_PWD = $c.password } { Invoke-KitExe (DbConn $e).mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '--default-character-set=utf8mb4', '-N', '-B') 300 -In "$($sql.TrimEnd().TrimEnd(';'));`nSELECT '__kit_rows_end__';`n" }   # TODO-PARAM (fixed default); stdin: no command-line cap
+  $r = With-Env @{ MYSQL_PWD = $c.password } { Invoke-KitExe (DbConn $e).mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '--default-character-set=utf8mb4', '-N', '-B', '--unbuffered') 300 -In "$($sql.TrimEnd().TrimEnd(';'));`nSELECT '__kit_rows_end__';`n" }   # TODO-PARAM (fixed default); stdin: no command-line cap
   if ($r.code) { throw "source mysql: $(Protect-KitText "$($r.err)".Split("`n")[-1])" }
   $lines = @("$($r.out)" -split "`r?`n" | Where-Object { $_ })
   if (-not $lines.Count -or $lines[-1] -ne '__kit_rows_end__') { throw "source mysql: exit 0 without the end marker: $($sql.Substring(0, [math]::Min(80, $sql.Length)))" }
