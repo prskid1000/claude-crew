@@ -88,6 +88,9 @@ def selftest(expect, tmp, md):
         row = [c[0]['text']['content'] if c else '' for c in rb['table']['children'][1]['table_row']['cells']]
         expect('notion: an env run fills the human doc row: result with check ids, each check\'s evidence (image link, JSON excerpt + link) on its own line',
                row[0] == 'T1' and row[3] == 'PASS (V1, V2)' and 'https://img/v1.png' in row[4] and 'GET /a -> 200' in row[4] and 'https://f/v2' in row[4] and '\n' in row[4])
+        r2 = [c[0]['text']['content'] if c else '' for c in rb['table']['children'][2]['table_row']['cells']]
+        expect('notion: a later run\'s NOT TESTED keeps the earlier PASS, both envs and the why in the row',
+               r2[0] == 'T2' and r2[3] == 'PASS (stg V3) · local: not tested (T2) — read-only' and 'GET /b -> 200' in r2[4] and 'read-only' in r2[4])
     finally:
         _http = saved
         os.environ.clear(); os.environ.update(env0)

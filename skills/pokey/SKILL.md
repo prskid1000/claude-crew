@@ -37,7 +37,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`): UI checks
    at each `qa.matrix` variant (`matrix()`) + `layoutIssues()`; stated qualities measured (`contrast()`, timings);
    app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command;
-   e2e: `check -Step e2e` (the change's specs). Check id = guide row id; row variants (V1, V2): `case: <row id>`.
+   e2e: `check -Step e2e` (the change's specs). Check id = guide row id; row variants (V1, V2): `case: <row id>`;
+   rows an earlier run covered need no NOT_TESTED filler.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `pokey.ps1 annotate`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
    -Next <next check id> -Evidence "<verdict> <file>"` (a restart resumes there; obey a beat's PAUSE line).

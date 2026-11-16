@@ -105,10 +105,18 @@ $vt = Read-Text $vd
 Expect 'finalize: variant checks fill their doc rows (ids named, api excerpt + link per file); evidence uploads under the run item key, never <task>:evidence' (
   $vt -match '\| C1 \| open a \| a shown \| PASS \(V1\) \| \*\*V1\*\* PASS: `GET /api/orders/7\?x=1 -> 200 · body\.po: PO-77` \[Order\]\(https://f/Q2-V1_01_order\.json\) \|' -and
   $vt -match '\| C2 \| open b \| b shown \| NOT TESTED \(V2\) \|' -and (Read-Text "$dtDir/ev-key.txt") -eq 'VA-Q2:evidence')
-# a human doc row no check covers: -Check exits 1 naming it, publishing refuses
-$gr = New-Run 'GA' @(@{ code = 'G1'; task = 'TAI'; checks = , @('C1', 'PASS') })
+# a human doc row no check of this run or an earlier published one covers: -Check exits 1 naming it, publishing refuses
+$gd = "$(Kd)/TGA-h.md"; Set-Content $gd 'g1'
+& $J @{ key = 'TGA:testing-doc'; url = $gd; rounds = @(@{ at = '2026-10-29 10:00'; label = ''; ext = '.md'; body = "# Testing: X`n| # | Steps | Expected | Result | Evidence |`n|---|---|---|---|---|`n| C1 | open a | a shown | | |`n| C2 | open b | b shown | | |" }) } "$k/.state/published/TGA_testing-doc.json"
+$gr = New-Run 'GA' @(@{ code = 'G1'; task = 'TGA'; checks = , @('C1', 'PASS') })
 $go = Fin $gr G1 -Check; $grc = $LASTEXITCODE; $gp = Fin $gr G1 -NoTracker
 Expect "finalize -Check: a human doc row no check covers -> EXIT=1 naming it; publish refuses, nothing published (rc $grc)" ($grc -eq 1 -and $go -match 'G1 doc check: C2: human testing doc row' -and $gp -match 'G1 doc check: C2' -and -not (Test-Path "$gr/G1/finalize.json"))
+# a later run of one row (a local app part): the earlier published run Q1 covers C2, so no NOT_TESTED filler; a NOT_TESTED never replaces C1's PASS
+$cr = New-Run 'CA' @(@{ code = 'G2'; task = 'TAI'; checks = , @('C1', 'NOT_TESTED') })
+$rj = Read-Json "$cr/G2/results.json"; $rj.checks[0] | Add-Member cause 'env-data'; $rj.checks[0].observed = 'PO field read-only on the phone vs typed PO'; & $J $rj "$cr/G2/results.json"
+$co = Fin $cr G2 -Check; $null = Fin $cr G2 -NoTracker; $ct = Read-Text $ad
+Expect "finalize -Check: a run covering one row passes the doc check when an earlier run covers the rest; the doc keeps C1 PASS and C2 FAIL, the why named" (
+  $co -notmatch 'doc check' -and $ct -match '\| C1 \| open a \| a shown \| PASS \(t C1\) · t: not tested \(C1\) — PO field read-only on the phone \|' -and $ct -match '\| C2 \| open b \| b shown \| FAIL \|')
 # OUT_OF_SCOPE only for a qa.outOfScope channel named in the check (run.json outOfScope wins); an unbuilt app part is not one
 $os = New-Run 'OS' @(@{ code = 'O1'; task = 'TOS'; checks = @(@('C1', 'OUT_OF_SCOPE'), @('C2', 'OUT_OF_SCOPE')) })
 $rn = Read-Json "$os/run.json"; $rn | Add-Member outOfScope @('slack'); & $J $rn "$os/run.json"

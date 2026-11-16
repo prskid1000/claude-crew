@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L153 seat · L222 api · L437 finalize · L894 results · L927 retest · L984 prepare
+Sections: L26 lanes · L40 report · L154 seat · L223 api · L438 finalize · L895 results · L928 retest · L985 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -123,7 +123,8 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
     $o.Add("| **$(MdEsc $c.id)** $(MdEsc $c.screen) | $($label[[string]$c.result])$kn$rt | $saw | $evc |")
     if ($null -ne $Cells) {   # the human doc's row (devtools.py _row_cells: by id, case or screen); one line per file
       $hev = (@($c.evidence | Where-Object { $_ }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$' -and $Map.files[$_]) { MdImg $_ } elseif (($pk = Peek $_ $c -Line) -and $Map.files[$_]) { "$pk [$(Caption $_)]($(([string]$Map.files[$_].link) -replace ' ', '%20'))" } else { "file: $(Lnk $_)" } }) -join '<br>'
-      $Cells[[string]$c.id] = @{ result = ([string]$c.result -replace '_', ' ') + $(if ($kn) { " (known: $kb)" }); evidence = $hev; case = "$($c.case)"; screen = "$($c.screen)" } }
+      $Cells[[string]$c.id] = @{ result = ([string]$c.result -replace '_', ' ') + $(if ($kn) { " (known: $kb)" }); evidence = $hev; case = "$($c.case)"; screen = "$($c.screen)"
+        why = if ([string]$c.result -notin 'PASS', 'PASS_WITH_NOTE', 'FAIL') { (("$($c.observed)" -split ' vs ', 2)[0]).Trim() } else { '' } } }   # a later run's NOT TESTED row names why
   }
   if ($fails.Count) {
     $o.Add(''); $o.Add('## Failures in detail')
@@ -519,16 +520,17 @@ $knownBad = { $tested = @(@($item.subtasks) | ForEach-Object { ([string]$_.id).T
   elseif ($kb.TrimStart('#') -in $tested) { "$($c.id): knownBug $kb is a tested task (its own failure: defect own)" }
   elseif (-not "$($kt.name)".Trim()) { "$($c.id): knownBug $kb not found in the tracker" }
   elseif ((Test-TrackerStatus "$($kt.status)" 'closed') -or "$($kt.status)" -ieq 'closed') { "$($c.id): knownBug $kb is closed (reopen it, or defect new)" } }) }
-# human doc rows no check of this run covers (devtools.py docgaps: id, case or a screen starting with the row id); a sibling item on the task: WARN
+# human doc rows neither this run nor an earlier published run covers (devtools.py docgaps: id, case or a screen starting with the row id); a sibling item on the task: WARN
+$runKey = "$(Split-Path $RunDir -Leaf)-$Code"
 $stIds = @(@($item.subtasks) | ForEach-Object { [string]$_.id })
 $docSib = [bool]@(@($run.items) | Where-Object { $_.code -ne $Code -and @(@($_.subtasks) | Where-Object { [string]$_.id -in $stIds }).Count }).Count
 $docGaps = { if (-not $hDoc) { return }
   $gc = @{}; foreach ($c in @($res.checks)) { $gc[[string]$c.id] = @{ result = [string]$c.result; case = "$($c.case)"; screen = "$($c.screen)" } }
   $gf = [IO.Path]::GetTempFileName(); [IO.File]::WriteAllText($gf, (ConvertTo-Json $gc -Depth 3), [Text.UTF8Encoding]::new($false))
-  $gapAll = @(& (Get-Python) -X utf8 $KitCmd.devtools docgaps --key "${pubKey}:testing-doc" --run $gf 2>&1); $gapRc = $LASTEXITCODE; Remove-Item -LiteralPath $gf -ErrorAction SilentlyContinue
+  $gapAll = @(& (Get-Python) -X utf8 $KitCmd.devtools docgaps --key "${pubKey}:testing-doc" --run $gf --run-id $runKey 2>&1); $gapRc = $LASTEXITCODE; Remove-Item -LiteralPath $gf -ErrorAction SilentlyContinue
   if ($gapRc) { throw "devtools.py docgaps failed (exit $gapRc): $((@($gapAll) | Select-Object -Last 3) -join ' | ')" }   # never read as "every row covered"
   @($gapAll | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] -and "$_".Trim() } | ForEach-Object { "$_".Trim() }) }
-$gapWhy = "human testing doc row(s) no check of this run covers (each row's Result / Evidence comes from the checks with its id, ""case"": ""<row id>"" or a screen starting with it): give those checks the row id, or add a NOT_TESTED check per row with why"
+$gapWhy = "human testing doc row(s) neither this run nor an earlier published run covers (each row's Result / Evidence comes from the checks with its id, ""case"": ""<row id>"" or a screen starting with it): give those checks the row id, or add a NOT_TESTED check per row with why"
 if ($Check) {
   # standard name, else setup form
   $ids = @(@($res.checks) | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -Unique | Sort-Object Length -Descending)
@@ -654,8 +656,7 @@ function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-War
 # 1. Evidence: report type host (gdocs: Drive) or the run folder
 $map = [ordered]@{ folderId = $prev.folderId; folderLink = $prev.folderLink; files = [ordered]@{}; local = $false; label = $null }
 if ($prev.folderId) { foreach ($pf in (Get-KitProps $prev.files)) { if ($pf.Name -notin $vChanged) { $map.files[$pf.Name] = $pf.Value } } }
-# evidence folder per run item: never the task's dev-loop folder (<task>:evidence holds the local test files)
-$runKey = "$(Split-Path $RunDir -Leaf)-$Code"
+# evidence folder per run item ($runKey): never the task's dev-loop folder (<task>:evidence holds the local test files)
 $ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype, '--key', "${runKey}:evidence")
 if ($run.driveParent) { $ea += '--parent', [string]$run.driveParent }   # run.json wins, else kit.local.json
 if ($prev.folderId) { $ea += '--folder', [string]$prev.folderId }
@@ -687,7 +688,7 @@ $cells = @{}
 $md = Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl -Cells $cells
 $md | Out-File "$D/report.md" -Encoding utf8
 $kept = $prev.doc -match '^https?://' -and $prev.doc -notmatch '/d//' -and "$($prev.report)" -in '', $rtype
-# human testing doc: per-row results + "<env> run" (a re-publish of this item replaces its own; rows: the newest run covering each); else report by key
+# human testing doc: per-row results + "<env> run" (a re-publish of this item replaces its own; rows: over every run, devtools.py _runs_cells); else report by key
 if ($kept) { $docUrl = $prev.doc }   # a re-run keeps the posted report
 else {   # devtools doc; kept-file types stay in $D
   $pa = if ($hDoc) { [IO.File]::WriteAllText("$D/cells.json", (ConvertTo-Json $cells -Depth 4), [Text.UTF8Encoding]::new($false)); @("$D/report.md", '--key', "${pubKey}:testing-doc", '--run', "$D/cells.json", '--run-id', $runKey) }

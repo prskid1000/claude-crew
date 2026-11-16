@@ -23,16 +23,17 @@
   publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
   (same text: none; human doc: earlier rounds no env run tested show as one "Replaced drafts (not tested): <dates>" line)
   --run <cells.json> [--run-id <id>] (pokey finalize, key <task>:testing-doc): fills each human doc row's Result / Evidence from the
-  checks that cover it (id, `case`, or a screen starting with the row id) + a dated "<env> run" section (same --run-id: replaced)
- python -X utf8 devtools.py docgaps --key <task>:testing-doc --run <cells.json>   the human doc's row ids no run check covers, one per line
+  checks that cover it (id, `case`, or a screen starting with the row id) over every run (the newest PASS / FAIL decides, each env
+  named) + a dated "<env> run" section (same --run-id: replaced)
+ python -X utf8 devtools.py docgaps --key <task>:testing-doc --run <cells.json> [--run-id <id>]   human doc row ids neither this run nor an earlier one covers
  python -X utf8 devtools.py relayout <key|doc url> ...   republish a --key doc with the current layout (cell-fit images): same rows and link
  python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
  python -X utf8 devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L49 config · L104 run · L192 tracker · L344 process · L495 git host · L562 scope · L641 MR · L825 merge · L1151 docs ·
-  L1304 publish · L1718 render · L2108 plugins · L2122 keepboth · L2141 selftest · L2659 CLI
+Sections: L50 config · L105 run · L193 tracker · L345 process · L496 git host · L563 scope · L642 MR · L826 merge · L1152 docs ·
+  L1305 publish · L1745 render · L2135 plugins · L2149 keepboth · L2168 selftest · L2703 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1380,7 +1381,7 @@ def _table_rows(md, cells=None, full=False):
             rows.append((c[cols['#']], c[cols['result']], c[cols['evidence']]) + ((' | '.join(x for j, x in enumerate(c) if j not in (cols['#'], cols['result'], cols['evidence'])),) if full else ()))
             if cells and c[cols['#']] in cells:
                 for k in ('result', 'evidence'):
-                    c[cols[k]] = str(cells[c[cols['#']]].get(k) or '').replace('|', '\\|')
+                    c[cols[k]] = re.sub(r'\s*\n\s*', ' ', str(cells[c[cols['#']]].get(k) or '')).replace('|', '\\|')   # a newline would end the row
                 line = '| ' + ' | '.join(c) + ' |'
         elif not c:
             cols = None
@@ -1398,39 +1399,69 @@ def _refs(c):
 
 
 def _row_cells(md, cells):
-    """A run's cells {check id: {result, evidence, case, screen}} -> cells per human-doc row id: the row's own check, else every check
-    that covers it (_refs) in one cell: FAIL > NOT TESTED > PENDING > PASS (out-of-scope ones count only alone), check ids named."""
+    """A run's cells {check id: {result, evidence, case, screen, why}} -> cells per human-doc row id (+ ids, why): the row's own check,
+    else every check that covers it (_refs) in one cell: FAIL > NOT TESTED > PENDING > PASS (out-of-scope ones count only alone)."""
     out, nat = {}, lambda x: [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', x[0])]
     for rid, *_ in _table_rows(md)[0]:
         by = sorted(((cid, c) for cid, c in cells.items() if cid == rid or rid in _refs(c)), key=nat)
         if not by:
             continue
         if len(by) == 1 and by[0][0] == rid:   # the row's own check alone: its cell as is
-            out[rid] = cells[rid]
+            out[rid] = dict(cells[rid], ids=[rid])
             continue
         res = [str(c.get('result') or '').upper() for _, c in by]
         live = [x for x in res if not x.startswith('OUT OF SCOPE')] or res
         word = next((w for w in ('FAIL', 'NOT TESTED', 'PENDING') if any(x.startswith(w) for x in live)), None) or (
             'OUT OF SCOPE' if all(x.startswith('OUT OF SCOPE') for x in res) else 'PASS' if all(x.startswith('PASS') for x in live) else 'NOT TESTED')   # an empty / unknown result never reads PASS
-        out[rid] = {'result': f'{word} ({", ".join(cid for cid, _ in by)})',
-                    'evidence': '<br>'.join(f'**{cid}** {c.get("result") or ""}: {c.get("evidence") or "none"}' for cid, c in by)}
+        out[rid] = {'result': f'{word} ({", ".join(cid for cid, _ in by)})', 'ids': [cid for cid, _ in by],
+                    'why': '; '.join(c['why'] for _, c in by if c.get('why') and _word(c.get('result')) == word),
+                    'evidence': '<br>'.join(f'**{cid}** {c.get("result") or ""}: {c.get("evidence") or c.get("why") or "none"}' for cid, c in by)}
     return out
 
 
-def run_gaps(md, cells):
-    """Human-doc rows no check of a run covers (pokey finalize refuses them)."""
-    filled = _row_cells(md, cells or {})
+def _word(result):
+    """A cell's result word ('PASS (V1, V2)' -> PASS); empty or unknown -> NOT TESTED, never PASS."""
+    r = str(result or '').upper()
+    return next((w for w in ('PASS', 'FAIL', 'NOT TESTED', 'PENDING', 'OUT OF SCOPE') if r.startswith(w)), 'NOT TESTED')
+
+
+def _runs_cells(md, runs):
+    """Each human-doc row over every run that covers it (oldest first): the newest PASS / FAIL run decides, so a later NOT TESTED,
+    PENDING or OUT OF SCOPE never replaces an earlier result and a later FAIL does; 2+ runs: each named by its env, the ones with
+    another result after ' · ' with their why ('PASS (stg V5, V7) · local: not tested (T2) — <why>'); one run: its cell as is."""
+    per, out = {}, {}
+    for r in runs:
+        for rid, c in _row_cells(md, r.get('cells') or {}).items():
+            per.setdefault(rid, []).append((r.get('label') or r.get('id') or 'env', c))
+    for rid, got in per.items():
+        if len(got) == 1:
+            out[rid] = got[0][1]
+            continue
+        words = [_word(c.get('result')) for _, c in got]
+        word = words[([i for i, w in enumerate(words) if w in ('PASS', 'FAIL')] or [-1])[-1]]
+        same = [f'{env} {", ".join(c.get("ids") or [])}'.strip() for (env, c), w in zip(got, words) if w == word and word in ('PASS', 'FAIL')]
+        rest = [f'{env}: {w.lower()} ({", ".join(c.get("ids") or [])})' + (f' — {c["why"]}' if c.get('why') else '') for (env, c), w in zip(got, words) if w != word or not same]
+        out[rid] = {'result': word + (f' ({" + ".join(same)})' if same else '') + ''.join(f' · {x}' for x in rest), 'ids': [i for _, c in got for i in c.get('ids') or []],
+                    'evidence': '<br>'.join(f'**{env}** ' + (c.get('evidence') or c.get('why') or 'none') for env, c in got)}
+    return out
+
+
+def run_gaps(md, cells, earlier=()):
+    """Human-doc rows no check of a run covers and no earlier published run (earlier: their records) covered (pokey finalize refuses them)."""
+    filled = _runs_cells(md, list(earlier) + [{'cells': cells or {}}])
     return [rid for rid, *_ in _table_rows(md)[0] if rid not in filled]
 
 
 def sample_run_doc(tmp):
-    """Report adapter selftests: a human doc whose T1 row an env run filled from checks V1 (screen) + V2 (case) -> its path."""
-    body = '# Testing: X\n\n| # | Steps | Expected | Result | Evidence |\n|---|---|---|---|---|\n| T1 | open a | a shown | | |\n'
+    """Report adapter selftests: a human doc whose T1 row an env run filled from checks V1 (screen) + V2 (case), and whose T2 row
+    keeps that run's PASS (V3) after a later local run left it NOT TESTED -> its path."""
+    body = '# Testing: X\n\n| # | Steps | Expected | Result | Evidence |\n|---|---|---|---|---|\n| T1 | open a | a shown | | |\n| T2 | open b | b shown | | |\n'
     cells = {'V1': {'result': 'PASS', 'evidence': '![V1: List](https://img/v1.png "260")', 'screen': 'T1 list'},
-             'V2': {'result': 'PASS', 'evidence': '`GET /a -> 200 · po: X1` [Resp](https://f/v2)', 'case': 'T1'}}
+             'V2': {'result': 'PASS', 'evidence': '`GET /a -> 200 · po: X1` [Resp](https://f/v2)', 'case': 'T1'},
+             'V3': {'result': 'PASS', 'evidence': '`GET /b -> 200`', 'case': 'T2'}}
     p = os.path.join(tmp, 'run-doc.md')
     with open(p, 'w', encoding='utf-8') as fh:
-        fh.write(_table_rows(body, _row_cells(body, cells))[1])
+        fh.write(_table_rows(body, _runs_cells(body, [{'label': 'stg', 'cells': cells}, {'label': 'local', 'cells': {'T2': {'result': 'NOT TESTED', 'why': 'read-only'}}}]))[1])
     return p
 
 
@@ -1547,17 +1578,13 @@ def _after(a, b):
 
 
 def _compose(title, rounds, runs=(), kind=''):
-    """The newest version on top (Result / Evidence filled by the newest env run when it is newer than that version: a fix round
+    """The newest version on top (Result / Evidence filled from the env runs newer than that version, _runs_cells: a fix round
     after a run starts empty), then env runs and earlier rounds newest first under dated headings ('## <env> run <date>',
     '## Round <n> — <date>'), each kept whole; the human doc (testing-doc) keeps only earlier rounds an env run tested, the
     rest become one 'Replaced drafts (not tested): <dates>' line; one round, no run = unchanged. -> (text, ext)"""
     top = rounds[-1]
     if runs and top['ext'] == '.md' and _after(runs[-1], top):
-        filled = {}   # each row from the newest run that covers it (an env run, a local run of the app part, a sibling item)
-        for r in runs:
-            if _after(r, top):
-                filled.update(_row_cells(top['body'], r.get('cells') or {}))
-        top = dict(top, body=_table_rows(top['body'], filled)[1])
+        top = dict(top, body=_table_rows(top['body'], _runs_cells(top['body'], [r for r in runs if _after(r, top)]))[1])   # every run of this version
     ran = {max(i for i, r in enumerate(rounds) if i == 0 or _after(u, r)) for u in runs}   # each run tested the newest round before it
     shown = [i for i in range(len(rounds) - 1) if kind != 'testing-doc' or i in ran]
     days = sorted({rounds[i]['at'][:10] for i in range(len(rounds) - 1) if i not in shown})
@@ -1650,8 +1677,8 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None, run_id
         stale = bool(rounds and runs) and _after(runs[-1], rounds[-1])
         if run is not None:
             runs = [r for r in runs if not (run_id and r.get('id') == run_id)] + [dict(new, cells=run, **({'id': run_id} if run_id else {}))]
-            if rounds and (gap := run_gaps(rounds[-1]['body'], run)):
-                print(f'[publish] {key}: row(s) {", ".join(gap)} no check of this run covers stay empty', file=sys.stderr)
+            if rounds and (gap := run_gaps(rounds[-1]['body'], run, [r for r in runs[:-1] if _after(r, rounds[-1])])):
+                print(f'[publish] {key}: row(s) {", ".join(gap)} no run covers stay empty', file=sys.stderr)
         elif kind in ('testing-doc', 'testing-ai') and rounds and rounds[-1]['body'] == body and not stale:
             pass   # same text again (finish after the last loop round): no new round
         else:
@@ -2519,7 +2546,8 @@ def _publish_selftest(expect, refused):
                and hb.index('| T2 |') < hb.index('Replaced drafts') < hb.index('## stg run ') and '## Round' not in hb and not _pub_read('T9:qa-report'))
         ur2 = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'FAIL', 'evidence': 'x'}})
         hb2 = open(ur2, encoding='utf-8').read()
-        expect('a retest run adds a second "<env> run" section; the first stays', ur2 == u1 and hb2.count('## stg run ') == 2 and '| T2 | 1. Open the list. | Newest first. | FAIL | x |' in hb2)
+        expect('a retest run adds a second "<env> run" section; the first stays; its FAIL decides the row, the earlier PASS named',
+               ur2 == u1 and hb2.count('## stg run ') == 2 and '| T2 | 1. Open the list. | Newest first. | FAIL (stg T2) · stg: pass (T2) | **stg** ![T2: list](https://img/s2.png)<br>**stg** x |' in hb2)
         before = _pub_read('T9:testing-doc')
         expect('relayout: the same doc and text again, no new round or run; an unpublished key is refused',
                relayout('T9:testing-doc') == u1 and open(u1, encoding='utf-8').read() == hb2 and len(_pub_read('T9:testing-doc')['rounds']) == len(before['rounds'])
@@ -2544,7 +2572,23 @@ def _publish_selftest(expect, refused):
             hb5 = open(publish('T9:testing-doc', 'X', rep, label='local', run={'L1': {'result': 'PASS', 'evidence': 'x', 'screen': 'App only'}}, run_id='R2-Q1'), encoding='utf-8').read()
         expect('a later run that covers other rows (a local run of the app part) keeps each row from the newest run covering it; both sections kept',
                '| FAIL (V1, V2) |' in hb5 and hb5.count('## stg run ') == 3 and hb5.count('## local run ') == 1)
+        with contextlib.redirect_stderr(io.StringIO()):
+            publish('T9:testing-doc', 'X', rep, label='stg', run=vr, run_id='R1-Q1')
+            hb6 = open(publish('T9:testing-doc', 'X', rep, label='local', run={'T3': {'result': 'NOT TESTED', 'evidence': '', 'why': 'PO field read-only'}}, run_id='R3-Q1'), encoding='utf-8').read()
+        expect('a later NOT TESTED never replaces an earlier PASS: both envs named, the why kept, each evidence by env; all sections kept',
+               '| PASS (stg V1, V2) · local: not tested (T3) — PO field read-only | **stg** **V1** PASS' in hb6 and '<br>**local** PO field read-only |' in hb6
+               and hb6.count('## stg run ') == 3 and hb6.count('## local run ') == 2)
         rt = '| # | Steps | Result | Evidence |\n|---|---|---|---|\n| T1 | a | | |\n'
+        rc = lambda *rs: _runs_cells(rt, [{'label': e, 'cells': c} for e, c in rs])['T1']['result']
+        expect('_runs_cells: a later FAIL overrides a PASS (env named); a later PASS after a FAIL decides; PASS on two envs joins them; one run as is',
+               rc(('stg', {'T1': {'result': 'PASS'}}), ('local', {'A1': {'result': 'FAIL', 'case': 'T1'}})) == 'FAIL (local A1) · stg: pass (T1)'
+               and rc(('stg', {'T1': {'result': 'FAIL'}}), ('stg', {'T1': {'result': 'PASS'}}), ('local', {'T1': {'result': 'PENDING'}})) == 'PASS (stg T1) · stg: fail (T1) · local: pending (T1)'
+               and rc(('stg', {'V1': {'result': 'PASS', 'case': 'T1'}, 'V2': {'result': 'PASS', 'case': 'T1'}}), ('local', {'A1': {'result': 'PASS', 'case': 'T1'}})) == 'PASS (stg V1, V2 + local A1)'
+               and rc(('stg', {'T1': {'result': 'PASS'}})) == 'PASS'
+               and rc(('stg', {'T1': {'result': 'NOT TESTED', 'why': 'x'}}), ('local', {'T1': {'result': 'NOT TESTED', 'why': 'y'}})) == 'NOT TESTED · stg: not tested (T1) — x · local: not tested (T1) — y')
+        expect('_table_rows: a multi-line cell (a why with a newline) stays one row', _table_rows(rt, {'T1': {'result': 'NOT TESTED', 'evidence': 'a\nb'}})[1].endswith('| T1 | a | NOT TESTED | a b |\n'))
+        expect('run_gaps: a row an earlier published run covers is no gap (a run of the app part needs no NOT TESTED filler)',
+               run_gaps(rt, {'A1': {'result': 'PASS', 'screen': 'App only'}}) == ['T1'] and not run_gaps(rt, {'A1': {'result': 'PASS', 'screen': 'App only'}}, [{'label': 'stg', 'cells': {'T1': {'result': 'PASS'}}}]))
         expect('_row_cells: a row\'s own check next to a FAIL variant reads FAIL (ids in natural order); an unknown result never reads PASS',
                _row_cells(rt, {'V10': {'result': 'PASS', 'case': 'T1'}, 'V2': {'result': 'FAIL', 'case': 'T1'}, 'T1': {'result': 'PASS'}})['T1']['result'] == 'FAIL (T1, V2, V10)'
                and _row_cells(rt, {'V1': {'result': '', 'case': 'T1'}, 'V2': {'result': 'PASS', 'case': 'T1'}})['T1']['result'] == 'NOT TESTED (V1, V2)')
@@ -2752,10 +2796,11 @@ def _cli():
               else make_doc(title, path, *(a[3:4] or [])))
     elif cmd == 'docgaps':
         if not (opt.get('--key') and opt.get('--run')):
-            print('devtools.py docgaps --key <task>:testing-doc --run <cells.json>', file=sys.stderr)
+            print('devtools.py docgaps --key <task>:testing-doc --run <cells.json> [--run-id <id>]', file=sys.stderr)
             sys.exit(2)
-        rounds = _pub_read(opt['--key']).get('rounds') or []
-        print('\n'.join(run_gaps(rounds[-1]['body'], json.load(open(opt['--run'], encoding='utf-8-sig'))) if rounds else []))
+        rec = _pub_read(opt['--key']); rounds = rec.get('rounds') or []   # earlier runs of the newest version cover rows too; --run-id: not its own earlier publish
+        print('\n'.join(run_gaps(rounds[-1]['body'], json.load(open(opt['--run'], encoding='utf-8-sig')),
+                                 [r for r in rec.get('runs') or [] if _after(r, rounds[-1]) and not (opt.get('--run-id') and r.get('id') == opt['--run-id'])]) if rounds else []))
     elif cmd == 'relayout':
         for ref in a[1:]:
             print(relayout(ref))

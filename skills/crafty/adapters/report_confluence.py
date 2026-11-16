@@ -46,6 +46,8 @@ def selftest(expect, tmp, md):
         sv = calls[0][2]['body']['storage']['value']
         expect('confluence: an env run fills the human doc row: result with check ids, the screenshot inline (closed img), the JSON excerpt + link',
                re.search(r'>T1</td>.*PASS \(V1, V2\)</td>.*<img [^>]*src="https://img/v1\.png"[^>]*/>.*GET /a -&gt; 200.*href="https://f/v2"', sv, re.S) is not None)
+        expect('confluence: a later run\'s NOT TESTED keeps the earlier PASS, both envs and the why in the row',
+               re.search(r'>T2</td>.*PASS \(stg V3\) · local: not tested \(T2\) — read-only</td>', sv, re.S) is not None)
     finally:
         _http, dt.RCFG = saved, rcfg0
         os.environ.clear(); os.environ.update(env0)

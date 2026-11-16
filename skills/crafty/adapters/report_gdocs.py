@@ -110,8 +110,9 @@ def selftest(expect, tmp, md):
                and calls[1][1].get('sec') == 2 * dt.net_sec() and not calls[0][1].get('sec'))
         use({}); dt.make_doc('T', dt.sample_run_doc(tmp))
         rh = open(calls[0][1]['upload'], encoding='utf-8').read()
-        expect('gdocs: an env run fills the human doc row: result with check ids, the screenshot inline, the JSON excerpt + link',
-               re.search(r'>T1</td>.*PASS \(V1, V2\)</td>.*<img [^>]*src="https://img/v1\.png".*GET /a -&gt; 200.*href="https://f/v2"', rh, re.S) is not None)
+        expect('gdocs: env runs fill the human doc rows: check ids, screenshot inline, JSON excerpt + link; a later NOT TESTED keeps a PASS',
+               re.search(r'>T1</td>.*PASS \(V1, V2\)</td>.*<img [^>]*src="https://img/v1\.png".*GET /a -&gt; 200.*href="https://f/v2".*'
+                         r'>T2</td>.*PASS \(stg V3\) · local: not tested \(T2\) — read-only</td>', rh, re.S) is not None)
         use({}); ev = dt.make_evidence('ev', [png])
         expect('gdocs evidence: a Drive folder, an image src per file', calls[0][1]['body']['mimeType'].endswith('folder') and ev['files']['g.png']['src'].endswith('id=1AbC'))
     finally:
