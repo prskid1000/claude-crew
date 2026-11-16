@@ -184,15 +184,18 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 - machine and resources: memory (used / total meter with a 7-day peak tick, 24 h sparkline), every watched disk in one tile
   (free GB, fill rate, "full in" under 72 h, used / size meter with a 7-day peak tick, 7-day free sparkline marking the low; a
   flagged drive coloured and first) in one row; CPU (% of the machine from the CPU time of one process snapshot per sweep, 24 h):
-  a sparkline per lane service process tree (`localenv_supervise.ps1` hook `Get-KitCpuGroups*`) and the machine (from idle time), red
+  one heatmap in the gate's style, a row for the machine (from idle time) and each lane service process tree
+  (`localenv_supervise.ps1` hook `Get-KitCpuGroups*`), grouped by lane (shade = avg % in the hour, a cell's tooltip: avg, peak and,
+  on the machine row, that hour's top other processes; now · peak · avg %; services at 0% all day: one "idle" line), red
   over 80% between two sweeps 5+ min apart, then the top other processes (10%+: name, pid, owner agent, now, 24 h peak); build gate full width from its history (running, queued, builds today, longest
   wait; a row per kind: an hourly heatmap of the last 24 clock hours (shade = busy minutes, the current hour outlined, a cell's
   tooltip: builds, busy min, max wait) and running, queued, today, wait avg / peak, RAM as number columns under one icon header
   row, zeros dimmed; side panel: queued builds sparkline, RAM dots promised / free, QA seats, phone lanes, emulators, test browsers (leases, never gated)); resources and leases: lease waits in the gate's style (a row per resource,
   24 h heatmap of minutes waited, tooltip waits / minutes / longest / who; from the leases log's acquire `since` = wait start,
-  the builds log, local-env `lease-wait` events and the open queues), then each resource a 24 h
-  RAM sparkline (its scale in the caption) and a lease timeline per holder; a shared always-on service (`shared` row) is never
-  an orphan, a leasable one with no live holder is tinted; shells;
+  the builds log, local-env `lease-wait` events and the open queues), then RAM per resource in the same style (a row each:
+  name and holder, shade = avg GB in the hour against the biggest peak, a cell's tooltip: GB and that hour's holders; now · 24 h
+  peak GB); a shared always-on service (`shared` row) is never
+  an orphan, a leasable one with no live holder is dashed; shells;
 - usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
   sweep reads the transcripts' usage fields incrementally, cached by `_paths` `usage-cache`): tokens and est. cost today vs
   the 7-day average (`budget.prices`: USD per M tokens [in, out, cache read, cache write 5 min, 1 h] per model id or alias;

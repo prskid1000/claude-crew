@@ -188,7 +188,7 @@ $int = & $sec internals; $runsH = & $sec runs; $agH = & $sec agents
 $rxRun = @("<li class=f data-oc='' data-fk='d2026-01-02'><span class=tm>01-02</span><span class=gn0[^>]*>Ask RM bug wave</span><span class='chip k-build'>build</span><span class='chip s-oth'>resumed</span><span class='chip s-act'>1 MR\(s\) merged</span><a class=rk href='supervise-runs/wf_b.html'>steps</a></li>", "<span class=tm>01-01</span><span class=gn0 title='select-x &#183; wf_c'>select-x</span><span class='chip k-test'>test</span><span class='chip s-oth'>no QA result recorded</span>")
 $rxLive = "<div class=rus><div class='ru f' data-oc=''><div class=rh><span class=gn0[^>]*>Ask RM bug wave</span>.*?<a class=rk href='supervise-runs/wf_a.html'>steps</a></div></div></div>"   # a running run: its line in the Agents band
 $rxAg = @("devy-1 \(devy\)<div class=lc><span class='chip ls'[^>]*>browser t1<", 'id=sec-agents-done><summary><h3>Finished today</h3><span class=cnt>\(1\)')
-$rxOrphan = "<div class='ci f orphan'[^>]*><div class=tn>mysql(?:<span class=.iv.>.*?</span>)?</div><div class=sm>no live holder"
+$rxOrphan = "<div class='gk orphan'><span class=gn[^>]*>mysql<small>no live holder</small>"
 $endH = [regex]::Match($runsH, '(?s)<ul class=rfl>.*?</ul>').Value
 "runs:$($runsH -notmatch 'wf_kit' -and -not @($rxRun | Where-Object { $endH -notmatch $_ }).Count -and $agH -match $rxLive -and $endH -notmatch 'wf_a' -and ($agH -split "class='bar sb3'").Count -eq 2 -and ($agH -split 'class=bar>').Count -eq 2 -and $endH -notmatch '<table|sec-runs-| failed<')"
 $pg = @{}; $null = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } }) $pg; $dayH = [regex]::Match($fh, "(?s)<div class='uc dlc'>.*?</figure>").Value

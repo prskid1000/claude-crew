@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L258 shells · L392 page · L922 release · L961 lines · L994 cleanup · L1055 launch ·
-  L1133 pause · L1251 heartbeat · L1266 sessions · L1318 ci tasks ·
-  L1373 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L258 shells · L392 page · L914 release · L953 lines · L986 cleanup · L1047 launch ·
+  L1125 pause · L1243 heartbeat · L1258 sessions · L1310 ci tasks ·
+  L1365 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -684,15 +684,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $fxTile = "<div class=st data-fit><div class=k>Flags auto-FIXED</div><div class=v>$(if ($rxSum) { [math]::Round(100 * $fxSum / $rxSum) } else { '—' })<small>%</small></div><div class=w>$fxSum of $rxSum flags</div>$(& $spark @(for ($i = 0; $i -lt $hist.Count; $i++) { if ($fxRaised[$i]) { [math]::Round(100 * $fxFixed[$i] / $fxRaised[$i]) } }) 'sage' "per sweep, last $($hist.Count)" 'peak' 0 '%')</div>"
   $kitTiles = & $grid stats 220px @($wfTile, $brTile, $swTile, $failTile, $fxTile)   # Test runs: a Delivery tile (QA checks per day beside the tasks per repo)
   $UP = Format-KitUsageHtml $st.usage
-  # a resource card: RAM over 24 h (samples' res) as a sparkline; a leasable one its holders as a timeline (a colour each, idle empty);
-  # shared (row.shared): never an orphan; leasable with no live holder: orphan (released after idle.graceMinutes)
-  $resCard = { param($r) $nm = "$($r.name)"; $pts = @(@($l24 | Where-Object { [datetime]$_.at -lt $at } | ForEach-Object { $x = if ($_.res) { (Get-KitMember $_.res $nm) }; [pscustomobject]@{ gb = $(if ($x) { [double]$x.gb } else { 0 }); by = "$(if ($x) { $x.by })".Trim(); at = $_.at } }) + [pscustomobject]@{ gb = [double]$r.gb; by = "$($r.by)".Trim(); at = $at })
-    $by = "$($r.by)".Trim(); $orphan = -not $r.shared -and $by -match '^$|\(grace|^no lease$'; $hs = @($pts.by | Where-Object { $_ } | Select-Object -Unique)
-    $tl = if (-not $r.shared -and $pts.Count -ge 2) { "<div class=lt role=img aria-label='$(& $e "holders, 24 h: $(if ($hs.Count) { $hs -join ', ' } else { 'none' })")'>$(@(for ($i = 0; $i -lt $pts.Count; $i++) { $h0 = $pts[$i].by; $k = $i; while ($k + 1 -lt $pts.Count -and $pts[$k + 1].by -eq $h0) { $k++ }
-      "<i class=h$(if ($h0) { [array]::IndexOf($hs, $h0) % 4 } else { 'x' }) style='width:$(& $n1 (100 * ($k - $i + 1) / $pts.Count))%' title='$(& $e "$(if ($h0) { $h0 } else { 'idle' }) $(([datetime]$pts[$i].at).ToString('HH:mm'))-$(([datetime]$pts[$k].at).ToString('HH:mm'))")'></i>"; $i = $k }) -join '')</div>" }
-    $ri = & $item $nm "$(if ($r.shared) { 'shared · always on' } elseif ($by) { $by } else { 'no live holder' })" "$(if (@($pts | Where-Object gb).Count) { & $spark $pts.gb 'slate' 'RAM GB, 24 h' '' 0 })$tl" $(if ([double]$r.gb) { & $icv ram 'RAM GB now' (& $n1 $r.gb) ' GB' })
-    if ($orphan) { $ri -replace "^<div class='ci f'", "<div class='ci f orphan'" } else { $ri } }
-  $resHtml = if (-not @($j.resources | Where-Object { $_ }).Count) { '<p class=empty>No resource held.</p>' } else { & $grid res 260px @($j.resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb } | ForEach-Object { & $resCard $_ }) }
+  $resHtml = Format-KitResCard $j.resources @($l24 | Where-Object { $_ })   # adapters/supervise_stats.ps1: one heatmap row per resource
   # a command on one line, cut at 120 chars with an ellipsis in the text (no CSS clip), the whole one a click away
   $cmdCell = { param([string]$c) $full = "$c".Trim(); $one = $full -replace '\s+', ' '; if ($one -eq $full -and $one.Length -le 120) { return $one }
     $hd = if ($one.Length -gt 120) { $one.Substring(0, 119).TrimEnd() + '…' } else { $one }
@@ -783,7 +775,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'><p><a class=rk href='../supervise-report.html'>Supervisor</a></p>$($UP.pages[$pk] -replace " data-tip='", " title='")</main></body></html>" } }
   # Shells: a fold only when one runs; none = one muted word in the Resources header
   $nWait = @($st.waits.rows | Where-Object { $_ }).Count   # lease waits open the fold even with nothing held
-  $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $(if ($nRes -or -not $nWait) { $nRes } else { @{ h = '0 held' } }) "$(Format-KitWaitCard $st.waits)<div class=sxb>$resHtml</div>" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
+  $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $(if ($nRes -or -not $nWait) { $nRes } else { @{ h = '0 held' } }) "$(Format-KitWaitCard $st.waits)$resHtml" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open) + (& $section 'agents' 'Agents' $(if ("$agCnt" -eq '0' -and $UP.nRunning) { @{ h = (& $icv run 'running runs' $UP.nRunning) } } else { $agCnt }) "$(if ($UP.running) { "<div class=rus>$($UP.running)</div>" })$agentHtml" -Open -extra $agBar) +   # running runs: a line each above their agents; ended ones: Kit internals, Delivery
     (& $section 'machine' 'Machine and resources' '' $mrHtml -Open) +
     (& $section 'internals' 'Kit internals' '' $intHtml) +
@@ -825,8 +817,8 @@ function Get-KitSupervisePageCss {
   '.hn{color:var(--mt);font-size:11.5px;white-space:nowrap}.hw{overflow-wrap:anywhere;color:var(--mt)}.ht a{color:inherit}code.cp{font:11px ui-monospace,Consolas,monospace;overflow-wrap:anywhere;cursor:copy;color:var(--fg)}code.cp.ok{color:var(--sage2)}' +
   '@media(max-width:899px){.hr{grid-template-columns:minmax(0,auto) minmax(0,1fr)}.hr .hw{grid-column:1/-1}}' +
   '.lgd{display:inline-block;width:14px;height:0;border-top:2px solid var(--c);vertical-align:middle;margin:0 3px 0 6px}.lgd.ds{border-top-style:dashed}.lgd.dd{border-top-style:dotted}' +
-  '.sh4{margin:6px 0 2px;font-size:12px;color:var(--mt)}.cg.res{align-items:stretch}' +
-  '.cmd>summary{cursor:pointer;overflow-wrap:anywhere;display:block;padding:0;min-height:0}.cmd>summary::after{content:none}.cmd>summary .cnt{white-space:nowrap}.cmdf{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:4px;font-size:11.5px}.lc{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}.chip.ls{font-size:10.5px;padding:0 6px;background:var(--sf2);color:var(--mt)}.ci.orphan{border-color:color-mix(in srgb,var(--watch) 55%,var(--ln));background:color-mix(in srgb,var(--watch) 9%,var(--sf))}.chip.k-build{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}.chip.k-test{color:color-mix(in srgb,var(--plum) 55%,var(--fg))}.chip.k-kit{color:var(--mt)}' +
+  '.sh4{margin:6px 0 2px;font-size:12px;color:var(--mt)}' +
+  '.cmd>summary{cursor:pointer;overflow-wrap:anywhere;display:block;padding:0;min-height:0}.cmd>summary::after{content:none}.cmd>summary .cnt{white-space:nowrap}.cmdf{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:4px;font-size:11.5px}.lc{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}.chip.ls{font-size:10.5px;padding:0 6px;background:var(--sf2);color:var(--mt)}.chip.k-build{color:color-mix(in srgb,var(--slate) 55%,var(--fg))}.chip.k-test{color:color-mix(in srgb,var(--plum) 55%,var(--fg))}.chip.k-kit{color:var(--mt)}' +
   '.flag{border:1px solid var(--ln);border-left:3px solid var(--watch);border-radius:8px;padding:6px 10px}.flag.ACT{border-left-color:var(--act);background:color-mix(in srgb,var(--act) 5%,var(--sf))}' +
   '.flag .h{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mt)}.flag .w{margin:3px 0 2px;word-break:break-word}.flag .n{font-size:12.5px;color:var(--mt);word-break:break-word}.flag .n b{color:var(--sage2);margin-right:4px}.dot{opacity:.5}' +
   '.info{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px;color:var(--mt)}.info li{padding:2px 0 2px 14px;position:relative;word-break:break-word}.info li::before{content:"";position:absolute;left:2px;top:9px;width:5px;height:5px;border-radius:50%;background:var(--sage)}' +
