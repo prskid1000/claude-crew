@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L870 cycles · L946 pack · L1083 page · L1543 command
+Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L870 cycles · L946 pack · L1083 page · L1554 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -1093,10 +1093,21 @@ def write(out, data, texts):
     """The page plus its sidecar (<page>-src.js: every file's text and node descriptions, loaded when a node is first shown)."""
     side = out[:-5] + '-src.js' if out.endswith('.html') else out + '-src.js'
     js = lambda v: json.dumps(v, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
-    with open(side, 'w', encoding='utf-8') as fh:
-        fh.write('window.KF_SRC=' + js(texts) + ';window.KF_DESC=' + js([n[4] for n in data['nodes']]) + ';')
-    with open(out, 'w', encoding='utf-8') as fh:
-        fh.write(html(dict(data, nodes=[n[:4] + [''] + n[5:] for n in data['nodes']]), osp.basename(side)))
+    write_changed(side, 'window.KF_SRC=' + js(texts) + ';window.KF_DESC=' + js([n[4] for n in data['nodes']]) + ';')
+    write_changed(out, html(dict(data, nodes=[n[:4] + [''] + n[5:] for n in data['nodes']]), osp.basename(side)))
+
+def write_changed(path, text):
+    """Write only new bytes: every lint rewrote the MB page and sidecar unchanged."""
+    new = text.encode('utf-8')
+    try:
+        if osp.getsize(path) == len(new):
+            with open(path, 'rb') as fh:
+                if fh.read() == new:
+                    return
+    except OSError:
+        pass
+    with open(path, 'wb') as fh:
+        fh.write(new)
 
 PAGE = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content"><title>Claude Crew kit map</title>
 <meta name="description" content="Interactive map of the Claude Crew kit: its agents, skills and workflows, and who calls, runs or loads whom.">
@@ -1546,6 +1557,11 @@ def live_root(kit):
     main = main_clone(kit)
     return main if osp.isfile(osp.join(main, PATHS_JSON)) else kit
 
+def is_live(kit):
+    """kit is the main worktree of a git repo (not a linked worktree, not a copy outside git)."""
+    rc, top, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-common-dir', timeout=20)
+    return rc == 0 and osp.normcase(osp.realpath(osp.dirname(osp.normpath(top)))) == osp.normcase(osp.realpath(kit))
+
 def default_out(kit):
     return kit_path('kit-flow', kit=live_root(kit))
 
@@ -1614,7 +1630,8 @@ def lint_hook(k, problems, flags):
     except Exception as e:  # noqa - a model crash is itself a problem
         problems.append(('FLOW-MODEL', 'kitbag_flow.py', f'the flow model failed: {e}'))
         return
-    if '--no-flow' not in flags:   # keep the page current
+    # keep the page current: the live clone's lint only (a worktree's page comes with the pull: post-merge; a test kit has none)
+    if '--no-flow' not in flags and is_live(k.dir):
         try:
             render(k.dir, default_out(k.dir), quiet='--summary' in flags, data=data)
         except Exception as e:  # a convenience: never fail the lint

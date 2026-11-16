@@ -79,7 +79,7 @@ Register-KitAdapter 'scheduler' 'launchd' @{
 Register-KitAdapter 'scheduler' 'none' @{ '*' = { param($a, $verb) if ($verb -eq 'status') { @{ installed = $false; state = 'off (supervise.osTimer false)' } } else { throw 'supervise.osTimer is false in kit.local.json' } } }
 # adapter-end:scheduler
 function Get-KitOsBeatFile { Join-Path (Get-KitPath programs -Create) 'os-timer.json' }
-function Read-KitOsBeat { try { Get-Content -LiteralPath (Get-KitOsBeatFile) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} } }
+function Read-KitOsBeat { $s = try { Read-KitText (Get-KitOsBeatFile) | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -is [hashtable]) { $s } else { @{} } }
 # install / uninstall: one line, never exits (health calls it)
 function Set-KitOsBeat([bool]$On, [double]$Minutes) {
   $ad = Get-KitOsBeatAdapter; $a = Get-KitOsBeatArgs $(if ($Minutes) { $Minutes } else { Get-KitParam 'supervise.heartbeatMinutes' })

@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L50 config · L105 run · L193 tracker · L345 process · L496 git host · L563 scope · L642 MR · L826 merge · L1152 docs ·
-  L1305 publish · L1745 render · L2135 plugins · L2149 keepboth · L2168 selftest · L2703 CLI
+Sections: L51 config · L106 run · L194 tracker · L346 process · L497 git host · L564 scope · L643 MR · L827 merge · L1153 docs ·
+  L1306 publish · L1746 render · L2136 plugins · L2150 keepboth · L2169 selftest · L2704 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -43,6 +43,7 @@ from datetime import datetime
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
+os.environ['GIT_OPTIONAL_LOCKS'] = '0'   # git probes never rewrite a repo's index (lib.ps1, kitbag.py too)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
 from kitbag import kit_path, locked, audited, state_read, state_write, task_index, task_file, read_tracking, kitlog   # one path map, lock, call log for all kit scripts
 

@@ -5,7 +5,7 @@ Runs tests/<area>.tests.ps1 files in parallel, one pwsh each; each area file als
 Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|bossy|crafty|pokey|kitbag|workflows|supervise|params|guard|layout|flow|sessions|tracker|render|dashboard|debate|<any tests/<area>.tests.ps1>[,...]] [-Slow] [-Full]
  -Full: also the scratch-DB areas whose code did not change since origin/main (all skips them; KIT_TESTS_FULL=1).
  -Slow: also the checks that need real tools and take seconds each (KIT_TESTS_SLOW=1, e.g. a real headless Chrome).
-Outputs: each area's PASS / FAIL lines, its time, TEST-DUP lines (one case name in two places), a recap of the failed checks, then a total.
+Outputs: each area's PASS / FAIL lines, its time, TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), a recap of the failed checks, then a total.
 Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 #>
 param([string[]]$Area = 'all', [switch]$Slow, [switch]$Full)
@@ -29,6 +29,12 @@ if ($Area -contains 'all' -and -not ($Full -or $env:KIT_TESTS_FULL)) {
   if ($base) { foreach ($a in @($areas | Where-Object { $onChange[$_] -and -not @($changed -match $onChange[$_]).Count })) { "SKIP $a`: no change in what it tests (-Full runs it)"; $areas = @($areas | Where-Object { $_ -ne $a }) } }
 }
 
+# one snapshot of the source files for every area (harness.ps1 New-TestKit links to it); scratch of dead area runs removed
+$kx = Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/kit.example.json'; $tmpMap = if (Test-Path $kx) { (Get-Content $kx -Raw | ConvertFrom-Json)._paths }
+$tmpRoot = if ($tmpMap) { Join-Path (Join-Path (Split-Path $PSScriptRoot) $tmpMap.runtimeDir) $tmpMap.runtime.tmp.TrimEnd('/') } else { [IO.Path]::GetTempPath() }   # a bare tests/ copy (kitbag.tests)
+foreach ($old in @(Get-ChildItem -LiteralPath $tmpRoot -Directory -Filter 'kit-tests-*' -ErrorAction SilentlyContinue)) {
+  if ($old.Name -match '^kit-tests-(?:src-)?(\d+)$' -and -not (Get-Process -Id ([int]$Matches[1]) -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $old.FullName -Recurse -Force -ErrorAction SilentlyContinue } }
+$env:KIT_TESTS_SNAPSHOT = Join-Path $tmpRoot "kit-tests-src-$PID"
 $started = Get-Date
 $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {
   $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -48,6 +54,11 @@ foreach ($r in $results) {
 $cases = foreach ($r in $results) { $at = $r.area; foreach ($l in $r.out -split '\r?\n') {
   if ($l -match '^(PASS|FAIL) (.+)') { [pscustomobject]@{ name = $Matches[2].Trim().ToLower() -replace '\s+', ' '; at = $at; text = $Matches[2].Trim(); fail = $Matches[1] -eq 'FAIL' } } } }
 foreach ($d in $cases | Group-Object name | Where-Object Count -gt 1) { "TEST-DUP $($d.Name): $($d.Group.at -join ', ')"; $fails++ }
+# TEST-WRITE: a snapshot file changed in place (through a hard link) changed every area's kit: copy it first (harness $TestKitWrites, Undo-TestKitLink)
+foreach ($sf in @(Get-ChildItem -LiteralPath $env:KIT_TESTS_SNAPSHOT -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '[\\/]_git[\\/]' })) {
+  $rel = [IO.Path]::GetRelativePath($env:KIT_TESTS_SNAPSHOT, $sf.FullName); $s1 = Get-Item -LiteralPath (Join-Path (Split-Path $PSScriptRoot) $rel) -ErrorAction SilentlyContinue
+  if ($s1 -and $s1.LastWriteTimeUtc -lt $started.ToUniversalTime() -and $s1.LastWriteTimeUtc -ne $sf.LastWriteTimeUtc) { "TEST-WRITE $rel`: a test changed it in place through a hard link"; $fails++ } }
+Remove-Item -LiteralPath $env:KIT_TESTS_SNAPSHOT -Recurse -Force -ErrorAction SilentlyContinue
 # FAIL recap, indented: never counted twice
 $failed = @($cases | Where-Object fail); if ($failed.Count) { 'Failed checks:'; $failed | ForEach-Object { "  [$($_.at)] $($_.text)" } }
 "$fails failure(s) in $($areas.Count) area(s), $([int]((Get-Date) - $started).TotalSeconds) s"

@@ -19,7 +19,7 @@ function Get-KitLocalAiFile([string]$Name) {
   $d = Join-Path $root '_leases'; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null }; Join-Path $d "$Name.json"
 }
 function Get-KitLocalAiState([string]$Name) {
-  $s = try { Get-Content (Get-KitLocalAiFile $Name) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
+  $s = try { Read-KitText (Get-KitLocalAiFile $Name) | ConvertFrom-Json -AsHashtable } catch { $null }
   if ($s -isnot [hashtable]) { $s = @{} }
   $script:KitAiDropped = @($s.leases | Where-Object { $_ -and -not (Test-KitPid $_.pid $_.pidStart) })   # Update-KitLocalAi logs them
   $s.leases = @($s.leases | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) })

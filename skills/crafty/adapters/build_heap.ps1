@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # build-heap: heap caps for the JVM (Maven, Gradle) and Node builds crafty.ps1 gate starts: the learned peak x 1.25 (no
 # history: gate.startHeapGB.<maven|gradle|node>), at least gate.heapMinGB; an inherited -Xmx / --max-old-space-size is replaced.
-# Dot-sourced from skills/crafty/adapters/; Invoke-Gate calls both functions.
+# Dot-sourced from skills/crafty/adapters/; Invoke-Gate calls each function.
 function Get-GateHeap([string]$Kind, [double[]]$Peaks, [double]$NeedGB, [double]$Need) {
   $tool = if ($Kind -in 'android-build', 'android-test', 'gradle') { 'gradle' } elseif ($Kind -like 'maven*') { 'maven' }
           elseif ($Kind -in 'ng-test', 'web-build', 'js-test', 'tsc-lint', 'typecheck', 'rn-bundle', 'e2e') { 'node' }
@@ -18,6 +18,11 @@ function Get-GateHeap([string]$Kind, [double[]]$Peaks, [double]$NeedGB, [double]
   # a smaller heap thrashes in GC
   $floor = if ($Peaks.Count -ge 2) { [math]::Min($heap, [math]::Max($minGB, [int][math]::Ceiling($peakMax * 1.1))) } else { $minGB }
   [pscustomobject]@{ tool = $tool; heap = $heap; floor = $floor; need = $Need }
+}
+# the build's temp files (java.io.tmpdir, tests) per checkout in <runtime>/tmp (cleanup ages them out); gradle keeps the OS
+# temp: another tmpdir starts another daemon
+function Set-GateTemp([string]$Cmd, [string]$Dir) {
+  if ($Cmd -notmatch '\bgradlew?\b') { $env:TMP = $env:TEMP = $env:TMPDIR = (New-Item -ItemType Directory -Force (Join-Path (Get-KitTemp) "build/$(ConvertTo-KitSlug (Split-Path $Dir -Leaf))")).FullName }   # arch-ok: kit temp
 }
 # sets the env a cap of $GB needs; returns the command (Gradle takes it as a -D: it overrides org.gradle.jvmargs)
 function Set-GateHeap([string]$Tool, [int]$GB, [string]$Cmd) {

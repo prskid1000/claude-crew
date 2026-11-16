@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L43 login · L123 browsers · L166 tabs · L254 session · L300 actions · L399 ui checks · L421 evidence
+// Sections: L17 config · L43 login · L123 browsers · L166 tabs · L254 session · L301 actions · L400 ui checks · L422 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -105,7 +105,7 @@ async function login(page, t, tenant, as) {
   if (onLogin(page, t)) throw new Error('login failed: ' + (await text(page)).slice(0, 300))
   await page.evaluate((m) => localStorage.setItem('qa-session', m), `${tenant}/${as}`)
   try {   // share: web storage + cookies (httpOnly sessions)
-    const o = await page.evaluate((origin) => ({ origin, localStorage: Object.entries(localStorage).map(([name, value]) => ({ name, value })), session: { ...sessionStorage } }), t.web + loginPath(t))   // the root may redirect to the IdP
+    const o = await page.evaluate((origin) => ({ origin, localStorage: Object.entries(localStorage).map(([name, value]) => ({ name, value })), session: { ...sessionStorage } }), t.web + loginPath(t))   // root may redirect to the IdP
     writeFileSync(sessionFile(t, tenant, as), JSON.stringify({ at: Date.now(), cookies: await page.cookies(), origins: [o] }))
   } catch {}
 }
@@ -196,7 +196,7 @@ async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bo
     const id = await tabId(p).catch(() => ''), h = reg[id]
     if (!h && p.url() === 'about:blank') continue
     const mine = agent && h && h.agent === agent
-    if (h && !mine && !((h.pid && !alive(h.pid)) || (h.agent && leftBoard(h.agent)))) h.seen = now   // live holder (README "Leases")
+    if (h && !mine && !((h.pid && !alive(h.pid)) || (h.agent && leftBoard(h.agent)))) h.seen = now   // live holder
     if (mine || now - (h ? h.seen || h.at : reg[`?${id}`] || now) > GRACE_MS) { await p.close().catch(() => {}); closed++; if (h) leaseLog(mine ? 'release' : 'reclaim', key, h, mine ? process.env.KIT_LEASE_REASON : `reclaim: no live holder for ${GRACE_MS / 60000} min`); continue }
     live++
     keep[h ? id : `?${id}`] = h || reg[`?${id}`] || now
@@ -226,7 +226,7 @@ export async function closeTab(page, key) {
   await page.close().catch(() => {})
   await withLock(`tabs-${keyFile(key)}`, async () => { const f = tabsFile(key), reg = readJson(f, {}); if (reg[id]) leaseLog('release', key, reg[id]); delete reg[id]; saveJson(f, reg) }).catch(() => {})
 }
-// orphan tabs of every shared browser (supervise -AutoFix), or all of `agent`'s (bossy.ps1 release); a failed connect keeps the registry
+// orphan tabs of each shared browser (supervise -AutoFix) or all `agent`'s (bossy.ps1 release); failed connect: kept
 export async function sweepAll(agent = '') {
   const d = kitPath('sessions', { create: true }), ports = readJson(kitPath('browser-ports'), {})
   let closed = 0
@@ -277,7 +277,8 @@ export async function session({ target, tenant, as } = {}) {
       try { return await conn() } catch {}
       let b; const dir = `${PROFILES}/${keyFile(key)}`; mkdirSync(dir, { recursive: true })
       spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, '--no-first-run',
-        ...(bo.diskCache ? [] : ['--disk-cache-size=1', '--disable-component-update', '--disable-background-networking']), 'about:blank'], { detached: true, stdio: 'ignore' }).unref()
+        '--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',
+        ...(bo.diskCache ? [] : ['--disk-cache-size=1']), 'about:blank'], { detached: true, stdio: 'ignore' }).unref()
       for (let i = 0; i < 40 && !b; i++) { await sleep(500); try { b = await conn() } catch {} }
       if (!b) throw new Error(`could not start Chrome on port ${port}`)
       return b

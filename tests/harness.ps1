@@ -120,15 +120,31 @@ function Stop-TestMySql($Server) {
 }
 # commit everything in $Dir (a git repo first if it is none)
 function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git -C $Dir init -q }; git -C $Dir add -A; git -C $Dir commit -q -m $Message }
-# a throw-away kit copy (the scripts the tests run) in %TEMP%; one per area file
+# one read-only copy of the source files per suite run (kit-tests.ps1 sets KIT_TESTS_SNAPSHOT; an area run alone: its own)
+if (-not $env:KIT_TESTS_SNAPSHOT) { $env:KIT_TESTS_SNAPSHOT = Join-Path $env:TEMP 'src' }
+function Get-TestSnapshotFile([string]$Rel) {   # the snapshot's copy of $src/$Rel, made on first use (parallel areas: first rename wins)
+  $sf = Join-Path $env:KIT_TESTS_SNAPSHOT $Rel; if (Test-Path -LiteralPath $sf) { return $sf }
+  $s1 = Join-Path $src $Rel; if (-not (Test-Path -LiteralPath $s1 -PathType Leaf)) { return $null }
+  $null = New-Item -ItemType Directory -Force (Split-Path $sf); $tf = "$sf.$PID.tmp"; Copy-Item -LiteralPath $s1 $tf -Force
+  try { [IO.File]::Move($tf, $sf) } catch { Remove-Item -LiteralPath $tf -Force -ErrorAction SilentlyContinue }; $sf
+}
+# files a test or a kit script writes in place: copied, never linked (a write through a hard link changes every area's kit)
+$TestKitWrites = @('LESSONS.md')
+# a throw-away kit (the scripts the tests run) in %TEMP%: hard links to the suite's snapshot (a copy where links fail and for
+# $TestKitWrites); one per area file
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
   foreach ($f in @('skills/crafty/lib.ps1', 'skills/crafty/flagged.ps1', 'skills/crafty/kit.example.json', 'skills/crafty/crafty.ps1', 'skills/crafty/devtools.py', 'skills/pokey/pokey.ps1',
       'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1', 'skills/bossy/adapters/supervise_stats.ps1', 'skills/bossy/adapters/usage.ps1', 'skills/bossy/adapters/outcomes.ps1','skills/bossy/adapters/storage.ps1', 'skills/bossy/kitbag.py', 'skills/bossy/params.registry.json', 'LESSONS.md', 'skills/crafty/vocab.json', 'skills/crafty/adapters/process_gates.ps1', 'skills/crafty/adapters/task_items.ps1', 'skills/crafty/adapters/supervise_report.ps1') + @($TestKitFiles | Where-Object { $_ })) {   # $TestKitFiles: the area's own scripts
-    $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path $src $f) $d
+    $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; $to = Join-Path $d (Split-Path $f -Leaf)
+    $sf = if ($f -notin $TestKitWrites) { Get-TestSnapshotFile $f }
+    if ($sf -and -not (Test-Path -LiteralPath $to)) { try { $null = New-Item -ItemType HardLink -Path $to -Target $sf -ErrorAction Stop; continue } catch { } }
+    Copy-Item (Join-Path $src $f) $d -Force
   }
   $k
 }
+# a hard-linked kit file a test is about to change in place: made its own copy first
+function Undo-TestKitLink([string]$Path) { $tl = Get-Item -LiteralPath $Path; if ($tl.LinkType -eq 'HardLink') { $tc = "$Path.$PID.copy"; Copy-Item -LiteralPath $Path $tc; Remove-Item -LiteralPath $Path -Force; Move-Item -LiteralPath $tc $Path } }
 function TkPath($tkDir, $tkName, [switch]$Create) {
   if (-not $tkDir) { throw 'TkPath: $tkDir is unset or empty' }
   & { . (Join-Path $tkDir 'skills/crafty/lib.ps1'); Get-KitPath $tkName -Create:$Create }
@@ -142,9 +158,14 @@ function Copy-KitTree([string]$To) {
   foreach ($f in @(git -C $src ls-files)) { $s1 = Join-Path $src $f; if (Test-Path $s1) { $d = Join-Path $To (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
 }
 # Copy-KitTree into <Dir>/.claude as a git repo (one commit on main) with the bare <Dir>/origin.git; -Push: main pushed + fetched
+# (a shared clone of one such repo per suite run, made on first use: no second copy of every file into git objects)
 function New-GitKitCopy([string]$Dir, [switch]$Push) {
-  $kc = Join-Path $Dir '.claude'; Copy-KitTree $kc
-  git -C $kc init -q -b main; git -C $kc add -A; git -C $kc commit -q -m 'feat: base'
+  $kc = Join-Path $Dir '.claude'; $tpl = Join-Path $env:KIT_TESTS_SNAPSHOT '_git'
+  if (-not (Test-Path (Join-Path $tpl '.git'))) {
+    $tn = "$tpl-$PID"; Copy-KitTree $tn; git -C $tn init -q -b main; git -C $tn add -A; git -C $tn commit -q -m 'feat: base'
+    try { [IO.Directory]::Move($tn, $tpl) } catch { Remove-Item $tn -Recurse -Force -ErrorAction SilentlyContinue }   # a parallel area made it first
+  }
+  git clone -q --shared -b main $tpl $kc 2>&1 | Out-Null; git -C $kc remote remove origin
   git init -q --bare "$Dir/origin.git"; git -C $kc remote add origin "$Dir/origin.git"
   if ($Push) { git -C $kc push -q origin main 2>&1 | Out-Null; git -C $kc fetch -q origin }
   $kc

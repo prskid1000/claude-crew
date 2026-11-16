@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L184 wt · L505 stack · L687 gate · L1003 check · L1312 pipes · L1369 guard · L2217 dir ·
-  L2227 checkpoint · L2256 prior · L2294 tracker · L2316 task spec · L2492 scope · L2539 host
+Sections: L23 init · L30 sweep · L184 wt · L505 stack · L687 gate · L1004 check · L1313 pipes · L1370 guard · L2218 dir ·
+  L2228 checkpoint · L2257 prior · L2295 tracker · L2317 task spec · L2493 scope · L2540 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -178,7 +178,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     }
     [void]$counts.Add([ordered]@{ repo = $leaf; branches = @(git -C $rp for-each-ref --format='%(refname:short)' refs/heads 2>$null).Count; worktrees = [math]::Max(0, @(Get-KitWorktrees $rp).Count - 1); removable = $(if ($DryRun) { $del } else { 0 }); kept = $keptN })
   }
-  Write-KitAtomic (Get-KitPath repo-sweep -Create) ([ordered]@{ at = $now.ToString('o'); dryRun = [bool]$DryRun; repos = @($counts) } | ConvertTo-Json -Depth 4)
+  Write-KitAtomic (Get-KitPath repo-sweep -Create) ([ordered]@{ at = $now.ToString('o'); dryRun = [bool]$DryRun; repos = @($counts) } | ConvertTo-Json -Depth 4) -Volatile '"at":\s*"[^"]*"'
   [pscustomobject]@{ actions = @($actions); kept = @($kept); notes = @($notes) }
 }
 # ---- wt: a worktree per agent; deps linked, never installed
@@ -719,7 +719,7 @@ $script:GateKinds = [ordered]@{
 }
 function Get-GateKind([string]$c, [string]$Dir = '') {
   # a package script is its body: yarn test:api running Cypress is a cypress run
-  $sb = if ($Dir -and $c -match '^\s*(npm|yarn|pnpm|bun)\s+(run\s+)?([\w:.-]+)') { try { "$((Get-Content -LiteralPath (Join-Path $Dir 'package.json') -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable).scripts[$Matches[3]])" } catch { '' } }
+  $sb = if ($Dir -and $c -match '^\s*(npm|yarn|pnpm|bun)\s+(run\s+)?([\w:.-]+)') { try { "$((Read-KitText (Join-Path $Dir 'package.json') | ConvertFrom-Json -AsHashtable).scripts[$Matches[3]])" } catch { '' } }
   if ($sb -match 'cypress\s+run') { return 'cypress' }
   foreach ($t in @($c, $sb) | Where-Object { $_ }) { foreach ($k in $script:GateKinds.Keys) { if ($t -match $script:GateKinds[$k][0]) { return $k } } }; 'other'
 }
@@ -793,7 +793,7 @@ if ($Cmd -match '\bpytest\b' -and $Cmd -match '\s-n\s+auto') { $Cmd = $Cmd -repl
 $ledger = Get-KitGateLedger
 New-Item -ItemType Directory -Force $ledger | Out-Null
 $histFile = Join-Path $ledger 'history.json'
-function Read-History { try { Get-Content $histFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} } }
+function Read-History { $h = try { Read-KitText $histFile | ConvertFrom-Json -AsHashtable } catch {}; if ($h) { $h } else { @{} } }
 
 $kind = Get-GateKind $Cmd $Dir
 $default = if ($script:GateKinds.Contains($kind)) { $script:GateKinds[$kind][1] } else { 2 }
@@ -934,6 +934,7 @@ while ((Get-Date) -lt $deadline) {
       if ($heap -gt 0) { $Cmd = & (Get-Command Set-GateHeap) $heapTool $heap $Cmd }
       $reserved = $need   # an OOM near this = failure
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
+      if ($gt = Get-Command Set-GateTemp -ErrorAction SilentlyContinue) { & $gt $Cmd $Dir }
       # /s + outer quotes: a leading quoted path survives
       if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
       else {
@@ -987,7 +988,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator' -and -not $why) {
   try {
     $got = Lock-Gate $gate
     if ($got) {
-      $txt = if (Test-Path $histFile) { Get-Content $histFile -Raw -ErrorAction Stop } else { '' }
+      $txt = if (Test-Path $histFile) { Read-KitText $histFile } else { '' }
       $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -ErrorAction Stop } else { @{} }
       if ($h -is [hashtable]) {
         $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; wait = $waitSec; ctr = [math]::Round($ctrPeak, 2); cmd = (Get-GateHistCmd $Cmd $Dir) } | Select-Object -Last 10)
@@ -1612,7 +1613,7 @@ $cmd = if ($in.tool_input.command) { [string]$in.tool_input.command }
        else { '' }
 $K = $PSScriptRoot
 $protected = @('main', 'master', 'develop', 'release/\S+')
-try { $kc = Get-Content (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '\S+' }) } catch {}   # globs
+try { $kc = Read-KitText (Join-Path $K 'kit.local.json') | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '\S+' }) } catch {}   # globs
 
 function Deny($why) {
   if ($in.session_id) {   # test runs must not raise a guard WATCH
@@ -2232,7 +2233,7 @@ if (-not $Agent -or -not ($Step -or $Read)) { "usage: crafty.ps1 checkpoint -Age
 if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }
 $null = Invoke-Dir -Agent $Agent; $jf = Get-KitCheckpointFile $Agent $Run -Write:(-not $Read); $mf = $jf -replace '\.json$', '.md'   # per run: same-named agents never overwrite
 if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent$(if ($Run) { " run $Run" })" }; return }
-$c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
+$c = try { Read-KitText $jf | ConvertFrom-Json -AsHashtable } catch { $null }
 foreach ($ckObj in @($c) + @($c.steps)) { foreach ($ckKey in 'at', 'updated') { if ($ckObj -is [Collections.IDictionary] -and $ckObj[$ckKey] -is [datetime]) { $ckObj[$ckKey] = $ckObj[$ckKey].ToString('o') } } }   # times stay ISO text (-DateKind needs pwsh 7.5)
 if (-not $c -or ($Run -and "$($c.run)" -ne $Run)) { $c = @{ agent = $Agent; run = $Run; steps = @(); worktrees = @(); leases = @() } }   # another run's: start over
 $s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-Date).ToString('o') }
@@ -2519,7 +2520,7 @@ function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
   }
   # post-hoc: MRs merged within -Days whose area was logged (devtools.py mr / merge), each merged one checked once ('checked')
   # an open MR is asked again after 30 min, host calls stop after 20 s (supervise timed out on open MRs asked every sweep)
-  $pf = Join-Path (Get-KitPath cache -Create) 'scope-probes.json'; $probed = try { Get-Content -LiteralPath $pf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} }; if ($probed -isnot [hashtable]) { $probed = @{} }; $stopAt = $now.AddSeconds(20)
+  $pf = Join-Path (Get-KitPath cache -Create) 'scope-probes.json'; $probed = try { Read-KitText $pf | ConvertFrom-Json -AsHashtable } catch { @{} }; if ($probed -isnot [hashtable]) { $probed = @{} }; $stopAt = $now.AddSeconds(20)
   $hits = foreach ($a in @($areas.Values | Where-Object { [datetime]$_.at -ge $now.AddDays(-$Days) } | Sort-Object { if ($probed["$($_.mr)"]) { [datetime]$probed["$($_.mr)"] } else { [datetime]::MinValue } })) {   # least recently asked first: the 20 s cut never starves one
     if (-not ($c = $seen["$($a.mr)"])) {
       if ((Get-Date) -gt $stopAt -or ($probed["$($a.mr)"] -and ($now - [datetime]$probed["$($a.mr)"]).TotalMinutes -lt 30)) { continue }

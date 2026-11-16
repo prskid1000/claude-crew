@@ -1268,7 +1268,7 @@ function Stop-Svc([string]$e, $s, [string]$why = 'stopped') {
   Update-State $e { param($z) $o = $z.services[$s.name]; $z.services[$s.name] = @{ status = 'down'; port = $s.port; at = (Now); release = $o.release; artifact = $o.artifact; why = $why; restarts = @($o.restarts); aot = $o.aot } }
   if ($ran) { Event $e 'stop' @{ service = $s.name; why = $why } }
 }
-function Get-LocalEnvHistory { $h = try { Get-Content (Get-KitPath localenv-history) -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if ($h -isnot [hashtable]) { $h = @{} }; $h }
+function Get-LocalEnvHistory { $h = try { Read-KitText (Get-KitPath localenv-history) | ConvertFrom-Json -AsHashtable } catch { $null }; if ($h -isnot [hashtable]) { $h = @{} }; $h }
 function Save-LocalEnvHistory([string]$key, [double]$v) {
   if ($v -le 0) { return }
   $f = Get-KitPath localenv-history -Create
@@ -2488,6 +2488,9 @@ switch ($Action) {
   '_exec' {
     $s = Svc $e $Services[0]; $sdir = SvcDir $e $s; $log = LogFile $e $s.name
     $cmd = StartCmd $e $s $Artifact
+    # its temp files (java.io.tmpdir, the embedded server's base dir) in one folder per service, emptied each start; env vars below win
+    $stmp = Join-Path (Get-KitPath localenv -Create) "tmp/$e-$($s.name)"; Remove-Item -LiteralPath $stmp -Recurse -Force -ErrorAction SilentlyContinue
+    $env:TMP = $env:TEMP = $env:TMPDIR = (New-Item -ItemType Directory -Force $stmp).FullName   # arch-ok: kit temp
     foreach ($kv in (EnvVars $e $s).GetEnumerator()) { [Environment]::SetEnvironmentVariable($kv.Key, $kv.Value) }
     Set-Location $sdir
     Add-Content $log "== $(Now) start in $sdir : $cmd"

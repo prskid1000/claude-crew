@@ -1,11 +1,12 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L82 state · L156 config · L237 OS · L457 leases · L856 status · L1112 supervise sweep · L1190 tracker ·
-  L1519 prior · L1535 ask bugs · L1720 git-host · L1925 kitlog · L2045 params · L2350 entry-scripts
+Sections: L10 paths · L89 state · L165 config · L246 OS · L466 leases · L865 status · L1121 supervise sweep · L1199 tracker ·
+  L1528 prior · L1544 ask bugs · L1729 git-host · L1934 kitlog · L2054 params · L2359 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
+$env:GIT_OPTIONAL_LOCKS = '0'   # git probes (status, diff) never rewrite a repo's index
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
@@ -50,8 +51,14 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
   try { & $Body } finally { $fs.Dispose(); try { [IO.File]::Delete($lock) } catch {} }
 }
 # temp + rename in one folder: a crash never leaves half a file
-function Write-KitAtomic([Parameter(Mandatory)][string]$Path, [string]$Text) {
+# same text: no write (a sweep rewrote unchanged files each pass); -Volatile <regex>: the parts that change each pass (a time),
+# the rest unchanged -> only the file time moves (readers take `at` from it)
+function Write-KitAtomic([Parameter(Mandatory)][string]$Path, [string]$Text, [string]$Volatile) {
   $p = [IO.Path]::GetFullPath($Path, (Get-Location -PSProvider FileSystem).ProviderPath); $t = "$p.$PID.tmp"
+  try { $fi = [IO.FileInfo]::new($p)
+    if ($fi.Exists -and $fi.Length -lt 8MB) {
+      if ($fi.Length -eq [Text.Encoding]::UTF8.GetByteCount($Text) -and [IO.File]::ReadAllText($p) -ceq $Text) { return }
+      if ($Volatile -and ([IO.File]::ReadAllText($p) -replace $Volatile) -ceq ($Text -replace $Volatile)) { $fi.LastWriteTimeUtc = [datetime]::UtcNow; return } } } catch { }   # unreadable: write
   [IO.File]::WriteAllText($t, $Text, [Text.UTF8Encoding]::new($false))
   for ($i = 0; ; $i++) {
     try { [IO.File]::Move($t, $p, $true); return }
@@ -80,6 +87,8 @@ function Get-KitCheckpointFile([string]$Agent, [string]$Run = '', [switch]$Write
   @(@(Get-ChildItem -LiteralPath $ckDir -Filter 'resume*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | ForEach-Object FullName) + (Join-Path $ckDir 'resume.json'))[0]
 }
 # ---- state: skills/bossy/STATE.md (tolerant reads, atomic writes, one file per key)
+# a file's text, nothing when it is missing: a caught Get-Content -ErrorAction Stop logs pwsh event 4100 on every miss
+function Read-KitText([string]$Path) { if ($Path -and (Test-Path -LiteralPath $Path -PathType Leaf)) { Get-Content -LiteralPath $Path -Raw -ErrorAction Stop } }
 function Read-KitState([string]$Path) {   # never throws (state-lint flags the bad file)
   if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
   try { $o = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable; if ($o -is [Collections.IDictionary]) { $o } } catch { Write-KitLog calls state-bad @{ file = $Path; error = "$_" } }
@@ -279,7 +288,7 @@ function Get-SysCpu {
 # the file cache is freed only under RAM pressure, which a gate never allows: half of it counts as available
 function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [double]$Mem.CacheGB, 1) }
 # bossy.ps1 storage disk-rescue hold on a kit drive: crafty.ps1 gate holds new builds
-function Get-KitDiskHold { $hs = try { (Get-Content -LiteralPath (Join-Path (Get-KitPath storage) 'state.json') -Raw -ErrorAction Stop | ConvertFrom-Json).rescues } catch { $null }; @((Get-KitProps $hs).Value | Where-Object { $_.kit -and ((Get-Date) - [datetime]$_.at).TotalMinutes -lt [double](Get-KitSetting 'storage.holdMinutes' 60) })[0] }
+function Get-KitDiskHold { $hs = try { (Read-KitText (Join-Path (Get-KitPath storage) 'state.json') | ConvertFrom-Json).rescues } catch { $null }; @((Get-KitProps $hs).Value | Where-Object { $_.kit -and ((Get-Date) - [datetime]$_.at).TotalMinutes -lt [double](Get-KitSetting 'storage.holdMinutes' 60) })[0] }
 # after 20 min waiting, a start needs only a hard floor
 function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
   $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3, $TotalGB * 0.05))
@@ -469,7 +478,7 @@ function Test-KitLive($l) {
   $now = Get-Date; $bm = [double](Get-KitParam 'idle.beatMinutes'); $a = "$($l.agent)"
   if ($l.owner -or ($l.until -and -not $a -and -not $l.holderPid)) { return [datetime]$l.until -gt $now }   # a pre-lease hold keeps its minutes
   if ($l.pid -and (Test-KitPid $l.pid $l.pidStart)) { return $true }
-  $ls = Get-KitLiveCached steps { try { $s = Get-Content (Get-KitPath live-steps) -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$s.at).TotalMinutes -lt $bm) { $s } } catch {} }
+  $ls = Get-KitLiveCached steps { $lf = Get-KitPath live-steps; if ((Test-Path -LiteralPath $lf) -and ((Get-Date) - [IO.File]::GetLastWriteTime($lf)).TotalMinutes -lt $bm) { try { Get-Content -LiteralPath $lf -Raw | ConvertFrom-Json } catch {} } }   # the file time: an unchanged sweep only touches it
   $mine = @($ls.labels | Where-Object { ($a -and (($_ -split ':', 2)[-1] -split '@')[0] -eq $a) -or ($l.lane -and $_ -match "@$([regex]::Escape($l.lane))$") })
   if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
   # a holder blocked on a long gated command (a full e2e suite) writes no transcript: its running gate entry keeps it live
@@ -485,7 +494,7 @@ function Test-KitLive($l) {
 }
 # last supervise NEXT; one older than 2 beats = coordinator stopped
 function Get-KitBeatMinutes {
-  $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+  $s = try { Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json } catch { $null }
   if ($s.nextBeat -and $s.report.at -and ((Get-Date) - [datetime]$s.report.at).TotalMinutes -lt 2 * [double]$s.nextBeat) { [double]$s.nextBeat } else { [double](Get-KitParam 'supervise.heartbeatMinutes') }
 }
 # bossy E1 prompt and cron call (a one-shot died with each restart)
@@ -554,7 +563,7 @@ function Format-KitLeaseLast($o) { if ($o) { "$(([datetime]$o.at).ToString('MM-d
 # GPU: exclusive per kind in gpu.exclusive (e.g. emulator lanes)
 function Get-KitGpuFile { Join-Path (Get-KitPath runtimes -Create) 'gpu.json' }
 function Get-KitGpuState {
-  $s = try { Get-Content (Get-KitGpuFile) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
+  $s = try { Read-KitText (Get-KitGpuFile) | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
   $script:KitGpuDropped = @($s.leases | Where-Object { $_ -and -not (Test-KitPid $_.pid $_.pidStart) })   # Save-KitGpuState logs them
   $s.leases = @($s.leases | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }); $s.waiting = @($s.waiting | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }); $s
 }
@@ -631,7 +640,7 @@ function Test-KitLockHolder($H) {
   @(Get-ChildItem (Get-KitGateLedger) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { "$($_.gate)" -eq "$($H.pid)" -and (Test-KitPid $_.pid $_.start) }).Count -gt 0
 }
 function Get-KitLockState {
-  $s = try { Get-Content (Get-KitLockFile) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
+  $s = try { Read-KitText (Get-KitLockFile) | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
   $h = if ($s.held -is [hashtable]) { $s.held } else { @{} }
   $script:KitLockDropped = @(foreach ($k in @($h.Keys)) { if (-not (Test-KitLockHolder $h[$k])) { $h[$k]; $h.Remove($k) } })
   @{ held = $h; waiting = @($s.waiting | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }) }
@@ -704,7 +713,7 @@ function Add-KitNetCount([switch]$Retry, [switch]$Check) {
     try { $lk = [IO.File]::Open("$f.lock", 'CreateNew', 'Write', 'Read'); $pb = [Text.Encoding]::ASCII.GetBytes("$PID"); $lk.Write($pb, 0, $pb.Length); $lk.Flush() }
     catch { try { $hp = ([IO.File]::ReadAllText("$f.lock")).Trim(); if ($hp -and -not (Test-KitPid ([int]$hp) $null)) { [IO.File]::Delete("$f.lock") } } catch {}; [void][Threading.Thread]::Yield() } }
   if (-not $lk) { return $true }   # busy: best effort (20 tries, no sleep), never a wait on a network call
-  try { $s = try { Get-Content -LiteralPath $f -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $s) { $s = @{} }
+  try { $s = try { Read-KitText $f | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $s) { $s = @{} }
     foreach ($k in @($s.Keys)) { if ([long]$k -lt [long](Get-Date).AddMinutes(-10).ToString('yyyyMMddHHmm')) { $s.Remove($k) } }
     if ($Check) { $c = ($s.Values | ForEach-Object { [int]$_.c } | Measure-Object -Sum).Sum; $rt = ($s.Values | ForEach-Object { [int]$_.r } | Measure-Object -Sum).Sum; $ok = [int]$s[$m].r -lt 1 -or $rt -lt 0.1 * $c }
     if ($ok) { if (-not $s[$m]) { $s[$m] = @{ c = 0; r = 0 } }; if ($Retry) { $s[$m].r = [int]$s[$m].r + 1 } else { $s[$m].c = [int]$s[$m].c + 1 }; Write-KitAtomic $f ($s | ConvertTo-Json -Compress) }
@@ -965,7 +974,7 @@ function Set-KitStatusState($R, [datetime]$Now, [double]$StuckMin) {
 function Get-KitLiveTranscripts([datetime]$Now, [double]$Minutes, [string]$Kind = 'claude') {
   if ($Kind -eq '*') { foreach ($k in 'claude', 'codex', 'antigravity') { Get-KitLiveTranscripts $Now $Minutes $k }; return }
   $r = Invoke-KitAdapter transcript $Kind root; if (-not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return }
-  $cf = Get-KitPath transcript-dirs -Create; $c = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $c) { $c = @{} }
+  $cf = Get-KitPath transcript-dirs -Create; $c = try { Read-KitText $cf | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $c) { $c = @{} }
   $hit = $c[$r.dir]; $dirs = if ($hit -and ((Get-Date) - [datetime]$hit.at).TotalSeconds -lt 60) { @($hit.dirs) } else {
     $w = @(Get-Item -Force -Path (Join-Path ([WildcardPattern]::Escape($r.dir)) $(if ($r.sub) { $r.sub } else { '*/subagents' })) -ErrorAction SilentlyContinue | Where-Object PSIsContainer | ForEach-Object FullName)
     $c[$r.dir] = @{ at = (Get-Date).ToString('o'); dirs = $w }; try { Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 4 -Compress) } catch {}; $w }
@@ -1013,7 +1022,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
         phase = [string]$s.phase; script = "$(@($lr.script | Where-Object { $_ })[0])" }
       if ($live -and $s -in $running) { $st.tx = & $last 'claude' $st.tf; $seen.Add($st.tx.at); $runSteps.Add($st)
         $st | Add-Member -Force NoteProperty created (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime
-        $st | Add-Member -Force NoteProperty type $(try { (Get-Content ($st.tf -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json).agentType } catch { '' })
+        $st | Add-Member -Force NoteProperty type $(try { (Read-KitText ($st.tf -replace '\.jsonl$', '.meta.json') | ConvertFrom-Json).agentType } catch { '' })
         foreach ($n in @(LabelNames $st.label)) { $anyRun[$n] = if ($anyRun.ContainsKey($n) -and $anyRun[$n] -ne $st) { $false } else { $st } } }   # one running step of a name: its agent, whatever run it joined the board under
       foreach ($k in @(LabelNames $st.label | ForEach-Object { "$run/$_"; if ($run -like 'wf_*') { "?/$_" } })) { if (-not ($steps[$k].tx -and -not $st.tx)) { $steps[$k] = $st } }   # latest step wins, running first; ?/ = run name unknown
     }
@@ -1056,7 +1065,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $byTx[$dupKey] = $rows[$rows.Count - 1]
   }
   foreach ($st in @($runSteps | Where-Object { -not $_.covered })) {
-    $w = & $waitOf $st.run @(LabelNames $st.label); $ty = try { (Get-Content ($st.tf -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json).agentType } catch { '' }
+    $w = & $waitOf $st.run @(LabelNames $st.label); $ty = try { (Read-KitText ($st.tf -replace '\.jsonl$', '.meta.json') | ConvertFrom-Json).agentType } catch { '' }
     $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$((($st.label -split ':', 2)[-1] -split '@')[0]) ($(if ($ty) { $ty } else { 'step' }))"; run = $st.run; task = "$($st.label) · $($st.run)"
           wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = $(if ($st.tx) { $st.tx.at } else { $st.jt }); doing = & $doing $st.tx $st.phase; started = (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime
           next = $(if ($np = & $nextPh $st.script $st.phase) { "next: $np" } else { '' }) }) $Now $stuck))
@@ -1162,7 +1171,7 @@ function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scr
   if ($sl.Length -gt 100) { $sl = $sl.Substring(0, 80) + '-' + (Get-KitHash $sl SHA1).Substring(0, 12) }   # stay within MAX_PATH
   $base = Join-Path $d $sl; $res = @{ out = @() }
   Invoke-KitLocked "$base.json" {
-    $run = try { Get-Content -LiteralPath "$base.json" -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+    $run = try { Read-KitText "$base.json" | ConvertFrom-Json } catch { $null }
     $busy = $run -and (Test-KitPid $run.pid $run.start)
     if ($busy -and ((Get-Date) - [datetime]$run.at).TotalMinutes -gt [math]::Max(30, 10 * $Cost / 60)) {
       if ($KitIsWindows) { $null = & taskkill /PID ([int]$run.pid) /T /F 2>$null } else { Stop-Process -Id $run.pid -Force -ErrorAction SilentlyContinue }   # the launcher, its job and the job's children
@@ -1920,7 +1929,7 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
     action = "Link each to its task: $($adds -join '; ')$(if ($adds -match '<task>') { " (no task yet: & $($KitCmd.dev) tracker create -Spec <json> (crafty.ps1 'task spec'), never free text)" }); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)'; refs = $refs }
 }
 
-function Get-KitRepoSweep { try { Get-Content -LiteralPath (Get-KitPath repo-sweep) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null } }   # the last cleanup's counts per repo
+function Get-KitRepoSweep { $rf = Get-KitPath repo-sweep; if (Test-Path -LiteralPath $rf) { try { $o = Read-KitText $rf | ConvertFrom-Json; $o.at = [IO.File]::GetLastWriteTime($rf).ToString('o'); $o } catch { $null } } }   # the last cleanup's counts per repo; at = the file time (an unchanged sweep only touches it)
 
 # ---- kitlog: every log line (kit.example.json _paths.log)
 $script:KitLogMap = $script:KitPathMap.log
@@ -1943,7 +1952,7 @@ function Get-KitLogFile([string]$Stream, [datetime]$Day = (Get-Date), [switch]$C
 # params, else the board entry (-Session, -Dir, -Worktree), else KIT_AGENT / KIT_RUN
 function Get-KitWho([Collections.IDictionary]$Named = @{}) {
   $w = [ordered]@{ run = "$($Named.Run)"; agent = "$($Named.Agent)"; task = "$($Named.Task)" }
-  $b = if ($Named.Session) { try { Get-Content (Join-Path (Get-KitPath board) "$($Named.Session).json") -Raw -ErrorAction Stop | ConvertFrom-Json } catch {} }
+  $b = if ($Named.Session) { try { Read-KitText (Join-Path (Get-KitPath board) "$($Named.Session).json") | ConvertFrom-Json } catch {} }
   $dir = "$(@($Named.Dir, $Named.Worktree) | Where-Object { $_ } | Select-Object -First 1)"
   if (-not $b -and -not $w.agent -and $dir) { $d = try { [IO.Path]::GetFullPath($dir).TrimEnd('\', '/').ToLower() } catch { '' }
     $b = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddDays(-1) | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } |
@@ -2057,7 +2066,7 @@ function Get-KitParamSpec([string]$Key) {
 function Get-KitParamKeys([switch]$Learned) { @(if ($script:KitParamReg) { (Get-KitProps $script:KitParamReg).Name | Where-Object { -not $Learned -or (Get-KitParamSpec $_).how -ne 'config' } }) }
 function Read-KitParams([switch]$Strict) {   # -Strict (writers): a broken file throws, never overwritten
   $f = Get-KitPath param-state; if ($Strict -and -not (Test-Path -LiteralPath $f)) { return @{} }
-  try { $s = Get-Content -LiteralPath $f -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable; if ($s) { $s } else { @{} } } catch { if ($Strict) { throw "param state $f unreadable: $_" }; @{} }
+  try { $s = Read-KitText $f | ConvertFrom-Json -AsHashtable; if ($s) { $s } else { @{} } } catch { if ($Strict) { throw "param state $f unreadable: $_" }; @{} }
 }
 # KIT_PARAM_<KEY> > kit.local.json <key>[.<context>] > param pin > learned (params.learning on) > default
 function Resolve-KitParam([string]$Key, $Default, [string]$Context, $St) {
@@ -2076,7 +2085,7 @@ function Get-KitParam([Parameter(Mandatory)][string]$Key, $Default, [string]$Con
   try { (Resolve-KitParam $Key $Default $Context (Get-KitParamState))[0] } catch { $Default }
 }
 # last sweep's load (under 1 h old); lb busy (cpu 80%+ or manyAgents) | calm
-function Get-KitLoadTags { Get-KitMemo $script:KitParamMemo load 60 { $l = try { (Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json).load } catch { $null }
+function Get-KitLoadTags { Get-KitMemo $script:KitParamMemo load 60 { $l = try { (Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json).load } catch { $null }
     if (-not $l.at -or ((Get-Date) - [datetime]$l.at).TotalHours -ge 1) { return @{ lb = '' } }
     @{ availGB = $l.availGB; cpu = $l.cpu; agents = $l.agents; lb = $(if ([double]$l.cpu -ge 80 -or [double]$l.agents -ge [double](Get-KitParam 'supervise.manyAgents')) { 'busy' } else { 'calm' }) } } }
 # $Default = the call site's fixed default (clamps); Result ok | fail | timeout (censored) | oom | short

@@ -107,7 +107,7 @@ function Get-KitToolWhat($U) { $i = $U.input; $pt = { param($p) $ps = @("$p" -sp
 # a transcript's parsed tail, cached per file by size + write time (a sweep re-reads only grown transcripts; task outputs still rechecked); claude only
 function Get-KitTailCached([string]$Kind, [string]$File) {
   if ($Kind -ne 'claude' -or -not $File) { return $(if ($File) { Invoke-KitAdapter transcript $Kind last @{ file = $File } }) }
-  if ($null -eq $script:KitTailCache) { $script:KitTailCache = try { Get-Content -LiteralPath (Get-KitPath transcript-tails) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($script:KitTailCache -isnot [hashtable]) { $script:KitTailCache = @{} } }
+  if ($null -eq $script:KitTailCache) { $script:KitTailCache = try { Read-KitText (Get-KitPath transcript-tails) | ConvertFrom-Json -AsHashtable } catch { $null }; if ($script:KitTailCache -isnot [hashtable]) { $script:KitTailCache = @{} } }
   $fi = Get-Item -LiteralPath $File -ErrorAction SilentlyContinue; if (-not $fi) { return }
   $sig = "$($fi.Length)|$($fi.LastWriteTimeUtc.Ticks)"; $c = $script:KitTailCache[$fi.FullName]
   if ($c -and "$($c.sig)" -eq $sig) { $s = [pscustomobject]@{ file = $fi.FullName; at = $fi.LastWriteTime; tool = "$($c.tool)"; what = "$($c.what)"; say = "$($c.say)"; ended = [bool]$c.ended; killed = $false; version = "$($c.version)"; outs = @($c.outs) }

@@ -145,7 +145,7 @@ function Get-LiquibaseMissingRoutines([string]$e, [string]$Schema) {
       $lbVer = (Get-KitHash ("$((Get-Command Get-LiquibaseMissingRoutines).ScriptBlock)") SHA256).Substring(0, 12)
       $lbSha = "$(git -C $root log -1 --format=%H -- . 2>$null)".Trim(); if ($LASTEXITCODE -or "$(git -C $root status --porcelain -- . 2>$null)".Trim()) { $lbSha = '' }
       $lbCacheFile = Join-Path (Get-KitPath cache -Create) "liquibase-routines-$((Get-KitHash (([IO.Path]::GetFullPath($root)).ToLower()) SHA256).Substring(0, 12)).json"
-      $lbHit = if ($lbSha) { try { $lbJson = Get-Content -LiteralPath $lbCacheFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable; if ($lbJson.key -eq "$lbVer|$lbSha") { $lbJson.made } } catch { $null } }
+      $lbHit = if ($lbSha) { try { $lbJson = Read-KitText $lbCacheFile | ConvertFrom-Json -AsHashtable; if ($lbJson.key -eq "$lbVer|$lbSha") { $lbJson.made } } catch { $null } }
       if ($null -ne $lbHit) { foreach ($lbKv in $lbHit.GetEnumerator()) { $made[$lbKv.Key] = $lbKv.Value }; continue }
       $lbMine = @{}
       foreach ($f in Get-ChildItem -LiteralPath $root -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {

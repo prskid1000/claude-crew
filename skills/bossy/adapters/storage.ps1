@@ -21,7 +21,7 @@ function Get-KitDrives {
   @($ds | ForEach-Object { [pscustomobject]@{ name = $(if ($KitIsWindows) { $_.Name.Substring(0, 1) } else { $_.Name }); root = $_.RootDirectory.FullName; free = [math]::Round($_.AvailableFreeSpace / 1GB, 2); size = [math]::Round($_.TotalSize / 1GB, 2); kit = $_.RootDirectory.FullName -in $kr } })
 }
 function Get-KitStorageFile([string]$Drive, [string]$Kind = 'jsonl') { $s = ConvertTo-KitSlug $Drive; Join-Path (Get-KitPath storage -Create) "$(if ($s) { $s } else { 'root' }).$Kind" }
-function Get-KitStorageState { $f = Join-Path (Get-KitPath storage -Create) 'state.json'; $s = if (Test-Path -LiteralPath $f) { try { Get-Content -LiteralPath $f -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null } }; if ($s) { $s } else { @{} } }
+function Get-KitStorageState { $f = Join-Path (Get-KitPath storage -Create) 'state.json'; $s = if (Test-Path -LiteralPath $f) { try { Read-KitText $f | ConvertFrom-Json -AsHashtable } catch { $null } }; if ($s) { $s } else { @{} } }
 function Set-KitStorageState([scriptblock]$Change) { $f = Join-Path (Get-KitPath storage -Create) 'state.json'; Invoke-KitLocked $f { $s = Get-KitStorageState; & $Change $s; Write-KitAtomic $f ($s | ConvertTo-Json -Depth 8) } }
 function Get-KitStorageSamples([string]$Drive, [int]$Tail = 0) {   # regex: 40k lines a drive
   $f = Get-KitStorageFile $Drive; if (-not (Test-Path -LiteralPath $f)) { return @() }
@@ -112,7 +112,7 @@ function Get-KitStorageDefaults([string]$Root) {
 }
 function Start-KitStorageScan([string]$Drive) {
   if ($env:KIT_STORAGE_SCAN -eq '0') { return }   # tests: no real drive scans
-  $lk = Get-KitStorageFile $Drive 'scan.lock'; $o = try { Get-Content -LiteralPath $lk -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+  $lk = Get-KitStorageFile $Drive 'scan.lock'; $o = try { Read-KitText $lk | ConvertFrom-Json } catch { $null }
   if ($o -and ($(if ($o.pid) { Test-KitPid $o.pid $o.start } else { ((Get-Date) - (Get-Item -LiteralPath $lk).LastWriteTime).TotalMinutes -lt 1 }))) { return }
   if ($o) { Remove-Item -LiteralPath $lk -ErrorAction SilentlyContinue }   # stale: its scan is gone
   try { [IO.File]::Open($lk, 'CreateNew', 'Write', 'None').Dispose() } catch { return }   # another caller starts it
@@ -148,7 +148,7 @@ function Update-KitTracked($Fo, $Scan, $Prev, $C, [datetime]$Now = (Get-Date)) {
 function Invoke-KitStorageScan([string]$Drive) {
   try {
     $c = Get-KitStorageConf; $d = @(Get-KitDrives | Where-Object name -eq $Drive)[0]; if (-not $d) { return "no fixed drive $Drive" }
-    $ff = Get-KitStorageFile $Drive 'folders.json'; $fo = try { Get-Content -LiteralPath $ff -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $fo) { $fo = @{ tracked = @{}; scans = @() } }
+    $ff = Get-KitStorageFile $Drive 'folders.json'; $fo = try { Read-KitText $ff | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $fo) { $fo = @{ tracked = @{}; scans = @() } }
     $top = @(Get-ChildItem -LiteralPath $d.root -Directory -Force -ErrorAction SilentlyContinue | Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } | ForEach-Object FullName)
     foreach ($t in @($top) + @(Get-KitStorageDefaults $d.root)) { if (-not $fo.tracked[$t]) { $fo.tracked[$t] = @{ src = 'default'; at = (Get-Date).ToString('o') } } }
     $m = Measure-KitFolders $d.root @($fo.tracked.Keys); $gb = { param($b) [math]::Round($b / 1GB, 2) }
@@ -166,7 +166,7 @@ function Invoke-KitStorageScan([string]$Drive) {
 }
 # growth over the last two scans vs normal (GB/day)
 function Get-KitFolderGrowth([string]$Drive, [int]$Top = 3) {
-  $fo = try { Get-Content -LiteralPath (Get-KitStorageFile $Drive 'folders.json') -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; $s = @($fo.scans); if ($s.Count -lt 2) { return @() }
+  $fo = try { Read-KitText (Get-KitStorageFile $Drive 'folders.json') | ConvertFrom-Json -AsHashtable } catch { $null }; $s = @($fo.scans); if ($s.Count -lt 2) { return @() }
   $a = $s[-2]; $b = $s[-1]; $days = [math]::Max(0.01, ($b.t - $a.t) / 86400); $span = [math]::Max(0.01, ($b.t - $s[0].t) / 86400)
   @(@($b.sizes.Keys) + '<unexplained>' | ForEach-Object { $now = if ($_ -eq '<unexplained>') { $b.unexplained } else { $b.sizes[$_] }; $was = if ($_ -eq '<unexplained>') { $a.unexplained } else { $a.sizes[$_] }; $first = if ($_ -eq '<unexplained>') { $s[0].unexplained } else { $s[0].sizes[$_] }
       [pscustomobject]@{ path = $_; gb = [double]$now; grew = [math]::Round([double]$now - [double]$was, 2); perDay = [math]::Round(([double]$now - [double]$was) / $days, 2); normal = [math]::Round([math]::Abs([double]$now - [double]$first) / $span, 2) } } |
@@ -206,7 +206,7 @@ if ($Scan) { foreach ($d in @(if ($Drive) { $Drive } else { Get-KitDrives | ForE
 $from = if ($Since -match '^(\d+)([mhd]?)$') { (Get-Date).AddMinutes(-[int]$Matches[1] * (@{ m = 1; h = 60 }[$Matches[2]] ?? 1440)) } else { [datetime]$Since }; $t0 = [DateTimeOffset]::new($from).ToUnixTimeSeconds()
 foreach ($d in @(if ($Drive) { $Drive } else { Get-KitDrives | ForEach-Object name })) {
   if ($Folders) {
-    $fo = try { Get-Content -LiteralPath (Get-KitStorageFile $d 'folders.json') -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; $sc = @($fo.scans | Where-Object { $_.t -ge $t0 })
+    $fo = try { Read-KitText (Get-KitStorageFile $d 'folders.json') | ConvertFrom-Json -AsHashtable } catch { $null }; $sc = @($fo.scans | Where-Object { $_.t -ge $t0 })
     "== $d folders: $($sc.Count) scan(s) since $($from.ToString('yyyy-MM-dd HH:mm'))$(if (-not $sc.Count) { ' (bossy.ps1 storage -Scan -Drive ' + $d + ')' })"
     if (-not $sc.Count) { continue }; $a = $sc[0]; $b = $sc[-1]; $days = [math]::Max(0.01, ($b.t - $a.t) / 86400)
     foreach ($k in @($b.sizes.Keys | Sort-Object { - [double]$b.sizes[$_] } | Select-Object -First 25)) { '{0,9:N2} GB {1,8:+0.00;-0.00} ({2,7:N2}/day)  {3}{4}' -f $b.sizes[$k], ($b.sizes[$k] - [double]$a.sizes[$k]), (($b.sizes[$k] - [double]$a.sizes[$k]) / $days), $k, $(if ($fo.tracked[$k].src -eq 'learned') { ' (learned)' }) }

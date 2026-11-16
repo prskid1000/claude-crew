@@ -17,7 +17,7 @@ Sections: L16 state · L45 leases · L90 verb · L136 supervise
 function Get-KitRuntimeNames { $r = Get-KitSetting 'runtimes' $null; if ($r) { @((Get-KitProps $r).Name | Where-Object { $_ -notlike '_*' -and (Get-KitMember $r $_).isUp }) } }
 function Get-KitRuntimeFile([string]$Name) { Join-Path (Get-KitPath runtimes -Create) "$Name.json" }
 function Get-KitRuntimeState([string]$Name) {
-  $s = try { Get-Content (Get-KitRuntimeFile $Name) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
+  $s = try { Read-KitText (Get-KitRuntimeFile $Name) | ConvertFrom-Json -AsHashtable } catch { $null }
   if ($s -isnot [hashtable]) { $s = @{ name = $Name; startedByKit = $false } }
   $s.leases = @($s.leases | Where-Object { $_ }); $s
 }

@@ -329,7 +329,7 @@ function Get-KitShellOwner([string]$Tx, $Board) {
   $j = Join-Path (Split-Path $Tx) 'journal.jsonl'
   if (Test-Path -LiteralPath $j) {
     foreach ($l in @(Select-String -LiteralPath $j -SimpleMatch "`"$id`"" | ForEach-Object { try { $_.Line | ConvertFrom-Json } catch {} })) { if ($l.type -eq 'started' -and -not $name) { $name = (($l.label -split ':', 2)[-1] -split '@')[0] }; if ($l.type -eq 'result') { $fin = $true } }
-  } else { $m = try { Get-Content -LiteralPath ($Tx -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }; if (-not $name) { $name = $m.agentType }; if ($m.finished) { $fin = $true } }
+  } else { $m = try { Read-KitText ($Tx -replace '\.jsonl$', '.meta.json') | ConvertFrom-Json } catch { $null }; if (-not $name) { $name = $m.agentType }; if ($m.finished) { $fin = $true } }
   $live = ($e -and $e.status -ne 'left' -and (Test-KitHolder $e) -ne $false) -or ($name -and (Test-KitLive ([pscustomobject]@{ agent = "$name" })) -eq $true)   # a running workflow step, gated command or fresh board entry
   [pscustomobject]@{ name = $(if ($name) { "$name" } else { "agent $id" }); finished = [bool]$fin; coordinator = $false; live = [bool]$live; last = (Get-KitLastActivity $Tx $e "$($e.tool)") }
 }
@@ -447,7 +447,7 @@ function Get-KitSuperviseSettings($Params = @()) {
 function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $rk = @{ ACT = 0; WATCH = 1; INFO = 2 }
   $p = [IO.Path]::ChangeExtension((Get-KitPath supervise-report -Create), '.html'); $pj = [IO.Path]::ChangeExtension($p, '.json')
-  $prior = try { Get-Content -LiteralPath $pj -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+  $prior = try { Read-KitText $pj | ConvertFrom-Json } catch { $null }
   $fl = @(@($d.flags) + @($d.info | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }) | Sort-Object { $rk["$($_.level)"] })
   $fixedN = @($fl | Where-Object { $_.level -eq 'INFO' -and "$($_.what)" -like 'auto-fixed:*' }).Count
   $History = @(@([pscustomobject]@{ at = $d.at.ToString('o'); flags = @($d.flags | Where-Object level -ne 'INFO' | Select-Object level, what); active = @($d.rows | Where-Object state -ne 'FINISHED').Count; fixed = $fixedN }) + @($prior.history | Where-Object { $_ }) | Select-Object -First ([int](Get-KitSetting 'supervise.historySweeps' 12)))
@@ -1244,7 +1244,7 @@ function Show-KitPause {
 function Get-KitBeatArmLine { "CronList has no heartbeat -> CronCreate cron '*/$([int](Get-KitParam 'supervise.heartbeatMinutes')) * * * *', recurring: true, durable: true, prompt ""$(Get-KitBeatPrompt)""" }
 # health: the coordinator's beat passed while agents live (coordAt: not the OS timer's)
 function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
-  $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+  $s = try { Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json } catch { $null }
   if (-not $s.report.at) { return }
   $last = [datetime]$(if ($s.coordAt) { $s.coordAt } else { $s.report.at }); $due = $last.AddMinutes([double](Get-KitParam 'supervise.heartbeatMinutes')); $late = [int]($Now - $due).TotalMinutes
   $bm = [double](Get-KitParam 'idle.beatMinutes')

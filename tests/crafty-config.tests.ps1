@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-crafty-config.tests.ps1: crafty.ps1 stack / check config: -Touched, .claude-stack.json, switches (stack.presets, tests.fallbackRunner, protectedBranchesBase, linkDefaults, guard.heavyPatterns / e2ePatterns); guard stray writes (drive root, outside every root, guard.writeRoots).
+crafty-config.tests.ps1: crafty.ps1 stack / check config, lib.ps1 file writes and reads (Write-KitAtomic, Read-KitText): -Touched, .claude-stack.json, switches (stack.presets, tests.fallbackRunner, protectedBranchesBase, linkDefaults, guard.heavyPatterns / e2ePatterns); guard stray writes (drive root, outside every root, guard.writeRoots).
 Usage: pwsh -NoProfile -File <kit>/tests/crafty-config.tests.ps1 (or tests/kit-tests.ps1 -Area crafty-config).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -58,5 +58,16 @@ $kl = "$kd/skills/crafty/kit.local.json"; '{"guard":{"writeRoots":["~/' + $sf + 
 if (((& $d guard -Json (@{ tool_name = 'Write'; cwd = $kd; tool_input = @{ file_path = "~/$sf/notes.md" } } | ConvertTo-Json -Compress)) -join '') -match '"deny"') { 'FAIL writeRoots' }; Remove-Item $kl
 '@ @($D, $k)
 Expect "guard: new files at a drive root or outside every root denied (redirect, tee, cp, cd + redirect, Out-File, Set-Content, WriteAllText, Write); reads, /dev/null, nul, kit, ~/.claude, Downloads, guard.writeRoots pass ($swr)" (-not "$swr".Trim())
+$churnTest = @'
+param($LibPath, $Dir)
+. $LibPath; $f = Join-Path $Dir 'churn.json'; $old = [datetime]'2020-01-01'
+Write-KitAtomic $f '{"at": "1", "n": 1}'; [IO.File]::SetLastWriteTime($f, $old); Write-KitAtomic $f '{"at": "1", "n": 1}'
+"same:$([IO.File]::GetLastWriteTime($f) -eq $old)"
+Write-KitAtomic $f '{"at": "2", "n": 1}' -Volatile '"at":\s*"[^"]*"'; "volatile:$([IO.File]::GetLastWriteTime($f) -gt $old -and [IO.File]::ReadAllText($f) -match '"1"')"
+Write-KitAtomic $f '{"at": "3", "n": 2}' -Volatile '"at":\s*"[^"]*"'; "changed:$([IO.File]::ReadAllText($f) -match '"3".*2')"
+$e0 = $Error.Count; $t = Read-KitText (Join-Path $Dir 'no-such.json'); "missing:$($null -eq $t -and $Error.Count -eq $e0)"; "text:$((Read-KitText $f) -match '"n": 2')"
+"locks:$($env:GIT_OPTIONAL_LOCKS -eq '0')"
+'@
+Expect-Each (Invoke-PsTest 'churn' $churnTest @((Lib), (Kd))) 'churn #: Write-KitAtomic skips same bytes, a -Volatile-only change moves the file time; Read-KitText misses quietly; git probes skip optional locks' 'same', 'volatile', 'changed', 'missing', 'text', 'locks'
 Remove-TestKit $k
 Complete-Tests

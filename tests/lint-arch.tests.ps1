@@ -37,9 +37,8 @@ def run(p):
 '@
 Set-Content (Join-Path $kc 'skills/crafty/zz_arch.py') $fy -Encoding utf8
 Set-Content (Join-Path $kc 'skills/crafty/adapters/zz_arch.ps1') "#Requires -Version 7`n`$v = glab api projects/1`n`$l = @('web', 'api', 'app')" -Encoding utf8
-# ARCH-SBLOG fixtures: a flagged word (a comment counts) and a computed member name; a quoted literal member and phoney/ pass
+# ARCH-SBLOG fixtures: a flagged word (a comment counts) and a computed member name; a quoted literal member and the exempt flagged.ps1 pass
 Set-Content (Join-Path $kc 'skills/crafty/zz_sb.ps1') "#Requires -Version 7`n# loop the PSObject.Properties`n`$x = `$o.`$k`n`$y = `$o.'lit'" -Encoding utf8
-Set-Content (Join-Path $kc 'skills/phoney/zz_sb.ps1') "#Requires -Version 7`n# loop the PSObject.Properties`n`$x = `$o.`$k" -Encoding utf8
 # inline pwsh text in a .py (a literal and a named constant) and a cdxml cmdlet are counted; a git -c pair passes
 $sbPy = "import subprocess`nPS_ZZ = '''`$a = 1`n`$b = [Runtime.InteropServices.Marshal]'''`nsubprocess.run(['pwsh', '-EncodedCommand', PS_ZZ])`nsubprocess.run(['pwsh', '-Command', 'Get-NetTCPConnection'])`nsubprocess.run(['git', '-c', 'x.GetField=1'])`nsubprocess.run(['pwsh', '-Command', f'& {{ Add-Type {PS_ZZ} }}'])"
 Set-Content (Join-Path $kc 'skills/crafty/zz_sbi.py') $sbPy -Encoding utf8
@@ -80,8 +79,8 @@ Expect 'ARCH-LESSON: liquibase in tracked LESSONS.md = a problem; a rules/*.loca
   $l1 -notmatch 'ARCH-LESSON\s+rules/zz\.local\.md' -and $l1 -notmatch 'ARCH-LESSON\s+rules/zz-org\.md' -and $l1 -match '(?m)^ARCH-LESSON\s+rules/zz-pub\.md:\d+: names spring')
 Expect "ARCH-DEAD-KEY: a documented key no script reads is a counted problem (exit $LASTEXITCODE); a read key passes" ($LASTEXITCODE -eq 1 -and
   $l1 -match '(?m)^ARCH-DEAD-KEY\s+skills/crafty/kit\.example\.json: "zzDeadKey"' -and $l1 -notmatch 'ARCH-DEAD-KEY.*zzLiveKey')
-Expect 'ARCH-SBLOG: a flagged word (in a comment too) and $o.$k in skills/ are counted problems with file:line; a literal member and the exempt phoney/ pass' ($l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:2: "Properties"' -and
-  $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:3: \$o\.\$k' -and (& $cnt 'ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1') -eq 2 -and $l1 -notmatch 'ARCH-SBLOG\s+skills/phoney/')
+Expect 'ARCH-SBLOG: a flagged word (in a comment too) and $o.$k in skills/ are counted problems with file:line; a literal member and the exempt flagged.ps1 pass' ($l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:2: "Properties"' -and
+  $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:3: \$o\.\$k' -and (& $cnt 'ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1') -eq 2 -and $l1 -notmatch 'ARCH-SBLOG\s+skills/crafty/flagged\.ps1')
 Expect 'ARCH-SBLOG: inline -Command / -EncodedCommand text in a .py (literal or constant, at its line) and a cdxml cmdlet count; git -c passes' ($l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:3: "InteropServices"' -and
   $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:5: "Get-NetTCPConnection": a cdxml' -and $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:7: "Add-Type"' -and (& $cnt 'ARCH-SBLOG\s+skills/crafty/zz_sbi\.py') -eq 4)
 # pwsh's own check (internal; absent on another version: SKIP): no lint-scoped kit script is logged on load

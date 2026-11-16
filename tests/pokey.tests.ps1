@@ -204,7 +204,8 @@ Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and
 $klBase | Set-Content $kl
 # browser.mjs: mocks, then local fixture servers
 $bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
-Expect 'browser.mjs: Chrome starts with no disk cache or component downloads unless browser.diskCache' ($bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1', '--disable-component-update', '--disable-background-networking']"))
+Expect 'browser.mjs: Chrome starts with no component, safe-browsing or background downloads, and no disk cache unless browser.diskCache' (
+  $bmSrc.Contains("'--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',") -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])"))
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
   $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +

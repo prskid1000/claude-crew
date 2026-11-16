@@ -162,7 +162,7 @@ k.texts['b.py'] += 'time.sleep(9)\n'; print('again:' + '|'.join(w for c, w, m in
 import json; p = k.dir + '/' + kb.PARAMS_JSON; r = json.load(open(p, encoding='utf-8')); r['_literals'] = {}; json.dump(r, open(p, 'w', encoding='utf-8'))
 print('zero:' + str(len(kb.literal_warns(k, True))))
 '@
-$rj = "$k/skills/bossy/params.registry.json"; $rg = Get-Content $rj -Raw | ConvertFrom-Json -AsHashtable; $rg.Remove('_literals'); $rg | ConvertTo-Json -Depth 5 | Set-Content $rj   # no baseline yet
+$rj = "$k/skills/bossy/params.registry.json"; $rg = Get-Content $rj -Raw | ConvertFrom-Json -AsHashtable; $rg.Remove('_literals'); Undo-TestKitLink $rj; $rg | ConvertTo-Json -Depth 5 | Set-Content $rj   # no baseline yet
 $plf = Join-Path (Kd) 'pl.py'; Set-Content $plf $pl; $lr = @(& $py -X utf8 $plf $k 2>&1 | ForEach-Object { "$_" })
 Expect "lint: an unregistered key, a literal other than the registry default ($(@($lr -match '^lint:') -join ' '))" ($lr -contains 'lint:PARAM-DEFAULT a.ps1:1|PARAM-UNREG a.ps1:1')
 Expect "lint: tunable literals WARN over the baseline; --ratchet records them; a new one warns again ($(@($lr -match '^(warn|ratchet|again):') -join ' '))" ($lr -contains 'warn:a.ps1 1 tunable literal(s)|b.py 2 tunable literal(s)|c.mjs 1 tunable literal(s)' -and $lr -contains 'ratchet:0' -and $lr -contains 'again:b.py' -and $lr -contains 'zero:3')

@@ -38,6 +38,9 @@ $out = KtPy "g = []; k.kitlog = lambda *a: g.append(a[2]); k.audited('x', ['v'],
 Expect 'audited: a usage exit 2 keeps its stderr why in the call line' ($out -match "'error': 'x: error: no verb'")
 $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
 Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
+Expect 'harness: New-TestKit hard-links the suite snapshot, copies the files tests write ($TestKitWrites)' ((Get-Item "$k/skills/crafty/lib.ps1").LinkType -eq 'HardLink' -and -not (Get-Item "$k/LESSONS.md").LinkType)
+$tiOut = KtPy "k.task_index('--help', lambda x: None)" 2>&1 | Out-String
+Expect "task_index: a flag is no task id, no tasks/--help.json ($($tiOut.Trim()))" ($tiOut -match 'a flag is no task id' -and -not (Test-Path (Join-Path (TkPath $k tasks) '--help.json')))
 $wc = KtPy "k.load_json = lambda p: ({'commitStyle': 'free'}, 0); print(k.words('日本 wörd ok'), k.commit_rx())"
 Expect 'prose: CJK per char, any script''s words; commitStyle free' ("$wc" -eq '4 \S')
 $um = Join-Path (Split-Path $k) 'unmerged'; $null = git init -q -b main $um; $gu = @('-C', $um, '-c', 'user.name=t', '-c', 'user.email=t@t')

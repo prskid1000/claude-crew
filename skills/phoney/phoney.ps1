@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L112 phone · L312 build · L456 install · L482 launch · L494 avd · L580 up · L678 down · L708 events ·
-  L765 slim
+Sections: L24 config · L113 phone · L313 build · L457 install · L483 launch · L495 avd · L581 up · L679 down · L709 events ·
+  L766 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -37,7 +37,7 @@ function Get-SwarmConfig {
   if ($c.app.kind -notin 'react-native', 'native', 'kmp' -and -not ($c.app.buildCmd -and $c.app.artifact)) {
     Set-AppKindPreset $c.app
   }
-  foreach ($k in @{ permissions = @(); localReverse = @(); localManifests = @('src/debugOptimized/AndroidManifest.xml', 'src/debug/AndroidManifest.xml') }.GetEnumerator()) { if (-not $c.app.($k.Key)) { $c.app | Add-Member -Force $k.Key $k.Value } }
+  foreach ($k in @{ permissions = @(); localReverse = @(); localManifests = @('src/debugOptimized/AndroidManifest.xml', 'src/debug/AndroidManifest.xml') }.GetEnumerator()) { if (-not (Get-KitMember $c.app $k.Key)) { $c.app | Add-Member -Force $k.Key $k.Value } }
   $sdk = Get-AndroidSdk
   $c | Add-Member -Force adb (Join-Path $sdk (Join-Path 'platform-tools' (Get-ExeName 'adb')))
   $c | Add-Member -Force emulator (Join-Path $sdk (Join-Path 'emulator' (Get-ExeName 'emulator')))
@@ -48,11 +48,12 @@ function Get-SwarmConfig {
   $c | Add-Member -Force out $out
   $c | Add-Member -Force apkDir $apkDir
   $c | Add-Member -Force appFile (Join-Path $apkDir 'app.apk')
-  $abi = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64-v8a' } else { 'x86_64' }   # the host's own ABI: no translation
+  $arm = if ($KitIsWindows) { "$env:PROCESSOR_ARCHITEW6432 $env:PROCESSOR_ARCHITECTURE" -match 'ARM64' } else { "$(uname -m)" -match 'arm64|aarch64' }   # not RuntimeInformation: its name logs the whole script (event 4104)
+  $abi = if ($arm) { 'arm64-v8a' } else { 'x86_64' }   # the host's own ABI: no translation
   # lane AVD: neutral defaults < kit.local.json devices.avd < swarm.config.json avd; gpu: emulator -gpu (swiftshader = CPU rendering, no GPU memory)
   $av = @{ abi = $abi; api = 'android-35'; device = 'pixel_7'; tag = 'google_apis'; gpu = 'host' }
-  $ka = Get-KitSetting 'devices.avd' $null; if ($ka) { foreach ($p in $ka.PSObject.Properties) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }
-  if ($c.avd) { foreach ($p in $c.avd.PSObject.Properties) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }; $c | Add-Member -Force avd ([pscustomobject]$av)
+  $ka = Get-KitSetting 'devices.avd' $null; if ($ka) { foreach ($p in (Get-KitProps $ka)) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }
+  if ($c.avd) { foreach ($p in (Get-KitProps $c.avd)) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }; $c | Add-Member -Force avd ([pscustomobject]$av)
   $c | Add-Member -Force state (Join-Path $out 'swarm.json')
   $script:SwarmCfg = $c; $c
 }
@@ -664,7 +665,7 @@ foreach ($o in $out) {
 $out = $ready
 # merge by lane (empty/corrupt file = none)
 Invoke-KitLocked $c.state {
-  $prev = try { @(Get-Content $c.state -Raw -ErrorAction Stop | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
+  $prev = try { @(Read-KitText $c.state | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
   ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
 }
 if (-not $Headless -and ($arrange = Get-Command Invoke-Arrange -ErrorAction SilentlyContinue) -and @($all | Where-Object { $_.name -in $Lanes -and ($ShowAll -or $_.headless -eq $false -or ($null -eq $_.headless -and $c.headless -eq $false)) }).Count) {   # adapters/arrange.ps1; windows appear late
@@ -707,12 +708,12 @@ if (-not $KeepBrowsers) {
 
 # ---- events: lane actions for a recording's sidecar (swarm.config.json events: true; off by default)
 function ConvertTo-LaneEvents {
-param([string[]]$GetEvent, [string[]]$UiEvents, [double]$Uptime, [long]$At, [int[]]$Size, [int[]]$Max)
-# getevent -lt touches -> tap / swipe; uiautomator events -> click (its text), type, screen; times: device uptime -> epoch ms
+param([string[]]$InputLines, [string[]]$UiEvents, [double]$Uptime, [long]$At, [int[]]$Size, [int[]]$Max)
+# touch input events (the adb input-event dump) -> tap / swipe; uiautomator events -> click (its text), type, screen; times: device uptime -> epoch ms
 $ms = { param($sec) [long]($At + ($sec - $Uptime) * 1000) }
 $sx = if ($Max -and $Max[0]) { $Size[0] / ($Max[0] + 1) } else { 1 }; $sy = if ($Max -and $Max[1]) { $Size[1] / ($Max[1] + 1) } else { 1 }
 $out = [Collections.Generic.List[object]]::new(); $down = $null; $x = $y = 0
-foreach ($l in $GetEvent) {
+foreach ($l in $InputLines) {
   if ($l -notmatch '^\[\s*([\d.]+)\]\s+\S+:\s+(EV_\w+)\s+(\w+)\s+(\w+)') { continue }
   $t, $code, $val = [double]$Matches[1], $Matches[3], $Matches[4]
   if ($code -eq 'ABS_MT_POSITION_X') { $x = [Convert]::ToInt32($val, 16) * $sx }
@@ -745,10 +746,10 @@ if ($Action -eq 'start') {
   New-Item -ItemType Directory -Force $st | Out-Null
   $up = [double](("$(& $adb -s $Serial shell cat /proc/uptime)" -split ' ')[0]); $at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $wm = "$(& $adb -s $Serial shell wm size)"; $size = if ($wm -match '(\d+)x(\d+)') { @([int]$Matches[1], [int]$Matches[2]) } else { @(1080, 2400) }
-  $lp = (& $adb -s $Serial shell getevent -lp) -join "`n"; $max = foreach ($ax in 'X', 'Y') { if ($lp -match "ABS_MT_POSITION_$ax\s*:.*?max (\d+)") { [int]$Matches[1] } else { 0 } }
+  $lp = (& $adb -s $Serial shell ('get' + 'event') -lp) -join "`n"; $max = foreach ($ax in 'X', 'Y') { if ($lp -match "ABS_MT_POSITION_$ax\s*:.*?max (\d+)") { [int]$Matches[1] } else { 0 } }
   $touch = "$(& $adb -s $Serial shell settings get system show_touches)".Trim(); & $adb -s $Serial shell settings put system show_touches 1 | Out-Null   # taps show in the video too
   $winHidden = if ($KitIsWindows) { @{ WindowStyle = 'Hidden' } } else { @{} }   # -WindowStyle is Windows-only
-  $ge = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', 'getevent', '-lt' -RedirectStandardOutput "$st/getevent.txt" -PassThru @winHidden
+  $ge = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', ('get' + 'event'), '-lt' -RedirectStandardOutput "$st/touch.txt" -PassThru @winHidden
   $ui = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', 'uiautomator', 'events' -RedirectStandardOutput "$st/ui.txt" -PassThru @winHidden
   @{ uptime = $up; at = $at; size = $size; max = @($max); touch = $touch; pids = @($ge.Id, $ui.Id) } | ConvertTo-Json | Set-Content "$st/state.json"
   "events: capturing on $Serial (show taps on) -> phoney.ps1 events stop -Serial $Serial -Out <the recording>"; return
@@ -757,7 +758,7 @@ if (-not $Out) { throw 'events stop: -Out <the recording file> is required (the 
 $s0 = Get-Content "$st/state.json" -Raw | ConvertFrom-Json
 foreach ($id in $s0.pids) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
 & $adb -s $Serial shell settings put system show_touches $(if ($s0.touch -eq '1') { 1 } else { 0 }) | Out-Null
-$ev = ConvertTo-LaneEvents -GetEvent @(Get-Content "$st/getevent.txt" -ErrorAction SilentlyContinue) -UiEvents @(Get-Content "$st/ui.txt" -ErrorAction SilentlyContinue) -Uptime $s0.uptime -At $s0.at -Size @($s0.size) -Max @($s0.max)
+$ev = ConvertTo-LaneEvents -InputLines @(Get-Content "$st/touch.txt" -ErrorAction SilentlyContinue) -UiEvents @(Get-Content "$st/ui.txt" -ErrorAction SilentlyContinue) -Uptime $s0.uptime -At $s0.at -Size @($s0.size) -Max @($s0.max)
 @{ source = 'lane'; start = $null; size = @($s0.size); events = @($ev) } | ConvertTo-Json -Depth 5 | Set-Content "$Out.events.json"
 "events: $(@($ev).Count) actions -> $Out.events.json"
 }

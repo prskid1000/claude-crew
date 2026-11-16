@@ -44,7 +44,7 @@ function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
   $rows = @($g.Values | ForEach-Object { [pscustomobject]@{ name = $_.name; running = $_.running; queued = $_.queued; done = $_.done; ram = [math]::Round($_.ram, 1); peakGB = [math]::Round($_.peakGB, 1)
         waitAvg = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Average).Average, 1) } else { 0 }); waitMax = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Maximum).Maximum, 1) } else { 0 })
         hours = @($_.hours | ForEach-Object { , @([int]$_[0], [math]::Round($_[1], 1), [math]::Round($_[2], 1)) }) } } | Sort-Object { - ($_.running * 1000 + $_.queued * 100 + $_.done) })
-  $lanes = @(try { (Get-Content (Join-Path $KitConf.Kit 'skills/phoney/swarm.config.json') -Raw -ErrorAction Stop | ConvertFrom-Json).lanes } catch { })
+  $lanes = @(try { (Read-KitText (Join-Path $KitConf.Kit 'skills/phoney/swarm.config.json') | ConvertFrom-Json).lanes } catch { })
   [pscustomobject]@{ h0 = $h0.ToString('o'); running = $run.Count; queued = $que.Count; today = [int](($rows | Measure-Object done -Sum).Sum); waitMax = [double](@($rows.waitMax) + 0 | Measure-Object -Maximum).Maximum
     ram = [math]::Round([double](($run | Measure-Object need -Sum).Sum), 1); rows = $rows
     lanes = $lanes.Count; leased = @($lanes | Where-Object { $_.name -and (Test-Path (Join-Path (Get-KitPath phones) "$($_.name).json")) }).Count; emulators = @($Resources | Where-Object { "$($_.name)" -like 'phone *' }).Count

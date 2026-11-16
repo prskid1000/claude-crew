@@ -11,7 +11,9 @@ One folder, feature or service; findings only, no code changes. `<kit>` = the wo
    absence is never a Bug. Functional Gap / UX / Reporting: `in_scope: "No"`, `product_decision: "Yes"`. Never invent features.
 2. Evidence, strongest first: live/test data > code (`file:line`) > DB/API schema > docs > git history. Map the module across
    layers, walk each area (settings, master data, transactions, calculations, sync, reports, jobs, API, schema); a large module:
-   the caller runs one revy (kind module) per layer, then one more merges, dedupes and assigns ids.
+   the caller runs one revy (kind module) per layer, then one more merges, dedupes and assigns ids. Read code in place (the
+   checkout or an existing worktree; another ref: `git grep <pattern> <ref>`, `git show <ref>:<path>`); never copy a source
+   tree into your agent folder.
 3. False-positive pre-flight per candidate: confirmed in code/data (else `current` starts `(unverified)`, severity <= Medium)?
    intended by docs / a setting / a decision / the by-design list? already fixed on a branch or open MR (`git log --all
    --since=6.months --grep=<topic>`)? the "missing" field required for this record type? grep all layers before "missing";

@@ -86,7 +86,7 @@ if (Use-BrowserKit) {
   [IO.File]::WriteAllText($uiRow, '<style>div{display:grid;gap:8px}</style><div style="grid-template-columns:repeat(4,1fr)"><p data-fit>a<p data-fit>b<p data-fit>c</div><div style="grid-template-columns:repeat(3,1fr)"><p data-fit>a<details style="margin:8px"><summary>b</summary></details><p data-fit>c</div><div style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr))"><article>lone</article></div><section style="columns:3 300px"><article>col</article></section>')
   $uiRowOut = @(& $py -X utf8 $uiKb ui-check $uiRow --widths 1366,900 2>&1)
   Expect "ui-check: a card row 24+ px short of its box, a lone grid card, empty CSS columns fail at 1280+ px only ($($uiRowOut -match 'rows'))" (@($uiRowOut -match 'CLIP rows: a card row ends').Count -eq 2 -and @($uiRowOut -match 'CLIP rows: a lone card ends').Count -eq 2 -and @($uiRowOut -match 'CLIP rows: CSS columns end').Count -eq 2 -and @($uiRowOut -match '^900 px .* 0 clipped').Count -eq 2)
-  git init -q $k; git -C $k add skills/bossy; git -C $k commit -q -m base; Add-Content (Join-Path $k 'skills/bossy/adapters/supervise_resources.ps1') '# touched'
+  git init -q $k; git -C $k add skills/bossy; git -C $k commit -q -m base; $uiSr = Join-Path $k 'skills/bossy/adapters/supervise_resources.ps1'; Undo-TestKitLink $uiSr; Add-Content $uiSr '# touched'
   $uiWarn = { & $py -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print([w for _, w, _ in kitbag.ui_check_warns(sys.argv[2])])" (Join-Path $k 'skills/bossy') $k }
   $uiWarnBefore = & $uiWarn
   $uiPage = Join-Path (Kd) 'dash.html'

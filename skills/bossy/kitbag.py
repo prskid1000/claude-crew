@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L34 paths · L88 state · L143 kitlog · L242 load · L636 lint · L1041 README graph · L1144 lint command · L1380 audit ·
-  L1496 registry · L1828 arch lint · L2095 prose · L2246 sections · L2376 budget · L2390 migrate · L2550 plugins ·
-  L2604 state lint · L2792 main
+Sections: L35 paths · L89 state · L146 kitlog · L245 load · L639 lint · L1044 README graph · L1147 lint command · L1383 audit ·
+  L1499 registry · L1831 arch lint · L2098 prose · L2249 sections · L2379 budget · L2393 migrate · L2553 plugins ·
+  L2607 state lint · L2795 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 KIT_DIR = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))   # 3 levels up: <kit>
+os.environ['GIT_OPTIONAL_LOCKS'] = '0'   # git probes (status, diff) never rewrite a repo's index (lib.ps1 sets it too)
 
 # ---- paths: kit.example.json _paths
 with open(osp.join(KIT_DIR, 'skills', 'crafty', 'kit.example.json'), encoding='utf-8') as _f:
@@ -111,6 +112,8 @@ def task_file(task):
 
 def task_index(task, change, folder=None):
     """Change .state/tasks/<id>.json (docs.<kind>, comments.<kind>, envRuns, track) under its lock; folder: another tasks/ dir."""
+    if not str(task) or str(task).startswith('-'):   # `cases round --help` wrote tasks/--help.json
+        raise SystemExit(f'no task id: {task!r} (a flag is no task id)')
     f = osp.join(folder, re.sub(r'[^\w.-]', '_', str(task)) + '.json') if folder else task_file(task)
     os.makedirs(osp.dirname(f), exist_ok=True)
     with locked(f):

@@ -686,7 +686,7 @@ function Get-OrphanQaItems([int]$Hours = 48) {
       Where-Object { -not $_.completed -and (Test-KitHolder $_) -ne $false } | ForEach-Object { [string]$(if ($_.runDir) { $_.runDir } else { $_.args.runDir }) } | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf })
   foreach ($d in Get-ChildItem -LiteralPath (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-$Hours) -and $_.Name -notin $live }) {
     $codes = @(); $fails = @()
-    foreach ($it in @(try { (Get-Content -LiteralPath (Join-Path $d.FullName 'run.json') -Raw -ErrorAction Stop | ConvertFrom-Json).items } catch { })) {
+    foreach ($it in @(try { (Read-KitText (Join-Path $d.FullName 'run.json') | ConvertFrom-Json).items } catch { })) {
       $c = [string]$it.code; $id = Join-Path $d.FullName $c
       if (-not $c -or -not (Test-Path (Join-Path $id 'results.json')) -or (Test-Path (Join-Path $id 'finalize.json')) -or (Test-Path (Join-Path $id 'held.json'))) { continue }
       $codes += $c
@@ -1145,7 +1145,7 @@ $liveNames = @($liveLabels | ForEach-Object { LabelNames $_ })
 $runNames = @($runningLabels | ForEach-Object { LabelNames $_ })   # running even idle: an earlier decide:SD result closed a live resume:SD
 $doneNames = @($doneLabels | ForEach-Object { LabelNames $_ } | Where-Object { $_ -and $_ -notin $liveNames -and $_ -notin $runNames })
 # workflow steps for Test-KitLive
-Write-KitAtomic (Get-KitPath live-steps -Create) (@{ at = $now.ToString('o'); running = @($runningLabels); labels = @(@($runningLabels) + @($doneLabels) | Where-Object { $_ } | Select-Object -Unique) } | ConvertTo-Json)
+Write-KitAtomic (Get-KitPath live-steps -Create) (@{ at = $now.ToString('o'); running = @($runningLabels); labels = @(@($runningLabels) + @($doneLabels) | Where-Object { $_ } | Select-Object -Unique) } | ConvertTo-Json) -Volatile '"at":\s*"[^"]*"'
 foreach ($s in $stale | Where-Object { $_.agent -in $doneNames -and (-not $doneAt[$_.agent] -or -not $_.joined -or [datetime]$_.joined -le $doneAt[$_.agent]) }) {   # an older result never closes a newer entry
   if ($AutoFix) { & $markLeft $s 'finished'; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) left: its workflow step has a journal result" 'Nothing to do.' }
 }
@@ -2062,7 +2062,7 @@ $kit = $KitConf.Kit
 function Say($s) { if (-not $Quiet) { $s } }
 
 function Set-Memory {
-  try { $cfg = Get-Content $KitConf.ConfigFile -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $cfg = $null }
+  try { $cfg = Read-KitText $KitConf.ConfigFile | ConvertFrom-Json } catch { $cfg = $null }
   if ($cfg -and $cfg.memory -and $cfg.memory.keepDefault) { return $null }
   $gd = "$(git -C $kit rev-parse --path-format=absolute --git-dir 2>$null)".Trim(); $cd = "$(git -C $kit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
   if ($gd -and $cd -and $gd -ne $cd) { return 'memory: a linked kit worktree - autoMemoryDirectory is set only in the main clone' }

@@ -11,8 +11,8 @@ ios (Simulators, macOS) | none (verbs refuse; app checks NOT_TESTED).
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
-Sections: L21 config · L110 phone · L306 build · L455 install · L482 launch · L496 avd · L583 up · L674 down · L704 slim ·
-  L731 arrange
+Sections: L21 config · L111 phone · L307 build · L456 install · L483 launch · L497 avd · L584 up · L675 down · L705 slim ·
+  L732 arrange
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -45,7 +45,8 @@ function Get-SwarmConfig {
   $c | Add-Member -Force out $out
   $c | Add-Member -Force apkDir $apkDir
   $c | Add-Member -Force appFile (Join-Path $apkDir "app.$(if ($c.kind -eq 'ios') { 'app' } else { 'apk' })")
-  $abi = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64-v8a' } else { 'x86_64' }   # the host's own ABI: no translation
+  $arm = if ($KitIsWindows) { "$env:PROCESSOR_ARCHITEW6432 $env:PROCESSOR_ARCHITECTURE" -match 'ARM64' } else { "$(uname -m)" -match 'arm64|aarch64' }
+  $abi = if ($arm) { 'arm64-v8a' } else { 'x86_64' }   # the host's own ABI: no translation
   # lane AVD: neutral defaults < kit.local.json devices.avd < swarm.config.json avd
   $av = @{ abi = $abi; api = 'android-35'; device = 'pixel_7'; tag = 'google_apis' }
   $ka = Get-KitSetting 'devices.avd' $null; if ($ka) { foreach ($p in $ka.PSObject.Properties) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }
@@ -662,7 +663,7 @@ foreach ($o in $out) {
 $out = $ready
 # merge by lane (empty/corrupt file = none)
 Invoke-KitLocked $c.state {
-  $prev = try { @(Get-Content $c.state -Raw -ErrorAction Stop | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
+  $prev = try { @(Read-KitText $c.state | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
   ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
 }
 foreach ($i in 1..3) { Start-Sleep 4; & $KitCmd.swarm arrange | Out-Null }

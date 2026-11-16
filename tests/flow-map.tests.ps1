@@ -55,6 +55,13 @@ os.remove(cp); print('cachekey=' + str(v['v'] == flow.PARSER_KEY != str(flow.VER
 kf = types.SimpleNamespace(files=list(S), texts=S, dir=sys.argv[2], skills=[], agents={}, workflows={})   # unchanged parses: no rewrite; write=False: never
 flow.model(kf, [], cp); os.utime(cp, ns=(10**15, 10**15)); t0 = os.stat(cp).st_mtime_ns; flow.model(kf, [], cp); same = os.stat(cp).st_mtime_ns == t0; os.remove(cp)
 flow.model(kf, [], cp, write=False); print('cachewrite=' + str(same and not os.path.exists(cp)))
+pg = cp + '.html'; flow.write_changed(pg, 'x'); os.utime(pg, ns=(10**15, 10**15)); flow.write_changed(pg, 'x'); same = os.stat(pg).st_mtime_ns == 10**15
+flow.write_changed(pg, 'y'); print('pagewrite=' + str(same and open(pg).read() == 'y')); os.remove(pg)
+import shutil, subprocess   # the page is drawn by the live clone's lint only: a linked worktree or a copy outside git never
+lv = cp + '-live'; g = lambda *a: subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a], capture_output=True)
+g('init', '-q', lv); g('-C', lv, 'commit', '-q', '--allow-empty', '-m', 'x'); g('-C', lv, 'worktree', 'add', '-q', '--detach', lv + '-wt')
+print('live=' + str(flow.is_live(lv) and not flow.is_live(lv + '-wt') and not flow.is_live(sys.argv[2])))
+g('-C', lv, 'worktree', 'remove', '--force', lv + '-wt'); shutil.rmtree(lv, ignore_errors=True)
 '@
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
 $pgOut = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-$PID.html"
@@ -118,6 +125,8 @@ $checks += [ordered]@{
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
   'the flow cache key holds the parser hash: an old-parser cache is re-parsed' = $res -match 'cachekey=True'
   'the flow cache is rewritten only when a parse changed; a read-only cache (tests) is never written' = $res -match 'cachewrite=True'
+  'the flow page is rewritten only when its bytes change' = $res -match 'pagewrite=True'
+  'lint draws the flow page in the live clone only, never from a linked worktree or a kit copy' = $res -match 'live=True'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
   'run-then-read is a loop from a script, never from a test file, a doc step or one read-modify-write' = $res -match 'scc-tests=0 scc-driver=1 scc-doc=0 scc-rmw=0'
   'verbs from COMMANDS tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'
