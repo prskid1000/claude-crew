@@ -17,12 +17,8 @@ function New-PresetKit([string]$n) {
 $mysqld = Get-Command mysqld -ErrorAction SilentlyContinue
 if (-not $mysqld -or -not (Get-Command mysqlbinlog -ErrorAction SilentlyContinue)) { 'SKIP flashback round trip (no mysqld / mysqlbinlog on PATH)'; Complete-Tests }
 $k3 = New-PresetKit le3; $k = $k3; $L3 = Join-Path $k3 'skills/envy/envy.ps1'
-$fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $port = $fp.LocalEndpoint.Port; $fp.Stop()   # an OS-picked free port: 3390+ raced parallel runs
-$data = Join-Path $env:TEMP "mysqld-$PID"
-& $mysqld.Source --no-defaults --initialize-insecure "--datadir=$data" 2>&1 | Out-Null
-$srv = Start-Process $mysqld.Source -ArgumentList "--no-defaults `"--datadir=$data`" --port=$port --bind-address=127.0.0.1 --mysqlx=OFF --log-bin=binlog --server-id=1 --binlog-row-metadata=FULL" -WindowStyle Hidden -PassThru
+$tmSrv = Start-TestMySql -Binlog; $port = $tmSrv.port
 try {
-  for ($i = 0; $i -lt 60 -and -not (Test-NetConnection 127.0.0.1 -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue); $i++) { Start-Sleep 1 }
   $env:MYSQL_PWD = ''
   function Q([string]$sql) { Invoke-TestMySql $sql $port }
   Q @"
@@ -244,8 +240,7 @@ DELIMITER ;
   $pi = @(& { . $L3; Invoke-DbPool s; Invoke-DbPool s -Now; @(Get-DbExpectDoctor s).Count; (Get-DbPoolDoctor s).what }); $ps = & $poolMB 128
   Expect "db.bufferPool: a lease grows the pool to busyMB (chunk-aligned), idle shrinks it to idleMB only past the grace (-Now: loop exit); db.expect skips the pool; doctor row ($pg | $($pi -join ' | '))" ($pg -match '128 -> 256 MB \(a lease' -and $pb -eq 256 -and $pi[0] -match '256 -> 128 MB \(idle\)' -and $pi[1] -eq 0 -and $pi[2] -match 'innodb_buffer_pool_size 128 MB \(db\.bufferPool busy 200 / idle 128 MB\); server RAM \d+ MB' -and $ps -eq 128)
 } finally {
-  if ($srv -and -not $srv.HasExited) { & mysqladmin -h 127.0.0.1 -P $port -u root shutdown 2>&1 | Out-Null; $null = $srv.WaitForExit(30000); if (-not $srv.HasExited) { Stop-Process -Id $srv.Id -Force } }
-  Remove-Item $data -Recurse -Force -ErrorAction SilentlyContinue
+  Stop-TestMySql $tmSrv
   Remove-TestKit $k3
 }
 Complete-Tests

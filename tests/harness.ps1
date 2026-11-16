@@ -82,6 +82,28 @@ function Invoke-TestMySql([string]$Sql, [string]$Port) {
     if ($tmOut.Count -and $tmOut[-1] -eq '__kit_rows_end__') { return $tmOut | Select-Object -SkipLast 1 }
     if (-not $tmRead) { throw "mysql: exit 0 without the end marker (a write: not re-run, it may have run): $($Sql.Substring(0, [math]::Min(80, $Sql.Length)))" } }
   throw "mysql: a read without the end marker 3 times: $Sql" }
+# a scratch mysqld for one area file: data dir in the kit's runtime (work/tests, never %TEMP%), an OS-picked port, cheap writes (8 MB
+# redo, no doublewrite, lazy log flush: ~1 GB a suite before); -Binlog: ROW / FULL binlogs. Stop-TestMySql in a finally; a hard
+# kill leaves it to bossy.ps1 cleanup / supervise (no live launcher)
+function Start-TestMySql([switch]$Binlog) {
+  $tmExe = (Get-Command mysqld -ErrorAction Stop).Source
+  $tmRoot = & { . (Join-Path $src 'skills/crafty/lib.ps1'); Join-Path (Get-KitPath work) 'tests' }   # the source kit's runtime
+  $tmData = Join-Path $tmRoot "mysqld-$PID"; Remove-Item $tmData -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $tmRoot | Out-Null
+  $tmCheap = '--innodb-redo-log-capacity=8M --innodb-doublewrite=OFF --innodb-flush-log-at-trx-commit=2'
+  & $tmExe --no-defaults --initialize-insecure "--datadir=$tmData" --skip-log-bin @($tmCheap -split ' ') 2>&1 | Out-Null
+  $fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $tmPort = $fp.LocalEndpoint.Port; $fp.Stop()   # an OS-picked free port: 3390+ raced parallel runs
+  $tmLog = if ($Binlog) { '--log-bin=binlog --server-id=1 --binlog-row-metadata=FULL --sync-binlog=0' } else { '--skip-log-bin' }
+  $tmProc = Start-Process $tmExe -ArgumentList "--no-defaults `"--datadir=$tmData`" --port=$tmPort --bind-address=127.0.0.1 --mysqlx=OFF $tmCheap $tmLog" -WindowStyle Hidden -PassThru
+  for ($i = 0; $i -lt 60 -and -not (Test-NetConnection 127.0.0.1 -Port $tmPort -InformationLevel Quiet -WarningAction SilentlyContinue); $i++) { Start-Sleep 1 }
+  [pscustomobject]@{ proc = $tmProc; port = $tmPort; data = $tmData }
+}
+# a clean shutdown, else the whole tree (Windows: the started mysqld is a monitor, its worker a child: killing the monitor alone orphans it)
+function Stop-TestMySql($Server) {
+  if (-not $Server) { return }
+  if (-not $Server.proc.HasExited) { & mysqladmin -h 127.0.0.1 -P $Server.port -u root shutdown 2>&1 | Out-Null; $null = $Server.proc.WaitForExit(30000) }
+  try { $Server.proc.Kill($true) } catch {}
+  Remove-Item $Server.data -Recurse -Force -ErrorAction SilentlyContinue
+}
 # commit everything in $Dir (a git repo first if it is none)
 function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git -C $Dir init -q }; git -C $Dir add -A; git -C $Dir commit -q -m $Message }
 # a throw-away kit copy (the scripts the tests run) in %TEMP%; one per area file

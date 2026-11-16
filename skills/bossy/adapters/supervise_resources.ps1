@@ -1,16 +1,16 @@
 <#
 supervise_resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): build gate holders and queue, test locks, repeated build failures, the file cache flush (gate.cacheFlush),
-phone leases, env leases, QA seats and claims, test browsers and their profiles, idle daemons (cleanup.idleDaemons), the RAM rows of
+phone leases, env leases, QA seats and claims, test browsers and their profiles, idle daemons (cleanup.idleDaemons), orphan scratch DB servers, the RAM rows of
 the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), the report page (dashboard + Statistics from the logs; supervise.output, publish), seats and leases in board show and recover, the status resource rows, STUCK, pause and silent-run flags, release (every lease of an agent), launch: pauses it releases, a buildy launch's item tasks (-Self / -Check), stop-learn; sessions: several coordinators (run
 owners for pause / resume / recover, a stepped-aside session's own flags, task claims), the step-age handoff.
 Its hooks run inside the bossy.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L258 shells · L392 page · L883 release · L922 lines · L955 cleanup · L995 launch ·
-  L1073 pause · L1191 heartbeat · L1206 sessions · L1258 ci tasks ·
-  L1313 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L258 shells · L392 page · L883 release · L922 lines · L955 cleanup · L1016 launch ·
+  L1094 pause · L1212 heartbeat · L1227 sessions · L1279 ci tasks ·
+  L1334 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -990,6 +990,27 @@ function Invoke-KitCleanupResources {
       if (($now - $d.Created).TotalMinutes -gt 10) { [void]$actions.Add(("stopped idle {0} pid {1} ({2:N1} GB)" -f $(if ($dm.label) { $dm.label } else { $dm.match }), $d.Id, ($d.WorkingSet / 1GB))); $script:freed += [long]$d.WorkingSet; if (-not $DryRun) { Stop-SysProcess $d.Id } }
     }
   }
+}
+# scratch DB servers (tests' Start-TestMySql, an agent's probe) with a data dir in any kit runtime's work/: launcher gone for
+# idle.graceMinutes -> orphan; Windows mysqld = a monitor + its worker child, so the worker goes too (killing the monitor alone orphaned 6)
+function Get-KitScratchOrphans($Procs = $null, [datetime]$At = (Get-Date)) {
+  if ($null -eq $Procs) { $Procs = @(Get-SysProcs) }
+  $rx = "--datadir=`"?[^`"]*[\\/]$([regex]::Escape($script:KitPathMap.runtimeDir))[\\/]work[\\/]"
+  $dbs = @($Procs | Where-Object { $_.Name -match '^(mysqld|mariadbd)(\.exe)?$' -and "$($_.CommandLine)" -match $rx })
+  foreach ($d in $dbs | Where-Object { $_.ParentId -notin $dbs.Id }) {
+    $par = @($Procs | Where-Object Id -eq $d.ParentId)[0]
+    if (($par -and $par.Created -le $d.Created) -or ($At - $d.Created).TotalMinutes -lt [double](Get-KitParam 'idle.graceMinutes')) { continue }   # a pid reused later is no launcher
+    [pscustomobject]@{ id = $d.Id; ids = @(@($dbs | Where-Object ParentId -eq $d.Id | ForEach-Object Id) + $d.Id); dir = $(if ("$($d.CommandLine)" -match '--datadir="?([^" ]+)') { $Matches[1] }) }
+  }
+}
+function Stop-KitScratchOrphans([switch]$DryRun) {
+  if ($env:KIT_KEEP_DAEMONS) { return }   # tests: never the machine's servers
+  foreach ($o in @(Get-KitScratchOrphans)) { if (-not $DryRun) { foreach ($i in $o.ids) { Stop-SysProcess $i } }   # worker first: a live monitor restarts it
+    "$(if ($DryRun) { 'would stop' } else { 'stopped' }) orphan scratch DB server pid $($o.ids -join '+') ($($o.dir))" }
+}
+function Invoke-KitCleanupScratch { foreach ($l in @(Stop-KitScratchOrphans -DryRun:$DryRun)) { [void]$actions.Add($l) } }
+function Get-KitSuperviseFlagsScratch([switch]$AutoFix) {
+  foreach ($l in @(Stop-KitScratchOrphans -DryRun:(-not $AutoFix))) { [pscustomobject]@{ level = $(if ($AutoFix) { 'INFO' } else { 'WATCH' }); what = $(if ($AutoFix) { "auto-fixed: $l" } else { $l }); action = $(if ($AutoFix) { 'Nothing to do.' } else { 'supervise -AutoFix or bossy.ps1 cleanup stops it.' }) } }
 }
 
 # ---- launch: pauses a launch releases; a buildy launch's item tasks (launch -Self, launch -Check)
