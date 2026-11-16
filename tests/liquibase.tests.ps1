@@ -9,7 +9,7 @@ param([string]$Kit = (Split-Path $PSScriptRoot))
 . (Join-Path $Kit 'tests/harness.ps1')
 $k = New-TestKit liquibase
 New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters') | Out-Null
-Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/*') (Join-Path $k 'skills/crafty/adapters')
+Get-ChildItem (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters') -File | Where-Object { -not (Test-Path (Join-Path $k "skills/crafty/adapters/$($_.Name)")) } | Copy-Item -Destination (Join-Path $k 'skills/crafty/adapters')   # never over New-TestKit's hard links
 $repo = Join-Path (Kd) 'lb-repo'; $lb = Join-Path $repo 'config/liquibase'; New-Item -ItemType Directory -Force "$lb/changelog" | Out-Null
 @'
 <databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
