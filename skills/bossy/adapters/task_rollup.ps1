@@ -4,6 +4,7 @@ dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>[;<another>]]   -From stores the run's triage (item
     table + agents) in the parent's task state; then rebuilds and writes what changed; a task without subtasks: its Items only
   track run calls Invoke-KitTrackRollupHook: every parent with a not-done tracked subtask or a stored triage
+  bossy.ps1 track forget-item -Task <id> -Item <code>[,<code>]   items deleted on the tracker stay deleted (task state itemsDropped)
 Reads: task state (.state/tasks: track), the git host (Invoke-HostVerb mr.get / mr.url; merged MRs cached for good),
 the deploy log, the tracker (parent + its subtasks, one view per read). Writes (tracker adapter, only on a diff): the parent
 description between <!-- kit:delivery --> / <!-- kit:triage --> markers, the parent's "Items" checklist (one per subtask, lib.ps1
@@ -11,7 +12,7 @@ Update-KitParentItems), each subtask's "Items" checklist (adapter verb checklist
 one comment per milestone (all merged, deployed to <env>, all closed).
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L19 triage · L68 render · L146 rollup · L241 items · L286 close
+Sections: L20 triage · L69 render · L148 rollup · L245 items · L291 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -88,9 +89,10 @@ function Get-KitItemDesc([string]$Desc, $Rows) {
 # one subtask's items, severity first: fix items tick when merged; deferred / duplicate ones stay unticked with their reason.
 # rows: its area's, plus those its description's Items list names (one area across subtasks, several areas on one subtask)
 # URLs: the MRs naming the id, else those naming an area whose Items words list it ($DescMap: area id -> words), else (fix) all once merged
-function Get-KitSubItems($Tri, [string]$Area, [string[]]$DoneIds, [bool]$AllDone, $Mrs, $DescMap = @{}, [switch]$All) {
-  $said = "$(@($DescMap.Keys) + @($DescMap.Values) -join ' ')"
-  @($Tri.rows | Where-Object { $All -or ($Area -and $_.area -eq $Area) -or ($said -and $said -match "(?<![\w.-])$([regex]::Escape($_.id))(?![\w-]|\.\w)") } | Sort-Object -Stable { Get-KitSevRank $_.sev } | ForEach-Object {
+# never another task's: '(ports X)' words name the item ported, and a row of an area another subtask owns ($Foreign) stays there
+function Get-KitSubItems($Tri, [string]$Area, [string[]]$DoneIds, [bool]$AllDone, $Mrs, $DescMap = @{}, [switch]$All, [string[]]$Foreign = @()) {
+  $said = "$(@($DescMap.Keys) + @($DescMap.Values | ForEach-Object { "$_" -replace '\(ports\b(?:[^()]|\([^()]*(?:\)|$))*(?:\)|$)' }) -join ' ')"
+  @($Tri.rows | Where-Object { $All -or ($Area -and $_.area -eq $Area) -or ($said -and $Foreign -notcontains $_.area -and $said -match "(?<![\w.-])$([regex]::Escape($_.id))(?![\w-]|\.\w)") } | Sort-Object -Stable { Get-KitSevRank $_.sev } | ForEach-Object {
       $k = Get-KitItemKind $_.decision; $t = ConvertTo-KitOneLine $_.title; $rid = $_.id
       $d = "$(if ($_.sev) { "$($_.sev) · " })$(if ($k -eq 'fix') { $t } elseif ($k -eq 'defer') { "deferred: $t" } else { "$(ConvertTo-KitOneLine $_.decision): $t" })"
       $own = @($Mrs | Where-Object { @($_.ids) -contains $rid })
@@ -201,10 +203,12 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
       $di0 = @(Get-KitDescItems $stk.description); $sx.itemDesc = @{}; foreach ($e in $di0) { $sx.itemDesc[$e.id] = $e.text }; if ($di0.Count) { $sx.itemIds = @($di0.id) }
       $dsc = $sx.itemDesc; $dids = @($sx.itemIds); Update-KitTaskIndex $sb.id { param($x) $x.itemDesc = $dsc; $x.itemIds = $dids } }
     $dmap = if ($sx.itemDesc -is [Collections.IDictionary]) { $sx.itemDesc } else { @{} }; $mids = @($mrs | Where-Object state -eq 'merged' | ForEach-Object { @($_.ids) })
-    $items = @(Get-KitSubItems $tri "$($ag.area)" $mids $merged $mrs $dmap); if ($leaf -and -not $items.Count) { $items = @(Get-KitSubItems $tri '' $mids $merged $mrs $dmap -All) }
+    $fa = @($tri.agents | Where-Object { $_.task -and "$($_.task)" -ne $sb.id } | ForEach-Object { "$($_.area)" })
+    $items = @(Get-KitSubItems $tri "$($ag.area)" $mids $merged $mrs $dmap -Foreign $fa); if ($leaf -and -not $items.Count) { $items = @(Get-KitSubItems $tri '' $mids $merged $mrs $dmap -All) }
     if ($items.Count) {   # the task's own Items ids (areas) share the checklist: one ticks once every MR naming it merged, all once all merged
       $tid = @($items.id); $items += @(@($sx.itemIds) | Where-Object { $_ -and $tid -notcontains $_ } | ForEach-Object { $di = $_; $nm = @($mrs | Where-Object { @($_.ids) -contains $di })
           [pscustomobject]@{ id = $di; sev = ''; text = (Format-KitItemText $di (Get-KitItemDesc "$($sx.itemDesc[$di])" $tri.rows) $(if ($nm.Count) { @($nm.url) } elseif ($merged) { @($mrs.url) })); fix = $false; done = ($merged -or ($nm.Count -and -not @($nm | Where-Object state -ne 'merged').Count)) } })
+      $items = @($items | Where-Object { @($sx.itemsDropped) -notcontains $_.id })   # track forget-item: removed on the tracker, stays removed
       $isig = Get-KitRollupHash (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
       if ($isig -ne "$($sx.itemsSig)") { try { $null = Set-KitItemsChecklist $sb.id $items; Update-KitTaskIndex $sb.id { param($x) $x.itemsSig = $isig; $x.itemsFrom = 'triage' }; $did.Add("items $($sb.id)") } catch { $did.Add("items $($sb.id) FAILED: $("$_".Split("`n")[0])") } }
     }
@@ -261,7 +265,8 @@ function Get-KitDescItems([string]$Text) {
 function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
   $x = Read-KitState (Get-KitTaskFile $Task); if ($x.itemsFrom -in 'triage', 'subtasks' -or ($x.itemsFinal -and -not $Force)) { return }
   $dsc = @{}; if ($T) { foreach ($e in @(Get-KitDescItems $T.description)) { $dsc[$e.id] = $e.text } } elseif ($x.itemDesc -is [Collections.IDictionary]) { foreach ($k in $x.itemDesc.Keys) { $dsc[$k] = $x.itemDesc[$k] } }
-  $ids = @(@(if ($T) { Get-KitDescItemIds $T.description } else { $x.itemIds }) | Where-Object { $_ }); $tr = (Read-KitTracking).tasks[$Task]
+  $ids = @(@(if ($T) { Get-KitDescItemIds $T.description } else { $x.itemIds }) | Where-Object { $_ -and @($x.itemsDropped) -notcontains $_ }); $tr = (Read-KitTracking).tasks[$Task]
+  if (-not $ids.Count -and @($x.itemsDropped | Where-Object { $_ }).Count) { return }   # every item forgotten: no MRs line either
   $one = -not $ids.Count -or "$ids" -eq 'MRs'; if ($one) { if (-not @($tr.mrs).Count) { return }; $ids = @('MRs'); if ($T.name) { $dsc.MRs = $T.name } }
   $mc = @{}; if ($x.itemsMrs -is [Collections.IDictionary]) { foreach ($k in $x.itemsMrs.Keys) { $mc[$k] = $x.itemsMrs[$k] } }; $named = @{}
   $look = -not $x.itemsReadAt -or ((Get-Date) - [datetime]$x.itemsReadAt).TotalMinutes -ge [double](Get-KitSetting 'track.rollupMinutes' 30)
@@ -310,6 +315,17 @@ function Invoke-TaskRollup([string]$Task, [string]$From, [switch]$Quiet) {
     "track rollup: $(@($tri.rows).Count) item(s), $(@($tri.agents).Count) area(s) from $($tri.source) stored on $Task"
   }
   $o = Update-KitParentRollup $Task -Force; if ($o) { $o } elseif (-not $Quiet) { "ROLLUP ${Task}: no change" }
+}
+# items removed from a task's checklist on purpose: kept out of its Items (rollup and Items list), its spec and its stored Items words
+function Invoke-KitForgetItems([string]$Task, [string[]]$Item) {
+  $codes = @($Item | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ } | Select-Object -Unique)
+  if (-not $Task -or -not $codes.Count) { 'usage: bossy.ps1 track forget-item -Task <id> -Item <code>[,<code>...]'; exit 2 }
+  Update-KitTaskIndex $Task { param($x)
+    $x.itemsDropped = @(@($x.itemsDropped) + $codes | Where-Object { $_ } | Select-Object -Unique); $x.itemsSig = ''; $x.itemsFinal = $false
+    if ($x.itemIds) { $x.itemIds = @($x.itemIds | Where-Object { $codes -notcontains $_ }) }
+    if ($x.itemDesc -is [Collections.IDictionary]) { foreach ($c in $codes) { $x.itemDesc.Remove($c) } }
+    if ($x.spec -is [Collections.IDictionary] -and $x.spec.items) { $x.spec.items = @($x.spec.items | Where-Object { $codes -notcontains "$($_.code)" }) } }
+  "track forget-item ${Task}: $($codes -join ', ') dropped; the next rollup (track rollup -Task <parent>) writes its Items without them"
 }
 # parents: a stored triage, or the tracker parent of a not-done tracked task (looked up once per task, 10 per run)
 function Invoke-KitTrackRollupHook([switch]$Quiet) {

@@ -11,6 +11,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Usage] [-Json]   agent budget, run cap + spend; -Usage: page usage
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged and every launched area delivered (add: at once; -HoldPromotion '' releases)
     | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists
+    | forget-item -Task -Item <codes>   items removed from a task's checklist on purpose: never written back
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
     one row per resource: holder, since, last seen, last used (files only)
@@ -24,9 +25,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L32 init · L43 board · L220 budget · L250 launch · L491 recover · L578 pause · L589 resume · L656 program · L707 param ·
-  L713 track · L1029 supervise · L1330 report · L1409 audit · L1469 storage · L1472 bugbrief · L1583 cleanup · L1667 learn ·
-  L1698 decide · L1832 debate · L1876 health · L1939 retro due · L1949 tidy · L2015 setup · L2109 guard-sendmessage
+Sections: L33 init · L44 board · L221 budget · L251 launch · L492 recover · L579 pause · L590 resume · L657 program · L708 param ·
+  L714 track · L1031 supervise · L1332 report · L1411 audit · L1471 storage · L1474 bugbrief · L1585 cleanup · L1669 learn ·
+  L1700 decide · L1834 debate · L1878 health · L1941 retro due · L1951 tidy · L2017 setup · L2111 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -739,7 +740,7 @@ function NormRef($r) {
 }
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' } }   # group/repo!n too
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'rollup')][string]$Action = 'show', [string]$Reason, [string]$From, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
+param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'rollup', 'forget-item')][string]$Action = 'show', [string]$Reason, [string]$From, [string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # throw is swallowed under SilentlyContinue
@@ -1011,6 +1012,7 @@ switch ($Action) {
     try { Invoke-KitHooks Invoke-KitTrackRollup @{ Quiet = $Quiet } } catch { "ROLLUP hook failed: $("$_".Split("`n")[0])" }   # adapters/task_rollup.ps1: parents' delivery sections
   }
   'rollup' { Invoke-TaskRollup -Task $Task -From $From -Quiet:$Quiet }
+  'forget-item' { Invoke-KitForgetItems -Task $Task -Item $Item }
 }
 }
 

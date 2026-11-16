@@ -124,5 +124,24 @@ $bf = & {
 Expect "rollup -From 'a;b': briefy columns (Owner area, Ports -> '(ports X)'); a subtask's items = the ids its Items list names, beside its area items ($($bf.o))" ($bf.o -match '4 item\(s\)' -and $bf.i1 -match '(?s)- \[ \] H-P1-S01 · HM tables agent \(ports P1-JS-01\)\n- \[ \] H-P1-C01 · Chat with an agent \(ports P1-JC-02\)\n- \[ \] HS · HM tables agent \(ports P1-JS-01\)\n- \[ \] HC · Chat with an agent' -and $bf.i1 -notmatch 'H-P2-C01' -and $bf.i2 -match '- \[ \] H-P2-C01 · Unattended chats' -and $bf.i2 -notmatch 'H-P1')
 Expect "rollup parent: its Items checklist = one item per subtask '<code> · <name without [Kind]> · <URL>', ticked once closed" ($bf.pd -match "(?s)\*\*Items\*\*\n- \[ \] HM-P1 · HM P1: store · \S*$($bf.s1)\S*\n- \[ \] HM-P2 · HM P2: triggers · " -and $bf.pd2 -match '- \[x\] HM-P2 · HM P2: triggers')
 Expect "rollup without subtasks: the item table -> its own Items checklist; none stored -> says so ($($bf.ol) | $($bf.os))" ($bf.ld -match '- \[ \] H-P1-S01 · HM tables agent \(ports P1-JS-01\)' -and $bf.ld -notmatch 'H-P1-C01' -and $bf.ol -match 'its Items checklist only' -and $bf.os -match 'nothing to write')
+# never another task's items: a row of an area another subtask owns, a '(ports X)' mention; track forget-item keeps a removed item out
+$fx = & {
+  $env:KIT_TRACKER_TYPE = 'none'; . (Join-Path $k 'skills/bossy/bossy.ps1') 6>$null; $view = { param($i) __TrA 'view' @{ id = $i } }
+  $b4 = Join-Path (Kd) 'brief-d'; New-Item -ItemType Directory -Force $b4 | Out-Null
+  Set-Content (Join-Path $b4 'items.md') "| ID | Owner area | Ports | Title |`n|---|---|---|---|`n| P1-JS-01 | P1 | | RM tables |`n| P1-JC-02 | RX | | RM chat |`n| HM-S01 | HS | P1-JS-01 | HM tables |`n| HM-C01 | HC | P1-JC-02 | HM chat |"
+  $p = (__TrA 'create' @{ name = 'Port parent' }).id; $rm = (__TrA 'create' @{ name = '[Feature] RM P1'; parent = $p }).id
+  $hm = (__TrA 'create' @{ name = '[Feature] HM P1'; parent = $p; description = "**Items:**`n- HM-S01: HM tables, like P1-JS-01 (ports P1-JS-01)`n- HM-C01: HM chat (ports P1-JC-02)" }).id
+  Set-JsonFile (Join-Path $b4 'rollup-agents.json') @{ agents = @(@{ id = 'P1'; task = $rm }, @{ id = 'HM-P1'; task = $hm }) }
+  $null = Invoke-TaskRollup -Task $p -From $b4; $h1 = (& $view $hm).description; $r1 = (& $view $rm).description
+  $fo = Invoke-KitForgetItems -Task $hm -Item 'HM-C01'; $null = Invoke-TaskRollup -Task $p
+  function ProjPath($r) { "g/$r" }; function Invoke-HostVerb([string]$Verb, [hashtable]$A) { if ($Verb -eq 'mr.url') { return "https://git/$($A.repo)/$($A.n)" }; @{ state = 'merged'; title = 'fix: Z1' } }
+  $z = (__TrA 'create' @{ name = 'Only one'; description = "**Items:** Z1 fix it" }).id; Update-KitTaskIndex $z { param($x) $x.track = @{ task = $z; mrs = @('api-repo!21'); done = $true } }
+  $null = Invoke-KitForgetItems -Task $z -Item 'Z1'; $zo = Update-KitTaskItems $z (& $view $z) -Force
+  $cut = Get-KitSubItems ([pscustomobject]@{ rows = @([pscustomobject]@{ id = 'P2-JT-05'; area = 'RX'; title = 't'; decision = 'fix'; sev = '' }) }) '' @() $false @() @{ 'HM-C1' = 'chats (ports P2-JT-05 (chat A…' }
+  [pscustomobject]@{ h1 = $h1; r1 = $r1; h2 = (& $view $hm).description; fo = "$fo"; dropped = @((Read-KitState (Get-KitTaskFile $hm)).itemsDropped) -join ','; zo = "$zo"; zd = (& $view $z).description; cut = @($cut).Count }
+}
+Expect "rollup: a subtask never gets another subtask's area rows or the rows its '(ports X)' words name ($($fx.h1 -replace '\s+', ' '))" ($fx.h1 -match '(?m)^- \[ \] HM-S01 · ' -and $fx.h1 -match '(?m)^- \[ \] HM-C01 · ' -and $fx.h1 -notmatch '(?m)^- \[.\] P1-' -and $fx.r1 -match '(?m)^- \[ \] P1-JS-01 · RM tables' -and $fx.r1 -notmatch 'HM-')
+Expect "track forget-item: the item stays out of the next rollup; stored as itemsDropped ($($fx.fo))" ($fx.h2 -notmatch '(?m)^- \[.\] HM-C01' -and $fx.h2 -match '(?m)^- \[ \] HM-S01 · ' -and $fx.dropped -eq 'HM-C01' -and $fx.fo -match 'HM-C01 dropped')
+Expect "track forget-item of every item: no 'MRs' line instead; a cut '(ports X (y…' value names nothing ($($fx.zo) | $($fx.cut))" (-not $fx.zo -and $fx.zd -notmatch 'kit:items' -and $fx.cut -eq 0)
 Remove-TestKit $k
 Complete-Tests
