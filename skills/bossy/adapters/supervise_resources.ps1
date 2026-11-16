@@ -995,17 +995,17 @@ function Invoke-KitCleanupResources {
 # idle.graceMinutes -> orphan; Windows mysqld = a monitor + its worker child, so the worker goes too (killing the monitor alone orphaned 6)
 function Get-KitScratchOrphans($Procs = $null, [datetime]$At = (Get-Date)) {
   if ($null -eq $Procs) { $Procs = @(Get-SysProcs) }
-  $rx = "--datadir=`"?[^`"]*[\\/]$([regex]::Escape($script:KitPathMap.runtimeDir))[\\/]work[\\/]"
+  $rx = "--datadir=(`"[^`"]*|[^`" ]*)[\\/]$([regex]::Escape($script:KitPathMap.runtimeDir))[\\/]work[\\/]"   # never across into the next argument (--tmpdir)
   $dbs = @($Procs | Where-Object { $_.Name -match '^(mysqld|mariadbd)(\.exe)?$' -and "$($_.CommandLine)" -match $rx })
-  foreach ($d in $dbs | Where-Object { $_.ParentId -notin $dbs.Id }) {
+  foreach ($d in $dbs | Where-Object { $_.ParentId -notin $dbs.Id -and $_.Created }) {
     $par = @($Procs | Where-Object Id -eq $d.ParentId)[0]
-    if (($par -and $par.Created -le $d.Created) -or ($At - $d.Created).TotalMinutes -lt [double](Get-KitParam 'idle.graceMinutes')) { continue }   # a pid reused later is no launcher
-    [pscustomobject]@{ id = $d.Id; ids = @(@($dbs | Where-Object ParentId -eq $d.Id | ForEach-Object Id) + $d.Id); dir = $(if ("$($d.CommandLine)" -match '--datadir="?([^" ]+)') { $Matches[1] }) }
+    if (($par -and (-not $par.Created -or $par.Created -le $d.Created)) -or ($At - $d.Created).TotalMinutes -lt [double](Get-KitParam 'idle.graceMinutes')) { continue }   # a pid reused later is no launcher
+    [pscustomobject]@{ id = $d.Id; ids = @(@($d.Id) + @($dbs | Where-Object ParentId -eq $d.Id | ForEach-Object Id)); dir = $(if ("$($d.CommandLine)" -match '--datadir="?([^" ]+)') { $Matches[1] }) }
   }
 }
 function Stop-KitScratchOrphans([switch]$DryRun) {
   if ($env:KIT_KEEP_DAEMONS) { return }   # tests: never the machine's servers
-  foreach ($o in @(Get-KitScratchOrphans)) { if (-not $DryRun) { foreach ($i in $o.ids) { Stop-SysProcess $i } }   # worker first: a live monitor restarts it
+  foreach ($o in @(Get-KitScratchOrphans)) { if (-not $DryRun) { foreach ($i in $o.ids) { Stop-SysProcess $i } }   # monitor first (no restart), then its worker found before
     "$(if ($DryRun) { 'would stop' } else { 'stopped' }) orphan scratch DB server pid $($o.ids -join '+') ($($o.dir))" }
 }
 function Invoke-KitCleanupScratch { foreach ($l in @(Stop-KitScratchOrphans -DryRun:$DryRun)) { [void]$actions.Add($l) } }

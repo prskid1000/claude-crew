@@ -33,11 +33,11 @@ $script:KitGateLabels = $null; $__cfg = [pscustomobject]@{ gate = [pscustomobjec
 "labels:$((Get-KitGateGroup 'zig' 'x') -eq 'zig build' -and (Get-KitGateGroup 'maven-test' 'x') -eq 'all maven' -and (Get-KitGateGroup 'ng-test' 'x') -eq 'js tests')"
 $sp = { param($i, $p, $n, $c, $m) [pscustomobject]@{ Id = $i; ParentId = $p; Name = $n; CommandLine = $c; Created = $now.AddMinutes(-$m) } }; $rd = $script:KitPathMap.runtimeDir; $wd = "--no-defaults `"--datadir=D:/k/$rd/work/tests/mysqld-1`""
 $so = @(Get-KitScratchOrphans @((& $sp 50 1 'pwsh.exe' 'pwsh' 120), (& $sp 51 50 'mysqld.exe' $wd 60), (& $sp 60 99 'mysqld.exe' $wd 60), (& $sp 61 60 'mysqld.exe' $wd 60), (& $sp 70 99 'mysqld.exe' $wd 2),
-  (& $sp 80 99 'mysqld.exe' '--defaults-file=D:/k/.state/env.ini' 60), (& $sp 90 91 'mariadbd' "--datadir=/k/$rd/work/agents/x/probe" 60), (& $sp 91 1 'bash' 'bash' 5)) $now)
+  (& $sp 80 99 'mysqld.exe' "--defaults-file=D:/k/env.ini --datadir=D:/k/data --tmpdir=D:/k/$rd/work/tmp" 60),(& $sp 90 91 'mariadbd' "--datadir=/k/$rd/work/agents/x/probe" 60), (& $sp 91 1 'bash' 'bash' 5)) $now)
 "scratch:$(($so | ForEach-Object { $_.ids -join '+' }) -join ',')"
 '@ @($O, (Kd))
 Expect-Each $gen 'resources generic: #' 'none', 'own', 'busy', 'caches', 'cachedef', 'labels-def', 'labels' -Show 6
-Expect "scratch DB servers: launcher gone past idle.graceMinutes = orphan, its worker child too; a live or reused-later launcher, a young one, an env server (no runtime work/ data dir) stay ($(@($gen) -match '^scratch:'))" (@($gen) -contains 'scratch:61+60,90')
+Expect "scratch DB servers: launcher gone past idle.graceMinutes = orphan, its worker child too; a live or reused-later launcher, a young one, an env server (data dir outside runtime work/, its --tmpdir inside) stay; monitor first ($(@($gen) -match '^scratch:'))" (@($gen) -contains 'scratch:60+61,90')
 # a CI-raised test task (tracker.ciTaskPattern): track add of its merged fix MR promotes it with no testing docs, holds while the
 # named job runs again on its branch, closes it with ONE qa-result comment linking the passing job; a plain task keeps the doc gate
 $ciTrack = Invoke-PsTest track-ci @'

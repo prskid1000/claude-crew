@@ -95,14 +95,16 @@ function Start-TestMySql([switch]$Binlog) {
   $tmLog = if ($Binlog) { '--log-bin=binlog --server-id=1 --binlog-row-metadata=FULL --sync-binlog=0' } else { '--skip-log-bin' }
   $tmProc = Start-Process $tmExe -ArgumentList "--no-defaults `"--datadir=$tmData`" --port=$tmPort --bind-address=127.0.0.1 --mysqlx=OFF $tmCheap $tmLog" -WindowStyle Hidden -PassThru
   for ($i = 0; $i -lt 60 -and -not (Test-NetConnection 127.0.0.1 -Port $tmPort -InformationLevel Quiet -WarningAction SilentlyContinue); $i++) { Start-Sleep 1 }
-  [pscustomobject]@{ proc = $tmProc; port = $tmPort; data = $tmData }
+  $tmSrv = [pscustomobject]@{ proc = $tmProc; port = $tmPort; data = $tmData }
+  if ($i -ge 60) { Stop-TestMySql $tmSrv; throw "Start-TestMySql: mysqld not listening on $tmPort after 60 s" }
+  $tmSrv
 }
 # a clean shutdown, else the whole tree (Windows: the started mysqld is a monitor, its worker a child: killing the monitor alone orphans it)
 function Stop-TestMySql($Server) {
   if (-not $Server) { return }
   if (-not $Server.proc.HasExited) { & mysqladmin -h 127.0.0.1 -P $Server.port -u root shutdown 2>&1 | Out-Null; $null = $Server.proc.WaitForExit(30000) }
-  try { $Server.proc.Kill($true) } catch {}
-  Remove-Item $Server.data -Recurse -Force -ErrorAction SilentlyContinue
+  try { $Server.proc.Kill($true) } catch {}; $null = $Server.proc.WaitForExit(10000)
+  for ($tmTry = 0; $tmTry -lt 10 -and (Test-Path $Server.data); $tmTry++) { Remove-Item $Server.data -Recurse -Force -ErrorAction SilentlyContinue; if (Test-Path $Server.data) { Start-Sleep -Milliseconds 500 } }   # a killed worker frees its files a moment later
 }
 # commit everything in $Dir (a git repo first if it is none)
 function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git -C $Dir init -q }; git -C $Dir add -A; git -C $Dir commit -q -m $Message }
