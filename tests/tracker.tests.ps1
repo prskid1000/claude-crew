@@ -160,21 +160,6 @@ $lk = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 & $J @{ session = 'os-timer'; at = (Get-Date).ToString('o'); pid = 1 } $lk; $sv1 = Px $O supervise -Session coord-a | Out-String
 & $J @{ session = 'coord-a'; at = (Get-Date).ToString('o'); pid = 1 } $lk; $sv2 = Px $O supervise -Session os-timer | Out-String
 Expect 'supervise: a session never steps aside for the OS timer; the OS timer steps aside for a session' ($sv1 -notmatch 'steps aside' -and $sv2 -match 'steps aside')
-# area scope (incident 2026-11-14: a spec-only area merged product files): the globs rule (= devtools.py selftest), the post-hoc WATCH, wt commit + the scope word
-$sc = Invoke-PsTest scope @'
-$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'
-$g = @('rm/api/cypress/**', 'rm/api/package.json'); $d = @('rm/api/cypress/e2e/a.cy.js', 'rm/api/package.json', 'rm/api/src/Inv.java', 'rm/api/cypress.config.js')
-"globs:$("$(Get-KitScopeOutside $d $g)" -eq 'rm/api/src/Inv.java rm/api/cypress.config.js' -and -not @(Get-KitScopeOutside $d @()).Count -and "$(Get-KitScopeOutside 'a/x.ts', 'a/b/x.ts', 'A/x.ts' 'a/*.ts')" -eq 'a/b/x.ts A/x.ts')"
-function Get-HostProject($r) { "g/$r" }; $global:calls = 0
-function Invoke-HostVerb($v, $a) { $global:calls++; $p = "x/$($a.n)$(if ($v -eq 'mr.changes') { '/changes' })"; if ($p -match '/changes$') { @{ changes = @(@{ new_path = 'rm/api/cypress/e2e/a.cy.js' }, @{ new_path = 'rm/api/src/Inv.java'; old_path = 'rm/api/src/Inv.java' }) } } else { @{ state = $(if ($p -match '/7$') { 'opened' } else { 'merged' }); merged_at = (Get-Date).ToString('o') } } }
-foreach ($m in 'java!5', 'java!6', 'java!7') { Write-KitLog scope-log area @{ mr = $m; branch = "b$($m[-1])"; globs = $(if ($m -eq 'java!6') { @('rm/**') } else { $g }) } }
-$f1 = Invoke-Scope; $n1 = $global:calls; $f2 = Invoke-Scope; $n2 = $global:calls; $pj = Invoke-Scope -Mrs 'https://h/g/java/-/merge_requests/5,java!9' -Json | ConvertFrom-Json
-"flag:$($f1 -match '^WATCH OUT-OF-AREA merged: java!5 \(1 file\(s\) outside .*rm/api/src/Inv\.java\) \| Tell the owner' -and $f1 -notmatch 'java!6|java!7' -and $f2 -eq $f1 -and $n2 -eq $n1 + 1)"
-"plan:$("$($pj[0].mr) $($pj[0].files) $($pj[0].source) $($pj[0].test) $($pj[0].outside)" -eq 'java!5 2 rm/api/src/Inv.java 1 rm/api/src/Inv.java' -and -not @($pj[1].outside).Count)"
-Write-KitState (Join-Path (Get-KitPath decisions -Create) 'd-1.json') @{ id = 'd-1'; gate = 'scope'; status = 'answered'; item = 'b5'; mrs = @() }
-"word:$((Invoke-Scope) -notmatch 'WATCH' -and -not @((Invoke-Scope -Mrs 'java!5' -Json | ConvertFrom-Json).outside).Count)"
-'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
-Expect "crafty.ps1 scope: globs as devtools.py; WATCH names an MR merged outside its area (checked once; open, in-area ones not); -Mrs: source / test / OUT-OF-AREA per MR; a scope word lifts both ($sc)" ("$sc" -match 'globs:True' -and "$sc" -match 'flag:True' -and "$sc" -match 'plan:True' -and "$sc" -match 'word:True')
 $D = Join-Path $k 'skills/crafty/crafty.ps1'; $sr = Join-Path (Kd) 'scope-repo'; New-Item -ItemType Directory -Force "$sr/src", "$sr/specs" | Out-Null
 'a' | Set-Content "$sr/specs/a.cy.js"; Save-GitRepo $sr base; git -C $sr checkout -q -b b1; Set-Content (Join-Path $sr '.git/claude-scope') "specs/**"
 'b' | Set-Content "$sr/specs/b.cy.js"; $c1 = pwsh @np $D wt commit -Dir $sr -Message 'test: add the b spec' 2>&1 | Out-String; $e1 = $LASTEXITCODE

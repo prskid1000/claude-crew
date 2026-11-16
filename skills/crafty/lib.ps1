@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L67 state · L141 config · L222 OS · L435 leases · L834 status · L1090 supervise sweep · L1161 tracker ·
-  L1510 prior · L1526 ask bugs · L1711 process · L1739 git-host · L1931 kitlog · L2051 params · L2356 entry-scripts
+Sections: L9 paths · L67 state · L141 config · L222 OS · L435 leases · L834 status · L1090 supervise sweep · L1168 tracker ·
+  L1517 prior · L1533 ask bugs · L1718 process · L1746 git-host · L1938 kitlog · L2058 params · L2363 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1091,6 +1091,7 @@ function Format-KitStatusTable($Rows, $Now, $Versions, [int]$Cap = 0) {
 # runs when its cost fits the time left after starved sections; supervise.sectionMinutes caps its cadence
 function New-KitSweep([datetime]$Deadline, $State) {
   $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary] -or $sw.v -ne 2) { $sw.cost = @{} }   # v2: costs exclude ungated work
+  foreach ($jk in @($sw.cost.Keys | Where-Object { "$_" -match '^\S+\.ps1(\s+\S+){3}' })) { $sw.cost.Remove($jk) }   # old per-job keys
   $every = @{ 'cleanup' = 30; 'deploy checks' = 10; 'stale layers' = 15 }   # only one-shot sections: standing flags would vanish off-round
   $cf = Get-KitSetting 'supervise.sectionMinutes' $null; if ($cf) { foreach ($p in @($cf.PSObject.Properties | Where-Object MemberType -eq NoteProperty)) { $v = 0.0; if ([double]::TryParse("$($p.Value)", [ref]$v)) { $every[$p.Name] = $v } } }
   [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); last = $(if ($sw.last -is [Collections.IDictionary]) { $sw.last } else { @{} }); every = $every; always = @('tracker checks'); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
@@ -1125,7 +1126,13 @@ function Invoke-KitSweepCall($Sw, [string]$Name, [string]$Script, [string[]]$A, 
     $Sw.cost[$Name] = [math]::Round($(if ($r.timedOut) { [math]::Max(2 * $s, [double]$c) } elseif ($null -ne $c) { 0.7 * [double]$c + 0.3 * $s } else { $s }), 2); if ($r.timedOut) { $Sw.timedOut.Add($Name) }   # cut short: at least 2x what it got
     return @($r.out -split "`r?`n" | Where-Object { $_ })
   }
-  @(Invoke-KitBackground $(if ($Job) { $Job } else { $Name }) $Script $A { param($s) $Sw.cost[$Name] = [math]::Round(0.7 * [double]$Sw.cost[$Name] + 0.3 * $s, 2) } ([double]$c))
+  $sn = $Name   # closure: Invoke-KitBackground's $Name is the job
+  @(Invoke-KitBackground $(if ($Job) { $Job } else { $Name }) $Script $A { param($s) $Sw.cost[$sn] = [math]::Round(0.7 * [double]$Sw.cost[$sn] + 0.3 * $s, 2) }.GetNewClosure() ([double]$c))
+}
+# supervise's kit calls: detached = last result now, a fresh run behind; background = inline under half the time left
+function Get-KitSweepMode([string[]]$A) {
+  $v = "$($A[0..1])"
+  if ($v -in 'deploy plan', 'deployed -Mrs', 'deploy intest', 'budget -Usage', 'report -Run', 'tracker statuses', 'scope') { 'detached' } elseif ($v -in 'track run', 'budget -Run') { 'background' } else { 'inline' }
 }
 # past max(10 x cost, 30 min) = hung, stopped; empty result with errors = WATCH
 function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scriptblock]$OnSeconds, [double]$Cost = 0) {

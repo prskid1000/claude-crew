@@ -43,6 +43,17 @@ $sv = pwsh @np $O supervise 2>&1 | Out-String
 Expect "runtimes: supervise flags a dead lease without -AutoFix" ($sv -match 'lease of ghost has no live holder' -and (Test-Path $flag))
 $sv = pwsh @np $O supervise -AutoFix 2>&1 | Out-String
 Expect "runtimes: supervise -AutoFix releases a dead lease and stops the kit-started runtime" ($sv -match 'released the lease of ghost' -and $sv -match 'stopped' -and -not (Test-Path $flag) -and (Log) -eq 'down')
+# the sweep probes isUp only when a stop may follow (kit-started, no live lease): 1-4 s a sweep under load
+$pr = Invoke-PsTest rt-probe @'
+. $args[0]; $global:probes = 0; function Test-KitRuntimeUp { $global:probes++; $true }; function Test-KitRuntimeLease($l) { $l.agent -eq 'alive' }
+$f = Get-KitRuntimeFile fake; $now = (Get-Date).ToString('o')
+@{ name = 'fake'; startedByKit = $true; leases = @(@{ agent = 'alive'; at = $now }) } | ConvertTo-Json -Depth 4 | Set-Content $f
+$l1 = @(Get-KitSuperviseGuardRuntimes -AutoFix) -join '|'; $p1 = $global:probes
+@{ name = 'fake'; startedByKit = $true; leases = @(@{ agent = 'gone'; at = $now; seen = $now }) } | ConvertTo-Json -Depth 4 | Set-Content $f
+$l2 = @(Get-KitSuperviseGuardRuntimes -AutoFix) -join '|'
+"probe:$($p1 -eq 0 -and $l1 -match 'runtime fake: not probed \(kit-started\), 1 lease' -and $global:probes -eq 1 -and $l2 -match 'runtime fake: running')"
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'))
+Expect-Each $pr 'runtimes: sweep #' 'probe'
 
 Remove-TestKit $k
 Complete-Tests

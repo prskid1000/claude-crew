@@ -61,7 +61,18 @@ $global:tname = 'Plain fix'; $global:st = 'open'; $p3 = Invoke-Track add -Task c
 "plain:$($global:st -eq 'open' -and $p3 -match 'ATTENTION ci2: MRs merged, no testing-doc link' -and $null -eq (Get-KitCiTask ci2))"
 '@ @($O)
 Expect-Each $ciTrack 'track: CI task # (wait: track add of a merged MR promotes at once, holds while the job runs again; closed: job passed -> closed + one qa-result comment with the job link; plain: no pattern match = the testing-doc gate)' @('wait', 'closed', 'plain') 3
-Remove-TestKit $k
+# supervise failedTesting: tracker views in the background (inline: 6-9 s a sweep), cached statuses now, a 2-beat cache
+$qd = TkPath $k qa-runs -Create; $null = New-Item -ItemType Directory -Force "$qd/q1/A1"; & $J @{ subtasks = @(1..4 | ForEach-Object { @{ id = "ft$_"; failedTesting = $true } }) } "$qd/q1/A1/finalize.json"
+$tn = TkPath $k tracker-none -Create; $ts = { param($i, $s) & $J @{ id = "ft$i"; name = 'n'; status = $s } "$tn/ft$i.json" }; 1..4 | ForEach-Object { & $ts $_ 'failed testing' }
+$ftn = { "$(@((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags.what) -match 'failed testing, back' -replace ' .*')" }
+$ftw = { foreach ($bj in @(Get-ChildItem (TkPath $k background) -Filter '*statuses*.json' -ErrorAction SilentlyContinue)) { $bjr = Get-Content $bj.FullName -Raw | ConvertFrom-Json; for ($i = 0; $i -lt 300 -and (Get-Process -Id $bjr.pid -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 100 } } }
+$fta = { $svf = TkPath $k supervise-state; $svs = Get-Content $svf -Raw | ConvertFrom-Json -AsHashtable; foreach ($v in $svs.ftStatus.Values) { $v.at = (Get-Date).AddDays(-1).ToString('o') }; $svs | ConvertTo-Json -Depth 20 | Set-Content $svf }
+$f1 = & $ftn; & $ftw; $f2 = & $ftn; & $ftw; & $ts 4 'in progress'; $f3 = & $ftn; & $fta; $f4 = & $ftn; & $ftw; & $fta; $f5 = & $ftn
+Expect "supervise failedTesting: views in the background, the last result next sweep, then cached; a view newer than the cache wins ($f1 $f2 $f3 $f4 $f5)" ("$f1|$f2$f3$f4$f5" -eq '|4443')
+# every view fails (tracker down): one WATCH, not silence
+& $ftw; Remove-Item "$tn/ft*.json"; & $fta; $null = & $ftn; & $ftw; & $fta
+$fw = @((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^failedTesting views: background .*failed: tracker statuses: 4 view\(s\) failed' })
+Expect "supervise failedTesting: failed views are a WATCH ($($fw.Count))" ($fw.Count -eq 1)
 # gate.cacheFlush: starved gate + big cache -> 1 flush / 30 min; failing command = 1 WATCH
 $cft = @'
 $env:KIT_TRACKER_TYPE = 'none'
@@ -87,4 +98,5 @@ $nb = Invoke-KitCacheFlush 12 $m $n 2
 "budget:$($global:polls -eq 1 -and $nb.what -match 'available 3 -> 3 GB')"
 '@
 Expect-Each (Invoke-PsTest 'cache-flush' $cft @($O)) 'cache flush: #' @('once', 'short', 'small', 'fail', 'budget')
+Remove-TestKit $k
 Complete-Tests

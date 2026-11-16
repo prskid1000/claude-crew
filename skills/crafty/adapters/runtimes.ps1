@@ -142,14 +142,16 @@ function Get-KitSuperviseGuardRuntimes([switch]$AutoFix) {
     $pre = Get-KitRuntimeState $n; if (-not $pre.leases.Count -and -not $pre.startedByKit) { continue }
     $script:rtOut = @()
     Update-KitRuntimeState $n { param($st)
-      $now = Get-Date; $running = Test-KitRuntimeUp $n 10
-      # stopped outside the kit: whoever starts it next owns it (not while the kit's own start may still be booting)
-      if ($running -eq $false -and $st.startedByKit -and -not ($st.startedAt -and ($now - [datetime]$st.startedAt).TotalMinutes -lt $grace)) { $st.startedByKit = $false; $st.Remove('emptySince') }
+      $now = Get-Date; $live = 0
       $dead = @(foreach ($l in $st.leases) {
-          if (Test-KitRuntimeLease $l) { $l.seen = $now.ToString('o'); continue }
+          if (Test-KitRuntimeLease $l) { $l.seen = $now.ToString('o'); $live++; continue }
           if (-not $l.seen) { $l.seen = $now.ToString('o') }
           if (($now - [datetime]$l.seen).TotalMinutes -ge $grace) { $l }
         })
+      # probed only when a stop may follow (kit-started, no live lease): the probe cost 1-4 s a sweep under load
+      $running = if ($st.startedByKit -and -not $live) { Test-KitRuntimeUp $n 10 } else { 'skip' }
+      # stopped outside the kit: whoever starts it next owns it (not while the kit's own start may still be booting)
+      if ($running -eq $false -and $st.startedByKit -and -not ($st.startedAt -and ($now - [datetime]$st.startedAt).TotalMinutes -lt $grace)) { $st.startedByKit = $false; $st.Remove('emptySince') }
       foreach ($l in $dead) {
         if ($AutoFix) { $st.leases = @($st.leases | Where-Object { $_ -ne $l }); $script:rtOut += [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: runtime ${n}: released the lease of $($l.agent) (no live holder for $grace+ min)"; action = 'Nothing to do.' } }
         else { $script:rtOut += [pscustomobject]@{ level = 'WATCH'; what = "runtime ${n}: the lease of $($l.agent) has no live holder"; action = 'supervise -AutoFix releases it (and stops the runtime when the kit started it).' } }
@@ -161,7 +163,7 @@ function Get-KitSuperviseGuardRuntimes([switch]$AutoFix) {
           else { $script:rtOut += [pscustomobject]@{ level = 'WATCH'; what = "runtime ${n}: started by the kit, no lease since $([int]($now - [datetime]$st.emptySince).TotalMinutes) min"; action = 'supervise -AutoFix stops it.' } }
         }
       }
-      $script:rtOut += "runtime ${n}: $(switch ($running) { $true { 'running' } $false { 'not running' } default { 'unknown' } })$(if ($st.startedByKit) { ' (kit-started)' }), $($st.leases.Count) lease(s)"
+      $script:rtOut += "runtime ${n}: $(if ($running -is [string]) { 'not probed' } else { switch ($running) { $true { 'running' } $false { 'not running' } default { 'unknown' } } })$(if ($st.startedByKit) { ' (kit-started)' }), $($st.leases.Count) lease(s)"
     }
     $script:rtOut
   }

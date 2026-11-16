@@ -17,7 +17,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L23 init · L29 sweep · L183 wt · L504 stack · L686 gate · L1002 check · L1311 pipes · L1368 guard · L2198 dir ·
-  L2208 checkpoint · L2237 prior · L2275 tracker · L2297 task spec · L2472 scope · L2514 host
+  L2208 checkpoint · L2237 prior · L2275 tracker · L2297 task spec · L2473 scope · L2520 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2403,6 +2403,7 @@ function Invoke-Tracker {
   function __TrOut($o) { if ($null -ne $o) { ConvertTo-Json -InputObject $o -Depth 6 } }
   switch ($__v) {
     'view' { __TrOut (Get-TrackerTask $__id) }
+    'statuses' { $__bad = 0; foreach ($__s in @(Split-KitList $__id)) { $__st = try { "$((Get-TrackerTask $__s).status)" } catch { '' }; if ($__st) { "$__s $((Get-Date).ToString('o')) $__st" } else { $__bad++ } }; if ($__bad) { [Console]::Error.WriteLine("tracker statuses: $__bad view(s) failed") } }   # supervise reads them in the background: <id> <viewed at> <status> per line, a failed view none
     'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> (read it: tracker view <id>)'; exit 2 }; Set-TrackerStatus $__id $__x }   # an empty status set Open
     'comment' {   # -Kind required (keyed kinds edit in place); over prose limits = refused
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = "$($__trOpt.Kind)"
@@ -2465,7 +2466,7 @@ function Invoke-Tracker {
     'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
-    default { 'usage: crafty.ps1 tracker view|status|comment|comments|uncomment|create|update|render|bug|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
+    default { 'usage: crafty.ps1 tracker view|statuses|status|comment|comments|uncomment|create|update|render|bug|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
   }
 }
 
@@ -2498,9 +2499,13 @@ function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
     return
   }
   # post-hoc: MRs merged within -Days whose area was logged (devtools.py mr / merge), each merged one checked once ('checked')
-  $hits = foreach ($a in @($areas.Values | Where-Object { [datetime]$_.at -ge $now.AddDays(-$Days) })) {
+  # an open MR is asked again after 30 min, host calls stop after 20 s (supervise timed out on open MRs asked every sweep)
+  $pf = Join-Path (Get-KitPath cache -Create) 'scope-probes.json'; $probed = try { Get-Content -LiteralPath $pf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} }; if ($probed -isnot [hashtable]) { $probed = @{} }; $stopAt = $now.AddSeconds(20)
+  $hits = foreach ($a in @($areas.Values | Where-Object { [datetime]$_.at -ge $now.AddDays(-$Days) } | Sort-Object { if ($probed["$($_.mr)"]) { [datetime]$probed["$($_.mr)"] } else { [datetime]::MinValue } })) {   # least recently asked first: the 20 s cut never starves one
     if (-not ($c = $seen["$($a.mr)"])) {
+      if ((Get-Date) -gt $stopAt -or ($probed["$($a.mr)"] -and ($now - [datetime]$probed["$($a.mr)"]).TotalMinutes -lt 30)) { continue }
       $rn, $iid = "$($a.mr)" -split '!', 2; $m = try { Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject $rn -Raw); n = $iid } } catch { $null }
+      if ($m.state -and $m.state -ne 'merged') { $probed["$($a.mr)"] = $now.ToString('o') }   # open or closed; unknown: next round
       if ($m.state -ne 'merged' -or -not ($f = @(& $filesOf "$($a.mr)")).Count) { continue }   # open: devtools.py merge checks it; unknown: next round
       $c = [ordered]@{ mr ="$($a.mr)"; branch = "$($a.branch)"; globs = @($a.globs); outside = @(Get-KitScopeOutside $f @($a.globs)); mergedAt = "$($m.merged_at)" }
       Write-KitLog scope-log checked $c
@@ -2508,6 +2513,7 @@ function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
     if (-not @($c.outside).Count -or ($c.mergedAt -and ($now - [datetime]$c.mergedAt).TotalDays -gt $Days) -or (& $lifted $c)) { continue }
     "$($c.mr) ($(@($c.outside).Count) file(s) outside $(@($c.globs) -join ', '): $((@($c.outside) | Select-Object -First 4) -join ', '))"
   }
+  foreach ($pk in @($probed.Keys | Where-Object { ($now - [datetime]$probed[$_]).TotalDays -gt 1 })) { $probed.Remove($pk) }; Write-KitAtomic $pf ($probed | ConvertTo-Json -Compress)
   if (@($hits).Count) { "WATCH OUT-OF-AREA merged: $(@($hits) -join '; ') | Tell the owner before any deploy of it: a revert MR, or their yes: decide record -Gate scope -Item <branch> (then supervise -Ack)." } else { 'scope: no merged MR outside its area' }
 }
 

@@ -25,8 +25,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L32 init · L43 board · L220 budget · L250 launch · L491 recover · L578 pause · L589 resume · L656 program · L707 param ·
-  L713 track · L1029 supervise · L1327 report · L1406 audit · L1466 storage · L1469 bugbrief · L1580 cleanup · L1664 learn ·
-  L1695 decide · L1829 debate · L1873 health · L1936 retro due · L1946 tidy · L2012 setup · L2106 guard-sendmessage
+  L713 track · L1029 supervise · L1330 report · L1409 audit · L1469 storage · L1472 bugbrief · L1583 cleanup · L1667 learn ·
+  L1698 decide · L1832 debate · L1876 health · L1939 retro due · L1949 tidy · L2015 setup · L2109 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1059,7 +1059,7 @@ $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
 $kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.n = $name; Test-KitSweep $kitSweep $name }   # learned cost, starved first; a cut-short section still names its ACT
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
-function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs', 'deploy intest', 'budget -Usage', 'report -Run') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest timed out inline each round
+function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; $md = Get-KitSweepMode $A; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:($md -eq 'background') -Detached:($md -eq 'detached') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest, scope timed out inline
 $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached first, outside the budget (gated: skipped most sweeps)
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params: 3 s, when due (d-20261029173533)
@@ -1249,12 +1249,15 @@ if (Within 'failedTesting tasks') {
   }
   $trk = (Read-KitTracking).tasks; if ($state.ftStatus -isnot [Collections.IDictionary]) { $state.ftStatus = @{} }
   foreach ($id in @($state.ftStatus.Keys)) { if ($id -notin $ft.Keys) { $state.ftStatus.Remove($id) } }
-  $views = 0   # max 3 tracker views a round, unseen first (all: 8.8 s)
-  $back = @(foreach ($id in @($ft.Keys | Sort-Object { if ($state.ftStatus[$_]) { [datetime]$state.ftStatus[$_].at } else { [datetime]::MinValue } })) {
-      if (-not (Within 'failedTesting tasks')) { break }
-      $o = $trk[$id]; if ($o -and -not $o.done) { continue }
-      $c = $state.ftStatus[$id]; if (-not $c -and $views -ge 3) { continue }
-      $st = if ($c -and ($views -ge 3 -or ($now - [datetime]$c.at).TotalMinutes -lt [math]::Max(15, 2 * (Get-KitBeatMinutes)))) { [string]$c.st } else { $views++; $v = try { [string](Get-TrackerTask $id).status } catch { $null }; if ($null -ne $v) { $state.ftStatus[$id] = @{ at = $now.ToString('o'); st = $v } }; "$v" }
+  $ids = @($ft.Keys | Where-Object { -not ($trk[$_] -and -not $trk[$_].done) })   # tracked open: its own flow
+  $ttl = [math]::Max(15, 2 * (Get-KitBeatMinutes))   # closed: 6 h; views in the background, cached statuses now (3 inline views: 6-9 s)
+  $due = @($ids | Where-Object { -not ($c = $state.ftStatus[$_]) -or ($now - [datetime]$c.at).TotalMinutes -ge $(if (Test-TrackerStatus $c.st 'closed') { 360 } else { $ttl }) })
+  foreach ($l in @(if ($due.Count) { Invoke-Bounded $KitCmd.dev @('tracker', 'statuses', ($due -join ',')) })) {   # the last finished run: a view newer than the cache wins
+    if ("$l" -match '^WATCH ') { Flag 'WATCH' "failedTesting views: $("$l".Substring(6))" 'Check tracker auth: crafty.ps1 tracker view <id>'; continue }
+    if ("$l" -match '^(\S+) (\S+) (.+)$' -and $Matches[1] -in $ids -and (-not ($c = $state.ftStatus[$Matches[1]]) -or [datetimeoffset]$Matches[2] -gt [datetimeoffset]$c.at)) { $state.ftStatus[$Matches[1]] = @{ at = $Matches[2]; st = $Matches[3] } }
+  }
+  $back = @(foreach ($id in $ids) {
+      $o = $trk[$id]; $st = "$($state.ftStatus[$id].st)"
       if ((Test-TrackerStatus $st 'failedTesting') -or ($o.done -and (Test-TrackerStatus $st 'inProgress'))) { "$id ($($ft[$id]))" } })
   if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow: $($back -join '; ')" "ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." }
 }

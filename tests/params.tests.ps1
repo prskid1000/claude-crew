@@ -74,6 +74,8 @@ $wait = { param($wn = 'bgx') $r = Get-Content (Join-Path (Get-KitPath background
 & $wait; $b2 = @(Invoke-KitSweepCall $sw bgx $args[1] @('-X', "a'$([char]0x2019)b") -Background); & $wait
 $dq = foreach ($r in 1, 2) { @(Invoke-KitSweepCall $sw dq $args[1] @() -Detached).Count; & $wait dq }
 "bg:$($dq -join '')$($sw.cost.dq -gt 0)$($i1 -join ','):$($sw.cost.quick -gt 0):$($b1.Count):$($b2 -join ','):$($sw.cost.bgx -lt 50)"
+foreach ($r in 1, 2) { $null = Invoke-KitSweepCall $sw dqn $args[1] @() -Detached -Job dqjob; & $wait dqjob }   # the cost goes to the call's name, never one key per job (MR list)
+"mode:$(((Get-KitSweepMode 'report', '-Run', 'w1'), (Get-KitSweepMode 'scope'), (Get-KitSweepMode 'tracker', 'statuses', 'a'), (Get-KitSweepMode 'track', 'run'), (Get-KitSweepMode 'tracker', 'view')) -join ','):$($sw.cost.dqn -gt 0 -and -not $sw.cost.ContainsKey('dqjob')):$((New-KitSweep $n0 @{ sweep = @{ v = 2; cost = @{ 'q.ps1 deployed -Mrs a!1' = 9; 'q.ps1 deployed -Mrs' = 4 } } }).cost.Keys -join ',')"
 $s2 = New-KitSweep $n0.AddSeconds(-6) @{ sweep = @{ v = 2; cost = @{ s = 10; q = 0.5 }; starved = @('s', 'q') } }; "starved:$(Test-KitSweep $s2 s $n0)$(Test-KitSweep $s2 q $n0)"
 $s6 = New-KitSweep $n0.AddSeconds(-60) @{ sweep = @{ v = 2; cost = @{ 'tracker checks' = 50; y = 1 } } }; "always:$(Test-KitSweep $s6 'tracker checks' $n0)$(Test-KitSweep $s6 y $n0)"
 $s3 = New-KitSweep $n0.AddSeconds(60) @{}; $null = Test-KitSweep $s3 a $n0; Start-KitSweepPhase $s3 hook $n0.AddSeconds(2); $null = Test-KitSweep $s3 b $n0.AddSeconds(7); $st3 = @{}
@@ -90,6 +92,7 @@ $cr = @(Invoke-KitBackground crash $ce @()); "hung:$($hu[0] -match '^WATCH backg
 '@ @((Lib), $bs)
 Expect "sweep: a section runs when its cost fits the time left after starved ones; starved first; costs EWMA; skipped = next starved ($(@($sr -match '^sweep') -join ' '))" ($sr -contains 'sweep:FalseTrueTrueFalse' -and $sr -contains 'sweep2:a,d:1.3:6.8')
 Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background, or cheap with -Detached: the last result, a fresh detached run, args intact, smart quotes too ($(@($sr -match '^bg:') -join ' '))" ($sr -contains "bg:01Truebg-out:True:0:bg-out-X a'?b:True")
+Expect "sweep: report -Run, scope, tracker statuses run detached, track run in the background, the rest inline; a detached cost keys on the call, old job keys dropped ($(@($sr -match '^mode:') -join ' '))" ($sr -contains 'mode:detached,detached,detached,background,inline:True:q.ps1 deployed -Mrs')
 Expect "sweep: tracker checks (promotion) run past the deadline; a starved section runs up to 10 s past it if min(cost, 5) s fit; a hung background run is stopped; a crashed one (console stderr) is a WATCH line ($(@($sr -match '^(starved|hung|always):') -join ' '))" ($sr -contains 'starved:FalseTrue' -and $sr -contains 'always:TrueFalse' -and $sr -contains 'hung:TrueTrue:True')
 Expect "sweep: an ungated phase is no section's cost, named in slowest; starved hold at most half; pre-v2 costs relearn ($(@($sr -match '^(phase|hold):') -join ' '))" ($sr -contains 'phase:2:1:False:slowest: ~hook 5.0 s, a 2.0 s, b 1.0 s' -and $sr -contains 'hold:True:0')
 Expect "sweep: inside its sectionMinutes not due (no skip); due: runs (twice in a round too), stamped ($(@($sr -match '^due:') -join ' '))" ($sr -contains 'due:FalseTrueTrue:0:True')
@@ -145,12 +148,6 @@ $s.untrackedMrs = @{ at = "$n"; user = 'u'; mrs = @(1..3 | ForEach-Object { @{ r
 "refs:$(@($s.known.Keys | Sort-Object) -join ',')|$($s.acks.Count)|$($o -match 'known from now on' -and $o -match 'hides 1')|$((Get-KitUntrackedMrFlag $s $n).problem)"
 '@ @($O)
 Expect "supervise: a fix report naming another agent: no collision; -Ack: a cell matches, UNTRACKED MR keeps its MRs ($($ac -join ' // '))" ($ac -contains 'cx:FalseTrue' -and $ac -contains 'cells:STUCK revy-7 (revy) (): no progress|2 acknowledged flag(s) hidden (supervise -Ack, 24 h)' -and $ac -contains 'refs:web!1,web!2|0|True|web!3 merged, no task')
-# supervise failedTesting: 3 tracker views a round, unseen first, then a 2-beat cache
-$qd = TkPath $k qa-runs -Create; $null = New-Item -ItemType Directory -Force "$qd/q1/A1"; & $J @{ subtasks = @(1..4 | ForEach-Object { @{ id = "ft$_"; failedTesting = $true } }) } "$qd/q1/A1/finalize.json"
-$tn = TkPath $k tracker-none -Create; $ts = { param($i, $s) & $J @{ id = "ft$i"; name = 'n'; status = $s } "$tn/ft$i.json" }; 1..4 | ForEach-Object { & $ts $_ 'failed testing' }
-$ftn = { "$(@((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags.what) -match 'failed testing, back' -replace ' .*')" }
-$f1 = & $ftn; $f2 = & $ftn; & $ts 4 'in progress'; $f3 = & $ftn
-Expect "supervise failedTesting: 3 views a round, unseen first, then cached ($f1 $f2 $f3)" ("$f1$f2$f3" -eq '344')
 # kitbag lint: PARAM-UNREG, PARAM-DEFAULT; tunable literals over the _literals baseline WARN; --ratchet records, then only lowers
 '$x = Get-KitParam ''supervise.stuckMinutes'' 25; $y = Get-KitParam ''no.key''; Start-Sleep 5' | Set-Content "$k/a.ps1"
 $pl = @'
