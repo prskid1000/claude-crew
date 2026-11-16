@@ -13,7 +13,7 @@ if ($IsWindows) {
   Expect 'build-heap: maven gets -Xmx in MAVEN_OPTS, its own -D kept, the old -Xmx gone' ($out[1] -match '-Dkeep=1 -Xmx\d+g' -and $out[1] -notmatch '-Xmx1g')
   Expect 'build-heap: node gets --max-old-space-size' ($out[2] -match '--max-old-space-size=\d+')
   $kt = TkPath $k tmp; Expect "build-heap: a gated build's temp is <runtime>/tmp/build/<checkout>, gradle keeps the OS temp (its daemon)" (
-    $out[3] -match "tmp=$([regex]::Escape($kt))[\\/]build[\\/]b" -and $out[4] -match 'tmp=' -and $out[4] -notmatch [regex]::Escape($kt))
+    $out[3] -match "tmp=$([regex]::Escape($kt))[\\/]build[\\/]kit-test-heap-\d+-b\s" -and $out[4] -match 'tmp=' -and $out[4] -notmatch [regex]::Escape($kt))
 }
 Remove-TestKit $k
 Complete-Tests

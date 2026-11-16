@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L89 state · L165 config · L246 OS · L466 leases · L865 status · L1121 supervise sweep · L1199 tracker ·
-  L1528 prior · L1544 ask bugs · L1729 git-host · L1934 kitlog · L2054 params · L2359 entry-scripts
+Sections: L10 paths · L88 state · L164 config · L245 OS · L465 leases · L864 status · L1120 supervise sweep · L1198 tracker ·
+  L1527 prior · L1543 ask bugs · L1728 git-host · L1933 kitlog · L2053 params · L2358 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -51,13 +51,12 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
   try { & $Body } finally { $fs.Dispose(); try { [IO.File]::Delete($lock) } catch {} }
 }
 # temp + rename in one folder: a crash never leaves half a file
-# same text: no write (a sweep rewrote unchanged files each pass); -Volatile <regex>: the parts that change each pass (a time),
-# the rest unchanged -> only the file time moves (readers take `at` from it)
+# same text: no write; -Volatile <regex>: only that part (a time) changed -> the file time moves (readers take `at` from it)
 function Write-KitAtomic([Parameter(Mandatory)][string]$Path, [string]$Text, [string]$Volatile) {
   $p = [IO.Path]::GetFullPath($Path, (Get-Location -PSProvider FileSystem).ProviderPath); $t = "$p.$PID.tmp"
   try { $fi = [IO.FileInfo]::new($p)
     if ($fi.Exists -and $fi.Length -lt 8MB) {
-      if ($fi.Length -eq [Text.Encoding]::UTF8.GetByteCount($Text) -and [IO.File]::ReadAllText($p) -ceq $Text) { return }
+      if ($fi.Length -eq [Text.Encoding]::UTF8.GetByteCount($Text) -and [IO.File]::ReadAllText($p) -ceq $Text) { if (([datetime]::UtcNow - $fi.LastWriteTimeUtc).TotalMinutes -gt 5) { $fi.LastWriteTimeUtc = [datetime]::UtcNow }; return }
       if ($Volatile -and ([IO.File]::ReadAllText($p) -replace $Volatile) -ceq ($Text -replace $Volatile)) { $fi.LastWriteTimeUtc = [datetime]::UtcNow; return } } } catch { }   # unreadable: write
   [IO.File]::WriteAllText($t, $Text, [Text.UTF8Encoding]::new($false))
   for ($i = 0; ; $i++) {
@@ -87,7 +86,7 @@ function Get-KitCheckpointFile([string]$Agent, [string]$Run = '', [switch]$Write
   @(@(Get-ChildItem -LiteralPath $ckDir -Filter 'resume*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | ForEach-Object FullName) + (Join-Path $ckDir 'resume.json'))[0]
 }
 # ---- state: skills/bossy/STATE.md (tolerant reads, atomic writes, one file per key)
-# a file's text, nothing when it is missing: a caught Get-Content -ErrorAction Stop logs pwsh event 4100 on every miss
+# a file's text, nothing when missing (a caught Get-Content -ErrorAction Stop logs pwsh event 4100)
 function Read-KitText([string]$Path) { if ($Path -and (Test-Path -LiteralPath $Path -PathType Leaf)) { Get-Content -LiteralPath $Path -Raw -ErrorAction Stop } }
 function Read-KitState([string]$Path) {   # never throws (state-lint flags the bad file)
   if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }

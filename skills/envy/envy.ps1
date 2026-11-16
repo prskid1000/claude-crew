@@ -2489,7 +2489,7 @@ switch ($Action) {
     $s = Svc $e $Services[0]; $sdir = SvcDir $e $s; $log = LogFile $e $s.name
     $cmd = StartCmd $e $s $Artifact
     # its temp files (java.io.tmpdir, the embedded server's base dir) in one folder per service, emptied each start; env vars below win
-    $stmp = Join-Path (Get-KitPath localenv -Create) "tmp/$e-$($s.name)"; Remove-Item -LiteralPath $stmp -Recurse -Force -ErrorAction SilentlyContinue
+    $stmp = Join-Path (Get-KitPath localenv -Create) "tmp/$e-$($s.name)"; if (-not ($s.port -and (Test-PortListening ([int]$s.port)))) { Remove-Item -LiteralPath $stmp -Recurse -Force -ErrorAction SilentlyContinue }   # a live instance keeps its files
     $env:TMP = $env:TEMP = $env:TMPDIR = (New-Item -ItemType Directory -Force $stmp).FullName   # arch-ok: kit temp
     foreach ($kv in (EnvVars $e $s).GetEnumerator()) { [Environment]::SetEnvironmentVariable($kv.Key, $kv.Value) }
     Set-Location $sdir

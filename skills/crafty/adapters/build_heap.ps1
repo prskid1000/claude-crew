@@ -19,10 +19,10 @@ function Get-GateHeap([string]$Kind, [double[]]$Peaks, [double]$NeedGB, [double]
   $floor = if ($Peaks.Count -ge 2) { [math]::Min($heap, [math]::Max($minGB, [int][math]::Ceiling($peakMax * 1.1))) } else { $minGB }
   [pscustomobject]@{ tool = $tool; heap = $heap; floor = $floor; need = $Need }
 }
-# the build's temp files (java.io.tmpdir, tests) per checkout in <runtime>/tmp (cleanup ages them out); gradle keeps the OS
+# the build's temp files (java.io.tmpdir, tests) per checkout (<parent>-<folder>) in <runtime>/tmp (cleanup ages them out); gradle keeps the OS
 # temp: another tmpdir starts another daemon
 function Set-GateTemp([string]$Cmd, [string]$Dir) {
-  if ($Cmd -notmatch '\bgradlew?\b') { $env:TMP = $env:TEMP = $env:TMPDIR = (New-Item -ItemType Directory -Force (Join-Path (Get-KitTemp) "build/$(ConvertTo-KitSlug (Split-Path $Dir -Leaf))")).FullName }   # arch-ok: kit temp
+  if ($Dir -and $Cmd -notmatch '\bgradlew?\b') { $env:TMP = $env:TEMP = $env:TMPDIR = (New-Item -ItemType Directory -Force (Join-Path (Get-KitTemp) "build/$(ConvertTo-KitSlug "$(Split-Path (Split-Path $Dir) -Leaf)-$(Split-Path $Dir -Leaf)")")).FullName }   # arch-ok: kit temp
 }
 # sets the env a cap of $GB needs; returns the command (Gradle takes it as a -D: it overrides org.gradle.jvmargs)
 function Set-GateHeap([string]$Tool, [int]$GB, [string]$Cmd) {

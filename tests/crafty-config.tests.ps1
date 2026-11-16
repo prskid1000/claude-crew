@@ -60,14 +60,16 @@ if (((& $d guard -Json (@{ tool_name = 'Write'; cwd = $kd; tool_input = @{ file_
 Expect "guard: new files at a drive root or outside every root denied (redirect, tee, cp, cd + redirect, Out-File, Set-Content, WriteAllText, Write); reads, /dev/null, nul, kit, ~/.claude, Downloads, guard.writeRoots pass ($swr)" (-not "$swr".Trim())
 $churnTest = @'
 param($LibPath, $Dir)
-. $LibPath; $f = Join-Path $Dir 'churn.json'; $old = [datetime]'2020-01-01'
-Write-KitAtomic $f '{"at": "1", "n": 1}'; [IO.File]::SetLastWriteTime($f, $old); Write-KitAtomic $f '{"at": "1", "n": 1}'
-"same:$([IO.File]::GetLastWriteTime($f) -eq $old)"
+. $LibPath; $f = Join-Path $Dir 'churn.json'; $new = (Get-Date).AddMinutes(-2); $old = [datetime]'2020-01-01'
+Write-KitAtomic $f '{"at": "1", "n": 1}'; [IO.File]::SetLastWriteTime($f, $new); Write-KitAtomic $f '{"at": "1", "n": 1}'; $same = [IO.File]::GetLastWriteTime($f) -eq $new
+[IO.File]::SetLastWriteTime($f, $old); Write-KitAtomic $f '{"at": "1", "n": 1}'; "same:$($same -and [IO.File]::GetLastWriteTime($f) -gt $new)"   # an old file gets a fresh time
+$u = Join-Path $Dir 'usage.json'; $ux = '^\{"at":"[^"]*","since":"[^"]*"'; Write-KitAtomic $u '{"at":"1","since":"1","runs":[{"at":"a"}]}'; Write-KitAtomic $u '{"at":"2","since":"2","runs":[{"at":"b"}]}' -Volatile $ux
+"nested:$([IO.File]::ReadAllText($u) -match '"b"')"
 Write-KitAtomic $f '{"at": "2", "n": 1}' -Volatile '"at":\s*"[^"]*"'; "volatile:$([IO.File]::GetLastWriteTime($f) -gt $old -and [IO.File]::ReadAllText($f) -match '"1"')"
 Write-KitAtomic $f '{"at": "3", "n": 2}' -Volatile '"at":\s*"[^"]*"'; "changed:$([IO.File]::ReadAllText($f) -match '"3".*2')"
 $e0 = $Error.Count; $t = Read-KitText (Join-Path $Dir 'no-such.json'); "missing:$($null -eq $t -and $Error.Count -eq $e0)"; "text:$((Read-KitText $f) -match '"n": 2')"
 "locks:$($env:GIT_OPTIONAL_LOCKS -eq '0')"
 '@
-Expect-Each (Invoke-PsTest 'churn' $churnTest @((Lib), (Kd))) 'churn #: Write-KitAtomic skips same bytes, a -Volatile-only change moves the file time; Read-KitText misses quietly; git probes skip optional locks' 'same', 'volatile', 'changed', 'missing', 'text', 'locks'
+Expect-Each (Invoke-PsTest 'churn' $churnTest @((Lib), (Kd))) 'churn #: Write-KitAtomic skips same bytes (an old file: time only), a -Volatile-only change moves the file time, a change outside it writes; Read-KitText misses quietly; git probes skip optional locks' 'same', 'nested', 'volatile', 'changed', 'missing', 'text', 'locks'
 Remove-TestKit $k
 Complete-Tests
