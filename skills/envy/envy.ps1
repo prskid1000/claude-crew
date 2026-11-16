@@ -23,7 +23,7 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L35 config · L233 state · L280 layer drops · L352 leases · L480 code · L512 migrations ·
   L515 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L663 shared builds (opt-in services[].shareBuild true ·
-  L842 hooks · L914 marks · L1096 seed · L1155 processes · L1536 daemon · L1996 cleanup · L2068 doctor · L2121 verbs
+  L840 hooks · L912 marks · L1092 seed · L1159 processes · L1538 daemon · L1998 cleanup · L2070 doctor · L2123 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -702,10 +702,8 @@ function Build-Repo([string]$e, [string]$rn) {
 }
 # a release's runnable copy per service (the env worktree builds on while it serves): the artifact file, its unpacked form
 # (services[].unpack) or the built files of a static service; keepReleases kept per service plus the ones in use
-# {reactor} in a build: services[].reactor = module folders (globs, relative to the repo) built from source in one reactor with
-# the service's module; -> '-f <aggregator> -pl <module> -am' (only what it needs; the aggregator is untracked in the env worktree).
-# Only modules whose parent is in the service module's parent chain: others miss its pluginManagement (Maven default plugin
-# versions: absent offline, too old online) and come from the local repository instead (doctor lists them)
+# {reactor}: services[].reactor module globs built in one reactor with the service's module ('-f <aggregator> -pl <module> -am');
+# only modules in its parent chain (others miss its pluginManagement: they come from the local repository, doctor lists them)
 function Get-PomParents([string]$pom) {   # groupId:artifactId of each parent found on disk (relativePath, default ../pom.xml)
   for ($i = 0; $i -lt 8 -and (Test-Path -LiteralPath $pom); $i++) {
     $x = try { [xml](Get-Content -LiteralPath $pom -Raw) } catch { break }; $p = $x.project.parent; if (-not $p) { break }
@@ -1041,10 +1039,8 @@ function RestorePlanText($p) {
     @($p.fallback | ForEach-Object { "FALLBACK $($_.table) : $($_.why) -> seed" }) +
     @($p.warnings | ForEach-Object { "WARN $_" }) + @($p.refused | ForEach-Object { "REFUSED $_" })
 }
-# the DB part of a restore (writers stopped by the caller): [db.rollback, opt-in] renames back, structure per mark newest first,
-# created tables dropped, object definitions back, the row flashback; tables it cannot bring back exactly -> $script:RestoreFallback
-# (Invoke-RestoreFallback seeds them); the range is recorded undone and the marks inside it dropped (not when the flashback wrote
-# no row); $null = ok
+# a restore's DB part (writers stopped): [db.rollback] renames, structure, created tables dropped, objects, row flashback; inexact
+# tables -> $script:RestoreFallback (seeded); range recorded undone, its marks dropped (unless no row written); $null = ok
 function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$UseTool) {
   $st = Read-State $e; $db = (Get-EnvCfg $e).db; $script:RestoreFallback = @(@($plan.fallback) | Where-Object { $_ }); $noRows = $true   # until the row flashback runs
   $ev = @(Invoke-DbSql $e "SELECT EVENT_SCHEMA, EVENT_NAME FROM information_schema.EVENTS WHERE STATUS = 'ENABLED' AND EVENT_SCHEMA IN ($(@($schemas | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '))")
@@ -1093,8 +1089,7 @@ function Invoke-RestoreFallback([string]$e) {
   "fallback (not restored exactly, seeded): $(@($script:RestoreFallback | ForEach-Object { "$($_.table) ($($_.why))" }) -join '; ') -> seed $(if ($script:SeedBad) { 'NOT green' } else { 'green' }): $(@($out | Select-Object -First 1))"
 }
 
-# ---- seed: the env's baseline data, declared in envs.<env>.seed (JSON { "items": [ { name, check: { sql, expect } | { cmd }, create:
-# { cmd }, how, needs: [names] } ] }; default <state>/localenv/<env>.seed.json); every create is idempotent through its check
+# ---- seed: the env's baseline data (envs.<env>.seed; items format: envy db.md "seed")
 function SeedFile([string]$e) { $f = (Get-EnvCfg $e).seed; if ($f) { Expand-Placeholders ([string]$f) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' } else { Join-Path (Get-KitPath localenv-env) "$((Get-EnvCfg $e).group).seed.json" } }   # lanes share their envs fixtures
 # -> ok | missing | drift (the value differs from expect) | error
 function Test-SeedItem([string]$e, $it) {
@@ -1110,13 +1105,18 @@ function Test-SeedItem([string]$e, $it) {
   $want = if ($it.check.expect) { [string]$it.check.expect } else { '^[1-9]\d*$' }
   @{ state = $(if (-not $v -or $v -eq '0') { 'missing' } elseif ($v -notmatch $want) { 'drift' } else { 'ok' }); got = $v }
 }
-# the tool's missingRoutines verb: routines a scope's applied migrations create that it lacks -> @{ schema; names; files }
-# (a restore fallback or a tenant reset dropped them while the history table kept the rows, so the tool never runs them again)
+# why seed skips a create (drift needs create.upsert: an insert adds rows); none = it runs
+function Get-SeedSkipWhy($it, $r) {
+  if ($r.state -eq 'blocked') { return "$($r.got) first" }; if ($r.state -eq 'error') { return "check failed: $($r.got)" }; if (-not $it.create.cmd) { return 'no create.cmd' }
+  if ($r.state -ne 'drift') { return }; if (-not $it.create.upsert) { return 'create.upsert not set' }
+  if ("$($it.check.expect)" -match '^\^(\d+)\$$' -and [long]$Matches[1] -lt ("$($r.got)" -as [long])) { "has $($r.got), expects $($Matches[1]): remove extras by hand" }
+}
+# the tool's missingRoutines verb: routines a scope's applied migrations made that it lacks (dropped by a reset) -> @{ schema; names; files }
 function Get-MissingRoutines([string]$e) { $tool = Get-MigTool $e; if (Test-MigVerb $tool 'missingRoutines') { Invoke-MigVerb $tool 'missingRoutines' @{ e = $e } } }
-# rerunRoutines: one scope's missing routines made pending again -> notes
+# rerunRoutines: a scope's missing routines made pending -> notes
 function Reset-MissingRoutines([string]$e, [string]$s) { $tool = Get-MigTool $e; if (Test-MigVerb $tool 'rerunRoutines') { Invoke-MigVerb $tool 'rerunRoutines' @{ e = $e; schema = $s } } }
 
-# -Tables (a restore's fallback): only the items whose tables name one of them (schema.table or table) and what they need; none named: all
+# -Tables (a restore's fallback): the items naming one (schema.table or table) + their needs; none named: all
 function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
   $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { throw "[$e] no seed file $f (envs.$e.seed)" }
   $items = @((Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).items | Where-Object { $_ })
@@ -1126,16 +1126,19 @@ function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
     for ($i = 0; $i -lt 10; $i++) { $pick = @($pick + @($items | Where-Object { $_.name -in $pick } | ForEach-Object { @($_.needs) }) | Where-Object { $_ } | Select-Object -Unique) }   # TODO-PARAM (fixed default)
     if ($pick.Count) { $items = @($items | Where-Object { $_.name -in $pick }) }
   }
-  $res = [ordered]@{}; $lines = [Collections.Generic.List[string]]::new()
+  $res = [ordered]@{}; $lines = [Collections.Generic.List[string]]::new(); $skipped = [Collections.Generic.List[string]]::new()
   foreach ($it in $items) {
     $blocked = @($it.needs | Where-Object { $_ -and $res[$_] -ne 'ok' })
     $r = if ($blocked.Count) { @{ state = 'blocked'; got = "needs $($blocked -join ', ')" } } else { Test-SeedItem $e $it }
-    if (-not $Check -and $r.state -eq 'missing' -and $it.create.cmd) {
+    $why = if (-not $Check -and $r.state -ne 'ok') { Get-SeedSkipWhy $it $r }
+    if (-not $Check -and $r.state -in 'missing', 'drift' -and -not $why) {
       $code = Invoke-Shell (Expand-Placeholders ([string]$it.create.cmd) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '') (LogFile $e 'seed') (EnvVars $e ([pscustomobject]@{})) 600
       $r = if ($code) { @{ state = 'error'; got = "create $(Get-ShellWhy $code): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" } } else { $x = Test-SeedItem $e $it; $x.created = $true; $x }
+      if ($r.state -ne 'ok') { $why = "create ran, still $($r.state): $($r.got)" }
     }
     $res[[string]$it.name] = $r.state
-    $lines.Add(('  {0,-8} {1}{2}' -f $r.state.ToUpper(), $it.name, $(if ($r.created) { ' (created)' } elseif ($r.state -ne 'ok') { " - $($r.got)$(if ($r.state -eq 'missing' -and -not $it.create.cmd -and $it.how) { "; how: $($it.how)" })" })))
+    if ($why) { $skipped.Add("$($it.name) ($why)") }
+    $lines.Add(('  {0,-8} {1}{2}' -f $r.state.ToUpper(), $it.name, $(if ($r.state -eq 'ok') { if ($r.created) { ' (created)' } } else { " - $(if ($why) { $why } else { $r.got })$(if ($it.how -and $r.state -ne 'blocked' -and ($why -or ($r.state -eq 'missing' -and -not $it.create.cmd))) { "; how: $($it.how)" })" })))
   }
   if (-not $Tables) {
     foreach ($g in @(try { Get-MissingRoutines $e } catch { $res['routines'] = 'error'; $items += @{ name = 'routines' }; $lines.Add("  ERROR    routines - $("$_".Split("`n")[0])") })) {
@@ -1148,6 +1151,7 @@ function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
   if (-not $Tables) { Update-State $e { param($x) $x.seed = @{ at = (Now); ok = (-not $bad.Count); missing = @($bad | Where-Object { $res[$_] -in 'missing', 'blocked' }); drift = @($bad | Where-Object { $res[$_] -in 'drift', 'error' }) } } }
   Event $e 'seed' @{ check = [bool]$Check; bad = $bad }
   "[$e] seed$(if ($Check) { ' -Check' })$(if ($Tables) { " ($(@($items).Count) item(s) for $($Tables -join ', '))" }): $($items.Count - $bad.Count)/$($items.Count) ok ($f)"; $lines
+  if ($skipped.Count) { "[$e] seed could not create $($skipped.Count): $($skipped -join '; ')" }
   if (-not $bad.Count -and -not $Check -and -not $Tables) { $n = New-Mark $e "baseline-$(Get-Date -Format yyyy-MM-dd)" 'baseline'; if ($n) { "[$e] mark ${n}: restore -Mark $n brings the env back to this seed" } }
   if ($bad.Count) { $script:SeedBad = $true }
 }
@@ -1165,9 +1169,9 @@ function Get-SysCpu {
   $sum = (ps -A -o %cpu= 2>$null | ForEach-Object { [double]"$_".Trim() } | Measure-Object -Sum).Sum
   [math]::Min(100, [math]::Round($sum / [Environment]::ProcessorCount, 0))
 }
-# one listen-table snapshot per 2 s (Windows: Get-NetTCPConnection is slow; status and the loop check many ports); Stop-Svc drops it
+# one listen-table snapshot per 2 s (Get-NetTCPConnection is slow); Stop-Svc drops it
 $script:ListenSnap = $null
-# a listener = state Listen or no remote end: some Windows boots report listeners with state 0 (2026-10-29: -State Listen missed them)
+# a listener = state Listen or no remote end (some Windows boots report state 0)
 function Test-ListenRow($c) { "$($c.State)" -eq 'Listen' -or ([int]$c.RemotePort -eq 0 -and "$($c.RemoteAddress)" -in '0.0.0.0', '::') }
 function Get-PortPids([int]$Port) {
   if ($KitIsWindows) {
@@ -1360,8 +1364,7 @@ function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
   Start-Detached -FilePath $pwsh -ArgumentList $a -WorkingDirectory $dir -Log $log
   Start-Sleep 1; (Get-SysProcs | Where-Object { $_.CommandLine -match [regex]::Escape($match) } | Select-Object -First 1).Id
 }
-# a start waits for its dependsOn to be HEALTHY (a train may restart one meanwhile; one whose own start still waits for room
-# is waited for past startMinutes); a start that fails on a dependency connection waits for them again and retries once
+# a start waits for its dependsOn to be HEALTHY (one still waiting for room: past startMinutes); a dependency connection failure: wait, retry once
 $script:DepFailPattern = [string](Opt 'logClasses.dependency' '(?i)connection refused|ECONNREFUSED|ConnectException|UnknownHostException|could not connect|connection (timed out|reset)')   # a dependency down at start (localEnv.logClasses.dependency)
 # a dependency that is down and that nobody starts is claimed (status waiting, waitFor dep: the loop leaves it) and started here
 # a train's DB steps (marks, slices, migration checks, the guard, a restore) on a lane whose own DB service rests: a start in
@@ -1503,8 +1506,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose(); Update-State $e { param($x) $v = $x.services[$s.name]; if ($v -and $v.status -eq 'waiting' -and $v.waitPid -eq $PID) { $v.status = 'down' } } }   # a claim never outlives its start
   if ($dbStarted) { Add-SeedBaseline $e $s.name }   # after the start lock: other starts never wait on the check
 }
-# the env's own DB up with no baseline mark (copied before marks, expired): a green seed check marks one. SQL checks only (a cmd
-# check may need the app, not up yet); its result is the env's seed state like any seed -Check
+# the env's DB up with no baseline mark: a green seed -Check marks one (SQL checks only: a cmd check may need the app)
 function Add-SeedBaseline([string]$e, [string]$by) {
   if (-not (MarksOn $e) -or @((Read-State $e).marks | Where-Object { $_ -and $_.kind -eq 'baseline' }).Count) { return }
   try {

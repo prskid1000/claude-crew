@@ -47,7 +47,8 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
 - Marks expire with the binlog (`binlog_expire_logs_seconds`; `marks.keepDays` 30, `marks.max` 60). Doctor checks binlog
   ROW / FULL images / FULL metadata / retention.
 - `seed [-Check]`: the env's baseline data (`envs.<env>.seed`, JSON `items` [ { name, check: { sql, expect } | { cmd },
-  create: { cmd }, how, needs, tables } ], default `<state>/localenv/<env>.seed.json`); each check gates its create.
+  create: { cmd, upsert }, how, needs, tables } ], default `<state>/localenv/<env>.seed.json`); a create runs on MISSING, on DRIFT only with `create.upsert: true`, then
+  the check again; the last line names each item not created and why.
 - With Liquibase also DRIFT `routines:<schema>` = a procedure / function an executed changeSet file created that the schema
   lacks (fix: delete those rows, reset a migration skip marker, restart).
 - `db.timeoutSec`: seconds per hook (a number or `{ "<hook>": n }`; default 1800, query 120). `tasks` (`task -Task <name>`),

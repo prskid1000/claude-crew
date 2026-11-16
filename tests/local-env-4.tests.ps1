@@ -127,6 +127,21 @@ Expect "lanes: a lane seeds from its env's seed file; {lane} expands at run time
 $lt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); $tc = [pscustomobject]@{ targets = [pscustomobject]@{ 'local-shop' = [pscustomobject]@{ api = 'http://127.0.0.1:8080/x'; web = 'http://127.0.0.1:4200' } } }
   $t2 = Get-LaneTarget $tc 'local-shop2'; "$($t2.api)|$($t2.web)|$($null -eq (Get-LaneTarget $tc 'other2'))|$((Get-LaneTarget $tc 'local-shop3').api)" }
 Expect "lanes: pokey target <target><k> = the base target with lane k's ports ($lt)" ($lt -eq 'http://127.0.0.1:8180/x|http://127.0.0.1:4200|True|http://127.0.0.1:8280/x')
+# seed creates DRIFT with create.upsert (a partial set: a script-created item completes it); a plain create on drift, a count
+# above ^N$, no create.cmd or blocked: not created, named with why
+$sdr = & { . $lkL; $sd = Join-Path $laneKit 'seedfix'; New-Item -ItemType Directory -Force $sd | Out-Null
+  foreach ($kv in @{ part = 6; extra = 3; plain = 1; none = 0 }.GetEnumerator()) { Set-Content (Join-Path $sd $kv.Key) $kv.Value }
+  $fixScript = Join-Path $sd 'part.create.ps1'; Set-Content $fixScript "Set-Content '$(Join-Path $sd 'part')' 8"
+  function Invoke-Hook($hookEnv, $hookName, $hookArgs) { $script:HookOut = @(Get-Content (Join-Path $sd $hookArgs.sql)); '' }
+  $sf = SeedFile shop2; New-Item -ItemType Directory -Force (Split-Path $sf) | Out-Null
+  Set-JsonFile $sf @{ items = @(@{ name = 'part'; check = @{ sql = 'part'; expect = '^8$' }; create = @{ cmd = "pwsh -NoProfile -File `"$fixScript`""; upsert = $true } }
+    @{ name = 'extra'; check = @{ sql = 'extra'; expect = '^1$' }; create = @{ cmd = "pwsh -NoProfile -File `"$fixScript`""; upsert = $true } }
+    @{ name = 'plain'; check = @{ sql = 'plain'; expect = '^2$' }; create = @{ cmd = "pwsh -NoProfile -File `"$fixScript`"" } }
+    @{ name = 'none'; check = @{ sql = 'none' }; how = 'by hand' }, @{ name = 'later'; needs = @('none'); check = @{ sql = 'part' } }) } 6
+  $chk = @(Invoke-Seed shop2 -Check) -join "`n"; $chkPart = "$(Get-Content (Join-Path $sd 'part'))"
+  $run = @(Invoke-Seed shop2) -join "`n"; Remove-Item -LiteralPath $sf, $sd -Recurse -Force
+  "$chkPart|$($chk -match 'DRIFT\s+part - 6')|$($run -match 'OK\s+part \(created\)')|$($run -match 'DRIFT\s+extra - has 3, expects 1')|$($run -match 'DRIFT\s+plain - create.upsert not set')|$($run -match 'MISSING\s+none - no create.cmd; how: by hand')|$($run -match 'BLOCKED\s+later - needs none first')|$($run -match 'could not create 4: extra .+; plain .+; none .+; later ')" }
+Expect "seed: a DRIFT item with an upsert create runs it (script-created, re-checked); -Check creates nothing; the rest named with why ($sdr)" ($sdr -eq '6|True|True|True|True|True|True|True')
 # status of every env: one process snapshot and one lease-log read for the call (supervise ran both per env: 7-17 s)
 $stKit = New-LocalEnvKit lestat; Set-JsonFile (Join-Path $stKit 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ a = @{ services = @(@{ name = 'w'; port = 7001; start = 'echo' }) }; b = @{ services = @(@{ name = 'v'; port = 7002; start = 'echo' }) } } } } 8
 $ss = & { . (Join-Path $stKit 'skills/envy/envy.ps1'); $global:snapN = 0; function Get-KitProcSnap { $global:snapN++; @{ kids = @{}; procs = @{} } }
