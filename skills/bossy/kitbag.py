@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1374 audit ·
-  L1490 registry · L1822 arch lint · L2025 prose · L2176 sections · L2306 budget · L2320 migrate · L2480 plugins ·
-  L2534 state lint · L2722 main
+Sections: L34 paths · L85 state · L140 kitlog · L239 load · L633 lint · L1038 README graph · L1141 lint command · L1377 audit ·
+  L1493 registry · L1825 arch lint · L2028 prose · L2179 sections · L2309 budget · L2323 migrate · L2483 plugins ·
+  L2537 state lint · L2725 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, time, traceback
 import os.path as osp
@@ -1312,13 +1312,16 @@ const svgs = () => [...document.querySelectorAll('body *')].flatMap((g) => {
 })
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
 const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
+// one tab for every state, its storage cleared before each load: a new context per state spawned a renderer each (48 for the kit
+// map) and under a full test run one never answered (ProtocolError: Network.enable timed out after 180 s)
+const page = (await b.pages())[0] || await b.newPage(), href = pathToFileURL(file).href
 try {
   for (const width of ws.split(',').map(Number)) for (const theme of ['light', 'dark']) for (const [si, clicks] of JSON.parse(st).entries()) {
-    const ctx = await b.createBrowserContext(), page = await ctx.newPage(), clipped = []
-    const touch = width < 600   // a phone width: touch emulation (pointer: coarse) and taps
+    const clipped = [], touch = width < 600   // a phone width: touch emulation (pointer: coarse) and taps
     await page.setViewport({ width, height: touch ? 844 : 900, hasTouch: touch })   // no isMobile: a page without a viewport meta would lay out at 980 px
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }])   // its own line: in the comment above it never ran (both shots one theme)
-    await page.goto(pathToFileURL(file).href, { waitUntil: 'load' })
+    await page.goto(href, { waitUntil: 'load' }); await page.evaluate(() => { try { localStorage.clear(); sessionStorage.clear() } catch { } })   // fresh storage, then the page as a first visit
+    await page.goto(href, { waitUntil: 'load' })
     for (const sel of clicks) await (touch ? page.tap(sel) : page.click(sel)).catch((e) => clipped.push({ el: sel, why: `${touch ? 'tap' : 'click'} failed: ${e.message}`, text: '' }))
     const rest = async (when) => { if (await page.evaluate(settle)) clipped.push({ el: 'page', why: `never settled ${when}: an animation or window.uiBusy() still running after 600 frames`, text: '' }) }
     await rest('as loaded or clicked')
@@ -1329,7 +1332,7 @@ try {
     await page.evaluate(openAll); await rest('with every details open')
     clipped.push(...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
     await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
-    res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped }); await ctx.close()
+    res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped })
   }
 } finally { await b.close() }
 console.log(JSON.stringify(res))'''
