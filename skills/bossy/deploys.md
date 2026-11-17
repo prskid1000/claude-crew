@@ -16,3 +16,7 @@ question back:
 Deploy kinds (`repos[].deploys[].kind`, else from the row keys): ci-job (branch + job), branch-mr, ssh, awsStack, probe, tag, manual, laneApk,
 command (`{ isDeployed, lastDeploy, isRunning, restart }` command lines: `{sha} {target} {branch} {repo} {mr} {service}`). Verbs: pokey adapters/deployed_checks.ps1;
 a verb a kind lacks = UNKNOWN. Production = `deploys[].production`, else `deploy.productionPattern` (no default).
+
+## Before an ask
+An ask (`decide ask`, AskUserQuestion) about testing, deploying or a task's state: first `pokey.ps1 deployed -Mrs <its MRs>` and
+`crafty.ps1 tracker view <id>`, their result in the ask; every MR deployed and the task in test: no ask, route to `/testy` (R8).
