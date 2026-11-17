@@ -243,6 +243,6 @@ CREATE TABLE pa.u (login varchar(40)); INSERT INTO pa.u VALUES ('alice'), ('bob'
 }
 $tmLeft = @(Get-Process mysqld, mariadbd -ErrorAction SilentlyContinue | Where-Object { "$($_.CommandLine)" -match "$([regex]::Escape((Split-Path $tmSrv.data -Leaf)))\b" }).Count
 Expect "Stop-TestMySql: no mysqld (monitor or worker) left on its data dir, the dir gone, outside %TEMP% ($tmLeft left, $($tmSrv.data))" ($tmLeft -eq 0 -and -not (Test-Path $tmSrv.data) -and -not $tmSrv.data.StartsWith([IO.Path]::GetTempPath()))
-$tmTpls = @(Get-ChildItem (Split-Path $tmSrv.data) -Directory -Filter 'mysqld-template-*' | Where-Object { Test-Path (Join-Path $_.FullName 'mysql.ibd') })
-Expect "Start-TestMySql: data dirs are copies of one initialized template per mysqld build, kept for the next server ($($tmTpls.Count))" ($tmTpls.Count -ge 1)
+$tmMainC = "$(git -C $src rev-parse --path-format=absolute --git-common-dir 2>$null)" -replace '[\\/]\.git$', ''
+Expect "Start-TestMySql: data dirs are copies of one initialized template per mysqld build + options, kept in the main clone's cache for every worktree ($($tmSrv.tpl))" ((Test-Path (Join-Path $tmSrv.tpl 'mysql.ibd')) -and (Split-Path $tmSrv.tpl -Leaf) -match '^mysqld-template-[0-9A-F]{12}$' -and (-not $tmMainC -or [IO.Path]::GetFullPath($tmSrv.tpl).StartsWith([IO.Path]::GetFullPath($tmMainC), 'OrdinalIgnoreCase')))
 Complete-Tests

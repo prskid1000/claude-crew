@@ -99,9 +99,13 @@ function Start-TestMySql([switch]$Binlog) {
   $tmExe = (Get-Command mysqld -ErrorAction Stop).Source
   $tmRoot = & { . (Join-Path $src 'skills/crafty/lib.ps1'); Join-Path (Get-KitPath work) 'tests' }   # the source kit's runtime
   $tmData = Join-Path $tmRoot "mysqld-$PID"; Remove-Item $tmData -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $tmRoot | Out-Null
-  $tmCheap = '--innodb-redo-log-capacity=8M --innodb-doublewrite=OFF --innodb-flush-log-at-trx-commit=2'
-  # one initialized template per mysqld build, copied: an --initialize wrote 151 MB in 4.5 s, the copy 79 MB in 0.2 s
-  $tmTpl = Join-Path $tmRoot "mysqld-template-$((Get-Item $tmExe).LastWriteTimeUtc.Ticks)"
+  $tmCheap = '--innodb-redo-log-capacity=8M --innodb-doublewrite=OFF --innodb-flush-log-at-trx-commit=0 --performance-schema=OFF --innodb-max-dirty-pages-pct=90 --innodb-io-capacity=100'
+  # one initialized template per mysqld build + options, copied (an --initialize wrote 151 MB in 4.5 s, the copy 79 MB in 0.2 s);
+  # kept in the main clone's cache so kit worktrees share it instead of initialising one each
+  $tmMain = "$(git -C $src rev-parse --path-format=absolute --git-common-dir 2>$null)" -replace '[\\/]\.git$', ''
+  $tmCache = if ($tmMain -and (Test-Path (Join-Path $tmMain 'skills/crafty/lib.ps1'))) { & { . (Join-Path $tmMain 'skills/crafty/lib.ps1'); Get-KitPath cache -Create } } else { $tmRoot }
+  $tmKey = [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes("$((Get-Item $tmExe).LastWriteTimeUtc.Ticks) $tmCheap"))).Substring(0, 12)
+  $tmTpl = Join-Path $tmCache "mysqld-template-$tmKey"
   if (-not (Test-Path (Join-Path $tmTpl 'mysql.ibd'))) {
     $tmNew = "$tmTpl-$PID"; Remove-Item $tmNew -Recurse -Force -ErrorAction SilentlyContinue
     & $tmExe --no-defaults --initialize-insecure "--datadir=$tmNew" --skip-log-bin @($tmCheap -split ' ') 2>&1 | Out-Null
@@ -113,14 +117,15 @@ function Start-TestMySql([switch]$Binlog) {
   $tmProc = Start-Process $tmExe -ArgumentList "--no-defaults `"--datadir=$tmData`" --port=$tmPort --bind-address=127.0.0.1 --mysqlx=OFF $tmCheap $tmLog" -WindowStyle Hidden -PassThru
   $tmUp = { $tc = [Net.Sockets.TcpClient]::new(); try { $tc.ConnectAsync('127.0.0.1', $tmPort).Wait(1000) -and $tc.Connected } catch { $false } finally { $tc.Dispose() } }   # Test-NetConnection loads the NetTCPIP cdxml modules (event 4104)
   for ($i = 0; $i -lt 60 -and -not (& $tmUp); $i++) { Start-Sleep 1 }
-  $tmSrv = [pscustomobject]@{ proc = $tmProc; port = $tmPort; data = $tmData }
+  $tmSrv = [pscustomobject]@{ proc = $tmProc; port = $tmPort; data = $tmData; tpl = $tmTpl }
   if ($i -ge 60) { Stop-TestMySql $tmSrv; throw "Start-TestMySql: mysqld not listening on $tmPort after 60 s" }
   $tmSrv
 }
 # a clean shutdown, else the whole tree (Windows: the started mysqld is a monitor, its worker a child: killing the monitor alone orphans it)
 function Stop-TestMySql($Server) {
   if (-not $Server) { return }
-  if (-not $Server.proc.HasExited) { & mysqladmin -h 127.0.0.1 -P $Server.port -u root shutdown 2>&1 | Out-Null; $null = $Server.proc.WaitForExit(30000) }
+  # fast_shutdown 2: no dirty-page flush on the way out (the data dir is deleted next)
+  if (-not $Server.proc.HasExited) { & mysql -h 127.0.0.1 -P $Server.port -u root -e 'SET GLOBAL innodb_fast_shutdown = 2' 2>&1 | Out-Null; & mysqladmin -h 127.0.0.1 -P $Server.port -u root shutdown 2>&1 | Out-Null; $null = $Server.proc.WaitForExit(30000) }
   try { $Server.proc.Kill($true) } catch {}; $null = $Server.proc.WaitForExit(10000)
   for ($tmTry = 0; $tmTry -lt 10 -and (Test-Path $Server.data); $tmTry++) { Remove-Item $Server.data -Recurse -Force -ErrorAction SilentlyContinue; if (Test-Path $Server.data) { Start-Sleep -Milliseconds 500 } }   # a killed worker frees its files a moment later
 }
