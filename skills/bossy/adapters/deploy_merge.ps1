@@ -100,14 +100,14 @@ $noCi = $rc.ci.mrPipelines -eq $false; $end = (Get-Date).AddMinutes($WaitMinutes
 do {   # wait for its pipeline: success merges, any other end state stops
   $cur = Invoke-HostVerb 'mr.get' ($ha + @{ n = $iid }) -NoMemo; $st = "$($cur.head_pipeline.status)"; $cs = if ($cur.head_pipeline) { ConvertTo-KitCiState $st } else { 'none' }
   if ($noCi -or ($cur -and $cur.state -ne 'opened') -or $cs -in 'success', 'failed', 'canceled' -or (__CiWord $st) -in 'skipped', 'manual' -or (Get-Date) -gt $end) { break }
-  Start-Sleep 30
+  Start-Sleep (Get-KitParam 'deploy.mergePollSec')
 } while ($true)
 if ($cur.state -eq 'merged') { "deploy MR $url already merged"; exit 0 }
 if ($cur.state -ne 'opened') { "deploy MR $url is $(if ($cur) { $cur.state } else { 'unreadable' }): not merged"; exit 1 }
 if (-not $noCi -and $cs -ne 'success') { "deploy MR $url pipeline $(if ($st) { $st } else { 'none' })$(if ((Get-Date) -gt $end) { " after $WaitMinutes min" }): not merged (crafty.ps1 pipes -Mrs $url; merge it on green)"; exit 1 }
 $done = Invoke-HostVerb 'mr.merge' ($ha + @{ n = $iid; method = $dmm; sha = $cur.sha })
 # the host merges asynchronously: 'opened' for some seconds after an accepted merge call
-for ($i = 0; $i -lt 30 -and "$($done.state)" -ne 'merged'; $i++) { if ($i) { Start-Sleep 3 }; $done = Invoke-HostVerb 'mr.get' ($ha + @{ n = $iid }) -NoMemo; if ($done -and $done.state -notin 'opened', 'locked') { break } }
+for ($i = 0; $i -lt 30 -and "$($done.state)" -ne 'merged'; $i++) { if ($i) { Start-Sleep (Get-KitParam 'deploy.mergeSettleSec') }; $done = Invoke-HostVerb 'mr.get' ($ha + @{ n = $iid }) -NoMemo; if ($done -and $done.state -notin 'opened', 'locked') { break } }
 if ($done.state -ne 'merged') { "deploy MR $url merge FAILED (state $($done.state)): merge it by hand, squash off"; exit 1 }
 "merged deploy MR $url into $To (merge commit, $ahead commits from $From)"
 }

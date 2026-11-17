@@ -53,7 +53,7 @@ function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until, [switch]$NoPaths)
 }
 # MRs in a CI deploy's last green job (its commit holds the merge): mr|target -> detail; per repo one MR list and one git
 # rev-list per deploy instead of one pokey.ps1 deployed probe per MR (229 MRs ran past 600 s); past $Until the rest is probed
-function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int]$Days = 14, [datetime]$Until = (Get-Date).AddSeconds(200)) {
+function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int]$Days = 14, [datetime]$Until = (Get-Date).AddSeconds((Get-KitParam 'deploy.ancestryBudgetSec'))) {
   $hit = @{}; $env:GIT_TERMINAL_PROMPT = '0'
   foreach ($rp in $Repos) {
     if ((Get-Date) -gt $Until) { break }
@@ -309,7 +309,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $take = { param($q, [int]$ms) while ($q.rl -and $q.rl.Wait($ms)) { $ln = $q.rl.Result; if ($null -eq $ln) { $q.rl = $null; break }; $q.out.Add($ln); $q.rl = $q.p.StandardOutput.ReadLineAsync()
         if (-not $Json -and $ln -match '^\s*\{') { try { $x = $ln | ConvertFrom-Json; $script:probeCount["$($x.state)"] = 1 + [int]$script:probeCount["$($x.state)"]; if ($x.state -in 'NOT-MERGED', 'NOT-DEPLOYED') { [Console]::Error.WriteLine("  $($x.mr) @ $($x.target): $($x.state) $($x.detail)") } } catch {} } } }
     # an exited run is done once drained: a grandchild (git, ssh) holding its stdout kept the plan waiting to the deadline (45 s idle)
-    while (@($runs | Where-Object rl).Count -and (Get-Date) -lt $until) { foreach ($q in $runs) { & $take $q 0; if ($q.rl -and $q.p.HasExited) { & $take $q 300; $q.rl = $null } }; Start-Sleep -Milliseconds 200 }
+    while (@($runs | Where-Object rl).Count -and (Get-Date) -lt $until) { foreach ($q in $runs) { & $take $q 0; if ($q.rl -and $q.p.HasExited) { & $take $q 300; $q.rl = $null } }; Start-Sleep -Milliseconds (Get-KitParam 'deploy.planPollMs') }
     foreach ($q in $runs) {
       $fin = $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { Stop-KitProcessTree $q.p }
       & $take $q 2000; $null = $q.se.Wait($(if ($fin) { 300 } else { 5000 })); $txt = $q.out -join "`n"   # exited: stderr held open by a grandchild cost 5 s a run
@@ -328,8 +328,8 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     if (-not $Json -and $runs.Count) { [Console]::Error.WriteLine("deploy plan probes: $((@($script:probeCount.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key) $($_.Value)" }) + @(if ($anc.Count) { "DEPLOYED (green job) $($anc.Count)" })) -join ' · ')") }
   }
   $trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower()
-  $win = Get-KitSetting 'deploy.minIntervalHours' 4
-  $winOf = { param($t) if ($win -is [psobject] -and (Get-KitProps $win).Name -contains $t) { [double](Get-KitMember $win $t) } elseif ($win -is [psobject] -and (Get-KitProps $win).Name -contains 'default') { [double]$win.default } elseif ($win -is [psobject]) { 4 } else { [double]$win } }
+  $win = Get-KitSetting 'deploy.minIntervalHours' (Get-KitParam 'deploy.minIntervalHours')
+  $winOf = { param($t) if ($win -is [psobject] -and (Get-KitProps $win).Name -contains $t) { [double](Get-KitMember $win $t) } elseif ($win -is [psobject] -and (Get-KitProps $win).Name -contains 'default') { [double]$win.default } elseif ($win -is [psobject]) { [double](Get-KitParam 'deploy.minIntervalHours') } else { [double]$win } }
   $logged = if (Test-Path $log) { @(Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
   $hostErr = $null
   $recOf = @{}; foreach ($x in $logged) { foreach ($m in @($x.mrs)) { $recOf["$(Get-CanonMr (ConvertTo-MrRef $m))|$($x.target)"] = 1 } }   # MANUAL (no check can see it): a recorded deploy is the proof
@@ -448,10 +448,10 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
   $tgs = @(@(@($Cache.ask) | ForEach-Object { ("$_" -split ':', 2)[0].Trim() }) + @(@($Cache.ready) | ForEach-Object { "$_" -replace '\s*\(\d+ MR\(s\)\)$' }) | Where-Object { $_ } | Select-Object -Unique)
   if (-not $tgs.Count) { return $hold }
   $atOf = { param($d) if ($d.answeredAt -is [datetime]) { $d.answeredAt } else { try { [datetime]"$($d.answeredAt)" } catch { $Now } } }   # JSON gives a DateTime: "$x" drops the offset
-  $words = @{}; foreach ($d in @(Read-KitLog decisions-log $Now.AddDays(-30) | Where-Object { $_.event -eq 'answered' -and $_.gate -eq 'deploy' -and $_.kind -ne 'envfix' -and "$($_.answer)".Trim() } | Sort-Object { (& $atOf $_).ToUniversalTime().Ticks })) { foreach ($t in @(Split-KitList @("$($d.item)"))) { if (-not $words[$t]) { $words[$t] = [Collections.Generic.List[object]]::new() }; $words[$t].Add($d) } }
+  $words = @{}; foreach ($d in @(Read-KitLog decisions-log $Now.AddDays(-(Get-KitParam 'deploy.wordsDays')) | Where-Object { $_.event -eq 'answered' -and $_.gate -eq 'deploy' -and $_.kind -ne 'envfix' -and "$($_.answer)".Trim() } | Sort-Object { (& $atOf $_).ToUniversalTime().Ticks })) { foreach ($t in @(Split-KitList @("$($d.item)"))) { if (-not $words[$t]) { $words[$t] = [Collections.Generic.List[object]]::new() }; $words[$t].Add($d) } }
   $cfgHold = @(Split-KitList @(Get-KitSetting 'deploy.hold' @()))
   $waitOf = { param($t, $d) $ans = "$($d.answer)".Trim(); $at = & $atOf $d; $sid = ("$($d.id)" -split '-')[-1]
-    $retry = if ($ans -match '\b([01]?\d|2[0-3]):([0-5]\d)\b') { $rt = $at.Date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2]); if ($rt -le $at) { $rt.AddDays(1) } else { $rt } } else { $at.AddMinutes(20) }
+    $retry = if ($ans -match '\b([01]?\d|2[0-3]):([0-5]\d)\b') { $rt = $at.Date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2]); if ($rt -le $at) { $rt.AddDays(1) } else { $rt } } else { $at.AddMinutes((Get-KitParam 'deploy.waitRetryMinutes')) }
     $why = if ("$($d.question) $ans" -match '(?i)\bbusy\b') { 'host busy' } else { "wait ($($d.by))" }
     [pscustomobject]@{ target = $t; state = $(if ($Now -lt $retry) { 'waiting' } else { 'due' }); sid = $sid; why = $why; retry = $retry; text = "$t waiting: $why, retry $($retry.ToString('HH:mm')) ($sid)" } }
   $dirty = $false
@@ -461,7 +461,7 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
     $d = $ws[-1]; $sid = ("$($d.id)" -split '-')[-1]; $kind = Get-KitDeployWordKind "$($d.answer)"
     if ($kind -eq 'wait') { $hold[$t] = & $waitOf $t $d }
     elseif ($kind -eq 'yes') {
-      $w = @($ws | Where-Object { (Get-KitDeployWordKind "$($_.answer)") -eq 'wait' -and ($Now - (& $atOf $_)).TotalHours -lt 12 } | Select-Object -Last 1)
+      $w = @($ws | Where-Object { (Get-KitDeployWordKind "$($_.answer)") -eq 'wait' -and ($Now - (& $atOf $_)).TotalHours -lt (Get-KitParam 'deploy.waitWordHours') } | Select-Object -Last 1)
       $hold[$t] = if ($w.Count) { & $waitOf $t $w[0] } else { [pscustomobject]@{ target = $t; state = 'go'; sid = $sid; by = $d.by; text = "$t approved: $sid" } }
     }
     elseif ($kind -in 'no', 'noAll') {
@@ -489,7 +489,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     foreach ($o in @((Read-KitTracking).tasks.Values)) {
       if (-not (Within 'deploy checks')) { break }
       # a repo may deploy to several test envs
-      if (-not $o.done -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt 3) { continue }
+      if (-not $o.done -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt (Get-KitParam 'deploy.doneLookbackDays')) { continue }
       if ($o.qaCovered) { continue }
       if ($o.liveCheckedAt -and ($now - [datetime]$o.liveCheckedAt).TotalMinutes -lt $(if (@($o.liveOn).Count) { 60 } else { 10 })) { continue }
       # a QA run already covers it: skip the deploy lookup (10+ calls); exact id: 12 is no AB-12
@@ -507,7 +507,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       if ($new.Count) { Set-KitTaskFields $o.task @{ inTestDue = $now.ToString('o') } }
     }
     # deployed = in test (never before): one background run for every due task (inline it outran the sweep); each line names its own task
-    $due = @((Read-KitTracking).tasks.Values | Where-Object { $_.inTestDue -and ($now - [datetime]$_.inTestDue).TotalHours -lt 24 } | ForEach-Object task | Sort-Object)
+    $due = @((Read-KitTracking).tasks.Values | Where-Object { $_.inTestDue -and ($now - [datetime]$_.inTestDue).TotalHours -lt (Get-KitParam 'deploy.inTestDueHours') } | ForEach-Object task | Sort-Object)
     foreach ($l2 in @(if ($due.Count) { Invoke-Bounded $KitCmd.orch @('deploy', 'intest', '-Apply', '-Task', ($due -join ',')) })) {
       if ($l2 -match '^WATCH ') { & $flag 'WATCH' "deploy intest: $($l2 -replace '^WATCH ')" 'Supervise runs it again next round.' }
       if ($l2 -notmatch '^(?<w>MARKED|WAIT|SKIP|GONE|ERROR)\s+(?<t>\S+)') { continue }
@@ -519,7 +519,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     $pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'
     $cache = if (Test-Path $pc) { try { Get-Content $pc -Raw | ConvertFrom-Json } catch { $null } }
     $plan = $null; $asked = $null
-    if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge 60) {
+    if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge (Get-KitParam 'deploy.planCacheMinutes')) {
       $from = $cache.asked; $asked = $now.ToString('o')   # a background run: this call returns the plan started at the last ask and starts a fresh one
       $out = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')))
       # timed out, still running in the background or failed (no JSON): keep the last good plan, plan again next round
