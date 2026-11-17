@@ -87,7 +87,7 @@ const { calls, agent } = _mock((p, o) => ({ 'build:F1': _rep(lt, { mrs: [mr('py'
  'order:F2': { ok: true, output: 'merge-after: x' } }[o.label] || (/^review/.test(o.label) ? { findings: [] } : undefined)), '[]')
 const o = await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'F1' }, { id: 'F2', dependsOn: ['F1'] }] }, agent, _n, _n, pipeline)
 const L = calls.map((c) => c.label)
-console.log(`gate:${L.includes('producer-wait:F2') && !L.includes('build:F2') && o.blocked.some((b) => /F1 not MERGED/.test(b.why)) && !o.next && o.afterMerge.waitFor.join() === 'F1' && o.afterMerge.next.args.agents.map((g) => g.id).join() === 'F2'}`)
+console.log(`gate:${L.includes('producer-wait:F2') && !L.includes('build:F2') && o.blocked.some((b) => /F1 not MERGED/.test(b.why) && b.agent === 'F2' && (b.blockedBy || []).join() === 'F1') && !o.next && o.afterMerge.waitFor.join() === 'F1' && o.afterMerge.next.args.agents.map((g) => g.id).join() === 'F2'}`)
 '@
 Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy dependsOn: #' 'gate' -Show 9
 # the producer merges in the wait: the consumer builds and merges

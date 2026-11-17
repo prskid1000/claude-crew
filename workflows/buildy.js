@@ -660,7 +660,7 @@ async function ship(a, x) {
 
 const out = results.filter(Boolean)
 for (const x of out) {
- if (x.error) { if (!x.blocked) log(`${x.id}: ERROR ${x.error}`); continue }
+ if (x.error) { if (x.waitFor) log(`${x.id}: BLOCKED by unmerged producer(s) ${x.waitFor.join(', ')}: not started; outcome.afterMerge.next relaunches it once they merge`); else if (!x.blocked) log(`${x.id}: ERROR ${x.error}`); continue }
  const r = x.report
  log(`${x.id}: ${r.mrs.filter((m) => m.merged).length}/${r.mrs.length} MRs merged, scheduled ${r.mrs.filter((m) => m.mergeState === 'SCHEDULED').length}, local ${(r.localTest || {}).status || '?'}, done ${r.done.length}, deferred ${r.deferred.length}${x.blocked ? `, BLOCKED (${x.blocked})` : ''}`)
 }
@@ -669,7 +669,7 @@ await releaseAll(A.agents.map((a) => a.id), 'Fix')   // backstop for every area,
 const outcome = {
  agents: out,
  deferred: out.flatMap((x) => (x.report ? x.report.deferred.map((d) => ({ agent: x.id, ...d })) : [])),
- blocked: out.filter((x) => x.blocked).map((x) => ({ agent: x.id, why: x.blocked })),
+ blocked: out.filter((x) => x.blocked).map((x) => ({ agent: x.id, why: x.blocked, ...(x.waitFor ? { blockedBy: x.waitFor } : {}) })),
  decisions,
  envFixes,
  needsLiveCheck: out.flatMap((x) => (x.report ? x.report.needsLiveCheck : [])),
