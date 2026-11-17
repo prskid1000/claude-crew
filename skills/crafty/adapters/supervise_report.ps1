@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next.
-# Sections: L5 supervise report · L107 transcript tails
+# Sections: L5 supervise report · L108 transcript tails
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -54,7 +54,8 @@ function Get-KitFlagCells($f) {
 # a flag's identity across rounds: counts, times and sizes vary
 function Get-KitFlagKey([string]$What) { $k = (($What.ToLower() -replace '\b\d+\b', '#') -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
 # -Ack text pasted from the -Brief table: cells add spaces after - / (word wrap), escape |, end in …, join with ·; counts vary
-function ConvertTo-KitAckText([string]$Text) { ($Text.ToLower() -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
+# lane ids as shown names first (K55: an ack copied from the shown flag, rm·Kestrel, matches a flag stored with rm2)
+function ConvertTo-KitAckText([string]$Text) { ((ConvertTo-KitLaneText $Text).ToLower() -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
 # an ack matches the flag's whole line or any one cell; a short one only a whole flag or its kind + who start ("BUILDS · HQA")
 function Get-KitAckWholes($Flag) { $c = Get-KitFlagCells $Flag; @((ConvertTo-KitAckText "$($Flag.what)"), (ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"), $(if ($c.kind -and $c.who) { ConvertTo-KitAckText "$($c.kind) $($c.who)" })) | Where-Object { $_ } }
 function Test-KitAcked($Flag, [string[]]$Keys) {

@@ -122,10 +122,12 @@ Expect "pool: learned warm = p90 + 1 (capped by the pool size), idle candidates 
 $lnt = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{ localEnv = [pscustomobject]@{ envs = [pscustomobject]@{ shop = [pscustomobject]@{ lanes = [pscustomobject]@{ max = 3 } } } } }
   @(@('shop2 · api', 'shop · db', 'env shop', '[shop3] up', 'shop2-api.log', 'lane/shop-kestrel', 'workshop2 · x', 'shop2 &#183; web') | ForEach-Object { ConvertTo-KitLaneText $_ }) -join '|'
   "from:$(ConvertFrom-KitLaneLabel 'shop·Kestrel')/$(ConvertFrom-KitLaneLabel 'SHOP-OSPREY')/$(ConvertFrom-KitLaneLabel 'other')"
-  "out:$(@('x shop2' | ConvertTo-KitLaneOut $false) + @('x shop2' | ConvertTo-KitLaneOut $true) -join '/')" }
+  "out:$(@('x shop2' | ConvertTo-KitLaneOut $false) + @('x shop2' | ConvertTo-KitLaneOut $true) -join '/')"
+  $spk = [pscustomobject]@{ what = 'ERROR SPIKE: 1 new error line(s) in C:\x\shop2-api.log'; kind = 'ERROR SPIKE'; who = 'shop2 api'; problem = '1 new error line in shop2 api log' }
+  "ack:$(Test-KitAcked $spk @('ERROR SPIKE · shop·Kestrel api'))/$(Test-KitAcked $spk @('ERROR SPIKE · shop2 api'))/$(Test-KitAcked $spk @('ERROR SPIKE · shop·Osprey api'))" }
 Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 } } } } }; $lp = Join-Path (Kd) 'lanes.html'
 Set-Content $lp "<html><body><p>env shop·Kestrel</p><p>shop2 &#183; api</p><script>var a='shop2'</script></body></html>"
 $lhit = python -X utf8 -c "import sys; sys.argv=['kitbag.py']; sys.path.insert(0, r'$k/skills/bossy'); import kitbag; print(len(kitbag.lane_ids_shown(r'$lp', r'$k')))"
-Expect "lane names: ids shown as <product>·<Bird> (paths, branches, other words kept), -Env takes the shown name, -Json keeps ids; ui-check counts a bare id outside scripts ($($lnt -join ' | ') | $lhit)" ($lnt[0] -eq 'shop·Kestrel · api|shop·Falcon · db|env shop·Falcon|[shop·Osprey] up|shop2-api.log|lane/shop-kestrel|workshop2 · x|shop·Kestrel &#183; web' -and $lnt[1] -eq 'from:shop2/shop3/other' -and $lnt[2] -eq 'out:x shop·Kestrel/x shop2' -and "$lhit".Trim() -eq '1')
+Expect "lane names: ids shown as <product>·<Bird> (paths, branches, other words kept), -Env takes the shown name, -Json keeps ids; ui-check counts a bare id outside scripts ($($lnt -join ' | ') | $lhit)" ($lnt[0] -eq 'shop·Kestrel · api|shop·Falcon · db|env shop·Falcon|[shop·Osprey] up|shop2-api.log|lane/shop-kestrel|workshop2 · x|shop·Kestrel &#183; web' -and $lnt[1] -eq 'from:shop2/shop3/other' -and $lnt[2] -eq 'out:x shop·Kestrel/x shop2' -and $lnt[3] -eq 'ack:True/True/False' -and "$lhit".Trim() -eq '1')
 Remove-TestKit $k
 Complete-Tests
