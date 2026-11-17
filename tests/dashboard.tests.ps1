@@ -44,7 +44,7 @@ Expect "resources: 0 held + 1 agent active while agents run; none live: (0) ($rs
 # Branches tile: the last repo sync per repo (fast-forwarded, diverged, dirty, pruned), kept ones in its tooltip
 $syh = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ repos = @{ at = $n.ToString('o'); repos = @(@{ repo = 'api'; branches = 3; worktrees = 1 }) }
         sync = @(@{ repo = 'api'; at = $n.ToString('o'); ff = @('main +5', 'x +1'); diverged = @('lane-ish [ahead 1, behind 2]'); dirty = @(); pruned = @('lane/a-falcon (lane branch, no worktree)'); err = '' }) } }); $h }
-Expect 'Branches tile: sync line with counts, a warn tone and the kept branch in its tooltip' ($syh -match "sync 10:00: 2 fast-forwarded (·|&#183;) 1 diverged (·|&#183;) 0 dirty (·|&#183;) 1 pruned" -and $syh -match "class='s warn' title='api: lane-ish \[ahead 1, behind 2\]'")
+Expect 'Branches tile: sync chips with counts (zero ones left out), a warn tone and the kept branch in its tooltip' ($syh -match "<span class=chip[^>]*>sync 10:00</span><span class=chip[^>]*>2 fast-forwarded</span><span class='chip warn' title='api: lane-ish \[ahead 1, behind 2\]'>1 diverged</span><span class=chip[^>]*>1 pruned</span>" -and $syh -notmatch '0 dirty')
 # flags heatmap: distinct flags per clock hour (a flag seen twice in one hour counts once), auto-fixed = FIXED, 24 h kept; ACT row + a kind sub-row, the count in the cell
 $drwHold = "if(d.querySelector('dialog.drw[open]')){sa();return}"
 $fhm = & { . $O; $n = [datetime]'2026-01-02T10:20:00'; $fa = @{ level = 'ACT'; what = 'STUCK W1 (r1): no progress' }
@@ -83,14 +83,27 @@ $agg = & { . $O; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date
   $rxA = "<tbody class='grp' data-g='wf_a'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=true><span class=gn0>wf_a</span><span class=gcn>2 agents &#183; 1 active &#183; 1 waiting &#183; buildy</span>"
   $rxF = "<tbody class='grp cl' data-g='kit-x'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=false><span class=gn0>kit-x</span><span class=gcn>1 agent &#183; 1 finished &#183; kitty</span>"
   $rxD = "<span title='Build &#183; Bash: export CLAUDE_AGENT=&#39;B1&#39;;[^']*'>Build &#183; runs envy.ps1</span>"
-  $rxB = 'data-ga=1>Collapse all</button><button type=button class=ga data-ga=0>Expand all'; $rxS = "S.getItem('kc-ag-'"
-  $okC = $h.Contains($rxB) -and $h -match $rxD -and $h.Contains('>Review &#183; Bash: Run crafty pipes check<') -and $h.Contains($rxS)
+  # K72: one toggle in the Agents header (gl() relabels it), the column header in a thead hidden while every group is collapsed
+  $rxS = "S.getItem('kc-ag-'"
+  $okT = $h.Contains('<button type=button class=ga data-gall>Collapse all</button></summary>') -and $h.Contains('<thead class=agh>') -and $h.Contains('table.ag:not(:has(tbody.grp:not(.cl)))>thead{display:none}') -and $h.Contains('function gl(){') -and -not $h.Contains('data-ga=1')
+  $okC = $okT -and $h -match $rxD -and $h.Contains('>Review &#183; Bash: Run crafty pipes check<') -and $h.Contains($rxS)
   "$($h.Contains($rxA)) $($h.Contains($rxF)) $okC" }
 Expect "Agents: a collapsible group per run (agents, active / waiting, kind), finished-only folded, collapse / expand all, raw command -> step + script ($agg)" ($agg -eq 'True True True')
-# lanes (K39): Branches tile, a line per lane x repo "base @ sha · behind N · test merges N"; behind or kept: warn
-$lnh = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ repos = @{ at = $n.ToString('o'); repos = @(@{ repo = 'api'; branches = 1; worktrees = 1 }) }; lanes = @(@{ lane = 'shop'; repo = 'api'; head = 'abcdef1234'; base = '1234567890'; behind = 0; merges = 1; at = $n.ToString('o') }, @{ lane = 'shop2'; repo = 'api'; head = 'ffff0000aa'; behind = 3; merges = 0; kept = 'in use' }) } })
-  "$($h -match "<li class='f'[^>]*><b>shop &#183; api</b> base @ 12345678 · behind 0 · test merges 1</li>") $($h -match "<li class='f warn'[^>]*><b>shop2 &#183; api</b> base @ ffff0000 · behind 3")" }
-Expect "lanes on the Branches tile: base @ sha, behind, test merges; behind / kept tinted ($lnh)" ($lnh -eq 'True True')
+# lanes (K39, K74): Branches tile, a grid lane x repo (short repo names), a cell = behind + "+N" test merges, base sha in its tooltip,
+# behind amber, kept outlined, no slot = empty cell; cleanup / sync / warm slots as chips; a stretched graph capped at 160 px
+$lnh = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ repos = @{ at = $n.ToString('o'); repos = @(@{ repo = 'api-code'; branches = 1; worktrees = 1; removable = 2 }) }
+        sync = @(@{ repo = 'api-code'; at = $n.ToString('o'); ff = @('a'); dirty = @('wt1'); warm = '2 of 7 (learned 2)' }, @{ repo = 'ui-code'; at = $n.ToString('o'); warm = '1 of 3 (learned 1)' })
+        lanes = @(@{ lane = 'shop'; repo = 'api-code'; head = 'abcdef1234'; base = '1234567890'; behind = 0; merges = 1; at = $n.ToString('o') }, @{ lane = 'shop2'; repo = 'api-code'; head = 'ffff0000aa'; behind = 3; merges = 0; kept = 'in use' }, @{ lane = 'shop2'; repo = 'ui-code'; head = 'eeee'; behind = 0; merges = 0 }) } })
+  $cl = { param($rx) [bool]($h -match $rx) }
+  @((& $cl "<span class=lnh title='api-code'>api</span><span class=lnh title='ui-code'>ui</span>"), (& $cl "<span class=lnn title='shop'>shop</span><span class='lnc on' tabindex=0 title='shop &#183; api-code: base @ 12345678[^']*'>0<small>\+1</small></span><span class=lnc></span>"),
+    (& $cl "<span class='lnc on bh kp' tabindex=0 title='shop2 &#183; api-code: base @ ffff0000[^']*kept: in use[^']*'>3</span>"), (& $cl "<span class='chip warn'[^>]*>2 to clean</span>"), (& $cl "<span class='chip warn'[^>]*>1 dirty</span>"),
+    (& $cl "warm slots</small><span class=chip title='warm slots api-code: 2 of 7 \(learned 2\)'>api 2/7</span>"), (-not $h.Contains('class=lnl')), $h.Contains("Math.min(ex,Math.floor(160-lg.getBoundingClientRect().height))")) -join ' ' }
+Expect "lanes grid + chips on the Branches tile; graphs stretch to 160 px at most ($lnh)" ($lnh -eq 'True True True True True True True True')
+# no Sessions fold (owner K74): coordinator and agents-outside-workflows sessions show only as their role share in Usage
+$ses = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $sx = @(1..3 | ForEach-Object { @{ session = "c0ffee0$_-aaaa-bbbb"; tok = 1000; cost = 1; min = 5; model = 'claude-x' } })
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ usage = [pscustomobject]@{ days = @(@{ day = '2026-01-02'; tok = 3000; cost = 3 }); coord = $sx; bg = @(@{ session = 'b1'; n = 1; tok = 9; cost = 0.1; roles = 'x' }) } } })
+  "$($h -match 'sec-sessions|Coordinator sessions|by session') $($h -match 'sec-usage')" }
+Expect "no Sessions fold: per-session tables gone, Usage stays ($ses)" ($ses -eq 'False True')
 # generic (K29): a synthetic config (other repos, no phones, no lanes) + a gate log of one unknown kind: no built-in preset, org or phone row shows
 $gen = & { Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos = @(@{ name = 'svc-x'; checkout = 'D:/nowhere/svc-x' }) }; . $O; $n = Get-Date; $dd = Join-Path (Get-KitPath audit -Create) $n.ToString('yyyy-MM-dd'); New-Item -ItemType Directory -Force $dd | Out-Null
   @{ at = $n.AddMinutes(-5).ToString('o'); event = 'end'; kind = 'zig-build'; owner = 'd1'; project = 'svc-x'; sec = 120; waitSec = 0; code = 0 } | ConvertTo-Json -Compress | Set-Content (Join-Path $dd 'builds.jsonl')

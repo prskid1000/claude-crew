@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour; their heatmap cards 
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L129 cards · L252 flags
+Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L129 cards · L265 flags
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -237,12 +237,25 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
   $legend = "<div class=hk><i class='lgk c'></i>top half = avg CPU % of the machine ($([Environment]::ProcessorCount) cores) <i class='lgk r'></i>bottom half = avg RAM (full = the biggest peak, $(& $n1 $ramTop) GB; the machine: its $(& $n1 $TotalGB) GB) · outlined = now · tap a cell for both values, holders and (machine row) the top other processes · dashed = no live holder (released after idle.graceMinutes)</div>"
   & $fold 'res24' 'Resources · 24 h' (Get-KitHeatCount $items) "<div class='gks w5 cpg rsh'>$head$(Format-KitHeatRows $items 'resources')</div>$legend$topHtml" -Open -tag h4 -cls "sub st cpu$(if ($last -and (& $hot $last.all $last.s)) { ' hot' })"
 }
-# lanes (envy.ps1 lanes -Sync, wt-slots/lanes/lanes.json; owner 2026-11-17): a line per lane x repo "base @ target sha · behind N · test merges N",
-# a lane kept in use or on a conflict tinted; none: nothing
-function Format-KitLaneLines($Lanes) {
-  $ls = @($Lanes | Where-Object { $_ -and $_.lane }); if (-not $ls.Count) { return '' }
-  "<ul class=lnl>$(@($ls | Sort-Object lane, repo | ForEach-Object { $hd = "$(if ($_.base) { $_.base } else { $_.head })"
-      "<li class='f$(if ($_.kept -or [int]$_.behind) { ' warn' })' title='$(& $e "$($_.lane) · $($_.repo): head $($_.head)$(if ($_.kept) { " · kept: $($_.kept)" }) · $($_.at)")'><b>$(& $e "$($_.lane) · $($_.repo)")</b> base @ $(& $e $hd.Substring(0, [math]::Min(8, $hd.Length))) · behind $([int]$_.behind) · test merges $([int]$_.merges)</li>" }) -join '')</ul>"
+# names minus the suffix all of them share ("-code"): narrow grid columns and chips; one name keeps its full form
+function Get-KitShortNames([string[]]$Names) {
+  $ns = @($Names | Where-Object { $_ } | Select-Object -Unique); $map = @{}; $sx = ''
+  if ($ns.Count -ge 2 -and "$($ns[0])" -match '([-_.][^-_.]+)$') { $c0 = $Matches[1]; if (-not @($ns | Where-Object { -not $_.EndsWith($c0) -or $_.Length -le $c0.Length }).Count) { $sx = $c0 } }
+  foreach ($x in $ns) { $map[$x] = if ($sx) { $x.Substring(0, $x.Length - $sx.Length) } else { $x } }; $map
+}
+# lanes (envy.ps1 lanes -Sync, wt-slots/lanes/lanes.json; owner 2026-11-17, K74): a grid, a row per lane, a column per repo; a cell = commits
+# behind the target (amber when > 0) and +N test merges (sage); base, head and kept in its tooltip; no slot for that repo: an empty cell
+function Format-KitLaneGrid($Lanes) {
+  $ls = @($Lanes | Where-Object { $_ -and $_.lane -and $_.repo }); if (-not $ls.Count) { return '' }
+  $rps = @($ls.repo | Sort-Object -Unique); $sn = Get-KitShortNames $rps; $byLR = @{}; foreach ($x in $ls) { $byLR["$($x.lane)|$($x.repo)"] = $x }
+  $s8 = { param($v) $v = "$v"; $v.Substring(0, [math]::Min(8, $v.Length)) }
+  $hd = "<span></span>$(@($rps | ForEach-Object { "<span class=lnh title='$(& $e $_)'>$(& $e $sn[$_])</span>" }) -join '')"
+  $rows = @($ls.lane | Sort-Object -Unique | ForEach-Object { $ln = $_; $lbl = try { Get-KitPoolLabel env $ln } catch { $ln }   # lane 1 too: <env>·<Bird>
+      "<span class=lnn title='$(& $e $ln)'>$(& $e $lbl)</span>" + (@($rps | ForEach-Object { $x = $byLR["$ln|$_"]; if (-not $x) { return '<span class=lnc></span>' }
+          $bh = [int]$x.behind; $mg = [int]$x.merges
+          "<span class='lnc on$(if ($bh) { ' bh' })$(if ($x.kept) { ' kp' })' tabindex=0 title='$(& $e "$lbl · $($x.repo): base @ $(& $s8 $(if ($x.base) { $x.base } else { $x.head })) · head $(& $s8 $x.head) · behind $bh · test merges $mg$(if ($x.kept) { " · kept: $($x.kept)" })$(if ($x.at) { " · $($x.at)" })")'>$bh$(if ($mg) { "<small>+$mg</small>" })</span>" }) -join '') })
+  "<div class=lng style='--n:$($rps.Count)' role=group aria-label='lanes by repo: commits behind the target, +N test merges'>$hd$($rows -join '')</div>" +
+  "<div class=lnk><i class='lgk lb'></i>behind target <i class='lgk lm'></i>+N test merges · outlined = in use · tap a cell: base sha</div>"
 }
 # resources held now (Resources and leases): name and holder; none: the live agents' count or "No resource held."
 function Format-KitHeldList($Resources, [int]$Active = 0) {   # $Active: live agents (none held while agents run is a count, not idle)
@@ -317,7 +330,11 @@ function Get-KitStatsCss {
   '.fhm .gk.gl0>.hm.fh{height:20px}.fhm .gk.fk>.gn{padding-left:12px;font-weight:500;color:var(--mt)}.fhm .gk.l-act:not(.fk)>.gn{color:color-mix(in srgb,var(--act) 60%,var(--fg))}.fhm .gk.l-watch:not(.fk)>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.fhm .gk.l-fixed:not(.fk)>.gn{color:var(--sage2)}' +
   '.gkx{grid-column:1/-1;justify-self:start;background:none;border:0;padding:2px 0;color:var(--mt);font:inherit;cursor:pointer}.gkx::before{content:"\25B8  "}.gkx[aria-expanded=true]::before{content:"\25BE  "}.gkx small{font-size:inherit}.gki{display:none}.gks.gio>.gki{display:contents}' +
   '.lgk{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 3px 0 6px;vertical-align:-1px}.lgk:first-child{margin-left:0}.lgk.c{background:var(--slate)}.lgk.r{background:var(--sage2)}' +
-  '.hld{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:3px 16px;font-size:12px}.hld .m{color:var(--mt)}.lnl{list-style:none;margin:4px 0 0;padding:0;font-size:12px;color:var(--mt)}.lnl b{color:var(--fg);font-weight:600}.lnl .warn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}' +
+  '.hld{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:3px 16px;font-size:12px}.hld .m{color:var(--mt)}' +
+  # lane grid (K74): muted cells, amber = behind, sage +N = test merges, outline = in use
+  '.lng{display:grid;grid-template-columns:minmax(0,max-content) repeat(var(--n),minmax(30px,1fr));gap:2px;margin-top:6px;font-size:11.5px;font-variant-numeric:tabular-nums}.lnh{font-size:10.5px;color:var(--mt);text-align:center;overflow-wrap:anywhere}.lnn{padding-right:6px;line-height:20px;overflow-wrap:anywhere}' +
+  '.lnc{min-height:20px;line-height:20px;text-align:center;border-radius:3px;color:var(--mt)}.lnc.on{background:var(--sf2)}.lnc.bh{background:color-mix(in srgb,var(--watch) 22%,var(--sf2));color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:600}.lnc small{margin-left:3px;font-size:10px;font-weight:600;color:var(--sage2)}.lnc.kp{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 22%,transparent)}' +
+  '.lnk{font-size:10.5px;color:var(--mt);margin-top:3px}.lgk.lb{background:color-mix(in srgb,var(--watch) 40%,var(--sf2))}.lgk.lm{background:var(--sage2)}.lcp>.ya{z-index:1}.sch{margin-top:6px;align-items:center}.sch .lnk{margin:0 0 0 4px}.sch .chip{font-weight:500;letter-spacing:0}' +
   'dialog.drw{position:fixed;inset:0 0 0 auto;margin:0;height:100dvh;max-height:none;width:min(1100px,94vw);max-width:none;padding:0;border:0;border-left:1px solid var(--ln);background:var(--bg);color:var(--fg)}dialog.drw[open]{display:flex;flex-direction:column}dialog.drw::backdrop{background:rgba(0,0,0,.35)}.dwh{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--ln)}.dwh b{flex:1;font-size:13px;overflow-wrap:anywhere}.drw iframe{flex:1;border:0;width:100%;background:var(--bg)}' +
   '.nod{font-size:10.5px;color:var(--mt);padding:10px 0;text-align:center}' +
   '.cpt{margin-top:6px}.cpo{display:grid;grid-template-columns:minmax(0,1fr) max-content max-content;gap:2px 12px;font-size:12px;padding:2px 0;border-top:1px solid var(--ln)}.cpo .cn0{overflow-wrap:anywhere}.cpo small{color:var(--mt)}.cpo.hot .gc{color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}' +
