@@ -48,6 +48,13 @@ $ru.checks[2].observed = 'GET /api/agents/7 500 vs 200'; $ru.checks[2] | Add-Mem
 $rv = Read-Json "$un/U2/results.json"; $rv.checks[1].observed = 'Delete button did nothing, could not get a result'; $rv.checks[1] | Add-Member verify 'inconclusive | no repro'; & $J $rv "$un/U2/results.json"
 $null = Fin $un U1; $null = Fin $un U2; $ub = @(Get-ChildItem $store -Filter *.json | ForEach-Object { Read-Json $_.FullName } | Where-Object { $_.parent -eq 'PU' -and $_.name -like '`[Bug`]*' })
 Expect "finalize: inconclusive X1 without a request -> unproven + watch, no [Bug]; X2 names GET /api -> [Bug] '<product> — <first defect>' ($(@($ub.name) -join '; '))" ((Rec $un U1).unproven -contains 'X1' -and (Rec $un U1).newDefects -eq 1 -and (Read-Json "$un/U1/finalize.json").watch[0].id -eq 'X1' -and $ub.Count -eq 1 -and $ub[0].name -eq '[Bug] ProdU — s' -and (Rec $un U2).newDefects -eq 0 -and (Rec $un U2).closed -and -not (Rec $un U2).bug)
+# K68: a passing retest closes (the original's FAIL is superseded); an own FAIL beats a pending check; a check naming no subtask keeps it open
+New-Task 'TR' 'Task R'; New-Task 'TP' 'Task P'; New-Task 'TO' 'Task O'; New-Task 'TO2' 'Task O2'
+$rr = New-Run 'RR' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'FAIL') }, @{ code = 'R2'; task = 'TR'; checks = , @('C1', 'PASS') }, @{ code = 'P1'; task = 'TP'; checks = @(@('C1', 'FAIL'), @('C2', 'PENDING')) }, @{ code = 'O1'; task = 'TO'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) })
+$rj = Read-Json "$rr/run.json"; $rj.items[1] | Add-Member retest $true; $rj.items[3].subtasks += [pscustomobject]@{ id = 'TO2'; name = 'Task O2' }; & $J $rj "$rr/run.json"
+$ro = Read-Json "$rr/O1/results.json"; $ro.checks[1].subtask_id = 'TZZ'; & $J $ro "$rr/O1/results.json"
+foreach ($c in 'R1', 'R2', 'P1', 'O1') { $null = Fin $rr $c }
+Expect "finalize: a passing retest closes ($((Rec $rr R2).keptOpen)); an own FAIL beside a pending check fails testing; an orphan FAIL keeps the item open" ((Rec $rr R2).closed -and (Rec $rr P1).failedTesting -and (Rec $rr O1).keptOpen -match '1 check\(s\) name no subtask of this item \(TZZ\)')
 # lanes: qa.lanes names any lane; unset = web only; unknown names the configured list
 $lo1 = pwsh @np $Q retest -RunDir $rt -Task TZ -Code Z2 -Lane app 2>&1 | Out-String; $lc1 = $LASTEXITCODE
 '{"qa":{"lanes":{"web":{"kind":"web"},"desk":{"kind":"desktop"},"phone":{"kind":"app","devices":"android"}}}}' | Set-Content $kl
@@ -81,6 +88,10 @@ Expect "prepare: a run folder with files is refused (exit 1, no -2 suffix); an e
 Set-JsonFile $kl @{ process = @{ docs = @() } }   # [] = no docs (unset: the built-in pair, vocab.json)
 $ppNd = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-nodoc') 2>&1); $ndRun = ("$($ppNd[-1])" -replace '^RUN ') | ConvertFrom-Json
 Expect "prepare, process.docs []: no doc needed, the task text is the guide, lane = the first qa.lanes lane (web) ($($ppNd[-2]))" (@($ndRun.items).Count -eq 2 -and -not @($ndRun.left).Count -and (Get-Content -Raw $ndRun.items[1].guideFile) -match 'No testing doc configured' -and $ndRun.items[0].lane -eq 'web')
+# K68: a qa.targets rule's repos match the MR repos (the inner $_ hid the rule)
+Set-JsonFile $kl @{ process = @{ docs = @() }; qa = @{ targets = @{ 'stg-a' = @(@{ repos = @('api'); target = 'x-api' }, @{ repos = @('web'); target = 'x-web' }) } } }
+$ppTg = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-tgt') 2>&1); $tgRun = ("$($ppTg[-1])" -replace '^RUN ') | ConvertFrom-Json
+Expect "prepare: qa.targets rules match by repos (web MRs -> x-web) ($($ppTg[-2]))" (@($tgRun.items).Count -eq 2 -and @($tgRun.items | Where-Object target -eq 'x-web').Count -eq 2)
 # browser.mjs defaultUser: no 'admin' default (as pokey.ps1 api)
 if (Use-BrowserKit) {
   $du = "import { defaultUser } from '$((Join-Path $k 'skills/pokey/browser.mjs').Replace('\', '/') -replace '^', 'file:///')'`nconst two = { users: { a: 1, b: 2 } }`nlet e = ''; try { defaultUser(two, 'tt') } catch (x) { e = x.message }`nconsole.log([defaultUser({ users: { solo: 1 } }), defaultUser({ ...two, defaultUser: 'b' }), defaultUser({}), /several users/.test(e)].join('|'))"

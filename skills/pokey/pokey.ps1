@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L154 seat · L223 api · L442 finalize · L906 results · L939 retest · L996 prepare
+Sections: L26 lanes · L40 report · L154 seat · L223 api · L442 finalize · L910 results · L943 retest · L1000 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -730,7 +730,8 @@ function Format-Checks($list, [string]$heading) {
 # last item on a shared task decides
 function SiblingHold($id) {
   $own = 0; $nt = 0; $ntH = 0; $err = $null; $pend = 0
-  foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code } | ForEach-Object code)) {
+  # a retest supersedes the items it retests: their old FAIL never holds its close
+  foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code -and -not ($item.retest -and -not $_.retest) } | ForEach-Object code)) {
     $f = "$RunDir/$c/finalize.json"; if (-not (Test-Path $f)) { continue }
     $r = @((Get-Content $f -Raw | ConvertFrom-Json).subtasks | Where-Object { $_.id -eq $id -and -not $_.noTracker }) | Select-Object -First 1
     if ($r) { $own += [int]$r.fail; $nt += [int]$r.notTested; $ntH += [int]$r.notTestedHold; $pend += [int]$r.pending; if ($r.bugError) { $err = "$c`: $($r.bugError)" } }
@@ -808,10 +809,10 @@ function Set-FailedTesting($rec, $st) {
 function Resolve-Outcome($rec, $st, [int]$pend) {
   $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir/$($_.code)/finalize.json") } | ForEach-Object code)
   if ($others.Count) { $rec.waitingFor = $others; return }
-  if ($pend) { $rec.keptOpen = "$pend check(s) pending in another lane"; return }
+  if ($pend -and -not $rec.fail) { $rec.keptOpen = "$pend check(s) pending in another lane"; return }   # an own FAIL decides now
   if (-not $rec.total) { $rec.keptOpen = 'no check carries this task id (subtask_id)'; return }   # 0 of 0 is not a pass
   $sib = SiblingHold $st.id
-  if ($sib.pending) { $rec.keptOpen = "$($sib.pending) check(s) of a sibling item pending in another lane"; return }
+  if ($sib.pending -and -not ($rec.fail + $sib.fail)) { $rec.keptOpen = "$($sib.pending) check(s) of a sibling item pending in another lane"; return }
   # local env: untested = ENV-FIX
   if ($isLocal -and -not ($rec.fail + $sib.fail) -and ($rec.notTested + $sib.notTested)) { $rec.keptOpen = "local env ${isLocal}: $($rec.notTested + $sib.notTested) check(s) not tested: ENV-FIX + pokey.ps1 retest"; return }
   $hold = [int]$rec.notTestedHold + [int]$sib.notTestedHold   # owner decides (close / retest)
@@ -821,6 +822,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
     $rec.decision = TrySay { "$(& $KitCmd.orch decide ask -Run (Split-Path $RunDir -Leaf) -Agent "qa-$Code" -Item $st.id -Task $st.id -Question "$($st.id): $hold check(s) not tested ($($script:NtHold -join ' / ') causes; report $docUrl). Close it or retest?" -Options 'A: close it', 'B: keep it open for a retest' -Recommend B)" } "ask the owner about $($st.id)"
     return
   }
+  if ($orphans.Count) { $rec.keptOpen = "$($orphans.Count) check(s) name no subtask of this item ($(@($orphans.subtask_id | Select-Object -Unique) -join ', ')): fix their subtask_id, finalize again"; return }   # never dropped
   if ($rec.bugError -or $sib.bugError) { $rec.keptOpen = "new defects have no [Bug] task ($(if ($rec.bugError) { $rec.bugError } else { $sib.bugError }))"; return }   # never close while a defect is untracked
   if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
 }
@@ -831,6 +833,8 @@ $fOwn = $true; try { $fOwn = $fmx.WaitOne(1000 * [int](Get-KitParam 'qa.finalize
 if (-not $fOwn) { $fmx.Dispose(); throw "another finalize of $RunDir held the tracker step for $(Get-KitParam 'qa.finalizeLockSec') s (qa.finalizeLockSec): re-run finalize -Code $Code" }
 function Save-Fin { Write-KitAtomic $fin ($out | ConvertTo-Json -Depth 6) }
 try {
+$known = @(@($item.subtasks).id) + @(if ($item.dups) { (Get-KitProps $item.dups).Value })
+$orphans = @(if (@($item.subtasks).Count -gt 1) { $checks | Where-Object { $_.subtask_id -and "$($_.subtask_id)" -notin $known -and $_.result -ne 'PASS' } })
 foreach ($st in @($item.subtasks)) {
   $mine = @($checks | Where-Object { $_.subtask_id -eq $st.id })
   if (-not $mine.Count -and @($item.subtasks).Count -eq 1) { $mine = $checks }
@@ -1037,7 +1041,9 @@ foreach ($tid in @($cand.Keys)) {
   $it = [ordered]@{ code = ''; title = $nm; guideFile = ''; lane = @((Get-QaLanes).Keys)[0]; subtasks = @([ordered]@{ id = $tid; name = $nm; mrs = ($mrs -join ', ') }) }
   if ($tgtRules) {
     $repoNames = @($mrs | ForEach-Object { ($_ -split '!')[0] })
-    $hit = @($tgtRules) | Where-Object { (-not $_.lists -or @($_.lists) -contains $cand[$tid]) -and (-not $_.repos -or @($repoNames | Where-Object { @($_.repos) -contains $_ }).Count) -and (-not $_.nameRegex -or $nm -match $_.nameRegex) } | Select-Object -First 1
+    $mrPaths = { if ($null -eq $script:QaMrPaths) { $script:QaMrPaths = @(foreach ($m in $mrs) { $r0 = $m -split '!'; @((Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $r0[0] -Raw); n = $r0[1] }).changes.new_path) }) }; $script:QaMrPaths }   # asked once, only by a pathRegex rule
+    $script:QaMrPaths = $null
+    $hit = @(foreach ($rule in @($tgtRules)) { if ((-not $rule.lists -or @($rule.lists) -contains $cand[$tid]) -and (-not $rule.repos -or @($repoNames | Where-Object { $_ -in @($rule.repos) }).Count) -and (-not $rule.nameRegex -or $nm -match $rule.nameRegex) -and (-not $rule.pathRegex -or @(& $mrPaths | Where-Object { $_ -match $rule.pathRegex }).Count)) { $rule } })[0]
     if (-not $hit) { & $out "no qa.targets.$($jb.target) rule matches"; continue }
     $it.target = "$($hit.target)"; if ($hit.localEnv) { $it.localEnv = "$($hit.localEnv)" }
   } else { $it.target = "$($jb.target)" }
