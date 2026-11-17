@@ -27,7 +27,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
   L715 track · L1032 supervise · L1335 report · L1415 audit · L1475 storage · L1478 bugbrief · L1589 cleanup · L1674 learn ·
-  L1705 decide · L1844 debate · L1888 health · L1951 retro due · L1961 tidy · L2033 setup · L2130 guard-sendmessage
+  L1705 decide · L1856 debate · L1900 health · L1963 retro due · L1973 tidy · L2045 setup · L2142 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1781,6 +1781,18 @@ function Invoke-Decide {
       & $save $o
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
+      # a scope ask (-Gate scope, or its question names `decide record -Gate scope -Item <x>`) answered with a pick that records or
+      # approves: the scope word too (devy's wt commit -ScopeOk needs gate scope on the branch; an answer alone left it blocked)
+      $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($o.gate -eq 'scope') { "$($o.item)" }
+      $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]
+      if ($scItem -and $By -notmatch $crewRx) {
+        if ($pick -and "$($pick.label)" -match '(?i)\b(record|approve|allow|widen|yes)\b' -and "$($pick.label)" -notmatch '(?i)\b(split|hold|revert|separate)\b') {
+          $now = (Get-Date).ToString('o'); $sc = [pscustomobject][ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-coordinator-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
+            kind = 'decision'; run = $o.run; agent = 'coordinator'; item = $scItem; gate = 'scope'; question = $o.question; options = @(); blocking = $false; status = 'answered'; at = $now
+            task = "$($o.task)"; mrs = @($o.mrs); answer = $Answer; by = $By; source = 'chat'; answeredAt = $now; supersedes = @(); parentId = $Id }
+          & $save $sc; $o | Add-Member -Force scopeId $sc.id; & $save $o; & $note $o.contracts "DECISION $Id SCOPE WORD $($sc.id) ($scItem)"; "SCOPE RECORDED $($sc.id) (scope $scItem, from $Id): pass it to the agent (wt commit -ScopeOk $($sc.id))"
+        } else { "scope ask $Id answered without a record / approve pick: no scope word (decide record -Gate scope -Item $scItem when the owner allows it)" }
+      }
       if ($o.item -eq 'standing-rules' -and $By -notmatch $crewRx -and (Get-Command Set-KitStandingRuleAnswer -ErrorAction SilentlyContinue)) { Set-KitStandingRuleAnswer $Id $Answer $By }   # approved -> rules/standing-rules.local.md
       if ($o.kind -ne 'envfix') { & $pub "$($o.task)" $false }   # a known task only: -Item A2 / staging / 3 is no tracker task
     }
@@ -1793,14 +1805,14 @@ function Invoke-Decide {
       $until = (Get-Date).AddMinutes($MaxMinutes)
       while ($true) {
         $o = & $get $Id; if (-not $o) { "no decision $Id"; exit 1 }
-        if ($o.status -eq 'answered') { "ANSWERED $Id`: $($o.answer)$(if ($o.rationale) { " [Rationale: $($o.rationale)]" })"; return }
+        if ($o.status -eq 'answered') { "ANSWERED $Id`: $($o.answer)$(if ($o.rationale) { " [Rationale: $($o.rationale)]" })$(if ($o.scopeId) { " [scope word: wt commit -ScopeOk $($o.scopeId)]" })"; return }
         if ((Get-Date) -ge $until) { "PENDING $Id (no answer within $MaxMinutes min; wait again)"; exit 1 }
         Wait-KitPoll 30
       }
     }
     'record' {
       if (-not ($Gate -in $kitGates -and $Item -and $Question -and $Answer -and $Source)) { "usage: decide record -Gate $($kitGates -join '|') -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs] [-Task] [-Supersedes <ids>] [-NoPublish]"; exit 2 }
-      if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: coordinator only; -By names the person, never an agent ($By)"; exit 2 }
+      if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: -By names the person who gave the word, never an agent or the coordinator ($By): omit -By (default owner) or name the person; the coordinator runs it without -Agent"; exit 2 }
       $resolvedTask = if ($Task) { NormTask $Task } elseif (($tagRx = Get-KitTaskTagRx) -and $Item -match $tagRx) { NormTask $Item } else { '' }
       $now = (Get-Date).ToString('o')
       $o = [pscustomobject][ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-coordinator-$([guid]::NewGuid().ToString('N').Substring(0, 4))"

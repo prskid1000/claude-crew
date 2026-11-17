@@ -79,6 +79,15 @@ Set-Content $log @(Get-Content $log | Select-Object -SkipLast 1)
 $cw = pwsh @np $fx '"$(Test-KitSameChoice (Get-KitChoiceWords ''Replay'') (Get-KitChoiceWords "B: Don''t replay"))|$(Test-KitSameChoice (Get-KitChoiceWords ''Keep both'') (Get-KitChoiceWords ''Cannot keep both''))|$(Test-KitRuleSensitive '''' ''Delete the old tenant rows?'')|$(Test-KitRuleSensitive '''' ''Show the user-visible copy?'')"'
 Expect 'choices: a contraction is a no; sensitive: delete, tenant, user-visible asks never auto' ("$cw" -eq 'False|False|True|True')
 
+# a scope ask answered with its record pick records the scope word (devy's wt commit -ScopeOk); a split pick does not; -By coordinator: a hint
+$scQ = 'Review blocks MR 9 on scope. Record ONE scope word (decide record -Gate scope -Item f/CU-1-x) for the 2 test files.'
+$scA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: record the scope word for both', 'B: split them into a separate MR' | Out-String; $scId = if ($scA -match 'DECISION (\S+)') { $Matches[1] }
+$scR = pwsh @np $O decide answer -Id $scId -Answer 'A' | Out-String; $scW = if ($scR -match 'SCOPE RECORDED (\S+)') { $Matches[1] }
+$scC = pwsh @np $O decide check -Id $scW -Gate scope -Item f/CU-1-x | Out-String; $scWt = pwsh @np $O decide wait -Id $scId -MaxMinutes 0 | Out-String
+$sbA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: record the scope word for both', 'B: split them into a separate MR' | Out-String; $sbId = if ($sbA -match 'DECISION (\S+)') { $Matches[1] }
+$sbR = pwsh @np $O decide answer -Id $sbId -Answer 'B' | Out-String
+$byC = pwsh @np $O decide record -Gate scope -Item f/CU-1-x -Question q -Answer yes -Source chat -By coordinator 2>&1 | Out-String
+Expect "decide answer: a scope ask's record pick records gate scope on the branch (check WORD, wait names it); a split pick records none; record -By coordinator says omit -By ($scW)" ($scW -and $scC -match '^WORD ' -and $scWt -match "scope word: wt commit -ScopeOk $scW" -and $sbR -match 'no scope word' -and $sbR -notmatch 'SCOPE RECORDED' -and $byC -match 'omit -By')
 # standing rules: one ask, the owner's A, auto-answers (never deploy), a gate check refuses it, revoke
 $po = pwsh @np $O decide rules -Propose | Out-String
 $askId = if ($po -match 'ask (d-\S+)') { $Matches[1] }
