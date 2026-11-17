@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L69 pause · L81 spike · L113 flags · L177 waits · L188 cpu
+Sections: L10 logs · L47 rows · L72 pause · L84 spike · L116 flags · L187 waits · L198 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -60,6 +60,9 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
       if ($h1 -and $why.Count -and -not @($why | Where-Object { $_ -notmatch '^hold:' }).Count) { $fl.Add([pscustomobject]@{ level = 'WATCH'; what = "$($ev.env) $($sv.service) kept up only by $($h1.who)'s hold for $([int]($now - [datetime]$h1.at).TotalMinutes) min (no lease)"; action = "Done with it: & $($KitCmd.local) unhold -Env $($ev.env) -Agent $($h1.who)" }) }
     }
     foreach ($h in @($ev.holds | Where-Object owner)) { $own += "owner hold $($ev.env) [$(@($h.services) -join ',')] until $($h.until) (unhold -Env $($ev.env) -Agent $($h.who) when done)" }
+    # K20n: a down service a live (not grace) holder needs flags in the sweep that reads it, not only as a row
+    foreach ($d1 in $down) { $lh = @($holders | Where-Object { $null -eq $_.graceLeft -and $d1.service -in @($_.services) } | ForEach-Object { if ($_.agent) { $_.agent } else { $_.who } } | Select-Object -Unique)
+      if ($lh.Count) { $fl.Add([pscustomobject]@{ level = $(if ($d1.state -eq 'blocked') { 'WATCH' } else { 'ACT' }); what = "SERVICE DOWN: $($ev.env) $($d1.service) is $($d1.state)$(if ($d1.why) { " ($($d1.why))" }) while $($lh -join ', ') hold$(if ($lh.Count -eq 1) { 's' }) it"; action = "kitty kind env: & $($KitCmd.local) logs -Env $($ev.env) -Service $($d1.service), then restart -Env $($ev.env) -Services $($d1.service)" }) } }
     if ($down.Count) { $rows.Add([pscustomobject]@{ name = "$($ev.env) · $(($down | ForEach-Object service) -join ' · ') (down)"; by = "$(@($down | ForEach-Object { if ("$($_.why)" -match 'memory|RAM') { 'memory' } elseif ($_.why) { "$($_.why)".Substring(0, [math]::Min(30, "$($_.why)".Length)) } else { $_.state } } | Select-Object -Unique) -join ', ')"; gb = 0 }) }
   }
   $ur = @(foreach ($u in $up.Values) { $g = @($u.gl | Sort-Object)[0]
@@ -114,10 +117,16 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix, [string[]]$Known = @()) {
 # waiting on leases or stalled, RAM floor moves, mark expiry / baseline age / short binlog, seed drift, unknown port owners, new log errors
 # (sizes cached per round)
 # the env rows early, among the machine guards: a sweep that runs out of budget later (track, network) still lists what holds RAM
+# a failed or timed-out status -Json read -> its reason (K20n: silent empty rows hid a down service), $null when read
+function Get-KitEnvStatusErr($Le) {
+  if (-not $Le.code -and -not $Le.timedOut) { return $null }
+  if (-not @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue).Count) { return $null }   # no env set up: nothing to read
+  if ($Le.timedOut) { 'timed out' } else { "exit $($Le.code): $(("$($Le.err)$($Le.out)" -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1))" }
+}
 function Get-KitSuperviseGuardLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
   $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30.0, (Left)))
-  $script:KitEnvStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }); (Get-KitEnvRows $script:KitEnvStatus $now).rows
+  $script:KitEnvStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }); $script:KitEnvStatusErr = Get-KitEnvStatusErr $le; (Get-KitEnvRows $script:KitEnvStatus $now).rows
 }
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
@@ -138,7 +147,8 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   }
   $early = $null -ne $script:KitEnvStatus   # the guard hook read status this round: its rows are out
   $envs = if ($early) { $script:KitEnvStatus } else { $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30.0, (Left))); @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }) }
-  $script:KitEnvStatus = $null; $er = Get-KitEnvRows $envs $now
+  $se = if ($early) { $script:KitEnvStatusErr } else { Get-KitEnvStatusErr $le }; $script:KitEnvStatus = $null; $script:KitEnvStatusErr = $null; $er = Get-KitEnvRows $envs $now
+  if ($se) { [pscustomobject]@{ level = 'WATCH'; what = "LOCAL ENV STATUS unread this sweep: $se (down services cannot flag)"; action = "& $($KitCmd.local) status; slow or failing: kitty kind env" } }
   if (-not $early) { $er.rows }; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
   $cf = Join-Path (Get-KitPath cache -Create) 'localenv-supervise.json'; $last = try { Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $last) { $last = @{} }; $seenEnv = @{}
   $waitMin = [double](Get-KitParam 'localEnv.trainWaitFlagMinutes')

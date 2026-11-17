@@ -210,5 +210,14 @@ $um = foreach ($rel in 1, 2) { & { . $L3; $e = 'uz'; $Agent = 'A'; $Services = '
   Update-State uz { param($x) $x.release = @{ n = $rel }; $x.leases = @{ A = @{ services = @('api'); repos = @(); release = 1; note = 'n1' } } }
   $null = . ([scriptblock]::Create($use.Substring(1, $use.Length - 2))); $l = (Read-State uz).leases.A; "$(@($l.services) -join ',')/$($l.release)/$($l.note)" } }
 Expect "envy use: a second use keeps the held services and the note, the release moves to the current one ($($um -join ' '))" (($um -join ' ') -eq 'api,job/1/n1 api,job/2/n1')
+# K20n: a down service a live lease needs is an ACT in the same sweep (grace-only holder: row only); an unread status is a WATCH
+$sdBossy = Join-Path $k3 'skills/bossy/bossy.ps1'; Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') (Join-Path $k3 'skills/bossy/adapters')
+$sdJ = '[{"env":"shop","services":[{"service":"api","state":"down","why":"exit 1"},{"service":"web","state":"down"}],"leases":[{"agent":"devy-a","services":["api"]},{"agent":"devy-b","services":["web"],"graceLeft":4}],"holds":[],"seed":{"ok":true}}]'
+$sdOut = & { . $sdBossy; function Left { 30 }; function Within { $false }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = $sdJ } }; [void]@(Get-KitSuperviseGuardLocalEnv); @(Get-KitSuperviseFlagsLocalEnv) | Where-Object level | ForEach-Object { "$($_.level) $($_.what)" } }
+Expect "supervise: SERVICE DOWN ACT for a live lease's down service, none for a grace-only one ($($sdOut -join ' | '))" (@(@($sdOut) -match '^ACT SERVICE DOWN: shop api is down \(exit 1\) while devy-a holds it$').Count -eq 1 -and -not @(@($sdOut) -match 'shop web').Count)
+$sdErr = & { . $sdBossy; function Left { 30 }; function Within { $false }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 1; out = ''; err = 'status failed: lock busy'; timedOut = $false } }
+  $sdMark = Join-Path (Get-KitPath localenv -Create) 'k20n-probe.json'; '{}' | Set-Content $sdMark   # an env is set up: the read is expected
+  try { [void]@(Get-KitSuperviseGuardLocalEnv); @(Get-KitSuperviseFlagsLocalEnv) | Where-Object level | ForEach-Object { "$($_.level) $($_.what)" } } finally { Remove-Item -LiteralPath $sdMark } }
+Expect "supervise: a failed status read is a WATCH naming its reason ($($sdErr -join ' | '))" (@(@($sdErr) -match '^WATCH LOCAL ENV STATUS unread this sweep: exit 1: status failed: lock busy').Count -eq 1)
 Remove-TestKit $k3
 Complete-Tests
