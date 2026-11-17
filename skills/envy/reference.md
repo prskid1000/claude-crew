@@ -94,7 +94,9 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
 - An edited kit.local.json, envy.ps1, lib.ps1 or `adapters/` file restarts the loop between trains.
 - `readyPattern`: a ready log line checks health at once (else every 5 s; fail lines every 1 s).
 - `logClasses` { expected, startup, connection, 5xx, dependency }: regexes replacing the generic log classes (supervise's
-  ERROR SPIKE classes; `dependency` = a start failed on a dependency that was down: wait, retry once). `defaultService`:
+  ERROR SPIKE classes; `dependency` = a start failed on a dependency that was down: wait, retry once). `expectedErrors`
+  (`localEnv.` or `envs.<env>.`; a lane uses its env's): regexes of lines that never flag (a job calling an outside system the
+  machine cannot reach). `defaultService`:
   the service `logs` shows without `-Service` (else the env's only one).
 - `mvnd` on PATH replaces mvn / mvnw in every gated build. Events: `build`, `stage`, `up`, `aot-train` with seconds.
 

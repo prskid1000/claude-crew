@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L69 pause · L81 spike · L108 flags · L172 waits · L183 cpu
+Sections: L10 logs · L47 rows · L69 pause · L81 spike · L113 flags · L177 waits · L188 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -86,7 +86,12 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix, [string[]]$Known = @()) {
   $base = [IO.Path]::GetFileNameWithoutExtension($L.path); $ev = @($Envs | Where-Object { $_.env -and $base.StartsWith("$($_.env)-") } | Sort-Object { - "$($_.env)".Length })[0]
   $svc = if ($ev) { $base.Substring("$($ev.env)".Length + 1) } else { $base }; $where = if ($ev) { "$($ev.env) $svc (release r$($ev.release))" } else { $L.path }
   $sigOf = { param($x) "noise:$(if ($ev) { $ev.env } else { $base }):$(Get-KitErrorSignature $x)" }
-  if ($Known.Count -and $L.lines) { $L = [pscustomobject](@{ path = $L.path; expected = $L.expected; lines = @($L.lines | Where-Object { (& $sigOf $_) -notin $Known }) } + (Get-KitLogClass @($L.lines | Where-Object { (& $sigOf $_) -notin $Known }))) }
+  # expected on a local env (K50: a scheduled job that calls an outside system the machine cannot reach): localEnv.expectedErrors and
+  # localEnv.envs.<env>.expectedErrors (regexes; a lane uses its env's), dropped like acknowledged noise
+  $be = if (-not $ev) { '' } elseif ($null -ne (Get-KitSetting "localEnv.envs.$($ev.env)" $null)) { "$($ev.env)" } else { "$($ev.env)" -replace '\d+$' }
+  $exp = @(@(Get-KitSetting 'localEnv.expectedErrors' @()) + @(if ($be) { Get-KitSetting "localEnv.envs.$be.expectedErrors" @() }) | Where-Object { $_ })
+  $keep = { param($x) (& $sigOf $x) -notin $Known -and -not @($exp | Where-Object { "$x" -match $_ }).Count }
+  if (($Known.Count -or $exp.Count) -and $L.lines) { $kl = @($L.lines | Where-Object { & $keep $_ }); $L = [pscustomobject](@{ path = $L.path; expected = $L.expected; lines = $kl } + (Get-KitLogClass $kl)) }
   $n = $L.errors + $(if (-not @($ev.leases).Count) { $L.expected })   # 4xx with nobody testing: someone else's calls
   if ($n -le 0) { return }
   $cells = @{ kind = 'ERROR SPIKE'; who = $(if ($ev) { "$($ev.env) $svc" } else { $base }); problem = "$n new error line$(if ($n -ne 1) { 's' }) in $(if ($ev) { "$($ev.env) $svc" } else { $base }) log"; next = "$($L.cls): $(("$($L.first)" -replace '\s+', ' ').Trim() | ForEach-Object { if ($_.Length -gt 60) { $_.Substring(0, 60) } else { $_ } })"
