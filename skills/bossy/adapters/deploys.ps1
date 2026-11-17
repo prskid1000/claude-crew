@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L210 deploy · L381 restart · L429 supervise
+Sections: L14 helpers · L93 intest · L212 deploy · L383 restart · L431 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -94,7 +94,7 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
 param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @())   # not $Mrs: pwsh names ignore case ($mrs below)
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'SilentlyContinue'; $intestEnd = (Get-Date).AddSeconds(3 * $TimeoutSec)   # every deployed check of this run together
 function Out-Line($s) { if (-not $Quiet -or $s -like 'MARKED*') { $s } }
 # -Mrs (what opsy deployed): the kit maps each MR to its task (tracking, else the tag in its title), never the caller
 $track = (Read-KitTracking).tasks
@@ -161,9 +161,11 @@ foreach ($id in $cand.Keys) {
   if (-not $mrs.Count) { Add-Tally 'no MRs found' $id; Out-Line "SKIP  $id  no MRs found | $short"; continue }
   $live = @(); $why = $null
   foreach ($mr in $mrs) {
-    # bounded per MR (K31: a hung host held deploy intest 35 min): a timeout = not live yet, the next tasks still run
-    $dr = Invoke-KitExe (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', $mr, '-Json', '-Exclude', (Get-NoTestRx), '-TimeoutSec', $TimeoutSec) ([int]($TimeoutSec * 1.5) + 5)
-    if ($dr.timedOut) { $why = "$mr deployed check timed out after $([int]($TimeoutSec * 1.5) + 5) s (deploy.deployedTimeoutSec)"; break }
+    # bounded per MR and per run (K31: a hung host held deploy intest 35 min): a timeout or a used budget = not live yet
+    $left = [int]($intestEnd - (Get-Date)).TotalSeconds; if ($left -lt 2) { $why = "$mr not checked: the intest budget ($(3 * $TimeoutSec) s, deploy.deployedTimeoutSec) is used"; break }
+    $cap = [math]::Min([int]($TimeoutSec * 1.5) + 5, $left)
+    $dr = Invoke-KitExe (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', $mr, '-Json', '-Exclude', (Get-NoTestRx), '-TimeoutSec', $TimeoutSec) $cap
+    if ($dr.timedOut) { $why = "$mr deployed check timed out after $cap s (deploy.deployedTimeoutSec)"; break }
     $rows = @(try { "$($dr.out)" | ConvertFrom-Json } catch { })
     # another product's deploy branch proves nothing
     $ok = @($rows | Where-Object { $_.state -eq 'DEPLOYED' -and $_.target -notmatch (Get-NoTestRx -Lanes) })

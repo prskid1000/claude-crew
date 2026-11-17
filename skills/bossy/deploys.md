@@ -19,4 +19,5 @@ a verb a kind lacks = UNKNOWN. Production = `deploys[].production`, else `deploy
 
 ## Before an ask
 An ask (`decide ask`, AskUserQuestion) about testing, deploying or a task's state: first `pokey.ps1 deployed -Mrs <its MRs>` and
-`crafty.ps1 tracker view <id>`, their result in the ask; every MR deployed and the task in test: no ask, route to `/testy` (R8).
+`crafty.ps1 tracker view <id>`, their result in the ask; every MR deployed and the task in test: no ask, route it (R8 `/testy` when it
+has a human testing doc and no org row sends it to a person). ENV-FIX and other decisions: as before.
