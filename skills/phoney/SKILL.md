@@ -24,7 +24,8 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
 - **lane APK** `apk/app.apk` (+ `app.json` stamp): the merged branch, installed on every lane at acquire (test-only runs).
 - **local-env APK** `apk/app-local.apk` (+ `app-local.json`): `phoney.ps1 build -Local [-AppDir <worktree>]` = a JS-bundled
   release build with the app's cleartext manifest overlay (`app.localManifests`, first that exists) for the local env's http
-  API; `acquire -Apk local` installs it and reverses `app.localReverse`. Not debug variants: they need Metro / a dev launcher.
+  API (a non-Gradle `app.kind` / `app.buildCmd`: `app.localBuildCmd`, else refused); `acquire -Apk local` installs it and
+  reverses `app.localReverse`. Not debug variants: they need Metro / a dev launcher.
   Only a clean origin/<app.branch> HEAD or a lane branch (`lane/*`) replaces it; else a side APK (`acquire -Apk <path>`).
 
 ## App-lane steps (devy and checky)

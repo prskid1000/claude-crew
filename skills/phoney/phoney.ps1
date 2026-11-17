@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L113 phone · L313 build · L457 install · L484 launch · L496 avd · L582 up · L680 down · L710 events ·
-  L767 slim
+Sections: L24 config · L113 phone · L313 build · L459 install · L486 launch · L498 avd · L584 up · L682 down · L712 events ·
+  L769 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -377,6 +377,8 @@ $commit = (git -C $AppDir rev-parse --short HEAD).Trim()
 $log = Join-Path $c.out 'build.log'
 $t0 = Get-Date
 if ($cmd) {
+  # -Local: the cleartext overlay is a Gradle init script; a non-Gradle build gets app.localBuildCmd or is refused (its release APK cannot reach http)
+  if ($Local) { if (-not "$($c.app.localBuildCmd)".Trim()) { throw "build -Local: app.kind $($c.app.kind) / app.buildCmd builds without the cleartext overlay: set swarm.config.json app.localBuildCmd (a build that allows http to the local env)" }; $cmd = [string]$c.app.localBuildCmd }
   & $gate -Dir $AppDir -Cmd "$($cmd.Replace('{gw}', $(if ($KitIsWindows) { $gw } else { "./$gw" }))) $BuildArgs > `"$log`" 2>&1" -WaitMinutes 120
   if ($LASTEXITCODE) { Get-Content $log -Tail 15; throw "build failed (exit $LASTEXITCODE) - see $log" }
   $apk = Get-Item (Join-Path $AppDir $c.app.artifact) -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } | Sort-Object LastWriteTime | Select-Object -Last 1
