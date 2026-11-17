@@ -96,6 +96,7 @@ function Invoke-KitStorageTick([switch]$Force) {
   $q = @(Get-KitDbQueries $c); $max = if ($c.db -and $c.db.maxGB) { [double]$c.db.maxGB } else { 0 }   # storage.db.maxGB: temp cap a query may hold (unset: no cap)
   $top = @($q | Sort-Object gb -Descending)[0]; if ($max -gt 0 -and $top -and $top.gb -gt $max) { $null = Stop-KitDbQuery $c $top "temp above $max GB"; $q = @($q | Where-Object id -ne $top.id) }
   foreach ($v in $out | Where-Object rescue) { Invoke-KitDiskRescue $c $v $q }
+  $script:KitStorageDbQ = $q   # the round's diagnosis reuses this list (one db call a sweep, K20)
   $out
 }
 # sustained fill (10 min a drive): kill temp db query, hold builds, Stop-KitDiskWriter* hooks
@@ -203,8 +204,10 @@ function Get-KitStorageRound {
     }
     $h = if ($st.rescues) { $st.rescues[$v.drive] }; $held = $h -and ((Get-Date) - [datetime]$h.at).TotalMinutes -lt $hm
     if ($v.level -eq 'OK') { if ($h) { Set-KitStorageState { param($s) $s.rescues.Remove($v.drive) }; if ($held) { [pscustomobject]@{ level = 'INFO'; what = "disk $($v.drive) back to normal: build hold lifted"; action = 'Nothing to do.' } } }; continue }
-    $why = @(); if ($v.anomaly -or $v.rescue) { $tw = @(Get-KitTopWriters); if ($tw.Count) { $why += "top writers: $(@($tw | ForEach-Object { "$($_.name) ($($_.pid)) $($_.mbs) MB/s" }) -join ', ')" }
-      $q = @(Get-KitDbQueries $c | Sort-Object gb -Descending)[0]; if ($q -and $q.gb -gt 0) { $why += "db query $($q.id): $($q.gb) GB temp, $($q.secs) s" } }
+    $why = @(); if ($v.anomaly -or $v.rescue) {   # top writers sample ~2 s: once per 5 min while a drive stays anomalous (K20)
+      $tw = if ($st.topAt -and ((Get-Date) - [datetime]$st.topAt).TotalMinutes -lt 5) { @($st.top) } else { $tw0 = @(Get-KitTopWriters); Set-KitStorageState { param($s) $s.top = $tw0; $s.topAt = (Get-Date).ToString('o') }; $st.top = $tw0; $st.topAt = (Get-Date).ToString('o'); $tw0 }
+      if (@($tw).Count) { $why += "top writers: $(@($tw | ForEach-Object { "$($_.name) ($($_.pid)) $($_.mbs) MB/s" }) -join ', ')" }
+      $q = @($(if ($null -ne $script:KitStorageDbQ) { $script:KitStorageDbQ } else { Get-KitDbQueries $c }) | Sort-Object gb -Descending)[0]; if ($q -and $q.gb -gt 0) { $why += "db query $($q.id): $($q.gb) GB temp, $($q.secs) s" } }
     $del = Get-KitHeldDeletedGB $v.root; if ($null -ne $del) { $why += "deleted-but-open $del GB" }
     $g = @(Get-KitFolderGrowth $v.drive); if ($g.Count) { $why += "grew since the last scan: $(@($g | ForEach-Object { "$($_.path) +$($_.grew) GB ($($_.perDay) GB/day, normal $($_.normal))" }) -join '; ') (<unexplained> = deleted-but-open or no access)" }
     $what = "disk $($v.drive): $($v.free) GB free, filling $($v.rate) GB/h$(if (-not [double]::IsInfinity($v.ttf)) { ", full in $($v.ttf) h" })$(if ($v.anomaly) { " ($([math]::Round($v.rate / [math]::Max(0.1, $v.normal))) x normal)" })$(if ($why.Count) { '; ' + ($why -join '; ') })"

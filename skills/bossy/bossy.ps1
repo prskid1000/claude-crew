@@ -1296,7 +1296,7 @@ foreach ($e in $active | Where-Object { $_.budget -and $_.spend -ge $_.handoff }
 foreach ($h in Get-KitHandoffs 24 | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -ge 15 }) { Flag 'ACT' "HANDOFF $($h.agent) ($($h.run)) $([int]($now - [datetime]$h.beat).TotalMinutes) min ago, no fresh agent yet" "Spawn a fresh $(if ($h.type) { $h.type } else { 'agent' }) (-Agent $($h.agent) -Run $($h.run) in its prompt): continue from $($h.handoffBrief)" @{ kind = 'HANDOFF'; who = "$($h.agent) ($($h.run))"; age = "$([int]($now - [datetime]$h.beat).TotalMinutes) min"; problem = 'handed off, no fresh agent yet' } }
 foreach ($sf in @(Get-ChildItem (Get-KitPath launches) -Filter 'self-*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-12) } | Sort-Object LastWriteTime -Descending | Select-Object -First 3)) {
   $o = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json } catch { $null }; if (-not $o.cap -or $o.completed -or -not (Within 'run budgets')) { continue }
-  $sp = try { @(Invoke-Bounded $KitCmd.orch @('budget', '-Run', $o.run, '-Json')) -join '' | ConvertFrom-Json } catch { $null }
+  $sp = try { @(Invoke-KitBackground "budget -Run $($o.run)" $KitCmd.orch @('budget', '-Run', $o.run, '-Json')) -join '' | ConvertFrom-Json } catch { $null }   # the last sweep's result (it took 11 s inline, K20)
   if ($sp -and $sp.spent -ge $o.stopAt * $o.cap) { Flag 'WATCH' "run $($o.run) at $([int](100 * $sp.spent / $o.cap))% of its cap ($($sp.spent) / $($o.cap))" 'No new item starts; launch its next when it finishes (E7).' }
 }
 

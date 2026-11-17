@@ -15,6 +15,14 @@ $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$d
 $db.maxGB = 5; $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$db } }; $null = Invoke-KitStorageTick -Force; "cap:$("$(Get-Content "$sd/killed.txt")".Trim() -eq '43')"
 '@ @($O, $sd)
 Expect-Each $cap 'storage db cap: #' 'nocap', 'cap' -Show 4
+# K20: an anomalous drive's round: one db query list a sweep (the tick's), top writers sampled once per 5 min
+$rnd = Invoke-PsTest storage-round @'
+$null = . $args[0] 6>$null; $global:dbc = 0; $global:twc = 0; function Get-KitDbQueries($C) { $global:dbc++; @() }; function Get-KitTopWriters { $global:twc++; @([pscustomobject]@{ name = 'w'; pid = 1; mbs = 9 }) }
+function Get-KitDrives { @([pscustomobject]@{ name = 'Q'; root = 'Q:\'; free = 3; size = 100; kit = $true }) }; function Get-KitDiskVerdict { [pscustomobject]@{ level = 'WATCH'; anomaly = $true; rate = 9; ttf = 0.3; free = 3; normal = 0.1 } }
+function Get-KitHeldDeletedGB { $null }; function Get-KitFolderGrowth { @() }; function Start-KitStorageScan { }
+$r1 = @(Get-KitStorageRound); $r2 = @(Get-KitStorageRound); "round:$($global:dbc):$($global:twc):$(@($r2 | Where-Object { "$($_.what)" -match 'top writers: w \(1\)' }).Count)"
+'@ @($O)
+Expect "storage round: one db query list a sweep, top writers cached 5 min ($(@($rnd)[-1]))" (@($rnd)[-1] -eq 'round:2:1:1')
 # generic: idle daemons only from cleanup.idleDaemons (busyKinds hold them), tool caches from storage.toolCaches, gate.labels before built-in kinds
 $gen = Invoke-PsTest res-generic @'
 $null = . $args[0] 6>$null; Remove-Item Env:KIT_KEEP_DAEMONS -ErrorAction SilentlyContinue
