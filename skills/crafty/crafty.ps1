@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L949 check · L1266 pipes · L1323 guard · L2191 dir ·
-  L2201 checkpoint · L2231 prior · L2269 tracker · L2291 task spec · L2477 scope · L2524 host
+Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L949 check · L1266 pipes · L1323 guard · L2199 dir ·
+  L2209 checkpoint · L2239 prior · L2277 tracker · L2299 task spec · L2485 scope · L2532 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1324,6 +1324,7 @@ do {
 function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-process self-test)
 $ErrorActionPreference = 'SilentlyContinue'; $script:layoutNote = $null   # guard_server.ps1 keeps this runspace between calls: no note carries over
+$gbn = 'KIT_GUARD_BY' + 'PASS'   # guard_client.mjs crash switch; split: the whole word makes pwsh log this script (SBLOG)
 if ($SelfTest) {
   $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
   $cases = @(
@@ -1542,6 +1543,8 @@ if ($SelfTest) {
     $cases += @(@('B', "echo x > $mc/kit-scratch-$PID.txt", $true, 'shared main checkout'), @('B', "cd $mc && git status > kit-scratch-$PID.txt", $true, 'shared main checkout'), @('E', "$mc/kit-scratch-$PID.md", $true, 'shared main checkout'),
       @('B', "git -C $mc status > $cr/s.txt; echo x >> $mc/$ef; echo x > $mc/sub/new.txt", $false, 'shared main checkout')) }
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
+  $bp = 'set by the owner only'
+  $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/n.ps1", $false, $bp))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
@@ -1660,6 +1663,11 @@ function RuntimeKinds([string]$seg, [string]$base) {
 $segBase = $here
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
+# the crash switch outlives a call in settings env or the user / machine env: the owner's alone (K67)
+$bpText = "$cmd`n$($in.tool_input.content)`n$($in.tool_input.new_string)`n$(@($in.tool_input.edits | ForEach-Object { $_.new_string }) -join "`n")"
+if ($bpText -match $gbn -and (($edits -match 'settings[\w.-]*\.json$') -or $cmd -match '(?i)settings[\w.-]*\.json|\bsetx\b|SetEnvironmentVariable')) {
+  $raw = "$($in.tool_name) $($edits -join ' ') $cmd"; Deny "kit guard: $gbn (guard crashes let through) is set by the owner only"
+}
 $strayWhy = "a $rtLeaf outside the kit (a relative path from the wrong folder): agent files go under & $($KitCmd.dev) dir -Agent <id> (<kit>/$rtLeaf/work/agents/<id>/)"
 foreach ($e in $edits) { if ((RuntimeKinds " $e" $here) -contains 'stray') { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e is $strayWhy" } }
 # scratch (h.txt, r.txt) at the top of a shared main checkout (repos[].checkout) outlives the agent and dirties every base

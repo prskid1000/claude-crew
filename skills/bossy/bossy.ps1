@@ -26,8 +26,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1342 report · L1422 audit · L1482 storage · L1485 bugbrief · L1599 cleanup · L1684 learn ·
-  L1715 decide · L1866 debate · L1910 health · L1973 retro due · L1983 tidy · L2055 setup · L2152 guard-sendmessage
+  L715 track · L1032 supervise · L1344 report · L1424 audit · L1484 storage · L1487 bugbrief · L1601 cleanup · L1686 learn ·
+  L1717 decide · L1868 debate · L1912 health · L1975 retro due · L1985 tidy · L2057 setup · L2154 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1186,6 +1186,8 @@ if (Within 'state files') {   # unreadable state files (STATE.md)
 }
 Phase 'guard log'; $blocks = @(Read-KitLog guard $now.AddHours(-1) | Where-Object event -eq 'deny')
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: bossy.ps1 audit -Since 1h shows them; add a contracts note or a lesson so they stop.' }
+$crash = @(Read-KitLog guard $now.AddHours(-1) | Where-Object event -eq 'crash')   # K67: blocked, or let through by the owner's switch (guard_client.mjs header)
+if ($crash.Count) { Flag 'ACT' "guard crashed $($crash.Count)x in the last hour ($(@($crash | Where-Object letThrough).Count) let through by the owner's switch), first: $(([string]$crash[0].why).Substring(0, [math]::Min(120, ([string]$crash[0].why).Length)))" 'Spawn a kitty (kind fix) on skills/crafty; the owner unsets the switch (guard_client.mjs header) after the push.' }
 
 # 4. -AutoFix: tracker, outbox, cleanup (inTest: deploys adapter hook)
 if ($AutoFix -and (Within 'tracker checks')) {
