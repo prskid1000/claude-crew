@@ -103,7 +103,8 @@ $ph = (& { . $supBossy; $global:downs = @(); function Invoke-KitExe([string]$Exe
 Expect 'pause hook: services only a paused agent''s lease (in grace) or nobody needs stop; a live hold and external ones stay' ($ph -match 'stopped api, web \(no live holder\)' -and $ph -match 'downs=api,web$')
 # guard rules (adapters/guard_localenv.ps1): localenv/ pushes and hand-started dev servers are denied; rows: tool, command, deny
 $gk = New-TestKit leguard; New-Item -ItemType Directory -Force (Join-Path $gk 'skills/crafty/adapters') | Out-Null
-Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/crafty/adapters/guard_localenv.ps1') (Join-Path $gk 'skills/crafty/adapters')
+# New-TestKit links it already (harness list): a copy over the link failed while another area held the shared file
+if (-not (Test-Path (Join-Path $gk 'skills/crafty/adapters/guard_localenv.ps1'))) { Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/crafty/adapters/guard_localenv.ps1') (Join-Path $gk 'skills/crafty/adapters') }
 $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $bad = @()
 foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('B', 'git push -u origin lane/shop-kestrel', $true), @('P', 'git push -u origin f/CU-1-x', $false), @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true),
     @('B', 'npx ng serve --port 4200', $true), @('P', '& D:/kit/skills/envy/envy.ps1 up -Env shop', $false), @('B', 'yarn start', $true), @('P', 'dotnet watch run', $true),
