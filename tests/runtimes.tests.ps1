@@ -55,5 +55,8 @@ $l2 = @(Get-KitSuperviseGuardRuntimes -AutoFix) -join '|'
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'))
 Expect-Each $pr 'runtimes: sweep #' 'probe'
 
+# retro 2205: a verb crash names its innermost frame (16 finalize crashes named only the caller's line)
+$vst = pwsh -NoProfile -Command ". '$(Lib)'; function Get-TInner { `$null.X() }; function Invoke-T { Get-TInner }; Invoke-KitVerb Invoke-T @()" 2>&1 | Out-String
+Expect "Invoke-KitVerb: a crash names the innermost frame ($(($vst -replace '\s+', ' ').Trim()))" ($vst -match 'FAILED: .*\(at Get-TInner')
 Remove-TestKit $k
 Complete-Tests

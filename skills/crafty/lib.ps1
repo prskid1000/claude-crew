@@ -1509,7 +1509,7 @@ function ConvertTo-KitPriority([string]$Priority) {
   if ($n) { "$n" } else { throw "tracker create: priority '$p' unknown: 1-4 or urgent / high / normal / low" }
 }
 function Set-TrackerDescription([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'describe' @{ id = $Id; text = (__TrText $Text) } }
-# the owner's text stays: only <!-- kit:<name> --> ... <!-- /kit:<name> --> is replaced; new: after section $After, else under the testing-doc links
+# owner text stays: only the <!-- kit:<name> --> block is replaced; new: after $After, else under the testing-doc links
 function Set-KitDescSection([string]$Desc, [string]$Name, [string]$Body, [string]$After) {
   $s = "<!-- kit:$Name -->"; $e = "<!-- /kit:$Name -->"; $block = "$s`n$Body`n$e"; $d = "$Desc" -replace "`r`n", "`n"
   $i = $d.IndexOf($s); $j = if ($i -ge 0) { $d.IndexOf($e, $i) } else { -1 }
@@ -2023,7 +2023,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
     try { try { & $Fn @pa @nm; $script:KitRc = 0 } catch {
     if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { & $usage "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)" ($_.Exception.ErrorId -eq 'MissingMandatoryParameter') }
     $script:KitRc = 1; Write-KitLog calls error @{ error = "$_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')" }; & $end
-    if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_$(if ($_.FullyQualifiedErrorId -ne "$($_.Exception.Message)") { ' ' + ($_.InvocationInfo.PositionMessage -replace '\s+', ' ') })"); exit 1 } } finally { & $end } }   # a thrown message alone: no code position
+    if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_$(if ($_.FullyQualifiedErrorId -ne "$($_.Exception.Message)") { ' ' + ($_.InvocationInfo.PositionMessage -replace '\s+', ' ') + " ($("$($_.ScriptStackTrace)" -replace '(?s)\r?\n.*'))" })"); exit 1 } } finally { & $end } }   # a bare throw: no position
   if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $run $Tokens @{}; return }
   $named = @{}; $pos = [Collections.Generic.List[object]]::new(); $i = 0
   while ($i -lt $Tokens.Count) {
