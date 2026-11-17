@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L296 shells · L430 page · L968 release · L1008 lines · L1041 cleanup · L1113 launch ·
-  L1191 pause · L1309 heartbeat · L1324 sessions · L1376 ci tasks ·
-  L1431 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L298 shells · L432 page · L970 release · L1010 lines · L1043 cleanup · L1115 launch ·
+  L1193 pause · L1311 heartbeat · L1326 sessions · L1378 ci tasks ·
+  L1433 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -213,8 +213,10 @@ function Get-KitSuperviseFlagsPrior([switch]$AutoFix) {
 function Get-KitPriorForeign($Entry, [string[]]$Briefs) {
   $tag = "$($KitConf.TrackerTag)"; $has = { param($t, $id) "$t" -match "(?i)(?<![A-Za-z0-9])$([regex]::Escape("$id"))(?![A-Za-z0-9])" }   # whole ids: 7 is not in 17
   $parentOf = { param($id) "$((Read-KitState (Get-KitTaskFile "$id")).spec.parent)" }; $parentOf0 = & $parentOf $Entry.task
+  # K46: a reason that names its own task id or the hit's id was weighed by id, not fuzzy text: no WATCH (it repeated 6+ times a day)
+  if ($Entry.task -and (& $has $Entry.reason $Entry.task)) { return }
   foreach ($h in @($Entry.matched | Where-Object { $_ })) {
-    if ($h.tagged -or (& $has $h.ref "$tag$($Entry.task)")) { continue }
+    if ($h.tagged -or (& $has $h.ref "$tag$($Entry.task)") -or (& $has $Entry.reason $h.ref)) { continue }
     $tid = if ($h.kind -eq 'task') { "$($h.ref)" } elseif ($tag -and "$($h.ref)" -match "(?i)$([regex]::Escape($tag))([A-Za-z0-9]+)") { $Matches[1] }
     $sib = $tid -and $parentOf0 -and (& $parentOf $tid) -eq $parentOf0
     if ($tid -and @($Briefs | Where-Object { $_ -and (& $has $_ $tid) -and ($sib -or (& $has $_ $Entry.task)) }).Count) { continue }
