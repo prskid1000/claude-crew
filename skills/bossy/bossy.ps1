@@ -26,8 +26,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1346 report · L1426 audit · L1486 storage · L1489 bugbrief · L1603 cleanup · L1688 learn ·
-  L1719 decide · L1870 debate · L1914 health · L1977 retro due · L1987 tidy · L2059 setup · L2156 guard-sendmessage
+  L715 track · L1034 supervise · L1348 report · L1428 audit · L1488 storage · L1491 bugbrief · L1605 cleanup · L1690 learn ·
+  L1721 decide · L1872 debate · L1916 health · L1979 retro due · L1989 tidy · L2061 setup · L2158 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -740,6 +740,8 @@ function NormRef($r) {
   if ($r -match '^([\w.-]+)!(\d+)$' -and ($al = (Get-KitMember $KitConf.RepoAliases ($Matches[1])))) { "$al!$($Matches[2])" } else { $r }
 }
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' } }   # group/repo!n too
+# a cached track-run ATTENTION about missing testing docs / solution whose task moved on since (devtools.py finish promoted it)
+function Test-KitTrackLineStale([string]$Line) { $Line -match '^ATTENTION (?<t>\S+): .*no (solution/testing comment|testing-doc link)' -and (Test-TrackerStatus $(try { [string](Get-TrackerTask $Matches.t).status } catch { '' }) 'promoted', 'inTest', 'closed') }
 function Invoke-Track {
 param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'rollup', 'forget-item')][string]$Action = 'show', [string]$Reason, [string]$From, [string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
 $ErrorActionPreference = 'SilentlyContinue'
@@ -1208,7 +1210,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   }
   $heldIds = @((Read-KitTracking).tasks.Values | Where-Object { $_.holdPromotion -and -not $_.done } | ForEach-Object task)
   foreach ($l in @(Invoke-Bounded $KitCmd.orch @('track', 'run', '-Detail'))) {   # the last background result
-    if (Test-KitHeldLine $l $heldIds) { continue }
+    if ((Test-KitHeldLine $l $heldIds) -or (Test-KitTrackLineStale $l)) { continue }
     if ($l -match '^ATTENTION \S+: no tracker id') { Flag 'ACT' $l 'Register its MRs under the real task id (the command in the line).' }
     elseif ($l -match '^(DONE|COMMENTED|DROPPED|MOVED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^CONFIG') { Flag 'INFO' $l 'A kit.local.json key is missing for this task; add it or register its MRs by hand.' }

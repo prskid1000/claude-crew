@@ -124,12 +124,15 @@ $null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invo
 $global:tdesc += "`nTesting doc (AI): https://d/g"; $null = Invoke-Track run; $unk = & { function Get-TrackerTask { throw 'down' }; Test-KitTaskDocLink t9 }
 $global:tdesc = "**Testing doc (human):**`n`n**Testing doc (AI):** [open](https://d/g)"; $bl0 = Test-KitTaskDocLink t9; $global:tdesc = $global:tdesc -replace '(human\):\*\*)', '$1 [open](https://d/h)'; $bl1 = Test-KitTaskDocLink t9
 "nodoc:$($nd -match 'ATTENTION t9: MRs merged, no testing-doc link.*finish t9 .*; MRs \S*web!5' -and -not $s0.Count -and $global:sets -contains 't9=promoted' -and $null -eq $unk -and -not $bl0 -and $bl1)"
+$stl = 'ATTENTION t9: MRs merged, no testing-doc link (human + AI) or the task is unread: not promoted'; $st1 = Test-KitTrackLineStale $stl
+$st2 = & { function Get-TrackerTask($id) { [pscustomobject]@{ name = 'n'; status = 'promoted'; subtasks = @() } }; Test-KitTrackLineStale $stl }
+"staledoc:$(-not $st1 -and $st2 -and -not (Test-KitTrackLineStale 'ATTENTION t9: could not set status'))"
 $KitConf.GitlabGroup = 'grp'; $null = Invoke-Track add -Task t10 -Mrs 'grp/web!4,https://h/grp/web/-/merge_requests/4,web!4'
 Update-KitTaskIndex t11 { param($x) $x.track = @{ task = 't11'; mrs = @('web!3', 'grp/web!3'); done = $true } }; $null = Invoke-Track add -Task t11
 $rt = Read-KitTracking; "mrref:$((@($rt.tasks['t10'].mrs) -join ',') -eq 'web!4' -and (@($rt.tasks['t11'].mrs) -join ',') -eq 'web!3')"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
-Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; stalehold: closed = done, 1 read/30 min; nodoc: promoted only with both doc links, the human one alone held; mrref: group/repo!n, URL and repo!n stored once, old duplicates dedupe on read)' @('skip', 'once', 'hold', 'throttle', 'keep', 'stalehold', 'nodoc', 'mrref') 9
+Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; stalehold: closed = done, 1 read/30 min; nodoc: promoted only with both doc links, the human one alone held; staledoc: a cached no-doc ATTENTION is dropped once the task is promoted; mrref: group/repo!n, URL and repo!n stored once, old duplicates dedupe on read)' @('skip', 'once', 'hold', 'throttle', 'keep', 'stalehold', 'nodoc', 'staledoc', 'mrref') 9
 $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
 $sv = pwsh @np $O supervise -Brief -Session me | Out-String
