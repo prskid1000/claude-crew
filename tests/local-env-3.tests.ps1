@@ -100,7 +100,7 @@ Expect 'pause hook: services only a paused agent''s lease (in grace) or nobody n
 $gk = New-TestKit leguard; New-Item -ItemType Directory -Force (Join-Path $gk 'skills/crafty/adapters') | Out-Null
 Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/crafty/adapters/guard_localenv.ps1') (Join-Path $gk 'skills/crafty/adapters')
 $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $bad = @()
-foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('P', 'git push -u origin f/CU-1-x', $false), @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true),
+foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('B', 'git push -u origin lane/shop-kestrel', $true), @('P', 'git push -u origin f/CU-1-x', $false), @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true),
     @('B', 'npx ng serve --port 4200', $true), @('P', '& D:/kit/skills/envy/envy.ps1 up -Env shop', $false), @('B', 'yarn start', $true), @('P', 'dotnet watch run', $true),
     @('B', 'rg "ng serve" src', $false), @('B', 'git log -S bootRun --oneline', $false), @('P', 'git commit -m "fix: ng serve proxy"', $false), @('B', 'npm run dev:build', $false),
     @('P', 'dotnet run -- migrate', $false), @('B', 'cd web && yarn start', $true), @('B', 'git push origin --delete localenv/shop', $false),
@@ -187,6 +187,13 @@ $dq = & { . $ckL; $global:dSql = @(); function Read-State { @{ marks = @(); undo
   function Invoke-DbFlashback { @{ applied = $true; fallback = @(); refused = @() } }; function Update-State { }; function Remove-MarkSlices { }; function Event { }
   $null = Invoke-RestoreDb t @{ pos = 'b.000008:50'; name = 'm1' } @('s1') @{ to = 'b.000009:1'; steps = @(); objects = @(); renames = @(); drops = @('s1.agent', 's1.agent_eval_case'); objectDrops = @() }; @($global:dSql -match 'DROP TABLE') }
 Expect "localenv: restore drops post-mark tables in one statement with FOREIGN_KEY_CHECKS = 0 ($dq)" (@($dq).Count -eq 1 -and $dq -match '^SET FOREIGN_KEY_CHECKS = 0; DROP TABLE IF EXISTS `s1`.`agent`, `s1`.`agent_eval_case`; SET FOREIGN_KEY_CHECKS = 1$')
+# lane names (README "Worktrees and lanes"): an old-scheme lane worktree (localenv-<env>-<repo>, branch localenv/<env>) is moved to
+# lane-<product>-<bird>-<repo> on lane/<product>-<bird> at its next build; a fresh lane gets the new names
+$lnr = Join-Path $sq 'lnr'; git init -q -b main $lnr; 'x' | Set-Content "$lnr/x.txt"; Save-GitRepo $lnr init; $lwr = Join-Path $sq 'lwr'; New-Item -ItemType Directory -Force $lwr | Out-Null
+git -C $lnr worktree add -q -b localenv/shop2 (Join-Path $lwr 'localenv-shop2-lnr') main 2>$null
+Set-JsonFile "$ck/skills/crafty/kit.local.json" @{ worktreeRoots = @($lwr); localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 } } } } }
+$lnm = & { . $ckL 6>$null; $r = [pscustomobject]@{ name = 'lnr'; cfg = [pscustomobject]@{ checkout = $lnr }; target = 'main'; wt = (LaneWorktree shop2 $lnr) }; $w0 = $r.wt; Ensure-Worktree shop2 $r 6>$null; "$(Split-Path $w0 -Leaf)|$(Split-Path $r.wt -Leaf)|$(git -C $r.wt branch --show-current)|$(LaneBranch shop)" }
+Expect "lanes: the old worktree is used, then moved to lane-shop-kestrel-lnr on lane/shop-kestrel; lane 1 = lane/shop-falcon ($lnm)" ($lnm -eq 'localenv-shop2-lnr|lane-shop-kestrel-lnr|lane/shop-kestrel|lane/shop-falcon' -and -not (git -C $lnr branch --list 'localenv/*'))
 Remove-TestKit $ck
 Remove-TestKit $k
 Complete-Tests

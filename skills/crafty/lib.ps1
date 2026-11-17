@@ -1127,7 +1127,7 @@ function Format-KitStatusTable($Rows, $Now, $Versions, [int]$Cap = 0) {
 function New-KitSweep([datetime]$Deadline, $State) {
   $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary] -or $sw.v -ne 2) { $sw.cost = @{} }   # v2: costs exclude ungated work
   foreach ($jk in @($sw.cost.Keys | Where-Object { "$_" -match '^\S+\.ps1(\s+\S+){3}' })) { $sw.cost.Remove($jk) }   # old per-job keys
-  $every = @{ 'cleanup' = 30; 'deploy checks' = 10; 'stale layers' = 15 }   # only one-shot sections: standing flags would vanish off-round
+  $every = @{ 'cleanup' = 30; 'deploy checks' = 10; 'stale layers' = 15; 'repo sync' = [double](Get-KitParam 'sync.everyMinutes') }   # only one-shot sections: standing flags would vanish off-round
   $cf = Get-KitSetting 'supervise.sectionMinutes' $null; if ($cf) { foreach ($p in @((Get-KitProps $cf) | Where-Object MemberType -eq NoteProperty)) { $v = 0.0; if ([double]::TryParse("$($p.Value)", [ref]$v)) { $every[$p.Name] = $v } } }
   [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); last = $(if ($sw.last -is [Collections.IDictionary]) { $sw.last } else { @{} }); every = $every; always = @('tracker checks'); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
 }
@@ -1169,7 +1169,7 @@ function Invoke-KitSweepCall($Sw, [string]$Name, [string]$Script, [string[]]$A, 
 # supervise's kit calls: detached = last result now, a fresh run behind; background = inline under half the time left
 function Get-KitSweepMode([string[]]$A) {
   $v = "$($A[0..1])"
-  if ($v -in 'deploy plan', 'deployed -Mrs', 'deploy intest', 'budget -Usage', 'report -Run', 'tracker statuses', 'scope') { 'detached' } elseif ($v -in 'track run', 'budget -Run') { 'background' } else { 'inline' }
+  if ($v -in 'deploy plan', 'deployed -Mrs', 'deploy intest', 'budget -Usage', 'report -Run', 'tracker statuses', 'scope', 'wt pool') { 'detached' } elseif ($v -in 'track run', 'budget -Run') { 'background' } else { 'inline' }
 }
 # past max(10 x cost, 30 min) = hung, stopped; empty result with errors = WATCH
 function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scriptblock]$OnSeconds, [double]$Cost = 0) {

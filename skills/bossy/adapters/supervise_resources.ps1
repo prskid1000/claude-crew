@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L295 shells · L429 page · L952 release · L992 lines · L1025 cleanup · L1097 launch ·
-  L1175 pause · L1293 heartbeat · L1308 sessions · L1360 ci tasks ·
-  L1415 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L295 shells · L429 page · L956 release · L996 lines · L1029 cleanup · L1101 launch ·
+  L1179 pause · L1297 heartbeat · L1312 sessions · L1364 ci tasks ·
+  L1419 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -498,7 +498,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $rsw = @((Get-KitRepoSweep).repos | Where-Object { $_ })   # the Branches tile's lines
     $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
   $usage = Read-KitUsageResult   # budget -Usage writes it
-  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
+  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
     changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ((Get-KitMember $apv "$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })") -or (Get-KitMember $apv "$($_.key)|")) { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
@@ -704,6 +704,10 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     (@($nw.wfr | Where-Object { [int]$_.run } | ForEach-Object { $ur = $runOf["$($_.id)"]; "<span class='chip s-act' title='$(& $e "$(@($_.id, $ur.label | Where-Object { $_ }) -join ' · ') · $($_.done)/$($_.total) steps · $($_.run) running")'>$(& $e $(if ($ur.run) { $ur.run } else { $_.id }))</span>" }) -join '') +
     "</div>$(if ($nst.Count) { "<div class=s>$($nst.Count) stale: $(& $e ($nst -join ', '))</div>" })$(& $spark @($l24.run) 'sage' 'running steps, 24 h' 'peak' 0 '' -Step -NoNow)</div>" }
   # branches · worktrees (bossy.ps1 cleanup): a row per repo, by count; daily totals (else per sweep) as two lines
+  # repo sync (wt_pool.ps1 Sync-KitRepo): fast-forwarded / diverged / dirty / pruned per repo, the kept ones in the tooltip
+  $syncLine = { $sy = @($st.sync | Where-Object { $_.repo }); if (-not $sy.Count) { return '' }; $n = { param($k) [int](@($sy | ForEach-Object { @(Get-KitMember $_ $k).Count }) | Measure-Object -Sum).Sum }
+    $kept = @($sy | ForEach-Object { $rp = $_.repo; @(@($_.diverged) + @($_.dirty) | Where-Object { $_ } | ForEach-Object { "${rp}: $_" }) })
+    "<div class='s$(if ($kept.Count -or @($sy | Where-Object err).Count) { ' warn' })' title='$(& $e (@($kept) + @($sy | Where-Object err | ForEach-Object { "$($_.repo): $($_.err)" }) -join "`n"))'>sync $(try { (@($sy | ForEach-Object { [datetime]$_.at } | Sort-Object))[-1].ToString('HH:mm') } catch { '?' }): $(& $n ff) fast-forwarded · $(& $n diverged) diverged · $(& $n dirty) dirty · $(& $n pruned) pruned</div>" }
   $brTile = if (($rr = @($st.repos.repos | Where-Object { [int]$_.branches + [int]$_.worktrees } | Sort-Object { -[int]$_.branches }, { -[int]$_.worktrees })).Count) {
     $sm = @{}; foreach ($k in 'branches', 'worktrees', 'kept', 'removable') { $sm[$k] = [int](@((Get-KitMember $rr $k)) + 0 | Measure-Object -Sum).Sum }; $bMax = [math]::Max(1, (@($rr.branches) + @($rr.worktrees) | Measure-Object -Maximum).Maximum)
     $bs = @($lv | Where-Object { $null -ne $_.br }); $bd = @($bs | Group-Object { ([datetime]$_.at).Date } | ForEach-Object { $_.Group[-1] }); $bp = if ($bd.Count -ge 2) { $bd } else { @($bs | Select-Object -Last 24) }
@@ -711,7 +715,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
       "<div class=lcf><div class=lcp style='height:40px;margin-top:4px' role=img aria-label='branches and worktrees, $bWin, y $bLo-$bTop'>$(Format-KitLineChart @($bp | ForEach-Object { @{} }) @(foreach ($s in @('br', 'sage', 'solid'), @('wt', 'slate', 'dash')) { @{ vals = @($bp | ForEach-Object { [int](Get-KitMember $_ ($s[0])) - $bLo }); tone = $s[1]; style = $s[2]; max = [math]::Max(1, $bTop - $bLo) } }) '' -Bare)</div><div class=ax><span><i class='lk t-sage'>branches</i> <i class='lk t-slate dash'>worktrees</i></span><span class=gc>$bWin · y $bLo-$bTop</span></div></div>" }
     "<div class='st$(if ($sm.removable) { ' warn' })' data-fit><div class=k>Branches · worktrees</div><div class=v>$($sm.branches)<small> br · </small>$($sm.worktrees)<small> wt</small></div><div class=rpt><div class='rp rh'><span class=rn>repo</span><span></span><span class=rc><i class=sw1></i>br</span><span class=rc><i class=sw2></i>wt</span></div>" +
     (@($rr | ForEach-Object { "<div class=rp title='$(& $e "$($_.repo): $([int]$_.branches) branches · $([int]$_.worktrees) worktrees$(if ($_.kept) { " · $($_.kept) kept" })")'><span class=rn>$(& $e $_.repo)</span><span class=rbr aria-hidden=true><i style='width:$(& $n1 (100 * $_.branches / $bMax))%'></i><b style='width:$(& $n1 (100 * $_.worktrees / $bMax))%'></b></span><span class=rc>$(if ($_.branches) { $_.branches })</span><span class=rc>$(if ($_.worktrees) { $_.worktrees })</span></div>" }) -join '') +
-    "</div><div class=s>$($sm.kept) kept (unpushed/open/dirty) · $($sm.removable) to clean · cleanup $(try { ([datetime]$st.repos.at).ToString('HH:mm') } catch { '?' })</div>$brChart</div>" }   # the chart last: it takes a stretched tile's room
+    "</div><div class=s>$($sm.kept) kept (unpushed/open/dirty) · $($sm.removable) to clean · cleanup $(try { ([datetime]$st.repos.at).ToString('HH:mm') } catch { '?' })</div>$(& $syncLine)$brChart</div>" }   # the chart last: it takes a stretched tile's room
   $swAll = @($lv.secs | Where-Object { $null -ne $_ })   # sweep time: slowest step, 24 h with the 7-day average dotted
   $swTile = if ($nw) { & $nowCard 'Sweep time' "$(& $fmt $nw.secs)<small> s</small>" $nw.slow '' 'lo' (& $spark @($l24.secs) 'slate' 'sweep, 24 h' 'peak' $null ' s' $(if ($swAll.Count) { ($swAll | Measure-Object -Average).Average }) '7-day avg' -NoNow) }
   # agents failed: the 7-day total, a labelled bar per day

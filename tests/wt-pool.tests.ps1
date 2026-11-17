@@ -73,5 +73,14 @@ $o10 = & $lease devH feat/seven; $s10 = & $slotOf $o10; 'p' | Set-Content "$s10/
 & $J @{ repos = @(@{ name = 'app'; checkout = $app; target = 'main'; poolSize = 2; linkFromByTarget = @{ main = "$base/no-deps" } }); tracker = @{ type = 'none' } } "$k/skills/crafty/kit.local.json"
 $o11 = & $lease devI feat/seven; $pf = Get-ChildItem $kf -Filter '*-app.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { $_.branch -eq 'feat/seven' }
 Expect "a failed resume of a parked slot parks it again (files kept, parkedAt set), the lease file stays ($($o11 -replace '\s+', ' '))" ($o11 -match 'dep source .* is missing' -and $pf.parked -and $pf.parkedAt -and (Test-Path "$s10/p.txt"))
+# repo sync (wt pool): behind -> fast-forwarded (checked out + clean too), diverged listed, gone + merged and a lane branch with no worktree pruned; warm slots made
+$so = "$base/sync.git"; $sr = "$base/syn"; $sx = "$base/syn-other"; git init -q --bare -b main $so; git clone -q $so $sr 2>$null; 'a' | Set-Content "$sr/a.txt"; Save-GitRepo $sr s0; git -C $sr push -q origin main 2>$null
+foreach ($b in 'beh', 'div', 'gone') { git -C $sr branch -q $b; git -C $sr push -q -u origin $b 2>$null }
+git clone -q $so $sx 2>$null; foreach ($b in 'main', 'beh', 'div') { git -C $sx checkout -q $b; "$b+" | Set-Content "$sx/$b.txt"; Save-GitRepo $sx "$b up"; git -C $sx push -q origin $b 2>$null }
+git -C $sr checkout -q div; 'local' | Set-Content "$sr/l.txt"; Save-GitRepo $sr 'div local'; git -C $sr checkout -q main; git -C $sr push -q origin --delete gone 2>$null; git -C $sr branch -q lane/syn-falcon
+& $J @{ repos = @(@{ name = 'syn'; checkout = $sr; target = 'main'; poolSize = 3; poolWarm = 1 }); tracker = @{ type = 'none' } } "$k/skills/crafty/kit.local.json"
+$sp = pwsh @np $D wt pool -Repo syn 2>&1 | Out-String; $tip = { param($r) "$(git -C $sr rev-parse $r)".Trim() }
+$syj = Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json
+Expect "repo sync: main (checked out, clean) and beh fast-forwarded, div diverged kept, gone (merged) + lane/syn-falcon pruned, 1 warm slot ($(($sp -split "`n")[0].Trim()))" ((& $tip main) -eq (& $tip origin/main) -and (& $tip beh) -eq (& $tip origin/beh) -and (& $tip div) -ne (& $tip origin/div) -and -not (git -C $sr branch --list gone lane/syn-falcon) -and @($syj.diverged) -match '^div ' -and $sp -match '1 warm slot' -and $sp -match 'pool syn: 1/3 slots, 1 free')
 Remove-TestKit $k
 Complete-Tests

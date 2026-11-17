@@ -26,7 +26,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
 
 ## Model
 - Env = ONE shared running instance of its services (`localEnv.envs.<env>`: any stack; a service = a start command in a folder;
-  ports unique across envs). Release N = target commit + agent branches merged as **layers** (`localenv/<env>`, never pushed).
+  ports unique across envs). Release N = target commit + agent branches merged as **layers** (branch `lane/<product>-<bird>`,
+  never pushed; README "Worktrees and lanes").
 - **Train**: every deploy queued when it starts = one merge, one gated build, one switch-over; a conflict refuses that branch;
   a failed build bisects to the culprit (reference.md "Train and leases").
 - **Lease** (`use`): keeps the services you test up while you use them (README "Leases"); unused past `leaseIdleMinutes`:
@@ -97,7 +98,7 @@ $L = '<kit>/skills/envy/envy.ps1'
   -Services <svc>` (the services reading that line), then rechecks the failing step before `decide answer`.
 
 **Rules**
-- No dev servers by hand (the guard blocks them while `localEnv` is set); never edit env worktrees, push `localenv/*` or install
+- No dev servers by hand (the guard blocks them while `localEnv` is set); never edit env worktrees, push `lane/*` or install
   there.
 - A migration layer changes the shared local DB for every layer: say so.
 - Local DB drift (a leftover table, a missing user or grant) breaking a deploy: ENV-FIX to the coordinator ("Unblock

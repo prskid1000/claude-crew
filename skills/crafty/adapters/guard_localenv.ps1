@@ -4,7 +4,7 @@
 Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
     $cmd = $a.cmd
     foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
-      if ($push.Value -match '(^|[\s:/])localenv/' -and $push.Value -notmatch '\s--delete\b|\s-d\s|\s:localenv/') { return 'localenv/<env> is a local env branch (all agents'' layers merged): never push it. Push your branch; envy.ps1 deploy -Dir <worktree> takes it.' }
+      if ($push.Value -match '(^|[\s:/])(localenv|lane)/' -and $push.Value -notmatch '\s--delete\b|\s-d\s|\s:(localenv|lane)/') { return 'lane/<lane> (old: localenv/<env>) is a local env branch (all agents'' layers merged): never push it. Push your branch; envy.ps1 deploy -Dir <worktree> takes it.' }
     }
     if (-not ($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $a.config.localEnv) -or $cmd -match 'envy\.ps1') { return }
     $server = '^(\.?[\\/])?(mvnw(\.cmd)?|mvn)\b.*\bspring-boot:run\b|^(\.?[\\/])?(gradlew(\.bat)?|gradle)\b.*\bbootRun\b|^(npx\s+(-\S+\s+)*)?ng\s+serve\b|^dotnet\s+(run|watch)\b(?!.*\s--\s)|^npx\s+(react-native|expo)\s+start\b|^(python\d?\s+)?manage\.py\s+runserver\b|^uvicorn\s|^flask\s+run\b|^(npm|yarn|pnpm|bun)\s+((--cwd|--prefix|--dir|-C)\s+\S+\s+|workspace\s+\S+\s+)?(run\s+)?(dev|start|serve)(\s|$)|^(npm|yarn|pnpm|bun)\s+(run\s+)?ng\s+serve\b|^Start-Process\b.*\b(npm|yarn|pnpm|bun|ng)(\.cmd)?\b.*\b(start|serve|dev)\b'

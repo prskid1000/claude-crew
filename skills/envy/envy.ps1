@@ -21,9 +21,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L35 config · L230 state · L277 layer drops · L349 leases · L477 code · L509 migrations ·
-  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds · L818 hooks · L890 marks · L1070 seed ·
-  L1137 processes · L1516 daemon · L1976 cleanup · L2048 doctor · L2101 verbs
+Sections: L35 config · L237 state · L284 layer drops · L356 leases · L484 code · L522 migrations ·
+  L525 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L673 shared builds · L831 hooks · L903 marks · L1083 seed ·
+  L1150 processes · L1529 daemon · L1989 cleanup · L2061 doctor · L2114 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -143,6 +143,13 @@ function Test-PortClash {
     if (@($u | Where-Object { -not $_.external }).Count -or @($u.start | Select-Object -Unique).Count -gt 1) { "port $port is claimed by $(($u.who) -join ', ')" }
   }
 }
+# lane names: README "Worktrees and lanes"
+function LaneSlug([string]$e) { ((Get-KitPoolLabel 'env' $e) -replace '[·\s]+', '-').ToLower() }
+function LaneBranch([string]$e) { "lane/$(LaneSlug $e)" }
+function LaneWorktree([string]$e, [string]$co, [switch]$Old) {
+  $rt = @($KitConf.WorktreeRoots)[0]; $lf = Split-Path $co -Leaf; $ow = Join-Path $rt "localenv-$e-$lf"; $nw = Join-Path $rt "lane-$(LaneSlug $e)-$lf"
+  if ($Old -or (-not (Test-Path $nw) -and (Test-Path "$ow/.git"))) { $ow } else { $nw }
+}
 function EnvRepos([string]$e) {
   $map = [ordered]@{}
   $items = @(EnvServices $e) + @(if ((Get-EnvCfg $e).tasks) { (Get-KitProps (Get-EnvCfg $e).tasks).Value })
@@ -150,7 +157,7 @@ function EnvRepos([string]$e) {
     $r = Get-RepoCfg $s.repo
     $t = if ($s.target) { [string]$s.target } else { [string]$r.target }
     if ($map.Contains($r.name)) { if ($map[$r.name].target -ne $t) { throw "env $e uses repo $($r.name) with two targets ($($map[$r.name].target), $t): one env = one target per repo" } }
-    else { $map[$r.name] = [pscustomobject]@{ name = $r.name; cfg = $r; target = $t; wt = (Join-Path @($KitConf.WorktreeRoots)[0] "localenv-$e-$(Split-Path $r.checkout -Leaf)"); live = $false } }
+    else { $map[$r.name] = [pscustomobject]@{ name = $r.name; cfg = $r; target = $t; wt = (LaneWorktree $e $r.checkout); live = $false } }
   }
   foreach ($s in EnvServices $e | Where-Object { $_.repo -and -not $_.artifact }) { $map[(Get-RepoCfg $s.repo).name].live = $true }
   $map
@@ -271,7 +278,7 @@ function Mine([int]$p) { @{ pid = $p; pstart = "$(Get-KitPidStart $p)" } }
 function CmdLine([int]$p) { if ($KitIsWindows) { "$((Get-CimInstance Win32_Process -Filter "ProcessId=$p" -Property CommandLine -ErrorAction SilentlyContinue).CommandLine)" } else { "$(ps -o args= -p $p 2>$null)" } }
 function EnvProcess([int]$p, [string]$e) {
   $c = CmdLine $p
-  $c -and ($c.Contains((Get-KitPath localenv)) -or $c -match [regex]::Escape("localenv-$e-") -or $c -match [regex]::Escape("_exec -Env $e "))
+  $c -and ($c.Contains((Get-KitPath localenv)) -or $c -match [regex]::Escape("localenv-$e-") -or $c -match [regex]::Escape("lane-$(LaneSlug $e)-") -or $c -match [regex]::Escape("_exec -Env $e "))
 }
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Object { $_ }) }
 # ---- layer drops: release (finished), supervise (merged, gone, orphan); each queued with its reason (leases.jsonl kind env-layer)
@@ -478,9 +485,15 @@ function ClientPids([int]$port, [int[]]$exclude, [switch]$Any) {
 function G([string]$d) { $o = & git -C $d @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' ') in $d : $o" }; $o }
 function NoHooksDir { $d = Join-Path (Get-KitPath localenv -Create) '.no-hooks'; New-Item -ItemType Directory -Force $d | Out-Null; $d }   # local-only merges, never pushed
 function Ensure-Worktree([string]$e, $r) {
-  if (Test-Path (Join-Path $r.wt '.git')) { return }
+  $co = $r.cfg.checkout; $ow = LaneWorktree $e $co -Old
+  if ((Test-Path "$($r.wt)/.git") -and $r.wt -eq $ow) {   # old names; in use (locked): kept till the next build
+    $nw = Join-Path (Split-Path $ow) "lane-$(LaneSlug $e)-$(Split-Path $co -Leaf)"; $mv = @(git -C $co worktree move $ow $nw 2>&1); if ($LASTEXITCODE) { Write-Host "[$e] $ow kept: $(@($mv)[-1])"; return }
+    $r.wt = $nw; git -C $nw branch -M "localenv/$e" (LaneBranch $e) 2>$null | Out-Null; Write-Host "[$e] lane worktree now $nw"; return
+  }
+  if (Test-Path "$($r.wt)/.git") { return }
   Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
-  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch "localenv/$e" -Target $r.target -Name "localenv-$e" | ForEach-Object { Write-Host "  $_" }
+  git -C $co branch -D "localenv/$e" 2>$null | Out-Null   # old names, no worktree: test merges only
+  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch (LaneBranch $e) -Target $r.target -Name "lane-$(LaneSlug $e)" | ForEach-Object { Write-Host "  $_" }
 }
 function Sync-DepLinks([string]$e, $r) {
   $c = $r.cfg
@@ -862,7 +875,7 @@ function Test-Smoke([string]$e) {
         $u = Expand-Placeholders ([string]$c.url) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace ''
         $want = if ($c.status) { [string]$c.status } else { '^[23]\d\d$|^401$|^403$' }
         try { $r = Invoke-WebRequest $u -ConnectionTimeoutSeconds 15 -OperationTimeoutSeconds 30 -UseBasicParsing -SkipCertificateCheck -SkipHttpErrorCheck; if ("$($r.StatusCode)" -match $want) { $why = $null } else { $why = "$u returned $($r.StatusCode)" } } catch { $why = "$u : $($_.Exception.Message)" }
-      } elseif ($c.login) {   # POST login.body (JSON; ${VAR} = env file values) to login.url: a token in the reply passes; login.get: then a GET with it
+      } elseif ($c.login) {   # POST login.body (${VAR}: env file) to login.url: a token in the reply passes; login.get: a GET with it
         $lv = EnvVars $e ([pscustomobject]@{}); $none = [pscustomobject]@{ port = '' }
         $x = { param($t) [regex]::Replace((Expand-Placeholders "$t" $e $none $KitConf.Workspace ''), '\$\{(\w+)\}', { param($mm) "$($lv[$mm.Groups[1].Value])" }) }
         $body = [ordered]@{}; foreach ($pp in @((Get-KitProps $c.login.body))) { $body[$pp.Name] = if ($pp.Value -is [string]) { & $x $pp.Value } else { $pp.Value } }
@@ -1036,7 +1049,7 @@ function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$Us
       $script:RestoreFallback += @($j.fallback | Where-Object { $_ })
       if ($j.error -or -not $j.verified) { return "structure back to mark $($s.mark) failed: $(if ($j.error) { $j.error } else { "still differs: $(@($j.differs) -join ', ')" })" }
     }
-    # one session with FK checks off: tables made after the mark reference each other (parent before child failed: mysql 3730)
+    # one session, FK checks off: post-mark tables reference each other (mysql 3730)
     $dropList = @($plan.drops | ForEach-Object { '`' + (($_ -split '\.', 2) -join '`.`') + '`' }) -join ', '
     if ($dropList) { $null = Invoke-DbSql $e "SET FOREIGN_KEY_CHECKS = 0; DROP TABLE IF EXISTS $dropList; SET FOREIGN_KEY_CHECKS = 1" }
     foreach ($k in @($plan.objectDrops)) { $t, $n = $k -split ':', 2; $null = Invoke-DbSql $e "DROP $t IF EXISTS ``$(($n -split '\.', 2) -join '`.`')``" }
@@ -1052,7 +1065,7 @@ function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$Us
     foreach ($x in $ev) { try { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` ENABLE" } catch { } }
     $end = Get-DbPos $e
     $gone = @()
-    # a flashback that wrote no row leaves the changes in place: recorded undone, the next restore would skip them
+    # a flashback that wrote no row: not recorded undone (the next restore would skip them)
     if (-not $noRows) { Update-State $e { param($x) $x.undone = @(@($x.undone | Where-Object { $_ }) + "$($m.pos)~$end"); $script:goneMarks = @(@($x.marks) | Where-Object { $_ -and (Test-DbPosBefore $m.pos $_.pos) } | ForEach-Object name); $x.marks = @(@($x.marks) | Where-Object { $_ -and $_.name -notin $script:goneMarks }) }
     Remove-MarkSlices $e $script:goneMarks }
     Event $e 'restore-db' @{ mark = $m.name; end = $end; fallback = @($script:RestoreFallback | ForEach-Object table); recorded = (-not $noRows) }
@@ -1713,7 +1726,7 @@ function Run-Train {
     catch {
       $sw = "$_".Split("`n")[0]
       if ($sw -notmatch ': dependency down: ') { & $rollback @($rn) "$($s.name) did not come up with it: $sw"; continue }
-      # the code is not at fault: the release stays, the service waits stopped on it and the loop starts it once its dependency is up
+      # not the code: the release stays, the service waits stopped; the loop starts it once its dependency is up
       Update-State $e { param($z) if (-not $z.services[$s.name]) { $z.services[$s.name] = @{} }; $z.services[$s.name].release = $newN; if ($artifacts[$s.name]) { $z.services[$s.name].artifact = $artifacts[$s.name] } }
       Stop-Svc $e $s "waits for its dependency: $sw"
       $notes.Add("$($s.name) kept release $newN but is not up ($sw): it starts when its dependency is up (no rollback)"); $keptRepos += $rn
@@ -1859,7 +1872,7 @@ try {
       if ($beat) { $beatAt = Get-Date }
       if (((Get-Date) - $ramAt).TotalSeconds -ge 60) { Add-RamSample (Get-GateAvailGB (Get-SysMem)); $ramAt = Get-Date }
       $st = Read-State $e
-      # ---- kit.local.json or the env scripts edited: between trains a fresh loop takes over (services, leases and state stay)
+      # ---- config or env scripts edited: between trains a fresh loop takes over (all else stays)
       $cfgNow = Get-LoopStamp
       if (-not $st.train -and $cfgNow -ne $cfgAt -and $(try { $null = -not $__cfgFile -or (Get-Content -LiteralPath $__cfgFile -Raw | ConvertFrom-Json); $true } catch { $false })) { Say "kit.local.json or the env scripts changed: the loop restarts with them"; Event $e 'loop-reload' @{ pid = $PID }; $reload = $true; break }   # a half-written file waits
 
@@ -1875,7 +1888,7 @@ try {
         $st = Read-State $e
       }
 
-      # ---- demand; every 5th tick (slow): client traffic, lease use, peak RAM, out-of-memory lines of running services
+      # ---- demand; every 5th tick: client traffic, lease use, peak RAM, out-of-memory lines
       $snap = Get-KitProcSnap
       $envPids = @(foreach ($s in EnvServices $e) { SvcPids $e $s $st $snap })
       if ($tick % 5 -eq 1) {
@@ -1980,7 +1993,7 @@ function Get-EnvOrphans {
   $add = { param($kind, $path, $why, $dirty) $out.Add([pscustomobject]@{ kind = $kind; path = $path; why = $why; dirty = [bool]$dirty }) }
   $wts = @(foreach ($n in $envs) { foreach ($r in (EnvRepos $n).Values) { [IO.Path]::GetFullPath($r.wt).TrimEnd('\', '/').ToLower() } })
   foreach ($root in @($KitConf.WorktreeRoots)) {
-    foreach ($w in Get-ChildItem -LiteralPath $root -Directory -Filter 'localenv-*' -ErrorAction SilentlyContinue) {
+    foreach ($w in Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Where-Object Name -Match '^(localenv|lane)-') {
       if ($w.FullName.TrimEnd('\', '/').ToLower() -in $wts) { continue }
       $ch = @(git -C $w.FullName status --porcelain 2>$null); $failed = $LASTEXITCODE   # an unreadable worktree counts as dirty
       & $add 'worktree' $w.FullName 'no configured env runs it' ($ch.Count -or $failed)
@@ -2024,7 +2037,7 @@ function Invoke-EnvCleanup([switch]$Quick, [switch]$DryRun) {
   if ($Quick) {
     foreach ($n in EnvNames) { foreach ($s in EnvServices $n | Where-Object { $_.artifact }) { $root = Join-Path (Get-KitPath localenv -Create) "run/$n/$($s.name)"; if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($p in @(Remove-OldReleases $n $s $root -DryRun)) { & $gone $p "old release (keepReleases $($script:KeepReleases))" }; if (-not $DryRun) { $null = Remove-OldReleases $n $s $root } } }   # the second call prunes the library store
-    # never what a service runs from or writes: its staged release, its folder and dataDir while it is up or starting
+    # never what a service runs from or writes: its release, folder and dataDir while up or starting
     $inUse = @(@(foreach ($n in EnvNames) { $st = Read-State $n; foreach ($k in @($st.services.Keys)) { $x = $st.services[$k]; if ($x.artifact) { ReleaseDirOf (Join-Path (Get-KitPath localenv) "run/$n") "$($x.artifact)" }
           if ($x.status -in 'up', 'starting') { $sv = @(EnvServices $n | Where-Object name -eq $k)[0]; if ($sv) { if ($sv.repo -or $sv.dir) { try { SvcDir $n $sv } catch { } }; if ($sv.dataDir) { Expand-Placeholders ([string]$sv.dataDir) $n $sv $KitConf.Workspace '' } } } } }) | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') })
     foreach ($q in @($script:LE.cleanup.quick) | Where-Object { $_ }) {
@@ -2319,7 +2332,7 @@ switch ($Action) {
       if (@(git -C $Dir status --porcelain --untracked-files=no).Count) { Write-Warning "$Dir has uncommitted changes: only committed work is deployed (crafty.ps1 wt commit first)" }
     }
     if (-not $Branch) { throw 'deploy needs -Dir <your worktree> or -Branch <branch>' }
-    if ($Branch -match '^localenv/') { throw 'that is the env branch itself' }
+    if ($Branch -match '^(localenv|lane)/') { throw 'that is the env branch itself' }
     $targets = if ($Repo) { @($Repo | ForEach-Object { (Get-RepoCfg $_).name }) } else { @($envRepos.Values | Where-Object { Resolve-Ref $_.cfg.checkout $Branch } | ForEach-Object name) }
     $targets = @($targets | Where-Object { $envRepos.Contains($_) })
     if (-not $targets) { throw "[$e] branch $Branch not found in any repo of this env ($($envRepos.Keys -join ', '))" }
@@ -2458,7 +2471,7 @@ switch ($Action) {
     if (-not (Test-ReadOnlySql $Query)) { throw 'sql needs -Query with ONE read-only statement (select / show / explain / with ...)' }
     $err = Invoke-Hook $e 'query' @{ sql = $Query }; $script:HookOut; if ($err) { throw $err }
   }
-  'dbtemp' {   # '<id> <temp GB> <seconds> <query>' per connection (bossy.ps1 storage.db.use); -Kill <id>: that connection ends (storage.db.kill)
+  'dbtemp' {   # '<id> <temp GB> <seconds> <query>' per connection (storage.db.use); -Kill <id> ends one (storage.db.kill)
     if (-not (Get-Command Get-DbTempUse -ErrorAction SilentlyContinue) -or -not (Test-DbTemp $e)) { throw "[$e] dbtemp needs db.engine mysql (adapters/db_presets.ps1)" }
     if ($Kill) { Stop-DbConn $e $Kill; Event $e 'db-kill' @{ id = $Kill; by = $Agent }; "[$e] db connection $Kill killed"; return }
     foreach ($q in @(Get-DbTempUse $e)) { '{0} {1} {2} {3}' -f $q.id, $q.gb.ToString([Globalization.CultureInfo]::InvariantCulture), $q.secs, (Protect-KitText $q.query) }

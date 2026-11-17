@@ -7,7 +7,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L13 worktrees · L64 names · L75 slots · L101 lease · L198 release · L226 pool
+Sections: L13 worktrees · L64 names · L75 slots · L101 lease · L198 release · L226 sync · L270 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -223,6 +223,50 @@ function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo)
     "released $($o.slot) ($p)$bn"
   }
 }
+# ---- sync: every pooled repo (wt pool; supervise every sync.everyMinutes): one fetch, fast-forward each local branch strictly
+# behind its upstream (checked out: ff-only when clean), prune lane branches no worktree holds and gone-upstream branches merged
+# into the target; diverged or dirty: listed only. Free clean slots sit detached at origin/<target>; pool.warm free slots exist.
+function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
+  $rl = Split-Path $Repo -Leaf; $r = [ordered]@{ repo = $rl; at = (Get-Date).ToString('o'); ff = @(); diverged = @(); dirty = @(); pruned = @(); warmed = @(); err = '' }
+  $fo = @(git -C $Repo fetch -q --prune origin 2>&1); if ($LASTEXITCODE) { $r.err = "fetch failed: $(@($fo)[-1])"; return [pscustomobject]$r }
+  $tgt = "$(Get-RepoConf (Get-KitCheckoutName $Repo) 'target' '')"; if (-not $tgt) { $tgt = "$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/' }
+  $keepRx = Get-KitKeepBranchRx $Repo; $at = @{}; foreach ($w in @(Get-KitWorktrees $Repo)) { if ($w.branch) { $at[$w.branch] = $w.path } }
+  foreach ($ln in @(git -C $Repo for-each-ref --format='%(refname:short)|%(upstream:short)|%(upstream:track)' refs/heads 2>$null)) {
+    $b, $u, $tr = "$ln" -split '\|', 3; $wd = $at[$b]
+    if ($b -like 'lane/*' -or $b -like 'localenv/*') {   # a lane's branch = target + test merges, rebuilt at its next build
+      if (-not $wd) { if (-not $DryRun) { git -C $Repo branch -D $b 2>$null | Out-Null }; $r.pruned += "$b (lane branch, no worktree)" }; continue }
+    if (-not $u) { continue }
+    if ($tr -eq '[gone]') {
+      if (-not $wd -and $b -notmatch $keepRx -and $tgt) { git -C $Repo merge-base --is-ancestor "refs/heads/$b" "origin/$tgt" 2>$null; if (-not $LASTEXITCODE) { if (-not $DryRun) { git -C $Repo branch -D $b 2>$null | Out-Null }; $r.pruned += "$b (upstream gone, merged into $tgt)" } }
+      continue }
+    $bh = if ($tr -match 'behind (\d+)') { [int]$Matches[1] } else { 0 }; if (-not $bh) { continue }
+    if ($tr -match 'ahead') { $r.diverged += "$b $tr"; continue }
+    if ($wd) {
+      if (@(git -C $wd status --porcelain --untracked-files=no 2>$null).Count) { $r.dirty += "$b behind $bh ($wd)"; continue }
+      if (-not $DryRun) { git -C $wd merge -q --ff-only "refs/remotes/$u" 2>$null | Out-Null; if ($LASTEXITCODE) { $r.diverged += "$b ff failed"; continue } }
+    } elseif (-not $DryRun) { $old = "$(git -C $Repo rev-parse "refs/heads/$b")".Trim(); git -C $Repo update-ref "refs/heads/$b" "refs/remotes/$u" $old 2>$null | Out-Null; if ($LASTEXITCODE) { $r.diverged += "$b update failed"; continue } }
+    $r.ff += "$b +$bh"
+  }
+  $size = Get-KitPoolSize $Repo; $warm = [math]::Min($size, [int]$(if ($null -ne ($pw = Get-RepoConf (Get-KitCheckoutName $Repo) 'poolWarm' $null)) { $pw } else { Get-KitParam 'pool.warm' }))
+  if ($size -gt 0 -and $tgt -and -not $DryRun) {
+    Invoke-KitLocked (Join-Path (Get-KitPath wt-slots -Create) "$rl.pool") {
+      $slots = @(Get-KitSlots $Repo)
+      foreach ($s in $slots) { if (-not (Read-KitSlotLease $s.file) -and -not $s.branch -and -not @(git -C $s.path status --porcelain --untracked-files=no 2>$null).Count) { git -C $s.path checkout -q --detach "origin/$tgt" 2>$null | Out-Null } }   # idle: at the target, no stale branch
+      $byN = @{}; foreach ($s in $slots) { $byN[$s.n] = $s }; $free = @($slots | Where-Object { -not (Read-KitSlotLease $_.file) }).Count
+      foreach ($n in @(1..$size | Where-Object { -not $byN[$_] -and -not (Test-Path -LiteralPath (Get-KitSlotFile "$((Get-KitBirdName $_).ToLower())-$rl")) })) {
+        if ($free -ge $warm) { break }
+        $p = Join-Path @($KitConf.WorktreeRoots)[0] "$((Get-KitBirdName $n).ToLower())-$rl"; if (Test-Path -LiteralPath $p) { continue }
+        Add-WtRoot (Split-Path $p); git -C $Repo worktree add -q --detach $p "origin/$tgt" 2>$null | Out-Null; if ($LASTEXITCODE) { $r.err = "warm slot $n failed"; break }
+        Meta $p 'slot' $n; $free++; $r.warmed += "$rl·$(Get-KitBirdName $n)"
+      }
+    }
+  }
+  $sf = Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'sync')).FullName "$rl.json"
+  if (-not $DryRun) { Write-KitAtomic $sf ([pscustomobject]$r | ConvertTo-Json -Depth 4) }
+  [pscustomobject]$r
+}
+# the last sync per repo (the dashboard's Branches tile)
+function Get-KitRepoSyncState { @(Get-ChildItem -LiteralPath (Join-Path (Get-KitPath wt-slots -Create) 'sync') -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } }) }
 # ---- pool: wt pool [-Migrate]
 function Invoke-WtPool {   # slots per pooled repo; -Migrate [-DryRun]: per-task worktrees of pooled repos go when nothing is lost, the rest listed
   $repos = if ($Repo) { @(Resolve-WtRepo $Repo) } else { @(Get-KitRepoDirs | Where-Object { (Get-KitPoolSize $_) -gt 0 }) }
@@ -246,6 +290,8 @@ function Invoke-WtPool {   # slots per pooled repo; -Migrate [-DryRun]: per-task
     }
     return
   }
+  $synced = @(foreach ($rp in $repos) { $sy = Sync-KitRepo $rp -DryRun:$DryRun; if (-not $Json) { "sync $($sy.repo): $(@($sy.ff).Count) fast-forwarded, $(@($sy.diverged).Count) diverged, $(@($sy.dirty).Count) dirty, $(@($sy.pruned).Count) pruned, $(@($sy.warmed).Count) warm slot(s) made$(if ($sy.err) { "; $($sy.err)" })"; foreach ($x in @($sy.diverged) + @($sy.dirty)) { "  kept: $x" } } })
+  if (-not $Json) { $synced }
   $rows = @(foreach ($rp in $repos) { $size = Get-KitPoolSize $rp; foreach ($s in @(Get-KitSlots $rp)) { $o = Read-KitSlotLease $s.file
         [pscustomobject]@{ slot = $s.name; repo = (Split-Path $rp -Leaf); size = $size; path = $s.path; branch = $(if ($s.branch) { $s.branch } else { "detached $("$($s.head)".Substring(0, [math]::Min(8, "$($s.head)".Length)))" })
           state = $(if (-not $o) { 'free' } elseif ($o.parked) { 'parked' } elseif ($o.creating) { 'creating' } else { 'leased' }); agent = "$($o.agent)"; since = "$($o.since)"; why = "$($o.parkedWhy)" } } })

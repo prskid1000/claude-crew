@@ -77,7 +77,7 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
 ## Speed and disk
 - Per service: `static` = the folder its `build` writes: the train builds once per release, the kit's static server serves a
   staged copy (unknown routes -> index.html; no dev server).
-- `prepare` = a command after each sync whose edits are committed locally on `localenv/<env>` (a build cache at `{cache}`,
+- `prepare` = a command after each sync whose edits are committed locally on the lane branch `lane/<product>-<bird>` (a build cache at `{cache}`,
   outside the repo).
 - `unpack` = a command that unpacks `{artifact}` into `{out}` (it fails: the plain artifact is staged, event `unpack-fallback`,
   doctor warns).

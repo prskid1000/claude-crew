@@ -111,6 +111,18 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
 - **Log:** `.state/leases.jsonl` (`lib.ps1` `Write-KitLeaseLog`): one line per acquire / release / reclaim / down (kind, name, agent,
   session, run, since, reason); the newest half kept past 1 MB. Last used: `bossy.ps1 status`, the lane and env status.
 
+## Worktrees and lanes
+- **Pool slots** (`crafty.ps1 wt lease`): per repo, folder `<bird>-<repo>`, shown as `<repo>·<Bird>`; agents lease one per branch
+  and release it; a free slot sits detached at `origin/<target>`, never on a stale branch; `pool.warm` free slots are kept made.
+- **Lanes** (envy): lane k of env `<product>` runs from its own worktrees `lane-<product>-<bird>-<repo>` on the local branch
+  `lane/<product>-<bird>` (never pushed): the target plus the task branches merged in as layers. Old names (`localenv-<env>-<repo>`,
+  `localenv/<env>`) are moved at the lane's next build; a folder in use stays until then.
+- **Many to many:** any task branch can be built into any lane; a lane's worktree merges the branches onto its target; the slot keeps
+  the task's own code. Lane branches are rebuilt from the target, so a lane branch no worktree holds is pruned.
+- **Repo sync** (`wt pool`; supervise every `sync.everyMinutes`): one fetch per repo, every local branch strictly behind its
+  upstream fast-forwarded (checked out: only when clean), merged branches whose upstream is gone deleted; diverged or dirty ones
+  are listed (dashboard Branches tile), never touched.
+
 ## Pause and resume
 - **Checkpoints** (both paths): each agent runs `crafty.ps1 checkpoint` at every step boundary (worktree, commit, testing goals,
   loop round, MR, review, CI, testing doc, tracker, merge; QA: each check): `work/agents/<id>/resume-<run>.json` + `.md` (per run: same-named agents never overwrite; an old `resume.json` is still read). Kit
@@ -280,7 +292,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `build` | {"mavenOffline": true} | mavenOffline: Maven -o if ~/.m2/repository exists (default true). |
 | `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build_heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |
 | `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (&gt;= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop &gt;= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: &lt;id&gt; &lt;GB&gt; &lt;s&gt; &lt;query&gt;; db.kill {id}; db.maxGB. TODO-PARAM. |
-| `pool` | {"size": 10} | Worktree pool (crafty SKILL.md Worktrees): size = slots per repo (default 10; repos[].poolSize per repo, 0 = no pool: wt new), created lazily, never deleted; names: the n-th member of every pool (slot, env lane, phone lane), default birds Falcon, Kestrel, Osprey, ... |
+| `pool` | {"size": 10} | Worktree pool (crafty SKILL.md Worktrees): size = slots per repo (default 10; repos[].poolSize per repo, 0 = no pool: wt new), created on lease, never deleted; warm = free slots kept made (default 2; repos[].poolWarm); sync.everyMinutes (60): supervise runs wt pool (fetch, fast-forward, prune, idle slots at origin/&lt;target&gt;); names: the n-th member of every pool (slot, env lane, phone lane), default birds Falcon, Kestrel, Osprey, ... |
 | `params` | {"learning": "on", "shadowDays": 14} | Tunables (param show; keys: params.registry.json) learn both ways per machine (.state/params.json) from the default within default/4..x4: a failure (timeout, OOM, short: holder back past grace, handoff, 2+ new ACTs a sweep) steps safe next use (x1.5 or the need); risky steps &lt;= 10%/day after 5 new samples, none 7 d after a failure; shadowDays: shown, then used; past 2x default: param approve (owner). kit.local.json value = pin; learning on / shadow / off. |
 | `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "stepHours": 2, "prices":… | Budget = an agent tool's compaction point: handoff at handoffAt x it or a step &gt; stepHours (0: off); run cap = planned budgets: estimate &gt; runStopAt x cap refused (split), at it no new item; estimate per agent, item |
 <!-- kit-graph:end -->

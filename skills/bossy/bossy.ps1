@@ -26,8 +26,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1335 report · L1415 audit · L1475 storage · L1478 bugbrief · L1589 cleanup · L1674 learn ·
-  L1705 decide · L1856 debate · L1900 health · L1963 retro due · L1973 tidy · L2045 setup · L2142 guard-sendmessage
+  L715 track · L1032 supervise · L1336 report · L1416 audit · L1476 storage · L1479 bugbrief · L1590 cleanup · L1675 learn ·
+  L1706 decide · L1857 debate · L1901 health · L1964 retro due · L1974 tidy · L2046 setup · L2143 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1222,6 +1222,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   # idle daemons (cleanup.idleDaemons) hold GBs
   if ($pct -ge 85) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
+  if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Json') }   # every sync.everyMinutes, detached: fetch, fast-forward, prune, warm slots (wt_pool.ps1 Sync-KitRepo)
 }
 # 4b. owner MRs merged in 24 h, untracked
 if ($KitConf.TrackerType -ne 'none' -and (Within 'untracked MRs')) { foreach ($x in @(Get-KitUntrackedMrFlag $state $now { Within 'untracked MRs' })) { [void]$flags.Add($x) } }

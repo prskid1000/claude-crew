@@ -28,6 +28,8 @@
   "qa.finalizeLockSec": "config default=600 unit=s",
   "cleanup.worktreeDays": "config default=7 unit=d",
   "pool.size": "config default=10 unit=slots",
+  "pool.warm": "config default=2 unit=slots",
+  "sync.everyMinutes": "config default=60 unit=min",
   "cleanup.worktreeIdleHours": "config default=2 unit=h",
   "tidy.judgeMinutes": "config default=3 unit=min",
   "tracker.duplicateScore": "config default=0.6 unit=share",

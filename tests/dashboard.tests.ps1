@@ -41,6 +41,10 @@ Expect "sparkline: axis + caption values compact, no raw 9-digit number ($(([reg
 $rsc = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; foreach ($ag in @(@([pscustomobject]@{ agent = 'devy-1'; state = 'ACTIVE'; since = $n.ToString('o'); last = $n.ToString('o') }), @())) {
     $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = $ag; resources = @() }); "$($h -match "Resources and leases</h3><span class=cnt>\(0 held\)") $($h -match '1 agent active (·|&#183;) none holds a lease') $($h -match 'No resource held') $($h -match "Resources and leases</h3><span class=cnt>\(0\)")" } }
 Expect "resources: 0 held + 1 agent active while agents run; none live: (0) ($rsc)" ($rsc -join '|' -eq 'True True False False|False False False True')
+# Branches tile: the last repo sync per repo (fast-forwarded, diverged, dirty, pruned), kept ones in its tooltip
+$syh = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ repos = @{ at = $n.ToString('o'); repos = @(@{ repo = 'api'; branches = 3; worktrees = 1 }) }
+        sync = @(@{ repo = 'api'; at = $n.ToString('o'); ff = @('main +5', 'x +1'); diverged = @('lane-ish [ahead 1, behind 2]'); dirty = @(); pruned = @('lane/a-falcon (lane branch, no worktree)'); err = '' }) } }); $h }
+Expect 'Branches tile: sync line with counts, a warn tone and the kept branch in its tooltip' ($syh -match "sync 10:00: 2 fast-forwarded (·|&#183;) 1 diverged (·|&#183;) 0 dirty (·|&#183;) 1 pruned" -and $syh -match "class='s warn' title='api: lane-ish \[ahead 1, behind 2\]'")
 if (Use-BrowserKit) {   # owner 2026-11-14: one tall tile (15 repos) beside short ones: each column's last tile stretches; without it uiChecks fails
   $uiKb = Join-Path $k 'skills/bossy/kitbag.py'; $pg = Join-Path (Kd) 'tiles.html'; $pg2 = Join-Path (Kd) 'tiles-flat.html'
   & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $lv = @(0..30 | ForEach-Object { [pscustomobject]@{ at = $n.AddMinutes(-20 * $_).ToString('o'); run = $_ % 5; secs = 30 + $_ % 9; br = 30; wt = 9 } }); [array]::Reverse($lv)

@@ -52,11 +52,11 @@ function Get-DepLinkDefaults {
   if ($l.Count -or ($__cfg -and (Get-KitProps $__cfg).Name -contains 'linkDefaults')) { return $l }   # [] = link nothing
   @([pscustomobject]@{ markers = @('package.json'); dir = 'node_modules' }, [pscustomobject]@{ markers = @('pyproject.toml', 'requirements.txt'); dir = '.venv' })
 }
-# never deleted: protectedBranchesBase (default main/master/develop/release/*), localenv/* (envy's env branches); protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
+# never deleted: protectedBranchesBase (default main/master/develop/release/*), lane/* + localenv/* (envy's lane branches: wt sync-repos prunes those no worktree holds); protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
 function Get-KitKeepBranchRx([string]$Repo) {
   $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
   $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @(Get-KitSetting 'protectedBranchesBase' @('main', 'master', 'develop', 'release/*')) }
-  $all = @($base) + 'localenv/*' + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
+  $all = @($base) + 'localenv/*' + 'lane/*' + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
   '^(' + (@($all | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape("$_") -replace '\\\*', '.+' }) -join '|') + ')$'
 }
 # may a local branch go? delete + why; $Ctx caches per repo (keep rx, checkouts, bases, host MR refs)
