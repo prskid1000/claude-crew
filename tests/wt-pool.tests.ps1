@@ -89,5 +89,12 @@ git -C $sx checkout -q beh; 'more' | Set-Content "$sx/beh2.txt"; Save-GitRepo $s
 $ls = pwsh @np $D wt lease -Repo syn -Branch beh -Agent devS 2>&1 | Out-String; $lsd = if ($ls -match '(?m)^worktree: (.+)$') { $Matches[1].Trim() }; $b0 = & $tip beh
 $sp2 = pwsh @np $D wt pool -Repo syn -Sync 2>&1 | Out-String; $syj2 = Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json
 Expect "repo sync: a leased slot's branch stays (listed), a stranded detached commit is kept ($(@($syj2.dirty) -join ' | '))" ($lsd -and (& $tip beh) -eq $b0 -and @($syj2.dirty) -match 'leased slot' -and $stOk)
+# a stray non-lease file in wt-slots (an array, as lanes.json was): supervise, wt release and bossy release skip it (K42)
+Set-Content "$kf/stray.json" '[{"lane":"x","parked":true,"parkedAt":"2026-01-01T00:00:00Z","since":"2026-01-01T00:00:00Z","agent":"devZ"},{"lane":"y","parked":true,"parkedAt":"2026-01-02T00:00:00Z","agent":"devZ"}]'
+$sg = Invoke-PsTest stray-slot @'
+. $args[0]; foreach ($a in @(Get-ChildItem $args[1] -Filter '*.ps1')) { . $a.FullName }; $now = Get-Date; try { $o = @(Get-KitSuperviseGuardResources); "stray:$(-not @($o | Where-Object { "$($_.what)" -match 'devZ|slot \S* parked' }).Count)" } catch { "stray:ERR $($_.Exception.Message) $($_.InvocationInfo.PositionMessage)" }
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/bossy/adapters'))
+$wr = pwsh @np $D wt release -Agent devZ 2>&1 | Out-String
+Expect "a stray array file in wt-slots: supervise resources sweep runs, no slot flag from it; wt release ignores it ($(@($sg) -join ' ') | $($wr.Trim()))" ((@($sg) -join ' ') -match 'stray:True' -and $wr -match 'no slot held by devZ' -and (Test-Path "$kf/stray.json"))
 Remove-TestKit $k
 Complete-Tests

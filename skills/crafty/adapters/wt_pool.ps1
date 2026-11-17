@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L65 names · L84 slots · L110 lease · L207 release · L235 lanes · L324 sync · L388 pool
+Sections: L14 worktrees · L65 names · L84 slots · L110 lease · L207 release · L235 lanes · L326 sync · L390 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -208,7 +208,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
 function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo) · -Dir: that slot; uncommitted work -> a WIP commit, else parked
   if (-not ($Agent -or $Dir)) { throw 'release needs -Agent <id> or -Dir <slot>' }
   $want = if ($Dir) { [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/').Replace('\', '/').ToLower() }
-  $held = @(Get-ChildItem -LiteralPath (Get-KitPath wt-slots -Create) -Filter '*.json' -File | ForEach-Object { $o = Read-KitSlotLease $_.FullName; if ($o) { [pscustomobject]@{ f = $_.FullName; o = $o } } } |
+  $held = @(Get-ChildItem -LiteralPath (Get-KitPath wt-slots -Create) -Filter '*.json' -File | ForEach-Object { $o = Read-KitSlotLease $_.FullName; if ($o -is [pscustomobject] -and $o.slot) { [pscustomobject]@{ f = $_.FullName; o = $o } } } |
     Where-Object { if ($want) { "$($_.o.path)".Replace('\', '/').TrimEnd('/').ToLower() -eq $want } else { $_.o.agent -eq $Agent -and -not $_.o.parked -and (-not $Repo -or (Split-Path "$($_.o.repo)" -Leaf) -eq (Split-Path $Repo -Leaf)) } })
   if (-not $held.Count) { "$(if ($Dir) { "${Dir}: no lease" } else { "no slot held by $Agent" })"; return }
   $why = if ($Reason) { $Reason } else { 'released' }
@@ -294,7 +294,7 @@ function Invoke-LaneMigrate([switch]$LanesOnly, [switch]$DryRun) {
 # lanes -Sync [-DryRun] (wt pool -Sync, owner 2026-11-17: lane branches always in sync): every idle lane x repo rebuilt as Sync-Repo
 # does at a build: origin/<target> + the layers still open in its state (re-merged; merged ones dropped) + the prepare commit; a
 # conflict puts the lane back as it was (listed); lane/* never track an upstream (local only: no false ahead / behind); the per
-# lane state (base sha, behind, merges) -> wt-slots/lanes.json for the dashboard (Branches tile)
+# lane state (base sha, behind, merges) -> wt-slots/lanes/lanes.json for the dashboard (Branches tile)
 function Invoke-LaneResync([switch]$DryRun) {
   $rows = [Collections.Generic.List[object]]::new()
   foreach ($e in @(EnvNames)) { $sf = StateFile $e
@@ -319,8 +319,10 @@ function Invoke-LaneResync([switch]$DryRun) {
           $row.head = "$(git -C $d rev-parse HEAD 2>$null)".Trim(); $row.behind = [int]"$(git -C $d rev-list --count "HEAD..origin/$($r.target)" 2>$null)"; $rows.Add([pscustomobject]$row) }
         if (-not $DryRun -and ($st | ConvertTo-Json -Depth 10) -ne $was) { Write-KitAtomic $sf ($st | ConvertTo-Json -Depth 10) } }   # the layers that stayed, written only when changed
       finally { $script:stateLocked = $false } } }
-  if (-not $DryRun) { Write-KitAtomic (Join-Path (Get-KitPath wt-slots -Create) 'lanes.json') (ConvertTo-Json @($rows) -Depth 4) }
+  if (-not $DryRun) { Write-KitAtomic (Get-KitLaneSyncFile) (ConvertTo-Json @($rows) -Depth 4) }
 }
+# wt-slots/lanes/lanes.json: its own folder (wt-slots/*.json are slot leases only)
+function Get-KitLaneSyncFile { Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'lanes')).FullName 'lanes.json' }
 # ---- sync: every pooled repo (wt pool; supervise every sync.everyMinutes): one fetch, fast-forward each local branch strictly
 # behind its upstream (checked out: ff-only when clean), prune lane branches no worktree holds and gone-upstream branches merged
 # into the target; diverged or dirty: listed only. Free clean slots sit detached at origin/<target>; pool.warm free slots exist.

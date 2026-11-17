@@ -207,12 +207,12 @@ $syo = & { . $syL help 6>$null *> $null; $sf = Join-Path (Get-KitPath localenv -
   $o1 = @(Invoke-LocalEnv lanes -Sync 6>$null); $st1 = Get-Content $sf -Raw | ConvertFrom-Json; $h1 = "$(git -C $lw rev-parse HEAD)".Trim()
   $anc = { param($x) git -C $lw merge-base --is-ancestor $x HEAD; -not $LASTEXITCODE }
   $ok = (& $anc origin/main) -and (& $anc $shO) -and -not "$(git -C $lw config branch.lane/shop-falcon.merge)"
-  $lj = Get-Content (Join-Path (Get-KitPath wt-slots) 'lanes.json') -Raw | ConvertFrom-Json
+  $lj = Get-Content (Get-KitLaneSyncFile) -Raw | ConvertFrom-Json; $ljOut = -not (Test-Path (Join-Path (Get-KitPath wt-slots) 'lanes.json'))
   'c2' | Set-Content "$sc/a.txt"; Save-GitRepo $sc conf; git -C $sc push -q origin main 2>$null
   Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-conf'; sha = $shC; agent = 'a3' }) } } } }
   $o2 = @(Invoke-LocalEnv lanes -Sync 6>$null)
   $rx1 = '^synced \[shop\] sc: .*1 layer\(s\) re-merged; dropped feat-merged \(merged into main'; $rx2 = '^kept \[shop\] sc: layer feat-conf conflicts'
-  "$ok|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$("$(git -C $lw rev-parse HEAD)".Trim() -eq $h1)" }
+  "$($ok -and $ljOut)|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$("$(git -C $lw rev-parse HEAD)".Trim() -eq $h1)" }
 Expect "lanes -Sync: idle lane rebuilt on origin/main + its open layer, the merged one dropped, no upstream, behind 0; a conflicting layer leaves the lane as it was ($syo)" ($syo -eq 'True|feat-open|0/1|1|1|True')
 Remove-TestKit $syKit
 Complete-Tests

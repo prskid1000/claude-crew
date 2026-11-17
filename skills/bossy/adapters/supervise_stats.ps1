@@ -228,7 +228,7 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
   $legend = "<div class=hk><i class='lgk c'></i>top half = avg CPU % of the machine ($([Environment]::ProcessorCount) cores) <i class='lgk r'></i>bottom half = avg RAM (full = the biggest peak, $(& $n1 $ramTop) GB; the machine: its $(& $n1 $TotalGB) GB) · outlined = now · tap a cell for both values, holders and (machine row) the top other processes · dashed = no live holder (released after idle.graceMinutes)</div>"
   & $fold 'res24' 'Resources · 24 h' (Get-KitHeatCount $items) "<div class='gks w5 cpg rsh'>$head$(Format-KitHeatRows $items 'resources')</div>$legend$topHtml" -Open -tag h4 -cls "sub st cpu$(if ($last -and (& $hot $last.all $last.s)) { ' hot' })"
 }
-# lanes (envy.ps1 lanes -Sync, wt-slots/lanes.json; owner 2026-11-17): a line per lane x repo "base @ target sha · behind N · test merges N",
+# lanes (envy.ps1 lanes -Sync, wt-slots/lanes/lanes.json; owner 2026-11-17): a line per lane x repo "base @ target sha · behind N · test merges N",
 # a lane kept in use or on a conflict tinted; none: nothing
 function Format-KitLaneLines($Lanes) {
   $ls = @($Lanes | Where-Object { $_ -and $_.lane }); if (-not $ls.Count) { return '' }

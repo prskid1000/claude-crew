@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L295 shells · L429 page · L951 release · L991 lines · L1024 cleanup · L1096 launch ·
-  L1174 pause · L1292 heartbeat · L1307 sessions · L1359 ci tasks ·
-  L1414 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L296 shells · L430 page · L952 release · L992 lines · L1025 cleanup · L1097 launch ·
+  L1175 pause · L1293 heartbeat · L1308 sessions · L1360 ci tasks ·
+  L1415 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -124,6 +124,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   # worktree slot leases with no live holder: released (uncommitted work -> a WIP commit, else parked for its branch)
   foreach ($lf in @(Get-ChildItem (Get-KitPath wt-slots) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
     $ls = try { Get-Content $lf.FullName -Raw | ConvertFrom-Json } catch { continue }
+    if ($ls -isnot [pscustomobject] -or -not $ls.slot) { continue }   # a slot lease only, never another file in the folder
     if ($ls.parked) { $pa = [datetime]$(if ($ls.parkedAt) { $ls.parkedAt } else { $ls.since }); if (($now - $pa).TotalHours -ge 24) { & $flag 'WATCH' "slot $($ls.slot) parked $([int]($now - $pa).TotalHours) h: $($ls.parkedWhy)" "Its branch's next agent resumes it (crafty.ps1 wt lease -Branch $($ls.branch)); else commit or drop the files in $($ls.path), then wt release -Dir $($ls.path)" }; continue }
     $s0 = "$($ls.seen)"; $keep = Update-KitLease $ls
     if ($keep -and "$($ls.seen)" -ne $s0 -and (Test-Path $lf.FullName)) { Write-KitAtomic $lf.FullName ($ls | ConvertTo-Json -Depth 5) }
@@ -177,7 +178,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
     $held = @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object { $_.agent -eq $w.agent })[0]
     $rows.Add([pscustomobject]@{ name = "phone $(if ($held) { $held.lane } elseif ($w.lane) { $w.lane } else { 'next lane' })"; by = "$($w.agent) $(if ($held) { '(waiting for RAM)' } else { '(waiting for a lane)' })"; gb = 0 })
   }
-  foreach ($sl in @(Read-KitJsonFiles (Get-KitPath wt-slots))) { $rows.Add([pscustomobject]@{ name = "slot $($sl.slot)"; by = $(if ($sl.parked) { "parked: $($sl.branch)" } else { "$($sl.agent) ($($sl.branch))" }); gb = 0 }) }   # one naming scheme: <pool>·<bird>
+  foreach ($sl in @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot })) { $rows.Add([pscustomobject]@{ name = "slot $($sl.slot)"; by = $(if ($sl.parked) { "parked: $($sl.branch)" } else { "$($sl.agent) ($($sl.branch))" }); gb = 0 }) }   # one naming scheme: <pool>·<bird>
   foreach ($ev in @($script:KitEnvStatus | Where-Object { $_.env })) { $hs = @($ev.leases | Where-Object { $_.agent } | ForEach-Object agent); if ($hs.Count) { $rows.Add([pscustomobject]@{ name = "env $(Get-KitPoolLabel env $ev.env)"; by = $hs -join ', '; gb = 0 }) } }
   foreach ($t in @($builds | Where-Object { $_.kind -ne 'emulator' })) { $p = $byId[[int]$t.pid]; $rows.Add([pscustomobject]@{ name = "build $(Split-Path "$($t.dir)" -Leaf) $($t.kind)"; by = $t.owner; gb = $(if ($p) { [math]::Max((& $tree $p), 0.1) } else { [double]$t.need }) }) }
   $lks = Get-KitLockState   # repos[].exclusiveTests locks: holder + waiters (their RAM: the build rows)
@@ -498,7 +499,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $rsw = @((Get-KitRepoSweep).repos | Where-Object { $_ })   # the Branches tile's lines
     $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
   $usage = Read-KitUsageResult   # budget -Usage writes it
-  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { }); lanes = @(try { Get-Content -LiteralPath (Join-Path (Get-KitPath wt-slots) 'lanes.json') -Raw | ConvertFrom-Json } catch { }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
+  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { }); lanes = @(try { Get-Content -LiteralPath (Get-KitLaneSyncFile) -Raw | ConvertFrom-Json } catch { }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
     changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ((Get-KitMember $apv "$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })") -or (Get-KitMember $apv "$($_.key)|")) { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
@@ -971,7 +972,7 @@ function Invoke-KitReleaseAgent([string[]]$Agent, [string]$Reason = 'agent finis
     foreach ($a in $Agent) {
       $n = 0
       if ($KitCmd.swarm -and (Test-Path $KitCmd.swarm) -and @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object agent -eq $a).Count) { "$a phone: $(& $sub $KitCmd.swarm 'release', '-Agent', $a)"; $n++ }
-      if (@(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.agent -eq $a -and -not $_.parked }).Count) { "$a slot: $(& $sub $KitCmd.dev 'wt', 'release', '-Agent', $a, '-Reason', $Reason)"; $n++ }   # WIP commit or parked: never lost
+      if (@(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -eq $a -and -not $_.parked }).Count) { "$a slot: $(& $sub $KitCmd.dev 'wt', 'release', '-Agent', $a, '-Reason', $Reason)"; $n++ }   # WIP commit or parked: never lost
       foreach ($ev in $envs) {
         if (@($ev.leases | Where-Object agent -eq $a).Count) { "$a env: $(& $sub $KitCmd.local 'release', '-Env', $ev.env, '-Agent', $a)"; $n++ }
         if (@($ev.holds | Where-Object who -eq $a).Count) { "$a env: $(& $sub $KitCmd.local 'unhold', '-Env', $ev.env, '-Agent', $a)"; $n++ }
