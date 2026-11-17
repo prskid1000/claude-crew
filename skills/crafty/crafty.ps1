@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1305 guard · L2180 dir ·
-  L2190 checkpoint · L2220 prior · L2258 tracker · L2280 task spec · L2455 scope · L2503 host
+Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1305 guard · L2181 dir ·
+  L2191 checkpoint · L2221 prior · L2259 tracker · L2281 task spec · L2456 scope · L2504 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1409,7 +1409,7 @@ if ($SelfTest) {
   @('B', 'pwsh -c ". a.py"', $true, $sx),
   @('P', 'cmd.exe /k a.js', $true, $sx),
   @('B', 'mshta x.hta', $true, $da),
-  @('B', "cd {KRT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, $rp),
+  @('B', "cd {KRT} && mkdir -p work/agents/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/agents/g5/body.md; cat >> work/agents/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/agents/g5/body.md)`"", $false, $rp),
   @('P', '& D:/kit/learn.ps1 -Skill crafty -Text "never rm the {RT}/work folder" -Source workflow', $false, $rp),
   @('B', 'rm -rf {KRTB}/work', $true, $rp),
   @('P', 'Remove-Item -Recurse -Force "{KRT}\work"', $true, $rp),
@@ -1418,7 +1418,7 @@ if ($SelfTest) {
   @('B', 'rm -rf /d/x/{RT}/work', $false, $rp), @('P', 'Remove-Item -Recurse "D:\x\{RT}\work"', $false, $rp), @('B', 'cd /d/x/{RT} && rm -rf work', $false, $rp),
   @('B', 'cd {WS}; rmdir {RT}/work/agents/a {RT}/work {RT}', $false, $rp), @('B', 'cd {WS}; mkdir -p {RT}/work/agents/a', $true, 'outside the kit'),
   @('E', '{WS}/{RT}/work/a.md', $true, 'outside the kit'), @('B', 'mkdir -p {KRT}/work/agents/a; echo x > {KRTB}/../x/y/{RT}/a.txt', $false, 'outside the kit'),
-  @('B', 'rm -rf {KRTU}/work', $true, $rp), @('B', 'cd {WS}; mkdir -p {RTU}/w', $true, 'outside the kit'), @('B', 'mv {WS}/{RT}/work/x {KRT}/work/agents/x; cat {WS}/{RT}/a.md > {KRT}/b.md', $false, 'outside the kit'),
+  @('B', 'rm -rf {KRTU}/work', $true, $rp), @('B', 'cd {WS}; mkdir -p {RTU}/w', $true, 'outside the kit'), @('B', 'mv {WS}/{RT}/work/x {KRT}/work/agents/x; cat {WS}/{RT}/a.md > {KRT}/work/agents/x/b.md', $false, 'outside the kit'),
   @('B', 'cd {WS}; echo "{RT}/" >> .gitignore; ls {RT} 2>&1', $false, 'outside the kit'), @('B', 'cd {WS}; mkdir -p a/b/c/{RT}', $false, 'outside the kit'),
   @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
   @('B', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
@@ -1442,21 +1442,21 @@ if ($SelfTest) {
   @('B', 'git -C "{KIT}" push origin --delete kit/build-x; git -C "{KIT}" branch -D kit/main-x', $false, $pb),
   @('B', 'git -C /nowhere/repo push origin --delete main; git -C /nowhere/repo branch -D develop', $false, $pb),
   @('B', 'git -C /nowhere/repo push origin --force-with-lease HEAD:release', $false, $pb),
-  @('P', 'git -C "{KIT}" commit -m "never git push origin --delete main"', $false, $pb),
+  @('P', 'git commit -m "never git push origin --delete main"', $false, $pb),
   @('B', 'git commit -n -m "x"', $true, $hk),
   @('B', 'git -c core.hooksPath=/dev/null commit -m x', $true, $hk),
   @('B', 'git commit --no-edit --amend', $false, $hk),
   @('P', 'git commit -m "use -n for a dry run"', $false, $hk),
   @('B', 'git log -n 3; git commit -m x', $false, $hk),
   @('E', '{LIVE}/skills/crafty/crafty.ps1', $true, $lk),
-  @('E', '{LIVE}/{RT}/logs/x.md', $false, $lk),
+  @('E', '{LIVE}/{RT}/work/agents/x/x.md', $false, $lk),
   @('E', '{LIVE}/.git/info/exclude', $false, $lk),
   @('E', '{LIVE}/../wt/skills/crafty/crafty.ps1', $false, $lk),
   @('A', "*** Begin Patch`n*** Update File: {LIVE}/AGENTS.md", $true, $lk),
   @('P', 'Set-Content {LIVE}/AGENTS.md x', $true, $lk),
   @('B', 'sed -i s/a/b/ {LIVE}/README.md', $true, $lk),
   @('B', 'git -C "{LIVE}" commit -m x', $true, $lk),
-  @('P', 'cd {LIVE}; git pull; git log -1; Get-Content AGENTS.md > {RT}/a.txt; cp AGENTS.md ../a.md', $false, $lk),
+  @('P', 'cd {LIVE}; git pull; git log -1; Get-Content AGENTS.md > {RT}/work/agents/x/a.txt; cp AGENTS.md ../a.md', $false, $lk),
   @('B', 'cd {LIVE}; grep -c ">" README.md; git clean -n', $false, $lk),
   @('B', 'KIT_LIVE_EDIT=1 git -C "{LIVE}" commit -m x', $false, $lk),
   @('B', 'node shot.mjs --out /d/x/{RT}/work/evidence/t1/a.png', $true, 'Use D:/x/'),
@@ -1527,6 +1527,7 @@ if ($SelfTest) {
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
   $bp = 'owner only'
   $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/settings.json; git commit -m 'setx $gbn > settings.json'", $false, $bp), @('P', "Set-ItemProperty -Path x -Name $gbn -Value 1", $true, $bp), @('B', "grep x y; pwsh -c ""setx $gbn 1""", $true, $bp), @('B', "sed -i 's/}/,""$gbn"":1}/;s/a/b/' settings.json", $true, $bp), @('B', "git commit -m ""`$(setx $gbn 1)""", $true, $bp))
+  $nr = Join-Path (Get-KitPath agents) 'guard-selftest/neutral'; if (-not (Test-Path "$nr/.git")) { git init -q -b selftest $nr }   # cwd: a repo of its own on an unprotected branch, never the kit (K63s)
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
@@ -1534,14 +1535,14 @@ if ($SelfTest) {
     $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch'; G = 'run_command' }[$c[0]]
     $v = $c[1].Replace('{KRTU}', ($krt -replace '[^/]+$', { $_.Value.ToUpper() })).Replace('{RTU}', '.RUNTIME').Replace('{KRTB}', ($krt -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KRT}', $krt).Replace('{WS}', (Split-Path $live)).Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
     # cwd-independent results
-    $hookIn = @{ tool_name = $tool; cwd = (Join-Path (Get-KitPath agents) 'guard-selftest'); tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) }
+    $hookIn = @{ tool_name = $tool; cwd = $nr; tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) }
     if ($tool -eq 'run_command') { $hookIn = @{ conversationId = 'selftest'; toolCall = @{ args = @{ CommandLine = $v } }; cwd = $hookIn.cwd } }
     $json = $hookIn | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
     $denied = $out -match '"(permissionDecision|decision)":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
-    $ok = $denied -eq $c[2]
+    $ok = if ($c[2]) { $denied } else { $out -notmatch '"(permissionDecision|decision)":"deny"' }   # strict allow (K63s): a deny for any reason fails it
     if (-not $ok) { $fail++ }
-    '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ($c[2]) { 'deny' } else { 'allow' }), ($c[1] -replace "`n", ' \n ')
+    '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ($c[2]) { 'deny' } else { 'allow' }), (($c[1] -replace "`n", ' \n ') + $(if (-not $ok -and $out -match '(?:Reason|reason)":"([^"]{1,160})') { " <- $($Matches[1])" }))
   }
   "$($cases.Count - $fail)/$($cases.Count) passed"
   exit [int]($fail -gt 0)
