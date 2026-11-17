@@ -14,9 +14,9 @@ Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 param([string[]]$Area = @(), [switch]$Slow, [switch]$Full)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
-# the areas a change reaches: a test file -> its area; the runner, the harness, a crafty adapter or a non-.md file the harness copies
-# into every kit -> all; else the areas naming the file (+ its skill's script for an adapter, kitbag.py for kitbag_*); a non-.md
-# file no area names -> all (a gap must never skip a test)
+# the areas a change reaches: a test file -> its area; the runner, the harness, a crafty adapter or another non-.md file the harness
+# copies into every kit -> all; else the areas naming the file (+ its skill's script for an adapter, kitbag.py for kitbag_*; a
+# generated .<dir>/ file: the areas naming .<dir>/); a non-.md file no area names -> all. -Full (pre-push to main) closes the rest.
 function Get-ChangedArea([string]$KitDir, [string[]]$Known) {
   $base = "$(git -C $KitDir merge-base HEAD origin/main 2>$null)".Trim()
   if (-not $base) { return [pscustomobject]@{ areas = $Known; why = 'no merge-base with origin/main: all' } }
@@ -25,12 +25,12 @@ function Get-ChangedArea([string]$KitDir, [string[]]$Known) {
   $pick = [Collections.Generic.List[string]]::new(); $whyAll = ''
   $names = { param($n) $rn = [regex]::Escape($n); @($Known | Where-Object { $texts[$_] -match "(?<![\w.-])$rn(?![\w-])" }) }
   foreach ($f in $changed) {
-    # lib.ps1 loads every crafty adapter into every script
-    if ($f -match '^tests/(harness|kit-tests|hostverb-shim)\.ps1$|^skills/crafty/adapters/' -or ($f -notmatch '\.md$' -and $harness.Contains("'$f'"))) { $whyAll = $f; break }
+    # lib.ps1 loads every crafty adapter into every script; another skill's adapter loads with its skill's script only
+    $own = if ($f -match '^skills/(\w+)/adapters/' -and $Matches[1] -ne 'crafty') { "$($Matches[1]).ps1" } elseif ($f -match '^skills/bossy/(kitbag_\w+\.py|lint-vocab\.json)$') { 'kitbag.py' }
+    if ($f -match '^tests/(harness|kit-tests|hostverb-shim)\.ps1$|^skills/crafty/adapters/' -or (-not $own -and $f -notmatch '\.md$' -and $harness.Contains("'$f'"))) { $whyAll = $f; break }
     if ($f -match '^tests/(.+)\.tests\.ps1$') { if ($Matches[1] -in $Known) { $pick.Add($Matches[1]) }; continue }
-    $hit = @(& $names (Split-Path $f -Leaf))
-    # a file its skill's script loads: the areas naming that script too
-    if ($f -match '^skills/(\w+)/adapters/') { $hit += & $names "$($Matches[1]).ps1" } elseif ($f -match '^skills/bossy/(kitbag_\w+\.py|lint-vocab\.json)$') { $hit += & $names 'kitbag.py' }
+    $hit = @(& $names (Split-Path $f -Leaf)); if ($own) { $hit += & $names $own }
+    if (-not $hit.Count -and $f -match '^(\.\w+)/') { $hit = @(& $names "$($Matches[1])/") }   # a generated port (.codex/...): the areas testing that folder
     if ($hit.Count) { $pick.AddRange([string[]]$hit) } elseif ($f -notmatch '\.md$') { $whyAll = "$f (no area names it)"; break }
   }
   if ($whyAll) { return [pscustomobject]@{ areas = $Known; why = "$whyAll changed: all" } }
