@@ -37,8 +37,8 @@ function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   if ($Create) { New-Item -ItemType Directory -Force $(if ($dir) { $p } else { Split-Path $p }) | Out-Null }
   $p
 }
-# <file>.lock is kept: held = byte 0 locked (kitbag.py locked() too), freed by the OS when the holder dies; macOS (no
-# FileStream.Lock): CreateNew + delete, stale after 2 min. -> the stream, or $null (held; a pre-change holder refuses the open)
+# <file>.lock is kept: held = byte 0 locked (kitbag.py locked() too), freed by the OS when the holder dies; macOS:
+# CreateNew + delete, stale after 2 min. -> the stream, or $null (held)
 function Open-KitLockFile([Parameter(Mandatory)][string]$Lock) {
   if ($IsMacOS) { try { return [IO.File]::Open($Lock, 'CreateNew', 'Write', 'None') } catch { try { if (((Get-Date) - [IO.File]::GetLastWriteTime($Lock)).TotalMinutes -gt 2) { [IO.File]::Delete($Lock) } } catch {}; return $null } }
   $fs = $null; try { $fs = [IO.FileStream]::new($Lock, 'OpenOrCreate', 'ReadWrite', 'ReadWrite'); $fs.Lock(0, 1); $fs } catch { if ($fs) { $fs.Dispose() }; $null }
@@ -136,7 +136,7 @@ function Update-KitTracking([Parameter(Mandatory)][scriptblock]$Change) {
     if ($move) { Remove-Item -LiteralPath $f -Force }
   }
 }
-# a task deleted in the tracker (404 + "not found", never an outage or missing CLI): dropped from tracking
+# a task deleted in the tracker (404 + "not found", not an outage or no CLI): dropped from tracking
 function Remove-KitGoneTask([string]$Id, $Err) {
   if ("$Err" -notmatch '(?is)(?=.*\b404\b)(?=.*\b(task|issue|item|ticket)\b[^.]{0,30}\b(not found|does not exist|deleted)\b)|could not resolve to an? issue') { return $false }
   Update-KitTracking { param($t) Write-KitLog calls task-gone @{ task = $Id; error = "$Err"; entry = $t.tasks[$Id] }; $t.tasks.Remove($Id) }; $true
@@ -147,7 +147,7 @@ function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Manda
 # deployed-env changes (K56; vocab.json envChangeCommands + guard.envChangeCommands): denied without an owner's decision
 function Get-KitEnvChangeRx { $alts = @(@($script:KitVocab.envChangeCommands) + @(Get-KitSetting 'guard.envChangeCommands' @()) | Where-Object { $_ }); if (-not $alts.Count) { return '' }
   "(?m)(?:^|[;&|(\n{]|\`$\(|\b(?:sudo|env|time|exec|xargs|nohup|call|start)\s)\s*(?:[\w:]+=\S*\s+)*(?:[^\s;&|]*[\\/])?(?<verb>(?:$($alts -join '|')))" }
-# a task's tracker id in a branch or MR title: tracker.branchRx, else branchTag, else the vendor's vocab.json branchRx / idPattern ('' = none)
+# a task id in a branch or MR title: tracker.branchRx, else branchTag, else vocab.json branchRx / idPattern ('' = none)
 function Get-KitTaskTagRx {
   $rx = [string](Get-KitSetting 'tracker.branchRx' ''); if ($rx) { return $rx }
   if ($KitConf.TrackerTag) { return "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)" }
@@ -1015,9 +1015,9 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $rec = @(Get-KitWorkflowRecords $w $ev $launch); $lr = @($rec | Where-Object { $_.runId -or $_.wfDir })
     $started = @($ev | Where-Object type -eq 'started'); $res = @{}; foreach ($x in $ev | Where-Object type -eq 'result') { $res[$x.agentId] = $x }
     $running = @(Get-JournalRunning $started @($res.Keys)); $seen = [Collections.Generic.List[object]]::new(); $seen.Add($jt)
-    # no end marker: no running step for 2+ min = ended (unless paused)
+    # no end marker: no running step for 2+ min (none ever: 10) = ended, unless paused
     $paused = [bool]@($rec | Where-Object { $_.paused -and -not $_.completed }).Count
-    $fin = -not $paused -and ([bool]@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or [bool]@($rec | Where-Object completed).Count -or ($started.Count -and -not $running.Count -and ($Now - $jt).TotalMinutes -ge 2))
+    $fin = -not $paused -and ([bool]@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or [bool]@($rec | Where-Object completed).Count -or ($started.Count -and -not $running.Count -and ($Now - $jt).TotalMinutes -ge 2) -or (-not $started.Count -and ($Now - $jt).TotalMinutes -ge 10))
     $gone = if (-not $fin) { Get-KitWorkflowStop $w $rec }; $live = -not $fin -and -not $gone   # ended runs have no running steps
     if (($Now - $jt).TotalHours -ge $(if ($live) { 48 } else { 2 })) { continue }
     $run = @(@($lr | ForEach-Object run) + $runOf[$w.Name] + $w.Name | Where-Object { $_ })[0]

@@ -50,8 +50,10 @@ $wj = { param($id, $run, [object[]]$L, $m, $x = @{}) New-Journal $id $L; (Get-It
 & $J @{ id = 'e-2'; kind = 'envfix'; run = 'sp'; agent = 'P1'; status = 'pending'; at = (& $ago 25) } (Join-Path (TkPath $k decisions) 'e-2.json')
 & $wj wf_s3 sq @(@{ type = 'started'; agentId = 'z1'; label = 'build:Q1' }, @{ type = 'result'; agentId = 'z1'; result = @{} }) 5 @{ paused = (& $ago 4) }
 & $se S9 @{ beat = (& $ago 30) }; $null = & $tx (Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/agent-a9.jsonl') '{"message":{"content":[{"type":"tool_result","content":"SESSION s-S9 (pass -Session)"}]}}'   # an Agent-tool subagent no beat mapped
+& $wj wf_s4 sv @(@{ type = 'launched' }) 30
 $st = Invoke-PsTest 'status' '. $args[0]; $r = Get-KitStatusRows; Format-KitStatusTable $r (Get-Date) $script:KitTxVersions; Get-KitStuckFlags $r (Get-Date) 20 | ForEach-Object { "[$($_.level)] $($_.what)" }' @($O)
 $sv = { param($n, $rx) [bool]@($st | Where-Object { $_ -match "^\| $([regex]::Escape($n)) \|[^|]*\| $rx" }).Count }
+Expect "status: a workflow with no step in 10 min (failed at its args) = FINISHED, not STUCK" ((& $sv 'sv (workflow)' 'FINISHED') -and -not @($st -match 'STUCK.*\bsv\b').Count)
 $lt = Invoke-PsTest 'livetx' '. $args[0]; @(Get-KitLiveTranscripts (Get-Date) 10).Name -join ","' @($O)
 Expect "status: a stale beat but a fresh transcript (found by its SESSION line, kept in the entry) = ACTIVE; NEXT counts it ($lt)" ((& $sv 'S9 (devy)' 'ACTIVE') -and (Read-Json "$bd/s-S9.json").transcript -match 'agent-a9' -and "$lt" -match 'agent-a9')
 $fr = Invoke-PsTest 'finished' '. $args[0]; $n = Get-Date; (Select-KitBriefRows @(foreach ($m in 31, 29) { [pscustomobject]@{ name = "f$m"; state = "FINISHED"; ended = $n.AddMinutes(-$m) } }; [pscustomobject]@{ name = "s"; state = "STUCK"; ended = $n.AddDays(-1) }) $n).name -join ","' @($O)
