@@ -20,7 +20,7 @@ description: "Load when: you reproduce, debug or test a change on the local env 
 | `adapters/db_presets.ps1` | dot-sourced by `envy.ps1`: db hooks from the engine, marks, restore, cascade guard, dbtemp, pool (db.md) |
 | `adapters/tenant_models.ps1` | kind tenant-model (`tenants.model`, default none) and the `tenant` verb (kind envy-verb) (db.md "Tenants") |
 | `adapters/tenant_schema.ps1` | the schema tenant model: list, drop, import (db.md "Tenants") |
-| `adapters/shared_builds.ps1` | deploy step 2: a lane's or a check's build of the same code staged, no build (reference.md `shareBuild`, `shareCheckBuild`) |
+| `adapters/shared_builds.ps1` | deploy step 2: a lane's or a check's build of the same code staged, no build (reference.md `shareBuild`, `shareCheckBuild`); the lane pick (reference.md "Lanes") |
 | `adapters/*.local.ps1` | org-only adapters: `Register-KitAdapter envy-verb <verb> @{ ops; run }` adds an envy verb; db-engine / tenant-model / migration the same way |
 | `adapters/db_flashback.py` | run by `envy.ps1` `restore`, release slices, the cascade guard (`doctor`), `tenant import` masking (db.md) |
 

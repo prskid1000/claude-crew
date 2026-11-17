@@ -31,8 +31,11 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
   `{lane}` ('' / k), `{port:<svc>}` and `:<old port>` follow.
 - `envs.<env><k>` keys override that lane (e.g. its own DB service; `db.port` follows its port); env file `<env>.env`, then
   `<env><k>.env`.
-- `-Env <env>` (deploy, use, task) = the lane the agent already uses, else the least busy one (a cold lane only when free RAM
-  minus the keep-free floor holds all its services); `-Lane <k>` pins; owner verbs act on the named lane.
+- `-Env <env>` (deploy, use, task) = the lane the agent already uses, else the least busy warm lane (services up or a train;
+  shared when busy); a cold lane opens only when the warm lanes' queue wait reaches `localEnv.lanes.openAfterMinutes` (learned
+  from queue waits) and free RAM minus the keep-free floor holds all its services; `-Env <env><k>` / `-Lane <k>` opens or pins
+  one; owner verbs act on the named lane. An extra lane's services stop after `idle.graceMinutes` unheld. `status`: `lanes open
+  N of M (why)`.
 - API calls: `pokey.ps1 api -Target <target><k>`. Seed: the env's seed file; `{lane}` in it (e.g. `-Target local-shop{lane}`).
 - `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).
 - A lane's own DB service (port = `db.port`) down: marks wait for its start (an init's fresh copy marks `baseline-<date>`; no

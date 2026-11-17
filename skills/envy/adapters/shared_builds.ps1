@@ -1,8 +1,8 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
-# crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
-$script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
+# Sections: L4 shared builds · L65 lane pick
+# ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
+# crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.$script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
 # a crafty.ps1 check build of this code (env tree = the check's tree), service folder and -P / -D flags (-DskipTests aside), its
 # jar unchanged since -> @{ path; t }. services[].shareCheckBuild: true on, false off; unset: on for a Maven package build without
 # prepare (its edits are in an env build only) or build env vars
@@ -61,4 +61,47 @@ function Write-Reactor([string]$e, $s) {
   $f = Join-Path $wt ".localenv-reactor-$($s.name).xml"
   Set-Content -LiteralPath $f "<project xmlns=`"http://maven.apache.org/POM/4.0.0`"><modelVersion>4.0.0</modelVersion><groupId>localenv</groupId><artifactId>reactor-$($s.name)</artifactId><version>0</version><packaging>pom</packaging><modules>$(($mods | ForEach-Object { "<module>$_</module>" }) -join '')</modules></project>" -Encoding utf8
   "-f `"$f`" -pl $me -am"
+}
+# ---- lane pick: envy.ps1 calls Select-Lane at -Env <env> (K58 lane opening); Get-LaneLoad, Get-LanesOpen
+# a lane's users: agents with a layer, lease, hold or open deploy there; services up; train running
+function Get-LaneLoad([string]$n) {
+  $st = Read-State $n
+  $who = @(@($st.leases.Keys | ForEach-Object { if ($st.leases[$_].agent) { $st.leases[$_].agent } else { ($_ -split '/')[0] } }) + @($st.holds.Keys) + @($st.release.repos.Values | ForEach-Object { @($_.layers) } | Where-Object { $_ } | ForEach-Object agent) + @($st.requests | Where-Object { $_.kind -eq 'deploy' -and $_.status -in 'queued', 'in-train' } | ForEach-Object agent))
+  [pscustomobject]@{ env = $n; agents = @($who | Where-Object { $_ } | Select-Object -Unique); up = @($st.services.Values | Where-Object { $_.status -eq 'up' }).Count; train = [bool]$st.train }
+}
+# -Lane k; else the lane the agent already uses; else (deploy / use / task) the least busy warm lane (K58 below)
+function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [string]$id) {
+  $names = @(LaneNames $e)
+  if ($k) { if ($k -gt $names.Count) { throw "-Lane ${k}: $($names[0]) has $($names.Count) lane(s) (localEnv.envs.$($names[0]).lanes.max)" }; return $names[$k - 1] }
+  $loads = @($names | ForEach-Object { Get-LaneLoad $_ })
+  if ($id) { foreach ($n in $names) { if (@((Read-State $n).requests | Where-Object id -eq $id).Count) { return $n } } }   # wait -Id: the lane holding that request
+  $mine = @($loads | Where-Object { $agent -in $_.agents })[0]; if ($mine) { return $mine.env }
+  if ($action -notin 'deploy', 'use', 'task') { return $e }
+  # K58 (owner 2026-11-17): a warm lane (services up or a train) first, even shared; a cold one only past the queue wait
+  # localEnv.lanes.openAfterMinutes (learned) with room for all its services; a person opens one with -Env <lane> / -Lane k
+  $room = (Get-GateAvailGB (Get-SysMem)) - (KeepFreeGB)
+  $fits = { param($n) (@(EnvServices $n | Where-Object { Managed $_ } | ForEach-Object { Need-GB $n $_ }) | Measure-Object -Sum).Sum -le $room }
+  $warm = @($loads | Where-Object { $_.up -or $_.train }); if (-not $warm.Count) { $warm = @($loads[0]) }   # all cold: lane 1
+  $best = @($warm | Sort-Object @{ Expression = { $_.agents.Count + [int]$_.train } }, @{ Expression = { $_.up }; Descending = $true }, @{ Expression = { [array]::IndexOf($names, $_.env) } })[0]
+  $why = 'warm lane, free'
+  if ($best.agents.Count + [int]$best.train) {
+    $wait = [int](@($warm | ForEach-Object { Get-LaneWaitMin $_.env }) | Measure-Object -Minimum).Minimum; $after = [double](Get-KitParam 'localEnv.lanes.openAfterMinutes')
+    $cold = @($loads | Where-Object { $_.env -notin $warm.env -and (& $fits $_.env) })[0]
+    $why = if ($wait -lt $after) { "warm lanes busy, shared: queue wait $wait min < lanes.openAfterMinutes $after" } elseif (-not $cold) { "warm lanes busy, shared: queue wait $wait min, no cold lane with room" } else { "cold lane opened: warm lanes busy, queue wait $wait min >= lanes.openAfterMinutes $after" }
+    if ($cold -and $wait -ge $after) { $best = $cold }
+  }
+  Update-State $names[0] { param($x) $x.lanePick = @{ at = (Now); env = $best.env; agent = $agent; why = $why } }
+  Write-Host "[$($best.env)] lane $([array]::IndexOf($names, $best.env) + 1) of $($names[0]): $why ($(($loads | ForEach-Object { "$($_.env) $($_.agents.Count) agent(s)$(if (-not ($_.up -or $_.train)) { ' cold' })" }) -join ', ')); later calls with -Env $($names[0]) stay on it"
+  $best.env
+}
+# minutes the next deploy on a lane waits: its oldest queued request or its running train (0: none)
+function Get-LaneWaitMin([string]$n) {
+  $st = Read-State $n; $ats = @(@($st.requests | Where-Object { $_.status -eq 'queued' } | ForEach-Object at) + @($st.train.at) | Where-Object { $_ })
+  [int](@($ats | ForEach-Object { ((Get-Date) - [datetime]$_).TotalMinutes }) + 0 | Measure-Object -Maximum).Maximum
+}
+# lanes open N of M (why): open = services up or a train; why = the last pick (Select-Lane)
+function Get-LanesOpen([string]$e) {
+  $names = @(LaneNames $e); if ($names.Count -lt 2) { return $null }
+  $open = @($names | Where-Object { $l = Get-LaneLoad $_; $l.up -or $l.train }); $p = (Read-State $names[0]).lanePick
+  [pscustomobject]@{ open = $open.Count; of = $names.Count; lanes = $open; why = $(if ($p) { "$(([datetime]$p.at).ToString('HH:mm')) $($p.agent) -> $($p.env): $($p.why)" } else { 'no pick yet' }) }
 }

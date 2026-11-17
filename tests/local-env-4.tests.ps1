@@ -9,7 +9,7 @@ param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/h
 # envy.ps1 is not in the core test kit: copy it in
 function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item (Join-Path $src 'skills/envy/adapters/shared_builds.ps1') (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
 # lanes: lane 1 = the env unchanged, lane k = <env><k>: managed ports + (k-1) x portStep, {lane} / {port:<svc>} / ":<port>" rewritten,
-# envs.<env><k> overrides one lane (its db port follows); -Env <env> keeps an agent on its lane, else the least busy one; -Lane pins
+# envs.<env><k> overrides one lane (its db port follows); -Env <env> keeps an agent on its lane, else the least busy warm one; -Lane pins
 $laneKit = New-LocalEnvKit lelane; $lkL = Join-Path $laneKit 'skills/envy/envy.ps1'
 Set-JsonFile (Join-Path $laneKit 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{
   shop = @{ lanes = @{ max = 3 }; env = @{ DB_PORT = '{port:db}'; SEARCH = 'http://127.0.0.1:{port:search}' }; db = @{ port = 3306 }
@@ -36,7 +36,24 @@ $ls = & { . $lkL
   Update-State shop3 { param($x) $x.requests = @(@{ id = 'q9'; kind = 'deploy'; status = 'queued'; agent = 'Q1' }, @{ id = 'q8'; kind = 'deploy'; status = 'done'; agent = 'Q2' }) }
   $queued = Select-Lane shop Q1 0 'deploy'; $waitId = Select-Lane shop Q2 0 'wait' 'q8'
   "$sticky|$pick|$read|$pin|$cold|$bad|$queued|$waitId" } 6>$null
-Expect "lanes: the agent's lane (layer, lease, open deploy) sticks; wait -Id finds its request's lane; deploy / use go to the least busy lane (a cold one only with room); other verbs stay; -Lane pins; a lane past max refused ($ls)" ($ls -eq 'shop2|shop3|shop|shop2|shop|refused|shop3|shop3')
+Expect "lanes: the agent's lane (layer, lease, open deploy) sticks; wait -Id finds its request's lane; deploy / use share the warm lane (all cold: lane 1, K58); other verbs stay; -Lane pins; a lane past max refused ($ls)" ($ls -eq 'shop2|shop|shop|shop2|shop|refused|shop3|shop3')
+# K58 lane opening: a free warm lane first; busy warm lanes are shared until the queue wait reaches localEnv.lanes.openAfterMinutes,
+# then a cold lane with room opens; status shows "lanes open N of M (why)"; an extra lane idles out after idle.graceMinutes
+$k58Kit = New-LocalEnvKit lek58; $k58L = Join-Path $k58Kit 'skills/envy/envy.ps1'
+Set-JsonFile (Join-Path $k58Kit 'skills/crafty/kit.local.json') @{ localEnv = @{ lanes = @{ openAfterMinutes = 15 }; envs = @{ shop = @{ lanes = @{ max = 3 }; services = @(@{ name = 'api'; port = 8080; start = 'echo' }) } } } } 8
+$k58 = & { . $k58L
+  function Get-GateAvailGB { 50 }; function KeepFreeGB { 10 }; function Need-GB { 1 }
+  Update-State shop2 { param($x) $x.services = @{ api = @{ status = 'up' } } }
+  $free = Select-Lane shop F1 0 'deploy'
+  Update-State shop2 { param($x) $x.leases.F1 = @{ services = @('api'); agent = 'F1' }; $x.requests = @(@{ id = 'w1'; kind = 'deploy'; status = 'queued'; agent = 'F1'; at = (Get-Date).AddMinutes(-5).ToString('o') }) }
+  $shared = Select-Lane shop S1 0 'deploy'
+  Update-State shop2 { param($x) $x.requests[0].at = (Get-Date).AddMinutes(-20).ToString('o') }
+  function Get-GateAvailGB { 10.5 }; $noRoom = Select-Lane shop S2 0 'deploy'
+  function Get-GateAvailGB { 50 }; $opened = Select-Lane shop S3 0 'deploy'
+  $lo = Get-LanesOpen shop
+  "$free|$shared|$noRoom|$opened|$($lo.open)/$($lo.of)|$($lo.why -match 'S3 -> shop: cold lane opened: warm lanes busy, queue wait 20 min >= lanes.openAfterMinutes 15')|$((GraceMin shop2 $null) -eq (Get-KitParam 'idle.graceMinutes'))" } 6>$null
+Expect "K58 lanes: free warm lane first, busy warm shared under the queue-wait threshold or without room, a cold lane past it; lanes open N of M (why); extra lane idle grace = idle.graceMinutes ($k58)" ($k58 -eq 'shop2|shop2|shop2|shop|1/3|True|True')
+Remove-TestKit $k58Kit
 $lm = & { . $lkL; function MarksOn { $true }; function Get-DbPos { 'pos1' }; $global:lmUp = $false; function Test-PortListening { $global:lmUp }
   $q = New-Mark shop2 'release-3' 'release'; $pend = "$(@((Read-State shop2).pendingMarks).name)|$(@((Read-State shop2).marks | Where-Object { $_ }).Count)"
   function SvcDir { $env:TEMP }; function StartCmd { 'x' }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }
@@ -231,21 +248,4 @@ $syo = & { . $syL help 6>$null *> $null; $sf = Join-Path (Get-KitPath localenv -
   "$($ok -and $ljOut -and $sqOk)|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$($h2 -eq $h1)" }
 Expect "lanes -Sync: idle lane rebuilt on origin/main + its open layer, the merged one dropped, no upstream, behind 0; a conflicting layer leaves the lane as it was ($syo)" ($syo -eq 'True|feat-open|0/1|1|1|True')
 Remove-TestKit $syKit
-# lane env: comment lines ignored, an empty value never exported, With-Env unsets a var it found unset (it came back EMPTY and
-# every child of the envy loop inherited it: Spring "Invalid boolean value []"), _exec drops inherited empty vars
-$evKit = New-LocalEnvKit leenv; $evL = Join-Path $evKit 'skills/envy/envy.ps1'
-Set-JsonFile (Join-Path $evKit 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api'; port = 8080; start = 'echo' }) } } } } 6
-$evo = & { . $evL
-  $edir = Get-KitPath localenv-env -Create
-  [IO.File]::WriteAllText((Join-Path $edir 'shop.env'), "# KIT_T_GONE=true`nKIT_T_A=1`n  # KIT_T_C=3`n")
-  [IO.File]::WriteAllText((Join-Path $edir 'shop2.env'), "# lane own file: KIT_T_GONE removed`nKIT_T_EMPTY=`n")
-  $vv = EnvVars shop2 ([pscustomobject]@{})
-  $keys = (@($vv.Keys) | Sort-Object) -join ','
-  [Environment]::SetEnvironmentVariable('KIT_T_GONE', [NullString]::Value)
-  With-Env @{ KIT_T_GONE = 'true'; KIT_T_EMPTY = '' } { $script:inEmpty = $null -eq [Environment]::GetEnvironmentVariable('KIT_T_EMPTY') }
-  $after = if ($null -eq [Environment]::GetEnvironmentVariable('KIT_T_GONE')) { 'unset' } else { "[$([Environment]::GetEnvironmentVariable('KIT_T_GONE'))]" }
-  $lines = @((Get-Content -LiteralPath $evL) -match 'Get-ChildItem env: \| Where-Object \{ "\$\(\$_\.Value\)" -eq '''' \}\)\) \{ Set-EnvVar')
-  "$keys|$($vv.KIT_T_EMPTY -eq '')|$script:inEmpty|$after|$($lines.Count)" }
-Expect "lane env: comments ignored, an empty key not exported, a var unset before With-Env is unset after, _exec drops inherited empties ($evo)" ($evo -eq 'KIT_T_A,KIT_T_EMPTY|True|True|unset|1')
-Remove-TestKit $evKit
 Complete-Tests

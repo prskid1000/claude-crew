@@ -12,7 +12,7 @@ Verbs: envs · status · doctor · deploy · wait (-Id | -Until up [-Services] [
        lanes -Migrate [-LanesOnly] [-DryRun] | -Sync [-DryRun] (wt_pool.ps1 lanes) ·
        <verb> an adapter registers (kind envy-verb) ·
        _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
-Lanes (envs.<env>.lanes.max > 1): -Env <env> = the agent's lane, else (deploy / use / task) the least busy one with room;
+Lanes (envs.<env>.lanes.max > 1): -Env <env> = the agent's lane, else (deploy / use / task) the least busy warm one; a cold one past localEnv.lanes.openAfterMinutes of queue wait, with room;
   -Lane <k> pins one; -Env <env><k> names one.
 In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.extends; lanes), .state/localenv/<env>.env (secrets).
 Out: text; status -Json, envs -Json.
@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L233 state · L280 layer drops · L352 leases · L480 code · L518 migrations ·
-  L521 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L669 shared builds · L802 hooks · L874 marks · L1054 seed ·
-  L1121 processes · L1500 daemon · L1960 cleanup · L2032 doctor · L2085 verbs
+Sections: L36 config · L233 state · L280 layer drops · L352 leases · L460 code · L498 migrations ·
+  L501 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L649 shared builds · L782 hooks · L854 marks · L1034 seed ·
+  L1101 processes · L1481 daemon · L1942 cleanup · L2014 doctor · L2067 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -393,26 +393,6 @@ function Touch-Lease([string]$e, [string]$agent) {
   $st = Read-State $e; $l = $st.leases[$agent]
   if (-not $l -or $l.owner -or ($l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalSeconds -lt 30)) { return }
   Update-State $e { param($x) if ($x.leases[$agent]) { $x.leases[$agent].lastUse = (Now) } }
-}
-# a lane's users: agents with a layer, lease, hold or open deploy there; services up; train running
-function Get-LaneLoad([string]$n) {
-  $st = Read-State $n
-  $who = @(@($st.leases.Keys | ForEach-Object { if ($st.leases[$_].agent) { $st.leases[$_].agent } else { ($_ -split '/')[0] } }) + @($st.holds.Keys) + @($st.release.repos.Values | ForEach-Object { @($_.layers) } | Where-Object { $_ } | ForEach-Object agent) + @($st.requests | Where-Object { $_.kind -eq 'deploy' -and $_.status -in 'queued', 'in-train' } | ForEach-Object agent))
-  [pscustomobject]@{ env = $n; agents = @($who | Where-Object { $_ } | Select-Object -Unique); up = @($st.services.Values | Where-Object { $_.status -eq 'up' }).Count; train = [bool]$st.train }
-}
-# -Lane k; else the lane the agent already uses; else (deploy / use / task) the least busy lane, a cold one only with room for all its services
-function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [string]$id) {
-  $names = @(LaneNames $e)
-  if ($k) { if ($k -gt $names.Count) { throw "-Lane ${k}: $($names[0]) has $($names.Count) lane(s) (localEnv.envs.$($names[0]).lanes.max)" }; return $names[$k - 1] }
-  $loads = @($names | ForEach-Object { Get-LaneLoad $_ })
-  if ($id) { foreach ($n in $names) { if (@((Read-State $n).requests | Where-Object id -eq $id).Count) { return $n } } }   # wait -Id: the lane holding that request
-  $mine = @($loads | Where-Object { $agent -in $_.agents })[0]; if ($mine) { return $mine.env }
-  if ($action -notin 'deploy', 'use', 'task') { return $e }
-  $room = (Get-GateAvailGB (Get-SysMem)) - (KeepFreeGB)
-  $ok = @($loads | Where-Object { $n = $_.env; $_.up -or $n -eq $names[0] -or (@(EnvServices $n | Where-Object { Managed $_ } | ForEach-Object { Need-GB $n $_ }) | Measure-Object -Sum).Sum -le $room })
-  $best = @($ok | Sort-Object @{ Expression = { $_.agents.Count + [int]$_.train } }, @{ Expression = { $_.up }; Descending = $true }, @{ Expression = { [array]::IndexOf($names, $_.env) } })[0]
-  Write-Host "[$($best.env)] lane $([array]::IndexOf($names, $best.env) + 1) of $($names[0]), least busy ($(($loads | ForEach-Object { "$($_.env) $($_.agents.Count) agent(s)$(if ($_.env -notin $ok.env) { ' no room' })" }) -join ', ')); later calls with -Env $($names[0]) stay on it"
-  $best.env
 }
 # the holders' board inbox (bossy.ps1 board msg) + their status -Agent notice
 function Send-LeaseNotice([string]$e, [string[]]$keys, [string]$text) {
@@ -1251,6 +1231,7 @@ function Need-GB([string]$e, $s) {
   switch -regex ($st) { '^java|^gradle|^android' { 3 } '^angular' { 3 } '^dotnet' { 1.5 } '^node|^react' { 1.5 } '^python|^go|^rust' { 0.5 } default { 1 } }
 }
 function GraceMin([string]$e, $s) {
+  if ([int](Get-EnvCfg $e).lane -gt 1) { return [double](Get-KitParam 'idle.graceMinutes') }   # K58: an extra lane closes after the idle grace
   $xs = @((Get-LocalEnvHistory)["$e/$($s.name)/startSec"] | Where-Object { $_ })
   $start = if ($xs.Count) { ($xs | Measure-Object -Maximum).Maximum } else { 120 }
   [math]::Min($script:IdleMaxM, [math]::Max($script:IdleMinM, [math]::Round(3 * $start / 60, 1)))
@@ -1856,6 +1837,7 @@ try {
         $wp = Start-Pwsh @('_daemon', '-Env', $e, '-Train', $tid) $PSScriptRoot "_daemon -Env $e -Train $tid" (LogFile $e "train-$tid")
         Update-State $e { param($x) if ($x.train -and $x.train.id -eq $tid) { $m = Mine $wp; $x.train.pid = $m.pid; $x.train.pstart = $m.pstart } }
         Say "train $tid started for $($ids.Count) request(s): $(($queued | ForEach-Object { "$($_.kind) $($_.branch)" }) -join '; ')"
+        foreach ($q in @($queued | Where-Object { $_.kind -eq 'deploy' -and $_.at })) { Add-KitParamObs 'localEnv.lanes.openAfterMinutes' ((Get-Date) - [datetime]$q.at).TotalMinutes }   # queue waits teach Select-Lane's cold-lane threshold
         $st = Read-State $e
       }
 
@@ -2211,6 +2193,7 @@ function Show-Status([string]$env1) {
       [pscustomobject]@{ count = $ms.Count; newest = @($ms)[-1].name; baseline = $b.name; baselineAgeDays = $(if ($b) { [math]::Round(((Get-Date) - [datetime]$b.at).TotalDays, 1) }); expired = @($st.expiredMarks | Where-Object { $_ }); binlogDays = $st.binlog.days; dbDown = (DbSvcDown $env1) } })
     seed = $(if ($st.seed) { [pscustomobject]@{ at = $st.seed.at; ok = [bool]$st.seed.ok; missing = @($st.seed.missing | Where-Object { $_ }); drift = @($st.seed.drift | Where-Object { $_ }) } })
     loop = $(if (Owned $st.loop "_daemon -Env $env1") { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
+    lanesOpen = Get-LanesOpen $env1
   }
   if ($Agent -and $st.notices[$Agent]) { $o | Add-Member -NotePropertyName notice -NotePropertyValue "$(([datetime]$st.notices[$Agent].at).ToString('HH:mm')) $($st.notices[$Agent].text)" }
   if ($Agent -and $Agent -ne 'main' -and $st.leases[$Agent]) {
@@ -2225,6 +2208,7 @@ function Show-Status([string]$env1) {
   if ($o.train) { "  TRAIN $($o.train.id): $($o.train.phase)$(if ($o.train.waitingFor.Count) { " - waiting for $($o.train.waitingFor -join ', ')" }) ($($o.train.requests) request(s); quiet $($o.train.quietMin)/$($o.train.stallMin) min)" }
   if ($o.halfRestored) { "  HALF-RESTORED to $($o.halfRestored.mark) at $(([datetime]$o.halfRestored.at).ToString('HH:mm')): $($o.halfRestored.why)" }
   if ($o.trainDead) { "  TRAIN $($o.trainDead.id) ended $(([datetime]$o.trainDead.at).ToString('HH:mm')): $($o.trainDead.why); requeued$(if (@($o.trainDead.failed).Count) { ", failed: $(@($o.trainDead.failed) -join ', ')" })" }
+  if ($o.lanesOpen -and (Get-EnvCfg $env1).lane -eq 1) { "  lanes open $($o.lanesOpen.open) of $($o.lanesOpen.of) ($($o.lanesOpen.why))" }
   if ($o.queue) { "  queued: $($o.queue -join '; ')" }
   if ($o.due) { "  on the next lease: $($o.due -join '; ')" }
   foreach ($x in $o.services) {

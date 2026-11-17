@@ -207,4 +207,21 @@ $null = Px $L3 _daemon -Env tl -Start api 2>&1; $tl9.Stop()
 $au = & { . $L3; $x = Read-State tl; "$lr|$($x.services.api.status)|$(@($x.services.api.restarts).Count)|$(@($x.services.gone.restarts).Count)" }
 Expect "start worker: the loop counts no restart; 'already up' -> status up, none counted; a real try (gone) counts 1 ($au)" ($au -eq '0|up|1|1')
 Remove-TestKit $k3
+# lane env: comment lines ignored, an empty value never exported, With-Env unsets a var it found unset (it came back EMPTY and
+# every child of the envy loop inherited it: Spring "Invalid boolean value []"), _exec drops inherited empty vars
+$evKit = New-LocalEnvKit leenv; $evL = Join-Path $evKit 'skills/envy/envy.ps1'
+Set-JsonFile (Join-Path $evKit 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api'; port = 8080; start = 'echo' }) } } } } 6
+$evo = & { . $evL
+  $edir = Get-KitPath localenv-env -Create
+  [IO.File]::WriteAllText((Join-Path $edir 'shop.env'), "# KIT_T_GONE=true`nKIT_T_A=1`n  # KIT_T_C=3`n")
+  [IO.File]::WriteAllText((Join-Path $edir 'shop2.env'), "# lane own file: KIT_T_GONE removed`nKIT_T_EMPTY=`n")
+  $vv = EnvVars shop2 ([pscustomobject]@{})
+  $keys = (@($vv.Keys) | Sort-Object) -join ','
+  [Environment]::SetEnvironmentVariable('KIT_T_GONE', [NullString]::Value)
+  With-Env @{ KIT_T_GONE = 'true'; KIT_T_EMPTY = '' } { $script:inEmpty = $null -eq [Environment]::GetEnvironmentVariable('KIT_T_EMPTY') }
+  $after = if ($null -eq [Environment]::GetEnvironmentVariable('KIT_T_GONE')) { 'unset' } else { "[$([Environment]::GetEnvironmentVariable('KIT_T_GONE'))]" }
+  $lines = @((Get-Content -LiteralPath $evL) -match 'Get-ChildItem env: \| Where-Object \{ "\$\(\$_\.Value\)" -eq '''' \}\)\) \{ Set-EnvVar')
+  "$keys|$($vv.KIT_T_EMPTY -eq '')|$script:inEmpty|$after|$($lines.Count)" }
+Expect "lane env: comments ignored, an empty key not exported, a var unset before With-Env is unset after, _exec drops inherited empties ($evo)" ($evo -eq 'KIT_T_A,KIT_T_EMPTY|True|True|unset|1')
+Remove-TestKit $evKit
 Complete-Tests
