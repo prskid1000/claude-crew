@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L947 check · L1264 pipes · L1321 guard · L2174 dir ·
-  L2184 checkpoint · L2214 prior · L2252 tracker · L2274 task spec · L2460 scope · L2507 host
+Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L947 check · L1264 pipes · L1321 guard · L2188 dir ·
+  L2198 checkpoint · L2228 prior · L2266 tracker · L2288 task spec · L2474 scope · L2521 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1339,6 +1339,13 @@ if ($SelfTest) {
   @('B', "git commit -m `"`$(cat <<'EOF'`nfix: never git stash in worktrees`nEOF`n)`"", $false),
   @('B', 'git checkout fix/stash-list', $false),
   @('B', 'echo done # not git stash', $false),
+  @('B', 'aws elasticbeanstalk update-environment --environment-name e1 --option-settings Namespace=aws:elasticbeanstalk:application:environment,OptionName=A,Value=true', $true, 'changes a deployed env'),
+  @('B', 'aws --region eu-west-1 elasticbeanstalk restart-app-server --environment-name e1', $true, 'changes a deployed env'),
+  @('P', 'aws ecs update-service --cluster c --service s --force-new-deployment', $true, 'changes a deployed env'),
+  @('B', 'cd x && kubectl -n qa rollout restart deploy/api', $true, 'changes a deployed env'),
+  @('B', 'KIT_DECISION=d-none aws lambda update-function-configuration --function-name f', $true, 'changes a deployed env'),
+  @('B', 'aws elasticbeanstalk describe-configuration-settings --environment-name e1', $false),
+  @('B', 'git commit -m "test: never aws elasticbeanstalk update-environment"', $false),
   @('P', '& D:\kit\skills\crafty\LESSONS.md', $true, $da),
   @('P', 'Invoke-Item .\report.html', $true, $da),
   @('P', 'Start-Process https://example.com', $true, $da),
@@ -1808,6 +1815,13 @@ if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*
   Deny 'kit guard: that makes a local branch from an MR, which outlives you: git fetch origin merge-requests/<n>/head (GitHub: pull/<n>/head), then read FETCH_HEAD (git diff origin/<target>...FETCH_HEAD); to change it: crafty.ps1 wt new' }
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }
+# a deployed env's config or runtime changed by hand restarts it under everyone (K56, 2026-11-17: a tester's env-option toggle restarted a
+# test env twice, 502s for other runs): only with an owner's deploy decision on the line (KIT_DECISION=<id>); kit deploy verbs run inside scripts
+$envChg = Get-KitEnvChangeRx
+if ($envChg -and (StripDocs $raw) -match $envChg) {
+  $verb = $Matches.verb; $dId = if ($raw -match '\bKIT_DECISION\s*=\s*[''"]?(?<d>d-[\w-]+)') { $Matches.d }
+  if (-not ($dId -and "$(pwsh -NoProfile -File $KitCmd.orch decide check -Id $dId -Gate deploy -MaxHours 12)" -match '^WORD ')) {
+    Deny "kit guard: that changes a deployed env's config or restarts it ($($verb -replace '\s+', ' ')), which restarts it for every run and tester on it. A feature behind an env switch that is off there is NOT_TESTED (tool-down) plus bossy.ps1 decide ask; never toggle it. With the owner's yes for this change: KIT_DECISION=<decision id> <command> (bossy.ps1 decide record -Gate deploy -Item <env> ...)" } }
 # hand-made task branches skip the prior-work gate of wt lease / new
 if (($trx = Get-KitTaskTagRx) -and $raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(checkout\s+(-\S+\s+)*-[bB]|switch\s+(-\S+\s+)*-[cC]|worktree\s+add\s+(\S+\s+)*?-[bB]|branch(\s+-[fct]\S*)*)\s+(?<br>[^\s;|&]+)') {
   $br = $Matches.br; if ($br -match $trx) { try { Assert-KitPrior $Matches.id '' "git branch $br" '' } catch { Deny "kit guard: $($_.Exception.Message -replace '-Override', 'crafty.ps1 wt lease -Override')" } }

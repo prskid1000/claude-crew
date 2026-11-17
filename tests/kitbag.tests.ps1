@@ -38,6 +38,9 @@ $out = KtPy "g = []; k.kitlog = lambda *a: g.append(a[2]); k.audited('x', ['v'],
 Expect 'audited: a usage exit 2 keeps its stderr why in the call line' ($out -match "'error': 'x: error: no verb'")
 $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
 Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
+# K56: a testing doc never tells a tester to change a deployed env's config (an UPPER_CASE switch, env-variable words, a cloud CLI verb)
+$envOut = @('| 1 | UI | Set ASSISTANT_HELP_SEND=true on the env | x | | |', 'Run aws elasticbeanstalk update-environment --environment-name e', 'Enable the environment variable X', 'Set user_name to bob in the form') | ForEach-Object { $o = $_ | python -X utf8 $KT prose --kind testing-doc - | Out-String; "$([int]($o -match 'env change'))" }
+Expect "prose: a testing doc that toggles env config or restarts an env is a finding; a form field is not ($($envOut -join ''))" (($envOut -join '') -eq '1110')
 Expect 'harness: New-TestKit hard-links the suite snapshot, copies the files tests write ($TestKitWrites)' ((Get-Item "$k/skills/crafty/lib.ps1").LinkType -eq 'HardLink' -and -not (Get-Item "$k/LESSONS.md").LinkType)
 $tiOut = KtPy "k.task_index('--help', lambda x: None)" 2>&1 | Out-String
 Expect "task_index: a flag is no task id, no tasks/--help.json ($($tiOut.Trim()))" ($tiOut -match 'a flag is no task id' -and -not (Test-Path (Join-Path (TkPath $k tasks) '--help.json')))

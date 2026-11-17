@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L91 state · L169 config · L250 OS · L470 leases · L867 status · L1125 supervise sweep · L1205 tracker ·
-  L1546 prior · L1562 ask bugs · L1747 git-host · L1928 kitlog · L2048 params · L2353 entry-scripts
+Sections: L10 paths · L91 state · L172 config · L253 OS · L473 leases · L870 status · L1128 supervise sweep · L1208 tracker ·
+  L1549 prior · L1565 ask bugs · L1750 git-host · L1931 kitlog · L2051 params · L2356 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -144,6 +144,9 @@ function Remove-KitGoneTask([string]$Id, $Err) {
 function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][hashtable]$Fields) {
   Update-KitTracking { param($t) if ($t.tasks[$Task]) { foreach ($k in $Fields.Keys) { $t.tasks[$Task][$k] = $Fields[$k] } } }
 }
+# deployed-env changes (K56; vocab.json envChangeCommands + guard.envChangeCommands): guard-denied without an owner's deploy decision
+function Get-KitEnvChangeRx { $alts = @(@($script:KitVocab.envChangeCommands) + @(Get-KitSetting 'guard.envChangeCommands' @()) | Where-Object { $_ }); if (-not $alts.Count) { return '' }
+  "(?m)(?:^|[;&|(\n{]|\`$\()\s*(?:\w+=\S*\s+)*(?:\S*[\\/])?(?<verb>(?:$($alts -join '|')))\b" }
 # a task's tracker id in a branch or MR title: tracker.branchRx, else branchTag, else the vendor's vocab.json branchRx / idPattern ('' = none)
 function Get-KitTaskTagRx {
   $rx = [string](Get-KitSetting 'tracker.branchRx' ''); if ($rx) { return $rx }

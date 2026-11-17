@@ -20,8 +20,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1426 audit ·
-  L1542 registry · L1874 arch lint · L2141 prose · L2292 sections · L2422 budget · L2436 migrate · L2596 plugins ·
-  L2650 state lint · L2838 main
+  L1542 registry · L1874 arch lint · L2141 prose · L2306 sections · L2436 budget · L2450 migrate · L2610 plugins ·
+  L2664 state lint · L2852 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2242,11 +2242,25 @@ def prose_check(kind, text, spec, banned):
         mm = re.search(b, flat, re.I | re.M)
         if mm:
             out.append(f'filler: "{mm.group(0).strip()}"')
+    if kind.startswith('testing-'):   # K56: a tester never reconfigures or restarts a deployed env (it restarts it for every run on it)
+        mm = env_change_rx().search(flat)
+        if mm:
+            out.append(f'env change "{mm.group(0).strip()[:60]}": a tester never toggles env config or restarts a deployed env; a feature whose '
+                       'env switch is off there is NOT_TESTED (tool-down) + bossy.ps1 decide ask')
     if re.match(r'(task|comment)-|decisions$', kind):   # tracker texts: a reader has no access to this machine
         mm = LOCAL_PATH_RX.search(re.sub(r'https?://\S+', ' ', flat))
         if mm:
             out.append(f'local path "{mm.group(0).strip()}": link the doc / MR URL instead, or leave it out')
     return out
+
+def env_change_rx():
+    """A deployed-env change in a testing doc: a command of crafty/vocab.json envChangeCommands (the guard's list), or words that tell
+    a tester to set / toggle an env variable, option or app setting, or to set an UPPER_CASE switch."""
+    cmds = (load_json(osp.join(KIT_DIR, 'skills', 'crafty', 'vocab.json'))[0] or {}).get('envChangeCommands') or []
+    words_rx = (r'(?i:\b(?:set|toggle|flip|enable|disable|turn\s+(?:on|off)|change|update|add|remove)\b[^.\n|]{0,60}?\b(?:env(?:ironment)?[ -]'
+                r'(?:var(?:iable)?|config(?:uration)?|setting|option)s?|option[ -]settings?|app[ -]settings?)\b)'
+                r'|(?i:\b(?:set|toggle|flip|enable|disable|turn\s+(?:on|off))\s+)`?[A-Z][A-Z0-9]*_[A-Z0-9_]+`?\s*(?:=|(?i:\bto\b|\bon\b))')
+    return re.compile('|'.join([words_rx] + [f'(?i:{c})' for c in cmds]))
 
 LOCAL_PATH_RX = re.compile(r'(?<![\w/.-])(?:[A-Za-z]:[\\/]|\\\\\w|~[\\/]|/(?:home|Users)/[\w.-]+/|/(?:tmp|mnt)/[\w.-]+/[\w.-]+|\.{1,2}[\\/]|\.(?:runtime|state|claude|claude-runtime)[\\/])\S*')
 

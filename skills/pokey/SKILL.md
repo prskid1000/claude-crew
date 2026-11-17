@@ -50,20 +50,21 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      silent 200 with empty data, wrong answer stated as fact, restart errors. Set **`defect`**: `own` = task expected
      behaviour failed, never "pre-existing" (failedTesting -> back to dev); `new` = regression outside change
      (`X1`, `X2`... -> [Bug] task); **`knownBug: <task id>`**: an open, untested task already tracks it.
-   - **Upstream 5xx** (502/503/504 or a killed long turn from a service the change does not touch): check that service's
-     health and restart times first (service log, a control call). An outage -> NOT_TESTED `tool-down`, re-run after recovery;
+   - **Upstream 5xx** (502/503/504 or a killed long turn from a service the change does not touch): check its health and
+     restart times (log, a control call). An outage -> NOT_TESTED `tool-down`, re-run after recovery;
      a real defect there -> `defect: new` under that service's owner, one bug per shared cause.
    - **Retests of a fix** fail on the sibling path: run the whole flow end to end and every screen reading
      same record/rule; date/shift fixes also cross midnight.
    - **NOT_TESTED**: only when truly impossible: the reason, what you tried, `cause` (`no-mail-sandbox` |
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
+     An env switch off on the target: `tool-down` + `decide ask`; never change deployed env config (guard: denied).
      ONE stronger retry (`models.retest`, told your blocker); still NOT_TESTED -> failedTesting; never for "no time".
    - **Local env item** (`localEnv`): no cause is final (envy "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
      with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
    - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, each answer's UTC time; set
      `attempts`, `window`; a verifier recreates them to refute.
-   - **Flaky**: a FAIL a re-test does not reproduce stays FAIL, `flaky: true` (own -> failedTesting, new -> [Bug] tagged
-     flaky); never PASS_WITH_NOTE.
+   - **Flaky**: a FAIL no re-test reproduces stays FAIL, `flaky: true` (own -> failedTesting, new -> [Bug] tagged
+     flaky); no PASS_WITH_NOTE.
    - **OUT_OF_SCOPE**: only a `qa.outOfScope` channel (run.json `outOfScope` wins), its in-app part tested. A part with no
      build on the target (NO-TARGET): the local env (`phoney.ps1 build -Local` + a lane), a "local run"; no lane: NOT_TESTED.
    - **PENDING**: tested later in another lane (the workflow adds `<code>A`). **findings**: context only.
@@ -80,16 +81,16 @@ one QA comment (no doc link) names failed / untested checks, why; NO new task ·
 request named: WATCH, no [Bug] · `knownBug` FAIL: not own, no task, "Seen again" line · PENDING: open.
 
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
-change may be another agent's; change a setting only when a check needs it, restore it at once, list it in `setup_changes`;
-never deactivate, delete or re-password test logins; one shared Chrome per target + tenant + user (`session()`: own tab,
-`relogin(s)` on a 401, never log out), <= 2 tabs per agent; app lanes: only your serial, never `adb kill-server`.
+change may be another agent's; an app setting (never env config) only when a check needs it, restored at once, in
+`setup_changes`; never deactivate, delete or re-password test logins; one shared Chrome per target + tenant + user
+(`session()`: own tab, `relogin(s)` on a 401, never log out), <= 2 tabs an agent; app lanes: your serial, no `adb kill-server`.
 
 ## Evidence
 - Where: `<run>/<CODE>/shots` (web `.jpeg`, app `.png`, `.mp4` <= 30 s), `/evidence` (`.json` request/response, `.jsonl`, `.log`
   +-20 lines, DB `{meta, query, rows}` <= 50 rows), `/scripts` (yours, never published).
 - Name: `<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>` (`what` lowercase-kebab <= 40 chars; marked copy `-marked`; setup evidence
   `<CODE>-<nn>-<what>`, 00 = before the checks, 90+ = cleanup), e.g. `F2-T4_01_before-edit.jpeg`. List only files that exist
-  and are not 0 bytes; open each image with Read first; `finalize -FixNames` is a safety net, not the naming step.
+  and are not 0 bytes; open each image with Read first.
 - Minimum: PASS (UI) = a shot of the result (state change: before + after); PASS (API) = the request/response JSON; FAIL = the
   failure shot AND the failing call JSON (`saveNet`) or log excerpt + exact steps; verify = your own `_verify` files.
 - Redaction: helpers write `[redacted]` for auth headers, cookies, tokens, passwords, secrets, keys; prefer QA-created records,
@@ -98,7 +99,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
 ## Human testing doc (a person tests by hand)
 - H0. `bossy.ps1 learn -Read -Skill pokey`; the doc: the task's testing doc (`crafty/templates.md` "Test cases");
   missing or incomplete for this change: write it from that template first.
-- H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
+- H1. First: every in-app switch ON (the doc's table; an env switch off: ask the owner), the logins and data it names.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
 - H3. Result rule (above), each with a comment (check ids, saw, evidence) `crafty.ps1 tracker status <task> closed|failedTesting`;
   a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "[Bug] <product> — <defect>"`.
