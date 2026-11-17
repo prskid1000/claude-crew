@@ -16,9 +16,9 @@ $viaPlain = { param($j) & $nz (($j | pwsh @np $D guard) -join '') }
 $viaClient = { param($j) & $nz (($j | node $gc) -join '') }
 $plain = @($ins | ForEach-Object { & $viaPlain $_ })
 $first = @($ins | ForEach-Object { & $viaClient $_ })   # no server yet: the plain path, and a server starts
-for ($i = 0; $i -lt 60 -and (& $mine).Count -ne 1; $i++) { Start-Sleep -Milliseconds 250 }; Start-Sleep -Seconds 2   # it loads the kit; a second one started by a later cold call exits
+for ($i = 0; $i -lt 4 * (Get-TestBound 30) -and (& $mine).Count -ne 1; $i++) { Start-Sleep -Milliseconds 250 }; Start-Sleep -Seconds 2   # it loads the kit; a second one started by a later cold call exits
 $warm = @($ins | ForEach-Object { & $viaClient $_ })
-Expect "warm guard: the same answers as crafty.ps1 guard (cold and warm), a server runs" (($first -join '~') -eq ($plain -join '~') -and ($warm -join '~') -eq ($plain -join '~') -and $plain[0] -match 'git stash is shared' -and (& $mine).Count -eq 1)
+Expect "warm guard: the same answers as crafty.ps1 guard (cold and warm), a server runs ($((& $mine).Count) server(s), $(@($first + $warm | Where-Object { $_ -notin $plain }).Count) odd answers)" (($first -join '~') -eq ($plain -join '~') -and ($warm -join '~') -eq ($plain -join '~') -and $plain[0] -match 'git stash is shared' -and (& $mine).Count -eq 1)
 # timing (K74): plain and warm interleaved, best of each (a load burst hits both); KIT_TESTS_SLACK eases the 2x margin, warm still wins
 $ms = @(); $pms = @(); foreach ($j in $ins + $ins) { $sw = [Diagnostics.Stopwatch]::StartNew(); $null = & $viaPlain $j; $pms += [int]$sw.Elapsed.TotalMilliseconds; $sw.Restart(); $null = & $viaClient $j; $ms += [int]$sw.Elapsed.TotalMilliseconds }
 $wmin = @($ms | Sort-Object)[0]; $pmin = @($pms | Sort-Object)[0]
