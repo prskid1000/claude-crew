@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L35 paths · L89 state · L146 kitlog · L245 load · L639 lint · L1044 README graph · L1147 lint command · L1383 audit ·
-  L1499 registry · L1831 arch lint · L2098 prose · L2249 sections · L2379 budget · L2393 migrate · L2553 plugins ·
-  L2607 state lint · L2795 main
+Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1418 audit ·
+  L1534 registry · L1866 arch lint · L2133 prose · L2284 sections · L2414 budget · L2428 migrate · L2588 plugins ·
+  L2642 state lint · L2830 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -59,11 +59,46 @@ def kit_path(name, create=False, kit=None):
 with contextlib.suppress(OSError):   # a read-only kit keeps the OS default rather than failing every import
     tempfile.tempdir = kit_path('tmp', create=True)   # every tempfile.* call of a kit script (it imports kitbag): <runtime>/tmp, never the OS temp
 
+def _lock_byte(fd, on=True):
+    """Lock (or unlock) byte 0 of an open lock file, never blocking; OSError when another process holds it."""
+    if os.name == 'nt':
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK if on else msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.lockf(fd, (fcntl.LOCK_EX | fcntl.LOCK_NB) if on else fcntl.LOCK_UN, 1, 0)
+
+
 @contextlib.contextmanager
 def locked(path, stale=120):
-    """A lock file beside path for one writer at a time (devtools.py imports it); a dead writer's stale lock is taken over."""
+    """A lock file beside path for one writer at a time (devtools.py imports it), kept between uses (no create / delete per
+    update): held = byte 0 locked (lib.ps1 Invoke-KitLocked locks the same byte), freed by the OS when the holder dies.
+    macOS (lib.ps1 has no byte lock there): created new, removed after, a dead writer's stale lock taken over."""
     lock = path + '.lock'
     fd, end = None, time.time() + stale + 10
+    if sys.platform != 'darwin':
+        while fd is None:
+            try:
+                fd = os.open(lock, os.O_RDWR | os.O_CREAT)
+                _lock_byte(fd)
+            except OSError:   # held, or a pre-change holder (share none) refuses the open
+                if fd is not None:
+                    os.close(fd)
+                    fd = None
+                if time.time() > end:   # never run unlocked (that lost concurrent writes)
+                    raise TimeoutError(f'could not lock {path} within {stale + 10} s ({lock} is held)') from None
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                _lock_byte(fd, False)
+            os.close(fd)
+            if os.name == 'nt' and not osp.exists(path):   # its file went: the lock too (an open handle keeps it; POSIX would unlink a held one)
+                with contextlib.suppress(OSError):
+                    os.remove(lock)
+        return
     while fd is None:
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)

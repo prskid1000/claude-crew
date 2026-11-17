@@ -125,7 +125,7 @@ Register-KitAdapter 'guard' 'runtimes' @{ check = { param($a)
     $who = if ($raw -match 'CLAUDE_AGENT\s*=\s*[''"]?([\w.@:-]+)') { $Matches[1] } elseif ($a.hook.agent_type) { "$($a.hook.agent_type)$(if ($a.hook.agent_id) { '-' + "$($a.hook.agent_id)".Substring(0, [math]::Min(8, "$($a.hook.agent_id)".Length)) })" } else { 'main' }
     $notes = foreach ($n in $rts) {
       $m = "$(Get-KitSetting "runtimes.$n.match" '')"; if (-not $m -or -not @($segs | Where-Object { $_ -match "^(?:$m)" }).Count) { continue }
-      if ((Test-Path "$(Get-KitRuntimeFile $n).lock") -and ((Get-Date) - (Get-Item "$(Get-KitRuntimeFile $n).lock").LastWriteTime).TotalMinutes -lt 2) { continue }   # a use / down in progress: never past the hook timeout; the next command retries
+      if (Test-KitLockHeld (Get-KitRuntimeFile $n)) { continue }   # a use / down in progress: never past the hook timeout; the next command retries
       $mine = @((Get-KitRuntimeState $n).leases | Where-Object { $_.agent -eq $who })
       if ($mine.Count) { if (@($mine | Where-Object { $_.auto }).Count) { Update-KitRuntimeState $n { param($st) foreach ($l in @($st.leases | Where-Object { $_.agent -eq $who -and $_.auto })) { $l.used = (Get-Date).ToString('o') } } }; continue }
       try { "$(Use-KitRuntime $n $who -Auto -NoWait). When done: & $($KitCmd.dev) runtime release -Name $n -Agent $who" } catch {}   # never fail a hook over a lease

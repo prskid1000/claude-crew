@@ -46,7 +46,7 @@ Remove-Item "$sf.ps1", $sf -Recurse -Force -ErrorAction SilentlyContinue
 $ss = & { $rt = Join-Path ([IO.Path]::GetTempPath()) "swl-$PID"; Set-Item Env:CLAUDE_RUNTIME $rt; . (Join-Path $src 'skills/phoney/phoney.ps1')
   foreach ($fn in (Get-Command Invoke-Phone).ScriptBlock.Ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -in 'Save-Json', 'Lease' }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
   $dir = Join-Path $rt 'ph'; New-Item -ItemType Directory -Force $dir | Out-Null; Save-Json @{ agent = 'A' } "$dir/L1.json"
-  Save-Json @{ agent = 'B' } "$dir/L1.json"; "$((Lease L1).agent)$(Test-Path "$dir/L1.json.lock")" }
+  Save-Json @{ agent = 'B' } "$dir/L1.json"; "$((Lease L1).agent)$(Test-FileLockHeld "$dir/L1.json")" }
 Expect "swarm: lease reads and writes go through the file lock, released after ($ss)" ($ss -eq 'BFalse' -and (Get-Content (Join-Path $src 'skills/phoney/phoney.ps1') -Raw) -match 'function Lease\(\$name\) \{[^\n]*Invoke-KitLocked')
 Remove-Item (Join-Path ([IO.Path]::GetTempPath()) "swl-$PID") -Recurse -Force -ErrorAction SilentlyContinue
 # lanes 0..N on demand: 3 requests, RAM for 2 boots: 2 boot, the 3rd waits, takes lane 1 when A releases it; no 3rd emulator ever starts

@@ -102,7 +102,7 @@ $nr = Invoke-PsTest net @'
 function Invoke-KitExe($Exe, $A, $T) { $script:seen += $T; [pscustomobject]@{ code = $(if ($script:ok) { 0 } else { -1 }); out = ''; err = ''; timedOut = -not $script:ok } }
 $null = Invoke-KitNetExe gh @('x'); $null = Invoke-KitNetExe gh @('x'); $script:ok = $true; $null = Invoke-KitNetExe gh @('x'); $null = Invoke-KitNetExe gh @('x'); "backoff:$($seen -join ',')"
 Remove-Item (Get-KitPath net-budget) -ErrorAction SilentlyContinue; '999999' | Set-Content "$(Get-KitPath net-budget).lock"; 1..24 | ForEach-Object { $null = Add-KitNetCount }
-"budget:$(@(1..4 | ForEach-Object { Add-KitNetCount -Retry -Check }) -join ','):$(Test-Path "$(Get-KitPath net-budget).lock")"
+"budget:$(@(1..4 | ForEach-Object { Add-KitNetCount -Retry -Check }) -join ','):$(Test-KitLockHeld (Get-KitPath net-budget))"
 $script:ok = $false; $r = Invoke-KitRetry { Invoke-KitNetExe gh @('x') } 3; "spent:$($r.err -match 'hang retry budget spent')"
 $env:KIT_NET_TIMEOUT_SEC = ''; $env:KIT_PARAM_NET_TIMEOUTSEC = 30; $null = Invoke-KitNetExe gh @('x'); $null = Invoke-KitNetExe gh @('x')
 "tobs:$(@(Read-KitLog params (Get-Date).AddHours(-1) | Where-Object { $_.key -eq 'net.timeoutSec' -and $_.r -eq 'timeout' } | ForEach-Object v) -join ',')|$($seen[-2..-1] -join ',')"
@@ -115,7 +115,7 @@ Set-Content "$root/d.jsonl" (@('{"message":{"model":"m1","usage":{"input_tokens"
 '@ @((Lib))
 Expect "net: after a timeout the next call waits x1.5, then back ($(@($nr -match '^backoff:') -join ' '))" ($nr -contains 'backoff:40,60,60,40')
 Expect "net: a timeout is observed at the learned value, not the x1.5 back-off ($(@($nr -match '^tobs:') -join ' '))" ($nr -contains 'tobs:30,30|45,45')
-Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); a dead writer's count lock is cleared; spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False:False' -and $nr -contains 'spent:True')
+Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); a dead writer's count lock is taken (the OS freed it), not held after; spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False:False' -and $nr -contains 'spent:True')
 Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' ')); Codex spend = last token_count" ($nr -contains 'tx:112' -and $nr -contains 'spend:75' -and $nr -contains 'spend2:10')
 Expect 'Antigravity SessionStart: injectSteps (empty: []); no blocking decision: ids []' ($nr -contains 'ss:{"injectSteps":[{"systemMessage":{"systemMessage":"hi"}}]}|{"injectSteps":[]}|{"ids":[],"questions":[]}')
 # health: the python checks (lint, port --check) run in the background; the next session shows their lines

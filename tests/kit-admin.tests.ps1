@@ -63,7 +63,7 @@ Expect "kit-admin: precommit runs from the adapter and sees unstaged README edit
 $sx = Join-Path $kc 'skills/sx.ps1'; "<#`nSections: L9 a`n#>`n# ---- a: x`n" | Set-Content $sx -NoNewline; git -C $kc add -- skills/sx.ps1; $null = pwsh -NoProfile -File $O precommit 2>&1
 Expect 'kit-admin: precommit rewrites and stages a stale Sections: map' (@(git -C $kc show :skills/sx.ps1) -contains 'Sections: L4 a'); git -C $kc rm -qf -- skills/sx.ps1
 $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE
-Expect 'kit-admin: learn -Bump miss exits 1, LESSONS.md lock released' ($bc -eq 1 -and -not (Test-Path (Join-Path $kc 'LESSONS.md.lock')))
+Expect 'kit-admin: learn -Bump miss exits 1, LESSONS.md lock released' ($bc -eq 1 -and -not (Test-FileLockHeld (Join-Path $kc 'LESSONS.md')))
 '{ "orgTerms": ["Acmecorp"] }' | Set-Content (Join-Path $kc 'skills/crafty/kit.local.json')
 $null = & $lo -Skill revy -When 'a generic case' -Do 'a generic lesson' -Why 'test'; $null = & $lo -Skill revy -When 'an Acmecorp case' -Do 'an Acmecorp lesson' -Why 'org'
 $null = & $lo -Skill revy -Lesson 'free text, no shape'; $freeCode = $LASTEXITCODE

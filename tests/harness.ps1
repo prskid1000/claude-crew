@@ -119,6 +119,8 @@ function Stop-TestMySql($Server) {
   for ($tmTry = 0; $tmTry -lt 10 -and (Test-Path $Server.data); $tmTry++) { Remove-Item $Server.data -Recurse -Force -ErrorAction SilentlyContinue; if (Test-Path $Server.data) { Start-Sleep -Milliseconds 500 } }   # a killed worker frees its files a moment later
 }
 # commit everything in $Dir (a git repo first if it is none)
+# <file>.lock held by a process now (lib.ps1 Open-KitLockFile: the lock file stays, byte 0 locked while held)
+function Test-FileLockHeld([string]$File) { $l = "$File.lock"; if (-not (Test-Path -LiteralPath $l)) { return $false }; if ($IsMacOS) { return $true }; $fs = $null; try { $fs = [IO.FileStream]::new($l, 'Open', 'ReadWrite', 'ReadWrite'); $fs.Lock(0, 1); $fs.Unlock(0, 1); $false } catch { $true } finally { if ($fs) { $fs.Dispose() } } }
 function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git -C $Dir init -q }; git -C $Dir add -A; git -C $Dir commit -q -m $Message }
 # one read-only copy of the source files per suite run (kit-tests.ps1 sets KIT_TESTS_SNAPSHOT; an area run alone: its own)
 if (-not $env:KIT_TESTS_SNAPSHOT) { $env:KIT_TESTS_SNAPSHOT = Join-Path $env:TEMP 'src' }

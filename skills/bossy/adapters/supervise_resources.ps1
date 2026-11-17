@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L271 shells · L405 page · L927 release · L967 lines · L1000 cleanup · L1061 launch ·
-  L1139 pause · L1257 heartbeat · L1272 sessions · L1324 ci tasks ·
-  L1379 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L295 shells · L429 page · L951 release · L991 lines · L1024 cleanup · L1092 launch ·
+  L1170 pause · L1288 heartbeat · L1303 sessions · L1355 ci tasks ·
+  L1410 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -266,6 +266,30 @@ function Format-KitResourceTable($Rows) {
   if (-not @($Rows).Count) { return }
   ''; '| Resource | Holder | Since | Last seen | Last used |'; '|---|---|---|---|---|'
   foreach ($r in @($Rows | Sort-Object resource)) { "| $($r.resource) | $($r.holder) | $(if ($r.since) { ([datetime]$r.since).ToString('HH:mm') } else { '—' }) | $($r.seen) | $($r.used) |" }
+}
+
+# ONE WATCH for the owner's MRs merged in 24 h that no task tracks; host lists cached 2 beats, the login a day
+function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = { $true }) {
+  $um = $State.untrackedMrs
+  if (-not $um -or ($Now - [datetime]$um.at).TotalMinutes -ge [math]::Max(30, 2 * (Get-KitBeatMinutes))) {   # per-round lists took 4.5-6 s; a 5 min pace refreshed every other sweep
+    $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt 24) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
+    $since = $Now.ToUniversalTime().AddHours(-24).ToString('o')
+    $um = @{ at = $Now.ToString('o'); user = $hu; mrs = @(if ($hu) { foreach ($rp in @(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ }) {
+            if (-not (& $Within)) { break }
+            foreach ($m in @(try { Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $since; per_page = 50 } } catch { }) | Where-Object { $_.iid }) {
+              @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; target = "$($m.target_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)" } } } }) }
+    $State.untrackedMrs = $um
+  }
+  $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
+  $ig =@{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
+  $known = if ($State.known) { @($State.known.Keys) } else { @() }   # supervise -Ack on this flag: one decision per MR
+  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and -not (Test-KitDeployMr $_.repo $_.branch $_.target) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and "$($_.repo)!$($_.iid)" -notin $known -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
+  if (-not $un.Count) { return }
+  $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
+  $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
+  # cells are cut at 90 chars: full commands in the report's "All flags"
+  [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
+    action = "Link each to its task: $($adds -join '; ')$(if ($adds -match '<task>') { " (no task yet: & $($KitCmd.dev) tracker create -Spec <json> (crafty.ps1 'task spec'), never free text)" }); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)'; refs = $refs }
 }
 
 # ---- shells: agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills)
@@ -1054,6 +1078,13 @@ function Stop-KitScratchOrphans([switch]$DryRun) {
     "$(if ($DryRun) { 'would stop' } else { 'stopped' }) orphan scratch DB server pid $($o.ids -join '+') ($($o.dir))" }
 }
 function Invoke-KitCleanupScratch { foreach ($l in @(Stop-KitScratchOrphans -DryRun:$DryRun)) { [void]$actions.Add($l) } }
+# kept lock files (lib.ps1 Open-KitLockFile) whose file went outside the lock (a wait, lease or board file): unheld after a day -> gone
+function Invoke-KitCleanupLocks {
+  foreach ($lk in @(foreach ($rt in @((Get-KitPath work), (Get-KitPath cache))) { Get-ChildItem -LiteralPath $rt -Recurse -File -Filter '*.lock' -Force -ErrorAction SilentlyContinue })) {
+    $data = $lk.FullName -replace '\.lock$'
+    if ($lk.Length -le 64 -and $data -match '\.(json|jsonl|md|txt)$' -and -not (Test-Path -LiteralPath $data) -and (Old $lk 24) -and -not (Test-KitLockHeld $data)) { Gone $lk.FullName 'lock file of a gone file' }
+  }
+}
 function Get-KitSuperviseFlagsScratch([switch]$AutoFix) {
   foreach ($l in @(Stop-KitScratchOrphans -DryRun:(-not $AutoFix))) { [pscustomobject]@{ level = $(if ($AutoFix) { 'INFO' } else { 'WATCH' }); what = $(if ($AutoFix) { "auto-fixed: $l" } else { $l }); action = $(if ($AutoFix) { 'Nothing to do.' } else { 'supervise -AutoFix or bossy.ps1 cleanup stops it.' }) } }
 }

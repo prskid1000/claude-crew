@@ -69,7 +69,7 @@ $bd = TkPath $k board
 $jr = pwsh @np $O board join -Agent RV -Run rv | Out-String; $sr = if ($jr -match 'SESSION (\S+)') { $Matches[1] }; $rf0 = Join-Path $bd "$sr.json"
 $rw = Get-Content $rf0 -Raw | ConvertFrom-Json; $rw.status = 'left'; $rw | Add-Member -Force NoteProperty finished 'x'; $rw | ConvertTo-Json -Depth 5 | Set-Content $rf0
 $null = pwsh @np $O board beat -Session $sr; Expect 'board: a beat revives a reaped row' ((Get-Content $rf0 -Raw | ConvertFrom-Json).status -eq 'working')
-Expect 'board: beat after TAKEOVER exit 1, no lock left' ($j2 -match 'TAKEOVER' -and $btc -eq 1 -and $bt -match 'TAKEN OVER' -and -not @(Get-ChildItem $bd -Filter '*.lock').Count)
+Expect 'board: beat after TAKEOVER exit 1, no lock held' ($j2 -match 'TAKEOVER' -and $btc -eq 1 -and $bt -match 'TAKEN OVER' -and -not @(Get-ChildItem $bd -Filter '*.lock' | Where-Object { Test-FileLockHeld ($_.FullName -replace '\.lock$') }).Count)
 $jc = pwsh @np $O board join -Agent 'pokey:DZ1' -Run rc | Out-String; $sc = if ($jc -match 'SESSION (\S+)') { $Matches[1] }
 [IO.File]::WriteAllText((Join-Path $ld 'args-rel.json'), $full)
 $rl = pwsh @np $O launch -Self -Script buildy.js -Run rel -ArgsFile 'nowhere/args-rel.json' -Fnv (& { . $O; Get-KitFnv $full }) | Out-String; $null = pwsh @np $O launch -Done -Run rel 2>&1
@@ -134,7 +134,7 @@ Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotat
 $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
 $sv = pwsh @np $O supervise -Brief -Session me | Out-String
-Expect 'supervise: another session''s fresh lock -> steps aside, lock file kept, no .lock left' ($sv -match 'steps aside' -and (Get-Content $lkf -Raw) -match 'other' -and -not (Test-Path "$lkf.lock"))
+Expect 'supervise: another session''s fresh lock -> steps aside, lock file kept, its .lock not held' ($sv -match 'steps aside' -and (Get-Content $lkf -Raw) -match 'other' -and -not (Test-FileLockHeld $lkf))
 $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $dp.WaitForExit()
 $gb = Join-Path (TkPath $k board -Create) 'gone-s.json'; Set-JsonFile $gb @{ session = 'gone-s'; agent = 'X9'; run = 'r1'; status = 'working'; beat = (Get-Date).ToString('o'); joined = (Get-Date).ToString('o'); holderPid = $dp.Id }
 $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters')
@@ -146,14 +146,6 @@ Expect "supervise: a 20 s background child never holds the caller; sweep <= 25 s
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
 Expect 'supervise: an adapter hook adds sweep line, flag, row, owner line, RAM need; kit-report shape' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
   $sr -match '^# Supervise report .*\n\*\*Result:\*\* \d+ ACT · \d+ WATCH' -and $sr -match "\| ACT \| DECISION $i1 \(blocking.*AskUserQuestion.*-Ask -Json" -and $sr -match "DECISION 1 FYI: $i2 \|" -and (Test-Prose kit-report (TkPath $k supervise-report))); Remove-Item "$ad/fake.ps1", "$ad/slow.ps1"   # the core adapter stays
-$lt = Join-Path (Kd) 'lk.json'; $old = { '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5) }   # a 5-min-old lock
-& $old; $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
-$lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }
-$lw = & { . (Lib); try { Invoke-KitLocked $lt { 'got' } } catch { "threw: $_" } }; $null = $lj | Wait-Job
-Expect 'Invoke-KitLocked: an old lock still held open waits for its holder, never fails fast' ($lw -eq 'got')
-& $old; $sw = [Diagnostics.Stopwatch]::StartNew()
-$l2 = & { . (Lib); Invoke-KitLocked $lt { 'got' } }
-Expect 'Invoke-KitLocked: an old lock nobody holds is taken at once, none left' ($l2 -eq 'got' -and $sw.Elapsed.TotalSeconds -lt 10 -and -not (Test-Path "$lt.lock"))
 $hlp = pwsh @np $O --help | Out-String; $hc2 = $LASTEXITCODE; $null = pwsh @np $O nope; $nc = $LASTEXITCODE
 Expect 'bossy.ps1 --help: header only, exit 0; bad verb exit 2' ($hc2 -eq 0 -and $hlp -match '^\s*bossy\.ps1: the coordinator' -and $hlp -notmatch '__verb|#>' -and $nc -eq 2)
 $sm = Join-Path (Kd) 'subm'; New-Item -ItemType Directory -Force $sm | Out-Null
@@ -228,7 +220,7 @@ foreach ($c in @('C1', 'worktree', $cw), @('C1', 'commit', (git -C $cw rev-parse
 'b' | Set-Content "$cw/b.txt"   # the interrupted step's diff
 $bf = Join-Path (TkPath $k board) "$cs.json"
 $kp = Start-Process $pwshExe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', ". '$(Lib)'; Invoke-KitLocked '$bf' { Start-Sleep 60 }"
-while (-not (Test-Path "$bf.lock")) { Start-Sleep -Milliseconds 100 }; $kp.Kill(); $kp.WaitForExit()   # killed mid-write
+for ($kw = 0; $kw -lt 300 -and -not (Test-FileLockHeld $bf); $kw++) { Start-Sleep -Milliseconds 100 }; $kp.Kill(); $kp.WaitForExit()   # killed mid-write
 $e = Read-Json $bf; $e.holderPid = $kp.Id; & $J $e $bf
 $null = Px $O launch -Done -RunId wf_t1
 foreach ($r in 'cr', 'cm') { $null = & $self buildy.js $r "{""brief"":""C:/b/$r.md"",""agents"":[{""id"":""$(if ($r -eq 'cr') { 'C1"},{"id":"C2","items":"g/api!5' } else { 'C3","items":"tsk123 g/api!6' })""}]}"; $sx = Get-ChildItem (TkPath $k launches) -Filter "self-buildy-$r-*.json" | Select-Object -First 1; $x = Read-Json $sx.FullName; $x.holderPid = $kp.Id; & $J $x $sx.FullName 10 }
@@ -240,7 +232,7 @@ $wr = Join-Path (Kd) 'wr'; $c1w = "$wr/c1-wip"; New-Item -ItemType Directory -Fo
 $rs = Px $O resume -All | Out-String; $ag = TkPath $k agents; Remove-Item Env:CLAUDE_WT_ROOT
 $b1 = Get-Content "$ag/c1/resume-cr-brief.md" -Raw; $b2 = Get-Content "$ag/c2/resume-cr-brief.md" -Raw; $rj = Px $O board join -Agent C1 -Run cr -Resume | Out-String
 $bad = @(Get-ChildItem (TkPath $k work) -Recurse -Filter '*.json' | Where-Object { try { $null = Get-Content $_.FullName -Raw | ConvertFrom-Json; $false } catch { $true } })
-Expect 'crash: agent killed holding the board lock -> health marks it crashed, no lock left, state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt 60 -and -not (Test-Path "$bf.lock") -and -not $bad.Count)
+Expect 'crash: agent killed holding the board lock -> health marks it crashed, the OS freed the lock, state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt 60 -and -not (Test-FileLockHeld $bf) -and -not $bad.Count)
 Expect 'resume offline: says so, exit 1, nothing relaunched' ($off.code -eq 1 -and $off.out -match 'OFFLINE' -and $off.out -cnotmatch 'RESUME|RELAUNCH')
 Expect 'resume after a crash: brief at the next step, done verified, diff kept; join: CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match '\| b\.txt \|' -and (Test-Prose kit-report "$ag/c1/resume-cr-brief.md") -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
 $rl = @($rs -split "`n" | Where-Object { $_ -match 'RELAUNCH .*finished steps skipped' } | ForEach-Object { ($_ -replace '^.*args: (\{.*\}) \}\)\s*$', '$1') | ConvertFrom-Json -AsHashtable })

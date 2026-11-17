@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L88 state · L164 config · L245 OS · L465 leases · L864 status · L1120 supervise sweep · L1198 tracker ·
-  L1527 prior · L1543 ask bugs · L1728 git-host · L1933 kitlog · L2053 params · L2358 entry-scripts
+Sections: L10 paths · L91 state · L167 config · L248 OS · L468 leases · L865 status · L1121 supervise sweep · L1199 tracker ·
+  L1528 prior · L1544 ask bugs · L1729 git-host · L1910 kitlog · L2030 params · L2335 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -37,18 +37,21 @@ function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   if ($Create) { New-Item -ItemType Directory -Force $(if ($dir) { $p } else { Split-Path $p }) | Out-Null }
   $p
 }
-# cross-process <file>.lock: stale after 2 min (Windows: holder gone); throws after 130 s, never runs unlocked
+# <file>.lock is kept: held = byte 0 locked (kitbag.py locked() too), freed by the OS when the holder dies; macOS (no
+# FileStream.Lock): CreateNew + delete, stale after 2 min. -> the stream, or $null (held; a pre-change holder refuses the open)
+function Open-KitLockFile([Parameter(Mandatory)][string]$Lock) {
+  if ($IsMacOS) { try { return [IO.File]::Open($Lock, 'CreateNew', 'Write', 'None') } catch { try { if (((Get-Date) - [IO.File]::GetLastWriteTime($Lock)).TotalMinutes -gt 2) { [IO.File]::Delete($Lock) } } catch {}; return $null } }
+  $fs = $null; try { $fs = [IO.FileStream]::new($Lock, 'OpenOrCreate', 'ReadWrite', 'ReadWrite'); $fs.Lock(0, 1); $fs } catch { if ($fs) { $fs.Dispose() }; $null }
+}
+function Close-KitLockFile($Stream, [string]$Lock) { if ($Stream) { if (-not $IsMacOS) { try { $Stream.Unlock(0, 1) } catch {} }; $Stream.Dispose(); if ($IsMacOS) { try { [IO.File]::Delete($Lock) } catch {} } } }
+function Test-KitLockHeld([Parameter(Mandatory)][string]$File) { $l = "$File.lock"; if (-not [IO.File]::Exists($l)) { return $false }; $fs = Open-KitLockFile $l; Close-KitLockFile $fs $l; -not $fs }
+# cross-process <file>.lock; throws after 130 s, never runs unlocked; its file gone after: the lock goes too (Windows: an open
+# handle refuses the delete; POSIX would unlink a held one)
 function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandatory)][scriptblock]$Body) {
   $lock = "$File.lock"; $fs = $null
-  for ($i = 0; $i -lt 1300 -and -not $fs; $i++) {
-    try { $fs = [IO.File]::Open($lock, 'CreateNew', 'Write', 'None') }
-    catch {
-      try { if ([IO.File]::Exists($lock) -and ($KitIsWindows -or ((Get-Date) - [IO.File]::GetLastWriteTime($lock)).TotalMinutes -gt 2)) { [IO.File]::Delete($lock) } } catch {}
-      Start-Sleep -Milliseconds 100
-    }
-  }
+  for ($i = 0; $i -lt 1300 -and -not ($fs = Open-KitLockFile $lock); $i++) { Start-Sleep -Milliseconds 100 }
   if (-not $fs) { $m = "Invoke-KitLocked: $lock held after 130 s"; Write-Warning $m; throw $m; return }
-  try { & $Body } finally { $fs.Dispose(); try { [IO.File]::Delete($lock) } catch {} }
+  try { & $Body } finally { Close-KitLockFile $fs $lock; if ($KitIsWindows -and -not [IO.File]::Exists($File)) { try { [IO.File]::Delete($lock) } catch {} } }
 }
 # temp + rename in one folder: a crash never leaves half a file
 # same text: no write; -Volatile <regex>: only that part (a time) changed -> the file time moves (readers take `at` from it)
@@ -708,15 +711,13 @@ function Invoke-KitNetExe([string]$Exe, [string[]]$A) {
 # hang retries capped at 10% of network calls (10 min window, at least 1/min): no retry storm on a dead host
 function Add-KitNetCount([switch]$Retry, [switch]$Check) {
   $f = Get-KitPath net-budget -Create; $m = (Get-Date).ToString('yyyyMMddHHmm'); $ok = $true; $lk = $null
-  for ($i = 0; $i -lt 20 -and -not $lk; $i++) {   # a lock whose writer pid is gone is stale
-    try { $lk = [IO.File]::Open("$f.lock", 'CreateNew', 'Write', 'Read'); $pb = [Text.Encoding]::ASCII.GetBytes("$PID"); $lk.Write($pb, 0, $pb.Length); $lk.Flush() }
-    catch { try { $hp = ([IO.File]::ReadAllText("$f.lock")).Trim(); if ($hp -and -not (Test-KitPid ([int]$hp) $null)) { [IO.File]::Delete("$f.lock") } } catch {}; [void][Threading.Thread]::Yield() } }
+  for ($i = 0; $i -lt 20 -and -not ($lk = Open-KitLockFile "$f.lock"); $i++) { [void][Threading.Thread]::Yield() }
   if (-not $lk) { return $true }   # busy: best effort (20 tries, no sleep), never a wait on a network call
   try { $s = try { Read-KitText $f | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $s) { $s = @{} }
     foreach ($k in @($s.Keys)) { if ([long]$k -lt [long](Get-Date).AddMinutes(-10).ToString('yyyyMMddHHmm')) { $s.Remove($k) } }
     if ($Check) { $c = ($s.Values | ForEach-Object { [int]$_.c } | Measure-Object -Sum).Sum; $rt = ($s.Values | ForEach-Object { [int]$_.r } | Measure-Object -Sum).Sum; $ok = [int]$s[$m].r -lt 1 -or $rt -lt 0.1 * $c }
     if ($ok) { if (-not $s[$m]) { $s[$m] = @{ c = 0; r = 0 } }; if ($Retry) { $s[$m].r = [int]$s[$m].r + 1 } else { $s[$m].c = [int]$s[$m].c + 1 }; Write-KitAtomic $f ($s | ConvertTo-Json -Compress) }
-  } catch {} finally { $lk.Dispose(); try { [IO.File]::Delete("$f.lock") } catch {} }
+  } catch {} finally { Close-KitLockFile $lk "$f.lock" }
   $ok
 }
 function Wait-KitPoll([int]$Seconds) { Start-Sleep -Milliseconds $(if ($env:KIT_POLL_MS) { [int]$env:KIT_POLL_MS } else { 1000 * $Seconds }) }   # KIT_POLL_MS: the tests' fake clock
@@ -1591,7 +1592,7 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
     if ($t.id) { [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
   }
 }
-# gate before work (wt new, devtools.py mr / finish / doc): -Override is logged
+# gate before work (wt lease / new, devtools.py mr / finish / doc): -Override is logged
 function Assert-KitPrior([string]$Task, [string]$Repo, [string]$What, [string]$Override, [string]$Reuse) {
   if (-not $Task) { return }
   $p = (Read-KitState (Get-KitTaskFile $Task)).prior
@@ -1904,30 +1905,6 @@ function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
   $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq ($Repo -split '/')[-1] } | Select-Object -First 1
   [bool]($Target -and $r -and $Target -in @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }))
 }
-# ONE WATCH for the owner's MRs merged in 24 h that no task tracks; host lists cached 2 beats, the login a day
-function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = { $true }) {
-  $um = $State.untrackedMrs
-  if (-not $um -or ($Now - [datetime]$um.at).TotalMinutes -ge [math]::Max(30, 2 * (Get-KitBeatMinutes))) {   # per-round lists took 4.5-6 s; a 5 min pace refreshed every other sweep
-    $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt 24) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
-    $since = $Now.ToUniversalTime().AddHours(-24).ToString('o')
-    $um = @{ at = $Now.ToString('o'); user = $hu; mrs = @(if ($hu) { foreach ($rp in @(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ }) {
-            if (-not (& $Within)) { break }
-            foreach ($m in @(try { Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $since; per_page = 50 } } catch { }) | Where-Object { $_.iid }) {
-              @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; target = "$($m.target_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)" } } } }) }
-    $State.untrackedMrs = $um
-  }
-  $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
-  $ig =@{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
-  $known = if ($State.known) { @($State.known.Keys) } else { @() }   # supervise -Ack on this flag: one decision per MR
-  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and -not (Test-KitDeployMr $_.repo $_.branch $_.target) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and "$($_.repo)!$($_.iid)" -notin $known -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
-  if (-not $un.Count) { return }
-  $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
-  $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
-  # cells are cut at 90 chars: full commands in the report's "All flags"
-  [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
-    action = "Link each to its task: $($adds -join '; ')$(if ($adds -match '<task>') { " (no task yet: & $($KitCmd.dev) tracker create -Spec <json> (crafty.ps1 'task spec'), never free text)" }); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)'; refs = $refs }
-}
-
 function Get-KitRepoSweep { $rf = Get-KitPath repo-sweep; if (Test-Path -LiteralPath $rf) { try { $o = Read-KitText $rf | ConvertFrom-Json; $o.at = [IO.File]::GetLastWriteTime($rf).ToString('o'); $o } catch { $null } } }   # the last cleanup's counts per repo; at = the file time (an unchanged sweep only touches it)
 
 # ---- kitlog: every log line (kit.example.json _paths.log)

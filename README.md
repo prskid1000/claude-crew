@@ -535,6 +535,7 @@ flowchart LR
   skills_envy_SKILL_md -->|"dot-sourced by envy.ps1: db hooks from the…"| skills_envy_adapters_db_presets_ps1["db_presets.ps1"]
   skills_envy_SKILL_md -->|"kind tenant-model (tenants.model, default none)…"| skills_envy_adapters_tenant_models_ps1["tenant_models.ps1"]
   skills_envy_SKILL_md -->|"the schema tenant model: list, drop, import…"| skills_envy_adapters_tenant_schema_ps1["tenant_schema.ps1"]
+  skills_envy_SKILL_md -->|"deploy step 2: a lane's or a check's build of…"| skills_envy_adapters_shared_builds_ps1["shared_builds.ps1"]
   skills_envy_SKILL_md -->|"run by envy.ps1 restore, release slices, the…"| skills_envy_adapters_db_flashback_py["db_flashback.py"]
 ```
 <!-- kit-graph:end -->

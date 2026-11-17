@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
+bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, file locks (PowerShell and python), board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
 Usage: pwsh -NoProfile -File <kit>/tests/bossy-generic.tests.ps1 (or tests/kit-tests.ps1 -Area bossy-generic).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -62,5 +62,21 @@ New-Item -Force -ItemType Directory "$osT/kit-fresh-z" | Out-Null
 $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
 Expect 'cleanup: kit scratch (<runtime>/tmp) ages out at 24 h; the OS temp only loses kit leftovers idle 24 h (kit-*, the old gate ledger)' ($cd -match '1 x\s+tmp > 24 h .*kit-1-old\.tmp' -and
   $cd -match '2 x\s+kit leftover in the OS temp \(legacy\)')   # kit-legacy-z + claude-build-gate; kit-fresh-z and the fresh test kit stay
+# file locks (lib.ps1 Invoke-KitLocked, kitbag.py locked): old holders waited for, a free lock taken at once, python <-> PowerShell
+$lt = Join-Path (Kd) 'lk.json'; $old = { '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5) }   # a 5-min-old lock
+& $old; $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
+$lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }
+$lw = & { . (Lib); try { Invoke-KitLocked $lt { 'got' } } catch { "threw: $_" } }; $null = $lj | Wait-Job
+Expect 'Invoke-KitLocked: an old lock still held open waits for its holder, never fails fast' ($lw -eq 'got')
+& $old; $sw = [Diagnostics.Stopwatch]::StartNew()
+$l2 = & { . (Lib); Invoke-KitLocked $lt { 'got' } }; $kf2 = Join-Path (Kd) 'kept.json'; '{}' | Set-Content $kf2; $null = & { . (Lib); Invoke-KitLocked $kf2 { 1 } }; $kept = (Test-Path "$kf2.lock") -and -not (Test-FileLockHeld $kf2)
+Expect 'Invoke-KitLocked: an old lock nobody holds is taken at once; its file absent: the lock goes too (a kept file keeps it)' ($l2 -eq 'got' -and $sw.Elapsed.TotalSeconds -lt 10 -and -not (Test-Path "$lt.lock") -and $kept)
+# python (kitbag.py locked) and PowerShell lock the same byte of the kept lock file: each waits for the other
+$pyf = Join-Path (Kd) 'pylock.py'; Set-Content $pyf "import sys, time`nsys.path.insert(0, r'$(Join-Path $k 'skills/bossy')')`nimport kitbag`nt = time.time()`nwith kitbag.locked(r'$lt'):`n    print(round(time.time() - t, 1), flush=True)`n    time.sleep(float(sys.argv[1]))"
+$pyp = Start-Process $py -ArgumentList '-X', 'utf8', $pyf, '2' -PassThru -WindowStyle Hidden; for ($pw = 0; $pw -lt 100 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 100 }
+$sw.Restart(); $psGot = & { . (Lib); Invoke-KitLocked $lt { 'got' } }; $psWait = $sw.Elapsed.TotalSeconds; $null = $pyp.WaitForExit(10000)
+$lbp = Lib; $tj = Start-ThreadJob { . $using:lbp; Invoke-KitLocked $using:lt { Start-Sleep -Milliseconds 1500 } }; for ($pw = 0; $pw -lt 100 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 50 }
+$pyWait = [double]"$(& $py -X utf8 $pyf 0 | Select-Object -Last 1)"; $null = $tj | Wait-Job
+Expect "lock: python waits for a PowerShell holder and the other way round (ps waited $([math]::Round($psWait, 1)) s, python $pyWait s)" ($psGot -eq 'got' -and $psWait -ge 1 -and $pyWait -ge 0.8 -and -not (Test-FileLockHeld $lt))
 Remove-TestKit $k
 Complete-Tests

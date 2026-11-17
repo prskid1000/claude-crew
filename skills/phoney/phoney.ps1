@@ -206,7 +206,7 @@ switch ($Action) {
         $pick
       }
       if (-not $got) {
-        if ((Get-Date) -gt $deadline) { Remove-Item $wf -Force -ErrorAction SilentlyContinue; throw "no phone free within $WaitMinutes min (phoney.ps1 status shows who holds them)" }
+        if ((Get-Date) -gt $deadline) { Remove-Item $wf, "$wf.lock" -Force -ErrorAction SilentlyContinue; throw "no phone free within $WaitMinutes min (phoney.ps1 status shows who holds them)" }
         if (-not $told) { "all $(if ($Lane) { "$Lane is" } else { 'lanes are' }) leased; waiting for a release or memory (fair queue) ..."; $told = $true }
         Wait-KitPoll 20
       }
@@ -229,7 +229,7 @@ switch ($Action) {
           } while ((Get-Date) -lt $deadline)
         } finally { Remove-Item Env:KIT_SWARM_TURN_MIN -ErrorAction SilentlyContinue }   # also when Boot throws
       }
-      Remove-Item $wf -Force -ErrorAction SilentlyContinue
+      Remove-Item $wf, "$wf.lock" -Force -ErrorAction SilentlyContinue
       if (-not (Running $got) -and -not $script:had -and -not $memQueued) {
         "$($got.name): first boot failed, retrying once (cold boot; lease kept)" | Out-Host
         $memQueued = Boot $got -Cold -Until $deadline
@@ -286,7 +286,7 @@ switch ($Action) {
 
   'release' {
     if (-not $Agent) { throw 'release needs -Agent' }
-    Remove-Item (Join-Path $waitDir "$(ConvertTo-KitSlug $Agent).json") -Force -ErrorAction SilentlyContinue
+    Remove-Item @("json", "json.lock" | ForEach-Object { Join-Path $waitDir "$(ConvertTo-KitSlug $Agent).$_" }) -Force -ErrorAction SilentlyContinue   # its kept lock file too
     $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent })
     if (-not $mine) { "no phone leased by $Agent"; return }
     foreach ($l in $mine) {
