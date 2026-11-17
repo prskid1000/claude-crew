@@ -59,8 +59,7 @@ $null = pwsh @np $O launch -RunId wf_t1 -Script (Join-Path $k 'workflows/buildy.
 $rj = Read-Json (Join-Path $ld 'wf_t1.json'); $rj.holderPid = 999999; & $J $rj (Join-Path $ld 'wf_t1.json') 10   # its session is gone
 $l = pwsh @np $O launch -List -Brief | Out-String
 $rc = pwsh @np $O recover | Out-String
-Expect 'launch -List / recover: stopped run resumes with exact args' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf-t1.resume.md')))
-Expect 'recover: RESUME line has the recorded args byte for byte' ($rc.Contains("resumeFromRunId: 'wf_t1', args: $full })") -and $rc -match 'RESUME \(refused: its session ended')
+Expect 'launch -List / recover: stopped run resumes, its RESUME line has the recorded args byte for byte' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf-t1.resume.md')) -and $rc.Contains("resumeFromRunId: 'wf_t1', args: $full })") -and $rc -match 'RESUME \(refused: its session ended')
 $bwt = Join-Path (Kd) 'bwt'
 $j1 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt | Out-String; $s1 = if ($j1 -match 'SESSION (\S+)') { $Matches[1] }
 $j2 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt -Resume | Out-String
@@ -139,10 +138,10 @@ $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThr
 $gb = Join-Path (TkPath $k board -Create) 'gone-s.json'; Set-JsonFile $gb @{ session = 'gone-s'; agent = 'X9'; run = 'r1'; status = 'working'; beat = (Get-Date).ToString('o'); joined = (Get-Date).ToString('o'); holderPid = $dp.Id }
 $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters')
 'function Get-KitSuperviseFlagsFake([switch]$AutoFix) { "fake line $AutoFix $($null -ne $now -and $null -ne $mem -and $null -ne $keepFree)"; [pscustomobject]@{ ramNeed = 9999 }; [pscustomobject]@{ level = "WATCH"; what = "fake flag"; action = "x" }; [pscustomobject]@{ name = "fake row"; by = "me"; gb = 1 }; [pscustomobject]@{ info = "fake info" } }' | Set-Content (Join-Path $ad 'fake.ps1')
-'Start-Sleep 20' | Set-Content ($zs = Join-Path (Kd) 'z.ps1'); "function Get-KitSuperviseFlagsSlow { `$null = Invoke-KitBackground slow '$zs' @() }" | Set-Content (Join-Path $ad 'slow.ps1')
+'Start-Sleep 60' | Set-Content ($zs = Join-Path (Kd) 'z.ps1'); "function Get-KitSuperviseFlagsSlow { `$null = Invoke-KitBackground slow '$zs' @() }" | Set-Content (Join-Path $ad 'slow.ps1')
 $w0 = Get-Date; $sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-String; $ws = ((Get-Date) - $w0).TotalSeconds
 $sr = Get-Content (TkPath $k supervise-report) -Raw; Stop-Process -Id (Read-Json (Join-Path (TkPath $k background) 'slow.json')).pid -ErrorAction SilentlyContinue
-Expect "supervise: a 20 s background child never holds the caller; sweep <= 25 s, each section <= 12.5 s (wall $([int]$ws) s)" ($ws -lt 20 -and $sr -match 'sweep: (\d+) s' -and [int]$Matches[1] -le 25 -and -not @((Read-Json (TkPath $k supervise-state)).sweep.cost.PSObject.Properties.Value -gt 12.5).Count)
+Expect "supervise: a 60 s background child never holds the caller; sweep <= 25 s, each section <= 12.5 s (wall $([int]$ws) s)" ($ws -lt (Get-TestBound 20 -Below 60) -and $sr -match 'sweep: (\d+) s' -and [int]$Matches[1] -le 25 -and -not @((Read-Json (TkPath $k supervise-state)).sweep.cost.PSObject.Properties.Value -gt 12.5).Count)
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
 Expect 'supervise: an adapter hook adds sweep line, flag, row, owner line, RAM need; kit-report shape' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
   $sr -match '^# Supervise report .*\n\*\*Result:\*\* \d+ ACT · \d+ WATCH' -and $sr -match "\| ACT \| DECISION $i1 \(blocking.*AskUserQuestion.*-Ask -Json" -and $sr -match "DECISION 1 FYI: $i2 \|" -and (Test-Prose kit-report (TkPath $k supervise-report))); Remove-Item "$ad/fake.ps1", "$ad/slow.ps1"   # the core adapter stays
@@ -232,7 +231,7 @@ $wr = Join-Path (Kd) 'wr'; $c1w = "$wr/c1-wip"; New-Item -ItemType Directory -Fo
 $rs = Px $O resume -All | Out-String; $ag = TkPath $k agents; Remove-Item Env:CLAUDE_WT_ROOT
 $b1 = Get-Content "$ag/c1/resume-cr-brief.md" -Raw; $b2 = Get-Content "$ag/c2/resume-cr-brief.md" -Raw; $rj = Px $O board join -Agent C1 -Run cr -Resume | Out-String
 $bad = @(Get-ChildItem (TkPath $k work) -Recurse -Filter '*.json' | Where-Object { try { $null = Get-Content $_.FullName -Raw | ConvertFrom-Json; $false } catch { $true } })
-Expect 'crash: agent killed holding the board lock -> health marks it crashed, the OS freed the lock, state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt 60 -and -not (Test-FileLockHeld $bf) -and -not $bad.Count)
+Expect 'crash: agent killed holding the board lock -> health marks it crashed, the OS freed the lock, state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt (Get-TestBound 60) -and -not (Test-FileLockHeld $bf) -and -not $bad.Count)
 Expect 'resume offline: says so, exit 1, nothing relaunched' ($off.code -eq 1 -and $off.out -match 'OFFLINE' -and $off.out -cnotmatch 'RESUME|RELAUNCH')
 Expect 'resume after a crash: brief at the next step, done verified, diff kept; join: CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match '\| b\.txt \|' -and (Test-Prose kit-report "$ag/c1/resume-cr-brief.md") -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
 $rl = @($rs -split "`n" | Where-Object { $_ -match 'RELAUNCH .*finished steps skipped' } | ForEach-Object { ($_ -replace '^.*args: (\{.*\}) \}\)\s*$', '$1') | ConvertFrom-Json -AsHashtable })

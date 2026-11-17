@@ -165,7 +165,7 @@ function Get-KitValue { @{ name = 'cirepo'; ci = @{ mrPipelines = $false } } }
 "no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
 "unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
 $t0 = Get-Date; $u = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/3','https://h.example/g/cirepo/-/merge_requests/4' -MaxMinutes 1 -UntilMerged | ConvertFrom-Json; $ut = ((Get-Date) - $t0).TotalSeconds; $g = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/3' -MaxMinutes 0 | ConvertFrom-Json
-"until-merged:$(-not $u.done -and $u.mrs[0].status -eq 'success' -and $u.mrs[1].status -eq 'closed' -and $ut -lt 20 -and $g.done)"
+"until-merged:$(-not $u.done -and $u.mrs[0].status -eq 'success' -and $u.mrs[1].status -eq 'closed' -and $ut -lt [Math]::Min(55, 20 * [Math]::Min(3, [Math]::Max(1, [double]"0$env:KIT_TESTS_SLACK"))) -and $g.done)"
 '@
 $res = Invoke-PsTest 'pipes-test' $pt @($D)
 Expect-Each $res 'pipes: # (tracked: outside a worktree, no -Mrs = the open MRs of the tracked tasks of -Run)' 'no-ci', 'no-pipeline', 'unknown', 'mr-off', 'until-merged', 'tracked'

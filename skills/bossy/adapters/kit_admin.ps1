@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L102 health · L111 prepush · L175 precommit
+Sections: L12 learn · L102 health · L111 prepush · L191 nightly tests · L207 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -108,13 +108,13 @@ function Get-KitHealthLinesAudit {
   $busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -eq 'kitty' -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 60 }).Count
   if (-not $busy) { "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kitty agent (bossy E13)." }
 }
-# ---- prepush: local files, org terms, ports
-# the kit's git pre-push hook (.githooks/pre-push): blocks local files, org terms; warns on stale ports
+# ---- prepush: local files, org terms, ports, full tests to main
+# the kit's git pre-push hook (.githooks/pre-push): blocks local files, org terms, a failing full test run to main; warns on stale ports
 function Invoke-PrePush {
 $ErrorActionPreference = 'Stop'
 $root = $KitConf.Kit
 $zero = '0' * 40
-$updates = @($(if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }) -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $p = $_ -split '\s+'; [pscustomobject]@{ lsha = $p[1]; rsha = $p[3] } } | Where-Object { $_.lsha -ne $zero })
+$updates = @($(if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }) -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $p = $_ -split '\s+'; [pscustomobject]@{ lsha = $p[1]; rref = $p[2]; rsha = $p[3] } } | Where-Object { $_.lsha -ne $zero })
 $hits = @()
 
 $revs = foreach ($u in $updates) { if ($u.rsha -eq $zero) { git -C $root rev-list $u.lsha --not --remotes } else { git -C $root rev-list "$($u.rsha)..$($u.lsha)" } }
@@ -163,6 +163,22 @@ else {
 $py = Get-Python
 if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kitbag port --check 2>&1; if ($LASTEXITCODE -eq 1) { Write-Host "pre-push: warning: ports differ (optional; run kitbag.py port if deploying to codex/gemini)" } }   # 2: kitbag.py port is unavailable
 
+# a push to main: the full kit tests on the pushed tree (a tree a green full run stamped: skipped; inside a test run: never)
+$kt = Join-Path $root 'tests/kit-tests.ps1'; $toMain = @($updates | Where-Object { $_.rref -eq 'refs/heads/main' })
+if ($toMain.Count -and (Test-Path $kt) -and -not $env:KIT_TESTS_SNAPSHOT) {
+  $tree = "$(git -C $root rev-parse "$($toMain[-1].lsha)^{tree}" 2>$null)".Trim()
+  $pm = (Get-Content -LiteralPath (Join-Path $root 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths   # where kit-tests.ps1 stamps (this checkout's runtime, never CLAUDE_RUNTIME)
+  $green = @(Get-Content -LiteralPath (Join-Path (Join-Path (Join-Path $root $pm.runtimeDir) $pm.runtime.cache) 'kit-tests-green.txt') -ErrorAction SilentlyContinue)
+  if ($tree -in $green) { Write-Host "pre-push: kit tests: tree $($tree.Substring(0, 8)) already green in a full run" }
+  elseif ($tree -ne "$(git -C $root rev-parse 'HEAD^{tree}' 2>$null)".Trim() -or (git -C $root status --porcelain 2>$null)) { $hits += "TESTS       the pushed commit is not this clean checkout: commit everything, run tests/kit-tests.ps1 -Full, push again" }
+  else {
+    $tl = Join-Path (Get-KitPath logs -Create) 'kit-tests-prepush.txt'; Write-Host "pre-push: kit tests -Full on tree $($tree.Substring(0, 8)) (a few minutes; log $tl)"
+    & (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -NoProfile -File $kt -Full *> $tl; $tc = $LASTEXITCODE
+    $sum = @(Get-Content -LiteralPath $tl | Select-String -Pattern '^(Failed checks:|  \[|TEST-DUP|TEST-WRITE|\d+ failure\(s\) in)' | ForEach-Object Line)
+    $sum | ForEach-Object { Write-Host "  $_" }; if ($tc) { $hits += "TESTS       the full kit run failed (exit $tc): $tl" }
+  }
+}
+
 if ($hits.Count) {
   Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
   $hits | Select-Object -Unique | ForEach-Object { Write-Host "  $_" }
@@ -170,6 +186,22 @@ if ($hits.Count) {
   exit 1
 }
 exit 0
+}
+
+# ---- nightly tests: one full kit test run a day while nothing runs (supervise -AutoFix); its FAILs returned once
+function Invoke-KitNightlyTests([bool]$Idle) {
+  $kt = Join-Path $KitConf.Kit 'tests/kit-tests.ps1'; if ($env:KIT_TESTS_SNAPSHOT -or -not (Test-Path -LiteralPath $kt)) { return }   # inside a test run: never
+  $sf = Join-Path (Get-KitPath cache -Create) 'kit-tests-nightly.json'; $lf = Join-Path (Get-KitPath logs -Create) 'kit-tests-nightly.txt'
+  $s = try { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json } catch { $null }
+  if ($s -and -not $s.read -and -not (Test-KitPid $s.pid $s.start)) {   # finished since the last beat: read once
+    $s | Add-Member -Force NoteProperty read $true; Write-KitAtomic $sf ($s | ConvertTo-Json -Compress)
+    $tail = @(Get-Content -LiteralPath $lf -ErrorAction SilentlyContinue | Select-String -Pattern '^(\d+) failure\(s\) in' | ForEach-Object Line)[-1]
+    if (-not $tail -or $tail -notmatch '^0 failure') { "kit tests nightly: $(if ($tail) { $tail } else { 'no total (crashed)' }), $(@(Get-Content -LiteralPath $lf | Select-String -Pattern '^  \[').Count) failed check(s): $lf" }
+  }
+  if (-not $Idle -or ($s -and ((Get-Date) - [datetime]$s.at).TotalHours -lt 20) -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
+  $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "& '$($kt.Replace("'", "''"))' -Full *> '$($lf.Replace("'", "''"))'"
+  $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }
+  Write-KitAtomic $sf (@{ pid = $p.Id; start = $p.StartTime.ToString('o'); at = (Get-Date).ToString('o'); read = $false } | ConvertTo-Json -Compress)
 }
 
 # ---- precommit: graph, ports, section maps, lint

@@ -28,11 +28,11 @@ try {
   Expect 'wt commit -MessageFile from the current folder' ($code -eq 0 -and (git -C "$r/outer" log -1 --format=%s) -eq 'feat: from file')
   Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty')
   'z' | Set-Content "$r/outer/z.txt"; $lm = 'feat: ' + ('long subject ' * 8)
-  $po = pwsh @np $D wt commit -Dir "$r/outer" -Message $lm 2>&1 | Out-String; $pc = $LASTEXITCODE; $ps = git -C "$r/outer" log -1 --format=%s
+  $po = @(pwsh @np $D wt commit -Dir "$r/outer" -Message $lm 2>&1); $pc = $LASTEXITCODE; $ps = git -C "$r/outer" log -1 --format=%s; $pe = $po | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
   $null = pwsh @np $D wt commit -Dir "$r/outer" -Message $lm -ProseOk 'test' 2>&1; $pk = $LASTEXITCODE
   'w' | Set-Content "$r/outer/w.txt"; $null = pwsh @np $D wt commit -Dir "$r/outer" -Message ('wip: ' + 'pause ' * 20) 2>&1; $pk += $LASTEXITCODE
   $null = pwsh @np $D wt commit -Dir "$r/outer" -Message 'chore: deploy marker' -AllowEmpty 2>&1; $pk += $LASTEXITCODE
-  Expect "wt commit: a subject over its prose limit is refused, -ProseOk / a WIP / an -AllowEmpty commit pass ($pc $pk)" ($pc -eq 1 -and $po -match 'commit refused' -and $ps -eq 'feat: from file' -and $pk -eq 0 -and (git -C "$r/outer" log -3 --format=%s)[2] -eq $lm.Trim())
+  Expect "wt commit: a subject over its prose limit is refused on stderr, -ProseOk / a WIP / an -AllowEmpty commit pass ($pc $pk)" ($pc -eq 1 -and $pe -match '(?s)commit refused: \d+ prose.*line 1 is \d+ chars' -and $ps -eq 'feat: from file' -and $pk -eq 0 -and (git -C "$r/outer" log -3 --format=%s)[2] -eq $lm.Trim())
   'g1' | Set-Content "$r/outer/g1.txt"; 'g2' | Set-Content "$r/outer/g2.txt"
   $null = pwsh @np $D wt commit -Dir "$r/outer" -Message 'chore: group one' -Paths 'g1.txt' 2>&1; $gc = $LASTEXITCODE
   Expect "wt commit -Paths stages only the listed paths; the next group stays uncommitted ($gc)" ($gc -eq 0 -and "$(git -C "$r/outer" show --name-only --format= HEAD)".Trim() -eq 'g1.txt' -and "$(git -C "$r/outer" status --porcelain g2.txt)" -match '\?\? g2\.txt')
@@ -235,7 +235,7 @@ if ($IsWindows) { 'SKIP posix (Linux / macOS only)' } else {
 }
 $gf = Invoke-PsTest gitfetch '. $args[0]; $d = $args[1]; git init -q $d; git -C $d remote add origin "$d-o.git"; Invoke-GitFetch $d 10 3>$null; git init -q --bare "$d-o.git"; Invoke-GitFetch $d 10' @((Lib), (Join-Path (Kd) 'gf'))
 Expect 'Invoke-GitFetch: a failed fetch is not memoized' (($gf -join ',') -eq 'False,True')
-if ($IsWindows) {   # Stop-KitProcessTree: the child first, the root last (a root killed first left a starting pwsh child a closed pipe: FailFast popup)
+if ($IsWindows) {   # Stop-KitProcessTree: child first, root last (a root killed first: a starting child's FailFast popup)
   $tkF = Join-Path (Kd) 'tree-parent.ps1'; Set-Content $tkF '$treeOut = pwsh -NoProfile -Command "Start-Sleep 60"; $treeOut'
   $tkP = Start-Process pwsh -ArgumentList '-NoProfile', '-File', $tkF -PassThru -WindowStyle Hidden; $tkC = $null
   for ($i = 0; $i -lt 150 -and -not $tkC; $i++) { $tkC = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($tkP.Id) AND Name='pwsh.exe'" -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $tkC) { Start-Sleep -Milliseconds 200 } }

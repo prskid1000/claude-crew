@@ -88,11 +88,7 @@ $sw = { param($n, $o) & $J ($o + @{ agent = $n; lease = $n; need = 0; since = (G
 & $sw L1 @{ holderPid = $PID; holderStart = $myStart }; & $sw L2 @{ holderPid = 999999; seen = '2000-01-01' }; & $sw L3 @{ holderPid = 999999 }
 $null = pwsh @np $Q seat status
 Expect 'seat: a live holder''s 4 h seat stays; a dead one''s goes after the grace' ((Test-Path (Join-Path $sd 'seats/L1.json')) -and -not (Test-Path (Join-Path $sd 'seats/L2.json')) -and (Get-Content (Join-Path $sd 'seats/L3.json') | ConvertFrom-Json).seen); Remove-Item (Join-Path $sd 'seats/L*')
-# wt commit: a refusal reaches stderr (a chained call shows it)
-$cr = Join-Path (Kd) 'cr'; New-Item -ItemType Directory -Force $cr | Out-Null; git -C $cr init -q; git -C $cr commit -q --allow-empty -m init; 'z' | Set-Content "$cr/z.txt"
-Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty')
-$ce = pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') wt commit -Dir $cr -Message ('feat: ' + 'long subject ' * 8) 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
-Expect 'wt commit: an over-long subject is refused on stderr with its findings' ($ce -match '(?s)commit refused: \d+ prose finding\(s\).*line 1 is \d+ chars')
+Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty')   # prose limits for the tracker texts below
 # buildy: one MR listed twice ships once, merged only when every copy says so
 $uq = node -e "const s = require('fs').readFileSync(process.argv[1], 'utf8'); eval(s.match(/^const nu = .*$/m)[0] + '\n' + s.match(/^const uniqMr = .*$/m)[0] + '\nglobalThis.u = uniqMr');
 const r = u([{ url: 'https://h/g/a/-/merge_requests/1', merged: true }, { url: 'https://h/g/a/-/merge_requests/1/', merged: false }, { url: 'https://h/g/a/-/merge_requests/2', merged: true }]); console.log(r.length === 2 && !r[0].merged && r[1].merged)" (Join-Path $src 'workflows/buildy.js')
@@ -199,7 +195,7 @@ $qf = (Get-ChildItem (TkPath $k pauses -Create) -Filter 'pause-*.json' | Sort-Ob
 $qn = Invoke-TestScript $O pause -Status; $null = Px $O board leave -Session $qs -Status paused -Wait 0
 for ($i = 0; $i -lt 300 -and (Read-Json $qf).state -ne 'paused'; $i++) { Start-Sleep -Milliseconds 200 }   # the background finisher: 60 s at most
 $qy = Invoke-TestScript $O pause -Status; $qr = Read-Json $qf; $null = Px $O resume -Run pq
-Expect 'pause: returns in seconds, PAUSING + -Status; finisher confirms in the background; -Status: NOT safe (exit 1), then safe (exit 0)' ($qt -lt 20 -and $qp -match 'PAUSING' -and $qp -match 'pause -Status' -and $q0 -eq 'pausing' -and
+Expect 'pause: returns in seconds, PAUSING + -Status; finisher confirms in the background; -Status: NOT safe (exit 1), then safe (exit 0)' ($qt -lt (Get-TestBound 20 -Below 60) -and $qp -match 'PAUSING' -and $qp -match 'pause -Status' -and $q0 -eq 'pausing' -and
   $qn.code -eq 1 -and $qn.out -match 'NOT safe yet: Q1' -and $qr.state -eq 'paused' -and @($qr.agents | Where-Object confirmed).agent -eq 'Q1' -and $qy.code -eq 0 -and $qy.out -match 'Safe to power off')
 # fast pause: the paused agent's long gated build (owner = its worktree's name) stops at once, a queued one is refused, another owner's runs; unconfirmed = safe only from a checkpoint after the pause, worktree clean
 $kq = Join-Path (Kd) 'kq'; $null = New-Item -ItemType Directory -Force $kq; 'x' | Set-Content "$kq/a.txt"; Save-GitRepo $kq init

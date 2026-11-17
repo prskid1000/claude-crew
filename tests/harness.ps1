@@ -51,6 +51,11 @@ function Lib {
   Join-Path $k 'skills/crafty/lib.ps1'
 }   # the test kit's lib.ps1
 function Px { $input | pwsh -NoProfile -File @args }
+# a "returns soon" bound in seconds, stretched by the run's CPU load (kit-tests.ps1 KIT_TESTS_SLACK, 1-3); -Below: never at or above it
+function Get-TestBound([double]$Seconds, [double]$Below = 0) {
+  $sl = 1.0; if (-not [double]::TryParse("$env:KIT_TESTS_SLACK", [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$sl)) { $sl = 1.0 }
+  $b = $Seconds * [Math]::Min(3, [Math]::Max(1, $sl)); if ($Below -and $b -ge $Below) { $Below - 1 } else { $b }
+}
 # KIT_TESTS_TIME=1: Complete-Tests lists the slowest checks (time since the previous check)
 $script:clock = [Diagnostics.Stopwatch]::StartNew(); $script:times = [Collections.Generic.List[object]]::new()
 function Expect($what, $cond) {

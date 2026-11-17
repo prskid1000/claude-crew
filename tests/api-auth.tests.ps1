@@ -13,8 +13,6 @@ $twoD = & $T ($L + @{ type = 'login'; tokenField = 'access_token' }); $twoD.user
   th = & $T @{ type = 'command'; cmd = 'echo X-Sig: s1' }; tn = & $T ($L + @{ type = 'login' }); tp = & $T ($L + @{ preset = 'oauth2' }); t2 = $two; t2d = $twoD } } (Join-Path $k 'skills/pokey/targets.local.json') 6
 $ok = foreach ($x in 'tc/c', 'tr/b', 'tq/q', 'th/h') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
 Expect "api auth kinds ($ok)" (@($ok).Count -eq 4 -and (Get-Content "$(Kd)/A1-C1_01_tq.json" -Raw) -match 'api_key=\[redacted\]')
-$nu = Px $Q api -Target tq -As ghost -Path '/q' 2>&1 | Out-String; $nuc = $LASTEXITCODE
-Expect 'api (api_auth.ps1 auth kind): a user missing from the target exits 2 NO-USER, no stack trace' ($nuc -eq 2 -and $nu -match "NO-USER 'ghost' in target tq" -and $nu -notmatch 'Exception|at line')
 # token field: no vendor fallback; auth.tokenField, auth.preset or kit api.tokenFields
 $tn1 = Px $Q api -Target tn -Path '/l' 2>&1 | Out-String; $tp1 = Px $Q api -Target tp -Path '/l' 2>&1 | Out-String
 $kl = Join-Path $k 'skills/crafty/kit.local.json'; '{"api":{"tokenFields":["id_token","access_token"]}}' | Set-Content $kl

@@ -34,6 +34,26 @@ Expect "kit-admin: prepush flags a git-ignored file, not one an old kitbag exclu
 Add-Content $xf '/notes/none.txt'; $asu = & $py -X utf8 $KT audit setup --kit $kc 2>&1 | Out-String
 Expect "kit-admin: audit setup names an exclude line hiding a tracked file (fix: bossy.ps1 setup) and one not in localOnly" ($asu -match 'SETUP-INSTALL.+line /notes/l\.txt hides tracked file\(s\) notes/l\.txt.+bossy\.ps1 setup' -and $asu -match 'SETUP-EXCLUDE.+line /notes/none\.txt is not in kit\.local\.json localOnly')
 git -C $kc reset -q --hard $base
+# prepush to main: the full kit run on the pushed clean tree (a fake runner), a stamped tree skipped, a dirty checkout refused, no run off main
+$env:FAKE_RAN = Join-Path $root 'ran.txt'; Set-Content (Join-Path $kc 'tests/kit-tests.ps1') """`$args"" | Set-Content `$env:FAKE_RAN; 'Failed checks:'; '  [x] y'; '1 failure(s) in 1 area(s), 1 s'; exit 1"
+git -C $kc commit -qam 'test: fake runner'; $hd = git -C $kc rev-parse HEAD; $snap = $env:KIT_TESTS_SNAPSHOT; Remove-Item Env:KIT_TESTS_SNAPSHOT
+$prePush = { param($ref) Remove-Item $env:FAKE_RAN -ErrorAction SilentlyContinue; $ppOut = "$ref $hd $ref $base" | pwsh @np (Join-Path $kc 'skills/bossy/bossy.ps1') prepush 2>&1 | Out-String; [pscustomobject]@{ out = $ppOut; code = $LASTEXITCODE; ran = "$(Get-Content $env:FAKE_RAN -ErrorAction SilentlyContinue)" } }
+$pr = & $prePush refs/heads/main; $po = & $prePush refs/heads/f/x
+$gf = Join-Path (TkPath $kc cache -Create) 'kit-tests-green.txt'; git -C $kc rev-parse 'HEAD^{tree}' | Set-Content $gf; $pg = & $prePush refs/heads/main; Remove-Item $gf
+'x' | Add-Content (Join-Path $kc 'README.md'); $pd = & $prePush refs/heads/main; git -C $kc checkout -q -- README.md
+Expect "kit-admin: prepush to main runs kit-tests -Full (a FAIL blocks), skips a green-stamped tree, refuses a dirty checkout; no run off main ($($pr.code) $($pg.code) $($pd.code))" (
+  $pr.code -eq 1 -and $pr.ran -eq '-Full' -and $pr.out -match 'TESTS\s+the full kit run failed' -and $pr.out -match '  \[x\] y' -and -not $po.ran -and $po.out -notmatch 'TESTS' -and
+  $pg.code -eq 0 -and -not $pg.ran -and $pg.out -match 'already green' -and $pd.code -eq 1 -and -not $pd.ran -and $pd.out -match 'TESTS\s+the pushed commit is not this clean checkout')
+# nightly: idle + none in 20 h -> one detached full run; its total read once, not restarted; busy -> none started
+$nf = Join-Path $root 'nightly.ps1'; Set-Content $nf @'
+. $args[0]; . $args[1]; $sf = Join-Path (Get-KitPath cache -Create) 'kit-tests-nightly.json'
+$o1 = @(Invoke-KitNightlyTests $false); $s0 = Test-Path $sf; $null = Invoke-KitNightlyTests $true; $st = Get-Content $sf -Raw | ConvertFrom-Json
+$null = Wait-Process -Id $st.pid -Timeout 60 -ErrorAction SilentlyContinue; $o2 = @(Invoke-KitNightlyTests $true); $o3 = @(Invoke-KitNightlyTests $true)
+"busy:$(-not $o1.Count -and -not $s0 -and $st.pid)"
+"read:$($o2.Count -eq 1 -and $o2[0] -match '^kit tests nightly: 1 failure\(s\) in 1 area\(s\), 1 s, 1 failed check' -and -not $o3.Count -and (Get-Content $sf -Raw | ConvertFrom-Json).pid -eq $st.pid -and (Get-Content $env:FAKE_RAN) -eq '-Full')"
+'@; $ng = @(pwsh @np $nf (Join-Path $kc 'skills/crafty/lib.ps1') (Join-Path $kc 'skills/bossy/adapters/kit_admin.ps1') 2>&1)
+Expect-Each $ng 'kit-admin: nightly kit tests: #' 'busy', 'read' -Show 6
+$env:KIT_TESTS_SNAPSHOT = $snap; git -C $kc reset -q --hard $base
 # release: the next SemVer from Conventional Commits
 $rel = & $py -X utf8 $KT release 2>&1 | Out-String
 Expect 'kit-admin: release prints the next SemVer and its notes' ($rel -match '^# v\d+\.\d+\.\d+')

@@ -19,7 +19,7 @@ function ssh { $script:n++; "HEAD=$($b.Substring(0, 7)) 2026-01-02"; 'ANC=yes'; 
 function ssh { $script:m++ }; $null = SshState @{ host = 'h3' } $a; $null = SshState @{ host = 'h3' } $b   # no answer: asked once
 "host:$($n -eq 1 -and $s3.anc -and $s4.anc -and $m -eq 1)"
 if ($KitIsWindows) { Remove-Item function:ssh; $sd = Join-Path $args[5] 'sshbin'; $null = New-Item -ItemType Directory -Force $sd; '@ping -n 8 127.0.0.1 >nul' | Set-Content "$sd/ssh.cmd"; $env:PATH = "$sd;$env:PATH"
-  $t0 = Get-Date; $o = Invoke-BoundedSsh @('h') 1; "bound:$(-not $o.Count -and ((Get-Date) - $t0).TotalSeconds -lt 5)" } else { 'bound:True' }
+  $t0 = Get-Date; $o = Invoke-BoundedSsh @('h') 1; "bound:$(-not $o.Count -and ((Get-Date) - $t0).TotalSeconds -lt [Math]::Min(7, 5 * [Math]::Min(3, [Math]::Max(1, [double]"0$env:KIT_TESTS_SLACK"))))" } else { 'bound:True' }
 . $env:KIT_TEST_SHIM; function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*merge_base*' { @{ id = 'F' } } '*ref=staging*' { , @(@{ id = 1; created_at = '2026-01-03'; sha = 'F' }) } '*jobs*' { , @(@{ name = 'deploy-eu'; status = 'success' }) } } }
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@

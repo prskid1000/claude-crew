@@ -70,7 +70,7 @@ $lw = & { . (Lib); try { Invoke-KitLocked $lt { 'got' } } catch { "threw: $_" } 
 Expect 'Invoke-KitLocked: an old lock still held open waits for its holder, never fails fast' ($lw -eq 'got')
 & $old; $sw = [Diagnostics.Stopwatch]::StartNew()
 $l2 = & { . (Lib); Invoke-KitLocked $lt { 'got' } }; $kf2 = Join-Path (Kd) 'kept.json'; '{}' | Set-Content $kf2; $null = & { . (Lib); Invoke-KitLocked $kf2 { 1 } }; $kept = (Test-Path "$kf2.lock") -and -not (Test-FileLockHeld $kf2)
-Expect 'Invoke-KitLocked: an old lock nobody holds is taken at once; its file absent: the lock goes too (a kept file keeps it)' ($l2 -eq 'got' -and $sw.Elapsed.TotalSeconds -lt 10 -and -not (Test-Path "$lt.lock") -and $kept)
+Expect 'Invoke-KitLocked: an old lock nobody holds is taken at once; its file absent: the lock goes too (a kept file keeps it)' ($l2 -eq 'got' -and $sw.Elapsed.TotalSeconds -lt (Get-TestBound 10) -and -not (Test-Path "$lt.lock") -and $kept)
 # python (kitbag.py locked) and PowerShell lock the same byte of the kept lock file: each waits for the other
 $pyf = Join-Path (Kd) 'pylock.py'; Set-Content $pyf "import sys, time`nsys.path.insert(0, r'$(Join-Path $k 'skills/bossy')')`nimport kitbag`nt = time.time()`nwith kitbag.locked(r'$lt'):`n    print(round(time.time() - t, 1), flush=True)`n    time.sleep(float(sys.argv[1]))"
 $pyp = Start-Process $py -ArgumentList '-X', 'utf8', $pyf, '2' -PassThru -WindowStyle Hidden; for ($pw = 0; $pw -lt 100 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 100 }

@@ -2,15 +2,35 @@
 <#
 kit-tests.ps1: offline kit tests (throw-away kit copies, local git repos, mocked CLIs, no real services).
 Runs tests/<area>.tests.ps1 files in parallel, one pwsh each; each area file also runs on its own.
-Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|bossy|crafty|pokey|kitbag|workflows|supervise|params|guard|layout|flow|sessions|tracker|render|dashboard|debate|<any tests/<area>.tests.ps1>[,...]] [-Slow] [-Full]
- -Full: also the scratch-DB areas whose code did not change since origin/main (all skips them; KIT_TESTS_FULL=1).
+Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<area>.tests.ps1>[,...]] [-Full] [-Slow]
+ (none): the areas a change since the merge-base with origin/main reaches (Get-ChangedArea); -Full or -Area all (KIT_TESTS_FULL=1): every area.
  -Slow: also the checks that need real tools and take seconds each (KIT_TESTS_SLOW=1, e.g. a real headless Chrome).
-Outputs: each area's PASS / FAIL lines, its time, TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), a recap of the failed checks, then a total.
+Outputs: the picked areas and why, each area's PASS / FAIL lines, its time, TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), a recap of the failed checks, then a total.
+ A green full run stamps its tree (<runtime>/cache/kit-tests-green.txt). -Full also runs from the pre-push hook on a push to main
+ (a stamped tree skipped) and from supervise -AutoFix once a day while idle (adapters/kit_admin.ps1). One setup per area: a new case
+ joins the area that builds its setup, as a table row.
 Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 #>
-param([string[]]$Area = 'all', [switch]$Slow, [switch]$Full)
+param([string[]]$Area = @(), [switch]$Slow, [switch]$Full)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
+# the areas a change reaches: a test file -> its area; the runner, the harness or a non-.md file it copies into every kit -> all;
+# else the areas naming the file; a script no area names -> all (a gap must never skip a test)
+function Get-ChangedArea([string]$KitDir, [string[]]$Known) {
+  $base = "$(git -C $KitDir merge-base HEAD origin/main 2>$null)".Trim()
+  if (-not $base) { return [pscustomobject]@{ areas = $Known; why = 'no merge-base with origin/main: all' } }
+  $changed = @(@(git -C $KitDir diff --name-only $base 2>$null) + @(git -C $KitDir ls-files --others --exclude-standard 2>$null) | Where-Object { $_ } | Select-Object -Unique)
+  $harness = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'harness.ps1')); $texts = @{}; foreach ($a in $Known) { $texts[$a] = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "$a.tests.ps1")) }
+  $pick = [Collections.Generic.List[string]]::new(); $whyAll = ''
+  foreach ($f in $changed) {
+    if ($f -match '^tests/(harness|kit-tests|hostverb-shim)\.ps1$' -or ($f -notmatch '\.md$' -and $harness.Contains("'$f'"))) { $whyAll = $f; break }
+    if ($f -match '^tests/(.+)\.tests\.ps1$') { if ($Matches[1] -in $Known) { $pick.Add($Matches[1]) }; continue }
+    $leaf = [regex]::Escape((Split-Path $f -Leaf)); $hit = @($Known | Where-Object { $texts[$_] -match "(?<![\w.-])$leaf(?![\w-])" })
+    if ($hit.Count) { $pick.AddRange([string[]]$hit) } elseif ($f -match '\.(ps1|py|mjs|js|cjs)$') { $whyAll = "$f (no area names it)"; break }
+  }
+  if ($whyAll) { return [pscustomobject]@{ areas = $Known; why = "$whyAll changed: all" } }
+  [pscustomobject]@{ areas = @($Known | Where-Object { $_ -in $pick }); why = "$($changed.Count) changed file(s) since origin/main" }
+}
 # the real python first on PATH: a shim (pyenv-win python.bat runs chcp) flips the console code page all areas share, and a
 # pwsh started meanwhile prints mojibake
 $pyReal = foreach ($p in 'python', 'python3') { if (Get-Command $p -ErrorAction SilentlyContinue) { & $p -c 'import sys; print(sys.executable)' 2>$null | Select-Object -Last 1; break } }
@@ -18,16 +38,14 @@ if ($pyReal) { $env:PATH = (Split-Path $pyReal) + [IO.Path]::PathSeparator + $en
 # one file per area; each dot-sources harness.ps1
 $files = @(Get-ChildItem $PSScriptRoot -Filter '*.tests.ps1' | Sort-Object Name | ForEach-Object Name)
 $all = @($files | ForEach-Object { $_ -replace '\.tests\.ps1$' })
-$areas = if ($Area -contains 'all') { $all } else { @($Area | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
+$Full = $Full -or $Area -contains 'all' -or [bool]$env:KIT_TESTS_FULL
+$areas = if ($Full) { $all } elseif ($Area.Count) { @($Area | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
+if (-not $Full -and -not $Area.Count) {
+  $ch = Get-ChangedArea (Split-Path $PSScriptRoot) $all; $areas = @($ch.areas)
+  "areas: $($ch.why) -> $($areas.Count) of $($all.Count)$(if ($areas.Count -lt $all.Count) { ' (-Full runs all)' })"
+  if (-not $areas.Count) { 'no area tests what changed: nothing to run'; exit 0 } }
 $unknown = @($areas | Where-Object { $_ -notin $all })
 if (-not $areas -or $unknown) { Write-Error "kit-tests.ps1: unknown or no area(s) '$($unknown -join ', ')'; known: $($all -join ', ')" -ErrorAction Continue; exit 2 }
-# areas on a scratch DB server run in 'all' only when a path they test changed since origin/main (-Full / KIT_TESTS_FULL=1: always)
-$dbRx = '^(skills/envy/|skills/crafty/(lib\.ps1|adapters/)|tests/(harness\.ps1|kit-tests\.ps1|db-engine-presets))'; $onChange = @{ 'db-engine-presets' = $dbRx; 'db-engine-presets-2' = $dbRx }
-if ($Area -contains 'all' -and -not ($Full -or $env:KIT_TESTS_FULL)) {
-  $kitDir = Split-Path $PSScriptRoot; $base = "$(git -C $kitDir merge-base HEAD origin/main 2>$null)".Trim()
-  $changed = if ($base) { @(git -C $kitDir diff --name-only $base 2>$null) + @(git -C $kitDir ls-files --others --exclude-standard 2>$null) }
-  if ($base) { foreach ($a in @($areas | Where-Object { $onChange[$_] -and -not @($changed -match $onChange[$_]).Count })) { "SKIP $a`: no change in what it tests (-Full runs it)"; $areas = @($areas | Where-Object { $_ -ne $a }) } }
-}
 
 # one snapshot of the source files for every area (harness.ps1 New-TestKit links to it); scratch of dead area runs removed
 $kx = Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/kit.example.json'; $tmpMap = if (Test-Path $kx) { (Get-Content $kx -Raw | ConvertFrom-Json)._paths }
@@ -35,6 +53,8 @@ $tmpRoot = if ($tmpMap) { Join-Path (Join-Path (Split-Path $PSScriptRoot) $tmpMa
 foreach ($old in @(Get-ChildItem -LiteralPath $tmpRoot -Directory -Filter 'kit-tests-*' -ErrorAction SilentlyContinue)) {
   if ($old.Name -match '^kit-tests-(?:src-)?(\d+)$' -and -not (Get-Process -Id ([int]$Matches[1]) -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $old.FullName -Recurse -Force -ErrorAction SilentlyContinue } }
 $env:KIT_TESTS_SNAPSHOT = Join-Path $tmpRoot "kit-tests-src-$PID"
+# timing bounds stretch with the load this run puts on the CPU (harness Get-TestBound): 1 alone, at most 3
+if (-not $env:KIT_TESTS_SLACK) { $env:KIT_TESTS_SLACK = [Math]::Round([Math]::Min(3, [Math]::Max(1, $areas.Count / [Environment]::ProcessorCount)), 2).ToString([Globalization.CultureInfo]::InvariantCulture) }
 $started = Get-Date
 $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {
   $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -62,4 +82,9 @@ Remove-Item -LiteralPath $env:KIT_TESTS_SNAPSHOT -Recurse -Force -ErrorAction Si
 # FAIL recap, indented: never counted twice
 $failed = @($cases | Where-Object fail); if ($failed.Count) { 'Failed checks:'; $failed | ForEach-Object { "  [$($_.at)] $($_.text)" } }
 "$fails failure(s) in $($areas.Count) area(s), $([int]((Get-Date) - $started).TotalSeconds) s"
+# a green full run of a clean tree: its tree id stamped (the pre-push hook skips a stamped tree)
+$kitDir = Split-Path $PSScriptRoot
+if ($Full -and -not $fails -and $tmpMap -and -not (git -C $kitDir status --porcelain 2>$null)) {
+  $tree = "$(git -C $kitDir rev-parse 'HEAD^{tree}' 2>$null)".Trim(); $gf = Join-Path (Join-Path (Join-Path $kitDir $tmpMap.runtimeDir) $tmpMap.runtime.cache) 'kit-tests-green.txt'
+  if ($tree) { $null = New-Item -ItemType Directory -Force (Split-Path $gf); @(@(Get-Content -LiteralPath $gf -ErrorAction SilentlyContinue) + $tree | Select-Object -Last 20) | Set-Content -LiteralPath $gf; "green full run: tree $tree stamped" } }
 exit [int]($fails -gt 0)
