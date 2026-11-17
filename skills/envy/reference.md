@@ -41,6 +41,9 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
 - A new release staged for a service in start backoff resets it, like `restart`.
 - `services[].shareBuild` true (a build that reads no per-lane value): a lane stages another lane's recorded copy of the same
   code and build config, no build.
+- `services[].shareCheckBuild` (unset: on for a Maven `package` build without `prepare` or build `env`; true / false): a
+  `crafty.ps1 check -Step build` of a clean tree with the same code, service folder and -P / -D flags is staged (its jar
+  copied, unchanged since), no build.
 
 ## Config
 - Envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`, `smoke`)

@@ -20,6 +20,7 @@ description: "Load when: you reproduce, debug or test a change on the local env 
 | `adapters/db_presets.ps1` | dot-sourced by `envy.ps1`: db hooks from the engine, marks, restore, cascade guard, dbtemp, pool (db.md) |
 | `adapters/tenant_models.ps1` | kind tenant-model (`tenants.model`, default none) and the `tenant` verb (kind envy-verb) (db.md "Tenants") |
 | `adapters/tenant_schema.ps1` | the schema tenant model: list, drop, import (db.md "Tenants") |
+| `adapters/shared_builds.ps1` | deploy step 2: a lane's or a check's build of the same code staged, no build (reference.md `shareBuild`, `shareCheckBuild`) |
 | `adapters/*.local.ps1` | org-only adapters: `Register-KitAdapter envy-verb <verb> @{ ops; run }` adds an envy verb; db-engine / tenant-model / migration the same way |
 | `adapters/db_flashback.py` | run by `envy.ps1` `restore`, release slices, the cascade guard (`doctor`), `tenant import` masking (db.md) |
 
@@ -41,6 +42,7 @@ description: "Load when: you reproduce, debug or test a change on the local env 
 $L = '<kit>/skills/envy/envy.ps1'
 & $L envs; & $L status -Env <env>                                       # 1. which env serves your repo; what is live
 & $L deploy -Env <env> -Agent <id> -Dir <worktree>                      # 2. committed work only -> LIVE r<n> | REFUSED | ...
+#    a Java service: crafty.ps1 check -Step build after the commit first; the env stages that jar (shareCheckBuild), no second build
 & $L wait -Env <env> -Id <request>                                      #    when it printed "still ..."
 & $L use -Env <env> -Agent <id> -Services <svc,..> -Session <board token> -Note "<goals>"   # 3. lease, then test
 & $L status -Env <env> -Agent <id>                                      # 4. "CHANGED since your lease" -> re-run those goals

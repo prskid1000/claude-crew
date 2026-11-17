@@ -7,7 +7,7 @@ Exit codes: 0 pass · 1 a check failed.
 param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 # envy.ps1 is not in the core test kit: copy it in
-function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; $kd }
+function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item (Join-Path $src 'skills/envy/adapters/shared_builds.ps1') (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
 # lanes: lane 1 = the env unchanged, lane k = <env><k>: managed ports + (k-1) x portStep, {lane} / {port:<svc>} / ":<port>" rewritten,
 # envs.<env><k> overrides one lane (its db port follows); -Env <env> keeps an agent on its lane, else the least busy one; -Lane pins
 $laneKit = New-LocalEnvKit lelane; $lkL = Join-Path $laneKit 'skills/envy/envy.ps1'
@@ -130,6 +130,22 @@ $lso = & { . $lkL; $api = [pscustomobject]@{ name = 'api'; repo = 'w'; build = '
   foreach ($l in 'shop', 'shop2') { Update-State $l { param($x) $x.Remove('builds') } }
   "$($null -eq $none)|$($hit.lane)" }
 Expect "lanes: without shareBuild only the lane's own recorded copy of a build is reused ($lso)" ($lso -eq 'True|shop2')
+# check build shared: crafty.ps1 check -Step build on a clean tree records it; the env deploy of the same tree copies its jar, no build
+$cbg = Join-Path (Split-Path $laneKit) 'cb'; $cbs = "$cbg/src"; New-Item -ItemType Directory -Force "$cbs/api" | Out-Null; git -C $cbs init -q -b main; 'target/' | Set-Content "$cbs/.gitignore"; '<project/>' | Set-Content "$cbs/api/pom.xml"
+git -C $cbs add -A; git -C $cbs -c user.name=t -c user.email=t@t commit -q -m code; git clone -q $cbs "$cbg/env" 2>$null
+New-Item -ItemType Directory -Force "$cbs/api/target" | Out-Null; $t0 = (Get-Date).AddSeconds(-30); 'jar' | Set-Content "$cbs/api/target/api-1.jar"
+$null = pwsh -NoProfile -Command ". '$(Join-Path $laneKit 'skills/crafty/crafty.ps1')'; Save-CheckBuild '$cbs/api' 'mvn -q package -DskipTests' ([datetime]'$($t0.ToString('o'))')"
+'dirty' | Set-Content "$cbs/x.txt"; $null = pwsh -NoProfile -Command ". '$(Join-Path $laneKit 'skills/crafty/crafty.ps1')'; Save-CheckBuild '$cbs/api' 'mvn' (Get-Date)"; Remove-Item "$cbs/x.txt"
+$lcb = & { . $lkL; $api = [pscustomobject]@{ name = 'api'; repo = 'w'; build = 'mvn -q package -DskipTests'; artifact = 'target/api-*.jar' }
+  function RepoOf { 'w' }; function EnvRepos([string]$e) { @{ w = [pscustomobject]@{ wt = "$cbg/env" } } }; function SvcDir { Join-Path "$cbg/env" 'api' }; function EnvServices { @($api) }; function BuildKey { $null }
+  $global:cbBuilt = 0; function Expand-Placeholders { $global:cbBuilt++; 'b' }
+  $hit = Find-CheckBuild shop $api; $off = Find-CheckBuild shop ([pscustomobject]@{ name = 'api'; build = 'mvn package'; artifact = 'target/api-*.jar'; shareCheckBuild = $false })
+  $prep = Find-CheckBuild shop ([pscustomobject]@{ name = 'api'; build = 'mvn package'; artifact = 'target/api-*.jar'; prepare = 'x' }); $flagged = Find-CheckBuild shop ([pscustomobject]@{ name = 'api'; build = 'mvn -Plocal package -DskipTests'; artifact = 'target/api-*.jar' })
+  $err = Build-Repo shop 'w' 6>$null; $to = (Stage-Artifacts shop 'w' 'r1').api
+  $null = Build-Repo shop 'w' 6>$null; (Get-Item "$cbs/api/target/api-1.jar").LastWriteTime = (Get-Date).AddMinutes(5); $moved = try { $null = Stage-Artifacts shop 'w' 'r2'; 'staged' } catch { "$_" -match 'rebuilt since the build step' }
+  $rebuilt = Find-CheckBuild shop $api
+  "$($hit.path -like '*api-1.jar')|$($null -eq $off)|$($null -eq $err)|$global:cbBuilt|$(Test-Path $to)|$(Test-Path "$cbs/api/target/api-1.jar")|$($null -eq $rebuilt)|$(@(Get-ChildItem (TkPath $laneKit check-builds) -Filter '*.json').Count)|$($null -eq $prep)|$($null -eq $flagged)|$moved" }
+Expect "check build shared: a clean tree's check build is staged by the env deploy of that tree (copied, no build); off, prepare, other -P / -D flags, rebuilt since (also between build and stage) or a dirty tree: none ($lcb)" ($lcb -eq 'True|True|True|0|True|True|True|1|True|True|True')
 Expect "lanes: the build key = the code without its prepare commits + the build config; without shareBuild none, unless reuseBuilds: a lane-only key (prepare commits count) ($lk2)" ($lk2 -eq '40|True|False|False|40|True|True')
 $lsd = & { . $lkL; $none = [pscustomobject]@{ port = '' }; "$(Split-Path (SeedFile shop2) -Leaf)|$(Expand-Placeholders 'pokey -Target local-shop{lane}' shop2 $none '' '')|$(Expand-Placeholders 'local-shop{lane}' shop $none '' '')" }
 Expect "lanes: a lane seeds from its env's seed file; {lane} expands at run time too (seed commands) ($lsd)" ($lsd -eq 'shop.seed.json|pokey -Target local-shop2|local-shop')

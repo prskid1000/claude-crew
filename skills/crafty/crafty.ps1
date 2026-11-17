@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L179 wt · L487 stack · L669 gate · L986 check · L1295 pipes · L1352 guard · L2200 dir ·
-  L2210 checkpoint · L2239 prior · L2277 tracker · L2299 task spec · L2475 scope · L2522 host
+Sections: L23 init · L30 sweep · L179 wt · L487 stack · L669 gate · L986 check · L1303 pipes · L1360 guard · L2208 dir ·
+  L2218 checkpoint · L2247 prior · L2285 tracker · L2307 task spec · L2483 scope · L2530 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1024,6 +1024,12 @@ function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
   $cons = Join-Path (Get-KitPath logs -Create) "constraints-$((Get-KitHash ($Dir.ToLower()) MD5).Substring(0, 12)).txt"; $pins -replace '\[[^\]]*\]' | Set-Content -LiteralPath $cons -Encoding utf8
   Write-Host "[check] ENV-FIX to kitty (shared venv, when no build uses it; never run it from a worktree): `"$venvPy`" -m pip install -c `"$cons`" $quoted"
 }
+# a clean tree's build, keyed by its tree: envy deploys of the same code stage its artifact instead of building (envy Find-CheckBuild)
+function Save-CheckBuild([string]$Dir, [string]$Cmd, [datetime]$Start) {
+  $top = "$(git -C $Dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $top -or @(git -C $top status --porcelain 2>$null).Count) { return }
+  $tree = "$(git -C $top rev-parse 'HEAD^{tree}' 2>$null)".Trim(); if (-not $tree) { return }
+  Write-KitAtomic (Join-Path (Get-KitPath check-builds -Create) "$tree.json") ([ordered]@{ tree = $tree; dir = $Dir; rel = [IO.Path]::GetRelativePath($top, $Dir).Replace('\', '/'); cmd = $Cmd; start = $Start.ToString('o'); at = (Get-Date).ToString('o') } | ConvertTo-Json)
+}
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -1276,6 +1282,7 @@ foreach ($s in $steps) {
     # python test output is logged too: "No module named" tells a stale venv from a failed test
     $runLog = if ($s -eq 'test' -and $pyRun) { Join-Path (Get-KitPath logs -Create) "check-$(Hash12 $st.dir.ToLower())-$PID.log" }   # per run: parallel checks of one dir
     if ($runLog) { Write-Host "[check] test output goes to $runLog and prints when the run ends"; $env:PYTHONUTF8 = '1' }
+    $bt0 = (Get-Date).AddSeconds(-2)
     try { & $KitCmd.dev gate -Dir $st.dir -Cmd $(if ($runLog) { "($cmd) > `"$runLog`" 2>&1" } else { $cmd }); $rc = $LASTEXITCODE } finally {
       if ($lk) { Remove-KitLock "$($lk.lock)" }
       if ($runLog) { $runText = Get-Content -LiteralPath $runLog -Raw -Encoding utf8 -ErrorAction SilentlyContinue; if ($runText) { Write-Host $runText.TrimEnd() }; Remove-Item -LiteralPath $runLog -ErrorAction SilentlyContinue } }
@@ -1284,6 +1291,7 @@ foreach ($s in $steps) {
   $stale = if ($rc -and $runLog) { @(Get-PyStaleModules $st.dir $pyRun $runText $tl) } else { @() }   # 24 of 39 python builds failed on the env, not the code
   if ($stale.Count) { Write-PyStaleEnv $st.dir $pyRun $stale; Write-Host "[check] exit 5: $s UNRUN (stale-env, test exit $rc)"; exit 5 }
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
+  if ($s -eq 'build' -and -not $unrun) { Save-CheckBuild $st.dir $cmd $bt0 }
   }
   if (-not $Show) { Write-Host "[check] $s $(if ($unrun) { 'UNRUN (not a pass: see above)' } else { 'ok' })" }
 }

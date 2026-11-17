@@ -22,8 +22,8 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L35 config · L230 state · L277 layer drops · L349 leases · L477 code · L509 migrations ·
-  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds · L833 hooks · L905 marks · L1085 seed ·
-  L1152 processes · L1531 daemon · L1991 cleanup · L2063 doctor · L2116 verbs
+  L512 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L660 shared builds · L818 hooks · L890 marks · L1070 seed ·
+  L1137 processes · L1516 daemon · L1976 cleanup · L2048 doctor · L2101 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -658,28 +658,11 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
   @{ kept = $kept; dropped = $dropped; targetSha = $base }
 }
 # ---- shared builds: a recorded copy of the same code + build config is staged, no build (reuseBuilds: own lane; shareBuild: any)
-$script:BuildKeys = @{}; $script:SharedStage = @{}
-function BuildKey([string]$e, $s) {
-  $sb = $s.shareBuild -eq $true
-  if (-not ($sb -or (Opt 'reuseBuilds' $false)) -or -not $s.build -or -not $s.repo -or -not ($s.artifact -or $s.static)) { return $null }
-  $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; if (-not $wt -or -not (Test-Path -LiteralPath (Join-Path $wt '.git'))) { return $null }
-  $n = 0; while ($sb -and $n -lt 10 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv prepare*') { $n++ }   # lane paths only ({cache}, {env}, {dir}, {wt})
-  $tree = "$(git -C $wt rev-parse "HEAD~$n^{tree}" 2>$null)".Trim(); if ($LASTEXITCODE -or -not $tree) { return $null }
-  $cfg = [ordered]@{ tree = $tree; dir = "$($s.dir)"; build = "$($s.build)"; artifact = "$($s.artifact)"; static = "$($s.static)"; unpack = "$($s.unpack)"; prepare = "$($s.prepare)"; reactor = @($s.reactor); env = $s.env }
-  if (-not $sb) { $cfg.lane = $e }
-  (Get-KitHash ($cfg | ConvertTo-Json -Depth 8 -Compress) SHA1).ToLower()
-}
-# -> @{ lane; dir; path } of a recorded copy with this key (this lane first), else nothing; never throws
-function Find-SharedBuild([string]$e, $s, [string]$key) {
-  foreach ($l in @($e; if ($s.shareBuild -eq $true) { LaneNames $e | Where-Object { $_ -ne $e } })) {
-    try { $st = Read-State $l; $hit = @(@(if ($st.builds -is [hashtable]) { $st.builds[$s.name] }) | Where-Object { $_ -and $_.key -eq $key -and $_.path -and (Test-Path -LiteralPath "$($_.path)") })[-1] } catch { continue }
-    if ($hit) { return @{ lane = $l; dir = "$($hit.dir)"; path = "$($hit.path)" } }
-  }
-  $null
-}
 function Build-Repo([string]$e, [string]$rn) {
   foreach ($s in EnvServices $e | Where-Object { $_.build -and (RepoOf $e $_) -eq $rn }) {
     $script:SharedStage.Remove($s.name); $script:BuildKeys[$s.name] = $key = BuildKey $e $s
+    $script:CheckBuild.Remove($s.name)
+    if ($cb = Find-CheckBuild $e $s) { Write-Host "[$e] $($s.name): a check built the same code ($($cb.path)): staged, no build"; $script:CheckBuild[$s.name] = $cb; Event $e 'build-check' @{ service = $s.name; repo = $rn; from = $cb.path }; continue }
     $hit = if ($key) { Find-SharedBuild $e $s $key }
     if ($hit) { Write-Host "[$e] $($s.name): lane $($hit.lane) built the same code: its copy is staged, no build"; $script:SharedStage[$s.name] = $hit; Event $e 'build-shared' @{ service = $s.name; repo = $rn; from = $hit.lane; key = $key }; continue }
     $dir = SvcDir $e $s; $cmd = Expand-Placeholders ([string]$s.build) $e $s $dir ''
@@ -747,14 +730,16 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
       Add-ReleaseFiles $src $to; $out[$s.name] = $to
     } else {
       $excl = if ($s.artifactExclude) { [string]$s.artifactExclude } else { 'original|sources|javadoc|plain' }
-      $f = Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue | Where-Object Name -notmatch $excl | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      $cbf = $script:CheckBuild[$s.name]; $script:CheckBuild.Remove($s.name)   # a check's artifact is copied: its worktree keeps it
+      if ($cbf -and -not ((Test-Path -LiteralPath $cbf.path) -and (Get-Item -LiteralPath $cbf.path).LastWriteTimeUtc -eq $cbf.t)) { throw "[$e] $($s.name): the check build $($cbf.path) is gone or rebuilt since the build step: deploy again (it builds then)" }
+      $f = if ($cbf) { Get-Item -LiteralPath $cbf.path } else { Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue | Where-Object Name -notmatch $excl | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
       if (-not $f) { throw "[$e] $($s.name): no artifact matches $($s.artifact) in $dir after the build" }
       $out[$s.name] = $null
       if ($s.unpack) {   # a failed unpack: the plain artifact goes live, the event says why
         try { $out[$s.name] = Expand-Artifact $e $s $f.FullName $to }
         catch { $why = "$_".Split("`n")[0]; Write-Host "[$e] $($s.name): $why - staged the plain artifact instead"; Event $e 'unpack-fallback' @{ service = $s.name; tag = $tag; why = $why }; Get-ChildItem -LiteralPath $to -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
       }
-      if (-not $out[$s.name]) { if ((Opt 'stageLinks' $true) -and -not @(EnvServices $e | Where-Object { $_.name -ne $s.name -and "$($_.artifact)" -eq $s.artifact -and (SvcDir $e $_) -eq $dir }).Count) { Move-Item -LiteralPath $f.FullName $to -Force } else { Copy-Item $f.FullName $to -Force }; $out[$s.name] = Join-Path $to $f.Name }
+      if (-not $out[$s.name]) { if (-not $cbf -and (Opt 'stageLinks' $true) -and -not @(EnvServices $e | Where-Object { $_.name -ne $s.name -and "$($_.artifact)" -eq $s.artifact -and (SvcDir $e $_) -eq $dir }).Count) { Move-Item -LiteralPath $f.FullName $to -Force } else { Copy-Item $f.FullName $to -Force }; $out[$s.name] = Join-Path $to $f.Name }
     }
     $bo = $out[$s.name]
     if ($bk) { Update-State $e { param($x) if ($x.builds -isnot [hashtable]) { $x.builds = @{} }; $x.builds[$s.name] = @(@(@($x.builds[$s.name]) | Where-Object { $_ -and $_.key -ne $bk }) + @(@{ key = $bk; dir = $to; path = $bo; at = (Now) }) | Select-Object -Last 3) } }
