@@ -91,5 +91,30 @@ const o = await run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }], m
 console.log(`one-area:${o.refused === true && o.unsplittable === true && !o.next && !o.batch && !calls.some((c) => /^build:/.test(c))}`)
 '@
 Expect-Each (Invoke-Js wg-one $js1a $wfd) 'buildy budget: #' 'one-area' -Show 5
+# K66: a budget stop after the build hands next a resume map (its MRs and worktrees), never a bare mode resume
+$js1b = @'
+const agent = async (p, o) => /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":1000000,"estimate":700000,"stopAt":0.8}') : o.label === 'budget' ? _ok(JSON.stringify({ spent: 900000 }))
+ : /^build:/.test(o.label) ? _rep({ status: 'FAIL', env: 'e', rounds: 1, failing: ['G1'], goalsDoc: 'g' }) : _ok('[]')
+const o = await run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }], mandate: ['m'], ..._kl }, agent, _n, _n, pipeline)
+const rs = o.next && o.next.args.resume && o.next.args.resume.X1
+console.log(`resume-map:${o.next && o.next.args.mode === 'resume' && rs && rs.state === 'budget stop' && rs.mrs.length === 1 && rs.worktrees[0] === 'C:/wt/x1'}`)
+'@
+Expect-Each (Invoke-Js wg-res $js1b $wfd) 'buildy budget: #' 'resume-map' -Show 5
+# K69: testy next keeps the run options; a mostly NOT_TESTED shared-env item is held (never dropped unpublished); verify corrects the defect class
+$js1c = @'
+const sim = async (args, checks, verdicts, spent = 0) => { const calls = []; const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
+  if (/^record-args/.test(o.label)) return _ok('RECORDED x\nBUDGET {"cap":1000000,"estimate":750000,"stopAt":0.8}')
+  if (o.label === 'budget') return _ok(JSON.stringify({ spent }))
+  if (/^(test|retest)/.test(o.label)) return { ..._res(o.label.split(':')[1], checks.map((c) => _ck(...c))), handoff: '' }
+  if (/^verify/.test(o.label)) return { verdicts }
+  return { ..._ok('[]'), json: '' } }; return { calls, o: await run({ runDir: 'C:/r/run1', ..._kl, mandate: ['m'], ...args }, agent, _n, _n, null) } }
+const a = await sim({ items: ['W1', 'W2'].map((c) => _item(c, 'web', { skipClose: true })), webParallel: 1, verify: false, devices: 'none' }, [['C1', 'PASS']], [], 900000)
+console.log(`next-opts:${a.o.next && a.o.next.args.verify === false && a.o.next.args.webParallel === 1 && a.o.next.args.devices === 'none'}`)
+const b = await sim({ items: [_item('W1', 'web')] }, [['C1', 'NOT_TESTED'], ['C2', 'NOT_TESTED'], ['C3', 'PASS']])
+console.log(`broken-held:${b.calls.some((c) => /^hold:W1/.test(c.label) && /broken run/.test(c.prompt)) && !b.calls.some((c) => /^close:W1/.test(c.label))}`)
+const v = await sim({ items: [_item('W1', 'web', { skipClose: true })] }, [['C1', 'FAIL', { defect: 'own', evidence: ['e.png'] }]], [{ id: 'C1', outcome: 'confirmed', attempts: 1, observed: 'o', evidence: [], basis: 'none', defect: 'new' }])
+console.log(`verify-defect:${v.calls.some((c) => /^hold:W1/.test(c.label) && /"defect":\s*"new"/.test(c.prompt))}`)
+'@
+Expect-Each (Invoke-Js wg-tn $js1c (Join-Path $src 'workflows/testy.js')) 'testy: #' 'next-opts', 'broken-held', 'verify-defect' -Show 8
 Remove-TestKit $k
 Complete-Tests

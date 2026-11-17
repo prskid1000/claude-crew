@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L151 record-args · L170 budget · L189 build-prompt · L264 ship-prompt · L282 plan · L300 spike ·
-//   L313 local-loop · L386 stages · L538 ship · L578 debate · L687 deploy · L702 learn
+//   L313 local-loop · L386 stages · L539 ship · L579 debate · L692 deploy · L707 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -456,6 +456,7 @@ const results = await pipeline(
      { ...dvo(a, 'resume', 'Decide'), agentType: 'devy' })
     cur = await localLoop(a, mergeReports(cur, r2, `Decision ${d.decisionId}`), LOCAL_RETRIES, 'Decide')
    }
+   if (cur.budgetStopped) break   // no more decision waits after the budget gate: the rest goes to next
   }
   return { ...cur, needsDecision: [], needsEnvFix: [] }
   })
@@ -579,6 +580,7 @@ async function askBlocking(a, r, open, decided) {
 async function settleDisputes(a, rep, open, decided) {
  const of = (d) => open.find((f) => fkey(f) === d.finding), ds = ((rep && rep.disputes) || []).filter((d) => d && d.evidence && of(d) && !decided.has(d.finding))   // once per finding
  if (!ds.length) return open
+ const said = new Map()   // finding key -> the owner's free-text answer
  log(`${a.id}: devy contests ${ds.length} finding(s) -> one revy answer`)
  const v = await agent(`Kind dispute: devy ${a.id} contests your findings on ${rep.mrs.map((m) => m.url).join(', ')}; answer as your agent definition says.${PATHS}
 ${ds.map((d) => `- ${d.finding}: ${of(d).problem} | devy: ${d.evidence}`).join('\n')}`, { label: `dispute:${a.id}`, phase: 'Review', schema: ANSWERS, agentType: 'revy', ...pick('review') })
@@ -590,9 +592,10 @@ ${ds.map((d) => `- ${d.finding}: ${of(d).problem} | devy: ${d.evidence}`).join('
  }
  await Promise.all([...decided].filter(([k, v]) => ds.some((d) => d.finding === k) && !['A', 'B'].includes(v)).map(async ([k, id]) => {
   const w = (await waitAnswer(id, `dispute-wait:${a.id}`, WAIT_SLICES)) || '', ch = (/ANSWERED \S+:\s*(A|devy)\b/i.test(w) && 'A') || (/ANSWERED \S+:\s*(B|revy)\b/i.test(w) && 'B')
-  if (ch) decided.set(k, ch)   // other words: still pending
+  if (ch) decided.set(k, ch)
+  else if (/ANSWERED \S+:\s*\S/i.test(w)) { decided.set(k, 'B'); said.set(k, w.replace(/^[\s\S]*?ANSWERED \S+:\s*/i, '').trim()) }   // the owner's own words: fixed their way, never pending
  }))
- return open.filter((f) => decided.get(fkey(f)) !== 'A')
+ return open.filter((f) => decided.get(fkey(f)) !== 'A').map((f) => (said.has(fkey(f)) ? { ...f, fix: `${f.fix || ''} (owner: ${cl(said.get(fkey(f)), 300)})` } : f))
 }
 // a debate while the run's slot is free (1 per run; owner: always) and the budget allows: one rechy moderator spawns fresh
 // advocates and revy (its agent definition); else, or failed: a plain A/B ask
@@ -678,7 +681,9 @@ const outcome = {
 }
 // budget-stopped areas and those beyond args.batch: a ready relaunch
 const leftover = [...out.filter((x) => x.budgetStopped).map((x) => A0.agents.find((g) => g.id === x.id)).filter(Boolean), ...(BATCH ? A0.agents.slice(BATCH) : [])]
-if (leftover.length) { outcome.next = nextCall(leftover, out.some((x) => x.budgetStopped) ? { mode: 'resume' } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
+// a stopped area resumes from what it reported (MRs, worktrees, doc), never from scratch
+const resMap = Object.fromEntries(out.filter((x) => x.budgetStopped).map((x) => { const r = x.report || {}; return [x.id, { ...(RES[x.id] || {}), state: 'budget stop', skip: [].concat((RES[x.id] || {}).skip || []), mrs: r.mrs || [], doc: r.testerGuide || '', worktrees: r.worktrees || [] }] }))
+if (leftover.length) { outcome.next = nextCall(leftover, Object.keys(resMap).length ? { mode: 'resume', resume: resMap } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
 // relaunched once the waitFor producers merged
 const held = out.filter((x) => x.waitFor)
 if (held.length) outcome.afterMerge = { waitFor: uniq(held.flatMap((x) => x.waitFor)), next: nextCall(held.map((x) => A0.agents.find((g) => g.id === x.id))) }

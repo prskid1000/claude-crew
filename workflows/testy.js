@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L52 record-args · L73 prepare · L102 config · L133 prompts · L222 local · L250 app · L279 test-prompt ·
-//   L333 verify · L395 run-item · L576 pool · L598 budget · L628 run · L674 learn
+// Sections: L16 args · L52 record-args · L73 prepare · L102 config · L133 prompts · L223 local · L251 app · L280 test-prompt ·
+//   L334 verify · L396 run-item · L576 pool · L598 budget · L630 run · L676 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -194,7 +194,8 @@ const VERIFY_SCHEMA = {
   attempts: { type: 'integer', description: 'how many times you ran the check' },
   observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } },
   basis: { type: 'string', description: '_verify evidence files, the log window read (UTC), or the code path (file:line); none' },
-  knownBug: { type: 'string', description: 'confirmed FAIL already tracked by an open task (not a tested task): its tracker id; empty = keep the class' } },
+  knownBug: { type: 'string', description: 'confirmed FAIL already tracked by an open task (not a tested task): its tracker id; empty = keep the class' },
+  defect: { type: 'string', enum: ['own', 'new', ''], description: 'confirmed FAIL: own = the task\'s own expected behaviour, new = another defect; empty = keep' } },
   required: ['id', 'outcome', 'attempts', 'observed', 'evidence', 'basis'] } } },
  required: ['verdicts'],
 }
@@ -512,10 +513,8 @@ async function runItem(it, idx, L) {
   retried = true
  }
  // still mostly NOT_TESTED after the stronger retry on a shared env: a broken run, not a verdict (a local item has ENV-FIX instead)
- if (ntShare(res) > 0.5 && !LOCALENV(it)) {
-  log(`${it.code}: still ${Math.round(ntShare(res) * 100)}% NOT_TESTED after the stronger retry — not publishing; needs a manual look`)
-  return { code: it.code, error: `${Math.round(ntShare(res) * 100)}% NOT_TESTED, not published`, result: res }
- }
+ const broken = ntShare(res) > 0.5 && !LOCALENV(it) ? `${Math.round(ntShare(res) * 100)}% NOT_TESTED after the stronger retry on a shared env: a broken run, not a verdict - results held, the coordinator decides (retest or close)` : ''
+ if (broken) log(`${it.code}: ${broken}`)   // held below (held.json: supervise asks), never dropped unpublished
  const envFixOpen = !!LOCALENV(it) && res.checks.some((c) => c.result === 'NOT_TESTED')
  if (envFixOpen) log(`${it.code}: ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (bossy E4)`)
  const fails = res.checks.filter((c) => c.result === 'FAIL')
@@ -545,6 +544,7 @@ async function runItem(it, idx, L) {
    // re-test + audit text lives in verify (the report renders it outside the Results cell); observed stays within the note cap
    const audit = c.verify
    if (outcome === 'confirmed' && String(x.knownBug || '').trim()) c.knownBug = String(x.knownBug).trim()   // pokey finalize checks the id exists
+   if (outcome === 'confirmed' && ['own', 'new'].includes(x.defect)) c.defect = x.defect   // the verifier corrects the class
    if (outcome === 'confirmed') c.verify = vJoin('confirmed', `Independent re-test confirmed: ${x.observed}`, audit)
    else if (outcome === 'inconclusive') c.verify = vJoin('inconclusive', `Re-test inconclusive (conditions not recreated): ${x.observed}`, audit)
    else if (firstEv) { c.verify = vJoin('not reproduced (flaky)', `An independent re-test under the same conditions did not reproduce it; the first run's evidence stands. Re-test: ${x.observed}`, audit); c.flaky = true }
@@ -554,16 +554,16 @@ async function runItem(it, idx, L) {
  const n = (k) => res.checks.filter((c) => c.result === k).length
  const line =`${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
  const holdLocal = envFixOpen && !res.checks.some((c) => c.result === 'FAIL' && c.defect !== 'new' && !c.knownBug)
- if (it.skipClose || holdLocal) {
+ if (it.skipClose || holdLocal || broken) {
   // verdicts stay on disk for the lead (finalize -Code); held.json tells supervise + workers
-  const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator fixes the env + pokey.ps1 retest (never failedTesting for an env reason)` : 'publish left to the lead (skipClose)'
+  const why = broken || (holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator fixes the env + pokey.ps1 retest (never failedTesting for an env reason)` : 'publish left to the lead (skipClose)')
   const q = (s) => String(s).replace(/'/g, "''"), patch = resultsPatch(written, res)
   await agent(`STEP (checky, role lead): run these in PowerShell, exactly as given, then return ok=true with their output.
 ${patch ? `${patch}\n` : ''}& '${Q}' results hold -RunDir '${R.runDir}' -Code ${it.code} -Why '${q(why)}' -Summary '${q(line)}'${envFix ? ` -EnvFix '${q(JSON.stringify(envFix))}'` : ''}
 ${CHECK(it, ` -ExpectChecks ${res.checks.length}`)} (publishes nothing). Exit 1: return ok=true anyway with that output (the lead fixes
  them before publishing).`,
    { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('hold'), effort: 'low' })
-  log(`${line} (results saved; ${holdLocal ? 'ENV-FIX unresolved: the coordinator decides' : 'publish left to the lead'})`)
+  log(`${line} (results saved; ${broken ? 'broken run: the coordinator decides' : holdLocal ? 'ENV-FIX unresolved: the coordinator decides' : 'publish left to the lead'})`)
   return { code: it.code, summary: line, result: res, eventful: true, envFix, envFixOpen: holdLocal, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
  }
  let fin = await agent(finalPrompt(it, res, written), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('close'), effort: 'low' })
@@ -605,7 +605,9 @@ const PLAN = [...R.items.map((it) => `checky/${it.model || PM('test')}:1,checky/
 const REC = await recordArgs(RUN0, R.runDir, 'Test', PLAN)
 takeConfig(REC)
 try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(REC) || [])[1])); BUD.unit = BUD.estimate / R.items.length } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
-const nextCall = (only, extra) => ({ scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, ...(only && { only }), ...(ARGS0.lanes && { lanes: ARGS0.lanes }), ...(ARGS0.instance && { instance: ARGS0.instance }), ...extra } })
+// the caller's run options carry into next (a short-form call reads the rest from run.json)
+const OPTS = Object.fromEntries('devices verify learn webParallel apiParallel skipClose context contextFiles outOfScope envFixCycles envFixWaitMinutes alsoTargets'.split(' ').filter((k) => ARGS0[k] !== undefined).map((k) => [k, ARGS0[k]]))
+const nextCall = (only, extra) => ({ scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, ...OPTS, ...(only && { only }), ...(ARGS0.lanes && { lanes: ARGS0.lanes }), ...(ARGS0.instance && { instance: ARGS0.instance }), ...extra } })
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  const batch = Math.max(1, Math.floor(R.items.length * BUD.stopAt * BUD.cap / BUD.estimate))
  log(`REFUSED: estimate ${BUD.estimate} > ${BUD.stopAt * 100}% of the cap ${BUD.cap}: test ${batch} item(s) per run (args.batch)`)
