@@ -1084,8 +1084,8 @@ foreach ($w in $wfDirs) {
   $done = [bool]($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }) -or ($wsc -and (Get-Command Test-KitJournalFinished -ErrorAction SilentlyContinue) -and (Test-KitJournalFinished $w.FullName (Split-Path $wsc -Leaf) $(if (@($wrec | Where-Object { (Test-KitHolder $_) -eq $true }).Count) { 10 } else { 2 })))   # the engine writes no end marker
   if (-not $done -and (Get-KitWorkflowStop $w $wrec)) { continue }   # stopped (TaskStop, restart)
   if ($done -and $AutoFix -and -not $state.closedRuns[$w.Name] -and (Within 'run records')) {
-    $state.closedRuns[$w.Name] = $now.ToString('o'); $cl = @(Invoke-Bounded $KitCmd.orch @('launch', '-Done', '-RunId', $w.Name)) -join ' '
-    if ($cl -match 'marked completed') { Flag 'INFO' "auto-fixed: run $($w.Name) finished: launch record closed" 'Nothing to do.' }
+    $state.closedRuns[$w.Name] = $now.ToString('o')   # a child bossy took 3-8 s of the sweep budget (K20): closed in the background
+    $null = Invoke-KitBackground "launch -Done $($w.Name)" $KitCmd.orch @('launch', '-Done', '-RunId', $w.Name); Flag 'INFO' "auto-fixed: run $($w.Name) finished: its launch record closes in the background" 'Nothing to do.'
     Phase 'workflows'
   }
   $silentH = ($now - (Get-Item $j).LastWriteTime).TotalHours

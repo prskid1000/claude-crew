@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, file locks (PowerShell and python), board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
+bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, file locks (PowerShell and python), bugbrief repos (from MRs, else configured), board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
 Usage: pwsh -NoProfile -File <kit>/tests/bossy-generic.tests.ps1 (or tests/kit-tests.ps1 -Area bossy-generic).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -89,5 +89,21 @@ Expect "board leave -Agent -Run: the newest of 2 rows left, the older kept ($($b
 $akS = pwsh @np $O supervise -Ack 'BUILDS · HQA' -Reason t 2>&1 | Out-String; $akN = pwsh @np $O supervise -Ack 'BUILDS · XYZ' 2>&1 | Out-String; $akC = $LASTEXITCODE
 $akH = pwsh -NoProfile -Command ". '$O'; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; @(Select-KitFlags @([pscustomobject]@{ level = 'WATCH'; what = 'b1'; kind = 'BUILDS'; who = 'HQA'; problem = 'x failed' }, [pscustomobject]@{ level = 'WATCH'; what = 'b2'; kind = 'BUILDS'; who = 'HQB'; problem = 'y failed' }) `$a (Get-Date) | ForEach-Object what) -join ','"
 Expect "supervise -Ack: short kind + who accepted, hides that holder's flag only; an unknown short one refused, exit 2 ($akH)" ($akS -match 'hides 1 flag' -and $akN -match '20\+ characters' -and $akC -eq 2 -and "$akH" -match '^b2,1 acknowledged')
+# bossy.ps1 bugbrief (a QA bug's brief; moved from guard.tests: its cap)
+$bbScript = Join-Path $k 'skills/bossy/bossy.ps1'
+$kl = Join-Path $k 'skills/crafty/kit.local.json'; Set-JsonFile $kl @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm' }) }
+$bb = Invoke-PsTest bb @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; Update-KitTracking { param($tk) $tk.tasks.b1 = @{ task = 'b1' } }
+function Get-TrackerTask { @{ name = 'E500'; description = 'spike' } }; function Get-TrackerComments { }; function Get-TaskMrBranches { @{ repo = 'w'; branch = 'm' } }
+$o = Invoke-BugBrief -Task b1 3>$null | Out-String; "d:$($o -match '"id":"B-b1"' -and (Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match '(?s)\*\*b1\*\* .*E500: spike.*\| w \| `C:/w` \| `m`')"
+function Get-TaskMrBranches { }; Remove-Item (Join-Path (Get-KitPath briefs) b1.md); $null = Invoke-BugBrief -Task b1 3>$null 2>$null; "r:$((Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match '\| w \| `C:/w` \|')"   # no MR: the configured repos
+$klx = Join-Path (Split-Path (Split-Path $args[0])) 'crafty/kit.local.json'; $kl0 = Get-Content $klx -Raw; '{"repos":[{"checkout":"C:/w"}]}' | Set-Content $klx
+"e:$(try { $null = Invoke-BugBrief -Task b1 3>$null 2>$null; 'no throw' } catch { "$_" -match 'no repos in kit.local.json' })"; Set-Content $klx $kl0   # no repo name anywhere: an error
+function Get-TrackerTask { @{ name = 'E500'; description = "## Failed checks`n### C1 — a`n**Saw:** x`n### C2 — b`n**Saw:** y`n### C3 — c`n**Saw:** z" } }
+$null = Invoke-BugBrief -Task b1 -Repos w -Only C1, C2 -Skip 'C2=web; api area' 3>$null; $bt = Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw
+"o:$($bt -match '(?s)## Failed checks\s+- \*\*C1\*\*[^\n]*\n\n## Not yours \(coordinator\)\s+- \*\*C2\*\* — web; api area\s+- \*\*C3\*\* — outside -Only')"
+"n:$(try { Invoke-BugBrief -Task b1 -Repos w -Only C9 3>$null; 0 } catch { "$_" -match 'no check C9 ' })"
+'@ @($bbScript); Remove-Item $kl
+Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else the configured repos; -Only / -Skip -> a Not yours list (a ; in a why kept), an unknown id = error; no repo name anywhere = error (#)' 'd', 'r', 'e', 'o', 'n'
 Remove-TestKit $k
 Complete-Tests

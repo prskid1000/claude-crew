@@ -23,10 +23,11 @@ New-Journal wf_r3 @(@{ type = 'started'; agentId = 'b1'; label = 'learn' }, @{ t
 New-Entry 'review-PY-RET' r1 49; New-Entry 'revy-1400' kit-fix 40; New-Entry 'kitty' kit-fix 41 'left'; New-Entry 'H9' r2 30; New-Entry 'SD' r1 49
 $null = pwsh @np $O launch -RunId wf_r3 -Script buildy.js -ArgsJson '{"brief":"C:/b/r3.md","run":"r3"}' 2>&1
 $sj = pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json; $sw = @($sj.flags | ForEach-Object { "[$($_.level)] $($_.what)" }) -join "`n"
-$lr3 = Read-Json (Join-Path (TkPath $k launches) 'wf_r3.json'); $left = { param($a) $e = Read-Json (Join-Path $bd "s-$a.json"); $e.status -eq 'left' -and $e.finished }
+for ($wi = 0; $wi -lt 60; $wi++) { $lr3 = Read-Json (Join-Path (TkPath $k launches) 'wf_r3.json'); if ($lr3.completed) { break }; Start-Sleep 1 }   # closed in the background (K20)
+$left = { param($a) $e = Read-Json (Join-Path $bd "s-$a.json"); $e.status -eq 'left' -and $e.finished }
 Expect 'supervise -AutoFix: stale entries with a journal result (not one running again) or a finished parent leave (INFO); a silent one = STUCK (WATCH); a finished run''s record closes' ((& $left 'review-PY-RET') -and (& $left 'revy-1400') -and -not (& $left 'H9') -and -not (& $left 'SD') -and
   $sw -match '\[INFO\] auto-fixed: board entry review-PY-RET \(r1\) left: its workflow step has a journal result' -and $sw -match '\[INFO\] auto-fixed: board entry revy-1400 \(kit-fix\) left: every other agent of its run left' -and
-  $sw -match '\[WATCH\] STUCK H9 \(revy\) \(r2\): no progress for 30 min' -and $sw -match '\[INFO\] auto-fixed: run wf_r3 finished: launch record closed' -and $lr3.completed -and $lr3.learned -match 'own|launch -Done')
+  $sw -match '\[WATCH\] STUCK H9 \(revy\) \(r2\): no progress for 30 min' -and $sw -match '\[INFO\] auto-fixed: run wf_r3 finished: its launch record closes in the background' -and $lr3.completed -and $lr3.learned -match 'own|launch -Done')
 # status rows, one per state; transcripts (Claude, Codex, Antigravity shapes) with set mtimes
 $tx = { param($f, [string[]]$Lines, [int]$Min = 1) New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Set-Content $f $Lines; (Get-Item $f).LastWriteTime = (Get-Date).AddMinutes(-$Min); $f }
 $ago = { param($m) (Get-Date).AddMinutes(-$m).ToString('o') }; $wd = Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/workflows/wf_s1'
