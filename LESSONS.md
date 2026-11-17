@@ -18,6 +18,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- devtools.py finish runs on a task created without a spec (no Problem, Goal, Items, Acceptance, Links) -> write the tracker spec sections before finish, or create tasks through tracker create with a spec (tracker describe refused finish 3 times, task stuck before promoted)
 - A spec-only (test-only) area finds a product bug -> pin today's behaviour in the spec, report BACKEND FIX + `decide ask`, never edit product source (a spec-only area's MR changed 4 service / repository files, passed review and CI, and reached a test env). (1x)
 - devtools.py finish on a parent task whose description is rendered from a spec -> update the description with crafty.ps1 tracker update -Spec before finish; finish must skip describe on spec-rendered tasks (finish failed 3x at tracker describe after docs and MRs were already posted)
 - looking for a skill, script or file -> Glob / Grep the kit, ~/.claude or the repo; never a whole-drive find (an orphaned whole-drive find held the shell and disk)
@@ -54,6 +55,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
+- testy finalize -Check on a run whose run.json title is long -> keep the run title at 25 words or fewer when the run is created (finalize -Check failed EXIT=1 twice and needed a hand edit of run.json)
 - a test run lasts longer than a few minutes (a full e2e suite) -> start it detached with Start-Process and a log file, never as a Bash run_in_background child (a 3.5 h e2e run died at 42 min with the shell, no exit line)
 - publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames)
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
