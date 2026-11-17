@@ -11,16 +11,20 @@ $k = New-TestKit gwarm; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $gc = Join
 $mine = { @(Get-Process pwsh -ErrorAction SilentlyContinue | Where-Object { "$($_.CommandLine)" -like "*guard_server*" -and "$($_.CommandLine)" -like "*$(Split-Path $k -Leaf)*" }) }
 $ins = @('git stash', 'git status --short', 'echo hi') | ForEach-Object { @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $_ } } | ConvertTo-Json -Compress -Depth 4 }
 # the decision and its reason (key order differs per process)
-$nz = { param($s) if ("$s".Trim()) { $h = ("$s" | ConvertFrom-Json).hookSpecificOutput; "$($h.permissionDecision)|$($h.permissionDecisionReason)" } else { '' } }
+$nz = { param($s) if ("$s".Trim()) { $h = ("$s" | ConvertFrom-Json).hookSpecificOutput; "$($h.permissionDecision)|$($h.permissionDecisionReason)|$($h.additionalContext)" } else { '' } }
 $viaPlain = { param($j) & $nz (($j | pwsh @np $D guard) -join '') }
 $viaClient = { param($j) & $nz (($j | node $gc) -join '') }
-$plain = @($ins | ForEach-Object { & $viaPlain $_ })
+$pms = @(); $plain = @($ins | ForEach-Object { $sw = [Diagnostics.Stopwatch]::StartNew(); & $viaPlain $_; $pms += [int]$sw.Elapsed.TotalMilliseconds })
+$med = { param($v) @($v | Sort-Object)[[int](@($v).Count / 2)] }   # warm vs plain in the same run: a loaded suite slows both
 $first = @($ins | ForEach-Object { & $viaClient $_ })   # no server yet: the plain path, and a server starts
 for ($i = 0; $i -lt 40 -and -not (& $mine).Count; $i++) { Start-Sleep -Milliseconds 250 }; Start-Sleep -Seconds 2   # it loads the kit
 $ms = @(); $warm = @($ins | ForEach-Object { $sw = [Diagnostics.Stopwatch]::StartNew(); & $viaClient $_; $ms += [int]$sw.Elapsed.TotalMilliseconds })
-Expect "warm guard: the same answers as crafty.ps1 guard (cold and warm), a server runs, warm calls fast ($($ms -join ' ') ms)" (($first -join '~') -eq ($plain -join '~') -and ($warm -join '~') -eq ($plain -join '~') -and $plain[0] -match 'git stash is shared' -and (& $mine).Count -eq 1 -and @($ms | Where-Object { $_ -gt 900 }).Count -le 1)
+Expect "warm guard: the same answers as crafty.ps1 guard (cold and warm), a server runs, warm calls fast ($($ms -join ' ') ms)" (($first -join '~') -eq ($plain -join '~') -and ($warm -join '~') -eq ($plain -join '~') -and $plain[0] -match 'git stash is shared' -and (& $mine).Count -eq 1 -and (& $med $ms) * 3 -lt (& $med $pms))
 $env:KIT_LIVE_EDIT = '1'; $null = & $viaClient $ins[0]; Remove-Item Env:KIT_LIVE_EDIT; $le2 = & $viaClient $ins[0]
 Expect 'warm guard: the caller''s KIT_* env counts for its call only' ($le2 -eq $plain[0])
+$rt = "$(pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; Get-KitRuntime")".Trim().Replace('\', '/'); $wo = @("$rt/zzbogus/a.txt", "$rt/work/agents/x/a.txt") | ForEach-Object { @{ tool_name = 'Write'; cwd = $k; tool_input = @{ file_path = $_; content = 'x' } } | ConvertTo-Json -Compress -Depth 4 }
+$wp = @($wo | ForEach-Object { & $viaPlain $_ }); $ww = @($wo | ForEach-Object { & $viaClient $_ })
+Expect "warm guard: one call's layout note never carries into the next ($($ww -join ' ~ '))" (($ww -join '~') -eq ($wp -join '~') -and $wp[0] -match 'layout' -and $wp[1] -notmatch 'layout')
 $old = @((& $mine).Id); Set-Content (Join-Path $k 'skills/crafty/kit.local.json') '{}'; $after = & $viaClient $ins[0]
 for ($i = 0; $i -lt 20 -and @(Get-Process -Id $old -ErrorAction SilentlyContinue).Count; $i++) { Start-Sleep -Milliseconds 250 }
 Expect "warm guard: a kit file change ends the server ($($old -join ',')); that call gets the plain answer" ($old.Count -eq 1 -and $after -eq $plain[0] -and -not @(Get-Process -Id $old -ErrorAction SilentlyContinue).Count)
