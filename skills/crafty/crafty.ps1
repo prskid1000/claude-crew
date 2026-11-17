@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L179 wt · L487 stack · L669 gate · L986 check · L1303 pipes · L1360 guard · L2213 dir ·
-  L2223 checkpoint · L2253 prior · L2291 tracker · L2313 task spec · L2489 scope · L2536 host
+Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L947 check · L1264 pipes · L1321 guard · L2174 dir ·
+  L2184 checkpoint · L2214 prior · L2252 tracker · L2274 task spec · L2450 scope · L2497 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -51,45 +51,6 @@ function Get-DepLinkDefaults {
   $l = @(Get-KitSetting 'linkDefaults' $null | Where-Object { $_.dir -and @($_.markers).Count })
   if ($l.Count -or ($__cfg -and (Get-KitProps $__cfg).Name -contains 'linkDefaults')) { return $l }   # [] = link nothing
   @([pscustomobject]@{ markers = @('package.json'); dir = 'node_modules' }, [pscustomobject]@{ markers = @('pyproject.toml', 'requirements.txt'); dir = '.venv' })
-}
-# never deleted: protectedBranchesBase (main/master/develop/release/*), lane/*, localenv/*, protectedBranches, target, deploy branches, origin/HEAD
-function Get-KitKeepBranchRx([string]$Repo) {
-  $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
-  $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @(Get-KitSetting 'protectedBranchesBase' @('main', 'master', 'develop', 'release/*')) }
-  $all = @($base) + 'localenv/*' + 'lane/*' + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
-  '^(' + (@($all | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape("$_") -replace '\\\*', '.+' }) -join '|') + ')$'
-}
-# may a local branch go? delete + why; $Ctx caches per repo (keep rx, checkouts, bases, host MR refs)
-function Get-KitBranchVerdict([string]$Repo, [string]$Branch, [hashtable]$Ctx, [double]$IdleHours = 2, [switch]$IgnoreCheckout) {
-  $v = { param($go, $why) [pscustomobject]@{ branch = $Branch; delete = [bool]$go; why = $why } }
-  if (-not $Ctx.keep) { $Ctx.keep = Get-KitKeepBranchRx $Repo }
-  if ($null -eq $Ctx.out) { $Ctx.out = @{}; foreach ($w in @(Get-KitWorktrees $Repo)) { if ($w.branch) { $Ctx.out[$w.branch] = $w.path } } }
-  if ($null -eq $Ctx.bases) { $tg = Get-RepoConf ((("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$') -split '[/:\\]')[-1]) 'target' ''
-    $Ctx.bases = @(@("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim(), $(if ($tg) { "origin/$tg" })) | Where-Object { $_ -and (git -C $Repo rev-parse -q --verify "refs/remotes/$_" 2>$null) } | Select-Object -Unique) }
-  if ($Branch -match $Ctx.keep) { return & $v $false 'protected (default, target or deploy branch)' }
-  if (-not $IgnoreCheckout -and $Ctx.out[$Branch]) { return & $v $false "checked out in $($Ctx.out[$Branch])" }
-  $tip = "$(git -C $Repo rev-parse -q --verify "refs/heads/$Branch" 2>$null)".Trim(); if (-not $tip) { return & $v $false 'no such branch' }
-  $t = if ("$(git -C $Repo reflog show -1 --format=%gd --date=unix "refs/heads/$Branch" 2>$null)" -match '@\{(\d+)\}') { $Matches[1] } else { "$(git -C $Repo log -1 --format=%ct $tip 2>$null)".Trim() }   # last move, not commit time
-  if ($t -and $IdleHours -gt 0 -and ($age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::FromUnixTimeSeconds([long]$t)).TotalHours) -lt $IdleHours) { return & $v $false "moved $([math]::Round($age * 60)) min ago" }
-  foreach ($b in $Ctx.bases) { git -C $Repo merge-base --is-ancestor $tip $b 2>$null; if ($LASTEXITCODE -eq 0) { return & $v $true "merged into $b" } }
-  $up, $track = "$(git -C $Repo for-each-ref --format='%(upstream:short)|%(upstream:track)' "refs/heads/$Branch" 2>$null)".Trim() -split '\|', 2
-  $on = "$(git -C $Repo for-each-ref --contains $tip --count=1 --format='%(refname:short)' refs/remotes/origin 2>$null)".Trim()
-  if (-not $on) {   # MR / PR refs keep pushed work after its branch is deleted
-    if ($null -eq $Ctx.mrRefs) { $Ctx.mrRefs = @{}; $r = Invoke-KitExe git @('-C', $Repo, 'ls-remote', 'origin', 'refs/merge-requests/*/head', 'refs/pull/*/head') 30
-      foreach ($l in @(if (-not $r.code) { "$($r.out)" -split "`n" })) { $s, $ref = $l.Trim() -split '\s+', 2; if ($ref) { $Ctx.mrRefs[$s] = $ref } } }
-    $on = $Ctx.mrRefs[$tip]
-  }
-  $iid = if ($Branch -match '^(?:mr|pr)[-_]?(\d+)$') { $Matches[1] }   # an MR checkout branch
-  if (-not $on -and ($iid -or $track -eq '[gone]')) {   # squash-merged: the tip inside a merged MR's head
-    foreach ($m in @(if ($iid) { Get-MergedMrs $Repo '' '' 'merged' $iid } else { Get-MergedMrs $Repo $Branch })) {
-      if ($m.sha -and ($m.sha -eq $tip -or $(git -C $Repo merge-base --is-ancestor $tip $m.sha 2>$null; $LASTEXITCODE -eq 0))) { return & $v $true "MR merged, tip in its head ($(if ($iid) { "!$iid" } else { $m.sha.Substring(0, 8) }))" } } }
-  if (-not $on) { return & $v $false "$("$(git -C $Repo rev-list --count $tip --not --remotes=origin 2>$null)".Trim()) commit(s) on no remote branch or MR$(if ($track -eq '[gone]') { " (upstream $up gone)" })" }
-  if ($track -eq '[gone]') { return & $v $true "upstream $up gone, tip on the host ($on)" }
-  if (($up -and ($up -replace '^origin/') -eq $Branch) -or (git -C $Repo rev-parse -q --verify "refs/remotes/origin/$Branch" 2>$null)) {
-    if ($tip -in @(Get-MergedMrs $Repo $Branch | ForEach-Object sha)) { return & $v $true 'MR merged at its tip' }
-    return & $v $false "open: origin/$Branch not merged"
-  }
-  & $v $true "local copy, its commits are on the host ($on)"
 }
 # a worktree-root folder no repo registers (a half-done remove): goes when every file is git-ignored or in its repo's objects
 function Get-KitLeftoverVerdict([string]$Dir, [string[]]$RepoDirs) {

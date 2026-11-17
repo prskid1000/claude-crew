@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L65 names · L84 slots · L110 lease · L207 release · L235 lanes · L340 sync · L404 pool
+Sections: L14 worktrees · L108 names · L129 slots · L155 lease · L252 release · L280 lanes · L385 sync · L449 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -22,6 +22,49 @@ function Get-KitWtHeldTest {
     } | Where-Object { "$_" -match '^([A-Za-z]:)?[\\/]' } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
   $claimedAt = $script:KitWtClaimed; $cmdLines = @(Get-SysProcs | Where-Object { $_.Id -ne $PID -and $_.CommandLine } | ForEach-Object { $_.CommandLine.Replace('/', '\').ToLower() })
   { param($p) $l = $p.ToLower(); if ($l -in $claimedAt) { 'a board agent' } elseif (@($cmdLines | Where-Object { $_.Contains($l) }).Count) { 'a running process' } }.GetNewClosure()
+}
+# never deleted: protectedBranchesBase (main/master/develop/release/*), configured lanes' lane/* + localenv/*, protectedBranches, target, deploy branches, origin/HEAD
+function Get-KitKeepBranchRx([string]$Repo) {
+  $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
+  $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @(Get-KitSetting 'protectedBranchesBase' @('main', 'master', 'develop', 'release/*')) }
+  $all = @($base) + @(Get-KitLaneNames | ForEach-Object { "localenv/$_"; Get-KitLaneBranch $_ }) + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
+  '^(' + (@($all | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape("$_") -replace '\\\*', '.+' }) -join '|') + ')$'
+}
+# may a local branch go? delete + why; $Ctx caches per repo (keep rx, checkouts, bases, host MR refs)
+function Get-KitBranchVerdict([string]$Repo, [string]$Branch, [hashtable]$Ctx, [double]$IdleHours = 2, [switch]$IgnoreCheckout) {
+  $v = { param($go, $why) [pscustomobject]@{ branch = $Branch; delete = [bool]$go; why = $why } }
+  if (-not $Ctx.keep) { $Ctx.keep = Get-KitKeepBranchRx $Repo }
+  if ($null -eq $Ctx.out) { $Ctx.out = @{}; foreach ($w in @(Get-KitWorktrees $Repo)) { if ($w.branch) { $Ctx.out[$w.branch] = $w.path } } }
+  if ($null -eq $Ctx.bases) { $tg = Get-RepoConf ((("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$') -split '[/:\\]')[-1]) 'target' ''
+    $Ctx.bases = @(@("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim(), $(if ($tg) { "origin/$tg" })) | Where-Object { $_ -and (git -C $Repo rev-parse -q --verify "refs/remotes/$_" 2>$null) } | Select-Object -Unique) }
+  if ($Branch -match $Ctx.keep) { return & $v $false 'protected (default, target or deploy branch)' }
+  if (-not $IgnoreCheckout -and $Ctx.out[$Branch]) { return & $v $false "checked out in $($Ctx.out[$Branch])" }
+  $tip = "$(git -C $Repo rev-parse -q --verify "refs/heads/$Branch" 2>$null)".Trim(); if (-not $tip) { return & $v $false 'no such branch' }
+  $t = if ("$(git -C $Repo reflog show -1 --format=%gd --date=unix "refs/heads/$Branch" 2>$null)" -match '@\{(\d+)\}') { $Matches[1] } else { "$(git -C $Repo log -1 --format=%ct $tip 2>$null)".Trim() }   # last move, not commit time
+  if ($t -and $IdleHours -gt 0 -and ($age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::FromUnixTimeSeconds([long]$t)).TotalHours) -lt $IdleHours) { return & $v $false "moved $([math]::Round($age * 60)) min ago" }
+  foreach ($b in $Ctx.bases) { git -C $Repo merge-base --is-ancestor $tip $b 2>$null; if ($LASTEXITCODE -eq 0) { return & $v $true "merged into $b" } }
+  $up, $track = "$(git -C $Repo for-each-ref --format='%(upstream:short)|%(upstream:track)' "refs/heads/$Branch" 2>$null)".Trim() -split '\|', 2
+  $on = "$(git -C $Repo for-each-ref --contains $tip --count=1 --format='%(refname:short)' refs/remotes/origin 2>$null)".Trim()
+  if (-not $on) {   # MR / PR refs keep pushed work after its branch is deleted
+    if ($null -eq $Ctx.mrRefs) { $Ctx.mrRefs = @{}; $r = Invoke-KitExe git @('-C', $Repo, 'ls-remote', 'origin', 'refs/merge-requests/*/head', 'refs/pull/*/head') 30
+      foreach ($l in @(if (-not $r.code) { "$($r.out)" -split "`n" })) { $s, $ref = $l.Trim() -split '\s+', 2; if ($ref) { $Ctx.mrRefs[$s] = $ref } } }
+    $on = $Ctx.mrRefs[$tip]
+  }
+  $iid = if ($Branch -match '^(?:mr|pr)[-_]?(\d+)$') { $Matches[1] }   # an MR checkout branch
+  if (-not $on -and $Branch -match '^(lane|localenv)/') {   # a lane no longer configured (keep rx: configured lanes only): its own commits are test merges
+    $own = @(git -C $Repo log --format=%s $tip --not --remotes=origin 2>$null | Where-Object { $_ -notmatch '^localenv (layer|prepare) ' })
+    return & $v (-not $own.Count) $(if ($own.Count) { "dead lane, $($own.Count) commit(s) beyond its test merges" } else { 'dead lane: only local test merges' })
+  }
+  if (-not $on) {   # squash-merged (K38: with or without an upstream): the tip inside a merged MR's head, or a rebased copy of it
+    foreach ($m in @(if ($iid) { Get-MergedMrs $Repo '' '' 'merged' $iid } else { Get-MergedMrs $Repo $Branch })) {
+      if ($m.sha -and ($m.sha -eq $tip -or $(git -C $Repo cat-file -e "$($m.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { git -C $Repo fetch -q origin $m.sha 2>$null }; git -C $Repo merge-base --is-ancestor $tip $m.sha 2>$null; $LASTEXITCODE -eq 0) -or (Test-KitRebasedCopy $Repo $tip $m.sha))) { return & $v $true "MR merged, tip in its head ($(if ($iid) { "!$iid" } else { $m.sha.Substring(0, 8) }))" } } }
+  if (-not $on) { return & $v $false "$("$(git -C $Repo rev-list --count $tip --not --remotes=origin 2>$null)".Trim()) commit(s) on no remote branch or MR$(if ($track -eq '[gone]') { " (upstream $up gone)" })" }
+  if ($track -eq '[gone]') { return & $v $true "upstream $up gone, tip on the host ($on)" }
+  if (($up -and ($up -replace '^origin/') -eq $Branch) -or (git -C $Repo rev-parse -q --verify "refs/remotes/origin/$Branch" 2>$null)) {
+    if ($tip -in @(Get-MergedMrs $Repo $Branch | ForEach-Object sha)) { return & $v $true 'MR merged at its tip' }
+    return & $v $false "open: origin/$Branch not merged"
+  }
+  & $v $true "local copy, its commits are on the host ($on)"
 }
 # the worktree root, git-excluded in an outer repo (else untracked there)
 function Add-WtRoot($rt) {
@@ -77,6 +120,8 @@ function Get-KitPoolLabel([string]$Kind, [string]$Name) {
 # localenv-<env>-<repo> serves until envy Ensure-Worktree moves it (-Old: that path, -New: the new one)
 function Get-KitLaneSlug([string]$Lane) { ((Get-KitPoolLabel 'env' $Lane) -replace '[·\s]+', '-').ToLower() }
 function Get-KitLaneBranch([string]$Lane) { "lane/$(Get-KitLaneSlug $Lane)" }
+# configured lanes: each localEnv.envs key, lanes 2..lanes.max as <env><k> (envy.ps1 Get-LaneCfg)
+function Get-KitLaneNames { $envs = Get-KitSetting 'localEnv.envs' $null; if (-not $envs) { return @() }; @(foreach ($p in @(Get-KitProps $envs)) { $p.Name; for ($i = 2; $i -le [int]"$($p.Value.lanes.max)"; $i++) { "$($p.Name)$i" } }) | Select-Object -Unique }
 function Get-KitLaneWorktree([string]$Lane, [string]$Checkout, [switch]$Old, [switch]$New) {
   $rt = @($KitConf.WorktreeRoots)[0]; $lf = Split-Path $Checkout -Leaf; $ow = Join-Path $rt "localenv-$Lane-$lf"; $nw = Join-Path $rt "lane-$(Get-KitLaneSlug $Lane)-$lf"
   if ($New) { $nw } elseif ($Old -or (-not (Test-Path $nw) -and (Test-Path "$ow/.git"))) { $ow } else { $nw }
@@ -253,7 +298,7 @@ function Move-LaneWorktree([string]$e, [string]$co, [string]$Busy = '') {
 }
 # envy.ps1 Get-MergedWhy: a layer = an older copy of the branch the MR merged after a rebase: each of its own non-merge commits has a same-subject commit on
 # the MR's side (trailing marker tokens a commit hook adds, e.g. a symbol-led word, ignored); a commit the MR lacks keeps the layer
-function Test-LayerRebased([string]$d, [string]$sha, [string]$mrSha) {
+function Test-KitRebasedCopy([string]$d, [string]$sha, [string]$mrSha) {
   $norm = { param($s) ("$s" -replace '(\s+[^\w\s(\[][^\s]*)+$').Trim() }
   $mine = @(git -C $d log --no-merges --format=%s "$mrSha..$sha" 2>$null | ForEach-Object { & $norm $_ }); if ($LASTEXITCODE -or -not $mine.Count) { return $false }
   $theirs = @(git -C $d log --no-merges --format=%s "$sha..$mrSha" 2>$null | ForEach-Object { & $norm $_ })
@@ -414,8 +459,14 @@ function Invoke-WtPool {   # slots per pooled repo; -Migrate [-DryRun]: per-task
         $dedicated = if ($w.branch -and $w.branch -match $keepRx) { 'protected or env branch' } elseif ((Split-Path $d -Leaf) -like 'deploymerge-*') { 'deploy merge' } elseif (-not $w.branch -and @(Get-DepLinkDefaults | Where-Object { $i = Get-Item -LiteralPath (Join-Path $d $_.dir) -Force -ErrorAction SilentlyContinue; $i -and -not $i.LinkType }).Count) { 'a dependency store' }
         if ($dedicated) { "dedicated  ${label}: $dedicated"; continue }
         if (($who = & $heldBy $d.Replace('/', '\'))) { "keep  ${label}: held by $who"; continue }
-        if (@(Get-WtDirty $d).Count) { "keep  ${label}: uncommitted files"; continue }
-        if ($w.branch) { $bv = Get-KitBranchVerdict $rp $w.branch $bctx -IdleHours 0 -IgnoreCheckout; if (-not $bv.delete) { "keep  ${label}: $($bv.why)"; continue }; $gw = $bv.why }
+        $dt = @(Get-WtDirty $d); $bv = if ($w.branch) { Get-KitBranchVerdict $rp $w.branch $bctx -IdleHours 0 -IgnoreCheckout }
+        if ($dt.Count) {   # a merged branch whose only leftovers are edits of tracked files (regenerated fixtures): saved as a patch, then discarded (K38)
+          if (-not $bv.delete -or @($dt | Where-Object { $_ -notmatch '^( M|M |MM) ' }).Count) { "keep  ${label}: uncommitted files"; continue }
+          if ($DryRun) { "would go  ${label}: $($bv.why); $($dt.Count) edited file(s) saved as a patch first"; continue }
+          $pf = Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'patches')).FullName "$(Split-Path $d -Leaf)-$((Get-Date).ToString('yyyyMMdd-HHmmss')).patch"
+          [IO.File]::WriteAllText($pf, ((@(git -C $d diff HEAD --binary 2>$null) -join "`n") + "`n")); if (-not (Get-Item -LiteralPath $pf).Length -or $LASTEXITCODE) { "keep  ${label}: uncommitted files (patch failed)"; continue }
+          git -C $d checkout -q HEAD -- . 2>$null; "patched  ${label}: $($dt.Count) edited file(s) saved to $pf" }
+        if ($w.branch) { if (-not $bv.delete) { "keep  ${label}: $($bv.why)"; continue }; $gw = $bv.why }
         elseif (-not "$(git -C $d for-each-ref --contains $w.head --count=1 --format='%(refname)' refs/remotes/origin 2>$null)".Trim()) { "keep  ${label}: detached HEAD on no remote branch"; continue }
         else { $gw = 'detached HEAD on the host' }
         if ($DryRun) { "would go  ${label}: $gw"; continue }

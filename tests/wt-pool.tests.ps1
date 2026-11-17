@@ -89,6 +89,19 @@ git -C $sx checkout -q beh; 'more' | Set-Content "$sx/beh2.txt"; Save-GitRepo $s
 $ls = pwsh @np $D wt lease -Repo syn -Branch beh -Agent devS 2>&1 | Out-String; $lsd = if ($ls -match '(?m)^worktree: (.+)$') { $Matches[1].Trim() }; $b0 = & $tip beh
 $sp2 = pwsh @np $D wt pool -Repo syn -Sync 2>&1 | Out-String; $syj2 = Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json
 Expect "repo sync: a leased slot's branch stays (listed), a stranded detached commit is kept ($(@($syj2.dirty) -join ' | '))" ($lsd -and (& $tip beh) -eq $b0 -and @($syj2.dirty) -match 'leased slot' -and $stOk)
+# K38 verdicts: a squash-merged branch with no upstream (the MR merged a rebased copy) goes; a dead lane goes when only its test merges
+# are local, stays with its own commit; a merged worktree whose only leftovers are edited tracked files: patch saved, then removed
+$vb = "$base/vb"; git clone -q $orig $vb 2>$null; $mk = { param($b, $msg) git -C $vb checkout -q -b $b origin/main; "$b" | Set-Content "$vb/$($b -replace '/', '_').txt"; Save-GitRepo $vb $msg; "$(git -C $vb rev-parse HEAD)".Trim() }
+$null = & $mk 'sq' 'fix: sq'; $rb = & $mk 'sq-rb' 'fix: sq +hook'; $null = & $mk 'lane/old-a' 'localenv layer x (a)'; $null = & $mk 'lane/old-b' 'mine'; git -C $vb checkout -q --detach origin/main
+$vr = Invoke-PsTest verdicts @'
+. $args[0]; $ast = [Management.Automation.Language.Parser]::ParseFile($args[1], [ref]$null, [ref]$null)
+foreach ($fd in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-KitWorktrees' }, $true)) { . ([scriptblock]::Create($fd.Extent.Text)) }
+$rb = $args[3]; $vrp = $args[2]; function Get-MergedMrs { param($R, $B) if ($B -eq 'sq') { @([pscustomobject]@{ iid = 7; sha = $rb }) } }
+@('sq', 'lane/old-a', 'lane/old-b') | ForEach-Object { $x = Get-KitBranchVerdict $vrp $_ @{} -IdleHours 0; "$_=$($x.delete) ($($x.why))" }
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/crafty/crafty.ps1'), $vb, $rb)
+$fw = "$base/wt/fx-app"; git -C $app worktree add -q -b old/fx $fw origin/main 2>$null; 'regen' | Set-Content "$fw/a.txt"
+$fm = pwsh @np $D wt pool -Migrate 2>&1 | Out-String; $pt = @(Get-ChildItem (Join-Path (TkPath $k wt-slots) 'patches') -Filter 'fx-app-*.patch' -ErrorAction SilentlyContinue)
+Expect "K38: squash-merged rebased branch goes, dead lane with only test merges goes, with its own commit stays; merged worktree with edited fixtures: patch, then gone ($(@($vr) -join ' ') | $($fm -replace '\s+', ' '))" ((@($vr) -join ' ') -match 'sq=True .*lane/old-a=True .*lane/old-b=False' -and $fm -match 'patched\s+\S*fx-app' -and -not (Test-Path $fw) -and $pt.Count -eq 1 -and (Get-Content $pt[0].FullName -Raw) -match '\+regen')
 # a stray non-lease file in wt-slots (an array, as lanes.json was): supervise, wt release and bossy release skip it (K42)
 Set-Content "$kf/stray.json" '[{"lane":"x","parked":true,"parkedAt":"2026-01-01T00:00:00Z","since":"2026-01-01T00:00:00Z","agent":"devZ"},{"lane":"y","parked":true,"parkedAt":"2026-01-02T00:00:00Z","agent":"devZ"}]'
 $sg = Invoke-PsTest stray-slot @'
