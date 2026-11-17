@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L102 health · L111 prepush · L191 nightly tests · L207 precommit
+Sections: L12 learn · L102 health · L111 prepush · L194 nightly tests · L212 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -173,9 +173,12 @@ if ($toMain.Count -and (Test-Path $kt) -and -not $env:KIT_TESTS_SNAPSHOT) {
   elseif ($tree -ne "$(git -C $root rev-parse 'HEAD^{tree}' 2>$null)".Trim() -or (git -C $root status --porcelain 2>$null)) { $hits += "TESTS       the pushed commit is not this clean checkout: commit everything, run tests/kit-tests.ps1 -Full, push again" }
   else {
     $tl = Join-Path (Get-KitPath logs -Create) 'kit-tests-prepush.txt'; Write-Host "pre-push: kit tests -Full on tree $($tree.Substring(0, 8)) (a few minutes; log $tl)"
-    & (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -NoProfile -File $kt -Full *> $tl; $tc = $LASTEXITCODE
-    $sum = @(Get-Content -LiteralPath $tl | Select-String -Pattern '^(Failed checks:|  \[|TEST-DUP|TEST-WRITE|\d+ failure\(s\) in)' | ForEach-Object Line)
-    $sum | ForEach-Object { Write-Host "  $_" }; if ($tc) { $hits += "TESTS       the full kit run failed (exit $tc): $tl" }
+    Remove-Item Env:GIT_DIR, Env:GIT_INDEX_FILE, Env:GIT_WORK_TREE -ErrorAction SilentlyContinue   # the hook's git env would point every test repo at this one
+    $tp = Start-Process (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -ArgumentList '-NoProfile', '-NonInteractive', '-File', "`"$kt`"", '-Full' -RedirectStandardOutput $tl -RedirectStandardError "$tl.err" -NoNewWindow -PassThru; $null = $tp.Handle   # the handle kept: ExitCode stays readable
+    if (-not $tp.WaitForExit(1800000)) { Stop-KitProcessTree $tp; $hits += "TESTS       the full kit run passed 30 min: stopped (log $tl)" }
+    else {
+      $sum = @(Get-Content -LiteralPath $tl | Select-String -Pattern '^(Failed checks:|  \[|TEST-DUP|TEST-WRITE|\d+ failure\(s\) in)' | ForEach-Object Line)
+      $sum | ForEach-Object { Write-Host "  $_" }; if ($tp.ExitCode) { $hits += "TESTS       the full kit run failed (exit $($tp.ExitCode)): $tl" } }
   }
 }
 
@@ -200,8 +203,10 @@ function Invoke-KitNightlyTests([bool]$Idle) {
   }
   if (-not $Idle -or ($s -and ((Get-Date) - [datetime]$s.at).TotalHours -lt 20) -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
   $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "& '$($kt.Replace("'", "''"))' -Full *> '$($lf.Replace("'", "''"))'"
-  $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }
-  Write-KitAtomic $sf (@{ pid = $p.Id; start = $p.StartTime.ToString('o'); at = (Get-Date).ToString('o'); read = $false } | ConvertTo-Json -Compress)
+  $st = @{ at = (Get-Date).ToString('o'); read = $false }
+  try { $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }; $st.pid = $p.Id; $st.start = $p.StartTime.ToString('o') }
+  catch { $st.read = $true; "kit tests nightly: the run did not start ($($_.Exception.Message)); next try in 20 h" }   # stamped: no retry every beat
+  Write-KitAtomic $sf ($st | ConvertTo-Json -Compress)
 }
 
 # ---- precommit: graph, ports, section maps, lint

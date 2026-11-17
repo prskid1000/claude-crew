@@ -14,19 +14,24 @@ Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 param([string[]]$Area = @(), [switch]$Slow, [switch]$Full)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
-# the areas a change reaches: a test file -> its area; the runner, the harness or a non-.md file it copies into every kit -> all;
-# else the areas naming the file; a script no area names -> all (a gap must never skip a test)
+# the areas a change reaches: a test file -> its area; the runner, the harness, a crafty adapter or a non-.md file the harness copies
+# into every kit -> all; else the areas naming the file (+ its skill's script for an adapter, kitbag.py for kitbag_*); a non-.md
+# file no area names -> all (a gap must never skip a test)
 function Get-ChangedArea([string]$KitDir, [string[]]$Known) {
   $base = "$(git -C $KitDir merge-base HEAD origin/main 2>$null)".Trim()
   if (-not $base) { return [pscustomobject]@{ areas = $Known; why = 'no merge-base with origin/main: all' } }
-  $changed = @(@(git -C $KitDir diff --name-only $base 2>$null) + @(git -C $KitDir ls-files --others --exclude-standard 2>$null) | Where-Object { $_ } | Select-Object -Unique)
+  $changed = @(@(git -c core.quotepath=off -C $KitDir diff --name-only $base 2>$null) + @(git -c core.quotepath=off -C $KitDir ls-files --others --exclude-standard 2>$null) | Where-Object { $_ } | Select-Object -Unique)
   $harness = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'harness.ps1')); $texts = @{}; foreach ($a in $Known) { $texts[$a] = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "$a.tests.ps1")) }
   $pick = [Collections.Generic.List[string]]::new(); $whyAll = ''
+  $names = { param($n) $rn = [regex]::Escape($n); @($Known | Where-Object { $texts[$_] -match "(?<![\w.-])$rn(?![\w-])" }) }
   foreach ($f in $changed) {
-    if ($f -match '^tests/(harness|kit-tests|hostverb-shim)\.ps1$' -or ($f -notmatch '\.md$' -and $harness.Contains("'$f'"))) { $whyAll = $f; break }
+    # lib.ps1 loads every crafty adapter into every script
+    if ($f -match '^tests/(harness|kit-tests|hostverb-shim)\.ps1$|^skills/crafty/adapters/' -or ($f -notmatch '\.md$' -and $harness.Contains("'$f'"))) { $whyAll = $f; break }
     if ($f -match '^tests/(.+)\.tests\.ps1$') { if ($Matches[1] -in $Known) { $pick.Add($Matches[1]) }; continue }
-    $leaf = [regex]::Escape((Split-Path $f -Leaf)); $hit = @($Known | Where-Object { $texts[$_] -match "(?<![\w.-])$leaf(?![\w-])" })
-    if ($hit.Count) { $pick.AddRange([string[]]$hit) } elseif ($f -match '\.(ps1|py|mjs|js|cjs)$') { $whyAll = "$f (no area names it)"; break }
+    $hit = @(& $names (Split-Path $f -Leaf))
+    # a file its skill's script loads: the areas naming that script too
+    if ($f -match '^skills/(\w+)/adapters/') { $hit += & $names "$($Matches[1]).ps1" } elseif ($f -match '^skills/bossy/(kitbag_\w+\.py|lint-vocab\.json)$') { $hit += & $names 'kitbag.py' }
+    if ($hit.Count) { $pick.AddRange([string[]]$hit) } elseif ($f -notmatch '\.md$') { $whyAll = "$f (no area names it)"; break }
   }
   if ($whyAll) { return [pscustomobject]@{ areas = $Known; why = "$whyAll changed: all" } }
   [pscustomobject]@{ areas = @($Known | Where-Object { $_ -in $pick }); why = "$($changed.Count) changed file(s) since origin/main" }
@@ -38,7 +43,7 @@ if ($pyReal) { $env:PATH = (Split-Path $pyReal) + [IO.Path]::PathSeparator + $en
 # one file per area; each dot-sources harness.ps1
 $files = @(Get-ChildItem $PSScriptRoot -Filter '*.tests.ps1' | Sort-Object Name | ForEach-Object Name)
 $all = @($files | ForEach-Object { $_ -replace '\.tests\.ps1$' })
-$Full = $Full -or $Area -contains 'all' -or [bool]$env:KIT_TESTS_FULL
+$Full = $Full -or $Area -contains 'all' -or ([bool]$env:KIT_TESTS_FULL -and -not $Area.Count)
 $areas = if ($Full) { $all } elseif ($Area.Count) { @($Area | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
 if (-not $Full -and -not $Area.Count) {
   $ch = Get-ChangedArea (Split-Path $PSScriptRoot) $all; $areas = @($ch.areas)

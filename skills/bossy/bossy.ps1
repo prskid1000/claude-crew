@@ -1223,7 +1223,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   if ($pct -ge 85) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
   if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Sync', '-Json') }   # every sync.everyMinutes, detached: fetch, fast-forward, prune, warm slots (wt_pool.ps1 Sync-KitRepo)
-  if (Within 'kit tests') { foreach ($l in @(Invoke-KitNightlyTests (-not $active.Count -and -not $liveNames.Count))) { Flag 'ACT' $l 'Spawn kitty (kind fix) on the failed checks the log lists.' } }   # adapters/kit_admin.ps1: one full run a day while idle
+  if ((Get-Command Invoke-KitNightlyTests -ErrorAction SilentlyContinue) -and (Within 'kit tests')) { foreach ($l in @(Invoke-KitNightlyTests (-not $active.Count -and -not $liveNames.Count))) { Flag 'ACT' $l 'Spawn kitty (kind fix) on the failed checks the log lists.' } }   # adapters/kit_admin.ps1: one full run a day while idle
 }
 # 4b. owner MRs merged in 24 h, untracked
 if ($KitConf.TrackerType -ne 'none' -and (Within 'untracked MRs')) { foreach ($x in @(Get-KitUntrackedMrFlag $state $now { Within 'untracked MRs' })) { [void]$flags.Add($x) } }

@@ -165,11 +165,11 @@ $tdr = Invoke-TestScript "$td/kit-tests.ps1" -Area bossy,crafty
 Expect 'kit-tests: a case in two areas = TEST-DUP (area order, exit 1); real python, no shim; FAILs recapped by area' ($tdr.code -eq 1 -and $tdr.out -match 'Failed checks:\s+\[bossy\] x\s+\[crafty\] x' -and $tdr.out -match 'TEST-DUP same case: bossy, crafty' -and $tdr.out -notmatch 'TEST-DUP own' -and $tdr.out -match 'py True' -and $tdr.out -notmatch 'py False')
 # kit-tests default: only the areas a change since origin/main reaches
 $cd = Join-Path (Kd) 'chg'; New-Item -ItemType Directory -Force "$cd/tests" | Out-Null; Copy-Item (Join-Path $src 'tests/kit-tests.ps1'), (Join-Path $src 'tests/harness.ps1') "$cd/tests"
-"'PASS a uses skills/x/foo.ps1'" | Set-Content "$cd/tests/a.tests.ps1"; "'PASS b'" | Set-Content "$cd/tests/b.tests.ps1"; Save-GitRepo $cd init; git -C $cd update-ref refs/remotes/origin/main HEAD
-$chg = foreach ($f in 'skills/x/notes.md', 'skills/x/foo.ps1', 'skills/z/q.ps1', 'skills/crafty/lib.ps1', 'tests/b.tests.ps1') {
+"'PASS a uses skills/x/foo.ps1'" | Set-Content "$cd/tests/a.tests.ps1"; "'PASS b runs pokey.ps1'" | Set-Content "$cd/tests/b.tests.ps1"; Save-GitRepo $cd init; git -C $cd update-ref refs/remotes/origin/main HEAD
+$chg = foreach ($f in 'skills/x/notes.md', 'skills/x/foo.ps1', 'skills/pokey/adapters/zz.ps1', 'skills/z/q.ps1', 'skills/crafty/lib.ps1', 'tests/b.tests.ps1') {
   $fp = Join-Path $cd $f; $had = Test-Path $fp; $null = New-Item -ItemType Directory -Force (Split-Path $fp); Add-Content $fp ''; $o = (Invoke-TestScript "$cd/tests/kit-tests.ps1").out
   if ($had) { git -C $cd checkout -q -- $f } else { Remove-Item $fp }; if ($o -match 'nothing to run') { 'none' } else { @([regex]::Matches($o, '(?m)^== (\w+)') | ForEach-Object { $_.Groups[1].Value }) -join '+' } }
-Expect "kit-tests default: changed areas (.md none, a named file its areas, an unnamed script or a harness file all, a test file its area) ($($chg -join ' | '))" (($chg -join '|') -eq 'none|a|a+b|a+b|b')
+Expect "kit-tests default: changed areas (.md none, a named file its areas, an adapter its script's areas, an unnamed file or a harness file all, a test file its area) ($($chg -join ' | '))" (($chg -join '|') -eq 'none|a|b|a+b|a+b|b')
 $null = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
 # lib.ps1 Add-KitAskBug (here for the guard area's cap): only a QA collector [Bug] takes sections
