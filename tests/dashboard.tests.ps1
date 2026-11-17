@@ -70,6 +70,18 @@ $dlv = & { Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos =
   $h = Format-KitDeliveryHtml $outS $up ''
   "$($h -match "<span class=gn[^>]*>alpha</span><span class='gs hm fh l-mr'[^>]*><i[^>]*title='$d1 &#183; alpha: 1 MR\(s\) merged: alpha!1'>1</i><i class=nw[^>]*>1</i></span><span class='gc'>2</span>") $($h -match '>beta</span>' -and $h -match "1 idle repos[^<]*</button><div class=gki><div class=gk><span class=gn[^>]*>quiet<") $($h -match "data-fv='st:review'[^>]*>1</i>" -and $h -match "data-fv='st:intest'" -and $h -match "<li data-fk='st:review'>" -and $h -notmatch "data-fk='[^']*st:passed") $($h -match 'id=sec-dl-lead open><summary>MR lead time, median per day \(6 h\)') $($h -match "class='ug dlv'[^>]*data-mas data-fill" -and $h -notmatch 'ucol')" }
 Expect "Delivery: repo x day map from config + MRs (idle repo folded), in-flight bar by status with task filters, median lead time, one balanced masonry grid ($dlv)" ($dlv -eq 'True True True True True')
+# agent groups (K45): a collapsible row per run (count, active / waiting, run kind), finished-only folded, collapse / expand all; a raw command -> step + script
+$agg = & { . $O; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); agents = @(
+      [pscustomobject]@{ name = 'B1 (devy)'; run = 'wf_a'; state = 'ACTIVE'; task = 'build:B1'; doing = "Build · Bash: export CLAUDE_AGENT='B1'; L=D:/k/skills/envy/envy.ps1; pwsh -Command x" },
+      [pscustomobject]@{ name = 'wf_a (workflow)'; run = 'wf_a'; state = 'WAITING'; task = 'buildy.js wf_a'; doing = 'Review · Bash: Run crafty pipes check' },
+      [pscustomobject]@{ name = 'k (kitty)'; run = 'kit-x'; state = 'FINISHED' }, [pscustomobject]@{ name = 's (devy)'; run = 'solo'; state = 'ACTIVE' }) })
+  $rxA = "<tbody class='grp' data-g='wf_a'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=true><span class=gn0>wf_a</span><span class=gcn>2 agents &#183; 1 active &#183; 1 waiting &#183; buildy</span>"
+  $rxF = "<tbody class='grp cl' data-g='kit-x'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=false><span class=gn0>kit-x</span><span class=gcn>1 agent &#183; 1 finished &#183; kitty</span>"
+  $rxD = "<span title='Build &#183; Bash: export CLAUDE_AGENT=&#39;B1&#39;;[^']*'>Build &#183; runs envy.ps1</span>"
+  $rxB = 'data-ga=1>Collapse all</button><button type=button class=sa data-ga=0>Expand all'; $rxS = "S.getItem('kc-ag-'"
+  $okC = $h.Contains($rxB) -and $h -match $rxD -and $h.Contains('>Review &#183; Bash: Run crafty pipes check<') -and $h.Contains($rxS)
+  "$($h.Contains($rxA)) $($h.Contains($rxF)) $okC" }
+Expect "Agents: a collapsible group per run (agents, active / waiting, kind), finished-only folded, collapse / expand all, raw command -> step + script ($agg)" ($agg -eq 'True True True')
 # lanes (K39): Branches tile, a line per lane x repo "base @ sha · behind N · test merges N"; behind or kept: warn
 $lnh = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ repos = @{ at = $n.ToString('o'); repos = @(@{ repo = 'api'; branches = 1; worktrees = 1 }) }; lanes = @(@{ lane = 'shop'; repo = 'api'; head = 'abcdef1234'; base = '1234567890'; behind = 0; merges = 1; at = $n.ToString('o') }, @{ lane = 'shop2'; repo = 'api'; head = 'ffff0000aa'; behind = 3; merges = 0; kept = 'in use' }) } })
   "$($h -match "<li class='f'[^>]*><b>shop &#183; api</b> base @ 12345678 · behind 0 · test merges 1</li>") $($h -match "<li class='f warn'[^>]*><b>shop2 &#183; api</b> base @ ffff0000 · behind 3")" }

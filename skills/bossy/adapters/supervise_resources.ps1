@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L296 shells · L430 page · L953 release · L993 lines · L1026 cleanup · L1098 launch ·
-  L1176 pause · L1294 heartbeat · L1309 sessions · L1361 ci tasks ·
-  L1416 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L296 shells · L430 page · L968 release · L1008 lines · L1041 cleanup · L1113 launch ·
+  L1191 pause · L1309 heartbeat · L1324 sessions · L1376 ci tasks ·
+  L1431 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -656,11 +656,23 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $taskCell = { param($txt) [regex]::Replace((& $e $txt), '(?<![\w./-])([\w./-]+[!#]\d+|[\w-]{4,})(?![\w-])', { param($m) $w = $m.Value
       if ($w -match '[!#]\d+$') { & $mrA $w } elseif ($w -match '\d' -and $taskIds.Contains(($w -replace '[^\w.-]', '_'))) { & $taskA $w } else { $w } }) }
   $taskIds = [Collections.Generic.HashSet[string]]::new([string[]]@(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object BaseName))   # the task index ids, read once (Get-KitTaskFile names)
-  $agT = { param($list) '<div class=tw><table class=ag><tr><th>State</th><th>Agent</th><th class=hs>Task</th><th>Since</th><th>Last progress</th><th class=hs>Doing · next</th></tr>' + (@(foreach ($g in @($list | Group-Object { if ("$($_.run)" -in '', 'solo') { '' } else { "$($_.run)" } } | Sort-Object { -not $_.Name }, Name)) {
+  # Doing (owner 2026-11-17): a raw shell command shows as "<step> · runs <script>", the command only in the tooltip
+  $doCell = { param($t) $t = "$t"; if ($t -notmatch '^(?<h>.*?)\b(?:Bash|PowerShell): (?<c>.+)$') { return (& $e $t) }; $h = ($Matches.h -replace '[\s·]+$'); $c = $Matches.c
+    if ($c -notmatch '^\s*(export |cd |set |\$|&|\.\s|pwsh|powershell|python|node|git |npx |\w+=)|;|&&|\|') { return (& $e $t) }
+    $lb = if ($c -match '([\w-]+\.(?:ps1|py|mjs|js|sh))\b') { "runs $($Matches[1])" } else { 'shell command' }
+    "<span title='$(& $e $t)'>$(& $e "$(if ($h) { "$h · " })$lb")</span>" }
+  # a run's group: a collapsible row (chevron, agents, active / waiting, run kind), state per run in localStorage; finished-only runs start folded
+  $agT = { param($list) $grs = @($list | Group-Object { if ("$($_.run)" -in '', 'solo') { '' } else { "$($_.run)" } } | Sort-Object { -not $_.Name }, Name)
+    "<div class=agw>$(if ($grs.Count -ge 2) { "<div class=gta><button type=button class=sa data-ga=1>Collapse all</button><button type=button class=sa data-ga=0>Expand all</button></div>" })" +
+    '<div class=tw><table class=ag><tr><th>State</th><th>Agent</th><th class=hs>Task</th><th>Since</th><th>Last progress</th><th class=hs>Doing · next</th></tr>' + (@(foreach ($g in $grs) {
     $rl = if ($g.Name) { "$(@($st.usage.runs | Where-Object { $_ -and "$($_.run)" -eq $g.Name -and "$($_.label)".Trim() })[0].label)".Trim() }   # a run's label (mandate or area) when it has one
-    "<tbody class=grp><tr class=gh><th colspan=6><span class=gn0>$(if (-not $g.Name) { 'standalone agents' } elseif ($rl) { "$(& $e $rl) <small>$(& $e $g.Name)</small>" } else { & $e $g.Name })</span></th></tr>" +
+    $ga = @($g.Group); $cnt = { param($c) @($ga | Where-Object { -not (& $isFin $_) -and (& $stCls $_.state) -eq $c }).Count }; $nFin = @($ga | Where-Object { & $isFin $_ }).Count
+    $wfA = @($ga | Where-Object { "$($_.task)" -match '^\w+\.js\b' })[0]; $kind = if ($wfA -and "$($wfA.task)" -match '^(\w+)\.js\b') { $Matches[1] } elseif ("$($ga[0].name)" -match '\((\w[\w-]*)\)') { $Matches[1] }
+    $sum = @("$($ga.Count) agent$(if ($ga.Count -ne 1) { 's' })"; foreach ($p in @(@('s-act', 'active'), @('s-oth', 'waiting'), @('s-stuck', 'stuck'))) { if (($nb = & $cnt $p[0])) { "$nb $($p[1])" } }; if ($nFin) { "$nFin finished" }; if ($kind) { $kind }) -join ' · '
+    $fold0 = $nFin -eq $ga.Count
+    "<tbody class='grp$(if ($fold0) { ' cl' })' data-g='$(& $e $(if ($g.Name) { $g.Name } else { 'solo' }))'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=$(if ($fold0) { 'false' } else { 'true' })><span class=gn0>$(if (-not $g.Name) { 'standalone agents' } elseif ($rl) { "$(& $e $rl) <small>$(& $e $g.Name)</small>" } else { & $e $g.Name })</span><span class=gcn>$(& $e $sum)</span></button></th></tr>" +
     (@(foreach ($a in @($g.Group | Sort-Object name)) { $sub = @($a.wait, $a.done, $a.stopped | Where-Object { "$_".Trim() }) -join ' · '
-      "<tr class=f><td><span class='chip $(& $stCls $a.state)'>$(& $e ("$($a.state)" -replace '\s.*'))</span>$(if ($sub) { "<div class=sm>$(& $e $sub)</div>" })</td><td>$(& $e $a.name)$(& $leaseOf $a.name)</td><td class=hs>$(& $taskCell ("$($a.task)" -replace ' · steps \d+/\d+ · [\d.]+[kKmMB]? tokens of [\d.]+[kKmMB]?'))</td><td>$(& $when $a.since)</td><td>$(& $when $a.last)</td><td class=hs>$(& $e $a.doing)$(if ("$($a.next)".Trim()) { "<div class=sm>$(& $e $a.next)</div>" })</td></tr>" }) -join '') + '</tbody>' }) -join '') + '</table></div>' }
+      "<tr class=f><td><span class='chip $(& $stCls $a.state)'>$(& $e ("$($a.state)" -replace '\s.*'))</span>$(if ($sub) { "<div class=sm>$(& $e $sub)</div>" })</td><td>$(& $e $a.name)$(& $leaseOf $a.name)</td><td class=hs>$(& $taskCell ("$($a.task)" -replace ' · steps \d+/\d+ · [\d.]+[kKmMB]? tokens of [\d.]+[kKmMB]?'))</td><td>$(& $when $a.since)</td><td>$(& $when $a.last)</td><td class=hs>$(& $doCell $a.doing)$(if ("$($a.next)".Trim()) { "<div class=sm>$(& $e $a.next)</div>" })</td></tr>" }) -join '') + '</tbody>' }) -join '') + '</table></div></div>' }
   $fin = @($agents | Where-Object { & $isFin $_ })
   # agents by state: one stacked bar in the Agents header, its counts as the section's text
   $byState = @(@(@('s-act', 'running'), @('s-oth', 'waiting'), @('s-stuck', 'stuck'), @('s-fin', 'done today')) | ForEach-Object { $cl = $_[0]; $nb = @($agents | Where-Object { $(if (& $isFin $_) { 's-fin' } else { & $stCls $_.state }) -eq $cl }).Count; if ($nb) { [pscustomobject]@{ c = $cl; n = $nb; t = "$nb $($_[1])" } } })
@@ -761,7 +773,9 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "d.addEventListener('click',function(x){var b=x.target.closest('.sa');if(!b)return;var k=tk(b.parentNode),i=AL.indexOf(k);if(i>=0)AL.splice(i,1);else AL.push(k);L.setItem('kc-all',JSON.stringify(AL));sa0();ca()});" +
     "d.querySelectorAll('.jl a').forEach(function(a){a.addEventListener('click',function(){for(var s=d.querySelector(a.getAttribute('href'));s;s=s.parentElement&&s.parentElement.closest('details'))s.open=true})});" +   # a jump opens its section and the bands around it
     "function tx(x){var s=x.textContent;x.querySelectorAll('svg title').forEach(function(t){s=s.replace(t.textContent,'')});return s.toLowerCase()}" +   # icon titles are no match ('gb', 'ram' would hit every card)
-    "function fl(){var v=q.value.toLowerCase();S.setItem('kc-q',q.value);d.querySelectorAll('.f').forEach(function(x){x.hidden=!!v&&tx(x).indexOf(v)<0});d.querySelectorAll('tbody.grp').forEach(function(g){g.hidden=!g.querySelector('tr.f:not([hidden])')});" +
+    "function gs(b,c){b.classList.toggle('cl',c);var t=b.querySelector('.gtg');if(t)t.setAttribute('aria-expanded',!c)}d.querySelectorAll('tbody.grp[data-g]').forEach(function(b){var v=S.getItem('kc-ag-'+b.dataset.g);if(v!==null)gs(b,v=='1')});" +   # agent groups: folded per run, remembered
+    "d.addEventListener('click',function(x){var t=x.target.closest('.gtg'),a=x.target.closest('[data-ga]'),bs=t?[t.closest('tbody')]:a?[].slice.call(a.closest('.agw').querySelectorAll('tbody.grp[data-g]')):[];bs.forEach(function(b){var c=t?!b.classList.contains('cl'):a.dataset.ga=='1';gs(b,c);S.setItem('kc-ag-'+b.dataset.g,c?'1':'0')})});" +
+    "function fl(){var v=q.value.toLowerCase();S.setItem('kc-q',q.value);d.documentElement.classList.toggle('flq',!!v);d.querySelectorAll('.f').forEach(function(x){x.hidden=!!v&&tx(x).indexOf(v)<0});d.querySelectorAll('tbody.grp').forEach(function(g){g.hidden=!g.querySelector('tr.f:not([hidden])')});" +
     "d.querySelectorAll('details.lx').forEach(function(x){if(v&&tx(x).indexOf(v)>=0){if(!x.open){x.open=true;x.dataset.fo=1}}else if(!v&&x.dataset.fo){x.open=false;delete x.dataset.fo}});d.querySelectorAll('details.sec').forEach(function(s){if(v){if(!s.open&&s.querySelector('.f:not([hidden])')){s.open=true;s.dataset.fo=1}}else if(s.dataset.fo){s.open=false;delete s.dataset.fo}});nm.hidden=!v||!!d.querySelector('.f:not([hidden])');sa0()}q.oninput=fl;sa0();q.value=S.getItem('kc-q')||'';if(q.value)fl();d.addEventListener('keydown',function(x){if(x.key=='/'&&d.activeElement!=q){x.preventDefault();q.focus()}});" +
     "var SC='.bd,.info,.tw,.sy,.sxb';function cu(e){var v=e.scrollHeight>e.clientHeight+1,h=e.scrollWidth>e.clientWidth+1,c=e.classList,o=v||h;c.toggle('sc',o);if(o)e.tabIndex=0;else e.removeAttribute('tabindex');c.toggle('u',v&&e.scrollTop>1);c.toggle('d',v&&e.scrollTop+e.clientHeight<e.scrollHeight-1);c.toggle('l',h&&e.scrollLeft>1);c.toggle('r',h&&e.scrollLeft+e.clientWidth<e.scrollWidth-1)}" +
     "function ca(){d.querySelectorAll(SC).forEach(cu)}ca();addEventListener('resize',ca);d.addEventListener('toggle',ca,true);q.addEventListener('input',ca);" +
@@ -866,6 +880,7 @@ function Get-KitSupervisePageCss {
   '.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:12.5px}th{text-align:left;font-weight:600;font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.06em;padding:4px 6px;border-bottom:1px solid var(--ln);overflow-wrap:break-word}' +   # headers break between words only: their longest word sets the column's min width
   'td{padding:3px 6px;border-bottom:1px solid var(--ln);vertical-align:top;overflow-wrap:anywhere}tr:last-child td{border-bottom:0}tr.f:hover td{background:color-mix(in srgb,var(--sf2) 55%,transparent)}' +
   'tr.gh th{background:var(--sf2);color:var(--fg);text-transform:none;letter-spacing:0;white-space:normal;font-size:12.5px;padding:4px 6px;border-radius:0}.gn0{font-weight:650}' +
+  '.gtg{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;width:100%}.gtg::before{content:"\25B8";color:var(--mt);transition:transform .15s}tbody.grp:not(.cl) .gtg::before{transform:rotate(90deg)}.gtg:focus-visible{outline:2px solid var(--sage);outline-offset:2px;border-radius:4px}.gcn{font-size:11.5px;font-weight:500;color:var(--mt)}tbody.grp.cl>tr.f{display:none}.flq tbody.grp.cl>tr.f:not([hidden]){display:table-row}.gta{display:flex;gap:6px;justify-content:flex-end;margin-bottom:4px}.gta .sa{margin:0}' +   # agent groups fold (owner 2026-11-17)
   '.bar{display:inline-block;width:88px;height:6px;border-radius:3px;background:var(--sf2);overflow:hidden;vertical-align:middle;margin:0 6px 0 12px}.bar i{display:block;height:100%;border-radius:3px;background:var(--sage)}.bar i.watch{background:var(--watch)}.bar i.slate{background:var(--slate)}.bar i.act{background:var(--act)}.bar i.plum{background:var(--plum)}.bl{font-size:11.5px;color:var(--mt);font-weight:500}' +
   'td .bar{margin-left:0;width:64px}' +
   '.st{border:1px solid var(--ln);border-radius:8px;padding:6px 10px;min-width:0}.st .v{font-size:19px;font-weight:620;letter-spacing:-.01em;line-height:1.3}.st .v small{font-size:12px;color:var(--mt);font-weight:500}' +
