@@ -83,6 +83,7 @@ $s4 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{ big = 30; x
 $s5 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{}; last = @{ 'deploy checks' = "$($n0.AddMinutes(-5))"; cleanup = "$($n0.AddMinutes(-40))" } } }; $st5 = @{}
 "due:$(Test-KitSweep $s5 'deploy checks' $n0)$(Test-KitSweep $s5 cleanup $n0)$(Test-KitSweep $s5 cleanup $n0):$($s5.skipped.Count):$($null = Complete-KitSweep $s5 $st5 $n0.AddSeconds(1); [datetime]$st5.sweep.last.cleanup -gt $n0)"
 $top = Complete-KitSweep $s3 $st3 $n0.AddSeconds(8); "phase:$($st3.sweep.cost.a):$($st3.sweep.cost.b):$($st3.sweep.cost.ContainsKey('~hook')):$top"
+$slg = @(Get-Content (Get-KitLogFile calls) | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object event -eq sweep)[-1]; "slog:$($slg.secs.'~hook'):$($slg.secs.a):$($slg.secs.b)"
 $hp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 60' -PassThru -WindowStyle Hidden; $hb = Join-Path (Get-KitPath background) 'hung.json'
 @{ pid = $hp.Id; start = (Get-KitPidStart $hp.Id); at = (Get-Date).AddHours(-2).ToString('o') } | ConvertTo-Json | Set-Content $hb
 $hu = @(Invoke-KitBackground hung $args[1] @() $null 5); $null = $hp.WaitForExit(5000)
@@ -94,7 +95,7 @@ Expect "sweep: a section runs when its cost fits the time left after starved one
 Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background, or cheap with -Detached: the last result, a fresh detached run, args intact, smart quotes too ($(@($sr -match '^bg:') -join ' '))" ($sr -contains "bg:01Truebg-out:True:0:bg-out-X a'?b:True")
 Expect "sweep: report -Run, scope, tracker statuses run detached, track run in the background, the rest inline; a detached cost keys on the call, old job keys dropped ($(@($sr -match '^mode:') -join ' '))" ($sr -contains 'mode:detached,detached,detached,background,inline:True:q.ps1 deployed -Mrs')
 Expect "sweep: tracker checks (promotion) run past the deadline; a starved section runs up to 10 s past it if min(cost, 5) s fit; a hung background run is stopped; a crashed one (console stderr) is a WATCH line ($(@($sr -match '^(starved|hung|always):') -join ' '))" ($sr -contains 'starved:FalseTrue' -and $sr -contains 'always:TrueFalse' -and $sr -contains 'hung:TrueTrue:True')
-Expect "sweep: an ungated phase is no section's cost, named in slowest; starved hold at most half; pre-v2 costs relearn ($(@($sr -match '^(phase|hold):') -join ' '))" ($sr -contains 'phase:2:1:False:slowest: ~hook 5.0 s, a 2.0 s, b 1.0 s' -and $sr -contains 'hold:True:0')
+Expect "sweep: an ungated phase is no section's cost, named in slowest and the calls log sweep line; starved hold at most half; pre-v2 costs relearn ($(@($sr -match '^(phase|hold|slog):') -join ' '))" ($sr -contains 'phase:2:1:False:slowest: ~hook 5.0 s, a 2.0 s, b 1.0 s' -and $sr -contains 'hold:True:0' -and $sr -contains 'slog:5:2:1')
 Expect "sweep: inside its sectionMinutes not due (no skip); due: runs (twice in a round too), stamped ($(@($sr -match '^due:') -join ' '))" ($sr -contains 'due:FalseTrueTrue:0:True')
 # net: after a timeout the next call waits x1.5 (that call only); hang retries within 10% of calls (>= 1 a minute)
 $nr = Invoke-PsTest net @'

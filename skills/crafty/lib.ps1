@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L91 state · L169 config · L250 OS · L470 leases · L867 status · L1123 supervise sweep · L1201 tracker ·
-  L1530 prior · L1546 ask bugs · L1731 git-host · L1912 kitlog · L2032 params · L2337 entry-scripts
+Sections: L10 paths · L91 state · L169 config · L250 OS · L470 leases · L867 status · L1123 supervise sweep · L1203 tracker ·
+  L1532 prior · L1548 ask bugs · L1733 git-host · L1914 kitlog · L2034 params · L2339 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1149,6 +1149,8 @@ function Complete-KitSweep($Sw, $State, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds; $Sw.cur = $null }
   foreach ($n in @($Sw.ran.Keys | Where-Object { -not "$_".StartsWith('~') })) { $c = $Sw.cost[$n]; $Sw.cost[$n] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $Sw.ran[$n] } else { $Sw.ran[$n] }), 2); if ($Sw.every[$n]) { $Sw.last[$n] = $Now.ToString('o') } }
   $State.sweep = @{ v = 2; cost = $Sw.cost; last = $Sw.last; starved = @($Sw.skipped | Where-Object { -not $Sw.ran.ContainsKey($_) }) }
+  $secs = [ordered]@{}; foreach ($kv in @($Sw.ran.GetEnumerator() | Where-Object { $_.Value -ge 0.5 } | Sort-Object { -$_.Value })) { $secs[$kv.Key] = [math]::Round($kv.Value, 1) }
+  Write-KitLog calls sweep @{ secs = $secs; skipped = @($State.sweep.starved); timedOut = @($Sw.timedOut) }   # a budget hit names its slow sections (K8: no per-sweep data before)
   "slowest: $(@($Sw.ran.GetEnumerator() | Sort-Object { -$_.Value } | Select-Object -First 5 | ForEach-Object { '{0} {1:0.0} s' -f $_.Key, $_.Value }) -join ', ')"   # ~ = ungated phase
 }
 # inline within the time left; -Background over half of it, or -Detached: background, last finished result now
