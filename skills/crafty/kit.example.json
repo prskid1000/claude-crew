@@ -218,7 +218,7 @@
    "tracker-none": "tracker-none/", "published": "published/",
    "localenv-env": "localenv/",
    "browser-ports": "browser-ports.json", "ports-deployed": "ports-deployed.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "locks": "runtimes/locks.json", "storage": "storage/",
-   "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl", "outcomes": "outcomes.jsonl", "standing-rules": "standing-rules.json"
+   "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl", "outcomes": "outcomes.jsonl", "standing-rules": "standing-rules.json", "pool-usage": "pool-usage.json"
   },
   "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kitbag.py kitlog): every log line: at, run, agent, task, script, verb, event + fields, secrets masked. A durable name's stream writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl (merged by bossy.ps1 audit).",
    "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log", "scope-log", "params", "params-changes", "logs-summary", "leases", "outcomes"],

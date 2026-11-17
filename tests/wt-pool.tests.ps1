@@ -110,6 +110,14 @@ $sg = Invoke-PsTest stray-slot @'
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/bossy/adapters'))
 $wr = pwsh @np $D wt release -Agent devZ 2>&1 | Out-String
 Expect "a stray array file in wt-slots: supervise resources sweep runs, no slot flag from it; wt release ignores it ($(@($sg) -join ' ') | $($wr.Trim()))" ((@($sg) -join ' ') -match 'stray:True' -and $wr -match 'no slot held by devZ' -and (Test-Path "$kf/stray.json"))
+# K40: the learned warm count = p90 of 7 days of leased-slot samples + 1; a free slot unused 7+ days goes when 3 days stayed under it, one a day
+$pu = & { . (Join-Path $k 'skills/crafty/lib.ps1'); function Get-KitCheckoutName { 'app' }; $now = [datetime]'2026-02-10T12:00:00'; $f = Get-KitPath pool-usage -Create
+  $smp = @(0..40 | ForEach-Object { , @($now.AddHours(-4 * $_).ToString('o'), $(if ($_ % 10 -eq 0) { 2 } else { 1 })) })
+  Write-KitState $f ([ordered]@{ repos = [ordered]@{ app = [ordered]@{ samples = $smp; used = [ordered]@{ '1' = $now.AddDays(-1).ToString('o'); '2' = $now.AddDays(-2).ToString('o'); '3' = $now.AddDays(-9).ToString('o'); '4' = $now.AddDays(-9).ToString('o') }; shrunk = '' } } })
+  $sl = @(1..4 | ForEach-Object { [pscustomobject]@{ n = $_; file = (Join-Path (Kd) "none-$_.json") } })
+  $r1 = Update-KitPoolUsage 'x' 10 2 $sl $now; $r2 = Update-KitPoolUsage 'x' 10 2 $sl $now.AddHours(2); $r3 = Update-KitPoolUsage 'x' 2 2 $sl $now.AddDays(2)
+  "$($r1.target)|$($r1.drop)|$($r2.drop)|$($r3.target)|$(@((Read-KitState $f).repos.app.samples).Count)" }
+Expect "pool: learned warm = p90 + 1 (capped by the pool size), one idle slot dropped a day, samples kept 7 days ($pu)" ($pu -eq '3|4|0|2|33')
 # K55: one lane name in shown text (ids kept in paths, logs, branch names and -Json); -Env takes the shown name; ui-check LANE-ID
 $lnt = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{ localEnv = [pscustomobject]@{ envs = [pscustomobject]@{ shop = [pscustomobject]@{ lanes = [pscustomobject]@{ max = 3 } } } } }
   @(@('shop2 · api', 'shop · db', 'env shop', '[shop3] up', 'shop2-api.log', 'lane/shop-kestrel', 'workshop2 · x', 'shop2 &#183; web') | ForEach-Object { ConvertTo-KitLaneText $_ }) -join '|'

@@ -113,7 +113,7 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
 
 ## Worktrees and lanes
 - **Pool slots** (`crafty.ps1 wt lease`): per repo, folder `<bird>-<repo>`, shown as `<repo>·<Bird>`; agents lease one per branch
-  and release it; a free slot sits detached at `origin/<target>`, never on a stale branch; `pool.warm` free slots are kept made.
+  and release it; a free slot sits detached at `origin/<target>`, never on a stale branch; warm free slots: 7-day p90 + 1 (`pool.warm` first).
 - **Lanes** (envy): lane k of env `<product>` runs from its own worktrees `lane-<product>-<bird>-<repo>` on the local branch
   `lane/<product>-<bird>` (never pushed): the target plus the task branches merged in as layers. Old names (`localenv-<env>-<repo>`,
   `localenv/<env>`) move once the lane is idle: `envy.ps1 lanes -Migrate [-DryRun]`, and supervise each sweep (`-LanesOnly`);

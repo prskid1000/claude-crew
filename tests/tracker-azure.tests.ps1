@@ -37,6 +37,8 @@ Cmt azure ([ordered]@{ 'GET .*workItems/42/comments\?' = '{"comments":[{"id":7,"
 # K54 move: the old parent link removed by index, the new one added, the area path set; top-level: only the removal
 try { Initialize-KitTracker -Type azure; $global:fx = [ordered]@{ 'GET .*workitems/42\?\$expand=relations' = '{"id":42,"relations":[{"rel":"System.LinkTypes.Related","url":"u"},{"rel":"System.LinkTypes.Hierarchy-Reverse","url":"p"}]}'; 'PATCH .*workitems/42\?' = '{"id":42}' }; $global:log.Clear()
   $m1 = Move-TrackerTask 42 -Parent 7 -List 'Shop\Team'; $m2 = Move-TrackerTask 42 -Top; $pl = @($global:log -match '^PATCH')
-  $pass = $m1 -eq 'moved 42 to Shop\Team under 7' -and $pl[0] -match '(?=.*\{"path":"/relations/1","op":"remove"\})(?=.*workItems/7)(?=.*System.AreaPath)' -and $pl[0] -notmatch 'relations/0' -and $pl[1] -match '"path":"/relations/1"' -and $pl[1] -notmatch 'Hierarchy-Reverse","url":"https' } catch { $pass = $false; "  azure move error: $_" }
+  $o0 = @(($pl[0] -replace '^[^\[]*') | ConvertFrom-Json); $o1 = @(($pl[1] -replace '^[^\[]*') | ConvertFrom-Json)   # key order differs per process
+  $pass = $m1 -eq 'moved 42 to Shop\Team under 7' -and "$($o0.op -join ',')|$($o0.path -join ',')" -eq 'remove,add,add|/relations/1,/relations/-,/fields/System.AreaPath' -and $o0[1].value.url -match 'workItems/7$' -and
+    "$($o1.op -join ',')|$($o1.path -join ',')" -eq 'remove|/relations/1' } catch { $pass = $false; "  azure move error: $_" }
 if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker azure: move swaps the parent link (old one out by index), sets the area path; top-level removes the link"
 exit [int]($global:failed -gt 0)

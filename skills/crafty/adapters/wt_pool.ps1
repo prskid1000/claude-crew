@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L108 names · L141 slots · L167 lease · L264 release · L292 lanes · L397 sync · L461 pool
+Sections: L14 worktrees · L108 names · L141 slots · L167 lease · L264 release · L292 lanes · L397 sync · L485 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -405,6 +405,24 @@ function Save-KitBranchBackup([string]$Repo, [string]$Branch, [switch]$DryRun) {
   $err = ''; if (-not $DryRun) { git -C $Repo rev-parse -q --verify "refs/tags/$tag" 2>$null | Out-Null; if ($LASTEXITCODE) { $o = @(git -C $Repo tag $tag "refs/heads/$Branch" 2>&1); if ($LASTEXITCODE) { $err = "tag $tag failed: $(@($o)[-1])" } } }
   [pscustomobject]@{ n = $n; tag = $tag; err = $err }
 }
+# adaptive warm slots (K40, owner 2026-11-17; state pool-usage, never config): each sync samples the leased slots; warm = p90 of 7 days
+# + 1, capped by the pool size (config poolWarm / pool.warm until a day of samples); grows at once (a lease makes a slot lazily); a
+# free clean slot unused 7+ days goes only when 3 days stayed under the target, one a day -> @{ warm; target; drop (slot n or 0) }
+function Update-KitPoolUsage([string]$Repo, [int]$Size, [int]$Default, $Slots, [datetime]$Now = (Get-Date)) {
+  $rk = Get-KitCheckoutName $Repo; $f = Get-KitPath pool-usage; $res = @{ warm = $Default; target = $Default; drop = 0 }
+  Invoke-KitLocked $f { $st = Read-KitState $f; if (-not $st) { $st = [ordered]@{ repos = [ordered]@{} } }; if (-not $st.repos[$rk]) { $st.repos[$rk] = [ordered]@{ samples = @(); used = [ordered]@{}; shrunk = '' } }
+    $u = $st.repos[$rk]; $held = @($Slots | Where-Object { Read-KitSlotLease $_.file }); foreach ($s in $held) { $u.used["$($s.n)"] = $Now.ToString('o') }
+    foreach ($s in @($Slots | Where-Object { -not $u.used["$($_.n)"] })) { $u.used["$($s.n)"] = $Now.ToString('o') }   # first seen: counts as used now
+    $u.samples = @(@($u.samples | Where-Object { $_ -and [datetime]$_[0] -gt $Now.AddDays(-7) }) + , @($Now.ToString('o'), $held.Count))
+    $vals = @($u.samples | ForEach-Object { [int]$_[1] } | Sort-Object)
+    if ($vals.Count -and (@($u.samples | ForEach-Object { [datetime]$_[0] }) | Measure-Object -Minimum).Minimum -le $Now.AddDays(-1)) { $res.target = [math]::Min($Size, $vals[[math]::Min($vals.Count - 1, [int][math]::Ceiling(0.9 * $vals.Count) - 1)] + 1); $res.warm = $res.target }
+    $recent = @($u.samples | Where-Object { [datetime]$_[0] -gt $Now.AddDays(-3) } | ForEach-Object { [int]$_[1] }); $span = @($u.samples | Where-Object { [datetime]$_[0] -le $Now.AddDays(-3) }).Count
+    if ($span -and @($Slots).Count -gt $res.target -and -not @($recent | Where-Object { $_ + 1 -gt $res.target }).Count -and -not ($u.shrunk -and [datetime]$u.shrunk -gt $Now.AddDays(-1))) {
+      $old = @($Slots | Where-Object { -not (Read-KitSlotLease $_.file) -and [datetime]$u.used["$($_.n)"] -lt $Now.AddDays(-7) } | Sort-Object n -Descending)[0]
+      if ($old) { $res.drop = $old.n; $u.shrunk = $Now.ToString('o') } }
+    $u.target = $res.target; Write-KitState $f $st }
+  $res
+}
 function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
   $rl = Split-Path $Repo -Leaf; $r = [ordered]@{ repo = $rl; at = (Get-Date).ToString('o'); ff = @(); diverged = @(); dirty = @(); pruned = @(); warmed = @(); err = '' }
   $fo = @(git -C $Repo fetch -q --prune origin 2>&1); if ($LASTEXITCODE) { $r.err = "fetch failed: $(@($fo)[-1])"; return [pscustomobject]$r }
@@ -433,6 +451,12 @@ function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
     $r.ff += "$b +$bh"
   }
   $size = Get-KitPoolSize $Repo; $warm = [math]::Min($size, [int]$(if ($null -ne ($pw = Get-RepoConf (Get-KitCheckoutName $Repo) 'poolWarm' $null)) { $pw } else { Get-KitParam 'pool.warm' }))
+  if ($size -gt 0 -and -not $DryRun) {   # K40: the learned warm count; one long-unused free slot may go (wt remove: links first, nothing lost)
+    $pu = Update-KitPoolUsage $Repo $size $warm @(Get-KitSlots $Repo); $warm = $pu.warm; $r.warm = "$warm of $(@(Get-KitSlots $Repo).Count) (learned $($pu.target))"
+    $ds = @(Get-KitSlots $Repo | Where-Object { $_.n -eq $pu.drop })[0]
+    if ($ds -and -not (Read-KitSlotLease $ds.file) -and -not "$(git -C $ds.path branch --show-current 2>$null)".Trim() -and -not @(Get-WtDirty $ds.path).Count) {
+      git -C $ds.path merge-base --is-ancestor HEAD "origin/$tgt" 2>$null
+      if (-not $LASTEXITCODE) { $rm = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.dev, 'wt', 'remove', '-Dir', $ds.path) 120; $r.shrunk = @("$($ds.name)$(if ($rm.code) { ' (remove failed)' })") } } }
   if ($size -gt 0 -and $tgt -and -not $DryRun) {
     $pl = Join-Path (Get-KitPath wt-slots -Create) "$rl.pool"
     foreach ($s in @(Get-KitSlots $Repo)) {   # idle: at the target, no stale branch; the lock per slot (a lease never waits on a sweep)
