@@ -2498,5 +2498,5 @@ elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($__envyArgs | Se
 elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }
 else {   # usage errors exit 2; any other crash exits 1 (Invoke-KitVerb)
   $KitVerbOnError = { param($e) $m = "$($e.Exception.Message)"; if ($m -match 'unknown env|-Env needed|No local environments configured|needs -|marks lists the marks') { [Console]::Error.WriteLine("envy.ps1: $m"); exit 2 } }
-  Invoke-KitVerb Invoke-LocalEnv @($__envyArgs) | ConvertTo-KitLaneOut ("-Json" -in $__envyArgs)   # shown lane names (K55)
+  Invoke-KitVerb Invoke-LocalEnv @($__envyArgs) | ConvertTo-KitLaneOut (("-Json" -in $__envyArgs) -or $__verb -in "sql", "logs", "api", "events")   # shown lane names (K55); data verbs as they are
 }

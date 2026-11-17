@@ -90,7 +90,7 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix, [string[]]$Known = @()) {
   # localEnv.envs.<env>.expectedErrors (regexes; a lane uses its env's), dropped like acknowledged noise
   $be = if (-not $ev) { '' } elseif ($null -ne (Get-KitSetting "localEnv.envs.$($ev.env)" $null)) { "$($ev.env)" } else { "$($ev.env)" -replace '\d+$' }
   $exp = @(@(Get-KitSetting 'localEnv.expectedErrors' @()) + @(if ($be) { Get-KitSetting "localEnv.envs.$be.expectedErrors" @() }) | Where-Object { $_ })
-  $keep = { param($x) (& $sigOf $x) -notin $Known -and -not @($exp | Where-Object { "$x" -match $_ }).Count }
+  $keep = { param($x) (& $sigOf $x) -notin $Known -and -not @($exp | Where-Object { try { "$x" -match $_ } catch { $false } }).Count }
   if (($Known.Count -or $exp.Count) -and $L.lines) { $kl = @($L.lines | Where-Object { & $keep $_ }); $L = [pscustomobject](@{ path = $L.path; expected = $L.expected; lines = $kl } + (Get-KitLogClass $kl)) }
   $n = $L.errors + $(if (-not @($ev.leases).Count) { $L.expected })   # 4xx with nobody testing: someone else's calls
   if ($n -le 0) { return }
