@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L179 wt · L487 stack · L669 gate · L986 check · L1303 pipes · L1360 guard · L2208 dir ·
-  L2218 checkpoint · L2247 prior · L2285 tracker · L2307 task spec · L2483 scope · L2530 host
+Sections: L23 init · L30 sweep · L179 wt · L487 stack · L669 gate · L986 check · L1303 pipes · L1360 guard · L2213 dir ·
+  L2223 checkpoint · L2252 prior · L2290 tracker · L2312 task spec · L2488 scope · L2535 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -46,13 +46,13 @@ function Get-KitWorktrees([string]$Repo) {   # git worktree list as objects; bra
     elseif ($cur -and $l -like 'HEAD *') { $cur.head = $l.Substring(5) }
   }
 }
-# linkDefaults: [{ markers: [<file>], dir }] a worktree links from its source (dir node_modules: the node farm); unset = node_modules + .venv
+# linkDefaults: [{ markers: [<file>], dir }] a worktree links from its source; unset = node_modules + .venv
 function Get-DepLinkDefaults {
   $l = @(Get-KitSetting 'linkDefaults' $null | Where-Object { $_.dir -and @($_.markers).Count })
   if ($l.Count -or ($__cfg -and (Get-KitProps $__cfg).Name -contains 'linkDefaults')) { return $l }   # [] = link nothing
   @([pscustomobject]@{ markers = @('package.json'); dir = 'node_modules' }, [pscustomobject]@{ markers = @('pyproject.toml', 'requirements.txt'); dir = '.venv' })
 }
-# never deleted: protectedBranchesBase (default main/master/develop/release/*), lane/* + localenv/* (envy's lane branches: wt sync-repos prunes those no worktree holds); protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
+# never deleted: protectedBranchesBase (default main/master/develop/release/*), lane/*, localenv/* (envy lanes; wt pool prunes unheld ones); protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
 function Get-KitKeepBranchRx([string]$Repo) {
   $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
   $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @(Get-KitSetting 'protectedBranchesBase' @('main', 'master', 'develop', 'release/*')) }
@@ -110,7 +110,7 @@ function Remove-KitLeftover([string]$Dir) {
   if (@(Get-ChildItem -LiteralPath $Dir -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue).Count) { throw "links left in ${Dir}: not removed" }
   Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction Stop
 }
-# every worktree-root folder, then every repo's branches; { actions (bytes, why, path), kept, notes }; counts -> repo-sweep (health, dashboard)
+# worktree-root folders, then repo branches -> { actions, kept, notes }; counts -> repo-sweep
 function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryRun) {
   $ErrorActionPreference = 'SilentlyContinue'; $now = Get-Date; $wtDays = [double](Get-KitParam 'cleanup.worktreeDays')   # gone branch / uncommitted: idle this long
   $actions = [Collections.ArrayList]::new(); $kept = [Collections.ArrayList]::new(); $notes = @()
@@ -667,7 +667,7 @@ else {
 }
 
 # ---- gate: machine-wide memory gate; exit = command's code, 3 = no start in time or a PAUSE
-# the open pause over a live board agent (by name, or a worktree holding $Dir) of a paused run or one it lists; nobody on the board: none
+# the open pause over a live board agent (by name, or a worktree holding $Dir) of a paused or listed run; none on the board: none
 function Get-KitPauseFor([string]$Agent, [string]$Dir) {
   $ps = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' }); if (-not $ps.Count) { return }
   $full = try { [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/') } catch { '' }
@@ -1010,7 +1010,7 @@ print(' '.join(x for x in sorted(t) if gone(x)))
   if (-not $pr.WaitForExit(1000 * [int](Get-KitParam 'check.importProbeSec'))) { Stop-KitProcessTree $pr; return @() }
   @("$($outTask.Result)".Trim() -split '\s+' | Where-Object { $_ })
 }
-# stale-env hint: each module's requirements.txt line, the file's plain pins as constraints (a full -r rebuilt other pins, 2026-11-12)
+# stale-env hint: each module's requirements.txt line, its plain pins as constraints (a full -r rebuilt other pins)
 function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
   $venv = Get-Item -LiteralPath (Join-Path $Dir '.venv') -Force -ErrorAction SilentlyContinue; $venvDir = if ($venv.LinkTarget) { [IO.Path]::GetFullPath($venv.LinkTarget, $Dir) } else { $venv.FullName }
   $venvPy = if ($venvDir) { Join-Path $venvDir $(if ($KitIsWindows) { 'Scripts\python.exe' } else { 'bin/python' }) } else { $Py }
@@ -2044,9 +2044,14 @@ function Test-OpenDoc([string]$text, [string]$tool) {
       $t -match "$sep(Start-Process|start|saps)\s+(-\w+\s+)*([^\s;|&<>]+\.($de)|https?://\S+|\.{1,2}[\\/]?)$fe") { return 'doc' }
   $null
 }
+function Get-KitScriptRewrite([string]$text) {   # the first script in command position, through its interpreter
+  if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>[^\r\n;|&]*)') { return '' }
+  " Rewrite: $(@{ ps1 = 'pwsh -NoProfile -File'; py = 'python -X utf8' }[$Matches.x] ?? 'node') $($Matches.s)$($Matches.r.TrimEnd())"
+}
 $od = Test-OpenDoc $raw $tn
 if ($od -eq 'script') {
-  Deny "That runs a script file directly: Windows opens it with its file association (an editor on the owner's screen). Run it with python -X utf8 <script> / node <script> (.ps1: & <script> or pwsh -File <script>). $hl" }
+  $fix = Get-KitScriptRewrite $raw
+  Deny "That runs a script file directly: Windows opens it with its file association (an editor on the owner's screen). Run it with python -X utf8 <script> / node <script> (.ps1: & <script> or pwsh -File <script>).$fix $hl" }
 $readIt = "use the Read tool (offset / limit; Get-Content or cat in a script); run a script through its interpreter (python -X utf8, node, pwsh -File). $hl"
 if ($od) { Deny "That opens the file in its default desktop app instead of reading it: $readIt" }
 # a file path in command position (quoted, any extension, an existing file or folder) opens its associated app
@@ -2109,7 +2114,7 @@ function Find-RunsFile([string]$text, [string]$tool, [string]$base) {
   }
   $null
 }
-if (($rf = Find-RunsFile $raw $tn $here)) { Deny "kit guard: $rf in command position opens it in its default desktop app (a window on the owner's screen), not your terminal: $readIt" }
+if (($rf = Find-RunsFile $raw $tn $here)) { Deny "kit guard: $rf in command position opens it in its default desktop app (a window on the owner's screen), not your terminal: $readIt$(if ($rf -match '\.(ps1|py|mjs|cjs|js)$') { Get-KitScriptRewrite $raw })" }
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
     $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run: commit with $($KitCmd.dev) wt commit; fix what the hook reports." }
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
@@ -2468,7 +2473,7 @@ function Invoke-Tracker {
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
     'describe' { if ((Read-KitState (Get-KitTaskFile $__id)).spec) { "tracker describe refused: $__id is rendered from its spec: tracker update $__id -Spec <json with the changed keys>"; exit 1 }
-      $__nd = __TrText $(if ($__x) { $__x } else { $__trOpt.Description }); $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # __TrText: devtools.py passes long text as a file path; spec-less: free text may not drop a template section ('x': no [Bug] exemption)
+      $__nd = __TrText $(if ($__x) { $__x } else { $__trOpt.Description }); $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # text or a file path; spec-less: free text may not drop a template section ('x': no [Bug] exemption)
       $__oldG = @(Get-KitTaskTextGaps 'x' "$($__ot.description)" -Subtask:$__sub); if ($__oldG -contains 'a description') { $__oldG = @(Get-KitTaskTemplate | ForEach-Object { "$($_.label)" }) }   # empty today: nothing to lose
       $__lost = @(Get-KitTaskTextGaps 'x' $__nd -Subtask:$__sub | Where-Object { $_ -notin $__oldG })
       if ($__lost.Count) { "tracker describe refused: the text lacks $($__lost -join ', ') (templates.md task-description): render it from a spec: tracker update $__id -Spec <json> (crafty.ps1 ""task spec""; doc links and kit sections stay)"; exit 1 }

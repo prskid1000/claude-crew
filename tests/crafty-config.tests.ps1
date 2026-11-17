@@ -74,5 +74,8 @@ Expect-Each (Invoke-PsTest 'churn' $churnTest @((Lib), (Kd))) 'churn #: Write-Ki
 # usage errors carry one worked example (retro 2026-11-17: cases 31x, evidence 7x)
 $dtU = Join-Path $k 'skills/crafty/devtools.py'; $evU = & $py -X utf8 $dtU evidence 2>&1 | Out-String; $caU = & $py -X utf8 $dtU cases 2>&1 | Out-String; $crU = & $py -X utf8 $dtU cases result T1 2>&1 | Out-String
 Expect 'devtools.py: evidence / cases usage errors print a worked example per verb' ($evU -match 'e\.g\. python -X utf8 devtools\.py evidence "T1' -and $caU -match 'cases add T1 ' -and $caU -match 'cases round T1 --fix' -and $crU -match 'e\.g\. python -X utf8 devtools\.py cases result T1 A1 PASS')
+# guard: a script in command position is denied with its exact rewrite (retro 2026-11-17)
+$gRw = foreach ($gc in 'skills/bossy/bossy.ps1 learn -Skill kitty -Kind win', 'cd x && tools/run.py --n 2') { $gj = @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $gc } } | ConvertTo-Json -Compress; (pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') guard -Json $gj) -join '' }
+Expect "guard: a .ps1 / .py in command position -> the pwsh -File / python -X utf8 rewrite in the deny ($(($gRw | ForEach-Object { [regex]::Match($_, 'Rewrite: [^.]*').Value }) -join ' | '))" ($gRw[0] -match 'Rewrite: pwsh -NoProfile -File skills/bossy/bossy\.ps1 learn -Skill kitty -Kind win' -and $gRw[1] -match 'Rewrite: python -X utf8 tools/run\.py --n 2')
 Remove-TestKit $k
 Complete-Tests
