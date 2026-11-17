@@ -47,12 +47,14 @@ $k58 = & { . $k58L
   $free = Select-Lane shop F1 0 'deploy'
   Update-State shop2 { param($x) $x.leases.F1 = @{ services = @('api'); agent = 'F1' }; $x.requests = @(@{ id = 'w1'; kind = 'deploy'; status = 'queued'; agent = 'F1'; at = (Get-Date).AddMinutes(-5).ToString('o') }) }
   $shared = Select-Lane shop S1 0 'deploy'
-  Update-State shop2 { param($x) $x.requests[0].at = (Get-Date).AddMinutes(-20).ToString('o') }
+  Update-State shop2 { param($x) $x.requests[0].status = 'in-train'; $x.train = @{ id = 't1'; at = (Get-Date).AddMinutes(-30).ToString('o'); requests = @('w1') } }
+  $shared += '/' + (Select-Lane shop T1 0 'deploy')
+  Update-State shop2 { param($x) $x.train = $null; $x.requests[0].status = 'queued'; $x.requests[0].at = (Get-Date).AddMinutes(-20).ToString('o') }
   function Get-GateAvailGB { 10.5 }; $noRoom = Select-Lane shop S2 0 'deploy'
   function Get-GateAvailGB { 50 }; $opened = Select-Lane shop S3 0 'deploy'
   $lo = Get-LanesOpen shop
-  "$free|$shared|$noRoom|$opened|$($lo.open)/$($lo.of)|$($lo.why -match 'S3 -> shop: cold lane opened: warm lanes busy, queue wait 20 min >= lanes.openAfterMinutes 15')|$((GraceMin shop2 $null) -eq (Get-KitParam 'idle.graceMinutes'))" } 6>$null
-Expect "K58 lanes: free warm lane first, busy warm shared under the queue-wait threshold or without room, a cold lane past it; lanes open N of M (why); extra lane idle grace = idle.graceMinutes ($k58)" ($k58 -eq 'shop2|shop2|shop2|shop|1/3|True|True')
+  "$free|$shared|$noRoom|$opened|$($lo.open)/$($lo.of)|$($lo.why -match 'S3 -> shop: cold lane opened: warm lanes busy, queue wait 20 min >= lanes.openAfterMinutes 15')|$((GraceMin shop2 (Svc shop2 'api')) -eq [math]::Max(6, (Get-KitParam 'idle.graceMinutes')))/$(GraceMin shop (Svc shop 'api'))" } 6>$null
+Expect "K58 lanes: free warm lane first, busy warm shared under the queue-wait threshold (a running train alone is no wait) or without room, a cold lane past it; lanes open N of M (why); extra lane idle grace = idle.graceMinutes, at least 3 starts; lane 1 keeps its 15 min ($k58)" ($k58 -eq 'shop2|shop2/shop2|shop2|shop|1/3|True|True/15')
 Remove-TestKit $k58Kit
 $lm = & { . $lkL; function MarksOn { $true }; function Get-DbPos { 'pos1' }; $global:lmUp = $false; function Test-PortListening { $global:lmUp }
   $q = New-Mark shop2 'release-3' 'release'; $pend = "$(@((Read-State shop2).pendingMarks).name)|$(@((Read-State shop2).marks | Where-Object { $_ }).Count)"

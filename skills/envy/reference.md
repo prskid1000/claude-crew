@@ -34,7 +34,7 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
 - `-Env <env>` (deploy, use, task) = the lane the agent already uses, else the least busy warm lane (services up or a train;
   shared when busy); a cold lane opens only when the warm lanes' queue wait reaches `localEnv.lanes.openAfterMinutes` (learned
   from queue waits) and free RAM minus the keep-free floor holds all its services; `-Env <env><k>` / `-Lane <k>` opens or pins
-  one; owner verbs act on the named lane. An extra lane's services stop after `idle.graceMinutes` unheld. `status`: `lanes open
+  one; owner verbs act on the named lane. An extra lane's services stop after `idle.graceMinutes` unheld (at least 3 start times). `status`: `lanes open
   N of M (why)`.
 - API calls: `pokey.ps1 api -Target <target><k>`. Seed: the env's seed file; `{lane}` in it (e.g. `-Target local-shop{lane}`).
 - `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).

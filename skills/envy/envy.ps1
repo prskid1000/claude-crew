@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L233 state · L280 layer drops · L352 leases · L460 code · L498 migrations ·
-  L501 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L649 shared builds · L782 hooks · L854 marks · L1034 seed ·
-  L1101 processes · L1481 daemon · L1942 cleanup · L2014 doctor · L2067 verbs
+Sections: L36 config · L236 state · L283 layer drops · L355 leases · L463 code · L501 migrations ·
+  L504 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L652 shared builds · L785 hooks · L857 marks · L1037 seed ·
+  L1104 processes · L1484 daemon · L1945 cleanup · L2017 doctor · L2070 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -213,6 +213,9 @@ function EnvVars([string]$e, $item) {
 }
 # $null or '' unsets (pwsh passes $null to a [string] as '': an unset var came back EMPTY and every child of the loop inherited it)
 function Set-EnvVar([string]$k, $v) { if ("$v" -eq '') { [Environment]::SetEnvironmentVariable($k, [NullString]::Value) } else { [Environment]::SetEnvironmentVariable($k, "$v") } }
+# _exec: an inherited empty var (a key gone from the env file, an older loop's leak) never reaches a service (Spring reads ''
+# as a value); Linux: drops deliberate empties too (NO_COLOR=)
+function Clear-EmptyEnv { foreach ($ev in @(Get-ChildItem env: | Where-Object { "$($_.Value)" -eq '' })) { Set-EnvVar $ev.Name '' } }
 function With-Env($vars, [scriptblock]$body) {
   $old = @{}; foreach ($k in $vars.Keys) { $old[$k] = [Environment]::GetEnvironmentVariable($k); Set-EnvVar $k $vars[$k] }
   try { & $body } finally { foreach ($k in $old.Keys) { Set-EnvVar $k $old[$k] } }
@@ -1231,9 +1234,9 @@ function Need-GB([string]$e, $s) {
   switch -regex ($st) { '^java|^gradle|^android' { 3 } '^angular' { 3 } '^dotnet' { 1.5 } '^node|^react' { 1.5 } '^python|^go|^rust' { 0.5 } default { 1 } }
 }
 function GraceMin([string]$e, $s) {
-  if ([int](Get-EnvCfg $e).lane -gt 1) { return [double](Get-KitParam 'idle.graceMinutes') }   # K58: an extra lane closes after the idle grace
   $xs = @((Get-LocalEnvHistory)["$e/$($s.name)/startSec"] | Where-Object { $_ })
   $start = if ($xs.Count) { ($xs | Measure-Object -Maximum).Maximum } else { 120 }
+  if ([int](Get-EnvCfg $e).lane -gt 1) { return [math]::Max([double](Get-KitParam 'idle.graceMinutes'), [math]::Round(3 * $start / 60, 1)) }   # K58: an extra lane closes after the idle grace (3 starts at least)
   [math]::Min($script:IdleMaxM, [math]::Max($script:IdleMinM, [math]::Round(3 * $start / 60, 1)))
 }
 # free RAM (avail + half the file cache), one sample a minute while a controller runs, 24 h kept (localenv-history "ram")
@@ -2456,8 +2459,7 @@ switch ($Action) {
     # its temp files (java.io.tmpdir, the embedded server's base dir) in one folder per service, emptied each start; env vars below win
     $stmp = Join-Path (Get-KitPath localenv -Create) "tmp/$e-$($s.name)"; if (-not ($s.port -and (Test-PortListening ([int]$s.port)))) { Remove-Item -LiteralPath $stmp -Recurse -Force -ErrorAction SilentlyContinue }   # a live instance keeps its files
     $env:TMP = $env:TEMP = $env:TMPDIR = (New-Item -ItemType Directory -Force $stmp).FullName   # arch-ok: kit temp
-    # an inherited empty var (a key removed from the env file, an older loop's leak) never reaches the service: Spring reads '' as a value
-    foreach ($ev in @(Get-ChildItem env: | Where-Object { "$($_.Value)" -eq '' })) { Set-EnvVar $ev.Name '' }
+    Clear-EmptyEnv
     foreach ($kv in (EnvVars $e $s).GetEnumerator()) { Set-EnvVar $kv.Key $kv.Value }
     Set-Location $sdir
     Add-Content $log "== $(Now) start in $sdir : $cmd"

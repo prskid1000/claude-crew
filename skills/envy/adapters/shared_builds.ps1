@@ -1,8 +1,9 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L65 lane pick
+# Sections: L4 shared builds · L66 lane pick
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
-# crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.$script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
+# crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
+$script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
 # a crafty.ps1 check build of this code (env tree = the check's tree), service folder and -P / -D flags (-DskipTests aside), its
 # jar unchanged since -> @{ path; t }. services[].shareCheckBuild: true on, false off; unset: on for a Maven package build without
 # prepare (its edits are in an env build only) or build env vars
@@ -94,9 +95,9 @@ function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [stri
   Write-Host "[$($best.env)] lane $([array]::IndexOf($names, $best.env) + 1) of $($names[0]): $why ($(($loads | ForEach-Object { "$($_.env) $($_.agents.Count) agent(s)$(if (-not ($_.up -or $_.train)) { ' cold' })" }) -join ', ')); later calls with -Env $($names[0]) stay on it"
   $best.env
 }
-# minutes the next deploy on a lane waits: its oldest queued request or its running train (0: none)
+# a lane's queue wait: minutes its oldest queued request has waited (0: none; a running train alone is no wait, as the learned obs)
 function Get-LaneWaitMin([string]$n) {
-  $st = Read-State $n; $ats = @(@($st.requests | Where-Object { $_.status -eq 'queued' } | ForEach-Object at) + @($st.train.at) | Where-Object { $_ })
+  $st = Read-State $n; $ats = @($st.requests | Where-Object { $_.status -eq 'queued' -and $_.at } | ForEach-Object at)
   [int](@($ats | ForEach-Object { ((Get-Date) - [datetime]$_).TotalMinutes }) + 0 | Measure-Object -Maximum).Maximum
 }
 # lanes open N of M (why): open = services up or a train; why = the last pick (Select-Lane)

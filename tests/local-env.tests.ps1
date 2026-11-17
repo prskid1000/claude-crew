@@ -220,8 +220,10 @@ $evo = & { . $evL
   [Environment]::SetEnvironmentVariable('KIT_T_GONE', [NullString]::Value)
   With-Env @{ KIT_T_GONE = 'true'; KIT_T_EMPTY = '' } { $script:inEmpty = $null -eq [Environment]::GetEnvironmentVariable('KIT_T_EMPTY') }
   $after = if ($null -eq [Environment]::GetEnvironmentVariable('KIT_T_GONE')) { 'unset' } else { "[$([Environment]::GetEnvironmentVariable('KIT_T_GONE'))]" }
-  $lines = @((Get-Content -LiteralPath $evL) -match 'Get-ChildItem env: \| Where-Object \{ "\$\(\$_\.Value\)" -eq '''' \}\)\) \{ Set-EnvVar')
-  "$keys|$($vv.KIT_T_EMPTY -eq '')|$script:inEmpty|$after|$($lines.Count)" }
-Expect "lane env: comments ignored, an empty key not exported, a var unset before With-Env is unset after, _exec drops inherited empties ($evo)" ($evo -eq 'KIT_T_A,KIT_T_EMPTY|True|True|unset|1')
+  [Environment]::SetEnvironmentVariable('KIT_T_INH', ''); [Environment]::SetEnvironmentVariable('KIT_T_KEEP', 'v')
+  $inh0 = $null -ne [Environment]::GetEnvironmentVariable('KIT_T_INH'); Clear-EmptyEnv
+  $inh = "$inh0/$($null -eq [Environment]::GetEnvironmentVariable('KIT_T_INH'))/$([Environment]::GetEnvironmentVariable('KIT_T_KEEP'))"; Set-EnvVar KIT_T_KEEP ''
+  "$keys|$($vv.KIT_T_EMPTY -eq '')|$script:inEmpty|$after|$inh|$($script:SharedStage -is [hashtable] -and $script:BuildKeys -is [hashtable] -and $script:CheckBuild -is [hashtable])" }
+Expect "lane env: comments ignored, an empty key not exported, a var unset before With-Env is unset after, _exec drops inherited empties, adapter state set ($evo)" ($evo -eq 'KIT_T_A,KIT_T_EMPTY|True|True|unset|True/True/v|True')
 Remove-TestKit $evKit
 Complete-Tests
