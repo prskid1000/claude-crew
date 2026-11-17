@@ -97,6 +97,11 @@ Expect "finalize: a retest of C1 alone leaves the original's C2 FAIL holding (fa
 Set-JsonFile $kl @{ process = @{ docs = @() }; qa = @{ targets = @{ 'stg-a' = @(@{ repos = @('api'); target = 'x-api' }, @{ repos = @('web'); target = 'x-web' }) } } }
 $ppTg = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-tgt') 2>&1); $tgRun = ("$($ppTg[-1])" -replace '^RUN ') | ConvertFrom-Json
 Expect "prepare: qa.targets rules match by repos (web MRs -> x-web) ($($ppTg[-2]))" (@($tgRun.items).Count -eq 2 -and @($tgRun.items | Where-Object target -eq 'x-web').Count -eq 2)
+# K68s: pathRegex reads mr.changes (a command host mock); a cut list (overflow) with no match is undecided: left out, not the next rule
+$mrch = Join-Path (Kd) 'mrch.mjs'; 'const n = process.argv[2]; console.log(JSON.stringify(n === "5" ? { changes: [{ new_path: "src/app/a.ts" }] } : { changes: [{ new_path: "docs/x.md" }], overflow: true }))' | Set-Content $mrch
+Set-JsonFile $kl @{ gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.changes' = "node $($mrch.Replace('\', '/')) {n}" } }; process = @{ docs = @() }; qa = @{ targets = @{ 'stg-a' = @(@{ pathRegex = '^src/'; target = 'x-src' }, @{ target = 'x-any' }) } } }
+$ppCut = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-cut') 2>&1); $cutRun = ("$($ppCut[-1])" -replace '^RUN ') | ConvertFrom-Json
+Expect "prepare: pathRegex matches web!5's src path (x-src); web!6's cut list is left out with the reason ($($ppCut[-2]))" (@($cutRun.items).Count -eq 1 -and $cutRun.items[0].target -eq 'x-src' -and @($cutRun.left | Where-Object { $_.id -eq $tB -and $_.reason -match 'cut by the host' }).Count -eq 1)
 # browser.mjs defaultUser: no 'admin' default (as pokey.ps1 api)
 if (Use-BrowserKit) {
   $du = "import { defaultUser } from '$((Join-Path $k 'skills/pokey/browser.mjs').Replace('\', '/') -replace '^', 'file:///')'`nconst two = { users: { a: 1, b: 2 } }`nlet e = ''; try { defaultUser(two, 'tt') } catch (x) { e = x.message }`nconsole.log([defaultUser({ users: { solo: 1 } }), defaultUser({ ...two, defaultUser: 'b' }), defaultUser({}), /several users/.test(e)].join('|'))"
