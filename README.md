@@ -485,6 +485,8 @@ flowchart LR
   skills_crafty_SKILL_md -->|"#quot;Writing standards#quot; whenever you write; steps 4…"| skills_crafty_templates_md["templates.md"]
   skills_crafty_SKILL_md -->|"steps 4-5 (Rules #gt; Tests: what to test, how,…"| skills_crafty_testing_md["testing.md"]
   skills_crafty_SKILL_md -->|"steps 1-5, CI wait (pipes), the PreToolUse hook…"| skills_crafty_crafty_ps1["crafty.ps1"]
+  skills_crafty_SKILL_md -->|"the PreToolUse hook: a warm guard (~0.1 s a…"| skills_crafty_guard_client_mjs["guard_client.mjs"]
+  skills_crafty_SKILL_md -->|"the PreToolUse hook: a warm guard (~0.1 s a…"| skills_crafty_guard_server_ps1["guard_server.ps1"]
   skills_crafty_SKILL_md -->|"dot-sourced by every kit script; never run by…"| skills_crafty_lib_ps1["lib.ps1"]
   skills_crafty_SKILL_md -->|"run by lib.ps1 / envy.ps1 for the calls pwsh…"| skills_crafty_flagged_ps1["flagged.ps1"]
   skills_crafty_SKILL_md -->|"steps 6-7, rebase conflicts (keepboth)"| skills_crafty_devtools_py["devtools.py"]

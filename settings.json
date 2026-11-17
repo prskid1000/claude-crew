@@ -70,8 +70,8 @@
     "hooks": [
      {
       "type": "command",
-      "command": "pwsh",
-      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/crafty/crafty.ps1", "guard"],
+      "command": "node",
+      "args": ["${CLAUDE_PROJECT_DIR}/.claude/skills/crafty/guard_client.mjs"],
       "timeout": 10
      }
     ]

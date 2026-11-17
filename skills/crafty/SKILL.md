@@ -14,6 +14,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 | `templates.md` | "Writing standards" whenever you write; steps 4 and 6, D1 |
 | `testing.md` | steps 4-5 (Rules > Tests: what to test, how, where, when) |
 | `crafty.ps1` | steps 1-5, CI wait (`pipes`), the PreToolUse hook (`guard`) |
+| `guard_client.mjs`, `guard_server.ps1` | the PreToolUse hook: a warm `guard` (~0.1 s a call); `KIT_GUARD_WARM=0`: the plain path; never by hand |
 | `lib.ps1` | dot-sourced by every kit script; never run by hand |
 | `flagged.ps1` | run by `lib.ps1` / `envy.ps1` for the calls pwsh logs a script for (hash, IPv4 list); never by hand |
 | `devtools.py` | steps 6-7, rebase conflicts (`keepboth`) |
