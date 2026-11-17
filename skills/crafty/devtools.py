@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L346 process · L506 git host · L573 scope · L662 MR · L854 merge · L1180 docs ·
-  L1333 publish · L1773 render · L2189 plugins · L2203 keepboth · L2222 selftest · L2768 CLI
+Sections: L51 config · L106 run · L194 tracker · L346 process · L506 git host · L573 scope · L663 MR · L855 merge · L1181 docs ·
+  L1334 publish · L1774 render · L2190 plugins · L2204 keepboth · L2223 selftest · L2769 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -612,12 +612,13 @@ def scope_refusal(files, globs, branch, ref='', what='mr'):
     out = scope_outside(files, globs)
     if not out:
         return ''
-    if SCOPE_OK:
-        orch = os.path.join(KIT_DIR, 'skills', 'bossy', 'bossy.ps1')
-        for k in [['-Item', branch]] + ([['-Mrs', ref]] if ref else []):
-            if _run([PWSH, '-NoProfile', '-NonInteractive', '-File', orch, 'decide', 'check', '-Id', SCOPE_OK, '-Gate', 'scope', '-MaxHours', '720', *k], write=False).startswith('WORD '):
-                kitlog('calls', 'scope-override', {'what': what, 'branch': branch, 'mr': ref, 'decision': SCOPE_OK, 'outside': out[:20]})
-                return ''
+    # --scope-ok <id>, else any scope word recorded for this branch / MR (K73: a recorded gate was refused without the id)
+    orch = os.path.join(KIT_DIR, 'skills', 'bossy', 'bossy.ps1')
+    for k in [['-Item', branch]] + ([['-Mrs', ref]] if ref else []):
+        word = _run([PWSH, '-NoProfile', '-NonInteractive', '-File', orch, 'decide', 'check', *(['-Id', SCOPE_OK] if SCOPE_OK else []), '-Gate', 'scope', '-MaxHours', '720', *k], write=False)
+        if word.startswith('WORD '):
+            kitlog('calls', 'scope-override', {'what': what, 'branch': branch, 'mr': ref, 'decision': SCOPE_OK or (word.split() + ['', ''])[1], 'outside': out[:20]})
+            return ''
     return (f'{what} refused: {len(out)} file(s) outside the area ({", ".join(globs)}): {", ".join(out[:12])}{" ..." if len(out) > 12 else ""}.'
             f' Revert them (a product bug in a test-only area: pin today\'s behaviour, decide ask); an owner-approved exception:'
             f' bossy.ps1 decide record -Gate scope -Item {branch} ..., then --scope-ok <id>')

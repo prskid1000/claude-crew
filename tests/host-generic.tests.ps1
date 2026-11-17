@@ -75,5 +75,10 @@ Write-KitState (Join-Path (Get-KitPath decisions -Create) 'd-1.json') @{ id = 'd
 "word:$((Invoke-Scope) -notmatch 'WATCH' -and -not @((Invoke-Scope -Mrs 'java!5' -Json | ConvertFrom-Json).outside).Count)"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
 Expect "crafty.ps1 scope: globs as devtools.py; WATCH names an MR merged outside its area (checked once; open, in-area ones not; an open one asked again after 30 min); -Mrs: source / test / OUT-OF-AREA per MR; a scope word lifts both ($sc)" ("$sc" -match 'globs:True' -and "$sc" -match 'flag:True' -and "$sc" -match 'reask:True' -and "$sc" -match 'statuses:True' -and "$sc" -match 'plan:True' -and "$sc" -match 'word:True' -and "$sc" -match 'spec:True')
+# K73: devtools merge takes a scope word recorded for the branch (d-1, item b5) without --scope-ok; another branch is refused
+& { . (Lib); Write-KitState (Join-Path (Get-KitPath decisions -Create) 'd-73.json') @{ id = 'd-73'; gate = 'scope'; status = 'answered'; item = 'b7'; mrs = @(); by = 'owner'; source = 'chat'; answeredAt = (Get-Date).ToString('o') } }
+$k73 = Join-Path (Kd) 'k73.py'; Set-Content $k73 "import sys`nsys.path.insert(0, r'$k/skills/crafty')`nimport devtools`nprint(devtools.scope_refusal(['x/y.ts'], ['a/**'], 'b7', what='merge') == '' and 'refused' in devtools.scope_refusal(['x/y.ts'], ['a/**'], 'b6', what='merge'))"
+$k73o = "$(& $py -X utf8 $k73 2>$null | Where-Object { $_ -match '^(True|False)$' } | Select-Object -Last 1)"
+Expect "devtools scope: a recorded scope word for the branch lifts the refusal without --scope-ok; another branch still refused ($k73o)" ($k73o -eq 'True')
 Remove-TestKit $k
 Complete-Tests
