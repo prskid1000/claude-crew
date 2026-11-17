@@ -84,7 +84,7 @@ $scQ = 'Review blocks MR 9 on scope. Record ONE scope word (decide record -Gate 
 $scA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: record the scope word for both', 'B: split them into a separate MR' | Out-String; $scId = if ($scA -match 'DECISION (\S+)') { $Matches[1] }
 $scR = pwsh @np $O decide answer -Id $scId -Answer 'A' | Out-String; $scW = if ($scR -match 'SCOPE RECORDED (\S+)') { $Matches[1] }
 $scC = pwsh @np $O decide check -Id $scW -Gate scope -Item f/CU-1-x | Out-String; $scWt = pwsh @np $O decide wait -Id $scId -MaxMinutes 0 | Out-String
-$sbA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: record the scope word for both', 'B: split them into a separate MR' | Out-String; $sbId = if ($sbA -match 'DECISION (\S+)') { $Matches[1] }
+$sbA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: split them into a separate MR', 'B: do not record the scope word' | Out-String; $sbId = if ($sbA -match 'DECISION (\S+)') { $Matches[1] }
 $sbR = pwsh @np $O decide answer -Id $sbId -Answer 'B' | Out-String
 $byC = pwsh @np $O decide record -Gate scope -Item f/CU-1-x -Question q -Answer yes -Source chat -By coordinator 2>&1 | Out-String
 Expect "decide answer: a scope ask's record pick records gate scope on the branch (check WORD, wait names it); a split pick records none; record -By coordinator says omit -By ($scW)" ($scW -and $scC -match '^WORD ' -and $scWt -match "scope word: wt commit -ScopeOk $scW" -and $sbR -match 'no scope word' -and $sbR -notmatch 'SCOPE RECORDED' -and $byC -match 'omit -By')

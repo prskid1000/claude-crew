@@ -79,8 +79,15 @@ foreach ($b in 'beh', 'div', 'gone') { git -C $sr branch -q $b; git -C $sr push 
 git clone -q $so $sx 2>$null; foreach ($b in 'main', 'beh', 'div') { git -C $sx checkout -q $b; "$b+" | Set-Content "$sx/$b.txt"; Save-GitRepo $sx "$b up"; git -C $sx push -q origin $b 2>$null }
 git -C $sr checkout -q div; 'local' | Set-Content "$sr/l.txt"; Save-GitRepo $sr 'div local'; git -C $sr checkout -q main; git -C $sr push -q origin --delete gone 2>$null; git -C $sr branch -q lane/syn-falcon
 & $J @{ repos = @(@{ name = 'syn'; checkout = $sr; target = 'main'; poolSize = 3; poolWarm = 1 }); tracker = @{ type = 'none' } } "$k/skills/crafty/kit.local.json"
-$sp = pwsh @np $D wt pool -Repo syn 2>&1 | Out-String; $tip = { param($r) "$(git -C $sr rev-parse $r)".Trim() }
+$tip = { param($r) "$(git -C $sr rev-parse $r)".Trim() }; $pv = pwsh @np $D wt pool -Repo syn 2>&1 | Out-String; $behPv = (& $tip beh) -ne (& $tip origin/beh)   # plain pool: a preview, nothing moves
+$sp = pwsh @np $D wt pool -Repo syn -Sync 2>&1 | Out-String
 $syj = Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json
-Expect "repo sync: main (checked out, clean) and beh fast-forwarded, div diverged kept, gone (merged) + lane/syn-falcon pruned, 1 warm slot ($(($sp -split "`n")[0].Trim()))" ((& $tip main) -eq (& $tip origin/main) -and (& $tip beh) -eq (& $tip origin/beh) -and (& $tip div) -ne (& $tip origin/div) -and -not (git -C $sr branch --list gone lane/syn-falcon) -and @($syj.diverged) -match '^div ' -and $sp -match '1 warm slot' -and $sp -match 'pool syn: 1/3 slots, 1 free')
+Expect "repo sync: main (checked out, clean) and beh fast-forwarded, div diverged kept, gone (merged) + lane/syn-falcon pruned, 1 warm slot ($(($sp -split "`n")[0].Trim()))" ((& $tip main) -eq (& $tip origin/main) -and (& $tip beh) -eq (& $tip origin/beh) -and (& $tip div) -ne (& $tip origin/div) -and -not (git -C $sr branch --list gone lane/syn-falcon) -and @($syj.diverged) -match '^div ' -and $sp -match '1 warm slot' -and $sp -match 'pool syn: 1/3 slots, 1 free' -and $behPv -and $pv -match 'sync syn: 2 fast-forwarded')
+# never under a live agent: a leased slot's branch behind upstream is not moved; a free slot with commits on no branch is not detached
+$wsl = "$base/wt/falcon-syn"; 'x' | Set-Content "$wsl/strand.txt"; git -C $wsl add -A; git -C $wsl commit -q -m strand; $strand = "$(git -C $wsl rev-parse HEAD)".Trim(); $null = pwsh @np $D wt pool -Repo syn -Sync 2>&1; $stOk = "$(git -C $wsl rev-parse HEAD)".Trim() -eq $strand -and @((Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json).dirty) -match 'holds commits on no branch'
+git -C $sx checkout -q beh; 'more' | Set-Content "$sx/beh2.txt"; Save-GitRepo $sx 'beh more'; git -C $sx push -q origin beh 2>$null
+$ls = pwsh @np $D wt lease -Repo syn -Branch beh -Agent devS 2>&1 | Out-String; $lsd = if ($ls -match '(?m)^worktree: (.+)$') { $Matches[1].Trim() }; $b0 = & $tip beh
+$sp2 = pwsh @np $D wt pool -Repo syn -Sync 2>&1 | Out-String; $syj2 = Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json
+Expect "repo sync: a leased slot's branch stays (listed), a stranded detached commit is kept ($(@($syj2.dirty) -join ' | '))" ($lsd -and (& $tip beh) -eq $b0 -and @($syj2.dirty) -match 'leased slot' -and $stOk)
 Remove-TestKit $k
 Complete-Tests

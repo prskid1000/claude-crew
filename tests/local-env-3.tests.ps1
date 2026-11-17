@@ -192,7 +192,7 @@ Expect "localenv: restore drops post-mark tables in one statement with FOREIGN_K
 $lnr = Join-Path $sq 'lnr'; git init -q -b main $lnr; 'x' | Set-Content "$lnr/x.txt"; Save-GitRepo $lnr init; $lwr = Join-Path $sq 'lwr'; New-Item -ItemType Directory -Force $lwr | Out-Null
 git -C $lnr worktree add -q -b localenv/shop2 (Join-Path $lwr 'localenv-shop2-lnr') main 2>$null
 Set-JsonFile "$ck/skills/crafty/kit.local.json" @{ worktreeRoots = @($lwr); localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 } } } } }
-$lnm = & { . $ckL 6>$null; $r = [pscustomobject]@{ name = 'lnr'; cfg = [pscustomobject]@{ checkout = $lnr }; target = 'main'; wt = (LaneWorktree shop2 $lnr) }; $w0 = $r.wt; Ensure-Worktree shop2 $r 6>$null; "$(Split-Path $w0 -Leaf)|$(Split-Path $r.wt -Leaf)|$(git -C $r.wt branch --show-current)|$(LaneBranch shop)" }
+$lnm = & { . $ckL 6>$null; $r = [pscustomobject]@{ name = 'lnr'; cfg = [pscustomobject]@{ checkout = $lnr }; target = 'main'; wt = (Get-KitLaneWorktree shop2 $lnr) }; $w0 = $r.wt; Ensure-Worktree shop2 $r 6>$null; "$(Split-Path $w0 -Leaf)|$(Split-Path $r.wt -Leaf)|$(git -C $r.wt branch --show-current)|$(Get-KitLaneBranch shop)" }
 Expect "lanes: the old worktree is used, then moved to lane-shop-kestrel-lnr on lane/shop-kestrel; lane 1 = lane/shop-falcon ($lnm)" ($lnm -eq 'localenv-shop2-lnr|lane-shop-kestrel-lnr|lane/shop-kestrel|lane/shop-falcon' -and -not (git -C $lnr branch --list 'localenv/*'))
 Remove-TestKit $ck
 Remove-TestKit $k

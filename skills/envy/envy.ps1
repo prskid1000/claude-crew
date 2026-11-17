@@ -21,9 +21,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L35 config · L237 state · L284 layer drops · L356 leases · L484 code · L522 migrations ·
-  L525 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L673 shared builds · L831 hooks · L903 marks · L1083 seed ·
-  L1150 processes · L1529 daemon · L1989 cleanup · L2061 doctor · L2114 verbs
+Sections: L35 config · L230 state · L277 layer drops · L349 leases · L477 code · L516 migrations ·
+  L519 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L667 shared builds · L825 hooks · L897 marks · L1077 seed ·
+  L1144 processes · L1523 daemon · L1983 cleanup · L2055 doctor · L2108 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -143,13 +143,6 @@ function Test-PortClash {
     if (@($u | Where-Object { -not $_.external }).Count -or @($u.start | Select-Object -Unique).Count -gt 1) { "port $port is claimed by $(($u.who) -join ', ')" }
   }
 }
-# lane names: README "Worktrees and lanes"
-function LaneSlug([string]$e) { ((Get-KitPoolLabel 'env' $e) -replace '[·\s]+', '-').ToLower() }
-function LaneBranch([string]$e) { "lane/$(LaneSlug $e)" }
-function LaneWorktree([string]$e, [string]$co, [switch]$Old) {
-  $rt = @($KitConf.WorktreeRoots)[0]; $lf = Split-Path $co -Leaf; $ow = Join-Path $rt "localenv-$e-$lf"; $nw = Join-Path $rt "lane-$(LaneSlug $e)-$lf"
-  if ($Old -or (-not (Test-Path $nw) -and (Test-Path "$ow/.git"))) { $ow } else { $nw }
-}
 function EnvRepos([string]$e) {
   $map = [ordered]@{}
   $items = @(EnvServices $e) + @(if ((Get-EnvCfg $e).tasks) { (Get-KitProps (Get-EnvCfg $e).tasks).Value })
@@ -157,7 +150,7 @@ function EnvRepos([string]$e) {
     $r = Get-RepoCfg $s.repo
     $t = if ($s.target) { [string]$s.target } else { [string]$r.target }
     if ($map.Contains($r.name)) { if ($map[$r.name].target -ne $t) { throw "env $e uses repo $($r.name) with two targets ($($map[$r.name].target), $t): one env = one target per repo" } }
-    else { $map[$r.name] = [pscustomobject]@{ name = $r.name; cfg = $r; target = $t; wt = (LaneWorktree $e $r.checkout); live = $false } }
+    else { $map[$r.name] = [pscustomobject]@{ name = $r.name; cfg = $r; target = $t; wt = (Get-KitLaneWorktree $e $r.checkout); live = $false } }
   }
   foreach ($s in EnvServices $e | Where-Object { $_.repo -and -not $_.artifact }) { $map[(Get-RepoCfg $s.repo).name].live = $true }
   $map
@@ -278,7 +271,7 @@ function Mine([int]$p) { @{ pid = $p; pstart = "$(Get-KitPidStart $p)" } }
 function CmdLine([int]$p) { if ($KitIsWindows) { "$((Get-CimInstance Win32_Process -Filter "ProcessId=$p" -Property CommandLine -ErrorAction SilentlyContinue).CommandLine)" } else { "$(ps -o args= -p $p 2>$null)" } }
 function EnvProcess([int]$p, [string]$e) {
   $c = CmdLine $p
-  $c -and ($c.Contains((Get-KitPath localenv)) -or $c -match [regex]::Escape("localenv-$e-") -or $c -match [regex]::Escape("lane-$(LaneSlug $e)-") -or $c -match [regex]::Escape("_exec -Env $e "))
+  $c -and ($c.Contains((Get-KitPath localenv)) -or $c -match [regex]::Escape("localenv-$e-") -or $c -match [regex]::Escape("lane-$(Get-KitLaneSlug $e)-") -or $c -match [regex]::Escape("_exec -Env $e "))
 }
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Object { $_ }) }
 # ---- layer drops: release (finished), supervise (merged, gone, orphan); each queued with its reason (leases.jsonl kind env-layer)
@@ -485,15 +478,16 @@ function ClientPids([int]$port, [int[]]$exclude, [switch]$Any) {
 function G([string]$d) { $o = & git -C $d @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' ') in $d : $o" }; $o }
 function NoHooksDir { $d = Join-Path (Get-KitPath localenv -Create) '.no-hooks'; New-Item -ItemType Directory -Force $d | Out-Null; $d }   # local-only merges, never pushed
 function Ensure-Worktree([string]$e, $r) {
-  $co = $r.cfg.checkout; $ow = LaneWorktree $e $co -Old
-  if ((Test-Path "$($r.wt)/.git") -and $r.wt -eq $ow) {   # old names; in use (locked): kept till the next build
-    $nw = Join-Path (Split-Path $ow) "lane-$(LaneSlug $e)-$(Split-Path $co -Leaf)"; $mv = @(git -C $co worktree move $ow $nw 2>&1); if ($LASTEXITCODE) { Write-Host "[$e] $ow kept: $(@($mv)[-1])"; return }
-    $r.wt = $nw; git -C $nw branch -M "localenv/$e" (LaneBranch $e) 2>$null | Out-Null; Write-Host "[$e] lane worktree now $nw"; return
+  $co = $r.cfg.checkout; $ow = Get-KitLaneWorktree $e $co -Old
+  if ((Test-Path "$($r.wt)/.git") -and $r.wt -eq $ow) {   # old names: moved once the lane is idle (a service may run from it)
+    if (@((Read-State $e).services.Values | Where-Object { $_.status -in 'up', 'starting' }).Count) { return }
+    $nw = Get-KitLaneWorktree $e $co -New; $mv = @(git -C $co worktree move $ow $nw 2>&1); if ($LASTEXITCODE) { Write-Host "[$e] $ow kept: $(@($mv)[-1])"; return }
+    $r.wt = $nw; $bm = @(git -C $nw branch -M "localenv/$e" (Get-KitLaneBranch $e) 2>&1); Write-Host "[$e] lane worktree now $nw$(if ($LASTEXITCODE) { "; branch kept: $(@($bm)[-1])" })"; return
   }
   if (Test-Path "$($r.wt)/.git") { return }
   Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
   git -C $co branch -D "localenv/$e" 2>$null | Out-Null   # old names, no worktree: test merges only
-  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch (LaneBranch $e) -Target $r.target -Name "lane-$(LaneSlug $e)" | ForEach-Object { Write-Host "  $_" }
+  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch (Get-KitLaneBranch $e) -Target $r.target -Name "lane-$(Get-KitLaneSlug $e)" | ForEach-Object { Write-Host "  $_" }
 }
 function Sync-DepLinks([string]$e, $r) {
   $c = $r.cfg
@@ -1467,7 +1461,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     $fail = if ($s.failPattern) { [string]$s.failPattern } else { $script:FailPattern }
     $ready = if ($s.readyPattern) { [string]$s.readyPattern } else { $script:ReadyPattern }
     $failPos = @{ $log = $logFrom }; $readyPos = @{ $log = $logFrom }; $seen = $false
-    # a 1 s poll: fail / ready lines every second, health every 5 s until the ready line, then every second
+    # 1 s poll: fail / ready lines each second, health each 5 s until ready, then each second
     for ($i = 0; ; $i++) {
       if (-not $seen -and $ready -and (Find-NewLogLine $log $ready $readyPos)) { $seen = $true }
       if (($seen -or $i % 5 -eq 0) -and (Healthy $e $s)) { break }
@@ -1838,7 +1832,7 @@ if ($Aot) {   # AOT training worker: one run for one artifact, gated, off the lo
   try { Invoke-AotTrain $e (Svc $e $Aot) $Artifact } catch { Say "aot training of $Aot failed: $("$_".Split("`n")[0])" }
   exit
 }
-if ($Start) {   # start worker: one service start (RAM wait, lock, health) off the loop: beats, prune, idle stops go on
+if ($Start) {   # start worker: one service start (RAM wait, lock, health) off the loop
   $s = Svc $e $Start
   try {
     if (Healthy $e $s) { Say "start of ${Start}: already up"; Update-State $e { param($z) if ($z.services[$Start] -and $z.services[$Start].status -ne 'up') { $z.services[$Start].status = 'up' } } }
@@ -2289,7 +2283,7 @@ switch ($Action) {
     if (@($st.expiredMarks).Count) { "  expired (binlog gone): $(@($st.expiredMarks) -join ', ')" }
     if ($st.binlog) { "  the binlog keeps $($st.binlog.days) d (oldest $($st.binlog.oldest))" }
   }
-  'restore' {   # owner / coordinator: the DB (flashback + migration rollbacks) and the code back to a mark; -DryRun: the plan only
+  'restore' {   # owner / coordinator: DB (flashback + rollbacks) and code back to a mark; -DryRun: the plan
     if (-not (MarksOn $e)) { throw "[$e] restore needs marks: db.engine mysql or mariadb (adapters/db_presets.ps1)" }
     if (-not $Mark -and $Release -lt 0) { throw 'restore needs -Mark <name> or -Release <n> (envy.ps1 mark -Env <env> lists them)' }
     $st = Read-State $e; $m = Find-Mark $st $Mark $Release

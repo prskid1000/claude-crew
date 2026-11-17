@@ -1222,7 +1222,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   # idle daemons (cleanup.idleDaemons) hold GBs
   if ($pct -ge 85) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
-  if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Json') }   # every sync.everyMinutes, detached: fetch, fast-forward, prune, warm slots (wt_pool.ps1 Sync-KitRepo)
+  if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Sync', '-Json') }   # every sync.everyMinutes, detached: fetch, fast-forward, prune, warm slots (wt_pool.ps1 Sync-KitRepo)
 }
 # 4b. owner MRs merged in 24 h, untracked
 if ($KitConf.TrackerType -ne 'none' -and (Within 'untracked MRs')) { foreach ($x in @(Get-KitUntrackedMrFlag $state $now { Within 'untracked MRs' })) { [void]$flags.Add($x) } }
@@ -1787,7 +1787,7 @@ function Invoke-Decide {
       $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($o.gate -eq 'scope') { "$($o.item)" }
       $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]
       if ($scItem -and $By -notmatch $crewRx) {
-        if ($pick -and "$($pick.label)" -match '(?i)\b(record|approve|allow|widen|yes)\b' -and "$($pick.label)" -notmatch '(?i)\b(split|hold|revert|separate)\b') {
+        if ($pick -and "$($pick.label)" -match '(?i)\b(record|approve|allow|widen|yes)\b' -and "$($pick.label)" -notmatch "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep)\b") {
           $now = (Get-Date).ToString('o'); $sc = [pscustomobject][ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-coordinator-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
             kind = 'decision'; run = $o.run; agent = 'coordinator'; item = $scItem; gate = 'scope'; question = $o.question; options = @(); blocking = $false; status = 'answered'; at = $now
             task = "$($o.task)"; mrs = @($o.mrs); answer = $Answer; by = $By; source = 'chat'; answeredAt = $now; supersedes = @(); parentId = $Id }
