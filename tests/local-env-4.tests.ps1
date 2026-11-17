@@ -193,4 +193,26 @@ Expect "lanes -Migrate: idle lane moved at once, the busy one kept then moved wh
   @($mgo[0] -match '^kept \[shop2\] mg: in use \(1 hold\(s\)\)').Count -eq 1 -and @($mgo[1] -match '^moved \[shop2\] mg: .*on lane/shop-kestrel$').Count -eq 1 -and $mt.Count -eq 1 -and "$(git -C $mc log -1 --format=%s $mt[0])".Trim() -eq 'z' -and
   'lane/shop-falcon' -in $mb -and 'lane/shop-kestrel' -in $mb -and 'wv-backup-y' -in $mb -and -not @($mb | Where-Object { $_ -in 'gone1', 'backup/x', 'localenv/shop', 'localenv/shop2', 'localenv/old-sb' }).Count -and @($mgo[0] -match '^kept mg wv-backup-y: backup, 1 commit\(s\) on no remote$').Count -eq 1)
 Remove-TestKit $mgKit
+# lanes -Sync (wt pool -Sync): an idle lane = origin/<target> + its open layers re-merged, a merged layer dropped (state), no upstream;
+# a layer that conflicts with the new target: the lane stays as it was; lanes.json: behind 0, merges
+$syKit = New-LocalEnvKit lesync; $syL = Join-Path $syKit 'skills/envy/envy.ps1'; $k = $syKit; $sq2 = Kd; $so2 = Join-Path $sq2 'so.git'; $sc = Join-Path $sq2 'sc'; $sw2 = Join-Path $sq2 'sw'
+git init -q --bare -b main $so2; git clone -q $so2 $sc 2>$null; 'a' | Set-Content "$sc/a.txt"; Save-GitRepo $sc init; git -C $sc push -q origin main 2>$null; New-Item -ItemType Directory -Force $sw2 | Out-Null
+$lyr = { param($b, $f, $v) git -C $sc checkout -q -b $b main; $v | Set-Content "$sc/$f"; Save-GitRepo $sc $b; git -C $sc checkout -q main; "$(git -C $sc rev-parse $b)".Trim() }
+$shO = & $lyr 'feat-open' 'o.txt' 'o'; $shM = & $lyr 'feat-merged' 'm.txt' 'm'; $shC = & $lyr 'feat-conf' 'a.txt' 'mine'
+$lw = Join-Path $sw2 'lane-shop-falcon-sc'; git -C $sc worktree add -q -b lane/shop-falcon $lw main 2>$null; git -C $lw branch -q --set-upstream-to=origin/main 2>$null
+git -C $sc merge -q --no-ff -m 'merge m' feat-merged 2>$null; 'a2' | Set-Content "$sc/n.txt"; Save-GitRepo $sc next; git -C $sc push -q origin main 2>$null
+Set-JsonFile (Join-Path $syKit 'skills/crafty/kit.local.json') @{ worktreeRoots = @($sw2); repos = @(@{ name = 'sc'; checkout = $sc; target = 'main' }); localEnv = @{ envs = @{ shop = @{ services = @(@{ name = 'api'; repo = 'sc'; port = 18711 }) } } } }
+$syo = & { . $syL help 6>$null *> $null; $sf = Join-Path (Get-KitPath localenv -Create) 'shop.json'
+  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-open'; sha = $shO; agent = 'a1' }, @{ branch = 'feat-merged'; sha = $shM; agent = 'a2' }) } } } }
+  $o1 = @(Invoke-LocalEnv lanes -Sync 6>$null); $st1 = Get-Content $sf -Raw | ConvertFrom-Json; $h1 = "$(git -C $lw rev-parse HEAD)".Trim()
+  $anc = { param($x) git -C $lw merge-base --is-ancestor $x HEAD; -not $LASTEXITCODE }
+  $ok = (& $anc origin/main) -and (& $anc $shO) -and -not "$(git -C $lw config branch.lane/shop-falcon.merge)"
+  $lj = Get-Content (Join-Path (Get-KitPath wt-slots) 'lanes.json') -Raw | ConvertFrom-Json
+  'c2' | Set-Content "$sc/a.txt"; Save-GitRepo $sc conf; git -C $sc push -q origin main 2>$null
+  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-conf'; sha = $shC; agent = 'a3' }) } } } }
+  $o2 = @(Invoke-LocalEnv lanes -Sync 6>$null)
+  $rx1 = '^synced \[shop\] sc: .*1 layer\(s\) re-merged; dropped feat-merged \(merged into main'; $rx2 = '^kept \[shop\] sc: layer feat-conf conflicts'
+  "$ok|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$("$(git -C $lw rev-parse HEAD)".Trim() -eq $h1)" }
+Expect "lanes -Sync: idle lane rebuilt on origin/main + its open layer, the merged one dropped, no upstream, behind 0; a conflicting layer leaves the lane as it was ($syo)" ($syo -eq 'True|feat-open|0/1|1|1|True')
+Remove-TestKit $syKit
 Complete-Tests

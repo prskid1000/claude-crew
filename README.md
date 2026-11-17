@@ -119,6 +119,9 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
   `localenv/<env>`) move as soon as the lane is idle (no service up, no lease, hold or train): `envy.ps1 lanes -Migrate [-DryRun]`,
   and supervise each sweep (`-LanesOnly`) while one is left; it also removes a clean worktree of a `localenv/*` branch no lane
   owns, deletes `[gone]` branches merged into the target and backup branches whose commits are all on origin, and lists the rest.
+- **Lanes in sync** (`wt pool -Sync` -> `envy.ps1 lanes -Sync`): an idle lane is rebuilt as a build would (`origin/<target>` +
+  open layers + prepare; merged layers dropped; a conflict: left as it was, listed); `lane/*` track no upstream; Branches tile:
+  `base @ <sha> · behind N · test merges N`.
 - **Many to many:** any task branch can be built into any lane; a lane's worktree merges the branches onto its target; the slot keeps
   the task's own code. Lane branches are rebuilt from the target, so a lane branch no worktree holds is pruned (its commits on no
   remote first kept as tag `backup/<branch>-<yyyyMMdd>-<sha>`).
@@ -193,11 +196,9 @@ usage; top steps and kit internals folded; the page keeps each one the owner tog
 rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; the header holds
 jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
 of two fields a line, low-value columns hidden; tone-coloured text is mixed toward the foreground (WCAG AA in both themes):
-- every heatmap (flags, resources, build gate, lease waits, repo x day): 24 clock-hour cells (days for repo x day), the current one
-  outlined; rows from config + data only (built-in presets only label a row), rows with no data in the last 12 h folded into one
-  "N idle rows" line (a tap shows them); each card folds (chevron + count, kept in `kc-open`; busy open, idle closed); links to
-  the kit's own pages (run steps, reports) open in an in-page drawer (Esc closes), web links (MR, task, doc) in a new tab
-  (`kitbag.py ui-check` fails any other link);
+- every heatmap: 24 clock-hour cells (repo x day: days), now outlined; rows from config + data only (presets only label), rows
+  with no data in 12 h folded ("N idle rows", a tap shows them); each card folds (`kc-open`; busy open); kit pages open in an
+  in-page drawer, web links (MR, task, doc) in a new tab (`kitbag.py ui-check` fails any other link);
 - flags as cards in masonry columns (an icon per kind, the next step, ACT first; auto-fixed folded); under them Flags · 24 h:
   ACT / WATCH / FIXED rows with a sub-row per kind, a cell = distinct flags that hour (count shown, colour by level, tooltip
   their texts; `stats.flagHours` in supervise-report.json keeps 24 h); the other INFO lines folded as notes;
