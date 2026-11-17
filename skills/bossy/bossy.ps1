@@ -26,8 +26,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1336 report · L1416 audit · L1476 storage · L1479 bugbrief · L1590 cleanup · L1675 learn ·
-  L1706 decide · L1857 debate · L1901 health · L1964 retro due · L1974 tidy · L2046 setup · L2143 guard-sendmessage
+  L715 track · L1032 supervise · L1336 report · L1416 audit · L1476 storage · L1479 bugbrief · L1593 cleanup · L1678 learn ·
+  L1709 decide · L1860 debate · L1904 health · L1967 retro due · L1977 tidy · L2049 setup · L2146 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1522,7 +1522,10 @@ foreach ($o in $orig) {   # original ask's repos join unless named
   $rn = RepoName $o.repo
   if ($rn -and -not @($Repos | Where-Object { (RepoName ($_ -split '@')[0]) -eq $rn }).Count) { $Repos += "$rn@$($o.branch)" }
 }
-if (-not $Repos.Count) { throw "no -Repos and no MR on $Task or its parent: -Repos <repo>[@<branch>],..." }
+if (-not $Repos.Count) {   # no MR yet: the configured area repos (trackerRepos, else repos[]), named on stderr
+  $Repos = @(@(if (@($KitConf.TrackerRepos).Count) { $KitConf.TrackerRepos } else { @($cfg.repos | ForEach-Object name) }) | Where-Object { $_ } | Select-Object -Unique)
+  if ($Repos.Count) { [Console]::Error.WriteLine("bugbrief: no -Repos and no MR on $Task or its parent: using $($Repos -join ', ') (-Repos narrows it)") } }
+if (-not $Repos.Count) { throw "no -Repos, no MR on $Task or its parent and no repos in kit.local.json: -Repos <repo>[@<branch>],..." }
 $origLine = if ($orig) { "Original ask's MRs: " + (($orig | ForEach-Object { "$($_.ref) -> ``$($_.branch)``" }) -join ', ') + '.' }
 $rows = foreach ($spec in $Repos) {
   $r, $branch = $spec -split '@', 2
