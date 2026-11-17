@@ -105,7 +105,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
     $k = $bfx.key; $who = $bfx.who
     [pscustomobject]@{ level = 'WATCH'; what = "builds '$k' failed 3 times in a row"; kind = 'BUILDS'; who = $(if ($who) { $who } else { $k }); problem = "$k failed 3 times in a row"; next = "Check that agent's last build log"
       action = 'Repeated failing builds burn memory and turns; a setup-data cause (fixture, seed drift) -> spawn datay kind fixture, else help it or fix its brief.' } }
-  if ($AutoFix -and (Within 'cache flush')) { Invoke-KitCacheFlush $wait $mem $now ([math]::Min(120, (Left))) }
+  if ($AutoFix -and (Within 'cache flush')) { Invoke-KitCacheFlush $wait $mem $now ([math]::Min(120.0, (Left))) }
 
   # phone leases with no live holder (dead emulators reboot on acquire)
   foreach ($lf in @(Get-ChildItem (Get-KitPath phones) -Filter '*.json' -ErrorAction SilentlyContinue)) {
@@ -533,7 +533,7 @@ function Format-KitLineChart($Points, $Series, [string]$Aria, [int]$Height = 96,
   $pts = @($Points); $n = $pts.Count; $ss = @($Series | Where-Object { $_ }); if (-not $n -or -not $ss.Count) { return '' }
   $pad = if ($n -eq 1) { 50 } elseif ($Labels) { 7 } else { 2 }; $top = if ($Labels) { 34 } else { 8 }
   $xOf = { param($i) if ($n -eq 1) { 50 } else { $pad + (100 - 2 * $pad) * $i / ($n - 1) } }
-  $yOf = { param($v, $mx) 4 + (96 - 4 - $top) * [math]::Max(0, [double]$v) / $mx }   # % from the bottom
+  $yOf = { param($v, $mx) 4 + (96 - 4 - $top) * [math]::Max(0.0, [double]$v) / $mx }   # % from the bottom
   $mxOf = @(foreach ($s in $ss) { if ($s.max) { [double]$s.max } else { [math]::Max(1e-9, [double](@(@($s.vals) | ForEach-Object { [double]$_ }) + 0 | Measure-Object -Maximum).Maximum) } })
   $svg = @(for ($k = 0; $k -lt $ss.Count; $k++) { $s = $ss[$k]
       $xy = @(for ($i = 0; $i -lt $n; $i++) { "$(& $cn1 (& $xOf $i)),$(& $cn1 (100 - (& $yOf @($s.vals)[$i] $mxOf[$k])))" }) -join ' '
@@ -564,7 +564,7 @@ function Format-KitIcon([string]$Name, [string]$Label = $Name) {
 function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $iv = [cultureinfo]::InvariantCulture; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $n1 = { param($x) ([double]$x).ToString('0.#', $iv) }
   $toTime = { param($x) if ($x) { try { [datetime]$x } catch { $null } } }; $at = & $toTime $j.at; if (-not $at) { $at = Get-Date }
-  $ago = { param($x) $tx = & $toTime $x; if (-not $tx) { return '' }; $m = [int][math]::Max(0, ($at - $tx).TotalMinutes); if ($m -lt 1) { 'now' } elseif ($m -lt 60) { "$m min" } elseif ($m -lt 1440) { "$([math]::Floor($m / 60)) h $($m % 60) min" } else { "$([math]::Floor($m / 1440)) d" } }
+  $ago = { param($x) $tx = & $toTime $x; if (-not $tx) { return '' }; $m = [int][math]::Max(0.0, ($at - $tx).TotalMinutes); if ($m -lt 1) { 'now' } elseif ($m -lt 60) { "$m min" } elseif ($m -lt 1440) { "$([math]::Floor($m / 60)) h $($m % 60) min" } else { "$([math]::Floor($m / 1440)) d" } }
   $when = { param($x) $tx = & $toTime $x; if ($tx) { "<span class=tm>$($tx.ToString($(if ($tx.Date -eq $at.Date) { 'HH:mm' } else { 'MM-dd HH:mm' }))) · </span><span class=ago data-t='$($tx.ToString('o'))' title='$($tx.ToString('yyyy-MM-dd HH:mm'))'>$(& $ago $x)</span>" } else { '<span class=m>—</span>' } }   # .ago: the page JS recounts it live
   $minAgo = { param($v) if ("$v" -match '^\s*(\d+(?:\.\d+)?)(?: min)?\s*$') { & $when $at.AddMinutes(-[double]$Matches[1]) } else { & $e $v } }   # sweep-relative minutes -> a live age
   $stCls = { param($s) if ("$s" -match 'STUCK') { 's-stuck' } elseif ("$s" -match '^ACTIVE') { 's-act' } elseif ("$s" -match '^FINISHED') { 's-fin' } else { 's-oth' } }
@@ -582,9 +582,9 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "<figure class='spk $cls'><div class=spw><svg class=spark viewBox='0 0 100 40' preserveAspectRatio=none role=img aria-label='$(& $e "$cap, y $(& $n1 $mn)-$(& $n1 $mx)$unit")'><polygon class=a fill=currentColor points='0,40 $pts 100,40'/><polyline class=l fill=none points='$pts'/>$avL</svg>" +
     "<span class='ya hi'>$(& $n1 $mx)$(& $e $unit)</span><span class='ya lo'>$(& $n1 $mn)$(& $e $unit)</span><i class=nd style='bottom:$(& $n1 (100 * (40 - (& $yv $vals[-1])) / 40))%'></i></div><figcaption>$(& $e $cap)</figcaption></figure>" }
   # a meter: value of max with its caption; $peak = a marker (the 7-day peak)
-  $meter = { param([double]$v, [double]$max, [string]$cap, [string]$tone = 'slate', $peak = $null) if ($max -le 0) { return '' }; $w = { param($x) & $n1 ([math]::Max(0, [math]::Min(100, 100 * $x / $max))) }
+  $meter = { param([double]$v, [double]$max, [string]$cap, [string]$tone = 'slate', $peak = $null) if ($max -le 0) { return '' }; $w = { param($x) & $n1 ([math]::Max(0.0, [math]::Min(100.0, 100 * $x / $max))) }
     "<div class=mtr><span class=mb role=img aria-label='$(& $e $cap)'><i class=$tone style='width:$(& $w $v)%'></i>$(if ($null -ne $peak) { "<b class=pk style='left:$(& $w ([double]$peak))%'></b>" })</span><span class=mc>$(& $e $cap)</span></div>" }
-  $bar = { param([double]$v, [double]$max, [string]$label, [string]$tone = '') if ($max -le 0) { return '' }; $pc = [math]::Min(100, 100 * $v / $max); $bc = if ($tone) { $tone } elseif ($pc -ge 100) { 'act' } elseif ($pc -ge 80) { 'watch' } else { 'sage' }
+  $bar = { param([double]$v, [double]$max, [string]$label, [string]$tone = '') if ($max -le 0) { return '' }; $pc = [math]::Min(100.0, 100 * $v / $max); $bc = if ($tone) { $tone } elseif ($pc -ge 100) { 'act' } elseif ($pc -ge 80) { 'watch' } else { 'sage' }
     "<span class=bar><i class=$bc style='width:$(& $n1 $pc)%'></i></span><span class=bl>$(& $e $label)</span>" }
   # every section folds: "<title> (<count>)" summary; count 0 = summary only; open state kept per id (page JS)
   $fold = { param([string]$id, [string]$title, $count, [string]$inner, [switch]$Open, [string]$tag = 'h3', [string]$cls = '', [string]$extra = '') $none = "$count" -eq '0'

@@ -102,7 +102,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     if ($br -and $br -match $ctx[$rp].keep) { continue }   # env / default worktrees: their owners'
     if (git -C $d status --porcelain 2>$null) { & $keep "$d$(if ($br) { " ($br)" })" 'uncommitted files'; if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($idleH / 24)) d: kept (never deleted; commit or remove it by hand)" }; continue }
     # an unclaimed deploymerge-* idle past idle.graceMinutes (min 60) blocks the next merge
-    $dm = $w.Name -like 'deploymerge-*' -and $d.ToLower() -notin $claimed -and $newest -and ($now - $newest).TotalMinutes -ge [math]::Max(60, [double](Get-KitParam 'idle.graceMinutes'))
+    $dm = $w.Name -like 'deploymerge-*' -and $d.ToLower() -notin $claimed -and $newest -and ($now - $newest).TotalMinutes -ge [math]::Max(60.0, [double](Get-KitParam 'idle.graceMinutes'))
     if (-not $dm -and $idleH -lt $IdleHours) { & $keep "$d ($br)" "active, changed $([int]($idleH * 60)) min ago"; continue }
     if (-not (Invoke-GitFetch -Dir $d)) { & $keep $d 'git fetch failed'; continue }
     $why = if ($dm) { 'ownerless deploy merge' } elseif ($br) {
@@ -809,7 +809,7 @@ function Get-State {
     if (-not $Snap.procs.ContainsKey([int]$e.pid) -or -not (Test-KitPid $e.pid $e.start)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }
     $running++
     if ($e.backfill) { $backfills++ }
-    $promised += [math]::Max(0, [double]$e.need - (Get-KitTreeGB ([int]$e.pid) $Snap))
+    $promised += [math]::Max(0.0, [double]$e.need - (Get-KitTreeGB ([int]$e.pid) $Snap))
   }
   $mem = Get-SysMem
   [pscustomobject]@{ Avail = (Get-GateAvailGB $mem); Total = $mem.TotalGB; Promised = [math]::Round($promised, 1); Running = $running; Backfills = $backfills; Snap = $Snap }

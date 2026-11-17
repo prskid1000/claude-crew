@@ -146,7 +146,7 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
   $chart = if ($dy.Count) {
     $runsV = @($dy | ForEach-Object { [double]@($UP.dayRuns["$($_.day)"] | Where-Object { $_ }).Count }); $mrV = @($dy | ForEach-Object { [double]$_.merged })
     $clV = @($dy | ForEach-Object { [double]@($closed["$($_.day)"]).Where({ $_ }).Count }); $bkV = @($dy | ForEach-Object { [double]@($back["$($_.day)"]).Where({ $_ }).Count })
-    $all = [math]::Max(1, [double](@($runsV + $mrV + $clV + $bkV) | Measure-Object -Maximum).Maximum) * 1.1
+    $all = [math]::Max(1.0, [double](@($runsV + $mrV + $clV + $bkV) | Measure-Object -Maximum).Maximum) * 1.1
     $pts = @(for ($i = 0; $i -lt $dy.Count; $i++) { $dk = "$($dy[$i].day)"; $today = $i -eq $dy.Count - 1; $rr = @($UP.dayRuns[$dk] | Where-Object { $_ })
         @{ label = $(if ($today) { 'today' } else { $dk.Substring(5) }); x = $today; fv = "d$dk"
           tip = "$dk$(if ($today) { ' (today)' }): $($mrV[$i]) MR(s) merged · $($clV[$i]) task(s) closed · $($bkV[$i]) came back · $($rr.Count) run(s) started$(@($rr | Select-Object -First 6 | ForEach-Object { "`n- $(if ("$($_.label)".Trim()) { $_.label } else { $_.run }) ($(if ($_.kind) { $_.kind } else { 'run' }))" }) -join '')$(if ($rr.Count -gt 6) { "`n+ $($rr.Count - 6) more" })`nclick: show that day's tasks and runs" } })

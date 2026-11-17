@@ -289,7 +289,7 @@ function Get-FreeGB { $m = Get-SysMem; if ($KitIsWindows) { $m.FreeGB } else { $
 # CPU busy % (non-Windows: 1-min load average per core)
 function Get-SysCpu {
   try { if ($KitIsWindows) { [int](Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -Property PercentProcessorTime -ErrorAction Stop).PercentProcessorTime }
-    else { $la = if ($KitIsMac) { [double]((sysctl -n vm.loadavg) -replace '[{}]' -split '\s+' | Where-Object { $_ })[0] } else { [double]((Get-Content /proc/loadavg) -split ' ')[0] }; [int][math]::Min(100, 100 * $la / [Environment]::ProcessorCount) } } catch { $null }
+    else { $la = if ($KitIsMac) { [double]((sysctl -n vm.loadavg) -replace '[{}]' -split '\s+' | Where-Object { $_ })[0] } else { [double]((Get-Content /proc/loadavg) -split ' ')[0] }; [int][math]::Min(100.0, 100 * $la / [Environment]::ProcessorCount) } } catch { $null }
 }
 # RAM every build, phone and QA seat leaves free
 # the file cache is freed only under RAM pressure, which a gate never allows: half of it counts as available
@@ -298,7 +298,7 @@ function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [dou
 function Get-KitDiskHold { $hs = try { (Read-KitText (Join-Path (Get-KitPath storage) 'state.json') | ConvertFrom-Json).rescues } catch { $null }; @((Get-KitProps $hs).Value | Where-Object { $_.kit -and ((Get-Date) - [datetime]$_.at).TotalMinutes -lt [double](Get-KitSetting 'storage.holdMinutes' 60) })[0] }
 # after 20 min waiting, a start needs only a hard floor
 function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
-  $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3, $TotalGB * 0.05))
+  $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3.0, $TotalGB * 0.05))
 }
 # one process snapshot shared by many Get-KitTreeGB calls
 function Get-KitProcSnap {
@@ -688,7 +688,7 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [strin
   $feed = $PSBoundParameters.ContainsKey('In'); if ($feed) { $si.RedirectStandardInput = $true; $si.StandardInputEncoding = [Text.UTF8Encoding]::new($false) }
   $p = [Diagnostics.Process]::Start($si)
   $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()   # readers first: a full stdout pipe would block the stdin write
-  if ($feed) {   # async + timed: a child that never reads stdin (no connection) must not hang the write; it may also exit before reading it all
+  if ($feed) {   # async + timed: a child that never reads stdin must not hang the write; it may exit before reading it all
     try { if (-not $p.StandardInput.WriteAsync($In).Wait($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s (stdin not read)" $true }; $p.StandardInput.Close() } catch [IO.IOException] {} catch [AggregateException] {}
   }
   if (-not $p.WaitForExit($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s" $true }
@@ -1182,7 +1182,7 @@ function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scr
   Invoke-KitLocked "$base.json" {
     $run = try { Read-KitText "$base.json" | ConvertFrom-Json } catch { $null }
     $busy = $run -and (Test-KitPid $run.pid $run.start)
-    if ($busy -and ((Get-Date) - [datetime]$run.at).TotalMinutes -gt [math]::Max(30, 10 * $Cost / 60)) {
+    if ($busy -and ((Get-Date) - [datetime]$run.at).TotalMinutes -gt [math]::Max(30.0, 10 * $Cost / 60)) {
       if ($KitIsWindows) { $null = & taskkill /PID ([int]$run.pid) /T /F 2>$null } else { Stop-Process -Id $run.pid -Force -ErrorAction SilentlyContinue }   # the launcher, its job and the job's children
       $busy = $false; $res.out = @("WATCH background $Name hung $([int]((Get-Date) - [datetime]$run.at).TotalMinutes) min: stopped, started again")
     }
@@ -2150,12 +2150,12 @@ function Get-KitParamRec($Spec, [object[]]$Obs, [double]$Cur, [datetime]$Now, $S
   $lg = [double[]]@($v | ForEach-Object { [math]::Log([math]::Max(1e-6, $_)) }); $lm = Get-KitQuantile $lg 0.5; $ls = 1.4826 * (Get-KitQuantile ([double[]]@($lg | ForEach-Object { [math]::Abs($_ - $lm) })) 0.5)
   if ($ls -gt 0 -and $v.Count -ge 10) {
     $hi = 0.0; $lo = 0.0; $cut = -1
-    for ($i = 0; $i -lt $lg.Count; $i++) { $z = ($lg[$i] - $lm) / $ls; $hi = [math]::Max(0, $hi + $z - 0.5); $lo = [math]::Max(0, $lo - $z - 0.5); if ($hi -gt 4.5 -or $lo -gt 4.5) { $cut = $i; $hi = 0.0; $lo = 0.0 } }
+    for ($i = 0; $i -lt $lg.Count; $i++) { $z = ($lg[$i] - $lm) / $ls; $hi = [math]::Max(0.0, $hi + $z - 0.5); $lo = [math]::Max(0.0, $lo - $z - 0.5); if ($hi -gt 4.5 -or $lo -gt 4.5) { $cut = $i; $hi = 0.0; $lo = 0.0 } }
     if ($cut -ge 0) { $from = [math]::Min($cut, $v.Count - $Spec.min); $ok = @($ok | Select-Object -Skip $from); $wt = [double[]]@($wt | Select-Object -Skip $from); $v = [double[]]@($v | Select-Object -Skip $from); $why += 'drift (CUSUM): window restarted; '; $drift = $true }
   }
   $x = switch ($Spec.how) {
     'peak' {
-      $w = [double[]]@(for ($i = 0; $i -lt $ok.Count; $i++) { $wt[$i] * [math]::Pow(0.5, [math]::Max(0, ($Now - [datetime]$ok[$i][0]).TotalDays) / 7) })
+      $w = [double[]]@(for ($i = 0; $i -lt $ok.Count; $i++) { $wt[$i] * [math]::Pow(0.5, [math]::Max(0.0, ($Now - [datetime]$ok[$i][0]).TotalDays) / 7) })
       $p = (Get-KitQuantile $v 0.95 $w) * $Spec.k; $oom = @($all | Where-Object { $_[2] -eq 'oom' } | ForEach-Object { [double]$_[1] })
       if ($oom.Count) { $p = [math]::Max($p, 1.2 * ($oom | Measure-Object -Maximum).Maximum); $why += 'OOM bump; ' }; $p; $why += "peak q95 x$($Spec.k)" }
     'ewma' { $m = $v[0]; $var = 0.0; foreach ($y in $v) { $dl = $y - $m; $m += 0.3 * $dl; $var = 0.7 * ($var + 0.3 * $dl * $dl) }; $m + $Spec.k * [math]::Sqrt($var); $why += "ewma + $($Spec.k) sigma" }
@@ -2233,7 +2233,7 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
           if ($af.Count -ge 5 -and (& $fails $af) -ge 2 -and $ra -gt 2 * $rb) {
             $old = @($st.history | Where-Object { $_.key -eq $key -and $_.ctx -eq $ctx -and "$($_.to)" -eq "$($e.value)" })[-1].from
             $e.rec = $old; $e.why = "rollback: failures $([int](100 * $ra))% after the change vs $([int](100 * $rb))% before"; $e.frozen = $now.AddDays(7).ToString('o'); $whys += 'rollback'
-            $c.min = [math]::Min(1440, 4 * [double]$(if ($c.min) { $c.min } else { 60 }))
+            $c.min = [math]::Min(1440.0, 4 * [double]$(if ($c.min) { $c.min } else { 60 }))
             & $flag 'WATCH' "param $key [$ctx] rolled back to $(if ($null -ne $old) { $old } else { "default $d" }) ($($e.why)); frozen 7 d" 'Nothing to do unless it repeats (bossy.ps1 param history).' } }
         $cur = if ($null -ne $e.rec) { [double]$e.rec } else { $d }; $r = if ($e.frozen -and [datetime]$e.frozen -gt $now) { $null } else { Get-KitParamRec $sp @(@(Get-KitParamHistory $e) + @($e.obs)) $cur $now $e.changed }
         $moved = $false
@@ -2250,7 +2250,7 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
         $e.byLoad = @{}; foreach ($g in @($e.obs | Where-Object { $_.Count -gt 4 -and $_[4] -and $_[2] -eq 'ok' } | Group-Object { $_[4] })) { $e.byLoad[$g.Name] = @{ n = $g.Count; p90 = [math]::Round((Get-KitQuantile ([double[]]@($g.Group | ForEach-Object { [double]$_[1] })) 0.9), 3) } }   # per load bucket: shown, not applied
         # cadence: an urgent trigger -> the minimum (15); 3 stable passes -> x2 (max 1 d)
         if (@($whys | Where-Object { $_ -in @($script:KitUrgent) + 'drift' }).Count) { $c.min = 15; $c.stable = 0 }
-        elseif ($moved) { $c.stable = 0 } elseif ([int]$c.stable -ge 2) { $c.min = [math]::Min(1440, 2 * [double]$c.min); $c.stable = 0 } else { $c.stable = [int]$c.stable + 1 }
+        elseif ($moved) { $c.stable = 0 } elseif ([int]$c.stable -ge 2) { $c.min = [math]::Min(1440.0, 2 * [double]$c.min); $c.stable = 0 } else { $c.stable = [int]$c.stable + 1 }
         $c.lastTrig = "$($whys -join ',') $($now.ToString('o'))"; $c.due = $now.AddMinutes([double]$c.min).ToString('o'); $e.cad = $c
         $acc = $sp.gate -ne 'accuracy' -or (@($e.errs).Count -ge 10 -and (@($e.errs) | Measure-Object -Average).Average -le 0.2)
         $val = if ($mode -eq 'on' -and $null -ne $e.rec -and $acc -and ($e.live -or (($now - [datetime]$e.since).TotalDays -ge $shadow -and [double]$e.conf -ge 0.5))) { [double]$e.rec } else { $null }
@@ -2279,7 +2279,7 @@ function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now, [hashtable]$Sec 
   $fresh = @($Acts | Where-Object { $_ -notin $was -and $_ -notin $held }); $new = $fresh.Count   # 2+ new ACTs in one sweep: the beat was too long (short)
   # censored: a gap over 2 beats (sleep, stopped coordinator) or a reboot since the last ACT
   $boot = Get-KitBootTime
-  $gap = $State.report.at -and ($Now - [datetime]$State.report.at).TotalMinutes -gt 2 * [math]::Max(5, [double]$State.nextBeat)
+  $gap = $State.report.at -and ($Now - [datetime]$State.report.at).TotalMinutes -gt 2 * [math]::Max(5.0, [double]$State.nextBeat)
   if ($gap -or ($State.lastAct -and $boot -gt [datetime]$State.lastAct)) { $State.lastAct = $null }
   if ($new) { if ($State.lastAct) { Add-KitParamObs 'supervise.heartbeatMinutes' ($Now - [datetime]$State.lastAct).TotalMinutes '' $(if ($new -ge 2) { 'short' } else { 'ok' }) 15 }; $State.lastAct = $Now.ToString('o') }
   $State.acts = @($Acts | Where-Object { $_ -notin $held }) + $carry; $State.actSec = @{}

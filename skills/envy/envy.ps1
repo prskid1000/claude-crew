@@ -843,7 +843,7 @@ function Test-Smoke([string]$e) {
       } elseif ($c.cmd) {
         $cmd = Expand-Placeholders ([string]$c.cmd) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace ''
         $slog = LogFile $e 'smoke'; Remove-Item $slog -ErrorAction SilentlyContinue
-        $code = Invoke-Shell $cmd $slog (EnvVars $e ([pscustomobject]@{})) ([int][math]::Max(5, ($until - (Get-Date)).TotalSeconds))
+        $code = Invoke-Shell $cmd $slog (EnvVars $e ([pscustomobject]@{})) ([int][math]::Max(5.0, ($until - (Get-Date)).TotalSeconds))
         $final = $code -in $script:Misconfigured
         $why = if ($code) { "$(Get-ShellWhy $code) : $((@($script:ShellOut) | Where-Object { "$_".Trim() } | Select-Object -Last 3) -join ' | ')" } else { $null }
       }
@@ -1930,7 +1930,7 @@ try {
       $fails++; $m = "$_".Split("`n")[0]
       if ($m -ne $lastErr) { Say "tick $tick failed ($fails in a row, retrying): $_ $($_.ScriptStackTrace)"; $lastErr = $m }
       if ($fails -ge 30) { Say 'loop gives up after 30 failed ticks in a row (the next request starts it again)'; break }
-      Start-Sleep ([math]::Min(60, 3 * [math]::Pow(2, [math]::Min($fails, 5)))); continue
+      Start-Sleep ([math]::Min(60.0, 3 * [math]::Pow(2, [math]::Min($fails, 5)))); continue
     }
     $fails = 0; $lastErr = $null
     Start-Sleep 3

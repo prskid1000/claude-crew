@@ -17,7 +17,7 @@ $bmp = New-Object Drawing.Bitmap $img0.Width, $img0.Height
 $g = [Drawing.Graphics]::FromImage($bmp)
 $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
 $g.DrawImage($img0, 0, 0, $img0.Width, $img0.Height)
-$k = [math]::Max(1, $img0.Width / 1300)   # sizes grow with the image
+$k = [math]::Max(1.0, $img0.Width / 1300)   # sizes grow with the image
 $red = [Drawing.Color]::FromArgb(230, 220, 38, 38)
 $pen = New-Object Drawing.Pen $red, (4 * $k)
 $font = New-Object Drawing.Font ([Drawing.FontFamily]::GenericSansSerif), ([float](15 * $k)), ([Drawing.FontStyle]::Bold)

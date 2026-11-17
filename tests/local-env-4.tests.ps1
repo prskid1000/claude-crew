@@ -53,7 +53,7 @@ $k58 = & { . $k58L
   function Get-GateAvailGB { 10.5 }; $noRoom = Select-Lane shop S2 0 'deploy'
   function Get-GateAvailGB { 50 }; $opened = Select-Lane shop S3 0 'deploy'
   $lo = Get-LanesOpen shop
-  "$free|$shared|$noRoom|$opened|$($lo.open)/$($lo.of)|$($lo.why -match 'S3 -> shop: cold lane opened: warm lanes busy, queue wait 20 min >= lanes.openAfterMinutes 15')|$((GraceMin shop2 (Svc shop2 'api')) -eq [math]::Max(6, (Get-KitParam 'idle.graceMinutes')))/$(GraceMin shop (Svc shop 'api'))" } 6>$null
+  "$free|$shared|$noRoom|$opened|$($lo.open)/$($lo.of)|$($lo.why -match 'S3 -> shop: cold lane opened: warm lanes busy, queue wait 20 min >= lanes.openAfterMinutes 15')|$((GraceMin shop2 (Svc shop2 'api')) -eq [math]::Max(6.0, (Get-KitParam 'idle.graceMinutes')))/$(GraceMin shop (Svc shop 'api'))" } 6>$null
 Expect "K58 lanes: free warm lane first, busy warm shared under the queue-wait threshold (a running train alone is no wait) or without room, a cold lane past it; lanes open N of M (why); extra lane idle grace = idle.graceMinutes, at least 3 starts; lane 1 keeps its 15 min ($k58)" ($k58 -eq 'shop2|shop2/shop2|shop2|shop|1/3|True|True/15')
 Remove-TestKit $k58Kit
 $lm = & { . $lkL; function MarksOn { $true }; function Get-DbPos { 'pos1' }; $global:lmUp = $false; function Test-PortListening { $global:lmUp }

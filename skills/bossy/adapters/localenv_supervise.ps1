@@ -103,7 +103,7 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix, [string[]]$Known = @()) {
     $key = $L.path; foreach ($k0 in @($tried.Keys)) { if (((Get-Date) - [datetime]$tried[$k0]).TotalMinutes -ge 60) { $tried.Remove($k0) } }   # once per log an hour
     if ($up -and $AutoFix -and -not $tried[$key]) {
       $tried[$key] = (Get-Date).ToString('o'); $tried | ConvertTo-Json | Set-Content $rf
-      $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'restart', '-Env', $ev.env, '-Services', $svc, '-Agent', 'supervise') ([math]::Min(120, (Left)))
+      $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'restart', '-Env', $ev.env, '-Services', $svc, '-Agent', 'supervise') ([math]::Min(120.0, (Left)))
       return [pscustomobject]@{ level = $(if ($r.code) { 'ACT' } else { 'INFO' }); what = "$(if ($r.code) { 'ERROR SPIKE' } else { 'auto-fixed' }): $where failed to start while $($L.dep) was down; it is up now: restarted once$(if ($r.code) { " - FAILED: $("$($r.out)".Trim())" })"; action = "& $($KitCmd.local) logs -Env $($ev.env) -Service $svc" }
     }
     if (-not $up) { return [pscustomobject](@{ level = 'ACT'; what = "ERROR SPIKE: $where failed to start: $($L.dep) is down: $($L.first)"; action = "Bring $($L.dep) up; the next heartbeat restarts $svc once (-AutoFix)." } + @{ kind = $cells.kind; who = $cells.who; problem = "$svc failed to start: $($L.dep) is down"; next = "bring $($L.dep) up" }) }
@@ -116,7 +116,7 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix, [string[]]$Known = @()) {
 # the env rows early, among the machine guards: a sweep that runs out of budget later (track, network) still lists what holds RAM
 function Get-KitSuperviseGuardLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
-  $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left)))
+  $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30.0, (Left)))
   $script:KitEnvStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }); (Get-KitEnvRows $script:KitEnvStatus $now).rows
 }
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
@@ -137,7 +137,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       if ("$ln" -like 'kept *') { [pscustomobject]@{ info = "LANE NAMES: $ln" } } else { [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: $ln"; action = 'Nothing to do.' } } }
   }
   $early = $null -ne $script:KitEnvStatus   # the guard hook read status this round: its rows are out
-  $envs = if ($early) { $script:KitEnvStatus } else { $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left))); @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }) }
+  $envs = if ($early) { $script:KitEnvStatus } else { $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30.0, (Left))); @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }) }
   $script:KitEnvStatus = $null; $er = Get-KitEnvRows $envs $now
   if (-not $early) { $er.rows }; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
   $cf = Join-Path (Get-KitPath cache -Create) 'localenv-supervise.json'; $last = try { Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $last) { $last = @{} }; $seenEnv = @{}

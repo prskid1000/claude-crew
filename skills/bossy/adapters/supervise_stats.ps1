@@ -120,7 +120,7 @@ function Update-KitCpuStats($Prior, [datetime]$Now = (Get-Date), $Shells = @()) 
     $top = @($pct.Keys | Where-Object { -not $inG.ContainsKey($_) -and $pct[$_] -ge 10 } | Sort-Object { - $pct[$_] } | Select-Object -First 5 | ForEach-Object { $p = $byId[$_]   # TODO-PARAM (fixed default: 10% of the machine)
         [ordered]@{ n = "$($p.Name)"; pid = $p.Id; p = [math]::Round($pct[$_], 1); o = (& $owner $p.Id); c = $(if ($p.CommandLine) { $one = Protect-KitText ("$($p.CommandLine)" -replace '\s+', ' '); $one.Substring(0, [math]::Min(160, $one.Length)) } else { '' }) } })
     # the machine from idle time (a build that came and went between sweeps counts too); no idle process: the sum
-    $all = if ($idle -and $null -ne $pa.idle) { [math]::Max(0, [math]::Min(100, 100 - 100 * ([double]$idle.Cpu - [double]$pa.idle) / $dt / $cores)) } else { [double](@($pct.Values) + 0 | Measure-Object -Sum).Sum }
+    $all = if ($idle -and $null -ne $pa.idle) { [math]::Max(0.0, [math]::Min(100.0, 100 - 100 * ([double]$idle.Cpu - [double]$pa.idle) / $dt / $cores)) } else { [double](@($pct.Values) + 0 | Measure-Object -Sum).Sum }
     $samples += [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; all = [math]::Round($all, 1); g = $g; m = $m; top = $top }
   }
   [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; svc = @($groups | Where-Object name | ForEach-Object { "$($_.name)" } | Select-Object -Unique) }   # svc: every configured service, up or not (its row stays)
@@ -160,7 +160,7 @@ function Get-KitHeatCount($Rows) { $rs = @($Rows | Where-Object { $_ }); "$(@($r
 # build gate: one line per kind (24 h heatmap of busy minutes, running, queued, today, waits, RAM); RAM, QA seats, phones, browsers aside
 function Format-KitGateCard($gs) {
   if (-not $gs) { return (& $nowCard 'Build gate · QA seats' "$(& $icv run 'running builds' (& $fmt $nw.gr))$(& $icv queue 'queued builds' (& $fmt $nw.gq))<small> · seats </small>$(& $fmt $nw.seats)<small> / $(& $fmt $nw.seatsMax)</small>" "longest wait $(& $fmt $nw.gw) min" '' $(if ($nw.gw -ge 30) { 'hot' } elseif ($nw.gq -ge 6) { 'warn' }) "$(& $dots $nw.seats $nw.seatsMax)$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queue, 24 h' 'peak' 0)") }
-  $fl = [math]::Max(0, [double]$j.mem.AvailGB - [double]$st.keepFree); $gb = [math]::Min(24, [int][math]::Ceiling([double]$gs.ram + $fl))   # 1 dot = 1 GB: promised to running builds, then free above the floor
+  $fl = [math]::Max(0.0, [double]$j.mem.AvailGB - [double]$st.keepFree); $gb = [math]::Min(24, [int][math]::Ceiling([double]$gs.ram + $fl))   # 1 dot = 1 GB: promised to running builds, then free above the floor
   $ramDots = if ($gb -gt 0) { "<div class=dots role=img aria-label='RAM for builds: $(& $n1 $gs.ram) GB promised, $(& $n1 $fl) GB free above the floor'>$(@(1..$gb | ForEach-Object { "<i$(if ($_ -le [math]::Round([double]$gs.ram)) { ' class=on' })></i>" }) -join '')</div><div class=s>RAM: $(& $n1 $gs.ram) GB promised · $(& $n1 $fl) GB free above the $(& $n1 $st.keepFree) GB floor</div>" }
   # under one header row (hour labels, icons); zeros dimmed; each cell carries its icon too: shown only under 700 px
   $gCols = @(@('run', 'running builds', ''), @('queue', 'queued builds', ''), @('today', 'builds today', ''), @('wait', 'wait avg, min', 'avg'), @('wait', 'wait peak, min', 'peak'), @('ram', 'RAM GB: now, or up to (24 h peak)', 'GB'))

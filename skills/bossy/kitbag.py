@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1448 audit ·
-  L1564 registry · L1896 arch lint · L2163 prose · L2328 sections · L2458 budget · L2472 migrate · L2632 plugins ·
-  L2686 state lint · L2874 main
+Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1084 README graph · L1187 lint command · L1453 audit ·
+  L1592 registry · L1924 arch lint · L2191 prose · L2356 sections · L2486 budget · L2500 migrate · L2660 plugins ·
+  L2714 state lint · L2902 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1054,6 +1054,11 @@ def lint(k, g=None, org_terms=None):
         if f.endswith('.ps1') and osp.isfile(osp.join(k.dir, f)):
             for lb, b, a, la in ps_case(k.texts.get(f) or read(osp.join(k.dir, f))):
                 bad('PS-CASE', f'{f}:{lb}', f'${b} is the same variable as ${a} (line {la}) in this function: rename one')
+    # ---- PS-MATH-INT: [math]::Min/Max with an int literal first binds the Int32 overload: Max(0, 1.5) = 2 (K57)
+    for f in k.files:
+        if f.endswith('.ps1') and f.startswith('skills/'):   # tests/ hold fixtures in strings
+            for ln, arg in ps_math_int(k.texts.get(f) or read(osp.join(k.dir, f))):
+                bad('PS-MATH-INT', f'{f}:{ln}', f'[math]::Min/Max(<int>, {arg[:40]}) rounds a double side: write the literal as a double (0.0)')
     # ---- org terms (published files + README/docs/examples)
     if org_terms:
         scan = [(f, k.texts.get(f) or read(osp.join(k.dir, f))) for f in k.files if not is_overlay(k, f)]
@@ -1507,6 +1512,29 @@ def tracked(kit):
 def strip_ps_comments(text):
     text = re.sub(r'<#.*?#>', lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
     return '\n'.join(re.sub(r'(^|\s)#(?![>{]).*$', r'\1', l) if not re.search(r"""['"][^'"]*#""", l) else l for l in text.split('\n'))
+
+MATH_DBL = re.compile(r'/|\d\.\d|\[double\]|\.Total\w*|\w+GB\b|Get-Kit(Param|Setting|BeatMinutes|NetTimeout)\b|\(Left\)|\[math\]::(Pow|Sqrt)\b')
+
+def ps_math_int(t):
+    """[math]::Min/Max(<int literal>, <a side that may be a double>): [(line, second argument)] (here-strings and comments skipped)."""
+    code = re.sub(r"""@'.*?'@|@".*?"@""", lambda m: '\n' * m.group(0).count('\n'), strip_ps_comments(t), flags=re.S)
+    out = []
+    for m in re.finditer(r'\[math\]::(?:Min|Max)\(\s*-?\d+\s*,', code, re.I):
+        i, depth = m.end(), 1
+        while i < len(code) and depth:
+            depth += {'(': 1, ')': -1}.get(code[i], 0)
+            i += 1
+        arg = code[m.end():i - 1].strip()
+        bare = re.sub(r""""(?:[^"`]|`.)*"|'[^']*'""", "''", arg)
+        whole = re.match(r'\[math\]::(?:Ceiling|Floor|Round|Truncate)\(', bare, re.I)   # a whole number: the Int32 overload is exact
+        if whole:
+            j, d = whole.end(), 1
+            while j < len(bare) and d:
+                d += {'(': 1, ')': -1}.get(bare[j], 0)
+                j += 1
+        if MATH_DBL.search(bare) and not re.match(r'\[(?:int|long)\]', bare, re.I) and not (whole and j == len(bare)):
+            out.append((code.count('\n', 0, m.start()) + 1, arg))
+    return out
 
 def ps_case(t):
     """One variable assigned under two spellings ($L, $l) in one function (or the script body): [(line, b, a, line_a)]."""

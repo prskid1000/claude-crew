@@ -311,7 +311,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     # an exited run is done once drained: a grandchild (git, ssh) holding its stdout kept the plan waiting to the deadline (45 s idle)
     while (@($runs | Where-Object rl).Count -and (Get-Date) -lt $until) { foreach ($q in $runs) { & $take $q 0; if ($q.rl -and $q.p.HasExited) { & $take $q 300; $q.rl = $null } }; Start-Sleep -Milliseconds (Get-KitParam 'deploy.planPollMs') }
     foreach ($q in $runs) {
-      $fin = $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { Stop-KitProcessTree $q.p }
+      $fin = $q.p.WaitForExit([int][math]::Max(1000.0, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { Stop-KitProcessTree $q.p }
       & $take $q 2000; $null = $q.se.Wait($(if ($fin) { 300 } else { 5000 })); $txt = $q.out -join "`n"   # exited: stderr held open by a grandchild cost 5 s a run
       $parsed = @($txt -split "`r?`n" | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.mr })   # -Lines: one row per line
       $qts = @($q.t -split ','); $fw = $null
