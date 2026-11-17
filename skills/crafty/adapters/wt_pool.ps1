@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L108 names · L141 slots · L167 lease · L264 release · L292 lanes · L397 sync · L493 pool
+Sections: L14 worktrees · L130 names · L163 slots · L189 lease · L286 release · L314 lanes · L419 sync · L515 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -93,12 +93,34 @@ function Get-WtRepoConf($rp) {
   $kc = $KitConf.ConfigFile; if (-not ($kc -and (Test-Path $kc))) { return }
   $rpn = $rp.TrimEnd('\', '/'); @((Get-Content $kc -Raw | ConvertFrom-Json).repos) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rpn) } | Select-Object -First 1
 }
-# kit.local.json dep source of a target; configured but missing: error
+# kit.local.json dep sources of a target (linkFromByTarget.<t>: a path or a list, first with the package's folder wins); a missing one: error
 function Get-WtDepSource($rp, $tg) {
   $rc = Get-WtRepoConf $rp; if (-not $rc) { return }
-  $cand = if ($rc.linkFromByTarget -and (Get-KitMember $rc.linkFromByTarget $tg)) { (Get-KitMember $rc.linkFromByTarget $tg) } elseif ($rc.linkFrom -and $tg -eq $rc.target) { $rc.linkFrom } else { $null }
-  if ($cand -and -not (Test-Path $cand)) { throw "kit.local.json dep source $cand ($(Split-Path $rp -Leaf), target $tg) is missing: create it (git worktree add --detach <path> origin/$tg + frozen-lockfile install) or fix kit.local.json" }
+  $cand = @(if ($rc.linkFromByTarget -and (Get-KitMember $rc.linkFromByTarget $tg)) { (Get-KitMember $rc.linkFromByTarget $tg) } elseif ($rc.linkFrom -and $tg -eq $rc.target) { $rc.linkFrom }) | Where-Object { $_ } | ForEach-Object { "$_" }
+  foreach ($c in $cand) { if (-not (Test-Path $c)) { throw "kit.local.json dep source $c ($(Split-Path $rp -Leaf), target $tg) is missing: create it (git worktree add --detach <path> origin/$tg + frozen-lockfile install) or fix kit.local.json" } }
   $cand
+}
+# $srcs: one source or a list (linkFromByTarget); per package folder the first source that has it
+function Add-DepLinks($path, $srcs, $target) {
+  $made = @(); $ld = @(Get-DepLinkDefaults)
+  $pickSrc = { param($sub) foreach ($s in @($srcs)) { if (Test-Path (Join-Path $s $sub)) { return $s } }; @($srcs)[0] }
+  foreach ($e in @($ld | Where-Object { $_.dir -ne 'node_modules' })) {
+    foreach ($mk in (git -C $path ls-files -- @(@($e.markers) | ForEach-Object { $_; "*/$_" }) | Where-Object { $_ -notmatch 'node_modules/' })) {
+      $rel = Split-Path $mk; if (-not $rel) { $rel = "." }; $src = & $pickSrc (Join-Path $rel $e.dir); $from = Join-Path $src (Join-Path $rel $e.dir); $to = Join-Path $path (Join-Path $rel $e.dir)
+      if ((Test-Path $from) -and -not (Test-Path $to)) { New-DirLink $to $from; $made += $to }
+    }
+  }
+  if (-not @($ld | Where-Object { $_.dir -eq 'node_modules' }).Count) { return $made }
+  foreach ($pj in (git -C $path ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
+    $rel = Split-Path $pj; if (-not $rel) { $rel = "." }; $src = & $pickSrc (Join-Path $rel 'node_modules'); $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $path (Join-Path $rel 'node_modules')
+    if ((Test-Path $from) -and -not (Test-Path $to)) {
+      $null = Set-NodeModules $to $from $src $path; $made += $to
+      $a = DepHash (Join-Path $path $pj); $b = DepHash (Join-Path $src $pj)
+      if ($a -ne $b) { Write-Warning "$pj deps differ from ${src}: linked node_modules may be wrong.$(if ($target) { " Use -LinkFrom <a $target checkout with matching installs>." })" }
+      if (($old = Get-StaleDepsNote $from)) { Write-Warning $old }
+    }
+  }
+  $made
 }
 # porcelain status minus the worktree's own dependency links
 function Get-WtDirty($d) {

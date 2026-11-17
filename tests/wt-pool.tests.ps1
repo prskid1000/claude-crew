@@ -128,6 +128,13 @@ $lnt = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{
 Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 } } } } }; $lp = Join-Path (Kd) 'lanes.html'
 Set-Content $lp "<html><body><p>env shop·Kestrel</p><p>shop2 &#183; api</p><script>var a='shop2'</script></body></html>"
 $lhit = python -X utf8 -c "import sys; sys.argv=['kitbag.py']; sys.path.insert(0, r'$k/skills/bossy'); import kitbag; print(len(kitbag.lane_ids_shown(r'$lp', r'$k')))"
+# K61b: linkFromByTarget.<t> as a list: per package folder the first store that has its node_modules
+$mono = "$base/mono"; git init -q -b main $mono; '{}' | Set-Content "$mono/package.json"; New-Item -ItemType Directory -Force "$mono/sub" | Out-Null; '{}' | Set-Content "$mono/sub/package.json"
+Save-GitRepo $mono base; $monoO = "$base/mono.git"; git init -q --bare -b main $monoO; git -C $mono remote add origin $monoO; git -C $mono push -q origin main 2>$null
+foreach ($dm in "$base/storeA/node_modules/a-mark", "$base/storeB/sub/node_modules/b-mark", "$base/storeB/node_modules/wrong-mark") { New-Item -ItemType Directory -Force $dm | Out-Null }
+Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos = @(@{ name = 'mono'; checkout = $mono; target = 'main'; linkFromByTarget = @{ main = @("$base/storeA", "$base/storeB") } }); tracker = @{ type = 'none' } }
+$dl = (pwsh @np $D wt new -Repo mono -Branch feat/deps -Target main -Name dl 2>&1 | Out-String); $dlw = "$base/wt/dl-mono"
+Expect "wt new: linkFromByTarget list -> root node_modules from the first store, sub/node_modules from the second (the first lacks it) ($(($dl -split "`n" | Select-String 'linked') -replace '\s+', ' '))" ((Test-Path "$dlw/node_modules/a-mark") -and -not (Test-Path "$dlw/node_modules/wrong-mark") -and (Test-Path "$dlw/sub/node_modules/b-mark") -and $dl -match 'storeA, .*storeB')
 Expect "lane names: ids shown as <product>·<Bird> (paths, branches, other words kept), -Env takes the shown name, -Json keeps ids; ui-check counts a bare id outside scripts ($($lnt -join ' | ') | $lhit)" ($lnt[0] -eq 'shop·Kestrel · api|shop·Falcon · db|env shop·Falcon|[shop·Osprey] up|shop2-api.log|lane/shop-kestrel|workshop2 · x|shop·Kestrel &#183; web|env shop&#183;Falcon J|lane shop&middot;Falcon|env shop·Falcon|env shop&#xB7;Falcon|shop·Falcon &middot; db' -and $lnt[1] -eq 'from:shop2/shop3/other' -and $lnt[2] -eq 'out:x shop·Kestrel/x shop2' -and $lnt[3] -eq 'ack:True/True/False' -and "$lhit".Trim() -eq '1')
 Remove-TestKit $k
 Complete-Tests

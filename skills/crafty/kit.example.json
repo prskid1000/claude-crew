@@ -98,7 +98,7 @@
     { "target": "staging", "branch": "staging", "job": "deploy-staging" },
     { "target": "<test phones of an app repo>", "laneApk": true }
    ],
-   "linkFromByTarget": { "<other target branch>": "<a checkout of that branch with its own install>" },
+   "linkFromByTarget": { "<other target branch>": "<a checkout of that branch with its own install, or a list: per package the first that has it>" },
    "linkPaths": ["<git-ignored file or folder every worktree needs, e.g. local credentials or local.properties>"] }
  ],
  "localOnly": ["skills/<org-only-skill>", "<another org-only path>"],

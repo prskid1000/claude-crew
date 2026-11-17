@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L949 check · L1266 pipes · L1323 guard · L2198 dir ·
-  L2208 checkpoint · L2238 prior · L2276 tracker · L2298 task spec · L2473 scope · L2521 host
+Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1305 guard · L2180 dir ·
+  L2190 checkpoint · L2220 prior · L2258 tracker · L2280 task spec · L2455 scope · L2503 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -212,26 +212,6 @@ function DepHash($pkgJson) {
   try { $p = Get-Content $pkgJson -Raw | ConvertFrom-Json } catch { return '' }
   (@('dependencies', 'devDependencies') | ForEach-Object { if ((Get-KitMember $p $_)) { (Get-KitProps (Get-KitMember $p $_)) | Sort-Object Name | ForEach-Object { "$($_.Name)@$($_.Value)" } } }) -join ';'
 }
-function Add-DepLinks($path, $src, $target) {
-  $made = @(); $ld = @(Get-DepLinkDefaults)
-  foreach ($e in @($ld | Where-Object { $_.dir -ne 'node_modules' })) {
-    foreach ($mk in (git -C $path ls-files -- @(@($e.markers) | ForEach-Object { $_; "*/$_" }) | Where-Object { $_ -notmatch 'node_modules/' })) {
-      $rel = Split-Path $mk; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel $e.dir); $to = Join-Path $path (Join-Path $rel $e.dir)
-      if ((Test-Path $from) -and -not (Test-Path $to)) { New-DirLink $to $from; $made += $to }
-    }
-  }
-  if (-not @($ld | Where-Object { $_.dir -eq 'node_modules' }).Count) { return $made }
-  foreach ($pj in (git -C $path ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
-    $rel = Split-Path $pj; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $path (Join-Path $rel 'node_modules')
-    if ((Test-Path $from) -and -not (Test-Path $to)) {
-      $null = Set-NodeModules $to $from $src $path; $made += $to
-      $a = DepHash (Join-Path $path $pj); $b = DepHash (Join-Path $src $pj)
-      if ($a -ne $b) { Write-Warning "$pj deps differ from ${src}: linked node_modules may be wrong.$(if ($target) { " Use -LinkFrom <a $target checkout with matching installs>." })" }
-      if (($old = Get-StaleDepsNote $from)) { Write-Warning $old }
-    }
-  }
-  $made
-}
 function Copy-HookDirs($path, $sources) {
   foreach ($hs in @($sources | Where-Object { $_ } | ForEach-Object { (Resolve-Path $_).Path } | Select-Object -Unique)) {
     foreach ($h in (Get-ChildItem $hs -Directory -Recurse -Depth 3 -Filter '_' -ErrorAction SilentlyContinue | Where-Object { $_.Parent.Name -eq '.husky' -and $_.FullName -notmatch 'node_modules' })) {
@@ -251,27 +231,28 @@ function Exclude-Links($path, $links) {
 }
 # deps from the target's source (repos[].linkFromByTarget / linkFrom, else the checkout), linkPaths, hooks; another source relinks
 function Set-WtDeps($path, $rp, $tg, $from) {
-  $rc = Get-WtRepoConf $rp
-  if (-not $from -and ($from = Get-WtDepSource $rp $tg)) { "linking dependencies from $from (kit.local.json, target $tg)" }
-  $src = if ($from) { (Resolve-Path $from).Path } else { $rp }
+  $rc = Get-WtRepoConf $rp; $from = @($from | Where-Object { $_ })
+  if (-not $from.Count -and ($from = @(Get-WtDepSource $rp $tg)).Count) { "linking dependencies from $($from -join ', ') (kit.local.json, target $tg)" }
+  $srcs = @(if ($from.Count) { $from | ForEach-Object { (Resolve-Path $_).Path } } else { $rp }); $src = $srcs[0]   # a list: the first is the source of record
   $was = "$(Meta $path 'linksrc')".Trim(); $kept = @()
-  if ($was -and $was -ne $src) {   # a slot moved to another target's install
+  $srcKey = $srcs -join ";"
+  if ($was -and $was -ne $srcKey) {   # a slot moved to another target's install
     foreach ($l in @(Meta $path 'links' | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } }
-    "relinked dependencies: $was -> $src"
+    "relinked dependencies: $was -> $srcKey"
   } elseif ($was) { $kept = @(Meta $path 'links' | Where-Object { $_ }) }
-  $links = @(Add-DepLinks $path $src $tg)
+  $links = @(Add-DepLinks $path $srcs $tg)
   foreach ($lp in @($rc.linkPaths) | Where-Object { $_ }) {   # git-ignored files
-    $lf = @((Join-Path $src $lp), (Join-Path $rp $lp)) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $lf = @(@($srcs) + $rp | ForEach-Object { Join-Path $_ $lp }) | Where-Object { Test-Path $_ } | Select-Object -First 1
     $to = Join-Path $path $lp
     if (-not $lf) { Write-Warning "linkPaths: no $lp in $src or $rp, skipped"; continue }
     if (Test-Path $to) { continue }
     New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
     if ((Get-Item $lf).PSIsContainer) { New-DirLink $to $lf; $links += $to } else { Copy-Item $lf $to }
   }
-  Copy-HookDirs $path @($src, $rp)   # a --ignore-scripts checkout has no .husky/_
-  Meta $path 'links' (@(@($kept) + $links | Select-Object -Unique) -join "`n"); Meta $path 'linksrc' $src
+  Copy-HookDirs $path @(@($srcs) + $rp)   # a --ignore-scripts checkout has no .husky/_
+  Meta $path 'links' (@(@($kept) + $links | Select-Object -Unique) -join "`n"); Meta $path 'linksrc' $srcKey
   Exclude-Links $path $links
-  if ($links) { 'linked:   ' + (($links | ForEach-Object { $_.Substring($path.Length + 1) }) -join ', ') + "  (from $src)" }
+  if ($links) { 'linked:   ' + (($links | ForEach-Object { $_.Substring($path.Length + 1) }) -join ', ') + "  (from $($srcs -join ', '))" }
 }
 
 switch ($Action) {
@@ -292,7 +273,8 @@ switch ($Action) {
       throw (@($priorWhy) + @($reuseBr | ForEach-Object { "  reuse: $wtCmd -Branch $_" }) + @(if ($priorWhy -match 'already exists') { "  new work on purpose: $wtCmd -Branch $Branch -Override '<why>'" }) -join "`n")
     }
     if ($tk) { Update-KitTaskIndex $tk { param($x) if ($x.prior) { $x.prior.claimed = @(@($x.prior.claimed) + $Branch | Where-Object { $_ } | Select-Object -Unique) } } }
-    if (-not $LinkFrom -and ($LinkFrom = Get-WtDepSource $Repo $Target)) { "linking dependencies from $LinkFrom (kit.local.json, target $Target)" }   # before the checkout: a missing source fails first
+    $depFrom = @($LinkFrom | Where-Object { $_ })   # before the checkout: a missing source fails first
+    if (-not $depFrom.Count -and ($depFrom = @(Get-WtDepSource $Repo $Target)).Count) { "linking dependencies from $($depFrom -join ', ') (kit.local.json, target $Target)" }
     Add-WtRoot $Root
     G -C $Repo fetch -q origin $Target | Out-Null
     $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # bare name would suffix-match
@@ -303,7 +285,7 @@ switch ($Action) {
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
     if ($Scope) { Meta $path 'scope' (@(Split-KitList $Scope -Sep '\s*,\s*') -join "`n"); "area:     $Scope (wt commit, devtools.py mr / merge refuse files outside)" }   # brief agents[].paths
-    $depOut = @(Set-WtDeps $path $Repo $Target $LinkFrom)
+    $depOut = @(Set-WtDeps $path $Repo $Target $depFrom)
     "worktree: $path"
     "branch:   $Branch (from origin/$Target)"
     $depOut

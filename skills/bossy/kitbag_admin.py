@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L65 setup · L186 config · L367 recover · L512 release · L563 cost · L670 registry · L674 scan
+Sections: L16 helpers · L65 setup · L186 config · L368 recover · L513 release · L564 cost · L671 registry · L675 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -299,9 +299,10 @@ def config_rules(kit, c):
         for k in ('linkFrom',):
             if r.get(k) and not osp.isdir(osp.expanduser(str(r[k]))):
                 out('ACT', 'CONFIG-VALUE', f'{w}.{k}', 'folder does not exist (wt.ps1 new fails)')
-        for t, d in (r.get('linkFromByTarget') or {}).items():
-            if d and not osp.isdir(osp.expanduser(str(d))):
-                out('ACT', 'CONFIG-VALUE', f'{w}.linkFromByTarget.{t}', 'folder does not exist (wt.ps1 new fails)')
+        for t, ds in (r.get('linkFromByTarget') or {}).items():
+            for d in (ds if isinstance(ds, list) else [ds]):   # a path or a list of dep stores
+                if d and not osp.isdir(osp.expanduser(str(d))):
+                    out('ACT', 'CONFIG-VALUE', f'{w}.linkFromByTarget.{t}', 'folder does not exist (wt.ps1 new fails)')
         for j, d in enumerate(r.get('deploys') or []):
             dw = f'{w}.deploys[{j}]'
             if not isinstance(d, dict) or not d.get('target'):

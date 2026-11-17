@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L236 state · L283 layer drops · L355 leases · L463 code · L501 migrations ·
-  L504 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L652 shared builds · L785 hooks · L857 marks · L1038 seed ·
-  L1105 processes · L1485 daemon · L1946 cleanup · L2018 doctor · L2071 verbs
+Sections: L36 config · L236 state · L283 layer drops · L355 leases · L463 code · L504 migrations ·
+  L507 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L655 shared builds · L788 hooks · L860 marks · L1041 seed ·
+  L1108 processes · L1488 daemon · L1949 cleanup · L2021 doctor · L2074 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -476,15 +476,18 @@ function Ensure-Worktree([string]$e, $r) {
 }
 function Sync-DepLinks([string]$e, $r) {
   $c = $r.cfg
-  $src = if ($c.linkFromByTarget -and (Get-KitMember $c.linkFromByTarget ($r.target))) { [string](Get-KitMember $c.linkFromByTarget ($r.target)) } elseif ($c.linkFrom -and $r.target -eq $c.target) { [string]$c.linkFrom } else { [string]$c.checkout }
-  if (-not (Test-Path $src)) { Write-Warning "[$e] dependency source $src for $($r.name) @ $($r.target) does not exist"; return }
-  $src = (Resolve-Path $src).Path
+  # linkFromByTarget.<t>: a path or a list (per package folder the first source that has it)
+  $srcs = @(if ($c.linkFromByTarget -and (Get-KitMember $c.linkFromByTarget ($r.target))) { Get-KitMember $c.linkFromByTarget ($r.target) } elseif ($c.linkFrom -and $r.target -eq $c.target) { $c.linkFrom } else { $c.checkout }) | ForEach-Object { "$_" }
+  foreach ($s in $srcs) { if (-not (Test-Path $s)) { Write-Warning "[$e] dependency source $s for $($r.name) @ $($r.target) does not exist"; return } }
+  $srcs = @($srcs | ForEach-Object { (Resolve-Path $_).Path }); $src = $srcs[0]
   foreach ($pj in (git -C $r.wt ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
-    $rel = Split-Path $pj; if (-not $rel) { $rel = '.' }; $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $r.wt (Join-Path $rel 'node_modules')
+    $rel = Split-Path $pj; if (-not $rel) { $rel = '.' }
+    $src = @($srcs | Where-Object { Test-Path (Join-Path $_ (Join-Path $rel 'node_modules')) })[0]; if (-not $src) { $src = $srcs[0] }
+    $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $r.wt (Join-Path $rel 'node_modules')
     if ((Test-Path $from) -and (Set-NodeModules $to $from $src $r.wt)) { Write-Host "[$e] $($r.name): $(Join-Path $rel 'node_modules') linked from $src" }
   }
   foreach ($l in Get-DirLinks $r.wt 4 | Where-Object { $_.Name -eq '.venv' }) {
-    $rel = [IO.Path]::GetRelativePath($r.wt, $l.FullName); $want = Join-Path $src $rel
+    $rel = [IO.Path]::GetRelativePath($r.wt, $l.FullName); $want = Join-Path $srcs[0] $rel
     if (-not (Test-Path $want) -or "$(@($l.Target)[0])".TrimEnd('\', '/') -eq $want.TrimEnd('\', '/')) { continue }
     Remove-DirLink $l.FullName; New-DirLink $l.FullName $want
     Write-Host "[$e] $($r.name): $rel now links $want"
