@@ -627,7 +627,7 @@ function Get-MergedWhy([string]$d, [string]$branch, [string]$sha, [string]$targe
   git -C $d merge-base --is-ancestor $sha $tref 2>$null
   if ($LASTEXITCODE -eq 0) { return "merged into $target" }
   if ($NoHost -or $tref -ne "origin/$target" -or -not (Get-Command Get-MergedMrs -ErrorAction SilentlyContinue)) { return $null }
-  $mr = try { @(Get-MergedMrs $d $branch $target | Where-Object { $_.sha -and ($_.sha -eq $sha -or $(git -C $d cat-file -e "$($_.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { git -C $d fetch -q origin $_.sha 2>$null }; git -C $d merge-base --is-ancestor $sha $_.sha 2>$null; $LASTEXITCODE -eq 0) -or (Test-LayerRebased $d $sha $_.sha)) })[0] } catch { $null }
+  $mr = try { @(Get-MergedMrs $d $branch $target | Where-Object { $_.sha -and ($_.sha -eq $sha -or $(git -C $d cat-file -e "$($_.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { git -C $d fetch -q origin $_.sha 2>$null }; git -C $d merge-base --is-ancestor $sha $_.sha 2>$null; $LASTEXITCODE -eq 0) -or (Test-KitRebasedCopy $d $sha $_.sha)) })[0] } catch { $null }
   if ($mr) { "merged into $target (MR $($mr.iid))" }
 }
 function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]$Base) {   # -Base: a target commit (restore), else origin/<target>
