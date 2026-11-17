@@ -66,6 +66,11 @@ Expect "deploy merge -To <target>: resolved from another clone; a target without
 $cfg7.repos += [pscustomobject]@{ name = 'other'; checkout = "$r/none"; deploys = @(@{ target = 'o-st'; branch = 'staging' }) }; $cfg7 | ConvertTo-Json -Depth 8 | Set-Content $kl
 $o9 = pwsh @np $O deploy merge -Repo "$r/repo2" -To staging 2>&1 | Out-String; $o9c = $LASTEXITCODE
 Expect "deploy merge: -To that two repos' deploys name, from an unknown clone = a stop, exit 2 ($($o9.Trim()))" ($o9c -eq 2 -and $o9 -match 'names deploys of shop, other')
+# K62r: deploy record without -Mrs clears only the recorded target's repos; another repo's pending request survives
+Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage' }) }, @{ name = 'web'; deploys = @(@{ target = 'webst' }) }) }
+Set-JsonFile (Join-Path (TkPath $k deploys -Create) 'pending.json') @{ requests = @(@{ at = (Get-Date).ToString('s'); run = 'r1'; mrs = @('api!9', 'web!4') }) }
+$null = pwsh @np $O deploy record -Env stage -By tester 2>&1; $pend62 = @((Read-Json (Join-Path (TkPath $k deploys) 'pending.json')).requests.mrs)
+Expect "deploy record without -Mrs: the stage repo's MR leaves pending, the other repo's request stays ($($pend62 -join ','))" (($pend62 -join ',') -eq 'web!4')
 Remove-Item Env:CLAUDE_WT_ROOT
 Remove-TestKit $k
 Complete-Tests
