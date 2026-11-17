@@ -138,7 +138,7 @@ Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Ra
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
 $pgs = @{}; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } }) $pgs
-$cardGrid = @("class=ug><details class='sec sub st uc' id=sec-u-days open><summary><h4>Per day", "<div class=ucol><details class='sec sub st uc ", "class='sec sub st uc ur' id=sec-u-spend open><summary><h4>Spend per role", "<span class='sb mix'", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
+$cardGrid = @("data-mas data-fill><details class='sec sub st uc' id=sec-u-days open><summary><h4>Per day", "</div><details class='sec sub st uc ur' id=sec-u-spend", "class='sec sub st uc ur' id=sec-u-spend open><summary><h4>Spend per role", "<span class='sb mix'", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
 # the right-align nth-child ranges assume these column counts: step types under a role 7, run steps 9
 $thCount = { param($open, $in = $h) ([regex]::Match($in, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
 $colCounts = "$(& $thCount "class='tw sty'>") $(& $thCount "class='sy rst'>" @($pgs.Values)[0])"

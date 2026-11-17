@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L296 shells · L430 page · L952 release · L992 lines · L1025 cleanup · L1097 launch ·
-  L1175 pause · L1293 heartbeat · L1308 sessions · L1360 ci tasks ·
-  L1415 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L296 shells · L430 page · L953 release · L993 lines · L1026 cleanup · L1098 launch ·
+  L1176 pause · L1294 heartbeat · L1309 sessions · L1361 ci tasks ·
+  L1416 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -782,6 +782,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "d.querySelectorAll('[data-mas]').forEach(function(g){var it=[].filter.call(g.children,function(c){return c.getClientRects().length}).map(function(c){var r=c.getBoundingClientRect();return{l:Math.round(r.left),t:r.top,b:r.bottom}}),ls=[],g0=g.getBoundingClientRect().top;it.forEach(function(x){if(ls.indexOf(x.l)<0)ls.push(x.l)});if(ls.length<2)return;" +
     "it.forEach(function(x){ls.forEach(function(l){if(l==x.l)return;var bt=g0;it.forEach(function(y){if(y.l==l&&y.t<x.t-1)bt=Math.max(bt,y.b)});if(x.t-bt>48)o.push({el:g.className,why:'a card starts '+Math.round(x.t-bt)+' px below free space in another column (max 48): pack the grid',text:''})})})});" +   # card grids: no card under a column with 48+ px free above it
     "d.querySelectorAll('[data-fill].msn').forEach(function(g){var bt={};[].forEach.call(g.children,function(c){if(!c.getClientRects().length)return;var r=c.getBoundingClientRect(),l=Math.round(r.left);bt[l]=Math.max(bt[l]||0,r.bottom)});var v=Object.keys(bt).map(function(k){return bt[k]}),df=v.length>1?Math.round(Math.max.apply(0,v)-Math.min.apply(0,v)):0;if(df>48)o.push({el:g.className,why:'tile columns end '+df+' px apart (max 48): the last tile of each column stretches',text:''})});" +   # one tile row, one height
+    "d.querySelectorAll('.ug').forEach(function(g){var bt={};[].forEach.call(g.children,function(c){if(!c.getClientRects().length)return;var r=c.getBoundingClientRect(),l=Math.round(r.left);bt[l]=Math.max(bt[l]||0,r.bottom)});var v=Object.keys(bt).map(function(k){return bt[k]}),df=v.length>1?Math.round(Math.max.apply(0,v)-Math.min.apply(0,v)):0;if(df>80)o.push({el:g.className,why:'two-column section: columns end '+df+' px apart (max 80)',text:''})});" +   # owner 2026-11-17: no empty band in a two-column section
     "d.querySelectorAll('details.top').forEach(function(s){var c=s.querySelector(':scope>summary>.cnt'),b=s.querySelector(':scope>.bd');if(!c||!b)return;(c.textContent.match(/[$]?\d[\d.,]*(%|[kMB]\b|\s?GB\b)|[$]\d[\d.,]*/g)||[]).forEach(function(v){var t=b.textContent,i=t.indexOf(v),hit=false;for(;i>=0&&!hit;i=t.indexOf(v,i+1))hit=!/[\d.]/.test(t.charAt(i-1))&&!/[\d.]/.test(t.charAt(i+v.length));if(hit)o.push({el:s.id,why:'headline value '+v+' in the band header and again inside it',text:c.textContent.trim()})})});return o};" +   # each number once: a band header never repeats a value its body shows
     "d.addEventListener('click',function(x){var c=x.target.closest('code.cp');if(!c)return;x.preventDefault();try{navigator.clipboard.writeText(c.textContent).then(function(){c.classList.add('ok');setTimeout(function(){c.classList.remove('ok')},1200)})}catch(e){}},true);" +   # a release command: click copies, the row stays as it is
     "var oc0=S.getItem('kc-oc');if(oc0&&d.querySelector('.ocb[data-oc=`"'+oc0+'`"]')){r.dataset.ocf=oc0;d.querySelectorAll('.ocb').forEach(function(o){o.setAttribute('aria-pressed',o.dataset.oc==oc0)})}" +   # kept across the 60 s reload
@@ -896,7 +897,7 @@ function Get-KitSupervisePageCss {
   '.ocb{font:inherit;color:inherit;background:none;border:1px solid transparent;border-radius:6px;padding:1px 5px;cursor:pointer}.ocb b{margin-left:4px}.ocb[aria-pressed=true]{border-color:var(--sage);background:var(--sf2)}' +
   ((@('pass', 'empty', 'fail', 'stopped', 'running', 'stuck') | ForEach-Object { "[data-ocf=$_] #sec-runs [data-oc]:not([data-oc~=$_])" }) -join ',') + '{display:none}#tip{white-space:pre-line}' +
   # usage cards: the chart beside outcome bar + model table, the role table full width; none stretches
-  '.ug{display:grid;gap:8px;margin-top:8px;align-items:start;grid-template-columns:minmax(0,1fr)}.ucol{display:grid;gap:8px;min-width:0}.uc{padding:6px 10px;min-width:0}.ru>summary .bar{background:var(--sf)}' +
+  '.ug{display:grid;gap:8px;margin-top:8px;align-items:start;grid-template-columns:minmax(0,1fr)}.uc{padding:6px 10px;min-width:0}.ru>summary .bar{background:var(--sf)}' +
   '@media(min-width:1100px){.ug{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}.ur{grid-column:1/-1}}' +   # no empty column: Per role spans the row or fills the third
   '.lch{margin:4px 0 0}.lcp{position:relative}.lcp svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}.lcp ol{list-style:none;margin:0;padding:0;position:absolute;inset:0}' +
   'svg .ar{stroke:none;fill:var(--c);opacity:.16}svg .ln{fill:none;stroke:var(--c);stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}.ln.dash{stroke-width:1.4;stroke-dasharray:5 3}.ln.dot{stroke-width:1.6;stroke-dasharray:1 3;opacity:1}.avg{stroke:var(--mt);stroke-width:1;stroke-dasharray:2 4;vector-effect:non-scaling-stroke}' +

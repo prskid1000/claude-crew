@@ -266,7 +266,7 @@ function Format-KitUsageHtml($U) {
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
   [pscustomobject]@{ runsN = $(if ($shown.Count) { "$($devRuns.Count - $nRunning) ended in 7 days" } else { 0 }); runs = $ended; running = $running; nRunning = $nRunning; tpm = $tpm
     dayRuns = $byDay; days = $dy; mrs = @($U.mrList | Where-Object { $_ })
-    usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })<div class=ug>$chart<div class=ucol>$ocCard$share</div>$spend</div>"
+    usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })<div class=ug style='--cmin:380px;--cmax:2' data-mas data-fill>$chart$ocCard$share</div>$spend"
     internals = $(if ($sess) { & $fold 'sessions' 'Sessions' ($cos.Count + $bgs.Count) $sess -cls sub }); pages = $pages
     usageN = "$(& $tk $td.tok) tokens today" }
 }

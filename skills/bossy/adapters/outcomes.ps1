@@ -7,7 +7,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L13 outcomes · L82 summary · L217 patterns · L252 rules
+Sections: L13 outcomes · L82 summary · L218 patterns · L253 rules
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -197,7 +197,8 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
       $fk = @(@($t.repos | ForEach-Object { "$(if ($_ -in $restNames) { 'other' } else { $_ }):$($t.bucket)" }) + @(if ($c = & $dayOf $t.closedAt) { "d$c" }) + @(if ($b = & $dayOf $t.backAt) { "d$b" }) + @(if ($s0 = & $stOf $t.stage) { "st:$s0" }) | Select-Object -Unique) -join ' '
       "<li data-fk='$(& $e $fk)'>$(& $taskA $t.id)<span class='chip ob-$($tone[$t.bucket])'>$(& $e $bk[$t.bucket])</span><span class=m>$(& $e ($t.repos -join ', '))</span></li>" })
   $list = "<div id=oc-tasks class='ftl uc'><p class=fclr hidden>Tasks: <b></b> <button type=button>Clear</button></p><ul class=otl>$($rows -join '')</ul></div>"
-  "$tiles<div class='ug dlv'><div class=ucol>$(if ($chart) { & $fold 'dl-days' 'Delivered per day' '' $chart -Open -tag h4 -cls 'sub st uc dlc' })$rdCard$flightCard$leadCard</div><div class=ucol>$barsCard$QaTile</div></div>$list"
+  # two balanced columns (owner 2026-11-17): cards pack into the shorter column, the last tile of each stretches (masonry data-fill)
+  "$tiles<div class='ug dlv' style='--cmin:380px;--cmax:2' data-mas data-fill>$(if ($chart) { & $fold 'dl-days' 'Delivered per day' '' $chart -Open -tag h4 -cls 'sub st uc dlc' })$rdCard$barsCard$flightCard$leadCard$QaTile</div>$list"
 }
 # bucket order = the bar's segment order: passed QA by fix rounds before it (n/a: no wave report names the task), came back, not tested yet
 $script:KitOutcomeBuckets = [ordered]@{ r0 = 'passed, 0 fix rounds'; r1 = 'passed, 1 round'; r2 = 'passed, 2 rounds'; r3 = 'passed, 3+ rounds'; rna = 'passed, rounds not recorded'; back = 'came back'; wait = 'not tested yet' }
