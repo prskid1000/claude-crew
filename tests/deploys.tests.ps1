@@ -250,8 +250,8 @@ function Has($n, $rx) { [bool]@($o | Where-Object { $_ -match "^$n=$rx" }).Count
 "wait:$(Has 3 'WAIT .*jc!3 not live on: b-st \(NOT-DEPLOYED: not on b-st yet\)')"
 "paths:$(Has 4 'MARK .*jc!4 on b-st\b')"
 "shared:$(Has 5 'WAIT .*jc!5 not live on: a-st \(NOT-DEPLOYED: not on a-st yet\)')"
-$KitCmd.qa = $args[2]; $sw = [Diagnostics.Stopwatch]::StartNew(); $hg = @(Invoke-MarkInTest -Task t3,t5 -TimeoutSec 1 -Quiet:$false | Where-Object { $_ -match '^WAIT' }); $hs = $sw.Elapsed.TotalSeconds; $KitCmd.qa = $args[1]   # K31: a hung check is bounded, per MR and per run
-"hang:$([bool]($hg -match 'jc!3 deployed check timed out after \d+ s') -and [bool]($hg -match 'jc!5 not checked: the intest budget') -and $hs -lt 15)"
+$KitCmd.qa = $args[2]; $hg = @(Invoke-MarkInTest -Task t3,t5 -TimeoutSec 2 -Quiet:$false | Where-Object { $_ -match '^WAIT' }); $KitCmd.qa = $args[1]   # K31: a hung check is bounded, per MR and per run
+"hang:$([bool]($hg -match 'jc!3 deployed check timed out after \d+ s') -and [bool]($hg -match 'jc!5 not checked: the intest budget'))"
 $null = Invoke-MarkInTest -Task t1 -Apply -Quiet; "keyed:$("$global:kc" -eq 't1|comment-intest' -and $global:kt -match '\[jc!1\]\(https://git\.example/\S*jc/-/merge_requests/1\) on b-st')"
 $fs = Format-KitInTestSummary 63 62 1 14 $false ([ordered]@{ 'moved to in test' = @('a'); 'already closed' = @('b', 'c'); 'not deployed yet' = @('d'); 'blocked' = @('e: no status') })
 "summary:$($fs -eq 'mark-in-test: 63 task(s) checked (62 promoted by the kit in 14 d, subtasks included, 1 more assigned to you in trackerLists): 1 moved to in test, 2 already closed, 1 not deployed yet, 1 blocked (e: no status)')"

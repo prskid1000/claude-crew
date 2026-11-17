@@ -18,6 +18,7 @@ $s0 = & $stamp
 $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
 $ps = [powershell]::Create(); $ps.Runspace = $rs; $null = $ps.AddScript("`$ErrorActionPreference = 'SilentlyContinue'; . '$((Join-Path $kit 'skills/crafty/crafty.ps1').Replace("'", "''"))'; `$script:KitScript = 'crafty.ps1'; `$script:KitVerb = 'guard'").Invoke(); $ps.Dispose()
 $env0 = @{}; foreach ($v in Get-ChildItem env:) { $env0[$v.Name] = $v.Value }
+if ($IsWindows -and [IO.File]::Exists("\\.\pipe\$Pipe")) { exit 1 }   # two cold calls started two: the later one goes
 while ($true) {
   $srv = try { [IO.Pipes.NamedPipeServerStream]::new($Pipe, 'InOut', 1, 'Byte', 'Asynchronous') } catch { exit 1 }
   try {
