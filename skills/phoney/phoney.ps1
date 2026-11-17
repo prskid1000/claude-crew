@@ -472,7 +472,7 @@ $failed = @()
 foreach ($s in $Serials) {
   $r = & $adb -s $s install -r -g $apk 2>&1 | Select-Object -Last 1
   # an uninstall wipes the app's data and login: only for a signature or version clash, never for a bad APK, full disk or offline phone
-  if ($r -match 'INSTALL_FAILED_(UPDATE_INCOMPATIBLE|VERSION_DOWNGRADE)|SIGNATURES_DO_NOT_MATCH') { & $adb -s $s uninstall $pkg | Out-Null; $r = & $adb -s $s install -g $apk 2>&1 | Select-Object -Last 1 }
+  if ($r -match 'INSTALL_FAILED_(UPDATE_INCOMPATIBLE|VERSION_DOWNGRADE)|SIGNATURES_DO_NOT_MATCH|INCONSISTENT_CERTIFICATES') { & $adb -s $s uninstall $pkg | Out-Null; $r = & $adb -s $s install -g $apk 2>&1 | Select-Object -Last 1 }
   if ($r -notmatch 'Success') { Write-Warning "$s : install failed ($r)"; $failed += $s; continue }
   foreach ($p in @($c.app.permissions)) { & $adb -s $s shell pm grant $pkg "android.permission.$p" 2>$null }
   "$s : app installed ($r)"

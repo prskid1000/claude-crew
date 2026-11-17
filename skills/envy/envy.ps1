@@ -2343,8 +2343,8 @@ switch ($Action) {
         if ($old -and $blocked.Count) {   # a train waits on it: kept, not extended
           $o.ok = $true; $o.rel = $old.release; $o.capped = $true
         } elseif (-not $blocked.Count) {
-          # a second use adds its services and keeps the release the lease started on (status -Agent: changed since then)
-          $x.leases[$Agent] = @{ services = @(@($old.services) + $names | Where-Object { $_ } | Select-Object -Unique); repos = @($old.repos | Where-Object { $_ }); release = $(if ($old) { [int]$old.release } else { [int]$x.release.n }); note = $(if ($Note) { $Note } else { "$($old.note)" }); lastUse = (Now) } + (New-KitLease $Agent $Session $(if ($Owner) { $min }))   # no live holder: Prune frees it
+          # a second use adds its services; the release moves to the current one when it changed meanwhile
+          $x.leases[$Agent] = @{ services = @(@($old.services) + $names | Where-Object { $_ } | Select-Object -Unique); repos = @($old.repos | Where-Object { $_ }); release = $(if ($old -and [int]$old.release -eq [int]$x.release.n) { [int]$old.release } else { [int]$x.release.n }); note = $(if ($Note) { $Note } else { "$($old.note)" }); lastUse = (Now) } + (New-KitLease $Agent $Session $(if ($Owner) { $min }))   # no live holder: Prune frees it
           $o.ok = $true; $o.rel = $x.release.n
         } else { $o.why = "train $($x.train.id) is switching $($blocked -join ', ') ($($x.train.phase))" }
       }
