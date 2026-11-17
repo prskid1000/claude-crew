@@ -210,9 +210,15 @@ $syo = & { . $syL help 6>$null *> $null; $sf = Join-Path (Get-KitPath localenv -
   $lj = Get-Content (Get-KitLaneSyncFile) -Raw | ConvertFrom-Json; $ljOut = -not (Test-Path (Join-Path (Get-KitPath wt-slots) 'lanes.json'))
   'c2' | Set-Content "$sc/a.txt"; Save-GitRepo $sc conf; git -C $sc push -q origin main 2>$null
   Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-conf'; sha = $shC; agent = 'a3' }) } } } }
-  $o2 = @(Invoke-LocalEnv lanes -Sync 6>$null)
+  $o2 = @(Invoke-LocalEnv lanes -Sync 6>$null); $h2 = "$(git -C $lw rev-parse HEAD)".Trim()
+  # K41: a squash-merged layer (its MR merged on the host, its commit not in main) that conflicts with main: dropped, never re-merged
+  $shS = & $lyr 'feat-sq' 'a.txt' 'sq'; 'sq' | Set-Content "$sc/a.txt"; Save-GitRepo $sc 'squash feat-sq'; 'sq2' | Set-Content "$sc/a.txt"; Save-GitRepo $sc after; git -C $sc push -q origin main 2>$null
+  function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) { if ($Branch -eq 'feat-sq') { @([pscustomobject]@{ iid = 8995; sha = $shS }) } }
+  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-sq'; sha = $shS; agent = 'a4' }) } } } }
+  $o3 = @(Invoke-LocalEnv lanes -Sync -DryRun 6>$null); $o4 = @(Invoke-LocalEnv lanes -Sync 6>$null); $st4 = Get-Content $sf -Raw | ConvertFrom-Json
+  $sqOk = @($o3 -match '^plan \[shop\] sc: origin/main \+ 0 layer\(s\); drop feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and @($o4 -match '^synced \[shop\] sc: .*dropped feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and -not @($st4.release.repos.sc.layers).Count -and "$(git -C $lw rev-parse HEAD)".Trim() -eq "$(git -C $sc rev-parse main)".Trim()
   $rx1 = '^synced \[shop\] sc: .*1 layer\(s\) re-merged; dropped feat-merged \(merged into main'; $rx2 = '^kept \[shop\] sc: layer feat-conf conflicts'
-  "$($ok -and $ljOut)|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$("$(git -C $lw rev-parse HEAD)".Trim() -eq $h1)" }
+  "$($ok -and $ljOut -and $sqOk)|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$($h2 -eq $h1)" }
 Expect "lanes -Sync: idle lane rebuilt on origin/main + its open layer, the merged one dropped, no upstream, behind 0; a conflicting layer leaves the lane as it was ($syo)" ($syo -eq 'True|feat-open|0/1|1|1|True')
 Remove-TestKit $syKit
 Complete-Tests
