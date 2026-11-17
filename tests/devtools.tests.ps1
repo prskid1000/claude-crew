@@ -55,5 +55,8 @@ $qh = Get-ChildItem "$d/G1" -Filter *.html -Recurse | Get-Content -Raw | Out-Str
 Expect 'QA report HTML: header cells are <th> (Docs repeats them), backtick spans monospace' ($qh -match "<th style='[^']*'><b>Check</b></th>" -and $qh -match "o <span style=`"font-family:'Roboto Mono'[^`"]*`">a\.b=1</span>")
 $kh = "$(Invoke-PsTest 'known-html' ". `$args[0]; Build-QaReport -Title T -Code K1 -Item ([pscustomobject]@{ title = 'x'; subtasks = @() }) -Res ([pscustomobject]@{ checks = @([pscustomobject]@{ id = 'X1'; screen = 's'; result = 'FAIL'; knownBug = 'KB9'; what_was_done = 'w'; observed = 'o'; evidence = @() }) }) -Map @{ files = @{}; folderLink = 'f'; label = 'l' } -Run ([pscustomobject]@{}) -Tester t -Date d" @($Q))"
 Expect 'QA report HTML: a knownBug FAIL reads FAIL (known: <id>) with the task link, and its detail names the tracking task' ($kh -match '<b>FAIL</b> \(known: <a href=''[^'']*''>KB9</a>\)' -and $kh -match '<b>Known defect</b></td><td[^>]*>tracked in <a href=''[^'']*''>KB9</a>')
+# retro 2205: a mistyped cases verb names the closest one; a verb without <task> says so (exit 2 both)
+$cv = @(foreach ($cva in @('reslt', 'T1'), @('add')) { $cvo = & $py -X utf8 $DT cases @cva 2>&1 | Out-String; "$LASTEXITCODE|$(($cvo -split "`r?`n" | Where-Object { $_.Trim() })[-1])" })
+Expect "devtools cases: closest verb / missing task named ($($cv -join ' ; '))" ($cv[0] -eq '2|did you mean: cases result (see its example above)' -and $cv[1] -eq '2|cases add needs <task> first (example above)')
 Remove-TestKit $k
 Complete-Tests

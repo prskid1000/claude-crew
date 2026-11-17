@@ -33,12 +33,12 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L51 config · L106 run · L194 tracker · L346 process · L506 git host · L573 scope · L663 MR · L855 merge · L1181 docs ·
-  L1334 publish · L1774 render · L2190 plugins · L2204 keepboth · L2223 selftest · L2769 CLI
+  L1334 publish · L1774 render · L2193 plugins · L2207 keepboth · L2226 selftest · L2772 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
 """
-import contextlib, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time
+import contextlib, difflib, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time
 from datetime import datetime
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
@@ -1934,8 +1934,11 @@ def cases_cmd(a):
       python -X utf8 devtools.py cases result T1 A1 PASS https://drive.example/a1.png
       python -X utf8 devtools.py cases round T1 --fix 1a2b3c4 --bugs none
       python -X utf8 devtools.py cases render T1 ai"""
-    if len(a) < 2 or a[0] not in ('add', 'result', 'round', 'render'):
+    verbs = ('add', 'result', 'round', 'render')
+    if len(a) < 2 or a[0] not in verbs:
         print(cases_cmd.__doc__, file=sys.stderr)
+        near = difflib.get_close_matches(a[0].lower(), verbs, 1, 0.5) if a and a[0] not in verbs else []   # retro 2205: 30 usage errors
+        print(f'did you mean: cases {near[0]} (see its example above)' if near else f'cases {a[0]} needs <task> first (example above)' if a and a[0] in verbs else 'cases <verb> <task> ...: verbs ' + ', '.join(verbs), file=sys.stderr)
         return 2
     verb, tid, rest = a[0], a[1], a[2:]
     if verb == 'render':
