@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L130 names · L163 slots · L189 lease · L286 release · L314 lanes · L419 sync · L515 pool
+Sections: L14 worktrees · L130 names · L163 slots · L189 lease · L293 release · L321 lanes · L426 sync · L522 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -188,7 +188,14 @@ function Read-KitSlotLease([string]$File) { if (Test-Path -LiteralPath $File) { 
 function Test-KitSlotDir([string]$Dir) { $gf = Join-Path $Dir '.git'; if (-not (Test-Path -LiteralPath $gf -PathType Leaf)) { return $false }; $gd = ("$(Get-Content -LiteralPath $gf -TotalCount 1)" -replace '^gitdir:\s*').Trim(); [bool]($gd -and (Test-Path -LiteralPath (Join-Path $gd 'claude-slot'))) }
 # ---- lease: wt lease
 function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair queue when all are leased); created lazily up to the pool size
-  if (-not ($Repo -and $Branch -and $Agent)) { throw 'lease needs -Repo -Branch -Agent' }
+  # defaults (retro 2205, 11 usage errors): -Agent = the -Session board row or KIT_AGENT; -Repo / -Branch = the linked worktree at -Dir or cwd
+  if (-not $Agent) { $Agent = "$($script:KitWho.agent)" }
+  if (-not ($Repo -and $Branch)) { $here = if ($Dir) { $Dir } else { (Get-Location).Path }
+    $top = "$(git -C $here rev-parse --show-toplevel 2>$null)".Trim(); $cdir = "$(git -C $here rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
+    if ($top -and $cdir -and [IO.Path]::GetFullPath($top).TrimEnd('\', '/') -ne [IO.Path]::GetFullPath((Split-Path $cdir)).TrimEnd('\', '/')) {   # a linked worktree, never the main checkout's branch
+      if (-not $Repo) { $Repo = Split-Path $cdir }; if (-not $Branch) { $Branch = "$(git -C $here branch --show-current 2>$null)".Trim() } } }
+  $miss = @(@{ '-Repo' = $Repo; '-Branch' = $Branch; '-Agent' = $Agent }.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Name | Sort-Object)
+  if ($miss.Count) { throw "lease needs $($miss -join ' '): wt lease -Repo <repo> -Branch <branch> -Agent <id> (-Agent: -Session <board session> or KIT_AGENT; -Repo / -Branch: run it in the linked worktree or pass -Dir <it>)" }
   $Repo = Resolve-WtRepo $Repo; $rl = Split-Path $Repo -Leaf; $size = Get-KitPoolSize $Repo
   if ($size -lt 1) { throw "wt lease: $(Get-KitCheckoutName $Repo) has no pool (repos[].poolSize 0, or the kit itself): wt new" }
   if (-not $Target) { $Target = "$(Get-RepoConf (Get-KitCheckoutName $Repo) 'target' '')"; if (-not $Target) { $Target = "$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/' } }
