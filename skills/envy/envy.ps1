@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L231 state · L278 layer drops · L350 leases · L478 code · L516 migrations ·
-  L519 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L667 shared builds · L800 hooks · L872 marks · L1052 seed ·
-  L1119 processes · L1498 daemon · L1958 cleanup · L2030 doctor · L2083 verbs
+Sections: L36 config · L233 state · L280 layer drops · L352 leases · L480 code · L518 migrations ·
+  L521 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L669 shared builds · L802 hooks · L874 marks · L1054 seed ·
+  L1121 processes · L1500 daemon · L1960 cleanup · L2032 doctor · L2085 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -211,9 +211,11 @@ function EnvVars([string]$e, $item) {
   foreach ($k in @($v.Keys)) { $v[$k] = Expand-Placeholders $v[$k] $e $item $dir '' }
   $v
 }
+# $null or '' unsets (pwsh passes $null to a [string] as '': an unset var came back EMPTY and every child of the loop inherited it)
+function Set-EnvVar([string]$k, $v) { if ("$v" -eq '') { [Environment]::SetEnvironmentVariable($k, [NullString]::Value) } else { [Environment]::SetEnvironmentVariable($k, "$v") } }
 function With-Env($vars, [scriptblock]$body) {
-  $old = @{}; foreach ($k in $vars.Keys) { $old[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $vars[$k]) }
-  try { & $body } finally { foreach ($k in $old.Keys) { [Environment]::SetEnvironmentVariable($k, $old[$k]) } }
+  $old = @{}; foreach ($k in $vars.Keys) { $old[$k] = [Environment]::GetEnvironmentVariable($k); Set-EnvVar $k $vars[$k] }
+  try { & $body } finally { foreach ($k in $old.Keys) { Set-EnvVar $k $old[$k] } }
 }
 function LogFile([string]$e, [string]$n) { Join-Path (Get-KitPath localenv-logs -Create) "$e-$n.log" }
 # a failed start's log, kept past the next start's rotation (last 3 per service; TODO-PARAM fixed default) -> "<cause line>. Log: <kept>"
@@ -2470,7 +2472,9 @@ switch ($Action) {
     # its temp files (java.io.tmpdir, the embedded server's base dir) in one folder per service, emptied each start; env vars below win
     $stmp = Join-Path (Get-KitPath localenv -Create) "tmp/$e-$($s.name)"; if (-not ($s.port -and (Test-PortListening ([int]$s.port)))) { Remove-Item -LiteralPath $stmp -Recurse -Force -ErrorAction SilentlyContinue }   # a live instance keeps its files
     $env:TMP = $env:TEMP = $env:TMPDIR = (New-Item -ItemType Directory -Force $stmp).FullName   # arch-ok: kit temp
-    foreach ($kv in (EnvVars $e $s).GetEnumerator()) { [Environment]::SetEnvironmentVariable($kv.Key, $kv.Value) }
+    # an inherited empty var (a key removed from the env file, an older loop's leak) never reaches the service: Spring reads '' as a value
+    foreach ($ev in @(Get-ChildItem env: | Where-Object { "$($_.Value)" -eq '' })) { Set-EnvVar $ev.Name '' }
+    foreach ($kv in (EnvVars $e $s).GetEnumerator()) { Set-EnvVar $kv.Key $kv.Value }
     Set-Location $sdir
     Add-Content $log "== $(Now) start in $sdir : $cmd"
     # the output (stdout + stderr, merged by the shell) is copied byte for byte; past logMaxMB the log moves to .prev

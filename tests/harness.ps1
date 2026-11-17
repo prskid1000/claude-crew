@@ -33,7 +33,7 @@ function pwsh {
   finally {
     $code = $global:LASTEXITCODE; [Console]::SetError($e0); [Console]::SetIn($i0); Set-Location $here
     Get-Variable -Scope Global | Where-Object Name -NotIn $g0 | Remove-Variable -Scope Global -Force -ErrorAction SilentlyContinue   # memos ($KitTrackerMemo, ...) die with a process
-    $now = [Environment]::GetEnvironmentVariables(); foreach ($n in $now.Keys) { if (-not $envs.Contains($n)) { [Environment]::SetEnvironmentVariable($n, $null) } }
+    $now = [Environment]::GetEnvironmentVariables(); foreach ($n in $now.Keys) { if (-not $envs.Contains($n)) { [Environment]::SetEnvironmentVariable($n, [NullString]::Value) } }
     foreach ($n in $envs.Keys) { if ($now[$n] -ne $envs[$n]) { [Environment]::SetEnvironmentVariable($n, $envs[$n]) } }
     if ("$ew") { Write-Error "$ew".TrimEnd() }
     $global:LASTEXITCODE = $code
