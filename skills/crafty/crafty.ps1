@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1305 guard · L2181 dir ·
-  L2191 checkpoint · L2221 prior · L2259 tracker · L2281 task spec · L2456 scope · L2504 host
+Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1305 guard · L2182 dir ·
+  L2192 checkpoint · L2222 prior · L2260 tracker · L2282 task spec · L2457 scope · L2505 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2019,7 +2019,7 @@ function Get-KitScriptRewrite([string]$text) {   # the first script in command p
 $od = Test-OpenDoc $raw $tn
 if ($od -eq 'script') {
   $fix = Get-KitScriptRewrite $raw
-  Deny "That runs a script file directly: Windows opens it with its file association (an editor on the owner's screen). Run it with python -X utf8 <script> / node <script> (.ps1: & <script> or pwsh -File <script>).$fix $hl" }
+  Deny "$(if ($fix) { "$($fix.Trim()) -> " })That runs a script file directly: Windows opens it with its file association (an editor on the owner's screen). Run it with python -X utf8 <script> / node <script> (.ps1: & <script> or pwsh -File <script>). $hl" }
 $readIt = "use the Read tool (offset / limit; Get-Content or cat in a script); run a script through its interpreter (python -X utf8, node, pwsh -File). $hl"
 if ($od) { Deny "That opens the file in its default desktop app instead of reading it: $readIt" }
 # a file path in command position (quoted, any extension, an existing file or folder) opens its associated app
@@ -2082,7 +2082,8 @@ function Find-RunsFile([string]$text, [string]$tool, [string]$base) {
   }
   $null
 }
-if (($rf = Find-RunsFile $raw $tn $here)) { Deny "kit guard: $rf in command position opens it in its default desktop app (a window on the owner's screen), not your terminal: $readIt$(if ($rf -match '\.(ps1|py|mjs|cjs|js)$') { Get-KitScriptRewrite $raw })" }
+if (($rf = Find-RunsFile $raw $tn $here)) { $rw = if ($rf -match '\.(ps1|py|mjs|cjs|js)$') { Get-KitScriptRewrite $raw }   # the ready command first (retro 2205: 13 denies, agents missed it at the end)
+  Deny "kit guard:$(if ($rw) { "$rw ->" }) $rf in command position opens it in its default desktop app (a window on the owner's screen), not your terminal: $readIt" }
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
     $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run: commit with $($KitCmd.dev) wt commit; fix what the hook reports." }
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
