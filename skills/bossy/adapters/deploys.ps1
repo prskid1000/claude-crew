@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L212 deploy · L383 restart · L431 supervise
+Sections: L14 helpers · L93 intest · L212 deploy · L384 restart · L432 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -245,7 +245,8 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     Remove-Item -LiteralPath (Join-Path (Get-KitPath deploys) 'plan-cache.json') -ErrorAction SilentlyContinue
     if (-not (Test-KitPid ($r = try { Get-Content -LiteralPath "$bgPlan.json" -Raw | ConvertFrom-Json } catch { $null }).pid $r.start)) { Remove-Item -LiteralPath "$bgPlan.json", "$bgPlan.out", "$bgPlan.err" -ErrorAction SilentlyContinue }   # a running one is left whole
     $done = @($Mrs | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) })
-    if (Test-Path $pf) { & $pendEdit { param($p) foreach ($q in @($p.requests)) { $q.mrs = @(@($q.mrs) | Where-Object { -not $done.Count -or (Get-CanonMr (ConvertTo-MrRef $_)) -notin $done }) }; $p.requests = @(@($p.requests) | Where-Object { @($_.mrs).Count }) } }
+    $hit = @(@(Get-KitValue 'repos' @()) | Where-Object { @(@($_.deploys) | Where-Object { $_.target -in $envs }).Count } | ForEach-Object { "$($_.name)" })   # no -Mrs: the recorded targets' repos only
+    if (Test-Path $pf) { & $pendEdit { param($p) foreach ($q in @($p.requests)) { $q.mrs = @(@($q.mrs) | Where-Object { if ($done.Count) { (Get-CanonMr (ConvertTo-MrRef $_)) -notin $done } else { (((ConvertTo-MrRef $_) -split '!')[0] -split '/')[-1] -notin $hit } }) }; $p.requests = @(@($p.requests) | Where-Object { @($_.mrs).Count }) } }
     "recorded the deploy of $Env$(if ($Mrs.Count) { " ($($Mrs -join ', '))" }). Next: once pokey.ps1 deployed shows them live, bossy.ps1 deploy intest -Apply"
     return
   }
@@ -433,6 +434,7 @@ function Invoke-DeployRestartSsh([string]$t, $d, [string]$Service, [int]$WaitMin
 # (noAll: new MRs stay held) when it says all / any / never / keep ... held / until
 function Get-KitDeployWordKind([string]$Answer) {
   $a = "$Answer".Trim()
+  if ($a -match "(?i)^(no (problem|worries|issues?|objections?)|(do not|d[o]?n['’]?t|no need to) wait)\b") { return 'yes' }   # a go, not a no
   if ($a -match '(?i)^(wait|later|retry|not yet)\b' -or ($a -notmatch '(?i)^(no|nope|nah)\b' -and $a -match '(?i)\b(tomorrow|tonight|later today)\b')) { return 'wait' }
   $no = $a -match "(?i)^(no|nope|nah|d[o]?n['’]?t|do not|never|skip|hold|held|not now|stop)\b" -or $a -match "(?i)\b(keep|keeps|stays?|remains?|leave)\b[^.;]*\b(held|on hold)\b|\b(no|never|d[o]?n['’]?t|do not)\s+deploy|\b(hold|held)\s+(all|every|any)\b"
   if ($no) { if ($a -match "(?i)\b(all|any|every|never|until)\b|\b(keep|keeps|stays?|remains?|leave)\b[^.;]*\bheld\b") { 'noAll' } else { 'no' } }
