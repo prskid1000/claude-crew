@@ -27,6 +27,9 @@ $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-s
 $tj = Get-Content (Join-Path $src 'workflows/tidy.js') -Raw
 Expect 'retro + lead notes: tidy renders the retro (devtools.py render retro), checky names the lead-notes headings; a lead-notes sample passes' ($tj -match 'devtools\.py render retro' -and
   (Get-Content (Join-Path $src 'agents/checky.md') -Raw) -match '(?s)# Lead notes: .*## Prerequisites' -and (Test-Prose kit-report $pf))
+# K60b: kitty kinds docs / env / retro run on sonnet (tidy apply step, bossy K1); the rest keep the agent default
+Expect 'kitty model per kind: tidy apply on sonnet, bossy K1 names docs / env / retro -> sonnet' ($tj -match "label: 'apply'[^\n]*agentType: 'kitty', model: 'sonnet'" -and
+  (Get-Content (Join-Path $src 'skills/bossy/SKILL.md') -Raw) -match "docs / env / retro pass ``model: 'sonnet'``" -and (Get-Content (Join-Path $src 'agents/kitty.md') -Raw) -match '(?m)^model: opus')
 "Hi, I hope this is basically fine, merged successfully`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
 $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
 Expect 'prose: filler (the whole banned list), missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match '"I hope"' -and $out -match '"successfully"' -and $out -match 'missing sections' -and $out -match '4 bullets')

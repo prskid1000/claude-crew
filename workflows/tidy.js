@@ -76,7 +76,7 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
  ${C}/skills/crafty/devtools.py render retro retro.json ${rp('retros')}/retro-<yyyy-MM-dd-HHmm>.md.
 5. python -X utf8 ${C}/skills/bossy/kitbag.py lint: fix what your edits broke; list the rest in the report.
 6. & ${C}/skills/bossy/bossy.ps1 tidy done -At '${P.at}' (marks these signals reviewed).
-Return the lists and the report path.`, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty' })
+Return the lists and the report path.`, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'sonnet' })   // kitty kind retro: sonnet (bossy K1)
 
 log(`applied ${res ? res.applied.length : 0}, awaiting approval ${res ? res.proposedForApproval.length : 0}`)
 return res || { applied: [], proposedForApproval: [], rejected: [], report: `judge returned nothing: digest ${P.digest}, last retro not stamped` }
