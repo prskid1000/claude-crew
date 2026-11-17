@@ -198,8 +198,9 @@ Expect "render with a git host: MR refs are full-URL links in comment-solution, 
 $qr = TkPath $k qa-runs -Create; New-Item -ItemType Directory -Force "$qr/r3/A1" | Out-Null
 Set-JsonFile "$qr/r3/A1/results.json" @{ code = 'A1'; checks = @(); colour = 'red' }; Set-JsonFile "$qr/r3/run.json" @{ title = 't'; runDir = 'r3'; items = @() }
 Set-JsonFile (Join-Path (TkPath $k programs -Create) 'p1.json') @{ wave = 1 }
+Set-JsonFile (Join-Path (TkPath $k decisions -Create) 'd.json') @{ schemaVersion = 2; id = 'd'; status = 'answered'; question = 'q'; scopeId = 's'; rationale = 'r' }
 $s10 = @(& $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json | ForEach-Object { "$($_.name)|$($_.problem)" }) -join "`n"
-Expect 'state lint schemas: a results.json key outside its schema is drift, a program without updated misses a key, a listed run.json passes' ($s10 -match 'qa-runs:results\|drift: key\(s\) colour' -and $s10 -match 'programs\|missing updated' -and $s10 -notmatch 'qa-runs:run\|drift')
+Expect "state lint schemas: an unknown results.json key is drift, a program lacks updated, a listed run.json, a scope decision pass" ($s10 -match 'qa-runs:results\|drift: key\(s\) colour' -and $s10 -match 'programs\|missing updated' -and $s10 -notmatch '(?m)qa-runs:run\|drift|^decisions\|')
 # ---- kitty to-do / handoff lists (item 21): one item shape, written by kitbag.py state todo, linted
 $td = Join-Path $wd 'todo.md'; $t1 = & $py -X utf8 $KB state todo add $td R1 'render the wave brief' 'kit-render-all.md:10' 2>&1; $null = & $py -X utf8 $KB state todo add $td R2 'retro report' 'item 9' 2>&1
 $t2 = & $py -X utf8 $KB state todo done $td R1 'kit abc1234' 2>&1; $t3 = & $py -X utf8 $KB state todo add $td R2 'again' 'x' 2>&1; $t3c = $LASTEXITCODE
