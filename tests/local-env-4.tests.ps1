@@ -150,8 +150,9 @@ Expect "lanes: the build key = the code without its prepare commits + the build 
 $lsd = & { . $lkL; $none = [pscustomobject]@{ port = '' }; "$(Split-Path (SeedFile shop2) -Leaf)|$(Expand-Placeholders 'pokey -Target local-shop{lane}' shop2 $none '' '')|$(Expand-Placeholders 'local-shop{lane}' shop $none '' '')" }
 Expect "lanes: a lane seeds from its env's seed file; {lane} expands at run time too (seed commands) ($lsd)" ($lsd -eq 'shop.seed.json|pokey -Target local-shop2|local-shop')
 $lt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); $tc = [pscustomobject]@{ targets = [pscustomobject]@{ 'local-shop' = [pscustomobject]@{ api = 'http://127.0.0.1:8080/x'; web = 'http://127.0.0.1:4200' } } }
-  $t2 = Get-LaneTarget $tc 'local-shop2'; "$($t2.api)|$($t2.web)|$($null -eq (Get-LaneTarget $tc 'other2'))|$((Get-LaneTarget $tc 'local-shop3').api)" }
-Expect "lanes: pokey target <target><k> = the base target with lane k's ports ($lt)" ($lt -eq 'http://127.0.0.1:8180/x|http://127.0.0.1:4200|True|http://127.0.0.1:8280/x')
+  $t2 = Get-LaneTarget $tc 'local-shop2'; $global:ex = 0; function Invoke-KitExe { $global:ex++ }; $t3 = (Get-LaneTarget $tc 'local-shop3').api
+  "$($t2.api)|$($t2.web)|$($null -eq (Get-LaneTarget $tc 'other2'))|$t3|$global:ex" }
+Expect "lanes: pokey target <target><k> = the base target with lane k's ports; envs -Json cached by config (no second pwsh) ($lt)" ($lt -eq 'http://127.0.0.1:8180/x|http://127.0.0.1:4200|True|http://127.0.0.1:8280/x|0')
 # seed creates DRIFT with create.upsert (a partial set: a script-created item completes it); a plain create on drift, a count
 # above ^N$, no create.cmd or blocked: not created, named with why
 $sdr = & { . $lkL; $sd = Join-Path $laneKit 'seedfix'; New-Item -ItemType Directory -Force $sd | Out-Null
@@ -172,6 +173,8 @@ $stKit = New-LocalEnvKit lestat; Set-JsonFile (Join-Path $stKit 'skills/crafty/k
 $ss = & { . (Join-Path $stKit 'skills/envy/envy.ps1'); $global:snapN = 0; function Get-KitProcSnap { $global:snapN++; @{ kids = @{}; procs = @{} } }
   $n = @(Invoke-LocalEnv status -Json | ConvertFrom-Json).Count; "$n envs, $global:snapN snapshot(s), lease log parsed once: $([object]::ReferenceEquals((Get-KitLeaseLast), (Get-KitLeaseLast)))" }
 Expect "envy status: every env reads the call's one process snapshot and lease log ($ss)" ("$ss" -eq '2 envs, 1 snapshot(s), lease log parsed once: True')
+$stE = Join-Path $stKit 'skills/envy/envy.ps1'; $wu = pwsh @np $stE wait -Env a -Until up -Timeout 1 2>&1 | Out-String; $wuc = $LASTEXITCODE; $wd = pwsh @np $stE wait -Env a -Until down -Services w 2>&1 | Out-String   # K48: one process, no status loop
+Expect "envy wait -Until: a down service times out (exit 1, its state named); -Until down returns at once ($($wu.Trim()) | $($wd.Trim()))" ($wuc -eq 1 -and $wu -match '\[a\] not up after 1 s: w ' -and $LASTEXITCODE -eq 0 -and $wd -match '\[a\] w: down')
 Remove-TestKit $stKit; Remove-TestKit $laneKit
 # lanes -Migrate: an idle lane's old worktree + branch -> the new names now (not at its next build), a lane in use kept until idle;
 # a localenv/* branch of no lane: worktree removed, its unpushed commit kept as a backup/ tag, deleted; [gone] merged + a backup branch

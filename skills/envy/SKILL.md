@@ -45,6 +45,7 @@ $L = '<kit>/skills/envy/envy.ps1'
 & $L deploy -Env <env> -Agent <id> -Dir <worktree>                      # 2. committed work only -> LIVE r<n> | REFUSED | ...
 #    a Java service: crafty.ps1 check -Step build after the commit first; the env stages that jar (shareCheckBuild), no second build
 & $L wait -Env <env> -Id <request>                                      #    when it printed "still ..."
+& $L wait -Env <env> -Until up -Services <svc,..> -Timeout 600          #    a service to come up: one call, never a status loop
 & $L use -Env <env> -Agent <id> -Services <svc,..> -Session <board token> -Note "<goals>"   # 3. lease, then test
 & $L status -Env <env> -Agent <id>                                      # 4. "CHANGED since your lease" -> re-run those goals
 & $L logs -Env <env> -Service <svc> [-Grep <re>] [-Since <min>]; & $L events -Env <env>   #    debug ("Debug locally")
@@ -56,7 +57,7 @@ $L = '<kit>/skills/envy/envy.ps1'
    REFUSED: `crafty.ps1 wt sync`, resolve, deploy again. REJECTED / ROLLED BACK: read the message + `logs`, fix, deploy again.
 3. Lease only the services you test, right before the checks; it lives while you use it (README "Leases"); exit 3 = no lease
    yet, call again. A NOTICE "deploy of <svc> starting, pause" (board inbox or `status -Agent`): stop checks there until
-   "deploy done", then re-run the checks of that service. Release right after your last check.
+   "deploy done" (`wait -Until up -Services <svc>`), then re-run the checks of that service. Release right after your last check.
    Test data: prefix with your agent id.
 
 ## Local testing (dev flow step 5)

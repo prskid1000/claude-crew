@@ -2,7 +2,7 @@
 envy.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) that agents deploy branches to, test and debug
 on; a service = a start command in a folder (default crafty.ps1 stack `run`). Model: envy SKILL.md "Local testing".
   & <kit>/skills/envy/envy.ps1 <verb> [args]
-Verbs: envs · status · doctor · deploy · wait · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
+Verbs: envs · status · doctor · deploy · wait (-Id | -Until up [-Services] [-Timeout s]) · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
        migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] (marks = list) ·
        seed [-Check] · drop -Agent <id> [-Note <why>] | -Stale [-DryRun] (bossy.ps1 release / supervise: layers of a finished agent,
        merged, gone or orphan ones)
@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L231 state · L278 layer drops · L350 leases · L478 code · L516 migrations ·
-  L519 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L667 shared builds · L825 hooks · L897 marks · L1077 seed ·
-  L1144 processes · L1523 daemon · L1983 cleanup · L2055 doctor · L2108 verbs
+  L519 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L667 shared builds · L800 hooks · L872 marks · L1052 seed ·
+  L1119 processes · L1498 daemon · L1958 cleanup · L2030 doctor · L2083 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -688,31 +688,6 @@ function Build-Repo([string]$e, [string]$rn) {
   $null
 }
 # a release = a runnable copy per service (the worktree builds on while it serves); keepReleases + the ones in use kept
-# {reactor}: services[].reactor module globs built in one reactor with the service's module ('-f <aggregator> -pl <module> -am');
-# only modules in its parent chain (others lack its pluginManagement: from the local repository, doctor lists them)
-function Get-PomParents([string]$pom) {   # groupId:artifactId of each parent found on disk (relativePath, default ../pom.xml)
-  for ($i = 0; $i -lt 8 -and (Test-Path -LiteralPath $pom); $i++) {
-    $x = try { [xml](Get-Content -LiteralPath $pom -Raw) } catch { break }; $p = $x.project.parent; if (-not $p) { break }
-    "$($p.groupId):$($p.artifactId)"
-    $pom = Join-Path (Split-Path $pom) $(if ($p.relativePath) { [string]$p.relativePath } else { '../pom.xml' }); if (Test-Path -LiteralPath $pom -PathType Container) { $pom = Join-Path $pom 'pom.xml' }
-  }
-}
-function Get-ReactorModules([string]$e, $s) {
-  $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; $me = ([IO.Path]::GetRelativePath($wt, (SvcDir $e $s))).Replace('\', '/')
-  $chain = @(Get-PomParents (Join-Path $wt "$me/pom.xml")); $use = @(); $skip = @()
-  foreach ($d in @($s.reactor | ForEach-Object { Get-ChildItem (Join-Path $wt $_) -Directory -ErrorAction SilentlyContinue } | Where-Object { Test-Path (Join-Path $_.FullName 'pom.xml') })) {
-    $rel = [IO.Path]::GetRelativePath($wt, $d.FullName).Replace('\', '/'); $mp = @(Get-PomParents (Join-Path $d.FullName 'pom.xml'))[0]
-    if ($mp -and $mp -in $chain) { $use += $rel } else { $skip += $rel }
-  }
-  [pscustomobject]@{ wt = $wt; me = $me; use = @(@($use) + $me | Select-Object -Unique); skip = @($skip) }
-}
-function Write-Reactor([string]$e, $s) {
-  $rm = Get-ReactorModules $e $s; $wt = $rm.wt; $me = $rm.me; $mods = $rm.use
-  if ($rm.skip.Count) { Write-Host "[$e] $($s.name) reactor: from the local repository, not built (parent outside $me's chain): $($rm.skip -join ', ')" }
-  $f = Join-Path $wt ".localenv-reactor-$($s.name).xml"
-  Set-Content -LiteralPath $f "<project xmlns=`"http://maven.apache.org/POM/4.0.0`"><modelVersion>4.0.0</modelVersion><groupId>localenv</groupId><artifactId>reactor-$($s.name)</artifactId><version>0</version><packaging>pom</packaging><modules>$(($mods | ForEach-Object { "<module>$_</module>" }) -join '')</modules></project>" -Encoding utf8
-  "-f `"$f`" -pl $me -am"
-}
 function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
   $out = @{}
   foreach ($s in EnvServices $e | Where-Object { ($_.artifact -or $_.static) -and (RepoOf $e $_) -eq $rn }) {
@@ -2123,7 +2098,7 @@ param(
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
   [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
-  [int]$Lane = 0
+  [int]$Lane = 0, [string]$Until, [int]$Timeout = 600
 )
 if ($Action -eq 'help') { foreach ($hl in @(Get-Content $PSCommandPath | Select-Object -Skip 1)) { if ($hl -eq '#>') { break }; $hl }; return }   # the verbs, before any env check
 if ($Action -eq 'marks') { if ($Name) { throw "marks lists the marks; to make one: mark -Name $Name" }; $Action = 'mark' }   # the list form agents guess
@@ -2153,6 +2128,16 @@ function New-Request([hashtable]$r) {
   $r.id
 }
 function Exit-Request($r) { if ($r -and $r.status -ne 'done') { exit 3 }; if ($r -and "$($r.result.outcome)" -match '(?i)refus|reject|error|roll|fail') { exit 1 } }
+# wait -Until <state> [-Services] [-Timeout s] (K48): one process polls (no agent status loop of pwsh starts); 0 reached, 1 failed / timeout
+function Wait-Until([string]$e, [string]$state, [string[]]$names, [int]$sec) {
+  $Json = $true; $end = (Get-Date).AddSeconds($sec); $want = if ($names.Count) { $names } else { @(EnvServices $e | Where-Object { Managed $_ } | ForEach-Object name) }
+  while ($true) { $script:StatusSnap = Get-KitProcSnap; $bad = @((Show-Status $e).services | Where-Object { $_.service -in $want -and "$($_.state)" -notlike "$state*" })
+    if (-not $bad.Count) { "[$e] $($want -join ', '): $state"; return }
+    $why = @($bad | ForEach-Object { "$($_.service) $($_.state)" }) -join ', '
+    if (@($bad | Where-Object state -eq 'failed').Count -and $state -ne 'failed') { "[$e] failed: $why"; exit 1 }
+    if ((Get-Date) -ge $end) { "[$e] not $state after $sec s: $why"; exit 1 }
+    Wait-KitPoll 5 }
+}
 function Wait-Request([string]$rid) {
   $until = (Get-Date).AddMinutes($Wait); $said = $null
   while ($true) {
@@ -2351,7 +2336,7 @@ switch ($Action) {
     }
     if (-not $Branch) { throw 'drop needs -Branch, -Agent or -Stale' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; Exit-Request (Wait-Request $rid) }
   'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; Exit-Request (Wait-Request $rid) }
-  'wait' { if (-not $Id) { throw 'wait needs -Id <request>' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
+  'wait' { if ($Until) { Wait-Until $e $Until $Services $Timeout; return }; if (-not $Id) { throw 'wait needs -Id <request> or -Until <state> [-Services a,b] [-Timeout 600]' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
   'use' {
     $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed }))
     foreach ($n in $names) { $null = Svc $e $n }

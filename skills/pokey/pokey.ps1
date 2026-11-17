@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L154 seat · L223 api · L438 finalize · L895 results · L928 retest · L985 prepare
+Sections: L26 lanes · L40 report · L154 seat · L223 api · L442 finalize · L899 results · L932 retest · L989 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -226,7 +226,11 @@ function Get-LaneTarget($cfg, [string]$name) {
   $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
   if ($name -notmatch '^(?<b>.+?)(?<k>\d+)$' -or -not (Get-KitMember $cfg.targets ($Matches.b)) -or -not (Test-Path -LiteralPath $envy)) { return $null }
   $base = (Get-KitMember $cfg.targets ($Matches.b)); $k = [int]$Matches.k; $urls = [string](@($base.web, $base.api) -join ' ')
-  $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $envy, 'envs', '-Json') 60; $lanes = try { @($r.out | ConvertFrom-Json) } catch { @() }
+  # envs -Json depends on the config only: cached by kit.local.json + envy.ps1 times (a pwsh start per api call was 72/h, K48)
+  $cf = Join-Path (Get-KitPath cache -Create) 'envy-envs.json'; $ck = "$((Get-Item -LiteralPath $KitConf.ConfigFile -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks)|$((Get-Item -LiteralPath $envy).LastWriteTimeUtc.Ticks)"
+  $c0 = try { Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json } catch { $null }
+  $lanes = if ($c0 -and $c0.key -eq $ck) { @($c0.lanes) } else { $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $envy, 'envs', '-Json') 60; $l0 = try { @($r.out | ConvertFrom-Json) } catch { @() }
+    if ($l0.Count) { Write-KitAtomic $cf (@{ key = $ck; lanes = $l0 } | ConvertTo-Json -Depth 10) }; $l0 }
   foreach ($g in @($lanes | Where-Object { $_.lane -eq 1 })) {
     $one = @((Get-KitProps $g.ports) | Where-Object { $urls -match ":$($_.Value)(?!\d)" }); $lk = @($lanes | Where-Object { $_.group -eq $g.group -and $_.lane -eq $k })[0]
     if (-not $one.Count -or -not $lk) { continue }
