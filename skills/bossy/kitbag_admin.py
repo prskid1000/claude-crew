@@ -698,10 +698,14 @@ def script_config_keys(kit, files):
             continue
         text = read(osp.join(kit, f))
         use = pats if re.search(r"""Join-Path[^\n]*kit\.local\.json['"]""", text) else pats[:3]   # $cfg.<key> only where kit.local.json is loaded
+        # CFG / $cfg bound to one section (CFG = ....get('media'), $cfg = Get-KitSetting 'tests.e2e'): its reads are that section's sub-keys
+        py_root = re.search(r"""^CFG\s*=.*\.get\(\s*['"](\w+)['"]\s*\)""", text, re.M)
+        ps_root = re.search(r"\$cfg\s*=\s*Get-Kit(?:Setting|Value)\s+'([\w.]+)'", text)
         for ln, line in enumerate(text.split('\n'), 1):
-            for rx in use:
+            for i, rx in enumerate(use):
+                root = (py_root if i in (1, 2) else ps_root if i == 3 else None)
                 for m in rx.finditer(line):
-                    keys.setdefault(m.group(1), f'{f}:{ln}')
+                    keys.setdefault(f'{root.group(1)}.{m.group(1)}' if root else m.group(1), f'{f}:{ln}')
     return keys
 
 def cmd_scan(kit):

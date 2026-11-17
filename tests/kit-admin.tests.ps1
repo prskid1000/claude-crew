@@ -80,5 +80,12 @@ $null = & $lo -Skill revy -Fixed 'a generic lesson'; $hi = & $lo -History -Grep 
 Expect 'kit-admin: learn -Fixed moves the line out, -History lists it, -Stats counts signals' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) a generic case -> a generic lesson \(test\)' -and $st -match 'signals since last retro')
 $splitOne = @("a`nb" -split "`n", -1).Count; $kaText = (Get-Content (Join-Path $src 'skills/bossy/kit-admin.md') -Raw) -replace '\s+', ' '
 Expect "kit-admin.md Script pitfalls: -split with limit -1 returns one element ($splitOne): no limit" ($splitOne -eq 1 -and $kaText -match '`-split` limit -1 = one element: no limit')
+# audit config: CFG / $cfg bound to one section -> its reads are that section's sub-keys (media.vidy, tests.e2e.specs), not top-level keys
+$ck = Join-Path $root 'cfgkeys'; New-Item -ItemType Directory -Force $ck | Out-Null
+"CFG = merge(D, load().get('media') or {})`nx = CFG['vidy']`ny = CFG.get('stt')" | Set-Content (Join-Path $ck 'a.py'); "`$cfg = Get-KitSetting 'tests.e2e' `$null`n`$s = `$cfg.specs`n`$p = Join-Path k 'kit.local.json'" | Set-Content (Join-Path $ck 'b.ps1')
+$ckPy = Join-Path $root 'cfgkeys.py'; @('import importlib.util, sys', "sys.path.insert(0, r'$(Split-Path $KT)')", 'import kitbag', "spec = importlib.util.spec_from_file_location('ka', r'$(Join-Path (Split-Path $KT) 'kitbag_admin.py')')",
+  'ka = importlib.util.module_from_spec(spec); ka.__dict__.update({n: v for n, v in vars(kitbag).items() if not n.startswith("__")}); spec.loader.exec_module(ka)', "print(','.join(sorted(ka.script_config_keys(r'$ck', ['a.py', 'b.ps1']))))") | Set-Content $ckPy
+$ckOut = & $py -X utf8 $ckPy 2>&1 | Select-Object -Last 1
+Expect "audit config: section-bound CFG / `$cfg reads are sub-keys ($ckOut)" ("$ckOut".Trim() -eq 'media.stt,media.vidy,tests.e2e,tests.e2e.specs')
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 Complete-Tests

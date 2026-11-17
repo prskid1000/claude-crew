@@ -1,6 +1,6 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
- wt lease|release|pool|new|sync|commit|remove|status|list ...  worktrees (lease -Repo -Branch -Agent: a pool slot, release: back, pool [-Migrate]; deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty] [-Paths <p,..> (stages only them)]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate;
+ wt lease|release|pool|new|sync|commit|remove|status|list ...  worktrees (lease -Repo -Branch -Agent: a pool slot, release: back, pool [-Sync] [-Migrate]; deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty] [-Paths <p,..> (stages only them)]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate;
    new -Scope '<glob>,..' (brief agents[].paths): commit refuses files outside, -ScopeOk <decision id> = the owner's scope word)
  scope [-Mrs <refs> [-Json]] [-Days 7]  -Mrs: each MR's source / test files + OUT-OF-AREA vs its logged area; none: one WATCH line for MRs merged outside it
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
@@ -110,7 +110,7 @@ function Remove-KitLeftover([string]$Dir) {
   if (@(Get-ChildItem -LiteralPath $Dir -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue).Count) { throw "links left in ${Dir}: not removed" }
   Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction Stop
 }
-# worktree-root folders, then repo branches -> { actions, kept, notes }; counts -> repo-sweep
+# worktree-root folders, then repo branches; counts -> repo-sweep
 function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryRun) {
   $ErrorActionPreference = 'SilentlyContinue'; $now = Get-Date; $wtDays = [double](Get-KitParam 'cleanup.worktreeDays')   # gone branch / uncommitted: idle this long
   $actions = [Collections.ArrayList]::new(); $kept = [Collections.ArrayList]::new(); $notes = @()
@@ -190,7 +190,7 @@ param(
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
   [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [string[]]$Paths, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
   [string]$Scope, [string]$ScopeOk, [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json,
-  [string]$Agent, [string]$Session, [int]$WaitMinutes = 60, [string]$Reason, [switch]$Migrate
+  [string]$Agent, [string]$Session, [int]$WaitMinutes = 60, [string]$Reason, [switch]$Migrate, [switch]$Sync
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
@@ -1545,9 +1545,9 @@ if ($SelfTest) {
   @('B', 'find C:\ -name x', $true, $dr), @('B', 'grep -rn reconciler /', $true, $dr), @('B', 'rg -l -g "*.md" reconciler C:/', $true, $dr), @('B', 'ls -R /c | grep x', $true, $dr),
   @('B', 'bash -c "find / -name x"', $true, $dr), @('P', 'cmd /c dir /s C:\*.md', $true, $dr), @('P', 'Get-ChildItem -Recurse C:\ -Filter SKILL.md', $true, $dr),
   @('P', 'gci D:\ -r -Include *.md', $true, $dr), @('P', 'where.exe /r C:\ claude.exe', $true, $dr), @('P', 'rg --files D:\', $true, $dr), @('B', 'find //c/.. -name x', $true, $dr), @('B', 'rg --max-columns 5 x / src', $true, $dr), @('B', 'rg --max-columns 5 / src', $false, $dr),
-  @('B', 'find . -name x; find ~/.claude/skills -name SKILL.md; find /d/Codebase/cursor -maxdepth 2 -name pom.xml; ls /; ls -la /c', $false, $dr),
+  @('B', 'find . -name x; find ~/.claude/skills -name SKILL.md; find /d/work/repos -maxdepth 2 -name pom.xml; ls /; ls -la /c', $false, $dr),
   @('B', "grep -rn / src; rg -n `"/`" skills; grep -e x /etc/hosts; git commit -m `"never find / -name x`"; cat > n.md <<'EOF'`nfind / -name x`nEOF", $false, $dr),
-  @('P', 'Get-ChildItem -Recurse D:\Codebase\.claude\skills -Filter SKILL.md; Get-ChildItem C:\; where.exe git; rg -l x C:\Users\x\.claude', $false, $dr),
+  @('P', 'Get-ChildItem -Recurse D:\work\.claude\skills -Filter SKILL.md; Get-ChildItem C:\; where.exe git; rg -l x C:\Users\x\.claude', $false, $dr),
   @('B', 'cd / && find . -name x', $true, $dr), @('B', 'cd /c; grep -rn x', $true, $dr), @('P', 'Set-Location C:\; gci -Recurse -Filter x', $true, $dr), @('B', 'find . -name "*.md" -exec grep -rl x / \;', $true, $dr),
   @('B', 'cd / && ls; cd ~/src && find . -name x; find . -exec grep -l x {} +; cd /d/repo && rg x', $false, $dr), @('P', 'Set-Location C:\; where.exe git; Get-ChildItem', $false, $dr)
   )
