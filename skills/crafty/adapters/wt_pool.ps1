@@ -124,7 +124,7 @@ function Get-KitLaneSlug([string]$Lane) { ((Get-KitPoolLabel 'env' $Lane) -repla
 function ConvertTo-KitLaneText([string]$Text) {
   if (-not $Text) { return $Text }
   if (-not $script:KitLaneRx -or -not [object]::ReferenceEquals($script:KitLaneRx.cfg, $__cfg)) { $script:KitLaneRx = @{ cfg = $__cfg; map =@(foreach ($l in @(Get-KitLaneNames | Sort-Object Length -Descending)) { $lb = Get-KitPoolLabel env $l; if ($lb -ne $l) { $q = [regex]::Escape($l)
-          , @($(if ($l -match '\d$') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= (?:·|&#183;) )|(?<=\b(?:env|lane) )$q(?![\w·./\-])" }), $lb) } }) } }
+          , @($(if ($l -match '\d$') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= (?:·|&#183;) )|(?<=\b(?:env|lane) )$q(?![\w·./\-]|&#0*183;|&middot;)" }), $lb) } }) } }
   foreach ($m in $script:KitLaneRx.map) { $Text = [regex]::Replace($Text, $m[0], $m[1]) }; $Text }
 # a shown lane name (rm·Kestrel, rm-kestrel, case-insensitive) -> its id; anything else as given
 function ConvertFrom-KitLaneLabel([string]$Name) { foreach ($l in @(Get-KitLaneNames)) { if ($Name -ieq (Get-KitPoolLabel env $l) -or $Name -ieq (Get-KitLaneSlug $l)) { return $l } }; $Name }
