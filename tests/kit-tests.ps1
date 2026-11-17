@@ -2,16 +2,17 @@
 <#
 kit-tests.ps1: offline kit tests (throw-away kit copies, local git repos, mocked CLIs, no real services).
 Runs tests/<area>.tests.ps1 files in parallel, one pwsh each; each area file also runs on its own.
-Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<area>.tests.ps1>[,...]] [-Full] [-Slow]
+Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<area>.tests.ps1>[,...]] [-Full] [-Slow] [-Detail]
  (none): the areas a change since the merge-base with origin/main reaches (Get-ChangedArea); -Full or -Area all (KIT_TESTS_FULL=1): every area.
  -Slow: also the checks that need real tools and take seconds each (KIT_TESTS_SLOW=1, e.g. a real headless Chrome).
-Outputs: the picked areas and why, each area's PASS / FAIL lines, its time, TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), a recap of the failed checks, then a total.
+ -Detail: every area's full output here too (else a green area is one line; all of it in <runtime>/logs/kit-tests-last.txt).
+Outputs: the picked areas and why, per area its time and pass count (a failed or crashed area: its whole output), TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), a recap of the failed checks, then a total.
  A green full run stamps its tree (<runtime>/cache/kit-tests-green.txt). -Full also runs from the pre-push hook on a push to main
  (a stamped tree skipped) and from supervise -AutoFix once a day while idle (adapters/kit_admin.ps1). One setup per area: a new case
  joins the area that builds its setup, as a table row.
 Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 #>
-param([string[]]$Area = @(), [switch]$Slow, [switch]$Full)
+param([string[]]$Area = @(), [switch]$Slow, [switch]$Full, [switch]$Detail)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
 # the areas a change reaches: a test file -> its area; the runner, the harness, a crafty adapter or another non-.md file the harness
@@ -67,14 +68,17 @@ $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 *
   Write-Host "  $_ done ($([int]$clock.Elapsed.TotalSeconds) s)"   # progress while the slower areas run
   [pscustomobject]@{ area = $_; out = $out.TrimEnd(); code = $LASTEXITCODE; seconds = [int]$clock.Elapsed.TotalSeconds }
 } | Sort-Object { [array]::IndexOf($areas, $_.area) }   # area order, not finish order: output and TEST-DUP lists stay stable
-$fails = 0
+$fails = 0; $logLines = [Collections.Generic.List[string]]::new()
 foreach ($r in $results) {
-  "== $($r.area) ($($r.seconds) s)"
-  $r.out
+  $f0 = $fails
   # a crash before Complete-Tests prints no count: its FAIL lines, at least one
   if ($r.out -match '(?m)^(\d+) failure\(s\)\s*\z') { $fails += [int]$Matches[1] }
   elseif ($r.code) { $fails += [Math]::Max(1, ([regex]::Matches($r.out, '(?m)^FAIL ')).Count) }
+  $logLines.Add("== $($r.area) ($($r.seconds) s)"); $logLines.Add($r.out)
+  # a green area is one line here (its output reads tokens, not news); a failed one in full
+  if ($Detail -or $fails -gt $f0 -or $r.code) { "== $($r.area) ($($r.seconds) s)"; $r.out } else { "== $($r.area) ($($r.seconds) s): $(([regex]::Matches($r.out, '(?m)^PASS ')).Count) passed" }
 }
+if ($tmpMap) { $lastLog = Join-Path (Join-Path (Join-Path (Split-Path $PSScriptRoot) $tmpMap.runtimeDir) $tmpMap.runtime.logs) 'kit-tests-last.txt'; $null = New-Item -ItemType Directory -Force (Split-Path $lastLog); $logLines | Set-Content -LiteralPath $lastLog; "every area's output: $lastLog" }
 # TEST-DUP: one behaviour, one case: a case name (its PASS / FAIL line, case and spaces ignored) twice fails the run
 $cases = foreach ($r in $results) { $at = $r.area; foreach ($l in $r.out -split '\r?\n') {
   if ($l -match '^(PASS|FAIL) (.+)') { [pscustomobject]@{ name = $Matches[2].Trim().ToLower() -replace '\s+', ' '; at = $at; text = $Matches[2].Trim(); fail = $Matches[1] -eq 'FAIL' } } } }

@@ -170,6 +170,8 @@ $chg = foreach ($f in 'skills/x/notes.md', 'skills/x/foo.ps1', 'skills/pokey/ada
   $fp = Join-Path $cd $f; $had = Test-Path $fp; $null = New-Item -ItemType Directory -Force (Split-Path $fp); Add-Content $fp ''; $o = (Invoke-TestScript "$cd/tests/kit-tests.ps1").out
   if ($had) { git -C $cd checkout -q -- $f } else { Remove-Item $fp }; if ($o -match 'nothing to run') { 'none' } else { @([regex]::Matches($o, '(?m)^== (\w+)') | ForEach-Object { $_.Groups[1].Value }) -join '+' } }
 Expect "kit-tests default: changed areas (.md none, a named file its areas, an adapter its script's areas, an unnamed file or a harness file all, a test file its area) ($($chg -join ' | '))" (($chg -join '|') -eq 'none|a|b|a+b|a+b|b')
+$qo = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area a).out
+Expect "kit-tests: a green area prints one line (its PASS lines go to the log)" ($qo -match '(?m)^== a \(\d+ s\): 1 passed\s*$' -and $qo -notmatch 'PASS a uses')
 $null = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
 # lib.ps1 Add-KitAskBug (here for the guard area's cap): only a QA collector [Bug] takes sections

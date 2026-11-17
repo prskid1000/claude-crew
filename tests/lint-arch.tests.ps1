@@ -62,7 +62,9 @@ Set-Content (Join-Path $kc 'skills/crafty/zz_tmpk.py') "from kitbag import kit_p
 Set-Content (Join-Path $kc 'skills/crafty/zz_tmp.mjs') "import { tmpdir } from 'node:os'`nconst d = tmpdir()" -Encoding utf8
 $ex = Join-Path $kc 'skills/crafty/kit.example.json'; $t = [IO.File]::ReadAllText($ex)
 [IO.File]::WriteAllText($ex, ($t -replace '(?s)^\{', "{`n `"zzDeadKey`": 1, `"zzLiveKey`": 2,"))
-$l1 = & $py -X utf8 $KT3 lint --no-flow 2>&1 | Out-String
+$l1 = & $py -X utf8 $KT3 lint --no-flow --warn 2>&1 | Out-String
+$l0 = & $py -X utf8 $KT3 lint --no-flow 2>&1 | Out-String
+Expect 'lint: standing warnings are one count line unless --warn lists them' ($l0 -notmatch 'WARN ARCH-ENUM' -and $l0 -match 'warning\(s\) not counted \(--warn lists them\)' -and $l1 -match 'WARN ARCH-ENUM')
 $cnt = { param($rx) @([regex]::Matches($l1, $rx)).Count }
 Expect "ARCH-DEFAULT: a vendor default is a problem with file:line; neutral, arch-ok, legacy block and vendor-named files pass" ($l1 -match '(?m)^ARCH-DEFAULT\s+skills/crafty/zz_arch\.ps1:2: zz\.hit: default names gitlab' -and
   $l1 -match '(?m)^ARCH-DEFAULT\s+skills/crafty/zz_arch\.py:3: zzTag: default names CU-' -and (& $cnt 'ARCH-DEFAULT\s+skills/crafty/zz_arch\.ps1') -eq 1 -and $l1 -notmatch 'ARCH-DEFAULT\s+skills/crafty/zz_gitlab')

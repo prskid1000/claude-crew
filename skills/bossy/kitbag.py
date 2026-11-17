@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1446 audit ·
-  L1562 registry · L1894 arch lint · L2161 prose · L2326 sections · L2456 budget · L2470 migrate · L2630 plugins ·
-  L2684 state lint · L2872 main
+Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1448 audit ·
+  L1564 registry · L1896 arch lint · L2163 prose · L2328 sections · L2458 budget · L2472 migrate · L2632 plugins ·
+  L2686 state lint · L2874 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1210,8 +1210,10 @@ def cmd_lint(a):
     else:
         for c, w, m in problems:
             print(f'{c:15} {w}: {m}')
-        for c, w, m in warns:
+        for c, w, m in (warns if '--warn' in flags else []):   # standing warnings: a count unless asked (they re-read as tokens on every run)
             print(f'WARN {c:10} {w}: {m}')
+        if warns and '--warn' not in flags:
+            print(f'kitbag lint: {len(warns)} warning(s) not counted (--warn lists them)')
         unmerged = {x.split('\t', 1)[-1] for x in git(kit, 'ls-files', '-u')[1].splitlines() if x}
         if unmerged:   # said once, not per stage entry
             print(f'kitbag lint: rebase / merge in progress: {len(unmerged)} unmerged file(s), each counted once; resolve, then lint again')
