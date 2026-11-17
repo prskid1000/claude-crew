@@ -26,8 +26,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1333 report · L1413 audit · L1473 storage · L1476 bugbrief · L1587 cleanup · L1672 learn ·
-  L1703 decide · L1842 debate · L1886 health · L1949 retro due · L1959 tidy · L2031 setup · L2128 guard-sendmessage
+  L715 track · L1032 supervise · L1335 report · L1415 audit · L1475 storage · L1478 bugbrief · L1589 cleanup · L1674 learn ·
+  L1705 decide · L1844 debate · L1888 health · L1951 retro due · L1961 tidy · L2033 setup · L2130 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1050,8 +1050,10 @@ $me = Get-SuperviseOwner $Session; Update-KitCoordinatorBeat   # the registry: t
 $script:aside = $null
 Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
-  if (-not $Takeover -and $held -and $held.session -ne $me -and $held.session -ne 'os-timer' -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt [math]::Max(15, [math]::Min(45, 1.5 * (Get-KitBeatMinutes)))) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
-  Write-KitAtomic $lk (@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } | ConvertTo-Json)
+  $myHolder = Get-KitHolder   # a restart (new session id) or a dead holder process never blocks: only a live other process does
+  $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
+  if (-not $Takeover -and $other -and $held.session -ne 'os-timer' -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt [math]::Max(15, [math]::Min(45, 1.5 * (Get-KitBeatMinutes)))) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
+  Write-KitAtomic $lk (([ordered]@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } + $myHolder) | ConvertTo-Json)
 }
 if ($script:aside) { $script:aside; Get-KitAsideFlags $me; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }
 $budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 40) } else { 240 }

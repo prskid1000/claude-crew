@@ -226,5 +226,9 @@ $__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ heartbeatMinutes = 10
 "$($s.'supervise.ramActPct'.source) $($s.'supervise.shellStuckMinutes'.source) $($h -match '<td data-k=Value>90</td><td data-k=Source>default</td>') $($l.value)/$($l.source)/$($l.default)"
 '@ @($O)
 Expect "settings: effective defaults with no override, learned, an override names its default ($setOut)" ("$setOut" -eq 'default learned True 10/local/15')
+$deadH = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $deadH.WaitForExit()   # a restart: the old session id, its holder process gone
+$lkR = Join-Path (TkPath $k cache -Create) 'supervise.lock'; & $J @{ session = 'before-restart'; at = (Get-Date).ToString('s'); pid = 1; holderPid = $deadH.Id; holderStart = $deadH.StartTime.ToUniversalTime().ToString('o') } $lkR
+$svR = pwsh @np $O supervise -Brief -Session after-restart 2>$null | Out-String
+Expect 'supervise: a fresh lock whose holder process is gone (session restart) -> no step aside, the lock now names this session and its holder' ($svR -notmatch 'steps aside' -and (Get-Content $lkR -Raw) -match 'after-restart' -and (Get-Content $lkR -Raw) -match 'holderPid')
 Remove-TestKit $k
 Complete-Tests
