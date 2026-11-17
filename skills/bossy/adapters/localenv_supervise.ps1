@@ -61,7 +61,7 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
     }
     foreach ($h in @($ev.holds | Where-Object owner)) { $own += "owner hold $($ev.env) [$(@($h.services) -join ',')] until $($h.until) (unhold -Env $($ev.env) -Agent $($h.who) when done)" }
     # K20n: a down service a live (not grace) holder needs flags in the sweep that reads it, not only as a row
-    foreach ($d1 in $down) { $lh = @($holders | Where-Object { $null -eq $_.graceLeft -and $d1.service -in @($_.services) } | ForEach-Object { if ($_.agent) { $_.agent } else { $_.who } } | Select-Object -Unique)
+    foreach ($d1 in @($down | Where-Object { $_.state -notmatch '^start' })) { $lh = @($holders | Where-Object { $null -eq $_.graceLeft -and $d1.service -in @($_.services) } | ForEach-Object { if ($_.agent) { $_.agent } else { $_.who } } | Select-Object -Unique)
       if ($lh.Count) { $fl.Add([pscustomobject]@{ level = $(if ($d1.state -eq 'blocked') { 'WATCH' } else { 'ACT' }); what = "SERVICE DOWN: $($ev.env) $($d1.service) is $($d1.state)$(if ($d1.why) { " ($($d1.why))" }) while $($lh -join ', ') hold$(if ($lh.Count -eq 1) { 's' }) it"; action = "kitty kind env: & $($KitCmd.local) logs -Env $($ev.env) -Service $($d1.service), then restart -Env $($ev.env) -Services $($d1.service)" }) } }
     if ($down.Count) { $rows.Add([pscustomobject]@{ name = "$($ev.env) · $(($down | ForEach-Object service) -join ' · ') (down)"; by = "$(@($down | ForEach-Object { if ("$($_.why)" -match 'memory|RAM') { 'memory' } elseif ($_.why) { "$($_.why)".Substring(0, [math]::Min(30, "$($_.why)".Length)) } else { $_.state } } | Select-Object -Unique) -join ', ')"; gb = 0 }) }
   }

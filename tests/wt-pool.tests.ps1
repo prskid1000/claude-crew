@@ -23,8 +23,8 @@ $o2 = & $lease devB feat/two; $o3 = & $lease devC feat/three; $o4 = & $lease dev
 Expect "lease: a second slot up to poolSize; all leased -> no slot within -WaitMinutes; a branch another agent holds -> refused" ($o2 -match 'new slot app·Kestrel' -and $o3 -match 'no app slot free within 0 min' -and $o4 -match 'two agents never share a slot')
 # retro 2205: -Agent from KIT_AGENT, -Repo / -Branch from the linked worktree at -Dir; outside one, the error names what is missing
 $lm = (pwsh @np $D wt lease -Dir (Kd) -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join ' '; $env:KIT_AGENT = 'devA'
-$ld = (pwsh @np $D wt lease -Dir $s1 -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join "`n"; Remove-Item Env:KIT_AGENT
-Expect "lease: defaults from KIT_AGENT + the slot at -Dir (same slot back); none -> names -Agent -Branch -Repo ($lm | $(& $slotOf $ld))" ($lm -match 'lease needs -Agent -Branch -Repo:' -and (& $slotOf $ld) -eq $s1)
+$ld = (pwsh @np $D wt lease -Dir $s1 -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join "`n"; $lo = (pwsh @np $D wt lease -Dir $s1 -Repo (Kd) -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join ' '; Remove-Item Env:KIT_AGENT
+Expect "lease: defaults from KIT_AGENT + the slot at -Dir (same slot back); another -Repo never takes its branch; none -> names -Agent -Branch -Repo ($lm | $lo | $(& $slotOf $ld))" ($lm -match 'lease needs -Agent -Branch -Repo:' -and $lo -match 'lease needs -Branch:' -and (& $slotOf $ld) -eq $s1)
 $py1 = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools; print(devtools.target_of(r'$s1'))" 2>&1 | Select-Object -Last 1
 Expect "devtools.py mr / merge read the slot's target record ($py1)" ("$py1".Trim() -eq 'main')
 

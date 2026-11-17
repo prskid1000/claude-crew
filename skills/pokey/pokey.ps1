@@ -1043,8 +1043,8 @@ foreach ($tid in @($cand.Keys)) {
   $it = [ordered]@{ code = ''; title = $nm; guideFile = ''; lane = @((Get-QaLanes).Keys)[0]; subtasks = @([ordered]@{ id = $tid; name = $nm; mrs = ($mrs -join ', ') }) }
   if ($tgtRules) {
     $repoNames = @($mrs | ForEach-Object { ($_ -split '!')[0] })
-    # asked once, only by a pathRegex rule; a cut list (host overflow) cannot prove a path is absent: that rule is undecided (K68s)
-    $mrPaths = { if ($null -eq $script:QaMrPaths) { $script:QaMrCut = @(); $script:QaMrPaths = @(foreach ($m in $mrs) { $r0 = $m -split '!'; $ch = Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $r0[0] -Raw); n = $r0[1] }; if ($ch.overflow) { $script:QaMrCut += $m }; @($ch.changes.new_path) }) }; $script:QaMrPaths }
+    # asked once, only by a pathRegex rule; a cut list (host overflow, an unpaged 100-file page) cannot prove a path is absent: that rule is undecided (K68s)
+    $mrPaths = { if ($null -eq $script:QaMrPaths) { $script:QaMrCut = @(); $script:QaMrPaths = @(foreach ($m in $mrs) { $r0 = $m -split '!'; $ch = Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $r0[0] -Raw); n = $r0[1] }; if ($ch.overflow -or @($ch.changes).Count -ge 100) { $script:QaMrCut += $m }; @($ch.changes.new_path) }) }; $script:QaMrPaths }
     $script:QaMrPaths = $null; $script:QaMrCut = @(); $cutRule = $null
     $hit = @(foreach ($rule in @($tgtRules)) { if ((-not $rule.lists -or @($rule.lists) -contains $cand[$tid]) -and (-not $rule.repos -or @($repoNames | Where-Object { $_ -in @($rule.repos) }).Count) -and (-not $rule.nameRegex -or $nm -match $rule.nameRegex)) {
         if (-not $rule.pathRegex -or @(& $mrPaths | Where-Object { $_ -match $rule.pathRegex }).Count) { $rule; break }
