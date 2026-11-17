@@ -29,6 +29,11 @@ Run gitlab ([ordered]@{ 'PUT projects/g%2Fp/issues/5 .*status:in test' = '{"iid"
  'GET projects/g%2Fp/issues/6' = '{"iid":6,"title":"Sub","state":"closed","labels":[]}'; 'users\?username=Ann' = '[{"id":3}]'; 'POST projects/g%2Fp/issues .*"assignee_ids":\[3\]' = '{"iid":12}'; 'PUT projects/g%2Fp/issues/5 .*#12' = '{"iid":5}'
  'issues\?state=opened&labels=status%3Ain%20test' = '[{"iid":7,"title":"A","assignees":[{"id":3,"username":"ann"}]}]' }) 'g/p#5' g/p { param($r, $l) & $v $r 3 12 }
 Cmt gitlab ([ordered]@{ 'GET projects/g%2Fp/issues/5/notes' = '[{"id":77,"author":{"username":"a"},"created_at":"2026-01-01T00:00:00Z","body":"old","system":false}]'; 'PUT projects/g%2Fp/issues/5/notes/77 .*new words' = '{"id":77}'; 'DELETE projects/g%2Fp/issues/5/notes/77' = '' }) 'g/p#5' '77'
+# K54 move: a task-list line on the parent once (an existing one kept), the issue move API to another project, top-level refused
+try { Initialize-KitTracker -Type gitlab; $global:fx = [ordered]@{ 'GET projects/g%2Fp/issues/5 ' = '{"iid":5,"description":"x\n- [ ] #6"}'; 'PUT projects/g%2Fp/issues/5 .*#8' = '{"iid":5}'; 'GET projects/g%2Fq ' = '{"id":44}'; 'POST projects/g%2Fp/issues/8/move .*"to_project_id":44' = '{"iid":3}' }; $global:log.Clear()
+  $m1 = Move-TrackerTask 'g/p#8' -Parent 'g/p#5'; $m2 = Move-TrackerTask 'g/p#6' -Parent 'g/p#5'; $m3 = Move-TrackerTask 'g/p#8' -List g/q; $mt = try { Move-TrackerTask 'g/p#8' -Top; 'no throw' } catch { "$_" }
+  $ok = $m1 -eq 'moved #8 under g/p#5' -and @($global:log -match 'PUT projects/g%2Fp/issues/5 ').Count -eq 1 -and $m2 -eq 'moved #6 under g/p#5' -and $m3 -eq 'moved #8 to g/q as #3' -and $mt -match 'task-list line on its parent' } catch { $ok = $false; "  gitlab move error: $_" }
+if (-not $ok) { $global:failed++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) tracker gitlab: move (a task-list line once, the move API to another project, top-level refused)"
 # git host: glab calls, the memo, branch.protect answers
 function Check($what, $ok) { if (-not $ok) { $global:failed++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) gitlab ${what}" }
 $global:calls = [Collections.Generic.List[string]]::new(); $global:post = ''

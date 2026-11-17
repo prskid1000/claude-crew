@@ -29,4 +29,9 @@ Run youtrack ([ordered]@{ 'GET https://yt.test/api/issues/D-1\?' = '{"idReadable
  'commands .*State \{in test\}' = '{}'; 'D-1/comments.*two words' = '{"id":"c"}'; 'admin/projects' = '[{"id":"0-1","shortName":"OPS"},{"id":"0-2","shortName":"D"}]'; 'POST .*issues\?fields.*"0-2"' = '{"idReadable":"D-9"}'
  'commands .*subtask of D-1 for Ann Lee Priority Major' = '{}'; 'GET .*issues\?query=project%3A%20%7BD%7D' = '[{"idReadable":"D-3","summary":"A","customFields":[{"name":"Assignee","value":{"login":"ann"}}]}]' }) D-1 D { param($r, $l) (& $v $r ann D-9) -and $l -match 'Bearer y' }
 Cmt youtrack ([ordered]@{ 'GET .*issues/D-1/comments\?fields=id' = '[{"id":"4-7","text":"old","created":1767225600000,"author":{"login":"a"}}]'; 'POST .*issues/D-1/comments/4-7\?fields=id .*new words' = '{"id":"4-7"}'; 'DELETE .*issues/D-1/comments/4-7' = '' }) D-1 '4-7'
+# K54 move: project, the old parent's link out, the new one in; top-level: only the old link out
+try { Initialize-KitTracker -Type youtrack; $global:fx = [ordered]@{ 'admin/projects' = '[{"id":"0-2","shortName":"D"}]'; 'GET .*issues/D-5\?fields' = '{"idReadable":"D-5","summary":"S","parent":{"issues":[{"idReadable":"D-1"}]}}'; 'POST .*issues/D-5\?fields=idReadable .*"0-2"' = '{"idReadable":"D-5"}'; 'commands ' = '{}' }; $global:log.Clear()
+  $m1 = Move-TrackerTask D-5 -Parent D-2 -List D; $m2 = Move-TrackerTask D-5 -Top; $ml = $global:log -join "`n"
+  $pass = $m1 -eq 'moved D-5 to D under D-2' -and $ml -match 'remove subtask of D-1' -and $ml -match '"query":"subtask of D-2"' -and @($global:log -match 'commands ').Count -eq 3 } catch { $pass = $false; "  youtrack move error: $_" }
+if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker youtrack: move to a project and a new parent (old link out), top-level"
 exit [int]($global:failed -gt 0)

@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L10 paths · L91 state · L169 config · L250 OS · L470 leases · L867 status · L1125 supervise sweep · L1205 tracker ·
-  L1540 prior · L1556 ask bugs · L1741 git-host · L1922 kitlog · L2042 params · L2347 entry-scripts
+  L1546 prior · L1562 ask bugs · L1747 git-host · L1928 kitlog · L2048 params · L2353 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1329,6 +1329,7 @@ Register-KitAdapter 'tracker' 'none' @{
   }
   'describe' = { param($a) $null = __TrNone $a.id 'describe' { param($o) $o.description = $a.text }; "described $($a.id) (tracker none)" }
   'rename' = { param($a) $null = __TrNone $a.id "rename $($a.name)" { param($o) $o.name = $a.name }; "renamed $($a.id) (tracker none)" }
+  'move' = { param($a) $null = __TrNone $a.id "move $($a.parent)$($a.list)" { param($o) if ($a.top) { $o.parent = $null } elseif ($a.parent) { $o.parent = $a.parent }; if ($a.list) { $o.list = $a.list } }; "moved $($a.id) (tracker none)" }
   'attach' = { param($a) $null = __TrNone $a.id "attach $($a.file)" { param($o) __TrNoneNote $o "$($a.text) [attachment: $($a.file)]" }; "attached $($a.leaf) to $($a.id) (tracker none)" }
   'list' = { param($a) @(__TrNoneAll | Where-Object { (-not $a.list -or "$($_.list)" -eq $a.list) -and ((Test-TrackerStatus "$($_.status)" $a.logical) -or "$($_.status)" -ieq $a.status) } | ForEach-Object { __TrRow $_.id $_.name $_.status @($_.assignees | ForEach-Object { __TrWho $_ $_ }) }) }
   'owner' = { param($a) $a.name }
@@ -1522,6 +1523,11 @@ function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
   $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'
   (@($Id, (ConvertTo-KitOneLine $Desc), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
 function Set-TrackerName([string]$Id, [string]$Name) { Clear-TrackerMemo $Id; __TrA 'rename' @{ id = $Id; name = $Name } }
+# move a task (K54): under -Parent, to another -List, or top-level (-Top); each adapter refuses what its tracker cannot do;
+# command adapter: tracker.commands.move
+function Move-TrackerTask([string]$Id, [string]$Parent = '', [string]$List = '', [switch]$Top) {
+  if (-not ($Parent -or $List -or $Top)) { throw 'tracker move: -Parent, -List or -NoParent' }; if ($Top -and $Parent) { throw 'tracker move: -Parent or -NoParent, not both' }
+  Clear-TrackerMemo $Id; __TrA 'move' @{ id = $Id; parent = $Parent; list = $List; top = [bool]$Top } }
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }
   __TrA 'attach' @{ id = $Id; file = $File; text = $Text; leaf = (Split-Path $File -Leaf) }

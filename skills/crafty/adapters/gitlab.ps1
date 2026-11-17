@@ -88,6 +88,13 @@ Register-KitAdapter 'tracker' 'gitlab' @{
   }
   'describe' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id) @{ description = $a.text }; "described #$((__TrRef $a.id)[1])" }
   'rename' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id) @{ title = $a.name }; "renamed #$((__TrRef $a.id)[1])" }
+  # move (K54): -List = the issue move API to that project; -Parent = a task-list line on the parent (as create); top: refused
+  'move' = { param($a) $r, $n = __TrRef $a.id
+    if ($a.top) { throw "tracker (gitlab) move: a subtask is a task-list line on its parent: remove '- [ ] #$n' there by hand" }
+    if ($a.list -and $a.parent) { throw 'tracker (gitlab) move: -List and -Parent in two calls (the move gives a new number)' }
+    if ($a.list) { $pid0 = (__TrGl 'GET' "projects/$([uri]::EscapeDataString((__TrRepoOf $a.list)))" $null).id; $t = __TrGl 'POST' (__TrGlPath $a.id '/move') @{ to_project_id = $pid0 }; return "moved #$n to $($a.list)$(if ($t.iid) { " as #$($t.iid)" })" }
+    $p = __TrGlPath "$r#$($a.parent -replace '^.*#', '')"; $b = ([string](__TrGl 'GET' $p $null).description).TrimEnd()
+    if ($b -notmatch "(?m)^- \[[ x]\] #$n\b") { $null = __TrGl 'PUT' $p @{ description = $b + "`n- [ ] #$n" } }; "moved #${n} under $($a.parent)" }
   'attach' = { param($a) __TrAttachText $a }
   'list' = { param($a)
     $q = if (__TrIsClosed $a.status) { 'state=closed' } else { "state=opened&labels=$([uri]::EscapeDataString("$__trLp$($a.status)"))" }

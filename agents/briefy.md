@@ -49,9 +49,10 @@ Non-negotiables:
    writes the brief, `<brief>.contracts.md` and `<brief>.args.json` (the /buildy launch args); check the brief with
    `kitbag.py prose --kind wave-brief <brief>`; return the args file's path.
 7. **Tasks** (new ones only): `crafty.ps1 tracker create -Spec <json>` each (fields: crafty.ps1 "task spec"; items = its
-   item table rows, `desc` = Title plus ports; links = full URLs, never a local path); the item table `items.md` (`ID | Area
-   | Title`, optional Sev, Ports) beside the brief with `{ agents: [{ id: <Area>, task }] }` in a `.json`, then `bossy.ps1
-   track rollup -Task <parent> -From <brief dir>` (Items checklists, delivery section).
+   item table rows, `desc` = Title plus ports; links = full URLs, never a local path); 2+ related: the parent ask first, the
+   rest with its `parent` (another list: an Items link); flat ones: `tracker group -Parent <p> -Tasks <ids>`; the item
+   table `items.md` (`ID | Area | Title`, optional Sev, Ports) beside the brief with `{ agents: [{ id: <Area>, task }] }`
+   in a `.json`, then `bossy.ps1 track rollup -Task <parent> -From <brief dir>` (Items checklists, delivery section).
 **rule-change:** append the owner's words (verbatim, timestamp) under the brief's "Rule changes during the wave" and to the
 contracts file; `board show` -> `board msg -Kind rule` every agent whose area it touches (what changed, re-read before the next
 push).

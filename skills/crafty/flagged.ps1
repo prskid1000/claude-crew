@@ -7,6 +7,7 @@ pwsh 7: & <kit>/skills/crafty/flagged.ps1 <verb> ...
    SHA1 of every file): to <from>'s own files (-Release: a staged release, never rewritten; no app.aot) or to one copy per
    content hash in <to>/../_lib (-Move: taken from <from>), listed in <to>/.libs.json; no hard links there: copies
  ipv4  IPv4 addresses of the up, non-loopback, non-tunnel interfaces, in interface order (envy.ps1 LanIp)
+ credread -Text <target>  a Windows generic credential's secret, to the caller only (a tracker CLI's stored token)
 Exit codes: 0 ok · 2 usage
 #>
 #Requires -Version 7
@@ -36,5 +37,14 @@ switch ($Verb) {
       Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -notin 'Loopback', 'Tunnel' } |
       ForEach-Object { $_.GetIPProperties().UnicastAddresses } | Where-Object { $_.Address.AddressFamily -eq 'InterNetwork' } | ForEach-Object { "$($_.Address)" }
   }
-  default { 'usage: flagged.ps1 hash -Text <text> [-Algorithm MD5|SHA1|SHA256] | linkfiles -Text <from> -To <to> [-Release] [-Move] | ipv4'; exit 2 }
+  'credread' {   # a generic Windows credential's secret (UTF-8 blob, as go-keyring stores it); returned to the caller, never printed by it
+    if (-not ('KitCredRead' -as [type])) {
+      Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class KitCredRead {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct C { public int F; public int T; public string N; public string Cm; public long W; public int S; public IntPtr B; public int P; public int A; public IntPtr At; public string Ta; public string U; }
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredReadW(string n, int t, int f, out IntPtr c);
+        [DllImport("advapi32.dll")] static extern void CredFree(IntPtr c);
+        public static string Read(string n) { IntPtr p; if (!CredReadW(n, 1, 0, out p)) return null; try { var c = (C)Marshal.PtrToStructure(p, typeof(C)); var b = new byte[c.S]; Marshal.Copy(c.B, b, 0, c.S); return System.Text.Encoding.UTF8.GetString(b); } finally { CredFree(p); } } }' }
+    [KitCredRead]::Read($Text)
+  }
+  default { 'usage: flagged.ps1 hash -Text <text> [-Algorithm MD5|SHA1|SHA256] | linkfiles -Text <from> -To <to> [-Release] [-Move] | ipv4 | credread -Text <target>'; exit 2 }
 }

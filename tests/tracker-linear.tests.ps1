@@ -31,4 +31,9 @@ Run linear ([ordered]@{ 'identifier title url description' = '{"data":{"issue":{
  'users\(filter' = '{"data":{"users":{"nodes":[{"id":"u1"}]}}}'; '"parentId":"uuid-1"' = '{"data":{"issueCreate":{"issue":{"identifier":"E-9"}}}}'
  '"eqIgnoreCase":"in test"' = '{"data":{"issues":{"nodes":[{"identifier":"E-3","title":"A","assignee":{"id":"u1","name":"Ann"}}]}}}' }) E-1 E { param($r, $l) & $v $r u1 E-9 }
 Cmt linear ([ordered]@{ 'comments\(first: 200\)' = '{"data":{"issue":{"comments":{"nodes":[{"id":"cm-7","body":"old","createdAt":"2026-01-01T00:00:00Z","user":{"name":"A"}}]}}}}'; '(?=.*commentUpdate)(?=.*cm-7)(?=.*new words)' = '{"data":{"commentUpdate":{"success":true}}}'; '(?=.*commentDelete)(?=.*cm-7)' = '{"data":{"commentDelete":{"success":true}}}' }) E-1 'cm-7'
+# K54 move: team (from its key) and parent in one issueUpdate; top-level = parentId null
+try { Initialize-KitTracker -Type linear; $global:fx = [ordered]@{ 'teams\(filter' = '{"data":{"teams":{"nodes":[{"id":"t1"}]}}}'; 'issue\(id: \$id\) \{ id' = '{"data":{"issue":{"id":"uuid-0"}}}'; 'issueUpdate' = '{"data":{"issueUpdate":{"success":true}}}' }; $global:log.Clear()
+  $m1 = Move-TrackerTask E-1 -Parent E-0 -List OPS; $m2 = Move-TrackerTask E-1 -Top; $ml = $global:log -join "`n"
+  $pass = $m1 -eq 'moved E-1 to team OPS under E-0' -and $ml -match '(?=.*issueUpdate)(?=.*"teamId":"t1")(?=.*"parentId":"uuid-0")' -and $ml -match '(?=.*issueUpdate)(?=.*"parentId":null)' } catch { $pass = $false; "  linear move error: $_" }
+if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker linear: move to a team and under a parent (one issueUpdate), top-level = parentId null"
 exit [int]($global:failed -gt 0)

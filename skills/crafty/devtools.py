@@ -211,7 +211,7 @@ def _tracker(*args):
                 tmp.append(p)
                 x = p
             argv.append(x)
-        w = bool(argv) and argv[0] in ('status', 'comment', 'describe', 'create', 'rename', 'attach', 'update')
+        w = bool(argv) and argv[0] in ('status', 'comment', 'describe', 'create', 'rename', 'parent', 'attach', 'update')
         return _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'tracker', *argv], check=w, write=w)
     finally:
         for p in tmp:

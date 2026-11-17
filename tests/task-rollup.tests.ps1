@@ -178,5 +178,22 @@ Expect "items (own Items list, task spec): a hold and a fix-round MR untick with
 Expect "items: a final (all ticked) list opens again when a fix-round MR is registered: the item unticked, not final ($($hx.f0) | $($hx.f1))" ($hx.f0 -match '1/1 done True$' -and $hx.f1 -match '0/1 done False$' -and $hx.fd -match '(?m)^- \[ \] B1 · [^
 ]*· fix round 2$')
 Expect "items released (hold dropped, area delivered, fix MR merged): all ticked, suffixes and the held line gone, parent line ticked" ($hx.h2 -notmatch '- \[ \]|held|fix round|not delivered' -and $hx.h2 -match '(?m)^- \[x\] HM-S01 · ' -and $hx.p2 -match "(?m)^- \[x\] HM-P1 · HM P1 · \S*$($hx.hm)\S*$")
+# K54 tracker group / move (tracker none): the parent's list -> a subtask (code from the Items line naming it), another list -> an
+# Items line with its URL; the parent's Items from both; the move logged in the task state; -DryRun writes nothing; -NoParent clears it
+$grp = Invoke-PsTest taskgroup @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'; function Get-TrackerUrl([string]$Id) { "https://t.test/$Id" }
+$a = (__TrA 'create' @{ name = '[Bug] Alpha leak'; description = 'd'; list = 'L1' }).id; $b = (__TrA 'create' @{ name = '[Bug] Beta leak'; description = 'd'; list = 'L2' }).id
+$p = (Publish-KitTaskSpec @{ kind = 'chore'; title = 'Wave'; list = 'L1'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'B1'; desc = "alpha fix · https://t.test/$a" }, @{ code = 'B9'; desc = 'other' }); acceptance = @('x'); links = @('https://t.test/1') }).id
+$dry = @(Invoke-KitTaskGroup -Parent $p -Tasks @($a, $b) -DryRun) -join '|'; "dp:$((Get-TrackerTask $a).parent)"
+$out = @(Invoke-KitTaskGroup -Parent $p -Tasks @($a, $b)) -join '|'; $ps = (Read-KitState (Get-KitTaskFile $p)).spec
+"dry:$dry"; "par:$((Get-TrackerTask $a).parent)|$((Get-TrackerTask $b).parent)"; "subs:$(@($ps.subtasks | ForEach-Object { "$($_.code)=$($_.id)" }) -join ',')"
+"items:$(@($ps.items | ForEach-Object { "$($_.code):$(@($_.mrs) -join ' ')" }) -join ',')"; "mv:$(@((Read-KitState (Get-KitTaskFile $a)).moves).Count)"; "out:$out"
+"desc:$(((Get-TrackerTask $p).description) -replace "`n", '\n')"; $null = Move-KitTask $a -Top; "top:[$((Get-TrackerTask $a).parent)]"
+$env:KIT_SESSION = 's-k54'; $q = @{ kind = 'bug'; title = 'Lone'; list = 'L1'; problem = 'p.' }; $null = Publish-KitTaskSpec $q; $null = Publish-KitTaskSpec $q
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
+$gv = { param($key) "$(@($grp | Where-Object { "$_" -like "${key}:*" })[0])".Substring($key.Length + 1) }
+Expect "tracker group: same list -> subtask (code from the parent's Items line), another list -> Items link with its URL; dry run writes nothing; move logged; -NoParent clears ($($grp -join ' | '))" ((& $gv 'dp') -eq '' -and (& $gv 'dry') -match '^group under .*\|subtask \S+ \(B1\)\|link \S+ · list L2, parent list L1: Items link$' -and
+  (& $gv 'par') -match '^\S+\|$' -and (& $gv 'subs') -match '^B1=' -and (& $gv 'items') -match '^B9:,LOCAL-\d+:https://t.test/LOCAL-\d+$' -and (& $gv 'mv') -eq '1' -and (& $gv 'out') -match '1 moved, 0 already, 1 linked' -and
+  (& $gv 'desc') -match 'B1 · Alpha leak · https://t.test/' -and (& $gv 'desc') -match 'Beta leak · https://t.test/' -and (& $gv 'top') -eq '[]' -and @($grp -match 'WARNING: tracker create: this session made 2 top-level tasks .*tracker group -Parent <p> -Tasks').Count -eq 1)
 Remove-TestKit $k
 Complete-Tests

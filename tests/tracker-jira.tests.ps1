@@ -38,4 +38,9 @@ $okWiki = $wk -eq "<!-- kit:delivery -->`n*Sum*: 1 of 2`n||Subtask||MRs||`n|[S-1
 if (-not ($okAdf -and $okWiki)) { $global:failed++; "  adf: $back`n  wiki: $wk" }
 "$(if ($okAdf -and $okWiki) { 'PASS' } else { 'FAIL' }) tracker jira / jira-server: Markdown tables, links, breaks, lists -> ADF (round trip to the same Markdown) / wiki (stable when re-sent)"
 Cmt jira ([ordered]@{ 'GET .*api/3/issue/P-1/comment\?maxResults' = '{"comments":[{"id":"10007","author":{"displayName":"A"},"created":"2026-01-01T00:00:00Z","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"old"}]}]}}]}'; 'PUT .*api/3/issue/P-1/comment/10007 .*new words' = '{"id":"10007"}'; 'DELETE .*api/3/issue/P-1/comment/10007' = '' }) P-1 '10007'
+# K54 move: parent field set / cleared (top-level); another project refused before any call
+try { Initialize-KitTracker -Type jira; $global:fx = [ordered]@{ 'PUT .*api/3/issue/P-1 ' = '' }; $global:log.Clear()
+  $m1 = Move-TrackerTask P-1 -Parent P-0; $m2 = Move-TrackerTask P-1 -Top; $mx = try { Move-TrackerTask P-1 -List OPS; 'no throw' } catch { "$_" }; $ml = $global:log -join "`n"
+  $pass = $m1 -eq 'moved P-1: under P-0' -and $ml -match '"parent":\{"key":"P-0"\}' -and $ml -match '"parent":null' -and $mx -match "another project \(OPS\) needs Jira's bulk move" -and $global:log.Count -eq 2 } catch { $pass = $false; "  jira move error: $_" }
+if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker jira: move under a parent, top-level (parent null); another project refused before the call"
 exit [int]($global:failed -gt 0)

@@ -59,5 +59,13 @@ $cl = $global:log -join "`n"
 $pass = $cl -match '(?m)^task checklist item remove K1 i1$' -and $cl -match '(?m)^task checklist item add K1 A1 · x · u · held: real-API check$' -and $cl -match '(?m)^task checklist item remove K1 i3$' -and $cl -match '(?m)^task checklist item remove K1 i4$' -and $cl -notmatch 'remove K1 i[29]|resolve K1 i2'
 if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: checklist unticks a resolved item (remove + add: no unresolve verb); prune drops a kit line not wanted and a repeat, a person's line kept ($ck)"
+# K54: re-parent through the REST API (the CLI has no --parent), the stored token as the header; another list: refused before the call
+$global:http = [Collections.Generic.List[string]]::new(); function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Headers = @{}) { $global:http.Add("$Method $Uri $($Body | ConvertTo-Json -Compress) $($Headers.Authorization)"); @{ id = 'C9' } }
+$env:CLICKUP_API_TOKEN = 'tk-test'; $global:fx.Insert(0, 'task view C9 --json', '{"id":"C9","list":{"id":"L9"}}')
+$__cfg = [pscustomobject]@{ tracker = [pscustomobject]@{ workspace = 'W1' } }
+try { $rp = Move-TrackerTask C9 -Parent C1; $rx = try { Move-TrackerTask C9 -Parent P2; 'no throw' } catch { "$_" }; $rt = try { Move-TrackerTask C9 -Top; 'no throw' } catch { "$_" }; $rl = Move-TrackerTask C9 -List L7 -Parent P2 } finally { Remove-Item Env:CLICKUP_API_TOKEN; $__cfg = $null }
+$pass = $rp -eq 'moved C9 under C1' -and $global:http.Count -eq 3 -and $global:http[0] -eq 'PUT https://api.clickup.com/api/v2/task/C9 {"parent":"C1"} tk-test' -and $rx -match 'C9 is in list L9, P2 in list L7: a subtask lives in its parent.s list \(-List L7 moves it first' -and $rt -match 'cannot make a subtask top-level' -and
+  $rl -eq 'moved C9 to list L7 under P2' -and $global:http[1] -eq 'PUT https://api.clickup.com/api/v3/workspaces/W1/tasks/C9/home_list/L7 null tk-test' -and $global:http[2] -match 'task/C9 \{"parent":"P2"\}'; if (-not $pass) { $failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: move under a parent (REST v2 PUT with the stored token), to another list (v3 home_list, then the parent); a parent in another list without -List and top-level are refused before a call ($rp | $rx | $rt | $rl)"
 "$failed failure(s)"   # this file's count (kit-tests.ps1 prints the total)
 exit [int]($failed -gt 0)

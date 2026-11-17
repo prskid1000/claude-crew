@@ -1,13 +1,24 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # tracker-clickup: ClickUp as the kit tracker through the clickup CLI (tracker.type clickup; tracker.list = the list id of
-# new tasks; tracker.statuses = the list's status names). Dot-sourced by lib.ps1 before the tracker type is resolved.
+# new tasks; tracker.statuses = the list's status names; tracker.workspace = the workspace id for a list move, else the CLI's
+# config). Dot-sourced by lib.ps1 before the tracker type is resolved.
+# Sections: L7 helpers · L21 tracker
+# ---- helpers: member ids, the stored token
 function __TrClickupMemberId([string]$Who) {
   if (-not $Who) { return $null }
   $__trDry = $false
   $m = @(__TrJson (__TrCli 'clickup' @('member', 'list', '--json'))) | Where-Object { $_ -and ($_.username -eq $Who -or ($_.email -and $_.email -eq $Who)) } | Select-Object -First 1
   if ($m) { [string]$m.id } else { $null }
 }
+# the clickup CLI's stored API token for a REST call the CLI lacks (env CLICKUP_API_TOKEN, else its OS keyring entry
+# clickup-cli:api_token; Windows Credential Manager only); never printed or logged
+function __TrClickupToken {
+  $t = "$env:CLICKUP_API_TOKEN"; if ($t) { return $t }
+  if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { throw 'tracker (clickup): no CLICKUP_API_TOKEN (the CLI keyring is read on Windows only)' }
+  $t = & (Join-Path $script:KitLibDir 'flagged.ps1') credread -Text 'clickup-cli:api_token'; if (-not $t) { throw 'tracker (clickup): no stored token (clickup auth status; the owner logs in, never an agent)' }; $t
+}
+# ---- tracker: the adapter verbs
 # comments: the CLI posts plain text (Markdown shows as typed) -> lib.ps1 ConvertTo-KitPlainText; descriptions render Markdown
 # adapter:tracker/clickup: clickup CLI
 Register-KitAdapter 'tracker' 'clickup' @{
@@ -45,6 +56,24 @@ Register-KitAdapter 'tracker' 'clickup' @{
   }
   'describe' = { param($a) __TrCli 'clickup' @('task', 'edit', $a.id, '--markdown-description', $a.text) }
   'rename' = { param($a) __TrCli 'clickup' @('task', 'edit', $a.id, '--name', $a.name) }
+  # move (K54; the CLI has neither): -List = REST v3 home-list move (workspace: tracker.workspace, else the CLI's config), -Parent =
+  # REST v2 PUT {parent}; a subtask lives in its parent's list (another list without -List: refused, link it in the parent's Items);
+  # top-level: the API cannot (parent null is refused)
+  'move' = { param($a)
+    if ($a.top) { throw 'tracker (clickup) move: the API cannot make a subtask top-level (parent null is refused): do it in the app' }
+    $lid = [string](__TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--json'))).list.id; $tl = if ($a.list) { "$($a.list)" } else { $lid }
+    $plid = if ($a.parent) { [string](__TrJson (__TrCli 'clickup' @('task', 'view', $a.parent, '--json'))).list.id }
+    if ($plid -and $tl -and $plid -ne $tl) { throw "tracker (clickup) move: $($a.id) is in list $tl, $($a.parent) in list ${plid}: a subtask lives in its parent's list (-List $plid moves it first; to keep its list, link it in the parent's Items)" }
+    $calls = @(if ($a.list -and $a.list -ne $lid) {
+        $ws = Get-KitSetting 'tracker.workspace' ''; if (-not $ws) { $cf = Join-Path $HOME '.config/clickup/config.yml'; if (Test-Path -LiteralPath $cf) { $ws = @((Get-Content -LiteralPath $cf) -match '^workspace:' -replace '^workspace:\s*', '' -replace '["'']')[0] } }
+        if (-not $ws) { throw 'tracker (clickup) move: no workspace id (tracker.workspace in kit.local.json)' }
+        , @('PUT', "https://api.clickup.com/api/v3/workspaces/$ws/tasks/$($a.id)/home_list/$($a.list)", $null) }
+      if ($a.parent) { , @('PUT', "https://api.clickup.com/api/v2/task/$($a.id)", @{ parent = $a.parent }) })
+    foreach ($c in $calls) {
+      if ($__trDry) { Write-Host "DRYRUN: $($c[0]) $($c[1])$(if ($c[2]) { ' ' + ($c[2] | ConvertTo-Json -Compress) })"; continue }
+      $o = @(Invoke-KitHttp $c[0] $c[1] $c[2] @{ Authorization = (__TrClickupToken) } 3>&1)
+      $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { throw "tracker (clickup) move: $($w[0].Message)" } }
+    "moved $($a.id)$(if ($a.list -and $a.list -ne $lid) { " to list $($a.list)" })$(if ($a.parent) { " under $($a.parent)" })" }
   'attach' = { param($a) __TrCli 'clickup' @('attachment', 'add', $a.id, $a.file); __TrNote $a }
   'list' = { param($a)
     # lib.ps1 Get-TrackerTasks already fell back to tracker.list; without one the CLI exits 1 'no list specified'

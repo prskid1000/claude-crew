@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # github: GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L6 gh · L17 tracker · L65 git-host · L101 ci
+# Sections: L6 gh · L17 tracker · L72 git-host · L108 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -54,6 +54,13 @@ Register-KitAdapter 'tracker' 'github' @{
   }
   'describe' = { param($a) $r, $n = __TrRef $a.id; __TrGhBody @('issue', 'edit', $n, '-R', $r) $a.text }
   'rename' = { param($a) $r, $n = __TrRef $a.id; __GhCli @('issue', 'edit', $n, '-R', $r, '--title', $a.name) }
+  # move (K54): -List = gh issue transfer to that repo; -Parent = a task-list line on the parent (as create); top: refused
+  'move' = { param($a) $r, $n = __TrRef $a.id
+    if ($a.top) { throw "tracker (github) move: a subtask is a task-list line on its parent: remove '- [ ] #$n' there by hand" }
+    if ($a.list -and $a.parent) { throw 'tracker (github) move: -List and -Parent in two calls (the transfer gives a new number)' }
+    if ($a.list) { $out = __GhCli @('issue', 'transfer', $n, (__TrRepoOf $a.list), '-R', $r); return "moved #$n to $($a.list): $out" }
+    $pn = $a.parent -replace '^.*#', ''; $b = ([string](__TrJson (__GhCli @('issue', 'view', $pn, '-R', $r, '--json', 'body'))).body).TrimEnd()
+    if ($b -notmatch "(?m)^- \[[ x]\] #$n\b") { $null = __TrGhBody @('issue', 'edit', $pn, '-R', $r) ($b + "`n- [ ] #$n") }; "moved #${n} under #$pn" }
   'attach' = { param($a) __TrAttachText $a }
   'list' = { param($a)
     $c = @('issue', 'list', '-R', (__TrRepoOf $a.list), '--limit', '200', '--json', 'number,title,assignees')

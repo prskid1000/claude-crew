@@ -48,6 +48,13 @@ Register-KitAdapter 'tracker' 'youtrack' @{
   }
   'describe' = { param($a) $null = __TrYt 'POST' "issues/$($a.id)?fields=idReadable" @{ description = $a.text }; "described $($a.id)" }
   'rename' = { param($a) $null = __TrYt 'POST' "issues/$($a.id)?fields=idReadable" @{ summary = $a.name }; "renamed $($a.id)" }
+  # move (K54): project (-List short name), then the subtask link (top: the old parent's link removed)
+  'move' = { param($a)
+    if ($a.list) { $p = @(__TrYt 'GET' 'admin/projects?fields=id,shortName&$top=500' $null | Where-Object { $_.shortName -eq $a.list })[0]; if (-not $p -and -not $__trDry) { throw "tracker (youtrack) move: no project '$($a.list)'" }; $null = __TrYt 'POST' "issues/$($a.id)?fields=idReadable" @{ project = @{ id = $p.id } } }
+    $old = if ($a.top -or $a.parent) { "$((Get-TrackerTask $a.id).parent)" }
+    if ($old -and $old -ne $a.parent) { __TrYtCmd $a.id "remove subtask of $old" }
+    if ($a.parent -and $old -ne $a.parent) { __TrYtCmd $a.id "subtask of $($a.parent)" }
+    "moved $($a.id)$(if ($a.list) { " to $($a.list)" })$(if ($a.top) { ': top-level' } elseif ($a.parent) { " under $($a.parent)" })" }
   'attach' = { param($a) $null = __TrYt 'POST' "issues/$($a.id)/attachments?fields=id" $null $a.file; "attached $($a.leaf) to $($a.id)"; __TrNote $a }
   'list' = { param($a)
     $q = [uri]::EscapeDataString("$(if ($a.list) { "project: {$($a.list)} " })State: {$($a.status)}")

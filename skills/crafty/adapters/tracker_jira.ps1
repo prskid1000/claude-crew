@@ -106,6 +106,10 @@ Register-KitAdapter 'tracker' 'jira' @{
   }
   'describe' = { param($a) $null = __TrJira 'PUT' "issue/$($a.id)" @{ fields = @{ description = (__TrJDoc $a.text) } }; "described $($a.id)" }
   'rename' = { param($a) $null = __TrJira 'PUT' "issue/$($a.id)" @{ fields = @{ summary = $a.name } }; "renamed $($a.id)" }
+  # move (K54): parent field (top: cleared, team-managed projects); another project needs Jira's bulk move: refused
+  'move' = { param($a)
+    if ($a.list) { throw "tracker (jira) move: another project ($($a.list)) needs Jira's bulk move (UI or bulk API); -Parent / -NoParent only" }
+    $null = __TrJira 'PUT' "issue/$($a.id)" @{ fields = @{ parent = $(if ($a.top) { $null } else { @{ key = $a.parent } }) } }; "moved $($a.id): $(if ($a.top) { 'top-level' } else { "under $($a.parent)" })" }
   'attach' = { param($a) $null = __TrJira 'POST' "issue/$($a.id)/attachments" $null $a.file; "attached $($a.leaf) to $($a.id)"; __TrNote $a }
   'list' = { param($a)
     $q = [uri]::EscapeDataString("project = `"$($a.list)`" AND status = `"$($a.status)`"")

@@ -72,6 +72,14 @@ Register-KitAdapter 'tracker' 'azure' @{
   }
   'describe' = { param($a) $null = __TrAzSet $a.id @{ 'System.Description' = (__TrHtml $a.text) }; "described $($a.id)" }
   'rename' = { param($a) $null = __TrAzSet $a.id @{ 'System.Title' = $a.name }; "renamed $($a.id)" }
+  # move (K54): the old parent link out (top or a new parent), the new one in; -List = area path
+  'move' = { param($a)
+    $rels = @((__TrAz 'GET' "wit/workitems/$($a.id)?`$expand=relations" $null).relations)
+    $o = @(for ($i = $rels.Count - 1; $i -ge 0; $i--) { if ("$($rels[$i].rel)" -eq 'System.LinkTypes.Hierarchy-Reverse' -and ($a.top -or $a.parent)) { @{ op = 'remove'; path = "/relations/$i" } } })
+    if ($a.parent) { $o += @{ op = 'add'; path = '/relations/-'; value = @{ rel = 'System.LinkTypes.Hierarchy-Reverse'; url = "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '')/_apis/wit/workItems/$($a.parent)" } } }
+    if ($a.list) { $o += @{ op = 'add'; path = '/fields/System.AreaPath'; value = $a.list } }
+    $null = __TrAz 'PATCH' "wit/workitems/$($a.id)" $o 'application/json-patch+json'
+    "moved $($a.id)$(if ($a.list) { " to $($a.list)" })$(if ($a.top) { ': top-level' } elseif ($a.parent) { " under $($a.parent)" })" }
   'attach' = { param($a)
     $u = __TrAz 'POST' "wit/attachments?fileName=$([uri]::EscapeDataString($a.leaf))" $null 'application/octet-stream' $a.file
     $null = __TrAz 'PATCH' "wit/workitems/$($a.id)" @(@{ op = 'add'; path = '/relations/-'; value = @{ rel = 'AttachedFile'; url = $u.url } }) 'application/json-patch+json'; "attached $($a.leaf) to $($a.id)"; __TrNote $a

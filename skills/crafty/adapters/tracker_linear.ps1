@@ -49,6 +49,11 @@ Register-KitAdapter 'tracker' 'linear' @{
   }
   'describe' = { param($a) __TrLinSet $a.id @{ description = $a.text }; "described $($a.id)" }
   'rename' = { param($a) __TrLinSet $a.id @{ title = $a.name }; "renamed $($a.id)" }
+  # move (K54): parentId (top: null), teamId from the team key (-List)
+  'move' = { param($a) $in = @{}
+    if ($a.list) { $tid = @((__TrLin 'query($k: String!) { teams(filter: { key: { eq: $k } }) { nodes { id } } }' @{ k = $a.list }).teams.nodes.id)[0]; if (-not $tid -and -not $__trDry) { throw "tracker (linear) move: no team '$($a.list)'" }; $in.teamId = $tid }
+    if ($a.top) { $in.parentId = $null } elseif ($a.parent) { $in.parentId = (__TrLin 'query($id: String!) { issue(id: $id) { id } }' @{ id = $a.parent }).issue.id }
+    __TrLinSet $a.id $in; "moved $($a.id)$(if ($a.list) { " to team $($a.list)" })$(if ($a.top) { ': top-level' } elseif ($a.parent) { " under $($a.parent)" })" }
   'attach' = { param($a) __TrAttachText $a }
   'list' = { param($a)
     $f = @{ state = @{ name = @{ eqIgnoreCase = $a.status } } }; if ($a.list) { $f.team = @{ key = @{ eq = $a.list } } }

@@ -54,8 +54,11 @@ $global:fx = [ordered]@{ 'view 5 -R o/r --json comments' = '{"comments":[{"autho
  'api -X PATCH repos/o/r/issues/comments/77 .*new words' = '{"id":77}'; 'api -X DELETE repos/o/r/issues/comments/77' = '' }; $global:log.Clear()
 $c = @(Get-TrackerComments 'o/r#5'); $e = __TrA 'comment-edit' @{ id = 'o/r#5'; comment = $c[0].id; text = 'new words' }; $x = __TrA 'comment-delete' @{ id = 'o/r#5'; comment = $c[0].id }
 "cmt:$($c[0].id -eq '77' -and $e -match 'edited' -and $x -match 'deleted' -and $global:log.Count -eq 3)"
+$global:fx = [ordered]@{ 'view 5 -R o/r --json body' = '{"body":"x\n- [ ] #6"}'; '^issue edit 5 -R o/r --body-file' = 'ok'; '^issue transfer 8 o/r2 -R o/r' = 'https://github.com/o/r2/issues/1' }; $global:log.Clear()
+$m1 = Move-TrackerTask 'o/r#8' -Parent 'o/r#5'; $m2 = Move-TrackerTask 'o/r#6' -Parent 'o/r#5'; $m3 = Move-TrackerTask 'o/r#8' -List o/r2; $mt = try { Move-TrackerTask 'o/r#8' -Top; 'no throw' } catch { "$_" }
+"mv:$($m1 -eq 'moved #8 under #5' -and @($global:log -match '^issue edit 5').Count -eq 1 -and $m2 -eq 'moved #6 under #5' -and $m3 -match '^moved #8 to o/r2' -and $mt -match 'task-list line on its parent')"
 '@
-Expect-Each (Invoke-PsTest 'github-tracker' $tb @(Join-Path $k 'skills/crafty/lib.ps1')) 'github #: view, status, comment, create, list; comment ids, edit, delete on recorded answers' 'tracker', 'cmt'
+Expect-Each (Invoke-PsTest 'github-tracker' $tb @(Join-Path $k 'skills/crafty/lib.ps1')) 'github #: view, status, comment, create, list; comment ids, edit, delete; move (task-list line once, transfer, top refused) on recorded answers' 'tracker', 'cmt', 'mv'
 $env:KIT_TRACKER_TYPE = 'github'; 'body text' | Set-Content "$(Kd)/c.md"
 $out = pwsh @np $D tracker comment o/r#12 -File "$(Kd)/c.md" -Kind comment-status -ProseOk x -DryRun 6>&1 2>&1 | Out-String
 Remove-Item Env:KIT_TRACKER_TYPE
