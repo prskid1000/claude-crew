@@ -118,6 +118,10 @@ if (Use-BrowserKit) {   # owner 2026-11-14: one tall tile (15 repos) beside shor
   (Get-Content $pg -Raw).Replace('if(fill)Object.keys', 'if(0)Object.keys') | Set-Content $pg2 -Encoding utf8
   $u1 = @(& $py -X utf8 $uiKb ui-check $pg --widths 1920,1366 --click '#sec-internals summary,#sec-activity summary' 2>&1); $c1 = $LASTEXITCODE; $u2 = @(& $py -X utf8 $uiKb ui-check $pg2 --widths 1366 --click '#sec-internals summary,#sec-activity summary' 2>&1)
   Expect "ui-check: Activity tiles stretch to one row height at 1920 + 1366 (exit $c1$(@($u1 -match '^\s+CLIP|render failed') | Select-Object -First 2)); unstretched, uiChecks flags the columns ($(@($u2 -match 'tile columns end|render failed')[0]))" ($c1 -eq 0 -and @($u2 -match 'CLIP cg stats msn: tile columns end \d+ px apart').Count -ge 2)
+  # K74: without the 160 px cap the short tiles stretch into an empty band above their graph: uiChecks flags it
+  $pg3 = Join-Path (Kd) 'tiles-uncapped.html'; (Get-Content $pg -Raw).Replace('Math.floor(160-lg', 'Math.floor(9999-lg') | Set-Content $pg3 -Encoding utf8
+  $u3 = @(& $py -X utf8 $uiKb ui-check $pg3 --widths 1366 --click '#sec-internals summary,#sec-activity summary' 2>&1)
+  Expect "ui-check: an uncapped stretch leaves an empty band above a graph and is flagged ($(@($u3 -match 'empty above its graph|render failed')[0]))" (@($u3 -match 'a stretched tile: \d+ px empty above its graph').Count -ge 1)
   $uiLnk = Join-Path (Kd) 'links.html'   # K26: a kit page link navigates away unless it opens in the drawer (data-dw); a web link needs target=_blank
   [IO.File]::WriteAllText($uiLnk, '<p><a href="runs/a.html">bad1</a> <a href="https://x.test/mr/1">bad2</a> <a href="runs/b.html" data-dw="Run b">ok1</a> <a href="https://x.test/t/2" target="_blank">ok2</a> <a href="#sec">ok3</a> <a href="vscode://file/x">ok4</a></p>')
   $lnkOut = @(& $py -X utf8 $uiKb ui-check $uiLnk --widths 1366 2>&1 | Out-String) -split "`n"
