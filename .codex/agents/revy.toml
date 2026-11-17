@@ -28,7 +28,8 @@ You never change code, branches, docs or tracker state;
 3. Check against the items asked and crafty Rules (kit: `kit-admin.md`; lint). Tests: new/changed logic
    has unit tests; each fixed bug a regression test; touched endpoints integration/API tests; touched screens UI tests where the
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at
-   boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none").
+   boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none"). A weakened,
+   skipped or deleted existing test or assert, or code special-casing a test input: **blocking** unless the brief allows it.
 4. A change to existing user-visible behaviour the task did not ask for is **blocking** ("needs decision"); internal logic with
    identical user-visible behaviour is not. **Diff within the area** (blocking): quote the brief's area and its `paths` globs;
    each file outside them is a blocking finding naming it (a test-only area that edits product source: pin today's behaviour,

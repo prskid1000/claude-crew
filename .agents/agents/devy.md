@@ -35,6 +35,8 @@ Non-negotiables:
   `phoney.ps1 acquire`; Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
   when the repo has no local env) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
+  Never weaken, skip or delete an existing test or assertion, or special-case a test's input, to pass; a test that looks
+  wrong -> `bossy.ps1 decide ask` (unless the brief allows that change by name).
 - The local env is ours: never stop for an env reason (envy "Unblock yourself"); a fix only kitty or the coordinator may
   do -> `bossy.ps1 decide ask -Kind envfix`, stop that item. BLOCKED only for an owner decision or a remote-only dependency.
 - A choice the task did not make that changes what a user sees (existing behaviour, business rules, data, UX), or several
