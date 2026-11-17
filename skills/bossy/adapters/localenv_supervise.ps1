@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L69 pause · L81 spike · L108 flags · L166 waits · L177 cpu
+Sections: L10 logs · L47 rows · L69 pause · L81 spike · L108 flags · L172 waits · L183 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -124,6 +124,12 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
     foreach ($ln in @(Invoke-KitBackground "envy.ps1 $($da -join ' ')" $KitCmd.local $da | Where-Object { $_ -match '^\[[^\]]+\] (drop|stale) ' })) {
       if ($AutoFix) { [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: $ln"; action = 'Nothing to do.' } } else { & $watch "STALE LAYER: $ln" 'supervise -AutoFix drops it (envy.ps1 drop -Stale).' }
     }
+  }
+  # old lane names (localenv-<lane>-<repo> worktrees): moved each sweep once their lane is idle (envy.ps1 lanes -Migrate -LanesOnly, background)
+  $wr0 = @($KitConf.WorktreeRoots)[0]
+  if ($wr0 -and @(Get-ChildItem -LiteralPath $wr0 -Directory -Filter 'localenv-*' -ErrorAction SilentlyContinue).Count -and (Within 'lane names')) {
+    foreach ($ln in @(Invoke-KitBackground 'envy.ps1 lanes -Migrate -LanesOnly' $KitCmd.local @('lanes', '-Migrate', '-LanesOnly') | Where-Object { "$_" -match '^(moved|renamed|deleted|kept) ' })) {
+      if ("$ln" -like 'kept *') { [pscustomobject]@{ info = "LANE NAMES: $ln" } } else { [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: $ln"; action = 'Nothing to do.' } } }
   }
   $early = $null -ne $script:KitEnvStatus   # the guard hook read status this round: its rows are out
   $envs = if ($early) { $script:KitEnvStatus } else { $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left))); @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }) }

@@ -9,6 +9,7 @@ Verbs: envs · status · doctor · deploy · wait · use · release · promote �
        (owner) up -Services [-Owner] · unhold · restart -Services · down · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
        [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] | import -From <source> -Tenant <schema>
        [-As <name>] -Mask <profile> [-DryRun] [-Refresh] (adapters/tenant_models.ps1) · cleanup [-Quick] [-DryRun] ·
+       lanes -Migrate [-LanesOnly] [-DryRun] (old lane names -> new when idle; orphan / merged branches: wt_pool.ps1 Invoke-LaneMigrate) ·
        <verb> an adapter registers (kind envy-verb) ·
        _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
 Lanes (envs.<env>.lanes.max > 1): -Env <env> = the agent's lane, else (deploy / use / task) the least busy one with room;
@@ -21,7 +22,7 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L35 config · L230 state · L277 layer drops · L349 leases · L477 code · L516 migrations ·
+Sections: L36 config · L231 state · L278 layer drops · L350 leases · L478 code · L516 migrations ·
   L519 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L667 shared builds · L825 hooks · L897 marks · L1077 seed ·
   L1144 processes · L1523 daemon · L1983 cleanup · L2055 doctor · L2108 verbs
 #>
@@ -478,11 +479,10 @@ function ClientPids([int]$port, [int[]]$exclude, [switch]$Any) {
 function G([string]$d) { $o = & git -C $d @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' ') in $d : $o" }; $o }
 function NoHooksDir { $d = Join-Path (Get-KitPath localenv -Create) '.no-hooks'; New-Item -ItemType Directory -Force $d | Out-Null; $d }   # local-only merges, never pushed
 function Ensure-Worktree([string]$e, $r) {
-  $co = $r.cfg.checkout; $ow = Get-KitLaneWorktree $e $co -Old
-  if ((Test-Path "$($r.wt)/.git") -and $r.wt -eq $ow) {   # old names: moved once the lane is idle (a service may run from it)
-    if (@((Read-State $e).services.Values | Where-Object { $_.status -in 'up', 'starting' }).Count) { return }
-    $nw = Get-KitLaneWorktree $e $co -New; $mv = @(git -C $co worktree move $ow $nw 2>&1); if ($LASTEXITCODE) { Write-Host "[$e] $ow kept: $(@($mv)[-1])"; return }
-    $r.wt = $nw; $bm = @(git -C $nw branch -M "localenv/$e" (Get-KitLaneBranch $e) 2>&1); Write-Host "[$e] lane worktree now $nw$(if ($LASTEXITCODE) { "; branch kept: $(@($bm)[-1])" })"; return
+  $co = $r.cfg.checkout; $r.wt = Get-KitLaneWorktree $e $co   # again: lanes -Migrate may have moved it since EnvRepos
+  if ((Test-Path "$($r.wt)/.git") -and $r.wt -eq (Get-KitLaneWorktree $e $co -Old)) {   # old names: moved once the lane is idle (a service may run from it)
+    $up = @((Read-State $e).services.Values | Where-Object { $_.status -in 'up', 'starting' }).Count
+    $mv = Move-LaneWorktree $e $co $(if ($up) { "$up service(s) up" }); if ("$mv" -like 'moved*') { $r.wt = Get-KitLaneWorktree $e $co -New }; if ($mv) { Write-Host $mv }; return
   }
   if (Test-Path "$($r.wt)/.git") { return }
   Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
@@ -2107,7 +2107,7 @@ function Get-Doctor([string]$e) {
 }
 # ---- verbs: owner / brief asks; calls return within -Wait min (8). Adapters add verbs (kind envy-verb: @{ run = { ... }; ops = @(..) },
 #      run inside Invoke-LocalEnv with its parameters and helpers in scope; e.g. tenant in adapters/tenant_models.ps1)
-$script:EnvyVerbs = @('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')
+$script:EnvyVerbs = @('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', 'lanes', '_exec')
 function Test-EnvyVerb([string]$v) {
   $reg = if ($KitAdapters['envy-verb']) { @($KitAdapters['envy-verb'].Keys) } else { @() }
   if ($v -in $script:EnvyVerbs -or $v -in $reg) { return $true }
@@ -2122,7 +2122,7 @@ param(
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
-  [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
+  [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
   [int]$Lane = 0
 )
 if ($Action -eq 'help') { foreach ($hl in @(Get-Content $PSCommandPath | Select-Object -Skip 1)) { if ($hl -eq '#>') { break }; $hl }; return }   # the verbs, before any env check
@@ -2132,7 +2132,7 @@ if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
-if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
+if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup', 'lanes' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
 if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 $e = $EnvName
 # db.engine without its presets (adapters/db_presets.ps1 missing): stop before anything changes
@@ -2306,6 +2306,7 @@ switch ($Action) {
     if (@($vd.ops).Count -and $Op -and $Op -notin @($vd.ops)) { throw "$Action $Op : unknown ($(@($vd.ops) -join ', '))" }
     & $vd.run
   }
+  'lanes' { if (-not $Migrate) { throw 'usage: envy.ps1 lanes -Migrate [-LanesOnly] [-DryRun]' }; Invoke-LaneMigrate -LanesOnly:$LanesOnly -DryRun:$DryRun }   # owner / supervise
   'cleanup' { Invoke-EnvCleanup -Quick:$Quick -DryRun:$DryRun }   # owner / coordinator: orphans of envs no longer configured; -Quick: old releases + cleanup.quick
   'teardown' {   # owner: the cascade guard's triggers and journal schema removed (doctor installs them again)
     if (-not (MarksOn $e)) { throw "[$e] teardown: no marks here (db.engine mysql or mariadb, adapters/db_presets.ps1)" }

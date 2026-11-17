@@ -4,10 +4,11 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
   & <kit>/skills/crafty/crafty.ps1 wt lease -Repo <r> -Branch <b> -Agent <id> [-Target] [-Scope] [-Session] [-WaitMinutes 60]
   & <kit>/skills/crafty/crafty.ps1 wt release -Agent <id> [-Repo] | -Dir <slot> [-Reason]   uncommitted work: a WIP commit, else parked
   & <kit>/skills/crafty/crafty.ps1 wt pool [-Repo] [-Json] [-Sync] | -Migrate [-DryRun]   slots + a repo sync preview (-Sync: run it); per-task worktrees go when nothing is lost
+  & <kit>/skills/envy/envy.ps1 lanes -Migrate [-LanesOnly] [-DryRun]   old lane names -> new when idle, orphan / merged branches (Invoke-LaneMigrate)
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L13 worktrees · L64 names · L83 slots · L109 lease · L206 release · L234 sync · L289 pool
+Sections: L14 worktrees · L65 names · L84 slots · L110 lease · L207 release · L235 lanes · L294 sync · L358 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -231,9 +232,76 @@ function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo)
     "released $($o.slot) ($p)$bn"
   }
 }
+# ---- lanes: envy.ps1 lanes -Migrate (run inside envy.ps1: its EnvNames, EnvRepos, Read-State, StateFile)
+# a lane's old names (worktree localenv-<lane>-<repo>, branch localenv/<lane>) -> lane-<slug>-<repo>, lane/<slug>; $Busy (why the lane
+# is in use) keeps them; -> "moved / renamed ..." | "kept ...: <why>" | $null (nothing to move); the state keeps no worktree path
+function Move-LaneWorktree([string]$e, [string]$co, [string]$Busy = '') {
+  $ow = Get-KitLaneWorktree $e $co -Old; $nw = Get-KitLaneWorktree $e $co -New; $rl = Split-Path $co -Leaf; $ob = "localenv/$e"; $nb = Get-KitLaneBranch $e
+  $onOld = { param($d) "$(git -C $d branch --show-current 2>$null)".Trim() -eq $ob }
+  if (Test-Path "$ow/.git") {
+    if (Test-Path -LiteralPath $nw) { return "kept [$e] ${rl}: $ow and $nw both exist" }
+    if ($Busy) { return "kept [$e] ${rl}: in use ($Busy), retried next sweep" }
+    $mv = @(git -C $co worktree move $ow $nw 2>&1); if ($LASTEXITCODE) { return "kept [$e] ${rl}: $(@($mv)[-1])" }
+    if (-not (& $onOld $nw)) { return "moved [$e] ${rl}: $nw" }
+    $bm = @(git -C $nw branch -M $ob $nb 2>&1); return "moved [$e] ${rl}: $nw$(if ($LASTEXITCODE) { "; branch kept: $(@($bm)[-1])" } else { " on $nb" })"
+  }
+  if ((Test-Path "$nw/.git") -and (& $onOld $nw)) {   # moved, the branch not renamed
+    if ($Busy) { return "kept [$e] ${rl}: in use ($Busy), retried next sweep" }
+    $bm = @(git -C $nw branch -M $ob $nb 2>&1); return $(if ($LASTEXITCODE) { "kept [$e] ${rl}: $(@($bm)[-1])" } else { "renamed [$e] ${rl}: $ob -> $nb" })
+  }
+  $null
+}
+# why a lane is in use ('' = idle): a service up, starting or waiting with a live process, a lease, a hold, a train, a queued request
+function Get-LaneBusy([string]$e, $st) {
+  $up = @($st.services.Keys | Where-Object { $v = $st.services[$_]; $v.status -in 'up', 'starting', 'waiting' -and (-not $v.pid -or (Test-KitPid $v.pid $v.pstart)) })
+  @(if ($up.Count) { "up: $($up -join ', ')" }; if ($st.leases.Count) { "$($st.leases.Count) lease(s)" }; if ($st.holds.Count) { "$($st.holds.Count) hold(s)" }; if ($st.train) { 'a train' }
+    if (@($st.requests | Where-Object { $_.status -in 'queued', 'in-train' }).Count) { 'queued requests' }) -join ', '
+}
+# lanes -Migrate [-LanesOnly] [-DryRun] (supervise: -LanesOnly each sweep while an old name is left): every idle lane x repo to the new
+# names (a busy one: next sweep); localenv/* branches no lane worktree holds: a clean worktree removed, commits on no remote kept as
+# a backup/ tag (Save-KitBranchBackup), the branch deleted; then (not -LanesOnly, after a fetch) [gone] branches merged into the target and
+# backup branches whose every commit is on origin: deleted; the rest listed as kept
+function Invoke-LaneMigrate([switch]$LanesOnly, [switch]$DryRun) {
+  $repos = [ordered]@{}; $lanes = @(EnvNames)
+  foreach ($e in $lanes) {
+    foreach ($r in @((EnvRepos $e).Values)) { $co = "$($r.cfg.checkout)"; if (-not (Test-Path -LiteralPath "$co/.git")) { continue }; if (-not $repos.Contains($co)) { $repos[$co] = "$($r.target)" }
+      if ($DryRun) { $ow = Get-KitLaneWorktree $e $co -Old; $busy = Get-LaneBusy $e (Read-State $e)
+        if (Test-Path "$ow/.git") { "plan [$e] $(Split-Path $co -Leaf): $ow -> $(Get-KitLaneWorktree $e $co -New), $(Get-KitLaneBranch $e)$(if ($busy) { " (in use: $busy)" })" }; continue }
+      Invoke-KitLocked (StateFile $e) { $script:stateLocked = $true; try { $busy = Get-LaneBusy $e (Read-State $e) } finally { $script:stateLocked = $false }; Move-LaneWorktree $e $co $busy } } }   # under the state lock: no build starts mid-move
+  $held = Get-KitWtHeldTest
+  foreach ($co in @($repos.Keys)) { $tg = $repos[$co]; $rl = Split-Path $co -Leaf
+    if (-not $LanesOnly) { $null = git -C $co fetch -q --prune origin 2>&1 }
+    $wts = @{}; $wp = ''; foreach ($l in @(git -C $co worktree list --porcelain 2>$null)) { if ($l -like 'worktree *') { $wp = $l.Substring(9) } elseif ($l -like 'branch refs/heads/*') { $wts[$l.Substring(18)] = $wp } }
+    $offRemote = { param($b) $c = @(git -C $co rev-list --count "refs/heads/$b" --not --remotes 2>$null); if ($LASTEXITCODE -or -not "$($c[0])".Trim()) { -1 } else { [int]"$($c[0])".Trim() } }   # -1: unknown, kept
+    foreach ($b in @(git -C $co for-each-ref --format='%(refname:short)' refs/heads/localenv 2>$null)) { $wd = $wts[$b]
+      if (("$b" -replace '^localenv/') -in $lanes) { continue }   # a configured lane's own: moved above when idle (no worktree: Sync-KitRepo, tagged first)
+      if ($wd) { $ign = @(git -C $wd status --porcelain --ignored 2>$null | Where-Object { $_ -like '!! *' -and $_ -notmatch '(^!! |/)(target|node_modules|build|dist|out|bin|obj|\.gradle|\.angular|\.idea|\.vscode|__pycache__|\.venv)/?$' })   # ignored files beyond build output (.env, local config): kept
+        $why = if (@(git -C $wd status --porcelain 2>$null).Count) { 'uncommitted changes' } elseif ($ign.Count) { "ignored files ($(@($ign | Select-Object -First 3 | ForEach-Object { $_.Substring(3) }) -join ', '))" } else { & $held ([IO.Path]::GetFullPath($wd).TrimEnd('\', '/')) }
+        if ($why) { "kept $rl ${b}: $wd has $why"; continue } }
+      if ($DryRun) { $bk = Save-KitBranchBackup $co $b -DryRun; "plan $rl ${b}: $(if ($wd) { "remove worktree $wd, " })$(if ($bk.n) { "tag $($bk.tag) ($($bk.n) commit(s) on no remote), " })delete"; continue }
+      if ($wd) { $o = @(git -C $co worktree remove $wd 2>&1); if ($LASTEXITCODE) { "kept $rl ${b}: $(@($o)[-1])"; continue } }
+      $bk = Save-KitBranchBackup $co $b; if ($bk.err) { "kept $rl ${b}: $($bk.err)"; continue }
+      $o = @(git -C $co branch -D $b 2>&1); if ($LASTEXITCODE) { "kept $rl ${b}: $(@($o)[-1])" } else { "deleted $rl $b$(if ($wd) { " (worktree $wd removed)" })$(if ($bk.n) { " ($($bk.n) commit(s) kept as tag $($bk.tag))" })" } }
+    if ($LanesOnly) { continue }
+    foreach ($ln in @(git -C $co for-each-ref --format='%(refname:short)|%(upstream:track)' refs/heads 2>$null)) { $b, $tr = "$ln" -split '\|', 2
+      if ($wts[$b] -or $b -like 'localenv/*' -or $b -like 'lane/*') { continue }
+      $kind = if ($tr -eq '[gone]') { 'upstream gone' } elseif ($b -match '(^|[/_-])backup([/_-]|$)') { 'backup' } else { continue }
+      $n = & $offRemote $b; $merged = $false; if ($tg) { git -C $co merge-base --is-ancestor "refs/heads/$b" "origin/$tg" 2>$null; $merged = -not $LASTEXITCODE }
+      if ($n -and -not $merged) { "kept $rl ${b}: $kind, $(if ($n -lt 0) { 'commits unknown (rev-list failed)' } else { "$n commit(s) on no remote" })"; continue }
+      if ($DryRun) { "plan $rl ${b}: delete ($kind, every commit on origin)"; continue }
+      $o = @(git -C $co branch -D $b 2>&1); if ($LASTEXITCODE) { "kept $rl ${b}: $(@($o)[-1])" } else { "deleted $rl $b ($kind, every commit on origin)" } } }
+}
 # ---- sync: every pooled repo (wt pool; supervise every sync.everyMinutes): one fetch, fast-forward each local branch strictly
 # behind its upstream (checked out: ff-only when clean), prune lane branches no worktree holds and gone-upstream branches merged
 # into the target; diverged or dirty: listed only. Free clean slots sit detached at origin/<target>; pool.warm free slots exist.
+# a branch about to be deleted: its commits on no remote kept as tag backup/<branch>-<yyyyMMdd>-<sha> (one per tip) -> @{ n; tag; err }
+function Save-KitBranchBackup([string]$Repo, [string]$Branch, [switch]$DryRun) {
+  $c = @(git -C $Repo rev-list --count "refs/heads/$Branch" --not --remotes 2>$null); if ($LASTEXITCODE -or -not "$($c[0])".Trim()) { return [pscustomobject]@{ n = 0; tag = ''; err = 'rev-list failed: commits unknown' } }
+  $n = [int]"$($c[0])".Trim(); if (-not $n) { return [pscustomobject]@{ n = 0; tag = ''; err = '' } }
+  $sha = "$(git -C $Repo rev-parse --short=8 "refs/heads/$Branch" 2>$null)".Trim(); $tag = "backup/$($Branch -replace '/', '-')-$((Get-Date).ToString('yyyyMMdd'))-$sha"
+  $err = ''; if (-not $DryRun) { git -C $Repo rev-parse -q --verify "refs/tags/$tag" 2>$null | Out-Null; if ($LASTEXITCODE) { $o = @(git -C $Repo tag $tag "refs/heads/$Branch" 2>&1); if ($LASTEXITCODE) { $err = "tag $tag failed: $(@($o)[-1])" } } }
+  [pscustomobject]@{ n = $n; tag = $tag; err = $err }
+}
 function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
   $rl = Split-Path $Repo -Leaf; $r = [ordered]@{ repo = $rl; at = (Get-Date).ToString('o'); ff = @(); diverged = @(); dirty = @(); pruned = @(); warmed = @(); err = '' }
   $fo = @(git -C $Repo fetch -q --prune origin 2>&1); if ($LASTEXITCODE) { $r.err = "fetch failed: $(@($fo)[-1])"; return [pscustomobject]$r }
@@ -246,7 +314,8 @@ function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
   foreach ($ln in @(git -C $Repo for-each-ref --format='%(refname:short)|%(upstream:short)|%(upstream:track)' refs/heads 2>$null)) {
     $b, $u, $tr = "$ln" -split '\|', 3; $wd = $at[$b]
     if ($b -like 'lane/*' -or $b -like 'localenv/*') {   # a lane's branch = target + test merges, rebuilt at its next build
-      if (-not $wd) { if (-not $DryRun) { git -C $Repo branch -D $b 2>$null | Out-Null }; $r.pruned += "$b (lane branch, no worktree)" }; continue }
+      if (-not $wd) { $bk = Save-KitBranchBackup $Repo $b -DryRun:$DryRun; if ($bk.err) { $r.diverged += "$b kept: $($bk.err)"; continue }
+        if (-not $DryRun) { git -C $Repo branch -D $b 2>$null | Out-Null }; $r.pruned += "$b (lane branch, no worktree$(if ($bk.n) { "; $($bk.n) commit(s) on no remote kept as tag $($bk.tag)" }))" }; continue }
     if (-not $u) { continue }
     if ($tr -eq '[gone]') {
       if (-not $wd -and $b -notmatch $keepRx -and $tgt) { git -C $Repo merge-base --is-ancestor "refs/heads/$b" "origin/$tgt" 2>$null; if (-not $LASTEXITCODE) { if (-not $DryRun) { git -C $Repo branch -D $b 2>$null | Out-Null }; $r.pruned += "$b (upstream gone, merged into $tgt)" } }

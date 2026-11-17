@@ -173,4 +173,24 @@ $ss = & { . (Join-Path $stKit 'skills/envy/envy.ps1'); $global:snapN = 0; functi
   $n = @(Invoke-LocalEnv status -Json | ConvertFrom-Json).Count; "$n envs, $global:snapN snapshot(s), lease log parsed once: $([object]::ReferenceEquals((Get-KitLeaseLast), (Get-KitLeaseLast)))" }
 Expect "envy status: every env reads the call's one process snapshot and lease log ($ss)" ("$ss" -eq '2 envs, 1 snapshot(s), lease log parsed once: True')
 Remove-TestKit $stKit; Remove-TestKit $laneKit
+# lanes -Migrate: an idle lane's old worktree + branch -> the new names now (not at its next build), a lane in use kept until idle;
+# a localenv/* branch of no lane: worktree removed, its unpushed commit kept as a backup/ tag, deleted; [gone] merged + a backup branch
+# all on origin: deleted; a backup branch with an unpushed commit: kept
+$mgKit = New-LocalEnvKit lemig; $mgL = Join-Path $mgKit 'skills/envy/envy.ps1'; $k = $mgKit; $mq = Kd; $mo = Join-Path $mq 'mo.git'; $mc = Join-Path $mq 'mg'; $mw = Join-Path $mq 'mw'
+git init -q --bare -b main $mo; git clone -q $mo $mc 2>$null; 'a' | Set-Content "$mc/a.txt"; Save-GitRepo $mc init; git -C $mc push -q origin main 2>$null; New-Item -ItemType Directory -Force $mw | Out-Null
+git -C $mc branch -q gone1; git -C $mc push -q -u origin gone1 2>$null; git -C $mc push -q origin --delete gone1 2>$null; git -C $mc branch -q backup/x main
+git -C $mc checkout -q -b wv-backup-y; 'y' | Set-Content "$mc/y.txt"; Save-GitRepo $mc y; git -C $mc checkout -q main
+foreach ($ln in 'shop', 'shop2', 'old-sb', 'old-dirty') { git -C $mc worktree add -q -b "localenv/$ln" (Join-Path $mw "localenv-$ln-mg") main 2>$null }
+'z' | Set-Content (Join-Path $mw 'localenv-old-sb-mg/z.txt'); Save-GitRepo (Join-Path $mw 'localenv-old-sb-mg') z; 'w' | Set-Content (Join-Path $mw 'localenv-old-dirty-mg/w.txt'); git -C $mc branch -q localenv/shop3 main
+Set-JsonFile (Join-Path $mgKit 'skills/crafty/kit.local.json') @{ worktreeRoots = @($mw); repos = @(@{ name = 'mg'; checkout = $mc; target = 'main' }); localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 3 }; services = @(@{ name = 'api'; repo = 'mg'; port = 18611 }) } } } }
+$mgo = & { . $mgL help 6>$null *> $null; Set-JsonFile (Join-Path (Get-KitPath localenv -Create) 'shop2.json') @{ holds = @{ h1 = @{ who = 'dev1'; services = @('api') } } }
+  $o0 = @(Invoke-LocalEnv lanes -Migrate -DryRun 6>$null); $dryKept = (Test-Path "$mw/localenv-shop-mg/.git") -and (Test-Path "$mw/localenv-old-sb-mg/.git") -and @(git -C $mc branch --list gone1).Count
+  $o1 = @(Invoke-LocalEnv lanes -Migrate 6>$null); Set-JsonFile (Join-Path (Get-KitPath localenv) 'shop2.json') @{}; $o2 = @(Invoke-LocalEnv lanes -Migrate -LanesOnly 6>$null); , @($o1, $o2, $dryKept, $o0) }
+$mt = @(git -C $mc tag --list 'backup/localenv-old-sb-*'); $mb = @(git -C $mc branch --format='%(refname:short)')
+Expect "lanes -Migrate -DryRun: plans only, nothing moved or deleted ($(@($mgo[3]).Count) plan lines)" ($mgo[2] -and @($mgo[3] -match '^plan ').Count -ge 4)
+Expect "lanes -Migrate: a configured lane's branch without a worktree and a dirty orphan worktree are kept ($(@($mgo[0] -match 'old-dirty') -join ' '))" ('localenv/shop3' -in $mb -and 'localenv/old-dirty' -in $mb -and (Test-Path "$mw/localenv-old-dirty-mg/w.txt") -and @($mgo[0] -match '^kept mg localenv/old-dirty: .* has uncommitted changes$').Count -eq 1)
+Expect "lanes -Migrate: idle lane moved at once, the busy one kept then moved when idle, orphan lane branch tagged + deleted, merged leftovers deleted ($(@($mgo[0]) -join ' | '))" ((Test-Path "$mw/lane-shop-falcon-mg/.git") -and (Test-Path "$mw/lane-shop-kestrel-mg/.git") -and -not (Test-Path "$mw/localenv-shop-mg") -and -not (Test-Path "$mw/localenv-old-sb-mg") -and
+  @($mgo[0] -match '^kept \[shop2\] mg: in use \(1 hold\(s\)\)').Count -eq 1 -and @($mgo[1] -match '^moved \[shop2\] mg: .*on lane/shop-kestrel$').Count -eq 1 -and $mt.Count -eq 1 -and "$(git -C $mc log -1 --format=%s $mt[0])".Trim() -eq 'z' -and
+  'lane/shop-falcon' -in $mb -and 'lane/shop-kestrel' -in $mb -and 'wv-backup-y' -in $mb -and -not @($mb | Where-Object { $_ -in 'gone1', 'backup/x', 'localenv/shop', 'localenv/shop2', 'localenv/old-sb' }).Count -and @($mgo[0] -match '^kept mg wv-backup-y: backup, 1 commit\(s\) on no remote$').Count -eq 1)
+Remove-TestKit $mgKit
 Complete-Tests
