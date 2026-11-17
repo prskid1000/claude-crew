@@ -5,6 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
+// Sections: L25 crash · L49 plain · L76 warm
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
@@ -21,19 +22,22 @@ process.on('uncaughtException', (e) => crashed('node', (e && e.stack) || e))   /
 const input = readFileSync(0, 'utf8')
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(CLAUDE|KIT)_|^(TEMP|TMP)$/i.test(k)))
 
-// a crash: block (exit 2, the reason to the agent) or, under KIT_GUARD_BYPASS=1, allow; both logged for supervise
+// ---- crash: block (exit 2, the reason to the agent) or, under KIT_GUARD_BYPASS=1, allow; both logged for supervise
 function crashed(rc, err, event = 'crash') {
   if (dying) process.exit(2); dying = true   // an error in here: still blocked, never a loop
-  const bypass = process.env.KIT_GUARD_BYPASS === '1' || event === 'timeout'
-  const why = `${err || ''}`.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160).replace(/(bearer|basic|token|passw\w*|secret|api[-_]?key|authoriz\w*|cookie)\S*\s*[=:]?\s*\S+/gi, '$1 [redacted]')   // Write-KitLog masks; this line skips it
-  let tool = '', session = ''; try { const h = JSON.parse(input); tool = `${h.tool_name || ''}`; session = `${h.session_id || ''}` } catch { }
+  let inp = ''; try { inp = `${input}` } catch { }   // unset when stdin itself failed
+  const h = createHash('sha1').update(inp).digest('hex').slice(0, 12)
+  const why = `${err || ''}`.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\s+/g, ' ').trim()
+    .replace(/\b(bearer|basic|token|passw\w*|secret|api[-_]?key|authoriz\w*|cookie)\b[^\s=:]*(?:\s*[=:]\s*|\s+)(?:(?:bearer|basic)\s+)?[^\s;]+(?:;\s*[^\s;]+)*;?/gi, '$1 [redacted]').slice(0, 160)   // Write-KitLog masks; this line skips it
+  let tool = '', session = '', bypass = process.env.KIT_GUARD_BYPASS === '1' || event === 'timeout'
+  try { const j = JSON.parse(inp); tool = `${j.tool_name || ''}`; session = `${j.session_id || ''}` } catch { }
   try {
     const map = JSON.parse(readFileSync(join(here, 'kit.example.json'), 'utf8'))._paths, d = new Date(), p = (n) => `${n}`.padStart(2, '0'), off = -d.getTimezoneOffset()
     const dir = join(kit, map.stateDir, map.durable.audit, `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`)
     const at = new Date(d.getTime() + off * 60000).toISOString().slice(0, -1) + (off < 0 ? '-' : '+') + p(Math.floor(Math.abs(off) / 60)) + ':' + p(Math.abs(off) % 60)   // local, as Write-KitLog
-    const line = JSON.stringify({ at, run: process.env.KIT_RUN || '', agent: process.env.KIT_AGENT || '', script: 'guard_client.mjs', verb: 'guard', event, session, tool, rc, letThrough: bypass, why }) + '\n'
     mkdirSync(dir, { recursive: true }); const file = join(dir, 'guard.jsonl')   // Write-KitLog's line shape: pwsh is broken or absent here
-    appendFileSync(file, line)
+    if (event === 'timeout') { let seen = ''; try { seen = readFileSync(file, 'utf8') } catch { }; if (seen.includes(`"in":"${h}"`)) { event = 'crash'; bypass = process.env.KIT_GUARD_BYPASS === '1' } }   // the same input slow again: a hang, not load
+    appendFileSync(file, JSON.stringify({ at, run: process.env.KIT_RUN || '', agent: process.env.KIT_AGENT || '', script: 'guard_client.mjs', verb: 'guard', event, session, tool, in: h, rc, letThrough: bypass, why }) + '\n')
   } catch { }
   const what = `kit guard crashed (rc ${rc}${why ? `: ${why}` : ''})`
   if (event === 'timeout') process.exit(0)
@@ -42,10 +46,9 @@ function crashed(rc, err, event = 'crash') {
   process.exit(2)
 }
 
-// a deny is exit 0 + JSON: other stdout would read as plain text and allow the call
+// ---- plain: a deny is exit 0 + JSON (other stdout would read as plain text and allow the call); one pwsh per call
 function answer(s) { s = `${s || ''}`.trim(); if (!s) return true; try { const o = JSON.parse(s); return !!o && typeof o === 'object' } catch { return false } }
 
-// the plain path: one pwsh per call (and a warm server for the next one)
 function plain(start) {
   // Windows: node's children die with it (its job object): WMI starts the server outside it, while the plain call runs
   const srv = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(here, 'guard_server.ps1'), '-Pipe', name]
@@ -67,9 +70,10 @@ function plain(start) {
     if (r.error || (r.status !== 0 && r.status !== 2) || (r.status === 0 && !answer(r.stdout))) return crashed(r.error ? r.error.code || 'spawn' : r.status ?? r.signal, r.error ? r.error.message : r.stderr || r.stdout)
     process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); process.exit(r.status)
   }
-  if (starter && starter.exitCode === null) { starter.on('exit', end); setTimeout(end, 3000) } else end()
+  if (starter && starter.exitCode === null) { starter.on('exit', end); setTimeout(end, Math.max(0, Math.min(3000, 9700 - (Date.now() - t0)))) } else end()   // the answer before the hook timeout
 }
 
+// ---- warm: ask the guard_server.ps1 pipe; busy, absent or odd -> the plain path
 function ask(tries) {
   let buf = '', done = false
   const c = net.connect(pipe)

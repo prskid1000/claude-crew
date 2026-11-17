@@ -58,7 +58,10 @@ Remove-Item Env:HG_HTTP, Env:HG_SSH, Env:HG_CLI
 $sc = Invoke-PsTest scope @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'
 $g = @('rm/api/cypress/**', 'rm/api/package.json'); $d = @('rm/api/cypress/e2e/a.cy.js', 'rm/api/package.json', 'rm/api/src/Inv.java', 'rm/api/cypress.config.js')
-"globs:$("$(Get-KitScopeOutside $d $g)" -eq 'rm/api/src/Inv.java rm/api/cypress.config.js' -and -not @(Get-KitScopeOutside $d @()).Count -and "$(Get-KitScopeOutside 'a/x.ts', 'a/b/x.ts', 'A/x.ts' 'a/*.ts')" -eq 'a/b/x.ts A/x.ts')"
+"globs:$("$(Get-KitScopeOutside $d $g)" -eq 'rm/api/src/Inv.java rm/api/cypress.config.js' -and -not @(Get-KitScopeOutside $d @()).Count -and "$(Get-KitScopeOutside 'a/x.ts', 'a/b/x.ts', 'A/x.ts' 'a/*.ts')" -eq 'a/b/x.ts A/x.ts' -and "$(Get-KitScopeOutside 's/a.ts', 's/b/c.html', 's/d.css' 's/**/*.{ts,html}')" -eq 's/d.css')"
+# K65: a spec merge leaves the stored spec as read and keeps entries without a key
+$o0 = [ordered]@{ items = @([ordered]@{ code = 'A1'; desc = 'old' }) }; $mg = Merge-KitTaskSpec $o0 ([ordered]@{ items = @([ordered]@{ code = 'A1'; desc = 'new' }, [ordered]@{ desc = 'no code' }) })
+"spec:$($o0.items[0].desc -eq 'old' -and $mg.items[0].desc -eq 'new' -and @($mg.items).Count -eq 2 -and $mg.items[1].desc -eq 'no code')"
 function Get-HostProject($r) { "g/$r" }; $global:calls = 0
 function Invoke-HostVerb($v, $a) { $global:calls++; $p = "x/$($a.n)$(if ($v -eq 'mr.changes') { '/changes' })"; if ($p -match '/changes$') { @{ changes = @(@{ new_path = 'rm/api/cypress/e2e/a.cy.js' }, @{ new_path = 'rm/api/src/Inv.java'; old_path = 'rm/api/src/Inv.java' }) } } else { @{ state = $(if ($p -match '/7$') { 'opened' } else { 'merged' }); merged_at = (Get-Date).ToString('o') } } }
 foreach ($m in 'java!5', 'java!6', 'java!7') { Write-KitLog scope-log area @{ mr = $m; branch = "b$($m[-1])"; globs = $(if ($m -eq 'java!6') { @('rm/**') } else { $g }) } }
@@ -71,6 +74,6 @@ function Get-TrackerTask($i) { if ($i -eq 'b') { throw 'down' }; @{ status = "st
 Write-KitState (Join-Path (Get-KitPath decisions -Create) 'd-1.json') @{ id = 'd-1'; gate = 'scope'; status = 'answered'; item = 'b5'; mrs = @() }
 "word:$((Invoke-Scope) -notmatch 'WATCH' -and -not @((Invoke-Scope -Mrs 'java!5' -Json | ConvertFrom-Json).outside).Count)"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
-Expect "crafty.ps1 scope: globs as devtools.py; WATCH names an MR merged outside its area (checked once; open, in-area ones not; an open one asked again after 30 min); -Mrs: source / test / OUT-OF-AREA per MR; a scope word lifts both ($sc)" ("$sc" -match 'globs:True' -and "$sc" -match 'flag:True' -and "$sc" -match 'reask:True' -and "$sc" -match 'statuses:True' -and "$sc" -match 'plan:True' -and "$sc" -match 'word:True')
+Expect "crafty.ps1 scope: globs as devtools.py; WATCH names an MR merged outside its area (checked once; open, in-area ones not; an open one asked again after 30 min); -Mrs: source / test / OUT-OF-AREA per MR; a scope word lifts both ($sc)" ("$sc" -match 'globs:True' -and "$sc" -match 'flag:True' -and "$sc" -match 'reask:True' -and "$sc" -match 'statuses:True' -and "$sc" -match 'plan:True' -and "$sc" -match 'word:True' -and "$sc" -match 'spec:True')
 Remove-TestKit $k
 Complete-Tests

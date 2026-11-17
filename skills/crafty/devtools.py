@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L346 process · L506 git host · L573 scope · L652 MR · L844 merge · L1170 docs ·
-  L1323 publish · L1763 render · L2179 plugins · L2193 keepboth · L2212 selftest · L2757 CLI
+Sections: L51 config · L106 run · L194 tracker · L346 process · L506 git host · L573 scope · L662 MR · L854 merge · L1180 docs ·
+  L1333 publish · L1773 render · L2189 plugins · L2203 keepboth · L2222 selftest · L2768 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -572,16 +572,26 @@ def wt_record(worktree, key):
 
 # ---- scope: an area's path globs (brief agents[].paths); a diff outside them is refused (lib.ps1 Get-KitScopeOutside: same rule)
 def glob_rx(g):
-    """A repo-relative area glob as a regex: ** any folders, * and ? within one name, a trailing / = everything below."""
+    """A repo-relative area glob as a regex: ** any folders, * and ? within one name, {a,b} either, a trailing / = everything below;
+    case-sensitive like git paths (crafty ConvertTo-KitGlobRx: the same rule)."""
     g = re.sub(r'^\./', '', g.strip().replace('\\', '/'))
     g = g + '**' if g.endswith('/') else g
-    return re.compile(''.join({'**/': '(?:.*/)?', '**': '.*', '*': '[^/]*', '?': '[^/]'}.get(p, re.escape(p)) for p in re.split(r'(\*\*/?|\*|\?)', g)) + r'\Z')
+    part = lambda s: ''.join({'**/': '(?:.*/)?', '**': '.*', '*': '[^/]*', '?': '[^/]'}.get(p, re.escape(p)) for p in re.split(r'(\*\*/?|\*|\?)', s))
+    return re.compile(''.join('(?:' + '|'.join(part(x) for x in p[1:-1].split(',')) + ')' if p.startswith('{') else part(p)
+                              for p in re.split(r'(\{[^{}]*\})', g)) + r'\Z')
 
 
 def scope_outside(files, globs):
     """The files no glob matches ([] when there are no globs: no area, no check)."""
     rx = [glob_rx(g) for g in globs if g.strip()]
     return [f for f in files if rx and not any(r.match(f) for r in rx)]
+
+
+def _json_or_none(line):
+    try:
+        return json.loads(line)
+    except ValueError:
+        return None
 
 
 def scope_of(worktree, given='', mr='', log=None):
@@ -593,7 +603,7 @@ def scope_of(worktree, given='', mr='', log=None):
         lines = open(log or kit_path('scope-log'), encoding='utf-8').read().splitlines() if mr else []
     except OSError:
         lines = []
-    areas = [x for x in (json.loads(ln) for ln in lines if f'"{mr}"' in ln) if x.get('event') == 'area' and x.get('mr') == mr]
+    areas = [x for x in (_json_or_none(ln) for ln in lines if f'"{mr}"' in ln) if x and x.get('event') == 'area' and x.get('mr') == mr]   # a torn line: skipped
     return list(areas[-1].get('globs') or []) if areas else []
 
 
@@ -2239,14 +2249,15 @@ def selftest():
     diff = ['svc/api/cypress/e2e/inv.cy.js', 'svc/api/package.json', 'svc/api/src/main/java/InventoryService.java', 'svc/api/cypress.config.js']
     expect('scope: files outside the area globs are named (** any depth, an exact file, a sibling is outside)',
            scope_outside(diff, spec_only) == diff[2:] and scope_outside(diff, []) == [] and scope_outside(['a/b/c.ts'], ['a/']) == []
-           and scope_outside(['a/x.ts', 'a/b/x.ts'], ['a/*.ts']) == ['a/b/x.ts'] and scope_outside(['x/test/y.ts', 'test/z.ts'], ['**/test/**']) == [])
+           and scope_outside(['a/x.ts', 'a/b/x.ts'], ['a/*.ts']) == ['a/b/x.ts'] and scope_outside(['x/test/y.ts', 'test/z.ts'], ['**/test/**']) == []
+           and scope_outside(['s/a.ts', 's/b/c.html', 's/d.css', 'S/a.ts'], ['s/**/*.{ts,html}']) == ['s/d.css', 'S/a.ts'])   # K61: {a,b}, case kept
     no = scope_refusal(diff, spec_only, 'f/t1-specs', what='merge')
     expect('scope: the refusal names the files, the area and the decision path', 'merge refused: 2 file(s)' in no and 'InventoryService.java' in no
            and '-Gate scope -Item f/t1-specs' in no and scope_refusal(diff[:2], spec_only, 'b') == '')
     td = tempfile.mkdtemp(); lg = os.path.join(td, 'scopes.jsonl')
     with open(lg, 'w', encoding='utf-8') as fh:
-        fh.write(''.join(json.dumps({'event': 'area', 'mr': 'api!5', 'globs': g}) + '\n' for g in (['old/**'], spec_only)) + '{"event": "area", "mr": "api!55", "globs": ["x"]}\n')
-    expect('scope: a deferred merge (no record, no --scope) takes the MR\'s last logged area', scope_of(td, '', 'api!5', lg) == spec_only
+        fh.write(''.join(json.dumps({'event': 'area', 'mr': 'api!5', 'globs': g}) + '\n' for g in (['old/**'], spec_only)) + '{"event": "area", "mr": "api!55", "globs": ["x"]}\n{"event": "area", "mr": "api!5", "glo\n')
+    expect('scope: a deferred merge (no record, no --scope) takes the MR\'s last logged area, a torn line skipped', scope_of(td, '', 'api!5', lg) == spec_only
            and scope_of(td, '', 'api!6', lg) == [] and scope_of(td, 'a/**, b/', 'api!5', lg) == ['a/**', 'b/'])
     shutil.rmtree(td, ignore_errors=True)
     wb = {'name': 'w', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}

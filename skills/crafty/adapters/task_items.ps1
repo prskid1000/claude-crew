@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task_rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L70 move
+# Sections: L7 items · L83 move
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -66,6 +66,19 @@ function Update-KitParentItems([string]$Parent, $Pt, [hashtable]$CodeOf = @{}) {
   $sig = ConvertTo-KitLetters (@($script:KitItemsSigV) + @($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join ';'); if ($sig -eq "$($px.parentItemsSig)") { return }
   $null = Set-KitTaskChecklist $Parent 'Items' $items -Prune; Update-KitTaskIndex $Parent { param($x) $x.parentItemsSig = $sig; $x.itemsFrom = 'subtasks' }
   "parent items ${Parent}: $(@($items | Where-Object done).Count)/$($items.Count) done"
+}
+# merge by key: items / subtasks by code, decisions by id; any other field present replaces the stored one
+function Merge-KitTaskSpec($Old, $New) {
+  $m = [ordered]@{}; foreach ($k in @($Old.Keys)) { $m[$k] = $Old[$k] }
+  foreach ($k in @($New.Keys)) {
+    $key = @{ items = 'code'; subtasks = 'code'; decisions = 'id' }[$k]
+    if (-not $key) { $m[$k] = $New[$k]; continue }
+    # copies: the stored spec stays as read; an entry without its key is kept, never dropped (K65)
+    $byKey = [ordered]@{}; $loose = @(); foreach ($e in @($m[$k]) + @($New[$k])) { if (-not $e) { continue }; if (-not ($e -is [Collections.IDictionary]) -or -not $e[$key]) { $loose += , $e; continue }
+      $id = "$($e[$key])"; if (-not $byKey.Contains($id)) { $byKey[$id] = [ordered]@{} }; foreach ($f in $e.Keys) { $byKey[$id][$f] = $e[$f] } }
+    $m[$k] = @(@($byKey.Values) + $loose)
+  }
+  $m
 }
 # ---- move: tracker move and group
 # tracker move (K54): the adapter's move, then the task state (spec parent / list, a moves log) and the old and new parent's Items

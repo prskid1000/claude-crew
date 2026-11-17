@@ -8,7 +8,7 @@ $k = New-TestKit guard; $D = Join-Path $k 'skills/crafty/crafty.ps1'
 $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # {KIT} cases
 $kl = "$k/skills/crafty/kit.local.json";'{"guard":{"layout":"block"}}' | Set-Content $kl
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String; Remove-Item $kl
-Expect 'guard self-test (guard.layout block)' ($out -match '(\d+)/\1 passed')
+Expect 'guard self-test (guard.layout block): every case, at least one' ($out -match '([1-9]\d*)/\1 passed')
 '/nested/' | Set-Content "$k/.gitignore"; git init -q "$k/nested/wt"; New-Item -ItemType Directory -Force "$k/nested/plain" | Out-Null
 $gn = Invoke-PsTest 'guard-nested' @'
 $d, $kd = $args; foreach ($x in "$kd/nested/wt", "$kd/skills", "$kd/nested/plain") { $j = @{ tool_name = 'Bash'; cwd = $x; tool_input = @{ command = 'git commit -m x' } } | ConvertTo-Json -Compress; "$((& $d guard -Json $j) -join '' -match 'the live kit runs')" }

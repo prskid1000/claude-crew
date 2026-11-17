@@ -17,7 +17,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L949 check · L1266 pipes · L1323 guard · L2198 dir ·
-  L2208 checkpoint · L2238 prior · L2276 tracker · L2298 task spec · L2484 scope · L2531 host
+  L2208 checkpoint · L2238 prior · L2276 tracker · L2298 task spec · L2473 scope · L2521 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1427,7 +1427,7 @@ if ($SelfTest) {
   @('B', 'pwsh -c ". a.py"', $true, $sx),
   @('P', 'cmd.exe /k a.js', $true, $sx),
   @('B', 'mshta x.hta', $true, $da),
-  @('B', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, $rp),
+  @('B', "cd {KRT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, $rp),
   @('P', '& D:/kit/learn.ps1 -Skill crafty -Text "never rm the {RT}/work folder" -Source workflow', $false, $rp),
   @('B', 'rm -rf {KRTB}/work', $true, $rp),
   @('P', 'Remove-Item -Recurse -Force "{KRT}\work"', $true, $rp),
@@ -1435,7 +1435,7 @@ if ($SelfTest) {
   @('B', 'cd {KRTB} && rm -rf work', $true, $rp), @('B', 'cd {KIT}; rm -rf {RT}/work', $true, $rp), @('B', 'rm -rf $K/{RT}/work', $true, $rp),
   @('B', 'rm -rf /d/x/{RT}/work', $false, $rp), @('P', 'Remove-Item -Recurse "D:\x\{RT}\work"', $false, $rp), @('B', 'cd /d/x/{RT} && rm -rf work', $false, $rp),
   @('B', 'cd {WS}; rmdir {RT}/work/agents/a {RT}/work {RT}', $false, $rp), @('B', 'cd {WS}; mkdir -p {RT}/work/agents/a', $true, 'outside the kit'),
-  @('E', '{WS}/{RT}/work/a.md', $true, 'outside the kit'), @('B', 'mkdir -p {KRT}/work/agents/a; echo x > /d/x/{RT}/a.txt', $false, 'outside the kit'),
+  @('E', '{WS}/{RT}/work/a.md', $true, 'outside the kit'), @('B', 'mkdir -p {KRT}/work/agents/a; echo x > {KRTB}/../x/{RT}/a.txt', $false, 'outside the kit'),
   @('B', 'rm -rf {KRTU}/work', $true, $rp), @('B', 'cd {WS}; mkdir -p {RTU}/w', $true, 'outside the kit'), @('B', 'mv {WS}/{RT}/work/x {KRT}/work/agents/x; cat {WS}/{RT}/a.md > {KRT}/b.md', $false, 'outside the kit'),
   @('B', 'cd {WS}; echo "{RT}/" >> .gitignore; ls {RT} 2>&1', $false, 'outside the kit'), @('B', 'cd {WS}; mkdir -p a/b/c/{RT}', $false, 'outside the kit'),
   @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
@@ -1492,7 +1492,7 @@ if ($SelfTest) {
   @('B', 'curl -K /d/x/c.txt; curl -F file=@/d/x/a.png https://h.io', $true, $gb),
   @('B', 'curl -s -d ''{"route":"/c/orders"}'' https://h.io/api; curl --json ''{"p":"/d/x"}'' "https://h.io/api?path=/d/x"', $false, $gb),
   @('B', 'curl --data-raw /c/orders -H "X-Path: /v/1" https://h.io; curl -X POST --data /d/x https://h.io', $false, $gb),
-  @('B', 'node a.mjs D:/x > /d/x/out.log 2>/d/x/err.log; python a.py < /d/x/in.txt', $false, $gb),
+  @('B', 'node a.mjs D:/x > {KRTB}/work/agents/a/out.log 2>{KRTB}/work/agents/a/err.log; python a.py < /d/x/in.txt', $false, $gb),
   @('B', 'curl -s https://h.io/d/files/a.json -o D:/x/a.json; node a.mjs abc/c/def x/d/y ${R}/c/z', $false, $gb),
   @('B', "python a.py D:/x # was /d/x`n# node b.mjs /d/y", $false, $gb),
   @('B', 'python a.py x#y /d/z', $true, $gb),
@@ -1501,7 +1501,7 @@ if ($SelfTest) {
   @('P', 'python -X utf8 D:\x\a.py --out D:/x/a.png; adb shell ls /sdcard/DCIM', $false, $gb),
   @('B', 'cd web && npx cypress run', $true, 'e2e runs go through'), @('P', 'yarn e2e:ci; npx playwright test x.spec.ts', $true, 'e2e runs go through'),
   @('P', '& D:/k/skills/crafty/crafty.ps1 check -Dir web -Step e2e', $false, 'e2e runs go through'), @('B', 'crafty.ps1 check -Dir w -Step test; npx cypress run', $true, 'e2e runs go through'),
-  @('B', 'npx tsc -p cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through'),
+  @('B', 'cat cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through'),
   # a file path as the command (G = Antigravity run_command; Codex sends Bash, also with PowerShell text)
   @('B', '"{KIT}/skills/bossy/SKILL.md"', $true, $rt), @('B', '{CR}/NOTICE', $true, $rt), @('B', 'cd "{CR}" && ./NOTICE', $true, $rt),
   @('B', 'start {CR}/NOTICE', $true, $rt), @('B', '& "{CR}\NOTICE"', $true, $rt), @('B', 'cd x; "./tool.ps1" -A', $true, $rt),
@@ -1544,7 +1544,7 @@ if ($SelfTest) {
       @('B', "git -C $mc status > $cr/s.txt; echo x >> $mc/$ef; echo x > $mc/sub/new.txt", $false, 'shared main checkout')) }
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
   $bp = 'owner only'
-  $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/settings.json; git commit -m 'setx $gbn > settings.json'", $false, $bp), @('P', "Set-ItemProperty -Path x -Name $gbn -Value 1", $true, $bp))
+  $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/settings.json; git commit -m 'setx $gbn > settings.json'", $false, $bp), @('P', "Set-ItemProperty -Path x -Name $gbn -Value 1", $true, $bp), @('B', "grep x y; pwsh -c ""setx $gbn 1""", $true, $bp))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
@@ -1556,7 +1556,7 @@ if ($SelfTest) {
     if ($tool -eq 'run_command') { $hookIn = @{ conversationId = 'selftest'; toolCall = @{ args = @{ CommandLine = $v } }; cwd = $hookIn.cwd } }
     $json = $hookIn | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
-    $denied = $out -match '"(permissionDecision|decision)":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
+    $denied = $out -match '"(permissionDecision|decision)":"deny"' -and (-not $c[2] -or $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' }))   # an allow case denied for any reason fails (K63)
     $ok = $denied -eq $c[2]
     if (-not $ok) { $fail++ }
     '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ($c[2]) { 'deny' } else { 'allow' }), ($c[1] -replace "`n", ' \n ')
@@ -1663,9 +1663,9 @@ function RuntimeKinds([string]$seg, [string]$base) {
 $segBase = $here
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
-# the crash switch is the owner's (K67); quoted text is data
+# the crash switch is the owner's (K67); a commit message or a search is no write
 $bpw = '(?i)\bsetx\b|SetEnvironmentVariable|\breg(\.exe)?\s+add\b|(New|Set)-ItemProperty|(>|\btee\b|\bsed\s+-i|Set-Content|Add-Content|Out-File).*(settings[\w.-]*\.json|\.bashrc|\$PROFILE)'
-if ("$cmd $($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)" -match $gbn -and (($edits -match 'settings[\w.-]*\.json$') -or [regex]::Replace($cmd, '"(?:[^"\\]|\\.)*"|''[^'']*''', '""') -match $bpw)) {
+if ("$cmd $($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)" -match $gbn -and (($edits -match 'settings[\w.-]*\.json$') -or @($cmd -split '[;&|\r\n]+' | Where-Object { $_ -match $bpw -and $_ -notmatch '^\s*(git\b.*\b(commit|tag)\b|grep|rg|Select-String)\b' }).Count)) {
   $raw = "$($in.tool_name) $($edits -join ' ') $cmd"; Deny "kit guard: $gbn (lets guard crashes through) is set by the owner only" }
 $strayWhy = "a $rtLeaf outside the kit (a relative path from the wrong folder): agent files go under & $($KitCmd.dev) dir -Agent <id> (<kit>/$rtLeaf/work/agents/<id>/)"
 foreach ($e in $edits) { if ((RuntimeKinds " $e" $here) -contains 'stray') { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e is $strayWhy" } }
@@ -2302,17 +2302,6 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
 # { text, url }], docs: { human, ai }, decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], proseOk }.
 # Refused: a missing field (a [Bug]: title + problem), a link or MR that is no full URL, a prose finding (a local path).
-# merge by key: items / subtasks by code, decisions by id; any other field present replaces the stored one
-function Merge-KitTaskSpec($Old, $New) {
-  $m = [ordered]@{}; foreach ($k in @($Old.Keys)) { $m[$k] = $Old[$k] }
-  foreach ($k in @($New.Keys)) {
-    $key = @{ items = 'code'; subtasks = 'code'; decisions = 'id' }[$k]
-    if (-not $key) { $m[$k] = $New[$k]; continue }
-    $byKey = [ordered]@{}; foreach ($e in @($m[$k]) + @($New[$k])) { if ($e -and $e[$key]) { $byKey["$($e[$key])"] = $(if ($byKey["$($e[$key])"]) { $o = $byKey["$($e[$key])"]; foreach ($f in $e.Keys) { $o[$f] = $e[$f] }; $o } else { $e }) } }
-    $m[$k] = @($byKey.Values)
-  }
-  $m
-}
 # what a spec lacks (a [Bug] keeps its own shape: name + problem)
 function Test-KitTaskSpec($Spec) {
   $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")
@@ -2482,9 +2471,10 @@ function Invoke-Tracker {
 }
 
 # ---- scope: brief area globs (agents[].paths) vs a diff: wt commit, deploy plan (-Mrs), supervise (merged MRs); devtools.py glob_rx, the same rule
-function ConvertTo-KitGlobRx([string]$Glob) {   # ** any folders, * and ? in one name, a trailing / all below
+function ConvertTo-KitGlobRx([string]$Glob) {   # ** any folders, * and ? in one name, {a,b} either, a trailing / all below
   $g = ($Glob.Trim() -replace '\\', '/') -replace '^\./'; if ($g.EndsWith('/')) { $g += '**' }
-  '^' + (@([regex]::Split($g, '(\*\*/?|\*|\?)') | ForEach-Object { switch -CaseSensitive ($_) { '**/' { '(?:.*/)?' } '**' { '.*' } '*' { '[^/]*' } '?' { '[^/]' } default { [regex]::Escape($_) } } }) -join '') + '\z'
+  $part = { param($s) @([regex]::Split($s, '(\*\*/?|\*|\?)') | ForEach-Object { switch -CaseSensitive ($_) { '**/' { '(?:.*/)?' } '**' { '.*' } '*' { '[^/]*' } '?' { '[^/]' } default { [regex]::Escape($_) } } }) -join '' }
+  '^' + (@([regex]::Split($g, '(\{[^{}]*\})') | ForEach-Object { if ($_ -match '^\{(.*)\}$') { '(?:' + (@($Matches[1] -split ',' | ForEach-Object { & $part $_ }) -join '|') + ')' } else { & $part $_ } }) -join '') + '\z'
 }
 function Get-KitScopeOutside([string[]]$Files, [string[]]$Globs) {   # no globs: no area, nothing outside
   $rx = @($Globs | Where-Object { "$_".Trim() } | ForEach-Object { ConvertTo-KitGlobRx $_ }); if (-not $rx.Count) { return @() }

@@ -1186,9 +1186,9 @@ if (Within 'state files') {   # unreadable state files (STATE.md)
 }
 Phase 'guard log'; $blocks = @(Read-KitLog guard $now.AddHours(-1) | Where-Object event -eq 'deny')
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: bossy.ps1 audit -Since 1h shows them; add a contracts note or a lesson so they stop.' }
-$g20 = @(Read-KitLog guard $now.AddMinutes(-20)); $crash = @($g20 | Where-Object event -eq 'crash'); $slow = @($g20 | Where-Object event -eq 'timeout')
-if ($slow.Count -ge 3) { Flag 'WATCH' "guard timed out $($slow.Count)x in 20 min: those calls ran unguarded" 'A loaded machine (Resources) or a dead warm guard server (guard_server.ps1 answers in ~0.1 s).' }   # K67: blocked, or let through by the owner's switch (guard_client.mjs header); one beat: a fixed crash stops flagging
-if ($crash.Count) { Flag 'ACT' "guard crashed $($crash.Count)x in 20 min ($(@($crash | Where-Object letThrough).Count) let through by the owner's switch), last: $(([string]$crash[-1].why).Substring(0, [math]::Min(120, ([string]$crash[-1].why).Length)))" 'Spawn a kitty (kind fix) on skills/crafty; the owner unsets the switch (guard_client.mjs header) after the push.' }
+$g20 = @(Read-KitLog guard $now.AddMinutes(-[math]::Max(20.0, 1.25 * (Get-KitBeatMinutes))));   # one beat with its run time $crash = @($g20 | Where-Object event -eq 'crash'); $slow = @($g20 | Where-Object event -eq 'timeout')
+if ($slow.Count -ge 3) { Flag 'WATCH' "guard timed out $($slow.Count)x in a beat: those calls ran unguarded" 'A loaded machine (Resources) or a dead warm guard server (guard_server.ps1 answers in ~0.1 s).' }   # K67: blocked, or let through by the owner's switch (guard_client.mjs header); one beat: a fixed crash stops flagging
+if ($crash.Count) { Flag 'ACT' "guard crashed $($crash.Count)x in a beat ($(@($crash | Where-Object letThrough).Count) let through by the owner's switch), last: $(([string]$crash[-1].why).Substring(0, [math]::Min(120, ([string]$crash[-1].why).Length)))" 'Spawn a kitty (kind fix) on skills/crafty; the owner unsets the switch (guard_client.mjs header) after the push.' }
 
 # 4. -AutoFix: tracker, outbox, cleanup (inTest: deploys adapter hook)
 if ($AutoFix -and (Within 'tracker checks')) {
