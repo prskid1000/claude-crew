@@ -464,8 +464,8 @@ function Invoke-WtPool {   # slots per pooled repo; -Migrate [-DryRun]: per-task
           if (-not $bv.delete -or @($dt | Where-Object { $_ -notmatch '^( M|M |MM) ' }).Count) { "keep  ${label}: uncommitted files"; continue }
           if ($DryRun) { "would go  ${label}: $($bv.why); $($dt.Count) edited file(s) saved as a patch first"; continue }
           $pf = Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'patches')).FullName "$(Split-Path $d -Leaf)-$((Get-Date).ToString('yyyyMMdd-HHmmss')).patch"
-          [IO.File]::WriteAllText($pf, ((@(git -C $d diff HEAD --binary 2>$null) -join "`n") + "`n")); if (-not (Get-Item -LiteralPath $pf).Length -or $LASTEXITCODE) { "keep  ${label}: uncommitted files (patch failed)"; continue }
-          git -C $d checkout -q HEAD -- . 2>$null; "patched  ${label}: $($dt.Count) edited file(s) saved to $pf" }
+          git -C $d diff HEAD --binary --output="$pf" 2>$null; if ($LASTEXITCODE -or -not (Test-Path -LiteralPath $pf) -or -not (Get-Item -LiteralPath $pf).Length) { "keep  ${label}: uncommitted files (patch failed)"; continue }   # git writes the bytes (CRLF, binary kept)
+          git -C $d checkout -q HEAD -- . 2>$null; if ($LASTEXITCODE) { "keep  ${label}: uncommitted files (reset failed; patch $pf)"; continue }; "patched  ${label}: $($dt.Count) edited file(s) saved to $pf" }
         if ($w.branch) { if (-not $bv.delete) { "keep  ${label}: $($bv.why)"; continue }; $gw = $bv.why }
         elseif (-not "$(git -C $d for-each-ref --contains $w.head --count=1 --format='%(refname)' refs/remotes/origin 2>$null)".Trim()) { "keep  ${label}: detached HEAD on no remote branch"; continue }
         else { $gw = 'detached HEAD on the host' }

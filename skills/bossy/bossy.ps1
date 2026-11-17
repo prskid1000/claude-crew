@@ -26,8 +26,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1336 report · L1416 audit · L1476 storage · L1479 bugbrief · L1593 cleanup · L1678 learn ·
-  L1709 decide · L1860 debate · L1904 health · L1967 retro due · L1977 tidy · L2049 setup · L2146 guard-sendmessage
+  L715 track · L1032 supervise · L1337 report · L1417 audit · L1477 storage · L1480 bugbrief · L1594 cleanup · L1679 learn ·
+  L1710 decide · L1861 debate · L1905 health · L1968 retro due · L1978 tidy · L2050 setup · L2147 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1296,7 +1296,8 @@ foreach ($e in $active | Where-Object { $_.budget -and $_.spend -ge $_.handoff }
 foreach ($h in Get-KitHandoffs 24 | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -ge 15 }) { Flag 'ACT' "HANDOFF $($h.agent) ($($h.run)) $([int]($now - [datetime]$h.beat).TotalMinutes) min ago, no fresh agent yet" "Spawn a fresh $(if ($h.type) { $h.type } else { 'agent' }) (-Agent $($h.agent) -Run $($h.run) in its prompt): continue from $($h.handoffBrief)" @{ kind = 'HANDOFF'; who = "$($h.agent) ($($h.run))"; age = "$([int]($now - [datetime]$h.beat).TotalMinutes) min"; problem = 'handed off, no fresh agent yet' } }
 foreach ($sf in @(Get-ChildItem (Get-KitPath launches) -Filter 'self-*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-12) } | Sort-Object LastWriteTime -Descending | Select-Object -First 3)) {
   $o = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json } catch { $null }; if (-not $o.cap -or $o.completed -or -not (Within 'run budgets')) { continue }
-  $sp = try { @(Invoke-KitBackground "budget -Run $($o.run)" $KitCmd.orch @('budget', '-Run', $o.run, '-Json')) -join '' | ConvertFrom-Json } catch { $null }   # the last sweep's result (it took 11 s inline, K20)
+  $bgo = @(Invoke-KitBackground "budget -Run $($o.run)" $KitCmd.orch @('budget', '-Run', $o.run, '-Json')); foreach ($x in @($bgo -match '^WATCH ')) { Flag 'WATCH' $x.Substring(6) "bossy.ps1 budget -Run $($o.run)" }   # the last sweep's result (it took 11 s inline, K20)
+  $sp = try { @($bgo -notmatch '^WATCH ') -join '' | ConvertFrom-Json } catch { $null }
   if ($sp -and $sp.spent -ge $o.stopAt * $o.cap) { Flag 'WATCH' "run $($o.run) at $([int](100 * $sp.spent / $o.cap))% of its cap ($($sp.spent) / $($o.cap))" 'No new item starts; launch its next when it finishes (E7).' }
 }
 

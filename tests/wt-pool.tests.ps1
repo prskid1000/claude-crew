@@ -99,9 +99,10 @@ foreach ($fd in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.
 $rb = $args[3]; $vrp = $args[2]; function Get-MergedMrs { param($R, $B) if ($B -eq 'sq') { @([pscustomobject]@{ iid = 7; sha = $rb }) } }
 @('sq', 'lane/old-a', 'lane/old-b') | ForEach-Object { $x = Get-KitBranchVerdict $vrp $_ @{} -IdleHours 0; "$_=$($x.delete) ($($x.why))" }
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/crafty/crafty.ps1'), $vb, $rb)
-$fw = "$base/wt/fx-app"; git -C $app worktree add -q -b old/fx $fw origin/main 2>$null; 'regen' | Set-Content "$fw/a.txt"
+$fw = "$base/wt/fx-app"; git -C $app worktree add -q -b old/fx $fw origin/main 2>$null; 'regen' | Set-Content "$fw/a.txt"; [IO.File]::WriteAllText("$fw/f1.txt", "crlf`r`nkept`r`n")
 $fm = pwsh @np $D wt pool -Migrate 2>&1 | Out-String; $pt = @(Get-ChildItem (Join-Path (TkPath $k wt-slots) 'patches') -Filter 'fx-app-*.patch' -ErrorAction SilentlyContinue)
-Expect "K38: squash-merged rebased branch goes, dead lane with only test merges goes, with its own commit stays; merged worktree with edited fixtures: patch, then gone ($(@($vr) -join ' ') | $($fm -replace '\s+', ' '))" ((@($vr) -join ' ') -match 'sq=True .*lane/old-a=True .*lane/old-b=False' -and $fm -match 'patched\s+\S*fx-app' -and -not (Test-Path $fw) -and $pt.Count -eq 1 -and (Get-Content $pt[0].FullName -Raw) -match '\+regen')
+$null = git -C $vb apply --check $pt[0].FullName 2>&1; $fm += " apply-check:$LASTEXITCODE"
+Expect "K38: squash-merged rebased branch goes, dead lane with only test merges goes, with its own commit stays; merged worktree with edited fixtures: patch, then gone ($(@($vr) -join ' ') | $($fm -replace '\s+', ' '))" ((@($vr) -join ' ') -match 'sq=True .*lane/old-a=True .*lane/old-b=False' -and $fm -match 'patched\s+\S*fx-app' -and $fm -match 'apply-check:0' -and -not (Test-Path $fw) -and $pt.Count -eq 1 -and (Get-Content $pt[0].FullName -Raw) -match '\+regen')
 # a stray non-lease file in wt-slots (an array, as lanes.json was): supervise, wt release and bossy release skip it (K42)
 Set-Content "$kf/stray.json" '[{"lane":"x","parked":true,"parkedAt":"2026-01-01T00:00:00Z","since":"2026-01-01T00:00:00Z","agent":"devZ"},{"lane":"y","parked":true,"parkedAt":"2026-01-02T00:00:00Z","agent":"devZ"}]'
 $sg = Invoke-PsTest stray-slot @'
