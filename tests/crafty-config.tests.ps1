@@ -74,6 +74,13 @@ Expect-Each (Invoke-PsTest 'churn' $churnTest @((Lib), (Kd))) 'churn #: Write-Ki
 # usage errors carry one worked example (retro 2026-11-17: cases 31x, evidence 7x)
 $dtU = Join-Path $k 'skills/crafty/devtools.py'; $evU = & $py -X utf8 $dtU evidence 2>&1 | Out-String; $caU = & $py -X utf8 $dtU cases 2>&1 | Out-String; $crU = & $py -X utf8 $dtU cases result T1 2>&1 | Out-String
 Expect 'devtools.py: evidence / cases usage errors print a worked example per verb' ($evU -match 'e\.g\. python -X utf8 devtools\.py evidence "T1' -and $caU -match 'cases add T1 ' -and $caU -match 'cases round T1 --fix' -and $crU -match 'e\.g\. python -X utf8 devtools\.py cases result T1 A1 PASS')
+# K32: cases add on a shared task merges a second agent's goals / env per item; title / change stay first-wins; a repeat adds nothing
+$sw2 = Join-Path (Kd) 'shared'; New-Item -ItemType Directory -Force $sw2 | Out-Null
+Set-JsonFile "$sw2/a.json" @{ title = 'a'; change = 'ca'; env = 'rm'; plan = @{ unit = 'x' }; checks = @(@{ id = 'S1'; goal = 'g1' }) }
+Set-JsonFile "$sw2/b.json" @{ title = 'b'; change = 'cb'; env = 'hm'; setup = 's'; plan = @{ unit = 'y'; e2e = 'z' }; checks = @(@{ id = 'S2'; goal = 'g2' }) }
+foreach ($n in 'AA:a', 'BB:b', 'BB:b') { $env:CLAUDE_AGENT, $f = $n -split ':'; $null = & $py -X utf8 $dtU cases add T8 "$sw2/$f.json" 2>&1 }; $env:CLAUDE_AGENT = $null
+$sg = Get-Content (& $py -X utf8 $dtU cases render T8 goals) -Raw
+Expect "cases add, shared task: env 'rm; BB: hm', plan per key, both goals; title / change first-wins; a repeat adds nothing" ($sg -match '# Testing goals: T8 a\b' -and $sg -match 'Change: ca\.' -and $sg -match 'Local env: rm; BB: hm,' -and $sg -match '- unit: x; BB: y' -and $sg -match '- e2e: z' -and $sg -match 'G1 \(S1\) \| g1' -and $sg -match 'G2 \(S2\) \| g2' -and ([regex]::Matches($sg, 'BB: hm')).Count -eq 1)
 # guard: a script in command position is denied with its exact rewrite (retro 2026-11-17)
 $gRw = foreach ($gc in 'skills/bossy/bossy.ps1 learn -Skill kitty -Kind win', 'cd x && tools/run.py --n 2') { $gj = @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $gc } } | ConvertTo-Json -Compress; (pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') guard -Json $gj) -join '' }
 Expect "guard: a .ps1 / .py in command position -> the pwsh -File / python -X utf8 rewrite in the deny ($(($gRw | ForEach-Object { [regex]::Match($_, 'Rewrite: [^.]*').Value }) -join ' | '))" ($gRw[0] -match 'Rewrite: pwsh -NoProfile -File skills/bossy/bossy\.ps1 learn -Skill kitty -Kind win' -and $gRw[1] -match 'Rewrite: python -X utf8 tools/run\.py --n 2')
