@@ -37,6 +37,10 @@ Expect "cpu: group = its tree (15%), machine from idle time (50%), top other 90%
 $spk = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $lv = @(@{ at = $n.AddMinutes(-40).ToString('o'); secs = 37437000 }, @{ at = $n.AddMinutes(-20).ToString('o'); secs = 229037567 }, @{ at = $n.ToString('o'); secs = 12500 })
   $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ live = $lv; now = [pscustomobject]@{ secs = 12500; wfr = @(); stale = @(); disks = @() } } }); $h }
 Expect "sparkline: axis + caption values compact, no raw 9-digit number ($(([regex]::Matches($spk, "ya hi'>[^<]*<|figcaption>[^<]*<")).Value -join ' '))" ($spk -match "ya hi'>229M s<" -and $spk -match 'peak 229M s' -and $spk -notmatch '229037567')
+# resources: none held while agents run = "0 held" + the active count, not "No resource held."; nothing live: folded (0)
+$rsc = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; foreach ($ag in @(@([pscustomobject]@{ agent = 'devy-1'; state = 'ACTIVE'; since = $n.ToString('o'); last = $n.ToString('o') }), @())) {
+    $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = $ag; resources = @() }); "$($h -match "Resources and leases</h3><span class=cnt>\(0 held\)") $($h -match '1 agent active (·|&#183;) none holds a lease') $($h -match 'No resource held') $($h -match "Resources and leases</h3><span class=cnt>\(0\)")" } }
+Expect "resources: 0 held + 1 agent active while agents run; none live: (0) ($rsc)" ($rsc -join '|' -eq 'True True False False|False False False True')
 if (Use-BrowserKit) {   # owner 2026-11-14: one tall tile (15 repos) beside short ones: each column's last tile stretches; without it uiChecks fails
   $uiKb = Join-Path $k 'skills/bossy/kitbag.py'; $pg = Join-Path (Kd) 'tiles.html'; $pg2 = Join-Path (Kd) 'tiles-flat.html'
   & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $lv = @(0..30 | ForEach-Object { [pscustomobject]@{ at = $n.AddMinutes(-20 * $_).ToString('o'); run = $_ % 5; secs = 30 + $_ % 9; br = 30; wt = 9 } }); [array]::Reverse($lv)

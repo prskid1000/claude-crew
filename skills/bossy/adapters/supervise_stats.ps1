@@ -198,8 +198,8 @@ function Format-KitCpuCard($cpu) {
 }
 # resources: one heatmap row each (owner, 2026-11-16: as CPU and the build gate): shade = avg RAM GB in the hour (the biggest peak = full),
 # a cell's tooltip = its GB and holders, then now · 24 h peak GB; shared = always on, never an orphan; leasable with no live holder: tinted
-function Format-KitResCard($Resources, $Live) {
-  $rs = @($Resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb }); if (-not $rs.Count) { return '<p class=empty>No resource held.</p>' }
+function Format-KitResCard($Resources, $Live, [int]$Active = 0) {   # $Active: live agents (none held while agents run is a count, not idle)
+  $rs = @($Resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb }); if (-not $rs.Count) { return "<p class=empty>$(if ($Active) { "$Active agent$(if ($Active -ne 1) { 's' }) active · none holds a lease" } else { 'No resource held.' })</p>" }
   $h0 = $at.Date.AddHours($at.Hour - 23); $ls = @($Live | Where-Object { $_ -and [datetime]$_.at -ge $h0 -and [datetime]$_.at -lt $at })
   $rows = @(foreach ($r in $rs) { $nm = "$($r.name)"; $by = "$($r.by)".Trim()
       $pts = @(@($ls | ForEach-Object { $x = if ($_.res) { Get-KitMember $_.res $nm }; if ($x) { [pscustomobject]@{ h = [int][math]::Floor(([datetime]$_.at - $h0).TotalHours); gb = [double]$x.gb; by = "$($x.by)".Trim() } } }) + [pscustomobject]@{ h = 23; gb = [double]$r.gb; by = $by })

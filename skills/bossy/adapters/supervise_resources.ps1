@@ -722,7 +722,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $fxTile = "<div class=st data-fit><div class=k>Flags auto-FIXED</div><div class=v>$(if ($rxSum) { [math]::Round(100 * $fxSum / $rxSum) } else { '—' })<small>%</small></div><div class=w>$fxSum of $rxSum flags</div>$(& $spark @(for ($i = 0; $i -lt $hist.Count; $i++) { if ($fxRaised[$i]) { [math]::Round(100 * $fxFixed[$i] / $fxRaised[$i]) } }) 'sage' "per sweep, last $($hist.Count)" 'peak' 0 '%')</div>"
   $kitTiles = & $grid stats 220px @($wfTile, $brTile, $swTile, $failTile, $fxTile)   # Test runs: a Delivery tile (QA checks per day beside the tasks per repo)
   $UP = Format-KitUsageHtml $st.usage
-  $resHtml = Format-KitResCard $j.resources @($l24 | Where-Object { $_ })   # adapters/supervise_stats.ps1: one heatmap row per resource
+  $resHtml = Format-KitResCard $j.resources @($l24 | Where-Object { $_ }) $live.Count   # adapters/supervise_stats.ps1: one heatmap row per resource
   # a command on one line, cut at 120 chars with an ellipsis in the text (no CSS clip), the whole one a click away
   $cmdCell = { param([string]$c) $full = "$c".Trim(); $one = $full -replace '\s+', ' '; if ($one -eq $full -and $one.Length -le 120) { return $one }
     $hd = if ($one.Length -gt 120) { $one.Substring(0, 119).TrimEnd() + '…' } else { $one }
@@ -813,7 +813,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'><p><a class=rk href='../supervise-report.html'>Supervisor</a></p>$($UP.pages[$pk] -replace " data-tip='", " title='")</main></body></html>" } }
   # Shells: a fold only when one runs; none = one muted word in the Resources header
   $nWait = @($st.waits.rows | Where-Object { $_ }).Count   # lease waits open the fold even with nothing held
-  $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $(if ($nRes -or -not $nWait) { $nRes } else { @{ h = '0 held' } }) "$(Format-KitWaitCard $st.waits)$resHtml" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
+  $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $(if ($nRes -or -not ($nWait -or $live.Count)) { $nRes } else { @{ h = '0 held' } }) "$(Format-KitWaitCard $st.waits)$resHtml" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open) + (& $section 'agents' 'Agents' $(if ("$agCnt" -eq '0' -and $UP.nRunning) { @{ h = (& $icv run 'running runs' $UP.nRunning) } } else { $agCnt }) "$(if ($UP.running) { "<div class=rus>$($UP.running)</div>" })$agentHtml" -Open -extra $agBar) +   # running runs: a line each above their agents; ended ones: Kit internals, Delivery
     (& $section 'machine' 'Machine and resources' '' $mrHtml -Open) +
     (& $section 'internals' 'Kit internals' '' $intHtml) +
