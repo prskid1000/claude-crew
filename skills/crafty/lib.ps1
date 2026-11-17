@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L91 state · L167 config · L248 OS · L468 leases · L865 status · L1121 supervise sweep · L1199 tracker ·
-  L1528 prior · L1544 ask bugs · L1729 git-host · L1910 kitlog · L2030 params · L2335 entry-scripts
+Sections: L10 paths · L91 state · L169 config · L250 OS · L470 leases · L867 status · L1123 supervise sweep · L1201 tracker ·
+  L1530 prior · L1546 ask bugs · L1731 git-host · L1912 kitlog · L2032 params · L2337 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -104,7 +104,9 @@ function Write-KitState([Parameter(Mandatory)][string]$Path, [Parameter(Mandator
 }
 # .state/tasks/<id>.json (track, docs, comments, envRuns): agents read it, not tracker comments
 function Get-KitTaskFile([string]$Task) { Join-Path (Get-KitPath tasks) "$($Task -replace '[^\w.-]', '_').json" }
+function Test-KitTaskId([string]$Task) { $Task -match '^[^-\s]' }   # '--help', '-Task': a flag taken as the id
 function Update-KitTaskIndex([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][scriptblock]$Change) {
+  if (-not (Test-KitTaskId $Task)) { throw "not a task id: '$Task' (a flag where the task id goes?)" }
   $f = Get-KitTaskFile $Task; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
   Invoke-KitLocked $f { $x = Read-KitState $f; if (-not $x) { $x = [ordered]@{ task = $Task } }; foreach ($k in 'docs', 'comments') { if ($x[$k] -isnot [Collections.IDictionary]) { $x[$k] = @{} } }; $x.envRuns = @($x.envRuns | Where-Object { $_ }); & $Change $x; Write-KitState $f $x }
 }

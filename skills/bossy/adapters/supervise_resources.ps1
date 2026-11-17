@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L295 shells · L429 page · L952 release · L992 lines · L1025 cleanup · L1093 launch ·
-  L1171 pause · L1289 heartbeat · L1304 sessions · L1356 ci tasks ·
-  L1411 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L295 shells · L429 page · L952 release · L992 lines · L1025 cleanup · L1097 launch ·
+  L1175 pause · L1293 heartbeat · L1308 sessions · L1360 ci tasks ·
+  L1415 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1085,6 +1085,10 @@ function Invoke-KitCleanupLocks {
     $data = $lk.FullName -replace '\.lock$'
     if ($lk.Length -le 64 -and $data -match '\.(json|jsonl|md|txt)$' -and -not (Test-Path -LiteralPath $data) -and (Old $lk 24) -and -not (Test-KitLockHeld $data)) { Gone $lk.FullName 'lock file of a gone file' }
   }
+}
+# task files named by a CLI flag (.state/tasks/--help.json: a verb's flag taken as the task id; lib.ps1 now refuses such ids)
+function Invoke-KitCleanupTaskFiles {
+  foreach ($tf in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { -not (Test-KitTaskId $_.BaseName) })) { Gone $tf.FullName 'task file of an invalid task id' }
 }
 function Get-KitSuperviseFlagsScratch([switch]$AutoFix) {
   foreach ($l in @(Stop-KitScratchOrphans -DryRun:(-not $AutoFix))) { [pscustomobject]@{ level = $(if ($AutoFix) { 'INFO' } else { 'WATCH' }); what = $(if ($AutoFix) { "auto-fixed: $l" } else { $l }); action = $(if ($AutoFix) { 'Nothing to do.' } else { 'supervise -AutoFix or bossy.ps1 cleanup stops it.' }) } }
