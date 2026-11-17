@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L154 seat · L223 api · L442 finalize · L899 results · L932 retest · L989 prepare
+Sections: L26 lanes · L40 report · L154 seat · L223 api · L442 finalize · L906 results · L939 retest · L996 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -705,7 +705,7 @@ else {   # devtools doc; kept-file types stay in $D
 $reportFile = if ($docUrl -notmatch '^https?://') { $docUrl }   # a kept file is attached to the task
 
 # 4. Tracker per subtask, result rule (SKILL.md step 5)
-$out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.folderLink; files = $map.files; doc = $docUrl; subtasks = @() }
+$out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.folderLink; files = $map.files; doc = $docUrl; subtasks = @(); watch = @() }
 $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # logical name (tracker.statuses)
 $isLocal = [string]$(if ($item.localEnv) { $item.localEnv } else { $run.localEnv })   # local env item (ENV-FIX)
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
@@ -715,6 +715,8 @@ $canCreate = [bool]$bugList -or $KitConf.TrackerType -eq 'none' -or [bool]$(if (
 $script:NewDefectRx = [string](Get-KitSetting 'qa.newDefectIdRx' '')
 function Test-KnownBug($c) { [bool]"$($c.knownBug)".Trim() }
 function Test-NewDefect($c) { if (Test-KnownBug $c) { return $false }; if ("$($c.defect)" -in 'new', 'own') { return "$($c.defect)" -eq 'new' }; [bool]$script:NewDefectRx -and [string]$c.id -match $script:NewDefectRx }
+# a new defect with an inconclusive verify and no request / endpoint named is unproven: a WATCH note (watchy triage), never a [Bug]
+function Test-Unproven($c) { (VerifyStatus $c.verify) -match '^inconclusive\b' -and "$($c.what_was_done) $($c.observed)" -notmatch '(?i)\b(?:GET|POST|PUT|PATCH|DELETE)\s+\S|https?://\S|(?:^|[\s(`''"])/[\w.{}:-]+/' }
 # bossy.ps1 bugbrief parses "### <id> — <screen>" + "**Saw:**"
 $script:NtHold = @(Get-KitSetting 'qa.holdCauses' @() | Where-Object { $_ } | ForEach-Object { "$_" })   # NOT_TESTED causes no developer can fix: status kept, the owner decides
 function Format-Check($c) {
@@ -764,8 +766,10 @@ function Add-NewDefects($st, [object[]]$defects) {
     $ds = @($entries | ForEach-Object { if ($_.defects) { @($_.defects) } elseif ($_.md) { [pscustomobject]@{ label = $_.code; sig = @(); md = $_.md; group = '' } } })
     $mdAll = ($ds | ForEach-Object md) -join "`n"
     $n = ([regex]::Matches($mdAll, '(?m)^### ')).Count
-    # "<prefix> <ask product> — <first defect> (+N more)"
-    $prod = (("$(if ($ask.name) { $ask.name } else { $title })" -replace '^\s*\[[^\]]*\]\s*', '') -split ' [—-] ', 2)[0].Trim()
+    # "<prefix> <product> — <first defect> (+N more)": product = the part before " — " of a tested task, the ask or the run title
+    $pn = @(@($entries | ForEach-Object taskName) + $ask.name + $title | Where-Object { $_ } | ForEach-Object { "$_" -replace '^\s*(?:[\w.-]+:\s*)?\[[^\]]*\]\s*', '' })
+    $pAsk = "$(if ($ask.name) { $ask.name } else { $title })" -replace '^\s*\[[^\]]*\]\s*', ''
+    $prod = (@(@($pn | Where-Object { $_ -match ' [—-] ' }) + $pAsk)[0] -split ' [—-] ', 2)[0].Trim()
     $first = [regex]::Match($mdAll, '(?m)^### \S+ — (.+?)(?: \(flaky\))?\r?$').Groups[1].Value
     $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if ($mdAll -match '\(flaky\)') { ' [flaky]' })"
     $head = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)$(if ($guideUrl) { "`n- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)" })"
@@ -834,12 +838,14 @@ foreach ($st in @($item.subtasks)) {
   if (-not $mine.Count -and $dupOf) { $mine = @($checks | Where-Object { $_.subtask_id -eq $dupOf }) }
   $allFails = @($mine | Where-Object { $_.result -eq 'FAIL' })
   $knownFails = @($allFails | Where-Object { Test-KnownBug $_ })
-  $newDefects = @($allFails | Where-Object { Test-NewDefect $_ }); $ownFails = @($allFails | Where-Object { -not (Test-NewDefect $_) -and -not (Test-KnownBug $_) })
+  $newDefects = @($allFails | Where-Object { Test-NewDefect $_ }); $unproven = @($newDefects | Where-Object { Test-Unproven $_ }); $newDefects = @($newDefects | Where-Object { -not (Test-Unproven $_) }); $ownFails = @($allFails | Where-Object { -not (Test-NewDefect $_) -and -not (Test-KnownBug $_) })
   $ntChecks = @($mine | Where-Object { $_.result -eq 'NOT_TESTED' }); $nt = $ntChecks.Count; $pend = Cnt $mine 'PENDING'
   $pass = (Cnt $mine 'PASS') + (Cnt $mine 'PASS_WITH_NOTE'); $oos = Cnt $mine 'OUT_OF_SCOPE'   # OUT_OF_SCOPE: qa.outOfScope
   $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $ownFails.Count; newDefects = $newDefects.Count; known = @($knownFails | ForEach-Object { "$($_.id) -> $("$($_.knownBug)".Trim())" }); notTested = $nt; outOfScope = $oos; pending = $pend; bug = $null; closed = $false; failedTesting = $false
-    notTestedHold = @($ntChecks | Where-Object { "$($_.cause)" -in $script:NtHold }).Count }
-  $prevRec = if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
+    notTestedHold = @($ntChecks | Where-Object { "$($_.cause)" -in $script:NtHold }).Count; unproven = @($unproven | ForEach-Object id) }
+  # supervise reads watch: one WATCH + a watchy triage per unproven finding
+  foreach ($u in $unproven) { $out.watch += [pscustomobject]@{ id = $u.id; task = $st.id; screen = $u.screen; env = [string]$(if ($item.target) { $item.target } else { $run.target }); observed = $u.observed } }
+  $prevRec =if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
   if ($NoTracker) {
     # a dry run never overwrites a posted record
     if ($prevRec -and -not $prevRec.noTracker) { $out.subtasks += $prevRec; continue }
@@ -859,6 +865,7 @@ foreach ($st in @($item.subtasks)) {
     if ($ownFails.Count) { $msg += ", $($ownFails.Count) of this task's checks failed ($(($ownFails | ForEach-Object id) -join ', '))" }
     if ($nt) { $msg += ", $nt not tested ($(($ntChecks | ForEach-Object id) -join ', '))" }
     if ($oos) { $msg += ", $oos out of scope" }
+    if ($unproven.Count) { $msg += ", $($unproven.Count) unproven finding(s) ($(($unproven | ForEach-Object id) -join ', '): verify inconclusive, no request named) left to a monitoring triage, no [Bug]" }
     if ($pend) { $msg += ". $pend check(s) are tested next in another lane" }
     if ($newDefects.Count -and $canCreate) {
       $b = TrySay { Add-NewDefects $st $newDefects } 'record the new defects in the [Bug] task'

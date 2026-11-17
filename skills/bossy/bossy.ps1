@@ -26,8 +26,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1032 supervise · L1337 report · L1417 audit · L1477 storage · L1480 bugbrief · L1594 cleanup · L1679 learn ·
-  L1710 decide · L1861 debate · L1905 health · L1968 retro due · L1978 tidy · L2050 setup · L2147 guard-sendmessage
+  L715 track · L1032 supervise · L1341 report · L1421 audit · L1481 storage · L1484 bugbrief · L1598 cleanup · L1683 learn ·
+  L1714 decide · L1865 debate · L1909 health · L1972 retro due · L1982 tidy · L2054 setup · L2151 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1249,10 +1249,14 @@ if (Within 'QA bug tasks') {
   }
 }
 if (Within 'failedTesting tasks') {
-  $ft = @{}
+  $ft = @{}; $uw = @()
   foreach ($fj in Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter finalize.json -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddDays(-7) }) {
-    foreach ($s in @((Get-Content $fj.FullName -Raw | ConvertFrom-Json).subtasks | Where-Object { $_.failedTesting })) { $ft[[string]$s.id] = $fj.Directory.Parent.Name }
+    $fo = Get-Content $fj.FullName -Raw | ConvertFrom-Json
+    foreach ($s in @($fo.subtasks | Where-Object { $_.failedTesting })) { $ft[[string]$s.id] = $fj.Directory.Parent.Name }
+    if ($fj.LastWriteTime -gt $now.AddDays(-1)) { foreach ($w in @($fo.watch | Where-Object { $_ })) { $uw += "$($fj.Directory.Parent.Name)/$($fj.Directory.Name) $($w.id) ($($w.task), $($w.screen)) on $($w.env)" } }
   }
+  # pokey.ps1 finalize Test-Unproven: no [Bug] filed
+  if ($uw.Count) { Flag 'WATCH' "$($uw.Count) unproven QA finding(s), verify inconclusive, no request named: $($uw -join '; ')" "One watchy kind triage per env for the finding's window (its results.json observed); a confirmed defect -> its [Bug]; then supervise -Ack." }
   $trk = (Read-KitTracking).tasks; if ($state.ftStatus -isnot [Collections.IDictionary]) { $state.ftStatus = @{} }
   foreach ($id in @($state.ftStatus.Keys)) { if ($id -notin $ft.Keys) { $state.ftStatus.Remove($id) } }
   $ids = @($ft.Keys | Where-Object { -not ($trk[$_] -and -not $trk[$_].done) })   # tracked open: its own flow

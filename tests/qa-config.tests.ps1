@@ -40,6 +40,14 @@ New-Task 'TD1' 'Task D1'; New-Task 'TD2' 'Task D2'
 $rj = Read-Json "$nd/D2/results.json"; $rj.checks[1] | Add-Member cause 'env-data'; & $J $rj "$nd/D2/results.json"
 $null = Fin $nd D1; $null = Fin $nd D2
 Expect 'finalize, neutral config: an X id without defect is the own FAIL (no qa.newDefectIdRx); env-data untested fails testing (no qa.holdCauses)' ((Rec $nd D1).fail -eq 1 -and (Rec $nd D1).newDefects -eq 0 -and (Rec $nd D1).failedTesting -and (Rec $nd D2).failedTesting -and -not (Rec $nd D2).keptOpen)
+# K52: an inconclusive new defect naming no request = WATCH, no [Bug]; the bug title = "<product> — <first defect>" (tested task's product, not the ask)
+New-Task 'PU' 'Leverage the thing to build agents'; New-Task 'TU' '[Feature] ProdU - Agents P3: history' 'PU'; New-Task 'TV' 'Task V' 'PU'
+$un = New-Run 'UN' @(@{ code = 'U1'; task = 'TU'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL', 'new'), @('X2', 'FAIL', 'new')) }, @{ code = 'U2'; task = 'TV'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL', 'new')) })
+(Read-Text "$un/run.json") -replace 'Task TU', '[Feature] ProdU - Agents P3: history' | Set-Content "$un/run.json"; $ru = Read-Json "$un/U1/results.json"; $ru.checks[1].observed = 'Intermittent 502, about 1 in 3 calls, vs stable 2xx'; $ru.checks[1] | Add-Member verify 'inconclusive | 30 GETs all 200'
+$ru.checks[2].observed = 'GET /api/agents/7 500 vs 200'; $ru.checks[2] | Add-Member verify 'inconclusive | window gone'; & $J $ru "$un/U1/results.json"
+$rv = Read-Json "$un/U2/results.json"; $rv.checks[1] | Add-Member verify 'inconclusive | no repro'; & $J $rv "$un/U2/results.json"
+$null = Fin $un U1; $null = Fin $un U2; $ub = @(Get-ChildItem $store -Filter *.json | ForEach-Object { Read-Json $_.FullName } | Where-Object { $_.parent -eq 'PU' -and $_.name -like '`[Bug`]*' })
+Expect "finalize: inconclusive X1 without a request -> unproven + watch, no [Bug]; X2 names GET /api -> [Bug] '<product> — <first defect>' ($(@($ub.name) -join '; '))" ((Rec $un U1).unproven -contains 'X1' -and (Rec $un U1).newDefects -eq 1 -and (Read-Json "$un/U1/finalize.json").watch[0].id -eq 'X1' -and $ub.Count -eq 1 -and $ub[0].name -eq '[Bug] ProdU — s' -and (Rec $un U2).newDefects -eq 0 -and (Rec $un U2).closed -and -not (Rec $un U2).bug)
 # lanes: qa.lanes names any lane; unset = web only; unknown names the configured list
 $lo1 = pwsh @np $Q retest -RunDir $rt -Task TZ -Code Z2 -Lane app 2>&1 | Out-String; $lc1 = $LASTEXITCODE
 '{"qa":{"lanes":{"web":{"kind":"web"},"desk":{"kind":"desktop"},"phone":{"kind":"app","devices":"android"}}}}' | Set-Content $kl

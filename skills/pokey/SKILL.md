@@ -49,7 +49,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **FAIL**: any defect: 5xx, unexpected 4xx, crash, stuck flow, unsaved data, broken navigation, missing screen,
      silent 200 with empty data, wrong answer stated as fact, restart errors. Set **`defect`**: `own` = task expected
      behaviour failed, never "pre-existing" (failedTesting -> back to dev); `new` = regression outside change
-     (checks `X1`, `X2`... -> [Bug] task); **`knownBug: <task id>`**: an open, untested task already tracks it.
+     (`X1`, `X2`... -> [Bug] task); **`knownBug: <task id>`**: an open, untested task already tracks it.
    - **Upstream 5xx** (502/503/504 or a killed long turn from a service the change does not touch): check that service's
      health and restart times first (service log, a control call). An outage -> NOT_TESTED `tool-down`, re-run after recovery;
      a real defect there -> `defect: new` under that service's owner, one bug per shared cause.
@@ -74,10 +74,10 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    out); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
-all checks pass -> **closed** · an own check FAILED or not all tested -> **failedTesting** (fallback `inProgress` +
-comment), one QA comment (no doc link) lists failed / untested checks and why, NO new task · a new defect -> ONE
-`[Bug] <ask> — new defects (n)` under the original ask (its open collector grows; a known `signature`: a duplicate line) ·
-a `knownBug` FAIL: not own, no new task, a "Seen again" line on it · PENDING -> open.
+all pass -> **closed** · an own check FAILED or not all tested -> **failedTesting** (fallback `inProgress` + comment),
+one QA comment (no doc link) names failed / untested checks, why; NO new task · a new defect -> ONE `[Bug] <product> —
+<first defect> (+n)` under the ask (one open collector; known `signature`: duplicate line); verify `inconclusive` + no
+request named: WATCH, no [Bug] · `knownBug` FAIL: not own, no task, "Seen again" line · PENDING: open.
 
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
 change may be another agent's; change a setting only when a check needs it, restore it at once, list it in `setup_changes`;
@@ -101,7 +101,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
 - H3. Result rule (above), each with a comment (check ids, saw, evidence) `crafty.ps1 tracker status <task> closed|failedTesting`;
-  a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "[Bug] <ask> — <defect>"`.
+  a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "[Bug] <product> — <defect>"`.
 
 ## Lead steps (a test-only run; bossy T1-T4)
 - L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for

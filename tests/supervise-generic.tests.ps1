@@ -76,7 +76,7 @@ $global:tname = 'Plain fix'; $global:st = 'open'; $p3 = Invoke-Track add -Task c
 '@ @($O)
 Expect-Each $ciTrack 'track: CI task # (wait: track add of a merged MR promotes at once, holds while the job runs again; closed: job passed -> closed + one qa-result comment with the job link; plain: no pattern match = the testing-doc gate)' @('wait', 'closed', 'plain') 3
 # supervise failedTesting: tracker views in the background (inline: 6-9 s a sweep), cached statuses now, a 2-beat cache
-$qd = TkPath $k qa-runs -Create; $null = New-Item -ItemType Directory -Force "$qd/q1/A1"; & $J @{ subtasks = @(1..4 | ForEach-Object { @{ id = "ft$_"; failedTesting = $true } }) } "$qd/q1/A1/finalize.json"
+$qd = TkPath $k qa-runs -Create; $null = New-Item -ItemType Directory -Force "$qd/q1/A1"; & $J @{ subtasks = @(1..4 | ForEach-Object { @{ id = "ft$_"; failedTesting = $true } }); watch = @(@{ id = 'X1'; task = 'ft1'; screen = 'api'; env = 'stg' }) } "$qd/q1/A1/finalize.json"
 $tn = TkPath $k tracker-none -Create; $ts = { param($i, $s) & $J @{ id = "ft$i"; name = 'n'; status = $s } "$tn/ft$i.json" }; 1..4 | ForEach-Object { & $ts $_ 'failed testing' }
 $ftn = { "$(@((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags.what) -match 'failed testing, back' -replace ' .*')" }
 $ftw = { foreach ($bj in @(Get-ChildItem (TkPath $k background) -Filter '*statuses*.json' -ErrorAction SilentlyContinue)) { $bjr = Get-Content $bj.FullName -Raw | ConvertFrom-Json; for ($i = 0; $i -lt 300 -and (Get-Process -Id $bjr.pid -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 100 } } }
@@ -85,8 +85,9 @@ $f1 = & $ftn; & $ftw; $f2 = & $ftn; & $ftw; & $ts 4 'in progress'; $f3 = & $ftn;
 Expect "supervise failedTesting: views in the background, the last result next sweep, then cached; a view newer than the cache wins ($f1 $f2 $f3 $f4 $f5)" ("$f1|$f2$f3$f4$f5" -eq '|4443')
 # every view fails (tracker down): one WATCH, not silence
 & $ftw; Remove-Item "$tn/ft*.json"; & $fta; $null = & $ftn; & $ftw; & $fta
-$fw = @((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^failedTesting views: background .*failed: tracker statuses: 4 view\(s\) failed' })
+$fwa = @((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags); $fw = @($fwa | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^failedTesting views: background .*failed: tracker statuses: 4 view\(s\) failed' })
 Expect "supervise failedTesting: failed views are a WATCH ($($fw.Count))" ($fw.Count -eq 1)
+Expect "supervise: an unproven QA finding (finalize.json watch, K52) is one WATCH naming run/item, check and env" (@($fwa | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^1 unproven QA finding.*q1/A1 X1 \(ft1, api\) on stg' }).Count -eq 1)
 # gate.cacheFlush: starved gate + big cache -> 1 flush / 30 min; failing command = 1 WATCH
 $cft = @'
 $env:KIT_TRACKER_TYPE = 'none'
