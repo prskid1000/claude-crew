@@ -20,8 +20,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1084 README graph · L1187 lint command · L1453 audit ·
-  L1592 registry · L1924 arch lint · L2191 prose · L2356 sections · L2486 budget · L2500 migrate · L2660 plugins ·
-  L2714 state lint · L2902 main
+  L1593 registry · L1925 arch lint · L2192 prose · L2357 sections · L2487 budget · L2501 migrate · L2661 plugins ·
+  L2715 state lint · L2903 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1513,11 +1513,11 @@ def strip_ps_comments(text):
     text = re.sub(r'<#.*?#>', lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
     return '\n'.join(re.sub(r'(^|\s)#(?![>{]).*$', r'\1', l) if not re.search(r"""['"][^'"]*#""", l) else l for l in text.split('\n'))
 
-MATH_DBL = re.compile(r'/|\d\.\d|\[double\]|\.Total\w*|\w+GB\b|Get-Kit(Param|Setting|BeatMinutes|NetTimeout)\b|\(Left\)|\[math\]::(Pow|Sqrt)\b')
+MATH_DBL = re.compile(r'/|\d\.\d|\[double\]|\.Total\w*|\w+GB\b|Get-Kit(Param|Setting|BeatMinutes)\b|\(Left\)|\[math\]::(Pow|Sqrt)\b')
 
 def ps_math_int(t):
     """[math]::Min/Max(<int literal>, <a side that may be a double>): [(line, second argument)] (here-strings and comments skipped)."""
-    code = re.sub(r"""@'.*?'@|@".*?"@""", lambda m: '\n' * m.group(0).count('\n'), strip_ps_comments(t), flags=re.S)
+    code = re.sub(r"""@'[ \t]*\r?\n.*?\r?\n[ \t]*'@|@"[ \t]*\r?\n.*?\r?\n[ \t]*"@""", lambda m: '\n' * m.group(0).count('\n'), strip_ps_comments(t), flags=re.S)   # here-strings only: 'x@' in a line is none
     out = []
     for m in re.finditer(r'\[math\]::(?:Min|Max)\(\s*-?\d+\s*,', code, re.I):
         i, depth = m.end(), 1
@@ -1532,6 +1532,7 @@ def ps_math_int(t):
             while j < len(bare) and d:
                 d += {'(': 1, ')': -1}.get(bare[j], 0)
                 j += 1
+                whole = whole if d != 1 or bare[j - 1] != ',' else None   # Round(x, 1): digits stay
         if MATH_DBL.search(bare) and not re.match(r'\[(?:int|long)\]', bare, re.I) and not (whole and j == len(bare)):
             out.append((code.count('\n', 0, m.start()) + 1, arg))
     return out

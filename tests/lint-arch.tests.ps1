@@ -40,7 +40,7 @@ Set-Content (Join-Path $kc 'skills/crafty/adapters/zz_arch.ps1') "#Requires -Ver
 # ARCH-SBLOG fixtures: a flagged word (a comment counts) and a computed member name; a quoted literal member and the exempt flagged.ps1 pass
 Set-Content (Join-Path $kc 'skills/crafty/zz_sb.ps1') "#Requires -Version 7`n# loop the PSObject.Properties`n`$x = `$o.`$k`n`$y = `$o.'lit'" -Encoding utf8
 # PS-MATH-INT (K57): an int literal first and a double side; a .Length side, a double literal, an [int] side and a comment pass
-Set-Content (Join-Path $kc 'skills/crafty/zz_math.ps1') "#Requires -Version 7`n`$a = [math]::Max(0, (`$t - `$u).TotalMinutes)`n`$b = [math]::Min(80, `$s.Length)`n`$c = [math]::Max(0.0, `$x / 2)`n`$d = [math]::Max(1, [int](`$x / 2))`n# [math]::Max(0, 1.5)" -Encoding utf8
+Set-Content (Join-Path $kc 'skills/crafty/zz_math.ps1') "#Requires -Version 7`n`$s = 'x@'`n`$a = [math]::Max(0, (`$t - `$u).TotalMinutes)`n`$b = [math]::Min(80, `$s.Length)`n`$c = [math]::Max(0.0, `$x / 2)`n`$d = [math]::Max(1, [int](`$x / 2))`n# [math]::Max(0, 1.5)" -Encoding utf8
 # inline pwsh text in a .py (a literal and a named constant) and a cdxml cmdlet are counted; a git -c pair passes
 $sbPy = "import subprocess`nPS_ZZ = '''`$a = 1`n`$b = [Runtime.InteropServices.Marshal]'''`nsubprocess.run(['pwsh', '-EncodedCommand', PS_ZZ])`nsubprocess.run(['pwsh', '-Command', 'Get-NetTCPConnection'])`nsubprocess.run(['git', '-c', 'x.GetField=1'])`nsubprocess.run(['pwsh', '-Command', f'& {{ Add-Type {PS_ZZ} }}'])"
 Set-Content (Join-Path $kc 'skills/crafty/zz_sbi.py') $sbPy -Encoding utf8
@@ -85,7 +85,7 @@ Expect "ARCH-DEAD-KEY: a documented key no script reads is a counted problem (ex
   $l1 -match '(?m)^ARCH-DEAD-KEY\s+skills/crafty/kit\.example\.json: "zzDeadKey"' -and $l1 -notmatch 'ARCH-DEAD-KEY.*zzLiveKey')
 Expect 'ARCH-SBLOG: a flagged word (in a comment too) and $o.$k in skills/ are counted problems with file:line; a literal member and the exempt flagged.ps1 pass' ($l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:2: "Properties"' -and
   $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1:3: \$o\.\$k' -and (& $cnt 'ARCH-SBLOG\s+skills/crafty/zz_sb\.ps1') -eq 2 -and $l1 -notmatch 'ARCH-SBLOG\s+skills/crafty/flagged\.ps1')
-Expect 'PS-MATH-INT: [math]::Max(0, <a double>) is a problem at its line; .Length, 0.0, [int] and a comment pass' ($l1 -match '(?m)^PS-MATH-INT\s+skills/crafty/zz_math\.ps1:2:' -and (& $cnt 'PS-MATH-INT\s+skills/crafty/zz_math\.ps1') -eq 1)
+Expect 'PS-MATH-INT: [math]::Max(0, <a double>) is a problem at its line (after a ''x@'' string); .Length, 0.0, [int] and a comment pass' ($l1 -match '(?m)^PS-MATH-INT\s+skills/crafty/zz_math\.ps1:3:' -and (& $cnt 'PS-MATH-INT\s+skills/crafty/zz_math\.ps1') -eq 1)
 Expect 'ARCH-SBLOG: inline -Command / -EncodedCommand text in a .py (literal or constant, at its line) and a cdxml cmdlet count; git -c passes' ($l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:3: "InteropServices"' -and
   $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:5: "Get-NetTCPConnection": a cdxml' -and $l1 -match '(?m)^ARCH-SBLOG\s+skills/crafty/zz_sbi\.py:7: "Add-Type"' -and (& $cnt 'ARCH-SBLOG\s+skills/crafty/zz_sbi\.py') -eq 4)
 # pwsh's own check (internal; absent on another version: SKIP): no lint-scoped kit script is logged on load

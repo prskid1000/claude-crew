@@ -1113,7 +1113,7 @@ function Get-SysCpu {
     return [math]::Round(100 * (1 - ($b.idle - $a.idle) / $d), 0)
   }
   $sum = (ps -A -o %cpu= 2>$null | ForEach-Object { [double]"$_".Trim() } | Measure-Object -Sum).Sum
-  [math]::Min(100, [math]::Round($sum / [Environment]::ProcessorCount, 0))
+  [math]::Min(100.0, [math]::Round($sum / [Environment]::ProcessorCount, 0))
 }
 # one listen-table snapshot per 2 s (netstat takes ~0.2 s); Stop-Svc drops it
 $script:ListenSnap = $null
@@ -1254,7 +1254,7 @@ function Add-RamSample([double]$gb) {
 function Get-KeepFreeFrom([double[]]$xs, [double]$total) {
   $min = [math]::Max(3.0, [math]::Round($total * 0.05, 1))   # TODO-PARAM (fixed default)
   if ($xs.Count -lt 60) { return @{ gb = [math]::Max(6.0, [math]::Round($total * 0.15, 1)); why = "learning ($($xs.Count)/60 free-RAM samples): max(6 GB, 15% of RAM)" } }
-  $drops = @(for ($i = 10; $i -lt $xs.Count; $i++) { [math]::Max(0, $xs[$i - 10] - $xs[$i]) }) | Sort-Object
+  $drops = @(for ($i = 10; $i -lt $xs.Count; $i++) { [math]::Max(0.0, $xs[$i - 10] - $xs[$i]) }) | Sort-Object
   $swing = [math]::Round([double]@($drops)[[int][math]::Floor(0.9 * (@($drops).Count - 1))], 1)
   $dips = @(for ($i = 1; $i -lt $xs.Count; $i++) { if ($xs[$i] -lt 6 -and $xs[$i - 1] -ge 6) { 1 } }).Count
   $gb = [math]::Max($min, [math]::Min([math]::Round($total * 0.25, 1), [math]::Round($min + $swing + 0.5 * [math]::Min($dips, 8), 1)))
