@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1418 audit ·
-  L1534 registry · L1866 arch lint · L2133 prose · L2284 sections · L2414 budget · L2428 migrate · L2588 plugins ·
-  L2642 state lint · L2830 main
+Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1426 audit ·
+  L1542 registry · L1874 arch lint · L2141 prose · L2292 sections · L2422 budget · L2436 migrate · L2596 plugins ·
+  L2650 state lint · L2838 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1351,6 +1351,13 @@ const svgs = () => [...document.querySelectorAll('body *')].flatMap((g) => {
   }
   return out
 })
+// links never navigate the page away (owner, 2026-11-17): the kit's own pages (relative, file:) open in the page drawer (data-dw);
+// web URLs (MR, task, doc) in a new tab; '#' anchors and app links (vscode:, mailto:) stay as they are
+const links = () => [...document.querySelectorAll('a[href]')].flatMap((a) => {
+  const h = a.getAttribute('href') || '', web = /^https?:/i.test(h), app = /^[a-z][a-z0-9+.-]*:/i.test(h) && !web && !/^file:/i.test(h)
+  if (h.startsWith('#') || app || a.hasAttribute('data-dw') || (web && a.target === '_blank')) return []
+  return [{ el: 'link', why: web ? 'a web link opens in this tab: target=_blank' : 'a link to a kit page navigates away: open it in the page drawer (data-dw)', text: `${a.textContent.trim().slice(0, 40)} -> ${h.slice(0, 80)}` }]
+})
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
 const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
 // one tab for every state, its storage cleared before each load: a new context per state spawned a renderer each (48 for the kit
@@ -1369,7 +1376,7 @@ try {
     const base = `${out}/${stem}-${width}-${theme}${si ? '-s' + si : ''}`, height = await page.evaluate(() => document.documentElement.scrollHeight)
     await page.screenshot({ path: `${base}.png`, fullPage: true })   // as the owner sees it: the page's own open / closed defaults
     const hs = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (hs > 1) clipped.push({ el: 'page', why: `horizontal page scroll ${hs} px (a wide table scrolls in its own box)`, text: '' })
-    clipped.push(...await page.evaluate(layout), ...await page.evaluate(rows), ...await page.evaluate(svgs), ...await page.evaluate(cols), ...await page.evaluate(stray))
+    clipped.push(...await page.evaluate(layout), ...await page.evaluate(rows), ...await page.evaluate(svgs), ...await page.evaluate(cols), ...await page.evaluate(stray), ...(si ? [] : await page.evaluate(links)))
     await page.evaluate(openAll); await rest('with every details open')
     clipped.push(...await page.evaluate(scan), ...await page.evaluate(fit), ...await page.evaluate(() => typeof window.uiChecks === 'function' ? window.uiChecks() : []))   // a page's own checks: [{el, why, text}]
     await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
@@ -1381,7 +1388,8 @@ console.log(JSON.stringify(res))'''
 def cmd_ui_check(a):
     """ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']: PAGE_JS (light + dark; each --click state after
     the page as loaded); exit 1 on clipped text, a failed click, a layout box (window.uiBoxes) off-screen or overlapping, an svg over a sibling tile or a [data-fit]
-    card with 24+ px blank below its content or a card row 24+ px short of its box at 1280+ px, 0 = pass + stamp."""
+    card with 24+ px blank below its content, a card row 24+ px short of its box at 1280+ px or a link that navigates away (kit
+    pages: the drawer, data-dw; web URLs: target=_blank), 0 = pass + stamp."""
     flags, rest = parse_opts(a, {'--widths', '--click'})
     widths = str(flags.get('--widths') or '1920,1366,900,390')
     if len(rest) != 1 or not osp.isfile(rest[0]) or not re.fullmatch(r'\d+(,\d+)*', widths):

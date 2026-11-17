@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L295 shells · L429 page · L956 release · L996 lines · L1029 cleanup · L1101 launch ·
-  L1179 pause · L1297 heartbeat · L1312 sessions · L1364 ci tasks ·
-  L1419 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L295 shells · L429 page · L951 release · L991 lines · L1024 cleanup · L1096 launch ·
+  L1174 pause · L1292 heartbeat · L1307 sessions · L1359 ci tasks ·
+  L1414 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -506,6 +506,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
   $stats.gate = try { Get-KitGateStats $d.at @($d.resources) } catch { $null }
   $stats.waits = try { Get-KitLeaseWaits $d.at } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
+  $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 9)
   $runPages = @{}; Write-KitAtomic $p (Format-KitSuperviseHtml $j $runPages)
@@ -630,16 +631,10 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $card ={ param($f) $c = Get-KitFlagCells $f; $lv = if ($f.level -eq 'ACT') { 'ACT' } else { 'WATCH' }; $ic = @($fIco | Where-Object { "$($c.kind) $($c.problem)" -match "(?i)$($_[0])" })[0]
     "<article class='flag $lv f' data-fit><div class=h><span class='chip lv $lv'>$lv</span><svg class=fi viewBox='0 0 24 24' aria-hidden=true><path fill=none d='$($ic[1])'/></svg>$(@(@($c.kind, $c.who | Where-Object { "$_".Trim() } | ForEach-Object { "<span>$(& $e $_)</span>" }) + @(if ("$($c.age)".Trim()) { & $minAgo $c.age })) -join '<span class=dot>·</span>')</div><div class=w>$(& $long $c.problem)</div>$(if ("$($c.action)".Trim()) { "<div class=n><b>Next</b> $(& $long $c.action)</div>" })</article>" }
   $info = @($flags | Where-Object level -eq 'INFO')
-  # history: flags per sweep as lines, oldest left (ACT solid, WATCH dashed, FIXED dotted: told apart without colour)
-  $hMax = [math]::Max(1, (@($hist | ForEach-Object { [math]::Max([math]::Max((& $hCount $_ 'ACT'), (& $hCount $_ 'WATCH')), [int]$_.fixed) }) + 0 | Measure-Object -Maximum).Maximum)
-  $hSeries = @(@{ vals = @($hist | ForEach-Object { & $hCount $_ 'ACT' }); tone = 'act'; style = 'solid'; max = $hMax }, @{ vals = @($hist | ForEach-Object { & $hCount $_ 'WATCH' }); tone = 'watch'; style = 'dash'; max = $hMax }, @{ vals = @($hist | ForEach-Object { [int]$_.fixed }); tone = 'sage'; style = 'dot'; max = $hMax })
-  # flags band: one masonry grid, the trend pinned top right; below: fixed, promotion holds, notes (folded)
+  # flags band: one masonry grid; below: the flags heatmap (24 h), fixed, promotion holds, notes (folded)
   $fixedI = @($info | Where-Object { "$($_.what)" -like 'auto-fixed:*' }); $holdI = @($info | Where-Object { "$($_.what)" -match '^HOLD \S+:' }); $restI = @($info | Where-Object { "$($_.what)" -notlike 'auto-fixed:*' -and "$($_.what)" -notmatch '^HOLD \S+:' })
   $flagCards = if ($nAct + $nWatch) { @($flags | Where-Object level -in 'ACT', 'WATCH' | Sort-Object { $_.level -ne 'ACT' } | ForEach-Object { & $card $_ }) -join '' } else { '<p class=empty>All clear: no ACT or WATCH flag.</p>' }
   $fixedHtml = $(if ($fixedI.Count) { & $fold 'fixed' 'Fixed this sweep' $fixedI.Count (& $grid info 280px @($fixedI | ForEach-Object { "<li class=f>$(& $e ("$($_.what)" -replace '^auto-fixed:\s*'))</li>" }) 0 ul) -cls sub })
-  # in the side panel only: the history trend (each count once: the header chips are this sweep, the chart the last 12)
-  # a fixed 100 px chart pinned to the top of the last masonry column (data-end), cards pack around it; title + legend one line, y 0..peak, x oldest..now
-  $trendFig = if ($hist.Count -ge 2) { "<figure data-end class=ftr><figcaption><b>flags per sweep</b><span class=lgs><i class='lgd t-act'></i>ACT<i class='lgd t-watch ds'></i>WATCH<i class='lgd t-sage dd'></i>FIXED</span></figcaption><div class=fty><span>$hMax</span><span>0</span></div><div class=lcp role=img aria-label='flags per sweep, last $($hist.Count) sweeps, peak $hMax'>$(Format-KitLineChart @($hist) $hSeries '' -Bare)</div><div class=ax><span>$($hist.Count) sweeps ago</span><span>now</span></div></figure>" }
   # a hold row: task (linked) · why (deferred count or who it waits on) · reason, wrapped; the release command once, below
   $holdRow = { param([string]$w) $null = $w -match '^HOLD (?<t>[^\s:]+):\s*(?<why>.*?)(?:;\s*release:\s*(?<cmd>.+))?$'; $tid = $Matches.t; $why = "$($Matches.why)"
     $its = @(if ($why -match '\((?<k>deferred items|waiting on [^:]+):\s*(?<l>.+)\)\s*$') { $hk = $Matches.k; ([regex]::Split($Matches.l, ',(?![^()]*\))')) | ForEach-Object { "$_".Trim() } | Where-Object { $_ } } else { $hk = ''; $why })   # @(): one item stays a list, never its first letter
@@ -651,7 +646,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $notes = @(@($restI | ForEach-Object { "$($_.what)" }) | Group-Object { $m = & $noteKey $_; if ($m) { "$($m.k)|$($m.r)" } else { $_ } } | ForEach-Object { if ($_.Count -gt 1) { $m0 = & $noteKey $_.Group[0]; "$($m0.k): $(@($_.Group | ForEach-Object { (& $noteKey $_).s }) -join ', ') $($m0.r)" } else { $_.Group[0] } })
   $flagBelow = $(if ($holdI.Count) { & $fold 'holds' 'Promotion holds' $holdI.Count "<ul class=hold>$(@($holdI | ForEach-Object { & $holdRow "$($_.what)" }) -join '')</ul>$(if ($holdCmd.Count) { "<p class=hc>release: $(@($holdCmd | ForEach-Object { "<code class=cp title='Click to copy'>$(& $e $_)</code>" }) -join ' ')</p>" })" -cls sub }) + $(if ($notes.Count) { & $fold 'notes' 'Notes' $notes.Count (& $grid info 280px @($notes | ForEach-Object { "<li class=f>$(& $e $_)</li>" }) 0 ul) -cls sub })
   # the folded lists share one row (an open one: full width)
-  $flagHtml = "<div class=fmas style='--cmin:300px' data-mas>$trendFig$flagCards</div>" + $(if ("$fixedHtml$flagBelow") { "<div class=fbl>$fixedHtml$flagBelow</div>" })
+  $flagHtml = "<div class=fmas style='--cmin:300px' data-mas>$flagCards</div>$(Format-KitFlagHeat $st.flagHours)" + $(if ("$fixedHtml$flagBelow") { "<div class=fbl>$fixedHtml$flagBelow</div>" })
   # live agents by run, what each does now; finished ones folded (steps, tokens, cost: Runs)
   # the leases an agent holds, on its row: a resource whose holder list names the agent's id (the name's first word)
   $leaseOf = { param($nm) $aid = ("$nm" -split ' ')[0]; if (-not $aid -or "$nm" -notmatch ' \(') { return '' }; $hs = @($j.resources | Where-Object { $_ -and "$($_.by)" -match "(^|[\s,;:])$([regex]::Escape($aid))([\s,;]|$)" })
@@ -697,7 +692,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     (& $nowCard 'Memory' "$(& $fmt $memPct)<small>% used</small>" "$(if ($usedGB) { "$(& $n1 $usedGB) / $(& $n1 $tot) GB used · " })$(& $fmt $memFree) GB free · floor $(& $fmt $st.keepFree) GB" "" $(if ($memPct -ge 90) { 'hot' } elseif ($memPct -ge 75) { 'warn' }) "$(if ($usedGB) { & $meter $usedGB $tot "$(if ($memPk -ne '—') { "tick = 7-day peak $memPk%" } else { "of $(& $n1 $tot) GB" })" 'slate' $(if ($memPk -ne '—') { $tot * [double]$memPk / 100 }) })$(& $spark @($l24 | ForEach-Object mem) 'slate' 'used %, 24 h' 'peak' $null '%')"),
     "<div class='st $(if ($dkRows.tone -contains 'hot') { 'hot' } elseif (@($dkRows | Where-Object tone).Count) { 'warn' })' data-fit><div class=k>Disks$(if ($lv.Count) { '<small> · tick = 7-day peak use</small>' })</div>$(if ($dkRows.Count) { & $grid dks 190px @($dkRows.h) 2 } else { '<div class=v>—</div><div class=s>no sample</div>' })</div>",
     $gateCard)
-  $machineHtml = "<div class=mcol>$(& $grid 'stats mach' 300px @($machCards[0], $machCards[1]) 2)$(Format-KitCpuCard $st.cpu)$($machCards[2])</div>"
+  $machineHtml = "<div class=mcol>$(& $grid 'stats mach' 300px @($machCards[0], $machCards[1]) 2)$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }))$($machCards[2])</div>"
   # Activity (owner, 2026-11-14): actionable tiles, each number once, history as labelled graphs
   $nst = @($nw.stale | Where-Object { $_ }); $runOf = @{}; foreach ($ur in @($st.usage.runs | Where-Object { $_.id })) { $runOf["$($ur.id)"] = $ur }
   $wfTile = if ($nw) { "<div class='st$(if ($nst.Count) { ' warn' })' data-fit><div class=k>Workflow steps now</div><div class=v>$(& $icv run 'running steps' (& $fmt $nw.run))<small>running$(if ($null -ne $nw.total) { " · </small>$($nw.done)/$($nw.total)<small> steps" })</small></div><div class=rch>" +
@@ -726,7 +721,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $fxTile = "<div class=st data-fit><div class=k>Flags auto-FIXED</div><div class=v>$(if ($rxSum) { [math]::Round(100 * $fxSum / $rxSum) } else { '—' })<small>%</small></div><div class=w>$fxSum of $rxSum flags</div>$(& $spark @(for ($i = 0; $i -lt $hist.Count; $i++) { if ($fxRaised[$i]) { [math]::Round(100 * $fxFixed[$i] / $fxRaised[$i]) } }) 'sage' "per sweep, last $($hist.Count)" 'peak' 0 '%')</div>"
   $kitTiles = & $grid stats 220px @($wfTile, $brTile, $swTile, $failTile, $fxTile)   # Test runs: a Delivery tile (QA checks per day beside the tasks per repo)
   $UP = Format-KitUsageHtml $st.usage
-  $resHtml = Format-KitResCard $j.resources @($l24 | Where-Object { $_ }) $live.Count   # adapters/supervise_stats.ps1: one heatmap row per resource
+  $resHtml = Format-KitHeldList $j.resources $live.Count   # adapters/supervise_stats.ps1; their CPU + RAM history: Resources · 24 h
   # a command on one line, cut at 120 chars with an ellipsis in the text (no CSS clip), the whole one a click away
   $cmdCell = { param([string]$c) $full = "$c".Trim(); $one = $full -replace '\s+', ' '; if ($one -eq $full -and $one.Length -le 120) { return $one }
     $hd = if ($one.Length -gt 120) { $one.Substring(0, 119).TrimEnd() + '…' } else { $one }
@@ -758,7 +753,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "function ag(m){return m<1?'now':m<60?m+' min':m<1440?Math.floor(m/60)+' h '+m%60+' min':Math.floor(m/1440)+' d'}function u(){var w=Date.now(),m=Math.round((w-t)/6e4),o=Math.round((t-w)/6e4+n);a.textContent='updated '+(m<1?'just now':m<60?m+' min ago':m<2880?Math.round(m/60)+' h ago':Math.round(m/1440)+' d ago');a.className='chip '+(m>4*n?'bad':m>2*n?'warn':'ok');" +
     "nx.title='Next sweep '+nx.dataset.due+' ('+(o>0?'in '+ag(o):(same?'waiting for it':'due now')+(o<0?', overdue '+ag(-o):''))+')'+nx.dataset.tail;nx.textContent='next '+nx.dataset.due+(o<0?' (overdue)':'');d.querySelectorAll('.ago').forEach(function(e){e.textContent=ag(Math.max(0,Math.round((w-new Date(e.dataset.t))/6e4)))})}u();setInterval(u,1e4);" +
     "d.getElementById('tt').onclick=function(){var k=r.dataset.theme?r.dataset.theme=='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=k?'light':'dark';L.setItem('kc-theme',r.dataset.theme)};" +
-    "var ar=d.getElementById('ar'),on=L.getItem('kc-ar')!=='0',tm;function sa(){ar.setAttribute('aria-pressed',on);ar.title=on?'Auto-refresh every 60 s':'Auto-refresh off';ar.setAttribute('aria-label',ar.title);clearTimeout(tm);if(on)tm=setTimeout(function(){var p={};d.querySelectorAll('details.sec').forEach(function(s){s.querySelectorAll(SC).forEach(function(e,i){if(e.scrollTop||e.scrollLeft)p[s.id+i]=[e.scrollTop,e.scrollLeft]})});S.setItem('kc-sp',JSON.stringify(p));S.setItem('kc-y',scrollY);location.reload()},6e4)}ar.onclick=function(){on=!on;L.setItem('kc-ar',on?'1':'0');sa()};sa();" +
+    "var ar=d.getElementById('ar'),on=L.getItem('kc-ar')!=='0',tm;function sa(){ar.setAttribute('aria-pressed',on);ar.title=on?'Auto-refresh every 60 s':'Auto-refresh off';ar.setAttribute('aria-label',ar.title);clearTimeout(tm);if(on)tm=setTimeout(function(){if(d.querySelector('dialog.drw[open]')){sa();return}var p={};d.querySelectorAll('details.sec').forEach(function(s){s.querySelectorAll(SC).forEach(function(e,i){if(e.scrollTop||e.scrollLeft)p[s.id+i]=[e.scrollTop,e.scrollLeft]})});S.setItem('kc-sp',JSON.stringify(p));S.setItem('kc-y',scrollY);location.reload()},6e4)}ar.onclick=function(){on=!on;L.setItem('kc-ar',on?'1':'0');sa()};sa();" +
     "function jp(k,f){try{return JSON.parse(L.getItem(k))||f}catch(e){return f}}var op=jp('kc-open',{});d.querySelectorAll('details.sec').forEach(function(s){if(s.classList.contains('none')){s.querySelector(':scope>summary').addEventListener('click',function(x){x.preventDefault()});return}if(s.id in op)s.open=op[s.id];s.querySelector(':scope>summary').addEventListener('click',function(){setTimeout(function(){delete s.dataset.fo;var o=jp('kc-open',{});o[s.id]=s.open;try{L.setItem('kc-open',JSON.stringify(o))}catch(e){}})})});" +   # the owner's own clicks only: a default never pins itself
     "var q=d.getElementById('q'),nm=d.getElementById('nm'),AL=jp('kc-all',[]);function tk(t){var s=t.closest('details'),h=s&&s.querySelector(':scope>summary>:first-child'),r=t.querySelector('tr');return(h?h.textContent:'')+':'+(r?r.textContent:'')}" +   # show all: kept per table
     "function sa0(){d.querySelectorAll('.tw').forEach(function(t){var b=t.querySelector(':scope>.sa');if(!b)return;var on=!!q.value||AL.indexOf(tk(t))>=0;t.classList.toggle('all',on);b.textContent=on?'Show fewer':'Show all ('+b.dataset.n+')'})}" +
@@ -814,7 +809,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $dlv = try { Format-KitDeliveryHtml $oc $UP (Format-KitQaTile $st.qa $at) } catch { "<p class=m>Delivery view failed: $(& $e $_.Exception.Message)</p>" }
   $runsF = & $fold 'runs' 'Runs, 7 days' $(if ($UP.runs) { $UP.runsN } else { 0 }) "<p class=fclr hidden>Runs: <b></b> <button type=button>Clear</button></p>$($UP.runs)" -cls sub   # ended runs: a Delivery day click filters them
   $intHtml = (& $fold 'delivery' 'Delivery, 30 days' $(if ($oc.n) { "$($oc.n) task(s)" } else { '' }) "$dlv$runsF" -Open -cls sub) + (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + $UP.internals + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $setHtml
-  if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'><p><a class=rk href='../supervise-report.html'>Supervisor</a></p>$($UP.pages[$pk] -replace " data-tip='", " title='")</main></body></html>" } }
+  if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$($UP.pages[$pk] -replace " data-tip='", " title='")</main></body></html>" } }
   # Shells: a fold only when one runs; none = one muted word in the Resources header
   $nWait = @($st.waits.rows | Where-Object { $_ }).Count   # lease waits open the fold even with nothing held
   $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $(if ($nRes -or -not ($nWait -or $live.Count)) { $nRes } else { @{ h = '0 held' } }) "$(Format-KitWaitCard $st.waits)$resHtml" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
@@ -822,7 +817,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     (& $section 'machine' 'Machine and resources' '' $mrHtml -Open) +
     (& $section 'internals' 'Kit internals' '' $intHtml) +
     "<p id=nm class=empty hidden>No match.</p><footer>Written by bossy.ps1 supervise each sweep (no model tokens) · data: supervise-report.json · times local (UTC$($at.ToString('zzz')))</footer></main>"
-  "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$head$main<script>$js</script></body></html>"
+  "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$head$main<script>$js</script><script>$(Get-KitStatsJs)</script></body></html>"
 }
 # page CSS: muted sage palette, light / dark (prefers-color-scheme; data-theme overrides)
 function Get-KitSupervisePageCss {

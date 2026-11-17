@@ -66,7 +66,7 @@ function Get-KitUsageHostMrs([datetime]$Since, [datetime]$Now, $Prev) {
   $hu = try { Get-KitHostUser } catch { '' }; if (-not $hu) { return $null }; $cut = $Since.ToUniversalTime(); $hostErr = $false
   $mrs = @(foreach ($rp in $repos) { foreach ($m in @(try { Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $cut.ToString('o'); per_page = 100 } } catch { $hostErr = $true }) | Where-Object { $_.iid -and $_.merged_at }) {
         $au = if ($m.author.username) { $m.author.username } else { "$($m.author)" }
-        if ((-not $au -or $au -eq $hu) -and ([datetimeoffset]$m.merged_at).UtcDateTime -ge $cut -and -not (Test-KitDeployMr $rp "$($m.source_branch)" "$($m.target_branch)")) { @{ ref = "$rp!$($m.iid)"; day = ([datetimeoffset]$m.merged_at).LocalDateTime.ToString('yyyy-MM-dd') } } } })
+        if ((-not $au -or $au -eq $hu) -and ([datetimeoffset]$m.merged_at).UtcDateTime -ge $cut -and -not (Test-KitDeployMr $rp "$($m.source_branch)" "$($m.target_branch)")) { @{ ref = "$rp!$($m.iid)"; day = ([datetimeoffset]$m.merged_at).LocalDateTime.ToString('yyyy-MM-dd'); lead = $(if ($m.created_at) { [math]::Round((([datetimeoffset]$m.merged_at) - ([datetimeoffset]$m.created_at)).TotalHours, 1) }) } } } })   # lead: open -> merged, hours
   if ($hostErr) { return $Prev }   # a failed list is no 0 merged: the last list (or workflow MRs), retried next beat
   @{ at = $Now.ToString('o'); since = $Since.ToString('yyyy-MM-dd'); user = $hu; mrs = @($mrs | Sort-Object { $_.ref } -Unique) }
 }
@@ -153,6 +153,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
         merged = $(if ($hostMrs) { @($hostMrs.mrs | Where-Object { "$($_.day)" -eq $dk }).Count } else { @(@($steps | Where-Object { "$($_.at)".StartsWith($dk) }).mrs | Where-Object { $_ } | Select-Object -Unique).Count }) } })
   $usageOut = [pscustomobject]@{ at = $Now.ToString('o'); since = $since.ToString('o'); partial = $script:KitUsagePartial; runs = @($runs | Sort-Object at -Descending); bg = @($bg.Values | ForEach-Object { [pscustomobject]@{ session = $_.session; n = $_.n; tok = $_.tok; cost = $(if ($null -ne $_.cost) { [math]::Round($_.cost, 2) }); roles = (@($_.roles.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ' · ') } } | Sort-Object { -$_.tok })
     coord = @($coord | Sort-Object { -$_.tok }); modelCost = @($mcost.GetEnumerator() | ForEach-Object { [pscustomobject]@{ k = $_.Key; v = [math]::Round($_.Value, 2) } }); unpriced = @($unp.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { [pscustomobject]@{ model = $_.Key; tok = $_.Value } })
+    mrList = @(@(if ($hostMrs) { $hostMrs.mrs } else { foreach ($sx in $wf) { foreach ($mr in @($sx.mrs | Where-Object { $_ })) { @{ ref = "$mr"; day = $(try { ([datetimeoffset]"$($sx.at)").LocalDateTime.ToString('yyyy-MM-dd') } catch { '' }); lead = $null } } } }) | Sort-Object { "$($_.ref)" } -Unique)   # the Delivery repo x day map, lead times
     merged = $(if ($hostMrs) { [pscustomobject]@{ source = 'host'; user = $hostMrs.user; n = @($hostMrs.mrs).Count } } else { [pscustomobject]@{ source = 'workflows'; user = ''; n = @($wf.mrs | Where-Object { $_ } | Select-Object -Unique).Count } })
     byType = (& $grp type); byModel = (& $grp model)
     byRole = @(& $grp role | ForEach-Object { $rss = @($steps | Where-Object role -eq $_.k)   # the Spend view: a role row, its model mix and step types under it
@@ -242,9 +243,9 @@ function Format-KitUsageHtml($U) {
   $devRuns = @($runs | Where-Object { (& $kindOf $_) -ne 'kit' })
   $dayOf = { param($r) try { ([datetimeoffset]"$(if ($r.started) { $r.started } else { $r.at })").LocalDateTime.ToString('yyyy-MM-dd') } catch { '' } }
   $shown = @($devRuns | Where-Object status -ne 'running' | Sort-Object { "$($_.at)" } -Descending | Select-Object -First 25)   # newest 25 ended: the page stays light
-  $running = @($devRuns | Where-Object status -eq 'running' | ForEach-Object { "<div class='ru f' data-oc='$(& $ocOf $_)'><div class=rh>$(& $head $_)$(& $linksOf $_)<a class=rk href='$(& $pageOf $_)'>steps</a></div></div>" }) -join ''
+  $running = @($devRuns | Where-Object status -eq 'running' | ForEach-Object { "<div class='ru f' data-oc='$(& $ocOf $_)'><div class=rh>$(& $head $_)$(& $linksOf $_)<a class=rk href='$(& $pageOf $_)' data-dw='$(& $e "Run $(& $lbOf $_)")'>steps</a></div></div>" }) -join ''
   $ended = $(if ($shown.Count) { "<ul class=rfl>$(@($shown | ForEach-Object { $dk = & $dayOf $_
-      "<li class=f data-oc='$(& $ocOf $_)' data-fk='d$dk'><span class=tm>$(if ($dk) { $dk.Substring(5) })</span><span class=gn0 title='$(& $e "$($_.run) · $($_.id)")'>$(& $e (& $lbOf $_))</span><span class='chip k-$(& $e (& $kindOf $_))'>$(& $e (& $kindOf $_))</span>$(if ($resumed["$($_.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(& $resOf $_)$(& $linksOf $_)<a class=rk href='$(& $pageOf $_)'>steps</a></li>" }) -join '')</ul>" }) +
+      "<li class=f data-oc='$(& $ocOf $_)' data-fk='d$dk'><span class=tm>$(if ($dk) { $dk.Substring(5) })</span><span class=gn0 title='$(& $e "$($_.run) · $($_.id)")'>$(& $e (& $lbOf $_))</span><span class='chip k-$(& $e (& $kindOf $_))'>$(& $e (& $kindOf $_))</span>$(if ($resumed["$($_.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(& $resOf $_)$(& $linksOf $_)<a class=rk href='$(& $pageOf $_)' data-dw='$(& $e "Run $(& $lbOf $_)")'>steps</a></li>" }) -join '')</ul>" }) +
     $(if ($devRuns.Count - @($devRuns | Where-Object status -eq 'running').Count -gt $shown.Count) { "<p class=m>$($devRuns.Count - @($devRuns | Where-Object status -eq 'running').Count - $shown.Count) older run(s): supervise-report.json</p>" })
   # a run page per shown run: its tasks and MRs, the QA / merge / error chips, its step table (Write-KitSuperviseHtml writes them)
   $pages = [ordered]@{}; foreach ($r in @(@($devRuns | Where-Object status -eq 'running') + $shown)) { $pages["$($r.id)"] = "<div class='ru'><div class=rh>$(& $head $r)$(if ($r.status -ne 'running') { & $resOf $r })</div></div>" +
@@ -264,7 +265,7 @@ function Format-KitUsageHtml($U) {
     $(if ($bgs.Count -ge 2) { "<details class=ru><summary>Agents outside workflows, by session ($($bgs.Count))</summary><div class='sy us'>$(& $table 'Session', 'Agents', 'Tokens', 'Est. cost', 'Roles' @($bgs | ForEach-Object { , @($_.session, $_.n, (& $tk $_.tok), (& $usd $_.cost), $_.roles) }))</div></details>" })
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
   [pscustomobject]@{ runsN = $(if ($shown.Count) { "$($devRuns.Count - $nRunning) ended in 7 days" } else { 0 }); runs = $ended; running = $running; nRunning = $nRunning; tpm = $tpm
-    dayRuns = $byDay; days = $dy
+    dayRuns = $byDay; days = $dy; mrs = @($U.mrList | Where-Object { $_ })
     usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })<div class=ug>$chart<div class=ucol>$ocCard$share</div>$spend</div>"
     internals = $(if ($sess) { & $fold 'sessions' 'Sessions' ($cos.Count + $bgs.Count) $sess -cls sub }); pages = $pages
     usageN = "$(& $tk $td.tok) tokens today" }

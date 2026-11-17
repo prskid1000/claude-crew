@@ -29,7 +29,7 @@ Expect 'outcomes summary: totals, worst area, agent rounds, a repeat cause' ($li
 $null = pwsh @np $fx 'Update-KitOutcomes'
 $oh = & { . $O; Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o') }) } | Out-String
 $fvMiss = @([regex]::Matches($oh, "data-ft='#oc-tasks' data-fv='([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Where-Object { $oh -notmatch "<li data-fk='([^']* )?$([regex]::Escape($_))( [^']*)?'>" })
-Expect "dashboard: every repo segment's filter value names a listed task, the other bar too ($fvMiss)" (-not $fvMiss.Count -and $oh -match 'other \(cs\) <b>1</b>')
+Expect "dashboard: every repo segment's filter value names a listed task; one untested repo shows by its name, never 'other (x)' ($fvMiss)" (-not $fvMiss.Count -and $oh -match '<span class=obn>cs <b>1</b>' -and $oh -notmatch 'other \(cs\)')
 $bDay, $cDay = '2026-11-02T10:00:00+00:00', '2026-11-04T10:00:00+00:00' | ForEach-Object { ([datetimeoffset]$_).LocalDateTime.ToString('yyyy-MM-dd') }
 $ocRaw = Get-Content (TkPath $k outcomes) -Raw
 Expect 'outcome rows: promoted, closed and came-back times (UTC text; the earliest of reopen, a failing run, a [Bug])' ($ocRaw -match '"task":"t1".*"doneAt":"2026-11-01T14:00:00Z","closedAt":"2026-11-04T10:00:00Z","backAt":"2026-11-02T10:00:00Z"')

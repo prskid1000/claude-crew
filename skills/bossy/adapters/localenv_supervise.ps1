@@ -180,8 +180,9 @@ function Get-KitStatusWaitLocalEnv {
     }
   }
 }
-# ---- cpu: CPU per lane service on the supervise page (Update-KitCpuStats hook): its process tree root, pid + start checked
+# ---- cpu: CPU + RAM per lane service on the supervise page (Update-KitCpuStats hook): its process tree root, pid + start checked;
+# a stopped service with pid 0 (its row stays on the page)
 function Get-KitCpuGroupsLocalEnv {
   foreach ($f in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -File -ErrorAction SilentlyContinue)) { $s = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { continue }
-    foreach ($p in @((Get-KitProps $s.services) | Where-Object { $_.Value.pid -and $_.Value.status -eq 'up' })) { if (Test-KitPid $p.Value.pid $p.Value.pstart) { [pscustomobject]@{ name = "$($f.BaseName) · $($p.Name)"; pid = [int]$p.Value.pid } } } }
+    foreach ($p in @(Get-KitProps $s.services)) { $up = $p.Value.pid -and $p.Value.status -eq 'up' -and (Test-KitPid $p.Value.pid $p.Value.pstart); [pscustomobject]@{ name = "$($f.BaseName) · $($p.Name)"; pid = $(if ($up) { [int]$p.Value.pid } else { 0 }) } } }
 }

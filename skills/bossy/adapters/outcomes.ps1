@@ -7,7 +7,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L13 outcomes · L82 summary · L191 patterns · L226 rules
+Sections: L13 outcomes · L82 summary · L217 patterns · L252 rules
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -99,7 +99,7 @@ function Get-KitOutcomeStats([int]$Days = 30) {   # TODO-PARAM (fixed default)
   # dashboard: one bucket per task, a stacked bar per repo, KPIs with weekly points (the task's promoted day, else its last change)
   $tasks = @(foreach ($r in $rows) { [pscustomobject]@{ id = "$($r.task)"; repos = @("$($r.area)" -split ',' | Where-Object { $_ }); bucket = (Get-KitOutcomeBucket $r); rounds = $(if (@($r.agents | Where-Object { $_ }).Count) { & $rounds $r })
       week = [int][math]::Floor(((Get-Date) - [datetime]@($r.doneAt, $r.seen, $r.at | Where-Object { $_ })[0]).TotalDays / 7); closedAt = (ConvertTo-KitOutcomeIso $r.closedAt); backAt = (ConvertTo-KitOutcomeIso $r.backAt)
-      firstPass = [bool]$r.qaFirstPass; qa = [int]$r.qaRuns -gt 0; back = [bool]$r.cameBack; hPromoted = $r.hPromoted } })
+      firstPass = [bool]$r.qaFirstPass; qa = [int]$r.qaRuns -gt 0; back = [bool]$r.cameBack; hPromoted = $r.hPromoted; stage = "$($r.stage)" } })
   $repos = @($tasks | ForEach-Object { $t = $_; foreach ($rp in $t.repos) { [pscustomobject]@{ repo = $rp; t = $t } } } | Group-Object repo | ForEach-Object {
       $g = @($_.Group.t); $b = [ordered]@{}; foreach ($k in $script:KitOutcomeBuckets.Keys) { $b[$k] = @($g | Where-Object bucket -eq $k | ForEach-Object id) }
       [pscustomobject]@{ repo = $_.Name; n = $g.Count; tested = @($g | Where-Object { $_.bucket -ne 'wait' }).Count; buckets = $b } } | Sort-Object { -$_.n }, repo)
@@ -155,8 +155,8 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
       @{ vals = $clV; tone = 'slate'; style = 'dash'; max = $all; name = 'tasks closed'; fmt = (& $fmt 'closed' 'closed') },
       @{ vals = $bkV; tone = 'act'; style = 'solid'; max = $all; name = 'came back'; fmt = (& $fmt 'back' 'back'); inline = $true },
       @{ vals = $runsV; tone = 'plum'; style = 'dot'; max = $all; name = 'runs started'; fmt = (& $fmt 'run' 'runs') }) "MRs merged, tasks closed, came back and runs started per day, $($dy.Count) days" 170 -Labels -Filter '#oc-tasks,#sec-runs' }
-  # a stacked bar per repo with a QA'd task (the rest: one "other" bar), each segment its count; the legend once
-  $rp = @($S.repos | Where-Object tested); $rest = @($S.repos | Where-Object { -not $_.tested }); $restNames = @($rest.repo)
+  # a stacked bar per repo with a QA'd task; the untested ones: one "other (a, b)" bar when 2+, a single one by its own name; the legend once
+  $rp = @($S.repos | Where-Object tested); $rest = @($S.repos | Where-Object { -not $_.tested }); if ($rest.Count -eq 1) { $rp += $rest; $rest = @() }; $restNames = @($rest.repo)
   if ($rest.Count) { $ob = [ordered]@{}; foreach ($kk in $bk.Keys) { $ob[$kk] = @($rest | ForEach-Object { @($_.buckets[$kk]) } | Where-Object { $_ } | Select-Object -Unique) }; $rp += [pscustomobject]@{ repo = 'other'; who = (@($rest.repo) -join ', '); n = [int]($rest | Measure-Object n -Sum).Sum; buckets = $ob } }
   $bars = @($rp | ForEach-Object { $r = $_; $nm = if ($r.who) { "other ($($r.who))" } else { $r.repo }
       $segs = @(foreach ($kk in $bk.Keys) { $ids = @($r.buckets[$kk] | Where-Object { $_ }); if (-not $ids.Count) { continue }
@@ -165,13 +165,39 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
       "<div class=obr><span class=obn>$(& $e $nm) <b>$($r.n)</b></span><span class=obar>$($segs -join '')</span></div>" })
   $leg = "<ul class='ocl obl'>$(@($bk.Keys | ForEach-Object { "<li><i class='ob-$($tone[$_])'></i>$(& $e $bk[$_])</li>" }) -join '')</ul>"
   $noMr = @($S.tasks | Where-Object { -not $_.repos.Count }).Count
-  $barsCard = "<div class='uc obc'><h4>Tasks per repo by outcome</h4>$($bars -join '')$leg$(if ($noMr) { "<p class=m>$noMr task(s) without an MR not shown</p>" })</div>"
-  # the tasks behind a click (a segment: repo + bucket, a grouped repo as "other"; a day: closed or came back that day); hidden until a filter is set
-  $rows = @($S.tasks | Where-Object { $_.repos.Count -or $_.closedAt -or $_.backAt } | ForEach-Object { $t = $_
-      $fk = @(@($t.repos | ForEach-Object { "$(if ($_ -in $restNames) { 'other' } else { $_ }):$($t.bucket)" }) + @(if ($c = & $dayOf $t.closedAt) { "d$c" }) + @(if ($b = & $dayOf $t.backAt) { "d$b" }) | Select-Object -Unique) -join ' '
+  $barsCard = & $fold 'dl-repos' 'Tasks per repo by outcome' $bars.Count "$($bars -join '')$leg$(if ($noMr) { "<p class=m>$noMr task(s) without an MR not shown</p>" })" -Open -tag h4 -cls 'sub st uc obc'
+  # (owner, 2026-11-17) under the per-day chart: MRs merged per repo and day (rows = configured repos + any with an MR; none in the
+  # window: folded), work in flight now by status (tap: its tasks), median MR lead time per day (open -> merged, git host only)
+  $mrs = @($UP.mrs | Where-Object { $_ -and $_.ref }); $dk = @($dy | ForEach-Object { "$($_.day)" }); $nd = $dk.Count; $ic = [cultureinfo]::InvariantCulture
+  $repoOf = { param($ref) ("$ref" -split '[!#]')[0] }
+  $rdCard = if ($nd) {
+    $mx = [math]::Max(1, [int](@($mrs | Group-Object { "$(& $repoOf $_.ref)|$($_.day)" } | ForEach-Object Count) + 0 | Measure-Object -Maximum).Maximum)
+    $cols = "style='grid-template-columns:repeat($nd,minmax(0,1fr))'"
+    $rows = @(foreach ($rn in @(@(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.name)" }) + @($mrs | ForEach-Object { & $repoOf $_.ref }) | Where-Object { $_ } | Select-Object -Unique)) {
+        $per = @(foreach ($d in $dk) { , @($mrs | Where-Object { (& $repoOf $_.ref) -eq $rn -and "$($_.day)" -eq $d } | ForEach-Object { "$($_.ref)" }) }); $tot = [int](@($per | ForEach-Object { $_.Count }) + 0 | Measure-Object -Sum).Sum
+        [pscustomobject]@{ busy = $tot -gt 0; html = "<div class=gk><span class=gn title='$(& $e "${rn}: $tot MR(s) merged in $nd days")'>$(& $e $rn)</span><span class='gs hm fh l-mr' $cols role=img aria-label='$(& $e "$rn, MRs merged per day, $nd days")'>" +
+          (@(for ($i = 0; $i -lt $nd; $i++) { $c = @($per[$i]).Count; "<i$(if ($i -eq $nd - 1) { ' class=nw' }) style='--a:$(Get-KitHeatShade ($c / $mx))%' title='$(& $e "$($dk[$i])$(if ($i -eq $nd - 1) { ' (today)' }) · ${rn}: $c MR(s) merged$(if ($c) { ": $(@($per[$i] | Select-Object -First 8) -join ', ')" })")'>$(if ($c) { $c })</i>" }) -join '') + "</span><span class='gc$(if (-not $tot) { ' z' })'>$tot</span></div>" } })
+    $head = "<div class='gk gh'><span class=gn>repo · day</span><span class='gs0 hrs' $cols aria-hidden=true>$(@(for ($i = 0; $i -lt $nd; $i++) { "<b$(if ($i -eq $nd - 1) { ' class=nw' })>$(if ($i -eq $nd - 1) { 'today' } else { try { ([datetime]$dk[$i]).ToString('ddd', $ic) } catch { $dk[$i] } })</b>" }) -join '')</span><span class=gc><small>$nd d</small></span></div>"
+    & $fold 'dl-repoday' 'MRs merged per repo and day' "$($mrs.Count) MRs" "<div class='gks w1'>$head$(Format-KitHeatRows $rows 'repos')</div><div class=hk>a cell = MRs merged that day (shade by count) · outlined = today · tap a cell for its MRs</div>" -Open:([bool]$mrs.Count) -tag h4 -cls 'sub st uc dlr' }
+  $flight = [ordered]@{ open = @('in progress', 'slate'); review = @('review', 'plum'); promoted = @('promoted', 'sage'); intest = @('in test', 'watch'); failedTesting = @('failed testing', 'act') }
+  $stOf = { param([string]$s) if ($s -in 'deployed', 'untested') { 'intest' } elseif ($flight.Contains($s)) { $s } else { '' } }   # outcome stage -> status (passed: done, not in flight)
+  $fl = @($S.tasks | ForEach-Object { $b = & $stOf $_.stage; if ($b) { [pscustomobject]@{ id = $_.id; b = $b } } })
+  $fSegs = @(foreach ($kk in $flight.Keys) { $ids = @($fl | Where-Object b -eq $kk | ForEach-Object id); if (-not $ids.Count) { continue }; $lab = $flight[$kk][0]
+      "<i class='ob-$($flight[$kk][1])' style='flex-grow:$($ids.Count)' tabindex=0 role=button data-tip='$(& $e "$lab`: $($ids.Count) task(s)`n$(@($ids | Select-Object -First 12) -join ', ')$(if ($ids.Count -gt 12) { " +$($ids.Count - 12)" })`nclick: list them")' aria-label='$(& $e "$lab`: $($ids.Count)")' data-ft='#oc-tasks' data-fv='st:$kk' data-fl='$(& $e $lab)'>$($ids.Count)</i>" })
+  $flightCard = & $fold 'dl-flight' 'Work in flight now' $fl.Count "<div class=obr><span class=obn>tasks</span><span class=obar>$($fSegs -join '')</span></div><ul class='ocl obl'>$(@($flight.Keys | Where-Object { $k0 = $_; @($fl | Where-Object b -eq $k0).Count } | ForEach-Object { "<li><i class='ob-$($flight[$_][1])'></i>$(& $e $flight[$_][0])</li>" }) -join '')</ul>" -Open -tag h4 -cls 'sub st uc'
+  $med = { param($v) $s = @($v | Sort-Object); if ($s.Count) { $s[[int][math]::Floor(($s.Count - 1) / 2)] } else { $null } }   # lower median, as the KPIs; $null keeps its day's slot
+  $leadV = @(foreach ($d in $dk) { & $med @($mrs | Where-Object { "$($_.day)" -eq $d -and $null -ne $_.lead } | ForEach-Object { [double]$_.lead }) })
+  $leadAll = & $med @($mrs | Where-Object { $null -ne $_.lead } | ForEach-Object { [double]$_.lead })
+  $leadCard = if ($null -ne $leadAll) {
+    $lp = @(for ($i = 0; $i -lt $nd; $i++) { @{ label = $(if ($i -eq $nd - 1) { 'today' } else { $dk[$i].Substring(5) }); x = $i -eq $nd - 1; tip = "$($dk[$i]): $(if ($null -ne $leadV[$i]) { "median $(& $n1 $leadV[$i]) h open -> merged" } else { 'no MR merged' })" } })
+    & $fold 'dl-lead' 'MR lead time, median per day' "$(& $n1 $leadAll) h" (Format-KitLineChart $lp @(@{ vals = @($leadV | ForEach-Object { if ($null -ne $_) { $_ } else { 0 } }); tone = 'plum'; style = 'solid'; fmt = { param($v) if ([double]$v) { "$([math]::Round([double]$v, 1)) h" } else { '' } } }) "median MR lead time per day, $nd days" 80 -Labels) -Open -tag h4 -cls 'sub st uc' }
+    else { & $fold 'dl-lead' 'MR lead time, median per day' 0 '' -tag h4 -cls 'sub st uc' }   # (0): no git-host list with open times
+  # the tasks behind a click (a segment: repo + bucket, a grouped repo as "other"; a day: closed or came back that day; a status); hidden until a filter is set
+  $rows = @($S.tasks | Where-Object { $_.repos.Count -or $_.closedAt -or $_.backAt -or (& $stOf $_.stage) } | ForEach-Object { $t = $_
+      $fk = @(@($t.repos | ForEach-Object { "$(if ($_ -in $restNames) { 'other' } else { $_ }):$($t.bucket)" }) + @(if ($c = & $dayOf $t.closedAt) { "d$c" }) + @(if ($b = & $dayOf $t.backAt) { "d$b" }) + @(if ($s0 = & $stOf $t.stage) { "st:$s0" }) | Select-Object -Unique) -join ' '
       "<li data-fk='$(& $e $fk)'>$(& $taskA $t.id)<span class='chip ob-$($tone[$t.bucket])'>$(& $e $bk[$t.bucket])</span><span class=m>$(& $e ($t.repos -join ', '))</span></li>" })
   $list = "<div id=oc-tasks class='ftl uc'><p class=fclr hidden>Tasks: <b></b> <button type=button>Clear</button></p><ul class=otl>$($rows -join '')</ul></div>"
-  "$tiles<div class='ug dlv'>$(if ($chart) { "<div class='uc dlc'><h4>Delivered per day</h4>$chart</div>" })<div class=ucol>$barsCard$QaTile</div></div>$list"
+  "$tiles<div class='ug dlv'><div class=ucol>$(if ($chart) { & $fold 'dl-days' 'Delivered per day' '' $chart -Open -tag h4 -cls 'sub st uc dlc' })$rdCard$flightCard$leadCard</div><div class=ucol>$barsCard$QaTile</div></div>$list"
 }
 # bucket order = the bar's segment order: passed QA by fix rounds before it (n/a: no wave report names the task), came back, not tested yet
 $script:KitOutcomeBuckets = [ordered]@{ r0 = 'passed, 0 fix rounds'; r1 = 'passed, 1 round'; r2 = 'passed, 2 rounds'; r3 = 'passed, 3+ rounds'; rna = 'passed, rounds not recorded'; back = 'came back'; wait = 'not tested yet' }

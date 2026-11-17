@@ -12,9 +12,21 @@ function Get-KitStorageConf {
   foreach ($k in @($d.Keys)) { $d[$k] = Get-KitSetting "storage.$k" $d[$k] }
   $d.actFreeGB = [double](Get-KitSetting 'supervise.minDiskFreeGB' 30); $d.db = Get-KitSetting 'storage.db' $null; [pscustomobject]$d
 }
-# fixed drives; kit = holds workspace, .runtime, temp, profile, worktree root or watch[]
+# Windows: the letters on the machine's internal disks (a partition of a disk whose bus is not USB, 1394, SD or MMC); an external,
+# USB, phone (MTP) or network drive reports "Fixed" too; cached 1 h; $null = no storage CIM (every fixed drive counts)
+function Get-KitInternalLetters {
+  if (-not $KitIsWindows) { return $null }
+  $cf = Join-Path (Get-KitPath cache -Create) 'internal-drives.json'
+  if ((Test-Path -LiteralPath $cf) -and ((Get-Date) - (Get-Item -LiteralPath $cf).LastWriteTime).TotalMinutes -lt 60) { try { $c = @(Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json); if ($c.Count) { return $c } } catch {} }
+  $ls = try { $ns = 'root/Microsoft/Windows/Storage'; $ext = @{}; foreach ($dk in @(Get-CimInstance -Namespace $ns -ClassName MSFT_Disk -Property Number, BusType -OperationTimeoutSec 10 -ErrorAction Stop)) { if ([int]$dk.BusType -in 4, 7, 12, 13) { $ext[[int]$dk.Number] = 1 } }   # 1394, USB, SD, MMC
+      @(Get-CimInstance -Namespace $ns -ClassName MSFT_Partition -Property DriveLetter, DiskNumber -OperationTimeoutSec 10 -ErrorAction Stop | Where-Object { [int]$_.DriveLetter -and -not $ext[[int]$_.DiskNumber] } | ForEach-Object { "$([char][int]$_.DriveLetter)" }) } catch { @() }
+  if (-not $ls.Count) { return $null }
+  Set-Content -LiteralPath $cf (ConvertTo-Json @($ls) -Compress); @($ls)
+}
+# fixed drives on internal disks; kit = holds workspace, .runtime, temp, profile, worktree root or watch[]
 function Get-KitDrives {
-  $ds = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady -and $_.TotalSize -gt 1GB -and "$($_.DriveFormat)" -notmatch '^(squashfs|tmpfs|overlay|iso9660|udf|devtmpfs|ramfs)$' })
+  $il = Get-KitInternalLetters
+  $ds = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady -and $_.TotalSize -gt 1GB -and "$($_.DriveFormat)" -notmatch '^(squashfs|tmpfs|overlay|iso9660|udf|devtmpfs|ramfs)$' -and ($null -eq $il -or $_.Name.Substring(0, 1) -in $il) })
   $kp = @(@($KitConf.Workspace, (Get-KitRuntime), [IO.Path]::GetTempPath(), [Environment]::GetFolderPath('UserProfile')) + @($KitConf.WorktreeRoots) + @(Get-KitSetting 'storage.watch' @()) | Where-Object { $_ } | ForEach-Object { try { [IO.Path]::GetFullPath("$_") } catch {} })   # arch-ok: the OS temp's drive is watched, nothing written
   $roots = @($ds | ForEach-Object { $_.RootDirectory.FullName } | Sort-Object Length -Descending)
   $kr = @($kp | ForEach-Object { $p = $_; @($roots | Where-Object { $p.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) })[0] })

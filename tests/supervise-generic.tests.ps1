@@ -28,15 +28,16 @@ function Test-KitPid { $true }; Invoke-KitCleanupResources; "busy:$($actions.Cou
 $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ toolCaches = @('~/.mine', '{localAppData}/x') } }
 "caches:$((@(Get-KitToolCaches 'H' 'L') -join ',') -eq 'H/.mine,L/x' -and (@(Get-KitToolCaches 'H' '') -join ',') -eq 'H/.mine')"
 $__cfg = $null; "cachedef:$(@(Get-KitToolCaches 'H' 'L') -contains 'H/.gradle')"
-"labels-def:$((Get-KitGateGroup 'maven-test' 'x') -eq 'maven test' -and (Get-KitGateGroup 'zig' 'x') -eq 'other')"
+"labels-def:$((Get-KitGateGroup 'maven-test' 'x') -eq 'maven test' -and (Get-KitGateGroup 'zig' 'x') -eq 'zig' -and (Get-KitGateGroup '' 'x') -eq 'other')"   # an unknown kind = its own row; presets only label
 $script:KitGateLabels = $null; $__cfg = [pscustomobject]@{ gate = [pscustomobject]@{ labels = [pscustomobject]@{ _readme = 'x'; 'zig build' = '^zig'; 'all maven' = '^maven' } } }
 "labels:$((Get-KitGateGroup 'zig' 'x') -eq 'zig build' -and (Get-KitGateGroup 'maven-test' 'x') -eq 'all maven' -and (Get-KitGateGroup 'ng-test' 'x') -eq 'js tests')"
 $sp = { param($i, $p, $n, $c, $m) [pscustomobject]@{ Id = $i; ParentId = $p; Name = $n; CommandLine = $c; Created = $now.AddMinutes(-$m) } }; $rd = $script:KitPathMap.runtimeDir; $wd = "--no-defaults `"--datadir=D:/k/$rd/work/tests/mysqld-1`""
 $so = @(Get-KitScratchOrphans @((& $sp 50 1 'pwsh.exe' 'pwsh' 120), (& $sp 51 50 'mysqld.exe' $wd 60), (& $sp 60 99 'mysqld.exe' $wd 60), (& $sp 61 60 'mysqld.exe' $wd 60), (& $sp 70 99 'mysqld.exe' $wd 2),
   (& $sp 80 99 'mysqld.exe' "--defaults-file=D:/k/env.ini --datadir=D:/k/data --tmpdir=D:/k/$rd/work/tmp" 60),(& $sp 90 91 'mariadbd' "--datadir=/k/$rd/work/agents/x/probe" 60), (& $sp 91 1 'bash' 'bash' 5)) $now)
 "scratch:$(($so | ForEach-Object { $_.ids -join '+' }) -join ',')"
+$allDrv = @(Get-KitDrives).Count; function Get-KitInternalLetters { @('Q') }; "intdrv:$($allDrv -ge 1 -and @(Get-KitDrives).Count -eq 0)"   # a drive on no internal disk (USB, external, phone): not watched
 '@ @($O, (Kd))
-Expect-Each $gen 'resources generic: #' 'none', 'own', 'busy', 'caches', 'cachedef', 'labels-def', 'labels' -Show 6
+Expect-Each $gen 'resources generic: #' 'none', 'own', 'busy', 'caches', 'cachedef', 'labels-def', 'labels', 'intdrv' -Show 6
 Expect "scratch DB servers: launcher gone past idle.graceMinutes = orphan, its worker child too; a live or reused-later launcher, a young one, an env server (data dir outside runtime work/, its --tmpdir inside) stay; monitor first ($(@($gen) -match '^scratch:'))" (@($gen) -contains 'scratch:60+61,90')
 # a CI-raised test task (tracker.ciTaskPattern): track add of its merged fix MR promotes it with no testing docs, holds while the
 # named job runs again on its branch, closes it with ONE qa-result comment linking the passing job; a plain task keeps the doc gate

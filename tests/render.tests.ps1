@@ -240,9 +240,9 @@ $dashFix = (Invoke-PsTest dashfix @'
 . $args[0]
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; agents = @(@{ name = 'k2 (kitty)'; state = 'STOPPED'; last = '2026-01-02T09:00:00' }, @{ name = 'k3 (kitty)'; state = 'STOPPED'; last = '2026-01-02T09:55:00' }, @{ name = 'k1 (kitty)'; state = 'ACTIVE' }); history = @(@{ flags = @() }, @{ flags = @() })
   flags = @(@{ level = 'INFO'; what = "HOLD t1: promotion held (deferred items: pin 744); release: bossy.ps1 track add -Task t1 -HoldPromotion ''" }, @{ level = 'INFO'; what = 'RAM FLOOR: rm moved 8 GB (why)' }, @{ level = 'INFO'; what = 'RAM FLOOR: hm moved 8 GB (why)' }) })
-"$($h -match 'Finished today</h3><span class=cnt>\(1\)' -and $h -match '<td>k3 \(kitty\)') $($h -match '<span class=hw>pin 744</span>') $($h -match '<li class=f>RAM FLOOR: rm, hm moved 8 GB \(why\)</li>') $(([regex]::Matches($h, 'track add -Task')).Count) $($h -match "<h2>Machine and resources</h2></summary>") $($h -match "lgd t-sage dd'")"
+"$($h -match 'Finished today</h3><span class=cnt>\(1\)' -and $h -match '<td>k3 \(kitty\)') $($h -match '<span class=hw>pin 744</span>') $($h -match '<li class=f>RAM FLOOR: rm, hm moved 8 GB \(why\)</li>') $(([regex]::Matches($h, 'track add -Task')).Count) $($h -match "<h2>Machine and resources</h2></summary>") $($h -match "id=sec-flagmap><summary><h4>Flags &#183; 24 h</h4><span class=cnt>\(0\)" -and $h -notmatch 'flags per sweep')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join ' '
-Expect "supervise page: stale STOPPED agent finished, one hold item whole, notes grouped, release once, no machine header count, legend not a chart dot ($dashFix)" ($dashFix -eq 'True True True 1 True True')
+Expect "supervise page: stale STOPPED agent finished, one hold item whole, notes grouped, release once, no machine header count, the flags heatmap (no line chart) ($dashFix)" ($dashFix -eq 'True True True 1 True True')
 # ---- lessons and signals (items 7, 18): one lesson shape (lint), signals <= 400 chars with a fixed key set (state lint)
 $bossyPs = Join-Path $k 'skills/bossy/bossy.ps1'; $null = pwsh -NoProfile -File $bossyPs learn -Skill kitty -Kind idea -Text ('z' * 401) 2>&1; $sigLongCode = $LASTEXITCODE
 $null = pwsh -NoProfile -File $bossyPs learn -Skill kitty -Kind idea -Text 'short one' 2>&1
