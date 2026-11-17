@@ -5,7 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L49 plain · L76 warm
+// Sections: L25 crash · L50 plain · L77 warm
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
@@ -26,9 +26,10 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(CL
 function crashed(rc, err, event = 'crash') {
   if (dying) process.exit(2); dying = true   // an error in here: still blocked, never a loop
   let inp = ''; try { inp = `${input}` } catch { }   // unset when stdin itself failed
-  const h = createHash('sha1').update(inp).digest('hex').slice(0, 12)
+  let key = inp; try { const j = JSON.parse(inp); key = JSON.stringify([j.tool_name, j.tool_input, j.cwd]) } catch { }   // the call, not its per-call ids
+  const h = createHash('sha1').update(key).digest('hex').slice(0, 12)
   const why = `${err || ''}`.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\s+/g, ' ').trim()
-    .replace(/\b(bearer|basic|token|passw\w*|secret|api[-_]?key|authoriz\w*|cookie)\b[^\s=:]*(?:\s*[=:]\s*|\s+)(?:(?:bearer|basic)\s+)?[^\s;]+(?:;\s*[^\s;]+)*;?/gi, '$1 [redacted]').slice(0, 160)   // Write-KitLog masks; this line skips it
+    .replace(/(bearer|basic|token|passw\w*|secret|api[-_]?key|authoriz\w*|cookie)[^\s=:]*(?:\s*[=:]\s*|\s+)(?:(?:bearer|basic)\s+)?[^\s;]+(?:;\s*[^\s;]+)*;?/gi, '$1 [redacted]').slice(0, 160)   // Write-KitLog masks; this line skips it
   let tool = '', session = '', bypass = process.env.KIT_GUARD_BYPASS === '1' || event === 'timeout'
   try { const j = JSON.parse(inp); tool = `${j.tool_name || ''}`; session = `${j.session_id || ''}` } catch { }
   try {

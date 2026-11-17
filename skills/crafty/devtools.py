@@ -577,7 +577,7 @@ def glob_rx(g):
     g = re.sub(r'^\./', '', g.strip().replace('\\', '/'))
     g = g + '**' if g.endswith('/') else g
     part = lambda s: ''.join({'**/': '(?:.*/)?', '**': '.*', '*': '[^/]*', '?': '[^/]'}.get(p, re.escape(p)) for p in re.split(r'(\*\*/?|\*|\?)', s))
-    return re.compile(''.join('(?:' + '|'.join(part(x) for x in p[1:-1].split(',')) + ')' if p.startswith('{') else part(p)
+    return re.compile(''.join('(?:' + '|'.join(part(x) for x in p[1:-1].split(',')) + ')' if p.startswith('{') and p.endswith('}') else part(p)
                               for p in re.split(r'(\{[^{}]*\})', g)) + r'\Z')
 
 

@@ -207,7 +207,7 @@ function buildPrompt(a) {
  return `${WHY}${dn}
 You are devy ${a.id} in a parallel wave (${MODE}; kind: ${a.kind || (MODE === 'bugfix' ? 'fix' : 'feature')}).${PATHS}${AGENT_ENV(a.id)}
 Follow ${K}/SKILL.md (its steps and Rules; tools in ${DEV}, ${DT}) and the brief ${A.brief} (repos, ownership, ranges, local env, decisions; it wins).
-${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat((RES[a.id] || {}).skip || []).join(', ') || 'none'} (resume brief table); work out the rest (templates.md "Resume brief"), continue.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
+${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat((RES[a.id] || {}).skip || []).join(', ') || 'none'}${(((RES[a.id] || {}).mrs) || []).length ? `; open MRs ${RES[a.id].mrs.map((m) => m.url).join(' ')}` : ''}${(((RES[a.id] || {}).worktrees) || []).length ? `; worktrees ${RES[a.id].worktrees.join(' ')} (continue there)` : ''} (resume brief table); work out the rest (templates.md "Resume brief"), continue.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
 Board: & ${ORCH} board join -Type devy -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
 Worktrees: pool slots leased as ${a.id} (crafty Rules "Worktrees"). Never touch other agents' slots, branches or processes.
 ${a.note || ''}
@@ -682,7 +682,7 @@ const outcome = {
 // budget-stopped areas and those beyond args.batch: a ready relaunch
 const leftover = [...out.filter((x) => x.budgetStopped).map((x) => A0.agents.find((g) => g.id === x.id)).filter(Boolean), ...(BATCH ? A0.agents.slice(BATCH) : [])]
 // a stopped area resumes from what it reported (MRs, worktrees, doc), never from scratch
-const resMap = Object.fromEntries(out.filter((x) => x.budgetStopped).map((x) => { const r = x.report || {}; return [x.id, { ...(RES[x.id] || {}), state: 'budget stop', skip: [].concat((RES[x.id] || {}).skip || []), mrs: r.mrs || [], doc: r.testerGuide || '', worktrees: r.worktrees || [] }] }))
+const resMap = Object.fromEntries(out.filter((x) => x.budgetStopped).map((x) => { const r = x.report || {}; return [x.id, { ...(RES[x.id] || {}), state: 'budget stop', skip: [...new Set([].concat((RES[x.id] || {}).skip || [], (r.mrs || []).length && (r.localTest || {}).status === 'PASS' ? ['build'] : []))], mrs: r.mrs || [], doc: r.testerGuide || '', worktrees: r.worktrees || [] }] }))
 if (leftover.length) { outcome.next = nextCall(leftover, Object.keys(resMap).length ? { mode: 'resume', resume: resMap } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
 // relaunched once the waitFor producers merged
 const held = out.filter((x) => x.waitFor)

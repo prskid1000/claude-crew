@@ -97,7 +97,7 @@ const agent = async (p, o) => /^record-args/.test(o.label) ? _ok('RECORDED x\nBU
  : /^build:/.test(o.label) ? _rep({ status: 'FAIL', env: 'e', rounds: 1, failing: ['G1'], goalsDoc: 'g' }) : _ok('[]')
 const o = await run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }], mandate: ['m'], ..._kl }, agent, _n, _n, pipeline)
 const rs = o.next && o.next.args.resume && o.next.args.resume.X1
-console.log(`resume-map:${o.next && o.next.args.mode === 'resume' && rs && rs.state === 'budget stop' && rs.mrs.length === 1 && rs.worktrees[0] === 'C:/wt/x1'}`)
+console.log(`resume-map:${o.next && o.next.args.mode === 'resume' && rs && rs.state === 'budget stop' && rs.mrs.length === 1 && rs.worktrees[0] === 'C:/wt/x1' && !rs.skip.includes('build')}`)   // the loop had failed: devy finishes it in that worktree
 '@
 Expect-Each (Invoke-Js wg-res $js1b $wfd) 'buildy budget: #' 'resume-map' -Show 5
 # K69: testy next keeps the run options; a mostly NOT_TESTED shared-env item is held (never dropped unpublished); verify corrects the defect class

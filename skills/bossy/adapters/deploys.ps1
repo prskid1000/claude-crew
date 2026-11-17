@@ -434,7 +434,7 @@ function Invoke-DeployRestartSsh([string]$t, $d, [string]$Service, [int]$WaitMin
 # (noAll: new MRs stay held) when it says all / any / never / keep ... held / until
 function Get-KitDeployWordKind([string]$Answer) {
   $a = "$Answer".Trim()
-  if ($a -match "(?i)^(no (problem|worries|issues?|objections?)|(do not|d[o]?n['’]?t|no need to) wait)\b") { return 'yes' }   # a go, not a no
+  if ($a -match "(?i)^(no (problem|worries|issues?|objections?)|(do not|d[o]?n['’]?t|no need to) wait)\b" -and $a -notmatch '(?i)\b(but|except|however|hold|held|keep|until|tomorrow|later)\b') { return 'yes' }   # a go, not a no; a qualifier reads on
   if ($a -match '(?i)^(wait|later|retry|not yet)\b' -or ($a -notmatch '(?i)^(no|nope|nah)\b' -and $a -match '(?i)\b(tomorrow|tonight|later today)\b')) { return 'wait' }
   $no = $a -match "(?i)^(no|nope|nah|d[o]?n['’]?t|do not|never|skip|hold|held|not now|stop)\b" -or $a -match "(?i)\b(keep|keeps|stays?|remains?|leave)\b[^.;]*\b(held|on hold)\b|\b(no|never|d[o]?n['’]?t|do not)\s+deploy|\b(hold|held)\s+(all|every|any)\b"
   if ($no) { if ($a -match "(?i)\b(all|any|every|never|until)\b|\b(keep|keeps|stays?|remains?|leave)\b[^.;]*\bheld\b") { 'noAll' } else { 'no' } }

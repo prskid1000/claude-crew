@@ -1513,7 +1513,7 @@ def strip_ps_comments(text):
     text = re.sub(r'<#.*?#>', lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
     return '\n'.join(re.sub(r'(^|\s)#(?![>{]).*$', r'\1', l) if not re.search(r"""['"][^'"]*#""", l) else l for l in text.split('\n'))
 
-MATH_DBL = re.compile(r'/|\d\.\d|\[double\]|\.Total\w*|\w+GB\b|Get-Kit(Param|Setting|BeatMinutes)\b|\(Left\)|\[math\]::(Pow|Sqrt)\b')
+MATH_DBL = re.compile(r'/|\d\.\d|\[double\]|\.Total\w*|\w+GB\b|Get-Kit(Param|Setting|BeatMinutes)\b|\(Left\)|\[math\]::(Pow|Sqrt)\b|\[math\]::Round\([^()]*,\s*[1-9]')
 
 def ps_math_int(t):
     """[math]::Min/Max(<int literal>, <a side that may be a double>): [(line, second argument)] (here-strings and comments skipped)."""

@@ -1324,7 +1324,7 @@ do {
 function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-process self-test)
 $ErrorActionPreference = 'SilentlyContinue'; $script:layoutNote = $null   # guard_server.ps1 keeps this runspace between calls: no note carries over
-$gbn = 'KIT_GUARD_BY' + 'PASS'   # guard_client.mjs crash switch, split for SBLOG
+$gbn = 'KIT_GUARD_BY' + 'PASS'   # client crash switch; split: SBLOG
 if ($SelfTest) {
   $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
   $cases = @(
@@ -1435,7 +1435,7 @@ if ($SelfTest) {
   @('B', 'cd {KRTB} && rm -rf work', $true, $rp), @('B', 'cd {KIT}; rm -rf {RT}/work', $true, $rp), @('B', 'rm -rf $K/{RT}/work', $true, $rp),
   @('B', 'rm -rf /d/x/{RT}/work', $false, $rp), @('P', 'Remove-Item -Recurse "D:\x\{RT}\work"', $false, $rp), @('B', 'cd /d/x/{RT} && rm -rf work', $false, $rp),
   @('B', 'cd {WS}; rmdir {RT}/work/agents/a {RT}/work {RT}', $false, $rp), @('B', 'cd {WS}; mkdir -p {RT}/work/agents/a', $true, 'outside the kit'),
-  @('E', '{WS}/{RT}/work/a.md', $true, 'outside the kit'), @('B', 'mkdir -p {KRT}/work/agents/a; echo x > {KRTB}/../x/{RT}/a.txt', $false, 'outside the kit'),
+  @('E', '{WS}/{RT}/work/a.md', $true, 'outside the kit'), @('B', 'mkdir -p {KRT}/work/agents/a; echo x > {KRTB}/../x/y/{RT}/a.txt', $false, 'outside the kit'),
   @('B', 'rm -rf {KRTU}/work', $true, $rp), @('B', 'cd {WS}; mkdir -p {RTU}/w', $true, 'outside the kit'), @('B', 'mv {WS}/{RT}/work/x {KRT}/work/agents/x; cat {WS}/{RT}/a.md > {KRT}/b.md', $false, 'outside the kit'),
   @('B', 'cd {WS}; echo "{RT}/" >> .gitignore; ls {RT} 2>&1', $false, 'outside the kit'), @('B', 'cd {WS}; mkdir -p a/b/c/{RT}', $false, 'outside the kit'),
   @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
@@ -1544,7 +1544,7 @@ if ($SelfTest) {
       @('B', "git -C $mc status > $cr/s.txt; echo x >> $mc/$ef; echo x > $mc/sub/new.txt", $false, 'shared main checkout')) }
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
   $bp = 'owner only'
-  $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/settings.json; git commit -m 'setx $gbn > settings.json'", $false, $bp), @('P', "Set-ItemProperty -Path x -Name $gbn -Value 1", $true, $bp), @('B', "grep x y; pwsh -c ""setx $gbn 1""", $true, $bp))
+  $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/settings.json; git commit -m 'setx $gbn > settings.json'", $false, $bp), @('P', "Set-ItemProperty -Path x -Name $gbn -Value 1", $true, $bp), @('B', "grep x y; pwsh -c ""setx $gbn 1""", $true, $bp), @('B', "sed -i 's/}/,""$gbn"":1}/;s/a/b/' settings.json", $true, $bp), @('B', "git commit -m ""`$(setx $gbn 1)""", $true, $bp))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
@@ -1556,7 +1556,7 @@ if ($SelfTest) {
     if ($tool -eq 'run_command') { $hookIn = @{ conversationId = 'selftest'; toolCall = @{ args = @{ CommandLine = $v } }; cwd = $hookIn.cwd } }
     $json = $hookIn | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
-    $denied = $out -match '"(permissionDecision|decision)":"deny"' -and (-not $c[2] -or $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' }))   # an allow case denied for any reason fails (K63)
+    $denied = $out -match '"(permissionDecision|decision)":"deny"' -and (-not $c[2] -or $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' }))   # allow: any deny fails (K63)
     $ok = $denied -eq $c[2]
     if (-not $ok) { $fail++ }
     '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ($c[2]) { 'deny' } else { 'allow' }), ($c[1] -replace "`n", ' \n ')
@@ -1663,9 +1663,9 @@ function RuntimeKinds([string]$seg, [string]$base) {
 $segBase = $here
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
-# the crash switch is the owner's (K67); a commit message or a search is no write
+# the crash switch: the owner's (K67); a commit or search is no write
 $bpw = '(?i)\bsetx\b|SetEnvironmentVariable|\breg(\.exe)?\s+add\b|(New|Set)-ItemProperty|(>|\btee\b|\bsed\s+-i|Set-Content|Add-Content|Out-File).*(settings[\w.-]*\.json|\.bashrc|\$PROFILE)'
-if ("$cmd $($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)" -match $gbn -and (($edits -match 'settings[\w.-]*\.json$') -or @($cmd -split '[;&|\r\n]+' | Where-Object { $_ -match $bpw -and $_ -notmatch '^\s*(git\b.*\b(commit|tag)\b|grep|rg|Select-String)\b' }).Count)) {
+if ("$cmd $($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)" -match $gbn -and (($edits -match 'settings[\w.-]*\.json$') -or @([regex]::Matches(($cmd -replace '\\\r?\n|`\r?\n', ' '), '(?:"(?:[^"\\]|\\.)*"|''[^'']*''|[^;&|\r\n])+').Value | Where-Object { $_ -match $bpw -and -not ($_ -match '^\s*(git\b.*\b(commit|tag)\b|grep|rg|Select-String)\b' -and $_ -notmatch '\$\(|`|<\(') }).Count)) {
   $raw = "$($in.tool_name) $($edits -join ' ') $cmd"; Deny "kit guard: $gbn (lets guard crashes through) is set by the owner only" }
 $strayWhy = "a $rtLeaf outside the kit (a relative path from the wrong folder): agent files go under & $($KitCmd.dev) dir -Agent <id> (<kit>/$rtLeaf/work/agents/<id>/)"
 foreach ($e in $edits) { if ((RuntimeKinds " $e" $here) -contains 'stray') { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e is $strayWhy" } }
@@ -2461,7 +2461,7 @@ function Invoke-Tracker {
     'move' {   # K54: re-parent, list or top-level; state and both parents' Items follow (adapters/task_items.ps1)
       if (-not ($__id -and ($__trOpt.Parent -or $__trOpt.List -or $__trOpt.NoParent))) { 'usage: tracker move <id> [-Parent <p>] [-List <l>] [-NoParent] [-DryRun]'; exit 2 }
       Move-KitTask $__id -Parent "$($__trOpt.Parent)" -List "$($__trOpt.List)" -Top:([bool]$__trOpt.NoParent) -DryRun:([bool]$__trOpt.DryRun) }
-    'group' {   # K54: tasks under one parent (created from -Spec when missing); another list: an Items link with its URL
+    'group' {   # K54: tasks under one parent (made from -Spec if missing); another list: an Items link
       if (-not ($__trOpt.Tasks -and ($__trOpt.Parent -or $__trOpt.Spec))) { 'usage: tracker group -Parent <p> | -Spec <parent spec json> -Tasks <id,id,...> [-DryRun]'; exit 2 }
       Invoke-KitTaskGroup -Parent "$($__trOpt.Parent)" -Tasks @(Split-KitList $__trOpt.Tasks) -Spec $(if ($__trOpt.Spec) { $__sp }) -DryRun:([bool]$__trOpt.DryRun) }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
@@ -2471,7 +2471,7 @@ function Invoke-Tracker {
 }
 
 # ---- scope: brief area globs (agents[].paths) vs a diff: wt commit, deploy plan (-Mrs), supervise (merged MRs); devtools.py glob_rx, the same rule
-function ConvertTo-KitGlobRx([string]$Glob) {   # ** any folders, * and ? in one name, {a,b} either, a trailing / all below
+function ConvertTo-KitGlobRx([string]$Glob) {   # ** any folders, * ? in one name, {a,b}, a trailing / all below
   $g = ($Glob.Trim() -replace '\\', '/') -replace '^\./'; if ($g.EndsWith('/')) { $g += '**' }
   $part = { param($s) @([regex]::Split($s, '(\*\*/?|\*|\?)') | ForEach-Object { switch -CaseSensitive ($_) { '**/' { '(?:.*/)?' } '**' { '.*' } '*' { '[^/]*' } '?' { '[^/]' } default { [regex]::Escape($_) } } }) -join '' }
   '^' + (@([regex]::Split($g, '(\{[^{}]*\})') | ForEach-Object { if ($_ -match '^\{(.*)\}$') { '(?:' + (@($Matches[1] -split ',' | ForEach-Object { & $part $_ }) -join '|') + ')' } else { & $part $_ } }) -join '') + '\z'
