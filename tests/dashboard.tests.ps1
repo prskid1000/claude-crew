@@ -78,7 +78,7 @@ $agg = & { . $O; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date
   $rxA = "<tbody class='grp' data-g='wf_a'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=true><span class=gn0>wf_a</span><span class=gcn>2 agents &#183; 1 active &#183; 1 waiting &#183; buildy</span>"
   $rxF = "<tbody class='grp cl' data-g='kit-x'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=false><span class=gn0>kit-x</span><span class=gcn>1 agent &#183; 1 finished &#183; kitty</span>"
   $rxD = "<span title='Build &#183; Bash: export CLAUDE_AGENT=&#39;B1&#39;;[^']*'>Build &#183; runs envy.ps1</span>"
-  $rxB = 'data-ga=1>Collapse all</button><button type=button class=sa data-ga=0>Expand all'; $rxS = "S.getItem('kc-ag-'"
+  $rxB = 'data-ga=1>Collapse all</button><button type=button class=ga data-ga=0>Expand all'; $rxS = "S.getItem('kc-ag-'"
   $okC = $h.Contains($rxB) -and $h -match $rxD -and $h.Contains('>Review &#183; Bash: Run crafty pipes check<') -and $h.Contains($rxS)
   "$($h.Contains($rxA)) $($h.Contains($rxF)) $okC" }
 Expect "Agents: a collapsible group per run (agents, active / waiting, kind), finished-only folded, collapse / expand all, raw command -> step + script ($agg)" ($agg -eq 'True True True')
