@@ -78,6 +78,8 @@ $sw.Restart(); $psGot = & { . (Lib); Invoke-KitLocked $lt { 'got' } }; $psWait =
 $lbp = Lib; $tj = Start-ThreadJob { . $using:lbp; Invoke-KitLocked $using:lt { Start-Sleep -Milliseconds 1500 } }; for ($pw = 0; $pw -lt 100 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 50 }
 $pyWait = [double]"$(& $py -X utf8 $pyf 0 | Select-Object -Last 1)"; $null = $tj | Wait-Job
 Expect "lock: python waits for a PowerShell holder and the other way round (ps waited $([math]::Round($psWait, 1)) s, python $pyWait s)" ($psGot -eq 'got' -and $psWait -ge 1 -and $pyWait -ge 0.8 -and -not (Test-FileLockHeld $lt))
+# kept lock files (LESSONS.md.lock after learn) are git-ignored: never a lint REACH-NONE or a pre-push local-file block
+git -C $src check-ignore -q 'skills/crafty/LESSONS.md.lock'; Expect 'gitignore: *.lock (a kept LESSONS.md.lock is no kit file)' (-not $LASTEXITCODE)
 # board leave with the token lost: -Agent -Run leaves that agent's newest row (two rows: the older stays)
 $bdD = TkPath $k board -Create; foreach ($bx in @(@('duo-old', '2026-01-01T10:00:00'), @('duo-new', '2026-01-01T11:00:00'))) { & $J @{ session = $bx[0]; agent = 'duo'; run = 'r8'; status = 'working'; beat = $bx[1]; joined = $bx[1] } (Join-Path $bdD "$($bx[0]).json") }
 $blD = pwsh @np $O board leave -Agent duo -Run r8 2>&1 | Out-String

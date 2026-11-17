@@ -24,6 +24,9 @@ rules/*.local.md
 /scheduled_tasks.json
 /worktrees/
 
+# lock files the kit keeps next to the file they guard (lib.ps1 lock helpers; cleanup drops stale ones)
+*.lock
+
 # installs, caches, build output
 node_modules/
 package-lock.json
