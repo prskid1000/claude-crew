@@ -33,7 +33,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L51 config · L106 run · L194 tracker · L346 process · L497 git host · L564 scope · L643 MR · L827 merge · L1153 docs ·
-  L1306 publish · L1746 render · L2136 plugins · L2150 keepboth · L2169 selftest · L2704 CLI
+  L1306 publish · L1746 render · L2145 plugins · L2159 keepboth · L2178 selftest · L2713 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1878,9 +1878,17 @@ def own_spec(old, new, replace=False):
             new.pop(k)
 
 
+USAGE_EXAMPLES = {'evidence': 'python -X utf8 devtools.py evidence "T1 local run" shots/t1-list.png api/t1-get.json --key T1:evidence',
+                  'doc': 'python -X utf8 devtools.py doc "T1 testing doc (AI)" ai-t1.md --key T1:testing-ai'}
+
+
 def cases_cmd(a):
     """cases add <task> <spec.json|JSON> [--replace] · result <task> <id> <PASS|FAIL|...> [<evidence> ...] · round <task> [--fix <sha>] [--bugs <t>]
-    [--retest <t>] · render <task> goals|ai|human -> the rendered file's path."""
+    [--retest <t>] · render <task> goals|ai|human -> the rendered file's path. Examples (one per verb):
+      python -X utf8 devtools.py cases add T1 cases-t1.json
+      python -X utf8 devtools.py cases result T1 A1 PASS https://drive.example/a1.png
+      python -X utf8 devtools.py cases round T1 --fix 1a2b3c4 --bugs none
+      python -X utf8 devtools.py cases render T1 ai"""
     if len(a) < 2 or a[0] not in ('add', 'result', 'round', 'render'):
         print(cases_cmd.__doc__, file=sys.stderr)
         return 2
@@ -1900,7 +1908,8 @@ def cases_cmd(a):
             raise SystemExit('cases add: the spec is one JSON object (templates.md "Test cases")')
     elif verb == 'result':
         if len(rest) < 2:
-            raise SystemExit('cases result <task> <case id> <PASS|FAIL|NOT_TESTED_LOCAL ...> [<evidence link> ...]')
+            raise SystemExit('cases result <task> <case id> <PASS|FAIL|NOT_TESTED_LOCAL ...> [<evidence link> ...]\n'
+                             '  e.g. python -X utf8 devtools.py cases result T1 A1 PASS https://drive.example/a1.png')
         new = {'cases': [{'id': rest[0], 'result': rest[1], 'evidence': rest[2:]}]}   # evidence replaced: an old FAIL's link never stays
     gaps = []
 
@@ -2740,6 +2749,8 @@ def _cli():
         print((f'devtools.py {cmd}: unknown option {bad[0]}' if bad else f'devtools.py {cmd}: missing arguments') if cmd in ARITY
               else f"devtools.py: unknown verb {cmd}: python -X utf8 devtools.py <verb> ... (verbs: {', '.join(sorted(ARITY))})\n{__doc__}", file=sys.stderr)
         print('\n'.join(use) if use else '', file=sys.stderr)
+        if cmd in USAGE_EXAMPLES:   # retro 2026-11-17: 7x 'evidence: missing arguments'
+            print(f'  e.g. {USAGE_EXAMPLES[cmd]}', file=sys.stderr)
         sys.exit(2)
     if cmd == 'comment' and opt.get('--spec'):   # comment <task> --spec <json> [kind]: rendered
         kd = a[2] if len(a) > 2 else 'comment-status'

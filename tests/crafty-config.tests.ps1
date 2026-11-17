@@ -71,5 +71,8 @@ $e0 = $Error.Count; $t = Read-KitText (Join-Path $Dir 'no-such.json'); "missing:
 "locks:$($env:GIT_OPTIONAL_LOCKS -eq '0')"
 '@
 Expect-Each (Invoke-PsTest 'churn' $churnTest @((Lib), (Kd))) 'churn #: Write-KitAtomic skips same bytes (an old file: time only), a -Volatile-only change moves the file time, a change outside it writes; Read-KitText misses quietly; git probes skip optional locks' 'same', 'nested', 'volatile', 'changed', 'missing', 'text', 'locks'
+# usage errors carry one worked example (retro 2026-11-17: cases 31x, evidence 7x)
+$dtU = Join-Path $k 'skills/crafty/devtools.py'; $evU = & $py -X utf8 $dtU evidence 2>&1 | Out-String; $caU = & $py -X utf8 $dtU cases 2>&1 | Out-String; $crU = & $py -X utf8 $dtU cases result T1 2>&1 | Out-String
+Expect 'devtools.py: evidence / cases usage errors print a worked example per verb' ($evU -match 'e\.g\. python -X utf8 devtools\.py evidence "T1' -and $caU -match 'cases add T1 ' -and $caU -match 'cases round T1 --fix' -and $crU -match 'e\.g\. python -X utf8 devtools\.py cases result T1 A1 PASS')
 Remove-TestKit $k
 Complete-Tests
