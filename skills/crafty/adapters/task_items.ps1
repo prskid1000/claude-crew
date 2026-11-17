@@ -88,10 +88,12 @@ function Invoke-KitTaskGroup([string]$Parent, [string[]]$Tasks, $Spec, [switch]$
   $its = @($px.spec.items | Where-Object { $_ })
   $plan = @(foreach ($id in @($Tasks | Where-Object { $_ -and $_ -ne $Parent } | Select-Object -Unique)) { $t = Get-TrackerTask $id
       if (-not $t.name) { [pscustomobject]@{ id = $id; how = 'missing'; code = ''; list = '' }; continue }
-      $code = @($its | Where-Object { "$($_.desc)" -match "(?<![\w])$([regex]::Escape($id))(?![\w])" } | ForEach-Object code)[0]
+      $hit = @($its | Where-Object { "$($_.desc)" -match "(?<![\w])$([regex]::Escape($id))(?![\w])" })[0]; $code = "$($hit.code)"
       if (-not $code) { $code = "$((Read-KitState (Get-KitTaskFile $id)).spec.code)" }; if (-not $code) { $code = $id }
       $how = if ("$($t.parent)" -eq $Parent) { 'already' } elseif (-not "$($pt.list)" -or "$($t.list)" -eq "$($pt.list)") { 'subtask' } else { 'link' }
-      [pscustomobject]@{ id = $id; code = "$code"; how = $how; name = ("$($t.name)" -replace '^\s*\[[^\]]*\]\s*'); url = $(if ($t.url) { "$($t.url)" } else { Get-TrackerUrl $id }); list = "$($t.list)" } })
+      # short text: the parent's own line for it (URL cut), its subtask entry, else the task name
+      $sd = if ($hit) { ("$($hit.desc)" -replace 'https?://\S+' -replace '[\s·,;]+$').Trim() } else { "$(@($px.spec.subtasks | Where-Object { "$($_.id)" -eq $id } | ForEach-Object desc)[0])" }
+      [pscustomobject]@{ id = $id; code = "$code"; how = $how; name = $(if ($sd) { $sd } else { "$($t.name)" -replace '^\s*\[[^\]]*\]\s*' }); url = $(if ($t.url) { "$($t.url)" } else { Get-TrackerUrl $id }); list = "$($t.list)" } })
   $lines = @($plan | ForEach-Object { "$($_.how) $($_.id)$(if ($_.code -and $_.code -ne $_.id) { " ($($_.code))" })$(if ($_.how -eq 'link') { " · list $($_.list), parent list $($pt.list): Items link" })" })
   if ($DryRun) { return @("group under $Parent ($($pt.name)):") + $lines }
   $mv = @(foreach ($p in @($plan | Where-Object how -eq 'subtask')) { try { $null = Move-KitTask $p.id -Parent $Parent; $p } catch { $p.how = 'failed'; "  $($p.id): $($_.Exception.Message)" } })
@@ -103,6 +105,6 @@ function Invoke-KitTaskGroup([string]$Parent, [string[]]$Tasks, $Spec, [switch]$
     @($lk.Values | ForEach-Object { [ordered]@{ code = $_.code; desc = $_.name; mrs = @($_.url) } }))
   $sp.subtasks = @(@($sp.subtasks | Where-Object { $_ -and "$($_.id)" -notin @($subs | ForEach-Object id) }) + @($subs | ForEach-Object { [ordered]@{ code = $_.code; desc = $_.name; id = $_.id } }))
   Update-KitTaskIndex $Parent { param($x) $x.spec = $sp; $x.parentItemsSig = '' }
-  $pub = Publish-KitTaskSpec ([ordered]@{}) -Task $Parent
+  $pub = try { Publish-KitTaskSpec ([ordered]@{}) -Task $Parent } catch { [pscustomobject]@{ parent = "the moves stand; $Parent text not re-rendered: $($_.Exception.Message) -> tracker update $Parent -Spec <shorter items / subtasks desc>" } }
   @("grouped under $Parent ($(Get-TrackerUrl $Parent)): $(@($plan | Where-Object how -eq 'subtask').Count) moved, $(@($plan | Where-Object how -eq 'already').Count) already, $(@($plan | Where-Object how -eq 'link').Count) linked$(if (@($plan | Where-Object how -in 'missing', 'failed').Count) { ", $(@($plan | Where-Object how -in 'missing', 'failed').Count) not grouped" })") + $lines + @($mv | Where-Object { $_ -is [string] }) + @("$($pub.parent)" | Where-Object { $_ })
 }
