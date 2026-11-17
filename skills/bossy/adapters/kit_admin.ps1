@@ -235,6 +235,8 @@ function Invoke-PreCommit {
     & $py -X utf8 $KitCmd.kitbag sections --fix @($sec | ForEach-Object { Join-Path $root $_ }) | Out-Null
     foreach ($f in $sec) { if (Test-UnstagedEdits $root $f) { git -C $root add -- $f; Write-Host "pre-commit: Sections: map of $f regenerated and staged" } }
   }
+  # a broken hook script fails open (Claude Code blocks only on exit 2): node --check each staged .mjs (workflows need a wrapper)
+  foreach ($f in @(git -C $root diff --cached --name-only --diff-filter=ACMR -- '*.mjs')) { $nc = node --check (Join-Path $root $f) 2>&1; if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - node --check $f`: $(@($nc)[0..3] -join ' ')" -ForegroundColor Red; exit 1 } }
   & $py -X utf8 $KitCmd.kitbag port 2>$null | Out-Null   # silent: ports are optional
   if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
     git -C $root add -- .codex .agents GEMINI.md

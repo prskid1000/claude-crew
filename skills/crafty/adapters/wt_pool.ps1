@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L108 names · L140 slots · L166 lease · L263 release · L291 lanes · L396 sync · L492 pool
+Sections: L14 worktrees · L108 names · L141 slots · L167 lease · L264 release · L292 lanes · L397 sync · L493 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -123,8 +123,9 @@ function Get-KitLaneSlug([string]$Lane) { ((Get-KitPoolLabel 'env' $Lane) -repla
 # before " · " (a service row) or after "env " / "lane " become the pool label (rm2 · api -> rm·Kestrel · api); kitbag.py ui-check LANE-ID
 function ConvertTo-KitLaneText([string]$Text) {
   if (-not $Text) { return $Text }
+  $dot = '(?:·|&#0*183;|&middot;|(?i:&#x0*b7;))'   # a middle dot, plain or HTML-encoded: a lane already labelled
   if (-not $script:KitLaneRx -or -not [object]::ReferenceEquals($script:KitLaneRx.cfg, $__cfg)) { $script:KitLaneRx = @{ cfg = $__cfg; map =@(foreach ($l in @(Get-KitLaneNames | Sort-Object Length -Descending)) { $lb = Get-KitPoolLabel env $l; if ($lb -ne $l) { $q = [regex]::Escape($l)
-          , @($(if ($l -match '\d$') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= (?:·|&#183;) )|(?<=\b(?:env|lane) )$q(?![\w·./\-]|&#0*183;|&middot;)" }), $lb) } }) } }
+          , @($(if ($l -match '\d$') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= $dot )|(?<=\b(?:env|lane) )$q(?![\w·./\-]|$dot)" }), $lb) } }) } }
   foreach ($m in $script:KitLaneRx.map) { $Text = [regex]::Replace($Text, $m[0], $m[1]) }; $Text }
 # a shown lane name (rm·Kestrel, rm-kestrel, case-insensitive) -> its id; anything else as given
 function ConvertFrom-KitLaneLabel([string]$Name) { foreach ($l in @(Get-KitLaneNames)) { if ($Name -ieq (Get-KitPoolLabel env $l) -or $Name -ieq (Get-KitLaneSlug $l)) { return $l } }; $Name }

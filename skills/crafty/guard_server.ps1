@@ -5,7 +5,7 @@ falls back to crafty.ps1 guard for that call; any kit file change, 30 idle minut
 restarts it).
   pwsh -NoProfile -File <kit>/skills/crafty/guard_server.ps1 [-Pipe <name>]   (the client starts it: never by hand)
 Request (one line): {"env":{...},"input":"<hook stdin>"} -> reply (one line): {"code":0,"out":"..."} | {"reload":true}; {"stop":true}: ends
-Exit codes: 0 ended (idle, kit changed, failed request) · 1 the pipe is taken (another server runs).
+Exit codes: 0 ended (idle, kit changed, failed request) · 1 the pipe is taken (another server runs) or crafty.ps1 did not load.
 #>
 #Requires -Version 7
 param([string]$Pipe)
@@ -17,6 +17,8 @@ $s0 = & $stamp
 # a runspace keeps the guard's script state; its exit ends one call, never the runspace
 $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
 $ps = [powershell]::Create(); $ps.Runspace = $rs; $null = $ps.AddScript("`$ErrorActionPreference = 'SilentlyContinue'; . '$((Join-Path $kit 'skills/crafty/crafty.ps1').Replace("'", "''"))'; `$script:KitScript = 'crafty.ps1'; `$script:KitVerb = 'guard'").Invoke(); $ps.Dispose()
+$ps = [powershell]::Create(); $ps.Runspace = $rs; $loaded = @($ps.AddScript('[bool](Get-Command Invoke-Guard -ErrorAction SilentlyContinue)').Invoke())[0]; $ps.Dispose()
+if (-not $loaded) { exit 1 }   # a half-loaded crafty.ps1 would answer every call with an empty allow: the client's plain path decides
 $env0 = @{}; foreach ($v in Get-ChildItem env:) { $env0[$v.Name] = $v.Value }
 if ($IsWindows -and [IO.File]::Exists("\\.\pipe\$Pipe")) { exit 1 }   # two cold calls started two: the later one goes
 while ($true) {

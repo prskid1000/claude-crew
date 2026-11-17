@@ -31,17 +31,21 @@ Expect "warm guard: a kit file change ends the server ($($old -join ',')); that 
 $env:KIT_GUARD_WARM = '0'; $off = & $viaClient $ins[0]; Remove-Item Env:KIT_GUARD_WARM
 Expect 'warm guard: KIT_GUARD_WARM=0 = the plain path' ($off -eq $plain[0])
 & $mine | Stop-Process -ErrorAction SilentlyContinue
-# K67: a guard crash (parse error, no pwsh) blocks the call (exit 2) and logs it; KIT_GUARD_BYPASS=1 lets it through
-$env:KIT_GUARD_WARM = '0'; $ok0 = @(Get-Content -LiteralPath $D); Add-Content -LiteralPath $D 'function Broken {'
-$cr1 = @($ins[2] | node $gc 2>&1); $rc1 = $LASTEXITCODE
+# K67: a guard crash (parse error, non-JSON stdout, timeout, no pwsh) blocks the call (exit 2) and logs it; KIT_GUARD_BYPASS=1 lets it through
+# crafty.ps1 is a hard link to the source kit: unlink before every write (TEST-WRITE)
+$env:KIT_GUARD_WARM = '0'; $ok0 = [IO.File]::ReadAllText($D); $put = { param($t) Remove-Item -LiteralPath $D; [IO.File]::WriteAllText($D, $t) }
+& $put "$ok0`nfunction Broken {"; $cr1 = @($ins[2] | node $gc 2>&1); $rc1 = $LASTEXITCODE
 $env:KIT_GUARD_BYPASS = '1'; $cr2 = @($ins[2] | node $gc 2>&1); $rc2 = $LASTEXITCODE; Remove-Item Env:KIT_GUARD_BYPASS
 $nodeExe = (Get-Command node).Source; $path0 = $env:PATH; $env:PATH = Split-Path $nodeExe; $cr3 = @($ins[2] | & $nodeExe $gc 2>&1); $rc3 = $LASTEXITCODE; $env:PATH = $path0
-Set-Content -LiteralPath $D $ok0; Remove-Item Env:KIT_GUARD_WARM
-$glog = @(Get-ChildItem -LiteralPath "$(pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; Get-KitPath audit")".Trim() -Recurse -Filter guard.jsonl -ErrorAction SilentlyContinue | Get-Content | ConvertFrom-Json | Where-Object event -eq 'crash')
+& $put "'not json'; exit 0"; $cr4 = @($ins[2] | node $gc 2>&1); $rc4 = $LASTEXITCODE
+$env:KIT_GUARD_TIMEOUT_MS = '1500'; & $put 'Start-Sleep -Seconds 9'; $cr5 = @($ins[2] | node $gc 2>&1); $rc5 = $LASTEXITCODE; Remove-Item Env:KIT_GUARD_TIMEOUT_MS
+& $put $ok0; Remove-Item Env:KIT_GUARD_WARM
+$gl = @(Get-ChildItem -LiteralPath "$(pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; Get-KitPath audit")".Trim() -Recurse -Filter guard.jsonl -ErrorAction SilentlyContinue | Get-Content); $glog = @($gl | ConvertFrom-Json | Where-Object event -eq 'crash')
 Expect "guard crash: blocked with exit 2 and the reason ($rc1 $($cr1 -join ' '))" ($rc1 -eq 2 -and "$cr1" -match 'kit guard crashed .*call blocked .*KIT_GUARD_BYPASS')
 Expect "guard crash: KIT_GUARD_BYPASS=1 lets the call through with a note ($rc2)" ($rc2 -eq 0 -and "$cr2" -match 'systemMessage.*unguarded')
-Expect "guard crash: no pwsh blocks too ($rc3 $($cr3 -join ' '))" ($rc3 -eq 2 -and "$cr3" -match 'ENOENT')
-Expect "guard crash: each logged as guard event crash, bypass marked ($($glog.Count))" ($glog.Count -eq 3 -and @($glog | Where-Object letThrough).Count -eq 1 -and $glog[0].tool -eq 'Bash')
+Expect "guard crash: no pwsh and non-JSON stdout block too; a timeout (loaded machine) passes, logged ($rc3 $rc4 $rc5 $cr4 $(@($gl -match '"event":"timeout"').Count))" ($rc3 -eq 2 -and "$cr3" -match 'ENOENT' -and $rc4 -eq 2 -and "$cr4" -match 'not json' -and $rc5 -eq 0 -and @($gl -match '"event":"timeout"').Count -ge 1)
+# a fresh test kit: its guard log holds only these
+Expect "guard crash: each logged as guard event crash, the switch marked ($($glog.Count))" ($glog.Count -eq 4 -and @($glog | Where-Object letThrough).Count -eq 1 -and $glog[0].tool -eq 'Bash' -and $gl[0] -match '"at":"[^"]+[+-]\d\d:\d\d"')
 Expect 'guard crash: a healthy guard after the fix answers as before' (($ins[0] | node $gc) -join '' -match 'git stash is shared')
 Start-Sleep -Seconds 1; & $mine | Stop-Process -ErrorAction SilentlyContinue
 Remove-TestKit $k

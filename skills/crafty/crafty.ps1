@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L949 check · L1266 pipes · L1323 guard · L2199 dir ·
-  L2209 checkpoint · L2239 prior · L2277 tracker · L2299 task spec · L2485 scope · L2532 host
+Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L949 check · L1266 pipes · L1323 guard · L2198 dir ·
+  L2208 checkpoint · L2238 prior · L2276 tracker · L2298 task spec · L2484 scope · L2531 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -101,7 +101,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     if (-not $ctx[$rp].keep) { $ctx[$rp].keep = Get-KitKeepBranchRx $rp }
     if ($br -and $br -match $ctx[$rp].keep) { continue }   # env / default worktrees: their owners'
     if (git -C $d status --porcelain 2>$null) { & $keep "$d$(if ($br) { " ($br)" })" 'uncommitted files'; if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($idleH / 24)) d: kept (never deleted; commit or remove it by hand)" }; continue }
-    # an unclaimed deploymerge-* idle idle.graceMinutes (min 60; CI waits write nothing) blocks the next merge
+    # an unclaimed deploymerge-* idle past idle.graceMinutes (min 60) blocks the next merge
     $dm = $w.Name -like 'deploymerge-*' -and $d.ToLower() -notin $claimed -and $newest -and ($now - $newest).TotalMinutes -ge [math]::Max(60, [double](Get-KitParam 'idle.graceMinutes'))
     if (-not $dm -and $idleH -lt $IdleHours) { & $keep "$d ($br)" "active, changed $([int]($idleH * 60)) min ago"; continue }
     if (-not (Invoke-GitFetch -Dir $d)) { & $keep $d 'git fetch failed'; continue }
@@ -431,7 +431,7 @@ switch ($Action) {
       foreach ($u in $farmUndo) { $src = $u[1][0]; $wtr = $u[1][1]; $null = Set-NodeModules $u[0] $src (git -C $Dir rev-parse --path-format=absolute --git-common-dir | Split-Path) $wtr }
       throw "git worktree remove failed for $Dir (links restored): $(($gitSaid | Where-Object { $_.Trim() }) -join ' ' -replace '\s+', ' '); fix that, or -Force"
     }
-    # git dropped the record, a locked file kept the folder: no links back into it (a skeleton no sweep sees)
+    # git dropped the record, a locked file kept the folder: no links back into it (no sweep sees it)
     if (Test-Path -LiteralPath $full) { $lv = Get-KitLeftoverVerdict $full $repoDirs; if (-not $lv.delete) { "left $Dir in place: $($lv.why)" } else { try { Remove-KitLeftover $full } catch { "left $Dir in place: $($_.Exception.Message)" } } }
     & $finish $main $br
     "removed $Dir"
@@ -1242,7 +1242,7 @@ foreach ($s in $steps) {
   else {
     $lk = if ($s -eq 'test') { Get-TestLock @($Tests -split '[,\s]+' | Where-Object { $_ }) }
     if ($lk -and -not (Use-KitLock "$($lk.lock)" $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Split-Path (Get-CheckRepo).top -Leaf }) $st.dir)) { Write-Host "[check] test not started: lock $($lk.lock) still held by $($script:KitLockRefused.holder) (repos[].exclusiveTests); retry when it ends"; exit 3 }
-    # python test output is logged too: "No module named" tells a stale venv from a failed test
+    # python output logged too: "No module named" = a stale venv, not a failed test
     $runLog = if ($s -eq 'test' -and $pyRun) { Join-Path (Get-KitPath logs -Create) "check-$(Hash12 $st.dir.ToLower())-$PID.log" }   # per run: parallel checks of one dir
     if ($runLog) { Write-Host "[check] test output goes to $runLog and prints when the run ends"; $env:PYTHONUTF8 = '1' }
     $bt0 = (Get-Date).AddSeconds(-2)
@@ -1266,7 +1266,7 @@ exit 0
 # ---- pipes: wait for MR/PR pipelines (JSON)
 function Invoke-Pipes {
 param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run)   # -UntilMerged: a consumer waits for producers
-if (-not $Mrs) {   # in a wt worktree: its branch's open MRs; else the open MRs of the tracked tasks (-Run: of that run)
+if (-not $Mrs) {   # a wt worktree: its branch's open MRs; else the tracked tasks' (-Run: its)
   $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
   $wtTarget = if ($wtGit -and (Test-Path -LiteralPath (Join-Path $wtGit 'claude-target'))) { (Get-Content -LiteralPath (Join-Path $wtGit 'claude-target') -TotalCount 1).Trim() }
   $script:KitRc = 2
@@ -1324,7 +1324,7 @@ do {
 function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-process self-test)
 $ErrorActionPreference = 'SilentlyContinue'; $script:layoutNote = $null   # guard_server.ps1 keeps this runspace between calls: no note carries over
-$gbn = 'KIT_GUARD_BY' + 'PASS'   # guard_client.mjs crash switch; split: the whole word makes pwsh log this script (SBLOG)
+$gbn = 'KIT_GUARD_BY' + 'PASS'   # guard_client.mjs crash switch, split for SBLOG
 if ($SelfTest) {
   $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
   $cases = @(
@@ -1543,8 +1543,8 @@ if ($SelfTest) {
     $cases += @(@('B', "echo x > $mc/kit-scratch-$PID.txt", $true, 'shared main checkout'), @('B', "cd $mc && git status > kit-scratch-$PID.txt", $true, 'shared main checkout'), @('E', "$mc/kit-scratch-$PID.md", $true, 'shared main checkout'),
       @('B', "git -C $mc status > $cr/s.txt; echo x >> $mc/$ef; echo x > $mc/sub/new.txt", $false, 'shared main checkout')) }
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
-  $bp = 'set by the owner only'
-  $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/n.ps1", $false, $bp))
+  $bp = 'owner only'
+  $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/settings.json; git commit -m 'setx $gbn > settings.json'", $false, $bp), @('P', "Set-ItemProperty -Path x -Name $gbn -Value 1", $true, $bp))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
@@ -1640,7 +1640,7 @@ function CrlfKitFile([string]$p, [string]$base) {
   if ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($p)).Contains("`r`n")) { $p }
 }
 $liveWhy = 'the live kit runs every agent: edit your kit worktree (crafty.ps1 wt) and push; the coordinator pulls'
-# a .runtime path: 'kit' = <kit>/.runtime or unresolvable ($var, ~), 'stray' = one more up to 2 folders into the workspace (lint RUNTIME-STRAY; not a kit checkout's), else 'other'
+# a .runtime path: 'kit' = <kit>/.runtime or unresolvable ($var, ~), 'stray' = one more up to 2 folders into the workspace, not a kit checkout's (lint RUNTIME-STRAY), else 'other'
 $rtFull = [IO.Path]::GetFullPath((Get-KitRuntime)).TrimEnd('\', '/'); $rtLeaf = Split-Path $rtFull -Leaf
 $wsRoot = Split-Path $(if ($live) { $live } else { $script:KitRoot })
 function FullOf([string]$p, [string]$base) {
@@ -1663,11 +1663,10 @@ function RuntimeKinds([string]$seg, [string]$base) {
 $segBase = $here
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
-# the crash switch outlives a call in settings env or the user / machine env: the owner's alone (K67)
-$bpText = "$cmd`n$($in.tool_input.content)`n$($in.tool_input.new_string)`n$(@($in.tool_input.edits | ForEach-Object { $_.new_string }) -join "`n")"
-if ($bpText -match $gbn -and (($edits -match 'settings[\w.-]*\.json$') -or $cmd -match '(?i)settings[\w.-]*\.json|\bsetx\b|SetEnvironmentVariable')) {
-  $raw = "$($in.tool_name) $($edits -join ' ') $cmd"; Deny "kit guard: $gbn (guard crashes let through) is set by the owner only"
-}
+# the crash switch is the owner's (K67); quoted text is data
+$bpw = '(?i)\bsetx\b|SetEnvironmentVariable|\breg(\.exe)?\s+add\b|(New|Set)-ItemProperty|(>|\btee\b|\bsed\s+-i|Set-Content|Add-Content|Out-File).*(settings[\w.-]*\.json|\.bashrc|\$PROFILE)'
+if ("$cmd $($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)" -match $gbn -and (($edits -match 'settings[\w.-]*\.json$') -or [regex]::Replace($cmd, '"(?:[^"\\]|\\.)*"|''[^'']*''', '""') -match $bpw)) {
+  $raw = "$($in.tool_name) $($edits -join ' ') $cmd"; Deny "kit guard: $gbn (lets guard crashes through) is set by the owner only" }
 $strayWhy = "a $rtLeaf outside the kit (a relative path from the wrong folder): agent files go under & $($KitCmd.dev) dir -Agent <id> (<kit>/$rtLeaf/work/agents/<id>/)"
 foreach ($e in $edits) { if ((RuntimeKinds " $e" $here) -contains 'stray') { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e is $strayWhy" } }
 # scratch (h.txt, r.txt) at the top of a shared main checkout (repos[].checkout) outlives the agent and dirties every base
@@ -2329,7 +2328,7 @@ function Get-KitSpecName($Spec) {
 }
 # a spec doc's link: docs.<doc key>, or the legacy docs.human / docs.ai of the first two process docs
 function Get-KitSpecDocUrl($Spec, $Doc, [int]$At) { $u = (Get-KitMember $Spec.docs "$($Doc.key)"); if (-not $u) { $u = (Get-KitMember $Spec.docs (@('human', 'ai')[$At])) }; "$u" }
-# the description: doc links (process.docs, only once they exist), then tracker.taskTemplate sections (Problem, Goal, Items, Acceptance, Links)
+# the description: doc links (process.docs, once they exist), then the tracker.taskTemplate sections
 function Format-KitTaskText($Spec) {
   $ln = @(); $dk = @(Get-KitProcessDocs); for ($i = 0; $i -lt $dk.Count; $i++) { if ($u = Get-KitSpecDocUrl $Spec $dk[$i] $i) { $ln += "**$($dk[$i].label):** [open]($u)", '' } }
   $lb = @{}; foreach ($s in Get-KitTaskTemplate) { $lb["$($s.key)"] = "$($s.label)" }; $L = { param($k, $d) if ($lb.ContainsKey($k)) { $lb[$k] } else { $d } }
@@ -2439,7 +2438,7 @@ function Invoke-Tracker {
     }
     'render' { if (-not $__sp) { 'usage: tracker render -Spec <json>'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -DryRun) }
     'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> (merged by key into the stored spec)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id) }
-    'create' {   # -Spec: rendered ("task spec"); free text only for a keyed QA / watch defect (-Key updates its open task)
+    'create' {   # -Spec: rendered ("task spec"); free text only for a keyed QA / watch defect (-Key: updates its task)
       if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
       $__specHint = 'tracker create -Spec <json> (crafty.ps1 "task spec": kind, title, problem, goal, items, acceptance, links)'
       if ("$($__trOpt.Key)" -notmatch '^(qa|watch)-') { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (-Key qa-<run> or watch-<env>-<signature>$(if ($__trOpt.Key) { "; '$($__trOpt.Key)' is neither" }))"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs; 2026-11-16: a made-up key skipped the spec
@@ -2470,7 +2469,7 @@ function Invoke-Tracker {
       if ($__lost.Count) { "tracker describe refused: the text lacks $($__lost -join ', ') (templates.md task-description): render it from a spec: tracker update $__id -Spec <json> (crafty.ps1 ""task spec""; doc links and kit sections stay)"; exit 1 }
       Set-TrackerDescription $__id $__nd }
     'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
-    'move' {   # K54: re-parent, another list, or top-level; state, old and new parent Items follow (adapters/task_items.ps1)
+    'move' {   # K54: re-parent, list or top-level; state and both parents' Items follow (adapters/task_items.ps1)
       if (-not ($__id -and ($__trOpt.Parent -or $__trOpt.List -or $__trOpt.NoParent))) { 'usage: tracker move <id> [-Parent <p>] [-List <l>] [-NoParent] [-DryRun]'; exit 2 }
       Move-KitTask $__id -Parent "$($__trOpt.Parent)" -List "$($__trOpt.List)" -Top:([bool]$__trOpt.NoParent) -DryRun:([bool]$__trOpt.DryRun) }
     'group' {   # K54: tasks under one parent (created from -Spec when missing); another list: an Items link with its URL
@@ -2499,7 +2498,7 @@ function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
   $words = @(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object { $_.gate -eq 'scope' -and $_.status -eq 'answered' -and ("$($_.by)" -split '[-_ :]')[0] -notin $crew })
   $lifted = { param($c) @($words | Where-Object { ($_.item -and $_.item -in "$($c.branch)", "$($c.mr)") -or "$($c.mr)" -in @($_.mrs) }).Count -gt 0 }   # a person's scope word
   $filesOf = { param($m) $rn, $iid = $m -split '!', 2; $ch = try { Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $rn -Raw); n = $iid } } catch { $null }; @($ch.changes | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique) }
-  if ($Mrs) {   # each MR's source / test files and its area (deploy plan: the owner sees them before saying deploy)
+  if ($Mrs) {   # each MR's source / test files and area (the deploy plan shows them)
     $rows = foreach ($m in @(Split-KitList $Mrs)) {
       $k = if ($m -match '([^/]+)/(?:-/)?(?:merge_requests|pulls?|pull-requests|pullrequest)/(\d+)') { "$($Matches[1])!$($Matches[2])" } else { $m -replace '^.*/' }
       $f = @(& $filesOf $k); $a = $areas[$k]
