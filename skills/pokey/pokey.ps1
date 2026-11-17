@@ -716,7 +716,7 @@ $script:NewDefectRx = [string](Get-KitSetting 'qa.newDefectIdRx' '')
 function Test-KnownBug($c) { [bool]"$($c.knownBug)".Trim() }
 function Test-NewDefect($c) { if (Test-KnownBug $c) { return $false }; if ("$($c.defect)" -in 'new', 'own') { return "$($c.defect)" -eq 'new' }; [bool]$script:NewDefectRx -and [string]$c.id -match $script:NewDefectRx }
 # a new defect with an inconclusive verify and no request / endpoint named is unproven: a WATCH note (watchy triage), never a [Bug]
-function Test-Unproven($c) { (VerifyStatus $c.verify) -match '^inconclusive\b' -and "$($c.what_was_done) $($c.observed)" -notmatch '(?i)\b(?:GET|POST|PUT|PATCH|DELETE)\s+\S|https?://\S|(?:^|[\s(`''"])/[\w.{}:-]+/' }
+function Test-Unproven($c) { (VerifyStatus $c.verify) -match '^inconclusive\b' -and "$($c.what_was_done) $($c.observed)" -cnotmatch '\b(?:GET|POST|PUT|PATCH|DELETE)\s+(?:https?:|/)|https?://\S|(?:^|[\s(`''"])/[\w.{}:-]+/' }
 # bossy.ps1 bugbrief parses "### <id> — <screen>" + "**Saw:**"
 $script:NtHold = @(Get-KitSetting 'qa.holdCauses' @() | Where-Object { $_ } | ForEach-Object { "$_" })   # NOT_TESTED causes no developer can fix: status kept, the owner decides
 function Format-Check($c) {

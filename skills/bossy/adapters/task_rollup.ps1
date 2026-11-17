@@ -169,7 +169,7 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $sig0 = Get-KitRollupLocalSig $ro $known $trk; $mins = [double](Get-KitSetting 'track.rollupMinutes' 30)
   $ans = $ro.closeAsk -and $ro.closeActed -ne $ro.closeAsk -and (Get-KitCloseAsk "$($ro.closeAsk)").status -eq 'answered'   # a new answer: act now
   $fresh = $ro.readAt -and ((Get-Date) - [datetime]$ro.readAt).TotalMinutes -lt $mins
-  if (-not $Force -and (($ro.parentClosed -and $fresh) -or (-not $ro.parentClosed -and -not $ans -and $ro.localSig -eq $sig0 -and $fresh))) { return }   # a closed parent: its status read once per rollupMinutes
+  if (-not $Force -and (($ro.parentClosed -and $fresh -and $ro.localSig -eq $sig0) -or (-not $ro.parentClosed -and -not $ans -and $ro.localSig -eq $sig0 -and $fresh))) { return }   # a closed parent: its status read once per rollupMinutes
   $stamp = { Update-KitTaskIndex $Parent { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.readAt = (Get-Date).ToString('o'); $x.rollup.localSig = $sig0 } }   # a failed or empty read waits too
   Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { & $stamp; return "ROLLUP ${Parent}: tracker read failed, nothing written" }
   if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) {   # still closed: final, but a subtask closed after it still ticks its Items line

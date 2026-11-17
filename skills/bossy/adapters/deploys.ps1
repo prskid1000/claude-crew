@@ -328,7 +328,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     if (-not $Json -and $runs.Count) { [Console]::Error.WriteLine("deploy plan probes: $((@($script:probeCount.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key) $($_.Value)" }) + @(if ($anc.Count) { "DEPLOYED (green job) $($anc.Count)" })) -join ' · ')") }
   }
   $trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower()
-  $win = Get-KitSetting 'deploy.minIntervalHours' (Get-KitParam 'deploy.minIntervalHours')
+  $win = if ($env:KIT_PARAM_DEPLOY_MININTERVALHOURS) { Get-KitParam 'deploy.minIntervalHours' } else { Get-KitSetting 'deploy.minIntervalHours' (Get-KitParam 'deploy.minIntervalHours') }   # env > kit.local.json (a per-target object too)
   $winOf = { param($t) if ($win -is [psobject] -and (Get-KitProps $win).Name -contains $t) { [double](Get-KitMember $win $t) } elseif ($win -is [psobject] -and (Get-KitProps $win).Name -contains 'default') { [double]$win.default } elseif ($win -is [psobject]) { [double](Get-KitParam 'deploy.minIntervalHours') } else { [double]$win } }
   $logged = if (Test-Path $log) { @(Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
   $hostErr = $null

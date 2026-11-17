@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L346 process · L505 git host · L572 scope · L651 MR · L843 merge · L1169 docs ·
-  L1322 publish · L1762 render · L2174 plugins · L2188 keepboth · L2207 selftest · L2749 CLI
+Sections: L51 config · L106 run · L194 tracker · L346 process · L506 git host · L573 scope · L652 MR · L844 merge · L1170 docs ·
+  L1323 publish · L1763 render · L2179 plugins · L2193 keepboth · L2212 selftest · L2757 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -476,16 +476,17 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     elif t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
     comment(tid, solution_md, 'comment-solution')
-    mst = []
+    mst, read_ok = [], True
     if gate_how('mrBody') == 'builtin:testingDocs':
         try:   # after the tracker writes: a host error must not fail finish
             for ref in refresh_mr_docs(tid, states=mst):
                 print(f'[finish] {ref}: testing doc lines written', file=sys.stderr)
         except Exception as e:
+            read_ok = False
             print(f'[finish] {tid}: MR testing doc lines not written ({e}): devtools.py merge writes them, or devtools.py mr', file=sys.stderr)
         for ref, st, ok in mst:   # each MR with its tester guide state; no MR tracked = a no-MR outcome
             print(f'[finish] MR {ref} ({st}): tester guide {"linked" if ok else "MISSING"}', file=sys.stderr)
-        if not mst:
+        if read_ok and not mst:
             print(f'[finish] {tid}: no MR tracked (bossy.ps1 track add -Task {tid} -Mrs <repo>!<n> before merge)', file=sys.stderr)
         if miss := [ref for ref, st, ok in mst if not ok and st == 'opened']:
             raise SystemExit(f'finish {tid}: open MR(s) {", ".join(miss)} have no tester guide line after the update (a doc not published, or the host refused it): add the testing doc'
@@ -1891,9 +1892,7 @@ def own_spec(old, new, replace=False):
     elif me and by != me and not replace:   # title / change: first wins; other fields merged per item ('<old>; <agent>: <new>')
         for k in [k for k in new if k not in SPEC_KEYS and old.get(k) not in (None, '', new[k])]:
             o, v = old[k], new[k]
-            if k not in ('title', 'change') and isinstance(o, dict) and isinstance(v, dict):
-                new[k] = {**o, **{kk: _merge_val(o.get(kk), vv, me) for kk, vv in v.items()}}
-            elif k not in ('title', 'change') and isinstance(o, dict) == isinstance(v, dict) and isinstance(o, list) == isinstance(v, list):
+            if k not in ('title', 'change') and isinstance(o, dict) == isinstance(v, dict) and isinstance(o, list) == isinstance(v, list):
                 new[k] = _merge_val(o, v, me)
             else:
                 print(f'cases add: {k} kept ({str(o)[:60]!r}, set by {by}; --replace to change it)', file=sys.stderr)
@@ -1902,9 +1901,15 @@ def own_spec(old, new, replace=False):
 
 def _merge_val(o, v, me):
     """One shared-spec scalar: the second agent's value appended once ('<old>; <agent>: <new>')."""
+    if isinstance(o, dict) and isinstance(v, dict):
+        return {**o, **{k: _merge_val(o.get(k), x, me) for k, x in v.items()}}
     if isinstance(o, list) and isinstance(v, list):
         return o + [e for e in v if e not in o]
-    return v if o in (None, '') else o if v in (None, '') or str(v) == str(o) or f'{me}: {v}' in str(o) else f'{o}; {me}: {v}'
+    if o in (None, ''):
+        return v
+    if v in (None, '') or str(v) == str(o) or isinstance(o, (dict, list)) or isinstance(v, (dict, list)):   # a type clash: first wins
+        return o
+    return o if f'{o}'.endswith(f'; {me}: {v}') or f'; {me}: {v}; ' in f'{o}; ' else f'{o}; {me}: {v}'
 
 
 USAGE_EXAMPLES = {'evidence': 'python -X utf8 devtools.py evidence "T1 local run" shots/t1-list.png api/t1-get.json --key T1:evidence',
@@ -2670,6 +2675,9 @@ def _publish_selftest(expect, refused):
         expect('finish twice: no comment holds a doc link; the description holds both links once, on top',
                len(all_c) == 2 and not [x for x in all_c if 'Testing doc' in x or u1 in x or ua in x or '<link>' in x]
                and st['d'].startswith(f'**Testing doc (human):** {u1}\n\n**Testing doc (AI):** {ua}\n') and st['d'].count(u1) == 1 and st['d'].count(ua) == 1)
+        expect('_merge_val (K32): nested dicts per key, a type clash keeps the first, a prefix of an earlier value still appends, a repeat adds nothing',
+               _merge_val({'a': {'x': 1}}, {'a': {'y': 2}}, 'B') == {'a': {'x': 1, 'y': 2}} and _merge_val(['a'], 'b', 'B') == ['a'] and _merge_val('a', ['b'], 'B') == 'a'
+               and _merge_val('A; B: xy', 'x', 'B') == 'A; B: xy; B: x' and _merge_val('A; B: x', 'x', 'B') == 'A; B: x')
         rm0 = g['refresh_mr_docs']; calls.clear(); st['s'] = 'in progress'   # K33
         g['refresh_mr_docs'] = lambda t, host=None, states=None: states.extend([('web!5', 'opened', False), ('web!6', 'merged', True)]) or []
         with contextlib.redirect_stderr(io.StringIO()) as fe:
