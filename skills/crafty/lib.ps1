@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L91 state · L169 config · L250 OS · L470 leases · L867 status · L1123 supervise sweep · L1203 tracker ·
-  L1532 prior · L1548 ask bugs · L1733 git-host · L1914 kitlog · L2034 params · L2339 entry-scripts
+Sections: L10 paths · L91 state · L169 config · L250 OS · L470 leases · L867 status · L1125 supervise sweep · L1205 tracker ·
+  L1534 prior · L1550 ask bugs · L1735 git-host · L1916 kitlog · L2036 params · L2341 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1097,6 +1097,8 @@ function Format-KitCell($Text, [int]$Max = 12, [switch]$Exact) {
   }
   $out -join ' '
 }
+# at most $Max words; cut: the first $Max-1 words + $Tail (one word)
+function Limit-KitWords([string]$Text, [int]$Max, [string]$Tail = '…') { $ws = @("$Text" -split '\s+' | Where-Object { $_ }); if ($ws.Count -le $Max) { $ws -join ' ' } else { "$(@($ws | Select-Object -First ($Max - 1)) -join ' ') $Tail" } }
 # a cell over $Max chars turns the table into cards; full text in supervise-report.md
 function Limit-KitCell($Text, [int]$Max = 80) {
   $t = ("$Text" -replace '\s+', ' ' -replace '&\s*\S*[\\/](\w+\.ps1)\b', '$1').Trim()   # a kit script by its name

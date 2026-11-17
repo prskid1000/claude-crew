@@ -1045,7 +1045,8 @@ foreach ($tid in @($cand.Keys)) {
   $it.guideFile = $gf; if ($doc -notlike 'task:*') { $it.guideUrl = $doc }; $items.Add($it); $byDoc[$doc] = $it
 }
 # 5. run.json + lead-notes.md (fixed headings; testers and the lead append with lead-notes add)
-$run = [ordered]@{ title = "$($jb.target): $(@($items | ForEach-Object title) -join '; ')"; target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }
+# the title: 25 words at most (finalize -Check refuses a longer one)
+$run = [ordered]@{ title = (Limit-KitWords "$($jb.target): $(@($items | ForEach-Object title) -join '; ')" 25 "+$(@($items).Count)-items"); target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }
 foreach ($rk in @(@($jb.runSettings.Keys) | Where-Object { $_ -and $_ -notin $run.Keys })) { $run[$rk] = $jb.runSettings[$rk] }
 Write-KitAtomic "$dir/run.json" ($run | ConvertTo-Json -Depth 8)
 $cell = { param($Text) "$Text" -replace '\s+', ' ' -replace '\|', '\|' }

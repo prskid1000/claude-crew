@@ -2468,7 +2468,7 @@ function Invoke-Tracker {
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
     'describe' { if ((Read-KitState (Get-KitTaskFile $__id)).spec) { "tracker describe refused: $__id is rendered from its spec: tracker update $__id -Spec <json with the changed keys>"; exit 1 }
-      $__nd = if ($__x) { $__x } else { $__trOpt.Description }; $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # spec-less: free text may not drop a template section ('x': no [Bug] exemption)
+      $__nd = __TrText $(if ($__x) { $__x } else { $__trOpt.Description }); $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # __TrText: devtools.py passes long text as a file path; spec-less: free text may not drop a template section ('x': no [Bug] exemption)
       $__oldG = @(Get-KitTaskTextGaps 'x' "$($__ot.description)" -Subtask:$__sub); if ($__oldG -contains 'a description') { $__oldG = @(Get-KitTaskTemplate | ForEach-Object { "$($_.label)" }) }   # empty today: nothing to lose
       $__lost = @(Get-KitTaskTextGaps 'x' $__nd -Subtask:$__sub | Where-Object { $_ -notin $__oldG })
       if ($__lost.Count) { "tracker describe refused: the text lacks $($__lost -join ', ') (templates.md task-description): render it from a spec: tracker update $__id -Spec <json> (crafty.ps1 ""task spec""; doc links and kit sections stay)"; exit 1 }
