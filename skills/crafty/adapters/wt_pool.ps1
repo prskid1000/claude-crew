@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L65 names · L84 slots · L110 lease · L207 release · L235 lanes · L331 sync · L395 pool
+Sections: L14 worktrees · L65 names · L84 slots · L110 lease · L207 release · L235 lanes · L340 sync · L404 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -251,6 +251,14 @@ function Move-LaneWorktree([string]$e, [string]$co, [string]$Busy = '') {
   }
   $null
 }
+# envy.ps1 Get-MergedWhy: a layer = an older copy of the branch the MR merged after a rebase: each of its own non-merge commits has a same-subject commit on
+# the MR's side (trailing marker tokens a commit hook adds, e.g. a symbol-led word, ignored); a commit the MR lacks keeps the layer
+function Test-LayerRebased([string]$d, [string]$sha, [string]$mrSha) {
+  $norm = { param($s) ("$s" -replace '(\s+[^\w\s(\[][^\s]*)+$').Trim() }
+  $mine = @(git -C $d log --no-merges --format=%s "$mrSha..$sha" 2>$null | ForEach-Object { & $norm $_ }); if ($LASTEXITCODE -or -not $mine.Count) { return $false }
+  $theirs = @(git -C $d log --no-merges --format=%s "$sha..$mrSha" 2>$null | ForEach-Object { & $norm $_ })
+  -not @($mine | Where-Object { $_ -notin $theirs }).Count
+}
 # why a lane is in use ('' = idle): a service up, starting or waiting with a live process, a lease, a hold, a train, a queued request
 function Get-LaneBusy([string]$e, $st) {
   $up = @($st.services.Keys | Where-Object { $v = $st.services[$_]; $v.status -in 'up', 'starting', 'waiting' -and (-not $v.pid -or (Test-KitPid $v.pid $v.pstart)) })
@@ -299,16 +307,17 @@ function Invoke-LaneResync([switch]$DryRun) {
   $rows = [Collections.Generic.List[object]]::new()
   foreach ($e in @(EnvNames)) { $sf = StateFile $e
     foreach ($co in @(@((EnvRepos $e).Values) | ForEach-Object { "$($_.cfg.checkout)" } | Select-Object -Unique)) { if (-not $DryRun -and (Test-Path "$co/.git")) { $null = git -C $co fetch -q origin 2>&1 } }   # the network outside the lock
-    $mergedWhy = @{}; $st0 = Read-State $e   # "<repo>|<branch>" -> why: ancestry or the host's merged MR by source branch (squash merges), outside the lock
-    foreach ($r in @((EnvRepos $e).Values)) { if (-not (Test-Path "$($r.wt)/.git")) { continue }
-      foreach ($l in @($st0.release.repos[$r.name].layers | Where-Object { $_ })) { $lsha = if ($l.sha) { "$($l.sha)" } else { Resolve-Ref $r.wt $l.branch }
-        if ($lsha -and ($mw = Get-MergedWhy $r.wt $l.branch $lsha $r.target "origin/$($r.target)")) { $mergedWhy["$($r.name)|$($l.branch)"] = $mw } } }
+    $mergedWhy = @{}; $st0 = Read-State $e   # "<repo>|<branch>|<sha>" -> why: ancestry or the host's merged MR by source branch (squash / rebase), outside the lock
+    foreach ($r in @(if (-not (Get-LaneBusy $e $st0)) { (EnvRepos $e).Values })) { if (-not (Test-Path "$($r.wt)/.git")) { continue }   # a busy lane is kept anyway: no host calls
+      foreach ($l in @($st0.release.repos[$r.name].layers | Where-Object { $_.sha })) {
+        if (($mw = Get-MergedWhy $r.wt $l.branch "$($l.sha)" $r.target "origin/$($r.target)")) { $mergedWhy["$($r.name)|$($l.branch)|$($l.sha)"] = $mw } } }
     Invoke-KitLocked $sf { $script:stateLocked = $true   # held for the whole lane: Sync-Repo's Ensure-Worktree reads the state too; no build starts mid-sync
       try { $st = Read-State $e; $busy = Get-LaneBusy $e $st; $was = $st | ConvertTo-Json -Depth 10
         foreach ($r in @((EnvRepos $e).Values)) { $d = $r.wt; $rl = $r.name; if (-not (Test-Path "$d/.git")) { continue }
           $br = "$(git -C $d branch --show-current 2>$null)".Trim(); if ($br -like 'lane/*') { git -C $d config --unset "branch.$br.merge" 2>$null; git -C $d config --unset "branch.$br.remote" 2>$null }
           $rs = $st.release.repos[$rl]; $old = "$(git -C $d rev-parse HEAD 2>$null)".Trim()
-          $ly = @($rs.layers | Where-Object { $_ -and -not $mergedWhy["$rl|$($_.branch)"] }); $pre = @($rs.layers | Where-Object { $_ -and $mergedWhy["$rl|$($_.branch)"] } | ForEach-Object { "$($_.branch) ($($mergedWhy["$rl|$($_.branch)"]))" })   # merged: dropped, never re-merged
+          $mk = { param($l) "$rl|$($l.branch)|$($l.sha)" }   # the sha too: a layer re-pushed since the read is judged again by Sync-Repo
+          $ly = @($rs.layers | Where-Object { $_ -and -not $mergedWhy[(& $mk $_)] }); $pre = @($rs.layers | Where-Object { $_ -and $mergedWhy[(& $mk $_)] } | ForEach-Object { "$($_.branch) ($($mergedWhy[(& $mk $_)]))" })   # merged: dropped, never re-merged
           $row = [ordered]@{ lane = $e; repo = $rl; head = $old; base = ''; behind = 0; merges = $ly.Count; at = (Get-Date).ToString('o'); kept = '' }
           if ($busy) { "kept [$e] ${rl}: in use ($busy)"; $row.kept = $busy }
           elseif (@(git -C $d status --porcelain --untracked-files=no 2>$null).Count) { "kept [$e] ${rl}: uncommitted edits in $d (a sync never discards them)"; $row.kept = 'uncommitted edits' }

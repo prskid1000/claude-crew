@@ -216,7 +216,14 @@ $syo = & { . $syL help 6>$null *> $null; $sf = Join-Path (Get-KitPath localenv -
   function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) { if ($Branch -eq 'feat-sq') { @([pscustomobject]@{ iid = 8995; sha = $shS }) } }
   Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-sq'; sha = $shS; agent = 'a4' }) } } } }
   $o3 = @(Invoke-LocalEnv lanes -Sync -DryRun 6>$null); $o4 = @(Invoke-LocalEnv lanes -Sync 6>$null); $st4 = Get-Content $sf -Raw | ConvertFrom-Json
-  $sqOk = @($o3 -match '^plan \[shop\] sc: origin/main \+ 0 layer\(s\); drop feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and @($o4 -match '^synced \[shop\] sc: .*dropped feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and -not @($st4.release.repos.sc.layers).Count -and "$(git -C $lw rev-parse HEAD)".Trim() -eq "$(git -C $sc rev-parse main)".Trim()
+  # a layer recorded before a rebase (its MR merged the rebased copy, a hook marker added): dropped; one with a commit the MR lacks: kept
+  $shR = & $lyr 'feat-rb' 'r.txt' 'r'; git -C $sc checkout -q -b feat-rb2 main; 'r' | Set-Content "$sc/r.txt"; 'z' | Set-Content "$sc/z.txt"; Save-GitRepo $sc 'feat-rb +hook'; $shR2 = "$(git -C $sc rev-parse HEAD)".Trim(); git -C $sc checkout -q main
+  git -C $sc checkout -q feat-rb; 'x' | Set-Content "$sc/x.txt"; Save-GitRepo $sc 'extra after the MR'; $shRx = "$(git -C $sc rev-parse HEAD)".Trim(); git -C $sc checkout -q main
+  function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) { if ($Branch -eq 'feat-sq') { @([pscustomobject]@{ iid = 8995; sha = $shS }) } elseif ($Branch -in 'feat-rb', 'feat-rbx') { @([pscustomobject]@{ iid = 8988; sha = $shR2 }) } }
+  $sqSt = Get-Content $sf -Raw; Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-rb'; sha = $shR; agent = 'a5' }, @{ branch = 'feat-rbx'; sha = $shRx; agent = 'a6' }) } } } }
+  $o5 = @(Invoke-LocalEnv lanes -Sync -DryRun 6>$null); [IO.File]::WriteAllText($sf, $sqSt)
+  $rbOk = @($o5 -match '^plan \[shop\] sc: origin/main \+ 1 layer\(s\); drop feat-rb \(merged into main \(MR 8988\)\)$').Count -eq 1
+  $sqOk = $rbOk -and @($o3 -match '^plan \[shop\] sc: origin/main \+ 0 layer\(s\); drop feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and @($o4 -match '^synced \[shop\] sc: .*dropped feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and -not @($st4.release.repos.sc.layers).Count -and "$(git -C $lw rev-parse HEAD)".Trim() -eq "$(git -C $sc rev-parse main)".Trim()
   $rx1 = '^synced \[shop\] sc: .*1 layer\(s\) re-merged; dropped feat-merged \(merged into main'; $rx2 = '^kept \[shop\] sc: layer feat-conf conflicts'
   "$($ok -and $ljOut -and $sqOk)|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$($h2 -eq $h1)" }
 Expect "lanes -Sync: idle lane rebuilt on origin/main + its open layer, the merged one dropped, no upstream, behind 0; a conflicting layer leaves the lane as it was ($syo)" ($syo -eq 'True|feat-open|0/1|1|1|True')
