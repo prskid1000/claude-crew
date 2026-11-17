@@ -88,6 +88,11 @@ Expect "prepare: a run folder with files is refused (exit 1, no -2 suffix); an e
 Set-JsonFile $kl @{ process = @{ docs = @() } }   # [] = no docs (unset: the built-in pair, vocab.json)
 $ppNd = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-nodoc') 2>&1); $ndRun = ("$($ppNd[-1])" -replace '^RUN ') | ConvertFrom-Json
 Expect "prepare, process.docs []: no doc needed, the task text is the guide, lane = the first qa.lanes lane (web) ($($ppNd[-2]))" (@($ndRun.items).Count -eq 2 -and -not @($ndRun.left).Count -and (Get-Content -Raw $ndRun.items[1].guideFile) -match 'No testing doc configured' -and $ndRun.items[0].lane -eq 'web')
+# K68r: a retest supersedes only the FAILs its only list names: the original's other FAIL still fails testing
+New-Task 'TQ' 'Task Q'; $rq = New-Run 'RQ' @(@{ code = 'Q1'; task = 'TQ'; checks = @(@('C1', 'FAIL'), @('C2', 'FAIL')) }, @{ code = 'Q2'; task = 'TQ'; checks = , @('C1', 'PASS') })
+$rqj = Read-Json "$rq/run.json"; $rqj.items[1] | Add-Member retest $true; $rqj.items[1] | Add-Member only @('C1'); & $J $rqj "$rq/run.json"
+foreach ($c in 'Q1', 'Q2') { $null = Fin $rq $c }
+Expect "finalize: a retest of C1 alone leaves the original's C2 FAIL holding (failed testing, not closed)" ((Rec $rq Q2).failedTesting -and -not (Rec $rq Q2).closed)
 # K68: a qa.targets rule's repos match the MR repos (the inner $_ hid the rule)
 Set-JsonFile $kl @{ process = @{ docs = @() }; qa = @{ targets = @{ 'stg-a' = @(@{ repos = @('api'); target = 'x-api' }, @{ repos = @('web'); target = 'x-web' }) } } }
 $ppTg = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-tgt') 2>&1); $tgRun = ("$($ppTg[-1])" -replace '^RUN ') | ConvertFrom-Json

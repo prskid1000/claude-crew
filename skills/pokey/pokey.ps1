@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L154 seat · L223 api · L442 finalize · L910 results · L943 retest · L1000 prepare
+Sections: L26 lanes · L40 report · L154 seat · L223 api · L442 finalize · L911 results · L944 retest · L1001 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -730,11 +730,12 @@ function Format-Checks($list, [string]$heading) {
 # last item on a shared task decides
 function SiblingHold($id) {
   $own = 0; $nt = 0; $ntH = 0; $err = $null; $pend = 0
-  # a retest supersedes the items it retests: their old FAIL never holds its close
-  foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code -and -not ($item.retest -and -not $_.retest) } | ForEach-Object code)) {
+  # a retest supersedes the FAILs its only list names: a sibling's other FAILs still hold (K68r)
+  foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code } | ForEach-Object code)) {
     $f = "$RunDir/$c/finalize.json"; if (-not (Test-Path $f)) { continue }
     $r = @((Get-Content $f -Raw | ConvertFrom-Json).subtasks | Where-Object { $_.id -eq $id -and -not $_.noTracker }) | Select-Object -First 1
-    if ($r) { $own += [int]$r.fail; $nt += [int]$r.notTested; $ntH += [int]$r.notTestedHold; $pend += [int]$r.pending; if ($r.bugError) { $err = "$c`: $($r.bugError)" } }
+    $sup = $item.retest -and -not @($run.items | Where-Object { $_.code -eq $c }).retest   # an older round this retest redoes
+    if ($r) { $own += if (-not $sup) { [int]$r.fail } elseif ($null -ne $r.failIds -and @($item.only | Where-Object { $_ }).Count) { @(@($r.failIds) | Where-Object { $_ -notin @($item.only) }).Count } else { 0 }; if ($sup) { continue }; $nt += [int]$r.notTested; $ntH += [int]$r.notTestedHold; $pend += [int]$r.pending; if ($r.bugError) { $err = "$c`: $($r.bugError)" } }
   }
   [pscustomobject]@{ fail = $own; notTested = $nt; notTestedHold = $ntH; bugError = $err; pending = $pend }
 }
@@ -846,7 +847,7 @@ foreach ($st in @($item.subtasks)) {
   $ntChecks = @($mine | Where-Object { $_.result -eq 'NOT_TESTED' }); $nt = $ntChecks.Count; $pend = Cnt $mine 'PENDING'
   $pass = (Cnt $mine 'PASS') + (Cnt $mine 'PASS_WITH_NOTE'); $oos = Cnt $mine 'OUT_OF_SCOPE'   # OUT_OF_SCOPE: qa.outOfScope
   $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $ownFails.Count; newDefects = $newDefects.Count; known = @($knownFails | ForEach-Object { "$($_.id) -> $("$($_.knownBug)".Trim())" }); notTested = $nt; outOfScope = $oos; pending = $pend; bug = $null; closed = $false; failedTesting = $false
-    notTestedHold = @($ntChecks | Where-Object { "$($_.cause)" -in $script:NtHold }).Count; unproven = @($unproven | ForEach-Object id) }
+    notTestedHold = @($ntChecks | Where-Object { "$($_.cause)" -in $script:NtHold }).Count; unproven = @($unproven | ForEach-Object id); failIds = @($ownFails | ForEach-Object id) }
   # supervise reads watch: one WATCH + a watchy triage per unproven finding
   foreach ($u in $unproven) { $out.watch += [pscustomobject]@{ id = $u.id; task = $st.id; screen = $u.screen; env = [string]$(if ($item.target) { $item.target } else { $run.target }); observed = $u.observed } }
   $prevRec =if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }

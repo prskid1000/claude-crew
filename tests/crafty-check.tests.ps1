@@ -36,9 +36,10 @@ Expect "ts-typecheck: an error in a changed file fails, the baseline does not ($
 # build-heap: Gradle gets -Dorg.gradle.jvmargs, Maven MAVEN_OPTS, Node NODE_OPTIONS; a gated build's temp
 $bd = Join-Path (Kd) 'b'; New-Item -ItemType Directory -Force $bd | Out-Null
 $env:CLAUDE_GATE_KEEP_FREE_GB = '0'; $env:MAVEN_OPTS = '-Xmx1g -Dkeep=1'
-$cmds = @('echo gradlew build', 'echo mvn -q test & echo %MAVEN_OPTS%', 'echo jest x & echo %NODE_OPTIONS%', 'echo mvn -q test & echo tmp=%TMP%', 'echo gradlew test & echo tmp=%TMP%')
+$cmds = @('echo gradlew build', 'echo mvn -q test & echo %MAVEN_OPTS%', 'echo jest x & echo %NODE_OPTIONS%', 'echo mvn -q test & echo tmp=%TMP%', 'echo gradlew test & echo tmp=%TMP%', 'echo vitest run y && echo tsc z')
 $out = @(foreach ($c in $cmds) { pwsh @np $D gate -Dir $bd -Cmd $c 2>&1 | Out-String })
 Remove-Item Env:MAVEN_OPTS; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'   # the harness value
+Expect 'gate: jest / vitest get --maxWorkers=2 right after the runner word, not on a later tool (K70g)' ($out[2] -match 'jest --maxWorkers=2 x' -and $out[5] -match 'vitest run --maxWorkers=2 y' -and $out[5] -notmatch 'tsc z --maxWorkers')
 Expect 'build-heap: gradle gets -Dorg.gradle.jvmargs' ($out[0] -match 'gradlew "?-Dorg\.gradle\.jvmargs=-Xmx\d+g')
 if ($IsWindows) {
   Expect 'build-heap: maven gets -Xmx in MAVEN_OPTS, its own -D kept, the old -Xmx gone' ($out[1] -match '-Dkeep=1 -Xmx\d+g' -and $out[1] -notmatch '-Xmx1g')
