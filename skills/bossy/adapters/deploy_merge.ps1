@@ -44,7 +44,7 @@ $name = 'deploymerge-' + ($To -replace '[^\w]+', '-')
 $bp = [string]$(if ($dep.branchPrefix) { $dep.branchPrefix } else { Get-KitSetting 'deploy.branchPrefix' 'deploy/' })
 $dmm = [string]$(if ($dep.mergeMethod) { $dep.mergeMethod } else { Get-KitSetting 'deploy.mergeMethod' 'merge' })
 $br = "$bp$($envName -replace '[^\w]+', '-')-$(Get-Date -Format yyyyMMddHHmm)"
-$out = & $KitCmd.dev wt new -Repo $Repo -Branch $br -Target $To -Name $name
+$out = & $KitCmd.dev wt new -Repo $Repo -Branch $br -Target $To -Name $name -Override 'deploy merge: a dedicated worktree'
 $wt = ($out | Where-Object { $_ -match '^worktree:\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() }) | Select-Object -First 1
 if (-not $wt) { throw "crafty.ps1 wt new failed: $out" }
 "worktree: $wt"

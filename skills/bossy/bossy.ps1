@@ -556,7 +556,7 @@ foreach ($s in $runs) {
   if ($s.leaf -eq 'buildy.js' -and $agents.Count) {
     $rf = Join-Path (Get-KitPath launches -Create) "$(ConvertTo-KitSlug $(if ($s.runId) { $s.runId } else { $s.run })).resume.md"
     $txt = @("# Resume brief: $($s.run) (``$($s.leaf)`` $($s.runId))", "**Result:** mode resume; the original brief ``$($a.brief)`` wins where this differs.",
-      '**Takeover:** `board join -Agent <id> -Resume` (TAKEOVER); `crafty.ps1 wt status -Dir <wt>` per worktree; read the task, comments, open / merged MRs;',
+      '**Takeover:** `board join -Agent <id> -Resume` (TAKEOVER); `crafty.ps1 wt lease -Branch <b>` per branch (the slot that has it) + `wt status`; read the task, comments, open / merged MRs;',
       'continue, never redo finished work; files changing under you (another writer): stop, report. Steps per item (host + tracker, checked now): build, review,',
       'ci, merge, testing-doc, tracker; done: skipped, missing: run; unknown = a call failed: check it first.', '', '## State at recovery', '') + $brief
     Write-KitAtomic $rf (($txt -join "`n") + "`n")

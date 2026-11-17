@@ -1,13 +1,13 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
- wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty] [-Paths <p,..> (stages only them)]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate;
+ wt lease|release|pool|new|sync|commit|remove|status|list ...  worktrees (lease -Repo -Branch -Agent: a pool slot, release: back, pool [-Migrate]; deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty] [-Paths <p,..> (stages only them)]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate;
    new -Scope '<glob>,..' (brief agents[].paths): commit refuses files outside, -ScopeOk <decision id> = the owner's scope word)
  scope [-Mrs <refs> [-Json]] [-Days 7]  -Mrs: each MR's source / test files + OUT-OF-AREA vs its logged area; none: one WATCH line for MRs merged outside it
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
- prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
+ prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
  pipes [-Mrs <url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L184 wt · L505 stack · L687 gate · L1004 check · L1313 pipes · L1370 guard · L2218 dir ·
-  L2228 checkpoint · L2257 prior · L2295 tracker · L2317 task spec · L2493 scope · L2540 host
+Sections: L23 init · L30 sweep · L179 wt · L487 stack · L669 gate · L986 check · L1295 pipes · L1352 guard · L2200 dir ·
+  L2210 checkpoint · L2239 prior · L2277 tracker · L2299 task spec · L2475 scope · L2522 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -117,18 +117,13 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
   $act = { param($b, $why, $path) [void]$actions.Add([pscustomobject]@{ bytes = [long]$b; why = $why; path = $path }) }; $keep = { param($what, $why) [void]$kept.Add("$what`: $why") }
   $size = { param($p) [long](Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
   $cat = { param($w) $w -replace '^(upstream) \S+ (gone).*', '$1 $2, tip on the host' -replace ' \(.*$' -replace '^merged into \S+', 'merged' }   # one action group per reason
-  # a live row's claims + the worktrees its agent checkpointed since it joined (a kitty's own worktree went after its push)
-  $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') } | ForEach-Object {
-      $liveRow = $_; $liveRow.worktrees
-      if ($liveRow.agent -and $liveRow.joined) { @((Read-KitState (Get-KitCheckpointFile $liveRow.agent "$($liveRow.run)")).steps | Where-Object { $_.dir -and $_.at -and [datetime]$_.at -ge [datetime]$liveRow.joined } | ForEach-Object { $_.dir }) }
-    } | Where-Object { "$_" -match '^([A-Za-z]:)?[\\/]' } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
-  $cmdLines = @(Get-SysProcs | Where-Object { $_.Id -ne $PID -and $_.CommandLine } | ForEach-Object { $_.CommandLine.Replace('/', '\').ToLower() })   # an editor, build or shell in the folder
-  $heldBy = { param($p) $l = $p.ToLower(); if ($l -in $claimed) { 'a board agent' } elseif (@($cmdLines | Where-Object { $_.Contains($l) }).Count) { 'a running process' } }
+  $heldBy = Get-KitWtHeldTest; $claimed = $script:KitWtClaimed
   $ctx = [ordered]@{}; $reg = @{}
   $addRepo = { param($rp) if ($rp -and -not $ctx.Contains($rp)) { $ctx[$rp] = @{}; foreach ($x in @(Get-KitWorktrees $rp)) { $reg[$x.path.ToLower()] = $rp } } }
   foreach ($rp in @(Get-KitRepoDirs)) { & $addRepo $rp }
   foreach ($w in @(foreach ($root in $Roots) { Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue })) {
     $d = $w.FullName; $key = $d.Replace('\', '/').ToLower()
+    if (Test-KitSlotDir $d) { continue }   # pool slots stay (wt release frees them; supervise reaps their leases)
     if (-not $reg[$key] -and "$(git -C $d rev-parse --path-format=absolute --show-toplevel 2>$null)".Trim().ToLower() -eq $key) { & $addRepo ("$(@(git -C $d worktree list --porcelain 2>$null)[0])" -replace '^worktree ') }
     $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '[\\/](node_modules|\.git|target|build)[\\/]' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
     $idleH = ($now - $(if ($newest) { $newest } else { $w.LastWriteTime })).TotalHours; $old = $idleH -ge 24 * $wtDays   # no file (a skeleton): the folder's own time
@@ -191,10 +186,11 @@ function Get-StaleDepsNote([string]$nmDir) {
 }
 function Invoke-Wt {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep', 'lease', 'release', 'pool')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
   [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [string[]]$Paths, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
-  [string]$Scope, [string]$ScopeOk, [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json
+  [string]$Scope, [string]$ScopeOk, [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json,
+  [string]$Agent, [string]$Session, [int]$WaitMinutes = 60, [string]$Reason, [switch]$Migrate
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
@@ -292,16 +288,36 @@ function Exclude-Links($path, $links) {
   $add = @($links | ForEach-Object { '/' + [IO.Path]::GetRelativePath($path, $_).Replace('\', '/') } | Where-Object { $_ -notin $have })
   if ($add) { Add-Content $ex $add }
 }
+# deps from the target's source (repos[].linkFromByTarget / linkFrom, else the checkout), linkPaths, hooks; another source relinks
+function Set-WtDeps($path, $rp, $tg, $from) {
+  $rc = Get-WtRepoConf $rp
+  if (-not $from -and ($from = Get-WtDepSource $rp $tg)) { "linking dependencies from $from (kit.local.json, target $tg)" }
+  $src = if ($from) { (Resolve-Path $from).Path } else { $rp }
+  $was = "$(Meta $path 'linksrc')".Trim(); $kept = @()
+  if ($was -and $was -ne $src) {   # a slot moved to another target's install
+    foreach ($l in @(Meta $path 'links' | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } }
+    "relinked dependencies: $was -> $src"
+  } elseif ($was) { $kept = @(Meta $path 'links' | Where-Object { $_ }) }
+  $links = @(Add-DepLinks $path $src $tg)
+  foreach ($lp in @($rc.linkPaths) | Where-Object { $_ }) {   # git-ignored files
+    $lf = @((Join-Path $src $lp), (Join-Path $rp $lp)) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $to = Join-Path $path $lp
+    if (-not $lf) { Write-Warning "linkPaths: no $lp in $src or $rp, skipped"; continue }
+    if (Test-Path $to) { continue }
+    New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
+    if ((Get-Item $lf).PSIsContainer) { New-DirLink $to $lf; $links += $to } else { Copy-Item $lf $to }
+  }
+  Copy-HookDirs $path @($src, $rp)   # a --ignore-scripts checkout has no .husky/_
+  Meta $path 'links' (@(@($kept) + $links | Select-Object -Unique) -join "`n"); Meta $path 'linksrc' $src
+  Exclude-Links $path $links
+  if ($links) { 'linked:   ' + (($links | ForEach-Object { $_.Substring($path.Length + 1) }) -join ', ') + "  (from $src)" }
+}
 
 switch ($Action) {
   'new' {
     if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch -Target -Name' }
-    if (-not (Test-Path -LiteralPath $Repo)) {   # name or alias: repos[].checkout, else <reposRoot>/<name>
-      $hit = @((Get-RepoConf $Repo checkout $null), (Join-Path $KitConf.ReposRoot $Repo)) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-      if (-not $hit) { throw "no repo $Repo (not a folder, no kit.local.json repos[] checkout, not under $($KitConf.ReposRoot)): pass the checkout path" }
-      $Repo = $hit
-    }
-    $Repo = (Resolve-Path $Repo).Path
+    $Repo = Resolve-WtRepo $Repo
+    if (($tx = Get-KitTaskTagRx) -and $Branch -match $tx -and (Get-KitPoolSize $Repo) -gt 0 -and -not $Override) { throw "wt new refused: $(Get-KitCheckoutName $Repo) has a worktree pool and $Branch is a task branch: & $($KitCmd.dev) wt lease -Repo $Repo -Branch $Branch -Agent <your id> (a free slot, kept warm); a dedicated worktree on purpose: -Override '<why>'" }
     if (-not $Root) { $Root = @($KitConf.WorktreeRoots)[0] }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
     if (Test-Path $path) {   # name the blocker
@@ -315,32 +331,8 @@ switch ($Action) {
       throw (@($priorWhy) + @($reuseBr | ForEach-Object { "  reuse: $wtCmd -Branch $_" }) + @(if ($priorWhy -match 'already exists') { "  new work on purpose: $wtCmd -Branch $Branch -Override '<why>'" }) -join "`n")
     }
     if ($tk) { Update-KitTaskIndex $tk { param($x) if ($x.prior) { $x.prior.claimed = @(@($x.prior.claimed) + $Branch | Where-Object { $_ } | Select-Object -Unique) } } }
-    # a missing configured dep source: error
-    $r = $null
-    $kc = $KitConf.ConfigFile
-    if ($kc -and (Test-Path $kc)) {
-      $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
-      $r = @((Get-Content $kc -Raw | ConvertFrom-Json).repos) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rp) } | Select-Object -First 1
-    }
-    if (-not $LinkFrom) {
-      if ($r) {
-        $cand = if ($r.linkFromByTarget -and (Get-KitMember $r.linkFromByTarget $Target)) { (Get-KitMember $r.linkFromByTarget $Target) } elseif ($r.linkFrom -and $Target -eq $r.target) { $r.linkFrom } else { $null }
-        if ($cand -and -not (Test-Path $cand)) { throw "kit.local.json dep source $cand ($(Split-Path $Repo -Leaf), target $Target) is missing: create it (git worktree add --detach <path> origin/$Target + frozen-lockfile install) or fix kit.local.json" }
-        if ($cand) { $LinkFrom = $cand; "linking dependencies from $cand (kit.local.json, target $Target)" }
-      }
-    }
-    New-Item -ItemType Directory -Force $Root | Out-Null
-    # else untracked in an outer repo
-    $outer = git -C $Root rev-parse --show-toplevel 2>$null
-    if ($LASTEXITCODE -eq 0 -and $outer) {
-      $outer = (Resolve-Path $outer.Trim()).Path; $rootFull = (Resolve-Path $Root).Path
-      if ($rootFull.StartsWith($outer, [StringComparison]::OrdinalIgnoreCase) -and $rootFull.Length -gt $outer.Length) {
-        $rel = '/' + $rootFull.Substring($outer.Length).TrimStart('\', '/').Replace('\', '/') + '/'
-        $ex = Join-Path (git -C $outer rev-parse --path-format=absolute --git-common-dir).Trim() 'info/exclude'
-        New-Item -ItemType Directory -Force (Split-Path $ex) | Out-Null
-        if (-not ((Test-Path $ex) -and (Select-String -Path $ex -SimpleMatch -Pattern $rel -Quiet))) { Add-Content $ex $rel }
-      }
-    }
+    if (-not $LinkFrom -and ($LinkFrom = Get-WtDepSource $Repo $Target)) { "linking dependencies from $LinkFrom (kit.local.json, target $Target)" }   # before the checkout: a missing source fails first
+    Add-WtRoot $Root
     G -C $Repo fetch -q origin $Target | Out-Null
     $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # bare name would suffix-match
     git -C $Repo show-ref --verify --quiet "refs/heads/$Branch"
@@ -350,24 +342,10 @@ switch ($Action) {
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
     if ($Scope) { Meta $path 'scope' (@(Split-KitList $Scope -Sep '\s*,\s*') -join "`n"); "area:     $Scope (wt commit, devtools.py mr / merge refuse files outside)" }   # brief agents[].paths
-    $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
-    $links = @(Add-DepLinks $path $src $Target)
-    # linkPaths: git-ignored files
-    foreach ($lp in @($r.linkPaths) | Where-Object { $_ }) {
-      $from = @((Join-Path $src $lp), (Join-Path $Repo $lp)) | Where-Object { Test-Path $_ } | Select-Object -First 1
-      $to = Join-Path $path $lp
-      if (-not $from) { Write-Warning "linkPaths: no $lp in $src or $Repo, skipped"; continue }
-      if (Test-Path $to) { continue }
-      New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
-      if ((Get-Item $from).PSIsContainer) { New-DirLink $to $from; $links += $to } else { Copy-Item $from $to }
-    }
-    # a --ignore-scripts checkout has no .husky/_
-    Copy-HookDirs $path @($src, $Repo)
-    Meta $path 'links' ($links -join "`n")
-    Exclude-Links $path $links
+    $depOut = @(Set-WtDeps $path $Repo $Target $LinkFrom)
     "worktree: $path"
     "branch:   $Branch (from origin/$Target)"
-    if ($links) { 'linked:   ' + (($links | ForEach-Object { $_.Substring($path.Length + 1) }) -join ', ') + "  (from $src)" }
+    $depOut
   }
   'sync' {
     $Dir = Resolve-Wt $Dir
@@ -462,6 +440,7 @@ switch ($Action) {
       Remove-KitLeftover $full; "removed leftover $Dir ($($lv.why))"; exit 0
     }
     $Dir = Resolve-Wt $Dir
+    if (Test-KitSlotDir $Dir) { throw "$Dir is a pool slot: never deleted (its build caches stay warm); free it with wt release -Dir $Dir" }
     $br = "$(git -C $Dir rev-parse --abbrev-ref HEAD 2>$null)".Trim(); if ($br -eq 'HEAD') { $br = '' }
     $gd = (git -C $Dir rev-parse --path-format=absolute --git-dir).Trim()
     if ($gd -eq (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim() -or $Dir -eq (Resolve-Path -LiteralPath $KitConf.Kit).Path.TrimEnd('\', '/')) { throw "$Dir is a main working tree or the running kit: wt remove only removes linked worktrees" }
@@ -499,6 +478,9 @@ switch ($Action) {
   'list' { git -C $(if ($Repo) { $Repo } else { (Get-Location).Path }) worktree list }
   'sweep' { $r = Invoke-KitSweep @(if ($Root) { Split-KitList $Root } else { $KitConf.WorktreeRoots }) $IdleHours -DryRun:$DryRun
     if ($Json) { $r | ConvertTo-Json -Depth 4 -Compress } else { $r.actions | ForEach-Object { "$(if ($DryRun) { 'would go' } else { 'gone' }): $($_.path)" }; $r.kept | ForEach-Object { "kept: $_" }; $r.notes } }
+  'lease' { Invoke-WtLease }   # adapters/wt_pool.ps1
+  'release' { Invoke-WtRelease }
+  'pool' { Invoke-WtPool }
 }
 }
 
@@ -1857,9 +1839,9 @@ if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*
   Deny 'kit guard: that makes a local branch from an MR, which outlives you: git fetch origin merge-requests/<n>/head (GitHub: pull/<n>/head), then read FETCH_HEAD (git diff origin/<target>...FETCH_HEAD); to change it: crafty.ps1 wt new' }
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }
-# hand-made task branches skip wt new's prior-work gate
+# hand-made task branches skip the prior-work gate of wt lease / new
 if (($trx = Get-KitTaskTagRx) -and $raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(checkout\s+(-\S+\s+)*-[bB]|switch\s+(-\S+\s+)*-[cC]|worktree\s+add\s+(\S+\s+)*?-[bB]|branch(\s+-[fct]\S*)*)\s+(?<br>[^\s;|&]+)') {
-  $br = $Matches.br; if ($br -match $trx) { try { Assert-KitPrior $Matches.id '' "git branch $br" '' } catch { Deny "kit guard: $($_.Exception.Message -replace '-Override', 'crafty.ps1 wt new -Override')" } }
+  $br = $Matches.br; if ($br -match $trx) { try { Assert-KitPrior $Matches.id '' "git branch $br" '' } catch { Deny "kit guard: $($_.Exception.Message -replace '-Override', 'crafty.ps1 wt lease -Override')" } }
 }
 # Git Bash /d/x reaches Windows programs as \d\x; MSYS skips strings, JSON, env, code
 function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
@@ -2259,7 +2241,7 @@ function Invoke-Prior {
 param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Json)
   if (-not $Task) { 'usage: crafty.ps1 prior -Task <id> [-Repo <r>] [-Query <words>] [-Symbol <s>] [-Json]'; exit 2 }
   $tag = "$($KitConf.TrackerTag)$Task"; $since = (Get-Date).AddDays(-30); $priorHits = [Collections.Generic.List[object]]::new()
-  $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # branches wt new made for this task
+  $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # branches wt lease / new made for this task
   $add = { param($k, $r, $ref, $ti, [bool]$tg, $br) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti"; tagged = $tg; proj = $(if ($r) { ((Get-HostProject $r -Raw) -split '/')[-1] }); branches = @($br | Where-Object { $_ }) }) }   # branches: MR source / commit's (wt new reusing one passes)
   $idRx = "(?i)$([regex]::Escape($tag))(?![A-Za-z0-9])"   # CU-12 is no hit for CU-123
   $tt = Get-TrackerTask $Task; $words = if ($Query) { $Query } else { $tt.name }

@@ -14,7 +14,7 @@
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
- mr / merge [--scope "<glob>,.."] [--scope-ok <decision id>]: a diff outside the area (--scope, else the wt new -Scope record)
+ mr / merge [--scope "<glob>,.."] [--scope-ok <decision id>]: a diff outside the area (--scope, else the wt lease / new -Scope record)
   is refused naming the files (merge: the host's diff); --scope-ok = a person's decide record -Gate scope -Item <branch>, logged
  python -X utf8 devtools.py merge <worktree> <iid> [--override "<why>"]   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
@@ -269,7 +269,7 @@ def statuses():
 
 
 def prior_gate(task, repo, what):
-    """Check before create (crafty.ps1 prior; lib.ps1 Assert-KitPrior is the same gate for wt new): prior ran within prior.validHours
+    """Check before create (crafty.ps1 prior; lib.ps1 Assert-KitPrior is the same gate for wt lease / new): prior ran within prior.validHours
     and found nothing for this repo (or a duplicate task); work tagged with the task (its wave branches *<tag><task>*, their commits
     and MRs) is its own: INFO, never a stop; --override passes, logged with the hits it passed."""
     if not task:
@@ -552,7 +552,7 @@ def _mr_api(host, proj, iid):
 
 
 def wt_record(worktree, key):
-    """A crafty.ps1 wt new record (<git dir>/claude-<key>) as its lines; None when absent."""
+    """A crafty.ps1 wt lease / new record (<git dir>/claude-<key>) as its lines; None when absent."""
     gd = _run(['git', '-C', worktree, 'rev-parse', '--git-dir'])
     f = os.path.join(gd if os.path.isabs(gd) else os.path.join(worktree, gd), f'claude-{key}')
     if os.path.exists(f):
@@ -576,7 +576,7 @@ def scope_outside(files, globs):
 
 
 def scope_of(worktree, given='', mr='', log=None):
-    """Area globs: --scope (comma list), else the worktree's wt new -Scope record, else the MR's last scope-log area (a deferred
+    """Area globs: --scope (comma list), else the worktree's wt lease / new -Scope record, else the MR's last scope-log area (a deferred
     merge from the main checkout: bossy.ps1 track run); [] = no area."""
     if given or (rec := wt_record(worktree, 'scope')):
         return [g.strip() for g in given.split(',') if g.strip()] if given else rec
@@ -612,7 +612,7 @@ def scope_note(url, globs, branch):
 
 
 def target_of(worktree):
-    """MR target: the worktree's record (crafty.ps1 wt new), else kit.local.json repos[].target, else origin/HEAD.
+    """MR target: the worktree's record (crafty.ps1 wt lease / new), else kit.local.json repos[].target, else origin/HEAD.
     A fallback is printed (stderr) with its source; None when all three are missing."""
     rec = wt_record(worktree, 'target')
     if rec is not None:
@@ -2070,7 +2070,7 @@ def render_wave_brief(s):
                             [r[:3] + [', '.join(f'`{g}`' for g in a.get('paths') or []) or 'any'] + r[3:] + [yn(a.get('complex'))]
                              for r, a in zip(rows(('id', 'items', 'area', 'repos', 'migrationRange', 'services'), s['agents']), s['agents'])]), '',
         f'**Overlaps:** {s.get("overlaps") or "none"} · **Contracts:** `{s["name"]}.contracts.md` ({len(s.get("contracts") or [])} crossing)',
-        f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, worktree name = agent id · **Tracker:** {s.get("tracker") or "—"}.',
+        f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
         '## openQuestions', *(qs or ['none']), '## Findings (rechy)', 'none yet', '## Rule changes during the wave (newest last)']) + '\n'
 

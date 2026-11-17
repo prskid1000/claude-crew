@@ -21,9 +21,10 @@ You never change code, branches, docs or tracker state;
   (a fresh agent continues); CHECKPOINT on join -> go on from there.
 
 **mr / kit / config:**
-1. The diff: `git -C <wt> fetch origin`, `git -C <wt> diff origin/<target>...<MR head sha>`, a kit
-   commit `git -C <wt> show <sha>`.
-2. The surrounding code (a main checkout is fine for reading), the repo's `CLAUDE.md` conventions, the author's testing-goals doc.
+1. The diff by sha from the repo's main checkout (an author's pool slot may hold another branch by now): `git -C <checkout>
+   fetch origin`, `git -C <checkout> diff origin/<target>...<MR head sha>`, a kit commit `git -C <checkout> show <sha>`.
+2. The surrounding code (`git -C <checkout> show <sha>:<path>`; main checkout files for unchanged code), the repo's `CLAUDE.md`
+   conventions, the author's testing-goals doc.
 3. Check against the items asked and crafty Rules (kit: `kit-admin.md`; lint). Tests: new/changed logic
    has unit tests; each fixed bug a regression test; touched endpoints integration/API tests; touched screens UI tests where the
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at

@@ -90,8 +90,11 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 <!-- kit-graph:end -->
 
 ## Leases
-One rule (`lib.ps1` `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes;
+One rule (`lib.ps1` `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes, worktree slots;
 only owner holds (`envy.ps1 up -Owner`, phone `manual`) keep minutes, with a reminder.
+Worktree slots (`crafty.ps1 wt lease / release / pool`): a fixed pool per repo (`pool.size`), created lazily, never deleted; a
+released slot keeps its build caches and goes detached, a fair queue when all are leased. One naming scheme, shown on the
+dashboard: member n of any pool (slot, env lane, phone lane) is the n-th bird of `pool.names` (`backend·Falcon`, `shop·Kestrel`).
 The local STT server (`local-stt`; `skills/pokey/media.md`): one job at a time, bound to the job's process, its RAM through the memory gate.
 The GPU (`gpu.exclusive.<kind>`, `lib.ps1` `Use-KitGpu`): one kind at a time (e.g. lane emulators); another kind waits, supervise
 shows `waiting for GPU: held by <holder>`. `processes` (regex): running processes that hold it; `idleExcept` (regex of the kind's own backend):
@@ -244,7 +247,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `devices` | {"type": "android"} | type: none (default: verbs refuse, app checks NOT_TESTED) / android / ios (swarm-ios.ps1); avd {api, device, tag}; snapshotSave (false: Quick Boot keeps the first snapshot, no multi-GB save on each close) |
 | `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; containers for deploy intest; env per path |
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge: NOT_MERGED held for approval |
-| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = its own check, else the migrations.tool adapter (envy db.md); exclusiveTests: README Leases; regenerate: wt sync conflicts -&gt; target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = no MR pipelines (CI on deploy branches): pipes no-ci, devtools.py merge on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual, from, paths, serves; kind: bossy deploys.md |
+| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | poolSize: its worktree slots (pool.size; 0 = none); role producer / consumer; migrations.check = its own check, else the migrations.tool adapter (envy db.md); exclusiveTests: README Leases; regenerate: wt sync conflicts -&gt; target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = no MR pipelines (CI on deploy branches): pipes no-ci, devtools.py merge on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual, from, paths, serves; kind: bossy deploys.md |
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs, reports (gdocs) |
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "briefSeconds": 40,… | heartbeat: ramActPct, minDiskFreeGB, ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): base of NEXT=&lt;n&gt; (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent (no named wait) / flat-CPU shell = STUCK; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: each section's cadence |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
@@ -258,7 +261,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `gpu` |  | exclusive.&lt;kind&gt;.processes (regex): one kind on the GPU at a time; unset: no limit |
 | `process` |  | gates.&lt;promote/merge/finish/bugFix/mrBody&gt;: unset = pass, builtin:testingDocs / builtin:reproRow, or a hook command (payload JSON on stdin, exit 0 = pass); docs[] {key, label, linkRx, headerRx, required} (unset: vocab.json pair, [] = none); bugFixRx |
 | `mr` |  | footer: last line of every MR body ("" = none); sections, uiFilesRx: devtools.py render |
-| `protectedBranchesBase`, `linkDefaults`, `stack.presets` |  | branches the sweep never deletes (main/master/develop/release/*); dep folders wt new links; false = no built-in stack presets |
+| `protectedBranchesBase`, `linkDefaults`, `stack.presets` |  | branches the sweep never deletes (main/master/develop/release/*); dep folders wt lease / new link; false = no built-in stack presets |
 | `api`, `auth` |  | api.defaultUser (none: a target with one user uses it, several refuse), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 / oidc |
 | `masking`, `migrations` |  | masking.rules {table.column glob: kind}, logins, names {first, last, streets} (envy db.md); migrations.tool (none), lbcheck.*, historyTables (envy db.md) |
 | `configVersion` | 2 | below 2: migrate adds old defaults |
@@ -277,6 +280,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `build` | {"mavenOffline": true} | mavenOffline: Maven -o if ~/.m2/repository exists (default true). |
 | `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build_heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |
 | `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (&gt;= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop &gt;= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: &lt;id&gt; &lt;GB&gt; &lt;s&gt; &lt;query&gt;; db.kill {id}; db.maxGB. TODO-PARAM. |
+| `pool` | {"size": 10} | Worktree pool (crafty SKILL.md Worktrees): size = slots per repo (default 10; repos[].poolSize per repo, 0 = no pool: wt new), created lazily, never deleted; names: the n-th member of every pool (slot, env lane, phone lane), default birds Falcon, Kestrel, Osprey, ... |
 | `params` | {"learning": "on", "shadowDays": 14} | Tunables (param show; keys: params.registry.json) learn both ways per machine (.state/params.json) from the default within default/4..x4: a failure (timeout, OOM, short: holder back past grace, handoff, 2+ new ACTs a sweep) steps safe next use (x1.5 or the need); risky steps &lt;= 10%/day after 5 new samples, none 7 d after a failure; shadowDays: shown, then used; past 2x default: param approve (owner). kit.local.json value = pin; learning on / shadow / off. |
 | `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "stepHours": 2, "prices":… | Budget = an agent tool's compaction point: handoff at handoffAt x it or a step &gt; stepHours (0: off); run cap = planned budgets: estimate &gt; runStopAt x cap refused (split), at it no new item; estimate per agent, item |
 <!-- kit-graph:end -->
@@ -487,6 +491,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_youtrack_ps1["tracker_youtrack.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_ts_typecheck_ps1["ts_typecheck.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_video_ps1["video.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_wt_pool_ps1["wt_pool.ps1"]
   skills_crafty_SKILL_md -->|"step 4: check -Step test runs it for a web…"| skills_crafty_spec_mjs["spec.mjs"]
   skills_crafty_SKILL_md -->|"revy kind module (devtools.py findings)"| skills_crafty_module_audit_md["module-audit.md"]
   skills_crafty_SKILL_md -->|"setup (bossy.ps1 setup -WriteLocal; keys:…"| skills_crafty_kit_example_json["kit.example.json"]

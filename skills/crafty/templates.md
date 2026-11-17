@@ -67,7 +67,7 @@ holdMerge? }`.
 | X1 | <ids> | <area> | `<repo-relative glob>`, .. or any | <repos> | <range or —> | <api; api-only items: no web> | <yes: why / no> |
 
 **Overlaps:** <who touches what in a shared file> · **Contracts:** <field / endpoint X1 adds, X2 consumes after X1 merges>
-**Branch:** `f/<tag><task>-<slug>`, worktree name = agent id · **Tracker:** task under <epic> in <list>, assigned to <user>.
+**Branch:** `f/<tag><task>-<slug>`, pool slots leased as the agent id · **Tracker:** task under <epic> in <list>, assigned to <user>.
 Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
 
 ## openQuestions
@@ -92,8 +92,9 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 ## Resume brief
 Rendered, never hand-written: `bossy.ps1 recover` (crash) or, at a budget HANDOFF, `crafty.ps1 checkpoint -Agent <id> -Run <run>
 -Step <last done> -Next <step> -Notes '<one line>' -Brief <the path HANDOFF names>` (Done table with evidence and worktree @ head,
-Open: worktrees, leases, pending decisions, Notes). The next agent joins with the same id + `-Resume` (TAKEOVER), runs
-`crafty.ps1 wt status -Dir <wt>` per worktree, reads the task and its MRs; files changing under it: stop, report.
+Open: worktrees, leases, pending decisions, Notes). The next agent joins with the same id + `-Resume` (TAKEOVER), leases
+each branch again (`crafty.ps1 wt lease -Branch <b>`: the slot that has it) + `wt status`, reads the task and its MRs;
+files changing under it: stop, report.
 `<run>.resume.md`: per area, done (skipped) / missing (run) steps, MRs, tracker, doc.
 
 ## Test cases (goals file, AI doc, human doc)

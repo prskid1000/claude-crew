@@ -170,9 +170,9 @@ $ap = Invoke-Js area-paths @'
 const fn = async (p, o) => /^build/.test(o.label) ? _rep({ status: 'PASS', failing: [] }) : /^ship/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, _merged(1)) : undefined
 const m = _mock(fn, '[]'); await run({ ..._kl, brief: 'C:/b/w.md', mandate: ['m'], agents: [{ id: 'W2c', items: 'A1', area: 'specs', paths: ['specs/**'] }] }, m.agent, _n, _n, pipeline).catch(_err)
 const p = (l) => (m.calls.find((c) => c.label.startsWith(l)) || {}).prompt || ''
-console.log([/AREA PATHS: wt new -Scope 'specs\/\*\*'/.test(p('build')), /merge <worktree path, absolute> <iid> --scope 'specs\/\*\*' \(/.test(p('ship'))].join(' '))
+console.log([/AREA PATHS: wt lease -Scope 'specs\/\*\*'/.test(p('build')), /wt lease -Repo <its repo> -Branch <its source branch> -Agent \S+ .*merge <wt> <iid> --scope 'specs\/\*\*'; at the end .*wt release -Agent/.test(p('ship'))].join(' '))
 '@ (Join-Path $src 'workflows/buildy.js')
-Expect "buildy: agents[].paths reach the build (wt new -Scope) and ship (merge --scope) prompts ($ap)" ("$ap".Trim() -eq 'true true')
+Expect "buildy: agents[].paths reach the build (wt lease -Scope) and ship (lease, merge --scope, release) prompts ($ap)" ("$ap".Trim() -eq 'true true')
 Expect "wt commit: area files pass; a file outside is refused naming it; the owner's scope word (decide record -Gate scope) lets it through ($e1 $e2 $e3)" ($e1 -eq 0 -and $e2 -eq 1 -and $c2 -match 'commit refused: 1 file\(s\) outside the area \(specs/\*\*\): src/Inv\.java' -and $e3 -eq 0 -and (git -C $sr log -1 --format=%s) -eq 'fix: change the service')
 # (cap moves from guard) malformed hook input, a body file in the shared temp root, background loops
 $D = Join-Path $k 'skills/crafty/crafty.ps1'

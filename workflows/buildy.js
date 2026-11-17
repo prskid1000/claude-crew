@@ -197,7 +197,7 @@ function depNote(a) {
   (cs.length ? `MERGE ORDER: area(s) ${cs.join(', ')} consume your work: open your MRs early and say which MR carries the contract.\n` : '')
 }
 const globs = (a) => [].concat(a.paths || []).join(',')
-const areaNote = (a) => globs(a) ? `AREA PATHS: wt new -Scope '${globs(a)}'.\n` : ''
+const areaNote = (a) => globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\n` : ''
 // this run's commands live in agents/devy.md "In a /buildy wave" (devy's own definition: same text, one copy)
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses) with your agent definition's
 "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
@@ -209,7 +209,7 @@ You are devy ${a.id} in a parallel wave (${MODE}; kind: ${a.kind || (MODE === 'b
 Follow ${K}/SKILL.md (its steps and Rules; tools in ${DEV}, ${DT}) and the brief ${A.brief} (repos, ownership, ranges, local env, decisions; it wins).
 ${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat((RES[a.id] || {}).skip || []).join(', ') || 'none'} (resume brief table); work out the rest (templates.md "Resume brief"), continue.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
 Board: & ${ORCH} board join -Type devy -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
-Worktree name prefix: ${a.id.toLowerCase()}. Never touch other agents' worktrees, branches or processes.
+Worktrees: pool slots leased as ${a.id} (crafty Rules "Worktrees"). Never touch other agents' slots, branches or processes.
 ${a.note || ''}
 ${depNote(a)}${areaNote(a)}${FLOW}${HOLD_NOTE}
 Return the report.`
@@ -229,7 +229,7 @@ Complete the cases spec (devtools.py cases add / result), run devtools.py finish
 function continuePrompt(a, r, why) {
  return `${WHY}
 You are devy ${a.id} again (items ${a.items}, area ${a.area}).${PATHS}${AGENT_ENV(a.id)}
-Follow ${K}/SKILL.md and ${A.brief}. Your worktrees: ${(r.worktrees || []).join(', ') || '(see the board / your branch)'}. Testing-goals doc: ${(r.localTest || {}).goalsDoc || '(yours)'}.
+Follow ${K}/SKILL.md and ${A.brief}. Your slots were released: lease your branch again (crafty.ps1 wt lease -Repo <repo> -Branch <branch> -Agent ${a.id}; last in ${(r.worktrees || []).join(', ') || 'see the board'}). Testing-goals doc: ${(r.localTest || {}).goalsDoc || '(yours)'}.
 ${why}
 ${areaNote(a)}${FLOW}${HOLD_NOTE}
 Return the full report (every MR, all items done so far).`
@@ -273,7 +273,7 @@ function shipPrompt(a, r) {
  return `STEP: schedule merge-when-green for devy ${a.id}'s reviewed MRs. Change no code (only append-only conflict resolution).${PATHS}${AGENT_ENV(`ship-${a.id}`)}
 These merges are authorized for this run: local loop passed, review clean, hold list applied (your agent definition's "In a /buildy wave" SHIP step). Merge in THIS order (producers first, consumers last):
 ${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}, ${roleOf(m) || 'independent'})`).join('\n')}
-python ${DT} merge <worktree path, absolute> <iid>${globs(a) && ` --scope '${globs(a)}'`} (worktrees: ${r.worktrees.join(', ')}). The merge order is registered (bossy.ps1 track):
+Per MR: & ${DEV} wt lease -Repo <its repo> -Branch <its source branch> -Agent ${a.id} (its "worktree:" line = <wt>; last used: worktrees: ${r.worktrees.join(', ')}), then python ${DT} merge <wt> <iid>${globs(a) && ` --scope '${globs(a)}'`}; at the end & ${DEV} wt release -Agent ${a.id}. The merge order is registered (bossy.ps1 track):
 a consumer whose producer is not merged yet prints WAIT "waiting for producer": report WAIT, never merge it another way.
 Conflicts and merge results: your agent definition's "In a /buildy wave" SHIP step and Merge results (crafty.ps1 = ${DEV}, devtools.py = ${DT}).
 Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
@@ -399,7 +399,7 @@ const results = await pipeline(
   return releasing(a, 'Build', async () => {
   const dbt = a.debate && MODE !== 'resume' ? debateOrAsk(a, { ...a.debate, trigger: 'brief' }, 'Build') : null   // beside the build
   let r = await agent(buildPrompt(a), { ...dvo(a, 'build', 'Build'), agentType: 'devy' })
-  if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt status, the board, your branch), continue.'), { ...dvo(a, 'build-retry', 'Build'), agentType: 'devy' }) }
+  if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt lease your branch + wt status, the board), continue.'), { ...dvo(a, 'build-retry', 'Build'), agentType: 'devy' }) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
   const o = await localLoop(a, r, LOCAL_RETRIES, 'Build'), dq = await dbt, it = (a.debate || {}).item
   return !dbt ? o : dq ? { ...o, needsDecision: [...(o.needsDecision || []), { item: it, decisionId: dq, question: a.debate.question }] } : { ...o, deferred: [...(o.deferred || []), { id: it, reason: 'debate and ask failed: the coordinator decides' }] }

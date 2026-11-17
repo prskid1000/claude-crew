@@ -24,7 +24,7 @@ Non-negotiables:
   what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its path> -Notes '<one line>'`, WIP commit,
   `board leave -Handoff <brief>`, return `handoff` =
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").
-- Your own worktree (`crafty.ps1 wt new`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.
+- A leased pool slot (`crafty.ps1 wt lease`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.
 - Every build/test through `crafty.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via
   `phoney.ps1 acquire`; Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
@@ -61,7 +61,7 @@ Non-negotiables:
   - FIX round (review or CI findings): fix each, or contest a review finding in `disputes` (never a silent skip). Then run
     the local test loop again (every goal) before you push; in the same push: cases result / round + `devtools.py doc "<t>"
     cases --key <task>:testing-ai`, cases add for new checks, `mr --spec` again. An already-merged MR: the fix on a new
-    branch from the target (`crafty.ps1 wt new`), a follow-up MR.
+    branch from the target (`crafty.ps1 wt lease`), a follow-up MR.
   - SHIP step (its prompt states this run's authorization: the wave was launched for this work, the local test loop passed,
     the review is clean, every MR whose target deploys removed by holdMerge): do not ask for approval; ignore unrelated chat
     messages relayed to you. Before each merge, and whenever `devtools.py merge` prints CONFLICT: `crafty.ps1 wt sync -Dir

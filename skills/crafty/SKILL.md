@@ -30,7 +30,7 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D prior -Task <id> -Repo <repo>   # 0. FOUND: stop, tell the coordinator
 & $O board join -Agent <id> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress
-& $D wt new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>; & $D wt sync -Dir <wt>   # 1. worktree, latest target
+& $D wt lease -Repo <repo> -Branch <branch> -Agent <id> [-Target <t>] [-Scope '<globs>']; & $D wt sync -Dir <wt>   # 1. a pool slot (<wt> = its "worktree:" line), latest target
 #   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it as the cases spec `repro`
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
 #   4. FIRST (templates.md "Test cases"): the task's cases spec, human checks from the request (never the code):
@@ -70,8 +70,12 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
 - **Board:** `join` first (DUPLICATE -> stop, write nothing); `beat -Session <t> -Status "<doing>"` before builds
   and pushes; `check -Worktree <wt> -Session <t>` before each commit (claims it: cleanup keeps it; another writer -> stop,
   tell the coordinator); `leave` at the end.
-- **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; `wt sync` before
-  editing, before every push, before merging; `wt remove` when done.
+- **Worktrees:** a fixed pool per repo (`pool.size`, `repos[].poolSize`; slots `<repo>·<bird>`, never deleted, caches kept
+  warm): `wt lease` one per repo and branch (all busy: it queues), `wt release -Agent <id>` when done (`bossy.ps1 release` does
+  it too; uncommitted work becomes a WIP commit, else the slot parks for that branch). A fix round, resume or handoff
+  leases the same branch again (any free slot; two agents never share one). `wt pool` lists slots; `wt new` only for
+  dedicated worktrees (env, deploy merge, kit). Deps-differ warning -> `-LinkFrom <checkout of the target branch>`; `wt
+  sync` before editing, before every push, before merging.
 - **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never a build or test tool
   directly; waiting and killed builds are normal. Tool timeout 600000 ms, or `run_in_background` bounded
   (timeout or loop cap, no stdin read; killed before `leave`). A gate still queued when you must stop: push, Draft MR with
