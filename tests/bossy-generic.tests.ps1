@@ -75,7 +75,8 @@ Expect 'Invoke-KitLocked: an old lock nobody holds is taken at once; its file ab
 $pyf = Join-Path (Kd) 'pylock.py'; Set-Content $pyf "import sys, time`nsys.path.insert(0, r'$(Join-Path $k 'skills/bossy')')`nimport kitbag`nt = time.time()`nwith kitbag.locked(r'$lt'):`n    print(round(time.time() - t, 1), flush=True)`n    time.sleep(float(sys.argv[1]))"
 $pyp = Start-Process $py -ArgumentList '-X', 'utf8', $pyf, '2' -PassThru -WindowStyle Hidden; for ($pw = 0; $pw -lt 100 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 100 }
 $sw.Restart(); $psGot = & { . (Lib); Invoke-KitLocked $lt { 'got' } }; $psWait = $sw.Elapsed.TotalSeconds; $null = $pyp.WaitForExit(10000)
-$lbp = Lib; $tj = Start-ThreadJob { . $using:lbp; Invoke-KitLocked $using:lt { Start-Sleep -Milliseconds 4000 } }   # 4 s: a loaded python start (~1-3 s) still waits >= 0.8 s; for ($pw = 0; $pw -lt 100 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 50 }
+# the holder keeps the lock 4 s and is awaited up to 30 s (a loaded lib load in the job): python still waits >= 0.8 s
+$lbp = Lib; $tj = Start-ThreadJob { . $using:lbp; Invoke-KitLocked $using:lt { Start-Sleep -Milliseconds 4000 } }; for ($pw = 0; $pw -lt 600 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 50 }
 $pyWait = [double]"$(& $py -X utf8 $pyf 0 | Select-Object -Last 1)"; $null = $tj | Wait-Job
 Expect "lock: python waits for a PowerShell holder and the other way round (ps waited $([math]::Round($psWait, 1)) s, python $pyWait s)" ($psGot -eq 'got' -and $psWait -ge 1 -and $pyWait -ge 0.8 -and -not (Test-FileLockHeld $lt))
 # kept lock files (LESSONS.md.lock after learn) are git-ignored: never a lint REACH-NONE or a pre-push local-file block
