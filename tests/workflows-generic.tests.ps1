@@ -84,5 +84,12 @@ run(args, agent, _n, _n, null).then(() => {
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts: #' 'local-call', 'phone-call', 'release-guard' -Show 8
+# K70 (K7 fix): one area over the cap is refused as unsplittable, with no next (a batch of 1 changed nothing: endless refusal)
+$js1a = @'
+const calls = [], agent = async (p, o) => { calls.push(o.label); return /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":100000,"estimate":500000,"stopAt":0.8}') : _ok('[]') }
+const o = await run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }], mandate: ['m'], ..._kl }, agent, _n, _n, pipeline)
+console.log(`one-area:${o.refused === true && o.unsplittable === true && !o.next && !o.batch && !calls.some((c) => /^build:/.test(c))}`)
+'@
+Expect-Each (Invoke-Js wg-one $js1a $wfd) 'buildy budget: #' 'one-area' -Show 5
 Remove-TestKit $k
 Complete-Tests

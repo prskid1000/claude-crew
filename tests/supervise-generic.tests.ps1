@@ -23,6 +23,14 @@ function Get-KitHeldDeletedGB { $null }; function Get-KitFolderGrowth { @() }; f
 $r1 = @(Get-KitStorageRound); $r2 = @(Get-KitStorageRound); "round:$($global:dbc):$($global:twc):$(@($r2 | Where-Object { "$($_.what)" -match 'top writers: w \(1\)' }).Count)"
 '@ @($O)
 Expect "storage round: one db query list a sweep, top writers cached 5 min ($(@($rnd)[-1]))" (@($rnd)[-1] -eq 'round:2:1:1')
+# K70 (K7 fix): an empty scan.lock (a failed start) older than a minute is replaced; a fresh one (a starter mid-write) is left
+$slk = Invoke-PsTest storage-lock @'
+$null = . $args[0] 6>$null; $env:KIT_STORAGE_SCAN = '1'; $global:sp = 0; function Start-Process { $global:sp++; [pscustomobject]@{ Id = $PID } }
+$lk = Get-KitStorageFile 'Q' 'scan.lock'; New-Item -ItemType Directory -Force (Split-Path $lk) | Out-Null
+Set-Content -LiteralPath $lk '' -NoNewline; Start-KitStorageScan 'Q'; $fresh = "$($global:sp):$((Get-Item -LiteralPath $lk).Length)"
+(Get-Item -LiteralPath $lk).LastWriteTime = (Get-Date).AddMinutes(-3); Start-KitStorageScan 'Q'; "lock:$fresh/$($global:sp):$((Read-KitText $lk | ConvertFrom-Json).pid -eq $PID)"
+'@ @($O)
+Expect "storage scan: an old empty scan.lock is replaced, a fresh one left ($(@($slk)[-1]))" (@($slk)[-1] -eq 'lock:0:0/1:True')
 # generic: idle daemons only from cleanup.idleDaemons (busyKinds hold them), tool caches from storage.toolCaches, gate.labels before built-in kinds
 $gen = Invoke-PsTest res-generic @'
 $null = . $args[0] 6>$null; Remove-Item Env:KIT_KEEP_DAEMONS -ErrorAction SilentlyContinue

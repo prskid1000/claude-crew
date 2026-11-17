@@ -203,5 +203,12 @@ Invoke-Daemon -Env t -Train tr2
 $null = Px $rbw 2>&1
 $rb = & { . $L3; $sv = (Read-State t).services.api; "$($sv.artifact -eq $a1)|$($sv.release)|$((Read-State t).release.n)" }
 Expect "rollback: a failed switch-over and a failed restart leave the previous release's copy in the state ($rb)" ($rb -eq 'True|1|1')
+# K70 (K7 fix): a second envy use adds its services to the agent's lease (the first ones stay held); the release moves when it changed
+$use = (([Management.Automation.Language.Parser]::ParseFile($L3, [ref]$null, [ref]$null)).FindAll({ $args[0] -is [Management.Automation.Language.SwitchStatementAst] }, $true) | ForEach-Object Clauses | Where-Object { "$($_.Item1)" -eq "'use'" } | Select-Object -First 1).Item2.Extent.Text
+$um = foreach ($rel in 1, 2) { & { . $L3; $e = 'uz'; $Agent = 'A'; $Services = 'job'; $LeaseMin = 30; $MaxLeaseMin = 60; $Wait = 0
+  foreach ($f in 'Ensure-Loop', 'Show-Status', 'Event', 'Wake-Deferred', 'Prune', 'Svc') { Set-Item "function:$f" {} }; function Closure { @($args[1]) }; function MarksOn { $false }; function Wait-Up { $true }
+  Update-State uz { param($x) $x.release = @{ n = $rel }; $x.leases = @{ A = @{ services = @('api'); repos = @(); release = 1; note = 'n1' } } }
+  $null = . ([scriptblock]::Create($use.Substring(1, $use.Length - 2))); $l = (Read-State uz).leases.A; "$(@($l.services) -join ',')/$($l.release)/$($l.note)" } }
+Expect "envy use: a second use keeps the held services and the note, the release moves to the current one ($($um -join ' '))" (($um -join ' ') -eq 'api,job/1/n1 api,job/2/n1')
 Remove-TestKit $k3
 Complete-Tests

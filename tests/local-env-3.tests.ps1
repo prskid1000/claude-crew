@@ -188,6 +188,11 @@ $fbOut = foreach ($ok in $false, $true) { & { . $ckL; $script:rec = 0
     function Invoke-DbFlashback { @{ applied = $ok; error = 'disk full'; fallback = @(); refused = @() } }; function Update-State { $script:rec++ }; function Remove-MarkSlices { }; function Event { }
     "$(Invoke-RestoreDb t @{ pos = 'b.000008:50'; name = 'm1' } @('s1') @{ to = 'b.000009:1'; steps = @(); objects = @(); renames = @(); drops = @(); objectDrops = @() })|$script:rec" } }
 Expect "localenv: restore records mark~end undone only after the row flashback applied ($($fbOut -join ' / '))" ($fbOut[0] -eq 'row flashback failed: disk full|0' -and $fbOut[1] -eq '|1')
+# K70 (K7 fix): a failed ALTER EVENT DISABLE still enables every event again; no schemas = refused before any SQL
+$evo = & { . $ckL; $global:eSql = @(); function Read-State { @{ marks = @(); undone = @() } }; function Get-EnvCfg { @{ db = @{} } }; function Get-DbPos { 'b.000009:1' }
+  function Invoke-DbSql { $global:eSql += $args[1]; if ($args[1] -match '^SELECT EVENT') { , @('s1', 'e1'); , @('s1', 'e2') } elseif ($args[1] -match 'e2`` DISABLE|e2` DISABLE') { throw 'denied' } }
+  $r0 = Invoke-RestoreDb t @{ pos = 'b.000008:50' } @() @{}; $n0 = $global:eSql.Count; try { $null = Invoke-RestoreDb t @{ pos = 'b.000008:50' } @('s1') @{ to = 'x' } } catch { }; "$r0|$n0|$(@($global:eSql -match ' ENABLE$').Count)" }
+Expect "localenv: restore with no schemas refused, a failed event disable enables all again ($evo)" ($evo -eq 'restore has no schemas|0|2')
 # restore: tables made after the mark go in one FK-checks-off statement (parent before child: mysql 3730)
 $dq = & { . $ckL; $global:dSql = @(); function Read-State { @{ marks = @(); undone = @() } }; function Get-EnvCfg { @{ db = @{} } }; function Invoke-DbSql { $global:dSql += $args[1] }; function Get-DbPos { 'b.000009:1' }
   function Invoke-DbFlashback { @{ applied = $true; fallback = @(); refused = @() } }; function Update-State { }; function Remove-MarkSlices { }; function Event { }

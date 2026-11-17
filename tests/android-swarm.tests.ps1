@@ -37,10 +37,17 @@ $null = Invoke-KitVerb Invoke-Build @('-NoUpdate', '-Local'); $side = -not (Test
 git -C "$tmp/a" checkout -q -b localenv/r1; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate', '-Local')
 "local:$($side -and (Test-Path "$tmp/app-local.apk"))"
 "kinds:$($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false' -and $ini -match 'hw.audioInput=yes') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb gradlew')"
+# K70 (K7 fixes): install uninstalls (wipes app data) only on a signature / version clash; acquire -Lane stays on that lane
+$a2 = "$tmp/adb2.cmd"; Set-Content $a2 "@echo off`r`nif `"%1`"==`"devices`" (echo List of devices attached& echo emulator-5560	device& echo emulator-5562	device& exit /b 0)`r`nif `"%3`"==`"uninstall`" (echo %2>> `"$tmp\un.txt`"& exit /b 0)`r`nif `"%4`"==`"-r`" (type `"$tmp\mode.txt`"& exit /b 0)`r`necho Success" -Encoding ascii
+$script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'L1'; port = 5560 }, [pscustomobject]@{ name = 'L2'; port = 5562 }); adb = $a2; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() }; apkDir = $tmp; out = $tmp }
+Set-Content "$tmp/i.apk" 'x'; $ins = foreach ($m in 'Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]', 'Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: x]') { Set-Content "$tmp/mode.txt" $m; $ok = try { $null = Invoke-Install -Apk "$tmp/i.apk" -Serials 'e1' 3>$null; 1 } catch { 0 }; "$ok$(@(Get-Content "$tmp/un.txt" -ErrorAction SilentlyContinue).Count)" }
+foreach ($n in 'L1', 'L2') { @{ agent = 'A'; lane = $n; serial = "emulator-556$(if ($n -eq 'L2') { 2 } else { 0 })"; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content "$P/$n.json" }
+$jl = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A', '-Lane', 'L2') | Select-Object -Last 1 | ConvertFrom-Json
+"clash:$($ins -join ',') $($jl.lane)"
 '@
 $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
 $res = @(Px "$sf.ps1" (Join-Path $src 'skills/phoney/phoney.ps1') $sf 2>&1)
-foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'colon:True', 'kinds:True True', 'local:True') { Expect "swarm: $x" ($res -contains $x) }
+foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'colon:True', 'kinds:True True', 'local:True', 'clash:00,11 L2') { Expect "swarm: $x" ($res -contains $x) }
 Remove-Item "$sf.ps1", $sf -Recurse -Force -ErrorAction SilentlyContinue
 # lease files: reads and writes under the file lock (an open reader made the rename fail)
 $ss = & { $rt = Join-Path ([IO.Path]::GetTempPath()) "swl-$PID"; Set-Item Env:CLAUDE_RUNTIME $rt; . (Join-Path $src 'skills/phoney/phoney.ps1')
