@@ -5,7 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L50 plain · L86 warm
+// Sections: L25 crash · L50 plain · L88 warm
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
@@ -48,12 +48,14 @@ function crashed(rc, err, event = 'crash') {
 }
 
 // ---- plain: a deny is exit 0 + JSON (other stdout would read as plain text and allow the call); one pwsh per call
-// guard_server.ps1 marks a failed load with the crafty.ps1 + lib.ps1 mtimes; true while both are unchanged
+// guard_server.ps1 marks a failed load with the crafty.ps1 + lib.ps1 mtimes; true while both are unchanged (±1 ms) and the mark
+// is under 5 min old (a cause elsewhere, e.g. an adapter, gets a retry)
 function noload() {
   try {
-    const map = JSON.parse(readFileSync(join(here, 'kit.example.json'), 'utf8'))._paths
-    const mark = readFileSync(join(kit, map.runtimeDir, map.runtime.cache, `${name}.noload`), 'utf8').trim()
-    return mark === ['crafty.ps1', 'lib.ps1'].map((f) => Math.floor(statSync(join(here, f)).mtimeMs)).join(',')
+    const map = JSON.parse(readFileSync(join(here, 'kit.example.json'), 'utf8'))._paths, mk = join(kit, map.runtimeDir, map.runtime.cache, `${name}.noload`)
+    if (statSync(mk).mtimeMs < Date.now() - 300000) return false
+    const mark = readFileSync(mk, 'utf8').trim().split(',').map(Number)
+    return ['crafty.ps1', 'lib.ps1'].every((f, i) => Math.abs(statSync(join(here, f)).mtimeMs - mark[i]) <= 1)
   } catch { return false }
 }
 function answer(s) { s = `${s || ''}`.trim(); if (!s) return true; try { const o = JSON.parse(s); return !!o && typeof o === 'object' } catch { return false } }

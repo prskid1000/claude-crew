@@ -18,12 +18,13 @@ $s0 = & $stamp
 $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
 $ps = [powershell]::Create(); $ps.Runspace = $rs; $null = $ps.AddScript("`$ErrorActionPreference = 'SilentlyContinue'; . '$((Join-Path $kit 'skills/crafty/crafty.ps1').Replace("'", "''"))'; `$script:KitScript = 'crafty.ps1'; `$script:KitVerb = 'guard'").Invoke(); $ps.Dispose()
 $ps = [powershell]::Create(); $ps.Runspace = $rs; $loaded = @($ps.AddScript('[bool](Get-Command Invoke-Guard -ErrorAction SilentlyContinue)').Invoke())[0]; $ps.Dispose()
+$mk = try { $pm = (Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json)._paths; Join-Path $kit "$($pm.runtimeDir)/$($pm.runtime.cache)$Pipe.noload" } catch { $null }
 if (-not $loaded) {   # a half-loaded crafty.ps1 would answer every call with an empty allow: the client's plain path decides
   # the marker (crafty.ps1 + lib.ps1 mtimes) stops the client starting a server per call until either changes (K67r)
-  try { $pm = (Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json)._paths; $mk = Join-Path $kit "$($pm.runtimeDir)/$($pm.runtime.cache)$Pipe.noload"
-    $null = New-Item -ItemType Directory -Force (Split-Path $mk); Set-Content -LiteralPath $mk -NoNewline (@('crafty.ps1', 'lib.ps1' | ForEach-Object { [DateTimeOffset]::new((Get-Item (Join-Path $PSScriptRoot $_)).LastWriteTimeUtc).ToUnixTimeMilliseconds() }) -join ',') } catch { }
+  try { $null = New-Item -ItemType Directory -Force (Split-Path $mk); Set-Content -LiteralPath $mk -NoNewline (@('crafty.ps1', 'lib.ps1' | ForEach-Object { [DateTimeOffset]::new((Get-Item (Join-Path $PSScriptRoot $_)).LastWriteTimeUtc).ToUnixTimeMilliseconds() }) -join ',') } catch { }
   exit 1
 }
+if ($mk) { Remove-Item -LiteralPath $mk -ErrorAction SilentlyContinue }   # loaded: an old mark goes
 $env0 = @{}; foreach ($v in Get-ChildItem env:) { $env0[$v.Name] = $v.Value }
 if ($IsWindows -and [IO.File]::Exists("\\.\pipe\$Pipe")) { exit 1 }   # two cold calls started two: the later one goes
 while ($true) {

@@ -207,6 +207,7 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
   for ($taTry = 0; $taTry -lt 100; $taTry++) {   # ready when it accepts a connection (10 s at most), not after a fixed sleep
     $tc = [Net.Sockets.TcpClient]::new(); try { if ($tc.ConnectAsync('127.0.0.1', $port).Wait(200) -and $tc.Connected) { break } } catch { } finally { $tc.Dispose() }
     Start-Sleep -Milliseconds 100 }
+  if ($taTry -ge 100) { try { $taProc.Kill() } catch { }; throw "Start-TestApi: node not listening on $port after 10 s" }
   [pscustomobject]@{ port = $port; proc = $taProc }
 }
 # browser.mjs + the kit's puppeteer-core linked ($false: none); NodeT <name> <js> [args]: $js after m = await import(BM)
