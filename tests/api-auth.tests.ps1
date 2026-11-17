@@ -6,6 +6,9 @@
 $TestKitFiles = @('skills/pokey/adapters/api_auth.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'
 $api = Start-TestApi; $P = $api.port
+# K63h: an OS-picked port per server (two at once differ) and ready on return (no sleep)
+$api2 = Start-TestApi; $taUp = $null; try { $taUp = (Invoke-WebRequest "http://127.0.0.1:$($api2.port)/v" -TimeoutSec 5).StatusCode } catch { }; $api2.proc.Kill()
+Expect "Start-TestApi: two servers get different free ports, each answers at once ($P / $($api2.port): $taUp)" ($P -ne $api2.port -and $taUp -eq 200)
 $T = { param($a) @{ api = "http://127.0.0.1:$P"; auth = $a; users = @{ admin = 'u', 'K9' } } }; $L = @{ path = '/login'; body = @{} }
 $two = & $T ($L + @{ type = 'login'; tokenField = 'access_token' }); $two.users = @{ admin = 'u', 'K9'; viewer = 'v', 'K8' }
 $twoD = & $T ($L + @{ type = 'login'; tokenField = 'access_token' }); $twoD.users = $two.users; $twoD.defaultUser = 'viewer'

@@ -193,7 +193,8 @@ function New-LinkedKit([string]$Name, [hashtable]$Local, [string[]]$Files = @())
 }
 # a local JSON API for pokey.ps1 api: /login gives tokens + cookies; each other path answers 200 only with its auth; /v returns $Sha
 function Start-TestApi([string]$Sha = '') {
-  $sv = Join-Path (Kd) 's.cjs'; $port = 18000 + $PID % 1000
+  # an OS-picked free port (18000 + PID % 1000 collided: Windows PIDs are multiples of 4)
+  $sv = Join-Path (Kd) 's.cjs'; $fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $port = $fp.LocalEndpoint.Port; $fp.Stop()
   Set-Content $sv @'
 require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d); q.on('end', () => {
   const u = q.url, h = q.headers, j = (o, st = 200, hd = {}) => { s.writeHead(st, { 'content-type': 'application/json', ...hd }); s.end(JSON.stringify(o)) }
@@ -202,7 +203,11 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
   if (/^\/t\/acme\/(pdf|txt|empty)$/.test(u)) { s.writeHead(200, { 'content-type': 'application/octet-stream' }); return s.end({ pdf: '%PDF-1 x', txt: 'a,b' }[u.slice(8)] || '') }
   u === '/v' ? j({ v: { sha: process.argv[3] } }) : j({}, ok ? 200 : 401) }) }).listen(+process.argv[2], '127.0.0.1')
 '@
-  [pscustomobject]@{ port = $port; proc = (Start-Process node -ArgumentList $sv, $port, $Sha -PassThru -NoNewWindow) }; Start-Sleep 1
+  $taProc = Start-Process node -ArgumentList $sv, $port, $Sha -PassThru -NoNewWindow
+  for ($taTry = 0; $taTry -lt 100; $taTry++) {   # ready when it accepts a connection (10 s at most), not after a fixed sleep
+    $tc = [Net.Sockets.TcpClient]::new(); try { if ($tc.ConnectAsync('127.0.0.1', $port).Wait(200) -and $tc.Connected) { break } } catch { } finally { $tc.Dispose() }
+    Start-Sleep -Milliseconds 100 }
+  [pscustomobject]@{ port = $port; proc = $taProc }
 }
 # browser.mjs + the kit's puppeteer-core linked ($false: none); NodeT <name> <js> [args]: $js after m = await import(BM)
 function Use-BrowserKit {
