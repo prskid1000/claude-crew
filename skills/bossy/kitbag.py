@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """kitbag.py: the kit's own tooling in one file - lint, README graph, audit stamp, prose, budget; plugins (kitbag_<name>.py) add commands.
 
-  python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn] [--no-flow] [--ratchet] [--org-terms <kit.local.json | a,b>] [--json <out>]
+  python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn (+ the uncounted warnings, exit 0)] [--no-flow] [--ratchet] [--org-terms <kit.local.json | a,b>] [--json <out>]
   python -X utf8 kitbag.py flow --readme [<kit>]       # README graph sections (the interactive page: kitbag_flow.py)
   python -X utf8 kitbag.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (kitbag_ports.py)
   python -X utf8 kitbag.py audit stamp | scan [--kit <dir>] [--json <file>]   # stamp resets the audit nudge; scan: kitbag_admin.py

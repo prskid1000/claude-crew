@@ -76,9 +76,10 @@ foreach ($r in $results) {
   elseif ($r.code) { $fails += [Math]::Max(1, ([regex]::Matches($r.out, '(?m)^FAIL ')).Count) }
   $logLines.Add("== $($r.area) ($($r.seconds) s)"); $logLines.Add($r.out)
   # a green area is one line here (its output reads tokens, not news); a failed one in full
-  if ($Detail -or $fails -gt $f0 -or $r.code) { "== $($r.area) ($($r.seconds) s)"; $r.out } else { "== $($r.area) ($($r.seconds) s): $(([regex]::Matches($r.out, '(?m)^PASS ')).Count) passed" }
+  if ($Detail -or $fails -gt $f0 -or $r.code) { "== $($r.area) ($($r.seconds) s)"; $r.out } else { $sk = ([regex]::Matches($r.out, '(?m)^SKIP ')).Count; "== $($r.area) ($($r.seconds) s): $(([regex]::Matches($r.out, '(?m)^PASS ')).Count) passed$(if ($sk) { ", $sk skipped" })" }
 }
-if ($tmpMap) { $lastLog = Join-Path (Join-Path (Join-Path (Split-Path $PSScriptRoot) $tmpMap.runtimeDir) $tmpMap.runtime.logs) 'kit-tests-last.txt'; $null = New-Item -ItemType Directory -Force (Split-Path $lastLog); $logLines | Set-Content -LiteralPath $lastLog; "every area's output: $lastLog" }
+if ($tmpMap) { $lastLog = Join-Path (Join-Path (Join-Path (Split-Path $PSScriptRoot) $tmpMap.runtimeDir) $tmpMap.runtime.logs) 'kit-tests-last.txt'; try { $null = New-Item -ItemType Directory -Force (Split-Path $lastLog); $logLines | Set-Content -LiteralPath $lastLog; "every area's output: $lastLog" } catch { "every area's output: not written ($($_.Exception.Message)): -Detail prints it" } }
+elseif (-not $Detail) { 'no kit.example.json runtime map: no output log (-Detail prints every area)' }
 # TEST-DUP: one behaviour, one case: a case name (its PASS / FAIL line, case and spaces ignored) twice fails the run
 $cases = foreach ($r in $results) { $at = $r.area; foreach ($l in $r.out -split '\r?\n') {
   if ($l -match '^(PASS|FAIL) (.+)') { [pscustomobject]@{ name = $Matches[2].Trim().ToLower() -replace '\s+', ' '; at = $at; text = $Matches[2].Trim(); fail = $Matches[1] -eq 'FAIL' } } } }
