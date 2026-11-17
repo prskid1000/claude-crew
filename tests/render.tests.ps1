@@ -221,6 +221,10 @@ $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step commi
 $hbo = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step mr -Evidence 'web!5' -Notes "rebase  pending`nthen push" -Brief $hbf 2>&1 | Out-String
 $hbt = (Get-Content -Raw $hbf) -replace '\d{4}-\d\d-\d\dT[\d:.+\-Z]+', 'T' -replace '\d{4}-\d\d-\d\d \d\d:\d\d', 'T' -replace '(?m)^\| T \|', '| T |'
 Expect "checkpoint -Notes -Brief: golden resume brief (Done table, Open, Notes as one line) ($($hbo.Trim()))" ($hbo -match 'resume brief: .*board leave -Handoff' -and (Gold $hbt "# Resume brief: h8 (run ``r8``)`n**Result:** Next: review (start here; the steps below are done: verify, never redo) · T`n`n## Done`n`n| At | Step | Item | Evidence | Worktree @ head |`n|---|---|---|---|---|`n| T | commit | — | abc1234 | — |`n| T | mr | — | web!5 | — |`n`n## Open`n`n**Worktrees:** `n**Leases:** `n**Decisions pending:** `n`n## Notes`n`n- T rebase pending then push"))
+# a hand-written brief at -Brief keeps its text; the rendered part follows a marker and is replaced on the next checkpoint (retro 2026-11-17 10:12)
+$hwf = Join-Path $wd 'own-h9.md'; [IO.File]::WriteAllText($hwf, "# My plan`n- keep me`n"); foreach ($stp in 'commit', 'mr') { $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h9 -Run r9 -Step $stp -Brief $hwf 2>&1 }
+$hwt = Get-Content -Raw $hwf
+Expect 'checkpoint -Brief on a hand-written brief: its text kept, one rendered part after the marker' ($hwt.StartsWith("# My plan`n- keep me`n`n<!-- checkpoint") -and ([regex]::Matches($hwt, '# Resume brief: h9')).Count -eq 1 -and ([regex]::Matches($hwt, '<!-- checkpoint')).Count -eq 1 -and $hwt -match '\| mr \|')
 $hlNoRun = & { . (Join-Path $k 'skills/bossy/bossy.ps1'); Get-KitHandoffLine ([pscustomobject]@{ agent = 'h8'; run = '' }) 's8' 'why' }
 Expect "HANDOFF line: the checkpoint call it names drops -Run when the agent has none ($hlNoRun)" ($hlNoRun -match 'checkpoint -Agent h8 -Step <last done>' -and $hlNoRun -notmatch '-Run ')
 if (Use-BrowserKit) {   # kitbag.py ui-check on a canvas page

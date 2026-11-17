@@ -17,7 +17,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L23 init · L30 sweep · L179 wt · L487 stack · L669 gate · L986 check · L1303 pipes · L1360 guard · L2213 dir ·
-  L2223 checkpoint · L2252 prior · L2290 tracker · L2312 task spec · L2488 scope · L2535 host
+  L2223 checkpoint · L2253 prior · L2291 tracker · L2313 task spec · L2489 scope · L2536 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -52,7 +52,7 @@ function Get-DepLinkDefaults {
   if ($l.Count -or ($__cfg -and (Get-KitProps $__cfg).Name -contains 'linkDefaults')) { return $l }   # [] = link nothing
   @([pscustomobject]@{ markers = @('package.json'); dir = 'node_modules' }, [pscustomobject]@{ markers = @('pyproject.toml', 'requirements.txt'); dir = '.venv' })
 }
-# never deleted: protectedBranchesBase (default main/master/develop/release/*), lane/*, localenv/* (envy lanes; wt pool prunes unheld ones); protectedBranches (globs); the repo's target, deploy branches, origin/HEAD
+# never deleted: protectedBranchesBase (main/master/develop/release/*), lane/*, localenv/*, protectedBranches, target, deploy branches, origin/HEAD
 function Get-KitKeepBranchRx([string]$Repo) {
   $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
   $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @(Get-KitSetting 'protectedBranchesBase' @('main', 'master', 'develop', 'release/*')) }
@@ -140,7 +140,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     if (-not $ctx[$rp].keep) { $ctx[$rp].keep = Get-KitKeepBranchRx $rp }
     if ($br -and $br -match $ctx[$rp].keep) { continue }   # env / default worktrees: their owners'
     if (git -C $d status --porcelain 2>$null) { & $keep "$d$(if ($br) { " ($br)" })" 'uncommitted files'; if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($idleH / 24)) d: kept (never deleted; commit or remove it by hand)" }; continue }
-    # an unclaimed deploymerge-* (deploy merge) idle idle.graceMinutes (min 60; CI waits write nothing) blocks the next merge
+    # an unclaimed deploymerge-* idle idle.graceMinutes (min 60; CI waits write nothing) blocks the next merge
     $dm = $w.Name -like 'deploymerge-*' -and $d.ToLower() -notin $claimed -and $newest -and ($now - $newest).TotalMinutes -ge [math]::Max(60, [double](Get-KitParam 'idle.graceMinutes'))
     if (-not $dm -and $idleH -lt $IdleHours) { & $keep "$d ($br)" "active, changed $([int]($idleH * 60)) min ago"; continue }
     if (-not (Invoke-GitFetch -Dir $d)) { & $keep $d 'git fetch failed'; continue }
@@ -633,7 +633,7 @@ function Get-Stack($d) {
     if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
-  # adapters/stack_presets.ps1; stack.presets: the stack adapter names to try (unset = all, [] = none: only core stacks + .claude-stack.json)
+  # adapters/stack_presets.ps1; stack.presets: names to try (unset = all, [] = core + .claude-stack.json)
   $on = Get-KitSetting 'stack.presets' $null; $raw = $__cfg.stack -and (Get-KitProps $__cfg.stack).Name -contains 'presets'
   foreach ($plugin in @(@(if ($KitAdapters.stack) { $KitAdapters.stack.GetEnumerator() }) | Where-Object { $_.Value -and (-not $raw -or @($on) -contains $_.Key) } | ForEach-Object Value)) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
@@ -1829,7 +1829,7 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
 $segBase = $here
 foreach ($seg in DeleteSegments $raw) {
   if ($seg -match '^\s*(cd|Set-Location|sl|pushd|Push-Location)\s+(?<to>.*?)\s*$') { $segBase = FullOf $Matches.to.Trim('''"') $segBase; continue }
-  # only what is written: a redirect's target, a copy's last argument, a create verb's arguments (reading the stray stays allowed)
+  # only what is written (redirect target, copy's last argument, create verb's arguments); reads stay allowed
   $wrote = @([regex]::Matches($seg, '(?<![\d&>])>{1,2}(?!&)\s*(?<t>\S+)') | ForEach-Object { $_.Groups['t'].Value })
   if ($seg -match '(^|[\s(`])(cp|mv|Copy-Item|Move-Item)\s') { $wrote += ($seg.TrimEnd() -split '\s+')[-1] }
   if ($seg -match '(^|[\s(`])(?<v>mkdir|md|New-Item|ni|touch|tee|Out-File|Set-Content|Add-Content)\s+(?<a>.*)$') { $wrote += @($Matches.a -split '\s+' | Where-Object { $_ -and $_ -notmatch '^-' }) }
@@ -2220,7 +2220,7 @@ New-Item -ItemType Directory -Force $d | Out-Null
 if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug $Agent)-" })$(& $slug $Name)" } else { $d.TrimEnd('\', '/') }
 }
 
-# ---- checkpoint: resume point per step: resume-<run>.json + .md, atomic
+# ---- checkpoint: resume point per step: resume-<run>.json + .md, atomic; -Brief: a hand-written brief keeps its text
 $script:KitSteps = 'worktree', 'commit', 'goals', 'loop', 'mr', 'review', 'ci', 'doc', 'tracker', 'merge', 'done'
 function Invoke-Checkpoint {
 param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read, [string]$Notes = '', [string]$Brief = '')
@@ -2245,7 +2245,8 @@ $md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next
   @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')") +
   @(if ($c.notes) { '', '## Notes', ''; @($c.notes | ForEach-Object { "- $_" }) })
 Write-KitAtomic $mf (($md -join "`n") + "`n")
-if ($Brief) { Write-KitAtomic $Brief (((@("# Resume brief: $Agent (run ``$($c.run)``)") + $md[1..($md.Count - 1)]) -join "`n") + "`n"); "resume brief: $Brief (board leave -Handoff $Brief)" }   # the HANDOFF path: rendered, never hand-written
+if ($Brief) { $own = "$(if (Test-Path $Brief) { ([IO.File]::ReadAllText($Brief) -split '<!-- checkpoint -->')[0] })" -replace '(?s)^# Resume brief: .*'
+  Write-KitAtomic $Brief ("$(if ($own.Trim()) { "$($own.TrimEnd())`n`n<!-- checkpoint -->`n" })# Resume brief: $Agent (run ``$($c.run)``)`n" + ($md[1..($md.Count - 1)] -join "`n") + "`n"); "resume brief: $Brief (board leave -Handoff $Brief)" }
 "checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"
 }
 
@@ -2513,8 +2514,8 @@ function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
     foreach ($r in $rows) { "$($r.mr): $(if ($r.files) { "$($r.files) file(s), $(@($r.source).Count) source, $($r.test) test" } else { 'files unknown (no change list)' })$(if (@($r.outside).Count) { " · OUT-OF-AREA: $(@($r.outside).Count) outside $($r.globs -join ', '): $(@($r.outside) -join ', ')" })" }
     return
   }
-  # post-hoc: MRs merged within -Days whose area was logged (devtools.py mr / merge), each merged one checked once ('checked')
-  # an open MR is asked again after 30 min, host calls stop after 20 s (supervise timed out on open MRs asked every sweep)
+  # post-hoc: MRs merged within -Days with a logged area (devtools.py mr / merge), each checked once
+  # an open MR asked again after 30 min, host calls cut at 20 s (asked every sweep, supervise timed out)
   $pf = Join-Path (Get-KitPath cache -Create) 'scope-probes.json'; $probed = try { Read-KitText $pf | ConvertFrom-Json -AsHashtable } catch { @{} }; if ($probed -isnot [hashtable]) { $probed = @{} }; $stopAt = $now.AddSeconds(20)
   $hits = foreach ($a in @($areas.Values | Where-Object { [datetime]$_.at -ge $now.AddDays(-$Days) } | Sort-Object { if ($probed["$($_.mr)"]) { [datetime]$probed["$($_.mr)"] } else { [datetime]::MinValue } })) {   # least recently asked first: the 20 s cut never starves one
     if (-not ($c = $seen["$($a.mr)"])) {
