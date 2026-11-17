@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # github: GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L6 gh · L17 tracker · L72 git-host · L108 ci
+# Sections: L6 gh · L17 tracker · L73 git-host · L109 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -59,8 +59,9 @@ Register-KitAdapter 'tracker' 'github' @{
     if ($a.top) { throw "tracker (github) move: a subtask is a task-list line on its parent: remove '- [ ] #$n' there by hand" }
     if ($a.list -and $a.parent) { throw 'tracker (github) move: -List and -Parent in two calls (the transfer gives a new number)' }
     if ($a.list) { $out = __GhCli @('issue', 'transfer', $n, (__TrRepoOf $a.list), '-R', $r); return "moved #$n to $($a.list): $out" }
-    $pn = $a.parent -replace '^.*#', ''; $b = ([string](__TrJson (__GhCli @('issue', 'view', $pn, '-R', $r, '--json', 'body'))).body).TrimEnd()
-    if ($b -notmatch "(?m)^- \[[ x]\] #$n\b") { $null = __TrGhBody @('issue', 'edit', $pn, '-R', $r) ($b + "`n- [ ] #$n") }; "moved #${n} under #$pn" }
+    $pr, $pn = if ("$($a.parent)" -match '^(?<r>[^#]+)#(?<n>\d+)$') { $Matches.r, $Matches.n } else { $r, ($a.parent -replace '^.*#', '') }   # a parent in another repo: its repo
+    $ref = if ($pr -eq $r) { "#$n" } else { "$r#$n" }; $b = ([string](__TrJson (__GhCli @('issue', 'view', $pn, '-R', $pr, '--json', 'body'))).body).TrimEnd()
+    if ($b -notmatch "(?m)^- \[[ x]\] $([regex]::Escape($ref))\b") { $null = __TrGhBody @('issue', 'edit', $pn, '-R', $pr) ($b + "`n- [ ] $ref") }; "moved #${n} under #$pn" }
   'attach' = { param($a) __TrAttachText $a }
   'list' = { param($a)
     $c = @('issue', 'list', '-R', (__TrRepoOf $a.list), '--limit', '200', '--json', 'number,title,assignees')

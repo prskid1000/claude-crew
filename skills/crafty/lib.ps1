@@ -144,9 +144,9 @@ function Remove-KitGoneTask([string]$Id, $Err) {
 function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][hashtable]$Fields) {
   Update-KitTracking { param($t) if ($t.tasks[$Task]) { foreach ($k in $Fields.Keys) { $t.tasks[$Task][$k] = $Fields[$k] } } }
 }
-# deployed-env changes (K56; vocab.json envChangeCommands + guard.envChangeCommands): guard-denied without an owner's deploy decision
+# deployed-env changes (K56; vocab.json envChangeCommands + guard.envChangeCommands): denied without an owner's decision
 function Get-KitEnvChangeRx { $alts = @(@($script:KitVocab.envChangeCommands) + @(Get-KitSetting 'guard.envChangeCommands' @()) | Where-Object { $_ }); if (-not $alts.Count) { return '' }
-  "(?m)(?:^|[;&|(\n{]|\`$\()\s*(?:\w+=\S*\s+)*(?:\S*[\\/])?(?<verb>(?:$($alts -join '|')))\b" }
+  "(?m)(?:^|[;&|(\n{]|\`$\(|\b(?:sudo|env|time|exec|xargs|nohup|call|start)\s)\s*(?:[\w:]+=\S*\s+)*(?:[^\s;&|]*[\\/])?(?<verb>(?:$($alts -join '|')))" }
 # a task's tracker id in a branch or MR title: tracker.branchRx, else branchTag, else the vendor's vocab.json branchRx / idPattern ('' = none)
 function Get-KitTaskTagRx {
   $rx = [string](Get-KitSetting 'tracker.branchRx' ''); if ($rx) { return $rx }

@@ -2258,7 +2258,7 @@ def env_change_rx():
     a tester to set / toggle an env variable, option or app setting, or to set an UPPER_CASE switch."""
     cmds = (load_json(osp.join(KIT_DIR, 'skills', 'crafty', 'vocab.json'))[0] or {}).get('envChangeCommands') or []
     words_rx = (r'(?i:\b(?:set|toggle|flip|enable|disable|turn\s+(?:on|off)|change|update|add|remove)\b[^.\n|]{0,60}?\b(?:env(?:ironment)?[ -]'
-                r'(?:var(?:iable)?|config(?:uration)?|setting|option)s?|option[ -]settings?|app[ -]settings?)\b)'
+                r'var(?:iable)?s?|option[ -]settings?|(?:environment|server|container|pod|lambda|beanstalk)[ -](?:config(?:uration)?|propert(?:y|ies)))\b)'
                 r'|(?i:\b(?:set|toggle|flip|enable|disable|turn\s+(?:on|off))\s+)`?[A-Z][A-Z0-9]*_[A-Z0-9_]+`?\s*(?:=|(?i:\bto\b|\bon\b))')
     return re.compile('|'.join([words_rx] + [f'(?i:{c})' for c in cmds]))
 

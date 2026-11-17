@@ -88,7 +88,9 @@ function Invoke-KitTaskGroup([string]$Parent, [string[]]$Tasks, $Spec, [switch]$
   $its = @($px.spec.items | Where-Object { $_ })
   $plan = @(foreach ($id in @($Tasks | Where-Object { $_ -and $_ -ne $Parent } | Select-Object -Unique)) { $t = Get-TrackerTask $id
       if (-not $t.name) { [pscustomobject]@{ id = $id; how = 'missing'; code = ''; list = '' }; continue }
-      $hit = @($its | Where-Object { "$($_.desc)" -match "(?<![\w])$([regex]::Escape($id))(?![\w])" })[0]; $code = "$($hit.code)"
+      $tu = if ($t.url) { "$($t.url)" } else { Get-TrackerUrl $id }   # its URL first; a bare id only when it is no plain number (#12, !12, "12 files")
+      $hit = @($its | Where-Object { "$($_.desc) $(@($_.mrs) -join ' ')".Contains($tu) })[0]
+      if (-not $hit -and $id -notmatch '^\d+$') { $hit = @($its | Where-Object { "$($_.desc)" -match "(?<![\w!#/-])$([regex]::Escape($id))(?![\w])" })[0] }; $code = "$($hit.code)"
       if (-not $code) { $code = "$((Read-KitState (Get-KitTaskFile $id)).spec.code)" }; if (-not $code) { $code = $id }
       $how = if ("$($t.parent)" -eq $Parent) { 'already' } elseif (-not "$($pt.list)" -or "$($t.list)" -eq "$($pt.list)") { 'subtask' } else { 'link' }
       # short text: the parent's own line for it (URL cut), its subtask entry, else the task name
