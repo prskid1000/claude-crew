@@ -250,12 +250,13 @@ function Has($n, $rx) { [bool]@($o | Where-Object { $_ -match "^$n=$rx" }).Count
 "wait:$(Has 3 'WAIT .*jc!3 not live on: b-st \(NOT-DEPLOYED: not on b-st yet\)')"
 "paths:$(Has 4 'MARK .*jc!4 on b-st\b')"
 "shared:$(Has 5 'WAIT .*jc!5 not live on: a-st \(NOT-DEPLOYED: not on a-st yet\)')"
+$KitCmd.qa = $args[2]; $hg = @(Invoke-MarkInTest -Task t3 -TimeoutSec 1 -Quiet:$false | Where-Object { $_ -match '^WAIT' }); "hang:$([bool]($hg -match 'jc!3 deployed check timed out after \d+ s'))"; $KitCmd.qa = $args[1]   # K31: a hung check is bounded
 $null = Invoke-MarkInTest -Task t1 -Apply -Quiet; "keyed:$("$global:kc" -eq 't1|comment-intest' -and $global:kt -match '\[jc!1\]\(https://git\.example/\S*jc/-/merge_requests/1\) on b-st')"
 $fs = Format-KitInTestSummary 63 62 1 14 $false ([ordered]@{ 'moved to in test' = @('a'); 'already closed' = @('b', 'c'); 'not deployed yet' = @('d'); 'blocked' = @('e: no status') })
 "summary:$($fs -eq 'mark-in-test: 63 task(s) checked (62 promoted by the kit in 14 d, subtasks included, 1 more assigned to you in trackerLists): 1 moved to in test, 2 already closed, 1 not deployed yet, 1 blocked (e: no status)')"
 '@
 & $J @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('jc!1') }; t2 = @{ task = 't2'; mrs = @('jc!2') }; t3 = @{ task = 't3'; mrs = @('jc!3') }; t4 = @{ task = 't4'; mrs = @('jc!4') }; t5 = @{ task = 't5'; mrs = @('jc!5') } }; automerge = @{} } $tf
-$res = Invoke-PsTest 'intest-gate' $ug @($O, $fq2)
-Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside; the in-test note is ONE comment edited in place; the summary counts each outcome and says where the tasks came from (#)' @('live', 'record', 'wait', 'paths', 'shared', 'keyed', 'summary') 20
+$hang = Join-Path (Kd) 'hang.ps1'; Set-Content $hang 'Start-Sleep 60'; $res = Invoke-PsTest 'intest-gate' $ug @($O, $fq2, $hang)
+Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside; the in-test note is ONE comment edited in place; the summary counts each outcome and says where the tasks came from (#)' @('live', 'record', 'wait', 'paths', 'shared', 'hang', 'keyed', 'summary') 20
 Remove-TestKit $k
 Complete-Tests
