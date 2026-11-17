@@ -57,7 +57,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      same record/rule; date/shift fixes also cross midnight.
    - **NOT_TESTED**: only when truly impossible: the reason, what you tried, `cause` (`no-mail-sandbox` |
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
-     An env switch off on the target: `tool-down` + `decide ask`; never change deployed env config (guard: denied).
+     An env switch off on the target: `tool-down` + `decide ask`, never toggled (guard denies it).
      ONE stronger retry (`models.retest`, told your blocker); still NOT_TESTED -> failedTesting; never for "no time".
    - **Local env item** (`localEnv`): no cause is final (envy "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
      with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
