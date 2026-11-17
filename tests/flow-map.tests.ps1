@@ -61,6 +61,9 @@ import shutil, subprocess   # the page is drawn by the live clone's lint only: a
 lv = cp + '-live'; g = lambda *a: subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a], capture_output=True)
 g('init', '-q', lv); g('-C', lv, 'commit', '-q', '--allow-empty', '-m', 'x'); g('-C', lv, 'worktree', 'add', '-q', '--detach', lv + '-wt')
 print('live=' + str(flow.is_live(lv) and not flow.is_live(lv + '-wt') and not flow.is_live(sys.argv[2])))
+ws, m0 = [], flow.model; flow.model = lambda k, p, c=None, write=True: ws.append(write) or {}; os.environ.pop('KIT_FLOW_CACHE_RO', None)   # K48: only the live clone writes the parse cache
+for d in (lv, lv + '-wt'): flow.page_data(types.SimpleNamespace(files=[], texts={}, dir=d), [])
+flow.model = m0; print('cachelive=' + str(ws == [True, False]))
 g('-C', lv, 'worktree', 'remove', '--force', lv + '-wt'); shutil.rmtree(lv, ignore_errors=True)
 '@
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
@@ -125,6 +128,7 @@ $checks += [ordered]@{
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
   'the flow cache key holds the parser hash: an old-parser cache is re-parsed' = $res -match 'cachekey=True'
   'the flow cache is rewritten only when a parse changed; a read-only cache (tests) is never written' = $res -match 'cachewrite=True'
+  'only the live clone writes the flow parse cache, a linked worktree''s lint never (K48)' = $res -match 'cachelive=True'
   'the flow page is rewritten only when its bytes change' = $res -match 'pagewrite=True'
   'lint draws the flow page in the live clone only, never from a linked worktree or a kit copy' = $res -match 'live=True'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'

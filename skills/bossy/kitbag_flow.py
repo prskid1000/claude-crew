@@ -1569,7 +1569,8 @@ def page_data(k, problems, kit=None):
     """Page model: the parts inside every file, the edges between them, loops, issues."""
     live = live_root(kit or k.dir)
     ro = os.environ.get('KIT_FLOW_CACHE_RO')   # tests: the source kit's cache, read only (each throw-away kit wrote MBs)
-    data = model(k, problems, ro or kit_path('kit-flow-cache', kit=live), write=not ro)
+    # only the live clone writes the cache: a worktree's lint (other file texts) rewrote 7 MB each time, flip-flopping with the live lint (K48)
+    data = model(k, problems, ro or kit_path('kit-flow-cache', kit=live), write=not ro and is_live(k.dir))
     data['kit'], data['_texts'] = live.replace('\\', '/'), {f: k.texts.get(f, '') for f in k.files}
     return data
 
