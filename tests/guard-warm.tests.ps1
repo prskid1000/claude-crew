@@ -14,12 +14,15 @@ $ins = @('git stash', 'git status --short', 'echo hi') | ForEach-Object { @{ too
 $nz = { param($s) if ("$s".Trim()) { $h = ("$s" | ConvertFrom-Json).hookSpecificOutput; "$($h.permissionDecision)|$($h.permissionDecisionReason)|$($h.additionalContext)" } else { '' } }
 $viaPlain = { param($j) & $nz (($j | pwsh @np $D guard) -join '') }
 $viaClient = { param($j) & $nz (($j | node $gc) -join '') }
-$pms = @(); $plain = @($ins | ForEach-Object { $sw = [Diagnostics.Stopwatch]::StartNew(); & $viaPlain $_; $pms += [int]$sw.Elapsed.TotalMilliseconds })
-$med = { param($v) @($v | Sort-Object)[[int](@($v).Count / 2)] }   # warm vs plain in the same run: a loaded suite slows both
+$plain = @($ins | ForEach-Object { & $viaPlain $_ })
 $first = @($ins | ForEach-Object { & $viaClient $_ })   # no server yet: the plain path, and a server starts
 for ($i = 0; $i -lt 60 -and (& $mine).Count -ne 1; $i++) { Start-Sleep -Milliseconds 250 }; Start-Sleep -Seconds 2   # it loads the kit; a second one started by a later cold call exits
-$ms = @(); $warm = @($ins | ForEach-Object { $sw = [Diagnostics.Stopwatch]::StartNew(); & $viaClient $_; $ms += [int]$sw.Elapsed.TotalMilliseconds })
-Expect "warm guard: the same answers as crafty.ps1 guard (cold and warm), a server runs, warm calls fast ($($ms -join ' ') ms)" (($first -join '~') -eq ($plain -join '~') -and ($warm -join '~') -eq ($plain -join '~') -and $plain[0] -match 'git stash is shared' -and (& $mine).Count -eq 1 -and (& $med $ms) * 2 -lt (& $med $pms))
+$warm = @($ins | ForEach-Object { & $viaClient $_ })
+Expect "warm guard: the same answers as crafty.ps1 guard (cold and warm), a server runs" (($first -join '~') -eq ($plain -join '~') -and ($warm -join '~') -eq ($plain -join '~') -and $plain[0] -match 'git stash is shared' -and (& $mine).Count -eq 1)
+# timing (K74): plain and warm interleaved, best of each (a load burst hits both); KIT_TESTS_SLACK eases the 2x margin, warm still wins
+$ms = @(); $pms = @(); foreach ($j in $ins + $ins) { $sw = [Diagnostics.Stopwatch]::StartNew(); $null = & $viaPlain $j; $pms += [int]$sw.Elapsed.TotalMilliseconds; $sw.Restart(); $null = & $viaClient $j; $ms += [int]$sw.Elapsed.TotalMilliseconds }
+$wmin = @($ms | Sort-Object)[0]; $pmin = @($pms | Sort-Object)[0]
+Expect "warm guard: warm calls faster than plain ones in the same run (best warm $wmin ms x $([math]::Round(2 / (Get-TestBound 1), 2)) < best plain $pmin ms)" ($wmin * 2 / (Get-TestBound 1) -lt $pmin)
 $env:KIT_LIVE_EDIT = '1'; $null = & $viaClient $ins[0]; Remove-Item Env:KIT_LIVE_EDIT; $le2 = & $viaClient $ins[0]
 Expect 'warm guard: the caller''s KIT_* env counts for its call only' ($le2 -eq $plain[0])
 $rt = "$(pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; Get-KitRuntime")".Trim().Replace('\', '/'); $wo = @("$rt/zzbogus/a.txt", "$rt/work/agents/x/a.txt") | ForEach-Object { @{ tool_name = 'Write'; cwd = $k; tool_input = @{ file_path = $_; content = 'x' } } | ConvertTo-Json -Compress -Depth 4 }
