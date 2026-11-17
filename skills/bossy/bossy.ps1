@@ -1034,7 +1034,7 @@ function Invoke-Supervise {
 param([string]$Session, [switch]$Json, [switch]$AutoFix, [switch]$Brief, [switch]$Takeover, [string]$Ack, [string]$Reason = '')
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Ack) {   # flag hidden 24 h
-  if ($Ack.Trim().Length -lt 20) { "supervise -Ack: give the flag's start, 20+ characters (a short one would hide other problems)"; exit 2 }
+  if ($Ack.Trim().Length -lt 20 -and -not (Test-KitAckWhole $Ack)) { "supervise -Ack: give the flag's start, 20+ characters, or a short flag's whole text (a short start would hide other problems)"; exit 2 }
   Add-KitFlagAck $Ack $Reason; return
 }
 $idleMin = [double](Get-KitParam 'supervise.stuckMinutes')   # no progress longer, waiting on nothing = STUCK

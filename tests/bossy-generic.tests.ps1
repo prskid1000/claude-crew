@@ -78,5 +78,10 @@ $sw.Restart(); $psGot = & { . (Lib); Invoke-KitLocked $lt { 'got' } }; $psWait =
 $lbp = Lib; $tj = Start-ThreadJob { . $using:lbp; Invoke-KitLocked $using:lt { Start-Sleep -Milliseconds 1500 } }; for ($pw = 0; $pw -lt 100 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 50 }
 $pyWait = [double]"$(& $py -X utf8 $pyf 0 | Select-Object -Last 1)"; $null = $tj | Wait-Job
 Expect "lock: python waits for a PowerShell holder and the other way round (ps waited $([math]::Round($psWait, 1)) s, python $pyWait s)" ($psGot -eq 'got' -and $psWait -ge 1 -and $pyWait -ge 0.8 -and -not (Test-FileLockHeld $lt))
+# supervise -Ack: a short flag's kind + who ("BUILDS · HQA") is accepted and hides only that flag; a short text matching no flag is refused
+& $J @{ lastFlags = @(@{ level = 'WATCH'; what = "builds 'hq web' failed 3 times in a row"; kind = 'BUILDS'; who = 'HQA'; problem = 'hq web failed 3 times in a row' }) } (TkPath $k supervise-state -Create)
+$akS = pwsh @np $O supervise -Ack 'BUILDS · HQA' -Reason t 2>&1 | Out-String; $akN = pwsh @np $O supervise -Ack 'BUILDS · XYZ' 2>&1 | Out-String; $akC = $LASTEXITCODE
+$akH = pwsh -NoProfile -Command ". '$O'; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; @(Select-KitFlags @([pscustomobject]@{ level = 'WATCH'; what = 'b1'; kind = 'BUILDS'; who = 'HQA'; problem = 'x failed' }, [pscustomobject]@{ level = 'WATCH'; what = 'b2'; kind = 'BUILDS'; who = 'HQB'; problem = 'y failed' }) `$a (Get-Date) | ForEach-Object what) -join ','"
+Expect "supervise -Ack: short kind + who accepted, hides that holder's flag only; an unknown short one refused, exit 2 ($akH)" ($akS -match 'hides 1 flag' -and $akN -match '20\+ characters' -and $akC -eq 2 -and "$akH" -match '^b2,1 acknowledged')
 Remove-TestKit $k
 Complete-Tests

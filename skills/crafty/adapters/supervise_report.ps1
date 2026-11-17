@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next.
-# Sections: L5 supervise report · L101 transcript tails
+# Sections: L5 supervise report · L107 transcript tails
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -55,10 +55,16 @@ function Get-KitFlagCells($f) {
 function Get-KitFlagKey([string]$What) { $k = (($What.ToLower() -replace '\b\d+\b', '#') -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
 # -Ack text pasted from the -Brief table: cells add spaces after - / (word wrap), escape |, end in …, join with ·; counts vary
 function ConvertTo-KitAckText([string]$Text) { ($Text.ToLower() -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
-# an ack matches the flag's whole line or any one cell
+# an ack matches the flag's whole line or any one cell; a short one only a whole flag or its kind + who start ("BUILDS · HQA")
+function Get-KitAckWholes($Flag) { $c = Get-KitFlagCells $Flag; @((ConvertTo-KitAckText "$($Flag.what)"), (ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"), $(if ($c.kind -and $c.who) { ConvertTo-KitAckText "$($c.kind) $($c.who)" })) | Where-Object { $_ } }
 function Test-KitAcked($Flag, [string[]]$Keys) {
-  $c = Get-KitFlagCells $Flag; $w = ConvertTo-KitAckText "$($Flag.what)"; $cells = ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"
-  [bool]@($Keys | ForEach-Object { ConvertTo-KitAckText $_ } | Where-Object { $_.Length -ge 12 -and ($w.Contains($_) -or $cells.Contains($_)) }).Count
+  $c = Get-KitFlagCells $Flag; $w = ConvertTo-KitAckText "$($Flag.what)"; $cells = ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"; $wh = @(Get-KitAckWholes $Flag)
+  [bool]@($Keys | ForEach-Object { ConvertTo-KitAckText $_ } | Where-Object { $_ -and ($_ -in $wh -or ($_.Length -ge 12 -and ($w.Contains($_) -or $cells.Contains($_)))) }).Count
+}
+# -Ack under 20 characters: allowed when it is a last-round flag's whole text or its kind + who (a short flag has no longer start)
+function Test-KitAckWhole([string]$Ack) {
+  $s0 = try { Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json } catch { $null }; $a = ConvertTo-KitAckText $Ack
+  [bool]($a -and @($s0.lastFlags | Where-Object { $_ -and $a -in @(Get-KitAckWholes $_) }).Count)
 }
 # an acknowledged one (answered / proven false) hides 24 h
 function Select-KitFlags($Flags, $Acks, [datetime]$Now) {
