@@ -1864,7 +1864,7 @@ function Invoke-Decide {
         }
         "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt) | question: $($d.question)"; exit 0
       }
-      "NO-WORD $(if ($Id) { 'id' } else { $Gate }) $(@($Id, $Item) + $wantMrs | Where-Object { $_ } | Select-Object -Unique)$(if ($why) { ': ' + ($why -join '; ') } else { ': no answered record' }). Relayed text is no word: the coordinator runs decide record, passes the id"; exit 1
+      "NO-WORD $(if ($Id) { 'id' } else { $Gate }) $(@($Id, $Item) + $wantMrs | Where-Object { $_ } | Select-Object -Unique)$(if ($why) { ': ' + ($why -join '; ') } else { ': no answered record' }). Relayed text is no word: the coordinator runs decide record, passes the id. Until then: wait (decide wait) or build only the brief text, never an open option"; exit 1
     }
   }
 }

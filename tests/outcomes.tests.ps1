@@ -103,7 +103,7 @@ $aa = pwsh @np $O decide ask -Run r -Agent devy -Item t9 -Gate scope -Question '
 $aid = if ($aa -match 'DECISION (\S+)') { $Matches[1] }
 Expect 'decide ask matching an approved rule -> answered by it, option B, logged' ($aa -match 'ANSWERED by standing rule sr-' -and $aa -match 'B: No replay' -and (pwsh @np $O decide wait -Id $aid -MaxMinutes 0 | Out-String) -match '^ANSWERED')
 $ck = pwsh @np $O decide check -Id $aid -Gate scope -Item t9 | Out-String
-Expect 'decide check: a standing rule answer is no person''s word' ($ck -match 'NO-WORD' -and $ck -match 'no person')
+Expect 'decide check: a standing rule answer is no person''s word' ($ck -match 'NO-WORD' -and $ck -match 'no person' -and $ck -match 'never an open option')   # retro 2205: NO-WORD names what to do meanwhile
 $dd = pwsh @np $O decide ask -Run r -Agent opsy -Item staging -Gate deploy -Question 'Deploy the api to staging now?' -Options 'A: yes deploy', 'B: wait' | Out-String
 Expect 'decide ask on a deploy gate: never auto-answered' ($dd -match 'pending' -and $dd -notmatch 'standing rule')
 $sid = if ($rl -match 'APPROVED (sr-\w+) \[scope\]') { $Matches[1] }

@@ -59,7 +59,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   behaviour: no pause), or several valid paths (design, data handling, migration strategy, UX)? `& $O decide ask -Run <run>
   -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." -Recommend <A|B> -Contracts
   <brief>.contracts.md` (`-Fyi`: nothing waits), stop THAT item (`needsDecision`), continue the others. The answer: contracts
-  file (`decide wait -Id <id>`); finish the item from it.
+  file (`decide wait -Id <id>`); finish the item from it. `decide check` NO-WORD = no answer yet: wait, or build only what the
+  brief text says; never build an open option.
 - D2. **ENV-FIX**: a local-env fix only the coordinator may do (`up`/`down`/`refresh`/`drop`, shared DB repair): `& $O decide ask
   -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, stop THAT item (`needsEnvFix`), continue the others.
   `localTest` BLOCKED only for an owner decision or a remote-only dependency (`blockedKind`, `blockedReason`).
