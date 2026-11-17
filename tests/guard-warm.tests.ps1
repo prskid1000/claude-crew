@@ -48,6 +48,11 @@ Expect "guard crash: no pwsh and non-JSON stdout block (secrets masked); a timeo
 Expect "guard crash: each logged as guard event crash, the switch marked ($($glog.Count))" ($glog.Count -eq 5 -and @($glog | Where-Object letThrough).Count -eq 1 -and $glog[0].tool -eq 'Bash' -and $gl[0] -match '"at":"[^"]+[+-]\d\d:\d\d"')
 $sv = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') supervise 2>&1 | Out-String
 Expect "guard crash: supervise raises ACT with the count ($(([regex]::Match($sv, '.{0,20}guard crashed[^\r\n]{0,60}')).Value))" ($sv -match 'ACT.{0,40}guard crashed 5x')
+# K67r: a crafty.ps1 that does not load marks it once; the next calls start no server (the mark stays unchanged) until crafty.ps1 changes
+& $mine | Stop-Process -ErrorAction SilentlyContinue; & $put "$ok0`nfunction Broken {"; $nlm = { @(Get-ChildItem "$rt/cache" -Filter 'kit-guard-*.noload' -ErrorAction SilentlyContinue) }
+$null = $ins[2] | node $gc 2>&1; for ($i = 0; $i -lt 40 -and -not (& $nlm).Count; $i++) { Start-Sleep -Milliseconds 250 }; $nl1 = @(& $nlm | ForEach-Object { $_.LastWriteTimeUtc.Ticks })
+$null = $ins[2] | node $gc 2>&1; Start-Sleep -Seconds 4; $nl2 = @(& $nlm | ForEach-Object { $_.LastWriteTimeUtc.Ticks }); & $put $ok0
+Expect "warm guard: a crafty.ps1 that does not load is marked once, later calls start no server per call ($($nl1 -join ',') / $($nl2 -join ','))" ($nl1.Count -eq 1 -and "$nl1" -eq "$nl2")
 Expect 'guard crash: a healthy guard after the fix answers as before' (($ins[0] | node $gc) -join '' -match 'git stash is shared')
 Start-Sleep -Seconds 1; & $mine | Stop-Process -ErrorAction SilentlyContinue
 Remove-TestKit $k

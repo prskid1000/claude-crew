@@ -18,7 +18,12 @@ $s0 = & $stamp
 $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
 $ps = [powershell]::Create(); $ps.Runspace = $rs; $null = $ps.AddScript("`$ErrorActionPreference = 'SilentlyContinue'; . '$((Join-Path $kit 'skills/crafty/crafty.ps1').Replace("'", "''"))'; `$script:KitScript = 'crafty.ps1'; `$script:KitVerb = 'guard'").Invoke(); $ps.Dispose()
 $ps = [powershell]::Create(); $ps.Runspace = $rs; $loaded = @($ps.AddScript('[bool](Get-Command Invoke-Guard -ErrorAction SilentlyContinue)').Invoke())[0]; $ps.Dispose()
-if (-not $loaded) { exit 1 }   # a half-loaded crafty.ps1 would answer every call with an empty allow: the client's plain path decides
+if (-not $loaded) {   # a half-loaded crafty.ps1 would answer every call with an empty allow: the client's plain path decides
+  # the marker (crafty.ps1 + lib.ps1 mtimes) stops the client starting a server per call until either changes (K67r)
+  try { $pm = (Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json)._paths; $mk = Join-Path $kit "$($pm.runtimeDir)/$($pm.runtime.cache)$Pipe.noload"
+    $null = New-Item -ItemType Directory -Force (Split-Path $mk); Set-Content -LiteralPath $mk -NoNewline (@('crafty.ps1', 'lib.ps1' | ForEach-Object { [DateTimeOffset]::new((Get-Item (Join-Path $PSScriptRoot $_)).LastWriteTimeUtc).ToUnixTimeMilliseconds() }) -join ',') } catch { }
+  exit 1
+}
 $env0 = @{}; foreach ($v in Get-ChildItem env:) { $env0[$v.Name] = $v.Value }
 if ($IsWindows -and [IO.File]::Exists("\\.\pipe\$Pipe")) { exit 1 }   # two cold calls started two: the later one goes
 while ($true) {
@@ -33,7 +38,7 @@ while ($true) {
     $drop = @($env0.Keys | Where-Object { $_ -match '^(CLAUDE|KIT)_' -and $_ -notin $vars }); foreach ($n in $drop) { Remove-Item "env:$n" -ErrorAction SilentlyContinue }; foreach ($n in $vars) { Set-Item "env:$n" $req.env[$n] }
     $code = 0; $ps = [powershell]::Create(); $ps.Runspace = $rs; $rs.SessionStateProxy.SetVariable('LASTEXITCODE', 0)
     $cwd = try { "$(($req.input | ConvertFrom-Json).cwd)" } catch { '' }; if ($cwd -and (Test-Path -LiteralPath $cwd -PathType Container)) { [Environment]::CurrentDirectory = $cwd } else { $cwd = '' }   # the hook's cwd: child git calls and relative paths as in the plain path
-    $out = try { (@($ps.AddScript('param($j, $d) if ($d) { Set-Location -LiteralPath $d }; Invoke-Guard -Json $j').AddArgument([string]$req.input).AddArgument($cwd).Invoke()) | ForEach-Object { "$_" }) -join "`n"; $code = [int]$rs.SessionStateProxy.GetVariable('LASTEXITCODE') } catch { $code = -1; '' } finally { $ps.Dispose() }
+    $out = try { (@($ps.AddScript('param($j, $d) if ($d) { Set-Location -LiteralPath $d }; $ErrorActionPreference = ''Stop''; Invoke-Guard -Json $j').AddArgument([string]$req.input).AddArgument($cwd).Invoke()) | ForEach-Object { "$_" }) -join "`n"; $code = [int]$rs.SessionStateProxy.GetVariable('LASTEXITCODE') } catch { $code = -1; '' } finally { $ps.Dispose() }
     foreach ($n in @($vars) + $drop) { if ($env0.ContainsKey($n)) { Set-Item "env:$n" $env0[$n] } else { Remove-Item "env:$n" -ErrorAction SilentlyContinue } }
     $wr.WriteLine($(if ($code -lt 0) { '{"reload":true}' } else { @{ code = $code; out = $out } | ConvertTo-Json -Compress }))
     if ($code -lt 0) { exit 0 }
