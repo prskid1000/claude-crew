@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L10 paths · L91 state · L169 config · L250 OS · L470 leases · L867 status · L1125 supervise sweep · L1205 tracker ·
-  L1534 prior · L1550 ask bugs · L1735 git-host · L1916 kitlog · L2036 params · L2341 entry-scripts
+  L1540 prior · L1556 ask bugs · L1741 git-host · L1922 kitlog · L2042 params · L2347 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1496,7 +1496,13 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
       throw "tracker create refused: possible duplicate of $($dup[0].id) $($dup[0].name) (score $($dup[0].score)): extend it (crafty.ps1 tracker scope -Task $($dup[0].id) -Add '<item>'), or -NewTask '<why it cannot be folded in>'" }
   }
   if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # assignee: the kit runner unless '-' (nobody)
-  __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = $Priority }
+  __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = (ConvertTo-KitPriority $Priority) }
+}
+# a priority word -> the kit's 1 (urgent) .. 4 (low), as every adapter takes it (each maps the number to its own names)
+function ConvertTo-KitPriority([string]$Priority) {
+  $p = $Priority.Trim(); if (-not $p -or $p -match '^[1-4]$') { return $p }
+  $n = @{ urgent = 1; highest = 1; critical = 1; high = 2; normal = 3; medium = 3; low = 4; lowest = 4 }[$p.ToLower()]
+  if ($n) { "$n" } else { throw "tracker create: priority '$p' unknown: 1-4 or urgent / high / normal / low" }
 }
 function Set-TrackerDescription([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'describe' @{ id = $Id; text = (__TrText $Text) } }
 # the owner's text stays: only <!-- kit:<name> --> ... <!-- /kit:<name> --> is replaced; new: after section $After, else under the testing-doc links
