@@ -179,10 +179,10 @@ switch ($Action) {
   }
   'leave' {
     $mine = @(if (-not $Session -and $Agent) { All | Where-Object { $_.agent -eq $Agent -and $_.status -ne 'left' -and (-not $Run -or $_.run -eq $Run) } })
-    if ($mine.Count -eq 1 -and -not $Force) { $Session = $mine[0].session }   # token lost: the agent's only row
+    if ($mine.Count -and -not $Force) { $Session = @($mine | Sort-Object { (Test-KitHolder $_) -ne $false }, { "$($_.beat)" } -Descending)[0].session }   # token lost: the agent's newest live row
     elseif ($Force) { $Session = @($mine | Where-Object { (Test-KitHolder $_) -eq $false -or $_.session -notin (Active).session })[0].session }   # else a gone / quiet one
     $f = Join-Path $dir "$Session.json"
-    if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left, no handoff; token lost: -Agent [-Run], several rows: -Force)"; exit 1 }
+    if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left, no handoff; token lost: -Agent [-Run] leaves its newest live row; a gone one: -Force)"; exit 1 }
     $paused = $Status -eq 'paused'
     Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-Date).ToString('o'); if ($Handoff) { $x | Add-Member -Force NoteProperty handoffBrief $Handoff }; if ($paused) { $x | Add-Member -Force NoteProperty paused $x.beat }; $script:leftEntry = $x; $x }
     $cf = Get-KitCheckpointFile $script:leftEntry.agent "$($script:leftEntry.run)"

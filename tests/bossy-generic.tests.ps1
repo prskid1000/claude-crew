@@ -78,6 +78,10 @@ $sw.Restart(); $psGot = & { . (Lib); Invoke-KitLocked $lt { 'got' } }; $psWait =
 $lbp = Lib; $tj = Start-ThreadJob { . $using:lbp; Invoke-KitLocked $using:lt { Start-Sleep -Milliseconds 1500 } }; for ($pw = 0; $pw -lt 100 -and -not (Test-FileLockHeld $lt); $pw++) { Start-Sleep -Milliseconds 50 }
 $pyWait = [double]"$(& $py -X utf8 $pyf 0 | Select-Object -Last 1)"; $null = $tj | Wait-Job
 Expect "lock: python waits for a PowerShell holder and the other way round (ps waited $([math]::Round($psWait, 1)) s, python $pyWait s)" ($psGot -eq 'got' -and $psWait -ge 1 -and $pyWait -ge 0.8 -and -not (Test-FileLockHeld $lt))
+# board leave with the token lost: -Agent -Run leaves that agent's newest row (two rows: the older stays)
+$bdD = TkPath $k board -Create; foreach ($bx in @(@('duo-old', '2026-01-01T10:00:00'), @('duo-new', '2026-01-01T11:00:00'))) { & $J @{ session = $bx[0]; agent = 'duo'; run = 'r8'; status = 'working'; beat = $bx[1]; joined = $bx[1] } (Join-Path $bdD "$($bx[0]).json") }
+$blD = pwsh @np $O board leave -Agent duo -Run r8 2>&1 | Out-String
+Expect "board leave -Agent -Run: the newest of 2 rows left, the older kept ($($blD.Trim()))" ((Get-Content (Join-Path $bdD 'duo-new.json') -Raw | ConvertFrom-Json).status -eq 'left' -and (Get-Content (Join-Path $bdD 'duo-old.json') -Raw | ConvertFrom-Json).status -ne 'left')
 # supervise -Ack: a short flag's kind + who ("BUILDS · HQA") is accepted and hides only that flag; a short text matching no flag is refused
 & $J @{ lastFlags = @(@{ level = 'WATCH'; what = "builds 'hq web' failed 3 times in a row"; kind = 'BUILDS'; who = 'HQA'; problem = 'hq web failed 3 times in a row' }) } (TkPath $k supervise-state -Create)
 $akS = pwsh @np $O supervise -Ack 'BUILDS · HQA' -Reason t 2>&1 | Out-String; $akN = pwsh @np $O supervise -Ack 'BUILDS · XYZ' 2>&1 | Out-String; $akC = $LASTEXITCODE
