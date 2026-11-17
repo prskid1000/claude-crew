@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L236 state · L283 layer drops · L355 leases · L463 code · L501 migrations ·
-  L504 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L652 shared builds · L785 hooks · L857 marks · L1037 seed ·
-  L1104 processes · L1484 daemon · L1945 cleanup · L2017 doctor · L2070 verbs
+  L504 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L652 shared builds · L785 hooks · L857 marks · L1038 seed ·
+  L1105 processes · L1485 daemon · L1946 cleanup · L2018 doctor · L2071 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -988,9 +988,10 @@ function RestorePlanText($p) {
 # tables -> $script:RestoreFallback (seeded); range recorded undone, its marks dropped (unless no row written); $null = ok
 function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$UseTool) {
   $st = Read-State $e; $db = (Get-EnvCfg $e).db; $script:RestoreFallback = @(@($plan.fallback) | Where-Object { $_ }); $noRows = $true   # until the row flashback runs
+  if (-not @($schemas).Count) { return 'restore has no schemas' }
   $ev = @(Invoke-DbSql $e "SELECT EVENT_SCHEMA, EVENT_NAME FROM information_schema.EVENTS WHERE STATUS = 'ENABLED' AND EVENT_SCHEMA IN ($(@($schemas | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '))")
-  foreach ($x in $ev) { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` DISABLE" }   # no writer while it runs
   try {
+    foreach ($x in $ev) { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` DISABLE" }   # no writer while it runs; a failed one: the finally enables them all again
     if ($UseTool -or "$($db.restoreVia)" -eq 'tool-then-kit') {
       if (-not $db.rollback) { return 'restoreVia tool-then-kit needs db.rollback' }
       $err = if (Test-MigToolRollback $e) { Invoke-MigTagRollback $e 'rollback' "release-$($m.release)" }
@@ -2342,7 +2343,8 @@ switch ($Action) {
         if ($old -and $blocked.Count) {   # a train waits on it: kept, not extended
           $o.ok = $true; $o.rel = $old.release; $o.capped = $true
         } elseif (-not $blocked.Count) {
-          $x.leases[$Agent] = @{ services = $names; repos = @(); release = [int]$x.release.n; note = $Note; lastUse = (Now) } + (New-KitLease $Agent $Session $(if ($Owner) { $min }))   # no live holder: Prune frees it
+          # a second use adds its services and keeps the release the lease started on (status -Agent: changed since then)
+          $x.leases[$Agent] = @{ services = @(@($old.services) + $names | Where-Object { $_ } | Select-Object -Unique); repos = @($old.repos | Where-Object { $_ }); release = $(if ($old) { [int]$old.release } else { [int]$x.release.n }); note = $(if ($Note) { $Note } else { "$($old.note)" }); lastUse = (Now) } + (New-KitLease $Agent $Session $(if ($Owner) { $min }))   # no live holder: Prune frees it
           $o.ok = $true; $o.rel = $x.release.n
         } else { $o.why = "train $($x.train.id) is switching $($blocked -join ', ') ($($x.train.phase))" }
       }

@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L151 record-args · L170 budget · L189 build-prompt · L264 ship-prompt · L282 plan · L299 spike ·
-//   L312 local-loop · L385 stages · L537 ship · L577 debate · L686 deploy · L701 learn
+// Sections: L18 args · L151 record-args · L170 budget · L189 build-prompt · L264 ship-prompt · L282 plan · L300 spike ·
+//   L313 local-loop · L386 stages · L538 ship · L578 debate · L687 deploy · L702 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -291,6 +291,7 @@ const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy
 if (GAPS) { log(`REFUSED:\n${GAPS.join('\n')}`); return { refused: true, taskGaps: GAPS, next: nextCall([], A0) } }
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  const batch = Math.max(1, Math.floor(A.agents.length * BUD.stopAt * BUD.cap / BUD.estimate))
+ if (A.agents.length === 1) { log(`REFUSED: one area's estimate ${BUD.estimate} > ${BUD.stopAt * 100}% of the cap ${BUD.cap}: split the brief or raise the cap (decide ask)`); return { refused: true, estimate: BUD.estimate, cap: BUD.cap, unsplittable: true } }   // a batch of 1 changes nothing: no next
  log(`REFUSED: estimate ${BUD.estimate} > ${BUD.stopAt * 100}% of the cap ${BUD.cap}: run ${batch} area(s) per run (args.batch)`)
  return { refused: true, estimate: BUD.estimate, cap: BUD.cap, batch, next: nextCall([], { ...A0, batch }) }
 }
@@ -485,7 +486,7 @@ const results = await pipeline(
    if (!(await gate('Fix'))) return { ...x, budgetStopped: true }
    log(`${a.id}: ${blocking.length} blocking finding(s) / failed pipeline(s) -> fix round`)
    const r2 = await agent(fixPrompt(a, r, blocking), { ...dvo(a, 'fix', 'Fix'), agentType: 'devy' })
-   if (!r2) return { ...x, findings: [...findings, ...blocking], fixed: false, stopped: true }
+   if (!r2) return { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: false, stopped: true }
    x = { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: true, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(r, r2, 'Fix round'), 0, 'Fix')) }
    const lt2 = x.report.localTest || {}
    if (holdsMerge(lt2)) return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }

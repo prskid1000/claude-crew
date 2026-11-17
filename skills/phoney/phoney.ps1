@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L113 phone · L313 build · L457 install · L483 launch · L495 avd · L581 up · L679 down · L709 events ·
-  L766 slim
+Sections: L24 config · L113 phone · L313 build · L457 install · L484 launch · L496 avd · L582 up · L680 down · L710 events ·
+  L767 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -186,7 +186,7 @@ switch ($Action) {
       $got = Locked {
         if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf }   # heartbeat
         $ls = @{}; foreach ($x in $c.lanes) { $ls[$x.name] = Lease $x.name }   # one locked read per lane a round (3 made each lock churn)
-        $mine = @($c.lanes | Where-Object { $ls[$_.name].agent -eq $Agent } | Select-Object -First 1)
+        $mine = @($(if ($Lane) { $c.lanes | Where-Object name -eq $Lane } else { $c.lanes }) | Where-Object { $ls[$_.name].agent -eq $Agent } | Select-Object -First 1)   # -Lane: that lane only
         if ($mine) {   # already ours (offline too)
           $script:had = $true
           if ($Holder) { $lf = Join-Path $dir "$($mine[0].name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; if ($o.holder -ne $Holder) { $o | Add-Member -Force holder $Holder; Save-Json $o $lf } }
@@ -471,7 +471,8 @@ if (-not (Test-Path $apk)) { throw "$apk missing - run phoney.ps1 build" }
 $failed = @()
 foreach ($s in $Serials) {
   $r = & $adb -s $s install -r -g $apk 2>&1 | Select-Object -Last 1
-  if ($r -notmatch 'Success') { & $adb -s $s uninstall $pkg | Out-Null; $r = & $adb -s $s install -g $apk 2>&1 | Select-Object -Last 1 }
+  # an uninstall wipes the app's data and login: only for a signature or version clash, never for a bad APK, full disk or offline phone
+  if ($r -match 'INSTALL_FAILED_(UPDATE_INCOMPATIBLE|VERSION_DOWNGRADE)|SIGNATURES_DO_NOT_MATCH') { & $adb -s $s uninstall $pkg | Out-Null; $r = & $adb -s $s install -g $apk 2>&1 | Select-Object -Last 1 }
   if ($r -notmatch 'Success') { Write-Warning "$s : install failed ($r)"; $failed += $s; continue }
   foreach ($p in @($c.app.permissions)) { & $adb -s $s shell pm grant $pkg "android.permission.$p" 2>$null }
   "$s : app installed ($r)"

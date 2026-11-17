@@ -127,11 +127,12 @@ function Start-KitStorageScan([string]$Drive) {
   if ($env:KIT_STORAGE_SCAN -eq '0') { return }   # tests: no real drive scans
   $lk = Get-KitStorageFile $Drive 'scan.lock'; $o = try { Read-KitText $lk | ConvertFrom-Json } catch { $null }
   if ($o -and ($(if ($o.pid) { Test-KitPid $o.pid $o.start } else { ((Get-Date) - (Get-Item -LiteralPath $lk).LastWriteTime).TotalMinutes -lt 1 }))) { return }
-  if ($o) { Remove-Item -LiteralPath $lk -ErrorAction SilentlyContinue }   # stale: its scan is gone
+  if (-not $o -and (Test-Path -LiteralPath $lk) -and ((Get-Date) - (Get-Item -LiteralPath $lk).LastWriteTime).TotalMinutes -lt 1) { return }   # a starter mid-write
+  if (Test-Path -LiteralPath $lk) { Remove-Item -LiteralPath $lk -ErrorAction SilentlyContinue }   # stale (its scan is gone) or empty (its start failed): never a lock for good
   try { [IO.File]::Open($lk, 'CreateNew', 'Write', 'None').Dispose() } catch { return }   # another caller starts it
   Set-KitStorageState { param($s) if (-not $s.scanAt) { $s.scanAt = @{} }; $s.scanAt[$Drive] = (Get-Date).ToString('o') }   # a failing scan waits the cooldown
   $a = @('-NoProfile', '-NonInteractive', '-File', "`"$($KitCmd.orch)`"", 'storage', '-Scan', '-Drive', $Drive)
-  $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $a -PassThru }
+  $p = try { if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $a -PassThru } } catch { Remove-Item -LiteralPath $lk -ErrorAction SilentlyContinue; return }
   try { $p.PriorityClass = 'Idle' } catch {}; Write-KitAtomic $lk (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id) } | ConvertTo-Json)
 }
 # one pass, rolled up to tracked folders and their children

@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L947 check · L1264 pipes · L1321 guard · L2189 dir ·
-  L2199 checkpoint · L2229 prior · L2267 tracker · L2289 task spec · L2475 scope · L2522 host
+Sections: L23 init · L30 sweep · L140 wt · L448 stack · L630 gate · L949 check · L1266 pipes · L1323 guard · L2191 dir ·
+  L2201 checkpoint · L2231 prior · L2269 tracker · L2291 task spec · L2477 scope · L2524 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -729,8 +729,10 @@ $Cmd = [regex]::Replace($Cmd, '(^|&&\s*|&\s*|\|\|\s*)(?<!\.[\\/])(gradlew(\.bat)
 # mvnd on PATH keeps a warm JVM between builds
 if ($Cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $Cmd = $Cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }
 # runners fork a worker per core
-if ($Cmd -match '\bjest\b' -and $Cmd -notmatch 'maxWorkers|runInBand|\s-i(\s|$)') { $Cmd = "$Cmd --maxWorkers=2" }
-if ($Cmd -match '\bvitest\b' -and $Cmd -notmatch 'maxWorkers|maxThreads') { $Cmd = "$Cmd --maxWorkers=2" }
+# the flag right after the runner (at the line end a compound command's next tool, e.g. tsc, would get it)
+$wk = { param($rx) if ($Cmd -match $rx) { ([regex]$rx).Replace($Cmd, '$0 --maxWorkers=2', 1) } else { "$Cmd --maxWorkers=2" } }   # no runner word (yarn test): the end
+if ($Cmd -match '\bjest\b' -and $Cmd -notmatch 'maxWorkers|runInBand|\s-i(\s|$)') { $Cmd = & $wk '(?<![\w./-])jest(?=\s|$)' }
+if ($Cmd -match '\bvitest\b' -and $Cmd -notmatch 'maxWorkers|maxThreads') { $Cmd = & $wk '(?<![\w./-])vitest(\s+(run|watch))?(?=\s|$)' }
 if ($Cmd -match '\bpytest\b' -and $Cmd -match '\s-n\s+auto') { $Cmd = $Cmd -replace '\s-n\s+auto', ' -n 2' }
 
 $ledger = Get-KitGateLedger
