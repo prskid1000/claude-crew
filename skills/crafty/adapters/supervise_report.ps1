@@ -101,7 +101,7 @@ function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$
     @(Format-KitMdTable 'Level', 'Flag', 'Action' @(@($d.flags | ForEach-Object { , @($_.level, $_.what, $_.action) }) + @($d.info | Where-Object { $_ } | ForEach-Object { , @('INFO', $_, '') }))) +
     @('', '## Resources', '') + @(Format-KitMdTable 'Resource', 'Holder', 'GB' @($d.resources | ForEach-Object { , @($_.name, $_.by, $_.gb) })) +
     @('', '## Shells (whole commands)', '') + @(Format-KitMdTable 'PID', 'Owner', 'Age min', 'State', 'Dir', 'Command', 'Next' @($d.shells | ForEach-Object { , @($_.pid, $_.owner, $_.age, $_.state, $_.dir, ($_.cmd -replace '\r?\n', ' \n '), $_.next) })) +
-    @('', '## Sweep', '', '```text') + $Sweep + '```' |
+    @('', '## Sweep', '', '```text') + $Sweep + '```' | ForEach-Object { ConvertTo-KitLaneText "$_" } |   # one lane name (K55)
     Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
 }
 # ---- transcript tails: the board's Doing detail, cached per transcript (lib.ps1 Get-KitStatusRows)

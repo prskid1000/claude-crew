@@ -2178,8 +2178,8 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'learn' { Invoke-KitVerb Invoke-Learn $__rest }
     'launch' { Invoke-KitVerb Invoke-Launch $__rest }
     'track' { Invoke-KitVerb Invoke-Track $__rest }
-    'supervise' { Invoke-KitVerb Invoke-Supervise $__rest }
-    'status' { Invoke-KitVerb Invoke-Status $__rest }
+    'supervise' { Invoke-KitVerb Invoke-Supervise $__rest | ConvertTo-KitLaneOut ('-Json' -in $__rest) }   # shown lane names (K55)
+    'status' { Invoke-KitVerb Invoke-Status $__rest | ConvertTo-KitLaneOut ('-Json' -in $__rest) }
     'release' { Invoke-KitVerb Invoke-Release $__rest }
     'storage' { Invoke-KitVerb Invoke-Storage $__rest }
     'report' { Invoke-KitVerb Invoke-Report $__rest }

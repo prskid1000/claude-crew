@@ -116,15 +116,15 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
   and release it; a free slot sits detached at `origin/<target>`, never on a stale branch; `pool.warm` free slots are kept made.
 - **Lanes** (envy): lane k of env `<product>` runs from its own worktrees `lane-<product>-<bird>-<repo>` on the local branch
   `lane/<product>-<bird>` (never pushed): the target plus the task branches merged in as layers. Old names (`localenv-<env>-<repo>`,
-  `localenv/<env>`) move as soon as the lane is idle (no service up, no lease, hold or train): `envy.ps1 lanes -Migrate [-DryRun]`,
-  and supervise each sweep (`-LanesOnly`) while one is left; it also removes a clean worktree of a `localenv/*` branch no lane
-  owns, deletes `[gone]` branches merged into the target and backup branches whose commits are all on origin, and lists the rest.
+  `localenv/<env>`) move once the lane is idle: `envy.ps1 lanes -Migrate [-DryRun]`, and supervise each sweep (`-LanesOnly`);
+  it also removes a clean worktree of a `localenv/*` branch no lane owns, deletes `[gone]` branches merged into the target and
+  backup branches whose commits are all on origin, and lists the rest.
+- **One lane name:** output shows `<product>·<Bird>`; state and logs keep the id; `-Env` takes either (ui-check: LANE-ID).
 - **Lanes in sync** (`wt pool -Sync` -> `envy.ps1 lanes -Sync`): an idle lane is rebuilt as a build would (`origin/<target>` +
   open layers + prepare; merged layers dropped; a conflict: left as it was, listed); `lane/*` track no upstream; Branches tile:
   `base @ <sha> · behind N · test merges N`.
-- **Many to many:** any task branch can be built into any lane; a lane's worktree merges the branches onto its target; the slot keeps
-  the task's own code. Lane branches are rebuilt from the target, so a lane branch no worktree holds is pruned (its commits on no
-  remote first kept as tag `backup/<branch>-<yyyyMMdd>-<sha>`).
+- **Many to many:** any task branch builds into any lane (merged onto its target); the slot keeps the task's own code. A lane
+  branch no worktree holds is pruned (commits on no remote kept first as tag `backup/<branch>-<yyyyMMdd>-<sha>`).
 - **Repo sync** (`wt pool -Sync`, plain `wt pool` previews it; supervise every `sync.everyMinutes`): one fetch per repo, every local branch strictly behind its
   upstream fast-forwarded (checked out: only when clean), merged branches whose upstream is gone deleted; diverged or dirty ones
   are listed (dashboard Branches tile), never touched.

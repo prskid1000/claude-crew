@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L108 names · L129 slots · L155 lease · L252 release · L280 lanes · L385 sync · L449 pool
+Sections: L14 worktrees · L108 names · L141 slots · L167 lease · L264 release · L292 lanes · L397 sync · L461 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -119,6 +119,18 @@ function Get-KitPoolLabel([string]$Kind, [string]$Name) {
 # a lane's names (README "Worktrees and lanes"): env rm2 -> lane/rm-kestrel, worktree lane-rm-kestrel-<repo>; an old-scheme
 # localenv-<env>-<repo> serves until envy Ensure-Worktree moves it (-Old: that path, -New: the new one)
 function Get-KitLaneSlug([string]$Lane) { ((Get-KitPoolLabel 'env' $Lane) -replace '[·\s]+', '-').ToLower() }
+# one display name per lane (owner 2026-11-17, K55; state and logs keep the id): in shown text, <env><k> as a word and a base <env>
+# before " · " (a service row) or after "env " / "lane " become the pool label (rm2 · api -> rm·Kestrel · api); kitbag.py ui-check LANE-ID
+function ConvertTo-KitLaneText([string]$Text) {
+  if (-not $Text) { return $Text }
+  $ck = "$(@(Get-KitLaneNames) -join ',')|$(@(Get-KitSetting 'pool.names' @()) -join ',')"
+  if ($script:KitLaneRx.key -ne $ck) { $script:KitLaneRx = @{ key = $ck; map = @(foreach ($l in @(Get-KitLaneNames | Sort-Object Length -Descending)) { $lb = Get-KitPoolLabel env $l; if ($lb -ne $l) { $q = [regex]::Escape($l)
+          , @($(if ($l -match '\d$') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= (?:·|&#183;) )|(?<=\b(?:env|lane) )$q(?![\w·./\-])" }), $lb) } }) } }
+  foreach ($m in $script:KitLaneRx.map) { $Text = [regex]::Replace($Text, $m[0], $m[1]) }; $Text }
+# a shown lane name (rm·Kestrel, rm-kestrel, case-insensitive) -> its id; anything else as given
+function ConvertFrom-KitLaneLabel([string]$Name) { foreach ($l in @(Get-KitLaneNames)) { if ($Name -ieq (Get-KitPoolLabel env $l) -or $Name -ieq (Get-KitLaneSlug $l)) { return $l } }; $Name }
+# a verb's text output with shown lane names; -Json output (read by scripts) keeps the ids
+function ConvertTo-KitLaneOut([bool]$Json) { process { if ($Json -or $_ -isnot [string]) { $_ } else { ConvertTo-KitLaneText $_ } } }
 function Get-KitLaneBranch([string]$Lane) { "lane/$(Get-KitLaneSlug $Lane)" }
 # configured lanes: each localEnv.envs key, lanes 2..lanes.max as <env><k> (envy.ps1 Get-LaneCfg)
 function Get-KitLaneNames { $envs = Get-KitSetting 'localEnv.envs' $null; if (-not $envs) { return @() }; @(foreach ($p in @(Get-KitProps $envs)) { $p.Name; for ($i = 2; $i -le [int]"$($p.Value.lanes.max)"; $i++) { "$($p.Name)$i" } }) | Select-Object -Unique }

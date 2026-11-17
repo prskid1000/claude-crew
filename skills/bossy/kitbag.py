@@ -19,11 +19,11 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1426 audit ·
-  L1542 registry · L1874 arch lint · L2141 prose · L2306 sections · L2436 budget · L2450 migrate · L2610 plugins ·
-  L2664 state lint · L2852 main
+Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1079 README graph · L1182 lint command · L1446 audit ·
+  L1562 registry · L1894 arch lint · L2161 prose · L2326 sections · L2456 budget · L2470 migrate · L2630 plugins ·
+  L2684 state lint · L2872 main
 """
-import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
+import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
 from collections import defaultdict, deque
 from pathlib import Path
@@ -1385,6 +1385,22 @@ try {
 } finally { await b.close() }
 console.log(JSON.stringify(res))'''
 
+def lane_ids_shown(page, kit=None):
+    """K55: bare lane ids in a page's shown text (<product><k> as a word, k >= 2; a base <product> before " · " or after "env " /
+    "lane "), lanes from kit.local.json localEnv.envs (lanes.max); each hit with its context. No lanes configured: none."""
+    envs = (local_config(kit or KIT_DIR, 'kit.local.json').get('localEnv') or {}).get('envs') or {}
+    alts = []
+    for e, v in envs.items():
+        q = re.escape(e)
+        alts.append(rf'(?<![\w·./\\-]){q}(?= · )|(?<=env ){q}(?![\w·./\\-])|(?<=lane ){q}(?![\w·./\\-])')
+        alts += [rf'(?<![\w·./\\-]){q}{k}(?![\w·./\\-])' for k in range(2, int(((v or {}).get('lanes') or {}).get('max') or 1) + 1)]
+    if not alts:
+        return []
+    with open(page, encoding='utf-8', errors='replace') as fh:
+        page_html = fh.read()
+    text = html.unescape(re.sub(r'<[^>]+>', ' ', re.sub(r'(?is)<(script|style)\b.*?</\1>', ' ', page_html)))
+    return [f'{m.group(0)}: ...{text[max(0, m.start() - 30):m.end() + 30].strip()}...' for m in re.finditer('|'.join(alts), text)][:20]
+
 def cmd_ui_check(a):
     """ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']: PAGE_JS (light + dark; each --click state after
     the page as loaded); exit 1 on clipped text, a failed click, a layout box (window.uiBoxes) off-screen or overlapping, an svg over a sibling tile or a [data-fit]
@@ -1413,8 +1429,12 @@ def cmd_ui_check(a):
         for c in r['clipped']:
             print(f"  CLIP {c['el']}: {c['why']} ({c['text']})")
         bad += len(r['clipped'])
-    if bad:
-        print(f'kitbag ui-check: {bad} issue(s): content wraps, never truncates (README "Live supervisor dashboard")')
+    lane_bad = lane_ids_shown(rest[0])
+    for ln in lane_bad:
+        print(f'  LANE-ID {ln}')
+    if bad or lane_bad:
+        print(f'kitbag ui-check: {bad + len(lane_bad)} issue(s): content wraps, never truncates; lanes show as <product>·<Bird> '
+              '(README "Live supervisor dashboard", "Worktrees and lanes")')
         return 1
     stamp = ui_check_stamp()
     os.makedirs(osp.dirname(stamp), exist_ok=True)

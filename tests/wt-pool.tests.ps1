@@ -110,5 +110,14 @@ $sg = Invoke-PsTest stray-slot @'
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/bossy/adapters'))
 $wr = pwsh @np $D wt release -Agent devZ 2>&1 | Out-String
 Expect "a stray array file in wt-slots: supervise resources sweep runs, no slot flag from it; wt release ignores it ($(@($sg) -join ' ') | $($wr.Trim()))" ((@($sg) -join ' ') -match 'stray:True' -and $wr -match 'no slot held by devZ' -and (Test-Path "$kf/stray.json"))
+# K55: one lane name in shown text (ids kept in paths, logs, branch names and -Json); -Env takes the shown name; ui-check LANE-ID
+$lnt = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{ localEnv = [pscustomobject]@{ envs = [pscustomobject]@{ shop = [pscustomobject]@{ lanes = [pscustomobject]@{ max = 3 } } } } }
+  @(@('shop2 · api', 'shop · db', 'env shop', '[shop3] up', 'shop2-api.log', 'lane/shop-kestrel', 'workshop2 · x', 'shop2 &#183; web') | ForEach-Object { ConvertTo-KitLaneText $_ }) -join '|'
+  "from:$(ConvertFrom-KitLaneLabel 'shop·Kestrel')/$(ConvertFrom-KitLaneLabel 'SHOP-OSPREY')/$(ConvertFrom-KitLaneLabel 'other')"
+  "out:$(@('x shop2' | ConvertTo-KitLaneOut $false) + @('x shop2' | ConvertTo-KitLaneOut $true) -join '/')" }
+Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 } } } } }; $lp = Join-Path (Kd) 'lanes.html'
+Set-Content $lp "<html><body><p>env shop·Kestrel</p><p>shop2 &#183; api</p><script>var a='shop2'</script></body></html>"
+$lhit = python -X utf8 -c "import sys; sys.argv=['kitbag.py']; sys.path.insert(0, r'$k/skills/bossy'); import kitbag; print(len(kitbag.lane_ids_shown(r'$lp', r'$k')))"
+Expect "lane names: ids shown as <product>·<Bird> (paths, branches, other words kept), -Env takes the shown name, -Json keeps ids; ui-check counts a bare id outside scripts ($($lnt -join ' | ') | $lhit)" ($lnt[0] -eq 'shop·Kestrel · api|shop·Falcon · db|env shop·Falcon|[shop·Osprey] up|shop2-api.log|lane/shop-kestrel|workshop2 · x|shop·Kestrel &#183; web' -and $lnt[1] -eq 'from:shop2/shop3/other' -and $lnt[2] -eq 'out:x shop·Kestrel/x shop2' -and "$lhit".Trim() -eq '1')
 Remove-TestKit $k
 Complete-Tests

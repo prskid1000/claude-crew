@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L298 shells · L432 page · L970 release · L1010 lines · L1043 cleanup · L1115 launch ·
-  L1193 pause · L1311 heartbeat · L1326 sessions · L1378 ci tasks ·
-  L1433 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L298 shells · L432 page · L971 release · L1011 lines · L1044 cleanup · L1116 launch ·
+  L1194 pause · L1312 heartbeat · L1327 sessions · L1379 ci tasks ·
+  L1434 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -512,7 +512,8 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 9)
-  $runPages = @{}; Write-KitAtomic $p (Format-KitSuperviseHtml $j $runPages)
+  $runPages = @{}; Write-KitAtomic $p (ConvertTo-KitLaneText (Format-KitSuperviseHtml $j $runPages))   # shown lane names (K55); the json keeps ids
+  foreach ($rk in @($runPages.Keys)) { $runPages[$rk] = ConvertTo-KitLaneText $runPages[$rk] }
   $rpd = Join-Path (Split-Path $p) 'supervise-runs'; $null = New-Item -ItemType Directory -Force $rpd   # a run's step table, linked from its row
   foreach ($rk in $runPages.Keys) { $rpf = Join-Path $rpd "$rk.html"; if (-not (Test-Path -LiteralPath $rpf) -or [IO.File]::ReadAllText($rpf) -cne $runPages[$rk]) { Write-KitAtomic $rpf $runPages[$rk] } }   # an ended run's page: written once
   Get-ChildItem -LiteralPath $rpd -Filter '*.html' -File -ErrorAction SilentlyContinue | Where-Object { -not $runPages.ContainsKey($_.BaseName) } | Remove-Item -Force -ErrorAction SilentlyContinue   # runs no longer shown

@@ -2105,6 +2105,7 @@ if ($Action -eq 'marks') { if ($Name) { throw "marks lists the marks; to make on
 $Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services); $Schemas = @(Split-KitList $Schemas)
 if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }
+if ($EnvName) { $EnvName = ConvertFrom-KitLaneLabel $EnvName }   # -Env takes the id or the shown name (rm·Kestrel, rm-kestrel)
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
 if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup', 'lanes' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
@@ -2497,5 +2498,5 @@ elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($__envyArgs | Se
 elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }
 else {   # usage errors exit 2; any other crash exits 1 (Invoke-KitVerb)
   $KitVerbOnError = { param($e) $m = "$($e.Exception.Message)"; if ($m -match 'unknown env|-Env needed|No local environments configured|needs -|marks lists the marks') { [Console]::Error.WriteLine("envy.ps1: $m"); exit 2 } }
-  Invoke-KitVerb Invoke-LocalEnv @($__envyArgs)
+  Invoke-KitVerb Invoke-LocalEnv @($__envyArgs) | ConvertTo-KitLaneOut ("-Json" -in $__envyArgs)   # shown lane names (K55)
 }
