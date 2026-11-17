@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L295 shells · L429 page · L951 release · L991 lines · L1024 cleanup · L1092 launch ·
-  L1170 pause · L1288 heartbeat · L1303 sessions · L1355 ci tasks ·
-  L1410 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L295 shells · L429 page · L952 release · L992 lines · L1025 cleanup · L1093 launch ·
+  L1171 pause · L1289 heartbeat · L1304 sessions · L1356 ci tasks ·
+  L1411 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -571,6 +571,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     $yv = { param($v) if ($mx -eq $mn) { 20 } else { 38 - 34 * ($v - $mn) / ($mx - $mn) } }
     $pts = @(for ($i = 0; $i -lt $vals.Count; $i++) { if ($Step -and $i) { "$(& $xs $i),$(& $n1 (& $yv $vals[$i - 1]))" }; "$(& $xs $i),$(& $n1 (& $yv $vals[$i]))" }) -join ' '
     $mv = if ($mark) { if ($mark -eq 'low') { ($vals | Measure-Object -Minimum).Minimum } else { ($vals | Measure-Object -Maximum).Maximum } }
+    $n1 = { param($x) $ax = [math]::Abs([double]$x); if ($ax -ge 1e9) { "$(([double]$x / 1e9).ToString('0.##', $iv))B" } elseif ($ax -ge 1e6) { "$(([double]$x / 1e6).ToString('0.#', $iv))M" } elseif ($ax -ge 1e4) { "$([math]::Round([double]$x / 1e3))k" } else { ([double]$x).ToString('0.#', $iv) } }   # labels only (the points use $xs / $yv): 229037567 -> 229M
     $cap = "$what$(if (-not $NoNow) { " · now $(& $n1 $vals[-1])$unit" })$(if ($mark) { " · $mark $(& $n1 $mv)$unit" })$(if ($null -ne $avg) { " · $avgLabel $(& $n1 $avg)$unit" })"
     $avL = if ($null -ne $avg) { $ay = & $n1 (& $yv ([double]$avg)); "<line class=mk x1=0 x2=100 y1=$ay y2=$ay />" }
     "<figure class='spk $cls'><div class=spw><svg class=spark viewBox='0 0 100 40' preserveAspectRatio=none role=img aria-label='$(& $e "$cap, y $(& $n1 $mn)-$(& $n1 $mx)$unit")'><polygon class=a fill=currentColor points='0,40 $pts 100,40'/><polyline class=l fill=none points='$pts'/>$avL</svg>" +
