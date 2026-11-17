@@ -14,7 +14,7 @@ An item ticks only when done: its MRs merged, no open fix-round MR naming it, no
 an area not delivered); else unticked with ' · <reason>'; checklists are pruned of stale kit lines and repeats.
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L22 triage · L71 render · L150 rollup · L252 items · L306 close
+Sections: L22 triage · L71 render · L150 rollup · L254 items · L308 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -172,7 +172,9 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   if (-not $Force -and (($ro.parentClosed -and $fresh) -or (-not $ro.parentClosed -and -not $ans -and $ro.localSig -eq $sig0 -and $fresh))) { return }   # a closed parent: its status read once per rollupMinutes
   $stamp = { Update-KitTaskIndex $Parent { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.readAt = (Get-Date).ToString('o'); $x.rollup.localSig = $sig0 } }   # a failed or empty read waits too
   Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { & $stamp; return "ROLLUP ${Parent}: tracker read failed, nothing written" }
-  if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) { & $stamp; return } }   # still closed: final
+  if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) {   # still closed: final, but a subtask closed after it still ticks its Items line
+      & $stamp; $co = @{}; foreach ($a in @((ConvertTo-KitTriage $ro.triage).agents)) { if ($a.task) { $co["$($a.task)"] = "$($a.area)" } }
+      $pio = try { Update-KitParentItems $Parent $pt $co } catch { "parent items FAILED: $("$_".Split("`n")[0])" }; if ($pio) { return "ROLLUP ${Parent}: $pio" }; return } }
   elseif ($ro.parentClosed) {   # -Force too: the old answer never re-closes it
     Update-KitTaskIndex $Parent { param($x) $x.rollup.parentClosed = $false; $x.rollup.closeHold = 'reopened' }; $ro.parentClosed = $false; $ro.closeHold = 'reopened' }   # reopened: its delivery table updates again
   $tri = ConvertTo-KitTriage $ro.triage; $areaOf = @{}; foreach ($a in @($tri.agents)) { if ($a.task) { $areaOf[$a.task] = $a } }
