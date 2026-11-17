@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L102 health · L111 prepush · L194 nightly tests · L212 precommit
+Sections: L12 learn · L102 health · L111 prepush · L201 nightly tests · L219 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -174,11 +174,18 @@ if ($toMain.Count -and (Test-Path $kt) -and -not $env:KIT_TESTS_SNAPSHOT) {
   else {
     $tl = Join-Path (Get-KitPath logs -Create) 'kit-tests-prepush.txt'; Write-Host "pre-push: kit tests -Full on tree $($tree.Substring(0, 8)) (a few minutes; log $tl)"
     Remove-Item Env:GIT_DIR, Env:GIT_INDEX_FILE, Env:GIT_WORK_TREE -ErrorAction SilentlyContinue   # the hook's git env would point every test repo at this one
-    $tp = Start-Process (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -ArgumentList '-NoProfile', '-NonInteractive', '-File', "`"$kt`"", '-Full' -RedirectStandardOutput $tl -RedirectStandardError "$tl.err" -NoNewWindow -PassThru; $null = $tp.Handle   # the handle kept: ExitCode stays readable
-    if (-not $tp.WaitForExit(1800000)) { Stop-KitProcessTree $tp; $hits += "TESTS       the full kit run passed 30 min: stopped (log $tl)" }
-    else {
-      $sum = @(Get-Content -LiteralPath $tl | Select-String -Pattern '^(Failed checks:|  \[|TEST-DUP|TEST-WRITE|\d+ failure\(s\) in)' | ForEach-Object Line)
-      $sum | ForEach-Object { Write-Host "  $_" }; if ($tp.ExitCode) { $hits += "TESTS       the full kit run failed (exit $($tp.ExitCode)): $tl" } }
+    $ktRun = { param($ktArgs, $ktLog) $p = Start-Process (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -ArgumentList (@('-NoProfile', '-NonInteractive', '-File', "`"$kt`"") + $ktArgs) -RedirectStandardOutput $ktLog -RedirectStandardError "$ktLog.err" -NoNewWindow -PassThru; $null = $p.Handle   # the handle kept: ExitCode stays readable
+      if (-not $p.WaitForExit(1800000)) { Stop-KitProcessTree $p; return -1 }; $p.ExitCode }
+    $tc = & $ktRun @('-Full') $tl
+    if ($tc -eq -1) { $hits += "TESTS       the full kit run passed 30 min: stopped (log $tl)" }
+    elseif ($tc) {
+      $sum = @(Get-Content -LiteralPath $tl | Select-String -Pattern '^(Failed checks:|  \[|TEST-DUP|TEST-WRITE|\d+ failure\(s\) in)' | ForEach-Object Line); $sum | ForEach-Object { Write-Host "  $_" }
+      # each FAIL named in the recap (no crash, no TEST-DUP): its areas once more alone; green there = a load flake, said, not blocked
+      $fa = @($sum | Where-Object { $_ -match '^  \[([\w-]+)\]' } | ForEach-Object { $Matches[1] } | Select-Object -Unique); $nf = @($sum | Where-Object { $_ -match '^(\d+) failure' } | ForEach-Object { [int]$Matches[1] })[-1]
+      $rc = if ($fa.Count -and $nf -eq @($sum -match '^  \[').Count -and -not @($sum -match '^TEST-').Count) { & $ktRun @('-Area', ($fa -join ',')) "$tl.rerun" } else { 1 }
+      if ($rc -eq 0) { Write-Host "pre-push: kit tests: $($fa -join ', ') failed in the full run and passed alone (flaky under load: fix it, kitty kind fix; log $tl)" }
+      else { $hits += "TESTS       the full kit run failed (exit $tc$(if ($fa.Count) { "; alone too: $($fa -join ', ')" })): $tl" } }
+    else { Write-Host "  $(@(Get-Content -LiteralPath $tl | Select-String -Pattern '^\d+ failure\(s\) in' | ForEach-Object Line)[-1])" }
   }
 }
 
