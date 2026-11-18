@@ -244,7 +244,8 @@ DELIMITER ;
   Remove-TestKit $k3
 }
 # K78 (tests/test-mysql.ps1): one area holds the one server at a time; a second kit-test mysqld is a stray (TEST-MYSQLD)
-$tmHeld = Enter-TestMySqlLock (Get-TestMySqlHome) 0; $tmSecond = try { (Enter-TestMySqlLock (Get-TestMySqlHome) 0).Dispose(); 'got it' } catch { 'refused' } finally { $tmHeld.Dispose() }
+$tmLk = New-Item -ItemType Directory -Force (Join-Path $env:TEMP 'lock78')   # its own lock dir: the shared one may be held by another run
+$tmHeld = Enter-TestMySqlLock $tmLk 0; $tmSecond = try { (Enter-TestMySqlLock $tmLk 0).Dispose(); 'got it' } catch { 'refused' } finally { $tmHeld.Dispose() }
 $tmFake = { param($i, $p, $c) [pscustomobject]@{ ProcessId = $i; ParentProcessId = $p; CommandLine = $c } }
 $tmStrays = @(Get-TestMySqlStrays @((& $tmFake 10 1 '"mysqld.exe" --no-defaults "--datadir=D:\k\.state\kit-tests\mysql" --port=1'), (& $tmFake 11 10 'mysqld.exe --no-defaults --datadir=D:\k\.state\kit-tests\mysql'),
   (& $tmFake 20 2 "mysqld.exe --no-defaults `"--datadir=D:\w\$($tmpMap.runtimeDir)\work\tests\mysqld-77`" --port=2"), (& $tmFake 30 3 'mysqld.exe --defaults-file=C:\ProgramData\my.ini')) -Server '10:5')

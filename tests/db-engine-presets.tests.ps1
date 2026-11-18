@@ -246,7 +246,7 @@ CREATE TABLE pa.u (login varchar(40)); INSERT INTO pa.u VALUES ('alice'), ('bob'
 }
 # K78: one persistent test mysqld (tests/test-mysql.ps1): the data dir stays in the main clone's state after Stop, the lock is free, one start per run
 $tmDataRx = '[\\/]\.state[\\/]kit-tests[\\/]mysql$'
-$tmSt = Read-TestMySqlState $tmSrv.home; $tmFree = try { (Enter-TestMySqlLock $tmSrv.home 0).Dispose(); $true } catch { $false }
+$tmSt = Read-TestMySqlState $tmSrv.home; $tmFree = try { (Enter-TestMySqlLock $tmSrv.home 0).Dispose(); $true } catch { "$((Read-TestMySqlState $tmSrv.home).lock.holder)" -notin '', "$(Get-TestProcStamp $PID)" }   # held: by another run, not this area
 $tmRun = Get-TestProcStamp $(if ($env:KIT_TESTS_RUNNER) { [int]$env:KIT_TESTS_RUNNER } else { $PID })
 Expect "test-mysql.ps1: one data dir under .state (kept after Stop-TestMySql), lock free, this run started it at most once ($($tmSrv.data), starts $(@($tmSt.starts | Where-Object { "$_" -eq $tmRun }).Count))" ((Test-Path (Join-Path $tmSrv.data 'mysql.ibd')) -and $tmSrv.data -match $tmDataRx -and $tmFree -and @($tmSt.starts | Where-Object { "$_" -eq $tmRun }).Count -le 1)
 Complete-Tests
