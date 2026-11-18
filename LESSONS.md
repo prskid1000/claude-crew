@@ -3,6 +3,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 (adds the git-ignored LESSONS.local.md). Retired lines: `bossy.ps1 learn -History` (git + `.state`). Managed by `bossy.ps1 learn` (`-When -Do -Why`).
 
 ## bossy
+- a deploy plan or script whose final JSON you need -> run it in the foreground with a timeout, not as a background task (background run lost the JSON 3x; monitor waited on unsettled output, ENOENT on the task file)
 - supervise flags a SHELL ORPHAN whose owner agent still shows on the board -> check the board row and its last beat before taskkill /T; kill only when the agent is gone (taskkill /T on checky-R2 pid 32160 cut a live agent)
 - A consumer MR waits on producer MRs -> register EVERY producer with `bossy.ps1 track add -MergeAfter '<web>!<iid>><api>!<iid>'` before any merge, read the printed list back, confirm API MRs merged before QA, never merge a consumer by hand (a consumer merged first broke QA). (9×)
 - The owner asks to explain or plan -> answer or plan, never launch a wave (a 9-agent wave once built nothing). (4×)
@@ -57,6 +58,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
+- writing testing-doc or check texts with prose limits -> write to the word limit first and keep the key request (e.g. server-log check) when cutting (prose check failed twice; shortening dropped the server-log request)
 - testy finalize -Check on a run whose run.json title is long -> keep the run title at 25 words or fewer when the run is created (finalize -Check failed EXIT=1 twice and needed a hand edit of run.json)
 - a test run lasts longer than a few minutes (a full e2e suite) -> start it detached with Start-Process and a log file, never as a Bash run_in_background child (a 3.5 h e2e run died at 42 min with the shell, no exit line)
 - publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames)
