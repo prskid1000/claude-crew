@@ -194,5 +194,29 @@ $wsame = foreach ($wrun in { $null = & $pwshExe -NoProfile -File $O supervise -J
   & $wrun; Start-Sleep -Milliseconds 1100; $wa = @{}; foreach ($x in & $wsnap) { $wa[$x.f] = $x }; & $wrun
   foreach ($y in & $wsnap) { $x = $wa[$y.f]; if ($x -and $x.t -ne $y.t -and $x.h -eq $y.h) { $y.f } } }
 Expect "waste guards: a second supervise / learn -Stats / release on the same input rewrites no file with the same bytes ($($wsame -join ', '))" (-not @($wsame).Count)
+# disk writes per owner (owner 2026-11-18): fake I/O counters over two beats; a resource / shell owner, the OS root, restarts and exits
+$wrt = @'
+$null = . $args[0] 6>$null
+$t0 = [datetime]'2026-11-18T10:00:00'; $old = $t0.AddHours(-2)
+$mk = { param($id, $par, $nm, $cmd, $wb, $made) [pscustomobject]@{ Id = $id; ParentId = $par; Name = $nm; CommandLine = $cmd; Created = $made; Write = [double]$wb } }
+$own = @(@{ pid = 20; label = 'devy-a shell' }, @{ pid = 40; label = 'kitty (build x)' })
+$b1 = @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 10 2 'claude.exe' 'claude' 0 $old), (& $mk 20 10 'pwsh.exe' 'pwsh -c load' 1GB $old), (& $mk 30 20 'mysql.exe' 'mysql bulk' 5GB $old),
+  (& $mk 40 10 'robocopy.exe' 'robocopy tree' 9GB $old), (& $mk 50 2 'mysqld.exe' 'mysqld --datadir=x' 50GB $old))
+$s1 = Update-KitWriteStats $null $t0 $b1 $own
+$t1 = $t0.AddMinutes(20)
+$b2 = @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 10 2 'claude.exe' 'claude' 0 $old), (& $mk 20 10 'pwsh.exe' 'pwsh -c load' 1.5GB $old), (& $mk 21 20 'mysql.exe' 'mysql bulk2' 2GB $t0.AddMinutes(5)),
+  (& $mk 40 10 'robocopy.exe' 'robocopy tree' 15GB $old), (& $mk 50 2 'mysqld.exe' 'mysqld --datadir=x' 1GB $t0.AddMinutes(10)), (& $mk 70 2 'late.exe' 'late' 40GB $old))
+$s2 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $b2 $own
+$hr = @{}; foreach ($h in $s2.hour) { $hr[$h.label] = $h.gb }
+"first:$(-not @($s1.flags).Count -and -not @($s1.hour).Count)"
+"soft:$(@($s2.flags | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^WRITES devy-a shell: 2\.5 GB .*top: mysql bulk2' }).Count -eq 1)"
+"hard:$(@($s2.flags | Where-Object { $_.level -eq 'ACT' -and $_.what -match '^WRITES kitty \(build x\): 6 GB .*top: robocopy tree' -and $_.action -match '^Stop it now' }).Count -eq 1)"
+"restart:$($hr['mysqld.exe pid 50'] -eq 1 -and @($s2.flags).Count -eq 2)"
+"unseen:$(-not $hr.ContainsKey('late.exe pid 70') -and -not $hr.ContainsKey('mysql.exe pid 30'))"
+$global:meter = { param([double]$v, [double]$max, [string]$cap, [string]$tone) "<m $tone>$cap</m>" }; $global:n1 = { param($x) "$x" }; $global:e = { param($x) "$x" }
+$card = Format-KitWritesCard ([ordered]@{ at = $t1.ToString('o'); hour = $s2.hour })
+"card:$($card -match "class='st hot'" -and $card -match '<div class=s>kitty \(build x\): robocopy tree</div><m act>6 GB/h</m>' -and $card -match 'devy-a shell: mysql bulk2</div><m watch>2\.5 GB/h' -and $card -match 'soft 2 / hard 5 GB')"
+'@
+Expect-Each (Invoke-PsTest 'writes' $wrt @($O)) 'disk writes per owner: #' @('first', 'soft', 'hard', 'restart', 'unseen', 'card') -Show 8
 Remove-TestKit $k
 Complete-Tests

@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L303 shells · L437 page · L1003 release · L1043 lines · L1076 cleanup · L1161 launch ·
-  L1239 pause · L1358 heartbeat · L1373 sessions · L1425 ci tasks ·
-  L1480 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L303 shells · L437 page · L1004 release · L1044 lines · L1077 cleanup · L1162 launch ·
+  L1240 pause · L1359 heartbeat · L1374 sessions · L1426 ci tasks ·
+  L1481 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -514,6 +514,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
   $stats.gate = try { Get-KitGateStats $d.at @($d.resources) } catch { $null }
   $stats.waits = try { Get-KitLeaseWaits $d.at } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
+  $stats.writes = try { $wc = Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'supervise-writes.json') -Raw | ConvertFrom-Json; if ($wc.at) { [ordered]@{ at = $wc.at; hour = @($wc.hour) } } } catch { $null }   # Get-KitSuperviseFlagsWrites
   $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   # compact, no copy of usage.result.json (0.7 MB): each sweep rewrote 1.8 MB (NTFS journal churn); the page still shows it
@@ -717,7 +718,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     (& $nowCard 'Memory' "$(& $fmt $memPct)<small>% used</small>" "$(if ($usedGB) { "$(& $n1 $usedGB) / $(& $n1 $tot) GB used · " })$(& $fmt $memFree) GB free · floor $(& $fmt $st.keepFree) GB" "" $(if ($memPct -ge 90) { 'hot' } elseif ($memPct -ge 75) { 'warn' }) "$(if ($usedGB) { & $meter $usedGB $tot "$(if ($memPk -ne '—') { "tick = 7-day peak $memPk%" } else { "of $(& $n1 $tot) GB" })" 'slate' $(if ($memPk -ne '—') { $tot * [double]$memPk / 100 }) })$(& $spark @($l24 | ForEach-Object mem) 'slate' 'used %, 24 h' 'peak' $null '%')"),
     "<div class='st $(if ($dkRows.tone -contains 'hot') { 'hot' } elseif (@($dkRows | Where-Object tone).Count) { 'warn' })' data-fit><div class=k>Disks$(if ($lv.Count) { '<small> · tick = 7-day peak use</small>' })</div>$(if ($dkRows.Count) { & $grid dks 190px @($dkRows.h) 2 } else { '<div class=v>—</div><div class=s>no sample</div>' })</div>",
     $gateCard)
-  $machineHtml = "<div class=mcol>$(& $grid 'stats mach' 300px @($machCards[0], $machCards[1]) 2)$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }))$($machCards[2])</div>"
+  $machineHtml = "<div class=mcol>$(& $grid 'stats mach' 300px @($machCards[0], $machCards[1]) 2)$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }))$(Format-KitWritesCard $st.writes)$($machCards[2])</div>"
   # Activity (owner, 2026-11-14): actionable tiles, each number once, history as labelled graphs
   $nst = @($nw.stale | Where-Object { $_ }); $runOf = @{}; foreach ($ur in @($st.usage.runs | Where-Object { $_.id })) { $runOf["$($ur.id)"] = $ur }
   $wfTile = if ($nw) { "<div class='st$(if ($nst.Count) { ' warn' })' data-fit><div class=k>Workflow steps now</div><div class=v>$(& $icv run 'running steps' (& $fmt $nw.run))<small>running$(if ($null -ne $nw.total) { " · </small>$($nw.done)/$($nw.total)<small> steps" })</small></div><div class=rch>" +

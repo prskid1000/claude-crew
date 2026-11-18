@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour; their heatmap cards 
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L132 cards · L301 flags
+Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L132 writes (owner 2026-11-18 · L185 cards · L362 flags
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -129,11 +129,72 @@ function Update-KitCpuStats($Prior, [datetime]$Now = (Get-Date), $Shells = @(), 
   [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; svc = @($svcNames | Select-Object -Unique) }   # svc: every configured service, up or not (its row stays)
 }
 
+# ---- writes (owner 2026-11-18: no work that writes huge data): bytes written per process (Windows I/O counters) since the last
+# beat, summed per owner over the last hour; owner = the nearest ancestor that is a held resource, an agent's shell or a lane service,
+# else the tree's root under the OS (its own name + pid). A pid seen before counts its growth, one started since the last beat all of
+# it, an older unseen one nothing (no history spike); an exited one drops out. writes.softGBPerHour -> WATCH, writes.hardGBPerHour -> ACT
+function Get-KitWriteProcs {   # the sweep's processes + Write (bytes); none off Windows
+  if (-not $KitIsWindows) { return @() }
+  $wb = @{}; foreach ($c in @(Get-CimInstance Win32_Process -Property ProcessId, WriteTransferCount -ErrorAction SilentlyContinue)) { $wb[[int]$c.ProcessId] = [double]$c.WriteTransferCount }
+  @(Get-KitSweepProcs | Where-Object { $wb.ContainsKey($_.Id) } | ForEach-Object { $_ | Add-Member -Force -NotePropertyName Write -NotePropertyValue $wb[$_.Id] -PassThru })
+}
+# $Procs: @{ Id; ParentId; Name; CommandLine; Created; Write }; $Owners: @{ pid; label } roots; -> @{ at; acc; samples; hour; flags }
+function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @()) {
+  $key = { param($p) "$($p.Id)|$(if ($p.Created) { ([datetime]$p.Created).ToUniversalTime().Ticks })" }
+  $osRoot = '^(System|Idle|smss|csrss|wininit|winlogon|services|svchost|explorer|userinit|init|systemd|launchd)(\.exe)?$'
+  $byId = @{}; $acc = [ordered]@{}; foreach ($p in @($Procs | Where-Object { $_ -and $null -ne $_.Write })) { $byId[[int]$p.Id] = $p; $acc[(& $key $p)] = [double]$p.Write }
+  $own = @{}; foreach ($o in @($Owners | Where-Object { $_ -and [int]$_.pid -gt 0 -and $_.label })) { if (-not $own.ContainsKey([int]$o.pid)) { $own[[int]$o.pid] = "$($o.label)" } }
+  $ownerOf = { param($p) $q = $p
+    for ($n = 0; $n -lt 16; $n++) { if ($own.ContainsKey([int]$q.Id)) { return $own[[int]$q.Id] }
+      $up = $byId[[int]$q.ParentId]; if (-not $up -or $up.Id -eq $q.Id -or "$($up.Name)" -match $osRoot -or ($up.Created -and $q.Created -and [datetime]$up.Created -gt [datetime]$q.Created)) { break }; $q = $up }
+    "$($q.Name) pid $($q.Id)" }   # a reused parent id starts after its child: the tree stops there
+  $samples = @($Prior.samples | Where-Object { $_ -and [datetime]$_.at -ge $Now.AddDays(-1) -and [datetime]$_.at -lt $Now })
+  $prevAt = try { [datetime]$Prior.at } catch { $null }; $dt = if ($prevAt) { ($Now - $prevAt).TotalSeconds } else { 0 }
+  if ($dt -gt 0 -and $dt -le 7200) {   # an older snapshot: no sample (its deltas span hours)
+    $gb = @{}; $top = @{}
+    foreach ($p in $byId.Values) { if ([int]$p.Id -le 4) { continue }   # Idle / System: the cache flush of every process again
+      $was = Get-KitMember $Prior.acc (& $key $p)
+      $d = if ($null -ne $was) { [double]$p.Write - [double]$was } elseif ($p.Created -and [datetime]$p.Created -gt $prevAt) { [double]$p.Write } else { 0 }
+      if ($d -le 0) { continue }
+      $ow = & $ownerOf $p; $gb[$ow] = [double]$gb[$ow] + $d / 1GB
+      if (-not $top[$ow] -or $d -gt $top[$ow].b) { $cl = Protect-KitText ("$(if ($p.CommandLine) { $p.CommandLine } else { $p.Name })" -replace '\s+', ' '); $top[$ow] = @{ b = $d; c = $cl.Substring(0, [math]::Min(120, $cl.Length)) } } }
+    $samples += [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; w = @($gb.Keys | Where-Object { $gb[$_] -ge 0.001 } | ForEach-Object { [ordered]@{ n = "$_"; g = [math]::Round($gb[$_], 3); c = $top[$_].c } }) }   # w: one row per owner
+  }
+  $hr = @{}; $cmd = @{}
+  foreach ($s in @($samples | Where-Object { [datetime]$_.at -gt $Now.AddHours(-1) })) { foreach ($r in @($s.w | Where-Object { $_ })) { $hr["$($r.n)"] = [double]$hr["$($r.n)"] + [double]$r.g; $cmd["$($r.n)"] = "$($r.c)" } }
+  $hour = @($hr.Keys | Sort-Object { - $hr[$_] } | ForEach-Object { [ordered]@{ label = $_; gb = [math]::Round($hr[$_], 2); cmd = $cmd[$_] } })
+  $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour')
+  $flags = @(foreach ($h in @($hour | Where-Object { $_.gb -ge $soft })) { $lv = if ($h.gb -ge $hard) { 'ACT' } else { 'WATCH' }
+      [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $h.label; what = "WRITES $($h.label): $($h.gb) GB written in the last hour (soft $soft / hard $hard GB); top: $($h.cmd)"
+        action = "$(if ($lv -eq 'ACT') { 'Stop it now, then ' })tell its owner: no bulk data, dumps, tree copies, reinstalls or big captures (AGENTS.md); links / moves, small fixtures, read-only checks." } })
+  [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; hour = $hour; flags = $flags }
+}
+# supervise hook: the owners from this sweep (resources, shells, lane services); <runtime>/cache/supervise-writes.json between beats
+function Get-KitSuperviseFlagsWrites([switch]$AutoFix) {
+  $cf = Join-Path (Get-KitPath cache -Create) 'supervise-writes.json'
+  if (-not $KitIsWindows) { if (-not (Test-Path -LiteralPath $cf)) { Set-Content -LiteralPath $cf '{}'; [pscustomobject]@{ info = 'disk writes per agent: no per-process I/O counters on this OS (Windows only)' } }; return }
+  $prior = try { Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json } catch { $null }
+  $owners = @(@(Get-Variable res -ValueOnly -ErrorAction SilentlyContinue) | Where-Object { $_ -and $_.pid } | ForEach-Object { @{ pid = [int]$_.pid; label = $(if ("$($_.by)" -and "$($_.by)" -notmatch '^(no lease|free|parked)') { "$($_.by) ($($_.name))" } else { "$($_.name)" }) } }) +
+    @(@($script:KitShellRows) | Where-Object { $_ -and $_.pid } | ForEach-Object { @{ pid = [int]$_.pid; label = "$(if ($_.owner) { $_.owner } else { 'unknown agent' }) shell" } }) +
+    @(@(Invoke-KitHooks Get-KitCpuGroups) | Where-Object { $_ -and $_.pid } | ForEach-Object { @{ pid = [int]$_.pid; label = "lane $($_.name)" } })
+  $w = Update-KitWriteStats $prior (Get-Date) @(Get-KitWriteProcs) $owners
+  Write-KitAtomic $cf ([ordered]@{ at = $w.at; acc = $w.acc; samples = $w.samples; hour = $w.hour } | ConvertTo-Json -Depth 6 -Compress)
+  $w.flags
+}
+
 # ---- cards: render inside Format-KitSuperviseHtml and use its helpers ($e, $n1, $fmt, $icv, $spark, $dots, $nowCard, $at, $st, $nw, $j, $l24, $fold)
 # every heatmap: Format-KitHourHead over a row of Format-KitHeatCells each, rows through Format-KitHeatRows (idle rows folded), the card
 # through $fold (chevron + count, open state kept; busy open, idle closed)
 # the 24 hour labels over a heatmap: every 6th clock hour, "now" over the last cell
 function Format-KitHourHead([datetime]$H0) { @(for ($hi = 0; $hi -lt 21; $hi++) { if ($H0.AddHours($hi).Hour % 6 -eq 0) { "<b style='grid-column:$($hi + 1)/span 2'>$($H0.AddHours($hi).ToString('HH'))</b>" } }) + "<b class=nw style='grid-column:23/span 2'>now</b>" -join '' }
+# disk writes per owner, the last hour (Update-KitWriteStats hour): a labelled bar each against the hard limit; none: nothing
+function Format-KitWritesCard($W) {
+  $rows = @($W.hour | Where-Object { $_ -and [double]$_.gb -ge 0.01 } | Select-Object -First 8); if (-not $W) { return '' }
+  $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour')
+  $body = if ($rows.Count) { @($rows | ForEach-Object { $g = [double]$_.gb; "<div class=s>$(& $e "$($_.label)$(if ($_.cmd) { ": $($_.cmd)" })")</div>" + (& $meter $g $hard "$(& $n1 $g) GB/h" $(if ($g -ge $hard) { 'act' } elseif ($g -ge $soft) { 'watch' } else { 'slate' })) }) -join '' } else { '<div class=s>no owner wrote 10 MB in the last hour</div>' }
+  $tone = if (@($rows | Where-Object { [double]$_.gb -ge $hard }).Count) { ' hot' } elseif (@($rows | Where-Object { [double]$_.gb -ge $soft }).Count) { ' warn' } else { '' }
+  "<div class='st$tone' data-fit><div class=k>Disk writes per agent<small> · last hour · soft $(& $n1 $soft) / hard $(& $n1 $hard) GB</small></div>$body</div>"
+}
 # a share 0..1 -> cell shade % (square root: a small value still shows; 0 = blank)
 function Get-KitHeatShade([double]$F) { if ($F -gt 0) { [int][math]::Round(25 + 75 * [math]::Sqrt([math]::Min(1.0, $F))) } else { 0 } }
 # a heatmap cell's number (owner, 2026-11-17: a number in every non-empty cell): 0 / none blank, under 10 one decimal, else whole
