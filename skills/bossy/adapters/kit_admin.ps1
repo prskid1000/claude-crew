@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L105 health · L114 prepush · L222 nightly tests · L242 precommit
+Sections: L12 learn · L105 health · L114 prepush · L228 nightly tests · L248 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -190,12 +190,18 @@ if ($toMain.Count -and (Test-Path $kt) -and -not $env:KIT_TESTS_SNAPSHOT) {
         if ((Get-Date) -gt $ktEnd) { Stop-KitProcessTree $p; return -1 }
         if (((Get-Date) - $ktSeen).TotalMinutes -gt $ktStall) { Stop-KitProcessTree $p; return -2 } }
       $p.ExitCode }
-    # K76: a busy machine (a gated build queued, or RAM use over kitTests.pushBusyRamPct) runs the changed areas only; nightly + idle runs the full suite
+    # K76: a busy machine runs the changed areas only (nightly + idle runs the full suite): a gated build queued or running, RAM over
+    # kitTests.pushBusyRamPct, or kitTests.pushBusyRuns other kit-test runs live (the shared test mysqld lock held counts as one;
+    # 4 live runs, 0 queued builds, RAM 50%: a forced full suite hit the 30-min cap)
     $gq = @(Get-ChildItem (Join-Path (Get-KitGateLedger) 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $t = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; $t -and (Test-KitPid $t.pid $t.start) }).Count
+    $ga = @(Get-ChildItem (Get-KitGateLedger) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'history.json' -and $(try { $t = Get-Content $_.FullName -Raw | ConvertFrom-Json; Test-KitPid $t.pid $t.start } catch { $false }) }).Count
+    $mine = @(); $wp = Get-Process -Id $PID; for ($i = 0; $i -lt 12 -and $wp; $i++) { $mine += $wp.Id; $wp = try { $wp.Parent } catch { $null } }   # this push's own chain (a test run) is not another run
+    $kr = @(if ($KitIsWindows) { Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' AND CommandLine LIKE '%kit-tests.ps1%'" -ErrorAction SilentlyContinue | Where-Object { [int]$_.ProcessId -notin $mine } }).Count
+    $lk = try { [IO.File]::Open((Join-Path (Split-Path $ktDb) 'mysql.lock'), 'OpenOrCreate', 'ReadWrite', 'None').Dispose(); 0 } catch { 1 }
     $sm = Get-SysMem; $ramPct = if ($sm.TotalGB) { [math]::Round(100 * (1 - $sm.AvailGB / $sm.TotalGB)) } else { 0 }
-    $ktMode = @(if (-not $gq -and $ramPct -le [double](Get-KitParam 'kitTests.pushBusyRamPct')) { '-Full' })
+    $ktMode = @(if (-not $gq -and -not $ga -and $kr + $lk -lt [double](Get-KitParam 'kitTests.pushBusyRuns') -and $ramPct -le [double](Get-KitParam 'kitTests.pushBusyRamPct')) { '-Full' })
     if ($ktMode.Count) { Write-Host "pre-push: kit tests -Full on tree $($tree.Substring(0, 8)) (a few minutes; log $tl)" }
-    else { Write-Host "pre-push: machine busy ($gq queued build(s), RAM $ramPct%): changed areas only, log $tl; the full suite runs nightly while idle" }
+    else { Write-Host "pre-push: machine busy ($gq queued build(s), RAM $ramPct%, $ga running build(s), $kr other kit-test run(s)$(if ($lk) { ', test mysqld lock held' })): changed areas only, log $tl; the full suite runs nightly while idle" }
     $tc = & $ktRun $ktMode $tl
     if ($tc -eq -1) { $hits += "TESTS       the kit run passed $(Get-KitParam 'kitTests.pushTimeoutMinutes') min: stopped (log $tl)" }
     elseif ($tc -eq -2) { $hits += "TESTS       the kit run wrote nothing for $(Get-KitParam 'kitTests.pushStallMinutes') min (hung): stopped; read the log's last area lines, fix or rerun that area alone, push again (log $tl)" }

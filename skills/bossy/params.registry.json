@@ -62,6 +62,7 @@
   "kitAudit.everyDays": "config default=7 unit=d",
   "kitAudit.liveBeatMinutes": "config default=60 unit=min",
   "kitTests.pushBusyRamPct": "config default=80 unit=pct",
+  "kitTests.pushBusyRuns": "config default=1 unit=runs",
   "kitTests.pushTimeoutMinutes": "config default=30 unit=min",
   "kitTests.pushStallMinutes": "config default=10 unit=min",
   "data.maxRows": "config default=10000 unit=rows",

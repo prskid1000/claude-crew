@@ -41,19 +41,26 @@ $env:FAKE_RAN = Join-Path $root 'ran.txt'; Set-Content (Join-Path $kc 'tests/kit
 '@
 git -C $kc commit -qam 'test: fake runner'; $hd = git -C $kc rev-parse HEAD; $snap = $env:KIT_TESTS_SNAPSHOT; Remove-Item Env:KIT_TESTS_SNAPSHOT
 $prePush = { param($ref) Remove-Item $env:FAKE_RAN -ErrorAction SilentlyContinue; $ppOut = "$ref $hd $ref $base" | pwsh @np (Join-Path $kc 'skills/bossy/bossy.ps1') prepush 2>&1 | Out-String; [pscustomobject]@{ out = $ppOut; code = $LASTEXITCODE; ran = "$(Get-Content $env:FAKE_RAN -ErrorAction SilentlyContinue)" } }
-$kitLocalPath = Join-Path $kc 'skills/crafty/kit.local.json'; Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100 } }   # never busy: the full-run checks hold under load
+$kitLocalPath = Join-Path $kc 'skills/crafty/kit.local.json'; Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100; pushBusyRuns = 1000 } }   # never busy: the full-run checks hold under load
 $pr = & $prePush refs/heads/main; $po = & $prePush refs/heads/f/x; $env:FAKE_FLAKY = '1'; $pf = & $prePush refs/heads/main; Remove-Item Env:FAKE_FLAKY
-Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 0 } }; $pb = & $prePush refs/heads/main; Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100 } }
+Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 0; pushBusyRuns = 1000 } }; $pb = & $prePush refs/heads/main; Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100; pushBusyRuns = 1000 } }
 $gqDir = Join-Path (TkPath $kc build-gate -Create) 'queue'; New-Item -ItemType Directory -Force $gqDir | Out-Null
 $liveStart = "$(pwsh -NoProfile -Command ". '$kc/skills/crafty/lib.ps1'; Get-KitPidStart $PID")".Trim()
 Set-JsonFile (Join-Path $gqDir 'dead.json') @{ pid = 999999; start = 'x' }; $pdq = & $prePush refs/heads/main
 Set-JsonFile (Join-Path $gqDir 'live.json') @{ pid = $PID; start = $liveStart }; $pq = & $prePush refs/heads/main; Remove-Item (Join-Path $gqDir 'dead.json'), (Join-Path $gqDir 'live.json') -Force
 Expect "kit-admin: prepush on a busy machine (RAM over kitTests.pushBusyRamPct, or a live gate queue ticket) runs the changed areas only; a dead ticket does not count ($($pb.ran) | $($pq.ran) | $($pdq.ran))" (
-  $pb.ran -match '-Area x' -and $pb.ran -notmatch '-Full' -and $pb.out -match 'machine busy \(0 queued build\(s\), RAM \d+%\): changed areas only' -and $pb.out -match 'TESTS\s+the changed-area kit run failed' -and
+  $pb.ran -match '-Area x' -and $pb.ran -notmatch '-Full' -and $pb.out -match 'machine busy \(0 queued build\(s\), RAM \d+%.*?\): changed areas only' -and $pb.out -match 'TESTS\s+the changed-area kit run failed' -and
   $pq.ran -match '-Area x' -and $pq.ran -notmatch '-Full' -and $pq.out -match 'machine busy \(1 queued build\(s\)' -and $pdq.ran -match '^-Full' -and $pdq.out -notmatch 'machine busy')
+# K76: another live kit-tests.ps1 (or the test mysqld lock held) at kitTests.pushBusyRuns, or a running gated build = busy
+$kbS = Start-Process $pwshExe -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 60 # kit-tests.ps1 (a fake other run)' -WindowStyle Hidden -PassThru
+Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100; pushBusyRuns = 1 } }; $pkr = & $prePush refs/heads/main; Stop-Process -Id $kbS.Id -Force -ErrorAction SilentlyContinue
+Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100; pushBusyRuns = 1000 } }
+Set-JsonFile (Join-Path (Split-Path $gqDir) 'run1.json') @{ pid = $PID; start = $liveStart }; $pga = & $prePush refs/heads/main; Remove-Item (Join-Path (Split-Path $gqDir) 'run1.json') -Force
+Expect "kit-admin: prepush busy with another live kit-tests run or a running gated build: changed areas only ($($pkr.ran) | $($pga.ran))" (
+  $pkr.ran -match '-Area x' -and $pkr.out -match 'machine busy \(.*? [1-9]\d* other kit-test run' -and $pga.ran -match '-Area x' -and $pga.out -match '1 running build\(s\)')
 # K79: a run whose log stops growing for kitTests.pushStallMinutes is stopped and blocks the push with a clear line (no hang)
-Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100; pushStallMinutes = 0.05 } }; $env:FAKE_HANG = '1'; $hgClock = [Diagnostics.Stopwatch]::StartNew(); $ph = & $prePush refs/heads/main
-Remove-Item Env:FAKE_HANG; Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100 } }
+Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100; pushBusyRuns = 1000; pushStallMinutes = 0.05 } }; $env:FAKE_HANG = '1'; $hgClock = [Diagnostics.Stopwatch]::StartNew(); $ph = & $prePush refs/heads/main
+Remove-Item Env:FAKE_HANG; Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100; pushBusyRuns = 1000 } }
 Expect "kit-admin: prepush stops a kit run whose log froze for kitTests.pushStallMinutes and blocks with TESTS (code $($ph.code), $([int]$hgClock.Elapsed.TotalSeconds) s)" ($ph.code -eq 1 -and $ph.out -match 'TESTS\s+the kit run wrote nothing for 0\.05 min \(hung\): stopped' -and $hgClock.Elapsed.TotalSeconds -lt 40)
 $gf = Join-Path (TkPath $kc cache -Create) 'kit-tests-green.txt'; git -C $kc rev-parse 'HEAD^{tree}' | Set-Content $gf; $pg = & $prePush refs/heads/main; Remove-Item $gf
 'x' | Add-Content (Join-Path $kc 'README.md'); $pd = & $prePush refs/heads/main; git -C $kc checkout -q -- README.md
