@@ -28,7 +28,7 @@ function Get-ChangedArea([string]$KitDir, [string[]]$Known) {
   foreach ($f in $changed) {
     # lib.ps1 loads every crafty adapter into every script; another skill's adapter loads with its skill's script only
     $own = if ($f -match '^skills/(\w+)/adapters/' -and $Matches[1] -ne 'crafty') { "$($Matches[1]).ps1" } elseif ($f -match '^skills/bossy/(kitbag_\w+\.py|lint-vocab\.json)$') { 'kitbag.py' }
-    if ($f -match '^tests/(harness|kit-tests|hostverb-shim)\.ps1$|^skills/crafty/adapters/' -or (-not $own -and $f -notmatch '\.md$' -and $harness.Contains("'$f'"))) { $whyAll = $f; break }
+    if ($f -match '^tests/(harness|kit-tests|hostverb-shim|test-mysql)\.ps1$|^skills/crafty/adapters/' -or (-not $own -and $f -notmatch '\.md$' -and $harness.Contains("'$f'"))) { $whyAll = $f; break }
     if ($f -match '^tests/(.+)\.tests\.ps1$') { if ($Matches[1] -in $Known) { $pick.Add($Matches[1]) }; continue }
     $hit = @(& $names (Split-Path $f -Leaf)); if ($own) { $hit += & $names $own }
     if (-not $hit.Count -and $f -match '^(\.\w+)/') { $hit = @(& $names "$($Matches[1])/") }   # a generated port (.codex/...): the areas testing that folder
@@ -63,7 +63,9 @@ $env:KIT_TESTS_SNAPSHOT = Join-Path $tmpRoot "kit-tests-src-$PID"
 if (-not $env:KIT_TESTS_SLACK) { $env:KIT_TESTS_SLACK = [Math]::Round([Math]::Min(3, [Math]::Max(1, $areas.Count / [Environment]::ProcessorCount)), 2).ToString([Globalization.CultureInfo]::InvariantCulture) }
 $started = Get-Date
 $env:KIT_TESTS_RUNNER = $PID   # the one test mysqld's holder for every area of this run (test-mysql.ps1)
-$src = Split-Path $PSScriptRoot; . (Join-Path $PSScriptRoot 'test-mysql.ps1'); $myStarts = 0; $myMysqlErr = ''
+$src = Split-Path $PSScriptRoot; $myStarts = 0; $myMysqlErr = ''
+$myMysql = (Test-Path (Join-Path $PSScriptRoot 'test-mysql.ps1')) -and (Test-Path (Join-Path $src 'skills/crafty/kit.example.json'))   # a bare tests/ copy (kitbag.tests): none
+if ($myMysql) { . (Join-Path $PSScriptRoot 'test-mysql.ps1') }
 try {
 $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {
   $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -72,7 +74,7 @@ $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 *
   [pscustomobject]@{ area = $_; out = $out.TrimEnd(); code = $LASTEXITCODE; seconds = [int]$clock.Elapsed.TotalSeconds }
 } | Sort-Object { [array]::IndexOf($areas, $_.area) }   # area order, not finish order: output and TEST-DUP lists stay stable
 } finally {   # Ctrl-C or a crash too: this run lets the test mysqld go (it stops, data kept, when no other run holds it)
-  try { $myStarts = Exit-TestMySqlHolder (Get-TestMySqlHome) $PID } catch { $myMysqlErr = $_.Exception.Message }
+  if ($myMysql) { try { $myStarts = Exit-TestMySqlHolder (Get-TestMySqlHome) $PID } catch { $myMysqlErr = $_.Exception.Message } }
 }
 $fails = 0; $logLines = [Collections.Generic.List[string]]::new()
 foreach ($r in $results) {
