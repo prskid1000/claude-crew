@@ -26,9 +26,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L34 init · L45 board · L223 budget · L253 launch · L494 recover · L581 pause · L592 resume · L659 program · L710 param ·
-  L716 track · L1058 supervise · L1372 report · L1452 audit · L1512 storage · L1515 bugbrief · L1629 cleanup · L1716 learn ·
-  L1747 decide · L1898 debate · L1942 health · L2005 retro due · L2015 tidy · L2087 setup · L2184 guard-sendmessage
+Sections: L34 init · L45 board · L224 budget · L254 launch · L495 recover · L582 pause · L593 resume · L660 program · L711 param ·
+  L717 track · L1059 supervise · L1373 report · L1453 audit · L1513 storage · L1516 bugbrief · L1630 cleanup · L1717 learn ·
+  L1748 decide · L1899 debate · L1943 health · L2010 retro due · L2020 tidy · L2092 setup · L2189 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -192,6 +192,7 @@ switch ($Action) {
     $twin = @(All | Where-Object { $_.agent -eq $script:leftEntry.agent -and $_.session -ne $Session -and $_.status -ne 'left' -and (Test-KitLive @{ session = $_.session }) })
     if (-not $paused -and -not $Handoff -and -not $twin.Count) { Invoke-KitReleaseAgent -Agent $script:leftEntry.agent -Reason "left the board ($Session)" }   # paused / handed off: successor keeps them
     if ($paused) {
+      # poll-ok: local pause record, bounded by -Wait minutes
       $until = (Get-Date).AddMinutes($Wait); while (($pz = Get-KitActivePause $script:leftEntry.run) -and (Get-Date) -lt $until) { Wait-KitPoll 10 }
       if ($pz) { "PAUSED ($Session): stay stopped, return no result; the coordinator stops this run or resumes it. Run this same leave again now"; exit 0 }
       "RESUMED: board join -Agent $($script:leftEntry.agent) -Run '$($script:leftEntry.run)' -Resume, then go on at your checkpoint's next step"; exit 0
@@ -1281,7 +1282,7 @@ if (Within 'QA bug tasks') {
 }
 if (Within 'failedTesting tasks') {
   $ft = @{}; $uw = @()
-  foreach ($fj in Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter finalize.json -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddDays(-7) }) {
+  foreach ($fj in @(Get-KitQaRunFiles finalize.json -SinceDays 7)) {
     $fo = Get-Content $fj.FullName -Raw | ConvertFrom-Json
     foreach ($s in @($fo.subtasks | Where-Object { $_.failedTesting })) { $ft[[string]$s.id] = $fj.Directory.Parent.Name }
     if ($fj.LastWriteTime -gt $now.AddDays(-1)) { foreach ($w in @($fo.watch | Where-Object { $_ })) { $uw += "$($fj.Directory.Parent.Name)/$($fj.Directory.Name) $($w.id) ($($w.task), $($w.screen)) on $($w.env)" } }
@@ -1545,7 +1546,7 @@ $notHere = @($checks | Where-Object { $skipWhy.ContainsKey($_.id) -or ($Only.Cou
 if (-not $checks.Count) { throw "bugbrief: -Only / -Skip leave no check of $Task" }
 
 $runItem = $null
-foreach ($fin in Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter finalize.json -ErrorAction SilentlyContinue) {
+foreach ($fin in @(Get-KitQaRunFiles finalize.json)) {
   $o = Get-Content $fin.FullName -Raw | ConvertFrom-Json
   if (@($o.subtasks | Where-Object { $_.bug -eq $Task }).Count) { $runItem = $fin.Directory; break }
 }
@@ -1951,11 +1952,15 @@ if ($Checks) {   # 6-7 s: background, health shows the last run
 }
 if ($Flow -or $Fetch) {
   if ($Fetch -and (Test-Path (Join-Path $kit '.git'))) {
-    git -C $kit fetch --quiet 2>$null
-    # async: a failure = one hook-error line
+    # at most one fetch per 10 min across sessions (FETCH_HEAD time); async: a failure = one hook-error line
+    $fh = Join-Path $kit '.git/FETCH_HEAD'; if (-not (Test-Path -LiteralPath $fh) -or ((Get-Date) - (Get-Item -LiteralPath $fh).LastWriteTime).TotalMinutes -ge 10) { git -C $kit fetch --quiet 2>$null }
     $null = Test-KitWake   # reboot or wake: re-evaluate learned params
   }
-  if ($Flow -and $py) { & $py -X utf8 $KitCmd.kitbag flow $kit | Out-Null }
+  if ($Flow -and $py) {   # 15 s: only when the kit's tree or its uncommitted edits moved since the last build
+    $fst = Get-KitPath kit-flow-stamp -Create; $tree = "$(git -C $kit rev-parse 'HEAD^{tree}' 2>$null)|$(Get-KitHash "$(@(git -C $kit diff HEAD 2>$null) + @(git -C $kit ls-files -o --exclude-standard 2>$null) -join "`n")")"
+    $same = (Test-Path -LiteralPath (Get-KitPath kit-flow)) -and (Test-Path -LiteralPath $fst) -and ([IO.File]::ReadAllText($fst).Trim() -eq $tree)
+    if (-not $same) { & $py -X utf8 $KitCmd.kitbag flow $kit | Out-Null; if ($LASTEXITCODE -eq 0) { Write-KitAtomic $fst $tree } }
+  }
   exit 0
 }
 

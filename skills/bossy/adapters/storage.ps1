@@ -64,6 +64,7 @@ function Get-KitTopWriters([int]$N = 3) {
     if ($KitIsWindows) { foreach ($p in Get-CimInstance Win32_Process -Property ProcessId, Name, WriteTransferCount -ErrorAction SilentlyContinue) { $h[[int]$p.ProcessId] = @($p.Name, [double]$p.WriteTransferCount) } }
     else { foreach ($d in Get-ChildItem /proc -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^\d+$') { try { $wb = (Get-Content "$($d.FullName)/io" -ErrorAction Stop | Where-Object { $_ -like 'write_bytes:*' }) -replace '\D', ''; $h[[int]$d.Name] = @((Get-Content "$($d.FullName)/comm" -Raw).Trim(), [double]$wb) } catch {} } }
     $h }
+  # poll-ok: two snapshots 2 s apart, no loop
   $a = & $snap; Start-Sleep -Seconds 2; $b = & $snap
   @($b.Keys | Where-Object { $a[$_] } | ForEach-Object { [pscustomobject]@{ pid = $_; name = $b[$_][0]; mbs = [math]::Round(($b[$_][1] - $a[$_][1]) / 2MB, 2) } } | Where-Object mbs -gt 0 | Sort-Object mbs -Descending | Select-Object -First $N)
 }

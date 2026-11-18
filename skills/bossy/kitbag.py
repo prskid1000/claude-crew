@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L35 paths · L124 state · L181 kitlog · L280 load · L702 lint · L1086 README graph · L1189 lint command · L1455 audit ·
-  L1595 registry · L1927 arch lint · L2194 prose · L2359 sections · L2489 budget · L2503 migrate · L2663 plugins ·
-  L2717 state lint · L2905 main
+Sections: L35 paths · L124 state · L181 kitlog · L280 load · L702 lint · L1104 README graph · L1207 lint command · L1473 audit ·
+  L1613 registry · L1945 arch lint · L2212 prose · L2377 sections · L2507 budget · L2521 migrate · L2681 plugins ·
+  L2735 state lint · L2923 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -945,6 +945,24 @@ def lint(k, g=None, org_terms=None):
             if re.search(r'Start-Process\s+(?:-FilePath\s+)?\S*(?:pwsh|powershell|cmd)', line, re.I) and not re.search(r'WindowStyle|NoNewWindow|@hide', line) \
                     and not re.match(r"\s*(#|@\(\s*')", line):
                 bad('HIDDEN-WINDOW', f'{f}:{i + 1}', 'starts a shell without -WindowStyle Hidden / -NoNewWindow: a console window opens on the desktop')   # arch-ok: message text
+    # ---- waste guards (2026-11-18 audit): a short fixed sleep in a loop that calls the host, ssh or re-reads files polls
+    # forever at full rate; a bossy -Recurse over the runtime trees walks ~140k files per sweep
+    rx_call = r'Invoke-HostVerb|Invoke-BoundedSsh|\bssh\b|\bglab\b|\bgh\s|ConvertFrom-Json|Get-Content'
+    for f in counted:
+        if not f.endswith('.ps1') or f.startswith(('tests/',) + GENERATED):
+            continue
+        ls = k.texts.get(f, '').splitlines()
+        for i, line in enumerate(ls):
+            if re.match(r'\s*#', line):
+                continue
+            m = re.search(r'Start-Sleep\s+(?:-Seconds\s+)?(\d+)\b(?!\s*\))|Wait-KitPoll\s+(\d+)', line)
+            if m and int(m.group(1) or m.group(2)) <= 60:
+                win = '\n'.join(ls[max(0, i - 8):i + 1])
+                if re.search(r'\b(while|do|for|foreach)\b', win) and re.search(rx_call, win) and not re.search(r'poll\.maxSec|backoff|poll-ok|\*\s*2\b|Pow\(', win, re.I):
+                    bad('POLL-BACKOFF', f'{f}:{i + 1}', 'a fixed short sleep in a loop that calls the host, ssh or re-reads a file: back off (double up to poll.maxSec, reset on a change) or mark the loop "# poll-ok: <why>"')
+            if f.startswith('skills/bossy/') and re.search(r'Get-ChildItem\b.*-Recurse\b', line) and not re.search(r'-Depth\b|walk-ok', line) \
+                    and re.search(r'qa-runs|\bwork\b|\bcache\b|\blanes\b|\baudit\b|Get-KitRuntime|\$rt\b', line):
+                bad('DEEP-WALK', f'{f}:{i + 1}', 'a -Recurse walk over the runtime trees without -Depth: name the depth (Get-KitQaRunFiles for qa-runs) or mark the line "# walk-ok: <why>"')
     # ---- every lease or hold is written with its holder (README "Leases")
     for f in counted:
         if f.endswith('.ps1') and not f.startswith(('tests/',) + GENERATED):

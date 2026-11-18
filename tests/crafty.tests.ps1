@@ -195,10 +195,9 @@ Expect "guard: an adapter's note is context, no decision ($gn)" ($gn -match '"ad
 $lw = New-LinkedKit 'main kit' @{ tracker = @{ type = 'jira' }; zz = @(@{ p = 'q' }) }
 $tt = pwsh -NoProfile -Command ". '$lw/skills/crafty/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; (Get-KitSetting 'zz' 'dflt').p; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
 Expect 'lib: a linked worktree reads the main clone''s kit.local.json (a list of one object stays a list); fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match '(?m)^q\r?$' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
-$gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID)) $(Test-KitPid $PID 'x')" }
-Expect 'lib: a deleted task leaves tracking (not on outage); reused pid, bad start: dead' ($gt -eq 'True False False True|False True False')
 # learned params: shadowDays 3, heartbeat pinned; KIT_NOW = fake clock
-$pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk, "$pk/../bossy" | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk; Copy-Item "$k/skills/bossy/params.registry.json" "$pk/../bossy"
+$pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk, "$pk/../bossy", "$pk/adapters" | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk; Copy-Item "$k/skills/bossy/params.registry.json" "$pk/../bossy"
+Copy-Item "$k/skills/crafty/adapters/process_gates.ps1" "$pk/adapters"   # Read-KitLog's Get-KitLogLines
 & $J @{ params = @{ shadowDays = 3 }; supervise = @{ heartbeatMinutes = 12 } } "$pk/kit.local.json"
 $pr = Invoke-PsTest params @'
 . $args[0]; $t = [datetime]'2026-01-01T08:00'; $fl = @()

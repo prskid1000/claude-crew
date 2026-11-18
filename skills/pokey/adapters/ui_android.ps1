@@ -113,6 +113,7 @@ switch ($Action) {
     $kv = $ini | ForEach-Object { $h = @{}; Get-Content $_.FullName | ForEach-Object { $k, $v = $_ -split '=', 2; $h[$k] = $v }; $h } | Where-Object { $_['port.serial'] -eq $port -and $_['grpc.port'] } | Select-Object -First 1
     if (-not $kv) { "mic: no gRPC endpoint for emulator-$port (booted by an older phoney.ps1 or with -no-audio): phoney.ps1 avd reset -Lanes <lane> -Level recreate"; exit 1 }
     # audio injected while nothing records crashes the emulator: wait up to 10 s for an active recording
+    # poll-ok: up to 10 local adb probes
     $rec = $false; for ($i = 0; $i -lt 10 -and -not $rec; $i++) { $rec = (& $adb shell dumpsys audio) -match 'active\? true'; if (-not $rec) { Start-Sleep 1 } }
     if (-not $rec) { "mic: the phone is not recording: start the app's listening first (nothing sent)"; exit 1 }
     $env:KIT_GRPC_TOKEN = $kv['grpc.token']

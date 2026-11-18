@@ -121,5 +121,39 @@ $nb = Invoke-KitCacheFlush 12 $m $n 2
 "budget:$($global:polls -eq 1 -and $nb.what -match 'available 3 -> 3 GB')"
 '@
 Expect-Each (Invoke-PsTest 'cache-flush' $cft @($O)) 'cache flush: #' @('once', 'short', 'small', 'fail', 'budget')
+# (cap move from crafty.tests.ps1)
+$gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID)) $(Test-KitPid $PID 'x')" }
+Expect 'lib: a deleted task leaves tracking (not on outage); reused pid, bad start: dead' ($gt -eq 'True False False True|False True False')
+# waste audit 2026-11-18: QA files at their fixed depth, poll backoff, file-change wake, log rows from the window, agent folder cap
+$wst = @'
+$null = . $args[0] 6>$null; $qa = Get-KitPath qa-runs -Create
+foreach ($n in 1..3) { $rd = Join-Path $qa "r$n"; $cd = "$rd/C$n"; New-Item -ItemType Directory -Force "$cd/archive-1", "$cd/scripts", "$cd/evidence" | Out-Null
+  foreach ($f in "$rd/run.json", "$cd/finalize.json", "$cd/archive-1/finalize.json", "$cd/scripts/run.json", "$cd/evidence/finalize.json") { Set-Content $f '{}' } }
+(Get-Item "$qa/r1/C1/finalize.json").LastWriteTime = (Get-Date).AddDays(-10)
+$mine = { process { if ($_.FullName -match '[\\/]r\d[\\/]') { $_ } } }   # the area's earlier runs share qa-runs
+$fin = @(Get-KitQaRunFiles finalize.json | & $mine)
+"qafiles:$(@(Get-KitQaRunFiles run.json | & $mine).Count -eq 3 -and $fin.Count -eq 3 -and @(Get-KitQaRunFiles finalize.json -SinceDays 7 | & $mine).Count -eq 2 -and -not @($fin | Where-Object { $_.Directory.Name -notmatch '^C\d$' }).Count)"
+$global:slept = @(); function Start-Sleep([int]$Seconds) { $global:slept += $Seconds; if ($global:wakeAt -and $global:slept.Count -eq $global:wakeAt) { [IO.File]::SetLastWriteTimeUtc($global:wf, [datetime]::UtcNow.AddMinutes(1)) } }
+$env:KIT_PARAM_POLL_MAXSEC = '100'; $bo = @{}; foreach ($sg in 'a', 'a', 'a', 'a', 'b') { Wait-KitBackoff $bo $sg 30 (Get-Date).AddHours(1) }
+$s1 = $global:slept -join ','; $global:slept = @(); Wait-KitBackoff $bo 'b' 30 (Get-Date).AddSeconds(5)
+"backoff:$($s1 -eq '30,60,100,100,30' -and $global:slept[0] -le 6)"
+$global:wf = Join-Path (Get-KitPath work -Create) 'wake.json'; Set-Content $global:wf '{}'; $global:slept = @(); $global:wakeAt = 4; Wait-KitFileChange $global:wf 15
+$quiet = $global:slept.Count; $global:wakeAt = 0; $global:slept = @(); Wait-KitFileChange $global:wf 15; "wake:$($quiet -eq 4 -and $global:slept.Count -eq 15)"
+$lf = Join-Path (Get-KitPath work) 'rows.jsonl'; $t0 = Get-Date
+$rows = @(foreach ($m in 300, 200, 100, 45, 20, 5) { [ordered]@{ at = $t0.AddMinutes(-$m).ToString('o'); m = $m } | ConvertTo-Json -Compress })
+Set-Content $lf (@($rows[0..3]) + 'not json' + @($rows[4..5]))
+$got = @(Get-KitLogLines $lf $t0.AddMinutes(-30) | ForEach-Object { try { "$(($_ | ConvertFrom-Json).m)" } catch { 'bad' } })
+"loglines:$(($got -join ',') -eq '45,bad,20,5')"
+$env:KIT_PARAM_CLEANUP_AGENTDIRMAXMB = '1'; $DryRun = $false; $actions = [Collections.ArrayList]::new(); $now = Get-Date
+function Gone($path, $why) { Remove-Item -LiteralPath $path -Recurse -Force; [void]$actions.Add([pscustomobject]@{ why = $why; path = $path }) }
+function Old($item, $hours) { ($now - $item.LastWriteTime).TotalHours -gt $hours }
+$ab = Join-Path (Get-KitPath agents -Create) 'big'; $af = Join-Path (Get-KitPath agents) 'fresh'; New-Item -ItemType Directory -Force $ab, $af | Out-Null
+foreach ($p in "$ab/old1.bin", "$ab/old2.bin", "$ab/new1.bin", "$af/a.bin", "$af/b.bin") { [IO.File]::WriteAllBytes($p, [byte[]]::new(700KB)) }
+(Get-Item "$ab/old1.bin").LastWriteTime = $now.AddDays(-4); (Get-Item "$ab/old2.bin").LastWriteTime = $now.AddDays(-3)
+Invoke-KitCleanupAgentDirs
+"cap:$(-not (Test-Path "$ab/old1.bin") -and -not (Test-Path "$ab/old2.bin") -and (Test-Path "$ab/new1.bin") -and (Test-Path "$af/a.bin") -and (Test-Path "$af/b.bin"))"
+"overcap:$(@($actions | Where-Object { $_.why -match '^OVER CAP' -and $_.path -eq $af }).Count -eq 1 -and @($actions | Where-Object { $_.why -match '^OVER CAP' }).Count -eq 1)"
+'@
+Expect-Each (Invoke-PsTest 'waste' $wst @($O)) 'waste audit: #' @('qafiles', 'backoff', 'wake', 'loglines', 'cap', 'overcap') -Show 8
 Remove-TestKit $k
 Complete-Tests

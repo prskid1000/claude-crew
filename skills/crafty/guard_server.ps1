@@ -12,7 +12,8 @@ param([string]$Pipe)
 $kit = Split-Path (Split-Path $PSScriptRoot)
 if (-not $Pipe) { 'usage: guard_server.ps1 -Pipe <name> (guard_client.mjs names it)'; exit 1 }
 # the files the guard's answer depends on: a change ends the server (no stale code)
-$stamp = { @(Get-ChildItem -LiteralPath (Join-Path $kit 'skills/crafty') -Recurse -File -Include '*.ps1', '*.json' -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" }) -join ';' }
+# .NET listing, no pipeline: 1 ms a call (Get-ChildItem -Include: 4.5 ms on every guarded tool call)
+$stamp = { $sb = [Text.StringBuilder]::new(); try { foreach ($sf in [IO.Directory]::EnumerateFiles((Join-Path $kit 'skills/crafty'), '*', 'AllDirectories')) { if ($sf.EndsWith('.ps1') -or $sf.EndsWith('.json')) { [void]$sb.Append($sf).Append('|').Append([IO.File]::GetLastWriteTimeUtc($sf).Ticks).Append(';') } } } catch { }; $sb.ToString() }
 $s0 = & $stamp
 # a runspace keeps the guard's script state; its exit ends one call, never the runspace
 $rs = [runspacefactory]::CreateRunspace(); $rs.Open()

@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L298 shells · L432 page · L998 release · L1038 lines · L1071 cleanup · L1143 launch ·
-  L1221 pause · L1339 heartbeat · L1354 sessions · L1406 ci tasks ·
-  L1461 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L298 shells · L432 page · L998 release · L1038 lines · L1071 cleanup · L1156 launch ·
+  L1234 pause · L1353 heartbeat · L1368 sessions · L1420 ci tasks ·
+  L1475 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1127,9 +1127,22 @@ function Stop-KitScratchOrphans([switch]$DryRun) {
 function Invoke-KitCleanupScratch { foreach ($l in @(Stop-KitScratchOrphans -DryRun:$DryRun)) { [void]$actions.Add($l) } }
 # kept lock files (lib.ps1 Open-KitLockFile) whose file went outside the lock (a wait, lease or board file): unheld after a day -> gone
 function Invoke-KitCleanupLocks {
-  foreach ($lk in @(foreach ($rt in @((Get-KitPath work), (Get-KitPath cache))) { Get-ChildItem -LiteralPath $rt -Recurse -File -Filter '*.lock' -Force -ErrorAction SilentlyContinue })) {
+  # kit locks sit at most 4 levels down (work/agents/<id>/x/y.json.lock); a full walk listed ~140k files (0.6 s)
+  foreach ($lk in @(foreach ($rt in @((Get-KitPath work), (Get-KitPath cache))) { Get-ChildItem -LiteralPath $rt -Recurse -Depth 3 -File -Filter '*.lock' -Force -ErrorAction SilentlyContinue })) {
     $data = $lk.FullName -replace '\.lock$'
     if ($lk.Length -le 64 -and $data -match '\.(json|jsonl|md|txt)$' -and -not (Test-Path -LiteralPath $data) -and (Old $lk 24) -and -not (Test-KitLockHeld $data)) { Gone $lk.FullName 'lock file of a gone file' }
+  }
+}
+# work/agents/<id> over cleanup.agentDirMaxMB (one kitty folder held 1.2 GB inside its 168 h keep): its oldest entries idle 24 h+ go
+# until it fits; still over (all of it fresh) = a line in the cleanup report, so growth never stays silent
+function Invoke-KitCleanupAgentDirs {
+  $capB = [double](Get-KitParam 'cleanup.agentDirMaxMB') * 1MB
+  $sizeOf = { param($p) [long](@(Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) }
+  foreach ($ad in @(Get-ChildItem -LiteralPath (Get-KitPath agents) -Directory -Force -ErrorAction SilentlyContinue)) {
+    $parts = @(Get-ChildItem -LiteralPath $ad.FullName -Force -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ item = $_; size = $(if ($_.PSIsContainer) { & $sizeOf $_.FullName } else { $_.Length }) } })
+    $total = [long](@($parts | Measure-Object size -Sum).Sum); if ($total -le $capB) { continue }
+    foreach ($pt in @($parts | Sort-Object { $_.item.LastWriteTime })) { if ($total -le $capB) { break }; if (Old $pt.item 24) { Gone $pt.item.FullName "agent folder over $([int]($capB / 1MB)) MB"; $total -= $pt.size } }
+    if (-not $DryRun -and $total -gt $capB) { [void]$actions.Add([pscustomobject]@{ mb = 0; why = "OVER CAP agent folder $([int]($total / 1MB)) MB > $([int]($capB / 1MB)) MB, all of it written in the last 24 h"; path = $ad.FullName }) }
   }
 }
 # task files named by a CLI flag (.state/tasks/--help.json: a verb's flag taken as the task id; lib.ps1 now refuses such ids)
@@ -1301,6 +1314,7 @@ function Complete-KitPause([string]$Pf, [double]$Wait) {
   $rec = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json
   $until = (Get-Date).AddMinutes($Wait)
   $resumed = { (Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json).state -eq 'resumed' }
+  # poll-ok: local pause file, bounded by -Wait minutes
   while ($true) { $open = @(Get-KitPauseOpen $rec); if (-not @($open | Where-Object { -not (Test-KitPauseSafe $_ $rec.at) }).Count -or (Get-Date) -ge $until -or (& $resumed)) { break }; Wait-KitPoll 15 }   # safe unconfirmed agents: no wait
   if (& $resumed) { "pause $Pf was resumed meanwhile: nothing stopped"; return }
   foreach ($s in @($rec.runs)) { Invoke-KitStopLearn ([pscustomobject]@{ run = $s.run; leaf = $s.leaf; runId = $s.runId; file = $s.file; selfFile = $s.selfFile; at = $s.at }) 'pause' }

@@ -104,10 +104,13 @@ Add-Content (Join-Path $kc 'README.md') '', 'run `skills/gone/y.ps1`' -Encoding 
 $ngw = 'Go' + 'odies'   # built: the retired word never sits in a kit file
 Set-Content (Join-Path $kc '.githooks/ng') "$ngw here`nthe $ngw line kept (one-time migration)" -Encoding utf8; git -C $kc add -f .githooks/ng
 $qa2 = Join-Path $kc 'skills/pokey/pokey.ps1'; @(Get-Content $qa2) | Where-Object { $_ -notmatch '^#Requires' } | Set-Content $qa2 -Encoding utf8; Add-Content $qa2 "Start-Process $('pw' + 'sh') -ArgumentList x"   # PS-VERSION, HIDDEN-WINDOW
+$stg = Join-Path $kc 'skills/bossy/adapters/storage.ps1'   # POLL-BACKOFF (unmarked loop only), DEEP-WALK
+Add-Content $stg "while (`$true) { Invoke-HostVerb 'mr.get' @{}; Start-Sleep 30 }", "`$deep = Get-ChildItem (Get-KitPath work) -Recurse -File", '# poll-ok: test', "while (`$true) { Invoke-HostVerb 'mr.get' @{}; Start-Sleep 5 }"
 $rv = "$kc/agents/revy.md"; (Get-Content $rv -Raw) -replace 'Show me', 'X' | Set-Content $rv -NoNewline
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 Expect 'kitbag lint: MANIFEST (Character), AGENT-TYPE, LOG-DIRECT, PS-VERSION, HIDDEN-WINDOW, OLD-NAME (also last-<old>s), REF-DANGLING, RUNTIME-MAP rp() name missing from KP' ($l2 -match "RUNTIME-MAP\s+workflows/tidy\.js: rp\('agents'\) is not in const KP" -and $l2 -match 'HIDDEN-WINDOW\s+skills/pokey/pokey\.ps1:\d+' -and $l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match 'LOG-DIRECT\s+workflows/tidy\.js:\d+' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/crafty/templates\.md.*$oldSk" -and
   $l2 -match 'MANIFEST\s+agents/revy\.md: the Character block differs' -and $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -match 'PS-VERSION\s+skills/pokey/pokey\.ps1')
+Expect 'kitbag lint: POLL-BACKOFF flags a fixed short sleep in a host-polling loop, not a "# poll-ok" one; DEEP-WALK flags a bossy -Recurse over work/ without -Depth' (@([regex]::Matches($l2, 'POLL-BACKOFF\s+skills/bossy/adapters/storage\.ps1:\d+')).Count -eq 1 -and $l2 -match 'DEEP-WALK\s+skills/bossy/adapters/storage\.ps1:\d+')
 Expect 'kitbag lint: RETIRED-WORD flags the retired word in any tracked file (case-insensitive, .githooks too), no dated exemption line' ($l2 -match 'RETIRED-WORD\s+\.githooks/ng:1' -and $l2 -match 'RETIRED-WORD\s+\.githooks/ng:2')
 # budget: start tokens per role vs 12000 (lint START-BUDGET); repo and tests totals are INFO; a doc no skill leads to = ORPHAN-DOC
 $b2 = & $py -X utf8 $KT2 budget 2>&1 | Out-String

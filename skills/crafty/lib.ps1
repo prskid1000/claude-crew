@@ -1975,7 +1975,7 @@ function Read-KitLog([string[]]$Stream = $script:KitLogMap.streams, [datetime]$S
   foreach ($s in $Stream) {
     $files = if ((Get-KitProps $script:KitPathMap.durable).Name -contains $s) { Get-KitPath $s } else { Get-ChildItem (Get-KitPath audit) -Directory -ErrorAction SilentlyContinue | Where-Object Name -ge $Since.ToString('yyyy-MM-dd') | Sort-Object Name | ForEach-Object { Join-Path $_.FullName "$s.jsonl" } }
     foreach ($f in @($files | Where-Object { Test-Path -LiteralPath $_ })) {
-      foreach ($l in Get-Content -LiteralPath $f) { $o = try { $l | ConvertFrom-Json } catch { $null }; if ($o.at -and [datetime]$o.at -ge $Since) { $o | Add-Member -Force NoteProperty stream $s; $o } }
+      foreach ($l in (Get-KitLogLines $f $Since)) { $o = try { $l | ConvertFrom-Json } catch { $null }; if ($o.at -and [datetime]$o.at -ge $Since) { $o | Add-Member -Force NoteProperty stream $s; $o } }
     }
   }
 }

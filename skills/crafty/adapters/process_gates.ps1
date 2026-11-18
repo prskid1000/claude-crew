@@ -3,6 +3,8 @@
 # process-gate: Test-KitProcessGate (devtools.py process_gate is the python twin). Kind process-gate: verbs = gate names
 # (promote merge finish bugFix mrBody); built-ins testingDocs (promote here; devtools.py: merge, finish, mrBody) and reproRow (bugFix, devtools.py).
 # process.gates.<gate>: unset = pass · builtin:<name> · a command line (payload JSON on stdin, exit 0 = pass, stdout = why).
+# Sections: L7 gate · L38 process docs · L75 waits
+# ---- gate: process gates, a bounded stdin command
 # a command with text on stdin, bounded: { code; out; err }
 function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [int]$TimeoutSec = 120) {
   $cmd = Get-Command $Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -59,4 +61,33 @@ function Get-KitQaRunGap([string]$RunDir) {
   if (-not $items.Count) { return ', no item tested' }
   $miss = @($items | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName 'report.md')) } | ForEach-Object Name)
   if ($miss.Count) { ", no report: $($miss -join ', ')" } else { '' }
+}
+# qa-runs/<run>/run.json or <run>/<code>/finalize.json at their fixed depth (a -Recurse walk listed every evidence file and
+# matched scripts/run.json and archive-*/finalize.json copies); -SinceDays: written within that many days
+function Get-KitQaRunFiles([ValidateSet('run.json', 'finalize.json')][string]$Name, [double]$SinceDays) {
+  $root = Get-KitPath qa-runs; if (-not [IO.Directory]::Exists($root)) { return }
+  $since = if ($SinceDays) { [datetime]::Now.AddDays(-$SinceDays) } else { [datetime]::MinValue }
+  foreach ($rd in [IO.DirectoryInfo]::new($root).EnumerateDirectories()) {
+    $dirs = if ($Name -eq 'run.json') { @($rd) } else { @(try { $rd.EnumerateDirectories() } catch { }) }
+    foreach ($d in $dirs) { $f = [IO.FileInfo]::new((Join-Path $d.FullName $Name)); if ($f.Exists -and $f.LastWriteTime -gt $since) { $f } }
+  }
+}
+# ---- waits: poll backoff, file-change wake, kit log start
+# a poll's wait: -Seen unchanged since the last round doubles it up to poll.maxSec, a change resets it to -Base; never past -End
+function Wait-KitBackoff([hashtable]$State, [string]$Seen, [double]$Base, [datetime]$End) {
+  $State.wait = if ($Seen -cne $State.seen -or -not $State.wait) { $Base } else { [math]::Min([double](Get-KitParam 'poll.maxSec'), 2 * $State.wait) }; $State.seen = $Seen
+  Start-Sleep -Seconds ([int][math]::Max(1.0, [math]::Min($State.wait, ($End - (Get-Date)).TotalSeconds + 1)))
+}
+# sleep up to -Seconds; a write to -File after the first 2 s ends it early (a loop's idle tick that a request wakes)
+function Wait-KitFileChange([string]$File, [int]$Seconds) {
+  $t0 = [IO.File]::GetLastWriteTimeUtc($File); for ($i = 0; $i -lt $Seconds; $i++) { Start-Sleep 1; if ($i -ge 2 -and [IO.File]::GetLastWriteTimeUtc($File) -ne $t0) { return } }
+}
+# Read-KitLog: rows append in time order ({"at":"<time>" first), so a binary search skips the older ones unparsed (a day's files
+# parsed whole: ~0.8 s a call) -> the non-empty lines from 30 min before -Since on (slack for late rows; an unreadable time = late)
+function Get-KitLogLines([string]$File, [datetime]$Since) {
+  $Lines = "$(Get-Content -LiteralPath $File -Raw)" -split '\r?\n'
+  $lo = 0; $hi = $Lines.Count; $atv = [datetimeoffset]::MinValue; $Cut = if ($Since.Year -gt 1) { $Since.AddMinutes(-30) } else { $Since }
+  while ($lo -lt $hi) { $mid = [int][math]::Floor(($lo + $hi) / 2); $l = $Lines[$mid]
+    if ($l.StartsWith('{"at":"') -and ($q = $l.IndexOf('"', 7)) -gt 7 -and [datetimeoffset]::TryParse($l.Substring(7, $q - 7), [ref]$atv) -and $atv.LocalDateTime -lt $Cut) { $lo = $mid + 1 } else { $hi = $mid } }
+  for ($i = $lo; $i -lt $Lines.Count; $i++) { if ($Lines[$i]) { $Lines[$i] } }
 }

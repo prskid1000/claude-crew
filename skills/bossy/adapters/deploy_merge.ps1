@@ -96,11 +96,11 @@ $url = if ($made.web_url) { $made.web_url } else { Invoke-HostVerb 'mr.url' ($ha
 "deploy MR: $url ($br -> $To)"
 # squash is a GitLab MR field; the other hosts take it per merge call (method merge)
 if ($made.squash -eq $true -and $dmm -ne 'squash') { "deploy MR $url has squash ON (the project forces it?): turn it off, then merge it by hand on green; not merged"; exit 1 }
-$noCi = $rc.ci.mrPipelines -eq $false; $end = (Get-Date).AddMinutes($WaitMinutes)
-do {   # wait for its pipeline: success merges, any other end state stops
+$noCi = $rc.ci.mrPipelines -eq $false; $end = (Get-Date).AddMinutes($WaitMinutes); $bk = @{}
+do {   # wait for its pipeline: success merges, any other end state stops; an unchanged status backs off
   $cur = Invoke-HostVerb 'mr.get' ($ha + @{ n = $iid }) -NoMemo; $st = "$($cur.head_pipeline.status)"; $cs = if ($cur.head_pipeline) { ConvertTo-KitCiState $st } else { 'none' }
   if ($noCi -or ($cur -and $cur.state -ne 'opened') -or $cs -in 'success', 'failed', 'canceled' -or (__CiWord $st) -in 'skipped', 'manual' -or (Get-Date) -gt $end) { break }
-  Start-Sleep (Get-KitParam 'deploy.mergePollSec')
+  Wait-KitBackoff $bk $st (Get-KitParam 'deploy.mergePollSec') $end
 } while ($true)
 if ($cur.state -eq 'merged') { "deploy MR $url already merged"; exit 0 }
 if ($cur.state -ne 'opened') { "deploy MR $url is $(if ($cur) { $cur.state } else { 'unreadable' }): not merged"; exit 1 }

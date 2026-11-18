@@ -3,12 +3,13 @@
 # ts-typecheck: crafty.ps1 check -Step typecheck for tsc. TS5103 (a TypeScript too new for the tsconfig) -> one retry with a
 # temp tsconfig (ignoreDeprecations); errors count only in changed files (+ config errors); > 200 baseline errors = UNRUN (exit 5).
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $log, Hash12, Get-ChangedFiles, Get-WtTarget.
-# TS5103: one retry with a temp tsconfig; fail only on changed files + config errors
 function Invoke-Typecheck([string]$TcCmd) {
   $top = git -C $st.dir rev-parse --show-toplevel 2>$null
   $top = if ($top) { [IO.Path]::GetFullPath("$top".Trim()) } else { $null }
   $Repo = Split-Path $(if ($top) { $top } else { $st.dir }) -Leaf
   $log = Join-Path (Get-KitPath logs -Create) "typecheck-$Repo-$(Get-Date -Format yyyyMMdd-HHmmss).log"
+  # 2 newest per repo kept (355 piled up); older after 1 h
+  Get-ChildItem -LiteralPath (Split-Path $log) -Filter "typecheck-$Repo-*.log" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^typecheck-$([regex]::Escape($Repo))-\d{8}-\d{6}\.log$" } | Sort-Object Name -Descending | Select-Object -Skip 2 | Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-1) } | Remove-Item -Force -ErrorAction SilentlyContinue
   $proj = if ($TcCmd -match '\s-p\s+"?([^"\s]+)"?') { $Matches[1] } else { 'tsconfig.json' }
   $base = [IO.Path]::GetFullPath((Join-Path $st.dir $proj))
   $bin = $null; $d = $st.dir

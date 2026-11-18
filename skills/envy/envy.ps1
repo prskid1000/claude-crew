@@ -24,7 +24,7 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L233 state · L280 layer drops · L352 leases · L460 code · L502 migrations ·
   L505 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L653 shared builds · L786 hooks · L858 marks · L1039 seed ·
-  L1106 processes · L1486 daemon · L1947 cleanup · L2019 doctor · L2073 verbs
+  L1106 processes · L1487 daemon · L1948 cleanup · L2020 doctor · L2074 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -1435,6 +1435,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
         Event $e 'start-failed' @{ service = $s.name; why = $why; release = $release }
         throw "[$e] $($s.name) $why. $(Save-FailLog $log $release)`n$((Get-Content $log -Tail 25 -ErrorAction SilentlyContinue) -join "`n")"   # the tail: DepFailPattern reads it
       }
+      # poll-ok: bounded
       Start-Sleep 1
     }
     $sec = [int]((Get-Date) - $t0).TotalSeconds
@@ -1934,7 +1935,7 @@ try {
       Start-Sleep ([math]::Min(60.0, 3 * [math]::Pow(2, [math]::Min($fails, 5)))); continue
     }
     $fails = 0; $lastErr = $null
-    Start-Sleep 3
+    Wait-KitFileChange (StateFile $e) $(if ($busy -or $pressure) { 3 } else { 15 })   # idle: 15 s, a request wakes it
   }
 } catch { Say "loop crashed: $_ $($_.ScriptStackTrace)" }
 finally {

@@ -11,8 +11,8 @@ ios (Simulators, macOS) | none (verbs refuse; app checks NOT_TESTED).
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
-Sections: L21 config · L111 phone · L307 build · L456 install · L483 launch · L497 avd · L584 up · L675 down · L705 slim ·
-  L732 arrange
+Sections: L21 config · L111 phone · L307 build · L456 install · L483 launch · L497 avd · L584 up · L676 down · L706 slim ·
+  L733 arrange
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -666,6 +666,7 @@ Invoke-KitLocked $c.state {
   $prev = try { @(Read-KitText $c.state | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
   ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
 }
+# poll-ok: three window arranges, no host call
 foreach ($i in 1..3) { Start-Sleep 4; & $KitCmd.swarm arrange | Out-Null }
 & $KitCmd.swarm arrange
 if ($Mode -ne 'None' -and $out) { & $KitCmd.swarm install -Serials $out.serial }

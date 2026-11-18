@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L113 phone · L313 build · L459 install · L486 launch · L498 avd · L584 up · L682 down · L712 events ·
-  L769 slim
+Sections: L24 config · L113 phone · L313 build · L459 install · L486 launch · L498 avd · L584 up · L683 down · L713 events ·
+  L770 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -672,6 +672,7 @@ Invoke-KitLocked $c.state {
   ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
 }
 if (-not $Headless -and ($arrange = Get-Command Invoke-Arrange -ErrorAction SilentlyContinue) -and @($all | Where-Object { $_.name -in $Lanes -and ($ShowAll -or $_.headless -eq $false -or ($null -eq $_.headless -and $c.headless -eq $false)) }).Count) {   # adapters/arrange.ps1; windows appear late
+  # poll-ok: three window arranges, no host call
   foreach ($i in 1..3) { Wait-KitPoll 4; & $arrange | Out-Null }
   & $arrange | Out-Host
 }

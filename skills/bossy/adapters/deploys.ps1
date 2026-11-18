@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L248 deploy · L420 restart · L468 supervise
+Sections: L14 helpers · L93 intest · L248 deploy · L420 restart · L469 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -440,7 +440,7 @@ function Invoke-DeployRestartSsh([string]$t, $d, [string]$Service, [int]$WaitMin
     if (-not $svcs.Count) { "deploy restart: no -Service and no deploys[].ssh.service for $t"; exit 2 }
     if (-not (Get-KitSshServiceCmd $s 'restart' 'x')) { "REFUSED deploy restart ${t}: deploys[].ssh has no manager (systemd | docker | pm2) or restartCmd: set one; nothing restarted"; exit 2 }
     if (-not $s.busy -and -not $Ungated) { "REFUSED deploy restart ${t}: no deploys[].ssh.busy (a shell command that prints live work on the host, e.g. running agent turns): set it, or -Ungated when nothing on $($s.host) can be cut; nothing restarted"; exit 2 }
-    $end = (Get-Date).AddMinutes($WaitMinutes); $done = @(); $sec = [int](Get-KitParam 'deploy.sshTimeoutSeconds'); $key = [string]$s.key -replace '^~', $HOME
+    $end = (Get-Date).AddMinutes($WaitMinutes); $done = @(); $busySaid = $null; $sec = [int](Get-KitParam 'deploy.sshTimeoutSeconds'); $key = [string]$s.key -replace '^~', $HOME
     while ($true) {
       $left = @($svcs | Where-Object { $_ -notin $done })
       $sh = @(
@@ -460,7 +460,8 @@ function Invoke-DeployRestartSsh([string]$t, $d, [string]$Service, [int]$WaitMin
       if (-not ($lines -match '^BUSY=1')) { "UNKNOWN deploy restart ${t}: no answer from $($s.host) (ssh failed or timed out)$(if ($done) { "; restarted: $($done -join ', ')" }); restart state unknown: check the services on the host before a retry"; exit 1 }
       $live = @($lines -match '^LIVE=' -replace '^LIVE=', '') -join ' | '
       if ((Get-Date).AddSeconds($RecheckSeconds) -gt $end) { "REFUSED deploy restart ${t}: live work on $($s.host) after $WaitMinutes min ($live); $(if ($done) { "restarted: $($done -join ', '), not: " } else { 'not restarted: ' })$(@($svcs | Where-Object { $_ -notin $done }) -join ', ') (bossy.ps1 decide ask)"; exit 3 }
-      "BUSY ${t}: live work on $($s.host) ($live): re-check in $RecheckSeconds s (until $($end.ToString('HH:mm')))"; Start-Sleep $RecheckSeconds
+      # printed when the live work changes, not on every re-check
+      if ($live -ne $busySaid) { "BUSY ${t}: live work on $($s.host) ($live): re-check every $RecheckSeconds s (until $($end.ToString('HH:mm')))" }; $busySaid = $live; Start-Sleep $RecheckSeconds
     }
   }
 }
@@ -522,7 +523,7 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
 # supervise (called from Invoke-Supervise: $now, Within and Invoke-Bounded are its own): -AutoFix moves a done task that is live on a
 # test env to inTest (never before); the deploy plan is cached 1 h (a failed refresh keeps the last good one, marked stale): READY envs are report info, DEPLOY ASK only under trigger ask
 function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
-  $flag = { param($level, $what, $action) [pscustomobject]@{ level = $level; what = $what; action = $action } }; $holds = $null
+  $flag = { param($level, $what, $action) [pscustomobject]@{ level = $level; what = $what; action = $action } }; $holds = $null; $qaRunsByTask = $null
   if ($AutoFix) {
     foreach ($o in @((Read-KitTracking).tasks.Values)) {
       if (-not (Within 'deploy checks')) { break }
@@ -531,7 +532,9 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       if ($o.qaCovered) { continue }
       if ($o.liveCheckedAt -and ($now - [datetime]$o.liveCheckedAt).TotalMinutes -lt $(if (@($o.liveOn).Count) { 60 } else { 10 })) { continue }
       # a QA run already covers it: skip the deploy lookup (10+ calls); exact id: 12 is no AB-12
-      $covered = @(Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter 'run.json' -ErrorAction SilentlyContinue | Where-Object { $j = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; (@($j.items.subtasks.id) + @($j.tracker.parent) | ForEach-Object { "$_" }) -contains "$($o.task)" } | ForEach-Object { $_.Directory.Name })
+      # one read of the run.json files per sweep, not per task (each task re-walked 12k QA files)
+      if ($null -eq $qaRunsByTask) { $qaRunsByTask = @{}; foreach ($rf in @(Get-KitQaRunFiles run.json)) { $j = try { [IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json } catch { $null }; foreach ($qid in @(@($j.items.subtasks.id) + @($j.tracker.parent) | ForEach-Object { "$_" } | Where-Object { $_ } | Select-Object -Unique)) { $qaRunsByTask[$qid] = @(@($qaRunsByTask[$qid] | Where-Object { $_ }) + $rf.Directory.Name) } } }
+      $covered = @($qaRunsByTask["$($o.task)"] | Where-Object { $_ })
       if ($covered.Count) { Set-KitTaskFields $o.task @{ qaCovered = @($covered) }; continue }
       $raw = @(Invoke-Bounded $KitCmd.qa @('deployed', '-Mrs', (@($o.mrs) -join ','), '-Json'))   # a background run: none yet (started now, still running) or failed = ask again next round
       if (($raw -join "`n").Trim() -notmatch '^[\[{]') { foreach ($w in @($raw -match '^WATCH ')) { & $flag 'WATCH' "deployed check $($o.task): $($w -replace '^WATCH ')" 'Supervise checks it again next round.' }; continue }

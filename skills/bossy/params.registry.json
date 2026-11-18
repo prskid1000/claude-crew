@@ -23,6 +23,8 @@
   "deploy.inTestDueHours": "config default=24 unit=h",
   "deploy.mergePollSec": "config default=30 unit=s",
   "deploy.mergeSettleSec": "config default=3 unit=s",
+  "poll.maxSec": "config default=300 unit=s",
+  "cleanup.agentDirMaxMB": "config default=1024 unit=MB",
   "localEnv.startMinutes": "config default=10 unit=min",
   "localEnv.lanes.openAfterMinutes": "quantile q=.9 k=1.5 default=15 floor=5 ceil=60 unit=min",
   "localEnv.prepareTimeoutSec": "config default=300 unit=s",

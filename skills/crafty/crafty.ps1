@@ -16,8 +16,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1305 guard · L2182 dir ·
-  L2192 checkpoint · L2222 prior · L2260 tracker · L2282 task spec · L2462 scope · L2510 host
+Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1304 guard · L2181 dir ·
+  L2191 checkpoint · L2221 prior · L2259 tracker · L2281 task spec · L2461 scope · L2509 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1268,7 +1268,6 @@ if (-not $Mrs) {   # a wt worktree: its branch's open MRs; else the tracked task
 }
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
-# repos[].ci.mrPipelines false: no MR pipelines
 $noMrCi = @(Get-KitValue 'repos' @() | Where-Object { $_.ci.mrPipelines -eq $false } | ForEach-Object { @($_.name) + @($_.aliases) } | Where-Object { $_ } | ForEach-Object { "$_".ToLower() })
 # no head pipeline: no-ci (no CI config) or no-pipeline (may start)
 function State($url) {
@@ -1291,13 +1290,13 @@ function State($url) {
   }
   $o
 }
-$start = Get-Date; $end = $start.AddMinutes($MaxMinutes)
+$end = (Get-Date).AddMinutes($MaxMinutes); $bk = @{}; $states = $list.ForEach({ State $_ })
 do {
-  $states = @($list | ForEach-Object { State $_ })
   # a pipeline may still start
   $busy = @($states | Where-Object { $_.status -in 'created', 'pending', 'running', 'waiting_for_resource', 'preparing', 'scheduled', 'no-pipeline', 'unknown' -or ($UntilMerged -and $_.status -notin 'merged', 'failed', 'canceled', 'closed', 'bad-url') })
   if (-not $busy -or (Get-Date) -gt $end -or ($UntilMerged -and @($states | Where-Object { $_.status -in 'failed', 'canceled', 'closed', 'bad-url' }).Count)) { break }   # one will never merge: stop now
-  Start-Sleep 30
+  Wait-KitBackoff $bk "$($states.status)" 30 $end
+  $states = $states.ForEach({ if ($_.status -notin 'merged', 'closed', 'bad-url') { State $_.mr } else { $_ } })
 } while ($true)
 [ordered]@{ done = (-not $busy); mrs = $states } | ConvertTo-Json -Depth 4 -Compress
 }

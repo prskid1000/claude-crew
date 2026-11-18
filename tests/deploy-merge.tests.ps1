@@ -71,6 +71,16 @@ Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos = @(@{ name 
 Set-JsonFile (Join-Path (TkPath $k deploys -Create) 'pending.json') @{ requests = @(@{ at = (Get-Date).ToString('s'); run = 'r1'; mrs = @('api!9', 'web!4') }) }
 $null = pwsh @np $O deploy record -Env stage -By tester 2>&1; $pend62 = @((Read-Json (Join-Path (TkPath $k deploys) 'pending.json')).requests.mrs)
 Expect "deploy record without -Mrs: the stage repo's MR leaves pending, the other repo's request stays ($($pend62 -join ','))" (($pend62 -join ',') -eq 'web!4')
+# pipes (waste audit 2026-11-18): a failed pipeline retried is still re-polled, a merged-style end state is not; every round backs off
+$pp = Invoke-PsTest 'pipes-backoff' @'
+$null = . $args[0] 6>$null; $global:seq = @{ '1' = @('failed', 'running', 'success'); '2' = @('running', 'success') }; $global:calls = @{ '1' = 0; '2' = 0 }; $global:naps = 0
+function Invoke-HostVerb([string]$Verb, $A, [switch]$NoMemo) { if ($Verb -ne 'mr.get') { return @() }; $n = "$($A.n)"; $i = [math]::Min($global:calls[$n], $global:seq[$n].Count - 1); $global:calls[$n]++
+  [pscustomobject]@{ state = 'opened'; target_branch = 'main'; head_pipeline = [pscustomobject]@{ status = $global:seq[$n][$i]; id = 0 } } }
+function Start-Sleep([int]$Seconds) { $global:naps++ }
+$po = Invoke-Pipes -Mrs 'https://git.example.com/g/r/-/merge_requests/1,https://git.example.com/g/r/-/merge_requests/2' -MaxMinutes 5 | ConvertFrom-Json
+"retry:$((@($po.mrs.status) -join ',') -eq 'success,success' -and $po.done -and $global:calls['1'] -eq 3 -and $global:naps -eq 2)"
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
+Expect-Each $pp 'pipes: #' 'retry' -Show 4
 Remove-Item Env:CLAUDE_WT_ROOT
 Remove-TestKit $k
 Complete-Tests
