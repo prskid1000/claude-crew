@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L225 api · L447 finalize · L918 results · L951 retest · L1008 prepare
+Sections: L26 lanes · L40 report · L156 seat · L225 api · L447 finalize · L919 results · L952 retest · L1009 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -660,6 +660,7 @@ $prev = if ((Test-Path $fin) -and -not $Force) { Get-Content $fin -Raw | Convert
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
 $tester = if ($run.tester) { $run.tester } else { [Environment]::UserName }
 $tr = $run.tracker
+if ($tr.parent) { try { Add-KitQaParent ([string]$tr.parent) } catch { Write-Warning "QA parents index: $_" } }   # supervise reads it for new [Bug] tasks (30 d)
 Push-Location $RunDir; $script:qaFinPushed = $true   # tracker CLIs run inside the run folder
 trap { if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }; break }
 function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-Warning "tracker ($($KitConf.TrackerType)): $what failed: $_"; $null } }

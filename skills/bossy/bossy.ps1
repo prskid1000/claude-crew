@@ -27,8 +27,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L34 init · L45 board · L224 budget · L254 launch · L495 recover · L582 pause · L593 resume · L660 program · L711 param ·
-  L717 track · L1059 supervise · L1378 report · L1458 audit · L1518 storage · L1521 bugbrief · L1635 cleanup · L1722 learn ·
-  L1753 decide · L1904 debate · L1948 health · L2015 retro due · L2025 tidy · L2097 setup · L2194 guard-sendmessage
+  L717 track · L1059 supervise · L1382 report · L1462 audit · L1522 storage · L1525 bugbrief · L1639 cleanup · L1726 learn ·
+  L1757 decide · L1908 debate · L1952 health · L2019 retro due · L2029 tidy · L2101 setup · L2198 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1264,9 +1264,13 @@ if ((Test-Path (Get-KitPath scope-log)) -and (Within 'scope')) { foreach ($w in 
 
 # 5. QA results: new [Bug], failedTesting tasks (bossy E6)
 if (Within 'QA bug tasks') {
-  # runs of the last 7 days (as failedTesting): every run.json each beat read 500 old runs and viewed each parent (waste guard)
+  # run.json of the last 7 days only (every run.json each beat read 500 old runs: waste guard); parents of 30 days from the QA
+  # parents index (finalize writes it): a 7-day one viewed each beat, an older one at most every 6 h (owner decision 2026-11-18)
   $qaRecent = @(foreach ($rf in @(Get-KitQaRunFiles run.json -SinceDays 7)) { try { [pscustomobject]@{ dir = $rf.Directory; j = ([IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json) } } catch {} })
-  $parents = @($qaRecent | ForEach-Object { $_.j.tracker.parent } | Where-Object { $_ } | Select-Object -Unique)
+  $qaIdx = Update-KitQaParents { param($q) foreach ($qr in $qaRecent) { $qp = [string]$qr.j.tracker.parent; $qt = $qr.dir.LastWriteTime
+      if ($qp -and (-not $q[$qp] -or [datetime]$q[$qp].at -lt $qt)) { $q[$qp] = @{ at = $qt.ToString('o'); seen = $q[$qp].seen } } } }
+  $parents = @($qaIdx.Keys | Where-Object { $qo = $qaIdx[$_]; ($now - [datetime]$qo.at).TotalDays -le 7 -or -not $qo.seen -or ($now - [datetime]$qo.seen).TotalHours -ge 6 })
+  if ($parents.Count) { $null = Update-KitQaParents { param($q) foreach ($qp in $parents) { if ($q[$qp]) { $q[$qp].seen = $now.ToString('o') } } } }
   $tracked = @((Read-KitTracking).tasks.Keys)
   $openRuns = @{}
   foreach ($qr in @($qaRecent | Where-Object { ($now - $_.dir.LastWriteTime).TotalHours -lt 3 })) {

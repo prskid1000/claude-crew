@@ -3,7 +3,7 @@
 # process-gate: Test-KitProcessGate (devtools.py process_gate is the python twin). Kind process-gate: verbs = gate names
 # (promote merge finish bugFix mrBody); built-ins testingDocs (promote here; devtools.py: merge, finish, mrBody) and reproRow (bugFix, devtools.py).
 # process.gates.<gate>: unset = pass · builtin:<name> · a command line (payload JSON on stdin, exit 0 = pass, stdout = why).
-# Sections: L7 gate · L38 process docs · L75 waits · L94 api budget
+# Sections: L7 gate · L38 process docs · L87 waits · L106 api budget
 # ---- gate: process gates, a bounded stdin command
 # a command with text on stdin, bounded: { code; out; err }
 function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [int]$TimeoutSec = 120) {
@@ -61,6 +61,18 @@ function Get-KitQaRunGap([string]$RunDir) {
   if (-not $items.Count) { return ', no item tested' }
   $miss = @($items | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName 'report.md')) } | ForEach-Object Name)
   if ($miss.Count) { ", no report: $($miss -join ', ')" } else { '' }
+}
+# QA parents index (owner decision 2026-11-18): the tracker parent of every QA run of the last 30 days, written at finalize (and by
+# supervise from recent runs), read per beat instead of every run.json: { <parent>: { at: last run, seen: last tracker view } }
+function Update-KitQaParents([scriptblock]$Change) {
+  $qf = Join-Path (Get-KitPath cache -Create) 'qa-parents.json'
+  Invoke-KitLocked $qf { $q = try { Get-Content -LiteralPath $qf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $q) { $q = @{} }
+    & $Change $q
+    foreach ($qk in @($q.Keys)) { if (([datetime]::Now - [datetime]$q[$qk].at).TotalDays -gt 30) { $q.Remove($qk) } }   # older runs: out of the window
+    Write-KitAtomic $qf ($q | ConvertTo-Json -Depth 4 -Compress); $q }
+}
+function Add-KitQaParent([string]$Parent, [datetime]$At = [datetime]::Now) {
+  if ($Parent) { $null = Update-KitQaParents { param($q) $o = $q[$Parent]; if (-not $o -or [datetime]$o.at -lt $At) { $q[$Parent] = @{ at = $At.ToString('o'); seen = $o.seen } } } }
 }
 # qa-runs/<run>/run.json or <run>/<code>/finalize.json at their fixed depth (a -Recurse walk listed every evidence file and
 # matched scripts/run.json and archive-*/finalize.json copies); -SinceDays: written within that many days

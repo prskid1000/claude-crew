@@ -225,5 +225,19 @@ $card = Format-KitWritesCard ([ordered]@{ at = $t1.ToString('o'); hour = $s2.hou
 "card:$($card -match "class='st hot'" -and $card -match '<div class=s>kitty \(build x\): robocopy tree</div><m act>6 GB/h</m>' -and $card -match 'devy-a shell: mysql bulk2</div><m watch>2\.5 GB/h' -and $card -match 'soft 2 / hard 5 GB')"
 '@
 Expect-Each (Invoke-PsTest 'writes' $wrt @($O)) 'disk writes per owner: #' @('first', 'soft', 'hard', 'restart', 'unseen', 'card') -Show 8
+# QA parents index (owner decision 2026-11-18): a [Bug] under the parent of a 20-day-old run (no run.json in the 7-day scan) still
+# raises its ACT; a second beat within 6 h views it no more (cached); finalize writes the index
+$qpt = @'
+$env:KIT_TRACKER_TYPE = 'none'; $null = . $args[0] 6>$null; $cd = $KitCmd.dev
+$ask = (pwsh -NoProfile -File $cd tracker create -Key qa-fx-qp-1 -List L1 -Name 'Ask old' -Description 'a' -NewTask fixture | ConvertFrom-Json).id
+$null = pwsh -NoProfile -File $cd tracker create -Key qa-fx-qp-2 -List L1 -Parent $ask -Name '[Bug] Old ask button broken' -Description 'b' -NewTask fixture
+Add-KitQaParent $ask (Get-Date).AddDays(-20); Add-KitQaParent 'gone-40d' (Get-Date).AddDays(-40)
+$act = { @((pwsh -NoProfile -File $args[0] supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags | Where-Object { $_.level -eq 'ACT' -and $_.what -match 'new QA bug task' }).Count }
+$a1 = & $act $args[0]; $seen1 = (Get-Content (Join-Path (Get-KitPath cache) 'qa-parents.json') -Raw | ConvertFrom-Json -AsHashtable)
+$a2 = & $act $args[0]
+"old:$($a1 -eq 1 -and $seen1[$ask].seen -and -not $seen1.ContainsKey('gone-40d'))"
+"cached:$($a2 -eq 0)"
+'@
+Expect-Each (Invoke-PsTest 'qaparents' $qpt @($O)) 'QA parents index: #' @('old', 'cached') -Show 8
 Remove-TestKit $k
 Complete-Tests
