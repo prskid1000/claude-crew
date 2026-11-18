@@ -17,6 +17,8 @@ $tmpMap = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | 
 $tmpRoot = Join-Path (Join-Path $src $tmpMap.runtimeDir) $tmpMap.runtime.tmp.TrimEnd('/'); New-Item -ItemType Directory -Force $tmpRoot | Out-Null   # the source kit's <runtime>/tmp (CLAUDE_RUNTIME unset above)
 $env:TEMP = $env:TMP = $env:TMPDIR = Join-Path $tmpRoot "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # GetTempPath, python tempfile, node tmpdir of every test
 $env:GIT_CEILING_DIRECTORIES = $tmpRoot   # a non-git test kit under it never finds the kit's own repo
+$env:GIT_TEMPLATE_DIR = (New-Item -ItemType Directory -Force (Join-Path $tmpRoot 'git-template/info')).Parent.FullName   # test init / clone: info/ only, no hook samples (11 entries, not 28)
+$env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'maintenance.auto'; $env:GIT_CONFIG_VALUE_0 = 'false'   # test repos never start auto gc (lib.ps1 does the same)
 $env:KIT_FLOW_CACHE_RO = Join-Path (Join-Path $src $tmpMap.runtimeDir) $tmpMap.runtime.'kit-flow-cache'   # flow parses: the source kit's cache, read only (each test kit wrote MBs)
 # `pwsh -NoProfile -File <kit script>` runs in this process (0.07 s, not 0.7 s), seen as a child sees it (streams, exit code, cwd,
 # env, globals); stdin readers, gate / check / guard and KIT_TESTS_SPAWN=1: real processes

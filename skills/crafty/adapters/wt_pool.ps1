@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L130 names · L164 slots · L190 lease · L295 release · L323 lanes · L428 sync · L524 pool
+Sections: L14 worktrees · L130 names · L164 slots · L190 lease · L295 release · L323 lanes · L428 sync · L528 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -456,8 +456,10 @@ function Update-KitPoolUsage([string]$Repo, [int]$Size, [int]$Default, $Slots, [
   $res
 }
 function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
-  $rl = Split-Path $Repo -Leaf; $r = [ordered]@{ repo = $rl; at = (Get-Date).ToString('o'); ff = @(); diverged = @(); dirty = @(); pruned = @(); warmed = @(); err = '' }
-  $fo = @(git -C $Repo fetch -q --prune origin 2>&1); if ($LASTEXITCODE) { $r.err = "fetch failed: $(@($fo)[-1])"; return [pscustomobject]$r }
+  $rl = Split-Path $Repo -Leaf; $r = [ordered]@{ repo = $rl; at = (Get-Date).ToString('o'); ff = @(); diverged = @(); dirty = @(); pruned = @(); warmed = @(); maint = $false; err = '' }
+  # a preview (wt pool) reuses a fetch under 10 min old: no 6-repo fetch per look
+  $fh = "$(git -C $Repo rev-parse --path-format=absolute --git-path FETCH_HEAD 2>$null)".Trim(); $fresh = $DryRun -and $fh -and (Test-Path -LiteralPath $fh) -and ((Get-Date) - (Get-Item -LiteralPath $fh).LastWriteTime).TotalMinutes -lt 10
+  $fo = @(if (-not $fresh) { git -C $Repo fetch -q --prune origin 2>&1 }); if (-not $fresh -and $LASTEXITCODE) { $r.err = "fetch failed: $(@($fo)[-1])"; return [pscustomobject]$r }
   $tgt = "$(Get-RepoConf (Get-KitCheckoutName $Repo) 'target' '')"; if (-not $tgt) { $tgt = "$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/' }
   $keepRx = Get-KitKeepBranchRx $Repo; $at = @{}; $busy = @{}   # busy: a leased slot or a rebase in progress (its branch is not in worktree list then)
   $leased = @(Get-KitSlots $Repo | Where-Object { Read-KitSlotLease $_.file } | ForEach-Object { "$($_.path)".Replace('\', '/').ToLower() })
@@ -515,6 +517,8 @@ function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
         Meta $mk.p 'slot' $mk.n; $r.warmed += "$rl·$(Get-KitBirdName $mk.n)" } finally { Remove-Item -LiteralPath $mk.lf -Force -ErrorAction SilentlyContinue }
     }
   }
+  # the gc kit git skips (lib.ps1 maintenance.auto): at most once a sync, only with no slot of this repo leased; git's own thresholds
+  if (-not $DryRun -and -not $leased.Count) { git -C $Repo maintenance run --auto --quiet --detach 2>$null | Out-Null; $r.maint = $LASTEXITCODE -eq 0 }
   $sf = Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'sync')).FullName "$rl.json"
   if (-not $DryRun) { Write-KitAtomic $sf ([pscustomobject]$r | ConvertTo-Json -Depth 4) }
   [pscustomobject]$r

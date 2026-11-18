@@ -93,6 +93,14 @@ git -C $sx checkout -q beh; 'more' | Set-Content "$sx/beh2.txt"; Save-GitRepo $s
 $ls = pwsh @np $D wt lease -Repo syn -Branch beh -Agent devS 2>&1 | Out-String; $lsd = if ($ls -match '(?m)^worktree: (.+)$') { $Matches[1].Trim() }; $b0 = & $tip beh
 $sp2 = pwsh @np $D wt pool -Repo syn -Sync 2>&1 | Out-String; $syj2 = Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json
 Expect "repo sync: a leased slot's branch stays (listed), a stranded detached commit is kept ($(@($syj2.dirty) -join ' | '))" ($lsd -and (& $tip beh) -eq $b0 -and @($syj2.dirty) -match 'leased slot' -and $stOk)
+# git writes: a preview reuses a fetch under 10 min old; gc only from a sync with no slot leased; kit git (lib.ps1, kitbag.py) never auto-gcs
+$fhp = "$sr/.git/FETCH_HEAD"; $fh0 = (Get-Item $fhp).LastWriteTime; $null = pwsh @np $D wt pool -Repo syn 2>&1; $fh1 = (Get-Item $fhp).LastWriteTime
+(Get-Item $fhp).LastWriteTime = (Get-Date).AddMinutes(-11); $null = pwsh @np $D wt pool -Repo syn 2>&1; $fh2 = (Get-Item $fhp).LastWriteTime
+$gx = @{ GIT_CONFIG_COUNT = $null; GIT_CONFIG_KEY_0 = $null; GIT_CONFIG_VALUE_0 = $null }; $gx0 = @{}; foreach ($n in $gx.Keys) { $gx0[$n] = [Environment]::GetEnvironmentVariable($n); [Environment]::SetEnvironmentVariable($n, $gx[$n]) }
+$gPs = "$(& $pwshExe -NoProfile -Command ". '$src/skills/crafty/lib.ps1'; . '$src/skills/crafty/lib.ps1'; '{0} {1}' -f `$env:GIT_CONFIG_COUNT, (git config maintenance.auto)")".Trim()
+$gPy = "$(& $py -X utf8 -c "import sys, subprocess; sys.path.insert(0, r'$src/skills/bossy'); import kitbag, os; print(os.environ['GIT_CONFIG_COUNT'], subprocess.run(['git', 'config', 'maintenance.auto'], capture_output=True, text=True).stdout.strip())")".Trim()
+foreach ($n in $gx.Keys) { [Environment]::SetEnvironmentVariable($n, $gx0[$n]) }
+Expect "git writes: preview fetch reused under 10 min, refreshed after; sync gc only unleased ($($syj.maint)/$($syj2.maint)); lib.ps1 '$gPs', kitbag '$gPy' set maintenance.auto=false once" ($fh1 -eq $fh0 -and $fh2 -gt (Get-Date).AddMinutes(-5) -and $syj.maint -eq $true -and $syj2.maint -eq $false -and $gPs -eq '1 false' -and $gPy -eq '1 false')
 # K38 verdicts: a squash-merged branch with no upstream (the MR merged a rebased copy) goes; a dead lane goes when only its test merges
 # are local, stays with its own commit; a merged worktree whose only leftovers are edited tracked files: patch saved, then removed
 $vb = "$base/vb"; git clone -q $orig $vb 2>$null; $mk = { param($b, $msg) git -C $vb checkout -q -b $b origin/main; "$b" | Set-Content "$vb/$($b -replace '/', '_').txt"; Save-GitRepo $vb $msg; "$(git -C $vb rev-parse HEAD)".Trim() }

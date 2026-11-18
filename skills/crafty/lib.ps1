@@ -1,12 +1,13 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L91 state · L172 config · L253 OS · L473 leases · L871 status · L1129 supervise sweep · L1209 tracker ·
-  L1550 prior · L1566 ask bugs · L1751 git-host · L1932 kitlog · L2052 params · L2357 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L474 leases · L872 status · L1130 supervise sweep · L1210 tracker ·
+  L1551 prior · L1567 ask bugs · L1752 git-host · L1932 kitlog · L2052 params · L2357 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
-$env:GIT_OPTIONAL_LOCKS = '0'   # git probes (status, diff) never rewrite a repo's index
+$env:GIT_OPTIONAL_LOCKS = '0'   # probes never rewrite the index; no gc per fetch / commit (wt pool -Sync)
+if (-not $env:GIT_CONFIG_COUNT) { $env:GIT_CONFIG_COUNT = 1; $env:GIT_CONFIG_KEY_0 = 'maintenance.auto'; $env:GIT_CONFIG_VALUE_0 = 'false' }
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
@@ -1863,8 +1864,7 @@ function Format-KitMrLink([string]$Ref) {
   if ($u -notmatch '^https?://[^/\s]+/\S+$') { return $r }; "[$(if ($r -match '^https?://') { "$(($p.repo -split '/')[-1])!$($p.n)" } else { $r })]($u)"
 }
 function ConvertFrom-KitMrRef([string]$Ref) { $r = "$Ref".Trim(); if ($u = ConvertFrom-MrUrl $r) { $u } elseif ($r -match '^(?<repo>[\w./-]+)[!#](?<n>\d+)$') { $rp = $Matches.repo; $rn = $Matches.n; @{ repo = (Get-HostProject $(if ($rp.Contains('/')) { $rp } else { Get-KitRepoName $rp }) -Raw); n = $rn; type = $script:HostType } } }   # an alias ref names its repo
-# page links (dashboard, run pages): an MR ref or URL -> @{ text = <repo>!<n> (gitlab, azure) or <repo>#<n>; url = host mr.url } and a task id
-# -> @{ text = id; url = tracker url }; url '' when the adapter gives no web URL (tracker none: a file path), so the page shows plain text
+# page links: MR ref / URL or task id -> @{ text = <repo>!<n> | <repo>#<n> | id; url }; no web URL: url '' (plain text)
 function Get-KitMrLink([string]$Ref) {
   $r = "$Ref".Trim(); $p = ConvertFrom-KitMrRef $r; if (-not $p) { return @{ text = $r; url = '' } }
   $u = if ($r -match '^https?://') { $r } else { try { "$(Invoke-HostVerb 'mr.url' @{ repo = $p.repo; n = $p.n })".Trim() } catch { '' } }

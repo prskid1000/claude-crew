@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L35 paths · L124 state · L181 kitlog · L280 load · L702 lint · L1104 README graph · L1207 lint command · L1473 audit ·
-  L1613 registry · L1945 arch lint · L2212 prose · L2377 sections · L2507 budget · L2521 migrate · L2681 plugins ·
-  L2735 state lint · L2923 main
+Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1475 audit ·
+  L1615 registry · L1947 arch lint · L2214 prose · L2379 sections · L2509 budget · L2523 migrate · L2683 plugins ·
+  L2737 state lint · L2925 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -31,6 +31,8 @@ from typing import Dict, List, Optional, Set, Tuple
 
 KIT_DIR = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))   # 3 levels up: <kit>
 os.environ['GIT_OPTIONAL_LOCKS'] = '0'   # git probes (status, diff) never rewrite a repo's index (lib.ps1 sets it too)
+if not os.environ.get('GIT_CONFIG_COUNT'):   # no auto maintenance per kit fetch / commit (lib.ps1 sets it too)
+    os.environ.update({'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'maintenance.auto', 'GIT_CONFIG_VALUE_0': 'false'})
 
 # ---- paths: kit.example.json _paths
 with open(osp.join(KIT_DIR, 'skills', 'crafty', 'kit.example.json'), encoding='utf-8') as _f:
