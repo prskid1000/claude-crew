@@ -132,6 +132,10 @@ function Stop-TestMySql($Server) {
 # and the second kit-test servers it saw (starts, strays)
 function Exit-TestMySqlHolder([string]$StateDir, [int]$Holder, [switch]$Locked) {
   if (-not (Test-Path (Join-Path $StateDir 'server.json'))) { return [pscustomobject]@{ starts = 0; strays = @() } }
+  # a run that neither holds nor started it, with other live runs on it: nothing to do (the lock wait hung a guard-only run 30 min)
+  $tmPeek = Read-TestMySqlState $StateDir; $tmMe0 = Get-TestProcStamp $Holder
+  if (-not $Locked -and $tmMe0 -notin @($tmPeek.holders) -and "$($tmPeek.owner)" -ne $tmMe0 -and @($tmPeek.holders | Where-Object { $_ -and (Test-TestProcStamp $_) }).Count) {
+    return [pscustomobject]@{ starts = 0; strays = @() } }
   $tmLock = if ($Locked) { $null } else { Enter-TestMySqlLock $StateDir }
   try {
     $tmMe = Get-TestProcStamp $Holder; $St = Read-TestMySqlState $StateDir
