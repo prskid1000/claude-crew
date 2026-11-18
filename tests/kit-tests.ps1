@@ -63,12 +63,17 @@ $env:KIT_TESTS_SNAPSHOT = Join-Path $tmpRoot "kit-tests-src-$PID"
 if (-not $env:KIT_TESTS_SLACK) { $env:KIT_TESTS_SLACK = [Math]::Round([Math]::Min(3, [Math]::Max(1, $areas.Count / [Environment]::ProcessorCount)), 2).ToString([Globalization.CultureInfo]::InvariantCulture) }
 $started = Get-Date
 $env:KIT_TESTS_RUNNER = $PID   # the one test mysqld's holder for every area of this run (test-mysql.ps1)
-$results =$areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {
+$src = Split-Path $PSScriptRoot; . (Join-Path $PSScriptRoot 'test-mysql.ps1'); $myStarts = 0; $myMysqlErr = ''
+try {
+$results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {
   $clock = [Diagnostics.Stopwatch]::StartNew()
   $out = pwsh -NoProfile -File (Join-Path $using:PSScriptRoot "$_.tests.ps1") 2>&1 | Out-String
   Write-Host "  $_ done ($([int]$clock.Elapsed.TotalSeconds) s)"   # progress while the slower areas run
   [pscustomobject]@{ area = $_; out = $out.TrimEnd(); code = $LASTEXITCODE; seconds = [int]$clock.Elapsed.TotalSeconds }
 } | Sort-Object { [array]::IndexOf($areas, $_.area) }   # area order, not finish order: output and TEST-DUP lists stay stable
+} finally {   # Ctrl-C or a crash too: this run lets the test mysqld go (it stops, data kept, when no other run holds it)
+  try { $myStarts = Exit-TestMySqlHolder (Get-TestMySqlHome) $PID } catch { $myMysqlErr = $_.Exception.Message }
+}
 $fails = 0; $logLines = [Collections.Generic.List[string]]::new()
 foreach ($r in $results) {
   $f0 = $fails
@@ -91,8 +96,7 @@ foreach ($sf in @(Get-ChildItem -LiteralPath $env:KIT_TESTS_SNAPSHOT -File -Recu
   if ($s1 -and $s1.LastWriteTimeUtc -lt $started.ToUniversalTime() -and $s1.LastWriteTimeUtc -ne $sf.LastWriteTimeUtc) { "TEST-WRITE $rel`: a test changed it in place through a hard link"; $fails++ } }
 Remove-Item -LiteralPath $env:KIT_TESTS_SNAPSHOT -Recurse -Force -ErrorAction SilentlyContinue
 # TEST-MYSQLD (K78): at most one test mysqld start per run; it stops here (data kept) unless another run still holds it
-$src = Split-Path $PSScriptRoot; . (Join-Path $PSScriptRoot 'test-mysql.ps1')
-$myStarts = 0; try { $myStarts = Exit-TestMySqlHolder (Get-TestMySqlHome) $PID } catch { "TEST-MYSQLD the test mysqld did not stop: $($_.Exception.Message)" }
+if ($myMysqlErr) { "TEST-MYSQLD the test mysqld did not stop: $myMysqlErr" }
 if ($myStarts -gt 1) { "TEST-MYSQLD this run started the test mysqld $myStarts times (at most 1: tests/test-mysql.ps1)"; $fails++ }
 # FAIL recap, indented: never counted twice
 $failed = @($cases | Where-Object fail); if ($failed.Count) { 'Failed checks:'; $failed | ForEach-Object { "  [$($_.at)] $($_.text)" } }
