@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-supervise-generic.tests.ps1: supervise resources on neutral and custom config: cleanup.idleDaemons, storage.toolCaches, gate.labels.
+supervise-generic.tests.ps1: supervise resources on neutral and custom config: cleanup.idleDaemons, storage.toolCaches, gate.labels; shell progress (bossy.ps1 shells).
 Usage: pwsh -NoProfile -File <kit>/tests/supervise-generic.tests.ps1 (or tests/kit-tests.ps1 -Area supervise-generic).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -225,5 +225,41 @@ $card = Format-KitWritesCard ([ordered]@{ at = $t1.ToString('o'); hour = $s2.hou
 "card:$($card -match "class='st hot'" -and $card -match '<div class=s>kitty \(build x\): robocopy tree</div><m act>6 GB/h</m>' -and $card -match 'devy-a shell: mysql bulk2</div><m watch>2\.5 GB/h' -and $card -match 'soft 2 / hard 5 GB')"
 '@
 Expect-Each (Invoke-PsTest 'writes' $wrt @($O)) 'disk writes per owner: #' @('first', 'soft', 'hard', 'restart', 'unseen', 'card') -Show 8
+# shell progress (fake clock): output file from the tool_result, Git Bash child with a dead parent adopted, CPU / sample pair / output reset the quiet clock
+$pg = Invoke-PsTest 'shellprog' @'
+. $args[0]; $tr = Join-Path $args[1] 'tx-pg'; $env:KIT_TRANSCRIPTS = $tr; $env:KIT_PARAM_SUPERVISE_SHELLSTUCKMINUTES = '5'; $env:KIT_PARAM_SUPERVISE_HEARTBEATMINUTES = '1'
+$t0 = [datetime]'2026-01-05T10:00:00'; $of = Join-Path $args[1] 'pg-tasks/b1.output'; $tx = "$tr/s7/subagents/agent-p1.jsonl"; New-Item -ItemType Directory -Force (Split-Path $of), (Split-Path $tx) | Out-Null
+[IO.File]::WriteAllText($of, "step 1`n`e[32mstep 2 ok`e[0m`n"); '{"agentType":"devy"}' | Set-Content "$tr/s7/subagents/agent-p1.meta.json"
+$ca = 'for i in 1 2 3; do ./step.sh $i; sleep 60; done'; $cb = 'timeout 1500 pwsh -File long-job.ps1 -Minutes 20'; $ts = $t0.AddMinutes(-20).ToUniversalTime().ToString('o')
+Add-Content -LiteralPath $tx (@{ type = 'assistant'; timestamp = $ts; message = @{ content = @(@{ type = 'tool_use'; id = 'toolu_pa'; name = 'Bash'; input = @{ command = $ca; run_in_background = $true } }) } } | ConvertTo-Json -Compress -Depth 8)
+Add-Content -LiteralPath $tx (@{ type = 'user'; timestamp = $ts; message = @{ content = @(@{ type = 'tool_result'; tool_use_id = 'toolu_pa'; content = "Command running in background with ID: b1. Output is being written to: $of. You will be notified" }) } } | ConvertTo-Json -Compress -Depth 8)
+$cl = { param($c) "`"C:\Git\bin\bash.exe`" -c `"source s && eval '$c' < /dev/null && pwd -P >| /tmp/c`"" }
+$mk = { param($id, $par, $c, $cpu, $nm) [pscustomobject]@{ Id = $id; ParentId = $par; Name = $nm; CommandLine = $c; Created = $t0.AddMinutes(-20); Cpu = $cpu; Io = 100 } }
+$sa = & $mk 999801 50 (& $cl $ca) 1 'bash.exe'; $sb = & $mk 999803 50 (& $cl $cb) 1 'bash.exe'; $kid = & $mk 999802 424242 "`"C:\Git\usr\bin\timeout.exe`" 1500 pwsh -File long-job.ps1 -Minutes 20" 3 'timeout.exe'
+$all = @([pscustomobject]@{ Id = 50; ParentId = 1; Name = 'claude.exe'; CommandLine = 'claude'; Cpu = 9 }, $sa, $sb, $kid)
+$box = @{ busy = $false; n = 0 }; $smp = { param($ids) foreach ($i in $ids) { if ($i -eq 999802 -and $box.busy) { $box.n += 1 }; [pscustomobject]@{ Id = $i; Cpu = $(if ($i -eq 999802) { $box.n } else { 0 }); Io = 0 } } }
+$st = @{}; $sw = { param($m, $pr) $w = Get-KitShellSweep $st $t0.AddMinutes($m) -Procs $pr -Sampler $smp -GapSeconds 0; "$(@($w.rows | ForEach-Object state) -join ',')"; $script:lastRows = $w.rows }
+$r = @(& $sw 0 $all); $r0 = $script:lastRows
+$kid.Cpu = 8; $r += & $sw 3 $all
+$box.busy = $true; $r += & $sw 6 $all; $box.busy = $false
+Add-Content -LiteralPath $of 'step 3 done'; $r += & $sw 9 $all; $r3 = $script:lastRows
+$r += & $sw 14 $all; $r += & $sw 15 @($all[0], $sb, $kid)
+$e = @($st.shells.Values | Where-Object { $_.ended })
+"states:$($r -join '|')"; "rows:$($r0[0].last)|$($r0[0].owner)|$($r0[1].kids)|$($r0[1].cpu)|$($r3[0].last)|$($r0[0].outKB -ge 0)"; "ended:$($e.Count)|$($e[0].owner)|$($e[0].last)"
+# read-only: a -ReadOnly -AutoFix sweep and bossy.ps1 shells write nothing
+foreach ($v in @($st.shells.Values | Where-Object { $_.ended })) { $v.ended = (Get-Date).Ticks }; $st | ConvertTo-Json -Depth 8 | Set-Content (Get-KitPath supervise-state -Create)   # ended now: inside supervise.finishedMinutes
+$snap = { @(Get-ChildItem -LiteralPath $script:KitRoot, $args[0] -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName)|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)" }) -join "`n" }
+$b0 = & $snap $args[1]; $null = Get-KitShellSweep (@{} + $st) $t0.AddMinutes(16) -AutoFix -ReadOnly -Procs @($all[0], $sb, $kid) -Sampler $smp -GapSeconds 0
+$js = pwsh -NoProfile -File $args[0] shells -Json 2>&1 | Out-String; $b1 = & $snap $args[1]
+$jo = try { $js | ConvertFrom-Json } catch { $null }; "nowrite:$($b0 -eq $b1)|$(@($jo.ended | Where-Object { $_.last -eq 'step 3 done' }).Count)|$($null -ne $jo.live)"
+# the real sampler on a busy child (CIM or ps); canned ps lines ([dd-][hh:]mm:ss)
+$busyProc = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', '$e = (Get-Date).AddSeconds(8); while ((Get-Date) -lt $e) { }' -PassThru -NoNewWindow
+Start-Sleep -Milliseconds 800; $liveDelta = Measure-KitTreeDelta @{ b = @($busyProc.Id) } { param($ids) Get-KitProcSample $ids } 1; $busyProc | Stop-Process -Force
+$psSample = @(Get-KitProcSample @(7, 8) -PsLines @('    7 1-02:03:04', '    8 00:01:05', 'junk')); "live:$($liveDelta.b.cpu -gt 0.3)|$($liveDelta.b.pct -gt 30)|$($psSample.Count)|$($psSample[0].Cpu)|$($psSample[1].Cpu)"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'), (Kd))
+Expect "shells: progress from the output file (last line, ANSI cut), an adopted Git Bash child, CPU between sweeps and in the sample pair; STALLED after supervise.shellStuckMinutes quiet; ended keeps its last line ($($pg -match '^(states|rows|ended):'))" (
+  $pg -contains 'states:running,running|running,running|STALLED,running|running,running|STALLED,STALLED|STALLED' -and $pg -contains 'rows:step 2 ok|devy|1|4|step 3 done|True' -and $pg -contains 'ended:1|devy|step 3 done')
+Expect "bossy.ps1 shells and a -ReadOnly sweep write no file ($($pg -match '^nowrite:'))" ($pg -contains 'nowrite:True|1|True')
+Expect "shell sampler: a busy child's CPU between two real samples; ps time with days ($($pg -match '^live:'))" ($pg -contains 'live:True|True|2|93784|65')
 Remove-TestKit $k
 Complete-Tests
