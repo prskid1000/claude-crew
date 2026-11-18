@@ -241,8 +241,9 @@ CREATE TABLE pa.u (login varchar(40)); INSERT INTO pa.u VALUES ('alice'), ('bob'
   Stop-TestMySql $tmSrv
   Remove-TestKit $k3
 }
-$tmLeft = @(Get-Process mysqld, mariadbd -ErrorAction SilentlyContinue | Where-Object { "$($_.CommandLine)" -match "$([regex]::Escape((Split-Path $tmSrv.data -Leaf)))\b" }).Count
-Expect "Stop-TestMySql: no mysqld (monitor or worker) left on its data dir, the dir gone, outside %TEMP% ($tmLeft left, $($tmSrv.data))" ($tmLeft -eq 0 -and -not (Test-Path $tmSrv.data) -and -not $tmSrv.data.StartsWith([IO.Path]::GetTempPath()))
-$tmMainC = "$(git -C $src rev-parse --path-format=absolute --git-common-dir 2>$null)" -replace '[\\/]\.git$', ''
-Expect "Start-TestMySql: data dirs are copies of one initialized template per mysqld build + options, kept in the main clone's cache for every worktree ($($tmSrv.tpl))" ((Test-Path (Join-Path $tmSrv.tpl 'mysql.ibd')) -and (Split-Path $tmSrv.tpl -Leaf) -match '^mysqld-template-[0-9A-F]{12}$' -and (-not $tmMainC -or [IO.Path]::GetFullPath($tmSrv.tpl).StartsWith([IO.Path]::GetFullPath($tmMainC), 'OrdinalIgnoreCase')))
+# K78: one persistent test mysqld (tests/test-mysql.ps1): the data dir stays in the main clone's state after Stop, the lock is free, one start per run
+$tmDataRx = '[\\/]\.state[\\/]kit-tests[\\/]mysql$'
+$tmSt = Read-TestMySqlState $tmSrv.home; $tmFree = try { (Enter-TestMySqlLock $tmSrv.home 0).Dispose(); $true } catch { $false }
+$tmRun = if ($env:KIT_TESTS_RUNNER) { $env:KIT_TESTS_RUNNER } else { "$PID" }
+Expect "test-mysql.ps1: one data dir under .state (kept after Stop-TestMySql), lock free, this run started it at most once ($($tmSrv.data), starts $(@($tmSt.starts | Where-Object { "$_" -eq $tmRun }).Count))" ((Test-Path (Join-Path $tmSrv.data 'mysql.ibd')) -and $tmSrv.data -match $tmDataRx -and $tmFree -and @($tmSt.starts | Where-Object { "$_" -eq $tmRun }).Count -le 1)
 Complete-Tests

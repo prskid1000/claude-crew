@@ -1,7 +1,7 @@
 # Kit state (`.state/` durable, `.runtime/` disposable)
-Read by kitty on a state change, revy (kind kit), agents needing a task's links ("Indexes").
-Paths: `kit.example.json` `_paths` (`Get-KitPath` / `kit_path`); schemas: the Inventory below (`kitbag.py state lint` parses
-it; supervise lints recent files each beat: BAD = WATCH).
+Read by kitty (state changes), revy (kind kit), agents needing task links ("Indexes").
+Paths: `kit.example.json` `_paths` (`Get-KitPath` / `kit_path`); schemas: the Inventory below (`kitbag.py state lint`;
+supervise: BAD = WATCH).
 
 ## Rules
 - **One file per key** (task, session, decision, run, publish key); a shared map only with one owning writer.
@@ -43,6 +43,7 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `outcomes` | `kitlog` (`adapters/outcomes.ps1`: supervise, `tidy prep`) | `jsonl v0: at task stage` | keep (append-only, one row per task state change) |
 | `standing-rules` | `bossy.ps1 decide rules`, `decide answer` (its ask) | `json v1: rules` | keep (approved ones -> `rules/standing-rules.local.md`) |
 | `pool-usage` | `adapters/wt_pool.ps1` `Update-KitPoolUsage` (wt pool sync) | `json v1: repos` | keep (samples 7 d) |
+| `kit-tests-db` | `tests/test-mysql.ps1` | `json v0: pid port key holders` | keep |
 | `outcomes-sweep` | `adapters/outcomes.ps1` | `text v0` | 30 d |
 | `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) |
 | `decisions-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` |
