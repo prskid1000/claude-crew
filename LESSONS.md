@@ -19,6 +19,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- writing the MR body local-env row -> state the real lane result; never claim PASS on another product's env or when the brief said FAIL (RM web MR claimed local PASS on hm r211)
+- a change touches files outside the area paths of the brief -> raise the scope decide ask at plan time, not at wt commit (wt commit refused files and the agent waited with no answer)
 - editing regex text or writing mr/spec text -> use the Edit tool, not heredoc python; run kitbag.py prose on the text first (heredoc corrupted files; 46 prose refusals in one window)
 - a change touches a query, migration or shared util -> add a test per changed query/branch, assert the SQL not only the map key, list all callers of a shared helper, shift every dependent timestamp column (7 defect-missed signals (rm-eval, rm-sched, rm-chan, rm-ent) found only in review)
 - A testing-doc row is NOT_TESTED_LOCAL -> Add its human check (or needsLiveCheck) at write time, before devtools.py finish (finish refused 3x, blocking sibling items' publish)
@@ -29,9 +31,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - looking for a skill, script or file -> Glob / Grep the kit, ~/.claude or the repo; never a whole-drive find (an orphaned whole-drive find held the shell and disk)
 - wt commit refused (prose or lint finding) -> fix it and commit before any wt sync (uncommitted review-fix edits were lost across a sync). (1x)
 - A contract claims an old consumer ignores a new param -> test it against the deployed consumer (one call on staging) before merge (kwargs-strict handlers reject unknown params). (2x)
-- A long kit verb (bossy deploy request, waits) via Bash -> start it with run_in_background or a timeout over 120 s, then read the output file (a foreground call cut at 120 s loses the plan). (1x)
 - After `wt lease` / `wt new` -> check the dependency links (node_modules, linkPaths) exist before editing; missing: save the diff, lease again (a worktree without them fails wt remove and can empty the folder). (1×)
-- Code reads cloud secrets or creds -> lazy-load them and run unit tests once with creds unset before the MR (import-time reads pass on a laptop and fail on a clean CI container). (1x)
 - Wave branches of one task -> pass `--override` with the wave id to devtools finish and mr on each sibling branch (the prior-work gate refuses siblings until it counts the batch as one task). (2x) (2×)
 - Writing a shared task doc (one testing-ai key, many wave agents) -> read the current doc first, keep every other area's section and Rounds rows, write patches with the Edit tool or a file (heredoc python collapses backslash-n; areas lost rows). (4x)
 - A stacked MR after a fix round on its base -> rebuild it on the new base plus a revert of the moved commit (the stacked diff stays clean). (1x)
@@ -103,6 +103,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- a full kit suite or pre-push -Full runs while other kittys run suites -> run tests/kit-tests.ps1 -Full yourself first, with a long timeout; never kill a shell by pid (subagents share one claude pid) (pre-push hit the 30 min cap, flaked under load, and one kitty killed another's push shell)
 - kit push runs the full pre-push suite -> use a timeout over 20 min or run it in background; rerun a flaky area (guard-warm, wt-pool) alone before judging (a 590 s timeout killed pre-push (exit 143) and left orphan tests; 3 load-only flakes)
 - Adding a trailing # comment with Edit to a PowerShell one-liner (hash literal, foreach body) -> Put the comment on its own line above the statement (The # swallowed the rest of the line, 3x broken scripts)
 - a kit test reads durable state (.state/leases.jsonl) or a block moves into a new adapters/*.ps1 -> redirect .state in the test harness and add new files to tests/harness.ps1 New-TestKit list (torn lease lines from the running kit and missing files failed moved tests)
