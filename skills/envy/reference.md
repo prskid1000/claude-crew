@@ -48,6 +48,14 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
   `crafty.ps1 check -Step build` of a clean tree with the same code, service folder and -P / -D flags is staged (its jar
   copied, unchanged since), no build.
 
+## Lane service standard
+Every local-env service (mysql, search, api, web, any new one) follows it; `doctor` checks it (`adapters/lane_standard.ps1`, rows WARN;
+`localEnv.laneStandard: "FAIL"` makes `deploy` stop on a breach):
+- One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry `{lane}` and the env.
+- Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.
+- Data and logs on D: under the kit (`.state/localenv/lanes/<service>-<env>{lane}`), never C:; low-write settings (a MySQL lane ini: doublewrite off, `sync_binlog=0`, logs off).
+- Move an existing one: `skills/envy/mysql-base-move.ps1` (mysql: clone per product + the `-Config` edit, also moves search data off C:).
+
 ## Config
 - Envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`, `smoke`)
   merge by `name`.

@@ -564,6 +564,8 @@ flowchart LR
   skills_envy_SKILL_md -->|"kind tenant-model (tenants.model, default none)…"| skills_envy_adapters_tenant_models_ps1["tenant_models.ps1"]
   skills_envy_SKILL_md -->|"the schema tenant model: list, drop, import…"| skills_envy_adapters_tenant_schema_ps1["tenant_schema.ps1"]
   skills_envy_SKILL_md -->|"deploy step 2: a lane's or a check's build of…"| skills_envy_adapters_shared_builds_ps1["shared_builds.ps1"]
+  skills_envy_SKILL_md -->|"doctor rows for the lane service standard:…"| skills_envy_adapters_lane_standard_ps1["lane_standard.ps1"]
+  skills_envy_SKILL_md -->|"owner / coordinator: moves a base env's MySQL…"| skills_envy_mysql_base_move_ps1["mysql-base-move.ps1"]
   skills_envy_SKILL_md -->|"run by envy.ps1 restore, release slices, the…"| skills_envy_adapters_db_flashback_py["db_flashback.py"]
 ```
 <!-- kit-graph:end -->

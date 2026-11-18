@@ -7,7 +7,7 @@ Exit codes: 0 pass · 1 a check failed.
 param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 # envy.ps1 is not in the core test kit: copy it in
-function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item (Join-Path $src 'skills/envy/adapters/shared_builds.ps1') (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
+function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared_builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane_standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
 # lanes: lane 1 = the env unchanged, lane k = <env><k>: managed ports + (k-1) x portStep, {lane} / {port:<svc>} / ":<port>" rewritten,
 # envs.<env><k> overrides one lane (its db port follows); -Env <env> keeps an agent on its lane, else the least busy warm one; -Lane pins
 $laneKit = New-LocalEnvKit lelane; $lkL = Join-Path $laneKit 'skills/envy/envy.ps1'

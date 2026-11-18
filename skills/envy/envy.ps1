@@ -24,7 +24,7 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L246 state · L293 layer drops · L365 leases · L473 code · L515 migrations ·
   L518 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L666 shared builds · L799 hooks · L871 marks · L1052 seed ·
-  L1119 processes · L1499 daemon · L1960 cleanup · L2032 doctor · L2085 verbs
+  L1119 processes · L1499 daemon · L1960 cleanup · L2032 doctor · L2086 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -2034,6 +2034,7 @@ function Get-Doctor([string]$e) {
   $c = Get-EnvCfg $e; $r = [Collections.Generic.List[object]]::new()
   $add = { param($lvl, $what) $r.Add([pscustomobject]@{ level = $lvl; env = $e; what = $what }) }
   foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
+  foreach ($x in @(Get-LaneStandardRows $e)) { & $add $x.level $x.what }
   if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired: remove the key" }
   foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne (Get-KitMember $c.db $_) }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
   $dbDown = DbSvcDown $e   # a lane DB that starts with a lease: its checks wait for it
