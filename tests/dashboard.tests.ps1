@@ -49,7 +49,7 @@ $hlt = & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $h = [Ne
 Expect "resources: a leases table grouped by kind, counts, no live holder first and open, branch column cut ($hlt)" ($hlt -eq 'env=env services/1/cl;browser=browsers/2 · 1 no live holder/open;slot=worktree slots/1/cl;gizmo=gizmos/1/cl;shared=shared/1/cl|True|True')
 $hlp = & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $h = Format-KitHeldList @([pscustomobject]@{ name = 'slot a·Kite'; by = 'devy-1 (fix/x) (grace 5 min)' }, [pscustomobject]@{ name = 'slot a·Wren'; by = 'parked: fix/y' }, [pscustomobject]@{ name = 'phone P1'; by = 'no lease' },
     [pscustomobject]@{ name = 'phone P2'; by = 'devy-2 (waiting for RAM)' }, [pscustomobject]@{ name = "browser <b>x</b>'"; by = "devy-3 (b'ra)" })
-  @('<td>a&#183;Kite</td><td>devy-1 (grace 5 min)</td><td title=''fix/x''>', '<td>a&#183;Wren</td><td>parked</td><td title=''fix/y''>', "<tr class='f nh'><td>P1</td><td>no live holder</td>", '<td>P2</td><td>devy-2 (waiting for RAM)</td><td></td>',
+  @('<td>a&#183;Kite</td><td>devy-1 (grace 5 min)</td><td title=''fix/x''>', '<td>a&#183;Wren</td><td>parked</td><td title=''fix/y''>', "<tr class='f nh'><td>P1</td><td>no live holder</td>", '<td>P2</td><td>devy-2 (waiting for RAM)</td><td>—</td>',
     '<td>&lt;b&gt;x&lt;/b&gt;&#39;</td><td>devy-3</td><td title=''b&#39;ra''>') | ForEach-Object { $h.Contains($_) } }
 Expect "resources: leases parse grace after a branch, parked, no lease (amber), a wait note kept whole; names and branches escaped ($($hlp -join ' '))" (-not ($hlp -contains $false))
 # Branches tile: the last repo sync per repo (fast-forwarded, diverged, dirty, pruned), kept ones in its tooltip
@@ -75,6 +75,14 @@ $lcl = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $hr = { param($b, $m) , @
   $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $l = Format-KitHeldList @([pscustomobject]@{ name = 'env rm·Falcon api'; by = 'devy-1 (fix/x)' }, [pscustomobject]@{ name = 'env rm·Falcon web'; by = 'devy-1 (fix/x)' }, [pscustomobject]@{ name = 'mysql (rm, hm)'; kind = 'env'; shared = $true })
   "$($h -match '>rm&#183;Falcon</span>') $($h -notmatch '>rm&#183;Falcon &#183; api<') $($h -match '>hm&#183;Falcon &#183; api<' -and $h -match '>hm&#183;Falcon &#183; web<') $($l -match '<td>rm&#183;Falcon \(api, web\)</td>') $($l -match 'mysql \(rm, hm\)')" }
 Expect "lease waits + held: a lane's services with identical data are one row; differing ones stay split; shared row renders ($lcl)" ($lcl -eq 'True True True True True')
+# Branch / task of every lease: a QA code and pid of a board agent resolve to a task / item; blank rows show a dash; no value anywhere: no column
+$btk = & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $qd = Join-Path (Get-KitPath qa-runs -Create) 'run1'; New-Item -ItemType Directory -Force $qd | Out-Null
+  @{ run = 'run1'; items = @{ T5 = @{ tasks = @('t1'); pubKey = 'pk9' } } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $qd 'index.json')
+  $bd = Get-KitPath board -Create; @{ agent = 'devy-7'; run = 'r7'; items = 'CODE1'; status = 'active'; pid = 4242 } | ConvertTo-Json | Set-Content (Join-Path $bd 'devy-7-aa.json')
+  $l = Format-KitHeldList @([pscustomobject]@{ name = 'browser rm·x'; by = 'pid-1, test:T5' }, [pscustomobject]@{ name = 'browser hm·y'; by = '' }, [pscustomobject]@{ name = 'phone P1'; by = 'pid-4242' }, [pscustomobject]@{ name = 'mysql (rm, hm)'; kind = 'env'; shared = $true })
+  $n = Format-KitHeldList @([pscustomobject]@{ name = 'browser a·b'; by = 'zzz' })
+  "$($l -match 'QA T5 &#183; pk9') $($l -match '>CODE1</td>') $($l -match '<td>—</td></tr>') $($l -match 'Branch / task') $($n -notmatch 'Branch / task' -and $n -notmatch '<th colspan=3>')" }
+Expect "leases: branch / task resolved from QA code and board pid, dash when none, column dropped when no row has one ($btk)" ($btk -eq 'True True True True True')
 # gate rows (K28): every kind of the 24 h log its own row (presets only label), rows idle 12 h folded (K22); Resources · 24 h (K25/K27): a
 # configured stopped service keeps a (folded) row, RAM from a lease first, else its process tree; the idle fold names its count
 $gtr = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $hr = { param($b) , @(0..23 | ForEach-Object { if ($_ -eq $b) { , @(1, 30, 0) } else { , @(0, 0, 0) } }) }

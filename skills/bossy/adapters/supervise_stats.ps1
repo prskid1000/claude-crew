@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour; their heatmap cards 
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L129 cards · L284 flags
+Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L129 cards · L298 flags
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -260,6 +260,18 @@ function Format-KitLaneGrid($Lanes) {
   "<div class=lng style='--n:$($rps.Count)' role=group aria-label='lanes by repo: commits behind the target, +N test merges'>$hd$($rows -join '')</div>" +
   "<div class=lnk><i class='lgk lb'></i>behind target <i class='lgk lm'></i>+N test merges · outlined = in use · tap a cell: base sha</div>"
 }
+# the task a lease belongs to, from its holder ids (comma list): a QA code (test:T5, T5) -> its newest run's task "QA T5 · <task>"; an agent id or
+# pid-N -> its live board entry's items (else run); none found: ''
+function Get-KitHolderTask([string]$Holder) {
+  if (-not $script:KitHolderCache) { $script:KitHolderCache = @{} }; $c = $script:KitHolderCache; $out = [Collections.Generic.List[string]]::new()
+  if (-not $c.qa) { $c.qa = @(Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 8 | ForEach-Object { try { (Get-Content (Join-Path $_.FullName 'index.json') -Raw | ConvertFrom-Json).items } catch { $null } } | Where-Object { $_ }) }
+  if (-not $c.board) { $c.board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' }) }
+  foreach ($id in @("$Holder" -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notin 'parked', 'no lease' })) {
+    $t = ''; if ($id -match '^(?:test:)?(?<q>T\d+)$') { $q = $Matches.q; $it = @($c.qa | ForEach-Object { Get-KitMember $_ $q } | Where-Object { $_ } | Select-Object -First 1)[0]; if ($it) { $t = "QA $q · $(if ($it.pubKey) { $it.pubKey } else { @($it.tasks)[0] })" } }
+    if (-not $t) { $pn = if ($id -match '^pid-(?<n>\d+)$') { [int]$Matches.n } else { 0 }; $b = @($c.board | Where-Object { $_.agent -eq $id -or ($pn -and ($_.pid -eq $pn -or $_.holderPid -eq $pn)) } | Select-Object -First 1)[0]; if ($b) { $t = if ("$($b.items)".Trim()) { "$($b.items)".Trim() } else { "$($b.run)" } } }
+    if ($t -and $t -notin $out) { $out.Add($t) } }
+  $out -join '; '
+}
 # resources held now (Resources and leases): name and holder; none: the live agents' count or "No resource held."
 function Format-KitHeldList($Resources, [int]$Active = 0) {   # $Active: live agents (none held while agents run is a count, not idle)
   $rs = @($Resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb }); if (-not $rs.Count) { return "<p class=empty>$(if ($Active) { "$Active agent$(if ($Active -ne 1) { 's' }) active · none holds a lease" } else { 'No resource held.' })</p>" }
@@ -270,16 +282,18 @@ function Format-KitHeldList($Resources, [int]$Active = 0) {   # $Active: live ag
       if ($_.shared) { $kd = 'shared' } elseif (-not $kd -and $nm -match '^(?<k>[a-z]+) (?<r>.+)$') { $kd = $Matches.k; $nm = $Matches.r } elseif (-not $kd) { $kd = 'other' }
       $br = ''; $gr = ''; if ($by -match '^(?<r>.*?)\s*(?<g>\(grace [^()]*\))$') { $by = $Matches.r; $gr = " $($Matches.g)" }   # supervise appends the grace after the branch
       if ($by -match '^(?<h>.*?)\s*\((?<b>[^()\s]+)\)$') { $by = $Matches.h; $br = $Matches.b } elseif ($by -match '^parked: (?<b>\S+)$') { $by = 'parked'; $br = $Matches.b }
-      [pscustomobject]@{ k = $kd; n = $nm; o = -not $_.shared -and $by -in '', 'no lease'; h = $(if ($_.shared) { 'shared · always on' } elseif ($by -in '', 'no lease') { "no live holder$gr" } else { "$by$gr" }); b = $br } })
+      [pscustomobject]@{ k = $kd; n = $nm; o = -not $_.shared -and $by -in '', 'no lease'; h = $(if ($_.shared) { 'shared · always on' } elseif ($by -in '', 'no lease') { "no live holder$gr" } else { "$by$gr" }); b = $br; t = $(if ($_.shared) { '' } else { Get-KitHolderTask $by }) } })
   # a lane's services ("rm·Falcon api", "rm·Falcon web") with the same holder and branch are one lease: one row "rm·Falcon (api, web)"
   $its = @($its | Group-Object { $ix = "$($_.n)".LastIndexOf(' '); if ($_.k -ne 'shared' -and $ix -gt 0) { "$($_.k)|$("$($_.n)".Substring(0, $ix))|$($_.o)|$($_.h)|$($_.b)" } else { [guid]::NewGuid().ToString() } } | ForEach-Object {
       $g = @($_.Group); if ($g.Count -lt 2) { $g[0]; return }; $c = $g[0].PSObject.Copy(); $c.n = "$("$($g[0].n)".Substring(0, "$($g[0].n)".LastIndexOf(' '))) ($(@($g | ForEach-Object { "$($_.n)".Substring("$($_.n)".LastIndexOf(' ') + 1) }) -join ', '))"; $c })
   $gs = @($its | Group-Object k | Sort-Object { $i = [array]::IndexOf($ord, $_.Name); if ($_.Name -eq 'shared') { 99 } elseif ($i -ge 0) { $i } else { 50 } }, Name)
-  "<table class=hlt><thead><tr><th>Resource</th><th>Holder(s)</th><th>Branch / task</th></tr></thead>" + (@($gs | ForEach-Object {
+  $hasB = [bool]@($its | Where-Object { $_.b -or $_.t }).Count   # no branch or task on any row: no column
+  "<table class=hlt><thead><tr><th>Resource</th><th>Holder(s)</th>$(if ($hasB) { "<th>Branch / task</th>" })</tr></thead>" + (@($gs | ForEach-Object {
         $no = @($_.Group | Where-Object o).Count; $nmG = if ($lbl[$_.Name]) { $lbl[$_.Name] } elseif ($_.Name -in 'shared', 'other') { $_.Name } else { "$($_.Name)s" }
-        "<tbody class='grp$(if (-not $no) { ' cl' })' data-g='res-$(& $e $_.Name)'><tr class=gh><th colspan=3><button type=button class=gtg aria-expanded=$(if ($no) { 'true' } else { 'false' })><span class=gn0>$(& $e $nmG)</span><span class=gcn>$($_.Count)$(if ($no) { " · $no no live holder" })</span></button></th></tr>" +
-        (@($_.Group | Sort-Object { -not $_.o }, n | ForEach-Object { $bs = if ($_.b.Length -gt 40) { $_.b.Substring(0, 39) + '…' } else { $_.b }
-            "<tr class='f$(if ($_.o) { ' nh' })'><td>$(& $e $_.n)</td><td>$(& $e $_.h)</td><td$(if ($_.b) { " title='$(& $e $_.b)'" })>$(& $e $bs)</td></tr>" }) -join '') + '</tbody>' }) -join '') + '</table>'
+        "<tbody class='grp$(if (-not $no) { ' cl' })' data-g='res-$(& $e $_.Name)'><tr class=gh><th colspan=$(if ($hasB) { 3 } else { 2 })><button type=button class=gtg aria-expanded=$(if ($no) { 'true' } else { 'false' })><span class=gn0>$(& $e $nmG)</span><span class=gcn>$($_.Count)$(if ($no) { " · $no no live holder" })</span></button></th></tr>" +
+        (@($_.Group | Sort-Object { -not $_.o }, n | ForEach-Object {
+            $bt = @($_.b, $_.t | Where-Object { $_ }) -join ' · '; if ($bt.Length -gt 40) { $bs = $bt.Substring(0, 39) + '…' } else { $bs = $bt }
+            "<tr class='f$(if ($_.o) { ' nh' })'><td>$(& $e $_.n)</td><td>$(& $e $_.h)</td>$(if ($hasB) { "<td$(if ($bt) { " title='$(& $e $bt)'" })>$(if ($bt) { & $e $bs } else { & $e '—' })</td>" })</tr>" }) -join '') + '</tbody>' }) -join '') + '</table>'
 }
 # ---- flags: distinct ACT / WATCH / FIXED flags per clock hour, 24 h (history keeps 12 sweeps only): @(@{ h = yyyyMMddHH; f = @(@{ l; k = kind; y = key; t = text }) })
 function Get-KitFlagHour($H) { try { [datetime]::ParseExact("$H", 'yyyyMMddHH', [cultureinfo]::InvariantCulture) } catch { [datetime]::MinValue } }
