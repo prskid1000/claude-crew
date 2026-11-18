@@ -63,7 +63,7 @@ $env:KIT_TESTS_SNAPSHOT = Join-Path $tmpRoot "kit-tests-src-$PID"
 if (-not $env:KIT_TESTS_SLACK) { $env:KIT_TESTS_SLACK = [Math]::Round([Math]::Min(3, [Math]::Max(1, $areas.Count / [Environment]::ProcessorCount)), 2).ToString([Globalization.CultureInfo]::InvariantCulture) }
 $started = Get-Date
 $env:KIT_TESTS_RUNNER = $PID   # the one test mysqld's holder for every area of this run (test-mysql.ps1)
-$src = Split-Path $PSScriptRoot; $myStarts = 0; $myMysqlErr = ''
+$src = Split-Path $PSScriptRoot; $myMysqlRun = [pscustomobject]@{ starts = 0; strays = @() }; $myMysqlErr = ''
 $myMysql = (Test-Path (Join-Path $PSScriptRoot 'test-mysql.ps1')) -and (Test-Path (Join-Path $src 'skills/crafty/kit.example.json'))   # a bare tests/ copy (kitbag.tests): none
 if ($myMysql) { . (Join-Path $PSScriptRoot 'test-mysql.ps1') }
 try {
@@ -74,7 +74,7 @@ $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 *
   [pscustomobject]@{ area = $_; out = $out.TrimEnd(); code = $LASTEXITCODE; seconds = [int]$clock.Elapsed.TotalSeconds }
 } | Sort-Object { [array]::IndexOf($areas, $_.area) }   # area order, not finish order: output and TEST-DUP lists stay stable
 } finally {   # Ctrl-C or a crash too: this run lets the test mysqld go (it stops, data kept, when no other run holds it)
-  if ($myMysql) { try { $myStarts = Exit-TestMySqlHolder (Get-TestMySqlHome) $PID } catch { $myMysqlErr = $_.Exception.Message } }
+  if ($myMysql) { try { $myMysqlRun = Exit-TestMySqlHolder (Get-TestMySqlHome) $PID } catch { $myMysqlErr = $_.Exception.Message } }
 }
 $fails = 0; $logLines = [Collections.Generic.List[string]]::new()
 foreach ($r in $results) {
@@ -99,7 +99,8 @@ foreach ($sf in @(Get-ChildItem -LiteralPath $env:KIT_TESTS_SNAPSHOT -File -Recu
 Remove-Item -LiteralPath $env:KIT_TESTS_SNAPSHOT -Recurse -Force -ErrorAction SilentlyContinue
 # TEST-MYSQLD (K78): at most one test mysqld start per run; it stops here (data kept) unless another run still holds it
 if ($myMysqlErr) { "TEST-MYSQLD the test mysqld did not stop: $myMysqlErr" }
-if ($myStarts -gt 1) { "TEST-MYSQLD this run started the test mysqld $myStarts times (at most 1: tests/test-mysql.ps1)"; $fails++ }
+if ($myMysqlRun.starts -gt 1) { "TEST-MYSQLD this run started the test mysqld $($myMysqlRun.starts) times (at most 1: tests/test-mysql.ps1)"; $fails++ }
+foreach ($sy in @($myMysqlRun.strays)) { "TEST-MYSQLD a second kit-test mysqld ran during this run (one at a time machine-wide): $(($sy -split " ", 2)[1])"; $fails++ }
 # FAIL recap, indented: never counted twice
 $failed = @($cases | Where-Object fail); if ($failed.Count) { 'Failed checks:'; $failed | ForEach-Object { "  [$($_.at)] $($_.text)" } }
 "$fails failure(s) in $($areas.Count) area(s), $([int]((Get-Date) - $started).TotalSeconds) s"

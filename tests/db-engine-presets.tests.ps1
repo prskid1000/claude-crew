@@ -116,6 +116,9 @@ $tmSrv = Start-TestMySql -Binlog; $port = $tmSrv.port
 try {
   $env:MYSQL_PWD = ''
   function Q([string]$sql) { Invoke-TestMySql $sql $port }
+  # K78 consistency: every take starts at the baseline, whatever the last area (or run) left in the kept data dir
+  $tmAt = "$(Q "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','information_schema','performance_schema','sys')")|$(@(Q 'SHOW BINARY LOGS').Count)"
+  Expect "test-mysql.ps1: a take starts at the baseline: no schema of an earlier area, one binlog ($tmAt)" ($tmAt -eq '0|1')
   Q @"
 CREATE DATABASE fa; CREATE DATABASE fb;
 CREATE TABLE fa.t (id int primary key auto_increment, s varchar(40), d decimal(8,2), f double, dt datetime(3), ts timestamp(2) null, dd date, tm time, j json, e enum('x','y'), st set('a','b','c'), b blob, u int unsigned, bt bit(4), g int as (char_length(s)) virtual, n text) charset utf8mb4;

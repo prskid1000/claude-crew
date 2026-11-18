@@ -27,6 +27,16 @@ function Enter-TestMySqlLock([string]$StateDir, [int]$Minutes = 30) {
 # a process as "<pid>:<start ticks>": a pid reused after a reboot or crash is not the process saved
 function Get-TestProcStamp([int]$Id) { $p = Get-Process -Id $Id -ErrorAction SilentlyContinue; if ($p) { "${Id}:$($p.StartTime.ToUniversalTime().Ticks)" } }
 function Test-TestProcStamp([string]$Stamp) { if ($Stamp -notmatch '^(\d+):(\d+)$') { return $false }; "$(Get-TestProcStamp ([int]$Matches[1]))" -eq $Stamp }
+# a kit-test mysqld that is not the one server (another worktree's old per-area server, a second start): "<pid> <datadir>" each
+function Get-TestMySqlStrays($Procs = $null, [string]$Server = '') {
+  if ($null -eq $Procs) { if (-not $IsWindows) { return @() }; $Procs = @(Get-CimInstance Win32_Process -Filter "Name='mysqld.exe' OR Name='mariadbd.exe'" -ErrorAction SilentlyContinue) }
+  $tmOwn = if ("$Server" -match '^(\d+):') { [int]$Matches[1] } else { -1 }
+  @($Procs | Where-Object { "$($_.CommandLine)" -match '--datadir="?[^" ]*([\\/]work[\\/]tests[\\/]mysqld-|[\\/]kit-tests[\\/]mysql\b)' -and [int]$_.ProcessId -ne $tmOwn -and [int]$_.ParentProcessId -ne $tmOwn } |
+    ForEach-Object { "$($_.ProcessId) $(if ("$($_.CommandLine)" -match '--datadir="?([^" ]+)') { $Matches[1] })" })
+}
+# the state every take starts from, versioned (a change re-seeds those schemas, never a re-init): schemas kept across takes + the SQL
+# that seeds them; none today (each area creates and owns its schemas; areas take the server in turn, never sharing a mutable one)
+$script:TestMySqlBaseline = @{ schemas = @(); sql = '' }
 # a clean shutdown (data kept), else the whole tree (Windows: the started mysqld is a monitor, its worker a child); only the saved process
 function Stop-TestMySqlServer($St) {
   if (-not (Test-TestProcStamp "$($St.server)")) { return }
@@ -62,15 +72,26 @@ function Start-TestMySql([switch]$Binlog) {   # -Binlog: kept for callers; the o
       if ($i -ge 60) { Stop-TestMySqlServer $St; throw "Start-TestMySql: mysqld not listening on $tmPort after 60 s" }
     }
     $St.holders = @($tmOthers + $tmHolder | Select-Object -Unique)
+    # a second kit-test mysqld seen while this run holds the one: recorded, kit-tests.ps1 fails the run (TEST-MYSQLD)
+    $tmStray = @(Get-TestMySqlStrays -Server "$($St.server)"); if ($tmStray.Count) { $St.strays = @(@($St.strays) + @($tmStray | ForEach-Object { "$tmHolder $_" }) | Where-Object { $_ } | Select-Object -Last 50) }
     Save-TestMySqlState $tmHome $St
-    # a clean slate for this area: the last holder's sessions (first: none recreates a schema), schemas, binlogs back to binlog.000001, globals
+    # back to the baseline for this area: the last holder's sessions (first: none recreates a schema), its schemas, binlogs back to
+    # binlog.000001, globals; the baseline's own schemas re-seeded only when its version changed
     $env:MYSQL_PWD = ''
-    $tmKills = @(& mysql -h 127.0.0.1 -P $St.port -u root -N -B -e "SELECT CONCAT('KILL ', id, ';') FROM information_schema.processlist WHERE id <> CONNECTION_ID() AND user <> 'event_scheduler'" 2>&1 | Where-Object { $_ -match '^KILL \d+;$' })
+    $tmQ = { param($q) @(& mysql -h 127.0.0.1 -P $St.port -u root -N -B -e $q 2>&1) }
+    $tmKills = @(& $tmQ "SELECT CONCAT('KILL ', id, ';') FROM information_schema.processlist WHERE id <> CONNECTION_ID() AND user <> 'event_scheduler'" | Where-Object { $_ -match '^KILL \d+;$' })
     if ($tmKills.Count) { $null = ($tmKills -join "`n") | & mysql -h 127.0.0.1 -P $St.port -u root -f 2>&1 }   # a session gone meanwhile (1094): fine
-    $tmDbs = @(& mysql -h 127.0.0.1 -P $St.port -u root -N -B -e "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','information_schema','performance_schema','sys')" 2>&1)
-    $tmSql = @($tmDbs | Where-Object { $_ } | ForEach-Object { "DROP DATABASE ``$_``;" }) + 'RESET MASTER;', 'SET GLOBAL max_execution_time = DEFAULT, slow_query_log = DEFAULT;'
+    $tmSysDbs = "'mysql','information_schema','performance_schema','sys'"
+    $tmBase = [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes(($script:TestMySqlBaseline | ConvertTo-Json -Compress)))).Substring(0, 12)
+    $tmReseed = $St.baseline -ne $tmBase
+    $tmDbs = @(& $tmQ "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ($tmSysDbs)" | Where-Object { $_ -and ($tmReseed -or $_ -notin $script:TestMySqlBaseline.schemas) })
+    $tmSql = @($tmDbs | ForEach-Object { "DROP DATABASE ``$_``;" }) + @(if ($tmReseed -and $script:TestMySqlBaseline.sql) { $script:TestMySqlBaseline.sql }) + 'RESET MASTER;', 'SET GLOBAL max_execution_time = DEFAULT, slow_query_log = DEFAULT;'
     $tmOut = ($tmSql -join "`n") | & mysql -h 127.0.0.1 -P $St.port -u root 2>&1
     if ($LASTEXITCODE) { throw "Start-TestMySql: reset failed: $tmOut" }
+    if ($tmReseed) { $St.baseline = $tmBase; Save-TestMySqlState $tmHome $St }
+    # consistency: exactly the baseline's schemas and one binlog, or this area does not start
+    $tmNow = @(& $tmQ "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ($tmSysDbs) ORDER BY 1") -join ','; $tmLogs = @(& $tmQ 'SHOW BINARY LOGS').Count
+    if ($tmNow -ne ((@($script:TestMySqlBaseline.schemas) | Sort-Object) -join ',') -or $tmLogs -ne 1) { throw "Start-TestMySql: not at the baseline after the reset (schemas '$tmNow', $tmLogs binlog(s))" }
     [pscustomobject]@{ proc = (Get-Process -Id ([int]("$($St.server)" -split ':')[0])); port = $St.port; data = $tmData; home = $tmHome; holder = $tmHolder; lock = $tmLock }
   } catch { $tmLock.Dispose(); throw }
 }
@@ -80,14 +101,15 @@ function Stop-TestMySql($Server) {
   try { if ("$($Server.holder)" -eq "$(Get-TestProcStamp $PID)") { $null = Exit-TestMySqlHolder $Server.home $PID -Locked } } finally { $Server.lock.Dispose() }
 }
 # a run holding the server ends: the server stops (data kept) when no live run holds it; returns how often this holder started it
+# and the second kit-test servers it saw (starts, strays)
 function Exit-TestMySqlHolder([string]$StateDir, [int]$Holder, [switch]$Locked) {
-  if (-not (Test-Path (Join-Path $StateDir 'server.json'))) { return 0 }
+  if (-not (Test-Path (Join-Path $StateDir 'server.json'))) { return [pscustomobject]@{ starts = 0; strays = @() } }
   $tmLock = if ($Locked) { $null } else { Enter-TestMySqlLock $StateDir }
   try {
     $tmMe = Get-TestProcStamp $Holder; $St = Read-TestMySqlState $StateDir
     $St.holders = @($St.holders | Where-Object { $_ -and $_ -ne $tmMe -and (Test-TestProcStamp $_) })
     if (-not $St.holders.Count) { Stop-TestMySqlServer $St; $St.server = $null }
     Save-TestMySqlState $StateDir $St
-    @($St.starts | Where-Object { $_ -and $_ -eq $tmMe }).Count
+    [pscustomobject]@{ starts = @($St.starts | Where-Object { $_ -and $_ -eq $tmMe }).Count; strays = @($St.strays | Where-Object { "$_".StartsWith("$tmMe ") }) }
   } finally { if ($tmLock) { $tmLock.Dispose() } }
 }

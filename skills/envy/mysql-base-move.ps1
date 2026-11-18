@@ -15,7 +15,7 @@ templates); dir `<Lanes>/mysql-rm-falcon`, ini `<Lanes>/mysql-rm-falcon.ini` (co
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L32 names · L39 ini and config edit · L119 rename · L207 checks · L254 apply · L317 search data
+Sections: L32 names · L39 ini and config edit · L120 rename · L208 checks · L255 apply · L318 search data
 #>
 param([string[]]$Targets = @('rm:3305', 'hm:3316'), [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
   [string]$Bin = 'C:/Program Files/MySQL/MySQL Server 8.0/bin', [string]$Service = 'MySQL80', [int]$VerifyPort = 3399,
@@ -40,8 +40,9 @@ function Get-Bird([int]$N) { if ($N -ge 1 -and $N -le @($Birds).Count) { "$(@($B
 # a lane ini made from a template: the port lines and datadir changed, the low-write settings forced under [mysqld], every other line kept
 function New-BaseIni([string[]]$Template, [int]$Port, [string]$Dir) {
   # redo: mysqld 8.0.30+ rewrites its whole capacity at every start (measured: 512M -> 510 MB written per start, 64M -> 76 MB)
-  $force = @('innodb_doublewrite=OFF', 'innodb_flush_log_at_trx_commit=2', 'skip-log-bin', 'general_log=0', 'slow_query_log=0', 'innodb_redo_log_capacity=64M')
-  $drop = '^\s*(innodb[-_]doublewrite|innodb[-_]flush[-_]log[-_]at[-_]trx[-_]commit|innodb[-_]redo[-_]log[-_]capacity|(skip|disable)[-_]log[-_]bin|log[-_]bin|general[-_]log|slow[-_]query[-_]log)\s*(=|$)'
+  # the binlog stays as the template has it: envy marks and restores read it (db_presets.ps1: log_bin OFF = no marks); the load runs without it
+  $force = @('innodb_doublewrite=OFF', 'innodb_flush_log_at_trx_commit=2', 'general_log=0', 'slow_query_log=0', 'innodb_redo_log_capacity=64M')
+  $drop = '^\s*(innodb[-_]doublewrite|innodb[-_]flush[-_]log[-_]at[-_]trx[-_]commit|innodb[-_]redo[-_]log[-_]capacity|general[-_]log|slow[-_]query[-_]log)\s*(=|$)'
   @(foreach ($l in $Template) {
     if ($l -match '^\s*port\s*=') { "port=$Port" } elseif ($l -match '^\s*datadir\s*=') { "datadir=$Dir" } elseif ($l -match $drop) { continue } else { $l }
     if ($l -match '^\s*\[mysqld\]\s*$') { $force }

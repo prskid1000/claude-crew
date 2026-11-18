@@ -12,7 +12,7 @@ $mv = Join-Path (Split-Path $PSScriptRoot) 'skills/envy/mysql-base-move.ps1'
 . $mv
 $tpl = @('[client]', 'port=3317', '[mysqld]', 'sync_binlog=0', 'innodb_doublewrite=OFF', 'port=3317', 'datadir=D:/x/mysql-hm2', 'innodb_buffer_pool_size=1G', 'log-bin=binlog', 'slow-query-log=1', 'innodb_flush_log_at_trx_commit=1')
 $ini = New-BaseIni $tpl 3316 'D:/x/mysql-hm'
-Expect "ini: ports and datadir changed, low-write settings forced under [mysqld] (no binlog, logs, doublewrite; flush 2; redo 64M), the rest kept ($($ini -join ' '))" ($ini -join ' ' -eq '[client] port=3316 [mysqld] innodb_doublewrite=OFF innodb_flush_log_at_trx_commit=2 skip-log-bin general_log=0 slow_query_log=0 innodb_redo_log_capacity=64M sync_binlog=0 port=3316 datadir=D:/x/mysql-hm innodb_buffer_pool_size=1G')
+Expect "ini: ports and datadir changed, low-write settings forced under [mysqld] (no general / slow log, doublewrite; flush 2; redo 64M), the binlog kept for envy marks, the rest kept ($($ini -join ' '))" ($ini -join ' ' -eq '[client] port=3316 [mysqld] innodb_doublewrite=OFF innodb_flush_log_at_trx_commit=2 general_log=0 slow_query_log=0 innodb_redo_log_capacity=64M sync_binlog=0 port=3316 datadir=D:/x/mysql-hm innodb_buffer_pool_size=1G log-bin=binlog')
 # the copy writes only what is kept: never a server clone or a schema drop (12.9 GB of mysql.ibd churn per product, 2026-11-18)
 $mvText = Get-Content $mv -Raw
 Expect 'apply: empty datadir + mysqldump | mysql per kept schema, no CLONE and no DROP DATABASE' ($mvText -match '--initialize-insecure' -and $mvText -match '--single-transaction --no-tablespaces --routines --triggers --events' -and $mvText -notmatch 'CLONE LOCAL|DROP DATABASE|INSTALL PLUGIN')

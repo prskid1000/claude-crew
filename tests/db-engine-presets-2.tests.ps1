@@ -243,4 +243,10 @@ DELIMITER ;
   Stop-TestMySql $tmSrv
   Remove-TestKit $k3
 }
+# K78 (tests/test-mysql.ps1): one area holds the one server at a time; a second kit-test mysqld is a stray (TEST-MYSQLD)
+$tmHeld = Enter-TestMySqlLock (Get-TestMySqlHome) 0; $tmSecond = try { (Enter-TestMySqlLock (Get-TestMySqlHome) 0).Dispose(); 'got it' } catch { 'refused' } finally { $tmHeld.Dispose() }
+$tmFake = { param($i, $p, $c) [pscustomobject]@{ ProcessId = $i; ParentProcessId = $p; CommandLine = $c } }
+$tmStrays = @(Get-TestMySqlStrays @((& $tmFake 10 1 '"mysqld.exe" --no-defaults "--datadir=D:\k\.state\kit-tests\mysql" --port=1'), (& $tmFake 11 10 'mysqld.exe --no-defaults --datadir=D:\k\.state\kit-tests\mysql'),
+  (& $tmFake 20 2 "mysqld.exe --no-defaults `"--datadir=D:\w\$($tmpMap.runtimeDir)\work\tests\mysqld-77`" --port=2"), (& $tmFake 30 3 'mysqld.exe --defaults-file=C:\ProgramData\my.ini')) -Server '10:5')
+Expect "test-mysql.ps1: one area holds the server at a time (a second take waits: $tmSecond); a second kit-test mysqld (old per-area dir) is a stray, the one server, its worker and the OS service are not ($($tmStrays -join '; '))" ($tmSecond -eq 'refused' -and $tmStrays.Count -eq 1 -and $tmStrays[0] -match '^20 .*mysqld-77$')
 Complete-Tests
