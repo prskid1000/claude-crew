@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L130 names · L163 slots · L189 lease · L294 release · L322 lanes · L427 sync · L523 pool
+Sections: L14 worktrees · L130 names · L164 slots · L190 lease · L295 release · L323 lanes · L428 sync · L524 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -133,6 +133,7 @@ $script:KitBirds = @('Falcon', 'Kestrel', 'Osprey', 'Heron', 'Merlin', 'Harrier'
 function Get-KitBirdName([int]$N) { $b = @(Get-KitSetting 'pool.names' $script:KitBirds); if ($N -ge 1 -and $N -le $b.Count) { "$($b[$N - 1])" } else { "Bird$N" } }
 # "<pool>·<Bird>": env lane shop2 -> shop·Kestrel (lane 1 = <env>, lane k = <env><k>; envs.<env><k> overrides: the shortest base wins); else the name
 function Get-KitPoolLabel([string]$Kind, [string]$Name) {
+  if ($Kind -eq 'env' -and "$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird' -and $Name -match '^(?<p>.+)-(?<b>[a-z]+)$') { foreach ($i in 1..40) { if ((Get-KitBirdName $i) -ieq $Matches.b) { return "$($Matches.p)·$(Get-KitBirdName $i)" } } }   # laneIds "bird": the id is <product>-<bird>
   if ($Kind -eq 'env' -and ($envs = Get-KitSetting 'localEnv.envs' $null)) {
     foreach ($e in @((Get-KitProps $envs).Name | Sort-Object Length)) { if ($Name -match "^$([regex]::Escape($e))(?<k>\d*)$") { return "$e·$(Get-KitBirdName $(if ($Matches.k) { [int]$Matches.k } else { 1 }))" } }
   }
@@ -155,7 +156,7 @@ function ConvertFrom-KitLaneLabel([string]$Name) { foreach ($l in @(Get-KitLaneN
 function ConvertTo-KitLaneOut([bool]$Json) { process { if ($Json -or $_ -isnot [string]) { $_ } else { ConvertTo-KitLaneText $_ } } }
 function Get-KitLaneBranch([string]$Lane) { "lane/$(Get-KitLaneSlug $Lane)" }
 # configured lanes: each localEnv.envs key, lanes 2..lanes.max as <env><k> (envy.ps1 Get-LaneCfg)
-function Get-KitLaneNames { $envs = Get-KitSetting 'localEnv.envs' $null; if (-not $envs) { return @() }; @(foreach ($p in @(Get-KitProps $envs)) { $p.Name; for ($i = 2; $i -le [int]"$($p.Value.lanes.max)"; $i++) { "$($p.Name)$i" } }) | Select-Object -Unique }
+function Get-KitLaneNames { $envs = Get-KitSetting 'localEnv.envs' $null; if (-not $envs) { return @() }; if ("$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird') { $bn = @(1..40 | ForEach-Object { "$(Get-KitBirdName $_)".ToLower() }); return @(foreach ($p in @(Get-KitProps $envs | Where-Object { -not ($_.Name -match '^(?<b>.+?)\d+$' -and (Get-KitMember $envs $Matches.b)) })) { if ($p.Name -match '^.+-(?<b>[a-z]+)$' -and $Matches.b -in $bn) { $p.Name } else { for ($i = 1; $i -le [math]::Max(1, [int]"$($p.Value.lanes.max)"); $i++) { "$($p.Name)-$($bn[$i - 1])" } } }) | Select-Object -Unique }; @(foreach ($p in @(Get-KitProps $envs)) { $p.Name; for ($i = 2; $i -le [int]"$($p.Value.lanes.max)"; $i++) { "$($p.Name)$i" } }) | Select-Object -Unique }
 function Get-KitLaneWorktree([string]$Lane, [string]$Checkout, [switch]$Old, [switch]$New) {
   $rt = @($KitConf.WorktreeRoots)[0]; $lf = Split-Path $Checkout -Leaf; $ow = Join-Path $rt "localenv-$Lane-$lf"; $nw = Join-Path $rt "lane-$(Get-KitLaneSlug $Lane)-$lf"
   if ($New) { $nw } elseif ($Old -or (-not (Test-Path $nw) -and (Test-Path "$ow/.git"))) { $ow } else { $nw }

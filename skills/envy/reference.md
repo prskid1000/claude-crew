@@ -54,6 +54,7 @@ Every local-env service (mysql, search, api, web, any new one) follows it; `doct
 - One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry `{lane}` and the env.
 - Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.
 - Data and logs on D: under the kit (`.state/localenv/lanes/<service>-<env>{lane}`), never C:; low-write settings (a MySQL lane ini: doublewrite off, `sync_binlog=0`, logs off).
+- Names: `localEnv.laneIds: "bird"` makes the lane id `<product>-<bird>` (rm-falcon, rm-kestrel; shown `rm·Kestrel`): `-Env`, state, logs, run dirs, cmd files, leases, `{bird}` in lane paths (`mysql-rm-{bird}`, `search-rm-{bird}`). Old ids (`rm`, `rm2`) are accepted aliases with a warning; old `<product><k>` config keys still read; `doctor` flags them.
 - Move an existing one: `skills/envy/mysql-base-move.ps1` (mysql: clone per product + the `-Config` edit, also moves search data off C:).
 
 ## Config

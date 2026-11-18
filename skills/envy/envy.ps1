@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L246 state · L293 layer drops · L365 leases · L473 code · L515 migrations ·
-  L518 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L666 shared builds · L799 hooks · L871 marks · L1052 seed ·
-  L1119 processes · L1499 daemon · L1960 cleanup · L2032 doctor · L2086 verbs
+Sections: L36 config · L233 state · L280 layer drops · L352 leases · L460 code · L502 migrations ·
+  L505 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L653 shared builds · L786 hooks · L858 marks · L1039 seed ·
+  L1106 processes · L1486 daemon · L1947 cleanup · L2019 doctor · L2073 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -74,9 +74,9 @@ function Get-LaneCfg($base, [string]$g, [int]$k, $over) {
     $b = @($base.services | Where-Object name -eq $s.name)[0]; if ($s.port) { $ports[[string]$s.name] = "$($s.port)" }
     foreach ($pk in 'port', 'debugPort') { if ((Get-KitMember $b $pk) -and (Get-KitMember $s $pk) -and "$((Get-KitMember $b $pk))" -ne "$((Get-KitMember $s $pk))") { $map["$((Get-KitMember $b $pk))"] = "$((Get-KitMember $s $pk))" } }
   }
-  $lane = if ($k -gt 1) { "$k" } else { '' }
+  $lane = if ($k -gt 1) { "$k" } else { '' }; $bird = "$(Get-KitBirdName $k)".ToLower()
   Update-CfgText $c { param([string]$t)
-    $t = [regex]::Replace($t.Replace('{lane}', $lane), '\{port:([\w.-]+)\}', { param($m) if ($ports.ContainsKey($m.Groups[1].Value)) { $ports[$m.Groups[1].Value] } else { $m.Value } })
+    $t = [regex]::Replace($t.Replace('{lane}', $lane).Replace('{bird}', $bird), '\{port:([\w.-]+)\}', { param($m) if ($ports.ContainsKey($m.Groups[1].Value)) { $ports[$m.Groups[1].Value] } else { $m.Value } })
     if ($map.Count) { $t = [regex]::Replace($t, '(?<=:)\d{2,5}(?!\d)', { param($m) if ($map.ContainsKey($m.Value)) { $map[$m.Value] } else { $m.Value } }) }
     $t }
   if ($c.db.port -and $map.ContainsKey("$($c.db.port)")) { $c.db.port = [int]$map["$($c.db.port)"] }
@@ -84,9 +84,11 @@ function Get-LaneCfg($base, [string]$g, [int]$k, $over) {
 }
 if ($script:LE.envs) {
   $__envs = [ordered]@{}; $__res = [ordered]@{}; foreach ($__n in @((Get-KitProps $script:LE.envs).Name)) { $__res[$__n] = Resolve-EnvCfg $__n }
-  $__lanes = @{}; foreach ($__n in $__res.Keys) { for ($__k = 2; $__k -le [int]$__res[$__n].lanes.max; $__k++) { $__lanes["$__n$__k"] = $true } }
+  $__bird = "$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird'; $script:EnvAlias = @{}; $script:EnvKeysRaw = @($__res.Keys)   # laneIds "bird": the lane id is <product>-<bird> (rm-falcon, rm-kestrel)
+  $__lanes = @{}; foreach ($__n in $__res.Keys) { for ($__k = 2; $__k -le [int]$__res[$__n].lanes.max; $__k++) { $__lanes["$__n$__k"] = $true; $__lanes["$__n-$("$(Get-KitBirdName $__k)".ToLower())"] = $true } }
   foreach ($__n in @($__res.Keys | Where-Object { -not $__lanes.ContainsKey($_) })) {   # envs.<env><k> of a laned env: that lane's keys, no env of its own
-    for ($__k = 1; $__k -le [math]::Max(1, [int]$__res[$__n].lanes.max); $__k++) { $__ln = if ($__k -gt 1) { "$__n$__k" } else { $__n }; $__envs[$__ln] = Get-LaneCfg $__res[$__n] $__n $__k $(if ($__k -gt 1) { (Get-KitMember $script:LE.envs $__ln) }) }
+    for ($__k = 1; $__k -le [math]::Max(1, [int]$__res[$__n].lanes.max); $__k++) { $__old = if ($__k -gt 1) { "$__n$__k" } else { $__n }; $__ln = if ($__bird) { "$__n-$("$(Get-KitBirdName $__k)".ToLower())" } else { $__old }; if ($__bird) { $script:EnvAlias[$__old] = $__ln }
+      $__ov = if ($__k -gt 1) { $(if (Get-KitMember $script:LE.envs $__ln) { Get-KitMember $script:LE.envs $__ln } else { Get-KitMember $script:LE.envs $__old }) }; $__envs[$__ln] = Get-LaneCfg $__res[$__n] $__n $__k $__ov }
   }
   $script:LE.envs = [pscustomobject]$__envs
   # a static service runs from a staged copy of its built files, like an artifact
@@ -117,7 +119,7 @@ $script:OomPattern = 'JavaScript heap out of memory|Reached heap limit'   # also
 $script:FailPattern = [string](Opt 'failPattern' "APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module|$script:OomPattern|java\.lang\.OutOfMemoryError")
 function Now { (Get-Date).ToString('o') }
 function EnvNames { if ($script:LE -and $script:LE.envs) { @((Get-KitProps $script:LE.envs).Name) } else { @() } }
-function Get-EnvCfg([string]$e) { $c = (Get-KitMember $script:LE.envs $e); if (-not $c) { throw "unknown env '$e' (configured: $((EnvNames) -join ', '))" }; $c }
+function Get-EnvCfg([string]$e) { $c = (Get-KitMember $script:LE.envs $e); if (-not $c) { $c = (Get-KitMember $script:LE.envs (Resolve-EnvAlias $e)) }; if (-not $c) { throw "unknown env '$e' (configured: $((EnvNames) -join ', '))" }; $c }
 function LaneNames([string]$e) { $g = (Get-EnvCfg $e).group; @(EnvNames | Where-Object { (Get-KitMember $script:LE.envs $_).group -eq $g }) }   # lane order
 function Get-RepoCfg([string]$name) {
   $name = ($name -split '@', 2)[0]   # an env-repo key <repo>@<target> (RepoOf)
@@ -130,21 +132,6 @@ function Svc([string]$e, [string]$n) {
   $s = EnvServices $e | Where-Object name -eq $n; if (-not $s) { throw "env $e has no service '$n' ($((EnvServices $e).name -join ', '))" }; $s
 }
 function Managed($s) { -not ($s.external -and -not $s.start) }
-function Test-PortClash {
-  $by = @{}
-  foreach ($n in EnvNames) {
-    foreach ($s in @((Get-KitMember $script:LE.envs $n).services | Where-Object { $_ -and $_.port })) {
-      foreach ($pp in @(@{ p = $s.port; w = "$n/$($s.name)"; x = [bool]$s.external; c = [string]$s.start }, $(if ($s.debugPort) { @{ p = $s.debugPort; w = "$n/$($s.name) (debug)"; x = $false; c = '' } })) | Where-Object { $_ }) {
-        $by["$($pp.p)"] = @(@($by["$($pp.p)"]) + @([pscustomobject]@{ who = $pp.w; external = $pp.x; start = $pp.c }) | Where-Object { $_ })
-      }
-    }
-  }
-  foreach ($port in $by.Keys) {
-    $u = @($by[$port]); if ($u.Count -lt 2) { continue }
-    # one external service shared by several envs (same start or none) is fine
-    if (@($u | Where-Object { -not $_.external }).Count -or @($u.start | Select-Object -Unique).Count -gt 1) { "port $port is claimed by $(($u.who) -join ', ')" }
-  }
-}
 function EnvRepos([string]$e) {
   $map = [ordered]@{}
   $items = @(EnvServices $e) + @(if ((Get-EnvCfg $e).tasks) { (Get-KitProps (Get-EnvCfg $e).tasks).Value })
@@ -2111,6 +2098,7 @@ if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environment
 if ($EnvName) { $EnvName = ConvertFrom-KitLaneLabel $EnvName }   # -Env takes the id or the shown name (rm·Kestrel, rm-kestrel)
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
+if ($EnvName) { $EnvName = Resolve-EnvAlias $EnvName }
 if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup', 'lanes' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
 if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 $e = $EnvName
