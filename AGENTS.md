@@ -85,8 +85,8 @@ These rules hold whatever the route:
 - Phones only through `skills/phoney/phoney.ps1 acquire`. Every kit resource (env service,
   browser tab, phone, build) has a holder: lease only what your item declares, release when done; no live holder for
   `idle.graceMinutes` -> released (README "Leases").
-- **No large writes** (owner): no bulk data (performance: EXPLAIN, indexes, fixtures, read-only replica), shared-DB scratch
-  schema, full dump, copied dependency / data tree; added data under `data.maxRows` / `data.maxMB`, dropped at the end.
+- **No large writes** (owner): never bulk synthetic data, shared-DB scratch schemas, full dumps or copied dependency / data
+  trees; performance: EXPLAIN, indexes, the read-only replica; added data under `data.maxRows` / `data.maxMB`, then dropped.
 - Browsers are headless by default (`skills/pokey/browser.mjs`); a visible browser only when the owner asks to watch.
 - Python with `-X utf8`. On Windows: python and node from the PowerShell tool
   (pwsh 7), not Git Bash; anything handed to a Windows program uses `D:/...` paths (or the `crafty.ps1 dir` output), never Git

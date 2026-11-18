@@ -3,6 +3,8 @@
 # guard rules (crafty.ps1 guard): local-env: a localenv/<env> branch is never pushed; dev servers start in the shared local env, not by
 # hand; deployed-env (K56): no hand change of a deployed env's config or runtime without an owner's decision; large-writes: no
 # synthetic bulk data, scratch schema on a shared DB, big import, full dump or copied dependency / data tree.
+# Sections: L7 local-env · L20 deployed-env · L37 large-writes
+# ---- local-env: lane branch pushes, hand-started dev servers
 Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
     $cmd = $a.cmd
     foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
@@ -15,6 +17,7 @@ Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
       if ($seg -match $server) { return "Dev servers run in the shared local env as lane services (port, RAM and lease counted), not by hand: & $($KitCmd.local) restart -Env <lane> -Services web (start: up -Env <env>; list: envs; logs: logs -Env <env> -Service <s>)." }
     }
   } }
+# ---- deployed-env: hand changes of a deployed env (K56)
 Register-KitAdapter 'guard' 'deployed-env' @{ check = { param($a)
   # a deployed env's config or runtime changed by hand restarts it under everyone (K56, 2026-11-17: a tester's env-option toggle restarted a
   # test env twice, 502s for other runs): only with an owner's deploy decision on the line (KIT_DECISION=<id>); kit deploy verbs run inside scripts
@@ -31,19 +34,30 @@ Register-KitAdapter 'guard' 'deployed-env' @{ check = { param($a)
       if (-not ($dId -and $tgt -and "$(pwsh -NoProfile -File $KitCmd.orch decide check -Id $dId -Gate deploy -Item $tgt -MaxHours 12 -Use -Agent guard)" -match '^WORD ')) {
         return "kit guard: that changes a deployed env's config or restarts it ($("$($envHit[0])" -replace '\s+', ' ')), which restarts it for every run and tester on it. A feature behind an env switch that is off there is NOT_TESTED (tool-down) plus bossy.ps1 decide ask; never toggle it. With the owner's yes for this one change: bossy.ps1 decide record -Gate deploy -Item <the env / cluster / function name on the line> ..., then KIT_DECISION=<decision id> <command> (one use)" } } }
   } }
+# ---- large-writes: bulk data, scratch schemas, big imports, dumps, copied trees
 # large writes (owner, 2026-11-18: a benchmark's 2.1M-row scratch schema on the shared DB wrote ~4 GB to C:): a row generator past
 # data.maxRows, a scratch schema on a shared DB server, a load / import file past data.maxMB, a full dump, a recursive copy of a
 # dependency or data tree; kit scripts (envy, tests) run their own SQL and are not agent commands
 Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
-  $lw = "$($a.raw)"; if (-not $lw -or $lw -match 'envy\.ps1') { return }
+  $lw = "$($a.raw)"
+  # cheap first: no trigger word, no rule; a lone envy.ps1 call (its own SQL) passes, an envy call chained with more does not
+  if (-not $lw -or $lw -notmatch '(?i)create|generate_series|range|\bseq\b|executemany|recursive|infile|dump|\bcp\b|copy|robocopy|xcopy|<|\.\.\d' -or
+    ($lw -match '^\s*(&\s*)?(pwsh\s+(-\S+\s+)*)?["'']?[^\s"'']*envy\.ps1' -and $lw -notmatch '[;&|]')) { return }
   $lwRows = [long](Get-KitParam 'data.maxRows'); $lwMB = [double](Get-KitParam 'data.maxMB')
   $lwBig = { param($f) $lwF = $f.Trim('"', "'"); (Test-Path -LiteralPath $lwF -PathType Leaf) -and (Get-Item -LiteralPath $lwF).Length -gt $lwMB * 1MB }
-  $lwPort = if ($lw -match '(?:\s-P\s*|--port[= ]|\bpsql\b[^|;&]*\s-p\s*)(\d+)') { [int]$Matches[1] } else { 0 }
+  # a client at a command position (not a word in rg / git / gh text): a quoted Windows path, an env prefix, after ; & | or a new line
+  $lwBare = [regex]::Replace($lw, '"[^"]*"|''[^'']*''', { param($q) if ($q.Value -match '[\\/](mysql|mariadb|psql|sqlcmd|mysqladmin)(\.exe)?["'']$') { $Matches[1] } else { '""' } })   # quoted text is data, a quoted exe path its name
+  $lwClient = '(?im)(?:^|[;&|(]\s*|\n\s*)(?:&\s*)?(?:\w+=\S*\s+)*(mysql|mariadb|psql|sqlcmd|mysqladmin)(\.exe)?(\s|$)'
+  $lwPort = if ($lw -match '(?:\s-P\s*|--port[= ]|\bpsql\b[^|;&]*\s-p\s*|\bMYSQL_TCP_PORT=)(\d+)') { [int]$Matches[1] } else { 0 }
   $lwShared = @(3306, 5432, 1433) + @(foreach ($lwE in @(Get-KitProps $a.config.localEnv.envs)) { @($lwE.Value.services | Where-Object { $_.external -and $_.port } | ForEach-Object { [int]$_.port }) })
-  $lwWhy = if ($lw -match '(?i)\bWITH\s+RECURSIVE\b|\bgenerate_series\b|\bexecutemany\b|\brange\s*\(|\bseq\s+\d' -and @([regex]::Matches($lw, '(?<![\w.:-])\d[\d_]{4,}(?![\w.:-])') | Where-Object { [long]($_.Value -replace '_') -gt $lwRows }).Count) { "a row generator past data.maxRows ($lwRows)" }
-    elseif ((($lw -match '(?i)\bCREATE\s+(DATABASE|SCHEMA)\b' -and $lw -match '\b(mysql|mariadb|psql|sqlcmd)(\.exe)?\s') -or $lw -match '\bmysqladmin\b[^|;&\r\n]*\bcreate\b') -and (-not $lwPort -or $lwPort -in $lwShared)) { "a scratch schema on a shared DB server (port $(if ($lwPort) { $lwPort } else { 'default' }))" }
+  # the count bound to its generator: range(N) / range(a, N), generate_series(a, N), seq [a] N, n < N in a recursive CTE, a..N, 10**k, 1ek
+  $lwGen = '(?i)\brange\s*\(\s*(?:\d[\d_]*\s*,\s*)?(\d[\d_]*)\s*[,)]|\bgenerate_series\s*\(\s*\d+\s*,\s*(\d+)|\bseq\s+(?:\d+\s+)*(\d+)\b|\bRECURSIVE\b[\s\S]*?\b\w+\s*<=?\s*(\d+)\b|\b\d+\.\.(\d[\d_]*)\b|\b10\s*\*\*\s*(\d)\b|\b\d+e(\d)\b'
+  $lwGenHit = @([regex]::Matches($lw, $lwGen) | Where-Object { $m = $_; @(1..7 | Where-Object { $m.Groups[$_].Success } | ForEach-Object {
+      $v = [long]($m.Groups[$_].Value -replace '_'); if ($_ -ge 6) { [Math]::Pow(10, $v) } else { $v } } | Where-Object { $_ -gt $lwRows }).Count }).Count
+  $lwWhy = if ($lwGenHit) { "a row generator past data.maxRows ($lwRows)" }
+    elseif ((($lw -match '(?i)\bCREATE\s+(DATABASE|SCHEMA)\b' -and $lwBare -match $lwClient) -or $lw -match '\bmysqladmin\b[^|;&\r\n]*\bcreate\b') -and (-not $lwPort -or $lwPort -in $lwShared)) { "a scratch schema on a shared DB server (port $(if ($lwPort) { $lwPort } else { 'default' }))" }
     elseif (($lw -match '(?i)\bLOAD\s+DATA\s+(?:LOCAL\s+)?INFILE\s+(\S+)' -or $lw -match '\b(?:mysql|psql)\b[^|;&<\r\n]*<\s*(\S+)') -and (& $lwBig $Matches[1])) { "a load or import of a file past data.maxMB ($lwMB MB)" }
     elseif ($lw -match '\bmysqldump\b[^|;&\r\n]*(--all-databases|\s-A\b)|\bpg_dumpall\b') { 'a full dump' }
-    elseif ($lw -match '(?i)(\bcp\s+-\w*[rR]|\bCopy-Item\b(?=[^|;&\r\n]*\s-Recurse\b)|\brobocopy\b|\bxcopy\b)[^|;&\r\n]*(node_modules|\.m2\b|\.gradle\b|\.worktrees|\.venv\b|datadir|[\\/]mysql[\w-]*([\\/"'' ]|$))') { 'a recursive copy of a dependency, worktree or data tree (link or move it)' }
+    elseif ($lw -match '(?i)(\bcp\s+-\w*[rR]|\bCopy-Item\b(?=[^|;&\r\n]*\s-Recurse\b)|\brobocopy\b|\bxcopy\b)[^|;&\r\n]*(node_modules|(?<![\w-])\.m2\b|(?<![\w-])\.gradle\b|\.worktrees|(?<![\w-])\.venv\b|datadir|[\\/]mysql[\\/]data\b|[\\/]mysql-\d[\w.-]*[\\/](data|var)\b)') { 'a recursive copy of a dependency, worktree or data tree (link or move it)' }
   if ($lwWhy) { "kit guard: that writes large data ($lwWhy). No large writes (AGENTS.md): performance questions -> EXPLAIN / query plans, index checks, the fixtures, the read-only replica; data you add stays under data.maxRows / data.maxMB, on the kit-test or a leased lane DB, dropped at the run's end. A needed exception: bossy.ps1 decide ask (the owner runs it)." }
 } }
