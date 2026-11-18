@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task_rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L83 move
+# Sections: L7 items · L83 move · L126 parent status · L159 task text
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -122,4 +122,62 @@ function Invoke-KitTaskGroup([string]$Parent, [string[]]$Tasks, $Spec, [switch]$
   Update-KitTaskIndex $Parent { param($x) $x.spec = $sp; $x.parentItemsSig = '' }
   $pub = try { Publish-KitTaskSpec ([ordered]@{}) -Task $Parent } catch { [pscustomobject]@{ parent = "the moves stand; $Parent text not re-rendered: $($_.Exception.Message) -> tracker update $Parent -Spec <shorter items / subtasks desc>" } }
   @("grouped under $Parent ($(Get-TrackerUrl $Parent)): $(@($plan | Where-Object how -eq 'subtask').Count) moved, $(@($plan | Where-Object how -eq 'already').Count) already, $(@($plan | Where-Object how -eq 'link').Count) linked$(if (@($plan | Where-Object how -in 'missing', 'failed').Count) { ", $(@($plan | Where-Object how -in 'missing', 'failed').Count) not grouped" })") + $lines + @($mv | Where-Object { $_ -is [string] }) + @("$($pub.parent)" | Where-Object { $_ })
+}
+# ---- parent status: a parent follows its open subtasks (owner, 2026-11-18); called by lib.ps1 Set-TrackerStatus, New-TrackerTask, Move-TrackerTask, above every tracker.type
+$script:KitStatusRank = [ordered]@{ open = 0; inProgress = 1; failedTesting = 1; review = 2; promoted = 3; inTest = 4; closed = 5 }
+function Get-TrackerStatusKey([string]$Name) { foreach ($k in @($__trStatus.Keys)) { if (@($__trStatus[$k]) | Where-Object { $_ -ieq "$Name".Trim() }) { return $k } }; '' }
+# the status a parent should have: the least advanced of its open subtasks. Forward only; backwards for a new child (-NewChild);
+# a closed parent opens again for a new child or a reopened one (-Reopen); '' = leave it
+function Get-KitParentStatusTarget([string]$ParentKey, [string[]]$ChildKeys, [switch]$NewChild, [switch]$Reopen) {
+  $rk = $script:KitStatusRank; if (-not $rk.Contains($ParentKey)) { return '' }
+  $open = @($ChildKeys | Where-Object { $_ -and $rk.Contains($_) -and $_ -ne 'closed' }); if (-not $open.Count) { return '' }
+  $t = @($open | Sort-Object { $rk[$_] })[0]; if ($t -eq 'failedTesting') { $t = 'inProgress' }
+  $go = if ($ParentKey -eq 'closed') { $NewChild -or $Reopen } else { $rk[$t] -gt $rk[$ParentKey] -or ($NewChild -and $rk[$t] -lt $rk[$ParentKey]) }
+  if ($go -and $t -ne $ParentKey) { $t } else { '' }
+}
+# -ChildId / -ChildStatus: the change just made (a tracker may still show the old one); no child: the parent's own subtasks as read.
+# -ParentId: known by the caller. -DryRun: returns the plan, writes nothing. Never throws: the caller's write has already happened.
+function Sync-TrackerParent([string]$ChildId, [string]$ChildStatus, [string]$ParentId, [switch]$NewChild, [switch]$Reopen, [switch]$DryRun, [int]$Depth = 0) {
+  if ($__trDry -or $Depth -gt 3) { return }
+  try {
+    if (-not $ParentId -and $ChildId) { $ParentId = "$((Get-TrackerTask $ChildId).parent)" }; if (-not $ParentId) { return }
+    Clear-TrackerMemo $ParentId; $p = Get-TrackerTask $ParentId; if (-not $p.name) { return }
+    $nid = { param($x) "$x".Trim() -replace '^(?:.*#|CU-)' }; $found = $false
+    $keys = @(foreach ($s in @($p.subtasks)) { if ($ChildStatus -and $ChildId -and (& $nid $s.id) -eq (& $nid $ChildId)) { $found = $true; Get-TrackerStatusKey $ChildStatus } else { Get-TrackerStatusKey "$($s.status)" } })
+    if ($ChildStatus -and $ChildId -and -not $found) { $keys += Get-TrackerStatusKey $ChildStatus }   # a tracker may not list the child yet; no status given (a move): as the tracker shows it
+    if (@($keys | Where-Object { -not $_ }).Count) { return }   # a subtask status the kit does not know (custom, empty): guess nothing
+    $from = Get-TrackerStatusKey "$($p.status)"; $t = Get-KitParentStatusTarget $from $keys -NewChild:$NewChild -Reopen:$Reopen
+    if (-not $t -or (Test-TrackerStatusOff $t)) { return }
+    $plan = "parent ${ParentId}: $($p.status) -> $(Resolve-TrackerStatus $t) (follows its open subtasks)"
+    if ($DryRun) { return $plan }
+    Invoke-TrackerWrite 'status' $ParentId $t { __Set-TrackerStatus $ParentId $t } | Out-Null; Write-KitLog calls parent-status @{ task = $ParentId; from = "$($p.status)"; to = $t }
+    Write-Host "tracker: $plan"
+    if ($p.parent) { $null = Sync-TrackerParent $ParentId (Resolve-TrackerStatus $t) -ParentId "$($p.parent)" -Depth ($Depth + 1) }
+    $plan
+  } catch { Write-Warning "tracker: parent status of $ParentId not synced: $("$_".Split("`n")[0])" }
+}
+# ---- task text: kind prefixes, the task template and its gaps (lib.ps1 New-TrackerTask checks them)
+# missing labels of a task text (templates.md task-description; -Subtask: Items too); a [Bug] keeps its own shape
+function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask) {
+  if (-not "$Text".Trim()) { return @('a description') }; if (Test-KitBugName $Name) { return @() }
+  @(foreach ($sec in @(Get-KitTaskTemplate)) { if ("$($sec.required)" -eq 'subtask' -and -not $Subtask) { continue }; if ("$($sec.required)" -eq 'False') { continue }
+      $lb = (@($sec.label) + @($sec.alt) | Where-Object { $_ } | ForEach-Object { [regex]::Escape("$_") }) -join '|'
+      if ($Text -notmatch "(?im)^(?:\s*\d+[.)])?\W{0,6}(?:$lb)\b(?:\s+\w+){0,2}(?:\s*\([^)\r\n]*\))?\W{0,3}(?::|\s+[-–—]|\s*$)") { "$($sec.label)" } })
+}
+# tracker.kindPrefixes (kind -> name prefix; bug: tracker.bugPrefix), tracker.nameFormat, tracker.taskTemplate: today's kit shapes by default
+function Get-KitKindPrefix([string]$Kind) {
+  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $p = if ($kp) { @((Get-KitProps $kp) | Where-Object { $_.Name -ieq $Kind } | ForEach-Object { "$($_.Value)" })[0] }
+  if ($p) { $p } elseif ($Kind -ieq 'bug') { [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]') } elseif ($Kind) { "[$Kind]" } else { '' }
+}
+function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kindPrefixes)
+  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { (Get-KitProps $kp).Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
+  $n = "$Name".TrimStart(); [bool]@($ks | Where-Object { $n.StartsWith((Get-KitKindPrefix $_), 'OrdinalIgnoreCase') }).Count
+}
+function Test-KitBugName([string]$Name) { $p = Get-KitKindPrefix 'bug'; $n = "$Name".TrimStart(); ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) -or $n -match '^\W*Bug\]' }
+function Get-KitTaskTemplate {
+  $t = @(Get-KitSetting 'tracker.taskTemplate' $null | Where-Object { $_ -and $_.label })
+  if ($t.Count) { return $t }
+  @([pscustomobject]@{ key = 'problem'; label = 'Problem'; required = $true }, [pscustomobject]@{ key = 'goal'; label = 'Goal'; required = $true },
+    [pscustomobject]@{ key = 'items'; label = 'Items'; alt = 'Bugs'; required = 'subtask' }, [pscustomobject]@{ key = 'acceptance'; label = 'Acceptance'; required = $true },
+    [pscustomobject]@{ key = 'links'; label = 'Links'; required = $true })
 }

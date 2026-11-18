@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L11 paths · L92 state · L173 config · L254 OS · L474 leases · L872 status · L1130 supervise sweep · L1210 tracker ·
-  L1551 prior · L1567 ask bugs · L1752 git-host · L1932 kitlog · L2052 params · L2357 entry-scripts
+  L1534 prior · L1550 ask bugs · L1735 git-host · L1915 kitlog · L2035 params · L2340 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1409,7 +1409,10 @@ function Set-TrackerStatus([string]$Id, [string]$Status) {
   if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and -not ($pg = Test-KitProcessGate promote @{ task = $Id; status = $Status }).ok) {
     throw "tracker: $Id not set to $Status`: $($pg.why)"
   }
-  Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }
+  $was = try { if (-not $__trDry) { Get-TrackerTask $Id } } catch { $null }
+  $r = Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }
+  if ($was.parent -and "$r" -notmatch '^QUEUED') { $null = Sync-TrackerParent $Id (Resolve-TrackerStatus $Status) -ParentId "$($was.parent)" -Reopen:(Test-TrackerStatus "$($was.status)" 'closed') }
+  $r
 }
 function Add-TrackerComment([string]$Id, [string]$Text) { if (-not "$Id".Trim()) { throw 'tracker comment: no task id (a tracker CLI would guess it from the branch name)' }; $t = __TrText $Text; if (-not "$t".Trim()) { throw "tracker comment: empty text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }
 function __Set-TrackerStatus([string]$Id, [string]$Status) { Clear-TrackerMemo $Id; __TrA 'status' @{ id = $Id; status = (Resolve-TrackerStatus $Status); logical = $Status } }
@@ -1465,30 +1468,6 @@ function Get-TrackerOwner {
   }
   $script:__trOwner = ([string]$o).Trim(); $script:__trOwner
 }
-# missing labels of a task text (templates.md task-description; -Subtask: Items too); a [Bug] keeps its own shape
-function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask) {
-  if (-not "$Text".Trim()) { return @('a description') }; if (Test-KitBugName $Name) { return @() }
-  @(foreach ($sec in @(Get-KitTaskTemplate)) { if ("$($sec.required)" -eq 'subtask' -and -not $Subtask) { continue }; if ("$($sec.required)" -eq 'False') { continue }
-      $lb = (@($sec.label) + @($sec.alt) | Where-Object { $_ } | ForEach-Object { [regex]::Escape("$_") }) -join '|'
-      if ($Text -notmatch "(?im)^(?:\s*\d+[.)])?\W{0,6}(?:$lb)\b(?:\s+\w+){0,2}(?:\s*\([^)\r\n]*\))?\W{0,3}(?::|\s+[-–—]|\s*$)") { "$($sec.label)" } })
-}
-# tracker.kindPrefixes (kind -> name prefix; bug: tracker.bugPrefix), tracker.nameFormat, tracker.taskTemplate: today's kit shapes by default
-function Get-KitKindPrefix([string]$Kind) {
-  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $p = if ($kp) { @((Get-KitProps $kp) | Where-Object { $_.Name -ieq $Kind } | ForEach-Object { "$($_.Value)" })[0] }
-  if ($p) { $p } elseif ($Kind -ieq 'bug') { [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]') } elseif ($Kind) { "[$Kind]" } else { '' }
-}
-function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kindPrefixes)
-  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { (Get-KitProps $kp).Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
-  $n = "$Name".TrimStart(); [bool]@($ks | Where-Object { $n.StartsWith((Get-KitKindPrefix $_), 'OrdinalIgnoreCase') }).Count
-}
-function Test-KitBugName([string]$Name) { $p = Get-KitKindPrefix 'bug'; $n = "$Name".TrimStart(); ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) -or $n -match '^\W*Bug\]' }
-function Get-KitTaskTemplate {
-  $t = @(Get-KitSetting 'tracker.taskTemplate' $null | Where-Object { $_ -and $_.label })
-  if ($t.Count) { return $t }
-  @([pscustomobject]@{ key = 'problem'; label = 'Problem'; required = $true }, [pscustomobject]@{ key = 'goal'; label = 'Goal'; required = $true },
-    [pscustomobject]@{ key = 'items'; label = 'Items'; alt = 'Bugs'; required = 'subtask' }, [pscustomobject]@{ key = 'acceptance'; label = 'Acceptance'; required = $true },
-    [pscustomobject]@{ key = 'links'; label = 'Links'; required = $true })
-}
 # -NewTask '<why>' skips the duplicate check (logged); -Related: tasks the owner named this session
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related) {
   $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask })   # no bare subtasks (owner, 2026-11-11)
@@ -1502,7 +1481,9 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
       throw "tracker create refused: possible duplicate of $($dup[0].id) $($dup[0].name) (score $($dup[0].score)): extend it (crafty.ps1 tracker scope -Task $($dup[0].id) -Add '<item>'), or -NewTask '<why it cannot be folded in>'" }
   }
   if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # assignee: the kit runner unless '-' (nobody)
-  __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = (ConvertTo-KitPriority $Priority) }
+  $nt = __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = (ConvertTo-KitPriority $Priority) }
+  if ($sub -and $nt.id) { $null = Sync-TrackerParent "$($nt.id)" (Resolve-TrackerStatus 'open') -ParentId $Parent -NewChild }   # the parent follows its new open child
+  $nt
 }
 # a priority word -> the kit's 1 (urgent) .. 4 (low), as every adapter takes it (each maps the number to its own names)
 function ConvertTo-KitPriority([string]$Priority) {
@@ -1532,7 +1513,9 @@ function Set-TrackerName([string]$Id, [string]$Name) { Clear-TrackerMemo $Id; __
 # command adapter: tracker.commands.move
 function Move-TrackerTask([string]$Id, [string]$Parent = '', [string]$List = '', [switch]$Top) {
   if (-not ($Parent -or $List -or $Top)) { throw 'tracker move: -Parent, -List or -NoParent' }; if ($Top -and $Parent) { throw 'tracker move: -Parent or -NoParent, not both' }
-  Clear-TrackerMemo $Id; __TrA 'move' @{ id = $Id; parent = $Parent; list = $List; top = [bool]$Top } }
+  Clear-TrackerMemo $Id; $mv = __TrA 'move' @{ id = $Id; parent = $Parent; list = $List; top = [bool]$Top }
+  if ($Parent) { $null = Sync-TrackerParent $Id '' -ParentId $Parent -NewChild }
+  $mv }
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }
   __TrA 'attach' @{ id = $Id; file = $File; text = $Text; leaf = (Split-Path $File -Leaf) }

@@ -11,6 +11,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Usage] [-Json]   agent budget, run cap + spend; -Usage: page usage
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged and every launched area delivered (add: at once; -HoldPromotion '' releases)
     | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists
+    | rollup -Status (-Task <parent> | -All) [-Apply]   parent status = its least advanced open subtask (dry run unless -Apply)
     | forget-item -Task -Item <codes>   items removed from a task's checklist on purpose: never written back
     | remove -Task -Mrs [-Reason]   a wrongly attached MR off the task (kept in its removed list; add -Mrs re-attaches)
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
@@ -26,9 +27,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L34 init · L45 board · L224 budget · L254 launch · L495 recover · L582 pause · L593 resume · L660 program · L711 param ·
-  L717 track · L1059 supervise · L1382 report · L1462 audit · L1522 storage · L1525 bugbrief · L1639 cleanup · L1726 learn ·
-  L1757 decide · L1908 debate · L1952 health · L2019 retro due · L2029 tidy · L2101 setup · L2198 guard-sendmessage
+Sections: L35 init · L46 board · L225 budget · L255 launch · L496 recover · L583 pause · L594 resume · L661 program · L712 param ·
+  L718 track · L1060 supervise · L1383 report · L1463 audit · L1523 storage · L1526 bugbrief · L1640 cleanup · L1727 learn ·
+  L1758 decide · L1909 debate · L1953 health · L2020 retro due · L2030 tidy · L2102 setup · L2199 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -745,7 +746,7 @@ function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.r
 # a cached track-run ATTENTION about missing testing docs / solution whose task moved on since (devtools.py finish promoted it)
 function Test-KitTrackLineStale([string]$Line) { $Line -match '^ATTENTION (?<t>\S+): .*no (solution/testing comment|testing-doc link)' -and (Test-TrackerStatus $(try { [string](Get-TrackerTask $Matches.t).status } catch { '' }) 'promoted', 'inTest', 'closed') }
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item')][string]$Action = 'show', [string]$Reason, [string]$From, [string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
+param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item')][string]$Action = 'show', [string]$Reason, [string]$From, [string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion, [switch]$Status, [switch]$All, [switch]$Apply)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # throw is swallowed under SilentlyContinue
@@ -1039,7 +1040,7 @@ switch ($Action) {
     Set-KitTaskMrItems $rmTask; $rmS = Load $rmTask
     "removed $($rmRefs -join ', ') from $rmTask$(if ($Reason) { " ($Reason)" }): its MRs now $(if (@($rmS.mrs).Count) { @($rmS.mrs) -join ', ' } else { 'none' }); listed under removed (track add -Mrs re-attaches)"
   }
-  'rollup' { Invoke-TaskRollup -Task $Task -From $From -Quiet:$Quiet }
+  'rollup' { Invoke-TaskRollup -Task $Task -From $From -Quiet:$Quiet -Status:$Status -All:$All -Apply:$Apply }
   'forget-item' { Invoke-KitForgetItems -Task $Task -Item $Item }
 }
 }

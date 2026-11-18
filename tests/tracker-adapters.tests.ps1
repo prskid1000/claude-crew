@@ -45,7 +45,7 @@ Cmt jira ([ordered]@{ 'GET .*api/3/issue/P-1/comment\?maxResults' = '{"comments"
 # K54 move: parent field set / cleared (top-level); another project refused before any call
 try { Initialize-KitTracker -Type jira; $global:fx = [ordered]@{ 'PUT .*api/3/issue/P-1 ' = '' }; $global:log.Clear()
   $m1 = Move-TrackerTask P-1 -Parent P-0; $m2 = Move-TrackerTask P-1 -Top; $mx = try { Move-TrackerTask P-1 -List OPS; 'no throw' } catch { "$_" }; $ml = $global:log -join "`n"
-  $pass = $m1 -eq 'moved P-1: under P-0' -and $ml -match '"parent":\{"key":"P-0"\}' -and $ml -match '"parent":null' -and $mx -match "another project \(OPS\) needs Jira's bulk move" -and $global:log.Count -eq 2 } catch { $pass = $false; "  jira move error: $_" }
+  $pass = $m1 -eq 'moved P-1: under P-0' -and $ml -match '"parent":\{"key":"P-0"\}' -and $ml -match '"parent":null' -and $mx -match "another project \(OPS\) needs Jira's bulk move" -and @($global:log -match '^PUT ').Count -eq 2 } catch { $pass = $false; "  jira move error: $_" }
 if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker jira: move under a parent, top-level (parent null); another project refused before the call"
 # ---- linear
 Run linear ([ordered]@{ 'identifier title url description' = '{"data":{"issue":{"identifier":"E-1","title":"Bug","state":{"name":"In Progress"},"team":{"key":"E"},"children":{"nodes":[{"identifier":"E-2","title":"Sub"}]}}}}'

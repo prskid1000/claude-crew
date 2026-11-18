@@ -4,6 +4,8 @@ dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>[;<another>]]   -From stores the run's triage (item
     table + agents) in the parent's task state; then rebuilds and writes what changed; a task without subtasks: its Items only
   track run calls Invoke-KitTrackRollupHook: every parent with a not-done tracked subtask or a stored triage
+  bossy.ps1 track rollup -Status (-Task <parent> | -All) [-Apply]   parent status = its least advanced open subtask (lib.ps1 Sync-TrackerParent, also run on
+    every status set and subtask create); dry run unless -Apply; a closed parent with an open subtask reopens
   bossy.ps1 track forget-item -Task <id> -Item <code>[,<code>]   items deleted on the tracker stay deleted (task state itemsDropped)
 Reads: task state (.state/tasks: track), the git host (Invoke-HostVerb mr.get / mr.url; merged MRs cached for good),
 the deploy log, the tracker (parent + its subtasks, one view per read). Writes (tracker adapter, only on a diff): the parent
@@ -14,7 +16,7 @@ An item ticks only when done: its MRs merged, no open fix-round MR naming it, no
 an area not delivered); else unticked with ' · <reason>'; checklists are pruned of stale kit lines and repeats.
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L22 triage · L71 render · L150 rollup · L254 items · L308 close
+Sections: L24 triage · L73 render · L152 rollup · L257 items · L311 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -172,6 +174,7 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   if (-not $Force -and (($ro.parentClosed -and $fresh -and $ro.localSig -eq $sig0) -or (-not $ro.parentClosed -and -not $ans -and $ro.localSig -eq $sig0 -and $fresh))) { return }   # a closed parent: its status read once per rollupMinutes
   $stamp = { Update-KitTaskIndex $Parent { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.readAt = (Get-Date).ToString('o'); $x.rollup.localSig = $sig0 } }   # a failed or empty read waits too
   Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { & $stamp; return "ROLLUP ${Parent}: tracker read failed, nothing written" }
+  if (Sync-TrackerParent -ParentId $Parent) { Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent }   # status follows the open subtasks (forward only; a closed parent stays closed here)
   if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) {   # still closed: final, but a subtask closed after it still ticks its Items line
       & $stamp; $co = @{}; foreach ($a in @((ConvertTo-KitTriage $ro.triage).agents)) { if ($a.task) { $co["$($a.task)"] = "$($a.area)" } }
       $pio = try { Update-KitParentItems $Parent $pt $co } catch { "parent items FAILED: $("$_".Split("`n")[0])" }; if ($pio) { return "ROLLUP ${Parent}: $pio" }; return } }
@@ -324,14 +327,30 @@ function Update-KitParentClose([string]$Parent, $Pt, $Rows, $Ro) {
 }
 
 # ---- verb and hook
-function Invoke-TaskRollup([string]$Task, [string]$From, [switch]$Quiet) {
-  if (-not $Task) { 'usage: bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>]'; exit 2 }
+function Invoke-TaskRollup([string]$Task, [string]$From, [switch]$Quiet, [switch]$Status, [switch]$All, [switch]$Apply) {
+  if ($Status) { return Invoke-KitStatusSweep $Task -All:$All -Apply:$Apply }
+  if (-not $Task) { 'usage: bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>] | -Status (-Task <parent> | -All) [-Apply]'; exit 2 }
   if ($From) {
     $tri = Read-KitTriage $From; if (-not @($tri.rows).Count) { "track rollup: no item table with ID and Area columns in $From"; exit 1 }
     Update-KitTaskIndex $Task { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.triage = $tri }
     "track rollup: $(@($tri.rows).Count) item(s), $(@($tri.agents).Count) area(s) from $($tri.source) stored on $Task"
   }
   $o = Update-KitParentRollup $Task -Force; if ($o) { $o } elseif (-not $Quiet) { "ROLLUP ${Task}: no change" }
+}
+# parents follow their open subtasks (lib.ps1 Sync-TrackerParent); a dry run lists the changes, -Apply writes them; a closed parent with an open subtask reopens
+function Invoke-KitStatusSweep([string]$Task, [switch]$All, [switch]$Apply) {
+  if (-not $Task -and -not $All) { 'usage: bossy.ps1 track rollup -Status (-Task <parent> | -All) [-Apply]'; exit 2 }
+  $parents = [ordered]@{}; if ($Task) { $parents[$Task] = 1 }
+  if ($All) {
+    foreach ($g in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue)) { $x = Read-KitState $g.FullName; if ($x.task -and $x.rollup -is [Collections.IDictionary]) { $parents["$($x.task)"] = 1 }; if ($x.parent) { $parents["$($x.parent)"] = 1 } }
+    foreach ($t in @((Read-KitTracking).tasks.Values | Where-Object { $_.task })) {
+      $x = Read-KitState (Get-KitTaskFile $t.task); if ($x -and $x.Contains('parent')) { if ($x.parent) { $parents["$($x.parent)"] = 1 }; continue }
+      $tk = try { Get-TrackerTask $t.task } catch { $null }; if (-not $tk.name) { continue }
+      $p = "$($tk.parent)"; if ($Apply) { Update-KitTaskIndex $t.task { param($y) $y.parent = $p } }; if ($p) { $parents[$p] = 1 }
+    }
+  }
+  $n = 0; foreach ($p in @($parents.Keys)) { $o = Sync-TrackerParent -ParentId $p -Reopen -DryRun:(-not $Apply); if ($o) { $n++; "$(if ($Apply) { 'SET' } else { 'WOULD SET' }) $o" } }
+  "track rollup -Status: $($parents.Count) parent(s) read, $n $(if ($Apply) { 'changed' } else { 'to change (dry run: add -Apply)' })"
 }
 # items removed from a task's checklist on purpose: kept out of its Items (rollup and Items list), its spec and its stored Items words
 function Invoke-KitForgetItems([string]$Task, [string[]]$Item) {
