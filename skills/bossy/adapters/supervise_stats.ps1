@@ -183,9 +183,9 @@ function Get-KitSuperviseFlagsWrites([switch]$AutoFix) {
   $cf = Join-Path (Get-KitPath cache -Create) 'supervise-writes.json'
   if (-not $KitIsWindows) { if (-not (Test-Path -LiteralPath $cf)) { Set-Content -LiteralPath $cf '{}'; [pscustomobject]@{ info = 'disk writes per agent: no per-process I/O counters on this OS (Windows only)' } }; return }
   $prior = try { Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json } catch { $null }
-  $owners = @(@(Get-Variable res -ValueOnly -ErrorAction SilentlyContinue) | Where-Object { $_ -and $_.pid } | ForEach-Object { @{ pid = [int]$_.pid; label = $(if ("$($_.by)" -and "$($_.by)" -notmatch '^(no lease|free|parked)') { "$($_.by) ($($_.name))" } else { "$($_.name)" }) } }) +
-    @(@($script:KitShellRows) | Where-Object { $_ -and $_.pid } | ForEach-Object { @{ pid = [int]$_.pid; label = "$(if ($_.owner) { $_.owner } else { 'unknown agent' }) shell" } }) +
-    @(@(Invoke-KitHooks Get-KitCpuGroups) | Where-Object { $_ -and $_.pid } | ForEach-Object { @{ pid = [int]$_.pid; label = "lane $($_.name)" } })
+  $owners = @(@(Get-Variable res -ValueOnly -ErrorAction SilentlyContinue) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = $(if ("$($r.by)" -and "$($r.by)" -notmatch '^(no lease|free|parked)') { "$($r.by) ($($r.name))" } else { "$($r.name)" }) } } }) +
+    @(@($script:KitShellRows) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "$(if ($r.owner) { $r.owner } else { 'unknown agent' }) shell" } } }) +
+    @(@(Invoke-KitHooks Get-KitCpuGroups) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "lane $($r.name)" } } })
   $w = Update-KitWriteStats $prior (Get-Date) @(Get-KitWriteProcs) $owners
   Write-KitAtomic $cf ([ordered]@{ at = $w.at; acc = $w.acc; samples = $w.samples; hour = $w.hour } | ConvertTo-Json -Depth 6 -Compress)
   $w.flags

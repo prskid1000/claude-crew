@@ -226,6 +226,13 @@ $card = Format-KitWritesCard ([ordered]@{ at = $t1.ToString('o'); hour = $s2.hou
 "card:$($card -match "class='st hot'" -and $card -match '<div class=s>kitty \(build x\): robocopy tree</div><m act>6 GB/h</m>' -and $card -match 'devy-a shell: mysql bulk2</div><m watch>2\.5 GB/h' -and $card -match 'soft 2 / hard 5 GB')"
 '@
 Expect-Each (Invoke-PsTest 'writes' $wrt @($O)) 'disk writes per owner: #' @('first', 'soft', 'hard', 'restart', 'unseen', 'card') -Show 8
+# a holder record with several pids (a lane group, a shared lease) must not crash the writes hook ([int] of an array)
+$mpt = @'
+$null = . $args[0] 6>$null; $KitShellRows = @(); $res = @([pscustomobject]@{ pid = @(4, 8); by = 'x'; name = 'svc' })
+$r = try { $null = Get-KitSuperviseFlagsWrites; 'ok' } catch { "crash $($_.Exception.Message)" }
+"multipid:$($r -eq 'ok')"
+'@
+Expect-Each (Invoke-PsTest 'multipid' $mpt @($O)) 'writes hook, holder with several pids: #' @('multipid') -Show 8
 # QA parents index (owner decision 2026-11-18): a [Bug] under the parent of a 20-day-old run (no run.json in the 7-day scan) still
 # raises its ACT; a second beat within 6 h views it no more (cached); finalize writes the index
 $qpt = @'
