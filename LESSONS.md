@@ -19,6 +19,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- editing regex text or writing mr/spec text -> use the Edit tool, not heredoc python; run kitbag.py prose on the text first (heredoc corrupted files; 46 prose refusals in one window)
+- a change touches a query, migration or shared util -> add a test per changed query/branch, assert the SQL not only the map key, list all callers of a shared helper, shift every dependent timestamp column (7 defect-missed signals (rm-eval, rm-sched, rm-chan, rm-ent) found only in review)
 - A testing-doc row is NOT_TESTED_LOCAL -> Add its human check (or needsLiveCheck) at write time, before devtools.py finish (finish refused 3x, blocking sibling items' publish)
 - Agent reports code plus unit tests pass but local-env loop and testing docs not done -> Treat as not finished: run the local loop and docs before returning, or hand off with the open steps (Cause seen 5x in 30 days; items came back for rework)
 - devtools.py finish runs on a task created without a spec (no Problem, Goal, Items, Acceptance, Links) -> write the tracker spec sections before finish, or create tasks through tracker create with a spec (tracker describe refused finish 3 times, task stuck before promoted)
@@ -99,6 +101,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- kit push runs the full pre-push suite -> use a timeout over 20 min or run it in background; rerun a flaky area (guard-warm, wt-pool) alone before judging (a 590 s timeout killed pre-push (exit 143) and left orphan tests; 3 load-only flakes)
 - Adding a trailing # comment with Edit to a PowerShell one-liner (hash literal, foreach body) -> Put the comment on its own line above the statement (The # swallowed the rest of the line, 3x broken scripts)
 - a kit test reads durable state (.state/leases.jsonl) or a block moves into a new adapters/*.ps1 -> redirect .state in the test harness and add new files to tests/harness.ps1 New-TestKit list (torn lease lines from the running kit and missing files failed moved tests)
 - a multi-line program or a > or // argument to python from Git Bash (pyenv shim, MSYS conversion) -> write a .py into crafty.ps1 dir, run it and pass selectors from pwsh (cut programs, stray files, 4 flaky FAILs, a dropped slash) (3×)
