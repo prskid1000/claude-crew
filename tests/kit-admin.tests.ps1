@@ -148,7 +148,7 @@ $fgDl = TkPath $kc decisions-log -Create
 $c0 = & $fgRun --confirm $fgB --decision d-fg-0; $c2 = & $fgRun --confirm $fgB --decision d-fg-2
 Expect "forget --confirm refuses a yes to another ask and a 'yet ...' answer ($($c0.Trim()) | $($c2.Trim()))" ($c0 -match 'not the owner' -and $c2 -match 'kept' -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -match $fgDn)
 Push-Location $kc; $fo = & $fgRun --target fg/tool.py --to 1 --apply; Pop-Location; $fgB = [regex]::Match($fo, 'BATCH (fb-\S+):').Groups[1].Value
-'{"at":"2026-01-01T00:00:00+00:00","event":"answered","id":"d-fg-1","item":"forget-' + $fgB + '","answer":"yes","by":"owner"}' | Add-Content $fgDl
+('{"at":"2026-01-01T00:00:00+00:00","event":"answered","id":"d-fg-1","item":"forget-' + $fgDn + '","answer":"yes","by":"owner"}') | Add-Content $fgDl   # item may name the feature instead of the batch
 $co = & $fgRun --confirm $fgB --decision d-fg-1
 Expect "forget --confirm after the owner's yes removes the feature, archived, used_fn stays ($($co.Trim()))" ($co -match 'forgot 1 feature' -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -notmatch $fgDn -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -match 'used_fn')
 $fgK = 'zq' + 'key'; $fgJ = Join-Path $fgD 'c.json'; [IO.File]::WriteAllText($fgJ, "{`n  `"_meta`": {`n    `"$fgK`": 1,`n    `"z`": 2`n  },`n  `"$fgK`": {`n    `"a`": 1`n  },`n  `"last`": 1`n}`n")

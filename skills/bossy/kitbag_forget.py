@@ -13,7 +13,7 @@ config keys) are only proposed: --apply writes one batch and prints its decide a
 indexes and produced texts are only proposed. Each cut goes to <state>/forgotten/<kind>/<date>.md (`--restore <id>` puts it
 back); a kind's archive lives 7 days, doubled per restore up to 90, halved after a window with none; --purge deletes the rest.
 Exit codes: 0 fits / done · 1 still over cap, or a confirm refused · 2 usage error.
-Sections: L29 model · L74 items · L213 plan · L265 archive · L472 hooks
+Sections: L29 model · L74 items · L213 plan · L265 archive · L475 hooks
 """
 import ast, contextlib, datetime, hashlib, json, os, re, sys, time
 import os.path as osp
@@ -264,7 +264,8 @@ def _applyable(p, x):
 
 # ---- archive: write, list, restore, retention, purge
 def _adir(kind=''):
-    return osp.join(kit_path('forgotten', create=True), kind) if kind else kit_path('forgotten', create=True)
+    d = kit_path('forgotten', create=True, kit=main_clone(KIT_DIR))   # the live clone's: a kit worktree's cut outlives the worktree
+    return osp.join(d, kind) if kind else d
 
 def _cut(p, xs, now):
     """Remove xs from the file (its line endings kept), archive each; -> ids."""
@@ -380,16 +381,18 @@ def confirm(b, did, now):
         print(f'forget --confirm: no pending batch {b} or no --decision', file=sys.stderr)
         return 2
     ans, rec = None, None
-    lf = log_file('decisions-log')
-    for l in open(lf, encoding='utf-8').read().splitlines() if osp.isfile(lf) else []:
-        with contextlib.suppress(ValueError):
-            o = json.loads(l)
-            if o.get('id') == did and o.get('event') == 'answered':
-                rec, ans = o, str(o.get('answer', ''))
+    logs = dict.fromkeys([log_file('decisions-log'), kit_path('decisions-log', kit=main_clone(KIT_DIR))])   # a kit worktree: the live clone's decisions
+    for lf in [x for x in logs if osp.isfile(x)]:
+        for l in open(lf, encoding='utf-8').read().splitlines():
+            with contextlib.suppress(ValueError):
+                o = json.loads(l)
+                if o.get('id') == did and o.get('event') == 'answered':
+                    rec, ans = o, str(o.get('answer', ''))
     if ans is None:
         print(f'forget --confirm: decision {did} has no answer yet (decide wait); nothing removed')
         return 1
-    if rec.get('item') != f'forget-{b}' or str(rec.get('by') or 'owner').lower() != 'owner':   # this batch's ask, the owner's word
+    names = ','.join(re.sub(r'[^\w,-]', '', it['label']) for it in batch['items'])   # forget-<batch> or forget-<the features it names>
+    if rec.get('item') not in (f'forget-{b}', f'forget-{names}') or str(rec.get('by') or 'owner').lower() != 'owner':   # this batch's ask, the owner's word
         print(f'forget --confirm: {did} is not the owner\'s answer to forget-{b} (item {rec.get("item")}, by {rec.get("by")}); nothing removed')
         return 1
     if not re.match(r'(?i)\s*(?:yes|y|approved?|confirm(?:ed)?)\b(?!\s+nothing)', ans):

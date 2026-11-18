@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L65 setup · L186 config · L368 recover · L513 release · L564 cost · L671 registry · L675 scan
+Sections: L16 helpers · L57 setup · L178 config · L360 recover · L505 release · L556 cost · L663 registry · L667 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -45,14 +45,6 @@ def pwsh(script, *a, timeout=120, stdin=''):
 def py():
     return sys.executable or shutil.which('python3') or shutil.which('python')
 
-def live_kit():
-    """The installed clone: the main worktree of this script's repo (an audit worktree checks the live kit, not itself)."""
-    rc, common, _ = git(OWN, 'rev-parse', '--path-format=absolute', '--git-common-dir')
-    if rc == 0 and common:
-        main = osp.dirname(osp.normpath(common))
-        if osp.isfile(osp.join(main, PATHS_JSON)):
-            return main
-    return OWN
 
 def get(d, dotted):
     cur = d
