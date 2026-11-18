@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L10 paths · L91 state · L172 config · L253 OS · L473 leases · L870 status · L1128 supervise sweep · L1208 tracker ·
-  L1549 prior · L1565 ask bugs · L1750 git-host · L1931 kitlog · L2051 params · L2356 entry-scripts
+Sections: L10 paths · L91 state · L172 config · L253 OS · L473 leases · L871 status · L1129 supervise sweep · L1209 tracker ·
+  L1550 prior · L1566 ask bugs · L1751 git-host · L1932 kitlog · L2052 params · L2357 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -354,7 +354,7 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
 
 function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
 # a tree deepest first, the root last: Kill($true) ends the root first, and a pwsh child still starting then found its stdout pipe
-# closed (FailFast "No process is on the other end of the pipe" = a modal "Unknown Hard Error" popup); Kill($true) last takes stragglers
+# closed (FailFast "No process is on the other end of the pipe": a modal popup); Kill($true) last takes stragglers
 function Stop-KitProcessTree([Diagnostics.Process]$Proc) {
   if (-not $Proc) { return }
   if ($KitIsWindows) {
@@ -448,7 +448,7 @@ function Get-KitHolder {
   }
   [ordered]@{ holderPid = $null; holderStart = '' }
 }
-# supervise lock owner = the heartbeat's session, not this pwsh (a new pid each round would step aside from itself)
+# supervise lock owner = the heartbeat's session, not this pwsh (a new pid a round stepped aside from itself)
 function Get-SuperviseOwner([string]$Session) {
   if ($Session) { return $Session }
   if ($env:CLAUDE_CODE_SESSION_ID) { return $env:CLAUDE_CODE_SESSION_ID }
@@ -488,7 +488,7 @@ function Test-KitLive($l) {
   $ls = Get-KitLiveCached steps { $lf = Get-KitPath live-steps; if ((Test-Path -LiteralPath $lf) -and ((Get-Date) - [IO.File]::GetLastWriteTime($lf)).TotalMinutes -lt $bm) { try { Get-Content -LiteralPath $lf -Raw | ConvertFrom-Json } catch {} } }   # the file time: an unchanged sweep only touches it
   $mine = @($ls.labels | Where-Object { ($a -and (($_ -split ':', 2)[-1] -split '@')[0] -eq $a) -or ($l.lane -and $_ -match "@$([regex]::Escape($l.lane))$") })
   if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
-  # a holder blocked on a long gated command (a full e2e suite) writes no transcript: its running gate entry keeps it live
+  # a holder blocked on a long gated command (an e2e suite) writes no transcript: its gate entry keeps it live
   if ($a -and @(Get-KitLiveCached gate { @(Get-ChildItem (Get-KitGateLedger) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } | Where-Object { $_.owner -eq $a -and (Test-KitPid $_.pid $_.start) }).Count) { return $true }
   $all = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
     Where-Object { if ($l.session) { $_.session -eq $l.session } else { ($_.agent -and $_.agent -in @($a, $l.holder)) -or ($l.holder -and $_.session -eq $l.holder) } })
@@ -846,6 +846,7 @@ function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtab
   $ad = $KitAdapters[$Kind][$Name]; $f = if (-not $ad) { $null } elseif ($ad.ContainsKey($Verb)) { $ad[$Verb] } else { $ad['*'] }
   if (-not $ad -and $Name) { throw "$Kind ${Name}: no such adapter (README ""Adapters"")" }
   if (-not $f) { Write-Warning "$Kind ($Name): no adapter or verb $Verb (README ""Adapters"")"; return $null }
+  if ($env:KIT_API_LEDGER) { Add-KitApiCall $Kind $Verb }
   & $f $a $Verb
 }
 # a config command line -> argv: quotes group, {name} = $a.name

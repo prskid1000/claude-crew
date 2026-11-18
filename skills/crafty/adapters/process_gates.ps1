@@ -3,7 +3,7 @@
 # process-gate: Test-KitProcessGate (devtools.py process_gate is the python twin). Kind process-gate: verbs = gate names
 # (promote merge finish bugFix mrBody); built-ins testingDocs (promote here; devtools.py: merge, finish, mrBody) and reproRow (bugFix, devtools.py).
 # process.gates.<gate>: unset = pass · builtin:<name> · a command line (payload JSON on stdin, exit 0 = pass, stdout = why).
-# Sections: L7 gate · L38 process docs · L75 waits
+# Sections: L7 gate · L38 process docs · L75 waits · L94 api budget
 # ---- gate: process gates, a bounded stdin command
 # a command with text on stdin, bounded: { code; out; err }
 function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [int]$TimeoutSec = 120) {
@@ -90,4 +90,18 @@ function Get-KitLogLines([string]$File, [datetime]$Since) {
   while ($lo -lt $hi) { $mid = [int][math]::Floor(($lo + $hi) / 2); $l = $Lines[$mid]
     if ($l.StartsWith('{"at":"') -and ($q = $l.IndexOf('"', 7)) -gt 7 -and [datetimeoffset]::TryParse($l.Substring(7, $q - 7), [ref]$atv) -and $atv.LocalDateTime -lt $Cut) { $lo = $mid + 1 } else { $hi = $mid } }
   for ($i = $lo; $i -lt $Lines.Count; $i++) { if ($Lines[$i]) { $Lines[$i] } }
+}
+# ---- api budget: host / ci / tracker calls of one supervise beat (KIT_API_LEDGER, inherited by its children): "<kind> <verb> <caller>"
+function Add-KitApiCall([string]$Kind, [string]$Verb) {   # from lib.ps1 Invoke-KitAdapter
+  if ($Kind -notin 'git-host', 'ci', 'tracker') { return }
+  $fr = @(Get-PSCallStack | Select-Object -Skip 1 | Where-Object { $_.FunctionName -notmatch '^(Add-KitApiCall|Invoke-KitAdapter|Invoke-HostVerb|__TrA|<ScriptBlock>.*)$' })[0]
+  $who = if ($fr) { "$(if ($fr.ScriptName) { Split-Path $fr.ScriptName -Leaf }):$($fr.FunctionName)" } else { 'script' }
+  try { [IO.File]::AppendAllText($env:KIT_API_LEDGER, "$Kind $Verb $who`n") } catch {}   # never fails a call
+}
+# the beat's calls: over supervise.apiCallsPerBeat -> one WATCH naming the top 3 callers; the ledger starts empty for the next beat
+function Get-KitApiBeatFlag([string]$Ledger) {
+  $calls = @(Get-Content -LiteralPath $Ledger -ErrorAction SilentlyContinue | Where-Object { $_ }); Remove-Item -LiteralPath $Ledger -Force -ErrorAction SilentlyContinue
+  $cap = [double](Get-KitParam 'supervise.apiCallsPerBeat'); if ($calls.Count -le $cap) { return }
+  $top = @($calls | Group-Object { ($_ -split ' ', 3)[2] } | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) $($_.Count)" })
+  [pscustomobject]@{ level = 'WATCH'; what = "API budget: $($calls.Count) host / tracker calls this beat (supervise.apiCallsPerBeat $cap): $($top -join ', ')"; action = 'Cache or back off the top caller (kitty kind fix); raise the cap in kit.local.json only for a real need.' }
 }

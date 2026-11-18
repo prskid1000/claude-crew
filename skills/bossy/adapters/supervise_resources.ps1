@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L298 shells · L432 page · L998 release · L1038 lines · L1071 cleanup · L1156 launch ·
-  L1234 pause · L1353 heartbeat · L1368 sessions · L1420 ci tasks ·
-  L1475 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L303 shells · L437 page · L1003 release · L1043 lines · L1076 cleanup · L1161 launch ·
+  L1239 pause · L1358 heartbeat · L1373 sessions · L1425 ci tasks ·
+  L1480 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -185,6 +185,9 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   foreach ($k in @($lks.held.Keys)) { $h = $lks.held[$k]; $wn = @($lks.waiting | Where-Object { $_.lock -eq $k }); $rows.Add([pscustomobject]@{ name = "lock $k"; by = "$($h.holder) since $(([datetime]$h.at).ToString('HH:mm'))$(if ($wn.Count) { "; waiting: $(@($wn | ForEach-Object { $_.holder }) -join ', ')" })"; gb = 0 }) }
   foreach ($r in $rows) { if ($graceRows.ContainsKey($r.name)) { $r.by = "$($r.by) (grace $($graceRows[$r.name]) min)" }; $r }
   foreach ($x in @(Read-KitLog leases $now | Where-Object { $_.event -eq 'reclaim' -and $_.kind -in 'env', 'tab' })) { & $flag 'INFO' "auto-fixed: reclaimed $($x.kind) $($x.name) of $($x.agent) ($($x.reason))" 'Nothing to do.' }   # the env and tab sweeps above log, not print
+  # idle holders: any leased resource (gpu, local-ai, lock, tab, ...) whose holders all went quiet 3x idle.graceMinutes (the kinds with a reclaim above end sooner)
+  $quietMin = 3 * [double](Get-KitParam 'idle.graceMinutes')
+  foreach ($ir in @(Get-KitResourceRows $now.AddHours(-24) | Where-Object { $null -ne $_.quiet -and $_.quiet -ge $quietMin })) { & $flag 'WATCH' "$($ir.resource) held by $($ir.holder): no live holder for $($ir.quiet) min" "bossy.ps1 release -Agent $(@("$($ir.holder)" -split ', ')[0]) frees it (README Leases)" }
   $need = [double](@(@($queue | ForEach-Object { [double]$_.need }) + 0) | Measure-Object -Maximum).Maximum
   if ($need) { [pscustomobject]@{ ramNeed = $need } }   # bossy.ps1 names the biggest rows of every adapter
 }
@@ -247,9 +250,10 @@ function Get-KitStatusWaitResources {
   }
 }
 # a row per resource from leases.jsonl (holder = unreleased acquire < 24 h old; lanes from lease files)
-function Get-KitResourceRows {
+# -Since: only rows logged from then (supervise: the 24 h of holds, not the whole 1 MB log a beat); quiet = minutes no holder lived
+function Get-KitResourceRows([datetime]$Since = [datetime]::MinValue) {
   $held = [ordered]@{}; $last = @{}; $lf = Get-KitLogFile leases
-  foreach ($x in @(if (Test-Path -LiteralPath $lf) { Get-Content -LiteralPath $lf })) {
+  foreach ($x in @(if (Test-Path -LiteralPath $lf) { Get-KitLogLines $lf $Since })) {
     $o = try { $x | ConvertFrom-Json } catch { continue }; $r = "$($o.kind)|$($o.name)"
     if ($o.event -eq 'acquire' -and $o.kind -ne 'build' -and ((Get-Date) - [datetime]$o.at).TotalHours -lt 24) { if (-not $held[$r]) { $held[$r] = @{} }; $held[$r]["$($o.agent)"] = $o; continue }
     if ($o.event -ne 'down') { $last[$r] = $o }; if (-not $held[$r]) { $held[$r] = @{} }; if ($o.event -eq 'down') { $held[$r].Clear() } else { $held[$r].Remove("$($o.agent)") }
@@ -262,7 +266,8 @@ function Get-KitResourceRows {
     [pscustomobject]@{ resource = "$rk $((Get-KitPoolLabel $rk $rn) -replace '\|', ' ')"; holder = $(if ($hs.Count) { @($hs.agent) -join ', ' } else { 'free' })
       since = @($hs | ForEach-Object { $(if ($_.since) { $_.since } else { $_.at }) } | Where-Object { $_ } | Sort-Object)[0]
       seen = $(if ($live.Count) { 'live now' } elseif ($hs.Count) { "$(if (@($hs.seen | Where-Object { $_ })) { "$(([datetime]@($hs.seen | Where-Object { $_ })[0]).ToString('HH:mm')), " })no live holder" } else { '—' })
-      used = Format-KitLeaseLast $last[$r] }
+      used = Format-KitLeaseLast $last[$r]
+      quiet = $(if ($hs.Count -and -not $live.Count) { $qt = @(@($hs | ForEach-Object { $_.seen; $_.since; $_.at }) | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1]; if ($qt) { [int]((Get-Date) - $qt).TotalMinutes } }) }
   }
 }
 function Format-KitResourceTable($Rows) {

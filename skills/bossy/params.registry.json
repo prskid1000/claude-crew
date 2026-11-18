@@ -37,6 +37,7 @@
   "supervise.stuckMinutes": "config default=20 unit=min",
   "supervise.shellStuckMinutes": "quantile q=.95 k=2 default=30 floor=10 ceil=240 unit=min",
   "supervise.manyAgents": "config default=8 unit=agents",
+  "supervise.apiCallsPerBeat": "config default=150 unit=calls",
   "supervise.kittyLiveHours": "config default=6 unit=h",
   "idle.beatMinutes": "config default=20 unit=min",
   "qa.bugsLockSec": "config default=120 unit=s",

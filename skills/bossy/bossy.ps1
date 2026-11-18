@@ -27,8 +27,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L34 init · L45 board · L224 budget · L254 launch · L495 recover · L582 pause · L593 resume · L660 program · L711 param ·
-  L717 track · L1059 supervise · L1373 report · L1453 audit · L1513 storage · L1516 bugbrief · L1630 cleanup · L1717 learn ·
-  L1748 decide · L1899 debate · L1943 health · L2010 retro due · L2020 tidy · L2092 setup · L2189 guard-sendmessage
+  L717 track · L1059 supervise · L1377 report · L1457 audit · L1517 storage · L1520 bugbrief · L1634 cleanup · L1721 learn ·
+  L1752 decide · L1903 debate · L1947 health · L2014 retro due · L2024 tidy · L2096 setup · L2193 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1085,6 +1085,7 @@ Invoke-KitLocked $lk {
 if ($script:aside) { $script:aside; Get-KitAsideFlags $me; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }
 $budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 40) } else { 240 }
 $deadline = (Get-Date).AddSeconds($budgetSeconds)
+$apiLedger = Join-Path (Get-KitPath cache -Create) 'supervise-api.txt'; $env:KIT_API_LEDGER = $apiLedger   # its children's calls count too (Get-KitApiBeatFlag)
 $env:KIT_NET_TIMEOUT_SEC = [string][math]::Min(20.0, (Get-KitNetTimeout)); $env:KIT_NET_TRIES = '2'
 function Left { [math]::Max(5, [int]($deadline - (Get-Date)).TotalSeconds) }
 $stateFile = Get-KitPath supervise-state -Create
@@ -1262,11 +1263,13 @@ if ((Test-Path (Get-KitPath scope-log)) -and (Within 'scope')) { foreach ($w in 
 
 # 5. QA results: new [Bug], failedTesting tasks (bossy E6)
 if (Within 'QA bug tasks') {
-  $parents = @(Get-ChildItem (Get-KitPath qa-runs) -Directory | ForEach-Object { try { (Get-Content (Join-Path $_.FullName 'run.json') -Raw | ConvertFrom-Json).tracker.parent } catch {} } | Where-Object { $_ } | Select-Object -Unique)
+  # runs of the last 7 days (as failedTesting): every run.json each beat read 500 old runs and viewed each parent (waste guard)
+  $qaRecent = @(foreach ($rf in @(Get-KitQaRunFiles run.json -SinceDays 7)) { try { [pscustomobject]@{ dir = $rf.Directory; j = ([IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json) } } catch {} })
+  $parents = @($qaRecent | ForEach-Object { $_.j.tracker.parent } | Where-Object { $_ } | Select-Object -Unique)
   $tracked = @((Read-KitTracking).tasks.Keys)
   $openRuns = @{}
-  foreach ($rd in Get-ChildItem (Get-KitPath qa-runs) -Directory | Where-Object { ($now - $_.LastWriteTime).TotalHours -lt 3 }) {
-    try { $rj = Get-Content (Join-Path $rd.FullName 'run.json') -Raw | ConvertFrom-Json } catch { continue }
+  foreach ($qr in @($qaRecent | Where-Object { ($now - $_.dir.LastWriteTime).TotalHours -lt 3 })) {
+    $rd = $qr.dir; $rj = $qr.j
     $left = @($rj.items | Where-Object { -not (Test-Path (Join-Path $rd.FullName "$($_.code)/finalize.json")) -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)/held.json")) }).Count
     if ($left -and $rj.tracker.parent) { $openRuns[$rj.tracker.parent] = "$($rd.Name) ($left item(s) left)" }
   }
@@ -1340,6 +1343,7 @@ foreach ($sf in @(Get-ChildItem (Get-KitPath launches) -Filter 'self-*.json' -Er
 # 9. anomalies vs last round: outbox, agent errors
 Phase 'anomalies'; $cur =@{ toolErrors = $toolErr; errorRun = $errRun; outbox = @(Get-Content (Get-KitPath outbox) -ErrorAction SilentlyContinue).Count }
 $an = Get-KitAnomalies $cur $state.anom; foreach ($x in $an.flags) { Flag $x.level $x.what $x.action }; $state.anom = $an.state
+foreach ($x in @(Get-KitApiBeatFlag $apiLedger)) { Flag $x.level $x.what $x.action }; Remove-Item Env:KIT_API_LEDGER -ErrorAction SilentlyContinue
 $late = @($kitSweep.skipped | Where-Object { -not $kitSweep.ran.ContainsKey($_) -and (-not $kitSweep.every[$_] -or -not $kitSweep.last[$_] -or ($now - [datetime]$kitSweep.last[$_]).TotalMinutes -ge 2 * $kitSweep.every[$_]) })   # one round late: no news
 if ($late.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $(@($late) + @($kitSweep.timedOut | ForEach-Object { "$_ (timed out)" }) -join ', '); slowest: $(@($kitSweep.ran.GetEnumerator() | Sort-Object { -$_.Value } | Select-Object -First 3 | ForEach-Object { '{0} {1:0} s' -f $_.Key, $_.Value }) -join ', ')" 'Partial result: the skipped sections go first next round; a repeat: speed up the slowest (calls log "sweep" lines).' }   # before the acks (-Ack)
 $s1 = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; $state.acks = @{}; $a0 = $s1.acks   # re-read: an -Ack during this sweep

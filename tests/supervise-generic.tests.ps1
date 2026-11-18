@@ -155,5 +155,44 @@ Invoke-KitCleanupAgentDirs
 "overcap:$(@($actions | Where-Object { $_.why -match '^OVER CAP' -and $_.path -eq $af }).Count -eq 1 -and @($actions | Where-Object { $_.why -match '^OVER CAP' }).Count -eq 1)"
 '@
 Expect-Each (Invoke-PsTest 'waste' $wst @($O)) 'waste audit: #' @('qafiles', 'backoff', 'wake', 'loglines', 'cap', 'overcap') -Show 8
+# waste guards: per-beat API budget (WATCH names the caller), idle holders (any leased kind quiet 3x idle.graceMinutes = WATCH)
+$wg = @'
+$null = . $args[0] 6>$null; $KitAdapters['git-host']['fakeh'] = @{ '*' = { param($a, $v) 1 } }
+function Get-FakePlan([int]$N) { foreach ($i in 1..$N) { $null = Invoke-KitAdapter git-host fakeh 'mr.get' @{} } }
+$env:KIT_API_LEDGER = Join-Path (Get-KitPath cache -Create) 'api-test.txt'; Get-FakePlan 160; $f1 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER)
+Get-FakePlan 20; $f2 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER); Remove-Item Env:KIT_API_LEDGER; Get-FakePlan 5
+"api:$($f1.Count -eq 1 -and $f1[0].level -eq 'WATCH' -and $f1[0].what -match '^API budget: 160 host / tracker calls this beat \(supervise\.apiCallsPerBeat 150\): \S+:Get-FakePlan 160$' -and -not $f2.Count -and -not (Test-Path (Join-Path (Get-KitPath cache) 'api-test.txt')))"
+$lf = Get-KitLogFile leases; $ago = { param($m) (Get-Date).AddMinutes(-$m).ToString('o') }
+Set-Content $lf @(foreach ($r in @('gpu', 'g0', 'gone-a', 45), @('local-ai', 'stt', 'fresh-b', 5)) { "{`"at`":`"$(& $ago $r[3])`",`"event`":`"acquire`",`"kind`":`"$($r[0])`",`"name`":`"$($r[1])`",`"agent`":`"$($r[2])`",`"holder`":`"9999999`"}" })
+$now = Get-Date; $ih = @(Get-KitSuperviseGuardResources | Where-Object { "$($_.what)" -match 'no live holder for' })
+"idle:$($ih.Count -eq 1 -and $ih[0].level -eq 'WATCH' -and $ih[0].what -match '^gpu .*held by gone-a: no live holder for 4\d min$')"
+'@
+Expect-Each (Invoke-PsTest 'wguard' $wg @($O)) 'waste guards: #' @('api', 'idle') -Show 8
+# sweep cost: 500 QA runs (490 older than 7 days) + 3000-row signals and outcomes logs; one beat stays at the measured cost
+# (2026-11-18: 750-950 reads, 40-56 API calls; every run.json was read and each run's parent viewed: 6500 reads, 1000+ calls)
+$wc = @'
+param($O, $Fill)
+$null = . $O 6>$null 2>$null
+if ($Fill) { $qa = Get-KitPath qa-runs -Create; $old = (Get-Date).AddDays(-10)
+  foreach ($n in 1..500) { $rd = Join-Path $qa "r$n"; New-Item -ItemType Directory -Force "$rd/C1" | Out-Null; Set-Content "$rd/run.json" "{`"tracker`":{`"parent`":`"P$n`"},`"items`":[]}"; Set-Content "$rd/C1/finalize.json" '{}'
+    if ($n -gt 10) { foreach ($p in "$rd/run.json", "$rd/C1/finalize.json", "$rd/C1", $rd) { (Get-Item $p).LastWriteTime = $old } } }
+  foreach ($lg in 'signals', 'outcomes') { $t0 = (Get-Date).AddDays(-2); Set-Content (Get-KitPath $lg -Create) @(foreach ($i in 1..3000) { "{`"at`":`"$($t0.AddMinutes($i).ToString('o'))`",`"skill`":`"crafty`",`"kind`":`"idea`",`"text`":`"row $i`",`"task`":`"t$i`",`"stage`":`"x`"}" }) }
+  return }
+$io = { if ($IsWindows) { [long](Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ReadOperationCount } else { 0 } }
+$env:KIT_PARAM_SUPERVISE_APICALLSPERBEAT = '0'; $r0 = & $io; $sj = & $O supervise -Json 2>$null | Out-String | ConvertFrom-Json; $r1 = & $io
+$api = @($sj.flags | Where-Object { $_.what -match '^API budget: (\d+) ' } | ForEach-Object { [int]$Matches[1] })[0]
+"cost:$($r1 - $r0) reads, $([int]$api) api"
+'@
+$wcf = Join-Path (Kd) 'wcost.ps1'; Set-Content $wcf $wc; $null = & $pwshExe -NoProfile -File $wcf $O 1; $wco = "$(& $pwshExe -NoProfile -File $wcf $O '' | Select-Object -Last 1)"
+$wcr = if ($wco -match '^cost:(\d+) reads, (\d+) api$') { [int]$Matches[1], [int]$Matches[2] } else { 99999, 99999 }
+Expect "waste guards: one supervise beat over 500 QA runs + 3000-row logs <= 2000 file reads (measured 950) and <= 120 API calls (measured 56) ($wco)" ($wcr[0] -le 2000 -and $wcr[1] -le 120)
+# write-if-changed: supervise, learn -Stats and kitbag.py release run twice on the same input: no file is rewritten with the same bytes
+# (by design: usage.result.json -Volatile moves its time, a background job's .out / .err are its new run, the API ledger its late calls)
+$wsnap = { @(Get-ChildItem -LiteralPath $k -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[\\/](\.runtime|\.state)[\\/]' -and $_.FullName -notmatch '[\\/]background[\\/]|usage\.result\.json$|supervise-api\.txt$' } |
+  ForEach-Object { [pscustomobject]@{ f = $_.FullName.Substring($k.Length); t = $_.LastWriteTimeUtc.Ticks; h = (Get-FileHash -LiteralPath $_.FullName -Algorithm MD5).Hash } }) }
+$wsame = foreach ($wrun in { $null = & $pwshExe -NoProfile -File $O supervise -Json 2>$null }, { $null = & $pwshExe -NoProfile -File $O learn -Stats 2>$null }, { $null = & $py -X utf8 (Join-Path $k 'skills/bossy/kitbag.py') release 2>$null }) {
+  & $wrun; Start-Sleep -Milliseconds 1100; $wa = @{}; foreach ($x in & $wsnap) { $wa[$x.f] = $x }; & $wrun
+  foreach ($y in & $wsnap) { $x = $wa[$y.f]; if ($x -and $x.t -ne $y.t -and $x.h -eq $y.h) { $y.f } } }
+Expect "waste guards: a second supervise / learn -Stats / release on the same input rewrites no file with the same bytes ($($wsame -join ', '))" (-not @($wsame).Count)
 Remove-TestKit $k
 Complete-Tests
