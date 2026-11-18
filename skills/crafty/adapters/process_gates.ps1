@@ -94,14 +94,16 @@ function Get-KitLogLines([string]$File, [datetime]$Since) {
 # ---- api budget: host / ci / tracker calls of one supervise beat (KIT_API_LEDGER, inherited by its children): "<kind> <verb> <caller>"
 function Add-KitApiCall([string]$Kind, [string]$Verb) {   # from lib.ps1 Invoke-KitAdapter
   if ($Kind -notin 'git-host', 'ci', 'tracker') { return }
-  $fr = @(Get-PSCallStack | Select-Object -Skip 1 | Where-Object { $_.FunctionName -notmatch '^(Add-KitApiCall|Invoke-KitAdapter|Invoke-HostVerb|__TrA|<ScriptBlock>.*)$' })[0]
+  # the caller past the wrappers (a lock, a memo, a bounded child, a hook): else every inline call reads as Invoke-KitLocked
+  $fr = @(Get-PSCallStack | Select-Object -Skip 1 | Where-Object { $_.FunctionName -notmatch '^(Add-KitApiCall|Invoke-KitAdapter|Invoke-HostVerb|__TrA|<ScriptBlock>.*|Invoke-KitLocked|Get-KitMemo|Invoke-Bounded|Invoke-KitHooks|Invoke-KitSweepCall)$' })[0]
   $who = if ($fr) { "$(if ($fr.ScriptName) { Split-Path $fr.ScriptName -Leaf }):$($fr.FunctionName)" } else { 'script' }
-  try { [IO.File]::AppendAllText($env:KIT_API_LEDGER, "$Kind $Verb $who`n") } catch {}   # never fails a call
+  # shared append: parallel children each write their line (AppendAllText shares read only: a collision dropped the count)
+  try { $fs = [IO.File]::Open($env:KIT_API_LEDGER, 'Append', 'Write', 'ReadWrite'); try { $b = [Text.Encoding]::UTF8.GetBytes("$Kind $Verb $who`n"); $fs.Write($b, 0, $b.Length) } finally { $fs.Dispose() } } catch {}   # never fails a call
 }
 # the beat's calls: over supervise.apiCallsPerBeat -> one WATCH naming the top 3 callers; the ledger starts empty for the next beat
 function Get-KitApiBeatFlag([string]$Ledger) {
   $calls = @(Get-Content -LiteralPath $Ledger -ErrorAction SilentlyContinue | Where-Object { $_ }); Remove-Item -LiteralPath $Ledger -Force -ErrorAction SilentlyContinue
   $cap = [double](Get-KitParam 'supervise.apiCallsPerBeat'); if ($calls.Count -le $cap) { return }
   $top = @($calls | Group-Object { ($_ -split ' ', 3)[2] } | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) $($_.Count)" })
-  [pscustomobject]@{ level = 'WATCH'; what = "API budget: $($calls.Count) host / tracker calls this beat (supervise.apiCallsPerBeat $cap): $($top -join ', ')"; action = 'Cache or back off the top caller (kitty kind fix); raise the cap in kit.local.json only for a real need.' }
+  [pscustomobject]@{ level = 'WATCH'; what = "API budget: $($calls.Count) host / tracker adapter verbs this beat (supervise.apiCallsPerBeat $cap): $($top -join ', ')"; action = 'Cache or back off the top caller (kitty kind fix); raise the cap in kit.local.json only for a real need.' }
 }

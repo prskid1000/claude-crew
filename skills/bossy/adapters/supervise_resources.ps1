@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L303 shells · L437 page · L1004 release · L1044 lines · L1077 cleanup · L1162 launch ·
-  L1240 pause · L1359 heartbeat · L1374 sessions · L1426 ci tasks ·
-  L1481 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L309 shells · L443 page · L1010 release · L1050 lines · L1083 cleanup · L1168 launch ·
+  L1246 pause · L1365 heartbeat · L1380 sessions · L1432 ci tasks ·
+  L1487 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -187,7 +187,13 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   foreach ($x in @(Read-KitLog leases $now | Where-Object { $_.event -eq 'reclaim' -and $_.kind -in 'env', 'tab' })) { & $flag 'INFO' "auto-fixed: reclaimed $($x.kind) $($x.name) of $($x.agent) ($($x.reason))" 'Nothing to do.' }   # the env and tab sweeps above log, not print
   # idle holders: any leased resource (gpu, local-ai, lock, tab, ...) whose holders all went quiet 3x idle.graceMinutes (the kinds with a reclaim above end sooner)
   $quietMin = 3 * [double](Get-KitParam 'idle.graceMinutes')
-  foreach ($ir in @(Get-KitResourceRows $now.AddHours(-24) | Where-Object { $null -ne $_.quiet -and $_.quiet -ge $quietMin })) { & $flag 'WATCH' "$($ir.resource) held by $($ir.holder): no live holder for $($ir.quiet) min" "bossy.ps1 release -Agent $(@("$($ir.holder)" -split ', ')[0]) frees it (README Leases)" }
+  # quiet counts from the first beat that saw no live holder (an acquire row has no `seen`: its age alone flagged a holder dead 1 min)
+  $idf = Join-Path (Get-KitPath cache -Create) 'idle-holders.json'; $idOld = try { Get-Content -LiteralPath $idf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $idOld) { $idOld = @{} }; $idNew = @{}
+  foreach ($ir in @(Get-KitResourceRows $now.AddHours(-24) | Where-Object { $null -ne $_.quiet })) {
+    $idAt = if ($idOld[$ir.resource]) { [datetime]$idOld[$ir.resource] } else { $now }; $idNew[$ir.resource] = $idAt.ToString('o')
+    $q = [int][math]::Min([double]$ir.quiet, ($now - $idAt).TotalMinutes)
+    if ($q -ge $quietMin) { & $flag 'WATCH' "$($ir.resource) held by $($ir.holder): no live holder for $q min" "bossy.ps1 release -Agent $(@("$($ir.holder)" -split ', ')[0]) frees it (README Leases)" } }
+  Write-KitAtomic $idf ($idNew | ConvertTo-Json -Compress)
   $need = [double](@(@($queue | ForEach-Object { [double]$_.need }) + 0) | Measure-Object -Maximum).Maximum
   if ($need) { [pscustomobject]@{ ramNeed = $need } }   # bossy.ps1 names the biggest rows of every adapter
 }

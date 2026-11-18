@@ -27,8 +27,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L34 init · L45 board · L224 budget · L254 launch · L495 recover · L582 pause · L593 resume · L660 program · L711 param ·
-  L717 track · L1059 supervise · L1377 report · L1457 audit · L1517 storage · L1520 bugbrief · L1634 cleanup · L1721 learn ·
-  L1752 decide · L1903 debate · L1947 health · L2014 retro due · L2024 tidy · L2096 setup · L2193 guard-sendmessage
+  L717 track · L1059 supervise · L1378 report · L1458 audit · L1518 storage · L1521 bugbrief · L1635 cleanup · L1722 learn ·
+  L1753 decide · L1904 debate · L1948 health · L2015 retro due · L2025 tidy · L2097 setup · L2194 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1086,6 +1086,7 @@ if ($script:aside) { $script:aside; Get-KitAsideFlags $me; if ($Brief) { [Consol
 $budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 40) } else { 240 }
 $deadline = (Get-Date).AddSeconds($budgetSeconds)
 $apiLedger = Join-Path (Get-KitPath cache -Create) 'supervise-api.txt'; $env:KIT_API_LEDGER = $apiLedger   # its children's calls count too (Get-KitApiBeatFlag)
+Remove-Item -LiteralPath $apiLedger -Force -ErrorAction SilentlyContinue   # a beat cut before its flag left lines: never the next beat's
 $env:KIT_NET_TIMEOUT_SEC = [string][math]::Min(20.0, (Get-KitNetTimeout)); $env:KIT_NET_TRIES = '2'
 function Left { [math]::Max(5, [int]($deadline - (Get-Date)).TotalSeconds) }
 $stateFile = Get-KitPath supervise-state -Create

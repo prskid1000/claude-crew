@@ -160,14 +160,21 @@ $wg = @'
 $null = . $args[0] 6>$null; $KitAdapters['git-host']['fakeh'] = @{ '*' = { param($a, $v) 1 } }
 function Get-FakePlan([int]$N) { foreach ($i in 1..$N) { $null = Invoke-KitAdapter git-host fakeh 'mr.get' @{} } }
 $env:KIT_API_LEDGER = Join-Path (Get-KitPath cache -Create) 'api-test.txt'; Get-FakePlan 160; $f1 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER)
-Get-FakePlan 20; $f2 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER); Remove-Item Env:KIT_API_LEDGER; Get-FakePlan 5
-"api:$($f1.Count -eq 1 -and $f1[0].level -eq 'WATCH' -and $f1[0].what -match '^API budget: 160 host / tracker calls this beat \(supervise\.apiCallsPerBeat 150\): \S+:Get-FakePlan 160$' -and -not $f2.Count -and -not (Test-Path (Join-Path (Get-KitPath cache) 'api-test.txt')))"
+Get-FakePlan 20; $f2 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER)
+# calls inside a lock wrapper name the function around it, not Invoke-KitLocked
+function Get-FakeLockedDirect { Invoke-KitLocked (Join-Path (Get-KitPath cache) 'api-lock.json') { foreach ($i in 1..151) { $null = Invoke-KitAdapter git-host fakeh 'mr.get' @{} } } }
+Get-FakeLockedDirect; $f3 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER); Remove-Item Env:KIT_API_LEDGER; Get-FakePlan 5
+"wrap:$($f3.Count -eq 1 -and $f3[0].what -match ':Get-FakeLockedDirect 151$')"
+"api:$($f1.Count -eq 1 -and $f1[0].level -eq 'WATCH' -and $f1[0].what -match '^API budget: 160 host / tracker adapter verbs this beat \(supervise\.apiCallsPerBeat 150\): \S+:Get-FakePlan 160$' -and -not $f2.Count -and -not (Test-Path (Join-Path (Get-KitPath cache) 'api-test.txt')))"
 $lf = Get-KitLogFile leases; $ago = { param($m) (Get-Date).AddMinutes(-$m).ToString('o') }
 Set-Content $lf @(foreach ($r in @('gpu', 'g0', 'gone-a', 45), @('local-ai', 'stt', 'fresh-b', 5)) { "{`"at`":`"$(& $ago $r[3])`",`"event`":`"acquire`",`"kind`":`"$($r[0])`",`"name`":`"$($r[1])`",`"agent`":`"$($r[2])`",`"holder`":`"9999999`"}" })
-$now = Get-Date; $ih = @(Get-KitSuperviseGuardResources | Where-Object { "$($_.what)" -match 'no live holder for' })
-"idle:$($ih.Count -eq 1 -and $ih[0].level -eq 'WATCH' -and $ih[0].what -match '^gpu .*held by gone-a: no live holder for 4\d min$')"
+# the first beat that sees no live holder starts the count (an old acquire alone flags nothing); 40 min later only the 45-min lease flags
+$now = Get-Date; $ih0 = @(Get-KitSuperviseGuardResources | Where-Object { "$($_.what)" -match 'no live holder for' })
+$idf = Join-Path (Get-KitPath cache) 'idle-holders.json'; $idc = Get-Content $idf -Raw | ConvertFrom-Json -AsHashtable; foreach ($ik in @($idc.Keys)) { $idc[$ik] = (& $ago 40) }; $idc | ConvertTo-Json | Set-Content $idf
+$ih = @(Get-KitSuperviseGuardResources | Where-Object { "$($_.what)" -match 'no live holder for' })
+"idle:$(-not $ih0.Count -and $ih.Count -eq 1 -and $ih[0].level -eq 'WATCH' -and $ih[0].what -match '^gpu .*held by gone-a: no live holder for 40 min$')"
 '@
-Expect-Each (Invoke-PsTest 'wguard' $wg @($O)) 'waste guards: #' @('api', 'idle') -Show 8
+Expect-Each (Invoke-PsTest 'wguard' $wg @($O)) 'waste guards: #' @('api', 'wrap', 'idle') -Show 8
 # sweep cost: 500 QA runs (490 older than 7 days) + 3000-row signals and outcomes logs; one beat stays at the measured cost
 # (2026-11-18: 750-950 reads, 40-56 API calls; every run.json was read and each run's parent viewed: 6500 reads, 1000+ calls)
 $wc = @'
