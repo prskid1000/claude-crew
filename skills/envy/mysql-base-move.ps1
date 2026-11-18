@@ -12,17 +12,18 @@ templates); dir `<Lanes>/mysql-rm-falcon`, ini `<Lanes>/mysql-rm-falcon.ini` (co
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L28 names · L35 ini and config edit · L107 rename · L182 checks · L220 apply · L257 search data
+Sections: L29 names · L36 ini and config edit · L108 rename · L196 checks · L234 apply · L271 search data
 #>
 param([string[]]$Targets = @('rm:3305', 'hm:3316'), [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
   [string]$Bin = 'C:/Program Files/MySQL/MySQL Server 8.0/bin', [string]$Service = 'MySQL80', [int]$VerifyPort = 3399,
-  [string]$ConfigFile, [string]$AdminSchema = '{env}_admin', [string]$RegistryTable = 'mt_datasource_config', [string]$PoolTable = 'db_pool', [switch]$Config, [string]$Runtime, [switch]$Rename, [switch]$Rollback, [string[]]$Birds, [switch]$Apply, [switch]$Replace, [switch]$Force)
+  [string]$ConfigFile, [string]$AdminSchema = '{env}_admin', [string]$RegistryTable = 'mt_datasource_config', [string]$PoolTable = 'db_pool', [switch]$Config, [string]$Runtime, [string]$PokeyFile, [switch]$Rename, [switch]$Rollback, [string[]]$Birds, [switch]$Apply, [switch]$Replace, [switch]$Force)
 $ErrorActionPreference = 'Stop'
 $KitDir = Split-Path (Split-Path $PSScriptRoot)
 if (-not $Lanes) { $Lanes = Join-Path $KitDir '.state/localenv/lanes' }
 $Lanes = $Lanes.Replace('\', '/').TrimEnd('/')
 if (-not $IniFrom) { $IniFrom = @(Get-ChildItem $Lanes -Filter 'mysql-*.ini' -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -First 1 -ExpandProperty FullName)[0] }
 if (-not $Runtime) { $Runtime = Join-Path $KitDir '.runtime' }
+if (-not $PokeyFile) { $PokeyFile = Join-Path $KitDir 'skills/pokey/targets.local.json' }
 if (-not $ConfigFile) { $ConfigFile = Join-Path $KitDir 'skills/crafty/kit.local.json' }
 
 # ---- names: the bird of a lane number
@@ -120,6 +121,7 @@ if ($Rename -or $Rollback) {
   if ($Rollback) {
     if (-not (Test-Path -LiteralPath $jf)) { 'no journal: nothing to roll back'; exit 1 }
     $j = Get-Content -LiteralPath $jf -Raw | ConvertFrom-Json -AsHashtable
+    if ($j['pokey'] -and (Test-Path -LiteralPath $j['pokey']['backup'])) { Copy-Item -LiteralPath $j['pokey']['backup'] $j['pokey']['file'] -Force; "back: $($j['pokey']['file'])" }
     foreach ($m in @($j['moves'])) { if (Test-Path -LiteralPath $m['to']) { Move-Item -LiteralPath $m['to'] $m['from'] }; "back: $($m['to']) -> $($m['from'])" }
     foreach ($m in @($j['mysql'])) {
       if (Test-Path -LiteralPath $m['newDir']) { Move-Item -LiteralPath $m['newDir'] $m['oldDir'] }
@@ -159,9 +161,15 @@ if ($Rename -or $Rollback) {
       }
     }
   }
-  'rename plan:'; Show-Plan (@($mysqlMoves | ForEach-Object { "$($_['oldDir']) -> $($_['newDir']) (+ ini rewritten, lane-ready.txt)" }) + @($moves | ForEach-Object { "$($_['from']) -> $($_['to'])" }))
+  # pokey targets: an explicit lane key (local-hm2) -> <base>-<bird> (the derived <target><k> names need no key; pokey accepts the old ones)
+  $tgKeys = @(); $pk = $null
+  if (Test-Path -LiteralPath $PokeyFile) {
+    $pk = Get-Content -LiteralPath $PokeyFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50
+    foreach ($n in @($pk['targets'].Keys)) { if ($n -match '^(?<b>.+?)(?<k>\d+)$' -and $pk['targets'].Contains($Matches.b)) { $tgKeys += @{ from = $n; to = "$($Matches.b)-$(Get-Bird ([int]$Matches.k))" } } }
+  }
+  'rename plan:'; Show-Plan (@($tgKeys | ForEach-Object { "${PokeyFile}: target $($_['from']) -> $($_['to'])" }) + @($mysqlMoves | ForEach-Object { "$($_['oldDir']) -> $($_['newDir']) (+ ini rewritten, lane-ready.txt)" }) + @($moves | ForEach-Object { "$($_['from']) -> $($_['to'])" }))
   if ($badR.Count) { 'REFUSED:'; Show-Plan $badR; if ($Apply) { exit 1 } }
-  if ($Apply -and ($moves.Count -or $mysqlMoves.Count)) {
+  if ($Apply -and ($moves.Count -or $mysqlMoves.Count -or $tgKeys.Count)) {
     New-Item -ItemType Directory -Force $bak | Out-Null
     foreach ($m in $moves) { Move-Item -LiteralPath $m['from'] $m['to'] }
     foreach ($m in $mysqlMoves) {
@@ -173,7 +181,13 @@ if ($Rename -or $Rollback) {
       }
       $rd = "$($m['newDir'])/lane-ready.txt"; if (Test-Path -LiteralPath $rd) { (Get-Content -LiteralPath $rd -Raw).Replace($m['oldDir'], $m['newDir']).Replace($m['oldIni'], $m['newIni']) | Set-Content -LiteralPath $rd -NoNewline }
     }
-    [ordered]@{ moves = $moves; mysql = $mysqlMoves } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jf -Encoding utf8
+    $pj = $null
+    if ($tgKeys.Count) {
+      Copy-Item -LiteralPath $PokeyFile "$bak/targets.local.json" -Force; $pj = @{ file = $PokeyFile; backup = "$bak/targets.local.json" }
+      $nt = [ordered]@{}; foreach ($n in @($pk['targets'].Keys)) { $hit = @($tgKeys | Where-Object { $_['from'] -eq $n })[0]; $nt[$(if ($hit) { $hit['to'] } else { $n })] = $pk['targets'][$n] }
+      $pk['targets'] = $nt; $pk | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $PokeyFile -Encoding utf8
+    }
+    [ordered]@{ moves = $moves; mysql = $mysqlMoves; pokey = $pj } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jf -Encoding utf8
     "renamed $($moves.Count) file(s)/dir(s) and $($mysqlMoves.Count) mysql lane(s); journal $jf (-Rollback undoes it)"
   } elseif (-not $Apply) { 'dry run: -Rename -Apply moves them' }
   exit 0

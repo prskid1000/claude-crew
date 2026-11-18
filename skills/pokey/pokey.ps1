@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L155 seat · L224 api · L443 finalize · L912 results · L945 retest · L1002 prepare
+Sections: L26 lanes · L40 report · L155 seat · L224 api · L446 finalize · L915 results · L948 retest · L1005 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -222,11 +222,13 @@ switch ($Action) {
 }
 }
 # ---- api: a target's API as a test user
-# '<target><k>' = lane k of a local env (envy.ps1 envs -Json): the base target, its lane-1 URL ports moved to lane k's
+# '<target>-<bird>' = that lane of a local env (envy.ps1 envs -Json; -falcon = the base target; old <target><k> still accepted): the base target, its lane-1 URL ports moved to lane k's
 function Get-LaneTarget($cfg, [string]$name) {
   $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
-  if ($name -notmatch '^(?<b>.+?)(?<k>\d+)$' -or -not (Get-KitMember $cfg.targets ($Matches.b)) -or -not (Test-Path -LiteralPath $envy)) { return $null }
-  $base = (Get-KitMember $cfg.targets ($Matches.b)); $k = [int]$Matches.k; $urls = [string](@($base.web, $base.api) -join ' ')
+  $bk = 0; if ($name -match '^(?<b>.+)-(?<bd>[a-z]+)$') { $bk = @(1..40 | Where-Object { "$(Get-KitBirdName $_)" -ieq $Matches.bd })[0] }
+  if ($bk) { $tb = $Matches.b; $k = [int]$bk } elseif ($name -match '^(?<b>.+?)(?<k>\d+)$') { $tb = $Matches.b; $k = [int]$Matches.k } else { return $null }
+  if (-not (Get-KitMember $cfg.targets $tb) -or -not (Test-Path -LiteralPath $envy)) { return $null }
+  $base = (Get-KitMember $cfg.targets $tb); if ($k -eq 1) { return $base }; $urls = [string](@($base.web, $base.api) -join ' ')
   # envs -Json depends on the config only: cached by kit.local.json + envy.ps1 times (a pwsh start per api call was 72/h, K48)
   $cf = Join-Path (Get-KitPath cache -Create) 'envy-envs.json'; $ck = "$((Get-Item -LiteralPath $KitConf.ConfigFile -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks)|$((Get-Item -LiteralPath $envy).LastWriteTimeUtc.Ticks)"
   $c0 = try { Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json } catch { $null }
@@ -316,8 +318,9 @@ if (-not $Target) { $Target = $cfg.default }
 $pin = @("$env:KIT_QA_TARGETS" -split '[,\s]+' | Where-Object { $_ })
 if ($pin.Count -and $Target -notin $pin) { throw "target '$Target' is not this QA run's target ($($pin -join ', ')): a run tests only its own env (run.json target / alsoTargets)" }
 $t = (Get-KitMember $cfg.targets $Target)
+if (-not $t -and $Target -match '^(?<b>.+?)(?<k>\d+)$' -and (Get-KitMember $cfg.targets "$($Matches.b)-$("$(Get-KitBirdName ([int]$Matches.k))".ToLower())")) { $nk = "$($Matches.b)-$("$(Get-KitBirdName ([int]$Matches.k))".ToLower())"; Write-Warning "old lane target '$Target': use $nk"; $Target = $nk; $t = (Get-KitMember $cfg.targets $Target) }
 if (-not $t) { $t = Get-LaneTarget $cfg $Target }
-if (-not $t) { throw "Unknown target '$Target'. Known: $((Get-KitProps $cfg.targets).Name -join ', ')$(if ($Target -match '\d$') { ' (a local env lane <target><k>: its base target must point at lane 1 ports; envy.ps1 envs)' })" }
+if (-not $t) { throw "Unknown target '$Target'. Known: $((Get-KitProps $cfg.targets).Name -join ', ')$(if ($Target -match '\d$|-[a-z]+$') { ' (a local env lane <target>-<bird>: its base target must point at lane 1 ports; envy.ps1 envs)' })" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $a = Resolve-ApiAuth $t.auth
 $kind = "$($a.type)"; if (-not $kind) { $kind = 'login' }

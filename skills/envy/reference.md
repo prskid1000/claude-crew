@@ -27,16 +27,16 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
 ## Lanes
 - `envs.<env>.lanes` { max, portStep 100 }: copies of an env side by side, each its own state, controller, train, worktrees,
   logs and release dirs.
-- Lane 1 = `<env>`, lane k = `<env><k>`, all derived alike: ports of services the env runs + (k-1) x portStep; in every string
+- Lane 1 = `<env>`, lane k = `<env><k>` (laneIds bird: `<env>-<bird>`), all derived alike: ports of services the env runs + (k-1) x portStep; in every string
   `{lane}` ('' / k), `{port:<svc>}` and `:<old port>` follow.
-- `envs.<env><k>` keys override that lane (e.g. its own DB service; `db.port` follows its port); env file `<env>.env`, then
+- `envs.<env><k>` (bird: `envs.<env>-<bird>`) keys override that lane (e.g. its own DB service; `db.port` follows its port); env file `<env>.env`, then
   `<env><k>.env`.
 - `-Env <env>` (deploy, use, task) = the lane the agent already uses, else the least busy warm lane (services up or a train;
   shared when busy); a cold lane opens only when the warm lanes' queue wait reaches `localEnv.lanes.openAfterMinutes` (learned
-  from queue waits) and free RAM minus the keep-free floor holds all its services; `-Env <env><k>` / `-Lane <k>` opens or pins
+  from queue waits) and free RAM minus the keep-free floor holds all its services; `-Env <env>-<bird>` / `-Lane <k>` opens or pins
   one; owner verbs act on the named lane. An extra lane's services stop after `idle.graceMinutes` unheld (at least 3 start times). `status`: `lanes open
   N of M (why)`.
-- API calls: `pokey.ps1 api -Target <target><k>`. Seed: the env's seed file; `{lane}` in it (e.g. `-Target local-shop{lane}`).
+- API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1; old `<target><k>` accepted with a warning). Seed: the env's seed file; `{bird}` in it (e.g. `-Target local-shop-{bird}`).
 - `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).
 - A lane's own DB service (port = `db.port`) down: marks wait for its start (an init's fresh copy marks `baseline-<date>`; no
   baseline yet: a green SQL-only seed check at its start marks one); db checks, pool, mark expiry and the temp watchdog rest.
@@ -49,13 +49,13 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
   copied, unchanged since), no build.
 
 ## Lane service standard
-Every local-env service (mysql, search, api, web, any new one) follows it; `doctor` checks it (`adapters/lane_standard.ps1`, rows WARN;
+Every local-env service follows it; `doctor` checks it (`adapters/lane_standard.ps1`, rows WARN;
 `localEnv.laneStandard: "FAIL"` makes `deploy` stop on a breach):
-- One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry `{lane}` and the env.
+- One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry the lane id (`{bird}` in a template).
 - Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.
-- Data and logs on D: under the kit (`.state/localenv/lanes/<service>-<env>{lane}`), never C:; low-write settings (a MySQL lane ini: doublewrite off, `sync_binlog=0`, logs off).
-- Names: `localEnv.laneIds: "bird"` makes the lane id `<product>-<bird>` (rm-falcon, rm-kestrel; shown `rm·Kestrel`): `-Env`, state, logs, run dirs, cmd files, leases, `{bird}` in lane paths (`mysql-rm-{bird}`, `search-rm-{bird}`). Old ids (`rm`, `rm2`) are accepted aliases with a warning; old `<product><k>` config keys still read; `doctor` flags them.
-- Move an existing one: `skills/envy/mysql-base-move.ps1` (mysql: clone per product + the `-Config` edit, also moves search data off C:).
+- Data and logs on D: under the kit (`.state/localenv/lanes/<service>-<product>-<bird>`), never C:; low-write settings (MySQL lane ini: doublewrite off, `sync_binlog=0`).
+- Names: `localEnv.laneIds: "bird"`: lane id `<product>-<bird>` (rm-falcon, rm-kestrel; shown `rm·Kestrel`) in `-Env`, state, logs, run dirs, leases; `{bird}` in lane paths. Old ids (`rm`, `rm2`, pokey `local-rm2`) are accepted with a warning; `doctor` flags old config keys.
+- Move an existing one: `skills/envy/mysql-base-move.ps1` (`-Apply` clone per product, `-Rename` every lane name, `-Config` the config).
 
 ## Config
 - Envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`, `smoke`)

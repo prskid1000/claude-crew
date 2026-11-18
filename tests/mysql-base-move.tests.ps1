@@ -67,12 +67,20 @@ foreach ($d in "$ln/mysql-shop2", "$wl/run/shop2/api", $lg, "$wl/tmp") { New-Ite
 Set-Content "$ln/mysql-shop2.ini" "datadir=$ln/mysql-shop2`nport=3307"; Set-Content "$ln/mysql-shop2/lane-ready.txt" "cloned; ini $ln/mysql-shop2.ini"
 Set-Content "$wl/shop2.json" '{}'; Set-Content "$wl/run/shop2-api.cmd" 'x'; Set-Content "$lg/shop2-api.log" 'x'; Set-Content "$kd/st/shop2.env" 'A=1'; Set-Content "$kd/st/shop.env" 'A=1'
 $rc = Join-Path $kd 'rename.json'; & $J @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api' }) }; shop2 = @{ services = @(@{ name = 'mysql'; port = 3307; start = 'mysqld --defaults-file=x' }) } } } } $rc 8
-$rn = @(pwsh -NoProfile -File $mv -Rename -Lanes $ln -Runtime $rt -ConfigFile $rc 2>&1) -join "`n"
+$pf = Join-Path $kd 'targets.local.json'; & $J @{ targets = @{ 'local-shop' = @{ api = 'http://x:8443' }; 'local-shop2' = @{ api = 'http://x:8543' }; other = @{ api = 'y' } } } $pf 8
+$pkBefore = (Get-Content $pf -Raw | ConvertFrom-Json).targets.PSObject.Properties.Name -join ','
+$rn = @(pwsh -NoProfile -File $mv -Rename -Lanes $ln -Runtime $rt -ConfigFile $rc -PokeyFile $pf 2>&1) -join "`n"
 Expect "rename dry run: the plan lists the dir, state, run, cmd, log and lane env moves, nothing moved ($($rn.Length) chars)" ($rn -match 'mysql-shop2 -> .*mysql-shop-kestrel' -and $rn -match 'shop-kestrel\.json' -and $rn -match 'shop-kestrel-api\.cmd' -and $rn -match 'shop-kestrel-api\.log' -and $rn -match 'shop-kestrel\.env' -and (Test-Path "$ln/mysql-shop2") -and -not (Test-Path "$wl/shop-kestrel.json"))
-$null = pwsh -NoProfile -File $mv -Rename -Apply -Lanes $ln -Runtime $rt -ConfigFile $rc 2>&1
+$null = pwsh -NoProfile -File $mv -Rename -Apply -Lanes $ln -Runtime $rt -ConfigFile $rc -PokeyFile $pf 2>&1
+$pkAfter = (Get-Content $pf -Raw | ConvertFrom-Json).targets.PSObject.Properties.Name -join ','
+Expect "rename -Apply: pokey target local-shop2 -> local-shop-kestrel, order and the others kept ($pkAfter)" ($pkAfter -eq ($pkBefore -replace 'local-shop2', 'local-shop-kestrel'))
 $ini = Get-Content "$ln/mysql-shop-kestrel.ini" -Raw
 Expect "rename -Apply: dir, ini (datadir rewritten), lane-ready, state, run dir, cmd, log, env file moved; the base lane's shared shop.env stays ($LASTEXITCODE)" ((Test-Path "$ln/mysql-shop-kestrel/lane-ready.txt") -and $ini -match 'datadir=.*mysql-shop-kestrel' -and (Get-Content "$ln/mysql-shop-kestrel/lane-ready.txt" -Raw) -match 'mysql-shop-kestrel\.ini' -and (Test-Path "$wl/shop-kestrel.json") -and (Test-Path "$wl/run/shop-kestrel/api") -and (Test-Path "$wl/run/shop-kestrel-api.cmd") -and (Test-Path "$lg/shop-kestrel-api.log") -and (Test-Path "$kd/st/shop-kestrel.env") -and (Test-Path "$kd/st/shop.env") -and -not (Test-Path "$ln/mysql-shop2"))
-$null = pwsh -NoProfile -File $mv -Rename -Rollback -Lanes $ln -Runtime $rt -ConfigFile $rc 2>&1
+$null = pwsh -NoProfile -File $mv -Rename -Rollback -Lanes $ln -Runtime $rt -ConfigFile $rc -PokeyFile $pf 2>&1
+Expect 'rename -Rollback: pokey targets back' ((Get-Content $pf -Raw | ConvertFrom-Json).targets.PSObject.Properties.Name -join ',' -eq $pkBefore)
 Expect 'rename -Rollback: every old name back, the ini as it was' ((Test-Path "$ln/mysql-shop2/lane-ready.txt") -and (Get-Content "$ln/mysql-shop2.ini" -Raw) -match 'datadir=.*mysql-shop2' -and (Test-Path "$wl/shop2.json") -and (Test-Path "$wl/run/shop2-api.cmd") -and (Test-Path "$lg/shop2-api.log") -and (Test-Path "$kd/st/shop2.env") -and -not (Test-Path "$wl/shop-kestrel.json"))
+# pokey: <target>-<bird> resolves (falcon = the base target), an old <target><k> with an explicit <target>-<bird> key warns and resolves
+$pks = Get-Content (Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/pokey.ps1') -Raw
+Expect 'pokey: the bird target name is parsed (falcon = lane 1 = the base target) and an old <target><k> maps to an explicit bird key with a warning' ($pks.Contains('if ($k -eq 1) { return $base }') -and $pks.Contains('old lane target ''$Target'': use $nk'))
 Remove-Item (Split-Path $kd) -Recurse -Force -ErrorAction SilentlyContinue
 if ($script:fails) { exit 1 }

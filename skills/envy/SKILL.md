@@ -34,8 +34,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   a failed build bisects to the culprit (reference.md "Train and leases").
 - **Lease** (`use`): keeps the services you test up while you use them (README "Leases"); unused past `leaseIdleMinutes`:
   released. A train changing a leased service tells you "deploy of <svc> starting, pause", then "deploy done, re-run your checks".
-- Starts wait for RAM + CPU; idle services stop after the grace. **Lanes**: side-by-side copies `<env><k>` (API target
-  `<target><k>`); `deploy` / `use` pick yours (reference.md "Lanes").
+- Starts wait for RAM + CPU; idle services stop after the grace. **Lanes**: side-by-side copies `<env>-<bird>` (API target
+  `<target>-<bird>`); `deploy` / `use` pick yours (reference.md "Lanes").
 - **DB** (`db.engine` mysql / mariadb): marks, restore, seed baseline; nothing is ever dumped whole (db.md).
 - Secrets: `<kit>/.state/localenv/<env>.env` (dotenv) only. Dependencies are linked from one install per target, never
   installed here.
@@ -55,7 +55,7 @@ $L = '<kit>/skills/envy/envy.ps1'
 & $L release -Env <env> -Agent <id>                                     # 6. always, also on early stop
 ```
 0. `bossy.ps1 learn -Read -Skill local-env`.
-1-2. `deploy` prints LIVE r<n> | REFUSED | REJECTED | ROLLED BACK; "[<env><k>] lane k": test there (target `<target><k>`).
+1-2. `deploy` prints LIVE r<n> | REFUSED | REJECTED | ROLLED BACK; "[<env>-<bird>] lane k": test there (target `<target>-<bird>`).
    REFUSED: `crafty.ps1 wt sync`, resolve, deploy again. REJECTED / ROLLED BACK: read the message + `logs`, fix, deploy again.
 3. Lease only the services you test, right before the checks; it lives while you use it (README "Leases"); exit 3 = no lease
    yet, call again. A NOTICE "deploy of <svc> starting, pause" (board inbox or `status -Agent`): stop checks there until
