@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour; their heatmap cards 
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L129 cards · L278 flags
+Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L129 cards · L284 flags
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -180,6 +180,9 @@ function Format-KitGateCard($gs) {
 # lease waits: one line per resource (24 h heatmap of minutes waited · waits · minutes · longest), the gate card's style
 function Format-KitWaitCard($w) {
   $rs = @($w.rows | Where-Object { $_ }); $h0 = try { [datetime]$w.h0 } catch { $at.Date.AddHours($at.Hour - 23) }
+  # owner 2026-11-18: one lease waits on all of a lane's services at once: "<lane> · <service>" rows with identical hours and totals collapse to "<lane>"
+  $rs = @($rs | Group-Object { $nm0 = "$($_.name)"; $ix = $nm0.LastIndexOf(' · '); if ($ix -gt 0) { "$($nm0.Substring(0, $ix))|$(ConvertTo-Json @($_.hours) -Depth 6 -Compress)|$($_.n)|$($_.min)|$($_.max)" } else { [guid]::NewGuid().ToString() } } | ForEach-Object {
+      $g = @($_.Group); if ($g.Count -lt 2) { $g[0]; return }; $nm0 = "$($g[0].name)"; $c = $g[0].PSObject.Copy(); $c.name = $nm0.Substring(0, $nm0.LastIndexOf(' · ')); $c })
   if (-not $rs.Count) { return (& $fold 'waits' 'Lease waits · 24 h' 0 '' -tag h4 -cls 'sub st wt') }   # (0): no agent waited for a lease in 24 h
   $cols = @(@('queue', 'waits, 24 h', ''), @('wait', 'minutes waited, 24 h', 'min'), @('wait', 'longest wait, min', 'max'))
   $head = "<div class='gk gh'><span class=gn>resource · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead $h0)</span>$(@($cols | ForEach-Object { "<span class=gc>$(Format-KitIcon $_[0] $_[1])$(if ($_[2]) { "<small>$($_[2])</small>" })</span>" }) -join '')</div>"
@@ -268,6 +271,9 @@ function Format-KitHeldList($Resources, [int]$Active = 0) {   # $Active: live ag
       $br = ''; $gr = ''; if ($by -match '^(?<r>.*?)\s*(?<g>\(grace [^()]*\))$') { $by = $Matches.r; $gr = " $($Matches.g)" }   # supervise appends the grace after the branch
       if ($by -match '^(?<h>.*?)\s*\((?<b>[^()\s]+)\)$') { $by = $Matches.h; $br = $Matches.b } elseif ($by -match '^parked: (?<b>\S+)$') { $by = 'parked'; $br = $Matches.b }
       [pscustomobject]@{ k = $kd; n = $nm; o = -not $_.shared -and $by -in '', 'no lease'; h = $(if ($_.shared) { 'shared · always on' } elseif ($by -in '', 'no lease') { "no live holder$gr" } else { "$by$gr" }); b = $br } })
+  # a lane's services ("rm·Falcon api", "rm·Falcon web") with the same holder and branch are one lease: one row "rm·Falcon (api, web)"
+  $its = @($its | Group-Object { $ix = "$($_.n)".LastIndexOf(' '); if ($_.k -ne 'shared' -and $ix -gt 0) { "$($_.k)|$("$($_.n)".Substring(0, $ix))|$($_.o)|$($_.h)|$($_.b)" } else { [guid]::NewGuid().ToString() } } | ForEach-Object {
+      $g = @($_.Group); if ($g.Count -lt 2) { $g[0]; return }; $c = $g[0].PSObject.Copy(); $c.n = "$("$($g[0].n)".Substring(0, "$($g[0].n)".LastIndexOf(' '))) ($(@($g | ForEach-Object { "$($_.n)".Substring("$($_.n)".LastIndexOf(' ') + 1) }) -join ', '))"; $c })
   $gs = @($its | Group-Object k | Sort-Object { $i = [array]::IndexOf($ord, $_.Name); if ($_.Name -eq 'shared') { 99 } elseif ($i -ge 0) { $i } else { 50 } }, Name)
   "<table class=hlt><thead><tr><th>Resource</th><th>Holder(s)</th><th>Branch / task</th></tr></thead>" + (@($gs | ForEach-Object {
         $no = @($_.Group | Where-Object o).Count; $nmG = if ($lbl[$_.Name]) { $lbl[$_.Name] } elseif ($_.Name -in 'shared', 'other') { $_.Name } else { "$($_.Name)s" }
