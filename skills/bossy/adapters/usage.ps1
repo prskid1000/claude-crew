@@ -80,6 +80,8 @@ function Get-KitRunLabel($A) {
 }
 function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seconds = 60) {
   $cf = Get-KitPath usage-cache -Create; $all = try { Read-KitText $cf | ConvertFrom-Json -AsHashtable } catch { $null }; $cache = $all.files; if ($cache -isnot [hashtable]) { $cache = @{} }
+  $cfCold = $cf -replace '\.json$', '.cold.json'; $coldAll = try { Read-KitText $cfCold | ConvertFrom-Json -AsHashtable } catch { $null }
+  if ($coldAll.files -is [hashtable]) { foreach ($ck in $coldAll.files.Keys) { if (-not $cache.ContainsKey($ck)) { $cache[$ck] = $coldAll.files[$ck] } } }   # the hot file wins
   $root = (Invoke-KitAdapter transcript claude root).dir; $since = $Now.Date.AddDays(1 - $Days); $stop = (Get-Date).AddSeconds($Seconds); $left = [ref][long]2GB; $seen = @{}
   $dayKeys = @(foreach ($i in ($Days - 1)..0) { $Now.AddDays(-$i).ToString('yyyy-MM-dd') }); $unp = @{}; $mcost = @{}
   $read = { param([string]$f) $seen[$f] = 1; try { if ((Get-Date) -lt $stop -and $left.Value -gt 0) { $cache[$f] = Update-KitUsageFile $f $cache[$f] $left }; if ([IO.FileInfo]::new($f).Length -gt [long]$cache[$f].off + 64KB) { $script:KitUsagePartial = $true } } catch { }; $cache[$f] }   # a vanished file: its last totals; a half-written line is no backlog
@@ -160,7 +162,9 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
         $_ | Add-Member -PassThru models @(& $grp model $rss | ForEach-Object { [pscustomobject]@{ k = $_.k; sum = $_.sum; cost = $_.cost } }) | Add-Member -PassThru types @(& $grp type $rss) })
     rates = [pscustomobject]@{ n = $ended.Count; empty = @($ended | Where-Object result -eq 'empty').Count; fail = @($ended | Where-Object result -eq 'fail').Count; stopped = @($ended | Where-Object result -eq 'stopped').Count; stuck = @($wf | Where-Object result -eq 'stuck').Count; running = @($wf | Where-Object result -eq 'running').Count }
     days = $dayRows }
-  try { Write-KitAtomic $cf (@{ files = $cache; host = $hostMrs } | ConvertTo-Json -Depth 7 -Compress); Write-KitAtomic ($cf -replace '\.json$', '.result.json') ($usageOut | ConvertTo-Json -Depth 10 -Compress) -Volatile '^\{"at":"[^"]*","since":"[^"]*"' } catch {}
+  # transcripts last written before today -> usage.cold.json, rewritten about once a day: one file rewrote 1 MB each sweep for a few live records
+  $hot = [ordered]@{}; $cold = [ordered]@{}; foreach ($ck in @($cache.Keys | Sort-Object)) { if ([IO.File]::GetLastWriteTime($ck) -lt $Now.Date) { $cold[$ck] = $cache[$ck] } else { $hot[$ck] = $cache[$ck] } }
+  try { Write-KitAtomic $cf (@{ files = $hot; host = $hostMrs } | ConvertTo-Json -Depth 7 -Compress); Write-KitAtomic $cfCold (@{ files = $cold } | ConvertTo-Json -Depth 7 -Compress); Write-KitAtomic ($cf -replace '\.json$', '.result.json') ($usageOut | ConvertTo-Json -Depth 10 -Compress) -Volatile '^\{"at":"[^"]*","since":"[^"]*"' } catch {}
   $usageOut
   } finally { $lkh.Dispose(); Remove-Item -LiteralPath $lk -Force -ErrorAction SilentlyContinue }
 }
@@ -249,7 +253,7 @@ function Format-KitUsageHtml($U) {
   $running = @($devRuns | Where-Object status -eq 'running' | ForEach-Object { "<div class='ru f' data-oc='$(& $ocOf $_)'><div class=rh>$(& $head $_)$(& $linksOf $_)<a class=rk href='$(& $pageOf $_)' data-dw='$(& $e "Run $(& $lbOf $_)")'>steps</a></div></div>" }) -join ''
   $ended = $(if ($shown.Count) { "<ul class=rfl>$(@($shown | ForEach-Object { $dk = & $dayOf $_
       "<li class=f data-oc='$(& $ocOf $_)' data-fk='d$dk'><span class=tm>$(if ($dk) { $dk.Substring(5) })</span><span class=gn0 title='$(& $e "$($_.run) · $($_.id)")'>$(& $e (& $lbOf $_))</span><span class='chip k-$(& $e (& $kindOf $_))'>$(& $e (& $kindOf $_))</span>$(if ($resumed["$($_.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(& $resOf $_)$(& $linksOf $_)<a class=rk href='$(& $pageOf $_)' data-dw='$(& $e "Run $(& $lbOf $_)")'>steps</a></li>" }) -join '')</ul>" }) +
-    $(if ($devRuns.Count - @($devRuns | Where-Object status -eq 'running').Count -gt $shown.Count) { "<p class=m>$($devRuns.Count - @($devRuns | Where-Object status -eq 'running').Count - $shown.Count) older run(s): supervise-report.json</p>" })
+    $(if ($devRuns.Count - @($devRuns | Where-Object status -eq 'running').Count -gt $shown.Count) { "<p class=m>$($devRuns.Count - @($devRuns | Where-Object status -eq 'running').Count - $shown.Count) older run(s): usage.result.json</p>" })
   # a run page per shown run: its tasks and MRs, the QA / merge / error chips, its step table (Write-KitSuperviseHtml writes them)
   $pages = [ordered]@{}; foreach ($r in @(@($devRuns | Where-Object status -eq 'running') + $shown)) { $pages["$($r.id)"] = "<div class='ru'><div class=rh>$(& $head $r)$(if ($r.status -ne 'running') { & $resOf $r })</div></div>" +
       "$(if ($lk = & $linksOf $r) { "<p class=rpl>Tasks and MRs: $lk</p>" })<div class='sy rst'>$((& $table 'Step', 'Role', '~Model', 'Tokens', '~In / out / cache r / w', 'Elapsed', '~Tools', 'Result', '~Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok }))) -replace "<tr class='f more'>", '<tr class=f>' -replace '<button type=button class=sa[^>]*>[^<]*</button>')</div>" +

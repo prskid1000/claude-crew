@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L298 shells · L432 page · L996 release · L1036 lines · L1069 cleanup · L1141 launch ·
-  L1219 pause · L1337 heartbeat · L1352 sessions · L1404 ci tasks ·
-  L1459 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L298 shells · L432 page · L998 release · L1038 lines · L1071 cleanup · L1143 launch ·
+  L1221 pause · L1339 heartbeat · L1354 sessions · L1406 ci tasks ·
+  L1461 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -511,7 +511,9 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $stats.waits = try { Get-KitLeaseWaits $d.at } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
   $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
-  Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 9)
+  # compact, no copy of usage.result.json (0.7 MB): each sweep rewrote 1.8 MB (NTFS journal churn); the page still shows it
+  $sj = [ordered]@{}; foreach ($sk in $stats.Keys) { if ($sk -ne 'usage') { $sj[$sk] = $stats[$sk] } }; $sj.usageFile = (Get-KitPath usage-cache) -replace '\.json$', '.result.json'
+  $jw = $j.PSObject.Copy(); $jw.stats = $sj; Write-KitAtomic $pj ($jw | ConvertTo-Json -Depth 9 -Compress)
   $runPages = @{}; Write-KitAtomic $p (ConvertTo-KitLaneText (Format-KitSuperviseHtml $j $runPages))   # shown lane names (K55); the json keeps ids
   foreach ($rk in @($runPages.Keys)) { $runPages[$rk] = ConvertTo-KitLaneText $runPages[$rk] }
   $rpd = Join-Path (Split-Path $p) 'supervise-runs'; $null = New-Item -ItemType Directory -Force $rpd   # a run's step table, linked from its row

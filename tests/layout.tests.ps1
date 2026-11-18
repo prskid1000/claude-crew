@@ -143,9 +143,14 @@ $cardGrid = @("data-mas data-fill><details class='sec sub st uc' id=sec-u-days o
 $thCount = { param($open, $in = $h) ([regex]::Match($in, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
 $colCounts = "$(& $thCount "class='tw sty'>") $(& $thCount "class='sy rst'>" @($pgs.Values)[0])"
 "$($h -notmatch 'Tokens today') $($h -match "class='ru f'|<li class=f data-oc" -and $h -match '<button type=button class=ocb data-oc=fail') $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 9' -and $h -notmatch 'class=ut>|Per model|Per step type')"
+# a transcript last written before today moves to usage.cold.json, which a later call leaves unchanged; totals the same
+$cfu = Get-KitPath usage-cache; $cfc = $cfu -replace '\.json$', '.cold.json'; [IO.File]::SetLastWriteTime(($args[2] -replace 'agent-a2', 'agent-a1'), (Get-Date).Date.AddHours(-2))
+$null = Get-KitUsage -Seconds 30; $cold1 = [IO.File]::ReadAllText($cfc); $d = Get-KitUsage -Seconds 30
+$cold2 = [IO.File]::ReadAllText($cfc); [IO.File]::SetLastWriteTime(($args[2] -replace 'agent-a2', 'agent-a1'), (Get-Date)); $e = Get-KitUsage -Seconds 30   # written again today: back to the hot file
+"$($cold1 -match 'agent-a1' -and $cold1 -notmatch 'agent-a2' -and $cold1 -ceq $cold2 -and $d.runs[0].tok -eq $b.runs[0].tok -and [IO.File]::ReadAllText($cfc) -notmatch 'agent-a1' -and [IO.File]::ReadAllText($cfu) -match 'agent-a1' -and $e.runs[0].tok -eq $b.runs[0].tok)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")
-Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; runs, steps, outcomes, cost, card grids ($($uv -join ' // '))" ($uv[-2] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.001272|4|3192|build,agent,review' -and $uv[-1] -eq 'True True True True')
+Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; runs, steps, outcomes, cost, card grids, cold cache ($($uv -join ' // '))" ($uv[-3] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.001272|4|3192|build,agent,review' -and $uv[-2] -eq 'True True True True' -and $uv[-1] -eq 'True')
 # usage numbers: 5.5 prices (alias, dated and [1m] ids, 1-hour writes), unknown model listed; ok=false / failed event = fail, empty = no field but ok,
 # stopped its own rate; one calendar window (a 9-day-old message drops); runs a day by workflow id; coordinator sessions; host-merged MRs
 $uy = Join-Path (Kd) 'uy'; $y1 = New-Item -ItemType Directory -Force "$uy/s1/subagents/workflows/wf_y1"; $y2 = New-Item -ItemType Directory -Force "$uy/s1/subagents/workflows/wf_y2"

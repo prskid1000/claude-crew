@@ -187,7 +187,7 @@ Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Code
 ## Live supervisor dashboard
 <p align="center"><img src="assets/dashboard-dark.png" alt="supervisor dashboard, dark theme, sample data" width="900"></p>
 
-Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-report.html` and its `.json` (the full data):
+Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-report.html` and its `.json` (compact data):
 - header, one row from 1100 px: staleness (amber past 2x NEXT, red past 4x), next sweep, jump links, ACT / WATCH counts, filter
   (`/`), auto-refresh 60 s and light / dark icon buttons;
 Each number appears once, in the order the owner acts on (owner 2026-11-13). Every section and sub-section is a `<details>` whose
@@ -222,7 +222,7 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   the builds log, local-env `lease-wait` events and the open queues), then what is held now (name · holder); a shared
   always-on service (`shared` row) is never an orphan, a leasable one with no live holder is dashed in Resources · 24 h; shells;
 - usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
-  sweep reads the transcripts' usage fields incrementally, cached by `_paths` `usage-cache`): tokens and est. cost today vs
+  sweep reads the transcripts' usage fields incrementally, cached by `_paths` `usage-cache` + `.cold.json`): tokens and est. cost today vs
   the 7-day average (`budget.prices`: USD per M tokens [in, out, cache read, cache write 5 min, 1 h] per model id or alias;
   unknown models listed as not priced), review + fix share; cost and tokens per day as lines (a time series is never bars); workflow steps by outcome as one stacked
   bar; Spend: one row per role (coordinator and agents outside workflows included: steps, tokens, share bar, est. cost,
