@@ -84,6 +84,9 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   `Not run: <gate>`, report NOT_MERGED. No dev servers by hand (the local env runs them), at most one headless browser; phones
   only through `phoney.ps1 acquire` (never `up`/`down`); Docker / WSL / VMs: `crafty.ps1 runtime use
   -Name <r>` first, `release` when done (the guard leases if you forget).
+- **Builds** (75-450 MB written each; WATCH past `gate.buildsPerHour`): the changed module and named tests only (`-Tests`,
+  `-Touched`); no `-Step build` (the env builds its own); review fixes batched into one rebuild; a flaky test rerun alone;
+  docs and MR text need none (check skips unchanged sources; `-Force` reruns).
 - **Tests:** `testing.md` (ship, shape, place, run; reviewers check them).
 - **Commits:** subject per `commitStyle` (default Conventional Commits) + any attribution trailer your harness or org
   asks for; `wt commit` only; never `--no-verify`, never type a hook's marker, never change shared git config or `git stash`.

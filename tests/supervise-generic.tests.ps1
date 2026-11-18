@@ -1,6 +1,7 @@
 #Requires -Version 7
 <#
-supervise-generic.tests.ps1: supervise resources on neutral and custom config: cleanup.idleDaemons, storage.toolCaches, gate.labels.
+supervise-generic.tests.ps1: supervise resources on neutral and custom config: cleanup.idleDaemons, storage.toolCaches, gate.labels,
+builds per agent (gate card, gate.buildsPerHour WATCH).
 Usage: pwsh -NoProfile -File <kit>/tests/supervise-generic.tests.ps1 (or tests/kit-tests.ps1 -Area supervise-generic).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -239,5 +240,16 @@ $a2 = & $act $args[0]
 "cached:$($a2 -eq 0)"
 '@
 Expect-Each (Invoke-PsTest 'qaparents' $qpt @($O)) 'QA parents index: #' @('old', 'cached') -Show 8
+# builds per agent (owner 2026-11-18 "why were so many builds needed?"): today's count, build-min, failed per owner on the gate
+# card, QA seat leases aside; over gate.buildsPerHour in the last hour -> one WATCH BUILDS per owner
+$bpo = & { . $O; $n = Get-Date; $dd = Join-Path (Get-KitPath audit -Create) $n.ToString('yyyy-MM-dd'); New-Item -ItemType Directory -Force $dd | Out-Null
+  $bl = @(1..10 | ForEach-Object { @{ at = $n.AddMinutes(-3 * $_).ToString('o'); event = 'end'; kind = 'maven-test'; owner = 'w1'; project = 'svc-x/api'; sec = 120; waitSec = 0; code = [int]($_ -le 2) } }) +
+    @(@{ at = $n.AddMinutes(-4).ToString('o'); event = 'end'; kind = 'maven'; owner = 'w2'; project = 'svc-x/api'; sec = 60; waitSec = 0; code = 0 }) +
+    @(1..12 | ForEach-Object { @{ at = $n.AddMinutes(-2 * $_).ToString('o'); event = 'end'; kind = 'other'; owner = 'test:T1'; project = 'kit/work/qa-seats'; sec = 0; waitSec = 0; code = 0 } })
+  $bl | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content (Join-Path $dd 'builds.jsonl')
+  $g = Get-KitGateStats $n @(); $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); mem = @{ TotalGB = 16; AvailGB = 8 }; stats = [pscustomobject]@{ gate = $g; keepFree = 2 } })
+  $now = $n; $script:mem = @{ AvailGB = 8; TotalGB = 16 }; $fl = @(Get-KitSuperviseGuardResources | Where-Object { $_.kind -eq 'BUILDS' -and "$($_.what)" -match 'gated builds' })
+  "$(@($g.owners | ForEach-Object { "$($_.name)=$($_.n)/$($_.min)/$($_.failed)" }) -join ',')|$($h -match 'w1 10 · 20 min · 2 failed')|$($fl.Count)|$($fl[0].who)" }
+Expect "builds per agent: gate card lists count / build-min / failed per owner, QA seats aside; over gate.buildsPerHour (8) -> one WATCH ($bpo)" ($bpo -eq 'w1=10/20/2,w2=1/1/0|True|1|w1')
 Remove-TestKit $k
 Complete-Tests

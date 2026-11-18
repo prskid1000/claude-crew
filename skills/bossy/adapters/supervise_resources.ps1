@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L309 shells · L443 page · L1010 release · L1050 lines · L1083 cleanup · L1168 launch ·
-  L1246 pause · L1365 heartbeat · L1380 sessions · L1432 ci tasks ·
-  L1487 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L314 shells · L448 page · L1015 release · L1055 lines · L1088 cleanup · L1173 launch ·
+  L1251 pause · L1370 heartbeat · L1385 sessions · L1437 ci tasks ·
+  L1492 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -101,7 +101,12 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   if ($wait -ge 30) { & $flag 'ACT' "gate: $($oldest.owner) $($oldest.kind) has waited $wait min" 'Memory-bound: start no new agents, run bossy.ps1 cleanup, ask the owner to close big apps; fewer agents per wave.' }
   elseif ($queue.Count -ge 6) { & $flag 'WATCH' "gate: $($queue.Count) builds queued" 'Do not launch more build-heavy agents until the queue drains.' }
   $hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
-  foreach ($bfx in Get-KitBuildFailures $hist $now @(Read-KitLog builds $now.AddHours(-24))) {
+  $bLog = @(Read-KitLog builds $now.AddHours(-24)); $bph = [int](Get-KitParam 'gate.buildsPerHour')
+  foreach ($bo in @(Get-KitBuildsByOwner @($bLog | Where-Object { $_.event -eq 'end' -and $_.at -and [datetime]$_.at -ge $now.AddHours(-1) }) | Where-Object { $bph -gt 0 -and $_.n -gt $bph })) {
+    [pscustomobject]@{ level = 'WATCH'; what = "builds: $($bo.name) ran $($bo.n) gated builds ($($bo.min) build-min, $($bo.failed) failed) in the last hour, over gate.buildsPerHour $bph"; kind = 'BUILDS'; who = $bo.name
+      problem = "$($bo.name): $($bo.n) builds in an hour"; next = 'Tell that agent: one rebuild per batch of fixes, named tests only, a flaky test rerun alone'
+      action = 'crafty SKILL.md Rules "Builds": only what the change needs, fixes batched into one rebuild.' } }
+  foreach ($bfx in Get-KitBuildFailures $hist $now $bLog) {
     $k = $bfx.key; $who = $bfx.who
     [pscustomobject]@{ level = 'WATCH'; what = "builds '$k' failed 3 times in a row"; kind = 'BUILDS'; who = $(if ($who) { $who } else { $k }); problem = "$k failed 3 times in a row"; next = "Check that agent's last build log"
       action = 'Repeated failing builds burn memory and turns; a setup-data cause (fixture, seed drift) -> spawn datay kind fixture, else help it or fix its brief.' } }

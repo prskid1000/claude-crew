@@ -45,7 +45,7 @@ description: "Load when: you reproduce, debug or test a change on the local env 
 $L = '<kit>/skills/envy/envy.ps1'
 & $L envs; & $L status -Env <env>                                       # 1. which env serves your repo; what is live
 & $L deploy -Env <env> -Agent <id> -Dir <worktree>                      # 2. committed work only -> LIVE r<n> | REFUSED | ...
-#    a Java service: crafty.ps1 check -Step build after the commit first; the env stages that jar (shareCheckBuild), no second build
+#    no check -Step build before it: the train builds once; one deploy per loop round (fixes batched), never per edit
 & $L wait -Env <env> -Id <request>                                      #    when it printed "still ..."
 & $L wait -Env <env> -Until up -Services <svc,..> -Timeout 600          #    a service to come up: one call, never a status loop
 & $L use -Env <env> -Agent <id> -Services <svc,..> -Session <board token> -Note "<goals>"   # 3. lease, then test

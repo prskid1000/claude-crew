@@ -167,7 +167,7 @@ $lr = Join-Path (Kd) lock-repo; $null = mkdir -Force "$lr/api"; $env:LOCK_LOG = 
 'BaseDb' | Set-Content "$lr/api/ADb.java"; 'C' | Set-Content "$lr/api/C.java"; Save-GitRepo $lr i
 git init -q "$lr-s"; git -C "$lr-s" -c protocol.file.allow=always submodule add -q $lr sub; git -C "$lr-s/sub" worktree add -q "$lr-w"   # a submodule's worktree
 & $J @{ repos = @(@{ name = 'lr'; checkout = "$lr-s/sub"; exclusiveTests = @(@{ dir = 'api'; match = 'BaseDb'; lock = 'db' }) }) } "$k/skills/crafty/kit.local.json"
-$lp = { param($t, $c = '', $w = 5) Start-Process $pwshExe "-NoProfile -Command `$env:KIT_PARAM_GATE_WAITMINUTES='$w'; & '$D' check -Dir '$lr-w/api' -Step test -Tests $t; exit `$LASTEXITCODE" -PassThru -NoNewWindow -RedirectStandardOutput "$lr/o$t$c" }
+$lp = { param($t, $c = '', $w = 5) Start-Process $pwshExe "-NoProfile -Command `$env:KIT_PARAM_GATE_WAITMINUTES='$w'; & '$D' check -Dir '$lr-w/api' -Step test -Tests $t -Force; exit `$LASTEXITCODE" -PassThru -NoNewWindow -RedirectStandardOutput "$lr/o$t$c" }
 $wx = { foreach ($p in $args) { $null = $p.Handle; $p.WaitForExit() } }; $p1 = & $lp ADb; $p2 = & $lp ADb#m 2; & $wx $p1 $p2; $t = Get-Content $env:LOCK_LOG -Raw; $wt = Get-Content "$lr/oADb*" -Raw
 $h = Start-Process $pwshExe "-NoProfile -Command . '$k/skills/crafty/crafty.ps1'; `$null = Use-KitLock db hx; sleep 60" -PassThru -NoNewWindow; for ($i = 0; $i -lt 50 -and -not (Select-String hx "$(TkPath $k runtimes)/locks.json" -Quiet -EA 0); $i++) { sleep -m 200 }
 $c3 = & $lp C; $c4 = & $lp ADb 4 0.03; & $wx $c3 $c4; $h.Kill(); $h.WaitForExit(); $free = pwsh -NoProfile -Command ". '$(Lib)'; (Get-KitLockState).held.Count"

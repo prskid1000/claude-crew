@@ -4,7 +4,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
    new -Scope '<glob>,..' (brief agents[].paths): commit refuses files outside, -ScopeOk <decision id> = the owner's scope word)
  scope [-Mrs <refs> [-Json]] [-Days 7]  -Mrs: each MR's source / test files + OUT-OF-AREA vs its logged area; none: one WATCH line for MRs merged outside it
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
- check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
+ check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force]  gated checks (e2e: the diff's specs only; -AllTests = whole suite;
+   a pass on the same sources + command is not rerun, -Force reruns)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
@@ -16,7 +17,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1304 guard · L2181 dir ·
+Sections: L24 init · L31 sweep · L141 wt · L431 stack · L613 gate · L932 check · L1248 pipes · L1304 guard · L2181 dir ·
   L2191 checkpoint · L2221 prior · L2259 tracker · L2281 task spec · L2461 scope · L2509 host
 #>
 #Requires -Version 7
@@ -499,7 +500,7 @@ function Get-Stack($d) {
     $c.compile = "$mvn $off-q compile"
     $c.test = "$mvn $off-q test -Dtest={tests} -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false"
     $c.build = "$mvn $off-q package -DskipTests"
-    if ((ReadText (Join-Path $d 'pom.xml')) -match 'spring-boot') { $c.run = "$mvn $($off)spring-boot:run" }
+    if ((ReadText (Join-Path $d 'pom.xml')) -match 'spring-boot') { $c.build += ' -Dspring-boot.repackage.skip=true'; $c.run = "$mvn $($off)spring-boot:run" }
   }
   elseif (Has $d 'build.gradle', 'build.gradle.kts', 'settings.gradle*') {
     $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
@@ -969,12 +970,7 @@ function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
   $cons = Join-Path (Get-KitPath logs -Create) "constraints-$((Get-KitHash ($Dir.ToLower()) MD5).Substring(0, 12)).txt"; $pins -replace '\[[^\]]*\]' | Set-Content -LiteralPath $cons -Encoding utf8
   Write-Host "[check] ENV-FIX to kitty (shared venv, when no build uses it; never run it from a worktree): `"$venvPy`" -m pip install -c `"$cons`" $quoted"
 }
-# a clean tree's build, keyed by its tree: envy deploys of the same code stage its artifact instead of building (envy Find-CheckBuild)
-function Save-CheckBuild([string]$Dir, [string]$Cmd, [datetime]$Start) {
-  $top = "$(git -C $Dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $top -or @(git -C $top status --porcelain 2>$null).Count) { return }
-  $tree = "$(git -C $top rev-parse 'HEAD^{tree}' 2>$null)".Trim(); if (-not $tree) { return }
-  Write-KitAtomic (Join-Path (Get-KitPath check-builds -Create) "$tree.json") ([ordered]@{ tree = $tree; dir = $Dir; rel = [IO.Path]::GetRelativePath($top, $Dir).Replace('\', '/'); cmd = $Cmd; start = $Start.ToString('o'); at = (Get-Date).ToString('o') } | ConvertTo-Json)
-}
+# check builds and stamps: adapters/check_stamps.ps1
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -985,10 +981,11 @@ param(
   [string]$since = (Get-Date).AddDays(-14).ToString('yyyyMMdd000000'),
   [switch]$Show,
   [switch]$Touched,
-  [switch]$RealAngular
+  [switch]$RealAngular,
+  [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
-$script:anyUnrun = $false
+$script:anyUnrun = $false; $script:CheckSrcKey = $null
 $k = $PSScriptRoot
 $st = & $KitCmd.dev stack -Dir $Dir -Json | ConvertFrom-Json
 function Hash12([string]$s) { (Get-KitHash $s MD5).Substring(0, 12) }
@@ -1218,7 +1215,9 @@ foreach ($s in $steps) {
   }
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }
   if ($Show) { "$s : $cmd"; continue }
-  $unrun = $false; $runLog = $runText = $null   # adapters/ts_typecheck.ps1: a huge tsc baseline = unrun (exit 5)
+  $unrun = $false; $slot = if ($s -in 'compile', 'typecheck', 'test') { "$s|$(Hash12 $cmd)" }   # build: its output may be gone
+  if ($slot -and (Test-CheckStamp $st.dir $slot -Force:$Force)) { $ran++; continue }
+  $runLog = $runText = $null   # adapters/ts_typecheck.ps1: a huge tsc baseline = unrun (exit 5)
   $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }
   if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else {
@@ -1237,6 +1236,7 @@ foreach ($s in $steps) {
   if ($stale.Count) { Write-PyStaleEnv $st.dir $pyRun $stale; Write-Host "[check] exit 5: $s UNRUN (stale-env, test exit $rc)"; exit 5 }
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
   if ($s -eq 'build' -and -not $unrun) { Save-CheckBuild $st.dir $cmd $bt0 }
+  if ($slot -and -not $unrun) { Save-CheckStamp $st.dir $slot }
   }
   if (-not $Show) { Write-Host "[check] $s $(if ($unrun) { 'UNRUN (not a pass: see above)' } else { 'ok' })" }
 }

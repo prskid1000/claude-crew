@@ -59,6 +59,33 @@ Expect 'spec.mjs: no esbuild -> exit 2 with the reason' ($LASTEXITCODE -eq 2 -an
 $out = node $spec --help 2>&1 | Out-String
 Expect 'spec.mjs --help prints its header' ($LASTEXITCODE -eq 0 -and $out -match 'Exit codes')
 
+# check stamps: a step that passed on the same sources with the same command is not rerun; a doc edit keeps the stamp, a
+# source edit, other tests, -Force or a failed run rerun it
+$sd = Join-Path (Kd) 'stamp-repo'; $cnt = Join-Path (Kd) 'stamp-count.js'; $runs = Join-Path (Kd) 'stamp-runs.txt'; $failFlag = Join-Path (Kd) 'stamp-fail.flag'
+New-Item -ItemType Directory -Force "$sd/src" | Out-Null; 'a' | Set-Content "$sd/src/a.txt"; 'doc' | Set-Content "$sd/README.md"
+"const fs = require('fs'); fs.appendFileSync(String.raw``$runs``, 'x'); process.exit(fs.existsSync(String.raw``$failFlag``) ? 1 : 0)" | Set-Content $cnt
+(@{ stack = 'custom'; commands = @{ test = "node `"$cnt`" {tests}" } } | ConvertTo-Json) | Set-Content "$sd/.claude-stack.json"
+git -C $sd init -q; git -C $sd add -A; git -C $sd -c user.name=t -c user.email=t@t commit -q -m init
+$stampRun = { param([string[]]$More) $o = pwsh @np $D check -Dir $sd -Step test @More 2>&1 | Out-String; "${LASTEXITCODE}:$((Get-Content $runs -Raw -ErrorAction SilentlyContinue).Length):$([int]($o -match 'not rerun'))" }
+$sr = @(& $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A'; ('doc 2' | Set-Content "$sd/README.md"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A', '-Force'
+  ('b' | Set-Content "$sd/src/b.txt"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'B'; (New-Item -Force $failFlag | Out-Null); ('c' | Set-Content "$sd/src/a.txt"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A')
+Expect "check stamps: rerun skipped on the same sources, doc edit kept, -Force / source edit / other tests / failed run rerun ($($sr -join ' '))" (
+  ($sr -join ' ') -eq '0:1:0 0:1:1 0:1:1 0:2:0 0:3:0 0:4:0 1:5:0 1:6:0')
+# source key: 400 untracked long names (past the Windows command line) still hash and see an edit; a .md under src/ counts,
+# a top-level doc does not; a quoted name (not on Windows) is unescaped
+$keyOf = { pwsh -NoProfile -Command ". '$(Lib)'; Get-CheckSourceKey '$sd'" }
+$k0 = & $keyOf; New-Item -ItemType Directory -Force "$sd/gen" | Out-Null; foreach ($i in 1..400) { 'x' | Set-Content ("$sd/gen/" + ('n' * 90) + "$i.txt") }
+$k1 = & $keyOf; 'y' | Set-Content ("$sd/gen/" + ('n' * 90) + '7.txt'); $k2 = & $keyOf; Remove-Item -Recurse -Force "$sd/gen"
+'m' | Set-Content "$sd/src/tpl.md"; $k3 = & $keyOf; 'n' | Set-Content "$sd/NOTES.md"; $k4 = & $keyOf
+$q = if (-not $IsWindows) { 'q1' | Set-Content "$sd/src/we`"ird.txt"; $q1 = & $keyOf; 'q2' | Set-Content "$sd/src/we`"ird.txt"; [int]($q1 -ne (& $keyOf)) } else { 1 }
+Expect "check stamps: source key over many long untracked names, an edit among them, a src/ .md counted, a top-level doc not, a quoted name ($k0 $k1 $k2 $k3 $k4 $q)" (
+  $k0 -match '^[0-9a-f]{40}$' -and $k1 -match '^[0-9a-f]{40}$' -and $k1 -ne $k0 -and $k2 -ne $k1 -and $k3 -ne $k0 -and $k4 -eq $k3 -and $q -eq 1)
+# a Spring Boot Maven module's check build skips the repackage (no fat jar a lane never stages); a plain one keeps package
+$sb = Join-Path (Kd) 'sb'; $pl = Join-Path (Kd) 'plain'; New-Item -ItemType Directory -Force $sb, $pl | Out-Null
+'<project><parent><artifactId>spring-boot-starter-parent</artifactId></parent></project>' | Set-Content "$sb/pom.xml"; '<project/>' | Set-Content "$pl/pom.xml"
+$bs = (pwsh @np $D stack -Dir $sb -Json | ConvertFrom-Json).commands.build; $bp = (pwsh @np $D stack -Dir $pl -Json | ConvertFrom-Json).commands.build
+Expect "stack: Spring Boot check build skips the repackage, a plain Maven build does not ($bs | $bp)" ($bs -match 'package -DskipTests -Dspring-boot\.repackage\.skip=true$' -and $bp -match 'package -DskipTests$')
+
 # container-tests: no answering engine -> exit 4; a configured runtimes.docker is leased (started when down)
 $jd = Join-Path (Kd) 'jvm-repo'; $bin = Join-Path (Kd) 'bin'; New-Item -ItemType Directory -Force $jd, $bin | Out-Null
 '<project><dependency>org.testcontainers</dependency></project>' | Set-Content "$jd/pom.xml"; '{ "stack": "java-maven", "commands": { "test": "echo {tests}" } }' | Set-Content "$jd/.claude-stack.json"

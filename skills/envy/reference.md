@@ -45,8 +45,8 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
 - `services[].shareBuild` true (a build that reads no per-lane value): a lane stages another lane's recorded copy of the same
   code and build config, no build.
 - `services[].shareCheckBuild` (unset: on for a Maven `package` build without `prepare` or build `env`; true / false): a
-  `crafty.ps1 check -Step build` of a clean tree with the same code, service folder and -P / -D flags is staged (its jar
-  copied, unchanged since), no build.
+  `crafty.ps1 check -Step build` jar of the same clean tree, service folder and -P / -D flags is staged, no build (a
+  Spring Boot check skips the repackage: never).
 
 ## Lane service standard
 Every local-env service follows it; `doctor` checks it (`adapters/lane_standard.ps1`, rows WARN;

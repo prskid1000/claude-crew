@@ -58,6 +58,7 @@
   "check.importProbeSec": "config default=90 unit=s",
   "api.loginHoldMinutes": "config default=30 unit=min",
   "gate.maxHours": "config default=24 unit=h",
+  "gate.buildsPerHour": "config default=8 unit=builds",
   "track.holdCheckMinutes": "config default=30 unit=min",
   "kitAudit.everyDays": "config default=7 unit=d",
   "kitAudit.liveBeatMinutes": "config default=60 unit=min",

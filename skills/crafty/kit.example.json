@@ -199,7 +199,7 @@
    "launches": "work/launches/", "decisions": "work/decisions/", "disputes": "work/disputes/", "duels": "work/duels/",
    "deploys": "work/deploys/", "audits": "work/audits/", "docs": "work/docs/", "evidence": "work/evidence/",
    "shots": "work/shots/", "chrome-profiles": "cache/chrome-profiles/", "sessions": "cache/sessions/",
-   "tokens": "cache/tokens/", "tsbuild": "cache/tsbuild/", "check-builds": "cache/check-builds/", "android-swarm": "cache/android-swarm/",
+   "tokens": "cache/tokens/", "tsbuild": "cache/tsbuild/", "check-builds": "cache/check-builds/", "check-stamps": "cache/check-stamps/", "android-swarm": "cache/android-swarm/",
    "android-tmp": "cache/android-tmp/", "stopped": "cache/stopped/", "kit-flow": "cache/kit-flow.html",
    "kit-flow-cache": "cache/kit-flow-model.json", "kit-flow-stamp": "cache/kit-flow-stamp.txt",
    "supervise-state": "cache/supervise-state.json", "live-steps": "cache/live-steps.json", "supervise-report": "logs/supervise-report.md", "supervise-digest": "logs/supervise-digest.md", "mem-samples": "cache/mem-samples.txt",

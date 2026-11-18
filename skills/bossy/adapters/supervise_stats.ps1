@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour; their heatmap cards 
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L132 writes (owner 2026-11-18 · L185 cards · L362 flags
+Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L194 cards · L379 flags
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -28,6 +28,14 @@ function Split-KitHours([datetime]$H0, [datetime]$S, [datetime]$E, [scriptblock]
 # the gate from its builds log (24 h), not a sweep sample (one missed a build between sweeps):
 # per group running / queued now, done today, avg / peak wait, RAM promised, an hourly heatmap (24 clock hours, the last = the current one:
 # @(builds ended, busy min, max wait min) each, h0 = the first hour); phone lanes and emulators
+# builds per owner (worktree or lane) from builds-log end lines, QA seat leases aside -> @{ name; n; min; failed }, most first
+function Get-KitBuildsByOwner($Ends) {
+  $by = [ordered]@{}
+  foreach ($x in @($Ends | Where-Object { $_ -and $_.owner -and "$($_.project)" -notmatch '(^|[\\/])qa-seats$' })) {
+    $o = "$($x.owner)"; if (-not $by.Contains($o)) { $by[$o] = [ordered]@{ name = $o; n = 0; min = 0.0; failed = 0 } }
+    $by[$o].n++; $by[$o].min += [double]$x.sec / 60; if ([int]$x.code) { $by[$o].failed++ } }
+  @($by.Values | ForEach-Object { [pscustomobject]@{ name = $_.name; n = $_.n; min = [math]::Round($_.min); failed = $_.failed } } | Sort-Object @{ Expression = 'n'; Descending = $true }, @{ Expression = 'min'; Descending = $true })
+}
 function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
   $h0 = $Now.Date.AddHours($Now.Hour - 23); $from = $h0; $led = Get-KitGateLedger; $rd = { param($f) try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
   $at = { param($v) if ($v -is [datetime]) { $v } else { try { [datetime]"$v" } catch { $null } } }
@@ -45,9 +53,10 @@ function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
   $rows = @($g.Values | ForEach-Object { [pscustomobject]@{ name = $_.name; running = $_.running; queued = $_.queued; done = $_.done; ram = [math]::Round($_.ram, 1); peakGB = [math]::Round($_.peakGB, 1)
         waitAvg = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Average).Average, 1) } else { 0 }); waitMax = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Maximum).Maximum, 1) } else { 0 })
         hours = @($_.hours | ForEach-Object { , @([int]$_[0], [math]::Round($_[1], 1), [math]::Round($_[2], 1)) }) } } | Sort-Object { - ($_.running * 1000 + $_.queued * 100 + $_.done) })
+  $owners = @(Get-KitBuildsByOwner @($ends | Where-Object { (& $at $_.at) -ge $Now.Date }))
   $lanes = @(try { (Read-KitText (Join-Path $KitConf.Kit 'skills/phoney/swarm.config.json') | ConvertFrom-Json).lanes } catch { })
   [pscustomobject]@{ h0 = $h0.ToString('o'); running = $run.Count; queued = $que.Count; today = [int](($rows | Measure-Object done -Sum).Sum); waitMax = [double](@($rows.waitMax) + 0 | Measure-Object -Maximum).Maximum
-    ram = [math]::Round([double](($run | Measure-Object need -Sum).Sum), 1); rows = $rows
+    ram = [math]::Round([double](($run | Measure-Object need -Sum).Sum), 1); rows = $rows; owners = $owners
     lanes = $lanes.Count; leased = @($lanes | Where-Object { $_.name -and (Test-Path (Join-Path (Get-KitPath phones) "$($_.name).json")) }).Count; emulators = @($Resources | Where-Object { "$($_.name)" -like 'phone *' }).Count
     browsers = @($Resources | Where-Object { "$($_.name)" -like 'browser *' }).Count; browserGB = [math]::Round([double](@($Resources | Where-Object { "$($_.name)" -like 'browser *' } | ForEach-Object { [double]$_.gb }) + 0 | Measure-Object -Sum).Sum, 1) }   # leases, never gated
 }
@@ -221,6 +230,14 @@ function Format-KitHeatRows($Rows, [string]$What = 'rows') {
   (@($on | ForEach-Object html) -join '') + $(if ($off.Count) { "<button type=button class=gkx aria-expanded=false>$($off.Count) idle $(& $e $What) · no data in 12 h</button><div class=gki>$(@($off | ForEach-Object html) -join '')</div>" }) }
 # the fold count of a heatmap card: busy rows of all
 function Get-KitHeatCount($Rows) { $rs = @($Rows | Where-Object { $_ }); "$(@($rs | Where-Object busy).Count) of $($rs.Count) busy" }
+# builds today per agent (owner): count, build minutes, failed; bar = share of the busiest owner's count
+function Format-KitBuildOwners($Owners) {
+  $os = @($Owners | Where-Object { $_ -and $_.n }); if (-not $os.Count) { return '' }; $top = [double]$os[0].n
+  "<div style='text-align:left'><div class=s>builds today per agent · build-min · failed</div>" + (@($os | Select-Object -First 8 | ForEach-Object {
+      $t = "$($_.name): $($_.n) builds, $($_.min) build-min, $($_.failed) failed"
+      "<div class=s title='$(& $e $t)'><span aria-hidden=true style='display:inline-block;width:60px;margin-right:6px'><span style='display:inline-block;height:6px;width:$([int](60 * $_.n / $top))px;background:currentColor;opacity:.45'></span></span>$(& $e $_.name) $($_.n) · $($_.min) min$(if ($_.failed) { " · $($_.failed) failed" })</div>" }) -join '') +
+    $(if ($os.Count -gt 8) { "<div class=s>+$($os.Count - 8) more agents</div>" }) + '</div>'
+}
 # build gate: one line per kind (24 h heatmap of busy minutes, running, queued, today, waits, RAM); RAM, QA seats, phones, browsers aside
 function Format-KitGateCard($gs) {
   if (-not $gs) { return (& $nowCard 'Build gate · QA seats' "$(& $icv run 'running builds' (& $fmt $nw.gr))$(& $icv queue 'queued builds' (& $fmt $nw.gq))<small> · seats </small>$(& $fmt $nw.seats)<small> / $(& $fmt $nw.seatsMax)</small>" "longest wait $(& $fmt $nw.gw) min" '' $(if ($nw.gw -ge 30) { 'hot' } elseif ($nw.gq -ge 6) { 'warn' }) "$(& $dots $nw.seats $nw.seatsMax)$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queue, 24 h' 'peak' 0)") }
@@ -238,7 +255,7 @@ function Format-KitGateCard($gs) {
       [pscustomobject]@{ busy = [int]$kr.running + [int]$kr.queued -gt 0 -or (Test-KitHeatBusy $kr.hours { param($c) [double]@($c)[1] -gt 0 }); html = "<div class=gk><span class=gn title='$(& $e "${nm}: $w")'>$(& $e $nm)</span>$(Format-KitHeatCells $kr.hours $h0 "$nm, builds per hour, last 24 h" { param($hv) "$nm · $([int]$hv[0]) builds · $(& $n1 $hv[1]) build-min · max wait $(& $n1 $hv[2]) min" })$($cells -join '')</div>" } })
   $inner = "<div class=v>$(& $icv run 'running builds' (& $fmt $gs.running))$(& $icv queue 'queued builds' (& $fmt $gs.queued))$(& $icv today 'builds today' (& $fmt $gs.today))$(& $icv wait 'longest wait today' (& $n1 $gs.waitMax) ' min')</div>" +
   "<div class=gl><div>$(if ($kRows.Count) { "<div class=gks>$gHead$(Format-KitHeatRows $kRows 'kinds')</div><div class=hk>shade = busy minutes in that hour · outlined = now · tap a cell for builds and waits</div>" } else { '<div class=s>no gated build in 24 h</div>' })</div>" +
-  "<div class=gp>$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queued builds, 24 h' 'peak' 0)$ramDots$(& $dots $nw.seats $nw.seatsMax)<div class=s>QA seats $(& $fmt $nw.seats) / $(& $fmt $nw.seatsMax)</div>$(if ($gs.lanes) { "<div class=s>phone lanes $($gs.leased) / $($gs.lanes) leased · emulators $($gs.emulators) running</div>" })$(if ($gs.browsers) { "<div class=s>test browsers $($gs.browsers) ($(& $n1 $gs.browserGB) GB, leased)</div>" })</div></div>"
+  "<div class=gp>$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queued builds, 24 h' 'peak' 0)$ramDots$(& $dots $nw.seats $nw.seatsMax)<div class=s>QA seats $(& $fmt $nw.seats) / $(& $fmt $nw.seatsMax)</div>$(if ($gs.lanes) { "<div class=s>phone lanes $($gs.leased) / $($gs.lanes) leased · emulators $($gs.emulators) running</div>" })$(if ($gs.browsers) { "<div class=s>test browsers $($gs.browsers) ($(& $n1 $gs.browserGB) GB, leased)</div>" })$(Format-KitBuildOwners $gs.owners)</div></div>"
   & $fold 'gate' 'Build gate · QA seats' $(if ($kRows.Count) { Get-KitHeatCount $kRows } else { '' }) $inner -Open:([bool]@($kRows | Where-Object busy).Count -or $gs.running -or $gs.queued) -tag h4 -cls "sub st gt $(if ($gs.waitMax -ge 30) { 'hot' } elseif ($gs.queued -ge 6) { 'warn' })"
 }
 # lease waits: one line per resource (24 h heatmap of minutes waited · waits · minutes · longest), the gate card's style
