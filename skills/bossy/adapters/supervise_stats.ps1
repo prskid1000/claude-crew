@@ -288,12 +288,12 @@ function Update-KitFlagHours($Prior, [datetime]$Now, $Flags) {
     $fs.Add([ordered]@{ l = $lv; k = $(if ($kd) { $kd } else { 'other' }); y = $y; t = $w.Substring(0, [math]::Min(200, $w.Length)) }) }
   @($old) + [ordered]@{ h = $hk; f = @($fs) }
 }
-# flags (owner, 2026-11-17: a heatmap like CPU): ACT / WATCH / FIXED rows, a sub-row per kind under each; a cell = distinct flags that
+# flags (owner, 2026-11-17: a heatmap like CPU): ACT / WATCH / FIXED rows, a sub-row per kind under each (the leading CAPS words of the flag, re-read for old 'other' entries; 'other' = no kind word); a cell = distinct flags that
 # hour (count shown, shade by count, colour by level), its tooltip their texts; column: distinct flags in 24 h
 function Format-KitFlagHeat($FH) {
   $h0 = $at.Date.AddHours($at.Hour - 23)
   $xs = @(foreach ($b in @($FH | Where-Object { $_ })) { $hi = [int][math]::Floor(((Get-KitFlagHour $b.h) - $h0).TotalHours); if ($hi -lt 0 -or $hi -gt 23) { continue }
-      foreach ($x in @($b.f | Where-Object { $_ })) { [pscustomobject]@{ hi = $hi; l = "$($x.l)"; k = "$($x.k)"; y = "$($x.y)"; t = "$($x.t)" } } })
+      foreach ($x in @($b.f | Where-Object { $_ })) { [pscustomobject]@{ hi = $hi; l = "$($x.l)"; k = $(if ("$($x.k)" -in '', 'other') { $kd = "$((Get-KitFlagCells ([pscustomobject]@{ what = $x.t })).kind)".Trim(); if ($kd) { $kd } else { 'other' } } else { "$($x.k)" }); y = "$($x.y)"; t = "$($x.t)" } } })
   if (-not $xs.Count) { return (& $fold 'flagmap' 'Flags · 24 h' 0 '' -tag h4 -cls 'sub st fhm') }
   $mx = [math]::Max(1, [int](@($xs | Group-Object { "$($_.l)|$($_.hi)" } | ForEach-Object Count) + 0 | Measure-Object -Maximum).Maximum)
   $mk = { param([string]$label, $set, [string]$lvl, [bool]$sub) $lc = $lvl.ToLower()

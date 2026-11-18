@@ -48,7 +48,7 @@ function Format-KitShellTable($Shells) {
 # no producer kind: an upper-case lead ("RESTART LOOP: ...") is the kind
 function Get-KitFlagCells($f) {
   $kind = $f.kind; $problem = $f.problem
-  if (-not $kind -and "$($f.what)" -cmatch '^([A-Z]{3,}(?:[ -][A-Z]{3,})*):?\s+(.+)$') { $kind = $Matches[1]; if (-not $problem) { $problem = $Matches[2] } }
+  if (-not $kind -and "$($f.what)" -cmatch '^([A-Z]{3,}(?:[ -](?:[A-Z]{3,}|MR|PR))*):?\s+(.+)$') { $kind = $Matches[1]; if (-not $problem) { $problem = $Matches[2] } }
   [pscustomobject]@{ kind = $kind; who = $f.who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
 }
 # a flag's identity across rounds: counts, times and sizes vary
