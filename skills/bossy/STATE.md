@@ -12,7 +12,7 @@ supervise: BAD = WATCH).
 - **Times:** ISO 8601 with offset (`ToString('o')`, `isoformat()`); readers accept offset-less ones.
 - **Ids:** stable, file-safe: session `<agent>-<8 hex>`, decision `d-<yyyyMMddHHmmss>-<agent>-<4>`, task = tracker id, run =
   workflow run name.
-- **Format:** JSON for scripts; markdown only for people (`resume-<run>.md`, resume briefs, reports: templates.md `kit-report`).
+- **Format:** JSON for scripts; markdown only for people (resume briefs, reports: templates.md `kit-report`).
 - **Change a schema:** bump `v<n>` in its row and the writer; readers accept `n-1`. A new file: a `_paths` name + a row.
   Deleting state in use: the owner decides.
 - **Lifecycle:** `.runtime` ages out by `_paths.keep` (`bossy.ps1 cleanup`); in `.state` it only trims the Inventory's logs
@@ -42,7 +42,8 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep |
 | `outcomes` | `kitlog` (`adapters/outcomes.ps1`: supervise, `tidy prep`) | `jsonl v0: at task stage` | keep (append-only, one row per task state change) |
 | `standing-rules` | `bossy.ps1 decide rules`, `decide answer` (its ask) | `json v1: rules` | keep (approved ones -> `rules/standing-rules.local.md`) |
-| `pool-usage` | `adapters/wt_pool.ps1` `Update-KitPoolUsage` (wt pool sync) | `json v1: repos` | keep (samples 7 d) |
+| `forgotten` | `kitbag.py forget` | `text v0` | `forget --purge` |
+| `pool-usage` | `adapters/wt_pool.ps1` | `json v1: repos` | keep (samples 7 d) |
 | `kit-tests-db` | `tests/test-mysql.ps1` | `json v0: pid port key holders` | keep |
 | `outcomes-sweep` | `adapters/outcomes.ps1` | `text v0` | 30 d |
 | `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) |
@@ -57,7 +58,7 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `pauses` | `bossy.ps1 pause / resume` | `dir v1: at run state` | keep |
 | `programs` | `bossy.ps1 program` | `dir v1: updated` | keep |
 | `browser-ports` | `browser.mjs` | `json v0` | keep |
-| `ports-deployed` | `kitbag.py port` | `json v1: files` | rewritten each deploy |
+| `ports-deployed` | `kitbag.py port` | `json v1: files` | per deploy |
 | `owner-apps` | `bossy.ps1 supervise` | `json v0` | keep |
 | `runtimes` | `crafty.ps1 runtime` | `dir v0: leases` | keep |
 | `locks` | `lib.ps1` (`repos[].exclusiveTests`) | `json v0: held waiting` | keep |

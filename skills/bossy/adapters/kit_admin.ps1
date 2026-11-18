@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L102 health · L111 prepush · L207 nightly tests · L227 precommit
+Sections: L12 learn · L105 health · L114 prepush · L210 nightly tests · L230 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -85,13 +85,16 @@ function Invoke-LearnAdmin {
       if ($hit.Count -ne 1) { "-Fixed must match exactly one lesson line of ## $Skill (matched $($hit.Count))"; $script:learnRc = 1; return }
       $moved.Add(($L[$hit[0]] -replace '^- (\(fixed in kit\) )?', '- (fixed in kit) ')); $L.RemoveAt($hit[0]); $r = Find-KitLessonSection $L $Skill
     }
-    # "### Project:" lines stay
-    while (@(& $idx).Count -gt $Max) {
-      $gen = @(& $idx | Where-Object { $i = $_; -not @($r[0]..$i | Where-Object { $L[$_] -like '### *' }).Count })
-      $i = if ($gen.Count) { $gen[-1] } else { @(& $idx)[-1] }
-      $moved.Add($L[$i]); $L.RemoveAt($i); $r = Find-KitLessonSection $L $Skill
-    }
     [IO.File]::WriteAllText($f, (($L -join "`n") + "`n"))
+    # over -Max: forget on cap (lowest hits, then oldest change; archived, forget --restore <id>)
+    if (@(& $idx).Count -gt $Max) {
+      $fg = & (Get-Python) -X utf8 $KitCmd.kitbag forget --target $f --section $Skill --to $Max --apply --json 2>&1
+      $fj = try { ($fg | Select-Object -Last 1) | ConvertFrom-Json } catch { $null }
+      if (-not $fj) { "learn -Trim: kitbag.py forget failed: $($fg -join ' ')"; $script:learnRc = 1; return }
+      if ($global:LASTEXITCODE -eq 1) { "learn -Trim: ## $Skill stays over $Max (the rest is protected: owner lines, Decisions): fold some into a rule" }
+      foreach ($x in @($fj[0].removed)) { $moved.Add("$x") }
+      $L = Read-KitLessonLines $f; $r = Find-KitLessonSection $L $Skill
+    }
     if ($moved.Count) {
       $at = (Get-Date).ToString('s'); foreach ($x in $moved) { Write-KitLog signals '' ([ordered]@{ at = $at; skill = $Skill; kind = 'retired'; text = $x; ref = $(if ($Fixed) { 'fixed' } else { 'trim' }); source = 'learn' }) }
     }

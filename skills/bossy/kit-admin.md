@@ -20,7 +20,7 @@ adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters
   `skills/crafty/templates.md`; tests in `tests/<area>.tests.ps1` (shared helpers: `tests/harness.ps1`).
 - **Token budgets** (UTF-8 bytes / 4; README graph sections excluded): a role's start load (always-loaded + its agent file, skill
   and lessons) [START-BUDGET, 12000], each file by type [BUDGET] (kitbag `BUDGETS`, README "Extending"; LESSONS.md: 40 lines per
-  skill). Over: trim (dense prose, dedupe, never golf that hurts reading) or move detail behind a pointer. Repo total: INFO only.
+  skill). Over: `kitbag.py forget` first, then trim (dense prose, dedupe, no golf) or move detail behind a pointer.
 - **Progressive loading** [ORPHAN-DOC, SCRIPT-READ]: a doc outside the start set is named in the Files index of the skill whose
   step reads it; scripts are run (their header prints usage), never named as text to read.
 - **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files

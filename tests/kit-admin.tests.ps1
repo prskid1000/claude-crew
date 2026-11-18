@@ -6,7 +6,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/kit-admin.tests.ps1 (or tests/kit-tests
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/adapters/kit_admin.ps1', 'skills/bossy/kit-admin.md', 'skills/bossy/kitbag_admin.py', 'skills/bossy/kitbag_scaffold.py')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/bossy/adapters/kit_admin.ps1', 'skills/bossy/kit-admin.md', 'skills/bossy/kitbag_admin.py', 'skills/bossy/kitbag_scaffold.py', 'skills/bossy/kitbag_forget.py')   # copied into every New-TestKit kit
 $root = Join-Path ([IO.Path]::GetTempPath()) "kit-admin-$PID"; $kc = New-GitKitCopy $root -Push
 $KT = Join-Path $kc 'skills/bossy/kitbag.py'
 # recover --fix never removes a detached worktree holding commits not on origin/main
@@ -124,5 +124,61 @@ $ckPy = Join-Path $root 'cfgkeys.py'; @('import importlib.util, sys', "sys.path.
   'ka = importlib.util.module_from_spec(spec); ka.__dict__.update({n: v for n, v in vars(kitbag).items() if not n.startswith("__")}); spec.loader.exec_module(ka)', "print(','.join(sorted(ka.script_config_keys(r'$ck', ['a.py', 'b.ps1']))))") | Set-Content $ckPy
 $ckOut = & $py -X utf8 $ckPy 2>&1 | Select-Object -Last 1
 Expect "audit config: section-bound CFG / `$cfg reads are sub-keys ($ckOut)" ("$ckOut".Trim() -eq 'media.stt,media.vidy,tests.e2e,tests.e2e.specs')
+# forget on cap (kitbag_forget.py): scoring, archive / restore, retention, purge, the feature gate, the cap hooks
+$fgD = Join-Path $kc 'fg'; $null = New-Item -ItemType Directory -Force $fgD; $fgRun = { & $py -X utf8 $KT forget @args 2>&1 | Out-String }
+$fgL = Join-Path $fgD 'LESSONS-fg.md'
+[IO.File]::WriteAllText($fgL, "## alpha`n- a hot case -> keep it (seen) (3×)`n- a cold case -> drop it (once)`n- (fixed in kit) an old case -> gone (fixed)`n- an owner case -> keep (owner, 2026-01-01)`n## Decisions`n- an ADR line`n")
+$fo = & $fgRun --target $fgL --section alpha --to 2 --apply; $fgT = [IO.File]::ReadAllText($fgL)
+Expect "forget: lessons over cap lose the fixed-in-kit line, then the lowest hits; owner lines and Decisions stay ($($fo.Trim()))" ($fgT -notmatch 'an old case|a cold case' -and $fgT -match 'a hot case' -and $fgT -match 'an owner case' -and $fgT -match 'an ADR line' -and $fo -match 'FORGOT .*2 item')
+$fgId = [regex]::Match($fo, 'lessons-\d{8}-[0-9a-f]{6}').Value; $ro = & $fgRun --restore $fgId
+$fgRet = Get-Content (Join-Path (TkPath $kc forgotten) 'retention.json') -Raw | ConvertFrom-Json
+Expect "forget --restore puts the line back after its anchor and doubles the kind's retention 7 -> 14 d ($($ro.Trim()))" ($ro -match "restored $fgId" -and [IO.File]::ReadAllText($fgL) -match '(cold|old) case' -and $fgRet.kinds.lessons.days -eq 14)
+[IO.File]::WriteAllText((Join-Path $fgD 'doc.md'), "# Doc`n## Used part`nkept: named elsewhere`n## Old notes`nnobody names this`n## Hard rules`nnever cut`n")
+[IO.File]::WriteAllText((Join-Path $fgD 'ref.md'), "see doc.md `"Used part`"`n")
+$fgDn = 'zq' + '_unused_fn'   # built: the literal name in this file would count as a call site
+[IO.File]::WriteAllText((Join-Path $fgD 'tool.py'), "def used_fn():`n    return 1`n`ndef $($fgDn)():`n    return 2`n`nprint(used_fn())`n")
+git -C $kc add fg 2>&1 | Out-Null; git -C $kc commit -q -m 'test: forget fixtures' 2>&1 | Out-Null
+$fo = & $fgRun --target (Join-Path $fgD 'doc.md') --to 5 --apply --unused-days 0; $fgT = [IO.File]::ReadAllText((Join-Path $fgD 'doc.md'))
+Expect "forget: an unreferenced section goes; a referenced one and a protected heading stay ($($fo.Trim()))" ($fgT -notmatch 'Old notes' -and $fgT -match 'Used part' -and $fgT -match 'Hard rules')
+$fo = & $fgRun --target (Join-Path $fgD 'tool.py') --to 1 --apply; $fgB = [regex]::Match($fo, 'BATCH (fb-\S+):').Groups[1].Value
+$co = & $fgRun --confirm $fgB --decision d-fg-1; $coRc = $LASTEXITCODE
+Expect "forget: a feature (0 call sites) is never cut by --apply: one BATCH + decide ask; --confirm without an answer refuses (1) ($($co.Trim()))" ($fo -match "CONFIRM .*$fgDn" -and $fo -match 'decide ask' -and $fgB -and $coRc -eq 1 -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -match $fgDn)
+$fgDl = TkPath $kc decisions-log -Create
+'{"at":"2026-01-01T00:00:00+00:00","event":"answered","id":"d-fg-0","item":"deploy-x","answer":"yes","by":"owner"}', ('{"at":"2026-01-01T00:00:00+00:00","event":"answered","id":"d-fg-2","item":"forget-' + $fgB + '","answer":"yet to decide","by":"owner"}') | Add-Content $fgDl
+$c0 = & $fgRun --confirm $fgB --decision d-fg-0; $c2 = & $fgRun --confirm $fgB --decision d-fg-2
+Expect "forget --confirm refuses a yes to another ask and a 'yet ...' answer ($($c0.Trim()) | $($c2.Trim()))" ($c0 -match 'not the owner' -and $c2 -match 'kept' -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -match $fgDn)
+Push-Location $kc; $fo = & $fgRun --target fg/tool.py --to 1 --apply; Pop-Location; $fgB = [regex]::Match($fo, 'BATCH (fb-\S+):').Groups[1].Value
+'{"at":"2026-01-01T00:00:00+00:00","event":"answered","id":"d-fg-1","item":"forget-' + $fgB + '","answer":"yes","by":"owner"}' | Add-Content $fgDl
+$co = & $fgRun --confirm $fgB --decision d-fg-1
+Expect "forget --confirm after the owner's yes removes the feature, archived, used_fn stays ($($co.Trim()))" ($co -match 'forgot 1 feature' -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -notmatch $fgDn -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -match 'used_fn')
+$fgK = 'zq' + 'key'; $fgJ = Join-Path $fgD 'c.json'; [IO.File]::WriteAllText($fgJ, "{`n  `"_meta`": {`n    `"$fgK`": 1,`n    `"z`": 2`n  },`n  `"$fgK`": {`n    `"a`": 1`n  },`n  `"last`": 1`n}`n")
+$jo = & $fgRun --target $fgJ --to 1
+Expect "forget: a config key is the top-level one, never a nested key of the same name ($($jo.Trim()))" ($jo -match "CONFIRM fg/c\.json:6 `"$fgK`"" -and $jo -notmatch 'c\.json:3 ')
+$fgQ = '```'; $fgM = Join-Path $fgD 'fence.md'; [IO.File]::WriteAllText($fgM, "# F`n## A`n$fgQ`n## never cut: not a heading`n$fgQ`n`n## Zq bee`nb text`n`n## Zq sea`nc text`n")
+$fo = & $fgRun --target $fgM --to 1 --apply --unused-days 0; $fgC = [regex]::Matches($fo, 'doc-\d{8}-[0-9a-f]{6}') | ForEach-Object Value
+$null = & $fgRun --restore $fgC[0]; $fgT = [IO.File]::ReadAllText($fgM) -split "`n"
+Expect "forget --restore with a repeated anchor line (a code fence) lands after the nearest one, never inside the block ($($fgT -join '|'))" ($fgT[4] -eq '```' -and ($fgT[5..7] -join '|') -match '## Zq (bee|sea)')
+$fgA = Join-Path (TkPath $kc forgotten) 'doc'; $null = New-Item -ItemType Directory -Force $fgA; 'x' | Set-Content (Join-Path $fgA '2026-01-01.md')
+@{ kinds = @{ doc = @{ days = 28; restores = 1; since = [DateTimeOffset]::Parse('2026-01-01T00:00:00Z').ToUnixTimeSeconds() } } } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path (TkPath $kc forgotten) 'retention.json')
+$p1 = & $fgRun --purge --now 2026-01-20T00:00:00+00:00; $kept = Test-Path (Join-Path $fgA '2026-01-01.md')
+$p2 = & $fgRun --purge --now 2026-02-15T00:00:00+00:00; $fgRet = Get-Content (Join-Path (TkPath $kc forgotten) 'retention.json') -Raw | ConvertFrom-Json
+Expect "forget --purge keeps an archive inside its kind's days (28), deletes it after, and halves days after a window with no restore ($($p2.Trim()))" ($kept -and $p2 -match 'deleted doc/2026-01-01.md' -and -not (Test-Path (Join-Path $fgA '2026-01-01.md')) -and $fgRet.kinds.doc.days -eq 14)
+$fgP = Join-Path $fgD 'status.md'; [IO.File]::WriteAllText($fgP, "Deployed the fix to the test env today for the team.`nDeployed the fix to the test env today for the team.`nGenerated with a tool, nothing to read here at all.`nNever close the task before the retest has passed fully.`n")
+$po = & $py -X utf8 $KT prose --kind comment-status $fgP 2>&1 | Out-String
+Expect "prose over its word cap prints forget proposals: the duplicate first, a never-line protected ($($po.Trim()))" ($po -match 'FORGET PROPOSE .*status\.md:2 .*duplicate' -and $po -notmatch 'FORGET .*Never close')
+[IO.File]::WriteAllText((Join-Path $fgD 'hook.md'), ("# Hook`n## Spare bit`nunused`n## Filler`n" + ('word ' * 2200))); $hk = Join-Path $root 'fg-hook.py'
+Set-Content $hk @"
+import importlib.util, sys, types
+spec = importlib.util.spec_from_file_location('kitbag', r'$KT'); kb = importlib.util.module_from_spec(spec); spec.loader.exec_module(kb); kb.load_plugins()
+probs = [('BUDGET', 'fg/hook.md', '9 tokens (cap 1)')]
+for h in kb.LINT_HOOKS:
+    h(types.SimpleNamespace(dir=r'$kc'), probs, {'--warn': True, '--no-flow': True})
+print(probs[0][2])
+"@
+$ho = & $py -X utf8 $hk 2>&1 | Select-Object -Last 1
+Expect "lint BUDGET over cap names the forget candidates ($ho)" ("$ho" -match 'forget first: ## Spare bit' -and "$ho" -match 'kitbag.py forget --target fg/hook.md')
+$null = & $lo -Skill zeta -When 'a first case' -Do 'act one' -Why 'why one'; $null = & $lo -Skill zeta -When 'a second case' -Do 'act two' -Why 'why two'; $null = & $lo -Skill zeta -Bump 'a first case'
+$tr = & $lo -Skill zeta -Trim -Max 1; $ls = [IO.File]::ReadAllText((Join-Path $kc 'LESSONS.md'))
+Expect "learn -Trim forgets by score (the bumped lesson stays), archives it, -History lists it ($($tr.Trim()))" ($ls -match 'a first case' -and $ls -notmatch 'a second case' -and $tr -match 'retired 1' -and (& $lo -History) -match 'a second case')
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 Complete-Tests

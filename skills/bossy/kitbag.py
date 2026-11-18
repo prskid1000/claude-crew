@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L35 paths · L124 state · L181 kitlog · L280 load · L674 lint · L1084 README graph · L1187 lint command · L1453 audit ·
-  L1593 registry · L1925 arch lint · L2192 prose · L2357 sections · L2487 budget · L2501 migrate · L2661 plugins ·
-  L2715 state lint · L2903 main
+Sections: L35 paths · L124 state · L181 kitlog · L280 load · L702 lint · L1086 README graph · L1189 lint command · L1455 audit ·
+  L1595 registry · L1927 arch lint · L2194 prose · L2359 sections · L2489 budget · L2503 migrate · L2663 plugins ·
+  L2717 state lint · L2905 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -321,6 +321,34 @@ def start_rows(k):
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
   'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 9500, 'tests': 9000}
+
+def budget_type(f):
+    """The BUDGETS key of a tracked kit file (relative, /), None = no per-file cap (CLAUDE.md, AGENTS.md: the 'always' cap)."""
+    b = osp.basename(f)
+    if f in ('CLAUDE.md', 'AGENTS.md'):
+        return None
+    if f.startswith('tests/'):
+        return 'tests'
+    if b == 'SKILL.md':
+        return 'skill'
+    if f.startswith('agents/'):
+        return 'agent'
+    if f.startswith('rules/'):
+        return 'rule'
+    if b == 'LESSONS.md':
+        return 'lessons'
+    if f == 'README.md':
+        return 'doc'
+    if f == 'skills/crafty/templates.md':   # every template + Writing standards
+        return 'templates'
+    if f.startswith('workflows/'):
+        return 'workflow'
+    if f == PATHS_JSON:   # every config key's sample + doc, read on demand (never at start)
+        return 'config'
+    if f.endswith('.md'):
+        return 'template'
+    ext = osp.splitext(f)[1][1:]
+    return ext if ext in BUDGETS else None
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/crafty/kit.example.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/crafty/lib.ps1', 'skills/crafty/devtools.py', 'skills/pokey/browser.mjs', 'skills/bossy/kitbag.py', 'skills/crafty/spec.mjs'}
@@ -857,34 +885,8 @@ def lint(k, g=None, org_terms=None):
         if always + own > START_CAP:
             bad('START-BUDGET', f'agents/{role}.md', f'{role} loads {always + own} tokens at start (always-loaded {always} + own {own}; cap '
                 f'{START_CAP}): move detail behind a pointer (a doc its skill names at the step that needs it)')
-    def btype(f):
-        b = osp.basename(f)
-        if f in ('CLAUDE.md', 'AGENTS.md'):
-            return None   # always-loaded: the 'always' cap
-        if f.startswith('tests/'):
-            return 'tests'
-        if b == 'SKILL.md':
-            return 'skill'
-        if f.startswith('agents/'):
-            return 'agent'
-        if f.startswith('rules/'):
-            return 'rule'
-        if b == 'LESSONS.md':
-            return 'lessons'
-        if f == 'README.md':
-            return 'doc'
-        if f == 'skills/crafty/templates.md':   # every template + Writing standards
-            return 'templates'
-        if f.startswith('workflows/'):
-            return 'workflow'
-        if f == PATHS_JSON:   # every config key's sample + doc, read on demand (never at start)
-            return 'config'
-        if f.endswith('.md'):
-            return 'template'
-        ext = osp.splitext(f)[1][1:]
-        return ext if ext in BUDGETS else None
     sizes = {f: size_tokens(k.dir, f) for f in counted}
-    over = [(f, n, BUDGETS[b]) for f, n in sizes.items() if (b := btype(f)) and n > BUDGETS[b]]
+    over = [(f, n, BUDGETS[b]) for f, n in sizes.items() if (b := budget_type(f)) and n > BUDGETS[b]]
     always = sum(sizes.get(f, 0) for f in ('CLAUDE.md', 'AGENTS.md') + tuple(f for f in counted if re.match(r'rules/[^/]+\.md$', f) and 'paths' not in frontmatter(k.texts.get(f, ''))))
     if always > BUDGETS['always']:
         over.append(('always-loaded (CLAUDE.md + AGENTS.md + rules)', always, BUDGETS['always']))
@@ -973,7 +975,7 @@ def lint(k, g=None, org_terms=None):
     for m in re.finditer(r'^## (?!History)(\S+)\n(.*?)(?=^## |\Z)', lt, re.S | re.M):
         n = len([l for l in m.group(2).splitlines() if l.startswith('- ')])
         if n > 40:
-            bad('LESSONS-CAP', f'LESSONS.md ## {m.group(1)}', f'{n} lessons (cap 40): bossy.ps1 learn -Skill {m.group(1)} -Trim')
+            bad('LESSONS-CAP', f'LESSONS.md ## {m.group(1)}', f'{n} lessons (cap 40): bossy.ps1 learn -Skill {m.group(1)} -Trim (forgets the lowest-scored: kitbag.py forget)')
         for l in m.group(2).splitlines():   # learn -When -Do -Why renders it
             if l.startswith('- ') and m.group(1) != 'Decisions' and not LESSON_SHAPE.match(l):
                 bad('LESSON-SHAPE', f'LESSONS.md ## {m.group(1)}', f'not "- <when> -> <do> (<why>)": {l[:80]}')

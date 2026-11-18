@@ -27,8 +27,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L34 init · L45 board · L223 budget · L253 launch · L494 recover · L581 pause · L592 resume · L659 program · L710 param ·
-  L716 track · L1058 supervise · L1372 report · L1452 audit · L1512 storage · L1515 bugbrief · L1629 cleanup · L1714 learn ·
-  L1745 decide · L1896 debate · L1940 health · L2003 retro due · L2013 tidy · L2085 setup · L2182 guard-sendmessage
+  L716 track · L1058 supervise · L1372 report · L1452 audit · L1512 storage · L1515 bugbrief · L1629 cleanup · L1716 learn ·
+  L1747 decide · L1898 debate · L1942 health · L2005 retro due · L2015 tidy · L2087 setup · L2184 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1701,6 +1701,8 @@ foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File -Recur
 }
 foreach ($x in @(Invoke-KitLogTrim -DryRun:$DryRun)) { [void]$actions.Add([pscustomobject]@{ mb = 0; why = "rolled into logs-summary.jsonl ($($x.days) d kept raw)"; path = "$($x.stream): $($x.rolled) line(s), $($x.kept) kept" }) }   # signals, decisions, deploys
 Gone "$(Get-KitPath tracking).migrated" 'tracking.json.migrated: its tasks live in tasks/'
+# forgotten items past their kind's retention (kitbag.py forget)
+foreach ($pl in @(& (Get-Python) -X utf8 $KitCmd.kitbag forget --purge $(if ($DryRun) { '--dry-run' }) 2>$null | Where-Object { $_ -match '^(would delete|deleted) ' })) { [void]$actions.Add([pscustomobject]@{ mb = 0; why = 'forgotten items past retention'; path = ($pl -replace '^(would delete|deleted) ', '') }) }
 
 }
 $summary = "$(if ($DryRun) { '[dry run] would free' } else { 'freed' }) $([math]::Round($script:freed / 1MB, 1)) MB in $($actions.Count) action(s)"

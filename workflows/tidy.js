@@ -66,7 +66,8 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
 1. Lessons (& ${C}/skills/bossy/bossy.ps1 learn): a "Signal groups" line with "-> lesson" = -Skill <s> -Bump "<words of that lesson>";
  a group without one = -Skill <s> -When "<situation>" -Do "<how to avoid it>" -Why "<the cost seen>" (one line <= 50 words) (org-, project- or vendor-specific (names a product, host, tracker, DB or tool our config picks): add -Project <name>, it goes to LESSONS.local.md);
  a single signal only when it is a clear win or a hard failure; a "seen again" line = a regression: list it as a script-change proposal.
- Then -Skill <s> -Trim for every skill you touched (never delete lessons by hand).
+ Then -Skill <s> -Trim for every skill you touched (never delete lessons by hand), then python -X utf8 ${C}/skills/bossy/kitbag.py forget --target over-cap --apply
+ (forget on cap: content is cut and archived; a BATCH line = features: run its decide ask once, never remove them yourself).
 2. Rules: a lesson at (3×) or more and still true -> a short rule in its SKILL.md or rules/*.md, then learn -Skill <s> -Fixed "<words>".
  "Outcomes" lines (results, not friction): a repeat cause or an area / agent with most fix rounds -> a lesson (-Skill of the step that failed) or a rule edit for the brief or check that would have caught it.
  "Standing rules proposed": the script already asked the owner (one decide ask); never apply one. An approved rule that holds for any org -> propose it as a kit rule edit.
