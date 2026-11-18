@@ -1307,7 +1307,7 @@ param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-
 $ErrorActionPreference = 'SilentlyContinue'; $script:layoutNote = $null   # guard_server.ps1 keeps this runspace between calls: no note carries over
 $gbn = 'KIT_GUARD_BY' + 'PASS'   # client crash switch; split: SBLOG
 if ($SelfTest) {
-  $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
+  $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it through its interpreter'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
@@ -2011,8 +2011,8 @@ function Test-OpenDoc([string]$text, [string]$tool) {
       $t -match "$sep(Start-Process|start|saps)\s+(-\w+\s+)*([^\s;|&<>]+\.($de)|https?://\S+|\.{1,2}[\\/]?)$fe") { return 'doc' }
   $null
 }
-function Get-KitScriptRewrite([string]$text) {   # the first script in command position, through its interpreter; quoted args whole (a | in JSON)
-  if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>(?:''[^'']*''|"(?:[^"\\]|\\.)*"|[^\r\n;|&''"])*)') { return '' }
+function Get-KitScriptRewrite([string]$text) {   # the first script in command position, through its interpreter; quoted args whole
+  if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>(?:''[^'']*''|"(?:[^"\\]|\\.)*"|[^\r\n;|&''"]|[''"])*)') { return '' }
   " Rewrite: $(@{ ps1 = 'pwsh -NoProfile -File'; py = 'python -X utf8' }[$Matches.x] ?? 'node') $($Matches.s)$($Matches.r.TrimEnd())"
 }
 $od = Test-OpenDoc $raw $tn
