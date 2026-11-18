@@ -1,9 +1,12 @@
 #Requires -Version 7
 <#
 mysql-base-move.ps1: moves the base envs' MySQL off the OS MySQL service onto one lane-style mysqld each (own datadir, own low-write
-ini, envy starts it on a lease and stops it when idle). Source = the service (CLONE LOCAL, online, binlogs not copied).
+ini, envy starts it on a lease and stops it when idle). Writes only what is kept: an empty datadir (--initialize-insecure, the lane
+low-write ini), the donor's accounts (hashes), then each kept schema `mysqldump --single-transaction | mysql` (load: flush 0, no binlog,
+unique / FK checks off); never clone + drop (that churned 12.9 GB of mysql.ibd for one product).
   pwsh -NoProfile -File mysql-base-move.ps1                      dry run: checks + the plan + the switch-over steps (changes nothing)
-  pwsh -NoProfile -File mysql-base-move.ps1 -Apply [-Replace]    clone, point the db_pool at the new port, verify; MYSQL_PWD from the env file
+  pwsh -NoProfile -File mysql-base-move.ps1 -Apply [-Replace] [-Only <schemas>]   copy, point the db_pool at the new port, verify, MB written;
+    MYSQL_PWD from the env file; -Only = a trial with those schemas (no orphan check; use a scratch -Lanes and target port)
   pwsh -NoProfile -File mysql-base-move.ps1 -Config [-Apply]     the kit.local.json edit (dry run prints it; -Apply writes, .bak-<date> kept)
   pwsh -NoProfile -File mysql-base-move.ps1 -Rename [-Apply|-Rollback]   every lane-scoped name (mysql dirs + inis, envy state, logs, run dirs, cmd files, lane env files) to <product>-<bird>, everything down; journal kept
 Targets `<env>:<port>` (default rm:3305 hm:3316: next to the lane ports 3307 / 3317, never the service's 3306). Each keeps only its product's
@@ -12,11 +15,11 @@ templates); dir `<Lanes>/mysql-rm-falcon`, ini `<Lanes>/mysql-rm-falcon.ini` (co
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L29 names · L36 ini and config edit · L108 rename · L196 checks · L234 apply · L271 search data
+Sections: L32 names · L39 ini and config edit · L119 rename · L207 checks · L254 apply · L317 search data
 #>
 param([string[]]$Targets = @('rm:3305', 'hm:3316'), [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
   [string]$Bin = 'C:/Program Files/MySQL/MySQL Server 8.0/bin', [string]$Service = 'MySQL80', [int]$VerifyPort = 3399,
-  [string]$ConfigFile, [string]$AdminSchema = '{env}_admin', [string]$RegistryTable = 'mt_datasource_config', [string]$PoolTable = 'db_pool', [switch]$Config, [string]$Runtime, [string]$PokeyFile, [switch]$Rename, [switch]$Rollback, [string[]]$Birds, [switch]$Apply, [switch]$Replace, [switch]$Force)
+  [string]$ConfigFile, [string]$AdminSchema = '{env}_admin', [string]$RegistryTable = 'mt_datasource_config', [string]$PoolTable = 'db_pool', [string[]]$Only, [switch]$Config, [string]$Runtime, [string]$PokeyFile, [switch]$Rename, [switch]$Rollback, [string[]]$Birds, [switch]$Apply, [switch]$Replace, [switch]$Force)
 $ErrorActionPreference = 'Stop'
 $KitDir = Split-Path (Split-Path $PSScriptRoot)
 if (-not $Lanes) { $Lanes = Join-Path $KitDir '.state/localenv/lanes' }
@@ -34,9 +37,15 @@ if (-not $Birds) {
 function Get-Bird([int]$N) { if ($N -ge 1 -and $N -le @($Birds).Count) { "$(@($Birds)[$N - 1])".ToLower() } else { "bird$N" } }
 
 # ---- ini and config edit: a lane ini from a template, the kit.local.json edit
-# a lane ini made from a template: the port lines and datadir changed, every other (low-write) setting kept
+# a lane ini made from a template: the port lines and datadir changed, the low-write settings forced under [mysqld], every other line kept
 function New-BaseIni([string[]]$Template, [int]$Port, [string]$Dir) {
-  @($Template | ForEach-Object { if ($_ -match '^\s*port\s*=') { "port=$Port" } elseif ($_ -match '^\s*datadir\s*=') { "datadir=$Dir" } else { $_ } })
+  # redo: mysqld 8.0.30+ rewrites its whole capacity at every start (measured: 512M -> 510 MB written per start, 64M -> 76 MB)
+  $force = @('innodb_doublewrite=OFF', 'innodb_flush_log_at_trx_commit=2', 'skip-log-bin', 'general_log=0', 'slow_query_log=0', 'innodb_redo_log_capacity=64M')
+  $drop = '^\s*(innodb[-_]doublewrite|innodb[-_]flush[-_]log[-_]at[-_]trx[-_]commit|innodb[-_]redo[-_]log[-_]capacity|(skip|disable)[-_]log[-_]bin|log[-_]bin|general[-_]log|slow[-_]query[-_]log)\s*(=|$)'
+  @(foreach ($l in $Template) {
+    if ($l -match '^\s*port\s*=') { "port=$Port" } elseif ($l -match '^\s*datadir\s*=') { "datadir=$Dir" } elseif ($l -match $drop) { continue } else { $l }
+    if ($l -match '^\s*\[mysqld\]\s*$') { $force }
+  })
 }
 # the kit.local.json edit (hashtables, key order kept): each target env runs its own managed mysql (the lane templates with an empty
 # {lane}) and its search data and logs move off C:; its lanes clone from it
@@ -90,10 +99,12 @@ function Test-Listen([int]$Port) {
   try { $c.ConnectAsync('127.0.0.1', $Port).Wait(1500) -and $c.Connected } catch { $false } finally { $c.Dispose() }
 }
 
-$mysql = Join-Path $Bin 'mysql.exe'; $mysqld = Join-Path $Bin 'mysqld.exe'
-function Invoke-Sql([int]$P, [string]$Q) { $o = & $mysql -h 127.0.0.1 -P $P -u root -N -B -e $Q 2>&1; if ($LASTEXITCODE) { throw "mysql :${P}: $o" }; @($o) }
+$mysql = Join-Path $Bin 'mysql.exe'; $mysqld = Join-Path $Bin 'mysqld.exe'; $mysqldump = Join-Path $Bin 'mysqldump.exe'
+function Invoke-Sql([int]$P, [string]$Q, [switch]$Raw) { $o = & $mysql -h 127.0.0.1 -P $P -u root -N -B $(if ($Raw) { '-r' }) -e $Q 2>&1; if ($LASTEXITCODE) { throw "mysql :${P}: $o" }; @($o) }
 $bad = [System.Collections.Generic.List[string]]::new(); $info = [System.Collections.Generic.List[string]]::new()
 function Show-Plan($Rows) { $Rows | ForEach-Object { "  $_" } }
+# MB a process and its children wrote (mysqld on Windows runs the server in a child of its monitor process)
+function Get-TreeWriteMb([int]$Id) { if (-not $IsWindows) { return 0 }; [math]::Round((@(Get-CimInstance Win32_Process -Filter "ProcessId=$Id OR ParentProcessId=$Id") | Measure-Object WriteTransferCount -Sum).Sum / 1MB) }
 
 if ($MyInvocation.InvocationName -eq '.') { return }   # dot-sourced by a test: functions only
 
@@ -194,82 +205,117 @@ if ($Rename -or $Rollback) {
 }
 
 # ---- checks: binaries, targets, ports, donor, space, schemas per product
-foreach ($f in $mysql, $mysqld) { if (-not (Test-Path -LiteralPath $f)) { $bad.Add("missing $f") } }
+foreach ($f in $mysql, $mysqld, $mysqldump) { if (-not (Test-Path -LiteralPath $f)) { $bad.Add("missing $f") } }
 if (-not $IniFrom -or -not (Test-Path -LiteralPath $IniFrom)) { $bad.Add("no template ini: pass -IniFrom <a lane ini>") }
 $plan = @(foreach ($t in $Targets) {
   if ($t -notmatch '^(\w+):(\d+)$') { $bad.Add("target '$t': use <env>:<port>"); continue }
   $en = $Matches[1]; $pt = [int]$Matches[2]; $dir = "$Lanes/mysql-$en-$(Get-Bird 1)"
-  if (Test-Path -LiteralPath $dir) { if (-not $Replace) { $bad.Add("$dir exists: -Replace removes it (only with its lane-ready.txt marker)") } elseif (-not (Test-Path -LiteralPath "$dir/lane-ready.txt")) { $bad.Add("$dir exists without lane-ready.txt: remove it by hand") } }
+  if (Test-Path -LiteralPath $dir) { if (-not $Replace) { $bad.Add("$dir exists: -Replace removes it (only with its lane-ready.txt or $dir.base-move.txt marker)") } elseif (-not (Test-Path -LiteralPath "$dir/lane-ready.txt") -and -not (Test-Path -LiteralPath "$dir.base-move.txt")) { $bad.Add("$dir exists without lane-ready.txt: remove it by hand") } }
   if ($pt -ne $DonorPort -and (Test-Listen $pt)) { $bad.Add("port $pt is in use") }
-  [pscustomobject]@{ env = $en; port = $pt; dir = $dir; ini = "$dir.ini"; keep = @(); admin = '' }
+  [pscustomobject]@{ env = $en; port = $pt; dir = $dir; ini = "$dir.ini"; keep = @(); admin = ''; mb = 0 }
 })
+if ($Only -and -not $PSBoundParameters.ContainsKey('Lanes')) { $bad.Add('-Only is a trial: pass a scratch -Lanes (a partial copy must never look like a base)') }
 if (@($plan.port | Select-Object -Unique).Count -ne @($plan).Count) { $bad.Add('two targets share a port') }
 if ($VerifyPort -eq $DonorPort -or $VerifyPort -in @($plan.port)) { $bad.Add("-VerifyPort $VerifyPort is the donor's or a target's port") }
-if (Test-Listen $VerifyPort) { $bad.Add("-VerifyPort $VerifyPort is in use: the verify step drops schemas on it") }
+if (Test-Listen $VerifyPort) { $bad.Add("-VerifyPort $VerifyPort is in use: the copy loads on it") }
 $svc = Get-Service $Service -ErrorAction SilentlyContinue
 $info.Add("service $Service : $(if ($svc) { "$($svc.Status), start $($svc.StartType)" } else { 'not found' })")
 $donorUp = Test-Listen $DonorPort
 if ($env:MYSQL_PWD -and $donorUp) {
   try {
-    $mb = [double](Invoke-Sql $DonorPort 'SELECT ROUND(SUM(data_length + index_length) / 1048576) FROM information_schema.tables')[0]
+    $sizes = @{}; foreach ($r in @(Invoke-Sql $DonorPort "SELECT table_schema, ROUND(SUM(data_length + index_length) / 1048576) FROM information_schema.tables GROUP BY table_schema")) { $k, $v = $r -split "`t"; $sizes[$k] = [double]$v }
     $busy = @(Invoke-Sql $DonorPort "SELECT COUNT(*) FROM information_schema.processlist WHERE command NOT IN ('Sleep','Daemon') AND id <> CONNECTION_ID()")[0]
     $sleep = @(Invoke-Sql $DonorPort "SELECT COUNT(*) FROM information_schema.processlist WHERE command = 'Sleep'")[0]
-    $free = [math]::Round((Get-PSDrive ([string]$Lanes[0])).Free / 1MB)
-    $info.Add("donor :$DonorPort data $mb MB, clients: $busy running, $sleep idle; $(([string]$Lanes[0])): free $free MB, need $([int]($mb * @($plan).Count * 1.3)) MB")
-    if ($free -lt $mb * @($plan).Count * 1.3) { $bad.Add('not enough free space for the clones') }
     $sys = "'information_schema','performance_schema','mysql','sys','kit_journal'"
-    foreach ($p in $plan) { $adm = $AdminSchema.Replace('{env}', $p.env); $p.admin = $adm; $p.keep = @($adm) + @(Invoke-Sql $DonorPort "SELECT name FROM ``$adm``.``$RegistryTable``") }
+    foreach ($p in $plan) {
+      $adm = $AdminSchema.Replace('{env}', $p.env); $p.admin = $adm; $p.keep = @($adm) + @(Invoke-Sql $DonorPort "SELECT name FROM ``$adm``.``$RegistryTable``") + 'kit_journal'
+      if ($Only) { $p.keep = @($p.keep | Where-Object { $_ -in $Only }) }
+      $gone = @($p.keep | Where-Object { -not $sizes.ContainsKey($_) })
+      if (-not $p.keep.Count -or $gone.Count) { $bad.Add("$($p.env): $(if ($gone.Count) { "kept schemas missing (or without tables) on the donor: $($gone -join ', ')" } else { 'nothing to keep (-Only matches none of its schemas)' })") }
+      $p.mb =[double](($p.keep | ForEach-Object { $sizes[$_] } | Measure-Object -Sum).Sum)
+    }
+    # need: the kept data once, its redo (innodb_redo_log_capacity, 512M) and the empty server (~200 MB) per target
+    $need = [int](@($plan | ForEach-Object { $_.mb * 1.3 + 800 } | Measure-Object -Sum).Sum)
+    $free = [math]::Round((Get-PSDrive ([string]$Lanes[0])).Free / 1MB)
+    $info.Add("donor :$DonorPort clients: $busy running, $sleep idle; $(([string]$Lanes[0])): free $free MB, need $need MB")
+    if ($free -lt $need) { $bad.Add('not enough free space for the copies') }
     $all = @(Invoke-Sql $DonorPort "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ($sys)")
     $orphan = @($all | Where-Object { $_ -notin @($plan.keep) })
-    foreach ($p in $plan) { $info.Add("$($p.env) keeps: $($p.keep -join ', '), kit_journal") }
-    if ($orphan.Count) { $bad.Add("schemas of no target (would be left on the service only): $($orphan -join ', ')") }
+    foreach ($p in $plan) { $info.Add("$($p.env) keeps: $($p.keep -join ', ') ($($p.mb) MB data + index)") }
+    if ($orphan.Count -and -not $Only) { $bad.Add("schemas of no target (would be left on the service only): $($orphan -join ', ')") }
     if ($Apply -and [int]$busy -gt 0 -and -not $Force) { $bad.Add("$busy statements running on :${DonorPort}: stop the envs first (envy down), or -Force") }
   } catch { $bad.Add("donor: $($_.Exception.Message)") }
 } else { $info.Add("donor :$DonorPort not checked ($(if (-not $env:MYSQL_PWD) { 'MYSQL_PWD unset' } else { 'not listening' }))"); if ($Apply) { $bad.Add('-Apply needs MYSQL_PWD and the donor up') } }
 
-"plan:"; Show-Plan ($plan | ForEach-Object { "$($_.env): clone :$DonorPort -> $($_.dir), ini $($_.ini), port $($_.port)$(if ($_.port -ne $DonorPort) { ", $($AdminSchema.Replace('{env}', $_.env)).$PoolTable -> :$($_.port)" })" })
+"plan:"; Show-Plan ($plan | ForEach-Object { "$($_.env): copy its schemas :$DonorPort -> $($_.dir) (empty datadir + mysqldump), ini $($_.ini), port $($_.port)$(if ($_.port -ne $DonorPort) { ", $($AdminSchema.Replace('{env}', $_.env)).$PoolTable -> :$($_.port)" })" })
 "checks:"; Show-Plan $info
 if ($bad.Count) { "REFUSED:"; Show-Plan $bad; if ($Apply) { exit 1 } }
 
-# ---- apply: clone, drop the other product's schemas, verify, point the pool
+# ---- apply: an empty datadir with the lane ini, the donor's accounts, only the kept schemas (mysqldump | mysql), verify, point the pool
 if ($Apply) {
   if ($bad.Count) { exit 1 }
   $tmpl = @(Get-Content -LiteralPath $IniFrom)
-  if ("$(Invoke-Sql $DonorPort "SELECT COUNT(*) FROM information_schema.plugins WHERE plugin_name='clone' AND plugin_status='ACTIVE'")".Trim() -ne '1') { Invoke-Sql $DonorPort "INSTALL PLUGIN clone SONAME 'mysql_clone.dll'" | Out-Null }
+  $hide = if ($IsWindows) { @{ WindowStyle = 'Hidden' } } else { @{} }
   $want = Invoke-Sql $DonorPort "SELECT table_schema, COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema','performance_schema','mysql','sys') GROUP BY table_schema ORDER BY 1"
+  # the donor's accounts as statements (auth as hex hashes, never a password): the copy answers the same logins and trigger definers
+  $acct = [System.Collections.Generic.List[string]]::new()
+  foreach ($u in @(Invoke-Sql $DonorPort "SELECT CONCAT(QUOTE(user), '@', QUOTE(host)) FROM mysql.user WHERE user NOT IN ('mysql.sys','mysql.session','mysql.infoschema')" -Raw)) {
+    $acct.Add("CREATE USER IF NOT EXISTS $u;"); $acct.Add((@(Invoke-Sql $DonorPort "SET SESSION print_identified_with_as_hex = ON; SHOW CREATE USER $u" -Raw)[0] -replace '^CREATE USER', 'ALTER USER') + ';')
+    foreach ($g in @(Invoke-Sql $DonorPort "SHOW GRANTS FOR $u" -Raw)) { $acct.Add("$g;") }
+  }
   foreach ($p in $plan) {
     if (Test-Path -LiteralPath $p.dir) { Remove-Item -LiteralPath $p.dir -Recurse -Force }
-    $t0 = Get-Date; "cloning :$DonorPort -> $($p.dir)"
-    Invoke-Sql $DonorPort "CLONE LOCAL DATA DIRECTORY = '$($p.dir)'" | Out-Null
-    "cloned in $([int]((Get-Date) - $t0).TotalSeconds) s"
+    # until lane-ready.txt: a half copy that -Replace may remove (envy never starts it: it waits for lane-ready.txt)
+    Set-Content -LiteralPath "$($p.dir).base-move.txt" "started $(Get-Date -Format o)"
     Set-Content -LiteralPath $p.ini (New-BaseIni $tmpl $p.port $p.dir) -Encoding ascii
-    # start on the verify port (the final one may be the donor's), compare, point the pool, stop
-    $hide = if ($IsWindows) { @{ WindowStyle = 'Hidden' } } else { @{} }
-    $pr = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=`"$($p.ini)`"", "--port=$VerifyPort", '--sql-mode=NO_ENGINE_SUBSTITUTION' -PassThru @hide
+    $t0 = Get-Date; "$($p.env): empty datadir $($p.dir)"
+    $ip = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=`"$($p.ini)`"", '--initialize-insecure', '--innodb-redo-log-capacity=8M' -PassThru @hide   # the ini's redo files come once, at the load start (not twice)
+    $initMb = 0; $until = (Get-Date).AddMinutes(10)
+    while (-not $ip.HasExited -and (Get-Date) -lt $until) { $initMb = [math]::Max($initMb, (Get-TreeWriteMb $ip.Id)); Start-Sleep -Milliseconds 500 }
+    if (-not $ip.HasExited) { $ip.Kill(); throw "mysqld --initialize-insecure hung for $($p.env) (see $($p.dir)/lane.err)" }
+    if ($ip.ExitCode) { throw "mysqld --initialize-insecure failed for $($p.env) (exit $($ip.ExitCode), see $($p.dir)/lane.err)" }
+    # start on the verify port (the final one may be the donor's) with the load settings, copy, compare, point the pool, stop
+    $pr = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=`"$($p.ini)`"", "--port=$VerifyPort", '--sql-mode=NO_ENGINE_SUBSTITUTION', '--innodb-flush-log-at-trx-commit=0', '--skip-log-bin' -PassThru @hide
     try {
       $until = (Get-Date).AddMinutes(5)
       while (-not (Test-Listen $VerifyPort)) { if ($pr.HasExited -or (Get-Date) -gt $until) { throw "mysqld did not start for $($p.env) (see $($p.dir)/lane.err)" }; Start-Sleep 2 }
-      $dd = ("$(Invoke-Sql $VerifyPort 'SELECT @@datadir')" -replace '\\', '/' -replace '/+', '/').TrimEnd('/')   # the client prints backslashes doubled
-      if ($dd -ne ($p.dir -replace '\\', '/' -replace '/+', '/').TrimEnd('/')) { throw "port $VerifyPort serves $dd, not the clone $($p.dir): nothing dropped" }
-      # the other product's schemas go (kit_journal stays: the cascade guard's triggers of the kept tenants write it)
-      foreach ($d in @(Invoke-Sql $VerifyPort "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ($sys)" | Where-Object { $_ -notin $p.keep })) { Invoke-Sql $VerifyPort "DROP DATABASE ``$d``" | Out-Null; "$($p.env): dropped $d (another product's)" }
+      $pwKeep = $env:MYSQL_PWD; $env:MYSQL_PWD = $null   # the new root has no password until the donor's accounts land
+      try {
+        $dd = ("$(Invoke-Sql $VerifyPort 'SELECT @@datadir')" -replace '\\', '/' -replace '/+', '/').TrimEnd('/')   # the client prints backslashes doubled
+        if ($dd -ne ($p.dir -replace '\\', '/' -replace '/+', '/').TrimEnd('/')) { throw "port $VerifyPort serves $dd, not the new $($p.dir): nothing loaded" }
+        $o = ($acct -join "`n") | & $mysql -h 127.0.0.1 -P $VerifyPort -u root 2>&1; if ($LASTEXITCODE) { throw "$($p.env): accounts: $("$o" -replace '0x[0-9A-Fa-f]+', '0x<hash>')" }
+      } finally { $env:MYSQL_PWD = $pwKeep }
+      $dumpErr = "$($p.dir).dump.err"
+      foreach ($s in @($p.keep | Where-Object { $_ -in @($want | ForEach-Object { ($_ -split "`t")[0] }) })) {
+        & $mysqldump -h 127.0.0.1 -P $DonorPort -u root --single-transaction --no-tablespaces --routines --triggers --events --hex-blob --set-gtid-purged=OFF --databases $s 2>$dumpErr |
+          & $mysql -h 127.0.0.1 -P $VerifyPort -u root '--init-command=SET unique_checks=0, foreign_key_checks=0, sql_log_bin=0'
+        # $LASTEXITCODE is the load side's; a dump that died mid-way shows in its stderr
+        if ($LASTEXITCODE -or (Get-Item -LiteralPath $dumpErr).Length) { throw "$($p.env): copy of $s failed (load exit $LASTEXITCODE; dump: $(Get-Content -LiteralPath $dumpErr -Raw))" }
+        "$($p.env): copied $s"
+      }
       $got = Invoke-Sql $VerifyPort "SELECT table_schema, COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema','performance_schema','mysql','sys') GROUP BY table_schema ORDER BY 1"
-      $exp = @($want | Where-Object { ($_ -split "`t")[0] -in ($p.keep + 'kit_journal') })
-      if (($got -join '|') -ne ($exp -join '|')) { throw "$($p.env): table counts differ from the donor:`n donor $($exp -join ', ')`n clone $($got -join ', ')" }
-      $sc = $AdminSchema.Replace('{env}', $p.env)
+      $exp = @($want | Where-Object { ($_ -split "`t")[0] -in $p.keep })
+      if (($got -join '|') -ne ($exp -join '|')) { throw "$($p.env): table counts differ from the donor:`n donor $($exp -join ', ')`n copy $($got -join ', ')" }
+      $sc =$AdminSchema.Replace('{env}', $p.env)
       if ($p.port -ne $DonorPort -and "$(Invoke-Sql $VerifyPort "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$sc' AND table_name='$PoolTable'")".Trim() -eq '1') {
         Invoke-Sql $VerifyPort "UPDATE ``$sc``.``$PoolTable`` SET url = REPLACE(url, ':$DonorPort/', ':$($p.port)/') WHERE url LIKE '%:$DonorPort/%'" | Out-Null; "$sc.$PoolTable -> :$($p.port)" }
       "$($p.env): verified $($got.Count) schemas"
     } finally {
+      $loadMb = Get-TreeWriteMb $pr.Id
       & (Join-Path $Bin 'mysqladmin.exe') -h 127.0.0.1 -P $VerifyPort -u root shutdown 2>&1 | Out-Null
-      if (-not $pr.WaitForExit(120000)) { $pr.Kill() }
+      $until = (Get-Date).AddMinutes(2)
+      while (-not $pr.HasExited -and (Get-Date) -lt $until) { $loadMb = [math]::Max($loadMb, (Get-TreeWriteMb $pr.Id)); Start-Sleep -Milliseconds 300 }
+      if (-not $pr.HasExited) { $pr.Kill() }
     }
-    Set-Content -LiteralPath "$($p.dir)/lane-ready.txt" "cloned $(Get-Date -Format o) from :$DonorPort (mysql-base-move); port $($p.port); ini $($p.ini)"
+    $dirMb = [math]::Round((Get-ChildItem -LiteralPath $p.dir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+    "$($p.env): written: initialise ~$initMb MB (polled) + load and shutdown ~$loadMb MB (mysqld file I/O); datadir $dirMb MB; $([int]((Get-Date) - $t0).TotalSeconds) s"
+    Remove-Item -LiteralPath "$($p.dir).base-move.txt", "$($p.dir).dump.err" -Force -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath "$($p.dir)/lane-ready.txt" "copied $(Get-Date -Format o) from :$DonorPort (mysql-base-move: $($p.keep -join ', ')); port $($p.port); ini $($p.ini)"
   }
 }
 
 # ---- search data: off C: (the old folders stay as the rollback)
-if ($Apply) {   # search data off C: (the old folders stay as the rollback): copied while that lane's search is down
+if ($Apply -and -not $Only) {   # search data off C: (the old folders stay as the rollback): copied while that lane's search is down; not in a trial
   $cfgNow = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50
   foreach ($p in $plan) {
     $sr = @($cfgNow['localEnv']['envs'][$p.env]['services'] | Where-Object { $_['name'] -eq 'search' -and $_['start'] })[0]
@@ -287,7 +333,7 @@ if ($Apply) {   # search data off C: (the old folders stay as the rollback): cop
 "switch-over (the coordinator, in this order):"
 Show-Plan @(
   '1. envy.ps1 down for every env and lane (rm, rm2, rm3, hm, hm2): every holder released, nothing writes to the service, lane servers stopped',
-  "2. pwsh -NoProfile -File mysql-base-move.ps1 -Apply   (clone + verify + search data; marks of :$DonorPort do not carry over)",
+  "2. pwsh -NoProfile -File mysql-base-move.ps1 -Apply   (copy + verify + search data; marks of :$DonorPort do not carry over)",
   '3. pwsh -NoProfile -File mysql-base-move.ps1 -Rename -Apply   (lane dirs + inis to bird names; -Rename -Rollback undoes it)',
   "4. net stop $Service ; sc config $Service start= demand   (rollback: sc config $Service start= auto ; net start $Service)",
   '5. pwsh -NoProfile -File mysql-base-move.ps1 -Config -Apply   (kit.local.json; envy resolves {bird}), then envy.ps1 envs / doctor',

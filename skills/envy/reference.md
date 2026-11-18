@@ -55,7 +55,7 @@ Every local-env service follows it; `doctor` checks it (`adapters/lane_standard.
 - Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.
 - Data and logs on D: under the kit (`.state/localenv/lanes/<service>-<product>-<bird>`), never C:; low-write settings (MySQL lane ini: doublewrite off, `sync_binlog=0`).
 - Names: `localEnv.laneIds: "bird"`: lane id `<product>-<bird>` (rm-falcon, rm-kestrel; shown `rm·Kestrel`) in `-Env`, state, logs, run dirs, leases; `{bird}` in lane paths. Old ids (`rm`, `rm2`, pokey `local-rm2`) are accepted with a warning; `doctor` flags old config keys.
-- Move an existing one: `skills/envy/mysql-base-move.ps1` (`-Apply` clone per product, `-Rename` every lane name, `-Config` the config).
+- Move an existing one: `skills/envy/mysql-base-move.ps1` (`-Apply` copies each product's schemas only, `-Rename` every lane name, `-Config` the config).
 
 ## Config
 - Envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`, `smoke`)

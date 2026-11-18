@@ -10,9 +10,12 @@ param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 $mv = Join-Path (Split-Path $PSScriptRoot) 'skills/envy/mysql-base-move.ps1'
 . $mv
-$tpl = @('[client]', 'port=3317', '[mysqld]', 'sync_binlog=0', 'innodb_doublewrite=OFF', 'port=3317', 'datadir=D:/x/mysql-hm2', 'innodb_buffer_pool_size=1G')
+$tpl = @('[client]', 'port=3317', '[mysqld]', 'sync_binlog=0', 'innodb_doublewrite=OFF', 'port=3317', 'datadir=D:/x/mysql-hm2', 'innodb_buffer_pool_size=1G', 'log-bin=binlog', 'slow-query-log=1', 'innodb_flush_log_at_trx_commit=1')
 $ini = New-BaseIni $tpl 3316 'D:/x/mysql-hm'
-Expect "ini: ports and datadir changed, low-write settings kept ($($ini -join ' '))" ($ini -join ' ' -eq '[client] port=3316 [mysqld] sync_binlog=0 innodb_doublewrite=OFF port=3316 datadir=D:/x/mysql-hm innodb_buffer_pool_size=1G')
+Expect "ini: ports and datadir changed, low-write settings forced under [mysqld] (no binlog, logs, doublewrite; flush 2; redo 64M), the rest kept ($($ini -join ' '))" ($ini -join ' ' -eq '[client] port=3316 [mysqld] innodb_doublewrite=OFF innodb_flush_log_at_trx_commit=2 skip-log-bin general_log=0 slow_query_log=0 innodb_redo_log_capacity=64M sync_binlog=0 port=3316 datadir=D:/x/mysql-hm innodb_buffer_pool_size=1G')
+# the copy writes only what is kept: never a server clone or a schema drop (12.9 GB of mysql.ibd churn per product, 2026-11-18)
+$mvText = Get-Content $mv -Raw
+Expect 'apply: empty datadir + mysqldump | mysql per kept schema, no CLONE and no DROP DATABASE' ($mvText -match '--initialize-insecure' -and $mvText -match '--single-transaction --no-tablespaces --routines --triggers --events' -and $mvText -notmatch 'CLONE LOCAL|DROP DATABASE|INSTALL PLUGIN')
 
 # the config edit on a base + lane layout like the org's, resolved by envy
 $lane = { param($n) @{ name = 'mysql'; external = $false; port = $n; start = '"mysqld" --defaults-file="D:/s/lanes/mysql-rm{lane}.ini"'; init = @{ cmd = 'pwsh -File lane.ps1 -Port {port} -Dir "D:/s/lanes/mysql-rm{lane}"'; creates = 'D:/s/lanes/mysql-rm{lane}/lane-ready.txt' } } }
@@ -40,10 +43,12 @@ Expect "lane standard: after the edit no breach, search data under the lane fold
 # dry run: plan printed, nothing created; an existing target dir is refused; -Apply without the donor is refused
 $ld = Join-Path $kd 'lanes'; New-Item -ItemType Directory -Force "$ld/mysql-rm-falcon" | Out-Null; Set-Content "$ld/mysql-hm2.ini" ($tpl -join "`n")
 $out = @(pwsh -NoProfile -File $mv -Lanes $ld -Bin $ld -ConfigFile $cf 2>&1) -join "`n"
-Expect "dry run: plan, switch-over steps, existing dir and missing binaries refused ($($out.Length) chars)" ($out -match 'rm: clone :3306 ->' -and $out -match '\w+_admin\.db_pool -> :3316' -and $out -match 'mysql-rm-falcon exists' -and $out -match 'missing .*mysqld\.exe' -and $out -match 'net stop MySQL80')
+Expect "dry run: plan, switch-over steps, existing dir and missing binaries refused ($($out.Length) chars)" ($out -match 'rm: copy its schemas :3306 ->' -and $out -match '\w+_admin\.db_pool -> :3316' -and $out -match 'mysql-rm-falcon exists' -and $out -match 'missing .*mysqld\.exe' -and $out -match 'net stop MySQL80')
 Expect 'dry run: nothing created' (-not (Test-Path "$ld/mysql-hm") -and -not (Test-Path "$ld/mysql-hm.ini"))
 $null = pwsh -NoProfile -File $mv -Lanes $ld -Bin $ld -ConfigFile $cf -Apply 2>&1
 Expect "-Apply refused with exit 1 ($LASTEXITCODE)" ($LASTEXITCODE -eq 1)
+$trial = @(pwsh -NoProfile -File $mv -Bin $ld -ConfigFile $cf -IniFrom "$ld/mysql-hm2.ini" -Only testtenant 2>&1) -join "`n"
+Expect '-Only without a scratch -Lanes is refused (a partial copy never lands in the real lanes dir)' ($trial -match '-Only is a trial: pass a scratch -Lanes')
 
 # laneIds "bird": the lane id is <product>-<bird>; old ids are accepted aliases (warning); old override keys still read; labels follow
 $kb = New-TestKit mbm2; $db = New-Item -ItemType Directory -Force (Join-Path $kb 'skills/envy/adapters')
