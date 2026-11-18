@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour; their heatmap cards 
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L129 cards · L265 flags
+Sections: L12 gate · L55 waits · L81 qa · L97 cpu · L129 cards · L278 flags
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -260,7 +260,20 @@ function Format-KitLaneGrid($Lanes) {
 # resources held now (Resources and leases): name and holder; none: the live agents' count or "No resource held."
 function Format-KitHeldList($Resources, [int]$Active = 0) {   # $Active: live agents (none held while agents run is a count, not idle)
   $rs = @($Resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb }); if (-not $rs.Count) { return "<p class=empty>$(if ($Active) { "$Active agent$(if ($Active -ne 1) { 's' }) active · none holds a lease" } else { 'No resource held.' })</p>" }
-  "<ul class=hld>$(@($rs | ForEach-Object { $by = "$($_.by)".Trim(); "<li class=f><b>$(& $e $_.name)</b> <span class=m>$(& $e $(if ($_.shared) { 'shared · always on' } elseif ($by) { $by } else { 'no live holder' }))</span></li>" }) -join '')</ul>"
+  # owner 2026-11-18: one table, a folding group per kind (kind, else the name's first word) with its count; no live holder first,
+  # amber, its group open; holder "(branch)" -> its own column, cut with the full text in the tooltip
+  $lbl = @{ env = 'env services'; slot = 'worktree slots' }; $ord = @('env', 'browser', 'build', 'slot')
+  $its = @($rs | ForEach-Object { $by = "$($_.by)".Trim(); $nm = "$($_.name)"; $kd = "$($_.kind)"
+      if ($_.shared) { $kd = 'shared' } elseif (-not $kd -and $nm -match '^(?<k>[a-z]+) (?<r>.+)$') { $kd = $Matches.k; $nm = $Matches.r } elseif (-not $kd) { $kd = 'other' }
+      $br = ''; $gr = ''; if ($by -match '^(?<r>.*?)\s*(?<g>\(grace [^()]*\))$') { $by = $Matches.r; $gr = " $($Matches.g)" }   # supervise appends the grace after the branch
+      if ($by -match '^(?<h>.*?)\s*\((?<b>[^()\s]+)\)$') { $by = $Matches.h; $br = $Matches.b } elseif ($by -match '^parked: (?<b>\S+)$') { $by = 'parked'; $br = $Matches.b }
+      [pscustomobject]@{ k = $kd; n = $nm; o = -not $_.shared -and $by -in '', 'no lease'; h = $(if ($_.shared) { 'shared · always on' } elseif ($by -in '', 'no lease') { "no live holder$gr" } else { "$by$gr" }); b = $br } })
+  $gs = @($its | Group-Object k | Sort-Object { $i = [array]::IndexOf($ord, $_.Name); if ($_.Name -eq 'shared') { 99 } elseif ($i -ge 0) { $i } else { 50 } }, Name)
+  "<table class=hlt><thead><tr><th>Resource</th><th>Holder(s)</th><th>Branch / task</th></tr></thead>" + (@($gs | ForEach-Object {
+        $no = @($_.Group | Where-Object o).Count; $nmG = if ($lbl[$_.Name]) { $lbl[$_.Name] } elseif ($_.Name -in 'shared', 'other') { $_.Name } else { "$($_.Name)s" }
+        "<tbody class='grp$(if (-not $no) { ' cl' })' data-g='res-$(& $e $_.Name)'><tr class=gh><th colspan=3><button type=button class=gtg aria-expanded=$(if ($no) { 'true' } else { 'false' })><span class=gn0>$(& $e $nmG)</span><span class=gcn>$($_.Count)$(if ($no) { " · $no no live holder" })</span></button></th></tr>" +
+        (@($_.Group | Sort-Object { -not $_.o }, n | ForEach-Object { $bs = if ($_.b.Length -gt 40) { $_.b.Substring(0, 39) + '…' } else { $_.b }
+            "<tr class='f$(if ($_.o) { ' nh' })'><td>$(& $e $_.n)</td><td>$(& $e $_.h)</td><td$(if ($_.b) { " title='$(& $e $_.b)'" })>$(& $e $bs)</td></tr>" }) -join '') + '</tbody>' }) -join '') + '</table>'
 }
 # ---- flags: distinct ACT / WATCH / FIXED flags per clock hour, 24 h (history keeps 12 sweeps only): @(@{ h = yyyyMMddHH; f = @(@{ l; k = kind; y = key; t = text }) })
 function Get-KitFlagHour($H) { try { [datetime]::ParseExact("$H", 'yyyyMMddHH', [cultureinfo]::InvariantCulture) } catch { [datetime]::MinValue } }
@@ -330,7 +343,8 @@ function Get-KitStatsCss {
   '.fhm .gk.gl0>.hm.fh{height:20px}.fhm .gk.fk>.gn{padding-left:12px;font-weight:500;color:var(--mt)}.fhm .gk.l-act:not(.fk)>.gn{color:color-mix(in srgb,var(--act) 60%,var(--fg))}.fhm .gk.l-watch:not(.fk)>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.fhm .gk.l-fixed:not(.fk)>.gn{color:var(--sage2)}' +
   '.gkx{grid-column:1/-1;justify-self:start;background:none;border:0;padding:2px 0;color:var(--mt);font:inherit;cursor:pointer}.gkx::before{content:"\25B8  "}.gkx[aria-expanded=true]::before{content:"\25BE  "}.gkx small{font-size:inherit}.gki{display:none}.gks.gio>.gki{display:contents}' +
   '.lgk{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 3px 0 6px;vertical-align:-1px}.lgk:first-child{margin-left:0}.lgk.c{background:var(--slate)}.lgk.r{background:var(--sage2)}' +
-  '.hld{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:3px 16px;font-size:12px}.hld .m{color:var(--mt)}' +
+  '.hlt{margin-top:6px;font-size:12px}.hlt td{padding:2px 6px;border-bottom:1px solid var(--ln);overflow-wrap:anywhere;vertical-align:top}.hlt td+td{color:var(--mt)}.hlt td:first-child{font-weight:600}' +
+  '.hlt tr.nh td{background:color-mix(in srgb,var(--watch) 10%,transparent);color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.hlt tr.gh th{font-size:12px;padding:3px 6px}' +
   # lane grid (K74): muted cells, amber = behind, sage +N = test merges, outline = in use
   '.lng{display:grid;grid-template-columns:minmax(0,max-content) repeat(var(--n),minmax(30px,1fr));gap:2px;margin-top:6px;font-size:11.5px;font-variant-numeric:tabular-nums}.lnh{font-size:10.5px;color:var(--mt);text-align:center;overflow-wrap:anywhere}.lnn{padding-right:6px;line-height:20px;overflow-wrap:anywhere}' +
   '.lnc{min-height:20px;line-height:20px;text-align:center;border-radius:3px;color:var(--mt)}.lnc.on{background:var(--sf2)}.lnc.bh{background:color-mix(in srgb,var(--watch) 22%,var(--sf2));color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:600}.lnc small{margin-left:3px;font-size:10px;font-weight:600;color:var(--sage2)}.lnc.kp{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 22%,transparent)}' +
