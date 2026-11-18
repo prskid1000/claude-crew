@@ -73,8 +73,7 @@ if ($myMysql) { . (Join-Path $PSScriptRoot 'test-mysql.ps1') }
 if ($IsWindows -and -not [AppDomain]::CurrentDomain.GetData('kit-tests-job')) {
   try {
     if (-not ('KitTestJob' -as [type])) {   # compiled once per runtime (1.7 s), loaded after
-      $null = New-Item -ItemType Directory -Force $tmpRoot; $jobDll = Join-Path $tmpRoot 'kit-test-job-1.dll'
-      if (-not (Test-Path -LiteralPath $jobDll)) { $jobTmp = "$jobDll.$PID"; Add-Type -OutputAssembly $jobTmp -TypeDefinition @'
+      $jobCs = @'
 using System; using System.Runtime.InteropServices;
 public static class KitTestJob {
   [StructLayout(LayoutKind.Sequential)] struct Basic { public long a, b; public uint Flags; public UIntPtr c, d; public uint e; public UIntPtr f; public uint g, h; }
@@ -91,6 +90,8 @@ public static class KitTestJob {
   }
 }
 '@
+      $jobDll = Join-Path (New-Item -ItemType Directory -Force $tmpRoot) "kit-test-job-$([Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($jobCs))).Substring(0, 8)).dll"   # a changed source: a new file
+      if (-not (Test-Path -LiteralPath $jobDll)) { $jobTmp = "$jobDll.$PID"; Add-Type -OutputAssembly $jobTmp -TypeDefinition $jobCs
         try { Move-Item -LiteralPath $jobTmp $jobDll -ErrorAction Stop } catch { Remove-Item -LiteralPath $jobTmp -ErrorAction SilentlyContinue } }   # a parallel run's copy won
       Add-Type -LiteralPath $jobDll }
     [AppDomain]::CurrentDomain.SetData('kit-tests-job', [KitTestJob]::Bind())

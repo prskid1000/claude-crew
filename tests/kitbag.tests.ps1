@@ -173,16 +173,16 @@ Expect 'kit-tests: a case in two areas = TEST-DUP (area order, exit 1); real pyt
 if ($IsWindows) {
   $wdT = Join-Path (Kd) 'k79/tests'; New-Item -ItemType Directory -Force $wdT | Out-Null; Copy-Item (Join-Path $src 'tests/kit-tests.ps1') $wdT
   '$PID | Set-Content (Join-Path $PSScriptRoot "area.pid"); Start-Sleep 120' | Set-Content "$wdT/slow.tests.ps1"
-  $wdR = foreach ($wdHow in 'starter', 'run') {
+  $wdR = foreach ($wdHow in 'starter', 'run', 'detached') {
     Remove-Item "$wdT/area.pid" -ErrorAction SilentlyContinue
-    $wdS = Start-Process $pwshExe -ArgumentList '-NoProfile', '-Command', "& '$pwshExe' -NoProfile -File '$wdT/kit-tests.ps1' -Area slow" -WindowStyle Hidden -PassThru
+    $wdS = Start-Process $pwshExe -ArgumentList '-NoProfile', '-Command', "& '$pwshExe' -NoProfile -File '$wdT/kit-tests.ps1' -Area slow$(if ($wdHow -eq 'detached') { ' -Detached' })" -WindowStyle Hidden -PassThru
     for ($i = 0; $i -lt 150 -and -not (Test-Path "$wdT/area.pid"); $i++) { Start-Sleep -Milliseconds 200 }
     $wdA = [int]"$(Get-Content "$wdT/area.pid" -ErrorAction SilentlyContinue)"; $wdP = [int](Get-CimInstance Win32_Process -Filter "ProcessId=$wdA").ParentProcessId
-    Stop-Process -Id $(if ($wdHow -eq 'starter') { $wdS.Id } else { $wdP }) -Force
-    $wdGone = $false; for ($i = 0; $i -lt 60 -and -not $wdGone; $i++) { Start-Sleep -Milliseconds 500; $wdGone = -not @(Get-Process -Id $wdA, $wdP -ErrorAction SilentlyContinue).Count }
+    Stop-Process -Id $(if ($wdHow -eq 'run') { $wdP } else { $wdS.Id }) -Force
+    $wdGone = $false; for ($i = 0; $i -lt $(if ($wdHow -eq 'detached') { 16 } else { 60 }) -and -not $wdGone; $i++) { Start-Sleep -Milliseconds 500; $wdGone = -not @(Get-Process -Id $wdA, $wdP -ErrorAction SilentlyContinue).Count }
     if (-not $wdGone) { Stop-Process -Id $wdA, $wdP -Force -ErrorAction SilentlyContinue }
-    "${wdHow}:$($wdA -gt 0 -and $wdGone)" }
-  Expect "kit-tests K79: the run and its area end when its starter is killed, the area ends when the run is killed ($($wdR -join ' '))" (($wdR -join ' ') -eq 'starter:True run:True')
+    "${wdHow}:$(if ($wdA -le 0) { 'no area' } else { $wdGone })" }
+  Expect "kit-tests K79: the run and its area end when its starter is killed, the area ends when the run is killed; -Detached outlives its starter ($($wdR -join ' '))" (($wdR -join ' ') -eq 'starter:True run:True detached:False')
 }
 # kit-tests default: only the areas a change since origin/main reaches
 $cd = Join-Path (Kd) 'chg'; New-Item -ItemType Directory -Force "$cd/tests" | Out-Null; Copy-Item (Join-Path $src 'tests/kit-tests.ps1'), (Join-Path $src 'tests/harness.ps1') "$cd/tests"

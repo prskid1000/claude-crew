@@ -111,4 +111,10 @@ $tmOwn = foreach ($tmO in $tmMe, $tmPar) { Save-TestMySqlState $tmOd @{ server =
 $tmRow = [regex]::Match((Get-Content (Join-Path $src 'skills/bossy/STATE.md') -Raw), '`kit-tests-db` \|[^|]+\| `json v\d+: ([^`]+)`').Groups[1].Value -split ' '
 Expect "test-mysql.ps1: its starter stops the server, another starter's stays; server.json has the schema keys ($($tmOwn -join ' ; ') | $($tmRow -join ' '))" (
   $tmOwn[0] -eq "|$tmPar" -and $tmOwn[1] -eq "1:1|$tmPar" -and $tmRow.Count -ge 3 -and -not @($tmRow | Where-Object { -not $tmS.ContainsKey($_) }).Count)
+# a server.json that lost its server (moved aside): the mysqld on the same data dir is ended before a start; one on another dir stays
+$tmLost = @(1, 2 | ForEach-Object { Start-Process $pwshExe -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 60' -WindowStyle Hidden -PassThru })
+$tmLostP = @($tmLost | ForEach-Object { [pscustomobject]@{ ProcessId = $_.Id; ParentProcessId = 1; CommandLine = "mysqld.exe --no-defaults `"--datadir=D:\k$($_.Id -eq $tmLost[1].Id)\.state\kit-tests\mysql`"" } })
+$tmGot = @(Stop-TestMySqlLost 'D:/kFalse/.state/kit-tests/mysql/' $tmLostP); Start-Sleep -Milliseconds 300
+Expect "test-mysql.ps1: a mysqld on the one data dir that server.json lost is ended, another dir's stays ($($tmGot -join ','))" ($tmGot.Count -eq 1 -and $tmGot[0] -eq $tmLost[0].Id -and $tmLost[0].HasExited -and -not $tmLost[1].HasExited)
+$tmLost | ForEach-Object { try { $_.Kill() } catch {} }
 if ($script:fails) { exit 1 }

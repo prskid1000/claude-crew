@@ -55,6 +55,13 @@ function Get-TestMySqlStrays($Procs = $null, [string]$Server = '') {
   @($Procs | Where-Object { "$($_.CommandLine)" -match '--datadir="?[^" ]*([\\/]work[\\/]tests[\\/]mysqld-|[\\/]kit-tests[\\/]mysql\b)' -and [int]$_.ProcessId -ne $tmOwn -and [int]$_.ParentProcessId -ne $tmOwn } |
     ForEach-Object { "$($_.ProcessId) $(if ("$($_.CommandLine)" -match '--datadir="?([^" ]+)') { $Matches[1] })" })
 }
+# a mysqld on the one data dir that server.json lost (moved aside, reset): ended (data kept), else a new start cannot open ibdata1
+function Stop-TestMySqlLost([string]$Data, $Procs = $null) {
+  $tmWant = [IO.Path]::GetFullPath($Data).TrimEnd('\', '/')
+  foreach ($tmL in @(Get-TestMySqlStrays $Procs)) { $tmLp, $tmLd = $tmL -split ' ', 2
+    if ($tmLd -and [IO.Path]::GetFullPath($tmLd).TrimEnd('\', '/') -ieq $tmWant) { $tmLx = Get-Process -Id ([int]$tmLp) -ErrorAction SilentlyContinue
+      if ($tmLx) { try { $tmLx.Kill($true); $null = $tmLx.WaitForExit(20000) } catch {}; [int]$tmLp } } }
+}
 # the state every take starts from, versioned (a change re-seeds those schemas, never a re-init): schemas kept across takes + the SQL
 # that seeds them; none today (each area creates and owns its schemas; areas take the server in turn, never sharing a mutable one)
 $script:TestMySqlBaseline = @{ schemas = @(); sql = '' }
@@ -78,7 +85,7 @@ function Start-TestMySql([switch]$Binlog) {   # -Binlog: kept for callers; the o
     # a live server is reused; with other runs on it even when its build or options differ (restarted once nobody holds it)
     $tmLive = (Test-TestProcStamp "$($St.server)") -and (Test-TestMySqlPort $St.port) -and ($St.key -eq $tmKey -or $tmOthers.Count)
     if (-not $tmLive) {
-      Stop-TestMySqlServer $St
+      Stop-TestMySqlServer $St; $null = Stop-TestMySqlLost $tmData
       if (-not (Test-Path (Join-Path $tmData 'mysql.ibd'))) {   # once; never deleted after (a new build or option starts on the same data)
         & $tmExe --no-defaults --initialize-insecure "--datadir=$tmData" --skip-log-bin @($script:TestMySqlOpts -split ' ') 2>&1 | Out-Null
         if (-not (Test-Path (Join-Path $tmData 'mysql.ibd'))) { throw "Start-TestMySql: mysqld --initialize-insecure failed in $tmData (a partial dir: remove it by hand)" }
