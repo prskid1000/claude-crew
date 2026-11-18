@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L309 shells · L474 page · L1046 release · L1086 lines · L1119 cleanup · L1204 launch ·
-  L1282 pause · L1401 heartbeat · L1416 sessions · L1468 ci tasks ·
-  L1523 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L309 shells · L476 page · L1048 release · L1088 lines · L1121 cleanup · L1206 launch ·
+  L1284 pause · L1403 heartbeat · L1418 sessions · L1470 ci tasks ·
+  L1525 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -386,9 +386,10 @@ function Get-KitShellOwner([string]$Tx, $Board) {
 }
 # ORPHAN: owner finished and not live (Test-KitLive), tree not busy, idle idle.graceMinutes; or dir gone. STALLED: no CPU, IO or output
 # growth (CPU vs the last sweep; CPU + IO between this sweep's two samples; its output file) for supervise.shellStuckMinutes.
-# -AutoFix kills on the 2nd gone sweep, or the 1st if no poll loop and owner idle 20+ min. -ReadOnly (bossy.ps1 shells): no kill, no learning.
+# -AutoFix kills on the 2nd gone sweep, or the 1st if no poll loop and owner idle 20+ min. -ReadOnly (bossy.ps1 shells): no kill, no learning;
+# -SampleAll: the sample pair for every shell (else only for shells with no CPU or output growth since the last sweep).
 # A shell gone since the last sweep stays in $State.shells as ended (owner, last line, killed) for supervise.finishedMinutes.
-function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(Get-KitSweepProcs), [scriptblock]$Sampler = { param($ids) Get-KitProcSample $ids }, [double]$GapSeconds = 2, [switch]$ReadOnly) {
+function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(Get-KitSweepProcs), [scriptblock]$Sampler = { param($ids) Get-KitProcSample $ids }, [double]$GapSeconds = 2, [switch]$ReadOnly, [switch]$SampleAll) {
   $graceMin = [double](Get-KitParam 'idle.graceMinutes'); $pollRx = '(^|[\s;&|(])(until|while|for)\s|\bsleep\s+[-\d]|\bglab api\b|\bgh run watch\b|--watch\b|\bpipes\b|\b(envy|pokey|bossy)\.ps1\s+(\w+\s+)*wait\b'
   $stuckMin = [double](Get-KitParam 'supervise.shellStuckMinutes'); $old = if ($State.shells -is [Collections.IDictionary]) { $State.shells } else { @{} }; $new = @{}
   $kids = @{}; foreach ($p in $Procs) { if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.Generic.List[object]]::new() }; $kids[$p.ParentId].Add($p) }
@@ -421,15 +422,16 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
     $busy = @($tree.Keys | Where-Object { "$_" -in $gated }).Count -or @($kc.Keys | Where-Object { $kc[$_] - $(if ($base -and $s.kids.Contains($_)) { [double]$s.kids[$_] } else { 0 }) -ge 1 }).Count
     $s.cpu = $cpu; $s.kids = $kc; $s.age = [math]::Round($age, 1)
     if (-not $s.bg -and $age -lt 10) { continue }   # a foreground tool call ends within the Bash tool's 10 min cap
-    $seen.Add([pscustomobject]@{ p = $p; s = $s; key = $key; made = $made; age = $age; cmd = $cmd; tree = $tree; cpu = $cpu; busy = $busy; moved = $moved }); $trees[$key] = @($tree.Keys)
+    $ot = Get-KitShellOutput $s.out; $outMoved = $ot -and ($ot.bytes -ne [long]$s.outBytes -or $ot.ticks -ne [long]$s.outTicks); if ($ot) { $s.outBytes = $ot.bytes; $s.outTicks = $ot.ticks; $s.last = $ot.last }
+    $seen.Add([pscustomobject]@{ p = $p; s = $s; key = $key; made = $made; age = $age; cmd = $cmd; tree = $tree; cpu = $cpu; busy = $busy; moved = ($moved -or $outMoved); ot = $ot })
+    if ($SampleAll -or -not ($moved -or $outMoved)) { $trees[$key] = @($tree.Keys) }   # the sample pair (and its wait) only for a shell that looks quiet
   }
   $nowDelta = Measure-KitTreeDelta $trees $Sampler $GapSeconds; $hbMin = [double](Get-KitParam 'supervise.heartbeatMinutes')
   foreach ($r in $seen) {
-    $p = $r.p; $s = $r.s; $made = $r.made; $age = $r.age; $cmd = $r.cmd; $tree = $r.tree; $busy = $r.busy
+    $p = $r.p; $s = $r.s; $made = $r.made; $age = $r.age; $cmd = $r.cmd; $tree = $r.tree; $busy = $r.busy; $ot = $r.ot
     $s.listed = $true; $o = Get-KitShellOwner $s.tx $board; $dir = Get-KitShellDir $cmd; $gone = $dir -and -not (Test-Path -LiteralPath $dir)
-    $dl = $nowDelta[$r.key]; $ot = Get-KitShellOutput $s.out
-    $outMoved = $ot -and ($ot.bytes -ne [long]$s.outBytes -or $ot.ticks -ne [long]$s.outTicks); if ($ot) { $s.outBytes = $ot.bytes; $s.outTicks = $ot.ticks; $s.last = $ot.last }
-    $act = $r.moved -or $outMoved -or ($dl -and ($dl.cpu -ge 0.02 -or $dl.io -gt 0))
+    $dl = $nowDelta[$r.key]
+    $act = $r.moved -or ($dl -and ($dl.cpu -ge 0.02 -or $dl.io -gt 0))
     if ($act -or -not $s.activeTicks) { $s.activeTicks = $Now.Ticks }
     $quiet = [math]::Max(0.0, ($Now.Ticks - [long]$s.activeTicks) / [double][TimeSpan]::TicksPerMinute)
     $stuck = -not $act -and $quiet -ge $stuckMin -and $age -ge $stuckMin

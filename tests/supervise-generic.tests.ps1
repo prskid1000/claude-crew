@@ -194,8 +194,8 @@ $wcf = Join-Path (Kd) 'wcost.ps1'; Set-Content $wcf $wc; $null = & $pwshExe -NoP
 $wcr = if ($wco -match '^cost:(\d+) reads, (\d+) api$') { [int]$Matches[1], [int]$Matches[2] } else { 99999, 99999 }
 Expect "waste guards: one supervise beat over 500 QA runs + 3000-row logs <= 2000 file reads (measured 950) and <= 120 API calls (measured 56) ($wco)" ($wcr[0] -le 2000 -and $wcr[1] -le 120)
 # write-if-changed: supervise, learn -Stats and kitbag.py release run twice on the same input: no file is rewritten with the same bytes
-# (by design: usage.result.json -Volatile moves its time, a background job's .out / .err are its new run, the API ledger its late calls)
-$wsnap = { @(Get-ChildItem -LiteralPath $k -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[\\/](\.runtime|\.state)[\\/]' -and $_.FullName -notmatch '[\\/]background[\\/]|usage\.result\.json$|supervise-api\.txt$' } |
+# (by design: usage.result.json and live-steps.json -Volatile move their time, a background job's .out / .err are its new run, the API ledger its late calls)
+$wsnap = { @(Get-ChildItem -LiteralPath $k -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[\\/](\.runtime|\.state)[\\/]' -and $_.FullName -notmatch '[\\/]background[\\/]|usage\.result\.json$|live-steps\.json$|supervise-api\.txt$' } |
   ForEach-Object { [pscustomobject]@{ f = $_.FullName.Substring($k.Length); t = $_.LastWriteTimeUtc.Ticks; h = (Get-FileHash -LiteralPath $_.FullName -Algorithm MD5).Hash } }) }
 $wsame = foreach ($wrun in { $null = & $pwshExe -NoProfile -File $O supervise -Json 2>$null }, { $null = & $pwshExe -NoProfile -File $O learn -Stats 2>$null }, { $null = & $py -X utf8 (Join-Path $k 'skills/bossy/kitbag.py') release 2>$null }) {
   & $wrun; Start-Sleep -Milliseconds 1100; $wa = @{}; foreach ($x in & $wsnap) { $wa[$x.f] = $x }; & $wrun

@@ -496,7 +496,7 @@ function Measure-KitTreeDelta([hashtable]$Trees, [scriptblock]$Sampler, [double]
 function Invoke-Shells {
   param([switch]$Json, [double]$GapSeconds = 2)
   $sst = try { Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $sst) { $sst = @{} }
-  $now0 = Get-Date; $sw = Get-KitShellSweep $sst $now0 -GapSeconds $GapSeconds -ReadOnly
+  $now0 = Get-Date; $sw = Get-KitShellSweep $sst $now0 -GapSeconds $GapSeconds -ReadOnly -SampleAll
   $ended = @($sst.shells.Values | Where-Object { $_ -is [Collections.IDictionary] -and $_.ended } | Sort-Object { -[long]$_.ended } | ForEach-Object {
     [pscustomobject]@{ owner = "$($_.owner)"; short = "$($_.short)"; endedMin = [math]::Round(($now0.Ticks - [long]$_.ended) / [double][TimeSpan]::TicksPerMinute); killed = [bool]$_.killed; last = "$($_.last)" } })
   if ($Json) { [pscustomobject]@{ at = $now0.ToString('o'); live = @($sw.rows); ended = $ended; flags = @($sw.flags) } | ConvertTo-Json -Depth 4; return }
