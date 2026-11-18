@@ -1,7 +1,8 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # guard rules (crafty.ps1 guard): local-env: a localenv/<env> branch is never pushed; dev servers start in the shared local env, not by
-# hand; deployed-env (K56): no hand change of a deployed env's config or runtime without an owner's decision.
+# hand; deployed-env (K56): no hand change of a deployed env's config or runtime without an owner's decision; large-writes: no
+# synthetic bulk data, scratch schema on a shared DB, big import, full dump or copied dependency / data tree.
 Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
     $cmd = $a.cmd
     foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
@@ -30,3 +31,19 @@ Register-KitAdapter 'guard' 'deployed-env' @{ check = { param($a)
       if (-not ($dId -and $tgt -and "$(pwsh -NoProfile -File $KitCmd.orch decide check -Id $dId -Gate deploy -Item $tgt -MaxHours 12 -Use -Agent guard)" -match '^WORD ')) {
         return "kit guard: that changes a deployed env's config or restarts it ($("$($envHit[0])" -replace '\s+', ' ')), which restarts it for every run and tester on it. A feature behind an env switch that is off there is NOT_TESTED (tool-down) plus bossy.ps1 decide ask; never toggle it. With the owner's yes for this one change: bossy.ps1 decide record -Gate deploy -Item <the env / cluster / function name on the line> ..., then KIT_DECISION=<decision id> <command> (one use)" } } }
   } }
+# large writes (owner, 2026-11-18: a benchmark's 2.1M-row scratch schema on the shared DB wrote ~4 GB to C:): a row generator past
+# data.maxRows, a scratch schema on a shared DB server, a load / import file past data.maxMB, a full dump, a recursive copy of a
+# dependency or data tree; kit scripts (envy, tests) run their own SQL and are not agent commands
+Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
+  $lw = "$($a.raw)"; if (-not $lw -or $lw -match 'envy\.ps1') { return }
+  $lwRows = [long](Get-KitParam 'data.maxRows'); $lwMB = [double](Get-KitParam 'data.maxMB')
+  $lwBig = { param($f) $lwF = $f.Trim('"', "'"); (Test-Path -LiteralPath $lwF -PathType Leaf) -and (Get-Item -LiteralPath $lwF).Length -gt $lwMB * 1MB }
+  $lwPort = if ($lw -match '(?:\s-P\s*|--port[= ]|\bpsql\b[^|;&]*\s-p\s*)(\d+)') { [int]$Matches[1] } else { 0 }
+  $lwShared = @(3306, 5432, 1433) + @(foreach ($lwE in @(Get-KitProps $a.config.localEnv.envs)) { @($lwE.Value.services | Where-Object { $_.external -and $_.port } | ForEach-Object { [int]$_.port }) })
+  $lwWhy = if ($lw -match '(?i)\bWITH\s+RECURSIVE\b|\bgenerate_series\b|\bexecutemany\b|\brange\s*\(|\bseq\s+\d' -and @([regex]::Matches($lw, '(?<![\w.:-])\d[\d_]{4,}(?![\w.:-])') | Where-Object { [long]($_.Value -replace '_') -gt $lwRows }).Count) { "a row generator past data.maxRows ($lwRows)" }
+    elseif ((($lw -match '(?i)\bCREATE\s+(DATABASE|SCHEMA)\b' -and $lw -match '\b(mysql|mariadb|psql|sqlcmd)(\.exe)?\s') -or $lw -match '\bmysqladmin\b[^|;&\r\n]*\bcreate\b') -and (-not $lwPort -or $lwPort -in $lwShared)) { "a scratch schema on a shared DB server (port $(if ($lwPort) { $lwPort } else { 'default' }))" }
+    elseif (($lw -match '(?i)\bLOAD\s+DATA\s+(?:LOCAL\s+)?INFILE\s+(\S+)' -or $lw -match '\b(?:mysql|psql)\b[^|;&<\r\n]*<\s*(\S+)') -and (& $lwBig $Matches[1])) { "a load or import of a file past data.maxMB ($lwMB MB)" }
+    elseif ($lw -match '\bmysqldump\b[^|;&\r\n]*(--all-databases|\s-A\b)|\bpg_dumpall\b') { 'a full dump' }
+    elseif ($lw -match '(?i)(\bcp\s+-\w*[rR]|\bCopy-Item\b(?=[^|;&\r\n]*\s-Recurse\b)|\brobocopy\b|\bxcopy\b)[^|;&\r\n]*(node_modules|\.m2\b|\.gradle\b|\.worktrees|\.venv\b|datadir|[\\/]mysql[\w-]*([\\/"'' ]|$))') { 'a recursive copy of a dependency, worktree or data tree (link or move it)' }
+  if ($lwWhy) { "kit guard: that writes large data ($lwWhy). No large writes (AGENTS.md): performance questions -> EXPLAIN / query plans, index checks, the fixtures, the read-only replica; data you add stays under data.maxRows / data.maxMB, on the kit-test or a leased lane DB, dropped at the run's end. A needed exception: bossy.ps1 decide ask (the owner runs it)." }
+} }

@@ -76,8 +76,8 @@ the **Target**. A mixed request is split and each part routed on its own.
 `<kit>` = the `.claude` folder of the workspace (the directory Claude Code was started in); kit scripts find it themselves.
 These rules hold whatever the route:
 
-- File inspection: the Read tool (`offset` / `limit`), never a bare file path as a command (it opens a desktop app; the guard denies it); the top 40
-  lines (the section line map), then only the line range you need, never a whole large file.
+- File inspection: the Read tool (`offset` / `limit`), never a bare file path as a command (it opens a desktop app); the top 40
+  lines (the section line map), then only the line range you need.
 - Builds and tests go through `<kit>/skills/crafty/crafty.ps1 check` (stack auto-detected; the machine-wide memory gate queues
   them); parallel work in worktrees (`crafty.ps1 wt`), commits with `crafty.ps1 wt commit`; never install packages into linked
   `node_modules` / `.venv`. The guard hook blocks `git stash`, `--no-verify` and ungated builds. Rebase (`wt sync`) before
@@ -85,15 +85,16 @@ These rules hold whatever the route:
 - Phones only through `skills/phoney/phoney.ps1 acquire`. Every kit resource (env service,
   browser tab, phone, build) has a holder: lease only what your item declares, release when done; no live holder for
   `idle.graceMinutes` -> released (README "Leases").
+- **No large writes** (owner): no bulk data (performance: EXPLAIN, indexes, fixtures, read-only replica), shared-DB scratch
+  schema, full dump, copied dependency / data tree; added data under `data.maxRows` / `data.maxMB`, dropped at the end.
 - Browsers are headless by default (`skills/pokey/browser.mjs`); a visible browser only when the owner asks to watch.
-- Python with `-X utf8`. On Windows (rules load by path, not OS, so it stays here): python and node from the PowerShell tool
+- Python with `-X utf8`. On Windows: python and node from the PowerShell tool
   (pwsh 7), not Git Bash; anything handed to a Windows program uses `D:/...` paths (or the `crafty.ps1 dir` output), never Git
   Bash `/d/...` (read as `\d\...` on the current drive; the guard denies it).
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by
-  name (`Get-KitPath`); never elsewhere in the kit. Your own files (notes, bodies, diffs, logs, evidence outside a QA run) go
+  name (`Get-KitPath`); never elsewhere in the kit. Your own files (notes, bodies, logs, evidence) go
   only where `crafty.ps1 dir -Agent <id> [-Item <task>] [-Name <file>]` (or `-Kind evidence -Item <task>`) says, never in `/tmp`,
-  `%TEMP%` itself, a main checkout, a drive root or outside the workspace (the guard denies body / desc files in temp, new
-  files at a main checkout's top, at a drive root or outside every kit / repo root; owner-asked places: `guard.writeRoots`).
+  `%TEMP%` itself, a main checkout, a drive root or outside the workspace (guard-enforced; owner-asked places: `guard.writeRoots`).
 - The kit learns: every agent reads its lessons at step 0 (`bossy.ps1 learn -Read -Skill <skill>`) and records surprises with
   `bossy.ps1 learn`.
 - **The main session coordinating agents** loads `bossy` and follows its Events table (heartbeat, decisions, `deploy <env>`,

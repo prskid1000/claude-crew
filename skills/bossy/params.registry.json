@@ -64,6 +64,8 @@
   "kitTests.pushBusyRamPct": "config default=80 unit=pct",
   "kitTests.pushTimeoutMinutes": "config default=30 unit=min",
   "kitTests.pushStallMinutes": "config default=10 unit=min",
+  "data.maxRows": "config default=10000 unit=rows",
+  "data.maxMB": "config default=50 unit=MB",
   "kitTests.nightlyEveryHours": "config default=20 unit=h",
   "writes.softGBPerHour": "config default=2 unit=GB",
   "writes.hardGBPerHour": "config default=5 unit=GB",

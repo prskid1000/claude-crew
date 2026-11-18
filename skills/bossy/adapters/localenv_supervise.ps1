@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L192 waits · L203 cpu
+Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L206 waits · L217 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -178,6 +178,20 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       if ($ev.marks.binlogDays -and [double]$ev.marks.binlogDays -lt [double](Get-KitParam 'localEnv.marks.keepDays')) { & $watch "SHORT BINLOG: $($ev.env) keeps $($ev.marks.binlogDays) d < marks.keepDays" "envy.ps1 doctor -Env $($ev.env) (SET PERSIST binlog_expire_logs_seconds)" }
     }
     if ($ev.seed -and -not $ev.seed.ok) { & $watch "SEED DRIFT: $($ev.env) $(@(@($ev.seed.missing) + @($ev.seed.drift)) -join ', ')" "envy.ps1 seed -Env $($ev.env) (ENV-FIX)" }
+  }
+  # no large writes (owner, 2026-11-18): a schema on an env's MySQL grown past data.maxRows / data.maxMB since its baseline (first
+  # sight; reset by a shrink, a flag or 24 h) -> WATCH; sizes from a background envy.ps1 sql per env (the last finished run read)
+  $dcRows = [long](Get-KitParam 'data.maxRows'); $dcMB = [double](Get-KitParam 'data.maxMB'); $dcAt = $now.ToString('o')
+  $dcSql = "SELECT table_schema, COALESCE(SUM(table_rows), 0), ROUND(COALESCE(SUM(data_length + index_length), 0) / 1048576) FROM information_schema.tables WHERE table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') GROUP BY table_schema"
+  foreach ($ev in @($envs | Where-Object { $_.marks -and -not $_.marks.dbDown })) {
+    $dcNow = @{}; foreach ($dl in @(Invoke-KitBackground "envy.ps1 sql data $($ev.env)" $KitCmd.local @('sql', '-Env', $ev.env, '-Query', $dcSql))) { $dc = "$dl" -split "`t"; if ($dc.Count -ge 3 -and $dc[1] -match '^\d+$') { $dcNow[$dc[0]] = @{ rows = [long]$dc[1]; mb = [double]$dc[2] } } }
+    if (-not $dcNow.Count) { continue }
+    $dcKey = "$($ev.env)/data"; $dcOld = $last[$dcKey]; $dcNew = @{}
+    foreach ($ds in $dcNow.Keys) { $dn = $dcNow[$ds]; $db = if (-not $dcOld) { $null } elseif ($dcOld[$ds]) { $dcOld[$ds] } else { @{ rows = 0; mb = 0; at = $dcAt } }
+      $dr = if ($db) { $dn.rows - [long]$db.rows } else { 0 }; $dm = if ($db) { $dn.mb - [double]$db.mb } else { 0 }
+      if ($dr -gt $dcRows -or $dm -gt $dcMB) { & $watch "DATA GROWTH: $($ev.env) $ds +$dr rows / +$([math]::Round($dm)) MB since $(([datetime]$db.at).ToString('MM-dd HH:mm')) (data.maxRows $dcRows, data.maxMB $dcMB)" 'no large writes (AGENTS.md): find who loaded it (board, envy.ps1 status), drop the synthetic data; performance -> EXPLAIN / plans / the read-only replica' }
+      $dcNew[$ds] = if (-not $db -or $dr -gt $dcRows -or $dm -gt $dcMB -or $dr -lt 0 -or $dm -lt 0 -or ($now - [datetime]$db.at).TotalHours -ge 24) { @{ rows = $dn.rows; mb = $dn.mb; at = $dcAt } } else { $db } }
+    $seenEnv[$dcKey] = $dcNew
   }
   $seenEnv | ConvertTo-Json -Depth 4 | Set-Content $cf
   foreach ($ev in $envs) { foreach ($s in @($ev.services | Where-Object state -eq 'up (adopted)')) { & $watch "UNKNOWN: $($ev.env) $($s.service) port $($s.port) is served by a process the kit did not start" "stop it or change the port (envy.ps1 status -Env $($ev.env))" } }
