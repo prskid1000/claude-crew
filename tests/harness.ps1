@@ -226,5 +226,8 @@ function Invoke-Js($name, $js, $wf) { $f = Join-Path (Kd) "$name.mjs"; [IO.File]
 function Complete-Tests {
   if ($env:KIT_TESTS_TIME) { $script:times | Sort-Object s -Descending | Select-Object -First 8 | ForEach-Object { 'TIME {0,5:N1} s  {1}' -f $_.s, $_.what } }
   Set-Location $src; Remove-Item -LiteralPath (Join-Path $tmpRoot "kit-tests-$PID") -Recurse -Force -ErrorAction SilentlyContinue   # this area's own scratch; a held file: cleanup ages it out (_paths.keep tmp)
-  "$script:fails failure(s)"; exit [int]($script:fails -gt 0)
+  "$script:fails failure(s)"
+  # K79: [Environment]::Exit, not a return from main: a foreground thread a check left (guard-warm, 0 CPU) held an area 17+ min after its last check
+  if ($Host.Name -eq 'ConsoleHost') { [Console]::Out.Flush(); [Environment]::Exit([int]($script:fails -gt 0)) }
+  exit [int]($script:fails -gt 0)
 }

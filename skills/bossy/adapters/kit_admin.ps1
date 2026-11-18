@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L105 health · L114 prepush · L218 nightly tests · L238 precommit
+Sections: L12 learn · L105 health · L114 prepush · L222 nightly tests · L242 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -177,11 +177,15 @@ if ($toMain.Count -and (Test-Path $kt) -and -not $env:KIT_TESTS_SNAPSHOT) {
   else {
     $tl = Join-Path (Get-KitPath logs -Create) 'kit-tests-prepush.txt'
     Remove-Item Env:GIT_DIR, Env:GIT_INDEX_FILE, Env:GIT_WORK_TREE -ErrorAction SilentlyContinue   # the hook's git env would point every test repo at this one
+    $ktMain = "$(git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim() -replace '[\\/]\.git$', ''; if (-not $ktMain) { $ktMain = $root }
+    $ktDb = Join-Path (Join-Path $ktMain $pm.stateDir) $pm.durable.'kit-tests-db'   # tests/test-mysql.ps1 server.json: every lock take writes it
     $ktRun = { param($ktArgs, $ktLog) $p = Start-Process (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -ArgumentList (@('-NoProfile', '-NonInteractive', '-File', "`"$kt`"") + $ktArgs) -RedirectStandardOutput $ktLog -RedirectStandardError "$ktLog.err" -NoNewWindow -PassThru; $null = $p.Handle   # the handle kept: ExitCode stays readable
       # K79: past kitTests.pushTimeoutMinutes -> -1; its log (stdout + stderr) not grown for kitTests.pushStallMinutes -> -2 (a push hung 25 min on a frozen log)
       $ktEnd = (Get-Date).AddMinutes([double](Get-KitParam 'kitTests.pushTimeoutMinutes')); $ktStall = [double](Get-KitParam 'kitTests.pushStallMinutes'); $ktSize = -1; $ktSeen = Get-Date
       while (-not $p.WaitForExit([int][Math]::Min(15000, [Math]::Max(200, 20000 * $ktStall)))) {
-        $ktNow = [long](@(Get-Item -LiteralPath $ktLog, "$ktLog.err" -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
+        # progress = the log grew, or the shared test mysqld changed hands (an area queued behind other runs prints nothing meanwhile)
+        $ktLen = [long](@(Get-Item -LiteralPath $ktLog, ($ktLog + '.err') -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
+        $ktTake = (Get-Item -LiteralPath $ktDb -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks; $ktNow = "$ktLen|$ktTake"
         if ($ktNow -ne $ktSize) { $ktSize = $ktNow; $ktSeen = Get-Date }
         if ((Get-Date) -gt $ktEnd) { Stop-KitProcessTree $p; return -1 }
         if (((Get-Date) - $ktSeen).TotalMinutes -gt $ktStall) { Stop-KitProcessTree $p; return -2 } }
