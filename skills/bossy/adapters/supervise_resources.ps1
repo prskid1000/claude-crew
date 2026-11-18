@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L309 shells · L472 page · L1044 release · L1084 lines · L1117 cleanup · L1202 launch ·
-  L1280 pause · L1399 heartbeat · L1414 sessions · L1466 ci tasks ·
-  L1521 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L309 shells · L474 page · L1046 release · L1086 lines · L1119 cleanup · L1204 launch ·
+  L1282 pause · L1401 heartbeat · L1416 sessions · L1468 ci tasks ·
+  L1523 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -400,7 +400,9 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
   if ($shCmd.Count) { foreach ($q in $Procs) {
     if ($alive.ContainsKey($q.ParentId) -or $shCmd.ContainsKey($q.Id)) { continue }
     $tail = ("$($q.CommandLine)" -replace '^\s*("[^"]*"|\S+)\s*', '' -replace '\s+', ' ').Trim(); if ($tail.Length -lt 12) { continue }
-    $hit = @($shells | Where-Object { $shCmd[$_.Id].Contains($tail) }); if ($hit.Count -eq 1) { if (-not $kids.ContainsKey($hit[0].Id)) { $kids[$hit[0].Id] = [Collections.Generic.List[object]]::new() }; $kids[$hit[0].Id].Add($q) } } }
+    $hit = @($shells | Where-Object { $shCmd[$_.Id].Contains($tail) })
+    if ($hit.Count -gt 1 -and $q.Created) { $hit = @($hit | Where-Object { $_.Created -and [datetime]$_.Created -le [datetime]$q.Created } | Sort-Object { [datetime]$_.Created } | Select-Object -Last 1) }   # same command twice: the newest shell started before it
+    if ($hit.Count -eq 1) { if (-not $kids.ContainsKey($hit[0].Id)) { $kids[$hit[0].Id] = [Collections.Generic.List[object]]::new() }; $kids[$hit[0].Id].Add($q) } } }
   $want = @{}; foreach ($p in $shells) { $m0 = & $made0 $p; $k0 = "$($p.Id)@$($m0.ToString('s'))"; if (-not ($old[$k0] -is [Collections.IDictionary] -and $old[$k0].ContainsKey('tx'))) { $want[$k0] = @{ cmd = (Get-KitShellCommand $p.CommandLine); created = $m0 } } }
   $found = if ($want.Count) { Find-KitShellTranscripts $want } else { @{} }   # once per shell: the tool_use line is written before the shell starts
   $seen = [Collections.Generic.List[object]]::new(); $trees = @{}

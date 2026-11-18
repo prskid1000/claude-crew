@@ -245,7 +245,9 @@ $box.busy = $true; $r += & $sw 6 $all; $box.busy = $false
 Add-Content -LiteralPath $of 'step 3 done'; $r += & $sw 9 $all; $r3 = $script:lastRows
 $r += & $sw 14 $all; $r += & $sw 15 @($all[0], $sb, $kid)
 $e = @($st.shells.Values | Where-Object { $_.ended })
-"states:$($r -join '|')"; "rows:$($r0[0].last)|$($r0[0].owner)|$($r0[1].kids)|$($r0[1].cpu)|$($r3[0].last)|$($r0[0].outKB -ge 0)"; "ended:$($e.Count)|$($e[0].owner)|$($e[0].last)"
+$sb2 = & $mk 999804 50 (& $cl $cb) 1 'bash.exe'; $sb2.Created = $t0.AddMinutes(-40)   # the same command in an older shell: the child joins the newer one
+$tw = Get-KitShellSweep @{} $t0 -Procs @($all[0], $sb, $sb2, $kid) -Sampler $smp -GapSeconds 0; "twin:$(@($tw.rows | ForEach-Object { "$($_.pid)=$($_.kids)" }) -join ',')"
+"states:$($r -join '|')";"rows:$($r0[0].last)|$($r0[0].owner)|$($r0[1].kids)|$($r0[1].cpu)|$($r3[0].last)|$($r0[0].outKB -ge 0)"; "ended:$($e.Count)|$($e[0].owner)|$($e[0].last)"
 # read-only: a -ReadOnly -AutoFix sweep and bossy.ps1 shells write nothing
 foreach ($v in @($st.shells.Values | Where-Object { $_.ended })) { $v.ended = (Get-Date).Ticks }; $st | ConvertTo-Json -Depth 8 | Set-Content (Get-KitPath supervise-state -Create)   # ended now: inside supervise.finishedMinutes
 $snap = { @(Get-ChildItem -LiteralPath $script:KitRoot, $args[0] -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName)|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)" }) -join "`n" }
@@ -258,7 +260,7 @@ Start-Sleep -Milliseconds 800; $liveDelta = Measure-KitTreeDelta @{ b = @($busyP
 $psSample = @(Get-KitProcSample @(7, 8) -PsLines @('    7 1-02:03:04', '    8 00:01:05', 'junk')); "live:$($liveDelta.b.cpu -gt 0.3)|$($liveDelta.b.pct -gt 30)|$($psSample.Count)|$($psSample[0].Cpu)|$($psSample[1].Cpu)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), (Kd))
 Expect "shells: progress from the output file (last line, ANSI cut), an adopted Git Bash child, CPU between sweeps and in the sample pair; STALLED after supervise.shellStuckMinutes quiet; ended keeps its last line ($($pg -match '^(states|rows|ended):'))" (
-  $pg -contains 'states:running,running|running,running|STALLED,running|running,running|STALLED,STALLED|STALLED' -and $pg -contains 'rows:step 2 ok|devy|1|4|step 3 done|True' -and $pg -contains 'ended:1|devy|step 3 done')
+  $pg -contains 'states:running,running|running,running|STALLED,running|running,running|STALLED,STALLED|STALLED' -and $pg -contains 'rows:step 2 ok|devy|1|4|step 3 done|True' -and $pg -contains 'ended:1|devy|step 3 done' -and $pg -contains 'twin:999803=1,999804=0')
 Expect "bossy.ps1 shells and a -ReadOnly sweep write no file ($($pg -match '^nowrite:'))" ($pg -contains 'nowrite:True|1|True')
 Expect "shell sampler: a busy child's CPU between two real samples; ps time with days ($($pg -match '^live:'))" ($pg -contains 'live:True|True|2|93784|65')
 Remove-TestKit $k
