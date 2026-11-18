@@ -169,6 +169,21 @@ $td = Join-Path (Kd) 'dup/tests'; New-Item -ItemType Directory -Force $td | Out-
 foreach ($a in 'bossy', 'crafty') { "$(if ($a -eq 'bossy') { 'Start-Sleep 2; ' })'PASS same  Case'; 'PASS own $a'; 'FAIL x'; ""py `$((Get-Command python).Source -notmatch '\.(bat|cmd)`$')""; '1 failure(s)'" | Set-Content "$td/$a.tests.ps1" }   # bossy ends last
 $tdr = Invoke-TestScript "$td/kit-tests.ps1" -Area bossy,crafty
 Expect 'kit-tests: a case in two areas = TEST-DUP (area order, exit 1); real python, no shim; FAILs recapped by area' ($tdr.code -eq 1 -and $tdr.out -match 'Failed checks:\s+\[bossy\] x\s+\[crafty\] x' -and $tdr.out -match 'TEST-DUP same case: bossy, crafty' -and $tdr.out -notmatch 'TEST-DUP own' -and $tdr.out -match 'py True' -and $tdr.out -notmatch 'py False')
+# K79: a run dies with what started it (its starter killed: the watchdog ends the run and its area) and its areas with it (the run killed: the job)
+if ($IsWindows) {
+  $wdT = Join-Path (Kd) 'k79/tests'; New-Item -ItemType Directory -Force $wdT | Out-Null; Copy-Item (Join-Path $src 'tests/kit-tests.ps1') $wdT
+  '$PID | Set-Content (Join-Path $PSScriptRoot "area.pid"); Start-Sleep 120' | Set-Content "$wdT/slow.tests.ps1"
+  $wdR = foreach ($wdHow in 'starter', 'run') {
+    Remove-Item "$wdT/area.pid" -ErrorAction SilentlyContinue
+    $wdS = Start-Process $pwshExe -ArgumentList '-NoProfile', '-Command', "& '$pwshExe' -NoProfile -File '$wdT/kit-tests.ps1' -Area slow" -WindowStyle Hidden -PassThru
+    for ($i = 0; $i -lt 150 -and -not (Test-Path "$wdT/area.pid"); $i++) { Start-Sleep -Milliseconds 200 }
+    $wdA = [int]"$(Get-Content "$wdT/area.pid" -ErrorAction SilentlyContinue)"; $wdP = [int](Get-CimInstance Win32_Process -Filter "ProcessId=$wdA").ParentProcessId
+    Stop-Process -Id $(if ($wdHow -eq 'starter') { $wdS.Id } else { $wdP }) -Force
+    $wdGone = $false; for ($i = 0; $i -lt 60 -and -not $wdGone; $i++) { Start-Sleep -Milliseconds 500; $wdGone = -not @(Get-Process -Id $wdA, $wdP -ErrorAction SilentlyContinue).Count }
+    if (-not $wdGone) { Stop-Process -Id $wdA, $wdP -Force -ErrorAction SilentlyContinue }
+    "${wdHow}:$($wdA -gt 0 -and $wdGone)" }
+  Expect "kit-tests K79: the run and its area end when its starter is killed, the area ends when the run is killed ($($wdR -join ' '))" (($wdR -join ' ') -eq 'starter:True run:True')
+}
 # kit-tests default: only the areas a change since origin/main reaches
 $cd = Join-Path (Kd) 'chg'; New-Item -ItemType Directory -Force "$cd/tests" | Out-Null; Copy-Item (Join-Path $src 'tests/kit-tests.ps1'), (Join-Path $src 'tests/harness.ps1') "$cd/tests"
 New-Item -ItemType Directory -Force "$cd/skills/crafty" | Out-Null; Copy-Item (Join-Path $src 'skills/crafty/kit.example.json') "$cd/skills/crafty"; '.runtime/' | Set-Content "$cd/.gitignore"

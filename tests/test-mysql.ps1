@@ -4,7 +4,7 @@ test-mysql.ps1: the ONE kit-test mysqld (K78), dot-sourced by harness.ps1 (Start
 (Exit-TestMySqlHolder at the end of a run). One persistent data dir in the main clone's state (`_paths` durable kit-tests-db:
 <kit>/.state/kit-tests/), initialised once and never deleted (a new mysqld build or options restart it on the same data), shared by every area, run and worktree: areas take it in
 turn (a machine-wide lock), a take drops the last holder's small schemas and resets binlogs and globals; started on first use,
-stopped (data kept) when the last run holding it ends. kit-tests.ps1 fails a run that started it more than once (TEST-MYSQLD).
+stopped (data kept) when the run that started it or the last run holding it ends (a killed run: kit-tests.ps1 K79). kit-tests.ps1 fails a run that started it more than once (TEST-MYSQLD).
 Usage: . (Join-Path $PSScriptRoot 'test-mysql.ps1'); needs $src (the kit under test).
 Exit codes: none (functions only).
 #>
@@ -20,9 +20,30 @@ function Get-TestMySqlHome([string]$Kit = $src) {   # the main clone's, so every
 function Test-TestMySqlPort([int]$Port) { $tc = [Net.Sockets.TcpClient]::new(); try { $tc.ConnectAsync('127.0.0.1', $Port).Wait(1000) -and $tc.Connected } catch { $false } finally { $tc.Dispose() } }
 function Read-TestMySqlState([string]$StateDir) { $f = Join-Path $StateDir 'server.json'; if (Test-Path $f) { try { Get-Content $f -Raw | ConvertFrom-Json -AsHashtable } catch { @{} } } else { @{} } }
 function Save-TestMySqlState([string]$StateDir, $St) { $f = Join-Path $StateDir 'server.json'; $St | ConvertTo-Json -Depth 4 | Set-Content "$f.tmp" -Encoding utf8; Move-Item "$f.tmp" $f -Force }
-function Enter-TestMySqlLock([string]$StateDir, [int]$Minutes = 30) {
-  $until = (Get-Date).AddMinutes($Minutes)
-  while ($true) { try { return [IO.File]::Open((Join-Path $StateDir 'mysql.lock'), 'OpenOrCreate', 'ReadWrite', 'None') } catch { if ((Get-Date) -gt $until) { throw "test mysqld: $StateDir/mysql.lock held $Minutes min" }; Start-Sleep -Milliseconds 500 } }
+# the take is stamped in server.json `lock` {holder, run, at}; a waiter (every 5 s): the holder's run gone (an orphan area, K79) ->
+# that holder ends and the lock is taken over; held over -WatchMinutes by a live run -> one WATCH line, still waiting to -Minutes
+function Enter-TestMySqlLock([string]$StateDir, [double]$Minutes = 30, [double]$WatchMinutes = 10) {
+  $until = (Get-Date).AddMinutes($Minutes); $tmTry = 0; $tmSaid = $false; $tmBy = $null
+  while ($true) {
+    try { $tmFs = [IO.File]::Open((Join-Path $StateDir 'mysql.lock'), 'OpenOrCreate', 'ReadWrite', 'None') } catch { $tmFs = $null }
+    if ($tmFs) {
+      $St = Read-TestMySqlState $StateDir; $tmMe = Get-TestProcStamp $PID
+      $tmRun = if ($env:KIT_TESTS_RUNNER) { Get-TestProcStamp ([int]$env:KIT_TESTS_RUNNER) }
+      $St.lock = @{ holder = $tmMe; run = $(if ($tmRun) { $tmRun } else { $tmMe }); at = (Get-Date).ToString('o') }
+      try { Save-TestMySqlState $StateDir $St } catch {}   # the stamp only informs waiters
+      return $tmFs
+    }
+    if ($tmTry++ % 10 -eq 0) {
+      $tmBy = (Read-TestMySqlState $StateDir).lock
+      if ($tmBy -and (Test-TestProcStamp "$($tmBy.holder)") -and -not (Test-TestProcStamp "$($tmBy.run)")) {
+        Write-Warning "test mysqld lock: holder $($tmBy.holder) outlived its run $($tmBy.run): ended, lock taken over (K79)"
+        try { (Get-Process -Id ([int]("$($tmBy.holder)" -split ':')[0])).Kill($true) } catch {}; continue }
+      $tmAge = if ($tmBy.at) { ([datetimeoffset]::Now - [datetimeoffset]$tmBy.at).TotalMinutes } else { 0 }
+      if (-not $tmSaid -and $tmAge -gt $WatchMinutes) { $tmSaid = $true; Write-Warning "WATCH test mysqld lock held $([int]$tmAge) min by $($tmBy.holder) (run $($tmBy.run) alive): waiting up to $Minutes min" }
+    }
+    if ((Get-Date) -gt $until) { throw "test mysqld: $StateDir/mysql.lock held $Minutes min$(if ($tmBy) { " by $($tmBy.holder) (run $($tmBy.run))" })" }
+    Start-Sleep -Milliseconds 500
+  }
 }
 # a process as "<pid>:<start ticks>": a pid reused after a reboot or crash is not the process saved
 function Get-TestProcStamp([int]$Id) { $p = Get-Process -Id $Id -ErrorAction SilentlyContinue; if ($p) { "${Id}:$($p.StartTime.ToUniversalTime().Ticks)" } }
@@ -67,7 +88,7 @@ function Start-TestMySql([switch]$Binlog) {   # -Binlog: kept for callers; the o
       $tmTmp = Join-Path $tmHome 'tmp'; New-Item -ItemType Directory -Force $tmTmp | Out-Null
       $tmProc = Start-Process $tmExe -ArgumentList "--no-defaults `"--datadir=$tmData`" `"--tmpdir=$tmTmp`" --port=$tmPort --bind-address=127.0.0.1 --mysqlx=OFF $tmOpts" -WindowStyle Hidden -PassThru
       for ($i = 0; $i -lt 60 -and -not (Test-TestMySqlPort $tmPort); $i++) { Start-Sleep 1 }
-      $St = @{ server = (Get-TestProcStamp $tmProc.Id); port = $tmPort; key = $tmKey; data = $tmData; holders = $tmOthers; starts = @(@($St.starts) + $tmHolder | Where-Object { $_ } | Select-Object -Last 50) }
+      $St = @{ server = (Get-TestProcStamp $tmProc.Id); port = $tmPort; key = $tmKey; data = $tmData; holders = $tmOthers; owner = $tmHolder; lock = $St.lock; starts = @(@($St.starts) + $tmHolder | Where-Object { "$_" -match '^\d+:\d+$' } | Select-Object -Last 20) }
       Save-TestMySqlState $tmHome $St
       if ($i -ge 60) { Stop-TestMySqlServer $St; throw "Start-TestMySql: mysqld not listening on $tmPort after 60 s" }
     }
@@ -108,7 +129,8 @@ function Exit-TestMySqlHolder([string]$StateDir, [int]$Holder, [switch]$Locked) 
   try {
     $tmMe = Get-TestProcStamp $Holder; $St = Read-TestMySqlState $StateDir
     $St.holders = @($St.holders | Where-Object { $_ -and $_ -ne $tmMe -and (Test-TestProcStamp $_) })
-    if (-not $St.holders.Count) { Stop-TestMySqlServer $St; $St.server = $null }
+    # the run that started it stops it (K79; under the lock no other area uses it: the next take restarts it on the same data)
+    if (-not $St.holders.Count -or ($tmMe -and "$($St.owner)" -eq $tmMe)) { Stop-TestMySqlServer $St; $St.server = $null; $St.owner = $null }
     Save-TestMySqlState $StateDir $St
     [pscustomobject]@{ starts = @($St.starts | Where-Object { $_ -and $_ -eq $tmMe }).Count; strays = @($St.strays | Where-Object { "$_".StartsWith("$tmMe ") }) }
   } finally { if ($tmLock) { $tmLock.Dispose() } }

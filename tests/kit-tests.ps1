@@ -2,17 +2,19 @@
 <#
 kit-tests.ps1: offline kit tests (throw-away kit copies, local git repos, mocked CLIs, no real services).
 Runs tests/<area>.tests.ps1 files in parallel, one pwsh each; each area file also runs on its own.
-Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<area>.tests.ps1>[,...]] [-Full] [-Slow] [-Detail]
+Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<area>.tests.ps1>[,...]] [-Full] [-Slow] [-Detail] [-Detached]
  (none): the areas a change since the merge-base with origin/main reaches (Get-ChangedArea); -Full or -Area all (KIT_TESTS_FULL=1): every area.
  -Slow: also the checks that need real tools and take seconds each (KIT_TESTS_SLOW=1, e.g. a real headless Chrome).
  -Detail: every area's full output here too (else a green area is one line; all of it in <runtime>/logs/kit-tests-last.txt).
+ K79: a run ends with what started it (a process of its parent chain gone: the run, its areas and their children stop) and,
+ on Windows, its areas die with it (a kill-on-close job); -Detached: no parent watch (the nightly run, started by a short beat).
 Outputs: the picked areas and why, per area its time and pass count (a failed or crashed area: its whole output), TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), TEST-MYSQLD (the one test mysqld started twice: tests/test-mysql.ps1), a recap of the failed checks, then a total.
  A green full run stamps its tree (<runtime>/cache/kit-tests-green.txt). -Full also runs from the pre-push hook on a push to main
  (a stamped tree skipped) and from supervise -AutoFix once a day while idle (adapters/kit_admin.ps1). One setup per area: a new case
  joins the area that builds its setup, as a table row.
 Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 #>
-param([string[]]$Area = @(), [switch]$Slow, [switch]$Full, [switch]$Detail)
+param([string[]]$Area = @(), [switch]$Slow, [switch]$Full, [switch]$Detail, [switch]$Detached)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
 Set-Location -LiteralPath (Split-Path $PSScriptRoot)   # areas run in the kit under test: a cwd in another clone (the live kit) failed local-env-3, runtimes
@@ -67,6 +69,51 @@ $env:KIT_TESTS_RUNNER = $PID   # the one test mysqld's holder for every area of 
 $src = Split-Path $PSScriptRoot; $myMysqlRun = [pscustomobject]@{ starts = 0; strays = @() }; $myMysqlErr = ''
 $myMysql = (Test-Path (Join-Path $PSScriptRoot 'test-mysql.ps1')) -and (Test-Path (Join-Path $src 'skills/crafty/kit.example.json'))   # a bare tests/ copy (kitbag.tests): none
 if ($myMysql) { . (Join-Path $PSScriptRoot 'test-mysql.ps1') }
+# K79 (finished agents left 2-5 h test trees; a push hung 25 min): areas and their children join a kill-on-close job (Windows)
+if ($IsWindows -and -not [AppDomain]::CurrentDomain.GetData('kit-tests-job')) {
+  try {
+    if (-not ('KitTestJob' -as [type])) {   # compiled once per runtime (1.7 s), loaded after
+      $null = New-Item -ItemType Directory -Force $tmpRoot; $jobDll = Join-Path $tmpRoot 'kit-test-job-1.dll'
+      if (-not (Test-Path -LiteralPath $jobDll)) { $jobTmp = "$jobDll.$PID"; Add-Type -OutputAssembly $jobTmp -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class KitTestJob {
+  [StructLayout(LayoutKind.Sequential)] struct Basic { public long a, b; public uint Flags; public UIntPtr c, d; public uint e; public UIntPtr f; public uint g, h; }
+  [StructLayout(LayoutKind.Sequential)] struct Io { public ulong a, b, c, d, e, f; }
+  [StructLayout(LayoutKind.Sequential)] struct Ext { public Basic B; public Io I; public UIntPtr p, j, pp, jp; }
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateJobObject(IntPtr a, string n);
+  [DllImport("kernel32.dll")] static extern bool SetInformationJobObject(IntPtr j, int c, ref Ext i, uint l);
+  [DllImport("kernel32.dll")] static extern bool AssignProcessToJobObject(IntPtr j, IntPtr p);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  public static IntPtr Bind() {   // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: the handle closes with this process, the job's processes end
+    IntPtr j = CreateJobObject(IntPtr.Zero, null); Ext x = new Ext(); x.B.Flags = 0x2000;
+    if (j == IntPtr.Zero || !SetInformationJobObject(j, 9, ref x, (uint)Marshal.SizeOf(typeof(Ext))) || !AssignProcessToJobObject(j, GetCurrentProcess())) throw new System.ComponentModel.Win32Exception();
+    return j;
+  }
+}
+'@
+        try { Move-Item -LiteralPath $jobTmp $jobDll -ErrorAction Stop } catch { Remove-Item -LiteralPath $jobTmp -ErrorAction SilentlyContinue } }   # a parallel run's copy won
+      Add-Type -LiteralPath $jobDll }
+    [AppDomain]::CurrentDomain.SetData('kit-tests-job', [KitTestJob]::Bind())
+  } catch { "kit-tests: no kill-on-close job ($($_.Exception.Message)): a killed run may leave its areas running" }
+}
+# the parent chain (pid:start ticks, at most 8 up); one gone -> a thread ends this run's tree, lets the test mysqld go, then this process
+$watch = @(if (-not $Detached -and -not [AppDomain]::CurrentDomain.GetData('kit-tests-watch')) {
+  $wc = Get-Process -Id $PID
+  for ($wi = 0; $wi -lt 8; $wi++) { $wp = try { $wc.Parent } catch { $null }; $ws = try { $wp.StartTime } catch { $null }
+    if (-not $wp -or -not $ws -or $wp.Id -le 4 -or $ws -gt $wc.StartTime) { break }   # a reused parent id starts after its child
+    "$($wp.Id):$($ws.ToUniversalTime().Ticks)"; $wc = $wp } })
+if ($watch.Count) {
+  [AppDomain]::CurrentDomain.SetData('kit-tests-watch', $true)
+  $wd = [powershell]::Create(); $null = $wd.AddScript({ param($Watch, $Me, $MysqlFile, $Kit)
+    $alive = { param($s) $s -match '^(\d+):(\d+)$' -and "$(try { (Get-Process -Id $Matches[1] -ErrorAction Stop).StartTime.ToUniversalTime().Ticks } catch {})" -eq $Matches[2] }
+    while (-not ($gone = @($Watch | Where-Object { -not (& $alive $_) })[0])) { Start-Sleep 5 }
+    [Console]::Out.WriteLine("kit-tests: process $gone that started this run is gone: the run, its areas and their children stop (K79)")
+    $mine = (Get-Process -Id $Me).StartTime
+    foreach ($kid in @(Get-Process | Where-Object { $(try { $_.Parent.Id -eq $Me -and $_.StartTime -ge $mine } catch { $false }) })) { try { $kid.Kill($true) } catch {} }
+    if ($MysqlFile) { try { . $MysqlFile; $src = $Kit; $null = Exit-TestMySqlHolder (Get-TestMySqlHome) $Me } catch {} }   # areas gone: the lock is free
+    [Diagnostics.Process]::GetCurrentProcess().Kill()
+  }).AddArgument($watch).AddArgument($PID).AddArgument($(if ($myMysql) { Join-Path $PSScriptRoot 'test-mysql.ps1' })).AddArgument($src).BeginInvoke()
+}
 try {
 $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {
   $clock = [Diagnostics.Stopwatch]::StartNew()

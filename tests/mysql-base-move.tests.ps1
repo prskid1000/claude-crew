@@ -2,7 +2,8 @@
 <#
 tests/mysql-base-move.tests.ps1: skills/envy/mysql-base-move.ps1: the lane ini keeps its low-write settings with a new port and datadir;
 the config edit gives each base env its own managed mysql (no port clash, lanes keep theirs, hm's db.port follows); a dry run
-changes nothing and refuses an existing target dir; -Apply without a donor is refused.
+changes nothing and refuses an existing target dir; -Apply without a donor is refused. tests/test-mysql.ps1 K79: lock takeover from an
+orphan holder, WATCH on a long hold, the starting run stops the server.
 Usage: pwsh -NoProfile -File tests/mysql-base-move.tests.ps1 [-Kit <kit>].
 Exit codes: 0 pass · 1 fail.
 #>
@@ -88,4 +89,26 @@ Expect 'rename -Rollback: every old name back, the ini as it was' ((Test-Path "$
 $pks = Get-Content (Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/pokey.ps1') -Raw
 Expect 'pokey: the bird target name is parsed (falcon = lane 1 = the base target) and an old <target><k> maps to an explicit bird key with a warning' ($pks.Contains('if ($k -eq 1) { return $base }') -and $pks.Contains('old lane target ''$Target'': use $nk'))
 Remove-Item (Split-Path $kd) -Recurse -Force -ErrorAction SilentlyContinue
+# (cap move from db-engine-presets-2.tests.ps1)
+# K79: a lock holder whose run is gone is ended and the lock taken over; one held long by a live run = WATCH, then the timeout names it
+$tmLd = New-Item -ItemType Directory -Force (Join-Path $env:TEMP 'lock79'); $tmHs = Join-Path $env:TEMP 'hold79.ps1'; Set-Content $tmHs @'
+param($Dir, $Run, $Age, $Lib); . $Lib; $l = Enter-TestMySqlLock $Dir 0
+$s = Read-TestMySqlState $Dir; $s.lock.run = $(if ($Run -eq 'self') { $s.lock.holder } else { $Run }); $s.lock.at = (Get-Date).AddMinutes(-[double]$Age).ToString('o'); Save-TestMySqlState $Dir $s
+'held' | Set-Content (Join-Path $Dir 'held'); Start-Sleep 60
+'@
+$tmTake = foreach ($tmCase in @('1:1', 0, 0.5), @('self', 20, 0.05)) {
+  Remove-Item (Join-Path $tmLd 'held') -ErrorAction SilentlyContinue
+  $tmHp = Start-Process $pwshExe -ArgumentList '-NoProfile', '-File', $tmHs, $tmLd, $tmCase[0], $tmCase[1], (Join-Path $PSScriptRoot 'test-mysql.ps1') -WindowStyle Hidden -PassThru
+  for ($i = 0; $i -lt 100 -and -not (Test-Path (Join-Path $tmLd 'held')); $i++) { Start-Sleep -Milliseconds 200 }
+  @(& { try { (Enter-TestMySqlLock $tmLd $tmCase[2]).Dispose(); 'got' } catch { "threw $($_.Exception.Message)" } } 3>&1) -join ' / '
+  try { $tmHp.Kill($true) } catch {} }
+Expect "test-mysql.ps1: a holder of a gone run is ended and the lock taken; a live run's long hold is one WATCH, the timeout names the holder ($($tmTake -join ' | '))" (
+  $tmTake[0] -match 'outlived its run 1:1: ended, lock taken over .*/ got$' -and $tmTake[1] -match '^WATCH test mysqld lock held 2\d min by \d+:\d+ .* / threw .*held 0\.05 min by \d+:\d+')
+# K79: the run that started the server stops it at its end even while another run holds it; another starter's server stays; server.json keeps the STATE.md row's keys
+$tmOd = New-Item -ItemType Directory -Force (Join-Path $env:TEMP 'own79'); $tmMe = Get-TestProcStamp $PID; $tmPar = Get-TestProcStamp (Get-Process -Id $PID).Parent.Id
+$tmOwn = foreach ($tmO in $tmMe, $tmPar) { Save-TestMySqlState $tmOd @{ server = '1:1'; port = 1; key = 'k'; data = 'd'; holders = @($tmMe, $tmPar); owner = $tmO; starts = @() }
+  $null = Exit-TestMySqlHolder $tmOd $PID; $tmS = Read-TestMySqlState $tmOd; "$($tmS.server)|$($tmS.holders -join ',')" }
+$tmRow = [regex]::Match((Get-Content (Join-Path $src 'skills/bossy/STATE.md') -Raw), '`kit-tests-db` \|[^|]+\| `json v\d+: ([^`]+)`').Groups[1].Value -split ' '
+Expect "test-mysql.ps1: its starter stops the server, another starter's stays; server.json has the schema keys ($($tmOwn -join ' ; ') | $($tmRow -join ' '))" (
+  $tmOwn[0] -eq "|$tmPar" -and $tmOwn[1] -eq "1:1|$tmPar" -and $tmRow.Count -ge 3 -and -not @($tmRow | Where-Object { -not $tmS.ContainsKey($_) }).Count)
 if ($script:fails) { exit 1 }

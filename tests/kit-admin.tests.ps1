@@ -36,7 +36,7 @@ Expect "kit-admin: audit setup names an exclude line hiding a tracked file (fix:
 git -C $kc reset -q --hard $base
 # prepush to main: the full kit run on the pushed clean tree (a fake runner), a stamped tree skipped, a dirty checkout refused, no run off main
 $env:FAKE_RAN = Join-Path $root 'ran.txt'; Set-Content (Join-Path $kc 'tests/kit-tests.ps1') @'
-"$args" | Add-Content $env:FAKE_RAN; if ($env:FAKE_FLAKY -and $args -contains '-Area') { '0 failure(s) in 1 area(s), 1 s'; exit 0 }
+"$args" | Add-Content $env:FAKE_RAN; if ($env:FAKE_HANG) { '  a done (1 s)'; Start-Sleep 60 }; if ($env:FAKE_FLAKY -and $args -contains '-Area') { '0 failure(s) in 1 area(s), 1 s'; exit 0 }
 'Failed checks:'; '  [x] y'; '1 failure(s) in 1 area(s), 1 s'; exit 1
 '@
 git -C $kc commit -qam 'test: fake runner'; $hd = git -C $kc rev-parse HEAD; $snap = $env:KIT_TESTS_SNAPSHOT; Remove-Item Env:KIT_TESTS_SNAPSHOT
@@ -51,6 +51,10 @@ Set-JsonFile (Join-Path $gqDir 'live.json') @{ pid = $PID; start = $liveStart };
 Expect "kit-admin: prepush on a busy machine (RAM over kitTests.pushBusyRamPct, or a live gate queue ticket) runs the changed areas only; a dead ticket does not count ($($pb.ran) | $($pq.ran) | $($pdq.ran))" (
   $pb.ran -match '-Area x' -and $pb.ran -notmatch '-Full' -and $pb.out -match 'machine busy \(0 queued build\(s\), RAM \d+%\): changed areas only' -and $pb.out -match 'TESTS\s+the changed-area kit run failed' -and
   $pq.ran -match '-Area x' -and $pq.ran -notmatch '-Full' -and $pq.out -match 'machine busy \(1 queued build\(s\)' -and $pdq.ran -match '^-Full' -and $pdq.out -notmatch 'machine busy')
+# K79: a run whose log stops growing for kitTests.pushStallMinutes is stopped and blocks the push with a clear line (no hang)
+Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100; pushStallMinutes = 0.05 } }; $env:FAKE_HANG = '1'; $hgClock = [Diagnostics.Stopwatch]::StartNew(); $ph = & $prePush refs/heads/main
+Remove-Item Env:FAKE_HANG; Set-JsonFile $kitLocalPath @{ kitTests = @{ pushBusyRamPct = 100 } }
+Expect "kit-admin: prepush stops a kit run whose log froze for kitTests.pushStallMinutes and blocks with TESTS (code $($ph.code), $([int]$hgClock.Elapsed.TotalSeconds) s)" ($ph.code -eq 1 -and $ph.out -match 'TESTS\s+the kit run wrote nothing for 0\.05 min \(hung\): stopped' -and $hgClock.Elapsed.TotalSeconds -lt 40)
 $gf = Join-Path (TkPath $kc cache -Create) 'kit-tests-green.txt'; git -C $kc rev-parse 'HEAD^{tree}' | Set-Content $gf; $pg = & $prePush refs/heads/main; Remove-Item $gf
 'x' | Add-Content (Join-Path $kc 'README.md'); $pd = & $prePush refs/heads/main; git -C $kc checkout -q -- README.md
 Expect "kit-admin: prepush to main runs kit-tests -Full (a FAIL blocks; one that passes alone warns), skips a green-stamped tree, refuses a dirty checkout; no run off main ($($pr.code) $($pf.code) $($pg.code) $($pd.code))" (
@@ -62,7 +66,7 @@ $nf = Join-Path $root 'nightly.ps1'; Set-Content $nf @'
 $o1 = @(Invoke-KitNightlyTests $false); $s0 = Test-Path $sf; $null = Invoke-KitNightlyTests $true; $st = Get-Content $sf -Raw | ConvertFrom-Json
 $null = Wait-Process -Id $st.pid -Timeout 60 -ErrorAction SilentlyContinue; $o2 = @(Invoke-KitNightlyTests $true); $o3 = @(Invoke-KitNightlyTests $true)
 "busy:$(-not $o1.Count -and -not $s0 -and $st.pid)"
-"read:$($o2.Count -eq 1 -and $o2[0] -match '^kit tests nightly: 1 failure\(s\) in 1 area\(s\), 1 s, 1 failed check' -and -not $o3.Count -and (Get-Content $sf -Raw | ConvertFrom-Json).pid -eq $st.pid -and (Get-Content $env:FAKE_RAN) -eq '-Full')"
+"read:$($o2.Count -eq 1 -and $o2[0] -match '^kit tests nightly: 1 failure\(s\) in 1 area\(s\), 1 s, 1 failed check' -and -not $o3.Count -and (Get-Content $sf -Raw | ConvertFrom-Json).pid -eq $st.pid -and (Get-Content $env:FAKE_RAN) -eq '-Full -Detached')"
 # no total: started before the last boot = cut by a machine restart (no ACT, due again); started after it = a crash (ACT)
 $lfn = Join-Path (Get-KitPath logs -Create) 'kit-tests-nightly.txt'; $cutAt = { param($t) @{ at = $t.ToString('o'); start = $t.ToString('o'); pid = $st.pid; read = $false } | ConvertTo-Json -Compress | Set-Content $sf; '  x done (1 s)' | Set-Content $lfn }
 & $cutAt (Get-KitBootTime).AddMinutes(-5); $o4 = @(Invoke-KitNightlyTests $false); $s4 = Get-Content $sf -Raw | ConvertFrom-Json

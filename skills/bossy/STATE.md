@@ -44,7 +44,7 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `standing-rules` | `bossy.ps1 decide rules`, `decide answer` (its ask) | `json v1: rules` | keep (approved ones -> `rules/standing-rules.local.md`) |
 | `forgotten` | `kitbag.py forget` | `text v0` | `forget --purge` |
 | `pool-usage` | `adapters/wt_pool.ps1` | `json v1: repos` | keep (samples 7 d) |
-| `kit-tests-db` | `tests/test-mysql.ps1` | `json v0: pid port key holders` | keep |
+| `kit-tests-db` | `tests/test-mysql.ps1` | `json v0: server port key holders` | keep |
 | `outcomes-sweep` | `adapters/outcomes.ps1` | `text v0` | 30 d |
 | `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) |
 | `decisions-log` | `kitlog` | `jsonl v0: at` | `logs.keepDays`, then `logs-summary` |

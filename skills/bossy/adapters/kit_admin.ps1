@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L105 health · L114 prepush · L210 nightly tests · L230 precommit
+Sections: L12 learn · L105 health · L114 prepush · L218 nightly tests · L238 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -178,7 +178,14 @@ if ($toMain.Count -and (Test-Path $kt) -and -not $env:KIT_TESTS_SNAPSHOT) {
     $tl = Join-Path (Get-KitPath logs -Create) 'kit-tests-prepush.txt'
     Remove-Item Env:GIT_DIR, Env:GIT_INDEX_FILE, Env:GIT_WORK_TREE -ErrorAction SilentlyContinue   # the hook's git env would point every test repo at this one
     $ktRun = { param($ktArgs, $ktLog) $p = Start-Process (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -ArgumentList (@('-NoProfile', '-NonInteractive', '-File', "`"$kt`"") + $ktArgs) -RedirectStandardOutput $ktLog -RedirectStandardError "$ktLog.err" -NoNewWindow -PassThru; $null = $p.Handle   # the handle kept: ExitCode stays readable
-      if (-not $p.WaitForExit([int](60000 * (Get-KitParam 'kitTests.pushTimeoutMinutes')))) { Stop-KitProcessTree $p; return -1 }; $p.ExitCode }
+      # K79: past kitTests.pushTimeoutMinutes -> -1; its log (stdout + stderr) not grown for kitTests.pushStallMinutes -> -2 (a push hung 25 min on a frozen log)
+      $ktEnd = (Get-Date).AddMinutes([double](Get-KitParam 'kitTests.pushTimeoutMinutes')); $ktStall = [double](Get-KitParam 'kitTests.pushStallMinutes'); $ktSize = -1; $ktSeen = Get-Date
+      while (-not $p.WaitForExit([int][Math]::Min(15000, [Math]::Max(200, 20000 * $ktStall)))) {
+        $ktNow = [long](@(Get-Item -LiteralPath $ktLog, "$ktLog.err" -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
+        if ($ktNow -ne $ktSize) { $ktSize = $ktNow; $ktSeen = Get-Date }
+        if ((Get-Date) -gt $ktEnd) { Stop-KitProcessTree $p; return -1 }
+        if (((Get-Date) - $ktSeen).TotalMinutes -gt $ktStall) { Stop-KitProcessTree $p; return -2 } }
+      $p.ExitCode }
     # K76: a busy machine (a gated build queued, or RAM use over kitTests.pushBusyRamPct) runs the changed areas only; nightly + idle runs the full suite
     $gq = @(Get-ChildItem (Join-Path (Get-KitGateLedger) 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $t = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; $t -and (Test-KitPid $t.pid $t.start) }).Count
     $sm = Get-SysMem; $ramPct = if ($sm.TotalGB) { [math]::Round(100 * (1 - $sm.AvailGB / $sm.TotalGB)) } else { 0 }
@@ -187,6 +194,7 @@ if ($toMain.Count -and (Test-Path $kt) -and -not $env:KIT_TESTS_SNAPSHOT) {
     else { Write-Host "pre-push: machine busy ($gq queued build(s), RAM $ramPct%): changed areas only, log $tl; the full suite runs nightly while idle" }
     $tc = & $ktRun $ktMode $tl
     if ($tc -eq -1) { $hits += "TESTS       the kit run passed $(Get-KitParam 'kitTests.pushTimeoutMinutes') min: stopped (log $tl)" }
+    elseif ($tc -eq -2) { $hits += "TESTS       the kit run wrote nothing for $(Get-KitParam 'kitTests.pushStallMinutes') min (hung): stopped; read the log's last area lines, fix or rerun that area alone, push again (log $tl)" }
     elseif ($tc) {
       $sum = @(Get-Content -LiteralPath $tl | Select-String -Pattern '^(Failed checks:|  \[|TEST-DUP|TEST-WRITE|\d+ failure\(s\) in)' | ForEach-Object Line); $sum | ForEach-Object { Write-Host "  $_" }
       # each FAIL named in the recap (no crash, no TEST-DUP): its areas once more alone; green there = a load flake, said, not blocked
@@ -220,7 +228,7 @@ function Invoke-KitNightlyTests([bool]$Idle) {
     elseif (-not $tail -or $tail -notmatch '^0 failure') { "kit tests nightly: $(if ($tail) { $tail } else { 'no total (crashed)' }), $(@(Get-Content -LiteralPath $lf | Select-String -Pattern '^  \[').Count) failed check(s): $lf" }
   }
   if (-not $Idle -or ($s -and ((Get-Date) - [datetime]$s.at).TotalHours -lt (Get-KitParam 'kitTests.nightlyEveryHours')) -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
-  $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "& '$($kt.Replace("'", "''"))' -Full *> '$($lf.Replace("'", "''"))'"
+  $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "& '$($kt.Replace("'", "''"))' -Full -Detached *> '$($lf.Replace("'", "''"))'"
   $st = @{ at = (Get-Date).ToString('o'); read = $false }
   try { $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }; $st.pid = $p.Id; $st.start = $p.StartTime.ToString('o') }
   catch { $st.read = $true; "kit tests nightly: the run did not start ($($_.Exception.Message)); next try in 20 h" }   # stamped: no retry every beat

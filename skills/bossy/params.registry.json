@@ -63,6 +63,7 @@
   "kitAudit.liveBeatMinutes": "config default=60 unit=min",
   "kitTests.pushBusyRamPct": "config default=80 unit=pct",
   "kitTests.pushTimeoutMinutes": "config default=30 unit=min",
+  "kitTests.pushStallMinutes": "config default=10 unit=min",
   "kitTests.nightlyEveryHours": "config default=20 unit=h",
   "writes.softGBPerHour": "config default=2 unit=GB",
   "writes.hardGBPerHour": "config default=5 unit=GB",
