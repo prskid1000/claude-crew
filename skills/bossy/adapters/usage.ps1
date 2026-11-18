@@ -212,6 +212,9 @@ function Format-KitUsageHtml($U) {
       if ($ts.Count -gt 1 -or ($ts.Count -eq 1 -and "$($ts[0].k)" -ne "$($_.k)")) { "<details class='spd f'><summary class=spr>$cells</summary>$(& $typeT $ts)</details>" } else { "<div class='spr f'>$cells</div>" } })
   $mLeg = "<ul class=ocl>$(@($mdl | ForEach-Object { "<li><i class='t-$($mTone["$($_.k)"])'></i>$(& $e (& $mShort $_.k)) <b>$(& $tk $_.sum)</b> · $(& $usd $_.cost) · $($_.n) steps</li>" }) -join '')</ul>"
   $spend = & $fold 'u-spend' 'Spend per role, step type and model' $roles.Count -Open -tag h4 -cls 'sub st uc ur' -inner "$spHead<div class=spl>$($spRows -join '')</div>$mLeg"
+  # est. cost per role, 7 days: labelled bars beside the step outcomes (owner 2026-11-18: no empty block under the right column)
+  $rcR = @($roles | Where-Object { $null -ne $_.cost -and [double]$_.cost -gt 0 } | Sort-Object { -[double]$_.cost } | Select-Object -First 8); $rcAll = [double](($rcR | Measure-Object cost -Sum).Sum)
+  $roleCost = if ($rcR.Count) { & $fold 'u-rolecost' 'Est. cost per role' (& $usd $rcAll) "<div role=img aria-label='est. cost per role, 7 days'>$(@($rcR | ForEach-Object { "<div class=rcr><span class=srn>$(& $e $_.k)</span>$(& $bar ([double]$_.cost) ([double]$rcR[0].cost) "$(& $usd $_.cost) · $(& $pct $_.cost $rcAll)%" 'sage')</div>" }) -join '')</div>" -Open -tag h4 -cls 'sub st uc' }
   $stepRows = { param($ss) @($ss | ForEach-Object { , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), (& $tk $_.tok), "$(& $tk $_.in) / $(& $tk $_.out) / $(& $tk $_.cr) / $(& $tk $_.cw)", (& $mn $_.min), $_.tools, @{ h = "<span class='chip $(switch ($_.result) { 'pass' { 's-act' } 'running' { 's-fin' } 'stuck' { 's-stuck' } 'fail' { 's-stuck' } default { 's-oth' } })'>$(& $e $_.result)</span>" }, "$($_.round)$(if ($_.retry) { " · retry $($_.retry)" })") }) }
   # a run: its human label (mandate / area, the run id in the tooltip), kind chip, resumed, outcome-split step bar; budget bar while running or over 80%
   $kindOf = { param($r) if ($r.kind) { "$($r.kind)" } elseif ("$($r.roles)" -match '^(kitty \d+( · )?)+$') { 'kit' } elseif ("$($r.roles)" -match 'checky') { 'test' } else { 'build' } }
@@ -263,7 +266,7 @@ function Format-KitUsageHtml($U) {
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
   [pscustomobject]@{ runsN = $(if ($shown.Count) { "$($devRuns.Count - $nRunning) ended in 7 days" } else { 0 }); runs = $ended; running = $running; nRunning = $nRunning; tpm = $tpm
     dayRuns = $byDay; days = $dy; mrs = @($U.mrList | Where-Object { $_ })
-    usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })<div class=ug style='--cmin:380px;--cmax:2' data-mas data-fill>$chart$ocCard$share</div>$spend"
+    usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })<div class=ug style='--cmin:380px;--cmax:2' data-mas data-fill>$chart$ocCard$share$roleCost</div>$spend"
     pages = $pages
     usageN = "$(& $tk $td.tok) tokens today" }
 }

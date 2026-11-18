@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L236 state · L283 layer drops · L355 leases · L463 code · L504 migrations ·
-  L507 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L655 shared builds · L788 hooks · L860 marks · L1041 seed ·
-  L1108 processes · L1488 daemon · L1949 cleanup · L2021 doctor · L2074 verbs
+Sections: L36 config · L246 state · L293 layer drops · L365 leases · L473 code · L515 migrations ·
+  L518 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L666 shared builds · L799 hooks · L871 marks · L1052 seed ·
+  L1119 processes · L1499 daemon · L1960 cleanup · L2032 doctor · L2085 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -120,6 +120,7 @@ function EnvNames { if ($script:LE -and $script:LE.envs) { @((Get-KitProps $scri
 function Get-EnvCfg([string]$e) { $c = (Get-KitMember $script:LE.envs $e); if (-not $c) { throw "unknown env '$e' (configured: $((EnvNames) -join ', '))" }; $c }
 function LaneNames([string]$e) { $g = (Get-EnvCfg $e).group; @(EnvNames | Where-Object { (Get-KitMember $script:LE.envs $_).group -eq $g }) }   # lane order
 function Get-RepoCfg([string]$name) {
+  $name = ($name -split '@', 2)[0]   # an env-repo key <repo>@<target> (RepoOf)
   $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1
   if (-not $r) { throw "repo '$name' is not in kit.local.json repos[] (name or alias)" }
   $r
@@ -148,18 +149,27 @@ function EnvRepos([string]$e) {
   $map = [ordered]@{}
   $items = @(EnvServices $e) + @(if ((Get-EnvCfg $e).tasks) { (Get-KitProps (Get-EnvCfg $e).tasks).Value })
   foreach ($s in $items | Where-Object { $_.repo }) {
-    $r = Get-RepoCfg $s.repo
-    $t = if ($s.target) { [string]$s.target } else { [string]$r.target }
-    if ($map.Contains($r.name)) { if ($map[$r.name].target -ne $t) { throw "env $e uses repo $($r.name) with two targets ($($map[$r.name].target), $t): one env = one target per repo" } }
-    else { $map[$r.name] = [pscustomobject]@{ name = $r.name; cfg = $r; target = $t; wt = (Get-KitLaneWorktree $e $r.checkout); live = $false } }
+    $rk = RepoOf $e $s; if ($map.Contains($rk)) { continue }
+    $r = Get-RepoCfg $s.repo; $t = if ($s.target) { [string]$s.target } else { [string]$r.target }
+    $map[$rk] = [pscustomobject]@{ name = $rk; cfg = $r; target = $t; wt = (Get-KitLaneWorktree $e $r.checkout); live = $false }
+    if ($rk -ne $r.name) {   # a second target of the repo: its own lane worktree and branch
+      $ts = ($t -replace '[^\w.-]+', '-').ToLower(); $map[$rk].wt = Join-Path @($KitConf.WorktreeRoots)[0] "lane-$(Get-KitLaneSlug $e)-$ts-$(Split-Path $r.checkout -Leaf)"
+      $map[$rk] | Add-Member branch "$(Get-KitLaneBranch $e)-$ts"; $map[$rk] | Add-Member wtName "lane-$(Get-KitLaneSlug $e)-$ts" }
   }
-  foreach ($s in EnvServices $e | Where-Object { $_.repo -and -not $_.artifact }) { $map[(Get-RepoCfg $s.repo).name].live = $true }
+  foreach ($s in EnvServices $e | Where-Object { $_.repo -and -not $_.artifact }) { $map[(RepoOf $e $s)].live = $true }
   $map
 }
-function RepoOf([string]$e, $s) { if ($s.repo) { (Get-RepoCfg $s.repo).name } else { $null } }
+# env-repo key: the repo name, or <repo>@<target> for a second target in the env (K61e)
+function RepoOf([string]$e, $s) {
+  if (-not $s.repo) { return $null }
+  $r = Get-RepoCfg $s.repo; $t = if ($s.target) { [string]$s.target } else { [string]$r.target }
+  $first = @(@(EnvServices $e) + @(if ((Get-EnvCfg $e).tasks) { (Get-KitProps (Get-EnvCfg $e).tasks).Value }) | Where-Object { $_.repo -and (Get-RepoCfg $_.repo).name -eq $r.name })[0]
+  $t0 = if ($first.target) { [string]$first.target } else { [string]$r.target }
+  if ($t -eq $t0) { $r.name } else { "$($r.name)@$t" }
+}
 function SvcDir([string]$e, $s) {
   if (-not $s.repo) { return $(if ($s.dir) { $s.dir } else { $KitConf.Workspace }) }
-  $wt = (EnvRepos $e)[(Get-RepoCfg $s.repo).name].wt
+  $wt = (EnvRepos $e)[(RepoOf $e $s)].wt
   if ($s.dir) { Join-Path $wt $s.dir } else { $wt }
 }
 function Closure([string]$e, [string[]]$names) {
@@ -179,7 +189,7 @@ function LanIp {
 }
 function Expand-Placeholders([string]$t, [string]$e, $s, [string]$dir, [string]$artifact) {
   if (-not $t) { return $t }
-  $wt = if ($s.repo) { (EnvRepos $e)[(Get-RepoCfg $s.repo).name].wt } else { '' }
+  $wt = if ($s.repo) { (EnvRepos $e)[(RepoOf $e $s)].wt } else { '' }
   if ($t -match '\{aot\}') {   # the AOT cache once a training run wrote it (services[].aotUse, default the JDK 24+ option), else nothing
     $af = AotFile $artifact; $t = $t.Replace('{aot}', $(if ($af -and (Test-Path -LiteralPath $af)) { $(if ($s.aotUse) { [string]$s.aotUse } else { '-XX:AOTCache="{aotFile}"' }).Replace('{aotFile}', $af) } else { '' }))
   }
@@ -472,7 +482,8 @@ function Ensure-Worktree([string]$e, $r) {
   if (Test-Path "$($r.wt)/.git") { return }
   Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
   git -C $co branch -D "localenv/$e" 2>$null | Out-Null   # old names, no worktree: test merges only
-  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch (Get-KitLaneBranch $e) -Target $r.target -Name "lane-$(Get-KitLaneSlug $e)" | ForEach-Object { Write-Host "  $_" }
+  $wb = if ($r.branch) { $r.branch } else { Get-KitLaneBranch $e }; $wn = if ($r.wtName) { $r.wtName } else { "lane-$(Get-KitLaneSlug $e)" }   # a second target (EnvRepos): its own
+  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch $wb -Target $r.target -Name $wn | ForEach-Object { Write-Host "  $_" }
 }
 function Sync-DepLinks([string]$e, $r) {
   $c = $r.cfg
@@ -644,7 +655,7 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
     $l.sha = $sha; $kept += $l
   }
   # services[].prepare: a local-only edit of the env worktree after every sync (a build cache path, ...): committed on localenv/<env>, never pushed
-  foreach ($s in EnvServices $e | Where-Object { $_.prepare -and $_.repo -and (Get-RepoCfg $_.repo).name -eq $r.name }) {
+  foreach ($s in EnvServices $e | Where-Object { $_.prepare -and $_.repo -and (RepoOf $e $_) -eq $r.name }) {
     $sd = SvcDir $e $s; $cd = if ($KitIsWindows) { "cd /d `"$sd`"" } else { "cd `"$sd`"" }
     $code = Invoke-Shell "$cd && $(Expand-Placeholders ([string]$s.prepare) $e $s $sd '')" (LogFile $e "$($s.name)-build") (EnvVars $e $s) ([int](Get-KitParam 'localEnv.prepareTimeoutSec'))
     if ($code) { Write-Warning "[$e] $($s.name) prepare failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')"; continue }
@@ -2307,7 +2318,8 @@ switch ($Action) {
     }
     if (-not $Branch) { throw 'deploy needs -Dir <your worktree> or -Branch <branch>' }
     if ($Branch -match '^(localenv|lane)/') { throw 'that is the env branch itself' }
-    $targets = if ($Repo) { @($Repo | ForEach-Object { (Get-RepoCfg $_).name }) } else { @($envRepos.Values | Where-Object { Resolve-Ref $_.cfg.checkout $Branch } | ForEach-Object name) }
+    # a second target only by name (-Repo <repo>@<target>)
+    $targets = if ($Repo) { @($Repo | ForEach-Object { if ($envRepos.Contains("$_")) { "$_" } else { (Get-RepoCfg $_).name } }) } else { @($envRepos.Values | Where-Object { $_.name -notlike '*@*' -and (Resolve-Ref $_.cfg.checkout $Branch) } | ForEach-Object name) }
     $targets = @($targets | Where-Object { $envRepos.Contains($_) })
     if (-not $targets) { throw "[$e] branch $Branch not found in any repo of this env ($($envRepos.Keys -join ', '))" }
     $shas = @{}; $mig = @{}
@@ -2410,7 +2422,7 @@ switch ($Action) {
   'task' {
     $t = (Get-KitMember (Get-EnvCfg $e).tasks $Task)
     if (-not $t) { throw "env $e has no task '$Task' ($(((Get-KitProps (Get-EnvCfg $e).tasks).Name) -join ', '))" }
-    $rn = (Get-RepoCfg $t.repo).name; $key = "$Agent/task"; Wake-Deferred $e -UntilDone
+    $rn = RepoOf $e $t; $key = "$Agent/task"; Wake-Deferred $e -UntilDone
     $until = (Get-Date).AddMinutes($Wait); $o = @{}
     while ($true) {
       Update-State $e { param($x) Prune $x; if ($rn -notin @($x.train.blockRepos)) { $x.leases[$key] = @{ services = @(); repos = @($rn); release = [int]$x.release.n; note = "task $Task" } + (New-KitLease $Agent $Session -ProcessId $PID); $o.ok = $true } }

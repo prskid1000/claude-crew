@@ -786,7 +786,7 @@ function ProducerOpen($proj, $iid) {
 }
 $script:doneFields = 'doneAt', 'liveOn', 'liveCheckedAt', 'qaCovered'
 function Save($o, [switch]$Run) {
-  # keep concurrent writes; -Run: track add owns holdPromotion / onMerged / wave / planReleased
+  # keep concurrent writes; -Run: track add owns holdPromotion / onMerged / wave / planReleased, add / remove own removed
   Update-KitTracking {
     param($all)
     $cur = $all.tasks[$o.task]
@@ -796,7 +796,7 @@ function Save($o, [switch]$Run) {
       if ($o.done -and -not $cur.done -and [string]$cur.reopenedAt -ne [string]$o.reopenedAt) { $o.done = $false; $o.reopenedAt = $cur.reopenedAt; foreach ($k in $script:doneFields) { $o.Remove($k) } }
       elseif ($cur.done -and -not $o.done -and [string]$cur.reopenedAt -eq [string]$o.reopenedAt -and -not $newMrs.Count) { $o.done = $true; $o.doneAt = $cur.doneAt }
     }
-    if ($cur -and $Run) { foreach ($k in 'holdPromotion', 'onMerged', 'wave', 'planReleased') { if ($cur.ContainsKey($k)) { $o[$k] = $cur[$k] } else { $o.Remove($k) } } }
+    if ($cur -and $Run) { foreach ($k in 'holdPromotion', 'onMerged', 'wave', 'planReleased', 'removed') { if ($cur.ContainsKey($k)) { $o[$k] = $cur[$k] } else { $o.Remove($k) } } }
     if ($cur) { foreach ($k in 'mrs', 'mergeAfter') { $o[$k] = @(@($o[$k]) + @($cur[$k]) | Where-Object { $_ } | Select-Object -Unique) }; if ($cur.discover) { $o.discover = $true } }
     # track remove: a removed MR stays off (discovery, a stale copy); track add -Mrs naming it re-attaches it
     $rmSeen = @{}; $rmList = @(@($cur.removed) + @($o.removed) | Where-Object { $_ -and $_.mr -and -not $rmSeen.ContainsKey("$($_.mr)") -and "$($_.mr)" -notin $script:trackReadd } | ForEach-Object { $rmSeen["$($_.mr)"] = 1; $_ })
@@ -881,6 +881,7 @@ switch ($Action) {
   }
   'run' {
     $script:planRecs = $null   # launches + waves: read once per run
+    $igRefs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys | ForEach-Object { NormRef $_ })   # track ignore + closed: not a task's work
     # a later push cancels merge-when-green
     $am =(Read-KitTracking).automerge
     if ($am.Count -and -not $Task) {
@@ -953,7 +954,7 @@ switch ($Action) {
         $cur = TaskStatus $o.task
         if ($script:gone[$o.task]) { "DROPPED $($o.task): deleted in the tracker, no longer tracked"; continue }
         if (-not (Test-TrackerStatus $cur 'review')) {
-          $allMerged = -not @(@($o.mrs) | Where-Object { (MrState $_) -ne 'merged' }).Count
+          $allMerged = -not @(@($o.mrs) | Where-Object { ($am0 = MrState $_) -ne 'merged' -and -not ($am0 -eq 'closed' -and $_ -in $igRefs) }).Count
           if (-not $allMerged) { $o.Remove('allMergedAt'); Save $o -Run; continue }
           if (-not $o.allMergedAt) { $o.allMergedAt = (Get-Date).ToString('o'); Save $o -Run; continue }
           if (((Get-Date) - [datetime]$o.allMergedAt).TotalMinutes -lt 20) { continue }
@@ -963,7 +964,6 @@ switch ($Action) {
       # no MR = never promote
       if (-not @($o.mrs).Count) { Hold "HOLD $($o.task): no MR registered yet (bossy.ps1 track add -Task $($o.task) -Mrs <repo>!<iid>)"; continue }
       $states = @{}; foreach ($m in $o.mrs) { $states[$m] = MrState $m }
-      $igRefs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys | ForEach-Object { NormRef $_ })   # track ignore + closed: not this task's work
       foreach ($m in @($states.Keys)) { if ($states[$m] -eq 'closed' -and $m -in $igRefs) { $states.Remove($m) } }
       if (-not $states.Count) { Hold "HOLD $($o.task): its only MRs are closed and ignored (bossy.ps1 track remove -Task $($o.task) -Mrs <ref>)"; continue }
       $failed = @($states.GetEnumerator() | Where-Object { $_.Value -match 'pipeline (failed|canceled)|closed|conflict' })

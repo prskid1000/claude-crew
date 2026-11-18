@@ -122,6 +122,11 @@ if (Use-BrowserKit) {   # owner 2026-11-14: one tall tile (15 repos) beside shor
   $pg3 = Join-Path (Kd) 'tiles-uncapped.html'; (Get-Content $pg -Raw).Replace('Math.floor(160-lg', 'Math.floor(9999-lg') | Set-Content $pg3 -Encoding utf8
   $u3 = @(& $py -X utf8 $uiKb ui-check $pg3 --widths 1366 --click '#sec-internals summary,#sec-activity summary' 2>&1)
   Expect "ui-check: an uncapped stretch leaves an empty band above a graph and is flagged ($(@($u3 -match 'empty above its graph|render failed')[0]))" (@($u3 -match 'a stretched tile: \d+ px empty above its graph').Count -ge 1)
+  # owner 2026-11-18: cards 100 / 150 / 250 px: greedy order leaves one column 200 px short; the balancer splits 250 | 250, and uiChecks flags any card grid > 80 px apart
+  $bal = "<div class='ug zbal' style='--cmin:300px;--cmax:2' data-mas><div style='height:100px'>a</div><div style='height:150px'>b</div><div style='height:250px'>c</div></div></body>"
+  $pg4 = Join-Path (Kd) 'balance.html'; $pg5 = Join-Path (Kd) 'balance-greedy.html'; $h4 = (Get-Content $pg -Raw).Replace('</body>', $bal); Set-Content $pg4 $h4 -Encoding utf8; $h4.Replace('if(ba){', 'if(0){') | Set-Content $pg5 -Encoding utf8
+  $u4 = @(& $py -X utf8 $uiKb ui-check $pg4 --widths 1366 2>&1); $u5 = @(& $py -X utf8 $uiKb ui-check $pg5 --widths 1366 2>&1)
+  Expect "ui-check: card columns balance (greedy alone is flagged: $(@($u5 -match 'zbal')[0]))" (-not @($u4 -match 'zbal|render failed').Count -and @($u5 -match 'CLIP ug zbal msn: two-column section: columns end \d+ px apart').Count -ge 1)
   $uiLnk = Join-Path (Kd) 'links.html'   # K26: a kit page link navigates away unless it opens in the drawer (data-dw); a web link needs target=_blank
   [IO.File]::WriteAllText($uiLnk, '<p><a href="runs/a.html">bad1</a> <a href="https://x.test/mr/1">bad2</a> <a href="runs/b.html" data-dw="Run b">ok1</a> <a href="https://x.test/t/2" target="_blank">ok2</a> <a href="#sec">ok3</a> <a href="vscode://file/x">ok4</a></p>')
   $lnkOut = @(& $py -X utf8 $uiKb ui-check $uiLnk --widths 1366 2>&1 | Out-String) -split "`n"

@@ -51,6 +51,8 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
 ## Config
 - Envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`, `smoke`)
   merge by `name`.
+- `services[].target`: a branch other than the repo's `target`; a second target of one repo in an env (an old UI next to the
+  new one) gets its own lane worktree and branch `lane/<product>-<bird>-<target>`, keyed `<repo>@<target>`.
 - `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health, `db.expect` ({ server variable: value })
   and `services[].requiredEnv` (variable names each lane must set, e.g. an integration key); `deploy` stops on its FAIL lines.
 - Service logs move to `.prev` past `logMaxMB` (100; per service too).

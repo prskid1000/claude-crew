@@ -23,11 +23,11 @@ function Get-KitWtHeldTest {
   $claimedAt = $script:KitWtClaimed; $cmdLines = @(Get-SysProcs | Where-Object { $_.Id -ne $PID -and $_.CommandLine } | ForEach-Object { $_.CommandLine.Replace('/', '\').ToLower() })
   { param($p) $l = $p.ToLower(); if ($l -in $claimedAt) { 'a board agent' } elseif (@($cmdLines | Where-Object { $_.Contains($l) }).Count) { 'a running process' } }.GetNewClosure()
 }
-# never deleted: protectedBranchesBase (main/master/develop/release/*), configured lanes' lane/* + localenv/*, protectedBranches, target, deploy branches, origin/HEAD
+# never deleted: protectedBranchesBase (main/master/develop/release/*), configured lanes' lane/* (+ -<target> of a second target) + localenv/*, protectedBranches, target, deploy branches, origin/HEAD
 function Get-KitKeepBranchRx([string]$Repo) {
   $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
   $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @(Get-KitSetting 'protectedBranchesBase' @('main', 'master', 'develop', 'release/*')) }
-  $all = @($base) + @(Get-KitLaneNames | ForEach-Object { "localenv/$_"; Get-KitLaneBranch $_ }) + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
+  $all = @($base) + @(Get-KitLaneNames | ForEach-Object { "localenv/$_"; Get-KitLaneBranch $_; "$(Get-KitLaneBranch $_)-*" }) + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
   '^(' + (@($all | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape("$_") -replace '\\\*', '.+' }) -join '|') + ')$'
 }
 # may a local branch go? delete + why; $Ctx caches per repo (keep rx, checkouts, bases, host MR refs)

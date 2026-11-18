@@ -206,7 +206,7 @@ function Invoke-KitNightlyTests([bool]$Idle) {
   if ($s -and -not $s.read -and -not (Test-KitPid $s.pid $s.start)) {   # finished since the last beat: read once
     $s | Add-Member -Force NoteProperty read $true; Write-KitAtomic $sf ($s | ConvertTo-Json -Compress)
     $tail = @(Get-Content -LiteralPath $lf -ErrorAction SilentlyContinue | Select-String -Pattern '^(\d+) failure\(s\) in' | ForEach-Object Line)[-1]
-    if (-not $tail -and $s.start -and (Get-KitBootTime) -gt [datetime]$s.start) {   # the machine restarted mid-run: no crash; due again at the next idle beat
+    if (-not $tail -and $s.start -and (Get-KitBootTime) -gt [datetime]$s.start) {   # the machine restarted mid-run: no crash; due again at the next idle beat (a real crash then shows on that run)
       $s.at = ([datetime]$s.start).AddHours(-21).ToString('o'); $s | Add-Member -Force NoteProperty cut 'machine restart'; Write-KitAtomic $sf ($s | ConvertTo-Json -Compress) }
     elseif (-not $tail -or $tail -notmatch '^0 failure') { "kit tests nightly: $(if ($tail) { $tail } else { 'no total (crashed)' }), $(@(Get-Content -LiteralPath $lf | Select-String -Pattern '^  \[').Count) failed check(s): $lf" }
   }

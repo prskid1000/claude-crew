@@ -226,4 +226,12 @@ $evo = & { . $evL
   "$keys|$($vv.KIT_T_EMPTY -eq '')|$script:inEmpty|$after|$inh|$($script:SharedStage -is [hashtable] -and $script:BuildKeys -is [hashtable] -and $script:CheckBuild -is [hashtable])" }
 Expect "lane env: comments ignored, an empty key not exported, a var unset before With-Env is unset after, _exec drops inherited empties, adapter state set ($evo)" ($evo -eq 'KIT_T_A,KIT_T_EMPTY|True|True|unset|True/True/v|True')
 Remove-TestKit $evKit
+# K61e: one repo at two targets in one env (an old UI next to the new one): its own key, lane worktree and branch; the first target keeps the plain ones
+$tvKit = New-LocalEnvKit le2t; $tvL = Join-Path $tvKit 'skills/envy/envy.ps1'
+Set-JsonFile (Join-Path $tvKit 'skills/crafty/kit.local.json') @{ worktreeRoots = @("$tvKit/wts"); repos = @(@{ name = 'web'; checkout = "$tvKit/web"; target = 'main' }); localEnv = @{ envs = @{ shop = @{ services = @(
+  @{ name = 'ui'; repo = 'web'; dir = 'new'; target = 'next'; port = 4200 }, @{ name = 'ui-old'; repo = 'web'; dir = 'old'; port = 4201 }) } } } } 8
+$tvo = & { . $tvL; $m = EnvRepos shop; $o = $m['web@main']; $n = $m['web']
+  "$(@($m.Keys) -join ',')|$($n.target)|$($o.target)|$($o.branch)|$((Split-Path $o.wt -Leaf) -ne (Split-Path $n.wt -Leaf))|$($o.wtName)|$(RepoOf shop (Svc shop 'ui-old'))|$((Split-Path (SvcDir shop (Svc shop 'ui-old')) -Leaf))|$((Get-RepoCfg 'web@main').name)|$(-not $n.branch)" }
+Expect "envy: a second target of a repo gets its own env-repo key, lane worktree and branch ($tvo)" ($tvo -match '^web,web@main\|next\|main\|lane/shop-\w+-main\|True\|lane-shop-\w+-main\|web@main\|old\|web\|True$')
+Remove-TestKit $tvKit
 Complete-Tests

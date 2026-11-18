@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L72 pause · L84 spike · L116 flags · L187 waits · L198 cpu
+Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L192 waits · L203 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -61,8 +61,13 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
     }
     foreach ($h in @($ev.holds | Where-Object owner)) { $own += "owner hold $($ev.env) [$(@($h.services) -join ',')] until $($h.until) (unhold -Env $($ev.env) -Agent $($h.who) when done)" }
     # K20n: a down service a live (not grace) holder needs flags in the sweep that reads it, not only as a row
-    foreach ($d1 in @($down | Where-Object { $_.state -notmatch '^start' })) { $lh = @($holders | Where-Object { $null -eq $_.graceLeft -and $d1.service -in @($_.services) } | ForEach-Object { if ($_.agent) { $_.agent } else { $_.who } } | Select-Object -Unique)
-      if ($lh.Count) { $fl.Add([pscustomobject]@{ level = $(if ($d1.state -eq 'blocked') { 'WATCH' } else { 'ACT' }); what = "SERVICE DOWN: $($ev.env) $($d1.service) is $($d1.state)$(if ($d1.why) { " ($($d1.why))" }) while $($lh -join ', ') hold$(if ($lh.Count -eq 1) { 's' }) it"; action = "kitty kind env: & $($KitCmd.local) logs -Env $($ev.env) -Service $($d1.service), then restart -Env $($ev.env) -Services $($d1.service)" }) } }
+    # a stop the env controller made on purpose (idle, memory pressure: why "idle...") restarts on demand: WATCH, ACT only once a holder
+    # has used the lane for localEnv.plannedDownActMinutes with the service still down
+    $pdMin = [double](Get-KitParam 'localEnv.plannedDownActMinutes')
+    foreach ($d1 in @($down | Where-Object { $_.state -notmatch '^start' })) { $lho = @($holders | Where-Object { $null -eq $_.graceLeft -and $d1.service -in @($_.services) }); $lh = @($lho | ForEach-Object { if ($_.agent) { $_.agent } else { $_.who } } | Select-Object -Unique)
+      $planned = "$($d1.why)" -match '^idle'; $stale = @($lho | Where-Object { $null -ne $_.ageMin -and [double]$_.ageMin -ge $pdMin -and $null -ne $_.usedMinAgo -and [double]$_.usedMinAgo -le $pdMin }).Count
+      $lvl = if ($d1.state -eq 'blocked' -or ($planned -and -not $stale)) { 'WATCH' } else { 'ACT' }
+      if ($lh.Count) { $fl.Add([pscustomobject]@{ level = $lvl; what = "SERVICE DOWN: $($ev.env) $($d1.service) is $($d1.state)$(if ($d1.why) { " ($($d1.why))" }) while $($lh -join ', ') hold$(if ($lh.Count -eq 1) { 's' }) it"; action = $(if ($lvl -eq 'WATCH' -and $planned) { "Nothing to do: it starts on its holder's next use (ACT if still down after $pdMin min of use)" } else { "kitty kind env: & $($KitCmd.local) logs -Env $($ev.env) -Service $($d1.service), then restart -Env $($ev.env) -Services $($d1.service)" }) }) } }
     if ($down.Count) { $rows.Add([pscustomobject]@{ name = "$($ev.env) · $(($down | ForEach-Object service) -join ' · ') (down)"; by = "$(@($down | ForEach-Object { if ("$($_.why)" -match 'memory|RAM') { 'memory' } elseif ($_.why) { "$($_.why)".Substring(0, [math]::Min(30, "$($_.why)".Length)) } else { $_.state } } | Select-Object -Unique) -join ', ')"; gb = 0 }) }
   }
   $ur = @(foreach ($u in $up.Values) { $g = @($u.gl | Sort-Object)[0]
