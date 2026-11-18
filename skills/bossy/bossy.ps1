@@ -27,8 +27,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L34 init · L45 board · L223 budget · L253 launch · L494 recover · L581 pause · L592 resume · L659 program · L710 param ·
-  L716 track · L1056 supervise · L1370 report · L1450 audit · L1510 storage · L1513 bugbrief · L1627 cleanup · L1712 learn ·
-  L1743 decide · L1894 debate · L1938 health · L2001 retro due · L2011 tidy · L2083 setup · L2180 guard-sendmessage
+  L716 track · L1058 supervise · L1372 report · L1452 audit · L1512 storage · L1515 bugbrief · L1629 cleanup · L1714 learn ·
+  L1745 decide · L1896 debate · L1940 health · L2003 retro due · L2013 tidy · L2085 setup · L2182 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -749,7 +749,9 @@ $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # throw is swallowed under SilentlyContinue
 function Fail([string]$m) { Stop-KitVerb "track: $m" 1 }
-if ($Action -eq 'ignore') { Add-KitMrIgnore @(Split-KitList $Mrs) $Reason; return }
+if ($Action -eq 'ignore') { Add-KitMrIgnore @(Split-KitList $Mrs) $Reason
+  # an MR of a task stays in its MR set: name the verb that drops it (a task waited on a closed, ignored MR)
+  $igTasks = (Read-KitTracking).tasks; foreach ($igR in @(Split-KitList $Mrs | ForEach-Object { NormRef $_ })) { foreach ($igT in @($igTasks.Values | Where-Object { @($_.mrs | ForEach-Object { NormRef $_ }) -contains $igR })) { "NOTE $igR is an MR of task $($igT.task): ignore only hides it from the untracked-MR watch; to drop it from the task: bossy.ps1 track remove -Task $($igT.task) -Mrs $igR" } }; return }
 if ($Action -eq 'show') { $rows = (Read-KitTracking).tasks
   foreach ($id in @(if ($Task) { NormTask $Task } else { $rows.Values | Where-Object { -not $_.done } | ForEach-Object task })) { $o = $rows[$id]; if (-not $o) { Fail "show: $Task untracked" }
     "$id : $(@($o.mrs) -join ', ') | $(if ($o.done) { 'done' } else { 'open' })$(if ($o.holdPromotion) { " | HELD: $($o.holdPromotion)" })" }; return }
@@ -921,7 +923,7 @@ switch ($Action) {
       if ($o.lagLine -and -not $o.holdPromotion -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt 30 -and -not $Quiet) { $o.lagLine }
       if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge 30)) {
         $o.lagAt = (Get-Date).ToString('o'); $o.Remove('lagLine'); Save $o -Run
-        $ms = @($o.mrs | ForEach-Object { MrState $_ }); $ls = TaskStatus $o.task
+        $ms = @($o.mrs | Where-Object { -not ((MrState $_) -eq 'closed' -and $_ -in $igRefs) } | ForEach-Object { MrState $_ }); $ls = TaskStatus $o.task
         if ($ls -and @($ms | Where-Object { "$_" -like 'opened*' }).Count -and (Test-TrackerStatus $ls 'open')) {
           $lr = try { $null = Set-TrackerStatus $o.task 'review'; "DONE $($o.task): status '$ls' -> review (its MR is open)" } catch { "ATTENTION $($o.task): could not set status 'review' (status '$ls' lags its open MR): $_" }
           if (-not $Quiet) { $lr }

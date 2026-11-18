@@ -668,7 +668,7 @@ function Get-KitSuperviseGuardGpu([switch]$AutoFix) {
   if ($h.Count -or $st.waiting.Count) { "gpu: $(if ($h.Count) { "held by $(@($h | ForEach-Object { "$($_.kind) $($_.holder)" }) -join ', ')" } else { 'free' })$(@($st.waiting | ForEach-Object { "; waiting for GPU: $($_.kind) $($_.holder) (held by $($_.heldBy))" }) -join '')" }
 }
 
-function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw, [string]$Cwd, [string]$In) {   # -Raw: the argument string as is (cmd.exe /s /c "<command>"); -In: stdin text (long SQL: the command line caps at 32k)
+function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw, [string]$Cwd, [string]$In) {   # -Raw: arguments as is (cmd.exe /s /c "<command>"); -In: stdin text (command line caps at 32k)
   $res = { param($c, $o, $e, $t = $false) [pscustomobject]@{ code = $c; out = $o; err = $e; timedOut = $t } }
   $cmd = Get-Command $Exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($cmd.CommandType -eq 'ExternalScript') { $app = Get-Command $Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($app) { $cmd = $app } }   # an npm .ps1 shim: its .cmd keeps the timeout
@@ -688,7 +688,7 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [strin
   $feed = $PSBoundParameters.ContainsKey('In'); if ($feed) { $si.RedirectStandardInput = $true; $si.StandardInputEncoding = [Text.UTF8Encoding]::new($false) }
   $p = [Diagnostics.Process]::Start($si)
   $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()   # readers first: a full stdout pipe would block the stdin write
-  if ($feed) {   # async + timed: a child that never reads stdin must not hang the write; it may exit before reading it all
+  if ($feed) {   # async + timed: a child that never reads stdin must not hang the write
     try { if (-not $p.StandardInput.WriteAsync($In).Wait($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s (stdin not read)" $true }; $p.StandardInput.Close() } catch [IO.IOException] {} catch [AggregateException] {}
   }
   if (-not $p.WaitForExit($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s" $true }
@@ -922,7 +922,7 @@ function Read-KitTranscriptTail([string]$File, [string]$Want, [scriptblock]$Each
 # adapter:transcript/claude: <project dir>/<session>/subagents/**/agent-*.jsonl; its named task *.output files = progress
 Register-KitAdapter 'transcript' 'claude' @{
   'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }); filter = '*.jsonl' } }
-  'last' = { param($a) $seen = @{ n = 0 }   # after the newest tool call: up to 3 older assistant records for its one-line text
+  'last' = { param($a) $seen = @{ n = 0 }   # up to 3 older assistant records for its one-line text
     $s = Read-KitTranscriptTail $a.file '"tool_use"|"type":"text"' { param($o, $s) if ($o.type -ne 'assistant') { return [bool]$s.tool -and ++$seen.n -ge 3 }
       $c = @($o.message.content); $tx = $null
       if (-not $s.tool) { $u = @($c | Where-Object { $_.type -eq 'tool_use' })[-1]; if (-not $u) { return $false }; $s.tool = "$($u.name)"; $s.what = Get-KitToolWhat $u; $tx = @($c[0..([array]::IndexOf($c, $u))] | Where-Object { $_.type -eq 'text' })[-1] }
@@ -1082,7 +1082,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
 function Format-KitCell($Text, [int]$Max = 12, [switch]$Exact) {
   $t = "$Text" -replace '[\r\n]+', ' '
   if (-not $Exact) { $t = $t -replace '\bwf_([0-9a-f]{8})[0-9a-f-]*', '$1' -replace '\b20\d\d-\d\d-\d\d-(?=\S)', '' }
-  $t = $t -replace '(\\*)\|', '$1$1\|'   # escaped before the split (backslashes doubled: \\| ends the cell); never split inside \|
+  $t = $t -replace '(\\*)\|', '$1$1\|'   # escaped before the split; never split inside \|
   $out = [Collections.Generic.List[string]]::new()
   foreach ($w in @($t -split '\s+' | Where-Object { $_ })) {
     if ($w.Length -le $Max -or $w -match '^-[A-Za-z]+$') { $out.Add($w); continue }   # a split -Parameter is a broken command (-Hold Promotion)
@@ -1196,7 +1196,7 @@ function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scr
     if (-not $busy) {
       Remove-Item -LiteralPath "$base.out", "$base.err" -Force -ErrorAction SilentlyContinue
       $fileArgs = @('-NoProfile', '-NonInteractive', '-File', "`"$Script`"") + @($A | ForEach-Object { if ("$_" -match '\s') { "`"$_`"" } else { "$_" } })
-      # Windows: -Redirect* inherits the caller's stdout (a -Brief hung 120+ s): a hidden pwsh runs it
+      # Windows: -Redirect* inherits the caller's stdout (a -Brief hung 120+ s)
       $sq = { param($s) "'$("$s" -replace '([\u2018-\u201B''])', '$1$1')'" }   # PowerShell reads the smart quotes as ' too
       $bc = "(Start-Process pwsh -ArgumentList $(@($fileArgs | ForEach-Object { & $sq $_ }) -join ',') -NoNewWindow -PassThru -RedirectStandardOutput $(& $sq "$base.out") -RedirectStandardError $(& $sq "$base.err")).WaitForExit()"
       $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-ec', ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bc))) -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $fileArgs -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
@@ -1219,11 +1219,10 @@ $__trNoneDir = Get-KitPath tracker-none
 $__trStatus = [ordered]@{}
 foreach ($__src in @($script:KitVocab.statuses, (Get-KitSetting 'tracker.statuses' $null))) { if ($__src) { foreach ($__p in (Get-KitProps $__src)) { $__trStatus[$__p.Name] = @($__p.Value | Where-Object { "$_".Trim() } | ForEach-Object { [string]$_ }) } } }
 
-function Resolve-TrackerStatus([string]$Status) {
-  foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { return "$(@($__trStatus[$k])[0])" } }   # '' = the status is off
-  $Status
-}
-function Test-TrackerStatusOff([string]$Status) { foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { return -not @($__trStatus[$k]).Count } }; $false }
+# in-test, in test -> inTest
+function ConvertTo-TrackerStatusKey([string]$Status) { $n = $Status -replace '[\s_-]'; foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $n) { return $k } }; $Status }
+function Resolve-TrackerStatus([string]$Status) { $k = ConvertTo-TrackerStatusKey $Status; if ($__trStatus.Contains($k)) { "$(@($__trStatus[$k])[0])" } else { $Status } }   # '' = the status is off
+function Test-TrackerStatusOff([string]$Status) { $k = ConvertTo-TrackerStatusKey $Status; $__trStatus.Contains($k) -and -not @($__trStatus[$k]).Count }
 function Test-TrackerStatus([string]$Status, [string[]]$Logical) {
   foreach ($l in $Logical) { foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $l -and (@($__trStatus[$k]) | Where-Object { $_ -ieq "$Status".Trim() })) { return $true } } }
   $false
@@ -1402,6 +1401,7 @@ function Invoke-KitOutbox([switch]$DryRun) {
   }
 }
 function Set-TrackerStatus([string]$Id, [string]$Status) {
+  $Status = ConvertTo-TrackerStatusKey $Status
   if (Test-TrackerStatusOff $Status) { Write-Host "tracker: $Id status $Status skipped (tracker.statuses.$Status is null)"; return }
   # promoted: process.gates.promote (builtin:testingDocs: the doc links; an unread task fails closed)
   if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and -not ($pg = Test-KitProcessGate promote @{ task = $Id; status = $Status }).ok) {
@@ -1475,7 +1475,7 @@ function Get-KitKindPrefix([string]$Kind) {
   $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $p = if ($kp) { @((Get-KitProps $kp) | Where-Object { $_.Name -ieq $Kind } | ForEach-Object { "$($_.Value)" })[0] }
   if ($p) { $p } elseif ($Kind -ieq 'bug') { [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]') } elseif ($Kind) { "[$Kind]" } else { '' }
 }
-function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kindPrefixes besides bug; default [Feature] [Chore])
+function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kindPrefixes)
   $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { (Get-KitProps $kp).Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
   $n = "$Name".TrimStart(); [bool]@($ks | Where-Object { $n.StartsWith((Get-KitKindPrefix $_), 'OrdinalIgnoreCase') }).Count
 }
@@ -1926,7 +1926,7 @@ function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
   $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq ($Repo -split '/')[-1] } | Select-Object -First 1
   [bool]($Target -and $r -and $Target -in @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }))
 }
-function Get-KitRepoSweep { $rf = Get-KitPath repo-sweep; if (Test-Path -LiteralPath $rf) { try { $o = Read-KitText $rf | ConvertFrom-Json; $o.at = [IO.File]::GetLastWriteTime($rf).ToString('o'); $o } catch { $null } } }   # the last cleanup's counts per repo; at = the file time (an unchanged sweep only touches it)
+function Get-KitRepoSweep { $rf = Get-KitPath repo-sweep; if (Test-Path -LiteralPath $rf) { try { $o = Read-KitText $rf | ConvertFrom-Json; $o.at = [IO.File]::GetLastWriteTime($rf).ToString('o'); $o } catch { $null } } }   # last cleanup's counts per repo; at = the file time
 
 # ---- kitlog: every log line (kit.example.json _paths.log)
 $script:KitLogMap = $script:KitPathMap.log
@@ -2201,7 +2201,7 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
       $e.fresh = [int]$e.fresh + 1; if (-not ($e.fresh % 5)) { & $enq $o.key $ctx 'n:5' }
       $hr = ([datetime]$o.at).ToString('yyyy-MM-ddTHH'); if ($e.lastHour -and $e.lastHour -ne $hr) { & $enq $o.key $ctx 'hourly' }; $e.lastHour = $hr
       if ($o.lb -and $e.lb -and $o.lb -ne $e.lb) { & $enq $o.key $ctx 'load' }; if ($o.lb) { $e.lb = "$($o.lb)" }
-      # failure (timeout, oom, short; not a failed build): one safe step; a timeout-class key moves by the 10% rule (RFC 6298)
+      # timeout / oom / short (not a failed build): one safe step; timeout keys move 10% (RFC 6298)
       if ($o.r -in 'timeout', 'oom', 'short' -and [double]$e.d -gt 0) { & $enq $o.key $ctx 'fail'; $e.lastFail = $st.cursor }
       if ($o.r -eq 'timeout' -and $sp.class -eq 'timeout') {
         $okv = [double[]]@($e.obs | Where-Object { $_[2] -eq 'ok' } | ForEach-Object { [double]$_[1] })

@@ -185,39 +185,6 @@ $a1 = @($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*win
 "ask:$([bool]$a1 -and -not @($r | Where-Object { "$($_.what)" -match '^DEPLOY ASK' }).Count)"
 '@
 Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names (#)' @('none', 'good', 'oa', 'stale', 'watch', 'empty', 'live', 'intest', 'ask')
-$ht = @'
-$env:KIT_TRACKER_TYPE = 'none'
-. $args[0]
-function Within($n) { $true }; function Invoke-Bounded { @() }
-$gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())
-$pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'; $now = Get-Date
-$cacheOf = { param([string[]]$m) @{ at = $now.ToString('o'); asked = $now.ToString('o'); ready = @("stage ($($m.Count) MR(s))"); ask = @("stage: $($m.Count) MR(s) ($($m -join ', '))"); mrsOf = @{ stage = $m } } | ConvertTo-Json -Depth 4 | Set-Content $pc }
-$word = { param($id, $ans, $q = 'deploy stage', $min = 1) Write-KitLog decisions-log answered ([ordered]@{ id = $id; kind = 'decision'; item = 'stage,other'; gate = 'deploy'; question = $q; answer = $ans; by = 'owner'; answeredAt = $now.AddMinutes(-$min).ToString('o'); mrs = @() }) }
-$acts = { param($r) @($r | Where-Object level -eq 'ACT' | ForEach-Object what) -join ';' }
-& $cacheOf @('api!1'); & $word 'd-20260101000000-coordinator-aa11' 'dont deploy stage' 'deploy stage' 3
-$r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
-"held:$(-not (& $acts $r) -and ($r.info -join ';') -eq 'deploy stage held by owner: aa11' -and (Get-Content $pc -Raw | ConvertFrom-Json).held.stage.id -eq 'd-20260101000000-coordinator-aa11')"
-& $cacheOf @('api!1', 'api!2'); $held = (Get-Content $pc -Raw | ConvertFrom-Json); $held | Add-Member -Force NoteProperty held ([pscustomobject]@{ stage = @{ id = 'd-20260101000000-coordinator-aa11'; mrs = @('api!1') } }); $held | ConvertTo-Json -Depth 5 | Set-Content $pc
-$r1 = @(Get-KitSuperviseFlagsDeploys -AutoFix); $r2 = @(Get-KitSuperviseFlagsDeploys -AutoFix)
-"fresh:$((& $acts $r1) -match '^DEPLOY ASK stage: 2 MR\(s\) .*new since hold aa11: api!2' -and -not (& $acts $r2) -and ($r2.info -join ';') -match 'held by owner: aa11')"
-& $word 'd-20260101000100-coordinator-bb22' 'yes, deploy stage'; $r = @(Get-KitSuperviseFlagsDeploys)
-"yes:$((& $acts $r) -match '^DEPLOY GO stage: approved \(bb22, owner\)' -and (& $acts $r) -notmatch 'DEPLOY ASK' -and @($r.info -match '^deploy ready: stage').Count -eq 1)"
-& $word 'd-20260101000200-opsy-stage-cc33' "wait: retry $($now.AddMinutes(30).ToString('HH:mm'))" 'host stayed busy' 0; $r = @(Get-KitSuperviseFlagsDeploys)
-"wait:$(-not (& $acts $r) -and ($r.info -join ';') -eq "deploy stage waiting: host busy, retry $($now.AddMinutes(30).ToString('HH:mm')) (cc33)")"
-$now = $now.AddMinutes(31); $r = @(Get-KitSuperviseFlagsDeploys)
-"due:$((& $acts $r) -match '^DEPLOY RETRY stage: host busy, wait cc33 due since' -and (& $acts $r) -notmatch 'DEPLOY ASK')"
-& $word 'd-20260101000300-coordinator-dd44' 'yes: standing rule' 'deploy stage' 0; $r = @(Get-KitSuperviseFlagsDeploys)   # a yes after a wait of the last 12 h: still that retry
-"retry:$((& $acts $r) -match '^DEPLOY RETRY stage: host busy, wait cc33' -and (& $acts $r) -notmatch 'DEPLOY (ASK|GO)')"
-& $cacheOf @('api!1', 'api!2', 'api!3'); & $word 'd-20260101000400-coordinator-ee55' 'keep stage hanges held' 'deploy stage' -1; $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
-"all:$(-not (& $acts $r) -and ($r.info -join ';') -match 'deploy stage held by owner: ee55')"
-$gs2 = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.hold') { @('stage') } else { & $gs2 @args } }.GetNewClosure())
-& $word 'd-20260101000500-coordinator-ff66' 'yes' 'deploy stage' -2; $r = @(Get-KitSuperviseFlagsDeploys)
-"cfg:$(-not (& $acts $r) -and ($r.info -join ';') -match 'deploy stage held by config: deploy.hold')"
-"kinds:$((@('dont deploy hm', 'No', 'hold it', 'wait: not urgent, never cut a live turn', 'Deploy tomorrow', 'yes: standing rule', 'deploy if needed', 'Sure, no problem', 'Please deploy now, no need to hold', 'test prod pipelines also', 'keep hm hanges held', 'dnt deploy hm', 'no deploy for hm yet', 'HM: merge and promote, never deploy', 'No problem, go ahead', 'do not wait, deploy', 'No problem, but hold hm') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
-'@
-$hr = Invoke-PsTest 'deploy-holds' $ht @($O)
-Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too) (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg')
-Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear,noAll,no,no,noAll,yes,yes,no')
 # a deploy MR (into deploys[].branch) feeds its own target only; from / paths pick an MR's targets in the intest gate too; old requests expire
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da' }, @{ target = 'b-st'; branch = 'st/b'; job = 'db' }) }) } $cfgF
 & $J @{ tasks = @{ g = @{ task = 'g'; mrs = @('jc!1', 'jc!2'); done = $true; doneAt = $now } }; automerge = @{} } $tf
@@ -230,9 +197,16 @@ Expect 'deploy plan: a request older than -Days expires, a new one stays' ((@((G
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da'; paths = @('a/api/**', 'common/**') }, @{ target = 'b-st'; branch = 'st/b'; job = 'db'; paths = @('b/**', 'common/**') }) }); productTargets = @(@{ pathRegex = '^a/'; targetRegex = '^a-'; label = 'A env' }, @{ pathRegex = '^b/'; targetRegex = '^b-'; label = 'B env' }) } $cfgF
 $fq2 = Join-Path (Kd) 'fake-deployed-gate.ps1'
 Set-Content $fq2 @'
-$m = $args[[array]::IndexOf($args, '-Mrs') + 1]; $live = @{ 'jc!1' = 'b-st'; 'jc!4' = 'b-st'; 'jc!5' = 'b-st' }[$m]
-ConvertTo-Json -Compress @('a-st', 'b-st' | ForEach-Object { @{ mr = $m; target = $_; state = $(if ($_ -eq $live) { 'DEPLOYED' } else { 'NOT-DEPLOYED' }); detail = "not on $_ yet" } })
+foreach ($m in @("$($args[[array]::IndexOf($args, '-Mrs') + 1])" -split ',')) { $live = @{ 'jc!1' = 'b-st'; 'jc!4' = 'b-st'; 'jc!5' = 'b-st' }[$m]
+  if ($m -eq 'jc!6') { ConvertTo-Json -Compress @(@{ mr = $m; target = ''; state = 'NOT-MERGED'; detail = 'closed' }); continue }
+  ConvertTo-Json -Compress @('a-st', 'b-st' | ForEach-Object { @{ mr = $m; target = $_; state = $(if ($_ -eq $live) { 'DEPLOYED' } else { 'NOT-DEPLOYED' }); detail = "not on $_ yet" } }) }
 '@ -Encoding utf8
+# a probe that checks 2 MRs per call (its -TimeoutSec), the rest "not checked": rounds go on until every MR is checked
+$fq3 = Join-Path (Kd) 'fake-deployed-slow.ps1'; $calls = Join-Path (Kd) 'probe-calls.txt'
+Set-Content $fq3 @"
+`$ms = @("`$(`$args[[array]::IndexOf(`$args, '-Mrs') + 1])" -split ','); Add-Content '$calls' `$ms.Count; `$i = 0
+foreach (`$m in `$ms) { ConvertTo-Json -Compress @(if (`$i++ -lt 2) { @{ mr = `$m; target = 'a-st'; state = 'DEPLOYED'; detail = 'live' }, @{ mr = `$m; target = 'b-st'; state = 'DEPLOYED'; detail = 'live' } } else { @{ mr = `$m; target = 'b-st'; state = 'UNKNOWN'; detail = 'not checked: -TimeoutSec 2 reached' } }) }
+"@ -Encoding utf8
 $ug = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
@@ -251,13 +225,20 @@ function Has($n, $rx) { [bool]@($o | Where-Object { $_ -match "^$n=$rx" }).Count
 "paths:$(Has 4 'MARK .*jc!4 on b-st\b')"
 "shared:$(Has 5 'WAIT .*jc!5 not live on: a-st \(NOT-DEPLOYED: not on a-st yet\)')"
 $KitCmd.qa = $args[2]; $hg = @(Invoke-MarkInTest -Task t3,t5 -TimeoutSec 2 -Quiet:$false | Where-Object { $_ -match '^WAIT' }); $KitCmd.qa = $args[1]   # K31: a hung check is bounded, per MR and per run
-"hang:$($hg.Count -eq 2 -and [bool]($hg -match 'jc!\d deployed check timed out after \d+ s') -and [bool]($hg -match 'jc!\d not checked: the intest budget'))"   # task order varies
+"hang:$($hg.Count -eq 2 -and @($hg -match 'jc!\d deployed check timed out after \d+ s').Count -eq 2)"   # one probe for both: a hung host ends the rounds
+$KitCmd.qa = $args[3]; $many = @(Invoke-MarkInTest -Task (@(1..10 | ForEach-Object { "u$_" }) -join ',') -Quiet:$false); $KitCmd.qa = $args[1]   # 2026-11-18: 10 tasks, the budget checked 6
+"rounds:$(@($many -match '^MARK ').Count -eq 10 -and (@(Get-Content $args[4]) -join ',') -eq '10,8,6,4,2' -and [bool]($many -match '^PROBE 10 MR\(s\) checked in 5 round'))"
+$ci = @(Invoke-MarkInTest -Task t6,t7 -Quiet:$false | Where-Object { $_ -match '^(MARK|WAIT)' })   # jc!6: closed, track ignore
+"closed:$([bool]($ci -match '^MARK\s+t6 .*jc!1 on b-st') -and -not ($ci -match 'jc!6 on') -and [bool]($ci -match '^WAIT\s+t7\s+its only MRs are closed and ignored'))"
 $null = Invoke-MarkInTest -Task t1 -Apply -Quiet; "keyed:$("$global:kc" -eq 't1|comment-intest' -and $global:kt -match '\[jc!1\]\(https://git\.example/\S*jc/-/merge_requests/1\) on b-st')"
 $fs = Format-KitInTestSummary 63 62 1 14 $false ([ordered]@{ 'moved to in test' = @('a'); 'already closed' = @('b', 'c'); 'not deployed yet' = @('d'); 'blocked' = @('e: no status') })
 "summary:$($fs -eq 'mark-in-test: 63 task(s) checked (62 promoted by the kit in 14 d, subtasks included, 1 more assigned to you in trackerLists): 1 moved to in test, 2 already closed, 1 not deployed yet, 1 blocked (e: no status)')"
 '@
-& $J @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('jc!1') }; t2 = @{ task = 't2'; mrs = @('jc!2') }; t3 = @{ task = 't3'; mrs = @('jc!3') }; t4 = @{ task = 't4'; mrs = @('jc!4') }; t5 = @{ task = 't5'; mrs = @('jc!5') } }; automerge = @{} } $tf
-$hang = Join-Path (Kd) 'hang.ps1'; Set-Content $hang 'Start-Sleep 60'; $res = Invoke-PsTest 'intest-gate' $ug @($O, $fq2, $hang)
-Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside; the in-test note is ONE comment edited in place; the summary counts each outcome and says where the tasks came from (#)' @('live', 'record', 'wait', 'paths', 'shared', 'hang', 'keyed', 'summary') 20
+& $J @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('jc!1') }; t2 = @{ task = 't2'; mrs = @('jc!2') }; t3 = @{ task = 't3'; mrs = @('jc!3') }; t4 = @{ task = 't4'; mrs = @('jc!4') }; t5 = @{ task = 't5'; mrs = @('jc!5') }; t6 = @{ task = 't6'; mrs = @('jc!1', 'jc!6') }; t7 = @{ task = 't7'; mrs = @('jc!6') } }; automerge = @{} } $tf
+$tu = Read-Json $tf; foreach ($n in 1..10) { $tu.tasks | Add-Member -Force NoteProperty "u$n" @{ task = "u$n"; mrs = @("jc!$(10 + $n)") } }; & $J $tu $tf
+$ign = Px $O track ignore -Mrs 'jc!6' -Reason 'wrong task' | Out-String
+Expect 'track ignore: an MR of a task names track remove (ignore only hides the untracked-MR watch)' ($ign -match 'NOTE jc!6 is an MR of task t6: .*bossy\.ps1 track remove -Task t6 -Mrs jc!6' -and $ign -match 'task t7')
+$hang = Join-Path (Kd) 'hang.ps1'; Set-Content $hang 'Start-Sleep 60'; $res = Invoke-PsTest 'intest-gate' $ug @($O, $fq2, $hang, $fq3, $calls)
+Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside; ONE probe for all tasks, rounds until every MR is checked; a closed ignored MR is not the task''s work; the in-test note is ONE comment edited in place; the summary counts each outcome and says where the tasks came from (#)' @('live', 'record', 'wait', 'paths', 'shared', 'hang', 'rounds', 'closed', 'keyed', 'summary') 20
 Remove-TestKit $k
 Complete-Tests

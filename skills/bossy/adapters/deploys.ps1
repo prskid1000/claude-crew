@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L212 deploy · L384 restart · L432 supervise
+Sections: L14 helpers · L93 intest · L248 deploy · L420 restart · L468 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -94,7 +94,7 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
 param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @())   # not $Mrs: pwsh names ignore case ($mrs below)
-$ErrorActionPreference = 'SilentlyContinue'; $intestEnd = (Get-Date).AddSeconds(3 * $TimeoutSec)   # every deployed check of this run together
+$ErrorActionPreference = 'SilentlyContinue'
 function Out-Line($s) { if (-not $Quiet -or $s -like 'MARKED*') { $s } }
 # -Mrs (what opsy deployed): the kit maps each MR to its task (tracking, else the tag in its title), never the caller
 $track = (Read-KitTracking).tasks
@@ -138,7 +138,7 @@ function Get-MrPaths([string]$mr) {
   $pathMemo[$mr]
 }
 
-$gone = @(); $tally = [ordered]@{}   # outcome -> task ids (and why)
+$gone = @(); $tally = [ordered]@{}; $ready = [Collections.Generic.List[object]]::new()   # outcome -> task ids (and why); tasks whose MRs are probed
 function Add-Tally([string]$Outcome, [string]$Detail) { if (-not $tally.Contains($Outcome)) { $tally[$Outcome] = [Collections.Generic.List[string]]::new() }; $tally[$Outcome].Add($Detail) }
 foreach ($id in $cand.Keys) {
   # a task deleted in the tracker: skipped, reported, dropped from tracking; another task's failure never ends the batch
@@ -159,14 +159,49 @@ foreach ($id in $cand.Keys) {
     $mrs = @($mrs | Select-Object -Unique)
   }
   if (-not $mrs.Count) { Add-Tally 'no MRs found' $id; Out-Line "SKIP  $id  no MRs found | $short"; continue }
+  $ready.Add([pscustomobject]@{ id = $id; short = $short; mrs = $mrs })
+}
+# ONE deployed probe for every task's MRs (pokey memoises the branch lookups per repo); rounds re-probe what its -TimeoutSec left
+# unchecked until none is left or a round checks nothing (a hung host: K31). Per-MR calls in one budget left 4 of 10 tasks unchecked
+$rowsOf = @{}; $whyOf = @{}; $round = 0; $probeEnd = (Get-Date).AddSeconds(10 * $TimeoutSec)   # a host slower than -TimeoutSec per MR: one MR a round (K31)
+$todo = @($ready | ForEach-Object { $_.mrs } | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) } | Select-Object -Unique)
+while ($todo.Count) {
+  $round++; $cap = [int][math]::Max(5.0, [math]::Min($TimeoutSec * 1.5 + 5.0, ($probeEnd - (Get-Date)).TotalSeconds))
+  $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
+  foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($todo -join ','), '-Lines', '-Exclude', (Get-NoTestRx), '-TimeoutSec', $TimeoutSec)) { $si.ArgumentList.Add([string]$x) }
+  $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
+  $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+  $pr = [Diagnostics.Process]::Start($si); $so = $pr.StandardOutput.ReadToEndAsync(); $se = $pr.StandardError.ReadToEndAsync()
+  $fin = $pr.WaitForExit($cap * 1000); if (-not $fin) { Stop-KitProcessTree $pr }; $null = $so.Wait(5000); $null = $se.Wait(1000)
+  $got = [ordered]@{}; $skip = @{}; $lastMr = $null
+  foreach ($ln in @("$($so.Result)" -split "`r?`n" | Where-Object { $_ -match '^\s*[\[{]' })) {
+    foreach ($x in @(try { $ln | ConvertFrom-Json } catch { })) {
+      if (-not $x.mr) { continue }; $k = Get-CanonMr (ConvertTo-MrRef $x.mr)
+      if ($x.state -eq 'UNKNOWN' -and "$($x.detail)" -like 'not checked:*') { $skip[$k] = 1; continue }   # past -TimeoutSec: next round
+      if (-not $got.Contains($k)) { $got[$k] = [Collections.Generic.List[object]]::new() }; $got[$k].Add($x); $lastMr = $k
+    }
+  }
+  if (-not $fin -and $lastMr) { $got.Remove($lastMr) }   # cut mid-MR: its rows may be partial
+  foreach ($k in $got.Keys) { $rowsOf[$k] = @($got[$k]) }
+  if ($fin) { foreach ($k in @($todo | Where-Object { -not $got.Contains($_) -and -not $skip.ContainsKey($_) })) { $rowsOf[$k] = @() } }   # finished, no row: nothing on any test env
+  $done = @($todo | Where-Object { $rowsOf.ContainsKey($_) }).Count; $todo = @($todo | Where-Object { -not $rowsOf.ContainsKey($_) })
+  if ($todo.Count -and -not $done) {
+    $err = ("$($se.Result)" -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+    foreach ($k in $todo) { $whyOf[$k] = if (-not $fin) { "$k deployed check timed out after $cap s (deploy.deployedTimeoutSec, round $round)" } else { "$k not checked: round $round checked none of $($todo.Count) MR(s)$(if ($err) { " ($err)" })" } }
+    break
+  }
+  if ($todo.Count -and (Get-Date) -gt $probeEnd) { foreach ($k in $todo) { $whyOf[$k] = "$k not checked: the probe used its $(10 * $TimeoutSec) s (10 x deploy.deployedTimeoutSec) in $round round(s); run deploy intest again" }; break }
+}
+if ($round -gt 1) { Out-Line "PROBE $(@($rowsOf.Keys).Count) MR(s) checked in $round round(s)$(if ($whyOf.Count) { ", $($whyOf.Count) left: $(@($whyOf.Keys) -join ', ')" })" }
+$igMr = @(@((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) })   # track ignore + closed: not the task's work
+foreach ($rd in $ready) {
+  $id = $rd.id; $short = $rd.short; $mrs = $rd.mrs
   $live = @(); $why = $null
   foreach ($mr in $mrs) {
-    # bounded per MR and per run (K31: a hung host held deploy intest 35 min): a timeout or a used budget = not live yet
-    $left = [int]($intestEnd - (Get-Date)).TotalSeconds; if ($left -lt 2) { $why = "$mr not checked: the intest budget ($(3 * $TimeoutSec) s, deploy.deployedTimeoutSec) is used"; break }
-    $cap = [math]::Min([int]($TimeoutSec * 1.5) + 5, $left)
-    $dr = Invoke-KitExe (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', $mr, '-Json', '-Exclude', (Get-NoTestRx), '-TimeoutSec', $TimeoutSec) $cap
-    if ($dr.timedOut) { $why = "$mr deployed check timed out after $cap s (deploy.deployedTimeoutSec)"; break }
-    $rows = @(try { "$($dr.out)" | ConvertFrom-Json } catch { })
+    $mk = Get-CanonMr (ConvertTo-MrRef $mr)
+    if (-not $rowsOf.ContainsKey($mk)) { $why = if ($whyOf[$mk]) { $whyOf[$mk] } else { "$mr not checked" }; break }
+    $rows = @($rowsOf[$mk])
+    if ($mk -in $igMr -and @($rows | Where-Object { $_.state -eq 'NOT-MERGED' -and "$($_.detail)" -eq 'closed' }).Count) { continue }
     # another product's deploy branch proves nothing
     $ok = @($rows | Where-Object { $_.state -eq 'DEPLOYED' -and $_.target -notmatch (Get-NoTestRx -Lanes) })
     $missing = @(); $matched = $false; $need = @()
@@ -191,6 +226,7 @@ foreach ($id in $cand.Keys) {
     $r0 = $rows | Where-Object { $t0 = $_.target; $_.state -notin 'DEPLOYED', 'N/A' -and (-not $need.Count -or @($need | Where-Object { $t0 -match $_ }).Count) } | Select-Object -First 1
     $why = "$mr not live on: " + $(if ($missing.Count) { $missing -join ', ' } else { 'a test env' }) + $(if ($r0) { " ($($r0.state): $($r0.detail))" } else { '' }); break
   }
+  if (-not $why -and -not $live.Count) { $why = "its only MRs are closed and ignored (bossy.ps1 track remove -Task $id -Mrs <ref>)" }
   if ($why) { Add-Tally 'not deployed yet' $id; Out-Line "WAIT  $id  $why | $short"; continue }
   if (-not $Apply) { Add-Tally 'would move to in test (no -Apply)' $id; Out-Line "MARK  $id  would set in test ($($live -join '; ')) | $short"; continue }
   try {

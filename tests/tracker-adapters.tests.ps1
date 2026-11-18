@@ -17,7 +17,7 @@ foreach ($c in 'clickup', 'gh', 'glab', 'mytr') { Set-Item "function:$c" { $i = 
 function Run($type, $fx, $id, $list, [scriptblock]$ok) {
  try {
   Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear()
-  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id inTest; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }
+  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id 'in-test'; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }   # in-test: the kebab alias of inTest (2026-11-18)
   $pass = [bool](& $ok $r ($global:log -join "`n"))
  } catch { $pass = $false; "  $type error: $_" }
  if (-not $pass) { $global:failed++ }
@@ -177,4 +177,7 @@ try { $rp = Move-TrackerTask C9 -Parent C1; $rx = try { Move-TrackerTask C9 -Par
 $pass = $rp -eq 'moved C9 under C1' -and $global:http.Count -eq 3 -and $global:http[0] -eq 'PUT https://api.clickup.com/api/v2/task/C9 {"parent":"C1"} tk-test' -and $rx -match 'C9 is in list L9, P2 in list L7: a subtask lives in its parent.s list \(-List L7 moves it first' -and $rt -match 'cannot make a subtask top-level' -and
   $rl -eq 'moved C9 to list L7 under P2' -and $global:http[1] -eq 'PUT https://api.clickup.com/api/v3/workspaces/W1/tasks/C9/home_list/L7 null tk-test' -and $global:http[2] -match 'task/C9 \{"parent":"P2"\}'; if (-not $pass) { $global:failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: move under a parent (REST v2 PUT with the stored token), to another list (v3 home_list, then the parent); a parent in another list without -List and top-level are refused before a call ($rp | $rx | $rt | $rl)"
+$sk = @('in-test', 'in test', 'In_Test', 'inTest', 'failed-testing', 'for review') | ForEach-Object { ConvertTo-TrackerStatusKey $_ }
+$pass = ($sk -join ',') -eq 'inTest,inTest,inTest,inTest,failedTesting,for review'; if (-not $pass) { $global:failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker status: kebab, spaced and snake forms of a kit status key resolve to the key for every adapter; a board name stays as given ($($sk -join ','))"
 exit [int]($global:failed -gt 0)

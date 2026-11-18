@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-tests/deploy-restart.tests.ps1: a fake ssh on PATH answers busy / free; offline.
+tests/deploy-restart.tests.ps1: a fake ssh on PATH answers busy / free; supervise deploy holds; offline.
 Usage: pwsh -NoProfile -File tests/deploy-restart.tests.ps1 (its tests.ps1 runs this file)
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -56,5 +56,39 @@ $rx = Px $O deploy restart -Env nope 2>&1 | Out-String; $rxc = $LASTEXITCODE
 Expect "deploy restart: an unknown target or one without ssh = usage, exit 2 ($($rx.Trim()))" ($rxc -eq 2 -and $rx -match 'nope has no repos\[\]\.deploys\[\]\.ssh')
 
 $env:PATH = $path0; Remove-Item Env:FAKE_SSH_LOG, Env:FAKE_SSH_MODE
+# supervise deploy holds (moved from deploys.tests.ps1: its token cap)
+$ht = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+function Within($n) { $true }; function Invoke-Bounded { @() }
+$gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())
+$pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'; $now = Get-Date
+$cacheOf = { param([string[]]$m) @{ at = $now.ToString('o'); asked = $now.ToString('o'); ready = @("stage ($($m.Count) MR(s))"); ask = @("stage: $($m.Count) MR(s) ($($m -join ', '))"); mrsOf = @{ stage = $m } } | ConvertTo-Json -Depth 4 | Set-Content $pc }
+$word = { param($id, $ans, $q = 'deploy stage', $min = 1) Write-KitLog decisions-log answered ([ordered]@{ id = $id; kind = 'decision'; item = 'stage,other'; gate = 'deploy'; question = $q; answer = $ans; by = 'owner'; answeredAt = $now.AddMinutes(-$min).ToString('o'); mrs = @() }) }
+$acts = { param($r) @($r | Where-Object level -eq 'ACT' | ForEach-Object what) -join ';' }
+& $cacheOf @('api!1'); & $word 'd-20260101000000-coordinator-aa11' 'dont deploy stage' 'deploy stage' 3
+$r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
+"held:$(-not (& $acts $r) -and ($r.info -join ';') -eq 'deploy stage held by owner: aa11' -and (Get-Content $pc -Raw | ConvertFrom-Json).held.stage.id -eq 'd-20260101000000-coordinator-aa11')"
+& $cacheOf @('api!1', 'api!2'); $held = (Get-Content $pc -Raw | ConvertFrom-Json); $held | Add-Member -Force NoteProperty held ([pscustomobject]@{ stage = @{ id = 'd-20260101000000-coordinator-aa11'; mrs = @('api!1') } }); $held | ConvertTo-Json -Depth 5 | Set-Content $pc
+$r1 = @(Get-KitSuperviseFlagsDeploys -AutoFix); $r2 = @(Get-KitSuperviseFlagsDeploys -AutoFix)
+"fresh:$((& $acts $r1) -match '^DEPLOY ASK stage: 2 MR\(s\) .*new since hold aa11: api!2' -and -not (& $acts $r2) -and ($r2.info -join ';') -match 'held by owner: aa11')"
+& $word 'd-20260101000100-coordinator-bb22' 'yes, deploy stage'; $r = @(Get-KitSuperviseFlagsDeploys)
+"yes:$((& $acts $r) -match '^DEPLOY GO stage: approved \(bb22, owner\)' -and (& $acts $r) -notmatch 'DEPLOY ASK' -and @($r.info -match '^deploy ready: stage').Count -eq 1)"
+& $word 'd-20260101000200-opsy-stage-cc33' "wait: retry $($now.AddMinutes(30).ToString('HH:mm'))" 'host stayed busy' 0; $r = @(Get-KitSuperviseFlagsDeploys)
+"wait:$(-not (& $acts $r) -and ($r.info -join ';') -eq "deploy stage waiting: host busy, retry $($now.AddMinutes(30).ToString('HH:mm')) (cc33)")"
+$now = $now.AddMinutes(31); $r = @(Get-KitSuperviseFlagsDeploys)
+"due:$((& $acts $r) -match '^DEPLOY RETRY stage: host busy, wait cc33 due since' -and (& $acts $r) -notmatch 'DEPLOY ASK')"
+& $word 'd-20260101000300-coordinator-dd44' 'yes: standing rule' 'deploy stage' 0; $r = @(Get-KitSuperviseFlagsDeploys)   # a yes after a wait of the last 12 h: still that retry
+"retry:$((& $acts $r) -match '^DEPLOY RETRY stage: host busy, wait cc33' -and (& $acts $r) -notmatch 'DEPLOY (ASK|GO)')"
+& $cacheOf @('api!1', 'api!2', 'api!3'); & $word 'd-20260101000400-coordinator-ee55' 'keep stage hanges held' 'deploy stage' -1; $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
+"all:$(-not (& $acts $r) -and ($r.info -join ';') -match 'deploy stage held by owner: ee55')"
+$gs2 = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.hold') { @('stage') } else { & $gs2 @args } }.GetNewClosure())
+& $word 'd-20260101000500-coordinator-ff66' 'yes' 'deploy stage' -2; $r = @(Get-KitSuperviseFlagsDeploys)
+"cfg:$(-not (& $acts $r) -and ($r.info -join ';') -match 'deploy stage held by config: deploy.hold')"
+"kinds:$((@('dont deploy hm', 'No', 'hold it', 'wait: not urgent, never cut a live turn', 'Deploy tomorrow', 'yes: standing rule', 'deploy if needed', 'Sure, no problem', 'Please deploy now, no need to hold', 'test prod pipelines also', 'keep hm hanges held', 'dnt deploy hm', 'no deploy for hm yet', 'HM: merge and promote, never deploy', 'No problem, go ahead', 'do not wait, deploy', 'No problem, but hold hm') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
+'@
+$hr = Invoke-PsTest 'deploy-holds' $ht @($O)
+Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too) (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg')
+Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear,noAll,no,no,noAll,yes,yes,no')
 Remove-TestKit $k
 Complete-Tests
