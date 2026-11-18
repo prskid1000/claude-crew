@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L102 health · L111 prepush · L201 nightly tests · L219 precommit
+Sections: L12 learn · L102 health · L111 prepush · L201 nightly tests · L221 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -206,7 +206,9 @@ function Invoke-KitNightlyTests([bool]$Idle) {
   if ($s -and -not $s.read -and -not (Test-KitPid $s.pid $s.start)) {   # finished since the last beat: read once
     $s | Add-Member -Force NoteProperty read $true; Write-KitAtomic $sf ($s | ConvertTo-Json -Compress)
     $tail = @(Get-Content -LiteralPath $lf -ErrorAction SilentlyContinue | Select-String -Pattern '^(\d+) failure\(s\) in' | ForEach-Object Line)[-1]
-    if (-not $tail -or $tail -notmatch '^0 failure') { "kit tests nightly: $(if ($tail) { $tail } else { 'no total (crashed)' }), $(@(Get-Content -LiteralPath $lf | Select-String -Pattern '^  \[').Count) failed check(s): $lf" }
+    if (-not $tail -and $s.start -and (Get-KitBootTime) -gt [datetime]$s.start) {   # the machine restarted mid-run: no crash; due again at the next idle beat
+      $s.at = ([datetime]$s.start).AddHours(-21).ToString('o'); $s | Add-Member -Force NoteProperty cut 'machine restart'; Write-KitAtomic $sf ($s | ConvertTo-Json -Compress) }
+    elseif (-not $tail -or $tail -notmatch '^0 failure') { "kit tests nightly: $(if ($tail) { $tail } else { 'no total (crashed)' }), $(@(Get-Content -LiteralPath $lf | Select-String -Pattern '^  \[').Count) failed check(s): $lf" }
   }
   if (-not $Idle -or ($s -and ((Get-Date) - [datetime]$s.at).TotalHours -lt 20) -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
   $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "& '$($kt.Replace("'", "''"))' -Full *> '$($lf.Replace("'", "''"))'"

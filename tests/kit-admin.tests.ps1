@@ -54,8 +54,13 @@ $o1 = @(Invoke-KitNightlyTests $false); $s0 = Test-Path $sf; $null = Invoke-KitN
 $null = Wait-Process -Id $st.pid -Timeout 60 -ErrorAction SilentlyContinue; $o2 = @(Invoke-KitNightlyTests $true); $o3 = @(Invoke-KitNightlyTests $true)
 "busy:$(-not $o1.Count -and -not $s0 -and $st.pid)"
 "read:$($o2.Count -eq 1 -and $o2[0] -match '^kit tests nightly: 1 failure\(s\) in 1 area\(s\), 1 s, 1 failed check' -and -not $o3.Count -and (Get-Content $sf -Raw | ConvertFrom-Json).pid -eq $st.pid -and (Get-Content $env:FAKE_RAN) -eq '-Full')"
+# no total: started before the last boot = cut by a machine restart (no ACT, due again); started after it = a crash (ACT)
+$lfn = Join-Path (Get-KitPath logs -Create) 'kit-tests-nightly.txt'; $cutAt = { param($t) @{ at = $t.ToString('o'); start = $t.ToString('o'); pid = $st.pid; read = $false } | ConvertTo-Json -Compress | Set-Content $sf; '  x done (1 s)' | Set-Content $lfn }
+& $cutAt (Get-KitBootTime).AddMinutes(-5); $o4 = @(Invoke-KitNightlyTests $false); $s4 = Get-Content $sf -Raw | ConvertFrom-Json
+& $cutAt (Get-Date).AddMinutes(-5); $o5 = @(Invoke-KitNightlyTests $false)
+"cut:$(-not $o4.Count -and $s4.read -and $s4.cut -eq 'machine restart' -and ((Get-Date) - [datetime]$s4.at).TotalHours -ge 20 -and $o5.Count -eq 1 -and $o5[0] -match 'no total \(crashed\)')"; "cut detail: $($o4 -join ' ') | $($o5 -join ' ')"
 '@; $ng = @(pwsh @np $nf (Join-Path $kc 'skills/crafty/lib.ps1') (Join-Path $kc 'skills/bossy/adapters/kit_admin.ps1') 2>&1)
-Expect-Each $ng 'kit-admin: nightly kit tests: #' 'busy', 'read' -Show 6
+Expect-Each $ng 'kit-admin: nightly kit tests: #' 'busy', 'read', 'cut' -Show 6
 $env:KIT_TESTS_SNAPSHOT = $snap; git -C $kc reset -q --hard $base
 # release: the next SemVer from Conventional Commits
 $rel = & $py -X utf8 $KT release 2>&1 | Out-String

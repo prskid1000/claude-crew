@@ -15,10 +15,15 @@ $nz = { param($s) if ("$s".Trim()) { $h = ("$s" | ConvertFrom-Json).hookSpecific
 $viaPlain = { param($j) & $nz (($j | pwsh @np $D guard) -join '') }
 $viaClient = { param($j) & $nz (($j | node $gc) -join '') }
 $plain = @($ins | ForEach-Object { & $viaPlain $_ })
+# K75: a cold call past the client's hook-time bound under load passes once with no answer; answers are compared without that bound
+$env:KIT_GUARD_TIMEOUT_MS = '120000'
+$waitOne = { for ($i = 0; $i -lt 4 * (Get-TestBound 30) -and (& $mine).Count -ne 1; $i++) { Start-Sleep -Milliseconds 250 }; @(& $mine).Count }
 $first = @($ins | ForEach-Object { & $viaClient $_ })   # no server yet: the plain path, and a server starts
-for ($i = 0; $i -lt 4 * (Get-TestBound 30) -and (& $mine).Count -ne 1; $i++) { Start-Sleep -Milliseconds 250 }; Start-Sleep -Seconds 2   # it loads the kit; a second one started by a later cold call exits
+$srvN = & $waitOne; Start-Sleep -Seconds 2   # it loads the kit; a second one started by a later cold call exits
 $warm = @($ins | ForEach-Object { & $viaClient $_ })
-Expect "warm guard: the same answers as crafty.ps1 guard (cold and warm), a server runs ($((& $mine).Count) server(s), $(@($first + $warm | Where-Object { $_ -notin $plain }).Count) odd answers)" (($first -join '~') -eq ($plain -join '~') -and ($warm -join '~') -eq ($plain -join '~') -and $plain[0] -match 'git stash is shared' -and (& $mine).Count -eq 1)
+$odd = @(0..($ins.Count - 1) | Where-Object { $first[$_] -ne $plain[$_] -or $warm[$_] -ne $plain[$_] } | ForEach-Object { "$_ plain=[$($plain[$_])] cold=[$($first[$_])] warm=[$($warm[$_])]" })
+Expect "warm guard: the same answers as crafty.ps1 guard, cold and warm ($($odd -join ' ; '))" ($odd.Count -eq 0 -and $first.Count -eq $ins.Count -and $warm.Count -eq $ins.Count -and $plain[0] -match 'git stash is shared')
+Expect "warm guard: one server runs after the first cold calls ($srvN)" ($srvN -eq 1)
 # timing (K74): plain and warm interleaved, best of each (a load burst hits both); KIT_TESTS_SLACK eases the 2x margin, warm still wins
 $ms = @(); $pms = @(); foreach ($j in $ins + $ins) { $sw = [Diagnostics.Stopwatch]::StartNew(); $null = & $viaPlain $j; $pms += [int]$sw.Elapsed.TotalMilliseconds; $sw.Restart(); $null = & $viaClient $j; $ms += [int]$sw.Elapsed.TotalMilliseconds }
 $wmin = @($ms | Sort-Object)[0]; $pmin = @($pms | Sort-Object)[0]
@@ -28,12 +33,12 @@ Expect 'warm guard: the caller''s KIT_* env counts for its call only' ($le2 -eq 
 $rt = "$(pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; Get-KitRuntime")".Trim().Replace('\', '/'); $wo = @("$rt/zzbogus/a.txt", "$rt/work/agents/x/a.txt") | ForEach-Object { @{ tool_name = 'Write'; cwd = $k; tool_input = @{ file_path = $_; content = 'x' } } | ConvertTo-Json -Compress -Depth 4 }
 $wp = @($wo | ForEach-Object { & $viaPlain $_ }); $ww = @($wo | ForEach-Object { & $viaClient $_ })
 Expect "warm guard: one call's layout note never carries into the next ($($ww -join ' ~ '))" (($ww -join '~') -eq ($wp -join '~') -and $wp[0] -match 'layout' -and $wp[1] -notmatch 'layout')
-$old = @((& $mine).Id); Set-Content (Join-Path $k 'skills/crafty/kit.local.json') '{}'; $after = & $viaClient $ins[0]
+$null = & $viaClient $ins[0]; $null = & $waitOne; $old = @((& $mine).Id); Set-Content (Join-Path $k 'skills/crafty/kit.local.json') '{}'; $after = & $viaClient $ins[0]
 for ($i = 0; $i -lt 20 -and @(Get-Process -Id $old -ErrorAction SilentlyContinue).Count; $i++) { Start-Sleep -Milliseconds 250 }
 Expect "warm guard: a kit file change ends the server ($($old -join ',')); that call gets the plain answer" ($old.Count -eq 1 -and $after -eq $plain[0] -and -not @(Get-Process -Id $old -ErrorAction SilentlyContinue).Count)
 $env:KIT_GUARD_WARM = '0'; $off = & $viaClient $ins[0]; Remove-Item Env:KIT_GUARD_WARM
 Expect 'warm guard: KIT_GUARD_WARM=0 = the plain path' ($off -eq $plain[0])
-& $mine | Stop-Process -ErrorAction SilentlyContinue
+Remove-Item Env:KIT_GUARD_TIMEOUT_MS; & $mine | Stop-Process -ErrorAction SilentlyContinue
 # K67: a guard crash (parse error, non-JSON stdout, timeout, no pwsh) blocks the call (exit 2) and logs it; KIT_GUARD_BYPASS=1 lets it through
 # crafty.ps1 is a hard link to the source kit: unlink before every write (TEST-WRITE)
 $env:KIT_GUARD_WARM = '0'; $ok0 = [IO.File]::ReadAllText($D); $put = { param($t) Remove-Item -LiteralPath $D; [IO.File]::WriteAllText($D, $t) }

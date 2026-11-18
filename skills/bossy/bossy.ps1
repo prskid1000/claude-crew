@@ -12,6 +12,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged and every launched area delivered (add: at once; -HoldPromotion '' releases)
     | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists
     | forget-item -Task -Item <codes>   items removed from a task's checklist on purpose: never written back
+    | remove -Task -Mrs [-Reason]   a wrongly attached MR off the task (kept in its removed list; add -Mrs re-attaches)
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
     one row per resource: holder, since, last seen, last used (files only)
@@ -25,9 +26,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L33 init · L44 board · L222 budget · L252 launch · L493 recover · L580 pause · L591 resume · L658 program · L709 param ·
-  L715 track · L1034 supervise · L1348 report · L1428 audit · L1488 storage · L1491 bugbrief · L1605 cleanup · L1690 learn ·
-  L1721 decide · L1872 debate · L1916 health · L1979 retro due · L1989 tidy · L2061 setup · L2158 guard-sendmessage
+Sections: L34 init · L45 board · L223 budget · L253 launch · L494 recover · L581 pause · L592 resume · L659 program · L710 param ·
+  L716 track · L1056 supervise · L1370 report · L1450 audit · L1510 storage · L1513 bugbrief · L1627 cleanup · L1712 learn ·
+  L1743 decide · L1894 debate · L1938 health · L2001 retro due · L2011 tidy · L2083 setup · L2180 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -743,7 +744,7 @@ function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.r
 # a cached track-run ATTENTION about missing testing docs / solution whose task moved on since (devtools.py finish promoted it)
 function Test-KitTrackLineStale([string]$Line) { $Line -match '^ATTENTION (?<t>\S+): .*no (solution/testing comment|testing-doc link)' -and (Test-TrackerStatus $(try { [string](Get-TrackerTask $Matches.t).status } catch { '' }) 'promoted', 'inTest', 'closed') }
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'rollup', 'forget-item')][string]$Action = 'show', [string]$Reason, [string]$From, [string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
+param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item')][string]$Action = 'show', [string]$Reason, [string]$From, [string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # throw is swallowed under SilentlyContinue
@@ -756,6 +757,7 @@ $wavesDir = Get-KitPath waves
 $script:holds = 0
 function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
 $script:gone = @{}   # deleted in the tracker
+$script:trackReadd = @()   # track add -Mrs: refs named again, out of the removed list
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { if (Remove-KitGoneTask $id $_) { $script:gone[$id] = $true }; '' } }
 # a held task already closed / in test is done (never promoted backwards); status read once per track.holdCheckMinutes
 function HeldPast($o) { $nw = Get-Date; if ($o.holdCheckedAt -and ($nw - [datetime]$o.holdCheckedAt).TotalMinutes -lt [double](Get-KitParam 'track.holdCheckMinutes')) { return '' }
@@ -796,7 +798,10 @@ function Save($o, [switch]$Run) {
     }
     if ($cur -and $Run) { foreach ($k in 'holdPromotion', 'onMerged', 'wave', 'planReleased') { if ($cur.ContainsKey($k)) { $o[$k] = $cur[$k] } else { $o.Remove($k) } } }
     if ($cur) { foreach ($k in 'mrs', 'mergeAfter') { $o[$k] = @(@($o[$k]) + @($cur[$k]) | Where-Object { $_ } | Select-Object -Unique) }; if ($cur.discover) { $o.discover = $true } }
-    $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
+    # track remove: a removed MR stays off (discovery, a stale copy); track add -Mrs naming it re-attaches it
+    $rmSeen = @{}; $rmList = @(@($cur.removed) + @($o.removed) | Where-Object { $_ -and $_.mr -and -not $rmSeen.ContainsKey("$($_.mr)") -and "$($_.mr)" -notin $script:trackReadd } | ForEach-Object { $rmSeen["$($_.mr)"] = 1; $_ })
+    if ($rmList.Count) { $o.removed = $rmList } else { $o.Remove('removed') }
+    $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ -and -not $rmSeen.ContainsKey($_) } | Select-Object -Unique)
     $o.mergeAfter = @(@($o.mergeAfter) | Where-Object { $_ } | ForEach-Object { $p = $_ -split '>', 2; if ($p.Count -eq 2) { "$(NormRef $p[0])>$(NormRef $p[1])" } else { $_ } } | Select-Object -Unique)
     $all.tasks[$o.task] = $o
   }
@@ -851,7 +856,7 @@ switch ($Action) {
     if (-not $Task) { Fail "add needs a real -Task id (got '$given'; the tracker id without its tag, as in the MR title)" }
     $o = Load $Task; if (-not $o) { $o = @{ task = $Task; mrs = @(); onMerged = @($OnMerged -split '\s*,\s*'); done = $false; created = (Get-Date).ToString('o') } }
     $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-    $before = @($o.mrs).Count
+    $before = @($o.mrs).Count; $script:trackReadd = @($refs)
     if ($Discover -and @($KitConf.TrackerRepos).Count) { $refs = @(@($refs) + @(Find-TaskMrs $Task) | Select-Object -Unique); $o.discoveredAt = (Get-Date).ToString('o') }
     $o.mrs = @(@($o.mrs) + $refs | Where-Object { $_ } | Select-Object -Unique)
     if ($PSBoundParameters.ContainsKey('OnMerged')) { $o.onMerged = @($OnMerged -split '\s*,\s*') }
@@ -958,6 +963,9 @@ switch ($Action) {
       # no MR = never promote
       if (-not @($o.mrs).Count) { Hold "HOLD $($o.task): no MR registered yet (bossy.ps1 track add -Task $($o.task) -Mrs <repo>!<iid>)"; continue }
       $states = @{}; foreach ($m in $o.mrs) { $states[$m] = MrState $m }
+      $igRefs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys | ForEach-Object { NormRef $_ })   # track ignore + closed: not this task's work
+      foreach ($m in @($states.Keys)) { if ($states[$m] -eq 'closed' -and $m -in $igRefs) { $states.Remove($m) } }
+      if (-not $states.Count) { Hold "HOLD $($o.task): its only MRs are closed and ignored (bossy.ps1 track remove -Task $($o.task) -Mrs <ref>)"; continue }
       $failed = @($states.GetEnumerator() | Where-Object { $_.Value -match 'pipeline (failed|canceled)|closed|conflict' })
       if ($failed) { if (-not $Quiet) { "ATTENTION $($o.task): $(($failed | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ', ')" }; continue }
       if (@($states.Values | Where-Object { $_ -ne 'merged' }).Count) { continue }
@@ -1013,6 +1021,20 @@ switch ($Action) {
       Start-Detached (Resolve-Tool pwsh) @('-NoProfile', '-NonInteractive', '-File', $(if ($KitIsWindows) { "`"$($KitCmd.orch)`"" } else { $KitCmd.orch }), 'cleanup', '-WorktreesOnly', '-WorktreeIdleHours', "$(Get-KitParam cleanup.worktreeIdleHours)", '-Quiet')
     }
     try { Invoke-KitHooks Invoke-KitTrackRollup @{ Quiet = $Quiet } } catch { "ROLLUP hook failed: $("$_".Split("`n")[0])" }   # adapters/task_rollup.ps1: parents' delivery sections
+  }
+  'remove' {
+    $rmTask = NormTask $Task; $rmRefs = @(Split-KitList $Mrs | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
+    if (-not $rmTask -or -not $rmRefs.Count) { Stop-KitVerb "usage: bossy.ps1 track remove -Task <id> -Mrs '<repo>!<iid>[,...]' [-Reason '<why>']" }
+    $rmO = Load $rmTask; if (-not $rmO) { Fail "remove: $rmTask is not tracked" }
+    $rmMiss = @($rmRefs | Where-Object { @($rmO.mrs) -notcontains $_ }); if ($rmMiss.Count) { Fail "remove: $($rmMiss -join ', ') not on $rmTask (its MRs: $(@($rmO.mrs) -join ', '))" }
+    $rmAt = (Get-Date).ToString('o')
+    Update-KitTracking { param($all) $rmCur = $all.tasks[$rmTask]
+      $rmCur.mrs = @(@($rmCur.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ -and $_ -notin $rmRefs })
+      $rmCur.mergeAfter = @(@($rmCur.mergeAfter) | Where-Object { -not @(@("$_" -split '>', 2) | ForEach-Object { NormRef $_ } | Where-Object { $_ -in $rmRefs }).Count })
+      $rmCur.removed = @(@($rmCur.removed) | Where-Object { $_ -and "$($_.mr)" -notin $rmRefs }) + @($rmRefs | ForEach-Object { [ordered]@{ mr = $_; at = $rmAt; reason = $Reason } })
+      foreach ($rmK in 'allMergedAt', 'mergedSeenAt', 'lagLine', 'lagAt') { $rmCur.Remove($rmK) } }   # merge state is re-read from the MRs left
+    Set-KitTaskMrItems $rmTask; $rmS = Load $rmTask
+    "removed $($rmRefs -join ', ') from $rmTask$(if ($Reason) { " ($Reason)" }): its MRs now $(if (@($rmS.mrs).Count) { @($rmS.mrs) -join ', ' } else { 'none' }); listed under removed (track add -Mrs re-attaches)"
   }
   'rollup' { Invoke-TaskRollup -Task $Task -From $From -Quiet:$Quiet }
   'forget-item' { Invoke-KitForgetItems -Task $Task -Item $Item }
