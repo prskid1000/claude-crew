@@ -33,7 +33,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L51 config · L106 run · L194 tracker · L346 process · L506 git host · L573 scope · L663 MR · L855 merge · L1181 docs ·
-  L1334 publish · L1774 render · L2193 plugins · L2207 keepboth · L2226 selftest · L2772 CLI
+  L1334 publish · L1774 render · L2197 plugins · L2211 keepboth · L2230 selftest · L2798 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -472,7 +472,7 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     given = {k: u for k, u in (('human', guide_url), ('ai', ai_url)) if u}
     # failed lookup: describing would wipe the description
     if ts.get('spec') and given and all(re.match(r'https?://', u) for u in given.values()):   # a spec-rendered task refuses describe: the links go into its spec
-        _tracker('update', tid, '-Spec', json.dumps({'docs': given}) + '\n')   # \n: via a file, quotes kept
+        _tracker('update', tid, '-Spec', json.dumps({'docs': given, **({'proseOk': PROSE_OK} if PROSE_OK else {})}) + '\n')   # \n: via a file, quotes kept
     elif t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
     comment(tid, solution_md, 'comment-solution')
@@ -1891,6 +1891,9 @@ def me_agent():
 def own_spec(old, new, replace=False):
     """cases add on a shared task: entries tagged by the caller; another agent's id refused, its title / change kept."""
     me, by, _ = me_agent(), old.get('by'), new.pop('by', None)
+    owners = sorted(({str(by)} if by else set()) | {str(e['by']) for k in SPEC_KEYS for e in old.get(k) or [] if isinstance(e, dict) and e.get('by')})
+    if not me and owners:   # an unnamed caller would overwrite agents' rows (retro 2026-11-18)
+        raise SystemExit(f'cases add: this spec holds rows of {", ".join(owners)}: set CLAUDE_AGENT=<your agent id> and add again. Nothing was written.')
     for k in ('cases', 'checks', 'qualities', 'unchanged') if me else ():
         es = [e for e in new.get(k) or [] if isinstance(e, dict)]
         theirs = {str(e.get('id')): e['by'] for e in old.get(k) or [] if isinstance(e, dict) and e.get('by') not in (None, me)}
@@ -2126,7 +2129,7 @@ def render_wave_brief(s):
         '## Agents', _table(['Agent', 'Items', 'Area (screens / packages / files)', 'Paths (enforced)', 'Repos', 'Migration range', 'Services (leased, nothing else)', 'Complex?'],
                             [r[:3] + [', '.join(f'`{g}`' for g in a.get('paths') or []) or 'any'] + r[3:] + [yn(a.get('complex'))]
                              for r, a in zip(rows(('id', 'items', 'area', 'repos', 'migrationRange', 'services'), s['agents']), s['agents'])]), '',
-        f'**Overlaps:** {s.get("overlaps") or "none"} · **Contracts:** `{s["name"]}.contracts.md` ({len(s.get("contracts") or [])} crossing)',
+        f'**Overlaps:** {s.get("overlaps") or "none"} · **Contracts:** `{s.get("contractsFile") or s["name"] + ".contracts.md"}` ({len(s.get("contracts") or [])} crossing)',
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
         '## openQuestions', *(qs or ['none']), '## Findings (rechy)', 'none yet', '## Rule changes during the wave (newest last)']) + '\n'
@@ -2160,9 +2163,9 @@ def load_spec(src):
     return json.loads(open(src, encoding='utf-8-sig').read())
 
 
-def spec_text(path, kind, task=''):
-    """A spec file rendered as kind (refused on gaps); task fills the spec's task when it has none."""
-    s = load_spec(path)
+def spec_text(path, kind, task='', add=None):
+    """A spec file rendered as kind (refused on gaps); task fills the spec's task when it has none; add: keys the caller knows."""
+    s = {**load_spec(path), **(add or {})}
     s = {'task': task, **s} if task else s
     if gaps := spec_gaps(s, kind):
         raise SystemExit(f'{kind} spec refused: missing {", ".join(gaps)} (templates.md "Comment spec" / "MR spec")')
@@ -2174,10 +2177,11 @@ def render_cmd(a):
     if len(a) < 2 or a[0] not in RENDERERS:
         print(f'usage: devtools.py render {"|".join(RENDERERS)} <spec.json>', file=sys.stderr)
         return 2
-    txt = spec_text(a[1], a[0]).rstrip('\n') + '\n'
     if a[0] == 'wave-brief' and len(a) < 3:
         print('usage: devtools.py render wave-brief <spec.json> <brief.md> (contracts + /buildy args land beside it)', file=sys.stderr)
         return 2
+    con = {'contractsFile': os.path.basename(os.path.splitext(a[2])[0]) + '.contracts.md'} if a[0] == 'wave-brief' else None   # the file wave_files writes
+    txt = spec_text(a[1], a[0], add=con).rstrip('\n') + '\n'
     if len(a) > 2:   # an out file: written, its path printed
         extra = wave_files(load_spec(a[1]), a[2]) if a[0] == 'wave-brief' else {}
         for path, body in {a[2]: txt, **extra}.items():
@@ -2267,6 +2271,22 @@ def selftest():
     wb = {'name': 'w', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}
     expect('wave brief: an area\'s paths are in the brief and the /buildy args', 'svc/api/cypress/**' in render_wave_brief(wb)
            and json.loads(wave_files(wb, 'b.md')['b.args.json'])['agents'][0]['paths'] == spec_only)
+    td = tempfile.mkdtemp(); wsp, wbp = os.path.join(td, 'w.json'), os.path.join(td, 'wave-x.md')
+    with open(wsp, 'w', encoding='utf-8') as fh:
+        json.dump(wb, fh)
+    with contextlib.redirect_stdout(io.StringIO()):
+        render_cmd(['wave-brief', wsp, wbp])
+    expect('wave brief: names the contracts file it writes (<brief stem>.contracts.md)', '`wave-x.contracts.md`' in open(wbp, encoding='utf-8').read() and os.path.isfile(os.path.join(td, 'wave-x.contracts.md')))
+    shutil.rmtree(td, ignore_errors=True)
+    agent_env = {n: os.environ.pop(n, None) for n in ('CLAUDE_AGENT', 'KIT_AGENT')}
+    try:
+        own_spec({'by': 'AA', 'checks': [{'id': 'S2', 'by': 'BB'}]}, {'checks': [{'id': 'S3'}]})
+        anon = ''
+    except SystemExit as e:
+        anon = str(e)
+    finally:
+        os.environ.update({n: v for n, v in agent_env.items() if v})
+    expect('cases add: no CLAUDE_AGENT on a spec holding agents\' rows is refused', 'holds rows of AA, BB: set CLAUDE_AGENT' in anon)
 
     fd, path = tempfile.mkstemp(suffix='.json')
     with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -2731,6 +2751,12 @@ def _publish_selftest(expect, refused):
         finally:
             g['TAG'] = tg
         expect('finish on a spec-rendered task (tagged id too): links into its spec (tracker update), never describe', [a[0] for a in calls if a[0] in ('update', 'describe')] == ['update'])
+        calls.clear(); g['PROSE_OK'], po = 'brief item list', g['PROSE_OK']; g['TAG'], tg = 'CU-', g['TAG']
+        try:
+            finish('CU-T6', 'https://x/h', '**Solution** — x', ai='https://x/ai-doc')
+        finally:
+            g['PROSE_OK'], g['TAG'] = po, tg
+        expect('finish --prose-ok passes through to the spec update (proseOk)', [json.loads(a[3]).get('proseOk') for a in calls if a[0] == 'update'] == ['brief item list'])
     finally:
         ADAPTERS['report']['markdown'].pop('evidence', None)
         g.update(saved); shutil.rmtree(tmp, ignore_errors=True)

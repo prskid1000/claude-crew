@@ -17,12 +17,12 @@ $viaClient = { param($j) & $nz (($j | node $gc) -join '') }
 $plain = @($ins | ForEach-Object { & $viaPlain $_ })
 # K75: a cold call past the client's hook-time bound under load passes once with no answer; answers are compared without that bound
 $env:KIT_GUARD_TIMEOUT_MS = '120000'
-$waitOne = { for ($i = 0; $i -lt 4 * (Get-TestBound 30) -and (& $mine).Count -ne 1; $i++) { Start-Sleep -Milliseconds 250 }; @(& $mine).Count }
+$waitOne = { for ($i = 0; $i -lt 4 * (Get-TestBound 60) -and (& $mine).Count -ne 1; $i++) { Start-Sleep -Milliseconds 250 }; @(& $mine).Count }
 $first = @($ins | ForEach-Object { & $viaClient $_ })   # no server yet: the plain path, and a server starts
 $srvN = & $waitOne; Start-Sleep -Seconds 2   # it loads the kit; a second one started by a later cold call exits
 $warm = @($ins | ForEach-Object { & $viaClient $_ })
 $odd = @(0..($ins.Count - 1) | Where-Object { $first[$_] -ne $plain[$_] -or $warm[$_] -ne $plain[$_] } | ForEach-Object { "$_ plain=[$($plain[$_])] cold=[$($first[$_])] warm=[$($warm[$_])]" })
-Expect "warm guard: the same answers as crafty.ps1 guard, cold and warm ($($odd -join ' ; '))" ($odd.Count -eq 0 -and $first.Count -eq $ins.Count -and $warm.Count -eq $ins.Count -and $plain[0] -match 'git stash is shared')
+Expect "warm guard: the same answers as crafty.ps1 guard, cold and warm ($($odd -join ' ; ') | n $($plain.Count)/$($first.Count)/$($warm.Count) plain0=[$($plain[0])])" ($odd.Count -eq 0 -and $first.Count -eq $ins.Count -and $warm.Count -eq $ins.Count -and $plain[0] -match 'git stash is shared')
 Expect "warm guard: one server runs after the first cold calls ($srvN)" ($srvN -eq 1)
 # timing (K74): plain and warm interleaved, best of each (a load burst hits both); KIT_TESTS_SLACK eases the 2x margin, warm still wins
 $ms = @(); $pms = @(); foreach ($j in $ins + $ins) { $sw = [Diagnostics.Stopwatch]::StartNew(); $null = & $viaPlain $j; $pms += [int]$sw.Elapsed.TotalMilliseconds; $sw.Restart(); $null = & $viaClient $j; $ms += [int]$sw.Elapsed.TotalMilliseconds }
@@ -57,11 +57,12 @@ Expect "guard crash: each logged as guard event crash, the switch marked ($($glo
 $sv = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') supervise 2>&1 | Out-String
 Expect "guard crash: supervise raises ACT with the count ($(([regex]::Match($sv, '.{0,20}guard crashed[^\r\n]{0,60}')).Value))" ($sv -match 'ACT.{0,40}guard crashed 5x')
 # K67r: a crafty.ps1 that does not load marks it once; the next calls start no server (the mark stays unchanged) until crafty.ps1 changes
-& $mine | Stop-Process -ErrorAction SilentlyContinue; & $put "$ok0`nfunction Broken {"; $nlm = { @(Get-ChildItem "$k/$((Read-Json "$k/skills/crafty/kit.example.json")._paths.runtimeDir)/cache" -Filter 'kit-guard-*.noload' -ErrorAction SilentlyContinue) }
+# cold calls below: no hook-time bound (a load timeout passes once with no answer, a second one on the same input is a crash)
+$env:KIT_GUARD_TIMEOUT_MS = '120000'; & $mine | Stop-Process -ErrorAction SilentlyContinue; & $put "$ok0`nfunction Broken {"; $nlm = { @(Get-ChildItem "$k/$((Read-Json "$k/skills/crafty/kit.example.json")._paths.runtimeDir)/cache" -Filter 'kit-guard-*.noload' -ErrorAction SilentlyContinue) }
 $null = $ins[2] | node $gc 2>&1; for ($i = 0; $i -lt 40 -and -not (& $nlm).Count; $i++) { Start-Sleep -Milliseconds 250 }; $nl1 = @(& $nlm | ForEach-Object { $_.LastWriteTimeUtc.Ticks })
 $null = $ins[2] | node $gc 2>&1; Start-Sleep -Seconds 4; $nl2 = @(& $nlm | ForEach-Object { $_.LastWriteTimeUtc.Ticks }); & $put $ok0
 Expect "warm guard: a crafty.ps1 that does not load is marked once, later calls start no server per call ($($nl1 -join ',') / $($nl2 -join ','))" ($nl1.Count -eq 1 -and "$nl1" -eq "$nl2")
 Expect 'guard crash: a healthy guard after the fix answers as before' (($ins[0] | node $gc) -join '' -match 'git stash is shared')
-Start-Sleep -Seconds 1; & $mine | Stop-Process -ErrorAction SilentlyContinue
+Remove-Item Env:KIT_GUARD_TIMEOUT_MS; Start-Sleep -Seconds 1; & $mine | Stop-Process -ErrorAction SilentlyContinue
 Remove-TestKit $k
 Complete-Tests

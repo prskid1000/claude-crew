@@ -17,7 +17,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L23 init · L30 sweep · L140 wt · L430 stack · L612 gate · L931 check · L1248 pipes · L1305 guard · L2182 dir ·
-  L2192 checkpoint · L2222 prior · L2260 tracker · L2282 task spec · L2457 scope · L2505 host
+  L2192 checkpoint · L2222 prior · L2260 tracker · L2282 task spec · L2462 scope · L2510 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2325,7 +2325,12 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
   $old = if ($Task) { (Read-KitState (Get-KitTaskFile $Task)).spec }; $sp = if ($old -is [Collections.IDictionary]) { Merge-KitTaskSpec $old $Spec } else { $Spec }
   $gap = @(Test-KitTaskSpec $sp); if ($gap.Count) { throw "tracker spec refused: missing or wrong: $($gap -join '; ') (crafty.ps1 ""task spec"")" }
   $r = ConvertTo-KitTaskRender $sp $Task
-  $pf = @(if (-not $Spec.proseOk) { Test-KitProse -Kind task-description -Text "$($r.name)`n`n$($r.description)`n`n$(@($r.decisions.text) -join "`n")" }); if ($pf.Count) { throw "tracker spec refused: $($pf.Count) prose finding(s): $($pf -join '; ')" }
+  $dt = "`n`n$(@($r.decisions.text) -join "`n")"; $pf = @(if (-not $Spec.proseOk) { Test-KitProse -Kind task-description -Text "$($r.name)`n`n$($r.description)$dt" })
+  if (@($pf | Where-Object { $_ -match '^\(all\): \d+ words' }).Count) {   # the Items list is generated from the brief: the word cap counts the rest
+    $pq = $sp | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable; $pq.items = @(); $pq.subtasks = @()
+    $pf = @(@($pf | Where-Object { $_ -notmatch '^\(all\): \d+ words' }) + @(Test-KitProse -Kind task-description -Text "$($r.name)`n`n$(Format-KitTaskText $pq)$dt" | Where-Object { $_ -match '^\(all\): \d+ words' }))
+  }
+  if ($pf.Count) { throw "tracker spec refused: $($pf.Count) prose finding(s): $($pf -join '; ')" }
   if ($DryRun) { return $r }
   if ($Task) {   # kept from the live text: doc links the spec lacks (devtools.py finish), rollup sections
     Clear-TrackerMemo $Task; $cur = "$((Get-TrackerTask $Task).description)" -replace "`r`n", "`n"; $nd = $r.description

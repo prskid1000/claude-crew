@@ -56,7 +56,7 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
       $hl = @($holders | Where-Object { $sv.service -in @($_.services) }); $gl = @($hl | Where-Object { $null -ne $_.graceLeft } | ForEach-Object graceLeft | Sort-Object)[0]
       $key = if ($sv.port) { "$($sv.service):$($sv.port)" } else { "$($ev.env)/$($sv.service)" }; if (-not $up.Contains($key)) { $up[$key] = @{ svc = $sv.service; envs = @(); who = @(); gl = @(); gb = 0; ext = $false } }
       $u = $up[$key]; $u.envs += $ev.env; $u.ext = $u.ext -or "$($sv.state)" -match 'external'; $u.who += @($hl | ForEach-Object { if ($_.agent) { $_.agent } else { $_.who } }); $u.gl += @($gl | Where-Object { $null -ne $_ }); $u.gb = [math]::Max([double]$u.gb, [double]$sv.gb)
-      $why = @($sv.need); $h1 = @($ev.holds | Where-Object { $sv.service -in @($_.services) -and $_.at -and ($now - [datetime]$_.at).TotalMinutes -ge 30 })[0]
+      $why = @($sv.need); $h1 = @($ev.holds | Where-Object { $sv.service -in @($_.services) -and $_.at -and ($now - [datetime]$_.at).TotalMinutes -ge (Get-KitParam 'localEnv.holdWatchMinutes') })[0]
       if ($h1 -and $why.Count -and -not @($why | Where-Object { $_ -notmatch '^hold:' }).Count) { $fl.Add([pscustomobject]@{ level = 'WATCH'; what = "$($ev.env) $($sv.service) kept up only by $($h1.who)'s hold for $([int]($now - [datetime]$h1.at).TotalMinutes) min (no lease)"; action = "Done with it: & $($KitCmd.local) unhold -Env $($ev.env) -Agent $($h1.who)" }) }
     }
     foreach ($h in @($ev.holds | Where-Object owner)) { $own += "owner hold $($ev.env) [$(@($h.services) -join ',')] until $($h.until) (unhold -Env $($ev.env) -Agent $($h.who) when done)" }
@@ -108,7 +108,7 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix, [string[]]$Known = @()) {
   if ($L.cls -eq 'startup' -and $L.dep -and $ev) {
     $up = $false; $tc = [Net.Sockets.TcpClient]::new(); try { $h, $p = $L.dep -split ':'; $up = $tc.ConnectAsync($h, [int]$p).Wait(1000) -and $tc.Connected } catch {} finally { $tc.Dispose() }
     $rf = Join-Path (Get-KitPath cache -Create) 'localenv-retries.json'; $tried = try { Get-Content $rf -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $tried) { $tried = @{} }
-    $key = $L.path; foreach ($k0 in @($tried.Keys)) { if (((Get-Date) - [datetime]$tried[$k0]).TotalMinutes -ge 60) { $tried.Remove($k0) } }   # once per log an hour
+    $key = $L.path; foreach ($k0 in @($tried.Keys)) { if (((Get-Date) - [datetime]$tried[$k0]).TotalMinutes -ge (Get-KitParam 'localEnv.retryEveryMinutes')) { $tried.Remove($k0) } }   # once per log per window
     if ($up -and $AutoFix -and -not $tried[$key]) {
       $tried[$key] = (Get-Date).ToString('o'); $tried | ConvertTo-Json | Set-Content $rf
       $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'restart', '-Env', $ev.env, '-Services', $svc, '-Agent', 'supervise') ([math]::Min(120.0, (Left)))
@@ -175,7 +175,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       if ($new.Count) { & $watch "MARKS EXPIRED: $($ev.env) $($new -join ', ') (the binlog keeps $($ev.marks.binlogDays) d)" "restore to them is gone; envy.ps1 doctor -Env $($ev.env)" }
       if (-not $ev.marks.baseline) { if (-not $ev.marks.dbDown) { & $watch "NO BASELINE MARK: $($ev.env)" "envy.ps1 seed -Env $($ev.env) (a green seed marks baseline-<date>)" } }   # a lane's DB at rest: its start marks it
       elseif ($ev.marks.binlogDays -and [double]$ev.marks.baselineAgeDays -gt [double]$ev.marks.binlogDays - 3) { & $watch "BASELINE EXPIRES: $($ev.env) $($ev.marks.baseline) is $($ev.marks.baselineAgeDays) d old, the binlog keeps $($ev.marks.binlogDays) d" "envy.ps1 seed -Env $($ev.env)" }
-      if ($ev.marks.binlogDays -and [double]$ev.marks.binlogDays -lt [double](Get-KitSetting 'localEnv.marks.keepDays' 30)) { & $watch "SHORT BINLOG: $($ev.env) keeps $($ev.marks.binlogDays) d < marks.keepDays" "envy.ps1 doctor -Env $($ev.env) (SET PERSIST binlog_expire_logs_seconds)" }
+      if ($ev.marks.binlogDays -and [double]$ev.marks.binlogDays -lt [double](Get-KitParam 'localEnv.marks.keepDays')) { & $watch "SHORT BINLOG: $($ev.env) keeps $($ev.marks.binlogDays) d < marks.keepDays" "envy.ps1 doctor -Env $($ev.env) (SET PERSIST binlog_expire_logs_seconds)" }
     }
     if ($ev.seed -and -not $ev.seed.ok) { & $watch "SEED DRIFT: $($ev.env) $(@(@($ev.seed.missing) + @($ev.seed.drift)) -join ', ')" "envy.ps1 seed -Env $($ev.env) (ENV-FIX)" }
   }
@@ -183,7 +183,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   foreach ($ev in $envs) { foreach ($s in @($ev.services | Where-Object state -eq 'up (adopted)')) { & $watch "UNKNOWN: $($ev.env) $($s.service) port $($s.port) is served by a process the kit did not start" "stop it or change the port (envy.ps1 status -Env $($ev.env))" } }
   $sizesFile = Join-Path (Get-KitPath cache -Create) 'localenv-log-sizes.json'
   $sizes = try { Get-Content $sizesFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $sizes) { $sizes = @{} }
-  $logs = @(Get-ChildItem (Get-KitPath localenv-logs) -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-2) -and $_.BaseName -notmatch '-build$|^loop' } | ForEach-Object FullName)
+  $logs = @(Get-ChildItem (Get-KitPath localenv-logs) -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-(Get-KitParam 'localEnv.logWindowHours')) -and $_.BaseName -notmatch '-build$|^loop' } | ForEach-Object FullName)
   $seen = @{}
   $known = @(if ($state.known) { $state.known.Keys | Where-Object { "$_".StartsWith('noise:') } })   # supervise's state: -Ack on a spike
   foreach ($l in @(Get-KitLogErrors $logs $sizes)) { $seen[$l.path] = $l.size; foreach ($x in @(Get-KitSpikeFlag $l $envs -AutoFix:$AutoFix -Known $known)) { $x } }
@@ -194,7 +194,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
 function Get-KitStatusWaitLocalEnv {
   foreach ($f in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -match '^[^.]+\.json$')) {   # <env>.json, not <env>.seed.json
     $st = try { Invoke-KitLocked $f.FullName { Get-Content -LiteralPath $f.FullName -Raw } | ConvertFrom-Json } catch { continue }
-    if (-not ($st.loop.beat -and ((Get-Date) - [datetime]$st.loop.beat).TotalMinutes -lt 5 -and (Test-KitPid $st.loop.pid $st.loop.pstart))) { continue }
+    if (-not ($st.loop.beat -and ((Get-Date) - [datetime]$st.loop.beat).TotalMinutes -lt (Get-KitParam 'localEnv.loopBeatMinutes') -and (Test-KitPid $st.loop.pid $st.loop.pstart))) { continue }
     foreach ($r in @($st.requests | Where-Object { $_.agent -and $_.status -in 'queued', 'in-train' })) {
       [pscustomobject]@{ agent = $r.agent; why = "$($f.BaseName) $($r.kind) $($r.id)$(if ($r.status -ne 'in-train') { " $($r.status)" })$(if ($st.train) { ", train $($st.train.id) $($st.train.phase -replace '^waiting for', 'waits for')" })"; at = $r.at; next = "envy.ps1 wait -Env $($f.BaseName) -Id $($r.id); a hung train: TRAIN STALLED" }
     }

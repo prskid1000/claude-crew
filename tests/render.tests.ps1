@@ -275,7 +275,7 @@ Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty
 | X1 | A1 | orders screen | any | web |  | api | yes: new grid |
 | X2 | A2 | api sort | any | api |  |  | no |
 
-**Overlaps:** none · **Contracts:** ``orders-sort.contracts.md`` (1 crossing)
+**Overlaps:** none · **Contracts:** ``wb.contracts.md`` (1 crossing)
 **Branch:** ``f/<tag><task>-<slug>``, pool slots leased as the agent id · **Tracker:** —.
 Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
 
