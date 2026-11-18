@@ -60,10 +60,12 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
+- results patch carries a row key firstAttempt -> use only keys in testy.js CHECKS_SCHEMA; fold the content into observed (9 refusals and re-runs of patch in one day)
+- finalize -Check -Results results-retry.json on a scoped retry -> check only rows in the retry file; expect docgaps to flag rows it does not cover and publish with the item results.json check instead (3 signals: false doc-check failures on unpublished rows)
 - writing testing-doc or check texts with prose limits -> write to the word limit first and keep the key request (e.g. server-log check) when cutting (prose check failed twice; shortening dropped the server-log request)
 - testy finalize -Check on a run whose run.json title is long -> keep the run title at 25 words or fewer when the run is created (finalize -Check failed EXIT=1 twice and needed a hand edit of run.json)
 - a test run lasts longer than a few minutes (a full e2e suite) -> start it detached with Start-Process and a log file, never as a Bash run_in_background child (a 3.5 h e2e run died at 42 min with the shell, no exit line)
-- publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames)
+- publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames) (2×)
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
 - A PASS_WITH_NOTE whose observed text describes a defect (clipped control, wrong data) -> make it a FAIL; re-read every note before closing (a defect passed as a note once). (1x)
 - A node QA script -> wrap it in try/finally s.done(); after a hard kill run `bossy.ps1 release -Agent <id>` (leased tabs, 8 max, made session() hang silently). (2x)
