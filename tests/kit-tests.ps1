@@ -15,6 +15,7 @@ Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 param([string[]]$Area = @(), [switch]$Slow, [switch]$Full, [switch]$Detail)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
+Set-Location -LiteralPath (Split-Path $PSScriptRoot)   # areas run in the kit under test: a cwd in another clone (the live kit) failed local-env-3, runtimes
 # the areas a change reaches: a test file -> its area; the runner, the harness, a crafty adapter or another non-.md file the harness
 # copies into every kit -> all; else the areas naming the file (+ its skill's script for an adapter, kitbag.py for kitbag_*; a
 # generated .<dir>/ file: the areas naming .<dir>/); a non-.md file no area names -> all. -Full (pre-push to main) closes the rest.

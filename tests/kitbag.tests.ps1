@@ -180,6 +180,8 @@ Expect "kit-tests default: changed areas (.md none, a named file its areas, an a
 $qo = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area a).out
 $qd = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area a -Detail).out; $cdp = (Read-Json "$cd/skills/crafty/kit.example.json")._paths; $ql = Get-Content -Raw -LiteralPath (Join-Path (Join-Path (Join-Path $cd $cdp.runtimeDir) $cdp.runtime.logs) 'kit-tests-last.txt') -ErrorAction SilentlyContinue
 Expect "kit-tests: a green area prints one line, its PASS lines in <runtime>/logs/kit-tests-last.txt; -Detail prints them" ($qo -match '(?m)^== a \(\d+ s\): 1 passed\s*$' -and $qo -notmatch 'PASS a uses' -and $ql -match 'PASS a uses' -and $qd -match '(?m)^PASS a uses')
+'"cwd $((Get-Location).Path)"; ''PASS c''' | Set-Content "$cd/tests/c.tests.ps1"; $cwo = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area c -Detail).out
+Expect "kit-tests: areas run in the kit under test, whatever the caller's cwd" ($cwo -match "(?m)^cwd $([regex]::Escape((Resolve-Path $cd).Path))\s*$" -and (Get-Location).Path -ne (Resolve-Path $cd).Path)
 $null = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
 # lib.ps1 Add-KitAskBug (here for the guard area's cap): only a QA collector [Bug] takes sections

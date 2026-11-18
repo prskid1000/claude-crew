@@ -144,6 +144,12 @@ $gd = "$(Kd)/TGA-h.md"; Set-Content $gd 'g1'
 $gr = New-Run 'GA' @(@{ code = 'G1'; task = 'TGA'; checks = , @('C1', 'PASS') })
 $go = Fin $gr G1 -Check; $grc = $LASTEXITCODE; $gp = Fin $gr G1 -NoTracker
 Expect "finalize -Check: a human doc row no check covers -> EXIT=1 naming it; publish refuses, nothing published (rc $grc)" ($grc -eq 1 -and $go -match 'G1 doc check: C2: human testing doc row' -and $gp -match 'G1 doc check: C2' -and -not (Test-Path "$gr/G1/finalize.json"))
+# a scoped retry (-Results results-retry.json, C1 only): the item's results.json covers C2, no doc gap; api evidence with only request.path previews, no crash
+New-Item -ItemType Directory -Force "$gr/G1/evidence" | Out-Null; & $J @{ request = @{ method = 'POST'; path = '/api/x' }; response = @{ status = 201; body = @{ ok = 1 } } } "$gr/G1/evidence/G1-C1_01_rel.json"
+$rj = Read-Json "$gr/G1/results.json"; $rj.checks[0].evidence = @('G1-C1_01_rel.json'); & $J $rj "$gr/G1/results-retry.json"
+$c2 = $rj.checks[0] | ConvertTo-Json -Depth 5 | ConvertFrom-Json; $c2.id = 'C2'; $c2.evidence = @(); $rj.checks = @($rj.checks) + $c2; & $J $rj "$gr/G1/results.json"
+$gro = Fin $gr G1 -Check -Results results-retry.json; $grr = $LASTEXITCODE
+Expect "finalize -Check -Results <retry>: rows the item's results.json covers are no doc gap; a path-only api file does not crash (rc $grr)" ($gro -notmatch 'doc check' -and $gro -notmatch 'null-valued' -and $grr -eq 0)
 # a later run of one row (a local app part): the earlier published run Q1 covers C2, so no NOT_TESTED filler; a NOT_TESTED never replaces C1's PASS
 $cr = New-Run 'CA' @(@{ code = 'G2'; task = 'TAI'; checks = , @('C1', 'NOT_TESTED') })
 $rj = Read-Json "$cr/G2/results.json"; $rj.checks[0] | Add-Member cause 'env-data'; $rj.checks[0].observed = 'PO field read-only on the phone vs typed PO'; & $J $rj "$cr/G2/results.json"

@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L155 seat · L224 api · L446 finalize · L915 results · L948 retest · L1005 prepare
+Sections: L26 lanes · L40 report · L156 seat · L225 api · L447 finalize · L918 results · L951 retest · L1008 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -85,7 +85,8 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
       }
       $jv = try { Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -AsHashtable } catch { $null }
       if ($jv -is [Collections.IDictionary] -and $jv.request -is [Collections.IDictionary] -and $jv.response -is [Collections.IDictionary]) {   # pokey.ps1 api
-        $u = [string]$jv.request.url; $path = try { ([uri]$u).PathAndQuery } catch { $u }
+        # a relative url or only request.path: PathAndQuery is $null (finalize crashed on .Substring)
+        $u = [string]$(if ($jv.request.url) { $jv.request.url } else { $jv.request.path }); $path = "$(try { ([uri]$u).PathAndQuery } catch { })"; if (-not $path) { $path = $u }
         $ln.Add("$($jv.request.method) $($path.Substring(0, [math]::Min(80, $path.Length))) -> $($jv.response.status)"); Walk $jv.response.body 'body'
       } else { Walk $jv '' }
       foreach ($x in @(@($hits) + @($first | Where-Object { $_ -notin $hits }) | Select-Object -First $(if ($Line -and $hits.Count) { $hits.Count } else { $max }))) { $ln.Add($x) }
@@ -533,7 +534,9 @@ $runKey = "$(Split-Path $RunDir -Leaf)-$Code"
 $stIds = @(@($item.subtasks) | ForEach-Object { [string]$_.id })
 $docSib = [bool]@(@($run.items) | Where-Object { $_.code -ne $Code -and @(@($_.subtasks) | Where-Object { [string]$_.id -in $stIds }).Count }).Count
 $docGaps = { if (-not $hDoc) { return }
-  $gc = @{}; foreach ($c in @($res.checks)) { $gc[[string]$c.id] = @{ result = [string]$c.result; case = "$($c.case)"; screen = "$($c.screen)" } }
+  # a scoped retry (-Results <file>): the item's results.json covers the rows the retry does not touch
+  $gcAll = @(@($res.checks) + @(if ($Results -ne 'results.json' -and (Test-Path -LiteralPath (Join-Path $D 'results.json'))) { try { @((Get-Content -LiteralPath (Join-Path $D 'results.json') -Raw | ConvertFrom-Json).checks) } catch { } }))
+  $gc = @{}; foreach ($c in $gcAll) { if ($c -and -not $gc.ContainsKey([string]$c.id)) { $gc[[string]$c.id] = @{ result = [string]$c.result; case = "$($c.case)"; screen = "$($c.screen)" } } }
   $gf = New-KitTempFile '.json'; [IO.File]::WriteAllText($gf, (ConvertTo-Json $gc -Depth 3), [Text.UTF8Encoding]::new($false))
   $gapAll = @(& (Get-Python) -X utf8 $KitCmd.devtools docgaps --key "${pubKey}:testing-doc" --run $gf --run-id $runKey 2>&1); $gapRc = $LASTEXITCODE; Remove-Item -LiteralPath $gf -ErrorAction SilentlyContinue
   if ($gapRc) { throw "devtools.py docgaps failed (exit $gapRc): $((@($gapAll) | Select-Object -Last 3) -join ' | ')" }   # never read as "every row covered"
@@ -914,7 +917,7 @@ $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, faile
 
 # ---- results: results.json written once (the tester); the workflow's changes as deltas by check id; held.json by the script
 # a row's keys: testy.js CHECKS_SCHEMA + the keys the workflow adds (kitbag lint RESULT-KEYS keeps them in step)
-$script:ResultRowKeys = 'id', 'subtask_id', 'case', 'screen', 'result', 'defect', 'knownBug', 'signature', 'cause', 'env_fix', 'what_was_done', 'observed', 'evidence', 'attempts', 'window', 'guideId', 'verify', 'flaky'
+$script:ResultRowKeys = 'id', 'subtask_id', 'case', 'screen', 'result', 'defect', 'knownBug', 'signature', 'cause', 'env_fix', 'what_was_done', 'observed', 'evidence', 'attempts', 'window', 'guideId', 'verify', 'flaky', 'firstAttempt'
 function Invoke-Results {
 param([Parameter(Mandatory, Position = 0)][ValidateSet('patch', 'hold')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Code,
   [string]$Patch, [string]$Why, [string]$Summary, [string]$EnvFix)

@@ -2011,14 +2011,14 @@ function Test-OpenDoc([string]$text, [string]$tool) {
       $t -match "$sep(Start-Process|start|saps)\s+(-\w+\s+)*([^\s;|&<>]+\.($de)|https?://\S+|\.{1,2}[\\/]?)$fe") { return 'doc' }
   $null
 }
-function Get-KitScriptRewrite([string]$text) {   # the first script in command position, through its interpreter
-  if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>[^\r\n;|&]*)') { return '' }
+function Get-KitScriptRewrite([string]$text) {   # the first script in command position, through its interpreter; quoted args whole (a | in JSON)
+  if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>(?:''[^'']*''|"(?:[^"\\]|\\.)*"|[^\r\n;|&''"])*)') { return '' }
   " Rewrite: $(@{ ps1 = 'pwsh -NoProfile -File'; py = 'python -X utf8' }[$Matches.x] ?? 'node') $($Matches.s)$($Matches.r.TrimEnd())"
 }
 $od = Test-OpenDoc $raw $tn
 if ($od -eq 'script') {
   $fix = Get-KitScriptRewrite $raw
-  Deny "$(if ($fix) { "$($fix.Trim()) -> " })That runs a script file directly: Windows opens it with its file association (an editor on the owner's screen). Run it with python -X utf8 <script> / node <script> (.ps1: & <script> or pwsh -File <script>). $hl" }
+  Deny "$(if ($fix) { "$($fix.Trim()) -> " })That runs a script file directly: Windows opens it in an editor. Run it through its interpreter (python -X utf8, node, pwsh -File). $hl" }
 $readIt = "use the Read tool (offset / limit; Get-Content or cat in a script); run a script through its interpreter (python -X utf8, node, pwsh -File). $hl"
 if ($od) { Deny "That opens the file in its default desktop app instead of reading it: $readIt" }
 # a file path in command position (quoted, any extension, an existing file or folder) opens its associated app

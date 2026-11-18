@@ -5,6 +5,7 @@
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/container_tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit rt; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
+$env:KIT_PARAM_RUNTIMEPROBE_ISUPSEC = '120'   # the fake isUp spawns a pwsh: the guard's 5 s probe timed out under a full parallel run (K76)
 $flag = Join-Path (Kd) 'fake.up'; $log = Join-Path (Kd) 'fake.log'
 $fake = @{ isUp = "if (Test-Path '$flag') { 'up' }"; up = "New-Item -Force '$flag' | Out-Null; Add-Content '$log' up"
   down = "Remove-Item -Force '$flag'; Add-Content '$log' down"; match = 'fakectl\b|tcx' }   # unanchored: the kit tests it at each command's head

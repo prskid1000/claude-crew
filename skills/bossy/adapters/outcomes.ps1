@@ -80,7 +80,7 @@ function Update-KitOutcomes([switch]$All) {
 function Get-KitSuperviseFlagsOutcomes([switch]$AutoFix) { try { $null = Update-KitOutcomes } catch { [pscustomobject]@{ level = 'WATCH'; what = "outcomes sweep failed: $($_.Exception.Message)"; action = 'bossy.ps1 tidy prep reruns it; else a kitty (kind fix)' } } }
 
 # ---- summary: worst areas, repeat causes, most fix rounds (tidy prep digest, dashboard)
-function Get-KitOutcomeStats([int]$Days = 30) {   # TODO-PARAM (fixed default)
+function Get-KitOutcomeStats([int]$Days = (Get-KitParam 'outcomes.days')) {
   $since = (Get-Date).AddDays(-$Days); $last = @{}
   foreach ($r in @(Read-KitOutcomeRows)) { $w = @($r.seen, $r.at | Where-Object { $_ })[0]; if ($r.task) { if ($w -and [datetime]$w -ge $since) { $last["$($r.task)"] = $r } else { $last.Remove("$($r.task)") } } }
   $rows = @($last.Values); foreach ($r in $rows) { $r.area = @("$($r.area)" -split ',' | Where-Object { $_ } | ForEach-Object { Get-KitRepoName $_ } | Sort-Object -Unique) -join ',' }   # rows written before alias names
@@ -95,7 +95,7 @@ function Get-KitOutcomeStats([int]$Days = 30) {   # TODO-PARAM (fixed default)
   $agents = @($rows | ForEach-Object { $r = $_; foreach ($a in @($r.agents | Where-Object { $_ })) { [pscustomobject]@{ agent = $a; n = & $rounds $r } } } | Group-Object agent |
     ForEach-Object { [pscustomobject]@{ agent = $_.Name; tasks = $_.Count; rounds = [int](@($_.Group.n) | Measure-Object -Sum).Sum } } | Where-Object rounds | Sort-Object { -$_.rounds }, agent)
   $why = @(foreach ($w in @(Read-KitJsonFiles (Get-KitPath waves) | Where-Object { $_.at -and [datetime]$_.at -ge $since })) { foreach ($p in @(Get-KitProps $w.agents)) { foreach ($d in @($p.Value.deferred | Where-Object { $_.reason })) { [pscustomobject]@{ skill = 'outcome'; kind = "$($d.kind)"; text = "$($d.reason)"; ref = "$($w.run)/$($p.Name)" } } } })
-  $causes = @(Get-KitSignalGroups $why @() 0.3 | Where-Object { $_.n -ge 2 } | Sort-Object { -$_.n })   # TODO-PARAM (fixed default)
+  $causes = @(Get-KitSignalGroups $why @() ([double](Get-KitParam 'outcomes.causeSimilarity')) | Where-Object { $_.n -ge 2 } | Sort-Object { -$_.n })
   # dashboard: one bucket per task, a stacked bar per repo, KPIs with weekly points (the task's promoted day, else its last change)
   $tasks = @(foreach ($r in $rows) { [pscustomobject]@{ id = "$($r.task)"; repos = @("$($r.area)" -split ',' | Where-Object { $_ }); bucket = (Get-KitOutcomeBucket $r); rounds = $(if (@($r.agents | Where-Object { $_ }).Count) { & $rounds $r })
       week = [int][math]::Floor(((Get-Date) - [datetime]@($r.doneAt, $r.seen, $r.at | Where-Object { $_ })[0]).TotalDays / 7); closedAt = (ConvertTo-KitOutcomeIso $r.closedAt); backAt = (ConvertTo-KitOutcomeIso $r.backAt)
@@ -115,7 +115,7 @@ function Get-KitOutcomeStats([int]$Days = 30) {   # TODO-PARAM (fixed default)
 }
 # a test run's QA outcome from the task index: its env runs named <date>[-<time>]-<name>, else its tasks' env runs inside its window
 function Get-KitRunQa($Run, $Ix) {
-  $from = try { [datetime]$Run.started } catch { $null }; $to = try { ([datetime]$Run.at).AddMinutes(60) } catch { $null }
+  $from = try { [datetime]$Run.started } catch { $null }; $to = try { ([datetime]$Run.at).AddMinutes([double](Get-KitParam 'outcomes.runWindowMinutes')) } catch { $null }
   $hit = @(foreach ($x in @($Ix)) { foreach ($er in @($x.envRuns | Where-Object { $_ })) {
         $named = $Run.qaName -and "$($er.run)" -match "^\d{4}-\d\d-\d\d(-\d{6})?-$([regex]::Escape("$($Run.qaName)"))$"
         $inWin = "$($x.task)" -in @($Run.tasks) -and $from -and $er.at -and [datetime]$er.at -ge $from -and [datetime]$er.at -le $to
@@ -206,7 +206,7 @@ function Get-KitOutcomeBucket($R) {
   if ($R.cameBack) { return 'back' }; if ("$($R.stage)" -ne 'passed') { return 'wait' }; if (-not @($R.agents | Where-Object { $_ }).Count) { return 'rna' }
   $n = [math]::Max(0, [int]$R.localRounds - 1) + [int]$R.reviewFix; if ($n -ge 3) { 'r3' } else { "r$n" }
 }
-function Get-KitOutcomeLines([int]$Days = 30) {   # TODO-PARAM (fixed default)
+function Get-KitOutcomeLines([int]$Days = (Get-KitParam 'outcomes.days')) {
   $s = Get-KitOutcomeStats $Days; if (-not $s.n) { return }
   $cut = { param($x, [int]$m = 120) $x = "$x" -replace '\s+', ' '; if ($x.Length -gt $m) { $x.Substring(0, $m - 3) + '...' } else { $x } }
   "$($s.n) task(s) in $Days d: QA first pass $($s.firstPass)/$($s.qaN), came back $($s.cameBack) (reopened, failedTesting or a [Bug] under it)$(if ($null -ne $s.p50Promoted) { ", p50 $($s.p50Promoted) h to promoted" })"
@@ -226,14 +226,14 @@ function Get-KitChoiceWords([string]$Answer) {
 }
 function ConvertTo-KitWordSet($Words) { $h = [Collections.Generic.HashSet[string]]::new(); foreach ($x in @($Words)) { if ($x) { [void]$h.Add("$x") } }; , $h }
 # one choice: the shorter answer's words sit in the longer one (an owner often adds a reason) and both say no, or neither does
-function Test-KitSameChoice($A, $B, [double]$Min = 0.8) {   # TODO-PARAM (fixed default)
+function Test-KitSameChoice($A, $B, [double]$Min = (Get-KitParam 'decide.sameChoice')) {
   if (-not $A.Count -or -not $B.Count) { return $false }
   $neg = { param($s) [bool]@($s | Where-Object { $_ -in 'no', 'not', 'never', 'none', 'without', 'dont', 'cant', 'wont', 'nothing', 'neither', 'skip' }).Count }
   if ((& $neg $A) -ne (& $neg $B)) { return $false }
   $in = @($A | Where-Object { $B.Contains($_) }).Count; $in / [math]::Min($A.Count, $B.Count) -ge $Min
 }
 function Test-KitRuleSensitive([string]$Gate, [string]$Question) { $Gate -in $script:KitRuleNeverGates -or $Question -match $script:KitRuleNeverRx }
-function Get-KitDecisionPatterns([int]$Min = 3, [double]$Topic = 0.5, [double]$Same = 0.8) {   # TODO-PARAM (fixed default)
+function Get-KitDecisionPatterns([int]$Min = (Get-KitParam 'decide.patternMin'), [double]$Topic = (Get-KitParam 'decide.topicSimilarity'), [double]$Same = (Get-KitParam 'decide.sameChoice')) {
   $groups = [Collections.Generic.List[object]]::new()
   foreach ($d in @(Get-KitOwnerAnswers | Sort-Object { [datetime]$_.at })) {
     $w = Get-KitTopicWords $d.question; if ($w.Count -lt 2) { continue }
@@ -261,7 +261,7 @@ function Save-KitStandingRules($Rules) {
     @($ok | ForEach-Object { "- $($_.id): asked `"$($_.question)`" -> `"$($_.answer)`"$(if (-not $_.auto) { ' (guidance: never auto-answered)' }) (evidence $(@($_.evidence) -join ', '); approved $("$($_.approvedAt)".Substring(0, [math]::Min(10, "$($_.approvedAt)".Length))) by $($_.approvedBy))" })
   [IO.File]::WriteAllText($md, (($lines -join "`n") + "`n"))
 }
-function Find-KitStandingRule($Rules, [string]$Gate, $Words, [double]$Min = 0.5) {   # TODO-PARAM (fixed default)
+function Find-KitStandingRule($Rules, [string]$Gate, $Words, [double]$Min = (Get-KitParam 'decide.ruleMatch')) {
   @($Rules | Where-Object { "$($_.gate)" -eq $Gate } | ForEach-Object { $rw = ConvertTo-KitWordSet $_.words; [pscustomobject]@{ r = $_; s = (Get-KitOverlap $rw $Words) } } | Where-Object { $_.s -ge $Min } | Sort-Object { -$_.s } | Select-Object -First 1).r
 }
 # the answer picks: "A" / "all" = every rule of the ask; else the sr- ids it names; the rest of the ask -> rejected

@@ -10,7 +10,7 @@ defaults to $env:CLAUDE_AGENT, else main. State: <state>/runtimes/<name>.json. C
 Dot-sourced by lib.ps1 (adapters/*.ps1): crafty.ps1 gets the verb and the guard rule, bossy.ps1 supervise its sweep
 (Get-KitSuperviseGuardRuntimes: a lease with no live holder for idle.graceMinutes -> released; kit-started + no lease -> down).
 Exit codes: 0 ok · 1 problem (not configured, up or down failed) · 2 usage.
-Sections: L16 state · L45 leases · L90 verb · L136 supervise
+Sections: L16 state · L46 leases · L91 verb · L137 supervise
 #>
 #Requires -Version 7
 # ---- state: names, state file, probes
@@ -32,7 +32,8 @@ function Update-KitRuntimeState([string]$Name, [scriptblock]$Change) {
 # WSL_UTF8: wsl.exe prints UTF-8 instead of UTF-16
 function Invoke-KitRuntimeCmd([string]$Line, [int]$TimeoutSec) { $env:WSL_UTF8 = '1'; Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-Command', $Line) $TimeoutSec }
 # $true running · $false not running · $null unknown (timed out): unknown is never a state, so it never starts or stops anything
-function Test-KitRuntimeUp([string]$Name, [int]$TimeoutSec = 20) {
+# runtimeProbe.isUpSec: a full wait; the guard's no-wait probe a quarter, the sweep's a half (under load 5 s timed out: K76 flakes)
+function Test-KitRuntimeUp([string]$Name, [int]$TimeoutSec = (Get-KitParam 'runtimeProbe.isUpSec')) {
   $r = Invoke-KitRuntimeCmd (Get-KitSetting "runtimes.$Name.isUp" '') $TimeoutSec
   if ($r.timedOut) { return $null }
   -not $r.code -and [bool]("$($r.out)" -replace "`0").Trim()
@@ -55,7 +56,7 @@ function Stop-KitRuntime([string]$Name, [hashtable]$St) {
 
 function Use-KitRuntime([string]$Name, [string]$Agent, [string]$Session, [switch]$Auto, [switch]$NoWait) {
  Update-KitRuntimeState $Name { param($st)
-    $script:up = Test-KitRuntimeUp $Name $(if ($NoWait) { 5 } else { 20 })
+    $script:up = Test-KitRuntimeUp $Name ([double](Get-KitParam 'runtimeProbe.isUpSec') / $(if ($NoWait) { 4 } else { 1 }))
     $st.leases = @($st.leases | Where-Object { -not ($_.agent -eq $Agent -and "$($_.session)" -eq $Session) })   # one per agent + session
     $l = New-KitLease $Agent $Session; if ($Auto) { $l.auto = $true; $l.used = (Get-Date).ToString('o') }
     $st.leases += $l; $st.Remove('emptySince')
@@ -149,7 +150,7 @@ function Get-KitSuperviseGuardRuntimes([switch]$AutoFix) {
           if (($now - [datetime]$l.seen).TotalMinutes -ge $grace) { $l }
         })
       # probed only when a stop may follow (kit-started, no live lease): the probe cost 1-4 s a sweep under load
-      $running = if ($st.startedByKit -and -not $live) { Test-KitRuntimeUp $n 10 } else { 'skip' }
+      $running = if ($st.startedByKit -and -not $live) { Test-KitRuntimeUp $n ([double](Get-KitParam 'runtimeProbe.isUpSec') / 2) } else { 'skip' }
       # stopped outside the kit: whoever starts it next owns it (not while the kit's own start may still be booting)
       if ($running -eq $false -and $st.startedByKit -and -not ($st.startedAt -and ($now - [datetime]$st.startedAt).TotalMinutes -lt $grace)) { $st.startedByKit = $false; $st.Remove('emptySince') }
       foreach ($l in $dead) {

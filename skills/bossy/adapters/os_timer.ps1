@@ -23,7 +23,7 @@ Register-KitAdapter 'scheduler' 'windows' @{
   'install' = { param($a) Import-Module ScheduledTasks -ErrorAction Stop
     $act = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\conhost.exe') -Argument "--headless `"$($a.pwsh)`" $($a.tick)"
     $trg = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $a.minutes)
-    $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+    $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes ([double](Get-KitParam 'supervise.osTimerLimitMinutes')))
     $null = Register-ScheduledTask -TaskName $a.name -Action $act -Trigger $trg -Settings $set -Description 'claude-crew: bossy.ps1 heartbeat tick (supervise.osTimer)' -Force -ErrorAction Stop }
   'uninstall' = { param($a) Import-Module ScheduledTasks -ErrorAction Stop; if (Get-ScheduledTask -TaskName $a.name -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $a.name -Confirm:$false -ErrorAction Stop } }
   'status' = { param($a) Import-Module ScheduledTasks -ErrorAction Stop; $t = Get-ScheduledTask -TaskName $a.name -ErrorAction SilentlyContinue; if (-not $t) { return @{ installed = $false } }

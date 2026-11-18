@@ -1,6 +1,7 @@
 #Requires -Version 7
 <#
-workflows-generic.tests.ps1: buildy.js / testy.js on neutral and custom config (CONFIG line of launch -Self): repo roles, qa.lanes, models.<phase>.
+workflows-generic.tests.ps1: buildy.js / testy.js on neutral and custom config (CONFIG line of launch -Self): repo roles, qa.lanes, models.<phase>;
+testy.js resultsPatch -> pokey.ps1 results patch / hold.
 Usage: pwsh -NoProfile -File <kit>/tests/workflows-generic.tests.ps1 (or tests/kit-tests.ps1 -Area workflows-generic).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -116,5 +117,33 @@ const v = await sim({ items: [_item('W1', 'web', { skipClose: true })] }, [['C1'
 console.log(`verify-defect:${v.calls.some((c) => /^hold:W1/.test(c.label) && /"defect":\s*"new"/.test(c.prompt))}`)
 '@
 Expect-Each (Invoke-Js wg-tn $js1c (Join-Path $src 'workflows/testy.js')) 'testy: #' 'next-opts', 'broken-held', 'verify-defect' -Show 8
+# (cap move from render.tests.ps1)
+# ---- results.json written once; the workflow sends deltas (item 3): testy.js resultsPatch -> pokey.ps1 results patch / hold
+$rd = Join-Path (Kd) 'qa-run'; New-Item -ItemType Directory -Force "$rd/W1" | Out-Null
+$row = { param($id, $r) [ordered]@{ id = $id; subtask_id = 't1'; screen = 's'; result = $r; what_was_done = 'w'; observed = 'o'; evidence = @(); attempts = 1 } }
+$tester = [ordered]@{ code = 'W1'; checks = @((& $row 'T1' 'PASS'), (& $row 'T2' 'FAIL'), (& $row 'T2' 'PASS')); findings = @(); setup_changes = @(); data_created = @() }
+Set-JsonFile "$rd/W1/results.json" $tester; Set-JsonFile "$rd/tester.json" $tester
+$js = Join-Path (Kd) 'rp.mjs'; [IO.File]::WriteAllText($js, @'
+import fs from 'node:fs'
+const src = fs.readFileSync(process.argv[2], 'utf8'), Q = 'pokey.ps1', R = { runDir: 'RD' }
+eval(src.slice(src.indexOf('const uniq ='), src.indexOf('function finalPrompt')).replace('function resultsPatch', 'globalThis.resultsPatch = function').replace('const uniq =', 'globalThis.uniq ='))
+const written = JSON.parse(fs.readFileSync(process.argv[3], 'utf8')), res = JSON.parse(JSON.stringify(written))
+res.code = 'W1'; res.checks[2].id = 'T2b'; res.checks[2].guideId = 'T2'; res.checks[1].verify = "re-test: confirmed (it's real)"; res.checks[0].firstAttempt = 'o'
+res.checks.push({ id: 'T1n', subtask_id: 't1', screen: 's', result: 'NOT_TESTED', cause: 'env-data', what_was_done: 'split', observed: '', evidence: [], attempts: 0 })
+console.log(resultsPatch(written, res)); console.log('NONE=' + JSON.stringify(resultsPatch(written, { ...written, checks: uniq(written.checks) })))
+'@)
+$cmds = @(node $js (Join-Path $src 'workflows/testy.js') "$rd/tester.json" 2>&1)
+$pj = if ("$($cmds[0])" -match "-Patch '(.*)'$") { $Matches[1].Replace("''", "'") } else { '' }
+$PK = Join-Path $k 'skills/pokey/pokey.ps1'
+$pr = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch $pj 2>&1 | Out-String; $after = Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json
+$pb = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch '{"set":{"T9":{"result":"PASS"}},"add":[{"id":"Z1","color":"red"}]}' 2>&1 | Out-String
+$ph = pwsh -NoProfile -File $PK results hold -RunDir $rd -Code W1 -Why "env: it's down" -Summary 'W1: pass 1/3' -EnvFix '{"id":"d-1","state":"open"}' 2>&1 | Out-String; $hj = Get-Content -Raw "$rd/W1/held.json" | ConvertFrom-Json
+Expect "testy.js resultsPatch: only the changed fields and added rows (dup ids as the workflow names them), none when nothing changed ($($cmds -join ' || '))" ("$($cmds[0])" -match "^& 'pokey\.ps1' results patch -RunDir 'RD' -Code W1 -Patch '\{" -and $pj -match '"set":\{"T1":\{"firstAttempt":"o"\},"T2":\{"verify":"re-test: confirmed \(it.s real\)"\}\}' -and $pj -match '"add":\[\{"id":"T1n"' -and $pj -notmatch 'T2b' -and "$($cmds[1])" -eq 'NONE=""')
+Expect "pokey.ps1 results patch: deltas merged by id (dup ids made unique, guideId, the workflow's firstAttempt), rows added, unknown key / id refused, nothing written ($($pr.Trim()))" ($pr -match '2 changed, 1 added, 4 checks' -and $after.checks[0].firstAttempt -eq 'o' -and (@($after.checks.id) -join ',') -eq 'T1,T2,T2b,T1n' -and $after.checks[1].verify -match "it's real" -and $after.checks[2].guideId -eq 'T2' -and $pb -match 'unknown row key\(s\) color' -and @((Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json).checks).Count -eq 4)
+$pn = foreach ($bp in '{"add":[{"observed":"x"}]}', '{"set":{"T1":"PASS"}}') { pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch $bp 2>&1 | Out-String }
+Expect 'results patch: an add row without id or a set value no object = refused with the set shape, no crash' (@($pn | Where-Object { $_ -match 'add rows need an id; to change fields of a check use set' }).Count -eq 2)
+$ps = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch '{"set":{"T2":{"observed":"set only"}}}' 2>&1 | Out-String   # no add key: .add was the hashtable's Add method (L20)
+Expect "results patch: a set-only patch (no add key) applies ($($ps.Trim()))" ($ps -match '1 changed, 0 added' -and @((Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json).checks | Where-Object { $_.id -eq 'T2' -and $_.observed -eq 'set only' }).Count -eq 1)
+Expect "pokey.ps1 results hold: held.json from arguments, the script's UTC time ($($hj.at))" ($hj.held -eq "env: it's down" -and $hj.envFix.id -eq 'd-1' -and $hj.summary -eq 'W1: pass 1/3' -and (Get-Content -Raw "$rd/W1/held.json") -match '"at": "\d{4}-\d\d-\d\dT[\d:.]+Z"')
 Remove-TestKit $k
 Complete-Tests
