@@ -62,8 +62,8 @@ Every local-env service follows it; `doctor` checks (`adapters/lane_standard.ps1
   merge by `name`.
 - `services[].target`: a branch other than the repo's `target`; a second target of one repo in an env (an old UI next to the
   new one) gets its own lane worktree and branch `lane/<product>-<bird>-<target>`, keyed `<repo>@<target>`.
-- `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health, `db.expect` ({ server variable: value })
-  and `services[].requiredEnv` (variable names each lane must set, e.g. an integration key); `deploy` stops on its FAIL lines.
+- `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health, `db.expect`, `services[].requiredEnv`
+  (variables each lane must set), dependency sources, lane worktrees (`-Fix` remakes one); `deploy` stops on its FAIL lines.
 - Service logs move to `.prev` past `logMaxMB` (100; per service too).
 - Example (`kit.local.json`):
 ```json

@@ -110,6 +110,8 @@ function Get-LanesOpen([string]$e) {
 # ---- thin artifacts: services[].classpathFile, a thin artifact + the build's classpath file -> <release>/classpath.txt and java.args (-cp "<artifact>;<libraries>"),
 # so a restart or rollback starts what that release built; libraries stay in the Maven local repository, the repo's own module jars are copied
 function JavaArgsFile([string]$artifact) { if ($artifact) { Join-Path $(if (Test-Path -LiteralPath $artifact -PathType Container) { $artifact } else { Split-Path $artifact }) 'java.args' } }
+# a live release the train can keep: its artifact, and with classpathFile its java.args (one staged before the switch is rebuilt: a restart fails)
+function Test-ReleaseArtifact($s, [string]$a) { [bool]($a -and (Test-Path -LiteralPath $a) -and -not ($s.classpathFile -and -not (Test-Path -LiteralPath (JavaArgsFile $a)))) }
 function Write-JavaArgs([string]$e, $s, [string]$from, [string]$to, [string]$art) {
   $cpf = Join-Path $to 'classpath.txt'
   if ($from) {   # a shared stage brings the other lane's classpath.txt; java.args is always rewritten for this release's artifact

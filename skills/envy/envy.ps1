@@ -2,7 +2,7 @@
 envy.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) that agents deploy branches to, test and debug
 on; a service = a start command in a folder (default crafty.ps1 stack `run`). Model: envy SKILL.md "Local testing".
   & <kit>/skills/envy/envy.ps1 <verb> [args]
-Verbs: envs · status · doctor · deploy · wait (-Id | -Until up [-Services] [-Timeout s]) · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
+Verbs: envs · status · doctor [-Fix] · deploy · wait (-Id | -Until up [-Services] [-Timeout s]) · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
        migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] (marks = list) ·
        seed [-Check] · drop -Agent <id> [-Note <why>] | -Stale [-DryRun] (bossy.ps1 release / supervise: layers of a finished agent,
        merged, gone or orphan ones)
@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L239 state · L286 layer drops · L358 leases · L466 code · L477 migrations ·
-  L480 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L628 shared builds · L766 hooks · L838 marks · L1019 seed ·
-  L1086 processes · L1467 daemon · L1929 cleanup · L2001 doctor · L2060 verbs
+  L480 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L627 shared builds · L765 hooks · L837 marks · L1018 seed ·
+  L1085 processes · L1466 daemon · L1928 cleanup · L2000 doctor · L2059 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -595,8 +595,7 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
   Ensure-Worktree $e $r
   Sync-DepLinks $e $r
   $d = $r.wt
-  $top = "$(git -C $d rev-parse --show-toplevel 2>$null)".Trim()
-  if (-not $top -or [IO.Path]::GetFullPath($top).TrimEnd('\', '/') -ne [IO.Path]::GetFullPath($d).TrimEnd('\', '/')) { throw "[$e] $d is not its own git worktree (toplevel: $top): refusing to reset it" }
+  if (-not (Test-LaneWorktree $d)) { throw "[$e] $d is not its own git worktree: not reset (envy.ps1 doctor -Env $e -Fix)" }
   $dirty = @(git -C $d status --porcelain --untracked-files=no)
   if ($dirty.Count) { Write-Host "[$e] $d had $($dirty.Count) uncommitted edits: discarded (the env worktree is never edited by hand)"; G $d reset -q --hard HEAD | Out-Null }
   if (-not $NoFetch) { G $d fetch -q origin $r.target | Out-Null }
@@ -1526,7 +1525,7 @@ function Run-Train {
     }
     $kept = @($res.kept); $targetSha = $res.targetSha
     $live = $st.release.repos[$rn]
-    $missing = @(EnvServices $e | Where-Object { $_.artifact -and (RepoOf $e $_) -eq $rn -and -not ($st.services[$_.name].artifact -and (Test-Path $st.services[$_.name].artifact)) })
+    $missing = @(EnvServices $e | Where-Object { $_.artifact -and (RepoOf $e $_) -eq $rn -and -not (Test-ReleaseArtifact $_ $st.services[$_.name].artifact) })
     if ([int]$st.release.n -gt 0 -and $live -and $live.targetSha -eq $targetSha -and -not $missing.Count -and (@($kept | ForEach-Object { Key $_ }) -join '|') -eq ($prevKeys -join '|')) {
       "[$e] $rn unchanged (same target commit and layers): no build"
       foreach ($l in $kept) { if ($l.request -and $results[$l.request].outcome -eq 'live') { $results[$l.request].message = 'already live' } }
@@ -1999,11 +1998,11 @@ function Test-ReadOnlySql([string]$q) {
     $q -notmatch '(?i)\b(insert|update|delete|drop|alter|create|truncate|replace|merge|grant|revoke|rename|call|exec|execute|set|load|copy|attach|into|out)\b|\.(insert|update|delete|drop|remove)\w*\('
 }
 # ---- doctor: what an env needs to run (doctor verb; deploy stops on a FAIL): config, env file, scripts, JAVA_HOME, builds, ports, health
-function Get-Doctor([string]$e) {
+function Get-Doctor([string]$e, [switch]$Fix) {
   $c = Get-EnvCfg $e; $r = [Collections.Generic.List[object]]::new()
   $add = { param($lvl, $what) $r.Add([pscustomobject]@{ level = $lvl; env = $e; what = $what }) }
   foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
-  foreach ($x in @(Get-LaneStandardRows $e)) { & $add $x.level $x.what }
+  foreach ($x in @(Get-LaneStandardRows $e) + @(Get-LaneWorktreeRows $e -Fix:$Fix)) { & $add $x.level $x.what }
   if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired: remove the key" }
   foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne (Get-KitMember $c.db $_) }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
   $dbDown = DbSvcDown $e   # a lane DB that starts with a lease: its checks wait for it
@@ -2074,7 +2073,7 @@ param(
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
-  [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
+  [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [switch]$Fix, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
   [int]$Lane = 0, [string]$Until, [int]$Timeout = 600
 )
 if ($Action -eq 'help') { foreach ($hl in @(Get-Content $PSCommandPath | Select-Object -Skip 1)) { if ($hl -eq '#>') { break }; $hl }; return }   # the verbs, before any env check
@@ -2237,7 +2236,7 @@ switch ($Action) {
     $script:StatusSnap = Get-KitProcSnap
     $out = foreach ($n in $names) { Show-Status $n }; if ($Json) { $out | ConvertTo-Json -Depth 8 } else { $out } }
   'doctor' {
-    $rows = @(foreach ($n in $(if ($EnvName) { @($EnvName) } else { EnvNames })) { $d = @(Get-Doctor $n); if ($d.Count) { $d } else { [pscustomobject]@{ level = 'OK'; env = $n; what = 'nothing to fix' } } })
+    $rows = @(foreach ($n in $(if ($EnvName) { @($EnvName) } else { EnvNames })) { $d = @(Get-Doctor $n -Fix:$Fix); if ($d.Count) { $d } else { [pscustomobject]@{ level = 'OK'; env = $n; what = 'nothing to fix' } } })
     if ($Json) { $rows | ConvertTo-Json -Depth 4 } else { $rows | ForEach-Object { '{0,-4} {1}: {2}' -f $_.level, $_.env, $_.what } }
     if (@($rows | Where-Object level -eq 'FAIL').Count) { exit 1 }
   }

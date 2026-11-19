@@ -35,5 +35,33 @@ $so = & { . $L5; $script:calls = 0; $KitCmd.dev = 'stack-fake'; function stack-f
   $msg = try { $null = StartCmd t ([pscustomobject]@{ name = 'web'; repo = 'r'; dir = 'no-such-lane' }) $null; 'started' } catch { "$_" -match 'no start command' }
   "$($null -eq $a)|$($null -eq $b)|$($script:calls)|$msg" }
 Expect "stack: a missing or relative dir -> no stack call, StartCmd still says no start command ($so)" ($so -eq 'True|True|0|True')
+# ENV-FIX 2026-11-19: wt new refused a second-target lane worktree (a dep source missing); Sync-Repo then crashed "not its own git
+# worktree (toplevel: )". Now: the wt new error is thrown, a plain folder is moved aside, a list of dep sources stays a list, doctor -Fix
+$co = Join-Path $ud 'co'; git init -q -b main $co; 'x' | Set-Content "$co/x.txt"; Save-GitRepo $co init; $s1 = New-Item -ItemType Directory -Force (Join-Path $ud 's1'); $s2 = Join-Path $ud 's2'
+$lw = & { . $L5 6>$null; $global:wtFail = $true; $wt = Join-Path $ud 'lane-t-main-co'
+  $KitCmd.dev = 'wt-fake'; function Get-LaneBusy { '' }
+  function wt-fake { if ("$global:wtFail" -eq 'quiet') { return }; if ($global:wtFail) { 'Wt FAILED: dep source s2 is missing'; return }; git -C $co worktree add -q --detach $wt main 2>$null }
+  $r = [pscustomobject]@{ name = 'co@main'; cfg = [pscustomobject]@{ checkout = $co; linkFromByTarget = [pscustomobject]@{ main = @("$s1", $s2) } }; target = 'main'; wt = $wt; branch = 'lane/t-main'; wtName = 'lane-t-main' }
+  New-Item -ItemType Directory -Force $wt | Out-Null; 'stray' | Set-Content "$wt/f.txt"
+  $err = try { Ensure-Worktree t $r 6>$null 3>$null; 'made' } catch { "$_" -match 'not created: Wt FAILED: dep source s2' }
+  $aside = @(Get-ChildItem $ud -Directory -Filter 'lane-t-main-co.stale-*').Count; $global:wtFail = $false; Ensure-Worktree t $r 6>$null 3>$null
+  $srcs = @(Get-LaneDepSources $r); $w1 = @(Get-LaneWorktreeRows t -Repos @($r) | ForEach-Object level) -join ','
+  git -C $co worktree remove --force $wt 2>$null; New-Item -ItemType Directory -Force $wt | Out-Null
+  $f1 = @(Get-LaneWorktreeRows t -Repos @($r) -Fix | ForEach-Object level) -join ','; New-Item -ItemType Directory -Force $s2 | Out-Null
+  $f2 = @(Get-LaneWorktreeRows t -Repos @($r) -Fix | ForEach-Object level) -join ','
+  # a live .git (git finds another tree) is never moved; a wt new with no output still names its exit
+  $global:wtFail = 'quiet'; $w3 = Join-Path $ud 'lane-t-live-co'; New-Item -ItemType Directory -Force "$w3/.git" | Out-Null; $r3 = [pscustomobject]@{ name = 'co'; cfg = [pscustomobject]@{ checkout = $co }; target = 'main'; wt = $w3 }
+  $live = try { Ensure-Worktree t $r3 6>$null; 'made' } catch { "$_" -match 'live \.git' -and (Test-Path "$w3/.git") }; $f3 = @(Get-LaneWorktreeRows t -Repos @($r3) | ForEach-Object level) -join ','
+  Remove-Item $w3 -Recurse -Force; $quiet = try { Ensure-Worktree t $r3 6>$null; 'made' } catch { "$_" -match 'wt new exit .*, no output' }
+  "$err|$aside|$(Test-LaneWorktree $wt)|$($srcs.Count)|$w1|$f1|$f2|$(@(Get-LaneWorktreeRows t -Repos @($r)).Count)|$live|$f3|$quiet" }
+Expect "lane worktree: wt new's error (or exit) thrown, a plain folder moved aside then made, a live .git never moved (FAIL), 2 dep sources, doctor WARN / -Fix ($lw)" ($lw -eq 'True|1|True|2|WARN|FAIL,WARN|OK|0|True|FAIL|True')
+# ENV-FIX 2026-11-19: rm api r469 (fat jar, no java.args) counted as unchanged after classpathFile was switched on: rebuilt now
+$ra = & { . $L5 6>$null; $rd = New-Item -ItemType Directory -Force (Join-Path $ud 'rel1'); $j = Join-Path $rd 'app.jar'; 'x' | Set-Content $j
+  $b = Test-ReleaseArtifact ([pscustomobject]$api) $j; $c = Test-ReleaseArtifact ([pscustomobject]@{ name = 'w' }) $j; 'a' | Set-Content (JavaArgsFile $j)
+  "$b|$c|$(Test-ReleaseArtifact ([pscustomobject]$api) $j)|$(Test-ReleaseArtifact ([pscustomobject]$api) '')" }
+Expect "train: a classpathFile release with no java.args is not kept as unchanged ($ra)" ($ra -eq 'False|True|True|False')
+$jv = & { . $L5 6>$null; function EnvServices { [pscustomobject]@{ name = 'x'; start = 'java @"{javaArgs}" {nope}' } }
+  "$(@(Get-LaneStandardRows t | Where-Object what -match 'javaArgs').Count)|$(@(Get-LaneStandardRows t | Where-Object what -match 'nope').Count)" }
+Expect "doctor: {javaArgs} is an envy placeholder, {nope} is not ($jv)" ($jv -eq '0|1')
 Remove-TestKit $k
 Complete-Tests

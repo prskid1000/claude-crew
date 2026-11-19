@@ -1,5 +1,5 @@
 #Requires -Version 7
-# Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (doctor rows; lane worktrees: Ensure-Worktree, Sync-DepLinks, Resolve-SvcDir).
+# Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (doctor rows; lane worktrees: Ensure-Worktree, Sync-DepLinks, Resolve-SvcDir, Get-LaneWorktreeRows).
 # lane_standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird", no old <product><k> lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
 # (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs under the kit, off the system drive, starts at a lease and stops
 # when idle. Rows: level `localEnv.laneStandard` (default WARN; FAIL stops a deploy), one per breach.
@@ -17,7 +17,7 @@ function Get-LaneStandardRows([string]$e) {
     if ($s.external -and -not $s.start -and $s.port) { & $row "service $($s.name) :$($s.port) of $e is external (always on, shared by lanes and products): give it a start (+ init) per lane, data under the kit" }
     $cmds = @($s.start, $s.init.cmd, $s.prepare) | Where-Object { $_ }
     # a {token} no envy verb expands stays literal (the retired sandbox {suffix}: search ran on C:/.../rdata{suffix} folders)
-    $known = 'port', 'debugPort', 'dir', 'wt', 'env', 'lane', 'bird', 'kit', 'workspace', 'artifact', 'lanIp', 'aot', 'aotFile', 'cache', 'reactor', 'tenant', 'mark', 'source', 'template', 'out'
+    $known = 'port', 'debugPort', 'dir', 'wt', 'env', 'lane', 'bird', 'kit', 'workspace', 'artifact', 'javaArgs', 'lanIp', 'aot', 'aotFile', 'cache', 'reactor', 'tenant', 'mark', 'source', 'template', 'out'
     $txt = (@($cmds) + @($s.health) + @(Get-KitProps $s.env | ForEach-Object { "$($_.Value)" })) -join ' '
     foreach ($ph in @([regex]::Matches($txt, '(?<!\$)\{([A-Za-z]\w*)(?::[\w.-]+)?\}') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique | Where-Object { $_ -notin $known })) { $out.Add([pscustomobject]@{ level = 'WARN'; what = "service $($s.name) of ${e}: {$ph} is no envy placeholder, it stays literal text (reference.md Lanes, Config)" }) }
     foreach ($a in @($cmds | ForEach-Object { Get-LanePathArgs ([string]$_) })) {
@@ -57,16 +57,44 @@ function Ensure-Worktree([string]$e, $r) {
     $up = @((Read-State $e).services.Values | Where-Object { $_.status -in 'up', 'starting' }).Count
     $mv = Move-LaneWorktree $e $co $(if ($up) { "$up service(s) up" }); if ("$mv" -like 'moved*') { $r.wt = Get-KitLaneWorktree $e $co -New }; if ($mv) { Write-Host $mv }; return
   }
-  if (Test-Path "$($r.wt)/.git") { return }
+  if (Test-LaneWorktree $r.wt) { return }
+  if (Test-Path -LiteralPath $r.wt) {   # a plain folder or a dead .git link: moved aside (cleanup sweep judges it), made again below
+    if (-not (Test-DeadLaneDir $r.wt)) { throw "[$e] $($r.wt) has a live .git but is not its own git worktree (toplevel: $("$(git -C $r.wt rev-parse --show-toplevel 2>&1)".Trim())): check it by hand (never moved)" }
+    $aside = "$($r.wt).stale-$(Get-Date -Format yyyyMMddHHmmssfff)-$((Get-Random -Maximum 65536).ToString('x4'))"   # unique: Move-Item into an existing folder nests
+    Move-Item -LiteralPath $r.wt $aside; git -C $co worktree prune 2>$null | Out-Null
+    Write-Warning "[$e] $($r.wt) was not its own git worktree: moved to $aside" }
   Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
   git -C $co branch -D "localenv/$e" 2>$null | Out-Null   # old names, no worktree: test merges only
   $wb = if ($r.branch) { $r.branch } else { Get-KitLaneBranch $e }; $wn = if ($r.wtName) { $r.wtName } else { "lane-$(Get-KitLaneSlug $e)" }   # a second target (EnvRepos): its own
-  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch $wb -Target $r.target -Name $wn | ForEach-Object { Write-Host "  $_" }
+  $out = @(& $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch $wb -Target $r.target -Name $wn *>&1 | ForEach-Object { "$_" } | Where-Object { $_ }); $wx = $LASTEXITCODE; $out | ForEach-Object { Write-Host "  $_" }
+  # a failed wt new (a missing dep source) surfaced here, not as Sync-Repo's "toplevel: )"
+  if (-not (Test-LaneWorktree $r.wt)) { throw "[$e] lane worktree $($r.wt) ($($r.name) @ $($r.target)) not created: $(if ($out) { $out[-1] } else { "wt new exit $wx, no output" })" }
+}
+function Test-LaneWorktree([string]$d) { $top = "$(git -C $d rev-parse --show-toplevel 2>$null)".Trim(); [bool]($top -and [string]::Equals([IO.Path]::GetFullPath($top).TrimEnd('\', '/'), [IO.Path]::GetFullPath($d).TrimEnd('\', '/'), $(if ($KitIsWindows) { 'OrdinalIgnoreCase' } else { 'Ordinal' }))) }
+# no .git, or a .git file whose gitdir is gone: safe to move aside; a live .git (another tree, a git error) never is
+function Test-DeadLaneDir([string]$d) {
+  $g = Join-Path $d '.git'; if (-not (Test-Path -LiteralPath $g)) { return $true }; if (Test-Path -LiteralPath $g -PathType Container) { return $false }
+  $gd = ("$(Get-Content -LiteralPath $g -TotalCount 1)" -replace '^gitdir:\s*').Trim(); -not ($gd -and (Test-Path -LiteralPath $(if ([IO.Path]::IsPathRooted($gd)) { $gd } else { Join-Path $d $gd })))
+}
+# linkFromByTarget.<t>: a path or a list (per package folder the first source that has it), else linkFrom (its target), else the checkout
+function Get-LaneDepSources($r) { $c = $r.cfg; @($(if ($c.linkFromByTarget -and (Get-KitMember $c.linkFromByTarget $r.target)) { (Get-KitMember $c.linkFromByTarget $r.target) } elseif ($c.linkFrom -and $r.target -eq $c.target) { $c.linkFrom } else { $c.checkout }) | ForEach-Object { "$_" }) }
+# doctor: a missing dep source (WARN with a worktree, FAIL without: wt new refuses); a lane path that is not its own worktree: dead = WARN
+# (refresh or -Fix, when the lane is idle, makes it again), a live .git = FAIL (by hand)
+function Get-LaneWorktreeRows([string]$e, [switch]$Fix, $Repos) {
+  if ($null -eq $Repos) { try { $Repos = @((EnvRepos $e).Values) } catch { return [pscustomobject]@{ level = 'FAIL'; what = "lane repos: $("$_".Split("`n")[0])" } } }
+  foreach ($r in $Repos) {
+    $ok = Test-LaneWorktree $r.wt; $miss = @(Get-LaneDepSources $r | Where-Object { -not (Test-Path -LiteralPath $_) })
+    foreach ($m in $miss) { [pscustomobject]@{ level = $(if ($ok) { 'WARN' } else { 'FAIL' }); what = "$($r.name) @ $($r.target): dependency source $m is missing (kit.local.json repos[].linkFromByTarget): create it, else no new lane worktree" } }
+    if ($ok -or -not (Test-Path -LiteralPath $r.wt)) { continue }   # not made yet: the next refresh makes it
+    $what = "lane worktree $($r.wt) ($($r.name) @ $($r.target)) is not its own git worktree"
+    if (-not (Test-DeadLaneDir $r.wt)) { [pscustomobject]@{ level = 'FAIL'; what = "${what}, its .git is live: check it by hand" }; continue }
+    $busy = if ($Fix) { Get-LaneBusy $e (Read-State $e) }
+    if ($Fix -and -not $miss.Count -and -not $busy) { try { Ensure-Worktree $e $r 6>$null 3>$null; Sync-DepLinks $e $r 6>$null; [pscustomobject]@{ level = 'OK'; what = "fixed: $what; made again" } } catch { [pscustomobject]@{ level = 'FAIL'; what = "-Fix: $("$_".Split("`n")[0])" } }; continue }
+    [pscustomobject]@{ level = 'WARN'; what = "${what}: $(if ($miss.Count) { 'the missing dependency source blocks remaking it' } elseif ($busy) { "-Fix waits: lane in use ($busy)" } else { "refresh or envy.ps1 doctor -Env $e -Fix remakes it" })" }
+  }
 }
 function Sync-DepLinks([string]$e, $r) {
-  $c = $r.cfg
-  # linkFromByTarget.<t>: a path or a list (per package folder the first source that has it)
-  $srcs = @(if ($c.linkFromByTarget -and (Get-KitMember $c.linkFromByTarget ($r.target))) { Get-KitMember $c.linkFromByTarget ($r.target) } elseif ($c.linkFrom -and $r.target -eq $c.target) { $c.linkFrom } else { $c.checkout }) | ForEach-Object { "$_" }
+  $srcs = Get-LaneDepSources $r
   foreach ($s in $srcs) { if (-not (Test-Path $s)) { Write-Warning "[$e] dependency source $s for $($r.name) @ $($r.target) does not exist"; return } }
   $srcs = @($srcs | ForEach-Object { (Resolve-Path $_).Path }); $src = $srcs[0]
   foreach ($pj in (git -C $r.wt ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
