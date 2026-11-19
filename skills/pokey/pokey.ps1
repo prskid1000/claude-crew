@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L225 api · L447 finalize · L919 results · L952 retest · L1009 prepare
+Sections: L26 lanes · L40 report · L156 seat · L230 api · L452 finalize · L924 results · L957 retest · L1014 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -192,7 +192,9 @@ switch ($Action) {
   }
   'release' {
     if (-not $Agent) { throw 'release needs -Agent' }
-    Remove-Item (Join-Path $seats "$(Safe $Agent).json") -Force -ErrorAction SilentlyContinue
+    $rf = Join-Path $seats "$(Safe $Agent).json"; $held = if (Test-Path -LiteralPath $rf) { Read-Seat $rf }
+    if ($held.since -and $held.kind) { Add-KitParamObs 'qa.packageMinutes' ((Get-Date) - [datetime]$held.since).TotalMinutes "$($held.kind)" }   # a package's time per lane: supervise QA SLOW
+    Remove-Item $rf -Force -ErrorAction SilentlyContinue
     "seat released: $Agent"
   }
   'acquire' {
@@ -215,7 +217,10 @@ switch ($Action) {
     # seats < 3 min old (browser starting) count too
     $fresh = [double](@(Locked { Seats }) | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 } | Measure-Object need -Sum).Sum
     $ga = @('-Dir', $dir, '-Cmd', 'exit 0 #qa-seat', '-NeedGB', ($need + $fresh), '-WaitMinutes', $WaitMinutes); if ($KeepFreeGB) { $ga += '-KeepFreeGB', $KeepFreeGB }
-    $said = @(& $KitCmd.dev gate @ga *>&1 | ForEach-Object { "$_" })
+    # first queue time across exit-4 retries (a retry comes within minutes; an older marker is a dropped wait)
+    $wq = "$sf.since"; if (-not (Test-Path -LiteralPath $wq) -or ((Get-Date) - (Get-Item -LiteralPath $wq).LastWriteTime).TotalMinutes -gt $WaitMinutes + 10) { (Get-Date).ToString('o') | Set-Content -LiteralPath $wq }
+    $env:KIT_GATE_SINCE = "$(Get-Content -LiteralPath $wq -TotalCount 1)"; try { $said = @(& $KitCmd.dev gate @ga *>&1 | ForEach-Object { "$_" }) } finally { Remove-Item Env:KIT_GATE_SINCE -ErrorAction SilentlyContinue }
+    if (-not $LASTEXITCODE) { Remove-Item -LiteralPath $wq -ErrorAction SilentlyContinue } else { (Get-Item -LiteralPath $wq).LastWriteTime = Get-Date }
     if ($LASTEXITCODE) { "STILL WAITING (no memory turn within $WaitMinutes min$(@($said | Where-Object { $_ -match 'waiting|queued' } | ForEach-Object { ": $_" })[-1])): run the same command again"; exit 4 }
     ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('o') } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ }
     "seat taken: $Agent ($Kind, ~$need GB); free RAM $(Get-FreeGB) GB"

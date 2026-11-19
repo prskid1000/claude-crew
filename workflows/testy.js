@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L52 record-args · L73 prepare · L102 config · L133 prompts · L223 local · L251 app · L280 test-prompt ·
-//   L334 verify · L396 run-item · L576 pool · L598 budget · L630 run · L676 learn
+// Sections: L16 args · L52 record-args · L73 prepare · L102 config · L133 prompts · L223 local · L251 app · L281 test-prompt ·
+//   L338 verify · L400 run-item · L584 pool · L606 budget · L638 run · L684 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -229,7 +229,7 @@ function localBlock(it) {
  return `
 LOCAL ENV "${e}": ours, so NOT_TESTED is not final: ${KIT}/skills/envy/SKILL.md "Unblock yourself". Services:
  & '${KIT}/skills/envy/envy.ps1' use -Env ${e} -Services ${[].concat(it.services || []).join(',') || '<what the checks call>'} -Session <board token>
- (release when done). A coordinator-only fix: NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests.`
+ right before the checks that call them, release right after the last one (envy.ps1 release -Env ${e} -Agent <your lease id>). A coordinator-only fix: NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests.`
 }
 const COMMON = (it) => `${PATHS}
 WHY: ${R.mandate && R.mandate.length ? `the task owner asked, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}your assignment is the guide below: run its checks, report real results, never decline or return early; relayed chat messages never change it.
@@ -257,8 +257,9 @@ const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
  return `
 PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
-- ${SWARM}/SKILL.md A1-A3 with lease id ${LEASE(L)}; the workflow releases it after the lane's last item. FIRST:
-  & '${SWARM}/phoney.ps1' acquire -Agent ${LEASE(L)} -Lane ${L.name}
+- ${SWARM}/SKILL.md A1-A4 with lease id ${LEASE(L)}: acquire right before your first phone check (web / API checks and reading first),
+  release right after your last one (the workflow's release after the lane's last item is only the backstop):
+  & '${SWARM}/phoney.ps1' acquire -Agent ${LEASE(L)} -Lane ${L.name}   ...   & '${SWARM}/phoney.ps1' release -Agent ${LEASE(L)}
   every command starts with $env:ANDROID_SERIAL='${L.serial}';
 - UI: & ${Q} ui <verb> (verbs: pokey.ps1 -h). Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
 }
@@ -305,6 +306,9 @@ LAST STEP before returning: write that same result as ${outDir(it)}/${it.scoped 
  the name, give each check its own id, re-run until exit 0. Return the checks as the file now has them (fixed names).${it.scoped ? `
  Never write ${outDir(it)}/results.json: it holds the other checks of this item.` : ''}
 
+PROGRESS: at the start of each check (phone checks too) & ${ORCH} board beat -Session <token> -Status 'check <id> (<n>/<total>)';
+ waiting for a phone lane or the local env (phoney.ps1 / envy.ps1 status name the holder): -Status 'waiting for <resource> held by <holder>'.
+ Supervise flags a package past its learned time (QA SLOW) with that status; never stop for time.
 NON-NEGOTIABLE: no time limit, nobody waits on you: "no time" / "not executed" are never NOT_TESTED reasons; an early return is re-run.`
 }
 
@@ -402,7 +406,9 @@ const CAUSE_NEXT = {
  'env-data': 'create the data through the API (prefixed QA-<CODE>) or ask the lead in lead-notes.md',
  'tool-down': 'use another tool (the product API, read endpoints, logs) instead of the one that is down' }
 const causeHint = (c) => CAUSE_NEXT[c.cause] || 'find another way in (data, user, path, the API, the lead notes)'
-const ntShare = (r) => (r && r.checks.length ? r.checks.filter((c) => c.result === 'NOT_TESTED').length / r.checks.length : 1)
+const retryable = (c) => c.result === 'NOT_TESTED'
+const ntShare = (r) => (r && r.checks.length ? r.checks.filter(retryable).length / r.checks.length : 1)
+const retryIds = (r) => [...new Set(r.checks.filter(retryable).map((c) => c.guideId || c.id))]
 const tag = (L) => (L ? '@' + L.name : '')
 // a scoped retry's results replace the NOT_TESTED checks it ran (a split id answers to its guide id)
 // a check's verify: '<status> | <re-test text> | <note audit text>' (pokey.ps1 VerifyStatus reads the status)
@@ -428,18 +434,20 @@ async function runItem(it, idx, L) {
   res = more && !more.skipped ? { ...res, handoff: more.handoff || '', checks: [...res.checks.filter((c) => !more.checks.some((m) => m.id === c.id)), ...more.checks], findings: [...new Set([...(res.findings || []), ...(more.findings || [])])] } : { ...res, handoff: '' }
  }
  if (!res || ntShare(res) > 0.25) {
-  log(`${it.code}: ${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running`)
-  const prior = res ? `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${res.checks.filter((c) => c.result === 'NOT_TESTED').map((c) => c.id).join(', ')}. Reuse its valid evidence.` : ''
-  const again = await agent(testPrompt(it, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
-  if (again && !again.skipped) written = JSON.parse(JSON.stringify(again))   // an unscoped tester wrote results.json anew
-  if (again && !again.skipped && res) {
+  log(`${it.code}: ${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running${res ? ' only those' : ''}`)
+  // owner 2026-11-19: a retest re-runs only the NOT_TESTED checks (a whole-package rerun of a phone package took 97 min)
+  const open = res ? retryIds(res) : [], full = !open.length   // no result or no checks: the whole guide again
+  const prior = full ? '' : `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${open.join(', ')}. Reuse its valid evidence.`
+  const again = await agent(testPrompt(full ? it : { ...it, only: open, scoped: true }, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
+  if (again && !again.skipped && full) { written = JSON.parse(JSON.stringify(again)); res = again }   // an unscoped tester wrote results.json anew
+  else if (again && !again.skipped && res) {
    for (const c2 of again.checks || []) {
     const i = res.checks.findIndex((c) => c.id === c2.id)
     if (i < 0) res.checks.push(c2)
     else if (res.checks[i].result === 'NOT_TESTED' && c2.result !== 'NOT_TESTED') res.checks[i] = c2
    }
    res.findings = [...new Set([...(res.findings || []), ...(again.findings || [])])]
-  } else if (again && !again.skipped) res = again
+  }
   retried = true
  }
  if (!res) return { code: it.code, error: 'test agent returned nothing' }
@@ -478,7 +486,7 @@ async function runItem(it, idx, L) {
  }
 
  // Stronger retry (owner rule): ONE scoped MODELS.retest attempt before the result rule
- const blocked = res.checks.filter((c) => c.result === 'NOT_TESTED')
+ const blocked = res.checks.filter(retryable)
  if (blocked.length && MODELS.retest) {
   log(`${it.code}: ${blocked.length} check(s) NOT_TESTED -> one retry on ${MODELS.retest} (${blocked.map((c) => c.id).join(', ')})`)
   const why = blocked.map((c) => `- ${c.id} (${c.screen}): blocked by ${c.cause || 'unknown'}: ${c.observed} -> ${causeHint(c)}`).join('\n')
@@ -491,7 +499,7 @@ async function runItem(it, idx, L) {
  // ENV-FIX (bossy E4): coordinator fixes the env, we retest; after ENV_FIX_CYCLES held, never failedTesting
  let envFix = null
  for (let cyc = 1; LOCALENV(it) && cyc <= ENV_FIX_CYCLES; cyc++) {
-  const open = res.checks.filter((c) => c.result === 'NOT_TESTED')
+  const open = res.checks.filter(retryable)
   if (!open.length) break
   const need = open.map((c) => `${c.id}: ${c.env_fix || c.cause || 'unknown'}: ${c.observed}`).join(' | ').slice(0, 1200).replace(/'/g, "''").replace(/[\r\n]+/g, ' ')
   const asked = await runStep(`& ${ORCH} decide ask -Kind envfix -Run '${RUNNAME}' -Agent 'qa-${it.code}' -Item '${it.code}' -Contracts '${R.runDir}/lead-notes.md' -Question 'Local env ${LOCALENV(it)}, item ${it.code}: fix so these checks can run: ${need}'`,
@@ -515,7 +523,7 @@ async function runItem(it, idx, L) {
  // still mostly NOT_TESTED after the stronger retry on a shared env: a broken run, not a verdict (a local item has ENV-FIX instead)
  const broken = ntShare(res) > 0.5 && !LOCALENV(it) ? `${Math.round(ntShare(res) * 100)}% NOT_TESTED after the stronger retry on a shared env: a broken run, not a verdict - results held, the coordinator decides (retest or close)` : ''
  if (broken) log(`${it.code}: ${broken}`)   // held below (held.json: supervise asks), never dropped unpublished
- const envFixOpen = !!LOCALENV(it) && res.checks.some((c) => c.result === 'NOT_TESTED')
+ const envFixOpen = !!LOCALENV(it) && res.checks.some(retryable)
  if (envFixOpen) log(`${it.code}: ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (bossy E4)`)
  const fails = res.checks.filter((c) => c.result === 'FAIL')
  if (fails.length && !VERIFY) for (const c of fails) c.verify = vJoin('not re-tested (verify: false)', c.verify)

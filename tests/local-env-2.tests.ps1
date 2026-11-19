@@ -13,11 +13,13 @@ $k3 = New-LocalEnvKit le3; $k = $k3; $L3 = Join-Path $k3 'skills/envy/envy.ps1';
 # deadlock 2026-10-29: a start waiting on CPU (or claiming a dependency) is no memory pressure; dependencies of a waiting,
 # starting or train-blocked service are never idle; a down dependency is started first; a dependency failure is 'dependency down'
 & $J @{ localEnv = @{ idle = @{ minMinutes = 1; maxMinutes = 1 }; envs = @{ dp = @{ services = @(@{ name = 'search'; start = 'echo s'; port = 41021 }, @{ name = 'api'; start = 'echo a'; port = 41022; dependsOn = @('search') }) } } } } $cf3 8
-$cw = & { . $L3; Update-State dp { param($x) $x.services = @{ api = @{ status = 'down' } } }; $script:ph = 0
-  function Get-SysMem { [pscustomobject]@{ AvailGB = 40; CacheGB = 0; TotalGB = 64 } }; function Get-SysCpu { @(95, 10)[$script:ph] }; function Need-GB { 3 }; function KeepFreeGB { 6 }
-  function Start-Sleep { $script:seen = "$(Pressure)/$((Read-State dp).services.api.waitFor)"; $script:ph = 1 }
-  $null = Wait-Room dp @{ name = 'api' }; $script:seen }
-Expect "pressure: a start waiting only for CPU is no memory pressure (waitFor CPU) ($cw)" ($cw -eq '/CPU')
+# owner 2026-11-19: a busy CPU (95% all day) delays a start at most localEnv.cpuWaitMinutes (2), then it starts (ETA in its state)
+$cw = & { . $L3; Update-State dp { param($x) $x.services = @{ api = @{ status = 'down' } } }; $script:clk = [datetime]'2026-11-19T10:00:00'; $script:n = 0
+  function Get-Date { if ($args.Count) { Microsoft.PowerShell.Utility\Get-Date @args } else { $script:clk } }
+  function Get-SysMem { [pscustomobject]@{ AvailGB = 40; CacheGB = 0; TotalGB = 64 } }; function Get-SysCpu { 95 }; function Need-GB { 3 }; function KeepFreeGB { 6 }
+  function Start-Sleep { if (-not $script:n++) { $script:seen = "$(Pressure)/$((Read-State dp).services.api.waitFor)/$(([datetime](Read-State dp).services.api.waitUntil).ToString('HH:mm'))" }; $script:clk = $script:clk.AddSeconds(30) }
+  $o = @(Wait-Room dp @{ name = 'api' }) -join ' '; "$script:seen|$script:n|$($o -like '*cpuWaitMinutes?: starting api anyway*')|$((Read-State dp).services.api.waitFor)" }
+Expect "start: CPU only is no memory pressure (waitFor CPU, until 10:02); it starts after 4 sleeps of 30 s, the claim waits for the lock ($cw)" ($cw -eq '/CPU/10:02|4|True|lock')
 $ip = & { . $L3; $old = (Get-Date).AddMinutes(-30).ToString('o')
   $mk = { param($api) @{ services = @{ search = @{ status = 'up'; lastNeed = $old; gb = 2 }; api = $api } } }
   $r = foreach ($api in @{ status = 'waiting'; waitPid = $PID; waitStart = (Get-KitPidStart $PID) }, @{ status = 'waiting'; waitPid = 999999 }, @{ status = 'starting' }, @{ status = 'down' }) { $st = & $mk $api; (@(Get-IdleServices dp $st @{} @() 'start(s) waiting for RAM: x' | ForEach-Object name) -join ',') + '.' }

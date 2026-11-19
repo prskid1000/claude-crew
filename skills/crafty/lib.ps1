@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L474 leases · L872 status · L1132 supervise sweep · L1212 tracker ·
-  L1537 prior · L1553 ask bugs · L1738 git-host · L1918 kitlog · L2038 params · L2343 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L485 leases · L883 status · L1143 supervise sweep · L1223 tracker ·
+  L1548 prior · L1564 ask bugs · L1749 git-host · L1929 kitlog · L2049 params · L2354 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -300,6 +300,17 @@ function Get-KitDiskHold { $hs = try { (Read-KitText (Join-Path (Get-KitPath sto
 # after 20 min waiting, a start needs only a hard floor
 function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
   $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3.0, $TotalGB * 0.05))
+}
+# gate ticket (owner 2026-11-19): class 0 agent, 1 QA, 2 background; since: a retried wait's first
+function Get-GateTicket([string]$Kind, [string]$Cmd, [double]$MedianSec) {
+  $p = switch ("$env:KIT_PRIORITY") { 'agent' { 0 } 'qa' { 1 } 'background' { 2 } default { if ($Kind -eq 'local-ai') { 2 } elseif ($Kind -eq 'emulator' -or $Cmd -match '#qa-seat') { 1 } else { 0 } } }
+  $sv = $env:KIT_GATE_SINCE -as [datetime]; $now = Get-Date
+  @{ prio = $p; sec = $(if ($MedianSec -ge 0) { [int]$MedianSec } else { 600 }); since = $(if ($sv -and $sv -lt $now -and ($now - $sv).TotalHours -lt 24) { $sv } else { $now }).ToString('o') }
+}
+function Get-GateAhead($Queue, [int]$Pos) { [math]::Ceiling(($Queue | Select-Object -First $Pos | Measure-Object sec -Sum).Sum / 60) }
+# class; then a 20+ min wait, fewer recent starts, shorter, oldest
+function Get-GateOrder($Tickets, [hashtable]$Recent, [datetime]$Now) {
+  @($Tickets | Sort-Object @{ e = { [int]$_.prio } }, @{ e = { if (($Now - [datetime]$_.since).TotalMinutes -ge 20) { 0 } else { 1 } } }, @{ e = { [int]$Recent["$($_.owner)"] } }, @{ e = { [int]$_.sec } }, @{ e = { [datetime]$_.since } })
 }
 # one process snapshot shared by many Get-KitTreeGB calls
 function Get-KitProcSnap {

@@ -200,12 +200,13 @@ const { calls, agent } = _mock((prompt, o) => {
 const args = { runDir: 'C:/runs/R4', ..._kl, items: [_item('A1')] }
 run(args, agent, _n, _n, null).then(() => {
  const cl = calls.find((c) => c.label === 'close:A1'), s = calls.find((c) => c.label === 'retest-strong:A1')
- console.log(`keeps-fail:${!!cl && /"id":"C1"[^}]*"result":"FAIL"/.test(cl.prompt) && !/"C3":\{[^}]*"result"/.test(cl.prompt) && /results patch/.test(cl.prompt)}`)
- console.log(`guide-id:${!!s && /ONLY these checks: C5\./.test(s.prompt) && /"id":"C5b"[^}]*"result":"PASS"/.test(cl.prompt)}`)
+ console.log(`keeps-fail:${!!cl && !/"C1":\{[^}]*"result"/.test(cl.prompt) && /"C3":\{[^}]*"result":"PASS"/.test(cl.prompt) && /results patch/.test(cl.prompt)}`)
+ console.log(`guide-id:${!!s && /ONLY these checks: C5\./.test(s.prompt) && /"C5b":\{[^}]*"result":"PASS"/.test(cl.prompt)}`)
+ console.log(`scoped-retest:${/ONLY these checks: C2, C3, C5\./.test(calls.find((c) => c.label === 'retest:A1').prompt)}`)
 }).catch(_err)
 '@
 $res = Invoke-Js tc-merge $js4 $wf
-Expect-Each $res 'testy retries: #' 'keeps-fail', 'guide-id' -Show 5
+Expect-Each $res 'testy retries: #' 'keeps-fail', 'guide-id', 'scoped-retest' -Show 5
 $js2 = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (o.label === 'prepare') return _ok('RUN ' + JSON.stringify({ runDir: 'C:/rt/work/qa-runs/2026-01-01-local', target: 'local-a', items: [_item('A1', 'api', { target: 'local-b' })], left: [{ id: 'T9', reason: 'not live' }] }))

@@ -460,6 +460,7 @@ flowchart LR
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_task_rollup_ps1["task_rollup.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_track_rebuild_ps1["track_rebuild.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_usage_ps1["usage.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1: E1 supervise, board…"| skills_bossy_adapters_waits_ps1["waits.ps1"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_pre_commit["pre-commit"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_pre_push["pre-push"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_post_merge["post-merge"]

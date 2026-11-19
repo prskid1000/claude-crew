@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L209 waits · L220 cpu
+Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L211 waits · L222 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -156,8 +156,10 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   if ($se) { [pscustomobject]@{ level = 'WATCH'; what = "LOCAL ENV STATUS unread this sweep: $se (down services cannot flag)"; action = "& $($KitCmd.local) status; slow or failing: kitty kind env" } }
   if (-not $early) { $er.rows }; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
   $cf = Join-Path (Get-KitPath cache -Create) 'localenv-supervise.json'; $last = try { Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $last) { $last = @{} }; $seenEnv = @{}
-  $waitMin = [double](Get-KitParam 'localEnv.trainWaitFlagMinutes')
+  $waitMin = [double](Get-KitParam 'localEnv.trainWaitFlagMinutes'); $stuckMin = [double](Get-KitParam 'supervise.stuckMinutes')
   foreach ($ev in $envs) {   # all from status -Json: never the env's state files
+    foreach ($s in @($ev.services | Where-Object { $null -ne $_.waitMin -and [int]$_.waitMin -ge $stuckMin })) {   # a start waiting for room past the stuck time
+      & $watch "START WAITS: $($ev.env) $($s.service) $($s.state) for $($s.waitMin) min; leases: $((@($ev.leases | ForEach-Object { $_.agent }) | Where-Object { $_ }) -join ', ')" "free RAM: & $($KitCmd.orch) cleanup (idle services, browsers), stop idle lanes; & $($KitCmd.local) status -Env $($ev.env)" }
     foreach ($s in @($ev.services | Where-Object { [int]$_.restarts30 -gt 2 })) { & $watch "RESTART LOOP: $($ev.env) $($s.service) restarted $($s.restarts30) times in 30 min" "evidence envy.ps1 logs -Env $($ev.env) -Service $($s.service)" }
     if ($ev.train -and @($ev.train.waitingFor).Count -and $ev.train.waitSince -and ($now - [datetime]$ev.train.waitSince).TotalMinutes -ge $waitMin) {
       & $watch "TRAIN WAITS: $($ev.env) train $($ev.train.id) waits $([int]($now - [datetime]$ev.train.waitSince).TotalMinutes) min for the lease(s) of $(@($ev.train.waitingFor) -join ', ')" 'holders: release when done (it deploys at leaseMinutes and tells them)'

@@ -8,6 +8,12 @@ Usage: pwsh -NoProfile -File tests/crafty-check.tests.ps1 (tests/kit-tests.ps1 r
 $TestKitFiles = @('skills/crafty/adapters/stack_presets.ps1', 'skills/crafty/adapters/ts_typecheck.ps1', 'skills/crafty/adapters/build_heap.ps1', 'skills/crafty/spec.mjs',
   'skills/crafty/adapters/container_tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into the test kit
 $k = New-TestKit check; $D = Join-Path $k 'skills/crafty/crafty.ps1'
+# gate queue (owner 2026-11-19): an agent's build > QA > background; in a class a 20+ min wait first, then fewer recent starts, the shorter build
+$go = Invoke-PsTest 'gate-order' @'
+. $args[0] *>$null; $gn = Get-Date; $tk = { param($o, $p, $m, $s) [pscustomobject]@{ owner = $o; prio = $p; since = $gn.AddMinutes(-$m).ToString('o'); sec = $s } }
+(@(Get-GateOrder @((& $tk bg 2 30 10), (& $tk qa 1 5 60), (& $tk long 0 5 900), (& $tk short 0 2 60), (& $tk old 0 25 900), (& $tk busy 0 6 30)) @{ busy = 3 } $gn) | ForEach-Object owner) -join ','
+'@ @($D)
+Expect "gate order: class, then aged, fewer recent starts, shorter ($go)" ("$go" -eq 'old,short,long,busy,qa,bg')
 
 # stack presets: detect finds Android Gradle, .NET, Go, Rust, CMake and Make projects (crafty.ps1 Invoke-Stack helpers, as there)
 $cases = [ordered]@{ 'android-gradle' = @('build.gradle', 'android { productFlavors { create("store") } }'); dotnet = @('a.csproj', '<Project Sdk="Microsoft.NET.Sdk"></Project>'); go = @('go.mod', 'module x'); rust = @('Cargo.toml', '[package]')

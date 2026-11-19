@@ -171,6 +171,12 @@ $pc = Split-QaLiveParts @((& $row 'api!1' 'NOT-DEPLOYED'), (& $row 'app!2' 'NO-T
 '@
 $lpo = "$(Invoke-PsTest 'live-parts' $lpScript @($Q))"
 Expect "prepare: an app MR with no build on the target next to a deployed one -> localParts (local env), not left out; alone, next to a not-deployed or only an N/A MR -> left out ($lpo)" ($lpo.Trim() -eq 'app!2|0|1|2|0|1')
+# seat waits (owner 2026-11-19): an exit-4 retry keeps its first queue time (gate age, order, flags); a release teaches qa.packageMinutes per lane
+$qsd = TkPath $k qa-seats -Create; $sq = { $null = pwsh @np $Q seat acquire -Agent test:S1 -KeepFreeGB 100000 -WaitMinutes 0 }; $wq = Join-Path $qsd 'seats/test_S1.json.since'
+& $sq; $q1 = "$(Get-Content $wq -TotalCount 1 -ErrorAction SilentlyContinue)"; & $sq; $q2 = "$(Get-Content $wq -TotalCount 1 -ErrorAction SilentlyContinue)"
+& $J @{ agent = 'test:P1'; lease = 'P1'; kind = 'web'; need = 0; since = (Get-Date).AddMinutes(-50).ToString('o') } (Join-Path $qsd 'seats/test_P1.json')
+$null = pwsh @np $Q seat release -Agent test:P1; $po = pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog params (Get-Date).AddHours(-1) | Where-Object { `$_.key -eq 'qa.packageMinutes' })[-1] | ForEach-Object { `"`$(`$_.ctx)/`$([int]`$_.v)`" }"
+Expect "seat: an exit-4 retry keeps its first queue time ($q1 = $q2); a release teaches qa.packageMinutes per lane ($po)" ($q1 -and $q1 -eq $q2 -and "$po".Trim() -match '^web/(49|50)$')
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE -ErrorAction SilentlyContinue
 Remove-TestKit $k
 Complete-Tests

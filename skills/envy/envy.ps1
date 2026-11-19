@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L233 state · L280 layer drops · L352 leases · L460 code · L471 migrations ·
-  L474 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L622 shared builds · L755 hooks · L827 marks · L1008 seed ·
-  L1075 processes · L1456 daemon · L1918 cleanup · L1990 doctor · L2045 verbs
+Sections: L36 config · L235 state · L282 layer drops · L354 leases · L462 code · L473 migrations ·
+  L476 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L624 shared builds · L757 hooks · L829 marks · L1010 seed ·
+  L1077 processes · L1458 daemon · L1920 cleanup · L1992 doctor · L2047 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -101,6 +101,8 @@ $script:TrainStallMin = [double](Get-KitParam 'localEnv.trainStallMinutes')   # 
 $script:EnvLeaseWhy = @{}   # Prune's reason per "leases|<key>" / "holds|<key>" (leases.jsonl)
 $script:LeaseIdleMin = [double](Opt 'leaseIdleMinutes' (Get-KitParam 'idle.graceMinutes' 10))   # a lease unused this long is released (learned unless set)
 $script:CpuMax = [int](Opt 'cpuMaxPct' 90)
+# a busy CPU only delays a start this long (owner 2026-11-19: a 90% CPU held a leased start 55 min); RAM waits roomWaitMinutes
+$script:CpuWaitMin = [double](Get-KitParam 'localEnv.cpuWaitMinutes')
 $script:RoomWaitMin = [int](Opt 'roomWaitMinutes' 30)   # TODO-PARAM (fixed default)
 $script:IdleOn = "$(Opt 'idle.enabled' $true)" -ne 'False'
 $script:IdleMinM = [double](Opt 'idle.minMinutes' 15)   # TODO-PARAM (fixed default)
@@ -1254,23 +1256,23 @@ function Pressure {
 function Test-Room([string]$e, $s, [double]$waitedMin) { $m = Get-SysMem; Test-GateStart ((Get-GateAvailGB $m) - (Need-GB $e $s)) (KeepFreeGB) $waitedMin $m.TotalGB }
 function Wait-Room([string]$e, $s) {
   $need = Need-GB $e $s; $keep = KeepFreeGB
-  $t0 = Get-Date; $until = $t0.AddMinutes($script:RoomWaitMin); $said = $t0.AddMinutes(-5); $marked = $false; $roomOk = $false
+  $t0 = Get-Date; $until = $t0.AddMinutes($script:RoomWaitMin); $said = $t0.AddMinutes(-5); $marked = $false; $roomOk = $false; $cpu0 = $null
   try {
     while ($true) {
       $m = Get-SysMem; $cpu = Get-SysCpu; $avail = Get-GateAvailGB $m
       $ramOk = Test-GateStart ($avail - $need) $keep ((Get-Date) - $t0).TotalMinutes $m.TotalGB; $cpuOk = $cpu -lt $script:CpuMax
       if ($ramOk -and $cpuOk) { $roomOk = $true; return }
       $for = if ($ramOk) { 'CPU' } else { 'RAM' }
-      if ($marked -ne $for) { Update-State $e { param($x) $x.services[$s.name].status = 'waiting'; $x.services[$s.name].waitFor = $for; $x.services[$s.name].waitPid = $PID; $x.services[$s.name].waitStart = Get-KitPidStart $PID }; $marked = $for }
-      if ((Get-Date) -gt $until) {
-        if (-not $ramOk) {
-          $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
-          Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = 'no room to start' }; $marked = ''
-          throw "[$e] no room to start $($s.name) after $($script:RoomWaitMin) min: needs $need GB + keep-free $keep GB, available $avail GB. Biggest: $(($top | ForEach-Object { "$($_.n) $($_.gb)G" }) -join ', ')"
-        }
-        "[$e] CPU still $cpu% after $($script:RoomWaitMin) min: starting $($s.name) anyway"; $roomOk = $true; return
+      if ($ramOk) { if (-not $cpu0) { $cpu0 = Get-Date } } else { $cpu0 = $null }   # CPU only delays: cpuWaitMinutes of busy CPU in a row, then it starts
+      if ($cpu0 -and ((Get-Date) - $cpu0).TotalMinutes -ge $script:CpuWaitMin) { "[$e] CPU $cpu% for $($script:CpuWaitMin) min (localEnv.cpuWaitMinutes): starting $($s.name) anyway"; $roomOk = $true; return }
+      $eta = if ($cpu0) { $cpu0.AddMinutes($script:CpuWaitMin) } else { $until }
+      if ($marked -ne $for) { Update-State $e { param($x) $v = $x.services[$s.name]; $v.status = 'waiting'; $v.waitFor = $for; $v.waitPid = $PID; $v.waitStart = Get-KitPidStart $PID; $v.waitSince = $t0.ToString('o'); $v.waitUntil = $eta.ToString('o') }; $marked = $for }
+      if (-not $ramOk -and (Get-Date) -gt $until) {
+        $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
+        Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = 'no room to start' }; $marked = ''
+        throw "[$e] no room to start $($s.name) after $($script:RoomWaitMin) min: needs $need GB + keep-free $keep GB, available $avail GB. Biggest: $(($top | ForEach-Object { "$($_.n) $($_.gb)G" }) -join ', ')"
       }
-      if (((Get-Date) - $said).TotalSeconds -ge 60) { "[$e] waiting for room to start $($s.name): RAM avail $avail GB (need $need + keep $keep; after 20 min a 5% floor), CPU $cpu% (max $($script:CpuMax)%)"; $said = Get-Date }
+      if (((Get-Date) - $said).TotalSeconds -ge 60) { "[$e] waiting for $for to start $($s.name): RAM avail $avail GB (need $need + keep $keep; after 20 min a 5% floor), CPU $cpu% (max $($script:CpuMax)%); $(if ($cpu0) { 'starts' } else { 'gives up' }) by $($eta.ToString('HH:mm'))"; $said = Get-Date }
       Start-Sleep 10
     }
   } finally { if ($marked) { Update-State $e { param($x) $v = $x.services[$s.name]; if ($v.status -eq 'waiting') { if ($roomOk) { $v.waitFor = 'lock' } else { $v.status = 'down' } } } } }   # room got: still claimed while it waits for the start lock
@@ -2147,9 +2149,9 @@ function Show-Status([string]$env1) {
       elseif ($h -and $ids -and (Resolve-Tool lsof)) { @(lsof -nP -a -p ($ids -join ',') -iTCP -sTCP:LISTEN -Fn 2>$null | Where-Object { $_ -match ':(\d+)$' } | ForEach-Object { [int]$Matches[1] } | Sort-Object -Unique) } else { @() }
     $idleMin = if ($h -and $x.lastNeed) { [int]((Get-Date) - [datetime]$x.lastNeed).TotalMinutes } else { $null }
     [pscustomobject]@{
-      service = $s.name; state = $(if ($h) { if (-not (Managed $s)) { 'up (external)' } elseif (Owned $x) { 'up' } else { 'up (adopted)' } } elseif ($x.status -in 'starting', 'failed') { $x.status } elseif ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart)) { "waiting ($(if ($x.waitFor) { $x.waitFor } else { 'RAM' }))" } else { 'down' })
+      service = $s.name; state = $(if ($h) { if (-not (Managed $s)) { 'up (external)' } elseif (Owned $x) { 'up' } else { 'up (adopted)' } } elseif ($x.status -in 'starting', 'failed') { $x.status } elseif ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart)) { "waiting ($(if ($x.waitFor) { $x.waitFor } else { 'RAM' })$(if ($x.waitUntil -and "$($x.waitFor)" -in '', 'RAM', 'CPU') { ', until ' + ([datetime]$x.waitUntil).ToString('HH:mm') }))" } else { 'down' })
       port = $s.port; gb = $(if ($ids) { TreeGB $ids $all } else { 0 }); release = $x.release; need = @($x.need | Where-Object { $_ }); idleMin = $idleMin; graceMin = $(if (Managed $s) { GraceMin $env1 $s }); listens = $listens
-      why = $(if (-not ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart))) { $x.why }); hot = [bool]$s.hot; restarts30 = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 }).Count
+      why = $(if (-not ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart))) { $x.why }); hot = [bool]$s.hot; waitMin = $(if ($x.status -eq 'waiting' -and $x.waitSince -and (Test-KitPid $x.waitPid $x.waitStart)) { [int]((Get-Date) - [datetime]$x.waitSince).TotalMinutes }); restarts30 = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 }).Count
     }
   }
   $o = [pscustomobject]@{

@@ -84,9 +84,20 @@ run(args, agent, _n, _n, null).then(() => {
  const lp = (calls.find((c) => /^test:P2/.test(c.label)) || {}).prompt || ''
  console.log(`local-parts:${/LOCAL PARTS app!2:.*use -Env <its local env> -Services api -Agent test:<CODE>.*release it right after them.*never the whole env/.test(lp)}`)
  console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
+ console.log(`just-in-time:${/acquire right before your first phone check/.test(tp) && tp.includes("phoney.ps1' release -Agent qa-w1-Falcon") && /release right after the last one \(envy\.ps1 release -Env shop/.test(tp)}`)
+ console.log(`progress:${/board beat -Session <token> -Status 'check <id>/.test(tp) && /never stop for time/.test(tp) && !/time-cap/.test(tp)}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts: #' 'local-call', 'phone-call', 'local-parts', 'release-guard' -Show 8
+Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts (owner 2026-11-19: leases just in time, progress on the board, no time cap): #' 'local-call', 'phone-call', 'local-parts', 'release-guard', 'just-in-time', 'progress' -Show 8
+# a first tester with no checks at all: the retest runs the whole guide (a scoped retest of nothing tested nothing)
+$jsE = @'
+const { calls, agent } = _mock((prompt, o) => { if (/^test:/.test(o.label)) return _res('E1', []); if (/^retest:/.test(o.label)) return _res('E1', [_ck('C1', 'PASS')]) }, 'published')
+run({ runDir: 'C:/runs/R9', ..._kl, verify: false, items: [_item('E1')] }, agent, _n, _n, null).then(() => {
+ const rt = calls.find((c) => c.label === 'retest:E1'), cl = calls.find((c) => c.label === 'close:E1')
+ console.log(`empty-full:${!!rt && !/ONLY these checks/.test(rt.prompt) && /Work through ALL checks/.test(rt.prompt) && !!cl}`)
+}).catch(_err)
+'@
+Expect-Each (Invoke-Js tc-empty $jsE (Join-Path $src 'workflows/testy.js')) 'testy retest: #' 'empty-full' -Show 8
 # K70 (K7 fix): one area over the cap is refused as unsplittable, with no next (a batch of 1 changed nothing: endless refusal)
 $js1a = @'
 const calls = [], agent = async (p, o) => { calls.push(o.label); return /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":100000,"estimate":500000,"stopAt":0.8}') : _ok('[]') }

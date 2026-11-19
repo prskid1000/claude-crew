@@ -194,9 +194,9 @@ function Invoke-KitWeeklyTests([bool]$Idle) {
   $tree = "$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}' 2>$null)".Trim()   # owner: an unchanged kit (its tree green-stamped by kit-tests.ps1) never reruns, whatever the age
   if ($tree -and $tree -in @(Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'kit-tests-green.txt') -ErrorAction SilentlyContinue)) { return }
   if ($s.at -and ((Get-Date) - [datetime]$s.at).TotalHours -lt 24) { return }   # one try a day until green
-  $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "& '$($kt.Replace("'", "''"))' -Full -Detached *> '$($lf.Replace("'", "''"))'"
+  $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "`$env:KIT_PRIORITY = 'background'; & '$($kt.Replace("'", "''"))' -Full -Detached *> '$($lf.Replace("'", "''"))'"
   $st = @{ at = (Get-Date).ToString('o'); read = $false; greenAt = "$($s.greenAt)" }
-  try { $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }; $st.pid = $p.Id; $st.start = $p.StartTime.ToString('o') }
+  try { $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }; $st.pid = $p.Id; $st.start = $p.StartTime.ToString('o'); try { $p.PriorityClass = 'BelowNormal' } catch {} }   # background: agents' starts and builds get the CPU first (children inherit it)
   catch { $st.read = $true; "kit tests (full): the run did not start ($($_.Exception.Message)); next try in 24 h" }   # stamped: no retry every beat
   Write-KitAtomic $sf ($st | ConvertTo-Json -Compress)
 }

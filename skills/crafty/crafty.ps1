@@ -767,9 +767,9 @@ $owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-KitBuildOwner $
 $heapBase = $heap
 $queueDir = Join-Path $ledger 'queue'; New-Item -ItemType Directory -Force $queueDir | Out-Null
 $myTicket = Join-Path $queueDir "$PID.json"
-$since = (Get-Date).ToString('o')
+$gtk = Get-GateTicket $kind $Cmd $medianSec
 $myStart = Get-KitPidStart $PID
-function Write-Ticket { Write-KitAtomic $myTicket (@{ pid = $PID; start = $myStart; owner = $owner; kind = $kind; need = $need; since = $since; dir = $Dir } | ConvertTo-Json -Compress) }
+function Write-Ticket { Write-KitAtomic $myTicket (@{ pid = $PID; start = $myStart; owner = $owner; kind = $kind; need = $need; dir = $Dir } + $gtk | ConvertTo-Json -Compress) }
 function Get-Queue {
   $q = foreach ($f in Get-ChildItem $queueDir -Filter '*.json' -ErrorAction SilentlyContinue) {
     try { $t = Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { continue }
@@ -778,7 +778,7 @@ function Get-Queue {
   }
   $cut = (Get-Date).AddMinutes(-30); $recent = @{}
   foreach ($x in @(Read-KitLog builds $cut | Where-Object event -eq 'start')) { $recent[$x.owner] = 1 + [int]$recent[$x.owner] }
-  @($q | Sort-Object @{ e = { [int]$recent[$_.owner] } }, @{ e = { [datetime]$_.since } })
+  Get-GateOrder @($q) $recent (Get-Date)
 }
 
 function Get-State {
@@ -844,7 +844,7 @@ while ((Get-Date) -lt $deadline) {
     }
     if (-not $myTurn) {
       $waits++; Add-KitMemSample $s.Avail
-      if ($waits % 3 -eq 1) { Write-Host "[gate] queued #$($pos + 1) of $($queue.Count) (owner $owner); next: $($head.owner) $($head.kind)" }
+      if ($waits % 3 -eq 1) { Write-Host "[gate] queued #$($pos + 1) of $($queue.Count) (owner $owner); next: $($head.owner) $($head.kind); ~$(Get-GateAhead $queue $pos) min ahead" }
     }
     else {
     if ($heap -gt 0 -and $left -lt $KeepFreeGB -and $NeedGB -le 0) {
@@ -856,7 +856,7 @@ while ((Get-Date) -lt $deadline) {
       }
     }
     $dh = Get-KitDiskHold
-    if (-not $dh -and (Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
+    if (-not $dh -and (Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$gtk.since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { $Cmd = & (Get-Command Set-GateHeap) $heapTool $heap $Cmd }
       $reserved = $need   # an OOM near this = failure
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"

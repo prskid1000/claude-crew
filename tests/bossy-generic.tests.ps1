@@ -5,7 +5,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/bossy-generic.tests.ps1 (or tests/kit-t
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/adapters/kit_admin.ps1')   # learn -Lesson
+$TestKitFiles = @('skills/bossy/adapters/kit_admin.ps1', 'skills/bossy/adapters/waits.ps1')   # learn -Lesson; waits
 $k = New-TestKit bossygen; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # setup -Allow: host + report + OS entries generated, own entries kept, stale generated ones dropped, idempotent
 $al = Invoke-PsTest allow @'
@@ -185,5 +185,17 @@ function Invoke-KitReleaseAgent([string[]]$Agent, $Reason) { $script:relAgents =
 $null = Invoke-KitVerb Invoke-Board leave, -Session, $s2; "holder:$($script:relAgents -eq 'AQ,test:AQhm')"
 '@ @($O)
 Expect-Each $rlo 'release: a log-only hold is closed, a left agent''s phone leases by holder go (#)' 'logonly', 'holder' -Show 4
+# waits (owner 2026-11-19): a test lock / phone wait past its cap names its holder; a QA package past its learned time = QA SLOW (it goes on)
+$wo = & { . $O; $n = Get-Date; $me = @{ pid = $PID; pidStart = (Get-KitPidStart $PID) }
+  Save-KitLockState @{ held = @{ db = @{ lock = 'db'; holder = 'devA'; at = $n.AddMinutes(-40).ToString('o') } + $me }; waiting = @(@{ lock = 'db'; holder = 'devB'; at = $n.AddMinutes(-25).ToString('o') } + $me) }
+  $pd = Get-KitPath phones -Create; Set-JsonFile (Join-Path $pd 'pixel-a.json') @{ lane = 'pixel-a'; agent = 'test:T2' }
+  Set-JsonFile (Join-Path $pd 'wait/test_T3.json') @{ agent = 'test:T3'; lane = 'pixel-a'; since = $n.AddMinutes(-30).ToString('o') }
+  Set-JsonFile (Join-Path $pd 'wait/test_T4.json') @{ agent = 'test:T4'; lane = ''; since = $n.AddMinutes(-5).ToString('o') }
+  $sd = Join-Path (Get-KitPath qa-seats -Create) 'seats'; Set-JsonFile (Join-Path $sd 'test_T1.json') @{ agent = 'test:T1'; lease = 'T1'; kind = 'app'; since = $n.AddMinutes(-100).ToString('o') }
+  Set-JsonFile (Join-Path $sd 'test_W1.json') @{ agent = 'test:W1'; lease = 'W1'; kind = 'web'; since = $n.AddMinutes(-10).ToString('o') }
+  Set-JsonFile (Join-Path (Get-KitPath board -Create) 'T1.json') @{ agent = 'T1'; status = 'check C3 (3/9)'; beat = $n.ToString('o') }
+  $w = @(Get-KitWaitsOverCap $n 20); $q = @(Get-KitQaSlow $n); $fl = @(Get-KitSuperviseFlagsWaits -At $n | ForEach-Object { ($_.what -split ':')[0] })
+  "$(@($w | ForEach-Object { "$($_.agent)/$($_.why)/$($_.holder)" }) -join ',')|$(@($q | ForEach-Object { "$($_.agent)/$($_.expect)/$($_.now -replace ', beat.*')" }) -join ',')|$($fl -join ',')" }
+Expect "waits: lock and phone waits past the cap name their holder; QA SLOW names the package and its board status ($wo)" ($wo -eq 'devB/test lock db/devA,test:T3/phone lane pixel-a/test:T2 (pixel-a)|test:T1/60/check C3 (3/9)|WAIT OVER CAP,WAIT OVER CAP,QA SLOW')
 Remove-TestKit $k
 Complete-Tests

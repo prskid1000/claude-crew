@@ -17,10 +17,10 @@ Read by kitty / the coordinator editing `localEnv` or running owner verbs; by an
   once under memory pressure (a start waiting for RAM; a CPU wait is none).
 - A dependency of a waiting, starting or train-switched service is never idle. An out-of-memory line in a running service's
   log restarts it. Idle services all stop in one tick, also while a train waits for leases.
-- Starts wait for RAM + CPU: the keep-free floor is learned from 24 h of free-RAM samples (`status` shows it and why;
-  `keepFreeGB` fixes it).
-- A start starts a down `dependsOn` nobody starts, then waits for it to be healthy (one whose start waits for room: up to
-  `roomWaitMinutes` more; `status`: waiting (CPU)); one failing on a dependency connection waits again and retries once.
+- Starts wait for RAM (`roomWaitMinutes` 30: fails) and CPU over `cpuMaxPct` 90 (`cpuWaitMinutes` 2: starts);
+  `status`: waiting (CPU, until HH:mm). Keep-free floor: learned or `keepFreeGB`.
+- A start starts a down `dependsOn` nobody starts, then waits for it to be healthy (one waiting for room: that wait more); one
+  failing on a dependency connection waits again and retries once.
 - A dependency still down: the train keeps its release, no rollback (the service starts once it is up).
 - Restarts count only real starts (backoff 3 / 30 min).
 
