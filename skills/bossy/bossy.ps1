@@ -1672,11 +1672,11 @@ foreach ($p in @((Get-KitProps $pm.keep) | Where-Object Name -notlike '_*')) {
 # QA run files: 7 d after report, 30 d without (results kept)
 foreach ($r in Get-ChildItem (Get-KitPath qa-runs) -Directory | Where-Object { Old $_ 168 }) { $all = Old $r 720
   foreach ($sub in Get-ChildItem $r.FullName -Recurse -Directory | Where-Object Name -in 'shots', 'evidence', 'scripts') { if ($all -or (Test-Path (Join-Path $sub.Parent.FullName 'report.md'))) { Gone $sub.FullName 'QA run media (7 d published / 30 d)' } } }
-# unnamed: root 72 h, work/ 336 h, cache/ logs/ 720 h; durable listed only
+# unnamed: root 72 h, work/ 168 h, cache/ logs/ 720 h; durable listed only
 $known = @{}; foreach ($r in @((Get-KitProps $pm.runtime).Value)) { $s = ([string]$r).TrimEnd('/') -split '/'; $known[$s[0]] = 1; if ($s.Count -gt 1) { $known["$($s[0])/$($s[1])"] = 1 } }
 $rt = Get-KitRuntime
 foreach ($i in Get-ChildItem $rt -Force) { if (-not $known[$i.Name] -and (Old $i 72)) { Gone $i.FullName 'not in the layout (runtime root)' } }
-foreach ($top in 'work', 'cache', 'logs') { $h = if ($top -eq 'work') { 336 } else { 720 }
+foreach ($top in 'work', 'cache', 'logs') { $h = if ($top -eq 'work') { 168 } else { 720 }
   foreach ($i in Get-ChildItem (Join-Path $rt $top) -Force | Where-Object Name -notmatch '\.lock$') { if (-not $known["$top/$($i.Name)"] -and (Old $i $h)) { Gone $i.FullName "not in the layout ($top/)" } } }
 $dk = @((Get-KitProps $pm.durable).Value | ForEach-Object { (([string]$_).TrimEnd('/') -split '/')[0] })
 $sd = Split-Path (Get-KitPath tracking); $odd = @(Get-ChildItem $sd -Force | Where-Object { $_.Name -notin $dk -and $_.Name -notmatch '\.(lock|bad-.*)$' })

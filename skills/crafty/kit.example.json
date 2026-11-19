@@ -226,8 +226,8 @@
    "mask": [["\\b(bearer|basic)\\s+(?=[\\w.~+/=-]*\\d)[\\w.~+/=-]{12,}", "$1 [redacted]"], ["(?-i:\\b(glpat-|gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[\\w-]{8,})", "[redacted]"],
     ["\\beyJ[\\w-]{6,}\\.[\\w-]{6,}\\.[\\w-]+", "[redacted]"], ["(?i)\\b((?:access_|api_?|auth_?|id_)?token|passw\\w*|secret|api[-_]?key|pwd)([\"']?\\s*[=:]\\s*)(\"[^\"]*\"|'[^']*'|[^\\s&;,]+)", "$1$2[redacted]"],
     ["://[^/\\s:@]+:[^/\\s@]+@", "://[redacted]@"], ["[\\w.+-]+@[\\w-]+(\\.[\\w-]+)*\\.[A-Za-z]{2,}\\b", "[email]"]] },
-  "keep": { "_readme": "cleanup: hours an entry of the path stays after its last write ([hours, newest N kept]); unnamed entries: 72 h in the runtime root, 336 h in work/, 720 h in cache/ and logs/ (.state: never).",
-   "sessions": 8, "tokens": 8, "android-tmp": 72, "shots": 72, "launches": 72, "agents": 168, "node-spec": 168, "apks": [72, 3], "evidence": 336, "waves": 336, "board": 336,
-   "qa-seats": 336, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "audit": 720, "retros": 2160, "kitty-audits": 2160, "media": 168, "background": 72, "tmp": 24 }
+  "keep": { "_readme": "cleanup: hours an entry of the path stays after its last write ([hours, newest N kept]); unnamed entries: 72 h in the runtime root, 168 h in work/, 720 h in cache/ and logs/ (.state: never).",
+   "sessions": 8, "tokens": 8, "android-tmp": 72, "shots": 72, "launches": 72, "agents": 168, "node-spec": 168, "apks": [72, 3], "evidence": 168, "waves": 168, "board": 168,
+   "qa-seats": 168, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "audit": 720, "retros": 2160, "kitty-audits": 2160, "media": 168, "background": 72, "tmp": 24 }
  }
 }
