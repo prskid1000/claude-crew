@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L934 check · L1250 pipes · L1306 guard · L2185 dir ·
-  L2195 checkpoint · L2225 prior · L2263 tracker · L2285 task spec · L2465 scope · L2513 host
+Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L930 check · L1246 pipes · L1302 guard · L2181 dir ·
+  L2191 checkpoint · L2221 prior · L2259 tracker · L2281 task spec · L2461 scope · L2509 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -762,12 +762,8 @@ $need = if ($NeedGB -gt 0) { $NeedGB } else { [math]::Min((Get-SysMem).TotalGB *
 $heap = 0; $heapFloor = 0; $heapTool = $null
 if (($hp = Get-Command Get-GateHeap -ErrorAction SilentlyContinue) -and ($h = & $hp $kind $peaks $NeedGB $need)) { $heap = $h.heap; $heapFloor = $h.floor; $need = $h.need; $heapTool = $h.tool }
 
-function Get-OwnerName([string]$Leaf, [string]$Repo) {
-  if ($Repo -and $Leaf.Length -gt $Repo.Length + 1 -and $Leaf.EndsWith("-$Repo", [StringComparison]::OrdinalIgnoreCase)) { return $Leaf.Substring(0, $Leaf.Length - $Repo.Length - 1) }
-  ($Leaf -split '-')[0]
-}
 $ownerRoot = if ($top) { Split-Path $top -Leaf } else { Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf }
-$owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-OwnerName $ownerRoot $(if ($top) { $repoName } else { '' }) }
+$owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-KitBuildOwner $ownerRoot $(if ($top) { $repoName } else { '' }) $top }
 $heapBase = $heap
 $queueDir = Join-Path $ledger 'queue'; New-Item -ItemType Directory -Force $queueDir | Out-Null
 $myTicket = Join-Path $queueDir "$PID.json"

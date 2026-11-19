@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L130 names · L164 slots · L190 lease · L295 release · L323 lanes · L428 sync · L528 pool
+Sections: L14 worktrees · L130 names · L172 slots · L198 lease · L303 release · L331 lanes · L436 sync · L536 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -160,6 +160,14 @@ function Get-KitLaneNames { $envs = Get-KitSetting 'localEnv.envs' $null; if (-n
 function Get-KitLaneWorktree([string]$Lane, [string]$Checkout, [switch]$Old, [switch]$New) {
   $rt = @($KitConf.WorktreeRoots)[0]; $lf = Split-Path $Checkout -Leaf; $ow = Join-Path $rt "localenv-$Lane-$lf"; $nw = Join-Path $rt "lane-$(Get-KitLaneSlug $Lane)-$lf"
   if ($New) { $nw } elseif ($Old -or (-not (Test-Path $nw) -and (Test-Path "$ow/.git"))) { $ow } else { $nw }
+}
+# the gate's build owner with no CLAUDE_AGENT (crafty.ps1 gate): a pool slot's build is its lease holder's, a lane worktree's "lane <env>·<Bird>" ("builds per agent" read falcon, kestrel:
+# slot names, not agents); else the worktree name before -<repo>
+function Get-KitBuildOwner([string]$Leaf, [string]$Repo, [string]$Top) {
+  $tn = "$Top".Replace('\', '/').TrimEnd('/')
+  if ($tn) { $sl = @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -and -not $_.parked -and "$($_.path)".Replace('\', '/').TrimEnd('/') -ieq $tn })[0]; if ($sl) { return "$($sl.agent)" } }
+  $o = if ($Repo -and $Leaf.Length -gt $Repo.Length + 1 -and $Leaf.EndsWith("-$Repo", [StringComparison]::OrdinalIgnoreCase)) { $Leaf.Substring(0, $Leaf.Length - $Repo.Length - 1) } else { ($Leaf -split '-')[0] }
+  if ($o -match '^lane-(?<s>.+)$') { "lane $(Get-KitPoolLabel env (ConvertFrom-KitLaneLabel $Matches.s))" } else { $o }
 }
 # ---- slots: a repo's pool size and its slots (worktrees marked <git dir>/claude-slot)
 # the repos[] entry whose checkout it is, else origin's last path segment, else the folder

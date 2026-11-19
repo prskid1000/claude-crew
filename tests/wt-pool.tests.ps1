@@ -156,5 +156,13 @@ Expect "wt remove: a leftover with only runtime scratch (a *.local.* file too) i
 Save-GitRepo $k kit; $kl = "$base/wt/kt-$(Split-Path $k -Leaf)"; New-Item -ItemType Directory -Force "$kl/skills/crafty" | Out-Null; Copy-Item "$k/skills/crafty/lib.ps1" "$kl/skills/crafty/"
 $kl1 = pwsh @np $D wt remove -Dir $kl -Root "$base/wt" 2>&1 | Out-String; $kl0 = Test-Path $kl
 Expect "wt remove: a kit worktree leftover whose files are in the kit's history is removed ($($kl1.Trim()))" (-not $kl0)
+# gate owner with no CLAUDE_AGENT: a slot's build is its lease holder's, a lane worktree's "lane <env>·<Bird>" ("builds per agent" read falcon, kestrel)
+Remove-TestKit $k; $k = New-TestKit owner-name; & $J @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 }; services = @() } } } } (Join-Path $k 'skills/crafty/kit.local.json')
+$on = Invoke-PsTest owner-name @'
+. $args[0]
+@{ slot = 'app·Falcon'; agent = 'J1'; path = 'D:/w/falcon-app' } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath wt-slots -Create) 'falcon-app.json')
+"$(Get-KitBuildOwner 'falcon-app' 'app' 'D:\w\falcon-app')|$(Get-KitBuildOwner 'kestrel-app' 'app' 'D:\w\kestrel-app')|$(Get-KitBuildOwner 'lane-shop-kestrel-app' 'app' 'D:\w\lane-shop-kestrel-app')"
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'))
+Expect "gate owner: a leased slot's build is its agent's, a free slot keeps its name, a lane worktree reads lane shop·Kestrel ($(@($on) -join ' '))" ((@($on) -join ' ') -eq 'J1|kestrel|lane shop·Kestrel')
 Remove-TestKit $k
 Complete-Tests
