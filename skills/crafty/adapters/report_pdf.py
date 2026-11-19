@@ -24,7 +24,9 @@ def publish(a):
         r = subprocess.run(cmd.replace('{in}', dt._q(src)).replace('{out}', dt._q(out)), shell=True, capture_output=True, text=True, errors='replace', timeout=180)
     else:
         browser = _browser() or sys.exit('pdf: no Chrome / Chromium / Edge: install one or set reports.pdfCommand')
-        r = subprocess.run(browser + ['--headless', '--disable-gpu', '--no-pdf-header-footer', '--print-to-pdf=' + out, Path(src).as_uri()],
+        quiet = ['--no-first-run', '--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update', '--disk-cache-size=1',   # pokey browser.mjs QUIET_ARGS: no model downloads
+                 '--disable-features=OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction']
+        r = subprocess.run(browser + ['--headless', '--disable-gpu', *quiet, '--no-pdf-header-footer', '--print-to-pdf=' + out, Path(src).as_uri()],
                            capture_output=True, text=True, errors='replace', timeout=180)
     if not os.path.isfile(out):
         sys.exit(f'reports.type pdf: {out} not written: {(r.stdout + r.stderr)[-300:]}')

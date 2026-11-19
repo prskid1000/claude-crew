@@ -28,9 +28,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L36 init · L47 board · L231 budget · L261 launch · L502 recover · L589 pause · L600 resume · L667 program · L718 param ·
-  L724 track · L1061 supervise · L1380 report · L1460 audit · L1520 storage · L1523 bugbrief · L1637 cleanup · L1724 learn ·
-  L1755 decide · L1906 debate · L1950 health · L2017 retro due · L2027 tidy · L2099 setup · L2196 guard-sendmessage
+Sections: L36 init · L47 board · L225 budget · L255 launch · L496 recover · L583 pause · L594 resume · L661 program · L712 param ·
+  L718 track · L1055 supervise · L1376 report · L1456 audit · L1516 storage · L1519 bugbrief · L1633 cleanup · L1720 learn ·
+  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2192 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -99,7 +99,6 @@ function Print($act) {
   $act | Sort-Object run, agent | ForEach-Object { $task = "$(if ($_.items) { $_.items } else { $_.area })"; $cl = (@($_.worktrees | ForEach-Object { Split-Path "$_" -Leaf }) -join ',')
     '  {0,-6} {1,-6} {2,-14} {3,-8} {4,-30} {5,-22} {6} | beat {7}{8}' -f $_.agent, "$($_.type)", $_.run, "$(if ($_.holderPid) { "s$($_.holderPid)" })", $task.Substring(0, [math]::Min(30, $task.Length)), $cl.Substring(0, [math]::Min(22, $cl.Length)), $_.status, ([datetime]$_.beat).ToString('HH:mm'), $(if ($_.budget) { " | spend $([int]($_.spend / 1000))k/$([int]($_.budget / 1000))k" }) }
 }
-function Get-Unread([string]$who) { $f = Get-InboxFile $who; if (Test-Path $f) { @(Get-Content $f | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { -not $_.read }).Count } else { 0 } }
 
 switch ($Action) {
   'join' {
@@ -167,7 +166,7 @@ switch ($Action) {
     }
     if (-not $ho) { $ho = Get-KitStepAgeHandoff $me $Session }; $ho   # past budget.stepHours: a fresh agent from the checkpoint
     try { $null = Invoke-KitStorageTick } catch {}
-    $u = Get-Unread $me.agent; if ($u) { "INBOX: $u message(s) wait: bossy.ps1 board inbox -Agent $($me.agent)" }
+    foreach ($m in @(Read-KitInboxNew $me.agent)) { "MESSAGE (follow it; a rule holds for the rest of your run): $m" }
     $pz = Get-KitActivePause $me.run; if ($pz) { "PAUSE ($($pz.reason)): $(Get-KitPauseSteps $Session)" }
     $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; if ($w -notlike 'STALE:*') { exit 1 } }
   }
@@ -215,13 +214,8 @@ switch ($Action) {
   }
   'inbox' {
     if (-not $Agent) { 'usage: board inbox -Agent <me> [-All]'; exit 2 }
-    $f = Get-InboxFile $Agent; if (-not (Test-Path $f)) { 'inbox: empty'; return }
-    Invoke-KitLocked $f {
-      $m = @(Get-Content $f | ForEach-Object { $_ | ConvertFrom-Json })
-      $show = @($m | Where-Object { $All -or -not $_.read }); foreach ($x in $show) { "$(([datetime]$x.at).ToString('HH:mm')) from $($x.from)$(if ($x.kind -and $x.kind -ne 'note') { " [$($x.kind)]" }): $($x.text)$(if ($x.ref) { " (ref $($x.ref))" })" }
-      if (-not $show.Count) { 'inbox: nothing unread' }
-      Write-KitAtomic $f ((@($m | ForEach-Object { $_.read = $true; $_ | ConvertTo-Json -Compress }) -join "`n") + "`n")
-    }
+    if (-not (Test-Path (Get-InboxFile $Agent))) { 'inbox: empty'; return }
+    $show = @(Read-KitInboxNew $Agent -All:$All); if ($show.Count) { $show } else { 'inbox: nothing unread' }
   }
 }
 }
@@ -1212,7 +1206,8 @@ $ramAct = [int](Get-KitSetting 'supervise.ramActPct' 90)
 if ($pct -ge $ramAct) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run bossy.ps1 cleanup; check for orphaned java/node/chrome from finished agents.' }
 if (Within 'storage') { try { foreach ($x in @(Get-KitStorageRound)) { Add-KitResult $x } } catch { Flag 'WATCH' "storage round failed: $($_.Exception.Message)" 'bossy.ps1 storage' } }
 Phase 'guard log'; $blocks = @(Read-KitLog guard $now.AddHours(-1) | Where-Object event -eq 'deny')
-if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: bossy.ps1 audit -Since 1h shows them; add a contracts note or a lesson so they stop.' }
+if ($blocks.Count -ge 3) { $bWho = @($blocks | Group-Object { Get-KitDenyWho $_ $rows } | Sort-Object Count -Descending | Select-Object -First 2 | ForEach-Object { "$($_.Name) ($($_.Count))" }) -join ', '
+  Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: bossy.ps1 audit -Since 1h shows them; add a contracts note or a lesson so they stop.' @{ kind = 'GUARD'; who = $bWho; problem = "$($blocks.Count) commands blocked in the last hour" } }
 # one beat with its run time
 $g20 = @(Read-KitLog guard $now.AddMinutes(-[math]::Max(20.0, 1.25 * (Get-KitBeatMinutes)))); $crash = @($g20 | Where-Object event -eq 'crash'); $slow = @($g20 | Where-Object event -eq 'timeout')
 if ($slow.Count -ge 3) { Flag 'WATCH' "guard timed out $($slow.Count)x in a beat: those calls ran unguarded" 'A loaded machine (Resources) or a dead warm guard server (guard_server.ps1 answers in ~0.1 s).' }   # K67: blocked, or let through by the owner's switch (guard_client.mjs header); one beat: a fixed crash stops flagging
@@ -1307,7 +1302,7 @@ if (Within 'failedTesting tasks') {
   $back = @(foreach ($id in $ids) {
       $o = $trk[$id]; $st = "$($state.ftStatus[$id].st)"
       if ((Test-TrackerStatus $st 'failedTesting') -or ($o.done -and (Test-TrackerStatus $st 'inProgress'))) { "$id ($($ft[$id]))" } })
-  if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow: $($back -join '; ')" "ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." }
+  if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow: $($back -join '; ')" "ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." @{ kind = 'FAILED TESTING'; who = @($back | ForEach-Object { ($_ -split ' ')[0] }) -join ', '; problem = "back to the dev flow: $($back -join '; ')" } }
 }
 
 # 6. decisions, ENV-FIX: every round until answered
@@ -1352,6 +1347,7 @@ if ($late.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budge
 $s1 = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; $state.acks = @{}; $a0 = $s1.acks   # re-read: an -Ack during this sweep
 $state.known = @{}; foreach ($r in @(if ($s1.known) { $s1.known.Keys })) { if (($now - [datetime]$s1.known[$r]).TotalDays -lt $(if ("$r".StartsWith('noise:')) { 30 } else { 2 })) { $state.known[$r] = $s1.known[$r] } }   # -Ack refs: MRs 2 d, noise 30 d
 foreach ($k in @(if ($a0) { $a0.Keys })) { if (($now - [datetime]$a0[$k].at).TotalHours -lt 24) { $state.acks[$k] = $a0[$k] } }
+Set-KitFlagAge $flags $state $now   # the page and -Brief Age column
 $state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @{ level = $_.level; what = $_.what; action = $_.action; kind = $_.kind; who = $_.who; problem = $_.problem; refs = @($_.refs | Where-Object { $_ }) } })   # supervise -Ack; a stepped-aside session's own flags
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }

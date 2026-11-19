@@ -10,7 +10,7 @@ Inputs: kit.local.json media.stt (maxConcurrent 1, ramGB, baseUrl). State: <runt
 belongs to the job process (pid + start time): a killed job frees it at once. Loaded by lib.ps1 (adapters/*.ps1): bossy.ps1
 supervise gets Get-KitSuperviseGuardLocalAi ("waiting for local AI").
 Exit codes: 0 ok · 1 problem (video.py's) · 2 usage.
-Sections: L16 lease · L66 stt · L84 verb
+Sections: L16 lease · L66 stt · L85 verb
 #>
 #Requires -Version 7
 # ---- lease: local-stt, one job at a time per server, bound to the job's process
@@ -73,6 +73,7 @@ function Invoke-KitVideoStt([string]$Key, [double]$WaitMinutes, [string]$Agent, 
     $cmd = "`"$((Get-Command (Get-Python)).Source)`" -X utf8 `"$vp`" transcribe $Key $($ref -join ' ')"
     $g = @(& (Get-Process -Id $PID).Path -NoProfile -File $KitCmd.dev gate -Dir (Split-Path (Split-Path $ix)) -Cmd $cmd -NeedGB ([double](Get-KitSetting 'media.stt.ramGB' 2)) -WaitMinutes ([math]::Max(1, [int][math]::Ceiling($WaitMinutes))) 2>&1)
     $code = $LASTEXITCODE
+    $g | Where-Object { "$_" -match '^\[gate\] MESSAGE' } | ForEach-Object { Write-Host "$_" }   # read once: the gate marked it read
     $g | Where-Object { "$_" -match '^\[gate\] (waiting|could not)' } | Select-Object -Last 1 | ForEach-Object { Write-Host "media transcribe: $_" }
     if ($code -eq 3) { return @{ degraded = $true; reason = "waiting for RAM: the memory gate did not start it within $WaitMinutes min" } }
     $j = try { Get-Content (Join-Path $ix 'transcribe.json') -Raw | ConvertFrom-Json } catch { $null }

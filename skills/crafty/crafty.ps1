@@ -711,10 +711,9 @@ if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) {
 
 # NoDefaultCurrentDirectoryInExePath hides bare names in cwd
 $Cmd = [regex]::Replace($Cmd, '(^|&&\s*|&\s*|\|\|\s*)(?<!\.[\\/])(gradlew(\.bat)?|mvnw(\.cmd)?)(?=\s|$)', $(if ($KitIsWindows) { '$1.\$2' } else { '$1./$2' }))
-# mvnd on PATH keeps a warm JVM between builds
+# mvnd on PATH: a warm JVM
 if ($Cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $Cmd = $Cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }
-# runners fork a worker per core
-# the flag right after the runner (at the line end a compound command's next tool, e.g. tsc, would get it)
+# runners fork a worker per core; the flag right after the runner (at the end a compound command's next tool gets it)
 $wk = { param($rx) if ($Cmd -match $rx) { ([regex]$rx).Replace($Cmd, '$0 --maxWorkers=2', 1) } else { "$Cmd --maxWorkers=2" } }   # no runner word (yarn test): the end
 if ($Cmd -match '\bjest\b' -and $Cmd -notmatch 'maxWorkers|runInBand|\s-i(\s|$)') { $Cmd = & $wk '(?<![\w./-])jest(?=\s|$)' }
 if ($Cmd -match '\bvitest\b' -and $Cmd -notmatch 'maxWorkers|maxThreads') { $Cmd = & $wk '(?<![\w./-])vitest(\s+(run|watch))?(?=\s|$)' }
@@ -727,7 +726,7 @@ function Read-History { $h = try { Read-KitText $histFile | ConvertFrom-Json -As
 
 $kind = Get-GateKind $Cmd $Dir
 $default = if ($script:GateKinds.Contains($kind)) { $script:GateKinds[$kind][1] } else { 2 }
-# containers: learned peaks hold their RAM (docker stats growth); until then +2 GB (a MySQL + an Elasticsearch)
+# containers: learned peaks (docker stats growth) hold RAM; until then +2 GB (a DB + a search engine)
 $ctr = $kind -eq 'docker' -or (($kind -match 'test|cypress|e2e|dotnet|^go$' -or ($kind -eq 'python' -and $Cmd -match 'pytest|unittest|\btest_')) -and (Test-GateContainers $Dir))
 if ($ctr -and $kind -ne 'docker') { $default += 2 }
 $project = Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf
@@ -764,6 +763,7 @@ if (($hp = Get-Command Get-GateHeap -ErrorAction SilentlyContinue) -and ($h = & 
 
 $ownerRoot = if ($top) { Split-Path $top -Leaf } else { Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf }
 $owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-KitBuildOwner $ownerRoot $(if ($top) { $repoName } else { '' }) $top }
+Show-KitGateInbox $owner
 $heapBase = $heap
 $queueDir = Join-Path $ledger 'queue'; New-Item -ItemType Directory -Force $queueDir | Out-Null
 $myTicket = Join-Path $queueDir "$PID.json"
@@ -1571,7 +1571,7 @@ function Deny($why) {
   if ($in.session_id) {   # test runs must not raise a guard WATCH
     $one = $raw -replace "[\r\n\t]+", " // "
     if ($one.Length -gt 2000) { $one = $one.Substring(0, 1000) + ' /*...*/ ' + $one.Substring($one.Length - 1000) }
-    Write-KitLog guard deny @{ session = "$($in.session_id)"; tool = "$($in.tool_name)"; why = $why; cmd = $one }
+    Write-KitLog guard deny @{ session = "$($in.session_id)"; agentId = "$($in.agent_id)"; tool = "$($in.tool_name)"; why = $why; cmd = $one }
   }
   if ($isGravity) {
     @{ decision = 'deny'; reason = $why } | ConvertTo-Json -Compress

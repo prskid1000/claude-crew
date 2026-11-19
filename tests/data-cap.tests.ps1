@@ -154,6 +154,18 @@ $pgT = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); reso
 "card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
 Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'redo', 'owners', 'bound', 'labels', 'buckets', 'history', 'view', 'label', 'card') -Show 8
+# the hour counts each second once: a 2 h window by its part in the hour, two sweeps' overlapping tracer windows once, never above all
+# disks; kit-owned when any sample saw it so; a process below the tree's root naming a kit folder makes the tree the kit's
+$ovl = Invoke-PsTest 'overlap' @'
+$null = . $args[0] 6>$null; $n = [datetime]'2026-11-18T12:00:00'; $kc = 'mysqld --datadir=D:\k\.state\kit-tests\mysql'
+$sm = { param($m, $s, $g, $k, $mach) [ordered]@{ at = $n.AddMinutes(-$m).ToString('o'); s = $s; m = $mach; t = 1; w = @([ordered]@{ n = 'mysqld · kit-tests'; a = $(if ($k) { 'kit' } else { '' }); g = $g; c = $kc; k = $k }) } }
+$pr = [pscustomobject]@{ at = $n.AddMinutes(-1).ToString('o'); acc = @{}; samples = @((& $sm 30 7200 4.0 0 4.0), (& $sm 20 600 1.0 1 1.0), (& $sm 15 600 1.0 0 0.1)) }
+$h = (Update-KitWriteStats $pr $n @() @() $null $null @('D:\k')).hour[0]
+$pk = [pscustomobject]@{ at = $n.AddMinutes(-10).ToString('o'); acc = [pscustomobject]@{ '7|' = 0; '6|' = 0 }; samples = @() }
+$kd = Update-KitWriteStats $pk $n @([pscustomobject]@{ Id = 7; ParentId = 6; Name = 'mysqld.exe'; CommandLine = $kc; Write = 1GB }, [pscustomobject]@{ Id = 6; ParentId = 2; Name = 'pwsh.exe'; CommandLine = 'pwsh -c run'; Write = 1GB }) @() $null $null @('D:\k')
+"$($h.gb) $($h.k) $($h.tag) $(@($kd.samples[-1].w | Where-Object { $_.n -eq 'mysqld · kit-tests' -and $_.k -eq 1 }).Count)"
+'@ @($supBossy)
+Expect "writes hour: overlapping and 2 h windows counted once, capped at all disks, kit-owned once seen, a kit folder below the root ($ovl)" ("$ovl".Trim() -eq '2.05 1 kit 1')
 # a holder record with several pids (a lane group, a shared lease) must not crash the writes hook ([int] of an array)
 $mpt = @'
 $null = . $args[0] 6>$null; $KitShellRows = @(); $res = @([pscustomobject]@{ pid = @(4, 8); by = 'x'; name = 'svc' })

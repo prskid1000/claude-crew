@@ -184,7 +184,7 @@ $st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=
 $sec = { param($id) [regex]::Match($fh, "(?s)id=sec-$id(?: open)?>.*?(?=<details class='sec top'|<footer)").Value }
 $int = & $sec internals; $runsH = & $sec runs
 "$($st -join ' ')"
-"internals:$(-not ($int -match 'sec-(resources|shells|agents|runs|usage|trends)') -and $int -match "<div class='tgr f'><span class=tgn>k1<small>1</small></span><div class=tgt><span class='pt f p-l" -and $int -notmatch 'sec-(top|kit-runs)')"
+"internals:$(-not ($int -match 'id=sec-(resources|shells|agents|runs|usage)\b') -and $int -match 'id=sec-trends' -and $int -match "<div class='tgr f'><span class=tgn>k1<small>1</small></span><div class=tgt><span class='pt f p-l" -and $int -notmatch 'sec-(top|kit-runs)')"
 $rxOrphan = "<div class='gk[^']* orphan'><span class=gn[^>]*>mysql<small>no live holder</small>"
 # runs (D9): the running one on top with its steps link, today's ended open, yesterday's folded; board agents under their run, a finished one marked
 "runs:$($runsH -match "<div class='rgg cl' data-g='rr-wf_a' data-oc='' data-fk='d2026-01-02'><div class='gk rgh rr f'><span class=gn[^>]*><button type=button class=rtg aria-expanded=false>Ask RM bug wave</button><span class='chip k-build'>build</span><span class='chip s-act'>running</span><a class=rk href='supervise-runs/wf_a.html'" -and $runsH -match "<div class='rgg rdg cl' data-g='rd-2026-01-01'" -and $runsH -match "data-g='rd-2026-01-02'[^>]*><div class='gk rgh'><button type=button class=rgb aria-expanded=true>" -and $fh -notmatch 'data-gall|sec-agents')"
@@ -202,7 +202,7 @@ $fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Tr
 $foldWant = 'flags=open', 'runs=open:1 running', 'machine=open', 'shells=closed:0:nobody', 'trends=open', 'dl-days=open', 'internals=closed', 'tuning=closed:3'
 $foldMiss = @($foldWant | Where-Object { " $($fl[0]) " -notmatch " $([regex]::Escape($_))[ :]" })
 Expect "supervise page: every section a <details> with '<title> (<count>)', the owner's default open states, an empty one summary only (missing: $foldMiss | $($fl[0]))" (-not $foldMiss.Count)
-Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: tuning only; runs: running first, a fold per day (today open, older folded), label, kind, steps link; agents: under their run, finished marked, orphan tinted; cap: every run of 7 days a row; ux: 10 rows + Show all (N), jump links, No match, keys break at | /, tone AA)' @('internals', 'runs', 'pages', 'agents', 'cap', 'ux') 6
+Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: Trends + Tuning; runs: running first, a fold per day (today open, older folded), label, kind, steps link; agents: under their run, finished marked, orphan tinted; cap: every run of 7 days a row; ux: 10 rows + Show all (N), jump links, No match, keys break at | /, tone AA)' @('internals', 'runs', 'pages', 'agents', 'cap', 'ux') 6
 # each headline number renders once: 7-day tokens + cost (chart title), step outcomes (one bar), agents spawned (one tile; the Today list counted board rows)
 $once = Invoke-PsTest once @'
 $null = . $args[0] 6>$null; $t0 = [datetime]'2026-01-02T10:00:00'

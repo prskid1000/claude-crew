@@ -22,11 +22,9 @@ if ($bk) {
   New-Item -ItemType Directory -Force "$qk/adapters" | Out-Null; Copy-Item (Join-Path $src 'skills/pokey/adapters/ui_checks.mjs') "$qk/adapters"
   $res = NodeT ui @'
 import { createRequire } from 'node:module'
-import { existsSync } from 'node:fs'
-const exe = [process.env.CHROME_PATH, 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  '/usr/bin/google-chrome', '/usr/bin/chromium', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((x) => x && existsSync(x))
+const exe = m.CHROME   // browser.mjs: the kit's one lookup and quiet flags
 if (!exe) { console.log('nochrome'); process.exit(0) }
-const br = await createRequire(BM)('puppeteer-core').launch({ executablePath: exe, headless: true }), page = await br.newPage()
+const br = await createRequire(BM)('puppeteer-core').launch({ executablePath: exe, headless: true, args: [...m.QUIET_ARGS, '--disk-cache-size=1'] }), page = await br.newPage()
 await page.setViewport({ width: 800, height: 600 })
 const at = (l, t) => `position:absolute;left:${l}px;top:${t}px`
 await page.setContent(`<body style="margin:0;font:14px sans-serif"><div style="position:absolute;right:10px;bottom:10px"><button id="next">Next</button></div>

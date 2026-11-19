@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L317 shells · L494 page · L965 release · L1010 lines · L1043 cleanup · L1110 launch ·
-  L1228 pause · L1347 heartbeat · L1362 sessions · L1414 ci tasks ·
-  L1472 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L342 shells · L519 page · L991 release · L1036 lines · L1068 cleanup · L1135 launch ·
+  L1253 pause · L1372 heartbeat · L1387 sessions · L1439 ci tasks ·
+  L1497 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -25,6 +25,14 @@ function Get-KitBuildFailures($Hist, [datetime]$Now, $Log = @(), [int]$Minutes =
     if ($who -and ((Test-KitLive @{ agent = $who }) -eq $false -or @($ends | Where-Object { $_.owner -eq $who -and -not [int]$_.code -and [datetime]$_.at -gt $failAt -and ("$($_.project)" -eq $dir -or "$($_.project)" -like "$dir/*" -or $dir -like "$($_.project)/*") }).Count)) { continue }
     [pscustomobject]@{ key = $k; who = $who }
   }
+}
+# over gate.buildsPerHour: the batching rule to that owner's inbox, once an hour (its gate prints it: a workflow step never beat it in)
+function Send-KitBuildsRule([string]$Owner, [int]$N, [int]$Max, [datetime]$Now) {
+  if (-not (Test-KitBoardAgent $Owner)) { return }   # a worktree-name owner: nobody reads its inbox
+  $f = Get-InboxFile $Owner; $last = @(if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { "$($_.ref)" -eq 'gate.buildsPerHour' } }) | Select-Object -Last 1
+  if ($last -and ($Now - [datetime]$last.at).TotalMinutes -lt 60) { return "sent $(([datetime]$last.at).ToString('HH:mm'))" }
+  Send-BoardMsg 'supervise' $Owner "$N gated builds in the last hour (gate.buildsPerHour $Max): batch your fixes into one rebuild; only the changed module and named tests (-Tests); a flaky test rerun alone; no build per small edit (crafty SKILL.md Rules, Builds)" 'rule' 'gate.buildsPerHour'
+  "sent $($Now.ToString('HH:mm'))"
 }
 # gate head waited 10+ min, file cache 25%+ of RAM: run gate.cacheFlush (e.g. an elevated task), max once per 30 min
 function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$TimeoutSec = 120) {
@@ -61,6 +69,22 @@ function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
     $m = if ($r.last) { [int]($Now - [datetime]$r.last).TotalMinutes } else { [int]::MaxValue }
     [pscustomobject]@{ level = $(if ($m -ge 3 * $StuckMin) { 'ACT' } else { 'WATCH' }); kind = 'STUCK'; who = "$($r.name) ($($r.task))"; age = $(if ($m -lt [int]::MaxValue) { "$m min" }); problem = "no progress$(if ($m -eq [int]::MaxValue) { ' for its whole run' }), nothing it waits on"; what = "STUCK $($r.name) ($($r.task)): no progress for $(if ($m -lt [int]::MaxValue) { "$m min" } else { 'its whole run' }), nothing it waits on"; action = "Read its transcript tail; resume it with RESUME_BRIEF or $($r.next -replace '^.*; resume it or ')." }
   }
+}
+# every ACT / WATCH flag's age (owner 2026-11-19) = since its text (Get-KitFlagKey: counts vary) first showed; supervise-state
+# flagSeen keeps first + last seen, an entry unseen for 2 h drops (a skipped section keeps its age); a producer's own age wins
+function Set-KitFlagAge($Flags, $State, [datetime]$Now) {
+  $seen = if ($State.flagSeen -is [Collections.IDictionary]) { $State.flagSeen } else { @{} }; $keep = @{}
+  foreach ($f in @($Flags | Where-Object { $_.level -in 'ACT', 'WATCH' })) { $k = Get-KitFlagKey "$($f.what)"
+    $first = try { ([datetime]$seen[$k].first).ToString('o') } catch { $Now.ToString('o') }; $keep[$k] = @{ first = $first; last = $Now.ToString('o') }   # ISO, never a culture string
+    if (-not "$($f.age)".Trim()) { $f | Add-Member -Force NoteProperty age "$([int][math]::Max(0.0, ($Now - [datetime]$first).TotalMinutes)) min" } }
+  foreach ($k in @($seen.Keys)) { if (-not $keep.ContainsKey($k) -and $(try { ($Now - [datetime]$seen[$k].last).TotalHours -lt 2 } catch { $false })) { $keep[$k] = $seen[$k] } }
+  $State.flagSeen = $keep
+}
+# a guard deny's agent: its own agent field, else the status row whose transcript names its subagent id or session, else the session
+function Get-KitDenyWho($D, $Rows) {
+  if ("$($D.agent)".Trim()) { return "$($D.agent)" }; $id = "$($D.agentId)"; $sid = "$($D.session)"
+  $r = @($Rows | Where-Object { $_.tx -and (($id -and "$($_.tx)".Contains($id)) -or ($sid -and [IO.Path]::GetFileNameWithoutExtension("$($_.tx)") -eq $sid)) })[0]
+  if ($r) { ("$($r.name)" -split ' ')[0] } elseif ($sid) { "session $($sid.Substring(0, [math]::Min(8, $sid.Length)))" } else { 'unknown' }
 }
 # an active pause whose runs work (relaunched by hand): their agents stop next beat
 function Get-KitPauseFlags($Pauses, $Active, [int]$WfAgents) {
@@ -103,8 +127,9 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
   $bLog = @(Read-KitLog builds $now.AddHours(-24)); $bph = [int](Get-KitParam 'gate.buildsPerHour')
   foreach ($bo in @(Get-KitBuildsByOwner @($bLog | Where-Object { $_.event -eq 'end' -and $_.at -and [datetime]$_.at -ge $now.AddHours(-1) }) | Where-Object { $bph -gt 0 -and $_.n -gt $bph })) {
+    $sent = if ($AutoFix) { try { Send-KitBuildsRule $bo.name $bo.n $bph $now } catch { } }
     [pscustomobject]@{ level = 'WATCH'; what = "builds: $($bo.name) ran $($bo.n) gated builds ($($bo.min) build-min, $($bo.failed) failed) in the last hour, over gate.buildsPerHour $bph"; kind = 'BUILDS'; who = $bo.name
-      problem = "$($bo.name): $($bo.n) builds in an hour"; next = 'Tell that agent: one rebuild per batch of fixes, named tests only, a flaky test rerun alone'
+      problem = "$($bo.name): $($bo.n) builds in an hour"; next = $(if ($sent) { "Rule $sent to its inbox (its next gated build and beat print it); still over next hour: stop and brief it" } else { 'Tell that agent: one rebuild per batch of fixes, named tests only, a flaky test rerun alone' })
       action = 'crafty SKILL.md Rules "Builds": only what the change needs, fixes batched into one rebuild.' } }
   foreach ($bfx in Get-KitBuildFailures $hist $now $bLog) {
     $k = $bfx.key; $who = $bfx.who
@@ -682,14 +707,15 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     $ser = @($lv | Where-Object { $_.at -and $_.disks -and $null -ne (Get-KitMember $_.disks $dv) } | ForEach-Object { [pscustomobject]@{ t = [datetime]$_.at; f = [double](Get-KitMember $_.disks $dv) } } | Sort-Object t)
     $fh = [double[]]::new(24); $fd7 = 0.0; $fday = 0.0; for ($si = 1; $si -lt $ser.Count; $si++) { $dd = [math]::Max(0.0, $ser[$si - 1].f - $ser[$si].f); $fd7 += $dd; if ($ser[$si].t -ge $at.Date) { $fday += $dd }
       $hi = [int][math]::Floor(($ser[$si].t - $hr0).TotalHours); if ($hi -ge 0 -and $hi -le 23) { $fh[$hi] += $dd } }   # filled = free GB dropped between two samples
-    [pscustomobject]@{ n = "disk $dv"; a = "$(& $fmt $dk.free) GB free$(if ($null -ne $pu) { " · $pu% used" }) · $(& $diskRate $dk -Short)$(if ($null -ne $ttf) { " · full in $(& $n1 $ttf) h" })"; c = (& $diskRate $dk); tone = $tn
+    [pscustomobject]@{ n = "disk $dv"; a = "$(& $fmt $dk.free) GB free$(if ($null -ne $pu) { " · $pu% used" }) · $(& $diskRate $dk -Short)$(if ($null -ne $ttf) { " · full in $(& $n1 $ttf) h" })"; c = (& $diskRate $dk); tone = $tn; fnow = $dk.free
       h = @($fh); now = $fh[23]; peak = [double]($fh | Measure-Object -Maximum).Maximum; avg = [double]($fh | Measure-Object -Sum).Sum / 24; day = $fday; d7 = $fd7
       free = @(foreach ($dk0 in $dDays) { @($ser | Where-Object { $_.t.ToString('yyyy-MM-dd') -eq $dk0 } | ForEach-Object f)[-1] }) } })
   $wrX = [pscustomobject]@{ rows = @(@($st.writes.rows) + @($diskW)); more = @($st.writes.more); src = "$($st.writes.src)" }   # the drive rows ride the Writes rows
-  $dFree = if ($diskW.Count) { "<div class=hk>free GB per day (the day's last sample), per drive</div>$(Format-KitDayHeat @($diskW | ForEach-Object { @{ n = $_.n; mk = "free-day-$($_.n -replace ' ', '-')"; cls = 'ws'; v = $_.free; tips = @($_.free | ForEach-Object { if ($null -eq $_) { 'no sample' } else { "$(& $n1 $_) GB free" } }); t = $(if (@($_.free | Where-Object { $null -ne $_ }).Count) { & $n1 (@($_.free | Where-Object { $null -ne $_ }) | Measure-Object -Minimum).Minimum } else { '—' }); fmt = { param($v) & $n1 $v } } }) $dDays 'drive · day' 'low')" }   # free now, % used, rate: the drive's Resources row
+  # its own fold, closed (owner 2026-11-19): the header names each drive's free GB now
+  $dFree = if ($diskW.Count) { & $fold 'disk-free' 'Disk free · 7 days' '' -tag h4 -cls 'sub st' -extra "<span class=fsm>now $(@($diskW | ForEach-Object { "$($_.n -replace '^disk ') $(& $fmt $_.fnow) GB" }) -join ' · ')</span>" -inner "<div class=hk>free GB per day (the day's last sample), per drive</div>$(Format-KitDayHeat @($diskW | ForEach-Object { @{ n = $_.n; mk = "free-day-$($_.n -replace ' ', '-')"; cls = 'ws'; v = $_.free; tips = @($_.free | ForEach-Object { if ($null -eq $_) { 'no sample' } else { "$(& $n1 $_) GB free" } }); t = $(if (@($_.free | Where-Object { $null -ne $_ }).Count) { & $n1 (@($_.free | Where-Object { $null -ne $_ }) | Measure-Object -Minimum).Minimum } else { '—' }); fmt = { param($v) & $n1 $v } } }) $dDays 'drive · day' 'low')" }   # free now, % used, rate: the drive's Resources row
   $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) })
   $gs = $st.gate; $machTop = Format-KitMachineTop $gs $nw $memPct $memFree $tot ([double]$st.keepFree)   # tiles, RAM bar (supervise_stats.ps1)
-  $machineHtml = "<div class=mcol>$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }) $wrX $st.waits $gs $machTop)$(Format-KitWritesCard $st.writes $dFree)</div>"
+  $machineHtml = "<div class=mcol>$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }) $wrX $st.waits $gs $machTop)$(Format-KitWritesCard $st.writes)$dFree</div>"
   # kit health rows of the Trends day heatmap (owner 2026-11-19): sweep s, agents failed / finished, branches, worktrees
   # kit health per day (Format-KitDayHeat): sweep s (stats.live samples), agents failed / finished (calls logs), branches and worktrees
   # (the day's last sample); 7 d: avg, sum or peak as the row's tooltip says
@@ -819,7 +845,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "var sp=JSON.parse(S.getItem('kc-sp')||'{}'),y=S.getItem('kc-y');S.removeItem('kc-sp');S.removeItem('kc-y');d.querySelectorAll('details.sec').forEach(function(s){s.querySelectorAll(SC).forEach(function(e,i){var v=sp[s.id+i];if(v){e.scrollTop=v[0];e.scrollLeft=v[1]}})});ca();if(y)scrollTo(0,+y)})()"   # after collapse + filter: the layout is final
   $head = "<header class=top><div class=brand>$mark<span>claude-crew</span><small>Supervisor</small></div><div class=meta><span id=age class=chip title='Last sweep $($at.ToString('yyyy-MM-dd HH:mm'))' data-at='$($at.ToString('o'))' data-next='$(& $e $nextMin)'></span><span id=nx title='$(& $e $j.next)' data-due='$($at.AddMinutes([double]$nextMin).ToString('HH:mm'))' data-tail='$(& $e $nxTail)'>next $($at.AddMinutes([double]$nextMin).ToString('HH:mm'))</span></div><nav class=jl aria-label='Sections'>$((@(@('flags', 'Flags'), @('runs', 'Runs'), @('machine', 'Machine'), @('trends', 'Trends'), @('internals', 'Kit internals')) | ForEach-Object { "<a href='#sec-$($_[0])'>$($_[1])</a>" }) -join '')<span class='chip lv ACT'>$nAct ACT</span><span class='chip lv WATCH'>$nWatch WATCH</span></nav><div class=sp></div>" +
     "<div class=tb><input id=q type=search placeholder='Filter  ( / )' aria-label='Filter the page'><button id=ar class=ib type=button aria-pressed=true aria-label='Auto-refresh every 60 s' title='Auto-refresh every 60 s'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round /></svg></button><button id=tt class=ib type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
-  # top to bottom (owner 2026-11-19): flags, runs, resources, shells, trends; Kit internals = Tuning, one folded band
+  # top to bottom (owner 2026-11-19): flags, runs, resources, shells; Kit internals (folded) = Trends + Tuning
   $nSh = @($j.shells | Where-Object { $_ }).Count
   # Trends (owner 2026-11-19): Delivery + Usage + kit health in one day heatmap, its tiles one strip, spend and repos as sub-blocks (adapters/outcomes.ps1)
   $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats } catch { $null } }
@@ -829,7 +855,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open -extra '<button type=button class=ga data-tg=fl-hist aria-expanded=false>24 h history</button>') +
     (& $section 'runs' 'Runs' "$(if ($UP.nRunning) { "$($UP.nRunning) running · " })$(if ($UP.runsN) { $UP.runsN } else { 'none ended in 7 days' })" "<p class=fclr hidden>Runs: <b></b> <button type=button>Clear</button></p>$runsH" -Open) +   # a Trends day click filters the runs
     (& $section 'machine' 'Machine and resources' '' $machineHtml -Open) + (& $section 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open) +
-    (& $section 'trends' 'Trends' '' $trends -Open) + (& $section 'internals' 'Kit internals' '' $setHtml) +
+    (& $section 'internals' 'Kit internals' '' ((& $fold 'trends' 'Trends' '' $trends -Open -cls sub) + $setHtml)) +
     "<p id=nm class=empty hidden>No match.</p><footer>Written by bossy.ps1 supervise each sweep (no model tokens) · data: supervise-report.json · times local (UTC$($at.ToString('zzz')))</footer></main>"
   "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$head$main<script>$js</script><script>$(Get-KitStatsJs)</script></body></html>"
 }
@@ -1032,8 +1058,7 @@ function Get-KitRecoverLinesResources {
   }
 }
 
-# board messages (bossy.ps1 board msg | inbox): one jsonl per agent
-function Get-InboxFile([string]$Agent) { Join-Path (Get-KitPath board -Create) "inbox/$($Agent.ToLower() -replace '[^\w.-]', '_').jsonl" }
+# board messages: the file and its reader live in crafty adapters/supervise_report.ps1 (the gate prints them too)
 $script:KitMsgKinds = 'note', 'hold', 'dispute', 'rule', 'rollback', 'report', 'pause'   # board msg schema { kind, to, text, ref }
 function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind = 'note', [string]$Ref = '') {
   $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null

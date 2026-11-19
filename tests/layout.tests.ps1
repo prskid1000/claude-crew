@@ -64,7 +64,7 @@ $staleBoard = Join-Path (TkPath $k board -Create) 'stale-s.json'; @{ session = '
 $superviseOut = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') supervise -AutoFix -Json 2>$null | Out-String | ConvertFrom-Json
 $livePage = Get-Content ([IO.Path]::ChangeExtension((TkPath $k supervise-report), '.html')) -Raw
 Expect "supervise page: machine row (full-in under 72 h), Activity as one day heatmap, no delta text, no sweep log; a silent board entry = STUCK, no board / shells lines (missing: $($tileMissing -join ' | '))" (
-  -not $tileMissing.Count -and $tilePage -notmatch 'full in 90|Sweep log|<pre|rn>b<|class=.tr |Lessons|Workflow steps now|Sweep time|Flags auto-FIXED' -and @($superviseOut.flags.what -match '^STUCK Y7 .*\(r7\): no progress for 40 min').Count -eq 1 -and -not @($superviseOut.summary -match '^(board|shells): ').Count -and $livePage -match '(?s)RAM used</span>.+Trends</h2>.+>sweep s<' -and $livePage -notmatch 'Sweep log')
+  -not $tileMissing.Count -and $tilePage -notmatch 'full in 90|Sweep log|<pre|rn>b<|class=.tr |Lessons|Workflow steps now|Sweep time|Flags auto-FIXED' -and @($superviseOut.flags.what -match '^STUCK Y7 .*\(r7\): no progress for 40 min').Count -eq 1 -and -not @($superviseOut.summary -match '^(board|shells): ').Count -and $livePage -match '(?s)RAM used</span>.+Kit internals</h2>.+Trends</h3>.+>sweep s<' -and $livePage -notmatch 'Sweep log')
 # supervise page: short-item lists use the grid helper (.cg); a tile + ring per disk, a flagged one tinted and first
 $gridPage = (Invoke-PsTest grids @'
 . $args[0]
@@ -138,7 +138,7 @@ Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Ra
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
 $pgs = @{}; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } }) $pgs
-$cardGrid = @("<details class='sec sub st uc dlr' id=sec-dl-days open><summary><h4>Per day", "<span class=gn title='est. cost per day", "<div class=tls data-mk=trend-tiles>", "data-oc=fail aria-pressed=false", "class='sec sub st uc ur' id=sec-u-spend open><summary><h4>Spend per role", "data-mk=spend-role>", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
+$cardGrid = @("<details class='sec sub st uc dlr' id=sec-dl-days open><summary><h4>Per day", "<span class=gn title='est. cost per day", "<div class=tls data-mk=trend-tiles>", "data-oc=fail aria-pressed=false", "class='sec sub st uc ur' id=sec-u-spend><summary><h4>Spend per role</h4>", '</span><span class=fsm>top: ', "data-mk=spend-role>", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
 # column counts: run steps 9 (right-align nth-child ranges)
 $thCount = { param($open, $in = $h) ([regex]::Match($in, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
 $colCounts = "7 $(& $thCount "class='sy rst'>" @($pgs.Values)[0])"

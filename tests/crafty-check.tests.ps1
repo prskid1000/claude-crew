@@ -14,6 +14,14 @@ $go = Invoke-PsTest 'gate-order' @'
 (@(Get-GateOrder @((& $tk bg 2 30 10), (& $tk qa 1 5 60), (& $tk long 0 5 900), (& $tk short 0 2 60), (& $tk old 0 25 900), (& $tk busy 0 6 30)) @{ busy = 3 } $gn) | ForEach-Object owner) -join ','
 '@ @($D)
 Expect "gate order: class, then aged, fewer recent starts, shorter ($go)" ("$go" -eq 'old,short,long,busy,qa,bg')
+# a board message reaches a workflow step between beats: its next gated build prints it once (marked read); supervise sends the
+# build-batching rule once an hour per owner
+$Bo = Join-Path $k 'skills/bossy/bossy.ps1'
+$null = pwsh @np $Bo board join -Agent W9 -Run r9 2>&1   # off the board (a worktree-name owner): no message
+$ib = & { . $Bo 6>$null; $n = Get-Date; $r0 = Send-KitBuildsRule 'wt9' 27 8 $n; $r1 = Send-KitBuildsRule 'W9' 27 8 $n; $r2 = Send-KitBuildsRule 'W9' 30 8 $n.AddMinutes(10)
+  "$r0|$r1|$r2|$(@(Get-Content (Get-InboxFile 'W9')).Count)|$(@(Read-KitInboxNew 'W9').Count)|$(Test-Path (Get-InboxFile 'wt9'))" }
+$gt = @(& { $env:CLAUDE_AGENT = 'W9b'; . $Bo 6>$null; Send-BoardMsg 'supervise' 'W9b' 'batch your fixes' 'rule' 'gate.buildsPerHour'; foreach ($gi in 1, 2) { pwsh @np $D gate -Dir $k -Cmd 'echo built' -WaitMinutes 0 2>&1 }; $env:CLAUDE_AGENT = $null } | Out-String)
+Expect "inbox: the rule sent once an hour per owner; the owner's next gated build prints it once ($ib; $(([regex]::Matches($gt, '\[gate\] MESSAGE for W9b')).Count))" ("$ib" -match '^\|sent \d\d:\d\d\|sent \d\d:\d\d\|1\|1\|False$' -and ([regex]::Matches($gt, '\[gate\] MESSAGE for W9b .*batch your fixes')).Count -eq 1)
 
 # stack presets: detect finds Android Gradle, .NET, Go, Rust, CMake and Make projects (crafty.ps1 Invoke-Stack helpers, as there)
 $cases = [ordered]@{ 'android-gradle' = @('build.gradle', 'android { productFlavors { create("store") } }'); dotnet = @('a.csproj', '<Project Sdk="Microsoft.NET.Sdk"></Project>'); go = @('go.mod', 'module x'); rust = @('Cargo.toml', '[package]')

@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next.
-# Sections: L5 supervise report · L108 transcript tails
+# Sections: L5 supervise report · L126 transcript tails
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -16,7 +16,7 @@ function Format-KitReport($d) {
   $fl = @(@($d.flags | Where-Object { $_.level -ne 'INFO' } | Sort-Object { @{ ACT = 0; WATCH = 1 }[$_.level] }) + @($d.info | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }))
   if ($fl.Count) { $reportLines.Add('| Level | Flag | Who / item | Age | Problem | Next step |'); $reportLines.Add('|---|---|---|---|---|---|') }
   foreach ($f in $fl) {
-    $c = Get-KitFlagCells $f
+    $c = Get-KitFlagCells $f -Fill:($f.level -ne 'INFO')
     $reportLines.Add("| $($f.level) | $(@($c.kind, $c.who, $c.age, $c.problem, $c.action | ForEach-Object { if ("$_".Trim()) { Format-KitCell (Limit-KitCell $_ 80) -Exact } else { '—' } }) -join ' | ') |")
   }
   if ($fl.Count) { $reportLines.Add('') }   # GFM: a plain line right after a table becomes a row
@@ -45,11 +45,15 @@ function Format-KitShellTable($Shells) {
   }
   ''
 }
-# no producer kind: an upper-case lead ("RESTART LOOP: ...") is the kind
-function Get-KitFlagCells($f) {
-  $kind = $f.kind; $problem = $f.problem
-  if (-not $kind -and "$($f.what)" -cmatch '^([A-Z]{3,}(?:[ -](?:[A-Z]{3,}|MR|PR))*):?\s+(.+)$') { $kind = $Matches[1]; if (-not $problem) { $problem = $Matches[2] } }
-  [pscustomobject]@{ kind = $kind; who = $f.who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
+# no producer kind: an upper-case lead ("RESTART LOOP: ...") is the kind, an id-like "<subject>:" (a digit in it) the who ("ATTENTION
+# <task>: ..."; "DISK C: ..." keeps its text); -Fill (the flag tables, owner 2026-11-19: every row has a kind, who and age): no kind =
+# the first word, no who = coordinator
+function Get-KitFlagCells($f, [switch]$Fill) {
+  $kind = $f.kind; $problem = $f.problem; $who = $f.who
+  if (-not $kind -and "$($f.what)" -cmatch '^([A-Z]{3,}(?:[ -](?:[A-Z]{3,}|MR|PR))*):?\s+(.+)$') { $kind = $Matches[1]; if (-not $problem) { $problem = $Matches[2]; if (-not $who -and $problem -match '^([^\s:]*\d[^\s:]*):\s+(.+)$') { $who = $Matches[1]; $problem = $Matches[2] } } }
+  if ($Fill -and -not $kind -and "$($f.what)" -match '[A-Za-z][\w-]*') { $kind = $Matches[0].ToUpper() }
+  if ($Fill -and -not "$who".Trim() -and $f.level -in 'ACT', 'WATCH') { $who = 'coordinator' }
+  [pscustomobject]@{ kind = $kind; who = $who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
 }
 # a flag's identity across rounds: counts, times and sizes vary
 function Get-KitFlagKey([string]$What) { $k = (($What.ToLower() -replace '\b\d+\b', '#') -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
@@ -105,6 +109,20 @@ function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$
     @('', '## Sweep', '', '```text') + $Sweep + '```' | ForEach-Object { ConvertTo-KitLaneText "$_" } |   # one lane name (K55)
     Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
 }
+# board messages (bossy.ps1 board msg | inbox): one jsonl per agent; the unread ones as lines, then marked read (inbox, board beat and
+# every gated build print them: a workflow step between beats still gets the coordinator's rule); -All: the read ones too
+function Get-InboxFile([string]$Agent) { Join-Path (Get-KitPath board -Create) "inbox/$($Agent.ToLower() -replace '[^\w.-]', '_').jsonl" }
+function Read-KitInboxNew([string]$Agent, [switch]$All) {
+  if (-not $Agent) { return }; $f = Get-InboxFile $Agent; if (-not (Test-Path -LiteralPath $f)) { return }
+  Invoke-KitLocked $f { $m = @(Get-Content -LiteralPath $f | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_ }); $new = @($m | Where-Object { $All -or -not $_.read })
+    foreach ($x in $new) { "$(([datetime]$x.at).ToString('HH:mm')) from $($x.from)$(if ($x.kind -and $x.kind -ne 'note') { " [$($x.kind)]" }): $($x.text)$(if ($x.ref) { " (ref $($x.ref))" })" }
+    $cut = (Get-Date).AddDays(-1)   # a read message is kept a day (the hourly rule dedupe), then dropped
+    if (@($new | Where-Object { -not $_.read }).Count) { Write-KitAtomic $f ((@($m | Where-Object { -not $_.read -or $(try { [datetime]$_.at -gt $cut } catch { $false }) } | ForEach-Object { $_ | Add-Member -Force NoteProperty read $true; $_ | ConvertTo-Json -Compress }) -join "`n") + "`n") } }
+}
+# crafty.ps1 gate: the build owner's unread messages first (a workflow step beats only between steps; it builds all the time); only a
+# named agent (CLAUDE_AGENT) or one live on the board: a worktree-name owner never drains another agent's inbox
+function Test-KitBoardAgent([string]$Agent) { [bool]@(Get-ChildItem (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddDays(-1) | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { "$($_.agent)" -eq $Agent -and $_.status -ne 'left' }).Count }
+function Show-KitGateInbox([string]$Owner) { if (-not $env:CLAUDE_AGENT -and -not (Test-KitBoardAgent $Owner)) { return }; foreach ($m in @(try { Read-KitInboxNew $Owner } catch { })) { Write-Host "[gate] MESSAGE for $Owner (follow it for this and every later build): $m" } }
 # ---- transcript tails: the board's Doing detail, cached per transcript (lib.ps1 Get-KitStatusRows)
 # what a tool call works on (board "Doing"): its description, else a file name + its folder tail, a workflow / skill name, a search pattern, the command
 function Get-KitToolWhat($U) { $i = $U.input; $pt = { param($p) $ps = @("$p" -split '[\\/]' | Where-Object { $_ }); if ($ps.Count -gt 1) { "$($ps[-1]) · $(@($ps | Select-Object -SkipLast 1 | Select-Object -Last 2) -join '/')" } else { "$p" } }
