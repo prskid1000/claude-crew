@@ -73,20 +73,26 @@ $s3 = Update-KitWriteStats ($s3 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t
 $e2 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $b2 $own 102GB; $eh = @{}; foreach ($h in $e2.hour) { $eh[$h.label] = $h.gb }
 "scaled:$($e2.samples[-1].e -eq 1 -and $e2.samples[-1].m -eq 2 -and $eh['build x'] -eq 1.2 -and $eh['devy-a'] -eq 0.5 -and $eh['mysqld · x'] -eq 0.3 -and @($e2.flags).Count -eq 1 -and $e2.flags[0].level -eq 'WATCH' -and $e2.flags[0].what -match 'build x \(kitty\): est\. 1\.2 GB')"
 $n2 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $b2 $own
-"nodisk:$(-not @($n2.flags).Count -and -not $n2.samples[-1].e -and @($n2.hour).Count -eq 3)"
+"nodisk:$(-not @($n2.flags).Count -and -not $n2.samples[-1].e -and -not @($n2.hour).Count)"
+# a raw sample (no prior disk value) and a scaled one in the same hour: only the scaled one counts (robocopy +1 GB, disks +0.5 GB)
+$m1 = Update-KitWriteStats ($n2 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1.AddMinutes(10) $b2 $own 110GB
+$m2 = Update-KitWriteStats ($m1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1.AddMinutes(20) @($b2 | ForEach-Object { if ($_.Id -eq 40) { & $mk 40 10 'robocopy.exe' 'robocopy tree' 16GB $old } else { $_ } }) $own 110.5GB
+"mixed:$(@($m2.hour).Count -eq 1 -and @($m2.hour)[0].label -eq 'build x' -and @($m2.hour)[0].gb -eq 0.5 -and -not @($m2.flags).Count)"
 $o1 = @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 1GB $old))
 $o0 = Update-KitWriteStats $null $t0 $o1 @() 0
 $o2 = Update-KitWriteStats ($o0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 2.8GB $old)) @() 1.8GB
 $o3 = Update-KitWriteStats ($o0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 5GB $old)) @() 4GB
 "notkit:$(-not @($o2.flags).Count -and @($o2.hour)[0].gb -eq 1.8 -and @($o3.flags).Count -eq 1 -and $o3.flags[0].level -eq 'WATCH' -and $o3.flags[0].what -match 'Edge \(CDP 9222\): est\. 4 GB .*not kit-owned')"
 $o4 = Update-KitWriteStats ($o0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 5GB $old)) @() 4GB @{ msedge = 0.32 }
+$o5 = Update-KitWriteStats ($o0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 5GB $old)) @() 4GB @{ chrome = 0.1 }
 $k4 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $b2 $own 102GB @{ robocopy = 0.01; mysqld = 0.05 }; $kh = @{}; foreach ($h in $k4.hour) { $kh[$h.label] = $h.gb }
 $tf = Join-Path $args[1] 'tracer.csv'
 Set-Content $tf @('"Time","Kind","Process","Folder","TopFile","WriteMB"', "`"$($t1.AddMinutes(-70).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"msedge`",`"C:\x`",`"f`",`"900`"",
   "`"$($t1.AddMinutes(-15).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"msedge`",`"C:\x`",`"f`",`"200.5`"", "`"$($t1.AddMinutes(-5).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"msedge`",`"D:\y`",`"g`",`"127.5`"",
-  "`"$($t1.AddMinutes(-5).ToString('yyyy-MM-dd HH:mm:ss'))`",`"net`",`"msedge`",`"D:\y`",`"g`",`"5000`"")
-$tr = Read-KitWriteTracer $tf $t1; $trOld = Read-KitWriteTracer $tf $t1.AddHours(2)
-"tracer:$(@($o4.hour)[0].gb -eq 0.32 -and $kh['build x'] -eq 1.2 -and $kh['mysqld · x'] -eq 0.05 -and -not @($o4.flags).Count -and [math]::Abs($tr['msedge'] - 0.3203) -lt 0.001 -and $null -eq $trOld -and $null -eq (Read-KitWriteTracer '' $t1))"
+  "`"$($t1.AddMinutes(-5).ToString('yyyy-MM-dd HH:mm:ss'))`",`"net`",`"msedge`",`"D:\y`",`"g`",`"5000`"", "`"$($t1.AddMinutes(-5).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"Slack.exe`",`"C:\s`",`"s`",`"10.24`"",
+  "`"$($t1.AddMinutes(-1).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"chrome`",`"C:\z`",`"h`",`"")
+$tr = Read-KitWriteTracer $tf $t1; $trOld = Read-KitWriteTracer $tf $t1.AddHours(2); $th = Join-Path $args[1] 'tracer-head.csv'; Set-Content $th '"Time","Process","WriteMB"'
+"tracer:$(@($o4.hour)[0].gb -eq 0.32 -and @($o5.hour)[0].gb -eq 4 -and @($o5.flags).Count -eq 1 -and $kh['build x'] -eq 1.2 -and $kh['mysqld · x'] -eq 0.05 -and -not @($o4.flags).Count -and [math]::Abs($tr['msedge'] - 0.3203) -lt 0.001 -and [math]::Abs($tr['Slack'] - 0.01) -lt 0.0001 -and -not $tr.ContainsKey('chrome') -and $null -eq $trOld -and $null -eq (Read-KitWriteTracer '' $t1) -and $null -eq (Read-KitWriteTracer $th $t1))"
 $lb = @((Get-KitWriteLabel 'msedge.exe' 'msedge.exe --headless --remote-debugging-port=9222'), (Get-KitWriteLabel 'mysqld.exe' '"C:\m\mysqld.exe" --no-defaults --datadir=D:\s\kit-tests\my'),
   (Get-KitWriteLabel 'node.exe' 'node "C:\n\npx-cli.js" -y vite build'), (Get-KitWriteLabel 'java.exe' 'java -jar D:\t\api-1.0.jar'), (Get-KitWriteLabel 'Slack.exe' 'Slack.exe --x'), (Get-KitWriteLabel 'python.exe' 'python -m http.server 8000'), (Get-KitWriteLabel 'java.exe' 'java -cp x org.acme.Main'))
 "labels:$(($lb -join '|') -ceq 'Edge (CDP 9222)|mysqld · kit-tests|npx · vite|java · api-1.0|Slack|python · http.server|java · Main')"
@@ -106,7 +112,7 @@ $card = Format-KitWritesCard ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
 $pg = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resources = @([pscustomobject]@{ name = 'build x'; by = 'kitty'; gb = 1 }); stats = [pscustomobject]@{ writes = ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json) } })
 "card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
-Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'notkit', 'tracer', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
+Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
 # a holder record with several pids (a lane group, a shared lease) must not crash the writes hook ([int] of an array)
 $mpt = @'
 $null = . $args[0] 6>$null; $KitShellRows = @(); $res = @([pscustomobject]@{ pid = @(4, 8); by = 'x'; name = 'svc' })
