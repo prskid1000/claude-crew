@@ -2,8 +2,8 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # guard rules (crafty.ps1 guard): local-env: a localenv/<env> branch is never pushed; dev servers start in the shared local env, not by
 # hand; deployed-env (K56): no hand change of a deployed env's config or runtime without an owner's decision; large-writes: no
-# synthetic bulk data, scratch schema on a shared DB, big import, full dump or copied dependency / data tree.
-# Sections: L7 local-env · L20 deployed-env · L37 large-writes
+# synthetic bulk data, scratch schema on a shared DB, big import, full dump or copied dependency / data tree; secrets: no command reads targets.local.json.
+# Sections: L7 local-env · L20 deployed-env · L37 large-writes · L65 secrets
 # ---- local-env: lane branch pushes, hand-started dev servers
 Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
     $cmd = $a.cmd
@@ -62,3 +62,8 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
     elseif ($lw -match '(?i)\bgit\b(?:\s+(?:-[Cc]\s+\S+|--[\w-]+(?:=\S+)?))*\s+archive\b([^|;&<>\r\n]*)' -and @(($Matches[1] -replace '(?i)\s(-o|--output|--prefix|--remote|--format)(\s+|=)\S+', ' ' -split '\s+') | Where-Object { $_ -and $_ -notlike '-*' }).Count -eq 1) { 'a whole-repo export (git archive without a path: a review export wrote 323 MB; read the ref with git show <ref>:<path> / git diff, or a crafty.ps1 wt worktree)' }
   if ($lwWhy) { "kit guard: that writes large data ($lwWhy). No large writes (AGENTS.md): performance questions -> EXPLAIN / query plans, index checks, the fixtures, the read-only replica; data you add stays under data.maxRows / data.maxMB, on the kit-test or a leased lane DB, dropped at the run's end. A needed exception: bossy.ps1 decide ask (the owner runs it)." }
 } }
+# ---- secrets: test logins (owner 2026-11-19: QA agents printed passwords): no command reads targets.local.json; a grep of the bare name is a pattern
+Register-KitAdapter 'guard' 'secrets' @{ check = { param($a)
+  $secRead = '(?i)(^|[\s;|&(`])(cat|type|more|less|head|tail|sed|awk|jq|bat|strings|xxd|od|base64|cp|copy|Copy-Item|cpi|Get-Content|gc|Import-Csv|scp|curl)(\.exe)?\s|open\(|readFile|ReadAll(Text|Lines|Bytes)|json\.load'
+  if (@("$($a.raw)" -split '[;&|\r\n]+' | Where-Object { $_ -match '(?i)targets\.local\.json' -and ($_ -match $secRead -or ($_ -match '(?i)\b(grep|egrep|rg|findstr|Select-String|sls)\b' -and $_ -match '(?i)[\/]targets\.local\.json')) }).Count) {
+    'kit guard: skills/pokey/targets.local.json holds test logins: never read or print it; pokey.ps1 api / seat / login use it for you, kitbag.py audit config checks its keys' } } }

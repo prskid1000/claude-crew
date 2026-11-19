@@ -82,13 +82,14 @@ run(args, agent, _n, _n, null).then(() => {
  console.log(`local-call:${tp.includes("& 'C:/kit/skills/envy/envy.ps1' use -Env shop -Services ") && !/Test-Path/.test(tp)}`)
  console.log(`phone-call:${tp.includes("& 'C:/kit/skills/phoney/phoney.ps1' acquire -Agent qa-w1-Falcon -Lane Falcon")}`)
  const lp = (calls.find((c) => /^test:P2/.test(c.label)) || {}).prompt || ''
- console.log(`local-parts:${/LOCAL PARTS app!2:.*use -Env <its local env> -Services api -Agent test:<CODE>.*release it right after them.*never the whole env/.test(lp)}`)
+ console.log(`local-parts:${/LOCAL PARTS app!2:.*use -Env <its local env> -Services api -Agent test:<CODE>@R2.*release it right after them.*never the whole env/.test(lp)}`)
+ console.log(`run-tag:${/board join -Type checky -Agent <CODE>@R2 -Run R2/.test(tp) && /CLAUDE_AGENT='test:P1@R2'/.test(tp) && /seat acquire -Agent "test:P1@R2"/.test(tp)}`)
  console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
  console.log(`just-in-time:${/acquire right before your first phone check/.test(tp) && tp.includes("phoney.ps1' release -Agent qa-w1-Falcon") && /release right after the last one \(envy\.ps1 release -Env shop/.test(tp)}`)
  console.log(`progress:${/board beat -Session <token> -Status 'check <id>/.test(tp) && /never stop for time/.test(tp) && !/time-cap/.test(tp)}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts (owner 2026-11-19: leases just in time, progress on the board, no time cap): #' 'local-call', 'phone-call', 'local-parts', 'release-guard', 'just-in-time', 'progress' -Show 8
+Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts (owner 2026-11-19: leases just in time, progress on the board, no time cap): #' 'local-call', 'phone-call', 'local-parts', 'run-tag', 'release-guard', 'just-in-time', 'progress' -Show 8
 # a first tester with no checks at all: the retest runs the whole guide (a scoped retest of nothing tested nothing)
 $jsE = @'
 const { calls, agent } = _mock((prompt, o) => { if (/^test:/.test(o.label)) return _res('E1', []); if (/^retest:/.test(o.label)) return _res('E1', [_ck('C1', 'PASS')]) }, 'published')

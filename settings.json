@@ -34,7 +34,8 @@
   ],
   "deny": [
    "Bash(git stash*)",
-   "PowerShell(git stash*)"
+   "PowerShell(git stash*)",
+   "Read(**/skills/pokey/targets.local.json)"
   ]
  },
  "hooks": {

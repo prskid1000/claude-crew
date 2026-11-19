@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L930 check · L1246 pipes · L1302 guard · L2181 dir ·
-  L2191 checkpoint · L2221 prior · L2259 tracker · L2281 task spec · L2461 scope · L2509 host
+Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L930 check · L1246 pipes · L1302 guard · L2183 dir ·
+  L2193 checkpoint · L2223 prior · L2261 tracker · L2283 task spec · L2462 scope · L2510 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1418,6 +1418,7 @@ if ($SelfTest) {
   @('B', 'rm -rf {KRTU}/work', $true, $rp), @('B', 'cd {WS}; mkdir -p {RTU}/w', $true, 'outside the kit'), @('B', 'mv {WS}/{RT}/work/x {KRT}/work/agents/x; cat {WS}/{RT}/a.md > {KRT}/work/agents/x/b.md', $false, 'outside the kit'),
   @('B', 'cd {WS}; echo "{RT}/" >> .gitignore; ls {RT} 2>&1', $false, 'outside the kit'), @('B', 'cd {WS}; mkdir -p a/b/c/{RT}', $false, 'outside the kit'),
   @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
+  @('P', 'Remove-Item -Force "{KRT}\work\a.json"', $false, $rp), @('B', 'rm -r {KRTB}/work/a.d', $true, $rp),
   @('B', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
   @('B', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $false),
   @('B', 'glab mr update 5 --description "$(cat /tmp/mr-body.md)"', $true, 'shared temp root'),
@@ -1784,8 +1785,9 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
       $segBase = if (($nb = FullOf $to $segBase)) { $nb } else { $null }; continue }
     if ($seg -notmatch $delWord) { continue }
     if ($seg -match ("($sd([\\/][\w.-]+)*|tracking\.local\.json|learning\.local\.(jsonl|stamp)|tracker-none\.local)" + $end)) {
-      Deny 'That is durable local kit state (task tracking, learning signals): never delete it. Requests to remove it are for the lead (coordinator).' }
-    if ($seg -match 'cleanup\.ps1|bossy\.ps1["'']?\s+cleanup') { continue }
+      Deny 'That is durable local kit state (task tracking, learning signals): never delete it; the lead (coordinator) may.' }
+    # cleanup, or one named file (not recursive): no wipe of work/
+    if ($seg -match 'cleanup\.ps1|bossy\.ps1["'']?\s+cleanup' -or ($seg -cnotmatch '\s-[fvidR]*[rR][fvidR]*(\s|$)' -and $seg -notmatch '(?i)-Recurse|rmtree|(^|\s)(rmdir|rd)\s|\*' -and $seg -match ("work[\\/]+[\w-]+\.\w{1,8}" + $end))) { continue }
     if (($seg -match ("$rt([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*" + $end) -and (RuntimeKinds $seg $segBase) -contains 'kit') -or
         ($inRuntime -and $seg -match '\s[''"]?(\.[\\/])?(work([\\/]+[\w.-]+)?|\*|\.)[\\/]*[''"]?(\s|$)')) {
       $act = @(ActiveWork)
@@ -1796,7 +1798,7 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
 $segBase = $here
 foreach ($seg in DeleteSegments $raw) {
   if ($seg -match '^\s*(cd|Set-Location|sl|pushd|Push-Location)\s+(?<to>.*?)\s*$') { $segBase = FullOf $Matches.to.Trim('''"') $segBase; continue }
-  # only what is written (redirect target, copy's last argument, create verb's arguments); reads stay allowed
+  # only what is written (redirect, copy target, create verb arguments); reads pass
   $wrote = @([regex]::Matches($seg, '(?<![\d&>])>{1,2}(?!&)\s*(?<t>\S+)') | ForEach-Object { $_.Groups['t'].Value })
   if ($seg -match '(^|[\s(`])(cp|mv|Copy-Item|Move-Item)\s') { $wrote += ($seg.TrimEnd() -split '\s+')[-1] }
   if ($seg -match '(^|[\s(`])(?<v>mkdir|md|New-Item|ni|touch|tee|Out-File|Set-Content|Add-Content)\s+(?<a>.*)$') { $wrote += @($Matches.a -split '\s+' | Where-Object { $_ -and $_ -notmatch '^-' }) }
@@ -2284,8 +2286,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 # the same through every tracker adapter. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
 # { text, url }], docs: { human, ai }, decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], proseOk }.
-# Refused: a missing field (a [Bug]: title + problem), a link or MR that is no full URL, a prose finding (a local path).
-# what a spec lacks (a [Bug] keeps its own shape: name + problem)
+# what a spec lacks ([Bug]: name + problem), a link or MR no full URL
 function Test-KitTaskSpec($Spec) {
   $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")
   @(if (-not "$($Spec.title)".Trim()) { 'title' }; if (-not "$($Spec.problem)".Trim()) { 'problem' }
@@ -2458,7 +2459,7 @@ function Invoke-Tracker {
   }
 }
 
-# ---- scope: brief area globs (agents[].paths) vs a diff: wt commit, deploy plan (-Mrs), supervise (merged MRs); devtools.py glob_rx, the same rule
+# ---- scope: brief area globs (agents[].paths) vs a diff (wt commit, deploy plan, supervise); devtools.py glob_rx alike
 function ConvertTo-KitGlobRx([string]$Glob) {   # ** any folders, * ? in one name, {a,b}, a trailing / all below
   $g = ($Glob.Trim() -replace '\\', '/') -replace '^\./'; if ($g.EndsWith('/')) { $g += '**' }
   $part = { param($s) @([regex]::Split($s, '(\*\*/?|\*|\?)') | ForEach-Object { switch -CaseSensitive ($_) { '**/' { '(?:.*/)?' } '**' { '.*' } '*' { '[^/]*' } '?' { '[^/]' } default { [regex]::Escape($_) } } }) -join '' }

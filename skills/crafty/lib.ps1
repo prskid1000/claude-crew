@@ -500,10 +500,10 @@ function Test-KitLive($l) {
   $ls = Get-KitLiveCached steps { $lf = Get-KitPath live-steps; if ((Test-Path -LiteralPath $lf) -and ((Get-Date) - [IO.File]::GetLastWriteTime($lf)).TotalMinutes -lt $bm) { try { Get-Content -LiteralPath $lf -Raw | ConvertFrom-Json } catch {} } }   # the file time: an unchanged sweep only touches it
   $mine = @($ls.labels | Where-Object { ($a -and (($_ -split ':', 2)[-1] -split '@')[0] -eq $a) -or ($l.lane -and $_ -match "@$([regex]::Escape($l.lane))$") })
   if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
-  # a holder blocked on a long gated command (an e2e suite) writes no transcript: its gate entry keeps it live
+  # a holder in a long gated command writes no transcript: its gate entry keeps it live
   if ($a -and @(Get-KitLiveCached gate { @(Get-ChildItem (Get-KitGateLedger) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } | Where-Object { $_.owner -eq $a -and (Test-KitPid $_.pid $_.start) }).Count) { return $true }
   $all = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
-    Where-Object { if ($l.session) { $_.session -eq $l.session } else { ($_.agent -and $_.agent -in @($a, $l.holder)) -or ($l.holder -and $_.session -eq $l.holder) } })
+    Where-Object { if ($l.session) { $_.session -eq $l.session } else { ($_.agent -and ($_.agent -in @($a, $l.holder) -or ($a -and "$($_.agent)" -like "$a@*"))) -or ($l.holder -and $_.session -eq $l.holder) } })
   $fresh = { param($e, $m) $x = Get-KitLiveCached "act:$($e.session)/$($e.agent)/$($e.run)" { Get-KitLastActivity "$($e.transcript)" $e "$($e.tool)" }; $x -and ($now - $x).TotalMinutes -lt $m }   # a silent agent writing its transcript is live
   if (@($all | Where-Object { $_.status -ne 'left' -and ((& $fresh $_ $bm) -or ($_.pid -and (Test-KitPid $_.pid $_.pidStart))) }).Count) { return $true }
   if ($mine.Count -or $l.session) { return $false }   # its step finished / its board entry left or went quiet
@@ -1854,7 +1854,7 @@ function Get-KitCiFailure([hashtable]$A) {
   [pscustomobject]@{ job = "$($j.name)"; id = $j.id; url = "$($j.web_url ?? $j.url)"; reason = "$($j.reason ?? 'unknown')"; raw = "$($j.failure_reason)"; excerpt = @($log -match '(?i)error|fail|invalid|exception' | Select-Object -Last 8) -join "`n" }
 }
 # mr.parseRef: MR URL or [<group>/]<repo>!<n> -> @{ repo; n; type }
-# an MR ref or URL -> [repo!n](full URL) (owner: tracker comments and MR bodies link full URLs); no URL: the ref as is (devtools.py mr_link)
+# an MR ref or URL -> [repo!n](full URL) (owner: full URLs in tracker texts); no URL: the ref as is (devtools.py mr_link)
 function Format-KitMrLink([string]$Ref) {
   $r = "$Ref".Trim(); $p = ConvertFrom-KitMrRef $r; if (-not $p) { return $r }
   $u = if ($r -match '^https?://') { $r } else { try { "$(Invoke-HostVerb 'mr.url' @{ repo = $p.repo; n = $p.n })".Trim() } catch { '' } }
