@@ -10,7 +10,7 @@ Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L16 builds · L52 supervise · L314 shells · L483 page · L1061 release · L1106 lines · L1139 cleanup · L1206 launch ·
   L1284 pause · L1403 heartbeat · L1418 sessions · L1470 ci tasks ·
-  L1525 the kit origin's default branch (kitBranch, else origin/HEAD)
+  L1526 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1478,15 +1478,16 @@ function Get-KitCiTask([string]$Task) {
   $d = "$($tt.description)" -replace '\\(?=[_*])', ''
   $ju = Invoke-HostVerb 'ci.parseUrl' @{ text = $d }   # the CI adapter reads its own job / run URLs; a CI without it: no job (bad)
   $bm = [regex]::Match($d, '(?im)^\W*Branch\W*:\W*(?<b>[\w./-]+)')
-  [pscustomobject]@{ url = "$($ju.url)"; job = "$($ju.job)"; run = "$($ju.run)"; branch = $bm.Groups['b'].Value }
+  $jn = if (-not "$($ju.job)") { [regex]::Match($d, '(?i)\bjob\W{0,3}(?<j>[\w.:-]{3,})').Groups['j'].Value }   # a pipeline link + a job name ("job `unit-test`"), no job URL
+  [pscustomobject]@{ url = "$($ju.url)"; job = "$($ju.job)"; jobName = "$jn"; run = "$($ju.run)"; branch = $bm.Groups['b'].Value }
 }
 # pass = a newer run of the same job on the branch whose commit holds every merged MR of the job's repo; wait = none yet / still running
 function Test-KitCiTaskJob($Ci, [string[]]$Mrs) {
-  if (-not ($Ci.job -and $Ci.run -and $Ci.branch)) { return @{ state = 'bad'; why = 'its description names no Job URL, Pipeline or Branch' } }
+  if (-not (($Ci.job -or $Ci.jobName) -and $Ci.run -and $Ci.branch)) { return @{ state = 'bad'; why = 'its description names no Job (URL or name), Pipeline or Branch' } }
   $refs = @($Mrs | Where-Object { "$_" -match '^[^!]+!\d+$' } | ForEach-Object { $r, $n = "$_" -split '!'; [pscustomobject]@{ repo = (ProjPath $r); n = $n } } | Where-Object repo)
   $repo = @($refs | Where-Object { $Ci.url -like "*/$($_.repo)/*" } | ForEach-Object repo)[0]; if (-not $repo) { $repo = @($refs.repo)[0] }
   if (-not $repo) { return @{ state = 'bad'; why = 'no MR ref to find its repo' } }
-  $name = "$(@(Invoke-HostVerb 'ci.jobs' @{ repo = $repo; id = $Ci.run }) | Where-Object { "$($_.id)" -eq $Ci.job } | ForEach-Object name | Select-Object -First 1)"
+  $name = if ($Ci.jobName) { "$($Ci.jobName)" } else { "$(@(Invoke-HostVerb 'ci.jobs' @{ repo = $repo; id = $Ci.run }) | Where-Object { "$($_.id)" -eq $Ci.job } | ForEach-Object name | Select-Object -First 1)" }
   if (-not $name) { return @{ state = 'bad'; why = "job $($Ci.job) not found in run $($Ci.run) of $repo" } }
   $shas = @(foreach ($x in @($refs | Where-Object repo -eq $repo)) { $m = Invoke-HostVerb 'mr.get' @{ repo = $repo; n = $x.n }; @($m.merge_commit_sha, $m.squash_commit_sha, $m.sha | Where-Object { $_ })[0] })
   if (@($shas | Where-Object { -not $_ }).Count -or $shas.Count -ne @($refs | Where-Object repo -eq $repo).Count) { return @{ state = 'bad'; why = "an MR of $repo unreadable (no merge commit)" } }

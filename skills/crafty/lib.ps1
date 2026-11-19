@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L474 leases · L872 status · L1130 supervise sweep · L1210 tracker ·
-  L1534 prior · L1550 ask bugs · L1735 git-host · L1915 kitlog · L2035 params · L2340 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L474 leases · L872 status · L1132 supervise sweep · L1212 tracker ·
+  L1537 prior · L1553 ask bugs · L1738 git-host · L1918 kitlog · L2038 params · L2343 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1056,6 +1056,8 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $sq = $steps["?/$($e.agent)"]; $st = @($steps["$($e.run)/$($e.agent)"], $(if ($sq.tx -or $sq.jt -ge [datetime]$e.joined) { $sq }) | Where-Object { $_ })[0]   # an unnamed run's ended step never matches a newer entry
     $sa = $anyRun["$($e.agent)"]; if (-not $st -and $sa -and $e.status -ne 'left' -and -not $e.crashed -and $sa.type -and $sa.type -eq $e.type -and $sa.created -and [datetime]$e.joined -ge $sa.created.AddMinutes(-1)) { $st = $sa   # testy testers join under the run folder, the launch is select-<target>
       if (-not $e.transcript -and $e.file) { try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { $x.transcript = $sa.tf; Write-KitState $e.file $x } } } catch { } } }   # lease grace and shell owners read it too
+    # an older attempt whose name now runs as a newer step of the same type (a testy retest): superseded, closed, never STUCK
+    $sup = if (-not $st -and $sa -and $e.status -ne 'left' -and $sa.type -and $sa.type -eq $e.type -and $sa.created -and [datetime]$e.joined -lt $sa.created.AddMinutes(-1)) { $sa }
     if ($st) { $st.covered = $true }; $on = [bool]$st.tx
     $t = if ($on) { $st.tx } else { $tx = & $txOf $e; & $last $e.tool $(if ($tx) { $tx } elseif ($st) { $st.tf }) }
     $w = if ($e.paused -and -not $on) { [pscustomobject]@{ why = 'owner pause'; at = $e.paused; next = "bossy.ps1 resume -Run $($e.run)" } } else { & $waitOf $e.run @($e.agent) }
@@ -1065,8 +1067,8 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $dupKey = "$($e.agent)|$($t.file)"; $twin = if ($t.file) { $byTx[$dupKey] }
     if ($twin) { if ($twin.state -notmatch '^(FIN|STOP)' -or $e.status -eq 'left') { continue }; [void]$rows.Remove($twin) }   # joined twice: one row, live wins
     $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$($e.agent) ($($e.type))"; run = $e.run; session = $e.session; tx = $t.file; task = (@($(if ($on) { $st.label }), $e.items, $e.run) | Where-Object { $_ }) -join ' · '
-          stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
-          done = $(if ($on) { '' } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
+          stopped = $(if ($sup) { $null } elseif ($e.crashed -and -not $on) { 'crashed' } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
+          done = $(if ($on) { '' } elseif ($sup) { "superseded by $($sup.label)" } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
           wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at); doing = & $doing $t ((@($ph, $ck.step) | Where-Object { $_ }) -join ' · '); started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
           next = $(if ($e.handoffBrief) { "a fresh $($e.type) from $(Split-Path "$($e.handoffBrief)" -Leaf)" } elseif ($tn) { $tn } elseif ("$($e.status)" -notin 'working', 'left') { "$($e.status)" } elseif ($ck.next -and $ck.next -ne 'none') { "next: $($ck.next)" } elseif ($npOn) { "next: $npOn" }) }) $Now $stuck))
     $byTx[$dupKey] = $rows[$rows.Count - 1]
@@ -1354,7 +1356,8 @@ Initialize-KitTracker
 
 # ----- verbs: dispatch to the tracker.type backend
 function __TrA([string]$Verb, [hashtable]$A) { Invoke-KitAdapter 'tracker' $__trType $Verb $A }
-function Get-TrackerUrl([string]$Id) { __TrA 'url' @{ id = $Id } }
+$script:KitTrUrl = @{}   # an id's URL once per process (98 adapter calls in one supervise beat)
+function Get-TrackerUrl([string]$Id) { $k = "$__trType|$Id"; if (-not $script:KitTrUrl.ContainsKey($k)) { $script:KitTrUrl[$k] = __TrA 'url' @{ id = $Id } }; $script:KitTrUrl[$k] }
 
 if (-not $global:KitTrackerMemo) { $global:KitTrackerMemo = @{} }
 function Get-TrackerTask([string]$Id) {

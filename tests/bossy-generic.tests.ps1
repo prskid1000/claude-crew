@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, file locks (PowerShell and python), shell progress (bossy.ps1 shells), bugbrief repos (from MRs, else configured), board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
+bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, file locks (PowerShell and python), shell progress (bossy.ps1 shells), leases (left = dead, log-only holds), the tracker URL memo, bugbrief repos (from MRs, else configured), board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
 Usage: pwsh -NoProfile -File <kit>/tests/bossy-generic.tests.ps1 (or tests/kit-tests.ps1 -Area bossy-generic).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -154,5 +154,29 @@ $w = Get-KitShellSweep @{} $t0 -Procs $pr -Sampler { param($ids) foreach ($i in 
 "hook:$(@($w.rows | Sort-Object pid | ForEach-Object { "$($_.pid)=$($_.kids)" }) -join ',')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), (Kd))
 Expect "shells: a git hook's pwsh with a dead parent joins the shell running git push ($(@($hk) -match '^hook:'))" ($hk -contains 'hook:999901=1,999903=0')
+$um = Invoke-PsTest url-memo @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $global:urlN = 0; function Invoke-KitAdapter { $global:urlN++; "u/$($args[3].id)" }
+1..3 | ForEach-Object { $null = Get-TrackerUrl 'a' }; $null = Get-TrackerUrl 'b'; "urlmemo:$($global:urlN -eq 2 -and (Get-TrackerUrl 'a') -eq 'u/a')"
+'@ @($O)
+Expect-Each $um 'tracker: Get-TrackerUrl asks the adapter once per id per process (98 calls a beat) (#)' @('urlmemo') 3
+$le = Invoke-PsTest 'leases' @'
+. $args[0]; $gs = ${function:Get-KitSetting}; function Get-KitSetting($p, $d) { if ($p -eq 'gpu.exclusive') { [pscustomobject]@{ lanes = 1 } } else { & $gs $p $d } }
+$s = ((Invoke-KitVerb Invoke-Board join, -Agent, AP, -Run, r | Out-String) -split 'SESSION ')[1].Split()[0]
+$null = Use-KitGpu -Kind lanes -Holder AP; $null = Use-KitGpu -Kind lanes -Holder AP -ProcessId (Get-Process -Id $PID).Parent.Id; $null = Invoke-KitVerb Invoke-Board leave, -Session, $s
+"dead:$(-not (Test-KitLive @{ agent = 'AP'; holderPid = $PID }))"
+$g = Get-Content (Get-KitPath leases) | ConvertFrom-Json | % { $_.event + $_.reason }; $ok = "$g" -match '^acquire releaseleft the board \(AP'; "log:$ok"
+$ok = (Invoke-KitVerb Invoke-Status @() | Out-String) -match 'gpu lanes \| free .+ AP \(release: left'; "status:$ok"
+$KitLeaseLogMax = 300; 1..6 | % { Write-KitLeaseLog acquire tab $_ }; "trim:$(@(Get-Content (Get-KitPath leases)).Count -lt 8)"
+'"LY"' > "$(Get-KitPath localenv -Create)/e.json"; function Get-KitLocalEnvStatus { @{ env = 'e'; repos = @(@{ layers = @(@{ agent = 'LY' }) }) } }; function Invoke-KitExe { $script:kx = "$($args[1])"; @{ out = 'q' } }
+"layer:$("$(Invoke-KitReleaseAgent LY)" -match '^LY env: q' -and $kx -match 'drop -Env e -Agent LY -Note agent finished$')"
+'@ @($O)
+Expect-Each $le 'leases (left = dead): #' 'dead', 'log', 'status', 'trim', 'layer'
+# a hold only the leases log has (its store dropped it, no release row): release closes the row (an env-layer, a tab), never a lock it does not release
+$rlo = Invoke-PsTest release-logonly @'
+$null = . $args[0] 6>$null; Write-KitLeaseLog acquire env-layer 'h/api' @{ agent = 'DL' }; Write-KitLeaseLog acquire tab 'stg|t|admin' @{ agent = 'DL' }; Write-KitLeaseLog acquire lock 'L1' @{ agent = 'DL' }
+$r1 = "$(Invoke-KitReleaseAgent DL)"; $left = @(Get-KitResourceRows | Where-Object { $_.agents -contains 'DL' } | ForEach-Object key)
+"logonly:$($r1 -match 'DL: 2 stale log hold\(s\) closed' -and "$left" -eq 'lock|L1' -and "$(Invoke-KitReleaseAgent PZ9)" -match 'PZ9: no lease held')"
+'@ @($O)
+Expect-Each $rlo 'release: a log-only hold is closed (#)' 'logonly' -Show 4
 Remove-TestKit $k
 Complete-Tests

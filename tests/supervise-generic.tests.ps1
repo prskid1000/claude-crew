@@ -16,13 +16,6 @@ $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$d
 $db.maxGB = 5; $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$db } }; $null = Invoke-KitStorageTick -Force; "cap:$("$(Get-Content "$sd/killed.txt")".Trim() -eq '43')"
 '@ @($O, $sd)
 Expect-Each $cap 'storage db cap: #' 'nocap', 'cap' -Show 4
-# a hold only the leases log has (its store dropped it, no release row): release closes the row (an env-layer, a tab), never a lock it does not release
-$rlo = Invoke-PsTest release-logonly @'
-$null = . $args[0] 6>$null; Write-KitLeaseLog acquire env-layer 'h/api' @{ agent = 'DL' }; Write-KitLeaseLog acquire tab 'stg|t|admin' @{ agent = 'DL' }; Write-KitLeaseLog acquire lock 'L1' @{ agent = 'DL' }
-$r1 = "$(Invoke-KitReleaseAgent DL)"; $left = @(Get-KitResourceRows | Where-Object { $_.agents -contains 'DL' } | ForEach-Object key)
-"logonly:$($r1 -match 'DL: 2 stale log hold\(s\) closed' -and "$left" -eq 'lock|L1' -and "$(Invoke-KitReleaseAgent PZ9)" -match 'PZ9: no lease held')"
-'@ @($O)
-Expect-Each $rlo 'release: a log-only hold is closed (#)' 'logonly' -Show 4
 # K20: an anomalous drive's round: one db query list a sweep (the tick's), top writers sampled once per 5 min
 $rnd = Invoke-PsTest storage-round @'
 $null = . $args[0] 6>$null; $global:dbc = 0; $global:twc = 0; function Get-KitDbQueries($C) { $global:dbc++; @() }; function Get-KitTopWriters { $global:twc++; @([pscustomobject]@{ name = 'w'; pid = 1; mbs = 9 }) }
@@ -94,8 +87,11 @@ $global:jobSt = 'success'; $r2 = Invoke-Track run -Task ci1 | Out-String
 "closed:$($global:st -eq 'closed' -and (Read-KitTracking).tasks['ci1'].done -and $r2 -match 'DONE ci1: all 1 MRs merged, CI job unit-x passed on staging/x -> closed' -and @($global:kc).Count -eq 1 -and $global:kc[0] -match '^qa-result\|QA: PASS . CI job unit-x passed on staging/x with \[api!5\]\(https://h/\S*api/-/merge_requests/5\) merged: https://h/g/api/-/jobs/9$')"
 $global:tname = 'Plain fix'; $global:st = 'open'; $p3 = Invoke-Track add -Task ci2 -Mrs 'api!6' | Out-String
 "plain:$($global:st -eq 'open' -and $p3 -match 'ATTENTION ci2: MRs merged, no testing-doc link' -and $null -eq (Get-KitCiTask ci2))"
+$global:tname = '[Backend Unit Test] Named'; function Get-TrackerTask($id) { [pscustomobject]@{ name = $global:tname; status = 'open'; subtasks = @(); description = "**Pipeline:** [https://h/g/api/-/pipelines/100/test\_report](https://h/g/api/-/pipelines/100/test_report)`n**Env:** Staging · job ``unit-x```n**Branch:** ``staging/x`` @ ``abc``" } }
+$c4 = Get-KitCiTask ci4; $t4 = Test-KitCiTaskJob $c4 @('api!5')
+"named:$("$($c4.jobName)|$($c4.run)|$($c4.branch)|$($t4.state)" -eq 'unit-x|100|staging/x|pass')"
 '@ @($O)
-Expect-Each $ciTrack 'track: CI task # (wait: track add of a merged MR promotes at once, holds while the job runs again; closed: job passed -> closed + one qa-result comment with the job link; plain: no pattern match = the testing-doc gate)' @('wait', 'closed', 'plain') 3
+Expect-Each $ciTrack 'track: CI task # (wait: track add of a merged MR promotes at once, holds while the job runs again; closed: job passed -> closed + one qa-result comment with the job link; plain: no pattern match = the testing-doc gate; named: a pipeline link + a job name, no job URL)' @('wait', 'closed', 'plain', 'named') 3
 # supervise failedTesting: tracker views in the background (inline: 6-9 s a sweep), cached statuses now, a 2-beat cache
 $qd = TkPath $k qa-runs -Create; $null = New-Item -ItemType Directory -Force "$qd/q1/A1"; & $J @{ subtasks = @(1..4 | ForEach-Object { @{ id = "ft$_"; failedTesting = $true } }); watch = @(@{ id = 'X1'; task = 'ft1'; screen = 'api'; env = 'stg' }) } "$qd/q1/A1/finalize.json"
 $tn = TkPath $k tracker-none -Create; $ts = { param($i, $s) & $J @{ id = "ft$i"; name = 'n'; status = $s } "$tn/ft$i.json" }; 1..4 | ForEach-Object { & $ts $_ 'failed testing' }

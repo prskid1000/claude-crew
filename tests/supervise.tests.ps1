@@ -72,6 +72,9 @@ Expect "status Doing · next: phase, checkpoint round, file, next step (testy: m
 & $wj wf_t1 sel @(@{ type = 'started'; agentId = 't1'; label = 'test:W7' }) 0; $t1 = "$(Split-Path $wd)/wf_t1/agent-t1"; $null = & $tx "$t1.jsonl" '{}' 1
 & $J @{ agentType = 'checky' } "$t1.meta.json"; & $se W7 @{ run = 'qrun'; type = 'checky'; beat = (& $ago 30); joined = (& $ago 0) }; & $se W7z @{ agent = 'W7'; run = 'zz'; beat = (& $ago 30) }
 $st = Invoke-PsTest 'anyrun' '. $args[0]; Format-KitStatusTable (Get-KitStatusRows)' @($O)
+& $wj wf_t2 sel2 @(@{ type = 'started'; agentId = 't2'; label = 'retest:W8' }) 0; $t2 = "$(Split-Path $wd)/wf_t2/agent-t2"; $null = & $tx "$t2.jsonl" '{}' 1; & $J @{ agentType = 'checky' } "$t2.meta.json"
+& $se W8 @{ run = 'qrun2'; type = 'checky'; beat = (& $ago 90); joined = (& $ago 120) }; $st = Invoke-PsTest 'anyrun' '. $args[0]; Format-KitStatusTable (Get-KitStatusRows)' @($O)
+Expect 'status: an older attempt whose name runs again as a newer step (a testy retest) is superseded, never STUCK' (& $sv 'W8 (checky)' 'FINISHED: superseded by retest:W8')
 Expect 'status: a step of another run name = its entry''s progress' ((& $sv 'W7 (checky)' 'ACTIVE') -and (& $sv 'W7 (devy)' 'STUCK') -and @($st -match '^\| W7 \(checky\)').Count -eq 1 -and (Read-Json "$bd/s-W7.json").transcript -match 'agent-t1')
 $nb = pwsh -NoProfile -Command ". '$O'; foreach (`$c in @(15, 1, 0, 0, 0, 2, 2, 1), @(15, 0, 1, 0, 0, 2, 2, 1), @(15, 0, 0, 1, 0, 2, 2, 1), @(15, 0, 0, 0, 3, 2, 2, 1), @(15, 0, 0, 0, 0, 9, 9, 3), @(15, 0, 0, 0, 0, 0, 0, 0), @(15, 0, 0, 0, 0, 2, 0, 2), @(15, 0, 0, 0, 0, 2, 2, 1), @(5, 0, 0, 0, 0, 2, 2, 1), @(30, 0, 0, 0, 0, 2, 2, 1)) { `$n = Get-KitNextBeat `$c[0] 15 `$c[1] `$c[2] ([bool]`$c[3]) `$c[4] `$c[5] `$c[6] `$c[7]; `"`$(`$n.min) `$(`$n.why)`" }"
 Expect "heartbeat NEXT and its reason per case ($($nb -join ' | '))" (($nb -join '|') -eq '5 fast pace: 1 new ACT|5 fast pace: 1 new ENV-FIX|8 quick pace: storage anomaly|8 quick pace: 3 failed builds in a row|8 quick pace: 9 live agents|30 slow pace: nothing runs|22 slow pace: every agent idle|15 normal pace|10 easing back to 15 min|22 easing back to 15 min' -and $sj.nextBeat.min -ge 5 -and $sj.nextBeat.min -le 30 -and (Read-Json (TkPath $k supervise-state)).nextBeat -eq $sj.nextBeat.min)
@@ -178,18 +181,6 @@ Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto
 Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
 Expect 'storage: over maxGB killed (43), small not; rescue kills the temp holder (42) once per 10 min, holds builds' ($sto -contains 'db:2:43,42:hold Z/False')
 Expect 'bossy.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
-$le = Invoke-PsTest 'leases' @'
-. $args[0]; $gs = ${function:Get-KitSetting}; function Get-KitSetting($p, $d) { if ($p -eq 'gpu.exclusive') { [pscustomobject]@{ lanes = 1 } } else { & $gs $p $d } }
-$s = ((Invoke-KitVerb Invoke-Board join, -Agent, AP, -Run, r | Out-String) -split 'SESSION ')[1].Split()[0]
-$null = Use-KitGpu -Kind lanes -Holder AP; $null = Use-KitGpu -Kind lanes -Holder AP -ProcessId (Get-Process -Id $PID).Parent.Id; $null = Invoke-KitVerb Invoke-Board leave, -Session, $s
-"dead:$(-not (Test-KitLive @{ agent = 'AP'; holderPid = $PID }))"
-$g = Get-Content (Get-KitPath leases) | ConvertFrom-Json | % { $_.event + $_.reason }; $ok = "$g" -match '^acquire releaseleft the board \(AP'; "log:$ok"
-$ok = (Invoke-KitVerb Invoke-Status @() | Out-String) -match 'gpu lanes \| free .+ AP \(release: left'; "status:$ok"
-$KitLeaseLogMax = 300; 1..6 | % { Write-KitLeaseLog acquire tab $_ }; "trim:$(@(Get-Content (Get-KitPath leases)).Count -lt 8)"
-'"LY"' > "$(Get-KitPath localenv -Create)/e.json"; function Get-KitLocalEnvStatus { @{ env = 'e'; repos = @(@{ layers = @(@{ agent = 'LY' }) }) } }; function Invoke-KitExe { $script:kx = "$($args[1])"; @{ out = 'q' } }
-"layer:$("$(Invoke-KitReleaseAgent LY)" -match '^LY env: q' -and $kx -match 'drop -Env e -Agent LY -Note agent finished$')"
-'@ @($O)
-Expect-Each $le 'leases (left = dead): #' 'dead', 'log', 'status', 'trim', 'layer'
 $jr = Invoke-Js wf-rel @'
 const c = _mock(_pass); await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1' }] }, c.agent, _n, _n, pipeline); const L = c.calls.map((x) => x.label)
 console.log(`release:${L.indexOf('release-X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release-X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release-X1').prompt)}`)
