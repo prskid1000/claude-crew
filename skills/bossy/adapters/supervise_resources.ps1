@@ -9,8 +9,8 @@ Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L16 builds · L60 supervise · L342 shells · L519 page · L991 release · L1036 lines · L1068 cleanup · L1135 launch ·
-  L1253 pause · L1372 heartbeat · L1387 sessions · L1439 ci tasks ·
-  L1497 the kit origin's default branch (kitBranch, else origin/HEAD)
+  L1252 pause · L1371 heartbeat · L1386 sessions · L1438 ci tasks ·
+  L1496 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1224,8 +1224,7 @@ function New-KitAreaTasks($A, [string]$RunName, [string]$RecFile) {
   $map = [ordered]@{}
   foreach ($t in @($by.Keys)) { $gs = @($by[$t]); if ($gs.Count -lt 2) { continue }
     $pt = Get-TrackerTask $t; if (-not $pt.name) { "AREA TASKS UNKNOWN ${t}: not read from the tracker"; continue }
-    $known = (Read-KitState (Get-KitTaskFile $t)).areaTasks; $nm = "$($pt.name)" -replace '^\s*\[[^\]]*\]\s*'
-    $kind = if ("$($pt.name)" -match '^\s*\[([^\]]+)\]') { $Matches[1] } else { 'Feature' }
+    $known = (Read-KitState (Get-KitTaskFile $t)).areaTasks; $nk = Get-KitNameKind "$($pt.name)"; $nm = $nk.rest; $kind = $nk.kind
     $h1 = if ($A.brief -and (Test-Path -LiteralPath $A.brief)) { "$(@(Get-Content -LiteralPath $A.brief -TotalCount 3 | Where-Object { $_ -match '^#\s' })[0])" -replace '^#\s*(?:[\w -]*brief:\s*)?' -replace [regex]::Escape($t) -replace ',?\s*\d{4}-\d{2}-\d{2}\s*$' }   # "# Wave brief: <name> <id>, <date>"
     $prod = if ($nm -match ' [—-] ') { ($nm -split ' [—-] ', 2)[0].Trim() } elseif ("$h1".Trim()) { "$h1".Trim() } else { ($nm -replace '\s*\([^)]*\)\s*$').Trim() }
     $url = if ($pt.url) { "$($pt.url)" } else { Get-TrackerUrl $t }

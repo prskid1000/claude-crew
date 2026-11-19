@@ -1034,7 +1034,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
           doing = $(if ($live -and $rsNow.Count) { (@(($phNow -join ', '), (@($rsNow.label) -join ', ')) | Where-Object { $_ }) -join ' · ' })
           next = $(if ($live -and $phNow.Count) { $scr0 = "$(@($rsNow.script | Where-Object { $_ })[0])"; $np = & $nextPh $scr0 "$($phNow[-1])"; if ($np) { "next: $np" } }) }) $Now $stuck))
   }
-  # a running step of the same name is that agent now (resume or env-fix after its entry left)
+  # a running step of the same name is that agent now
   $trk = (Read-KitTracking).tasks; $txCache = @{}; $byTx = @{}
   # Agent-tool subagent: transcript found by its SESSION line, saved in the entry
   $txOf = { param($e) if ($e.transcript -or $e.status -eq 'left' -or -not $e.session -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt 10)) { return "$($e.transcript)" }
@@ -1400,7 +1400,7 @@ function Set-TrackerStatus([string]$Id, [string]$Status, [string]$Back) {
   $was = try { if (-not $__trDry) { Clear-TrackerMemo $Id; Get-TrackerTask $Id } } catch { $null }
   $sc = "$($was.list)"; if ($sc -and $__trStatus.Contains($Status) -and -not @(Get-KitRoleNames $Status $sc).Count) { $skip = "SKIPPED: $Id kept '$($was.status)': scope $sc has no $Status status (step skipped; crafty.ps1 tracker roles $sc)"; Write-Host "tracker: $skip"; return $skip }   # never invented
   if ($skip = Test-KitStatusWrite $Id $Status $Back $was) { Write-Host "tracker: $skip"; return @($skip) -like 'SKIPPED*' }
-  # promoted: process.gates.promote (builtin:testingDocs: the doc links; an unread task fails closed)
+  # promoted: process.gates.promote (an unread task fails closed)
   if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and -not ($pg = Test-KitProcessGate promote @{ task = $Id; status = $Status }).ok) {
     throw "tracker: $Id not set to $Status`: $($pg.why)"
   }
@@ -1852,10 +1852,10 @@ function Get-KitRepoName([string]$Name) {
   if (-not $script:KitRepoNames) { $script:KitRepoNames = @{}; foreach ($rp in @(Get-KitValue 'repos' @())) { foreach ($n in @(@($rp.name) + @($rp.aliases) | Where-Object { $_ })) { $script:KitRepoNames["$n".ToLower()] = "$($rp.name)" } } }
   $k = "$Name".Trim(); if ($script:KitRepoNames.ContainsKey($k.ToLower())) { $script:KitRepoNames[$k.ToLower()] } else { $k }
 }
-# MR CLIs the guard checks (exe, MR noun, option names); gitHostApi.hostCli adds more
+# MR CLIs the guard and setup -Allow read; gitHostApi.hostCli adds more
 $script:KitHostCli = [ordered]@{
-  gitlab = @{ exe = 'glab'; noun = 'mr'; source = '-s', '--source-branch'; target = '-b', '--target-branch'; title = '-t', '--title'; valued = '-R', '--repo', '-m', '--message', '--squash-message', '--sha' }
-  github = @{ exe = 'gh'; noun = 'pr'; source = '-H', '--head'; target = '-B', '--base'; title = '-t', '--title'; valued = '-R', '--repo', '-b', '--body', '-F', '--body-file', '-t', '--subject', '--match-head-commit', '-A', '--author-email'; noAuto = '--disable-auto' }
+  gitlab = @{ exe = 'glab'; noun = 'mr'; allow = 'mr *', 'api *', 'auth status*'; source = '-s', '--source-branch'; target = '-b', '--target-branch'; title = '-t', '--title'; valued = '-R', '--repo', '-m', '--message', '--squash-message', '--sha' }
+  github = @{ exe = 'gh'; noun = 'pr'; allow = 'pr *', 'auth status*'; source = '-H', '--head'; target = '-B', '--base'; title = '-t', '--title'; valued = '-R', '--repo', '-b', '--body', '-F', '--body-file', '-t', '--subject', '--match-head-commit', '-A', '--author-email'; noAuto = '--disable-auto' }
 }
 function Get-KitHostCli { @($script:KitHostCli.Values) + @(@(__HostSet 'hostCli' @()) | Where-Object exe | ForEach-Object { $h = @{}; (Get-KitProps $_) | ForEach-Object { $h[$_.Name] = $_.Value }; $h }) }
 # LEGACY shim: a GitLab REST path -> a host verb (crafty.ps1 scope still calls it)
@@ -1997,7 +1997,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   # calls stream: start, then end with rc (0, 1 crash, 2 bad parameters, 'exit') and ms
   $script:KitLogOn = $Fn -notmatch '^Invoke-Guard|^Invoke-Shells$'; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitRc = 'exit'   # guards: denials only; shells: none
   $end = { param([string]$EndWhy) if (-not $EndWhy) { $EndWhy = $script:KitWhy }; if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($EndWhy) { @{ error = $EndWhy } } else { @{} })) } }   # rc 2 feeds tidy digest "Script errors"
-  # bad parameters: exit 2 with the usage line, never the host's prompt for a mandatory one
+  # bad parameters: exit 2 with the usage line, never a prompt
   $usage = { param([string]$why, [bool]$missing)
     $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues } | Where-Object { $_ }); if ($vs.Count -and $missing) { $why += " Verbs: $($vs -join ', ')." }    $use = if ($src -and (Test-Path $src)) { [regex]::Match((Get-Content $src -Raw), "(?m)^\s+$([regex]::Escape(($Fn -replace '^Invoke-', '').ToLower()))\b[^\r\n]*").Value.Trim() }; if ($use) { $why += " Usage: $use" }
     $script:KitRc = 2; & $end $why; [Console]::Error.WriteLine($why); exit 2 }

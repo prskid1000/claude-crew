@@ -30,7 +30,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
   L719 track · L1056 supervise · L1376 report · L1456 audit · L1516 storage · L1519 bugbrief · L1633 cleanup · L1720 learn ·
-  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2192 guard-sendmessage
+  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2193 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -2095,12 +2095,13 @@ if ($Json) { $o | ConvertTo-Json -Compress; return }
 # ---- setup: install / repair (idempotent)
 # vendor CLI + OS-only allows: generated into settings.local.json from the configured adapters (settings.json stays generic)
 function Get-KitAllowCatalogue {
-  [ordered]@{
-    'host:gitlab' = @('PowerShell(glab mr *)', 'PowerShell(glab api *)', 'PowerShell(glab auth status*)')   # arch-ok: allow pattern
-    'host:github' = @('PowerShell(gh pr *)', 'PowerShell(gh auth status*)')   # arch-ok: allow pattern
-    'report:gdocs' = @('PowerShell(gws drive files export *)')
-    'os:windows' = @('PowerShell(& *.claude\skills\*)', "PowerShell(& '*.claude\skills\*)", 'PowerShell(python *.claude\skills\*)')
-  }
+  # host:<type>: each host CLI's allow (else '<noun> *', 'auth status*')
+  $cat = [ordered]@{}; $own = @($script:KitHostCli.Values)
+  foreach ($hk in @($script:KitHostCli.Keys)) { $cat["host:$hk"] = $script:KitHostCli[$hk] }
+  foreach ($hx in @(Get-KitHostCli | Where-Object { $_ -notin $own })) { $cat["host:$(if ($hx.type) { $hx.type } else { $script:HostType })"] = $hx }
+  foreach ($hk in @($cat.Keys)) { $hx = $cat[$hk]; $cat[$hk] = @(@(if ($hx.allow) { $hx.allow } else { "$($hx.noun) *"; 'auth status*' }) | ForEach-Object { "PowerShell($($hx.exe) $_)" }) }
+  $cat['report:gdocs'] = @('PowerShell(gws drive files export *)')
+  $cat['os:windows'] = @('PowerShell(& *.claude\skills\*)', "PowerShell(& '*.claude\skills\*)", 'PowerShell(python *.claude\skills\*)'); $cat
 }
 function Set-KitAllowList {
   $gd = "$(git -C $KitConf.Kit rev-parse --path-format=absolute --git-dir 2>$null)".Trim(); $cd = "$(git -C $KitConf.Kit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()

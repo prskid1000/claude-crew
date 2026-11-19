@@ -86,9 +86,12 @@ $gs2 = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args
 & $word 'd-20260101000500-coordinator-ff66' 'yes' 'deploy stage' -2; $r = @(Get-KitSuperviseFlagsDeploys)
 "cfg:$(-not (& $acts $r) -and ($r.info -join ';') -match 'deploy stage held by config: deploy.hold')"
 "kinds:$((@('dont deploy hm', 'No', 'hold it', 'wait: not urgent, never cut a live turn', 'Deploy tomorrow', 'yes: standing rule', 'deploy if needed', 'Sure, no problem', 'Please deploy now, no need to hold', 'test prod pipelines also', 'keep hm hanges held', 'dnt deploy hm', 'no deploy for hm yet', 'HM: merge and promote, never deploy', 'No problem, go ahead', 'do not wait, deploy', 'No problem, but hold hm') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
+Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.answerWords') { [pscustomobject]@{ yes = @('ja'); no = @('nein'); noAll = @('nie'); wait = @('später') } } else { & $gs2 @args } }.GetNewClosure())
+"words:$((@('Ja, bitte', 'nein', 'nie wieder', 'später', 'janky', 'yes') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
 '@
 $hr = Invoke-PsTest 'deploy-holds' $ht @($O)
 Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too) (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg')
 Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear,noAll,no,no,noAll,yes,yes,no')
+Expect "deploy.answerWords: an org's own leading words first, whole words only, English still read ($(@($hr) -match '^words:'))" (@($hr) -contains 'words:yes,no,noAll,wait,unclear,yes')
 Remove-TestKit $k
 Complete-Tests

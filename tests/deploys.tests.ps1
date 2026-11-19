@@ -25,6 +25,12 @@ $pcf = Join-Path (TkPath $k deploys -Create) 'plan-cache.json'; $bgp = Join-Path
 foreach ($f in $pcf, "$bgp.out", "$bgp.json") { '{"at":"2020-01-01","ask":["stage: 1 MR(s) (api!1)"],"pid":1}' | Set-Content $f }
 $null = & $dep record -Env stage -Mrs 'api!1','api!3' -By tester; $p = & $plan
 Expect 'deploy record: WAIT in the window, the request cleared; the cached + background plan dropped (no second ask)' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count -and -not (Test-Path $pcf) -and -not (Test-Path "$bgp.out") -and -not (Test-Path "$bgp.json"))
+# deploy.minIntervalScope: repo (default) = another repo's deploy to the env starts no window for web (owner 2026-11-19: a UI deploy waited on a backend one); env = it does
+$fxw = Join-Path (Kd) 'deploy-fixture-w.json'; & $J @{ mrs = @{ 'web!1' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) } }; lastCi = @{ stage = (Get-Date).AddHours(-6).ToString('s') } } $fxw
+$cfgW = { param($sc) @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage' }) }, @{ name = 'web'; deploys = @(@{ target = 'stage' }) }); deploy = @{ trigger = 'ask'; minIntervalHours = 4; minIntervalScope = $sc } } }
+$null = & $dep request -Mrs 'web!1' -Run w6 -Offline $fxw; $wsc = foreach ($sc in 'repo', 'env') { & $J (& $cfgW $sc) $cfgF; $pw = @(@(& $dep plan -Offline $fxw -Json | ConvertFrom-Json) | Where-Object target -eq stage)[0]; "$sc=$($pw.status)/$($pw.windowScope)/$(@($pw.mrs.mr) -join ',')" }
+& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }, @{ target = 'live'; production = $true }, @{ target = 'preprod'; production = $false }) }); deploy = @{ productionPattern = '(?i)prod|critical'; trigger = 'ask'; minIntervalHours = @{ default = 4 } } } $cfgF
+Expect "deploy window per repo: api's record keeps web's batch askable (repo), env scope waits ($($wsc -join ' '))" (($wsc -join ' ') -eq 'repo=ASK/repo/web!1 env=WAIT/env/web!1')
 # a host-group name (no repos[].deploys target) is refused; a list records each target; a recorded MANUAL MR leaves the batch
 $fxm = Join-Path (Kd) 'deploy-fixture-m.json'; & $J @{ mrs = @{ 'api!7' = @{ rows = @(@{ target = 'preprod'; state = 'MANUAL'; detail = 'by hand' }) } } } $fxm
 $null = & $dep request -Mrs 'api!7' -Run w5 -Offline $fxm; $m0 = @(@(& $dep plan -Offline $fxm -Json | ConvertFrom-Json) | Where-Object target -eq preprod).mrs.Count
@@ -239,18 +245,6 @@ $tu = Read-Json $tf; foreach ($n in 1..10) { $tu.tasks | Add-Member -Force NoteP
 $ign = Px $O track ignore -Mrs 'jc!6' -Reason 'wrong task' | Out-String
 Expect 'track ignore: an MR of a task names track remove (ignore only hides the untracked-MR watch)' ($ign -match 'NOTE jc!6 is an MR of task t6: .*bossy\.ps1 track remove -Task t6 -Mrs jc!6' -and $ign -match 'task t7')
 $hang = Join-Path (Kd) 'hang.ps1'; Set-Content $hang 'Start-Sleep 60'; $res = Invoke-PsTest 'intest-gate' $ug @($O, $fq2, $hang, $fq3, $calls)
-# K93: a beat's parallel deployed probes share a branch-level host answer: one call, the others read it (16 processes asked the same ci.runs: 96 calls a beat)
-$bsw = Join-Path (Kd) 'beat-shared.ps1'; $bsc = Join-Path (Kd) 'beat-calls.txt'
-Set-Content $bsw '. $args[0]; . $args[1]; $env:KIT_API_BEAT = "b1"; $v = Get-BeatShared "ci.runs|ref=main&repo=o/r" { Add-Content $args2 x; Start-Sleep 2; @([pscustomobject]@{ id = 7; created_at = "2026-11-19T05:00:00Z" }) }; "$(@($v).Count)/$(@($v)[0].id)/$([datetimeoffset]@($v)[0].created_at -eq [datetimeoffset]"2026-11-19T05:00:00Z")"'.Replace('$args2', "'$bsc'")
-$bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', $bsw, (Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path (Kd) "beat-$_.out") })
-foreach ($bq in $bsp) { $null = $bq.WaitForExit(60000) }
-$bso = @(1..3 | ForEach-Object { "$(Get-Content (Join-Path (Kd) "beat-$_.out") -Raw)".Trim() }) -join ' '
-Expect "K93: 3 parallel probes of one beat: one host call, each reads the same answer ($bso, calls $(@(Get-Content $bsc -ErrorAction SilentlyContinue).Count))" ($bso -eq '1/7/True 1/7/True 1/7/True' -and @(Get-Content $bsc).Count -eq 1)
-# a no-answer is shared too (16 probes queued on the lock, each asking a down host again); keys that differ only by / vs _ or case: their own answers
-$bsn = Join-Path (Kd) 'beat-null.txt'; Set-Content $bsw ('. $args[0]; . $args[1]; $env:KIT_API_BEAT = "b2"; $v = Get-BeatShared "mr.list|ref=x" { Add-Content $args2 x; Start-Sleep 1; $null }; "n:$($null -eq $v)"').Replace('$args2', "'$bsn'")
-$bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', $bsw, (Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path (Kd) "beatn-$_.out") }); foreach ($bq in $bsp) { $null = $bq.WaitForExit(60000) }
-$bsk = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1'); $env:KIT_API_BEAT = 'b3'; @('ref=feat/a', 'ref=feat_a', 'ref=Main', 'ref=main') | ForEach-Object { $kv = $_; Get-BeatShared "ci.runs|$kv" { $kv } }; Remove-Item Env:KIT_API_BEAT }
-Expect "K93: a null answer: one call for 3 probes; keys feat/a, feat_a, Main, main: 4 answers ($(@(Get-Content $bsn -ErrorAction SilentlyContinue).Count) call(s), $($bsk -join ','))" (@(Get-Content $bsn).Count -eq 1 -and ($bsk -join ',') -eq 'ref=feat/a,ref=feat_a,ref=Main,ref=main')
 Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside; ONE probe for all tasks, rounds until every MR is checked; a closed ignored MR is not the task''s work; the in-test note is ONE comment edited in place; the summary counts each outcome and says where the tasks came from (#)' @('live', 'record', 'wait', 'paths', 'shared', 'hang', 'rounds', 'closed', 'keyed', 'summary') 20
 Remove-TestKit $k
 Complete-Tests

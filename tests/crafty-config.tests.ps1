@@ -92,11 +92,11 @@ Expect "guard: a .ps1 / .py in command position -> the pwsh -File / python -X ut
 # org names from config, one name for writer and readers: tracker.taskTemplate items label, kindPrefixes.bug (Get-KitItemsLabel, Get-KitKindPrefix)
 $ilr = Invoke-PsTest itemslabel @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; . $args[1]; $kl = Join-Path $KitConf.Kit 'skills/crafty/kit.local.json'
-"def:$((Get-KitItemsLabel) -eq 'Items' -and (@(Get-KitItemsLabel -All) -join ',') -eq 'Items,Bugs' -and (@(Get-KitDescItems "**Bugs:**`n- B1 x").id -join ',') -eq 'B1' -and (Test-KitBugName '[Bug] x'))"
-$c = @{ tracker = @{ kindPrefixes = @{ bug = 'Defect:' }; taskTemplate = @(@{ key = 'items'; label = 'Scope'; required = 'subtask' }) } }; Set-Content $kl ($c | ConvertTo-Json -Depth 6); $script:__cfg = $c | ConvertTo-Json -Depth 6 | ConvertFrom-Json
-"custom:$((Get-KitItemsLabel) -eq 'Scope' -and (@(Get-KitDescItems "**Scope:**`n- S1 y").id -join ',') -eq 'S1' -and (@(Get-KitDescItems "**Items:**`n- I1 z").id -join ',') -eq 'I1' -and (Test-KitBugName 'Defect: x') -and (Get-KitKindPrefix 'bug') -eq 'Defect:')"
+"def:$((Get-KitItemsLabel) -eq 'Items' -and (@(Get-KitItemsLabel -All) -join ',') -eq 'Items,Bugs' -and (@(Get-KitDescItems "**Bugs:**`n- B1 x").id -join ',') -eq 'B1' -and (Test-KitBugName '[Bug] x') -and "$((Get-KitNameKind '[Chore] Shop — A1 x').kind)|$((Get-KitNameKind 'Plain name').kind)|$((Get-KitNameKind '[Chore] Shop — A1 x').rest)" -eq 'Chore|Feature|Shop — A1 x')"
+$c = @{ tracker = @{ kindPrefixes = @{ bug = 'Defect:'; feature = 'Story:' }; taskTemplate = @(@{ key = 'items'; label = 'Scope'; required = 'subtask' }) } }; Set-Content $kl ($c | ConvertTo-Json -Depth 6); $script:__cfg = $c | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+"custom:$((Get-KitItemsLabel) -eq 'Scope' -and (@(Get-KitDescItems "**Scope:**`n- S1 y").id -join ',') -eq 'S1' -and (@(Get-KitDescItems "**Items:**`n- I1 z").id -join ',') -eq 'I1' -and (Test-KitBugName 'Defect: x') -and (Get-KitKindPrefix 'bug') -eq 'Defect:' -and "$((Get-KitNameKind 'Story: Shop — x').kind)|$((Get-KitNameKind 'Story: Shop — x').rest)|$((Get-KitNameKind 'Defect: y').kind)" -eq 'feature|Shop — x|bug')"
 '@ @($D, (Join-Path $src 'skills/bossy/adapters/task_rollup.ps1'))
-Expect-Each $ilr 'items label / bug prefix from config: #' 'def', 'custom' -Show 5
+Expect-Each $ilr 'items label / bug prefix / name kind (Get-KitNameKind) from config: #' 'def', 'custom' -Show 5
 # guard: the kit's protected branch = kitBranch, else main
 $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }
 $kbr = foreach ($kbv in '', 'trunk') { if ($kbv) { & $J @{ kitBranch = $kbv } $dkl }; foreach ($kbb in 'main', 'trunk') { "$($kbv)/$($kbb):$((& $D guard -Json (@{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = "git push origin --delete $kbb" } } | ConvertTo-Json -Compress)) -join '' -match 'a protected kit branch')" } }

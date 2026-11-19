@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L248 deploy · L420 restart · L469 supervise
+Sections: L14 helpers · L93 intest · L248 deploy · L426 restart · L475 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -366,6 +366,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   }
   $trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower()
   $win = if ($env:KIT_PARAM_DEPLOY_MININTERVALHOURS) { Get-KitParam 'deploy.minIntervalHours' } else { Get-KitSetting 'deploy.minIntervalHours' (Get-KitParam 'deploy.minIntervalHours') }   # env > kit.local.json (a per-target object too)
+  $winScope = ([string](Get-KitSetting 'deploy.minIntervalScope' 'repo')).ToLower()
   $winOf = { param($t) if ($win -is [psobject] -and (Get-KitProps $win).Name -contains $t) { [double](Get-KitMember $win $t) } elseif ($win -is [psobject] -and (Get-KitProps $win).Name -contains 'default') { [double]$win.default } elseif ($win -is [psobject]) { [double](Get-KitParam 'deploy.minIntervalHours') } else { [double]$win } }
   $logged = if (Test-Path $log) { @(Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
   $hostErr = $null
@@ -373,11 +374,11 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $feeds = @{}   # no deadline here: a cut lookup would batch an MR for a target it never feeds
   $plan = foreach ($t in $targets) {
     $batch = @(foreach ($m in @($cand.Keys)) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { if (-not $feeds.ContainsKey($m)) { $feeds[$m] = @(Get-MrDeployTargets $m $repos $fx $null -NoPaths:(-not $fx)) }; if ($t -notin $feeds[$m]) { continue }; [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })   # feeds-lookup only for a not-deployed row
-    $last = $null; $src = ''
-    $l = @($logged | Where-Object { $_.target -eq $t } | Sort-Object { [datetime]$_.at }) | Select-Object -Last 1
-    if ($l) { $last = [datetime]$l.at; $src = "kit log ($($l.by))" }
+    $last = $null; $src = ''; $lastBy = @{}; $envAt = $null   # lastBy: each repo's own last deploy here; envAt: one of no known repo (CI fixture)
+    foreach ($l in @($logged | Where-Object { $_.target -eq $t })) { $la = [datetime]$l.at; if (-not $last -or $la -gt $last) { $last = $la; $src = "kit log ($($l.by))" }
+      foreach ($lr in @(@($l.mrs) | ForEach-Object { & $repoOf $_ } | Select-Object -Unique)) { if (-not $lastBy[$lr] -or $la -gt $lastBy[$lr]) { $lastBy[$lr] = $la } } }
     $running = $false
-    if ($fx) { if ((Get-KitMember $fx.lastCi $t)) { $ci = [datetime](Get-KitMember $fx.lastCi $t); if (-not $last -or $ci -gt $last) { $last = $ci; $src = 'CI' } } }
+    if ($fx) { if ((Get-KitMember $fx.lastCi $t)) { $ci = [datetime](Get-KitMember $fx.lastCi $t); $envAt = $ci; if (-not $last -or $ci -gt $last) { $last = $ci; $src = 'CI' } } }
     else {
       # each deploy row's kind: lastDeploy (@{ at; source }) and isRunning (a deploy in flight); a kind without them adds nothing
       foreach ($r in $repos) { foreach ($d in @($r.deploys | Where-Object { $_.target -eq $t -and ((Get-KitDeployKind $_) -ne 'ci-job' -or ($_.branch -and $_.job)) })) {
@@ -385,16 +386,21 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
           try {
             if (Invoke-KitDeployKind $d 'isRunning' $ka) { $running = $true }
             $ld = Invoke-KitDeployKind $d 'lastDeploy' $ka; if ($ld.at -and (-not $last -or [datetime]$ld.at -gt $last)) { $last = [datetime]$ld.at; $src = "$($ld.source)" }
+            if ($ld.at -and (-not $lastBy["$($r.name)"] -or [datetime]$ld.at -gt $lastBy["$($r.name)"])) { $lastBy["$($r.name)"] = [datetime]$ld.at }
           } catch { if (-not $hostErr) { $hostErr = "$($_.Exception.Message)" } }
         } }
     }
     $h = & $winOf $t
-    $next = if ($last) { $last.AddHours($h) } else { $null }
+    # deploy.minIntervalScope repo (default): a batch repo's own last deploy here counts, another repo's not; the batch waits only while every repo does
+    $ref = if ($winScope -eq 'env' -or -not $batch.Count) { $last } else {
+      $rl = @(@($batch | ForEach-Object { & $repoOf $_.mr } | Select-Object -Unique) | ForEach-Object { $x = $lastBy[$_]; if ($envAt -and (-not $x -or $envAt -gt $x)) { $x = $envAt }; $x })
+      if (@($rl | Where-Object { -not $_ }).Count) { $null } else { @($rl | Sort-Object)[0] } }
+    $next = if ($ref) { $ref.AddHours($h) } else { $null }
     $mine = @($cand.Keys | Where-Object { $t -in $tOf[(& $repoOf $_)] })   # its repo deploys there (a feeds lookup per MR here cost 40 s): only for UNKNOWN reasons
     $unk = @(foreach ($m in $mine) { @(& $rowsOf $m) | Where-Object { $_ -and $_.target -eq $t -and $_.state -eq 'UNKNOWN' } | Where-Object { if (-not $feeds.ContainsKey($m)) { $feeds[$m] = @(Get-MrDeployTargets $m $repos $fx $null -NoPaths:(-not $fx)) }; $t -in $feeds[$m] } | ForEach-Object { "${m}: $($_.detail)" } })   # an UNKNOWN for a target it never feeds is no reason
     $why = if ($unk.Count) { $unk -join '; ' } elseif ($failOf[$t] -and $mine.Count -and -not @($mine | Where-Object { @(& $rowsOf $_) | Where-Object { $_ -and $_.target -eq $t } }).Count) { $failOf[$t] }
     $status = if ($why -and -not $batch.Count) { 'UNKNOWN' } elseif (-not $batch.Count) { 'NOTHING' } elseif ($running) { 'DEPLOYING' } elseif ($trigger -ne 'ask') { 'READY' } elseif ($next -and (Get-Date) -lt $next) { 'WAIT' } else { 'ASK' }
-    [pscustomobject]@{ target = $t; status = $status; trigger = $trigger; last = $(if ($last) { $last.ToString('s') }); lastSource = $src; windowHours = $h; nextAllowed = $(if ($next) { $next.ToString('s') }); mrs = $batch; why = $why; pending = @($pend | ForEach-Object { "$($_.run) $($_.at)" }) }
+    [pscustomobject]@{ target = $t; status = $status; trigger = $trigger; last = $(if ($last) { $last.ToString('s') }); lastSource = $src; windowHours = $h; windowScope = $winScope; nextAllowed = $(if ($next) { $next.ToString('s') }); mrs = $batch; why = $why; pending = @($pend | ForEach-Object { "$($_.run) $($_.at)" }) }
   }
   # each batch MR's source / test files and OUT-OF-AREA (its diff outside its brief area; crafty.ps1 scope): seen before anyone says deploy <env>
   $bm = @($plan | ForEach-Object { @($_.mrs) } | ForEach-Object mr | Where-Object { $_ } | Select-Object -Unique); $scopeOf = @{}
@@ -469,8 +475,11 @@ function Invoke-DeployRestartSsh([string]$t, $d, [string]$Service, [int]$WaitMin
 # ---- supervise: inTest moves, the cached plan
 # a deploy word's kind: wait | no | yes | unclear (yes and unclear silence nothing; "no problem" inside a yes is no no); a no is env-wide
 # (noAll: new MRs stay held) when it says all / any / never / keep ... held / until
+# deploy.answerWords {yes, no, noAll, wait}: an org's own leading words (any language), read before the built-in English ones
 function Get-KitDeployWordKind([string]$Answer) {
   $a = "$Answer".Trim()
+  $aw = Get-KitSetting 'deploy.answerWords' $null
+  foreach ($awKind in 'noAll', 'no', 'wait', 'yes') { $awRx = @(@((Get-KitMember $aw $awKind)) | Where-Object { $_ } | ForEach-Object { [regex]::Escape("$_") }) -join '|'; if ($awRx -and $a -match "(?i)^($awRx)(?=\W|$)") { return $awKind } }
   if ($a -match "(?i)^(no (problem|worries|issues?|objections?)|(do not|d[o]?n['’]?t|no need to) wait)\b" -and $a -notmatch '(?i)\b(but|except|however|hold|held|keep|until|tomorrow|later)\b') { return 'yes' }   # a go, not a no; a qualifier reads on
   if ($a -match '(?i)^(wait|later|retry|not yet)\b' -or ($a -notmatch '(?i)^(no|nope|nah)\b' -and $a -match '(?i)\b(tomorrow|tonight|later today)\b')) { return 'wait' }
   $no = $a -match "(?i)^(no|nope|nah|d[o]?n['’]?t|do not|never|skip|hold|held|not now|stop)\b" -or $a -match "(?i)\b(keep|keeps|stays?|remains?|leave)\b[^.;]*\b(held|on hold)\b|\b(no|never|d[o]?n['’]?t|do not)\s+deploy|\b(hold|held)\s+(all|every|any)\b"
