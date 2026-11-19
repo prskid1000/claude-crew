@@ -47,6 +47,18 @@ $p = Mk 'P' $null; $a = Mk 'A' $p; $b = Mk 'B' $p; Set-TrackerStatus $a 'promote
 Set-TrackerStatus $b 'review' 6>$null; "roll:$(Ky $p)"; Set-TrackerStatus $p 'failedTesting' 6>$null; "pft:$(Ky $p)"; $q = Mk 'Q' $null; $null = Mk '[Bug] Q leak' $q; Set-TrackerStatus $q 'closed' 6>$null; "bug:$(Ky $q)"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
 $sx = { param($key) "$(@($sw | Where-Object { "$_" -like "${key}:*" })[0])".Substring($key.Length + 1) }
+# track run (supervise auto-fix): a parent whose own MRs merged but a subtask is open is KEPT (never "DONE -> promoted"); a plain task is
+# promoted (2026-11-19: a parent reported promoted with its area subtasks open)
+$tpw = @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0] 6>$null
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }; function Start-Detached { }; function Find-TaskMrs { }
+function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; function Ky($i) { Clear-TrackerMemo $i; Get-TrackerStatusKey (Get-TrackerTask $i).status }
+$p = Mk 'P' $null; $a = Mk 'A' $p; Set-TrackerStatus $a 'inProgress' 6>$null; $t = Mk 'T' $null
+$po = Invoke-Track add -Task $p -Mrs 'g/web!70' 6>$null | Out-String; $to = Invoke-Track add -Task $t -Mrs 'g/web!71' 6>$null | Out-String
+"par:$($po -match "KEPT ${p}: $p not set to promoted: it follows its 1 open subtask" -and $po -notmatch "DONE $p" -and (Ky $p) -ne 'promoted' -and [bool](Read-KitTracking).tasks[$p].done)"
+"plain:$($to -match "DONE ${t}: all 1 MRs merged -> status promoted" -and (Ky $t) -eq 'promoted')"
+'@
+Expect-Each (Invoke-PsTest trackparent $tpw @($O)) 'track run: # (par: a parent with an open subtask KEPT, not promoted, tracking done; plain: a task without subtasks promoted)' 'par', 'plain' -Show 8
 # launch -Self, 2+ areas on one task: one subtask per area (named, parent's assignee, item titles from the brief), kept on a relaunch
 $ab = Join-Path (Kd) 'areabrief'; New-Item -ItemType Directory -Force $ab | Out-Null; $tst = Join-Path $k '.state/tracker-none'; New-Item -ItemType Directory -Force $tst | Out-Null
 & $J @{ id = 'PAR1'; url = 'https://t.test/PAR1'; name = 'Shop setup'; status = 'in progress'; parent = $null; list = 'L1'; assignees = @('Ann Lee'); description = "Problem: p`nItems: A-1"; comments = @() } (Join-Path $tst 'PAR1.json')

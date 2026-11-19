@@ -29,8 +29,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L231 budget · L261 launch · L502 recover · L589 pause · L600 resume · L667 program · L718 param ·
-  L724 track · L1066 supervise · L1385 report · L1465 audit · L1525 storage · L1528 bugbrief · L1642 cleanup · L1729 learn ·
-  L1760 decide · L1911 debate · L1955 health · L2022 retro due · L2032 tidy · L2104 setup · L2201 guard-sendmessage
+  L724 track · L1061 supervise · L1380 report · L1460 audit · L1520 storage · L1523 bugbrief · L1637 cleanup · L1724 learn ·
+  L1755 decide · L1906 debate · L1950 health · L2017 retro due · L2027 tidy · L2099 setup · L2196 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -801,7 +801,6 @@ function Save($o, [switch]$Run) {
     param($all)
     $cur = $all.tasks[$o.task]
     if ($cur) {
-      # run vs add race
       $newMrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ -and @($cur.mrs) -notcontains $_ })
       if ($o.done -and -not $cur.done -and [string]$cur.reopenedAt -ne [string]$o.reopenedAt) { $o.done = $false; $o.reopenedAt = $cur.reopenedAt; foreach ($k in $script:doneFields) { $o.Remove($k) } }
       elseif ($cur.done -and -not $o.done -and [string]$cur.reopenedAt -eq [string]$o.reopenedAt -and -not $newMrs.Count) { $o.done = $true; $o.doneAt = $cur.doneAt }
@@ -858,7 +857,6 @@ switch ($Action) {
   'add' {
     $given = $Task; $Task = NormTask $Task
     $refs = @(@($Mrs -split '\s*,\s*') | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-    # placeholders, reused branches
     $titled = @($refs | ForEach-Object { TaskOfMr $_ } | Where-Object { $_ } | Select-Object -Unique)
     if ($Task) { if ($titled.Count -and $titled -notcontains $Task) { "NOTE: the MR title names $($titled -join ', '); registering under -Task $Task" } }
     elseif ($titled.Count -eq 1) { $Task = $titled[0]; "NOTE: registering under $Task (MR title)" }
@@ -912,7 +910,6 @@ switch ($Action) {
         $r = Invoke-HostVerb 'mr.merge' @{ repo = $amProj; n = $iid; sha = $null; auto = ($hp -ne 'success') }
         "re-armed merge-when-green for $ref (it was dropped, probably by a push after scheduling): $(if ($r.state -eq 'merged') { 'merged' } elseif ($r.merge_when_pipeline_succeeds) { 'scheduled' } else { 'FAILED - check the MR' })"
       }
-      # devtools.py may add meanwhile
       $gone = @($am.Keys | Where-Object { -not $keep.ContainsKey($_) })
       if ($gone) { Update-KitTracking { param($t) foreach ($r in $gone) { $t.automerge.Remove($r) } } }
     }
@@ -927,13 +924,13 @@ switch ($Action) {
       }
       $o.checkedAt = (Get-Date).ToString('o'); Save $o -Run
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-      # every 30 min; merged 60+ min, not promoted, not HELD = LAG
+      # merged 60+ min, not promoted, not HELD = LAG
       if ($o.lagLine -and -not $o.holdPromotion -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt 30 -and -not $Quiet) { $o.lagLine }
       if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge 30)) {
         $o.lagAt = (Get-Date).ToString('o'); $o.Remove('lagLine'); Save $o -Run
         $ms = @($o.mrs | Where-Object { -not ((MrState $_) -eq 'closed' -and $_ -in $igRefs) } | ForEach-Object { MrState $_ }); $ls = TaskStatus $o.task
         if ($ls -and @($ms | Where-Object { "$_" -like 'opened*' }).Count -and (Test-TrackerStatus $ls 'open')) {
-          $lr = try { $null = Set-TrackerStatus $o.task 'review'; "DONE $($o.task): status '$ls' -> review (its MR is open)" } catch { "ATTENTION $($o.task): could not set status 'review' (status '$ls' lags its open MR): $_" }
+          $lr = try { if (($rv = "$(Set-TrackerStatus $o.task 'review')") -like 'SKIPPED*') { "KEPT $($o.task): $($rv.Substring(9))" } else { "DONE $($o.task): status '$ls' -> review (its MR is open)" } } catch { "ATTENTION $($o.task): could not set status 'review' (status '$ls' lags its open MR): $_" }
           if (-not $Quiet) { $lr }
         } elseif ($ls -and -not @($ms | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus $ls 'open', 'inProgress', 'review')) {
           if (-not $o.mergedSeenAt) { $o.mergedSeenAt = (Get-Date).ToString('o'); Save $o -Run }
@@ -943,7 +940,6 @@ switch ($Action) {
       foreach ($pair in @($o.mergeAfter)) {
         if ($pair -notmatch '^(?<dep>[^>]+)>(?<on>.+)$') { continue }
         $dep = $Matches.dep.Trim(); $on = $Matches.on.Trim()
-        # the ship step merges it
         $owner = InFlight $dep
         if ($owner) { Hold "HOLD $($o.task): $dep waits for its review ($owner still running)"; continue }
         if ((MrState $on) -eq 'merged' -and (MrState $dep) -eq 'opened' -and $dep -match '^(?<repo>[\w./-]+)!(?<iid>\d+)$') {
@@ -971,7 +967,6 @@ switch ($Action) {
           if (-not $Quiet) { "NOTE $($o.task): status '$cur' was never set to review, but all MRs merged 20+ min ago - completing it" }
         }
       }
-      # no MR = never promote
       if (-not @($o.mrs).Count) { Hold "HOLD $($o.task): no MR registered yet (bossy.ps1 track add -Task $($o.task) -Mrs <repo>!<iid>)"; continue }
       $states = @{}; foreach ($m in $o.mrs) { $states[$m] = MrState $m }
       foreach ($m in @($states.Keys)) { if ($states[$m] -eq 'closed' -and $m -in $igRefs) { $states.Remove($m) } }
@@ -999,12 +994,12 @@ switch ($Action) {
       if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o -Run; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
-      # process.gates.promote first (builtin:testingDocs: the docs linked); unread = held
       $ciTask = Get-KitCiTask $o.task   # a CI job's task: the job passing again is its test, no testing docs
       if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and -not ($pg = Test-KitProcessGate promote @{ task = $o.task }).ok) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, $(if ($pg.how -eq 'builtin:testingDocs') { 'no testing-doc link (human + AI) or the task is unread' } else { "process.gates.promote refused ($($pg.how)): $($pg.why)" }): not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
-      $setFailed = $false
-      foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
+      $setFailed = $false; $kept = ''
+      foreach ($s in $todo) { try { if (($sr = "$(Set-TrackerStatus $o.task $s)") -like 'SKIPPED*') { $kept = $sr.Substring(9); break } } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
+      if ($kept) { $o.done = $true; Save $o -Run; "KEPT $($o.task): $kept"; continue }
       if ($ciTask) { Set-KitTaskMrItems $o.task; $cj = Close-KitCiTask $o.task $ciTask @($o.mrs)
         if ($cj.state -eq 'wait') { Hold "HOLD $($o.task): $($cj.why)" } elseif ($cj.state -ne 'closed') { if (-not $Quiet) { "ATTENTION $($o.task): $($cj.why)" } } else { $o.done = $true; $o.doneAt = (Get-Date).ToString('o'); Save $o -Run; "DONE $($o.task): $($cj.why)"; $script:merged = $true }; continue }
       $cmts =@(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }

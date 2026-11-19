@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L346 process · L523 git host · L590 scope · L680 MR · L872 merge · L1198 docs ·
-  L1351 publish · L1791 render · L2214 plugins · L2228 keepboth · L2247 selftest · L2827 CLI
+Sections: L51 config · L106 run · L194 tracker · L346 process · L528 git host · L595 scope · L685 MR · L877 merge · L1203 docs ·
+  L1356 publish · L1796 render · L2219 plugins · L2233 keepboth · L2252 selftest · L2842 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -513,7 +513,12 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     if str(t.get('status', '')).strip().lower() in past:   # a fix round after the merge: links and comment only
         print(f'[finish] {tid} is {t.get("status")}: status kept (never backwards)', file=sys.stderr)
     else:
-        set_status(tid, status)
+        try:
+            set_status(tid, status)
+        except SystemExit as e:   # a parent with open subtasks follows them (lib.ps1 Set-TrackerStatus SKIPPED): docs and comment stand
+            if 'SKIPPED' not in str(e):
+                raise
+            print(f'[finish] {tid}: status kept: {str(e).split("SKIPPED:", 1)[1].strip().splitlines()[0]}', file=sys.stderr)
     tid = tid[len(TAG):] if TAG and tid.startswith(TAG) else tid   # tracking keys carry no tag
     tr = ((read_tracking().get('tasks') or {}).get(tid) or {})
     if tr and not tr.get('done'):   # merged MRs waited on these links: promote now, not a supervise sweep later
@@ -2720,6 +2725,16 @@ def _publish_selftest(expect, refused):
         finish('T9', human, '**Solution** — x\n**Testing doc**: <link>\n**Testing doc (AI)**: <ai>', ai=a2p)
         all_c += [a[2] for a in calls if a[0] == 'comment']
         expect('finish on a promoted task: docs and comment, status never moved back', not [a for a in calls if a[0] == 'status'] and [a for a in calls if a[0] == 'comment'])
+        g0, st['s'] = g['_tracker'], 'in progress'
+        def _skip(*a):   # a parent with open subtasks: crafty.ps1 tracker status exits 1 with SKIPPED
+            if a[0] == 'status':
+                raise SystemExit('failed (exit 1): tracker status T9\ntracker: SKIPPED: T9 not set to review: it follows its 2 open subtask(s)')
+            return g0(*a)
+        g['_tracker'] = _skip
+        with contextlib.redirect_stderr(io.StringIO()) as fe:
+            finish('T9', human, '**Solution** — x', ai=a2p)
+        g['_tracker'] = g0
+        expect('finish on a parent with open subtasks: status kept (it follows them), no failure', 'status kept: T9 not set to review' in fe.getvalue())
         expect('no_doc_links: prose and other fields kept, a links-only text empty',
                no_doc_links('Fixed the Testing goals: now 5 rows pass.\nDone') == 'Fixed the Testing goals: now 5 rows pass.\nDone\n'
                and no_doc_links('**MRs**: a · **Testing doc**: https://d · **After deploy**: seed') == '**MRs**: a · **After deploy**: seed\n'
