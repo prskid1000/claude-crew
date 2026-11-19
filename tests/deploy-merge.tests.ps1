@@ -48,7 +48,10 @@ $hostCmd = { param($v, $a) "pwsh -NoProfile -File `"$hostPs`" $v $a" }
 'c' | Set-Content "$r/repo/c.txt"; git -C "$r/repo" add -A; git -C "$r/repo" commit -q -m 'feat: c'; git -C "$r/repo" push -q origin main 2>$null
 Get-ChildItem "$r/wt" -Directory -Filter 'deploymerge-*' -ErrorAction SilentlyContinue | ForEach-Object { git -C "$r/repo" worktree remove --force $_.FullName 2>$null }
 $o5 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Push 2>&1 | Out-String
-Expect "deploy merge -Push to a deploy branch: refused, nothing pushed ($($o5.Trim()))" ($o5 -match 'REFUSED' -and $o5 -match '-Mr' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
+Expect "deploy merge -Push to a deploy branch: refused, nothing pushed ($($o5.Trim()))" ($o5 -match 'REFUSED' -and $o5 -match '-Mr' -and $o5 -match 'squash off' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
+$klKeep = Get-Content $kl -Raw; $klSq = $klKeep | ConvertFrom-Json; $klSq | Add-Member -Force NoteProperty deploy @{ mergeMethod = 'squash' }; $klSq | ConvertTo-Json -Depth 8 | Set-Content $kl
+$o5s = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Push 2>&1 | Out-String; Set-Content $kl $klKeep -NoNewline
+Expect "deploy merge texts follow deploy.mergeMethod: squash never says squash off ($($o5s.Trim()))" ($o5s -match 'merge method squash' -and $o5s -notmatch 'squash off')
 $env:DM_HOST_LOG = $hostLog
 $o6 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Mrs 'shop!12' -Decision 'd-42' -WaitMinutes 1 2>&1 | Out-String
 $hl = if (Test-Path $hostLog) { Get-Content $hostLog -Raw } else { '' }; $depBr = @(git -C "$r/origin.git" for-each-ref --format='%(refname:short)' 'refs/heads/deploy/')

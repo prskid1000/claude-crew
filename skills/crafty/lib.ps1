@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1122 supervise sweep · L1202 tracker ·
-  L1527 prior · L1543 ask bugs · L1728 git-host · L1915 kitlog · L2035 params · L2340 entry-scripts
+  L1527 prior · L1543 ask bugs · L1729 git-host · L1916 kitlog · L2036 params · L2341 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1556,6 +1556,7 @@ function Get-KitDefectSigs($Check) {
 function Test-KitBugCollector($Task) { "$($Task.name)" -match "[—-]\s*$([regex]::Escape([string](Get-KitSetting 'tracker.bugCollectorTitle' 'new defects')))(\s*\(\d+\))?(:|\s*$)" -or "$($Task.description)".TrimStart() -match '^[^\r\n]*\\?\[kit:bug:[^\]\r\n]+?\\?\][ \t]*(\r?\n|$)' }
 # $Defects: [{ label; sig = @(); md; group }]; -Id: the [Bug] this source wrote before; -Mine: its whole unmarked text is this source's
 function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head, [object[]]$Defects, [string]$List, [string]$Assignee, [string]$Priority = '2', [string]$Id, [switch]$Mine) {
+  $Name = Format-KitBugName $Name
   $Key = ("$Key" -replace '[^\w.-]+', '_').Trim('_'); if (-not $Key) { throw 'Add-KitAskBug: -Key (the section key) is required' }
   if ($Key.Length -gt 80) { $Key = $Key.Substring(0, 70) + '-' + (Get-KitHash $Key SHA256).Substring(0, 8) }
   Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-bug-$("$(if ($Ask) { $Ask } else { $Key })" -replace '[^\w.-]', '_')") {

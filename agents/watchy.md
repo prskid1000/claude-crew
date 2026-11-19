@@ -25,8 +25,8 @@ Steps (evidence to `crafty.ps1 dir -Agent <id> -Kind evidence -Item <env>-<windo
 3. **Group** each error into a signature: exception or error class + normalised message (ids, numbers, timestamps, emails
    stripped) + top in-app frame or endpoint. Per signature: count now vs baseline, first seen, users or tenants affected,
    endpoints, one sample (trace id, request, log line).
-4. **Judge** each signature: `new` (absent in the baseline) · `rising` (≥ 3x the baseline and ≥ 10 hits) · `known` (an open
-   tracker task holds it: `crafty.ps1 tracker list <list> open`) · `noise` (below both bars, or the org's ignore list). A
+4. **Judge** each signature: `new` (absent in the baseline) · `rising` (≥ 3x the baseline and ≥ 10 hits: `watch.rising`) · `known`
+   (an open tracker task holds it: `crafty.ps1 tracker list <list> open`) · `noise` (below both bars, or the org's ignore list). A
    triage screenshot maps to its signature or to `unmatched` (its evidence, no task).
 5. **Act** (`crafty.ps1 tracker create` / `comment`): `new` / `rising` with a suspect MR (the deploy's MRs touch its frame or
    endpoint) -> an entry in the ONE `[Bug] <product> — <first defect> (+n more)` under that MR's task's original ask:

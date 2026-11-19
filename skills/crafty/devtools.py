@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L346 process · L528 git host · L595 scope · L685 MR · L877 merge · L1204 docs ·
-  L1357 publish · L1797 render · L2220 plugins · L2234 keepboth · L2253 selftest · L2846 CLI
+Sections: L51 config · L106 run · L194 tracker · L346 process · L528 git host · L601 scope · L691 MR · L883 merge · L1210 docs ·
+  L1363 publish · L1803 render · L2226 plugins · L2240 keepboth · L2259 selftest · L2854 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -535,6 +535,12 @@ if CFG.get('gitHost') and not os.environ.get('GITLAB_HOST'):   # else glab api o
 def host_group():
     """gitHostGroup (gitlabGroup: its older name, still read): the group / owner of short refs <repo>!<iid>."""
     return CFG.get('gitHostGroup') or CFG.get('gitlabGroup') or ''
+
+
+def mr_word(host=None):
+    """The git host's word for a merge request in texts it shows (vocab.json mrWord: MR on GitLab, PR elsewhere)."""
+    w = VOCAB.get('mrWord') or {}
+    return w.get(host_kind(host if host is not None else GITLAB_HOST)) or w.get('_default') or 'MR'
 
 
 def host_kind(host):
@@ -2050,7 +2056,7 @@ def render_mr_body(s):
     return '\n\n'.join(['## Summary', (f'[{t}]({url}) — ' if t and url else f'{t} — ' if t else '') + str(s.get('summary') or s.get('change') or ''),
                         '## Changes', '\n'.join(f'- {c["text"]}' + (f' · **Technical:** `{c["technical"]}`' if c.get('technical') else '') for c in s.get('changes') or []) or '- none',
                         '## How tested', _table(['Check', 'Result'], rows), '## Risks', '\n'.join(risks), '## Links',
-                        f'- **Sibling MRs:** {", ".join(link_refs(x) for x in sib)} (merge order: producers first)' if sib else '- **Sibling MRs:** none']) + '\n'
+                        f'- **Sibling {mr_word()}s:** {", ".join(link_refs(x) for x in sib)} (merge order: producers first)' if sib else f'- **Sibling {mr_word()}s:** none']) + '\n'
 
 
 
@@ -2458,7 +2464,9 @@ def selftest():
     expect('MR body: the rendered How tested is a table, all sections in order, a doc link the merge gate reads; a bullet list is flagged',
            _how_tested_table(mrt) and not _how_tested_table('## How tested\n- tests pass\n') and all(h in mrt for h in MR_SECTIONS) and doc_link_rx(docs()[0]).search(mrt))
     cfg0 = dict(CFG); CFG.clear(); CFG['gitHostType'] = 'github'
-    expect('gitHostType, no gitHost: any origin', host_kind('git.corp.example') == 'github'); CFG.update(cfg0)
+    expect('gitHostType, no gitHost: any origin', host_kind('git.corp.example') == 'github')
+    expect('mr_word: PR on a GitHub host', mr_word('git.corp.example') == 'PR')
+    CFG.clear(); expect('mr_word: GitLab MR, unknown host MR', (mr_word('gitlab.example.com'), mr_word('x.example')) == ('MR', 'MR')); CFG.update(cfg0)
     _process_selftest(expect, LEGACY_GATES)
     _report_selftest(expect)
     _publish_selftest(expect, refused)

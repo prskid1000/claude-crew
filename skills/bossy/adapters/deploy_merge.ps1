@@ -1,9 +1,9 @@
 #Requires -Version 7
 # Usage: dot-sourced by bossy.ps1 from adapters/. Exit codes: none here (its verbs exit through bossy.ps1).
 # deploys: bossy.ps1 deploy merge, dot-sourced by bossy.ps1.
-# Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env>-<date> pushed, MR squash off, merged on green),
+# Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env>-<date> pushed, MR per deploy.mergeMethod, merged on green),
 # or tags it (deploys[].tag; -Push pushes the tag). A deploy branch itself is never pushed to.
-# Sections: L7 merge · L76 mr
+# Sections: L7 merge · L77 mr
 # ---- merge: tag or trunk, the merge in a worktree
 function Invoke-DeployMerge {
 param(
@@ -38,11 +38,12 @@ if ($dep.tag) {
 $envName = if ($dep.target) { $dep.target } else { $To }
 if ($dep.branch) { $To = $dep.branch }
 if ($To -eq $From) { "trunk: $To deploys from itself, nothing to merge (deploy record, pokey.ps1 deployed)"; exit 0 }
-if ($Push) { "REFUSED: deploy merge -Push would push straight to $To (a deploy branch). It changes only through a deploy MR: re-run with -Mr (pushes deploy/$envName-<date>, opens the MR with squash off, merges on a green pipeline)."; exit 2 }
-$name = 'deploymerge-' + ($To -replace '[^\w]+', '-')
 # deploys[].branchPrefix (deploy.branchPrefix, default deploy/): the pushed source of the deploy MR; mergeMethod (default merge: a merge commit)
 $bp = [string]$(if ($dep.branchPrefix) { $dep.branchPrefix } else { Get-KitSetting 'deploy.branchPrefix' 'deploy/' })
 $dmm = [string]$(if ($dep.mergeMethod) { $dep.mergeMethod } else { Get-KitSetting 'deploy.mergeMethod' 'merge' })
+$dmmText = if ($dmm -eq 'merge') { 'a merge commit, squash off' } else { "merge method $dmm" }   # the MR texts follow deploy.mergeMethod
+if ($Push) { "REFUSED: deploy merge -Push would push straight to $To (a deploy branch). It changes only through a deploy MR: re-run with -Mr (pushes $bp$envName-<date>, opens the MR ($dmmText), merges on a green pipeline)."; exit 2 }
+$name = 'deploymerge-' + ($To -replace '[^\w]+', '-')
 $br = "$bp$($envName -replace '[^\w]+', '-')-$(Get-Date -Format yyyyMMddHHmm)"
 $out = & $KitCmd.dev wt new -Repo $Repo -Branch $br -Target $To -Name $name -Override 'deploy merge: a dedicated worktree'
 $wt = ($out | Where-Object { $_ -match '^worktree:\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() }) | Select-Object -First 1
@@ -73,7 +74,7 @@ $msg = $ct.Replace('{from}', $From).Replace('{to}', $To).Replace('{env}', $envNa
 & $KitCmd.dev wt commit -Dir $wt -NoStage -Message $msg
 if ($LASTEXITCODE) { "commit FAILED (hooks?) in $wt"; exit 1 }
 if ($Check) { & $KitCmd.dev check -Dir (Join-Path $wt $Check); if ($LASTEXITCODE) { "compile FAILED - not pushing"; exit 1 } }
-# ---- mr: deploy/<env>-<date> pushed, the deploy MR opened (squash off), merged on green
+# ---- mr: deploy/<env>-<date> pushed, the deploy MR opened (deploy.mergeMethod), merged on green
 if (-not $Mr) { "ready (nothing pushed): review $wt; the deploy MR: crafty.ps1 wt remove -Dir $wt, then the same command with -Mr"; exit 0 }
 git -C $wt fetch -q origin $To
 git -C $wt merge-base --is-ancestor "origin/$To" HEAD
@@ -88,10 +89,11 @@ if ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -match '^(?:https?://
 }
 $refs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
 $trk = Read-KitTracking; $taskIds = @($trk.tasks.Keys | Where-Object { @(@($trk.tasks[$_].mrs) | Where-Object { $_ -in $refs }).Count } | Sort-Object)
-$body = "Deploy MR: $From into $To (bossy.ps1 deploy merge; a merge commit, squash off).`n`n- Env: $envName`n- MRs: $(if ($refs.Count) { $refs -join ', ' } else { 'none given' })`n- Tasks: $(if ($taskIds.Count) { $taskIds -join ', ' } else { 'none tracked' })`n- Deploy decision: $(if ($Decision) { $Decision } else { 'none given (deploy.trigger rule)' })`n- Commits from ${From}: $ahead"
+$mrw = [string]$(if ("$(Get-KitMember $script:KitVocab.mrWord $script:HostType)") { Get-KitMember $script:KitVocab.mrWord $script:HostType } else { 'MR' })   # vocab.json mrWord: PR off GitLab
+$body = "Deploy ${mrw}: $From into $To (bossy.ps1 deploy merge; $dmmText).`n`n- Env: $envName`n- ${mrw}s: $(if ($refs.Count) { $refs -join ', ' } else { 'none given' })`n- Tasks: $(if ($taskIds.Count) { $taskIds -join ', ' } else { 'none tracked' })`n- Deploy decision: $(if ($Decision) { $Decision } else { 'none given (deploy.trigger rule)' })`n- Commits from ${From}: $ahead"
 $ha = @{ repo = $hostRepo; type = $hostType }
 $made = Invoke-HostVerb 'mr.create' ($ha + @{ source = $br; target = $To; title = ($ct.Replace('{from}', $From).Replace('{to}', $To).Replace('{env}', $envName) -replace '\bmerge (?=\S+ into)', '') + " ($envName)"; body = $body; method = $dmm })
-$iid = "$($made.iid)"; if (-not $iid) { "deploy MR create FAILED for $br -> $To (host $hostType, repo $hostRepo): open it by hand, squash off; worktree kept: $wt"; exit 1 }
+$iid = "$($made.iid)"; if (-not $iid) { "deploy MR create FAILED for $br -> $To (host $hostType, repo $hostRepo): open it by hand ($dmmText); worktree kept: $wt"; exit 1 }
 $url = if ($made.web_url) { $made.web_url } else { Invoke-HostVerb 'mr.url' ($ha + @{ n = $iid }) }
 "deploy MR: $url ($br -> $To)"
 # squash is a GitLab MR field; the other hosts take it per merge call (method merge)
@@ -108,6 +110,6 @@ if (-not $noCi -and $cs -ne 'success') { "deploy MR $url pipeline $(if ($st) { $
 $done = Invoke-HostVerb 'mr.merge' ($ha + @{ n = $iid; method = $dmm; sha = $cur.sha })
 # the host merges asynchronously: 'opened' for some seconds after an accepted merge call
 for ($i = 0; $i -lt 30 -and "$($done.state)" -ne 'merged'; $i++) { if ($i) { Start-Sleep (Get-KitParam 'deploy.mergeSettleSec') }; $done = Invoke-HostVerb 'mr.get' ($ha + @{ n = $iid }) -NoMemo; if ($done -and $done.state -notin 'opened', 'locked') { break } }
-if ($done.state -ne 'merged') { "deploy MR $url merge FAILED (state $($done.state)): merge it by hand, squash off"; exit 1 }
+if ($done.state -ne 'merged') { "deploy MR $url merge FAILED (state $($done.state)): merge it by hand ($dmmText)"; exit 1 }
 "merged deploy MR $url into $To (merge commit, $ahead commits from $From)"
 }

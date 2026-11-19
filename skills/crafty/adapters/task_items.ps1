@@ -292,6 +292,8 @@ function Get-KitNameKind([string]$Name) {
   foreach ($k in @(@(if ($kp) { (Get-KitProps $kp).Name }) + 'Feature', 'Bug', 'Chore' | Select-Object -Unique)) { $p = Get-KitKindPrefix $k; if ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) { return [pscustomobject]@{ kind = $k; rest = $n.Substring($p.Length).Trim() } } }
   if ($n -match '^\[([^\]]+)\]\s*(.*)$') { [pscustomobject]@{ kind = $Matches[1]; rest = $Matches[2] } } else { [pscustomobject]@{ kind = 'Feature'; rest = $n } }
 }
+# a defect name under tracker.kindPrefixes.bug: a typed [Bug] / [Kind] prefix swapped for the configured one
+function Format-KitBugName([string]$Name) { $bp = Get-KitKindPrefix 'bug'; if ("$Name".TrimStart().StartsWith($bp, 'OrdinalIgnoreCase')) { return "$Name".Trim() }; "$bp $((Get-KitNameKind $Name).rest)".Trim() }
 function Test-KitBugName([string]$Name) { $p = Get-KitKindPrefix 'bug'; $n = "$Name".TrimStart(); ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) -or $n -match '^\W*Bug\]' }
 function Get-KitTaskTemplate {
   $t = @(Get-KitSetting 'tracker.taskTemplate' $null | Where-Object { $_ -and $_.label })

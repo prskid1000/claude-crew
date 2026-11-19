@@ -87,7 +87,7 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 | E12 | LEARN: something cost time, failed or surprised you | `bossy.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-When -Do -Why`); 3x -> script check / default |
 | E13 | SessionStart kit line (git state, gates, lint, ports, stopped runs, retro/audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` when idle; audit due -> spawn ONE `kitty` (kind audit); pulls live clone when idle, relays ASK list |
 | E14 | A new repo or stack joins | `crafty.ps1 stack -Dir <module>`; wrong commands -> `.claude-stack.json`; conventions -> `rules/*.local.md` (README "Rule examples") |
-| E15 | opsy reported `watch` (a deploy recorded), the nightly timer, or a watchy `ROLLBACK?` board msg | `watch`: one-shot timers +15 min, +2 h, +24 h, each spawning `watchy` kind window; nightly: one `watchy` kind sweep (model haiku); `ROLLBACK?` -> `decide ask` (roll back / fix forward / keep); the owner's answer -> `opsy` kind rollback |
+| E15 | opsy reported `watch` (a deploy recorded), the nightly timer, or a watchy `ROLLBACK?` board msg | `watch`: one-shot timers (`watch.windows`), each spawning `watchy` kind window; nightly: one `watchy` kind sweep (model haiku); `ROLLBACK?` -> `decide ask` (roll back / fix forward / keep); the owner's answer -> `opsy` kind rollback |
 
 ## Change the kit (HEAL and extending)
 - K1. Spawn ONE `kitty` (`subagent_type: 'kitty'`, kind build / fix / docs / audit / setup / env / recover) with the change or the
