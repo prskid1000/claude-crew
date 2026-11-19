@@ -30,7 +30,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
   L719 track · L1056 supervise · L1376 report · L1456 audit · L1516 storage · L1519 bugbrief · L1633 cleanup · L1720 learn ·
-  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2193 guard-sendmessage
+  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2191 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1258,8 +1258,8 @@ if ((Test-Path (Get-KitPath scope-log)) -and (Within 'scope')) { foreach ($w in 
 
 # 5. QA results: new [Bug], failedTesting tasks (bossy E6)
 if (Within 'QA bug tasks') {
-  # run.json of the last 7 days only (every run.json each beat read 500 old runs: waste guard); parents of 30 days from the QA
-  # parents index (finalize writes it): a 7-day one viewed each beat, an older one at most every 6 h (owner decision 2026-11-18)
+  # run.json of the last 7 days only (500 old runs a beat: waste guard); parents of 30 days from the QA
+  # parents index (finalize writes it): a 7-day one viewed each beat, an older one every 6 h at most (owner 2026-11-18)
   $qaRecent = @(foreach ($rf in @(Get-KitQaRunFiles run.json -SinceDays 7)) { try { [pscustomobject]@{ dir = $rf.Directory; j = ([IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json) } } catch {} })
   $qaIdx = Update-KitQaParents { param($q) foreach ($qr in $qaRecent) { $qp = [string]$qr.j.tracker.parent; $qt = $qr.dir.LastWriteTime
       if ($qp -and (-not $q[$qp] -or [datetime]$q[$qp].at -lt $qt)) { $q[$qp] = @{ at = $qt.ToString('o'); seen = $q[$qp].seen } } } }
@@ -1828,7 +1828,7 @@ function Invoke-Decide {
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
       # a scope ask (-Gate scope, or its question names `decide record -Gate scope -Item <x>`) answered with a pick that records or
-      # approves: the scope word too (devy's wt commit -ScopeOk needs gate scope on the branch; an answer alone left it blocked)
+      # approves: the scope word too (wt commit -ScopeOk needs gate scope on the branch)
       $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($o.gate -eq 'scope') { "$($o.item)" }
       $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]
       if ($scItem -and $By -notmatch $crewRx) {
@@ -2095,11 +2095,9 @@ if ($Json) { $o | ConvertTo-Json -Compress; return }
 # ---- setup: install / repair (idempotent)
 # vendor CLI + OS-only allows: generated into settings.local.json from the configured adapters (settings.json stays generic)
 function Get-KitAllowCatalogue {
-  # host:<type>: each host CLI's allow (else '<noun> *', 'auth status*')
+  # host:<type>: a host CLI's allow, else <noun> * + auth status*
   $cat = [ordered]@{}; $own = @($script:KitHostCli.Values)
-  foreach ($hk in @($script:KitHostCli.Keys)) { $cat["host:$hk"] = $script:KitHostCli[$hk] }
-  foreach ($hx in @(Get-KitHostCli | Where-Object { $_ -notin $own })) { $cat["host:$(if ($hx.type) { $hx.type } else { $script:HostType })"] = $hx }
-  foreach ($hk in @($cat.Keys)) { $hx = $cat[$hk]; $cat[$hk] = @(@(if ($hx.allow) { $hx.allow } else { "$($hx.noun) *"; 'auth status*' }) | ForEach-Object { "PowerShell($($hx.exe) $_)" }) }
+  foreach ($hx in @(Get-KitHostCli)) { $cat["host:$(if ($hx -in $own) { @($script:KitHostCli.Keys)[$own.IndexOf($hx)] } elseif ($hx.type) { $hx.type } else { $script:HostType })"] = @(@(if ($hx.allow) { $hx.allow } else { "$($hx.noun) *"; 'auth status*' }) | ForEach-Object { "PowerShell($($hx.exe) $_)" }) }
   $cat['report:gdocs'] = @('PowerShell(gws drive files export *)')
   $cat['os:windows'] = @('PowerShell(& *.claude\skills\*)', "PowerShell(& '*.claude\skills\*)", 'PowerShell(python *.claude\skills\*)'); $cat
 }
