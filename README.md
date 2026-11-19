@@ -196,55 +196,36 @@ usage; top steps and kit internals folded; the page keeps each one the owner tog
 rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; the header holds
 jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
 of two fields a line, low-value columns hidden; tone-coloured text is mixed toward the foreground (WCAG AA in both themes):
-- every heatmap: 24 clock-hour cells (repo x day: days), now outlined; rows from config + data only (presets only label), rows
-  with no data in 12 h folded ("N idle rows", a tap shows them); each card folds (`kc-open`; busy open); kit pages open in an
-  in-page drawer, web links (MR, task, doc) in a new tab (`kitbag.py ui-check` fails any other link);
-- flags as cards in masonry columns (an icon per kind, the next step, ACT first; auto-fixed folded); under them Flags · 24 h:
-  ACT / WATCH / FIXED rows with a sub-row per kind, a cell = distinct flags that hour (count shown, colour by level, tooltip
-  their texts; `stats.flagHours` in supervise-report.json keeps 24 h); the other INFO lines folded as notes;
+- every heatmap: one renderer, a number in each cell, now / today outlined; hours (24 clock hours) or days (`Format-KitDayHeat`:
+  rows = series, columns = days, a total); rows from config + data only; rows with no data in the window fold ("N idle rows");
+  each widget names its metric (`data-mk`, once per page); kit pages open in an in-page drawer, web links in a new tab;
+- flags as cards in masonry columns (an icon per kind, the next step, ACT first), promotion holds folded under them;
 - live agents grouped by run (a stacked bar by state in the summary): each running run on one line above them (label, kind,
   steps bar, tokens, est. cost, budget bar, its tasks and MRs linked), then state chip, task (a known task id or MR ref linked),
   the leases it holds, since, last progress, doing / next; "Finished today" folded; task and MR links come from the tracker
   (`url`) and git host (`mr.url`) adapters (text: the id, `repo!n` or `repo#n` per host; no web URL: plain text);
-- machine and resources: memory (used / total meter with a 7-day peak tick, 24 h sparkline), every fixed drive on an internal disk (no USB, external, phone or network drive) in one tile
-  (free GB, fill rate, "full in" under 72 h, used / size meter with a 7-day peak tick, 7-day free sparkline marking the low; a
-  flagged drive coloured and first) in one row; Resources · 24 h: one heatmap, a row for the machine and every resource of 24 h
-  (each configured lane service, up or not: `localenv_supervise.ps1` hook `Get-KitCpuGroups*`; builds, slots, browsers,
-  emulators), grouped by lane; a cell's top half = avg CPU % of the machine (from the CPU time of one process snapshot per
-  sweep), its bottom half = avg RAM GB (a lease's own GB, else the service's process tree working set, sampled each sweep);
-  columns CPU now · peak · avg %, RAM now · peak GB; a cell's tooltip: both, holders and, on the machine row, that hour's top
-  other processes; red over 80% between two sweeps 5+ min apart, then the top other processes folded (10%+: name, pid, owner
-  agent, now, 24 h peak); build gate full width from its history (running, queued, builds today, longest
-  wait; a row per kind seen in the 24 h builds log (`gate.labels` and the stack presets only name it): an hourly heatmap of the last 24 clock hours (shade = busy minutes, the current hour outlined, a cell's
-  tooltip: builds, busy min, max wait) and running, queued, today, wait avg / peak, RAM as number columns under one icon header
-  row, zeros dimmed; side panel: queued builds sparkline, RAM dots promised / free, QA seats, phone lanes, emulators, test browsers (leases, never gated)); resources and leases: lease waits in the gate's style (a row per resource,
-  24 h heatmap of minutes waited, tooltip waits / minutes / longest / who; from the leases log's acquire `since` = wait start,
-  the builds log, local-env `lease-wait` events and the open queues), then what is held now (name · holder); a shared
-  always-on service (`shared` row) is never an orphan, a leasable one with no live holder is dashed in Resources · 24 h; shells;
-- usage (the 7 calendar days ending today, cut by the day tokens were spent; `bossy.ps1 budget -Usage` in the background each
-  sweep reads the transcripts' usage fields incrementally, cached by `_paths` `usage-cache` + `.cold.json`): tokens and est. cost today vs
-  the 7-day average (`budget.prices`: USD per M tokens [in, out, cache read, cache write 5 min, 1 h] per model id or alias;
-  unknown models listed as not priced), review + fix share; cost and tokens per day as lines (a time series is never bars); workflow steps by outcome as one stacked
-  bar; Spend: one row per role (coordinator and agents outside workflows included: steps, tokens, share bar, est. cost,
-  avg / p90 time, model mix as a stacked bar), its step types (avg / p50 / p90 tokens, avg / p90 time) folded under it, the
-  model totals once as the mix legend; sessions when 2+;
-- kit internals: Delivery, 30 days (`.state/outcomes.jsonl`, one row per task change): tiles with a weekly line each (QA first
-  pass %, came back %, median fix rounds, p50 hours to promoted; tokens per merged MR: the git host's merged MRs of this login,
-  cached 2 beats, no login: MRs reported by workflows, a daily line); a per-day chart (MRs merged, tasks closed, came back,
-  runs started; labelled points, a day's tooltip lists its runs, a click filters the task list and the runs to that day,
-  legend buttons hide a line); under it MRs merged per repo and day (a heatmap, rows = `repos[]` + any repo with an MR, a cell's
-  tooltip its MRs), work in flight now (one bar: in progress, review, promoted, in test, failed testing; a segment lists its
-  tasks) and the median MR lead time per day (open -> merged, git host only); a stacked bar per repo (repo names through
-  `repos[].aliases`; passed QA by fix rounds 0 / 1 / 2 / 3+ / not recorded (no wave report names the task), came back, not
-  tested yet; each segment its count, a click lists its tasks; repos with no QA'd task: one "other (a, b)" bar when 2+, a single
-  one by its name); test runs (`qa-runs/*/*/results.json` by its write day): checks · pass %
-  (OUT_OF_SCOPE left out), 7 daily stacked bars (PASS, FAIL, NOT_TESTED, OUT_OF_SCOPE) and the NOT_TESTED causes in one line;
-  then the ended dev and QA runs of 7 days, one line each: label (mandate, area, a test run's name and target, or the
-  record-args run name; run id in the tooltip), kind, resumed, what it did (a test run's QA checks pass / fail / not tested,
-  MRs merged, steps errored with the steps named), its tasks and MRs linked, and its steps page; Activity tiles, each number once with its history as a labelled graph (workflow
-  steps now + a chip per running run, 24 h step line; branches · worktrees per repo + 7-day lines; sweep time, 24 h with the
-  7-day average; agents failed, 7 daily bars; flags auto-fixed, % per sweep; `—` = no source), Tuning: every parameter and `supervise` setting once, grouped by area (value ·
-  default / local config / learned with its note · changed · why), the last 10 learned changes on top.
+- machine and resources: tiles (RAM used, builds running / queued / today, longest gate wait, QA seats, phone lanes,
+  emulators, test browsers) and one RAM bar (used / promised to builds / free above the floor / floor); Resources · 24 h: one
+  heatmap, metric switch CPU · RAM | Writes GB | Waits min | Builds min, rows in folding groups (count + the worst state): the
+  machine (whole machine, a row per internal drive with free GB, % used, fill rate and full-in under 72 h, kit-owned, other
+  processes), env services, builds, worktree slots, phones, browser tabs, shells, shared; a row: holder + branch / task; the
+  builds group: a row per gate kind, its owners today as chips, today / build-min / failed (red chip) / wait avg / peak; then
+  the top other processes (10%+) folded; Disk writes · 7 days (day x hour, machine over kit-owned) with free GB per day per
+  drive; shells;
+- usage (the 7 calendar days ending today; `bossy.ps1 budget -Usage` reads the transcripts incrementally, `_paths`
+  `usage-cache` + `.cold.json`; `budget.prices` per model, unknown ones listed as not priced): est. cost and tokens per day
+  rows; tiles: review + fix share, a tile per step outcome (a tap shows the runs with that outcome); Spend: one table, a row
+  per role (steps, tokens, share, est. cost, avg / p90 time, model mix), its step types in the same columns (a tap shows them),
+  the model totals once as the mix legend;
+- kit internals (folded): Flags · 24 h (ACT / WATCH / FIXED rows, a sub-row per kind, `stats.flagHours`), fixed this sweep,
+  notes; Delivery, 30 days (`.state/outcomes.jsonl`): tiles (QA first pass %, came back %, median fix rounds, p50 hours to
+  promoted, tokens per merged MR), Delivered per day (MRs merged per repo, lead time p50 and came-back tasks in the tooltip;
+  tasks closed, came back, runs started; a cell filters the task list or the runs), tasks per repo by outcome, work in flight,
+  test runs (checks · pass %, 7 daily stacked bars, NOT_TESTED causes); runs of 7 days, one line each (label, kind, resumed,
+  what it did, tasks and MRs linked, its steps page); usage; Activity: Kit health · 7 days (sweep s, agents failed / finished,
+  branches, worktrees) and Branches · worktrees now (repo, branches, worktrees, kept, dirty, diverged); Tuning: a tile per key
+  in its group row (colour = learned / shadow / local / default, the value inside, changed in 7 days outlined), keys
+  changed 2+ times in 7 days as a key x day heatmap, the last changes as chips (old -> new, reason in the tooltip), the table one tap away.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: a wrapping row, a min width per item,

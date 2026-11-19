@@ -264,5 +264,15 @@ $s = foreach ($n in 'AA:a', 'BB:b', 'BB:c') { $env:CLAUDE_AGENT, $f = $n -split 
 Expect 'cases add, shared task: another agent''s id refused, its title kept' ($s[1].out -match 'S1 \(AA\) belong to another' -and $s[2].out -match "title kept \('a', set by AA")
 $nf = Dt render commit (Join-Path $wd 'nope.json')
 Expect 'render: a missing spec file = usage (exit 2), no traceback' ($nf.code -eq 2 -and $nf.out -match 'no such spec file' -and $nf.out -notmatch 'Traceback')
+# supervise page parts (moved from dashboard.tests.ps1: its cap)
+$O = Join-Path $k 'skills/bossy/bossy.ps1'
+# Tuning (owner 2026-11-19): tiles by source, a reset change reads "-> default", learned keys changed 2+ times as a day heatmap
+$tnp = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $pf = Get-KitPath params-changes; New-Item -ItemType Directory -Force (Split-Path $pf) | Out-Null
+  @(@{ at = $n.AddDays(-1).ToString('o'); key = 'gate.needGB'; ctx = 'mvn'; from = $null; to = 4 }, @{ at = $n.AddHours(-1).ToString('o'); key = 'gate.needGB'; ctx = 'mvn'; from = 4; to = 6 }, @{ at = $n.ToString('o'); key = 'a.b'; ctx = ''; from = 5.91; to = $null }, @{ at = $n.ToString('o'); key = 'c.d'; to = 'abc' }, @{ at = $n.ToString('o'); key = 'c.d'; to = 'xyz' }, @{ at = 'bad'; key = 'gate.needGB'; ctx = 'mvn'; to = 9 }) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content $pf
+  $pd = @(Get-KitParamDays $n); $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ paramDays = $pd; changes = @(@{ at = $n.ToString('o'); key = 'a.b'; ctx = ''; from = 5.91; to = $null }); params = @(@{ key = 'gate.needGB'; ctx = 'mvn'; value = 6; source = 'live'; changed = $n.ToString('o') }, @{ key = 'foo'; ctx = '<b>'; value = 1 }) } })
+  "$($pd.Count) $(@($pd[0].days)[-2..-1] -join '/') $($h -match '5\.91 -&gt; default</span>') $($h -match "class='pt f p-l c7'[^>]*><small>needGB &#183; mvn</small><b>6</b>" -and $h -match '<small>foo &#183; &lt;b&gt;</small>') $($h -match "<span class=gn>gate\.needGB \[mvn\]</span>")" }
+Expect "Tuning: drift rows only for numeric keys changed 2+ times (bad dates skipped), a reset reads default, a tile: label, escaped context, value ($tnp)" ($tnp -eq '1 4/6 True True True')
+$cpn = & { . $O; (@(999600, 999960000, 12345, 9.96, 0) | ForEach-Object { Format-KitCompactNum $_ }) -join '/' }
+Expect "compact day numbers round before the unit (no 1000k / 1000M) ($cpn)" ($cpn -eq '1M/1B/12k/10/')
 Remove-TestKit $k
 Complete-Tests

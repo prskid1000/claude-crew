@@ -52,8 +52,6 @@ $mkp = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $d0 = $n.ToString('yyyy-M
   $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $two = Format-KitDayHeat @(@{ n = 'a'; mk = 'x-day'; v = @(1) }, @{ n = 'b'; mk = 'x-day'; v = @(2) }) @($d0) 'k'; $dup2 = @([regex]::Matches($two, "data-mk='?([^ '>]+)") | ForEach-Object { $_.Groups[1].Value } | Group-Object | Where-Object Count -gt 1).Count
   "dup:$($dup -join ',') missing:$($want -join ',') seen2:$dup2 spend:$([regex]::Matches($h, '<tr class=sty>(<td[^>]*>.*?</td>){7}</tr>').Count)" }
 Expect "metric keys: each once on the page (the expected ones present), a key twice is caught; spend: step-type rows share the role columns ($mkp)" ($mkp -eq 'dup: missing: seen2:1 spend:2')
-$cpn = & { . $O; (@(999600, 999960000, 12345, 9.96, 0) | ForEach-Object { Format-KitCompactNum $_ }) -join '/' }
-Expect "compact day numbers round before the unit (no 1000k / 1000M) ($cpn)" ($cpn -eq '1M/1B/12k/10/')
 # resources (owner 2026-11-19): one view; the held table is gone; a holder text parses grace after a branch, parked, a wait note kept whole
 $hpt = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = @(); resources = @() })
   $p = @((Split-KitHolder 'devy-1 (fix/x) (grace 5 min)'), (Split-KitHolder 'parked: fix/y'), (Split-KitHolder 'devy-2 (waiting for RAM)'), (Split-KitHolder ''))

@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L335 cards · L536 flags · L634 shells
+Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L335 cards · L544 flags · L646 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -384,7 +384,7 @@ function Get-KitHeatCount($Rows) { $rs = @($Rows | Where-Object { $_ }); "$(@($r
 # THE day heatmap (owner 2026-11-19: a time series = the shared heatmap): rows = series, columns = $Dates (yyyy-MM-dd, the last = today,
 # outlined), the row total on the right; each row shaded by its own peak; a row: @{ n = label; sub; title; v = a value per day ($null: no
 # data); t = total text; tips = a tooltip per day; fmt = { param($v) cell number }; cls = colours (slate; ws sage; fh l-act red ..);
-# ft + fv = a filter value per day: a cell click filters [data-fk] rows (page JS); keep: shown when idle; gl: a rule above }; idle rows fold
+# zero: a 0 shows (else blank); sh = a shade % per day (else by the row's peak); ft + fv = a filter value per day: a cell click filters [data-fk] rows (page JS); keep: shown when idle; gl: a rule above }; idle rows fold
 # a day cell's or total's number: 10k+ compact (12k, 3.4M, 1.2B), else Format-KitHeatNum
 function Format-KitCompactNum($V) { if ($null -eq $V) { return '' }; $d = [double]$V; $iv = [cultureinfo]::InvariantCulture
   if ($d -ge 999.95e6) { ($d / 1e9).ToString('0.#', $iv) + 'B' } elseif ($d -ge 999.5e3) { ($d / 1e6).ToString('0.#', $iv) + 'M' } elseif ($d -ge 1e4) { "$([math]::Round($d / 1e3))k" } else { Format-KitHeatNum $d } }
@@ -394,9 +394,9 @@ function Format-KitDayHeat($Rows, [string[]]$Dates, [string]$What, [string]$TotL
   $head = "<div class='gk gh'><span class=gn>$(& $e $What)</span><span class='gs0 hrs dy' $cn aria-hidden=true>$(@(for ($i = 0; $i -lt $nd; $i++) { "<b$(if ($i -eq $nd - 1) { ' class=nw' })>$(& $dl $i)</b>" }) -join '')</span><span class=gc><small>$(& $e $TotLabel)</small></span></div>"
   $rs = @(foreach ($r in @($Rows | Where-Object { $_ })) { $vs = @(for ($i = 0; $i -lt $nd; $i++) { @($r.v)[$i] })
       $mx = [math]::Max(1e-9, [double](@($vs | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ }) + 0 | Measure-Object -Maximum).Maximum)
-      $cells = @(for ($i = 0; $i -lt $nd; $i++) { $v = $vs[$i]; $tx = if ($null -eq $v -or [double]$v -eq 0) { '' } elseif ($r.fmt) { "$(& $r.fmt $v)" } else { Format-KitCompactNum $v }
+      $cells = @(for ($i = 0; $i -lt $nd; $i++) { $v = $vs[$i]; $tx = if ($null -eq $v -or ([double]$v -eq 0 -and -not $r.zero)) { '' } elseif ($r.fmt) { "$(& $r.fmt $v)" } else { Format-KitCompactNum $v }
           $tp = "$($Dates[$i])$(if ($i -eq $nd - 1) { ' (today)' }) · $($r.n): $(if ($r.tips) { "$(@($r.tips)[$i])" } elseif ($null -eq $v) { 'no data' } elseif ($tx) { $tx } else { '0' })"
-          $c = Format-KitHeatCell $(if ($null -eq $v) { 0 } else { Get-KitHeatShade ([double]$v / $mx) }) $tx $tp ($i -eq $nd - 1)
+          $c = Format-KitHeatCell $(if ($r.sh) { [int]@($r.sh)[$i] } elseif ($null -eq $v) { 0 } else { Get-KitHeatShade ([double]$v / $mx) }) $tx $tp ($i -eq $nd - 1)
           if ($r.fv -and $tx) { $c -replace '^<i', "<i tabindex=0 role=button data-ft='$(& $e $r.ft)' data-fv='$(& $e "$(@($r.fv)[$i])")'" } else { $c } })
       $busy = [bool]$r.keep -or [bool]@($vs | Where-Object { $null -ne $_ -and [double]$_ -gt 0 }).Count
       [pscustomobject]@{ busy = $busy; html = "<div class=$(if ($r.gl) { "'gk gl0'" } else { 'gk' })$(if ($r.mk) { " data-mk='$($r.mk -replace '[^\w.:-]', '-')'" })><span class=gn$(if ($r.title) { " title='$(& $e $r.title)'" })>$(& $e $r.n)$(if ($r.sub) { "<small>$(& $e $r.sub)</small>" })</span><span class='gs hm dy$(if ($r.cls) { " $($r.cls)" })' $cn role=img aria-label='$(& $e "$($r.n) per day, $nd days")'>$($cells -join '')</span><span class='gc$(if ("$($r.t)" -in '', '0', '—') { ' z' })'>$(& $e "$($r.t)")</span></div>" } })
@@ -533,6 +533,14 @@ function Split-KitHolder([string]$By) {
   if ($by0 -match '^(?<h>.*?)\s*\((?<b>[^()\s]+)\)$') { $by0 = $Matches.h; $br = $Matches.b } elseif ($by0 -match '^parked: (?<b>\S+)$') { $by0 = 'parked'; $br = $Matches.b }
   @{ h = $by0; b = $br; g = $gr }
 }
+# learned keys with history (owner 2026-11-19, Tuning): from params-changes, keys changed 2+ times in $Days days, most first; per day the
+# last value (carried; $null = the default; numbers only); first = the value before the window; n = changes
+function Get-KitParamDays([datetime]$Now, [int]$Days = 7, [int]$Top = 12) {
+  $from = $Now.Date.AddDays(1 - $Days)
+  $rs = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 5000 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { } } | Where-Object { $_.key -and $(try { [datetime]$_.at -ge $from -and [datetime]$_.at -le $Now } catch { $false }) -and ($null -eq $_.to -or ($_.to -is [ValueType] -and $_.to -isnot [bool])) })
+  @($rs | Group-Object { "$($_.key)|$(if ("$($_.ctx)" -ne '_') { $_.ctx })" } | Where-Object Count -ge 2 | Sort-Object Count -Descending | Select-Object -First $Top | ForEach-Object { $g = @($_.Group | Sort-Object { [datetime]$_.at }); $k0, $c0 = $_.Name -split '\|', 2; $last = $g[0].from
+    [pscustomobject]@{ key = $k0; ctx = $c0; n = $g.Count; first = $(if ($g[0].from -is [ValueType]) { $g[0].from }); days = @(for ($i = 0; $i -lt $Days; $i++) { $in = @($g | Where-Object { ([datetime]$_.at).Date -eq $from.AddDays($i) }); if ($in.Count) { $last = $in[-1].to }; $last }) } })
+}
 # ---- flags: distinct ACT / WATCH / FIXED flags per clock hour, 24 h (history keeps 12 sweeps only): @(@{ h = yyyyMMddHH; f = @(@{ l; k = kind; y = key; t = text }) })
 function Get-KitFlagHour($H) { try { [datetime]::ParseExact("$H", 'yyyyMMddHH', [cultureinfo]::InvariantCulture) } catch { [datetime]::MinValue } }
 function Update-KitFlagHours($Prior, [datetime]$Now, $Flags) {
@@ -623,6 +631,10 @@ function Get-KitStatsCss {
   '.rgt{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 4px}.rgt button{all:unset;cursor:pointer;padding:1px 9px;border:1px solid var(--ln);border-radius:10px;font-size:11.5px;color:var(--mt)}.rgt button[aria-pressed=true]{background:var(--sf2);color:var(--fg);border-color:var(--sage2)}.rgt button:focus-visible{outline:2px solid var(--sage)}' +
   '.rsh .gc.hot{color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.rsh .gc.warn{color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:650}' +
   '.lcp>.ya{z-index:1}' +
+  # Tuning tiles: a group row each, a tile per key (source colour, value inside), changed in 7 days outlined
+  '.tgr{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px 10px;padding:5px 0;border-top:1px solid var(--ln)}.tgr[hidden],.pt[hidden]{display:none}.tgn{font-weight:600;font-size:12px}.tgn small{color:var(--mt);font-weight:500;margin-left:6px}.tgt{display:flex;flex-wrap:wrap;gap:4px}.pt{display:inline-flex;flex-direction:column;max-width:240px;padding:2px 8px;border-radius:5px;background:var(--sf2);font-size:11px;line-height:1.35;cursor:default}.pt small{color:var(--mt);overflow-wrap:anywhere}.pt b{font-weight:600;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}' +
+  '.pt.p-l,.lgk.pl{background:color-mix(in srgb,var(--sage2) 30%,var(--sf2))}.pt.p-s,.lgk.ps{background:color-mix(in srgb,var(--plum) 30%,var(--sf2))}.pt.p-c,.lgk.pc{background:color-mix(in srgb,var(--slate) 30%,var(--sf2))}.lgk.pd{background:var(--sf2);outline:1px solid var(--ln)}.pt.c7{box-shadow:inset 0 0 0 1.5px var(--watch)}.tcs{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px}.tcs .chip{font-weight:500;letter-spacing:0;white-space:normal;overflow-wrap:anywhere}.tat>summary{cursor:pointer;color:var(--mt);font-size:12px;margin-top:8px}.tat .mtb{min-width:720px}' +
+  '@media(max-width:699px){.tgr{grid-template-columns:minmax(0,1fr)}}' +
   # a phone: nested folds keep their width for the maps (thin side padding), day labels wrap, the repo table packs its columns
   '@media(max-width:699px){details.sub details.sub>.bd,details.sub .st>.bd{padding-left:4px;padding-right:4px}.hrs.dy b{white-space:normal;overflow-wrap:anywhere;font-size:9.5px}.mtb{font-size:11px;width:100%}.mtb th{font-size:9.5px;text-transform:none;letter-spacing:0;overflow-wrap:anywhere}.mtb :is(th,td){padding:2px 3px}}' +
   'dialog.drw{position:fixed;inset:0 0 0 auto;margin:0;height:100dvh;max-height:none;width:min(1100px,94vw);max-width:none;padding:0;border:0;border-left:1px solid var(--ln);background:var(--bg);color:var(--fg)}dialog.drw[open]{display:flex;flex-direction:column}dialog.drw::backdrop{background:rgba(0,0,0,.35)}.dwh{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--ln)}.dwh b{flex:1;font-size:13px;overflow-wrap:anywhere}.drw iframe{flex:1;border:0;width:100%;background:var(--bg)}' +

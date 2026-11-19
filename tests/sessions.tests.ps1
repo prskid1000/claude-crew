@@ -184,15 +184,15 @@ $st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=
 $sec = { param($id) [regex]::Match($fh, "(?s)id=sec-$id(?: open)?>.*?(?=<details class='sec top'|<footer)").Value }
 $int = & $sec internals; $runsH = & $sec runs; $agH = & $sec agents
 "$($st -join ' ')"
-"internals:$(-not ($int -match 'sec-(resources|shells|agents|runs-)') -and $int -match 'sec-usage' -and $int -match "<details class='sec sub f' id=sec-tg-k1><summary><h4>k1</h4><span class=cnt>\(1\)</span><span class='chip'>1 learned<" -and $int -notmatch 'sec-(top|kit-runs)' -and $fh -notmatch 'wf_kit')"
+"internals:$(-not ($int -match 'sec-(resources|shells|agents|runs-)') -and $int -match 'sec-usage' -and $int -match "<div class='tgr f'><span class=tgn>k1<small>1</small></span><div class=tgt><span class='pt f p-l" -and $int -notmatch 'sec-(top|kit-runs)' -and $fh -notmatch 'wf_kit')"
 $rxRun = @("<li class=f data-oc='' data-fk='d2026-01-02'><span class=tm>01-02</span><span class=gn0[^>]*>Ask RM bug wave</span><span class='chip k-build'>build</span><span class='chip s-oth'>resumed</span><span class='chip s-act'>1 MR\(s\) merged</span><a class=rk href='supervise-runs/wf_b.html' data-dw='Run [^']+'>steps</a></li>", "<span class=tm>01-01</span><span class=gn0 title='select-x &#183; wf_c'>select-x</span><span class='chip k-test'>test</span><span class='chip s-oth'>no QA result recorded</span>")
 $rxLive = "<div class=rus><div class='ru f' data-oc=''><div class=rh><span class=gn0[^>]*>Ask RM bug wave</span>.*?<a class=rk href='supervise-runs/wf_a.html' data-dw='Run [^']+'>steps</a></div></div></div>"   # a running run: its line in the Agents band
 $rxAg = @("devy-1 \(devy\)<div class=lc><span class='chip ls'[^>]*>browser t1<", 'id=sec-agents-done><summary><h3>Finished today</h3><span class=cnt>\(1\)')
 $rxOrphan = "<div class='gk[^']* orphan'><span class=gn[^>]*>mysql<small>no live holder</small>"
 $endH = [regex]::Match($runsH, '(?s)<ul class=rfl>.*?</ul>').Value
 "runs:$($runsH -notmatch 'wf_kit' -and -not @($rxRun | Where-Object { $endH -notmatch $_ }).Count -and $agH -match $rxLive -and $endH -notmatch 'wf_a' -and ($agH -split "class='bar sb3'").Count -eq 2 -and ($agH -split 'class=bar>').Count -eq 2 -and $endH -notmatch '<table|sec-runs-| failed<')"
-$pg = @{}; $null = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } }) $pg; $dayH = [regex]::Match($fh, "(?s)id=sec-dl-days open>.*?</figure>").Value
-"pages:$((($pg.Keys | Sort-Object) -join ',') -eq 'wf_a,wf_b,wf_c' -and $pg['wf_b'] -match "(?s)<div class='sy rst'>.*<th>Step</th>.*bossy\.ps1 report -Run wave-brief-1 -Detail" -and $pg['wf_b'] -notmatch 'class=sa' -and $dayH -match "data-tip='2026-01-02 \(today\): 0 MR\(s\) merged &#183; 0 task\(s\) closed &#183; 0 came back &#183; 2 run\(s\) started\n- Ask RM bug wave \(build\)" -and $dayH -match "data-ft='#oc-tasks,#sec-runs' data-fv='d2026-01-02'" -and $dayH -match 'class=lgt data-s=3 aria-pressed=true[^>]*><i[^>]*>runs started')"
+$pg = @{}; $null = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } }) $pg; $dayH = [regex]::Match($fh, "(?s)id=sec-dl-days open>.*?</details>").Value
+"pages:$((($pg.Keys | Sort-Object) -join ',') -eq 'wf_a,wf_b,wf_c' -and $pg['wf_b'] -match "(?s)<div class='sy rst'>.*<th>Step</th>.*bossy\.ps1 report -Run wave-brief-1 -Detail" -and $pg['wf_b'] -notmatch 'class=sa' -and $dayH -match "data-ft='#sec-runs' data-fv='d2026-01-02'[^>]*title='2026-01-02 \(today\) &#183; runs started: 2 run\(s\) started: Ask RM bug wave")"
 $u.runs = @(1..27 | ForEach-Object { & $rn "r$_" "wf_$_" 'ended' $d0 'devy 1' '' 'build' }); $fh2 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } })
 $rowRx = "<li class=f data-oc"; $olderTxt = '2 older run(s)'
 $fh3 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; shells = @(1..12 | ForEach-Object { [pscustomobject]@{ pid = $_; dir = 'maven|a/b' } }) })
@@ -203,7 +203,7 @@ $rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text 
 "agents:$(-not @($rxAg | Where-Object { $agH -notmatch $_ }).Count -and $fh -match $rxOrphan)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
 $fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Trim() })
-$foldWant = 'flags=open', 'agents=open:[running]1', 'delivery=open', 'runs=closed:2 ended in 7 days', 'machine=open', 'usage=open', 'internals=closed', 'tuning=closed:3', 'tg-k2=closed:1', 'agents-done=closed:1'
+$foldWant = 'flags=open', 'agents=open:[running]1', 'delivery=open', 'runs=closed:2 ended in 7 days', 'machine=open', 'usage=open', 'internals=closed', 'tuning=closed:3', 'agents-done=closed:1'
 $foldMiss = @($foldWant | Where-Object { " $($fl[0]) " -notmatch " $([regex]::Escape($_))[ :]" })
 Expect "supervise page: every section a <details> with '<title> (<count>)', the owner's default open states, an empty one summary only (missing: $foldMiss | $($fl[0]))" (-not $foldMiss.Count)
 Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: usage, activity, tuning (a closed fold per area, source counts); no top steps or kit runs; runs: running first, a fold per day (today open, sum), label, kind, resumed, budget bar running or 80%+, no kit runs; agents: leases on the row, finished folded, orphan tinted; cap: newest 25 ended runs, rest counted; ux: 10 rows + Show all (N), jump links, No match, keys break at | /, tone AA)' @('internals', 'runs', 'pages', 'agents', 'cap', 'ux') 6
@@ -223,7 +223,7 @@ $setOut = Invoke-PsTest 'settings' @'
 $null = . $args[0] 6>$null; $p = @{ key = 'supervise.shellStuckMinutes'; value = 45; source = 'learned' }; $__cfg = [pscustomobject]@{}; $s = Get-KitSuperviseSettings $p
 $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = @{ settings = $s } })
 $__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ heartbeatMinutes = 10 } }; $l = (Get-KitSuperviseSettings $p).'supervise.heartbeatMinutes'
-"$($s.'supervise.ramActPct'.source) $($s.'supervise.shellStuckMinutes'.source) $($h -match '<td data-k=Value>90</td><td data-k=Source>default</td>') $($l.value)/$($l.source)/$($l.default)"
+"$($s.'supervise.ramActPct'.source) $($s.'supervise.shellStuckMinutes'.source) $($h -match "<span class='pt f p-d'[^>]*><small>ramActPct</small><b>90</b>") $($l.value)/$($l.source)/$($l.default)"
 '@ @($O)
 Expect "settings: effective defaults with no override, learned, an override names its default ($setOut)" ("$setOut" -eq 'default learned True 10/local/15')
 $deadH = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $deadH.WaitForExit()   # a restart: the old session id, its holder process gone

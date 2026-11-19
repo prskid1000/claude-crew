@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L317 shells · L486 page · L1001 release · L1046 lines · L1079 cleanup · L1146 launch ·
-  L1224 pause · L1343 heartbeat · L1358 sessions · L1410 ci tasks ·
-  L1466 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L317 shells · L486 page · L1015 release · L1060 lines · L1093 cleanup · L1160 launch ·
+  L1238 pause · L1357 heartbeat · L1372 sessions · L1424 ci tasks ·
+  L1480 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -556,7 +556,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
   $usage = Read-KitUsageResult   # budget -Usage writes it
   $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
-    changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } })
+    paramDays = @(try { Get-KitParamDays $d.at } catch { }); changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 10 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ((Get-KitMember $apv "$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })") -or (Get-KitMember $apv "$($_.key)|")) { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
             learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); changed = $_.changed; why = $_.why } } } catch { }) }
@@ -772,17 +772,31 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $shellHtml = (& $table $shCols @($shRows | ForEach-Object { $sr = $_; , @(@($sr.pid, $sr.owner, @{ h = & $shAge $sr.age }, (& $shState $sr)) + @(if ($shDirOn) { & $shDir $sr }) + @(& $shCmd $sr) + @(if ($shNextOn) { "$($sr.next)" })) })) -replace '^<div class=tw><table>', "<div class=tw><table><colgroup>$(@($shWidths | ForEach-Object { "<col style='width:$_'>" }) -join '')</colgroup>"
   $setRows = @(if ($st.settings) { (Get-KitProps $st.settings) | ForEach-Object { , @($_.Name, $_.Value) } })
   $chg = @($st.changes | Where-Object { $_ }); [array]::Reverse($chg); $prm = @($st.params | Where-Object { $_ }); $hm = { param($x) if ($x) { try { ([datetime]$x).ToString('MM-dd HH:mm') } catch { "$x" } } else { '' } }   # '' keeps the cell: an empty result drops it from the row
-  # Tuning: every tunable once, a fold per area (closed, owner 2026-11-14; header: non-default sources); the last 10 changes on top
+  # Tuning (owner 2026-11-19: UI, not a dump table): a tile per key in its group's row (colour = source: learned sage, shadow plum, local
+  # slate, default plain; the value inside; changed in 7 days outlined; tooltip: key, context, source, change, why), learned keys with
+  # history as a key x day heatmap (shade = the change vs the day before), recent changes as chips, the page Filter finds a key, the table one tap away
   $tv = { param($v) if ($null -eq $v) { '' } elseif ($v -is [string] -or $v -is [ValueType]) { "$v" } else { $v | ConvertTo-Json -Compress -Depth 4 } }
   # state (· suffix: config) -> words; pinned / frozen / shadow kept (a shadow is a proposal, not applied)
   $tSrc = { param([string]$s, [string]$note, $dflt) if ($s -match '· |config|override|local') { "local config$(if ("$dflt" -ne '') { " (default $dflt)" })" } elseif ($s -match '^(live|approved|learned)') { "learned ($s$(if ($note) { ", $note" }))" } elseif ($s -match '^default') { 'default' } else { "$s$(if ($note) { " ($note)" })" } }
-  $tun = @(@($prm | ForEach-Object { [pscustomobject]@{ key = "$($_.key)"; ctx = $(if ("$($_.ctx)" -in '', '_') { '' } else { "$($_.ctx)" }); val = & $tv $_.value; src = & $tSrc "$($_.source)" "$($_.learned)" $null; chg = & $hm $_.changed; why = "$($_.why)" } }) +
+  $tun = @(@($prm | ForEach-Object { [pscustomobject]@{ key = "$($_.key)"; ctx = $(if ("$($_.ctx)" -in '', '_') { '' } else { "$($_.ctx)" }); val = & $tv $_.value; src = & $tSrc "$($_.source)" "$($_.learned)" $null; chg = & $hm $_.changed; c7 = $(try { [datetime]$_.changed -ge $at.AddDays(-7) } catch { $false }); why = "$($_.why)" } }) +
     @($setRows | Where-Object { $sk = $_[0]; -not @($prm | Where-Object { "$($_.key)" -eq $sk -and "$($_.ctx)" -in '', '_' }).Count } | ForEach-Object { $sv = $_[1]; $hasSrc = $null -ne $sv -and (Get-KitProps $sv).Name -contains 'source'
       [pscustomobject]@{ key = $_[0]; ctx = ''; val = & $tv $(if ($hasSrc) { $sv.value } else { $sv }); src = $(if ($hasSrc) { & $tSrc "$($sv.source)" '' $sv.default } else { '' }); chg = ''; why = '' } }))
-  $tunT = (@(foreach ($g in @($tun | Group-Object { ($_.key -split '\.')[0] } | Sort-Object Name)) { $gs = @($g.Group | Where-Object src -NotIn '', 'default' | Group-Object { $_.src -replace '\s*\(.*' } | Sort-Object Count -Descending | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ' · '
-      & $fold "tg-$($g.Name)" $g.Name $g.Count ('<div class=tw><table class=tun><tr><th>Key</th><th>Context</th><th>Value</th><th>Source</th><th class=lo>Changed</th><th class=hs>Why</th></tr>' + (@($g.Group | Sort-Object key, ctx | ForEach-Object { "<tr class=f><td data-k=Key>$((& $e $_.key) -replace '\.', '.<wbr>')</td><td data-k=Context>$(& $e $_.ctx)</td><td data-k=Value>$((& $e $_.val) -replace '([,/|])', '$1<wbr>')</td><td data-k=Source>$(& $e $_.src)</td><td data-k=Changed class=lo>$(& $e $_.chg)</td><td data-k=Why class=hs>$(& $e $_.why)</td></tr>" }) -join '') + '</table></div>') -tag h4 -cls 'sub f' -extra $(if ($gs) { "<span class='chip'>$(& $e $gs)</span>" }) }) -join '')
-  $chgL = if ($chg.Count) { "<h4 class=sh4>Recent changes</h4>" + (& $grid info 280px @($chg | Select-Object -First 10 | ForEach-Object { "<li class=f>$(& $e "$(& $hm $_.at) $($_.key)$(if ("$($_.ctx)" -notin '', '_') { " [$($_.ctx)]" }) $($_.from) -> $($_.to)$(if ($_.why) { ": $($_.why)" })")</li>" }) 0 ul) }
-  $setHtml = & $fold 'tuning' 'Tuning' $tun.Count "$chgL<div class=fx>$tunT</div>" -cls sub
+  $srcK = { param([string]$s) if ($s -like 'learned*') { 'l' } elseif ($s -like 'shadow*') { 's' } elseif ($s -like 'local*') { 'c' } elseif ($s -in '', 'default') { 'd' } else { 'o' } }
+  $tunG = @(foreach ($g in @($tun | Group-Object { ($_.key -split '\.')[0] } | Sort-Object Name)) { $gp = "$($g.Name)."
+      "<div class='tgr f'><span class=tgn>$(& $e $g.Name)<small>$($g.Count)</small></span><div class=tgt>$(@($g.Group | Sort-Object key, ctx | ForEach-Object { $sk = & $srcK $_.src
+          "<span class='pt f p-$sk$(if ($_.c7) { ' c7' })' title='$(& $e "$($_.key)$(if ($_.ctx) { " [$($_.ctx)]" }) = $($_.val) · $(if ($_.src) { $_.src } else { 'default' })$(if ($_.chg) { " · changed $($_.chg)" })$(if ($_.why) { " · $($_.why)" })")'><small>$(& $e $(if ($_.key.StartsWith($gp)) { $_.key.Substring($gp.Length) } else { $_.key }))$(if ($_.ctx) { & $e " · $($_.ctx)" })</small><b>$(& $e $_.val)</b><span hidden>$(& $e "$($_.key) $($_.ctx)")</span></span>" }) -join '')</div></div>" })
+  $tLeg = "<div class=hk><i class='lgk pl'></i>learned <i class='lgk ps'></i>shadow (proposed) <i class='lgk pc'></i>local config <i class='lgk pd'></i>default · outlined = changed in 7 days · hover a tile for its context, source and why</div>"
+  # recent changes: a chip each (when · key [context] · old -> new), the reason in its tooltip; no value = back to the default
+  $cv = { param($v, [string]$none) if ($null -eq $v -or "$v" -eq '') { $none } else { & $tv $v } }
+  $chgL = if ($chg.Count) { "<div class=tcs>$(@($chg | Select-Object -First 10 | ForEach-Object { "<span class=chip title='$(& $e "$($_.why)")'>$(& $e "$(& $hm $_.at) · $($_.key)$(if ("$($_.ctx)" -notin '', '_') { " [$($_.ctx)]" }) · $(& $cv $_.from 'new') -> $(& $cv $_.to 'default')")</span>" }) -join '')</div>" }
+  # learned keys with history (stats.paramDays): the day's last value, shade = its change vs the day before
+  $pd = @($st.paramDays | Where-Object { $_ -and $_.key }); $pdDates = @(6..0 | ForEach-Object { & $dayKey $_ })
+  $drift = if ($pd.Count) { Format-KitDayHeat @($pd | ForEach-Object { $vs = @($_.days); $prev = $null
+        $prev = $_.first; $sh = @(foreach ($v in $vs) { $s0 = if ($null -ne $v -and $null -ne $prev -and [double]$prev) { Get-KitHeatShade ([math]::Abs([double]$v - [double]$prev) / [math]::Abs([double]$prev)) } else { 0 }; $prev = $v; $s0 })
+        @{ n = "$($_.key)$(if ("$($_.ctx)" -notin '', '_') { " [$($_.ctx)]" })"; mk = "param-day-$($_.key)-$($_.ctx)"; v = $vs; sh = $sh; cls = 'fh l-watch'; t = "$($_.n)"; fmt = { param($v) & $n1 $v }; zero = $true
+          tips = @(for ($i = 0; $i -lt $vs.Count; $i++) { if ($null -eq $vs[$i]) { 'default (no learned value)' } else { "$(& $n1 $vs[$i])$(if ($i -and $null -ne $vs[$i - 1] -and "$($vs[$i - 1])" -ne "$($vs[$i])") { " (was $(& $n1 $vs[$i - 1]))" })" } }) } }) $pdDates 'learned key · day' 'changes' }
+  $tTab = "<details class=tat><summary>as table (copy)</summary><div class=tw>$(Format-KitMiniTable @('group', 'key', 'context', 'value', 'source', 'changed', 'why') @($tun | Sort-Object key, ctx | ForEach-Object { , @(($_.key -split '\.')[0], $_.key, $_.ctx, $_.val, $(if ($_.src) { $_.src } else { 'default' }), $_.chg, $_.why) }))</div></details>"
+  $setHtml = & $fold 'tuning' 'Tuning' $tun.Count "$chgL$(if ($drift) { "<div data-mk=param-day>$drift</div><div class=hk>a cell = the learned value at the day's end (shade = how much it moved since the day before) · blank = the default</div>" })<div class=tgs data-mk=params-now>$($tunG -join '')</div>$tLeg$tTab" -cls sub
   $css = (Get-KitSupervisePageCss) + (Get-KitStatsCss)
   $fav = if ($mark) { "<link rel=icon href='data:image/svg+xml,$([Uri]::EscapeDataString($mark))'>" }
   $js = "(function(){var d=document,L=localStorage,S=sessionStorage,r=d.documentElement,a=d.getElementById('age'),t=new Date(a.dataset.at),n=+a.dataset.next||15,nx=d.getElementById('nx'),same=S.getItem('kc-at')==a.dataset.at;S.setItem('kc-at',a.dataset.at);" +   # same: a reload brought no new sweep
