@@ -14,7 +14,7 @@ $lwr = & { . $O; $n = (Get-Date).Date.AddHours(12); $t = $n.AddMinutes(-30); $is
   @{ at = (& $iso 0); event = 'lease-wait'; env = 'rm2'; services = @('api', 'web'); holders = @('H'); min = 4 } | ConvertTo-Json -Compress | Set-Content (Join-Path $dd 'env.jsonl')
   $w = Get-KitLeaseWaits $n; $hc = @($w.rows | Where-Object name -eq 'browser seats')[0].hours | Where-Object { $_[0] }
   "$(@($w.rows | ForEach-Object { "$($_.name)=$($_.n)/$([math]::Round($_.min))" } | Sort-Object) -join ',')|$($hc[3])"
-  $html = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ waits = $w } }); "$($html -match "Lease waits")|$($html -match "title='[^']*&#183; 1 waits &#183; 10 min &#183; longest 10 min &#183; c1'")" }
+  $html = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ waits = $w } }); "$($html -match "Waits min")|$($html -match "title='[^']*&#183; 1 waits &#183; 10 min &#183; longest 10 min &#183; c1'")" }
 Expect "lease waits: wait = acquire since..at per resource (tab = browser seats, gate waitSec, a train per service), under 30 s none; card + cell tooltip ($lwr)" ($lwr -join ' ' -eq 'browser seats=1/10,build gate=1/10,rm2 · api=1/4,rm2 · web=1/4|c1 True|True')
 # test runs: results.json by write day; PASS_WITH_NOTE = PASS, PENDING none, a cause outside the list = other; an old run is out
 $qa = & { . $O; $r = Get-KitPath qa-runs -Create; $f = Join-Path (New-Item -ItemType Directory -Force (Join-Path $r 'run1/T1')) 'results.json'; $f2 = Join-Path (New-Item -ItemType Directory -Force (Join-Path $r 'old/T1')) 'results.json'
@@ -40,7 +40,7 @@ Expect "sparkline: axis + caption values compact, no raw 9-digit number ($(([reg
 # resources (owner 2026-11-19): one view; the held table is gone; a holder text parses grace after a branch, parked, a wait note kept whole
 $hpt = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = @(); resources = @() })
   $p = @((Split-KitHolder 'devy-1 (fix/x) (grace 5 min)'), (Split-KitHolder 'parked: fix/y'), (Split-KitHolder 'devy-2 (waiting for RAM)'), (Split-KitHolder ''))
-  "$($h -notmatch 'Resources and leases|class=hlt') $(@($p | ForEach-Object { "$($_.h)/$($_.b)/$($_.g)" }) -join '|')" }
+  "$($h -notmatch 'Resources and leases|class=hlt' -and $h.Contains('.cpg .gk.hot>.gc:nth-last-child(15)')) $(@($p | ForEach-Object { "$($_.h)/$($_.b)/$($_.g)" }) -join '|')" }
 Expect "resources: no held table; holder parts ($hpt)" ($hpt -eq 'True devy-1/fix/x/ (grace 5 min)|parked/fix/y/|devy-2 (waiting for RAM)//|//')
 # Branches tile: the last repo sync per repo (fast-forwarded, diverged, dirty, pruned), kept ones in its tooltip
 $syh = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ repos = @{ at = $n.ToString('o'); repos = @(@{ repo = 'api'; branches = 3; worktrees = 1 }) }
@@ -58,12 +58,6 @@ Expect "flags heatmap: per hour distinct, FIXED from auto-fixed, old hour droppe
 $fkr = & { . $O; $n = [datetime]'2026-01-02T10:20:00'; $fh = @(@{ h = '2026010210'; f = @(@{ l = 'WATCH'; k = 'other'; y = 'a'; t = 'UNTRACKED MR !5 open' }, @{ l = 'WATCH'; k = 'other'; y = 'b'; t = 'PRIOR OVERRIDE x' }, @{ l = 'WATCH'; k = 'other'; y = 'c'; t = 'disk D: low' }, @{ l = 'WATCH'; k = 'other'; y = 'd'; t = 'LANE RM 2 busy' }) })
   $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ flagHours = $fh } }); "$($h -match '<span class=gn[^>]*>UNTRACKED MR</span>') $($h -match '<span class=gn[^>]*>PRIOR OVERRIDE</span>') $($h -match '<span class=gn[^>]*>other</span>') $($h -match '<span class=gn[^>]*>LANE</span>' -and $h -notmatch '>LANE RM<')" }
 Expect "flags heatmap: a row per kind phrase, stored 'other' re-read, no kind word stays other ($fkr)" ($fkr -eq 'True True True True')
-# lane services of one lease collapse: wait rows with identical hours + totals -> one lane row; held rows with one holder -> one row; shared stays
-$lcl = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $hr = { param($b, $m) , @(0..23 | ForEach-Object { if ($_ -eq $b) { , @(1, $m, $m, '') } else { , @(0, 0, 0, '') } }) }
-  $w = [pscustomobject]@{ h0 = $n.AddHours(-23).ToString('o'); rows = @([pscustomobject]@{ name = 'rm·Falcon · api'; hours = (& $hr 22 5); n = 1; min = 5; max = 5 }, [pscustomobject]@{ name = 'rm·Falcon · web'; hours = (& $hr 22 5); n = 1; min = 5; max = 5 }, [pscustomobject]@{ name = 'hm·Falcon · api'; hours = (& $hr 21 4); n = 1; min = 4; max = 4 }, [pscustomobject]@{ name = 'hm·Falcon · web'; hours = (& $hr 20 4); n = 1; min = 4; max = 4 }) }
-  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ waits = $w } })
-  "$($h -match '>rm&#183;Falcon</span>') $($h -notmatch '>rm&#183;Falcon &#183; api<') $($h -match '>hm&#183;Falcon &#183; api<' -and $h -match '>hm&#183;Falcon &#183; web<')" }
-Expect "lease waits: a lane's services with identical data are one row; differing ones stay split ($lcl)" ($lcl -eq 'True True True')
 # Branch / task on the Resources · 24 h row: a QA code and pid of a board agent resolve to a task / item; the holder in its own small, escaped
 $btk = & { . $O; $qd = Join-Path (Get-KitPath qa-runs -Create) 'run1'; New-Item -ItemType Directory -Force $qd | Out-Null
   @{ run = 'run1'; items = @{ T5 = @{ tasks = @('t1'); pubKey = 'pk9' } } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $qd 'index.json')
@@ -78,8 +72,8 @@ $gtr = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $hr = { param($b) , @(0..
   $gs = [pscustomobject]@{ h0 = $n.AddHours(-23).ToString('o'); rows = @([pscustomobject]@{ name = 'zig-build'; hours = (& $hr 22) }, [pscustomobject]@{ name = 'maven test'; hours = (& $hr 2) }) }
   $cpu = [pscustomobject]@{ svc = @('e · api', 'e · web'); samples = @([pscustomobject]@{ at = $n.AddMinutes(-30).ToString('o'); s = 600; all = 20; g = @{ 'e · api' = 5 }; m = @{ 'e · api' = 1.5 }; top = @() }) }
   $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); mem = @{ TotalGB = 16; AvailGB = 8 }; stats = [pscustomobject]@{ gate = $gs; cpu = $cpu } })
-  "$($h -match '>zig-build</span>' -and (Get-KitGateGroup 'zig-build' 'x') -eq 'zig-build') $($h -match "1 idle kinds · no data in 12 h</button><div class=gki><div class=gk><span class=gn[^>]*>maven test<") $($h -match "<button type=button class=gkx aria-expanded=false>1 idle resources · no data in 12 h</button><div class=gki><div class='gk[^']*'><span class=gn title='e &#183; web: CPU not sampled") $($h -match "title='09:00 &#183; e &#183; api &#183; CPU avg 5% &#183; peak 5% &#183; RAM 1.5 GB'") $($h -match "id=sec-res24 open><summary><h4>Resources &#183; 24 h</h4><span class=cnt>\(2 of 3 busy\)")" }
-Expect "gate kinds from the log (unknown = own row), idle rows folded; Resources · 24 h: a stopped configured service keeps a folded row, RAM from its tree ($gtr)" ($gtr -eq 'True True True True True')
+  "$($h -match '>zig-build</span>' -and (Get-KitGateGroup 'zig-build' 'x') -eq 'zig-build') $($h -match "1 idle kinds · no data in 12 h</button><div class=gki><div class=gk><span class=gn[^>]*>maven test<") $($h -match "<div class='rgg cl' data-g='rg-env'>.*?<span class=gn title='e &#183; web: CPU not sampled") $($h -match "title='09:00 &#183; e &#183; api &#183; CPU avg 5% &#183; peak 5% &#183; RAM 1.5 GB'") $($h -match "id=sec-res24 open><summary><h4>Resources &#183; 24 h</h4><span class=cnt>\(2 of 3 busy\)")" }
+Expect "gate kinds from the log (unknown = own row), idle rows folded; Resources · 24 h: a stopped configured service keeps its row in a folded group, RAM from its tree ($gtr)" ($gtr -eq 'True True True True True')
 # K51 (owner): every heatmap cell shows its number (gate: busy minutes; Resources: CPU % over RAM GB), 0 blank, dark shade = hi (contrast text)
 $hnm = & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $h0 = [datetime]'2026-01-02T00:00:00'; $hs = @(0..23 | ForEach-Object { , @(0, 0, 0) }); $hs[3] = @(1, 30, 0); $hs[4] = @(1, 2, 0)
   $g = Format-KitHeatCells $hs $h0 'g' { 'tip' }; $s = Format-KitHeatCells $hs $h0 's' { 'tip' } { param($hv) @(42, '5', 100, '1.5') } 'sp'

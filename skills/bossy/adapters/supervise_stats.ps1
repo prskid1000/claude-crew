@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L299 cards · L492 flags · L573 shells
+Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L300 cards · L496 flags · L586 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -195,11 +195,11 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @()) {
     $samples += [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; m = [math]::Round($mach, 3); w = @($rw.Keys | Where-Object { $rw[$_].g -ge 0.001 } | ForEach-Object { [ordered]@{ n = "$_"; a = $rw[$_].a; g = [math]::Round($rw[$_].g, 3); c = $rw[$_].c; k = $rw[$_].k } }) }
   }
   $hr = @{}; $last = @{}
-  foreach ($s in @($samples | Where-Object { [datetime]$_.at -gt $Now.AddHours(-1) })) { foreach ($r in @($s.w | Where-Object { $_ })) { $hr["$($r.n)"] = [double]$hr["$($r.n)"] + [double]$r.g; $last["$($r.n)"] = $r } }
+  foreach ($s in @($samples | Where-Object { [datetime]$_.at -gt $Now.AddHours(-1) })) { foreach ($r in @(Get-KitWriteRows $s)) { $hr["$($r.n)"] = [double]$hr["$($r.n)"] + [double]$r.g; $last["$($r.n)"] = $r } }
   $hour = @($hr.Keys | Sort-Object { - $hr[$_] } | ForEach-Object { [ordered]@{ label = $_; tag = "$($last[$_].a)"; gb = [math]::Round($hr[$_], 2); cmd = "$($last[$_].c)" } })
   $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour')
   $flags = @(foreach ($h in @($hour | Where-Object { $_.gb -ge $soft })) { $lv = if ($h.gb -ge $hard) { 'ACT' } else { 'WATCH' }; $who = "$($h.label)$(if ($h.tag) { " ($($h.tag))" })"
-      [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $who; what = "WRITES ${who}: $($h.gb) GB written in the last hour (soft $soft / hard $hard GB); top: $($h.cmd)"
+      [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $who; what = "WRITES ${who}: $($h.gb) GB written in the last hour (soft $soft / hard $hard GB); top: $(Get-KitWriteLabel '' $h.cmd)" -replace "; top: $([regex]::Escape($h.label))$"
         action = "$(if ($lv -eq 'ACT') { 'Check whether it is a one-off (a burst already over, a false positive) before acting; still writing: stop it, then ' })tell its owner: no bulk data, dumps, tree copies, reinstalls or big captures (AGENTS.md); links / moves, small fixtures, read-only checks." } })
   [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; hour = $hour; flags = $flags }
 }
@@ -293,7 +293,8 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
   if ($tops.Count) { $rows += & $mk 'others' '' '' $oh (& $rest $now60['*m'] { param($nm) [double]$now60[$nm] }) (& $rest (& $sumD '*m' 1) { param($nm) & $sumD $nm 1 }) (& $rest (& $sumD '*m' 7) { param($nm) & $sumD $nm 7 }) (& $rest (& $sumD '*m' 30) { param($nm) & $sumD $nm 30 }) }
   $days = @(for ($i = 0; $i -lt 7; $i++) { $d0 = $Now.Date.AddDays(-$i); $hp = @(0..23 | ForEach-Object { $bk = $hm[$d0.AddHours($_).ToString('yyyyMMddHH')]; , @([math]::Round((& $val $bk '*m'), 3), [math]::Round((& $val $bk '*k'), 3)) })
       [ordered]@{ d = $d0.ToString('yyyy-MM-dd'); h = $hp; m = [math]::Round((& $val $dm[$d0.ToString('yyyy-MM-dd')] '*m'), 2); k = [math]::Round((& $val $dm[$d0.ToString('yyyy-MM-dd')] '*k'), 2) } })
-  [ordered]@{ at = $Now.ToString('o'); h0 = $h0.ToString('o'); rows = $rows; days = $days }
+  $byName = @($names | Where-Object { $_ -notin $tops } | ForEach-Object { & $mk $_ $_ "$($tags[$_])" (& $line $_) $now60[$_] (& $sumD $_ 1) (& $sumD $_ 7) (& $sumD $_ 30) })   # the Writes metric of Resources · 24 h: every owner, not only the top
+  [ordered]@{ at = $Now.ToString('o'); h0 = $h0.ToString('o'); rows = $rows; more = $byName; days = $days }
 }
 
 # ---- cards: render inside Format-KitSuperviseHtml and use its helpers ($e, $n1, $fmt, $icv, $spark, $dots, $nowCard, $at, $st, $nw, $j, $l24, $fold)
@@ -301,36 +302,22 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
 # through $fold (chevron + count, open state kept; busy open, idle closed)
 # the 24 hour labels over a heatmap: every 6th clock hour, "now" over the last cell; -Clock: a calendar day (00-23), no "now"
 function Format-KitHourHead([datetime]$H0, [switch]$Clock) { @(for ($hi = 0; $hi -lt $(if ($Clock) { 23 } else { 21 }); $hi++) { if ($H0.AddHours($hi).Hour % 6 -eq 0) { "<b style='grid-column:$($hi + 1)/span 2'>$($H0.AddHours($hi).ToString('HH'))</b>" } }) + $(if (-not $Clock) { "<b class=nw style='grid-column:23/span 2'>now</b>" }) -join '' }
-# Disk writes · 24 h (owner 2026-11-19: the Resources heatmap's look; Get-KitWriteView): a row per owner (whole machine, kit-owned, top 8,
-# others), a cell = GB written in that clock hour; columns now (last 60 min) / peak / avg GB an hour, today, 7 and 30 days; amber / red
-# = now over writes.softGBPerHour / hardGBPerHour; below, 7 days x 24 h: the machine (top half) over its kit-owned share (bottom half)
+# Disk writes · 7 days (owner 2026-11-19; Get-KitWriteView days): 7 days x 24 clock hours, the whole machine (top half) over its
+# kit-owned share (bottom half); per day: GB, kit GB, the busiest hour. The 24 h per owner is the Writes metric of Resources · 24 h
 function Format-KitWritesCard($W) {
-  $rs = @($W.rows | Where-Object { $_ }); if (-not $rs.Count) { return '' }
-  $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour'); $h0 = [datetime]$W.h0
-  $gv = { param($v) $d = [double]$v; if ($d -le 0) { '0' } elseif ($d -lt 0.095) { $d.ToString('0.00', [cultureinfo]::InvariantCulture) } else { & $n1 $d } }
+  $ds = @($W.days | Where-Object { $_ }); if (-not $ds.Count) { return '' }
+  $hard = [double](Get-KitParam 'writes.hardGBPerHour'); $ic = [cultureinfo]::InvariantCulture
+  $gv = { param($v) $d = [double]$v; if ($d -le 0) { '0' } elseif ($d -lt 0.095) { $d.ToString('0.00', $ic) } else { & $n1 $d } }
   $gbT = { param($v) $d = [double]$v; if ($d -lt 1) { "$([math]::Round($d * 1024)) MB" } else { "$(& $n1 $d) GB" } }
-  $mx = { param($xs) [math]::Max($hard, [double](@($xs | ForEach-Object { [double]$_ }) + 0 | Measure-Object -Maximum).Maximum) }
-  $scM = & $mx $rs[0].h; $scO = & $mx @($rs | Select-Object -Skip 1 | ForEach-Object { $_.h })   # full shade: the machine's busiest hour; an owner's: the busiest owner hour
-  $cols = @(@('now', 'GB in the last 60 min'), @('peak', 'most GB in one hour, 24 h'), @('avg', 'GB an hour on average, 24 h'), @('today', 'GB today'), @('7 d', 'GB, 7 days'), @('30 d', 'GB, 30 days'))
-  $head = "<div class='gk gh'><span class=gn>owner · agent · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead $h0)</span>$(@($cols | ForEach-Object { "<span class=gc title='$($_[1])'><small>$($_[0])</small></span>" }) -join '')</div>"
-  $items = @(for ($ri = 0; $ri -lt $rs.Count; $ri++) { $r = $rs[$ri]; $nm = "$($r.n)"; $sc = if ($ri) { $scO } else { $scM }; $nowV = [double]$r.now
-      $tone = if ($ri -lt 2 -or $nm -eq 'others') { '' } elseif ($nowV -ge $hard) { ' hot' } elseif ($nowV -ge $soft) { ' warn' } else { '' }   # flags are per owner: never the sums
-      $vals = @((& $gv $r.now), (& $gv $r.peak), (& $gv $r.avg), (& $gv $r.day), (& $gv $r.d7), (& $gv $r.d30))
-      $tip = "${nm}$(if ($r.a) { " · $($r.a)" }): now $(& $gbT $r.now) in the last 60 min · peak $(& $gbT $r.peak) an hour · today $(& $gbT $r.day) · 7 days $(& $gbT $r.d7) · 30 days $(& $gbT $r.d30)$(if ($r.c) { " · top: $($r.c)" })"
-      [pscustomobject]@{ busy = $ri -lt 2 -or (Test-KitHeatBusy @($r.h | ForEach-Object { , @([double]$_) })); html = "<div class='gk$(if ($ri -eq 2) { ' gl0' })$tone'><span class=gn title='$(& $e $tip)'>$(& $e $nm)$(if ($r.a) { "<small>$(& $e $r.a)</small>" })</span>" +
-        (Format-KitHeatCells @($r.h | ForEach-Object { , @([double]$_) }) $h0 "$nm, GB written per hour, last 24 h" { param($hv) "$nm · $(& $gbT $hv[0])" } { param($hv) @((Get-KitHeatShade ([double]$hv[0] / $sc)), (Format-KitHeatNum $hv[0])) } 'ws') +
-        (@(for ($ci = 0; $ci -lt 6; $ci++) { "<span class='gc$(if ($vals[$ci] -eq '0') { ' z' })' title='$(& $e "${nm}: $($vals[$ci]) $($cols[$ci][1])")'>$($vals[$ci])</span>" }) -join '') + '</div>' } })
-  $ds = @($W.days | Where-Object { $_ }); $scD = & $mx @($ds | ForEach-Object { @($_.h) | ForEach-Object { $_[0] } }); $ic = [cultureinfo]::InvariantCulture
-  $dHead = "<div class='gk gh wdh'><span class=gn>day · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead ([datetime]$ds[0].d) -Clock)</span><span class=gc title='GB the machine wrote that day'><small>day</small></span><span class=gc title='GB kit-owned processes wrote that day'><small>kit</small></span><span class=gc title='most GB in one hour that day'><small>peak</small></span><span></span><span></span><span></span></div>"
-  $dRows = @(for ($di = 0; $di -lt $ds.Count; $di++) { $dy = $ds[$di]; $d0 = [datetime]$dy.d; $dl = if ($di) { $d0.ToString('ddd dd', $ic) } else { 'today' }; $pk = [double](@($dy.h | ForEach-Object { [double]$_[0] }) + 0 | Measure-Object -Maximum).Maximum
+  $scD = [math]::Max($hard, [double](@($ds | ForEach-Object { @($_.h) | ForEach-Object { [double]@($_)[0] } }) + 0 | Measure-Object -Maximum).Maximum)
+  $dHead = "<div class='gk gh'><span class=gn>day · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead ([datetime]$ds[0].d) -Clock)</span><span class=gc title='GB the machine wrote that day'><small>day</small></span><span class=gc title='GB kit-owned processes wrote that day'><small>kit</small></span><span class=gc title='most GB in one hour that day'><small>peak</small></span></div>"
+  $dRows = @(for ($di = 0; $di -lt $ds.Count; $di++) { $dy = $ds[$di]; $d0 = [datetime]$dy.d; $dl = if ($di) { $d0.ToString('ddd dd', $ic) } else { 'today' }; $pk = [double](@($dy.h | ForEach-Object { [double]@($_)[0] }) + 0 | Measure-Object -Maximum).Maximum
       $dv = @((& $gv $dy.m), (& $gv $dy.k), (& $gv $pk))
       "<div class=gk><span class=gn title='$(& $e "${dl}: $(& $gbT $dy.m) written, $(& $gbT $dy.k) kit-owned, peak $(& $gbT $pk) an hour")'>$(& $e $dl)</span>" +
       (Format-KitHeatCells @($dy.h) $d0 "$dl, GB written per hour: machine over kit-owned" { param($hv) "machine $(& $gbT $hv[0]) · kit-owned $(& $gbT $hv[1])" } { param($hv) @((Get-KitHeatShade ([double]$hv[0] / $scD)), (Format-KitHeatNum $hv[0]), (Get-KitHeatShade ([double]$hv[1] / $scD)), (Format-KitHeatNum $hv[1])) } 'sp ws' -NowAt $(if ($di) { -1 } else { ([datetime]$W.at).Hour })) +
-      (@(for ($ci = 0; $ci -lt 3; $ci++) { "<span class='gc$(if ($dv[$ci] -eq '0') { ' z' })'>$($dv[$ci])</span>" }) -join '') + '<span></span><span></span><span></span></div>' })   # the owner grid's 6 columns: one look, aligned hours
-  $hot = @($items | Where-Object { $_.html -match "^<div class='gk[^']* hot'" }).Count; $warn = @($items | Where-Object { $_.html -match "^<div class='gk[^']* warn'" }).Count
-  $legend = "<div class=hk>a cell = GB written in that clock hour (full = the busiest hour) · outlined = now · now = the last 60 min: amber over $(& $n1 $soft), red over $(& $n1 $hard) GB (WATCH / ACT) · kit-owned = held resources, agent shells, lane services · tap a name for its full command</div>"
-  $inner = "<div class='gks wrh'>$head$(Format-KitHeatRows $items 'owners')$(if ($ds.Count) { "$dHead$($dRows -join '')" })</div>$legend" + $(if ($ds.Count) { "<div class=hk><i class='lgk c'></i>top half = the whole machine <i class='lgk r'></i>bottom half = kit-owned · GB per clock hour, 7 days</div>" })
-  & $fold 'writes' 'Disk writes · 24 h' (Get-KitHeatCount $items) $inner -Open -tag h4 -cls "sub st wr$(if ($hot) { ' hot' } elseif ($warn) { ' warn' })"
+      (@(for ($ci = 0; $ci -lt 3; $ci++) { "<span class='gc$(if ($dv[$ci] -eq '0') { ' z' })'>$($dv[$ci])</span>" }) -join '') + '</div>' })
+  $tot = [double](@($ds | ForEach-Object { [double]$_.m }) + 0 | Measure-Object -Sum).Sum
+  & $fold 'writes' 'Disk writes · 7 days' "$(& $gbT $tot)" "<div class='gks w3'>$dHead$($dRows -join '')</div><div class=hk><i class='lgk c'></i>top half = the whole machine <i class='lgk r'></i>bottom half = kit-owned · GB per clock hour · outlined = now · per owner: Resources · 24 h, Writes GB</div>" -tag h4 -cls 'sub st wr'
 }
 # a share 0..1 -> cell shade % (square root: a small value still shows; 0 = blank)
 function Get-KitHeatShade([double]$F) { if ($F -gt 0) { [int][math]::Round(25 + 75 * [math]::Sqrt([math]::Min(1.0, $F))) } else { 0 } }
@@ -386,25 +373,14 @@ function Format-KitGateCard($gs) {
   "<div class=gp>$(& $spark @($l24 | ForEach-Object gq) 'watch' 'queued builds, 24 h' 'peak' 0)$ramDots$(& $dots $nw.seats $nw.seatsMax)<div class=s>QA seats $(& $fmt $nw.seats) / $(& $fmt $nw.seatsMax)</div>$(if ($gs.lanes) { "<div class=s>phone lanes $($gs.leased) / $($gs.lanes) leased · emulators $($gs.emulators) running</div>" })$(if ($gs.browsers) { "<div class=s>test browsers $($gs.browsers) ($(& $n1 $gs.browserGB) GB, leased)</div>" })$(Format-KitBuildOwners $gs.owners)</div></div>"
   & $fold 'gate' 'Build gate · QA seats' $(if ($kRows.Count) { Get-KitHeatCount $kRows } else { '' }) $inner -Open:([bool]@($kRows | Where-Object busy).Count -or $gs.running -or $gs.queued) -tag h4 -cls "sub st gt $(if ($gs.waitMax -ge 30) { 'hot' } elseif ($gs.queued -ge 6) { 'warn' })"
 }
-# lease waits: one line per resource (24 h heatmap of minutes waited · waits · minutes · longest), the gate card's style
-function Format-KitWaitCard($w) {
-  $rs = @($w.rows | Where-Object { $_ }); $h0 = try { [datetime]$w.h0 } catch { $at.Date.AddHours($at.Hour - 23) }
-  # owner 2026-11-18: one lease waits on all of a lane's services at once: "<lane> · <service>" rows with identical hours and totals collapse to "<lane>"
-  $rs = @($rs | Group-Object { $nm0 = "$($_.name)"; $ix = $nm0.LastIndexOf(' · '); if ($ix -gt 0) { "$($nm0.Substring(0, $ix))|$(ConvertTo-Json @($_.hours) -Depth 6 -Compress)|$($_.n)|$($_.min)|$($_.max)" } else { [guid]::NewGuid().ToString() } } | ForEach-Object {
-      $g = @($_.Group); if ($g.Count -lt 2) { $g[0]; return }; $nm0 = "$($g[0].name)"; $c = $g[0].PSObject.Copy(); $c.name = $nm0.Substring(0, $nm0.LastIndexOf(' · ')); $c })
-  if (-not $rs.Count) { return (& $fold 'waits' 'Lease waits · 24 h' 0 '' -tag h4 -cls 'sub st wt') }   # (0): no agent waited for a lease in 24 h
-  $cols = @(@('queue', 'waits, 24 h', ''), @('wait', 'minutes waited, 24 h', 'min'), @('wait', 'longest wait, min', 'max'))
-  $head = "<div class='gk gh'><span class=gn>resource · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead $h0)</span>$(@($cols | ForEach-Object { "<span class=gc>$(Format-KitIcon $_[0] $_[1])$(if ($_[2]) { "<small>$($_[2])</small>" })</span>" }) -join '')</div>"
-  $lines = @(foreach ($r in $rs) { $nm = "$($r.name)"; $vals = @("$([int]$r.n)", (& $n1 $r.min), (& $n1 $r.max))
-      [pscustomobject]@{ busy = (Test-KitHeatBusy $r.hours { param($c) [double]@($c)[1] -gt 0 }); html = "<div class=gk><span class=gn title='$(& $e "${nm}: $($vals[0]) waits · $($vals[1]) min · longest $($vals[2]) min")'>$(& $e $nm)</span>$(Format-KitHeatCells $r.hours $h0 "$nm, minutes waited per hour, last 24 h" { param($hv) "$([int]$hv[0]) waits · $(& $n1 $hv[1]) min · longest $(& $n1 $hv[2]) min$(if ("$($hv[3])") { " · $($hv[3])" })" })" +
-      (@(for ($ci = 0; $ci -lt 3; $ci++) { "<span class='gc$(if ($vals[$ci] -eq '0') { ' z' })' title='$(& $e "${nm}: $($vals[$ci]) $($cols[$ci][1])")'>$(Format-KitIcon $cols[$ci][0] $cols[$ci][1])$($vals[$ci])</span>" }) -join '') + '</div>' } })
-  & $fold 'waits' 'Lease waits · 24 h' (Get-KitHeatCount $lines) "<div class='gks w3'>$head$(Format-KitHeatRows $lines 'resources')</div><div class=hk>shade = minutes agents waited for that resource in the hour · outlined = now · tap a cell for waits and who</div>" -Open:([bool]@($lines | Where-Object busy).Count) -tag h4 -cls 'sub st wt'
-}
 # Resources · 24 h (owner, 2026-11-17: CPU and RAM per resource in one heatmap): a row per resource, every name of 24 h plus each
 # configured lane service (Update-KitCpuStats svc: a stopped one keeps its row); a cell's top half = avg CPU % of the machine (slate),
 # the bottom = avg RAM GB (sage; full = the biggest peak, the machine: its total); lease / slot RAM first, else the service's process
 # tree; columns CPU now / peak / avg %, RAM now / peak GB; red: over 80% between sweeps 5+ min apart, amber: a peak over 80% in 24 h
-function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB = $null) {
+# owner 2026-11-19 (one resources view): metric switch CPU · RAM | Writes GB (Get-KitWriteView: kit-owned rows by resource name, agent
+# shells, lanes; machine, kit-owned and other processes) | Waits min (Get-KitLeaseWaits); rows in groups (machine open, the rest
+# folded; count + the worst state on the group row), holder + branch / task on the row
+function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB = $null, $Writes = $null, $Waits = $null) {
   $h0 = $at.Date.AddHours($at.Hour - 23); $hrOf = { param($x) try { [int][math]::Floor(([datetime]$x - $h0).TotalHours) } catch { -1 } }
   $hot = { param($v, $s) [double]$v -gt 80 -and [int]$s -ge 300 }   # TODO-PARAM (fixed default: 80% for 5+ min)
   $names = { param($o) if ($o -is [Collections.IDictionary]) { @($o.Keys) } elseif ($o) { @((Get-KitProps $o).Name) } else { @() } }   # this sweep's: a dictionary; older ones: from JSON
@@ -421,7 +397,16 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
   foreach ($nm in @($Cpu.svc | Where-Object { $_ })) { $null = & $row "$nm" }
   $cur = @{}; foreach ($r0 in @($Resources | Where-Object { $_.name })) { $cur["$($r0.name)"] = $r0; $w = & $row "$($r0.name)"; $w.r[23].Add([double]$r0.gb); if ("$($r0.by)".Trim()) { $w.by[23].Add("$($r0.by)".Trim()) } }
   if ($null -ne $MemNowGB) { $mach.r[23].Add([double]$MemNowGB) }
-  $avg = { param($l) if ($l.Count) { [double](@($l) | Measure-Object -Average).Average } else { $null } }; $max = { param($l) [double](@($l) + 0 | Measure-Object -Maximum).Maximum }   # $null kept: a tuple slot, never dropped
+  $wv = @{}; foreach ($x in @(@($Writes.rows) + @($Writes.more) | Where-Object { $_ -and $_.n })) { $wv["$($x.n)"] = $x }
+  $wm = $wv['whole machine']; $wk = $wv['kit-owned']
+  if ($wm -and $wk) { $oh = @(for ($i = 0; $i -lt 24; $i++) { [math]::Max(0.0, [double]@($wm.h)[$i] - [double]@($wk.h)[$i]) }); $dif = { param([string]$f) [math]::Max(0.0, [double](Get-KitMember $wm $f) - [double](Get-KitMember $wk $f)) }
+    $otop = @(@($Writes.rows) + @($Writes.more) | Where-Object { $_ -and "$($_.n)" -notin 'whole machine', 'kit-owned', 'others' -and -not $_.a -and -not $resRows.Contains("$($_.n)") -and "$($_.n)" -notmatch '^lane ' } | Sort-Object { - [double]$_.d7 } | Select-Object -First 3 | ForEach-Object { "$($_.n) $(& $n1 $_.d7) GB" })
+    $wv['other processes'] = [pscustomobject]@{ n = 'other processes'; a = ''; c = "7 days: $($otop -join ', ')"; h = $oh; now = (& $dif now); peak = [double]($oh + 0 | Measure-Object -Maximum).Maximum; avg = [double]($oh | Measure-Object -Sum).Sum / 24; day = (& $dif day); d7 = (& $dif d7) }
+    $null = & $row 'kit-owned'; $null = & $row 'other processes' }
+  foreach ($k0 in @($wv.Keys)) { if ("$($wv[$k0].a)" -eq 'shell' -or $k0 -match '^lane ') { $null = & $row $k0 } }   # agent shells and lanes: their own rows
+  $qv = @{}; foreach ($x in @($Waits.rows | Where-Object { $_ -and $_.name })) { $qv["$($x.name)"] = $x; $null = & $row "$($x.name)" }
+  $gv = { param($v) $d = [double]$v; if ($d -le 0) { '0' } elseif ($d -lt 0.095) { $d.ToString('0.00', [cultureinfo]::InvariantCulture) } else { & $n1 $d } }
+  $avg ={ param($l) if ($l.Count) { [double](@($l) | Measure-Object -Average).Average } else { $null } }; $max = { param($l) [double](@($l) + 0 | Measure-Object -Maximum).Maximum }   # $null kept: a tuple slot, never dropped
   $ramOf = { param($w, $hi) if ($w.r[$hi].Count) { $w.r[$hi] } else { $w.t[$hi] } }   # a lease's own GB first, else the process tree's
   $ramTop = [math]::Max(0.1, [double](@($resRows.Values | Where-Object { $_ -ne $mach } | ForEach-Object { $w = $_; 0..23 | ForEach-Object { & $max (& $ramOf $w $_) } }) + 0 | Measure-Object -Maximum).Maximum)
   $topIn = @{}; foreach ($s in $ss) { $hi = & $hrOf $s.at; foreach ($t in @($s.top | Where-Object { $_ })) { $k0 = "$hi|$($t.n)"; if (-not $topIn[$k0] -or [double]$t.p -gt $topIn[$k0].p) { $topIn[$k0] = [pscustomobject]@{ h = $hi; n = "$($t.n)"; p = [double]$t.p } } } }
@@ -437,19 +422,38 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
       $bt = if ($r0 -and -not $r0.shared) { @($hp.b, (Get-KitHolderTask $hp.h) | Where-Object { $_ }) -join ' · ' } else { '' }   # owner 2026-11-19: the held list's branch / task column, now on the row
       $vals = @($(if ($hasC) { & $n1 $cNow } else { '—' }), $(if ($hasC) { & $n1 $cPk } else { '—' }), $(if ($hasC) { & $n1 $cAvg } else { '—' }), $(if ($null -ne $rNow) { & $n1 $rNow } else { '—' }), $(if ($hasR) { & $n1 $rPk } else { '—' }))
       $tone = if ($hasC -and $last -and (& $hot $cNow $last.s)) { 'hot' } elseif ($cPk -gt 80) { 'warn' } else { '' }
-      [pscustomobject]@{ nm = $nm; busy = $isM -or [bool]$r0 -or (Test-KitHeatBusy $hours { param($c) [double]@($c)[1] -ge 0.1 -or [double]@($c)[3] -gt 0 })
-        tone = $tone; orphan = $r0 -and -not $r0.shared -and $by -match '^$|\(grace|^no lease$'; sub = $sub; bt = $bt; vals = $vals; hours = $hours } })
+      $wr = $wv[$nm]; $qr = $qv[$nm]; if (-not $sub -and "$($wr.a)") { $sub = "$($wr.a)" }
+      $wh = @(if ($wr) { $wr.h | ForEach-Object { , @([double]$_) } }); $wvals = if ($wr) { @($wr.now, $wr.peak, $wr.avg, $wr.day, $wr.d7 | ForEach-Object { & $gv $_ }) } else { @('—') * 5 }
+      $qvals = if ($qr) { @("$([int]$qr.n)", (& $n1 $qr.min), (& $n1 $qr.max), '', '') } else { @('—', '—', '—', '', '') }
+      $gk = if ($nm -in 'whole machine', 'kit-owned', 'other processes') { 'machine' } elseif ($r0.shared) { 'shared' } elseif ("$($wr.a)" -eq 'shell') { 'shell' } elseif ($nm -match '^(build|slot|phone|browser|lock|lane)\b') { $Matches[1] -replace '^lane$', 'env' } elseif ($nm -match '·') { 'env' } else { 'other' }
+      [pscustomobject]@{ nm = $nm; grp = $gk; busy = $isM -or [bool]$r0 -or (Test-KitHeatBusy $hours { param($c) [double]@($c)[1] -ge 0.1 -or [double]@($c)[3] -gt 0 }) -or ($wr -and [double]$wr.day -gt 0) -or ($qr -and [int]$qr.n)
+        tone = $tone; orphan = $r0 -and -not $r0.shared -and $by -match '^$|\(grace|^no lease$'; sub = $sub; bt = $bt; vals = $vals; hours = $hours; wh = $wh; wvals = $wvals; wc = "$($wr.c)"; qh = @(if ($qr) { $qr.hours }); qvals = $qvals } })
   $cols = @('now %', 'peak %', 'avg %', 'now GB', 'peak GB')
-  $head = "<div class='gk gh'><span class=gn>resource · holder · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead $h0)</span>$(@($cols | ForEach-Object { "<span class=gc><small>$_</small></span>" }) -join '')</div>"
-  $lane = ''; $items = @(foreach ($r in $rows) { $ln = ("$($r.nm)" -split ' · ')[0]; $first = $r.nm -ne 'whole machine' -and $ln -ne $lane; $lane = $ln; $nm = $r.nm
-      [pscustomobject]@{ busy = $r.busy; html = "<div class='gk$(if ($first) { ' gl0' })$(if ($r.tone) { " $($r.tone)" })$(if ($r.orphan) { ' orphan' })'><span class=gn title='$(& $e "${nm}$(if ($r.sub) { " · $($r.sub)" }): $(if ($r.vals[0] -ne '—') { "CPU now $($r.vals[0])% · 24 h peak $($r.vals[1])% · avg $($r.vals[2])% · " } else { 'CPU not sampled: not running, or no process tree of its own (lease, slot, lock, external) · ' })$(if ($r.vals[3] -ne '—') { "RAM now $($r.vals[3]) GB · 24 h peak $($r.vals[4]) GB" } else { 'RAM: not running now' })")'>$(& $e $nm)$(if ($r.sub) { "<small>$(& $e $r.sub)</small>" })$(if ($r.bt) { "<small class=bt>$(& $e $r.bt)</small>" })</span>" +
-        (Format-KitHeatCells $r.hours $h0 "$nm, CPU % and RAM GB per hour, last 24 h" { param($hv) if (-not $hv[0]) { "$nm · no sample" } else { "$nm · $(@(@($(if ($null -ne $hv[1]) { "CPU avg $(& $n1 $hv[1])% · peak $(& $n1 $hv[2])%" }), "RAM $(if ($null -ne $hv[3]) { "$(& $n1 $hv[3]) GB" } else { '—' })") | Where-Object { $_ }) -join ' · ')$(if ("$($hv[4])") { " · $($hv[4])" })$(if ("$($hv[5])") { " · top: $($hv[5])" })" } } { param($hv) @((Get-KitHeatShade ([double]$hv[1] / 100)), (Format-KitHeatNum $hv[1]), (Get-KitHeatShade ([double]$hv[3] / [double]$hv[6])), (Format-KitHeatNum $hv[3])) } 'sp') +
-        (@(for ($ci = 0; $ci -lt 5; $ci++) { "<span class='gc$(if ($r.vals[$ci] -in '0', '—') { ' z' })' title='$(& $e "${nm}: $($cols[$ci] -replace ' (%|GB)$') $(if ($ci -lt 3) { 'CPU' } else { 'RAM' }) $($r.vals[$ci]) $(if ($ci -lt 3) { '%' } else { 'GB' })")'>$($r.vals[$ci])</span>" }) -join '') + '</div>' } })
+  $mc = @(@('c', $cols), @('w', @('now', 'peak', 'avg', 'today', '7 d')), @('q', @('waits', 'min', 'longest', '', '')))
+  $head = "<div class='gk gh'><span class=gn>resource · holder · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead $h0)</span>$(@(foreach ($m in $mc) { foreach ($cn in $m[1]) { "<span class=gc data-mv=$($m[0])><small>$cn</small></span>" } }) -join '')</div>"
+  $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour')
+  $wmx = { param($rs) [math]::Max($hard, [double](@($rs | ForEach-Object { $_.wh } | ForEach-Object { [double]@($_)[0] }) + 0 | Measure-Object -Maximum).Maximum) }
+  $wscM = & $wmx @($rows | Where-Object grp -eq 'machine'); $wscO = & $wmx @($rows | Where-Object grp -ne 'machine')
+  $lane = ''; $items = @(foreach ($r in $rows) { $ln = ("$($r.nm)" -split ' · ')[0]; $first = $r.nm -ne 'whole machine' -and $ln -ne $lane; $lane = $ln; $nm = $r.nm; $wsc = if ($r.grp -eq 'machine') { $wscM } else { $wscO }
+      $wn = if ($r.grp -eq 'machine') { 0 } else { [double]($r.wvals[0] -replace '—', '0') }; [pscustomobject]@{ busy = $r.busy; grp = $r.grp; tone = $r.tone; orphan = $r.orphan; wl = $(if ($wn -ge $hard) { 2 } elseif ($wn -ge $soft) { 1 } else { 0 }); ql = [double]($r.qvals[2] -replace '—', '0') -ge 30; html = "<div class='gk$(if ($first) { ' gl0' })$(if ($r.tone) { " $($r.tone)" })$(if ($r.orphan) { ' orphan' })'><span class=gn title='$(& $e "${nm}$(if ($r.sub) { " · $($r.sub)" }): $(if ($r.vals[0] -ne '—') { "CPU now $($r.vals[0])% · 24 h peak $($r.vals[1])% · avg $($r.vals[2])% · " } else { 'CPU not sampled: not running, or no process tree of its own (lease, slot, lock, external) · ' })$(if ($r.vals[3] -ne '—') { "RAM now $($r.vals[3]) GB · 24 h peak $($r.vals[4]) GB" } else { 'RAM: not running now' })")'>$(& $e $nm)$(if ($r.sub) { "<small>$(& $e $r.sub)</small>" })$(if ($r.bt) { "<small class=bt>$(& $e $r.bt)</small>" })</span>" +
+        ((Format-KitHeatCells $r.hours $h0 "$nm, CPU % and RAM GB per hour, last 24 h" { param($hv) if (-not $hv[0]) { "$nm · no sample" } else { "$nm · $(@(@($(if ($null -ne $hv[1]) { "CPU avg $(& $n1 $hv[1])% · peak $(& $n1 $hv[2])%" }), "RAM $(if ($null -ne $hv[3]) { "$(& $n1 $hv[3]) GB" } else { '—' })") | Where-Object { $_ }) -join ' · ')$(if ("$($hv[4])") { " · $($hv[4])" })$(if ("$($hv[5])") { " · top: $($hv[5])" })" } } { param($hv) @((Get-KitHeatShade ([double]$hv[1] / 100)), (Format-KitHeatNum $hv[1]), (Get-KitHeatShade ([double]$hv[3] / [double]$hv[6])), (Format-KitHeatNum $hv[3])) } 'sp') -replace '^<span ', '<span data-mv=c ') +
+        ((Format-KitHeatCells $r.wh $h0 "$nm, GB written per hour, last 24 h" { param($hv) "$nm · $(& $gv $hv[0]) GB written$(if ($r.wc) { " · $($r.wc)" })" } { param($hv) @((Get-KitHeatShade ([double]$hv[0] / $wsc)), (Format-KitHeatNum $hv[0])) } 'ws') -replace '^<span ', '<span data-mv=w ') +
+        ((Format-KitHeatCells $r.qh $h0 "$nm, minutes waited per hour, last 24 h" { param($hv) "$([int]$hv[0]) waits · $(& $n1 $hv[1]) min · longest $(& $n1 $hv[2]) min$(if ("$(@($hv)[3])") { " · $($hv[3])" })" }) -replace '^<span ', '<span data-mv=q ') +
+        (@(for ($ci = 0; $ci -lt 5; $ci++) { "<span class='gc$(if ($r.vals[$ci] -in '0', '—') { ' z' })' data-mv=c title='$(& $e "${nm}: $($cols[$ci] -replace ' (%|GB)$') $(if ($ci -lt 3) { 'CPU' } else { 'RAM' }) $($r.vals[$ci]) $(if ($ci -lt 3) { '%' } else { 'GB' })")'>$($r.vals[$ci])</span>" }) -join '') +
+        (@(for ($ci = 0; $ci -lt 5; $ci++) { "<span class='gc$(if ($r.wvals[$ci] -in '0', '—') { ' z' })$(if ($ci -eq 0 -and $r.grp -ne 'machine' -and [double]($r.wvals[0] -replace '—', '0') -ge $hard) { ' hot' } elseif ($ci -eq 0 -and $r.grp -ne 'machine' -and [double]($r.wvals[0] -replace '—', '0') -ge $soft) { ' warn' })' data-mv=w title='$(& $e "${nm}: $($mc[1][1][$ci]) $($r.wvals[$ci]) GB")'>$($r.wvals[$ci])</span>" }) -join '') +
+        (@(for ($ci = 0; $ci -lt 5; $ci++) { "<span class='gc$(if ($r.qvals[$ci] -in '0', '—', '') { ' z' })' data-mv=q>$($r.qvals[$ci])</span>" }) -join '') + '</div>' } })
   $tops = @($ss | ForEach-Object { $s0 = $_; @($_.top | Where-Object { $_ }) | ForEach-Object { [pscustomobject]@{ k = "$($_.pid)|$($_.n)"; n = $_.n; pid = $_.pid; p = [double]$_.p; o = "$($_.o)"; c = "$($_.c)"; at = $s0.at; s = $s0.s; nowS = [bool]($s0 -eq $last) } } } | Group-Object k | ForEach-Object { $gp = @($_.Group | Sort-Object { [datetime]$_.at }); $pk = ($gp | Measure-Object p -Maximum).Maximum
       [pscustomobject]@{ n = $gp[-1].n; pid = $gp[-1].pid; o = @($gp.o | Where-Object { $_ })[-1]; c = $gp[-1].c; now = $(if ($gp[-1].nowS) { $gp[-1].p }); pk = $pk; hot = [bool]@($gp | Where-Object { & $hot $_.p $_.s }).Count } } | Sort-Object { - $_.pk } | Select-Object -First 8)
   $topHtml = if ($tops.Count) { & $fold 'cpu-top' 'Top other processes' $tops.Count ("<div class=cpt><div class=s>10%+ of the machine between two sweeps</div>" + (@($tops | ForEach-Object { "<div class='cpo f$(if ($_.hot) { ' hot' })' title='$(& $e $(if ($_.c) { $_.c } else { $_.n }))'><span class=cn0>$(& $e $_.n) <small>pid $($_.pid)$(if ($_.o) { " · $($_.o)" })</small></span><span class=gc>now $(if ($null -ne $_.now) { "$(& $n1 $_.now)%" } else { '—' })</span><span class=gc>24 h peak $(& $n1 $_.pk)%</span></div>" }) -join '') + '</div>') -Open:([bool]@($tops | Where-Object { $null -ne $_.now }).Count) -tag h4 -cls sub } else { '<div class=s>no other process over 10% of the machine in 24 h</div>' }
   $legend = "<div class=hk><i class='lgk c'></i>top half = avg CPU % of the machine ($([Environment]::ProcessorCount) cores) <i class='lgk r'></i>bottom half = avg RAM (full = the biggest peak, $(& $n1 $ramTop) GB; the machine: its $(& $n1 $TotalGB) GB) · outlined = now · tap a cell for both values, holders and (machine row) the top other processes · dashed = no live holder (released after idle.graceMinutes)</div>"
-  & $fold 'res24' 'Resources · 24 h' (Get-KitHeatCount $items) "<div class='gks w5 cpg rsh'>$head$(Format-KitHeatRows $items 'resources')</div>$legend$topHtml" -Open -tag h4 -cls "sub st cpu$(if ($last -and (& $hot $last.all $last.s)) { ' hot' })"
+  $gl = [ordered]@{ machine = 'machine'; env = 'env services'; build = 'builds'; slot = 'worktree slots'; phone = 'phones · emulators'; browser = 'browser tabs'; shell = 'agent shells'; lock = 'locks'; shared = 'shared'; other = 'other' }
+  $groups = @(foreach ($gk0 in $gl.Keys) { $gi = @($items | Where-Object grp -eq $gk0); if (-not $gi.Count) { continue }; $op = $gk0 -eq 'machine'
+      $wst = if (@($gi | Where-Object tone -eq 'hot').Count) { @('s-stuck', 'CPU over 80%') } elseif (@($gi | Where-Object wl -ge 2).Count) { @('s-stuck', "writes over $(& $n1 $hard) GB/h") } elseif (@($gi | Where-Object wl -ge 1).Count) { @('s-oth', "writes over $(& $n1 $soft) GB/h") } elseif (@($gi | Where-Object ql).Count) { @('s-oth', 'waits of 30+ min') } elseif (@($gi | Where-Object orphan).Count) { @('s-oth', "$(@($gi | Where-Object orphan).Count) no live holder") } elseif (@($gi | Where-Object tone -eq 'warn').Count) { @('s-oth', 'CPU peak over 80%') }
+      "<div class='rgg$(if (-not $op) { ' cl' })' data-g='rg-$gk0'><div class='gk rgh'><button type=button class=rgb aria-expanded=$(if ($op) { 'true' } else { 'false' })><span class=gn0>$($gl[$gk0])</span><span class=gcn>$($gi.Count)</span>$(if ($wst) { "<span class='chip $($wst[0])'>$($wst[1])</span>" })</button></div>$(@($gi | Sort-Object -Stable { -not $_.busy } | ForEach-Object html) -join '')</div>" })
+  $tabs = "<div class=rgt role=group aria-label='metric'>$(@(@(@('c', 'CPU · RAM'), @('w', 'Writes GB'), @('q', 'Waits min')) | ForEach-Object { "<button type=button data-m=$($_[0]) aria-pressed=$(if ($_[0] -eq 'c') { 'true' } else { 'false' })>$($_[1])</button>" }) -join '')</div>"
+  $legW = "<div class=hk data-mv=w>a cell = GB written in that clock hour (kit-owned processes by the resource, shell or lane that started them) · now = the last 60 min: amber over $(& $n1 $soft), red over $(& $n1 $hard) GB (WATCH / ACT) · other processes: its top 3 in the tooltip</div>"
+  $legQ = '<div class=hk data-mv=q>a cell = minutes agents waited for that resource in the hour · tap a cell for waits and who</div>'
+  & $fold 'res24' 'Resources · 24 h' (Get-KitHeatCount $items) "<div class=rgx data-m=c>$tabs<div class='gks w5 cpg rsh'>$head$($groups -join '')</div>$($legend -replace '^<div class=hk>', '<div class=hk data-mv=c>')$legW$legQ</div>$topHtml" -Open -tag h4 -cls "sub st cpu$(if ($last -and (& $hot $last.all $last.s)) { ' hot' })"
 }
 # names minus the suffix all of them share ("-code"): narrow grid columns and chips; one name keeps its full form
 function Get-KitShortNames([string[]]$Names) {
@@ -542,16 +546,20 @@ function Get-KitStatsJs {
   "(function(){var d=document;d.addEventListener('click',function(x){var b=x.target.closest('.gkx');if(!b)return;b.setAttribute('aria-expanded',b.parentNode.classList.toggle('gio'))});" +
   "var dw=d.createElement('dialog');dw.className='drw';dw.setAttribute('aria-label','Linked page');dw.innerHTML='<div class=dwh><b></b><button type=button class=ib aria-label=`"Close (Esc)`" title=`"Close (Esc)`">&#10005;</button></div><iframe title=`"Linked page`"></iframe>';d.body.appendChild(dw);var fr=dw.querySelector('iframe');" +
   "d.addEventListener('click',function(x){var a=x.target.closest('a[data-dw]');if(!a)return;x.preventDefault();dw.querySelector('b').textContent=a.dataset.dw||a.textContent;fr.src=a.getAttribute('href');dw.showModal()});" +
-  "dw.querySelector('button').onclick=function(){dw.close()};dw.addEventListener('click',function(x){if(x.target==dw)dw.close()});dw.addEventListener('close',function(){fr.src='about:blank'})})()"
+  "dw.querySelector('button').onclick=function(){dw.close()};dw.addEventListener('click',function(x){if(x.target==dw)dw.close()});dw.addEventListener('close',function(){fr.src='about:blank'});" +
+  # Resources · 24 h: group fold and metric switch, both kept in localStorage
+  "function rp(r,m){r.dataset.m=m;r.querySelectorAll('.rgt button').forEach(function(z){z.setAttribute('aria-pressed',z.dataset.m==m)})}function rf(g,c){g.classList.toggle('cl',c);var b=g.querySelector('.rgb');if(b)b.setAttribute('aria-expanded',!c)}" +
+  "d.addEventListener('click',function(x){var b=x.target.closest('.rgb'),t=x.target.closest('.rgt button'),g,c;if(b){g=b.closest('.rgg');c=!g.classList.contains('cl');rf(g,c);try{localStorage.setItem('kc-'+g.dataset.g,c?'1':'0')}catch(e){}}else if(t){rp(t.closest('.rgx'),t.dataset.m);try{localStorage.setItem('kc-rm',t.dataset.m)}catch(e){}}});" +
+  "try{d.querySelectorAll('.rgg[data-g]').forEach(function(g){var v=localStorage.getItem('kc-'+g.dataset.g);if(v!==null)rf(g,v=='1')});var m=localStorage.getItem('kc-rm');if(m)d.querySelectorAll('.rgx').forEach(function(r){rp(r,m)})}catch(e){}})()"
 }
 # CSS of these cards (appended to the page's)
 function Get-KitStatsCss {
-  '@media(min-width:700px){.gks.w1{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) max-content}.gks.w3{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(3,max-content)}.gks.w5{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(5,max-content)}.gks.wrh{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(6,max-content)}}:is(.gks.w1,.gks.w3,.gks.w5,.gks.wrh) .gn{white-space:normal;overflow-wrap:anywhere;max-width:260px}' +
+  '@media(min-width:700px){.gks.w1{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) max-content}.gks.w3{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(3,max-content)}.gks.w5{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(5,max-content)}}:is(.gks.w1,.gks.w3,.gks.w5) .gn{white-space:normal;overflow-wrap:anywhere;max-width:260px}' +
   '@media(max-width:699px){.gks.w1 .gk{grid-template-columns:minmax(0,1fr)}.gks.w3 .gk{grid-template-columns:repeat(3,minmax(0,1fr))}.gks.w5 .gk{grid-template-columns:repeat(5,minmax(0,1fr))}}' +
   '.gks .gn small{color:var(--mt);font-weight:500;font-size:11px;margin-left:6px}.rsh .gk.orphan>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.rsh .gk.orphan>.gs{outline:1px dashed color-mix(in srgb,var(--watch) 60%,var(--ln));outline-offset:1px}' +
-  # disk writes: muted sage cells (owner rows), the day block slate over sage; amber / red owner over the soft / hard limit
-  '.hm.ws:not(.sp) i{background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.wrh .gk.gl0>.hm{height:19px}.wrh .wdh>*{padding-top:10px}.wrh .gk.hot>.gn,.wrh .gk.hot>.gc:nth-last-child(6){color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.wrh .gk.warn>.gn,.wrh .gk.warn>.gc:nth-last-child(6){color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:650}' +
-  '.cpg{margin-top:6px}:is(.cpg,.fhm,.wrh) .gk.gl0>*{border-top:1px solid var(--ln);padding-top:2px}.gks .gc small{color:var(--mt);font-weight:500}.cpg .gk.hot>.gn,.cpg .gk.hot>.gc:nth-last-child(5){color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.cpg .gk.warn>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}' +
+  # disk writes: muted sage cells; the 7-day block slate over sage
+  '.hm.ws:not(.sp) i{background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.rsh .gk.gl0>.hm{height:19px}' +
+  '.cpg{margin-top:6px}:is(.cpg,.fhm) .gk.gl0>*{border-top:1px solid var(--ln);padding-top:2px}.gks .gc small{color:var(--mt);font-weight:500}.cpg .gk.hot>.gn,.cpg .gk.hot>.gc:nth-last-child(15){color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.cpg .gk.warn>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}' +
   # heatmap kinds: split CPU (top, slate) over RAM (bottom, sage); flag counts coloured by level; the idle-rows fold
   # a cell's number: dark text on a dark shade (hi, --hmt); split cells: CPU number over RAM number
   '.hm i.hi,.hm i>.hi{color:var(--hmt,var(--fg))}.hm.sp{height:26px}.hm.sp i{display:grid;grid-template-rows:1fr 1fr;font-size:9.5px;line-height:13px;background:linear-gradient(color-mix(in srgb,var(--slate) var(--a),var(--sf2)) 0 50%,color-mix(in srgb,var(--sage2) var(--b),var(--sf2)) 50% 100%)}.hm.sp i>span{overflow:hidden}' +
@@ -560,6 +568,11 @@ function Get-KitStatsCss {
   '.gkx{grid-column:1/-1;justify-self:start;background:none;border:0;padding:2px 0;color:var(--mt);font:inherit;cursor:pointer}.gkx::before{content:"\25B8  "}.gkx[aria-expanded=true]::before{content:"\25BE  "}.gkx small{font-size:inherit}.gki{display:none}.gks.gio>.gki{display:contents}' +
   '.lgk{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 3px 0 6px;vertical-align:-1px}.lgk:first-child{margin-left:0}.lgk.c{background:var(--slate)}.lgk.r{background:var(--sage2)}' +
   '.rsh .gn small.bt{display:block;margin-left:0}' +
+  # one resources view: metric switch (only the chosen strip and columns show), folding groups with a count and the worst state
+  '.rgx[data-m=c] [data-mv=w],.rgx[data-m=c] [data-mv=q],.rgx[data-m=w] [data-mv=c],.rgx[data-m=w] [data-mv=q],.rgx[data-m=q] [data-mv=c],.rgx[data-m=q] [data-mv=w]{display:none}.rgg{display:contents}.rgg.cl>.gk:not(.rgh){display:none}' +
+  '.rgh>.rgb{grid-column:1/-1}.rgb{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;border-top:1px solid var(--ln);padding-top:4px}.rgb::before{content:"\25B8";color:var(--mt)}.rgg:not(.cl) .rgb::before{content:"\25BE"}.rgb .gn0{font-weight:650}.rgb .gcn{color:var(--mt)}.rgb:focus-visible{outline:2px solid var(--sage);outline-offset:2px}' +
+  '.rgt{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 4px}.rgt button{all:unset;cursor:pointer;padding:1px 9px;border:1px solid var(--ln);border-radius:10px;font-size:11.5px;color:var(--mt)}.rgt button[aria-pressed=true]{background:var(--sf2);color:var(--fg);border-color:var(--sage2)}.rgt button:focus-visible{outline:2px solid var(--sage)}' +
+  '.rsh .gc.hot{color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.rsh .gc.warn{color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:650}' +
   # lane grid (K74): muted cells, amber = behind, sage +N = test merges, outline = in use
   '.lng{display:grid;grid-template-columns:minmax(0,max-content) repeat(var(--n),minmax(30px,1fr));gap:2px;margin-top:6px;font-size:11.5px;font-variant-numeric:tabular-nums}.lnh{font-size:10.5px;color:var(--mt);text-align:center;overflow-wrap:anywhere}.lnn{padding-right:6px;line-height:20px;overflow-wrap:anywhere}' +
   '.lnc{min-height:20px;line-height:20px;text-align:center;border-radius:3px;color:var(--mt)}.lnc.on{background:var(--sf2)}.lnc.bh{background:color-mix(in srgb,var(--watch) 22%,var(--sf2));color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:600}.lnc small{margin-left:3px;font-size:10px;font-weight:600;color:var(--sage2)}.lnc.kp{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 22%,transparent)}' +

@@ -226,7 +226,7 @@ $s2 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t
 $hr = @{}; foreach ($h in $s2.hour) { $hr[$h.label] = $h.gb }
 "first:$(-not @($s1.flags).Count -and -not @($s1.hour).Count)"
 "soft:$(@($s2.flags | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^WRITES mysqld · x: 1\.5 GB .*\(soft 1 / hard 2 GB\)' }).Count -eq 1)"
-"hard:$(@($s2.flags | Where-Object { $_.level -eq 'ACT' -and $_.what -match '^WRITES (build x \(kitty\): 6 GB .*top: robocopy tree|devy-a \(shell\): 2\.5 GB .*top: mysql bulk2)' -and $_.action -match '^Check whether it is a one-off' }).Count -eq 2)"
+"hard:$(@($s2.flags | Where-Object { $_.level -eq 'ACT' -and $_.what -match '^WRITES (build x \(kitty\): 6 GB .*top: robocopy|devy-a \(shell\): 2\.5 GB .*top: mysql)' -and $_.action -match '^Check whether it is a one-off' }).Count -eq 2)"
 "fold:$($hr['mysqld · x'] -eq 1.5 -and @($s2.flags).Count -eq 3 -and @($hr.Keys).Count -eq 3 -and $s2.samples[-1].m -eq 10)"
 "unseen:$(-not $hr.ContainsKey('late'))"
 $lb = @((Get-KitWriteLabel 'msedge.exe' 'msedge.exe --headless --remote-debugging-port=9222'), (Get-KitWriteLabel 'mysqld.exe' '"C:\m\mysqld.exe" --no-defaults --datadir=D:\s\kit-tests\my'),
@@ -245,7 +245,8 @@ $v = Get-KitWriteView $sm $hl $now 1; $r = @{}; foreach ($x in $v.rows) { $r[$x.
 "view:$($v.rows[0].n -eq 'whole machine' -and $r['mysqld · x'] -and $r.others.d30 -eq 8.8 -and $r['kit-owned'].day -eq 2.8 -and $r['whole machine'].d7 -eq 10.4 -and $v.rows[0].h[23] -eq 0.6 -and @($v.days).Count -eq 7)"
 $global:n1 = { param($x) "$x" }; $global:e = { param($x) "$x" }; $global:fold = { param($id, $t, $c, $in, [switch]$Open, $tag, $cls) "<f $cls>$in</f>" }
 $card = Format-KitWritesCard ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
-"card:$($card -match "^<f sub st wr" -and $card -match "<span class=gn title='mysqld · x: now [^']*top: mysqld'>mysqld · x</span>" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'")"
+$pg = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resources = @([pscustomobject]@{ name = 'build x'; by = 'kitty'; gb = 1 }); stats = [pscustomobject]@{ writes = ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json) } })
+"card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
 Expect-Each (Invoke-PsTest 'writes' $wrt @($O, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
 # a holder record with several pids (a lane group, a shared lease) must not crash the writes hook ([int] of an array)

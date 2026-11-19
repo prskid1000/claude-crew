@@ -81,7 +81,7 @@ $bh = @'
 import puppeteer from 'puppeteer-core'
 import { pathToFileURL } from 'node:url'
 const [bm, file] = process.argv.slice(1), { CHROME } = await import(bm), url = pathToFileURL(file).href, o = {}
-const b = await puppeteer.launch({ executablePath: CHROME, headless: true })
+const b = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 180000 })   // a loaded machine: Network.enable took over the 30 s default
 const open = async (w, hash = '', theme = 'light', c = null) => { c = c || await b.createBrowserContext(); const p = await c.newPage(); await p.setViewport({ width: w, height: 800 }); await p.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]); await p.goto(url + hash); return p }
 const ev = (p, f, ...a) => p.evaluate(f, ...a)
 try {
