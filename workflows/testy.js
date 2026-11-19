@@ -301,7 +301,7 @@ ${it.only ? `SCOPE: test ONLY these checks: ${it.only.join(', ')}. Return only t
 Return checks, findings, setup_changes and data_created.
 For a check you ran more than once (LLM-driven / timing: 5+), set attempts and window (conditions + UTC times): a verifier must
 recreate them before it may refute your FAIL.
-LAST STEP before returning: write that same result as ${outDir(it)}/${it.scoped ? 'results-retry.json' : 'results.json'} (Write tool) and run
+LAST STEP before returning: write that same result, only its schema keys (no title: run.json holds it), as ${outDir(it)}/${it.scoped ? 'results-retry.json' : 'results.json'} (Write tool) and run
  ${CHECK(it, it.scoped ? ' -Results results-retry.json' : '')} (publishes nothing). ${CHECK_FAILS}: save the file or drop
  the name, give each check its own id, re-run until exit 0. Return the checks as the file now has them (fixed names).${it.scoped ? `
  Never write ${outDir(it)}/results.json: it holds the other checks of this item.` : ''}
