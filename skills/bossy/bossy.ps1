@@ -28,9 +28,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L36 init · L47 board · L225 budget · L255 launch · L496 recover · L583 pause · L594 resume · L661 program · L712 param ·
-  L718 track · L1055 supervise · L1375 report · L1455 audit · L1515 storage · L1518 bugbrief · L1632 cleanup · L1719 learn ·
-  L1750 decide · L1901 debate · L1945 health · L2012 retro due · L2022 tidy · L2094 setup · L2191 guard-sendmessage
+Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
+  L719 track · L1056 supervise · L1376 report · L1456 audit · L1516 storage · L1519 bugbrief · L1633 cleanup · L1720 learn ·
+  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2192 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -109,7 +109,8 @@ switch ($Action) {
     $now = Get-Date
     $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
     $same = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.status -ne 'left' })
-    $rejoin = $same | Where-Object { -not $Resume -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
+    # no claims and no -Session: two parallel spawns of one id (kit-build-1710 twice) look the same, so they get PARALLEL, never one row
+    $rejoin = $same | Where-Object { -not $Resume -and ($myClaims.Count -or ($Session -and $_.session -eq $Session)) -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
       Sort-Object { [datetime]$_.joined } -Descending | Select-Object -First 1
     $peer = @($same | Where-Object { -not ($Resume -or $rejoin) -and (Test-KitHolder $_) -and (($now - [datetime]$_.beat).TotalMinutes -lt $staleMin -or ($_.transcript -and ($now - [IO.File]::GetLastWriteTime($_.transcript)).TotalMinutes -lt $staleMin / 6)) })   # or a fresh transcript
     if ($peer) { $b = $Agent; $n = 2; while (@(Active | Where-Object agent -eq "$b-$n").Count) { $n++ }; $Agent = "$b-$n"; $same = @(); $notes += "PARALLEL: $b runs in session $($peer[0].session): you are $Agent" }

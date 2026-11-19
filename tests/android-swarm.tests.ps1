@@ -111,6 +111,14 @@ Set-Content "$ud/platform-tools/adb.cmd" "@echo off`r`nif `"%1`"==`"pull`" copy 
 Set-Content "$ud/u.ps1" '$a = @($args); Set-Item Env:CLAUDE_RUNTIME "$($a[1])/rt"; $env:ANDROID_HOME = $a[1]; . $a[0]; function Get-ExeName($n) { "$n.cmd" }; Invoke-Ui "$($a[2])" "$($a[3])" "$($a[4])"'
 $ut = @(foreach ($a in @(@('tap', 'Hello'), @('tap', 'Nope'), @('wait', 'Nope', '1'))) { $null = Px "$ud/u.ps1" $Q $ud @a 2>&1; $LASTEXITCODE })
 Expect "ui: found 0, NOT FOUND 1, wait TIMEOUT 1; unknown action 2 ($($ut -join ','),$uc)" (($ut -join ',') -eq '0,1,1' -and $uc -eq 2)
+# retro 2026-11-19 (92 failed dumps): a pull that fails once is retried; no ui.xml after 3 tries exits 1
+$env:KIT_PARAM_PHONE_UIDUMPRETRYMS = '10'; $adbOk = Get-Content "$ud/platform-tools/adb.cmd" -Raw
+Set-Content "$ud/platform-tools/adb.cmd" "@echo off`r`nif not `"%1`"==`"pull`" exit /b 0`r`nif not exist `"$ud\once`" ( echo.>`"$ud\once`" & exit /b 1 )`r`ncopy /y `"$ud\s.xml`" `"%3`" >nul`r`nexit /b 0" -Encoding ascii
+$d1 = Px "$ud/u.ps1" $Q $ud dump 2>&1 | Out-String; $dc1 = $LASTEXITCODE
+Set-Content "$ud/platform-tools/adb.cmd" "@echo off`r`nexit /b 0" -Encoding ascii
+$d2 = Px "$ud/u.ps1" $Q $ud dump 2>&1 | Out-String; $dc2 = $LASTEXITCODE
+Set-Content "$ud/platform-tools/adb.cmd" $adbOk -NoNewline -Encoding ascii; $env:KIT_PARAM_PHONE_UIDUMPRETRYMS = $null
+Expect "ui dump: one failed pull retried (exit $dc1), 3 failed tries exit 1 ($dc2)" ($dc1 -eq 0 -and $d1 -match 'Hello @\(5,5\)' -and $dc2 -eq 1 -and $d2 -match 'failed 3 times')
 # ui mic: no emulator serial = usage 2; an emulator with no gRPC discovery file = 1, nothing sent
 Set-Content "$ud/s.wav" 'x'; $env:ANDROID_SERIAL = $null; $null = Px "$ud/u.ps1" $Q $ud mic "$ud/s.wav" 2>&1; $m1 = $LASTEXITCODE
 $env:ANDROID_SERIAL = 'emulator-5999'; $mo = Px "$ud/u.ps1" $Q $ud mic "$ud/s.wav" 2>&1 | Out-String; $m2 = $LASTEXITCODE; $env:ANDROID_SERIAL = $null

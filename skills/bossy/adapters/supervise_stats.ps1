@@ -6,8 +6,8 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L416 cards · L633 flags · L746 bands ·
-  L824 shells
+Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L421 cards · L638 flags · L751 bands ·
+  L829 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -118,7 +118,7 @@ function Update-KitCpuStats($Prior, [datetime]$Now = (Get-Date), $Shells = @(), 
   $groups = @(if (Get-Command Invoke-KitHooks -ErrorAction SilentlyContinue) { Invoke-KitHooks Get-KitCpuGroups })   # pid 0: configured, not running
   $svcNames = @($groups | Where-Object name | ForEach-Object { "$($_.name)" })
   # owner 2026-11-18: every resource with a process (browser, phone, build) gets CPU and RAM from the same tree sampling as a lane service
-  $groups += @($Resources | Where-Object { $_ -and $_.name -and [int]$_.pid -gt 0 -and "$($_.name)" -notin $svcNames } | ForEach-Object { [pscustomobject]@{ name = "$($_.name)"; pid = [int]$_.pid } })
+  $groups += @($Resources | Where-Object { $_ -and $_.name -and @($_.pid | Where-Object { [int]$_ -gt 0 }).Count -and "$($_.name)" -notin $svcNames } | ForEach-Object { [pscustomobject]@{ name = "$($_.name)"; pid = @($_.pid | Where-Object { [int]$_ -gt 0 } | ForEach-Object { [int]$_ }) } })
   if ($dt -ge 60 -and $dt -le 7200) {   # an older snapshot gives a long average: no sample
     $cores = [math]::Max(1, [Environment]::ProcessorCount); $pa = $Prior.acc; $pct = @{}; $byId = @{}; $kids = @{}
     foreach ($p in $procs) { $byId[$p.Id] = $p; if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.Generic.List[int]]::new() }; $kids[$p.ParentId].Add($p.Id)
@@ -126,7 +126,7 @@ function Update-KitCpuStats($Prior, [datetime]$Now = (Get-Date), $Shells = @(), 
       if ($null -ne $base) { $v = 100 * ([double]$p.Cpu - $base) / $dt / $cores; if ($v -gt 0.05) { $pct[$p.Id] = $v } } }
     $tree = { param([int]$id) $seen = @{}; $todo = [Collections.Generic.Queue[int]]::new(); $todo.Enqueue($id); while ($todo.Count) { $i = $todo.Dequeue(); if ($seen.ContainsKey($i) -or -not $byId.ContainsKey($i)) { continue }; $seen[$i] = 1; foreach ($c in @($kids[$i])) { if ($c -ne $i) { $todo.Enqueue($c) } } }; @($seen.Keys) }
     $inG = @{}; $g = [ordered]@{}; $m = [ordered]@{}   # m: RAM GB of each group's tree (working set), sampled each sweep like its CPU
-    foreach ($gr in @($groups | Where-Object { $_.name -and $_.pid })) { $ids = & $tree ([int]$gr.pid); foreach ($i in $ids) { $inG[$i] = 1 }; $g["$($gr.name)"] = [math]::Round([double](@($ids | ForEach-Object { $pct[$_] }) + 0 | Measure-Object -Sum).Sum, 1)
+    foreach ($gr in @($groups | Where-Object { $_.name -and $_.pid })) { $ids = @(foreach ($gp in @($gr.pid)) { & $tree ([int]$gp) }) | Select-Object -Unique; foreach ($i in $ids) { $inG[$i] = 1 }; $g["$($gr.name)"] = [math]::Round([double](@($ids | ForEach-Object { $pct[$_] }) + 0 | Measure-Object -Sum).Sum, 1)
       $m["$($gr.name)"] = [math]::Round([double](@($ids | ForEach-Object { [double]$byId[$_].WorkingSet }) + 0 | Measure-Object -Sum).Sum / 1GB, 2) }
     $sh = @{}; foreach ($s in @($Shells | Where-Object { $_.pid })) { $sh[[int]$s.pid] = "$($s.owner)" }
     $owner = { param([int]$id) for ($n = 0; $n -lt 12 -and $byId.ContainsKey($id); $n++) { if ($sh.ContainsKey($id) -and $sh[$id]) { return $sh[$id] }; $id = $byId[$id].ParentId }; '' }
@@ -215,7 +215,9 @@ function Get-KitWriteLabel([string]$Name, [string]$Cmd) {
 # a sample = @{ at; s = seconds; m = machine GB (the disks' when e); e = 1: GBs scaled to the disks; t = 1: GBs from the tracer; w = @(@{ n = label; a = tag (agent); g = GB; c = top command; k = 1: kit-owned }) }
 # the folders a command names (absolute paths after the executable; a file: its folder), at most 3
 function Get-KitWriteDirs([string]$Cmd) {
-  $ps = @([regex]::Matches(($Cmd -replace '^\s*("[^"]*"|\S+)'), '(?<![\w])[A-Za-z]:[\\/][^"\s]*') | ForEach-Object { $p = $_.Value -replace '/', '\' -replace '[\\,;]+$'; if ($p -match '\.\w{1,5}$') { Split-Path $p } else { $p } })
+  # a DB server writes to its data folder only: --datadir, else its --defaults-file's folder
+  foreach ($o in 'datadir', 'defaults-file') { if ($Cmd -match "--$o[= ](?:`"(?<d>[^`"]+)`"|(?<d>\S+))") { $p = $Matches.d -replace '/', '\'; return @(@($(if ($o -eq 'datadir') { $p.TrimEnd('\') } else { Split-Path $p })) | Where-Object { @($_ -split '\\').Count -ge 3 }) } }   # never a drive root
+  $ps =@([regex]::Matches(($Cmd -replace '^\s*("[^"]*"|\S+)'), '(?<![\w])[A-Za-z]:[\\/][^"\s]*') | ForEach-Object { $p = $_.Value -replace '/', '\' -replace '[\\,;]+$'; if ($p -match '\.\w{1,5}$') { Split-Path $p } else { $p } })
   @($ps | Where-Object { @($_ -split '\\').Count -ge 3 } | Select-Object -Unique -First 3)
 }
 # a tracer folder belongs to a dir: under it, or a cut tracer folder (4+ parts) above it
@@ -226,9 +228,12 @@ function Test-KitWriteFolderIn([string]$Folder, [string[]]$Dirs) {
 # a sample's rows ($Rows: @{ n; g = est. GB; c; k; f }) -> @{ label = disk GB } from the tracer rows in ($S1, $E1]: a write under a kit row's
 # folders goes to that row whatever the process (System flushes cached writes); any other write to the rows of its process (split by
 # their est. share); System's other writes and processes no row names: none (the machine total keeps them)
+# a DB server row (--datadir / --defaults-file) gets only the writes under its data folder: all mysqld writes split by share put a
+# lane's and the machine's MySQL into kit-tests (5.55 GB vs 1.70 GB traced there, 2026-11-19)
 function Get-KitTracerShare($Tracer, [datetime]$S1, [datetime]$E1, $Rows) {
-  $out = @{}; foreach ($r in $Rows) { $out["$($r.n)"] = 0.0 }; $kd = @($Rows | Where-Object { [int]$_.k -and @($_.f).Count })
-  $byExe = @{}; foreach ($r in $Rows) { $x = (Get-KitWriteExe '' "$($r.c)").ToLower(); if (-not $byExe.ContainsKey($x)) { $byExe[$x] = [Collections.Generic.List[object]]::new() }; $byExe[$x].Add($r) }
+  $dbRx = '--(?:datadir|defaults-file)[= ]'
+  $out = @{}; foreach ($r in $Rows) { $out["$($r.n)"] = 0.0 }; $kd = @($Rows | Where-Object { ([int]$_.k -or "$($_.c)" -match $dbRx) -and @($_.f).Count })
+  $byExe = @{}; foreach ($r in @($Rows | Where-Object { "$($_.c)" -notmatch $dbRx })) { $x = (Get-KitWriteExe '' "$($r.c)").ToLower(); if (-not $byExe.ContainsKey($x)) { $byExe[$x] = [Collections.Generic.List[object]]::new() }; $byExe[$x].Add($r) }
   foreach ($w in @($Tracer.rows | Where-Object { $_.t -gt $S1 -and $_.t -le $E1 })) { $gb = [double]$w.mb / 1024
     $hit = if ($w.f) { @($kd | Where-Object { Test-KitWriteFolderIn $w.f @($_.f) })[0] }; if ($hit) { $out["$($hit.n)"] += $gb; continue }
     $rs = $byExe["$($w.p)".ToLower()]; if ("$($w.p)" -match '^(System|Idle|Registry)$' -or -not $rs) { continue }
@@ -271,7 +276,7 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Di
     $wasD = Get-KitMember $Prior.acc 'disk'; $dg = if ($null -ne $Disk -and $null -ne $wasD -and [double]$Disk -ge [double]$wasD) { ([double]$Disk - [double]$wasD) / 1GB }
     $f = if ($null -eq $dg) { 1.0 } elseif ($mach -gt 0) { [math]::Min(1.0, $dg / $mach) } else { 0.0 }
     $smp = [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; m = [math]::Round($(if ($null -ne $dg) { $dg } else { $mach }), 3) }; if ($null -ne $dg) { $smp.e = 1 }
-    $smp.w = @($rw.Keys | Where-Object { $rw[$_].g * $f -ge 0.001 } | ForEach-Object { $o1 = [ordered]@{ n = "$_"; a = $rw[$_].a; g = [math]::Round($rw[$_].g * $f, 3); c = $rw[$_].c; k = $rw[$_].k }; if ($rw[$_].k -and $rw[$_].f.Count) { $o1.f = $rw[$_].f }; $o1 }); $samples += $smp
+    $smp.w = @($rw.Keys | Where-Object { $rw[$_].g * $f -ge 0.001 } | ForEach-Object { $o1 = [ordered]@{ n = "$_"; a = $rw[$_].a; g = [math]::Round($rw[$_].g * $f, 3); c = $rw[$_].c; k = $rw[$_].k }; if (($rw[$_].k -or $rw[$_].c -match '--(datadir|defaults-file)[= ]') -and $rw[$_].f.Count) { $o1.f = $rw[$_].f }; $o1 }); $samples += $smp
   }
   # owner 2026-11-19 ("it should record pure disk writes"): with a tracer every row's GB is its physical disk MB (a cached write, e.g. qemu
   # disk images or browser profiles, is flushed by System: credited to the kit row whose folder it is); the I/O counter is the fallback, est.

@@ -38,10 +38,14 @@ $tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
 $xmlLocal = Join-Path (Get-KitPath android-tmp -Create) "ui_$tag.xml"
 function Get-Nodes {
   # a failed dump must not return the old screen
-  & $adb shell rm -f /sdcard/ui.xml | Out-Null; Remove-Item $xmlLocal -Force -ErrorAction SilentlyContinue
-  & $adb shell uiautomator dump /sdcard/ui.xml | Out-Null
-  & $adb pull /sdcard/ui.xml $xmlLocal 2>$null | Out-Null
-  if (-not (Test-Path $xmlLocal)) { throw 'uiautomator dump failed (no fresh ui.xml): screen busy or device offline - retry' }
+  # a busy screen (animation, keyboard) often fails one dump: 3 tries (retro 2026-11-19: 92 failed dumps)
+  for ($try = 1; $try -le 3; $try++) {
+    & $adb shell rm -f /sdcard/ui.xml | Out-Null; Remove-Item $xmlLocal -Force -ErrorAction SilentlyContinue
+    & $adb shell uiautomator dump /sdcard/ui.xml | Out-Null
+    & $adb pull /sdcard/ui.xml $xmlLocal 2>$null | Out-Null
+    if ((Test-Path $xmlLocal) -or $try -eq 3) { break }; Start-Sleep -Milliseconds (Get-KitParam 'phone.uiDumpRetryMs')
+  }
+  if (-not (Test-Path $xmlLocal)) { throw 'uiautomator dump failed 3 times (no fresh ui.xml): screen busy or device offline' }
   [xml]$x = Get-Content $xmlLocal -Raw
   $x.SelectNodes('//node') | ForEach-Object {
     $t = if ($_.text) { $_.text } elseif ($_.'content-desc') { $_.'content-desc' } else { '' }

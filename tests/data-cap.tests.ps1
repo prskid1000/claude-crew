@@ -106,7 +106,7 @@ $tm = Join-Path $args[1] 'tracer-nomb.csv'; Set-Content $tm @('Time,Process,Byte
 $trN = Read-KitWriteTracer @{ csv = $tn; time = 'When'; kind = 'Type'; process = 'Proc'; folder = 'Folder'; mb = 'MB'; disk = 'disk' } $t1; $trK = Read-KitWriteTracer $tk $t1
 "tracer:$(@($o4.hour)[0].gb -eq 0.32 -and -not @($o4.flags).Count -and -not @($o4.hour)[0].est -and $o4.samples[-1].t -eq 1 -and -not @($o5.hour).Count -and -not @($o5.flags).Count -and
   @($o6.flags).Count -eq 1 -and $o6.flags[0].level -eq 'WATCH' -and $o6.flags[0].what -match '^WRITES Edge \(CDP 9222\): 1\.5 GB to disk .*not kit-owned' -and
-  $kh['build x'] -eq 0.01 -and $kh['mysqld · x'] -eq 0.05 -and -not $kh.ContainsKey('devy-a') -and (& $tsum $tr 'msedge') -eq 328 -and (& $tsum $tr 'Slack') -eq 10.24 -and -not @($tr.rows | Where-Object p -eq 'chrome').Count -and
+  $kh['build x'] -eq 0.01 -and -not $kh.ContainsKey('mysqld · x') -and -not $kh.ContainsKey('devy-a') -and (& $tsum $tr 'msedge') -eq 328 -and (& $tsum $tr 'Slack') -eq 10.24 -and -not @($tr.rows | Where-Object p -eq 'chrome').Count -and
   $null -eq $trOld -and $null -eq (Read-KitWriteTracer '' $t1) -and $null -eq (Read-KitWriteTracer $th $t1) -and (& $tsum $trN 'java') -eq 64 -and @($trN.rows).Count -eq 1 -and $trN.rows[0].f -eq '' -and
   (& $tsum $trK 'node') -eq 32 -and $null -eq (Read-KitWriteTracer $tm $t1))"
 # D14: a write under a kit row's folders is its own whatever the process (a browser profile: System flushes it); other System writes: none
@@ -130,6 +130,13 @@ $ow = @(Get-KitWriteOwners @([pscustomobject]@{ kind = 'env'; name = 'mysql (rm,
 $ok0 = @($b2 | ForEach-Object { if ($_.Id -eq 61) { & $mk 61 2 'mysqld.exe' 'mysqld --datadir=D:\kit\.state\kit-tests\db' 0.5GB $old } else { $_ } })
 $kt = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $ok0 (@($own) + $ow) 102GB $null @('D:/kit'); $kth = @{}; foreach ($h in $kt.hour) { $kth[$h.label] = $h }
 "owners:$($ow.Count -eq 1 -and $ow[0].pid -eq 50 -and $ow[0].tag -eq 'devy-a, W1' -and $kth['mysql (rm, hm)'].k -eq 1 -and $kth['mysql (rm, hm)'].tag -eq 'devy-a, W1' -and $kth['mysqld · kit-tests'].k -eq 1 -and -not $kth.ContainsKey('mysqld · x'))"
+# two mysqld (kit-tests --datadir, a lane --defaults-file): each row = the tracer MB under its own data folder; the machine MySQL's
+# writes go to neither (2026-11-19: kit-tests showed 5.55 GB, 1.70 GB traced there)
+$m2 = { param($wb) @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 81 2 'mysqld.exe' 'mysqld --no-defaults --datadir=D:\kit\.state\kit-tests\mysql' $wb $old), (& $mk 82 2 'mysqld.exe' '"C:/P/mysqld.exe" --defaults-file=D:/kit/.state/localenv/lanes/mysql-a/my.ini' $wb $old)) }
+$q0 = Update-KitWriteStats $null $t0 (& $m2 1GB) @() 0 $null @('D:/kit')
+$q1 = Update-KitWriteStats ($q0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 (& $m2 3GB) @() 4GB (& $tro @(@('mysqld', 'D:\kit\.state\kit-tests\mysql\db1', 102.4), @('mysqld', 'D:\kit\.state\localenv\lanes\mysql-a\data', 51.2), @('mysqld', 'C:\ProgramData\MySQL\Data', 1024))) @('D:/kit')
+$qh = @{}; foreach ($h in $q1.hour) { $qh[$h.label] = $h.gb }
+"twomysqld:$($qh['mysqld · kit-tests'] -eq 0.1 -and $qh['mysqld'] -eq 0.05 -and @($q1.hour).Count -eq 2 -and -not @(Get-KitWriteDirs 'mysqld --defaults-file=C:\my.ini').Count -and -not @(Get-KitWriteDirs 'mysqld --datadir=data').Count)"
 "bound:$(-not (Test-KitWriteFolderIn 'D:\a\app2\x' @('D:\a\app')) -and (Test-KitWriteFolderIn 'D:\a\app\x' @('D:\a\app')) -and (Test-KitWriteFolderIn 'D:\a\app' @('D:\a\app\')) -and (Test-KitWriteFolderIn 'D:\k\p\q' @('D:\k\p\q\r')))"
 $lb = @((Get-KitWriteLabel 'msedge.exe' 'msedge.exe --headless --remote-debugging-port=9222'), (Get-KitWriteLabel 'mysqld.exe' '"C:\m\mysqld.exe" --no-defaults --datadir=D:\s\kit-tests\my'),
   (Get-KitWriteLabel 'node.exe' 'node "C:\n\npx-cli.js" -y vite build'), (Get-KitWriteLabel 'java.exe' 'java -jar D:\t\api-1.0.jar'), (Get-KitWriteLabel 'Slack.exe' 'Slack.exe --x'), (Get-KitWriteLabel 'python.exe' 'python -m http.server 8000'), (Get-KitWriteLabel 'java.exe' 'java -cp x org.acme.Main'))
@@ -153,7 +160,7 @@ $pgT = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); reso
 "label:$($v.src -eq 'est' -and $pg -match '>Writes GB est\.</button>' -and $pg -match 'a cell = est\. GB written' -and $pgT -match '>Writes GB</button>' -and $pgT -match 'a cell = GB written')"
 "card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
-Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'redo', 'owners', 'bound', 'labels', 'buckets', 'history', 'view', 'label', 'card') -Show 8
+Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'redo', 'owners', 'twomysqld', 'bound', 'labels', 'buckets', 'history', 'view', 'label', 'card') -Show 8
 # the hour counts each second once: a 2 h window by its part in the hour, two sweeps' overlapping tracer windows once, never above all
 # disks; kit-owned when any sample saw it so; a process below the tree's root naming a kit folder makes the tree the kit's
 $ovl = Invoke-PsTest 'overlap' @'
@@ -173,5 +180,11 @@ $r = try { $null = Get-KitSuperviseFlagsWrites; 'ok' } catch { "crash $($_.Excep
 "multipid:$($r -eq 'ok')"
 '@
 Expect-Each (Invoke-PsTest 'multipid' $mpt @($supBossy)) 'writes hook, holder with several pids: #' @('multipid') -Show 8
+# a holder with several pids (retro 2026-11-19: [int] of an array crashed supervise): every pid's tree counts, no crash
+$cpm = & { . $supBossy; $c = [math]::Max(1, [Environment]::ProcessorCount); $n = Get-Date
+  function Get-KitSweepProcs { foreach ($p in @(@(200, 250, 540), @(250, 1, 0), @(300, 1, 6), @(0, 0, 300))) { [pscustomobject]@{ Id = $p[0]; ParentId = $p[1]; Name = "p$($p[0]).exe"; Cpu = 1000 + $p[2] * $c } } }
+  $acc = [pscustomobject]@{ '200|' = 1000; '250|' = 1000; '300|' = 1000; idle = 1000 }
+  try { "$((Update-KitCpuStats ([pscustomobject]@{ at = $n.AddSeconds(-600).ToString('o'); acc = $acc; samples = @() }) $n @() @(@{ name = 'browser x'; pid = @(300, 250, 0) })).samples[-1].g.'browser x')" } catch { "crash $($_.Exception.Message)" } }
+Expect "cpu: a holder with pids 300, 250 sums both trees (1 + 90), pid 0 skipped ($cpm)" ("$cpm" -eq '91')
 Remove-TestKit $k
 Complete-Tests

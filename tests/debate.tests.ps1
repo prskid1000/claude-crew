@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 debate.tests.ps1: bossy.ps1 debate (1 per run, -Owner, A/B options, each role's Character, the owner's table + decide ask) and the
-buildy sims of the review rebuttal (disputes) and the trigger debates (brief, dispute, rejected twice, low confidence).
+buildy sims of the review rebuttal (disputes) and the trigger debates (brief, dispute, rejected twice, low confidence); board join of
+one id spawned twice (PARALLEL, REJOIN only with claims or -Session).
 Usage: pwsh -NoProfile -File <kit>/tests/debate.tests.ps1 (or tests/kit-tests.ps1 -Area debate).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -46,5 +47,14 @@ run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1, A2', area: 'a', ...(V
 '@
 $jr = foreach ($v in 'q', 'k', 'p', 'd') { Invoke-Js "dw-$v" ($jsq -replace '__V__', $v) $wfd }
 Expect-Each $jr 'buildy dispute/debate: # (brief: beside the build, its answer resumes devy; split: A/B ask both sides; settled: never re-raised; sides: askBlocking both sides, owner B in the last fix round; pending: a failed moderator = plain ask, a pending answer reused; low: devy''s debate survives a local round)' 'brief', 'split', 'settled', 'sides', 'pending', 'low' -Show 8
+$bd = TkPath $k board; $bqw = Join-Path (Kd) 'bqw'
+# two kittys spawned in one minute with one id (kit-build-1710 twice, 2026-11-19): no claims -> two rows, never a shared session
+$pj = @(1, 2 | ForEach-Object -Parallel { pwsh -NoProfile -NonInteractive -File $using:O board join -Type kitty -Agent kitty-kb -Run kb | Out-String } -ThrottleLimit 2)
+$ps = @($pj | ForEach-Object { if ($_ -cmatch '(?m)^SESSION (\S+)') { $Matches[1] } }); $pa = @(Get-ChildItem $bd -Filter 'kitty-kb*.json' | ForEach-Object { (Get-Content $_.FullName -Raw | ConvertFrom-Json).agent } | Sort-Object)
+$jq = pwsh @np $O board join -Agent BQ -Run rq -Claims $bqw | Out-String; $jq2 = pwsh @np $O board join -Agent BQ -Run rq -Claims $bqw | Out-String
+$js = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc | Out-String; $fc = Join-Path $bd "$(($js -csplit 'SESSION ')[-1].Split(' ')[0]).json"
+$ec = Read-Json $fc; $ec.holderPid = $PID; $ec.holderStart = & { . (Lib); Get-KitPidStart $PID }; & $J $ec $fc   # both kittys share the coordinator's process
+$js2 = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc | Out-String; $js3 = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc -Session $ec.session | Out-String
+Expect "board: parallel joins of one id without claims -> 2 rows, 2 sessions ($($pa -join ',')); one after the other -> the second is PARALLEL kitty-kc-2; same claims or its -Session within 2 min -> REJOIN" ($ps.Count -eq 2 -and $ps[0] -ne $ps[1] -and $pa.Count -eq 2 -and $js2 -match 'PARALLEL: kitty-kc runs .*you are kitty-kc-2' -and $jq2 -match 'REJOIN' -and $js3 -match "REJOIN: .*reusing session $($ec.session)")
 Remove-TestKit $k
 Complete-Tests

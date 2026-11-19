@@ -28,5 +28,12 @@ $tj = & { . $L5; function RepoOf { 'r' }; function EnvRepos { @{ r = [pscustomob
   $chk = $null -eq (Find-CheckBuild t ([pscustomobject]@{ name = 'api'; build = 'mvn package'; artifact = 'target/app-*.jar'; classpathFile = 'target/classpath.txt' }))
   "$($a1 -eq $want)|$((Get-Content (JavaArgsFile $r1) -Raw) -eq $a1)|$(Test-Path (Join-Path (Split-Path $r1) 'lib/m1-1.jar'))|$($sc -eq ('java @"' + (JavaArgsFile $r1) + '" a.Main'))|$miss|$old|$chk|$used" }
 Expect "stage: classpathFile -> java.args per release (artifact + local-repository jars + the repo's module jars copied to lib), {javaArgs} = it, a later build leaves it, no classpath file / no java.args fail clearly, no check-build reuse, the classpath file consumed ($tj)" ($tj -eq 'True|True|True|True|True|True|True|True')
+# retro 2026-11-19 (84 failed crafty.ps1 stack calls): a lane worktree not made yet or a relative repo-less dir is never handed to stack
+$so = & { . $L5; $script:calls = 0; $KitCmd.dev = 'stack-fake'; function stack-fake { $script:calls++; '{"stack":"node"}' }
+  function RepoOf { 'r' }; function EnvRepos { @{ r = [pscustomobject]@{ wt = $wtd } } }
+  $gone = Join-Path $wtd 'no-such-lane'; $a = StackOf $gone; $b = StackOf 'app/web-ui'
+  $msg = try { $null = StartCmd t ([pscustomobject]@{ name = 'web'; repo = 'r'; dir = 'no-such-lane' }) $null; 'started' } catch { "$_" -match 'no start command' }
+  "$($null -eq $a)|$($null -eq $b)|$($script:calls)|$msg" }
+Expect "stack: a missing or relative dir -> no stack call, StartCmd still says no start command ($so)" ($so -eq 'True|True|0|True')
 Remove-TestKit $k
 Complete-Tests

@@ -144,7 +144,7 @@ function Get-KitEnvStatusKey {
 function Start-KitSupervisePrefetchLocalEnv {
   $script:KitEnvStatusRun = $null; if (-not (Test-Path $KitCmd.local)) { return }
   $key = Get-KitEnvStatusKey; $c = try { Read-KitText (Join-Path (Get-KitPath cache -Create) 'localenv-status.json') | ConvertFrom-Json } catch { $null }
-  if ($c.key -eq $key -and "$($c.out)".Trim() -and ((Get-Date) - [datetime]$c.at).TotalMinutes -lt 10) { $script:KitEnvStatusRun = @{ key = $key; out = "$($c.out)" }; return }
+  if ($c.key -eq $key -and "$($c.out)".Trim() -and ((Get-Date) - [datetime]$c.at).TotalMinutes -lt (Get-KitParam 'localEnv.statusCacheMinutes')) { $script:KitEnvStatusRun = @{ key = $key; out = "$($c.out)" }; return }
   $script:KitEnvStatusRun = @{ key = $key; h = $(try { Start-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') } catch { $null }) }
 }
 # -> Invoke-KitExe's shape; no prefetch (tests, a guard hook run alone): inline, uncached
@@ -211,7 +211,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   }
   # no large writes (owner, 2026-11-18): a schema on an env's MySQL grown past data.maxRows / data.maxMB since its baseline (first
   # sight; reset by a shrink, a flag or 24 h) -> WATCH; sizes from a background envy.ps1 sql per env (the last finished run read)
-  $dcRows = [long](Get-KitParam 'data.maxRows'); $dcMB = [double](Get-KitParam 'data.maxMB'); $dcAt = $now.ToString('o')
+  $dcRows = [long](Get-KitParam 'data.maxRows'); $dcMB = [double](Get-KitParam 'data.maxMB'); $dcBaseH = [double](Get-KitParam 'localEnv.dataBaselineHours'); $dcAt = $now.ToString('o')
   # fresh statistics (MySQL 8 caches them 24 h); rows are InnoDB estimates, so a row flag also needs 1 MB more
   foreach ($dk in @($last.Keys | Where-Object { "$_" -like '*/data' })) { $seenEnv[$dk] = $last[$dk] }   # a beat with no sizes (busy, DB down) keeps baselines
   $dcSql = "SELECT /*+ SET_VAR(information_schema_stats_expiry=0) */ table_schema, COALESCE(SUM(table_rows), 0), ROUND(COALESCE(SUM(data_length + index_length), 0) / 1048576) FROM information_schema.tables WHERE table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') GROUP BY table_schema"
@@ -223,7 +223,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       $dr = if ($db) { $dn.rows - [long]$db.rows } else { 0 }; $dm = if ($db) { $dn.mb - [double]$db.mb } else { 0 }
       $dfl = ($dr -gt $dcRows -and $dm -ge 1) -or $dm -gt $dcMB
       if ($dfl) { & $watch "DATA GROWTH: $($ev.env) $ds +$dr rows / +$([math]::Round($dm)) MB since $(([datetime]$db.at).ToString('MM-dd HH:mm')) (data.maxRows $dcRows, data.maxMB $dcMB)" 'no large writes (AGENTS.md): find who loaded it (board, envy.ps1 status), drop the synthetic data; performance -> EXPLAIN / plans / the read-only replica' }
-      $dcNew[$ds] = if (-not $db -or $dfl -or $dr -lt 0 -or $dm -lt 0 -or ($now - [datetime]$db.at).TotalHours -ge 24) { @{ rows = $dn.rows; mb = $dn.mb; at = $dcAt } } else { $db } }
+      $dcNew[$ds] = if (-not $db -or $dfl -or $dr -lt 0 -or $dm -lt 0 -or ($now - [datetime]$db.at).TotalHours -ge $dcBaseH) { @{ rows = $dn.rows; mb = $dn.mb; at = $dcAt } } else { $db } }
     $seenEnv[$dcKey] = $dcNew
   }
   $seenEnv | ConvertTo-Json -Depth 4 | Set-Content $cf

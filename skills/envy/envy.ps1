@@ -191,7 +191,7 @@ function Expand-Placeholders([string]$t, [string]$e, $s, [string]$dir, [string]$
 }
 $script:stacks = @{}
 function StackOf([string]$dir) {
-  if (-not $script:stacks.ContainsKey($dir)) { $script:stacks[$dir] = try { & $KitCmd.dev stack -Dir $dir -Json | ConvertFrom-Json } catch { $null } }
+  if (-not $script:stacks.ContainsKey($dir)) { $script:stacks[$dir] = if ([IO.Path]::IsPathRooted($dir) -and (Test-Path -LiteralPath $dir)) { try { & $KitCmd.dev stack -Dir $dir -Json | ConvertFrom-Json } catch { $null } } }
   $script:stacks[$dir]
 }
 function StartCmd([string]$e, $s, [string]$artifact) {

@@ -25,9 +25,10 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
 /tidy prompt):
 0. **Start:** `& $O learn -Read -Skill kitty`; read `kit-admin.md`; `& $O board
    join -Type kitty -Agent kitty-<run> -Run <run> -Area kit` (`<run>` = `kit-<kind>-<HHmm>`, the worktree name, or the run your
-   prompt names on a resume; `kitty-<run>` = your id for inbox, msg, checkpoint; DUPLICATE -> stop);
-   `git -C <kit> fetch`; `& <kit>/skills/crafty/crafty.ps1 wt new -Repo <kit> -Branch kit/<kind>-<yyyy-MM-dd-HHmm> -Target main
-   -Name kit-<kind>-<HHmm>`. Busy check:
+   prompt names on a resume; `kitty-<run>` = your id for inbox, msg, checkpoint; DUPLICATE -> stop; PARALLEL -> `<run>` = your
+   printed id without `kitty-`);
+   `git -C <kit> fetch`; `& <kit>/skills/crafty/crafty.ps1 wt new -Repo <kit> -Branch kit/<yyyy-MM-dd>-<run> -Target main
+   -Name <run>` (exists -> never reuse it: another kitty's). Busy check:
    `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into
    the live clone.
 1. **Setup:** `$A setup [--fix]` (detail for steps 1-3: `kit-admin.md` "kitty steps 1-3").
