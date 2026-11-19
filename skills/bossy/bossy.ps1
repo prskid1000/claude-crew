@@ -25,12 +25,12 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
   deploy plan|request|record|intest ... · decide ask|list|answer|wait|record|check|publish|rules ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist; standing rules
   debate start -Item -Question -Options "A: ..","B: .." [-Run] [-Why] [-Owner] | brief -File -Side A|B|revy -Round <n> | ask -File   a written debate (1 per run; rechy kind debate), its table + decide ask
-  heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
+  heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
   L719 track · L1056 supervise · L1376 report · L1456 audit · L1516 storage · L1519 bugbrief · L1633 cleanup · L1720 learn ·
-  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2191 guard-sendmessage
+  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2192 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -109,7 +109,7 @@ switch ($Action) {
     $now = Get-Date
     $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
     $same = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.status -ne 'left' })
-    # no claims and no -Session: two parallel spawns of one id (kit-build-1710 twice) look the same, so they get PARALLEL, never one row
+    # no claims, no -Session: two spawns of one id look the same -> PARALLEL, never one row
     $rejoin = $same | Where-Object { -not $Resume -and ($myClaims.Count -or ($Session -and $_.session -eq $Session)) -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
       Sort-Object { [datetime]$_.joined } -Descending | Select-Object -First 1
     $peer = @($same | Where-Object { -not ($Resume -or $rejoin) -and (Test-KitHolder $_) -and (($now - [datetime]$_.beat).TotalMinutes -lt $staleMin -or ($_.transcript -and ($now - [IO.File]::GetLastWriteTime($_.transcript)).TotalMinutes -lt $staleMin / 6)) })   # or a fresh transcript
@@ -121,7 +121,7 @@ switch ($Action) {
       $alive = $o.pid -and (Test-KitPid $o.pid $o.pidStart)
       $age = ($now - [datetime]$o.beat).TotalMinutes
       $shared = @(@(Split-KitList $o.worktrees | ForEach-Object { Norm $_ }) | Where-Object { $_ -and $_ -in $myClaims })
-      $holderLive = Test-KitHolder $o   # agents of one session share its process: a live holder never loses its row to age, only to -Resume
+      $holderLive = Test-KitHolder $o   # one session's agents share its process: a live holder loses its row only to -Resume
       $why = if ($holderLive -eq $false) { "its session process $($o.holderPid) is gone (crash or restart)" } elseif (-not $alive -and $age -ge 3 -and $null -eq $holderLive) { "no heartbeat for $([int]$age) min" } elseif ($Resume -and ($shared.Count -or -not $myClaims.Count)) { "-Resume$(if ($shared.Count) { " on $($shared -join ', ')" })" } else { $null }
       if (-not $why) { if ($age -ge 3) { $notes += "QUIET: session $($o.session) of a live session process, last beat $(([datetime]$o.beat).ToString('HH:mm')): kept (a crashed one: join -Resume)" }; continue }
       try {
@@ -802,7 +802,7 @@ function Save($o, [switch]$Run) {
     }
     if ($cur -and $Run) { foreach ($k in 'holdPromotion', 'onMerged', 'wave', 'planReleased', 'removed') { if ($cur.ContainsKey($k)) { $o[$k] = $cur[$k] } else { $o.Remove($k) } } }
     if ($cur) { foreach ($k in 'mrs', 'mergeAfter') { $o[$k] = @(@($o[$k]) + @($cur[$k]) | Where-Object { $_ } | Select-Object -Unique) }; if ($cur.discover) { $o.discover = $true } }
-    # track remove: a removed MR stays off (discovery, a stale copy); track add -Mrs naming it re-attaches it
+    # a removed MR stays off; track add -Mrs re-attaches it
     $rmSeen = @{}; $rmList = @(@($cur.removed) + @($o.removed) | Where-Object { $_ -and $_.mr -and -not $rmSeen.ContainsKey("$($_.mr)") -and "$($_.mr)" -notin $script:trackReadd } | ForEach-Object { $rmSeen["$($_.mr)"] = 1; $_ })
     if ($rmList.Count) { $o.removed = $rmList } else { $o.Remove('removed') }
     $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ -and -not $rmSeen.ContainsKey($_) } | Select-Object -Unique)
@@ -1074,7 +1074,7 @@ Start-KitSweepMemo; $me = Get-SuperviseOwner $Session; Update-KitCoordinatorBeat
 $script:aside = $null
 Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
-  $myHolder = Get-KitHolder   # a restart (new session id) or a dead holder process never blocks: only a live other process does
+  $myHolder = Get-KitHolder   # only a live other process blocks (not a restart or a dead holder)
   $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
   if (-not $Takeover -and $other -and $held.session -ne 'os-timer' -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt [math]::Max(15.0, [math]::Min(45.0, 1.5 * (Get-KitBeatMinutes)))) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
   Write-KitAtomic $lk (([ordered]@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } + $myHolder) | ConvertTo-Json)
@@ -1249,7 +1249,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   # idle daemons (cleanup.idleDaemons) hold GBs
   if ($pct -ge [int](Get-KitParam 'supervise.ramCleanupPct')) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
-  if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Sync', '-Json') }   # every sync.everyMinutes, detached: fetch, fast-forward, prune, warm slots (wt_pool.ps1 Sync-KitRepo)
+  if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Sync', '-Json') }   # sync.everyMinutes, detached (wt_pool.ps1 Sync-KitRepo)
   if ((Get-Command Invoke-KitWeeklyTests -ErrorAction SilentlyContinue) -and (Within 'kit tests')) { foreach ($l in @(Invoke-KitWeeklyTests (-not $active.Count -and -not $liveNames.Count))) { Flag 'ACT' $l 'Spawn kitty (kind fix) on the failed checks the log lists.' } }   # adapters/kit_admin.ps1: one full run a day while idle
 }
 # 4b. owner MRs merged in 24 h, untracked
@@ -1827,8 +1827,8 @@ function Invoke-Decide {
       & $save $o
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
-      # a scope ask (-Gate scope, or its question names `decide record -Gate scope -Item <x>`) answered with a pick that records or
-      # approves: the scope word too (wt commit -ScopeOk needs gate scope on the branch)
+      # a scope ask (-Gate scope, or its question names `decide record -Gate scope`) answered with a pick that records or approves:
+      # the scope word too (wt commit -ScopeOk needs it)
       $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($o.gate -eq 'scope') { "$($o.item)" }
       $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]
       if ($scItem -and $By -notmatch $crewRx) {
@@ -1955,7 +1955,7 @@ if ($Checks) {   # 6-7 s: background, health shows the last run
 }
 if ($Flow -or $Fetch) {
   if ($Fetch -and (Test-Path (Join-Path $kit '.git'))) {
-    # at most one fetch per 10 min across sessions (FETCH_HEAD time); async: a failure = one hook-error line
+    # one fetch per 10 min across sessions (FETCH_HEAD time); a failure = one hook-error line
     $fh = Join-Path $kit '.git/FETCH_HEAD'; if (-not (Test-Path -LiteralPath $fh) -or ((Get-Date) - (Get-Item -LiteralPath $fh).LastWriteTime).TotalMinutes -ge 10) { git -C $kit fetch --quiet 2>$null }
     $null = Test-KitWake   # reboot or wake: re-evaluate learned params
   }
@@ -2119,7 +2119,7 @@ function Set-KitAllowList {
   "allow: $($want.Count) generated entr$(if ($want.Count -eq 1) { 'y' } else { 'ies' }) in settings.local.json ($(@($on | Where-Object { $cat.Contains($_) }) -join ', '))"
 }
 function Invoke-Setup {
-param([switch]$Exclude, [switch]$Quiet, [switch]$WriteLocal, [switch]$Allow)
+param([switch]$Exclude, [switch]$Quiet, [switch]$WriteLocal, [switch]$Allow, [switch]$BrowserPolicy, [switch]$Undo, [switch]$Clean)
 $ErrorActionPreference = 'Stop'
 $kit = $KitConf.Kit
 function Say($s) { if (-not $Quiet) { $s } }
@@ -2163,6 +2163,7 @@ function Update-Exclude {
 }
 
 if ($Allow) { $a = Set-KitAllowList; if ($a) { Say $a }; exit 0 }
+if (-not $Exclude) { Invoke-KitHooks Get-KitSetupLines @{ Undo = $Undo; Clean = $Clean } | ForEach-Object { Say $_ }; if ($BrowserPolicy) { exit 0 } }
 if ($Exclude) { $r = Update-Exclude; if ($r) { Say $r }; $m = Set-Memory; if ($m) { Say $m }; exit 0 }
 
 if (-not (Test-Path (Join-Path $kit '.git'))) { Write-Warning "$kit is not a git clone: install per README ""Install""" }

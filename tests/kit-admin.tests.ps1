@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 kit-admin.tests.ps1: recover --fix keeps unmerged worktrees; release tags SemVer; budget raise steps x1.1 only over the
-cap; cost lists every crew agent; learn lesson tools (-Lesson, -Bump, -Fixed, -History, -Stats; core tests the line without it).
+cap; cost lists every crew agent; learn lesson tools (-Lesson, -Bump, -Fixed, -History, -Stats; core tests the line without it); setup -BrowserPolicy (HKCU policies, model folders).
 Usage: pwsh -NoProfile -File <kit>/tests/kit-admin.tests.ps1 (or tests/kit-tests.ps1 -Area kit-admin).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -174,4 +174,33 @@ $null = & $lo -Skill zeta -When 'a first case' -Do 'act one' -Why 'why one'; $nu
 $tr = & $lo -Skill zeta -Trim -Max 1; $ls = [IO.File]::ReadAllText((Join-Path $kc 'LESSONS.md'))
 Expect "learn -Trim forgets by score (the bumped lesson stays), archives it, -History lists it ($($tr.Trim()))" ($ls -match 'a first case' -and $ls -notmatch 'a second case' -and $tr -match 'retired 1' -and (& $lo -History) -match 'a second case')
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+# setup -BrowserPolicy: browsers.chromePolicies -> HKCU policy values (idempotent, undo leaves no key); model folders in kit and Cypress profiles reported, -Clean deletes them
+if ($IsWindows) {
+  $k = New-TestKit kitadminbp; $O = Join-Path $k 'skills/bossy/bossy.ps1'
+  $bpKey = "KitTest$PID"
+  & $J @{ browsers = @{ chromePolicies = @{ "$bpKey/Chrome" = [ordered]@{ GenAILocalFoundationalModelSettings = 1; ComponentUpdatesEnabled = 0; Note = 'x' } } } } (Join-Path $k 'skills/crafty/kit.local.json')
+  $bp = Invoke-PsTest browserpolicy @'
+$env:APPDATA = Join-Path $args[1] 'appdata'; $null = . $args[0] 6>$null; $rt = "HKCU:\Software\$($args[2])"; $key = "$rt\$($args[2])\Chrome"
+$elev = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrators')
+$dRx = '^browser policies: not written \(.*\): run once elevated \(one UAC prompt, same user\): .* -Verb RunAs -WindowStyle Hidden .*bossy\.ps1" setup -BrowserPolicy''$'
+"denied:$($elev -or ((Set-KitBrowserPolicy) -match $dRx -and -not (Test-Path -LiteralPath "HKCU:\Software\Policies\$($args[2])")))"
+New-Item -Path $rt -Force | Out-Null
+$r1 = Set-KitBrowserPolicy -Root $rt; $p = Get-ItemProperty -LiteralPath $key
+"set:$($r1 -match "$($args[2])/Chrome: GenAILocalFoundationalModelSettings=1, ComponentUpdatesEnabled=0, Note=x" -and $p.GenAILocalFoundationalModelSettings -eq 1 -and $p.ComponentUpdatesEnabled -eq 0 -and (Get-Item -LiteralPath $key).GetValueKind('Note') -eq 'String')"
+"same:$(-not (Set-KitBrowserPolicy -Root $rt))"
+Set-ItemProperty -LiteralPath $key -Name Note -Value 'admin'
+$r2 = Set-KitBrowserPolicy -Undo -Root $rt; "undokeeps:$($r2 -match 'Chrome: GenAILocalFoundationalModelSettings, ComponentUpdatesEnabled$' -and (Get-ItemProperty -LiteralPath $key).Note -eq 'admin')"
+Remove-ItemProperty -LiteralPath $key -Name Note; $null = Set-KitBrowserPolicy -Root $rt
+$r3 = Set-KitBrowserPolicy -Undo -Root $rt; "undo:$($r3 -match '^browser policies removed: ' -and -not (Test-Path -LiteralPath "$rt\$($args[2])") -and (Test-Path -LiteralPath $rt))"
+"undoagain:$(-not (Set-KitBrowserPolicy -Undo -Root $rt))"
+$KitIsWindows = $false; "otheros:$((Set-KitBrowserPolicy -Root $rt) -match 'Windows' -and -not (Test-Path -LiteralPath $key))"; $KitIsWindows = $true
+"nomodels:$(-not (Get-KitBrowserModelLine))"
+foreach ($d in (Join-Path (Get-KitPath chrome-profiles -Create) 'stg__a/optimization_guide_model_store/13'), (Join-Path $env:APPDATA 'Cypress/cy/production/browsers/chrome-stable/run-1/OptGuideOnDeviceModel'), (Join-Path (Get-KitPath chrome-profiles) 'stg__a/Default/keep')) { New-Item -ItemType Directory -Force $d | Out-Null; [IO.File]::WriteAllBytes((Join-Path $d 'model.tflite'), [byte[]]::new(1MB)) }
+"report:$((Get-KitBrowserModelLine) -match '^browser models: 2 folder\(s\), 2 MB left in test profiles; delete: bossy.ps1 setup -BrowserPolicy -Clean')"
+$hk = @(Invoke-KitHooks Get-KitSetupLines); $null = Set-KitBrowserPolicy -Undo; "hook:$($hk.Count -eq 2 -and $hk[0] -match '^browser policies(?: set|: not written)' -and $hk[1] -match '^browser models: 2')"
+"clean:$((Get-KitBrowserModelLine -Clean) -match '^browser models: deleted 2 folder' -and -not (Get-KitBrowserModelDirs) -and (Test-Path -LiteralPath (Join-Path (Get-KitPath chrome-profiles) 'stg__a/Default/keep/model.tflite')))"
+'@ @($O, $k, $bpKey)
+  Expect-Each $bp 'setup -BrowserPolicy: #' 'denied', 'set', 'same', 'undokeeps', 'undo', 'undoagain', 'otheros', 'nomodels', 'report', 'hook', 'clean' -Show 6
+  foreach ($bk in "HKCU:\Software\$bpKey", "HKCU:\Software\Policies\$bpKey") { if (Test-Path -LiteralPath $bk) { Remove-Item -LiteralPath $bk -Recurse } }
+} else { 'SKIP setup -BrowserPolicy (HKCU: Windows only)' }
 Complete-Tests

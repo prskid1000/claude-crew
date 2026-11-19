@@ -4,8 +4,9 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Stats | -History [-Grep] [-Last]   signals since the last retro, retired lessons
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
+  setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L105 health · L114 prepush · L178 weekly tests · L210 state lint · L219 precommit
+Sections: L13 learn · L106 health · L115 browser policy · L158 prepush · L222 weekly tests · L254 state lint · L263 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -111,6 +112,49 @@ function Get-KitHealthLinesAudit {
   $busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { ($_.type -eq 'kitty' -or "$($_.agent)" -match '^kitty') -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt (Get-KitParam 'kitAudit.liveBeatMinutes') }).Count
   if (-not $busy) { "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kitty agent (bossy E13)." }
 }
+# ---- browser policy: setup lines (bossy.ps1 setup [-BrowserPolicy [-Undo] [-Clean]])
+# browsers.chromePolicies -> HKCU\Software\Policies\<key> (this user's hive, admin-only ACL): test Chromium downloads no AI / optimization-guide models
+function Set-KitBrowserPolicy([switch]$Undo, [string]$Root = 'HKCU:\Software\Policies') {
+  $pol = Get-KitSetting 'browsers.chromePolicies' $null
+  if (-not $pol -or -not @(Get-KitProps $pol).Count) { return $null }
+  if (-not $KitIsWindows) { return 'browser policies: HKCU only (Windows); elsewhere use the OS policy store (Linux /etc/opt/chrome/policies/managed, macOS managed preferences)' }
+  $verb = "setup -BrowserPolicy$(if ($Undo) { ' -Undo' })"
+  try {
+    $done = foreach ($b in (Get-KitProps $pol)) {
+      $key = "$Root\$($b.Name -replace '/', '\')"; $names = @()
+      foreach ($v in (Get-KitProps $b.Value)) {
+        $cur = Get-KitMember (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue) $v.Name   # Get-ItemPropertyValue throws on a missing value
+        # undo removes only the kit's own value (an admin's other value stays)
+        if ($Undo) { if ($null -ne $cur -and "$cur" -eq "$($v.Value)") { Remove-ItemProperty -LiteralPath $key -Name $v.Name -ErrorAction Stop; $names += $v.Name }; continue }
+        if ("$cur" -eq "$($v.Value)") { continue }
+        if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force -ErrorAction Stop | Out-Null }
+        $type = if ($v.Value -is [string]) { 'String' } else { 'DWord' }
+        New-ItemProperty -LiteralPath $key -Name $v.Name -Value $v.Value -PropertyType $type -Force -ErrorAction Stop | Out-Null; $names += "$($v.Name)=$($v.Value)"
+      }
+      # undo leaves no empty key behind ($Root stays)
+      while ($Undo -and $key.Length -gt $Root.Length -and (Test-Path -LiteralPath $key) -and -not (Get-Item -LiteralPath $key).ValueCount -and -not @(Get-ChildItem -LiteralPath $key).Count) { Remove-Item -LiteralPath $key -ErrorAction Stop; $key = Split-Path $key }
+      if ($names) { "$($b.Name): $($names -join ', ')" }
+    }
+  } catch {
+    if ($_.Exception.Message -notmatch 'denied|unauthori|not allowed') { return "browser policies: not written ($($_.Exception.Message))" }
+    return "browser policies: not written ($($_.Exception.Message)): run once elevated (one UAC prompt, same user): Start-Process pwsh -Verb RunAs -WindowStyle Hidden -ArgumentList '-NoProfile -File `"$(Join-Path $KitConf.Kit 'skills/bossy/bossy.ps1')`" $verb'" }
+  if (-not $done) { return $null }
+  if ($Undo) { "browser policies removed: $(@($done) -join '; ')" } else { "browser policies set (HKCU, every profile of each browser; check <browser>://policy; undo: bossy.ps1 $verb -Undo): $(@($done) -join '; ')" }
+}
+# model folders left in kit chrome-profiles and Cypress browser profiles (setup reports them, -BrowserPolicy -Clean deletes them)
+function Get-KitBrowserModelDirs {
+  $cy = if ($KitIsWindows) { Join-Path "$env:APPDATA" 'Cypress/cy' } else { Join-Path $HOME '.config/Cypress/cy' }
+  $roots = @(@(Get-ChildItem -LiteralPath (Get-KitPath chrome-profiles) -Directory -ErrorAction SilentlyContinue) + @(if (Test-Path -LiteralPath $cy) { Get-ChildItem -Path (Join-Path $cy '*/browsers/*/*') -Directory -ErrorAction SilentlyContinue }))
+  foreach ($r in $roots) { Get-ChildItem -LiteralPath $r.FullName -Directory -Recurse -Depth 1 -ErrorAction SilentlyContinue | Where-Object { $_.Name -in 'optimization_guide_model_store', 'OptGuideOnDeviceModel' } }
+}
+function Get-KitBrowserModelLine([switch]$Clean) {
+  $dirs = @(Get-KitBrowserModelDirs); if (-not $dirs.Count) { return $null }
+  $mb = [math]::Round((@($dirs | ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -File -Recurse -ErrorAction SilentlyContinue }) | Measure-Object Length -Sum).Sum / 1MB)
+  if (-not $Clean) { return "browser models: $($dirs.Count) folder(s), $mb MB left in test profiles; delete: bossy.ps1 setup -BrowserPolicy -Clean" }
+  $left = @($dirs | Where-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue; Test-Path -LiteralPath $_.FullName })
+  "browser models: deleted $($dirs.Count - $left.Count) folder(s) ($mb MB)$(if ($left.Count) { "; $($left.Count) in use (close that browser, rerun): $(@($left.FullName) -join ', ')" })"
+}
+function Get-KitSetupLinesBrowser([switch]$Undo, [switch]$Clean) { Set-KitBrowserPolicy -Undo:$Undo; Get-KitBrowserModelLine -Clean:$Clean }
 # ---- prepush: local files, org terms, ports (no tests: the agent tests before it commits and pushes, owner 2026-11-19)
 # the kit's git pre-push hook (.githooks/pre-push): blocks local files and org terms; warns on stale ports
 function Invoke-PrePush {

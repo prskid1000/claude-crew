@@ -5,6 +5,7 @@
 import puppeteer from 'puppeteer-core'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { kitPath, QUIET_ARGS } from '../browser.mjs'
+import { quietProfile } from './engine-playwright.mjs'
 import { join } from 'node:path'
 
 const [url, mode, a3, a4] = process.argv.slice(2)
@@ -14,7 +15,7 @@ const exe = [process.env.CHROME_PATH, ...PF.map((d) => `${d}/Google/Chrome/Appli
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((p) => p && existsSync(p))
 if (!exe) { console.log(JSON.stringify({ error: 'no Chrome/Edge found; set CHROME_PATH' })); process.exit(1) }
 const MEDIA = /\.(m3u8|mpd)(\?|$)|\.(mp4|webm|mov)(\?|$)/i
-const profile = mkdtempSync(join(kitPath('tmp', { create: true }), 'media-grab-'))   // <runtime>/tmp, never the OS temp
+const profile = quietProfile(mkdtempSync(join(kitPath('tmp', { create: true }), 'media-grab-')))   // <runtime>/tmp, never the OS temp
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let browser, code = 0
 try {

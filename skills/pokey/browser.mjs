@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L46 login · L126 browsers · L169 tabs · L257 session · L303 actions · L402 ui checks · L423 evidence
+// Sections: L17 config · L45 login · L125 browsers · L168 tabs · L256 session · L302 actions · L401 ui checks · L422 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -37,9 +37,8 @@ const BROWSERS = [process.env.CHROME_PATH, ...(process.platform === 'win32' ? [.
   : process.platform === 'darwin' ? [MAC('Google Chrome'), homedir() + MAC('Google Chrome'), MAC('Microsoft Edge'), MAC('Chromium')]
   : ['/opt/google/chrome/chrome', '/opt/microsoft/msedge/msedge', ...onPath(['google-chrome', 'google-chrome-stable', 'microsoft-edge', 'microsoft-edge-stable', 'chromium', 'chromium-browser']), '/snap/bin/chromium'])].filter(Boolean)
 export const CHROME = BROWSERS.find(existsSync)
-// no model / update downloads (~50 MB per profile)
-export const QUIET_ARGS = ['--no-first-run', '--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',
-  '--disable-features=OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction']
+// the one quiet list of every kit Chromium (crafty vocab.json); profiles: engine-playwright.mjs quietProfile
+export const QUIET_ARGS = (() => { try { return JSON.parse(readFileSync(join(__HERE, '..', 'crafty', 'vocab.json'), 'utf8')).chromeQuietArgs || [] } catch { return [] } })()
 const browserOpts = (t) => ({ engine: 'chrome', lang: Intl.DateTimeFormat().resolvedOptions().locale, width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -271,14 +270,14 @@ export async function session({ target, tenant, as } = {}) {
   BASE = t.web
   let browser, page, port = null
   const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
-  if (eng !== 'chrome') ({ browser, page } = await (await adapter('engine-playwright.mjs')).pwPage(eng, bo, VIEW))
+  if (eng !== 'chrome') ({ browser, page } = await (await adapter('engine-playwright.mjs')).pwPage(eng, bo, VIEW, QUIET_ARGS))
   else {
     if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
     port = await sessionPort(tn, tenant, as)
     const conn = () => puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW, protocolTimeout: PROTO_MS })
     try { browser = await conn() } catch { browser = await withLock(`chrome-${keyFile(key)}`, async () => {   // one spawn per port
       try { return await conn() } catch {}
-      let b; const dir = `${PROFILES}/${keyFile(key)}`; mkdirSync(dir, { recursive: true })
+      let b; const dir = (await adapter('engine-playwright.mjs')).quietProfile(`${PROFILES}/${keyFile(key)}`)
       spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, ...QUIET_ARGS,
         ...(bo.diskCache ? [] : ['--disk-cache-size=1']), 'about:blank'], { detached: true, stdio: 'ignore' }).unref()
       for (let i = 0; i < 40 && !b; i++) { await sleep(500); try { b = await conn() } catch {} }

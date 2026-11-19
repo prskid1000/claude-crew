@@ -6,7 +6,7 @@ Usage: pwsh -NoProfile -File tests/pokey-visual.tests.ps1 (tests/kit-tests.ps1 r
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/android_sdk.ps1', 'skills/phoney/SKILL.md', 'skills/phoney/adapters/app_kinds.ps1', 'skills/phoney/adapters/arrange.ps1', 'skills/phoney/phoney.ps1',
-  'skills/pokey/adapters/annotate.ps1', 'skills/pokey/adapters/ui_android.ps1', 'skills/pokey/adapters/ui_checks.mjs', 'skills/pokey/adapters/web-login.mjs')   # copied into the test kit
+  'skills/pokey/adapters/annotate.ps1', 'skills/pokey/adapters/engine-playwright.mjs', 'skills/pokey/adapters/ui_android.ps1', 'skills/pokey/adapters/ui_checks.mjs', 'skills/pokey/adapters/web-login.mjs')   # copied into the test kit
 $k = New-TestKit visual; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $qk = Join-Path $k 'skills/pokey'; $bk = Use-BrowserKit   # browser.mjs + puppeteer-core linked once
 # ---- annotate
 if ($IsWindows) {
@@ -61,7 +61,21 @@ process.exit(0)
 $bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
 $bmUsers = @('skills/pokey/adapters/media_grab.mjs', 'skills/bossy/kitbag.py' | Where-Object { (Get-Content (Join-Path $src $_) -Raw) -notmatch 'QUIET_ARGS \}?\s*=\s*await import\(bm\)|import \{ kitPath, QUIET_ARGS \}|args: QUIET_ARGS|args: \[\.\.\.QUIET_ARGS' })
 Expect "browser.mjs: every kit Chrome (sessions, ui-check, media grab) starts with no component, model, safe-browsing or background downloads, no disk cache unless browser.diskCache (missing: $($bmUsers -join ', '))" (
-  $bmSrc -match "'--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',\s+'--disable-features=OptimizationGuideModelDownloading," -and $bmSrc.Contains("...QUIET_ARGS,") -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])") -and -not $bmUsers.Count)
+  $bmSrc.Contains("'vocab.json'), 'utf8')).chromeQuietArgs || []") -and $bmSrc.Contains('.quietProfile(`${PROFILES}/') -and $bmSrc.Contains("...QUIET_ARGS,") -and $bmSrc.Contains('.pwPage(eng, bo, VIEW, QUIET_ARGS)') -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])") -and -not $bmUsers.Count)
+# one quiet-flag list (vocab.json chromeQuietArgs) for every kit Chromium: browser.mjs, Playwright chromium, report_pdf.py, Cypress Electron (build_heap.ps1, gate kind cypress)
+$qa = @((Get-Content (Join-Path $src 'skills/crafty/vocab.json') -Raw | ConvertFrom-Json).chromeQuietArgs)
+if ($bk) {
+  $qpd = Join-Path (Kd) 'qp'; New-Item -ItemType Directory -Force $qpd | Out-Null; [IO.File]::WriteAllText((Join-Path $qpd 'Local State'), '{"browser":{"x":1},"component_updates":{"other":2}}')
+  $qp = NodeT qp "const a = await import(new URL('adapters/engine-playwright.mjs', BM)); a.quietProfile(process.argv[2]); a.quietProfile(process.argv[2] + '/new'); console.log('ok')" $qpd
+  $qs = Get-Content (Join-Path $qpd 'Local State') -Raw | ConvertFrom-Json; $qn = Get-Content (Join-Path $qpd 'new/Local State') -Raw | ConvertFrom-Json
+  Expect "browser.mjs quietProfile: seeds vocab.json chromeLocalState into a profile's Local State (kept keys; a new profile gets it) ($qp)" (
+    $qs.component_updates.component_updates_enabled -eq $false -and $qs.component_updates.other -eq 2 -and $qs.browser.x -eq 1 -and $qn.component_updates.component_updates_enabled -eq $false)
+} else { 'SKIP browser.mjs quietProfile (no puppeteer-core in skills/pokey)' }
+$qUsers = @{ 'skills/crafty/adapters/report_pdf.py' = "dt.VOCAB.get('chromeQuietArgs'"; 'skills/pokey/adapters/media_grab.mjs' = 'quietProfile(mkdtempSync('; 'skills/bossy/kitbag.py' = 'userDataDir: ud,'; 'skills/crafty/adapters/build_heap.ps1' = "if (`$Kind -eq 'cypress' -and -not `$env:ELECTRON_EXTRA_LAUNCH_ARGS) { `$env:ELECTRON_EXTRA_LAUNCH_ARGS = `$script:KitVocab.chromeQuietArgs -join"; 'skills/pokey/adapters/engine-playwright.mjs' = "args: eng === 'chromium' ? quiet : []" }
+$qMiss = @($qUsers.Keys | Where-Object { -not (Get-Content (Join-Path $src $_) -Raw).Contains($qUsers[$_]) })
+$qCopies = @(git -C $src grep -l -e 'OptimizationGuideModelDownloading' -- 'skills' | Where-Object { $_ -ne 'skills/crafty/vocab.json' })
+Expect "vocab.json chromeQuietArgs: one list, every kit Chromium start reads it (missing: $($qMiss -join ', '); copies: $($qCopies -join ', '))" (
+  $qa -contains '--disable-component-update' -and $qa -contains '--disable-background-networking' -and @($qa -match '^--disable-features=OptimizationGuideModelDownloading,').Count -eq 1 -and -not $qMiss.Count -and -not $qCopies.Count)
 # retro 2205: no upload map yet (-Check) -> plain file names, not 'Cannot index into a null array'
 $qm = pwsh -NoProfile -Command ". '$Q' 6>`$null; (Build-QaReportMd -Title t -Code T2 -Item @{} -Res ([pscustomobject]@{ checks = @([pscustomobject]@{ id = 'C1'; result = 'PASS'; evidence = @('T2-C1_01_a.png') }) }) -Map `$null -Run @{} -Tester x -Date d -Cells @{}) -join ' '" 2>&1 | Out-String
 Expect "report md: a null upload map renders file names ($($qm.Trim().Length) chars)" ($qm -match 'file: T2-C1_01_a\.png' -and $qm -notmatch 'null array')

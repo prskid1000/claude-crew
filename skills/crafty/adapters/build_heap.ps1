@@ -6,6 +6,8 @@
 function Get-GateHeap([string]$Kind, [double[]]$Peaks, [double]$NeedGB, [double]$Need) {
   $tool = if ($Kind -in 'android-build', 'android-test', 'gradle') { 'gradle' } elseif ($Kind -like 'maven*') { 'maven' }
           elseif ($Kind -in 'ng-test', 'web-build', 'js-test', 'tsc-lint', 'typecheck', 'rn-bundle', 'e2e') { 'node' }
+  # Cypress's Electron reads no browser policy: the shared quiet flags (vocab.json chromeQuietArgs)
+  if ($Kind -eq 'cypress' -and -not $env:ELECTRON_EXTRA_LAUNCH_ARGS) { $env:ELECTRON_EXTRA_LAUNCH_ARGS = $script:KitVocab.chromeQuietArgs -join ' ' }
   if (-not $tool) { return $null }
   if (-not $env:GRADLE_OPTS) { $env:GRADLE_OPTS = "-Dorg.gradle.workers.max=$([int](Get-KitParam 'gate.gradleWorkers'))" }
   $minGB = [double](Get-KitSetting 'gate.heapMinGB' 4)

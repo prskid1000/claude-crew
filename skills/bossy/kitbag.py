@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1477 audit ·
-  L1617 registry · L1949 arch lint · L2216 prose · L2381 sections · L2511 budget · L2525 migrate · L2685 plugins ·
-  L2739 state lint · L2927 main
+Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1481 audit ·
+  L1621 registry · L1953 arch lint · L2220 prose · L2385 sections · L2515 budget · L2529 migrate · L2689 plugins ·
+  L2743 state lint · L2931 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1276,7 +1276,11 @@ def ui_check_warns(kit):
 # box) or squeezed (a few letters a line)
 PAGE_JS = r'''import puppeteer from 'puppeteer-core'
 import { pathToFileURL } from 'node:url'
-const [bm, file, ws, st, out, stem] = process.argv.slice(1), { CHROME, QUIET_ARGS } = await import(bm)
+import { mkdtempSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+const [bm, file, ws, st, out, stem] = process.argv.slice(1), { CHROME, QUIET_ARGS, kitPath } = await import(bm)
+const { quietProfile } = await import(new URL('adapters/engine-playwright.mjs', bm))
+const ud = quietProfile(mkdtempSync(join(kitPath('tmp', { create: true }), 'ui-check-')))   // seeded prefs: no model downloads
 // every <details> open; resolves once each one's own toggle event ran (a page re-lays out on toggle: its capture and earlier listeners
 // run first); one the page closed again or removed is not waited for
 const openAll = () => new Promise((done) => { const wait = new Set([...document.querySelectorAll('details')].filter((d) => !d.open)); if (!wait.size) return done()
@@ -1390,7 +1394,7 @@ const links = () => [...document.querySelectorAll('a[href]')].flatMap((a) => {
   return [{ el: 'link', why: web ? 'a web link opens in this tab: target=_blank' : 'a link to a kit page navigates away: open it in the page drawer (data-dw)', text: `${a.textContent.trim().slice(0, 40)} -> ${h.slice(0, 80)}` }]
 })
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
-const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: [...QUIET_ARGS, '--disk-cache-size=1'] }), res = []
+const b = await puppeteer.launch({ executablePath: CHROME, headless: true, userDataDir: ud, args: [...QUIET_ARGS, '--disk-cache-size=1'] }), res = []
 // one tab for every state, its storage cleared before each load: a new context per state spawned a renderer each (48 for the kit
 // map) and under a full test run one never answered (ProtocolError: Network.enable timed out after 180 s)
 const page = (await b.pages())[0] || await b.newPage(), href = pathToFileURL(file).href
@@ -1413,7 +1417,7 @@ try {
     await page.screenshot({ path: `${base}-open.png`, fullPage: true })   // every <details> open: what the clip scan read
     res.push({ width, theme, state: clicks.join(' > ') || 'loaded', shot: `${base}.png`, height, clipped })
   }
-} finally { await b.close() }
+} finally { await b.close(); rmSync(ud, { recursive: true, force: true, maxRetries: 5 }) }
 console.log(JSON.stringify(res))'''
 
 def lane_ids_shown(page, kit=None):
