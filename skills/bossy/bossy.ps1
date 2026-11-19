@@ -1294,18 +1294,18 @@ if (Within 'QA bug tasks') {
   }
 }
 if (Within 'failedTesting tasks') {
-  $ft = @{}; $uw = @()
+  $ft = @{}; $ftAt = @{}; $uw = @()
   foreach ($fj in @(Get-KitQaRunFiles finalize.json -SinceDays 7)) {
     $fo = Get-Content $fj.FullName -Raw | ConvertFrom-Json
-    foreach ($s in @($fo.subtasks | Where-Object { $_.failedTesting })) { $ft[[string]$s.id] = $fj.Directory.Parent.Name }
+    foreach ($s in @($fo.subtasks | Where-Object { $_.failedTesting })) { $ft[[string]$s.id] = $fj.Directory.Parent.Name; $ftAt[[string]$s.id] = $fj.LastWriteTime }
     if ($fj.LastWriteTime -gt $now.AddDays(-1)) { foreach ($w in @($fo.watch | Where-Object { $_ })) { $uw += "$($fj.Directory.Parent.Name)/$($fj.Directory.Name) $($w.id) ($($w.task), $($w.screen)) on $($w.env)" } }
   }
   # pokey.ps1 finalize Test-Unproven: no [Bug] filed
   if ($uw.Count) { Flag 'WATCH' "$($uw.Count) unproven QA finding(s), verify inconclusive, no request named: $($uw -join '; ')" "One watchy kind triage per env for the finding's window (its results.json observed); a confirmed defect -> its [Bug]; then supervise -Ack." }
   $trk = (Read-KitTracking).tasks; if ($state.ftStatus -isnot [Collections.IDictionary]) { $state.ftStatus = @{} }
   foreach ($id in @($state.ftStatus.Keys)) { if ($id -notin $ft.Keys) { $state.ftStatus.Remove($id) } }
-  $ids = @($ft.Keys | Where-Object { -not ($trk[$_] -and -not $trk[$_].done) })   # tracked open: its own flow
-  $ttl = [math]::Max(15.0, 2 * (Get-KitBeatMinutes))   # closed: 6 h; views in the background, cached statuses now (3 inline views: 6-9 s)
+  $ids = @($ft.Keys | Where-Object { (($o = $trk[$_]).done -or -not $o) -and -not ($o.doneAt -and [datetime]$o.doneAt -gt $ftAt[$_]) })   # merged after it: fixed
+  $ttl = [math]::Max(15.0, 2 * (Get-KitBeatMinutes))   # closed: 6 h
   $due = @($ids | Where-Object { -not ($c = $state.ftStatus[$_]) -or ($now - [datetime]$c.at).TotalMinutes -ge $(if (Test-TrackerStatus $c.st 'closed') { 360 } else { $ttl }) })
   foreach ($l in @(if ($due.Count) { Invoke-Bounded $KitCmd.dev @('tracker', 'statuses', ($due -join ',')) })) {   # the last finished run: a view newer than the cache wins
     if ("$l" -match '^WATCH ') { Flag 'WATCH' "failedTesting views: $("$l".Substring(6))" 'Check tracker auth: crafty.ps1 tracker view <id>'; continue }

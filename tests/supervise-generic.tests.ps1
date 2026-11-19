@@ -100,9 +100,11 @@ $ftw = { foreach ($bj in @(Get-ChildItem (TkPath $k background) -Filter '*status
 $fta = { $svf = TkPath $k supervise-state; $svs = Get-Content $svf -Raw | ConvertFrom-Json -AsHashtable; foreach ($v in $svs.ftStatus.Values) { $v.at = (Get-Date).AddDays(-1).ToString('o') }; $svs | ConvertTo-Json -Depth 20 | Set-Content $svf }
 $f1 = & $ftn; & $ftw; $f2 = & $ftn; & $ftw; & $ts 4 'in progress'; $f3 = & $ftn; & $fta; $f4 = & $ftn; & $ftw; & $fta; $f5 = & $ftn
 Expect "supervise failedTesting: views in the background, the last result next sweep, then cached; a view newer than the cache wins ($f1 $f2 $f3 $f4 $f5)" ("$f1|$f2$f3$f4$f5" -eq '|4443')
+& $J @{ task = 'ft1'; track = @{ task = 'ft1'; done = $true; mrs = @(); doneAt = (Get-Date).AddMinutes(1).ToString('o') } } (Join-Path (TkPath $k tasks -Create) 'ft1.json'); $f6 = & $ftn
+Expect "supervise failedTesting: all MRs merged after the run (track doneAt) clears the task ($f5 -> $f6)" ("$f6" -eq '2')
 # every view fails (tracker down): one WATCH, not silence
 & $ftw; Remove-Item "$tn/ft*.json"; & $fta; $null = & $ftn; & $ftw; & $fta
-$fwa = @((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags); $fw = @($fwa | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^failedTesting views: background .*failed: tracker statuses: 4 view\(s\) failed' })
+$fwa = @((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags); $fw = @($fwa | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^failedTesting views: background .*failed: tracker statuses: 3 view\(s\) failed' })
 Expect "supervise failedTesting: failed views are a WATCH ($($fw.Count))" ($fw.Count -eq 1)
 Expect "supervise: an unproven QA finding (finalize.json watch, K52) is one WATCH naming run/item, check and env" (@($fwa | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^1 unproven QA finding.*q1/A1 X1 \(ft1, api\) on stg' }).Count -eq 1)
 # gate.cacheFlush: starved gate + big cache -> 1 flush / 30 min; failing command = 1 WATCH
