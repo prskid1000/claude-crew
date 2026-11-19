@@ -368,7 +368,7 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
   if ($Name) { @($all | Where-Object { $_.Name -match $Name }) } else { @($all) }
 }
 
-function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
+function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue; if ($script:KitProcMemo) { $script:KitProcMemo.all = $null } }   # a sweep's snapshot: scanned again
 # a tree deepest first, the root last: Kill($true) ends the root first, and a pwsh child still starting then found its stdout pipe
 # closed (FailFast "No process is on the other end of the pipe": a modal popup); Kill($true) last takes stragglers
 function Stop-KitProcessTree([Diagnostics.Process]$Proc) {
@@ -383,7 +383,7 @@ function Stop-KitProcessTree([Diagnostics.Process]$Proc) {
       for ($ix = $order.Count - 1; $ix -ge 0; $ix--) { try { $order[$ix].Kill() } catch {} }
     } catch {}
   }
-  try { $Proc.Kill($true) } catch {}
+  try { $Proc.Kill($true) } catch {}; if ($script:KitProcMemo) { $script:KitProcMemo.all = $null }
 }
 # reads only the last 512 KB (then 8 MB): Get-Content -Tail took 1.3 s per MB-sized transcript
 function Get-KitSpend([string]$File) {

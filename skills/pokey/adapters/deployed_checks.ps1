@@ -266,7 +266,8 @@ function OnRef($p, $mr, $sha, $ref, $branch = $ref) {
 }
 # a merged MR's changed files (never change): kept across beats
 function MrChanges($iid) {
-  $k = "chg|$ref"; if ($null -ne $rcache -and $rcache[$k]) { return [pscustomobject]@{ changes = @($rcache[$k].files | ForEach-Object { [pscustomobject]@{ new_path = $_; old_path = $_ } }); overflow = [bool]$rcache[$k].overflow } }
+  # keyed by repo + iid, never $ref: ContentOn's parameter of that name (a branch) shadows it
+  $k = "chg|$($r.name)!$iid"; if ($null -ne $rcache -and $rcache[$k]) { return [pscustomobject]@{ changes = @($rcache[$k].files | ForEach-Object { [pscustomobject]@{ new_path = $_; old_path = $_ } }); overflow = [bool]$rcache[$k].overflow } }
   $ch = Hv 'mr.changes' @{ n = $iid }
   if ($env:KIT_API_BEAT -and $null -ne $rcache -and $ch -and $mr.state -eq 'merged') { $rcache[$k] = @{ at = (Get-Date).ToString('o'); overflow = [bool]$ch.overflow -or @($ch.changes).Count -ge 100; files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique) }; $rdirty.on = $true }
   $ch

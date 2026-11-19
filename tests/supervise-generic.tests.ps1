@@ -271,11 +271,11 @@ $r2 = @(Read-KitJsonFiles $md | Sort-Object v); '{"v":"three"}' | Set-Content $a
 "json:$((@($r2.v) -join ',') -eq 'bee,one' -and $r2[0].file -eq $b -and (@($r3.v) -join ',') -eq 'three')"
 $script:KitJsonMemo = $null; $t1 = (Get-Item $a).LastWriteTimeUtc; '{"v":"thrEE"}' | Set-Content $a; (Get-Item $a).LastWriteTimeUtc = $t1; "off:$(@(Read-KitJsonFiles $md).v -ceq 'thrEE')"
 $p1 = @(Get-SysProcs -NoCommandLine); $script:KitProcMemo.all = @([pscustomobject]@{ Id = 1; ParentId = 0; Name = 'fake-x'; CommandLine = 'c' })
-"procs:$($p1.Count -gt 1 -and $null -ne @($p1 | Where-Object Id -eq $PID)[0].CommandLine -and (@(Get-SysProcs -Name '^fake').Name -join ',') -eq 'fake-x' -and (Get-KitProcSnap).names[1] -eq 'fake-x')"
+"procs:$($p1.Count -gt 1 -and $null -ne @($p1 | Where-Object Id -eq $PID)[0].CommandLine -and (@(Get-SysProcs -Name '^fake').Name -join ',') -eq 'fake-x' -and (Get-KitProcSnap).names[1] -eq 'fake-x' -and $(Stop-SysProcess 999999; -not @(Get-SysProcs -Name '^fake-x$').Count))"
 $h = Start-KitExe 'pwsh' @('-NoProfile', '-Command', 'Start-Sleep -Milliseconds 300; "early"'); Start-Sleep -Milliseconds 100; $x = Receive-KitExe $h 20
 $h2 = Start-KitExe 'pwsh' @('-NoProfile', '-Command', 'Start-Sleep 30'); $t2 = Get-Date; $y = Receive-KitExe $h2 1
 "exe:$($x.out -eq 'early' -and $x.code -eq 0 -and -not $x.timedOut -and $y.timedOut -and ((Get-Date) - $t2).TotalSeconds -lt 10 -and $h2.p.HasExited)"
 '@
-Expect-Each (Invoke-PsTest 'sweep-memo' $sm @($O, (Kd))) 'sweep memo: # (JSON files by time + size, copies per caller; off outside a sweep; one process snapshot; a child read later, cut at its timeout)' 'json', 'off', 'procs', 'exe'
+Expect-Each (Invoke-PsTest 'sweep-memo' $sm @($O, (Kd))) 'sweep memo: # (JSON files by time + size, copies per caller; off outside a sweep; one process snapshot until a kill; a child read later, cut at its timeout)' 'json', 'off', 'procs', 'exe'
 Remove-TestKit $k
 Complete-Tests

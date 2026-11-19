@@ -112,9 +112,14 @@ Set-Content "$(Kd)/chg.ps1" @'
 $env:KIT_API_BEAT = 'cb1'; $a = Invoke-Deployed -Mrs 'py!5' -Json -Target mc | ConvertFrom-Json; $n1 = $global:nc
 $env:KIT_API_BEAT = 'cb2'; $b = Invoke-Deployed -Mrs 'py!5' -Json -Target mc | ConvertFrom-Json; $env:KIT_API_BEAT = $null
 "chg:$($n1 -eq 1 -and $global:nc -eq 1 -and $a.state -eq 'N/A' -and $b.state -eq 'N/A') $n1/$global:nc $($a.state)/$($b.state)"
+$ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast; foreach ($fn in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+$rcache = @{}; $rdirty = @{ on = $false }; $env:KIT_API_BEAT = 'cb3'; $r = @{ name = 'py' }; $p = 'g/py'; $memo = @{}; $ref = 'staging'   # ContentOn's $ref: a branch
+function Invoke-HostVerb($v, $a) { @{ changes = @(@{ new_path = "f$($a.n).py"; old_path = "f$($a.n).py" }) } }
+$mr = @{ iid = 5; state = 'merged' }; $c5 = (MrChanges 5).changes[0].new_path; $mr = @{ iid = 6; state = 'merged' }; $c6 = (MrChanges 6).changes[0].new_path; $env:KIT_API_BEAT = $null
+"chgkey:$($c5 -eq 'f5.py' -and $c6 -eq 'f6.py') $c5/$c6"
 '@
 $chg = Px "$(Kd)/chg.ps1" $Q 2>&1 | Out-String
-Expect "deployed in a supervise beat: a merged MR's change list kept across beats ($($chg.Trim()))" ($chg -match 'chg:True ')
+Expect "deployed in a supervise beat: a merged MR's change list kept across beats, one per MR whatever ref it is compared with ($($chg.Trim()))" ($chg -match 'chg:True ' -and $chg -match 'chgkey:True ')
 # supervise: a done task's deployed probe is skipped while its repos' deploy-branch heads hold and its last answer settled (live, n/a,
 # not on the branch); a head move, a new MR or an unsettled answer (on the branch, job not done) probes again
 $hsk = @'
