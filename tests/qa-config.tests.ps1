@@ -177,6 +177,11 @@ $qsd = TkPath $k qa-seats -Create; $sq = { $null = pwsh @np $Q seat acquire -Age
 & $J @{ agent = 'test:P1'; lease = 'P1'; kind = 'web'; need = 0; since = (Get-Date).AddMinutes(-50).ToString('o') } (Join-Path $qsd 'seats/test_P1.json')
 $null = pwsh @np $Q seat release -Agent test:P1; $po = pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog params (Get-Date).AddHours(-1) | Where-Object { `$_.key -eq 'qa.packageMinutes' })[-1] | ForEach-Object { `"`$(`$_.ctx)/`$([int]`$_.v)`" }"
 Expect "seat: an exit-4 retry keeps its first queue time ($q1 = $q2); a release teaches qa.packageMinutes per lane ($po)" ($q1 -and $q1 -eq $q2 -and "$po".Trim() -match '^web/(49|50)$')
+# D12: a target on a lane's ports is that local env (prepare: live = the lead's envy check, not NO-TARGET)
+& $J @{ targets = @{ 'local-shop' = @{ api = 'http://127.0.0.1:8080/x' }; stg = @{ api = 'https://stg.example/api' } } } (Join-Path $k 'skills/pokey/targets.local.json')
+$tle = & { . $Q; function Get-KitEnvyLanes { @([pscustomobject]@{ env = 'shop'; group = 'shop'; lane = 1; ports = [pscustomobject]@{ api = 8080 } }, [pscustomobject]@{ env = 'shop2'; group = 'shop'; lane = 2; ports = [pscustomobject]@{ api = 8180 } }) }
+  "$(Get-TargetLocalEnv 'local-shop')/$(Get-TargetLocalEnv 'stg')/$(Get-TargetLocalEnv 'nope')" }
+Expect "prepare: a target on a local env lane's ports is that env, a deployed or unknown target none ($tle)" ($tle -eq 'shop//')
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE -ErrorAction SilentlyContinue
 Remove-TestKit $k
 Complete-Tests

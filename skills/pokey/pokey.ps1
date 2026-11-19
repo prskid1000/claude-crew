@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L230 api · L452 finalize · L939 results · L972 retest · L1029 prepare
+Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L950 results · L983 retest · L1040 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -229,17 +229,28 @@ switch ($Action) {
 }
 # ---- api: a target's API as a test user
 # '<target>-<bird>' = that lane of a local env (envy.ps1 envs -Json; -falcon = the base target; old <target><k> still accepted): the base target, its lane-1 URL ports moved to lane k's
+# envy.ps1 envs -Json (env, group, lane, ports): cached by kit.local.json + envy.ps1 times (a pwsh start per api call was 72/h, K48)
+function Get-KitEnvyLanes {
+  $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'; if (-not (Test-Path -LiteralPath $envy)) { return @() }
+  $cf = Join-Path (Get-KitPath cache -Create) 'envy-envs.json'; $ck = "$((Get-Item -LiteralPath $KitConf.ConfigFile -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks)|$((Get-Item -LiteralPath $envy).LastWriteTimeUtc.Ticks)"
+  $c0 = try { Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json } catch { $null }
+  if ($c0 -and $c0.key -eq $ck) { return @($c0.lanes) }
+  $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $envy, 'envs', '-Json') 60; $l0 = try { @($r.out | ConvertFrom-Json) } catch { @() }
+  if ($l0.Count) { Write-KitAtomic $cf (@{ key = $ck; lanes = $l0 } | ConvertTo-Json -Depth 10) }; $l0
+}
+# the local env a target runs on: its web / api URL ports are a lane-1 env's ports ('' = a deployed env)
+function Get-TargetLocalEnv([string]$Name) {
+  $tc = try { (Get-Content (Join-Path $PSScriptRoot 'targets.local.json') -Raw | ConvertFrom-Json).targets } catch { $null }; $t = Get-KitMember $tc $Name
+  $urls = "$((Get-KitMember $t 'web')) $((Get-KitMember $t 'api'))"; if (-not $urls.Trim()) { return '' }
+  "$(@(Get-KitEnvyLanes | Where-Object { $_.lane -eq 1 -and @((Get-KitProps $_.ports) | Where-Object { $urls -match ":$($_.Value)(?!\d)" }).Count })[0].env)"
+}
 function Get-LaneTarget($cfg, [string]$name) {
   $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
   $bk = 0; if ($name -match '^(?<b>.+)-(?<bd>[a-z]+)$') { $bk = @(1..40 | Where-Object { "$(Get-KitBirdName $_)" -ieq $Matches.bd })[0] }
   if ($bk) { $tb = $Matches.b; $k = [int]$bk } elseif ($name -match '^(?<b>.+?)(?<k>\d+)$') { $tb = $Matches.b; $k = [int]$Matches.k } else { return $null }
   if (-not (Get-KitMember $cfg.targets $tb) -or -not (Test-Path -LiteralPath $envy)) { return $null }
   $base = (Get-KitMember $cfg.targets $tb); if ($k -eq 1) { return $base }; $urls = [string](@($base.web, $base.api) -join ' ')
-  # envs -Json depends on the config only: cached by kit.local.json + envy.ps1 times (a pwsh start per api call was 72/h, K48)
-  $cf = Join-Path (Get-KitPath cache -Create) 'envy-envs.json'; $ck = "$((Get-Item -LiteralPath $KitConf.ConfigFile -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks)|$((Get-Item -LiteralPath $envy).LastWriteTimeUtc.Ticks)"
-  $c0 = try { Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json } catch { $null }
-  $lanes = if ($c0 -and $c0.key -eq $ck) { @($c0.lanes) } else { $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $envy, 'envs', '-Json') 60; $l0 = try { @($r.out | ConvertFrom-Json) } catch { @() }
-    if ($l0.Count) { Write-KitAtomic $cf (@{ key = $ck; lanes = $l0 } | ConvertTo-Json -Depth 10) }; $l0 }
+  $lanes = Get-KitEnvyLanes
   foreach ($g in @($lanes | Where-Object { $_.lane -eq 1 })) {
     $one = @((Get-KitProps $g.ports) | Where-Object { $urls -match ":$($_.Value)(?!\d)" }); $lk = @($lanes | Where-Object { $_.group -eq $g.group -and $_.lane -eq $k })[0]
     if (-not $one.Count -or -not $lk) { continue }
@@ -1047,7 +1058,8 @@ New-Item -ItemType Directory -Force (Join-Path $dir 'guides') | Out-Null; $dir =
 # 1. candidates: lists x statuses, plus tasks, minus exclude; mine = the tracker owner's
 $lists = @($jb.lists | Where-Object { $_ }); if (-not $lists.Count) { $lists = @(@(Get-KitValue 'trackerLists' @()) | Where-Object { $_ }) }; if (-not $lists.Count) { $lists = @('') }
 $sts = @($jb.statuses | Where-Object { $_ }); if (-not $sts.Count) { $sts = @('inTest') }
-$cand = [ordered]@{}; foreach ($ls in $lists) { foreach ($st in $sts) { foreach ($row in @(Get-TrackerTasks "$ls" "$st")) { if ($row.id) { $cand["$($row.id)"] = "$ls" } } } }
+$byIds = @($jb.tasks | Where-Object { $_ }).Count -and -not @($jb.lists | Where-Object { $_ }).Count -and -not @($jb.statuses | Where-Object { $_ }).Count   # a selection by ids: only those ids
+$cand = [ordered]@{}; foreach ($ls in $lists) { foreach ($st in @($sts | Where-Object { -not $byIds })) { foreach ($row in @(Get-TrackerTasks "$ls" "$st")) { if ($row.id) { $cand["$($row.id)"] = "$ls" } } } }
 foreach ($tid in @($jb.tasks | Where-Object { $_ })) { $cand["$tid"] = '' }
 foreach ($tid in @($jb.exclude | Where-Object { $_ })) { $cand.Remove("$tid") }
 $owner = if ($jb.mine) { "$(Get-TrackerOwner)" }
@@ -1079,7 +1091,7 @@ foreach ($tid in @($cand.Keys)) {
     if ($cutRule) { & $out "qa.targets.$($jb.target) rule -> $($cutRule.target): $($script:QaMrCut -join ', ') changes list cut by the host, pathRegex unprovable (name the task's target in the job)"; continue }
     if (-not $hit) { & $out "no qa.targets.$($jb.target) rule matches"; continue }
     $it.target = "$($hit.target)"; if ($hit.localEnv) { $it.localEnv = "$($hit.localEnv)" }
-  } else { $it.target = "$($jb.target)" }
+  } else { $it.target = "$($jb.target)"; if ($null -eq $script:QaJobLocal) { $script:QaJobLocal = Get-TargetLocalEnv $jb.target }; if ($script:QaJobLocal) { $it.localEnv = $script:QaJobLocal } }   # a local target: envy deploys what is missing (lead)
   # 4. live: every MR deployed on the target (N/A, MANUAL count as in); a local env: its own check (lead)
   $depFn = Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue   # adapters/deployed_checks.ps1
   if (-not $it.localEnv -and $depFn) {
