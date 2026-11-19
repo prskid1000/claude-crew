@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L314 shells · L483 page · L1061 release · L1106 lines · L1139 cleanup · L1206 launch ·
-  L1284 pause · L1403 heartbeat · L1418 sessions · L1470 ci tasks ·
-  L1526 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L314 shells · L483 page · L1054 release · L1099 lines · L1132 cleanup · L1199 launch ·
+  L1277 pause · L1396 heartbeat · L1411 sessions · L1463 ci tasks ·
+  L1519 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -761,17 +761,10 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     $dt = [double]@($disks | Where-Object { "$($_.drive)" -eq $dv })[0].total; $dw = @($lv | ForEach-Object { if ($_.disks) { (Get-KitMember $_.disks $dv) } } | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ })
     $mtr = if ($dt) { & $meter ($dt - [double]$dk.free) $dt "$([math]::Round(100 * ($dt - [double]$dk.free) / $dt))% of $(& $n1 $dt) GB used" $(if ($tn -eq 'hot') { 'act' } elseif ($tn) { 'watch' } else { 'slate' }) $(if ($dw.Count) { $dt - ($dw | Measure-Object -Minimum).Minimum }) }
     [pscustomobject]@{ tone = $tn; h = "<div class='dk $tn' title='$(& $e (& $diskRate $dk))'><div class=v><span class=dn0>$(& $e $dv)</span> $(& $fmt $dk.free)<small>$(& $e " GB free · $(& $diskRate $dk -Short)$(if ($null -ne $ttf) { " · full in $(& $n1 $ttf) h" })")</small></div>$mtr$(& $spark $dw 'slate' 'free GB, 7 days' 'low')</div>" } })
-  # QA seats as slots (filled = taken), up to 24; the numbers stay in the tile
-  $dots = { param($u, $m) $u = [int]$u; $m = [math]::Min(24, [int]$m); if ($m -le 0) { return '' }; "<div class=dots role=img aria-label='$u of $m QA seats taken'>$(@(1..$m | ForEach-Object { "<i$(if ($_ -le $u) { ' class=on' })></i>" }) -join '')</div>" }
-  $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) }); $memPk = & $agg { $_.mem }; $usedGB = if ($tot -and $null -ne $memPct) { $tot * [double]$memPct / 100 }
-  # build gate: a row per kind from its history (adapters/supervise_stats.ps1)
-  $gateCard = Format-KitGateCard $st.gate
-  # rows of like height (owner, 2026-11-13): Memory | Disks, then the Build gate full width
-  $machCards = @(
-    (& $nowCard 'Memory' "$(& $fmt $memPct)<small>% used</small>" "$(if ($usedGB) { "$(& $n1 $usedGB) / $(& $n1 $tot) GB used · " })$(& $fmt $memFree) GB free · floor $(& $fmt $st.keepFree) GB" "" $(if ($memPct -ge 90) { 'hot' } elseif ($memPct -ge 75) { 'warn' }) "$(if ($usedGB) { & $meter $usedGB $tot "$(if ($memPk -ne '—') { "tick = 7-day peak $memPk%" } else { "of $(& $n1 $tot) GB" })" 'slate' $(if ($memPk -ne '—') { $tot * [double]$memPk / 100 }) })$(& $spark @($l24 | ForEach-Object mem) 'slate' 'used %, 24 h' 'peak' $null '%')"),
-    "<div class='st $(if ($dkRows.tone -contains 'hot') { 'hot' } elseif (@($dkRows | Where-Object tone).Count) { 'warn' })' data-fit><div class=k>Disks$(if ($lv.Count) { '<small> · tick = 7-day peak use</small>' })</div>$(if ($dkRows.Count) { & $grid dks 190px @($dkRows.h) 2 } else { '<div class=v>—</div><div class=s>no sample</div>' })</div>",
-    $gateCard)
-  $machineHtml = "<div class=mcol>$(& $grid 'stats mach' 300px @($machCards[0], $machCards[1]) 2)$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }) $st.writes $st.waits)$(Format-KitWritesCard $st.writes)$($machCards[2])</div>"
+  $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) })
+  $gs = $st.gate; $machTop = Format-KitMachineTop $gs $nw $memPct $memFree $tot ([double]$st.keepFree)   # tiles, RAM bar, builds per agent (supervise_stats.ps1)
+  $diskCard = "<div class='st $(if ($dkRows.tone -contains 'hot') { 'hot' } elseif (@($dkRows | Where-Object tone).Count) { 'warn' })' data-fit><div class=k>Disks$(if ($lv.Count) { '<small> · tick = 7-day peak use</small>' })</div>$(if ($dkRows.Count) { & $grid dks 190px @($dkRows.h) 2 } else { '<div class=v>—</div><div class=s>no sample</div>' })</div>"
+  $machineHtml = "<div class=mcol>$diskCard$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }) $st.writes $st.waits $gs $machTop)$(Format-KitWritesCard $st.writes)</div>"
   # Activity (owner, 2026-11-14): actionable tiles, each number once, history as labelled graphs
   $nst = @($nw.stale | Where-Object { $_ }); $runOf = @{}; foreach ($ur in @($st.usage.runs | Where-Object { $_.id })) { $runOf["$($ur.id)"] = $ur }
   $wfTile = if ($nw) { "<div class='st$(if ($nst.Count) { ' warn' })' data-fit><div class=k>Workflow steps now</div><div class=v>$(& $icv run 'running steps' (& $fmt $nw.run))<small>running$(if ($null -ne $nw.total) { " · </small>$($nw.done)/$($nw.total)<small> steps" })</small></div><div class=rch>" +

@@ -275,7 +275,7 @@ $a2 = & $act $args[0]
 "cached:$($a2 -eq 0)"
 '@
 Expect-Each (Invoke-PsTest 'qaparents' $qpt @($O)) 'QA parents index: #' @('old', 'cached') -Show 8
-# builds per agent (owner 2026-11-18 "why were so many builds needed?"): today's count, build-min, failed per owner on the gate
+# builds per agent (owner 2026-11-18 "why were so many builds needed?"): today's count, build-min, failed per owner in a table
 # card, QA seat leases aside; over gate.buildsPerHour in the last hour -> one WATCH BUILDS per owner
 $bpo = & { . $O; $n = Get-Date; $dd = Join-Path (Get-KitPath audit -Create) $n.ToString('yyyy-MM-dd'); New-Item -ItemType Directory -Force $dd | Out-Null
   $bl = @(1..10 | ForEach-Object { @{ at = $n.AddMinutes(-3 * $_).ToString('o'); event = 'end'; kind = 'maven-test'; owner = 'w1'; project = 'svc-x/api'; sec = 120; waitSec = 0; code = [int]($_ -le 2) } }) +
@@ -284,7 +284,7 @@ $bpo = & { . $O; $n = Get-Date; $dd = Join-Path (Get-KitPath audit -Create) $n.T
   $bl | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content (Join-Path $dd 'builds.jsonl')
   $g = Get-KitGateStats $n @(); $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); mem = @{ TotalGB = 16; AvailGB = 8 }; stats = [pscustomobject]@{ gate = $g; keepFree = 2 } })
   $now = $n; $script:mem = @{ AvailGB = 8; TotalGB = 16 }; $fl = @(Get-KitSuperviseGuardResources | Where-Object { $_.kind -eq 'BUILDS' -and "$($_.what)" -match 'gated builds' })
-  "$(@($g.owners | ForEach-Object { "$($_.name)=$($_.n)/$($_.min)/$($_.failed)" }) -join ',')|$($h -match 'w1 10 · 20 min · 2 failed')|$($fl.Count)|$($fl[0].who)" }
+  "$(@($g.owners | ForEach-Object { "$($_.name)=$($_.n)/$($_.min)/$($_.failed)" }) -join ',')|$($h -match "<td>w1</td><td>10</td><td>20</td><td><span class='chip s-stuck'>2</span></td>")|$($fl.Count)|$($fl[0].who)" }
 Expect "builds per agent: gate card lists count / build-min / failed per owner, QA seats aside; over gate.buildsPerHour (8) -> one WATCH ($bpo)" ($bpo -eq 'w1=10/20/2,w2=1/1/0|True|1|w1')
 Remove-TestKit $k
 Complete-Tests
