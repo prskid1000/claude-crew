@@ -41,16 +41,17 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | command | a vendor adapter. statuses: logical -> board names (list: first set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; bugBranchPrefix: bug-fix brief branches (fix/); ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json). Examples: _examples, adapter headers.",
+  "_readme": "type: none (default) | command | a vendor adapter. Status roles (fixed: open inProgress review failedReview promoted inTest failedTesting closed; transitions: README \"Flows\"): statuses = default names per role (list: first set, all match; null = the step is skipped); statusMap.<scope>.<role> = overrides for one scope (ClickUp list id, Jira project, Linear team, repo; .other = names that are no role) over its live names (crafty.ps1 tracker roles <scope>); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; bugBranchPrefix: bug-fix brief branches (fix/); ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json). Examples: _examples, adapter headers.",
   "type": "none",
   "repo": "<owner/name, for github issues>",
   "list": "<container of new tasks, e.g. a ClickUp list id>", "workspace": "<ClickUp: workspace id for tracker move -List; default the CLI config>",
   "owner": "<assignee of new tasks; empty = your OS full name>",
   "branchTag": "<default by type: CU- / GH->", "bugPrefix": "[Bug]",
   "statuses": {
-   "open": ["open", "to do"], "inProgress": "in progress", "review": ["for review", "in review"], "promoted": "promoted",
-   "inTest": ["in test", "for test"], "failedTesting": ["failed testing", "test failed"], "closed": ["closed", "complete", "done"]
+   "open": ["open", "to do"], "inProgress": "in progress", "review": ["for review", "in review"], "failedReview": ["failed review", "changes requested"],
+   "promoted": "promoted", "inTest": ["in test", "for test"], "failedTesting": ["failed testing", "test failed"], "closed": ["closed", "complete", "done"]
   },
+  "statusMap": { "<scope id>": { "inTest": "qa", "failedReview": null, "other": ["blocked"] } },
   "_examples": {
    "command": { "type": "command", "commands": { "view": "mytracker show {id} --json", "status": "mytracker move {id} {status}", "comment": "mytracker note {id} {text}" } }
   }
@@ -161,7 +162,7 @@
   "caps": { "content": 28, "plumbing": 9 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
-   "tracker": { "config": "tracker.type", "file": "skills/crafty/lib.ps1", "verbs": "view url status comment comments create describe rename move attach list owner", "names": "command none", "vendors": "clickup github gitlab jira jira-server linear youtrack azure" },
+   "tracker": { "config": "tracker.type", "file": "skills/crafty/lib.ps1", "verbs": "view url status statuses comment comments create describe rename move attach list owner", "names": "command none", "vendors": "clickup github gitlab jira jira-server linear youtrack azure" },
    "git-host": { "config": "gitHostType", "file": "skills/crafty/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect", "names": "command", "vendors": "github gitlab bitbucket azure gitea" },
    "report": { "config": "reports.type", "file": "skills/crafty/devtools.py", "verbs": "publish", "names": "markdown html command", "vendors": "gdocs pdf confluence notion" },
    "ci": { "config": "ci.type", "file": "skills/crafty/lib.ps1", "verbs": "runs jobs log status config failure parseUrl", "names": "command none", "values": "host", "vendors": "github gitlab bitbucket azure gitea jenkins" },
@@ -207,7 +208,7 @@
    "agents": "work/agents/", "node-spec": "cache/node-spec/", "apks": "cache/android-swarm/apk/",
    "retros": "logs/retros/", "kitty-audits": "logs/kitty-audits/", "localenv": "work/localenv/",
    "localenv-logs": "logs/localenv/",
-   "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt",
+   "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt", "tracker-statuses": "cache/tracker-statuses/",
    "tmp": "tmp/", "build-gate": "work/build-gate/"
   },
   "durable": {

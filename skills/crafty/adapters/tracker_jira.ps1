@@ -91,6 +91,11 @@ Register-KitAdapter 'tracker' 'jira' @{
     if (-not $tr -and -not $__trDry) { throw "tracker ($__trType): no transition to '$name' from the current status of $id (have: $(@($t.transitions | ForEach-Object { $_.to.name }) -join ', '))" }
     $null = __TrJira 'POST' "issue/$id/transitions" @{ transition = @{ id = $(if ($tr) { $tr.id } else { "<id of '$name'>" }) } }; "status of $id`: $name"
   }
+  # a project's workflow statuses (all issue types); type = the status category: new -> open, done -> closed
+  'statuses' = { param($a)
+    $seen = @{}; @(@(__TrJira 'GET' "project/$($a.scope)/statuses" $null) | ForEach-Object { $_.statuses } | Where-Object { $_.name -and -not $seen[$_.name]++ } |
+      ForEach-Object { [pscustomobject]@{ name = $_.name; type = @{ new = 'open'; done = 'closed' }["$($_.statusCategory.key)"] ?? 'custom' } })
+  }
   'comment' = { param($a) $res = __TrJira 'POST' "issue/$($a.id)/comment" @{ body = (__TrJDoc $a.text) }; if ($res) { "commented on $($a.id)" } }
   'comments' = { param($a) @((__TrJira 'GET' "issue/$($a.id)/comment?maxResults=200" $null).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.displayName $_.created ((__TrAdfText $_.body).Trim()) $_.id } }
   'comment-edit' = { param($a) $null = __TrJira 'PUT' "issue/$($a.id)/comment/$($a.comment)" @{ body = (__TrJDoc $a.text) }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment

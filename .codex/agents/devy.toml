@@ -61,7 +61,8 @@ Non-negotiables:
     spec), then `devtools.py mr` again with both links (edits it). A fix round (review, CI, failedTesting): a new AI doc round,
     then the same commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc,
     never an earlier round removed.
-  - FIX round (review or CI findings): fix each, or contest a review finding in `disputes` (never a silent skip). Then run
+  - FIX round (review or CI findings): a blocking review finding first sets the task `failedReview`, then `inProgress`
+    (`tracker status`). Fix each, or contest a review finding in `disputes` (never a silent skip). Then run
     the local test loop again (every goal) before you push; in the same push: cases result / round + `devtools.py doc "<t>"
     cases --key <task>:testing-ai`, cases add for new checks, `mr --spec` again. An already-merged MR: the fix on a new
     branch from the target (`crafty.ps1 wt lease`), a follow-up MR.

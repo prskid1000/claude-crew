@@ -209,7 +209,7 @@ Set-TrackerStatus $b 'promoted'; "t4:$(St $p)"
 Set-TrackerStatus $a 'closed'; Set-TrackerStatus $b 'closed'; "t5:$(St $p)"
 Set-TrackerStatus $p 'closed'; $c = (New-TrackerTask -Name 'Bug' -Description "Problem: p`nGoal: g`nItems: B1`nAcceptance: a`nLinks: l" -Parent $p -Assignee '-' -NewTask 'test').id; "t6:$(St $p)"
 Set-TrackerStatus $p 'inTest'; $d = (New-TrackerTask -Name 'Bug 2' -Description "Problem: p`nGoal: g`nItems: B1`nAcceptance: a`nLinks: l" -Parent $p -Assignee '-' -NewTask 'test').id; "t7:$(St $p)"
-Set-TrackerStatus $c 'closed'; Set-TrackerStatus $d 'closed'; Set-TrackerStatus $p 'closed'; Set-TrackerStatus $d 'failedTesting'; "t8:$(St $p)"
+Set-TrackerStatus $c 'closed'; Set-TrackerStatus $d 'closed'; Set-TrackerStatus $p 'closed'; Set-TrackerStatus $d 'inProgress' 'reopened: a new round'; "t8:$(St $p)"
 Set-TrackerStatus $d 'closed'; $null = __TrNone $p 'x' { param($o) $o.status = 'closed' }; $null = __TrNone $d 'x' { param($o) $o.status = 'open' }
 $dry = @(Invoke-KitStatusSweep $p -All) -join '|'; "dry:$(St $p)|$dry"; $app = @(Invoke-KitStatusSweep $p -Apply) -join '|'; "app:$(St $p)|$app"
 $q = Mk 'Q' $null; $q1 = Mk 'Q1' $q; $q2 = Mk 'Q2' $q; $null = __TrNone $q2 'x' { param($o) $o.status = 'custom thing' }; Set-TrackerStatus $q1 'promoted'; "unk:$(St $q)"
@@ -217,7 +217,7 @@ $q = Mk 'Q' $null; $q1 = Mk 'Q1' $q; $q2 = Mk 'Q2' $q; $null = __TrNone $q2 'x' 
 $sv = { param($key) "$(@($sr | Where-Object { "$_" -like "${key}:*" })[0])".Substring($key.Length + 1) }
 Expect "parent status table: least advanced open child, back too (owner 2026-11-19), closed reopens only on a new or reopened child, failedTesting counts as in progress" ((& $sv 'tbl') -eq 'True')
 Expect "parent status (tracker none): follows its open subtasks on every status set ($($sr -join ' '))" ((& $sv 't1') -eq 'open' -and (& $sv 't2') -eq 'open' -and (& $sv 't3') -eq 'in progress' -and (& $sv 't4') -eq 'promoted' -and (& $sv 't5') -eq 'promoted')
-Expect "parent status: a new subtask reopens a closed parent (to the child's status) and pulls an in-test parent back to open; a closed child's reopen (failedTesting) reopens it" ((& $sv 't6') -eq 'open' -and (& $sv 't7') -eq 'open' -and (& $sv 't8') -eq 'in progress')
+Expect "parent status: a new subtask reopens a closed parent (to the child's status) and pulls an in-test parent back to open; a closed child's reopen (a new round: -Back) reopens it" ((& $sv 't6') -eq 'open' -and (& $sv 't7') -eq 'open' -and (& $sv 't8') -eq 'in progress')
 Expect "track rollup -Status: dry run lists and writes nothing; -Apply reopens the closed parent ($(& $sv 'dry') | $(& $sv 'app'))" ((& $sv 'dry') -match '^closed\|' -and (& $sv 'dry') -match 'to change \(dry run' -and (& $sv 'app') -match '^open\|SET parent \S+: closed -> open' -and (& $sv 'app') -match '1 changed')
 Expect "parent status: a subtask status the kit does not know -> the parent is left alone ($(& $sv 'unk'))" ((& $sv 'unk') -eq 'open')
 Remove-TestKit $k

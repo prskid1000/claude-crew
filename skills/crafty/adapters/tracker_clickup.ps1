@@ -28,9 +28,15 @@ Register-KitAdapter 'tracker' 'clickup' @{
     __TrTask $j.id $j.name ([string]$j.status.status) $(if ($j.url) { $j.url } else { Get-TrackerUrl $j.id }) $j.parent @($j.assignees | Where-Object { $_ } | ForEach-Object { if ($_.username) { $_.username } else { $_.id } }) ([string]$j.list.id) @($j.subtasks | Where-Object { $_ } | ForEach-Object { __TrSub $_.id $_.name ([string]$_.status.status) (Get-TrackerUrl $_.id) }) ([string]$(if ($j.markdown_description) { $j.markdown_description } else { $j.description }))
   }
   'status' = { param($a)
-    $names = @($a.status); foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $a.logical) { $names = @($__trStatus[$k]) } }
+    $names = @($a.names | Where-Object { $_ }); if (-not $names.Count) { $names = @($a.status) }   # the role's names in the task's list (lib.ps1 __Set-TrackerStatus)
     foreach ($n in $names) { $out = __TrCli 'clickup' @('status', 'set', $n, $a.id); if ("$out" -notmatch 'no matching status') { return $out } }
-    if (-not $__trDry) { throw "tracker (clickup): no status '$($names -join "' / '")' on the list of task $($a.id) (set tracker.statuses.$($a.logical) in kit.local.json)" }
+    if (-not $__trDry) { throw "tracker (clickup): no status '$($names -join "' / '")' on the list of task $($a.id) (crafty.ps1 tracker roles <list id>; tracker.statusMap.<list id>.$($a.logical) in kit.local.json)" }
+  }
+  # the list's live statuses (REST: the CLI lists a space's only; a list may override them); type open / custom / done / closed
+  'statuses' = { param($a)
+    $o = @(Invoke-KitHttp 'GET' "https://api.clickup.com/api/v2/list/$($a.scope)" $null @{ Authorization = (__TrClickupToken) } 3>&1)
+    $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { throw "tracker (clickup) statuses: $($w[0].Message)" }
+    @(@($o)[0].statuses | Where-Object { $_.status } | Sort-Object { [int]$_.orderindex } | ForEach-Object { [pscustomobject]@{ name = "$($_.status)"; type = "$($_.type)" } })
   }
   'comment' = { param($a) __TrCli 'clickup' @('comment', 'add', $a.id, (ConvertTo-KitPlainText $a.text)) }
   'comments' = { param($a) @(__TrJson (__TrCli 'clickup' @('comment', 'list', $a.id, '--json'))) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.username $_.date $_.comment_text $_.id } }

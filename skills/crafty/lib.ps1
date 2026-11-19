@@ -1209,18 +1209,16 @@ function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
 $__trRepo = [string](Get-KitSetting 'tracker.repo' '')
 $__trNoneDir = Get-KitPath tracker-none
 
-# logical statuses: vocab.json statuses (devtools.py reads the same), tracker.statuses per key; null / [] = that transition is skipped
+# status roles (adapters/task_items.ps1 "status roles"): default names per role = vocab.json statuses (devtools.py reads the same),
+# tracker.statuses per role; null / [] = that step is skipped; live names per scope: Get-KitScopeRoles
 $__trStatus = [ordered]@{}
 foreach ($__src in @($script:KitVocab.statuses, (Get-KitSetting 'tracker.statuses' $null))) { if ($__src) { foreach ($__p in (Get-KitProps $__src)) { $__trStatus[$__p.Name] = @($__p.Value | Where-Object { "$_".Trim() } | ForEach-Object { [string]$_ }) } } }
 
 # in-test, in test -> inTest
 function ConvertTo-TrackerStatusKey([string]$Status) { $n = $Status -replace '[\s_-]'; foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $n) { return $k } }; $Status }
-function Resolve-TrackerStatus([string]$Status) { $k = ConvertTo-TrackerStatusKey $Status; if ($__trStatus.Contains($k)) { "$(@($__trStatus[$k])[0])" } else { $Status } }   # '' = the status is off
+function Resolve-TrackerStatus([string]$Status, [string]$Scope) { $k = ConvertTo-TrackerStatusKey $Status; if ($__trStatus.Contains($k)) { "$(@(Get-KitRoleNames $k $Scope)[0])" } else { $Status } }   # '' = the status is off
 function Test-TrackerStatusOff([string]$Status) { $k = ConvertTo-TrackerStatusKey $Status; $__trStatus.Contains($k) -and -not @($__trStatus[$k]).Count }
-function Test-TrackerStatus([string]$Status, [string[]]$Logical) {
-  foreach ($l in $Logical) { foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $l -and (@($__trStatus[$k]) | Where-Object { $_ -ieq "$Status".Trim() })) { return $true } } }
-  $false
-}
+function Test-TrackerStatus([string]$Status, [string[]]$Logical, [string]$Scope) { $k = Get-TrackerStatusKey $Status $Scope; [bool]($k -and @($Logical | Where-Object { $_ -ieq $k }).Count) }
 function __TrText([string]$s) {
   $isFile = $false; if ($s -and $s.Length -lt 260 -and $s -notmatch '[\r\n<>|"*?]') { try { $isFile = Test-Path -LiteralPath $s -PathType Leaf } catch {} }
   if ($isFile) { Get-Content -LiteralPath $s -Raw -Encoding utf8 } else { $s }
@@ -1329,6 +1327,7 @@ Register-KitAdapter 'tracker' 'none' @{
   'attach' = { param($a) $null = __TrNone $a.id "attach $($a.file)" { param($o) __TrNoneNote $o "$($a.text) [attachment: $($a.file)]" }; "attached $($a.leaf) to $($a.id) (tracker none)" }
   'list' = { param($a) @(__TrNoneAll | Where-Object { (-not $a.list -or "$($_.list)" -eq $a.list) -and ((Test-TrackerStatus "$($_.status)" $a.logical) -or "$($_.status)" -ieq $a.status) } | ForEach-Object { __TrRow $_.id $_.name $_.status @($_.assignees | ForEach-Object { __TrWho $_ $_ }) }) }
   'owner' = { param($a) $a.name }
+  'statuses' = { param($a) }   # no live names: every role uses its default names
 }
 # adapter-end:tracker
 # adapters/*.ps1 register before the tracker type is resolved; a vendor file (names below) loads only when config selects one
@@ -1399,16 +1398,17 @@ function Set-TrackerStatus([string]$Id, [string]$Status, [string]$Back) {
   $Status = ConvertTo-TrackerStatusKey $Status
   if (Test-TrackerStatusOff $Status) { Write-Host "tracker: $Id status $Status skipped (tracker.statuses.$Status is null)"; return }
   $was = try { if (-not $__trDry) { Clear-TrackerMemo $Id; Get-TrackerTask $Id } } catch { $null }
+  $sc = "$($was.list)"; if ($sc -and $__trStatus.Contains($Status) -and -not @(Get-KitRoleNames $Status $sc).Count) { $skip = "SKIPPED: $Id kept '$($was.status)': scope $sc has no $Status status (step skipped; crafty.ps1 tracker roles $sc)"; Write-Host "tracker: $skip"; return $skip }   # never invented
   if ($skip = Test-KitStatusWrite $Id $Status $Back $was) { Write-Host "tracker: $skip"; return @($skip) -like 'SKIPPED*' }
   # promoted: process.gates.promote (builtin:testingDocs: the doc links; an unread task fails closed)
   if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and -not ($pg = Test-KitProcessGate promote @{ task = $Id; status = $Status }).ok) {
     throw "tracker: $Id not set to $Status`: $($pg.why)"
   }
-  $r = Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }; Complete-KitStatusWrite $Id $Status $r $was
+  $r = Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status $sc }; Complete-KitStatusWrite $Id $Status $r $was $Back
   $r
 }
 function Add-TrackerComment([string]$Id, [string]$Text) { if (-not "$Id".Trim()) { throw 'tracker comment: no task id (a tracker CLI would guess it from the branch name)' }; $t = __TrText $Text; if (-not "$t".Trim()) { throw "tracker comment: empty text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }
-function __Set-TrackerStatus([string]$Id, [string]$Status) { Clear-TrackerMemo $Id; __TrA 'status' @{ id = $Id; status = (Resolve-TrackerStatus $Status); logical = $Status } }
+function __Set-TrackerStatus([string]$Id, [string]$Status, [string]$Scope) { Clear-TrackerMemo $Id; $k = ConvertTo-TrackerStatusKey $Status; $nm = @(if ($__trStatus.Contains($k)) { Get-KitRoleNames $k $Scope }); __TrA 'status' @{ id = $Id; status = $(if ($nm.Count) { $nm[0] } else { $Status }); logical = $Status; names = $nm } }
 function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'comment' @{ id = $Id; text = (__TrText $Text) } }
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }
 # ONE kit comment per kind: edit, else post + delete old, else post; found by id, last text or legacy '[kit:<kind>]'
@@ -1515,8 +1515,8 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
 }
 function Get-TrackerTasks([string]$List, [string]$Status) {
   if (-not $List) { $List = [string]$(if ($__trType -in 'github', 'gitlab') { $__trRepo } else { Get-KitSetting 'tracker.list' '' }) }
-  # every tracker.statuses name of the logical status (lists differ: "in test" / "for test")
-  $names = @(foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { @($__trStatus[$k]) } }); if (-not $names.Count) { $names = @($Status) }
+  # every name of the role in this scope (lists differ: "in test" / "for test"); a role the scope lacks: none; not a role: as given
+  $rk = ConvertTo-TrackerStatusKey $Status; $names = @(if ($__trStatus.Contains($rk)) { Get-KitRoleNames $rk $List } else { $Status })
   $seen = @{}; $err = $null; $ok = 0
   foreach ($n in $names) {
     try { foreach ($t in @(__TrA 'list' @{ list = $List; status = $n; logical = $Status })) { $tk = if ($t.id) { [string]$t.id } else { [guid]::NewGuid() }; if ($t -and -not $seen[$tk]) { $seen[$tk] = 1; $t } }; $ok++ }

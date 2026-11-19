@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L950 results · L983 retest · L1040 prepare
+Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L952 results · L985 retest · L1042 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -824,12 +824,14 @@ function Send-KnownSeen($rec, [object[]]$known) {
   if ($rec -is [Collections.IDictionary]) { $rec.seenFailed = $lost } else { $rec | Add-Member -Force NoteProperty seenFailed $lost }
 }
 function Set-FailedTesting($rec, $st) {
-  $ok = TrySay { Set-TrackerStatus $st.id 'failedTesting'; $true } "set $($st.id) failedTesting"
+  $sr = TrySay { "$(Set-TrackerStatus $st.id 'failedTesting')" } "set $($st.id) failedTesting"
+  if ("$sr" -like 'SKIPPED*' -and "$sr" -notmatch 'has no failedTesting status') { $rec.keptOpen = "$sr".Substring(9); return }   # not a role transition from where it is now
+  $ok = if ($null -ne $sr -and "$sr" -notmatch 'has no failedTesting status') { $true }   # a scope without it: the inProgress fallback below
   # a parent and its subtasks follow one result (owner, 2026-11-19: a subtask stayed in test while its parent failed testing)
   if ($null -ne $ok) { foreach ($kid in @(try { Clear-TrackerMemo $st.id; (Get-TrackerTask $st.id).subtasks } catch { }) | Where-Object { $_.id -and (Test-TrackerStatus "$($_.status)" 'promoted', 'inTest') }) { $null = TrySay { Set-TrackerStatus $kid.id 'failedTesting'; $true } "set subtask $($kid.id) failedTesting (its parent $($st.id) failed testing)" } }
   if ($null -eq $ok) {
     $ok = TrySay { Set-TrackerStatus $st.id 'inProgress' 'failed testing, no failedTesting status'; $true } "set $($st.id) inProgress (fallback: no failedTesting status)"
-    if ($null -ne $ok) { $rec.statusFallback = 'inProgress'; $null = TrySay { Add-TrackerComment $st.id "Failed testing (this board has no 'failedTesting' status: set tracker.statuses.failedTesting in kit.local.json): moved back to in progress." } "comment on $($st.id)" }
+    if ($null -ne $ok) { $rec.statusFallback = 'inProgress'; $null = TrySay { Add-TrackerComment $st.id "Failed testing (this board has no 'failedTesting' status: map one in kit.local.json tracker.statusMap.<list>.failedTesting): moved back to in progress." } "comment on $($st.id)" }
   }
   if ($null -ne $ok) { $rec.failedTesting = $true } else { $rec.keptOpen = 'the tracker refused the failedTesting status (see warning)' }
 }

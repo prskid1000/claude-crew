@@ -73,6 +73,7 @@ Register-KitAdapter 'tracker' 'gitlab' @{
     if (__TrIsClosed $name) { $b.state_event = 'close' } else { $b.add_labels = "$__trLp$name"; if ($j.state -eq 'closed') { $b.state_event = 'reopen' } }
     $res = __TrGl 'PUT' $p $b; if ($res) { "status of #$($res.iid): $name" }
   }
+  'statuses' = { param($a) __TrLabelLive @(__TrGl 'GET' "projects/$([uri]::EscapeDataString($a.scope))/labels?per_page=100" $null).name }   # as on github
   'comment' = { param($a) $res = __TrGl 'POST' (__TrGlPath $a.id '/notes') @{ body = $a.text }; if ($res) { "commented on #$((__TrRef $a.id)[1])" } }
   'comments' = { param($a) @(__TrGl 'GET' (__TrGlPath $a.id '/notes?sort=asc&per_page=100') $null) | Where-Object { $_ -and -not $_.system } | ForEach-Object { __TrComment $_.author.username $_.created_at $_.body $_.id } }
   'comment-edit' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id "/notes/$($a.comment)") @{ body = $a.text }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment

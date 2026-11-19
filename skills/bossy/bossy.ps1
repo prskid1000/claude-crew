@@ -29,8 +29,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L225 budget · L255 launch · L496 recover · L583 pause · L594 resume · L661 program · L712 param ·
-  L718 track · L1055 supervise · L1376 report · L1456 audit · L1516 storage · L1519 bugbrief · L1633 cleanup · L1720 learn ·
-  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2192 guard-sendmessage
+  L718 track · L1055 supervise · L1375 report · L1455 audit · L1515 storage · L1518 bugbrief · L1632 cleanup · L1719 learn ·
+  L1750 decide · L1901 debate · L1945 health · L2012 retro due · L2022 tidy · L2094 setup · L2191 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -991,7 +991,7 @@ switch ($Action) {
       $ciTask = Get-KitCiTask $o.task   # a CI job's task: the job passing again is its test, no testing docs
       if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and -not ($pg = Test-KitProcessGate promote @{ task = $o.task }).ok) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, $(if ($pg.how -eq 'builtin:testingDocs') { 'no testing-doc link (human + AI) or the task is unread' } else { "process.gates.promote refused ($($pg.how)): $($pg.why)" }): not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
       $setFailed = $false; $kept = ''
-      foreach ($s in $todo) { try { if (($sr = "$(Set-TrackerStatus $o.task $s)") -like 'SKIPPED*') { $kept = $sr.Substring(9); break } } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
+      foreach ($s in $todo) { try { if (($sr = "$(Set-TrackerStatus $o.task $s)") -like 'SKIPPED*' -and $sr -notmatch 'has no \w+ status') { $kept = $sr.Substring(9); break } } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
       if ($kept) { $o.done = $true; Save $o -Run; "KEPT $($o.task): $kept"; continue }
       if ($ciTask) { Set-KitTaskMrItems $o.task; $cj = Close-KitCiTask $o.task $ciTask @($o.mrs)
@@ -1299,11 +1299,10 @@ if (Within 'failedTesting tasks') {
     if ("$l" -match '^WATCH ') { Flag 'WATCH' "failedTesting views: $("$l".Substring(6))" 'Check tracker auth: crafty.ps1 tracker view <id>'; continue }
     if ("$l" -match '^(\S+) (\S+) (.+)$' -and $Matches[1] -in $ids -and (-not ($c = $state.ftStatus[$Matches[1]]) -or [datetimeoffset]$Matches[2] -gt [datetimeoffset]$c.at)) { $state.ftStatus[$Matches[1]] = @{ at = $Matches[2]; st = $Matches[3] } }
   }
-  $back = @(foreach ($id in $ids) {
-      $o = $trk[$id]; $st = "$($state.ftStatus[$id].st)"
-      if ((Test-TrackerStatus $st 'failedTesting') -or ($o.done -and (Test-TrackerStatus $st 'inProgress'))) { "$id ($($ft[$id]))" } })
+  $back = @(Select-KitFailedLive $ids $trk $state.ftStatus | ForEach-Object { "$_ ($($ft[$_]))" })
   if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow: $($back -join '; ')" "ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." @{ kind = 'FAILED TESTING'; who = @($back | ForEach-Object { ($_ -split ' ')[0] }) -join ', '; problem = "back to the dev flow: $($back -join '; ')" } }
 }
+foreach ($w in @(Get-KitScopeWatch)) { Flag 'WATCH' $w.what $w.action }   # live status names of no role
 
 # 6. decisions, ENV-FIX: every round until answered
 Phase 'decisions'; $pd =@(Invoke-Decide list -Pending -Json | Out-String | ConvertFrom-Json | Where-Object { $_ })

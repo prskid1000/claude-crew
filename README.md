@@ -64,7 +64,15 @@ Board and disagreements: AGENTS.md "Crew".
 - Every task the kit builds: rendered from a spec (`skills/crafty/crafty.ps1` "task spec": description, Items and Decisions checklists, its
   line on the parent's Items; `tracker create` refuses free text but a QA / watch defect keyed `qa-` / `watch-`, `tracker describe` one that drops a section), both testing-doc links before promoted; a parent with every subtask closed closes only on the owner's
   answer to its one close ask.
-- Tasks move through logical tracker statuses (`tracker.statuses` maps them to your board's names). The local env: one shared
+- **Status roles**: tasks move through fixed roles, never board names: open -> inProgress -> review -> promoted (all MRs merged)
+  -> inTest (deployed) -> closed; review -> failedReview (a person or revy rejects) or inProgress (review changes); failedReview,
+  failedTesting -> inProgress; inTest (or promoted: undeployed) -> failedTesting; any role -> inProgress on a new code round
+  (`tracker status -Back '<why>'`). Forward skips pass; other moves, a sibling agent's write while the task's round owner is live,
+  repeats and stale QA results (MRs merged after the run started) are refused; a parent = its least complete open child. Per scope
+  (ClickUp list, Jira project, Linear team, repo) the adapter verb `statuses` reads the live names (cached a day, again on an
+  unknown name) and maps them to roles by name and type; `tracker.statusMap.<scope>.<role>` overrides, `tracker.statuses` holds the
+  default names. A role the scope lacks: that step is skipped; a live name of no role: supervise WATCH. Check: `crafty.ps1 tracker
+  roles <scope>`. The local env: one shared
   instance per env, branches as layers. WIP commits after every dev-flow step: a fresh agent loses nothing after a crash. The kit
   learns from every run (`/tidy`) and fixes itself in a kit worktree.
 <!-- kit-graph:start table-workflows -->
@@ -269,7 +277,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `configVersion` | 2 | below 2: migrate adds old defaults |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
-| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command / a vendor adapter. statuses: logical -&gt; board names (list: first set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; bugBranchPrefix: bug-fix brief branches (fix/); ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json). Examples: _examples, adapter headers. |
+| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command / a vendor adapter. Status roles (fixed: open inProgress review failedReview promoted inTest failedTesting closed; transitions: README "Flows"): statuses = default names per role (list: first set, all match; null = the step is skipped); statusMap.&lt;scope&gt;.&lt;role&gt; = overrides for one scope (ClickUp list id, Jira project, Linear team, repo; .other = names that are no role) over its live names (crafty.ps1 tracker roles &lt;scope&gt;); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; bugBranchPrefix: bug-fix brief branches (fix/); ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json). Examples: _examples, adapter headers. |
 | `reports` | {"type": "markdown"} | type: markdown, html (a kept file) / command ('&lt;cli&gt; {title} {path} {parent}' prints the URL); gdocs (Google Doc + Drive evidence via gws), pdf, confluence, notion: adapters. share (gdocs): anyone (default) / domain:&lt;domain&gt; / none |
 | `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "outOfScope": ["&lt;a… | lanes {&lt;lane&gt;: {kind, parallel, followUp, devices}} (unset: one web lane); newDefectIdRx, holdCauses (none), guideDoc (first process doc). shutterText / confirmText: camera label regexes. outOfScope: channels QA never tests (OUT_OF_SCOPE). targets: /testy select groups (target: '&lt;group&gt;'): a task's env: the first rule matching lists / repos / nameRegex / pathRegex (localEnv: live = in its running release). seatGB: RAM per QA seat. matrix: UI cases run at viewports (WxH) x fontScales x themes (app-set). notLocal: [{ name, match: row regex }] deps no local env runs (PASS -&gt; NOT_TESTED_LOCAL). qualityWords: stated-quality regex ('' = off). intermittentRx: FAIL text that gets 5 verify attempts (JS regex, case-insensitive; default testy.js INTERMITTENT). lanes: {&lt;n&gt;: {kind, parallel, followUp, devices}}. |
 | `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: a person says deploy &lt;env&gt;) / ask (one batched ask per env, at most one per minIntervalHours: a number or per target + default); planTimeoutSec bounds supervise's plan per env (late = UNKNOWN); hold: [&lt;env&gt;] never asked; productionPattern, branchPrefix, mergeMethod, commitTemplate, ssh: bossy deploys.md. |
@@ -296,7 +304,7 @@ Vendor adapters sit in `skills/crafty/adapters/` and load only when config selec
 <!-- kit-graph:start table-adapters -->
 | Kind | Selected by | Interface (verbs) | Built in | Vendor (config-selected) | Code |
 |---|---|---|---|---|---|
-| tracker | `tracker.type` | view url status comment comments create describe rename move attach list owner | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | `skills/crafty/lib.ps1` |
+| tracker | `tracker.type` | view url status statuses comment comments create describe rename move attach list owner | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | `skills/crafty/lib.ps1` |
 | git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect | command | github, gitlab, bitbucket, azure, gitea | `skills/crafty/lib.ps1` |
 | report | `reports.type` | publish | markdown, html, command | gdocs, pdf, confluence, notion | `skills/crafty/devtools.py` |
 | ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | `skills/crafty/lib.ps1` |

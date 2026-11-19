@@ -70,7 +70,7 @@ try {
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 $env:KIT_TRACKER_TYPE = 'none'
 $t = pwsh @np $D tracker create -Key qa-fx-crafty-72 -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
-$null = pwsh @np $D tracker status $t.id failedTesting; $sNo = pwsh @np $D tracker status $t.id 2>&1 | Out-String; $stCode = $LASTEXITCODE
+$null = pwsh @np $D tracker status $t.id inTest; $null = pwsh @np $D tracker status $t.id failedTesting; $sNo = pwsh @np $D tracker status $t.id 2>&1 | Out-String; $stCode = $LASTEXITCODE
 $l = @(pwsh @np $D tracker list L1 failedTesting | ConvertFrom-Json)
 Expect 'tracker none: create, status failedTesting, list; status without a word = usage, rc 2, unchanged' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id -and $stCode -eq 2 -and $sNo -match 'usage: tracker status')
 $d2 = (pwsh @np $D tracker create -Key qa-fx-crafty-76 -List L1 -Name 'Invoice export button' -Description 'd' | ConvertFrom-Json).id

@@ -40,11 +40,11 @@ $global:Wr = [Collections.Generic.List[string]]::new(); $realSet = ${function:__
 ${function:__Set-TrackerStatus} = { param($Id, $Status) $global:Wr.Add("$Id=$Status"); & $realSet $Id $Status }.GetNewClosure()
 function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; function Ky($i) { Clear-TrackerMemo $i; Get-TrackerStatusKey (Get-TrackerTask $i).status }
 $t = Mk 'T' $null; Set-TrackerStatus $t 'inProgress' 6>$null; Set-TrackerStatus $t 'inProgress' 6>$null; "deb:$(@($Wr | Where-Object { $_ -like "$t=*" }).Count)"
-Set-TrackerStatus $t 'review' 6>$null; Set-TrackerStatus $t 'inProgress' 6>$null; "back:$(Ky $t)"
+Set-TrackerStatus $t 'review' 6>$null; Set-TrackerStatus $t 'inProgress' 6>$null; "rv:$(Ky $t)"; Set-TrackerStatus $t 'inTest' 6>$null; Set-TrackerStatus $t 'review' 6>$null; "back:$(Ky $t)"
 Set-TrackerStatus $t 'inProgress' 'fix round 2' 6>$null; "backok:$(Ky $t)"
 Set-TrackerStatus $t 'promoted' 6>$null; Set-TrackerStatus $t 'failedTesting' 6>$null; "ft:$(Ky $t)"
 $p = Mk 'P' $null; $a = Mk 'A' $p; $b = Mk 'B' $p; Set-TrackerStatus $a 'promoted' 6>$null; $pr = Set-TrackerStatus $p 'promoted' 6>$null; "par:$(Ky $p)|$("$pr" -like 'SKIPPED*')"
-Set-TrackerStatus $b 'review' 6>$null; "roll:$(Ky $p)"; Set-TrackerStatus $p 'failedTesting' 6>$null; "pft:$(Ky $p)"; $q = Mk 'Q' $null; $null = Mk '[Bug] Q leak' $q; Set-TrackerStatus $q 'closed' 6>$null; "bug:$(Ky $q)"
+Set-TrackerStatus $b 'review' 6>$null; "roll:$(Ky $p)"; foreach ($c in $a, $b) { Set-TrackerStatus $c 'inTest' 6>$null }; Set-TrackerStatus $p 'failedTesting' 6>$null; "pft:$(Ky $p)"; $q = Mk 'Q' $null; $null = Mk '[Bug] Q leak' $q; Set-TrackerStatus $q 'closed' 6>$null; "bug:$(Ky $q)"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
 $sx = { param($key) "$(@($sw | Where-Object { "$_" -like "${key}:*" })[0])".Substring($key.Length + 1) }
 # track run (supervise auto-fix): a parent whose own MRs merged but a subtask is open is KEPT (never "DONE -> promoted"); a plain task is
@@ -78,7 +78,45 @@ $apiSub = @($subsA | Where-Object { $_.name -like '*API1*' })[0]
 Expect "launch -Self: 2 areas on one task -> a subtask each under it, kept on a relaunch ($(@($at1 -match '^AREA TASK') -join ' | ') / $(@($at2 -match '^AREA TASK') -join ' | ') / $($apiSub.name))" (@($at1 -match '^AREA TASK (API1|WEB1) LOCAL-\d+').Count -eq 2 -and @($at2 -match '^AREA TASK \S+ LOCAL-\d+ \(kept\)').Count -eq 2 -and $subsA.Count -eq 2 -and
   $apiSub.name -eq '[Feature] Site builder — API1 API guard (api)' -and "$($apiSub.assignees)" -match 'Ann Lee' -and $apiSub.description -match 'A-1 · Guard the path' -and (Read-Json (Join-Path $ab 'area-tasks.json')).agents.Count -eq 2)
 Expect "status write: the same status twice = one write ($(& $sx 'deb'))" ((& $sx 'deb') -eq '1')
-Expect "status write: review -> inProgress kept; -Back '<why>' (a new code round) moves it; failedTesting always ($(& $sx 'back') $(& $sx 'backok') $(& $sx 'ft'))" ((& $sx 'back') -eq 'review' -and (& $sx 'backok') -eq 'inProgress' -and (& $sx 'ft') -eq 'failedTesting')
+Expect "status write: review -> inProgress (review changes) moves; inTest -> review kept; -Back '<why>' (a new code round) moves it; promoted -> failedTesting ($(& $sx 'rv') $(& $sx 'back') $(& $sx 'backok') $(& $sx 'ft'))" ((& $sx 'rv') -eq 'inProgress' -and (& $sx 'back') -eq 'inTest' -and (& $sx 'backok') -eq 'inProgress' -and (& $sx 'ft') -eq 'failedTesting')
 Expect "status write: a parent with open subtasks is never set directly (promoted refused: SKIPPED, follows them), failedTesting is; an open [Bug] child holds its ask's close ($($sw -join ' '))" ((& $sx 'par') -eq 'open|True' -and (& $sx 'bug') -eq 'open' -and (& $sx 'roll') -eq 'review' -and (& $sx 'pft') -eq 'failedTesting')
+# status roles per scope (owner, 2026-11-19): fake trackers report their live names as each vendor does; roles by name and type,
+# statusMap overrides, a missing role skipped, unmapped names listed, an unknown name re-read once, the round's owner
+$rl = Invoke-PsTest roles @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'
+$global:Live = @{
+  L1 = @(@{ name = 'Open'; type = 'open' }, @{ name = 'in progress'; type = 'custom' }, @{ name = 'in review'; type = 'custom' }, @{ name = 'failed review'; type = 'custom' }, @{ name = 'promoted'; type = 'custom' }, @{ name = 'in test'; type = 'custom' }, @{ name = 'failed testing'; type = 'custom' }, @{ name = 'blocked'; type = 'custom' }, @{ name = 'Closed'; type = 'closed' })
+  P = @(@{ name = 'To Do'; type = 'open' }, @{ name = 'In Progress'; type = 'custom' }, @{ name = 'Code Review'; type = 'custom' }, @{ name = 'QA'; type = 'custom' }, @{ name = 'Shipped'; type = 'closed' })
+  ENG = @(@{ name = 'Backlog'; type = 'open' }, @{ name = 'Todo'; type = 'open' }, @{ name = 'In Progress'; type = 'started' }, @{ name = 'In Review'; type = 'started' }, @{ name = 'Done'; type = 'closed' }, @{ name = 'Canceled'; type = 'canceled' })
+  'o/r' = @(__TrLabelLive @('status:in progress', 'status:needs triage', 'bug')) }
+$global:Tk = @{}; $global:W = [Collections.Generic.List[string]]::new()
+foreach ($t in 'clickup', 'jira', 'linear', 'github') { Register-KitAdapter 'tracker' "fake-$t" @{ 'url' = { param($a) "https://t.test/$($a.id)" }
+  'view' = { param($a) $x = $global:Tk[$a.id]; if ($x) { [pscustomobject]@{ id = $a.id; name = 'T'; status = $x.status; list = $x.list; parent = $null; subtasks = @(); url = ''; assignees = @() } } }
+  'status' = { param($a) $global:Tk[$a.id].status = $a.status; $global:W.Add("$($a.id)=$($a.status)") }; 'statuses' = { param($a) $global:Live[$a.scope] } } }
+function Rl($type, $scope) { Initialize-KitTracker -Type "fake-$type"; $m = Get-KitScopeRoles $scope -Refresh; (@($m.roles.Keys | ForEach-Object { "$_=$(@($m.roles[$_]) -join '/')" }) -join ';') + "|$(@($m.unmapped) -join '/')" }
+"click:$(Rl clickup L1)"; "jira:$(Rl jira P)"; "lin:$(Rl linear ENG)"; "gh:$(Rl github 'o/r')"
+if (-not $__cfg) { $__cfg = [pscustomobject]@{} }; if (-not $__cfg.tracker) { $__cfg | Add-Member -Force NoteProperty tracker ([pscustomobject]@{}) }
+$__cfg.tracker | Add-Member -Force NoteProperty statusMap ([pscustomobject]@{ P = [pscustomobject]@{ review = 'Code Review'; inTest = 'QA' } })
+"jmap:$(Rl jira P)"
+# writes in scope P: names from the scope, a missing role skipped, the transition table, -Back
+Initialize-KitTracker -Type 'fake-jira'; $global:Tk['P-1'] = @{ status = 'To Do'; list = 'P' }
+$null = Set-TrackerStatus 'P-1' 'review' 6>$null; $pr = "$(Set-TrackerStatus 'P-1' 'promoted' 6>$null)"; $null = Set-TrackerStatus 'P-1' 'inTest' 6>$null; $bk = "$(Set-TrackerStatus 'P-1' 'review' 6>$null)"
+$null = Set-TrackerStatus 'P-1' 'closed' 6>$null; $nb = "$(Set-TrackerStatus 'P-1' 'inProgress' 6>$null)"; $null = Set-TrackerStatus 'P-1' 'inProgress' 'reopened: new round' 6>$null
+"wr:$($global:W -join ',')|$($pr -match 'has no promoted')|$($bk -like 'SKIPPED*')|$($nb -like 'SKIPPED*')"
+# a name the cache does not know: read again once
+$global:Live['P'] += @{ name = 'Verified'; type = 'custom' }; $script:KitScopeRoles.Clear(); "unk:$(Get-TrackerStatusKey 'Verified' 'P')|$(@((Get-KitScopeRoles 'P').unmapped) -join '/')"
+# the round's owner: another live agent's write is refused, the coordinator's passes
+function Test-KitLive { $true }; $global:Tk['P-2'] = @{ status = 'To Do'; list = 'P' }
+$script:KitWho = @{ agent = 'W1' }; $null = Set-TrackerStatus 'P-2' 'inProgress' 6>$null; $script:KitWho = @{ agent = 'W2' }; $o2 = "$(Set-TrackerStatus 'P-2' 'review' 6>$null)"
+$script:KitWho = @{ agent = 'main' }; $null = Set-TrackerStatus 'P-2' 'review' 6>$null; "own:$($o2 -match 'W1 owns')|$($global:Tk['P-2'].status)"
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
+$rx = { param($key) "$(@($rl | Where-Object { "$_" -like "${key}:*" })[0])".Substring($key.Length + 1) }
+$rClick = 'open=Open;inProgress=in progress;review=in review;failedReview=failed review;promoted=promoted;inTest=in test;failedTesting=failed testing;closed=Closed|'
+Expect "roles: a ClickUp-shaped list maps every role by name, 'blocked' is no role ($(& $rx 'click'))" ((& $rx 'click') -eq $rClick)
+Expect "roles: a Jira-shaped project: open / closed by type, missing roles empty, 'Code Review' + 'QA' unmapped; statusMap maps them ($(& $rx 'jira') / $(& $rx 'jmap'))" ((& $rx 'jira') -match '^open=To Do;inProgress=In Progress;review=;.*promoted=;inTest=;.*closed=Shipped\|Code Review/QA$' -and (& $rx 'jmap') -match 'review=Code Review;.*inTest=QA;.*\|$')
+Expect "roles: Linear states (Todo = open, Done = closed, Backlog / Canceled no role) and GitHub labels (a custom status label unmapped) ($(& $rx 'lin') / $(& $rx 'gh'))" ((& $rx 'lin') -match '^open=Todo;inProgress=In Progress;review=In Review;.*closed=Done\|$' -and (& $rx 'gh') -match '^open=open;inProgress=in progress;.*closed=closed\|needs triage$')
+Expect "roles: writes use the scope's names, a role it lacks is skipped (never invented), inTest -> review and closed -> inProgress refused, -Back reopens ($(& $rx 'wr'))" ((& $rx 'wr') -eq 'P-1=Code Review,P-1=QA,P-1=Shipped,P-1=In Progress|True|True|True')
+Expect "roles: an unknown live name is read again once, then listed as unmapped ($(& $rx 'unk'))" ((& $rx 'unk') -eq '|Verified')
+Expect "roles: a live agent owns its task's code round; a sibling's write is refused, the coordinator's passes ($(& $rx 'own'))" ((& $rx 'own') -eq 'True|Code Review')
 Remove-TestKit $k
 Complete-Tests

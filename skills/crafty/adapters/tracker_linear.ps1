@@ -35,6 +35,11 @@ Register-KitAdapter 'tracker' 'linear' @{
     if (-not $s -and -not $__trDry) { throw "tracker (linear): no workflow state '$($a.status)' in the team of $($a.id)" }
     __TrLinSet $a.id @{ stateId = $s.id }; "status of $($a.id): $($a.status)"
   }
+  # a team's workflow states (scope = team key); type backlog / unstarted / started / completed / canceled
+  'statuses' = { param($a)
+    @(@((__TrLin 'query($k: String!) { teams(filter: { key: { eq: $k } }) { nodes { states { nodes { name type position } } } } }' @{ k = $a.scope }).teams.nodes)[0].states.nodes | Where-Object { $_.name } | Sort-Object { [double]$_.position } |
+      ForEach-Object { [pscustomobject]@{ name = $_.name; type = @{ backlog = 'open'; unstarted = 'open'; completed = 'closed' }["$($_.type)"] ?? "$($_.type)" } })
+  }
   'comment' = { param($a) $null = __TrLin 'mutation($id: String!, $b: String!) { commentCreate(input: { issueId: $id, body: $b }) { success } }' @{ id = $a.id; b = $a.text }; "commented on $($a.id)" }
   'comments' = { param($a) @((__TrLin 'query($id: String!) { issue(id: $id) { comments(first: 200) { nodes { id body createdAt user { name } } } } }' @{ id = $a.id }).issue.comments.nodes) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.name $_.createdAt $_.body $_.id } }
   'comment-edit' = { param($a) $null = __TrLin 'mutation($id: String!, $b: String!) { commentUpdate(id: $id, input: { body: $b }) { success } }' @{ id = $a.comment; b = $a.text }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment

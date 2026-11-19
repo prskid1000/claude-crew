@@ -7,7 +7,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force]  gated checks (e2e: the diff's specs only; -AllTests = whole suite;
    a pass on the same sources + command is not rerun, -Force reruns)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
  pipes [-Mrs <url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
@@ -18,7 +18,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L930 check · L1246 pipes · L1302 guard · L2183 dir ·
-  L2193 checkpoint · L2223 prior · L2261 tracker · L2283 task spec · L2461 scope · L2509 host
+  L2193 checkpoint · L2223 prior · L2261 tracker · L2283 task spec · L2462 scope · L2510 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2385,7 +2385,8 @@ function Invoke-Tracker {
   function __TrOut($o) { if ($null -ne $o) { ConvertTo-Json -InputObject $o -Depth 6 } }
   switch ($__v) {
     'view' { __TrOut (Get-TrackerTask $__id) }
-    'statuses' { $__bad = 0; foreach ($__s in @(Split-KitList $__id)) { $__st = try { "$((Get-TrackerTask $__s).status)" } catch { '' }; if ($__st) { "$__s $((Get-Date).ToString('o')) $__st" } else { $__bad++ } }; if ($__bad) { [Console]::Error.WriteLine("tracker statuses: $__bad view(s) failed") } }   # supervise reads them in the background: <id> <viewed at> <status> per line, a failed view none
+    'statuses' { $__bad = 0; foreach ($__s in @(Split-KitList $__id)) { $__st = try { "$((Get-TrackerTask $__s).status)" } catch { '' }; if ($__st) { "$__s $((Get-Date).ToString('o')) $__st" } else { $__bad++ } }; if ($__bad) { [Console]::Error.WriteLine("tracker statuses: $__bad view(s) failed") } }   # supervise: <id> <at> <status>
+    'roles' { Show-KitScopeRoles $__id }
     'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> [-Back <why>] (read it: tracker view <id>)'; exit 2 }; $__sr = Set-TrackerStatus $__id $__x $__trOpt.Back; $__sr; if ("$__sr" -like 'SKIPPED*') { exit 1 } }   # an empty status set Open
     'comment' {   # -Kind required (keyed kinds edit in place); over prose limits = refused
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = "$($__trOpt.Kind)"
