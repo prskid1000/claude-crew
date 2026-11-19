@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 sweep · L142 wt · L432 stack · L614 gate · L933 check · L1249 pipes · L1305 guard · L2184 dir ·
-  L2194 checkpoint · L2224 prior · L2262 tracker · L2284 task spec · L2464 scope · L2512 host
+Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L934 check · L1250 pipes · L1306 guard · L2185 dir ·
+  L2195 checkpoint · L2225 prior · L2263 tracker · L2285 task spec · L2465 scope · L2513 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -53,8 +53,9 @@ function Get-DepLinkDefaults {
   if ($l.Count -or ($__cfg -and (Get-KitProps $__cfg).Name -contains 'linkDefaults')) { return $l }   # [] = link nothing
   @([pscustomobject]@{ markers = @('package.json'); dir = 'node_modules' }, [pscustomobject]@{ markers = @('pyproject.toml', 'requirements.txt'); dir = '.venv' })
 }
-# a worktree-root folder no repo registers (a half-done remove): goes when every file is git-ignored or in its repo's objects
+# a worktree-root folder no repo lists (half-done remove): goes if all files are runtime, ignored or in a repo's objects
 function Get-KitLeftoverVerdict([string]$Dir, [string[]]$RepoDirs) {
+  $RepoDirs += @(git -C $KitConf.Kit rev-parse --path-format=absolute --git-common-dir 2>$null | Split-Path)
   $leaf = Split-Path $Dir -Leaf; $repo = @($RepoDirs | Where-Object { $leaf -like "*-$(Split-Path $_ -Leaf)" -or $leaf -eq (Split-Path $_ -Leaf) } | Select-Object -First 1)[0]
   $files = @(Get-ChildItem -LiteralPath $Dir -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.LinkType })   # links are never followed
   if ($files.Count -gt 500) { return [pscustomobject]@{ delete = $false; why = "$($files.Count) files: check by hand" } }
@@ -612,7 +613,7 @@ else {
 }
 
 # ---- gate: machine-wide memory gate; exit = command's code, 3 = no start in time or a PAUSE
-# the open pause over a live board agent (by name, or a worktree holding $Dir) of a paused or listed run; none on the board: none
+# the open pause of a live board agent (by name or worktree holding $Dir) in a paused or listed run
 function Get-KitPauseFor([string]$Agent, [string]$Dir) {
   $ps = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' }); if (-not $ps.Count) { return }
   $full = try { [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/') } catch { '' }
@@ -957,7 +958,7 @@ print(' '.join(x for x in sorted(t) if gone(x)))
   if (-not $pr.WaitForExit(1000 * [int](Get-KitParam 'check.importProbeSec'))) { Stop-KitProcessTree $pr; return @() }
   @("$($outTask.Result)".Trim() -split '\s+' | Where-Object { $_ })
 }
-# stale-env hint: each module's requirements.txt line, its plain pins as constraints (a full -r rebuilt other pins)
+# stale-env hint: each module's requirements.txt pins as constraints (a full -r rebuilt other pins)
 function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
   $venv = Get-Item -LiteralPath (Join-Path $Dir '.venv') -Force -ErrorAction SilentlyContinue; $venvDir = if ($venv.LinkTarget) { [IO.Path]::GetFullPath($venv.LinkTarget, $Dir) } else { $venv.FullName }
   $venvPy = if ($venvDir) { Join-Path $venvDir $(if ($KitIsWindows) { 'Scripts\python.exe' } else { 'bin/python' }) } else { $Py }
@@ -1625,7 +1626,7 @@ function CrlfKitFile([string]$p, [string]$base) {
   if ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($p)).Contains("`r`n")) { $p }
 }
 $liveWhy = 'the live kit runs every agent: edit your kit worktree (crafty.ps1 wt) and push; the coordinator pulls'
-# .runtime path kind: 'kit' (<kit>/.runtime, $var, ~), 'stray' (another <= 2 folders into the workspace, no kit's: lint RUNTIME-STRAY), 'other'
+# .runtime path kind: kit (<kit>'s, $var, ~), stray (<= 2 folders into the workspace, no kit: lint RUNTIME-STRAY), other
 $rtFull = [IO.Path]::GetFullPath((Get-KitRuntime)).TrimEnd('\', '/'); $rtLeaf = Split-Path $rtFull -Leaf
 $wsRoot = Split-Path $(if ($live) { $live } else { $script:KitRoot })
 function FullOf([string]$p, [string]$base) {
@@ -1654,7 +1655,7 @@ if ("$cmd $($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_inpu
   $raw = "$($in.tool_name) $($edits -join ' ') $cmd"; Deny "kit guard: $gbn (lets guard crashes through) is set by the owner only" }
 $strayWhy = "a $rtLeaf outside the kit (a relative path from the wrong folder): agent files go under & $($KitCmd.dev) dir -Agent <id> (<kit>/$rtLeaf/work/agents/<id>/)"
 foreach ($e in $edits) { if ((RuntimeKinds " $e" $here) -contains 'stray') { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e is $strayWhy" } }
-# scratch (h.txt, r.txt) at the top of a shared main checkout (repos[].checkout) outlives the agent and dirties every base
+# scratch at a shared main checkout's top (repos[].checkout) outlives its agent
 $mainRoots = @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.checkout)" } | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
 $scratchWhy = "is a new file at the top of a shared main checkout: write scratch under & $($KitCmd.dev) dir -Agent <id> -Name <file>"
 function MainScratch([string]$p, [string]$base) {

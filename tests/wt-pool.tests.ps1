@@ -152,5 +152,9 @@ Expect "lane names: ids shown as <product>·<Bird> (paths, branches, other words
 $loRt = & { . (Lib); Split-Path (Get-KitRuntime) -Leaf }; $lo = "$base/wt/lo-left"; New-Item -ItemType Directory -Force "$lo/$loRt/t" | Out-Null; 'x' | Set-Content "$lo/$loRt/t/k.local.json"
 $loOut = pwsh @np $D wt remove -Dir $lo -Root "$base/wt" 2>&1 | Out-String
 Expect "wt remove: a leftover with only runtime scratch (a *.local.* file too) is removed ($($loOut.Trim()))" (-not (Test-Path $lo))
+# a kit worktree's leftover (<name>-.claude): its files are in the kit's own history
+Save-GitRepo $k kit; $kl = "$base/wt/kt-$(Split-Path $k -Leaf)"; New-Item -ItemType Directory -Force "$kl/skills/crafty" | Out-Null; Copy-Item "$k/skills/crafty/lib.ps1" "$kl/skills/crafty/"
+$kl1 = pwsh @np $D wt remove -Dir $kl -Root "$base/wt" 2>&1 | Out-String; $kl0 = Test-Path $kl
+Expect "wt remove: a kit worktree leftover whose files are in the kit's history is removed ($($kl1.Trim()))" (-not $kl0)
 Remove-TestKit $k
 Complete-Tests
