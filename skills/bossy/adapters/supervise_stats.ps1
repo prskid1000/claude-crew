@@ -2,11 +2,11 @@
 supervise_stats.ps1 (core): the supervise page's history graphs from the logs the kit already writes, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): the build gate per kind (builds log), lease waits per resource (leases log, builds log, local-env
 lease-wait events, live queues), test-run results per day (qa-runs results.json), CPU + RAM per lane process and the top other
-processes (one process snapshot per sweep), flags per hour; their heatmap cards (shared cells, idle-row fold, card fold) and the
+processes (one process snapshot per sweep), flags per hour, agents shell progress (bossy.ps1 shells); their heatmap cards (shared cells, idle-row fold, card fold) and the
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L194 cards · L379 flags
+Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L194 cards · L379 flags · L459 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -455,4 +455,74 @@ function Get-KitStatsCss {
   '.cpt{margin-top:6px}.cpo{display:grid;grid-template-columns:minmax(0,1fr) max-content max-content;gap:2px 12px;font-size:12px;padding:2px 0;border-top:1px solid var(--ln)}.cpo .cn0{overflow-wrap:anywhere}.cpo small{color:var(--mt)}.cpo.hot .gc{color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}' +
   '.dbc .qs{display:flex;flex-direction:column-reverse;overflow:hidden;background:none}.qs>i{display:block;min-height:2px;border-radius:0}.qs>.q-p,.ql>.q-p{background:var(--sage)}.qs>.q-f,.ql>.q-f{background:var(--act)}.qs>.q-n,.ql>.q-n{background:var(--watch)}.qs>.q-o,.ql>.q-o{background:color-mix(in srgb,var(--mt) 35%,var(--sf2))}' +
   '.qbr figcaption{display:flex;flex-wrap:wrap;gap:0 8px;margin-top:2px}.ql{white-space:nowrap}.ql i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:-1px}'
+}
+# ---- shells: progress of agents' background shells without a service or new files (owner 2026-11-18): output file tail, CPU + IO samples; the sweep: supervise_resources.ps1 shells
+# the last $Bytes of a file another process may be writing ('' when unreadable)
+function Read-KitFileTail([string]$Path, [int]$Bytes) {
+  try { $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite, Delete'); try { $n = [int][math]::Min($fs.Length, $Bytes); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $got = $fs.Read($b, 0, $n); [Text.Encoding]::UTF8.GetString($b, 0, $got) } finally { $fs.Dispose() } } catch { '' }
+}
+# a background shell's output file: "Output is being written to: <path>" in the tool_result of its tool_use id ('' until written)
+function Find-KitShellOutputPath([string]$Text, [string]$ToolUseId) {
+  if (-not $ToolUseId -or -not $Text) { return '' }
+  $i = $Text.IndexOf("`"tool_use_id`":`"$ToolUseId`"", [StringComparison]::Ordinal); if ($i -lt 0) { return '' }
+  $s0 = $Text.LastIndexOf("`n", $i) + 1; $e = $Text.IndexOf("`n", $i); if ($e -lt 0) { $e = $Text.Length }
+  if ($Text.Substring($s0, $e - $s0) -match 'Output is being written to: ((?:[^"\\]|\\\\)+?\.output)') { return ($Matches[1] -replace '\\\\', '\') }; ''
+}
+# a shell's progress without reading its output whole: size, last write, last non-empty line (4 KB tail, ANSI stripped, masked, 160 chars)
+function Get-KitShellOutput([string]$Path) {
+  if (-not $Path) { return $null }; $fi = [IO.FileInfo]::new($Path); if (-not $fi.Exists) { return $null }
+  $tail = (Read-KitFileTail $Path 4KB) -replace '\x1b\[[0-9;?]*[A-Za-z]', ''
+  $last = "$(@($tail -split '\r?\n|\r' | Where-Object { $_.Trim() })[-1])".Trim(); $last = Protect-KitText $last
+  if ($last.Length -gt 160) { $last = $last.Substring(0, 159) + '…' }
+  [pscustomobject]@{ bytes = $fi.Length; ticks = $fi.LastWriteTimeUtc.Ticks; at = $fi.LastWriteTime; last = $last }
+}
+# CPU seconds + IO bytes of these pids now: one OS query (Linux IO from /proc; none elsewhere)
+# -PsLines: canned `ps -o pid= -o time=` output (tests); Io = all bytes read + written, pipes included (Windows TransferCount, Linux rchar + wchar)
+function Get-KitProcSample([int[]]$Ids, [string[]]$PsLines) {
+  $ids1 = @($Ids | Select-Object -Unique); if (-not $ids1.Count) { return }
+  if ($KitIsWindows -and $null -eq $PsLines) {
+    for ($i = 0; $i -lt $ids1.Count; $i += 40) {   # a short WQL filter per 40 pids (one long OR list can fail, and SilentlyContinue would hide it)
+      $flt = @($ids1[$i..([math]::Min($i + 39, $ids1.Count - 1))] | ForEach-Object { "ProcessId=$_" }) -join ' OR '
+      foreach ($p in @(Get-CimInstance Win32_Process -Filter $flt -Property ProcessId, KernelModeTime, UserModeTime, ReadTransferCount, WriteTransferCount -ErrorAction SilentlyContinue)) {
+        [pscustomobject]@{ Id = [int]$p.ProcessId; Cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7; Io = [double]$p.ReadTransferCount + [double]$p.WriteTransferCount } } }
+    return
+  }
+  if ($null -eq $PsLines) { $PsLines = @(ps -o pid= -o time= -p ($ids1 -join ',') 2>$null) }
+  foreach ($l in $PsLines) {
+    if ($l -notmatch '^\s*(\d+)\s+(?:(\d+)-)?([\d:.]+)') { continue }
+    $id = [int]$Matches[1]; $days = [int]$Matches[2]; $sec = 0.0; foreach ($part in $Matches[3] -split ':') { $sec = 60 * $sec + [double]$part }; $sec += 86400.0 * $days   # [dd-][hh:]mm:ss
+    $io = $null; try { if ([IO.File]::ReadAllText("/proc/$id/io") -match '(?m)^rchar:\s*(\d+)[\s\S]*?^wchar:\s*(\d+)') { $io = [double]$Matches[1] + [double]$Matches[2] } } catch { }
+    [pscustomobject]@{ Id = $id; Cpu = $sec; Io = $io }
+  }
+}
+# progress now: CPU + IO growth of each tree between two samples $GapSeconds apart in this sweep (key -> cpu, io, pct of one core)
+function Measure-KitTreeDelta([hashtable]$Trees, [scriptblock]$Sampler, [double]$GapSeconds) {
+  $res = @{}; $ids = @($Trees.Values | ForEach-Object { @($_) } | ForEach-Object { [int]$_ }); if (-not $ids.Count) { return $res }
+  $sa = @{}; foreach ($x in @(& $Sampler $ids)) { if ($x) { $sa[[int]$x.Id] = $x } }
+  if ($GapSeconds -gt 0) { Start-Sleep -Milliseconds ([int](1000 * $GapSeconds)) }
+  $sb = @{}; foreach ($x in @(& $Sampler $ids)) { if ($x) { $sb[[int]$x.Id] = $x } }
+  foreach ($k in @($Trees.Keys)) {
+    $dc = 0.0; $di = 0.0; $tot = $null; $hit = $false
+    foreach ($id in @($Trees[$k])) { $x0 = $sa[[int]$id]; $x1 = $sb[[int]$id]; if (-not $x0 -or -not $x1) { continue }; $hit = $true; $dc += [math]::Max(0.0, [double]$x1.Cpu - [double]$x0.Cpu); if ($null -ne $x0.Io -and $null -ne $x1.Io) { $di += [math]::Max(0.0, [double]$x1.Io - [double]$x0.Io); $tot = [double]$tot + [double]$x1.Io } }
+    if ($hit) { $res[$k] = [pscustomobject]@{ cpu = $dc; io = $di; ioTotal = $tot; pct = $(if ($GapSeconds -gt 0) { [int][math]::Round(100 * $dc / $GapSeconds) } else { 0 }) } }
+  }
+  $res
+}
+# bossy.ps1 shells [-Json]: the live agent shells with progress (one sample pair now + the last sweep's quiet clock), then the ones
+# ended within supervise.finishedMinutes; read-only (no kill, nothing written)
+function Invoke-Shells {
+  param([switch]$Json, [double]$GapSeconds = 2)
+  $sst = try { Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $sst) { $sst = @{} }
+  $now0 = Get-Date; $sw = Get-KitShellSweep $sst $now0 -GapSeconds $GapSeconds -ReadOnly -SampleAll
+  $ended = @($sst.shells.Values | Where-Object { $_ -is [Collections.IDictionary] -and $_.ended } | Sort-Object { -[long]$_.ended } | ForEach-Object {
+    [pscustomobject]@{ owner = "$($_.owner)"; short = "$($_.short)"; endedMin = [math]::Round(($now0.Ticks - [long]$_.ended) / [double][TimeSpan]::TicksPerMinute); killed = [bool]$_.killed; last = "$($_.last)" } })
+  if ($Json) { [pscustomobject]@{ at = $now0.ToString('o'); live = @($sw.rows); ended = $ended; flags = @($sw.flags) } | ConvertTo-Json -Depth 4; return }
+  if (-not @($sw.rows).Count -and -not $ended.Count) { 'shells: none running'; return }
+  $c = { param($t, [int]$m) $t1 = ("$t" -replace '\s+', ' ').Trim(); if ($t1.Length -gt $m) { $t1.Substring(0, $m - 1) + '…' } else { $t1 } }
+  if (@($sw.rows).Count) {
+    Format-KitMdTable @('PID', 'Owner', 'Age min', 'State', 'CPU now', 'CPU s', 'IO MB', 'Quiet min', 'Output', 'Command', 'Last line') @($sw.rows | Sort-Object { $_.state -eq 'running' }, { -$_.age } | ForEach-Object {
+      , @($_.pid, (& $c $_.owner 30), $_.age, $_.state, $(if ($null -ne $_.cpuNow) { "$($_.cpuNow)%" } else { '—' }), $_.cpu, $(if ($null -ne $_.ioMB) { $_.ioMB } else { '—' }), $_.quiet, $(if ($null -ne $_.outKB) { "$($_.outKB) KB, $($_.outAge) min ago" } else { '—' }), (& $c $_.short 60), (& $c $_.last 80)) })
+  }
+  if ($ended.Count) { ''; "ended (last $(Get-KitSetting 'supervise.finishedMinutes' 30) min):"; Format-KitMdTable @('Owner', 'Ended min ago', 'Command', 'Last line') @($ended | ForEach-Object { , @((& $c $_.owner 30), "$($_.endedMin)$(if ($_.killed) { ' (killed)' })", (& $c $_.short 60), (& $c $_.last 80)) }) }
+  foreach ($fl in @($sw.flags)) { "$($fl.level) · $($fl.what) -> $($fl.action)" }
 }

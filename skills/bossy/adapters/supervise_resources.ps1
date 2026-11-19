@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L314 shells · L448 page · L1015 release · L1060 lines · L1093 cleanup · L1178 launch ·
-  L1256 pause · L1375 heartbeat · L1390 sessions · L1442 ci tasks ·
-  L1497 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L314 shells · L481 page · L1053 release · L1098 lines · L1131 cleanup · L1216 launch ·
+  L1294 pause · L1413 heartbeat · L1428 sessions · L1480 ci tasks ·
+  L1535 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -360,7 +360,7 @@ function Find-KitShellTranscripts([hashtable]$Want) {
   $r = Invoke-KitAdapter transcript claude root; if (-not $frags.Count -or -not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return $out }
   $from = @($frags.Keys | ForEach-Object { $Want[$_].created } | Sort-Object)[0].AddMinutes(-1)
   foreach ($file in @(Get-ChildItem -LiteralPath $r.dir -Recurse -Filter '*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $from } | ForEach-Object FullName)) {
-    $text = try { $fs = [IO.File]::Open($file, 'Open', 'Read', 'ReadWrite, Delete'); try { $n = [int][math]::Min($fs.Length, 16MB); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $got = $fs.Read($b, 0, $n); [Text.Encoding]::UTF8.GetString($b, 0, $got) } finally { $fs.Dispose() } } catch { '' }
+    $text = Read-KitFileTail $file 16MB
     foreach ($k in @($frags.Keys)) {
       for ($i = $text.IndexOf($frags[$k], [StringComparison]::Ordinal); $i -ge 0; $i = $text.IndexOf($frags[$k], $e, [StringComparison]::Ordinal)) {
         $s0 = $text.LastIndexOf("`n", $i) + 1; $e = $text.IndexOf("`n", $i); if ($e -lt 0) { $e = $text.Length }; $line = $text.Substring($s0, $e - $s0)
@@ -368,7 +368,7 @@ function Find-KitShellTranscripts([hashtable]$Want) {
         $o = try { $line | ConvertFrom-Json -Depth 80 } catch { continue }
         $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' -and "$($_.input.command)".Contains($frags[$k]) })[0]; if (-not $u) { continue }
         $gap = if ($o.timestamp) { [math]::Abs(([datetimeoffset]$o.timestamp - [datetimeoffset]$Want[$k].created).TotalSeconds) } else { 1e9 }
-        if ($gap -le 120 -and (-not $out[$k] -or $gap -lt $out[$k].gap)) { $out[$k] = [pscustomobject]@{ file = $file; bg = [bool]$u.input.run_in_background; gap = $gap } }
+        if ($gap -le 120 -and (-not $out[$k] -or $gap -lt $out[$k].gap)) { $out[$k] = [pscustomobject]@{ file = $file; bg = [bool]$u.input.run_in_background; gap = $gap; tuid = "$($u.id)"; out = (Find-KitShellOutputPath $text "$($u.id)") } }
       }
     }
   }
@@ -389,52 +389,85 @@ function Get-KitShellOwner([string]$Tx, $Board) {
   $live = ($e -and $e.status -ne 'left' -and (Test-KitHolder $e) -ne $false) -or ($name -and (Test-KitLive ([pscustomobject]@{ agent = "$name" })) -eq $true)   # a running workflow step, gated command or fresh board entry
   [pscustomobject]@{ name = $(if ($name) { "$name" } else { "agent $id" }); finished = [bool]$fin; coordinator = $false; live = [bool]$live; last = (Get-KitLastActivity $Tx $e "$($e.tool)") }
 }
-# ORPHAN: owner finished and not live (Test-KitLive), tree not busy, idle idle.graceMinutes; or dir gone. STUCK: no CPU growth, older than supervise.shellStuckMinutes.
-# -AutoFix kills on the 2nd gone sweep, or the 1st if no poll loop and owner idle 20+ min
-function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(Get-KitSweepProcs)) {
+# ORPHAN: owner finished and not live (Test-KitLive), tree not busy, idle idle.graceMinutes; or dir gone. STALLED: no CPU, IO or output
+# growth (CPU vs the last sweep; CPU + IO between this sweep's two samples; its output file) for supervise.shellStuckMinutes.
+# -AutoFix kills on the 2nd gone sweep, or the 1st if no poll loop and owner idle 20+ min. -ReadOnly (bossy.ps1 shells): no kill, no learning;
+# -SampleAll: the sample pair for every shell (else only for shells with no CPU or output growth since the last sweep).
+# A shell gone since the last sweep stays in $State.shells as ended (owner, last line, killed) for supervise.finishedMinutes.
+function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(Get-KitSweepProcs), [scriptblock]$Sampler = { param($ids) Get-KitProcSample $ids }, [double]$GapSeconds = 2, [switch]$ReadOnly, [switch]$SampleAll) {
   $graceMin = [double](Get-KitParam 'idle.graceMinutes'); $pollRx = '(^|[\s;&|(])(until|while|for)\s|\bsleep\s+[-\d]|\bglab api\b|\bgh run watch\b|--watch\b|\bpipes\b|\b(envy|pokey|bossy)\.ps1\s+(\w+\s+)*wait\b'
   $stuckMin = [double](Get-KitParam 'supervise.shellStuckMinutes'); $old = if ($State.shells -is [Collections.IDictionary]) { $State.shells } else { @{} }; $new = @{}
   $kids = @{}; foreach ($p in $Procs) { if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.Generic.List[object]]::new() }; $kids[$p.ParentId].Add($p) }
   $gated = @(Read-KitJsonFiles (Get-KitGateLedger) | Where-Object { Test-KitPid $_.pid $_.start } | ForEach-Object { "$($_.pid)" })
   $board = @(Read-KitJsonFiles (Get-KitPath board)); $rows = [Collections.Generic.List[object]]::new(); $flags = [Collections.Generic.List[object]]::new()
   $shells = @(Get-KitAgentShells $Procs); $made0 = { param($p) if ($p.Created) { [datetime]$p.Created } else { $Now } }
+  # Git Bash (MSYS) exec leaves a command's Windows parent dead: a process whose parent is gone joins the one shell whose command holds its arguments
+  $alive = @{}; foreach ($p in $Procs) { $alive[$p.Id] = 1 }; $shCmd = @{}; foreach ($p in $shells) { $shCmd[$p.Id] = (Get-KitShellCommand $p.CommandLine) -replace '\s+', ' ' }
+  if ($shCmd.Count) { foreach ($q in $Procs) {
+    if ($alive.ContainsKey($q.ParentId) -or $shCmd.ContainsKey($q.Id)) { continue }
+    $tail = ("$($q.CommandLine)" -replace '^\s*("[^"]*"|\S+)\s*', '' -replace '\s+', ' ').Trim(); if ($tail.Length -lt 12) { continue }
+    $hit = @($shells | Where-Object { $shCmd[$_.Id].Contains($tail) })
+    if ($hit.Count -gt 1 -and $q.Created) { $hit = @($hit | Where-Object { $_.Created -and [datetime]$_.Created -le [datetime]$q.Created } | Sort-Object { [datetime]$_.Created } | Select-Object -Last 1) }   # same command twice: the newest shell started before it
+    if ($hit.Count -eq 1) { if (-not $kids.ContainsKey($hit[0].Id)) { $kids[$hit[0].Id] = [Collections.Generic.List[object]]::new() }; $kids[$hit[0].Id].Add($q) } } }
   $want = @{}; foreach ($p in $shells) { $m0 = & $made0 $p; $k0 = "$($p.Id)@$($m0.ToString('s'))"; if (-not ($old[$k0] -is [Collections.IDictionary] -and $old[$k0].ContainsKey('tx'))) { $want[$k0] = @{ cmd = (Get-KitShellCommand $p.CommandLine); created = $m0 } } }
   $found = if ($want.Count) { Find-KitShellTranscripts $want } else { @{} }   # once per shell: the tool_use line is written before the shell starts
+  $seen = [Collections.Generic.List[object]]::new(); $trees = @{}
   foreach ($p in $shells) {
     $made = & $made0 $p; $age = ($Now - $made).TotalMinutes; $key = "$($p.Id)@$($made.ToString('s'))"
     $s = if ($old[$key] -is [Collections.IDictionary]) { $old[$key] } else { @{} }; $new[$key] = $s; if ($s.killed) { continue }; $cmd = Get-KitShellCommand $p.CommandLine
-    if (-not $s.ContainsKey('tx')) { $f = $found[$key]; $s.tx = "$($f.file)"; $s.bg = [bool]$f.bg }
+    if (-not $s.ContainsKey('tx')) { $f = $found[$key]; $s.tx = "$($f.file)"; $s.bg = [bool]$f.bg; $s.tuid = "$($f.tuid)"; $s.out = "$($f.out)" }
+    if ($s.bg -and -not $s.out -and $s.tuid -and [int]$s.outTries -lt 5) { $s.outTries = [int]$s.outTries + 1; $s.out = Find-KitShellOutputPath (Read-KitFileTail $s.tx 16MB) $s.tuid }   # its tool_result is written after the shell starts
     $tree = @{}; $cpu = 0.0; $st = [Collections.Stack]::new(); $st.Push($p)
     $kc = @{}; while ($st.Count) { $q = $st.Pop(); if ($tree[$q.Id]) { continue }; $tree[$q.Id] = 1; $cpu += [double]$q.Cpu; if ($q -ne $p) { $kc["$($q.Id)@$($q.Created)"] = [double]$q.Cpu }; foreach ($c in @($kids[$q.Id])) { if ($c) { $st.Push($c) } } }
     $flat = $null -ne $p.Cpu -and $null -ne $s.cpu -and [math]::Abs($cpu - [double]$s.cpu) -lt 0.02
+    $moved = -not $s.ContainsKey('activeTicks') -or ($null -ne $p.Cpu -and -not $flat)
     # busy (an Agent-tool owner is named by its type, so Test-KitLive misses it): a gated command in the tree, or a child that used 1+ s
     # CPU since last sweep (a new child: in all); a poll loop's sleep / curl children stay under it
     $base = $s.kids -is [Collections.IDictionary]
     $busy = @($tree.Keys | Where-Object { "$_" -in $gated }).Count -or @($kc.Keys | Where-Object { $kc[$_] - $(if ($base -and $s.kids.Contains($_)) { [double]$s.kids[$_] } else { 0 }) -ge 1 }).Count
     $s.cpu = $cpu; $s.kids = $kc; $s.age = [math]::Round($age, 1)
     if (-not $s.bg -and $age -lt 10) { continue }   # a foreground tool call ends within the Bash tool's 10 min cap
+    $ot = Get-KitShellOutput $s.out; $outMoved = $ot -and ($ot.bytes -ne [long]$s.outBytes -or $ot.ticks -ne [long]$s.outTicks); if ($ot) { $s.outBytes = $ot.bytes; $s.outTicks = $ot.ticks; $s.last = $ot.last }
+    $seen.Add([pscustomobject]@{ p = $p; s = $s; key = $key; made = $made; age = $age; cmd = $cmd; tree = $tree; cpu = $cpu; busy = $busy; moved = ($moved -or $outMoved); ot = $ot })
+    if ($SampleAll -or -not ($moved -or $outMoved)) { $trees[$key] = @($tree.Keys) }   # the sample pair (and its wait) only for a shell that looks quiet
+  }
+  $nowDelta = Measure-KitTreeDelta $trees $Sampler $GapSeconds; $hbMin = [double](Get-KitParam 'supervise.heartbeatMinutes')
+  foreach ($r in $seen) {
+    $p = $r.p; $s = $r.s; $made = $r.made; $age = $r.age; $cmd = $r.cmd; $tree = $r.tree; $busy = $r.busy; $ot = $r.ot
     $s.listed = $true; $o = Get-KitShellOwner $s.tx $board; $dir = Get-KitShellDir $cmd; $gone = $dir -and -not (Test-Path -LiteralPath $dir)
-    $stuck = $flat -and $age -ge $stuckMin
-    $hbMin = [double](Get-KitParam 'supervise.heartbeatMinutes')
+    $dl = $nowDelta[$r.key]
+    $act = $r.moved -or ($dl -and ($dl.cpu -ge 0.02 -or $dl.io -gt 0))
+    if ($act -or -not $s.activeTicks) { $s.activeTicks = $Now.Ticks }
+    $quiet = [math]::Max(0.0, ($Now.Ticks - [long]$s.activeTicks) / [double][TimeSpan]::TicksPerMinute)
+    $stuck = -not $act -and $quiet -ge $stuckMin -and $age -ge $stuckMin
     if (-not $stuck) { $s.stuck = 0; $s.stuckAt = $null } elseif (-not $s.stuckAt -or ($Now - [datetime]$s.stuckAt).TotalMinutes * 2 -ge $hbMin) { $s.stuck = [int]$s.stuck + 1; $s.stuckAt = $Now.ToString('o') }
     $idle = if ($o.last) { ($Now - [datetime]$o.last).TotalMinutes } else { 1e9 }; $poll = $cmd -match $pollRx
     $ownerGone = $o.finished -and -not $o.live -and -not $busy -and $idle -ge $graceMin  # meta "finished" alone also marks an agent idling on this very shell
     if (-not $ownerGone) { $s.gone = 0; $s.goneAt = $null } elseif (-not $s.goneAt -or ($Now - [datetime]$s.goneAt).TotalMinutes * 2 -ge $hbMin) { $s.gone = [int]$s.gone + 1; $s.goneAt = $Now.ToString('o') }
-    $why = @($(if ($ownerGone) { "owner $($o.name) finished, idle $([int]$idle) min" }), $(if ($gone) { "dir gone: $dir" }), $(if ($stuck) { "no CPU growth, $($s.stuck) sweep(s)" }) | Where-Object { $_ }) -join '; '
-    $short = Get-KitShellShort $cmd; $one = ($cmd -replace '\s+', ' ').Trim()
-    if ($ownerGone -and ($s.gone -ge 2 -or (-not $poll -and $idle -ge 20)) -and $AutoFix -and (Test-KitPid $p.Id $made)) {
+    $why = @($(if ($ownerGone) { "owner $($o.name) finished, idle $([int]$idle) min" }), $(if ($gone) { "dir gone: $dir" }), $(if ($stuck) { "no CPU, IO or output for $([int]$quiet) min, $($s.stuck) sweep(s)" }) | Where-Object { $_ }) -join '; '
+    $short = Get-KitShellShort $cmd; $one = ($cmd -replace '\s+', ' ').Trim(); $s.owner = $o.name; $s.short = $short
+    if ($ownerGone -and ($s.gone -ge 2 -or (-not $poll -and $idle -ge 20)) -and $AutoFix -and -not $ReadOnly -and (Test-KitPid $p.Id $made)) {
       if ($KitIsWindows) { taskkill /PID $p.Id /T /F 2>&1 | Out-Null } else { foreach ($t in @($tree.Keys)) { Stop-SysProcess $t } }
       $s.killed = $true; Write-KitLog calls shell-kill ([ordered]@{ pid = $p.Id; owner = $o.name; why = $why; dir = $dir; what = "killed shell $($p.Id) ($why): $($one.Substring(0, [math]::Min(300, $one.Length)))" })
       $flags.Add([pscustomobject]@{ level = 'INFO'; what = "auto-fixed: killed shell $($p.Id) of $($o.name) ($why): $short"; action = 'Nothing to do.' }); continue
     }
-    $shellState = @($(if ($ownerGone -or $gone) { 'ORPHAN' }), $(if ($stuck) { 'STUCK' }) | Where-Object { $_ }) -join ', '; if (-not $shellState) { $shellState = 'running' }
+    $shellState = @($(if ($ownerGone -or $gone) { 'ORPHAN' }), $(if ($stuck) { 'STALLED' }) | Where-Object { $_ }) -join ', '; if (-not $shellState) { $shellState = 'running' }
     $tk = if ($KitIsWindows) { "taskkill /PID $($p.Id) /T /F" } else { "kill -TERM $($p.Id)" }
     $next = if ($shellState -eq 'running') { '' } elseif ($o.coordinator) { "yours: stop it (KillShell) or $tk" } elseif ($ownerGone) { "supervise -AutoFix kills it next sweep; now: $tk" } elseif ($o.live -or $busy) { "board msg $($o.name) to end it (live agent or busy tree: no taskkill)" } else { "$($o.name) ends it, else $tk" }   # arch-ok: hint text, $tk is per OS
-    $rows.Add([pscustomobject]@{ pid = $p.Id; short = $short; cmd = $cmd; owner = $o.name; age = [math]::Round($age); state = $shellState; next = $next; dir = $dir })
+    # progress: tree CPU s, CPU % of one core between the two samples, IO MB, child count, quiet min, output size / age / last line
+    $rows.Add([pscustomobject]@{ pid = $p.Id; short = $short; cmd = $cmd; owner = $o.name; age = [math]::Round($age); state = $shellState; next = $next; dir = $dir
+      cpu = [math]::Round($r.cpu, 1); cpuNow = $(if ($dl) { $dl.pct }); ioMB = $(if ($null -ne $dl.ioTotal) { [math]::Round($dl.ioTotal / 1MB, 1) }); kids = $tree.Count - 1; quiet = [math]::Round($quiet)
+      outKB = $(if ($ot) { [math]::Round($ot.bytes / 1KB) }); outAge = $(if ($ot) { [math]::Round([math]::Max(0.0, ($Now - $ot.at).TotalMinutes)) }); last = "$($s.last)" })
     $s60 = $short.Substring(0, [math]::Min(60, $short.Length))
     if ($shellState -ne 'running') { $flags.Add([pscustomobject]@{ level = 'WATCH'; kind = "SHELL $shellState"; who = $o.name; age = "$([int]$age) min"; problem = "pid $($p.Id) $s60`: $why"; what = "SHELL $shellState pid $($p.Id) of $($o.name) ($s60): $why"; action = $next }) }
   }
-  foreach ($k in @($old.Keys)) { $g = $old[$k]; if (-not $new.ContainsKey($k) -and $g -is [Collections.IDictionary] -and $g.listed -and -not $g.killed) { Add-KitParamObs 'supervise.shellStuckMinutes' ([double]$g.age) -Default 30 } }   # it ended on its own
+  $finMin = [double](Get-KitSetting 'supervise.finishedMinutes' 30)
+  foreach ($k in @($old.Keys)) {
+    $g = $old[$k]; if ($new.ContainsKey($k) -or $g -isnot [Collections.IDictionary] -or -not $g.listed) { continue }
+    if ($g.ended) { if (($Now.Ticks - [long]$g.ended) / [double][TimeSpan]::TicksPerMinute -lt $finMin) { $new[$k] = $g }; continue }
+    if (-not $g.killed -and -not $ReadOnly) { Add-KitParamObs 'supervise.shellStuckMinutes' ([double]$g.age) -Default 30 }   # it ended on its own
+    $ot = Get-KitShellOutput $g.out; if ($ot) { $g.last = $ot.last; $g.outBytes = $ot.bytes }; $g.ended = $Now.Ticks; $new[$k] = $g   # where it ended
+  }
   $State.shells = $new
   [pscustomobject]@{ rows = @($rows); flags = @($flags) }
 }
@@ -780,10 +813,15 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $shRows = @($j.shells | Where-Object { $_ }); $kitDirNorm = "$script:KitRoot".TrimEnd('\', '/') -replace '\\', '/'
   $shDir = { param($s) $dn = "$($s.dir)".TrimEnd('\', '/') -replace '\\', '/'; if ($dn -and $dn -ne $kitDirNorm) { "$($s.dir)" } else { '' } }
   $shDirOn = [bool]@($shRows | Where-Object { & $shDir $_ }).Count; $shNextOn = [bool]@($shRows | Where-Object { "$($_.next)".Trim() }).Count
+  # progress (owner 2026-11-18) under the state: CPU now (the sweep's sample pair), quiet min, output size + age; the output's last line under the command
+  $shProg = { param($s) @($(if ($null -ne $s.cpuNow) { "CPU $($s.cpuNow)%" }), $(if ($s.quiet) { "quiet $($s.quiet) min" }), $(if ($null -ne $s.outKB) { "out $($s.outKB) KB $(if ($s.outAge) { "$($s.outAge) min ago" } else { 'now' })" })) | Where-Object { $_ } }
+  $shState = { param($s) $pl = @(& $shProg $s); if (-not $pl.Count) { return "$($s.state)" }; @{ h = "$(& $e $s.state)<div class=sm>$(@($pl | ForEach-Object { & $e $_ }) -join '<br>')</div>" } }
+  $shCmd = { param($s) $cc = & $cmdCell "$($s.cmd)"; if (-not "$($s.last)".Trim()) { return $cc }; $wb = { param($x) (& $e $x) -replace '([|/\\])', '$1<wbr>' }; @{ h = "$(if ($cc -is [hashtable]) { $cc.h } else { & $wb $cc })<div class=sm>&#8250; $(& $wb $s.last)</div>" } }
+  $shProgOn = [bool]@($shRows | Where-Object { @(& $shProg $_).Count }).Count
   $shCols = @('PID', 'Owner', 'Age', 'State') + @(if ($shDirOn) { 'Dir' }) + 'Command' + @(if ($shNextOn) { 'Next' })
-  $shWidths = @('64px', '12%', '64px', '76px') + @(if ($shDirOn) { '14%' }) + 'auto' + @(if ($shNextOn) { '15%' })
+  $shWidths = @('64px', '12%', '64px', $(if ($shProgOn) { '118px' } else { '76px' })) + @(if ($shDirOn) { '14%' }) + 'auto' + @(if ($shNextOn) { '15%' })
   $shAge = { param($v) if ("$v" -match '^\s*(\d+(?:\.\d+)?)(?: min)?\s*$') { $tx = $at.AddMinutes(-[double]$Matches[1]); "<span class=ago data-t='$($tx.ToString('o'))' title='$($tx.ToString('yyyy-MM-dd HH:mm'))'>$(& $ago $tx)</span>" } else { & $e $v } }
-  $shellHtml = (& $table $shCols @($shRows | ForEach-Object { $sr = $_; , @(@($sr.pid, $sr.owner, @{ h = & $shAge $sr.age }, $sr.state) + @(if ($shDirOn) { & $shDir $sr }) + @(& $cmdCell "$($sr.cmd)") + @(if ($shNextOn) { "$($sr.next)" })) })) -replace '^<div class=tw><table>', "<div class=tw><table><colgroup>$(@($shWidths | ForEach-Object { "<col style='width:$_'>" }) -join '')</colgroup>"
+  $shellHtml = (& $table $shCols @($shRows | ForEach-Object { $sr = $_; , @(@($sr.pid, $sr.owner, @{ h = & $shAge $sr.age }, (& $shState $sr)) + @(if ($shDirOn) { & $shDir $sr }) + @(& $shCmd $sr) + @(if ($shNextOn) { "$($sr.next)" })) })) -replace '^<div class=tw><table>', "<div class=tw><table><colgroup>$(@($shWidths | ForEach-Object { "<col style='width:$_'>" }) -join '')</colgroup>"
   $setRows = @(if ($st.settings) { (Get-KitProps $st.settings) | ForEach-Object { , @($_.Name, $_.Value) } })
   $chg = @($st.changes | Where-Object { $_ }); [array]::Reverse($chg); $prm = @($st.params | Where-Object { $_ }); $hm = { param($x) if ($x) { try { ([datetime]$x).ToString('MM-dd HH:mm') } catch { "$x" } } else { '' } }   # '' keeps the cell: an empty result drops it from the row
   # Tuning: every tunable once, a fold per area (closed, owner 2026-11-14; header: non-default sources); the last 10 changes on top

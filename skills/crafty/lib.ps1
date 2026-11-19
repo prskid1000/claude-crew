@@ -1995,7 +1995,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $own = @($meta.Keys | Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
   $script:KitScript = if ($src) { Split-Path $src -Leaf } else { '' }; $sub = "$($Tokens[0])" -match '^[a-z][\w-]*$'; $script:KitVerb = (($Fn -replace '^Invoke-', '') + $(if ($sub) { " $($Tokens[0])" })).ToLower()
   # calls stream: start, then end with rc (0, 1 crash, 2 bad parameters, 'exit' = the verb's own exit) and ms
-  $script:KitLogOn = $Fn -notmatch '^Invoke-Guard'; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitRc = 'exit'   # guards run on every tool call: they log only denials
+  $script:KitLogOn = $Fn -notmatch '^Invoke-Guard|^Invoke-Shells$'; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitRc = 'exit'   # guards: denials only; shells: none
   $end = { param([string]$EndWhy) if (-not $EndWhy) { $EndWhy = $script:KitWhy }; if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($EndWhy) { @{ error = $EndWhy } } else { @{} })) } }   # rc 2 feeds tidy digest "Script errors"
   # bad parameters: exit 2 with the usage line, never the host's prompt for a mandatory one
   $usage = { param([string]$why, [bool]$missing)
