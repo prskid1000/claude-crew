@@ -199,7 +199,7 @@ Expect "tracker group: same list -> subtask (code from the parent's Items line),
 $sr =Invoke-PsTest statusrollup @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; . $args[1]; $ErrorActionPreference = 'Stop'
 $tg = { param($p, $c, $nw, $ro) Get-KitParentStatusTarget $p $c -NewChild:$nw -Reopen:$ro }
-"tbl:$((& $tg 'open' @('promoted', 'inTest') $false $false) -eq 'promoted' -and (& $tg 'inProgress' @('open') $true $false) -eq '' -and (& $tg 'promoted' @('open') $false $false) -eq '' -and (& $tg 'promoted' @('open') $true $false) -eq 'open' -and (& $tg 'closed' @('open') $false $false) -eq '' -and (& $tg 'closed' @('review', 'inTest') $false $true) -eq 'review' -and (& $tg 'closed' @('failedTesting') $true $false) -eq 'inProgress' -and (& $tg 'inTest' @('closed', 'closed') $true $false) -eq '' -and (& $tg 'blocked' @('open') $true $false) -eq '' -and (& $tg 'open' @('open', 'zzz') $false $false) -eq '')"
+"tbl:$((& $tg 'open' @('promoted', 'inTest') $false $false) -eq 'promoted' -and (& $tg 'inProgress' @('open') $true $false) -eq 'open' -and (& $tg 'inTest' @('promoted', 'closed') $false $false) -eq 'promoted' -and (& $tg 'promoted' @('open') $false $false) -eq 'open' -and (& $tg 'promoted' @('open') $true $false) -eq 'open' -and (& $tg 'closed' @('open') $false $false) -eq '' -and (& $tg 'closed' @('review', 'inTest') $false $true) -eq 'review' -and (& $tg 'closed' @('failedTesting') $true $false) -eq 'inProgress' -and (& $tg 'inTest' @('closed', 'closed') $true $false) -eq '' -and (& $tg 'blocked' @('open') $true $false) -eq '' -and (& $tg 'open' @('open', 'zzz') $false $false) -eq '')"
 function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; function St($i) { (Get-TrackerTask $i).status }
 $p = Mk 'Ask' $null; $a = Mk 'A' $p; $b = Mk 'B' $p; Clear-TrackerMemo $p
 Set-TrackerStatus $a 'inProgress'; "t1:$(St $p)"
@@ -215,7 +215,7 @@ $dry = @(Invoke-KitStatusSweep $p -All) -join '|'; "dry:$(St $p)|$dry"; $app = @
 $q = Mk 'Q' $null; $q1 = Mk 'Q1' $q; $q2 = Mk 'Q2' $q; $null = __TrNone $q2 'x' { param($o) $o.status = 'custom thing' }; Set-TrackerStatus $q1 'promoted'; "unk:$(St $q)"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'), $ad)
 $sv = { param($key) "$(@($sr | Where-Object { "$_" -like "${key}:*" })[0])".Substring($key.Length + 1) }
-Expect "parent status table: least advanced open child, forward only, a new child pulls back, closed reopens only on a new or reopened child, failedTesting counts as in progress" ((& $sv 'tbl') -eq 'True')
+Expect "parent status table: least advanced open child, back too (owner 2026-11-19), closed reopens only on a new or reopened child, failedTesting counts as in progress" ((& $sv 'tbl') -eq 'True')
 Expect "parent status (tracker none): follows its open subtasks on every status set ($($sr -join ' '))" ((& $sv 't1') -eq 'open' -and (& $sv 't2') -eq 'open' -and (& $sv 't3') -eq 'in progress' -and (& $sv 't4') -eq 'promoted' -and (& $sv 't5') -eq 'promoted')
 Expect "parent status: a new subtask reopens a closed parent (to the child's status) and pulls an in-test parent back to open; a closed child's reopen (failedTesting) reopens it" ((& $sv 't6') -eq 'open' -and (& $sv 't7') -eq 'open' -and (& $sv 't8') -eq 'in progress')
 Expect "track rollup -Status: dry run lists and writes nothing; -Apply reopens the closed parent ($(& $sv 'dry') | $(& $sv 'app'))" ((& $sv 'dry') -match '^closed\|' -and (& $sv 'dry') -match 'to change \(dry run' -and (& $sv 'app') -match '^open\|SET parent \S+: closed -> open' -and (& $sv 'app') -match '1 changed')

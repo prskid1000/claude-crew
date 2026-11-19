@@ -56,9 +56,11 @@ function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; fun
 $p = Mk 'P' $null; $a = Mk 'A' $p; Set-TrackerStatus $a 'inProgress' 6>$null; $t = Mk 'T' $null
 $po = Invoke-Track add -Task $p -Mrs 'g/web!70' 6>$null | Out-String; $to = Invoke-Track add -Task $t -Mrs 'g/web!71' 6>$null | Out-String
 "par:$($po -match "KEPT ${p}: $p not set to promoted: it follows its 1 open subtask" -and $po -notmatch "DONE $p" -and (Ky $p) -ne 'promoted' -and [bool](Read-KitTracking).tasks[$p].done)"
+Set-TrackerStatus $a 'inTest' 6>$null; $pin = Ky $p; Set-TrackerStatus $a 'review' -Back 'new fix round' 6>$null; $pback = Ky $p
+"derive:$($pin -eq 'inTest' -and $pback -eq 'review')"
 "plain:$($to -match "DONE ${t}: all 1 MRs merged -> status promoted" -and (Ky $t) -eq 'promoted')"
 '@
-Expect-Each (Invoke-PsTest trackparent $tpw @($O)) 'track run: # (par: a parent with an open subtask KEPT, not promoted, tracking done; plain: a task without subtasks promoted)' 'par', 'plain' -Show 8
+Expect-Each (Invoke-PsTest trackparent $tpw @($O)) 'track run: # (par: a parent with an open subtask KEPT, not promoted, tracking done; plain: a task without subtasks promoted; derive: an in-test parent goes back with its subtask''s new fix round)' 'par', 'derive', 'plain' -Show 8
 # launch -Self, 2+ areas on one task: one subtask per area (named, parent's assignee, item titles from the brief), kept on a relaunch
 $ab = Join-Path (Kd) 'areabrief'; New-Item -ItemType Directory -Force $ab | Out-Null; $tst = Join-Path $k '.state/tracker-none'; New-Item -ItemType Directory -Force $tst | Out-Null
 & $J @{ id = 'PAR1'; url = 'https://t.test/PAR1'; name = 'Shop setup'; status = 'in progress'; parent = $null; list = 'L1'; assignees = @('Ann Lee'); description = "Problem: p`nItems: A-1"; comments = @() } (Join-Path $tst 'PAR1.json')

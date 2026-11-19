@@ -174,7 +174,7 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   if (-not $Force -and (($ro.parentClosed -and $fresh -and $ro.localSig -eq $sig0) -or (-not $ro.parentClosed -and -not $ans -and $ro.localSig -eq $sig0 -and $fresh))) { return }   # a closed parent: its status read once per rollupMinutes
   $stamp = { Update-KitTaskIndex $Parent { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.readAt = (Get-Date).ToString('o'); $x.rollup.localSig = $sig0 } }   # a failed or empty read waits too
   Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { & $stamp; return "ROLLUP ${Parent}: tracker read failed, nothing written" }
-  if (Sync-TrackerParent -ParentId $Parent) { Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent }   # status follows the open subtasks (forward only; a closed parent stays closed here)
+  if (Sync-TrackerParent -ParentId $Parent) { Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent }   # status follows the open subtasks (both ways; a closed parent stays closed here)
   if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) {   # still closed: final, but a subtask closed after it still ticks its Items line
       & $stamp; $co = @{}; foreach ($a in @((ConvertTo-KitTriage $ro.triage).agents)) { if ($a.task) { $co["$($a.task)"] = "$($a.area)" } }
       $pio = try { Update-KitParentItems $Parent $pt $co } catch { "parent items FAILED: $("$_".Split("`n")[0])" }; if ($pio) { return "ROLLUP ${Parent}: $pio" }; return } }

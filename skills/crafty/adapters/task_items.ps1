@@ -148,13 +148,13 @@ function Complete-KitStatusWrite([string]$Id, [string]$Status, $R, $Was) {
   if ($Was.parent) { $null = Sync-TrackerParent $Id (Resolve-TrackerStatus $Status) -ParentId "$($Was.parent)" -Reopen:(Test-TrackerStatus "$($Was.status)" 'closed') }
 }
 function Get-TrackerStatusKey([string]$Name) { foreach ($k in @($__trStatus.Keys)) { if (@($__trStatus[$k]) | Where-Object { $_ -ieq "$Name".Trim() }) { return $k } }; '' }
-# the status a parent should have: the least advanced of its open subtasks. Forward only; backwards for a new child (-NewChild);
+# the status a parent should have: the least advanced of its open subtasks, back too (a child's new fix round);
 # a closed parent opens again for a new child or a reopened one (-Reopen); '' = leave it
 function Get-KitParentStatusTarget([string]$ParentKey, [string[]]$ChildKeys, [switch]$NewChild, [switch]$Reopen) {
   $rk = $script:KitStatusRank; if (-not $rk.Contains($ParentKey)) { return '' }
   $open = @($ChildKeys | Where-Object { $_ -and $rk.Contains($_) -and $_ -ne 'closed' }); if (-not $open.Count) { return '' }
   $t = @($open | Sort-Object { $rk[$_] })[0]; if ($t -eq 'failedTesting') { $t = 'inProgress' }
-  $go = if ($ParentKey -eq 'closed') { $NewChild -or $Reopen } else { $rk[$t] -gt $rk[$ParentKey] -or ($NewChild -and $rk[$t] -lt $rk[$ParentKey] -and $ParentKey -ne 'inProgress') }   # an in-progress parent stays (launch area subtasks)
+  $go = if ($ParentKey -eq 'closed') { $NewChild -or $Reopen } else { $rk[$t] -ne $rk[$ParentKey] }   # both ways (owner 2026-11-19: a parent always equals its least complete open child)
   if ($go -and $t -ne $ParentKey) { $t } else { '' }
 }
 # -ChildId / -ChildStatus: the change just made (a tracker may still show the old one); no child: the parent's own subtasks as read.

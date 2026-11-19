@@ -120,8 +120,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
 - **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once MR, both docs and
   solution comment posted -> `promoted` by `track` when all merge -> `inTest` after deploy (coordinator)). Never set
-  `inTest`, `closed`, a parent's status, a step back (new code round: `-Back`); `promoted` passes
-  `process.gates.promote` (`builtin:testingDocs`: doc links atop the description, never a comment).
+  `inTest`, `closed`, a parent's (= least open child), a step back (new code round: `-Back`); `promoted` passes
+  `process.gates.promote` (`builtin:testingDocs`: doc links atop the description).
 - **Publish once per key:** docs and evidence via `devtools.py doc|evidence --key <task|run>:<kind>` (same link, a dated
   section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one; decisions: `bossy.ps1 decide` only);
   `devtools.py mr` edits the open MR.
