@@ -29,8 +29,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L228 budget · L258 launch · L499 recover · L586 pause · L597 resume · L664 program · L715 param ·
-  L721 track · L1063 supervise · L1386 report · L1466 audit · L1526 storage · L1529 bugbrief · L1643 cleanup · L1730 learn ·
-  L1761 decide · L1912 debate · L1956 health · L2023 retro due · L2033 tidy · L2105 setup · L2202 guard-sendmessage
+  L721 track · L1063 supervise · L1385 report · L1465 audit · L1525 storage · L1528 bugbrief · L1642 cleanup · L1729 learn ·
+  L1760 decide · L1911 debate · L1955 health · L2022 retro due · L2032 tidy · L2104 setup · L2201 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1089,8 +1089,7 @@ Invoke-KitLocked $lk {
 if ($script:aside) { $script:aside; Get-KitAsideFlags $me; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }
 $budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 40) } else { 240 }
 $deadline = (Get-Date).AddSeconds($budgetSeconds)
-$apiLedger = Join-Path (Get-KitPath cache -Create) 'supervise-api.txt'; $env:KIT_API_LEDGER = $apiLedger   # its children's calls count too (Get-KitApiBeatFlag)
-Remove-Item -LiteralPath $apiLedger -Force -ErrorAction SilentlyContinue   # a beat cut before its flag left lines: never the next beat's
+$apiLedger = Start-KitApiBeat   # its children's calls count too; a beat's shared host answers (K93)
 $env:KIT_NET_TIMEOUT_SEC = [string][math]::Min(20.0, (Get-KitNetTimeout)); $env:KIT_NET_TRIES = '2'
 function Left { [math]::Max(5, [int]($deadline - (Get-Date)).TotalSeconds) }
 $stateFile = Get-KitPath supervise-state -Create

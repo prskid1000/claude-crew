@@ -199,6 +199,14 @@ function Test-DeployedExtra($d) {
 # ---- deployed: pokey.ps1 deployed, an MR live per test env
 # pokey.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk:
 # ui_android.ps1; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
+# K93: a supervise beat's parallel probes (up to 16 processes) share their branch-level answers: each asked the same ci.runs / ci.jobs (96 calls a beat);
+# the first asker holds the key's lock while it calls, the rest read its answer; bossy.ps1 supervise sets KIT_API_BEAT and drops the folder after the beat
+function Get-BeatShared([string]$Key, [scriptblock]$Call) {
+  $bd = Join-Path (Get-KitPath cache -Create) "api-memo/$env:KIT_API_BEAT"; $null = New-Item -ItemType Directory -Force $bd
+  $bk = $Key -replace '[^\w.=-]+', '_'; $bf = Join-Path $bd "$($bk.Substring(0, [math]::Min(180, $bk.Length))).json"; $script:beatAnswer = $null
+  Invoke-KitLocked $bf { if (Test-Path -LiteralPath $bf) { $script:beatAnswer = Get-Content -LiteralPath $bf -Raw | ConvertFrom-Json -Depth 40 } else { $script:beatAnswer = & $Call; if ($null -ne $script:beatAnswer) { Write-KitAtomic $bf (ConvertTo-Json -InputObject $script:beatAnswer -Depth 40 -Compress) } } }
+  $script:beatAnswer
+}
 function Invoke-Deployed {
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines, [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout); -TimeoutSec: past it the MRs left are UNKNOWN (the first is always checked)
 $ErrorActionPreference = 'SilentlyContinue'
@@ -209,7 +217,7 @@ function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliase
 # memoised: supervise asks per round
 $memo = @{}
 # one host verb on this MR's repo ($p = its host path), memoised by verb + args
-function Hv([string]$Verb, [hashtable]$A = @{}) { $A = @{ repo = $p } + $A; $k = "$Verb|$(($A.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&')"; if (-not $memo.ContainsKey($k)) { $memo[$k] = Invoke-HostVerb $Verb $A }; $memo[$k] }
+function Hv([string]$Verb, [hashtable]$A = @{}) { $A = @{ repo = $p } + $A; $k = "$Verb|$(($A.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&')"; if (-not $memo.ContainsKey($k)) { $memo[$k] = if ($env:KIT_API_BEAT -and $Verb -in 'ci.runs', 'ci.jobs', 'repo.commit', 'repo.compare', 'repo.base', 'mr.list') { Get-BeatShared $k { Invoke-HostVerb $Verb $A } } else { Invoke-HostVerb $Verb $A } }; $memo[$k] }
 # a ref -> its commit sha (one memoised host call per branch); a full sha as is
 function RefSha($p, $ref) { if ($ref -match '^[0-9a-f]{40}$') { $ref } else { (Hv 'repo.commit' @{ ref = $ref }).id } }
 # the local checkout answers when it holds both commits (ms, not a host call each); else the host

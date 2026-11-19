@@ -112,9 +112,17 @@ function Add-KitApiCall([string]$Kind, [string]$Verb) {   # from lib.ps1 Invoke-
   # shared append: parallel children each write their line (AppendAllText shares read only: a collision dropped the count)
   try { $fs = [IO.File]::Open($env:KIT_API_LEDGER, 'Append', 'Write', 'ReadWrite'); try { $b = [Text.Encoding]::UTF8.GetBytes("$Kind $Verb $who`n"); $fs.Write($b, 0, $b.Length) } finally { $fs.Dispose() } } catch {}   # never fails a call
 }
+# a supervise beat: an empty ledger (a cut beat's lines are never the next one's) and a name for its shared host answers (K93: pokey
+# deployed_checks.ps1 Get-BeatShared); a cut beat's answers go after an hour -> the ledger path
+function Start-KitApiBeat {
+  $ld = Join-Path (Get-KitPath cache -Create) 'supervise-api.txt'; Remove-Item -LiteralPath $ld -Force -ErrorAction SilentlyContinue; $env:KIT_API_LEDGER = $ld; $env:KIT_API_BEAT = "$PID-$([DateTime]::UtcNow.Ticks)"
+  Get-ChildItem (Join-Path (Get-KitPath cache) 'api-memo') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-1) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue   # walk-ok: beat folders, one level
+  $ld
+}
 # the beat's calls: over supervise.apiCallsPerBeat -> one WATCH naming the top 3 callers; the ledger starts empty for the next beat
 function Get-KitApiBeatFlag([string]$Ledger) {
   $calls = @(Get-Content -LiteralPath $Ledger -ErrorAction SilentlyContinue | Where-Object { $_ }); Remove-Item -LiteralPath $Ledger -Force -ErrorAction SilentlyContinue
+  if ($env:KIT_API_BEAT) { Remove-Item -LiteralPath (Join-Path (Get-KitPath cache) "api-memo/$env:KIT_API_BEAT") -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Env:KIT_API_BEAT }   # walk-ok: one beat's folder
   $cap = [double](Get-KitParam 'supervise.apiCallsPerBeat'); if ($calls.Count -le $cap) { return }
   $top = @($calls | Group-Object { ($_ -split ' ', 3)[2] } | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) $($_.Count)" })
   [pscustomobject]@{ level = 'WATCH'; what = "API budget: $($calls.Count) host / tracker adapter verbs this beat (supervise.apiCallsPerBeat $cap): $($top -join ', ')"; action = 'Cache or back off the top caller (kitty kind fix); raise the cap in kit.local.json only for a real need.' }
