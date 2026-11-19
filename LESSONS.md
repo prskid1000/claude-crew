@@ -19,6 +19,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- a scratch file (probe, diff, config copy) -> only under crafty.ps1 dir -Agent <id> (a stray in <runtime>/work cannot be removed later: the guard blocks deletes there, 7x on 2026-11-19)
 - writing the MR body local-env row -> state the real lane result; never claim PASS on another product's env or when the brief said FAIL (RM web MR claimed local PASS on hm r211)
 - a change touches files outside the area paths of the brief -> raise the scope decide ask at plan time, not at wt commit (wt commit refused files and the agent waited with no answer)
 - editing regex text or writing mr/spec text -> use the Edit tool, not heredoc python; run kitbag.py prose on the text first (heredoc corrupted files; 46 prose refusals in one window)
@@ -60,10 +61,11 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
+- calling a kit script (pokey.ps1 prepare, results patch) from Bash -> pwsh -NoProfile -File <script> <verb> with the JSON in single quotes, or a .ps1 in the run dir that calls it (the guard denies a script in command position, -Command or a heredoc: 13x on 2026-11-19)
 - results patch carries a row key firstAttempt -> use only keys in testy.js CHECKS_SCHEMA; fold the content into observed (9 refusals and re-runs of patch in one day)
 - finalize -Check -Results results-retry.json on a scoped retry -> check only rows in the retry file; expect docgaps to flag rows it does not cover and publish with the item results.json check instead (3 signals: false doc-check failures on unpublished rows)
 - writing testing-doc or check texts with prose limits -> write to the word limit first and keep the key request (e.g. server-log check) when cutting (prose check failed twice; shortening dropped the server-log request)
-- testy finalize -Check on a run whose run.json title is long -> keep the run title at 25 words or fewer when the run is created (finalize -Check failed EXIT=1 twice and needed a hand edit of run.json)
+- testy finalize -Check on a run whose run.json title is long -> keep the run title at 25 words or fewer when the run is created (finalize -Check failed EXIT=1 twice and needed a hand edit of run.json) (2×)
 - a test run lasts longer than a few minutes (a full e2e suite) -> start it detached with Start-Process and a log file, never as a Bash run_in_background child (a 3.5 h e2e run died at 42 min with the shell, no exit line)
 - publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames) (2×)
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
@@ -139,6 +141,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A review sheet of 100+ items -> split verification across read-only agents by surface plus one endpoint-inventory agent, each writing one fixed-shape file, then merge (one agent ran out of context). (1x)
 - Launch args mode -> feature, bugfix or resume; map a new-work ask to feature (buildy.js rejects anything else, e.g. build, at once). (1x)
 ## opsy
+- listing logins in targets.local.json -> its key names only ((Get-Content <f> -Raw | ConvertFrom-Json).PSObject.Properties.Name), never sed / grep / cat it (a sed printed user and password pairs)
 ## watchy
 ## rechy
 - Checking an adapter against a vendor API -> read the vendor reference (an llms.txt index lists .md pages) and diff request and response shapes field by field (adapters drifted from the vendor). (1x)
