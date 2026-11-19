@@ -12,7 +12,7 @@ supervise: BAD = WATCH).
 - **Times:** ISO 8601 with offset (`ToString('o')`, `isoformat()`); readers accept offset-less ones.
 - **Ids:** stable, file-safe: session `<agent>-<8 hex>`, decision `d-<yyyyMMddHHmmss>-<agent>-<4>`, task = tracker id, run =
   workflow run name.
-- **Format:** JSON for scripts; markdown only for people (resume briefs, reports: templates.md `kit-report`).
+- **Format:** JSON for scripts; markdown only for people (templates.md `kit-report`).
 - **Change a schema:** bump `v<n>` in its row and the writer; readers accept `n-1`. A new file: a `_paths` name + a row.
   Deleting state in use: the owner decides.
 - **Lifecycle:** `.runtime` ages out by `_paths.keep` (`bossy.ps1 cleanup`); in `.state` it only trims the Inventory's logs
@@ -33,17 +33,18 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | Name | Owner | Schema | Lifecycle |
 |---|---|---|---|
 | `tasks` | `lib.ps1` `Update-KitTracking` / `Update-KitTaskIndex`, `devtools.py publish`, `pokey.ps1 finalize` | `dir v1: task` | keep |
-| `tracking` | none (legacy) | `json v0: tasks` | read until the first tracking write moves it into `tasks` and deletes it |
+| `tracking` | none (legacy) | `json v0: tasks` | read until a tracking write moves it into `tasks` |
 | `automerge` | `devtools.py merge`, `bossy.ps1 track run` | `json v1: refs` | an entry until its MR merges |
 | `mr-ignore` | `bossy.ps1 track ignore` | `json v1: mrs` | keep |
 | `published` | `devtools.py publish`, `crafty.ps1 tracker create -Key` | `dir v1: key` | keep |
 | `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) |
 | `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) |
 | `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep |
-| `outcomes` | `kitlog` (`adapters/outcomes.ps1`: supervise, `tidy prep`) | `jsonl v0: at task stage` | keep (append-only, one row per task state change) |
+| `outcomes` | `kitlog` (`adapters/outcomes.ps1`: supervise, `tidy prep`) | `jsonl v0: at task stage` | keep (append-only) |
 | `standing-rules` | `bossy.ps1 decide rules`, `decide answer` (its ask) | `json v1: rules` | keep (approved ones -> `rules/standing-rules.local.md`) |
 | `forgotten` | `kitbag.py forget` | `text v0` | `forget --purge` |
 | `pool-usage` | `adapters/wt_pool.ps1` | `json v1: repos` | keep (samples 7 d) |
+| `disk-writes` | `bossy.ps1 supervise` | `jsonl v0: at m k o + d` | 35 d |
 | `kit-tests-db` | `tests/test-mysql.ps1` | `json v0: server port key holders` | keep |
 | `outcomes-sweep` | `adapters/outcomes.ps1` | `text v0` | 30 d |
 | `signals` | `bossy.ps1 learn` | `jsonl v0: at skill kind text + run script verb ref source` | `logs.keepDays`, then `logs-summary` (retired: kept) |

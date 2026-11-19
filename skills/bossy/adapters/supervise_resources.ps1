@@ -558,7 +558,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
   $stats.gate = try { Get-KitGateStats $d.at @($d.resources) } catch { $null }
   $stats.waits = try { Get-KitLeaseWaits $d.at } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
-  $stats.writes = try { $wc = Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'supervise-writes.json') -Raw | ConvertFrom-Json; if ($wc.at) { [ordered]@{ at = $wc.at; hour = @($wc.hour) } } } catch { $null }   # Get-KitSuperviseFlagsWrites
+  $stats.writes = try { $wc = Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'supervise-writes.json') -Raw | ConvertFrom-Json; if ($wc.at) { Get-KitWriteView @($wc.samples) @(Get-Content -LiteralPath (Get-KitPath disk-writes) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } }) $d.at } } catch { $null }   # Get-KitSuperviseFlagsWrites; history: Update-KitWriteHistory
   $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   # compact, no copy of usage.result.json (0.7 MB): each sweep rewrote 1.8 MB (NTFS journal churn); the page still shows it
