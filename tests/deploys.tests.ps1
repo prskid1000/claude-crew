@@ -246,6 +246,11 @@ $bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', 
 foreach ($bq in $bsp) { $null = $bq.WaitForExit(60000) }
 $bso = @(1..3 | ForEach-Object { "$(Get-Content (Join-Path (Kd) "beat-$_.out") -Raw)".Trim() }) -join ' '
 Expect "K93: 3 parallel probes of one beat: one host call, each reads the same answer ($bso, calls $(@(Get-Content $bsc -ErrorAction SilentlyContinue).Count))" ($bso -eq '1/7/True 1/7/True 1/7/True' -and @(Get-Content $bsc).Count -eq 1)
+# a no-answer is shared too (16 probes queued on the lock, each asking a down host again); keys that differ only by / vs _ or case: their own answers
+$bsn = Join-Path (Kd) 'beat-null.txt'; Set-Content $bsw ('. $args[0]; . $args[1]; $env:KIT_API_BEAT = "b2"; $v = Get-BeatShared "mr.list|ref=x" { Add-Content $args2 x; Start-Sleep 1; $null }; "n:$($null -eq $v)"').Replace('$args2', "'$bsn'")
+$bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', $bsw, (Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path (Kd) "beatn-$_.out") }); foreach ($bq in $bsp) { $null = $bq.WaitForExit(60000) }
+$bsk = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1'); $env:KIT_API_BEAT = 'b3'; @('ref=feat/a', 'ref=feat_a', 'ref=Main', 'ref=main') | ForEach-Object { $kv = $_; Get-BeatShared "ci.runs|$kv" { $kv } }; Remove-Item Env:KIT_API_BEAT }
+Expect "K93: a null answer: one call for 3 probes; keys feat/a, feat_a, Main, main: 4 answers ($(@(Get-Content $bsn -ErrorAction SilentlyContinue).Count) call(s), $($bsk -join ','))" (@(Get-Content $bsn).Count -eq 1 -and ($bsk -join ',') -eq 'ref=feat/a,ref=feat_a,ref=Main,ref=main')
 Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside; ONE probe for all tasks, rounds until every MR is checked; a closed ignored MR is not the task''s work; the in-test note is ONE comment edited in place; the summary counts each outcome and says where the tasks came from (#)' @('live', 'record', 'wait', 'paths', 'shared', 'hang', 'rounds', 'closed', 'keyed', 'summary') 20
 Remove-TestKit $k
 Complete-Tests

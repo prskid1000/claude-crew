@@ -203,8 +203,11 @@ function Test-DeployedExtra($d) {
 # the first asker holds the key's lock while it calls, the rest read its answer; bossy.ps1 supervise sets KIT_API_BEAT and drops the folder after the beat
 function Get-BeatShared([string]$Key, [scriptblock]$Call) {
   $bd = Join-Path (Get-KitPath cache -Create) "api-memo/$env:KIT_API_BEAT"; $null = New-Item -ItemType Directory -Force $bd
-  $bk = $Key -replace '[^\w.=-]+', '_'; $bf = Join-Path $bd "$($bk.Substring(0, [math]::Min(180, $bk.Length))).json"; $script:beatAnswer = $null
-  Invoke-KitLocked $bf { if (Test-Path -LiteralPath $bf) { $script:beatAnswer = Get-Content -LiteralPath $bf -Raw | ConvertFrom-Json -Depth 40 } else { $script:beatAnswer = & $Call; if ($null -ne $script:beatAnswer) { Write-KitAtomic $bf (ConvertTo-Json -InputObject $script:beatAnswer -Depth 40 -Compress) } } }
+  # file name: a readable prefix + two FNV-1a hashes of the whole key (feat/a vs feat_a, Main vs main, a cut long key: one file each)
+  $h1 = [long]2166136261; $h2 = [long]2166136261; foreach ($ch in $Key.ToCharArray()) { $h1 = (($h1 -bxor [long][int]$ch) * 16777619) -band 4294967295L }; foreach ($ch in [char[]]($Key.ToCharArray() | Sort-Object -Descending)) { $h2 = (($h2 -bxor [long][int]$ch) * 16777619) -band 4294967295L }
+  $bk = $Key -replace '[^\w.=-]+', '_'; $bf = Join-Path $bd "$($bk.Substring(0, [math]::Min(60, $bk.Length)))-$($h1.ToString('x8'))$($h2.ToString('x8')).json"; $script:beatAnswer = $null
+  # an empty or failed answer is shared too ('null'): else every probe queued on the lock and asked again (16 x 40 s with the host down)
+  Invoke-KitLocked $bf { if (Test-Path -LiteralPath $bf) { $script:beatAnswer = Get-Content -LiteralPath $bf -Raw | ConvertFrom-Json -Depth 40 } else { $script:beatAnswer = & $Call; Write-KitAtomic $bf $(if ($null -eq $script:beatAnswer) { 'null' } else { ConvertTo-Json -InputObject $script:beatAnswer -Depth 40 -Compress }) } }
   $script:beatAnswer
 }
 function Invoke-Deployed {
