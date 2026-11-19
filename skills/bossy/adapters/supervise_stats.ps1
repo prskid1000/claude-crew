@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L300 cards · L496 flags · L586 shells
+Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L302 cards · L498 flags · L588 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -198,7 +198,9 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @()) {
   foreach ($s in @($samples | Where-Object { [datetime]$_.at -gt $Now.AddHours(-1) })) { foreach ($r in @(Get-KitWriteRows $s)) { $hr["$($r.n)"] = [double]$hr["$($r.n)"] + [double]$r.g; $last["$($r.n)"] = $r } }
   $hour = @($hr.Keys | Sort-Object { - $hr[$_] } | ForEach-Object { [ordered]@{ label = $_; tag = "$($last[$_].a)"; gb = [math]::Round($hr[$_], 2); cmd = "$($last[$_].c)" } })
   $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour')
-  $flags = @(foreach ($h in @($hour | Where-Object { $_.gb -ge $soft })) { $lv = if ($h.gb -ge $hard) { 'ACT' } else { 'WATCH' }; $who = "$($h.label)$(if ($h.tag) { " ($($h.tag))" })"
+  # a burst that is over (no write in the last 2 samples: exited or stopped) leaves the flags, the card keeps its hour
+  $nowS = @($samples | Where-Object { "$($_.at)" -eq $Now.ToString('o') })[0]; $cur = @($samples | Select-Object -Last 2 | ForEach-Object { Get-KitWriteRows $_ } | ForEach-Object { "$($_.n)" })
+  $flags = @(foreach ($h in @($hour | Where-Object { $_.gb -ge $soft -and (-not $nowS -or $_.label -in $cur) })) { $lv = if ($h.gb -ge $hard) { 'ACT' } else { 'WATCH' }; $who = "$($h.label)$(if ($h.tag) { " ($($h.tag))" })"
       [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $who; what = "WRITES ${who}: $($h.gb) GB written in the last hour (soft $soft / hard $hard GB); top: $(Get-KitWriteLabel '' $h.cmd)" -replace "; top: $([regex]::Escape($h.label))$"
         action = "$(if ($lv -eq 'ACT') { 'Check whether it is a one-off (a burst already over, a false positive) before acting; still writing: stop it, then ' })tell its owner: no bulk data, dumps, tree copies, reinstalls or big captures (AGENTS.md); links / moves, small fixtures, read-only checks." } })
   [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; hour = $hour; flags = $flags }

@@ -234,6 +234,9 @@ $hr = @{}; foreach ($h in $s2.hour) { $hr[$h.label] = $h.gb }
 "hard:$(@($s2.flags | Where-Object { $_.level -eq 'ACT' -and $_.what -match '^WRITES (build x \(kitty\): 6 GB .*top: robocopy|devy-a \(shell\): 2\.5 GB .*top: mysql)' -and $_.action -match '^Check whether it is a one-off' }).Count -eq 2)"
 "fold:$($hr['mysqld · x'] -eq 1.5 -and @($s2.flags).Count -eq 3 -and @($hr.Keys).Count -eq 3 -and $s2.samples[-1].m -eq 10)"
 "unseen:$(-not $hr.ContainsKey('late'))"
+# robocopy exited, the rest idle: its hour stays on the card, its flag goes (an exited burst flagged ACT for its whole hour)
+$s3 = Update-KitWriteStats ($s2 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1.AddMinutes(10) @($b2 | Where-Object Id -ne 40) $own
+"over:$(@($s3.hour | Where-Object label -eq 'build x').Count -eq 1 -and -not @($s3.flags | Where-Object { $_.what -match 'build x' }).Count)"
 $lb = @((Get-KitWriteLabel 'msedge.exe' 'msedge.exe --headless --remote-debugging-port=9222'), (Get-KitWriteLabel 'mysqld.exe' '"C:\m\mysqld.exe" --no-defaults --datadir=D:\s\kit-tests\my'),
   (Get-KitWriteLabel 'node.exe' 'node "C:\n\npx-cli.js" -y vite build'), (Get-KitWriteLabel 'java.exe' 'java -jar D:\t\api-1.0.jar'), (Get-KitWriteLabel 'Slack.exe' 'Slack.exe --x'), (Get-KitWriteLabel 'python.exe' 'python -m http.server 8000'), (Get-KitWriteLabel 'java.exe' 'java -cp x org.acme.Main'))
 "labels:$(($lb -join '|') -ceq 'Edge (CDP 9222)|mysqld · kit-tests|npx · vite|java · api-1.0|Slack|python · http.server|java · Main')"
@@ -253,7 +256,7 @@ $card = Format-KitWritesCard ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
 $pg = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resources = @([pscustomobject]@{ name = 'build x'; by = 'kitty'; gb = 1 }); stats = [pscustomobject]@{ writes = ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json) } })
 "card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
-Expect-Each (Invoke-PsTest 'writes' $wrt @($O, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
+Expect-Each (Invoke-PsTest 'writes' $wrt @($O, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
 # a holder record with several pids (a lane group, a shared lease) must not crash the writes hook ([int] of an array)
 $mpt = @'
 $null = . $args[0] 6>$null; $KitShellRows = @(); $res = @([pscustomobject]@{ pid = @(4, 8); by = 'x'; name = 'svc' })
