@@ -1478,7 +1478,7 @@ function Get-KitCiTask([string]$Task) {
   $d = "$($tt.description)" -replace '\\(?=[_*])', ''
   $ju = Invoke-HostVerb 'ci.parseUrl' @{ text = $d }   # the CI adapter reads its own job / run URLs; a CI without it: no job (bad)
   $bm = [regex]::Match($d, '(?im)^\W*Branch\W*:\W*(?<b>[\w./-]+)')
-  $jn = if (-not "$($ju.job)") { [regex]::Match($d, '(?i)\bjob\W{0,3}(?<j>[\w.:-]{3,})').Groups['j'].Value }   # a pipeline link + a job name ("job `unit-test`"), no job URL
+  $jn = if (-not "$($ju.job)") { @([regex]::Matches($d, '(?i)\bjob\s+[`''"](?<j>[\w.:-]{3,})[`''"]') | ForEach-Object { $_.Groups['j'].Value })[-1] }   # a pipeline link + a job name ("job `unit-test`"), no job URL
   [pscustomobject]@{ url = "$($ju.url)"; job = "$($ju.job)"; jobName = "$jn"; run = "$($ju.run)"; branch = $bm.Groups['b'].Value }
 }
 # pass = a newer run of the same job on the branch whose commit holds every merged MR of the job's repo; wait = none yet / still running

@@ -45,9 +45,9 @@ Expect "release after the host merge: slot back, the merged local branch deleted
 $scf = Join-Path "$(git -C $falcon rev-parse --path-format=absolute --git-dir)" 'claude-scope'
 Expect "next task reuses the slot clean: no new slot, files changed by the switch < a fresh checkout, no scope record ($(($o6 -split "`n" | Select-String 'files:') -replace '\s+', ' '))" ((& $slotOf $o6) -eq $falcon -and $o6 -notmatch 'new slot' -and $o6 -match 'files:\s+2 changed by the switch, not 3[0-9] written' -and -not (Test-Path $scf) -and @(Get-ChildItem "$base/wt" -Directory).Count -eq 2)
 
-# a slot is never removed; sweep leaves it; pool lists the states
+# a slot is never removed; sweep leaves it; pool lists the states (the refusal is an error record: wrapped at the host width)
 $rm = pwsh @np $D wt remove -Dir $falcon 2>&1 | Out-String; $sw = pwsh @np $D wt sweep -DryRun -IdleHours 0 2>&1 | Out-String; $pl = pwsh @np $D wt pool 2>&1 | Out-String
-Expect "remove refuses a slot, sweep skips slots, pool lists them ($(($pl -split "`n")[0].Trim()))" ($rm -match 'is a pool slot: never deleted' -and $sw -notmatch 'falcon-app|kestrel-app' -and $pl -match 'pool app: 2/2 slots, 0 free' -and $pl -match 'app·Falcon\s+leased\s+feat/four\s+devD')
+Expect "remove refuses a slot, sweep skips slots, pool lists them ($(($pl -split "`n")[0].Trim()))" (($rm -replace '\s*\|\s*|\s+', ' ') -match 'is a pool slot: never deleted' -and $sw -notmatch 'falcon-app|kestrel-app' -and $pl -match 'pool app: 2/2 slots, 0 free' -and $pl -match 'app·Falcon\s+leased\s+feat/four\s+devD')
 
 # reaper: a holder gone past the grace -> another agent's lease reclaims the clean slot
 $kf = TkPath $k 'wt-slots'; $kl = Get-Content "$kf/kestrel-app.json" -Raw | ConvertFrom-Json

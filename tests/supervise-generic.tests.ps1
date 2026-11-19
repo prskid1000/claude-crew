@@ -87,7 +87,7 @@ $global:jobSt = 'success'; $r2 = Invoke-Track run -Task ci1 | Out-String
 "closed:$($global:st -eq 'closed' -and (Read-KitTracking).tasks['ci1'].done -and $r2 -match 'DONE ci1: all 1 MRs merged, CI job unit-x passed on staging/x -> closed' -and @($global:kc).Count -eq 1 -and $global:kc[0] -match '^qa-result\|QA: PASS . CI job unit-x passed on staging/x with \[api!5\]\(https://h/\S*api/-/merge_requests/5\) merged: https://h/g/api/-/jobs/9$')"
 $global:tname = 'Plain fix'; $global:st = 'open'; $p3 = Invoke-Track add -Task ci2 -Mrs 'api!6' | Out-String
 "plain:$($global:st -eq 'open' -and $p3 -match 'ATTENTION ci2: MRs merged, no testing-doc link' -and $null -eq (Get-KitCiTask ci2))"
-$global:tname = '[Backend Unit Test] Named'; function Get-TrackerTask($id) { [pscustomobject]@{ name = $global:tname; status = 'open'; subtasks = @(); description = "**Pipeline:** [https://h/g/api/-/pipelines/100/test\_report](https://h/g/api/-/pipelines/100/test_report)`n**Env:** Staging · job ``unit-x```n**Branch:** ``staging/x`` @ ``abc``" } }
+$global:tname = '[Backend Unit Test] Named'; function Get-TrackerTask($id) { [pscustomobject]@{ name = $global:tname; status = 'open'; subtasks = @(); description = "Re-run the job until green; the job URL is not known.`n**Pipeline:** [https://h/g/api/-/pipelines/100/test\_report](https://h/g/api/-/pipelines/100/test_report)`n**Env:** Staging · job ``unit-x```n**Branch:** ``staging/x`` @ ``abc``" } }
 $c4 = Get-KitCiTask ci4; $t4 = Test-KitCiTaskJob $c4 @('api!5')
 "named:$("$($c4.jobName)|$($c4.run)|$($c4.branch)|$($t4.state)" -eq 'unit-x|100|staging/x|pass')"
 '@ @($O)
@@ -230,8 +230,9 @@ $hr = @{}; foreach ($h in $s2.hour) { $hr[$h.label] = $h.gb }
 "hard:$(@($s2.flags | Where-Object { $_.level -eq 'ACT' -and $_.what -match '^WRITES (build x \(kitty\): 6 GB .*top: robocopy|devy-a \(shell\): 2\.5 GB .*top: mysql)' -and $_.action -match '^Check whether it is a one-off' }).Count -eq 2)"
 "fold:$($hr['mysqld · x'] -eq 1.5 -and @($s2.flags).Count -eq 3 -and @($hr.Keys).Count -eq 3 -and $s2.samples[-1].m -eq 10)"
 "unseen:$(-not $hr.ContainsKey('late'))"
-# robocopy exited, the rest idle: its hour stays on the card, its flag goes (an exited burst flagged ACT for its whole hour)
+# robocopy exited, the rest idle two sweeps: its hour stays on the card, its flag goes (an exited burst flagged ACT for its whole hour)
 $s3 = Update-KitWriteStats ($s2 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1.AddMinutes(10) @($b2 | Where-Object Id -ne 40) $own
+$s3 = Update-KitWriteStats ($s3 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1.AddMinutes(20) @($b2 | Where-Object Id -ne 40) $own   # two idle sweeps: one is no end
 "over:$(@($s3.hour | Where-Object label -eq 'build x').Count -eq 1 -and -not @($s3.flags | Where-Object { $_.what -match 'build x' }).Count)"
 $lb = @((Get-KitWriteLabel 'msedge.exe' 'msedge.exe --headless --remote-debugging-port=9222'), (Get-KitWriteLabel 'mysqld.exe' '"C:\m\mysqld.exe" --no-defaults --datadir=D:\s\kit-tests\my'),
   (Get-KitWriteLabel 'node.exe' 'node "C:\n\npx-cli.js" -y vite build'), (Get-KitWriteLabel 'java.exe' 'java -jar D:\t\api-1.0.jar'), (Get-KitWriteLabel 'Slack.exe' 'Slack.exe --x'), (Get-KitWriteLabel 'python.exe' 'python -m http.server 8000'), (Get-KitWriteLabel 'java.exe' 'java -cp x org.acme.Main'))

@@ -82,6 +82,6 @@ function Get-SvcConfigError([string]$e, $s) { if (-not $s.repo -and $s.target) {
 function Resolve-SvcDir([string]$e, $s) {
   if (($ce = Get-SvcConfigError $e $s)) { throw $ce }
   $dir = SvcDir $e $s
-  if (-not (Test-Path $dir) -and $s.repo -and ($r = (EnvRepos $e)[(RepoOf $e $s)]) -and -not (Test-Path "$($r.wt)/.git")) { Ensure-Worktree $e $r; Sync-DepLinks $e $r; $dir = SvcDir $e $s }
+  if (-not (Test-Path $dir) -and $s.repo -and ($r = (EnvRepos $e)[(RepoOf $e $s)]) -and -not (Test-Path "$($r.wt)/.git")) { try { Ensure-Worktree $e $r } catch { if (-not (Test-Path "$($r.wt)/.git")) { throw } }; Sync-DepLinks $e $r; $dir = SvcDir $e $s }
   $dir
 }
