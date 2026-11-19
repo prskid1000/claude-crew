@@ -127,6 +127,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Reviewing an MR in a main checkout -> read diffs with `git show <sha>:path` or `git diff <base>...<sha>`, never git checkout there (a main checkout may sit on a detached head others use). (2x)
 
 ## Decisions
+- 2026-11-19 shareCheckBuild: context never hit here (the check build skips the step that makes a runnable artifact: nothing to stage) · decision (owner) keep it as is · consequences envy reference.md `shareCheckBuild`; other stacks' check builds still stage.
 - 2026-11-14 Debate: context Characters unseen, 0 disputes in 448 msgs · decision (owner) Characters, disputes, trigger debates: core, never trimmed for caps; the owner decides splits · consequences buildy.js disputes + debate, rechy / revy kinds debate / dispute, lint MANIFEST, workflow cap 16500.
 - 2026-11-14 Kit size: context a whole-kit cap kept parts off main · decision (owner, supersedes 2026-10-21) all on main, vendor adapters run when config selects them; a role starts <= 12k tokens, the rest via SKILL.md pointers; repo total INFO · consequences lint START-BUDGET, ORPHAN-DOC.
 - 2026-10-16 Deploys: context agents proposed deploys · decision `deploy.trigger: owner` (owner): nobody asks or proposes; a person says `deploy <env>`, the coordinator deploys at once · consequences supervise has no DEPLOY ASK under owner.
