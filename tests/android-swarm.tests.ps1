@@ -48,8 +48,11 @@ foreach ($n in 'L1', 'L2') { @{ agent = 'A'; lane = $n; serial = "emulator-556$(
 $jl = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A', '-Lane', 'L2') | Select-Object -Last 1 | ConvertFrom-Json
 "clash:$($ins -join ',') $($jl.lane)"
 '@
+# phoney from a test kit: its own .state (from the source kit, the lease log of a live kit got lanes L1 / L2 held by A, B, C)
+$swk = New-TestKit swarm-state; foreach ($f in 'skills/phoney/phoney.ps1', 'skills/phoney/adapters/app_kinds.ps1', 'skills/phoney/adapters/arrange.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $swk (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }
+$swp = Join-Path $swk 'skills/phoney/phoney.ps1'; $srcLeases = Join-Path $src '.state/leases.jsonl'
 $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
-$res = @(Px "$sf.ps1" (Join-Path $src 'skills/phoney/phoney.ps1') $sf 2>&1)
+$res = @(Px "$sf.ps1" $swp $sf 2>&1)
 foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'colon:True', 'kinds:True True', 'local:True', 'clash:00,11,12,13 L2') { Expect "swarm: $x" ($res -contains $x) }
 Remove-Item "$sf.ps1", $sf -Recurse -Force -ErrorAction SilentlyContinue
 # lease files: reads and writes under the file lock (an open reader made the rename fail)
@@ -58,7 +61,7 @@ $ss = & { $rt = Join-Path ([IO.Path]::GetTempPath()) "swl-$PID"; Set-Item Env:CL
   $dir = Join-Path $rt 'ph'; New-Item -ItemType Directory -Force $dir | Out-Null; Save-Json @{ agent = 'A' } "$dir/L1.json"
   Save-Json @{ agent = 'B' } "$dir/L1.json"; "$((Lease L1).agent)$(Test-FileLockHeld "$dir/L1.json")" }
 Expect "swarm: lease reads and writes go through the file lock, released after ($ss)" ($ss -eq 'BFalse' -and (Get-Content (Join-Path $src 'skills/phoney/phoney.ps1') -Raw) -match 'function Lease\(\$name\) \{[^\n]*Invoke-KitLocked')
-Remove-Item (Join-Path ([IO.Path]::GetTempPath()) "swl-$PID") -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path ([IO.Path]::GetTempPath()) "swl-$PID") -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # later tests: their own kit's runtime, not the deleted swl-<pid>
 # lanes 0..N on demand: 3 requests, RAM for 2 boots: 2 boot, the 3rd waits, takes lane 1 when A releases it; no 3rd emulator ever starts
 $lsc = @'
 $tmp = $args[1]; Set-Item Env:CLAUDE_RUNTIME "$tmp/rt"; . $args[0]
@@ -85,9 +88,11 @@ $lc = @(Get-Content (Get-KitLogFile leases) | ForEach-Object { try { $_ | Conver
 "scale:$($a.lane -eq 'L1' -and $b.lane -eq 'L2' -and $cj.lane -eq 'L1' -and (@(Get-Content "$tmp/boots.txt") -join ',') -eq 'L1,L2' -and [datetime]$lc.since -lt [datetime]$lc.at)"
 '@
 $lf2 = "$([IO.Path]::GetTempPath())lanes-test-$PID"; New-Item -ItemType Directory -Force $lf2 | Out-Null; Set-Content "$lf2.ps1" $lsc
-$res = @(Px "$lf2.ps1" (Join-Path $src 'skills/phoney/phoney.ps1') $lf2 2>&1)
+$res = @(Px "$lf2.ps1" $swp $lf2 2>&1)
 Expect "swarm: lanes on demand, a waiting request takes a lane freed meanwhile (logged since = its wait start), no extra boot ($(@($res | Where-Object { "$_" -match '^scale:' })))" ($res -contains 'scale:True')
 Remove-Item "$lf2.ps1", $lf2 -Recurse -Force -ErrorAction SilentlyContinue
+$leak = @(Select-String -LiteralPath $srcLeases -Pattern "(swarm|lanes)-test-$PID\.ps1" -ErrorAction SilentlyContinue).Count
+Expect "swarm: the lane tests log their leases in the test kit, none in the source kit's leases log ($leak)" ($leak -eq 0 -and @(Select-String -LiteralPath (Join-Path $swk '.state/leases.jsonl') -Pattern "lanes-test-$PID" -ErrorAction SilentlyContinue).Count)
 # pokey.ps1 ui (adapters/ui_android.ps1): a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
 $k = New-TestKit swarm-qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; & $J @{ devices = @{ type = 'android' } } (Join-Path $k 'skills/crafty/kit.local.json')   # devices.type default: none
 foreach ($f in 'skills/pokey/adapters/ui_android.ps1', 'skills/crafty/adapters/android_sdk.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $k (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }   # Get-AndroidSdk lives in android_sdk.ps1
