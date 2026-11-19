@@ -93,6 +93,14 @@ Expect "swarm: lanes on demand, a waiting request takes a lane freed meanwhile (
 Remove-Item "$lf2.ps1", $lf2 -Recurse -Force -ErrorAction SilentlyContinue
 $leak = @(Select-String -LiteralPath $srcLeases -Pattern "(swarm|lanes)-test-$PID\.ps1" -ErrorAction SilentlyContinue).Count
 Expect "swarm: the lane tests log their leases in the test kit, none in the source kit's leases log ($leak)" ($leak -eq 0 -and @(Select-String -LiteralPath (Join-Path $swk '.state/leases.jsonl') -Pattern "lanes-test-$PID" -ErrorAction SilentlyContinue).Count)
+# K92: each emulator's RAM row is named by its own -port's lane (the filter's $Matches named all three "phone Falcon")
+$k = New-TestKit swarm-ram; Set-JsonFile (Join-Path $k 'skills/phoney/swarm.config.json') @{ lanes = @(@{ name = 'Falcon'; port = 5556 }, @{ name = 'Kestrel'; port = 5558 }, @{ name = 'Osprey'; port = 5560 }) }
+$ram = Invoke-PsTest swarm-ram @'
+. $args[0]; foreach ($a in @(Get-ChildItem $args[1] -Filter '*.ps1')) { . $a.FullName }
+function Get-KitSweepProcs { foreach ($pt in 5560, 5558, 5556, 5562) { [pscustomobject]@{ Id = $pt; ParentId = 1; Name = 'emulator.exe'; CommandLine = "emulator.exe -avd Heron -port $pt"; WorkingSet = 1GB; Created = Get-Date } } }
+$now = Get-Date; (@(Get-KitSuperviseGuardResources) | Where-Object { "$($_.name)" -like 'phone *' } | ForEach-Object { "$($_.name)=$($_.pid)" }) -join ','
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/bossy/adapters'))
+Expect "K92: RAM rows name each emulator by its own port's lane, else its AVD, never the serial ($(@($ram) -join ' '))" ((@($ram) -join ' ') -match 'phone Osprey=5560,phone Kestrel=5558,phone Falcon=5556,phone Heron=5562')
 # pokey.ps1 ui (adapters/ui_android.ps1): a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
 $k = New-TestKit swarm-qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; & $J @{ devices = @{ type = 'android' } } (Join-Path $k 'skills/crafty/kit.local.json')   # devices.type default: none
 foreach ($f in 'skills/pokey/adapters/ui_android.ps1', 'skills/crafty/adapters/android_sdk.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $k (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }   # Get-AndroidSdk lives in android_sdk.ps1

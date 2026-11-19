@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L314 shells · L483 page · L1054 release · L1099 lines · L1132 cleanup · L1199 launch ·
-  L1277 pause · L1396 heartbeat · L1411 sessions · L1463 ci tasks ·
-  L1519 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L317 shells · L486 page · L1057 release · L1102 lines · L1135 cleanup · L1202 launch ·
+  L1280 pause · L1399 heartbeat · L1414 sessions · L1466 ci tasks ·
+  L1522 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -174,7 +174,10 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   }
   $lanes = try { (Get-Content (Join-Path $KitConf.Kit 'skills/phoney/swarm.config.json') -Raw | ConvertFrom-Json).lanes } catch { @() }
   foreach ($p in @($ps | Where-Object { $_.Name -match '^emulator' -and $_.CommandLine -match '-port\s+(\d+)' })) {
-    $port = $Matches[1]; $ln = @($lanes | Where-Object { "$($_.port)" -eq $port })[0]; $nm = if ($ln) { $ln.name } else { "emulator-$port" }
+    # its own -port: $Matches after the filter above holds the last process's port (all three emulators were "phone Falcon");
+    # no lane config (a kit worktree): the AVD name, which is the lane name (phoney avd create), never the serial
+    $port = if ($p.CommandLine -match '-port\s+(\d+)') { $Matches[1] }; $ln = @($lanes | Where-Object { "$($_.port)" -eq $port })[0]
+    $nm = if ($ln) { $ln.name } elseif ($p.CommandLine -match '-avd\s+"?([^\s"]+)') { $Matches[1] } else { "emulator-$port" }
     $ls = try { Get-Content (Join-Path (Get-KitPath phones) "$nm.json") -Raw | ConvertFrom-Json } catch { $null }
     $rows.Add([pscustomobject]@{ name = "phone $nm"; by = $(if ($ls) { $ls.agent } else { 'no lease' }); gb = & $tree $p; pid = $p.Id })
   }
