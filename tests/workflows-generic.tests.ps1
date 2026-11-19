@@ -76,15 +76,17 @@ const { calls, agent } = _mock((prompt, o) => {
  if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
 })
 const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
- items: [_item('P1', 'app')] }
+ items: [_item('P1', 'app'), _item('P2', 'app', { target: 'stg', localParts: ['app!2'] })] }
 run(args, agent, _n, _n, null).then(() => {
  const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release-Falcon') || {}).prompt || ''
  console.log(`local-call:${tp.includes("& 'C:/kit/skills/envy/envy.ps1' use -Env shop -Services ") && !/Test-Path/.test(tp)}`)
  console.log(`phone-call:${tp.includes("& 'C:/kit/skills/phoney/phoney.ps1' acquire -Agent qa-w1-Falcon -Lane Falcon")}`)
+ const lp = (calls.find((c) => /^test:P2/.test(c.label)) || {}).prompt || ''
+ console.log(`local-parts:${/LOCAL PARTS app!2:.*use -Env <its local env> -Services api -Agent test:<CODE>.*release it right after them.*never the whole env/.test(lp)}`)
  console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts: #' 'local-call', 'phone-call', 'release-guard' -Show 8
+Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts: #' 'local-call', 'phone-call', 'local-parts', 'release-guard' -Show 8
 # K70 (K7 fix): one area over the cap is refused as unsplittable, with no next (a batch of 1 changed nothing: endless refusal)
 $js1a = @'
 const calls = [], agent = async (p, o) => { calls.push(o.label); return /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":100000,"estimate":500000,"stopAt":0.8}') : _ok('[]') }

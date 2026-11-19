@@ -233,5 +233,12 @@ Set-JsonFile (Join-Path $tvKit 'skills/crafty/kit.local.json') @{ worktreeRoots 
 $tvo = & { . $tvL; $m = EnvRepos shop; $o = $m['web@main']; $n = $m['web']
   "$(@($m.Keys) -join ',')|$($n.target)|$($o.target)|$($o.branch)|$((Split-Path $o.wt -Leaf) -ne (Split-Path $n.wt -Leaf))|$($o.wtName)|$(RepoOf shop (Svc shop 'ui-old'))|$((Split-Path (SvcDir shop (Svc shop 'ui-old')) -Leaf))|$((Get-RepoCfg 'web@main').name)|$(-not $n.branch)" }
 Expect "envy: a second target of a repo gets its own env-repo key, lane worktree and branch ($tvo)" ($tvo -match '^web,web@main\|next\|main\|lane/shop-\w+-main\|True\|lane-shop-\w+-main\|web@main\|old\|web\|True$')
+# its start makes the missing lane worktree (no train made it); a target with no repo is a config error, never a cwd-relative dir
+$tvs = & { . $tvL; $global:tvMade = @(); function Ensure-Worktree($e, $r) { $global:tvMade += $r.name; New-Item -ItemType Directory -Force (Join-Path $r.wt 'old') | Out-Null }; function Sync-DepLinks { }
+  $d = Resolve-SvcDir shop (Svc shop 'ui-old'); $ce = try { Resolve-SvcDir shop ([pscustomobject]@{ name = 'x'; dir = 'old'; target = 'main' }) } catch { "$_" }
+  "$($global:tvMade -join ',')|$((Split-Path $d -Leaf) -eq 'old' -and (Test-Path $d))|$($ce -match ': config: target main needs a repo')" }
+Expect "envy: a service's start makes its missing lane worktree; a target with no repo is a config error ($tvs)" ($tvs -eq 'web@main|True|True')
+$tvu = Invoke-TestScript $tvL use -Env shop -Agent 'test:T9'   # a QA seat leasing the whole env held a staging run's local env 1 h+
+Expect "envy use: a QA seat (test:*) without -Services is refused, exit 2 ($($tvu.out.Trim()))" ($tvu.code -eq 2 -and $tvu.out -match 'name the services its checks call')
 Remove-TestKit $tvKit
 Complete-Tests

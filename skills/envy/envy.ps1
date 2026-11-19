@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L233 state · L280 layer drops · L352 leases · L460 code · L502 migrations ·
-  L505 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L653 shared builds · L786 hooks · L858 marks · L1039 seed ·
-  L1106 processes · L1487 daemon · L1948 cleanup · L2020 doctor · L2074 verbs
+Sections: L36 config · L233 state · L280 layer drops · L352 leases · L460 code · L471 migrations ·
+  L474 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L622 shared builds · L755 hooks · L827 marks · L1008 seed ·
+  L1075 processes · L1456 daemon · L1918 cleanup · L1990 doctor · L2045 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -460,37 +460,6 @@ function ClientPids([int]$port, [int[]]$exclude, [switch]$Any) {
 # ---- code: worktrees, layers, builds
 function G([string]$d) { $o = & git -C $d @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' ') in $d : $o" }; $o }
 function NoHooksDir { $d = Join-Path (Get-KitPath localenv -Create) '.no-hooks'; New-Item -ItemType Directory -Force $d | Out-Null; $d }   # local-only merges, never pushed
-function Ensure-Worktree([string]$e, $r) {
-  $co = $r.cfg.checkout; if ($r.wt -eq (Get-KitLaneWorktree $e $co -Old) -and -not (Test-Path "$($r.wt)/.git")) { $r.wt = Get-KitLaneWorktree $e $co -New }   # lanes -Migrate moved it since EnvRepos
-  if ((Test-Path "$($r.wt)/.git") -and $r.wt -eq (Get-KitLaneWorktree $e $co -Old)) {   # old names: moved once the lane is idle (a service may run from it)
-    $up = @((Read-State $e).services.Values | Where-Object { $_.status -in 'up', 'starting' }).Count
-    $mv = Move-LaneWorktree $e $co $(if ($up) { "$up service(s) up" }); if ("$mv" -like 'moved*') { $r.wt = Get-KitLaneWorktree $e $co -New }; if ($mv) { Write-Host $mv }; return
-  }
-  if (Test-Path "$($r.wt)/.git") { return }
-  Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
-  git -C $co branch -D "localenv/$e" 2>$null | Out-Null   # old names, no worktree: test merges only
-  $wb = if ($r.branch) { $r.branch } else { Get-KitLaneBranch $e }; $wn = if ($r.wtName) { $r.wtName } else { "lane-$(Get-KitLaneSlug $e)" }   # a second target (EnvRepos): its own
-  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch $wb -Target $r.target -Name $wn | ForEach-Object { Write-Host "  $_" }
-}
-function Sync-DepLinks([string]$e, $r) {
-  $c = $r.cfg
-  # linkFromByTarget.<t>: a path or a list (per package folder the first source that has it)
-  $srcs = @(if ($c.linkFromByTarget -and (Get-KitMember $c.linkFromByTarget ($r.target))) { Get-KitMember $c.linkFromByTarget ($r.target) } elseif ($c.linkFrom -and $r.target -eq $c.target) { $c.linkFrom } else { $c.checkout }) | ForEach-Object { "$_" }
-  foreach ($s in $srcs) { if (-not (Test-Path $s)) { Write-Warning "[$e] dependency source $s for $($r.name) @ $($r.target) does not exist"; return } }
-  $srcs = @($srcs | ForEach-Object { (Resolve-Path $_).Path }); $src = $srcs[0]
-  foreach ($pj in (git -C $r.wt ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
-    $rel = Split-Path $pj; if (-not $rel) { $rel = '.' }
-    $src = @($srcs | Where-Object { Test-Path (Join-Path $_ (Join-Path $rel 'node_modules')) })[0]; if (-not $src) { $src = $srcs[0] }
-    $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $r.wt (Join-Path $rel 'node_modules')
-    if ((Test-Path $from) -and (Set-NodeModules $to $from $src $r.wt)) { Write-Host "[$e] $($r.name): $(Join-Path $rel 'node_modules') linked from $src" }
-  }
-  foreach ($l in Get-DirLinks $r.wt 4 | Where-Object { $_.Name -eq '.venv' }) {
-    $rel = [IO.Path]::GetRelativePath($r.wt, $l.FullName); $want = Join-Path $srcs[0] $rel
-    if (-not (Test-Path $want) -or "$(@($l.Target)[0])".TrimEnd('\', '/') -eq $want.TrimEnd('\', '/')) { continue }
-    Remove-DirLink $l.FullName; New-DirLink $l.FullName $want
-    Write-Host "[$e] $($r.name): $rel now links $want"
-  }
-}
 function Resolve-Ref([string]$d, [string]$b) {
   foreach ($ref in "refs/heads/$b", "refs/remotes/origin/$b") { $x = git -C $d rev-parse -q --verify "$ref^{commit}" 2>$null; if ($LASTEXITCODE -eq 0 -and $x) { return "$x".Trim() } }
   git -C $d fetch -q origin $b 2>$null | Out-Null
@@ -1375,7 +1344,7 @@ function Start-Svc([string]$e, $s, [int]$release, [string]$artifact, [switch]$La
 }
 # -Latest (start worker): the copy the state names once room and lock are got; trains staged and pruned while it waited
 function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch]$Latest) {
-  $dir = SvcDir $e $s
+  $dir = Resolve-SvcDir $e $s
   if (-not (Test-Path $dir)) { throw "[$e] $($s.name): folder $dir does not exist" }
   $cmd = StartCmd $e $s $artifact
   $x0 = (Read-State $e).services[$s.name]
@@ -1910,6 +1879,7 @@ try {
         if (@($s.dependsOn | Where-Object { $_ -and -not (Healthy $e (Svc $e $_)) }).Count) { continue }   # dependencies first
         $recent = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 })
         if ($x.status -eq 'failed' -and $recent.Count -ge 3) { continue }   # backoff: 3 tries / 30 min
+        if ($x.status -eq 'failed' -and "$($x.why)" -match ': config: ' -and "$($x.why)" -eq "$(Get-SvcConfigError $e $s)") { continue }   # a config error: once, until the config changes
         if ($s.repo -and ([int]$st.release.n -eq 0 -or ($s.artifact -and -not ($x.artifact -and (Test-Path $x.artifact))))) { $needsBuild = $true; continue }
         $starters[$s.name] = Mine (Start-Pwsh @('_daemon', '-Env', $e, '-Start', $s.name, '-Release', "$([int]$st.release.n)", '-Artifact', "$($x.artifact)") $PSScriptRoot "_daemon -Env $e -Start $($s.name)" (LogFile $e "start-$($s.name)"))
         Say "start of $($s.name): worker pid $($starters[$s.name].pid)"
@@ -2039,6 +2009,7 @@ function Get-Doctor([string]$e) {
   foreach ($p in @((Get-KitProps $c.db) | Where-Object { $_.Value -is [string] -and $_.Name -notmatch '^(_|engine$|name$|user$|host$|uri$|jdbc$|passwordEnv$|schemasQuery$|afterRevert$|flashbackExclude$|bin$)' -and $_.Value -ne 'liquibase' })) { $cmds["db.$($p.Name)"] = Expand-Placeholders $p.Value $e $none $KitConf.Workspace '' }
   foreach ($m in @($c.smoke | Where-Object { $_.cmd })) { $cmds["smoke '$($m.name)'"] = Expand-Placeholders ([string]$m.cmd) $e $none $KitConf.Workspace '' }
   foreach ($s in EnvServices $e) {
+    if (($ce = Get-SvcConfigError $e $s)) { & $add 'FAIL' $ce; continue }
     $dir = try { SvcDir $e $s } catch { & $add 'FAIL' "$($s.name): $("$_".Split("`n")[0])"; continue }
     foreach ($k in 'start', 'build') { if ((Get-KitMember $s $k)) { $cmds["$($s.name).$k"] = Expand-Placeholders ([string](Get-KitMember $s $k)) $e $s $dir '' } }
     $v = try { EnvVars $e $s } catch { @{} }
@@ -2334,6 +2305,8 @@ switch ($Action) {
   'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; Exit-Request (Wait-Request $rid) }
   'wait' { if ($Until) { Wait-Until $e $Until $Services $Timeout; return }; if (-not $Id) { throw 'wait needs -Id <request> or -Until <state> [-Services a,b] [-Timeout 600]' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
   'use' {
+    # a QA seat (test:<code>) leases what its checks call: a whole-env lease held a staging run's rm env 1 h+ and stalled the local train
+    if (-not $Services -and "$Agent" -like 'test:*') { "[$e] use refused for ${Agent}: name the services its checks call (-Services api[,web]); a tester never leases the whole env"; exit 2 }
     $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed }))
     foreach ($n in $names) { $null = Svc $e $n }
     $min = [math]::Min($(if ($Minutes) { $Minutes } else { $LeaseMin }), $MaxLeaseMin)

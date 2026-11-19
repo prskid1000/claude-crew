@@ -1,5 +1,5 @@
 #Requires -Version 7
-# Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (doctor rows only).
+# Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (doctor rows; lane worktrees: Ensure-Worktree, Sync-DepLinks, Resolve-SvcDir).
 # lane_standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird", no old <product><k> lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
 # (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs on D:, starts at a lease and stops
 # when idle. Rows: level `localEnv.laneStandard` (default WARN; FAIL stops a deploy), one per breach.
@@ -43,3 +43,45 @@ function Test-PortClash {
 }
 # an old lane id (rm, rm2) -> its <product>-<bird> id (localEnv.laneIds bird), with a warning
 function Resolve-EnvAlias([string]$n) { if ($n -and $script:EnvAlias.ContainsKey($n) -and -not (Get-KitMember $script:LE.envs $n)) { Write-Warning "old lane id '$n': use $($script:EnvAlias[$n]) (accepted for now)"; $script:EnvAlias[$n] } else { $n } }
+# ---- lane worktrees: a lane repo's worktree and its dependency links (moved from envy.ps1 at its cap)
+function Ensure-Worktree([string]$e, $r) {
+  $co = $r.cfg.checkout; if ($r.wt -eq (Get-KitLaneWorktree $e $co -Old) -and -not (Test-Path "$($r.wt)/.git")) { $r.wt = Get-KitLaneWorktree $e $co -New }   # lanes -Migrate moved it since EnvRepos
+  if ((Test-Path "$($r.wt)/.git") -and $r.wt -eq (Get-KitLaneWorktree $e $co -Old)) {   # old names: moved once the lane is idle (a service may run from it)
+    $up = @((Read-State $e).services.Values | Where-Object { $_.status -in 'up', 'starting' }).Count
+    $mv = Move-LaneWorktree $e $co $(if ($up) { "$up service(s) up" }); if ("$mv" -like 'moved*') { $r.wt = Get-KitLaneWorktree $e $co -New }; if ($mv) { Write-Host $mv }; return
+  }
+  if (Test-Path "$($r.wt)/.git") { return }
+  Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
+  git -C $co branch -D "localenv/$e" 2>$null | Out-Null   # old names, no worktree: test merges only
+  $wb = if ($r.branch) { $r.branch } else { Get-KitLaneBranch $e }; $wn = if ($r.wtName) { $r.wtName } else { "lane-$(Get-KitLaneSlug $e)" }   # a second target (EnvRepos): its own
+  & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch $wb -Target $r.target -Name $wn | ForEach-Object { Write-Host "  $_" }
+}
+function Sync-DepLinks([string]$e, $r) {
+  $c = $r.cfg
+  # linkFromByTarget.<t>: a path or a list (per package folder the first source that has it)
+  $srcs = @(if ($c.linkFromByTarget -and (Get-KitMember $c.linkFromByTarget ($r.target))) { Get-KitMember $c.linkFromByTarget ($r.target) } elseif ($c.linkFrom -and $r.target -eq $c.target) { $c.linkFrom } else { $c.checkout }) | ForEach-Object { "$_" }
+  foreach ($s in $srcs) { if (-not (Test-Path $s)) { Write-Warning "[$e] dependency source $s for $($r.name) @ $($r.target) does not exist"; return } }
+  $srcs = @($srcs | ForEach-Object { (Resolve-Path $_).Path }); $src = $srcs[0]
+  foreach ($pj in (git -C $r.wt ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
+    $rel = Split-Path $pj; if (-not $rel) { $rel = '.' }
+    $src = @($srcs | Where-Object { Test-Path (Join-Path $_ (Join-Path $rel 'node_modules')) })[0]; if (-not $src) { $src = $srcs[0] }
+    $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $r.wt (Join-Path $rel 'node_modules')
+    if ((Test-Path $from) -and (Set-NodeModules $to $from $src $r.wt)) { Write-Host "[$e] $($r.name): $(Join-Path $rel 'node_modules') linked from $src" }
+  }
+  foreach ($l in Get-DirLinks $r.wt 4 | Where-Object { $_.Name -eq '.venv' }) {
+    $rel = [IO.Path]::GetRelativePath($r.wt, $l.FullName); $want = Join-Path $srcs[0] $rel
+    if (-not (Test-Path $want) -or "$(@($l.Target)[0])".TrimEnd('\', '/') -eq $want.TrimEnd('\', '/')) { continue }
+    Remove-DirLink $l.FullName; New-DirLink $l.FullName $want
+    Write-Host "[$e] $($r.name): $rel now links $want"
+  }
+}
+# a service's start: its config error, else its dir (the lane worktree made when missing)
+# a service config that cannot start (a target with no repo ran from a cwd-relative dir: "folder ... does not exist", restarted 3x / 30 min)
+function Get-SvcConfigError([string]$e, $s) { if (-not $s.repo -and $s.target) { "[$e] $($s.name): config: target $($s.target) needs a repo (kit.local.json localEnv.envs.$e.services[$($s.name)].repo): not started, no retry until the config changes" } }
+# its lane worktree made at its start when no train made it yet (a second target, K61e)
+function Resolve-SvcDir([string]$e, $s) {
+  if (($ce = Get-SvcConfigError $e $s)) { throw $ce }
+  $dir = SvcDir $e $s
+  if (-not (Test-Path $dir) -and $s.repo -and ($r = (EnvRepos $e)[(RepoOf $e $s)]) -and -not (Test-Path "$($r.wt)/.git")) { Ensure-Worktree $e $r; Sync-DepLinks $e $r; $dir = SvcDir $e $s }
+  $dir
+}
