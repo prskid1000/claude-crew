@@ -98,6 +98,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Library overlays (dropdowns, date pickers, virtual lists) -> hover dropdowns need `hoverSel`, date pickers a cell click, virtual lists the overlay scrolled; paginate and wait for the first row's id to change (overlays render outside the component). (2×)
 
 ## envy
+- a helper pipes crafty wt new output to Write-Host -> check the exit code or output of wt new and fail loudly (a refused wt new (missing dep source) went unnoticed)
 - Local DB drift (leftover table, missing definer or grant, orphan FK refs) fails migrations -> ENV-FIX (kitty NULLs the orphans, drops a half-added column, or `envy.ps1 restore -Mark <mark>` / `seed`), never fix the shared DB by hand (a failed FK changeSet leaves a half-added column). (2×)
 
 ## phoney
@@ -106,6 +107,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- changing a status-guard or transition table -> run every -Area that starts tasks open (pokey, qa-config), not only the touched one (QA fixtures broke after a transition-table change)
+- two kittys start in the same minute (run id kit-<kind>-<HHmm>) -> add a random suffix or the printed PARALLEL id to the run id and worktree name (kit-build-1710 shared one worktree and board row (REJOIN merged them)
 - a shell command reads stdin (heredoc ending in cat > /dev/null) -> never run a stdin-reading command; use a timeout or bounded input (blocked 64 min, SHELL STALLED)
 - a full kit suite or pre-push -Full runs while other kittys run suites -> run tests/kit-tests.ps1 -Full yourself first, with a long timeout; never kill a shell by pid (subagents share one claude pid) (pre-push hit the 30 min cap, flaked under load, and one kitty killed another's push shell)
 - kit push runs the full pre-push suite -> use a timeout over 20 min or run it in background; rerun a flaky area (guard-warm, wt-pool) alone before judging (a 590 s timeout killed pre-push (exit 143) and left orphan tests; 3 load-only flakes)
