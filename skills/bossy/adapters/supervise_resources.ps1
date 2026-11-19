@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L342 shells · L519 page · L991 release · L1036 lines · L1068 cleanup · L1135 launch ·
-  L1252 pause · L1371 heartbeat · L1386 sessions · L1438 ci tasks ·
-  L1496 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L349 shells · L526 page · L998 release · L1043 lines · L1075 cleanup · L1142 launch ·
+  L1259 pause · L1378 heartbeat · L1393 sessions · L1445 ci tasks ·
+  L1503 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -315,18 +315,25 @@ function Format-KitResourceTable($Rows) {
   foreach ($r in @($Rows | Sort-Object resource)) { "| $($r.resource) | $($r.holder) | $(if ($r.since) { ([datetime]$r.since).ToString('HH:mm') } else { '—' }) | $($r.seen) | $($r.used) |" }
 }
 
-# ONE WATCH for the owner's MRs merged in 24 h that no task tracks; host lists cached 2 beats, the login a day
+# ONE WATCH for the owner's MRs merged in 24 h that no task tracks; each repo's host list cached 2 beats (min 30 min), the login a day
+# per repo, at most 2 lists a beat, oldest first: 4 lists in one beat took 15 s of a 40 s sweep; a cut-short beat keeps the rest's lists
 function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = { $true }) {
-  $um = $State.untrackedMrs
-  if (-not $um -or ($Now - [datetime]$um.at).TotalMinutes -ge [math]::Max(30.0, 2 * (Get-KitBeatMinutes))) {   # per-round lists took 4.5-6 s; a 5 min pace refreshed every other sweep
+  $um = $State.untrackedMrs; if (-not $um -or $um.repos -isnot [Collections.IDictionary]) { $um = @{ user = "$($um.user)"; repos = @{} } }
+  $ttl = [math]::Max(30.0, 2 * (Get-KitBeatMinutes)); $since = $Now.ToUniversalTime().AddHours(-24).ToString('o')
+  $due = @(@(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ -and (-not $um.repos[$_] -or ($Now - [datetime]$um.repos[$_].at).TotalMinutes -ge $ttl) } |
+    Sort-Object { if ($um.repos[$_]) { [datetime]$um.repos[$_].at } else { [datetime]::MinValue } } | Select-Object -First 2)
+  if ($due.Count) {
     $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt 24) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
-    $since = $Now.ToUniversalTime().AddHours(-24).ToString('o')
-    $um = @{ at = $Now.ToString('o'); user = $hu; mrs = @(if ($hu) { foreach ($rp in @(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ }) {
-            if (-not (& $Within)) { break }
-            foreach ($m in @(try { Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $since; per_page = 50 } } catch { }) | Where-Object { $_.iid }) {
-              @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; target = "$($m.target_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)" } } } }) }
+    if ($hu -and $hu -ne $um.user) { $um = @{ user = $hu; repos = @{} } }
+    foreach ($rp in @(if ($hu) { $due })) {
+      if (-not (& $Within)) { break }
+      $got = $null; try { $got = @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $since; per_page = 50 }) } catch { }; if ($null -eq $got) { continue }   # failed: retried next beat (an empty list is a result)
+      $um.repos[$rp] = @{ at = $Now.ToString('o'); mrs = @(foreach ($m in @($got | Where-Object { $_.iid })) {
+            @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; target = "$($m.target_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)" } }) }
+    }
     $State.untrackedMrs = $um
   }
+  $um = @{ user = $um.user; mrs = @($um.repos.Values | ForEach-Object { $_.mrs }) }
   $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
   $ig =@{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
   $known = if ($State.known) { @($State.known.Keys) } else { @() }   # supervise -Ack on this flag: one decision per MR

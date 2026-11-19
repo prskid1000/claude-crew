@@ -63,5 +63,15 @@ Expect "train: a classpathFile release with no java.args is not kept as unchange
 $jv = & { . $L5 6>$null; function EnvServices { [pscustomobject]@{ name = 'x'; start = 'java @"{javaArgs}" {nope}' } }
   "$(@(Get-LaneStandardRows t | Where-Object what -match 'javaArgs').Count)|$(@(Get-LaneStandardRows t | Where-Object what -match 'nope').Count)" }
 Expect "doctor: {javaArgs} is an envy placeholder, {nope} is not ($jv)" ($jv -eq '0|1')
+# retro 2026-11-19: a train's DB step started a lane DB with no state row ("The property 'status' cannot be found")
+$sr = & { . $L5 6>$null; New-Item -ItemType Directory -Force (Join-Path $wtd 'api') | Out-Null; function RepoOf { 'r' }; function EnvRepos { @{ r = [pscustomobject]@{ wt = $wtd } } }
+  function Wait-Room { throw "row:$((Read-State t).services['api'].status)" }; function StartCmd { 'x' }
+  try { Start-SvcOnce t ([pscustomobject]$api) 0 '' 6>$null; 'started' } catch { "$_" } }
+Expect "start: a service with no state row gets one before its room wait ($sr)" ($sr -eq 'row:down')
+$kd = New-TestKit le5d; $dd = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy/adapters'); Copy-Item $L5 (Split-Path $dd); Copy-Item (Join-Path $src 'skills/envy/adapters/*') $dd
+& $J @{ localEnv = @{ envs = @{ t = @{ db = @{ engine = 'mysql'; port = 41999 }; services = @(@{ name = 'db'; port = 41999; start = 'x' }) } } } } (Join-Path $kd 'skills/crafty/kit.local.json') 8
+$dt = @(pwsh -NoProfile -File (Join-Path $kd 'skills/envy/envy.ps1') dbtemp -Env t 2>&1); $dtc = $LASTEXITCODE
+Expect "dbtemp: a lane DB at rest is skipped with one line, exit 0, no refused error (exit $dtc; $($dt -join ' / '))" ($dtc -eq 0 -and "$dt" -match 'dbtemp: db rests' -and "$dt" -notmatch 'refused|error')
+Remove-TestKit $kd
 Remove-TestKit $k
 Complete-Tests

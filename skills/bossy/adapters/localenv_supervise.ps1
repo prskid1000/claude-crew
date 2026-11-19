@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L239 waits · L250 cpu
+Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L247 waits · L258 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -161,9 +161,17 @@ function Get-KitSuperviseGuardLocalEnv([switch]$AutoFix) {
   $le = Read-KitEnvStatus
   $script:KitEnvStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }); $script:KitEnvStatusErr = Get-KitEnvStatusErr $le; (Get-KitEnvRows $script:KitEnvStatus $now).rows
 }
+# a configured dep source that is not on disk: every wt new of its target and every lane on it fails (2026-11-19: 3x before anyone built it)
+function Get-KitDepSourceFlags {
+  foreach ($rc in @(Get-KitValue 'repos' @())) {
+    $lb = $rc.linkFromByTarget; $srcs = @(@(if ($lb) { foreach ($t in @((Get-KitProps $lb).Name)) { (Get-KitMember $lb $t) } }) + @($rc.linkFrom) | Where-Object { $_ } | ForEach-Object { "$_" } | Sort-Object -Unique)
+    foreach ($src in @($srcs | Where-Object { -not (Test-Path -LiteralPath $_) })) { [pscustomobject]@{ level = 'WATCH'; what = "DEP SOURCE MISSING: $($rc.name) $src (kit.local.json repos[].linkFrom / linkFromByTarget): wt new of that target fails"; action = 'create it (git worktree add --detach <path> origin/<target> + frozen-lockfile install) or fix kit.local.json; envy.ps1 doctor names the lanes it blocks' } }
+  }
+}
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
   $watch = { param($what, $action) [pscustomobject]@{ level = 'WATCH'; what = $what; action = $action } }
+  Get-KitDepSourceFlags
   # layers merged into the target, gone from origin or with no live holder past the grace: -AutoFix drops them, else WATCH
   # its git fetches took 33 s a round: in the background (lib.ps1 Invoke-KitBackground), this round shows the last finished run
   if (@(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue).Count -and (Within 'stale layers')) {

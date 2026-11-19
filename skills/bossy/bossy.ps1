@@ -30,7 +30,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
   L719 track · L1056 supervise · L1376 report · L1456 audit · L1516 storage · L1519 bugbrief · L1633 cleanup · L1720 learn ·
-  L1751 decide · L1902 debate · L1946 health · L2013 retro due · L2023 tidy · L2095 setup · L2192 guard-sendmessage
+  L1751 decide · L1902 debate · L1946 health · L2014 setup · L2111 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -2010,87 +2010,6 @@ Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' })
 exit 0
 }
 
-# ---- retro due: one rule for health, supervise and report
-function Get-KitRetroSince { $m = Get-KitPath last-retro; if (Test-Path $m) { [datetime](Get-Content $m -Raw).Trim() } else { [datetime]::MinValue } }
-# 15+ signals and guard blocks since the last retro, or any after a run
-function Get-KitRetroDue([switch]$RunFinished) {
-  $since = Get-KitRetroSince
-  $n = @(Get-Content (Get-KitPath signals) -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '"kind":"retired"' -and $_ -match '"at":"([^"]+)"' -and [datetime]$Matches[1] -gt $since }).Count
-  $g = @(Read-KitLog guard $since | Where-Object event -eq 'deny').Count
-  if ($n + $g -ge 15 -or ($RunFinished -and $n)) { "$n signal(s) + $g guard block(s) since the last retro" }
-}
-
-# ---- tidy: /tidy script step (digest + upkeep) and retro stamp
-function Invoke-Tidy {
-param([Parameter(Position = 0)][string]$Action, [string]$At, [switch]$DryRun, [switch]$Json)
-if ($Action -eq 'done') {   # signals up to the prep time count as reviewed
-  $t = try { [datetime]$At } catch { $null }; if (-not $t) { 'usage: tidy done -At <time>'; exit 2 }
-  $m = Get-KitPath last-retro -Create
-  if (-not $DryRun) { Set-Content $m $t.ToString('o'); Remove-Item "$m.start" -ErrorAction SilentlyContinue }   # .start: the old workflow's marker
-  "last retro = $($t.ToString('s'))"; return
-}
-if ($Action -ne 'prep') { 'usage: tidy prep [-DryRun] [-Json] | tidy done -At <time> [-DryRun]'; exit 2 }
-$t0 = Get-Date; $since = Get-KitRetroSince; $from = if ($since -gt $t0.AddDays(-14)) { $since } else { $t0.AddDays(-14) }   # TODO-PARAM (fixed default)
-$cut = { param($s, [int]$n = 140) $s = "$s" -replace '\s+', ' '; if ($s.Length -gt $n) { $s.Substring(0, $n - 3) + '...' } else { $s } }
-$steps = [Collections.Generic.List[object]]::new()
-$run = { param([string]$Name, [scriptblock]$Body) $s0 = Get-Date; $st = 'ok'
-  $o = @(try { & $Body *>&1 | ForEach-Object { if ($_.what) { "$($_.level) $($_.what)" } else { "$_" } } | Where-Object { "$_".Trim() } } catch { $st = 'failed'; "$($_.Exception.Message)" })
-  if ($o.Count -and "$($o[0])" -like 'skip:*') { $st = 'skip' }
-  $steps.Add([pscustomobject]@{ step = $Name; state = $st; sec = [math]::Round(((Get-Date) - $s0).TotalSeconds, 1); out = @($o | Select-Object -Last 12) }) }
-$py = { param([string[]]$A) $o = @(& (Get-Python) -X utf8 $KitCmd.kitbag @A 2>&1 | ForEach-Object { "$_" }); if ($LASTEXITCODE) { throw "kitbag $($A[0..1] -join ' ') rc $LASTEXITCODE`: $($o | Select-Object -Last 1)" }; $o }
-$busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($t0 - [datetime]$_.beat).TotalMinutes -lt 20 })
-$idle = if ($busy) { "skip: $($busy.Count) live board agent(s) ($(@($busy.agent | Select-Object -First 4) -join ', ')): waits for an idle kit" }
-$opt = { param([string]$Fn, [scriptblock]$Call) $c = Get-Command $Fn -CommandType Function -ErrorAction SilentlyContinue; if ($c) { & $Call $c } else { "skip: $Fn not in this kit yet" } }   # function from another kit change
-
-# upkeep: a failed step is listed, the rest still run
-& $run 'param learn' { if ($DryRun) { 'skip: dry run' } else { & $opt Invoke-ParamLearn { param($c) & $c } } }
-& $run 'cleanup' { Invoke-Cleanup -DryRun:$DryRun | Select-Object -First 6 }
-& $run 'worktree prune' { $ga = @('-C', $KitConf.Kit, 'worktree', 'prune', '-v') + @(if ($DryRun) { '-n' }); git @ga 2>&1; if (-not $?) { throw 'git worktree prune failed' } }
-& $run 'outcomes' { if ($DryRun) { 'skip: dry run' } else { & $opt Update-KitOutcomes { param($c) "$(& $c) new row(s)" } } }
-& $run 'standing rules' { if ($DryRun) { 'skip: dry run' } else { & $opt Invoke-KitStandingRules { param($c) & $c -Propose } } }
-& $run 'lint' { $l = @(& (Get-Python) -X utf8 $KitCmd.kitbag lint --warn --no-flow 2>&1 | ForEach-Object { "$_" }); @($l | Where-Object { $_ -like 'kitbag lint:*' }) + @($l | Where-Object { $_ -notlike 'kitbag lint:*' } | Select-Object -First 10) }   # count first: digest keeps the head
-
-$sig = @(Get-Content (Get-KitPath signals) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} })
-$new = @($sig | Where-Object { $_.kind -ne 'retired' -and [datetime]$_.at -gt $since })
-$lessons = @(foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) { $sk = ''; foreach ($l in (Read-KitLessonLines $f)) { if ($l -match '^## (.+)$') { $sk = $Matches[1].Trim() } elseif ($l -match '^- (.+)$' -and $sk) { [pscustomobject]@{ skill = $sk; text = $Matches[1] } } } })
-$groups = @(Get-KitSignalGroups $new $lessons | Sort-Object n -Descending)
-$retired = @($sig | Where-Object kind -eq 'retired' | ForEach-Object { [pscustomobject]@{ skill = $_.skill; text = $_.text; words = (Get-KitWordSet $_.text) } })
-$back = @(foreach ($s in $new) { $w = Get-KitWordSet $s.text; $r = @($retired | Where-Object { $_.skill -eq $s.skill -and (Get-KitOverlap $_.words $w) -ge 0.4 } | Select-Object -First 1); if ($r) { "$($s.skill): $(& $cut $s.text 100) <- retired: $(& $cut $r[0].text 100)" } })   # TODO-PARAM (fixed default)
-$log = @(Read-KitLog -Since $from | Where-Object { [datetime]$_.at -gt $since })
-$by = { param($S, $E) @($log | Where-Object { $_.stream -eq $S -and $_.event -match $E }) }; $deny = & $by guard '^deny$'
-$errs = @($log | Where-Object { $_.stream -eq 'calls' -and ($_.event -eq 'error' -or "$($_.rc)" -eq '2' -or ($_.event -eq 'end' -and $_.error)) })   # end + error: Stop-KitVerb
-$bld = & $by builds '^end$'
-$envF = & $by env 'fail'
-$runs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and [datetime]$_.at -gt $since } | Sort-Object { [datetime]$_.at })
-$qa = @(Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)
-$lp = if ("$(@($steps | Where-Object step -eq 'lint').out)" -match '(\d+) problem') { [int]$Matches[1] } else { 0 }
-$oc = @(if (Get-Command Get-KitOutcomeLines -ErrorAction SilentlyContinue) { Get-KitOutcomeLines })
-$srs = @(if (Get-Command Read-KitStandingRules -ErrorAction SilentlyContinue) { if ($DryRun) { Get-KitDecisionPatterns | ForEach-Object { "candidate: asked `"$(& $cut $_.question)`" -> `"$(& $cut $_.answer 90)`" ($(@($_.evidence) -join ', '))" } } else { Read-KitStandingRules | Where-Object status -eq 'proposed' | ForEach-Object { "$($_.id) (ask $($_.askId)): asked `"$(& $cut $_.question)`" -> `"$(& $cut $_.answer 90)`"" } } })
-$work = $new.Count + $deny.Count + $errs.Count + $back.Count + $lp + @($steps | Where-Object state -eq 'failed').Count + @($oc | Where-Object { $_ -like 'cause *' }).Count + $srs.Count   # failed steps, lint, repeat causes, rule proposals: the judge sees them
-$min = 3; $gp = Get-Command Get-KitParam -CommandType Function -ErrorAction SilentlyContinue; if ($gp) { $min = [double](& $gp 'tidy.judgeMinutes' 3) }   # TODO-PARAM (fixed default)
-$hit = { param($g) "$(& $cut $g.text)$(if ($g.refs) { " refs $($g.refs -join ',')" })$(if ($g.lesson) { " -> lesson ($($g.score)): $(& $cut $g.lesson 90)" })" }
-$top = { param($Items, [scriptblock]$Key, [int]$Max = 10) @($Items | Group-Object $Key | Sort-Object Count -Descending | Select-Object -First $Max | ForEach-Object { "$($_.Count)x $($_.Name)" }) }
-$d = [Collections.Generic.List[string]]::new(); $part = { param($T, $Lines) if ($Lines) { $d.Add(''); $d.Add("## $T"); foreach ($x in $Lines) { $d.Add("- $x") } } }
-$d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the last retro ($(if ($since -eq [datetime]::MinValue) { "never; logs from $($from.ToString('yyyy-MM-dd'))" } else { $since.ToString('yyyy-MM-dd HH:mm') })): $($new.Count) signal(s), $($deny.Count) guard block(s), $($errs.Count) script error(s), $($runs.Count) run(s), $($qa.Count) QA run(s).")
-& $part 'Signal groups (2+ = lesson candidate; a matched lesson = bump it)' @($groups | Where-Object n -ge 2 | Select-Object -First 25 | ForEach-Object { "$($_.n)x $($_.skill) [$($_.kinds)] $(& $hit $_)" })
-& $part 'Single signals' @($groups | Where-Object n -lt 2 | Select-Object -First 30 | ForEach-Object { "$($_.skill) [$($_.kinds)] $(& $hit $_)" })
-& $part 'Retired lessons seen again (regression candidates)' @($back | Select-Object -First 10)
-& $part 'Outcomes, 30 days (worst areas, most fix rounds, repeat causes: lesson or rule candidates)' $oc
-& $part 'Standing rules proposed (owner answers repeated 3+ times; the owner approves in one decide ask)' $srs
-& $part 'Guard blocks' (& $top $deny { & $cut $_.why 110 })
-& $part 'Script errors (crash or usage)' (& $top $errs { "$($_.script) $($_.verb): $(if ($_.error) { & $cut $_.error 90 } else { "exit $($_.rc), message on stderr only (not a crash)" })" })
-& $part 'Builds per kind (gate)' @($bld | Group-Object kind | ForEach-Object { $q = @($_.Group.sec | ForEach-Object { [double]$_ } | Sort-Object); "$($_.Name): $($_.Count), $(@($_.Group | Where-Object { "$($_.code)" -ne '0' }).Count) failed, p50 $($q[[int][math]::Floor(($q.Count - 1) / 2)]) s, max $($q[-1]) s, wait max $(($_.Group.waitSec | Measure-Object -Maximum).Maximum) s, peak max $(($_.Group.peakGB | Measure-Object -Maximum).Maximum) GB" })
-& $part 'Local env failures' (& $top $envF { "$($_.event) $($_.env) $($_.service)".Trim() } 8)
-& $part 'Runs since' @(@($runs | Select-Object -Last 15 | ForEach-Object { "$($_.run) ($(Split-Path "$($_.script)" -Leaf)) spent $([int]$_.spent) of $([int]$_.cap)" }) + @($qa | Select-Object -Last 10 | ForEach-Object { "QA $($_.Name)$(Get-KitQaRunGap $_.FullName)" }))
-& $part 'Upkeep (no LLM)' @(@($steps | ForEach-Object { "$($_.step): $($_.state) ($($_.sec) s)$(if ($_.out) { ': ' + (& $cut ($_.out -join ' | ') 400) })" }) + @(Invoke-KitHooks Get-KitHealthLinesAudit))
-$file = Join-Path (Get-KitPath retros -Create) "digest-$($t0.ToString('yyyy-MM-dd-HHmm')).md"
-[IO.File]::WriteAllText($file, (($d -join "`n") + "`n"))
-$stamped = -not $work -and -not $DryRun -and -not @($steps | Where-Object state -eq 'failed').Count
-if ($stamped) { $null = Invoke-Tidy done -At $t0.ToString('o') }   # nothing to judge
-$o = [ordered]@{ digest = $file; at = $t0.ToString('o'); work = $work; groups = @($groups | Where-Object n -ge 2).Count; minutes = $min; stamped = $stamped; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); steps = @($steps | ForEach-Object { "$($_.step) $($_.state) $($_.sec)s" }) }
-if ($Json) { $o | ConvertTo-Json -Compress; return }
-"DIGEST $file"; "AT $($o.at)"; "WORK $work ($($o.groups) group(s) of 2+)$(if ($stamped) { '; nothing to judge: last retro stamped' })"; "MINUTES $min"; $o.steps | ForEach-Object { "  $_" }
-}
 
 # ---- setup: install / repair (idempotent)
 # vendor CLI + OS-only allows: generated into settings.local.json from the configured adapters (settings.json stays generic)

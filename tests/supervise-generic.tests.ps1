@@ -261,5 +261,16 @@ $lsh = & { . $O; $tx = Join-Path (Kd) 'agent-k1.jsonl'; $ps = @([pscustomobject]
   $killed = [Collections.Generic.List[int]]::new(); $said = @(Stop-KitLeftShells ([pscustomobject]@{ agent = 'k1'; transcript = $tx }) $ps $fd { param($id) $killed.Add($id) })
   "$($killed -join ',')|$($said -match '^killed shell 60 of k1: ' -as [bool])" }
 Expect "board leave: its background shells killed, not another agent's or a foreground one ($lsh)" ($lsh -eq '60|True')
+# coordinator 2026-11-19: 4 MR lists took 15 s of a 40 s sweep: at most 2 due repos a beat, oldest first; a missing dep source: WATCH
+Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') (Join-Path $k 'skills/bossy/adapters')
+$ul = Invoke-PsTest ulist @'
+. $args[0]; $n = Get-Date; $script:hostCalls = @(); function Invoke-HostVerb($v, $p) { $script:hostCalls += $p.repo; @() }; function Get-HostProject($r, [switch]$Raw) { $r }
+$KitConf.TrackerRepos = @('a', 'b', 'c', 'd'); $s = @{ hostUser = @{ at = "$n"; v = 'u' }; untrackedMrs = @{ user = 'u'; repos = @{ c = @{ at = $n.AddHours(-2).ToString('o'); mrs = @() }; d = @{ at = "$n"; mrs = @() } } } }
+$null = Get-KitUntrackedMrFlag $s $n; "ul:$($script:hostCalls -join ',')|$(@($s.untrackedMrs.repos.Keys | Sort-Object) -join ',')"
+$script:noDir = $args[0] -replace 'bossy.ps1$', 'no-such-dir'; function Get-KitValue($key, $def) { if ($key -eq 'repos') { @([pscustomobject]@{ name = 'web'; linkFrom = $script:noDir; linkFromByTarget = [pscustomobject]@{ main = @($PSScriptRoot, $env:TEMP) } }) } else { $def } }
+"ds:$(@(Get-KitDepSourceFlags).what -join '|')"
+'@ @($O)
+Expect "supervise: untracked MRs list at most 2 due repos a beat, never-listed first, a fresh one kept ($ul)" (@($ul | Where-Object { "$_" -match '^ul:(a,b|b,a)\|a,b,c,d$' }).Count -eq 1)
+Expect "supervise: a missing linkFrom dep source is one WATCH, existing linkFromByTarget ones none ($ul)" (@($ul | Where-Object { "$_" -match '^ds:DEP SOURCE MISSING: web \S+no-such-dir \(kit\.local\.json' }).Count -eq 1)
 Remove-TestKit $k
 Complete-Tests

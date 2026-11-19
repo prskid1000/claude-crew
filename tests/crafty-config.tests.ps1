@@ -102,5 +102,9 @@ $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }
 $kbr = foreach ($kbv in '', 'trunk') { if ($kbv) { & $J @{ kitBranch = $kbv } $dkl }; foreach ($kbb in 'main', 'trunk') { "$($kbv)/$($kbb):$((& $D guard -Json (@{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = "git push origin --delete $kbb" } } | ConvertTo-Json -Compress)) -join '' -match 'a protected kit branch')" } }
 if (Test-Path $dkl) { Remove-Item $dkl }; if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
 Expect "guard: kit branch = kitBranch, else main ($($kbr -join ' '))" (($kbr -join ' ') -eq '/main:True /trunk:False trunk/main:False trunk/trunk:True')
+# 2026-11-19: ng serve on localhost (= ::1 on Windows) never passed envy's IPv4 port check: rm web-old restarted every 10 min
+$ng = Join-Path (Kd) 'ng'; New-Item -ItemType Directory -Force $ng | Out-Null; '{}' | Set-Content "$ng/angular.json"; '{ "name": "x" }' | Set-Content "$ng/package.json"
+$ngRun = "$((pwsh @np $D stack -Dir $ng -Json | ConvertFrom-Json).commands.run)"
+Expect "stack: the angular run binds 127.0.0.1 ($ngRun)" ($ngRun -eq 'npx ng serve --host 127.0.0.1 --port {port}')
 Remove-TestKit $k
 Complete-Tests

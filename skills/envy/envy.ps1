@@ -24,7 +24,7 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L239 state · L286 layer drops · L358 leases · L466 code · L477 migrations ·
   L480 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L627 shared builds · L765 hooks · L837 marks · L1018 seed ·
-  L1085 processes · L1466 daemon · L1928 cleanup · L2000 doctor · L2059 verbs
+  L1085 processes · L1468 daemon · L1930 cleanup · L2002 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -1358,6 +1358,8 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
   if (-not (Test-Path $dir)) { throw "[$e] $($s.name): folder $dir does not exist" }
   $cmd = StartCmd $e $s $artifact
   $x0 = (Read-State $e).services[$s.name]
+  # a service never started here (an on-demand lane DB): its row is made first, or Wait-Room's / the up write's .status set fails on null
+  if ($null -eq $x0) { Update-State $e { param($x) if ($x.services[$s.name] -isnot [hashtable]) { $x.services[$s.name] = @{ status = 'down' } } } }
   $freed = @{ v = $false }
   $free = { param([string]$why) $xs = (Read-State $e).services[$s.name]
     if ((Owned $xs) -or ($s.port -and @(Get-PortPids ([int]$s.port)).Count)) { Stop-Svc $e $s $why; $freed.v = $true }   # only when it runs or holds its port
@@ -1997,65 +1999,6 @@ function Test-ReadOnlySql([string]$q) {
   $q -match '(?i)^\s*(select|show|describe|desc|explain|with|pragma)\b|^\s*db\.\w+\.(find|findOne|count\w*|aggregate|distinct)\(' -and $q -notmatch '["`]|;\s*\S' -and
     $q -notmatch '(?i)\b(insert|update|delete|drop|alter|create|truncate|replace|merge|grant|revoke|rename|call|exec|execute|set|load|copy|attach|into|out)\b|\.(insert|update|delete|drop|remove)\w*\('
 }
-# ---- doctor: what an env needs to run (doctor verb; deploy stops on a FAIL): config, env file, scripts, JAVA_HOME, builds, ports, health
-function Get-Doctor([string]$e, [switch]$Fix) {
-  $c = Get-EnvCfg $e; $r = [Collections.Generic.List[object]]::new()
-  $add = { param($lvl, $what) $r.Add([pscustomobject]@{ level = $lvl; env = $e; what = $what }) }
-  foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
-  foreach ($x in @(Get-LaneStandardRows $e) + @(Get-LaneWorktreeRows $e -Fix:$Fix)) { & $add $x.level $x.what }
-  if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired: remove the key" }
-  foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne (Get-KitMember $c.db $_) }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
-  $dbDown = DbSvcDown $e   # a lane DB that starts with a lease: its checks wait for it
-  if ($dbDown) { & $add OK "db service $((DbSvc $e).name) is down (it starts with a lease): db checks skipped" }
-  elseif (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e) + @(if (Get-Command Get-DbExpectDoctor -ErrorAction SilentlyContinue) { Get-DbExpectDoctor $e }) + @(if (Get-Command Get-DbPoolDoctor -ErrorAction SilentlyContinue) { Get-DbPoolDoctor $e })) { & $add $x.level $x.what } }
-  if ((MarksOn $e) -and -not $dbDown) {
-    $st0 = Read-State $e; $b = @($st0.marks | Where-Object { $_ -and $_.kind -eq 'baseline' })[-1]
-    if (-not $b) { & $add 'WARN' "no baseline mark: envy.ps1 seed -Env $e (a green seed marks baseline-<date>)" }
-    elseif ($st0.binlog.days -and ((Get-Date) - [datetime]$b.at).TotalDays -gt [double]$st0.binlog.days - 3) { & $add 'WARN' "baseline mark $($b.name) expires with the binlog ($($st0.binlog.days) d): seed -Env $e again" }   # TODO-PARAM (fixed default)
-  }
-  $f = if ($c.envFile) { [string]$c.envFile } else { Join-Path (Get-KitPath localenv-env) "$($c.group).env" }   # a lane's own file is optional
-  if (-not (Test-Path -LiteralPath $f)) { & $add $(if ($c.envFile) { 'FAIL' } else { 'WARN' }) "env file $f is missing$(if (-not $c.envFile) { ' (secrets go there)' })" }
-  $cmds = [ordered]@{}; $none = [pscustomobject]@{ port = '' }
-  foreach ($p in @((Get-KitProps $c.db) | Where-Object { $_.Value -is [string] -and $_.Name -notmatch '^(_|engine$|name$|user$|host$|uri$|jdbc$|passwordEnv$|schemasQuery$|afterRevert$|flashbackExclude$|bin$)' -and $_.Value -ne 'liquibase' })) { $cmds["db.$($p.Name)"] = Expand-Placeholders $p.Value $e $none $KitConf.Workspace '' }
-  foreach ($m in @($c.smoke | Where-Object { $_.cmd })) { $cmds["smoke '$($m.name)'"] = Expand-Placeholders ([string]$m.cmd) $e $none $KitConf.Workspace '' }
-  foreach ($s in EnvServices $e) {
-    if (($ce = Get-SvcConfigError $e $s)) { & $add 'FAIL' $ce; continue }
-    $dir = try { SvcDir $e $s } catch { & $add 'FAIL' "$($s.name): $("$_".Split("`n")[0])"; continue }
-    foreach ($k in 'start', 'build') { if ((Get-KitMember $s $k)) { $cmds["$($s.name).$k"] = Expand-Placeholders ([string](Get-KitMember $s $k)) $e $s $dir '' } }
-    $v = try { EnvVars $e $s } catch { @{} }
-    foreach ($rk in @($s.requiredEnv | Where-Object { $_ -and -not "$($v[[string]$_])".Trim() })) { & $add 'FAIL' "$($s.name): requiredEnv $rk is not set (env file, envs.$e.env or the service's env)" }   # a missing key starts a service that fails later (e.g. a 401)
-    $jh = if ($v.JAVA_HOME) { $v.JAVA_HOME } elseif ("$($s.start) $($s.build)" -match '\b(java|mvnw?|gradlew?)\b') { $env:JAVA_HOME } else { $null }
-    if ($jh -and -not (Test-Path -LiteralPath (Join-Path $jh 'bin'))) { & $add 'FAIL' "$($s.name): JAVA_HOME $jh has no bin folder" }
-    if ($s.reactor) { $rm = try { Get-ReactorModules $e $s } catch { $null }; if ($rm.skip.Count) { & $add 'WARN' "$($s.name).reactor: $($rm.skip -join ', ') not built (their parent is outside $($rm.me)'s chain: Maven default plugins); they come from the local repository" } }
-    if ($s.unpack) { $uf = @(Read-KitLog env (Get-Date).AddDays(-7) | Where-Object { $_.env -eq $e -and $_.event -eq 'unpack-fallback' -and $_.service -eq $s.name }); if ($uf.Count) { & $add 'WARN' "$($s.name).unpack failed $($uf.Count)x in 7 d (the plain artifact was staged): $($uf[-1].why)" } }
-    if ($s.classpathFile) {   # thin jar: start reads the release's argfile
-      if ("$($s.start)" -notmatch '\{javaArgs\}') { & $add 'WARN' "$($s.name).classpathFile is set but start has no @`"{javaArgs}`"" }
-      $ra = "$((Read-State $e).services[$s.name].artifact)"; if ($ra -and (Test-Path -LiteralPath $ra) -and -not (Test-Path -LiteralPath (JavaArgsFile $ra))) { & $add 'WARN' "$($s.name): the running release $(Split-Path $ra) has no java.args (staged before classpathFile): a restart fails until the next deploy" }
-    }
-    if ($s.artifact -and $s.repo) {
-      if (-not (Test-Path -LiteralPath $dir)) { & $add 'WARN' "$($s.name): $dir does not exist yet (the first deploy / refresh creates it)" }
-      elseif (-not $(if ($s.static) { Test-Path -LiteralPath (Join-Path $dir $s.static) -PathType Container } else { @(Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue).Count })) { & $add 'WARN' "$($s.name): nothing matches artifact $($s.artifact) in $dir yet (the next deploy / refresh builds it)" }
-    }
-    foreach ($u in @(@($s.health) + @($c.smoke | Where-Object { $_.url -and $_.service -eq $s.name } | ForEach-Object url) | Where-Object { $_ })) {
-      if ("$u" -match '//localhost[:/]') { & $add 'WARN' "$($s.name): $u uses localhost: use http://127.0.0.1:{port} (localhost can resolve to ::1 first)" }
-    }
-    if (-not $s.port -or -not (Managed $s)) { continue }
-    $pp = @(Get-PortPids ([int]$s.port)); if (-not $pp.Count) { continue }
-    if (-not (Test-PortListening ([int]$s.port))) { & $add 'WARN' "$($s.name): port $($s.port) listens, but not on IPv4 (127.0.0.1 or the LAN address): bind 127.0.0.1 or 0.0.0.0"; continue }
-    $x = (Read-State $e).services[$s.name]; $mine = if (Owned $x) { TreeIds ([int]$x.pid) } else { @() }
-    $foreign = @($pp | Where-Object { $_ -notin $mine -and -not (EnvProcess $_ $e) })
-    if ($foreign.Count) { & $add 'WARN' "$($s.name): port $($s.port) held by pid $($foreign -join ','), which the env did not start: a restart there fails" }
-    if ($s.health -and -not (Healthy $e $s)) { & $add 'WARN' "$($s.name): $($s.health) does not answer (< 500) while the port is up" }
-  }
-  foreach ($k in $cmds.Keys) {
-    foreach ($m in [regex]::Matches("$($cmds[$k])", '"([^"]+\.(?:ps1|py|sh|cmd|bat|mjs|js|exe))"|(?<![\w"''])((?:[A-Za-z]:[\\/]|/)[^\s"'']+\.(?:ps1|py|sh|cmd|bat|mjs|js|exe))(?=[\s"'']|$)')) {
-      $path = @($m.Groups[1].Value, $m.Groups[2].Value | Where-Object { $_ })[0]
-      if ($path -match '[{}]' -or -not [IO.Path]::IsPathRooted($path)) { continue }
-      if (-not (Test-Path -LiteralPath $path)) { & $add 'FAIL' "${k}: script $path does not exist" }
-    }
-  }
-  @($r)
-}
 # ---- verbs: owner / brief asks; calls return within -Wait min (8). Adapters add verbs (kind envy-verb: @{ run = { ... }; ops = @(..) },
 #      run inside Invoke-LocalEnv with its parameters and helpers in scope; e.g. tenant in adapters/tenant_models.ps1)
 $script:EnvyVerbs = @('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', 'lanes', '_exec')
@@ -2437,6 +2380,8 @@ switch ($Action) {
   }
   'dbtemp' {   # '<id> <temp GB> <seconds> <query>' per connection (storage.db.use); -Kill <id> ends one (storage.db.kill)
     if (-not (Get-Command Get-DbTempUse -ErrorAction SilentlyContinue) -or -not (Test-DbTemp $e)) { throw "[$e] dbtemp needs db.engine mysql (adapters/db_presets.ps1)" }
+    # storage.db.use polls a resting lane DB every tick (11 refused errors): no connections, no temp
+    if (DbSvcDown $e) { "[$e] dbtemp: $((DbSvc $e).name) rests (starts with a lease): no temp"; return }
     if ($Kill) { Stop-DbConn $e $Kill; Event $e 'db-kill' @{ id = $Kill; by = $Agent }; "[$e] db connection $Kill killed"; return }
     foreach ($q in @(Get-DbTempUse $e)) { '{0} {1} {2} {3}' -f $q.id, $q.gb.ToString([Globalization.CultureInfo]::InvariantCulture), $q.secs, (Protect-KitText $q.query) }
   }

@@ -219,4 +219,8 @@ $pg = [IO.File]::ReadAllText((Join-Path $src '.github/workflows/pages.yml')); $i
 Expect 'pages.yml: lint runs the flow checks (no --no-flow), so an issue the page would show fails CI' ($il -ge 0 -and $pg -notmatch '--no-flow')
 $cpNoAgent = @(Get-ChildItem "$src/agents/*.md", "$src/skills/*/SKILL.md", "$src/workflows/*.js" | Select-String -Pattern '(crafty\.ps1|\$D) checkpoint (?!-Agent )' | ForEach-Object { "$($_.Filename):$($_.LineNumber)" })
 Expect "every documented checkpoint call names -Agent (crafty.ps1 exits 2 without it): $($cpNoAgent -join ', ')" (-not $cpNoAgent.Count)
+# retro 2026-11-19: Git Bash read --click 'details > summary' unquoted as a redirect (a stray file 'summary'): stdout as a file is refused
+$rdPg = Join-Path (Kd) 'redir.html'; '<p>x</p>' | Set-Content $rdPg; $rdOut = Join-Path (Kd) 'summary'
+$rdP = Start-Process (Get-Command $py).Source -ArgumentList @('-X', 'utf8', (Join-Path $k 'skills/bossy/kitbag.py'), 'ui-check', $rdPg, '--click', 'details') -RedirectStandardOutput $rdOut -RedirectStandardError "$rdOut.err" -NoNewWindow -Wait -PassThru
+Expect "ui-check: --click with stdout redirected to a file exits 2 and names the unquoted '>' (exit $($rdP.ExitCode))" ($rdP.ExitCode -eq 2 -and (Get-Content "$rdOut.err" -Raw) -match 'unquoted ">"')
 Complete-Tests

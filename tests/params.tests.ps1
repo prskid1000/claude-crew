@@ -145,7 +145,7 @@ $fl = @{ level = 'W'; what = "builds 'mvn-test|j-c/api' failed 3 times"; kind = 
 "cells:$(@(Select-KitFlags @($fl | ForEach-Object { [pscustomobject]$_ }) $a $n).what -join '|')"
 $f = Get-KitPath supervise-state -Create; @{ lastFlags = @(@{ what = 'x'; kind = 'UNTRACKED MR'; who = 'someone1'; refs = 'web!1', 'web!2' }) } | ConvertTo-Json -Depth 5 | Set-Content $f
 $o = "$(Invoke-Supervise -Ack 'UNTRACKED MR | someone1')"; $s = Get-Content $f -Raw | ConvertFrom-Json -AsHashtable
-$s.untrackedMrs = @{ at = "$n"; user = 'u'; mrs = @(1..3 | ForEach-Object { @{ repo = 'web'; iid = "$_"; author = 'u'; merged_at = $n.ToUniversalTime().ToString('o') } }) }
+$s.untrackedMrs = @{ user = 'u'; repos = @{ web = @{ at = "$n"; mrs = @(1..3 | ForEach-Object { @{ repo = 'web'; iid = "$_"; author = 'u'; merged_at = $n.ToUniversalTime().ToString('o') } }) } } }
 "refs:$(@($s.known.Keys | Sort-Object) -join ',')|$($s.acks.Count)|$($o -match 'known from now on' -and $o -match 'hides 1')|$((Get-KitUntrackedMrFlag $s $n).problem)"
 '@ @($O)
 Expect "supervise: a fix report naming another agent: no collision; -Ack: a cell matches, UNTRACKED MR keeps its MRs ($($ac -join ' // '))" ($ac -contains 'cx:FalseTrue' -and $ac -contains 'cells:STUCK revy-7 (revy) (): no progress|2 acknowledged flag(s) hidden (supervise -Ack, 24 h)' -and $ac -contains 'refs:web!1,web!2|0|True|web!3 merged, no task')

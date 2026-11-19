@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1481 audit ·
-  L1621 registry · L1953 arch lint · L2220 prose · L2385 sections · L2515 budget · L2529 migrate · L2689 plugins ·
-  L2743 state lint · L2931 main
+Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1485 audit ·
+  L1633 registry · L1965 arch lint · L2232 prose · L2397 sections · L2527 budget · L2541 migrate · L2701 plugins ·
+  L2755 state lint · L2943 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1446,6 +1446,10 @@ def cmd_ui_check(a):
     if len(rest) != 1 or not osp.isfile(rest[0]) or not re.fullmatch(r'\d+(,\d+)*', widths):
         print('usage: kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click "<selector>,<selector>;<selector>"]', file=sys.stderr)
         return 2
+    if flags.get('--click') and stdout_is_file():   # an unquoted 'a > b' made the shell write stdout to a file named b (a stray 'summary')
+        print('kitbag ui-check: stdout goes to a file: an unquoted ">" in --click redirects it; quote the selector or run it from pwsh '
+              '(to keep a log on purpose: pipe through tee)', file=sys.stderr)
+        return 2
     states = [[]] + [[x.strip() for x in s.split(',') if x.strip()] for s in str(flags.get('--click') or '').split(';') if s.strip()]
     pokey, shots = osp.join(KIT_DIR, 'skills', 'pokey'), osp.join(kit_path('shots', create=True), 'ui-check')
     os.makedirs(shots, exist_ok=True)
@@ -1489,6 +1493,14 @@ findings = []
 
 def out(level, code, where, what, fix=''):
     findings.append({'level': level, 'code': code, 'where': where, 'what': what, 'fix': fix})
+
+def stdout_is_file():
+    try:
+        import stat
+        return stat.S_ISREG(os.fstat(sys.stdout.fileno()).st_mode)
+    except (OSError, ValueError, AttributeError):
+        return False
+
 
 def run(cmd, cwd=None, timeout=60, stdin=''):
     """(exit code, stdout, stderr); 124 = timeout, 127 = not runnable."""
