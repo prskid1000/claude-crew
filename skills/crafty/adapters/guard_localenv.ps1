@@ -41,7 +41,7 @@ Register-KitAdapter 'guard' 'deployed-env' @{ check = { param($a)
 Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
   $lw = "$($a.raw)"
   # cheap first: no trigger word, no rule; a lone envy.ps1 call (its own SQL) passes, an envy call chained with more does not
-  if (-not $lw -or $lw -notmatch '(?i)create|generate_series|range|\bseq\b|executemany|recursive|infile|dump|\bcp\b|copy|robocopy|xcopy|<|\.\.\d' -or
+  if (-not $lw -or $lw -notmatch '(?i)create|generate_series|range|\bseq\b|executemany|recursive|infile|dump|\bcp\b|copy|robocopy|xcopy|archive|<|\.\.\d' -or
     ($lw -match '^\s*(&\s*)?(pwsh\s+(-\S+\s+)*)?["'']?[^\s"'']*envy\.ps1' -and $lw -notmatch '[;&|]')) { return }
   $lwRows = [long](Get-KitParam 'data.maxRows'); $lwMB = [double](Get-KitParam 'data.maxMB')
   $lwBig = { param($f) $lwF = $f.Trim('"', "'"); (Test-Path -LiteralPath $lwF -PathType Leaf) -and (Get-Item -LiteralPath $lwF).Length -gt $lwMB * 1MB }
@@ -59,5 +59,6 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
     elseif (($lw -match '(?i)\bLOAD\s+DATA\s+(?:LOCAL\s+)?INFILE\s+(\S+)' -or $lw -match '\b(?:mysql|psql)\b[^|;&<\r\n]*<\s*(\S+)') -and (& $lwBig $Matches[1])) { "a load or import of a file past data.maxMB ($lwMB MB)" }
     elseif ($lw -match '\bmysqldump\b[^|;&\r\n]*(--all-databases|\s-A\b)|\bpg_dumpall\b') { 'a full dump' }
     elseif ($lw -match '(?i)(\bcp\s+-\w*[rR]|\bCopy-Item\b(?=[^|;&\r\n]*\s-Recurse\b)|\brobocopy\b|\bxcopy\b)[^|;&\r\n]*(node_modules|(?<![\w-])\.m2\b|(?<![\w-])\.gradle\b|\.worktrees|(?<![\w-])\.venv\b|datadir|[\\/]mysql[\\/]data\b|[\\/]mysql-\d[\w.-]*[\\/](data|var)\b)') { 'a recursive copy of a dependency, worktree or data tree (link or move it)' }
+    elseif ($lw -match '(?i)\bgit\b(?:\s+(?:-[Cc]\s+\S+|--[\w-]+(?:=\S+)?))*\s+archive\b([^|;&<>\r\n]*)' -and @(($Matches[1] -replace '(?i)\s(-o|--output|--prefix|--remote|--format)(\s+|=)\S+', ' ' -split '\s+') | Where-Object { $_ -and $_ -notlike '-*' }).Count -eq 1) { 'a whole-repo export (git archive without a path: a review export wrote 323 MB; read the ref with git show <ref>:<path> / git diff, or a crafty.ps1 wt worktree)' }
   if ($lwWhy) { "kit guard: that writes large data ($lwWhy). No large writes (AGENTS.md): performance questions -> EXPLAIN / query plans, index checks, the fixtures, the read-only replica; data you add stays under data.maxRows / data.maxMB, on the kit-test or a leased lane DB, dropped at the run's end. A needed exception: bossy.ps1 decide ask (the owner runs it)." }
 } }

@@ -64,6 +64,8 @@ print('live=' + str(flow.is_live(lv) and not flow.is_live(lv + '-wt') and not fl
 ws, m0 = [], flow.model; flow.model = lambda k, p, c=None, write=True: ws.append(write) or {}; os.environ.pop('KIT_FLOW_CACHE_RO', None)   # K48: only the live clone writes the parse cache
 for d in (lv, lv + '-wt'): flow.page_data(types.SimpleNamespace(files=[], texts={}, dir=d), [])
 flow.model = m0; print('cachelive=' + str(ws == [True, False]))
+rd, r0, w0 = [], flow.render, flow.write_readme; flow.render = lambda *a, **kw: rd.append('page'); flow.write_readme = lambda kit: rd.append('readme')   # pre-commit: README only, no 7 MB page
+flow.cmd_flow(['--readme', lv]); flow.cmd_flow(['--readme', '--out', cp + '.html', lv]); flow.render, flow.write_readme = r0, w0; print('readmeonly=' + str(rd == ['readme', 'readme', 'page']))
 g('-C', lv, 'worktree', 'remove', '--force', lv + '-wt'); shutil.rmtree(lv, ignore_errors=True)
 '@
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
@@ -80,8 +82,8 @@ $ui = @(if ($uiKit) { & $kb '1366,900' '.ri[data-t=key];.ri[data-t=issues];.ri[d
 $bh = @'
 import puppeteer from 'puppeteer-core'
 import { pathToFileURL } from 'node:url'
-const [bm, file] = process.argv.slice(1), { CHROME } = await import(bm), url = pathToFileURL(file).href, o = {}
-const b = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 180000 })   // a loaded machine: Network.enable took over the 30 s default
+const [bm, file] = process.argv.slice(1), { CHROME, QUIET_ARGS } = await import(bm), url = pathToFileURL(file).href, o = {}
+const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: [...QUIET_ARGS, '--disk-cache-size=1'], protocolTimeout: 180000 })   // a loaded machine: Network.enable took over the 30 s default
 const open = async (w, hash = '', theme = 'light', c = null) => { c = c || await b.createBrowserContext(); const p = await c.newPage(); await p.setViewport({ width: w, height: 800 }); await p.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]); await p.goto(url + hash); return p }
 const ev = (p, f, ...a) => p.evaluate(f, ...a)
 try {
@@ -130,6 +132,7 @@ $checks += [ordered]@{
   'the flow cache is rewritten only when a parse changed; a read-only cache (tests) is never written' = $res -match 'cachewrite=True'
   'only the live clone writes the flow parse cache, a linked worktree''s lint never (K48)' = $res -match 'cachelive=True'
   'the flow page is rewritten only when its bytes change' = $res -match 'pagewrite=True'
+  'flow --readme (pre-commit) writes README only, the page only with --out / --open' = $res -match 'readmeonly=True'
   'lint draws the flow page in the live clone only, never from a linked worktree or a kit copy' = $res -match 'live=True'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
   'run-then-read is a loop from a script, never from a test file, a doc step or one read-modify-write' = $res -match 'scc-tests=0 scc-driver=1 scc-doc=0 scc-rmw=0'

@@ -4,7 +4,7 @@
 // Called by video.py (fetchers jam-public, image). Exit codes: 0 ok · 1 nothing found / page failed · 2 usage.
 import puppeteer from 'puppeteer-core'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { kitPath } from '../browser.mjs'
+import { kitPath, QUIET_ARGS } from '../browser.mjs'
 import { join } from 'node:path'
 
 const [url, mode, a3, a4] = process.argv.slice(2)
@@ -18,7 +18,7 @@ const profile = mkdtempSync(join(kitPath('tmp', { create: true }), 'media-grab-'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let browser, code = 0
 try {
-  browser = await puppeteer.launch({ executablePath: exe, headless: true, userDataDir: profile, args: ['--mute-audio', '--autoplay-policy=no-user-gesture-required'] })
+  browser = await puppeteer.launch({ executablePath: exe, headless: true, userDataDir: profile, args: [...QUIET_ARGS, '--mute-audio', '--autoplay-policy=no-user-gesture-required'] })
   const page = await browser.newPage(); await page.setViewport({ width: 1366, height: 768 })
   const seen = []
   page.on('request', (r) => { const u = r.url(); if (MEDIA.test(u) && !seen.includes(u)) seen.push(u) })

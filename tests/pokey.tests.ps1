@@ -204,8 +204,9 @@ Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and
 $klBase | Set-Content $kl
 # browser.mjs: mocks, then local fixture servers
 $bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
-Expect 'browser.mjs: Chrome starts with no component, safe-browsing or background downloads, and no disk cache unless browser.diskCache' (
-  $bmSrc.Contains("'--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',") -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])"))
+$bmUsers = @('skills/pokey/adapters/media_grab.mjs', 'skills/bossy/kitbag.py' | Where-Object { (Get-Content (Join-Path $src $_) -Raw) -notmatch 'QUIET_ARGS \}?\s*=\s*await import\(bm\)|import \{ kitPath, QUIET_ARGS \}|args: QUIET_ARGS|args: \[\.\.\.QUIET_ARGS' })
+Expect "browser.mjs: every kit Chrome (sessions, ui-check, media grab) starts with no component, model, safe-browsing or background downloads, no disk cache unless browser.diskCache (missing: $($bmUsers -join ', '))" (
+  $bmSrc -match "'--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',\s+'--disable-features=OptimizationGuideModelDownloading," -and $bmSrc.Contains("...QUIET_ARGS,") -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])") -and -not $bmUsers.Count)
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
   $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +

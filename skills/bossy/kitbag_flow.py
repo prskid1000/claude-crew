@@ -1613,6 +1613,8 @@ def cmd_flow(a):
     out = osp.abspath(flags.get('--out') or default_out(kit))
     if '--readme' in flags:
         write_readme(kit)
+        if '--out' not in flags and '--open' not in flags:   # pre-commit: README only (each worktree commit rewrote the live 7 MB page)
+            return 0
     render(kit, out, public='--public' in flags)
     if '--open' in flags:
         if sys.platform.startswith('win'):

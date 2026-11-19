@@ -1276,7 +1276,7 @@ def ui_check_warns(kit):
 # box) or squeezed (a few letters a line)
 PAGE_JS = r'''import puppeteer from 'puppeteer-core'
 import { pathToFileURL } from 'node:url'
-const [bm, file, ws, st, out, stem] = process.argv.slice(1), { CHROME } = await import(bm)
+const [bm, file, ws, st, out, stem] = process.argv.slice(1), { CHROME, QUIET_ARGS } = await import(bm)
 // every <details> open; resolves once each one's own toggle event ran (a page re-lays out on toggle: its capture and earlier listeners
 // run first); one the page closed again or removed is not waited for
 const openAll = () => new Promise((done) => { const wait = new Set([...document.querySelectorAll('details')].filter((d) => !d.open)); if (!wait.size) return done()
@@ -1388,7 +1388,7 @@ const links = () => [...document.querySelectorAll('a[href]')].flatMap((a) => {
   return [{ el: 'link', why: web ? 'a web link opens in this tab: target=_blank' : 'a link to a kit page navigates away: open it in the page drawer (data-dw)', text: `${a.textContent.trim().slice(0, 40)} -> ${h.slice(0, 80)}` }]
 })
 if (!CHROME) throw new Error('no Chrome or Edge found (set CHROME_PATH)')
-const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--no-default-browser-check'] }), res = []
+const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: [...QUIET_ARGS, '--disk-cache-size=1'] }), res = []
 // one tab for every state, its storage cleared before each load: a new context per state spawned a renderer each (48 for the kit
 // map) and under a full test run one never answered (ProtocolError: Network.enable timed out after 180 s)
 const page = (await b.pages())[0] || await b.newPage(), href = pathToFileURL(file).href

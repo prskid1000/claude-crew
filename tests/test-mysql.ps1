@@ -12,10 +12,12 @@ Exit codes: none (functions only).
 $script:TestMySqlOpts = '--innodb-redo-log-capacity=8M --innodb-doublewrite=OFF --innodb-flush-log-at-trx-commit=0 --performance-schema=OFF --innodb-max-dirty-pages-pct=90 --innodb-io-capacity=100'
 $script:TestMySqlLog = '--log-bin=binlog --server-id=1 --binlog-row-metadata=FULL --sync-binlog=0'
 function Get-TestMySqlHome([string]$Kit = $src) {   # the main clone's, so every worktree shares it
+  # a suite run inside a test kit (its own git clone) inherits the outer home: it initialised a 500 MB data dir of its own
+  if ($env:KIT_TEST_MYSQL_HOME) { return $env:KIT_TEST_MYSQL_HOME }
   $tmMain = "$(git -C $Kit rev-parse --path-format=absolute --git-common-dir 2>$null)" -replace '[\\/]\.git$', ''
   $tmRoot = if ($tmMain -and (Test-Path (Join-Path $tmMain 'skills/crafty/kit.example.json'))) { $tmMain } else { $Kit }
   $tmMap = (Get-Content (Join-Path $Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths
-  Join-Path (Join-Path $tmRoot $tmMap.stateDir) (Split-Path $tmMap.durable.'kit-tests-db')
+  $env:KIT_TEST_MYSQL_HOME = Join-Path (Join-Path $tmRoot $tmMap.stateDir) (Split-Path $tmMap.durable.'kit-tests-db'); $env:KIT_TEST_MYSQL_HOME
 }
 function Test-TestMySqlPort([int]$Port) { $tc = [Net.Sockets.TcpClient]::new(); try { $tc.ConnectAsync('127.0.0.1', $Port).Wait(1000) -and $tc.Connected } catch { $false } finally { $tc.Dispose() } }
 function Read-TestMySqlState([string]$StateDir) { $f = Join-Path $StateDir 'server.json'; if (Test-Path $f) { try { Get-Content $f -Raw | ConvertFrom-Json -AsHashtable } catch { @{} } } else { @{} } }

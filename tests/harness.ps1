@@ -97,7 +97,7 @@ function Invoke-TestMySql([string]$Sql, [string]$Port) {
     if (-not $tmRead) { throw "mysql: exit 0 without the end marker (a write: not re-run, it may have run): $($Sql.Substring(0, [math]::Min(80, $Sql.Length)))" } }
   throw "mysql: a read without the end marker 3 times: $Sql" }
 # the one kit-test mysqld (K78): Start-TestMySql / Stop-TestMySql, shared by every area, run and worktree
-. (Join-Path $PSScriptRoot 'test-mysql.ps1')
+. (Join-Path $PSScriptRoot 'test-mysql.ps1'); $null = Get-TestMySqlHome   # now: a nested suite in a test kit inherits it
 # commit everything in $Dir (a git repo first if it is none)
 # <file>.lock held by a process now (lib.ps1 Open-KitLockFile: the lock file stays, byte 0 locked while held)
 function Test-FileLockHeld([string]$File) { $l = "$File.lock"; if (-not (Test-Path -LiteralPath $l)) { return $false }; if ($IsMacOS) { return $true }; $fs = $null; try { $fs = [IO.FileStream]::new($l, 'Open', 'ReadWrite', 'ReadWrite'); $fs.Lock(0, 1); $fs.Unlock(0, 1); $false } catch { $true } finally { if ($fs) { $fs.Dispose() } } }

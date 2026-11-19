@@ -124,4 +124,9 @@ $tmLostP = @($tmLost | ForEach-Object { [pscustomobject]@{ ProcessId = $_.Id; Pa
 $tmGot = @(Stop-TestMySqlLost 'D:/kFalse/.state/kit-tests/mysql/' $tmLostP); Start-Sleep -Milliseconds 300
 Expect "test-mysql.ps1: a mysqld on the one data dir that server.json lost is ended, another dir's stays ($($tmGot -join ','))" ($tmGot.Count -eq 1 -and $tmGot[0] -eq $tmLost[0].Id -and $tmLost[0].HasExited -and -not $tmLost[1].HasExited)
 $tmLost | ForEach-Object { try { $_.Kill() } catch {} }
+# a suite run inside a test kit (its own git clone) uses the outer run's home, never a data dir of its own (a 500 MB init)
+$tmNestKit = Join-Path $env:TEMP 'nest78'; $null = New-Item -ItemType Directory -Force (Join-Path $tmNestKit 'skills/crafty'); git -C $tmNestKit init -q
+Copy-Item (Join-Path $src 'skills/crafty/kit.example.json') (Join-Path $tmNestKit 'skills/crafty')
+$tmNestHome = & $pwshExe -NoProfile -Command ". '$(Join-Path $PSScriptRoot 'test-mysql.ps1')'; `$src = '$tmNestKit'; Get-TestMySqlHome"
+Expect "test-mysql.ps1: a nested suite in a test kit inherits the outer home ($tmNestHome)" ("$tmNestHome" -eq (Get-TestMySqlHome) -and "$tmNestHome" -notlike "$tmNestKit*")
 if ($script:fails) { exit 1 }

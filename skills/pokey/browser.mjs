@@ -1,12 +1,12 @@
 // browser.mjs: headless-browser library to test any web app (usage below). Exit codes: none.
-// targets.local.json: web, webLogin, users, browser: one shared headless Chrome (puppeteer) per target+tenant+user, a tab each.
+// targets.local.json: web, webLogin, users, browser: one shared headless Chrome per target+tenant+user, a tab each.
 // Logins shared via the session file (web storage + cookies), locked; never log out.
-// webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Adapters
-// (adapters/): web-login-types (sso-steps, script, storageState, totp), browser-engines (browser.engine chromium | firefox | webkit).
+// webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web); adapters/: sso-steps, script,
+// storageState, totp logins; browser.engine chromium | firefox | webkit.
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L43 login · L123 browsers · L166 tabs · L254 session · L301 actions · L400 ui checks · L422 evidence
+// Sections: L17 config · L46 login · L126 browsers · L169 tabs · L257 session · L303 actions · L402 ui checks · L423 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -37,14 +37,17 @@ const BROWSERS = [process.env.CHROME_PATH, ...(process.platform === 'win32' ? [.
   : process.platform === 'darwin' ? [MAC('Google Chrome'), homedir() + MAC('Google Chrome'), MAC('Microsoft Edge'), MAC('Chromium')]
   : ['/opt/google/chrome/chrome', '/opt/microsoft/msedge/msedge', ...onPath(['google-chrome', 'google-chrome-stable', 'microsoft-edge', 'microsoft-edge-stable', 'chromium', 'chromium-browser']), '/snap/bin/chromium'])].filter(Boolean)
 export const CHROME = BROWSERS.find(existsSync)
+// no model / update downloads (~50 MB per profile)
+export const QUIET_ARGS = ['--no-first-run', '--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',
+  '--disable-features=OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction']
 const browserOpts = (t) => ({ engine: 'chrome', lang: Intl.DateTimeFormat().resolvedOptions().locale, width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ---- login: targets, network watch, login steps, saved logins
 export const targetOf = (name) => CFG.targets[name || CFG.default] || (() => { throw new Error(`unknown target "${name}" (known: ${Object.keys(CFG.targets).join(', ')})`) })()
-let BASE = ''   // the last session's web: a fallback for pages without a session
+let BASE = ''   // fallback web for pages without a session
 export const url = (p, base = BASE) => (/^https?:/.test(p) ? p : base + p)
-const pageUrl = (page, p) => url(p, page.__qa ? page.__qa.t.web : BASE)   // each tab resolves against its own target
+const pageUrl = (page, p) => url(p, page.__qa ? page.__qa.t.web : BASE)   // against the tab's own target
 
 function watch(page, apiPattern) {
   const net = { failed: [], calls: [], jsErrors: 0 }
@@ -90,7 +93,7 @@ async function step(page, s, f) {
 async function login(page, t, tenant, as) {
   const L = t.webLogin, type = L.type || 'form', [user, pass, otp] = t.users[as] || []
   if (!user) throw new Error(`no user "${as}" in this target`)
-  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types and TOTP codes: adapters/web-login.mjs
+  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types, TOTP: adapters/web-login.mjs
     const ext = await adapter('web-login.mjs')
     await ext.login({ page, t, tenant, user, pass, otp, type }, { nav, step, applyState, onLogin, fill, here: __HERE })
   } else {
@@ -158,7 +161,7 @@ async function ensureLogin(page, t, tenant, as, key) {
   if (await loggedIn(page, t)) return
   await withLock(`login-${keyFile(key)}`, async () => {
     await nav(page, t.web + '/')
-    await sleep(1500)   // the app's auth guard redirects when the session is gone
+    await sleep(1500)   // the auth guard redirects
     if (await loggedIn(page, t)) return
     if (!(await restoreLogin(page, t, tenant, as).catch(() => false))) await login(page, t, tenant, as)
   }, { waitMs: 120000 })
@@ -201,7 +204,7 @@ async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bo
     live++
     keep[h ? id : `?${id}`] = h || reg[`?${id}`] || now
   }
-  if (!live) keep._idle = reg._idle || now   // supervise closes a browser idle for idle.graceMinutes
+  if (!live) keep._idle = reg._idle || now   // supervise closes it after idle.graceMinutes
   saveJson(f, keep)
   return { live, closed }
 }
@@ -276,8 +279,7 @@ export async function session({ target, tenant, as } = {}) {
     try { browser = await conn() } catch { browser = await withLock(`chrome-${keyFile(key)}`, async () => {   // one spawn per port
       try { return await conn() } catch {}
       let b; const dir = `${PROFILES}/${keyFile(key)}`; mkdirSync(dir, { recursive: true })
-      spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, '--no-first-run',
-        '--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',
+      spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, ...QUIET_ARGS,
         ...(bo.diskCache ? [] : ['--disk-cache-size=1']), 'about:blank'], { detached: true, stdio: 'ignore' }).unref()
       for (let i = 0; i < 40 && !b; i++) { await sleep(500); try { b = await conn() } catch {} }
       if (!b) throw new Error(`could not start Chrome on port ${port}`)
@@ -398,7 +400,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 }
 
 // ---- ui checks: qa.matrix variants; layout and contrast checks (adapters/ui_checks.mjs)
-// fn({ viewport, fontScale, theme, tag }) per variant of kit.local.json qa.matrix ([] = axis off); fn sets the app's font scale / theme
+// fn({ viewport, fontScale, theme, tag }) sets the app's font scale / theme; [] = axis off
 export async function matrix(s, fn, { matrix: m = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}).qa?.matrix || {} } = {}) {
   const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()
   try {
@@ -414,8 +416,7 @@ export async function matrix(s, fn, { matrix: m = readJson(join(__HERE, '..', 'c
   } finally { if (v0) await s.page.setViewport(v0) }
   return out
 }
-// layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG
-// ratio, pass; both in adapters/ui_checks.mjs
+// layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG (ui_checks.mjs)
 export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs')).layoutIssues(...a)
 export const contrast = async (...a) => (await adapter('ui_checks.mjs')).contrast(...a)
 

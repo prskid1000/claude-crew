@@ -37,10 +37,11 @@ $bad = @(foreach ($c in @(@('B', 'mysql -u root -e "CREATE DATABASE scratch_ie1"
     @('B', 'for i in $(seq 1 5); do curl -s --port 53118 x; done', $false), @('B', 'bossy.ps1 learn -Text "bench made 2100000 rows via generate_series"', $false),
     @('B', 'rg -n "CREATE DATABASE|mysql " skills', $false), @('B', 'cp -r docs/mysql-notes docs2/', $false), @('B', 'cp -r app/build.gradle bak/', $false),
     @('P', '& "C:\Program Files\MySQL\bin\mysql.exe" -u root -e "CREATE DATABASE scratch"', $true), @('B', 'envy.ps1 status; mysql -e "CREATE DATABASE x"', $true),
-    @('B', 'python -c "rows = range(10**6)"', $true), @('B', 'for i in {1..2000000}; do echo $i; done > ids.txt', $true), @('B', 'MYSQL_TCP_PORT=3317 mysql -e "CREATE DATABASE x"', $false))) {
+    @('B', 'python -c "rows = range(10**6)"', $true), @('B', 'for i in {1..2000000}; do echo $i; done > ids.txt', $true), @('B', 'MYSQL_TCP_PORT=3317 mysql -e "CREATE DATABASE x"', $false),
+    @('B', 'git -C ../api archive abc123 | tar -x -C x', $true), @('P', 'git archive --format=zip -o r.zip HEAD', $true), @('B', 'git archive HEAD svc/tools.py | tar -x', $false), @('B', 'git archive --list', $false), @('B', 'git log --grep archive', $false), @('B', 'git --no-pager -c a=b archive HEAD > r.tar', $true))) {
   $json = @{ tool_name = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]; cwd = $gk; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress   # cwd: a run from a drive root denies `> x` for its own reason
   $gOut = pwsh @np (Join-Path $gk 'skills/crafty/crafty.ps1') guard -Json $json | Out-String
   if (($gOut -match '"permissionDecision":"deny"' -and $gOut -match 'writes large data') -ne $c[2]) { $c[1] } })
-Expect "guard large-writes: bulk generators, shared-DB scratch schemas, big imports, full dumps, copied trees denied; small or scoped ones allowed ($($bad -join ' | '))" (-not $bad.Count)
+Expect "guard large-writes: bulk generators, shared-DB scratch schemas, big imports, full dumps, copied trees, whole-repo exports denied; small or scoped ones allowed ($($bad -join ' | '))" (-not $bad.Count)
 Remove-TestKit $k
 Complete-Tests
