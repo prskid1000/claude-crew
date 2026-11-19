@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L314 shells · L481 page · L1053 release · L1098 lines · L1131 cleanup · L1216 launch ·
-  L1294 pause · L1413 heartbeat · L1428 sessions · L1480 ci tasks ·
-  L1535 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L314 shells · L481 page · L1059 release · L1104 lines · L1137 cleanup · L1222 launch ·
+  L1300 pause · L1419 heartbeat · L1434 sessions · L1486 ci tasks ·
+  L1541 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -659,6 +659,13 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   # stopped / crashed with no progress for one heartbeat: finished, not live (owner, 2026-11-13)
   $isFin = { param($a) if ("$($a.state)" -eq 'FINISHED') { return $true }; if ("$($a.state)" -notmatch '^(STOPPED|CRASHED)') { return $false }; $lt = & $toTime $(if ($a.last) { $a.last } else { $a.since }); $lt -and ($at - $lt).TotalMinutes -gt $hbMin }
   $agents = @($j.agents | Where-Object { $_ }); $flags = @($j.flags | Where-Object { $_ })
+  # one agent = one row (owner 2026-11-19): a QA run's board row joins the live workflow whose launch record (run field, not the
+  # glob) names that runDir; the workflow's row of that agent wins; a workflow over two QA runs keeps them apart
+  $qaOf = @{}; foreach ($w in @($agents | Where-Object { "$($_.name)" -match '\(workflow\)$' -and "$($_.run)" } | ForEach-Object { "$($_.run)" } | Select-Object -Unique)) {
+    $rds = @(foreach ($lf in @(Get-ChildItem (Get-KitPath launches) -Filter "self-*$w*.json" -ErrorAction SilentlyContinue)) { $lr = try { Get-Content -LiteralPath $lf.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($lr -and "$($lr.run)" -eq $w -and "$($lr.runDir)") { Split-Path "$($lr.runDir)" -Leaf } }) | Select-Object -Unique
+    if (@($rds).Count -eq 1) { $qaOf["$rds"] = $w } }
+  if ($qaOf.Count) { $have = @{}; foreach ($a in $agents) { if (-not $qaOf.ContainsKey("$($a.run)")) { $have["$($a.run)|$($a.name)"] = 1 } }
+    $agents = @(foreach ($a in $agents) { if (-not $qaOf.ContainsKey("$($a.run)")) { $a; continue }; $w = $qaOf["$($a.run)"]; if (-not $have.ContainsKey("$w|$($a.name)")) { $c = $a.PSObject.Copy(); $c.run = $w; $c } }) }
   $nAct = @($flags | Where-Object level -eq 'ACT').Count; $nWatch = @($flags | Where-Object level -eq 'WATCH').Count
   $hist = @($j.history | Where-Object { $_ }); [array]::Reverse($hist)   # oldest first
   $hCount = { param($h, [string]$lv) @($h.flags | Where-Object level -eq $lv).Count }
@@ -716,7 +723,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     if ($c -notmatch '^\s*(export |cd |set |\$|&|\.\s|pwsh|powershell|python|node|git |npx |\w+=)|;|&&|\|') { return (& $e $t) }
     $lb = if ($c -match '([\w-]+\.(?:ps1|py|mjs|js|sh))\b') { "runs $($Matches[1])" } else { 'shell command' }
     "<span title='$(& $e $t)'>$(& $e "$(if ($h) { "$h · " })$lb")</span>" }
-  # a run's group: a collapsible row (chevron, agents, active / waiting, run kind), state per run in localStorage; finished-only runs start folded
+  # a run's group: a collapsible row (chevron, agents, active / waiting, run kind), folded by default, state per run in localStorage
   $agT = { param($list) $grs = @($list | Group-Object { if ("$($_.run)" -in '', 'solo') { '' } else { "$($_.run)" } } | Sort-Object { -not $_.Name }, Name)
     # K72: the column header shows only while a group is open (CSS); collapse / expand all: one toggle in the Agents header
     '<div class=agw><div class=tw><table class=ag><thead class=agh><tr><th>State</th><th>Agent</th><th class=hs>Task</th><th>Since</th><th>Last progress</th><th class=hs>Doing · next</th></tr></thead>' + (@(foreach ($g in $grs) {
@@ -724,7 +731,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     $ga = @($g.Group); $cnt = { param($c) @($ga | Where-Object { -not (& $isFin $_) -and (& $stCls $_.state) -eq $c }).Count }; $nFin = @($ga | Where-Object { & $isFin $_ }).Count
     $wfA = @($ga | Where-Object { "$($_.task)" -match '^\w+\.js\b' })[0]; $kind = if ($wfA -and "$($wfA.task)" -match '^(\w+)\.js\b') { $Matches[1] } elseif ("$($ga[0].name)" -match '\((\w[\w-]*)\)') { $Matches[1] }
     $sum = @("$($ga.Count) agent$(if ($ga.Count -ne 1) { 's' })"; foreach ($p in @(@('s-act', 'active'), @('s-oth', 'waiting'), @('s-stuck', 'stuck'))) { if (($nb = & $cnt $p[0])) { "$nb $($p[1])" } }; if ($nFin) { "$nFin finished" }; if ($kind) { $kind }) -join ' · '
-    $fold0 = $nFin -eq $ga.Count
+    $fold0 = $true   # owner 2026-11-19: every group starts folded (its header keeps the counts)
     "<tbody class='grp$(if ($fold0) { ' cl' })' data-g='$(& $e $(if ($g.Name) { $g.Name } else { 'solo' }))'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=$(if ($fold0) { 'false' } else { 'true' })><span class=gn0>$(if (-not $g.Name) { 'standalone agents' } elseif ($rl) { "$(& $e $rl) <small>$(& $e $g.Name)</small>" } else { & $e $g.Name })</span><span class=gcn>$(& $e $sum)</span></button></th></tr>" +
     (@(foreach ($a in @($g.Group | Sort-Object name)) { $sub = @($a.wait, $a.done, $a.stopped | Where-Object { "$_".Trim() }) -join ' · '
       "<tr class=f><td><span class='chip $(& $stCls $a.state)'>$(& $e ("$($a.state)" -replace '\s.*'))</span>$(if ($sub) { "<div class=sm>$(& $e $sub)</div>" })</td><td>$(& $e $a.name)$(& $leaseOf $a.name)</td><td class=hs>$(& $taskCell ("$($a.task)" -replace ' · steps \d+/\d+ · [\d.]+[kKmMB]? tokens of [\d.]+[kKmMB]?'))</td><td>$(& $when $a.since)</td><td>$(& $when $a.last)</td><td class=hs>$(& $doCell $a.doing)$(if ("$($a.next)".Trim()) { "<div class=sm>$(& $e $a.next)</div>" })</td></tr>" }) -join '') + '</tbody>' }) -join '') + '</table></div></div>' }
@@ -804,7 +811,6 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $fxTile = "<div class=st data-fit><div class=k>Flags auto-FIXED</div><div class=v>$(if ($rxSum) { [math]::Round(100 * $fxSum / $rxSum) } else { '—' })<small>%</small></div><div class=w>$fxSum of $rxSum flags</div>$(& $spark @(for ($i = 0; $i -lt $hist.Count; $i++) { if ($fxRaised[$i]) { [math]::Round(100 * $fxFixed[$i] / $fxRaised[$i]) } }) 'sage' "per sweep, last $($hist.Count)" 'peak' 0 '%')$(if ($rxSum) { & $spark @($fxRaised) 'slate' "flags raised per sweep (ACT + WATCH + fixed), last $($hist.Count)" 'peak' 0 '' })</div>"
   $kitTiles = & $grid stats 220px @($wfTile, $brTile, $swTile, $failTile, $fxTile)   # Test runs: a Delivery tile (QA checks per day beside the tasks per repo)
   $UP = Format-KitUsageHtml $st.usage
-  $resHtml = Format-KitHeldList $j.resources $live.Count   # adapters/supervise_stats.ps1; their CPU + RAM history: Resources · 24 h
   # a command on one line, cut at 120 chars with an ellipsis in the text (no CSS clip), the whole one a click away
   $cmdCell = { param([string]$c) $full = "$c".Trim(); $one = $full -replace '\s+', ' '; if ($one -eq $full -and $one.Length -le 120) { return $one }
     $hd = if ($one.Length -gt 120) { $one.Substring(0, 119).TrimEnd() + '…' } else { $one }
@@ -848,11 +854,11 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "d.addEventListener('click',function(x){var b=x.target.closest('.sa');if(!b)return;var k=tk(b.parentNode),i=AL.indexOf(k);if(i>=0)AL.splice(i,1);else AL.push(k);L.setItem('kc-all',JSON.stringify(AL));sa0();ca()});" +
     "d.querySelectorAll('.jl a').forEach(function(a){a.addEventListener('click',function(){for(var s=d.querySelector(a.getAttribute('href'));s;s=s.parentElement&&s.parentElement.closest('details'))s.open=true})});" +   # a jump opens its section and the bands around it
     "function tx(x){var s=x.textContent;x.querySelectorAll('svg title').forEach(function(t){s=s.replace(t.textContent,'')});return s.toLowerCase()}" +   # icon titles are no match ('gb', 'ram' would hit every card)
-    "function gs(b,c){b.classList.toggle('cl',c);var t=b.querySelector('.gtg');if(t)t.setAttribute('aria-expanded',!c)}d.querySelectorAll('tbody.grp[data-g]').forEach(function(b){var v=S.getItem('kc-ag-'+b.dataset.g);if(v!==null&&!b.querySelector('tr.nh'))gs(b,v=='1')});" +   # groups: folded per run, remembered; a lease group with no live holder stays open
+    "function gs(b,c){b.classList.toggle('cl',c);var t=b.querySelector('.gtg');if(t)t.setAttribute('aria-expanded',!c)}d.querySelectorAll('tbody.grp[data-g]').forEach(function(b){var v=L.getItem('kc-ag-'+b.dataset.g);if(v!==null&&!b.querySelector('tr.nh'))gs(b,v=='1')});" +   # groups: folded per run, remembered; a lease group with no live holder stays open
     # K72: one toggle in the Agents header (any group open: collapse all, else expand all; its click never folds the section)
     "function gl(){var b=d.querySelector('[data-gall]');if(b)b.textContent=d.querySelector('#sec-agents tbody.grp:not(.cl)')?'Collapse all':'Expand all'}gl();" +
     "d.addEventListener('click',function(x){var t=x.target.closest('.gtg'),a=x.target.closest('[data-gall]'),bs=[],c=false;if(a){x.preventDefault();bs=[].slice.call(d.querySelectorAll('#sec-agents tbody.grp[data-g]'));c=bs.some(function(b){return!b.classList.contains('cl')})}else if(t)bs=[t.closest('tbody')];if(!bs.length)return;" +
-    "bs.forEach(function(b){var k=a?c:!b.classList.contains('cl');gs(b,k);S.setItem('kc-ag-'+b.dataset.g,k?'1':'0')});gl()});" +
+    "bs.forEach(function(b){var k=a?c:!b.classList.contains('cl');gs(b,k);L.setItem('kc-ag-'+b.dataset.g,k?'1':'0')});gl()});" +
     "function fl(){var v=q.value.toLowerCase();S.setItem('kc-q',q.value);d.documentElement.classList.toggle('flq',!!v);d.querySelectorAll('.f').forEach(function(x){x.hidden=!!v&&tx(x).indexOf(v)<0});d.querySelectorAll('tbody.grp').forEach(function(g){g.hidden=!g.querySelector('tr.f:not([hidden])')});" +
     "d.querySelectorAll('details.lx').forEach(function(x){if(v&&tx(x).indexOf(v)>=0){if(!x.open){x.open=true;x.dataset.fo=1}}else if(!v&&x.dataset.fo){x.open=false;delete x.dataset.fo}});d.querySelectorAll('details.sec').forEach(function(s){if(v){if(!s.open&&s.querySelector('.f:not([hidden])')){s.open=true;s.dataset.fo=1}}else if(s.dataset.fo){s.open=false;delete s.dataset.fo}});nm.hidden=!v||!!d.querySelector('.f:not([hidden])');sa0()}q.oninput=fl;sa0();q.value=S.getItem('kc-q')||'';if(q.value)fl();d.addEventListener('keydown',function(x){if(x.key=='/'&&d.activeElement!=q){x.preventDefault();q.focus()}});" +
     "var SC='.bd,.info,.tw,.sy,.sxb';function cu(e){var v=e.scrollHeight>e.clientHeight+1,h=e.scrollWidth>e.clientWidth+1,c=e.classList,o=v||h;c.toggle('sc',o);if(o)e.tabIndex=0;else e.removeAttribute('tabindex');c.toggle('u',v&&e.scrollTop>1);c.toggle('d',v&&e.scrollTop+e.clientHeight<e.scrollHeight-1);c.toggle('l',h&&e.scrollLeft>1);c.toggle('r',h&&e.scrollLeft+e.clientWidth<e.scrollWidth-1)}" +
@@ -904,7 +910,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $head = "<header class=top><div class=brand>$mark<span>claude-crew</span><small>Supervisor</small></div><div class=meta><span id=age class=chip title='Last sweep $($at.ToString('yyyy-MM-dd HH:mm'))' data-at='$($at.ToString('o'))' data-next='$(& $e $nextMin)'></span><span id=nx title='$(& $e $j.next)' data-due='$($at.AddMinutes([double]$nextMin).ToString('HH:mm'))' data-tail='$(& $e $nxTail)'>next $($at.AddMinutes([double]$nextMin).ToString('HH:mm'))</span></div><nav class=jl aria-label='Sections'>$((@(@('flags', 'Flags'), @('agents', 'Agents'), @('runs', 'Runs'), @('machine', 'Machine'), @('internals', 'Kit internals')) | ForEach-Object { "<a href='#sec-$($_[0])'>$($_[1])</a>" }) -join '')<span class='chip lv ACT'>$nAct ACT</span><span class='chip lv WATCH'>$nWatch WATCH</span></nav><div class=sp></div>" +
     "<div class=tb><input id=q type=search placeholder='Filter  ( / )' aria-label='Filter the page'><button id=ar class=ib type=button aria-pressed=true aria-label='Auto-refresh every 60 s' title='Auto-refresh every 60 s'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round /></svg></button><button id=tt class=ib type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
   # each number once, in acting order, open: flags, live agents, runs, machine, resources; Kit internals one folded band (owner, 2026-11-13)
-  $nRes = @($j.resources | Where-Object { $_ }).Count; $nSh = @($j.shells | Where-Object { $_ }).Count
+  $nSh =@($j.shells | Where-Object { $_ }).Count
   # Delivery (adapters/outcomes.ps1, owner 2026-11-16): outcomes, the per-day delivery chart and the ended runs in one fold
   $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats } catch { $null } }
   $dlv = try { Format-KitDeliveryHtml $oc $UP (Format-KitQaTile $st.qa $at) } catch { "<p class=m>Delivery view failed: $(& $e $_.Exception.Message)</p>" }
@@ -912,8 +918,8 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $intHtml = (& $fold 'delivery' 'Delivery, 30 days' $(if ($oc.n) { "$($oc.n) task(s)" } else { '' }) "$dlv$runsF" -Open -cls sub) + (& $fold 'usage' 'Usage, 7 days' '' $UP.usage -Open -cls sub) + $UP.internals + (& $fold 'activity' 'Activity' $null $kitTiles -cls sub) + $setHtml
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$($UP.pages[$pk] -replace " data-tip='", " title='")</main></body></html>" } }
   # Shells: a fold only when one runs; none = one muted word in the Resources header
-  $nWait = @($st.waits.rows | Where-Object { $_ }).Count   # lease waits open the fold even with nothing held
-  $mrHtml = $machineHtml + (& $fold 'resources' 'Resources and leases' $(if ($nRes -or -not ($nWait -or $live.Count)) { $nRes } else { @{ h = '0 held' } }) "$(Format-KitWaitCard $st.waits)$resHtml" -Open -cls sub -extra $(if (-not $nSh) { '<span class=cnt>· no shell running</span>' })) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub })
+  # owner 2026-11-19: held resources, holders and branch / task live on the Resources · 24 h rows (one view); lease waits under it
+  $mrHtml = $machineHtml + (Format-KitWaitCard $st.waits) + $(if ($nSh) { & $fold 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open -cls sub } else { '<div class=nod>no shell running</div>' })
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open) + (& $section 'agents' 'Agents' $(if ("$agCnt" -eq '0' -and $UP.nRunning) { @{ h = (& $icv run 'running runs' $UP.nRunning) } } else { $agCnt }) "$(if ($UP.running) { "<div class=rus>$($UP.running)</div>" })$agentHtml" -Open -extra $agBar) +   # running runs: a line each above their agents; ended ones: Kit internals, Delivery
     (& $section 'machine' 'Machine and resources' '' $mrHtml -Open) +
     (& $section 'internals' 'Kit internals' '' $intHtml) +

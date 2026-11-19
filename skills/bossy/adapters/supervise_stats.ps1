@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L299 cards · L507 flags · L589 shells
+Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L299 cards · L492 flags · L573 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -432,15 +432,17 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
       $cPk = & $max $w.cv; $cAvg = if ($hasC -and $ss.Count) { [double](@($w.cv) | Measure-Object -Sum).Sum / $ss.Count }
       $rNow = if ($isM) { $MemNowGB } elseif ($cur.ContainsKey($nm)) { [double]$cur[$nm].gb } elseif ($last -and $null -ne (Get-KitMember $last.m $nm)) { [double](Get-KitMember $last.m $nm) }
       $rAll = @(0..23 | ForEach-Object { & $ramOf $w $_ } | ForEach-Object { $_ }); $rPk = [math]::Max([double]$rNow, (& $max $rAll)); $hasR = $rAll.Count -gt 0 -or $null -ne $rNow
-      $r0 = $cur[$nm]; $by = "$($r0.by)".Trim(); $sub = if (-not $r0) { '' } elseif ($r0.shared) { 'shared · always on' } elseif ($by) { $by } else { 'no live holder' }
+      $r0 = $cur[$nm]; $by = "$($r0.by)".Trim(); $hp = Split-KitHolder $by
+      $sub = if (-not $r0) { '' } elseif ($r0.shared) { 'shared · always on' } elseif ($hp.h -notin '', 'no lease') { "$($hp.h)$($hp.g)" } else { "no live holder$($hp.g)" }
+      $bt = if ($r0 -and -not $r0.shared) { @($hp.b, (Get-KitHolderTask $hp.h) | Where-Object { $_ }) -join ' · ' } else { '' }   # owner 2026-11-19: the held list's branch / task column, now on the row
       $vals = @($(if ($hasC) { & $n1 $cNow } else { '—' }), $(if ($hasC) { & $n1 $cPk } else { '—' }), $(if ($hasC) { & $n1 $cAvg } else { '—' }), $(if ($null -ne $rNow) { & $n1 $rNow } else { '—' }), $(if ($hasR) { & $n1 $rPk } else { '—' }))
       $tone = if ($hasC -and $last -and (& $hot $cNow $last.s)) { 'hot' } elseif ($cPk -gt 80) { 'warn' } else { '' }
       [pscustomobject]@{ nm = $nm; busy = $isM -or [bool]$r0 -or (Test-KitHeatBusy $hours { param($c) [double]@($c)[1] -ge 0.1 -or [double]@($c)[3] -gt 0 })
-        tone = $tone; orphan = $r0 -and -not $r0.shared -and $by -match '^$|\(grace|^no lease$'; sub = $sub; vals = $vals; hours = $hours } })
+        tone = $tone; orphan = $r0 -and -not $r0.shared -and $by -match '^$|\(grace|^no lease$'; sub = $sub; bt = $bt; vals = $vals; hours = $hours } })
   $cols = @('now %', 'peak %', 'avg %', 'now GB', 'peak GB')
   $head = "<div class='gk gh'><span class=gn>resource · holder · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead $h0)</span>$(@($cols | ForEach-Object { "<span class=gc><small>$_</small></span>" }) -join '')</div>"
   $lane = ''; $items = @(foreach ($r in $rows) { $ln = ("$($r.nm)" -split ' · ')[0]; $first = $r.nm -ne 'whole machine' -and $ln -ne $lane; $lane = $ln; $nm = $r.nm
-      [pscustomobject]@{ busy = $r.busy; html = "<div class='gk$(if ($first) { ' gl0' })$(if ($r.tone) { " $($r.tone)" })$(if ($r.orphan) { ' orphan' })'><span class=gn title='$(& $e "${nm}$(if ($r.sub) { " · $($r.sub)" }): $(if ($r.vals[0] -ne '—') { "CPU now $($r.vals[0])% · 24 h peak $($r.vals[1])% · avg $($r.vals[2])% · " } else { 'CPU not sampled: not running, or no process tree of its own (lease, slot, lock, external) · ' })$(if ($r.vals[3] -ne '—') { "RAM now $($r.vals[3]) GB · 24 h peak $($r.vals[4]) GB" } else { 'RAM: not running now' })")'>$(& $e $nm)$(if ($r.sub) { "<small>$(& $e $r.sub)</small>" })</span>" +
+      [pscustomobject]@{ busy = $r.busy; html = "<div class='gk$(if ($first) { ' gl0' })$(if ($r.tone) { " $($r.tone)" })$(if ($r.orphan) { ' orphan' })'><span class=gn title='$(& $e "${nm}$(if ($r.sub) { " · $($r.sub)" }): $(if ($r.vals[0] -ne '—') { "CPU now $($r.vals[0])% · 24 h peak $($r.vals[1])% · avg $($r.vals[2])% · " } else { 'CPU not sampled: not running, or no process tree of its own (lease, slot, lock, external) · ' })$(if ($r.vals[3] -ne '—') { "RAM now $($r.vals[3]) GB · 24 h peak $($r.vals[4]) GB" } else { 'RAM: not running now' })")'>$(& $e $nm)$(if ($r.sub) { "<small>$(& $e $r.sub)</small>" })$(if ($r.bt) { "<small class=bt>$(& $e $r.bt)</small>" })</span>" +
         (Format-KitHeatCells $r.hours $h0 "$nm, CPU % and RAM GB per hour, last 24 h" { param($hv) if (-not $hv[0]) { "$nm · no sample" } else { "$nm · $(@(@($(if ($null -ne $hv[1]) { "CPU avg $(& $n1 $hv[1])% · peak $(& $n1 $hv[2])%" }), "RAM $(if ($null -ne $hv[3]) { "$(& $n1 $hv[3]) GB" } else { '—' })") | Where-Object { $_ }) -join ' · ')$(if ("$($hv[4])") { " · $($hv[4])" })$(if ("$($hv[5])") { " · top: $($hv[5])" })" } } { param($hv) @((Get-KitHeatShade ([double]$hv[1] / 100)), (Format-KitHeatNum $hv[1]), (Get-KitHeatShade ([double]$hv[3] / [double]$hv[6])), (Format-KitHeatNum $hv[3])) } 'sp') +
         (@(for ($ci = 0; $ci -lt 5; $ci++) { "<span class='gc$(if ($r.vals[$ci] -in '0', '—') { ' z' })' title='$(& $e "${nm}: $($cols[$ci] -replace ' (%|GB)$') $(if ($ci -lt 3) { 'CPU' } else { 'RAM' }) $($r.vals[$ci]) $(if ($ci -lt 3) { '%' } else { 'GB' })")'>$($r.vals[$ci])</span>" }) -join '') + '</div>' } })
   $tops = @($ss | ForEach-Object { $s0 = $_; @($_.top | Where-Object { $_ }) | ForEach-Object { [pscustomobject]@{ k = "$($_.pid)|$($_.n)"; n = $_.n; pid = $_.pid; p = [double]$_.p; o = "$($_.o)"; c = "$($_.c)"; at = $s0.at; s = $s0.s; nowS = [bool]($s0 -eq $last) } } } | Group-Object k | ForEach-Object { $gp = @($_.Group | Sort-Object { [datetime]$_.at }); $pk = ($gp | Measure-Object p -Maximum).Maximum
@@ -481,28 +483,11 @@ function Get-KitHolderTask([string]$Holder) {
     if ($t -and $t -notin $out) { $out.Add($t) } }
   $out -join '; '
 }
-# resources held now (Resources and leases): name and holder; none: the live agents' count or "No resource held."
-function Format-KitHeldList($Resources, [int]$Active = 0) {   # $Active: live agents (none held while agents run is a count, not idle)
-  $rs = @($Resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb }); if (-not $rs.Count) { return "<p class=empty>$(if ($Active) { "$Active agent$(if ($Active -ne 1) { 's' }) active · none holds a lease" } else { 'No resource held.' })</p>" }
-  # owner 2026-11-18: one table, a folding group per kind (kind, else the name's first word) with its count; no live holder first,
-  # amber, its group open; holder "(branch)" -> its own column, cut with the full text in the tooltip
-  $lbl = @{ env = 'env services'; slot = 'worktree slots' }; $ord = @('env', 'browser', 'build', 'slot')
-  $its = @($rs | ForEach-Object { $by = "$($_.by)".Trim(); $nm = "$($_.name)"; $kd = "$($_.kind)"
-      if ($_.shared) { $kd = 'shared' } elseif (-not $kd -and $nm -match '^(?<k>[a-z]+) (?<r>.+)$') { $kd = $Matches.k; $nm = $Matches.r } elseif (-not $kd) { $kd = 'other' }
-      $br = ''; $gr = ''; if ($by -match '^(?<r>.*?)\s*(?<g>\(grace [^()]*\))$') { $by = $Matches.r; $gr = " $($Matches.g)" }   # supervise appends the grace after the branch
-      if ($by -match '^(?<h>.*?)\s*\((?<b>[^()\s]+)\)$') { $by = $Matches.h; $br = $Matches.b } elseif ($by -match '^parked: (?<b>\S+)$') { $by = 'parked'; $br = $Matches.b }
-      [pscustomobject]@{ k = $kd; n = $nm; o = -not $_.shared -and $by -in '', 'no lease'; h = $(if ($_.shared) { 'shared · always on' } elseif ($by -in '', 'no lease') { "no live holder$gr" } else { "$by$gr" }); b = $br; t = $(if ($_.shared) { '' } else { Get-KitHolderTask $by }) } })
-  # a lane's services ("rm·Falcon api", "rm·Falcon web") with the same holder and branch are one lease: one row "rm·Falcon (api, web)"
-  $its = @($its | Group-Object { $ix = "$($_.n)".LastIndexOf(' '); if ($_.k -ne 'shared' -and $ix -gt 0) { "$($_.k)|$("$($_.n)".Substring(0, $ix))|$($_.o)|$($_.h)|$($_.b)" } else { [guid]::NewGuid().ToString() } } | ForEach-Object {
-      $g = @($_.Group); if ($g.Count -lt 2) { $g[0]; return }; $c = $g[0].PSObject.Copy(); $c.n = "$("$($g[0].n)".Substring(0, "$($g[0].n)".LastIndexOf(' '))) ($(@($g | ForEach-Object { "$($_.n)".Substring("$($_.n)".LastIndexOf(' ') + 1) }) -join ', '))"; $c })
-  $gs = @($its | Group-Object k | Sort-Object { $i = [array]::IndexOf($ord, $_.Name); if ($_.Name -eq 'shared') { 99 } elseif ($i -ge 0) { $i } else { 50 } }, Name)
-  $hasB = [bool]@($its | Where-Object { $_.b -or $_.t }).Count   # no branch or task on any row: no column
-  "<table class=hlt><thead><tr><th>Resource</th><th>Holder(s)</th>$(if ($hasB) { "<th>Branch / task</th>" })</tr></thead>" + (@($gs | ForEach-Object {
-        $no = @($_.Group | Where-Object o).Count; $nmG = if ($lbl[$_.Name]) { $lbl[$_.Name] } elseif ($_.Name -in 'shared', 'other') { $_.Name } else { "$($_.Name)s" }
-        "<tbody class='grp$(if (-not $no) { ' cl' })' data-g='res-$(& $e $_.Name)'><tr class=gh><th colspan=$(if ($hasB) { 3 } else { 2 })><button type=button class=gtg aria-expanded=$(if ($no) { 'true' } else { 'false' })><span class=gn0>$(& $e $nmG)</span><span class=gcn>$($_.Count)$(if ($no) { " · $no no live holder" })</span></button></th></tr>" +
-        (@($_.Group | Sort-Object { -not $_.o }, n | ForEach-Object {
-            $bt = @($_.b, $_.t | Where-Object { $_ }) -join ' · '; if ($bt.Length -gt 40) { $bs = $bt.Substring(0, 39) + '…' } else { $bs = $bt }
-            "<tr class='f$(if ($_.o) { ' nh' })'><td>$(& $e $_.n)</td><td>$(& $e $_.h)</td>$(if ($hasB) { "<td$(if ($bt) { " title='$(& $e $bt)'" })>$(if ($bt) { & $e $bs } else { & $e '—' })</td>" })</tr>" }) -join '') + '</tbody>' }) -join '') + '</table>'
+# a lease holder text -> @{ h = holder(s); b = branch; g = " (grace ..)" }: supervise appends the grace after "(branch)"; "parked: <branch>"
+function Split-KitHolder([string]$By) {
+  $by0 = "$By".Trim(); $br = ''; $gr = ''; if ($by0 -match '^(?<r>.*?)\s*(?<g>\(grace [^()]*\))$') { $by0 = $Matches.r; $gr = " $($Matches.g)" }
+  if ($by0 -match '^(?<h>.*?)\s*\((?<b>[^()\s]+)\)$') { $by0 = $Matches.h; $br = $Matches.b } elseif ($by0 -match '^parked: (?<b>\S+)$') { $by0 = 'parked'; $br = $Matches.b }
+  @{ h = $by0; b = $br; g = $gr }
 }
 # ---- flags: distinct ACT / WATCH / FIXED flags per clock hour, 24 h (history keeps 12 sweeps only): @(@{ h = yyyyMMddHH; f = @(@{ l; k = kind; y = key; t = text }) })
 function Get-KitFlagHour($H) { try { [datetime]::ParseExact("$H", 'yyyyMMddHH', [cultureinfo]::InvariantCulture) } catch { [datetime]::MinValue } }
@@ -567,15 +552,14 @@ function Get-KitStatsCss {
   # disk writes: muted sage cells (owner rows), the day block slate over sage; amber / red owner over the soft / hard limit
   '.hm.ws:not(.sp) i{background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.wrh .gk.gl0>.hm{height:19px}.wrh .wdh>*{padding-top:10px}.wrh .gk.hot>.gn,.wrh .gk.hot>.gc:nth-last-child(6){color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.wrh .gk.warn>.gn,.wrh .gk.warn>.gc:nth-last-child(6){color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:650}' +
   '.cpg{margin-top:6px}:is(.cpg,.fhm,.wrh) .gk.gl0>*{border-top:1px solid var(--ln);padding-top:2px}.gks .gc small{color:var(--mt);font-weight:500}.cpg .gk.hot>.gn,.cpg .gk.hot>.gc:nth-last-child(5){color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.cpg .gk.warn>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}' +
-  # heatmap kinds: split CPU (top, slate) over RAM (bottom, sage); flag counts coloured by level; the idle-rows fold; held list
+  # heatmap kinds: split CPU (top, slate) over RAM (bottom, sage); flag counts coloured by level; the idle-rows fold
   # a cell's number: dark text on a dark shade (hi, --hmt); split cells: CPU number over RAM number
   '.hm i.hi,.hm i>.hi{color:var(--hmt,var(--fg))}.hm.sp{height:26px}.hm.sp i{display:grid;grid-template-rows:1fr 1fr;font-size:9.5px;line-height:13px;background:linear-gradient(color-mix(in srgb,var(--slate) var(--a),var(--sf2)) 0 50%,color-mix(in srgb,var(--sage2) var(--b),var(--sf2)) 50% 100%)}.hm.sp i>span{overflow:hidden}' +
   '.hm.fh{height:17px}.hm.fh i{line-height:17px}.hm.fh.l-act i{background:color-mix(in srgb,var(--act) var(--a),var(--sf2))}.hm.fh.l-watch i{background:color-mix(in srgb,var(--watch) var(--a),var(--sf2))}.hm.fh.l-fixed i{background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.hm.fh.l-mr i{background:color-mix(in srgb,var(--sage) var(--a),var(--sf2))}' +
   '.fhm .gk.gl0>.hm.fh{height:20px}.fhm .gk.fk>.gn{padding-left:12px;font-weight:500;color:var(--mt)}.fhm .gk.l-act:not(.fk)>.gn{color:color-mix(in srgb,var(--act) 60%,var(--fg))}.fhm .gk.l-watch:not(.fk)>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.fhm .gk.l-fixed:not(.fk)>.gn{color:var(--sage2)}' +
   '.gkx{grid-column:1/-1;justify-self:start;background:none;border:0;padding:2px 0;color:var(--mt);font:inherit;cursor:pointer}.gkx::before{content:"\25B8  "}.gkx[aria-expanded=true]::before{content:"\25BE  "}.gkx small{font-size:inherit}.gki{display:none}.gks.gio>.gki{display:contents}' +
   '.lgk{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 3px 0 6px;vertical-align:-1px}.lgk:first-child{margin-left:0}.lgk.c{background:var(--slate)}.lgk.r{background:var(--sage2)}' +
-  '.hlt{margin-top:6px;font-size:12px}.hlt td{padding:2px 6px;border-bottom:1px solid var(--ln);overflow-wrap:anywhere;vertical-align:top}.hlt td+td{color:var(--mt)}.hlt td:first-child{font-weight:600}' +
-  '.hlt tr.nh td{background:color-mix(in srgb,var(--watch) 10%,transparent);color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.hlt tr.gh th{font-size:12px;padding:3px 6px}' +
+  '.rsh .gn small.bt{display:block;margin-left:0}' +
   # lane grid (K74): muted cells, amber = behind, sage +N = test merges, outline = in use
   '.lng{display:grid;grid-template-columns:minmax(0,max-content) repeat(var(--n),minmax(30px,1fr));gap:2px;margin-top:6px;font-size:11.5px;font-variant-numeric:tabular-nums}.lnh{font-size:10.5px;color:var(--mt);text-align:center;overflow-wrap:anywhere}.lnn{padding-right:6px;line-height:20px;overflow-wrap:anywhere}' +
   '.lnc{min-height:20px;line-height:20px;text-align:center;border-radius:3px;color:var(--mt)}.lnc.on{background:var(--sf2)}.lnc.bh{background:color-mix(in srgb,var(--watch) 22%,var(--sf2));color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:600}.lnc small{margin-left:3px;font-size:10px;font-weight:600;color:var(--sage2)}.lnc.kp{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 22%,transparent)}' +

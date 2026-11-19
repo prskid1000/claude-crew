@@ -37,21 +37,11 @@ Expect "cpu: group = its tree (15%), machine from idle time (50%), top other 90%
 $spk = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $lv = @(@{ at = $n.AddMinutes(-40).ToString('o'); secs = 37437000 }, @{ at = $n.AddMinutes(-20).ToString('o'); secs = 229037567 }, @{ at = $n.ToString('o'); secs = 12500 })
   $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ live = $lv; now = [pscustomobject]@{ secs = 12500; wfr = @(); stale = @(); disks = @() } } }); $h }
 Expect "sparkline: axis + caption values compact, no raw 9-digit number ($(([regex]::Matches($spk, "ya hi'>[^<]*<|figcaption>[^<]*<")).Value -join ' '))" ($spk -match "ya hi'>229M s<" -and $spk -match 'peak 229M s' -and $spk -notmatch '229037567')
-# resources: none held while agents run = "0 held" + the active count, not "No resource held."; nothing live: folded (0)
-$rsc = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; foreach ($ag in @(@([pscustomobject]@{ agent = 'devy-1'; state = 'ACTIVE'; since = $n.ToString('o'); last = $n.ToString('o') }), @())) {
-    $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = $ag; resources = @() }); "$($h -match "Resources and leases</h3><span class=cnt>\(0 held\)") $($h -match '1 agent active (·|&#183;) none holds a lease') $($h -match 'No resource held') $($h -match "Resources and leases</h3><span class=cnt>\(0\)")" } }
-Expect "resources: 0 held + 1 agent active while agents run; none live: (0) ($rsc)" ($rsc -join '|' -eq 'True True False False|False False False True')
-# leases (owner 2026-11-18): one table, a folding group per kind with a count; no live holder first, amber, its group open; branch cut, full in its tooltip
-$hlt = & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $h = [Net.WebUtility]::HtmlDecode($(Format-KitHeldList @([pscustomobject]@{ kind = 'env'; name = 'rm · api'; by = 'devy-1, devy-2' }, [pscustomobject]@{ kind = 'env'; name = 'mysql (rm, hm)'; by = ''; shared = $true }, [pscustomobject]@{ name = 'slot app·Wren'; by = 'devy-1 (fix/T-123-a-rather-long-branch-name-for-the-cut)' },
-    [pscustomobject]@{ name = 'browser local-a'; by = 'devy-3' }, [pscustomobject]@{ name = 'browser local-b'; by = '' }, [pscustomobject]@{ name = 'gizmo x1'; by = 'devy-4' })))
-  $gr = @([regex]::Matches($h, "<tbody class='grp( cl)?' data-g='res-(\w+)'>.*?<span class=gn0>([^<]+)</span><span class=gcn>([^<]+)</span>") | ForEach-Object { "$($_.Groups[2])=$($_.Groups[3])/$($_.Groups[4])/$(if ($_.Groups[1].Success) { 'cl' } else { 'open' })" })
-  "$($gr -join ';')|$($h -match "<tbody class='grp' data-g='res-browser'>.*?</tr><tr class='f nh'><td>local-b</td><td>no live holder</td>")|$($h -match "<td>app·Wren</td><td>devy-1</td><td title='fix/T-123-a-rather-long-branch-name-for-the-cut'>fix/T-123-a-rather-long-branch-name-for…</td>")" }
-Expect "resources: a leases table grouped by kind, counts, no live holder first and open, branch column cut ($hlt)" ($hlt -eq 'env=env services/1/cl;browser=browsers/2 · 1 no live holder/open;slot=worktree slots/1/cl;gizmo=gizmos/1/cl;shared=shared/1/cl|True|True')
-$hlp = & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $h = Format-KitHeldList @([pscustomobject]@{ name = 'slot a·Kite'; by = 'devy-1 (fix/x) (grace 5 min)' }, [pscustomobject]@{ name = 'slot a·Wren'; by = 'parked: fix/y' }, [pscustomobject]@{ name = 'phone P1'; by = 'no lease' },
-    [pscustomobject]@{ name = 'phone P2'; by = 'devy-2 (waiting for RAM)' }, [pscustomobject]@{ name = "browser <b>x</b>'"; by = "devy-3 (b'ra)" })
-  @('<td>a&#183;Kite</td><td>devy-1 (grace 5 min)</td><td title=''fix/x''>', '<td>a&#183;Wren</td><td>parked</td><td title=''fix/y''>', "<tr class='f nh'><td>P1</td><td>no live holder</td>", '<td>P2</td><td>devy-2 (waiting for RAM)</td><td>—</td>',
-    '<td>&lt;b&gt;x&lt;/b&gt;&#39;</td><td>devy-3</td><td title=''b&#39;ra''>') | ForEach-Object { $h.Contains($_) } }
-Expect "resources: leases parse grace after a branch, parked, no lease (amber), a wait note kept whole; names and branches escaped ($($hlp -join ' '))" (-not ($hlp -contains $false))
+# resources (owner 2026-11-19): one view; the held table is gone; a holder text parses grace after a branch, parked, a wait note kept whole
+$hpt = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = @(); resources = @() })
+  $p = @((Split-KitHolder 'devy-1 (fix/x) (grace 5 min)'), (Split-KitHolder 'parked: fix/y'), (Split-KitHolder 'devy-2 (waiting for RAM)'), (Split-KitHolder ''))
+  "$($h -notmatch 'Resources and leases|class=hlt') $(@($p | ForEach-Object { "$($_.h)/$($_.b)/$($_.g)" }) -join '|')" }
+Expect "resources: no held table; holder parts ($hpt)" ($hpt -eq 'True devy-1/fix/x/ (grace 5 min)|parked/fix/y/|devy-2 (waiting for RAM)//|//')
 # Branches tile: the last repo sync per repo (fast-forwarded, diverged, dirty, pruned), kept ones in its tooltip
 $syh = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ repos = @{ at = $n.ToString('o'); repos = @(@{ repo = 'api'; branches = 3; worktrees = 1 }) }
         sync = @(@{ repo = 'api'; at = $n.ToString('o'); ff = @('main +5', 'x +1'); diverged = @('lane-ish [ahead 1, behind 2]'); dirty = @(); pruned = @('lane/a-falcon (lane branch, no worktree)'); err = '' }) } }); $h }
@@ -72,17 +62,16 @@ Expect "flags heatmap: a row per kind phrase, stored 'other' re-read, no kind wo
 $lcl = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $hr = { param($b, $m) , @(0..23 | ForEach-Object { if ($_ -eq $b) { , @(1, $m, $m, '') } else { , @(0, 0, 0, '') } }) }
   $w = [pscustomobject]@{ h0 = $n.AddHours(-23).ToString('o'); rows = @([pscustomobject]@{ name = 'rm·Falcon · api'; hours = (& $hr 22 5); n = 1; min = 5; max = 5 }, [pscustomobject]@{ name = 'rm·Falcon · web'; hours = (& $hr 22 5); n = 1; min = 5; max = 5 }, [pscustomobject]@{ name = 'hm·Falcon · api'; hours = (& $hr 21 4); n = 1; min = 4; max = 4 }, [pscustomobject]@{ name = 'hm·Falcon · web'; hours = (& $hr 20 4); n = 1; min = 4; max = 4 }) }
   $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ waits = $w } })
-  $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $l = Format-KitHeldList @([pscustomobject]@{ name = 'env rm·Falcon api'; by = 'devy-1 (fix/x)' }, [pscustomobject]@{ name = 'env rm·Falcon web'; by = 'devy-1 (fix/x)' }, [pscustomobject]@{ name = 'mysql (rm, hm)'; kind = 'env'; shared = $true })
-  "$($h -match '>rm&#183;Falcon</span>') $($h -notmatch '>rm&#183;Falcon &#183; api<') $($h -match '>hm&#183;Falcon &#183; api<' -and $h -match '>hm&#183;Falcon &#183; web<') $($l -match '<td>rm&#183;Falcon \(api, web\)</td>') $($l -match 'mysql \(rm, hm\)')" }
-Expect "lease waits + held: a lane's services with identical data are one row; differing ones stay split; shared row renders ($lcl)" ($lcl -eq 'True True True True True')
-# Branch / task of every lease: a QA code and pid of a board agent resolve to a task / item; blank rows show a dash; no value anywhere: no column
-$btk = & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $qd = Join-Path (Get-KitPath qa-runs -Create) 'run1'; New-Item -ItemType Directory -Force $qd | Out-Null
+  "$($h -match '>rm&#183;Falcon</span>') $($h -notmatch '>rm&#183;Falcon &#183; api<') $($h -match '>hm&#183;Falcon &#183; api<' -and $h -match '>hm&#183;Falcon &#183; web<')" }
+Expect "lease waits: a lane's services with identical data are one row; differing ones stay split ($lcl)" ($lcl -eq 'True True True')
+# Branch / task on the Resources · 24 h row: a QA code and pid of a board agent resolve to a task / item; the holder in its own small, escaped
+$btk = & { . $O; $qd = Join-Path (Get-KitPath qa-runs -Create) 'run1'; New-Item -ItemType Directory -Force $qd | Out-Null
   @{ run = 'run1'; items = @{ T5 = @{ tasks = @('t1'); pubKey = 'pk9' } } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $qd 'index.json')
   $bd = Get-KitPath board -Create; @{ agent = 'devy-7'; run = 'r7'; items = 'CODE1'; status = 'active'; pid = 4242 } | ConvertTo-Json | Set-Content (Join-Path $bd 'devy-7-aa.json')
-  $l = Format-KitHeldList @([pscustomobject]@{ name = 'browser rm·x'; by = 'pid-1, test:T5' }, [pscustomobject]@{ name = 'browser hm·y'; by = '' }, [pscustomobject]@{ name = 'phone P1'; by = 'pid-4242' }, [pscustomobject]@{ name = 'mysql (rm, hm)'; kind = 'env'; shared = $true })
-  $n = Format-KitHeldList @([pscustomobject]@{ name = 'browser a·b'; by = 'zzz' })
-  "$($l -match 'QA T5 &#183; pk9') $($l -match '>CODE1</td>') $($l -match '<td>—</td></tr>') $($l -match 'Branch / task') $($n -notmatch 'Branch / task' -and $n -notmatch '<th colspan=3>')" }
-Expect "leases: branch / task resolved from QA code and board pid, dash when none, column dropped when no row has one ($btk)" ($btk -eq 'True True True True True')
+  $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); resources = @([pscustomobject]@{ name = 'browser rm·x'; by = 'test:T5'; gb = 1 }, [pscustomobject]@{ name = 'phone P1'; by = 'pid-4242'; gb = 1 },
+      [pscustomobject]@{ name = 'slot a·Kite'; by = "devy-1 (fix/x) (grace 5 min)"; gb = 0 }, [pscustomobject]@{ name = 'phone P2'; by = ''; gb = 0 }, [pscustomobject]@{ name = 'mysql (rm, hm)'; kind = 'env'; shared = $true; gb = 1 }) })
+  "$($h -match '>browser rm&#183;x<small>test:T5</small><small class=bt>QA T5 &#183; pk9</small>') $($h -match '>phone P1<small>pid-4242</small><small class=bt>CODE1</small>') $($h -match '>slot a&#183;Kite<small>devy-1 \(grace 5 min\)</small><small class=bt>fix/x</small>') $($h -match '>phone P2<small>no live holder</small></span>') $($h -match '>mysql \(rm, hm\)<small>shared &#183; always on</small></span>')" }
+Expect "resources: holder + branch / task on each Resources · 24 h row, a dash-free blank, shared kept ($btk)" ($btk -eq 'True True True True True')
 # gate rows (K28): every kind of the 24 h log its own row (presets only label), rows idle 12 h folded (K22); Resources · 24 h (K25/K27): a
 # configured stopped service keeps a (folded) row, RAM from a lease first, else its process tree; the idle fold names its count
 $gtr = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $hr = { param($b) , @(0..23 | ForEach-Object { if ($_ -eq $b) { , @(1, 30, 0) } else { , @(0, 0, 0) } }) }
@@ -106,19 +95,22 @@ $dlv = & { Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos =
   "$($h -match "<span class=gn[^>]*>alpha</span><span class='gs hm fh l-mr'[^>]*><i[^>]*title='$d1 &#183; alpha: 1 MR\(s\) merged: alpha!1'>1</i><i class='nw hi'[^>]*>1</i></span><span class='gc'>2</span>") $($h -match '>beta</span>' -and $h -match "1 idle repos[^<]*</button><div class=gki><div class=gk><span class=gn[^>]*>quiet<") $($h -match "data-fv='st:review'[^>]*>1</i>" -and $h -match "data-fv='st:intest'" -and $h -match "<li data-fk='st:review'>" -and $h -notmatch "data-fk='[^']*st:passed") $($h -match 'id=sec-dl-lead open><summary>MR lead time, median per day \(6 h\)') $($h -match "class='ug dlv'[^>]*data-mas data-fill" -and $h -notmatch 'ucol')" }
 Expect "Delivery: repo x day map from config + MRs (idle repo folded), in-flight bar by status with task filters, median lead time, one balanced masonry grid ($dlv)" ($dlv -eq 'True True True True True')
 # agent groups (K45): a collapsible row per run (count, active / waiting, run kind), finished-only folded, collapse / expand all; a raw command -> step + script
-$agg = & { . $O; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); agents = @(
+# one agent = one row (owner 2026-11-19): B1's board row under the QA run that wf_a runs (its launch record's runDir) joins wf_a, the workflow's row wins
+$agg = & { . $O; @{ run = 'wf_a'; runDir = (Join-Path (Get-KitPath qa-runs) 'qa-run-1') } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath launches -Create) 'self-buildy-wf_a-1a2b.json')
+  @{ run = 'wf_a-2'; runDir = (Join-Path (Get-KitPath qa-runs) 'qa-run-2') } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath launches) 'self-buildy-wf_a-2-3c4d.json')   # glob also matches: its run field rules it out
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); agents = @([pscustomobject]@{ name = 'B1 (devy)'; run = 'qa-run-1'; state = 'STUCK'; task = 'qa-run-1' }, [pscustomobject]@{ name = 'C1 (checky)'; run = 'qa-run-2'; state = 'ACTIVE' },
       [pscustomobject]@{ name = 'B1 (devy)'; run = 'wf_a'; state = 'ACTIVE'; task = 'build:B1'; doing = "Build · Bash: export CLAUDE_AGENT='B1'; L=D:/k/skills/envy/envy.ps1; pwsh -Command x" },
       [pscustomobject]@{ name = 'wf_a (workflow)'; run = 'wf_a'; state = 'WAITING'; task = 'buildy.js wf_a'; doing = 'Review · Bash: Run crafty pipes check' },
       [pscustomobject]@{ name = 'k (kitty)'; run = 'kit-x'; state = 'FINISHED' }, [pscustomobject]@{ name = 's (devy)'; run = 'solo'; state = 'ACTIVE' }) })
-  $rxA = "<tbody class='grp' data-g='wf_a'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=true><span class=gn0>wf_a</span><span class=gcn>2 agents &#183; 1 active &#183; 1 waiting &#183; buildy</span>"
+  $rxA = "<tbody class='grp cl' data-g='wf_a'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=false><span class=gn0>wf_a</span><span class=gcn>2 agents &#183; 1 active &#183; 1 waiting &#183; buildy</span>"
   $rxF = "<tbody class='grp cl' data-g='kit-x'><tr class=gh><th colspan=6><button type=button class=gtg aria-expanded=false><span class=gn0>kit-x</span><span class=gcn>1 agent &#183; 1 finished &#183; kitty</span>"
   $rxD = "<span title='Build &#183; Bash: export CLAUDE_AGENT=&#39;B1&#39;;[^']*'>Build &#183; runs envy.ps1</span>"
   # K72: one toggle in the Agents header (gl() relabels it), the column header in a thead hidden while every group is collapsed
-  $rxS = "S.getItem('kc-ag-'"
+  $rxS = "L.getItem('kc-ag-'"
   $okT = $h.Contains('<button type=button class=ga data-gall>Collapse all</button></summary>') -and $h.Contains('<thead class=agh>') -and $h.Contains('table.ag:not(:has(tbody.grp:not(.cl)))>thead{display:none}') -and $h.Contains('function gl(){') -and -not $h.Contains('data-ga=1')
   $okC = $okT -and $h -match $rxD -and $h.Contains('>Review &#183; Bash: Run crafty pipes check<') -and $h.Contains($rxS)
-  "$($h.Contains($rxA)) $($h.Contains($rxF)) $okC" }
-Expect "Agents: a collapsible group per run (agents, active / waiting, kind), finished-only folded, collapse / expand all, raw command -> step + script ($agg)" ($agg -eq 'True True True')
+  "$($h.Contains($rxA)) $($h.Contains($rxF)) $okC $($h -notmatch "data-g='qa-run-1'" -and $h -match "data-g='qa-run-2'" -and ([regex]::Matches($h, '<td>B1 \(devy\)')).Count -eq 1)" }
+Expect "Agents: a collapsible group per run (agents, active / waiting, kind), every group folded, collapse / expand all, raw command -> step + script, one row per agent ($agg)" ($agg -eq 'True True True True')
 # lanes (K39, K74): Branches tile, a grid lane x repo (short repo names), a cell = behind + "+N" test merges, base sha in its tooltip,
 # behind amber, kept outlined, no slot = empty cell; cleanup / sync / warm slots as chips; a stretched graph capped at 160 px
 $lnh = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ repos = @{ at = $n.ToString('o'); repos = @(@{ repo = 'api-code'; branches = 1; worktrees = 1; removable = 2 }) }
