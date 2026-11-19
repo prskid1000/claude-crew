@@ -1,12 +1,12 @@
 # Local env reference (envy SKILL.md "Model" detail)
-Read by kitty / the coordinator editing `localEnv` or running owner verbs; by any agent puzzled by a NOTICE, a wait or a lane.
+For kitty / the coordinator editing `localEnv` or running owner verbs; any agent puzzled by a NOTICE, wait or lane.
 
 ## Train and leases
 - Train = every deploy queued when it starts: one merge, one gated build, one switch-over; a conflict refuses that branch; a
   failed build bisects to the culprit; merged branches drop out.
 - A layer also leaves when merged, gone from origin, its agent finished (`bossy.ps1 release`) or no live holder past the
-  grace (supervise); never a paused or handed-off agent's. An env without lease or hold drops at the next lease (`status`:
-  on the next lease, recent; leases.jsonl kind env-layer).
+  grace (supervise); never a paused or handed-off agent's. An env without lease or hold drops at the next lease (`status`,
+  leases.jsonl kind env-layer).
 - A lease keeps services up while its holder is live (README "Leases") and uses them (calls, traffic); unused
   `leaseIdleMinutes` (default `idle.graceMinutes`): released. Only a person's `-Owner` lease ends at a time.
 - A train waits for leases on what it changes at most `leaseMinutes` (30), then tells the holders ("deploy of <svc> starting,
@@ -93,16 +93,16 @@ Every local-env service follows it; `doctor` checks it (`adapters/lane_standard.
   staged copy (unknown routes -> index.html; no dev server).
 - `prepare` = a command after each sync whose edits are committed locally on the lane branch `lane/<product>-<bird>` (a build cache at `{cache}`,
   outside the repo).
-- `unpack` = a command that unpacks `{artifact}` into `{out}` (it fails: the plain artifact is staged, event `unpack-fallback`,
-  doctor warns).
+- `unpack` = a command unpacking `{artifact}` into `{out}` (failed: the plain artifact staged, event `unpack-fallback`, doctor warns).
 - `keepReleases` (2) staged per service + the ones running.
 - `stageLinks` (true): a release copies nothing: the artifact is moved out of the build (copied when another service
   stages the same one); unpacked and static files are kept once per content hash in `_lib` and hard-linked (a served file
-  is never written in place); another release's files hard-linked. `unpackLib` is gone: every unpacked file is stored.
+  is never written in place); another release's files hard-linked.
 - `reuseBuilds` (false): a lane re-stages its own copy of the same tree + config instead of building; only for builds that
   read nothing outside the worktree (a SNAPSHOT dependency from the local repository would go stale).
 - `aotTrain` ({aotFile}): one gated background run per artifact after it is up; `{aot}` in `start` = `aotUse`
   (`-XX:AOTCache="{aotFile}"`) once it exists.
+- `classpathFile` (off): thin jar + this classpath: per-release argfile; `start`: `@"{javaArgs}" <main>`.
 - `{reactor}` in `build` = `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs; only modules whose parent is
   in the module's parent chain, the rest come from the local repository: doctor lists them).
 - An edited kit.local.json, envy.ps1, lib.ps1 or `adapters/` file restarts the loop between trains.
@@ -112,7 +112,7 @@ Every local-env service follows it; `doctor` checks it (`adapters/lane_standard.
   (`localEnv.` or `envs.<env>.`; a lane uses its env's): regexes of lines that never flag (a job calling an outside system the
   machine cannot reach). `defaultService`:
   the service `logs` shows without `-Service` (else the env's only one).
-- `mvnd` on PATH replaces mvn / mvnw in every gated build. Events: `build`, `stage`, `up`, `aot-train` with seconds.
+- `mvnd` on PATH replaces mvn / mvnw in gated builds. Events `build`, `stage`, `up`, `aot-train` carry seconds.
 
 ## Cleanup
 - `cleanup [-Quick] [-DryRun]` (owner / coordinator): env worktrees (uncommitted ones kept), logs, run files and

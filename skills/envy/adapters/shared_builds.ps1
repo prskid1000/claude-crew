@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L66 lane pick
+# Sections: L4 shared builds · L67 lane pick · L110 thin artifacts
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -9,7 +9,7 @@ $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
 # prepare (its edits are in an env build only) or build env vars
 function Find-CheckBuild([string]$e, $s) {
   $on = $s.shareCheckBuild -eq $true -or ($null -eq $s.shareCheckBuild -and "$($s.build)" -match '\b(mvn|mvnw|mvnd)\b.*\bpackage\b' -and -not "$($s.prepare)" -and -not (Get-KitProps $s.env).Count)
-  if (-not $on -or $s.static -or -not $s.artifact) { return $null }
+  if (-not $on -or $s.static -or -not $s.artifact -or $s.classpathFile) { return $null }   # classpathFile: only an env build writes the classpath file
   $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; if (-not $wt -or -not (Test-Path -LiteralPath (Join-Path $wt '.git'))) { return $null }
   $tree = "$(git -C $wt rev-parse 'HEAD^{tree}' 2>$null)".Trim(); if (-not $tree) { return $null }
   $rec = try { Get-Content -LiteralPath (Join-Path (Get-KitPath check-builds) "$tree.json") -Raw -ErrorAction Stop | ConvertFrom-Json } catch { return $null }
@@ -28,6 +28,7 @@ function BuildKey([string]$e, $s) {
   $tree = "$(git -C $wt rev-parse "HEAD~$n^{tree}" 2>$null)".Trim(); if ($LASTEXITCODE -or -not $tree) { return $null }
   $cfg = [ordered]@{ tree = $tree; dir = "$($s.dir)"; build = "$($s.build)"; artifact = "$($s.artifact)"; static = "$($s.static)"; unpack = "$($s.unpack)"; prepare = "$($s.prepare)"; reactor = @($s.reactor); env = $s.env }
   if (-not $sb) { $cfg.lane = $e }
+  if ($s.classpathFile) { $cfg.classpathFile = "$($s.classpathFile)" }   # only when set: switched-off keys stay as they were
   (Get-KitHash ($cfg | ConvertTo-Json -Depth 8 -Compress) SHA1).ToLower()
 }
 # -> @{ lane; dir; path } of a recorded copy with this key (this lane first), else nothing; never throws
@@ -105,4 +106,25 @@ function Get-LanesOpen([string]$e) {
   $names = @(LaneNames $e); if ($names.Count -lt 2) { return $null }
   $open = @($names | Where-Object { $l = Get-LaneLoad $_; $l.up -or $l.train }); $p = (Read-State $names[0]).lanePick
   [pscustomobject]@{ open = $open.Count; of = $names.Count; lanes = $open; why = $(if ($p) { "$(([datetime]$p.at).ToString('HH:mm')) $($p.agent) -> $($p.env): $($p.why)" } else { 'no pick yet' }) }
+}
+# ---- thin artifacts: services[].classpathFile, a thin artifact + the build's classpath file -> <release>/classpath.txt and java.args (-cp "<artifact>;<libraries>"),
+# so a restart or rollback starts what that release built; libraries stay in the Maven local repository, the repo's own module jars are copied
+function JavaArgsFile([string]$artifact) { if ($artifact) { Join-Path $(if (Test-Path -LiteralPath $artifact -PathType Container) { $artifact } else { Split-Path $artifact }) 'java.args' } }
+function Write-JavaArgs([string]$e, $s, [string]$from, [string]$to, [string]$art) {
+  $cpf = Join-Path $to 'classpath.txt'
+  if ($from) {   # a shared stage brings the other lane's classpath.txt; java.args is always rewritten for this release's artifact
+    if (-not (Test-Path -LiteralPath $from -PathType Leaf)) { throw "[$e] $($s.name): no classpath file $from after the build (services[].classpathFile: the build writes it, e.g. Maven dependency:build-classpath -Dmdep.outputFile=$($s.classpathFile))" }
+    $wt = if ($s.repo) { (EnvRepos $e)[(RepoOf $e $s)].wt } else { '' }; $libDir = Join-Path $to 'lib'
+    $entries = foreach ($p in @((Get-Content -LiteralPath $from -Raw).Trim() -split [regex]::Escape([IO.Path]::PathSeparator) | Where-Object { $_ })) {
+      $rel = if ($wt) { [IO.Path]::GetRelativePath($wt, $p) } else { '..' }
+      if (-not ($rel -match '^\.\.' -or [IO.Path]::IsPathRooted($rel))) {   # a reactor module's jar in the worktree: the next build rewrites (or cannot, while locked) it
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "[$e] $($s.name): classpath entry $p is not a jar (build to package so modules resolve to their jars)" }
+        $null = New-Item -ItemType Directory -Force $libDir; Copy-Item -LiteralPath $p $libDir -Force; "lib/$(Split-Path $p -Leaf)"
+      } else { $p }
+    }
+    Remove-Item -LiteralPath $cpf -Force -ErrorAction SilentlyContinue; Set-Content -LiteralPath $cpf (@($entries) -join [IO.Path]::PathSeparator) -NoNewline -Encoding utf8NoBOM
+  } elseif (-not (Test-Path -LiteralPath $cpf)) { throw "[$e] $($s.name): the shared release has no classpath.txt (staged before services[].classpathFile was set): deploy again" }
+  $cp = (@($art) + @((Get-Content -LiteralPath $cpf -Raw).Trim() -split [regex]::Escape([IO.Path]::PathSeparator) | Where-Object { $_ } | ForEach-Object { if ([IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $to $_ } }) | ForEach-Object { $_.Replace('\', '/') }) -join [IO.Path]::PathSeparator
+  $ja = JavaArgsFile $art; Remove-Item -LiteralPath $ja -Force -ErrorAction SilentlyContinue   # a hard link from a shared stage is never written in place
+  Set-Content -LiteralPath $ja "-cp `"$cp`"" -NoNewline -Encoding utf8NoBOM   # java @argfile: quoted, forward slashes (a backslash escapes in quotes)
 }

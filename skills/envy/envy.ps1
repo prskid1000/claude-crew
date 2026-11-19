@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L235 state · L282 layer drops · L354 leases · L462 code · L473 migrations ·
-  L476 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L624 shared builds · L757 hooks · L829 marks · L1010 seed ·
-  L1077 processes · L1458 daemon · L1920 cleanup · L1992 doctor · L2047 verbs
+Sections: L36 config · L239 state · L286 layer drops · L358 leases · L466 code · L477 migrations ·
+  L480 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L628 shared builds · L766 hooks · L838 marks · L1019 seed ·
+  L1086 processes · L1467 daemon · L1929 cleanup · L2001 doctor · L2060 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -181,6 +181,10 @@ function Expand-Placeholders([string]$t, [string]$e, $s, [string]$dir, [string]$
   $wt = if ($s.repo) { (EnvRepos $e)[(RepoOf $e $s)].wt } else { '' }
   if ($t -match '\{aot\}') {   # the AOT cache once a training run wrote it (services[].aotUse, default the JDK 24+ option), else nothing
     $af = AotFile $artifact; $t = $t.Replace('{aot}', $(if ($af -and (Test-Path -LiteralPath $af)) { $(if ($s.aotUse) { [string]$s.aotUse } else { '-XX:AOTCache="{aotFile}"' }).Replace('{aotFile}', $af) } else { '' }))
+  }
+  if ($artifact -and $t.Contains('{javaArgs}')) {   # services[].classpathFile: the argfile of the release being started (its own artifact + libraries)
+    $ja = JavaArgsFile $artifact; if (-not (Test-Path -LiteralPath $ja)) { throw "[$e] $($s.name): no java.args next to $artifact (staged before services[].classpathFile was set): deploy again" }
+    $t = $t.Replace('{javaArgs}', $ja)
   }
   if ($t -match '\{cache\}') { $t = $t.Replace('{cache}', (Join-Path (Get-KitPath cache -Create) "localenv/$e-$($s.name)")) }   # a build cache outside the repo
   $t.Replace('{port}', "$($s.port)").Replace('{debugPort}', "$($s.debugPort)").Replace('{dir}', $dir).Replace('{wt}', $wt).Replace('{env}', $e).Replace('{lane}', $(if ($t.Contains('{lane}') -and [int](Get-EnvCfg $e).lane -gt 1) { "$((Get-EnvCfg $e).lane)" } else { '' })).Replace('{kit}', $KitConf.Kit).Replace('{workspace}', $KitConf.Workspace).Replace('{artifact}', "$artifact").Replace('{lanIp}', $(if ($t -match '\{lanIp\}') { LanIp } else { '' }))
@@ -646,7 +650,7 @@ function Build-Repo([string]$e, [string]$rn) {
 }
 # a release = a runnable copy per service (the worktree builds on while it serves); keepReleases + the ones in use kept
 function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
-  $out = @{}
+  $out = @{}; $cpUsed = @()
   foreach ($s in EnvServices $e | Where-Object { ($_.artifact -or $_.static) -and (RepoOf $e $_) -eq $rn }) {
     $dir = SvcDir $e $s; $t0 = Get-Date
     $to = Join-Path (Get-KitPath localenv -Create) "run/$e/$($s.name)/$tag"
@@ -680,11 +684,16 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
       }
       if (-not $out[$s.name]) { if (-not $cbf -and (Opt 'stageLinks' $true) -and -not @(EnvServices $e | Where-Object { $_.name -ne $s.name -and "$($_.artifact)" -eq $s.artifact -and (SvcDir $e $_) -eq $dir }).Count) { Move-Item -LiteralPath $f.FullName $to -Force } else { Copy-Item $f.FullName $to -Force }; $out[$s.name] = Join-Path $to $f.Name }
     }
+    if ($s.classpathFile -and -not $s.static) {   # consumed: never a stale one staged
+      $cpSrc = if ($shared) { $null } else { Join-Path $dir $s.classpathFile }; Write-JavaArgs $e $s $cpSrc $to $out[$s.name]
+      if ($cpSrc) { $cpUsed += $cpSrc }
+    }
     $bo = $out[$s.name]
     if ($bk) { Update-State $e { param($x) if ($x.builds -isnot [hashtable]) { $x.builds = @{} }; $x.builds[$s.name] = @(@(@($x.builds[$s.name]) | Where-Object { $_ -and $_.key -ne $bk }) + @(@{ key = $bk; dir = $to; path = $bo; at = (Now) }) | Select-Object -Last 3) } }
     Event $e 'stage' @{ service = $s.name; tag = $tag; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); unpacked = [bool]$s.unpack; shared = $shLane }
     $null = Remove-OldReleases $e $s (Split-Path $to)
   }
+  $cpUsed | Select-Object -Unique | ForEach-Object { Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue }   # after every service sharing it staged
   $out
 }
 # localEnv.stageLinks: a release links, never copies (flagged.ps1 linkfiles; store <service>/_lib); off: copies, no AOT cache
@@ -2020,6 +2029,10 @@ function Get-Doctor([string]$e) {
     if ($jh -and -not (Test-Path -LiteralPath (Join-Path $jh 'bin'))) { & $add 'FAIL' "$($s.name): JAVA_HOME $jh has no bin folder" }
     if ($s.reactor) { $rm = try { Get-ReactorModules $e $s } catch { $null }; if ($rm.skip.Count) { & $add 'WARN' "$($s.name).reactor: $($rm.skip -join ', ') not built (their parent is outside $($rm.me)'s chain: Maven default plugins); they come from the local repository" } }
     if ($s.unpack) { $uf = @(Read-KitLog env (Get-Date).AddDays(-7) | Where-Object { $_.env -eq $e -and $_.event -eq 'unpack-fallback' -and $_.service -eq $s.name }); if ($uf.Count) { & $add 'WARN' "$($s.name).unpack failed $($uf.Count)x in 7 d (the plain artifact was staged): $($uf[-1].why)" } }
+    if ($s.classpathFile) {   # thin jar: start reads the release's argfile
+      if ("$($s.start)" -notmatch '\{javaArgs\}') { & $add 'WARN' "$($s.name).classpathFile is set but start has no @`"{javaArgs}`"" }
+      $ra = "$((Read-State $e).services[$s.name].artifact)"; if ($ra -and (Test-Path -LiteralPath $ra) -and -not (Test-Path -LiteralPath (JavaArgsFile $ra))) { & $add 'WARN' "$($s.name): the running release $(Split-Path $ra) has no java.args (staged before classpathFile): a restart fails until the next deploy" }
+    }
     if ($s.artifact -and $s.repo) {
       if (-not (Test-Path -LiteralPath $dir)) { & $add 'WARN' "$($s.name): $dir does not exist yet (the first deploy / refresh creates it)" }
       elseif (-not $(if ($s.static) { Test-Path -LiteralPath (Join-Path $dir $s.static) -PathType Container } else { @(Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue).Count })) { & $add 'WARN' "$($s.name): nothing matches artifact $($s.artifact) in $dir yet (the next deploy / refresh builds it)" }
