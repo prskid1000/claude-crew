@@ -1091,7 +1091,7 @@ function Invoke-KitReleaseAgent([string[]]$Agent, [string]$Reason = 'agent finis
       }
       # a hold only the leases log still has (its store dropped it without a release row): the idle-holder WATCH read it for 24 h
       # kinds whose stores were checked above and hold nothing of $a (a tab with no puppeteer, a parked slot: still held)
-      $kinds = @('env', 'env-layer', 'gpu') + @(if (-not @($tabs | Where-Object agent -eq $a).Count) { 'tab' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -eq $a }).Count) { 'slot' })
+      $kinds = @('env', 'env-layer', 'gpu') + @(if (-not @($tabs | Where-Object agent -eq $a).Count) { 'tab' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -eq $a }).Count) { 'slot' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object agent -eq $a).Count) { 'lane' })
       if (-not $n) { $lo = @(Get-KitResourceRows (Get-Date).AddHours(-24) | Where-Object { ($_.key -split '\|')[0] -in $kinds -and $_.agents -contains $a })
         foreach ($x in $lo) { $xk, $xn = $x.key -split '\|', 2; Write-KitLeaseLog release $xk $xn @{ agent = $a } "$Reason (no store held it: log row closed)" }
         if ($lo.Count) { "${a}: $($lo.Count) stale log hold(s) closed: $(@($lo.resource) -join ', ')" } else { "${a}: no lease held" } }

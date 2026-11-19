@@ -173,10 +173,17 @@ $KitLeaseLogMax = 300; 1..6 | % { Write-KitLeaseLog acquire tab $_ }; "trim:$(@(
 Expect-Each $le 'leases (left = dead): #' 'dead', 'log', 'status', 'trim', 'layer'
 # a hold only the leases log has (its store dropped it, no release row): release closes the row (an env-layer, a tab), never a lock it does not release
 $rlo = Invoke-PsTest release-logonly @'
-$null = . $args[0] 6>$null; Write-KitLeaseLog acquire env-layer 'h/api' @{ agent = 'DL' }; Write-KitLeaseLog acquire tab 'stg|t|admin' @{ agent = 'DL' }; Write-KitLeaseLog acquire lock 'L1' @{ agent = 'DL' }
+$null = . $args[0] 6>$null; Write-KitLeaseLog acquire env-layer 'h/api' @{ agent = 'DL' }; Write-KitLeaseLog acquire tab 'stg|t|admin' @{ agent = 'DL' }; Write-KitLeaseLog acquire lock 'L1' @{ agent = 'DL' }; Write-KitLeaseLog acquire lane 'L9' @{ agent = 'DL' }
 $r1 = "$(Invoke-KitReleaseAgent DL)"; $left = @(Get-KitResourceRows | Where-Object { $_.agents -contains 'DL' } | ForEach-Object key)
-"logonly:$($r1 -match 'DL: 2 stale log hold\(s\) closed' -and "$left" -eq 'lock|L1' -and "$(Invoke-KitReleaseAgent PZ9)" -match 'PZ9: no lease held')"
+"logonly:$($r1 -match 'DL: 3 stale log hold\(s\) closed' -and "$left" -eq 'lock|L1' -and "$(Invoke-KitReleaseAgent PZ9)" -match 'PZ9: no lease held')"
+# board leave: the agent's phone leases under another lease id (test:AQhm, holder AQ) of its session process go with it; another process's stay
+$s2 = ((Invoke-KitVerb Invoke-Board join, -Agent, AQ, -Run, r | Out-String) -split 'SESSION ')[1].Split()[0]; $bf = Join-Path (Get-KitPath board) "$s2.json"
+$be = Get-Content $bf -Raw | ConvertFrom-Json; $be.holderPid = 4242; $be | ConvertTo-Json -Depth 5 | Set-Content $bf
+@{ agent = 'test:AQhm'; lane = 'L9'; holder = 'AQ'; holderPid = 4242 } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath phones -Create) 'L9.json')
+@{ agent = 'test:ZZ'; lane = 'L8'; holder = 'AQ'; holderPid = 1 } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath phones) 'L8.json')
+function Invoke-KitReleaseAgent([string[]]$Agent, $Reason) { $script:relAgents = @($Agent) -join ',' }
+$null = Invoke-KitVerb Invoke-Board leave, -Session, $s2; "holder:$($script:relAgents -eq 'AQ,test:AQhm')"
 '@ @($O)
-Expect-Each $rlo 'release: a log-only hold is closed (#)' 'logonly' -Show 4
+Expect-Each $rlo 'release: a log-only hold is closed, a left agent''s phone leases by holder go (#)' 'logonly', 'holder' -Show 4
 Remove-TestKit $k
 Complete-Tests

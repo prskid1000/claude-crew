@@ -28,9 +28,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
-  L719 track · L1061 supervise · L1384 report · L1464 audit · L1524 storage · L1527 bugbrief · L1641 cleanup · L1728 learn ·
-  L1759 decide · L1910 debate · L1954 health · L2021 retro due · L2031 tidy · L2103 setup · L2200 guard-sendmessage
+Sections: L36 init · L47 board · L228 budget · L258 launch · L499 recover · L586 pause · L597 resume · L664 program · L715 param ·
+  L721 track · L1063 supervise · L1386 report · L1466 audit · L1526 storage · L1529 bugbrief · L1643 cleanup · L1730 learn ·
+  L1761 decide · L1912 debate · L1956 health · L2023 retro due · L2033 tidy · L2105 setup · L2202 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -192,7 +192,9 @@ switch ($Action) {
     if (-not $paused) { Add-KitSpendObs $script:leftEntry $(if ($Handoff) { 'short' } else { 'ok' }) }   # a handoff: the estimate was too low
     if (-not $paused -and -not $Handoff -and (Test-Path -LiteralPath $cf)) { try { Invoke-KitLocked $cf { $c = Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json; if (-not $c.run -or "$($c.run)" -eq "$($script:leftEntry.run)") { $c | Add-Member -Force NoteProperty done $true; Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 6) } } } catch {} }   # next join starts fresh
     $twin = @(All | Where-Object { $_.agent -eq $script:leftEntry.agent -and $_.session -ne $Session -and $_.status -ne 'left' -and (Test-KitLive @{ session = $_.session }) })
-    if (-not $paused -and -not $Handoff -and -not $twin.Count) { Invoke-KitReleaseAgent -Agent $script:leftEntry.agent -Reason "left the board ($Session)" }   # paused / handed off: successor keeps them
+    # its phone leases under another lease id (test:T1hm, holder T1) from the same session process go too, not after the idle grace
+    $byHolder = @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object { $_.agent -and $_.agent -ne $script:leftEntry.agent -and "$($_.holder)" -eq $script:leftEntry.agent -and $_.holderPid -and "$($_.holderPid)" -eq "$($script:leftEntry.holderPid)" } | ForEach-Object agent | Select-Object -Unique)
+    if (-not $paused -and -not $Handoff -and -not $twin.Count) { Invoke-KitReleaseAgent -Agent (@($script:leftEntry.agent) + $byHolder) -Reason "left the board ($Session)" }   # paused / handed off: successor keeps them
     if ($paused) {
       # poll-ok: local pause record, bounded by -Wait minutes
       $until = (Get-Date).AddMinutes($Wait); while (($pz = Get-KitActivePause $script:leftEntry.run) -and (Get-Date) -lt $until) { Wait-KitPoll 10 }
