@@ -6,8 +6,8 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L349 cards · L565 flags · L677 bands ·
-  L754 shells
+Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L410 cards · L626 flags · L738 bands ·
+  L815 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -145,8 +145,8 @@ function Update-KitCpuStats($Prior, [datetime]$Now = (Get-Date), $Shells = @(), 
 # counts its growth, one started since the last beat all of it, an older unseen one nothing (no history spike); an exited one drops out.
 # writes.softGBPerHour -> WATCH, writes.hardGBPerHour -> ACT; closed clock hours -> state disk-writes (the card's 7 and 30 days)
 # K94 (owner 2026-11-19): the I/O counter also counts pipes, sockets and console, so a GB is "est." = the process's share of all process
-# I/O x the physical disks' real writes over the same beat (never above them); no disk counter -> no flag; not kit-owned -> never ACT,
-# WATCH only when the disks wrote writes.hardGBPerHour; kit.local.json writes.tracerCsv (Time, Process, WriteMB[, Kind=disk]) caps a non-kit row
+# I/O x the physical disks' real writes over the same beat (never above them); no disk counter -> no flag; a tracer (writes.tracer) replaces
+# every estimate with disk MB; not kit-owned -> never ACT, WATCH only on the tracer's MB
 function Get-KitWriteProcs {   # the sweep's processes + Write (bytes); none off Windows
   if (-not $KitIsWindows) { return @() }
   $wb = @{}; foreach ($c in @(Get-CimInstance Win32_Process -Property ProcessId, WriteTransferCount -ErrorAction SilentlyContinue)) { $wb[[int]$c.ProcessId] = [double]$c.WriteTransferCount }
@@ -158,17 +158,38 @@ function Get-KitDiskWritten {
   # the property is matched, not named: its full name is a pwsh script-block-logging trigger (lint ARCH-SBLOG)
   try { $pd = @(Get-KitProps @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop)[0] | Where-Object Name -like 'DiskWriteB*'); if ($pd.Count) { [double]$pd[0].Value } } catch { $null }
 }
-# the tracer CSV's disk GB per process name over the hour before $Now; $null when unset, missing or stale (no row in 30 min)
-function Read-KitWriteTracer([string]$File, [datetime]$Now) {
-  $script:KitTracerFolders = $null; if (-not $File -or -not (Test-Path -LiteralPath $File)) { return $null }
-  $hd = (Get-Content -LiteralPath $File -TotalCount 1); $rows = @(Get-Content -LiteralPath $File -Tail 3000 | Where-Object { $_ -ne $hd } | ConvertFrom-Csv -Header @($hd -split ',' | ForEach-Object { $_.Trim('"') }))
-  $ic = [cultureinfo]::InvariantCulture; $gb = @{}; $fo = @{}; $newest = [datetime]::MinValue
-  foreach ($r in $rows) { $t = [datetime]::MinValue; if (-not [datetime]::TryParse("$($r.Time)", $ic, [Globalization.DateTimeStyles]::None, [ref]$t) -or ($r.Kind -and $r.Kind -ne 'disk')) { continue }
-    $mb = 0.0; if (-not [double]::TryParse("$($r.WriteMB)", [Globalization.NumberStyles]::Float, $ic, [ref]$mb)) { continue }   # a half-written last line
-    $pn = "$($r.Process)" -replace '(?i)\.exe$'; if ($t -gt $newest) { $newest = $t }
-    if ($t -gt $Now.AddHours(-1) -and $t -le $Now) { $gb[$pn] = [double]$gb[$pn] + $mb / 1024; if ($r.Folder) { $fk = "$($r.Folder)" -replace '[\\/]+\.\.\.$' -replace '/', '\'; $fo[$fk] = [double]$fo[$fk] + $mb / 1024 } } }
-  $script:KitTracerFolders = if ($newest -ge $Now.AddMinutes(-30)) { $fo }   # per folder, every process (System flushes cached writes)
-  if ($newest -lt $Now.AddMinutes(-30)) { return $null }; $gb
+# kit.local.json writes.tracer { csv, time, kind, process, folder, mb, disk }: the tracer CSV and its column names (today's by default);
+# writes.tracerCsv: the older key for csv
+function Get-KitWriteTracerConf {
+  $c = Get-KitSetting 'writes.tracer' $null; $v = { param($k, $d) $x = if ($c) { "$(Get-KitMember $c $k)" }; if ($x) { $x } else { $d } }
+  @{ csv = (& $v 'csv' ([string](Get-KitSetting 'writes.tracerCsv' ''))); time = (& $v 'time' 'Time'); kind = (& $v 'kind' 'Kind'); process = (& $v 'process' 'Process'); folder = (& $v 'folder' 'Folder'); mb = (& $v 'mb' 'WriteMB'); disk = (& $v 'disk' 'disk') }
+}
+# the tracer's physical disk writes in ($Since, $Now] -> @{ oldest; newest; rows = @(@{ t; p = process; f = folder; mb }) }; columns by header name
+# (any order, case-insensitive); no kind column = every row is disk, another kind value is skipped; $null = no tracer: unset, missing,
+# no time / process / MB column, or stale (no row in the 20 min before $Now)
+function Read-KitWriteTracer($Conf, [datetime]$Now, [datetime]$Since = $Now.AddHours(-1)) {
+  if ($Conf -is [string]) { $cf = Get-KitWriteTracerConf; $cf.csv = $Conf; $Conf = $cf }
+  if (-not $Conf.csv -or -not (Test-Path -LiteralPath $Conf.csv)) { return $null }
+  $fs = [IO.FileStream]::new($Conf.csv, 'Open', 'Read', 'ReadWrite'); try { $all = [IO.StreamReader]::new($fs).ReadToEnd() } finally { $fs.Dispose() }   # the tracer appends meanwhile
+  $ln = @($all -split "`r?`n" | Where-Object { $_ }); if ($ln.Count -lt 2) { return $null }
+  $crx = [regex]::new('(?:^|,)(?:"((?:[^"]|"")*)"|([^,]*))', 'Compiled')
+  $cell = { param([string]$l) $o = [Collections.Generic.List[string]]::new(); foreach ($m in $crx.Matches($l)) { $o.Add($(if ($m.Groups[1].Success) { $m.Groups[1].Value.Replace('""', '"') } else { $m.Groups[2].Value })) }; , $o.ToArray() }
+  $hd = @((& $cell $ln[0]).ForEach({ "$_".Trim() })); $ix = @{}
+  foreach ($k in 'time', 'kind', 'process', 'folder', 'mb') { $ix[$k] = -1; for ($i = 0; $i -lt $hd.Count; $i++) { if ($hd[$i] -ieq $Conf[$k]) { $ix[$k] = $i; break } } }
+  if ($ix.time -lt 0 -or $ix.process -lt 0 -or $ix.mb -lt 0) { return $null }
+  $ic = [cultureinfo]::InvariantCulture; $newest = [datetime]::MinValue; $oldest = [datetime]::MaxValue; $rows = [Collections.Generic.List[object]]::new()
+  # appended in time order: parsed from the end in chunks until one starts at or before $Since (a beat parses ~1 chunk, not the file)
+  for ($end = $ln.Count - 1; $end -ge 1; $end -= 250) { $lo = 1e18
+    foreach ($l in $ln[[math]::Max(1, $end - 249)..$end]) { $t = [datetime]::MinValue   # the cells inline: a script block call per line doubled the beat's parse
+      $v = [Collections.Generic.List[string]]::new(); foreach ($m in $crx.Matches($l)) { $v.Add($(if ($m.Groups[1].Success) { $m.Groups[1].Value.Replace('""', '"') } else { $m.Groups[2].Value })) }
+      if ($v.Count -le $ix.time -or -not [datetime]::TryParse($v[$ix.time], $ic, [Globalization.DateTimeStyles]::None, [ref]$t)) { continue }
+      if ($t -gt $newest) { $newest = $t }; if ($t -lt $oldest) { $oldest = $t }; $lo = [math]::Min($lo, $t.Ticks)
+      if ($t -le $Since -or $t -gt $Now -or ($ix.kind -ge 0 -and "$($v[$ix.kind])" -ine $Conf.disk)) { continue }
+      $mb = 0.0; if (-not [double]::TryParse("$($v[$ix.mb])", [Globalization.NumberStyles]::Float, $ic, [ref]$mb)) { continue }   # a half-written last line
+      $rows.Add(@{ t = $t; p = ("$($v[$ix.process])" -replace '(?i)\.exe$'); f = $(if ($ix.folder -ge 0) { "$($v[$ix.folder])" -replace '[\\/]+\.\.\.$' -replace '/', '\' } else { '' }); mb = $mb }) }
+    if ($lo -le $Since.Ticks) { break } }
+  if ($newest -lt $Now.AddMinutes(-20)) { return $null }
+  @{ oldest = $oldest; newest = $newest; rows = $rows }
 }
 # a command's executable without folder and .exe (the tracer's process name)
 function Get-KitWriteExe([string]$Name, [string]$Cmd) { if ($Cmd -match '^(?:"(?:[^"]*[\\/])?(?<x>[^"\\/]+?)(?:\.exe)?"|(?:\S*[\\/])?(?<x>[^\s\\/]+?)(?:\.exe)?(?:\s|$))') { $Matches.x } else { $Name -replace '(?i)\.exe$' } }
@@ -191,17 +212,33 @@ function Get-KitWriteLabel([string]$Name, [string]$Cmd) {
 }
 # $Procs: @{ Id; ParentId; Name; CommandLine; Created; Write }; $Owners: @{ pid; label; tag } roots; -> @{ at; acc; samples; hour; flags }
 # $Disk: Get-KitDiskWritten; $Tracer: Read-KitWriteTracer
-# a sample = @{ at; s = seconds; m = machine GB (the disks' when e); e = 1: GBs scaled to the disks; w = @(@{ n = label; a = tag (agent); g = GB; c = top command; k = 1: kit-owned }) }
+# a sample = @{ at; s = seconds; m = machine GB (the disks' when e); e = 1: GBs scaled to the disks; t = 1: GBs from the tracer; w = @(@{ n = label; a = tag (agent); g = GB; c = top command; k = 1: kit-owned }) }
 # the folders a command names (absolute paths after the executable; a file: its folder), at most 3
 function Get-KitWriteDirs([string]$Cmd) {
   $ps = @([regex]::Matches(($Cmd -replace '^\s*("[^"]*"|\S+)'), '(?<![\w])[A-Za-z]:[\\/][^"\s]*') | ForEach-Object { $p = $_.Value -replace '/', '\' -replace '[\\,;]+$'; if ($p -match '\.\w{1,5}$') { Split-Path $p } else { $p } })
   @($ps | Where-Object { @($_ -split '\\').Count -ge 3 } | Select-Object -Unique -First 3)
 }
-# a kit row's disk GB from the tracer's folders: a folder under one of its paths, or a cut tracer folder (4+ parts) above one
-function Get-KitWriteFolderGB($Folders, [string[]]$Dirs) {
-  $sum = 0.0; foreach ($fk in @($Folders.Keys)) { foreach ($d in $Dirs) { if ($fk.StartsWith($d, 'OrdinalIgnoreCase') -or (@($fk -split '\\').Count -ge 4 -and $d.StartsWith($fk, 'OrdinalIgnoreCase'))) { $sum += [double]$Folders[$fk]; break } } }; $sum
+# a tracer folder belongs to a dir: under it, or a cut tracer folder (4+ parts) above it
+function Test-KitWriteFolderIn([string]$Folder, [string[]]$Dirs) {
+  $fb = $Folder.TrimEnd('\') + '\'   # a path boundary: D:\a\app2 is not under D:\a\app
+  foreach ($d in $Dirs) { $db = $d.TrimEnd('\') + '\'; if ($fb.StartsWith($db, 'OrdinalIgnoreCase') -or (@($Folder -split '\\').Count -ge 4 -and $db.StartsWith($fb, 'OrdinalIgnoreCase'))) { return $true } }; $false
 }
-function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Disk = $null, $Tracer = $null, $Folders = $null) {
+# a sample's rows ($Rows: @{ n; g = est. GB; c; k; f }) -> @{ label = disk GB } from the tracer rows in ($S1, $E1]: a write under a kit row's
+# folders goes to that row whatever the process (System flushes cached writes); any other write to the rows of its process (split by
+# their est. share); System's other writes and processes no row names: none (the machine total keeps them)
+function Get-KitTracerShare($Tracer, [datetime]$S1, [datetime]$E1, $Rows) {
+  $out = @{}; foreach ($r in $Rows) { $out["$($r.n)"] = 0.0 }; $kd = @($Rows | Where-Object { [int]$_.k -and @($_.f).Count })
+  $byExe = @{}; foreach ($r in $Rows) { $x = (Get-KitWriteExe '' "$($r.c)").ToLower(); if (-not $byExe.ContainsKey($x)) { $byExe[$x] = [Collections.Generic.List[object]]::new() }; $byExe[$x].Add($r) }
+  foreach ($w in @($Tracer.rows | Where-Object { $_.t -gt $S1 -and $_.t -le $E1 })) { $gb = [double]$w.mb / 1024
+    $hit = if ($w.f) { @($kd | Where-Object { Test-KitWriteFolderIn $w.f @($_.f) })[0] }; if ($hit) { $out["$($hit.n)"] += $gb; continue }
+    $rs = $byExe["$($w.p)".ToLower()]; if ("$($w.p)" -match '^(System|Idle|Registry)$' -or -not $rs) { continue }
+    $tot = [double](@($rs | ForEach-Object { [double]$_.g }) + 0 | Measure-Object -Sum).Sum
+    foreach ($r in $rs) { $out["$($r.n)"] += $gb * $(if ($tot -gt 0) { [double]$r.g / $tot } else { 1.0 / $rs.Count }) } }
+  $out
+}
+# $Tracer: Read-KitWriteTracer from the oldest sample still est. (24 h): its rows replace every row's GB (sample t = 1), samples
+# before it too ("re-render"); $Redo (out) = the sample windows it re-attributed
+function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Disk = $null, $Tracer = $null, [string[]]$KitDirs = @()) {
   $key = { param($p) "$($p.Id)|$(if ($p.Created) { ([datetime]$p.Created).ToUniversalTime().Ticks })" }
   $osRoot = '^(System|Idle|smss|csrss|wininit|winlogon|services|svchost|explorer|userinit|init|systemd|launchd)(\.exe)?$'
   $byId = @{}; $acc = [ordered]@{}; foreach ($p in @($Procs | Where-Object { $_ -and $null -ne $_.Write })) { $byId[[int]$p.Id] = $p; $acc[(& $key $p)] = [double]$p.Write }
@@ -210,6 +247,8 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Di
   $ownerOf = { param($p) $q = $p
     for ($n = 0; $n -lt 16; $n++) { if ($own.ContainsKey([int]$q.Id)) { return $own[[int]$q.Id] }
       $up = $byId[[int]$q.ParentId]; if (-not $up -or $up.Id -eq $q.Id -or "$($up.Name)" -match $osRoot -or ($up.Created -and $q.Created -and [datetime]$up.Created -gt [datetime]$q.Created)) { break }; $q = $up }
+    # an unowned tree whose root names a kit folder (the kit-tests mysqld's data dir, a detached kit script) is the kit's
+    $qc = "$($q.CommandLine)" -replace '/', '\'; foreach ($kd in @($KitDirs | Where-Object { $_ })) { if ($qc.IndexOf(("$kd" -replace '/', '\').TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -ge 0) { return @{ pid = [int]$q.Id; label = (Get-KitWriteLabel "$($q.Name)" $qc); tag = 'kit' } } }
     "pid $($q.Id)" }   # a reused parent id starts after its child: the tree stops there
   $samples = @($Prior.samples | Where-Object { $_ -and [datetime]$_.at -ge $Now.AddDays(-1) -and [datetime]$_.at -lt $Now })
   $prevAt = try { [datetime]$Prior.at } catch { $null }; $dt = if ($prevAt) { ($Now - $prevAt).TotalSeconds } else { 0 }
@@ -233,38 +272,52 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Di
     $smp = [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; m = [math]::Round($(if ($null -ne $dg) { $dg } else { $mach }), 3) }; if ($null -ne $dg) { $smp.e = 1 }
     $smp.w = @($rw.Keys | Where-Object { $rw[$_].g * $f -ge 0.001 } | ForEach-Object { $o1 = [ordered]@{ n = "$_"; a = $rw[$_].a; g = [math]::Round($rw[$_].g * $f, 3); c = $rw[$_].c; k = $rw[$_].k }; if ($rw[$_].k -and $rw[$_].f.Count) { $o1.f = $rw[$_].f }; $o1 }); $samples += $smp
   }
-  $hr = @{}; $last = @{}; $hd = 0.0; $he = $false
-  # only disk-scaled samples count (one from before the disk counter, a reboot or a lost prior is raw I/O); the card keeps them all
-  foreach ($s in @($samples | Where-Object { [datetime]$_.at -gt $Now.AddHours(-1) -and $_.e })) { $he = $true; $hd += [double]$s.m
-    foreach ($r in @(Get-KitWriteRows $s)) { $hr["$($r.n)"] = [double]$hr["$($r.n)"] + [double]$r.g; $last["$($r.n)"] = $r } }
-  # the tracer's disk GB of the top process caps a row not kit-owned; a kit row: its folders' GB, every process (a cached write, e.g. qemu
-  # disk images or browser profiles, is flushed by System: the writer's name undercounts it; 2026-11-19: Falcon.avd 0.8 GB/h, qemu 0;
-  # a browser profile est. 2.94 GB, its folder 84 MB)
-  $hour = @($hr.Keys | ForEach-Object { $g = $hr[$_]; $tx = Get-KitWriteExe '' "$($last[$_].c)"; if ($Tracer -and -not [int]$last[$_].k -and $Tracer.ContainsKey($tx)) { $g = [math]::Min($g, [double]$Tracer[$tx]) }
-      if ($Folders -and [int]$last[$_].k -and @($last[$_].f).Count) { $g = [math]::Min($g, [double](Get-KitWriteFolderGB $Folders @($last[$_].f))) }
-      [ordered]@{ label = $_; tag = "$($last[$_].a)"; gb = [math]::Round($g, 2); cmd = "$($last[$_].c)"; k = [int]$last[$_].k } } | Sort-Object { - $_.gb })
+  # owner 2026-11-19 ("it should record pure disk writes"): with a tracer every row's GB is its physical disk MB (a cached write, e.g. qemu
+  # disk images or browser profiles, is flushed by System: credited to the kit row whose folder it is); the I/O counter is the fallback, est.
+  $redo = [Collections.Generic.List[object]]::new()
+  if ($Tracer) { $samples = @(foreach ($s in $samples) { $e1 = [datetime]$s.at; $s1 = $e1.AddSeconds(-[math]::Max(1.0, [double]$s.s))
+        if ($s.t -or $s.x -or $e1 -gt $Tracer.newest.AddMinutes(20)) { $s; continue }
+        if ($s1 -lt $Tracer.oldest) { if ($s -is [Collections.IDictionary]) { $s.x = 1 } else { $s | Add-Member -Force -NotePropertyName x -NotePropertyValue 1 }; $s; continue }   # before the tracer's first row: est. for good (x), never read for again
+        $ws = @(Get-KitWriteRows $s); $sh = Get-KitTracerShare $Tracer $s1 $e1 $ws
+        $s2 = [ordered]@{}; foreach ($p in @(Get-KitWritePairs $s)) { if ($p.Name -ne 'w') { $s2[$p.Name] = $p.Value } }; $s2.t = 1
+        $s2.w = @($ws | Where-Object { $sh["$($_.n)"] -ge 0.001 } | ForEach-Object { $o1 = [ordered]@{ n = $_.n; a = $_.a; g = [math]::Round($sh["$($_.n)"], 3); c = $_.c; k = $_.k }; if (@($_.f).Count) { $o1.f = @($_.f) }; $o1 })
+        if ("$($s.at)" -ne $Now.ToString('o')) { $redo.Add($s2) }; $s2 }) }
+  $hr = @{}; $last = @{}; $hd = 0.0; $he = $false; $est = @{}
+  # only disk-scaled or tracer samples count (one from before the disk counter, a reboot or a lost prior is raw I/O); the card keeps them all
+  foreach ($s in @($samples | Where-Object { [datetime]$_.at -gt $Now.AddHours(-1) -and ($_.e -or $_.t) })) { $he = $true; $hd += [double]$s.m
+    foreach ($r in @(Get-KitWriteRows $s)) { $hr["$($r.n)"] = [double]$hr["$($r.n)"] + [double]$r.g; $last["$($r.n)"] = $r; if (-not $s.t) { $est["$($r.n)"] = 1 } } }
+  $hour = @($hr.Keys | ForEach-Object { [ordered]@{ label = $_; tag = "$($last[$_].a)"; gb = [math]::Round($hr[$_], 2); cmd = "$($last[$_].c)"; k = [int]$last[$_].k; est = [int]$est.ContainsKey($_) } } | Sort-Object { - $_.gb })
   $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour')
-  # a burst that is over (no write in the last 2 samples: exited or stopped) leaves the flags, the card keeps its hour
+  # a burst that is over (no write in the last 2 samples: exited or stopped) leaves the flags, the card keeps its hour; not kit-owned:
+  # only the tracer's own disk MB flags it (never ACT), an estimate never (2026-11-19: Edge est. 1.12 GB, ~0 MB on disk)
   $nowS = @($samples | Where-Object { "$($_.at)" -eq $Now.ToString('o') })[0]; $cur = @($samples | Select-Object -Last 2 | ForEach-Object { Get-KitWriteRows $_ } | ForEach-Object { "$($_.n)" })
-  $flags = @(foreach ($h in @($hour | Where-Object { $he -and $_.gb -ge $soft -and (-not $nowS -or $_.label -in $cur) -and ($_.k -or $hd -ge $hard) })) { $lv = if ($h.k -and $h.gb -ge $hard) { 'ACT' } else { 'WATCH' }; $who = "$($h.label)$(if ($h.tag) { " ($($h.tag))" })"
-      [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $who; what = "WRITES ${who}: est. $($h.gb) GB to disk in the last hour (all disks $([math]::Round($hd, 2)) GB; soft $soft / hard $hard GB$(if (-not $h.k) { '; not kit-owned' })); top: $(Get-KitWriteLabel '' $h.cmd)" -replace "; top: $([regex]::Escape($h.label))$"
+  $flags = @(foreach ($h in @($hour | Where-Object { $he -and $_.gb -ge $soft -and (-not $nowS -or $_.label -in $cur) -and ($_.k -or -not $_.est) })) { $lv = if ($h.k -and $h.gb -ge $hard) { 'ACT' } else { 'WATCH' }; $who = "$($h.label)$(if ($h.tag) { " ($($h.tag))" })"
+      [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $who; what = "WRITES ${who}: $(if ($h.est) { 'est. ' })$($h.gb) GB to disk in the last hour (all disks $([math]::Round($hd, 2)) GB; soft $soft / hard $hard GB$(if (-not $h.k) { '; not kit-owned' })); top: $(Get-KitWriteLabel '' $h.cmd)" -replace "; top: $([regex]::Escape($h.label))$"
         action = "$(if ($lv -eq 'ACT') { 'Check whether it is a one-off (a burst already over, a false positive) before acting; still writing: stop it, then ' })tell its owner: no bulk data, dumps, tree copies, reinstalls or big captures (AGENTS.md); links / moves, small fixtures, read-only checks." } })
-  [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; hour = $hour; flags = $flags }
+  [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; hour = $hour; flags = $flags; redo = @($redo) }
 }
-# supervise hook: the owners from this sweep (resources, shells, lane services); <runtime>/cache/supervise-writes.json between beats
+# the owners from this sweep (resources, shells, lane services): label = the resource, tag = its holder agent (no branch); a shell: the
+# agent, tag shell; an env service with no pid (an external one, e.g. the shared database): the pid listening on its port (one netstat)
+function Get-KitWriteOwners($Res) {
+  $rs = @($Res | Where-Object { $_ }); $lsn = @{}
+  if (@($rs | Where-Object { -not $_.pid -and $_.port }).Count) { foreach ($c in @(Get-KitTcpRows | Where-Object { [int]$_.RemotePort -eq 0 -and $_.OwningProcess })) { $lsn["$($c.LocalPort)"] = [int]$c.OwningProcess } }
+  @($rs | ForEach-Object { $r = $_; foreach ($p in @(if ($r.pid) { $r.pid } else { @($r.port) | ForEach-Object { $lsn["$_"] } })) { if ($p) { @{ pid = [int]$p; label = "$($r.name)"; tag = $(if ("$($r.by)" -notmatch '^(no lease|free|parked)') { ("$($r.by)" -replace '\s*\(.*$').Trim() }) } } } }) +
+    @(@($script:KitShellRows) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "$(if ($r.owner) { $r.owner } else { 'unknown agent' })"; tag = 'shell' } } }) +
+    @(@(Invoke-KitHooks Get-KitCpuGroups) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "lane $($r.name)"; tag = '' } } })
+}
+# supervise hook: <runtime>/cache/supervise-writes.json between beats
 function Get-KitSuperviseFlagsWrites([switch]$AutoFix) {
   $cf = Join-Path (Get-KitPath cache -Create) 'supervise-writes.json'
   if (-not $KitIsWindows) { if (-not (Test-Path -LiteralPath $cf)) { Set-Content -LiteralPath $cf '{}'; [pscustomobject]@{ info = 'disk writes per agent: no per-process I/O counters on this OS (Windows only)' } }; return }
   $prior = try { Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json } catch { $null }
-  # label = the resource, tag = its holder agent (no branch); a shell: the agent, tag shell
   # Get-Variable -ValueOnly writes the array as one object: unrolled, or every resource was one owner with all their names and holders
-  $owners = @(Get-Variable res -ValueOnly -ErrorAction SilentlyContinue | ForEach-Object { $_ } | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "$($r.name)"; tag = $(if ("$($r.by)" -notmatch '^(no lease|free|parked)') { ("$($r.by)" -replace '\s*\(.*$').Trim() }) } } }) +
-    @(@($script:KitShellRows) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "$(if ($r.owner) { $r.owner } else { 'unknown agent' })"; tag = 'shell' } } }) +
-    @(@(Invoke-KitHooks Get-KitCpuGroups) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "lane $($r.name)"; tag = '' } } })
-  $now = Get-Date; $trc = try { Read-KitWriteTracer (Get-KitSetting 'writes.tracerCsv' '') $now } catch { $null }   # a locked or odd file: no tracer this beat
-  $w = Update-KitWriteStats $prior $now @(Get-KitWriteProcs) $owners (Get-KitDiskWritten) $trc $script:KitTracerFolders
+  $owners = Get-KitWriteOwners @(Get-Variable res -ValueOnly -ErrorAction SilentlyContinue | ForEach-Object { $_ })
+  # the tracer from the oldest sample still est. (24 h), else since the last beat; a locked or odd file: no tracer this beat
+  $now = Get-Date; $since = @(@($prior.samples | Where-Object { $_.at -and -not $_.t -and -not $_.x } | ForEach-Object { ([datetime]$_.at).AddSeconds(-[double]$_.s) }) + $(if ($prior.at) { [datetime]$prior.at } else { $now.AddHours(-1) }) | Sort-Object)[0]
+  $trc = try { Read-KitWriteTracer (Get-KitWriteTracerConf) $now ([datetime]::new([math]::Max($since.Ticks, $now.AddDays(-1).Ticks))) } catch { $null }
+  $w = Update-KitWriteStats $prior $now @(Get-KitWriteProcs) $owners (Get-KitDiskWritten) $trc @(@($KitConf.Kit) + @($KitConf.WorktreeRoots))
   Write-KitAtomic $cf ([ordered]@{ at = $w.at; acc = $w.acc; samples = $w.samples; hour = $w.hour } | ConvertTo-Json -Depth 6 -Compress)
-  try { Update-KitWriteHistory (Get-KitPath disk-writes) $w.samples $now } catch { }   # the card's 7 / 30 days; a failed append costs one hour
+  try { Update-KitWriteHistory (Get-KitPath disk-writes) $w.samples $now $w.redo } catch { }   # the card's 7 / 30 days; a failed append costs one hour
   $w.flags
 }
 # a sample's owner rows; a row from before 2026-11-19 (no k): "<proc> pid N" -> its short label, "<agent> shell", "<holder> (<resource>)" -> kit-owned
@@ -299,14 +352,20 @@ function Compress-KitWriteRows($Rows, [datetime]$Now) {
     foreach ($p in @(Get-KitWritePairs $r.o)) { $bk.o[$p.Name] = [double]$bk.o[$p.Name] + [double]$p.Value } }
   @($days.Keys | ForEach-Object { ConvertTo-KitWriteRow $_ $days[$_] 8 -Day }) + @($keep)
 }
-# closed clock hours since the file's last row -> one line each; the first append of a new day also compacts the file
-function Update-KitWriteHistory([string]$File, $Samples, [datetime]$Now) {
+# closed clock hours since the file's last row -> one line each; the first append of a new day also compacts the file; $Redo (samples the
+# tracer re-attributed): the closed hours they touch that the samples fully cover are written again
+function Update-KitWriteHistory([string]$File, $Samples, [datetime]$Now, $Redo = @()) {
   $last = if (Test-Path -LiteralPath $File) { try { Get-Content -LiteralPath $File -Tail 1 | ConvertFrom-Json } catch { $null } }
   $lastAt = if ($last.at) { [datetime]$last.at } else { [datetime]::MinValue }; $cur = $Now.Date.AddHours($Now.Hour); $hs = @{}; Add-KitWriteHours $Samples $hs
-  $new = @($hs.Keys | Sort-Object | ForEach-Object { $h = [datetime]::ParseExact($_, 'yyyyMMddHH', [cultureinfo]::InvariantCulture); if ($h -lt $cur -and $h -gt $lastAt) { ConvertTo-KitWriteRow $h $hs[$_] } })
-  if (-not $new.Count) { return }
+  $hAt = { param($k) [datetime]::ParseExact($k, 'yyyyMMddHH', [cultureinfo]::InvariantCulture) }
+  $new = @($hs.Keys | Sort-Object | ForEach-Object { $h = & $hAt $_; if ($h -lt $cur -and $h -gt $lastAt) { ConvertTo-KitWriteRow $h $hs[$_] } })
+  $first = @($Samples | Where-Object { $_ -and $_.at } | ForEach-Object { ([datetime]$_.at).AddSeconds(-[double]$_.s) } | Sort-Object)[0]; $again = @{}
+  foreach ($s in @($Redo | Where-Object { $_ -and $_.at })) { $e1 = [datetime]$s.at; $s1 = $e1.AddSeconds(-[double]$s.s)
+    for ($h = $s1.Date.AddHours($s1.Hour); $h -lt $e1; $h = $h.AddHours(1)) { $hk = $h.ToString('yyyyMMddHH'); if ($first -and $h -ge $first -and $h -lt $cur -and $h -le $lastAt -and $hs.ContainsKey($hk)) { $again[$hk] = 1 } } }
+  if (-not $new.Count -and -not $again.Count) { return }
   $line = { param($r) $r | ConvertTo-Json -Depth 4 -Compress }
-  if ($last -and $lastAt.Date -ne $Now.Date) { $all = @(Get-Content -LiteralPath $File | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } }) + $new
+  if ($again.Count -or ($last -and $lastAt.Date -ne $Now.Date)) { $all = @(Get-Content -LiteralPath $File | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_.d -or -not $again.ContainsKey(([datetime]$_.at).ToString('yyyyMMddHH')) }) +
+      @($again.Keys | Sort-Object | ForEach-Object { ConvertTo-KitWriteRow (& $hAt $_) $hs[$_] }) + $new
     Write-KitAtomic $File ((@(Compress-KitWriteRows $all $Now | ForEach-Object { & $line $_ }) -join "`n") + "`n") }
   else { $null = New-Item -ItemType Directory -Force (Split-Path $File); Add-Content -LiteralPath $File -Value @($new | ForEach-Object { & $line $_ }) }
 }
@@ -326,7 +385,9 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
       foreach ($r in $ws) { $now60["$($r.n)"] = [double]$now60["$($r.n)"] + [double]$r.g; if ([int]$r.k) { $now60['*k'] += [double]$r.g } } } }
   $val = { param($bk, [string]$nm) if (-not $bk) { 0.0 } elseif ($nm -eq '*m') { [double]$bk.m } elseif ($nm -eq '*k') { [double]$bk.k } else { [double]$bk.o[$nm] } }
   $sumD = { param([string]$nm, [int]$n) $v = 0.0; for ($i = 0; $i -lt $n; $i++) { $v += & $val $dm[$Now.Date.AddDays(-$i).ToString('yyyy-MM-dd')] $nm }; $v }
-  $names = @($dm.Keys | Where-Object { [datetime]$_ -gt $Now.Date.AddDays(-7) } | ForEach-Object { $dm[$_].o.Keys } | Select-Object -Unique)
+  # a row not kit-owned under 50 MB in 7 days is no row of its own (in "others"); kit-owned: a row in the live samples with k
+  $kitN = @{}; foreach ($s in @($Samples | Where-Object { $_ })) { foreach ($r in @(Get-KitWriteRows $s | Where-Object { [int]$_.k })) { $kitN["$($r.n)"] = 1 } }
+  $names = @($dm.Keys | Where-Object { [datetime]$_ -gt $Now.Date.AddDays(-7) } | ForEach-Object { $dm[$_].o.Keys } | Select-Object -Unique | Where-Object { $kitN.ContainsKey("$_") -or (& $sumD $_ 7) -ge 0.05 })
   $tops = @($names | Sort-Object { - (& $sumD $_ 7) }, { "$_" } | Select-Object -First $Top)
   $h0 = $Now.Date.AddHours($Now.Hour - 23); $hk24 = @(0..23 | ForEach-Object { $h0.AddHours($_).ToString('yyyyMMddHH') })
   $mk = { param([string]$label, [string]$nm, [string]$tag, $hours, $now, $d1, $d7, $d30) $hs0 = @($hours | ForEach-Object { [math]::Round([math]::Max(0.0, [double]$_), 3) })
@@ -343,7 +404,7 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
   $days = @(for ($i = 0; $i -lt 7; $i++) { $d0 = $Now.Date.AddDays(-$i); $hp = @(0..23 | ForEach-Object { $bk = $hm[$d0.AddHours($_).ToString('yyyyMMddHH')]; , @([math]::Round((& $val $bk '*m'), 3), [math]::Round((& $val $bk '*k'), 3)) })
       [ordered]@{ d = $d0.ToString('yyyy-MM-dd'); h = $hp; m = [math]::Round((& $val $dm[$d0.ToString('yyyy-MM-dd')] '*m'), 2); k = [math]::Round((& $val $dm[$d0.ToString('yyyy-MM-dd')] '*k'), 2) } })
   $byName = @($names | Where-Object { $_ -notin $tops } | ForEach-Object { & $mk $_ $_ "$($tags[$_])" (& $line $_) $now60[$_] (& $sumD $_ 1) (& $sumD $_ 7) (& $sumD $_ 30) })   # the Writes metric of Resources · 24 h: every owner, not only the top
-  [ordered]@{ at = $Now.ToString('o'); h0 = $h0.ToString('o'); rows = $rows; more = $byName; days = $days }
+  [ordered]@{ at = $Now.ToString('o'); h0 = $h0.ToString('o'); src = $(if (@($Samples | Where-Object { $_ })[-1].t) { 'tracer' } else { 'est' }); rows = $rows; more = $byName; days = $days }   # src tracer: disk MB, no "est." label
 }
 
 # ---- cards: render inside Format-KitSuperviseHtml and use its helpers ($e, $n1, $fmt, $icv, $at, $st, $nw, $j, $l24, $fold)
