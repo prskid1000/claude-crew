@@ -117,6 +117,10 @@ $v = foreach ($b in 'main', 'dev', 'release', 'locked', 'auth') { "$b=$(Invoke-H
 Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;release=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
 $null = Invoke-HostVerb 'mr.update' @{ type = 'gitlab'; repo = 'o/r'; n = 5; title = 't'; body = 'b' } -NoMemo
 Check 'host: mr.update edits the open MR (PUT, devtools.py mr re-run)' ($global:calls[-1] -like 'glab api -X PUT projects/o%2Fr/merge_requests/5 *')
+# a CI task naming its job by name next to a run link (gitlab: the pipeline link): github's run id is read too, not only from a job URL
+. (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/github.ps1')
+$gp = @(foreach ($tx in 'job `unit` of [run](https://github.com/o/r/actions/runs/77)', 'https://github.com/o/r/actions/runs/77/job/9') { $u = Invoke-KitAdapter ci github parseUrl @{ text = $tx }; "$($u.run)/$($u.job)" }) -join ' '
+if ($gp -ne '77/ 77/9') { $global:failed++ }; "$(if ($gp -eq '77/ 77/9') { 'PASS' } else { 'FAIL' }) github ci.parseUrl: a run link alone gives the run, a job URL the run and the job ($gp)"
 # ---- clickup (its own clickup mock; dry-run comments, checklists, REST moves)
 $global:log.Clear()
 function clickup { $global:LASTEXITCODE = 0; Fx ($args -join ' ') }
