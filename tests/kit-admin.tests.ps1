@@ -85,8 +85,8 @@ Expect "kit-admin: kit-admin.md names only lint codes kitbag.py emits (stale: $(
 # learn lesson tools and the audit nudge (adapters/kit_admin.ps1): -Bump miss frees the lock; org terms go local; -Fixed shows in -History
 $ad = New-Item -ItemType Directory -Force (Join-Path $kc 'skills/bossy/adapters'); Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/kit_admin.ps1') $ad
 $O = Join-Path $kc 'skills/bossy/bossy.ps1'; $lo = { pwsh -NoProfile -File $O learn @args 2>&1 | Out-String }
-$au = & { . $O; Get-KitHealthLinesAudit }; $st = & { . (Join-Path $kc 'skills/crafty/lib.ps1'); Get-KitPath last-kitty-audit -Create }; (Get-Date).ToString('s') | Set-Content $st; $au2 = & { . $O; Get-KitHealthLinesAudit }
-Expect 'kit-admin: health nudges a never-run kitty audit, quiet right after one' ("$au" -match 'Kit audit due \(last never, every 7 days\)' -and -not $au2)
+$au = & { . $O; Get-KitHealthLinesAudit }; $null = pwsh -NoProfile -File $O board join -Type kitty -Run kit-fix-0303; $auK = & { . $O; Get-KitHealthLinesAudit }; $null = pwsh -NoProfile -File $O board leave -Agent kitty-kit-fix-0303; $st =& { . (Join-Path $kc 'skills/crafty/lib.ps1'); Get-KitPath last-kitty-audit -Create }; (Get-Date).ToString('s') | Set-Content $st; $au2 = & { . $O; Get-KitHealthLinesAudit }
+Expect 'kit-admin: health nudges a never-run kitty audit, quiet while a kitty-<run> works and right after one' ("$au" -match 'Kit audit due \(last never, every 7 days\)' -and -not $auK -and -not $au2)
 'edited' | Add-Content (Join-Path $kc 'README.md'); $ue = & { . $O; Test-UnstagedEdits $kc 'README.md' }; git -C $kc checkout -q -- README.md
 $pc = pwsh -NoProfile -File $O precommit 2>&1 | Out-String; $pcc = $LASTEXITCODE   # a clean copy: nothing to say, exit 0
 Expect "kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them) ($pcc $($pc.Trim()))" ($ue -and $pcc -eq 0 -and $pc -notmatch 'not recognized|Exception')

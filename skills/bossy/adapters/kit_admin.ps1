@@ -108,7 +108,7 @@ function Get-KitHealthLinesAudit {
   $every = [double](Get-KitParam 'kitAudit.everyDays'); if ($every -le 0) { return }
   $am = Get-KitPath last-kitty-audit; $last = $null; if (Test-Path $am) { try { $last = [datetime]((Get-Content $am -Raw).Trim()) } catch {} }
   if ($last -and ((Get-Date) - $last).TotalDays -lt $every) { return }
-  $busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -eq 'kitty' -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt (Get-KitParam 'kitAudit.liveBeatMinutes') }).Count
+  $busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { ($_.type -eq 'kitty' -or "$($_.agent)" -match '^kitty') -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt (Get-KitParam 'kitAudit.liveBeatMinutes') }).Count
   if (-not $busy) { "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kitty agent (bossy E13)." }
 }
 # ---- prepush: local files, org terms, ports (no tests: the agent tests before it commits and pushes, owner 2026-11-19)

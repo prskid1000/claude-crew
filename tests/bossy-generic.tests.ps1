@@ -50,6 +50,12 @@ $j6 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b6 = pwsh @np $O b
 Expect "board: a quiet row of a live session is not taken over ($j6)" ($j6 -notmatch 'TAKEOVER' -and $j6 -match "QUIET: session $s3" -and $b6 -notmatch 'TAKEN')
 $e3 = Read-Json $f3; $e3.beat = (Get-Date).AddMinutes(-45).ToString('o'); & $J $e3 $f3; $j7 = pwsh @np $O board join -Agent BY -Run rb -Resume | Out-String
 Expect "board: -Resume without claims takes a quiet row of a live session ($j7)" ($j7 -match "TAKEOVER: replaced session $s3 \(-Resume;")
+# two kittys of different runs: each id gets its run (one inbox each); a msg to the bare type is refused
+$kj1 = pwsh @np $O board join -Type kitty -Agent kitty -Run kit-fix-0101 | Out-String; $kj2 = pwsh @np $O board join -Type kitty -Run kit-env-0202 | Out-String
+$kmT = pwsh @np $O board msg -Agent BY -To kitty -Text 'hi'; $kmC = $LASTEXITCODE; $null = pwsh @np $O board msg -Agent BY -To kitty-kit-env-0202 -Text 'env only'
+$ki1 = pwsh @np $O board inbox -Agent kitty-kit-fix-0101 | Out-String; $ki2 = pwsh @np $O board inbox -Agent kitty-kit-env-0202 | Out-String
+foreach ($kl in 'kitty-kit-fix-0101', 'kitty-kit-env-0202') { $null = pwsh @np $O board leave -Agent $kl }
+Expect "board: a type id gets the run; msg to the type refused ($kmT)" ($kj1 -match 'you are kitty-kit-fix-0101' -and $kj2 -match 'you are kitty-kit-env-0202' -and $kmC -eq 2 -and $kmT -match 'kitty-kit-fix-0101' -and $ki1 -match 'inbox: empty' -and $ki2 -match 'from BY: env only')
 # kit scratch: <runtime>/tmp for pwsh and python, the gate ledger in the runtime; cleanup ages tmp out and sweeps legacy kit files from the OS temp
 $ktParts = & { . (Lib); $kf = New-KitTempFile '.json'; @((Get-KitTemp), $kf, (Test-Path $kf), (Get-KitGateLedger), (Get-KitRuntime)) }
 Expect 'kit scratch: Get-KitTemp = <runtime>/tmp, New-KitTempFile makes a file there, the build-gate ledger = <runtime>/work/build-gate (never the OS temp)' (

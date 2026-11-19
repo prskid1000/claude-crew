@@ -28,9 +28,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L36 init · L47 board · L228 budget · L258 launch · L499 recover · L586 pause · L597 resume · L664 program · L715 param ·
-  L721 track · L1063 supervise · L1385 report · L1465 audit · L1525 storage · L1528 bugbrief · L1642 cleanup · L1729 learn ·
-  L1760 decide · L1911 debate · L1955 health · L2022 retro due · L2032 tidy · L2104 setup · L2201 guard-sendmessage
+Sections: L36 init · L47 board · L230 budget · L260 launch · L501 recover · L588 pause · L599 resume · L666 program · L717 param ·
+  L723 track · L1065 supervise · L1387 report · L1467 audit · L1527 storage · L1530 bugbrief · L1644 cleanup · L1731 learn ·
+  L1762 decide · L1913 debate · L1957 health · L2024 retro due · L2034 tidy · L2106 setup · L2203 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -105,10 +105,11 @@ switch ($Action) {
   'join' {
     if (-not $Agent) { $Agent = $Type }
     if (-not $Agent) { 'usage: bossy.ps1 board join -Agent <id> [-Type] [-Run] [-Area] [-Items] [-Claims]'; exit 2 }
+    $notes = @()
+    if ($Run -and $Agent -eq $Type) { $Agent = "$Type-$Run"; $notes += "RUN-ID: you are $Agent" }
     $now = Get-Date
     $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
     $same = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.status -ne 'left' })
-    $notes = @()
     $rejoin = $same | Where-Object { -not $Resume -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
       Sort-Object { [datetime]$_.joined } -Descending | Select-Object -First 1
     $peer = @($same | Where-Object { -not ($Resume -or $rejoin) -and (Test-KitHolder $_) -and (($now - [datetime]$_.beat).TotalMinutes -lt $staleMin -or ($_.transcript -and ($now - [IO.File]::GetLastWriteTime($_.transcript)).TotalMinutes -lt $staleMin / 6)) })   # or a fresh transcript
@@ -150,7 +151,7 @@ switch ($Action) {
     "SESSION $tok   (pass -Session $tok to beat / check / leave)"
   }
   'beat' {
-    $f = Join-Path $dir "$Session.json"; if (-not $Session -or -not (Test-Path $f)) { "board beat: unknown session '$Session': board join first (bossy.ps1 board join -Agent <id> [-Run <run>]), then beat with the SESSION it prints"; exit 3 }   # no stack trace
+    $f = Join-Path $dir "$Session.json"; if (-not $Session -or -not (Test-Path $f)) { "board beat: unknown session '$Session': board join first, then beat with the SESSION it prints"; exit 3 }   # no stack trace
     $script:beatEntry = $null; $script:beatTaken = $null; $ho = $null
     Update-BoardEntry $f { param($x) if ($x.status -eq 'left' -and $x.takenOverBy) { $script:beatTaken = $x; return $null }; $x.beat = (Get-Date).ToString('o'); if ($Status) { $x.status = $Status } elseif ($x.status -eq 'left' -and -not $x.handoffBrief) { $x.status = 'working' }; $script:beatEntry = $x; $x }   # a beat proves it lives: a reaped row is back
     if ($script:beatTaken) { $me = $script:beatTaken; "TAKEN OVER: session $($me.takenOverBy) replaced $Session at $(([datetime]$me.takenOverAt).ToString('HH:mm')). Stop without writing and tell the coordinator."; exit 1 }
@@ -207,6 +208,7 @@ switch ($Action) {
     if (-not ($Agent -and $To -and $Text)) { "usage: board msg -Agent <me> -To <id> -Text '<message>' [-Kind $($script:KitMsgKinds -join '|')] [-Ref <id>]"; exit 2 }
     if ($Kind -notin $script:KitMsgKinds) { "board msg: -Kind '$Kind' unknown ($($script:KitMsgKinds -join ', '))"; exit 2 }
     if ($Text.Length -gt 2000) { "board msg: text over 2000 chars: a file, -Ref it"; exit 2 }
+    $ids = @(Active | Where-Object type -eq $To | ForEach-Object agent); if ($ids -and $To -notin $ids) { "board msg: $To is a type: to $($ids -join ', ')"; exit 2 }
     Send-BoardMsg $Agent $To $Text $Kind $Ref
     $held = @(Active | Where-Object { $_.agent -eq $To }); "sent to $To$(if (-not $held) { ' (not on the board now: it reads it when it joins)' })"
   }
