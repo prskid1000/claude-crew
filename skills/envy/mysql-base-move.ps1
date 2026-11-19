@@ -9,17 +9,18 @@ unique / FK checks off); never clone + drop (that churned 12.9 GB of mysql.ibd f
     MYSQL_PWD from the env file; -Only = a trial with those schemas (no orphan check; use a scratch -Lanes and target port)
   pwsh -NoProfile -File mysql-base-move.ps1 -Config [-Apply]     the kit.local.json edit (dry run prints it; -Apply writes, .bak-<date> kept)
   pwsh -NoProfile -File mysql-base-move.ps1 -Rename [-Apply|-Rollback]   every lane-scoped name (mysql dirs + inis, envy state, logs, run dirs, cmd files, lane env files) to <product>-<bird>, everything down; journal kept
-Targets `<env>:<port>` (default rm:3305 hm:3316: next to the lane ports 3307 / 3317, never the service's 3306). Each keeps only its product's
+Targets `<env>:<port>` (next to the lane ports, never the service's). -Targets, -Bin, -Service, -AdminSchema, -RegistryTable, -PoolTable:
+unset = kit.local.json localEnv.baseMove {targets, bin, service, adminSchema, registryTable, poolTable}; -Bin else mysqld on PATH. Each keeps only its product's
 schemas (-AdminSchema + the names in its -RegistryTable) and kit_journal (the cascade guard's triggers write it in the same server). Names `<service>-<product>-<bird>` (mysql-rm-falcon, search-hm-kestrel), the bird = the lane number's pool name (`{bird}` in the lane
 templates); dir `<Lanes>/mysql-rm-falcon`, ini `<Lanes>/mysql-rm-falcon.ini` (copy of -IniFrom with its port and datadir changed).
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L32 names · L39 ini and config edit · L120 rename · L208 checks · L255 apply · L318 search data
+Sections: L41 names · L48 ini and config edit · L131 rename · L219 checks · L268 apply · L331 search data
 #>
-param([string[]]$Targets = @('rm:3305', 'hm:3316'), [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
-  [string]$Bin = 'C:/Program Files/MySQL/MySQL Server 8.0/bin', [string]$Service = 'MySQL80', [int]$VerifyPort = 3399,
-  [string]$ConfigFile, [string]$AdminSchema = '{env}_admin', [string]$RegistryTable = 'mt_datasource_config', [string]$PoolTable = 'db_pool', [string[]]$Only, [switch]$Config, [string]$Runtime, [string]$PokeyFile, [switch]$Rename, [switch]$Rollback, [string[]]$Birds, [switch]$Apply, [switch]$Replace, [switch]$Force)
+param([string[]]$Targets, [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
+  [string]$Bin, [string]$Service, [int]$VerifyPort = 3399,
+  [string]$ConfigFile, [string]$AdminSchema, [string]$RegistryTable, [string]$PoolTable, [string[]]$Only, [switch]$Config, [string]$Runtime, [string]$PokeyFile, [switch]$Rename, [switch]$Rollback, [string[]]$Birds, [switch]$Apply, [switch]$Replace, [switch]$Force)
 $ErrorActionPreference = 'Stop'
 $KitDir = Split-Path (Split-Path $PSScriptRoot)
 if (-not $Lanes) { $Lanes = Join-Path $KitDir '.state/localenv/lanes' }
@@ -28,6 +29,14 @@ if (-not $IniFrom) { $IniFrom = @(Get-ChildItem $Lanes -Filter 'mysql-*.ini' -Er
 if (-not $Runtime) { $Runtime = Join-Path $KitDir '.runtime' }
 if (-not $PokeyFile) { $PokeyFile = Join-Path $KitDir 'skills/pokey/targets.local.json' }
 if (-not $ConfigFile) { $ConfigFile = Join-Path $KitDir 'skills/crafty/kit.local.json' }
+# org values: args, else localEnv.baseMove (no built-in product, port or service)
+$bm = try { (Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50)['localEnv']['baseMove'] } catch { $null }
+if ($bm) {
+  if (-not $Targets) { $Targets = @($bm['targets'] | Where-Object { $_ }) }
+  foreach ($bmKey in 'Bin', 'Service', 'AdminSchema', 'RegistryTable', 'PoolTable') { $bmVal = $bm[$bmKey.Substring(0, 1).ToLower() + $bmKey.Substring(1)]; if (-not (Get-Variable $bmKey -ValueOnly) -and $bmVal) { Set-Variable $bmKey ([string]$bmVal) } }
+}
+$Targets = @($Targets | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+if (-not $Bin -and ($mysqldCmd = Get-Command mysqld -ErrorAction SilentlyContinue)) { $Bin = Split-Path $mysqldCmd.Source }
 
 # ---- names: the bird of a lane number
 if (-not $Birds) {
@@ -100,7 +109,8 @@ function Test-Listen([int]$Port) {
   try { $c.ConnectAsync('127.0.0.1', $Port).Wait(1500) -and $c.Connected } catch { $false } finally { $c.Dispose() }
 }
 
-$mysql = Join-Path $Bin 'mysql.exe'; $mysqld = Join-Path $Bin 'mysqld.exe'; $mysqldump = Join-Path $Bin 'mysqldump.exe'
+$exe = if ($IsWindows) { '.exe' } else { '' }
+$mysql, $mysqld, $mysqldump = foreach ($tool in "mysql$exe", "mysqld$exe", "mysqldump$exe") { if ($Bin) { Join-Path $Bin $tool } else { $tool } }
 function Invoke-Sql([int]$P, [string]$Q, [switch]$Raw) { $o = & $mysql -h 127.0.0.1 -P $P -u root -N -B $(if ($Raw) { '-r' }) -e $Q 2>&1; if ($LASTEXITCODE) { throw "mysql :${P}: $o" }; @($o) }
 $bad = [System.Collections.Generic.List[string]]::new(); $info = [System.Collections.Generic.List[string]]::new()
 function Show-Plan($Rows) { $Rows | ForEach-Object { "  $_" } }
@@ -111,6 +121,7 @@ if ($MyInvocation.InvocationName -eq '.') { return }   # dot-sourced by a test: 
 
 if ($Config) {
   $cfg = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50
+  if (-not $Targets) { 'REFUSED: no targets: pass -Targets <env>:<port>,... or set localEnv.baseMove.targets'; exit 1 }
   $ch = Update-BaseMoveConfig $cfg $Targets $DonorPort $Lanes
   $ch | ForEach-Object { "config: $_" }
   if ($Apply) { Copy-Item -LiteralPath $ConfigFile "$ConfigFile.bak-$(Get-Date -Format yyyyMMdd)" -Force; ($cfg | ConvertTo-Json -Depth 50) | Set-Content -LiteralPath $ConfigFile -Encoding utf8; "written: $ConfigFile" } else { 'dry run: -Config -Apply writes it' }
@@ -206,7 +217,9 @@ if ($Rename -or $Rollback) {
 }
 
 # ---- checks: binaries, targets, ports, donor, space, schemas per product
-foreach ($f in $mysql, $mysqld, $mysqldump) { if (-not (Test-Path -LiteralPath $f)) { $bad.Add("missing $f") } }
+if (-not $Bin) { $bad.Add('no MySQL bin folder: pass -Bin or set localEnv.baseMove.bin (mysqld is not on PATH)') } else { foreach ($f in $mysql, $mysqld, $mysqldump) { if (-not (Test-Path -LiteralPath $f)) { $bad.Add("missing $f") } } }
+if (-not $Targets) { $bad.Add('no targets: pass -Targets <env>:<port>,... or set localEnv.baseMove.targets') }
+if (-not $AdminSchema -or -not $RegistryTable) { $bad.Add('no kept-schema source: pass -AdminSchema <name, {env} = the env> and -RegistryTable <its table of schema names> or set localEnv.baseMove') }
 if (-not $IniFrom -or -not (Test-Path -LiteralPath $IniFrom)) { $bad.Add("no template ini: pass -IniFrom <a lane ini>") }
 $plan = @(foreach ($t in $Targets) {
   if ($t -notmatch '^(\w+):(\d+)$') { $bad.Add("target '$t': use <env>:<port>"); continue }
@@ -219,10 +232,10 @@ if ($Only -and -not $PSBoundParameters.ContainsKey('Lanes')) { $bad.Add('-Only i
 if (@($plan.port | Select-Object -Unique).Count -ne @($plan).Count) { $bad.Add('two targets share a port') }
 if ($VerifyPort -eq $DonorPort -or $VerifyPort -in @($plan.port)) { $bad.Add("-VerifyPort $VerifyPort is the donor's or a target's port") }
 if (Test-Listen $VerifyPort) { $bad.Add("-VerifyPort $VerifyPort is in use: the copy loads on it") }
-$svc = Get-Service $Service -ErrorAction SilentlyContinue
-$info.Add("service $Service : $(if ($svc) { "$($svc.Status), start $($svc.StartType)" } else { 'not found' })")
+if ($Service) { $svc = Get-Service $Service -ErrorAction SilentlyContinue
+  $info.Add("service $Service : $(if ($svc) { "$($svc.Status), start $($svc.StartType)" } else { 'not found' })") } else { $info.Add('service: none named (-Service or localEnv.baseMove.service)') }
 $donorUp = Test-Listen $DonorPort
-if ($env:MYSQL_PWD -and $donorUp) {
+if ($env:MYSQL_PWD -and $donorUp -and $AdminSchema -and $RegistryTable) {
   try {
     $sizes = @{}; foreach ($r in @(Invoke-Sql $DonorPort "SELECT table_schema, ROUND(SUM(data_length + index_length) / 1048576) FROM information_schema.tables GROUP BY table_schema")) { $k, $v = $r -split "`t"; $sizes[$k] = [double]$v }
     $busy = @(Invoke-Sql $DonorPort "SELECT COUNT(*) FROM information_schema.processlist WHERE command NOT IN ('Sleep','Daemon') AND id <> CONNECTION_ID()")[0]
@@ -248,7 +261,7 @@ if ($env:MYSQL_PWD -and $donorUp) {
   } catch { $bad.Add("donor: $($_.Exception.Message)") }
 } else { $info.Add("donor :$DonorPort not checked ($(if (-not $env:MYSQL_PWD) { 'MYSQL_PWD unset' } else { 'not listening' }))"); if ($Apply) { $bad.Add('-Apply needs MYSQL_PWD and the donor up') } }
 
-"plan:"; Show-Plan ($plan | ForEach-Object { "$($_.env): copy its schemas :$DonorPort -> $($_.dir) (empty datadir + mysqldump), ini $($_.ini), port $($_.port)$(if ($_.port -ne $DonorPort) { ", $($AdminSchema.Replace('{env}', $_.env)).$PoolTable -> :$($_.port)" })" })
+"plan:"; Show-Plan ($plan | ForEach-Object { "$($_.env): copy its schemas :$DonorPort -> $($_.dir) (empty datadir + mysqldump), ini $($_.ini), port $($_.port)$(if ($_.port -ne $DonorPort -and $PoolTable) { ", $("$AdminSchema".Replace('{env}', $_.env)).$PoolTable -> :$($_.port)" })" })
 "checks:"; Show-Plan $info
 if ($bad.Count) { "REFUSED:"; Show-Plan $bad; if ($Apply) { exit 1 } }
 
@@ -298,12 +311,12 @@ if ($Apply) {
       $exp = @($want | Where-Object { ($_ -split "`t")[0] -in $p.keep })
       if (($got -join '|') -ne ($exp -join '|')) { throw "$($p.env): table counts differ from the donor:`n donor $($exp -join ', ')`n copy $($got -join ', ')" }
       $sc =$AdminSchema.Replace('{env}', $p.env)
-      if ($p.port -ne $DonorPort -and "$(Invoke-Sql $VerifyPort "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$sc' AND table_name='$PoolTable'")".Trim() -eq '1') {
+      if ($PoolTable -and $p.port -ne $DonorPort -and "$(Invoke-Sql $VerifyPort "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$sc' AND table_name='$PoolTable'")".Trim() -eq '1') {
         Invoke-Sql $VerifyPort "UPDATE ``$sc``.``$PoolTable`` SET url = REPLACE(url, ':$DonorPort/', ':$($p.port)/') WHERE url LIKE '%:$DonorPort/%'" | Out-Null; "$sc.$PoolTable -> :$($p.port)" }
       "$($p.env): verified $($got.Count) schemas"
     } finally {
       $loadMb = Get-TreeWriteMb $pr.Id
-      & (Join-Path $Bin 'mysqladmin.exe') -h 127.0.0.1 -P $VerifyPort -u root shutdown 2>&1 | Out-Null
+      & (Join-Path $Bin "mysqladmin$exe") -h 127.0.0.1 -P $VerifyPort -u root shutdown 2>&1 | Out-Null
       $until = (Get-Date).AddMinutes(2)
       while (-not $pr.HasExited -and (Get-Date) -lt $until) { $loadMb = [math]::Max($loadMb, (Get-TreeWriteMb $pr.Id)); Start-Sleep -Milliseconds 300 }
       if (-not $pr.HasExited) { $pr.Kill() }
@@ -333,11 +346,11 @@ if ($Apply -and -not $Only) {   # search data off C: (the old folders stay as th
 }
 "switch-over (the coordinator, in this order):"
 Show-Plan @(
-  '1. envy.ps1 down for every env and lane (rm, rm2, rm3, hm, hm2): every holder released, nothing writes to the service, lane servers stopped',
+  "1. envy.ps1 down for every env and lane of $(@($plan.env) -join ', '): every holder released, nothing writes to the service, lane servers stopped",
   "2. pwsh -NoProfile -File mysql-base-move.ps1 -Apply   (copy + verify + search data; marks of :$DonorPort do not carry over)",
   '3. pwsh -NoProfile -File mysql-base-move.ps1 -Rename -Apply   (lane dirs + inis to bird names; -Rename -Rollback undoes it)',
-  "4. net stop $Service ; sc config $Service start= demand   (rollback: sc config $Service start= auto ; net start $Service)",
+  $(if ($Service) { "4. net stop $Service ; sc config $Service start= demand   (rollback: sc config $Service start= auto ; net start $Service)" } else { '4. stop the OS MySQL service and set it to manual start (none named: -Service)' }),
   '5. pwsh -NoProfile -File mysql-base-move.ps1 -Config -Apply   (kit.local.json; envy resolves {bird}), then envy.ps1 envs / doctor',
-  '6. envy.ps1 up -Env rm -Services mysql ; up -Env hm -Services mysql ; then seed -Env rm|hm (re-marks baseline-<date>)',
-  "7. the DB MCP config: local/dev port $(@($plan)[0].port) (rm), a second target with port $(@($plan)[-1].port) (hm); each answers only while its env runs")
+  "6. $((@($plan.env) | ForEach-Object { "envy.ps1 up -Env $_ -Services mysql" }) -join ' ; ') ; then seed each (re-marks baseline-<date>)",
+  "7. the DB client config: $((@($plan) | ForEach-Object { "$($_.env) port $($_.port)" }) -join ', '); each answers only while its env runs")
 exit 0

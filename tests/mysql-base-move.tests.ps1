@@ -32,6 +32,7 @@ $otherSys = & { $sdKeep = $env:SystemDrive; $env:SystemDrive = 'Q:'; try { . (Jo
 Expect "lane standard: an external mysql, search data / logs on C:, a data path shared by two products and an unknown {suffix} are each reported ($($before.Count))" ($before.Count -eq 10 -and @($before | Where-Object { $_ -match '^service search of (rm|hm): \{suffix\} is no envy placeholder' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'external' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'on the system drive C:' }).Count -eq 4 -and $otherSys -eq 0 -and @($before | Where-Object { $_ -match 'shares path.data' }).Count -eq 2)
 $obj = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable -Depth 50
 $edit = Update-BaseMoveConfig $obj @('rm:3305', 'hm:3316') 3306 'D:/s/lanes'
+$obj.localEnv.baseMove = @{ targets = @('rm:3305', 'hm:3316'); service = 'MySQL80'; adminSchema = '{env}_admin'; registryTable = 'reg'; poolTable = 'db_pool' }   # the org values live in config
 Set-Content $cf ($obj | ConvertTo-Json -Depth 50) -Encoding utf8
 $res = & { . (Join-Path $kd 'skills/envy/envy.ps1'); $E = $script:LE.envs
   $m = { param($n) @($E.$n.services | Where-Object name -eq 'mysql')[0] }
@@ -52,6 +53,10 @@ $null = pwsh -NoProfile -File $mv -Lanes $ld -Bin $ld -ConfigFile $cf -Apply 2>&
 Expect "-Apply refused with exit 1 ($LASTEXITCODE)" ($LASTEXITCODE -eq 1)
 $trial = @(pwsh -NoProfile -File $mv -Bin $ld -ConfigFile $cf -IniFrom "$ld/mysql-hm2.ini" -Only testtenant 2>&1) -join "`n"
 Expect '-Only without a scratch -Lanes is refused (a partial copy never lands in the real lanes dir)' ($trial -match '-Only is a trial: pass a scratch -Lanes')
+# no localEnv.baseMove and no args: no built-in targets, service or schema source; refused with the key to set
+$cf0 = Join-Path $kd 'bare.local.json'; '{}' | Set-Content $cf0
+$bare = @(pwsh -NoProfile -File $mv -Lanes $ld -Bin $ld -ConfigFile $cf0 2>&1) -join "`n"; $bareCfg = @(pwsh -NoProfile -File $mv -Config -ConfigFile $cf0 2>&1) -join "`n"
+Expect "no baseMove config: targets, schema source and service are not guessed; -Config refused ($LASTEXITCODE)" ($bare -match 'no targets: pass -Targets' -and $bare -match 'no kept-schema source' -and $bare -match 'service: none named' -and $bare -notmatch 'MySQL80|rm:|hm:' -and $bareCfg -match 'REFUSED: no targets' -and $LASTEXITCODE -eq 1)
 
 # laneIds "bird": the lane id is <product>-<bird>; old ids are accepted aliases (warning); old override keys still read; labels follow
 $kb = New-TestKit mbm2; $db = New-Item -ItemType Directory -Force (Join-Path $kb 'skills/envy/adapters')

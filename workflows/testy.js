@@ -340,7 +340,7 @@ ${finds || '(none)'}`
 
 // ---- verify: retries, verify and final prompts
 // the tester's own count, else 5 for flaky-looking FAILs: one warm re-run is inconclusive (qa.intermittentRx replaces it)
-let INTERMITTENT = /time[d ]?out|took too long|\b50[234]\b|cold[- ]start|stall|intermittent|flak|busy|rate[- ]limit|LLM|assistant/i
+let INTERMITTENT = /time[d ]?out|took too long|\b50[234]\b|cold[- ]start|stall|intermittent|flak|busy|rate[- ]limit/i
 function attemptsNeeded(c) {
  return Math.max(c.attempts || 1, INTERMITTENT.test(`${c.observed || ''} ${c.what_was_done || ''}`) ? 5 : 1)
 }

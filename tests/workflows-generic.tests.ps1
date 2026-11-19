@@ -67,7 +67,7 @@ const mk = (logs) => new Function('log', 'MODELS', body)((m) => logs.push(m), {}
 const d = mk([]); d.takeConfig('CONFIG {"intermittentRx":""}')
 const c = mk([]); c.takeConfig('CONFIG {"intermittentRx":"boom"}')
 const bl = [], b = mk(bl); b.takeConfig('CONFIG {"intermittentRx":"("}')
-console.log(`default:${at(d, 'gateway timeout') === 5 && at(d, 'boom') === 1}`)
+console.log(`default:${at(d, 'gateway timeout') === 5 && at(d, 'boom') === 1 && at(d, 'the assistant answered wrong') === 1}`)
 console.log(`custom:${at(c, 'boom!') === 5 && at(c, 'gateway timeout') === 1}`)
 console.log(`bad:${at(b, 'gateway timeout') === 5 && bl.some((l) => /qa\.intermittentRx is no regex/.test(l))}`)
 '@)
