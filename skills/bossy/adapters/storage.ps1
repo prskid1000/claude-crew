@@ -4,7 +4,7 @@ storage.ps1 (core): bossy.ps1 storage (free space per drive, folder scans, disk 
 bossy.ps1 (skills/bossy/adapters/); its tick runs inside board beat and supervise.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 storage · L241 orphans
+Sections: L10 storage · L247 orphans
 #>
 #Requires -Version 7
 # ---- storage: free space trend, folder scans, rescue (kit.example.json storage; TODO-PARAM)
@@ -95,8 +95,14 @@ function Invoke-KitStorageTick([switch]$Force) {
     $v = Get-KitDiskVerdict (Get-KitStorageSamples $d.name 40) $c ([double]$(if ($st.normal -and $st.normal[$d.name]) { $st.normal[$d.name] } else { 0.1 })) $d.kit ((Get-KitBeatMinutes) * 60 - 60)
     $out += $v | Add-Member -PassThru NoteProperty drive $d.name | Add-Member -PassThru NoteProperty root $d.root | Add-Member -PassThru NoteProperty kit $d.kit
   }
-  $q = @(Get-KitDbQueries $c); $max = if ($c.db -and $c.db.maxGB) { [double]$c.db.maxGB } else { 0 }   # storage.db.maxGB: temp cap a query may hold (unset: no cap)
-  $top = @($q | Sort-Object gb -Descending)[0]; if ($max -gt 0 -and $top -and $top.gb -gt $max) { $null = Stop-KitDbQuery $c $top "temp above $max GB"; $q = @($q | Where-Object id -ne $top.id) }
+  # db.use (3-4 s): supervise's forced tick reuses a list under 5 min old while every drive is OK and no query held 1 GB temp
+  $dbDue = -not $Force -or -not $st.dbAt -or ((Get-Date) - [datetime]$st.dbAt).TotalMinutes -ge 5 -or @($out | Where-Object { $_.level -ne 'OK' -or $_.anomaly }).Count -or @($st.dbQ | Where-Object { [double]$_.gb -ge 1 }).Count
+  if (-not $dbDue) { $q = @($st.dbQ | Where-Object { $_ } | ForEach-Object { [pscustomobject]$_ }) }
+  else {
+    $q = @(Get-KitDbQueries $c); $max = if ($c.db -and $c.db.maxGB) { [double]$c.db.maxGB } else { 0 }   # storage.db.maxGB: temp cap a query may hold (unset: no cap)
+    $top = @($q | Sort-Object gb -Descending)[0]; if ($max -gt 0 -and $top -and $top.gb -gt $max) { $null = Stop-KitDbQuery $c $top "temp above $max GB"; $q = @($q | Where-Object id -ne $top.id) }
+    if ($c.db.use) { $q0 = $q; Set-KitStorageState { param($s) $s.dbAt = (Get-Date).ToString('o'); $s.dbQ = @($q0) } }
+  }
   foreach ($v in $out | Where-Object rescue) { Invoke-KitDiskRescue $c $v $q }
   $script:KitStorageDbQ = $q   # the round's diagnosis reuses this list (one db call a sweep, K20)
   $out

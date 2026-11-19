@@ -520,6 +520,22 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
   if ($dirty -and $CacheFile) { $Cache | ConvertTo-Json -Depth 5 | Set-Content $CacheFile -Encoding utf8 }
   $hold
 }
+# repo name -> its deploy branches' heads ("<sha>\trefs/heads/<b>;..."), one git ls-remote a repo a process (= a beat), run side by
+# side; $null = unknown (no checkout, no deploy branch, a failed call)
+function Get-KitDeployHeads([string[]]$Names) {
+  if ($null -eq $script:KitDeployHeads) { $script:KitDeployHeads = @{} }
+  $c = $script:KitDeployHeads; $runs = @{}
+  foreach ($n in @($Names | Where-Object { $_ -and -not $c.ContainsKey($_) } | Select-Object -Unique)) {
+    $c[$n] = $null; $rp = @(@(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $n })[0]
+    $bs = @(@($rp.deploys) | ForEach-Object { "$($_.branch)" } | Where-Object { $_ } | Sort-Object -Unique)
+    if ($bs.Count -and $rp.checkout -and (Test-Path -LiteralPath $rp.checkout)) { $runs[$n] = try { Start-KitExe 'git' (@('-C', "$($rp.checkout)", 'ls-remote', 'origin') + @($bs | ForEach-Object { "refs/heads/$_" })) } catch { $null } }
+  }
+  foreach ($n in @($runs.Keys)) { if (-not $runs[$n]) { continue }; $x = Receive-KitExe $runs[$n] 20; if (-not $x.code -and "$($x.out)".Trim()) { $c[$n] = @("$($x.out)" -split "`r?`n" | Where-Object { $_ } | Sort-Object) -join ';' } }
+  $c
+}
+# a probe's rows need no new probe while the heads hold: every row live, n/a, or not on its deploy branch yet (a deploy job or host
+# install can finish with the head unchanged: those rows are asked again)
+function Test-KitDeployRowsSettled($Rows) { @($Rows).Count -and -not @($Rows | Where-Object { $_.state -notin 'DEPLOYED', 'N/A' -and -not ($_.state -eq 'NOT-DEPLOYED' -and "$($_.detail)" -like 'not on * yet') }).Count }
 # supervise (called from Invoke-Supervise: $now, Within and Invoke-Bounded are its own): -AutoFix moves a done task that is live on a
 # test env to inTest (never before); the deploy plan is cached 1 h (a failed refresh keeps the last good one, marked stale): READY envs are report info, DEPLOY ASK only under trigger ask
 function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
@@ -536,13 +552,19 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       if ($null -eq $qaRunsByTask) { $qaRunsByTask = @{}; foreach ($rf in @(Get-KitQaRunFiles run.json)) { $j = try { [IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json } catch { $null }; foreach ($qid in @(@($j.items.subtasks.id) + @($j.tracker.parent) | ForEach-Object { "$_" } | Where-Object { $_ } | Select-Object -Unique)) { $qaRunsByTask[$qid] = @(@($qaRunsByTask[$qid] | Where-Object { $_ }) + $rf.Directory.Name) } } }
       $covered = @($qaRunsByTask["$($o.task)"] | Where-Object { $_ })
       if ($covered.Count) { Set-KitTaskFields $o.task @{ qaCovered = @($covered) }; continue }
+      # heads of its repos' deploy branches unmoved since its last settled answer: no probe (D13: 111 host verbs a beat re-asked them)
+      $rns = @(@($o.mrs) | ForEach-Object { ((Get-CanonMr (ConvertTo-MrRef "$_")) -split '!', 2)[0] } | Where-Object { $_ } | Sort-Object -Unique)
+      $hs = Get-KitDeployHeads $rns; $hk = if ($rns.Count -and -not @($rns | Where-Object { -not $hs[$_] }).Count) { "$(@($o.mrs | Sort-Object) -join ',')|$(@($rns | ForEach-Object { "$_=$($hs[$_])" }) -join '|')" }   # its MR list too: a new MR is asked
+      if ($hk -and $o.liveSettled -and $o.liveHeads -eq $hk) { Set-KitTaskFields $o.task @{ liveCheckedAt = $now.ToString('o') }; continue }
       $raw = @(Invoke-Bounded $KitCmd.qa @('deployed', '-Mrs', (@($o.mrs) -join ','), '-Json'))   # a background run: none yet (started now, still running) or failed = ask again next round
       if (($raw -join "`n").Trim() -notmatch '^[\[{]') { foreach ($w in @($raw -match '^WATCH ')) { & $flag 'WATCH' "deployed check $($o.task): $($w -replace '^WATCH ')" 'Supervise checks it again next round.' }; continue }
       $rows = @($raw | Out-String | ConvertFrom-Json)
       $o.liveCheckedAt = $now.ToString('o')
       $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -notin 'DEPLOYED', 'N/A' }).Count -and @($rows | Where-Object { $_.target -eq $t -and $_.state -eq 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
       $new = @($live | Where-Object { $_ -notin @($o.liveOn) })
-      $fields = @{ liveCheckedAt = $o.liveCheckedAt }; if ($new.Count) { $fields.liveOn = @(@($o.liveOn) + $new | Where-Object { $_ } | Select-Object -Unique) }
+      # these rows came from the run started last time (heads then: livePending); the run started now sees $hk
+      $fields = @{ liveCheckedAt = $o.liveCheckedAt; liveHeads = $o.livePending; liveSettled = [bool]($o.livePending -and (Test-KitDeployRowsSettled $rows)); livePending = $hk }
+      if ($new.Count) { $fields.liveOn = @(@($o.liveOn) + $new | Where-Object { $_ } | Select-Object -Unique) }
       Set-KitTaskFields $o.task $fields
       if ($new.Count -and (Test-TrackerStatus $(try { (Get-TrackerTask $o.task).status } catch { '' }) 'closed')) { Set-KitTaskFields $o.task @{ qaCovered = @('closed') }; continue }
       if ($new.Count) { Set-KitTaskFields $o.task @{ inTestDue = $now.ToString('o') } }

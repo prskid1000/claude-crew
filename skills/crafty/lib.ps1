@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L485 leases · L883 status · L1143 supervise sweep · L1223 tracker ·
-  L1548 prior · L1564 ask bugs · L1749 git-host · L1929 kitlog · L2049 params · L2354 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1122 supervise sweep · L1202 tracker ·
+  L1527 prior · L1543 ask bugs · L1728 git-host · L1908 kitlog · L2028 params · L2333 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -344,6 +344,9 @@ function Get-KitTcpRows {
       [pscustomobject]@{ LocalPort = [int]($f[1] -replace '^.*:'); RemoteAddress = $Matches[1]; RemotePort = [int]$Matches[2]; State = $f[3]; OwningProcess = [int]$f[4] } } })
 }
 function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster on Windows, no CommandLine/Created
+  $pm = $script:KitProcMemo   # a sweep (Start-KitSweepMemo): the first full scan serves every later call
+  if ($null -ne $pm -and $pm.all) { $all = $pm.all; return $(if ($Name) { @($all | Where-Object { $_.Name -match $Name }) } else { @($all) }) }
+  if ($null -ne $pm) { $NoCommandLine = $false }
   $all = if ($KitIsWindows) {
     $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'ExecutablePath', 'WorkingSetSize', 'CreationDate', 'PrivatePageCount', 'KernelModeTime', 'UserModeTime' }
     foreach ($p in Get-CimInstance Win32_Process -Property $props -ErrorAction SilentlyContinue) {   # Private: bytes; Cpu: seconds used
@@ -361,6 +364,7 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
       [pscustomobject]@{ Id = $id; ParentId = [int]$Matches[2]; Name = $n; CommandLine = $cl; Path = ($cl -split '\s+')[0]; WorkingSet = [double]$Matches[3] * 1KB; Created = (ConvertFrom-PsElapsed $Matches[4]); Private = [double]$Matches[3] * 1KB; Cpu = $null }
     }
   }
+  if ($null -ne $pm) { $pm.all = @($all) }
   if ($Name) { @($all | Where-Object { $_.Name -match $Name }) } else { @($all) }
 }
 
@@ -380,48 +384,6 @@ function Stop-KitProcessTree([Diagnostics.Process]$Proc) {
     } catch {}
   }
   try { $Proc.Kill($true) } catch {}
-}
-function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0) {
-  $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
-  $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { (Get-KitMember $ex.defaults $n) } }
-  $envs = @(Get-ChildItem env: | ForEach-Object Name)
-  if (-not $Tool) {
-    $Tool = if ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' }
-    elseif ($Model -match '^gpt') { 'codex' }
-    elseif ($Model -match '^gemini') { 'antigravity' }
-    elseif ($v = $env:KIT_TOOL) { $v }
-    elseif ($env:CLAUDECODE) { 'claude' }
-    elseif ($envs -like 'CODEX_*') { 'codex' }
-    elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' }
-    else { 'unknown' }
-  }
-  $n = 'unknown'; $tok = 0; $src = ''
-  if ($Tool -eq 'claude') {
-    if (-not $Model) { $Model = "$env:ANTHROPIC_MODEL" }
-    $m = $Model.ToLower(); $big = $m -match '\[1m\]|fable|^(opus|sonnet|haiku|inherit|default)?$'
-    if ($m -match '(opus|sonnet|haiku)-(\d+)(?:-(\d)(?!\d))?') { $big = $big -or ([double]$Matches[2] + [double]"0$($Matches[3])" / 10) -ge @{ opus = 4.7; sonnet = 5; haiku = 5.5 }[$Matches[1]] }
-    if ($big -or $m -match 'claude|opus|sonnet|haiku') {
-      if ($env:CLAUDE_CODE_DISABLE_1M_CONTEXT -eq '1') { $big = $false }
-      $n = if ($big) { 'claude-1m' } else { 'claude-200k' }; $tok = [int](& $row $n).tokens
-      if ($v = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW) { $tok = [int]$v; $src = 'env CLAUDE_CODE_AUTO_COMPACT_WINDOW' }
-      if ($v = $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $tok = [math]::Min($tok, [int]($(if ($big) { 1e6 } else { 2e5 }) * [double]$v / 100)); $src = 'env CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' }
-    }
-  } elseif ($Tool -eq 'codex') {
-    $ch = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
-    $tt = "$(Get-Content (Join-Path $ch 'config.toml') -Raw -ErrorAction SilentlyContinue)"
-    if (-not $Model -and $tt -match '(?m)^\s*model\s*=\s*"([^"]+)"') { $Model = $Matches[1] }
-    $mc = try { @((Get-Content (Join-Path $ch 'models_cache.json') -Raw | ConvertFrom-Json).models | Where-Object slug -eq $Model)[0] } catch { $null }
-    $n = 'codex'
-    if ($tt -match '(?m)^\s*model_auto_compact_token_limit\s*=\s*(\d+)') { $tok = [int]$Matches[1]; $src = 'config.toml model_auto_compact_token_limit' }
-    elseif ($v = $mc.auto_compact_token_limit) { $tok = [int]$v; $src = 'models_cache.json auto_compact_token_limit' }
-    else {
-      $w = if ($v = $mc.context_window) { [double]$v * $(if ($q = $mc.effective_context_window_percent) { [double]$q } else { 100 }) / 100 } else { $Window }
-      $tok = [int]($w * [double](& $row $n).fraction)
-    }
-  } elseif ($Tool -eq 'antigravity' -and $Window) { $n = 'antigravity'; $tok = [int]($Window * [double](& $row $n).fraction) }
-  if (-not $tok) { $n = 'unknown'; $tok = [int](& $row $n).tokens }
-  $h = [double](Get-KitSetting 'budget.handoffAt' $ex.handoffAt)
-  [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = [int]($tok * $h); handoffAt = $h; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $(if ($src) { $src } else { (& $row $n).source }) }
 }
 # reads only the last 512 KB (then 8 MB): Get-Content -Tail took 1.3 s per MB-sized transcript
 function Get-KitSpend([string]$File) {
@@ -692,20 +654,30 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [strin
     foreach ($x in $o) { if ($x -is [Management.Automation.ErrorRecord]) { $se += "$x" } else { $so += "$x" } }
     return & $res $c ($so -join "`n") ($se -join "`n")
   }
-  $si = [Diagnostics.ProcessStartInfo]::new($cmd.Source)
+  $feed = $PSBoundParameters.ContainsKey('In'); $h = Start-KitExe $cmd.Source $A $Raw $Cwd -Feed:$feed; $h.exe = $Exe; $p = $h.p
+  if ($feed) {   # async + timed: a child that never reads stdin must not hang the write
+    try { if (-not $p.StandardInput.WriteAsync($In).Wait($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s (stdin not read)" $true }; $p.StandardInput.Close() } catch [IO.IOException] {} catch [AggregateException] {}
+  }
+  Receive-KitExe $h ([math]::Max(1.0, $TimeoutSec - ((Get-Date) - $h.at).TotalSeconds))
+}
+# an application started now, its output collected later (Receive-KitExe): supervise overlaps a slow child with its own work
+function Start-KitExe([string]$Path, [string[]]$A, [string]$Raw, [string]$Cwd, [switch]$Feed) {
+  if (-not [IO.Path]::IsPathRooted($Path)) { $app = Get-Command $Path -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($app) { $Path = $app.Source } }   # a name on PATH (python, pwsh)
+  $si = [Diagnostics.ProcessStartInfo]::new($Path)
   if ($Raw) { $si.Arguments = $Raw } else { foreach ($x in @($A)) { $si.ArgumentList.Add([string]$x) } }
   if ($Cwd) { $si.WorkingDirectory = $Cwd }
   $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
   $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-  $feed = $PSBoundParameters.ContainsKey('In'); if ($feed) { $si.RedirectStandardInput = $true; $si.StandardInputEncoding = [Text.UTF8Encoding]::new($false) }
+  if ($Feed) { $si.RedirectStandardInput = $true; $si.StandardInputEncoding = [Text.UTF8Encoding]::new($false) }
   $p = [Diagnostics.Process]::Start($si)
-  $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()   # readers first: a full stdout pipe would block the stdin write
-  if ($feed) {   # async + timed: a child that never reads stdin must not hang the write
-    try { if (-not $p.StandardInput.WriteAsync($In).Wait($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s (stdin not read)" $true }; $p.StandardInput.Close() } catch [IO.IOException] {} catch [AggregateException] {}
-  }
-  if (-not $p.WaitForExit($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return & $res -1 '' "$Exe timed out after $TimeoutSec s" $true }
+  @{ p = $p; exe = $Path; at = Get-Date; so = $p.StandardOutput.ReadToEndAsync(); se = $p.StandardError.ReadToEndAsync() }   # readers first: a full stdout pipe would block the stdin write
+}
+# -> Invoke-KitExe's result; $TimeoutSec counts from now
+function Receive-KitExe($H, [int]$TimeoutSec = 60) {
+  $p = $H.p
+  if (-not $p.WaitForExit($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return [pscustomobject]@{ code = -1; out = ''; err = "$($H.exe) timed out after $TimeoutSec s"; timedOut = $true } }
   $p.WaitForExit()
-  & $res $p.ExitCode $so.Result.TrimEnd() $se.Result.TrimEnd()
+  [pscustomobject]@{ code = $p.ExitCode; out = $H.so.Result.TrimEnd(); err = $H.se.Result.TrimEnd(); timedOut = $false }
 }
 $script:KitNoConnect = '(?i)could not resolve|no such host|connection refused|unreachable|dial tcp'
 $script:KitTransient = $script:KitNoConnect + '|timed? ?out|connection (reset|closed|aborted)|\bEOF\b|TLS handshake|temporar|\b(429|50[0234])\b|bad gateway|service unavailable|too many requests'
@@ -902,11 +874,18 @@ function Get-KitClaudeStarts { @(Get-Process -ErrorAction SilentlyContinue | Whe
 # a broken file is skipped
 function Read-KitJsonFiles([string]$Dir, [string]$Filter = '*.json') {
   if (-not $Dir) { return }
+  $memo = $script:KitJsonMemo; $was = if ($null -ne $memo) { $memo["$Dir|$Filter"] }; $now = if ($null -ne $memo) { @{} }
   foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter $Filter -File -ErrorAction SilentlyContinue)) {
+    $m = if ($was) { $was[$f.FullName] }
+    if ($m -and $m.t -eq $f.LastWriteTimeUtc.Ticks -and $m.n -eq $f.Length) { $now[$f.FullName] = $m; $m.o.PSObject.Copy(); continue }   # a copy: callers set fields on it
     $o = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { $null }
-    if ($o) { $o | Add-Member -Force NoteProperty file $f.FullName; $o }
+    if ($o) { $o | Add-Member -Force NoteProperty file $f.FullName; if ($null -ne $now) { $now[$f.FullName] = @{ t = $f.LastWriteTimeUtc.Ticks; n = $f.Length; o = $o }; $o.PSObject.Copy() } else { $o } }
   }
+  if ($null -ne $memo) { $memo["$Dir|$Filter"] = $now }   # only this listing's files: deleted ones drop out
 }
+# one supervise sweep: Read-KitJsonFiles parses a file again only when its time or size changed (the board was read 6+ times a
+# sweep, 1 s each at 1.4k entries), Get-SysProcs is one process snapshot (CIM scans per section)
+function Start-KitSweepMemo { $script:KitJsonMemo = @{}; $script:KitProcMemo = @{} }
 # running = no result and no later start of the same item or label (a 529-dead agent writes no result)
 function Get-JournalRunning($Started, $DoneIds) {
   $itemOf = { param($label) (([string]$label -split ':', 2)[-1] -split '@')[0] }
@@ -1145,7 +1124,7 @@ function Format-KitStatusTable($Rows, $Now, $Versions, [int]$Cap = 0) {
 function New-KitSweep([datetime]$Deadline, $State) {
   $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary] -or $sw.v -ne 2) { $sw.cost = @{} }   # v2: costs exclude ungated work
   foreach ($jk in @($sw.cost.Keys | Where-Object { "$_" -match '^\S+\.ps1(\s+\S+){3}' })) { $sw.cost.Remove($jk) }   # old per-job keys
-  $every = @{ 'cleanup' = 30; 'deploy checks' = 10; 'stale layers' = 15; 'repo sync' = [double](Get-KitParam 'sync.everyMinutes') }   # only one-shot sections: standing flags would vanish off-round
+  $every = @{ 'cleanup' = 30; 'deploy checks' = 10; 'stale layers' = 15; 'outcomes' = 30; 'repo sync' = [double](Get-KitParam 'sync.everyMinutes') }   # only one-shot sections: standing flags would vanish off-round
   $cf = Get-KitSetting 'supervise.sectionMinutes' $null; if ($cf) { foreach ($p in @((Get-KitProps $cf) | Where-Object MemberType -eq NoteProperty)) { $v = 0.0; if ([double]::TryParse("$($p.Value)", [ref]$v)) { $every[$p.Name] = $v } } }
   [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); last = $(if ($sw.last -is [Collections.IDictionary]) { $sw.last } else { @{} }); every = $every; always = @('tracker checks'); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
 }

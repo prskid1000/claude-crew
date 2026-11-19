@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L211 waits · L222 cpu
+Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L239 waits · L250 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -128,9 +128,37 @@ function Get-KitEnvStatusErr($Le) {
   if (-not @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue).Count) { return $null }   # no env set up: nothing to read
   if ($Le.timedOut) { 'timed out' } else { "exit $($Le.code): $(("$($Le.err)$($Le.out)" -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1))" }
 }
+# status -Json (4-6 s, 11 s loaded: a pwsh child that loads envy) runs again only when what it reads changed: the env state files
+# minus their clocks and RAM readings, the live pids they name, kit.local.json or envy.ps1; else at most every 10 min (its minute counts, lease prune)
+function Get-KitEnvStatusKey {
+  $sb = [Text.StringBuilder]::new(); $ids = @{}; foreach ($p in @(Get-SysProcs)) { $ids[[int]$p.Id] = 1 }
+  foreach ($f in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object Name -match '^[^.]+\.json$' | Sort-Object Name)) {
+    $t = try { [IO.File]::ReadAllText($f.FullName) } catch { "unread $($f.Length) $($f.LastWriteTimeUtc.Ticks)" }
+    [void]$sb.Append($f.Name).Append('|').Append(($t -replace '"(seen|lastUse|lastNeed|beat|gb|peakGB)":\s*("[^"]*"|[-\d.eE+]+|null)', ''))
+    foreach ($m in [regex]::Matches($t, '"(?:pid|waitPid)":\s*(\d+)')) { [void]$sb.Append("|$($m.Groups[1].Value)=$([int]$ids.ContainsKey([int]$m.Groups[1].Value))") }
+  }
+  foreach ($x in @($KitConf.ConfigFile, $KitCmd.local)) { if ($x -and (Test-Path -LiteralPath $x)) { [void]$sb.Append("|$x=$((Get-Item -LiteralPath $x).LastWriteTimeUtc.Ticks)") } }
+  Get-KitHash $sb.ToString()
+}
+# sweep start (bossy.ps1 Start-KitSupervisePrefetch hooks): the cached answer, or the child started now and read by the guard hook
+function Start-KitSupervisePrefetchLocalEnv {
+  $script:KitEnvStatusRun = $null; if (-not (Test-Path $KitCmd.local)) { return }
+  $key = Get-KitEnvStatusKey; $c = try { Read-KitText (Join-Path (Get-KitPath cache -Create) 'localenv-status.json') | ConvertFrom-Json } catch { $null }
+  if ($c.key -eq $key -and "$($c.out)".Trim() -and ((Get-Date) - [datetime]$c.at).TotalMinutes -lt 10) { $script:KitEnvStatusRun = @{ key = $key; out = "$($c.out)" }; return }
+  $script:KitEnvStatusRun = @{ key = $key; h = $(try { Start-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') } catch { $null }) }
+}
+# -> Invoke-KitExe's shape; no prefetch (tests, a guard hook run alone): inline, uncached
+function Read-KitEnvStatus {
+  $r = $script:KitEnvStatusRun; $script:KitEnvStatusRun = $null
+  if ($r.out) { return [pscustomobject]@{ code = 0; out = $r.out; err = ''; timedOut = $false } }
+  if (-not $r.h) { return Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30.0, (Left))) }
+  $le = Receive-KitExe $r.h ([math]::Min(30.0, (Left)))
+  if (-not $le.code -and -not $le.timedOut -and "$($le.out)".Trim()) { Write-KitAtomic (Join-Path (Get-KitPath cache -Create) 'localenv-status.json') (@{ key = $r.key; at = (Get-Date).ToString('o'); out = $le.out } | ConvertTo-Json -Compress) }
+  $le
+}
 function Get-KitSuperviseGuardLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
-  $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30.0, (Left)))
+  $le = Read-KitEnvStatus
   $script:KitEnvStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }); $script:KitEnvStatusErr = Get-KitEnvStatusErr $le; (Get-KitEnvRows $script:KitEnvStatus $now).rows
 }
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
@@ -151,7 +179,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       if ("$ln" -like 'kept *') { [pscustomobject]@{ info = "LANE NAMES: $ln" } } else { [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: $ln"; action = 'Nothing to do.' } } }
   }
   $early = $null -ne $script:KitEnvStatus   # the guard hook read status this round: its rows are out
-  $envs = if ($early) { $script:KitEnvStatus } else { $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30.0, (Left))); @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }) }
+  $envs = if ($early) { $script:KitEnvStatus } else { $le = Read-KitEnvStatus; @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }) }
   $se = if ($early) { $script:KitEnvStatusErr } else { Get-KitEnvStatusErr $le }; $script:KitEnvStatus = $null; $script:KitEnvStatusErr = $null; $er = Get-KitEnvRows $envs $now
   if ($se) { [pscustomobject]@{ level = 'WATCH'; what = "LOCAL ENV STATUS unread this sweep: $se (down services cannot flag)"; action = "& $($KitCmd.local) status; slow or failing: kitty kind env" } }
   if (-not $early) { $er.rows }; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }

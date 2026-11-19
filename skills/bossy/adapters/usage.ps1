@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage
+Sections: L9 usage · L257 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -252,4 +252,48 @@ function Format-KitUsageHtml($U) {
     tiles = $uTiles; dayRows = $uRows; spend = $spend
     pages = $pages
     usageN = "$(& $tk $td.tok) tokens today" }
+}
+
+# ---- budget: a tool + model's token budget (compaction point), its handoff and run-stop fractions (README "Configuration")
+function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0) {
+  $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
+  $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { (Get-KitMember $ex.defaults $n) } }
+  $envs = @(Get-ChildItem env: | ForEach-Object Name)
+  if (-not $Tool) {
+    $Tool = if ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' }
+    elseif ($Model -match '^gpt') { 'codex' }
+    elseif ($Model -match '^gemini') { 'antigravity' }
+    elseif ($v = $env:KIT_TOOL) { $v }
+    elseif ($env:CLAUDECODE) { 'claude' }
+    elseif ($envs -like 'CODEX_*') { 'codex' }
+    elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' }
+    else { 'unknown' }
+  }
+  $n = 'unknown'; $tok = 0; $src = ''
+  if ($Tool -eq 'claude') {
+    if (-not $Model) { $Model = "$env:ANTHROPIC_MODEL" }
+    $m = $Model.ToLower(); $big = $m -match '\[1m\]|fable|^(opus|sonnet|haiku|inherit|default)?$'
+    if ($m -match '(opus|sonnet|haiku)-(\d+)(?:-(\d)(?!\d))?') { $big = $big -or ([double]$Matches[2] + [double]"0$($Matches[3])" / 10) -ge @{ opus = 4.7; sonnet = 5; haiku = 5.5 }[$Matches[1]] }
+    if ($big -or $m -match 'claude|opus|sonnet|haiku') {
+      if ($env:CLAUDE_CODE_DISABLE_1M_CONTEXT -eq '1') { $big = $false }
+      $n = if ($big) { 'claude-1m' } else { 'claude-200k' }; $tok = [int](& $row $n).tokens
+      if ($v = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW) { $tok = [int]$v; $src = 'env CLAUDE_CODE_AUTO_COMPACT_WINDOW' }
+      if ($v = $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $tok = [math]::Min($tok, [int]($(if ($big) { 1e6 } else { 2e5 }) * [double]$v / 100)); $src = 'env CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' }
+    }
+  } elseif ($Tool -eq 'codex') {
+    $ch = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
+    $tt = "$(Get-Content (Join-Path $ch 'config.toml') -Raw -ErrorAction SilentlyContinue)"
+    if (-not $Model -and $tt -match '(?m)^\s*model\s*=\s*"([^"]+)"') { $Model = $Matches[1] }
+    $mc = try { @((Get-Content (Join-Path $ch 'models_cache.json') -Raw | ConvertFrom-Json).models | Where-Object slug -eq $Model)[0] } catch { $null }
+    $n = 'codex'
+    if ($tt -match '(?m)^\s*model_auto_compact_token_limit\s*=\s*(\d+)') { $tok = [int]$Matches[1]; $src = 'config.toml model_auto_compact_token_limit' }
+    elseif ($v = $mc.auto_compact_token_limit) { $tok = [int]$v; $src = 'models_cache.json auto_compact_token_limit' }
+    else {
+      $w = if ($v = $mc.context_window) { [double]$v * $(if ($q = $mc.effective_context_window_percent) { [double]$q } else { 100 }) / 100 } else { $Window }
+      $tok = [int]($w * [double](& $row $n).fraction)
+    }
+  } elseif ($Tool -eq 'antigravity' -and $Window) { $n = 'antigravity'; $tok = [int]($Window * [double](& $row $n).fraction) }
+  if (-not $tok) { $n = 'unknown'; $tok = [int](& $row $n).tokens }
+  $h = [double](Get-KitSetting 'budget.handoffAt' $ex.handoffAt)
+  [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = [int]($tok * $h); handoffAt = $h; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $(if ($src) { $src } else { (& $row $n).source }) }
 }

@@ -76,8 +76,8 @@ function Update-KitOutcomes([switch]$All) {
   $n }
   Set-Content -LiteralPath $stampFile $t0.ToString('o'); $n
 }
-# supervise hook: a cheap sweep each beat (only when a task, wave or launch file changed)
-function Get-KitSuperviseFlagsOutcomes([switch]$AutoFix) { try { $null = Update-KitOutcomes } catch { [pscustomobject]@{ level = 'WATCH'; what = "outcomes sweep failed: $($_.Exception.Message)"; action = 'bossy.ps1 tidy prep reruns it; else a kitty (kind fix)' } } }
+# supervise hook: every 30 min (lib.ps1 New-KitSweep; 1.5-3 s while tasks change; tidy prep runs its own), only when a task, wave or launch file changed
+function Get-KitSuperviseFlagsOutcomes([switch]$AutoFix) { if (-not (Within 'outcomes')) { return }; try { $null = Update-KitOutcomes } catch { [pscustomobject]@{ level = 'WATCH'; what = "outcomes sweep failed: $($_.Exception.Message)"; action = 'bossy.ps1 tidy prep reruns it; else a kitty (kind fix)' } } }
 
 # ---- summary: worst areas, repeat causes, most fix rounds (tidy prep digest, dashboard)
 function Get-KitOutcomeStats([int]$Days = (Get-KitParam 'outcomes.days')) {

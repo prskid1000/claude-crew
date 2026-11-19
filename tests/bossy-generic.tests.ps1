@@ -204,4 +204,18 @@ $wo = & { . $O; $n = Get-Date; $me = @{ pid = $PID; pidStart = (Get-KitPidStart 
   "$(@($w | ForEach-Object { "$($_.agent)/$($_.why)/$($_.holder)" }) -join ',')|$(@($q | ForEach-Object { "$($_.agent)/$($_.expect)/$($_.now -replace ', beat.*')" }) -join ',')|$($fl -join ',')" }
 Expect "waits: lock and phone waits past the cap name their holder; QA SLOW names the package and its board status ($wo)" ($wo -eq 'devB/test lock db/devA,test:T3/phone lane pixel-a/test:T2 (pixel-a)|test:T1/60/check C3 (3/9)|WAIT OVER CAP,WAIT OVER CAP,QA SLOW')
 Remove-TestKit $k
+# prefetch hooks: env status -Json cached by its state files minus clocks and RAM (a change or a failed read asks again); state lint read in its section
+$TestKitFiles = @('skills/bossy/adapters/localenv_supervise.ps1', 'skills/bossy/adapters/kit_admin.ps1', 'skills/envy/envy.ps1'); $k = New-TestKit supenv; $TestKitFiles = @()
+$ec = & { . (Join-Path $k 'skills/bossy/bossy.ps1'); function Left { 30 }; function Within { $true }; $now = Get-Date; $global:ecStarts = 0; $global:ecFail = $false
+  function Start-KitExe { $global:ecStarts++; @{ at = Get-Date; p = $null } }
+  function Receive-KitExe { [pscustomobject]@{ code = $(if ($global:ecFail) { -1 } else { 0 }); out = $(if ($global:ecFail) { '' } elseif ($args[0].lint) { '[{"level":"BAD","file":"x.json","problem":"unreadable"}]' } else { '[{"env":"shop","services":[{"service":"web","state":"up","port":4200}],"leases":[],"holds":[]}]' }); err = ''; timedOut = $global:ecFail } }
+  $sf = Join-Path (Get-KitPath localenv -Create) 'eck.json'
+  $st = { param($s, $t, $g) "{`"services`":{`"web`":{`"status`":`"$s`",`"lastNeed`":`"$t`",`"gb`":$g}},`"loop`":{`"beat`":`"$t`"}}" | Set-Content $sf }
+  & $st 'up' '2026-01-01T00:00:00' 1.5
+  $ecOut = foreach ($step in 'first', 'same', 'clock', 'change', 'fail', 'after') {
+    if ($step -eq 'clock') { & $st 'up' '2026-01-02T09:30:00' 2.25 }; if ($step -eq 'change') { & $st 'failed' '2026-01-02T09:30:00' 2.25 }; if ($step -eq 'fail') { & $st 'starting' '2026-01-02T09:30:00' 2.25 }; $global:ecFail = $step -eq 'fail'
+    Start-KitSupervisePrefetchLocalEnv; "$step=$global:ecStarts/$(@(Get-KitSuperviseGuardLocalEnv | ForEach-Object name) -join ',')" }
+  Start-KitSupervisePrefetchStateLint; $script:KitStateLintRun.lint = $true; $ecOut += "lint=$(@(Get-KitSuperviseFlagsStateLint).what)"; $ecOut -join ' ' }
+Expect "supervise prefetch: env status cached by its state files minus clocks and RAM, asked again on a change or a failed read; state lint flags in its section ($ec)" ($ec -eq 'first=1/shop · web same=1/shop · web clock=1/shop · web change=2/shop · web fail=3/ after=4/shop · web lint=state file x.json: unreadable')
+Remove-TestKit $k
 Complete-Tests

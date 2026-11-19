@@ -29,8 +29,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L231 budget · L261 launch · L502 recover · L589 pause · L600 resume · L667 program · L718 param ·
-  L724 track · L1066 supervise · L1388 report · L1468 audit · L1528 storage · L1531 bugbrief · L1645 cleanup · L1732 learn ·
-  L1763 decide · L1914 debate · L1958 health · L2025 retro due · L2035 tidy · L2107 setup · L2204 guard-sendmessage
+  L724 track · L1066 supervise · L1385 report · L1465 audit · L1525 storage · L1528 bugbrief · L1642 cleanup · L1729 learn ·
+  L1760 decide · L1911 debate · L1955 health · L2022 retro due · L2032 tidy · L2104 setup · L2201 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1080,7 +1080,7 @@ $actSec = @{}; $lastWithin = @{ n = $null }; function Set-ActSection($lvl, $what
 function Flag($lvl, $what, $action, $cols) { Set-ActSection $lvl $what; [void]$flags.Add([pscustomobject](@{ level = $lvl; what = $what; action = $action } + $(if ($cols) { $cols } else { @{} }))) }
 function L($s) { [void]$lines.Add($s) }
 $lk = Join-Path (Get-KitPath cache -Create) 'supervise.lock'
-$me = Get-SuperviseOwner $Session; Update-KitCoordinatorBeat   # the registry: this session's coordinator row stays live
+Start-KitSweepMemo; $me = Get-SuperviseOwner $Session; Update-KitCoordinatorBeat   # the registry: this session's coordinator row stays live
 $script:aside = $null
 Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
@@ -1099,6 +1099,7 @@ $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
 $kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.n = $name; Test-KitSweep $kitSweep $name }   # learned cost, starved first; a cut-short section still names its ACT
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
+Phase 'prefetch'; $null = @(Invoke-KitHooks Start-KitSupervisePrefetch)   # slow children start now, their sections read them
 function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; $md = Get-KitSweepMode $A; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:($md -eq 'background') -Detached:($md -eq 'detached') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest, scope timed out inline
 $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached first, outside the budget (gated: skipped most sweeps)
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
@@ -1215,10 +1216,6 @@ foreach ($x in @(Invoke-KitHooks Get-KitSuperviseGuard @{ AutoFix = $AutoFix }))
 $ramAct = [int](Get-KitSetting 'supervise.ramActPct' 90)
 if ($pct -ge $ramAct) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run bossy.ps1 cleanup; check for orphaned java/node/chrome from finished agents.' }
 if (Within 'storage') { try { foreach ($x in @(Get-KitStorageRound)) { Add-KitResult $x } } catch { Flag 'WATCH' "storage round failed: $($_.Exception.Message)" 'bossy.ps1 storage' } }
-if (Within 'state files') {   # unreadable state files (STATE.md)
-  $sl = Invoke-KitExe (Get-Python) @('-X', 'utf8', (Join-Path $KitConf.Kit 'skills/bossy/kitbag.py'), 'state', 'lint', '--json', '--since', [string](3 * (Get-KitBeatMinutes))) ([math]::Min(8.0, (Left)))
-  foreach ($b in @(try { $sl.out | ConvertFrom-Json } catch { @() }) | Where-Object level -eq 'BAD') { Flag 'WATCH' "state file $($b.file): $($b.problem)" 'Readers skip it: fix or move it aside, then kitbag.py state lint' }
-}
 Phase 'guard log'; $blocks = @(Read-KitLog guard $now.AddHours(-1) | Where-Object event -eq 'deny')
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: bossy.ps1 audit -Since 1h shows them; add a contracts note or a lesson so they stop.' }
 # one beat with its run time

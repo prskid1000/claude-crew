@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L105 health · L114 prepush · L178 weekly tests · L210 precommit
+Sections: L12 learn · L105 health · L114 prepush · L178 weekly tests · L210 state lint · L219 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -205,6 +205,15 @@ function Get-KitHealthLinesFullTests {
   $days = [double](Get-KitParam 'kitTests.fullEveryDays'); if ($days -le 0) { return }
   $s = (Get-KitFullTestsState).s
   "Kit tests (full, every $days days while idle): last green $(if ($s.greenAt) { ([datetime]$s.greenAt).ToString('yyyy-MM-dd') } else { 'never' })$(if ($s.start -and "$($s.start)" -ne "$($s.greenAt)") { ", last run $(([datetime]$s.start).ToString('yyyy-MM-dd'))$(if (Test-KitPid $s.pid $s.start) { ' (running)' } elseif ($s.read) { ' (not green: log kit-tests-full.txt)' })" })."
+}
+
+# ---- state lint: unreadable state files (STATE.md) in supervise; the python child (1-2 s) starts with the sweep, read in its section
+function Start-KitSupervisePrefetchStateLint { $script:KitStateLintRun = try { Start-KitExe (Get-Python) @('-X', 'utf8', (Join-Path $KitConf.Kit 'skills/bossy/kitbag.py'), 'state', 'lint', '--json', '--since', [string](3 * (Get-KitBeatMinutes))) } catch { $null } }
+function Get-KitSuperviseFlagsStateLint([switch]$AutoFix) {
+  $r = $script:KitStateLintRun; $script:KitStateLintRun = $null; if (-not $r) { return }
+  if (-not (Within 'state files')) { Stop-KitProcessTree $r.p; return }
+  $sl = Receive-KitExe $r ([math]::Min(8.0, (Left)))
+  foreach ($b in @(try { $sl.out | ConvertFrom-Json } catch { @() }) | Where-Object level -eq 'BAD') { [pscustomobject]@{ level = 'WATCH'; what = "state file $($b.file): $($b.problem)"; action = 'Readers skip it: fix or move it aside, then kitbag.py state lint' } }
 }
 
 # ---- precommit: graph, ports, section maps, lint

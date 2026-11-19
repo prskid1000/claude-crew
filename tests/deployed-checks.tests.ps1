@@ -24,6 +24,10 @@ if ($KitIsWindows) { Remove-Item function:ssh; $sd = Join-Path $args[5] 'sshbin'
 $global:hc = 0; $env:KIT_API_BEAT = 'bt1'; $m1 = Invoke-Deployed -Mrs 'web!5' -Target stg -Json | ConvertFrom-Json; $c1 = $global:hc
 $env:KIT_API_BEAT = 'bt2'; $m2 = Invoke-Deployed -Mrs 'web!5' -Target stg -Json | ConvertFrom-Json; $env:KIT_API_BEAT = $null
 "memo:$($c1 -gt 0 -and $global:hc -eq $c1 -and $m1.state -eq 'DEPLOYED' -and $m2.state -eq 'DEPLOYED') $c1/$global:hc $($m1.state)/$($m2.state)"
+$hostApi0 = ${function:Invoke-HostApi}; function Invoke-HostApi($p) { if ($p -like '*requests/6') { return @{ iid = 6; state = 'merged'; sha = 'G'; merged_at = '2026-01-02' } }; if ($p -like '*merge_base*') { return @{ id = $(if ($p -cmatch 'refs\[\]=G\b') { 'G' } else { 'F' }) } }; if ($p -like '*commits/staging*') { return @{ id = 'H1' } }; if ($p -like '*ref=staging*') { return , @(@{ id = 2; created_at = '2026-01-03'; sha = 'G' }) }; if ($p -like '*jobs*') { return , @(@{ name = 'deploy-eu'; status = $env:JOB_ST }) } }
+$env:JOB_ST = 'running'; $env:KIT_API_BEAT = 'bt3'; $j1 = Invoke-Deployed -Mrs 'web!6' -Target stg -Json | ConvertFrom-Json
+$env:JOB_ST = 'success'; $env:KIT_API_BEAT = 'bt4'; $j2 = Invoke-Deployed -Mrs 'web!6' -Target stg -Json | ConvertFrom-Json; $env:KIT_API_BEAT = $null
+"job:$($j1.state -eq 'NOT-DEPLOYED' -and $j1.detail -match 'no successful' -and $j2.state -eq 'DEPLOYED') $($j1.state)/$($j2.state)"; Set-Item function:Invoke-HostApi $hostApi0
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@
 '{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"phones","laneApk":true}]}]}' | Set-Content $kl
@@ -45,6 +49,7 @@ foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'logs', 'rx') { Expect "deployed: $x 
 Expect "deployed ssh: one ssh per host, a later MR's ancestry read locally; a hung ssh ends at deploy.sshTimeoutSeconds ($($res -match '^(host|bound):'))" (@($res) -contains 'host:True' -and @($res) -contains 'bound:True')
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
 Expect "deployed in a supervise beat (D13): a DEPLOYED row and its merged MR kept across beats, the next beat asks the host nothing ($(@($res) -match '^memo|rror' | Select-Object -First 3))" (@($res) -match '^memo:True ').Count
+Expect "deployed in a supervise beat: an MR on the branch whose deploy job was still running is asked again next beat, head unchanged ($(@($res) -match '^job'))" (@($res) -match '^job:True ').Count
 Expect 'deployed: a laneApk deploy with no lane APK stamp is UNKNOWN, naming phoney.ps1 build' ("$res" -match 'UNKNOWN\s+web!5\s+phones\s+no lane APK stamp .*phoney\.ps1 build')
 # a squash-merged deploy MR counts; an unanswered git host is UNKNOWN, not NOT-DEPLOYED
 $t = @'
@@ -100,6 +105,33 @@ Expect 'deployed: every row carries the MR target branch (deploy plan: no feeds 
 $env:NA_TGT = 'mc,px'; $nt = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env:NA_TGT; $ntr = @(($nt -replace '(?s)^.*?(\[.*\]).*$', '$1') | ConvertFrom-Json)
 $dcs = Get-Content (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -Raw; $chU = @([regex]::Matches($dcs, "Hv 'mr\.changes' @\{ n = [^}]+\}") | ForEach-Object { $_.Value -replace '\$\(?[\w.]+\)?', 'I' } | Select-Object -Unique)
 Expect "deployed: -Target takes a list (deploy plan: one run per repo); the paths filter and the content check share one change-list call ($(@($ntr.target) -join ',') | $($chU -join ' '))" ((@($ntr.target) -join ',') -eq 'mc,px' -and $chU.Count -eq 1)
+# a merged MR's change list is kept across supervise beats: the next beat's paths check asks the host no mr.changes
+Set-Content "$(Kd)/chg.ps1" @'
+. $args[0]; $global:nc = 0; function ssh { 'HEAD=abc1234 2026-01-02'; 'ANC=yes'; 'RC=0'; 'FILES=1' }
+. $env:KIT_TEST_SHIM; function Invoke-HostApi($p) { if ($p -like '*requests/5/changes*') { $global:nc++; return @{ changes = @(@{ new_path = 'pm/a.py'; old_path = 'pm/a.py' }) } }; if ($p -like '*requests/5') { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02'; target_branch = 'main' } } }
+$env:KIT_API_BEAT = 'cb1'; $a = Invoke-Deployed -Mrs 'py!5' -Json -Target mc | ConvertFrom-Json; $n1 = $global:nc
+$env:KIT_API_BEAT = 'cb2'; $b = Invoke-Deployed -Mrs 'py!5' -Json -Target mc | ConvertFrom-Json; $env:KIT_API_BEAT = $null
+"chg:$($n1 -eq 1 -and $global:nc -eq 1 -and $a.state -eq 'N/A' -and $b.state -eq 'N/A') $n1/$global:nc $($a.state)/$($b.state)"
+'@
+$chg = Px "$(Kd)/chg.ps1" $Q 2>&1 | Out-String
+Expect "deployed in a supervise beat: a merged MR's change list kept across beats ($($chg.Trim()))" ($chg -match 'chg:True ')
+# supervise: a done task's deployed probe is skipped while its repos' deploy-branch heads hold and its last answer settled (live, n/a,
+# not on the branch); a head move, a new MR or an unsettled answer (on the branch, job not done) probes again
+$hsk = @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; function Within($n) { $true }; $now = Get-Date; $global:probes = 0; $global:heads = 'h1'
+function Get-KitDeployHeads { @{ web = $global:heads } }
+$global:rows = '[{"mr":"web!5","target":"stg","state":"NOT-DEPLOYED","detail":"not on staging yet"}]'
+function Invoke-Bounded { if ($args[1][0] -eq 'deployed') { $global:probes++; $global:rows } else { @() } }
+$global:task = [pscustomobject]@{ task = 'T1'; done = $true; doneAt = $now.AddHours(-1).ToString('o'); mrs = @('web!5'); liveCheckedAt = $null }
+function Read-KitTracking { [pscustomobject]@{ tasks = @{ T1 = $global:task } } }
+function Set-KitTaskFields($t, $f) { foreach ($x in $f.Keys) { $global:task | Add-Member -Force NoteProperty $x $f[$x] } }
+$o = foreach ($s in 'first', 'second', 'same', 'moved', 'onbranch', 'again') {
+  if ($s -eq 'moved') { $global:heads = 'h2' }; if ($s -eq 'onbranch') { $global:heads = 'h3'; $global:rows = '[{"mr":"web!5","target":"stg","state":"NOT-DEPLOYED","detail":"on staging, but no successful deploy-* includes it yet"}]' }
+  $null = @(Get-KitSuperviseFlagsDeploys -AutoFix); $global:task.liveCheckedAt = $null; "$s=$global:probes" }
+"heads:$(($o -join ' ') -eq 'first=1 second=2 same=2 moved=3 onbranch=4 again=5') $($o -join ' ')"
+'@
+$hsr = Invoke-PsTest 'deploy-heads' $hsk @((Join-Path $k 'skills/bossy/bossy.ps1'))
+Expect "supervise deploy checks: no probe while deploy-branch heads hold and the answer settled ($(@($hsr) -match '^heads|rror' | Select-Object -First 2))" (@($hsr) -match '^heads:True ').Count
 # deploys[].serves: an app env's check (-Target <app env>) covers the service hosts that back it; none -> NO-TARGET names serves
 & $J @{ repos = @(@{ name = 'py'; deploys = @(@{ target = 'mc'; ssh = @{ host = 'h1'; subdir = 'mcp/' } }, @{ target = 'pm'; serves = @('app-stg'); ssh = @{ host = 'h2'; subdir = 'pm' } }) }) } $kl
 $env:NA_TGT = 'app-stg'; $sv = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; $env:NA_TGT = 'nope'; $sn = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env:NA_TGT

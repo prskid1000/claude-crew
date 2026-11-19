@@ -236,7 +236,7 @@ function ContentOn($p, $mr, $sha, $ref) {
   $head = if ($cd) { @{ id = $ref; committed_date = $cd } } else { Hv 'repo.commit' @{ ref = $ref } }
   if (-not $head -or ($mr.merged_at -and [datetimeoffset]$head.committed_date -lt [datetimeoffset]$mr.merged_at)) { return $false }
   if (-not (IsAncestor $p $sha $mr.target_branch)) { return $false }
-  $files = @((Hv 'mr.changes' @{ n = $mr.iid }).changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
+  $files = @((MrChanges $mr.iid).changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
   if (-not $files.Count) { return $false }
   $tip = RefSha $p $mr.target_branch
   if ($head.id -and $tip -and $null -ne ($same = LocalSame $r.checkout $head.id $tip $files)) { return $same }
@@ -256,7 +256,21 @@ function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
 }
 # NOT-DEPLOYED only if the host answers, else UNKNOWN
 function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Hv 'repo.commit' @{ ref = $d.branch })) { Row $d 'UNKNOWN' "the git host did not answer for $($d.branch): try again" } else { Row $d 'NOT-DEPLOYED' $detail } }
-function OnRef($p, $mr, $sha, $ref, $branch = $ref) { (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref) }
+# a yes is kept across beats per (merge sha, commit of $ref): ancestry never changes; a no may be a failed host call
+function OnRef($p, $mr, $sha, $ref, $branch = $ref) {
+  $at = if ($env:KIT_API_BEAT -and $null -ne $rcache) { RefSha $p $ref }; $ok = if ($at) { "on|$sha|$at" }
+  if ($ok -and $rcache[$ok]) { return $true }
+  $on = (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref)
+  if ($on -and $ok) { $rcache[$ok] = @{ at = (Get-Date).ToString('o') }; $rdirty.on = $true }
+  $on
+}
+# a merged MR's changed files (never change): kept across beats
+function MrChanges($iid) {
+  $k = "chg|$ref"; if ($null -ne $rcache -and $rcache[$k]) { return [pscustomobject]@{ changes = @($rcache[$k].files | ForEach-Object { [pscustomobject]@{ new_path = $_; old_path = $_ } }); overflow = [bool]$rcache[$k].overflow } }
+  $ch = Hv 'mr.changes' @{ n = $iid }
+  if ($env:KIT_API_BEAT -and $null -ne $rcache -and $ch -and $mr.state -eq 'merged') { $rcache[$k] = @{ at = (Get-Date).ToString('o'); overflow = [bool]$ch.overflow -or @($ch.changes).Count -ge 100; files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique) }; $rdirty.on = $true }
+  $ch
+}
 # $null if the checkout or either commit is missing
 function LocalAncestor($dir, $sha, $commit) {
   if (-not $dir -or -not (Test-Path $dir)) { return $null }
@@ -298,25 +312,26 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   foreach ($d in $deps) {
     if ($d.from -and $mr.target_branch -and $mr.target_branch -notin @($d.from) -and $mr.target_branch -ne $d.branch) { Row $d 'N/A' "n/a for $($d.target): merged into $($mr.target_branch), not $(@($d.from) -join ' / ')"; continue }   # before any probe (ssh, pipelines)
     if (@(Get-DeployPaths $d).Count) {   # an MR outside the target's paths is n/a there: no ssh, no NOT-DEPLOYED
-      $ch = Hv 'mr.changes' @{ n = $iid }; $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
+      $ch = MrChanges $iid; $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
       if ($files.Count -and -not $ch.overflow -and @($ch.changes).Count -lt 100 -and -not (Test-DeployTouched $d $files)) { Row $d 'N/A' "n/a for $($d.target): changes nothing under $((Get-DeployPaths $d) -join ', ')"; continue }   # a partial list proves nothing
     }
     # incremental: DEPLOYED holds deploy.deployedKeepHours; NOT-DEPLOYED while the deploy branch head is unchanged (one shared call a branch)
     $ck = "row|$ref|$($d.target)"; $c = $rcache[$ck]; $fresh = $c -and ((Get-Date) - [datetime]$c.at).TotalHours -lt $keepH
     if ($fresh -and $c.row.state -eq 'DEPLOYED') { [pscustomobject]$c.row; continue }
-    $hd = if ($d.branch) { RefSha $p $d.branch }; if ($fresh -and $hd -and $c.head -eq $hd) { [pscustomobject]$c.row; continue }
+    $hd = if ($d.branch) { RefSha $p $d.branch }; if ($fresh -and $hd -and $c.head -eq $hd -and "$($c.row.detail)" -like 'not on * yet') { [pscustomobject]$c.row; continue }
     # the row's deploy kind answers (registry above); a kind without isDeployed, or none, = UNKNOWN
     $kd = Get-KitDeployKind $d
     $kRow = try { Invoke-KitDeployKind $d 'isDeployed' } catch { Row $d 'UNKNOWN' "deploy kind ${kd}: $($_.Exception.Message)" }
     if (-not $kRow) { $kRow = Row $d 'UNKNOWN' $(if ($kd) { "deploy kind $kd has no isDeployed check (README ""Adapters"" deploy-kind)" } else { 'no deploy kind: set deploys[].kind or branch + job, ssh, probe, tag, awsStack, manual, command' }) }
-    if (@($kRow).Count -eq 1 -and $kRow.state -in 'DEPLOYED', 'NOT-DEPLOYED') { $rcache[$ck] = @{ at = (Get-Date).ToString('o'); head = $hd; row = $kRow }; $rdirty.on = $true }
+    # NOT-DEPLOYED only while the merge is not on the branch: on it, a deploy job or host install finishes with the head unchanged
+    if (@($kRow).Count -eq 1 -and ($kRow.state -eq 'DEPLOYED' -or ($kRow.state -eq 'NOT-DEPLOYED' -and "$($kRow.detail)" -like 'not on * yet'))) { $rcache[$ck] = @{ at = (Get-Date).ToString('o'); head = $hd; row = $kRow }; $rdirty.on = $true }
     $kRow
   }
 } } | ForEach-Object { $out.Add($_); if ($Lines) { $_ | ConvertTo-Json -Depth 3 -Compress } }
 if ($env:KIT_API_BEAT -and $rdirty.on) {   # parallel probes: merged under the lock; rows past their hours and month-old MRs dropped
   Invoke-KitLocked $rcf { $all = try { Read-KitText $rcf | ConvertFrom-Json -AsHashtable } catch { $null }; if ($all -isnot [hashtable]) { $all = @{} }
     foreach ($k in $rcache.Keys) { $all[$k] = $rcache[$k] }
-    foreach ($k in @($all.Keys)) { if ($k -like 'row|*' -and ((Get-Date) - [datetime]$all[$k].at).TotalHours -ge $keepH) { $all.Remove($k) } elseif ($k -like 'mr|*' -and ((Get-Date) - [datetime]$all[$k].at).TotalDays -gt 30) { $all.Remove($k) } }
+    foreach ($k in @($all.Keys)) { if ($k -like 'row|*' -and ((Get-Date) - [datetime]$all[$k].at).TotalHours -ge $keepH) { $all.Remove($k) } elseif ($k -match '^(mr|chg|on)\|' -and ((Get-Date) - [datetime]$all[$k].at).TotalDays -gt 30) { $all.Remove($k) } }
     Write-KitAtomic $rcf ($all | ConvertTo-Json -Depth 12 -Compress) }
 }
 $miss = @($out | Where-Object { $_.state -notin 'DEPLOYED', 'N/A' })   # N/A: the MR has nothing for that target
