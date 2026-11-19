@@ -128,13 +128,13 @@ $script:KitStatusRank = [ordered]@{ open = 0; inProgress = 1; failedTesting = 1;
 # lib.ps1 Set-TrackerStatus (owner, 2026-11-19, 11 flips on one task): why a write is skipped, '' = write. No write equal to the
 # current status or this process's last one; no step back (rank) but failedTesting or -Back '<why>' (a new code round on THAT task);
 # a parent whose subtasks are open and read follows them (Sync-TrackerParent), failedTesting aside
-# UNCHANGED: ... (no write, done) · SKIPPED: ... (refused: callers keep the task open); a [Bug] child is no area (QA closes its ask)
+# UNCHANGED: ... (no write, done) · SKIPPED: ... (refused: callers keep the task open); any open child holds a close too (owner, 2026-11-19)
 function Test-KitStatusWrite([string]$Id, [string]$Status, [string]$Back, $Was) {
   $cur = if ($Was.status) { Get-TrackerStatusKey "$($Was.status)" } else { '' }; if (-not $script:KitStatusSet) { $script:KitStatusSet = @{} }
   if ($Status -eq $cur -or (-not $cur -and "$($script:KitStatusSet[$Id])" -eq $Status)) { return "UNCHANGED: $Id status $Status (no write)" }
   $rk = $script:KitStatusRank
   if (-not $Back -and $Status -ne 'failedTesting' -and $rk.Contains($cur) -and $rk.Contains($Status) -and $rk[$Status] -lt $rk[$cur]) { return "SKIPPED: $Id kept '$($Was.status)': $Status is a step back (only failedTesting, or -Back '<why>' for a new code round on it)" }
-  $subs = @($Was.subtasks | Where-Object { $_.id -and -not (Test-KitBugName "$($_.name)") }); $open = @($subs | Where-Object { -not (Test-TrackerStatus "$($_.status)" 'closed') })
+  $subs = @($Was.subtasks | Where-Object { $_.id }); $open = @($subs | Where-Object { -not (Test-TrackerStatus "$($_.status)" 'closed') })
   if ($Status -eq 'failedTesting' -or -not $open.Count -or @($subs | Where-Object { -not (Get-TrackerStatusKey "$($_.status)") }).Count) { return '' }
   $sy = Sync-TrackerParent -ParentId $Id; "SKIPPED: $Id not set to $Status`: it follows its $($open.Count) open subtask(s)$(if ($sy) { " ($sy)" })"
 }

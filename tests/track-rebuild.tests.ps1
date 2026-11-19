@@ -65,6 +65,6 @@ Expect "launch -Self: 2 areas on one task -> a subtask each under it, kept on a 
   $apiSub.name -eq '[Feature] Site builder — API1 API guard (api)' -and "$($apiSub.assignees)" -match 'Ann Lee' -and $apiSub.description -match 'A-1 · Guard the path' -and (Read-Json (Join-Path $ab 'area-tasks.json')).agents.Count -eq 2)
 Expect "status write: the same status twice = one write ($(& $sx 'deb'))" ((& $sx 'deb') -eq '1')
 Expect "status write: review -> inProgress kept; -Back '<why>' (a new code round) moves it; failedTesting always ($(& $sx 'back') $(& $sx 'backok') $(& $sx 'ft'))" ((& $sx 'back') -eq 'review' -and (& $sx 'backok') -eq 'inProgress' -and (& $sx 'ft') -eq 'failedTesting')
-Expect "status write: a parent with open subtasks is never set directly (promoted refused: SKIPPED, follows them), failedTesting is; an open [Bug] child does not hold its ask ($($sw -join ' '))" ((& $sx 'par') -eq 'open|True' -and (& $sx 'bug') -eq 'closed' -and (& $sx 'roll') -eq 'review' -and (& $sx 'pft') -eq 'failedTesting')
+Expect "status write: a parent with open subtasks is never set directly (promoted refused: SKIPPED, follows them), failedTesting is; an open [Bug] child holds its ask's close ($($sw -join ' '))" ((& $sx 'par') -eq 'open|True' -and (& $sx 'bug') -eq 'open' -and (& $sx 'roll') -eq 'review' -and (& $sx 'pft') -eq 'failedTesting')
 Remove-TestKit $k
 Complete-Tests

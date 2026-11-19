@@ -60,6 +60,10 @@ process.exit(0)
 '@) "$qk/targets.local.json" $(if (-not $nopw) { $pwm })
   foreach ($x in 'totp', 'totp-login', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright)" } else { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") } }
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/pokey)' }
+$bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
+$bmUsers = @('skills/pokey/adapters/media_grab.mjs', 'skills/bossy/kitbag.py' | Where-Object { (Get-Content (Join-Path $src $_) -Raw) -notmatch 'QUIET_ARGS \}?\s*=\s*await import\(bm\)|import \{ kitPath, QUIET_ARGS \}|args: QUIET_ARGS|args: \[\.\.\.QUIET_ARGS' })
+Expect "browser.mjs: every kit Chrome (sessions, ui-check, media grab) starts with no component, model, safe-browsing or background downloads, no disk cache unless browser.diskCache (missing: $($bmUsers -join ', '))" (
+  $bmSrc -match "'--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',\s+'--disable-features=OptimizationGuideModelDownloading," -and $bmSrc.Contains("...QUIET_ARGS,") -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])") -and -not $bmUsers.Count)
 # retro 2205: no upload map yet (-Check) -> plain file names, not 'Cannot index into a null array'
 $qm = pwsh -NoProfile -Command ". '$Q' 6>`$null; (Build-QaReportMd -Title t -Code T2 -Item @{} -Res ([pscustomobject]@{ checks = @([pscustomobject]@{ id = 'C1'; result = 'PASS'; evidence = @('T2-C1_01_a.png') }) }) -Map `$null -Run @{} -Tester x -Date d -Cells @{}) -join ' '" 2>&1 | Out-String
 Expect "report md: a null upload map renders file names ($($qm.Trim().Length) chars)" ($qm -match 'file: T2-C1_01_a\.png' -and $qm -notmatch 'null array')

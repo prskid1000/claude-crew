@@ -851,7 +851,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   }
   if ($orphans.Count) { $rec.keptOpen = "$($orphans.Count) check(s) name no subtask of this item ($(@($orphans.subtask_id | Select-Object -Unique) -join ', ')): fix their subtask_id, finalize again"; return }   # never dropped
   if ($rec.bugError -or $sib.bugError) { $rec.keptOpen = "new defects have no [Bug] task ($(if ($rec.bugError) { $rec.bugError } else { $sib.bugError }))"; return }   # never close while a defect is untracked
-  $cs = TrySay { "$(Set-TrackerStatus $st.id $closeStatus)" } "close $($st.id)"; if ("$cs" -like 'SKIPPED*') { $rec.keptOpen = "close $cs" } elseif ($null -ne $cs) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
+  $cs = TrySay { "$(Set-TrackerStatus $st.id $closeStatus)" } "close $($st.id)"; if ("$cs" -like 'SKIPPED*') { $rec.ownPassed = $true; $rec.keptOpen = "own checks passed; it closes with its last open subtask (rollup): $cs" } elseif ($null -ne $cs) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
 }
 # one tracker step per run (siblings deadlocked)
 $fh = (Get-KitHash ($RunDir.ToLower()) SHA256).Substring(0, 16)

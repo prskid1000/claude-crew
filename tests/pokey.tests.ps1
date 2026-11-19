@@ -203,10 +203,6 @@ $arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'archive-*')
 Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and (Test-Path "$($arc[0].FullName)/finalize.json") -and -not (Test-Path "$rt/Z1/finalize.json") -and $ro -match 'archived the earlier round')
 $klBase | Set-Content $kl
 # browser.mjs: mocks, then local fixture servers
-$bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
-$bmUsers = @('skills/pokey/adapters/media_grab.mjs', 'skills/bossy/kitbag.py' | Where-Object { (Get-Content (Join-Path $src $_) -Raw) -notmatch 'QUIET_ARGS \}?\s*=\s*await import\(bm\)|import \{ kitPath, QUIET_ARGS \}|args: QUIET_ARGS|args: \[\.\.\.QUIET_ARGS' })
-Expect "browser.mjs: every kit Chrome (sessions, ui-check, media grab) starts with no component, model, safe-browsing or background downloads, no disk cache unless browser.diskCache (missing: $($bmUsers -join ', '))" (
-  $bmSrc -match "'--disable-component-update', '--disable-background-networking', '--safebrowsing-disable-auto-update',\s+'--disable-features=OptimizationGuideModelDownloading," -and $bmSrc.Contains("...QUIET_ARGS,") -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])") -and -not $bmUsers.Count)
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
   $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +
@@ -265,10 +261,10 @@ New-Task 'PF' 'Ask F'; New-Task 'TF' 'Task F' 'PF'; $fk = New-Run 'FK' @(@{ code
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
 $null = Fin $fk 'K1'
 Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PF' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
-# owner 2026-11-19: subtasks follow the parent's failedTesting; an MR merged after the run start: kept
-$ff = @(@('C1', 'PASS'), @('C2', 'FAIL')); New-Task 'PC' 'Ask C' $null 'in test'; New-Task 'SC' 'Sub C' 'PC' 'in test'
-$cr = New-Run 'CR' @(@{ code = 'CR1'; task = 'PC'; checks = $ff }); $null = Fin $cr 'CR1'
-Expect "failedTesting: the in-test subtask follows its parent ($((Task 'SC').status))" ((Task 'PC').status -eq 'failed testing' -and (Task 'SC').status -eq 'failed testing')
+# owner 2026-11-19: subtasks follow the parent's failedTesting; a pass never closes a parent with an open subtask; a late MR: kept
+$ff = @(@('C1', 'PASS'), @('C2', 'FAIL')); foreach ($x in 'C', 'O') { New-Task "P$x" 'Ask' $null 'in test'; New-Task "S$x" 'Sub' "P$x" 'in test' }
+$cr = New-Run 'CR' @(@{ code = 'CR1'; task = 'PC'; checks = $ff }, @{ code = 'CO1'; task = 'PO'; checks = @(, @('C1', 'PASS')) }); $null = Fin $cr 'CR1'; $null = Fin $cr 'CO1'
+Expect "failedTesting: the in-test subtask follows its parent; a pass keeps a parent with an open subtask in test ($((Rec $cr 'CO1').keptOpen))" ((Task 'PC').status -eq 'failed testing' -and (Task 'SC').status -eq 'failed testing' -and (Task 'PO').status -eq 'in test' -and (Rec $cr 'CO1').ownPassed)
 $mg = Join-Path (Kd) 'mrget.ps1'; Set-Content $mg 'param($n) ''{"state":"merged","merged_at":"'' + $(if ($n -eq 5) { ''2026-01-03'' } else { ''2025-12-30'' }) + ''T12:00:00Z"}'''
 & $J (@{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$mg`" {n}" } } } + ($klBase | ConvertFrom-Json -AsHashtable)) $kl
 foreach ($lt in @(@('LT', 'api!5'), @('OK', 'api!6'))) { New-Task "T$($lt[0])" 't' $null 'in test'; $ld = New-Run "2026-01-01-100000-$($lt[0])" @(@{ code = "$($lt[0])1"; task = "T$($lt[0])"; checks = $ff }); $rj = Read-Json "$ld/run.json"; $rj.items[0].subtasks[0] | Add-Member mrs $lt[1]; & $J $rj "$ld/run.json"; $null = Fin $ld "$($lt[0])1"; Set-Variable "fin$($lt[0])" (Rec $ld "$($lt[0])1") }
