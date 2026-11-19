@@ -593,7 +593,7 @@ function Set-KitLaunchField([string[]]$Files, [string]$Name, $Value) {
 function Invoke-Pause { param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish, [switch]$Everyone) Start-KitPause @PSBoundParameters }
 
 # ---- resume: paused and crashed runs; done steps verified (sha, MR), never redone
-function Test-KitOnline([string]$HostName = $KitConf.GitHost, [int]$Ms = 5000, [int]$Port = 443) {   # all addresses at once: ConnectAsync(host) hung on dead IPv6
+function Test-KitOnline([string]$HostName = $KitConf.GitHost, [int]$Ms = 5000, [int]$Port = [int](Get-KitParam 'net.probePort')) {   # all addresses at once: ConnectAsync(host) hung on dead IPv6
   if ($env:KIT_OFFLINE) { return $env:KIT_OFFLINE -eq '0' }
   $cs = @(try { foreach ($ad in [Net.Dns]::GetHostAddresses($HostName)) { $c = [Net.Sockets.TcpClient]::new($ad.AddressFamily); $null = $c.ConnectAsync($ad, $Port); $c } } catch {})
   $pm = [math]::Max(10, [int](Get-KitParam 'net.pollMs')); try { for ($t = 0; $cs.Count -and $cs.Connected -notcontains $true -and $t -lt $Ms; $t += $pm) { Start-Sleep -Milliseconds $pm }; $cs.Connected -contains $true } finally { $cs | ForEach-Object Dispose }

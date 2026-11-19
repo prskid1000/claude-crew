@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L113 phone · L313 build · L459 install · L486 launch · L498 avd · L584 up · L683 down · L713 events ·
-  L770 slim
+Sections: L24 config · L115 phone · L315 build · L461 install · L488 launch · L500 avd · L588 up · L687 down · L717 events ·
+  L774 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -66,7 +66,9 @@ function SnapshotFlag($c, [string]$name, [bool]$cold) {
 function EmuProcs($port) { Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$port\b" } }
 function LaneSerial($l) { "emulator-$($l.port)" }
 function Test-LaneUp($l) { [bool]((& (Get-SwarmConfig).adb devices) -match "^emulator-$($l.port)\s+device") }
-# lane AVD hardware; {{X}} = swarm.config.json avd (abi, api, device, tag)
+# lane AVD hardware; {{X}} = swarm.config.json avd (abi, api, device, tag); devices.avd.extra {key: value} sets or adds config.ini lines
+# (hw.ramSize, hw.cpu.ncore, hw.lcd.*, disk.dataPartition.size); devices.phoneGB: the memory gate's need per booted phone
+$script:PhoneGB = [double](Get-KitSetting 'devices.phoneGB' 4.5)
 $script:AvdTemplate = @"
 AvdId={{NAME}}
 PlayStore.enabled={{PLAY}}
@@ -170,7 +172,7 @@ switch ($Action) {
       $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)$(if ($ls.seen) { ", seen $(([datetime]$ls.seen).ToString('HH:mm'))" })" } else { 'free' }
       '{0,-8} {1,-14} {2} · last used {3}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" }), (Format-KitLeaseLast $lu["lane|$($l.name)"])
     }
-    "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (~4.5 GB a phone)"
+    "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (~$($script:PhoneGB) GB a phone)"
     Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lane) { $w.lane } else { 'any lane' }) since $($w.since)" }
   }
 
@@ -522,6 +524,8 @@ function New-Avd($name) {
   $d = Join-Path $avdHome "$name.avd"
   New-Item -ItemType Directory -Force $d | Out-Null
   $cfg = $tpl.Replace('{{NAME}}', $name).Replace('{{SDK}}', $sdk)
+  foreach ($ax in @(Get-KitProps (Get-KitSetting 'devices.avd.extra' $null))) { $axLine = "$($ax.Name)=$($ax.Value)"; $axRx = "(?m)^$([regex]::Escape($ax.Name))=[^\r\n]*"
+    $cfg = if ($cfg -match $axRx) { [regex]::Replace($cfg, $axRx, { param($axM) $axLine }) } else { $cfg.TrimEnd() + "`r`n$axLine`r`n" } }
   if (-not $KitIsWindows) { $cfg = $cfg.Replace('\', '/') }   # template uses Windows separators
   $cfg | Set-Content (Join-Path $d 'config.ini') -Encoding ascii -NoNewline
   @('avd.ini.encoding=UTF-8', "path=$d", "path.rel=avd$([IO.Path]::DirectorySeparatorChar)$name.avd", "target=$($v.api)") | Set-Content (Join-Path $avdHome "$name.ini") -Encoding ascii
@@ -624,7 +628,7 @@ foreach ($name in $Lanes) {
     if ($onGpu -and $gpuCmd -and -not (Use-KitGpu -Kind emulator -Holder $name -WaitMinutes $(if ($null -ne $env:KIT_SWARM_TURN_MIN) { [double]$env:KIT_SWARM_TURN_MIN } else { 30 }) @gpuMin)) {
       Write-Warning $(if ($script:KitGpuRefused.vram) { "lane $name`: $($script:KitGpuRefused.holder); not started: no memory turn" } else { "$name not started: no memory turn (waiting for GPU)" }); continue
     }
-    if (-not (Turn 'emulator' 4.5)) { continue }
+    if (-not (Turn 'emulator' $script:PhoneGB)) { continue }
     $ini = Join-Path $c.avdDir "$name.avd/emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     # mic = pokey.ps1 ui mic (gRPC injectAudio on 127.0.0.1 with a token); injected audio reaches the guest only with -allow-host-audio
@@ -646,7 +650,7 @@ foreach ($name in $Lanes) {
     Wait-KitPoll 3
     $qemu = EmuProcs $l.port | Sort-Object Created -Descending | Select-Object -First 1
     if ($qemu -and $onGpu -and (Get-Command Use-KitGpu -ErrorAction SilentlyContinue)) { $null = Use-KitGpu -Kind emulator -Holder $name -ProcessId $qemu.Id -WaitMinutes 0 }   # the running emulator holds the GPU until it exits
-    if ($qemu) { @{ pid = $qemu.Id; start = (Get-KitPidStart $qemu.Id); need = 4.5; kind = 'emulator'; cmd = "emulator $name"; dir = $c.dir; started = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $ledger "$($qemu.Id).json") }
+    if ($qemu) { @{ pid = $qemu.Id; start = (Get-KitPidStart $qemu.Id); need = $script:PhoneGB; kind = 'emulator'; cmd = "emulator $name"; dir = $c.dir; started = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $ledger "$($qemu.Id).json") }
   }
   $out += [pscustomobject]@{ lane = $name; serial = $serial; port = $l.port }
 }

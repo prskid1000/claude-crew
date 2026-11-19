@@ -29,7 +29,8 @@ $null = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'test:CL1') *>&1; $ag
 $s = "$tmp/sdk"; New-Item -ItemType Directory -Force "$s/platform-tools", "$s/system-images/a35/g/arm64-v8a", "$tmp/a" | Out-Null; Copy-Item $adb "$s/platform-tools"
 $script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'A1'; port = 5570 }); adb = "$s/platform-tools/adb.cmd"; avdDir = "$tmp/avd"; apkDir = $tmp; out = $tmp; appFile = "$tmp/app.apk"
   avd = [pscustomobject]@{ abi = 'arm64-v8a'; api = 'a35'; device = 'p8'; tag = 'g' }; app = [pscustomobject]@{ buildTask = 'b'; appDir = "$tmp/a"; buildCmd = 'fb {gw}'; artifact = 'o/*.apk' } }
-$null = Invoke-KitVerb Invoke-Avd @('create', '-Lanes', 'A1', '-NoBoot'); $ini = Get-Content "$tmp/avd/A1.avd/config.ini" -Raw
+$gksAvd = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'devices.avd.extra') { [pscustomobject]@{ 'hw.ramSize' = 2048; 'hw.custom' = 'x' } } else { & $gksAvd @args } }.GetNewClosure())   # devices.avd.extra sets and adds lines
+$null = Invoke-KitVerb Invoke-Avd @('create', '-Lanes', 'A1', '-NoBoot'); $ini = Get-Content "$tmp/avd/A1.avd/config.ini" -Raw; Set-Item function:Get-KitSetting $gksAvd
 Set-Content "$tmp/gate.ps1" 'param($v, $Dir, $Cmd, $WaitMinutes) New-Item -ItemType Directory -Force "$Dir/o" | Out-Null; Set-Content "$Dir/o/x.apk" $Cmd'; $KitCmd.dev = "$tmp/gate.ps1"
 git -C "$tmp/a" init -q; git -C "$tmp/a" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate')
 # build -Local: app-local.apk only from origin/<app.branch> HEAD or a localenv/* branch, else a side APK
@@ -39,7 +40,7 @@ $noLb = try { $null = Invoke-Build -NoUpdate -Local; 'built' } catch { "$_" }; $
 $null = Invoke-KitVerb Invoke-Build @('-NoUpdate', '-Local'); $side = -not (Test-Path "$tmp/app-local.apk") -and @(Get-ChildItem $tmp -Filter 'app-local-*.apk').Count
 git -C "$tmp/a" checkout -q -b localenv/r1; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate', '-Local')
 "local:$($side -and (Test-Path "$tmp/app-local.apk") -and (Get-Content "$tmp/app-local.apk" -Raw) -match 'fbl' -and $noLb -match 'localBuildCmd')"
-"kinds:$($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false' -and $ini -match 'hw.audioInput=yes') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb gradlew')"
+"kinds:$($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false' -and $ini -match 'hw.audioInput=yes' -and $ini -match 'hw\.ramSize=2048\r?\n' -and $ini -notmatch 'ramSize=4096' -and $ini -match 'hw\.custom=x') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb gradlew')"
 # K70 (K7 fixes): install uninstalls (wipes app data) only on a signature / version clash; acquire -Lane stays on that lane
 $a2 = "$tmp/adb2.cmd"; Set-Content $a2 "@echo off`r`nif `"%1`"==`"devices`" (echo List of devices attached& echo emulator-5560	device& echo emulator-5562	device& exit /b 0)`r`nif `"%3`"==`"uninstall`" (echo %2>> `"$tmp\un.txt`"& exit /b 0)`r`nif `"%4`"==`"-r`" (type `"$tmp\mode.txt`"& exit /b 0)`r`necho Success" -Encoding ascii
 $script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'L1'; port = 5560 }, [pscustomobject]@{ name = 'L2'; port = 5562 }); adb = $a2; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() }; apkDir = $tmp; out = $tmp }

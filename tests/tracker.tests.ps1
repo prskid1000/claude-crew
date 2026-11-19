@@ -154,8 +154,8 @@ $ua = foreach ($w in @(@('buildy', "{ brief: 'b', agents: [{ id: 'X1', items: 'A
 Expect "workflows refuse unknown args ($ua)" ("$ua" -match 'buildy\.js args refused: unknown notes;' -and "$ua" -match 'testy\.js args refused: unknown notes; free text for testers goes in args\.context' -and "$ua" -match 'tidy\.js args refused: unknown notes' -and "$ua" -notmatch 'unknown (skipClose|driveParent)')
 # (cap move) online check: every resolved address at once (localhost = ::1 + 127.0.0.1, only IPv4 listens); a closed port is offline
 $onl = & { . $O; Remove-Item Env:KIT_OFFLINE -ErrorAction SilentlyContinue; $ls = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $ls.Start(); $lp = $ls.LocalEndpoint.Port
-  try { "$(Test-KitOnline localhost 3000 $lp)|$(Test-KitOnline 127.0.0.1 3000 $lp)" } finally { $ls.Stop() }; "$(Test-KitOnline 127.0.0.1 1000 $lp)" }
-Expect "online check: any address counts, a closed port is offline ($onl)" ("$onl" -eq 'True|True False')
+  try { "$(Test-KitOnline localhost 3000 $lp)|$(Test-KitOnline 127.0.0.1 3000 $lp)|$($env:KIT_PARAM_NET_PROBEPORT = $lp; Test-KitOnline 127.0.0.1 3000)" } finally { $ls.Stop(); Remove-Item Env:KIT_PARAM_NET_PROBEPORT }; "$(Test-KitOnline 127.0.0.1 1000 $lp)" }
+Expect "online check: any address counts, net.probePort sets the default port, a closed port is offline ($onl)" ("$onl" -eq 'True|True|True False')
 # (cap move) heartbeat (owner 2026-11-14: the sweep stopped with every session): one durable recurring cron, the OS timer's sweeps never count as the coordinator's
 $hb = Invoke-PsTest beat-cron @'
 . $args[0]; $al = Get-KitBeatArmLine; "arm:$($al -match "^CronList has no heartbeat -> CronCreate cron '\*/\d+ \* \* \* \*', recurring: true, durable: true, prompt " -and (Get-KitBeatPrompt) -notmatch 're-arm|one-shot')"

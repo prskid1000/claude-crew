@@ -55,6 +55,8 @@ $out = @(foreach ($c in $cmds) { pwsh @np $D gate -Dir $bd -Cmd $c 2>&1 | Out-St
 Remove-Item Env:MAVEN_OPTS; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'   # the harness value
 Expect 'gate: jest / vitest get --maxWorkers=2 right after the runner word, not on a later tool (K70g)' ($out[2] -match 'jest --maxWorkers=2 x' -and $out[5] -match 'vitest run --maxWorkers=2 y' -and $out[5] -notmatch 'tsc z --maxWorkers')
 Expect 'build-heap: gradle gets -Dorg.gradle.jvmargs' ($out[0] -match 'gradlew "?-Dorg\.gradle\.jvmargs=-Xmx\d+g')
+$gw = & { $go0 = $env:GRADLE_OPTS; try { foreach ($gwv in '', '2') { $env:GRADLE_OPTS = $null; $env:KIT_PARAM_GATE_GRADLEWORKERS = $(if ($gwv) { $gwv } else { $null }); . (Join-Path $k 'skills/crafty/lib.ps1'); $null = Get-GateHeap 'gradle' @() 0 0; $env:GRADLE_OPTS } } finally { $env:GRADLE_OPTS = $go0; Remove-Item Env:KIT_PARAM_GATE_GRADLEWORKERS -ErrorAction SilentlyContinue } }
+Expect "build-heap: gradle workers from gate.gradleWorkers (default 4) ($($gw -join ' | '))" (($gw -join '|') -eq '-Dorg.gradle.workers.max=4|-Dorg.gradle.workers.max=2')
 if ($IsWindows) {
   Expect 'build-heap: maven gets -Xmx in MAVEN_OPTS, its own -D kept, the old -Xmx gone' ($out[1] -match '-Dkeep=1 -Xmx\d+g' -and $out[1] -notmatch '-Xmx1g')
   Expect 'build-heap: node gets --max-old-space-size' ($out[2] -match '--max-old-space-size=\d+')

@@ -7,7 +7,7 @@ function Get-GateHeap([string]$Kind, [double[]]$Peaks, [double]$NeedGB, [double]
   $tool = if ($Kind -in 'android-build', 'android-test', 'gradle') { 'gradle' } elseif ($Kind -like 'maven*') { 'maven' }
           elseif ($Kind -in 'ng-test', 'web-build', 'js-test', 'tsc-lint', 'typecheck', 'rn-bundle', 'e2e') { 'node' }
   if (-not $tool) { return $null }
-  if (-not $env:GRADLE_OPTS) { $env:GRADLE_OPTS = '-Dorg.gradle.workers.max=4' }
+  if (-not $env:GRADLE_OPTS) { $env:GRADLE_OPTS = "-Dorg.gradle.workers.max=$([int](Get-KitParam 'gate.gradleWorkers'))" }
   $minGB = [double](Get-KitSetting 'gate.heapMinGB' 4)
   $start = [double](Get-KitSetting "gate.startHeapGB.$tool" @{ gradle = 12; maven = 8; node = 4 }[$tool])
   $peakMax = ($Peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum
