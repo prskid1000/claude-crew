@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L930 check · L1246 pipes · L1302 guard · L2190 dir ·
-  L2200 checkpoint · L2230 prior · L2268 tracker · L2290 task spec · L2469 scope · L2517 host
+Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L930 check · L1246 pipes · L1302 guard · L2191 dir ·
+  L2201 checkpoint · L2231 prior · L2269 tracker · L2291 task spec · L2470 scope · L2518 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -104,7 +104,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     if (-not $ctx[$rp].keep) { $ctx[$rp].keep = Get-KitKeepBranchRx $rp }
     if ($br -and $br -match $ctx[$rp].keep) { continue }   # env / default worktrees: their owners'
     if (git -C $d status --porcelain 2>$null) { & $keep "$d$(if ($br) { " ($br)" })" 'uncommitted files'; if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($idleH / 24)) d: kept (never deleted; commit or remove it by hand)" }; continue }
-    # an unclaimed deploymerge-* idle past idle.graceMinutes blocks the next merge
+    # an idle unclaimed deploymerge-* blocks the next merge
     $dm = $w.Name -like 'deploymerge-*' -and $d.ToLower() -notin $claimed -and $newest -and ($now - $newest).TotalMinutes -ge [math]::Max(60.0, [double](Get-KitParam 'idle.graceMinutes'))
     if (-not $dm -and $idleH -lt $IdleHours) { & $keep "$d ($br)" "active, changed $([int]($idleH * 60)) min ago"; continue }
     if (-not (Invoke-GitFetch -Dir $d)) { & $keep $d 'git fetch failed'; continue }
@@ -579,7 +579,7 @@ function Get-Stack($d) {
     if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
-  # stack.presets: names to try (unset = all, [] = core + .claude-stack.json)
+  # stack.presets: names to try (unset = all)
   $on = Get-KitSetting 'stack.presets' $null; $raw = $__cfg.stack -and (Get-KitProps $__cfg.stack).Name -contains 'presets'
   foreach ($plugin in @(@(if ($KitAdapters.stack) { $KitAdapters.stack.GetEnumerator() }) | Where-Object { $_.Value -and (-not $raw -or @($on) -contains $_.Key) } | ForEach-Object Value)) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
@@ -1221,7 +1221,7 @@ foreach ($s in $steps) {
   else {
     $lk = if ($s -eq 'test') { Get-TestLock @($Tests -split '[,\s]+' | Where-Object { $_ }) }
     if ($lk -and -not (Use-KitLock "$($lk.lock)" $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Split-Path (Get-CheckRepo).top -Leaf }) $st.dir)) { Write-Host "[check] test not started: lock $($lk.lock) still held by $($script:KitLockRefused.holder) (repos[].exclusiveTests); retry when it ends"; exit 3 }
-    # python output logged too: "No module named" = a stale venv, not a failed test
+    # "No module named" = a stale venv, not a failed test
     $runLog = if ($s -eq 'test' -and $pyRun) { Join-Path (Get-KitPath logs -Create) "check-$(Hash12 $st.dir.ToLower())-$PID.log" }   # per run: parallel checks of one dir
     if ($runLog) { Write-Host "[check] test output goes to $runLog and prints when the run ends"; $env:PYTHONUTF8 = '1' }
     $bt0 = (Get-Date).AddSeconds(-2)
@@ -1426,7 +1426,7 @@ if ($SelfTest) {
   @('B', 'cp body.md /tmp/w1-run/body.md; cat /tmp/out.log', $false, 'shared temp root'),
   @('B', 'git push origin +HEAD:main', $true, 'force-push'),
   @('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
-  @('B', 'git push origin HEAD:main', $true, 'is a protected branch'),
+  @('B', 'git push origin HEAD:main', $true, 'refused: a protected branch'),
   @('B', 'git push -u origin HEAD; git push origin HEAD:f/CU-1-x --force-with-lease', $false, 'force-push'),
   @('B', 'git push -fu origin main', $true, 'force-push'),
   @('P', 'git -C "{KIT}" push origin ":main"', $true, $pb),
@@ -1440,7 +1440,8 @@ if ($SelfTest) {
   @('B', 'git -C "{KIT}" push -u origin HEAD:main; git -C "{KIT}" branch --show-current', $false, $pb),
   @('B', 'git -C "{KIT}" push origin --delete kit/build-x; git -C "{KIT}" branch -D kit/main-x', $false, $pb),
   @('B', 'git -C /nowhere/repo push origin --delete f/x; git -C /nowhere/repo branch -D develop', $false, $pb),
-  @('B', 'git -C /nowhere/repo push origin --delete main', $true, 'is a protected branch'),
+  @('B', 'git -C /nowhere/repo push origin --delete main; git push origin main --tags', $true, 'refused: a protected branch'),
+  @('B', 'git push --all origin', $true, 'refused: a protected branch'),
   @('B', 'git -C /nowhere/repo push origin --force-with-lease HEAD:release', $false, $pb),
   @('P', 'git commit -m "never git push origin --delete main"', $false, $pb),
   @('B', 'git commit -n -m "x"', $true, $hk),
@@ -1493,7 +1494,7 @@ if ($SelfTest) {
   @('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('G', '{CR}\NOTICE', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
   @('B', "git log \`n  -- docs/readme.md; git diff \`n  skills/crafty/crafty.ps1", $false, $rt),
   @('P', '$py = ''C:/x/python.exe''; & $py a.py; Get-Content "{CR}/NOTICE"; "{KIT}/README.md" | Out-Null; cd "{KIT}"; .\.githooks\pre-commit.ps1', $false, $rt),
-  # pytest / docker runs go through the gate; a grep, --version or gated call is no run
+  # pytest / docker runs go through the gate
   @('B', 'cd api && pytest tests/test_a.py -q', $true, $mg), @('P', '& "C:\v\python.exe" -X utf8 -m pytest t', $true, $mg), @('B', 'uv run pytest', $true, $mg),
   @('B', 'docker compose -f a.yml -f b.yml up -d --wait', $true, $mg), @('P', 'docker build -t x .', $true, $mg), @('B', 'docker-compose up', $true, $mg),
   @('P', '& "C:\Program Files\Py\python.exe" -m pytest t', $true, $mg), @('B', 'FOO=1 timeout 300 pytest -x', $true, $mg), @('B', 'nohup pytest &', $true, $mg),
@@ -2101,16 +2102,16 @@ if ($cmd -match '\bgit\b[^|;&]*\bpush\b') {
   $pushText = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs or dirs; other quoted text is data
   $kitGit = GitCommon (Split-Path (Split-Path $K))
   foreach ($push in [regex]::Matches($pushText, '\bgit\b[^|;&\r\n]*?\spush(?=\s|$)[^|;&\r\n]*')) {   # push as a word, not a path part
-    if ($push.Value -match '\s--(tags|mirror|all)(?=\s|$)') { continue }
     $pushTk = @(-split (($push.Value -replace '^.*?\spush(?=\s|$)', '') -replace '\s(-o|--push-option|--repo)\s+\S+', ' ') | Where-Object { $_ -notmatch '^-' } | ForEach-Object { $_ -replace '[''"]' })
     $dst = @($pushTk | Select-Object -Skip 1 | ForEach-Object { ($_ -split ':')[-1] -replace '^\+' -replace '^refs/heads/' })
+    $wide = $push.Value -match '\s--(all|mirror)(?=\s|$)'; if (-not $dst.Count -and $push.Value -match '\s--tags(?=\s|$)') { continue }
     $cdTo = @([regex]::Matches($pushText.Substring(0, $push.Index), '\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location)\s+(?:-(?:Literal)?Path\s+)?([^\s;|&]+)'))
     $pushDir = if ($push.Value -match '\s-C\s+("[^"]+"|''[^'']+''|\S+)') { $Matches[1].Trim('"', "'") } elseif ($cdTo.Count) { $cdTo[-1].Groups[1].Value } else { $here }
     if (-not [IO.Path]::IsPathRooted($pushDir)) { $pushDir = Join-Path $here $pushDir }
-    if (-not $dst.Count -or $dst -contains 'HEAD') { $dst += "$(git -C $pushDir branch --show-current 2>$null)".Trim() }   # no refspec or HEAD: the checked-out branch
+    if (-not $wide -and (-not $dst.Count -or $dst -contains 'HEAD')) { $dst += "$(git -C $pushDir branch --show-current 2>$null)".Trim() }   # no refspec or HEAD: the checked-out branch
     if (($deployHit = @($dst | Where-Object { $_ -in $deployBr })[0])) { Deny "$deployHit is a deploy branch (kit.local.json repos[].deploys): it changes only through a deploy MR, never a push: bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr." }
-    if ($protectedRx -and -not ($kitGit -and (GitCommon $pushDir) -eq $kitGit) -and ($protHit = @($dst | Where-Object { $_ -match "^($protectedRx)$" })[0])) {
-      Deny "$protHit is a protected branch (protectedBranchesBase / protectedBranches): merged MRs only, never a push; push your branch, open an MR."
+    if ($protectedRx -and -not ($kitGit -and (GitCommon $pushDir) -eq $kitGit) -and ($protHit = $(if ($wide) { '--all / --mirror' } else { @($dst | Where-Object { $_ -match "^($protectedRx)$" })[0] }))) {
+      Deny "push to $protHit refused: a protected branch (protectedBranchesBase): merged MRs only; push your branch, open an MR."
     }
   }
 }
@@ -2332,7 +2333,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
   $gap = @(Test-KitTaskSpec $sp); if ($gap.Count) { throw "tracker spec refused: missing or wrong: $($gap -join '; ') (crafty.ps1 ""task spec"")" }
   $r = ConvertTo-KitTaskRender $sp $Task
   $dt = "`n`n$(@($r.decisions.text) -join "`n")"; $pf = @(if (-not $Spec.proseOk) { Test-KitProse -Kind task-description -Text "$($r.name)`n`n$($r.description)$dt" })
-  if (@($pf | Where-Object { $_ -match '^\(all\): \d+ words' }).Count) {   # the Items list is generated from the brief: the word cap counts the rest
+  if (@($pf | Where-Object { $_ -match '^\(all\): \d+ words' }).Count) {   # Items come from the brief: the word cap counts the rest
     $pq = $sp | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable; $pq.items = @(); $pq.subtasks = @()
     $pf = @(@($pf | Where-Object { $_ -notmatch '^\(all\): \d+ words' }) + @(Test-KitProse -Kind task-description -Text "$($r.name)`n`n$(Format-KitTaskText $pq)$dt" | Where-Object { $_ -match '^\(all\): \d+ words' }))
   }
@@ -2395,7 +2396,7 @@ function Invoke-Tracker {
     'statuses' { $__bad = 0; foreach ($__s in @(Split-KitList $__id)) { $__st = try { "$((Get-TrackerTask $__s).status)" } catch { '' }; if ($__st) { "$__s $((Get-Date).ToString('o')) $__st" } else { $__bad++ } }; if ($__bad) { [Console]::Error.WriteLine("tracker statuses: $__bad view(s) failed") } }   # supervise: <id> <at> <status>
     'roles' { Show-KitScopeRoles $__id }
     'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> [-Back <why>] (read it: tracker view <id>)'; exit 2 }; $__sr = Set-TrackerStatus $__id $__x $__trOpt.Back; $__sr; if ("$__sr" -like 'SKIPPED*') { exit 1 } }   # an empty status set Open
-    'comment' {   # -Kind required (keyed kinds edit in place); over prose limits = refused
+    'comment' {   # -Kind required; over prose limits = refused
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = "$($__trOpt.Kind)"
       if ($__sp -and -not "$__ct".Trim()) {   # -Spec: rendered as -Kind (templates.md "Comment spec")
         if (-not $__k) { $__k = 'comment-status' }
@@ -2413,7 +2414,7 @@ function Invoke-Tracker {
       if (Test-KitKeyedComment $__trOpt.Kind) { Set-TrackerKitComment $__id $__trOpt.Kind $__ct } else { Add-TrackerComment $__id $__ct }; exit 0   # a failure throws
     }
     'comments' { __TrOut @(Get-TrackerComments $__id) }
-    'uncomment' {   # one comment by id (tracker comments <id> lists them): a stale hand-written kit comment
+    'uncomment' {   # one comment by id (tracker comments <id>): a stale hand-written kit comment
       if (-not ($__id -and $__x)) { 'usage: tracker uncomment <task> <comment id> (ids: tracker comments <task>)'; exit 2 }
       $__c = @(Get-TrackerComments $__id | Where-Object { "$($_.id)" -eq $__x })
       if (-not $__c.Count) { "tracker uncomment: no comment $__x on $__id (tracker comments $__id lists the ids)"; exit 1 }
@@ -2423,7 +2424,7 @@ function Invoke-Tracker {
     }
     'render' { if (-not $__sp) { 'usage: tracker render -Spec <json>'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -DryRun) }
     'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> (merged by key into the stored spec)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id) }
-    'create' {   # -Spec: rendered ("task spec"); free text only for a keyed QA / watch defect (-Key: updates its task)
+    'create' {   # -Spec: rendered ("task spec"); free text only for a keyed QA / watch defect
       if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
       $__specHint = 'tracker create -Spec <json> (crafty.ps1 "task spec": kind, title, problem, goal, items, acceptance, links)'
       if ("$($__trOpt.Key)" -notmatch '^(qa|watch)-') { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (-Key qa-<run> or watch-<env>-<signature>$(if ($__trOpt.Key) { "; '$($__trOpt.Key)' is neither" }))"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs; 2026-11-16: a made-up key skipped the spec
@@ -2448,7 +2449,7 @@ function Invoke-Tracker {
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
     'describe' { if ((Read-KitState (Get-KitTaskFile $__id)).spec) { "tracker describe refused: $__id is rendered from its spec: tracker update $__id -Spec <json with the changed keys>"; exit 1 }
-      $__nd = __TrText $(if ($__x) { $__x } else { $__trOpt.Description }); $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # text or a file path; spec-less: free text may not drop a template section ('x': no [Bug] exemption)
+      $__nd = __TrText $(if ($__x) { $__x } else { $__trOpt.Description }); $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # text or a file path; spec-less free text keeps every template section
       $__oldG = @(Get-KitTaskTextGaps 'x' "$($__ot.description)" -Subtask:$__sub); if ($__oldG -contains 'a description') { $__oldG = @(Get-KitTaskTemplate | ForEach-Object { "$($_.label)" }) }   # empty today: nothing to lose
       $__lost = @(Get-KitTaskTextGaps 'x' $__nd -Subtask:$__sub | Where-Object { $_ -notin $__oldG })
       if ($__lost.Count) { "tracker describe refused: the text lacks $($__lost -join ', ') (templates.md task-description): render it from a spec: tracker update $__id -Spec <json> (crafty.ps1 ""task spec""; doc links and kit sections stay)"; exit 1 }
@@ -2457,7 +2458,7 @@ function Invoke-Tracker {
     'move' {   # K54: re-parent, list or top-level; state and both parents' Items follow
       if (-not ($__id -and ($__trOpt.Parent -or $__trOpt.List -or $__trOpt.NoParent))) { 'usage: tracker move <id> [-Parent <p>] [-List <l>] [-NoParent] [-DryRun]'; exit 2 }
       Move-KitTask $__id -Parent "$($__trOpt.Parent)" -List "$($__trOpt.List)" -Top:([bool]$__trOpt.NoParent) -DryRun:([bool]$__trOpt.DryRun) }
-    'group' {   # K54: tasks under one parent (made from -Spec if missing); another list: an Items link
+    'group' {   # K54: tasks under one parent (made from -Spec if missing)
       if (-not ($__trOpt.Tasks -and ($__trOpt.Parent -or $__trOpt.Spec))) { 'usage: tracker group -Parent <p> | -Spec <parent spec json> -Tasks <id,id,...> [-DryRun]'; exit 2 }
       Invoke-KitTaskGroup -Parent "$($__trOpt.Parent)" -Tasks @(Split-KitList $__trOpt.Tasks) -Spec $(if ($__trOpt.Spec) { $__sp }) -DryRun:([bool]$__trOpt.DryRun) }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }

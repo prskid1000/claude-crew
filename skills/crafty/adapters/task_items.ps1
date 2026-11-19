@@ -293,7 +293,8 @@ function Get-KitNameKind([string]$Name) {
   if ($n -match '^\[([^\]]+)\]\s*(.*)$') { [pscustomobject]@{ kind = $Matches[1]; rest = $Matches[2] } } else { [pscustomobject]@{ kind = 'Feature'; rest = $n } }
 }
 # a defect name under tracker.kindPrefixes.bug: a typed [Bug] / [Kind] prefix swapped for the configured one
-function Format-KitBugName([string]$Name) { $bp = Get-KitKindPrefix 'bug'; if ("$Name".TrimStart().StartsWith($bp, 'OrdinalIgnoreCase')) { return "$Name".Trim() }; "$bp $((Get-KitNameKind $Name).rest)".Trim() }
+function Format-KitBugName([string]$Name) { $bp = Get-KitKindPrefix 'bug'; $n = "$Name".Trim(); if ($n.StartsWith($bp, 'OrdinalIgnoreCase')) { return $n }
+  $nk = Get-KitNameKind $n; $kp = Get-KitSetting 'tracker.kindPrefixes' $null; "$bp $(if ($nk.rest -ne $n -and $nk.kind -in @(@('Feature', 'Bug', 'Chore') + @(if ($kp) { (Get-KitProps $kp).Name }))) { $nk.rest } else { $n })".Trim() }   # a known kind's prefix swapped, [ui] kept
 function Test-KitBugName([string]$Name) { $p = Get-KitKindPrefix 'bug'; $n = "$Name".TrimStart(); ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) -or $n -match '^\W*Bug\]' }
 function Get-KitTaskTemplate {
   $t = @(Get-KitSetting 'tracker.taskTemplate' $null | Where-Object { $_ -and $_.label })

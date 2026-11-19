@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L248 deploy · L426 restart · L475 supervise
+Sections: L14 helpers · L93 intest · L248 deploy · L427 restart · L476 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -376,9 +376,10 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $batch = @(foreach ($m in @($cand.Keys)) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { if (-not $feeds.ContainsKey($m)) { $feeds[$m] = @(Get-MrDeployTargets $m $repos $fx $null -NoPaths:(-not $fx)) }; if ($t -notin $feeds[$m]) { continue }; [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })   # feeds-lookup only for a not-deployed row
     $last = $null; $src = ''; $lastBy = @{}; $envAt = $null   # lastBy: each repo's own last deploy here; envAt: one of no known repo (CI fixture)
     foreach ($l in @($logged | Where-Object { $_.target -eq $t })) { $la = [datetime]$l.at; if (-not $last -or $la -gt $last) { $last = $la; $src = "kit log ($($l.by))" }
+      if (-not @($l.mrs | Where-Object { $_ }).Count -and (-not $envAt -or $la -gt $envAt)) { $envAt = $la }   # a record without -Mrs: every repo's window
       foreach ($lr in @(@($l.mrs) | ForEach-Object { & $repoOf $_ } | Select-Object -Unique)) { if (-not $lastBy[$lr] -or $la -gt $lastBy[$lr]) { $lastBy[$lr] = $la } } }
     $running = $false
-    if ($fx) { if ((Get-KitMember $fx.lastCi $t)) { $ci = [datetime](Get-KitMember $fx.lastCi $t); $envAt = $ci; if (-not $last -or $ci -gt $last) { $last = $ci; $src = 'CI' } } }
+    if ($fx) { if ((Get-KitMember $fx.lastCi $t)) { $ci = [datetime](Get-KitMember $fx.lastCi $t); if (-not $envAt -or $ci -gt $envAt) { $envAt = $ci }; if (-not $last -or $ci -gt $last) { $last = $ci; $src = 'CI' } } }
     else {
       # each deploy row's kind: lastDeploy (@{ at; source }) and isRunning (a deploy in flight); a kind without them adds nothing
       foreach ($r in $repos) { foreach ($d in @($r.deploys | Where-Object { $_.target -eq $t -and ((Get-KitDeployKind $_) -ne 'ci-job' -or ($_.branch -and $_.job)) })) {

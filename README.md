@@ -264,7 +264,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: model |
 | `localOnly`, `orgTerms` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words pre-push blocks |
 | `localFiles` | {"skills/pokey/targets.local.json": {"_readme": "One entry per TEST… | example only (setup -WriteLocal) |
-| `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (shape, example: envy reference.md) |
+| `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (shape, example: envy reference.md); baseMove {targets, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1 |
 | `runtimes` |  | runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match |
 | `media` |  | evidence videos -&gt; text index (pokey media.md) |
 | `findings` |  | required: the fields every module-audit finding fills (revy kind module; default root_cause, why_today, why_not_prod, db_migration, code_location) |
