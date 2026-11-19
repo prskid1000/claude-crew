@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L314 shells · L448 page · L1015 release · L1055 lines · L1088 cleanup · L1173 launch ·
-  L1251 pause · L1370 heartbeat · L1385 sessions · L1437 ci tasks ·
-  L1492 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L314 shells · L448 page · L1015 release · L1058 lines · L1091 cleanup · L1176 launch ·
+  L1254 pause · L1373 heartbeat · L1388 sessions · L1440 ci tasks ·
+  L1495 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -274,7 +274,7 @@ function Get-KitResourceRows([datetime]$Since = [datetime]::MinValue) {
     $hs = @($held[$r].Values); if ($r -like 'build|*') { continue }
     $live = @($hs | Where-Object { Test-KitLive @{ agent = $_.agent; session = $_.session; holder = $_.holder } })
     $rk, $rn = $r -split '\|', 2
-    [pscustomobject]@{ resource = "$rk $((Get-KitPoolLabel $rk $rn) -replace '\|', ' ')"; holder = $(if ($hs.Count) { @($hs.agent) -join ', ' } else { 'free' })
+    [pscustomobject]@{ key = $r; agents = @($hs | ForEach-Object { "$($_.agent)" }); resource = "$rk $((Get-KitPoolLabel $rk $rn) -replace '\|', ' ')"; holder = $(if ($hs.Count) { @($hs.agent) -join ', ' } else { 'free' })
       since = @($hs | ForEach-Object { $(if ($_.since) { $_.since } else { $_.at }) } | Where-Object { $_ } | Sort-Object)[0]
       seen = $(if ($live.Count) { 'live now' } elseif ($hs.Count) { "$(if (@($hs.seen | Where-Object { $_ })) { "$(([datetime]@($hs.seen | Where-Object { $_ })[0]).ToString('HH:mm')), " })no live holder" } else { '—' })
       used = Format-KitLeaseLast $last[$r]
@@ -1047,7 +1047,10 @@ function Invoke-KitReleaseAgent([string[]]$Agent, [string]$Reason = 'agent finis
         $r = Invoke-KitExe 'node' @('--input-type=module', '-e', "const m = await import('$([Uri]::new((Join-Path $KitConf.Kit 'skills/pokey/browser.mjs')).AbsoluteUri)'); console.log(await m.sweepAll('$($a -replace "'", '')'))") 120
         "$a tabs: $("$($r.out)".Trim()) closed"; $n++
       }
-      if (-not $n) { "${a}: no lease held" }
+      # a hold only the leases log still has (its store dropped it without a release row): the idle-holder WATCH read it for 24 h
+      if (-not $n) { $lo = @(Get-KitResourceRows (Get-Date).AddHours(-24) | Where-Object { $_.key -match '^(env|env-layer|tab|gpu|slot)\|' -and $_.agents -contains $a })   # the kinds whose stores release checked above
+        foreach ($x in $lo) { $xk, $xn = $x.key -split '\|', 2; Write-KitLeaseLog release $xk $xn @{ agent = $a } "$Reason (no store held it: log row closed)" }
+        if ($lo.Count) { "${a}: $($lo.Count) stale log hold(s) closed: $(@($lo.resource) -join ', ')" } else { "${a}: no lease held" } }
     }
   }
 }

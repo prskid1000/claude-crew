@@ -16,6 +16,13 @@ $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$d
 $db.maxGB = 5; $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]$db } }; $null = Invoke-KitStorageTick -Force; "cap:$("$(Get-Content "$sd/killed.txt")".Trim() -eq '43')"
 '@ @($O, $sd)
 Expect-Each $cap 'storage db cap: #' 'nocap', 'cap' -Show 4
+# a hold only the leases log has (its store dropped it, no release row): release closes the row (an env-layer, a tab), never a lock it does not release
+$rlo = Invoke-PsTest release-logonly @'
+$null = . $args[0] 6>$null; Write-KitLeaseLog acquire env-layer 'h/api' @{ agent = 'DL' }; Write-KitLeaseLog acquire tab 'stg|t|admin' @{ agent = 'DL' }; Write-KitLeaseLog acquire lock 'L1' @{ agent = 'DL' }
+$r1 = "$(Invoke-KitReleaseAgent DL)"; $left = @(Get-KitResourceRows | Where-Object { $_.agents -contains 'DL' } | ForEach-Object key)
+"logonly:$($r1 -match 'DL: 2 stale log hold\(s\) closed' -and "$left" -eq 'lock|L1' -and "$(Invoke-KitReleaseAgent PZ9)" -match 'PZ9: no lease held')"
+'@ @($O)
+Expect-Each $rlo 'release: a log-only hold is closed (#)' 'logonly' -Show 4
 # K20: an anomalous drive's round: one db query list a sweep (the tick's), top writers sampled once per 5 min
 $rnd = Invoke-PsTest storage-round @'
 $null = . $args[0] 6>$null; $global:dbc = 0; $global:twc = 0; function Get-KitDbQueries($C) { $global:dbc++; @() }; function Get-KitTopWriters { $global:twc++; @([pscustomobject]@{ name = 'w'; pid = 1; mbs = 9 }) }
@@ -195,8 +202,8 @@ $wcf = Join-Path (Kd) 'wcost.ps1'; Set-Content $wcf $wc; $null = & $pwshExe -NoP
 $wcr = if ($wco -match '^cost:(\d+) reads, (\d+) api$') { [int]$Matches[1], [int]$Matches[2] } else { 99999, 99999 }
 Expect "waste guards: one supervise beat over 500 QA runs + 3000-row logs <= 2000 file reads (measured 950) and <= 120 API calls (measured 56) ($wco)" ($wcr[0] -le 2000 -and $wcr[1] -le 120)
 # write-if-changed: supervise, learn -Stats and kitbag.py release run twice on the same input: no file is rewritten with the same bytes
-# (by design: usage.result.json -Volatile moves its time, a background job's .out / .err are its new run, the API ledger its late calls)
-$wsnap = { @(Get-ChildItem -LiteralPath $k -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[\\/](\.runtime|\.state)[\\/]' -and $_.FullName -notmatch '[\\/]background[\\/]|usage\.result\.json$|supervise-api\.txt$' } |
+# (by design: usage.result.json and live-steps.json -Volatile move their time (a second beat may run or stand aside on the lock), a background job's .out / .err are its new run, the API ledger its late calls)
+$wsnap = { @(Get-ChildItem -LiteralPath $k -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[\\/](\.runtime|\.state)[\\/]' -and $_.FullName -notmatch '[\\/]background[\\/]|usage\.result\.json$|live-steps\.json$|supervise-api\.txt$' } |
   ForEach-Object { [pscustomobject]@{ f = $_.FullName.Substring($k.Length); t = $_.LastWriteTimeUtc.Ticks; h = (Get-FileHash -LiteralPath $_.FullName -Algorithm MD5).Hash } }) }
 $wsame = foreach ($wrun in { $null = & $pwshExe -NoProfile -File $O supervise -Json 2>$null }, { $null = & $pwshExe -NoProfile -File $O learn -Stats 2>$null }, { $null = & $py -X utf8 (Join-Path $k 'skills/bossy/kitbag.py') release 2>$null }) {
   & $wrun; Start-Sleep -Milliseconds 1100; $wa = @{}; foreach ($x in & $wsnap) { $wa[$x.f] = $x }; & $wrun

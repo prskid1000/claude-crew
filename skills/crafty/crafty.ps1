@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 sweep · L141 wt · L431 stack · L613 gate · L932 check · L1248 pipes · L1304 guard · L2181 dir ·
-  L2191 checkpoint · L2221 prior · L2259 tracker · L2281 task spec · L2461 scope · L2509 host
+Sections: L24 init · L31 sweep · L141 wt · L431 stack · L613 gate · L932 check · L1248 pipes · L1304 guard · L2183 dir ·
+  L2193 checkpoint · L2223 prior · L2261 tracker · L2283 task spec · L2463 scope · L2511 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1582,7 +1582,9 @@ function Deny($why) {
   exit 0
 }
 function GitCommon([string]$d) {
+  $ceil = @("$env:GIT_CEILING_DIRECTORIES" -split [IO.Path]::PathSeparator | ForEach-Object { ($_ -replace '\\', '/').TrimEnd('/') })   # as git: a test kit in the live .runtime
   for (; $d; $d = Split-Path $d) {
+    if (($d -replace '\\', '/').TrimEnd('/') -in $ceil) { return }
     $g = Join-Path $d '.git'
     if (Test-Path -LiteralPath $g -PathType Container) { return [IO.Path]::GetFullPath($g) }
     if ((Test-Path -LiteralPath $g -PathType Leaf) -and (Get-Content -LiteralPath $g -Raw) -match 'gitdir:\s*(.+?)\s*$') { return [IO.Path]::GetFullPath(($Matches[1] -replace '[\\/]worktrees[\\/][^\\/]+[\\/]?$', '')) }

@@ -8,6 +8,8 @@ $ErrorActionPreference = 'Stop'   # the area files inherit it (dot-sourced), as 
 $src = Split-Path $PSScriptRoot   # the kit
 $script:fails = 0
 Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # own runtime + state per test kit
+# the nightly run inherits supervise's beat env: its API ledger (live cache) failed every host verb of a test kit without process_gates.ps1
+Remove-Item Env:KIT_API_LEDGER, Env:KIT_NET_TIMEOUT_SEC, Env:KIT_NET_TRIES, Env:KIT_SUPERVISE_HTML, Env:KIT_SUPERVISE_RUNS -ErrorAction SilentlyContinue
 foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-Item "env:GIT_${v}_EMAIL" 't@t' }   # test repos commit without a git config
 $np = '-NoProfile', '-File'   # pwsh @np <script>
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
