@@ -36,7 +36,7 @@ Expect 'bugPrefix: an open [Defect] under the ask gets the section, its name kep
 # neutral defaults: no qa.newDefectIdRx = an X id is the task's own FAIL; no qa.holdCauses = env-data untested fails testing
 '{}' | Set-Content $kl
 $nd = New-Run 'ND' @(@{ code = 'D1'; task = 'TD1'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'D2'; task = 'TD2'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
-New-Task 'TD1' 'Task D1'; New-Task 'TD2' 'Task D2'
+New-Task 'TD1' 'Task D1' $null 'promoted'; New-Task 'TD2' 'Task D2' $null 'promoted'   # failedTesting only from promoted / in test (prepare below lists in test)
 $rj = Read-Json "$nd/D2/results.json"; $rj.checks[1] | Add-Member cause 'env-data'; & $J $rj "$nd/D2/results.json"
 $null = Fin $nd D1; $null = Fin $nd D2
 Expect 'finalize, neutral config: an X id without defect is the own FAIL (no qa.newDefectIdRx); env-data untested fails testing (no qa.holdCauses)' ((Rec $nd D1).fail -eq 1 -and (Rec $nd D1).newDefects -eq 0 -and (Rec $nd D1).failedTesting -and (Rec $nd D2).failedTesting -and -not (Rec $nd D2).keptOpen)
@@ -49,7 +49,7 @@ $rv = Read-Json "$un/U2/results.json"; $rv.checks[1].observed = 'Delete button d
 $null = Fin $un U1; $null = Fin $un U2; $ub = @(Get-ChildItem $store -Filter *.json | ForEach-Object { Read-Json $_.FullName } | Where-Object { $_.parent -eq 'PU' -and $_.name -like '`[Bug`]*' })
 Expect "finalize: inconclusive X1 without a request -> unproven + watch, no [Bug]; X2 names GET /api -> [Bug] '<product> — <first defect>' ($(@($ub.name) -join '; '))" ((Rec $un U1).unproven -contains 'X1' -and (Rec $un U1).newDefects -eq 1 -and (Read-Json "$un/U1/finalize.json").watch[0].id -eq 'X1' -and $ub.Count -eq 1 -and $ub[0].name -eq '[Bug] ProdU — s' -and (Rec $un U2).newDefects -eq 0 -and (Rec $un U2).closed -and -not (Rec $un U2).bug)
 # K68: a passing retest closes (the original's FAIL is superseded); an own FAIL beats a pending check; a check naming no subtask keeps it open
-New-Task 'TR' 'Task R'; New-Task 'TP' 'Task P'; New-Task 'TO' 'Task O'; New-Task 'TO2' 'Task O2'
+foreach ($nt in @('TR', 'Task R'), @('TP', 'Task P'), @('TO', 'Task O'), @('TO2', 'Task O2')) { New-Task $nt[0] $nt[1] $null 'promoted' }
 $rr = New-Run 'RR' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'FAIL') }, @{ code = 'R2'; task = 'TR'; checks = , @('C1', 'PASS') }, @{ code = 'P1'; task = 'TP'; checks = @(@('C1', 'FAIL'), @('C2', 'PENDING')) }, @{ code = 'O1'; task = 'TO'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) })
 $rj = Read-Json "$rr/run.json"; $rj.items[1] | Add-Member retest $true; $rj.items[3].subtasks += [pscustomobject]@{ id = 'TO2'; name = 'Task O2' }; & $J $rj "$rr/run.json"
 $ro = Read-Json "$rr/O1/results.json"; $ro.checks[1].subtask_id = 'TZZ'; & $J $ro "$rr/O1/results.json"
@@ -89,7 +89,7 @@ Set-JsonFile $kl @{ process = @{ docs = @() } }   # [] = no docs (unset: the bui
 $ppNd = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-nodoc') 2>&1); $ndRun = ("$($ppNd[-1])" -replace '^RUN ') | ConvertFrom-Json
 Expect "prepare, process.docs []: no doc needed, the task text is the guide, lane = the first qa.lanes lane (web) ($($ppNd[-2]))" (@($ndRun.items).Count -eq 2 -and -not @($ndRun.left).Count -and (Get-Content -Raw $ndRun.items[1].guideFile) -match 'No testing doc configured' -and $ndRun.items[0].lane -eq 'web')
 # K68r: a retest supersedes only the FAILs its only list names: the original's other FAIL still fails testing
-New-Task 'TQ' 'Task Q'; $rq = New-Run 'RQ' @(@{ code = 'Q1'; task = 'TQ'; checks = @(@('C1', 'FAIL'), @('C2', 'FAIL')) }, @{ code = 'Q2'; task = 'TQ'; checks = , @('C1', 'PASS') })
+New-Task 'TQ' 'Task Q' $null 'promoted'; $rq = New-Run 'RQ' @(@{ code = 'Q1'; task = 'TQ'; checks = @(@('C1', 'FAIL'), @('C2', 'FAIL')) }, @{ code = 'Q2'; task = 'TQ'; checks = , @('C1', 'PASS') })
 $rqj = Read-Json "$rq/run.json"; $rqj.items[1] | Add-Member retest $true; $rqj.items[1] | Add-Member only @('C1'); & $J $rqj "$rq/run.json"
 foreach ($c in 'Q1', 'Q2') { $null = Fin $rq $c }
 Expect "finalize: a retest of C1 alone leaves the original's C2 FAIL holding (failed testing, not closed)" ((Rec $rq Q2).failedTesting -and -not (Rec $rq Q2).closed)
