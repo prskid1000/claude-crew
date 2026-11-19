@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 sweep · L141 wt · L431 stack · L613 gate · L932 check · L1248 pipes · L1304 guard · L2183 dir ·
-  L2193 checkpoint · L2223 prior · L2261 tracker · L2283 task spec · L2463 scope · L2511 host
+Sections: L24 init · L31 sweep · L142 wt · L432 stack · L614 gate · L933 check · L1249 pipes · L1305 guard · L2184 dir ·
+  L2194 checkpoint · L2224 prior · L2262 tracker · L2284 task spec · L2464 scope · L2512 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -58,13 +58,14 @@ function Get-KitLeftoverVerdict([string]$Dir, [string[]]$RepoDirs) {
   $leaf = Split-Path $Dir -Leaf; $repo = @($RepoDirs | Where-Object { $leaf -like "*-$(Split-Path $_ -Leaf)" -or $leaf -eq (Split-Path $_ -Leaf) } | Select-Object -First 1)[0]
   $files = @(Get-ChildItem -LiteralPath $Dir -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.LinkType })   # links are never followed
   if ($files.Count -gt 500) { return [pscustomobject]@{ delete = $false; why = "$($files.Count) files: check by hand" } }
-  $left = @(foreach ($f in $files) { $rel = [IO.Path]::GetRelativePath($Dir, $f.FullName).Replace('\', '/')
+  $rtl = "$(Split-Path (Get-KitRuntime) -Leaf)/"
+  $left = @(foreach ($f in $files) { $rel = [IO.Path]::GetRelativePath($Dir, $f.FullName).Replace('\', '/'); if ($rel.StartsWith($rtl)) { continue }
       if ($repo -and $f.Name -notlike '*.local.*') {
         git -C $repo check-ignore -q --no-index -- $rel 2>$null; if ($LASTEXITCODE -eq 0) { continue }
         $h = "$(git -C $repo hash-object --path=$rel -- $f.FullName 2>$null)".Trim(); if ($h) { git -C $repo cat-file -e "$h^{blob}" 2>$null; if ($LASTEXITCODE -eq 0) { continue } } }
       $rel })
   if ($left.Count) { return [pscustomobject]@{ delete = $false; why = "$($left.Count) file(s) in no git: $(@($left | Select-Object -First 3) -join ', ')" } }
-  [pscustomobject]@{ delete = $true; why = $(if ($files.Count) { "$($files.Count) file(s), all ignored or in $(Split-Path $repo -Leaf)'s history" } else { 'empty skeleton (links only)' }) }
+  [pscustomobject]@{ delete = $true; why = $(if ($files.Count) { "$($files.Count) file(s): runtime, ignored or in git" } else { 'empty skeleton (links only)' }) }
 }
 # links first (never followed), then the folder
 function Remove-KitLeftover([string]$Dir) {
@@ -1582,9 +1583,9 @@ function Deny($why) {
   exit 0
 }
 function GitCommon([string]$d) {
-  $ceil = @("$env:GIT_CEILING_DIRECTORIES" -split [IO.Path]::PathSeparator | ForEach-Object { ($_ -replace '\\', '/').TrimEnd('/') })   # as git: a test kit in the live .runtime
+  $ceil = @("$env:GIT_CEILING_DIRECTORIES" -split [IO.Path]::PathSeparator | Where-Object { $_ } | ForEach-Object { ($_ -replace '\\', '/').TrimEnd('/') })
   for (; $d; $d = Split-Path $d) {
-    if (($d -replace '\\', '/').TrimEnd('/') -in $ceil) { return }
+    if (($d -replace '\\', '/') -in $ceil) { return }
     $g = Join-Path $d '.git'
     if (Test-Path -LiteralPath $g -PathType Container) { return [IO.Path]::GetFullPath($g) }
     if ((Test-Path -LiteralPath $g -PathType Leaf) -and (Get-Content -LiteralPath $g -Raw) -match 'gitdir:\s*(.+?)\s*$') { return [IO.Path]::GetFullPath(($Matches[1] -replace '[\\/]worktrees[\\/][^\\/]+[\\/]?$', '')) }
@@ -1624,7 +1625,7 @@ function CrlfKitFile([string]$p, [string]$base) {
   if ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($p)).Contains("`r`n")) { $p }
 }
 $liveWhy = 'the live kit runs every agent: edit your kit worktree (crafty.ps1 wt) and push; the coordinator pulls'
-# a .runtime path: 'kit' = <kit>/.runtime or unresolvable ($var, ~), 'stray' = one more up to 2 folders into the workspace, not a kit checkout's (lint RUNTIME-STRAY), else 'other'
+# .runtime path kind: 'kit' (<kit>/.runtime, $var, ~), 'stray' (another <= 2 folders into the workspace, no kit's: lint RUNTIME-STRAY), 'other'
 $rtFull = [IO.Path]::GetFullPath((Get-KitRuntime)).TrimEnd('\', '/'); $rtLeaf = Split-Path $rtFull -Leaf
 $wsRoot = Split-Path $(if ($live) { $live } else { $script:KitRoot })
 function FullOf([string]$p, [string]$base) {

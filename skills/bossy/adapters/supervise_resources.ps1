@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L52 supervise · L314 shells · L448 page · L1015 release · L1058 lines · L1091 cleanup · L1176 launch ·
-  L1254 pause · L1373 heartbeat · L1388 sessions · L1440 ci tasks ·
-  L1495 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L52 supervise · L314 shells · L448 page · L1015 release · L1060 lines · L1093 cleanup · L1178 launch ·
+  L1256 pause · L1375 heartbeat · L1390 sessions · L1442 ci tasks ·
+  L1497 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1048,7 +1048,9 @@ function Invoke-KitReleaseAgent([string[]]$Agent, [string]$Reason = 'agent finis
         "$a tabs: $("$($r.out)".Trim()) closed"; $n++
       }
       # a hold only the leases log still has (its store dropped it without a release row): the idle-holder WATCH read it for 24 h
-      if (-not $n) { $lo = @(Get-KitResourceRows (Get-Date).AddHours(-24) | Where-Object { $_.key -match '^(env|env-layer|tab|gpu|slot)\|' -and $_.agents -contains $a })   # the kinds whose stores release checked above
+      # kinds whose stores were checked above and hold nothing of $a (a tab with no puppeteer, a parked slot: still held)
+      $kinds = @('env', 'env-layer', 'gpu') + @(if (-not @($tabs | Where-Object agent -eq $a).Count) { 'tab' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -eq $a }).Count) { 'slot' })
+      if (-not $n) { $lo = @(Get-KitResourceRows (Get-Date).AddHours(-24) | Where-Object { ($_.key -split '\|')[0] -in $kinds -and $_.agents -contains $a })
         foreach ($x in $lo) { $xk, $xn = $x.key -split '\|', 2; Write-KitLeaseLog release $xk $xn @{ agent = $a } "$Reason (no store held it: log row closed)" }
         if ($lo.Count) { "${a}: $($lo.Count) stale log hold(s) closed: $(@($lo.resource) -join ', ')" } else { "${a}: no lease held" } }
     }

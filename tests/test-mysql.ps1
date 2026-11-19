@@ -130,13 +130,14 @@ function Stop-TestMySql($Server) {
 }
 # a run holding the server ends: the server stops (data kept) when no live run holds it; returns how often this holder started it
 # and the second kit-test servers it saw (starts, strays)
-function Exit-TestMySqlHolder([string]$StateDir, [int]$Holder, [switch]$Locked) {
+function Exit-TestMySqlHolder([string]$StateDir, [int]$Holder, [switch]$Locked, [double]$WaitMinutes = 2) {
   if (-not (Test-Path (Join-Path $StateDir 'server.json'))) { return [pscustomobject]@{ starts = 0; strays = @() } }
   # a run that neither holds nor started it, with other live runs on it: nothing to do (the lock wait hung a guard-only run 30 min)
   $tmPeek = Read-TestMySqlState $StateDir; $tmMe0 = Get-TestProcStamp $Holder
   if (-not $Locked -and $tmMe0 -notin @($tmPeek.holders) -and "$($tmPeek.owner)" -ne $tmMe0 -and @($tmPeek.holders | Where-Object { $_ -and (Test-TestProcStamp $_) }).Count) {
     return [pscustomobject]@{ starts = 0; strays = @() } }
-  $tmLock = if ($Locked) { $null } else { Enter-TestMySqlLock $StateDir }
+  # K84: a run's end waits 2 min, not 30 (another suite held it: the done run hung 15+ min at 0 CPU); the next take prunes our dead stamp
+  $tmLock = if ($Locked) { $null } else { try { Enter-TestMySqlLock $StateDir $WaitMinutes 1 } catch { Write-Warning "$($_.Exception.Message): left as is, the next run prunes this holder"; return [pscustomobject]@{ starts = 0; strays = @() } } }
   try {
     $tmMe = Get-TestProcStamp $Holder; $St = Read-TestMySqlState $StateDir
     $St.holders = @($St.holders | Where-Object { $_ -and $_ -ne $tmMe -and (Test-TestProcStamp $_) })

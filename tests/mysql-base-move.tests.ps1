@@ -111,9 +111,13 @@ $tmOwn = foreach ($tmO in $tmMe, $tmPar) { Save-TestMySqlState $tmOd @{ server =
 Save-TestMySqlState $tmOd @{ server = '1:1'; port = 1; key = 'k'; data = 'd'; holders = @($tmPar); owner = $tmPar; starts = @() }
 $tmHeld2 = Enter-TestMySqlLock $tmOd 0; $tmClk = [Diagnostics.Stopwatch]::StartNew(); try { $null = Exit-TestMySqlHolder $tmOd $PID } finally { $tmHeld2.Dispose() }
 $tmOwn += "$((Read-TestMySqlState $tmOd).server)|$([int]$tmClk.Elapsed.TotalSeconds) s"
+# K84: the starter's end waits WaitMinutes for a lock another suite holds, then leaves the state and returns (it hung 15+ min)
+Save-TestMySqlState $tmOd @{ server = '1:1'; port = 1; key = 'k'; data = 'd'; holders = @($tmMe); owner = $tmMe; starts = @() }
+$tmHeld3 = Enter-TestMySqlLock $tmOd 0; $tmClk.Restart(); try { $null = Exit-TestMySqlHolder $tmOd $PID -WaitMinutes 0.02 3>$null } finally { $tmHeld3.Dispose() }
+$tmOwn += "$((Read-TestMySqlState $tmOd).server)|$($tmClk.Elapsed.TotalSeconds -lt 30)"
 $tmRow = [regex]::Match((Get-Content (Join-Path $src 'skills/bossy/STATE.md') -Raw), '`kit-tests-db` \|[^|]+\| `json v\d+: ([^`]+)`').Groups[1].Value -split ' '
 Expect "test-mysql.ps1: its starter stops the server, another starter's stays, a run that never held it ends without the lock; server.json has the schema keys ($($tmOwn -join ' ; ') | $($tmRow -join ' '))" (
-  $tmOwn[0] -eq "|$tmPar" -and $tmOwn[1] -eq "1:1|$tmPar" -and $tmOwn[2] -eq '1:1|0 s' -and $tmRow.Count -ge 3 -and -not @($tmRow | Where-Object { -not $tmS.ContainsKey($_) }).Count)
+  $tmOwn[0] -eq "|$tmPar" -and $tmOwn[1] -eq "1:1|$tmPar" -and $tmOwn[2] -eq '1:1|0 s' -and $tmOwn[3] -eq '1:1|True' -and $tmRow.Count -ge 3 -and -not @($tmRow | Where-Object { -not $tmS.ContainsKey($_) }).Count)
 # a server.json that lost its server (moved aside): the mysqld on the same data dir is ended before a start; one on another dir stays
 $tmLost = @(1, 2 | ForEach-Object { Start-Process $pwshExe -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 60' -WindowStyle Hidden -PassThru })
 $tmLostP = @($tmLost | ForEach-Object { [pscustomobject]@{ ProcessId = $_.Id; ParentProcessId = 1; CommandLine = "mysqld.exe --no-defaults `"--datadir=D:\k$($_.Id -eq $tmLost[1].Id)\.state\kit-tests\mysql`"" } })
