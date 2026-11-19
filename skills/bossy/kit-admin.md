@@ -46,8 +46,9 @@ adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters
   `kit.example.json` sample. **Hook**: `pwsh` exec form, SessionStart < 2 s, slow work async.
 
 ## Before every push
-`agents/kitty.md` step 8 (lint, ports, tests, org terms, cost). pre-commit regenerates README graph sections, staged scripts' `Sections:` maps and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
-deliberate); pre-push blocks stale ports, org terms and local files; commit with `crafty.ps1 wt commit`.
+`agents/kitty.md` step 8 (lint, ports, tests, org terms, cost); no hook tests (owner 2026-11-19); the full suite runs while
+idle every `kitTests.fullEveryDays` (kit changed). pre-commit regenerates README graph, staged `Sections:` maps and ports
+(a staged source), blocks on lint (`flow: <reason>`: deliberate); pre-push: org terms, local files.
 
 ## kitty steps 1-3 (`$A` = `python -X utf8 <wt>/skills/bossy/kitbag.py audit`)
 1. **Setup:** `$A setup` (clone, git hooks, `localOnly` excludes, runtime + state folders, hooks clean and fast, ports, CLIs and

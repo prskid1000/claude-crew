@@ -5,7 +5,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L105 health · L114 prepush · L228 nightly tests · L248 precommit
+Sections: L12 learn · L105 health · L114 prepush · L178 weekly tests · L210 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -111,8 +111,8 @@ function Get-KitHealthLinesAudit {
   $busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -eq 'kitty' -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt (Get-KitParam 'kitAudit.liveBeatMinutes') }).Count
   if (-not $busy) { "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kitty agent (bossy E13)." }
 }
-# ---- prepush: local files, org terms, ports, full tests to main
-# the kit's git pre-push hook (.githooks/pre-push): blocks local files, org terms, a failing full test run to main; warns on stale ports
+# ---- prepush: local files, org terms, ports (no tests: the agent tests before it commits and pushes, owner 2026-11-19)
+# the kit's git pre-push hook (.githooks/pre-push): blocks local files and org terms; warns on stale ports
 function Invoke-PrePush {
 $ErrorActionPreference = 'Stop'
 $root = $KitConf.Kit
@@ -166,56 +166,6 @@ else {
 $py = Get-Python
 if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kitbag port --check 2>&1; if ($LASTEXITCODE -eq 1) { Write-Host "pre-push: warning: ports differ (optional; run kitbag.py port if deploying to codex/gemini)" } }   # 2: kitbag.py port is unavailable
 
-# a push to main: the full kit tests on the pushed tree (a tree a green full run stamped: skipped; inside a test run: never)
-$kt = Join-Path $root 'tests/kit-tests.ps1'; $toMain = @($updates | Where-Object { $_.rref -eq 'refs/heads/main' })
-if ($toMain.Count -and (Test-Path $kt) -and -not $env:KIT_TESTS_SNAPSHOT) {
-  $tree = "$(git -C $root rev-parse "$($toMain[-1].lsha)^{tree}" 2>$null)".Trim()
-  $pm = (Get-Content -LiteralPath (Join-Path $root 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths   # where kit-tests.ps1 stamps (this checkout's runtime, never CLAUDE_RUNTIME)
-  $green = @(Get-Content -LiteralPath (Join-Path (Join-Path (Join-Path $root $pm.runtimeDir) $pm.runtime.cache) 'kit-tests-green.txt') -ErrorAction SilentlyContinue)
-  if ($tree -in $green) { Write-Host "pre-push: kit tests: tree $($tree.Substring(0, 8)) already green in a full run" }
-  elseif ($tree -ne "$(git -C $root rev-parse 'HEAD^{tree}' 2>$null)".Trim() -or (git -C $root status --porcelain 2>$null)) { $hits += "TESTS       the pushed commit is not this clean checkout: commit everything, run tests/kit-tests.ps1 -Full, push again" }
-  else {
-    $tl = Join-Path (Get-KitPath logs -Create) 'kit-tests-prepush.txt'
-    Remove-Item Env:GIT_DIR, Env:GIT_INDEX_FILE, Env:GIT_WORK_TREE -ErrorAction SilentlyContinue   # the hook's git env would point every test repo at this one
-    $ktMain = "$(git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim() -replace '[\\/]\.git$', ''; if (-not $ktMain) { $ktMain = $root }
-    $ktDb = Join-Path (Join-Path $ktMain $pm.stateDir) $pm.durable.'kit-tests-db'   # tests/test-mysql.ps1 server.json: every lock take writes it
-    $ktRun = { param($ktArgs, $ktLog) $p = Start-Process (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source -ArgumentList (@('-NoProfile', '-NonInteractive', '-File', "`"$kt`"") + $ktArgs) -RedirectStandardOutput $ktLog -RedirectStandardError "$ktLog.err" -NoNewWindow -PassThru; $null = $p.Handle   # the handle kept: ExitCode stays readable
-      # K79: past kitTests.pushTimeoutMinutes -> -1; its log (stdout + stderr) not grown for kitTests.pushStallMinutes -> -2 (a push hung 25 min on a frozen log)
-      $ktEnd = (Get-Date).AddMinutes([double](Get-KitParam 'kitTests.pushTimeoutMinutes')); $ktStall = [double](Get-KitParam 'kitTests.pushStallMinutes'); $ktSize = -1; $ktSeen = Get-Date
-      while (-not $p.WaitForExit([int][Math]::Min(15000, [Math]::Max(200, 20000 * $ktStall)))) {
-        # progress = the log grew, or the shared test mysqld changed hands (an area queued behind other runs prints nothing meanwhile)
-        $ktLen = [long](@(Get-Item -LiteralPath $ktLog, ($ktLog + '.err') -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)
-        $ktTake = (Get-Item -LiteralPath $ktDb -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks; $ktNow = "$ktLen|$ktTake"
-        if ($ktNow -ne $ktSize) { $ktSize = $ktNow; $ktSeen = Get-Date }
-        if ((Get-Date) -gt $ktEnd) { Stop-KitProcessTree $p; return -1 }
-        if (((Get-Date) - $ktSeen).TotalMinutes -gt $ktStall) { Stop-KitProcessTree $p; return -2 } }
-      $p.ExitCode }
-    # K76: a busy machine runs the changed areas only (nightly + idle runs the full suite): a gated build queued or running, RAM over
-    # kitTests.pushBusyRamPct, or kitTests.pushBusyRuns other kit-test runs live (the shared test mysqld lock held counts as one;
-    # 4 live runs, 0 queued builds, RAM 50%: a forced full suite hit the 30-min cap)
-    $gq = @(Get-ChildItem (Join-Path (Get-KitGateLedger) 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $t = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; $t -and (Test-KitPid $t.pid $t.start) }).Count
-    $ga = @(Get-ChildItem (Get-KitGateLedger) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'history.json' -and $(try { $t = Get-Content $_.FullName -Raw | ConvertFrom-Json; Test-KitPid $t.pid $t.start } catch { $false }) }).Count
-    $mine = @(); $wp = Get-Process -Id $PID; for ($i = 0; $i -lt 12 -and $wp; $i++) { $mine += $wp.Id; $wp = try { $wp.Parent } catch { $null } }   # this push's own chain (a test run) is not another run
-    $kr = @(if ($KitIsWindows) { Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' AND CommandLine LIKE '%kit-tests.ps1%'" -ErrorAction SilentlyContinue | Where-Object { [int]$_.ProcessId -notin $mine } }).Count
-    $lk = try { [IO.File]::Open((Join-Path (Split-Path $ktDb) 'mysql.lock'), 'OpenOrCreate', 'ReadWrite', 'None').Dispose(); 0 } catch { 1 }
-    $sm = Get-SysMem; $ramPct = if ($sm.TotalGB) { [math]::Round(100 * (1 - $sm.AvailGB / $sm.TotalGB)) } else { 0 }
-    $ktMode = @(if (-not $gq -and -not $ga -and $kr + $lk -lt [double](Get-KitParam 'kitTests.pushBusyRuns') -and $ramPct -le [double](Get-KitParam 'kitTests.pushBusyRamPct')) { '-Full' })
-    if ($ktMode.Count) { Write-Host "pre-push: kit tests -Full on tree $($tree.Substring(0, 8)) (a few minutes; log $tl)" }
-    else { Write-Host "pre-push: machine busy ($gq queued build(s), RAM $ramPct%, $ga running build(s), $kr other kit-test run(s)$(if ($lk) { ', test mysqld lock held' })): changed areas only, log $tl; the full suite runs nightly while idle" }
-    $tc = & $ktRun $ktMode $tl
-    if ($tc -eq -1) { $hits += "TESTS       the kit run passed $(Get-KitParam 'kitTests.pushTimeoutMinutes') min: stopped (log $tl)" }
-    elseif ($tc -eq -2) { $hits += "TESTS       the kit run wrote nothing for $(Get-KitParam 'kitTests.pushStallMinutes') min (hung): stopped; read the log's last area lines, fix or rerun that area alone, push again (log $tl)" }
-    elseif ($tc) {
-      $sum = @(Get-Content -LiteralPath $tl | Select-String -Pattern '^(Failed checks:|  \[|TEST-DUP|TEST-WRITE|\d+ failure\(s\) in)' | ForEach-Object Line); $sum | ForEach-Object { Write-Host "  $_" }
-      # each FAIL named in the recap (no crash, no TEST-DUP): its areas once more alone; green there = a load flake, said, not blocked
-      $fa = @($sum | Where-Object { $_ -match '^  \[([\w-]+)\]' } | ForEach-Object { $Matches[1] } | Select-Object -Unique); $nf = @($sum | Where-Object { $_ -match '^(\d+) failure' } | ForEach-Object { [int]$Matches[1] })[-1]
-      $rc = if ($fa.Count -and $nf -eq @($sum -match '^  \[').Count -and -not @($sum -match '^TEST-').Count) { & $ktRun @('-Area', ($fa -join ',')) "$tl.rerun" } else { 1 }
-      if ($rc -eq 0) { Write-Host "pre-push: kit tests: $($fa -join ', ') failed in the full run and passed alone (flaky under load: fix it, kitty kind fix; log $tl)" }
-      else { $hits += "TESTS       the $(if ($ktMode.Count) { 'full' } else { 'changed-area' }) kit run failed (exit $tc$(if ($fa.Count) { "; alone too: $($fa -join ', ')" })): $tl" } }
-    else { Write-Host "  $(@(Get-Content -LiteralPath $tl | Select-String -Pattern '^\d+ failure\(s\) in' | ForEach-Object Line)[-1])" }
-  }
-}
-
 if ($hits.Count) {
   Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
   $hits | Select-Object -Unique | ForEach-Object { Write-Host "  $_" }
@@ -225,24 +175,36 @@ if ($hits.Count) {
 exit 0
 }
 
-# ---- nightly tests: one full kit test run a day while nothing runs (supervise -AutoFix); its FAILs returned once
-function Invoke-KitNightlyTests([bool]$Idle) {
+# ---- weekly tests: the full kit suite while nothing runs (supervise -AutoFix), when the last green full run is kitTests.fullEveryDays
+# old (a missed week: the next idle beat); one try a day; its FAILs returned once; health names the last full run
+function Get-KitFullTestsState { $sf = Join-Path (Get-KitPath cache -Create) 'kit-tests-full.json'; [pscustomobject]@{ file = $sf; log = (Join-Path (Get-KitPath logs -Create) 'kit-tests-full.txt'); s = $(try { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json } catch { $null }) } }
+function Invoke-KitWeeklyTests([bool]$Idle) {
   $kt = Join-Path $KitConf.Kit 'tests/kit-tests.ps1'; if ($env:KIT_TESTS_SNAPSHOT -or -not (Test-Path -LiteralPath $kt)) { return }   # inside a test run: never
-  $sf = Join-Path (Get-KitPath cache -Create) 'kit-tests-nightly.json'; $lf = Join-Path (Get-KitPath logs -Create) 'kit-tests-nightly.txt'
-  $s = try { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json } catch { $null }
+  $fs = Get-KitFullTestsState; $sf = $fs.file; $lf = $fs.log; $s = $fs.s
   if ($s -and -not $s.read -and -not (Test-KitPid $s.pid $s.start)) {   # finished since the last beat: read once
-    $s | Add-Member -Force NoteProperty read $true; Write-KitAtomic $sf ($s | ConvertTo-Json -Compress)
+    $s | Add-Member -Force NoteProperty read $true
     $tail = @(Get-Content -LiteralPath $lf -ErrorAction SilentlyContinue | Select-String -Pattern '^(\d+) failure\(s\) in' | ForEach-Object Line)[-1]
-    if (-not $tail -and $s.start -and (Get-KitBootTime) -gt [datetime]$s.start) {   # the machine restarted mid-run: no crash; due again at the next idle beat (a real crash then shows on that run)
-      $s.at = ([datetime]$s.start).AddHours(-1 - (Get-KitParam 'kitTests.nightlyEveryHours')).ToString('o'); $s | Add-Member -Force NoteProperty cut 'machine restart'; Write-KitAtomic $sf ($s | ConvertTo-Json -Compress) }
-    elseif (-not $tail -or $tail -notmatch '^0 failure') { "kit tests nightly: $(if ($tail) { $tail } else { 'no total (crashed)' }), $(@(Get-Content -LiteralPath $lf | Select-String -Pattern '^  \[').Count) failed check(s): $lf" }
+    if (-not $tail -and $s.start -and (Get-KitBootTime) -gt [datetime]$s.start) { $s.at = ([datetime]$s.start).AddDays(-1).ToString('o'); $s | Add-Member -Force NoteProperty cut 'machine restart' }   # cut by a restart: due again at the next idle beat
+    elseif ($tail -match '^0 failure') { $s | Add-Member -Force NoteProperty greenAt $s.start }
+    else { "kit tests (full): $(if ($tail) { $tail } else { 'no total (crashed)' }), $(@(Get-Content -LiteralPath $lf -ErrorAction SilentlyContinue | Select-String -Pattern '^  \[').Count) failed check(s): $lf" }
+    Write-KitAtomic $sf ($s | ConvertTo-Json -Compress)
   }
-  if (-not $Idle -or ($s -and ((Get-Date) - [datetime]$s.at).TotalHours -lt (Get-KitParam 'kitTests.nightlyEveryHours')) -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
+  $days = [double](Get-KitParam 'kitTests.fullEveryDays'); if ($days -le 0 -or -not $Idle -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
+  if ($s.greenAt -and ((Get-Date) - [datetime]$s.greenAt).TotalDays -lt $days) { return }   # green within the week
+  $tree = "$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}' 2>$null)".Trim()   # owner: an unchanged kit (its tree green-stamped by kit-tests.ps1) never reruns, whatever the age
+  if ($tree -and $tree -in @(Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'kit-tests-green.txt') -ErrorAction SilentlyContinue)) { return }
+  if ($s.at -and ((Get-Date) - [datetime]$s.at).TotalHours -lt 24) { return }   # one try a day until green
   $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "& '$($kt.Replace("'", "''"))' -Full -Detached *> '$($lf.Replace("'", "''"))'"
-  $st = @{ at = (Get-Date).ToString('o'); read = $false }
+  $st = @{ at = (Get-Date).ToString('o'); read = $false; greenAt = "$($s.greenAt)" }
   try { $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }; $st.pid = $p.Id; $st.start = $p.StartTime.ToString('o') }
-  catch { $st.read = $true; "kit tests nightly: the run did not start ($($_.Exception.Message)); next try in 20 h" }   # stamped: no retry every beat
+  catch { $st.read = $true; "kit tests (full): the run did not start ($($_.Exception.Message)); next try in 24 h" }   # stamped: no retry every beat
   Write-KitAtomic $sf ($st | ConvertTo-Json -Compress)
+}
+# health: the last full run (green or not) and when the next is due
+function Get-KitHealthLinesFullTests {
+  $days = [double](Get-KitParam 'kitTests.fullEveryDays'); if ($days -le 0) { return }
+  $s = (Get-KitFullTestsState).s
+  "Kit tests (full, every $days days while idle): last green $(if ($s.greenAt) { ([datetime]$s.greenAt).ToString('yyyy-MM-dd') } else { 'never' })$(if ($s.start -and "$($s.start)" -ne "$($s.greenAt)") { ", last run $(([datetime]$s.start).ToString('yyyy-MM-dd'))$(if (Test-KitPid $s.pid $s.start) { ' (running)' } elseif ($s.read) { ' (not green: log kit-tests-full.txt)' })" })."
 }
 
 # ---- precommit: graph, ports, section maps, lint
@@ -266,10 +228,11 @@ function Invoke-PreCommit {
   }
   # a broken hook script fails open (Claude Code blocks only on exit 2): node --check each staged .mjs (workflows need a wrapper)
   foreach ($f in @(git -C $root diff --cached --name-only --diff-filter=ACMR -- '*.mjs')) { $nc = node --check (Join-Path $root $f) 2>&1; if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - node --check $f`: $(@($nc)[0..3] -join ' ')" -ForegroundColor Red; exit 1 } }
-  & $py -X utf8 $KitCmd.kitbag port 2>$null | Out-Null   # silent: ports are optional
+  # ports: only when a staged agent, skill, rule, workflow or manifest can change them (the workspace deploy is post-merge's)
+  if (@(git -C $root diff --cached --name-only -- 'agents/*' 'skills/*/SKILL.md' 'rules/*' 'workflows/*' 'AGENTS.md' 'CLAUDE.md' 'skills/crafty/kit.example.json').Count) { & $py -X utf8 $KitCmd.kitbag port 2>$null | Out-Null }
   if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
     git -C $root add -- .codex .agents GEMINI.md
-    Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and deployed to workspace'
+    Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and staged'
   }
   $out = Join-Path (Get-KitTemp) "kit-precommit-$PID.json"
   & $py -X utf8 $KitCmd.kitbag lint $root --no-flow --json $out | Out-Null

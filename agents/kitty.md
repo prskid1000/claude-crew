@@ -47,7 +47,7 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    regression finding. Each pattern -> the smallest durable change.
 8. **Fix in `<wt>`:** every finding with a safe fix, each with a test; a change an open kit branch also makes (diff it first)
    or an owner decision -> proposed with the exact edit. Then in `<wt>`: lint 0 (0 counted flow issues), `port` +
-   `port --check`, parse touched .ps1, `py_compile` .py, `node --check` .mjs / wrapped workflows, `tests/kit-tests.ps1`,
+   `port --check`, parse touched .ps1, `py_compile` .py, `node --check` .mjs / workflows, `kit-tests.ps1 -Area <touched>`,
    `cost --steps` after a workflow change; a page generator changed (dashboard, reports, flow graph): `kitbag.py ui-check <page>`
    0 clipped, then read its shots (overlap, gaps, contrast); spawn one `revy` (kind kit) on the diff before pushing.
 9. **Ship:** `crafty.ps1 wt commit` (Conventional Commits, the org's author rules), `git -C <wt> rebase origin/main`, checks,

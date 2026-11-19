@@ -9,8 +9,8 @@ Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<ar
  K79: a run ends with what started it (a process of its parent chain gone: the run, its areas and their children stop) and,
  on Windows, its areas die with it (a kill-on-close job); -Detached: no parent watch (the nightly run, started by a short beat).
 Outputs: the picked areas and why, per area its time and pass count (a failed or crashed area: its whole output), TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), TEST-MYSQLD (the one test mysqld started twice: tests/test-mysql.ps1), a recap of the failed checks, then a total.
- A green full run stamps its tree (<runtime>/cache/kit-tests-green.txt). -Full also runs from the pre-push hook on a push to main
- (a stamped tree skipped) and from supervise -AutoFix once a day while idle (adapters/kit_admin.ps1). One setup per area: a new case
+ A green full run stamps its tree (<runtime>/cache/kit-tests-green.txt). No git hook runs it: the agent runs the touched areas before it
+ commits and pushes; -Full runs from supervise -AutoFix while idle, every kitTests.fullEveryDays, a stamped tree skipped (adapters/kit_admin.ps1). One setup per area: a new case
  joins the area that builds its setup, as a table row.
 Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 #>
@@ -153,7 +153,7 @@ foreach ($sy in @($myMysqlRun.strays)) { "TEST-MYSQLD a second kit-test mysqld r
 # FAIL recap, indented: never counted twice
 $failed = @($cases | Where-Object fail); if ($failed.Count) { 'Failed checks:'; $failed | ForEach-Object { "  [$($_.at)] $($_.text)" } }
 "$fails failure(s) in $($areas.Count) area(s), $([int]((Get-Date) - $started).TotalSeconds) s"
-# a green full run of a clean tree: its tree id stamped (the pre-push hook skips a stamped tree)
+# a green full run of a clean tree: its tree id stamped (the weekly full run skips a stamped tree)
 $kitDir = Split-Path $PSScriptRoot
 if ($Full -and -not $fails -and $tmpMap -and -not (git -C $kitDir status --porcelain 2>$null)) {
   $tree = "$(git -C $kitDir rev-parse 'HEAD^{tree}' 2>$null)".Trim(); $gf = Join-Path (Join-Path (Join-Path $kitDir $tmpMap.runtimeDir) $tmpMap.runtime.cache) 'kit-tests-green.txt'

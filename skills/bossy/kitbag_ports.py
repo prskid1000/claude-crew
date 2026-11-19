@@ -11,7 +11,7 @@ deployed targets; a deselected one's kit-written copies are removed (its folder 
 the files (bossy.ps1 health, prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py
 loads this file and shares its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L37 characters · L72 agents · L118 hooks · L167 workflows · L298 mechanics · L332 deploy · L381 targets · L583 command
+Sections: L37 characters · L72 agents · L120 hooks · L169 workflows · L300 mechanics · L334 deploy · L383 targets · L585 command
 """
 import base64, contextlib, fnmatch, hashlib, io, json, os, re, shutil, tempfile
 from pathlib import Path
@@ -72,6 +72,8 @@ def write_characters(kit=None):
 # ---- agents: Codex / Antigravity agent files
 def write_port(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.read_bytes() == text.encode("utf-8"):   # unchanged: no write (every commit rewrote every port)
+        return
     path.write_text(text, encoding="utf-8", newline="\n")
 
 def agent_parts(text):
