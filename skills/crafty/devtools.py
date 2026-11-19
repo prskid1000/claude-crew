@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L346 process · L506 git host · L573 scope · L663 MR · L855 merge · L1181 docs ·
-  L1334 publish · L1774 render · L2197 plugins · L2211 keepboth · L2230 selftest · L2798 CLI
+Sections: L51 config · L106 run · L194 tracker · L346 process · L523 git host · L590 scope · L680 MR · L872 merge · L1198 docs ·
+  L1351 publish · L1791 render · L2214 plugins · L2228 keepboth · L2247 selftest · L2827 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -452,6 +452,16 @@ def _finish_strict(p):
     return (False, '; '.join(gaps) + '. Fix the AI doc (run the cases), then finish again') if gaps else (True, '')
 
 
+def bug_twins(tid, ts):
+    """Bug tasks fixed by tid's MRs: tracked with only MRs of tid, or named in tid's cases 'tasks' row; a bug kind prefix name only."""
+    tr = read_tracking().get('tasks') or {}
+    mine = {_norm_ref(r) for r in (tr.get(tid) or {}).get('mrs') or []} - {None}
+    by_mrs = [o for o, x in tr.items() if o != tid and (s := {_norm_ref(r) for r in (x or {}).get('mrs') or []} - {None}) and s <= mine]
+    named = [w for w in re.findall(r'\b[\w-]*\d[\w-]*\b', str((ts.get('cases') or {}).get('tasks') or '')) if w != tid]
+    bp = ((CFG.get('tracker') or {}).get('kindPrefixes') or {}).get('bug') or cfg('tracker.bugPrefix', '[Bug]')
+    return [x for x in (task(o) for o in dict.fromkeys(by_mrs + named)) if x.get('id') and str(x.get('name') or '').startswith(bp)]
+
+
 def finish(tid, guide, solution_md, status='review', ai=None):
     """The docs given (human + AI; process.gates.finish builtin:testingDocs: both required) published by key, the description's
     links block, one solution comment, status (never backwards). guide '-' = none."""
@@ -475,6 +485,13 @@ def finish(tid, guide, solution_md, status='review', ai=None):
         _tracker('update', tid, '-Spec', json.dumps({'docs': given, **({'proseOk': PROSE_OK} if PROSE_OK else {})}) + '\n')   # \n: via a file, quotes kept
     elif t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
+    for o in bug_twins(tid, ts) if given else []:   # its promotion needs the same links (a bug task was stuck unpromoted)
+        od = o.get('description') or ''; nd = links_block(od, {'testing-doc': guide_url, 'testing-ai': ai_url})
+        if (state_read(task_file(o['id'])) or {}).get('spec'):
+            _tracker('update', o['id'], '-Spec', json.dumps({'docs': given}) + '\n')
+        elif nd != od:
+            _tracker('describe', o['id'], nd)
+        print(f'[finish] {o["id"]}: {tid}\'s testing doc links (fixed by the same MRs)', file=sys.stderr)
     comment(tid, solution_md, 'comment-solution')
     mst, read_ok = [], True
     if gate_how('mrBody') == 'builtin:testingDocs':
@@ -2710,6 +2727,18 @@ def _publish_selftest(expect, refused):
         expect('finish twice: no comment holds a doc link; the description holds both links once, on top',
                len(all_c) == 2 and not [x for x in all_c if 'Testing doc' in x or u1 in x or ua in x or '<link>' in x]
                and st['d'].startswith(f'**Testing doc (human):** {u1}\n\n**Testing doc (AI):** {ua}\n') and st['d'].count(u1) == 1 and st['d'].count(ua) == 1)
+        sv = {x: g[x] for x in ('read_tracking', 'task', 'refresh_mr_docs')}; calls.clear()
+        g.update(read_tracking=lambda: {'tasks': {'T9': {'mrs': ['web!5', 'web!6']}, 'B1': {'mrs': ['web!5']}, 'B2': {'mrs': ['web!7']}, 'N1': {'mrs': ['web!6']}}},
+                 task=lambda t: {'id': t, 'name': 'n' if t in ('T9', 'N1') else '[Bug] b', 'status': 'promoted', 'description': st['d'] if t == 'T9' else 'Saw x.'},
+                 refresh_mr_docs=lambda t, host=None, states=None: [])
+        task_index('T9', lambda x: x.update(cases={'tasks': 'T9, bug B3'}))
+        try:
+            finish('T9', human, '**Solution** — x', ai=a2p)
+        finally:
+            g.update(sv); task_index('T9', lambda x: x.pop('cases', None))
+        bd = {a[1]: a[2] for a in calls if a[0] == 'describe'}
+        expect(f'finish: a [Bug] task with only its MRs or named in its cases tasks row gets the same doc links; other MRs or no bug prefix: none ({sorted(bd)})',
+               sorted(bd) == ['B1', 'B3'] and all(v.startswith(f'**Testing doc (human):** {u1}\n\n**Testing doc (AI):** {ua}\n') and v.endswith('Saw x.') for v in bd.values()))
         expect('_merge_val (K32): nested dicts per key, a type clash keeps the first, a prefix of an earlier value still appends, a repeat adds nothing',
                _merge_val({'a': {'x': 1}}, {'a': {'y': 2}}, 'B') == {'a': {'x': 1, 'y': 2}} and _merge_val(['a'], 'b', 'B') == ['a'] and _merge_val('a', ['b'], 'B') == 'a'
                and _merge_val('A; B: xy', 'x', 'B') == 'A; B: xy; B: x' and _merge_val('A; B: x', 'x', 'B') == 'A; B: x')
