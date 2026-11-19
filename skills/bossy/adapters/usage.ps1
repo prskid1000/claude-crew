@@ -186,39 +186,32 @@ function Format-KitUsageHtml($U) {
   $allTok = [double](& $sum 'tok'); $hm = $U.merged; $onHost = $hm.source -eq 'host'; $unp = @($U.unpriced | Where-Object { $_ })
   $card = { param([string]$label, [string]$v, [string]$sub, [string]$w, [string]$cls = '') "<div class='st $cls' data-fit><div class=k>$(& $e $label)</div><div class=v>$v</div>$(if ($sub) { "<div class=s title='$(& $e $sub)'>$(& $e $sub)</div>" })$(if ($w) { "<div class=w>$(& $e $w)</div>" })</div>" }
   $pct = { param($a, $b) if ([double]$b) { [math]::Round(100 * [double]$a / [double]$b) } }
-  # step outcomes: one stacked bar, counts in its legend (a part-of-whole with 4-6 parts reads better as one bar than a donut)
+  # step outcomes (pass, empty, failed, stopped, running, stuck): a tile each, the zero ones left out
   $oc = @(@(@('pass', ([double]$rt.n - $rt.empty - $rt.fail - $rt.stopped), 'sage', 'pass'), @('empty', $rt.empty, 'watch', 'empty'), @('failed', $rt.fail, 'act', 'fail'), @('stopped', $rt.stopped, 'slate', 'stopped'), @('running', $rt.running, 'mt', 'running'), @('stuck', $rt.stuck, 'plum', 'stuck')) | Where-Object { [double]$_[1] -gt 0 })
-  $ocAll = [double](($oc | ForEach-Object { [double]$_[1] } | Measure-Object -Sum).Sum)
-  # a legend item is a button: it shows only the runs with a step in that outcome (page JS + .ocf CSS), a second click shows all
-  $ocHtml = "<div class=sb role=img aria-label='workflow steps by outcome'>$(@($oc | ForEach-Object { "<i style='width:$(& $n1 (100 * [double]$_[1] / $ocAll))%;background:var(--$($_[2]))' title='$($_[0]): $([int]$_[1])'></i>" }) -join '')</div><ul class=ocl>$(@($oc | ForEach-Object { "<li><button type=button class=ocb data-oc=$($_[3]) aria-pressed=false title='Show the runs with a $($_[0]) step'><i style='background:var(--$($_[2]))'></i>$($_[0]) <b>$([int]$_[1])</b></button></li>" }) -join '')</ul>"
-  # today's tokens and cost: the Per day chart's labelled today point (no tile repeats them); tokens per merged MR: a Delivery tile (its daily line)
-  $tpmV = @($dy | ForEach-Object { if ([int]$_.merged) { [math]::Round([double]$_.tok / [int]$_.merged / 1e6, 1) } else { $null } })   # millions: the line's scale labels stay short
+  # one tile row (owner 2026-11-19: tiles, not cards): the review + fix share, then a tile per step outcome; an outcome tile is a button: it
+  # shows only the runs with a step in that outcome (page JS + .ocf CSS), a second click shows all
+  $shareP = if ($wfTok) { & $pct $loop $wfTok }; $shareW = $wfTok -and $loop / $wfTok -gt 0.5
+  $uTiles = "<div class=tls data-mk=steps-outcome><div class='tl$(if ($shareW) { ' watch' })' data-mk=review-share title='review + fix steps: share of the workflow tokens (warn over 50%)'><b>$(if ($null -ne $shareP) { "$(& $n1 $shareP)<small>%</small>" } else { '—' })</b><span>review + fix share</span></div>" +
+    "$(@($oc | ForEach-Object { "<button type=button class='tl ocb' data-oc=$($_[3]) aria-pressed=false title='Show the runs with a $($_[0]) step'><b>$([int]$_[1])</b><span><i style='background:var(--$($_[2]))'></i>$($_[0]) steps</span></button>" }) -join '')</div>"
+  # tokens per merged MR: a Delivery tile, the value and its base (no sparkline: the day values are the Per day heatmap's tokens row)
   $tpm = if ($onHost) { $hn = [int]$hm.n; & $card 'Tokens per merged MR' "$(if ($hn) { & $tk ($allTok / $hn) } else { '—' })" "$hn MR(s) merged on the git host by $($hm.user) · $merged by workflows · $items item(s), 7 days" '' 'dk' }
     else { & $card 'Tokens per workflow MR' "$(if ($merged) { & $tk ($wfTok / $merged) } else { '—' })" "$merged MR(s) merged by workflows (no git-host login) · $items item(s), 7 days" '' 'dk' }
-  $tpm = $tpm -replace '</div>$', "$(& $spark $tpmV 'slate' 'per day, 7 days' '' $null 'M' -NoNow)</div>"
-  $share = (& $card 'Review + fix share' "$(if ($wfTok) { & $n1 (& $pct $loop $wfTok) } else { '—' })<small>%</small>" '' '' "uc $(if ($wfTok -and $loop / $wfTok -gt 0.5) { 'warn' })") -replace '</div>$', "$(if ($wfTok) { & $meter $loop $wfTok 'of the workflow tokens · tick = 50% (warn)' $(if ($loop / $wfTok -gt 0.5) { 'watch' } else { 'slate' }) ($wfTok / 2) } else { '<div class=s>of the workflow tokens</div>' })</div>"
-  $ocCard = & $fold 'u-outcome' 'Workflow steps by outcome' ([int]$ocAll) $ocHtml -Open -tag h4 -cls "sub st uc $(if ($rt.stuck -or $rt.fail) { 'warn' })"
-  # 7 days as lines (owner: no bar charts): est. cost = the solid filled line (left scale), tokens = the dashed line (right scale), a value
-  # label per dot, today highlighted, the dotted 7-day average; the 7-day total once, in the title
-  # role and model: one table each, the share as an inline bar (exact values in the cells, the bar for the comparison)
-  # Spend (owner, 2026-11-16: one view, not three cards over the same steps): a row per role with its model mix; its step types fold under it;
-  # the models once, as the mix legend with their totals
+  # Spend (owner 2026-11-19: one aligned table): a row per role with its model mix, its step types under it in the same columns (a tap on
+  # the role opens them); the models once, as the mix legend with their totals; est. cost per role is its column (no second chart)
   $roles = @($U.byRole | Where-Object { $_ } | Sort-Object { -[double]$_.sum }); $rAll = [double](($roles | Measure-Object sum -Sum).Sum)
   $mdl = @($U.byModel | Where-Object { $_ } | Sort-Object { -[double]$_.sum }); $mTone = @{}; $tones = 'plum', 'slate', 'sage', 'watch', 'act'
   for ($mi = 0; $mi -lt $mdl.Count; $mi++) { $mTone["$($mdl[$mi].k)"] = $tones[$mi % $tones.Count] }
   $mShort = { param($k) "$k" -replace '^claude-' }
   $mix = { param($ms) $mt = [double](@($ms) | Measure-Object sum -Sum).Sum; if (-not $mt) { return '<span class=m>—</span>' }
     "<span class='sb mix' role=img aria-label='$(& $e (@($ms | ForEach-Object { "$(& $mShort $_.k) $(& $pct $_.sum $mt)%" }) -join ', '))'>$(@($ms | Sort-Object { -[double]$_.sum } | ForEach-Object { "<i class='t-$($mTone["$($_.k)"])' style='width:$(& $n1 (100 * [double]$_.sum / $mt))%' data-tip='$(& $e "$(& $mShort $_.k): $(& $tk $_.sum) tokens ($(& $pct $_.sum $mt)%) · $(& $usd $_.cost)")' tabindex=0></i>" }) -join '')</span>" }
-  $typeT = { param($ts) "<div class='tw sty'><table><tr><th>Step type</th><th>Steps</th><th>Tokens avg</th><th class=lo>p50</th><th class=lo>p90</th><th>Avg time</th><th class=lo>p90 time</th></tr>$(@($ts | ForEach-Object { "<tr><td data-k='Step type'>$(& $e $_.k)</td><td data-k=Steps>$($_.n)</td><td data-k='Tokens avg'>$(& $tk $_.avg)</td><td data-k=p50 class=lo>$(& $tk $_.p50)</td><td data-k=p90 class=lo>$(& $tk $_.p90)</td><td data-k='Avg time'>$(& $mn $_.avgMin)</td><td data-k='p90 time' class=lo>$(& $mn $_.p90Min)</td></tr>" }) -join '')</table></div>" }   # lo: hidden on a phone
-  $spHead = "<div class='spr sph' aria-hidden=true><span>Role</span><span>Steps</span><span>Tokens</span><span>Share</span><span>Est. cost</span><span>Avg / p90 time</span><span>Model mix</span></div>"
-  $spRows = @($roles | ForEach-Object { $ts = @($_.types | Where-Object { $_ })
-      $cells = "<span class=srn>$(& $e $_.k)</span><span data-k=Steps>$($_.n)</span><span data-k=Tokens>$(& $tk $_.sum)</span><span>$(& $bar ([double]$_.sum) $rAll "$(& $pct $_.sum $rAll)%" 'slate')</span><span data-k='Est. cost'>$(& $usd $_.cost)</span><span data-k='Avg / p90 time'>$(& $mn $_.avgMin) / $(& $mn $_.p90Min)</span><span>$(& $mix @($_.models | Where-Object { $_ }))</span>"
-      if ($ts.Count -gt 1 -or ($ts.Count -eq 1 -and "$($ts[0].k)" -ne "$($_.k)")) { "<details class='spd f'><summary class=spr>$cells</summary>$(& $typeT $ts)</details>" } else { "<div class='spr f'>$cells</div>" } })
+  $spCols = '<colgroup><col class=c0><col span=2><col class=cs><col span=2><col class=cm></colgroup><thead><tr><th>Role · step type</th><th>Steps</th><th>Tokens</th><th title=''a role: of all tokens; a step type: of its role''>Share</th><th>Est. cost</th><th>Avg / p90 time</th><th>Model mix</th></tr></thead>'
+  $spBodies = @($roles | ForEach-Object { $r0 = $_; $ts = @($_.types | Where-Object { $_ }); $sub = $ts.Count -gt 1 -or ($ts.Count -eq 1 -and "$($ts[0].k)" -ne "$($_.k)")
+      $nm = if ($sub) { "<button type=button class=spx aria-expanded=false title='Show its step types'>$(& $e $_.k)</button>" } else { & $e $_.k }
+      "<tbody class=f><tr class=spr><td class=srn>$nm</td><td>$($_.n)</td><td>$(& $tk $_.sum)</td><td>$(& $bar ([double]$_.sum) $rAll "$(& $pct $_.sum $rAll)%" 'slate')</td><td>$(& $usd $_.cost)</td><td>$(& $mn $_.avgMin) / $(& $mn $_.p90Min)</td><td>$(& $mix @($_.models | Where-Object { $_ }))</td></tr>" +
+      $(if ($sub) { @($ts | ForEach-Object { $tt = [double]$_.avg * [double]$_.n
+          "<tr class=sty><td class=srn>$(& $e $_.k)</td><td>$($_.n)</td><td title='$(& $e "avg $(& $tk $_.avg) · p50 $(& $tk $_.p50) · p90 $(& $tk $_.p90) per step")'>avg $(& $tk $_.avg)</td><td>$(& $bar $tt ([double]$r0.sum) "$(& $pct $tt $r0.sum)%" 'sage')</td><td></td><td>$(& $mn $_.avgMin) / $(& $mn $_.p90Min)</td><td></td></tr>" }) -join '' }) + '</tbody>' })
   $mLeg = "<ul class=ocl>$(@($mdl | ForEach-Object { "<li><i class='t-$($mTone["$($_.k)"])'></i>$(& $e (& $mShort $_.k)) <b>$(& $tk $_.sum)</b> · $(& $usd $_.cost) · $($_.n) steps</li>" }) -join '')</ul>"
-  $spend = & $fold 'u-spend' 'Spend per role, step type and model' $roles.Count -Open -tag h4 -cls 'sub st uc ur' -inner "$spHead<div class=spl>$($spRows -join '')</div>$mLeg"
-  # est. cost per role, 7 days: labelled bars beside the step outcomes (owner 2026-11-18: no empty block under the right column)
-  $rcR = @($roles | Where-Object { $null -ne $_.cost -and [double]$_.cost -gt 0 } | Sort-Object { -[double]$_.cost } | Select-Object -First 8); $rcAll = [double](($rcR | Measure-Object cost -Sum).Sum)
-  $roleCost = if ($rcR.Count) { & $fold 'u-rolecost' 'Est. cost per role' (& $usd $rcAll) "<div role=img aria-label='est. cost per role, 7 days'>$(@($rcR | ForEach-Object { "<div class=rcr><span class=srn>$(& $e $_.k)</span>$(& $bar ([double]$_.cost) ([double]$rcR[0].cost) "$(& $usd $_.cost) · $(& $pct $_.cost $rcAll)%" 'sage')</div>" }) -join '')</div>" -Open -tag h4 -cls 'sub st uc' }
+  $spend = & $fold 'u-spend' 'Spend per role, step type and model' $roles.Count -Open -tag h4 -cls 'sub st uc ur' -inner "<div class=tw><table class=spt data-mk=spend-role>$spCols$($spBodies -join '')</table></div>$mLeg"
   $stepRows = { param($ss) @($ss | ForEach-Object { , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), (& $tk $_.tok), "$(& $tk $_.in) / $(& $tk $_.out) / $(& $tk $_.cr) / $(& $tk $_.cw)", (& $mn $_.min), $_.tools, @{ h = "<span class='chip $(switch ($_.result) { 'pass' { 's-act' } 'running' { 's-fin' } 'stuck' { 's-stuck' } 'fail' { 's-stuck' } default { 's-oth' } })'>$(& $e $_.result)</span>" }, "$($_.round)$(if ($_.retry) { " · retry $($_.retry)" })") }) }
   # a run: its human label (mandate / area, the run id in the tooltip), kind chip, resumed, outcome-split step bar; budget bar while running or over 80%
   $kindOf = { param($r) if ($r.kind) { "$($r.kind)" } elseif ("$($r.roles)" -match '^(kitty \d+( · )?)+$') { 'kit' } elseif ("$($r.roles)" -match 'checky') { 'test' } else { 'build' } }
@@ -258,19 +251,17 @@ function Format-KitUsageHtml($U) {
   $pages = [ordered]@{}; foreach ($r in @(@($devRuns | Where-Object status -eq 'running') + $shown)) { $pages["$($r.id)"] = "<div class='ru'><div class=rh>$(& $head $r)$(if ($r.status -ne 'running') { & $resOf $r })</div></div>" +
       "$(if ($lk = & $linksOf $r) { "<p class=rpl>Tasks and MRs: $lk</p>" })<div class='sy rst'>$((& $table 'Step', 'Role', '~Model', 'Tokens', '~In / out / cache r / w', 'Elapsed', '~Tools', 'Result', '~Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok }))) -replace "<tr class='f more'>", '<tr class=f>' -replace '<button type=button class=sa[^>]*>[^<]*</button>')</div>" +
       "<p class=m>Review findings and QA detail: <code>bossy.ps1 report -Run $(& $e $r.run) -Detail</code></p>" }
-  # 7 days as lines (owner: no bar charts): est. cost = the solid filled line (left scale), tokens = the dashed line, a value label per dot,
-  # today highlighted, the dotted 7-day average, legend buttons hide a line; runs and MRs per day: the Delivery chart; the 7-day total once, in the title
+  # Per day (owner 2026-11-19: a time series = the day heatmap): est. cost and tokens per day, the 7-day sum on the right, the average in
+  # the row tooltip; runs and MRs per day: the Delivery heatmap
   $byDay = @{}; foreach ($r in $devRuns) { $dk = & $dayOf $r; if ($dk) { $byDay[$dk] = @(@($byDay[$dk] | Where-Object { $_ }) + $r) } }
-  $dpts = @(for ($i = 0; $i -lt $dy.Count; $i++) { $d0 = $dy[$i]; $isToday = $i -eq $dy.Count - 1
-      @{ label = $(if ($isToday) { 'today' } else { "$($d0.day)".Substring(5) }); x = $isToday; tip = "$($d0.day)$(if ($isToday) { ' (today)' }): est. $(& $usd $d0.cost) · $(& $tk $d0.tok) tokens" } })
-  $cAvg = & $avg 'cost'; $cMax = [double](@($dy | ForEach-Object { [double]$_.cost }) + 0 | Measure-Object -Maximum).Maximum; $tMax = [double](@($dy | ForEach-Object { [double]$_.tok }) + 0 | Measure-Object -Maximum).Maximum
-  $lines = Format-KitLineChart $dpts @(@{ vals = @($dy | ForEach-Object { if ($null -eq $_.cost) { $null } else { [double]$_.cost } }); tone = 'sage'; style = 'solid'; area = $true; name = "est. cost (left, 0-$(& $usd $cMax))"; fmt = { param($v) if ($null -eq $v) { '—' } else { '$' + [math]::Round([double]$v) } } },
-    @{ vals = @($dy | ForEach-Object { [double]$_.tok }); tone = 'slate'; style = 'dash'; name = "tokens (right, 0-$(& $tk $tMax))"; fmt = { param($v) & $tk $v } }) "est. cost and tokens per day, $($dy.Count) days" 130 $cAvg -Labels
-  $chart = & $fold 'u-days' 'Per day' "$(& $tk (& $sum 'tok')) tokens · $(& $usd (& $sum 'cost')) in 7 days" -Open -tag h4 -cls 'sub st uc' -inner "$lines<div class=ax>$(if ($cAvg) { "<span><i class='lk avg'>7-day avg $(& $usd $cAvg) (budget.prices)</i></span>" })</div>$(if ($unp.Count) { "<p class=m>not priced: $(& $e (@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', '))</p>" })"
+  $cAvg = & $avg 'cost'; $tAvg = & $avg 'tok'; $ud = @($dy | ForEach-Object { "$($_.day)" })
+  $uRows = @(@{ n = 'est. cost'; mk = 'cost-day'; title = "est. cost per day (budget.prices); 7 d: sum$(if ($null -ne $cAvg) { " · avg of the 6 days before today $(& $usd $cAvg)" })"; v = @($dy | ForEach-Object { if ($null -eq $_.cost) { $null } else { [double]$_.cost } }); fmt = { param($v) '$' + [math]::Round([double]$v) }; t = (& $usd (& $sum 'cost')); cls = 'ws'; keep = $true },
+    @{ n = 'tokens'; mk = 'tokens-day'; title = "tokens per day, all agents; 7 d: sum$(if ($null -ne $tAvg) { " · avg of the 6 days before today $(& $tk $tAvg)" })"; v = @($dy | ForEach-Object { [double]$_.tok }); fmt = $tk; t = (& $tk (& $sum 'tok')); keep = $true })
+  $chart = & $fold 'u-days' 'Per day' "$(& $tk (& $sum 'tok')) tokens · $(& $usd (& $sum 'cost')) in 7 days" -Open -tag h4 -cls 'sub st uc' -inner "$(Format-KitDayHeat $uRows $ud 'series · day')<div class=hk>a cell = that day's est. cost or tokens (shade by the row's peak) · outlined = today · 7 d = the sum</div>$(if ($unp.Count) { "<p class=m>not priced: $(& $e (@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', '))</p>" })"
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
   [pscustomobject]@{ runsN = $(if ($shown.Count) { "$($devRuns.Count - $nRunning) ended in 7 days" } else { 0 }); runs = $ended; running = $running; nRunning = $nRunning; tpm = $tpm
     dayRuns = $byDay; days = $dy; mrs = @($U.mrList | Where-Object { $_ })
-    usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })<div class=ug style='--cmin:380px;--cmax:2' data-mas data-fill>$chart$ocCard$share$roleCost</div>$spend"
+    usage = "$(if ($U.partial) { '<p class=m>Transcripts still being read: numbers grow next sweep.</p>' })$chart$uTiles$spend"
     pages = $pages
     usageN = "$(& $tk $td.tok) tokens today" }
 }
