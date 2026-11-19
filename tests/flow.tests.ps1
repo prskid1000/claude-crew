@@ -25,7 +25,8 @@ $sl = & $py -X utf8 (Join-Path $k 'skills/bossy/kitbag.py') state lint 2>&1 | Ou
 Expect "state lint: a broken task file is BAD (exit 1), readers skip it; locks.json has its own row ($slc)" ($slc -eq 1 -and $sl -match 'BAD .*bad1\.json: unreadable' -and $tasks.ContainsKey('old1') -and $sl -notmatch 'locks\.json' -and $sl -match 'vm\.json: missing leases')
 Expect 'track: tag stripped, merge order echoed' ($tasks.ContainsKey('abc123') -and $out -match 'merge-after: web!2>api!7')
 $null = pwsh @np $O track add -Task zero1 2>&1; $zr = pwsh @np $O track run -Detail 2>&1 | Out-String
-Expect 'track run: a task with 0 MRs is held, never promoted' (-not (& $trk).zero1.done -and $zr -match 'HOLD zero1: no MR')
+$zt = pwsh @np $O track run -Task zero1 2>&1 | Out-String   # devtools.py finish runs this: the held task named, not "HOLD: 1 task(s)"
+Expect 'track run: a task with 0 MRs is held, never promoted; -Task names it' (-not (& $trk).zero1.done -and $zr -match 'HOLD zero1: no MR' -and $zt -match 'HOLD zero1: no MR')
 $mr = pwsh @np $O track add -Task 'web!3' -Mrs 'web!3' 2>&1 | Out-String; $mc = $LASTEXITCODE
 $ti = pwsh @np $O track add -Task 'help lane - AR-17 (CU-ab12cd) (web)' -Mrs 'web!4' 2>&1 | Out-String
 & { . (Lib); Update-KitTracking { param($t) $t.tasks['web!5'] = @{ task = 'web!5'; mrs = @('web!5'); onMerged = @('promoted'); done = $false }

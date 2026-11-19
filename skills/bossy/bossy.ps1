@@ -760,7 +760,7 @@ if ($Action -eq 'show') { $rows = (Read-KitTracking).tasks
     "$id : $(@($o.mrs) -join ', ') | $(if ($o.done) { 'done' } else { 'open' })$(if ($o.holdPromotion) { " | HELD: $($o.holdPromotion)" })" }; return }
 $wavesDir = Get-KitPath waves
 $script:holds = 0
-function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
+function Hold($s) { if ($Quiet) { return }; if ($Detail -or $Task) { $s } else { $script:holds++ } }   # -Task (devtools.py finish): the held task named, not a count
 $script:gone = @{}   # deleted in the tracker
 $script:trackReadd = @()   # track add -Mrs: refs named again, out of the removed list
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { if (Remove-KitGoneTask $id $_) { $script:gone[$id] = $true }; '' } }
