@@ -11,6 +11,7 @@
   "logs.keepDays": "peak k=2 default=90 floor=30 ceil=365 unit=d",
   "deploy.planTimeoutSec": "config default=600 unit=s",
   "deploy.deployedTimeoutSec": "config default=100 unit=s",
+  "deploy.deployedKeepHours": "config default=6 unit=h",
   "deploy.sshTimeoutSeconds": "config default=30 unit=s",
   "deploy.minIntervalHours": "config default=4 unit=h",
   "deploy.ancestryBudgetSec": "config default=200 unit=s",

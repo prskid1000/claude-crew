@@ -273,7 +273,9 @@ function LocalSame($dir, $a, $b, $files) {
   if ($LASTEXITCODE -ne 0) { return $null }
   -not @($changed | Where-Object { $files -contains $_ }).Count
 }
-# pwsh -File keeps the quotes: strip, split
+# supervise beats only (KIT_API_BEAT): answers kept across beats, merged MRs and settled rows (D13: 238 host verbs a beat)
+$keepH = [double](Get-KitParam 'deploy.deployedKeepHours'); $rcf = Join-Path (Get-KitPath cache -Create) 'deployed-rows.json'; $rdirty = @{ on = $false }
+$rcache = if ($env:KIT_API_BEAT) { try { Read-KitText $rcf | ConvertFrom-Json -AsHashtable } catch { $null } }; if ($rcache -isnot [hashtable]) { $rcache = @{} }# pwsh -File keeps the quotes: strip, split
 $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds($TimeoutSec); $nth = 0
 & { foreach ($m in @(Split-KitList $Mrs)) {
   if ($nth++ -and (Get-Date) -gt $until) { [pscustomobject]@{ mr = $m; target = "$Target"; state = 'UNKNOWN'; detail = "not checked: -TimeoutSec $TimeoutSec reached (check it again)" }; continue }
@@ -282,7 +284,8 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   $r = Repo $Matches.repo; $iid = $Matches.iid
   if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }
   $p = Get-HostProject $r.name -Raw; $ref = "$($r.name)!$iid"   # gitHostGroup/<repo>
-  $mr = Hv 'mr.get' @{ n = $iid }
+  $mr = if ($rcache["mr|$ref"]) { $rcache["mr|$ref"].mr } else { Hv 'mr.get' @{ n = $iid } }
+  if ($mr.state -eq 'merged' -and -not $rcache["mr|$ref"]) { $rcache["mr|$ref"] = @{ at = (Get-Date).ToString('o'); mr = $mr | Select-Object iid, state, merged_at, target_branch, squash_commit_sha, merge_commit_sha, sha }; $rdirty.on = $true }   # a merged MR never changes
   if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
   if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
   # fast-forward: the MR head sha landed
@@ -298,12 +301,24 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
       $ch = Hv 'mr.changes' @{ n = $iid }; $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
       if ($files.Count -and -not $ch.overflow -and @($ch.changes).Count -lt 100 -and -not (Test-DeployTouched $d $files)) { Row $d 'N/A' "n/a for $($d.target): changes nothing under $((Get-DeployPaths $d) -join ', ')"; continue }   # a partial list proves nothing
     }
+    # incremental: DEPLOYED holds deploy.deployedKeepHours; NOT-DEPLOYED while the deploy branch head is unchanged (one shared call a branch)
+    $ck = "row|$ref|$($d.target)"; $c = $rcache[$ck]; $fresh = $c -and ((Get-Date) - [datetime]$c.at).TotalHours -lt $keepH
+    if ($fresh -and $c.row.state -eq 'DEPLOYED') { [pscustomobject]$c.row; continue }
+    $hd = if ($d.branch) { RefSha $p $d.branch }; if ($fresh -and $hd -and $c.head -eq $hd) { [pscustomobject]$c.row; continue }
     # the row's deploy kind answers (registry above); a kind without isDeployed, or none, = UNKNOWN
     $kd = Get-KitDeployKind $d
     $kRow = try { Invoke-KitDeployKind $d 'isDeployed' } catch { Row $d 'UNKNOWN' "deploy kind ${kd}: $($_.Exception.Message)" }
-    if ($kRow) { $kRow } else { Row $d 'UNKNOWN' $(if ($kd) { "deploy kind $kd has no isDeployed check (README ""Adapters"" deploy-kind)" } else { 'no deploy kind: set deploys[].kind or branch + job, ssh, probe, tag, awsStack, manual, command' }) }
+    if (-not $kRow) { $kRow = Row $d 'UNKNOWN' $(if ($kd) { "deploy kind $kd has no isDeployed check (README ""Adapters"" deploy-kind)" } else { 'no deploy kind: set deploys[].kind or branch + job, ssh, probe, tag, awsStack, manual, command' }) }
+    if (@($kRow).Count -eq 1 -and $kRow.state -in 'DEPLOYED', 'NOT-DEPLOYED') { $rcache[$ck] = @{ at = (Get-Date).ToString('o'); head = $hd; row = $kRow }; $rdirty.on = $true }
+    $kRow
   }
 } } | ForEach-Object { $out.Add($_); if ($Lines) { $_ | ConvertTo-Json -Depth 3 -Compress } }
+if ($env:KIT_API_BEAT -and $rdirty.on) {   # parallel probes: merged under the lock; rows past their hours and month-old MRs dropped
+  Invoke-KitLocked $rcf { $all = try { Read-KitText $rcf | ConvertFrom-Json -AsHashtable } catch { $null }; if ($all -isnot [hashtable]) { $all = @{} }
+    foreach ($k in $rcache.Keys) { $all[$k] = $rcache[$k] }
+    foreach ($k in @($all.Keys)) { if ($k -like 'row|*' -and ((Get-Date) - [datetime]$all[$k].at).TotalHours -ge $keepH) { $all.Remove($k) } elseif ($k -like 'mr|*' -and ((Get-Date) - [datetime]$all[$k].at).TotalDays -gt 30) { $all.Remove($k) } }
+    Write-KitAtomic $rcf ($all | ConvertTo-Json -Depth 12 -Compress) }
+}
 $miss = @($out | Where-Object { $_.state -notin 'DEPLOYED', 'N/A' })   # N/A: the MR has nothing for that target
 if ($Lines) { exit $(if ($miss.Count) { 1 } else { 0 }) }
 $row = { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail }

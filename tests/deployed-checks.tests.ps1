@@ -20,7 +20,10 @@ function ssh { $script:m++ }; $null = SshState @{ host = 'h3' } $a; $null = SshS
 "host:$($n -eq 1 -and $s3.anc -and $s4.anc -and $m -eq 1)"
 if ($KitIsWindows) { Remove-Item function:ssh; $sd = Join-Path $args[5] 'sshbin'; $null = New-Item -ItemType Directory -Force $sd; '@ping -n 20 127.0.0.1 >nul' | Set-Content "$sd/ssh.cmd"; $env:PATH = "$sd;$env:PATH"
   $t0 = Get-Date; $o = Invoke-BoundedSsh @('h') 1; "bound:$(-not $o.Count -and ((Get-Date) - $t0).TotalSeconds -lt [Math]::Min(7, 5 * [Math]::Min(3, [Math]::Max(1, [double]"0$env:KIT_TESTS_SLACK"))))" } else { 'bound:True' }
-. $env:KIT_TEST_SHIM; function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*merge_base*' { @{ id = 'F' } } '*ref=staging*' { , @(@{ id = 1; created_at = '2026-01-03'; sha = 'F' }) } '*jobs*' { , @(@{ name = 'deploy-eu'; status = 'success' }) } } }
+. $env:KIT_TEST_SHIM; function Invoke-HostApi($p) { $global:hc++; switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*merge_base*' { @{ id = 'F' } } '*ref=staging*' { , @(@{ id = 1; created_at = '2026-01-03'; sha = 'F' }) } '*jobs*' { , @(@{ name = 'deploy-eu'; status = 'success' }) } } }
+$global:hc = 0; $env:KIT_API_BEAT = 'bt1'; $m1 = Invoke-Deployed -Mrs 'web!5' -Target stg -Json | ConvertFrom-Json; $c1 = $global:hc
+$env:KIT_API_BEAT = 'bt2'; $m2 = Invoke-Deployed -Mrs 'web!5' -Target stg -Json | ConvertFrom-Json; $env:KIT_API_BEAT = $null
+"memo:$($c1 -gt 0 -and $global:hc -eq $c1 -and $m1.state -eq 'DEPLOYED' -and $m2.state -eq 'DEPLOYED') $c1/$global:hc $($m1.state)/$($m2.state)"
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@
 '{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"phones","laneApk":true}]}]}' | Set-Content $kl
@@ -41,6 +44,7 @@ Expect "deployed -Lines: one JSON row per line, exit 1 when not all deployed ($d
 foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'logs', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
 Expect "deployed ssh: one ssh per host, a later MR's ancestry read locally; a hung ssh ends at deploy.sshTimeoutSeconds ($($res -match '^(host|bound):'))" (@($res) -contains 'host:True' -and @($res) -contains 'bound:True')
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
+Expect "deployed in a supervise beat (D13): a DEPLOYED row and its merged MR kept across beats, the next beat asks the host nothing ($(@($res) -match '^memo|rror' | Select-Object -First 3))" (@($res) -match '^memo:True ').Count
 Expect 'deployed: a laneApk deploy with no lane APK stamp is UNKNOWN, naming phoney.ps1 build' ("$res" -match 'UNKNOWN\s+web!5\s+phones\s+no lane APK stamp .*phoney\.ps1 build')
 # a squash-merged deploy MR counts; an unanswered git host is UNKNOWN, not NOT-DEPLOYED
 $t = @'
