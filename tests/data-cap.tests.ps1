@@ -93,6 +93,12 @@ Set-Content $tf @('"Time","Kind","Process","Folder","TopFile","WriteMB"', "`"$($
   "`"$($t1.AddMinutes(-1).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"chrome`",`"C:\z`",`"h`",`"")
 $tr = Read-KitWriteTracer $tf $t1; $trOld = Read-KitWriteTracer $tf $t1.AddHours(2); $th = Join-Path $args[1] 'tracer-head.csv'; Set-Content $th '"Time","Process","WriteMB"'
 "tracer:$(@($o4.hour)[0].gb -eq 0.32 -and @($o5.hour)[0].gb -eq 4 -and @($o5.flags).Count -eq 1 -and $kh['build x'] -eq 1.2 -and $kh['mysqld · x'] -eq 0.05 -and -not @($o4.flags).Count -and [math]::Abs($tr['msedge'] - 0.3203) -lt 0.001 -and [math]::Abs($tr['Slack'] - 0.01) -lt 0.0001 -and -not $tr.ContainsKey('chrome') -and $null -eq $trOld -and $null -eq (Read-KitWriteTracer '' $t1) -and $null -eq (Read-KitWriteTracer $th $t1))"
+# D14: a kit row's estimate is capped by the tracer's GB for the folders its command names (a browser profile: System flushes it)
+$null = Read-KitWriteTracer $tf $t1; $tfo = $script:KitTracerFolders; $ko = @(@{ pid = 90; label = 'browser stg·a'; tag = 'test:T1' }); $kc = 'chrome.exe --user-data-dir="D:\k\chrome-profiles\stg__a" --remote-debugging-port=9333'
+$pb = { param($wb) @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 90 2 'chrome.exe' $kc $wb $old)) }; $p0 = Update-KitWriteStats $null $t0 (& $pb 1GB) $ko 0
+$p1 = Update-KitWriteStats ($p0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 (& $pb 4GB) $ko 3GB $null @{ 'D:\k\chrome-profiles\stg__a\Default' = 0.084; 'D:\other' = 5 }
+$p2 = Update-KitWriteStats ($p0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 (& $pb 4GB) $ko 3GB
+"folders:$(@($p1.hour)[0].gb -eq 0.08 -and -not @($p1.flags).Count -and @($p2.hour)[0].gb -eq 3 -and @($p2.flags | Where-Object level -eq 'ACT').Count -eq 1 -and [math]::Abs([double]$tfo['D:\y'] - 0.1245) -lt 0.001 -and -not $tfo.ContainsKey('D:\x'))"
 $lb = @((Get-KitWriteLabel 'msedge.exe' 'msedge.exe --headless --remote-debugging-port=9222'), (Get-KitWriteLabel 'mysqld.exe' '"C:\m\mysqld.exe" --no-defaults --datadir=D:\s\kit-tests\my'),
   (Get-KitWriteLabel 'node.exe' 'node "C:\n\npx-cli.js" -y vite build'), (Get-KitWriteLabel 'java.exe' 'java -jar D:\t\api-1.0.jar'), (Get-KitWriteLabel 'Slack.exe' 'Slack.exe --x'), (Get-KitWriteLabel 'python.exe' 'python -m http.server 8000'), (Get-KitWriteLabel 'java.exe' 'java -cp x org.acme.Main'))
 "labels:$(($lb -join '|') -ceq 'Edge (CDP 9222)|mysqld · kit-tests|npx · vite|java · api-1.0|Slack|python · http.server|java · Main')"
@@ -112,7 +118,7 @@ $card = Format-KitWritesCard ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
 $pg = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resources = @([pscustomobject]@{ name = 'build x'; by = 'kitty'; gb = 1 }); stats = [pscustomobject]@{ writes = ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json) } })
 "card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
-Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
+Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
 # a holder record with several pids (a lane group, a shared lease) must not crash the writes hook ([int] of an array)
 $mpt = @'
 $null = . $args[0] 6>$null; $KitShellRows = @(); $res = @([pscustomobject]@{ pid = @(4, 8); by = 'x'; name = 'svc' })
