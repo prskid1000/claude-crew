@@ -176,7 +176,7 @@ if ($IsWindows) {
   $wdR = foreach ($wdHow in 'starter', 'run', 'detached') {
     Remove-Item "$wdT/area.pid" -ErrorAction SilentlyContinue
     $wdS = Start-Process $pwshExe -ArgumentList '-NoProfile', '-Command', "& '$pwshExe' -NoProfile -File '$wdT/kit-tests.ps1' -Area slow$(if ($wdHow -eq 'detached') { ' -Detached' })" -WindowStyle Hidden -PassThru
-    for ($i = 0; $i -lt 150 -and -not (Test-Path "$wdT/area.pid"); $i++) { Start-Sleep -Milliseconds 200 }
+    for ($i = 0; $i -lt 5 * (Get-TestBound 60) -and -not (Test-Path "$wdT/area.pid"); $i++) { Start-Sleep -Milliseconds 200 }   # a loaded full run started the area after 30 s ("starter:no area")
     $wdA = [int]"$(Get-Content "$wdT/area.pid" -ErrorAction SilentlyContinue)"; $wdP = [int](Get-CimInstance Win32_Process -Filter "ProcessId=$wdA").ParentProcessId
     Stop-Process -Id $(if ($wdHow -eq 'run') { $wdP } else { $wdS.Id }) -Force
     $wdGone = $false; for ($i = 0; $i -lt $(if ($wdHow -eq 'detached') { 16 } else { 60 }) -and -not $wdGone; $i++) { Start-Sleep -Milliseconds 500; $wdGone = -not @(Get-Process -Id $wdA, $wdP -ErrorAction SilentlyContinue).Count }
