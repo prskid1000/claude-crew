@@ -144,5 +144,15 @@ Expect "shells: progress from the output file (last line, ANSI cut), an adopted 
   $pg -contains 'states:running,running|running,running|STALLED,running|running,running|STALLED,STALLED|STALLED' -and $pg -contains 'rows:step 2 ok|devy|1|4|step 3 done|True' -and $pg -contains 'ended:1|devy|step 3 done' -and $pg -contains 'twin:999803=1,999804=0')
 Expect "bossy.ps1 shells and a -ReadOnly sweep write no file ($($pg -match '^nowrite:'))" ($pg -contains 'nowrite:True|1|True')
 Expect "shell sampler: a busy child's CPU between two real samples; ps time with days ($($pg -match '^live:'))" ($pg -contains 'live:True|True|2|93784|65')
+# K85: a git hook's pwsh (MSYS exec: parent dead) joins the shell running git push, not the other shell (40 flags, no hook verb: no regex backtracking hang)
+$hk = Invoke-PsTest 'shellhook' @'
+. $args[0]; $env:KIT_TRANSCRIPTS = Join-Path $args[1] 'tx-none'; $t0 = Get-Date
+$mk = { param($id, $par, $c, $nm) [pscustomobject]@{ Id = $id; ParentId = $par; Name = $nm; CommandLine = $c; Created = $t0.AddMinutes(-15); Cpu = 1; Io = 1 } }   # foreground shells show after 10 min
+$pr = @([pscustomobject]@{ Id = 50; ParentId = 1; Name = 'claude.exe'; CommandLine = 'claude'; Cpu = 9 }, (& $mk 999901 50 'bash -c "git -C D:/w push origin HEAD:main"' 'bash.exe'),
+  (& $mk 999903 50 ('bash -c "git ' + ('-a ' * 40) + 'status"') 'bash.exe'), (& $mk 999902 424243 'pwsh -NoProfile -File D:/w/skills/bossy/bossy.ps1 prepush origin https://h/r' 'pwsh.exe'))
+$w = Get-KitShellSweep @{} $t0 -Procs $pr -Sampler { param($ids) foreach ($i in $ids) { [pscustomobject]@{ Id = $i; Cpu = 0; Io = 0 } } } -GapSeconds 0 -ReadOnly
+"hook:$(@($w.rows | Sort-Object pid | ForEach-Object { "$($_.pid)=$($_.kids)" }) -join ',')"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'), (Kd))
+Expect "shells: a git hook's pwsh with a dead parent joins the shell running git push ($(@($hk) -match '^hook:'))" ($hk -contains 'hook:999901=1,999903=0')
 Remove-TestKit $k
 Complete-Tests

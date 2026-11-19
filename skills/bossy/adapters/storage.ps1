@@ -1,9 +1,10 @@
 <#
-storage.ps1 (core): bossy.ps1 storage (free space per drive, folder scans, disk rescue; kit.example.json storage), dot-sourced by
+storage.ps1 (core): bossy.ps1 storage (free space per drive, folder scans, disk rescue; kit.example.json storage), orphan processes
+(scratch DB servers, suspended git children) for bossy.ps1 cleanup, dot-sourced by
 bossy.ps1 (skills/bossy/adapters/); its tick runs inside board beat and supervise.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 storage
+Sections: L10 storage · L241 orphans
 #>
 #Requires -Version 7
 # ---- storage: free space trend, folder scans, rescue (kit.example.json storage; TODO-PARAM)
@@ -236,4 +237,36 @@ foreach ($d in @(if ($Drive) { $Drive } else { Get-KitDrives | ForEach-Object na
     '{0}  {1,8:N1} GB free{2}' -f $tm.ToString('MM-dd HH:mm'), $x.free, $(if ($pv) { ' {0,8:+0.0;-0.0} GB' -f ($x.free - $pv.free) }); $pv = $x }
   foreach ($e in @(Read-KitLog disk $from | Where-Object { $_.drive -eq $d -or $_.event -eq 'db-kill' })) { "  $(([datetime]$e.at).ToString('MM-dd HH:mm')) $($e.event): $(if ($e.lines) { @($e.lines) -join '; ' } else { $e.query })" }
 }
+}
+# ---- orphans: scratch DB servers and suspended git children whose launcher is gone (bossy.ps1 cleanup; moved from supervise_resources.ps1 at its cap)
+# scratch DB servers (tests' Start-TestMySql, an agent's probe) with a data dir in any kit runtime's work/: launcher gone for
+# idle.graceMinutes -> orphan; Windows mysqld = a monitor + its worker child, so the worker goes too (killing the monitor alone orphaned 6)
+function Get-KitScratchOrphans($Procs = $null, [datetime]$At = (Get-Date)) {
+  if ($null -eq $Procs) { $Procs = @(Get-SysProcs) }
+  $rx = "--datadir=(`"[^`"]*|[^`" ]*)[\\/]$([regex]::Escape($script:KitPathMap.runtimeDir))[\\/]work[\\/]"   # never across into the next argument (--tmpdir)
+  $dbs = @($Procs | Where-Object { $_.Name -match '^(mysqld|mariadbd)(\.exe)?$' -and "$($_.CommandLine)" -match $rx })
+  foreach ($d in $dbs | Where-Object { $_.ParentId -notin $dbs.Id -and $_.Created }) {
+    $par = @($Procs | Where-Object Id -eq $d.ParentId)[0]
+    if (($par -and (-not $par.Created -or $par.Created -le $d.Created)) -or ($At - $d.Created).TotalMinutes -lt [double](Get-KitParam 'idle.graceMinutes')) { continue }   # a pid reused later is no launcher
+    [pscustomobject]@{ id = $d.Id; ids = @(@($d.Id) + @($dbs | Where-Object ParentId -eq $d.Id | ForEach-Object Id)); dir = $(if ("$($d.CommandLine)" -match '--datadir="?([^" ]+)') { $Matches[1] }) }
+  }
+}
+function Stop-KitScratchOrphans([switch]$DryRun) {
+  if ($env:KIT_KEEP_DAEMONS) { return }   # tests: never the machine's servers
+  foreach ($o in @(Get-KitScratchOrphans)) { if (-not $DryRun) { foreach ($i in $o.ids) { Stop-SysProcess $i } }   # monitor first (no restart), then its worker found before
+    "$(if ($DryRun) { 'would stop' } else { 'stopped' }) orphan scratch DB server pid $($o.ids -join '+') ($($o.dir))" }
+}
+function Invoke-KitCleanupScratch { foreach ($l in @(Stop-KitScratchOrphans -DryRun:$DryRun) + @(Stop-KitSuspendedOrphans -DryRun:$DryRun)) { [void]$actions.Add($l) } }
+# K86: git / glab / gh children left suspended (every thread) by a parent killed mid-spawn never run again: parent gone for idle.graceMinutes -> stopped
+function Get-KitSuspendedOrphans($Procs = $null, [datetime]$At = (Get-Date), [scriptblock]$IsSuspended = { param($id) $tp = Get-Process -Id $id -ErrorAction SilentlyContinue; $tp -and $tp.Threads.Count -and -not @($tp.Threads | Where-Object { "$($_.WaitReason)" -ne 'Suspended' }).Count }) {
+  if ($null -eq $Procs) { $Procs = @(Get-SysProcs) }
+  foreach ($d in @($Procs | Where-Object { $_.Name -match '^(git|glab|gh)(\.exe)?$' -and $_.Created -and ($At - $_.Created).TotalMinutes -ge [double](Get-KitParam 'idle.graceMinutes') })) {
+    $par = @($Procs | Where-Object Id -eq $d.ParentId)[0]
+    if ($par -and (-not $par.Created -or $par.Created -le $d.Created)) { continue }   # a live parent (a pid reused later is none)
+    if (& $IsSuspended $d.Id) { [pscustomobject]@{ id = $d.Id; cmd = "$($d.CommandLine)" } }
+  }
+}
+function Stop-KitSuspendedOrphans([switch]$DryRun) {
+  if ($env:KIT_KEEP_DAEMONS -or -not $IsWindows) { return }
+  foreach ($o in @(Get-KitSuspendedOrphans)) { if (-not $DryRun) { Stop-SysProcess $o.id }; "$(if ($DryRun) { 'would stop' } else { 'stopped' }) suspended orphan pid $($o.id) ($($o.cmd))" }
 }

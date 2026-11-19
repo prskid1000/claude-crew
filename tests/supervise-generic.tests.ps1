@@ -59,9 +59,14 @@ $sp = { param($i, $p, $n, $c, $m) [pscustomobject]@{ Id = $i; ParentId = $p; Nam
 $so = @(Get-KitScratchOrphans @((& $sp 50 1 'pwsh.exe' 'pwsh' 120), (& $sp 51 50 'mysqld.exe' $wd 60), (& $sp 60 99 'mysqld.exe' $wd 60), (& $sp 61 60 'mysqld.exe' $wd 60), (& $sp 70 99 'mysqld.exe' $wd 2),
   (& $sp 80 99 'mysqld.exe' "--defaults-file=D:/k/env.ini --datadir=D:/k/data --tmpdir=D:/k/$rd/work/tmp" 60),(& $sp 90 91 'mariadbd' "--datadir=/k/$rd/work/agents/x/probe" 60), (& $sp 91 1 'bash' 'bash' 5)) $now)
 "scratch:$(($so | ForEach-Object { $_.ids -join '+' }) -join ',')"
+# K86: a suspended git / glab child whose parent is gone goes; a live parent, a running one, a young one or another name stays
+$sus = @(Get-KitSuspendedOrphans @((& $sp 50 1 'pwsh.exe' 'pwsh' 120), (& $sp 52 99 'git.exe' 'git remote -v' 60), (& $sp 53 50 'git.exe' 'git remote -v' 60), (& $sp 54 99 'git.exe' 'git fetch' 60),
+  (& $sp 55 99 'git.exe' 'git remote -v' 2), (& $sp 56 99 'node.exe' 'node x' 60)) $now { param($id) $id -ne 54 })
+"suspended:$(@($sus.id) -join ',')"
 $allDrv = @(Get-KitDrives).Count; function Get-KitInternalLetters { @('Q') }; "intdrv:$($allDrv -ge 1 -and @(Get-KitDrives).Count -eq 0)"   # a drive on no internal disk (USB, external, phone): not watched
 '@ @($O, (Kd))
 Expect-Each $gen 'resources generic: #' 'none', 'own', 'busy', 'caches', 'cachedef', 'labels-def', 'labels', 'intdrv' -Show 6
+Expect "suspended orphans: a suspended git child whose parent is gone past idle.graceMinutes is stopped; a live parent, a running, a young or a non-git one stays ($(@($gen) -match '^suspended:'))" (@($gen) -contains 'suspended:52')
 Expect "scratch DB servers: launcher gone past idle.graceMinutes = orphan, its worker child too; a live or reused-later launcher, a young one, an env server (data dir outside runtime work/, its --tmpdir inside) stay; monitor first ($(@($gen) -match '^scratch:'))" (@($gen) -contains 'scratch:60+61,90')
 # a CI-raised test task (tracker.ciTaskPattern): track add of its merged fix MR promotes it with no testing docs, holds while the
 # named job runs again on its branch, closes it with ONE qa-result comment linking the passing job; a plain task keeps the doc gate
