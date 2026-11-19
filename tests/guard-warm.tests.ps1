@@ -8,7 +8,7 @@ param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 $TestKitFiles = @('skills/crafty/guard_client.mjs', 'skills/crafty/guard_server.ps1')
 $k = New-TestKit gwarm; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $gc = Join-Path $k 'skills/crafty/guard_client.mjs'
-$kw = (Resolve-Path -LiteralPath $k).Path.TrimEnd('\', '/'); $mine = { @($(if ($IsWindows) { Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' AND CommandLine LIKE '%guard[_]server%'" -ErrorAction SilentlyContinue | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } } else { Get-Process pwsh -ErrorAction SilentlyContinue }) | Where-Object { "$($_.CommandLine)".Contains("$kw$([IO.Path]::DirectorySeparatorChar)skills") -and "$($_.CommandLine)" -like '*guard_server*' }) }   # this kit's servers only
+$kw = (Resolve-Path -LiteralPath $k).Path.TrimEnd('\', '/'); $mine = { @($(if ($IsWindows) { Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' AND CommandLine LIKE '%guard[_]server%'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; CommandLine = $_.CommandLine } } } else { Get-Process pwsh -ErrorAction SilentlyContinue }) | Where-Object { "$($_.CommandLine)".Contains("$kw$([IO.Path]::DirectorySeparatorChar)skills") -and "$($_.CommandLine)" -like '*guard_server*' }) }   # this kit's servers only
 $ins = @('git stash', 'git status --short', 'echo hi') | ForEach-Object { @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $_ } } | ConvertTo-Json -Compress -Depth 4 }
 # the decision and its reason (key order differs per process)
 $nz = { param($s) if ("$s".Trim()) { $h = ("$s" | ConvertFrom-Json).hookSpecificOutput; "$($h.permissionDecision)|$($h.permissionDecisionReason)|$($h.additionalContext)" } else { '' } }
@@ -17,7 +17,8 @@ $viaClient = { param($j) & $nz (($j | node $gc) -join '') }
 $plain = @($ins | ForEach-Object { & $viaPlain $_ })
 # K75: a cold call past the client's hook-time bound under load passes once with no answer; answers are compared without that bound
 $env:KIT_GUARD_TIMEOUT_MS = '120000'
-# a deadline, not a count: each look reads every pwsh command line (slow under load: 720 looks took 17 min in a full run)
+# a deadline, not a count (720 looks took 17 min under load); one CIM query per look, its rows carry CommandLine (a Process object
+# re-queries CIM per .CommandLine read: 224 -> 68 ms a look)
 $waitOne = { $wDue = (Get-Date).AddSeconds((Get-TestBound 60)); while ((Get-Date) -lt $wDue -and @(& $mine).Count -ne 1) { Start-Sleep -Milliseconds 500 }; @(& $mine).Count }
 $first = @($ins | ForEach-Object { & $viaClient $_ })   # no server yet: the plain path, and a server starts
 $srvN = & $waitOne; Start-Sleep -Seconds 2   # it loads the kit; a second one started by a later cold call exits
