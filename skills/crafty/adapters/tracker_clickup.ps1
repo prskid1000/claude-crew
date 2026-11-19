@@ -25,7 +25,7 @@ Register-KitAdapter 'tracker' 'clickup' @{
   'url' = { param($a) "https://app.clickup.com/t/$($a.id)" }
   'view' = { param($a)
     $j = __TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--json')); if (-not $j.id) { return }
-    __TrTask $j.id $j.name ([string]$j.status.status) $(if ($j.url) { $j.url } else { Get-TrackerUrl $j.id }) $j.parent @($j.assignees | ForEach-Object { if ($_.username) { $_.username } else { $_.id } }) ([string]$j.list.id) @($j.subtasks | ForEach-Object { __TrSub $_.id $_.name ([string]$_.status.status) (Get-TrackerUrl $_.id) }) ([string]$(if ($j.markdown_description) { $j.markdown_description } else { $j.description }))
+    __TrTask $j.id $j.name ([string]$j.status.status) $(if ($j.url) { $j.url } else { Get-TrackerUrl $j.id }) $j.parent @($j.assignees | Where-Object { $_ } | ForEach-Object { if ($_.username) { $_.username } else { $_.id } }) ([string]$j.list.id) @($j.subtasks | Where-Object { $_ } | ForEach-Object { __TrSub $_.id $_.name ([string]$_.status.status) (Get-TrackerUrl $_.id) }) ([string]$(if ($j.markdown_description) { $j.markdown_description } else { $j.description }))
   }
   'status' = { param($a)
     $names = @($a.status); foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $a.logical) { $names = @($__trStatus[$k]) } }

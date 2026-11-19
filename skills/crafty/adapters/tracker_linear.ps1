@@ -28,7 +28,7 @@ Register-KitAdapter 'tracker' 'linear' @{
     $i = (__TrLin 'query($id: String!) { issue(id: $id) { identifier title url description state { name } assignee { name } parent { identifier } team { key } children { nodes { identifier title url state { name } } } } }' @{ id = $a.id }).issue
     if (-not $i) { return }
     [pscustomobject]@{ id = $i.identifier; name = $i.title; status = [string]$i.state.name; url = $i.url; parent = $i.parent.identifier; assignees = @($i.assignee.name | Where-Object { $_ }); list = $i.team.key
-      subtasks = @($i.children.nodes | ForEach-Object { [pscustomobject]@{ id = $_.identifier; name = $_.title; status = [string]$_.state.name; url = $_.url } }); description = [string]$i.description }
+      subtasks = @($i.children.nodes | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = $_.identifier; name = $_.title; status = [string]$_.state.name; url = $_.url } }); description = [string]$i.description }
   }
   'status' = { param($a)
     $s = @((__TrLin 'query($id: String!) { issue(id: $id) { team { states { nodes { id name } } } } }' @{ id = $a.id }).issue.team.states.nodes | Where-Object { $_.name -ieq $a.status })[0]

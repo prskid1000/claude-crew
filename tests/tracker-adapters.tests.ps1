@@ -132,6 +132,11 @@ try {
 } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $global:failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: view, status, comment, create (no list: the parent's), list on recorded answers"
+# a leaf task (subtasks / assignees null): no phantom subtask (id '', url ".../t/": a candidate in the duplicate check), no $null assignee
+$fx0 = $global:fx; $global:fx = [ordered]@{ 'task view C9' = '{"id":"C9","name":"Leaf","status":{"status":"open"},"list":{"id":"L9"},"subtasks":null,"assignees":null}'; 'GET https://j.test/rest/api/3/issue/P-9\?' = '{"key":"P-9","fields":{"summary":"Leaf","status":{"name":"To Do"},"subtasks":null}}' }
+$leaf = @(foreach ($lt in 'clickup:C9', 'jira:P-9') { $ty, $ti = $lt -split ':'; try { Initialize-KitTracker -Type $ty; $x = Get-TrackerTask $ti; "$ty=$(@($x.subtasks).Count)/$(@($x.assignees).Count)" } catch { "$ty error: $_" } }) -join ' '
+$global:fx = $fx0; Initialize-KitTracker -Type clickup
+if ($leaf -ne 'clickup=0/0 jira=0/0') { $global:failed++ }; "$(if ($leaf -eq 'clickup=0/0 jira=0/0') { 'PASS' } else { 'FAIL' }) tracker clickup / jira: a task with no subtasks lists none, no assignee none ($leaf)"
 $global:fx.Insert(0, 'task view P2', '{"id":"P2","list":{"id":"L7"}}'); $global:fx.Insert(0, 'task view P3', '{"id":"P3","list":{"id":"L9"}}'); $global:fx['task create --list-id L7 .*--parent P2'] = '{"id":"C7"}'; $global:fx['task create --list-id L9 --name w .*--parent P4'] = '{"id":"C8"}'; $global:log.Clear()
 $sw = [IO.StringWriter]::new(); $se = [Console]::Error; [Console]::SetError($sw)
 try { $xw = __TrA 'create' @{ list = 'L9'; name = 'y'; description = 'd'; parent = 'P2' }; $xe = try { $null = __TrA 'create' @{ list = 'L9'; name = 'z'; description = 'd'; parent = 'P3' }; 'no throw' } catch { "$_" }; $xv = __TrA 'create' @{ list = 'L9'; name = 'w'; description = 'd'; parent = 'P4' } } finally { [Console]::SetError($se) }

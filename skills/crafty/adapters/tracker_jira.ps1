@@ -83,7 +83,7 @@ Register-KitAdapter 'tracker' 'jira' @{
   'view' = { param($a)
     $j = __TrJira 'GET' "issue/$($a.id)?fields=summary,status,parent,assignee,subtasks,project,description" $null; if (-not $j.key) { return }
     $f = $j.fields
-    __TrTask $j.key $f.summary ([string]$f.status.name) (Get-TrackerUrl $j.key) $f.parent.key @($f.assignee | Where-Object { $_ } | ForEach-Object { $_.displayName }) ([string]$f.project.key) @($f.subtasks | ForEach-Object { __TrSub $_.key $_.fields.summary ([string]$_.fields.status.name) (Get-TrackerUrl $_.key) }) (__TrAdfText $f.description).Trim()
+    __TrTask $j.key $f.summary ([string]$f.status.name) (Get-TrackerUrl $j.key) $f.parent.key @($f.assignee | Where-Object { $_ } | ForEach-Object { $_.displayName }) ([string]$f.project.key) @($f.subtasks | Where-Object { $_ } | ForEach-Object { __TrSub $_.key $_.fields.summary ([string]$_.fields.status.name) (Get-TrackerUrl $_.key) }) (__TrAdfText $f.description).Trim()
   }
   'status' = { param($a)
     $id = $a.id; $name = $a.status; $t = __TrJira 'GET' "issue/$id/transitions" $null
