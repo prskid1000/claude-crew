@@ -103,7 +103,7 @@ $null = pwsh @np $D tracker comment $t.id 'new qa' -Kind qa-result -ProseOk x; $
 Expect "kit comment: an old marked comment (no stored id) is edited, its marker gone ($n4 $($cq.Count))" ($cq.Count -eq $n4 -and @($cq.text -match '^new qa$').Count -eq 1 -and -not @($cq.text -match '\[kit:qa-result').Count)
 $dk0 = if (Test-Path $dkl) { Get-Content $dkl -Raw }; $gate = Join-Path (Kd) 'promote-gate.ps1'
 '$p = [Console]::In.ReadToEnd() | ConvertFrom-Json; if ($p.gate -eq ''promote'' -and $p.task -eq ''ok'') { exit 0 }; "no $($p.gate) for $($p.task)"; exit 1' | Set-Content $gate
-$env:KIT_DOC_GATE = '1'; $gNone = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String   # process.gates unset: no docs needed
+$env:KIT_DOC_GATE = '1'; $gNone = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker status $t.id open -Back 'gate test reset'   # process.gates unset: no docs needed; a promoted task skips the gate
 Set-JsonFile $dkl @{ process = @{ gates = @{ promote = "pwsh -NoProfile -File `"$gate`"" } } }; $gH = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String
 Set-JsonFile $dkl @{ process = @{ gates = @{ promote = 'builtin:testingDocs' } } }   # the legacy row: today's two-doc gate
 $g1 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h"

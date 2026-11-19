@@ -297,7 +297,7 @@ if ($Self) {
   "RECORDED $leaf $Run (fnv $got)"; if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }
   "CONFIG $(Get-KitWorkflowConfig | ConvertTo-Json -Compress -Depth 10)"
   if (-not $prev -or $prev.completed -or $prev.paused) { Clear-KitPauseFor $Run }
-  if ($leaf -like 'buildy*' -and "$($a.mode)" -ne 'resume') { try { Test-KitLaunchTasks $a -RunName $Run } catch { "TASKS UNKNOWN: $_" } }   # TASKS REFUSED: buildy.js refuses
+  if ($leaf -like 'buildy*') { Invoke-KitLaunchTaskSteps $a $Run $sf }   # TASKS REFUSED: buildy.js refuses; AREA TASK lines
   exit 0
 }
 if ($Check) { Test-KitLaunchTasks -File $ArgsFile }   # the coordinator, before a /buildy launch

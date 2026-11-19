@@ -9,8 +9,8 @@ Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L16 builds · L52 supervise · L317 shells · L486 page · L1015 release · L1060 lines · L1093 cleanup · L1160 launch ·
-  L1238 pause · L1357 heartbeat · L1372 sessions · L1424 ci tasks ·
-  L1480 the kit origin's default branch (kitBranch, else origin/HEAD)
+  L1278 pause · L1397 heartbeat · L1412 sessions · L1464 ci tasks ·
+  L1522 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1234,6 +1234,46 @@ function Test-KitLaunchTasks($A, [string]$File, [string]$RunName = '') {
   $out; if (-not $File) { return }
   if (@($out -match '^TASKS REFUSED').Count) { exit 1 }; "TASKS ok: $(@($A.agents).Count) area(s)"; exit 0
 }
+# 2+ areas on one task (agents[].task, else args.task; owner, 2026-11-19: one task flipped 11 times): one subtask per area, made
+# once (task state areaTasks), "<kind> <product> — <area id> <area> (<repos>)", the parent's assignee; prints "AREA TASK <area> <id>"
+# (buildy.js: each devy's task), writes <brief dir>/area-tasks.json (track rollup: area -> task) and the launch record's areaTasks
+# bossy.ps1 launch -Self of a buildy run: the task check (not on a resume), then the area subtasks when nothing was refused
+function Invoke-KitLaunchTaskSteps($A, [string]$RunName, [string]$RecFile) {
+  $tk = @(if ("$($A.mode)" -ne 'resume') { try { Test-KitLaunchTasks $A -RunName $RunName } catch { "TASKS UNKNOWN: $_" } }); $tk
+  if (-not ($tk -match '^TASKS REFUSED')) { try { New-KitAreaTasks $A $RunName $RecFile } catch { "AREA TASKS UNKNOWN: $_" } }
+}
+function New-KitAreaTasks($A, [string]$RunName, [string]$RecFile) {
+  $by = [ordered]@{}; foreach ($g in @($A.agents | Where-Object { $_.id })) { $t = NormTask "$(if ($g.task) { $g.task } else { $A.task })"; if ($t) { if (-not $by.Contains($t)) { $by[$t] = @() }; $by[$t] += , $g } }
+  $bd = if ($A.brief) { Split-Path ([string]$A.brief) }; $rows = @(if ($bd -and (Get-Command Read-KitTriage -ErrorAction Ignore)) { (Read-KitTriage $bd).rows })
+  $rc = @{}; if ($A.brief -and (Test-Path -LiteralPath $A.brief)) { foreach ($tb in @(ConvertFrom-KitMdTables (Get-Content -LiteralPath $A.brief -Raw))) { if ($tb.head -contains 'agent' -and $tb.head -contains 'repos') { foreach ($r in $tb.rows) { $rc["$($r['agent'])"] = ("$($r['repos'])" -split '[,\s]+' | ForEach-Object { ($_ -split '@')[0] } | Where-Object { $_ }) -join ', ' } } } }
+  $map = [ordered]@{}
+  foreach ($t in @($by.Keys)) { $gs = @($by[$t]); if ($gs.Count -lt 2) { continue }
+    $pt = Get-TrackerTask $t; if (-not $pt.name) { "AREA TASKS UNKNOWN ${t}: not read from the tracker"; continue }
+    $known = (Read-KitState (Get-KitTaskFile $t)).areaTasks; $nm = "$($pt.name)" -replace '^\s*\[[^\]]*\]\s*'
+    $kind = if ("$($pt.name)" -match '^\s*\[([^\]]+)\]') { $Matches[1] } else { 'Feature' }
+    $h1 = if ($A.brief -and (Test-Path -LiteralPath $A.brief)) { "$(@(Get-Content -LiteralPath $A.brief -TotalCount 3 | Where-Object { $_ -match '^#\s' })[0])" -replace '^#\s*(?:[\w -]*brief:\s*)?' -replace [regex]::Escape($t) -replace ',?\s*\d{4}-\d{2}-\d{2}\s*$' }   # "# Wave brief: <name> <id>, <date>"
+    $prod = if ($nm -match ' [—-] ') { ($nm -split ' [—-] ', 2)[0].Trim() } elseif ("$h1".Trim()) { "$h1".Trim() } else { ($nm -replace '\s*\([^)]*\)\s*$').Trim() }
+    $url = if ($pt.url) { "$($pt.url)" } else { Get-TrackerUrl $t }
+    foreach ($g in $gs) {
+      $sid = "$(Get-KitMember $known "$($g.id)")"
+      if ($sid -and "$(try { (Get-TrackerTask $sid).name } catch { '' })") { $map["$($g.id)"] = $sid; "AREA TASK $($g.id) $sid (kept)"; continue }
+      $area = ("$($g.area)" -split '[,;(]')[0].Trim(); if ($area.Length -gt 60) { $area = $area.Substring(0, 60).Trim() }
+      $its = @("$($g.items)" -split '[,\s]+' | Where-Object { $_ }); $rp = $rc["$($g.id)"]
+      $spec = [ordered]@{ kind = $kind; title = "$prod — $($g.id) $area$(if ($rp) { " ($rp)" })"; parent = $t; code = "$($g.id)"; assignee = "$(@($pt.assignees)[0])"; newTask = "area $($g.id) of run $RunName"
+        problem = "Area $($g.id) of $url`: $($g.area)"; goal = "Deliver items $($its -join ', ') (area $($g.id)) of the parent task."
+        items = @($its | ForEach-Object { $iid = $_; $ti = "$(@($rows | Where-Object { "$($_.id)" -eq $iid } | ForEach-Object title)[0])"; [ordered]@{ code = $iid; desc = $(if ($ti) { $ti } else { $area }) } })
+        acceptance = @("Items $($its -join ', ') meet the parent task's acceptance, tested on the local env."); links = @($url); proseOk = 'rendered from the brief' }
+      $sf2 = Join-Path (Get-KitTemp) "area-task-$($g.id)-$PID.json"; [IO.File]::WriteAllText($sf2, ($spec | ConvertTo-Json -Depth 6))
+      $o = (pwsh -NoProfile -NonInteractive -File $KitCmd.dev tracker create -Spec $sf2 2>&1 | Out-String); Remove-Item -LiteralPath $sf2 -ErrorAction SilentlyContinue; $j = try { $o.Substring($o.IndexOf('{')) | ConvertFrom-Json } catch { $null }
+      if (-not $j.id) { "AREA TASK $($g.id) FAILED: $("$o" -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 1)"; continue }
+      $map["$($g.id)"] = "$($j.id)"; "AREA TASK $($g.id) $($j.id) $($j.url)"
+    }
+    $mt = @{} + $map; Update-KitTaskIndex $t { param($x) $am = [ordered]@{}; if ($x.areaTasks -is [Collections.IDictionary]) { foreach ($k in $x.areaTasks.Keys) { $am[$k] = $x.areaTasks[$k] } }; foreach ($k in $mt.Keys) { $am[$k] = $mt[$k] }; $x.areaTasks = $am }
+  }
+  if (-not $map.Count) { return }
+  if ($bd -and (Test-Path -LiteralPath $bd)) { Write-KitAtomic (Join-Path $bd 'area-tasks.json') (@{ agents = @($map.Keys | ForEach-Object { [ordered]@{ id = $_; task = $map[$_] } }) } | ConvertTo-Json -Depth 4) }
+  if ($RecFile -and (Test-Path -LiteralPath $RecFile)) { $r = Read-KitState $RecFile; $r.areaTasks = $map; Write-KitState $RecFile $r }
+}
 
 # ---- pause: pause / pause -Status and the finisher behind them; finished runs closed (bossy.ps1 pause, resume, recover, health)
 # one PAUSE text for the board message and every beat: fast (stopped builds are redone) and safe (no cut git / MR call)
@@ -1456,7 +1496,7 @@ function Test-KitCiTaskJob($Ci, [string[]]$Mrs) {
 # its job passed: closed + ONE QA comment (qa-result, edited in place) linking the passing job; state closed | wait | the reason
 function Close-KitCiTask([string]$Task, $Ci, [string[]]$Mrs) {
   $cj = Test-KitCiTaskJob $Ci $Mrs; if ($cj.state -ne 'pass') { return @{ state = $cj.state; why = "CI task not closed: $($cj.why)" } }
-  try { $null = Set-TrackerStatus $Task 'closed' } catch { return @{ state = 'error'; why = "could not set status 'closed' (retried next run): $_" } }
+  try { if ("$(Set-TrackerStatus $Task 'closed')" -like 'SKIPPED*') { return @{ state = 'wait'; why = 'CI task not closed: it follows its open subtasks' } } } catch { return @{ state = 'error'; why = "could not set status 'closed' (retried next run): $_" } }
   try { $null = Set-TrackerKitComment $Task 'qa-result' "QA: PASS · CI job $($cj.name) passed on $($Ci.branch) with $(@($Mrs | ForEach-Object { Format-KitMrLink $_ }) -join ', ') merged: $($cj.url)" } catch { Write-Warning "QA comment of $Task not written: $_" }
   @{ state = 'closed'; why = "all $(@($Mrs).Count) MRs merged, CI job $($cj.name) passed on $($Ci.branch) -> closed" }
 }
@@ -1468,12 +1508,14 @@ function Get-KitPlannedAreas([string]$TaskId, $Since) {
     $script:planDone = @{}; $planFrom = @($script:planRecs | ForEach-Object { [datetime]$_.at } | Sort-Object)[0]   # waves written since the oldest launch
     foreach ($wf in @(if ($planFrom) { Get-ChildItem (Get-KitPath waves) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $planFrom } })) {
       $wr = try { Get-Content -LiteralPath $wf.FullName -Raw | ConvertFrom-Json } catch { $null }
-      foreach ($wa in @(if ($wr.agents) { (Get-KitProps $wr.agents) })) { foreach ($dk in @((@($wa.Value.done) -join ' ') -split '[,\s]+' | Where-Object { $_ })) { $script:planDone["$($wa.Name)|$(NormTask $dk)"] = 1 } }
+      foreach ($wa in @(if ($wr.agents) { (Get-KitProps $wr.agents) })) { if (@($wa.Value.done | Where-Object { $_ }).Count) { foreach ($wm in @($wa.Value.mrs)) { $script:planDone["$($wa.Name)|$(NormRef "$($wm.url)")"] = 1 } }; foreach ($dk in @((@($wa.Value.done) -join ' ') -split '[,\s]+' | Where-Object { $_ })) { $script:planDone["$($wa.Name)|$(NormTask $dk)"] = 1 } }
     }
   }
   @(foreach ($pr in $script:planRecs) {
       if ($Since -and [datetime]$pr.at -le [datetime]$Since) { continue }
       foreach ($pa in @($pr.args.agents | Where-Object { $_.id -and $_.items })) {
+        $paT = NormTask "$(Get-KitMember $pr.areaTasks "$($pa.id)")"   # an area subtask (New-KitAreaTasks): its area counts as planned
+        if ($paT -and $paT -eq $TaskId) { if (-not @((Read-KitTracking).tasks[$TaskId].mrs | Where-Object { $script:planDone["$($pa.id)|$(NormRef $_)"] }).Count) { "$($pa.id)" }; continue }   # delivered: a wave lists this area done with one of its MRs (area ids repeat across runs)
         if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"]) { "$($pa.id)" }
       } }) | Select-Object -Unique
 }

@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L230 api · L452 finalize · L924 results · L957 retest · L1014 prepare
+Sections: L26 lanes · L40 report · L156 seat · L230 api · L452 finalize · L939 results · L972 retest · L1029 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -814,15 +814,28 @@ function Send-KnownSeen($rec, [object[]]$known) {
 }
 function Set-FailedTesting($rec, $st) {
   $ok = TrySay { Set-TrackerStatus $st.id 'failedTesting'; $true } "set $($st.id) failedTesting"
+  # a parent and its subtasks follow one result (owner, 2026-11-19: a subtask stayed in test while its parent failed testing)
+  if ($null -ne $ok) { foreach ($kid in @(try { Clear-TrackerMemo $st.id; (Get-TrackerTask $st.id).subtasks } catch { }) | Where-Object { $_.id -and (Test-TrackerStatus "$($_.status)" 'promoted', 'inTest') }) { $null = TrySay { Set-TrackerStatus $kid.id 'failedTesting'; $true } "set subtask $($kid.id) failedTesting (its parent $($st.id) failed testing)" } }
   if ($null -eq $ok) {
-    $ok = TrySay { Set-TrackerStatus $st.id 'inProgress'; $true } "set $($st.id) inProgress (fallback: no failedTesting status)"
+    $ok = TrySay { Set-TrackerStatus $st.id 'inProgress' 'failed testing, no failedTesting status'; $true } "set $($st.id) inProgress (fallback: no failedTesting status)"
     if ($null -ne $ok) { $rec.statusFallback = 'inProgress'; $null = TrySay { Add-TrackerComment $st.id "Failed testing (this board has no 'failedTesting' status: set tracker.statuses.failedTesting in kit.local.json): moved back to in progress." } "comment on $($st.id)" }
   }
   if ($null -ne $ok) { $rec.failedTesting = $true } else { $rec.keptOpen = 'the tracker refused the failedTesting status (see warning)' }
 }
+# the task's MRs (run item + track) merged after this run started (folder stamp yyyy-MM-dd-HHmmss): a newer fix round the run never tested
+function Get-LateMerges($st) {
+  if ((Split-Path $RunDir -Leaf) -notmatch '^(\d{4}-\d{2}-\d{2}-\d{6})') { return }
+  $t0 = [datetimeoffset][datetime]::ParseExact($Matches[1], 'yyyy-MM-dd-HHmmss', $null)
+  $refs = @(@("$($st.mrs)" -split '[,\s]+') + @((Read-KitTracking).tasks["$($st.id)"].mrs) | Where-Object { "$_" -match '^[\w./-]+!\d+$' } | Select-Object -Unique)
+  foreach ($ref in $refs) { $rp, $iid = "$ref" -split '!', 2; if ($rp -notmatch '/' -and $KitConf.GitlabGroup) { $rp = "$($KitConf.GitlabGroup)/$rp" }
+    $m = try { Invoke-HostVerb 'mr.get' @{ repo = $rp; n = $iid } } catch { $null }
+    $ma = $m.merged_at; if (-not $ma) { continue }
+    if ($(if ($ma -is [datetime]) { [datetimeoffset]$ma } else { [datetimeoffset]::Parse("$ma", [Globalization.CultureInfo]::InvariantCulture) }) -gt $t0) { "$ref" } }
+}
 function Resolve-Outcome($rec, $st, [int]$pend) {
   $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir/$($_.code)/finalize.json") } | ForEach-Object code)
   if ($others.Count) { $rec.waitingFor = $others; return }
+  if (@($rec.late).Count) { $rec.keptOpen = "status unchanged: $(@($rec.late) -join ', ') merged after this run started (a newer fix round): retest after their deploy"; return }   # owner, 2026-11-19
   if ($pend -and -not $rec.fail) { $rec.keptOpen = "$pend check(s) pending in another lane"; return }   # an own FAIL decides now
   if (-not $rec.total) { $rec.keptOpen = 'no check carries this task id (subtask_id)'; return }   # 0 of 0 is not a pass
   $sib = SiblingHold $st.id
@@ -838,7 +851,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   }
   if ($orphans.Count) { $rec.keptOpen = "$($orphans.Count) check(s) name no subtask of this item ($(@($orphans.subtask_id | Select-Object -Unique) -join ', ')): fix their subtask_id, finalize again"; return }   # never dropped
   if ($rec.bugError -or $sib.bugError) { $rec.keptOpen = "new defects have no [Bug] task ($(if ($rec.bugError) { $rec.bugError } else { $sib.bugError }))"; return }   # never close while a defect is untracked
-  if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
+  $cs = TrySay { "$(Set-TrackerStatus $st.id $closeStatus)" } "close $($st.id)"; if ("$cs" -like 'SKIPPED*') { $rec.keptOpen = "close $cs" } elseif ($null -ne $cs) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
 }
 # one tracker step per run (siblings deadlocked)
 $fh = (Get-KitHash ($RunDir.ToLower()) SHA256).Substring(0, 16)
@@ -872,6 +885,7 @@ foreach ($st in @($item.subtasks)) {
     if ($prevRec.noTracker -or $prevRec.commentFailed) { $prevRec = $null }   # failed comment: post again
     if ($prevRec.seenFailed -and $knownFails.Count) { Send-KnownSeen $prevRec $knownFails }   # a lost "Seen again" line is posted on the next run
     if ($prevRec.closed -or $prevRec.failedTesting) { $out.subtasks += $prevRec; continue }   # keep the first run's record
+    $rec.late = @(Get-LateMerges $st)
     # sibling re-run: re-resolve only
     if ($prevRec) {
       $rec.bug = $prevRec.bug; if ($prevRec.seenFailed) { $rec.seenFailed = $true }
@@ -885,6 +899,7 @@ foreach ($st in @($item.subtasks)) {
     if ($oos) { $msg += ", $oos out of scope" }
     if ($unproven.Count) { $msg += ", $($unproven.Count) unproven finding(s) ($(($unproven | ForEach-Object id) -join ', '): verify inconclusive, no request named) left to a monitoring triage, no [Bug]" }
     if ($pend) { $msg += ". $pend check(s) are tested next in another lane" }
+    if ($rec.late.Count) { $msg += ". Status unchanged: $($rec.late -join ', ') merged after this run started; retest after their deploy" }
     if ($newDefects.Count -and $canCreate) {
       $b = TrySay { Add-NewDefects $st $newDefects } 'record the new defects in the [Bug] task'
       if ($b.id) { $rec.bug = $b.id; $msg += ". New defects ($(($newDefects | ForEach-Object id) -join ', ')) moved to [Bug] task $($b.id)" }   # one link: the report

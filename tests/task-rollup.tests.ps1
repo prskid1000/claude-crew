@@ -199,7 +199,7 @@ Expect "tracker group: same list -> subtask (code from the parent's Items line),
 $sr =Invoke-PsTest statusrollup @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; . $args[1]; $ErrorActionPreference = 'Stop'
 $tg = { param($p, $c, $nw, $ro) Get-KitParentStatusTarget $p $c -NewChild:$nw -Reopen:$ro }
-"tbl:$((& $tg 'open' @('promoted', 'inTest') $false $false) -eq 'promoted' -and (& $tg 'promoted' @('open') $false $false) -eq '' -and (& $tg 'promoted' @('open') $true $false) -eq 'open' -and (& $tg 'closed' @('open') $false $false) -eq '' -and (& $tg 'closed' @('review', 'inTest') $false $true) -eq 'review' -and (& $tg 'closed' @('failedTesting') $true $false) -eq 'inProgress' -and (& $tg 'inTest' @('closed', 'closed') $true $false) -eq '' -and (& $tg 'blocked' @('open') $true $false) -eq '' -and (& $tg 'open' @('open', 'zzz') $false $false) -eq '')"
+"tbl:$((& $tg 'open' @('promoted', 'inTest') $false $false) -eq 'promoted' -and (& $tg 'inProgress' @('open') $true $false) -eq '' -and (& $tg 'promoted' @('open') $false $false) -eq '' -and (& $tg 'promoted' @('open') $true $false) -eq 'open' -and (& $tg 'closed' @('open') $false $false) -eq '' -and (& $tg 'closed' @('review', 'inTest') $false $true) -eq 'review' -and (& $tg 'closed' @('failedTesting') $true $false) -eq 'inProgress' -and (& $tg 'inTest' @('closed', 'closed') $true $false) -eq '' -and (& $tg 'blocked' @('open') $true $false) -eq '' -and (& $tg 'open' @('open', 'zzz') $false $false) -eq '')"
 function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; function St($i) { (Get-TrackerTask $i).status }
 $p = Mk 'Ask' $null; $a = Mk 'A' $p; $b = Mk 'B' $p; Clear-TrackerMemo $p
 Set-TrackerStatus $a 'inProgress'; "t1:$(St $p)"

@@ -13,12 +13,13 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L151 record-args · L170 budget · L189 build-prompt · L264 ship-prompt · L282 plan · L300 spike ·
-//   L313 local-loop · L386 stages · L539 ship · L579 debate · L692 deploy · L707 learn
+// Sections: L18 args · L152 record-args · L171 budget · L190 build-prompt · L265 ship-prompt · L283 plan · L302 spike ·
+//   L315 local-loop · L388 stages · L541 ship · L581 debate · L694 deploy · L709 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
- agents: [{ id: 'X1', items: 'A3, A4', area, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: ['X0'] (builds once its producers MERGED),
+ task: '<tracker id>' (2+ areas: a subtask each, AREA TASK lines),
+ agents: [{ id: 'X1', items: 'A3, A4', area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: ['X0'] (builds once its producers MERGED),
   migrations: true (datay reviews them), debate: { item, question, options: ['A: ..', 'B: ..'], owner } (briefy: debated before the build; owner: past 1 per run) }],
  debateModels: ['<A>', '<B>'] (advocates; default sonnet),
  openQuestions: ['<question>'] (Spike: rechy answers them in the brief first; one open -> spikeOpen),
@@ -67,7 +68,7 @@ const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported`)
 // unknown args: refused, never dropped
 const unk = (o, keys, pre = '') => Object.keys(o).filter((k) => !keys.split(' ').includes(k)).map((k) => pre + k)
-const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex holdMerge learn batch kitDir runtimeDir run debateModels'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate', `agents.${a.id}.`),
+const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex holdMerge learn batch kitDir runtimeDir run debateModels task'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate task', `agents.${a.id}.`),
  ...(a.debate && [].concat(a.debate.options || []).length !== 2 ? [`agents.${a.id}.debate.options (2)`] : [])])]
 if (badArgs.length) throw new Error(`buildy.js args refused: unknown ${badArgs.join(', ')}; free text: agents[].note or the brief`)
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (owner words): agents may drop items for the latest chat message (bossy step 3).')
@@ -197,7 +198,7 @@ function depNote(a) {
   (cs.length ? `MERGE ORDER: area(s) ${cs.join(', ')} consume your work: open your MRs early and say which MR carries the contract.\n` : '')
 }
 const globs = (a) => [].concat(a.paths || []).join(',')
-const areaNote = (a) => globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\n` : ''
+const areaNote = (a) => (globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\n` : '') + (AREA_TASK[a.id] ? `TRACKER TASK: ${AREA_TASK[a.id]} (subtask of ${a.task || A.task}) = <task> in every tracker step (status, MR title, track add); never the parent's status.\n` : '')
 // this run's commands live in agents/devy.md "In a /buildy wave" (devy's own definition: same text, one copy)
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses) with your agent definition's
 "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
@@ -287,6 +288,7 @@ if (A.agents.every(allDone)) { log('RESUME: every area is done (MRs merged, trac
 const REC = await recordArgs('buildy', RUN, A0, 'Build', PLAN), GAPS = REC.match(/^TASKS REFUSED .*$/gm)
 takeBudget(REC, A.agents.length)
 takeConfig(REC)
+const AREA_TASK = Object.fromEntries([...REC.matchAll(/^AREA TASK (\S+) (?!FAILED)(\S+)/gm)].map((m) => [m[1], m[2]]))
 const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents: own(agents), batch: undefined, ...extra } })
 if (GAPS) { log(`REFUSED:\n${GAPS.join('\n')}`); return { refused: true, taskGaps: GAPS, next: nextCall([], A0) } }
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
@@ -529,7 +531,7 @@ const results = await pipeline(
   const tr = await agentOrRedo(`STEP: register devy ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}${AGENT_ENV(`track-${a.id}`)}
 MRs: ${x.report.mrs.map((m) => m.url).join(', ')}
 1. The task id is in each MR's title after the tracker tag (the title wins over the branch); group the MRs by task.
-2. Per task: & ${ORCH} track add -Task <task id> -Discover -Mrs '<repo>!<iid>','<repo>!<iid>' -HoldPromotion '${(why || '').replace(/'/g, '').slice(0, 200)}'
+2. Per task: & ${ORCH} track add -Task <task id> -Discover -Mrs '<repo>!<iid>','<repo>!<iid>'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}
 Return ok=true and the output lines.`, { label: `track:${a.id}`, phase: 'Fix', schema: OK_SCHEMA, agentType: 'devy', ...pick('ship'), effort: 'low' })
   if (!tr || !tr.ok) log(`${a.id}: WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'})`)
   return why ? { ...x, trackHeld: why } : x

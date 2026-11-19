@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task_rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L83 move · L126 parent status · L159 task text
+# Sections: L7 items · L83 move · L126 parent status · L181 task text
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -125,6 +125,28 @@ function Invoke-KitTaskGroup([string]$Parent, [string[]]$Tasks, $Spec, [switch]$
 }
 # ---- parent status: a parent follows its open subtasks (owner, 2026-11-18); called by lib.ps1 Set-TrackerStatus, New-TrackerTask, Move-TrackerTask, above every tracker.type
 $script:KitStatusRank = [ordered]@{ open = 0; inProgress = 1; failedTesting = 1; review = 2; promoted = 3; inTest = 4; closed = 5 }
+# lib.ps1 Set-TrackerStatus (owner, 2026-11-19, 11 flips on one task): why a write is skipped, '' = write. No write equal to the
+# current status or this process's last one; no step back (rank) but failedTesting or -Back '<why>' (a new code round on THAT task);
+# a parent whose subtasks are open and read follows them (Sync-TrackerParent), failedTesting aside
+# UNCHANGED: ... (no write, done) · SKIPPED: ... (refused: callers keep the task open); a [Bug] child is no area (QA closes its ask)
+function Test-KitStatusWrite([string]$Id, [string]$Status, [string]$Back, $Was) {
+  $cur = if ($Was.status) { Get-TrackerStatusKey "$($Was.status)" } else { '' }; if (-not $script:KitStatusSet) { $script:KitStatusSet = @{} }
+  if ($Status -eq $cur -or (-not $cur -and "$($script:KitStatusSet[$Id])" -eq $Status)) { return "UNCHANGED: $Id status $Status (no write)" }
+  $rk = $script:KitStatusRank
+  if (-not $Back -and $Status -ne 'failedTesting' -and $rk.Contains($cur) -and $rk.Contains($Status) -and $rk[$Status] -lt $rk[$cur]) { return "SKIPPED: $Id kept '$($Was.status)': $Status is a step back (only failedTesting, or -Back '<why>' for a new code round on it)" }
+  $subs = @($Was.subtasks | Where-Object { $_.id -and -not (Test-KitBugName "$($_.name)") }); $open = @($subs | Where-Object { -not (Test-TrackerStatus "$($_.status)" 'closed') })
+  if ($Status -eq 'failedTesting' -or -not $open.Count -or @($subs | Where-Object { -not (Get-TrackerStatusKey "$($_.status)") }).Count) { return '' }
+  $sy = Sync-TrackerParent -ParentId $Id; "SKIPPED: $Id not set to $Status`: it follows its $($open.Count) open subtask(s)$(if ($sy) { " ($sy)" })"
+}
+# lib.ps1 Invoke-KitOutbox: a queued status is checked again when sent (the task may have moved on meanwhile)
+function Send-KitQueuedStatus([string]$Id, [string]$Status) {
+  $sk = Test-KitStatusWrite $Id $Status '' $(try { Clear-TrackerMemo $Id; Get-TrackerTask $Id } catch { $null }); if ($sk) { return "dropped: $sk" }; __Set-TrackerStatus $Id $Status
+}
+# after a write (not a queued or dry one): this process's memo, then the parent follows its children
+function Complete-KitStatusWrite([string]$Id, [string]$Status, $R, $Was) {
+  if ("$R" -match '^QUEUED' -or $__trDry) { return }; $script:KitStatusSet[$Id] = $Status
+  if ($Was.parent) { $null = Sync-TrackerParent $Id (Resolve-TrackerStatus $Status) -ParentId "$($Was.parent)" -Reopen:(Test-TrackerStatus "$($Was.status)" 'closed') }
+}
 function Get-TrackerStatusKey([string]$Name) { foreach ($k in @($__trStatus.Keys)) { if (@($__trStatus[$k]) | Where-Object { $_ -ieq "$Name".Trim() }) { return $k } }; '' }
 # the status a parent should have: the least advanced of its open subtasks. Forward only; backwards for a new child (-NewChild);
 # a closed parent opens again for a new child or a reopened one (-Reopen); '' = leave it
@@ -132,7 +154,7 @@ function Get-KitParentStatusTarget([string]$ParentKey, [string[]]$ChildKeys, [sw
   $rk = $script:KitStatusRank; if (-not $rk.Contains($ParentKey)) { return '' }
   $open = @($ChildKeys | Where-Object { $_ -and $rk.Contains($_) -and $_ -ne 'closed' }); if (-not $open.Count) { return '' }
   $t = @($open | Sort-Object { $rk[$_] })[0]; if ($t -eq 'failedTesting') { $t = 'inProgress' }
-  $go = if ($ParentKey -eq 'closed') { $NewChild -or $Reopen } else { $rk[$t] -gt $rk[$ParentKey] -or ($NewChild -and $rk[$t] -lt $rk[$ParentKey]) }
+  $go = if ($ParentKey -eq 'closed') { $NewChild -or $Reopen } else { $rk[$t] -gt $rk[$ParentKey] -or ($NewChild -and $rk[$t] -lt $rk[$ParentKey] -and $ParentKey -ne 'inProgress') }   # an in-progress parent stays (launch area subtasks)
   if ($go -and $t -ne $ParentKey) { $t } else { '' }
 }
 # -ChildId / -ChildStatus: the change just made (a tracker may still show the old one); no child: the parent's own subtasks as read.

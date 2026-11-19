@@ -1405,7 +1405,7 @@ function Invoke-KitOutbox([switch]$DryRun) {
       if ($DryRun) { "QUEUED $($e.op) $($e.id) since $($e.at) (tries $($e.tries)): $($e.why)"; $keep.Add($l); continue }
       if ($e.op -eq 'status' -and ((Get-Date) - [datetime]$e.at).TotalHours -gt 24) { "GAVE UP $($e.op) $($e.id) -> $($e.arg): queued > 24 h ago (a person may have moved it)"; continue }
       try {
-        $out = if ($e.op -eq 'status') { __Set-TrackerStatus $e.id $e.arg } else { __Add-TrackerComment $e.id $e.arg }
+        $out = if ($e.op -eq 'status') { Send-KitQueuedStatus $e.id $e.arg } else { __Add-TrackerComment $e.id $e.arg }
         "SENT $($e.op) $($e.id) (queued $($e.at)): $(__TrShort "$out")"
       } catch {
         $m = "$($_.Exception.Message)"; $e.tries = [int]$e.tries + 1; $e.why = __TrShort $m
@@ -1416,16 +1416,16 @@ function Invoke-KitOutbox([switch]$DryRun) {
     if ($keep.Count) { [IO.File]::WriteAllLines($f, $keep) } else { Remove-Item -LiteralPath $f -Force }
   }
 }
-function Set-TrackerStatus([string]$Id, [string]$Status) {
+function Set-TrackerStatus([string]$Id, [string]$Status, [string]$Back) {
   $Status = ConvertTo-TrackerStatusKey $Status
   if (Test-TrackerStatusOff $Status) { Write-Host "tracker: $Id status $Status skipped (tracker.statuses.$Status is null)"; return }
+  $was = try { if (-not $__trDry) { Clear-TrackerMemo $Id; Get-TrackerTask $Id } } catch { $null }
+  if ($skip = Test-KitStatusWrite $Id $Status $Back $was) { Write-Host "tracker: $skip"; return @($skip) -like 'SKIPPED*' }
   # promoted: process.gates.promote (builtin:testingDocs: the doc links; an unread task fails closed)
   if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and -not ($pg = Test-KitProcessGate promote @{ task = $Id; status = $Status }).ok) {
     throw "tracker: $Id not set to $Status`: $($pg.why)"
   }
-  $was = try { if (-not $__trDry) { Get-TrackerTask $Id } } catch { $null }
-  $r = Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }
-  if ($was.parent -and "$r" -notmatch '^QUEUED') { $null = Sync-TrackerParent $Id (Resolve-TrackerStatus $Status) -ParentId "$($was.parent)" -Reopen:(Test-TrackerStatus "$($was.status)" 'closed') }
+  $r = Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }; Complete-KitStatusWrite $Id $Status $r $was
   $r
 }
 function Add-TrackerComment([string]$Id, [string]$Text) { if (-not "$Id".Trim()) { throw 'tracker comment: no task id (a tracker CLI would guess it from the branch name)' }; $t = __TrText $Text; if (-not "$t".Trim()) { throw "tracker comment: empty text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }

@@ -158,5 +158,20 @@ Expect 'results patch: an add row without id or a set value no object = refused 
 $ps = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch '{"set":{"T2":{"observed":"set only"}}}' 2>&1 | Out-String   # no add key: .add was the hashtable's Add method (L20)
 Expect "results patch: a set-only patch (no add key) applies ($($ps.Trim()))" ($ps -match '1 changed, 0 added' -and @((Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json).checks | Where-Object { $_.id -eq 'T2' -and $_.observed -eq 'set only' }).Count -eq 1)
 Expect "pokey.ps1 results hold: held.json from arguments, the script's UTC time ($($hj.at))" ($hj.held -eq "env: it's down" -and $hj.envFix.id -eq 'd-1' -and $hj.summary -eq 'W1: pass 1/3' -and (Get-Content -Raw "$rd/W1/held.json") -match '"at": "\d{4}-\d\d-\d\dT[\d:.]+Z"')
+# buildy: AREA TASK lines give each devy its subtask; -HoldPromotion '' only on its own subtask (on a shared task it released every area's hold)
+$jsat = @'
+const calls = []
+const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
+ if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED\nAREA TASK X1 T-X1 https://t/T-X1\nAREA TASK X2 FAILED: no\n' + _CFG }
+ if (/^ci:/.test(o.label)) return { done: true, mrs: [] }
+ return /^(build|ship):/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, _merged(1)) : _ok('[]') }
+const args = { brief: 'C:/b/w.md', task: 'P1', agents: [{ id: 'X1', items: 'A1', area: 'a' }, { id: 'X2', items: 'A2', area: 'b' }], mandate: ['m'], ..._kl }
+run(args, agent, _n, _n, pipeline).then(() => {
+ const pr = (l) => (calls.find((c) => c.label === l) || {}).prompt || ''
+ console.log(`area-task:${/TRACKER TASK: T-X1 \(subtask of P1\)/.test(pr('build:X1')) && !/TRACKER TASK/.test(pr('build:X2'))}`)
+ console.log(`no-release:${/-HoldPromotion ''/.test(pr('track:X1')) && pr('track:X2') !== '' && !/-HoldPromotion/.test(pr('track:X2'))}`)
+}).catch(_err)
+'@
+Expect-Each (Invoke-Js dw-areatask $jsat $wfd) 'buildy: #' 'area-task', 'no-release' -Show 5
 Remove-TestKit $k
 Complete-Tests

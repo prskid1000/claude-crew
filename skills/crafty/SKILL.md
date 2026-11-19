@@ -118,10 +118,10 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   MR state in any report or text: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
   brief or memory. Over its prose limit, `wt commit`, `tracker comment -Kind <comment-*>`, `devtools.py comment|finish|mr`
   refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
-- **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once the MR, both docs and
-  the solution comment are posted -> `promoted` by `track` when all merge -> `inTest` after the deploy (coordinator)). Never set
-  `inTest` or `closed` yourself; `promoted` passes `process.gates.promote` (`builtin:testingDocs`: both doc links,
-  only atop the description, never in a comment).
+- **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once MR, both docs and
+  solution comment posted -> `promoted` by `track` when all merge -> `inTest` after deploy (coordinator)). Never set
+  `inTest`, `closed`, a parent's status, a step back (new code round: `-Back`); `promoted` passes
+  `process.gates.promote` (`builtin:testingDocs`: doc links atop the description, never a comment).
 - **Publish once per key:** docs and evidence via `devtools.py doc|evidence --key <task|run>:<kind>` (same link, a dated
   section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one; decisions: `bossy.ps1 decide` only);
   `devtools.py mr` edits the open MR.

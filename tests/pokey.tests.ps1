@@ -265,9 +265,15 @@ New-Task 'PF' 'Ask F'; New-Task 'TF' 'Task F' 'PF'; $fk = New-Run 'FK' @(@{ code
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
 $null = Fin $fk 'K1'
 Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PF' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
-# retro 2205: no upload map yet (-Check) -> plain file names, not 'Cannot index into a null array'
-$qm = pwsh -NoProfile -Command ". '$Q' 6>`$null; (Build-QaReportMd -Title t -Code T2 -Item @{} -Res ([pscustomobject]@{ checks = @([pscustomobject]@{ id = 'C1'; result = 'PASS'; evidence = @('T2-C1_01_a.png') }) }) -Map `$null -Run @{} -Tester x -Date d -Cells @{}) -join ' '" 2>&1 | Out-String
-Expect "report md: a null upload map renders file names ($($qm.Trim().Length) chars)" ($qm -match 'file: T2-C1_01_a\.png' -and $qm -notmatch 'null array')
+# owner 2026-11-19: subtasks follow the parent's failedTesting; an MR merged after the run start: kept
+$ff = @(@('C1', 'PASS'), @('C2', 'FAIL')); New-Task 'PC' 'Ask C' $null 'in test'; New-Task 'SC' 'Sub C' 'PC' 'in test'
+$cr = New-Run 'CR' @(@{ code = 'CR1'; task = 'PC'; checks = $ff }); $null = Fin $cr 'CR1'
+Expect "failedTesting: the in-test subtask follows its parent ($((Task 'SC').status))" ((Task 'PC').status -eq 'failed testing' -and (Task 'SC').status -eq 'failed testing')
+$mg = Join-Path (Kd) 'mrget.ps1'; Set-Content $mg 'param($n) ''{"state":"merged","merged_at":"'' + $(if ($n -eq 5) { ''2026-01-03'' } else { ''2025-12-30'' }) + ''T12:00:00Z"}'''
+& $J (@{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$mg`" {n}" } } } + ($klBase | ConvertFrom-Json -AsHashtable)) $kl
+foreach ($lt in @(@('LT', 'api!5'), @('OK', 'api!6'))) { New-Task "T$($lt[0])" 't' $null 'in test'; $ld = New-Run "2026-01-01-100000-$($lt[0])" @(@{ code = "$($lt[0])1"; task = "T$($lt[0])"; checks = $ff }); $rj = Read-Json "$ld/run.json"; $rj.items[0].subtasks[0] | Add-Member mrs $lt[1]; & $J $rj "$ld/run.json"; $null = Fin $ld "$($lt[0])1"; Set-Variable "fin$($lt[0])" (Rec $ld "$($lt[0])1") }
+Expect "late QA result: status kept, the comment says why; an older merge applies it ($($finLT.keptOpen))" (-not $finLT.failedTesting -and $finLT.keptOpen -match 'api!5 merged after this run started' -and (Task 'TLT').status -eq 'in test' -and @((Task 'TLT').comments | Where-Object { $_.text -match 'Status unchanged: api!5' }).Count -eq 1 -and $finOK.failedTesting)
+$klBase | Set-Content $kl
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
 Remove-TestKit $k
 Complete-Tests

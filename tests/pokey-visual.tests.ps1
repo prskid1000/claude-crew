@@ -60,5 +60,8 @@ process.exit(0)
 '@) "$qk/targets.local.json" $(if (-not $nopw) { $pwm })
   foreach ($x in 'totp', 'totp-login', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright)" } else { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") } }
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/pokey)' }
+# retro 2205: no upload map yet (-Check) -> plain file names, not 'Cannot index into a null array'
+$qm = pwsh -NoProfile -Command ". '$Q' 6>`$null; (Build-QaReportMd -Title t -Code T2 -Item @{} -Res ([pscustomobject]@{ checks = @([pscustomobject]@{ id = 'C1'; result = 'PASS'; evidence = @('T2-C1_01_a.png') }) }) -Map `$null -Run @{} -Tester x -Date d -Cells @{}) -join ' '" 2>&1 | Out-String
+Expect "report md: a null upload map renders file names ($($qm.Trim().Length) chars)" ($qm -match 'file: T2-C1_01_a\.png' -and $qm -notmatch 'null array')
 Remove-TestKit $k
 Complete-Tests
