@@ -6,7 +6,7 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L302 cards · L503 flags · L601 shells
+Sections: L12 gate · L64 waits · L90 qa · L106 cpu · L141 writes (owner 2026-11-18 · L332 cards · L533 flags · L631 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -143,15 +143,35 @@ function Update-KitCpuStats($Prior, [datetime]$Now = (Get-Date), $Shells = @(), 
 # (kit-owned), else the tree's root under the OS, named by its heaviest writer (wrappers fold: timeout -> mysqld). A pid seen before
 # counts its growth, one started since the last beat all of it, an older unseen one nothing (no history spike); an exited one drops out.
 # writes.softGBPerHour -> WATCH, writes.hardGBPerHour -> ACT; closed clock hours -> state disk-writes (the card's 7 and 30 days)
+# K94 (owner 2026-11-19): the I/O counter also counts pipes, sockets and console, so a GB is "est." = the process's share of all process
+# I/O x the physical disks' real writes over the same beat (never above them); no disk counter -> no flag; not kit-owned -> never ACT,
+# WATCH only when the disks wrote writes.hardGBPerHour; kit.local.json writes.tracerCsv (Time, Process, WriteMB[, Kind=disk]) caps a non-kit row
 function Get-KitWriteProcs {   # the sweep's processes + Write (bytes); none off Windows
   if (-not $KitIsWindows) { return @() }
   $wb = @{}; foreach ($c in @(Get-CimInstance Win32_Process -Property ProcessId, WriteTransferCount -ErrorAction SilentlyContinue)) { $wb[[int]$c.ProcessId] = [double]$c.WriteTransferCount }
   @(Get-KitSweepProcs | Where-Object { $wb.ContainsKey($_.Id) } | ForEach-Object { $_ | Add-Member -Force -NotePropertyName Write -NotePropertyValue $wb[$_.Id] -PassThru })
 }
+# bytes written to all physical disks since boot (cumulative raw counter); $null off Windows or without perf counters
+function Get-KitDiskWritten {
+  if (-not $KitIsWindows) { return $null }
+  # the property is matched, not named: its full name is a pwsh script-block-logging trigger (lint ARCH-SBLOG)
+  try { $pd = @(Get-KitProps @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop)[0] | Where-Object Name -like 'DiskWriteB*'); if ($pd.Count) { [double]$pd[0].Value } } catch { $null }
+}
+# the tracer CSV's disk GB per process name over the hour before $Now; $null when unset, missing or stale (no row in 30 min)
+function Read-KitWriteTracer([string]$File, [datetime]$Now) {
+  if (-not $File -or -not (Test-Path -LiteralPath $File)) { return $null }
+  $hd = (Get-Content -LiteralPath $File -TotalCount 1); $rows = @(Get-Content -LiteralPath $File -Tail 3000 | Where-Object { $_ -ne $hd } | ConvertFrom-Csv -Header @($hd -split ',' | ForEach-Object { $_.Trim('"') }))
+  $ic = [cultureinfo]::InvariantCulture; $gb = @{}; $newest = [datetime]::MinValue
+  foreach ($r in $rows) { $t = [datetime]::MinValue; if (-not [datetime]::TryParse("$($r.Time)", $ic, [Globalization.DateTimeStyles]::None, [ref]$t) -or ($r.Kind -and $r.Kind -ne 'disk')) { continue }
+    if ($t -gt $newest) { $newest = $t }; if ($t -gt $Now.AddHours(-1) -and $t -le $Now) { $gb["$($r.Process)"] = [double]$gb["$($r.Process)"] + [double]::Parse("$($r.WriteMB)", $ic) / 1024 } }
+  if ($newest -lt $Now.AddMinutes(-30)) { return $null }; $gb
+}
+# a command's executable without folder and .exe (the tracer's process name)
+function Get-KitWriteExe([string]$Name, [string]$Cmd) { if ($Cmd -match '^(?:"(?:[^"]*[\\/])?(?<x>[^"\\/]+?)(?:\.exe)?"|(?:\S*[\\/])?(?<x>[^\s\\/]+?)(?:\.exe)?(?:\s|$))') { $Matches.x } else { $Name -replace '(?i)\.exe$' } }
 # a process's short label (the full command stays in the tooltip): a browser with its CDP port, a DB server with its data folder,
 # a runtime with its script, jar, main class or npx package, else the name without .exe
 function Get-KitWriteLabel([string]$Name, [string]$Cmd) {
-  $b = if ($Cmd -match '^(?:"(?:[^"]*[\\/])?(?<x>[^"\\/]+?)(?:\.exe)?"|(?:\S*[\\/])?(?<x>[^\s\\/]+?)(?:\.exe)?(?:\s|$))') { $Matches.x } else { $Name -replace '(?i)\.exe$' }   # a wrapper's row carries its child's command
+  $b = Get-KitWriteExe $Name $Cmd   # a wrapper's row carries its child's command
   $leaf = { param([string]$p) @("$p".Trim('"', "'") -split '[\\/]' | Where-Object { $_ }) }
   $nice = @{ msedge = 'Edge'; chrome = 'Chrome'; brave = 'Brave'; firefox = 'Firefox'; slack = 'Slack'; code = 'VS Code'; 'ms-teams' = 'Teams'; onedrive = 'OneDrive' }
   $nm = if ($nice[$b.ToLower()]) { $nice[$b.ToLower()] } else { $b }
@@ -166,11 +186,13 @@ function Get-KitWriteLabel([string]$Name, [string]$Cmd) {
   $nm
 }
 # $Procs: @{ Id; ParentId; Name; CommandLine; Created; Write }; $Owners: @{ pid; label; tag } roots; -> @{ at; acc; samples; hour; flags }
-# a sample = @{ at; s = seconds; m = machine GB; w = @(@{ n = label; a = tag (agent); g = GB; c = top command; k = 1: kit-owned }) }
-function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @()) {
+# $Disk: Get-KitDiskWritten; $Tracer: Read-KitWriteTracer
+# a sample = @{ at; s = seconds; m = machine GB (the disks' when e); e = 1: GBs scaled to the disks; w = @(@{ n = label; a = tag (agent); g = GB; c = top command; k = 1: kit-owned }) }
+function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Disk = $null, $Tracer = $null) {
   $key = { param($p) "$($p.Id)|$(if ($p.Created) { ([datetime]$p.Created).ToUniversalTime().Ticks })" }
   $osRoot = '^(System|Idle|smss|csrss|wininit|winlogon|services|svchost|explorer|userinit|init|systemd|launchd)(\.exe)?$'
   $byId = @{}; $acc = [ordered]@{}; foreach ($p in @($Procs | Where-Object { $_ -and $null -ne $_.Write })) { $byId[[int]$p.Id] = $p; $acc[(& $key $p)] = [double]$p.Write }
+  if ($null -ne $Disk) { $acc['disk'] = [double]$Disk }
   $own = @{}; foreach ($o in @($Owners | Where-Object { $_ -and [int]$_.pid -gt 0 -and $_.label })) { if (-not $own.ContainsKey([int]$o.pid)) { $own[[int]$o.pid] = $o } }
   $ownerOf = { param($p) $q = $p
     for ($n = 0; $n -lt 16; $n++) { if ($own.ContainsKey([int]$q.Id)) { return $own[[int]$q.Id] }
@@ -192,16 +214,24 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @()) {
       $kit = $t.o -isnot [string]; $lb = if ($kit) { "$($t.o.label)" } else { Get-KitWriteLabel "$($t.p.Name)" $cl }
       if (-not $rw.Contains($lb)) { $rw[$lb] = @{ a = $(if ($kit) { "$($t.o.tag)" } else { '' }); g = 0.0; b = 0.0; c = ''; k = [int]$kit } }
       $r = $rw[$lb]; $r.g += $gb[$ok]; if ($t.b -gt $r.b) { $r.b = $t.b; $r.c = $cl.Substring(0, [math]::Min(120, $cl.Length)) } }
-    $samples += [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; m = [math]::Round($mach, 3); w = @($rw.Keys | Where-Object { $rw[$_].g -ge 0.001 } | ForEach-Object { [ordered]@{ n = "$_"; a = $rw[$_].a; g = [math]::Round($rw[$_].g, 3); c = $rw[$_].c; k = $rw[$_].k } }) }
+    # the disks' growth this beat (a reboot resets the counter: no scale); each GB = its share of all process I/O x that
+    $wasD = Get-KitMember $Prior.acc 'disk'; $dg = if ($null -ne $Disk -and $null -ne $wasD -and [double]$Disk -ge [double]$wasD) { ([double]$Disk - [double]$wasD) / 1GB }
+    $f = if ($null -eq $dg) { 1.0 } elseif ($mach -gt 0) { [math]::Min(1.0, $dg / $mach) } else { 0.0 }
+    $smp = [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; m = [math]::Round($(if ($null -ne $dg) { $dg } else { $mach }), 3) }; if ($null -ne $dg) { $smp.e = 1 }
+    $smp.w = @($rw.Keys | Where-Object { $rw[$_].g * $f -ge 0.001 } | ForEach-Object { [ordered]@{ n = "$_"; a = $rw[$_].a; g = [math]::Round($rw[$_].g * $f, 3); c = $rw[$_].c; k = $rw[$_].k } }); $samples += $smp
   }
-  $hr = @{}; $last = @{}
-  foreach ($s in @($samples | Where-Object { [datetime]$_.at -gt $Now.AddHours(-1) })) { foreach ($r in @(Get-KitWriteRows $s)) { $hr["$($r.n)"] = [double]$hr["$($r.n)"] + [double]$r.g; $last["$($r.n)"] = $r } }
-  $hour = @($hr.Keys | Sort-Object { - $hr[$_] } | ForEach-Object { [ordered]@{ label = $_; tag = "$($last[$_].a)"; gb = [math]::Round($hr[$_], 2); cmd = "$($last[$_].c)" } })
+  $hr = @{}; $last = @{}; $hd = 0.0; $he = $false
+  foreach ($s in @($samples | Where-Object { [datetime]$_.at -gt $Now.AddHours(-1) })) { if ($s.e) { $he = $true; $hd += [double]$s.m }
+    foreach ($r in @(Get-KitWriteRows $s)) { $hr["$($r.n)"] = [double]$hr["$($r.n)"] + [double]$r.g; $last["$($r.n)"] = $r } }
+  # the tracer's disk GB of the top process caps a row not kit-owned; a kit row keeps its estimate: a cached write (qemu disk images,
+  # browser profiles) is flushed by System, so the writer's own name undercounts it (2026-11-19: Falcon.avd 0.8 GB/h, qemu 0)
+  $hour = @($hr.Keys | ForEach-Object { $g = $hr[$_]; if ($Tracer -and -not [int]$last[$_].k) { $g = [math]::Min($g, [double]$Tracer[(Get-KitWriteExe '' "$($last[$_].c)")]) }
+      [ordered]@{ label = $_; tag = "$($last[$_].a)"; gb = [math]::Round($g, 2); cmd = "$($last[$_].c)"; k = [int]$last[$_].k } } | Sort-Object { - $_.gb })
   $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour')
   # a burst that is over (no write in the last 2 samples: exited or stopped) leaves the flags, the card keeps its hour
   $nowS = @($samples | Where-Object { "$($_.at)" -eq $Now.ToString('o') })[0]; $cur = @($samples | Select-Object -Last 2 | ForEach-Object { Get-KitWriteRows $_ } | ForEach-Object { "$($_.n)" })
-  $flags = @(foreach ($h in @($hour | Where-Object { $_.gb -ge $soft -and (-not $nowS -or $_.label -in $cur) })) { $lv = if ($h.gb -ge $hard) { 'ACT' } else { 'WATCH' }; $who = "$($h.label)$(if ($h.tag) { " ($($h.tag))" })"
-      [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $who; what = "WRITES ${who}: $($h.gb) GB written in the last hour (soft $soft / hard $hard GB); top: $(Get-KitWriteLabel '' $h.cmd)" -replace "; top: $([regex]::Escape($h.label))$"
+  $flags = @(foreach ($h in @($hour | Where-Object { $he -and $_.gb -ge $soft -and (-not $nowS -or $_.label -in $cur) -and ($_.k -or $hd -ge $hard) })) { $lv = if ($h.k -and $h.gb -ge $hard) { 'ACT' } else { 'WATCH' }; $who = "$($h.label)$(if ($h.tag) { " ($($h.tag))" })"
+      [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $who; what = "WRITES ${who}: est. $($h.gb) GB to disk in the last hour (all disks $([math]::Round($hd, 2)) GB; soft $soft / hard $hard GB$(if (-not $h.k) { '; not kit-owned' })); top: $(Get-KitWriteLabel '' $h.cmd)" -replace "; top: $([regex]::Escape($h.label))$"
         action = "$(if ($lv -eq 'ACT') { 'Check whether it is a one-off (a burst already over, a false positive) before acting; still writing: stop it, then ' })tell its owner: no bulk data, dumps, tree copies, reinstalls or big captures (AGENTS.md); links / moves, small fixtures, read-only checks." } })
   [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; hour = $hour; flags = $flags }
 }
@@ -215,7 +245,7 @@ function Get-KitSuperviseFlagsWrites([switch]$AutoFix) {
   $owners = @(Get-Variable res -ValueOnly -ErrorAction SilentlyContinue | ForEach-Object { $_ } | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "$($r.name)"; tag = $(if ("$($r.by)" -notmatch '^(no lease|free|parked)') { ("$($r.by)" -replace '\s*\(.*$').Trim() }) } } }) +
     @(@($script:KitShellRows) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "$(if ($r.owner) { $r.owner } else { 'unknown agent' })"; tag = 'shell' } } }) +
     @(@(Invoke-KitHooks Get-KitCpuGroups) | Where-Object { $_ -and $_.pid } | ForEach-Object { $r = $_; foreach ($p in @($r.pid)) { @{ pid = [int]$p; label = "lane $($r.name)"; tag = '' } } })
-  $now = Get-Date; $w = Update-KitWriteStats $prior $now @(Get-KitWriteProcs) $owners
+  $now = Get-Date; $w = Update-KitWriteStats $prior $now @(Get-KitWriteProcs) $owners (Get-KitDiskWritten) (Read-KitWriteTracer (Get-KitSetting 'writes.tracerCsv' '') $now)
   Write-KitAtomic $cf ([ordered]@{ at = $w.at; acc = $w.acc; samples = $w.samples; hour = $w.hour } | ConvertTo-Json -Depth 6 -Compress)
   try { Update-KitWriteHistory (Get-KitPath disk-writes) $w.samples $now } catch { }   # the card's 7 / 30 days; a failed append costs one hour
   $w.flags
@@ -320,7 +350,7 @@ function Format-KitWritesCard($W, [string]$Extra = '') {
       (Format-KitHeatCells @($dy.h) $d0 "$dl, GB written per hour: machine over kit-owned" { param($hv) "machine $(& $gbT $hv[0]) · kit-owned $(& $gbT $hv[1])" } { param($hv) @((Get-KitHeatShade ([double]$hv[0] / $scD)), (Format-KitHeatNum $hv[0]), (Get-KitHeatShade ([double]$hv[1] / $scD)), (Format-KitHeatNum $hv[1])) } 'sp ws' -NowAt $(if ($di) { -1 } else { ([datetime]$W.at).Hour })) +
       (@(for ($ci = 0; $ci -lt 3; $ci++) { "<span class='gc$(if ($dv[$ci] -eq '0') { ' z' })'>$($dv[$ci])</span>" }) -join '') + '</div>' })
   $tot = [double](@($ds | ForEach-Object { [double]$_.m }) + 0 | Measure-Object -Sum).Sum
-  & $fold 'writes' 'Disk writes · 7 days' "$(& $gbT $tot)" "<div class='gks w3' data-mk=writes-day-hour>$dHead$($dRows -join '')</div><div class=hk><i class='lgk c'></i>top half = the whole machine <i class='lgk r'></i>bottom half = kit-owned · GB per clock hour · outlined = now · per owner: Resources · 24 h, Writes GB</div>$Extra" -tag h4 -cls 'sub st wr'
+  & $fold 'writes' 'Disk writes · 7 days' "$(& $gbT $tot)" "<div class='gks w3' data-mk=writes-day-hour>$dHead$($dRows -join '')</div><div class=hk><i class='lgk c'></i>top half = the whole machine <i class='lgk r'></i>bottom half = kit-owned · GB per clock hour (machine: disk counter; per owner: est. = share of process I/O x disk writes) · outlined = now · per owner: Resources · 24 h, Writes GB</div>$Extra" -tag h4 -cls 'sub st wr'
 }
 # a share 0..1 -> cell shade % (square root: a small value still shows; 0 = blank)
 function Get-KitHeatShade([double]$F) { if ($F -gt 0) { [int][math]::Round(25 + 75 * [math]::Sqrt([math]::Min(1.0, $F))) } else { 0 } }
@@ -477,8 +507,8 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
   $groups = @(foreach ($gk0 in $gl.Keys) { $gi = @($items | Where-Object grp -eq $gk0); $kb = @(if ($gk0 -eq 'build') { $kinds }); if (-not ($gi.Count + $kb.Count)) { continue }; $op = $gk0 -eq 'machine'
       $wst = if (@($gi | Where-Object tone -eq 'hot').Count) { @('s-stuck', 'CPU over 80%') } elseif (@($gi | Where-Object dk -eq 'hot').Count) { @('s-stuck', 'disk filling') } elseif (@($gi | Where-Object dk -eq 'warn').Count) { @('s-oth', 'disk low') } elseif (@($gi | Where-Object wl -ge 2).Count) { @('s-stuck', "writes over $(& $n1 $hard) GB/h") } elseif (@($gi | Where-Object wl -ge 1).Count) { @('s-oth', "writes over $(& $n1 $soft) GB/h") } elseif (@($gi | Where-Object ql).Count) { @('s-oth', 'waits of 30+ min') } elseif (@($gi | Where-Object orphan).Count) { @('s-oth', "$(@($gi | Where-Object orphan).Count) no live holder") } elseif (@($gi | Where-Object tone -eq 'warn').Count) { @('s-oth', 'CPU peak over 80%') }
       "<div class='rgg$(if (-not $op) { ' cl' })$(if ($kb.Count) { ' hb' })$(if (-not $gi.Count) { ' ob' })' data-g='rg-$gk0'><div class='gk rgh'><button type=button class=rgb aria-expanded=$(if ($op) { 'true' } else { 'false' })><span class=gn0>$($gl[$gk0])</span><span class=gcn>$(if ($gi.Count) { $gi.Count } else { "$($kb.Count) kinds" })</span>$(if ($wst) { "<span class='chip $($wst[0])'>$($wst[1])</span>" })</button></div>$(Format-KitHeatRows @($gi | ForEach-Object { [pscustomobject]@{ busy = $_.busy -or $_.grp -eq 'machine'; html = $_.html } }) 'rows' '24 h')$((Format-KitHeatRows $kb 'kinds' '24 h') -replace 'class=gkx ', "class='gkx mb' ")</div>" })
-  $tabs = "<div class=rgt role=group aria-label='metric'>$(@(@(@('c', 'CPU · RAM'), @('w', 'Writes GB'), @('q', 'Waits min'), @('b', 'Builds min')) | ForEach-Object { "<button type=button data-m=$($_[0]) aria-pressed=$(if ($_[0] -eq 'c') { 'true' } else { 'false' })>$($_[1])</button>" }) -join '')</div>"
-  $legW = "<div class=hk data-mv=w>a cell = GB written in that clock hour (kit-owned processes by the resource, shell or lane that started them) · now = the last 60 min: amber over $(& $n1 $soft), red over $(& $n1 $hard) GB (WATCH / ACT) · other processes: its top 3 in the tooltip · a disk row: GB its free space dropped</div>"
+  $tabs = "<div class=rgt role=group aria-label='metric'>$(@(@(@('c', 'CPU · RAM'), @('w', 'Writes GB est.'), @('q', 'Waits min'), @('b', 'Builds min')) | ForEach-Object { "<button type=button data-m=$($_[0]) aria-pressed=$(if ($_[0] -eq 'c') { 'true' } else { 'false' })>$($_[1])</button>" }) -join '')</div>"
+  $legW = "<div class=hk data-mv=w>a cell = est. GB written to disk in that clock hour (kit-owned processes by the resource, shell or lane that started them) · now = the last 60 min: amber over $(& $n1 $soft), red over $(& $n1 $hard) GB (WATCH / ACT) · other processes: its top 3 in the tooltip · a disk row: GB its free space dropped</div>"
   $legQ = '<div class=hk data-mv=q>a cell = minutes agents waited for that resource in the hour · tap a cell for waits and who</div>'
   & $fold 'res24' 'Resources · 24 h' (Get-KitHeatCount $items) "<div class=rgx data-m=c>$HeadHtml$tabs<div class='gks w5 cpg rsh' data-mk=res-hour>$head$($groups -join '')</div>$($legend -replace '^<div class=hk>', '<div class=hk data-mv=c>')$legW$legQ<div class=hk data-mv=b>$(if (@($kinds).Count) { 'a cell = busy build minutes in that hour (the build gate per kind) · tap a cell for builds and waits' } else { 'no gated build in 24 h' })</div></div>$topHtml" -Open -tag h4 -cls "sub st cpu$(if ($last -and (& $hot $last.all $last.s)) { ' hot' })"
 }

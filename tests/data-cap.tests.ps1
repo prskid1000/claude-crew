@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 data-cap.tests.ps1: no large writes (owner, 2026-11-18): the crafty guard rule large-writes (adapters/guard_localenv.ps1) and the
-supervise DATA GROWTH flag (skills/bossy/adapters/localenv_supervise.ps1; params data.maxRows, data.maxMB).
+supervise DATA GROWTH flag (skills/bossy/adapters/localenv_supervise.ps1; params data.maxRows, data.maxMB), the WRITES flag and its
+card (adapters/supervise_stats.ps1; params writes.softGBPerHour, writes.hardGBPerHour; disk counter, writes.tracerCsv).
 Usage: pwsh -NoProfile -File <kit>/tests/data-cap.tests.ps1 (or tests/kit-tests.ps1 -Area data-cap). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit)
@@ -43,5 +44,75 @@ $bad = @(foreach ($c in @(@('B', 'mysql -u root -e "CREATE DATABASE scratch_ie1"
   $gOut = pwsh @np (Join-Path $gk 'skills/crafty/crafty.ps1') guard -Json $json | Out-String
   if (($gOut -match '"permissionDecision":"deny"' -and $gOut -match 'writes large data') -ne $c[2]) { $c[1] } })
 Expect "guard large-writes: bulk generators, shared-DB scratch schemas, big imports, full dumps, copied trees, whole-repo exports denied; small or scoped ones allowed ($($bad -join ' | '))" (-not $bad.Count)
+# disk writes per owner (owner 2026-11-18): fake I/O counters over two beats; a resource / shell owner, the OS root, restarts, exits,
+# a wrapper folded into its server (timeout -> mysqld); short labels; hour buckets, the 35-day history file, the view and its card
+$wrt = @'
+$null = . $args[0] 6>$null
+$t0 = [datetime]'2026-11-18T10:00:00'; $old = $t0.AddHours(-2)
+$mk = { param($id, $par, $nm, $cmd, $wb, $made) [pscustomobject]@{ Id = $id; ParentId = $par; Name = $nm; CommandLine = $cmd; Created = $made; Write = [double]$wb } }
+$own = @(@{ pid = 20; label = 'devy-a'; tag = 'shell' }, @{ pid = 40; label = 'build x'; tag = 'kitty' })
+$b1 = @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 10 2 'claude.exe' 'claude' 0 $old), (& $mk 20 10 'pwsh.exe' 'pwsh -c load' 1GB $old), (& $mk 30 20 'mysql.exe' 'mysql bulk' 5GB $old),
+  (& $mk 40 10 'robocopy.exe' 'robocopy tree' 9GB $old), (& $mk 50 2 'mysqld.exe' 'mysqld --datadir=x' 50GB $old), (& $mk 60 2 'timeout.exe' 'timeout 600' 0 $old), (& $mk 61 60 'mysqld.exe' 'mysqld --datadir=x' 0 $old))
+$s1 = Update-KitWriteStats $null $t0 $b1 $own 100GB
+$t1 = $t0.AddMinutes(20)
+$b2 = @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 10 2 'claude.exe' 'claude' 0 $old), (& $mk 20 10 'pwsh.exe' 'pwsh -c load' 1.5GB $old), (& $mk 21 20 'mysql.exe' 'mysql bulk2' 2GB $t0.AddMinutes(5)),
+  (& $mk 40 10 'robocopy.exe' 'robocopy tree' 15GB $old), (& $mk 50 2 'mysqld.exe' 'mysqld --datadir=x' 1GB $t0.AddMinutes(10)), (& $mk 70 2 'late.exe' 'late' 40GB $old), (& $mk 60 2 'timeout.exe' 'timeout 600' 0 $old), (& $mk 61 60 'mysqld.exe' 'mysqld --datadir=x' 0.5GB $old))
+$s2 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $b2 $own 110GB
+$hr = @{}; foreach ($h in $s2.hour) { $hr[$h.label] = $h.gb }
+"first:$(-not @($s1.flags).Count -and -not @($s1.hour).Count)"
+"soft:$(@($s2.flags | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^WRITES mysqld · x: est\. 1\.5 GB to disk .*\(all disks 10 GB; soft 1 / hard 2 GB; not kit-owned\)' }).Count -eq 1)"
+"hard:$(@($s2.flags | Where-Object { $_.level -eq 'ACT' -and $_.what -match '^WRITES (build x \(kitty\): est\. 6 GB .*top: robocopy|devy-a \(shell\): est\. 2\.5 GB .*top: mysql)' -and $_.action -match '^Check whether it is a one-off' }).Count -eq 2)"
+"fold:$($hr['mysqld · x'] -eq 1.5 -and @($s2.flags).Count -eq 3 -and @($hr.Keys).Count -eq 3 -and $s2.samples[-1].m -eq 10)"
+"unseen:$(-not $hr.ContainsKey('late'))"
+# robocopy exited, the rest idle two sweeps: its hour stays on the card, its flag goes (an exited burst flagged ACT for its whole hour)
+$s3 = Update-KitWriteStats ($s2 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1.AddMinutes(10) @($b2 | Where-Object Id -ne 40) $own 110GB
+$s3 = Update-KitWriteStats ($s3 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1.AddMinutes(20) @($b2 | Where-Object Id -ne 40) $own 110GB   # two idle sweeps: one is no end
+"over:$(@($s3.hour | Where-Object label -eq 'build x').Count -eq 1 -and -not @($s3.flags | Where-Object { $_.what -match 'build x' }).Count)"
+# K94: the disks wrote 2 GB while process I/O (pipes, sockets) counted 10: each GB x 0.2, capped at the disks; no disk counter -> no flag;
+# not kit-owned -> never ACT, no WATCH while the disks stay under hard; the tracer CSV caps a row by its process name
+$e2 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $b2 $own 102GB; $eh = @{}; foreach ($h in $e2.hour) { $eh[$h.label] = $h.gb }
+"scaled:$($e2.samples[-1].e -eq 1 -and $e2.samples[-1].m -eq 2 -and $eh['build x'] -eq 1.2 -and $eh['devy-a'] -eq 0.5 -and $eh['mysqld · x'] -eq 0.3 -and @($e2.flags).Count -eq 1 -and $e2.flags[0].level -eq 'WATCH' -and $e2.flags[0].what -match 'build x \(kitty\): est\. 1\.2 GB')"
+$n2 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $b2 $own
+"nodisk:$(-not @($n2.flags).Count -and -not $n2.samples[-1].e -and @($n2.hour).Count -eq 3)"
+$o1 = @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 1GB $old))
+$o0 = Update-KitWriteStats $null $t0 $o1 @() 0
+$o2 = Update-KitWriteStats ($o0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 2.8GB $old)) @() 1.8GB
+$o3 = Update-KitWriteStats ($o0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 5GB $old)) @() 4GB
+"notkit:$(-not @($o2.flags).Count -and @($o2.hour)[0].gb -eq 1.8 -and @($o3.flags).Count -eq 1 -and $o3.flags[0].level -eq 'WATCH' -and $o3.flags[0].what -match 'Edge \(CDP 9222\): est\. 4 GB .*not kit-owned')"
+$o4 = Update-KitWriteStats ($o0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 80 2 'msedge.exe' 'msedge.exe --remote-debugging-port=9222' 5GB $old)) @() 4GB @{ msedge = 0.32 }
+$k4 = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $b2 $own 102GB @{ robocopy = 0.01; mysqld = 0.05 }; $kh = @{}; foreach ($h in $k4.hour) { $kh[$h.label] = $h.gb }
+$tf = Join-Path $args[1] 'tracer.csv'
+Set-Content $tf @('"Time","Kind","Process","Folder","TopFile","WriteMB"', "`"$($t1.AddMinutes(-70).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"msedge`",`"C:\x`",`"f`",`"900`"",
+  "`"$($t1.AddMinutes(-15).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"msedge`",`"C:\x`",`"f`",`"200.5`"", "`"$($t1.AddMinutes(-5).ToString('yyyy-MM-dd HH:mm:ss'))`",`"disk`",`"msedge`",`"D:\y`",`"g`",`"127.5`"",
+  "`"$($t1.AddMinutes(-5).ToString('yyyy-MM-dd HH:mm:ss'))`",`"net`",`"msedge`",`"D:\y`",`"g`",`"5000`"")
+$tr = Read-KitWriteTracer $tf $t1; $trOld = Read-KitWriteTracer $tf $t1.AddHours(2)
+"tracer:$(@($o4.hour)[0].gb -eq 0.32 -and $kh['build x'] -eq 1.2 -and $kh['mysqld · x'] -eq 0.05 -and -not @($o4.flags).Count -and [math]::Abs($tr['msedge'] - 0.3203) -lt 0.001 -and $null -eq $trOld -and $null -eq (Read-KitWriteTracer '' $t1))"
+$lb = @((Get-KitWriteLabel 'msedge.exe' 'msedge.exe --headless --remote-debugging-port=9222'), (Get-KitWriteLabel 'mysqld.exe' '"C:\m\mysqld.exe" --no-defaults --datadir=D:\s\kit-tests\my'),
+  (Get-KitWriteLabel 'node.exe' 'node "C:\n\npx-cli.js" -y vite build'), (Get-KitWriteLabel 'java.exe' 'java -jar D:\t\api-1.0.jar'), (Get-KitWriteLabel 'Slack.exe' 'Slack.exe --x'), (Get-KitWriteLabel 'python.exe' 'python -m http.server 8000'), (Get-KitWriteLabel 'java.exe' 'java -cp x org.acme.Main'))
+"labels:$(($lb -join '|') -ceq 'Edge (CDP 9222)|mysqld · kit-tests|npx · vite|java · api-1.0|Slack|python · http.server|java · Main')"
+# one sample 09:50-10:10 splits half and half; 6 more beats make hours 10 and 11
+$sm = @(for ($i = 0; $i -lt 7; $i++) { [ordered]@{ at = [datetime]'2026-11-18T10:10:00' + [timespan]::FromMinutes(20 * $i) | ForEach-Object { $_.ToString('o') }; s = 1200; m = 1.2; w = @([ordered]@{ n = 'mysqld · x'; a = ''; g = 0.8; c = 'mysqld'; k = 0 }, [ordered]@{ n = 'build x'; a = 'kitty'; g = 0.4; c = 'mvn'; k = 1 }) } })
+$hs = @{}; Add-KitWriteHours @($sm[0]) $hs
+"buckets:$([math]::Round($hs['2026111809'].m, 3) -eq 0.6 -and [math]::Round($hs['2026111810'].k, 3) -eq 0.2 -and $hs['2026111810'].t['build x'] -eq 'kitty')"
+$hf = Join-Path $args[1] 'disk-writes.jsonl'; $now = [datetime]'2026-11-18T12:05:00'
+Set-Content $hf @(@(-40, -10, -10, -1) | ForEach-Object { [ordered]@{ at = $now.Date.AddDays($_).AddHours(5).ToString('o'); m = 2; k = 1; o = @{ Edge = 1.5 } } | ConvertTo-Json -Compress })
+Update-KitWriteHistory $hf $sm $now; $cnt1 = @(Get-Content $hf).Count; Update-KitWriteHistory $hf $sm $now
+$hl = @(Get-Content $hf | ConvertFrom-Json)
+"history:$($cnt1 -eq 5 -and @(Get-Content $hf).Count -eq 5 -and $hl[0].d -eq 1 -and $hl[0].m -eq 4 -and ([datetime]$hl[-1].at).Hour -eq 11 -and [math]::Abs($hl[-1].m - 3.6) -lt 0.001)"
+$v = Get-KitWriteView $sm $hl $now 1; $r = @{}; foreach ($x in $v.rows) { $r[$x.n] = $x }
+"view:$($v.rows[0].n -eq 'whole machine' -and $r['mysqld · x'] -and $r.others.d30 -eq 8.8 -and $r['kit-owned'].day -eq 2.8 -and $r['whole machine'].d7 -eq 10.4 -and $v.rows[0].h[23] -eq 0.6 -and @($v.days).Count -eq 7)"
+$global:n1 = { param($x) "$x" }; $global:e = { param($x) "$x" }; $global:fold = { param($id, $t, $c, $in, [switch]$Open, $tag, $cls) "<f $cls>$in</f>" }
+$card = Format-KitWritesCard ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
+$pg = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resources = @([pscustomobject]@{ name = 'build x'; by = 'kitty'; gb = 1 }); stats = [pscustomobject]@{ writes = ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json) } })
+"card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
+'@
+Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'notkit', 'tracer', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
+# a holder record with several pids (a lane group, a shared lease) must not crash the writes hook ([int] of an array)
+$mpt = @'
+$null = . $args[0] 6>$null; $KitShellRows = @(); $res = @([pscustomobject]@{ pid = @(4, 8); by = 'x'; name = 'svc' })
+$r = try { $null = Get-KitSuperviseFlagsWrites; 'ok' } catch { "crash $($_.Exception.Message)" }
+"multipid:$($r -eq 'ok')"
+'@
+Expect-Each (Invoke-PsTest 'multipid' $mpt @($supBossy)) 'writes hook, holder with several pids: #' @('multipid') -Show 8
 Remove-TestKit $k
 Complete-Tests
