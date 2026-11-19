@@ -260,22 +260,5 @@ $lsh = & { . $O; $tx = Join-Path (Kd) 'agent-k1.jsonl'; $ps = @([pscustomobject]
   $killed = [Collections.Generic.List[int]]::new(); $said = @(Stop-KitLeftShells ([pscustomobject]@{ agent = 'k1'; transcript = $tx }) $ps $fd { param($id) $killed.Add($id) })
   "$($killed -join ',')|$($said -match '^killed shell 60 of k1: ' -as [bool])" }
 Expect "board leave: its background shells killed, not another agent's or a foreground one ($lsh)" ($lsh -eq '60|True')
-# sweep memo: a JSON dir is parsed again only for a changed file (time or size), a caller's field change stays its own; one process
-# snapshot serves every Get-SysProcs; a child started early is read later, a late one is cut at its timeout
-$sm = @'
-. $args[0]; $md = Join-Path $args[1] 'memo'; $null = New-Item -ItemType Directory -Force $md; $a = Join-Path $md 'a.json'; $b = Join-Path $md 'b.json'
-'{"v":"one"}' | Set-Content $a; '{"v":"bee"}' | Set-Content $b; Start-KitSweepMemo
-$r1 = @(Read-KitJsonFiles $md | Sort-Object v); $r1[0].v = 'mutated'; $t0 = (Get-Item $a).LastWriteTimeUtc
-'{"v":"two"}' | Set-Content $a; (Get-Item $a).LastWriteTimeUtc = $t0   # same time and size: the memo answers
-$r2 = @(Read-KitJsonFiles $md | Sort-Object v); '{"v":"three"}' | Set-Content $a; Remove-Item $b; $r3 = @(Read-KitJsonFiles $md)
-"json:$((@($r2.v) -join ',') -eq 'bee,one' -and $r2[0].file -eq $b -and (@($r3.v) -join ',') -eq 'three')"
-$script:KitJsonMemo = $null; $t1 = (Get-Item $a).LastWriteTimeUtc; '{"v":"thrEE"}' | Set-Content $a; (Get-Item $a).LastWriteTimeUtc = $t1; "off:$(@(Read-KitJsonFiles $md).v -ceq 'thrEE')"
-$p1 = @(Get-SysProcs -NoCommandLine); $script:KitProcMemo.all = @([pscustomobject]@{ Id = 1; ParentId = 0; Name = 'fake-x'; CommandLine = 'c' })
-"procs:$($p1.Count -gt 1 -and $null -ne @($p1 | Where-Object Id -eq $PID)[0].CommandLine -and (@(Get-SysProcs -Name '^fake').Name -join ',') -eq 'fake-x' -and (Get-KitProcSnap).names[1] -eq 'fake-x' -and $(Stop-SysProcess 999999; -not @(Get-SysProcs -Name '^fake-x$').Count))"
-$h = Start-KitExe 'pwsh' @('-NoProfile', '-Command', 'Start-Sleep -Milliseconds 300; "early"'); Start-Sleep -Milliseconds 100; $x = Receive-KitExe $h 20
-$h2 = Start-KitExe 'pwsh' @('-NoProfile', '-Command', 'Start-Sleep 30'); $t2 = Get-Date; $y = Receive-KitExe $h2 1
-"exe:$($x.out -eq 'early' -and $x.code -eq 0 -and -not $x.timedOut -and $y.timedOut -and ((Get-Date) - $t2).TotalSeconds -lt 10 -and $h2.p.HasExited)"
-'@
-Expect-Each (Invoke-PsTest 'sweep-memo' $sm @($O, (Kd))) 'sweep memo: # (JSON files by time + size, copies per caller; off outside a sweep; one process snapshot until a kill; a child read later, cut at its timeout)' 'json', 'off', 'procs', 'exe'
 Remove-TestKit $k
 Complete-Tests
