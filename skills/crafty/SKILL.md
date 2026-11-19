@@ -110,7 +110,7 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; 
   scratchpad file passed to the interpreter is fine.
 - **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
-  (`repos[].migrations.check`, else Liquibase: `adapters/liquibase.ps1`; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
+  (`repos[].migrations.check`, else the `migrations.tool` adapter; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
   leftover table, a missing user): report it, never "fix" the shared DB by hand.
 - **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before the local test loop and before every push (a scope
   change stamped after your head commit is still yours; append-only if you write to it); one MR per repo, title with

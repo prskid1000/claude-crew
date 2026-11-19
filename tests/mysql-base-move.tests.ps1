@@ -26,8 +26,10 @@ $cfg = @{ localEnv = @{ lanes = @{}; defaults = @{ services = @(@{ name = 'mysql
 $kd = New-TestKit mbm; $dst = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy/adapters')
 Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $dst); Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/envy/adapters/*') $dst -Force
 $cf = Join-Path $kd 'skills/crafty/kit.local.json'; & $J $cfg $cf 12
-$before = & { . (Join-Path $kd 'skills/envy/envy.ps1'); @('rm', 'hm') | ForEach-Object { Get-LaneStandardRows $_ | ForEach-Object what } }
-Expect "lane standard: an external mysql, search data / logs on C:, a data path shared by two products and an unknown {suffix} are each reported ($($before.Count))" ($before.Count -eq 10 -and @($before | Where-Object { $_ -match '^service search of (rm|hm): \{suffix\} is no envy placeholder' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'external' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'on C:' }).Count -eq 4 -and @($before | Where-Object { $_ -match 'shares path.data' }).Count -eq 2)
+$before = & { $sdKeep = $env:SystemDrive; $env:SystemDrive = 'C:'; try { . (Join-Path $kd 'skills/envy/envy.ps1'); @('rm', 'hm') | ForEach-Object { Get-LaneStandardRows $_ | ForEach-Object what } } finally { $env:SystemDrive = $sdKeep } }
+# the drive rule follows the OS system drive (none on POSIX): another system drive flags no C:/ path
+$otherSys = & { $sdKeep = $env:SystemDrive; $env:SystemDrive = 'Q:'; try { . (Join-Path $kd 'skills/envy/envy.ps1'); @(Get-LaneStandardRows 'hm' | Where-Object { $_.what -match 'system drive' }).Count } finally { $env:SystemDrive = $sdKeep } }
+Expect "lane standard: an external mysql, search data / logs on C:, a data path shared by two products and an unknown {suffix} are each reported ($($before.Count))" ($before.Count -eq 10 -and @($before | Where-Object { $_ -match '^service search of (rm|hm): \{suffix\} is no envy placeholder' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'external' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'on the system drive C:' }).Count -eq 4 -and $otherSys -eq 0 -and @($before | Where-Object { $_ -match 'shares path.data' }).Count -eq 2)
 $obj = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable -Depth 50
 $edit = Update-BaseMoveConfig $obj @('rm:3305', 'hm:3316') 3306 'D:/s/lanes'
 Set-Content $cf ($obj | ConvertTo-Json -Depth 50) -Encoding utf8

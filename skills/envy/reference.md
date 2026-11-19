@@ -49,12 +49,12 @@ For kitty / the coordinator editing `localEnv` or running owner verbs; any agent
   Spring Boot check skips the repackage: never).
 
 ## Lane service standard
-Every local-env service follows it; `doctor` checks it (`adapters/lane_standard.ps1`, rows WARN;
+Every local-env service follows it; `doctor` checks (`adapters/lane_standard.ps1`, rows WARN;
 `localEnv.laneStandard: "FAIL"` makes `deploy` stop on a breach):
 - One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry the lane id (`{bird}` in a template).
 - Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.
-- Data and logs on D: under the kit (`.state/localenv/lanes/<service>-<product>-<bird>`), never C:; low-write settings (MySQL lane ini: doublewrite off, `sync_binlog=0`).
-- Names: `localEnv.laneIds: "bird"`: lane id `<product>-<bird>` (rm-falcon, rm-kestrel; shown `rm·Kestrel`) in `-Env`, state, logs, run dirs, leases; `{bird}` in lane paths. Old ids (`rm`, `rm2`, pokey `local-rm2`) are accepted with a warning; `doctor` flags old config keys.
+- Data and logs under the kit (`.state/localenv/lanes/<service>-<product>-<bird>`), never the system drive; low-write settings (MySQL lane ini: doublewrite off, `sync_binlog=0`).
+- Names: `localEnv.laneIds: "bird"`: lane id `<product>-<bird>` (shop-falcon; shown `shop·Falcon`) in `-Env`, state, logs, run dirs, leases; `{bird}` in lane paths. Old ids (`shop`, `shop2`, pokey `local-shop2`) are accepted with a warning; `doctor` flags old config keys.
 - Move an existing one: `skills/envy/mysql-base-move.ps1` (`-Apply` copies each product's schemas only, `-Rename` every lane name, `-Config` the config).
 
 ## Config

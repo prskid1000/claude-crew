@@ -1,26 +1,27 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (doctor rows; lane worktrees: Ensure-Worktree, Sync-DepLinks, Resolve-SvcDir).
 # lane_standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird", no old <product><k> lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
-# (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs on D:, starts at a lease and stops
+# (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs under the kit, off the system drive, starts at a lease and stops
 # when idle. Rows: level `localEnv.laneStandard` (default WARN; FAIL stops a deploy), one per breach.
-# Sections: L7 lane standard · L52 lane worktrees
+# Sections: L7 lane standard · L53 lane worktrees
 # ---- lane standard: doctor rows, port clashes, env aliases
 function Get-LanePathArgs([string]$Text) {
   @([regex]::Matches($Text, '(?i)(path\.data|path\.logs|datadir|data[-_]dir|log[-_]dir|log-error|defaults-file)[= ]\s*"?([^\s"]+)') | ForEach-Object { [pscustomobject]@{ key = $_.Groups[1].Value.ToLower(); path = $_.Groups[2].Value.Replace('\', '/').TrimEnd('/') } })
 }
 function Get-LaneStandardRows([string]$e) {
+  $sysDrive = "$env:SystemDrive"   # Windows only: POSIX data paths have no system drive rule
   $lvl = [string](Opt 'laneStandard' 'WARN'); $out = [Collections.Generic.List[object]]::new()
   $row = { param($t) $out.Add([pscustomobject]@{ level = $lvl; what = "lane standard: $t" }) }
   if ("$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird' -and $e -eq @(EnvNames)[0]) { foreach ($k in @($script:EnvKeysRaw | Where-Object { $_ -match '^(?<b>.+?)\d+$' -and $script:EnvKeysRaw -contains $Matches.b })) { & $row "old lane id envs.${k}: rename the key to <product>-<bird> (localEnv.laneIds bird)" } }
   foreach ($s in EnvServices $e) {
-    if ($s.external -and -not $s.start -and $s.port) { & $row "service $($s.name) :$($s.port) of $e is external (always on, shared by lanes and products): give it a start (+ init) per lane, data on D:" }
+    if ($s.external -and -not $s.start -and $s.port) { & $row "service $($s.name) :$($s.port) of $e is external (always on, shared by lanes and products): give it a start (+ init) per lane, data under the kit" }
     $cmds = @($s.start, $s.init.cmd, $s.prepare) | Where-Object { $_ }
     # a {token} no envy verb expands stays literal (the retired sandbox {suffix}: search ran on C:/.../rdata{suffix} folders)
     $known = 'port', 'debugPort', 'dir', 'wt', 'env', 'lane', 'bird', 'kit', 'workspace', 'artifact', 'lanIp', 'aot', 'aotFile', 'cache', 'reactor', 'tenant', 'mark', 'source', 'template', 'out'
     $txt = (@($cmds) + @($s.health) + @(Get-KitProps $s.env | ForEach-Object { "$($_.Value)" })) -join ' '
     foreach ($ph in @([regex]::Matches($txt, '(?<!\$)\{([A-Za-z]\w*)(?::[\w.-]+)?\}') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique | Where-Object { $_ -notin $known })) { $out.Add([pscustomobject]@{ level = 'WARN'; what = "service $($s.name) of ${e}: {$ph} is no envy placeholder, it stays literal text (reference.md Lanes, Config)" }) }
     foreach ($a in @($cmds | ForEach-Object { Get-LanePathArgs ([string]$_) })) {
-      if ($a.key -ne 'defaults-file' -and $a.path -match '^(?i)C:/') { & $row "service $($s.name) of $e keeps $($a.key) on C: ($($a.path)): move it under the lane's folder on D:" }
+      if ($a.key -ne 'defaults-file' -and $sysDrive -and $a.path.StartsWith("$sysDrive/", 'OrdinalIgnoreCase')) { & $row "service $($s.name) of $e keeps $($a.key) on the system drive $sysDrive ($($a.path)): move it under the lane's folder (.state/localenv/lanes)" }
     }
     # one data path per lane and product: another env running the same service on the same path shares its data
     foreach ($a in @($s.start | Where-Object { $_ } | ForEach-Object { Get-LanePathArgs ([string]$_) } | Where-Object { $_.key -in 'path.data', 'datadir', 'data-dir', 'data_dir' })) {
