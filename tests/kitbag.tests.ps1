@@ -197,6 +197,13 @@ $qd = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area a -Detail).out; $cdp = 
 Expect "kit-tests: a green area prints one line, its PASS lines in <runtime>/logs/kit-tests-last.txt; -Detail prints them" ($qo -match '(?m)^== a \(\d+ s\): 1 passed\s*$' -and $qo -notmatch 'PASS a uses' -and $ql -match 'PASS a uses' -and $qd -match '(?m)^PASS a uses')
 '"cwd $((Get-Location).Path)"; ''PASS c''' | Set-Content "$cd/tests/c.tests.ps1"; $cwo = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area c -Detail).out
 Expect "kit-tests: areas run in the kit under test, whatever the caller's cwd" ($cwo -match "(?m)^cwd $([regex]::Escape((Resolve-Path $cd).Path))\s*$" -and (Get-Location).Path -ne (Resolve-Path $cd).Path)
+# K95: area slots are machine-wide: while another process holds every slot, an area waits, then runs
+$sd = New-Item -ItemType Directory -Force (Join-Path (Kd) 'slots'); $env:KIT_TESTS_SLOT_DIR = $sd.FullName
+$sh = Start-Process $pwshExe -ArgumentList '-NoProfile', '-Command', "`$h = 1..(2 * [Environment]::ProcessorCount) | ForEach-Object { [IO.File]::Open('$sd/' + `$_ + '.slot', 'OpenOrCreate', 'ReadWrite', 'None') }; 'x' | Set-Content '$sd/held'; `$d = (Get-Date).AddSeconds(120); while (-not (Test-Path '$sd/waiting') -and (Get-Date) -lt `$d) { Start-Sleep -Milliseconds 100 }; (Get-Date).ToUniversalTime().Ticks | Set-Content '$sd/freed'" -WindowStyle Hidden -PassThru
+for ($i = 0; $i -lt 10 * (Get-TestBound 30) -and -not (Test-Path "$sd/held"); $i++) { Start-Sleep -Milliseconds 100 }
+'(Get-Date).ToUniversalTime().Ticks | Set-Content (Join-Path $PSScriptRoot "s.at"); ''PASS s''' | Set-Content "$cd/tests/s.tests.ps1"; $so = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area s).out; Remove-Item Env:KIT_TESTS_SLOT_DIR
+$sh.WaitForExit(); $sAt = [long]"$(Get-Content "$cd/tests/s.at" -ErrorAction SilentlyContinue)"; $sFree = [long]"$(Get-Content "$sd/freed" -ErrorAction SilentlyContinue)"
+Expect "kit-tests K95: an area waits while another process holds every slot, then runs ($so)" ($so -match 's waits for a test slot' -and $so -match '== s \(\d+ s\): 1 passed' -and $sFree -gt 0 -and $sAt -ge $sFree)
 $null = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
 # lib.ps1 Add-KitAskBug (here for the guard area's cap): only a QA collector [Bug] takes sections

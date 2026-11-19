@@ -5,7 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L50 plain · L88 warm
+// Sections: L25 crash · L50 plain · L90 warm
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
@@ -82,7 +82,9 @@ function plain(start) {
     if (r.error || (r.status !== 0 && r.status !== 2) || (r.status === 0 && !answer(r.stdout))) return crashed(r.error ? r.error.code || 'spawn' : r.status ?? r.signal, r.error ? r.error.message : r.stderr || r.stdout)
     process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); process.exit(r.status)
   }
-  if (starter && starter.exitCode === null) { starter.on('exit', end); setTimeout(end, Math.max(0, Math.min(3000, 9700 - (Date.now() - t0)))) } else end()   // the answer before the hook timeout
+  // the starter dies with this process: it gets what is left of the hook's 10 s since node started (a fixed 3 s killed it under
+  // load: no server ever, K96)
+  if (starter && starter.exitCode === null) { starter.on('exit', end); setTimeout(end, Math.max(0, (Number(process.env.KIT_GUARD_TIMEOUT_MS) || 8500) - process.uptime() * 1000)) } else end()
 }
 
 // ---- warm: ask the guard_server.ps1 pipe; busy, absent or odd -> the plain path

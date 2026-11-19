@@ -90,7 +90,8 @@ public static class KitTestJob {
   }
 }
 '@
-      $jobDll = Join-Path (New-Item -ItemType Directory -Force $tmpRoot) "kit-test-job-$([Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($jobCs))).Substring(0, 8)).dll"   # a changed source: a new file
+      if (-not $env:KIT_TESTS_JOB_DIR) { $env:KIT_TESTS_JOB_DIR = $tmpRoot }   # a nested run (kitbag's copied runner) loads it, no cold compile under load (K95)
+      $jobDll = Join-Path (New-Item -ItemType Directory -Force $env:KIT_TESTS_JOB_DIR) "kit-test-job-$([Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($jobCs))).Substring(0, 8)).dll"   # a changed source: a new file
       if (-not (Test-Path -LiteralPath $jobDll)) { $jobTmp = "$jobDll.$PID"; Add-Type -OutputAssembly $jobTmp -TypeDefinition $jobCs
         try { Move-Item -LiteralPath $jobTmp $jobDll -ErrorAction Stop } catch { Remove-Item -LiteralPath $jobTmp -ErrorAction SilentlyContinue } }   # a parallel run's copy won
       Add-Type -LiteralPath $jobDll }
@@ -115,10 +116,18 @@ if ($watch.Count) {
     [Diagnostics.Process]::GetCurrentProcess().Kill()
   }).AddArgument($watch).AddArgument($PID).AddArgument($(if ($myMysql) { Join-Path $PSScriptRoot 'test-mysql.ps1' })).AddArgument($src).BeginInvoke()
 }
+# area slots machine-wide (2 x cores, the shared test home): parallel runs share the CPU one run's timing bounds assume (K95)
+$slotDir = if ($env:KIT_TESTS_SLOT_DIR) { $env:KIT_TESTS_SLOT_DIR } elseif ($myMysql) { New-Item -ItemType Directory -Force (Join-Path (Get-TestMySqlHome) 'area-slots') }
 try {
 $results = $areas | ForEach-Object -ThrottleLimit ([Math]::Min($areas.Count, 2 * [Environment]::ProcessorCount)) -Parallel {
+  # a slot = an open file no one else may open; a killed run's slots free with its process. poll-ok: bounded, 30 min
+  $slot = $null; $told = $false; $due = (Get-Date).AddMinutes(30)
+  while ($using:slotDir -and -not $slot -and (Get-Date) -lt $due) {
+    foreach ($si in 1..(2 * [Environment]::ProcessorCount)) { try { $slot = [IO.File]::Open((Join-Path $using:slotDir "$si.slot"), 'OpenOrCreate', 'ReadWrite', 'None'); break } catch {} }
+    if (-not $slot -and -not $told) { $told = $true; Write-Host "  $_ waits for a test slot (other kit-tests runs hold all)"; try { [IO.File]::WriteAllText((Join-Path $using:slotDir 'waiting'), $_) } catch {} }
+    if (-not $slot) { Start-Sleep -Milliseconds 500 } }
   $clock = [Diagnostics.Stopwatch]::StartNew()
-  $out = pwsh -NoProfile -File (Join-Path $using:PSScriptRoot "$_.tests.ps1") 2>&1 | Out-String
+  try { $out = pwsh -NoProfile -File (Join-Path $using:PSScriptRoot "$_.tests.ps1") 2>&1 | Out-String } finally { if ($slot) { $slot.Dispose() } }
   Write-Host "  $_ done ($([int]$clock.Elapsed.TotalSeconds) s)"   # progress while the slower areas run
   [pscustomobject]@{ area = $_; out = $out.TrimEnd(); code = $LASTEXITCODE; seconds = [int]$clock.Elapsed.TotalSeconds }
 } | Sort-Object { [array]::IndexOf($areas, $_.area) }   # area order, not finish order: output and TEST-DUP lists stay stable
