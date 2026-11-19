@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-crafty-config.tests.ps1: crafty.ps1 stack / check config, lib.ps1 file writes and reads (Write-KitAtomic, Read-KitText): -Touched, .claude-stack.json, switches (stack.presets, tests.fallbackRunner, protectedBranchesBase, linkDefaults, guard.heavyPatterns / e2ePatterns); guard stray writes (drive root, outside every root, guard.writeRoots).
+crafty-config.tests.ps1: crafty.ps1 stack / check config, lib.ps1 file writes and reads (Write-KitAtomic, Read-KitText): -Touched, .claude-stack.json, switches (stack.presets, tests.fallbackRunner, protectedBranchesBase, kitBranch, items label, bug prefix, linkDefaults, guard.heavyPatterns / e2ePatterns); guard stray writes (drive root, outside every root, guard.writeRoots).
 Usage: pwsh -NoProfile -File <kit>/tests/crafty-config.tests.ps1 (or tests/kit-tests.ps1 -Area crafty-config).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -87,5 +87,18 @@ Expect "guard: a .ps1 / .py in command position -> the pwsh -File / python -X ut
   ($gRw[2] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: pwsh -NoProfile -File skills/pokey/pokey.ps1 results patch -Patch ''{"set":{"T1":{"verify":"a | b; c"}}}'' ->') -and
   ($gRw[3] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: python -X utf8 tools/a.py --msg it''s --n 2 ->') -and
   ($gRw[4] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: pwsh -NoProfile -File skills/pokey/pokey.ps1 api -Path "D:\x\" -Flag 1 ->'))   # the ready command first (retro 2205)
+# org names from config, one name for writer and readers: tracker.taskTemplate items label, kindPrefixes.bug (Get-KitItemsLabel, Get-KitKindPrefix)
+$ilr = Invoke-PsTest itemslabel @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; . $args[1]; $kl = Join-Path $KitConf.Kit 'skills/crafty/kit.local.json'
+"def:$((Get-KitItemsLabel) -eq 'Items' -and (@(Get-KitItemsLabel -All) -join ',') -eq 'Items,Bugs' -and (@(Get-KitDescItems "**Bugs:**`n- B1 x").id -join ',') -eq 'B1' -and (Test-KitBugName '[Bug] x'))"
+$c = @{ tracker = @{ kindPrefixes = @{ bug = 'Defect:' }; taskTemplate = @(@{ key = 'items'; label = 'Scope'; required = 'subtask' }) } }; Set-Content $kl ($c | ConvertTo-Json -Depth 6); $script:__cfg = $c | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+"custom:$((Get-KitItemsLabel) -eq 'Scope' -and (@(Get-KitDescItems "**Scope:**`n- S1 y").id -join ',') -eq 'S1' -and (@(Get-KitDescItems "**Items:**`n- I1 z").id -join ',') -eq 'I1' -and (Test-KitBugName 'Defect: x') -and (Get-KitKindPrefix 'bug') -eq 'Defect:')"
+'@ @($D, (Join-Path $src 'skills/bossy/adapters/task_rollup.ps1'))
+Expect-Each $ilr 'items label / bug prefix from config: #' 'def', 'custom' -Show 5
+# guard: the kit's protected branch = kitBranch, else main
+$gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }
+$kbr = foreach ($kbv in '', 'trunk') { if ($kbv) { & $J @{ kitBranch = $kbv } $dkl }; foreach ($kbb in 'main', 'trunk') { "$($kbv)/$($kbb):$((& $D guard -Json (@{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = "git push origin --delete $kbb" } } | ConvertTo-Json -Compress)) -join '' -match 'a protected kit branch')" } }
+if (Test-Path $dkl) { Remove-Item $dkl }; if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
+Expect "guard: kit branch = kitBranch, else main ($($kbr -join ' '))" (($kbr -join ' ') -eq '/main:True /trunk:False trunk/main:False trunk/trunk:True')
 Remove-TestKit $k
 Complete-Tests

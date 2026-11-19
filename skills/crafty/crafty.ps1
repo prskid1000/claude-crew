@@ -18,7 +18,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L24 init · L31 sweep · L143 wt · L433 stack · L615 gate · L930 check · L1246 pipes · L1302 guard · L2183 dir ·
-  L2193 checkpoint · L2223 prior · L2261 tracker · L2283 task spec · L2462 scope · L2510 host
+  L2193 checkpoint · L2223 prior · L2261 tracker · L2283 task spec · L2461 scope · L2509 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2136,7 +2136,7 @@ if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitComm
   $dirs = @([regex]::Matches($raw, '(?:\s-C|\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location))\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))') | ForEach-Object { $x = $_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value; if ([IO.Path]::IsPathRooted($x)) { $x } else { Join-Path $here $x } })
   if (@(@($(if ($dirs) { $dirs } else { $here })) | Where-Object { (GitCommon $_) -eq $kg }).Count) {
     $u = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs
-    $pr = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(main)$'
+    $pr = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(' + [regex]::Escape($(if ($kc.kitBranch) { "$($kc.kitBranch)" } else { 'main' })) + ')$'
     foreach ($m in [regex]::Matches($u, '\bgit\b[^|;&]*\b(push\b|branch\b|update-ref\b)[^|;&]*')) {
       $p = $m.Value; $tk = -split $p; $hit = @($tk | ForEach-Object { if ($_ -match $pr) { $Matches[1] } })[0]
       $bad = switch ($m.Groups[1].Value) {
@@ -2281,12 +2281,11 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
   }
 }
 # ---- task spec: agents pass facts (JSON), never task markdown; tracker create|update <id>|render -Spec <json> renders the
-# description (testing-doc lines once the docs exist, Problem, Goal, Items `- <code> · <desc>`, Acceptance, Links), the Items checklist
-# `<code> · <desc> · <MR URLs>`, Decisions (lib.ps1 Format-KitDecisionItems) and the parent's Items (adapters/task_items.ps1),
-# the same through every tracker adapter. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
+# description (doc lines, tracker.taskTemplate sections), the items checklist `<code> · <desc> · <MR URLs>`, Decisions
+# (lib.ps1 Format-KitDecisionItems), parent items (adapters/task_items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
 # { text, url }], docs: { human, ai }, decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], proseOk }.
-# what a spec lacks ([Bug]: name + problem), a link or MR no full URL
+# what a spec lacks (bug: name + problem), a link or MR no full URL
 function Test-KitTaskSpec($Spec) {
   $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")
   @(if (-not "$($Spec.title)".Trim()) { 'title' }; if (-not "$($Spec.problem)".Trim()) { 'problem' }
@@ -2341,7 +2340,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
     $null = Set-TrackerName $Task $r.name; $null = Set-TrackerDescription $Task $nd; $id = $Task
   }
   else { $nt = New-TrackerTask -List "$($sp.list)" -Name $r.name -Description $r.description -Parent "$($sp.parent)" -Assignee "$($sp.assignee)" -Priority "$($sp.priority)" -NewTask "$($sp.newTask)" -Related @($sp.related); $id = "$($nt.id)"; if (-not $id) { throw "tracker create returned no id: $nt" } }
-  if ($r.items.Count) { $null = Set-KitTaskChecklist $id 'Items' $r.items }
+  if ($r.items.Count) { $null = Set-KitTaskChecklist $id (Get-KitItemsLabel) $r.items }
   if ($r.decisions.Count) { $null = Set-KitTaskChecklist $id 'Decisions' $r.decisions }
   $sp.Remove('proseOk'); Update-KitTaskIndex $id { param($x) $x.spec = $sp; $x.parentItemsSig = ''; if ($r.items.Count) { $x.itemsSig = '' } }   # Items just rewritten: the rollup / parent items write theirs again
   $po = @(if ($sp.parent) { Update-KitParentItems "$($sp.parent)" }; if ($Task -or $sp.subtasks) { Update-KitParentItems $id }) -join ' · '

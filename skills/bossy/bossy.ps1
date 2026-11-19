@@ -264,7 +264,7 @@ function Get-KitWorkflowConfig {
   $roles = [ordered]@{}
   foreach ($r in @(Get-KitSetting 'repos' @())) { if ($r.role) { foreach ($n in @(@($r.name) + @($r.aliases) | Where-Object { $_ })) { $roles["$n".ToLower()] = "$($r.role)".ToLower() } } }
   $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }   # _readme keys dropped
-  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); roles = $roles; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)) }
+  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); roles = $roles; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
 }
 function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
 function Invoke-Launch {
@@ -1251,7 +1251,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   foreach ($l in @(Invoke-KitOutbox)) { Flag $(if ($l -match '^GAVE UP') { 'ACT' } else { 'INFO' }) $(if ($l -match '^SENT') { "auto-fixed: outbox $l" } else { "outbox: $l" }) 'A tracker write lost to the network: do it by hand (crafty.ps1 tracker).' }
   foreach ($gone in $stale | Where-Object { (& $quiet $_).TotalHours -ge 2 -and $_.agent -notin $liveNames }) { & $markLeft $gone }   # a long workflow step beats nothing
   # idle daemons (cleanup.idleDaemons) hold GBs
-  if ($pct -ge 85) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
+  if ($pct -ge [int](Get-KitParam 'supervise.ramCleanupPct')) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
   if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Sync', '-Json') }   # every sync.everyMinutes, detached: fetch, fast-forward, prune, warm slots (wt_pool.ps1 Sync-KitRepo)
   if ((Get-Command Invoke-KitWeeklyTests -ErrorAction SilentlyContinue) -and (Within 'kit tests')) { foreach ($l in @(Invoke-KitWeeklyTests (-not $active.Count -and -not $liveNames.Count))) { Flag 'ACT' $l 'Spawn kitty (kind fix) on the failed checks the log lists.' } }   # adapters/kit_admin.ps1: one full run a day while idle
@@ -1279,7 +1279,7 @@ if (Within 'QA bug tasks') {
   foreach ($par in $parents) {
     if (-not (Within 'QA bug tasks')) { break }
     $subs = try { (Get-TrackerTask $par).subtasks } catch { @() }
-    $new = @($subs | Where-Object { $_.name.StartsWith([string](Get-KitSetting 'tracker.bugPrefix' '[Bug]')) -and (Test-TrackerStatus $_.status 'open') -and $_.id -notin $tracked })
+    $new = @($subs | Where-Object { $_.name.StartsWith((Get-KitKindPrefix 'bug')) -and (Test-TrackerStatus $_.status 'open') -and $_.id -notin $tracked })
     if (-not $new.Count) { continue }
     $list = ($new | ForEach-Object { "$($_.id) $($_.name.Substring(0, [math]::Min(70, $_.name.Length)))" }) -join '; '
     $note = if ($openRuns[$par]) { " (run $($openRuns[$par]) is still testing: later bugs go into the next wave)" } else { '' }
@@ -1614,7 +1614,7 @@ $($rows -join "`n")
 |---|---|---|$(if ($mig) { '---|' })
 | $Agent | $Task | $ids |$(if ($mig) { " $(if ($Range) { $Range } else { 'ask the coordinator if you need one' }) |" })
 
-Branches ``fix/$($KitConf.TrackerTag)$Task-<slug>``; worktree prefix ``$slugAgent``; board run ``$runName``. Tracker (``$claude/skills/crafty/crafty.ps1 tracker``):
+Branches ``$(Get-KitSetting 'tracker.bugBranchPrefix' 'fix/')$($KitConf.TrackerTag)$Task-<slug>``; worktree prefix ``$slugAgent``; board run ``$runName``. Tracker (``$claude/skills/crafty/crafty.ps1 tracker``):
 in progress → review (bossy.ps1 track sets promoted when all merge). The workflow merges after review: do NOT merge yourself.
 Register: ``$claude/skills/bossy/bossy.ps1 track add -Task $Task -Discover``.
 $(if ($app) { "Phones (app bugs): the local-env APK (``phoney.ps1 build -Local``, ``phoney.ps1 acquire -Agent $Agent -Apk local``); release it when done." })

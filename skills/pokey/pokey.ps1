@@ -797,7 +797,7 @@ function Add-NewDefects($st, [object[]]$defects) {
     $pAsk = "$(if ($ask.name) { $ask.name } else { $title })" -replace '^\s*\[[^\]]*\]\s*', ''
     $prod = (@(@($pn | Where-Object { $_ -match ' [—-] ' }) + $pAsk)[0] -split ' [—-] ', 2)[0].Trim()
     $first = [regex]::Match($mdAll, '(?m)^### \S+ — (.+?)(?: \(flaky\))?\r?$').Groups[1].Value
-    $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if ($mdAll -match '\(flaky\)') { ' [flaky]' })"
+    $name = "$(Get-KitKindPrefix 'bug') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if ($mdAll -match '\(flaky\)') { ' [flaky]' })"
     $head = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)$(if ($guideUrl) { "`n- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)" })"
     $bt = if ($s.id) { Clear-TrackerMemo $s.id; try { Get-TrackerTask $s.id } catch { $null } }; $cur = [string]$bt.name
     # replace an older finalize's own text
@@ -1000,7 +1000,7 @@ if (-not $Only) {
     if ($ids.Count) { $Only = $ids; break }
   }
 }
-if (-not $Title) { $Title = "RETEST $($t.name -replace "^$([regex]::Escape([string](Get-KitSetting 'tracker.bugPrefix' '[Bug]')))\s*", '')" }
+if (-not $Title) { $Title = "RETEST $($t.name -replace "^$([regex]::Escape((Get-KitKindPrefix 'bug')))\s*", '')" }
 $md = "# $($t.name)`n`nTask: $($t.url)  Status: $($t.status)`n`n" +
   "RETEST of the fix: run the failed checks ($($Only -join ', ')) again on the deployed build, same steps and data where possible. " +
   "Check the fix is deployed first (pokey.ps1 deployed -Mrs $Mrs); not deployed = NOT_TESTED.`n`n## Description`n`n$($t.description)`n`n## Comments (oldest first)`n"

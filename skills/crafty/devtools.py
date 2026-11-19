@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L346 process · L528 git host · L595 scope · L685 MR · L877 merge · L1203 docs ·
-  L1356 publish · L1796 render · L2219 plugins · L2233 keepboth · L2252 selftest · L2842 CLI
+Sections: L51 config · L106 run · L194 tracker · L346 process · L528 git host · L595 scope · L685 MR · L877 merge · L1204 docs ·
+  L1357 publish · L1797 render · L2220 plugins · L2234 keepboth · L2253 selftest · L2846 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1046,9 +1046,10 @@ def _mr_task(m, proj, iid):
 
 
 def bug_fix_rx():
-    """process.bugFixRx, else a bug-fix branch (tracker.bugBranchRx: fix/ bugfix/), a fix(...): title or the bug kind prefix ([Bug])."""
+    """process.bugFixRx, else a bug-fix branch (tracker.bugBranchRx, else bugBranchPrefix (fix/) or bugfix/), a fix(...): title or the bug kind prefix ([Bug])."""
     bp = ((CFG.get('tracker') or {}).get('kindPrefixes') or {}).get('bug') or cfg('tracker.bugPrefix', '[Bug]')
-    return re.compile(py_rx(cfg('process.bugFixRx') or (r'(?im)^(?:' + cfg('tracker.bugBranchRx', 'fix/|bugfix/') + r')|^fix(?:\([^)]*\))?!?:|' + re.escape(bp))))
+    br = cfg('tracker.bugBranchRx', re.escape(cfg('tracker.bugBranchPrefix', 'fix/')) + '|bugfix/')
+    return re.compile(py_rx(cfg('process.bugFixRx') or (r'(?im)^(?:' + br + r')|^fix(?:\([^)]*\))?!?:|' + re.escape(bp))))
 
 
 REPRO = re.compile(r'(?i)\brepro(?:duc\w*|s)?\b')
@@ -2501,6 +2502,9 @@ def _process_selftest(expect, legacy):
         CFG['tracker'] = {'bugBranchRx': 'hotfix/', 'kindPrefixes': {'bug': '[Defect]'}}
         b = bug_fix_rx()
         expect('bug fix: tracker.bugBranchRx + the bug kind prefix', bool(b.search('hotfix/x')) and not b.search('fix/x') and bool(b.search('[Defect] y')))
+        CFG['tracker'] = {'bugBranchPrefix': 'hotfix/'}
+        b = bug_fix_rx()
+        expect('bug fix: no bugBranchRx -> the brief prefix tracker.bugBranchPrefix or bugfix/', bool(b.search('hotfix/x')) and bool(b.search('bugfix/x')) and not b.search('fix/x'))
     finally:
         CFG.clear(); CFG.update(cfg0); g.update(keep)
 

@@ -51,13 +51,27 @@ console.log(`follow-up:${!!fu && /BROWSER \(web\)/.test(fu.prompt) && /ONLY thes
 '@
 Expect-Each (Invoke-Js tc-generic $jsl $wf) 'testy lanes: #' 'unknown-refused', 'default-web', 'desktop', 'follow-up' -Show 5
 # launch -Self: CONFIG line (models, roles by name + alias, qa.lanes; _readme keys dropped); plan @phase tokens resolve models.<phase>
-& $J @{ models = @{ _readme = 'x'; build = 'opus' }; repos = @(@{ name = 'core'; aliases = @('api'); role = 'Producer' }, @{ name = 'ui' }); qa = @{ lanes = @{ web = @{ kind = 'web' } } } } (Join-Path $k 'skills/crafty/kit.local.json')
+& $J @{ models = @{ _readme = 'x'; build = 'opus' }; repos = @(@{ name = 'core'; aliases = @('api'); role = 'Producer' }, @{ name = 'ui' }); qa = @{ lanes = @{ web = @{ kind = 'web' } }; intermittentRx = 'boom' } } (Join-Path $k 'skills/crafty/kit.local.json')
 $cf = Join-Path (Kd) 'cfg-args.json'; [IO.File]::WriteAllText($cf, '{"brief":"C:/b/c.md","mode":"resume","agents":[{"id":"C1"}]}')
 $lo = pwsh @np $O launch -Self -Script buildy.js -Run cfgrun -ArgsFile $cf -Plan 'devy/@build=sonnet:1,step/@step=haiku:1' | Out-String
 $cfg = ($lo -split "`n" | Where-Object { $_ -like 'CONFIG *' }) -replace '^CONFIG ' | ConvertFrom-Json
 $pc = & { . $O; $a = Get-KitPlanCap 'devy/@build=sonnet:1,step/@step=haiku:1'; $b = Get-KitPlanCap 'devy/opus:1,step/haiku:1'; "$($a.cap -eq $b.cap)|$(($a.perModel.Keys | Sort-Object) -join ',')" }
-Expect "launch -Self prints CONFIG: models, repo roles by name + alias, qa.lanes; plan @phase tokens = models.<phase> ($pc)" ($cfg.models.build -eq 'opus' -and -not $cfg.models._readme -and $cfg.roles.core -eq 'producer' -and $cfg.roles.api -eq 'producer' -and -not $cfg.roles.ui -and $cfg.qaLanes.web.kind -eq 'web' -and $pc -eq 'True|haiku,opus')
+Expect "launch -Self prints CONFIG: models, repo roles by name + alias, qa.lanes; plan @phase tokens = models.<phase> ($pc)" ($cfg.models.build -eq 'opus' -and -not $cfg.models._readme -and $cfg.roles.core -eq 'producer' -and $cfg.roles.api -eq 'producer' -and -not $cfg.roles.ui -and $cfg.qaLanes.web.kind -eq 'web' -and $cfg.intermittentRx -eq 'boom' -and $pc -eq 'True|haiku,opus')
 Remove-Item (Join-Path $k 'skills/crafty/kit.local.json')
+# qa.intermittentRx (CONFIG line) replaces the flaky-FAIL regex that earns 5 verify attempts; unset or no regex: the default
+$jsir = Join-Path (Kd) 'ir.mjs'; [IO.File]::WriteAllText($jsir, @'
+import fs from 'node:fs'
+const src = fs.readFileSync(process.argv[2], 'utf8'), cut = (a, b) => src.slice(src.indexOf(a), src.indexOf(b, src.indexOf(a)))
+const body = cut('let QL =', '// ---- record-args') + cut('let INTERMITTENT', '\nfunction verifyPrompt') + '\nreturn { takeConfig, attemptsNeeded }'
+const mk = (logs) => new Function('log', 'MODELS', body)((m) => logs.push(m), {}), at = (t, s) => t.attemptsNeeded({ observed: s })
+const d = mk([]); d.takeConfig('CONFIG {"intermittentRx":""}')
+const c = mk([]); c.takeConfig('CONFIG {"intermittentRx":"boom"}')
+const bl = [], b = mk(bl); b.takeConfig('CONFIG {"intermittentRx":"("}')
+console.log(`default:${at(d, 'gateway timeout') === 5 && at(d, 'boom') === 1}`)
+console.log(`custom:${at(c, 'boom!') === 5 && at(c, 'gateway timeout') === 1}`)
+console.log(`bad:${at(b, 'gateway timeout') === 5 && bl.some((l) => /qa\.intermittentRx is no regex/.test(l))}`)
+'@)
+Expect-Each @(node $jsir $wf 2>&1) 'testy qa.intermittentRx: #' 'default', 'custom', 'bad' -Show 5
 # bugbrief: Migration range column + phone APK line only when repos[].migrations / qa.lanes kind app declare them
 $bbg = Invoke-PsTest bb-generic @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; Update-KitTracking { param($tk) $tk.tasks.g1 = @{ task = 'g1' } }
@@ -65,9 +79,9 @@ function Get-TrackerTask { @{ name = 'E500'; description = 'spike' } }; function
 $kl = Join-Path $KitConf.Kit 'skills/crafty/kit.local.json'; $bf = { $null = Invoke-BugBrief -Task g1 -Repos w 3>$null; Get-Content (Join-Path (Get-KitPath briefs) g1.md) -Raw }
 function Use($c) { Set-Content $kl ($c | ConvertTo-Json -Depth 6); $script:__cfg = $c | ConvertTo-Json -Depth 6 | ConvertFrom-Json }
 Use @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm' }) }; $t = & $bf
-"neutral:$($t -match '\| Agent \| Bug task \| Items \|\r?\n' -and $t -notmatch 'Migration range' -and $t -notmatch 'phoney')"
-Use @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm'; migrations = @{ check = 'x' } }); qa = @{ lanes = @{ web = @{ kind = 'web' }; app = @{ kind = 'app' } } } }; $t = & $bf
-"declared:$($t -match '\| Items \| Migration range \|' -and $t -match '\| ask the coordinator if you need one \|' -and $t -match 'phoney\.ps1 acquire -Agent B-g1 -Apk local')"
+"neutral:$($t -match '\| Agent \| Bug task \| Items \|\r?\n' -and $t -notmatch 'Migration range' -and $t -notmatch 'phoney' -and $t -match 'Branches `fix/')"
+Use @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm'; migrations = @{ check = 'x' } }); qa = @{ lanes = @{ web = @{ kind = 'web' }; app = @{ kind = 'app' } } }; tracker = @{ bugBranchPrefix = 'bugfix/' } }; $t = & $bf
+"declared:$($t -match '\| Items \| Migration range \|' -and $t -match '\| ask the coordinator if you need one \|' -and $t -match 'phoney\.ps1 acquire -Agent B-g1 -Apk local' -and $t -match 'Branches `bugfix/')"
 '@ @($O)
 Expect-Each $bbg 'bugbrief generic: #' 'neutral', 'declared' -Show 5
 # testy: the prompts call envy.ps1 use and phoney.ps1 acquire directly

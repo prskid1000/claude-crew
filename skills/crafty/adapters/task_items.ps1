@@ -64,7 +64,7 @@ function Update-KitParentItems([string]$Parent, $Pt, [hashtable]$CodeOf = @{}) {
       [pscustomobject]@{ text = "$(Format-KitItemText $(if ($sc) { "$sc" } elseif ($CodeOf[$s.id]) { "$($CodeOf[$s.id])" } else { "$($s.id)" }) ("$($s.name)" -replace '^\s*\[[^\]]*\]\s*') @($s.url))$(if ($sx.heldNote) { " · $($sx.heldNote)" })"
         done = [bool](-not $sx.heldNote -and (Test-TrackerStatus "$($s.status)" 'closed')) } })
   $sig = ConvertTo-KitLetters (@($script:KitItemsSigV) + @($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join ';'); if ($sig -eq "$($px.parentItemsSig)") { return }
-  $null = Set-KitTaskChecklist $Parent 'Items' $items -Prune; Update-KitTaskIndex $Parent { param($x) $x.parentItemsSig = $sig; $x.itemsFrom = 'subtasks' }
+  $null = Set-KitTaskChecklist $Parent (Get-KitItemsLabel) $items -Prune; Update-KitTaskIndex $Parent { param($x) $x.parentItemsSig = $sig; $x.itemsFrom = 'subtasks' }
   "parent items ${Parent}: $(@($items | Where-Object done).Count)/$($items.Count) done"
 }
 # merge by key: items / subtasks by code, decisions by id; any other field present replaces the stored one
@@ -202,4 +202,9 @@ function Get-KitTaskTemplate {
   @([pscustomobject]@{ key = 'problem'; label = 'Problem'; required = $true }, [pscustomobject]@{ key = 'goal'; label = 'Goal'; required = $true },
     [pscustomobject]@{ key = 'items'; label = 'Items'; alt = 'Bugs'; required = 'subtask' }, [pscustomobject]@{ key = 'acceptance'; label = 'Acceptance'; required = $true },
     [pscustomobject]@{ key = 'links'; label = 'Links'; required = $true })
+}
+# the items section's label (its checklist's name) and alt label from tracker.taskTemplate: one name for writer and reader
+function Get-KitItemsLabel([switch]$All) {
+  $s = @(Get-KitTaskTemplate | Where-Object { "$($_.key)" -eq 'items' })[0]; $l = if ($s) { "$($s.label)" } else { 'Items' }
+  if ($All) { @($l) + @(@($s.alt) | Where-Object { $_ }) } else { $l }
 }

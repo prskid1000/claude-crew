@@ -28,7 +28,7 @@ $null = Invoke-KitLogTrim -Now $n0; $left = @(Get-Content $sg | ConvertFrom-Json
 $w1 = Test-KitWake; $s = Read-KitParams; $s.boot = (Get-Date).AddDays(-3).ToString('o'); $s | ConvertTo-Json -Depth 8 | Set-Content (Get-KitPath param-state); $w3 = Test-KitWake
 "wake:$w1|$w3|$(@(Read-KitLog params (Get-Date).AddHours(-1) | Where-Object { $_.event -eq 'trig' -and $_.why -eq 'reboot' }).Count)"
 # registry: a config key's default, a kit.local.json pin, an unknown key
-"reg:$(Get-KitParam 'supervise.stuckMinutes'):$(Get-KitParam 'logs.keepDays' $null signals):$([int](Get-KitParam 'no.such.key')):$((Get-KitParamSpec 'idle.beatMinutes').how)"
+"reg:$(Get-KitParam 'supervise.stuckMinutes'):$(Get-KitParam 'logs.keepDays' $null signals):$([int](Get-KitParam 'no.such.key')):$((Get-KitParamSpec 'idle.beatMinutes').how):$(Get-KitParam 'supervise.ramCleanupPct')"
 # load tags and wake on an observation
 $t = [datetime]'2026-03-01T08:00'; $env:KIT_NOW = $t.ToString('o')
 @{ load = @{ at = (Get-Date).ToString('o'); availGB = 9.5; cpu = 91; agents = 2 } } | ConvertTo-Json | Set-Content (Get-KitPath supervise-state -Create)
@@ -54,7 +54,7 @@ $env:KIT_NOW = $t.AddMinutes(470).ToString('o'); Add-KitParamObs gate.waitMinute
 '@ @((Lib))
 Expect "params: owner decision 3: old lines roll into logs-summary once (month, counts, facts, span), retired stay, raw for logs.keepDays; an appender's handle neither blocks nor loses a line ($(@($pr -match '^trim:') -join ' '))" ($pr -contains 'trim:2:kept,new,late:1:signals:2026-03:2:2:2x old a:30:True')
 Expect 'params: the gap since the last retro is a logs.keepDays observation (each trim); a reboot is one trigger' ($pr -contains 'look:2' -and $pr -contains 'wake:|reboot|1')
-Expect 'params: the registry gives config defaults; kit.local.json pins; an unknown key is null' ($pr -contains 'reg:20:30:0:config')
+Expect 'params: the registry gives config defaults; kit.local.json pins; an unknown key is null' ($pr -contains 'reg:20:30:0:config:85')
 Expect "params: an observation carries load (busy at cpu 91), host and minutes since a wake ($(@($pr -match '^tags:') -join ' '))" ($pr -contains 'tags:busy:91:5:True')
 Expect "params: raw 14 d, hourly sketches within 2%, past 90 d gone ($(@($pr -match '^win:') -join ' '))" ($pr -contains 'win:1:2:2:True:2')
 Expect "params: a deploy trigger is queued until the cadence minimum passed, then evaluated; p90 per load bucket ($(@($pr -match '^queue:') -join ' '))" ($pr -contains 'queue:deploy:False:True:6')

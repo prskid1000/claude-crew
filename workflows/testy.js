@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L52 record-args · L73 prepare · L102 config · L133 prompts · L225 local · L253 app · L283 test-prompt ·
-//   L340 verify · L402 run-item · L586 pool · L608 budget · L640 run · L686 learn
+// Sections: L16 args · L53 record-args · L74 prepare · L103 config · L134 prompts · L226 local · L254 app · L284 test-prompt ·
+//   L341 verify · L403 run-item · L587 pool · L609 budget · L641 run · L687 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -48,6 +48,7 @@ function takeConfig(out) {
  if (!c) { log('WARNING: no CONFIG line from launch -Self: default models, one web lane'); return }
  for (const [k, v] of Object.entries(c.models || {})) if (typeof v === 'string') MODELS[k] = v
  if (c.qaLanes && typeof c.qaLanes === 'object' && Object.keys(c.qaLanes).length) QL = c.qaLanes
+ if (typeof c.intermittentRx === 'string' && c.intermittentRx) { try { INTERMITTENT = new RegExp(c.intermittentRx, 'i') } catch (e) { log(`WARNING: qa.intermittentRx is no regex (${e.message}): the default stays`) } }
 }
 // ---- record-args: the launch record (a resume needs it byte-exact)
 // launch record first (bossy.ps1 launch -Self, FNV-1a); runDir rides along once known
@@ -338,8 +339,8 @@ ${finds || '(none)'}`
 }
 
 // ---- verify: retries, verify and final prompts
-// the tester's own count, else 5 for flaky-looking FAILs: one warm re-run is inconclusive
-const INTERMITTENT = /time[d ]?out|took too long|\b50[234]\b|cold[- ]start|stall|intermittent|flak|busy|rate[- ]limit|LLM|assistant/i
+// the tester's own count, else 5 for flaky-looking FAILs: one warm re-run is inconclusive (qa.intermittentRx replaces it)
+let INTERMITTENT = /time[d ]?out|took too long|\b50[234]\b|cold[- ]start|stall|intermittent|flak|busy|rate[- ]limit|LLM|assistant/i
 function attemptsNeeded(c) {
  return Math.max(c.attempts || 1, INTERMITTENT.test(`${c.observed || ''} ${c.what_was_done || ''}`) ? 5 : 1)
 }

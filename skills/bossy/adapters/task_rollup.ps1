@@ -164,7 +164,7 @@ function Get-KitRollupLocalSig($Ro, [string[]]$Subs, $Tracking) {
   $pa = Get-Command Get-KitPlannedAreas -ErrorAction Ignore   # holds and undelivered areas untick items (crafty adapters/task_items.ps1)
   Get-KitRollupHash ((@($Subs | Sort-Object | ForEach-Object { $tr = $Tracking[$_]; "$_=$(@($tr.mrs) -join ',')/$($tr.done)/$($tr.holdPromotion)/$(if ($pa -and $tr) { @(Get-KitPlannedAreas $_ $tr.planReleased) -join ',' })" }) + "$($lf.Length)" + ($Ro.triage | ConvertTo-Json -Depth 6 -Compress)) -join '|')
 }
-function Set-KitItemsChecklist([string]$Task, $Items) { Set-KitTaskChecklist $Task 'Items' $Items -Prune }   # crafty adapters/task_items.ps1
+function Set-KitItemsChecklist([string]$Task, $Items) { Set-KitTaskChecklist $Task (Get-KitItemsLabel) $Items -Prune }   # crafty adapters/task_items.ps1
 function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $ix = Read-KitState (Get-KitTaskFile $Parent); $ro = if ($ix.rollup -is [Collections.IDictionary]) { $ix.rollup } else { @{} }
   $trk = (Read-KitTracking).tasks; $known = @($ro.subtasks | Where-Object { $_ })
@@ -259,9 +259,9 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
 function Get-KitDescItemIds([string]$Text) { @(Get-KitDescItems $Text | ForEach-Object id) }
 # the Items list as { id; text = its words after the id (JR (api-repo, refine): P4-JR-01 -> 'api-repo, refine: P4-JR-01') }
 function Get-KitDescItems([string]$Text) {
-  $ls = @("$Text" -split "`r?`n"); $o = @(); $idRx = '^(?<id>[A-Za-z]+-?\d[\w-]*)(?![\w-])'
+  $ls = @("$Text" -split "`r?`n"); $o = @(); $idRx = '^(?<id>[A-Za-z]+-?\d[\w-]*)(?![\w-])'; $lbRx = (@(@(Get-KitItemsLabel -All) + 'Items', 'Bugs' | Select-Object -Unique) | ForEach-Object { [regex]::Escape($_) }) -join '|'   # + the defaults: older descriptions
   for ($i = 0; $i -lt $ls.Count; $i++) {
-    if ($ls[$i] -notmatch '(?i)^\W{0,6}(?:Items|Bugs)\b[^:]*:\W*(?<l>.*)$') { continue }
+    if ($ls[$i] -notmatch "(?i)^\W{0,6}(?:$lbRx)\b[^:]*:\W*(?<l>.*)$") { continue }
     # items split on ' · ' and list bullets; a piece on ',' / ';' only when the first part is a bare id and each part starts with one ("A1, A2 (x)"), never inside an item's text
     $o = @(foreach ($seg in $Matches.l -split ' · ') { $cs = @($seg -split '[,;]' | ForEach-Object { ($_ -replace '[`*]', '').Trim() } | Where-Object { $_ }); if ($cs.Count -gt 1 -and $cs[0] -match "$idRx\s*(\([^)]*\))?$" -and -not @($cs | Where-Object { $_ -notmatch $idRx }).Count) { $cs } else { $seg } })
     for ($j = $i + 1; $j -lt $ls.Count -and $ls[$j] -match '^\s*[-*]\s+(\[.\]\s*)?(?<b>.+)$'; $j++) { $o += $Matches.b }; break
