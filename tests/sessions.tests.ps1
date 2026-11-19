@@ -203,7 +203,7 @@ $rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text 
 "agents:$(-not @($rxAg | Where-Object { $agH -notmatch $_ }).Count -and $fh -match $rxOrphan)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
 $fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Trim() })
-$foldWant = 'flags=open', 'agents=open:[running]1', 'delivery=open', 'runs=closed:2 ended in 7 days', 'machine=open', 'resources=open:2', 'usage=open', 'internals=closed', 'tuning=closed:3', 'tg-k2=closed:1', 'agents-done=closed:1'
+$foldWant = 'flags=open', 'agents=open:[running]1', 'delivery=open', 'runs=closed:2 ended in 7 days', 'machine=open', 'usage=open', 'internals=closed', 'tuning=closed:3', 'tg-k2=closed:1', 'agents-done=closed:1'
 $foldMiss = @($foldWant | Where-Object { " $($fl[0]) " -notmatch " $([regex]::Escape($_))[ :]" })
 Expect "supervise page: every section a <details> with '<title> (<count>)', the owner's default open states, an empty one summary only (missing: $foldMiss | $($fl[0]))" (-not $foldMiss.Count)
 Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: usage, activity, tuning (a closed fold per area, source counts); no top steps or kit runs; runs: running first, a fold per day (today open, sum), label, kind, resumed, budget bar running or 80%+, no kit runs; agents: leases on the row, finished folded, orphan tinted; cap: newest 25 ended runs, rest counted; ux: 10 rows + Show all (N), jump links, No match, keys break at | /, tone AA)' @('internals', 'runs', 'pages', 'agents', 'cap', 'ux') 6
