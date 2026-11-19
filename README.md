@@ -191,19 +191,19 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 - header, one row from 1100 px: staleness (amber past 2x NEXT, red past 4x), next sweep, jump links, ACT / WATCH counts, filter
   (`/`), auto-refresh 60 s and light / dark icon buttons;
 Each number appears once, in the order the owner acts on (owner 2026-11-13). Every section and sub-section is a `<details>` whose
-summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, agents, runs, machine and resources,
-usage; top steps and kit internals folded; the page keeps each one the owner toggles (localStorage `kc-open`). Tables show 10
+summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, runs, machine and resources,
+trends; shells with none and kit internals folded; the page keeps each one the owner toggles (localStorage `kc-open`). Tables show 10
 rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; the header holds
 jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
 of two fields a line, low-value columns hidden; tone-coloured text is mixed toward the foreground (WCAG AA in both themes):
 - every heatmap: one renderer, a number in each cell, now / today outlined; hours (24 clock hours) or days (`Format-KitDayHeat`:
   rows = series, columns = days, a total); rows from config + data only; rows with no data in the window fold ("N idle rows");
   each widget names its metric (`data-mk`, once per page); kit pages open in an in-page drawer, web links in a new tab;
-- flags as cards in masonry columns (an icon per kind, the next step, ACT first), promotion holds folded under them;
-- live agents grouped by run (a stacked bar by state in the summary): each running run on one line above them (label, kind,
-  steps bar, tokens, est. cost, budget bar, its tasks and MRs linked), then state chip, task (a known task id or MR ref linked),
-  the leases it holds, since, last progress, doing / next; "Finished today" folded; task and MR links come from the tracker
-  (`url`) and git host (`mr.url`) adapters (text: the id, `repo!n` or `repo#n` per host; no web URL: plain text);
+- flags (owner 2026-11-19): one table, ACT first (level, kind, who, problem, next step, age), a repeat one row with its count,
+  auto-fixes and notes one folded row, the 24 h flags heatmap behind a header toggle; promotion holds folded under it;
+- runs: one runs x hour heatmap (a cell = minutes active), live runs on top over the last 24 h, ended ones by day (today open, older
+  days folded); a run row: label, kind, its steps page, tokens, est. cost, time; agents (steps by agent code, live board rows with
+  state and age) under it on a tap; board agents outside a workflow run grouped by their run;
 - machine and resources: tiles (RAM used, builds running / queued / today, longest gate wait, QA seats, phone lanes,
   emulators, test browsers) and one RAM bar (used / promised to builds / free above the floor / floor); Resources · 24 h: one
   heatmap, metric switch CPU · RAM | Writes GB | Waits min | Builds min, rows in folding groups (count + the worst state): the
@@ -211,21 +211,16 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   processes), env services, builds, worktree slots, phones, browser tabs, shells, shared; a row: holder + branch / task; the
   builds group: a row per gate kind, its owners today as chips, today / build-min / failed (red chip) / wait avg / peak; then
   the top other processes (10%+) folded; Disk writes · 7 days (day x hour, machine over kit-owned) with free GB per day per
-  drive; shells;
-- usage (the 7 calendar days ending today; `bossy.ps1 budget -Usage` reads the transcripts incrementally, `_paths`
-  `usage-cache` + `.cold.json`; `budget.prices` per model, unknown ones listed as not priced): est. cost and tokens per day
-  rows; tiles: review + fix share, a tile per step outcome (a tap shows the runs with that outcome); Spend: one table, a row
-  per role (steps, tokens, share, est. cost, avg / p90 time, model mix), its step types in the same columns (a tap shows them),
-  the model totals once as the mix legend;
-- kit internals (folded): Flags · 24 h (ACT / WATCH / FIXED rows, a sub-row per kind, `stats.flagHours`), fixed this sweep,
-  notes; Delivery, 30 days (`.state/outcomes.jsonl`): tiles (QA first pass %, came back %, median fix rounds, p50 hours to
-  promoted, tokens per merged MR), Delivered per day (MRs merged per repo, lead time p50 and came-back tasks in the tooltip;
-  tasks closed, came back, runs started; a cell filters the task list or the runs), tasks per repo by outcome, work in flight,
-  test runs (checks · pass %, 7 daily stacked bars, NOT_TESTED causes); runs of 7 days, one line each (label, kind, resumed,
-  what it did, tasks and MRs linked, its steps page); usage; Activity: Kit health · 7 days (sweep s, agents failed / finished,
-  branches, worktrees) and Branches · worktrees now (repo, branches, worktrees, kept, dirty, diverged); Tuning: a tile per key
-  in its group row (colour = learned / shadow / local / default, the value inside, changed in 7 days outlined), keys
-  changed 2+ times in 7 days as a key x day heatmap, the last changes as chips (old -> new, reason in the tooltip), the table one tap away.
+  drive; shells: their own section;
+- trends (7 calendar days ending today; usage: `bossy.ps1 budget -Usage` reads the transcripts incrementally, `_paths`
+  `usage-cache` + `.cold.json`; `budget.prices` per model; delivery: `.state/outcomes.jsonl`): one tile strip (QA first pass %,
+  came back %, median fix rounds, p50 hours to promoted, tokens per merged MR, review + fix share, a tile per step outcome: a tap
+  shows the runs with it); ONE day heatmap (MRs merged per repo, tasks closed, came back, runs started: a cell filters the task
+  list or the runs; est. cost, tokens, sweep s, agents failed / finished, branches, worktrees); tasks per repo by outcome, work in
+  flight, test runs; Spend per role (roles x steps, tokens, share, est. cost, avg / p90 time and the 3 biggest models' share);
+  Repos now (repo x branches, worktrees, kept, dirty amber, diverged red);
+- kit internals (folded): Tuning: a tile per key in its group row (colour = learned / shadow / local / default, the value inside,
+  changed in 7 days outlined), keys changed 2+ times in 7 days as a key x day heatmap, the last changes as chips (old -> new, reason in the tooltip), the rows as TSV on a tap.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: a wrapping row, a min width per item,

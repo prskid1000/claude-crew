@@ -7,7 +7,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L13 outcomes · L82 summary · L211 patterns · L246 rules
+Sections: L13 outcomes · L82 summary · L213 patterns · L248 rules
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -125,21 +125,19 @@ function Get-KitRunQa($Run, $Ix) {
     closed = @($hit | Where-Object { -not $_.fail -and -not $_.nt -and $_.pass } | ForEach-Object task | Select-Object -Unique); failed = @($hit | Where-Object fail | ForEach-Object task | Select-Object -Unique)
     untested = @($hit | Where-Object { -not $_.fail -and $_.nt } | ForEach-Object task | Select-Object -Unique) }
 }
-# the dashboard's Delivery fold (owner, 2026-11-16: graphs over text, Outcomes + runs in one panel): KPI tiles, the per-day heatmap
-# (MRs merged per repo, tasks closed, came back, runs started; a day click filters the lists), a stacked bar per repo (a segment
-# click lists its tasks), $QaTile (QA checks per day), the task list; called by Format-KitSuperviseHtml: its helpers by dynamic scope; $UP = Format-KitUsageHtml
-function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
+# the dashboard's Trends band (owner 2026-11-19: Delivery + Usage + Activity in one): one tile strip (KPIs + $UP tiles), ONE day heatmap
+# (MRs merged per repo, tasks closed, came back, runs started + $More rows @{ d = dates; v }; a day click filters the lists), a stacked
+# bar per repo (a segment click lists its tasks), $QaTile, $Blocks (spend, repos), the task list; helpers by dynamic scope; $UP = Format-KitUsageHtml
+function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '', $More = @(), [string]$Blocks = '') {
+  if (-not $S) { $S = [pscustomobject]@{ kpi = [pscustomobject]@{}; tasks = @(); repos = @() } }   # no outcome stats yet: the rest still shows
   $bk = $script:KitOutcomeBuckets; $tone = @{ r0 = 'sage'; r1 = 'slate'; r2 = 'watch'; r3 = 'plum'; rna = 'pale'; back = 'act'; wait = 'none' }
   $pc = { param($v) if ($null -eq $v) { '—' } else { "$v<small>%</small>" } }
   # KPI tiles: the value and its base once (owner 2026-11-19: no sparklines; the weekly trend is read in a retro)
-  $tile = { param($label, $v, $sub) "<div class='st dk' data-fit><div class=k>$(& $e $label)</div><div class=v>$v</div><div class=s>$(& $e $sub)</div></div>" }
+  $tile = { param($label, $v, [string]$u, $sub) @{ v = $(if ($null -ne $v) { & $n1 $v } else { '—' }); u = $(if ($null -ne $v) { $u }); l = $label; tip = "${label}: $sub" } }
   $k = $S.kpi
-  $tiles = & $grid 'stats dlt' 150px @(
-    (& $tile 'QA first pass' (& $pc $k.first) "$($k.firstOf) tasks QA'd clean on the first run"),
-    (& $tile 'Came back' (& $pc $k.back) "$($k.backOf) reopened, failed testing or a [Bug] under them"),
-    (& $tile 'Median fix rounds' $(if ($null -ne $k.rounds) { & $n1 $k.rounds } else { '—' }) "over $($k.roundsOf) tasks with a wave report"),
-    (& $tile 'Hours to promoted' $(if ($null -ne $k.hours) { "$(& $n1 $k.hours)<small> h p50</small>" } else { '—' }) "over $($k.hoursOf) promoted tasks"),
-    $UP.tpm) 5
+  $kt = @((& $tile 'QA first pass' $k.first '%' "$($k.firstOf) tasks QA'd clean on the first run"), (& $tile 'came back' $k.back '%' "$($k.backOf) reopened, failed testing or a [Bug] under them"),
+    (& $tile 'median fix rounds' $k.rounds '' "over $($k.roundsOf) tasks with a wave report"), (& $tile 'hours to promoted, p50' $k.hours ' h' "over $($k.hoursOf) promoted tasks"))
+  $tiles = "<div class=tls data-mk=trend-tiles>$((Format-KitTiles $kt) -replace '^<div class=tls>|</div>$')$($UP.tpm)$($UP.tiles)</div>"
   $dy = @($UP.days | Where-Object { $_ }); $dayOf = { param($iso) if ($iso) { try { ([datetimeoffset]$iso).LocalDateTime.ToString('yyyy-MM-dd') } catch { '' } } }
   $closed = @{}; $back = @{}; foreach ($t in @($S.tasks)) { if ($c = & $dayOf $t.closedAt) { $closed[$c] = @(@($closed[$c]) + $t.id | Where-Object { $_ }) }; if ($b = & $dayOf $t.backAt) { $back[$b] = @(@($back[$b]) + $t.id | Where-Object { $_ }) } }
   # a stacked bar per repo with a QA'd task; the untested ones: one "other (a, b)" bar when 2+, a single one by its own name; the legend once
@@ -156,9 +154,12 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
   # Delivered per day (owner 2026-11-19: one day heatmap for the merges, the old per-day chart and lead-time line dropped): a row per repo
   # (configured + any with an MR; MRs merged, its MRs, median lead time and came-back tasks in the tooltip), then tasks closed, came back and
   # runs started (a cell click filters the task list and the runs to that day)
-  $mrs = @($UP.mrs | Where-Object { $_ -and $_.ref }); $dk = @($dy | ForEach-Object { "$($_.day)" }); $nd = $dk.Count
+  $mrs = @($UP.mrs | Where-Object { $_ -and $_.ref }); $dk = @($dy | ForEach-Object { "$($_.day)" }); if (-not $dk.Count) { $dk = @(6..0 | ForEach-Object { $at.AddDays(-$_).ToString('yyyy-MM-dd') }) }; $nd = $dk.Count
+  # a $More row's values by its own dates (d), onto this map's days
+  $align = { param($r) if (-not $r.d) { return $r }; $r2 = @{} + $r; $ix = @{}; for ($i = 0; $i -lt @($r.d).Count; $i++) { $ix["$(@($r.d)[$i])"] = $i }
+    foreach ($fk in 'v', 'tips') { if ($r[$fk]) { $r2[$fk] = @(foreach ($d in $dk) { if ($ix.ContainsKey($d)) { @($r[$fk])[$ix[$d]] } else { $null } }) } }; $r2 }
   $repoOf = { param($ref) ("$ref" -split '[!#]')[0] }
-  $med = { param($v) $s = @($v | Sort-Object); if ($s.Count) { $s[[int][math]::Floor(($s.Count - 1) / 2)] } else { $null } }   # lower median, as the KPIs
+  $med = { param($v) $sv = @($v | Sort-Object); if ($sv.Count) { $sv[[int][math]::Floor(($sv.Count - 1) / 2)] } else { $null } }   # lower median, as the KPIs
   $leadAll = & $med @($mrs | Where-Object { $null -ne $_.lead } | ForEach-Object { [double]$_.lead })
   $idList = { param($l) $l1 = @($l | Where-Object { $_ }); "$(@($l1 | Select-Object -First 8) -join ', ')$(if ($l1.Count -gt 8) { " +$($l1.Count - 8)" })" }
   $dayCard = if ($nd) {
@@ -170,7 +171,7 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
           v = @(for ($i = 0; $i -lt $nd; $i++) { [double]@($per[$i]).Count })
           tips = @(for ($i = 0; $i -lt $nd; $i++) { $m0 = @($per[$i]); $lt = & $med @($m0 | Where-Object { $null -ne $_.lead } | ForEach-Object { [double]$_.lead }); $b0 = @($bkR | Where-Object d -eq $dk[$i] | ForEach-Object id)
             "$($m0.Count) MR(s) merged$(if ($m0.Count) { ": $(& $idList @($m0 | ForEach-Object ref))" })$(if ($null -ne $lt) { " · lead time p50 $(& $n1 $lt) h" })$(if ($b0.Count) { " · came back: $(& $idList $b0)" })" }) } })
-    $runsOf = { param($d) @($UP.dayRuns[$d] | Where-Object { $_ } | ForEach-Object { if ("$($_.label)".Trim()) { $_.label } else { $_.run } }) }
+    $runsOf = { param($d) @($(if ($UP.dayRuns) { $UP.dayRuns[$d] }) | Where-Object { $_ } | ForEach-Object { if ("$($_.label)".Trim()) { $_.label } else { $_.run } }) }
     $fvOf = { param([string]$p) @($dk | ForEach-Object { "$p$_" }) }   # a closed / came-back cell filters the tasks, a runs cell the runs (one key each)
     $sumRow = { param([string]$n, [string]$cls, [string]$what, $lists, [string]$ft, $fv) $cs = @(foreach ($l in $lists) { @($l | Where-Object { $_ }).Count })
       @{ n = $n; mk = "$($n -replace ' ', '-')-day"; cls = $cls; ft = $ft; fv = $fv; v = @($cs | ForEach-Object { [double]$_ }); t = "$([int](@($cs) + 0 | Measure-Object -Sum).Sum)"
@@ -178,7 +179,8 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
     $sumRows = @((& $sumRow 'tasks closed' '' 'closed' @(foreach ($d in $dk) { , @($closed[$d]) }) '#oc-tasks' (& $fvOf dc)), (& $sumRow 'came back' 'fh l-act' 'came back' @(foreach ($d in $dk) { , @($back[$d]) }) '#oc-tasks' (& $fvOf db)),
       (& $sumRow 'runs started' 'fh l-fixed' 'run(s) started' @(foreach ($d in $dk) { , @(& $runsOf $d) }) '#sec-runs' (& $fvOf d)))
     $fb = @($sumRows | Where-Object { @($_.v | Where-Object { $_ }).Count })[0]; if ($fb) { $fb.gl = $true }   # the rule above the first shown one (idle rows fold)
-    & $fold 'dl-days' 'Delivered per day' "$($mrs.Count) MRs$(if ($null -ne $leadAll) { " · lead time p50 $(& $n1 $leadAll) h" })" "$(Format-KitDayHeat (@($repoRows) + @($sumRows)) $dk 'repo · series · day')<div class=hk>a cell = MRs merged (repo rows), tasks closed, came back or runs started that day · outlined = today · tap a cell: its MRs, lead time p50 and came-back tasks; a click on the lower rows filters the tasks and runs below</div>" -Open -tag h4 -cls 'sub st uc dlr' }
+    $mr0 = @($More | Where-Object { $_ } | ForEach-Object { & $align $_ }); if ($mr0.Count) { $mr0[0].gl = $true }
+    & $fold 'dl-days' 'Per day' "$($mrs.Count) MRs$(if ($null -ne $leadAll) { " · lead time p50 $(& $n1 $leadAll) h" })" "$(Format-KitDayHeat (@($repoRows) + @($sumRows) + $mr0) $dk 'repo · series · day')<div class=hk>a cell = that day's value (shade by the row's peak) · outlined = today · the right column: 7 days (sum, or as the row's tooltip says) · a click on tasks closed, came back or runs started filters the tasks and runs</div>" -Open -tag h4 -cls 'sub st uc dlr' }
   $flight = [ordered]@{ open = @('in progress', 'slate'); review = @('review', 'plum'); promoted = @('promoted', 'sage'); intest = @('in test', 'watch'); failedTesting = @('failed testing', 'act') }
   $stOf = { param([string]$s) if ($s -in 'deployed', 'untested') { 'intest' } elseif ($flight.Contains($s)) { $s } else { '' } }   # outcome stage -> status (passed: done, not in flight)
   $fl = @($S.tasks | ForEach-Object { $b = & $stOf $_.stage; if ($b) { [pscustomobject]@{ id = $_.id; b = $b } } })
@@ -191,7 +193,7 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '') {
       "<li data-fk='$(& $e $fk)'>$(& $taskA $t.id)<span class='chip ob-$($tone[$t.bucket])'>$(& $e $bk[$t.bucket])</span><span class=m>$(& $e ($t.repos -join ', '))</span></li>" })
   $list = "<div id=oc-tasks class='ftl uc'><p class=fclr hidden>Tasks: <b></b> <button type=button>Clear</button></p><ul class=otl>$($rows -join '')</ul></div>"
   # two balanced columns (owner 2026-11-17): cards pack into the shorter column, the last tile of each stretches (masonry data-fill)
-  "$tiles$dayCard<div class='ug dlv' style='--cmin:380px;--cmax:2' data-mas data-fill>$barsCard$flightCard$QaTile</div>$list"
+  "$tiles$dayCard<div class='ug dlv' style='--cmin:380px;--cmax:2' data-mas data-fill>$barsCard$flightCard$QaTile</div>$Blocks$list"
 }
 # bucket order = the bar's segment order: passed QA by fix rounds before it (n/a: no wave report names the task), came back, not tested yet
 $script:KitOutcomeBuckets = [ordered]@{ r0 = 'passed, 0 fix rounds'; r1 = 'passed, 1 round'; r2 = 'passed, 2 rounds'; r3 = 'passed, 3+ rounds'; rna = 'passed, rounds not recorded'; back = 'came back'; wait = 'not tested yet' }

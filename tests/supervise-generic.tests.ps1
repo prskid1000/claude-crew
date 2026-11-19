@@ -237,5 +237,20 @@ $bpo = & { . $O; $n = Get-Date; $dd = Join-Path (Get-KitPath audit -Create) $n.T
   $now = $n; $script:mem = @{ AvailGB = 8; TotalGB = 16 }; $fl = @(Get-KitSuperviseGuardResources | Where-Object { $_.kind -eq 'BUILDS' -and "$($_.what)" -match 'gated builds' })
   "$(@($g.owners | ForEach-Object { "$($_.name)=$($_.n)/$($_.min)/$($_.failed)" }) -join ',')|$($h -match ">w1</span></span></span><span[^>]+>(<i[^>]*>[^<]*</i>)+</span><span class='gc' data-mv=b>10</span><span class='gc' data-mv=b>20</span><span class=gc data-mv=b><span class='chip s-stuck'>2<")|$($fl.Count)|$($fl[0].who)" }
 Expect "kind row: owner, today / min / failed; no QA seats; over gate.buildsPerHour (8) -> one WATCH ($bpo)" ($bpo -eq 'w1=10/20/2,w2=1/1/0|True|1|w1')
+# flags table (D4/D7, owner 2026-11-19): ACT first, a repeat (same level, kind, problem) one row with its count and both owners; auto-fixes and notes one folded row
+$ftb = & { . $O; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; flags = @(@{ level = 'WATCH'; kind = 'SHELL'; who = 'a1'; problem = 'pid 4 quiet 30 min'; action = 'end it' }, @{ level = 'WATCH'; kind = 'SHELL'; who = 'a2'; problem = 'pid 9 quiet 31 min' }, @{ level = 'ACT'; what = 'DISK D: low' }, @{ level = 'INFO'; what = 'auto-fixed: killed shell 7' }) })
+  "$($h.IndexOf("<tr class='f fr ACT'>") -lt $h.IndexOf("<tr class='f fr WATCH'>")) $(([regex]::Matches($h, "<tr class='f fr WATCH'>")).Count) $($h -match "title='seen 2 times this sweep'>x2</span></td><td>SHELL</td><td>a1, a2</td>") $($h -match 'data-tg=fx-rows aria-expanded=false>1 auto-fixed this sweep</button></td></tr></tbody><tbody id=fx-rows hidden>')" }
+Expect "flags table: ACT first, a repeat one row x2 with both owners, auto-fixes folded ($ftb)" ($ftb -eq 'True 1 True True')
+# D1 (owner 2026-11-19): kit-owned = the kit's trees summed, other processes = the machine minus them: both rows have CPU samples and now values; a row with no sample folds
+$kow = & { . $O; $n = [datetime]'2026-01-02T10:00:00'; $cs = [pscustomobject]@{ samples = @([pscustomobject]@{ at = $n.AddMinutes(-20).ToString('o'); s = 600; all = 50; g = @{ 'e · api' = 10; 'phone P' = 5 }; m = @{ 'e · api' = 2; 'phone P' = 1 }; top = @() }); svc = @('e · web') }
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); mem = @{ TotalGB = 16; AvailGB = 8 }; stats = [pscustomobject]@{ cpu = $cs } })
+  "$($h -match "kit-owned &#183; CPU avg 15% &#183; peak 15% &#183; RAM 3 GB'>") $($h -match "other processes &#183; CPU avg 35%") $($h -match "<span class='gc' data-mv=c title='kit-owned: now CPU 15 %'>15</span>") $($h -match "idle rows · no data in 24 h</button><div class=gki><div class='gk'><span class=gn title='e &#183; web")" }
+Expect "resources: kit-owned and other processes rows carry samples, a sample-less row folds ($kow)" ($kow -eq 'True True True True')
+# board leave (owner 2026-11-19): the leaving agent's background shells die (its transcript), another agent's and a foreground one stay
+$lsh = & { . $O; $tx = Join-Path (Kd) 'agent-k1.jsonl'; $ps = @([pscustomobject]@{ Id = 50; ParentId = 1; Name = 'claude.exe' }) + @(60, 61, 62 | ForEach-Object { [pscustomobject]@{ Id = $_; ParentId = 50; Name = 'bash.exe'; CommandLine = "bash -c 'sleep $_'" } })
+  $fd = @{ '60' = [pscustomobject]@{ file = $tx; bg = $true }; '61' = [pscustomobject]@{ file = (Join-Path (Kd) 'agent-x.jsonl'); bg = $true }; '62' = [pscustomobject]@{ file = $tx; bg = $false } }
+  $killed = [Collections.Generic.List[int]]::new(); $said = @(Stop-KitLeftShells ([pscustomobject]@{ agent = 'k1'; transcript = $tx }) $ps $fd { param($id) $killed.Add($id) })
+  "$($killed -join ',')|$($said -match '^killed shell 60 of k1: ' -as [bool])" }
+Expect "board leave: its background shells killed, not another agent's or a foreground one ($lsh)" ($lsh -eq '60|True')
 Remove-TestKit $k
 Complete-Tests

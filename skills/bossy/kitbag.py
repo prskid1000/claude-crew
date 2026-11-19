@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1475 audit ·
-  L1615 registry · L1947 arch lint · L2214 prose · L2379 sections · L2509 budget · L2523 migrate · L2683 plugins ·
-  L2737 state lint · L2925 main
+Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1477 audit ·
+  L1617 registry · L1949 arch lint · L2216 prose · L2381 sections · L2511 budget · L2525 migrate · L2685 plugins ·
+  L2739 state lint · L2927 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1297,7 +1297,9 @@ const scan = () => {
     if (e.closest('svg,script,style,noscript,#tip') || !e.getClientRects().length) continue
     const cs = getComputedStyle(e), txt = (e.innerText || '').trim().replace(/\s+/g, ' '), fs = parseFloat(cs.fontSize), lh = parseFloat(cs.lineHeight) || fs * 1.2
     if (!txt) continue
-    const why = cs.textOverflow === 'ellipsis' ? 'text-overflow: ellipsis' : cs.webkitLineClamp && cs.webkitLineClamp !== 'none' ? `line-clamp ${cs.webkitLineClamp}`
+    // owner 2026-11-19: a one-line ellipsis passes when it fits, or when a title on it or its tile holds the full text
+    const tip = ((e.closest('[title]') || {}).title || '').replace(/\s+/g, ' ')
+    const why = cs.textOverflow === 'ellipsis' ? (e.scrollWidth <= e.clientWidth + 1 || tip.includes(txt) ? '' : 'text-overflow: ellipsis without a title holding the full text') : cs.webkitLineClamp && cs.webkitLineClamp !== 'none' ? `line-clamp ${cs.webkitLineClamp}`
       : cs.clipPath !== 'none' ? `clip-path ${cs.clipPath}` : /hidden|clip/.test(cs.overflowY) && e.scrollHeight > e.clientHeight + 1 ? `scrollHeight ${e.scrollHeight} > clientHeight ${e.clientHeight}`
       : /auto|scroll/.test(cs.overflowX) || cs.display === 'inline' ? '' : e.scrollWidth > e.clientWidth + 1 ? `scrollWidth ${e.scrollWidth} > clientWidth ${e.clientWidth}`
       : e.clientWidth > 0 && e.clientWidth < 4 * fs && txt.length > 6 && e.clientHeight > 3 * lh ? `squeezed: ${e.clientWidth} px wide, ${Math.round(e.clientHeight / lh)} lines` : ''
