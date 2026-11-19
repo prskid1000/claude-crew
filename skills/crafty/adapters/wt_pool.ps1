@@ -8,7 +8,7 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L14 worktrees · L130 names · L172 slots · L198 lease · L303 release · L331 lanes · L436 sync · L536 pool
+Sections: L14 worktrees · L129 names · L171 slots · L197 lease · L302 release · L330 lanes · L435 sync · L535 pool
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -26,8 +26,7 @@ function Get-KitWtHeldTest {
 # never deleted: protectedBranchesBase (main/master/develop/release/*), configured lanes' lane/* (+ -<target> of a second target) + localenv/*, protectedBranches, target, deploy branches, origin/HEAD
 function Get-KitKeepBranchRx([string]$Repo) {
   $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
-  $base = if ((Get-KitSetting 'protectedBranchesMode' '') -eq 'replace') { @() } else { @(Get-KitSetting 'protectedBranchesBase' @('main', 'master', 'develop', 'release/*')) }
-  $all = @($base) + @(Get-KitLaneNames | ForEach-Object { "localenv/$_"; Get-KitLaneBranch $_; "$(Get-KitLaneBranch $_)-*" }) + @($KitConf.ProtectedBranches) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
+  $all = @(Get-KitProtectedBranches) + @(Get-KitLaneNames | ForEach-Object { "localenv/$_"; Get-KitLaneBranch $_; "$(Get-KitLaneBranch $_)-*" }) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
   '^(' + (@($all | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape("$_") -replace '\\\*', '.+' }) -join '|') + ')$'
 }
 # may a local branch go? delete + why; $Ctx caches per repo (keep rx, checkouts, bases, host MR refs)

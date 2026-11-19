@@ -22,7 +22,7 @@
   "gpu": "exclusive.<kind>.processes (regex): one kind on the GPU at a time; unset: no limit",
   "process": "gates.<promote|merge|finish|bugFix|mrBody>: unset = pass, builtin:testingDocs / builtin:reproRow, or a hook command (payload JSON on stdin, exit 0 = pass); docs[] {key, label, linkRx, headerRx, required} (unset: vocab.json pair, [] = none); bugFixRx",
   "mr": "footer: last line of every MR body (\"\" = none); sections, uiFilesRx: devtools.py render",
-  "protectedBranchesBase, linkDefaults, stack.presets": "branches the sweep never deletes (main/master/develop/release/*); dep folders wt lease / new link; false = no built-in stack presets",
+  "protectedBranchesBase, linkDefaults, stack.presets": "protected branches (main/master/develop/release/*): never swept, force-pushed or pushed to (MR only), a deploy-MR source; dep folders wt lease / new link; false = no built-in stack presets",
   "api, auth": "api.defaultUser (none: a target with one user uses it, several refuse), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 | oidc",
   "masking, migrations": "masking.rules {table.column glob: kind}, logins, names {first, last, streets} (envy db.md); migrations.tool (none), lbcheck.*, historyTables (envy db.md)",
   "configVersion": "below 2: migrate adds old defaults" },

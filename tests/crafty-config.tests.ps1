@@ -33,9 +33,11 @@ Set-JsonFile $dkl @{ stack = @{ presets = @() }; tests = @{ fallbackRunner = 'no
 $s1 = "$(pwsh @np $swf $D $gd $td 2>&1)"
 $gj = { param($c) @{ tool_name = 'Bash'; cwd = $gd; tool_input = @{ command = $c } } | ConvertTo-Json -Compress }
 $hb = (pwsh @np $D guard -Json (& $gj 'bazel build //app') 2>&1) -join '' -match 'memory gate'; $he = (pwsh @np $D guard -Json (& $gj 'npx testcafe chrome t.js') 2>&1) -join '' -match 'e2e runs go through'
+$pgv = { @(foreach ($pc in 'git push origin --force-with-lease HEAD:hotfix/x', 'git push origin HEAD:staging', 'git push origin HEAD:f/x --force-with-lease') { (pwsh @np $D guard -Json (& $gj $pc) 2>&1) -join '' -match 'force-push|is a protected branch' }) -join ',' }; $pg1 = & $pgv; $dm1 = "$(pwsh -NoProfile -c "`$env:KIT_TRACKER_TYPE = 'none'; . '$D'; Test-KitDeployMr app hotfix/x main" 2>&1)"
 Set-JsonFile $dkl @{ stack = @{ presets = @('presets') }; tests = @{ fallbackRunner = 'npx mocha {tests}' } }; $s2 = "$(pwsh @np $swf $D $gd $td 2>&1)"
 if ($dk1) { $dk1 | Set-Content $dkl } else { Remove-Item $dkl }
-$hn = (pwsh @np $D guard -Json (& $gj 'bazel build //app') 2>&1) -join '' -match 'memory gate'; if ($spNew) { Remove-Item $spa }
+$hn = (pwsh @np $D guard -Json (& $gj 'bazel build //app') 2>&1) -join '' -match 'memory gate'; if ($spNew) { Remove-Item $spa }; $pg0 = & $pgv; $dm0 = "$(pwsh -NoProfile -c "`$env:KIT_TRACKER_TYPE = 'none'; . '$D'; Test-KitDeployMr app hotfix/x main" 2>&1)"
+Expect "protectedBranchesBase: the legacy list denies force-with-lease and direct pushes to hotfix/* and staging and makes hotfix/* a deploy-MR source; default: allowed, a task MR; own branch always passes ($pg1 $dm1 | $pg0 $dm0)" ($pg1 -eq 'True,True,False' -and $dm1 -eq 'True' -and $pg0 -eq 'False,False,False' -and $dm0 -eq 'False')
 Expect "config switches: unset = presets on, spec.mjs, base main/master/develop/release, node_modules+.venv; set = presets off, no fallback, the legacy branch list, no links, guard extras deny ($s0 | $s1 | $s2 | $hb $he $hn)" (
   $s0 -match '^stack=go\|spec=node .*spec\.mjs.* \{tests\}\|keep=True,False,False\|links=node_modules\+\.venv$' -and $s1 -match '^stack=none\|spec=null\|keep=True,True,True\|links=( .*no preset detects|$)' -and
   $s2 -match '^stack=go\|spec=npx mocha \{tests\}' -and $hb -and $he -and -not $hn)
