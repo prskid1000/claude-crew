@@ -148,9 +148,12 @@ $v = Get-KitWriteView $sm $hl $now 1; $r = @{}; foreach ($x in $v.rows) { $r[$x.
 $global:n1 = { param($x) "$x" }; $global:e = { param($x) "$x" }; $global:fold = { param($id, $t, $c, $in, [switch]$Open, $tag, $cls) "<f $cls>$in</f>" }
 $card = Format-KitWritesCard ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
 $pg = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resources = @([pscustomobject]@{ name = 'build x'; by = 'kitty'; gb = 1 }); stats = [pscustomobject]@{ writes = ($v | ConvertTo-Json -Depth 8 | ConvertFrom-Json) } })
+$vt = $v | ConvertTo-Json -Depth 8 | ConvertFrom-Json; $vt.src = 'tracer'
+$pgT = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resources = @([pscustomobject]@{ name = 'build x'; by = 'kitty'; gb = 1 }); stats = [pscustomobject]@{ writes = $vt } })
+"label:$($v.src -eq 'est' -and $pg -match '>Writes GB est\.</button>' -and $pg -match 'a cell = est\. GB written' -and $pgT -match '>Writes GB</button>' -and $pgT -match 'a cell = GB written')"
 "card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
-Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'redo', 'owners', 'bound', 'labels', 'buckets', 'history', 'view', 'card') -Show 8
+Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'redo', 'owners', 'bound', 'labels', 'buckets', 'history', 'view', 'label', 'card') -Show 8
 # a holder record with several pids (a lane group, a shared lease) must not crash the writes hook ([int] of an array)
 $mpt = @'
 $null = . $args[0] 6>$null; $KitShellRows = @(); $res = @([pscustomobject]@{ pid = @(4, 8); by = 'x'; name = 'svc' })

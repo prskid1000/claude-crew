@@ -685,7 +685,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     [pscustomobject]@{ n = "disk $dv"; a = "$(& $fmt $dk.free) GB free$(if ($null -ne $pu) { " · $pu% used" }) · $(& $diskRate $dk -Short)$(if ($null -ne $ttf) { " · full in $(& $n1 $ttf) h" })"; c = (& $diskRate $dk); tone = $tn
       h = @($fh); now = $fh[23]; peak = [double]($fh | Measure-Object -Maximum).Maximum; avg = [double]($fh | Measure-Object -Sum).Sum / 24; day = $fday; d7 = $fd7
       free = @(foreach ($dk0 in $dDays) { @($ser | Where-Object { $_.t.ToString('yyyy-MM-dd') -eq $dk0 } | ForEach-Object f)[-1] }) } })
-  $wrX = [pscustomobject]@{ rows = @(@($st.writes.rows) + @($diskW)); more = @($st.writes.more) }   # the drive rows ride the Writes rows
+  $wrX = [pscustomobject]@{ rows = @(@($st.writes.rows) + @($diskW)); more = @($st.writes.more); src = "$($st.writes.src)" }   # the drive rows ride the Writes rows
   $dFree = if ($diskW.Count) { "<div class=hk>free GB per day (the day's last sample), per drive</div>$(Format-KitDayHeat @($diskW | ForEach-Object { @{ n = $_.n; mk = "free-day-$($_.n -replace ' ', '-')"; cls = 'ws'; v = $_.free; tips = @($_.free | ForEach-Object { if ($null -eq $_) { 'no sample' } else { "$(& $n1 $_) GB free" } }); t = $(if (@($_.free | Where-Object { $null -ne $_ }).Count) { & $n1 (@($_.free | Where-Object { $null -ne $_ }) | Measure-Object -Minimum).Minimum } else { '—' }); fmt = { param($v) & $n1 $v } } }) $dDays 'drive · day' 'low')" }   # free now, % used, rate: the drive's Resources row
   $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) })
   $gs = $st.gate; $machTop = Format-KitMachineTop $gs $nw $memPct $memFree $tot ([double]$st.keepFree)   # tiles, RAM bar (supervise_stats.ps1)

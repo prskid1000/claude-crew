@@ -6,8 +6,8 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L410 cards · L626 flags · L738 bands ·
-  L815 shells
+Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L410 cards · L627 flags · L739 bands ·
+  L816 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -592,8 +592,9 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
   $groups = @(foreach ($gk0 in $gl.Keys) { $gi = @($items | Where-Object grp -eq $gk0); $kb = @(if ($gk0 -eq 'build') { $kinds }); if (-not ($gi.Count + $kb.Count)) { continue }; $op = $gk0 -eq 'machine'
       $wst = if (@($gi | Where-Object tone -eq 'hot').Count) { @('s-stuck', 'CPU over 80%') } elseif (@($gi | Where-Object dk -eq 'hot').Count) { @('s-stuck', 'disk filling') } elseif (@($gi | Where-Object dk -eq 'warn').Count) { @('s-oth', 'disk low') } elseif (@($gi | Where-Object wl -ge 2).Count) { @('s-stuck', "writes over $(& $n1 $hard) GB/h") } elseif (@($gi | Where-Object wl -ge 1).Count) { @('s-oth', "writes over $(& $n1 $soft) GB/h") } elseif (@($gi | Where-Object ql).Count) { @('s-oth', 'waits of 30+ min') } elseif (@($gi | Where-Object orphan).Count) { @('s-oth', "$(@($gi | Where-Object orphan).Count) no live holder") } elseif (@($gi | Where-Object tone -eq 'warn').Count) { @('s-oth', 'CPU peak over 80%') }
       "<div class='rgg$(if (-not $op) { ' cl' })$(if ($kb.Count) { ' hb' })$(if (-not $gi.Count) { ' ob' })' data-g='rg-$gk0'><div class='gk rgh'><button type=button class=rgb aria-expanded=$(if ($op) { 'true' } else { 'false' })><span class=gn0>$($gl[$gk0])</span><span class=gcn>$(if ($gi.Count) { $gi.Count } else { "$($kb.Count) kinds" })</span>$(if ($wst) { "<span class='chip $($wst[0])'>$($wst[1])</span>" })</button></div>$(Format-KitHeatRows @($gi | ForEach-Object { [pscustomobject]@{ busy = ($_.busy -or $_.grp -eq 'machine') -and $_.has; html = $_.html } }) 'rows' '24 h')$((Format-KitHeatRows $kb 'kinds' '24 h') -replace 'class=gkx ', "class='gkx mb' ")</div>" })
-  $tabs = "<div class=rgt role=group aria-label='metric'>$(@(@(@('c', 'CPU · RAM'), @('w', 'Writes GB est.'), @('q', 'Waits min'), @('b', 'Builds min')) | ForEach-Object { "<button type=button data-m=$($_[0]) aria-pressed=$(if ($_[0] -eq 'c') { 'true' } else { 'false' })>$($_[1])</button>" }) -join '')</div>"
-  $legW = "<div class=hk data-mv=w>a cell = est. GB written to disk in that clock hour (kit-owned processes by the resource, shell or lane that started them) · now = the last 60 min: amber over $(& $n1 $soft), red over $(& $n1 $hard) GB (WATCH / ACT) · other processes: its top 3 in the tooltip · a disk row: GB its free space dropped</div>"
+  $wEst = if ("$($Writes.src)" -ne 'tracer') { ' est.' } else { '' }   # the tracer's disk MB: no "est." (owner 2026-11-19)
+  $tabs = "<div class=rgt role=group aria-label='metric'>$(@(@(@('c', 'CPU · RAM'), @('w', "Writes GB$wEst"), @('q', 'Waits min'), @('b', 'Builds min')) | ForEach-Object { "<button type=button data-m=$($_[0]) aria-pressed=$(if ($_[0] -eq 'c') { 'true' } else { 'false' })>$($_[1])</button>" }) -join '')</div>"
+  $legW = "<div class=hk data-mv=w>a cell =$wEst GB written to disk in that clock hour (kit-owned processes by the resource, shell or lane that started them) · now = the last 60 min: amber over $(& $n1 $soft), red over $(& $n1 $hard) GB (WATCH / ACT) · other processes: its top 3 in the tooltip · a disk row: GB its free space dropped</div>"
   $legQ = '<div class=hk data-mv=q>a cell = minutes agents waited for that resource in the hour · tap a cell for waits and who</div>'
   & $fold 'res24' 'Resources · 24 h' (Get-KitHeatCount $items) "<div class=rgx data-m=c>$HeadHtml$tabs<div class='gks w5 cpg rsh' data-mk=res-hour>$head$($groups -join '')</div>$($legend -replace '^<div class=hk>', '<div class=hk data-mv=c>')$legW$legQ<div class=hk data-mv=b>$(if (@($kinds).Count) { 'a cell = busy build minutes in that hour (the build gate per kind) · tap a cell for builds and waits' } else { 'no gated build in 24 h' })</div></div>$topHtml" -Open -tag h4 -cls "sub st cpu$(if ($last -and (& $hot $last.all $last.s)) { ' hot' })"
 }
