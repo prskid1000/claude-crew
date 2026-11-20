@@ -1079,9 +1079,9 @@ Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
   $myHolder = Get-KitHolder   # only a live other process blocks (not a restart or a dead holder)
   $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
-  # report never a beat old (K102): the OS timer (fires every beat, jitter: 0.8) sweeps once the last sweep is a beat old, a session skips one under half a beat
-  $agoMin = if ($held.at) { ((Get-Date) - [datetime]$held.at).TotalMinutes } else { 1e9 }; $asideMin = (Get-KitBeatMinutes) * $(if ($me -eq 'os-timer') { 0.8 } else { 0.5 })
-  if (-not $Takeover -and $other -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"
+  # report never much over a beat old: the OS timer ticks every osTimerTickMinutes and sweeps once the last sweep (its own too) is a beat old, a session skips one under half a beat
+  $agoMin = if ($held.at) { ((Get-Date) - [datetime]$held.at).TotalMinutes } else { 1e9 }; $asideMin = if ($me -eq 'os-timer') { Get-KitOsBeatAsideMinutes } else { (Get-KitBeatMinutes) * 0.5 }
+  if (-not $Takeover -and ($other -or $me -eq 'os-timer') -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"
     # a session that skips still beats: health OVERDUE reads coordAt
     if ($me -ne 'os-timer') { try { $sf0 = Get-KitPath supervise-state -Create; $st0 = Read-KitText $sf0 | ConvertFrom-Json -AsHashtable; if ($st0) { $st0.coordAt = (Get-Date).ToString('o'); Write-KitAtomic $sf0 ($st0 | ConvertTo-Json -Depth 5) } } catch {} }; return }
   Write-KitAtomic $lk (([ordered]@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } + $myHolder) | ConvertTo-Json)

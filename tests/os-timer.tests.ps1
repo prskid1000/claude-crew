@@ -24,12 +24,27 @@ $null = Set-KitOsBeat $false 0; "removed:$(-not (Get-KitOsBeatHealth) -and -not 
 function Invoke-KitExe($Exe, $A, $T) { $script:kx = "$A"; [pscustomobject]@{ code = 0; out = "page`n2 ACT · 1 WATCH"; err = ''; timedOut = $false } }
 function Get-KitActivePause($Run) { }
 "tick:$((Invoke-KitOsBeatTick) -eq 'ok: 2 ACT · 1 WATCH' -and $script:kx -match 'supervise -Session os-timer -AutoFix -Brief$' -and (Read-KitOsBeat).lastTick)"
+# 5-min tick, beat 20: a session swept at 0; ticks at 4, 9, 14, 19 min step aside in-process (no child), 24 sweeps
+$lkT = Join-Path (Get-KitPath cache -Create) 'supervise.lock'; Write-KitAtomic (Get-KitPath supervise-state -Create) (@{ nextBeat = 20; report = @{ at = (Get-Date).ToString('o') } } | ConvertTo-Json)
+$tickRun = foreach ($tickAge in 4, 9, 14, 19, 24) { $script:kx = ''; Write-KitAtomic $lkT (@{ session = 'coord-a'; at = (Get-Date).AddMinutes(-$tickAge).ToString('o') } | ConvertTo-Json); $tr = Invoke-KitOsBeatTick; "$tickAge=$(if ($script:kx) { 'sweep' } elseif ($tr -like 'stepped aside: last sweep*') { 'aside' } else { $tr })" }
+"tick5:$(($tickRun -join ' ') -eq '4=aside 9=aside 14=aside 19=aside 24=sweep')"
+# its own sweep counts: an OS sweep 5 min ago is never repeated at the next tick
+Write-KitAtomic $lkT (@{ session = 'os-timer'; at = (Get-Date).AddMinutes(-5).ToString('o') } | ConvertTo-Json); $script:kx = ''; $null = Invoke-KitOsBeatTick; "tickown:$(-not $script:kx)"
+# the header's next sweep: last tick 1 min ago, every 5 min, last sweep 6 min ago -> the tick at +14 min (first one 19.5 min after the sweep)
+$nowT = Get-Date; $osB = Read-KitOsBeat; $osB.installed = $true; $osB.minutes = 5; $osB.lastTick = $nowT.AddMinutes(-1).ToString('o'); Write-KitState (Get-KitOsBeatFile) $osB
+"nextsweep:$([int]((Get-KitOsBeatNextSweep $nowT.AddMinutes(-6) $nowT) - $nowT).TotalMinutes -eq 14 -and -not (Get-KitOsBeatNextSweep $nowT.AddMinutes(-6) $nowT.AddMinutes(30)))"
+# a task installed before the beat gate (fired once a beat) is re-registered at the tick cadence
+$osB.Remove('gate'); $osB.minutes = 20; Write-KitState (Get-KitOsBeatFile) $osB; $script:there = $true
+"regate:$((Get-KitOsBeatHealth) -match '^OS heartbeat re-registered .*every 5 min' -and (Read-KitOsBeat).gate -eq 'beat' -and (Read-KitOsBeat).minutes -eq 5)"
+# a failed re-register says so (no "re-registered" claim); the next health retries
+$osB = Read-KitOsBeat; $osB.Remove('gate'); Write-KitState (Get-KitOsBeatFile) $osB; function Set-KitOsBeat([bool]$On, [double]$Minutes) { 'UNKNOWN: windows install failed: denied' }
+"regatefail:$((Get-KitOsBeatHealth) -match '^OS heartbeat still fires once a beat \(re-register failed\): UNKNOWN')"
 function Get-KitActivePause($Run) { [pscustomobject]@{ reason = 'power off' } }; $script:kx = ''
 "paused:$((Invoke-KitOsBeatTick) -eq 'skipped: paused (power off)' -and -not $script:kx)"
 $__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ osTimer = $false } }; Remove-Item (Get-KitOsBeatFile)
 "false:$((Get-KitOsBeatAdapter) -eq 'none' -and -not (Get-KitOsBeatHealth))"
 '@ @($O)
-Expect-Each $ob 'os-timer: # (off: the install line; inst; schema: updated + schemaVersion; fresh: quiet; stale; gone: reinstalled; removed: quiet; tick: supervise as os-timer; paused: skipped; false: adapter none, quiet)' 'off', 'inst', 'schema', 'fresh', 'stale', 'gone', 'removed', 'tick', 'paused', 'false'
+Expect-Each $ob 'os-timer: # (off: the install line; inst; schema: updated + schemaVersion; fresh: quiet; stale; gone: reinstalled; removed: quiet; tick: supervise as os-timer; tick5: 5-min ticks sweep only a beat after the last; tickown; nextsweep; regate; regatefail; paused: skipped; false: adapter none, quiet)' 'off', 'inst', 'schema', 'fresh', 'stale', 'gone', 'removed', 'tick', 'tick5', 'tickown', 'nextsweep', 'regate', 'regatefail', 'paused', 'false'
 # cron + launchd: the exact command lines (Invoke-KitSchedCmd replaced: nothing is scheduled on this machine)
 $cl = Invoke-PsTest os-beat-cron @'
 . $args[0]; $script:tab = "MAILTO=x`n5 * * * * other # keep"; $script:calls = @()
@@ -58,15 +73,15 @@ Invoke-KitAdapter 'scheduler' 'launchd' 'uninstall' $a; $s = Invoke-KitAdapter '
 Remove-Item -Recurse -Force $la -ErrorAction SilentlyContinue
 '@ @($O)
 Expect-Each $cl 'os-timer: cron + launchd # (cronline: one tagged line, other lines kept; cronstatus; cronhour; cronoff; cronempty; plist: label, interval, argv; lstatus; lreinstall: unload first; loff)' 'cronline', 'cronstatus', 'cronhour', 'cronoff', 'cronempty', 'plist', 'lstatus', 'lreinstall', 'loff'
-# K102 (beat 10): the OS timer steps aside for a sweep under 0.8 beat old (scheduler jitter), a session for one under half a beat and still
-# stamps coordAt (health OVERDUE); [holder, minutes ago, caller, steps aside]
+# beat 10: the OS timer steps aside for any sweep (its own too) under a beat less its 0.5 min start-up, a session for another's under
+# half a beat and still stamps coordAt (health OVERDUE); [holder, minutes ago, caller, steps aside]
 $lk = Join-Path (TkPath $k cache -Create) 'supervise.lock'; $sf = TkPath $k supervise-state -Create
-$asideBad = @(foreach ($ac in @(@('os-timer', 3, 'coord-a', 1), @('os-timer', 6, 'coord-a', 0), @('coord-a', 7, 'os-timer', 1), @('coord-a', 9, 'os-timer', 0))) {
+$asideBad = @(foreach ($ac in @(@('os-timer', 3, 'coord-a', 1), @('os-timer', 6, 'coord-a', 0), @('coord-a', 7, 'os-timer', 1), @('coord-a', 9, 'os-timer', 1), @('os-timer', 4, 'os-timer', 1), @('coord-a', 10, 'os-timer', 0))) {
   & $J @{ nextBeat = 10; report = @{ at = (Get-Date).ToString('o') }; coordAt = (Get-Date).AddHours(-1).ToString('o') } $sf
   & $J @{ session = $ac[0]; at = (Get-Date).AddMinutes(-$ac[1]).ToString('o'); pid = 1 } $lk
   $asideOut = Px $O supervise -Session $ac[2] | Out-String; $stamped = ((Get-Date) - [datetime](Get-Content $sf -Raw | ConvertFrom-Json).coordAt).TotalMinutes -lt 5
   if ([int]($asideOut -match 'steps aside') -ne $ac[3] -or $stamped -ne ($ac[2] -eq 'coord-a')) { "$($ac[2]) vs $($ac[0]) $($ac[1]) min (coordAt fresh: $stamped)" } })
-Expect "os-timer: the timer steps aside for a sweep under 0.8 beat, a session under half a beat and stamps coordAt ($asideBad)" (-not $asideBad.Count)
+Expect "os-timer: the timer steps aside for any sweep under a beat, a session under half a beat and stamps coordAt ($asideBad)" (-not $asideBad.Count)
 # K102 regression: no supervise.lock yet (fresh install) sweeps, never "Cannot convert null to type System.DateTime"
 Remove-Item -LiteralPath $lk -Force; $noLock = Px $O supervise -Session coord-a | Out-String
 Expect "supervise: a first sweep without supervise.lock runs and writes the lock ($($noLock -match 'FAILED' -as [bool]))" ($noLock -notmatch 'Supervise FAILED' -and (Test-Path -LiteralPath $lk))
@@ -74,5 +89,9 @@ Expect "supervise: a first sweep without supervise.lock runs and writes the lock
 $pd = TkPath $k pauses -Create; & $J @{ at = (Get-Date).ToString('o'); reason = 'owner pause'; run = '*'; state = 'paused' } (Join-Path $pd 'pause-t.json')
 $tk = Invoke-TestScript $O heartbeat tick; $st = Invoke-TestScript $O heartbeat status
 Expect "os-timer: heartbeat tick while paused = skipped; heartbeat status of a never-installed timer exits 1 ($($tk.code) $($st.code))" ($tk.out -match 'skipped: paused \(owner pause\)' -and $tk.code -eq 0 -and $st.code -eq 1 -and $st.out -match '^heartbeat: (not installed|UNKNOWN)')
+# header next: the OS timer's next sweep when it ticks (a busy session's NEXT went past: "next 19:01 (overdue)"), else the session's NEXT
+$nxh = & { . $O; $n = [datetime]'2026-01-02T18:49:00'; $hs = @(foreach ($on in @($n.AddMinutes(24).ToString('o'), $null)) { Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); next = '12 min'; osNext = $on }) })
+  @($hs | ForEach-Object { if ($_ -match "data-next='(\d+)'.*id=nx [^>]*data-due='([^']+)' data-dn='([^']+)'[^>]*data-tail='([^']*)'") { "$($Matches[1]) $($Matches[2]) $($Matches[3])$($Matches[4])" } }) -join '|' }
+Expect "supervise page: next = the OS timer's sweep, else the session NEXT; staleness stays on NEXT ($nxh)" ($nxh -eq '12 19:13 24 &#183; OS timer|12 19:01 12')
 Remove-TestKit $k
 Complete-Tests

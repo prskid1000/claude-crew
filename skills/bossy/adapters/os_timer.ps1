@@ -1,8 +1,8 @@
 <#
-os_timer.ps1: the OS heartbeat: supervise -AutoFix -Brief every supervise.heartbeatMinutes with no session open
-(the page, auto-fixes and flags stay fresh between sessions); dot-sourced by bossy.ps1 (skills/bossy/adapters/).
+os_timer.ps1: the OS heartbeat: ticks every supervise.osTimerTickMinutes and runs supervise -AutoFix -Brief once the last
+sweep (any session) is a beat old, so the page, auto-fixes and flags stay fresh while sessions are busy or closed; dot-sourced by bossy.ps1.
   bossy.ps1 heartbeat install [-Minutes <n>] | uninstall | status | tick   tick = the task's run: skips while paused (pause -All),
-    never a model call; status exits 1 when missing or stale (no tick for 2 intervals)
+    steps aside in-process under a beat, never a model call; status exits 1 when missing or stale (no tick for 2 intervals)
 Inputs: supervise.osTimer (unset: health offers it · true: health keeps it installed · false: off · or a scheduler name).
 Outputs: <state>/programs/os-timer.json (installed adapter name minutes at lastTick result); one OS task per kit folder.
 Exit codes: 0 ok · 1 install / uninstall / tick failed, status missing or stale · 2 usage.
@@ -80,12 +80,21 @@ Register-KitAdapter 'scheduler' 'none' @{ '*' = { param($a, $verb) if ($verb -eq
 # adapter-end:scheduler
 function Get-KitOsBeatFile { Join-Path (Get-KitPath programs -Create) 'os-timer.json' }
 function Read-KitOsBeat { $s = try { Read-KitText (Get-KitOsBeatFile) | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -is [hashtable]) { $s } else { @{} } }
+# the tick sweeps once the last sweep (any session, its own too) is a beat old; 0.5 min = its own start-up before it stamps the lock
+function Get-KitOsBeatAsideMinutes { [math]::Max(1.0, (Get-KitBeatMinutes) - 0.5) }
+function Get-KitLastSweepAt { $h = try { Read-KitText (Join-Path (Get-KitPath cache -Create) 'supervise.lock') | ConvertFrom-Json -AsHashtable } catch { $null }; if ($h.at) { [datetime]$h.at } }
+# when the OS timer sweeps next: its first tick (lastTick + k x minutes) at least a beat after $At; $null when it is off or not ticking
+function Get-KitOsBeatNextSweep([datetime]$At, [datetime]$Now = (Get-Date)) {
+  $s = Read-KitOsBeat; if (-not $s.installed -or -not $s.lastTick -or -not ([double]$s.minutes -gt 0)) { return $null }
+  $m = [double]$s.minutes; $tk = [datetime]$s.lastTick; if (($Now - $tk).TotalMinutes -gt 2 * $m + 2) { return $null }
+  $due = $At.AddMinutes((Get-KitOsBeatAsideMinutes)); $k = [math]::Max(1, [math]::Ceiling(($due - $tk).TotalMinutes / $m)); $tk.AddMinutes($k * $m)
+}
 # install / uninstall: one line, never exits (health calls it)
 function Set-KitOsBeat([bool]$On, [double]$Minutes) {
-  $ad = Get-KitOsBeatAdapter; $a = Get-KitOsBeatArgs $(if ($Minutes) { $Minutes } else { Get-KitParam 'supervise.heartbeatMinutes' })
+  $ad = Get-KitOsBeatAdapter; $a = Get-KitOsBeatArgs $(if ($Minutes) { $Minutes } else { Get-KitParam 'supervise.osTimerTickMinutes' })
   if ($On -and (Test-Path -LiteralPath (Join-Path $KitConf.Kit '.git') -PathType Leaf)) { return "UNKNOWN: $($KitConf.Kit) is a worktree (gone after its push): install from the live kit clone" }
   try { Invoke-KitAdapter scheduler $ad $(if ($On) { 'install' } else { 'uninstall' }) $a } catch { return "UNKNOWN: $ad $(if ($On) { 'install' } else { 'uninstall' }) failed: $_" }
-  $s = Read-KitOsBeat; $s.installed = $On; $s.adapter = $ad; $s.name = $a.name; $s.minutes = $a.minutes; $s.at = (Get-Date).ToString('o')
+  $s = Read-KitOsBeat; $s.installed = $On; $s.adapter = $ad; $s.name = $a.name; $s.minutes = $a.minutes; $s.gate = 'beat'; $s.at = (Get-Date).ToString('o')
   Write-KitState (Get-KitOsBeatFile) $s
   if ($On) { "installed: $ad task $($a.name), every $($a.minutes) min: bossy.ps1 heartbeat tick (supervise -AutoFix -Brief; skips while paused)" } else { "removed: $ad task $($a.name); health stays quiet (back: bossy.ps1 heartbeat install)" }
 }
@@ -93,6 +102,7 @@ function Set-KitOsBeat([bool]$On, [double]$Minutes) {
 function Invoke-KitOsBeatTick {
   $s = Read-KitOsBeat; $s.lastTick = (Get-Date).ToString('o')
   if ($p = Get-KitActivePause '') { $s.result = "skipped: paused ($($p.reason))" }
+  elseif (($last = Get-KitLastSweepAt) -and ($ago = ((Get-Date) - $last).TotalMinutes) -lt (Get-KitOsBeatAsideMinutes)) { $s.result = "stepped aside: last sweep $([int]$ago) min ago, under a beat" }   # no child pwsh
   else {
     $r = Invoke-KitExe ([Environment]::ProcessPath) @('-NoProfile', '-NonInteractive', '-File', $KitCmd.orch, 'supervise', '-Session', 'os-timer', '-AutoFix', '-Brief') 300
     $last = @("$($r.out)" -split "`r?`n" | Where-Object { $_.Trim() })[-1]
@@ -120,6 +130,9 @@ param([Parameter(Position = 0, Mandatory)][ValidateSet('install', 'uninstall', '
 function Get-KitOsBeatHealth {
   $ad = Get-KitOsBeatAdapter; $s = Read-KitOsBeat; if ($ad -eq 'none' -or $s.installed -eq $false) { return }   # off, or removed on purpose
   if (-not $s.installed -and -not "$(Get-KitSetting 'supervise.osTimer' '')") { return "OS heartbeat off: the dashboard and auto-fixes stop when no session supervises; turn it on: & '$($KitCmd.orch)' heartbeat install" }
+  # a task from before the beat gate fired once a beat; a worktree never installs (gone after its push)
+  if ($s.installed -and $s.gate -ne 'beat' -and -not (Test-Path -LiteralPath (Join-Path $KitConf.Kit '.git') -PathType Leaf)) { $r = Set-KitOsBeat $true 0
+    return $(if ($r -like 'UNKNOWN*') { "OS heartbeat still fires once a beat (re-register failed): $r" } else { "OS heartbeat re-registered (ticks between beats, sweeps once the last is a beat old): $r" }) }
   $m = [double]$(if ($s.minutes) { $s.minutes } else { Get-KitParam 'supervise.heartbeatMinutes' }); $last = if ($s.lastTick) { [datetime]$s.lastTick } elseif ($s.at) { [datetime]$s.at }
   if ($last -and ((Get-Date) - $last).TotalMinutes -lt 2 * $m + 2) { return }
   $st = try { Invoke-KitAdapter scheduler $ad status (Get-KitOsBeatArgs $m) } catch { $null }

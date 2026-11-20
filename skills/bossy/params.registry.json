@@ -82,6 +82,7 @@
   "writes.softGBPerHour": "config default=1 unit=GB",
   "writes.hardGBPerHour": "config default=2 unit=GB",
   "supervise.osTimerLimitMinutes": "config default=10 unit=min",
+  "supervise.osTimerTickMinutes": "config default=5 unit=min",
   "runtimeProbe.isUpSec": "config default=20 unit=s",
   "outcomes.days": "config default=30 unit=d",
   "outcomes.causeSimilarity": "config default=0.3 unit=ratio",
