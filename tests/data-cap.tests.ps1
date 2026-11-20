@@ -140,6 +140,12 @@ $q0 = Update-KitWriteStats $null $t0 (& $m2 1GB) @() 0 $null @('D:/kit')
 $q1 = Update-KitWriteStats ($q0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 (& $m2 3GB) @() 4GB (& $tro @(@('mysqld', 'D:\kit\.state\kit-tests\mysql\db1', 102.4), @('mysqld', 'D:\kit\.state\localenv\lanes\mysql-a\data', 51.2), @('mysqld', 'C:\ProgramData\MySQL\Data', 1024))) @('D:/kit')
 $qh = @{}; foreach ($h in $q1.hour) { $qh[$h.label] = $h.gb }
 "twomysqld:$($qh['mysqld · kit-tests'] -eq 0.1 -and $qh['mysqld'] -eq 0.05 -and @($q1.hour).Count -eq 2 -and -not @(Get-KitWriteDirs 'mysqld --defaults-file=C:\my.ini').Count -and -not @(Get-KitWriteDirs 'mysqld --datadir=data').Count)"
+# lane inis side by side, each naming its datadir: a write under lane b goes to b only (2026-11-20: rm-kestrel showed rm-falcon's 2.27 GB)
+$liD = (Join-Path $args[1] 'lanes') -replace '/', '\'; $null = New-Item -ItemType Directory -Force $liD
+foreach ($liN in 'a', 'b') { Set-Content (Join-Path $liD "mysql-$liN.ini") @('[mysqld]', 'port=3305', "datadir=$(($liD -replace '\\', '/'))/mysql-$liN") }
+$liRows = @(foreach ($liN in 'a', 'b') { $liC = "mysqld --defaults-file=$liD\mysql-$liN.ini"; @{ n = $liN; g = 1.0; c = $liC; k = 1; f = @(Get-KitWriteDirs $liC) } })
+$liSh = Get-KitTracerShare (& $tro @(, @('mysqld', "$liD\mysql-b\db1", 102.4))) $t0 $t1.AddMinutes(1) $liRows
+"laneini:$($liRows[0].f[0] -eq "$liD\mysql-a" -and $liSh['a'] -eq 0 -and [math]::Abs($liSh['b'] - 0.1) -lt 0.001)"
 "bound:$(-not (Test-KitWriteFolderIn 'D:\a\app2\x' @('D:\a\app')) -and (Test-KitWriteFolderIn 'D:\a\app\x' @('D:\a\app')) -and (Test-KitWriteFolderIn 'D:\a\app' @('D:\a\app\')) -and (Test-KitWriteFolderIn 'D:\k\p\q' @('D:\k\p\q\r')))"
 $lb = @((Get-KitWriteLabel 'msedge.exe' 'msedge.exe --headless --remote-debugging-port=9222'), (Get-KitWriteLabel 'mysqld.exe' '"C:\m\mysqld.exe" --no-defaults --datadir=D:\s\kit-tests\my'),
   (Get-KitWriteLabel 'node.exe' 'node "C:\n\npx-cli.js" -y vite build'), (Get-KitWriteLabel 'java.exe' 'java -jar D:\t\api-1.0.jar'), (Get-KitWriteLabel 'Slack.exe' 'Slack.exe --x'), (Get-KitWriteLabel 'python.exe' 'python -m http.server 8000'), (Get-KitWriteLabel 'java.exe' 'java -cp x org.acme.Main'))
@@ -163,7 +169,7 @@ $pgT = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); reso
 "label:$($v.src -eq 'est' -and $pg -match '>Writes GB est\.</button>' -and $pg -match 'a cell = est\. GB written' -and $pgT -match '>Writes GB</button>' -and $pgT -match 'a cell = GB written')"
 "card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
-Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'redo', 'owners', 'twomysqld', 'bound', 'labels', 'buckets', 'history', 'view', 'label', 'card') -Show 8
+Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'redo', 'owners', 'twomysqld', 'laneini', 'bound', 'labels', 'buckets', 'history', 'view', 'label', 'card') -Show 8
 # the hour counts each second once: a 2 h window by its part in the hour, two sweeps' overlapping tracer windows once, never above all
 # disks; kit-owned when any sample saw it so; a process below the tree's root naming a kit folder makes the tree the kit's
 $ovl = Invoke-PsTest 'overlap' @'

@@ -1,6 +1,7 @@
 #Requires -Version 7
 <#
-local-env-5.tests.ps1: envy.ps1 thin artifacts (services[].classpathFile): per-release classpath.txt + java.args, {javaArgs}.
+local-env-5.tests.ps1: envy.ps1 thin artifacts (services[].classpathFile): per-release classpath.txt + java.args, {javaArgs};
+a QA tester's lease needs its run.json item's localParts / localEnv.
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-5.tests.ps1 (tests/kit-tests.ps1 -Area local-env-5 runs it with the other areas).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -88,5 +89,14 @@ Expect "dbtemp: an unowned DB port with no listener prints the start hint, exit 
 $dh = @(pwsh -NoProfile -File (Join-Path $kd 'skills/envy/envy.ps1') dbtemp -Env t 2>&1) -join ' / '
 Expect "dbtemp: a remote db.host is queried, no local-port hint ($dh)" ($dh -notmatch 'nothing listens')
 Remove-TestKit $kd
+# 2026-11-20: a staging item's tester (no localParts / localEnv in run.json) leased two lanes for a suite's tenant restores (4.7 GB)
+& $J @{ localEnv = @{ envs = @{ q = @{ services = @(@{ name = 'ui'; port = 41059 }) } } } } (Join-Path $k 'skills/crafty/kit.local.json') 8
+$tqDir = New-Item -ItemType Directory -Force (Join-Path $k "$($tmpMap.runtimeDir)/work/qa-runs/2026-11-20-123456-stg")
+@{ target = 'stg'; items = @(@{ code = 'T3'; target = 'stg' }, @{ code = 'T4'; target = 'stg'; localParts = @('!12') }) } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $tqDir 'run.json')
+# the same tag a day earlier (its T3 local) never decides for today's run
+$tqOld = New-Item -ItemType Directory -Force (Join-Path (Split-Path $tqDir) '2026-11-19-123456-stg'); @{ items = @(@{ code = 'T3'; localEnv = 'q' }) } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $tqOld 'run.json')
+$tqNo = Invoke-TestScript $L5 use -Env q -Services ui -Agent 'test:T3@123456' -Wait 0
+$tqOk = Invoke-TestScript $L5 use -Env q -Services ui -Agent 'test:T4@123456' -Wait 0
+Expect "envy use: a tester whose run.json item has no localParts / localEnv is refused, exit 1; one with localParts passes the check ($($tqNo.out.Trim()) | $($tqOk.out -split "`n" | Select-Object -First 1))" ($tqNo.code -eq 1 -and $tqNo.out -match 'item T3 tests target stg' -and $tqOk.out -match 'lease for test:T4')
 Remove-TestKit $k
 Complete-Tests

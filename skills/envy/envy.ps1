@@ -2264,6 +2264,15 @@ switch ($Action) {
   'use' {
     # a lease starts only what it names (+ deps): a whole-env lease held a staging run's rm env 1 h+; owner 2026-11-20 "a lane might not need all resources"
     if (-not $Services -and "$Agent" -like 'test:*') { "[$e] use refused for ${Agent}: name the services its checks call (-Services api[,web]); a tester never leases the whole env"; exit 2 }
+    # a QA tester (test:<CODE>@<run tag>) leases only for an item run.json gives a local env (localParts, localEnv): 2026-11-20 a staging
+    # item's tester ran a suite's tenant restore 6x on two lanes (4.7 GB of lane MySQL writes in 40 min)
+    if ("$Agent" -match '^test:(?<c>[^@]+)@(?<t>.+)$') { $tc = $Matches.c; $tt = $Matches.t   # the tag: testy.js RUNTAG (HHmmss, else the dir name)
+      $tj = @(Get-ChildItem -LiteralPath (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $tt -or $_.Name -match "^\d{4}-\d\d-\d\d-$([regex]::Escape($tt))(-|$)" } |
+        Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName 'run.json' } | Where-Object { Test-Path -LiteralPath $_ })[0]
+      $tr = if ($tj) { try { Get-Content -LiteralPath $tj -Raw | ConvertFrom-Json } catch { $null } }
+      $ti = if ($tr) { $tx = @($tr.items | Where-Object { "$($_.code)" -eq $tc })[0]; if ($tx) { $tx } else { @($tr.items | Where-Object { "$($_.code)" -eq ($tc -creplace '[A-Z]$') })[0] } }
+      if ($ti -and -not @($ti.localParts | Where-Object { $_ }).Count -and -not "$($ti.localEnv)" -and -not "$($tr.localEnv)") {
+        "[$e] use refused for ${Agent}: item $tc tests target $(if ($ti.target) { $ti.target } else { $tr.target }) and run.json gives it no localParts or localEnv; a check that needs the local env: NOT_TESTED with env_fix / a lead-notes question (the lead adds localParts), never a lease of its own"; exit 1 } }
     if (-not $Services -and -not $AllServices) { "[$e] use refused for ${Agent}: name the services you test (-Services $(@(All-Managed) -join ',' ) or a part; their dependencies come along); the whole env only with -All"; exit 2 }
     $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed }))
     foreach ($n in $names) { $null = Svc $e $n }

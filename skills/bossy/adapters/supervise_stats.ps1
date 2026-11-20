@@ -6,8 +6,8 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L421 cards · L648 flags · L763 bands ·
-  L847 shells
+Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L424 cards · L651 flags · L766 bands ·
+  L850 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -215,8 +215,11 @@ function Get-KitWriteLabel([string]$Name, [string]$Cmd) {
 # a sample = @{ at; s = seconds; m = machine GB (the disks' when e); e = 1: GBs scaled to the disks; t = 1: GBs from the tracer; w = @(@{ n = label; a = tag (agent); g = GB; c = top command; k = 1: kit-owned }) }
 # the folders a command names (absolute paths after the executable; a file: its folder), at most 3
 function Get-KitWriteDirs([string]$Cmd) {
-  # a DB server writes to its data folder only: --datadir, else its --defaults-file's folder
-  foreach ($o in 'datadir', 'defaults-file') { if ($Cmd -match "--$o[= ](?:`"(?<d>[^`"]+)`"|(?<d>\S+))") { $p = $Matches.d -replace '/', '\'; return @(@($(if ($o -eq 'datadir') { $p.TrimEnd('\') } else { Split-Path $p })) | Where-Object { @($_ -split '\\').Count -ge 3 }) } }   # never a drive root
+  # a DB server writes to its data folder only: --datadir, else its --defaults-file's datadir line, else that file's folder
+  # (lane inis sit side by side in one folder: its folder made one lane's row take every lane's writes, 2026-11-20)
+  foreach ($o in 'datadir', 'defaults-file') { if ($Cmd -match "--$o[= ](?:`"(?<d>[^`"]+)`"|(?<d>\S+))") { $p = $Matches.d -replace '/', '\'
+      $dd = $null; if ($o -ne 'datadir' -and (Test-Path -LiteralPath $p -PathType Leaf)) { foreach ($il in @(Get-Content -LiteralPath $p -ErrorAction SilentlyContinue)) { $im = [regex]::Match("$il", '^\s*datadir\s*=\s*"?([^"]+?)"?\s*$'); if ($im.Success) { $dd = $im.Groups[1].Value -replace '/', '\' } } }
+      return @(@($(if ($o -eq 'datadir') { $p.TrimEnd('\') } elseif ($dd) { $dd.TrimEnd('\') } else { Split-Path $p })) | Where-Object { @($_ -split '\\').Count -ge 3 }) } }   # never a drive root
   $ps =@([regex]::Matches(($Cmd -replace '^\s*("[^"]*"|\S+)'), '(?<![\w])[A-Za-z]:[\\/][^"\s]*') | ForEach-Object { $p = $_.Value -replace '/', '\' -replace '[\\,;]+$'; if ($p -match '\.\w{1,5}$') { Split-Path $p } else { $p } })
   @($ps | Where-Object { @($_ -split '\\').Count -ge 3 } | Select-Object -Unique -First 3)
 }
