@@ -3,7 +3,7 @@
 # guard rules (crafty.ps1 guard): local-env: a localenv/<env> branch is never pushed; dev servers start in the shared local env, not by
 # hand; deployed-env (K56): no hand change of a deployed env's config or runtime without an owner's decision; large-writes: no
 # synthetic bulk data, scratch schema on a shared DB, big import, full dump or copied dependency / data tree; secrets: no command reads targets.local.json.
-# Sections: L7 local-env · L20 deployed-env · L37 large-writes · L65 secrets
+# Sections: L7 local-env · L20 deployed-env · L37 large-writes · L66 secrets
 # ---- local-env: lane branch pushes, hand-started dev servers
 Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
     $cmd = $a.cmd
@@ -50,8 +50,9 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
   $lwClient = '(?im)(?:^|[;&|(]\s*|\n\s*)(?:&\s*)?(?:\w+=\S*\s+)*(mysql|mariadb|psql|sqlcmd|mysqladmin)(\.exe)?(\s|$)'
   $lwPort = if ($lw -match '(?:\s-P\s*|--port[= ]|\bpsql\b[^|;&]*\s-p\s*|\bMYSQL_TCP_PORT=)(\d+)') { [int]$Matches[1] } else { 0 }
   $lwShared = @(3306, 5432, 1433) + @(foreach ($lwE in @(Get-KitProps $a.config.localEnv.envs)) { @($lwE.Value.services | Where-Object { $_.external -and $_.port } | ForEach-Object { [int]$_.port }) })
-  # the count bound to its generator: range(N) / range(a, N), generate_series(a, N), seq [a] N, n < N in a recursive CTE, a..N, 10**k, 1ek
-  $lwGen = '(?i)\brange\s*\(\s*(?:\d[\d_]*\s*,\s*)?(\d[\d_]*)\s*[,)]|\bgenerate_series\s*\(\s*\d+\s*,\s*(\d+)|\bseq\s+(?:\d+\s+)*(\d+)\b|\bRECURSIVE\b[\s\S]*?\b\w+\s*<=?\s*(\d+)\b|\b\d+\.\.(\d[\d_]*)\b|\b10\s*\*\*\s*(\d)\b|\b\d+e(\d)\b'
+  # the count bound to its generator: range(N) / range(a, N), generate_series(a, N), seq [a] N, n < N in a recursive CTE, a..N, 10**k,
+  # 1ek (alone: a uuid / hex group such as 4eeb-93e6-cf44 is an id, not a count)
+  $lwGen = '(?i)\brange\s*\(\s*(?:\d[\d_]*\s*,\s*)?(\d[\d_]*)\s*[,)]|\bgenerate_series\s*\(\s*\d+\s*,\s*(\d+)|\bseq\s+(?:\d+\s+)*(\d+)\b|\bRECURSIVE\b[\s\S]*?\b\w+\s*<=?\s*(\d+)\b|\b\d+\.\.(\d[\d_]*)\b|\b10\s*\*\*\s*(\d)\b|(?<![\w.:/-])\d+e(\d)(?![\w.:/-])'
   $lwGenHit = @([regex]::Matches($lw, $lwGen) | Where-Object { $m = $_; @(1..7 | Where-Object { $m.Groups[$_].Success } | ForEach-Object {
       $v = [long]($m.Groups[$_].Value -replace '_'); if ($_ -ge 6) { [Math]::Pow(10, $v) } else { $v } } | Where-Object { $_ -gt $lwRows }).Count }).Count
   $lwWhy = if ($lwGenHit) { "a row generator past data.maxRows ($lwRows)" }
