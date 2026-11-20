@@ -121,7 +121,8 @@ function Get-KitLogLines([string]$File, [datetime]$Since) {
 }
 # ---- api budget: host / ci / tracker calls of one supervise beat (KIT_API_LEDGER, inherited by its children): "<kind> <verb> <caller>"
 function Add-KitApiCall([string]$Kind, [string]$Verb) {   # from lib.ps1 Invoke-KitAdapter
-  if ($Kind -notin 'git-host', 'ci', 'tracker') { return }
+  # url / mr.url only format a string in every adapter (no request): 93-98 Get-TrackerUrl "calls" a beat were the WATCH (K93)
+  if ($Kind -notin 'git-host', 'ci', 'tracker' -or $Verb -in 'url', 'mr.url') { return }
   # the caller past the wrappers (a lock, a memo, a bounded child, a hook): else every inline call reads as Invoke-KitLocked
   $fr = @(Get-PSCallStack | Select-Object -Skip 1 | Where-Object { $_.FunctionName -notmatch '^(Add-KitApiCall|Invoke-KitAdapter|Invoke-HostVerb|__TrA|<ScriptBlock>.*|Invoke-KitLocked|Get-KitMemo|Invoke-Bounded|Invoke-KitHooks|Invoke-KitSweepCall)$' })[0]
   $who = if ($fr) { "$(if ($fr.ScriptName) { Split-Path $fr.ScriptName -Leaf }):$($fr.FunctionName)" } else { 'script' }

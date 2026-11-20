@@ -175,8 +175,11 @@ $env:KIT_API_LEDGER = Join-Path (Get-KitPath cache -Create) 'api-test.txt'; Get-
 Get-FakePlan 20; $f2 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER)
 # calls inside a lock wrapper name the function around it, not Invoke-KitLocked
 function Get-FakeLockedDirect { Invoke-KitLocked (Join-Path (Get-KitPath cache) 'api-lock.json') { foreach ($i in 1..151) { $null = Invoke-KitAdapter git-host fakeh 'mr.get' @{} } } }
-Get-FakeLockedDirect; $f3 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER); Remove-Item Env:KIT_API_LEDGER; Get-FakePlan 5
+Get-FakeLockedDirect; $f3 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER)
+# K93: url / mr.url format a string (no request): not counted
+foreach ($i in 1..160) { $null = Invoke-KitAdapter git-host fakeh 'mr.url' @{}; $null = Invoke-KitAdapter git-host fakeh 'url' @{} }; $f4 = @(Get-KitApiBeatFlag $env:KIT_API_LEDGER); Remove-Item Env:KIT_API_LEDGER; Get-FakePlan 5
 "wrap:$($f3.Count -eq 1 -and $f3[0].what -match ':Get-FakeLockedDirect 151$')"
+"urls:$(-not $f4.Count)"
 "api:$($f1.Count -eq 1 -and $f1[0].level -eq 'WATCH' -and $f1[0].what -match '^API budget: 160 host / tracker adapter verbs this beat \(supervise\.apiCallsPerBeat 150\): \S+:Get-FakePlan 160$' -and -not $f2.Count -and -not (Test-Path (Join-Path (Get-KitPath cache) 'api-test.txt')))"
 $lf = Get-KitLogFile leases; $ago = { param($m) (Get-Date).AddMinutes(-$m).ToString('o') }
 Set-Content $lf @(foreach ($r in @('gpu', 'g0', 'gone-a', 45), @('local-ai', 'stt', 'fresh-b', 5)) { "{`"at`":`"$(& $ago $r[3])`",`"event`":`"acquire`",`"kind`":`"$($r[0])`",`"name`":`"$($r[1])`",`"agent`":`"$($r[2])`",`"holder`":`"9999999`"}" })
@@ -186,7 +189,7 @@ $idf = Join-Path (Get-KitPath cache) 'idle-holders.json'; $idc = Get-Content $id
 $ih = @(Get-KitSuperviseGuardResources | Where-Object { "$($_.what)" -match 'no live holder for' })
 "idle:$(-not $ih0.Count -and $ih.Count -eq 1 -and $ih[0].level -eq 'WATCH' -and $ih[0].what -match '^gpu .*held by gone-a: no live holder for 40 min$')"
 '@
-Expect-Each (Invoke-PsTest 'wguard' $wg @($O)) 'waste guards: #' @('api', 'wrap', 'idle') -Show 8
+Expect-Each (Invoke-PsTest 'wguard' $wg @($O)) 'waste guards: #' @('api', 'wrap', 'urls', 'idle') -Show 8
 # sweep cost: 500 QA runs (490 older than 7 days) + 3000-row signals and outcomes logs; one beat stays at the measured cost
 # (2026-11-18: 750-950 reads, 40-56 API calls; every run.json was read and each run's parent viewed: 6500 reads, 1000+ calls)
 $wc = @'
