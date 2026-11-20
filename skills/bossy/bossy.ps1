@@ -29,8 +29,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
-  L719 track · L1056 supervise · L1376 report · L1456 audit · L1516 storage · L1519 bugbrief · L1633 cleanup · L1720 learn ·
-  L1751 decide · L1902 debate · L1946 health · L2014 setup · L2111 guard-sendmessage
+  L719 track · L1056 supervise · L1378 report · L1458 audit · L1518 storage · L1521 bugbrief · L1635 cleanup · L1722 learn ·
+  L1753 decide · L1904 debate · L1948 health · L2016 setup · L2113 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1076,7 +1076,9 @@ Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
   $myHolder = Get-KitHolder   # only a live other process blocks (not a restart or a dead holder)
   $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
-  if (-not $Takeover -and $other -and $held.session -ne 'os-timer' -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt [math]::Max(15.0, [math]::Min(45.0, 1.5 * (Get-KitBeatMinutes)))) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
+  # report never a beat old (K102): the OS timer sweeps once the last sweep is a beat old, a session skips one under half a beat
+  $agoMin = ((Get-Date) - [datetime]$held.at).TotalMinutes; $asideMin = if ($me -eq 'os-timer') { Get-KitBeatMinutes } else { (Get-KitBeatMinutes) / 2 }
+  if (-not $Takeover -and $other -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
   Write-KitAtomic $lk (([ordered]@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } + $myHolder) | ConvertTo-Json)
 }
 if ($script:aside) { $script:aside; Get-KitAsideFlags $me; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }

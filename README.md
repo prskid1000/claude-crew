@@ -184,7 +184,7 @@ Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Code
 
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`: a recurring durable
-  session cron, plus the opt-in OS timer `bossy.ps1 heartbeat install|uninstall|status` that runs it with no session open,
+  session cron, plus the opt-in OS timer `bossy.ps1 heartbeat install|uninstall|status` that runs it once the last sweep is a beat old (a session skips one under half a beat),
   `adapters/os_timer.ps1`) writes the dashboard ("Live supervisor dashboard" below; alone: `bossy.ps1 status
   [-Watch]`). Its stdout (`supervise.output`): `html` (default) = the page link, one line per ACT /
   WATCH and auto-fix, a count line; `chat` = the tables; `both`. `supervise.publish` (unset = off): a pwsh command run detached
