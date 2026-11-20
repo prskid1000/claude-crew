@@ -84,6 +84,16 @@ $po = Invoke-Pipes -Mrs 'https://git.example.com/g/r/-/merge_requests/1,https://
 "retry:$((@($po.mrs.status) -join ',') -eq 'success,success' -and $po.done -and $global:calls['1'] -eq 3 -and $global:naps -eq 2)"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
 Expect-Each $pp 'pipes: #' 'retry' -Show 4
+# K99 (retro 2026-11-20, 2x refused): -Mrs <repo!iid> resolves to the MR url (mr.url), a url passes as is
+$pr = Invoke-PsTest 'pipes-ref' @'
+$null = . $args[0] 6>$null; $global:urls = @()
+function Invoke-HostVerb([string]$Verb, $A, [switch]$NoMemo) { if ($Verb -eq 'mr.url') { $global:urls += "$($A.n)"; return "https://git.example.com/g/r/-/merge_requests/$($A.n)" }
+  if ($Verb -ne 'mr.get') { return @() }; [pscustomobject]@{ state = 'merged'; target_branch = 'main'; head_pipeline = [pscustomobject]@{ status = 'success'; id = 0 } } }
+function Start-Sleep([int]$Seconds) { }
+$po = Invoke-Pipes -Mrs 'r!7,https://git.example.com/g/r/-/merge_requests/8' -MaxMinutes 1 | ConvertFrom-Json
+"ref:$((@($po.mrs.mr) -join ',') -eq 'https://git.example.com/g/r/-/merge_requests/7,https://git.example.com/g/r/-/merge_requests/8' -and ($global:urls -join ',') -eq '7')"
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
+Expect-Each $pr 'pipes: #' 'ref' -Show 4
 Remove-Item Env:CLAUDE_WT_ROOT
 Remove-TestKit $k
 Complete-Tests

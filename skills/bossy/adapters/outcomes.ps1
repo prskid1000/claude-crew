@@ -344,7 +344,7 @@ if ($Action -eq 'done') {   # signals up to the prep time count as reviewed
   "last retro = $($t.ToString('s'))"; return
 }
 if ($Action -ne 'prep') { 'usage: tidy prep [-DryRun] [-Json] | tidy done -At <time> [-DryRun]'; exit 2 }
-$t0 = Get-Date; $since = Get-KitRetroSince; $from = if ($since -gt $t0.AddDays(-14)) { $since } else { $t0.AddDays(-14) }   # TODO-PARAM (fixed default)
+$t0 = Get-Date; $since = Get-KitRetroSince; $winDays = [double](Get-KitParam 'tidy.windowDays'); $from = if ($since -gt $t0.AddDays(-$winDays)) { $since } else { $t0.AddDays(-$winDays) }
 $cut = { param($s, [int]$n = 140) $s = "$s" -replace '\s+', ' '; if ($s.Length -gt $n) { $s.Substring(0, $n - 3) + '...' } else { $s } }
 $steps = [Collections.Generic.List[object]]::new()
 $run = { param([string]$Name, [scriptblock]$Body) $s0 = Get-Date; $st = 'ok'
@@ -352,7 +352,7 @@ $run = { param([string]$Name, [scriptblock]$Body) $s0 = Get-Date; $st = 'ok'
   if ($o.Count -and "$($o[0])" -like 'skip:*') { $st = 'skip' }
   $steps.Add([pscustomobject]@{ step = $Name; state = $st; sec = [math]::Round(((Get-Date) - $s0).TotalSeconds, 1); out = @($o | Select-Object -Last 12) }) }
 $py = { param([string[]]$A) $o = @(& (Get-Python) -X utf8 $KitCmd.kitbag @A 2>&1 | ForEach-Object { "$_" }); if ($LASTEXITCODE) { throw "kitbag $($A[0..1] -join ' ') rc $LASTEXITCODE`: $($o | Select-Object -Last 1)" }; $o }
-$busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($t0 - [datetime]$_.beat).TotalMinutes -lt 20 })
+$busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($t0 - [datetime]$_.beat).TotalMinutes -lt [double](Get-KitParam 'tidy.busyBeatMinutes') })
 $idle = if ($busy) { "skip: $($busy.Count) live board agent(s) ($(@($busy.agent | Select-Object -First 4) -join ', ')): waits for an idle kit" }
 $opt = { param([string]$Fn, [scriptblock]$Call) $c = Get-Command $Fn -CommandType Function -ErrorAction SilentlyContinue; if ($c) { & $Call $c } else { "skip: $Fn not in this kit yet" } }   # function from another kit change
 
@@ -369,7 +369,7 @@ $new = @($sig | Where-Object { $_.kind -ne 'retired' -and [datetime]$_.at -gt $s
 $lessons = @(foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) { $sk = ''; foreach ($l in (Read-KitLessonLines $f)) { if ($l -match '^## (.+)$') { $sk = $Matches[1].Trim() } elseif ($l -match '^- (.+)$' -and $sk) { [pscustomobject]@{ skill = $sk; text = $Matches[1] } } } })
 $groups = @(Get-KitSignalGroups $new $lessons | Sort-Object n -Descending)
 $retired = @($sig | Where-Object kind -eq 'retired' | ForEach-Object { [pscustomobject]@{ skill = $_.skill; text = $_.text; words = (Get-KitWordSet $_.text) } })
-$back = @(foreach ($s in $new) { $w = Get-KitWordSet $s.text; $r = @($retired | Where-Object { $_.skill -eq $s.skill -and (Get-KitOverlap $_.words $w) -ge 0.4 } | Select-Object -First 1); if ($r) { "$($s.skill): $(& $cut $s.text 100) <- retired: $(& $cut $r[0].text 100)" } })   # TODO-PARAM (fixed default)
+$regSim = [double](Get-KitParam 'tidy.regressionSimilarity'); $back = @(foreach ($s in $new) { $w = Get-KitWordSet $s.text; $r = @($retired | Where-Object { $_.skill -eq $s.skill -and (Get-KitOverlap $_.words $w) -ge $regSim } | Select-Object -First 1); if ($r) { "$($s.skill): $(& $cut $s.text 100) <- retired: $(& $cut $r[0].text 100)" } })
 $log = @(Read-KitLog -Since $from | Where-Object { [datetime]$_.at -gt $since })
 $by = { param($S, $E) @($log | Where-Object { $_.stream -eq $S -and $_.event -match $E }) }; $deny = & $by guard '^deny$'
 $errs = @($log | Where-Object { $_.stream -eq 'calls' -and ($_.event -eq 'error' -or "$($_.rc)" -eq '2' -or ($_.event -eq 'end' -and $_.error)) })   # end + error: Stop-KitVerb
@@ -381,7 +381,7 @@ $lp = if ("$(@($steps | Where-Object step -eq 'lint').out)" -match '(\d+) proble
 $oc = @(if (Get-Command Get-KitOutcomeLines -ErrorAction SilentlyContinue) { Get-KitOutcomeLines })
 $srs = @(if (Get-Command Read-KitStandingRules -ErrorAction SilentlyContinue) { if ($DryRun) { Get-KitDecisionPatterns | ForEach-Object { "candidate: asked `"$(& $cut $_.question)`" -> `"$(& $cut $_.answer 90)`" ($(@($_.evidence) -join ', '))" } } else { Read-KitStandingRules | Where-Object status -eq 'proposed' | ForEach-Object { "$($_.id) (ask $($_.askId)): asked `"$(& $cut $_.question)`" -> `"$(& $cut $_.answer 90)`"" } } })
 $work = $new.Count + $deny.Count + $errs.Count + $back.Count + $lp + @($steps | Where-Object state -eq 'failed').Count + @($oc | Where-Object { $_ -like 'cause *' }).Count + $srs.Count   # failed steps, lint, repeat causes, rule proposals: the judge sees them
-$min = 3; $gp = Get-Command Get-KitParam -CommandType Function -ErrorAction SilentlyContinue; if ($gp) { $min = [double](& $gp 'tidy.judgeMinutes' 3) }   # TODO-PARAM (fixed default)
+$min = [double](Get-KitParam 'tidy.judgeMinutes')
 $hit = { param($g) "$(& $cut $g.text)$(if ($g.refs) { " refs $($g.refs -join ',')" })$(if ($g.lesson) { " -> lesson ($($g.score)): $(& $cut $g.lesson 90)" })" }
 $top = { param($Items, [scriptblock]$Key, [int]$Max = 10) @($Items | Group-Object $Key | Sort-Object Count -Descending | Select-Object -First $Max | ForEach-Object { "$($_.Count)x $($_.Name)" }) }
 $d = [Collections.Generic.List[string]]::new(); $part = { param($T, $Lines) if ($Lines) { $d.Add(''); $d.Add("## $T"); foreach ($x in $Lines) { $d.Add("- $x") } } }

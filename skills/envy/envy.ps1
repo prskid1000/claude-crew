@@ -2383,6 +2383,8 @@ switch ($Action) {
     if (-not (Get-Command Get-DbTempUse -ErrorAction SilentlyContinue) -or -not (Test-DbTemp $e)) { throw "[$e] dbtemp needs db.engine mysql (adapters/db_presets.ps1)" }
     # storage.db.use polls a resting lane DB every tick (11 refused errors): no connections, no temp
     if (DbSvcDown $e) { "[$e] dbtemp: $((DbSvc $e).name) rests (starts with a lease): no temp"; return }
+    # a DB port no managed service owns (base server, a stale port): a hint, never the client's raw ERROR 2003 (retro 2026-11-20, 3x)
+    $dtPort = (Get-EnvCfg $e).db.port; if ($dtPort -and -not (Test-PortListening ([int]$dtPort))) { "[$e] dbtemp: nothing listens on the env DB port $dtPort (db.port): no temp. Start that MySQL (envy.ps1 status -Env $e names the services; up -Services <db> as owner) or fix db.port"; return }
     if ($Kill) { Stop-DbConn $e $Kill; Event $e 'db-kill' @{ id = $Kill; by = $Agent }; "[$e] db connection $Kill killed"; return }
     foreach ($q in @(Get-DbTempUse $e)) { '{0} {1} {2} {3}' -f $q.id, $q.gb.ToString([Globalization.CultureInfo]::InvariantCulture), $q.secs, (Protect-KitText $q.query) }
   }

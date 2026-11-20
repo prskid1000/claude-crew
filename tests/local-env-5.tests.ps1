@@ -72,6 +72,10 @@ $kd = New-TestKit le5d; $dd = New-Item -ItemType Directory -Force (Join-Path $kd
 & $J @{ localEnv = @{ envs = @{ t = @{ db = @{ engine = 'mysql'; port = 41999 }; services = @(@{ name = 'db'; port = 41999; start = 'x' }) } } } } (Join-Path $kd 'skills/crafty/kit.local.json') 8
 $dt = @(pwsh -NoProfile -File (Join-Path $kd 'skills/envy/envy.ps1') dbtemp -Env t 2>&1); $dtc = $LASTEXITCODE
 Expect "dbtemp: a lane DB at rest is skipped with one line, exit 0, no refused error (exit $dtc; $($dt -join ' / '))" ($dtc -eq 0 -and "$dt" -match 'dbtemp: db rests' -and "$dt" -notmatch 'refused|error')
+# K99 (retro 2026-11-20, 3x ERROR 2003): a db.port no managed service owns and nothing listens on: a start hint, never the raw client error
+& $J @{ localEnv = @{ envs = @{ t = @{ db = @{ engine = 'mysql'; port = 41998 }; services = @(@{ name = 'api'; port = 41997; start = 'x' }) } } } } (Join-Path $kd 'skills/crafty/kit.local.json') 8
+$dx = @(pwsh -NoProfile -File (Join-Path $kd 'skills/envy/envy.ps1') dbtemp -Env t 2>&1); $dxc = $LASTEXITCODE
+Expect "dbtemp: an unowned DB port with no listener prints the start hint, exit 0, no client error (exit $dxc; $($dx -join ' / '))" ($dxc -eq 0 -and "$dx" -match 'nothing listens on the env DB port 41998' -and "$dx" -notmatch 'ERROR 2003|refused')
 Remove-TestKit $kd
 Remove-TestKit $k
 Complete-Tests

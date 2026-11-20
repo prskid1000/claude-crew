@@ -74,7 +74,7 @@ function Get-KitHeldDeletedGB([string]$Root) { if (-not $KitIsWindows) { return 
 function Invoke-KitShellLine([string]$Cmd, [int]$Sec = 5) { if ($KitIsWindows) { Invoke-KitExe 'cmd.exe' @() $Sec "/d /s /c `"$Cmd`"" } else { Invoke-KitExe '/bin/sh' @('-c', $Cmd) $Sec } }
 # storage.db.use / kill; 5 s max (full-disk db hangs), timeout skips 5 min
 function Get-KitDbQueries($C) {
-  if (-not $C.db.use) { return @() }; $st = Get-KitStorageState; if ($st.dbDownAt -and ((Get-Date) - [datetime]$st.dbDownAt).TotalMinutes -lt 5) { return @() }
+  if (-not $C.db.use) { return @() }; $st = Get-KitStorageState; if ($st.dbDownAt -and ((Get-Date) - [datetime]$st.dbDownAt).TotalMinutes -lt [double](Get-KitParam 'storage.dbDownRetryMinutes')) { return @() }
   $r = Invoke-KitShellLine $C.db.use; if ($r.timedOut) { Set-KitStorageState { param($s) $s.dbDownAt = (Get-Date).ToString('o') }; return @() }
   @("$($r.out)" -split "`r?`n" | ForEach-Object { if ($_ -match '^\s*(?<id>\d+)\s+(?<gb>\d+(\.\d+)?)\s+(?<s>\d+)\s*(?<q>.*)$') { [pscustomobject]@{ id = $Matches.id; gb = [double]$Matches.gb; secs = [int]$Matches.s; query = (Protect-KitText $Matches.q) } } })
 }
@@ -97,7 +97,7 @@ function Invoke-KitStorageTick([switch]$Force) {
   }
   # db.use (3-5 s): supervise's forced tick reuses a list under 5 min old (15 min while no drive fills at minRateGBh: a runaway
   # temp query shows as a fill first) while every drive is OK and no query held 1 GB temp
-  $dbMin = if (@($out | Where-Object { [double]$_.rate -ge $c.minRateGBh }).Count) { 5 } else { 15 }   # TODO-PARAM (fixed defaults: 5 / 15 min)
+  $dbMin = [double](Get-KitParam $(if (@($out | Where-Object { [double]$_.rate -ge $c.minRateGBh }).Count) { 'storage.dbFastMinutes' } else { 'storage.dbSlowMinutes' }))
   $dbDue = -not $Force -or -not $st.dbAt -or ((Get-Date) - [datetime]$st.dbAt).TotalMinutes -ge $dbMin -or @($out | Where-Object { $_.level -ne 'OK' -or $_.anomaly }).Count -or @($st.dbQ | Where-Object { [double]$_.gb -ge 1 }).Count
   if (-not $dbDue) { $q = @($st.dbQ | Where-Object { $_ } | ForEach-Object { [pscustomobject]$_ }) }
   else {
@@ -113,7 +113,7 @@ function Invoke-KitStorageTick([switch]$Force) {
 function Invoke-KitDiskRescue($C, $V, $Q) {
   $why = "disk $($V.drive): $($V.free) GB free, filling $($V.rate) GB/h, full in $($V.ttf) h"
   $go = Set-KitStorageState { param($s) if (-not $s.rescues) { $s.rescues = @{} }; $h = $s.rescues[$V.drive]
-    if ($h -and ((Get-Date) - [datetime]$h.at).TotalMinutes -lt 10) { $false } else { $s.rescues[$V.drive] = @{ drive = $V.drive; kit = [bool]$V.kit; at = (Get-Date).ToString('o'); reason = $why; lines = @() }; $true } }
+    if ($h -and ((Get-Date) - [datetime]$h.at).TotalMinutes -lt [double](Get-KitParam 'storage.rescueEveryMinutes')) { $false } else { $s.rescues[$V.drive] = @{ drive = $V.drive; kit = [bool]$V.kit; at = (Get-Date).ToString('o'); reason = $why; lines = @() }; $true } }
   if (-not $go) { return }
   $dq = @(@($Q) | Where-Object { $_.gb -ge 0.1 } | Sort-Object gb, secs -Descending)[0]   # db is a cause only while a query holds temp
   $lines = @(@(Stop-KitDbQuery $C $dq 'disk rescue') + @(Invoke-KitHooks Stop-KitDiskWriter @{ Verdict = $V }) | Where-Object { $_ })
@@ -216,7 +216,7 @@ function Get-KitStorageRound {
     $h = if ($st.rescues) { $st.rescues[$v.drive] }; $held = $h -and ((Get-Date) - [datetime]$h.at).TotalMinutes -lt $hm
     if ($v.level -eq 'OK') { if ($h) { Set-KitStorageState { param($s) $s.rescues.Remove($v.drive) }; if ($held) { [pscustomobject]@{ level = 'INFO'; what = "disk $($v.drive) back to normal: build hold lifted"; action = 'Nothing to do.' } } }; continue }
     $why = @(); if ($v.anomaly -or $v.rescue) {   # top writers sample ~2 s: once per 5 min while a drive stays anomalous (K20)
-      $tw = if ($st.topAt -and ((Get-Date) - [datetime]$st.topAt).TotalMinutes -lt 5) { @($st.top) } else { $tw0 = @(Get-KitTopWriters); Set-KitStorageState { param($s) $s.top = $tw0; $s.topAt = (Get-Date).ToString('o') }; $st.top = $tw0; $st.topAt = (Get-Date).ToString('o'); $tw0 }
+      $tw = if ($st.topAt -and ((Get-Date) - [datetime]$st.topAt).TotalMinutes -lt [double](Get-KitParam 'storage.topCacheMinutes')) { @($st.top) } else { $tw0 = @(Get-KitTopWriters); Set-KitStorageState { param($s) $s.top = $tw0; $s.topAt = (Get-Date).ToString('o') }; $st.top = $tw0; $st.topAt = (Get-Date).ToString('o'); $tw0 }
       if (@($tw).Count) { $why += "top writers: $(@($tw | ForEach-Object { "$($_.name) ($($_.pid)) $($_.mbs) MB/s" }) -join ', ')" }
       $q = @($(if ($null -ne $script:KitStorageDbQ) { $script:KitStorageDbQ } else { Get-KitDbQueries $c }) | Sort-Object gb -Descending)[0]; if ($q -and $q.gb -gt 0) { $why += "db query $($q.id): $($q.gb) GB temp, $($q.secs) s" } }
     $del = Get-KitHeldDeletedGB $v.root; if ($null -ne $del) { $why += "deleted-but-open $del GB" }

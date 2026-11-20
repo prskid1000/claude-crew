@@ -9,7 +9,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
- pipes [-Mrs <url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
+ pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
@@ -1142,18 +1142,18 @@ if (-not $Mrs) {   # a wt worktree: its branch's open MRs; else the tracked task
     $trRefs = @((Read-KitTracking).tasks.Values | Where-Object { -not $_.done -and (-not $Run -or "$($_.wave)" -eq $Run) } | ForEach-Object { @($_.mrs) } | Where-Object { "$_" -match '^[\w./-]+!\d+$' } | Select-Object -Unique)
     $Mrs = @(foreach ($tr in $trRefs) { $trRepo, $trN = "$tr" -split '!', 2; $trA = @{ repo = (Get-HostProject $trRepo -Raw); n = $trN }
         if ("$((Invoke-HostVerb 'mr.get' $trA).state)" -eq 'opened') { Invoke-HostVerb 'mr.url' $trA } }) | Where-Object { $_ }
-    if (-not $Mrs.Count) { Stop-KitVerb "pipes: missing -Mrs (not in a crafty.ps1 wt worktree, no open MR in tracking$(if ($Run) { " for run $Run" })). Usage: pipes -Mrs <url>,... [-Run <run>] [-MaxMinutes 8] [-UntilMerged]" }
+    if (-not $Mrs.Count) { Stop-KitVerb "pipes: missing -Mrs (not in a crafty.ps1 wt worktree, no open MR in tracking$(if ($Run) { " for run $Run" })). Usage: pipes -Mrs <repo!iid>,... (or MR urls) [-Run <run>] [-MaxMinutes 8] [-UntilMerged]" }
     $script:KitRc = 'exit'; [Console]::Error.WriteLine("pipes: -Mrs $($Mrs -join ',') (open tracked MRs$(if ($Run) { " of run $Run" }))")
   } else {
     $wtBranch = "$(git -C $wtTop branch --show-current)".Trim()
-    if (-not $wtBranch) { Stop-KitVerb 'pipes: the worktree has a detached HEAD: pass -Mrs <url>,...' }
+    if (-not $wtBranch) { Stop-KitVerb 'pipes: the worktree has a detached HEAD: pass -Mrs <repo!iid>,...' }
     $Mrs = @(Get-MergedMrs $wtTop $wtBranch $wtTarget 'opened' | Where-Object source_branch -eq $wtBranch | ForEach-Object web_url | Where-Object { $_ })
-    if (-not $Mrs.Count) { Stop-KitVerb "pipes: no open MR for $wtBranch -> $wtTarget (open it, or pass -Mrs <url>,...)" }
+    if (-not $Mrs.Count) { Stop-KitVerb "pipes: no open MR for $wtBranch -> $wtTarget (open it, or pass -Mrs <repo!iid>,...)" }
     $script:KitRc = 'exit'; [Console]::Error.WriteLine("pipes: -Mrs $($Mrs -join ',') (open MRs of $wtBranch)")
   }
 }
 $ErrorActionPreference = 'SilentlyContinue'
-$list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
+$list = @($Mrs -split '\s*,\s*' | Where-Object { $_ } | ForEach-Object { if ("$_" -match '^([\w./-]+)!(\d+)$') { $pmUrl = Invoke-HostVerb 'mr.url' @{ repo = (Get-HostProject $Matches[1] -Raw); n = $Matches[2] }; if ($pmUrl) { $pmUrl } else { $_ } } else { $_ } })   # repo!iid -> its url (retro 2026-11-20)
 $noMrCi = @(Get-KitValue 'repos' @() | Where-Object { $_.ci.mrPipelines -eq $false } | ForEach-Object { @($_.name) + @($_.aliases) } | Where-Object { $_ } | ForEach-Object { "$_".ToLower() })
 # no head pipeline: no-ci (no CI config) or no-pipeline (may start)
 function State($url) {
