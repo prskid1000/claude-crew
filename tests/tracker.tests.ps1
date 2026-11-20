@@ -164,13 +164,6 @@ Write-KitAtomic (Get-KitPath supervise-state -Create) (@{ nextBeat = 5; coordAt 
 "coord:$((Get-KitBeatOverdue) -match '^heartbeat OVERDUE 2[45] min: .*CronCreate')"
 '@ @($O)
 Expect-Each $hb 'heartbeat: # (arm: the CronCreate call, recurring + durable, the prompt has no re-arm; coord: overdue counts the coordinator''s sweeps against heartbeatMinutes, not the OS timer''s)' 'arm', 'coord'
-$lk = Join-Path (TkPath $k cache -Create) 'supervise.lock'
-# K102, beat 10: holder, minutes ago, caller, steps aside?
-$asideBad = @(foreach ($ac in @(@('os-timer', 3, 'coord-a', 1), @('os-timer', 6, 'coord-a', 0), @('coord-a', 8, 'os-timer', 1), @('coord-a', 12, 'os-timer', 0))) {
-  & $J @{ nextBeat = 10; report = @{ at = (Get-Date).ToString('o') } } (TkPath $k supervise-state -Create)
-  & $J @{ session = $ac[0]; at = (Get-Date).AddMinutes(-$ac[1]).ToString('o'); pid = 1 } $lk
-  if ([int]((Px $O supervise -Session $ac[2] | Out-String) -match 'steps aside') -ne $ac[3]) { "$($ac[2]) vs $($ac[0]) $($ac[1])" } })
-Expect "supervise: the OS timer steps aside for a sweep under a beat old, a session under half a beat ($asideBad)" (-not $asideBad.Count)
 $D = Join-Path $k 'skills/crafty/crafty.ps1'; $sr = Join-Path (Kd) 'scope-repo'; New-Item -ItemType Directory -Force "$sr/src", "$sr/specs" | Out-Null
 'a' | Set-Content "$sr/specs/a.cy.js"; Save-GitRepo $sr base; git -C $sr checkout -q -b b1; Set-Content (Join-Path $sr '.git/claude-scope') "specs/**"
 'b' | Set-Content "$sr/specs/b.cy.js"; $c1 = pwsh @np $D wt commit -Dir $sr -Message 'test: add the b spec' 2>&1 | Out-String; $e1 = $LASTEXITCODE

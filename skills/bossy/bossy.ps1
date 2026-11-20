@@ -29,8 +29,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
-  L719 track · L1056 supervise · L1378 report · L1458 audit · L1518 storage · L1521 bugbrief · L1635 cleanup · L1722 learn ·
-  L1753 decide · L1904 debate · L1948 health · L2016 setup · L2113 guard-sendmessage
+  L719 track · L1056 supervise · L1382 report · L1462 audit · L1522 storage · L1525 bugbrief · L1639 cleanup · L1726 learn ·
+  L1757 decide · L1908 debate · L1952 health · L2020 setup · L2117 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1054,6 +1054,8 @@ function Invoke-Status([switch]$Watch, [int]$Seconds = 30, [switch]$Json, [strin
 }
 function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.completed -and $_.runId } | ForEach-Object runId) }
 # ---- supervise: coordinator heartbeat (FLAGS ACT / WATCH / INFO)
+# coordAt on disk as text: a session that stepped aside mid-sweep stamped it (ConvertFrom-Json makes a DateTime)
+function Get-KitDiskCoordAt([string]$File) { $cv = try { (Read-KitText $File | ConvertFrom-Json -AsHashtable).coordAt } catch { $null }; if ($cv -is [datetime]) { $cv.ToString('o') } else { "$cv" } }
 function Invoke-Supervise {
 param([string]$Session, [switch]$Json, [switch]$AutoFix, [switch]$Brief, [switch]$Takeover, [string]$Ack, [string]$Reason = '')
 $ErrorActionPreference = 'SilentlyContinue'
@@ -1076,9 +1078,11 @@ Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
   $myHolder = Get-KitHolder   # only a live other process blocks (not a restart or a dead holder)
   $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
-  # report never a beat old (K102): the OS timer sweeps once the last sweep is a beat old, a session skips one under half a beat
-  $agoMin = ((Get-Date) - [datetime]$held.at).TotalMinutes; $asideMin = if ($me -eq 'os-timer') { Get-KitBeatMinutes } else { (Get-KitBeatMinutes) / 2 }
-  if (-not $Takeover -and $other -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
+  # report never a beat old (K102): the OS timer (fires every beat, jitter: 0.8) sweeps once the last sweep is a beat old, a session skips one under half a beat
+  $agoMin = ((Get-Date) - [datetime]$held.at).TotalMinutes; $asideMin = (Get-KitBeatMinutes) * $(if ($me -eq 'os-timer') { 0.8 } else { 0.5 })
+  if (-not $Takeover -and $other -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"
+    # a session that skips still beats: health OVERDUE reads coordAt
+    if ($me -ne 'os-timer') { try { $sf0 = Get-KitPath supervise-state -Create; $st0 = Read-KitText $sf0 | ConvertFrom-Json -AsHashtable; if ($st0) { $st0.coordAt = (Get-Date).ToString('o'); Write-KitAtomic $sf0 ($st0 | ConvertTo-Json -Depth 5) } } catch {} }; return }
   Write-KitAtomic $lk (([ordered]@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } + $myHolder) | ConvertTo-Json)
 }
 if ($script:aside) { $script:aside; Get-KitAsideFlags $me; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }
@@ -1357,7 +1361,7 @@ $base = [double](Get-KitParam 'supervise.heartbeatMinutes'); $acts = @($flags | 
 $freshActs = @(Add-KitActObs $state $acts $now $actSec @(@($kitSweep.ran.Keys) + $kitSweep.cur | Where-Object { $_ -and $_ -notin $kitSweep.skipped })); $freshFlags = @($flags | Where-Object { $_.level -eq 'ACT' -and (Get-KitFlagKey $_.what) -in $freshActs })
 $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base $freshFlags.Count @($freshFlags | Where-Object what -like 'ENV-FIX*').Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($nAct + $wfAgents.Count) ($liveLabels.Count + $nAct) $runTotal
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
-L (Complete-KitSweep $kitSweep $state); $state.coordAt = if ($me -ne 'os-timer') { $now.ToString('o') } elseif ($state.coordAt) { $state.coordAt } else { "$($state.report.at)" }; $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
+L (Complete-KitSweep $kitSweep $state); $state.coordAt = if ($me -ne 'os-timer') { $now.ToString('o') } elseif ($cd0 = Get-KitDiskCoordAt $stateFile) { $cd0 } elseif ($state.coordAt) { $state.coordAt } else { "$($state.report.at)" }; $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 $report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShellRows; flags = @($flags); info = $script:ownerInfo }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"   # before the page: its Sweep time tile

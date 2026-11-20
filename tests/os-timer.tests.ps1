@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/os-timer.tests.ps1: install / uninstall / status through a fake scheduler adapter, health (off, fresh, stale, gone ->
-reinstalled, removed, osTimer false), the tick (supervise as session os-timer; skips while paused), the CLI verbs once installed.
+reinstalled, removed, osTimer false), the tick (supervise as session os-timer; skips while paused), the step-aside windows (K102), the CLI verbs once installed.
 Usage: pwsh -NoProfile -File tests/os-timer.tests.ps1 (copies adapters/os_timer.ps1 into its test kit).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -58,6 +58,15 @@ Invoke-KitAdapter 'scheduler' 'launchd' 'uninstall' $a; $s = Invoke-KitAdapter '
 Remove-Item -Recurse -Force $la -ErrorAction SilentlyContinue
 '@ @($O)
 Expect-Each $cl 'os-timer: cron + launchd # (cronline: one tagged line, other lines kept; cronstatus; cronhour; cronoff; cronempty; plist: label, interval, argv; lstatus; lreinstall: unload first; loff)' 'cronline', 'cronstatus', 'cronhour', 'cronoff', 'cronempty', 'plist', 'lstatus', 'lreinstall', 'loff'
+# K102 (beat 10): the OS timer steps aside for a sweep under 0.8 beat old (scheduler jitter), a session for one under half a beat and still
+# stamps coordAt (health OVERDUE); [holder, minutes ago, caller, steps aside]
+$lk = Join-Path (TkPath $k cache -Create) 'supervise.lock'; $sf = TkPath $k supervise-state -Create
+$asideBad = @(foreach ($ac in @(@('os-timer', 3, 'coord-a', 1), @('os-timer', 6, 'coord-a', 0), @('coord-a', 7, 'os-timer', 1), @('coord-a', 9, 'os-timer', 0))) {
+  & $J @{ nextBeat = 10; report = @{ at = (Get-Date).ToString('o') }; coordAt = (Get-Date).AddHours(-1).ToString('o') } $sf
+  & $J @{ session = $ac[0]; at = (Get-Date).AddMinutes(-$ac[1]).ToString('o'); pid = 1 } $lk
+  $asideOut = Px $O supervise -Session $ac[2] | Out-String; $stamped = ((Get-Date) - [datetime](Get-Content $sf -Raw | ConvertFrom-Json).coordAt).TotalMinutes -lt 5
+  if ([int]($asideOut -match 'steps aside') -ne $ac[3] -or $stamped -ne ($ac[2] -eq 'coord-a')) { "$($ac[2]) vs $($ac[0]) $($ac[1]) min (coordAt fresh: $stamped)" } })
+Expect "os-timer: the timer steps aside for a sweep under 0.8 beat, a session under half a beat and stamps coordAt ($asideBad)" (-not $asideBad.Count)
 # the CLI verbs reach os_timer.ps1; a paused kit's tick never starts supervise; status of a never-installed timer exits 1
 $pd = TkPath $k pauses -Create; & $J @{ at = (Get-Date).ToString('o'); reason = 'owner pause'; run = '*'; state = 'paused' } (Join-Path $pd 'pause-t.json')
 $tk = Invoke-TestScript $O heartbeat tick; $st = Invoke-TestScript $O heartbeat status
