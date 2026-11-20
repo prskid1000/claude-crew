@@ -103,10 +103,11 @@ INSERT INTO fa.o VALUES (1, 'a é', 1.5), (2, NULL, 2), (3, 'c', 3); INSERT INTO
   $wk2 = & { . $L3; Invoke-DbTempWatch s }
   Expect "watchdog: nothing above the line = no kill ($wk2)" (-not $wk2)
   if (-not $hold.HasExited) { Stop-Process -Id $hold.Id -Force -ErrorAction SilentlyContinue }
-  Q "SET GLOBAL max_execution_time = 600000; SET GLOBAL slow_query_log = ON"
+  Q "SET GLOBAL max_execution_time = 600000; SET GLOBAL log_output = 'NONE'"
   & $J @{ storage = @{ watch = @('', "$((Q 'SELECT @@datadir') -join '')".Replace('\\', '/').TrimEnd('/')) }; localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
   $dt = @(& { . $L3; Get-DbTempDoctor s } | ForEach-Object what)
-  Expect "doctor: after the caps only ibtmp1 (a restart setting) is left ($($dt -join ' / '))" ($dt.Count -eq 1 -and $dt[0] -match 'ibtmp1 has no max')
+  Q "SET GLOBAL log_output = DEFAULT"
+  Expect "doctor: after the caps only ibtmp1 is left; K103: slow log off + log_output NONE = no row ($($dt -join ' / '))" ($dt.Count -eq 1 -and $dt[0] -match 'ibtmp1 has no max')
   # tenant drop: registry row + FK children (a cycle too) + listed tables by id / name column, users no staying tenant has, the schema;
   # kept tenants and a lease refuse it; a dry run changes nothing; 0 references left; db.expect doctor rows
   Q @"

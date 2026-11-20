@@ -4,7 +4,7 @@
 # exec / jdbc / passwordEnv an env leaves unset; an engine with supportsMarks (mysql / mariadb) gives marks (binlog positions),
 # flashback restores and the cascade guard (db_flashback.py; db.cascadeGuard true); other engines: marks unsupported.
 # Placeholders: {H} {P} {U} {N} {URI} = db.host (127.0.0.1), db.port (the engine's), db.user, db.name, db.uri
-# Sections: L18 engine dispatch · L29 marks · L77 temp · L117 pool
+# Sections: L18 engine dispatch · L29 marks · L77 temp · L119 pool
 $script:DbPresets = @{}   # engine -> { port, query, exec, jdbc, passwordEnv, marks } (envy.ps1 checks it is loaded)
 foreach ($__en in @($KitAdapters['db-engine'].Keys)) { $__a = $KitAdapters['db-engine'][$__en]; $script:DbPresets[$__en] = @{ port = $__a.defaultPort; query = $__a.query; exec = $__a.exec; jdbc = $__a.jdbc; passwordEnv = $__a.passwordEnv; marks = [bool]$__a.supportsMarks } }
 foreach ($n in $(if ($script:LE.envs) { @((Get-KitProps $script:LE.envs).Name) })) {
@@ -94,7 +94,7 @@ function Invoke-DbTempWatch([string]$e) {
 function Get-DbTempDoctor([string]$e) {
   if (-not (Test-DbTemp $e)) { return }
   $w = @{}
-  try { foreach ($row in Invoke-DbSql $e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('temptable_max_ram', 'temptable_max_mmap', 'innodb_temp_data_file_path', 'max_execution_time', 'slow_query_log', 'datadir')") { $w[$row[0]] = $row[1] } }
+  try { foreach ($row in Invoke-DbSql $e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('temptable_max_ram', 'temptable_max_mmap', 'innodb_temp_data_file_path', 'max_execution_time', 'slow_query_log', 'log_output', 'datadir')") { $w[$row[0]] = $row[1] } }
   catch { [pscustomobject]@{ level = 'WARN'; what = "db temp: $("$_".Split("`n")[0])" }; return }
   $max = [double]$(if ((Get-EnvCfg $e).db.tempMaxGB) { (Get-EnvCfg $e).db.tempMaxGB } else { 5 }); $gb = { param($b) [math]::Round([double]$b / 1GB, 2) }
   $ib = if ("$($w.innodb_temp_data_file_path)" -match ':max:(\d+)([KMG])') { [double]$Matches[1] * @{ K = 1KB; M = 1MB; G = 1GB }[$Matches[2]] } elseif ("$($w.innodb_temp_data_file_path)" -notmatch 'autoextend') { 0 } else { -1 }
@@ -105,14 +105,16 @@ function Get-DbTempDoctor([string]$e) {
   $ram = try { [double](Get-SysMem).TotalGB } catch { 0 }   # TODO-PARAM: 1/8 of RAM (fixed default)
   if ($ram -and (& $gb $w.temptable_max_ram) -gt $ram / 8) { $bad += "temptable_max_ram $(& $gb $w.temptable_max_ram) GB > 1/8 of RAM (SET PERSIST temptable_max_ram = 1073741824)" }
   if ("$($w.max_execution_time)" -eq '0') { $bad += 'max_execution_time 0: a SELECT runs unbounded (SET PERSIST max_execution_time = 600000)' }
-  if ($w.slow_query_log -ne 'ON') { $bad += "slow_query_log $($w.slow_query_log): no record of the query that filled the disk (SET PERSIST slow_query_log = ON)" }
+  # K103: lanes run low-write (log-output=NONE, slow log off by decision): off on purpose is no WARN
+  $slowOff = "$($w.log_output)" -eq 'NONE' -or "$((Get-EnvCfg $e).db.expect.slow_query_log)" -in 'OFF', '0'
+  if ($w.slow_query_log -ne 'ON' -and -not $slowOff) { $bad +="slow_query_log $($w.slow_query_log): no record of the query that filled the disk (SET PERSIST slow_query_log = ON)" }
   $nz = { param($p) "$p".Replace('\\', '\').Replace('/', '\').TrimEnd('\') + '\' }   # batch output escapes backslashes; a folder ends in one
   $dd = if ("$($w.datadir)".Trim()) { & $nz $w.datadir }; $wt = @(Get-KitSetting 'storage.watch' @() | Where-Object { "$_".Trim() } | ForEach-Object { & $nz $_ })
   if ($dd -and -not @($wt | Where-Object { $dd.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count) { $bad += "storage.watch lacks the db datadir $($dd.TrimEnd('\')) (kit.local.json storage.watch): the disk guard does not size it" }
   $pv = try { "$(@(Invoke-DbSql $e "SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE PRIVILEGE_TYPE IN ('PROCESS', 'SUPER')")[0])" } catch { '' }
   if ($pv -eq '0') { $bad += 'the db user lacks PROCESS: dbtemp and the watchdog see only their own connection (GRANT PROCESS, CONNECTION_ADMIN)' }
   foreach ($b in $bad) { [pscustomobject]@{ level = 'WARN'; what = "db temp: $b" } }
-  if (-not $bad.Count) { [pscustomobject]@{ level = 'OK'; what = "db temp: temptable_max_ram $(& $gb $w.temptable_max_ram) GB, temptable_max_mmap $(& $gb $w.temptable_max_mmap) GB, ibtmp1 $(if ($ib) { "max $(& $gb $ib) GB" } else { 'fixed size' }), max_execution_time $([int]$w.max_execution_time / 1000) s, slow log on, watchdog at $max GB" } }
+  if (-not $bad.Count) { [pscustomobject]@{ level = 'OK'; what = "db temp: temptable_max_ram $(& $gb $w.temptable_max_ram) GB, temptable_max_mmap $(& $gb $w.temptable_max_mmap) GB, ibtmp1 $(if ($ib) { "max $(& $gb $ib) GB" } else { 'fixed size' }), max_execution_time $([int]$w.max_execution_time / 1000) s, slow log $(if ($w.slow_query_log -eq 'ON') { 'on' } else { 'off (low-write)' }), watchdog at $max GB" } }
 }
 # ---- pool: db.bufferPool (mysql) = innodb_buffer_pool_size busyMB (2048) while a lease or train is live on any env of this db
 #      server, idleMB (256) once none was for idle.graceMinutes; online, chunk-aligned, one resize at a time, never mid switch-over
