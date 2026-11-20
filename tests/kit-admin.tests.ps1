@@ -203,4 +203,9 @@ $hk = @(Invoke-KitHooks Get-KitSetupLines); $null = Set-KitBrowserPolicy -Undo; 
   Expect-Each $bp 'setup -BrowserPolicy: #' 'denied', 'set', 'same', 'undokeeps', 'undo', 'undoagain', 'otheros', 'nomodels', 'report', 'hook', 'clean' -Show 6
   foreach ($bk in "HKCU:\Software\$bpKey", "HKCU:\Software\Policies\$bpKey") { if (Test-Path -LiteralPath $bk) { Remove-Item -LiteralPath $bk -Recurse } }
 } else { 'SKIP setup -BrowserPolicy (HKCU: Windows only)' }
+# the MR spec repeats the mr-body / mr-title / commit limits next to its template (devtools.py mr refused MR prose 4x); a table edit keeps them equal
+$tplMd = Get-Content (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/templates.md') -Raw
+$tplLim = "$(@('mr-body', 'mr-title', 'commit') | ForEach-Object { if ($tplMd -match "(?m)^\| $_ \|[^|]*\|[^|]*\| ([^|]+) \|") { $Matches[1].Trim() } })"
+$tplSpec = if ($tplMd -match '(?s)## MR spec.*?\nLimits (.*?)\n```') { $Matches[1] -replace '\s+', ' ' } else { '' }
+Expect "templates: MR spec limits = the table ($tplLim)" ($tplLim -eq '260w each:3b Summary:40w 1l 90ch first:72ch 12l 100ch' -and $tplSpec -match 'body 260 words, 3 bullets per section, Summary 40 words; title 90 chars; commit subject 72 chars, lines 100 chars')
 Complete-Tests

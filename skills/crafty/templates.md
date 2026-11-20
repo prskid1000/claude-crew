@@ -123,6 +123,8 @@ One spec renders the MR title (`mrTitleFormat`), body (## Summary, ## Changes, #
 commit (`commitFormat` subject + change bullets + trailers): `devtools.py mr <wt> --spec mr.json`, `crafty.ps1 wt commit -Dir <wt>
 -Spec mr.json`, `devtools.py render mr-title|mr-body|commit mr.json` to read it first. Local env row: the loop checkpoint
 (`checkpoint -Step loop -Evidence`) unless `localEnv`; the testing doc lines: `devtools.py finish` (`process.gates.merge` `builtin:testingDocs`: merge refuses without).
+Limits ("Writing standards"; `devtools.py mr` refuses over them): body 260 words, 3 bullets per section, Summary 40 words; title
+90 chars; commit subject 72 chars, lines 100 chars.
 ```json
 { "task": "<id>", "type": "feat|fix|refactor", "scope": "", "change": "<subject>", "code": "<item code>", "repo": "", "summary": "<one-line goal and outcome>",
   "changes": [{ "text": "<behaviour change, user terms>", "technical": "<files / endpoints / migrations>" }],
