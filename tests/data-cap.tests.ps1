@@ -186,5 +186,31 @@ $cpm = & { . $supBossy; $c = [math]::Max(1, [Environment]::ProcessorCount); $n =
   $acc = [pscustomobject]@{ '200|' = 1000; '250|' = 1000; '300|' = 1000; idle = 1000 }
   try { "$((Update-KitCpuStats ([pscustomobject]@{ at = $n.AddSeconds(-600).ToString('o'); acc = $acc; samples = @() }) $n @() @(@{ name = 'browser x'; pid = @(300, 250, 0) })).samples[-1].g.'browser x')" } catch { "crash $($_.Exception.Message)" } }
 Expect "cpu: a holder with pids 300, 250 sums both trees (1 + 90), pid 0 skipped ($cpm)" ("$cpm" -eq '91')
+# owner 2026-11-19: Disk free, Disk writes, Repos now fold closed, a one-line summary in the header; Trends inside Kit internals
+$fo = & { . $supBossy 6>$null; $n = Get-Date; $lv = @(@{ at = $n.AddDays(-1).ToString('o'); disks = @{ 'C:' = 50.5 } }, @{ at = $n.AddMinutes(-10).ToString('o'); disks = @{ 'C:' = 48.2 } })
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ live = $lv; disks = @(@{ drive = 'C:'; free = 48.2; rate = 0; total = 100 }); now = [pscustomobject]@{ disks = @(@{ drive = 'C:'; free = 48.2; rate = 0 }) }
+      repos = @{ repos = @(@{ repo = 'web'; branches = 3; worktrees = 2; kept = 1 }) }; writes = @{ at = $n.ToString('o'); days = @(@{ d = $n.Date.ToString('o'); m = 2.5; k = 1; h = @(, @(1, 0.5)) }) } } })
+  @(@{ id = 'disk-free'; s = 'now C: 48.2 GB' }, @{ id = 'writes'; s = '2.5 GB in 7 days · today 2.5 GB (1 GB kit)' }, @{ id = 'repos-now'; s = '3 branches · 2 worktrees' }) | ForEach-Object { $h -match "id=sec-$($_.id)><summary><h4>[^<]*</h4>(<span class=cnt>[^<]*</span>)?<span class=fsm>$([regex]::Escape($_.s))</span>" }
+  $h.IndexOf("<details class='sec top' id=sec-internals>") -lt $h.IndexOf("id=sec-trends open>") }
+Expect "page: disk free / writes / repos folded closed with a header summary; Trends inside the closed Kit internals ($fo)" ("$fo" -eq 'True True True True')
+# supervise's forced tick reuses a db list under 5 min old while every drive is OK and no query held 1 GB; a drive not OK or a 1 GB query: asked again
+$reu = Invoke-PsTest storage-reuse @'
+$null = . $args[0] 6>$null; Set-KitStorageState { param($s) $s.Remove('dbAt') }; $global:dbc = 0; $global:gb = 0.2; $global:lvl = 'OK'; $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]@{ use = 'x' } } }
+function Get-KitDbQueries($C) { $global:dbc++; @([pscustomobject]@{ id = '9'; gb = $global:gb; secs = 1; query = 'q' }) }
+function Get-KitDrives { @([pscustomobject]@{ name = 'R'; root = 'R:\'; free = 500; size = 900; kit = $true }) }; function Get-KitDiskVerdict { [pscustomobject]@{ level = $global:lvl; anomaly = $false; rescue = $false; rate = 0; ttf = 1e9; free = 500; normal = 0.1 } }
+$t = { $null = Invoke-KitStorageTick -Force }; & $t; & $t; $a = $global:dbc; $global:gb = 3; $global:lvl = 'WATCH'; & $t; $global:lvl = 'OK'; & $t; "reuse:$a`:$global:dbc"
+# 10 min old: reused while no drive fills at minRateGBh (5), asked again once one does
+$global:gb = 0.2; & $t; $ageDb = { Set-KitStorageState { param($s) $s.dbAt = (Get-Date).AddMinutes(-10).ToString('o') } }; $b = $global:dbc; & $ageDb; & $t; $c1 = $global:dbc
+function Get-KitDiskVerdict { [pscustomobject]@{ level = 'OK'; anomaly = $false; rescue = $false; rate = 6; ttf = 80; free = 500; normal = 0.1 } }; & $ageDb; & $t; "stable:$($c1 - $b):$($global:dbc - $c1)"
+'@ @($supBossy)
+Expect "storage tick: a forced tick reuses a fresh db list while drives are OK and no query holds 1 GB; 15 min while no drive fills, 5 min while one does ($(@($reu) -join ' '))" (@($reu)[-2] -eq 'reuse:1:3' -and @($reu)[-1] -eq 'stable:0:1')
+# laneIds bird: samples, writes and waits under an old lane id (shop · api, written before the rename) join the bird id's row
+$lanePage = & { . $supBossy; $n = Get-Date; $__cfg = [pscustomobject]@{ localEnv = [pscustomobject]@{ laneIds = 'bird'; envs = [pscustomobject]@{ shop = [pscustomobject]@{ lanes = [pscustomobject]@{ max = 2 } } } } }
+  $sOld = @{ at = $n.AddMinutes(-30).ToString('o'); s = 600; all = 20; g = @{ 'shop · api' = 4 }; m = @{ 'shop · api' = 1 }; top = @() }; $sNew = @{ at = $n.AddMinutes(-5).ToString('o'); s = 600; all = 20; g = @{ 'shop-falcon · api' = 6 }; m = @{ 'shop-falcon · api' = 1 }; top = @() }
+  $wr = { param($nm, $gb) [pscustomobject]@{ n = $nm; a = ''; c = ''; h = @(@(0) * 23 + $gb); now = $gb; peak = $gb; avg = $gb / 24; day = $gb; d7 = $gb } }
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ cpu = @{ samples = @($sOld, $sNew) }; writes = [pscustomobject]@{ rows = @((& $wr 'lane shop' 1), (& $wr 'lane shop-falcon' 2)) }
+      waits = @{ rows = @([pscustomobject]@{ name = 'shop · api'; n = 2; min = 3; max = 2; hours = @() }, [pscustomobject]@{ name = 'shop-falcon · api'; n = 1; min = 1; max = 1; hours = @() }) } } })
+  "$([regex]::Matches($h, "<span class=gn title='shop-falcon &#183; api").Count)/$([regex]::Matches($h, "<span class=gn title='shop &#183; api").Count) $([regex]::Matches($h, "<span class=gn title='lane shop-falcon").Count)/$([regex]::Matches($h, "<span class=gn title='lane shop[:']").Count) $($h -match "data-mv=q>3</span>")" }
+Expect "lane ids bird: CPU, writes and waits of an old lane id on the bird id's row, none left under the old id ($lanePage)" ("$lanePage" -eq '1/0 1/0 True')
 Remove-TestKit $k
 Complete-Tests

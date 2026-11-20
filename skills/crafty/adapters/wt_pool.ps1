@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L130 names · L172 slots · L198 lease · L303 release · L331 lanes · L436 sync · L536 pool · L579 sweep
+Sections: L15 worktrees · L130 names · L183 slots · L209 lease · L314 release · L342 lanes · L447 sync · L547 pool · L590 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -147,9 +147,20 @@ function Get-KitLaneSlug([string]$Lane) { ((Get-KitPoolLabel 'env' $Lane) -repla
 function ConvertTo-KitLaneText([string]$Text) {
   if (-not $Text) { return $Text }
   $dot = '(?:·|&#0*183;|&middot;|(?i:&#x0*b7;))'   # a middle dot, plain or HTML-encoded: a lane already labelled
-  if (-not $script:KitLaneRx -or -not [object]::ReferenceEquals($script:KitLaneRx.cfg, $__cfg)) { $script:KitLaneRx = @{ cfg = $__cfg; map =@(foreach ($l in @(Get-KitLaneNames | Sort-Object Length -Descending)) { $lb = Get-KitPoolLabel env $l; if ($lb -ne $l) { $q = [regex]::Escape($l)
+  if (-not $script:KitLaneRx -or -not [object]::ReferenceEquals($script:KitLaneRx.cfg, $__cfg)) { $al = Get-KitLaneAlias; $script:KitLaneRx = @{ cfg = $__cfg; map =@(foreach ($l in @(@(Get-KitLaneNames) + @($al.Keys) | Sort-Object Length -Descending)) { $lb = Get-KitPoolLabel env $(if ($al.ContainsKey($l)) { $al[$l] } else { $l }); if ($lb -ne $l) { $q = [regex]::Escape($l)
           , @($(if ($l -match '\d$') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= $dot )|(?<=\b(?:env|lane) )$q(?![\w·./\-]|$dot)" }), $lb) } }) } }
   foreach ($m in $script:KitLaneRx.map) { $Text = [regex]::Replace($Text, $m[0], $m[1]) }; $Text }
+# laneIds "bird": each old lane id (<env>, <env><k>) -> its <env>-<bird> id; records from before the rename are read through it
+function Get-KitLaneAlias {
+  $al = @{}; if ("$(Get-KitSetting 'localEnv.laneIds' '')" -ne 'bird') { return $al }
+  foreach ($l in @(Get-KitLaneNames)) { if ($l -match '^(?<p>.+)-(?<b>[a-z]+)$') { for ($i = 1; $i -le 40; $i++) { if ((Get-KitBirdName $i) -ieq $Matches.b) { $al[$(if ($i -gt 1) { "$($Matches.p)$i" } else { $Matches.p })] = $l; break } } } }
+  $al
+}
+# a record's resource name (<lane> · <service>, lane <lane>, <lane>) with an old lane id -> the same name with the bird id (one row per lane)
+function ConvertTo-KitLaneId([string]$Name) {
+  if (-not $script:KitLaneAl -or -not [object]::ReferenceEquals($script:KitLaneAl.cfg, $__cfg)) { $script:KitLaneAl = @{ cfg = $__cfg; map = (Get-KitLaneAlias) } }
+  if ($script:KitLaneAl.map.Count -and $Name -match '^(?<pre>lane )?(?<id>[^\s·]+)(?<rest> · .*)?$' -and $script:KitLaneAl.map.ContainsKey($Matches.id)) { "$($Matches.pre)$($script:KitLaneAl.map[$Matches.id])$($Matches.rest)" } else { $Name }
+}
 # a shown lane name (rm·Kestrel, rm-kestrel, case-insensitive) -> its id; anything else as given
 function ConvertFrom-KitLaneLabel([string]$Name) { foreach ($l in @(Get-KitLaneNames)) { if ($Name -ieq (Get-KitPoolLabel env $l) -or $Name -ieq (Get-KitLaneSlug $l)) { return $l } }; $Name }
 # a verb's text output with shown lane names; -Json output (read by scripts) keeps the ids

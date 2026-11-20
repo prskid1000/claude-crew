@@ -6,8 +6,8 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L421 cards · L638 flags · L751 bands ·
-  L829 shells
+Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L421 cards · L643 flags · L756 bands ·
+  L840 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -527,7 +527,8 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
   $ss = @($Cpu.samples | Where-Object { $_ -and (& $hrOf $_.at) -in 0..23 }); $last = if ($ss.Count) { $ss[-1] }; $synC = @{}; $synR = @{}
   $ls = @($Live | Where-Object { $_ -and $_.at -and (& $hrOf $_.at) -in 0..23 -and [datetime]$_.at -lt $at })
   $resRows = [ordered]@{}; $lst = { , @(0..23 | ForEach-Object { , [Collections.Generic.List[object]]::new() }) }
-  $row = { param([string]$n) if (-not $resRows.Contains($n)) { $resRows[$n] = [pscustomobject]@{ n = $n; c = (& $lst); r = (& $lst); t = (& $lst); by = (& $lst); cv = [Collections.Generic.List[double]]::new() } }; $resRows[$n] }
+  # an old lane id in older samples (rm · api) joins its bird id's row (rm-falcon · api)
+  $row = { param([string]$n) $n = ConvertTo-KitLaneId $n; if (-not $resRows.Contains($n)) { $resRows[$n] = [pscustomobject]@{ n = $n; c = (& $lst); r = (& $lst); t = (& $lst); by = (& $lst); cv = [Collections.Generic.List[double]]::new() } }; $resRows[$n] }
   $mach = & $row 'whole machine'
   foreach ($s in $ss) { $hi = & $hrOf $s.at; $mach.c[$hi].Add([double]$s.all); $mach.cv.Add([double]$s.all)
     foreach ($nm in (& $names $s.g)) { $w = & $row "$nm"; $v = [double](Get-KitMember $s.g $nm); $w.c[$hi].Add($v); $w.cv.Add($v) }
@@ -541,16 +542,20 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
   if ($resRows.Contains('kit-owned')) { $kr = $resRows['kit-owned']; $orw = $resRows['other processes']; for ($hi = 0; $hi -lt 24; $hi++) { if ($mach.r[$hi].Count -and $kr.t[$hi].Count) { $orw.t[$hi].Add([math]::Max(0.0, [double](@($mach.r[$hi]) | Measure-Object -Average).Average - [double](@($kr.t[$hi]) | Measure-Object -Average).Average)) } }
     if ($null -ne $MemNowGB -and $synR) { $synR['other processes'] = [math]::Max(0.0, [double]$MemNowGB - $synR['kit-owned']) } }
   foreach ($nm in @($Cpu.svc | Where-Object { $_ })) { $null = & $row "$nm" }
-  $cur = @{}; foreach ($r0 in @($Resources | Where-Object { $_.name })) { $cur["$($r0.name)"] = $r0; $w = & $row "$($r0.name)"; $w.r[23].Add([double]$r0.gb); if ("$($r0.by)".Trim()) { $w.by[23].Add("$($r0.by)".Trim()) } }
+  $cur = @{}; foreach ($r0 in @($Resources | Where-Object { $_.name })) { $cur[(ConvertTo-KitLaneId "$($r0.name)")] = $r0; $w = & $row "$($r0.name)"; $w.r[23].Add([double]$r0.gb); if ("$($r0.by)".Trim()) { $w.by[23].Add("$($r0.by)".Trim()) } }
   if ($null -ne $MemNowGB) { $mach.r[23].Add([double]$MemNowGB) }
-  $wv = @{}; foreach ($x in @(@($Writes.rows) + @($Writes.more) | Where-Object { $_ -and $_.n })) { $wv["$($x.n)"] = $x }
+  # an old and a bird lane id on one row: written GB summed (per hour, now, avg, today, 7 d), peak of the sum
+  $wv = @{}; foreach ($x in @(@($Writes.rows) + @($Writes.more) | Where-Object { $_ -and $_.n })) { $wk0 = ConvertTo-KitLaneId "$($x.n)"; $w0 = $wv[$wk0]
+    $wv[$wk0] = if (-not $w0) { $x } else { $wh0 = @(for ($i = 0; $i -lt 24; $i++) { [double]@($w0.h)[$i] + [double]@($x.h)[$i] })
+      [pscustomobject]@{ n = $wk0; a = "$($w0.a)"; c = "$($w0.c)"; h = $wh0; now = [double]$w0.now + [double]$x.now; peak = [double]($wh0 + 0 | Measure-Object -Maximum).Maximum; avg = [double]$w0.avg + [double]$x.avg; day = [double]$w0.day + [double]$x.day; d7 = [double]$w0.d7 + [double]$x.d7 } } }
   $wm = $wv['whole machine']; $wk = $wv['kit-owned']
   if ($wm -and $wk) { $oh = @(for ($i = 0; $i -lt 24; $i++) { [math]::Max(0.0, [double]@($wm.h)[$i] - [double]@($wk.h)[$i]) }); $dif = { param([string]$f) [math]::Max(0.0, [double](Get-KitMember $wm $f) - [double](Get-KitMember $wk $f)) }
-    $otop = @(@($Writes.rows) + @($Writes.more) | Where-Object { $_ -and "$($_.n)" -notin 'whole machine', 'kit-owned', 'others' -and -not $_.a -and -not $resRows.Contains("$($_.n)") -and "$($_.n)" -notmatch '^lane ' } | Sort-Object { - [double]$_.d7 } | Select-Object -First 3 | ForEach-Object { "$($_.n) $(& $n1 $_.d7) GB" })
+    $otop = @(@($Writes.rows) + @($Writes.more) | Where-Object { $_ -and "$($_.n)" -notin 'whole machine', 'kit-owned', 'others' -and -not $_.a -and -not $resRows.Contains((ConvertTo-KitLaneId "$($_.n)")) -and "$($_.n)" -notmatch '^lane ' } | Sort-Object { - [double]$_.d7 } | Select-Object -First 3 | ForEach-Object { "$($_.n) $(& $n1 $_.d7) GB" })
     $wv['other processes'] = [pscustomobject]@{ n = 'other processes'; a = ''; c = "7 days: $($otop -join ', ')"; h = $oh; now = (& $dif now); peak = [double]($oh + 0 | Measure-Object -Maximum).Maximum; avg = [double]($oh | Measure-Object -Sum).Sum / 24; day = (& $dif day); d7 = (& $dif d7) }
     $null = & $row 'kit-owned'; $null = & $row 'other processes' }
   foreach ($k0 in @($wv.Keys)) { if ("$($wv[$k0].a)" -eq 'shell' -or $k0 -match '^(lane|disk) ') { $null = & $row $k0 } }   # agent shells and lanes: their own rows
-  $qv = @{}; foreach ($x in @($Waits.rows | Where-Object { $_ -and $_.name })) { $qv["$($x.name)"] = $x; $null = & $row "$($x.name)" }
+  $qv = @{}; foreach ($x in @($Waits.rows | Where-Object { $_ -and $_.name })) { $qk0 = ConvertTo-KitLaneId "$($x.name)"; $q0 = $qv[$qk0]   # two ids: waits and minutes summed, the longest kept
+    $qv[$qk0] = if (-not $q0) { $x } else { [pscustomobject]@{ name = $qk0; n = [int]$q0.n + [int]$x.n; min = [double]$q0.min + [double]$x.min; max = [math]::Max([double]$q0.max, [double]$x.max); hours = @(if ([int]$x.n -gt [int]$q0.n) { $x.hours } else { $q0.hours }) } }; $null = & $row "$($x.name)" }
   $gv = { param($v) $d = [double]$v; if ($d -le 0) { '0' } elseif ($d -lt 0.095) { $d.ToString('0.00', [cultureinfo]::InvariantCulture) } else { & $n1 $d } }
   $avg ={ param($l) if ($l.Count) { [double](@($l) | Measure-Object -Average).Average } else { $null } }; $max = { param($l) [double](@($l) + 0 | Measure-Object -Maximum).Maximum }   # $null kept: a tuple slot, never dropped
   $ramOf = { param($w, $hi) if ($w.r[$hi].Count) { $w.r[$hi] } else { $w.t[$hi] } }   # a lease's own GB first, else the process tree's
@@ -798,10 +803,16 @@ function Format-KitRunsTimeline($Runs, $Agents, $Pages) {
     "<div class='rgg cl' data-g='rr-$(& $e $it.id)' data-oc='$(& $e $it.oc)' data-fk='d$($it.s.ToString('yyyy-MM-dd'))'><div class='gk rgh rr f'><span class=gn title='$(& $e "$($it.label) · $($it.run) · $($it.id)")'><button type=button class=rtg aria-expanded=false>$(& $e $it.label)</button><span class='chip k-$(& $e $it.kind)'>$(& $e $it.kind)</span>$(if ($it.live) { "<span class='chip s-act'>running</span>" })$(if ($pg) { "<a class=rk href='supervise-runs/$([Uri]::EscapeDataString($it.id)).html' data-dw='$(& $e "Run $($it.label)")'>steps</a>" })</span>" +
     "$(& $cl $it.label (& $hrs @(, @($it.s, $it.e)) $H0))$(& $vcol @((& $tk $it.tok), (& $usd $it.cost), $(if ($null -ne $it.wall) { "$([int]$it.wall) min" } else { '—' })))</div>$($subH -join '')</div>" }
   $head = { param([datetime]$H0, [switch]$Clock) "<div class='gk gh'><span class=gn>run · agent · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead $H0 -Clock:$Clock)</span><span class=gc><small>tokens</small></span><span class=gc><small>cost</small></span><span class=gc><small>time</small></span></div>" }
+  # an ended run's row: rendered once per hour (76 rows cost 3.4 s a sweep), kept in cache/runs-rows.json while shown
+  $rcf = Join-Path (Get-KitPath cache -Create) 'runs-rows.json'; $rcOld = if ([IO.File]::Exists($rcf)) { try { [IO.File]::ReadAllText($rcf) | ConvertFrom-Json -AsHashtable } catch { $null } }; if (-not $rcOld) { $rcOld = @{} }
+  $rcNew = @{}; $rcVer = "$runRow|$((Get-Command Format-KitHeatCells).Definition)"
+  $rowOf = { param($it, [datetime]$H0, [int]$NowAt) $rk = Get-KitHash "$rcVer|$($H0.ToString('o'))|$NowAt|$("$($it.id)" -in @($Pages))|$($it | ConvertTo-Json -Depth 6 -Compress)"
+    $rcNew[$rk] = if ($rcOld.ContainsKey($rk)) { $rcOld[$rk] } else { & $runRow $it $H0 $NowAt }; $rcNew[$rk] }
   $liveR = @($items | Where-Object live | Sort-Object s -Descending); $hL = $at.Date.AddHours($at.Hour - 23)
   $dayG = @(@($items | Where-Object { -not $_.live }) | Group-Object { $_.e.ToString('yyyy-MM-dd') } | Sort-Object Name -Descending | ForEach-Object { $d0 = [datetime]$_.Name; $td = $d0 -eq $at.Date; $rs = @($_.Group | Sort-Object e -Descending)
       $tt = [double](@($rs | ForEach-Object { [double]$_.tok }) + 0 | Measure-Object -Sum).Sum; $cs = [double](@($rs | ForEach-Object { [double]$_.cost }) + 0 | Measure-Object -Sum).Sum
-      "<div class='rgg rdg$(if (-not $td) { ' cl' })' data-g='rd-$($_.Name)' data-oc='$(& $e (@($rs | ForEach-Object { $_.oc -split ' ' } | Where-Object { $_ } | Select-Object -Unique) -join ' '))' data-fk='$(@($rs | ForEach-Object { "d$($_.s.ToString('yyyy-MM-dd'))" } | Select-Object -Unique) -join ' ')'><div class='gk rgh'><button type=button class=rgb aria-expanded=$(if ($td) { 'true' } else { 'false' })><span class=gn0>$(if ($td) { 'ended today' } else { $d0.ToString('ddd dd MMM', [cultureinfo]::InvariantCulture) })</span><span class=gcn>$($rs.Count) run(s) · $(& $tk $tt) tokens · $(& $usd $cs)</span></button></div>$(& $head $d0 -Clock)$(@($rs | ForEach-Object { & $runRow $_ $d0 $(if ($td) { $at.Hour } else { -1 }) }) -join '')</div>" })
+      "<div class='rgg rdg$(if (-not $td) { ' cl' })' data-g='rd-$($_.Name)' data-oc='$(& $e (@($rs | ForEach-Object { $_.oc -split ' ' } | Where-Object { $_ } | Select-Object -Unique) -join ' '))' data-fk='$(@($rs | ForEach-Object { "d$($_.s.ToString('yyyy-MM-dd'))" } | Select-Object -Unique) -join ' ')'><div class='gk rgh'><button type=button class=rgb aria-expanded=$(if ($td) { 'true' } else { 'false' })><span class=gn0>$(if ($td) { 'ended today' } else { $d0.ToString('ddd dd MMM', [cultureinfo]::InvariantCulture) })</span><span class=gcn>$($rs.Count) run(s) · $(& $tk $tt) tokens · $(& $usd $cs)</span></button></div>$(& $head $d0 -Clock)$(@($rs | ForEach-Object { & $rowOf $_ $d0 $(if ($td) { $at.Hour } else { -1 }) }) -join '')</div>" })
+  if (@($rcNew.Keys | Where-Object { -not $rcOld.ContainsKey($_) }).Count -or $rcNew.Count -ne $rcOld.Count) { try { Write-KitAtomic $rcf ($rcNew | ConvertTo-Json -Compress) } catch { } }
   if (-not $items.Count) { return '<p class=empty>No run in 7 days.</p>' }
   "<div class='gks w3 rtl' data-mk=runs-hour>$(if ($liveR.Count) { "$(& $head $hL)$(@($liveR | ForEach-Object { & $runRow $_ $hL 23 }) -join '')" })$($dayG -join '')</div><div class=hk>a cell = minutes the run (or agent) was active in that clock hour · tap a run for its agents · live runs: the last 24 h, ended ones: their day</div>"
 }

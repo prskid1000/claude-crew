@@ -1091,7 +1091,8 @@ $kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
 Phase 'prefetch'; $null = @(Invoke-KitHooks Start-KitSupervisePrefetch)   # slow children start now, their sections read them
 function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; $md = Get-KitSweepMode $A; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:($md -eq 'background') -Detached:($md -eq 'detached') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest, scope timed out inline
-$null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached first, outside the budget (gated: skipped most sweeps)
+Phase 'budget usage'; $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached first, outside the budget (gated: skipped most sweeps); own phase: the last prefetch hook was charged with it
+Phase 'param learn'
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params: 3 s, when due (d-20261029173533)
 if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
@@ -1257,13 +1258,11 @@ if ($KitConf.TrackerType -ne 'none' -and (Within 'untracked MRs')) { foreach ($x
 if ((Test-Path (Get-KitPath scope-log)) -and (Within 'scope')) { foreach ($w in @(@(Invoke-Bounded $KitCmd.dev @('scope')) -match '^WATCH ')) { $wp = "$w".Substring(6) -split ' \| ', 2; Flag 'WATCH' $wp[0] $wp[1] } }
 
 # 5. QA results: new [Bug], failedTesting tasks (bossy E6)
-if (Within 'QA bug tasks') {
-  # run.json of the last 7 days only (500 old runs a beat: waste guard); parents of 30 days from the QA
-  # parents index (finalize writes it): a 7-day one viewed each beat, an older one every 6 h at most (owner 2026-11-18)
-  $qaRecent = @(foreach ($rf in @(Get-KitQaRunFiles run.json -SinceDays 7)) { try { [pscustomobject]@{ dir = $rf.Directory; j = ([IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json) } } catch {} })
-  $qaIdx = Update-KitQaParents { param($q) foreach ($qr in $qaRecent) { $qp = [string]$qr.j.tracker.parent; $qt = $qr.dir.LastWriteTime
-      if ($qp -and (-not $q[$qp] -or [datetime]$q[$qp].at -lt $qt)) { $q[$qp] = @{ at = $qt.ToString('o'); seen = $q[$qp].seen } } } }
-  $parents = @($qaIdx.Keys | Where-Object { $qo = $qaIdx[$_]; ($now - [datetime]$qo.at).TotalDays -le 7 -or -not $qo.seen -or ($now - [datetime]$qo.seen).TotalHours -ge 6 })
+if (-not (Within 'QA bug tasks')) { foreach ($qv in @($script:KitQaBugs.views.Values | Where-Object { $_ })) { Stop-KitProcessTree $qv.p } }
+else {
+  # parents and their tracker views: Start-KitSupervisePrefetchQaBugs (process_gates.ps1), started with the sweep (failed: now)
+  if (-not $script:KitQaBugs) { try { Start-KitSupervisePrefetchQaBugs } catch { Flag 'WATCH' "QA bug tasks: parents not read: $($_.Exception.Message)" 'Look at qa-parents.json (cache) and the QA runs; supervise asks again next round.' } }
+  $qaRecent = @($script:KitQaBugs.recent); $parents = @($script:KitQaBugs.parents)
   if ($parents.Count) { $null = Update-KitQaParents { param($q) foreach ($qp in $parents) { if ($q[$qp]) { $q[$qp].seen = $now.ToString('o') } } } }
   $tracked = @((Read-KitTracking).tasks.Keys)
   $openRuns = @{}
@@ -1274,13 +1273,14 @@ if (Within 'QA bug tasks') {
   }
   foreach ($par in $parents) {
     if (-not (Within 'QA bug tasks')) { break }
-    $subs = try { (Get-TrackerTask $par).subtasks } catch { @() }
+    $subs = Get-KitQaBugSubtasks $par ([math]::Min(20.0, (Left)))
     $new = @($subs | Where-Object { $_.name.StartsWith((Get-KitKindPrefix 'bug')) -and (Test-TrackerStatus $_.status 'open') -and $_.id -notin $tracked })
     if (-not $new.Count) { continue }
     $list = ($new | ForEach-Object { "$($_.id) $($_.name.Substring(0, [math]::Min(70, $_.name.Length)))" }) -join '; '
     $note = if ($openRuns[$par]) { " (run $($openRuns[$par]) is still testing: later bugs go into the next wave)" } else { '' }
     Flag 'ACT' "$($new.Count) new QA bug task(s) not being fixed$note`: $list" "ONE wave now: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' [-Hints ...] per task (brief, tracking, /buildy args), the briefs in one file (a section per agent), one /buildy."
   }
+  foreach ($qv in @($script:KitQaBugs.views.Values | Where-Object { $_ -and -not $_.p.HasExited })) { Stop-KitProcessTree $qv.p }   # cut short: no view outlives the sweep
 }
 if (Within 'failedTesting tasks') {
   $ft = @{}; $ftAt = @{}; $uw = @()

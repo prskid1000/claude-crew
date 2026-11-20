@@ -127,7 +127,7 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
   `localenv/<env>`) move once the lane is idle: `envy.ps1 lanes -Migrate [-DryRun]`, and supervise each sweep (`-LanesOnly`);
   it also removes a clean worktree of a `localenv/*` branch no lane owns, deletes `[gone]` branches merged into the target and
   backup branches whose commits are all on origin, and lists the rest.
-- **One lane name:** output shows `<product>·<Bird>`; state and logs keep the id; `-Env` takes either (ui-check: LANE-ID).
+- **One lane name:** output shows `<product>·<Bird>`; state and logs keep the id (records with an old id show and group as its bird); `-Env` takes either (ui-check: LANE-ID).
 - **Lanes in sync** (`wt pool -Sync` -> `envy.ps1 lanes -Sync`): an idle lane is rebuilt as a build would (`origin/<target>` +
   open layers + prepare; merged layers dropped; a conflict: left as it was, listed); `lane/*` track no upstream; Branches tile:
   `base @ <sha> · behind N · test merges N`.

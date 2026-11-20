@@ -97,6 +97,14 @@ $c = @{ tracker = @{ kindPrefixes = @{ bug = 'Defect:'; feature = 'Story:' }; ta
 "custom:$((Get-KitItemsLabel) -eq 'Scope' -and (@(Get-KitDescItems "**Scope:**`n- S1 y").id -join ',') -eq 'S1' -and (@(Get-KitDescItems "**Items:**`n- I1 z").id -join ',') -eq 'I1' -and (Test-KitBugName 'Defect: x') -and (Get-KitKindPrefix 'bug') -eq 'Defect:' -and "$((Get-KitNameKind 'Story: Shop — x').kind)|$((Get-KitNameKind 'Story: Shop — x').rest)|$((Get-KitNameKind 'Defect: y').kind)" -eq 'feature|Shop — x|bug' -and (Format-KitBugName '[Bug] Shop — x') -eq 'Defect: Shop — x')"
 '@ @($D, (Join-Path $src 'skills/bossy/adapters/task_rollup.ps1'))
 Expect-Each $ilr 'items label / bug prefix / name kind (Get-KitNameKind) from config: #' 'def', 'custom' -Show 5
+# testers never type [Bug]: a keyed defect's free-text name gets tracker.kindPrefixes.bug (a typed [Bug] swapped); a spec's typed kind prefix re-rendered, [ui] kept
+Set-JsonFile $dkl @{ tracker = @{ kindPrefixes = @{ bug = 'DEFECT:' } } }; $env:KIT_TRACKER_TYPE = 'none'
+$prefixBugNames = @('Crash on save', '[Bug] Invoice totals wrong' | ForEach-Object { $prefixBugId = (pwsh -NoProfile -File $D tracker create -Key "qa-fx-prefix-$($_.Length)" -List L1 -Name $_ -Description 'd' | ConvertFrom-Json).id; (pwsh -NoProfile -File $D tracker view $prefixBugId | ConvertFrom-Json).name })
+$prefixSpecName = Invoke-PsTest specname @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; "$(Get-KitSpecName @{ kind = 'bug'; title = '[Bug] Crash'; code = 'B1' })|$(Get-KitSpecName @{ kind = 'feature'; title = '[ui] Cart'; code = 'C2' })"
+'@ @($D)
+Remove-Item Env:KIT_TRACKER_TYPE; Remove-Item $dkl
+Expect "tracker create / spec name: the configured bug prefix added, a typed [Bug] swapped, [ui] kept ($($prefixBugNames -join ' | ') $(@($prefixSpecName)[-1]))" (($prefixBugNames -join '|') -eq 'DEFECT: Crash on save|DEFECT: Invoice totals wrong' -and @($prefixSpecName)[-1] -eq 'DEFECT: Crash|[ui] Cart')
 # guard: the kit's protected branch = kitBranch, else main
 $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }
 $kbr = foreach ($kbv in '', 'trunk') { if ($kbv) { & $J @{ kitBranch = $kbv } $dkl }; foreach ($kbb in 'main', 'trunk') { "$($kbv)/$($kbb):$((& $D guard -Json (@{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = "git push origin --delete $kbb" } } | ConvertTo-Json -Compress)) -join '' -match 'a protected kit branch')" } }

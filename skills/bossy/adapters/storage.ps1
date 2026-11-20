@@ -4,7 +4,7 @@ storage.ps1 (core): bossy.ps1 storage (free space per drive, folder scans, disk 
 bossy.ps1 (skills/bossy/adapters/); its tick runs inside board beat and supervise.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 storage · L247 orphans
+Sections: L10 storage · L249 orphans
 #>
 #Requires -Version 7
 # ---- storage: free space trend, folder scans, rescue (kit.example.json storage; TODO-PARAM)
@@ -95,8 +95,10 @@ function Invoke-KitStorageTick([switch]$Force) {
     $v = Get-KitDiskVerdict (Get-KitStorageSamples $d.name 40) $c ([double]$(if ($st.normal -and $st.normal[$d.name]) { $st.normal[$d.name] } else { 0.1 })) $d.kit ((Get-KitBeatMinutes) * 60 - 60)
     $out += $v | Add-Member -PassThru NoteProperty drive $d.name | Add-Member -PassThru NoteProperty root $d.root | Add-Member -PassThru NoteProperty kit $d.kit
   }
-  # db.use (3-4 s): supervise's forced tick reuses a list under 5 min old while every drive is OK and no query held 1 GB temp
-  $dbDue = -not $Force -or -not $st.dbAt -or ((Get-Date) - [datetime]$st.dbAt).TotalMinutes -ge 5 -or @($out | Where-Object { $_.level -ne 'OK' -or $_.anomaly }).Count -or @($st.dbQ | Where-Object { [double]$_.gb -ge 1 }).Count
+  # db.use (3-5 s): supervise's forced tick reuses a list under 5 min old (15 min while no drive fills at minRateGBh: a runaway
+  # temp query shows as a fill first) while every drive is OK and no query held 1 GB temp
+  $dbMin = if (@($out | Where-Object { [double]$_.rate -ge $c.minRateGBh }).Count) { 5 } else { 15 }   # TODO-PARAM (fixed defaults: 5 / 15 min)
+  $dbDue = -not $Force -or -not $st.dbAt -or ((Get-Date) - [datetime]$st.dbAt).TotalMinutes -ge $dbMin -or @($out | Where-Object { $_.level -ne 'OK' -or $_.anomaly }).Count -or @($st.dbQ | Where-Object { [double]$_.gb -ge 1 }).Count
   if (-not $dbDue) { $q = @($st.dbQ | Where-Object { $_ } | ForEach-Object { [pscustomobject]$_ }) }
   else {
     $q = @(Get-KitDbQueries $c); $max = if ($c.db -and $c.db.maxGB) { [double]$c.db.maxGB } else { 0 }   # storage.db.maxGB: temp cap a query may hold (unset: no cap)

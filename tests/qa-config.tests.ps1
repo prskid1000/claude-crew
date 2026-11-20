@@ -182,6 +182,12 @@ Expect "seat: an exit-4 retry keeps its first queue time ($q1 = $q2); a release 
 $tle = & { . $Q; function Get-KitEnvyLanes { @([pscustomobject]@{ env = 'shop'; group = 'shop'; lane = 1; ports = [pscustomobject]@{ api = 8080 } }, [pscustomobject]@{ env = 'shop2'; group = 'shop'; lane = 2; ports = [pscustomobject]@{ api = 8180 } }) }
   "$(Get-TargetLocalEnv 'local-shop')/$(Get-TargetLocalEnv 'stg')/$(Get-TargetLocalEnv 'nope')" }
 Expect "prepare: a target on a local env lane's ports is that env, a deployed or unknown target none ($tle)" ($tle -eq 'shop//')
+# supervise QA bug tasks: a prefetched view's subtasks; a failed view child: viewed inline; a timed-out one: none this beat
+$qbs = & { . (Join-Path $k 'skills/crafty/lib.ps1'); function Get-TrackerTask($Id) { [pscustomobject]@{ subtasks = @(@{ id = "inline-$Id" }) } }
+  $script:KitQaBugs = [pscustomobject]@{ views = @{ ok = @{ r = @{ code = 0; out = '{ "subtasks": [ { "id": "B1" } ] }' } }; bad = @{ r = @{ code = 1; out = '' } }; slow = @{ r = @{ code = -1; timedOut = $true } } } }
+  function Receive-KitExe($H, $TimeoutSec) { [pscustomobject]$H.r }
+  @('ok', 'bad', 'slow', 'none') | ForEach-Object { "$($_):$(@(Get-KitQaBugSubtasks $_ 1).id -join ',')" } }
+Expect "QA bug tasks: a prefetched view's subtasks, a failed child viewed inline, a timed-out one none this beat ($($qbs -join ' '))" (($qbs -join ' ') -eq 'ok:B1 bad:inline-bad slow: none:inline-none')
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE -ErrorAction SilentlyContinue
 Remove-TestKit $k
 Complete-Tests

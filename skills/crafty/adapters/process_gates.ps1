@@ -3,7 +3,7 @@
 # process-gate: Test-KitProcessGate (devtools.py process_gate is the python twin). Kind process-gate: verbs = gate names
 # (promote merge finish bugFix mrBody); built-ins testingDocs (promote here; devtools.py: merge, finish, mrBody) and reproRow (bugFix, devtools.py).
 # process.gates.<gate>: unset = pass · builtin:<name> · a command line (payload JSON on stdin, exit 0 = pass, stdout = why).
-# Sections: L7 gate · L38 process docs · L87 waits · L106 api budget
+# Sections: L7 gate · L38 process docs · L103 waits · L122 api budget
 # ---- gate: process gates, a bounded stdin command
 # a command with text on stdin, bounded: { code; out; err }
 function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [int]$TimeoutSec = 120) {
@@ -83,6 +83,22 @@ function Get-KitQaRunFiles([ValidateSet('run.json', 'finalize.json')][string]$Na
     $dirs = if ($Name -eq 'run.json') { @($rd) } else { @(try { $rd.EnumerateDirectories() } catch { }) }
     foreach ($d in $dirs) { $f = [IO.FileInfo]::new((Join-Path $d.FullName $Name)); if ($f.Exists -and $f.LastWriteTime -gt $since) { $f } }
   }
+}
+# supervise "QA bug tasks": the beat's QA parents (run.json of 7 days; a 7-day parent each beat, an older one every 6 h, owner
+# 2026-11-18) and their tracker views started with the sweep (2-3 s each, read in the section); $script:KitQaBugs
+function Start-KitSupervisePrefetchQaBugs {
+  $now = Get-Date; $recent = @(foreach ($rf in @(Get-KitQaRunFiles run.json -SinceDays 7)) { try { [pscustomobject]@{ dir = $rf.Directory; j = ([IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json) } } catch {} })
+  $idx = Update-KitQaParents { param($q) foreach ($qr in $recent) { $qp = [string]$qr.j.tracker.parent; $qt = $qr.dir.LastWriteTime
+      if ($qp -and (-not $q[$qp] -or [datetime]$q[$qp].at -lt $qt)) { $q[$qp] = @{ at = $qt.ToString('o'); seen = $q[$qp].seen } } } }
+  $parents = @($idx.Keys | Where-Object { $qo = $idx[$_]; ($now - [datetime]$qo.at).TotalDays -le 7 -or -not $qo.seen -or ($now - [datetime]$qo.seen).TotalHours -ge 6 })
+  $views = @{}; foreach ($qp in $parents) { $views[$qp] = try { Start-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.dev, 'tracker', 'view', $qp) } catch { $null } }
+  $script:KitQaBugs = [pscustomobject]@{ recent = $recent; parents = $parents; views = $views }
+}
+# a prefetched parent's subtasks; a failed child: viewed inline; a timed-out one: none this beat (the next beat asks again)
+function Get-KitQaBugSubtasks([string]$Parent, [double]$WaitSec = 20) {
+  $v = if ($script:KitQaBugs) { $script:KitQaBugs.views[$Parent] }
+  if ($v) { $r = Receive-KitExe $v $WaitSec; if ($r.timedOut) { return @() }; if (-not $r.code) { try { return @(($r.out | ConvertFrom-Json).subtasks) } catch { } } }
+  try { @((Get-TrackerTask $Parent).subtasks) } catch { @() }
 }
 # ---- waits: poll backoff, file-change wake, kit log start
 # a poll's wait: -Seen unchanged since the last round doubles it up to poll.maxSec, a change resets it to -Base; never past -End

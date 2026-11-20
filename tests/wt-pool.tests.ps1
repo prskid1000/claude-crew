@@ -137,6 +137,10 @@ $lnt = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{
   "out:$(@('x shop2' | ConvertTo-KitLaneOut $false) + @('x shop2' | ConvertTo-KitLaneOut $true) -join '/')"
   $spk = [pscustomobject]@{ what = 'ERROR SPIKE: 1 new error line(s) in C:\x\shop2-api.log'; kind = 'ERROR SPIKE'; who = 'shop2 api'; problem = '1 new error line in shop2 api log' }
   "ack:$(Test-KitAcked $spk @('ERROR SPIKE · shop·Kestrel api'))/$(Test-KitAcked $spk @('ERROR SPIKE · shop2 api'))/$(Test-KitAcked $spk @('ERROR SPIKE · shop·Osprey api'))" }
+# laneIds bird: records from before the rename (shop · api, shop2, lane shop) show and group under the bird id
+$lnb = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{ localEnv = [pscustomobject]@{ laneIds = 'bird'; envs = [pscustomobject]@{ shop = [pscustomobject]@{ lanes = [pscustomobject]@{ max = 2 } } } } }
+  "$(@('shop &#183; api', 'shop2 · web', 'env shop', 'shop-falcon · api', 'workshop · x') | ForEach-Object { ConvertTo-KitLaneText $_ })|$(@('shop · api', 'lane shop2', 'shop2', 'shop-kestrel · db', 'other · x') | ForEach-Object { ConvertTo-KitLaneId $_ })" }
+Expect "lane ids bird: old ids shown and grouped as the bird id ($lnb)" ($lnb -eq 'shop·Falcon &#183; api shop·Kestrel · web env shop·Falcon shop·Falcon · api workshop · x|shop-falcon · api lane shop-kestrel shop-kestrel shop-kestrel · db other · x')
 Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 } } } } }; $lp = Join-Path (Kd) 'lanes.html'
 Set-Content $lp "<html><body><p>env shop·Kestrel</p><p>shop2 &#183; api</p><script>var a='shop2'</script></body></html>"
 $lhit = python -X utf8 -c "import sys; sys.argv=['kitbag.py']; sys.path.insert(0, r'$k/skills/bossy'); import kitbag; print(len(kitbag.lane_ids_shown(r'$lp', r'$k')))"

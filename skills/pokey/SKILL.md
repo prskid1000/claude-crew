@@ -100,9 +100,9 @@ change may be another agent's; an app setting (never env config) only when a che
 - H0. `bossy.ps1 learn -Read -Skill pokey`; the doc: the task's testing doc (`crafty/templates.md` "Test cases");
   missing or incomplete for this change: write it from that template first.
 - H1. First: every in-app switch ON (the doc's table; an env switch off: ask the owner), the logins and data it names.
-- H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
+- H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API).
 - H3. Result rule (above), each with a comment (check ids, saw, evidence) `crafty.ps1 tracker status <task> closed|failedTesting`;
-  a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "[Bug] <product> — <defect>"`.
+  a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "<product> — <defect>"` (kit adds [Bug]).
 
 ## Lead steps (a test-only run; bossy T1-T4)
 - L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for

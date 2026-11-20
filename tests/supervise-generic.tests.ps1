@@ -32,14 +32,6 @@ Set-Content -LiteralPath $lk '' -NoNewline; Start-KitStorageScan 'Q'; $fresh = "
 (Get-Item -LiteralPath $lk).LastWriteTime = (Get-Date).AddMinutes(-3); Start-KitStorageScan 'Q'; "lock:$fresh/$($global:sp):$((Read-KitText $lk | ConvertFrom-Json).pid -eq $PID)"
 '@ @($O)
 Expect "storage scan: an old empty scan.lock is replaced, a fresh one left ($(@($slk)[-1]))" (@($slk)[-1] -eq 'lock:0:0/1:True')
-# supervise's forced tick reuses a db list under 5 min old while every drive is OK and no query held 1 GB; a drive not OK or a 1 GB query: asked again
-$reu = Invoke-PsTest storage-reuse @'
-$null = . $args[0] 6>$null; Set-KitStorageState { param($s) $s.Remove('dbAt') }; $global:dbc = 0; $global:gb = 0.2; $global:lvl = 'OK'; $__cfg = [pscustomobject]@{ storage = [pscustomobject]@{ db = [pscustomobject]@{ use = 'x' } } }
-function Get-KitDbQueries($C) { $global:dbc++; @([pscustomobject]@{ id = '9'; gb = $global:gb; secs = 1; query = 'q' }) }
-function Get-KitDrives { @([pscustomobject]@{ name = 'R'; root = 'R:\'; free = 500; size = 900; kit = $true }) }; function Get-KitDiskVerdict { [pscustomobject]@{ level = $global:lvl; anomaly = $false; rescue = $false; rate = 0; ttf = 1e9; free = 500; normal = 0.1 } }
-$t = { $null = Invoke-KitStorageTick -Force }; & $t; & $t; $a = $global:dbc; $global:gb = 3; $global:lvl = 'WATCH'; & $t; $global:lvl = 'OK'; & $t; "reuse:$a`:$global:dbc"
-'@ @($O)
-Expect "storage tick: a forced tick reuses a fresh db list while drives are OK and no query holds 1 GB ($(@($reu)[-1]))" (@($reu)[-1] -eq 'reuse:1:3')
 # generic: idle daemons only from cleanup.idleDaemons (busyKinds hold them), tool caches from storage.toolCaches, gate.labels before built-in kinds
 $gen = Invoke-PsTest res-generic @'
 $null = . $args[0] 6>$null; Remove-Item Env:KIT_KEEP_DAEMONS -ErrorAction SilentlyContinue

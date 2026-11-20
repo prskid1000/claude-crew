@@ -18,7 +18,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L24 init · L31 wt · L321 stack · L503 gate · L818 check · L1134 pipes · L1190 guard · L2079 dir · L2089 checkpoint ·
-  L2119 prior · L2157 tracker · L2179 task spec · L2358 scope · L2406 host
+  L2119 prior · L2157 tracker · L2179 task spec · L2361 scope · L2409 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2188,9 +2188,11 @@ function Test-KitTaskSpec($Spec) {
     if (-not $bug) { if (-not "$($Spec.goal)".Trim()) { 'goal' }; if (-not (@($Spec.items) + @($Spec.subtasks) | Where-Object { $_.code }).Count) { 'items[{code, desc}] (or subtasks)' }; if (-not @($Spec.acceptance | Where-Object { $_ }).Count) { 'acceptance' } }
     foreach ($ln in @($Spec.links) + @(if ($Spec.docs -is [Collections.IDictionary]) { @($Spec.docs.Values) } else { @($Spec.docs.human, $Spec.docs.ai) }) +@($Spec.items | ForEach-Object { @($_.mrs) })) { $u = if ($ln -is [Collections.IDictionary]) { $ln.url } else { "$ln" }; if ($u -and $u -notmatch '^https?://\S+$') { "a full URL instead of '$u'" } })
 }
-# tracker.nameFormat ({prefix} {title} {kind} {code}); prefix = tracker.kindPrefixes[kind]; a title already "[...]" stays
+# tracker.nameFormat ({prefix} {title} {kind} {code}); prefix = tracker.kindPrefixes[kind]; a typed known kind prefix ([Bug]) is swapped, another "[...]" stays
 function Get-KitSpecName($Spec) {
-  $t = "$($Spec.title)".Trim(); if (-not $Spec.kind -or $t -match '^\[') { return $t }
+  $t = "$($Spec.title)".Trim(); if (-not $Spec.kind) { return $t }
+  $nk = Get-KitNameKind $t
+  if ($nk.rest -ne $t -and $nk.kind -ieq "$($Spec.kind)") { $t = $nk.rest } elseif ($t -match '^\[') { return $t }   # another kind typed: kept as written
   $v = @{ prefix = (Get-KitKindPrefix "$($Spec.kind)"); title = $t; kind = "$($Spec.kind)"; code = "$($Spec.code)" }
   ([regex]::Replace([string](Get-KitSetting 'tracker.nameFormat' '{prefix} {title}'), '\{(\w+)\}', { param($m) [string]$v[$m.Groups[1].Value] }) -replace '\s{2,}', ' ').Trim()
 }
@@ -2316,6 +2318,7 @@ function Invoke-Tracker {
       if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
       $__specHint = 'tracker create -Spec <json> (crafty.ps1 "task spec": kind, title, problem, goal, items, acceptance, links)'
       if ("$($__trOpt.Key)" -notmatch '^(qa|watch)-') { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (-Key qa-<run> or watch-<env>-<signature>$(if ($__trOpt.Key) { "; '$($__trOpt.Key)' is neither" }))"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs; 2026-11-16: a made-up key skipped the spec
+      if ("$($__trOpt.Name)".Trim() -and -not (Test-KitKindName $__trOpt.Name)) { $__trOpt.Name = Format-KitBugName $__trOpt.Name }   # a keyed defect: the kit adds the configured bug prefix
       if ((($__trOpt.Parent -and $__trOpt.Parent -ne '-') -or (Test-KitKindName $__trOpt.Name)) -and @(Get-KitTaskTextGaps $__trOpt.Name 'x').Count) { "tracker create refused: a kit task's text (a subtask or a [Kind] name) is rendered from a spec: $__specHint; free text only for a keyed [Bug]"; exit 1 }
       $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
@@ -2329,7 +2332,7 @@ function Invoke-Tracker {
       __TrOut $nt
     }
     'bug' {   # ONE open QA collector [Bug] per ask (lib.ps1 Add-KitAskBug)
-      if (-not ($__trOpt.Key -and $__trOpt.Name -and $__trOpt.Text)) { "usage: tracker bug -Parent <ask> -Key <qa-<run> | watch-<env>-<signature>> -Name '<[Bug] title>' -File <md> [-Signature 'a|b'] [-List] [-Assignee] [-Priority]"; exit 2 }
+      if (-not ($__trOpt.Key -and $__trOpt.Name -and $__trOpt.Text)) { "usage: tracker bug -Parent <ask> -Key <qa-<run> | watch-<env>-<signature>> -Name '<title: the kit adds tracker.kindPrefixes.bug>' -File <md> [-Signature 'a|b'] [-List] [-Assignee] [-Priority]"; exit 2 }
       if ($__trOpt.Key -notmatch '^(qa|watch)-') { "tracker bug refused: -Key '$($__trOpt.Key)' is no QA / watch defect key (qa-<run>, watch-<env>-<signature>); any other task: tracker create -Spec <json> (crafty.ps1 ""task spec"")"; exit 1 }
       __TrOut (Add-KitAskBug -Ask $__trOpt.Parent -Key $__trOpt.Key -Name $__trOpt.Name -List $__trOpt.List -Assignee $__trOpt.Assignee -Priority $(if ($__trOpt.Priority) { $__trOpt.Priority } else { '2' }) -Defects @([pscustomobject]@{ label = $__trOpt.Key; sig = @("$($__trOpt.Signature)" -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ }); md = $__trOpt.Text; group = '' }))
     }
