@@ -162,7 +162,7 @@ $null = Use-FakeUploader @'
 '@ { Fin $ir I1 } "'evidence', 'doc'"
 $irp = Read-Text "$ir/I1/report.md"; $ic = @((Task 'TI').comments | Where-Object { $_.text -match 'Test results' })
 Expect 'report: 3 images inline under their checks (caption = id), JSON as a file line; one comment, one link, no evidence list' (([regex]::Matches($irp, '!\[')).Count -eq 3 -and
-  $irp -match '(?m)^\| \*\*C1\*\* s \| \*\*FAIL\*\* \|[^\n]*!\[C1: Before\][^\n]*`rates\.child\[1\]: 567`<br>[^\n]*\[full file\]\(https://f/I1-C1_03_resp\.json\)' -and $irp -match '\| Task TI \| 1 \| 1 \| 0 \| failed \|' -and $ic.Count -eq 1 -and ([regex]::Matches($ic[0].text, 'https?://')).Count -eq 1 -and $ic[0].text -notmatch '\*\*Evidence|\]\(')
+  $irp -match '(?m)^\| \*\*C1\*\* s \| \*\*FAIL\*\* \|[^\n]*!\[C1: Before\][^\n]*`rates\.child\[1\]: 567`<br>[^\n]*\[full json\]\(https://f/I1-C1_03_resp\.json\)' -and $irp -match '\| Task TI \| 1 \| 1 \| 0 \| failed \|' -and $ic.Count -eq 1 -and ([regex]::Matches($ic[0].text, 'https?://')).Count -eq 1 -and $ic[0].text -notmatch '\*\*Evidence|\]\(')
 # NOT_TESTED for a cause no developer can fix: status kept, the owner decides (close / retest)
 $nr = New-Run 'N' @(@{ code = 'N1'; task = 'TN'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) }); New-Task 'TN' 'Task N'
 $rj = Read-Json "$nr/N1/results.json"; $rj.checks[1] | Add-Member cause 'env-data'; & $J $rj "$nr/N1/results.json"

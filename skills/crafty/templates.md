@@ -99,7 +99,7 @@ files changing under it: stop, report.
 
 ## Test cases (goals file, AI doc, human doc)
 devy writes ONE spec per task (crafty step 4), never the three docs: `devtools.py cases add <task> <spec.json>` (merged by id),
-each loop round `cases result <task> <id> PASS|FAIL|NOT_TESTED_LOCAL <evidence link> ...` + `cases round <task> --fix <sha>
+each loop round `cases result <task> <id> PASS|FAIL|NOT_TESTED_LOCAL <file>=<evidence link> ...` (the link reads as its type: json, screenshot, log) + `cases round <task> --fix <sha>
 --bugs "<what>"`; `cases render <task> goals|ai|human` prints the file (goals: local, never published). Publish: `devtools.py doc
 "<title>" cases --key <task>:testing-ai --label "round <n>"` each round; after the loop PASS `devtools.py finish <task> cases
 solution.md review --ai cases`.

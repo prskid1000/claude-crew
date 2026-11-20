@@ -33,7 +33,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L51 config · L106 run · L194 tracker · L346 process · L528 git host · L601 scope · L691 MR · L883 merge · L1210 docs ·
-  L1363 publish · L1803 render · L2226 plugins · L2240 keepboth · L2259 selftest · L2854 CLI
+  L1363 publish · L1803 render · L2244 plugins · L2258 keepboth · L2277 selftest · L2876 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1838,11 +1838,29 @@ def _table(head, rows):
     return '\n'.join(['| ' + ' | '.join(head) + ' |', '|' + '---|' * len(head)] + ['| ' + ' | '.join(_cell(c) for c in r) + ' |' for r in rows])
 
 
+EV_TYPES = {'png': 'screenshot', 'jpg': 'screenshot', 'jpeg': 'screenshot', 'gif': 'screenshot', 'webp': 'screenshot', 'json': 'json', 'har': 'har',
+            'log': 'log', 'txt': 'log', 'out': 'log', 'mp4': 'video', 'webm': 'video', 'mov': 'video', 'html': 'page', 'pdf': 'pdf', 'csv': 'csv',
+            'xml': 'xml', 'sql': 'sql', 'md': 'notes'}
+
+
+def _ev_type(name):
+    """The link text for an evidence file: its type (json, screenshot, log, video ...), never a URL segment such as 'view'."""
+    ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
+    return EV_TYPES.get(ext, ext if 1 < len(ext) <= 5 and ext.isalnum() else 'file')
+
+
 def _ev(cid, ev):
-    """Evidence: an image URL inline, another URL as a link named by its file, text as is."""
-    name = lambda u: re.sub(r'[?#].*', '', u).rstrip('/').rsplit('/', 1)[-1] or 'link'
-    return ' · '.join(f'![{cid}]({e})' if re.match(r'https?://\S+\.(png|jpe?g|gif|webp)(\?\S*)?$', e, re.I) else f'[{name(e)}]({e})'
-                      if re.match(r'https?://\S+$', e) else e for e in (str(x).strip() for x in (ev if isinstance(ev, list) else [ev] if ev else [])))
+    """Evidence: an image URL inline, another URL as a link named by its type; '<file>=<url>' (devtools.py evidence prints
+    the names) types a host link without one (a Drive /view link); text as is."""
+    def one(e):
+        named = re.match(r'([^=\s]+)=(https?://\S+)$', e)
+        name, url = (named[1], named[2]) if named else ('', e)
+        if not re.match(r'https?://\S+$', url):
+            return e
+        if not named and re.match(r'https?://\S+\.(png|jpe?g|gif|webp)(\?\S*)?$', url, re.I):
+            return f'![{cid}]({url})'
+        return f'[{_ev_type(name or re.sub(r"[?#].*", "", url).rstrip("/").rsplit("/", 1)[-1])}]({url})'
+    return ' · '.join(one(e) for e in (str(x).strip() for x in (ev if isinstance(ev, list) else [ev] if ev else [])))
 
 
 def _verdict(results):
@@ -1963,7 +1981,7 @@ def cases_cmd(a):
     """cases add <task> <spec.json|JSON> [--replace] · result <task> <id> <PASS|FAIL|...> [<evidence> ...] · round <task> [--fix <sha>] [--bugs <t>]
     [--retest <t>] · render <task> goals|ai|human -> the rendered file's path. Examples (one per verb):
       python -X utf8 devtools.py cases add T1 cases-t1.json
-      python -X utf8 devtools.py cases result T1 A1 PASS https://drive.example/a1.png
+      python -X utf8 devtools.py cases result T1 A1 PASS A1_resp.json=https://drive.example/file/d/1Ab/view
       python -X utf8 devtools.py cases round T1 --fix 1a2b3c4 --bugs none
       python -X utf8 devtools.py cases render T1 ai"""
     verbs = ('add', 'result', 'round', 'render')
@@ -2544,6 +2562,10 @@ def _publish_selftest(expect, refused):
             ra, rh = render_cases(cs, 'ai'), render_cases(cs, 'human')
             expect('cases render: the AI doc has negative rows, its case and Rounds tables; the human doc positive checks only',
                    '| negative |' in ra and AI_TABLE.search(ra) and ROUNDS_TABLE.search(ra) and CHECKS_TABLE.search(rh) and 'negative' not in rh.lower())
+            dv = 'https://drive.google.com/file/d/1Ab/view?usp=drivesdk'
+            expect('cases evidence: links named by type (json, screenshot, log), never a URL segment such as "view"; an image URL inline',
+                   _ev('A1', [f'A1_resp.json={dv}', f'A1_list.png={dv}', 'https://x/run.log', 'https://x/a.png', dv, 'curl 200'])
+                   == f'[json]({dv}) · [screenshot]({dv}) · [log](https://x/run.log) · ![A1](https://x/a.png) · [file]({dv}) · curl 200')
             long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
                    not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))
