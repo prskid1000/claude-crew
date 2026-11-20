@@ -150,7 +150,7 @@ function Get-Doctor([string]$e, [switch]$Fix) {
     foreach ($rk in @($s.requiredEnv | Where-Object { $_ })) {
       $rn, $rw = "$rk" -split '=', 2; $rg = "$($v[$rn])".Trim()
       if (-not $rg) { & $add 'FAIL' "$($s.name): requiredEnv $rn is not set (env file, envs.$e.env or the service's env)" }
-      elseif ($null -ne $rw -and $rg -ne $rw) { & $add 'FAIL' "$($s.name): requiredEnv $rn must be '$rw' (envs.$e.env or localEnv.defaults.env)" }
+      elseif ($null -ne $rw -and $rg -cne $rw) { & $add 'FAIL' "$($s.name): requiredEnv $rn must be '$rw' (envs.$e.env or localEnv.defaults.env)" }
     }
     $jh = if ($v.JAVA_HOME) { $v.JAVA_HOME } elseif ("$($s.start) $($s.build)" -match '\b(java|mvnw?|gradlew?)\b') { $env:JAVA_HOME } else { $null }
     if ($jh -and -not (Test-Path -LiteralPath (Join-Path $jh 'bin'))) { & $add 'FAIL' "$($s.name): JAVA_HOME $jh has no bin folder" }
