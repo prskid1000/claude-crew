@@ -45,6 +45,8 @@ Set-TrackerStatus $t 'inProgress' 'fix round 2' 6>$null; "backok:$(Ky $t)"
 Set-TrackerStatus $t 'promoted' 6>$null; Set-TrackerStatus $t 'failedTesting' 6>$null; "ft:$(Ky $t)"
 $p = Mk 'P' $null; $a = Mk 'A' $p; $b = Mk 'B' $p; Set-TrackerStatus $a 'promoted' 6>$null; $pr = Set-TrackerStatus $p 'promoted' 6>$null; "par:$(Ky $p)|$("$pr" -like 'SKIPPED*')"
 Set-TrackerStatus $b 'review' 6>$null; "roll:$(Ky $p)"; foreach ($c in $a, $b) { Set-TrackerStatus $c 'inTest' 6>$null }; Set-TrackerStatus $p 'failedTesting' 6>$null; "pft:$(Ky $p)"; $q = Mk 'Q' $null; $null = Mk '[Bug] Q leak' $q; Set-TrackerStatus $q 'closed' 6>$null; "bug:$(Ky $q)"
+# ROLLUP-OLDPARENT: a moved child's old parent follows the children it keeps (the one that left was its least advanced)
+$m = Mk 'M' $null; $m1 = Mk 'M1' $m; Set-TrackerStatus (Mk 'M2' $m) 'promoted' 6>$null; $mb = Ky $m; $null = Move-TrackerTask $m1 -Parent (Mk 'N' $null) 6>$null; "old:$mb>$(Ky $m)"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
 $sx = { param($key) "$(@($sw | Where-Object { "$_" -like "${key}:*" })[0])".Substring($key.Length + 1) }
 # track run (supervise auto-fix): a parent whose own MRs merged but a subtask is open is KEPT (never "DONE -> promoted"); a plain task is
@@ -78,6 +80,7 @@ $apiSub = @($subsA | Where-Object { $_.name -like '*API1*' })[0]
 Expect "launch -Self: 2 areas on one task -> a subtask each under it, kept on a relaunch ($(@($at1 -match '^AREA TASK') -join ' | ') / $(@($at2 -match '^AREA TASK') -join ' | ') / $($apiSub.name))" (@($at1 -match '^AREA TASK (API1|WEB1) LOCAL-\d+').Count -eq 2 -and @($at2 -match '^AREA TASK \S+ LOCAL-\d+ \(kept\)').Count -eq 2 -and $subsA.Count -eq 2 -and
   $apiSub.name -eq '[Feature] Site builder — API1 API guard (api)' -and "$($apiSub.assignees)" -match 'Ann Lee' -and $apiSub.description -match 'A-1 · Guard the path' -and (Read-Json (Join-Path $ab 'area-tasks.json')).agents.Count -eq 2)
 Expect "status write: the same status twice = one write ($(& $sx 'deb'))" ((& $sx 'deb') -eq '1')
+Expect "tracker move: the old parent re-syncs to the children it keeps ($(& $sx 'old'))" ((& $sx 'old') -eq 'open>promoted')
 Expect "status write: review -> inProgress (review changes) moves; inTest -> review kept; -Back '<why>' (a new code round) moves it; promoted -> failedTesting ($(& $sx 'rv') $(& $sx 'back') $(& $sx 'backok') $(& $sx 'ft'))" ((& $sx 'rv') -eq 'inProgress' -and (& $sx 'back') -eq 'inTest' -and (& $sx 'backok') -eq 'inProgress' -and (& $sx 'ft') -eq 'failedTesting')
 Expect "status write: a parent with open subtasks is never set directly (promoted refused: SKIPPED, follows them), failedTesting is; an open [Bug] child holds its ask's close ($($sw -join ' '))" ((& $sx 'par') -eq 'open|True' -and (& $sx 'bug') -eq 'open' -and (& $sx 'roll') -eq 'review' -and (& $sx 'pft') -eq 'failedTesting')
 # status roles per scope (owner, 2026-11-19): fake trackers report their live names as each vendor does; roles by name and type,

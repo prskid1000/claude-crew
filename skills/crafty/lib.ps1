@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1122 tracker · L1447 prior ·
-  L1463 ask bugs · L1649 git-host · L1836 kitlog · L1956 params · L2261 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1122 tracker · L1449 prior ·
+  L1465 ask bugs · L1651 git-host · L1838 kitlog · L1958 params · L2263 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1426,8 +1426,10 @@ function Set-TrackerName([string]$Id, [string]$Name) { Clear-TrackerMemo $Id; __
 # command adapter: tracker.commands.move
 function Move-TrackerTask([string]$Id, [string]$Parent = '', [string]$List = '', [switch]$Top) {
   if (-not ($Parent -or $List -or $Top)) { throw 'tracker move: -Parent, -List or -NoParent' }; if ($Top -and $Parent) { throw 'tracker move: -Parent or -NoParent, not both' }
-  Clear-TrackerMemo $Id; $mv = __TrA 'move' @{ id = $Id; parent = $Parent; list = $List; top = [bool]$Top }
+  Clear-TrackerMemo $Id; $mvOld = try { "$((Get-TrackerTask $Id).parent)" } catch { '' }   # read first: the old parent follows the children it keeps
+  $mv = __TrA 'move' @{ id = $Id; parent = $Parent; list = $List; top = [bool]$Top }; Clear-TrackerMemo $Id   # the read above memoised the old parent
   if ($Parent) { $null = Sync-TrackerParent $Id '' -ParentId $Parent -NewChild }
+  if ($mvOld -and $mvOld -ne $Parent) { $null = Sync-TrackerParent -ParentId $mvOld }
   $mv }
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }
