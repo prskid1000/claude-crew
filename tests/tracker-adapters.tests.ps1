@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/tracker-adapters.tests.ps1: the tracker adapters (jira, jira-server, linear, youtrack, azure, gitlab, clickup) and the gitlab
-git host on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call fails): one prelude, a block per adapter.
+git host on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call fails): one prelude, a block per adapter, the parent sync per adapter.
 Usage: pwsh -NoProfile -File tests/tracker-adapters.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -121,6 +121,29 @@ Check 'host: mr.update edits the open MR (PUT, devtools.py mr re-run)' ($global:
 . (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/github.ps1')
 $gp = @(foreach ($tx in 'job `unit` of [run](https://github.com/o/r/actions/runs/77)', 'https://github.com/o/r/actions/runs/77/job/9') { $u = Invoke-KitAdapter ci github parseUrl @{ text = $tx }; "$($u.run)/$($u.job)" }) -join ' '
 if ($gp -ne '77/ 77/9') { $global:failed++ }; "$(if ($gp -eq '77/ 77/9') { 'PASS' } else { 'FAIL' }) github ci.parseUrl: a run link alone gives the run, a job URL the run and the job ($gp)"
+# parent sync (lib.ps1 Sync-TrackerParent) on each adapter's recorded answers: child -> inTest, its sibling done -> the parent read, then set in test
+function Psy($type, $kid, $par, $fx, $want) {
+ try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $null = Set-TrackerStatus $kid inTest 6>$null; $pass = $global:log[-1] -match $want -and @($global:log -match [regex]::Escape($par)).Count -ge 2 } catch { $pass = $false; "  $type parent sync error: $_" }
+ if (-not $pass) { $global:failed++; "  log: $($global:log -join ' | ')" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker ${type}: parent sync (a child in test, its sibling done -> the parent read, then set in test)"
+}
+Psy jira P-5 P-4 ([ordered]@{ 'GET .*/issue/P-5\?' = '{"key":"P-5","fields":{"summary":"K","status":{"name":"In Progress"},"parent":{"key":"P-4"}}}'
+ 'GET .*/issue/P-4\?' = '{"key":"P-4","fields":{"summary":"A","status":{"name":"In Progress"},"subtasks":[{"key":"P-5","fields":{"summary":"K","status":{"name":"In Progress"}}},{"key":"P-6","fields":{"summary":"O","status":{"name":"Done"}}}]}}'
+ 'P-(4|5)/transitions  ' = '{"transitions":[{"id":"31","name":"QA","to":{"name":"In Test"}}]}'; 'transitions application/json' = '' }) P-4 'POST .*issue/P-4/transitions .*"31"'
+Psy linear E-5 E-4 ([ordered]@{ '(?=.*identifier title url)(?=.*"id":"E-5")' = '{"data":{"issue":{"identifier":"E-5","title":"K","state":{"name":"In Progress"},"parent":{"identifier":"E-4"},"team":{"key":"E"}}}}'
+ '(?=.*identifier title url)(?=.*"id":"E-4")' = '{"data":{"issue":{"identifier":"E-4","title":"A","state":{"name":"In Progress"},"team":{"key":"E"},"children":{"nodes":[{"identifier":"E-5","title":"K","state":{"name":"In Progress"}},{"identifier":"E-6","title":"O","state":{"name":"Done"}}]}}}}'
+ 'team \{ states' = '{"data":{"issue":{"team":{"states":{"nodes":[{"id":"s1","name":"In Progress"},{"id":"s2","name":"In Test"}]}}}}}'; 'issueUpdate' = '{"data":{"issueUpdate":{"success":true}}}'
+ 'teams\(filter: \{ key' = '{"data":{"teams":{"nodes":[{"states":{"nodes":[{"name":"In Progress","type":"started","position":1},{"name":"In Test","type":"started","position":2},{"name":"Done","type":"completed","position":3}]}}]}}}' }) E-4 '(?=.*issueUpdate)(?=.*"id":"E-4")(?=.*"stateId":"s2")'
+Psy youtrack D-5 D-4 ([ordered]@{ 'GET .*issues/D-5\?' = '{"idReadable":"D-5","summary":"K","parent":{"issues":[{"idReadable":"D-4"}]},"customFields":[{"name":"State","value":{"name":"In Progress"}}]}'
+ 'GET .*issues/D-4\?' = '{"idReadable":"D-4","summary":"A","customFields":[{"name":"State","value":{"name":"In Progress"}}],"subtasks":{"issues":[{"idReadable":"D-5","summary":"K","customFields":[{"name":"State","value":{"name":"In Progress"}}]},{"idReadable":"D-6","summary":"O","customFields":[{"name":"State","value":{"name":"Done"}}]}]}}'
+ 'commands ' = '{}' }) D-4 '(?=.*commands)(?=.*State \{in test\})(?=.*"D-4")'
+Psy azure 45 44 ([ordered]@{ 'GET .*workitems/45\?\$expand' = '{"id":45,"fields":{"System.Title":"K","System.State":"In Progress"},"relations":[{"rel":"System.LinkTypes.Hierarchy-Reverse","url":"https://dev.azure.com/acme/_apis/wit/workItems/44"}]}'
+ 'GET .*workitems/44\?\$expand' = '{"id":44,"fields":{"System.Title":"A","System.State":"In Progress"},"relations":[{"rel":"System.LinkTypes.Hierarchy-Forward","url":"u/45"},{"rel":"System.LinkTypes.Hierarchy-Forward","url":"u/46"}]}'
+ 'ids=45,46&' = '{"value":[{"id":45,"fields":{"System.Title":"K","System.State":"In Progress"}},{"id":46,"fields":{"System.Title":"O","System.State":"Done"}}]}'; 'PATCH .*workitems/4[45]\?' = '{"id":1}' }) 44 '(?=PATCH .*workitems/44\?)(?=.*"value":"in test")'
+# a fake token: the statuses read must never pick up the CLI's stored one (it would show in a FAIL log)
+$env:CLICKUP_API_TOKEN = 'tk-test'
+try { Psy clickup C5 C4 ([ordered]@{ 'task view C5 --json' = '{"id":"C5","name":"K","status":{"status":"in progress"},"parent":"C4","list":{"id":"L9"}}'
+ 'task view C4 --json' = '{"id":"C4","name":"A","status":{"status":"in progress"},"list":{"id":"L9"},"subtasks":[{"id":"C5","name":"K","status":{"status":"in progress"}},{"id":"C6","name":"O","status":{"status":"closed"}}]}'
+ 'status set in test C[45]' = 'Status set'; 'GET .*api/v2/list/L9 .*tk-test' = '{"statuses":[{"status":"in progress","type":"custom","orderindex":1},{"status":"in test","type":"custom","orderindex":2},{"status":"closed","type":"closed","orderindex":3}]}' }) C4 '^status set in test C4\s*$' } finally { Remove-Item Env:CLICKUP_API_TOKEN }
 # ---- clickup (its own clickup mock; dry-run comments, checklists, REST moves)
 $global:log.Clear()
 function clickup { $global:LASTEXITCODE = 0; Fx ($args -join ' ') }
