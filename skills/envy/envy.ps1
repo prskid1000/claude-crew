@@ -2,7 +2,7 @@
 envy.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) that agents deploy branches to, test and debug
 on; a service = a start command in a folder (default crafty.ps1 stack `run`). Model: envy SKILL.md "Local testing".
   & <kit>/skills/envy/envy.ps1 <verb> [args]
-Verbs: envs · status · doctor [-Fix] · deploy · wait (-Id | -Until up [-Services] [-Timeout s]) · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
+Verbs: envs · status · doctor [-Fix] · deploy · wait (-Id | -Until up [-Services] [-Timeout s]) · use -Services <svc,..> (+ deps) | -All · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
        migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] (marks = list) ·
        seed [-Check] · drop -Agent <id> [-Note <why>] | -Stale [-DryRun] (bossy.ps1 release / supervise: layers of a finished agent,
        merged, gone or orphan ones)
@@ -2017,7 +2017,7 @@ param(
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
   [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [switch]$Fix, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
-  [int]$Lane = 0, [string]$Until, [int]$Timeout = 600
+  [int]$Lane = 0, [string]$Until, [int]$Timeout = 600, [Alias('All')][switch]$AllServices
 )
 if ($Action -eq 'help') { foreach ($hl in @(Get-Content $PSCommandPath | Select-Object -Skip 1)) { if ($hl -eq '#>') { break }; $hl }; return }   # the verbs, before any env check
 if ($Action -eq 'marks') { if ($Name) { throw "marks lists the marks; to make one: mark -Name $Name" }; $Action = 'mark' }   # the list form agents guess
@@ -2262,8 +2262,9 @@ switch ($Action) {
   'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; Exit-Request (Wait-Request $rid) }
   'wait' { if ($Until) { Wait-Until $e $Until $Services $Timeout; return }; if (-not $Id) { throw 'wait needs -Id <request> or -Until <state> [-Services a,b] [-Timeout 600]' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
   'use' {
-    # a QA seat (test:<code>) leases what its checks call: a whole-env lease held a staging run's rm env 1 h+ and stalled the local train
+    # a lease starts only what it names (+ deps): a whole-env lease held a staging run's rm env 1 h+; owner 2026-11-20 "a lane might not need all resources"
     if (-not $Services -and "$Agent" -like 'test:*') { "[$e] use refused for ${Agent}: name the services its checks call (-Services api[,web]); a tester never leases the whole env"; exit 2 }
+    if (-not $Services -and -not $AllServices) { "[$e] use refused for ${Agent}: name the services you test (-Services $(@(All-Managed) -join ',' ) or a part; their dependencies come along); the whole env only with -All"; exit 2 }
     $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed }))
     foreach ($n in $names) { $null = Svc $e $n }
     $min = [math]::Min($(if ($Minutes) { $Minutes } else { $LeaseMin }), $MaxLeaseMin)

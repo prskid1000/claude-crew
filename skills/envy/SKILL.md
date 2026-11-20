@@ -57,7 +57,8 @@ $L = '<kit>/skills/envy/envy.ps1'
 0. `bossy.ps1 learn -Read -Skill local-env`.
 1-2. `deploy` prints LIVE r<n> | REFUSED | REJECTED | ROLLED BACK; "[<env>-<bird>] lane k": test there (target `<target>-<bird>`).
    REFUSED: `crafty.ps1 wt sync`, resolve, deploy again. REJECTED / ROLLED BACK: read the message + `logs`, fix, deploy again.
-3. Lease only the services you test, right before the checks; it lives while you use it (README "Leases"); exit 3 = no lease
+3. Lease only the services you test (`-Services`, their dependencies come along; no `-Services` = refused, the whole env only
+   with `-All`), right before the checks; it lives while you use it (README "Leases"); exit 3 = no lease
    yet, call again. A NOTICE "deploy of <svc> starting, pause" (board inbox or `status -Agent`): stop checks there until
    "deploy done" (`wait -Until up -Services <svc>`), then re-run the checks of that service. Release right after your last check.
    Test data: prefix with your agent id.

@@ -240,5 +240,8 @@ $tvs = & { . $tvL; $global:tvMade = @(); function Ensure-Worktree($e, $r) { $glo
 Expect "envy: a service's start makes its missing lane worktree; a target with no repo is a config error ($tvs)" ($tvs -eq 'web@main|True|True')
 $tvu = Invoke-TestScript $tvL use -Env shop -Agent 'test:T9'   # a QA seat leasing the whole env held a staging run's local env 1 h+
 Expect "envy use: a QA seat (test:*) without -Services is refused, exit 2 ($($tvu.out.Trim()))" ($tvu.code -eq 2 -and $tvu.out -match 'name the services its checks call')
+# K97 (owner 2026-11-20 "a lane might not need all resources"): any agent names its services; the whole env only with -All
+$tvd = Invoke-TestScript $tvL use -Env shop -Agent 'devy-k97'
+Expect "envy use: any agent without -Services or -All is refused, exit 2, names the services ($($tvd.out.Trim()))" ($tvd.code -eq 2 -and $tvd.out -match 'name the services you test \(-Services ui,ui-old' -and $tvd.out -match 'only with -All')
 Remove-TestKit $tvKit
 Complete-Tests
