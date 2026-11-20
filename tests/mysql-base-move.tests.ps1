@@ -11,12 +11,13 @@ param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 $mv = Join-Path (Split-Path $PSScriptRoot) 'skills/envy/mysql-base-move.ps1'
 . $mv
-$tpl = @('[client]', 'port=3317', '[mysqld]', 'sync_binlog=0', 'innodb_doublewrite=OFF', 'port=3317', 'datadir=D:/x/mysql-hm2', 'innodb_buffer_pool_size=1G', 'log-bin=binlog', 'slow-query-log=1', 'innodb_flush_log_at_trx_commit=1')
+$tpl = @('[client]', 'port=3317', '[mysqld]', 'sync_binlog=0', 'innodb_doublewrite=OFF', 'port=3317', 'datadir=D:/x/mysql-hm2', 'innodb_buffer_pool_size=1G', 'log-bin=binlog', 'slow-query-log=1', 'innodb_flush_log_at_trx_commit=1', 'innodb_file_per_table=1', 'innodb_io_capacity=2000', 'innodb-io-capacity-max=4000', 'innodb_io_capacity_max=4000', 'innodb-adaptive-flushing=1')
 $ini = New-BaseIni $tpl 3316 'D:/x/mysql-hm'
-Expect "ini: ports and datadir changed, low-write settings forced under [mysqld] (no general / slow log, doublewrite; flush 2; redo 64M), the binlog kept for envy marks, the rest kept ($($ini -join ' '))" ($ini -join ' ' -eq '[client] port=3316 [mysqld] innodb_doublewrite=OFF innodb_flush_log_at_trx_commit=2 general_log=0 slow_query_log=0 innodb_redo_log_capacity=64M binlog_row_metadata=FULL sync_binlog=0 port=3316 datadir=D:/x/mysql-hm innodb_buffer_pool_size=1G log-bin=binlog')
+Expect "ini: ports and datadir changed, low-write settings forced under [mysqld] (no general / slow log, doublewrite; flush 2; redo 64M; tables in ibdata1; lazy page flushing), the binlog kept for envy marks, the rest kept ($($ini -join ' '))" ($ini -join ' ' -eq '[client] port=3316 [mysqld] innodb_doublewrite=OFF innodb_flush_log_at_trx_commit=2 general_log=0 slow_query_log=0 innodb_redo_log_capacity=64M binlog_row_metadata=FULL innodb_file_per_table=OFF innodb_adaptive_flushing=OFF innodb_io_capacity=100 innodb_io_capacity_max=200 sync_binlog=0 port=3316 datadir=D:/x/mysql-hm innodb_buffer_pool_size=1G log-bin=binlog')
 # the copy writes only what is kept: never a server clone or a schema drop (12.9 GB of mysql.ibd churn per product, 2026-11-18)
 $mvText = Get-Content $mv -Raw
 Expect 'apply: empty datadir + mysqldump | mysql per kept schema, no CLONE and no DROP DATABASE' ($mvText -match '--initialize-insecure' -and $mvText -match '--single-transaction --no-tablespaces --routines --triggers --events' -and $mvText -notmatch 'CLONE LOCAL|DROP DATABASE|INSTALL PLUGIN')
+Expect 'apply: the load keeps the copied tables in own files (the ini puts only later tables in ibdata1)' ($mvText -match "'--skip-log-bin', '--innodb-file-per-table=ON'")
 
 # the config edit on a base + lane layout like the org's, resolved by envy
 $lane = { param($n) @{ name = 'mysql'; external = $false; port = $n; start = '"mysqld" --defaults-file="D:/s/lanes/mysql-rm{lane}.ini"'; init = @{ cmd = 'pwsh -File lane.ps1 -Port {port} -Dir "D:/s/lanes/mysql-rm{lane}"'; creates = 'D:/s/lanes/mysql-rm{lane}/lane-ready.txt' } } }

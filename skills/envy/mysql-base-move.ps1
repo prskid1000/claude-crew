@@ -16,7 +16,7 @@ templates); dir `<Lanes>/mysql-rm-falcon`, ini `<Lanes>/mysql-rm-falcon.ini` (co
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L41 names · L48 ini and config edit · L138 rename · L226 checks · L275 apply · L338 search data
+Sections: L41 names · L48 ini and config edit · L141 rename · L229 checks · L278 apply · L341 search data
 #>
 param([string[]]$Targets, [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
   [string]$Bin, [string]$Service, [int]$VerifyPort = 3399,
@@ -48,11 +48,14 @@ function Get-Bird([int]$N) { if ($N -ge 1 -and $N -le @($Birds).Count) { "$(@($B
 # ---- ini and config edit: a lane ini from a template, the kit.local.json edit
 # a lane ini made from a template: the port lines and datadir changed, the low-write settings forced under [mysqld], every other line kept
 function New-BaseIni([string[]]$Template, [int]$Port, [string]$Dir) {
-  # redo: mysqld 8.0.30+ rewrites its whole capacity at every start (measured: 512M -> 510 MB written per start, 64M -> 76 MB)
+  # redo: mysqld 8.0.30+ rewrites its whole capacity at every start (start: 64M 80 MB, 128M 142, 256M 266; a tenant restore only -1..-4%)
+  # a tenant restore (drop + create ~830 tables) measured 2026-11-20: 521 MB; file_per_table OFF 272 (no per-table file init; ibdata1 +31 MB
+  # once, reused, never shrinks); adaptive flushing OFF + io_capacity 100 / 200: -5%; both 253; trx_commit 0, dirty pct, lru depth, binlog: noise
+  # file_per_table OFF: new and rebuilt (ALTER) tables land in ibdata1, reclaimed only by a lane re-init; partitioned / compressed tables refused (none today)
   # the binlog stays as the template has it: envy marks and restores read it (db_presets.ps1: log_bin OFF = no marks); the load runs without it
   # binlog_row_metadata FULL: the donor's SET PERSIST (mysqld-auto.cnf) stays behind; envy restores by column name need it
-  $force = @('innodb_doublewrite=OFF', 'innodb_flush_log_at_trx_commit=2', 'general_log=0', 'slow_query_log=0', 'innodb_redo_log_capacity=64M', 'binlog_row_metadata=FULL')
-  $drop = '^\s*(innodb[-_]doublewrite|innodb[-_]flush[-_]log[-_]at[-_]trx[-_]commit|innodb[-_]redo[-_]log[-_]capacity|general[-_]log|slow[-_]query[-_]log|binlog[-_]row[-_]metadata)\s*(=|$)'
+  $force = @('innodb_doublewrite=OFF', 'innodb_flush_log_at_trx_commit=2', 'general_log=0', 'slow_query_log=0', 'innodb_redo_log_capacity=64M', 'binlog_row_metadata=FULL', 'innodb_file_per_table=OFF', 'innodb_adaptive_flushing=OFF', 'innodb_io_capacity=100', 'innodb_io_capacity_max=200')
+  $drop = '^\s*(innodb[-_]doublewrite|innodb[-_]flush[-_]log[-_]at[-_]trx[-_]commit|innodb[-_]redo[-_]log[-_]capacity|general[-_]log|slow[-_]query[-_]log|binlog[-_]row[-_]metadata|innodb[-_]file[-_]per[-_]table|innodb[-_]adaptive[-_]flushing|innodb[-_]io[-_]capacity(?:[-_]max)?)\s*(=|$)'
   @(foreach ($l in $Template) {
     if ($l -match '^\s*port\s*=') { "port=$Port" } elseif ($l -match '^\s*datadir\s*=') { "datadir=$Dir" } elseif ($l -match $drop) { continue } else { $l }
     if ($l -match '^\s*\[mysqld\]\s*$') { $force }
@@ -296,7 +299,7 @@ if ($Apply) {
     if (-not $ip.HasExited) { $ip.Kill(); throw "mysqld --initialize-insecure hung for $($p.env) (see $($p.dir)/lane.err)" }
     if ($ip.ExitCode) { throw "mysqld --initialize-insecure failed for $($p.env) (exit $($ip.ExitCode), see $($p.dir)/lane.err)" }
     # start on the verify port (the final one may be the donor's) with the load settings, copy, compare, point the pool, stop
-    $pr = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=`"$($p.ini)`"", "--port=$VerifyPort", '--sql-mode=NO_ENGINE_SUBSTITUTION', '--innodb-flush-log-at-trx-commit=0', '--skip-log-bin' -PassThru @hide
+    $pr = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=`"$($p.ini)`"", "--port=$VerifyPort", '--sql-mode=NO_ENGINE_SUBSTITUTION', '--innodb-flush-log-at-trx-commit=0', '--skip-log-bin', '--innodb-file-per-table=ON' -PassThru @hide   # the kept data in own files (droppable); later tables go to ibdata1
     try {
       $until = (Get-Date).AddMinutes(5)
       while (-not (Test-Listen $VerifyPort)) { if ($pr.HasExited -or (Get-Date) -gt $until) { throw "mysqld did not start for $($p.env) (see $($p.dir)/lane.err)" }; Start-Sleep 2 }
