@@ -68,6 +68,14 @@ $sr = & { . $L5 6>$null; New-Item -ItemType Directory -Force (Join-Path $wtd 'ap
   function Wait-Room { throw "row:$((Read-State t).services['api'].status)" }; function StartCmd { 'x' }
   try { Start-SvcOnce t ([pscustomobject]$api) 0 '' 6>$null; 'started' } catch { "$_" } }
 Expect "start: a service with no state row gets one before its room wait ($sr)" ($sr -eq 'row:down')
+# K97: -All (alias of AllServices) leases every managed service (the refusal without either: local-env.tests.ps1, a real run)
+$uAst = [Management.Automation.Language.Parser]::ParseFile($L5, [ref]$null, [ref]$null)
+$use = ($uAst.FindAll({ $args[0] -is [Management.Automation.Language.SwitchStatementAst] }, $true) | ForEach-Object Clauses | Where-Object { "$($_.Item1)" -eq "'use'" } | Select-Object -First 1).Item2.Extent.Text
+$ua = & { . $L5 6>$null; $e = 'uz'; $Agent = 'B'; $Services = @(); $AllServices = $true; $LeaseMin = 30; $MaxLeaseMin = 60; $Wait = 0
+  foreach ($f in 'Ensure-Loop', 'Show-Status', 'Event', 'Wake-Deferred', 'Prune', 'Svc') { Set-Item "function:$f" {} }; function Closure { @($args[1]) }; function MarksOn { $false }; function Wait-Up { $true }; function All-Managed { 'api', 'web' }
+  $null = . ([scriptblock]::Create($use.Substring(1, $use.Length - 2))); "$(@((Read-State uz).leases.B.services) -join ',')" }
+$uAlias = @($uAst.FindAll({ $args[0] -is [Management.Automation.Language.ParameterAst] -and $args[0].Name.VariablePath.UserPath -eq 'AllServices' }, $true) | ForEach-Object { "$($_.Attributes)" }) -join ''
+Expect "envy use: -All leases every managed service; -All is AllServices' alias ($ua | $uAlias)" ($ua -eq 'api,web' -and $uAlias -match "Alias\('All'\)")
 $kd = New-TestKit le5d; $dd = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy/adapters'); Copy-Item $L5 (Split-Path $dd); Copy-Item (Join-Path $src 'skills/envy/adapters/*') $dd
 & $J @{ localEnv = @{ envs = @{ t = @{ db = @{ engine = 'mysql'; port = 41999 }; services = @(@{ name = 'db'; port = 41999; start = 'x' }) } } } } (Join-Path $kd 'skills/crafty/kit.local.json') 8
 $dt = @(pwsh -NoProfile -File (Join-Path $kd 'skills/envy/envy.ps1') dbtemp -Env t 2>&1); $dtc = $LASTEXITCODE
@@ -76,6 +84,9 @@ Expect "dbtemp: a lane DB at rest is skipped with one line, exit 0, no refused e
 & $J @{ localEnv = @{ envs = @{ t = @{ db = @{ engine = 'mysql'; port = 41998 }; services = @(@{ name = 'api'; port = 41997; start = 'x' }) } } } } (Join-Path $kd 'skills/crafty/kit.local.json') 8
 $dx = @(pwsh -NoProfile -File (Join-Path $kd 'skills/envy/envy.ps1') dbtemp -Env t 2>&1); $dxc = $LASTEXITCODE
 Expect "dbtemp: an unowned DB port with no listener prints the start hint, exit 0, no client error (exit $dxc; $($dx -join ' / '))" ($dxc -eq 0 -and "$dx" -match 'nothing listens on the env DB port 41998' -and "$dx" -notmatch 'ERROR 2003|refused')
+& $J @{ localEnv = @{ envs = @{ t = @{ db = @{ engine = 'mysql'; host = 'db.invalid'; port = 41998 }; services = @(@{ name = 'api'; port = 41997; start = 'x' }) } } } } (Join-Path $kd 'skills/crafty/kit.local.json') 8
+$dh = @(pwsh -NoProfile -File (Join-Path $kd 'skills/envy/envy.ps1') dbtemp -Env t 2>&1) -join ' / '
+Expect "dbtemp: a remote db.host is queried, no local-port hint ($dh)" ($dh -notmatch 'nothing listens')
 Remove-TestKit $kd
 Remove-TestKit $k
 Complete-Tests
