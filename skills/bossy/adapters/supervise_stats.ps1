@@ -37,9 +37,9 @@ function Get-KitBuildsByOwner($Ends) {
     $by[$o].n++; $by[$o].min += [double]$x.sec / 60; if ([int]$x.code) { $by[$o].failed++ } }
   @($by.Values | ForEach-Object { [pscustomobject]@{ name = $_.name; n = $_.n; min = [math]::Round($_.min); failed = $_.failed } } | Sort-Object @{ Expression = 'n'; Descending = $true }, @{ Expression = 'min'; Descending = $true })
 }
-function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
+function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @(), [datetime]$StatsFrom = [datetime]::MinValue) {   # StatsFrom: Get-KitStatsCutoff
   $h0 = $Now.Date.AddHours($Now.Hour - 23); $from = $h0; $led = Get-KitGateLedger; $rd = { param($f) try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
-  $at = { param($v) if ($v -is [datetime]) { $v } else { try { [datetime]"$v" } catch { $null } } }
+  $at = { param($v) $t = if ($v -is [datetime]) { $v } else { try { [datetime]"$v" } catch { $null } }; if ($t -and $t -ge $StatsFrom) { $t } }   # before the stats reset: no time, the line drops
   $run = @(Get-ChildItem $led -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { & $rd $_.FullName } | Where-Object { $_ -and $_.pid -and (Test-KitPid $_.pid $_.start) })
   $que = @(Get-ChildItem (Join-Path $led 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { & $rd $_.FullName } | Where-Object { $_ })
   $ends = @(Read-KitLog builds $from | Where-Object { $_.event -eq 'end' -and (& $at $_.at) })
@@ -48,8 +48,8 @@ function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
   $busy = { param($r, [datetime]$s1, [datetime]$e1) Split-KitHours $h0 $s1 $e1 { param($hi, $ov) $r.hours[$hi][1] += $ov } }
   foreach ($x in $ends) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.project)"); $e1 = & $at $x.at; $s1 = $e1.AddSeconds(-[double]$x.sec); $wm = [double]$x.waitSec / 60
     if ($e1 -ge $Now.Date) { $r.done++; $r.waits.Add($wm); $r.minToday += [double]$x.sec / 60; if ([int]$x.code) { $r.failed++ } }; if ($e1 -ge $Now.Date -and "$($x.owner)" -and "$($x.owner)" -notin $r.who -and "$($x.project)" -notmatch '(^|[\\/])qa-seats$') { $r.who.Add("$($x.owner)") }; & $busy $r $s1 $e1; $hi = [int][math]::Floor(($e1 - $h0).TotalHours); if ($hi -ge 0 -and $hi -le 23) { $r.hours[$hi][0]++; $r.hours[$hi][2] = [math]::Max($r.hours[$hi][2], $wm) } }
-  foreach ($x in @(Read-KitLog builds $Now.Date | Where-Object { $_.event -eq 'start' })) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.project)"); $r.peakGB = [math]::Max($r.peakGB, [double]$x.needGB) }
-  foreach ($x in $run) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.dir)"); $r.running++; $r.ram += [double]$x.need; if ("$($x.owner)" -and "$($x.owner)" -notin $r.who) { $r.who.Add("$($x.owner)") }; $s1 = & $at $x.started; if ($s1) { & $busy $r $s1 $Now } }
+  foreach ($x in @(Read-KitLog builds $Now.Date | Where-Object { $_.event -eq 'start' -and (& $at $_.at) })) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.project)"); $r.peakGB = [math]::Max($r.peakGB, [double]$x.needGB) }
+  foreach ($x in $run) { $r = & $row (Get-KitGateGroup "$($x.kind)" "$($x.owner) $($x.dir)"); $r.running++; $r.ram += [double]$x.need; if ("$($x.owner)" -and "$($x.owner)" -notin $r.who) { $r.who.Add("$($x.owner)") }; $s1 = if ($x.started) { try { [datetime]$x.started } catch { $null } }; if ($s1 -and $s1 -lt $StatsFrom) { $s1 = $StatsFrom }; if ($s1) { & $busy $r $s1 $Now } }   # a build running since before the reset: busy from the reset on
   foreach ($x in $que) { (& $row (Get-KitGateGroup "$($x.kind)" "$($x.owner)")).queued++ }
   $rows = @($g.Values | ForEach-Object { [pscustomobject]@{ name = $_.name; running = $_.running; queued = $_.queued; done = $_.done; ram = [math]::Round($_.ram, 1); peakGB = [math]::Round($_.peakGB, 1); min = [math]::Round($_.minToday); failed = $_.failed; owners = @($_.who)
         waitAvg = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Average).Average, 1) } else { 0 }); waitMax = $(if ($_.waits.Count) { [math]::Round(($_.waits | Measure-Object -Maximum).Maximum, 1) } else { 0 })
@@ -66,9 +66,9 @@ function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @()) {
 # sources: leases.jsonl acquire lines (since = when the caller began to wait: locks, browser tabs, phone lanes, GPU), builds log
 # start waitSec (the gate), the local env's lease-wait events (a train waiting for holders), and the waits still open now;
 # a row = @{ name; n; min; max; hours = 24 x @(waits ended, minutes waited, longest, who) }; waits under 30 s are no wait
-function Get-KitLeaseWaits([datetime]$Now = (Get-Date)) {
+function Get-KitLeaseWaits([datetime]$Now = (Get-Date), [datetime]$StatsFrom = [datetime]::MinValue) {   # StatsFrom: Get-KitStatsCutoff
   $h0 = $Now.Date.AddHours($Now.Hour - 23); $rows = [ordered]@{}
-  $add = { param([string]$res, $s, $e, [string]$who) if ($null -eq $s -or $null -eq $e) { return }; $s = [datetime]$s; $e = [datetime]$e; if (($e - $s).TotalMinutes -lt 0.5 -or $e -lt $h0) { return }
+  $add = { param([string]$res, $s, $e, [string]$who) if ($null -eq $s -or $null -eq $e) { return }; $s = [datetime]$s; $e = [datetime]$e; if ($s -lt $StatsFrom) { $s = $StatsFrom }; if (($e - $s).TotalMinutes -lt 0.5 -or $e -lt $h0) { return }
     if (-not $rows.Contains($res)) { $rows[$res] = [ordered]@{ name = $res; n = 0; min = 0.0; max = 0.0; hours = @(0..23 | ForEach-Object { , @(0, 0.0, 0.0, '') }) } }
     $r = $rows[$res]; $wm = ($e - $s).TotalMinutes; $r.n++; $r.min += $wm; $r.max = [math]::Max($r.max, $wm)
     Split-KitHours $h0 $s $e { param($hi, $ov) $r.hours[$hi][1] += $ov }
@@ -90,8 +90,8 @@ function Get-KitLeaseWaits([datetime]$Now = (Get-Date)) {
 
 # ---- qa: checks per day from the QA runs' results.json (7 days): PASS / FAIL / NOT_TESTED / OUT_OF_SCOPE, NOT_TESTED causes, runs per day
 $script:KitQaCauses = 'env-data', 'phone-only', 'tool-down', 'no-mail-sandbox', 'undeployed'   # testy.js CHECKS_SCHEMA cause; anything else: other
-function Get-KitQaDays([datetime]$Now = (Get-Date), [int]$Days = 7) {
-  $from = $Now.Date.AddDays(1 - $Days); $byDay = [ordered]@{}; foreach ($i in ($Days - 1)..0) { $byDay[$Now.Date.AddDays(-$i).ToString('yyyy-MM-dd')] = [ordered]@{} }
+function Get-KitQaDays([datetime]$Now = (Get-Date), [int]$Days = 7, [datetime]$StatsFrom = [datetime]::MinValue) {   # StatsFrom: Get-KitStatsCutoff
+  $from = $Now.Date.AddDays(1 - $Days); if ($StatsFrom -gt $from) { $from = $StatsFrom } $byDay = [ordered]@{}; foreach ($i in ($Days - 1)..0) { $byDay[$Now.Date.AddDays(-$i).ToString('yyyy-MM-dd')] = [ordered]@{} }
   $causes = [ordered]@{}; foreach ($c in @($script:KitQaCauses) + 'other') { $causes[$c] = 0 }
   # <qa-runs>/<run>/<item>/results.json, dated by its last write (a retest rewrites it)
   foreach ($f in @(Get-ChildItem (Get-KitPath qa-runs) -Filter 'results.json' -File -Recurse -Depth 2 -ErrorAction SilentlyContinue | Where-Object LastWriteTime -ge $from)) {
@@ -940,4 +940,23 @@ function Invoke-Stats {
     try { [IO.File]::Move($f.path, $to); $moved++; "moved  $($f.rel) ($kb KB)" } catch { "busy  $($f.rel): $($_.Exception.Message)" }
   }
   if ($moved) { "-> $dst"; Write-KitLog calls stats-reset @{ to = $dst; files = $moved } }
+}
+# the newest reset's day (owner 2026-11-20): charts still built from kept logs (runs, gate, waits, QA, Trends) read nothing before it;
+# the Tuning heatmap and Disk free do; no reset = MinValue
+function Get-KitStatsCutoff {
+  $rd = @(Get-ChildItem -LiteralPath (Get-KitPath forgotten) -Directory -Filter 'stats-reset-*' -ErrorAction SilentlyContinue | ForEach-Object { if ($_.Name -match '^stats-reset-(\d{8})') { [datetime]::ParseExact($Matches[1], 'yyyyMMdd', [cultureinfo]::InvariantCulture) } } | Sort-Object)
+  if ($rd.Count) { $rd[-1] } else { [datetime]::MinValue }
+}
+# a budget -Usage result without what came before $StatsFrom: ended runs started before it (the day they are listed under), its days' values, its MRs; step outcomes recounted
+# from the kept runs (Spend per role stays: the result has no per-day split of it)
+function Select-KitUsageSince($U, [datetime]$StatsFrom) {
+  if (-not $U -or $StatsFrom -eq [datetime]::MinValue) { return $U }
+  $cutDay = $StatsFrom.ToString('yyyy-MM-dd'); $uo = $U.PSObject.Copy()
+  $uo | Add-Member -Force NoteProperty runs @($U.runs | Where-Object { $_ -and ("$($_.status)" -eq 'running' -or $(try { ([datetimeoffset]"$(if ($_.started) { $_.started } else { $_.at })").LocalDateTime -ge $StatsFrom } catch { $false })) })
+  $uo | Add-Member -Force NoteProperty days @($U.days | Where-Object { $_ } | ForEach-Object { if ("$($_.day)" -ge $cutDay) { $_ } else { [pscustomobject]@{ day = "$($_.day)"; tok = $null; cost = $null; runs = $null; merged = $null } } })
+  if ($null -ne $U.mrList) { $uo.mrList = @($U.mrList | Where-Object { $_ -and "$($_.day)" -ge $cutDay }) }
+  if ("$($U.merged.source)" -eq 'host') { $uo.merged = [pscustomobject]@{ source = 'host'; user = $U.merged.user; n = @($uo.mrList).Count } }
+  $wfSteps = @($uo.runs | ForEach-Object { @($_.steps) } | Where-Object { $_ }); $endSteps = @($wfSteps | Where-Object result -in 'pass', 'empty', 'fail', 'stopped')
+  if ($null -ne $U.rates) { $uo.rates = [pscustomobject]@{ n = $endSteps.Count; empty = @($endSteps | Where-Object result -eq 'empty').Count; fail = @($endSteps | Where-Object result -eq 'fail').Count; stopped = @($endSteps | Where-Object result -eq 'stopped').Count; stuck = @($wfSteps | Where-Object result -eq 'stuck').Count; running = @($wfSteps | Where-Object result -eq 'running').Count } }
+  $uo
 }

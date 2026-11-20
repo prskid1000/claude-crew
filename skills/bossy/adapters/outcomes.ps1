@@ -81,8 +81,8 @@ function Update-KitOutcomes([switch]$All) {
 function Get-KitSuperviseFlagsOutcomes([switch]$AutoFix) { if (-not (Within 'outcomes')) { return }; try { $null = Update-KitOutcomes } catch { [pscustomobject]@{ level = 'WATCH'; what = "outcomes sweep failed: $($_.Exception.Message)"; action = 'bossy.ps1 tidy prep reruns it; else a kitty (kind fix)' } } }
 
 # ---- summary: worst areas, repeat causes, most fix rounds (tidy prep digest, dashboard)
-function Get-KitOutcomeStats([int]$Days = (Get-KitParam 'outcomes.days')) {
-  $since = (Get-Date).AddDays(-$Days); $last = @{}
+function Get-KitOutcomeStats([int]$Days = (Get-KitParam 'outcomes.days'), [datetime]$StatsFrom = [datetime]::MinValue) {   # the page: Get-KitStatsCutoff
+  $since = (Get-Date).AddDays(-$Days); if ($StatsFrom -gt $since) { $since = $StatsFrom }; $last = @{}
   foreach ($r in @(Read-KitOutcomeRows)) { $w = @($r.seen, $r.at | Where-Object { $_ })[0]; if ($r.task) { if ($w -and [datetime]$w -ge $since) { $last["$($r.task)"] = $r } else { $last.Remove("$($r.task)") } } }
   $rows = @($last.Values); foreach ($r in $rows) { $r.area = @("$($r.area)" -split ',' | Where-Object { $_ } | ForEach-Object { Get-KitRepoName $_ } | Sort-Object -Unique) -join ',' }   # rows written before alias names
   $qa = @($rows | Where-Object { [int]$_.qaRuns -gt 0 })

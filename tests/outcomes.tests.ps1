@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/outcomes.tests.ps1: adapters/outcomes.ps1 offline: task outcome rows, the tidy digest summary, decision patterns, standing
-rules (propose, the owner's approval, auto-answers, never for deploy, revoke).
+rules (propose, the owner's approval, auto-answers, never for deploy, revoke); the stats-reset cutoff of the page's charts.
 Usage: pwsh -NoProfile -File tests/outcomes.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -114,5 +114,23 @@ Expect 'decide rules -Revoke: the rule stops answering; the rules file keeps onl
 # tidy prep: the digest carries the outcomes section
 $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json
 Expect 'tidy prep: digest has the Outcomes section' ((Get-Content $tp.digest -Raw) -match '## Outcomes, 30 days')
+# stats reset (owner 2026-11-20): the newest forgotten/stats-reset-<day> cuts what the charts read from kept logs; a wait across it is clipped
+$cutT = & { . $O; $n = (Get-Date).Date.AddHours(12); $y = $n.Date.AddDays(-1); $fgDir = Get-KitPath forgotten -Create
+  $cutDirs = @((Join-Path $fgDir "stats-reset-$($n.AddDays(-3).ToString('yyyyMMdd'))"), (Join-Path $fgDir "stats-reset-$($n.ToString('yyyyMMdd'))-101500")); foreach ($cd in $cutDirs) { $null = New-Item -ItemType Directory -Force $cd }
+  $sCut = Get-KitStatsCutoff; $yDir = Join-Path (Get-KitPath audit) $y.ToString('yyyy-MM-dd'); $yNew = -not (Test-Path $yDir); $null = New-Item -ItemType Directory -Force $yDir
+  $yBuilds = Join-Path $yDir 'builds.jsonl'; $yCalls = Join-Path $yDir 'calls.jsonl'
+  @(@{ at = $y.AddHours(20).ToString('o'); event = 'start'; owner = 'old'; waitSec = 600 }, @{ at = $n.Date.AddMinutes(10).ToString('o'); event = 'start'; owner = 'mid'; waitSec = 1200 }, @{ at = $y.AddHours(20).ToString('o'); event = 'end'; kind = 'maven'; owner = 'old'; sec = 60; waitSec = 0; code = 0 }) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content $yBuilds
+  @(@{ at = $y.AddHours(9).ToString('s'); verb = 'board leave'; event = 'start'; pid = 7; args = '-Agent A -Status failed' }, @{ at = $y.AddHours(9).ToString('s'); verb = 'board leave'; event = 'end'; pid = 7; rc = 0 }) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content $yCalls
+  $qaRes = Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath qa-runs) 'cutq/T1')) 'results.json'; @{ checks = @(@{ result = 'PASS' }) } | ConvertTo-Json -Depth 4 | Set-Content $qaRes; (Get-Item $qaRes).LastWriteTime = $y.AddHours(20)
+  $gr = { param($g) @($g.rows | Where-Object name -eq 'maven build').Count }; $wr = { param($w) $b = @($w.rows | Where-Object name -eq 'build gate')[0]; "$($b.n)/$([math]::Round($b.min))" }; $qr = { param($q) @($q.days | Where-Object { @($_.runs).run -contains 'cutq' }).Count }
+  $dr = { param($ds) "$(@($ds | Where-Object day -eq $y.ToString('yyyy-MM-dd'))[0].failed)" }
+  $uIn = [pscustomobject]@{ runs = @([pscustomobject]@{ id = 'a'; status = 'ended'; at = $y.AddHours(20).ToString('o'); steps = @([pscustomobject]@{ result = 'fail' }) }, [pscustomobject]@{ id = 'b'; status = 'ended'; at = $n.ToString('o'); steps = @([pscustomobject]@{ result = 'pass' }) }, [pscustomobject]@{ id = 'c'; status = 'running'; at = $y.ToString('o'); steps = @() }, [pscustomobject]@{ id = 'd'; status = 'ended'; started = $y.AddHours(23).ToString('o'); at = $n.ToString('o'); steps = @() })
+    days = @([pscustomobject]@{ day = $y.ToString('yyyy-MM-dd'); tok = 5; cost = 1 }, [pscustomobject]@{ day = $n.ToString('yyyy-MM-dd'); tok = 7; cost = 2 }); mrList = @([pscustomobject]@{ ref = 'w!1'; day = $y.ToString('yyyy-MM-dd') }, [pscustomobject]@{ ref = 'w!2'; day = $n.ToString('yyyy-MM-dd') })
+    merged = [pscustomobject]@{ source = 'host'; user = 'u'; n = 2 }; rates = [pscustomobject]@{ n = 2; fail = 1 } }
+  $uCut = Select-KitUsageSince $uIn $sCut
+  "$($sCut -eq $n.Date)|$(& $gr (Get-KitGateStats $n @()))$(& $gr (Get-KitGateStats $n @() -StatsFrom $sCut))|$(& $wr (Get-KitLeaseWaits $n)) $(& $wr (Get-KitLeaseWaits $n -StatsFrom $sCut))|$(& $qr (Get-KitQaDays $n)) $(& $qr (Get-KitQaDays $n -StatsFrom $sCut))|$(& $dr (Get-KitSuperviseDays $null $n 3))-$(& $dr (Get-KitSuperviseDays $null $n 3 -StatsFrom $sCut))|" +
+    "$(@($uCut.runs.id) -join ',') $(@($uCut.days | ForEach-Object { "$($_.tok)" }) -join ',') $(@($uCut.mrList).Count)$($uCut.merged.n) $($uCut.rates.n)$($uCut.rates.fail) $([object]::ReferenceEquals((Select-KitUsageSince $uIn ([datetime]::MinValue)), $uIn)) $(@($uIn.runs).Count)"
+  foreach ($cutF in @($yBuilds, $yCalls, $qaRes)) { Remove-Item -LiteralPath $cutF }; Remove-Item -LiteralPath (Split-Path $qaRes) -Recurse; Remove-Item -LiteralPath (Join-Path (Get-KitPath qa-runs) 'cutq'); foreach ($cd in $cutDirs) { Remove-Item -LiteralPath $cd }; if ($yNew) { Remove-Item -LiteralPath $yDir } }
+Expect "stats reset: the newest stats-reset-<day> = cutoff; gate, waits (one clipped), QA, agents failed per day and usage (runs, day values, MRs, step outcomes) drop what came before it ($cutT)" ($cutT -eq 'True|10|2/30 1/10|1 0|1-|b,c ,7 11 10 True 4')
 Remove-TestKit $k
 Complete-Tests

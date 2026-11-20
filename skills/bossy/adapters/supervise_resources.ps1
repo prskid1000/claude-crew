@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L349 shells · L528 page · L1007 release · L1052 lines · L1084 cleanup · L1151 launch ·
-  L1268 pause · L1387 heartbeat · L1402 sessions · L1454 ci tasks ·
-  L1512 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L349 shells · L528 page · L1010 release · L1055 lines · L1087 cleanup · L1154 launch ·
+  L1271 pause · L1390 heartbeat · L1405 sessions · L1457 ci tasks ·
+  L1515 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -527,9 +527,10 @@ function Get-KitSuperviseGuardShells([switch]$AutoFix) {
 
 # ---- page: report page and -Brief stdout (supervise.output)
 # agents failed a day (null = no calls log): ended board leave -Status failed / blocked / error; closed days from $Prev
-function Get-KitSuperviseDays($Prev, [datetime]$Now, [int]$Days = 7) {
-  $today = $Now.ToString('yyyy-MM-dd'); $kept = @{}; foreach ($pd in @($Prev | Where-Object { $_.final -and $null -ne $_.failed -and $null -ne $_.left })) { $kept["$($pd.day)"] = [pscustomobject]@{ day = "$($pd.day)"; final = $true; failed = $pd.failed; left = $pd.left } }   # older records: failed + left kept (a record without left: read again once)
+function Get-KitSuperviseDays($Prev, [datetime]$Now, [int]$Days = 7, [datetime]$StatsFrom = [datetime]::MinValue) {   # a day before StatsFrom (Get-KitStatsCutoff): no source
+  $today = $Now.ToString('yyyy-MM-dd'); $kept = @{}; $cutDay = $StatsFrom.ToString('yyyy-MM-dd'); foreach ($pd in @($Prev | Where-Object { $_.final -and $null -ne $_.failed -and $null -ne $_.left })) { $kept["$($pd.day)"] = [pscustomobject]@{ day = "$($pd.day)"; final = $true; failed = $pd.failed; left = $pd.left } }   # older records: failed + left kept (a record without left: read again once)
   foreach ($i in 0..($Days - 1)) { $day = $Now.AddDays(-$i).ToString('yyyy-MM-dd')
+    if ($day -lt $cutDay) { [pscustomobject]@{ day = $day; final = $false; failed = $null; left = $null }; continue }
     if ($kept.ContainsKey($day)) { $kept[$day]; continue }
     $rec = [ordered]@{ day = $day; final = $day -ne $today; failed = $null; left = $null }
     $cf = Join-Path (Get-KitPath audit) "$day/calls.jsonl"
@@ -596,15 +597,15 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $rs = [ordered]@{}; foreach ($r0 in @($d.resources | Where-Object { $_.name })) { $rs["$($r0.name)"] = [pscustomobject]@{ gb = $r0.gb; by = "$($r0.by)" } }   # each resource's RAM + holder: the cards' 24 h history
     $rsw = @((Get-KitRepoSweep).repos | Where-Object { $_ })   # the Branches tile's lines
     $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
-  $usage = Read-KitUsageResult   # budget -Usage writes it
-  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
+  $statsFrom = Get-KitStatsCutoff; $usage = Select-KitUsageSince (Read-KitUsageResult) $statsFrom   # budget -Usage writes it; nothing before the stats reset
+  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at -StatsFrom $statsFrom } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
     paramDays = @(try { Get-KitParamDays $d.at } catch { })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ((Get-KitMember $apv "$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })") -or (Get-KitMember $apv "$($_.key)|")) { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
             learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); changed = $_.changed; why = $_.why } } } catch { }) }
   $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
-  $stats.gate = try { Get-KitGateStats $d.at @($d.resources) } catch { $null }
-  $stats.waits = try { Get-KitLeaseWaits $d.at } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
+  $stats.gate = try { Get-KitGateStats $d.at @($d.resources) -StatsFrom $statsFrom } catch { $null }
+  $stats.waits = try { Get-KitLeaseWaits $d.at -StatsFrom $statsFrom } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at -StatsFrom $statsFrom } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
   $stats.writes = try { $wc = Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'supervise-writes.json') -Raw | ConvertFrom-Json; if ($wc.at) { Get-KitWriteView @($wc.samples) @(Get-Content -LiteralPath (Get-KitPath disk-writes) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } }) $d.at } } catch { $null }   # Get-KitSuperviseFlagsWrites; history: Update-KitWriteHistory
   $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
@@ -772,10 +773,10 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     @($setRows | Where-Object { $sk = $_[0]; -not @($prm | Where-Object { "$($_.key)" -eq $sk -and "$($_.ctx)" -in '', '_' }).Count } | ForEach-Object { $sv = $_[1]; $hasSrc = $null -ne $sv -and (Get-KitProps $sv).Name -contains 'source'
       [pscustomobject]@{ key = $_[0]; ctx = ''; val = & $tv $(if ($hasSrc) { $sv.value } else { $sv }); src = $(if ($hasSrc) { & $tSrc "$($sv.source)" '' $sv.default } else { '' }); chg = ''; why = '' } }))
   $srcK = { param([string]$s) if ($s -like 'learned*') { 'l' } elseif ($s -like 'shadow*') { 's' } elseif ($s -like 'local*') { 'c' } elseif ($s -in '', 'default') { 'd' } else { 'o' } }
-  # a group = a fold (owner 2026-11-20): name, count, changed this week + source mix; over 12 tiles closed by default, kept per id (kc-open)
+  # a group = a fold (owner 2026-11-20): name, count, changed this week + source mix; closed by default, kept per id (kc-open)
   $tunG = @(foreach ($g in @($tun | Group-Object { ($_.key -split '\.')[0] } | Sort-Object Name)) { $gp = "$($g.Name)."; $gk = @($g.Group | ForEach-Object { & $srcK $_.src }); $g7 = @($g.Group | Where-Object { $_.c7 }).Count
       $gSum = @($(if ($g7) { "$g7 changed this week" } else { 'unchanged this week' })) + @(@(@('l', 'learned'), @('s', 'shadow'), @('c', 'local')) | ForEach-Object { $kn = $_; $nk = @($gk | Where-Object { $_ -eq $kn[0] }).Count; if ($nk) { "$nk $($kn[1])" } })
-      "<details class='tgr f' id='tg-$(& $e ($g.Name -replace '[^\w-]', '-'))'$(if ($g.Count -le 12) { ' open' })><summary><span class=tgn>$(& $e $g.Name)<small>$($g.Count)</small></span><span class=tgm>$(& $e ($gSum -join ' · '))</span></summary><div class=tgt>$(@($g.Group | Sort-Object key, ctx | ForEach-Object { $sk = & $srcK $_.src
+      "<details class='tgr f' id='tg-$(& $e ($g.Name -replace '[^\w-]', '-'))'><summary><span class=tgn>$(& $e $g.Name)<small>$($g.Count)</small></span><span class=tgm>$(& $e ($gSum -join ' · '))</span></summary><div class=tgt>$(@($g.Group | Sort-Object key, ctx | ForEach-Object { $sk = & $srcK $_.src
           "<span class='pt f p-$sk$(if ($_.c7) { ' c7' })' title='$(& $e "$($_.key)$(if ($_.ctx) { " [$($_.ctx)]" }) = $($_.val) · $(if ($_.src) { $_.src } else { 'default' })$(if ($_.chg) { " · changed $($_.chg)" })$(if ($_.why) { " · $($_.why)" })")'><small>$(& $e $(if ($_.key.StartsWith($gp)) { $_.key.Substring($gp.Length) } else { $_.key }))$(if ($_.ctx) { & $e " · $($_.ctx)" })</small><b>$(& $e $_.val)</b><span hidden>$(& $e "$($_.key) $($_.ctx)")</span></span>" }) -join '')</div></details>" })
   $tLeg = "<div class=hk><i class='lgk pl'></i>learned <i class='lgk ps'></i>shadow (proposed) <i class='lgk pc'></i>local config <i class='lgk pd'></i>default · outlined = changed in 7 days · hover a tile for its context, source and why</div>"
   # changed keys (owner 2026-11-20, K100; stats.paramDays): a row per key + scope (short label, full one in the tooltip), the latest change
@@ -795,7 +796,9 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $tTsv = (@("key`tcontext`tvalue`tsource`tchanged`twhy") + @($tun | Sort-Object key, ctx | ForEach-Object { (@($_.key, $_.ctx, $_.val, $(if ($_.src) { $_.src } else { 'default' }), $_.chg, $_.why) | ForEach-Object { "$_" -replace '[\t\r\n]+', ' ' }) -join "`t" })) -join "`n"
   # in the section header, right-aligned (owner 2026-11-20); its click never toggles the fold
   $tCopy = "<button type=button class='chip tsv' data-tsv='$(& $e $tTsv)' title='the $($tun.Count) rows as tab-separated text'>copy as TSV</button>"
-  $setHtml = & $fold 'tuning' 'Tuning' $tun.Count -extra $tCopy "$(if ($drift) { "<div class=pdk data-mk=param-day>$drift</div><div class=hk><i class='lgk pu'></i>up <i class='lgk pw'></i>down · →default = reset to the default · now = the value today · hover a row for the full key, scope and why</div>" })<div class=tgs data-mk=params-now>$($tunG -join '')</div>$tLeg" -cls sub
+  # all tile groups in one fold under the heatmap, closed by default (owner 2026-11-20); kept in kc-open, the filter opens it
+  $tSet = & $fold 'settings' 'Settings' $(if ($tun.Count) { @{ h = & $e "$($tun.Count) keys · $(@($tun | Where-Object { $_.c7 }).Count) changed this week" } } else { 0 }) "<div class=tgs data-mk=params-now>$($tunG -join '')</div>$tLeg" -cls sub
+  $setHtml = & $fold 'tuning' 'Tuning' $tun.Count -extra $tCopy "$(if ($drift) { "<div class=pdk data-mk=param-day>$drift</div><div class=hk><i class='lgk pu'></i>up <i class='lgk pw'></i>down · →default = reset to the default · now = the value today · hover a row for the full key, scope and why</div>" })$tSet" -cls sub
   $css = (Get-KitSupervisePageCss) + (Get-KitStatsCss)
   $fav = if ($mark) { "<link rel=icon href='data:image/svg+xml,$([Uri]::EscapeDataString($mark))'>" }
   $js = "(function(){var d=document,L=localStorage,S=sessionStorage,r=d.documentElement,a=d.getElementById('age'),t=new Date(a.dataset.at),n=+a.dataset.next||15,nx=d.getElementById('nx'),same=S.getItem('kc-at')==a.dataset.at;S.setItem('kc-at',a.dataset.at);" +   # same: a reload brought no new sweep
@@ -864,7 +867,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   # top to bottom (owner 2026-11-19): flags, runs, resources, shells; Kit internals (folded) = Trends + Tuning
   $nSh = @($j.shells | Where-Object { $_ }).Count
   # Trends (owner 2026-11-19): Delivery + Usage + kit health in one day heatmap, its tiles one strip, spend and repos as sub-blocks (adapters/outcomes.ps1)
-  $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats } catch { $null } }
+  $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats -StatsFrom (Get-KitStatsCutoff) } catch { $null } }
   $trends = try { Format-KitDeliveryHtml $oc $UP (Format-KitQaTile $st.qa $at) @(@($UP.dayRows) + @($hRows)) "$($UP.spend)$(Format-KitRepoGrid $st.repos $st.sync)" } catch { "<p class=m>Trends view failed: $(& $e $_.Exception.Message)</p>" }
   $runsH = try { Format-KitRunsTimeline @($st.usage.runs) $agents @($UP.pages.Keys) } catch { "<p class=m>Runs view failed: $(& $e $_.Exception.Message)</p>" }
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$($UP.pages[$pk] -replace " data-tip='", " title='")</main></body></html>" } }
