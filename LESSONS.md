@@ -61,8 +61,10 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
+- a guide covers RM and HM on a run with one target -> split the other product part into its own check before the run (HM check stayed NOT_TESTED, lead silent 10 min)
+- a testy run ends via launch -Done -> finish the Learn phase (record signals) before launch -Done (run stopped before Learn 3x: steps and results lost)
 - writing run.json title/text for finalize -Check -> keep title <= 25 words and every sentence <= 25 words; run kitbag.py prose before finalize (4 finalize -Check failures cost reruns)
-- calling a kit script (pokey.ps1 prepare, results patch) from Bash -> pwsh -NoProfile -File <script> <verb> with the JSON in single quotes, or a .ps1 in the run dir that calls it (the guard denies a script in command position, -Command or a heredoc: 13x on 2026-11-19) (2×)
+- calling a kit script (pokey.ps1 prepare, results patch) from Bash -> pwsh -NoProfile -File <script> <verb> with the JSON in single quotes, or a .ps1 in the run dir that calls it (the guard denies a script in command position, -Command or a heredoc: 13x on 2026-11-19) (3×)
 - results patch carries a row key firstAttempt -> use only keys in testy.js CHECKS_SCHEMA; fold the content into observed (9 refusals and re-runs of patch in one day)
 - finalize -Check -Results results-retry.json on a scoped retry -> check only rows in the retry file; expect docgaps to flag rows it does not cover and publish with the item results.json check instead (3 signals: false doc-check failures on unpublished rows)
 - writing testing-doc or check texts with prose limits -> write to the word limit first and keep the key request (e.g. server-log check) when cutting (prose check failed twice; shortening dropped the server-log request)
@@ -107,6 +109,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- writing test data or fixtures -> use invented paths and ids, never copy a real repo path or cloud resource id from live state (pre-push ORG-TERM block)
+- a scripted replace has ONE pair -> write @(,@(a,b)) so PowerShell keeps the pair nested (single pair flattened, every 5 in a file was replaced)
 - changing a status-guard or transition table -> run every -Area that starts tasks open (pokey, qa-config), not only the touched one (QA fixtures broke after a transition-table change)
 - two kittys start in the same minute (run id kit-<kind>-<HHmm>) -> add a random suffix or the printed PARALLEL id to the run id and worktree name (kit-build-1710 shared one worktree and board row (REJOIN merged them)
 - a shell command reads stdin (heredoc ending in cat > /dev/null) -> never run a stdin-reading command; use a timeout or bounded input (blocked 64 min, SHELL STALLED)
