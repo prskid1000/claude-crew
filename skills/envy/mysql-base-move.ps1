@@ -16,7 +16,7 @@ templates); dir `<Lanes>/mysql-rm-falcon`, ini `<Lanes>/mysql-rm-falcon.ini` (co
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L41 names · L48 ini and config edit · L131 rename · L219 checks · L268 apply · L331 search data
+Sections: L41 names · L48 ini and config edit · L138 rename · L226 checks · L275 apply · L338 search data
 #>
 param([string[]]$Targets, [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
   [string]$Bin, [string]$Service, [int]$VerifyPort = 3399,
@@ -50,8 +50,9 @@ function Get-Bird([int]$N) { if ($N -ge 1 -and $N -le @($Birds).Count) { "$(@($B
 function New-BaseIni([string[]]$Template, [int]$Port, [string]$Dir) {
   # redo: mysqld 8.0.30+ rewrites its whole capacity at every start (measured: 512M -> 510 MB written per start, 64M -> 76 MB)
   # the binlog stays as the template has it: envy marks and restores read it (db_presets.ps1: log_bin OFF = no marks); the load runs without it
-  $force = @('innodb_doublewrite=OFF', 'innodb_flush_log_at_trx_commit=2', 'general_log=0', 'slow_query_log=0', 'innodb_redo_log_capacity=64M')
-  $drop = '^\s*(innodb[-_]doublewrite|innodb[-_]flush[-_]log[-_]at[-_]trx[-_]commit|innodb[-_]redo[-_]log[-_]capacity|general[-_]log|slow[-_]query[-_]log)\s*(=|$)'
+  # binlog_row_metadata FULL: the donor's SET PERSIST (mysqld-auto.cnf) stays behind; envy restores by column name need it
+  $force = @('innodb_doublewrite=OFF', 'innodb_flush_log_at_trx_commit=2', 'general_log=0', 'slow_query_log=0', 'innodb_redo_log_capacity=64M', 'binlog_row_metadata=FULL')
+  $drop = '^\s*(innodb[-_]doublewrite|innodb[-_]flush[-_]log[-_]at[-_]trx[-_]commit|innodb[-_]redo[-_]log[-_]capacity|general[-_]log|slow[-_]query[-_]log|binlog[-_]row[-_]metadata)\s*(=|$)'
   @(foreach ($l in $Template) {
     if ($l -match '^\s*port\s*=') { "port=$Port" } elseif ($l -match '^\s*datadir\s*=') { "datadir=$Dir" } elseif ($l -match $drop) { continue } else { $l }
     if ($l -match '^\s*\[mysqld\]\s*$') { $force }
@@ -96,6 +97,12 @@ function Update-BaseMoveConfig($Cfg, [string[]]$Spec, [int]$Donor, [string]$Lane
       if (($s | ConvertTo-Json -Depth 10 -Compress) -ne $before) { $changed += "envs.$n.services[mysql] names -> bird ({bird} in the lane templates)" }
     }
   }
+  # the disk guard sizes only storage.watch paths (envy doctor: "storage.watch lacks the db datadir")
+  if ($LanesDir) {
+    if (-not $Cfg['storage']) { $Cfg['storage'] = [ordered]@{} }
+    $watch = @($Cfg['storage']['watch'] | Where-Object { $_ }); $lanesNorm = $LanesDir.Replace('\', '/').TrimEnd('/')
+    if (-not @($watch | Where-Object { ($lanesNorm + '/').StartsWith("$_".Replace('\', '/').TrimEnd('/') + '/', [StringComparison]::OrdinalIgnoreCase) }).Count) { $Cfg['storage']['watch'] = @($watch) + $lanesNorm; $changed += "storage.watch + $lanesNorm (the lane datadirs)" }
+  }
   $Cfg['localEnv']['laneIds'] = 'bird'   # lane ids <product>-<bird>; the old <product><k> keys become the new ids, the old ids stay accepted aliases
   $renamed = [ordered]@{}
   foreach ($n in @($envs.Keys)) {
@@ -137,7 +144,7 @@ function Get-LaneIds($Envs) {
     $n; for ($k = 2; $k -le $max; $k++) { "$n$k" }
   }
 }
-function Get-LaneSlug([string]$Id) { if ($Id -match '^(\D+)(\d*)$') { "$($Matches[1])-$(Get-Bird $(if ($Matches[2]) { [int]$Matches[2] } else { 1 }))" } else { $Id } }
+function Get-LaneSlug([string]$Id) { if ($Id -match '^([^\d-]+)(\d*)$') { "$($Matches[1])-$(Get-Bird $(if ($Matches[2]) { [int]$Matches[2] } else { 1 }))" } else { $Id } }
 if ($Rename -or $Rollback) {
   $jf = "$Lanes/rename-journal.json"; $bak = "$Lanes/rename-backup"
   $stateDir = Split-Path $Lanes; $wd = "$Runtime/work/localenv"; $ld = "$Runtime/logs/localenv"
@@ -173,7 +180,7 @@ if ($Rename -or $Rollback) {
       }
     }
     # the lane's mysql server
-    $ms = @($envsR[$id]['services'] | Where-Object { $_ -and $_['name'] -eq 'mysql' -and $_['start'] })[0]
+    $ms = if ($envsR[$id]) { @($envsR[$id]['services'] | Where-Object { $_ -and $_['name'] -eq 'mysql' -and $_['start'] })[0] }   # after -Config -Apply: lane keys are bird names
     $old = "$Lanes/mysql-$id"; $new = "$Lanes/mysql-$slug"
     if ($ms -and (Test-Path -LiteralPath $old)) {
       if ((Test-Path -LiteralPath $new) -or (Test-Path -LiteralPath "$new.ini")) { $badR += "$new exists" }
