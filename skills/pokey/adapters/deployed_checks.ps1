@@ -297,7 +297,9 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   $m = if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { "$m".Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' }   # an MR URL or <group>/<repo>!<iid> -> <repo>!<iid> (as bossy.ps1 ConvertTo-MrRef; pokey does not load bossy)
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>, <group>/<repo>!<iid> or an MR URL' }; continue }
   $r = Repo $Matches.repo; $iid = $Matches.iid
-  if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }
+  # K106: a repo nothing deploys (docs) is n/a, never BAD-REF (it left a task out of a testy run)
+  if (-not $r) { [pscustomobject]@{ mr = $m; target = "$Target"; state = 'N/A'; detail = 'n/a: repo not in kit.local.json repos (no deploy config)' }; continue }
+  if (-not @($r.deploys | Where-Object { $_ }).Count) { [pscustomobject]@{ mr = "$($r.name)!$iid"; target = "$Target"; state = 'N/A'; detail = 'n/a: no deploys configured for this repo' }; continue }
   $p = Get-HostProject $r.name -Raw; $ref = "$($r.name)!$iid"   # gitHostGroup/<repo>
   $mr = if ($rcache["mr|$ref"]) { $rcache["mr|$ref"].mr } else { Hv 'mr.get' @{ n = $iid } }
   if ($mr.state -eq 'merged' -and -not $rcache["mr|$ref"]) { $rcache["mr|$ref"] = @{ at = (Get-Date).ToString('o'); mr = $mr | Select-Object iid, state, merged_at, target_branch, squash_commit_sha, merge_commit_sha, sha }; $rdirty.on = $true }   # a merged MR never changes
@@ -309,7 +311,7 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   $s8 = $sha.Substring(0, [math]::Min(8, $sha.Length))
   # deploys[].serves: the app envs a service host backs (a backend service of the app env checked on its own hosts)
   $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -in @(Split-KitList $Target) -or @(@($_.serves) | Where-Object { $_ -in @(Split-KitList $Target) }).Count) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
-  if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = $(if (@($r.deploys).Count -and $Target) { "no deploys[] entry of $($r.name) has target or serves $Target (map an app env to this repo's hosts: deploys[].serves)" } else { 'no deploys configured for this repo' }) }; continue }
+  if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = $(if ($Target) { "no deploys[] entry of $($r.name) has target or serves $Target (map an app env to this repo's hosts: deploys[].serves)" } else { "every deploys[] entry of $($r.name) matches -Exclude $Exclude" }) }; continue }
   foreach ($d in $deps) {
     if ($d.from -and $mr.target_branch -and $mr.target_branch -notin @($d.from) -and $mr.target_branch -ne $d.branch) { Row $d 'N/A' "n/a for $($d.target): merged into $($mr.target_branch), not $(@($d.from) -join ' / ')"; continue }   # before any probe (ssh, pipelines)
     if (@(Get-DeployPaths $d).Count) {   # an MR outside the target's paths is n/a there: no ssh, no NOT-DEPLOYED

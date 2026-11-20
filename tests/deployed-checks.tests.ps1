@@ -30,10 +30,12 @@ $env:JOB_ST = 'success'; $env:KIT_API_BEAT = 'bt4'; $j2 = Invoke-Deployed -Mrs '
 "job:$($j1.state -eq 'NOT-DEPLOYED' -and $j1.detail -match 'no successful' -and $j2.state -eq 'DEPLOYED') $($j1.state)/$($j2.state)"; Set-Item function:Invoke-HostApi $hostApi0
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@
-'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"phones","laneApk":true}]}]}' | Set-Content $kl
+'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"phones","laneApk":true}]},{"name":"docs"}]}' | Set-Content $kl
 $res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" (Kd) 2>&1); $api.proc.Kill()
 $dl = @(Px $Q deployed -Mrs 'nope,zz!1' -Lines 2>&1); $dlc = $LASTEXITCODE
-$dt = @(Px $Q deployed -Mrs 'nope,zz!1' -Json -TimeoutSec 0 2>&1 | Out-String | ConvertFrom-Json); Remove-Item $kl
+$dt = @(Px $Q deployed -Mrs 'nope,zz!1' -Json -TimeoutSec 0 2>&1 | Out-String | ConvertFrom-Json)
+$dDoc = Px $Q deployed -Mrs 'docs!2' -Target stg -Json 2>&1 | Out-String | ConvertFrom-Json; $dDocC = $LASTEXITCODE; Remove-Item $kl
+Expect "deployed K106: a configured repo with no deploys[] is N/A (no host call), exit 0 ($dDocC $($dDoc.state))" ($dDocC -eq 0 -and $dDoc.state -eq 'N/A' -and $dDoc.detail -match 'no deploys configured')
 Expect 'deployed -TimeoutSec: past the deadline the MRs left are UNKNOWN, the first is checked' ($dt.Count -eq 2 -and $dt[0].state -eq 'BAD-REF' -and $dt[1].state -eq 'UNKNOWN' -and $dt[1].detail -match 'TimeoutSec 0 reached')
 # prepare calls Invoke-Deployed in-process: its -Json returns, so prepare (pwsh -File, as testy runs it) still writes run.json and prints RUN
 $env:KIT_TRACKER_TYPE = 'none'; $craftyQ = Join-Path $k 'skills/crafty/crafty.ps1'
@@ -42,9 +44,9 @@ $null = pwsh -NoProfile -File $craftyQ tracker status $tPrep 'in test' 2>&1
 $prepJob = @{ runFolder = "$(Kd)/qa-runs/<yyyy-MM-dd>-dep"; tasks = @($tPrep); target = 'stg'; kitDir = $k } | ConvertTo-Json -Compress
 $prepOut = @(pwsh -NoProfile -File $Q prepare -Job $prepJob 2>&1); $prepCode = $LASTEXITCODE; $env:KIT_TRACKER_TYPE = $null
 $prepRun = try { "$($prepOut[-1])" -replace '^RUN ' | ConvertFrom-Json } catch { $null }
-Expect "prepare with deployed_checks.ps1: exit 0, RUN line, run.json; the not-live task left out ($prepCode $($prepOut[-2]))" ($prepCode -eq 0 -and $prepRun -and (Test-Path "$($prepRun.runDir)/run.json") -and $prepRun.left[0].reason -match 'not live on stg: nope!1 BAD-REF')
-$dj = @($dl | ForEach-Object { try { "$_" | ConvertFrom-Json } catch {} } | Where-Object state -eq 'BAD-REF')
-Expect "deployed -Lines: one JSON row per line, exit 1 when not all deployed ($dlc $($dl.Count))" ($dlc -eq 1 -and $dl.Count -eq 2 -and $dj.Count -eq 2 -and $dj[1].mr -eq 'zz!1')
+Expect "prepare with deployed_checks.ps1: exit 0, RUN line, run.json; K106: a task whose MR is in a repo with no deploy config stays in ($prepCode $($prepOut[-2]))" ($prepCode -eq 0 -and $prepRun -and (Test-Path "$($prepRun.runDir)/run.json") -and -not @($prepRun.left).Count)
+$dj = @($dl | ForEach-Object { try { "$_" | ConvertFrom-Json } catch {} })
+Expect "deployed -Lines: one JSON row per line, exit 1 when not all deployed; K106: a repo not in kit.local.json = N/A, a bad ref BAD-REF ($dlc $(@($dj.state) -join ','))" ($dlc -eq 1 -and $dl.Count -eq 2 -and $dj[0].state -eq 'BAD-REF' -and $dj[1].state -eq 'N/A' -and $dj[1].mr -eq 'zz!1')
 foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'logs', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
 Expect "deployed ssh: one ssh per host, a later MR's ancestry read locally; a hung ssh ends at deploy.sshTimeoutSeconds ($($res -match '^(host|bound):'))" (@($res) -contains 'host:True' -and @($res) -contains 'bound:True')
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
