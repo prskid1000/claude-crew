@@ -213,7 +213,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   write, cache read; a $ each at the model's per-type price) + the total, every duration model / tools / waiting + elapsed
   (transcript gaps; a tool's kind from its command; the gate's printed queue time = waiting); the cell's width picks the form
   (container query): wide all tiles, medium work / cache + total, narrow the total over a 4-part bar; the tooltip holds every
-  value; a transcript first read before the split: "split not recorded" (a run: "split: N of M steps");
+  value; a heatmap's split column names its tiles in the column head; a transcript first read before the split: "split not
+  recorded", a duration "wall clock" (a run: "split: N of M steps"); time counts inside the 7-day window only;
 - palette: muted sage / slate / stone / clay tokens, each fill capped (`--kcap`) so text keeps 4.5:1 in both themes; every
   legend one short line of swatches and 1-2 word keys, the explanation in an (i) tooltip;
 - runs: one runs x hour heatmap (a cell = minutes active under that hour's output tokens), live runs on top over the last 24 h,
@@ -233,7 +234,7 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   came back %, median fix rounds, p50 hours to promoted, output tokens per merged MR, review + fix share, a tile per step outcome: a tap
   shows the runs with it); ONE day heatmap (MRs merged per repo, tasks closed, came back, runs started: a cell filters the task
   list or the runs; est. cost, tokens, sweep s, agents failed / finished, branches, worktrees); tasks per repo by outcome, work in
-  flight, test runs; Spend per role (roles x steps, tokens · est. cost, share, avg / p90 time and the 3 biggest models' share);
+  flight, test runs; Spend per role (roles x steps, tokens · est. cost, share, avg / p90 time = active minutes, wall clock where no split, and the 3 biggest models' share);
   Repos now (repo x branches, worktrees, kept, dirty amber, diverged red);
 - kit internals (folded): Tuning: Settings = a tile map of key groups (width = keys, sage = changed this week, a source strip; a
   tap opens the group as a full row: a tile per key, colour = learned / shadow / local / default, the value inside, changed in 7

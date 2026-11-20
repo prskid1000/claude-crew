@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L306 split · L375 budget
+Sections: L9 usage · L314 split · L388 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -14,6 +14,7 @@ function Update-KitUsageFile([string]$Path, $Rec, [ref]$Left) {
   if (-not $Rec -or $null -eq $Rec.days -or [int]$Rec.v -lt 3 -or [long]$Rec.off -gt $fi.Length) { $Rec = [ordered]@{ v = 3; off = 0L; in = 0L; out = 0L; cr = 0L; cw = 0L; cw1 = 0L; n = 0; tools = 0; model = ''; t0 = ''; t1 = ''; lastId = ''; lastU = @(0, 0, 0, 0, 0); days = @{} } }   # older cache: no per-day + model vectors, reread
   # time split + hourly tokens (owner 2026-11-20): whole only when read from offset 0; an older record counts on, flagged partial (never reread for it)
   if ($null -eq $Rec.tm) { $Rec['tm'] = @(0.0, 0.0, 0.0, 0.0, 0.0, 0.0); $Rec['tOk'] = [long]$Rec.off -eq 0; $Rec['tL'] = ''; $Rec['tK'] = ''; $Rec['tC'] = 4; $Rec['hrs'] = @{}; $Rec['tOff'] = [long]$Rec.off }
+  if ($null -eq $Rec.tmd -and [long]$Rec.off -eq 0) { $Rec['tmd'] = @{} }   # the split per day: only a read from offset 0 (an older record keeps its whole-file split)
   if ($Rec.tOk -and [long]$Rec.tOff -ne [long]$Rec.off) { $Rec.tOk = $false }   # an older reader moved the offset past the split: partial from here
   $Rec['tOff'] = [long]$Rec.off
   $n = [int][math]::Min([math]::Min($fi.Length - [long]$Rec.off, [math]::Max([long]0, [long]$Left.Value)), [long]256MB); if ($n -le 0) { return $Rec }
@@ -42,6 +43,7 @@ function Update-KitUsageFile([string]$Path, $Rec, [ref]$Left) {
         if (@(for ($i = 0; $i -lt 5; $i++) { $now5[$i] - $was[$i] }) -ne 0) { $Rec.hrs[$hk] = @(for ($i = 0; $i -lt 5; $i++) { [long]$hv[$i] + $now5[$i] - $was[$i] }) } } }
   }
   if ($Rec.hrs -and $Rec.hrs.Count) { $cut = (Get-Date).AddDays(-8).ToString('yyyy-MM-dd'); foreach ($hk in @($Rec.hrs.Keys | Where-Object { "$_" -lt $cut })) { $Rec.hrs.Remove($hk) } }
+  if ($Rec.tmd -and $Rec.tmd.Count) { $cut = (Get-Date).AddDays(-8).ToString('yyyy-MM-dd'); foreach ($dk in @($Rec.tmd.Keys | Where-Object { "$_" -lt $cut })) { $Rec.tmd.Remove($dk) } }
   $Rec
 }
 # a transcript line's time (owner 2026-11-20): prompt or tool result -> assistant = model (a gap over 30 min = idle); tool_use -> its results = that
@@ -52,6 +54,8 @@ function Step-KitUsageTime($Rec, [string]$L, [string]$Ts) {
   if ($isA) { if ($Rec.tK -and $gap -le 1800) { $tm[0] += $gap }; if ($L.Contains('"type":"tool_use"')) { $Rec.tK = 'a'; $Rec.tC = Get-KitToolTimeKind $L } else { $Rec.tK = 'e' } }
   elseif ($L.Contains('"tool_result"')) { if ($Rec.tK -in 'a', 'r') { $q = [math]::Min($gap, [double](@([regex]::Matches($L, '\[gate\] starting:[^\\"]*?queued (\d+) s') | ForEach-Object { [double]$_.Groups[1].Value }) + 0 | Measure-Object -Sum).Sum); $tm[[int]$Rec.tC] += $gap - $q; $tm[5] += $q }; $Rec.tK = 'r' }
   else { $Rec.tK = 'u' }
+  if ($null -ne $Rec.tmd) { $dk = $t.LocalDateTime.ToString('yyyy-MM-dd'); $d6 = @(if ($Rec.tmd[$dk]) { $Rec.tmd[$dk] } else { 0, 0, 0, 0, 0, 0 }); $was6 = @($Rec.tm)   # per day: the 7-day window counts its own days only
+    $Rec.tmd[$dk] = @(for ($i = 0; $i -lt 6; $i++) { [double]$d6[$i] + $tm[$i] - [double]$was6[$i] }) }
   $Rec.tm = $tm; $Rec.tL = $Ts
 }
 # a tool_use line's time kind: 5 waiting (monitors, questions, decisions, leases, sleeps) · 1 builds + tests (gated) · 2 CI / pipelines · 3 browser / QA / phones · 4 other
@@ -116,7 +120,8 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
   try { $lkh = [IO.File]::Open($lk, 'CreateNew', 'Write', 'None') } catch { return (Read-KitUsageResult) }   # another run reads: its last result
   try {
   $meta = { param([string]$f) try { Read-KitText ($f -replace '\.jsonl$', '.meta.json') | ConvertFrom-Json } catch { $null } }
-  $mins = { param($r) if ($r.t0 -and $r.t1) { [math]::Round(([datetimeoffset]$r.t1 - [datetimeoffset]$r.t0).TotalMinutes, 1) } }
+  # elapsed inside the window: a main session open for 15 days read 22184 min in a 7-day window (2026-11-20)
+  $mins = { param($r) if ($r.t0 -and $r.t1) { $a0 = [datetimeoffset]$r.t0; if ($a0 -lt [datetimeoffset]$since) { $a0 = [datetimeoffset]$since }; [math]::Round([math]::Max(0.0, ([datetimeoffset]$r.t1 - $a0).TotalMinutes), 1) } }
   $tok4 = { param($v) [long]$v[0] + [long]$v[1] + [long]$v[2] + [long]$v[3] }
   $price = { param($v, [string]$model) $c = Get-KitUsageCostSplit $v $model; $tk = & $tok4 $v; if ($null -eq $c -and $tk) { $mk = if ($model) { $model } else { '(no model)' }; $unp[$mk] = [long]$unp[$mk] + $tk }; $c }   # [in, out, cache read, cache write] USD
   # a step from a file record: its in-window tokens; $x = the step's own fields; $null = no tokens in the window (spent before it)
@@ -131,8 +136,9 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
     $tk = & $tok4 $v; if (-not $tk -and $u.days -and $u.days.Count) { return }
     $hr = @{}; if ($u.tOk -and $u.hrs) { foreach ($kv in $u.hrs.GetEnumerator()) { $hd, $hm = "$($kv.Key)" -split '[|]', 2; if ($hd.Substring(0, 10) -notin $dayKeys) { continue }; $hv = @($kv.Value | ForEach-Object { [long]$_ })
         $hc = Get-KitUsageCostSplit $hv $(if ($hm) { $hm } else { $model }); $hr[$hd] = & $add $hr[$hd] (@($hv[0..3]) + @(if ($hc) { $hc } else { 0, 0, 0, 0 })) 8 } }
-    $tmv = if ($u.tOk -and $null -ne $u.tm) { @($u.tm | ForEach-Object { [math]::Round([double]$_ / 60, 1) }) }
-    $o = [ordered]@{ run = ''; wid = ''; label = ''; type = ''; role = ''; model = $model; in = $v[0]; out = $v[1]; cr = $v[2]; cw = $v[3]; cw1 = $v[4]; tok = $tk; cost = $cs; cs = $c4; tm = $tmv; hrs = $hr; min = (& $mins $u); tools = [int]$u.tools; result = 'pass'; round = 1; retry = 0; dayc = $dc; at = ''; mrs = @() }
+    $tmS = if ($u.tmd) { $s6 = @(0.0) * 6; foreach ($kv in $u.tmd.GetEnumerator()) { if ("$($kv.Key)" -in $dayKeys) { for ($i = 0; $i -lt 6; $i++) { $s6[$i] += [double]@($kv.Value)[$i] } } }; $s6 } elseif ($u.t0 -and [datetimeoffset]$u.t0 -ge [datetimeoffset]$since) { $u.tm }   # the window's days only; no per-day split and begun before the window: unsplit (wall clock)
+    $tmv = if ($u.tOk -and $null -ne $tmS) { @($tmS | ForEach-Object { [math]::Round([double]$_ / 60, 1) }) }
+    $o = [ordered]@{ run = ''; wid = ''; label = ''; type = ''; role = ''; model = $model; in = $v[0]; out = $v[1]; cr = $v[2]; cw = $v[3]; cw1 = $v[4]; tok = $tk; cost = $cs; cs = $c4; tm = $tmv; act = $(if ($tmv) { [math]::Round(($tmv | Measure-Object -Sum).Sum, 1) }); hrs = $hr; min = (& $mins $u); tools = [int]$u.tools; result = 'pass'; round = 1; retry = 0; dayc = $dc; at = ''; mrs = @() }
     foreach ($kv in $x.GetEnumerator()) { $o[$kv.Key] = $kv.Value }; [pscustomobject]$o }
   # steps' split sums (runs, roles, sessions): tokens by type, cs, tm over the tmN steps that have one (agent minutes: parallel steps add up);
   # hours stay on the steps (the runs band sums them)
@@ -187,7 +193,8 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
     $u = & $read $f.FullName; $st = & $mkStep $u "$($u.model)" @{ label = "session $($f.BaseName)"; type = 'coordinator'; role = 'coordinator'; at = (& $atOf $u $f.FullName) }; if (-not $st -or -not $st.tok) { continue }
     $steps.Add($st); $coord.Add((& $withSplit ([pscustomobject]@{ session = $f.BaseName; model = $st.model; tok = $st.tok; cost = $(if ($null -ne $st.cost) { [math]::Round($st.cost, 2) }); min = $st.min; at = $st.at }) @($st))) }
   foreach ($k in @($cache.Keys)) { if (-not $seen[$k]) { $cache.Remove($k) } }   # older than $Days: dropped
-  $grp = { param([string]$by, $ss = $steps) @($ss | Where-Object { (Get-KitMember $_ $by) -and $_.tok } | Group-Object $by | ForEach-Object { $g = @($_.Group); [pscustomobject]@{ k = $_.Name; n = $g.Count; sum = [long]($g | Measure-Object tok -Sum).Sum; cost = $(if (@($g | Where-Object { $null -ne $_.cost }).Count) { [math]::Round((@($g | Where-Object { $null -ne $_.cost }) | Measure-Object cost -Sum).Sum, 2) }); avg = [long]($g | Measure-Object tok -Average).Average; p50 = (Get-KitPct $g.tok 0.5); p90 = (Get-KitPct $g.tok 0.9); avgMin = $(if (@($g.min | Where-Object { $null -ne $_ }).Count) { [math]::Round(($g.min | Where-Object { $null -ne $_ } | Measure-Object -Average).Average, 1) }); p90Min = (Get-KitPct $g.min 0.9) } | ForEach-Object { & $withSplit $_ $g } } | Sort-Object { -$_.avg * $_.n }) }
+  # avgMin / p90Min: a step's active time (model + tools + waiting) when its split is recorded, else its elapsed (wall clock: wallN steps)
+  $grp = { param([string]$by, $ss = $steps) @($ss | Where-Object { (Get-KitMember $_ $by) -and $_.tok } | Group-Object $by | ForEach-Object { $g = @($_.Group); $tv = @($g | ForEach-Object { if ($null -ne $_.act) { $_.act } else { $_.min } } | Where-Object { $null -ne $_ }); [pscustomobject]@{ k = $_.Name; n = $g.Count; sum = [long]($g | Measure-Object tok -Sum).Sum; cost = $(if (@($g | Where-Object { $null -ne $_.cost }).Count) { [math]::Round((@($g | Where-Object { $null -ne $_.cost }) | Measure-Object cost -Sum).Sum, 2) }); avg = [long]($g | Measure-Object tok -Average).Average; p50 = (Get-KitPct $g.tok 0.5); p90 = (Get-KitPct $g.tok 0.9); avgMin = $(if ($tv.Count) { [math]::Round(($tv | Measure-Object -Average).Average, 1) }); p90Min = (Get-KitPct $tv 0.9); wallN = @($g | Where-Object { $null -eq $_.act -and $null -ne $_.min }).Count } | ForEach-Object { & $withSplit $_ $g } } | Sort-Object { -$_.avg * $_.n }) }
   $wf = @($steps | Where-Object run); $ended = @($wf | Where-Object result -in 'pass', 'empty', 'fail', 'stopped')   # stopped: ended with no result
   $hostMrs = Get-KitUsageHostMrs $since $Now $all.host
   $dayRows = @(foreach ($dk in $dayKeys) { $ds = @($steps | Where-Object { $_.dayc[$dk] }); $tk = 0L; $dc = [Collections.Generic.List[double]]::new(); $t8 = @(0) * 8
@@ -249,12 +256,13 @@ function Format-KitUsageHtml($U) {
   $spRows = @($roles | ForEach-Object { $r0 = $_; $mt = [double](@($_.models | Where-Object { $_ }) | Measure-Object sum -Sum).Sum; $msh = @($mdl | ForEach-Object { $mk = "$($_.k)"; $ms = [double](@($r0.models | Where-Object { "$($_.k)" -eq $mk }) | Measure-Object sum -Sum).Sum; if ($mt) { [math]::Round(100 * $ms / $mt) } else { 0 } })
       # merged (owner 2026-11-20): tokens + est. cost = one split cell; avg time split by model / tools / waiting over the steps that have it
       $tok0 = [pscustomobject]@{ tok = $_.sum; cost = $_.cost; in = $_.in; out = $_.out; cr = $_.cr; cw = $_.cw; cs = $_.cs }
-      $tim0 = [pscustomobject]@{ min = $_.avgMin; tm = $(if ([int]$_.tmN) { @(@($_.tm) | ForEach-Object { [double]$_ / [int]$r0.tmN }) }); tmN = 1 }
+      # the cell: tiles + total over the steps with a split (the total = their sum); none: the avg wall clock
+      $tim0 = [pscustomobject]@{ min = $(if (-not [int]$_.tmN) { $_.avgMin }); tm = $(if ([int]$_.tmN) { @(@($_.tm) | ForEach-Object { [double]$_ / [int]$r0.tmN }) }); tmN = 1 }
       @{ n = "$($_.k)"; title = "$($_.k): $(@($_.types | Where-Object { $_ } | ForEach-Object { "$($_.k) $($_.n) steps, avg $(& $tk $_.avg)" }) -join ' · ')"; v = @([double]$_.n, [double]$_.sum, $(if ($rAll) { 100 * [double]$_.sum / $rAll } else { 0 }), [double]$_.avgMin, [double]$_.p90Min) + @($msh | ForEach-Object { [double]$_ })
-        sk = @('', 'tc', '', 'time', ''); so = @($null, $tok0, $null, $tim0, $null); tips = @('', '', '', "avg of $($_.n) steps$(if ([int]$_.tmN) { ", the split over the $($_.tmN) with one" })`n$(Get-KitSplitTip ([pscustomobject]@{ min = $_.avgMin; tm = $tim0.tm }))", '')
+        sk = @('', 'tc', '', 'time', ''); so = @($null, $tok0, $null, $tim0, $null); tips = @('', '', '', "$(& $mn $_.avgMin), avg of $($_.n) steps: active time$(if ([int]$_.wallN) { ", wall clock for the $($_.wallN) without a split" })$(if ([int]$_.tmN) { "; the cell: the $($_.tmN) with one`n$(Get-KitSplitTip ([pscustomobject]@{ tm = $tim0.tm }))" })", "$(& $mn $_.p90Min), p90 of $($_.n) steps (active time$(if ([int]$_.wallN) { "; wall clock for $($_.wallN)" }))")
         tx = @("$($_.n)", (& $tk $_.sum), "$(& $pct $_.sum $rAll)%", (& $mn $_.avgMin), (& $mn $_.p90Min)) + @($msh | ForEach-Object { if ($_) { "$_%" } else { '' } }) } })
   $top = $roles | Select-Object -First 1   # folded (owner 2026-11-19): the top role in its header (the 7-day cost is a Trends tile)
-  $spend = & $fold 'u-spend' 'Spend per role' $roles.Count -tag h4 -cls 'sub st uc ur' -extra "$(if ($top) { "<span class=fsm>top: $(& $e $top.k), $(& $pct $top.sum $rAll)% of the tokens</span>" })" -inner "$(Format-KitMetricHeat $spRows (@('steps', 'tokens · est. cost', 'share', 'avg time', 'p90 time') + @($mdl | ForEach-Object { & $mShort $_.k })) 'role · metric' 'spend-role')$(Format-KitLegend "shade = column peak · last $($mdl.Count) = model share$(if ($unp.Count) { ' · some not priced' })" "a column shaded by its peak (a split cell: each tile by its type's peak; colours: Per day) · the last $($mdl.Count) = each model's share of the role's tokens · hover a role for its step types$(if ($unp.Count) { " · not priced: $(@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })")"
+  $spend = & $fold 'u-spend' 'Spend per role' $roles.Count -tag h4 -cls 'sub st uc ur' -extra "$(if ($top) { "<span class=fsm>top: $(& $e $top.k), $(& $pct $top.sum $rAll)% of the tokens</span>" })" -inner "$(Format-KitMetricHeat $spRows (@('steps', 'tokens · est. cost', 'share', 'avg time', 'p90 time') + @($mdl | ForEach-Object { & $mShort $_.k })) 'role · metric' 'spend-role')$(Format-KitLegend "shade = column peak · last $($mdl.Count) = model share$(if ($unp.Count) { ' · some not priced' })" "a column shaded by its peak (a split cell: each tile by its type's peak, named in the column head) · time = active (model + tools + waiting), wall clock where no split is recorded · the last $($mdl.Count) = each model's share of the role's tokens · hover a role for its step types$(if ($unp.Count) { " · not priced: $(@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })")"
   $stepRows = { param($ss) @($ss | ForEach-Object { $tip = Get-KitSplitTip $_ "$($_.label)"; , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), @{ h = Format-KitSplitCell $_ 'tc' $tip }, @{ h = Format-KitSplitCell $_ 'time' (Get-KitSplitTip ($_ | Select-Object tm, tmN, min)) }, $_.tools, @{ h = "<span class='chip $(switch ($_.result) { 'pass' { 's-act' } 'running' { 's-fin' } 'stuck' { 's-stuck' } 'fail' { 's-stuck' } default { 's-oth' } })'>$(& $e $_.result)</span>" }, "$($_.round)$(if ($_.retry) { " · retry $($_.retry)" })") }) }
   # a run: its human label (mandate / area, the run id in the tooltip), kind chip, resumed, outcome-split step bar; budget bar while running or over 80%
   $kindOf = { param($r) if ($r.kind) { "$($r.kind)" } elseif ("$($r.roles)" -match '^(kitty \d+( · )?)+$') { 'kit' } elseif ("$($r.roles)" -match 'checky') { 'test' } else { 'build' } }
@@ -287,7 +295,7 @@ function Format-KitUsageHtml($U) {
   $shown = @($devRuns | Where-Object status -ne 'running' | Sort-Object { "$($_.at)" } -Descending | Select-Object -First 25)   # newest 25 ended: the page stays light
   # a run page per shown run: its tasks and MRs, the QA / merge / error chips, its step table (Write-KitSuperviseHtml writes them)
   $pages = [ordered]@{}; foreach ($r in @(@($devRuns | Where-Object status -eq 'running') + $shown)) { $pages["$($r.id)"] = "<div class='ru'><div class=rh>$(& $head $r)$(if ($r.status -ne 'running') { & $resOf $r })</div></div>" +
-      "$(if ($lk = & $linksOf $r) { "<p class=rpl>Tasks and MRs: $lk</p>" })<div class='sy rst'>$((& $table 'Step', 'Role', '~Model', 'Tokens · cost', 'Time', '~Tools', 'Result', '~Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok }))) -replace "<tr class='f more'>", '<tr class=f>' -replace '<button type=button class=sa[^>]*>[^<]*</button>')</div>" +
+      "$(if ($lk = & $linksOf $r) { "<p class=rpl>Tasks and MRs: $lk</p>" })<div class='sy rst'>$((& $table 'Step', 'Role', '~Model', 'Tokens · cost', 'Time', '~Tools', 'Result', '~Round' (& $stepRows @($r.steps | Sort-Object { -$_.tok }))) -replace "<tr class='f more'>", '<tr class=f>' -replace '<button type=button class=sa[^>]*>[^<]*</button>')</div>$(Format-KitLegend (Format-KitSplitLegend) 'tokens · cost: a tile per type (its cost below) and the total · time: model, tools, waiting (active) and the total = elapsed (wall clock) · hover a cell for every type')" +
       "<p class=m>Review findings and QA detail: <code>bossy.ps1 report -Run $(& $e $r.run) -Detail</code></p>" }
   # Per day (owner 2026-11-19: a time series = the day heatmap): est. cost and tokens per day, the 7-day sum on the right, the average in
   # the row tooltip; runs and MRs per day: the Delivery heatmap
@@ -348,7 +356,7 @@ function Format-KitSplitCell($O, [string]$Kind, [string]$Tip, $Peaks = $null, [s
   $enc = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $sp = Get-KitSplitParts $O $Kind
   $nk = if ($Kind -eq 'tc') { 'tokens' } else { $Kind }
   if (-not $sp.ok) { $tot = switch ($Kind) { 'cost' { $O.cost } 'time' { if ($null -ne $O.wall) { $O.wall } else { $O.min } } default { $O.tok } }
-    $tx = if ($null -eq $tot) { '—' } else { "$(Format-KitSplitNum $tot $nk)$(if ($Kind -eq 'tc' -and $null -ne $O.cost) { " $(Format-KitSplitNum $O.cost cost)" })" }; $nr = if ($null -ne $tot) { "<small class=knr>$(if ($Kind -eq 'cost') { 'not split' } elseif ($Kind -eq 'time' -and [int]$O.tmN -gt 0 -and [int]$O.tmN -lt [int]$O.tmAll) { "split: $([int]$O.tmN) of $($O.tmAll) steps" } else { 'split not recorded' })</small>" }
+    $tx = if ($null -eq $tot) { '—' } else { "$(Format-KitSplitNum $tot $nk)$(if ($Kind -eq 'tc' -and $null -ne $O.cost) { " $(Format-KitSplitNum $O.cost cost)" })" }; $nr = if ($null -ne $tot) { "<small class=knr>$(if ($Kind -eq 'cost') { 'not split' } elseif ($Kind -eq 'time' -and [int]$O.tmN -gt 0 -and [int]$O.tmN -lt [int]$O.tmAll) { "split: $([int]$O.tmN) of $($O.tmAll) steps" } elseif ($Kind -eq 'time') { 'wall clock' } else { 'split not recorded' })</small>" }
     if ($Heat) { return "<i class='kst k0$(if ($Now) { ' nw' })' title='$(& $enc $Tip)'><b>$(& $enc $tx)</b>$nr</i>" }; return "<span class='gc ks kd-$Kind k0' title='$(& $enc $Tip)'><b>$(& $enc $tx)</b>$nr</span>" }
   $tt = Get-KitSplitTotal $O $Kind $sp
   $tile = { param($pt, [string]$cl) $sh = if ($Heat) { if ($Peaks -and [double]$Peaks[$pt.k] -gt 0 -and [double]$pt.v -gt 0) { Get-KitHeatShade ([double]$pt.v / [double]$Peaks[$pt.k]) } else { 0 } }
@@ -365,6 +373,11 @@ function Get-KitSplitPeaks($Objs, [string]$Kind) { $pk = @{}; foreach ($o in @($
 function Format-KitSplitLegend {
   $sw = { param($k, $l) "<i class='lgk k-$k'></i>$l" }
   "<span class=kleg>$(& $sw out output) $(& $sw in fresh) $(& $sw cw 'cache write') $(& $sw cr 'cache read') $(& $sw tot total) · $(& $sw mo model) $(& $sw to tools) $(& $sw wa waiting)</span>"
+}
+# a split column's sub-header (owner 2026-11-20: tiles need names): the cell's tile row with names, same widths and container query as the cells
+function Format-KitSplitHead([string]$Kind) {
+  $nm = if ($Kind -eq 'time') { @(@('mo', 'model', 'k4'), @('to', 'tools', 'k4'), @('wa', 'wait', 'k4'), @('mo', 'model', 'k2'), @('tw', 'tools+wait', 'k2')) } else { @(@('out', 'out', 'k4'), @('in', 'fresh', 'k4'), @('cw', 'c-write', 'k4'), @('cr', 'c-read', 'k4'), @('wk', 'work', 'k2'), @('ca', 'cache', 'k2')) }
+  "<span class='kst kh kd-$Kind'><span class=kr4>$(@($nm | ForEach-Object { "<b class='kq k-$($_[0]) $($_[2])'>$($_[1])</b>" }) -join '')<b class='kq k-tot kt'>total</b></span></span>"
 }
 # every legend (owner 2026-11-20): one short line of swatches and 1-2 word keys; the explanation only in an (i) tooltip
 function Format-KitLegend([string]$Keys, [string]$Info = '') {

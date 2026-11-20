@@ -143,7 +143,7 @@ $cardGrid = @("<details class='sec sub st uc dlr' id=sec-dl-days open><summary><
 # column counts: run steps 8 (right-align nth-child ranges)
 $thCount = { param($open, $in = $h) ([regex]::Match($in, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
 $colCounts = "7 $(& $thCount "class='sy rst'>" @($pgs.Values)[0])"
-"$($h -notmatch 'Tokens today') $($h -match "data-g='rr-[^']+' data-oc=" -and $h -match "<button type=button class='tl ocb' data-oc=fail") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 8' -and $h -notmatch 'class=ut>|Per model|Per step type|sec-u-rolecost|class=spd')"
+"$($h -notmatch 'Tokens today') $($h -match "data-g='rr-[^']+' data-oc=" -and $h -match "<button type=button class='tl ocb' data-oc=fail") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 8' -and @($pgs.Values)[0] -match 'class=kleg' -and $h -notmatch 'class=ut>|Per model|Per step type|sec-u-rolecost|class=spd')"
 # a transcript last written before today moves to usage.cold.json, which a later call leaves unchanged; totals the same
 $cfu = Get-KitPath usage-cache; $cfc = $cfu -replace '\.json$', '.cold.json'; [IO.File]::SetLastWriteTime(($args[2] -replace 'agent-a2', 'agent-a1'), (Get-Date).Date.AddHours(-2))
 $null = Get-KitUsage -Seconds 30; $cold1 = [IO.File]::ReadAllText($cfc); $d = Get-KitUsage -Seconds 30
