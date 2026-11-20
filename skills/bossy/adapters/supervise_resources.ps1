@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L349 shells · L526 page · L1002 release · L1047 lines · L1079 cleanup · L1146 launch ·
-  L1263 pause · L1382 heartbeat · L1397 sessions · L1449 ci tasks ·
-  L1507 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L349 shells · L528 page · L1004 release · L1049 lines · L1081 cleanup · L1148 launch ·
+  L1265 pause · L1384 heartbeat · L1399 sessions · L1451 ci tasks ·
+  L1509 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -403,7 +403,9 @@ function Find-KitShellTranscripts([hashtable]$Want) {
         $o = try { $line | ConvertFrom-Json -Depth 80 } catch { continue }
         $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' -and "$($_.input.command)".Contains($frags[$k]) })[0]; if (-not $u) { continue }
         $gap = if ($o.timestamp) { [math]::Abs(([datetimeoffset]$o.timestamp - [datetimeoffset]$Want[$k].created).TotalSeconds) } else { 1e9 }
-        if ($gap -le 120 -and (-not $out[$k] -or $gap -lt $out[$k].gap)) { $out[$k] = [pscustomobject]@{ file = $file; bg = [bool]$u.input.run_in_background; gap = $gap; tuid = "$($u.id)"; out = (Find-KitShellOutputPath $text "$($u.id)") } }
+        # K104: a Monitor tool call is a background shell too (no run_in_background key; 21 outlived their agents)
+        $mon = "$($u.name)" -eq 'Monitor'
+        if ($gap -le 120 -and (-not $out[$k] -or $gap -lt $out[$k].gap)) { $out[$k] = [pscustomobject]@{ file = $file; bg = ([bool]$u.input.run_in_background -or $mon); mon = $mon; gap = $gap; tuid = "$($u.id)"; out = (Find-KitShellOutputPath $text "$($u.id)") } }
       }
     }
   }
@@ -452,7 +454,7 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
   foreach ($p in $shells) {
     $made = & $made0 $p; $age = ($Now - $made).TotalMinutes; $key = "$($p.Id)@$($made.ToString('s'))"
     $s = if ($old[$key] -is [Collections.IDictionary]) { $old[$key] } else { @{} }; $new[$key] = $s; if ($s.killed) { continue }; $cmd = Get-KitShellCommand $p.CommandLine
-    if (-not $s.ContainsKey('tx')) { $f = $found[$key]; $s.tx = "$($f.file)"; $s.bg = [bool]$f.bg; $s.tuid = "$($f.tuid)"; $s.out = "$($f.out)" }
+    if (-not $s.ContainsKey('tx')) { $f = $found[$key]; $s.tx = "$($f.file)"; $s.bg = [bool]$f.bg; $s.mon = [bool]$f.mon; $s.tuid = "$($f.tuid)"; $s.out = "$($f.out)" }
     if ($s.bg -and -not $s.out -and $s.tuid -and [int]$s.outTries -lt 5) { $s.outTries = [int]$s.outTries + 1; $s.out = Find-KitShellOutputPath (Read-KitFileTail $s.tx 16MB) $s.tuid }   # its tool_result is written after the shell starts
     $tree = @{}; $cpu = 0.0; $st = [Collections.Stack]::new(); $st.Push($p)
     $kc = @{}; while ($st.Count) { $q = $st.Pop(); if ($tree[$q.Id]) { continue }; $tree[$q.Id] = 1; $cpu += [double]$q.Cpu; if ($q -ne $p) { $kc["$($q.Id)@$($q.Created)"] = [double]$q.Cpu }; foreach ($c in @($kids[$q.Id])) { if ($c) { $st.Push($c) } } }
@@ -482,7 +484,7 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
     $ownerGone = $o.finished -and -not $o.live -and -not $busy -and $idle -ge $graceMin  # meta "finished" alone also marks an agent idling on this very shell
     if (-not $ownerGone) { $s.gone = 0; $s.goneAt = $null } elseif (-not $s.goneAt -or ($Now - [datetime]$s.goneAt).TotalMinutes * 2 -ge $hbMin) { $s.gone = [int]$s.gone + 1; $s.goneAt = $Now.ToString('o') }
     $why = @($(if ($ownerGone) { "owner $($o.name) finished, idle $([int]$idle) min" }), $(if ($gone) { "dir gone: $dir" }), $(if ($stuck) { "no CPU, IO or output for $([int]$quiet) min, $($s.stuck) sweep(s)" }) | Where-Object { $_ }) -join '; '
-    $short = Get-KitShellShort $cmd; $one = ($cmd -replace '\s+', ' ').Trim(); $s.owner = $o.name; $s.short = $short
+    $short = "$(if ($s.mon) { 'monitor: ' })$(Get-KitShellShort $cmd)"; $one = ($cmd -replace '\s+', ' ').Trim(); $s.owner = $o.name; $s.short = $short
     if ($ownerGone -and ($s.gone -ge 2 -or (-not $poll -and $idle -ge 20)) -and $AutoFix -and -not $ReadOnly -and (Test-KitPid $p.Id $made)) {
       if ($KitIsWindows) { taskkill /PID $p.Id /T /F 2>&1 | Out-Null } else { foreach ($t in @($tree.Keys)) { Stop-SysProcess $t } }
       $s.killed = $true; Write-KitLog calls shell-kill ([ordered]@{ pid = $p.Id; owner = $o.name; why = $why; dir = $dir; what = "killed shell $($p.Id) ($why): $($one.Substring(0, [math]::Min(300, $one.Length)))" })
@@ -515,7 +517,7 @@ function Stop-KitLeftShells($Entry, $Procs = $(Get-KitSweepProcs), $Hits = $null
   $sh = @(Get-KitAgentShells $Procs); $want = @{}; foreach ($p in $sh) { $want["$($p.Id)"] = @{ cmd = (Get-KitShellCommand $p.CommandLine); created = $(if ($p.Created) { [datetime]$p.Created } else { Get-Date }) } }
   if ($null -eq $Hits) { $Hits = if ($want.Count) { Find-KitShellTranscripts $want } else { @{} } }
   foreach ($p in $sh) { $hit = $Hits["$($p.Id)"]; if (-not $hit -or -not $hit.bg -or (& $full $hit.file) -ne (& $full $Entry.transcript)) { continue }
-    & $Kill $p.Id; Write-KitLog calls shell-kill ([ordered]@{ pid = $p.Id; owner = "$($Entry.agent)"; why = 'its agent left the board' }); "killed shell $($p.Id) of $($Entry.agent): $(Get-KitShellShort $want["$($p.Id)"].cmd)" } }
+    & $Kill $p.Id; Write-KitLog calls shell-kill ([ordered]@{ pid = $p.Id; owner = "$($Entry.agent)"; why = 'its agent left the board' }); "killed $(if ($hit.mon) { 'monitor' } else { 'shell' }) $($p.Id) of $($Entry.agent): $(Get-KitShellShort $want["$($p.Id)"].cmd)" } }
 # supervise hook (section 3; uses $state, $now, Within): flags only (a count is no problem); rows go to $script:KitShellRows
 function Get-KitSuperviseGuardShells([switch]$AutoFix) {
   $script:KitShellRows = @(); if (-not (Within 'shells')) { return }

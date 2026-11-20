@@ -23,7 +23,7 @@ Non-negotiables:
   for your id -> stop without writing; `board check` before every commit; a file, task, env or seat someone else holds ->
   `board msg` the holder, never collide; release each lease the step its use ends (env after the local loop, phone after
   app checks, tab `s.done()` after UI checks); at the end `bossy.ps1 release -Agent <your id>` (backstop: lane, env, GPU,
-  build, tabs; leave and the workflow repeat it), kill your background shells (crafty Rules), then `leave`.
+  build, tabs; leave and the workflow repeat it), stop your monitors and background shells (crafty Rules), then `leave`.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` at each step boundary and `board beat` after it (spend / budget, PAUSE: do
   what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its path> -Notes '<one line>'`, WIP commit,
   `board leave -Handoff <brief>`, return `handoff` =

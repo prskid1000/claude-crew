@@ -53,8 +53,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    0 clipped, then read its shots (overlap, gaps, contrast); spawn one `revy` (kind kit) on the diff before pushing.
 9. **Ship:** `crafty.ps1 wt commit` (Conventional Commits, the org's author rules), `git -C <wt> rebase origin/main`, checks,
    `git -C <wt> push origin HEAD:main` (fast-forward only, never force); `crafty.ps1 wt remove -Dir <wt>`; the live clone pulls it
-   when no run uses the kit. Report (kit-admin.md "Audit report"). Audit: `$A stamp`. Kill your background shells (each
-   must end on its own: a timeout or bounded loop, no stdin reads), then `board leave`.
+   when no run uses the kit. Report (kit-admin.md "Audit report"). Audit: `$A stamp`. Stop your monitors and background
+   shells (each must end on its own: a timeout or bounded loop, no stdin reads), then `board leave`.
 
 Non-negotiables:
 - The live clone is read-only for you except `kitbag.py audit --fix / --fill` (only what they call safe; skip `--fix` on

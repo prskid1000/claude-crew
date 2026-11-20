@@ -256,6 +256,11 @@ $lsh = & { . $O; $tx = Join-Path (Kd) 'agent-k1.jsonl'; $ps = @([pscustomobject]
   $killed = [Collections.Generic.List[int]]::new(); $said = @(Stop-KitLeftShells ([pscustomobject]@{ agent = 'k1'; transcript = $tx }) $ps $fd { param($id) $killed.Add($id) })
   "$($killed -join ',')|$($said -match '^killed shell 60 of k1: ' -as [bool])" }
 Expect "board leave: its background shells killed, not another agent's or a foreground one ($lsh)" ($lsh -eq '60|True')
+# K104: a Monitor call (no run_in_background) is a background shell: board leave kills it
+$mnv = & { . $O; $env:KIT_TRANSCRIPTS = Join-Path (Kd) 'txm'; $mt = Get-Date; $tx = Join-Path $env:KIT_TRANSCRIPTS 's/agent-m.jsonl'; $null = New-Item -ItemType Directory -Force (Split-Path $tx); $mc = 'tail -f D:/x/k104.out'
+  @{ timestamp = $mt.ToUniversalTime().ToString('o'); message = @{ content = @(@{ type = 'tool_use'; id = 't1'; name = 'Monitor'; input = @{ command = $mc } }) } } | ConvertTo-Json -Depth 9 -Compress | Set-Content $tx
+  $said = @(Stop-KitLeftShells ([pscustomobject]@{ agent = 'm'; transcript = $tx }) @([pscustomobject]@{ Id = 5; ParentId = 1; Name = 'claude.exe' }, [pscustomobject]@{ Id = 7; ParentId = 5; Name = 'bash.exe'; CommandLine = "bash -c $mc"; Created = $mt }) $null { }); Remove-Item Env:KIT_TRANSCRIPTS; "$said" }
+Expect "board leave: a finished agent's Monitor is killed, named a monitor ($mnv)" ($mnv -match '^killed monitor 7 of m: ')
 # coordinator 2026-11-19: 4 MR lists took 15 s of a 40 s sweep: at most 2 due repos a beat, oldest first; a missing dep source: WATCH
 Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') (Join-Path $k 'skills/bossy/adapters')
 $ul = Invoke-PsTest ulist @'

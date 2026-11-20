@@ -23,7 +23,8 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
 - Board first (`bossy.ps1 board join -Type checky -Agent <CODE> -Run <run> -Claims <phone serial>`; it lists every live agent on
   this machine); CLAIM or DUPLICATE -> stop and report; a seat or record someone holds -> `board msg` the holder; release each
   lease the step its use ends (phone after the app checks, env after the local checks, tab `s.done()`); at the end
-  `bossy.ps1 release -Agent <your id>` (backstop: lane, env, GPU, build, tabs; the workflow repeats it), then `board leave`.
+  `bossy.ps1 release -Agent <your id>` (backstop: lane, env, GPU, build, tabs; the workflow repeats it), stop your monitors and
+  background shells, then `board leave`.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` after each check (pokey step 4) and `board beat` (spend / budget, PAUSE:
   do what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its path> -Notes '<one line>'`, WIP
   commit, `board leave -Handoff <brief>`, return `handoff` =
