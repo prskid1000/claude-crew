@@ -158,7 +158,7 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '', $More = @(), [str
   $mrs = @($UP.mrs | Where-Object { $_ -and $_.ref }); $dk = @($dy | ForEach-Object { "$($_.day)" }); if (-not $dk.Count) { $dk = @(6..0 | ForEach-Object { $at.AddDays(-$_).ToString('yyyy-MM-dd') }) }; $nd = $dk.Count
   # a $More row's values by its own dates (d), onto this map's days
   $align = { param($r) if (-not $r.d) { return $r }; $r2 = @{} + $r; $ix = @{}; for ($i = 0; $i -lt @($r.d).Count; $i++) { $ix["$(@($r.d)[$i])"] = $i }
-    foreach ($fk in 'v', 'tips') { if ($r[$fk]) { $r2[$fk] = @(foreach ($d in $dk) { if ($ix.ContainsKey($d)) { @($r[$fk])[$ix[$d]] } else { $null } }) } }; $r2 }
+    foreach ($fk in 'v', 'tips', 'so') { if ($r[$fk]) { $r2[$fk] = @(foreach ($d in $dk) { if ($ix.ContainsKey($d)) { @($r[$fk])[$ix[$d]] } else { $null } }) } }; $r2 }
   $repoOf = { param($ref) ("$ref" -split '[!#]')[0] }
   $med = { param($v) $sv = @($v | Sort-Object); if ($sv.Count) { $sv[[int][math]::Floor(($sv.Count - 1) / 2)] } else { $null } }   # lower median, as the KPIs
   $leadAll = & $med @($mrs | Where-Object { $null -ne $_.lead } | ForEach-Object { [double]$_.lead })
@@ -181,7 +181,7 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '', $More = @(), [str
       (& $sumRow 'runs started' 'fh l-fixed' 'run(s) started' @(foreach ($d in $dk) { , @(& $runsOf $d) }) '#sec-runs' (& $fvOf d)))
     $fb = @($sumRows | Where-Object { @($_.v | Where-Object { $_ }).Count })[0]; if ($fb) { $fb.gl = $true }   # the rule above the first shown one (idle rows fold)
     $mr0 = @($More | Where-Object { $_ } | ForEach-Object { & $align $_ }); if ($mr0.Count) { $mr0[0].gl = $true }
-    & $fold 'dl-days' 'Per day' "$($mrs.Count) MRs$(if ($null -ne $leadAll) { " · lead time p50 $(& $n1 $leadAll) h" })" "$(Format-KitDayHeat (@($repoRows) + @($sumRows) + $mr0) $dk 'repo · series · day')<div class=hk>a cell = that day's value (shade by the row's peak) · outlined = today · the right column: 7 days (sum, or as the row's tooltip says) · a click on tasks closed, came back or runs started filters the tasks and runs</div>" -Open -tag h4 -cls 'sub st uc dlr' }
+    & $fold 'dl-days' 'Per day' "$($mrs.Count) MRs$(if ($null -ne $leadAll) { " · lead time p50 $(& $n1 $leadAll) h" })" "$(Format-KitDayHeat (@($repoRows) + @($sumRows) + $mr0) $dk 'repo · series · day')<div class=hk>a cell = that day's value (shade by the row's peak) · outlined = today · the right column: 7 days (sum, or as the row's tooltip says) · a click on tasks closed, came back or runs started filters the tasks and runs<br>est. cost and tokens: a line per type, each shaded by its own 7-day peak · $(Format-KitSplitLegend)</div>" -Open -tag h4 -cls 'sub st uc dlr' }
   $flight = [ordered]@{ open = @('in progress', 'slate'); review = @('review', 'plum'); promoted = @('promoted', 'sage'); intest = @('in test', 'watch'); failedTesting = @('failed testing', 'act') }
   $stOf = { param([string]$s) if ($s -in 'deployed', 'untested') { 'intest' } elseif ($flight.Contains($s)) { $s } else { '' } }   # outcome stage -> status (passed: done, not in flight)
   $fl = @($S.tasks | ForEach-Object { $b = & $stOf $_.stage; if ($b) { [pscustomobject]@{ id = $_.id; b = $b } } })

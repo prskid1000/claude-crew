@@ -880,8 +880,8 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
 }
 # page CSS: muted sage palette, light / dark (prefers-color-scheme; data-theme overrides)
 function Get-KitSupervisePageCss {
-  $dark = '--bg:#0c0c0c;--sf:#161b16;--sf2:#212a21;--fg:#d8dee9;--mt:#8a948a;--ln:#2e3a2e;--sage:#79a86a;--sage2:#9fd48c;--act:#dc9089;--watch:#e0ce8a;--slate:#8fbbd4;--plum:#c495d4;--hmt:#0c0c0c;--sh:0 4px 20px rgba(0,0,0,0.45)'
-  ':root{--bg:#f4f7f4;--sf:#ffffff;--sf2:#eaefea;--fg:#1a221a;--mt:#5e6c5e;--ln:#d5dfd5;--sage:#647c64;--sage2:#79a86a;--act:#ce8f8a;--watch:#c4b06a;--slate:#5f93a8;--plum:#a074b0;--hmt:#1a221a;--sh:0 1px 3px rgba(26,34,26,.06),0 1px 2px rgba(26,34,26,.04)}' +
+  $dark = '--bg:#0c0c0c;--sf:#161b16;--sf2:#212a21;--fg:#d8dee9;--mt:#8a948a;--ln:#2e3a2e;--sage:#79a86a;--sage2:#9fd48c;--act:#dc9089;--watch:#e0ce8a;--slate:#8fbbd4;--plum:#c495d4;--kcr:#a9b3a9;--hmt:#0c0c0c;--sh:0 4px 20px rgba(0,0,0,0.45)'
+  ':root{--bg:#f4f7f4;--sf:#ffffff;--sf2:#eaefea;--fg:#1a221a;--mt:#5e6c5e;--ln:#d5dfd5;--sage:#647c64;--sage2:#79a86a;--act:#ce8f8a;--watch:#c4b06a;--slate:#5f93a8;--plum:#a074b0;--kcr:#a3ada3;--hmt:#1a221a;--sh:0 1px 3px rgba(26,34,26,.06),0 1px 2px rgba(26,34,26,.04)}' +
   "[data-theme=dark]{$dark}@media(prefers-color-scheme:dark){:root:not([data-theme=light]){$dark}}" +
   # no scrollbars (owner 2026-11-09): JS marks overflowing boxes .sc and their edges with more content (u d l r): faded by the mask
   '*{box-sizing:border-box;scrollbar-width:none}::-webkit-scrollbar{display:none}html{touch-action:manipulation}.sc{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;--u:0px;--d:0px;--l:0px;--r:0px;mask:linear-gradient(#0000,#000 var(--u),#000 calc(100% - var(--d)),#0000),linear-gradient(90deg,#0000,#000 var(--l),#000 calc(100% - var(--r)),#0000);mask-composite:intersect}' +
@@ -989,7 +989,7 @@ function Get-KitSupervisePageCss {
   '.hrs{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px}.hrs b{font-weight:500;white-space:nowrap}.hrs b.nw{text-align:right;color:var(--sage2)}.hk{font-size:10.5px;color:var(--mt);margin-top:4px}' +
   '@media(max-width:699px){.gks{grid-template-columns:minmax(0,1fr)}.gk{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:2px 6px}.gk>.gn,.gk>.gs,.gk>.gs0{grid-column:1/-1}.gh>.gn,.gh>.gc{display:none}.gk:not(.gh)>.gc .ic{display:inline-block;margin-right:2px}}' +
   '.uc .sy{max-height:clamp(200px,36dvh,360px)}.uc .tw>table:not(.ag){min-width:0}.uc :is(th,td){padding:3px 4px}.uc td{overflow-wrap:normal}.us td:first-child{overflow-wrap:anywhere}:is(.uc,.us) .sy td,.us td{white-space:normal}.sty td:first-child{overflow-wrap:anywhere}' +
-  '@media(min-width:641px){.sty :is(th,td):not(:first-child),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.rst :is(th,td):nth-child(n+4):nth-child(-n+7){text-align:right}}' +
+  '@media(min-width:641px){.sty :is(th,td):not(:first-child),.us :is(th,td):nth-child(n+2):nth-child(-n+4),.rst :is(th,td):nth-child(n+4):nth-child(-n+6){text-align:right}}' +
   '.tw>table:not(.ag){min-width:520px}@media(max-width:640px){.ag .tm{display:none}.ag .ago{white-space:nowrap}.wrap{padding:8px}header.top{padding:6px 10px;position:static}.hs{display:none}.tb{width:100%}input[type=search]{flex:1;width:auto}' +
   # phone: a table row = a card, two fields a line (label above value), low-value columns ('~') hidden
   '.tw>table:not(.ag){min-width:0}.tw>table:not(.ag) tr:first-child{display:none}.tw>table:not(.ag),.tw>table:not(.ag) :is(tbody,tr,td){display:block;width:auto}.tw>table:not(.ag) tr{border-bottom:1px solid var(--ln);padding:4px 0}' +

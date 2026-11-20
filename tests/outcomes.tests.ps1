@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 tests/outcomes.tests.ps1: adapters/outcomes.ps1 offline: task outcome rows, the tidy digest summary, decision patterns, standing
-rules (propose, the owner's approval, auto-answers, never for deploy, revoke); the stats-reset cutoff of the page's charts.
+rules (propose, the owner's approval, auto-answers, never for deploy, revoke); the stats-reset cutoff of the page's charts; the
+token, cost and time split (adapters/usage.ps1 split: prices per type, transcript time, split cells, runs band).
 Usage: pwsh -NoProfile -File tests/outcomes.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -132,5 +133,33 @@ $cutT = & { . $O; $n = (Get-Date).Date.AddHours(12); $y = $n.Date.AddDays(-1); $
     "$(@($uCut.runs.id) -join ',') $(@($uCut.days | ForEach-Object { "$($_.tok)" }) -join ',') $(@($uCut.mrList).Count)$($uCut.merged.n) $($uCut.rates.n)$($uCut.rates.fail) $([object]::ReferenceEquals((Select-KitUsageSince $uIn ([datetime]::MinValue)), $uIn)) $(@($uIn.runs).Count)"
   foreach ($cutF in @($yBuilds, $yCalls, $qaRes)) { Remove-Item -LiteralPath $cutF }; Remove-Item -LiteralPath (Split-Path $qaRes) -Recurse; Remove-Item -LiteralPath (Join-Path (Get-KitPath qa-runs) 'cutq'); foreach ($cd in $cutDirs) { Remove-Item -LiteralPath $cd }; if ($yNew) { Remove-Item -LiteralPath $yDir } }
 Expect "stats reset: the newest stats-reset-<day> = cutoff; gate, waits (one clipped), QA, agents failed per day and usage (runs, day values, MRs, step outcomes) drop what came before it ($cutT)" ($cutT -eq 'True|10|2/30 1/10|1 0|1-|b,c ,7 11 10 True 4')
+# split (owner 2026-11-20): cost per type (5-min vs 1-h writes), the time split from transcript gaps (gate queue = waiting), hourly tokens
+$spc = & { . $O; $cs = Get-KitUsageCostSplit @(100, 10, 1000, 200, 50) 'claude-opus-5-5'
+  "$(@($cs | ForEach-Object { [math]::Round($_, 6) }) -join '/') $([math]::Round((Get-KitUsageCost @(100, 10, 1000, 200, 50) 'claude-opus-5-5'), 6)) $($null -eq (Get-KitUsageCostSplit @(1, 1, 1, 0, 0) 'mystery-1'))" }
+Expect "split cost: opus in/out/cache read/cache write (150 at 5-min 1.25x + 50 at 1-h 2x in), the total = their sum, an unknown model unpriced ($spc)" ($spc -eq '0.0004/0.0002/0.0002/0.00115 0.00195 True')
+$spt = & { . $O; $tx = Join-Path $k 'split-tx.jsonl'; $t00 = [datetimeoffset]::Now.AddMinutes(-40); $ts = { param([int]$s) $t00.AddSeconds($s).ToString('o') }   # inside the 8-day hour window
+  $use = { param($outN) """usage"":{""input_tokens"":100,""output_tokens"":$outN,""cache_read_input_tokens"":1000,""cache_creation_input_tokens"":200,""cache_creation"":{""ephemeral_5m_input_tokens"":150,""ephemeral_1h_input_tokens"":50}}" }
+  @("{""type"":""user"",""message"":{""role"":""user"",""content"":""go""},""timestamp"":""$(& $ts 0)""}",
+    "{""message"":{""model"":""claude-opus-5-5"",""id"":""msg_1"",""role"":""assistant"",""content"":[{""type"":""tool_use"",""id"":""t1"",""name"":""Bash"",""input"":{""command"":""pwsh crafty.ps1 check -Dir x""}}],$(& $use 10)},""type"":""assistant"",""timestamp"":""$(& $ts 10)""}",
+    "{""type"":""user"",""message"":{""role"":""user"",""content"":[{""tool_use_id"":""t1"",""type"":""tool_result"",""content"":""[gate] starting: 9 GB available; queued 20 s\nok""}]},""timestamp"":""$(& $ts 70)""}",
+    "{""message"":{""model"":""claude-opus-5-5"",""id"":""msg_2"",""role"":""assistant"",""content"":[{""type"":""text"",""text"":""done""}],$(& $use 5)},""type"":""assistant"",""timestamp"":""$(& $ts 80)""}",
+    "{""type"":""user"",""message"":{""role"":""user"",""content"":""next""},""timestamp"":""$(& $ts 1200)""}",
+    "{""message"":{""model"":""claude-opus-5-5"",""id"":""msg_3"",""role"":""assistant"",""content"":[{""type"":""tool_use"",""id"":""t2"",""name"":""Monitor"",""input"":{}}],$(& $use 1)},""type"":""assistant"",""timestamp"":""$(& $ts 1205)""}",
+    "{""type"":""user"",""message"":{""role"":""user"",""content"":[{""tool_use_id"":""t2"",""type"":""tool_result"",""content"":""x""}]},""timestamp"":""$(& $ts 1505)""}") -join "`n" | Set-Content -LiteralPath $tx -NoNewline
+  Add-Content -LiteralPath $tx "`n"; $left = [ref][long]1MB; $r = Update-KitUsageFile $tx $null $left
+  $old = [ordered]@{ v = 3; off = 5L; in = 0L; out = 0L; cr = 0L; cw = 0L; cw1 = 0L; n = 0; tools = 0; model = ''; t0 = ''; t1 = ''; lastId = ''; lastU = @(0, 0, 0, 0, 0); days = @{} }; $r2 = Update-KitUsageFile $tx $old ([ref][long]1MB)
+  $hs = @($r.hrs.Values); $ok1 = $r.tOk; $r.tOff = 0L; $r3 = Update-KitUsageFile $tx $r ([ref][long]1MB)   # an older reader moved off past the split
+  "$(@($r.tm | ForEach-Object { [int]$_ }) -join '/') $ok1 out:$([long](@($hs | ForEach-Object { $_[1] }) | Measure-Object -Sum).Sum) $($r2.tOk)/$($r2.hrs.Count) $($r3.tOk)" }
+Expect "split time: model = prompt or result -> answer (25 s), the build's 60 s minus its 20 s gate queue, waiting = queue + the monitor (320 s), idle prompt gaps out; hourly output 16; a record read from mid-file, or moved on by an older reader: partial ($spt)" ($spt -eq '25/40/0/0/0/320 True out:16 False/0 False')
+$spf = & { . $O; $so1 = [pscustomobject]@{ tok = 193240000; cost = 38.3; in = 40000; out = 1200000; cw = 2000000; cr = 190000000; cs = @(0.2, 3.1, 30, 5); tm = @(40, 60, 10, 20, 10, 30); tmN = 1; min = 184 }
+  $c = Format-KitSplitCell $so1 'tc' 'tip'; $t = Format-KitSplitCell $so1 'time' 'tip'; $n = Format-KitSplitCell ([pscustomobject]@{ tok = 5; min = 12 }) 'time' 'tip'; $h = Format-KitSplitCell $so1 'tokens' 'tip' (Get-KitSplitPeaks @($so1) 'tokens') -Heat
+  $tip = Get-KitSplitTip $so1
+  "$(@([regex]::Matches(($c -replace '<span class=k2>.*'), "aria-label='([^']*)'") | ForEach-Object { $_.Groups[1].Value }) -join ';')|$(@([regex]::Matches(($c -replace '^.*<span class=k2>'), '>([^<]+)</b>') | ForEach-Object { $_.Groups[1].Value }) -join ';')|$(@([regex]::Matches(($t -replace '<span class=k2>.*'), '>([^<]+)</b>') | ForEach-Object { $_.Groups[1].Value }) -join ';')|$($n -match 'split not recorded' -and $n -match '>12 min<')|$($h -match "^<i class='kst' title='tip'><span class=k4><b class='k-out hi' style='--a:100%'")|$(@($tip -split "`n").Count) $($tip -match 'cache read 190M &#183; \$30\.00|cache read 190M · \$30\.00')" }
+Expect "split cell: tokens · cost a line per type (output, fresh in, cache write, cache read), narrow work / cache, time model / tools / waiting, no data = the total + 'split not recorded', a heat cell shaded per type; the tooltip all types with their cost ($spf)" ($spf -eq 'output 1.2M $3.10;fresh in 40k $0.20;cache write 2M $5.00;cache read 190M $30.00|1.2M $3.30;192M $35.00|40 min;1.7 h;30 min|True|True|7 True')
+$spr = & { . $O; $n = [datetime]'2026-01-02T15:00:00'; $hk = $n.AddHours(-1).ToString('yyyy-MM-dd HH'); $st = [pscustomobject]@{ label = 'devy:A1'; role = 'devy'; at = $n.AddMinutes(-10).ToString('o'); min = 50; result = 'pass'; tok = 1000; in = 10; out = 90; cr = 800; cw = 100; cs = @(0.01, 0.2, 0.02, 0.05); tm = @(20, 10, 0, 0, 5, 15); hrs = @{ $hk = @(10, 90, 800, 100, 0.01, 0.2, 0.02, 0.05) }; mrs = @() }
+  $run = [pscustomobject]@{ run = 'r1'; id = 'wf_1'; label = 'build a thing'; kind = 'build'; started = $n.AddHours(-2).ToString('o'); status = 'ended'; at = $n.AddMinutes(-10).ToString('o'); tok = 1000; cost = 0.28; in = 10; out = 90; cr = 800; cw = 100; cs = @(0.01, 0.2, 0.02, 0.05); tm = @(20, 10, 0, 0, 5, 15); tmN = 1; wall = 50; hrs = $st.hrs; steps = @($st); total = 1; done = 1; merged = 0; roles = 'devy 1' }
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = @(); stats = [pscustomobject]@{ usage = [pscustomobject]@{ runs = @($run); days = @([pscustomobject]@{ day = $n.ToString('yyyy-MM-dd'); tok = 1000; cost = 0.28; in = 10; out = 90; cr = 800; cw = 100; cs = $run.cs }) } } })
+  "$($h -match "class='gks w2 rtl'") $($h -match '<small>tokens (&#183;|·) cost</small>') $($h -match "class='gs hm sp rs'") $($h -match "title='$($n.AddHours(-1).ToString('HH:00')) &#183; build a thing &#183; 50 min active &#183; output 90") $($h -match '1 ended run\(s\) (&#183;|·) out 90 (&#183;|·) cache read 800 of 1000 tokens (&#183;|·) \$0\.28') $($h -match "class='gs hm dy[^']* kr'") $($h -match 'class=kleg') $($h -match "title='$($n.AddHours(-2).ToString('HH:00')) &#183; build a thing &#183; 60 min active'><span class='t'></span><span class='u hi'>60</span></i>")" }
+Expect "runs band: tokens · cost and time split columns, an hour cell = output tokens over minutes with the hour's split in its tooltip (an hour with no tokens: an empty upper part, never the shade as its number), the day header split; Per day tokens / cost split rows; one legend ($spr)" ($spr -eq 'True True True True True True True True')
 Remove-TestKit $k
 Complete-Tests

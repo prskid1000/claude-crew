@@ -747,7 +747,7 @@ while ((Get-Date) -lt $deadline) {
     if (-not $dh -and (Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$gtk.since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { $Cmd = & (Get-Command Set-GateHeap) $heapTool $heap $Cmd }
       $reserved = $need   # an OOM near this = failure
-      Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
+      Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" }); queued $([int]((Get-Date) - [datetime]$gtk.since).TotalSeconds) s"   # usage.ps1 Step-KitUsageTime: the queue = waiting
       if ($gt = Get-Command Set-GateTemp -ErrorAction SilentlyContinue) { & $gt $Cmd $Dir }
       # /s + outer quotes: a leading quoted path survives
       if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }

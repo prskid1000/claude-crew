@@ -132,17 +132,18 @@ $t0 = (Get-Date).Date.AddMinutes(1).ToUniversalTime(); $iso = { param($m) $t0.Ad
 '{"agentType":"devy","model":"sonnet"}' | Set-Content "$uw/agent-a1.meta.json"; '{"agentType":"revy"}' | Set-Content "$uw/agent-a2.meta.json"; '{"agentType":"revy","description":"review x"}' | Set-Content "$ub/agent-b1.meta.json"
 (@{ type = 'started'; agentId = 'a1'; label = 'build:X1' }, @{ type = 'result'; agentId = 'a1'; result = @{ summary = 'ok'; mrs = @(@{ url = 'u/1'; merged = $true }) } }, @{ type = 'started'; agentId = 'a2'; label = 'review:X1' }, @{ type = 'result'; agentId = 'a2'; result = @{ error = 'boom' } } | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 6 }) | Set-Content "$uw/journal.jsonl"
 (Get-Item "$ux/s1").LastWriteTime = (Get-Date).AddDays(-10)   # a coordinator session started 10 days ago, its runs today (the page showed 0)
+(Get-Item $uw).CreationTime = $t0.ToLocalTime(); (Get-Item $uw).LastWriteTime = $t0.ToLocalTime()   # a run folder's write time stays at its last new file: wall = to the last step's write (12 min, was 0)
 $uo = Invoke-PsTest usage @'
 $null = . $args[0] 6>$null; $env:KIT_TRANSCRIPTS = $args[1]; $a = Get-KitUsage -Seconds 30
 Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Raw).Trim() -replace 'msg_9', 'msg_8') -NoNewline; [IO.File]::AppendAllText($args[2], "`n{`"type`":`"assistant`",`"message`":{`"usage`"")
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
-"$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')"
+"$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')|$($r.wall)"
 $pgs = @{}; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } }) $pgs
 $cardGrid = @("<details class='sec sub st uc dlr' id=sec-dl-days open><summary><h4>Per day", "<span class=gn title='est. cost per day", "<div class=tls data-mk=trend-tiles>", "data-oc=fail aria-pressed=false", "class='sec sub st uc ur' id=sec-u-spend><summary><h4>Spend per role</h4>", '</span><span class=fsm>top: ', "data-mk=spend-role>", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
-# column counts: run steps 9 (right-align nth-child ranges)
+# column counts: run steps 8 (right-align nth-child ranges)
 $thCount = { param($open, $in = $h) ([regex]::Match($in, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
 $colCounts = "7 $(& $thCount "class='sy rst'>" @($pgs.Values)[0])"
-"$($h -notmatch 'Tokens today') $($h -match "data-g='rr-[^']+' data-oc=" -and $h -match "<button type=button class='tl ocb' data-oc=fail") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 9' -and $h -notmatch 'class=ut>|Per model|Per step type|sec-u-rolecost|class=spd')"
+"$($h -notmatch 'Tokens today') $($h -match "data-g='rr-[^']+' data-oc=" -and $h -match "<button type=button class='tl ocb' data-oc=fail") $($h -notmatch 'Agents outside workflows') $(-not $cardGrid -and $colCounts -eq '7 8' -and $h -notmatch 'class=ut>|Per model|Per step type|sec-u-rolecost|class=spd')"
 # a transcript last written before today moves to usage.cold.json, which a later call leaves unchanged; totals the same
 $cfu = Get-KitPath usage-cache; $cfc = $cfu -replace '\.json$', '.cold.json'; [IO.File]::SetLastWriteTime(($args[2] -replace 'agent-a2', 'agent-a1'), (Get-Date).Date.AddHours(-2))
 $null = Get-KitUsage -Seconds 30; $cold1 = [IO.File]::ReadAllText($cfc); $d = Get-KitUsage -Seconds 30
@@ -150,7 +151,7 @@ $cold2 = [IO.File]::ReadAllText($cfc); [IO.File]::SetLastWriteTime(($args[2] -re
 "$($cold1 -match 'agent-a1' -and $cold1 -notmatch 'agent-a2' -and $cold1 -ceq $cold2 -and $d.runs[0].tok -eq $b.runs[0].tok -and [IO.File]::ReadAllText($cfc) -notmatch 'agent-a1' -and [IO.File]::ReadAllText($cfu) -match 'agent-a1' -and $e.runs[0].tok -eq $b.runs[0].tok)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $ux, "$uw/agent-a2.jsonl", "$uw/agent-a2.jsonl") | Out-String
 $uv = @($uo.Trim() -split "`r?`n")
-Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; runs, steps, outcomes, cost, card grids, cold cache ($($uv -join ' // '))" ($uv[-3] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.001272|4|3192|build,agent,review' -and $uv[-2] -eq 'True True True True' -and $uv[-1] -eq 'True')
+Expect "usage: an old session folder's new runs count; dedupe by message id, appended lines, partial line waits; runs, steps, outcomes, cost, card grids, cold cache ($($uv -join ' // '))" ($uv[-3] -eq '3183|3185|70|1|10|1|2/2|1|7|revy 1|0.001272|4|3192|build,agent,review|12' -and $uv[-2] -eq 'True True True True' -and $uv[-1] -eq 'True')
 # usage numbers: 5.5 prices (alias, dated and [1m] ids, 1-hour writes), unknown model listed; ok=false / failed event = fail, empty = no field but ok,
 # stopped its own rate; one calendar window (a 9-day-old message drops); runs a day by workflow id; coordinator sessions; host-merged MRs
 $uy = Join-Path (Kd) 'uy'; $y1 = New-Item -ItemType Directory -Force "$uy/s1/subagents/workflows/wf_y1"; $y2 = New-Item -ItemType Directory -Force "$uy/s1/subagents/workflows/wf_y2"
@@ -174,7 +175,7 @@ $b1 = @($s | Where-Object label -eq 'build:A')[0]; $cst = { param($l) [math]::Ro
 "$res|$($b1.in)|$(& $cst 'build:A')|$(& $cst 'review:A')|$(& $cst 'check:A')|$(@($u.unpriced).model -join ',')|$($u.rates.n) $($u.rates.fail) $($u.rates.empty) $($u.rates.stopped)"
 "$(@($u.days)[-1].runs)|$(@($u.runs).Count)|$($u.coord[0].tok) $([math]::Round((Get-KitUsageCost @(100, 10, 0, 1000, 1000) 'claude-opus-5-5'), 4))|$(@($u.days)[-1].tok)|$($u.merged.source) $($u.merged.n) $(@($u.days)[-1].merged)"
 $pgu = @{}; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $u } }) $pgu
-"$($h -match "<span class=gn title='coordinator[^']*'>coordinator</span>") $($h -match "<span class=gn[^>]*>tokens</span><span class='gs hm dy' style='--n:\d+'" -and $h -match '<b class=nw>today</b>' -and $h -notmatch "class='lch lgw'|class=dch") $(([regex]::Matches($h, "class='st uc dn'|class=gauge|viewBox='0 0 42 42'")).Count) $($h -match 'not priced: gpt-x') $($h -match '1 MR\(s\) merged on the git host by me') $((@($pgu.Values) -join '') -match "'Elapsed'|>Elapsed<")"
+"$($h -match "<span class=gn title='coordinator[^']*'>coordinator</span>") $($h -match "<span class=gn[^>]*>tokens</span><span class='gs hm dy kr' style='--n:\d+'" -and $h -match '<b class=nw>today</b>' -and $h -notmatch "class='lch lgw'|class=dch") $(([regex]::Matches($h, "class='st uc dn'|class=gauge|viewBox='0 0 42 42'")).Count) $($h -match 'not priced: gpt-x') $($h -match '1 MR\(s\) merged on the git host by me') $((@($pgu.Values) -join '') -match ">Time<")"
 $pm = @(Get-KitUsageParts (Update-KitUsageFile "$($args[1])/main-1.jsonl" $null ([ref][long]1GB)) @((Get-Date).ToString('yyyy-MM-dd')) | ForEach-Object model | Sort-Object) -join ','
 function Invoke-HostVerb { throw 'host down' }; $hp = Get-KitUsageHostMrs (Get-Date).Date (Get-Date) @{ at = '2020-01-01T00:00:00'; since = 'x'; mrs = @(1) }
 $cf = Get-KitPath usage-cache; $cj = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable; foreach ($kv in @($cj.files.GetEnumerator())) { if ($kv.Key -like '*agent-b3*') { $kv.Value.v = 2 } }; $cj | ConvertTo-Json -Depth 7 | Set-Content $cf
