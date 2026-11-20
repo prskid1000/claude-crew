@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, file locks (PowerShell and python), shell progress (bossy.ps1 shells), leases (left = dead, log-only holds), the tracker URL memo, bugbrief repos (from MRs, else configured), board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
+bossy-generic.tests.ps1: bossy.ps1 on neutral and custom config: setup -Allow (vendor CLI + OS allows generated from the adapters), learn -Read of LESSONS.local.md, file locks (PowerShell and python), shell progress (bossy.ps1 shells), statistics reset (bossy.ps1 stats), leases (left = dead, log-only holds), the tracker URL memo, bugbrief repos (from MRs, else configured), board join in a live session (parallel, quiet, -Resume), kit scratch in <runtime>/tmp (cleanup, legacy OS-temp sweep).
 Usage: pwsh -NoProfile -File <kit>/tests/bossy-generic.tests.ps1 (or tests/kit-tests.ps1 -Area bossy-generic).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -152,6 +152,14 @@ Expect "shells: progress from the output file (last line, ANSI cut), an adopted 
   $pg -contains 'states:running,running|running,running|STALLED,running|running,running|STALLED,STALLED|STALLED' -and $pg -contains 'rows:step 2 ok|devy|1|4|step 3 done|True' -and $pg -contains 'ended:1|devy|step 3 done' -and $pg -contains 'twin:999803=1,999804=0')
 Expect "bossy.ps1 shells and a -ReadOnly sweep write no file ($($pg -match '^nowrite:'))" ($pg -contains 'nowrite:True|1|True')
 Expect "shell sampler: a busy child's CPU between two real samples; ps time with days ($($pg -match '^live:'))" ($pg -contains 'live:True|True|2|93784|65')
+# bossy.ps1 stats -Reset: only the charts' files move to forgotten/stats-reset-<date>/ (relative paths kept); params.json stays
+$sfi = @((TkPath $k disk-writes -Create), (TkPath $k params-changes), (TkPath $k mem-samples -Create), (Join-Path (TkPath $k cache -Create) 'runs-rows.json'), (TkPath $k param-state))
+foreach ($statF in $sfi) { '{}' | Set-Content $statF }
+$sl0 = pwsh @np $O stats | Out-String; $sr1 = pwsh @np $O stats -Reset | Out-String; $sr2 = pwsh @np $O stats -Reset | Out-String
+$sfd = Join-Path (TkPath $k forgotten) "stats-reset-$((Get-Date).ToString('yyyyMMdd'))"; $rtDir = Join-Path $sfd (Get-Content (Join-Path $k 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths.runtimeDir
+Expect "stats lists; -Reset moves the charts' files with their relative paths, keeps params.json; a second reset finds none ($sr1)" ($sl0 -match 'stats  \.state[\\/]disk-writes\.jsonl' -and
+  $sl0 -match 'absent  \S+supervise-report\.json' -and (Test-Path (Join-Path $sfd '.state/disk-writes.jsonl')) -and (Test-Path (Join-Path $rtDir 'cache/runs-rows.json')) -and
+  (Test-Path (Join-Path $rtDir 'cache/mem-samples.txt')) -and -not (Test-Path $sfi[0]) -and (Test-Path $sfi[4]) -and $sr1 -match '(?m)^moved  ' -and $sr2 -notmatch 'moved')
 # K85: a git hook's pwsh (MSYS exec: parent dead) joins the shell running git push, not the other shell (40 flags, no hook verb: no regex backtracking hang)
 $hk = Invoke-PsTest 'shellhook' @'
 . $args[0]; $env:KIT_TRANSCRIPTS = Join-Path $args[1] 'tx-none'; $t0 = Get-Date

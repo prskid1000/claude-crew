@@ -19,6 +19,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
     one row per resource: holder, since, last seen, last used (files only)
   release -Agent <id>[,<id>] [-Reason]   every lease of those agents (lanes, env + layers, GPU, builds, tabs), logged in .state/leases.jsonl
   shells [-Json]   agents' background shells: owner, state, CPU / IO / output progress, last output line; recently ended ones (read-only)
+  stats [-Reset]   the dashboard's statistics-only files; -Reset moves them to .state/forgotten/stats-reset-<date>/ (charts start empty)
   storage [-Drive] [-Since 24h|7d] [-Folders] [-Scan]   free space per drive, folder sizes, rescues (.state/storage)
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Only <ids>] [-Skip <id>=<why>; ...] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
@@ -28,9 +29,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L36 init · L47 board · L226 budget · L256 launch · L497 recover · L584 pause · L595 resume · L662 program · L713 param ·
-  L719 track · L1056 supervise · L1382 report · L1462 audit · L1522 storage · L1525 bugbrief · L1639 cleanup · L1726 learn ·
-  L1757 decide · L1908 debate · L1952 health · L2020 setup · L2117 guard-sendmessage
+Sections: L37 init · L48 board · L227 budget · L257 launch · L498 recover · L585 pause · L596 resume · L663 program · L714 param ·
+  L720 track · L1057 supervise · L1383 report · L1463 audit · L1523 storage · L1526 bugbrief · L1640 cleanup · L1727 learn ·
+  L1758 decide · L1909 debate · L1953 health · L2021 setup · L2118 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -2148,6 +2149,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'status' { Invoke-KitVerb Invoke-Status $__rest | ConvertTo-KitLaneOut ('-Json' -in $__rest) }
     'release' { Invoke-KitVerb Invoke-Release $__rest }
     'shells' { Invoke-KitVerb Invoke-Shells $__rest }
+    'stats' { Invoke-KitVerb Invoke-Stats $__rest }
     'storage' { Invoke-KitVerb Invoke-Storage $__rest }
     'report' { Invoke-KitVerb Invoke-Report $__rest }
     'audit' { Invoke-KitVerb Invoke-Audit $__rest }

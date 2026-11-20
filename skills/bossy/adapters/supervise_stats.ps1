@@ -2,12 +2,12 @@
 supervise_stats.ps1 (core): the supervise page's history graphs from the logs the kit already writes, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): the build gate per kind (builds log), lease waits per resource (leases log, builds log, local-env
 lease-wait events, live queues), test-run results per day (qa-runs results.json), CPU + RAM per lane process and the top other
-processes (one process snapshot per sweep), flags per hour, agents shell progress (bossy.ps1 shells); their heatmap cards (shared cells, idle-row fold, card fold) and the
+processes (one process snapshot per sweep), flags per hour, agents shell progress (bossy.ps1 shells), the statistics reset (bossy.ps1 stats); their heatmap cards (shared cells, idle-row fold, card fold) and the
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L424 cards · L651 flags · L766 bands ·
-  L850 shells
+  L850 shells · L921 reset
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -916,4 +916,28 @@ function Invoke-Shells {
   }
   if ($ended.Count) { ''; "ended (last $(Get-KitSetting 'supervise.finishedMinutes' 30) min):"; Format-KitMdTable @('Owner', 'Ended min ago', 'Command', 'Last line') @($ended | ForEach-Object { , @((& $c $_.owner 30), "$($_.endedMin)$(if ($_.killed) { ' (killed)' })", (& $c $_.short 60), (& $c $_.last 80)) }) }
   foreach ($fl in @($sw.flags)) { "$($fl.level) · $($fl.what) -> $($fl.action)" }
+}
+
+# ---- reset: bossy.ps1 stats [-Reset] (owner 2026-11-20): the files only this page's charts read; -Reset moves them to
+# <state>/forgotten/stats-reset-<yyyyMMdd>/ (relative paths kept), the next sweep starts empty charts. Functional state stays: params,
+# outcomes, storage (disk verdicts), pool-usage, runtimes, localenv-history, leases, audit logs, run records, supervise-state.
+function Get-KitStatsFiles {
+  $rt = Get-KitRuntime; $sd = Split-Path (Get-KitPath disk-writes); $cache = Get-KitPath cache
+  foreach ($p in @((Get-KitPath disk-writes), (Get-KitPath params-changes), (Get-KitPath mem-samples), [IO.Path]::ChangeExtension((Get-KitPath supervise-report), '.json'), (Join-Path $cache 'supervise-writes.json'), (Join-Path $cache 'runs-rows.json'))) {
+    $inState = $p.StartsWith($sd, [StringComparison]::OrdinalIgnoreCase)
+    [pscustomobject]@{ path = $p; rel = Join-Path $(if ($inState) { $script:KitPathMap.stateDir } else { $script:KitPathMap.runtimeDir }) ([IO.Path]::GetRelativePath($(if ($inState) { $sd } else { $rt }), $p)) } }
+}
+function Invoke-Stats {
+  param([switch]$Reset)
+  $dst = Join-Path (Get-KitPath forgotten) "stats-reset-$((Get-Date).ToString('yyyyMMdd'))"
+  if (Test-Path -LiteralPath $dst) { $dst += "-$((Get-Date).ToString('HHmmss'))" }   # a second reset the same day never overwrites the first
+  $moved = 0
+  foreach ($f in @(Get-KitStatsFiles)) {
+    if (-not [IO.File]::Exists($f.path)) { "absent  $($f.rel)"; continue }
+    $kb = [math]::Round([IO.FileInfo]::new($f.path).Length / 1KB, 1)
+    if (-not $Reset) { "stats  $($f.rel) ($kb KB)"; continue }
+    $to = Join-Path $dst $f.rel; $null = New-Item -ItemType Directory -Force (Split-Path $to)
+    try { [IO.File]::Move($f.path, $to); $moved++; "moved  $($f.rel) ($kb KB)" } catch { "busy  $($f.rel): $($_.Exception.Message)" }
+  }
+  if ($moved) { "-> $dst"; Write-KitLog calls stats-reset @{ to = $dst; files = $moved } }
 }
