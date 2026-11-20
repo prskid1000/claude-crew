@@ -920,10 +920,10 @@ function Invoke-Shells {
 
 # ---- reset: bossy.ps1 stats [-Reset] (owner 2026-11-20): the files only this page's charts read; -Reset moves them to
 # <state>/forgotten/stats-reset-<yyyyMMdd>/ (relative paths kept), the next sweep starts empty charts. Functional state stays: params,
-# outcomes, storage (disk verdicts), pool-usage, runtimes, localenv-history, leases, audit logs, run records, supervise-state.
+# params-changes (the settings audit log), outcomes, storage (disk verdicts), pool-usage, runtimes, localenv-history, leases, audit logs, run records, supervise-state.
 function Get-KitStatsFiles {
   $rt = Get-KitRuntime; $sd = Split-Path (Get-KitPath disk-writes); $cache = Get-KitPath cache
-  foreach ($p in @((Get-KitPath disk-writes), (Get-KitPath params-changes), (Get-KitPath mem-samples), [IO.Path]::ChangeExtension((Get-KitPath supervise-report), '.json'), (Join-Path $cache 'supervise-writes.json'), (Join-Path $cache 'runs-rows.json'))) {
+  foreach ($p in @((Get-KitPath disk-writes), (Get-KitPath mem-samples), [IO.Path]::ChangeExtension((Get-KitPath supervise-report), '.json'), (Join-Path $cache 'supervise-writes.json'), (Join-Path $cache 'runs-rows.json'))) {
     $inState = $p.StartsWith($sd, [StringComparison]::OrdinalIgnoreCase)
     [pscustomobject]@{ path = $p; rel = Join-Path $(if ($inState) { $script:KitPathMap.stateDir } else { $script:KitPathMap.runtimeDir }) ([IO.Path]::GetRelativePath($(if ($inState) { $sd } else { $rt }), $p)) } }
 }

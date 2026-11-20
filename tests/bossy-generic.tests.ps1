@@ -153,13 +153,16 @@ Expect "shells: progress from the output file (last line, ANSI cut), an adopted 
 Expect "bossy.ps1 shells and a -ReadOnly sweep write no file ($($pg -match '^nowrite:'))" ($pg -contains 'nowrite:True|1|True')
 Expect "shell sampler: a busy child's CPU between two real samples; ps time with days ($($pg -match '^live:'))" ($pg -contains 'live:True|True|2|93784|65')
 # bossy.ps1 stats -Reset: only the charts' files move to forgotten/stats-reset-<date>/ (relative paths kept); params.json stays
-$sfi = @((TkPath $k disk-writes -Create), (TkPath $k params-changes), (TkPath $k mem-samples -Create), (Join-Path (TkPath $k cache -Create) 'runs-rows.json'), (TkPath $k param-state))
+$sfi = @((TkPath $k disk-writes -Create), (TkPath $k mem-samples -Create), [IO.Path]::ChangeExtension((TkPath $k supervise-report -Create), '.json'), (Join-Path (TkPath $k cache -Create) 'supervise-writes.json'),
+  (Join-Path (TkPath $k cache) 'runs-rows.json'), (TkPath $k param-state), (TkPath $k params-changes))
 foreach ($statF in $sfi) { '{}' | Set-Content $statF }
-$sl0 = pwsh @np $O stats | Out-String; $sr1 = pwsh @np $O stats -Reset | Out-String; $sr2 = pwsh @np $O stats -Reset | Out-String
+$sl0 = pwsh @np $O stats | Out-String; $sr1 = pwsh @np $O stats -Reset | Out-String; '{}' | Set-Content $sfi[0]; $sr2 = pwsh @np $O stats -Reset | Out-String; $sr3 = pwsh @np $O stats -Reset | Out-String
 $sfd = Join-Path (TkPath $k forgotten) "stats-reset-$((Get-Date).ToString('yyyyMMdd'))"; $rtDir = Join-Path $sfd (Get-Content (Join-Path $k 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths.runtimeDir
-Expect "stats lists; -Reset moves the charts' files with their relative paths, keeps params.json; a second reset finds none ($sr1)" ($sl0 -match 'stats  \.state[\\/]disk-writes\.jsonl' -and
-  $sl0 -match 'absent  \S+supervise-report\.json' -and (Test-Path (Join-Path $sfd '.state/disk-writes.jsonl')) -and (Test-Path (Join-Path $rtDir 'cache/runs-rows.json')) -and
-  (Test-Path (Join-Path $rtDir 'cache/mem-samples.txt')) -and -not (Test-Path $sfi[0]) -and (Test-Path $sfi[4]) -and $sr1 -match '(?m)^moved  ' -and $sr2 -notmatch 'moved')
+$sfm = @('cache/mem-samples.txt', 'logs/supervise-report.json', 'cache/supervise-writes.json', 'cache/runs-rows.json' | Where-Object { Test-Path (Join-Path $rtDir $_) }).Count
+$sf2 = @(Get-ChildItem (Split-Path $sfd) -Directory -Filter "$(Split-Path $sfd -Leaf)-*" | Where-Object { Test-Path (Join-Path $_.FullName '.state/disk-writes.jsonl') }).Count
+Expect "stats lists; -Reset moves the 5 charts' files with their relative paths, keeps params.json and params-changes; a same-day rerun gets its own folder; nothing left: none moved ($sr1)" (
+  $sl0 -match 'stats  \.state[\\/]disk-writes\.jsonl' -and (Test-Path (Join-Path $sfd '.state/disk-writes.jsonl')) -and $sfm -eq 4 -and -not (Test-Path $sfi[2]) -and (Test-Path $sfi[5]) -and (Test-Path $sfi[6]) -and
+  @($sr1 -split "`n" | Where-Object { $_ -match '^moved  ' }).Count -eq 5 -and $sf2 -eq 1 -and $sr2 -match 'moved  \.state' -and $sr3 -notmatch 'moved')
 # K85: a git hook's pwsh (MSYS exec: parent dead) joins the shell running git push, not the other shell (40 flags, no hook verb: no regex backtracking hang)
 $hk = Invoke-PsTest 'shellhook' @'
 . $args[0]; $env:KIT_TRANSCRIPTS = Join-Path $args[1] 'tx-none'; $t0 = Get-Date
