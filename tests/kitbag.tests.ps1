@@ -214,13 +214,17 @@ $cbFirst = pwsh @np $cbD tracker bug -Parent $cbAsk -Key qa-r1 -Name '[Bug] Ask 
 $cbUnit = & { . (Lib); "$(Test-KitBugCollector ([pscustomobject]@{ name = '[Bug] a'; description = "hand`n`nSource: k [kit:bug:k]" }))$(Test-KitBugCollector ([pscustomobject]@{ name = '[Bug] a - new defects (2): x'; description = '' }))$(Test-KitBugCollector ([pscustomobject]@{ name = '[Bug] a'; description = "Source: a \[kit:bug:a\_b\]`r`n`r`nx" }))" }
 Expect "tracker bug: a hand-made [Bug] under the ask never takes a section; a new collector does ($($cbFirst.action) $($cbSecond.action) $cbUnit)" ($cbFirst.action -eq 'created' -and $cbFirst.id -ne $cbHand -and $cbSecond.id -eq $cbFirst.id -and $cbSecond.action -eq 'appended' -and (pwsh @np $cbD tracker view $cbHand | ConvertFrom-Json).description -eq 'hand scope' -and $cbUnit -eq 'FalseTrueTrue')
 Remove-Item Env:KIT_TRACKER_TYPE
+# retro 2026-11-19: Git Bash read --click 'details > summary' unquoted as a redirect (a stray file 'summary'): stdout as a file is refused
+$rdPg = Join-Path (Kd) 'redir.html'; '<p>x</p>' | Set-Content $rdPg; $rdOut = Join-Path (Kd) 'summary'
+$rdP = Start-Process (Get-Command $py).Source -ArgumentList @('-X', 'utf8', (Join-Path $k 'skills/bossy/kitbag.py'), 'ui-check', $rdPg, '--click', 'details') -RedirectStandardOutput $rdOut -RedirectStandardError "$rdOut.err" -NoNewWindow -Wait -PassThru
+Expect "ui-check: --click with stdout redirected to a file exits 2 and names the unquoted '>' (exit $($rdP.ExitCode))" ($rdP.ExitCode -eq 2 -and (Get-Content "$rdOut.err" -Raw) -match 'unquoted ">"')
+# K105: every Kd / $k use sits above Remove-TestKit (it deletes Kd: redir.html had no folder)
+$kbLines = [IO.File]::ReadAllLines($PSCommandPath); $kbRm = [array]::FindLastIndex($kbLines, [Predicate[string]] { param($l) $l -match '^Remove-TestKit \$k' })
+$kbLate = @($kbLines[($kbRm + 1)..($kbLines.Count - 1)] | Where-Object { $_ -match '\(Kd\)|\$k\b' -and $_ -notmatch '^\s*#|kbLines' })
+Expect "kitbag area: nothing uses Kd or `$k after Remove-TestKit ($($kbLate.Count))" ($kbRm -gt 0 -and -not $kbLate.Count)
 Remove-TestKit $k
 $pg = [IO.File]::ReadAllText((Join-Path $src '.github/workflows/pages.yml')); $il = $pg.IndexOf('kitbag.py lint')
 Expect 'pages.yml: lint runs the flow checks (no --no-flow), so an issue the page would show fails CI' ($il -ge 0 -and $pg -notmatch '--no-flow')
 $cpNoAgent = @(Get-ChildItem "$src/agents/*.md", "$src/skills/*/SKILL.md", "$src/workflows/*.js" | Select-String -Pattern '(crafty\.ps1|\$D) checkpoint (?!-Agent )' | ForEach-Object { "$($_.Filename):$($_.LineNumber)" })
 Expect "every documented checkpoint call names -Agent (crafty.ps1 exits 2 without it): $($cpNoAgent -join ', ')" (-not $cpNoAgent.Count)
-# retro 2026-11-19: Git Bash read --click 'details > summary' unquoted as a redirect (a stray file 'summary'): stdout as a file is refused
-$rdPg = Join-Path (Kd) 'redir.html'; '<p>x</p>' | Set-Content $rdPg; $rdOut = Join-Path (Kd) 'summary'
-$rdP = Start-Process (Get-Command $py).Source -ArgumentList @('-X', 'utf8', (Join-Path $k 'skills/bossy/kitbag.py'), 'ui-check', $rdPg, '--click', 'details') -RedirectStandardOutput $rdOut -RedirectStandardError "$rdOut.err" -NoNewWindow -Wait -PassThru
-Expect "ui-check: --click with stdout redirected to a file exits 2 and names the unquoted '>' (exit $($rdP.ExitCode))" ($rdP.ExitCode -eq 2 -and (Get-Content "$rdOut.err" -Raw) -match 'unquoted ">"')
 Complete-Tests
