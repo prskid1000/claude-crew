@@ -1853,7 +1853,7 @@ def _ev(cid, ev):
     """Evidence: an image URL inline, another URL as a link named by its type; '<file>=<url>' (devtools.py evidence prints
     the names) types a host link without one (a Drive /view link); text as is."""
     def one(e):
-        named = re.match(r'([^=\s]+)=(https?://\S+)$', e)
+        named = re.match(r'([\w.\-]+)=(https?://\S+)$', e)
         name, url = (named[1], named[2]) if named else ('', e)
         if not re.match(r'https?://\S+$', url):
             return e
@@ -2564,8 +2564,8 @@ def _publish_selftest(expect, refused):
                    '| negative |' in ra and AI_TABLE.search(ra) and ROUNDS_TABLE.search(ra) and CHECKS_TABLE.search(rh) and 'negative' not in rh.lower())
             dv = 'https://drive.google.com/file/d/1Ab/view?usp=drivesdk'
             expect('cases evidence: links named by type (json, screenshot, log), never a URL segment such as "view"; an image URL inline',
-                   _ev('A1', [f'A1_resp.json={dv}', f'A1_list.png={dv}', 'https://x/run.log', 'https://x/a.png', dv, 'curl 200'])
-                   == f'[json]({dv}) · [screenshot]({dv}) · [log](https://x/run.log) · ![A1](https://x/a.png) · [file]({dv}) · curl 200')
+                   _ev('A1', [f'A1_resp.json={dv}', f'A1_list.png={dv}', 'https://x/run.log', 'https://x/a.png', dv, 'curl 200', '[s](https://x/a?u=https://y/z)'])
+                   == f'[json]({dv}) · [screenshot]({dv}) · [log](https://x/run.log) · ![A1](https://x/a.png) · [file]({dv}) · curl 200 · [s](https://x/a?u=https://y/z)')
             long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
                    not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))

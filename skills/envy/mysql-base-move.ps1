@@ -144,7 +144,7 @@ function Get-LaneIds($Envs) {
     $n; for ($k = 2; $k -le $max; $k++) { "$n$k" }
   }
 }
-function Get-LaneSlug([string]$Id) { if ($Id -match '^([^\d-]+)(\d*)$') { "$($Matches[1])-$(Get-Bird $(if ($Matches[2]) { [int]$Matches[2] } else { 1 }))" } else { $Id } }
+function Get-LaneSlug([string]$Id) { if ($Id -match "-($(@($Birds) -join '|'))$") { return $Id }; if ($Id -match '^(\D+)(\d*)$') { "$($Matches[1])-$(Get-Bird $(if ($Matches[2]) { [int]$Matches[2] } else { 1 }))" } else { $Id } }
 if ($Rename -or $Rollback) {
   $jf = "$Lanes/rename-journal.json"; $bak = "$Lanes/rename-backup"
   $stateDir = Split-Path $Lanes; $wd = "$Runtime/work/localenv"; $ld = "$Runtime/logs/localenv"
