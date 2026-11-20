@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L952 results · L985 retest · L1042 prepare
+Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L972 results · L1005 retest · L1062 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -557,6 +557,25 @@ $docGaps = { if (-not $hDoc) { return }
   $gapAll = @(& (Get-Python) -X utf8 $KitCmd.devtools docgaps --key "${pubKey}:testing-doc" --run $gf --run-id $runKey 2>&1); $gapRc = $LASTEXITCODE; Remove-Item -LiteralPath $gf -ErrorAction SilentlyContinue
   if ($gapRc) { throw "devtools.py docgaps failed (exit $gapRc): $((@($gapAll) | Select-Object -Last 3) -join ' | ')" }   # never read as "every row covered"
   @($gapAll | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] -and "$_".Trim() } | ForEach-Object { "$_".Trim() }) }
+# human doc checks run from the UI: a screenshot each (PASS / note / FAIL); a "No UI trigger" row also takes a .log excerpt; JSON alone = API-only
+$noShot = { if (-not $hDoc) { return }
+  $hRec = try { Get-Content -LiteralPath (Join-Path (Get-KitPath published) "$($pubKey -replace '[^\w.-]+', '_')_testing-doc.json") -Raw | ConvertFrom-Json } catch { $null }
+  # the rows of the doc's case tables (a header with # and Result); only checks covering one need a screenshot
+  $docRows = [Collections.Generic.List[string]]::new(); $noUiRows = [Collections.Generic.List[string]]::new(); $inCases = $false
+  foreach ($hLine in ("$(@($hRec.rounds)[-1].body)" -split "`r?`n")) {
+    if ($hLine -notmatch '^\s*\|') { $inCases = $false; continue }
+    if ($hLine -match '^\s*\|\s*#\s*\|' -and $hLine -match '\|\s*Result\s*\|') { $inCases = $true; continue }
+    if ($inCases -and $hLine -match '^\s*\|\s*([^|\s]+)\s*\|(.*)' -and $Matches[1] -notmatch '^[-:]+$') {
+      $rowId = $Matches[1]; $docRows.Add($rowId); if ($Matches[2] -match '^\s*\**No UI trigger') { $noUiRows.Add($rowId) } }
+  }
+  foreach ($sc in @(@($res.checks) | Where-Object { [string]$_.result -in 'PASS', 'PASS_WITH_NOTE', 'FAIL' })) {
+    $scEv = @(@($sc.evidence) | Where-Object { $_ } | ForEach-Object { [string]$_ })
+    if (@($scEv | Where-Object { $_ -match '\.(png|jpe?g)$' }).Count) { continue }
+    $scRows = @(@("$($sc.id)") + @("$($sc.case)" -split '[\s,;]+') + @(if ("$($sc.screen)" -match '^\s*([A-Za-z]*\d+[a-z]?)\b') { $Matches[1] }) | Where-Object { $_ })
+    if (-not @($scRows | Where-Object { $_ -in $docRows }).Count) { continue }
+    if (@($scRows | Where-Object { $_ -in $noUiRows }).Count -and @($scEv | Where-Object { $_ -match '\.log$' }).Count) { continue }
+    "$($sc.id)$(if (@($scEv | Where-Object { $_ -match '\.json$' }).Count) { ' (API-only evidence: run it from the UI, keep the JSON that action caused as extra)' })"
+  } }
 $gapWhy = "human testing doc row(s) neither this run nor an earlier published run covers (each row's Result / Evidence comes from the checks with its id, ""case"": ""<row id>"" or a screen starting with it): give those checks the row id, or add a NOT_TESTED check per row with why"
 if ($Check) {
   # standard name, else setup form
@@ -648,6 +667,7 @@ if ($Check) {
   $oosCh = @(@(if ($null -ne $run.outOfScope) { $run.outOfScope } else { Get-KitSetting 'qa.outOfScope' @() }) | Where-Object { "$_".Trim() } | ForEach-Object { "$_".Trim() })
   $oosBad = @(@($res.checks) | Where-Object { $_.result -eq 'OUT_OF_SCOPE' } | Where-Object { $t = "$($_.screen) $($_.what_was_done) $($_.observed)"; -not @($oosCh | Where-Object { $t -match "(?i)\b$([regex]::Escape($_))\b" }).Count } | ForEach-Object { [string]$_.id })
   if ($oosBad.Count) { $fail = $true; "$Code scope check: OUT_OF_SCOPE is only for a qa.outOfScope channel ($(if ($oosCh.Count) { $oosCh -join ', ' } else { 'none set' })), named in the check: $($oosBad -join ', '). A part with no build on the target: test it on the local env (phoney.ps1 build -Local + a lane, a ""local run""); no lane can run it -> NOT_TESTED phone-only (the owner decides)" }
+  $shotBad = @(& $noShot); if ($shotBad.Count) { $fail = $true; "$Code screenshot check: human testing doc check(s) without a screenshot of the visible result (pokey SKILL.md Evidence: run each from the UI; JSON is extra, never instead): $($shotBad -join ', ')" }
   $gaps = @(& $docGaps); if ($gaps.Count) { if (-not $docSib) { $fail = $true }; "$Code doc check$(if ($docSib) { ' WARN (a sibling item tests the same task)' }): $($gaps -join ', '): $gapWhy" }
   if ($badTypes.Count) {
     $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
@@ -657,7 +677,7 @@ if ($Check) {
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
   $prRun = @(& $proseRun); if ($prRun.Count) { "$Code prose WARN (run.json / bugs.json, shared by every package: fix there; does not hold this close):"; $prRun | ForEach-Object { "  $_" } }
   if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count -or $kbBad.Count -or $oosBad.Count -or ($gaps.Count -and -not $docSib)) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: $checkCmd"; 'EXIT=1'; exit 1 }
-  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose$(if ($hDoc) { ', every human doc row covered' }))"
+  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose$(if ($hDoc) { ', every human doc row covered, each with a screenshot' }))"
   if ($publishAfter) { $pass = @{} + $PSBoundParameters; foreach ($k in 'FixNames', 'Check') { $pass.Remove($k) }; Invoke-Finalize @pass; return }
   'EXIT=0'; exit 0
 }

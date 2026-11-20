@@ -65,11 +65,13 @@ Set these first, restore them after:
 
 ## Checks
 
+Do each check in the app as a user would; a screenshot of what you see, every check; network or log JSON from that action only as extra evidence. "No UI trigger": check the visible effect it names.
+
 Orders screen:
 
-| # | Steps | Expected | Result | Evidence |
-|---|---|---|---|---|
-| T1 | 1. Open Orders 2. Click Date | newest first |  |  |
+| # | UI steps | Expected on screen | Screenshot | Extra evidence | Result |
+|---|---|---|---|---|---|
+| T1 | 1. Open Orders 2. Click Date | newest first |  |  |  |
 
 ## Out of scope
 
@@ -79,7 +81,7 @@ none
 
 All checks pass -> close the task. A check of this change fails or could not be tested -> failedTesting with the check ids and why. A defect outside this change -> one [Bug] task under the original ask.
 "@)
-Expect 'cases render goals: a goal per human check (its result from the AI rows naming it) and quality, the rounds' ($go -match '(?m)^\| G1 \(T1\) \| newest first \| A1 \| newest first \| PASS \|$' -and $go -match '(?m)^\| Q1 \| list loads fast \| 5 timings \| p95 <= 2 s \|  \|$' -and $go -match '(?m)^- unit: OrderSortTest$' -and $go -match '(?m)^\| 1 \| none \| abc1234 \|$')
+Expect 'cases render goals: a goal per human check (its result from the AI rows naming it) and quality, the rounds' ($go -match '(?m)^\| G1 \(T1\) \| newest first \| UI: 1\. Open Orders 2\. Click Date · A1 \| newest first \| PASS \|$' -and $go -match '(?m)^\| Q1 \| list loads fast \| 5 timings \| p95 <= 2 s \|  \|$' -and $go -match '(?m)^- unit: OrderSortTest$' -and $go -match '(?m)^\| 1 \| none \| abc1234 \|$')
 # the gates judge the rendered text: the goals file is never published; the AI doc publishes (markdown and html adapters: same text)
 $env:KIT_REPORT_TYPE = 'markdown'; $pg = Dt doc 'goals' (Dt cases render T1 goals).out --key T1:testing-ai --override t; $pm = Dt doc 'Sort orders' cases --key T1:testing-ai --override t
 $env:KIT_REPORT_TYPE = 'html'; $null = Dt cases add T2 "$wd/cases.json"; $ph = Dt doc 'Sort orders' cases --key T2:testing-ai --override t; $env:KIT_REPORT_TYPE = $null

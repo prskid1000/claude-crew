@@ -12,7 +12,7 @@ export const meta = {
 }
 
 // Sections: L16 args · L53 record-args · L74 prepare · L103 config · L134 prompts · L226 local · L254 app · L284 test-prompt ·
-//   L341 verify · L403 run-item · L587 pool · L609 budget · L641 run · L687 learn
+//   L342 verify · L404 run-item · L588 pool · L610 budget · L642 run · L688 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -176,7 +176,7 @@ const CHECKS_SCHEMA = {
      env_fix: { type: 'string', description: 'local env, NOT_TESTED: the exact coordinator-only fix' },
      what_was_done: { type: 'string' },
      observed: { type: 'string', description: 'what you saw; for FAIL the failing call (method, URL, status, body excerpt) or message' },
-     evidence: { type: 'array', items: { type: 'string' }, description: 'file names (not paths) that exist in shots/ or evidence/' },
+     evidence: { type: 'array', items: { type: 'string' }, description: 'file names (not paths) that exist in shots/ or evidence/; a human testing doc check (PASS / note / FAIL): at least one screenshot; JSON only from the UI action (network / app log)' },
      attempts: { type: 'integer', description: 'runs of this check (LLM-driven / timing: 5+)' },
      window: { type: 'string', description: 'conditions + UTC times, e.g. "first 5 min after a restart, 14:02-14:10 UTC"' },
     },
@@ -267,7 +267,7 @@ PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.us
 - UI: & ${Q} ui <verb> (verbs: pokey.ps1 -h). Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
 }
 const API = `
-API-ONLY LANE: pokey.ps1 api only (exit 1 on HTTP >= 400: judge the status against Expected); save request/response evidence for every check.`
+API-ONLY LANE: pokey.ps1 api only (exit 1 on HTTP >= 400: judge the status against Expected); save request/response evidence for every check. A human testing doc row with UI steps needs a web or app lane (its screenshot): NOT_TESTED tool-down naming it; a "No UI trigger" row: its log excerpt.`
 
 // an item's lane (default: the first qa.lanes entry), its config and kind; a lane with devices runs one item per device
 const laneOf = (it) => (it && it.lane) || Object.keys(QL)[0]
@@ -284,13 +284,14 @@ LANE "${laneOf(it)}" (kind ${k}): drive it with the tools ${QA}/SKILL.md names f
 // ---- test-prompt: test and audit prompts
 // finalize -Check publishes nothing: it renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites the results file
 const CHECK = (it, extra = '') => `& '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames${extra}`
-const CHECK_FAILS = 'It prints EXIT=1 (plus a FAILED line: it crashed, read the error) =evidence named in it is missing, a name it could not fix, duplicate check ids, or a human testing doc row no check covers (give a check its row id or case)'
+const CHECK_FAILS = 'It prints EXIT=1 (plus a FAILED line: it crashed, read the error) =evidence named in it is missing, a name it could not fix, duplicate check ids, a human testing doc row no check covers (give a check its row id or case), or a doc check without a screenshot (run it from the UI and capture it)'
 
 function testPrompt(it, L) {
  return `You are checky (role test, kind ${it.retest ? 'regression' : 'task'}). Test ONE tester guide on the test environment and return a verdict per check.
 
 GUIDE: ${it.title}
-Guide text (read it fully first; the task's AI testing doc, else its human doc): ${it.guideFile}
+Guide text (the task's human testing doc; read it fully first): ${it.guideFile}
+UI ONLY: run each guide check as a person would, from its UI steps (a backend change through the UI action that triggers it; the API only for setup data); a screenshot of the visible result per check; request / response JSON only as captured from that action (saveNet, app log), never a hand-made call. A "No UI trigger" row: check the visible effect it names (screen or log).
 Package code: ${it.code}. Output folder: ${outDir(it)} (create shots/, evidence/, scripts/). Reuse valid evidence already there.
 Tasks covered (tag each check with its task id):
 ${(it.subtasks || []).map((s) => `  - ${s.id}: ${s.name}${s.mrs ? `  (MRs: ${s.mrs})` : ''}`).join('\n')}
@@ -349,7 +350,7 @@ function verifyPrompt(it, fails, L) {
  return `You are checky (role verify). Verify these FAILED checks from scratch (your agent definition: be skeptical of the first tester, confirm a real difference from Expected).
 
 GUIDE: ${it.title}   Guide text: ${it.guideFile}
-Package ${it.code}. Output folder ${outDir(it)}; name new evidence <CODE>-<checkId>_verify_<desc>.jpeg/.json.
+Package ${it.code}. Output folder ${outDir(it)}; name new evidence <CODE>-<checkId>_verify_<desc>.jpeg/.json (re-run from the UI as the guide says: a screenshot each, JSON only from that action).
 Tasks and MRs: ${(it.subtasks || []).map((s) => `${s.id}${s.mrs ? ` (MRs: ${s.mrs})` : ''}`).join('; ')}
 
 FAILED CHECKS:
@@ -404,10 +405,10 @@ Return ok=true/false and the script's output.`
 // NOT_TESTED: stronger retry, then ENV-FIX (local) or failedTesting (shared env)
 const CAUSE_NEXT = {
  'no-mail-sandbox': 'check what the app sent through its API or job log (the delivery channel itself is out of scope)',
- 'phone-only': 'take a device lane (phoney.ps1 acquire); no build on the target: the local-env APK (phoney.ps1 build -Local) on a lane, a "local run"; else prove the server side through the API',
+ 'phone-only': 'take a device lane (phoney.ps1 acquire); no build on the target: the local-env APK (phoney.ps1 build -Local) on a lane, a "local run"; else a web screen showing the same result',
  'undeployed': 'run pokey.ps1 deployed again; still not live -> NOT_TESTED undeployed (the task goes back to its developer)',
  'env-data': 'create the data through the API (prefixed QA-<CODE>) or ask the lead in lead-notes.md',
- 'tool-down': 'use another tool (the product API, read endpoints, logs) instead of the one that is down' }
+ 'tool-down': 'use another tool (another screen, read endpoints, logs) instead of the one that is down; a doc check still needs its screenshot' }
 const causeHint = (c) => CAUSE_NEXT[c.cause] || 'find another way in (data, user, path, the API, the lead notes)'
 const retryable = (c) => c.result === 'NOT_TESTED'
 const ntShare = (r) => (r && r.checks.length ? r.checks.filter(retryable).length / r.checks.length : 1)

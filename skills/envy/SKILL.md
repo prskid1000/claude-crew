@@ -72,7 +72,7 @@ $L = '<kit>/skills/envy/envy.ps1'
 3. Run each goal with the tool its proof names: API -> `pokey.ps1 api -Target <local target> -Save`; web -> `browser.mjs`
    (headless); app -> a phone with the local-env APK through the `phoney` skill: `build -Local [-AppDir <your app worktree>]`,
    then `acquire -Agent <id> -Apk local` (installs it, reverses `app.localReverse` ports to this machine; log in against the
-   local server), `pokey.ps1 ui ...`, `release` when done. Save evidence as in pokey "Evidence" (the human doc reuses it).
+   local server), `pokey.ps1 ui ...`, `release` when done. Save evidence as in pokey "Evidence" (the AI doc links it).
 4. A goal fails, a log shows an error, or a request returns 5xx: Debug locally, fix (crafty step 3), commit, deploy again,
    re-run ALL goals (a fix can break an earlier one). Max 3 rounds; then report FAIL with the failing goals and evidence (a
    stronger round follows, then the coordinator). Never BLOCKED for an env reason: "Unblock yourself".

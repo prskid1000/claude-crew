@@ -146,10 +146,20 @@ $go = Fin $gr G1 -Check; $grc = $LASTEXITCODE; $gp = Fin $gr G1 -NoTracker
 Expect "finalize -Check: a human doc row no check covers -> EXIT=1 naming it; publish refuses, nothing published (rc $grc)" ($grc -eq 1 -and $go -match 'G1 doc check: C2: human testing doc row' -and $gp -match 'G1 doc check: C2' -and -not (Test-Path "$gr/G1/finalize.json"))
 # a scoped retry (-Results results-retry.json, C1 only): the item's results.json covers C2, no doc gap; api evidence with only request.path previews, no crash
 New-Item -ItemType Directory -Force "$gr/G1/evidence" | Out-Null; & $J @{ request = @{ method = 'POST'; path = '/api/x' }; response = @{ status = 201; body = @{ ok = 1 } } } "$gr/G1/evidence/G1-C1_01_rel.json"
-$rj = Read-Json "$gr/G1/results.json"; $rj.checks[0].evidence = @('G1-C1_01_rel.json'); & $J $rj "$gr/G1/results-retry.json"
+New-Item -ItemType Directory -Force "$gr/G1/shots" | Out-Null; [IO.File]::WriteAllBytes("$gr/G1/shots/G1-C1_02_saved.png", [byte[]](1, 2))
+$rj = Read-Json "$gr/G1/results.json"; $rj.checks[0].evidence = @('G1-C1_01_rel.json', 'G1-C1_02_saved.png'); & $J $rj "$gr/G1/results-retry.json"
 $c2 = $rj.checks[0] | ConvertTo-Json -Depth 5 | ConvertFrom-Json; $c2.id = 'C2'; $c2.evidence = @(); $rj.checks = @($rj.checks) + $c2; & $J $rj "$gr/G1/results.json"
 $gro = Fin $gr G1 -Check -Results results-retry.json; $grr = $LASTEXITCODE
 Expect "finalize -Check -Results <retry>: rows the item's results.json covers are no doc gap; a path-only api file does not crash (rc $grr)" ($gro -notmatch 'doc check' -and $gro -notmatch 'null-valued' -and $grr -eq 0)
+# human doc checks run from the UI (owner 2026-11-20): a PASS / FAIL with no screenshot -> EXIT=1, JSON-only named API-only; a "No UI trigger" row takes a .log
+$sd = "$(Kd)/TSH-h.md"; Set-Content $sd 's1'
+& $J @{ key = 'TSH:testing-doc'; url = $sd; rounds = @(@{ at = '2026-11-20 10:00'; label = ''; ext = '.md'; body = "# Testing: X`n| # | UI steps | Expected on screen | Screenshot | Extra evidence | Result |`n|---|---|---|---|---|---|`n| S1 | Click Save | Saved shown | | | |`n| S2 | **No UI trigger** (nightly job): open Job history | a run at 02:00 | | | |`n| S3 | Click Sort | newest first | | | |" }) } "$k/.state/published/TSH_testing-doc.json"
+$shr = New-Run 'SH' @(@{ code = 'H1'; task = 'TSH'; checks = @(@('S1', 'PASS'), @('S2', 'PASS'), @('S3', 'FAIL', 'own'), @('X1', 'PASS')) }); New-Item -ItemType Directory -Force "$shr/H1/evidence" | Out-Null
+& $J @{ request = @{ method = 'POST'; path = '/x' }; response = @{ status = 200 } } "$shr/H1/evidence/H1-S1_01_save.json"; Set-Content "$shr/H1/evidence/H1-S2_01_job.log" 'run 02:00 ok'
+$rj = Read-Json "$shr/H1/results.json"; $rj.checks[0].evidence = @('H1-S1_01_save.json'); $rj.checks[1].evidence = @('H1-S2_01_job.log'); & $J $rj "$shr/H1/results.json"
+$sho = Fin $shr H1 -Check; $shc = $LASTEXITCODE
+Expect "finalize -Check: doc checks without a screenshot -> EXIT=1 (S1 API-only, S3 none); the No UI trigger row's log passes; X1 covers no doc row (rc $shc)" (
+  $shc -eq 1 -and $sho -match 'H1 screenshot check: [^\n]*S1 \(API-only evidence[^\n]*S3' -and $sho -notmatch 'screenshot check: [^\n]*(S2|X1)')
 # a later run of one row (a local app part): the earlier published run Q1 covers C2, so no NOT_TESTED filler; a NOT_TESTED never replaces C1's PASS
 $cr = New-Run 'CA' @(@{ code = 'G2'; task = 'TAI'; checks = , @('C1', 'NOT_TESTED') })
 $rj = Read-Json "$cr/G2/results.json"; $rj.checks[0] | Add-Member cause 'env-data'; $rj.checks[0].observed = 'PO field read-only on the phone vs typed PO'; & $J $rj "$cr/G2/results.json"

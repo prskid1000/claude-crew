@@ -37,8 +37,9 @@ You never change code, branches, docs or tracker state;
 5. Writing: `python -X utf8 <kit>/skills/bossy/kitbag.py prose --kind mr-body <body.md>` (and `--kind mr-title`); each
    finding is a **should-fix**: rewrite, never cut facts.
 **doc / qa:** the artefact against its templates.md section and "Writing standards" (`kitbag.py prose --kind <kind>`); qa: every
-verdict has its evidence, defects are FAIL never notes, own vs new right. **plan:** each claim checked against its evidence (runs,
-numbers, diffs); unsupported claims called out.
+verdict has its evidence, defects are FAIL never notes, own vs new right; a human testing doc and its runs: UI steps and screen
+wording only (no endpoints or code), a screenshot per check, JSON only from the UI action. **plan:** each claim checked
+against its evidence (runs, numbers, diffs); unsupported claims called out.
 
 **dispute** (/buildy fix round: devy contests your findings with evidence; one answer, no second round): re-read your Character;
 per finding open devy's evidence (the file:line, run the test, redo the measurement); `withdrawn` when it holds, else `upheld`

@@ -24,8 +24,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 ## Tester / verifier steps (test environment only, never production)
 0. `bossy.ps1 learn -Read -Skill pokey`; [Bug] / task: `crafty.ps1 prior` (FOUND: tracker scope);
    read the guide, the run's `context` / `contextFiles`. Check SQL/MCP tools once; a tool down is never NOT_TESTED (read APIs).
-   Only the run's target (run.json `target`, `alsoTargets`; `pokey.ps1 api` refuses others): a local run never calls a shared env;
-   no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
+   Only the run's target (run.json `target`, `alsoTargets`; `api` refuses others); no load, stress or request floods on a
+   shared env, even when a guide asks.
 1. **Seat + board:** `pokey.ps1 seat acquire` (exit 4 = still waiting: run it again);
    `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop, report.
    Phones: `phoney.ps1 acquire|release` (kept through waits < 30 min). Local env "pause": stop its checks; "deploy done": re-run.
@@ -37,8 +37,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`): UI checks
    at each `qa.matrix` variant (`matrix()`) + `layoutIssues()`; stated qualities measured (`contrast()`, timings);
    app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command;
-   e2e: `check -Step e2e` (the change's specs). Check id = guide row id; row variants (V1, V2): `case: <row id>`;
-   rows an earlier run covered need no NOT_TESTED filler.
+   e2e: `check -Step e2e`. A human doc row: from the UI only, as its steps say (`api` for setup data only).
+   Check id = guide row id; variants (V1, V2): `case: <row id>`; rows an earlier run covered need no NOT_TESTED filler.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `pokey.ps1 annotate`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
    -Next <next check id> -Evidence "<verdict> <file>"` (a restart resumes there; obey a beat's PAUSE line).
@@ -91,8 +91,8 @@ change may be another agent's; an app setting (never env config) only when a che
 - Name: `<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>` (`what` lowercase-kebab <= 40 chars; marked copy `-marked`; setup evidence
   `<CODE>-<nn>-<what>`, 00 = before the checks, 90+ = cleanup), e.g. `F2-T4_01_before-edit.jpeg`. List only files that exist
   and are not 0 bytes; open each image with Read first.
-- Minimum: PASS (UI) = a shot of the result (state change: before + after); PASS (API) = the request/response JSON; FAIL = the
-  failure shot AND the failing call JSON (`saveNet`) or log excerpt + exact steps; verify = your own `_verify` files.
+- Minimum: a result shot (state change: before + after) per human doc check (`finalize -Check`; "No UI trigger": or a
+  `.log`); JSON only from the UI action (`saveNet`, app log); FAIL: + the failing call JSON or log; verify: own `_verify` files.
 - Redaction: helpers write `[redacted]` for auth headers, cookies, tokens, passwords, secrets, keys; prefer QA-created records,
   mask real customer data.
 
@@ -100,7 +100,7 @@ change may be another agent's; an app setting (never env config) only when a che
 - H0. `bossy.ps1 learn -Read -Skill pokey`; the doc: the task's testing doc (`crafty/templates.md` "Test cases");
   missing or incomplete for this change: write it from that template first.
 - H1. First: every in-app switch ON (the doc's table; an env switch off: ask the owner), the logins and data it names.
-- H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API).
+- H2. Each check: do the steps in the app, compare with Expected on screen, a screenshot always; its network / log JSON: extra.
 - H3. Result rule (above), each with a comment (check ids, saw, evidence) `crafty.ps1 tracker status <task> closed|failedTesting`;
   a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "<product> — <defect>"` (kit adds [Bug]).
 

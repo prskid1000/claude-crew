@@ -10,7 +10,7 @@ $dt = Get-KitSetting 'devices.type' 'none'
 if ($dt -eq 'none') { 'no devices (devices.type none): app checks are NOT_TESTED'; exit 1 }
 $ios = $dt -eq 'ios'   # Simulator: $env:KIT_DEVICE = udid
 $tag = if ($ios) { if ($env:KIT_DEVICE) { $env:KIT_DEVICE } else { 'booted' } } elseif ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
-if ($ios -and $Action -notin 'shot', 'openurl', 'log') { "ios: no ui $Action (simctl has no UI driver): use shot | openurl | log, prove the rest via the API"; exit 2 }
+if ($ios -and $Action -notin 'shot', 'openurl', 'log') { "ios: no ui $Action (simctl has no UI driver): use shot | openurl | log, prove the rest on a web screen or in the app log (a human doc check needs its screenshot)"; exit 2 }
 $xmlLocal = Join-Path (Get-KitPath android-tmp -Create) "ui_$tag.xml"
 function Get-Nodes {
   # a failed dump must not return the old screen

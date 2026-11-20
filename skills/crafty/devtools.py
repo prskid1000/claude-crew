@@ -33,7 +33,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L51 config · L106 run · L194 tracker · L346 process · L528 git host · L601 scope · L691 MR · L883 merge · L1210 docs ·
-  L1363 publish · L1803 render · L2244 plugins · L2258 keepboth · L2277 selftest · L2876 CLI
+  L1365 publish · L1824 render · L2273 plugins · L2287 keepboth · L2306 selftest · L2923 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1234,12 +1234,14 @@ def _cells(row):
 CODE_CSS = "font-family:'Roboto Mono';font-size:9pt;background-color:#f1f3f4"
 CELL_CSS = 'vertical-align:top;padding:4pt'
 HEAD_CSS = CELL_CSS + ';background-color:#e8eaed'
-COL_ROLES = ((5, r'#|no\.?|id|round'), (10, r'type|result|status|date|verdict|retest'), (20, r'evidence|links?|fix commit|bugs found'),
+COL_ROLES = ((30, r'screenshot|ui steps'), (12, r'extra evidence'), (20, r'expected on screen'),   # the human doc: the screenshot readable
+             (5, r'#|no\.?|id|round'), (10, r'type|result|status|date|verdict|retest'), (20, r'evidence|links?|fix commit|bugs found'),
              (25, r'expected|observed|pass rule|saw|why|value'), (40, r'steps?\b.*|check|goal|how checked|what.*|cases run|item|setting'))
 
 
 def col_widths(headers):
-    """Column widths in % by header role (# 5, Step 40, Expected 25, Result 10, Evidence 20; others share the rest), summing to
+    """Column widths in % by header role (# 5, Step 40, Expected 25, Result 10, Evidence 20; human doc: UI steps 30, Expected on
+    screen 20, Screenshot 30, Extra evidence 12; others share the rest), summing to
     100; None when no header has a known role (the renderer's default widths)."""
     w = [next((p for p, rx in COL_ROLES if re.fullmatch(rx, re.sub(r'[*_`]', '', h).strip().lower())), 0) for h in headers]
     if not any(w):
@@ -1363,7 +1365,13 @@ def make_evidence(name, files, folder=None, parent=None, key=None):
 # ---- publish: one artefact per key (<task or run>:<kind>), same link every round; .state/published/
 PUB_KINDS = {'testing-doc': 'append', 'testing-ai': 'append', 'qa-report': 'append'}   # other kinds: replace
 GOALS_MARK = re.compile(r'(?m)^#{1,2} (Testing goals\b|Goals \(what must be true\))')   # templates.md "Testing goals"
-CHECKS_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*Steps\s*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence\s*\|')   # "Human testing doc" (positive cases)
+CHECKS_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*(UI steps\s*\|\s*Expected on screen\s*\|\s*Screenshot\s*\|\s*Extra evidence\s*\|\s*Result|Steps\s*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence)\s*\|')   # "Human testing doc" (positive cases; the 5-column form: docs before 2026-11-20)
+HUMAN_HEAD = ['#', 'UI steps', 'Expected on screen', 'Screenshot', 'Extra evidence', 'Result']
+# a human check names what a person clicks and sees, never an endpoint (owner 2026-11-20)
+API_WORDS = re.compile(r'(?i)\bcurl\b|/api/|\bpayload\b|\brequest body\b|\bpostman\b|\bswagger\b|\b(call|calls|send|sends|hit|invoke)\b[^.|]{0,25}\bAPI\b'
+                       r'|(?-i:\b(GET|POST|PUT|PATCH|DELETE)(\s+/(?=[\w{:.-])|\s+request\b))')
+EV_LABEL = re.compile(r'\s*((?:\*\*[^*]+\*\*\s*)+(?:[A-Z][A-Z _]*(?:\([^)]*\))?:)?\s*)')   # '**V1** PASS: ' / '**stg** ' before a check's evidence
+IMG_MD = re.compile(r'!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>')
 AI_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*Type\s*\|\s*Steps\s*/\s*API call[^|]*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence\s*\|')   # "Testing doc (AI)"
 ROUNDS_TABLE = re.compile(r'(?im)^\|\s*Round\s*\|\s*Date\s*\|\s*Cases run\s*\|\s*Result\s*\|\s*Bugs found\s*\|\s*Fix commit\s*\|\s*Retest\s*\|[^\n]*\n\|[-:| ]+\|[ \t]*\n?((?:\|[^\n]*\n?)*)')   # its loop history
 
@@ -1427,19 +1435,29 @@ def _body_of(h):
 
 
 def _table_rows(md, cells=None, full=False):
-    """Rows of every table whose header has '#', 'Result' and 'Evidence': [(id, result, evidence)] (full: + its other cells joined); cells {id:
-    {result, evidence}} -> the Markdown with those two cells filled. -> (rows, md)"""
+    """Rows of every table whose header has '#', 'Result' and 'Evidence' (or 'Screenshot' + 'Extra evidence'): [(id, result, evidence)]
+    (full: + its other cells joined); cells {id: {result, evidence}} -> the Markdown with those cells filled (images -> Screenshot,
+    the rest -> Extra evidence). -> (rows, md)"""
     out, rows, cols = [], [], None
+    one = lambda v: re.sub(r'\s*\n\s*', ' ', str(v or '')).replace('|', '\\|')   # a newline would end the row
     for line in md.split('\n'):
         c = _cells(line) if line.lstrip().startswith('|') else None
         low = [x.lower() for x in c] if c else []
-        if c and '#' in low and 'result' in low and 'evidence' in low:
+        if c and '#' in low and 'result' in low and ('evidence' in low or 'screenshot' in low):
             cols = {n: i for i, n in enumerate(low)}
+            evc = [cols[n] for n in ('evidence', 'screenshot', 'extra evidence') if n in cols]
         elif c and cols and not re.fullmatch(r'[\s|:-]+', line) and len(c) == len(cols):
-            rows.append((c[cols['#']], c[cols['result']], c[cols['evidence']]) + ((' | '.join(x for j, x in enumerate(c) if j not in (cols['#'], cols['result'], cols['evidence'])),) if full else ()))
+            rows.append((c[cols['#']], c[cols['result']], ' '.join(c[j] for j in evc if c[j])) + ((' | '.join(x for j, x in enumerate(c) if j not in [cols['#'], cols['result']] + evc),) if full else ()))
             if cells and c[cols['#']] in cells:
-                for k in ('result', 'evidence'):
-                    c[cols[k]] = re.sub(r'\s*\n\s*', ' ', str(cells[c[cols['#']]].get(k) or '')).replace('|', '\\|')   # a newline would end the row
+                ev = str(cells[c[cols['#']]].get('evidence') or '')
+                c[cols['result']] = one(cells[c[cols['#']]].get('result'))
+                if 'evidence' in cols:
+                    c[cols['evidence']] = one(ev)
+                else:
+                    segs = [(m.group(1) if (m := EV_LABEL.match(s)) else '', s) for s in ev.split('<br>')]   # one segment per check / env
+                    c[cols['screenshot']] = one('<br>'.join(lb + ' '.join(im) for lb, s in segs if (im := IMG_MD.findall(s))))
+                    if 'extra evidence' in cols:
+                        c[cols['extra evidence']] = one('<br>'.join(r for lb, s in segs if (r := re.sub(r'\s{2,}', ' ', IMG_MD.sub('', s)).strip()) and r != lb.strip()))
                 line = '| ' + ' | '.join(c) + ' |'
         elif not c:
             cols = None
@@ -1664,7 +1682,7 @@ def _check_doc(kind, scope, path, body, prior=()):
     if GOALS_MARK.search(body):
         raise SystemExit(f'{path} is the local goals file (templates.md "Test cases"): never published; publish the AI doc'
                          ' (`doc "<title>" cases --key <task>:testing-ai`) and, after the loop PASS, the human doc. Nothing was published.')
-    tb, name, tpl = (CHECKS_TABLE, '| # | Steps | Expected | Result | Evidence |', 'Human testing doc') if kind == 'testing-doc' else \
+    tb, name, tpl = (CHECKS_TABLE, '| ' + ' | '.join(HUMAN_HEAD) + ' |', 'Human testing doc') if kind == 'testing-doc' else \
         (AI_TABLE, '| # | Type | Steps / API call + payload | Expected | Result | Evidence |', 'Testing doc (AI)')
     tb = next((re.compile(d['headerRx']) for d in docs() if d['key'] == kind and d['headerRx']), tb)   # process.docs[].headerRx
     if not tb.search(body):
@@ -1675,6 +1693,9 @@ def _check_doc(kind, scope, path, body, prior=()):
     if kind == 'testing-doc' and (re.search(r'!\[', body) or any(r or e for _, r, e in _table_rows(body)[0])):
         raise SystemExit(f'{path} has evidence or results: the human doc ships with Result / Evidence empty; a deployed-env run fills them'
                          ' (local evidence lives in the AI doc). Nothing was published.')
+    if kind == 'testing-doc' and (api := [r[0] for r in split_rows(body, prior)[0] if API_WORDS.search(r[3])]):
+        raise SystemExit(f'{path}: row(s) {", ".join(api)} name an API call or endpoint: a human check says what a person clicks or types and'
+                         ' what they see on screen (templates.md "Test cases"). Nothing was published.')
     if kind == 'testing-ai':
         if not neg:
             raise SystemExit(f'{path} has no negative row: the AI doc covers every positive and negative case (templates.md "Test cases"). Nothing was published.')
@@ -1874,6 +1895,10 @@ def cases_gaps(c):
     out = [f'case {x.get("id") or "?"}: type {x.get("type")!r} (one of {"/".join(CASE_TYPES)})' for x in c.get('cases') or [] if x.get('type') not in CASE_TYPES]
     out += [f'case {x["id"]}: check {x["check"]!r} is no checks/qualities/unchanged id' for x in c.get('cases') or [] if x.get('check') and x['check'] not in ids]
     out += [f'{k}: an entry without {SPEC_KEYS[k]}' for k in ('checks', 'qualities', 'unchanged', 'cases') for x in c.get(k) or [] if not x.get(SPEC_KEYS[k])]
+    out += [f'check {x["id"]}: steps / expected name an API call or endpoint; a human check says what a person clicks or types and sees'
+            ' (a backend change through the UI action that triggers it; no UI trigger: noUi, steps = the screen or log where its effect shows)'
+            for x in c.get('checks') or []
+            if x.get('id') and API_WORDS.search(f'{x.get("steps", "")} {x.get("expected", "")}')]
     out += [f'{k}: an object' for k in ('plan',) if c.get(k) and not isinstance(c[k], dict)]
     return out + ([] if c.get('title') else ['title'])
 
@@ -1884,7 +1909,8 @@ def render_cases(c, kind, tid=''):
     of = lambda cid: [x for x in cases if x.get('check') == cid]
     rnd = c.get('rounds') or []
     if kind == 'goals':
-        row = lambda g, gid: [gid, g.get('goal') or g.get('expected') or g.get('steps', ''), g.get('how') or ', '.join(x['id'] for x in of(g['id'])),
+        row = lambda g, gid: [gid, g.get('goal') or g.get('expected') or g.get('steps', ''), g.get('how') or ' · '.join(
+                              filter(None, [f'UI: {g["steps"]}' if g.get('steps') and g.get('expected') else '', ', '.join(x['id'] for x in of(g['id']))])),
                               g.get('rule') or g.get('expected', ''), _verdict([x.get('result') for x in of(g['id'])]) if of(g['id']) else '']
         goals = [row(g, f'G{i} ({g["id"]})') for i, g in enumerate(c.get('checks') or [], 1)] + [row(g, g['id']) for k in ('qualities', 'unchanged') for g in c.get(k) or []]
         plan = c.get('plan') or {}
@@ -1905,13 +1931,16 @@ def render_cases(c, kind, tid=''):
         raise SystemExit(f'cases render: kind {kind!r}: goals | ai | human')
     areas = {}
     for t in c.get('checks') or []:
-        areas.setdefault(t.get('area') or 'Checks', []).append([t['id'], t.get('steps', ''), t.get('expected', ''), '', ''])
+        areas.setdefault(t.get('area') or 'Checks', []).append([t['id'], (f'**No UI trigger** ({t["noUi"]}): ' if t.get('noUi') else '') + t.get('steps', ''),
+                                                              t.get('expected', ''), '', '', ''])
     sw, oos = c.get('switches') or [], c.get('outOfScope') or []
     return '\n\n'.join([f'# Testing: {c.get("title", "")}', _table(['', ''], [['Tasks', c.get('tasks') or tid], ['Environment', c.get('environment') or ''],
                       ['Logins', c.get('logins') or ''], ['Test data', c.get('testData') or '']]), '## What changed', c.get('whatChanged') or c.get('change', ''),
                       '## Before you start / Feature switches'] + (['Set these first, restore them after:', _table(['Setting', 'Where', 'Value'],
                       [[s.get('setting'), s.get('where', ''), s.get('value', '')] for s in sw])] if sw else ['none'])
-                     + ['## Checks'] + [f'{a}:\n\n' + _table(['#', 'Steps', 'Expected', 'Result', 'Evidence'], r) for a, r in areas.items()]
+                     + ['## Checks', 'Do each check in the app as a user would; a screenshot of what you see, every check; network or log JSON'
+                        ' from that action only as extra evidence. "No UI trigger": check the visible effect it names.']
+                     + [f'{a}:\n\n' + _table(HUMAN_HEAD, r) for a, r in areas.items()]
                      + ['## Out of scope'] + ([_table(['Item', 'Why'], [[o.get('item'), o.get('why', '')] for o in oos])] if oos else ['none'])
                      + ['## Result (testers)', 'All checks pass -> close the task. A check of this change fails or could not be tested -> failedTesting with the'
                         ' check ids and why. A defect outside this change -> one [Bug] task under the original ask.']) + '\n'
@@ -2674,6 +2703,24 @@ def _publish_selftest(expect, refused):
         expect('the human doc starts with Result / Evidence empty', _table_rows(open(u2, encoding='utf-8').read())[0][0] == ('T2', '', ''))
         pt = _table_rows('| # | Steps | Result | Evidence |\n|---|---|---|---|\n| A1 | a \\| b | PASS | |', {'A1': {'result': 'PASS', 'evidence': 'x|y'}})
         expect('a \\| in a cell: the row is still read, a filled x|y too, the HTML shows |', pt[0] == [('A1', 'PASS', '')] and _table_rows(pt[1])[0] == [('A1', 'PASS', 'x\\|y')] and 'a | b</td>' in md_to_html(pt[1]))
+        nh = '| ' + ' | '.join(HUMAN_HEAD) + ' |\n|---|---|---|---|---|---|\n| T1 | Click Save | Saved shown | | | |'
+        nf = _table_rows(nh, {'T1': {'result': 'PASS', 'evidence': '![T1: saved](https://img/t1.png)<br>`POST -> 200` [Resp](https://f/t1)'}})
+        expect('human doc (UI form): a run fills Screenshot with the images, Extra evidence with the rest; rows read back',
+               nf[1].endswith('| T1 | Click Save | Saved shown | ![T1: saved](https://img/t1.png) | `POST -> 200` [Resp](https://f/t1) | PASS |')
+               and _table_rows(nf[1])[0] == [('T1', 'PASS', '![T1: saved](https://img/t1.png) `POST -> 200` [Resp](https://f/t1)')] and CHECKS_TABLE.search(nh)
+               and col_widths(HUMAN_HEAD) and 0 not in col_widths(HUMAN_HEAD) and col_widths(HUMAN_HEAD)[3] >= 25)
+        nm = _table_rows(nh, {'T1': {'result': 'PASS (V1, V2)', 'evidence': '**V1** PASS: ![V1: a](https://img/a.png)<br>**V2** PASS: ![V2: b](https://img/b.png) [Resp](https://f/v2)'}})[1]
+        expect('human doc (UI form): checks sharing a row keep their labels in Screenshot; Extra evidence holds no bare label',
+               '| **V1** PASS: ![V1: a](https://img/a.png)<br>**V2** PASS: ![V2: b](https://img/b.png) | **V2** PASS: [Resp](https://f/v2) |' in nm)
+        expect('API_WORDS: endpoint calls and API tools caught; screen wording (a DELETE / ARCHIVE button, a page showing HTTP 404, a webhook endpoint field, Send request) passes',
+               all(API_WORDS.search(x) for x in ('GET /orders', 'Send a POST request', 'call the API', 'curl -X', 'open /api/x', 'in Postman'))
+               and not any(API_WORDS.search(x) for x in ('Click DELETE / ARCHIVE', 'Page shows HTTP 404', 'Enter the webhook endpoint URL', 'Click Send request')))
+        refused('testing-doc: a row naming an endpoint -> refused (human checks run from the UI)', lambda: publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'hapi.md'),
+                doc.replace('1. Open the list.', 'POST /api/list with a payload'))), 'API call or endpoint')
+        expect('cases spec: a human check naming an endpoint is a gap; a UI one with noUi is not',
+               any('API call' in x for x in cases_gaps({'title': 'x', 'checks': [{'id': 'T1', 'steps': 'GET /orders', 'expected': '200'}]}))
+               and not cases_gaps({'title': 'x', 'checks': [{'id': 'T1', 'steps': 'Open Job history', 'expected': 'a run at 02:00', 'noUi': 'nightly job'}]})
+               and '**No UI trigger** (nightly job): Open Job history' in render_cases({'title': 'x', 'checks': [{'id': 'T1', 'steps': 'Open Job history', 'expected': 'e', 'noUi': 'nightly job'}]}, 'human'))
         ur = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'PASS', 'evidence': '![T2: list](https://img/s2.png)'}})
         hb = open(ur, encoding='utf-8').read()
         expect('env run: the human doc (same link) gets Result / Evidence from the deployed run and a dated "<env> run" section; no report doc',

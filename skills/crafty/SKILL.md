@@ -34,7 +34,7 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D wt lease -Repo <repo> -Branch <branch> -Agent <id> [-Target <t>] [-Scope '<globs>']; & $D wt sync -Dir <wt>   # 1. a pool slot (<wt> = its "worktree:" line), latest target
 #   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it as the cases spec `repro`
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
-#   4. FIRST (templates.md "Test cases"): the task's cases spec, human checks from the request (never the code):
+#   4. FIRST (templates.md "Test cases"): the task's cases spec, human checks from the request (never the code), UI-driven:
 #      devtools.py cases add <task> cases.json; automated tests (`testing.md`); each loop round: cases result / round, then
 #      devtools.py doc "<title>" cases --key <task>:testing-ai --label "round <n>"
 & $D check -Dir <wt>/<module>   #    compile + typecheck + lint (gated)

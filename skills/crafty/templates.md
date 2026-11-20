@@ -28,7 +28,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | wave-brief | what a wave builds, by whom | the "Wave brief" template | 600w each:12b 130ch | id path |
 | bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
 | testing-goals | local goals file, never published (`cases render goals`) | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
-| testing-doc | the human testing doc (positive cases; env evidence; `cases render human`) | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected |
+| testing-doc | the human testing doc (positive UI cases; a screenshot each; `cases render human`) | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected |
 | testing-ai | the AI testing doc (the local loop record; `cases render ai`) | setup line, case table, Rounds table | 2500w 25sw | expected |
 | qa-report | the QA run report (an "<env> run" section of the human doc) | header table, Tasks table, Results table (Check, Result, Observed, Evidence: images inline), failures in detail | prose:900w each:15b 25sw | id verdict evidence |
 | result-note | a results.json `observed` / `what_was_done` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
@@ -106,13 +106,16 @@ solution.md review --ai cases`.
 ```json
 { "title": "", "change": "<one line, user terms>", "repos": ["<refs>"], "env": "<env> r<n>", "services": "<leased>", "setup": "<data via the API, prefixed; cleanup>",
   "data": "", "repro": "<bugs: steps, logs, DB state>", "plan": { "unit": "", "regression": "", "api": "", "ui": "", "run": "" }, "matrix": "<qa.matrix line>",
-  "checks": [{ "id": "T1", "area": "<screen>", "steps": "1. <step> 2. <step>", "expected": "<exact, from the shipped code>" }],
+  "checks": [{ "id": "T1", "area": "<screen>", "steps": "1. <click / type> 2. ...", "expected": "<exact text on screen>", "noUi": "<only: no UI trigger (job, inbound feed); steps = where its effect shows>" }],
   "qualities": [{ "id": "Q1", "goal": "<'prominent', '< 10 s'>", "how": "<contrast(), 5 timings>", "rule": "<p95 <= 10 s>" }], "unchanged": [{ "id": "U1", "goal": "" }],
   "cases": [{ "id": "A1", "type": "positive|negative|edge|regression|repro", "check": "T1", "steps": "<API call + payload / screen, selector>", "expected": "", "result": "", "evidence": ["<link>"] }],
   "switches": [{ "setting": "", "where": "", "value": "" }], "outOfScope": [{ "item": "", "why": "" }], "tasks": "", "environment": "", "logins": "<keys>", "testData": "", "whatChanged": "" }
 ```
-The gates judge the rendered text: `checks` = the human doc, POSITIVE only, from the request (task, acceptance, stated qualities), never the
-code, Result / Evidence empty (an env run fills them: pokey finalize or a person, a dated "<env> run" section); `cases` = every
+The gates judge the rendered text: `checks` = the human doc (`| # | UI steps | Expected on screen | Screenshot | Extra evidence |
+Result |`), POSITIVE only, from the request (task, acceptance, stated qualities), never the code; driven from the UI (owner
+2026-11-20): what a person clicks or types and sees, a backend change through the UI action that triggers it, no endpoints, payloads
+or code names (refused); a screenshot per check, request / response JSON only from that action (network or app log) as extra;
+Screenshot / Extra evidence / Result empty (an env run fills them: pokey finalize or a person, a dated "<env> run" section); `cases` = every
 positive, negative, edge and regression case (invalid input, role denials, boundaries, empty data, concurrency, nearby features,
 impact edges), each human check run by a case naming it (`check`); a bug fix: a `repro` case (`process.gates.bugFix` `builtin:reproRow`: merge refuses without); UI cases at
 every `qa.matrix` variant (`matrix`); a failing case is FAIL, never "pre-existing"; a `qa.notLocal` stub path NOT_TESTED_LOCAL,
