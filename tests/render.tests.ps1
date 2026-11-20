@@ -23,7 +23,7 @@ $cn = Dt cases round T1 --fix abc1234; $cx = Dt cases result T1 A9 PASS
 $ai = Get-Content -Raw (Dt cases render T1 ai).out; $hu = Get-Content -Raw (Dt cases render T1 human).out; $go = Get-Content -Raw (Dt cases render T1 goals).out
 $day = Get-Date -Format 'yyyy-MM-dd'
 Expect "cases add / result / round: the task's spec changes by key; an unknown case id is refused ($($ca.code)$($cr.code)$($cn.code)$($cx.code))" ($ca.code + $cr.code + $cn.code -eq 0 -and $cx.code -ne 0 -and $cx.out -match 'no case A9')
-Expect 'cases render ai: golden text (case # names its human check, evidence image inline / file link, a pipe escaped, Rounds row)' (Gold $ai @"
+Expect 'cases render ai: golden text (case # names its human check, evidence image inline / link named by type, a pipe escaped, Rounds row)' (Gold $ai @"
 # Testing doc (AI): T1 Sort orders
 
 Setup and cleanup: order rows via the API, deleted after.
@@ -33,7 +33,7 @@ Cases:
 | # | Type | Steps / API call + payload | Expected | Result | Evidence |
 |---|---|---|---|---|---|
 | A1 (T1) | positive | click Date | newest first | PASS | ![A1](https://x/a1.png) |
-| A2 | negative | GET /orders?sort=x | 400 \| bad sort | PASS | [a2.json](https://x/a2.json) |
+| A2 | negative | GET /orders?sort=x | 400 \| bad sort | PASS | [json](https://x/a2.json) |
 
 Rounds (one per round, appended):
 
