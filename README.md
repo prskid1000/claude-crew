@@ -228,7 +228,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   flight, test runs; Spend per role (roles x steps, tokens, share, est. cost, avg / p90 time and the 3 biggest models' share);
   Repos now (repo x branches, worktrees, kept, dirty amber, diverged red);
 - kit internals (folded): Tuning: a tile per key in its group row (colour = learned / shadow / local / default, the value inside,
-  changed in 7 days outlined), keys changed 2+ times in 7 days as a key x day heatmap, the last changes as chips (old -> new, reason in the tooltip), the rows as TSV on a tap.
+  changed in 7 days outlined), keys changed in 7 days as a key + scope x day heatmap (latest change first; a cell = old→new, up slate,
+  down plum, →default = a reset; the value now on the right; full key and reason in the tooltip), the rows as TSV on a tap.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: a wrapping row, a min width per item,

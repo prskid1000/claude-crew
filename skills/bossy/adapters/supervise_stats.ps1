@@ -6,8 +6,8 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L421 cards · L643 flags · L756 bands ·
-  L840 shells
+Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L421 cards · L648 flags · L763 bands ·
+  L847 shells
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -470,7 +470,7 @@ function Get-KitHeatCount($Rows) { $rs = @($Rows | Where-Object { $_ }); "$(@($r
 # THE day heatmap (owner 2026-11-19: a time series = the shared heatmap): rows = series, columns = $Dates (yyyy-MM-dd, the last = today,
 # outlined), the row total on the right; each row shaded by its own peak; a row: @{ n = label; sub; title; v = a value per day ($null: no
 # data); t = total text; tips = a tooltip per day; fmt = { param($v) cell number }; cls = colours (slate; ws sage; fh l-act red ..);
-# zero: a 0 shows (else blank); sh = a shade % per day (else by the row's peak); ft + fv = a filter value per day: a cell click filters [data-fk] rows (page JS); keep: shown when idle; gl: a rule above }; idle rows fold
+# zero: a 0 shows (else blank); tx = a text per day (else the number); dd = a direction per day; sh = a shade % per day (else by the row's peak); ft + fv = a filter value per day: a cell click filters [data-fk] rows (page JS); keep: shown when idle; gl: a rule above }; idle rows fold
 # a day cell's or total's number: 10k+ compact (12k, 3.4M, 1.2B), else Format-KitHeatNum
 function Format-KitCompactNum($V) { if ($null -eq $V) { return '' }; $d = [double]$V; $iv = [cultureinfo]::InvariantCulture
   if ($d -ge 999.95e6) { ($d / 1e9).ToString('0.#', $iv) + 'B' } elseif ($d -ge 999.5e3) { ($d / 1e6).ToString('0.#', $iv) + 'M' } elseif ($d -ge 1e4) { "$([math]::Round($d / 1e3))k" } else { Format-KitHeatNum $d } }
@@ -480,9 +480,11 @@ function Format-KitDayHeat($Rows, [string[]]$Dates, [string]$What, [string]$TotL
   $head = "<div class='gk gh'><span class=gn>$(& $e $What)</span><span class='gs0 hrs dy' $cn aria-hidden=true>$(@(for ($i = 0; $i -lt $nd; $i++) { "<b$(if ($i -eq $nd - 1) { ' class=nw' })>$(& $dl $i)</b>" }) -join '')</span><span class=gc><small>$(& $e $TotLabel)</small></span></div>"
   $rs = @(foreach ($r in @($Rows | Where-Object { $_ })) { $vs = @(for ($i = 0; $i -lt $nd; $i++) { @($r.v)[$i] })
       $mx = [math]::Max(1e-9, [double](@($vs | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ }) + 0 | Measure-Object -Maximum).Maximum)
-      $cells = @(for ($i = 0; $i -lt $nd; $i++) { $v = $vs[$i]; $tx = if ($null -eq $v -or ([double]$v -eq 0 -and -not $r.zero)) { '' } elseif ($r.fmt) { "$(& $r.fmt $v)" } else { Format-KitCompactNum $v }
+      $cells = @(for ($i = 0; $i -lt $nd; $i++) { $v = $vs[$i]; $tx = if ($r.tx) { "$(@($r.tx)[$i])" } elseif ($null -eq $v -or ([double]$v -eq 0 -and -not $r.zero)) { '' } elseif ($r.fmt) { "$(& $r.fmt $v)" } else { Format-KitCompactNum $v }
           $tp = "$($Dates[$i])$(if ($i -eq $nd - 1) { ' (today)' }) · $($r.n): $(if ($r.tips) { "$(@($r.tips)[$i])" } elseif ($null -eq $v) { 'no data' } elseif ($tx) { $tx } else { '0' })"
           $c = Format-KitHeatCell $(if ($r.sh) { [int]@($r.sh)[$i] } elseif ($null -eq $v) { 0 } else { Get-KitHeatShade ([double]$v / $mx) }) $tx $tp ($i -eq $nd - 1)
+          # dd: a direction per day (up / dn / rs = reset / ch = changed, not a number): the cell's colour (CSS .hm.pd)
+          if ($r.dd -and "$(@($r.dd)[$i])") { $c = $c -replace '^<i', "<i data-d=$(@($r.dd)[$i])" }
           if ($r.fv -and $tx) { $c -replace '^<i', "<i tabindex=0 role=button data-ft='$(& $e $r.ft)' data-fv='$(& $e "$(@($r.fv)[$i])")'" } else { $c } })
       $busy = [bool]$r.keep -or [bool]@($vs | Where-Object { $null -ne $_ -and [double]$_ -gt 0 }).Count
       [pscustomobject]@{ busy = $busy; html = "<div class=$(if ($r.gl) { "'gk gl0'" } else { 'gk' })$(if ($r.mk) { " data-mk='$($r.mk -replace '[^\w.:-]', '-')'" })><span class=gn$(if ($r.title) { " title='$(& $e $r.title)'" })>$(& $e $r.n)$(if ($r.sub) { "<small>$(& $e $r.sub)</small>" })</span><span class='gs hm dy$(if ($r.cls) { " $($r.cls)" })' $cn role=img aria-label='$(& $e "$($r.n) per day, $nd days")'>$($cells -join '')</span><span class='gc$(if ("$($r.t)" -in '', '0', '—') { ' z' })'>$(& $e "$($r.t)")</span></div>" } })
@@ -632,13 +634,16 @@ function Split-KitHolder([string]$By) {
   if ($by0 -match '^(?<h>.*?)\s*\((?<b>[^()\s]+)\)$') { $by0 = $Matches.h; $br = $Matches.b } elseif ($by0 -match '^parked: (?<b>\S+)$') { $by0 = 'parked'; $br = $Matches.b }
   @{ h = $by0; b = $br; g = $gr }
 }
-# learned keys with history (owner 2026-11-19, Tuning): from params-changes, keys changed 2+ times in $Days days, most first; per day the
-# last value (carried; $null = the default; numbers only); first = the value before the window; n = changes
-function Get-KitParamDays([datetime]$Now, [int]$Days = 7, [int]$Top = 12) {
+# learned keys (owner 2026-11-20, K100: one row per key + scope): from params-changes, every key changed in $Days days, the latest change
+# first; per day $null (no change) or @{ f = the value before the day's first change; t = after its last; c = changes }; cur = the value now
+# ($null = the default); last = its newest change (ISO); why = that change's reason
+function Get-KitParamDays([datetime]$Now, [int]$Days = 7, [int]$Top = 16) {
   $from = $Now.Date.AddDays(1 - $Days)
-  $rs = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 5000 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { } } | Where-Object { $_.key -and $(try { [datetime]$_.at -ge $from -and [datetime]$_.at -le $Now } catch { $false }) -and ($null -eq $_.to -or ($_.to -is [ValueType] -and $_.to -isnot [bool])) })
-  @($rs | Group-Object { "$($_.key)|$(if ("$($_.ctx)" -ne '_') { $_.ctx })" } | Where-Object Count -ge 2 | Sort-Object Count -Descending | Select-Object -First $Top | ForEach-Object { $g = @($_.Group | Sort-Object { [datetime]$_.at }); $k0, $c0 = $_.Name -split '\|', 2; $last = $g[0].from
-    [pscustomobject]@{ key = $k0; ctx = $c0; n = $g.Count; first = $(if ($g[0].from -is [ValueType]) { $g[0].from }); days = @(for ($i = 0; $i -lt $Days; $i++) { $in = @($g | Where-Object { ([datetime]$_.at).Date -eq $from.AddDays($i) }); if ($in.Count) { $last = $in[-1].to }; $last }) } })
+  $rs = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 5000 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { } } | Where-Object { $_.key -and $(try { [datetime]$_.at -ge $from -and [datetime]$_.at -le $Now } catch { $false }) })
+  @($rs | Group-Object { "$($_.key)|$(if ("$($_.ctx)" -ne '_') { $_.ctx })" } | ForEach-Object { $g = @($_.Group | Sort-Object { [datetime]$_.at }); $k0, $c0 = $_.Name -split '\|', 2
+      [pscustomobject]@{ key = $k0; ctx = $c0; n = $g.Count; cur = $g[-1].to; last = ([datetime]$g[-1].at).ToString('o'); why = "$($g[-1].why)"
+        days = @(for ($i = 0; $i -lt $Days; $i++) { $in = @($g | Where-Object { ([datetime]$_.at).Date -eq $from.AddDays($i) }); if ($in.Count) { [pscustomobject]@{ f = $in[0].from; t = $in[-1].to; c = $in.Count } } else { $null } }) } } |
+    Sort-Object { [datetime]$_.last } -Descending | Select-Object -First $Top)
 }
 # ---- flags: distinct ACT / WATCH / FIXED flags per clock hour, 24 h (history keeps 12 sweeps only): @(@{ h = yyyyMMddHH; f = @(@{ l; k = kind; y = key; t = text }) })
 function Get-KitFlagHour($H) { try { [datetime]::ParseExact("$H", 'yyyyMMddHH', [cultureinfo]::InvariantCulture) } catch { [datetime]::MinValue } }
@@ -719,6 +724,8 @@ function Get-KitStatsCss {
   # a cell's number: dark text on a dark shade (hi, --hmt); split cells: CPU number over RAM number
   '.hm i.hi,.hm i>.hi{color:var(--hmt,var(--fg))}.hm.sp{height:26px}.hm.sp i{display:grid;grid-template-rows:1fr 1fr;font-size:9.5px;line-height:13px;background:linear-gradient(color-mix(in srgb,var(--slate) var(--a),var(--sf2)) 0 50%,color-mix(in srgb,var(--sage2) var(--b),var(--sf2)) 50% 100%)}.hm.sp i>span{overflow:hidden}' +
   '.hm.fh{height:17px}.hm.fh i{line-height:17px}.hm.fh.l-act i{background:color-mix(in srgb,var(--act) var(--a),var(--sf2))}.hm.fh.l-watch i{background:color-mix(in srgb,var(--watch) var(--a),var(--sf2))}.hm.fh.l-fixed i{background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.hm.fh.l-mr i{background:color-mix(in srgb,var(--sage) var(--a),var(--sf2))}' +
+  # learned keys (K100): a change cell wraps its "old→new" (never cut); up slate, down plum, a reset or text change outlined plain
+  '.dyh .hm.dy.pd{height:auto;min-height:20px}.dyh .hm.pd i{display:flex;align-items:center;justify-content:center;line-height:12px;padding:2px 1px;white-space:normal;overflow-wrap:break-word;font-size:10px}:is(.hm.pd i[data-d=up],.lgk.pu){background:color-mix(in srgb,var(--slate) 45%,var(--sf2))}:is(.hm.pd i[data-d=dn],.lgk.pw){background:color-mix(in srgb,var(--plum) 45%,var(--sf2))}.hm.pd i:is([data-d=rs],[data-d=ch]){background:var(--sf2);outline:1px dashed var(--mt);outline-offset:-1px}.hm.pd i[data-d=rs]{color:var(--mt)}.pdk .gc{white-space:nowrap}' +
   '.fhm .gk.gl0>.hm.fh{height:20px}.fhm .gk.fk>.gn{padding-left:12px;font-weight:500;color:var(--mt)}.fhm .gk.l-act:not(.fk)>.gn{color:color-mix(in srgb,var(--act) 60%,var(--fg))}.fhm .gk.l-watch:not(.fk)>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.fhm .gk.l-fixed:not(.fk)>.gn{color:var(--sage2)}' +
   '.gkx{grid-column:1/-1;justify-self:start;background:none;border:0;padding:2px 0;color:var(--mt);font:inherit;cursor:pointer}.gkx::before{content:"\25B8  "}.gkx[aria-expanded=true]::before{content:"\25BE  "}.gkx small{font-size:inherit}.gki{display:none}.gks.gio>.gki{display:contents}' +
   '.lgk{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 3px 0 6px;vertical-align:-1px}.lgk:first-child{margin-left:0}.lgk.c{background:var(--slate)}.lgk.r{background:var(--sage2)}' +
@@ -736,7 +743,7 @@ function Get-KitStatsCss {
   '.lcp>.ya{z-index:1}' +
   # Tuning tiles: a group row each, a tile per key (source colour, value inside), changed in 7 days outlined
   '.tgr{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px 10px;padding:5px 0;border-top:1px solid var(--ln)}.tgr[hidden],.pt[hidden]{display:none}.tgn{font-weight:600;font-size:12px}.tgn small{color:var(--mt);font-weight:500;margin-left:6px}.tgt{display:flex;flex-wrap:wrap;gap:4px}.pt{display:inline-flex;flex-direction:column;max-width:240px;padding:2px 8px;border-radius:5px;background:var(--sf2);font-size:11px;line-height:1.35;cursor:default}.pt small{color:var(--mt);overflow-wrap:anywhere}.pt b{font-weight:600;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}' +
-  '.pt.p-l,.lgk.pl{background:color-mix(in srgb,var(--sage2) 30%,var(--sf2))}.pt.p-s,.lgk.ps{background:color-mix(in srgb,var(--plum) 30%,var(--sf2))}.pt.p-c,.lgk.pc{background:color-mix(in srgb,var(--slate) 30%,var(--sf2))}.lgk.pd{background:var(--sf2);outline:1px solid var(--ln)}.pt.c7{box-shadow:inset 0 0 0 1.5px var(--watch)}.tcs{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px}.tcs .chip{font-weight:500;letter-spacing:0;white-space:normal;overflow-wrap:anywhere}.tat>summary{cursor:pointer;color:var(--mt);font-size:12px;margin-top:8px}.tat .mtb{min-width:720px}' +
+  '.pt.p-l,.lgk.pl{background:color-mix(in srgb,var(--sage2) 30%,var(--sf2))}.pt.p-s,.lgk.ps{background:color-mix(in srgb,var(--plum) 30%,var(--sf2))}.pt.p-c,.lgk.pc{background:color-mix(in srgb,var(--slate) 30%,var(--sf2))}.lgk.pd{background:var(--sf2);outline:1px solid var(--ln)}.pt.c7{box-shadow:inset 0 0 0 1.5px var(--watch)}.tat>summary{cursor:pointer;color:var(--mt);font-size:12px;margin-top:8px}.tat .mtb{min-width:720px}' +
   '@media(max-width:699px){.tgr{grid-template-columns:minmax(0,1fr)}}' +
   # a phone: nested folds keep their width for the maps (thin side padding), day labels wrap, the repo table packs its columns
   '@media(max-width:699px){details.sub details.sub>.bd,details.sub .st>.bd{padding-left:4px;padding-right:4px}.hrs.dy b{white-space:normal;overflow-wrap:anywhere;font-size:9.5px}.mtb{font-size:11px;width:100%}.mtb th{font-size:9.5px;text-transform:none;letter-spacing:0;overflow-wrap:anywhere}.mtb :is(th,td){padding:2px 3px}}' +
