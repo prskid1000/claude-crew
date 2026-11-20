@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L306 split · L359 budget
+Sections: L9 usage · L306 split · L375 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -139,7 +139,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
   $split = { param($ss) $ss = @($ss | Where-Object { $_ }); $c4 = $null; $t6 = $null; $tn = 0
     foreach ($s in $ss) { if ($null -ne $s.cs) { $c4 = & $add $c4 $s.cs 4 }; if ($null -ne $s.tm) { $t6 = & $add $t6 $s.tm 6; $tn++ } }
     [ordered]@{ in = [long]($ss | Measure-Object in -Sum).Sum; out = [long]($ss | Measure-Object out -Sum).Sum; cr = [long]($ss | Measure-Object cr -Sum).Sum; cw = [long]($ss | Measure-Object cw -Sum).Sum
-      cs = $(if ($null -ne $c4) { @($c4 | ForEach-Object { [math]::Round($_, 4) }) }); tm = $(if ($tn) { @($t6 | ForEach-Object { [math]::Round($_, 1) }) }); tmN = $tn } }
+      cs = $(if ($null -ne $c4) { @($c4 | ForEach-Object { [math]::Round($_, 4) }) }); tm = $(if ($tn) { @($t6 | ForEach-Object { [math]::Round($_, 1) }) }); tmN = $tn; tmAll = $ss.Count } }
   $withSplit = { param($o, $ss) foreach ($kv in (& $split $ss).GetEnumerator()) { $o | Add-Member -Force NoteProperty $kv.Key $kv.Value }; $o }
   $atOf = { param($u, [string]$f) if ($u.t1) { ([datetimeoffset]$u.t1).LocalDateTime.ToString('o') } else { [IO.File]::GetLastWriteTime($f).ToString('o') } }
   # empty = a result whose every field but ok is empty (a missing mrs is no MR)
@@ -254,7 +254,7 @@ function Format-KitUsageHtml($U) {
         sk = @('', 'tc', '', 'time', ''); so = @($null, $tok0, $null, $tim0, $null); tips = @('', '', '', "avg of $($_.n) steps$(if ([int]$_.tmN) { ", the split over the $($_.tmN) with one" })`n$(Get-KitSplitTip ([pscustomobject]@{ min = $_.avgMin; tm = $tim0.tm }))", '')
         tx = @("$($_.n)", (& $tk $_.sum), "$(& $pct $_.sum $rAll)%", (& $mn $_.avgMin), (& $mn $_.p90Min)) + @($msh | ForEach-Object { if ($_) { "$_%" } else { '' } }) } })
   $top = $roles | Select-Object -First 1   # folded (owner 2026-11-19): the top role in its header (the 7-day cost is a Trends tile)
-  $spend = & $fold 'u-spend' 'Spend per role' $roles.Count -tag h4 -cls 'sub st uc ur' -extra "$(if ($top) { "<span class=fsm>top: $(& $e $top.k), $(& $pct $top.sum $rAll)% of the tokens</span>" })" -inner "$(Format-KitMetricHeat $spRows (@('steps', 'tokens · est. cost', 'share', 'avg time', 'p90 time') + @($mdl | ForEach-Object { & $mShort $_.k })) 'role · metric' 'spend-role')<div class=hk>a column shaded by its peak (a split cell: each part by its type's peak; colours: Per day) · the last $($mdl.Count) = each model's share of the role's tokens · hover a role for its step types$(if ($unp.Count) { " · not priced: $(& $e (@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', '))" })</div>"
+  $spend = & $fold 'u-spend' 'Spend per role' $roles.Count -tag h4 -cls 'sub st uc ur' -extra "$(if ($top) { "<span class=fsm>top: $(& $e $top.k), $(& $pct $top.sum $rAll)% of the tokens</span>" })" -inner "$(Format-KitMetricHeat $spRows (@('steps', 'tokens · est. cost', 'share', 'avg time', 'p90 time') + @($mdl | ForEach-Object { & $mShort $_.k })) 'role · metric' 'spend-role')$(Format-KitLegend "shade = column peak · last $($mdl.Count) = model share$(if ($unp.Count) { ' · some not priced' })" "a column shaded by its peak (a split cell: each tile by its type's peak; colours: Per day) · the last $($mdl.Count) = each model's share of the role's tokens · hover a role for its step types$(if ($unp.Count) { " · not priced: $(@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })")"
   $stepRows = { param($ss) @($ss | ForEach-Object { $tip = Get-KitSplitTip $_ "$($_.label)"; , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), @{ h = Format-KitSplitCell $_ 'tc' $tip }, @{ h = Format-KitSplitCell $_ 'time' (Get-KitSplitTip ($_ | Select-Object tm, tmN, min)) }, $_.tools, @{ h = "<span class='chip $(switch ($_.result) { 'pass' { 's-act' } 'running' { 's-fin' } 'stuck' { 's-stuck' } 'fail' { 's-stuck' } default { 's-oth' } })'>$(& $e $_.result)</span>" }, "$($_.round)$(if ($_.retry) { " · retry $($_.retry)" })") }) }
   # a run: its human label (mandate / area, the run id in the tooltip), kind chip, resumed, outcome-split step bar; budget bar while running or over 80%
   $kindOf = { param($r) if ($r.kind) { "$($r.kind)" } elseif ("$($r.roles)" -match '^(kitty \d+( · )?)+$') { 'kit' } elseif ("$($r.roles)" -match 'checky') { 'test' } else { 'build' } }
@@ -266,7 +266,7 @@ function Format-KitUsageHtml($U) {
   $pageOf = { param($r) "supervise-runs/$([Uri]::EscapeDataString("$($r.id)")).html" }   # Write-KitSuperviseHtml writes $Pages next to the page
   $head = { param($r) $bp = if ($r.cap) { [double]$r.spent / [double]$r.cap } else { 0 }
     "<span class=gn0 title='$(& $e "$($r.run) · $($r.id)")'>$(& $e (& $lbOf $r))</span><span class='chip k-$(& $e (& $kindOf $r))'>$(& $e (& $kindOf $r))</span>$(if ($resumed["$($r.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(if ($r.status -eq 'running') { "<span class='chip s-act'>running</span>" })$(& $segBar $r)" +
-    "$(Format-KitSplitCell $r 'tc' (Get-KitSplitTip $r))$(Format-KitSplitCell $r 'time' (Get-KitSplitTip ($r | Select-Object tm, tmN, wall)))$(if ([int]$r.merged) { "<span class='chip s-act'>$($r.merged) merged</span>" })$(if ($r.cap -and ($r.status -eq 'running' -or $bp -ge 0.8)) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" $(if ($bp -ge 0.8) { 'watch' }) })" }   # budget = context spend (budget -Run), not billed tokens
+    "$(Format-KitSplitCell $r 'tc' (Get-KitSplitTip $r))$(Format-KitSplitCell $r 'time' (Get-KitSplitTip ($r | Select-Object tm, tmN, tmAll, wall)))$(if ([int]$r.merged) { "<span class='chip s-act'>$($r.merged) merged</span>" })$(if ($r.cap -and ($r.status -eq 'running' -or $bp -ge 0.8)) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" $(if ($bp -ge 0.8) { 'watch' }) })" }   # budget = context spend (budget -Run), not billed tokens
   # what an ended run did, never a bare "failed" (owner, 2026-11-16): a test run's QA checks (task index), MRs merged, then the workflow's own
   # steps that errored (failed, empty, stopped, stuck: named in the tooltip)
   $ix = @(Read-KitJsonFiles (Get-KitPath tasks) | Where-Object { $_.envRuns })
@@ -332,28 +332,44 @@ function Get-KitSplitTip($O, [string]$Head = '') {
   $tm = Get-KitSplitParts $O 'time'; $t = @($O.tm); $el = if ($null -ne $O.wall) { $O.wall } else { $O.min }
   if ($tm.ok) { $ls.Add("model $(Format-KitSplitNum $t[0] time) · tools $(Format-KitSplitNum $tm.p4[1].v time) (builds + tests $(Format-KitSplitNum $t[1] time), CI $(Format-KitSplitNum $t[2] time), browser / QA $(Format-KitSplitNum $t[3] time), other $(Format-KitSplitNum $t[4] time)) · waiting $(Format-KitSplitNum $t[5] time) (gate queue, leases, questions, monitors)")
     if ($null -ne $el) { $ls.Add("elapsed $(Format-KitSplitNum $el time)$(if ([int]$O.tmN -gt 1) { "; the split adds up the agent minutes of $($O.tmN) steps (parallel)" } else { '; the rest: idle between turns' })") } }
-  elseif ($null -ne $el) { $ls.Add("elapsed $(Format-KitSplitNum $el time) · time split not recorded") }
+  elseif ($null -ne $el) { $ls.Add("elapsed $(Format-KitSplitNum $el time) · time split not recorded$(if ([int]$O.tmAll -gt 0 -and [int]$O.tmN -lt [int]$O.tmAll) { ": $([int]$O.tmN) of $($O.tmAll) steps have one (a transcript read before the split was recorded stays without; new steps get it)" })") }
   $ls -join "`n"
 }
-# one stacked cell: a line per part, each its type's colour; wide = p4, narrow (CSS, under 700 px) = p2; -Heat: a heatmap cell (each part
-# shaded by $Peaks[<part key>], the row's or column's peak); else a value-column cell; no split data = the total and "split not recorded"
+# the total part of a split (key tot): the parts' sum (and their cost); time: the elapsed minutes when known
+function Get-KitSplitTotal($O, [string]$Kind, $Sp) {
+  $sum = [double](@($Sp.p4 | ForEach-Object { [double]$_.v }) + 0 | Measure-Object -Sum).Sum; $el = if ($null -ne $O.wall) { $O.wall } else { $O.min }
+  $cs = @($Sp.p4 | Where-Object { $null -ne $_.c }); $c = if ($cs.Count) { [double]($cs | Measure-Object c -Sum).Sum }
+  if ($Kind -eq 'time' -and $null -ne $el) { [pscustomobject]@{ k = 'tot'; l = 'elapsed'; v = [double]$el; c = $null } } else { [pscustomobject]@{ k = 'tot'; l = 'total'; v = $sum; c = $c } }
+}
+# one split cell = a row of small tiles, one per part (tinted by type, the value on top, its cost below) + the total; the cell's own width
+# picks the form (CSS container query): wide p4 + total, medium p2 + total, narrow the total over a 4-part bar; -Heat: a heatmap cell
+# (each tile shaded by $Peaks[<part key>], the row's or column's peak); no split data = the total and "split not recorded"
 function Format-KitSplitCell($O, [string]$Kind, [string]$Tip, $Peaks = $null, [switch]$Heat, [bool]$Now = $false) {
   $enc = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $sp = Get-KitSplitParts $O $Kind
-  $nk = if ($Kind -eq 'tc') { 'tokens' } else { $Kind }; $ptx = { param($pt) if ([double]$pt.v -le 0) { '' } else { "$(Format-KitSplitNum $pt.v $nk)$(if ($null -ne $pt.c) { " $(Format-KitSplitNum $pt.c cost)" })" } }
+  $nk = if ($Kind -eq 'tc') { 'tokens' } else { $Kind }
   if (-not $sp.ok) { $tot = switch ($Kind) { 'cost' { $O.cost } 'time' { if ($null -ne $O.wall) { $O.wall } else { $O.min } } default { $O.tok } }
-    $tx = if ($null -eq $tot) { '—' } else { "$(Format-KitSplitNum $tot $nk)$(if ($Kind -eq 'tc' -and $null -ne $O.cost) { " $(Format-KitSplitNum $O.cost cost)" })" }; $nr = if ($null -ne $tot) { "<small class=knr>$(if ($Kind -eq 'cost') { 'not split' } else { 'split not recorded' })</small>" }
-    if ($Heat) { return "<i class='kst k0$(if ($Now) { ' nw' })' title='$(& $enc $Tip)'><b>$(& $enc $tx)</b>$nr</i>" }; return "<span class='gc ks k0' title='$(& $enc $Tip)'><b>$(& $enc $tx)</b>$nr</span>" }
-  $line = { param($pt) $sh = if ($Heat) { if ($Peaks -and [double]$Peaks[$pt.k] -gt 0 -and [double]$pt.v -gt 0) { Get-KitHeatShade ([double]$pt.v / [double]$Peaks[$pt.k]) } else { 0 } }
-    "<b class='k-$($pt.k)$(if ($sh -ge 55) { ' hi' })'$(if ($Heat) { " style='--a:$sh%'" }) aria-label='$(& $enc "$($pt.l) $(& $ptx $pt)")'>$(& $enc (& $ptx $pt))</b>" }
-  $body = "<span class=k4>$(@($sp.p4 | ForEach-Object { & $line $_ }) -join '')</span><span class=k2>$(@($sp.p2 | ForEach-Object { & $line $_ }) -join '')</span>"
-  if ($Heat) { "<i class='kst$(if ($Now) { ' nw' })' title='$(& $enc $Tip)'>$body</i>" } else { "<span class='gc ks' title='$(& $enc $Tip)'>$body</span>" }
+    $tx = if ($null -eq $tot) { '—' } else { "$(Format-KitSplitNum $tot $nk)$(if ($Kind -eq 'tc' -and $null -ne $O.cost) { " $(Format-KitSplitNum $O.cost cost)" })" }; $nr = if ($null -ne $tot) { "<small class=knr>$(if ($Kind -eq 'cost') { 'not split' } elseif ($Kind -eq 'time' -and [int]$O.tmN -gt 0 -and [int]$O.tmN -lt [int]$O.tmAll) { "split: $([int]$O.tmN) of $($O.tmAll) steps" } else { 'split not recorded' })</small>" }
+    if ($Heat) { return "<i class='kst k0$(if ($Now) { ' nw' })' title='$(& $enc $Tip)'><b>$(& $enc $tx)</b>$nr</i>" }; return "<span class='gc ks kd-$Kind k0' title='$(& $enc $Tip)'><b>$(& $enc $tx)</b>$nr</span>" }
+  $tt = Get-KitSplitTotal $O $Kind $sp
+  $tile = { param($pt, [string]$cl) $sh = if ($Heat) { if ($Peaks -and [double]$Peaks[$pt.k] -gt 0 -and [double]$pt.v -gt 0) { Get-KitHeatShade ([double]$pt.v / [double]$Peaks[$pt.k]) } else { 0 } }
+    $vx = if ([double]$pt.v -le 0) { '0' } else { Format-KitSplitNum $pt.v $nk }
+    "<b class='kq k-$($pt.k) $cl'$(if ($Heat) { " style='--a:$sh%'" })>$(& $enc $vx)$(if ($null -ne $pt.c) { "<small>$(& $enc (Format-KitSplitNum $pt.c cost))</small>" })</b>" }
+  $vs = [double](@($sp.p4 | ForEach-Object { [double]$_.v }) + 0 | Measure-Object -Sum).Sum
+  $bar = "<span class=kb aria-hidden=true>$(@($sp.p4 | Where-Object { [double]$_.v -gt 0 } | ForEach-Object { "<i class='k-$($_.k)' style='flex-grow:$([math]::Round(1000 * [double]$_.v / [math]::Max(1e-9, $vs)))'></i>" }) -join '')</span>"
+  $body = "<span class=kr4>$(@($sp.p4 | ForEach-Object { & $tile $_ k4 }) -join '')$(@($sp.p2 | ForEach-Object { & $tile $_ k2 }) -join '')$(& $tile $tt kt)</span>$bar"
+  if ($Heat) { "<i class='kst kd-$Kind$(if ($Now) { ' nw' })' title='$(& $enc $Tip)'>$body</i>" } else { "<span class='gc ks kd-$Kind' title='$(& $enc $Tip)'>$body</span>" }
 }
-# per part key, the peak over $Objs (a heat row's or column's shading)
-function Get-KitSplitPeaks($Objs, [string]$Kind) { $pk = @{}; foreach ($o in @($Objs | Where-Object { $_ })) { $sp = Get-KitSplitParts $o $Kind; foreach ($pt in @($sp.p4) + @($sp.p2)) { if ([double]$pt.v -gt [double]$pk[$pt.k]) { $pk[$pt.k] = [double]$pt.v } } }; $pk }
+# per part key (and tot), the peak over $Objs (a heat row's or column's shading)
+function Get-KitSplitPeaks($Objs, [string]$Kind) { $pk = @{}; foreach ($o in @($Objs | Where-Object { $_ })) { $sp = Get-KitSplitParts $o $Kind; if (-not $sp.ok) { continue }; foreach ($pt in @($sp.p4) + @($sp.p2) + @(Get-KitSplitTotal $o $Kind $sp)) { if ([double]$pt.v -gt [double]$pk[$pt.k]) { $pk[$pt.k] = [double]$pt.v } } }; $pk }
 # the legend line of every split (one colour per type)
 function Format-KitSplitLegend {
   $sw = { param($k, $l) "<i class='lgk k-$k'></i>$l" }
-  "<span class=kleg>tokens and cost: $(& $sw out output) $(& $sw in 'fresh in') $(& $sw cw 'cache write') $(& $sw cr 'cache read') · time: $(& $sw mo model) $(& $sw to tools) $(& $sw wa waiting) · narrow screens: $(& $sw wk work) / $(& $sw ca cache) · hover: every value and its cost</span>"
+  "<span class=kleg>$(& $sw out output) $(& $sw in fresh) $(& $sw cw 'cache write') $(& $sw cr 'cache read') $(& $sw tot total) · $(& $sw mo model) $(& $sw to tools) $(& $sw wa waiting)</span>"
+}
+# every legend (owner 2026-11-20): one short line of swatches and 1-2 word keys; the explanation only in an (i) tooltip
+function Format-KitLegend([string]$Keys, [string]$Info = '') {
+  $enc = [Net.WebUtility]::HtmlEncode($Info)
+  "<div class=hk>$Keys$(if ($Info) { " <span class=hki tabindex=0 role=note title='$enc' aria-label='$enc'>&#9432;</span>" })</div>"
 }
 
 # ---- budget: a tool + model's token budget (compaction point), its handoff and run-stop fractions (README "Configuration")

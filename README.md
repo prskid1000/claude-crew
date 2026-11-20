@@ -209,10 +209,13 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   each widget names its metric (`data-mk`, once per page); kit pages open in an in-page drawer, web links in a new tab;
 - flags (owner 2026-11-19): one table, ACT first (level, kind, who, problem, next step, age), a repeat one row with its count,
   auto-fixes and notes one folded row, the 24 h flags heatmap behind a header toggle; promotion holds folded under it;
-- split cells (owner 2026-11-20): every token count and $ is a line per type (output, fresh in, cache write, cache read; a $
-  each at the model's per-type price), every duration model / tools / waiting (transcript gaps; a tool's kind from its command;
-  the gate's printed queue time = waiting); under 700 px work / cache and model / tools + waiting; the tooltip holds every value;
-  a transcript first read before the split: "split not recorded";
+- split cells (owner 2026-11-20): every token count and $ is a row of small muted tiles, one per type (output, fresh in, cache
+  write, cache read; a $ each at the model's per-type price) + the total, every duration model / tools / waiting + elapsed
+  (transcript gaps; a tool's kind from its command; the gate's printed queue time = waiting); the cell's width picks the form
+  (container query): wide all tiles, medium work / cache + total, narrow the total over a 4-part bar; the tooltip holds every
+  value; a transcript first read before the split: "split not recorded" (a run: "split: N of M steps");
+- palette: muted sage / slate / stone / clay tokens, each fill capped (`--kcap`) so text keeps 4.5:1 in both themes; every
+  legend one short line of swatches and 1-2 word keys, the explanation in an (i) tooltip;
 - runs: one runs x hour heatmap (a cell = minutes active under that hour's output tokens), live runs on top over the last 24 h,
   ended ones by day (today open, older days folded); a run row: label, kind, its steps page, tokens · cost, time (agent minutes
   added up; elapsed = to its last step's write in the tooltip); agents (steps by agent code, live board rows with
@@ -232,8 +235,9 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   list or the runs; est. cost, tokens, sweep s, agents failed / finished, branches, worktrees); tasks per repo by outcome, work in
   flight, test runs; Spend per role (roles x steps, tokens · est. cost, share, avg / p90 time and the 3 biggest models' share);
   Repos now (repo x branches, worktrees, kept, dirty amber, diverged red);
-- kit internals (folded): Tuning: a tile per key in its group row (colour = learned / shadow / local / default, the value inside,
-  changed in 7 days outlined), keys changed in 7 days as a key + scope x day heatmap (latest change first; a cell = old→new, up slate,
+- kit internals (folded): Tuning: Settings = a tile map of key groups (width = keys, sage = changed this week, a source strip; a
+  tap opens the group as a full row: a tile per key, colour = learned / shadow / local / default, the value inside, changed in 7
+  days outlined), keys changed in 7 days as a key + scope x day heatmap (latest change first; a cell = old→new, up slate,
   down plum, →default = a reset; the value now on the right; full key and reason in the tooltip), the rows as TSV on a tap.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of

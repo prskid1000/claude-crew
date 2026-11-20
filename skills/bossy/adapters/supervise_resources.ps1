@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L349 shells · L528 page · L1010 release · L1055 lines · L1087 cleanup · L1154 launch ·
-  L1271 pause · L1390 heartbeat · L1405 sessions · L1457 ci tasks ·
-  L1515 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L349 shells · L528 page · L1014 release · L1059 lines · L1091 cleanup · L1158 launch ·
+  L1275 pause · L1394 heartbeat · L1409 sessions · L1461 ci tasks ·
+  L1519 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -773,12 +773,16 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     @($setRows | Where-Object { $sk = $_[0]; -not @($prm | Where-Object { "$($_.key)" -eq $sk -and "$($_.ctx)" -in '', '_' }).Count } | ForEach-Object { $sv = $_[1]; $hasSrc = $null -ne $sv -and (Get-KitProps $sv).Name -contains 'source'
       [pscustomobject]@{ key = $_[0]; ctx = ''; val = & $tv $(if ($hasSrc) { $sv.value } else { $sv }); src = $(if ($hasSrc) { & $tSrc "$($sv.source)" '' $sv.default } else { '' }); chg = ''; why = '' } }))
   $srcK = { param([string]$s) if ($s -like 'learned*') { 'l' } elseif ($s -like 'shadow*') { 's' } elseif ($s -like 'local*') { 'c' } elseif ($s -in '', 'default') { 'd' } else { 'o' } }
-  # a group = a fold (owner 2026-11-20): name, count, changed this week + source mix; closed by default, kept per id (kc-open)
-  $tunG = @(foreach ($g in @($tun | Group-Object { ($_.key -split '\.')[0] } | Sort-Object Name)) { $gp = "$($g.Name)."; $gk = @($g.Group | ForEach-Object { & $srcK $_.src }); $g7 = @($g.Group | Where-Object { $_.c7 }).Count
-      $gSum = @($(if ($g7) { "$g7 changed this week" } else { 'unchanged this week' })) + @(@(@('l', 'learned'), @('s', 'shadow'), @('c', 'local')) | ForEach-Object { $kn = $_; $nk = @($gk | Where-Object { $_ -eq $kn[0] }).Count; if ($nk) { "$nk $($kn[1])" } })
-      "<details class='tgr f' id='tg-$(& $e ($g.Name -replace '[^\w-]', '-'))'><summary><span class=tgn>$(& $e $g.Name)<small>$($g.Count)</small></span><span class=tgm>$(& $e ($gSum -join ' · '))</span></summary><div class=tgt>$(@($g.Group | Sort-Object key, ctx | ForEach-Object { $sk = & $srcK $_.src
+  # a group = a tile that folds (owner 2026-11-20): width by key count, sage by changes this week (the most-changed group strongest), a
+  # source strip (learned / shadow / local), the full line in its tooltip; closed by default, kept per id (kc-open); open = a full row
+  $tunGs = @($tun | Group-Object { ($_.key -split '\.')[0] } | Sort-Object Name); $g7Max = [math]::Max(1, [int](@($tunGs | ForEach-Object { @($_.Group | Where-Object { $_.c7 }).Count }) + 0 | Measure-Object -Maximum).Maximum)
+  $tunG = @(foreach ($g in $tunGs) { $gp = "$($g.Name)."; $gk = @($g.Group | ForEach-Object { & $srcK $_.src }); $g7 = @($g.Group | Where-Object { $_.c7 }).Count
+      $gMix = @(@(@('l', 'learned'), @('s', 'shadow'), @('c', 'local')) | ForEach-Object { $kn = $_; [pscustomobject]@{ k = $kn[0]; l = $kn[1]; n = @($gk | Where-Object { $_ -eq $kn[0] }).Count } })
+      $gSum = @("$($g.Name) · $($g.Count) key$(if ($g.Count -ne 1) { 's' })", $(if ($g7) { "$g7 changed this week" } else { 'unchanged this week' })) + @($gMix | Where-Object n | ForEach-Object { "$($_.n) $($_.l)" })
+      $gStrip = "<span class=tgx aria-hidden=true>$(@($gMix | Where-Object n | ForEach-Object { "<i class=p$($_.k) style='flex-grow:$($_.n)'></i>" }) -join '')$(if ($g.Count -gt ($gMix | Measure-Object n -Sum).Sum) { "<i style='flex-grow:$($g.Count - ($gMix | Measure-Object n -Sum).Sum)'></i>" })</span>"
+      "<details class='tgr f' id='tg-$(& $e ($g.Name -replace '[^\w-]', '-'))' style='--w:$($g.Count);--c:$(if ($g7) { Get-KitHeatShade ($g7 / $g7Max) } else { 0 })%'><summary title='$(& $e ($gSum -join ' · '))'><span class=tgn>$(& $e $g.Name)<small>· $($g.Count)</small></span><span class=tgm>$(if ($g7) { "$g7 changed" })</span>$gStrip</summary><div class=tgt>$(@($g.Group | Sort-Object key, ctx | ForEach-Object { $sk = & $srcK $_.src
           "<span class='pt f p-$sk$(if ($_.c7) { ' c7' })' title='$(& $e "$($_.key)$(if ($_.ctx) { " [$($_.ctx)]" }) = $($_.val) · $(if ($_.src) { $_.src } else { 'default' })$(if ($_.chg) { " · changed $($_.chg)" })$(if ($_.why) { " · $($_.why)" })")'><small>$(& $e $(if ($_.key.StartsWith($gp)) { $_.key.Substring($gp.Length) } else { $_.key }))$(if ($_.ctx) { & $e " · $($_.ctx)" })</small><b>$(& $e $_.val)</b><span hidden>$(& $e "$($_.key) $($_.ctx)")</span></span>" }) -join '')</div></details>" })
-  $tLeg = "<div class=hk><i class='lgk pl'></i>learned <i class='lgk ps'></i>shadow (proposed) <i class='lgk pc'></i>local config <i class='lgk pd'></i>default · outlined = changed in 7 days · hover a tile for its context, source and why</div>"
+  $tLeg = Format-KitLegend "<i class='lgk pl'></i>learned <i class='lgk ps'></i>shadow <i class='lgk pc'></i>local <i class='lgk pd'></i>default · sage = changed" "a group tile: width = its keys, sage = keys changed this week, the strip = its source mix · tap a group for its keys; a key outlined = changed in 7 days · shadow = proposed, not applied · hover a tile for its full line, context, source and why"
   # changed keys (owner 2026-11-20, K100; stats.paramDays): a row per key + scope (short label, full one in the tooltip), the latest change
   # first; a day cell = old→new (up slate, down plum, "→default" = a reset), the value now on the right
   $pv = { param($v) if ($null -eq $v -or "$v" -eq '') { 'default' } elseif ($v -is [ValueType] -and $v -isnot [bool]) { ([double]$v).ToString('0.##', $iv) } else { & $tv $v } }
@@ -798,7 +802,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $tCopy = "<button type=button class='chip tsv' data-tsv='$(& $e $tTsv)' title='the $($tun.Count) rows as tab-separated text'>copy as TSV</button>"
   # all tile groups in one fold under the heatmap, closed by default (owner 2026-11-20); kept in kc-open, the filter opens it
   $tSet = & $fold 'settings' 'Settings' $(if ($tun.Count) { @{ h = & $e "$($tun.Count) keys · $(@($tun | Where-Object { $_.c7 }).Count) changed this week" } } else { 0 }) "<div class=tgs data-mk=params-now>$($tunG -join '')</div>$tLeg" -cls sub
-  $setHtml = & $fold 'tuning' 'Tuning' $tun.Count -extra $tCopy "$(if ($drift) { "<div class=pdk data-mk=param-day>$drift</div><div class=hk><i class='lgk pu'></i>up <i class='lgk pw'></i>down · →default = reset to the default · now = the value today · hover a row for the full key, scope and why</div>" })$tSet" -cls sub
+  $setHtml = & $fold 'tuning' 'Tuning' $tun.Count -extra $tCopy "$(if ($drift) { "<div class=pdk data-mk=param-day>$drift</div>$(Format-KitLegend "<i class='lgk pu'></i>up <i class='lgk pw'></i>down · →default = reset" 'now = the value today · hover a row for the full key, scope and why')" })$tSet" -cls sub
   $css = (Get-KitSupervisePageCss) + (Get-KitStatsCss)
   $fav = if ($mark) { "<link rel=icon href='data:image/svg+xml,$([Uri]::EscapeDataString($mark))'>" }
   $js = "(function(){var d=document,L=localStorage,S=sessionStorage,r=d.documentElement,a=d.getElementById('age'),t=new Date(a.dataset.at),n=+a.dataset.next||15,nx=d.getElementById('nx'),same=S.getItem('kc-at')==a.dataset.at;S.setItem('kc-at',a.dataset.at);" +   # same: a reload brought no new sweep
@@ -880,8 +884,8 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
 }
 # page CSS: muted sage palette, light / dark (prefers-color-scheme; data-theme overrides)
 function Get-KitSupervisePageCss {
-  $dark = '--bg:#0c0c0c;--sf:#161b16;--sf2:#212a21;--fg:#d8dee9;--mt:#8a948a;--ln:#2e3a2e;--sage:#79a86a;--sage2:#9fd48c;--act:#dc9089;--watch:#e0ce8a;--slate:#8fbbd4;--plum:#c495d4;--kcr:#a9b3a9;--hmt:#0c0c0c;--sh:0 4px 20px rgba(0,0,0,0.45)'
-  ':root{--bg:#f4f7f4;--sf:#ffffff;--sf2:#eaefea;--fg:#1a221a;--mt:#5e6c5e;--ln:#d5dfd5;--sage:#647c64;--sage2:#79a86a;--act:#ce8f8a;--watch:#c4b06a;--slate:#5f93a8;--plum:#a074b0;--kcr:#a3ada3;--hmt:#1a221a;--sh:0 1px 3px rgba(26,34,26,.06),0 1px 2px rgba(26,34,26,.04)}' +
+  $dark = '--bg:#0c0c0c;--sf:#161b16;--sf2:#212a21;--fg:#d8dee9;--mt:#8a948a;--ln:#2e3a2e;--sage:#79a86a;--sage2:#9fd48c;--act:#dc9089;--watch:#e0ce8a;--slate:#7f9caa;--plum:#a993b0;--k2:#86a87a;--k3:#ab8f78;--k4:#7a8277;--kcap:.42;--hmt:#0c0c0c;--sh:0 4px 20px rgba(0,0,0,0.45)'
+  ':root{--bg:#f4f7f4;--sf:#ffffff;--sf2:#eaefea;--fg:#1a221a;--mt:#5e6c5e;--ln:#d5dfd5;--sage:#647c64;--sage2:#79a86a;--act:#ce8f8a;--watch:#c4b06a;--slate:#5e7f8c;--plum:#8f7a98;--k2:#7f9a78;--k3:#a98a74;--k4:#a6aca2;--kcap:.6;--hmt:#1a221a;--sh:0 1px 3px rgba(26,34,26,.06),0 1px 2px rgba(26,34,26,.04)}' +
   "[data-theme=dark]{$dark}@media(prefers-color-scheme:dark){:root:not([data-theme=light]){$dark}}" +
   # no scrollbars (owner 2026-11-09): JS marks overflowing boxes .sc and their edges with more content (u d l r): faded by the mask
   '*{box-sizing:border-box;scrollbar-width:none}::-webkit-scrollbar{display:none}html{touch-action:manipulation}.sc{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;--u:0px;--d:0px;--l:0px;--r:0px;mask:linear-gradient(#0000,#000 var(--u),#000 calc(100% - var(--d)),#0000),linear-gradient(90deg,#0000,#000 var(--l),#000 calc(100% - var(--r)),#0000);mask-composite:intersect}' +
