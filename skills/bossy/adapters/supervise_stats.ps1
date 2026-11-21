@@ -6,8 +6,8 @@ processes (one process snapshot per sweep), flags per hour, agents shell progres
 page drawer render inside Format-KitSuperviseHtml.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L424 cards · L653 flags · L785 bands ·
-  L889 shells · L960 reset
+Sections: L13 gate · L65 waits · L91 qa · L107 cpu · L142 writes (owner 2026-11-18 · L426 cards · L675 flags · L814 bands ·
+  L918 shells · L989 reset
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -415,10 +415,12 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
   $rest = { param($tot, [scriptblock]$part) $tot - [double](@($tops | ForEach-Object { & $part $_ }) + 0 | Measure-Object -Sum).Sum }
   $oh = @(for ($i = 0; $i -lt 24; $i++) { $bk = $hm[$hk24[$i]]; & $rest (& $val $bk '*m') { param($nm) & $val $bk $nm } })
   if ($tops.Count) { $rows += & $mk 'others' '' '' $oh (& $rest $now60['*m'] { param($nm) [double]$now60[$nm] }) (& $rest (& $sumD '*m' 1) { param($nm) & $sumD $nm 1 }) (& $rest (& $sumD '*m' 7) { param($nm) & $sumD $nm 7 }) (& $rest (& $sumD '*m' 30) { param($nm) & $sumD $nm 30 }) }
-  $days = @(for ($i = 0; $i -lt 7; $i++) { $d0 = $Now.Date.AddDays(-$i); $hp = @(0..23 | ForEach-Object { $bk = $hm[$d0.AddHours($_).ToString('yyyyMMddHH')]; , @([math]::Round((& $val $bk '*m'), 3), [math]::Round((& $val $bk '*k'), 3)) })
+  # an hour: @(machine GB, kit GB, top writer, sampled 1/0): an hour no sample covered is "no samples", never 0 written
+  $days = @(for ($i = 0; $i -lt 7; $i++) { $d0 = $Now.Date.AddDays(-$i); $hp = @(0..23 | ForEach-Object { $bk = $hm[$d0.AddHours($_).ToString('yyyyMMddHH')]; $tw = if ($bk -and $bk.o.Count) { @($bk.o.GetEnumerator() | Sort-Object Value -Descending)[0].Key } else { '' }
+        , @([math]::Round((& $val $bk '*m'), 3), [math]::Round((& $val $bk '*k'), 3), $tw, [int][bool]$bk) })
       [ordered]@{ d = $d0.ToString('yyyy-MM-dd'); h = $hp; m = [math]::Round((& $val $dm[$d0.ToString('yyyy-MM-dd')] '*m'), 2); k = [math]::Round((& $val $dm[$d0.ToString('yyyy-MM-dd')] '*k'), 2) } })
   $byName = @($names | Where-Object { $_ -notin $tops } | ForEach-Object { & $mk $_ $_ "$($tags[$_])" (& $line $_) $now60[$_] (& $sumD $_ 1) (& $sumD $_ 7) (& $sumD $_ 30) })   # the Writes metric of Resources · 24 h: every owner, not only the top
-  [ordered]@{ at = $Now.ToString('o'); h0 = $h0.ToString('o'); src = $(if (@($Samples | Where-Object { $_ })[-1].t) { 'tracer' } else { 'est' }); rows = $rows; more = $byName; days = $days }   # src tracer: disk MB, no "est." label
+  [ordered]@{ at = $Now.ToString('o'); last = $(@($Samples | Where-Object { $_ -and $_.at } | ForEach-Object { ([datetime]$_.at).ToString('o') } | Sort-Object)[-1]); h0 = $h0.ToString('o'); src =$(if (@($Samples | Where-Object { $_ })[-1].t) { 'tracer' } else { 'est' }); rows = $rows; more = $byName; days = $days }   # src tracer: disk MB, no "est." label
 }
 
 # ---- cards: render inside Format-KitSuperviseHtml and use its helpers ($e, $n1, $fmt, $icv, $at, $st, $nw, $j, $l24, $fold)
@@ -426,23 +428,43 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
 # through $fold (chevron + count, open state kept; busy open, idle closed)
 # the 24 hour labels over a heatmap: every 6th clock hour, "now" over the last cell; -Clock: a calendar day (00-23), no "now"
 function Format-KitHourHead([datetime]$H0, [switch]$Clock) { @(for ($hi = 0; $hi -lt $(if ($Clock) { 23 } else { 21 }); $hi++) { if ($H0.AddHours($hi).Hour % 6 -eq 0) { "<b style='grid-column:$($hi + 1)/span 2'>$($H0.AddHours($hi).ToString('HH'))</b>" } }) + $(if (-not $Clock) { "<b class=nw style='grid-column:23/span 2'>now</b>" }) -join '' }
-# Disk writes · 7 days (owner 2026-11-19; Get-KitWriteView days): 7 days x 24 clock hours, the whole machine (top half) over its
-# kit-owned share (bottom half); per day: GB, kit GB, the busiest hour. The 24 h per owner is the Writes metric of Resources · 24 h
-# folded (owner 2026-11-19), its header: the 7-day and today's GB
-function Format-KitWritesCard($W) {
-  $ds = @($W.days | Where-Object { $_ }); if (-not $ds.Count) { return '' }
-  $hard = [double](Get-KitParam 'writes.hardGBPerHour'); $ic = [cultureinfo]::InvariantCulture
+# Disk · 7 days (owner 2026-11-21: one disk section): a row per day (today on top), 24 clock hours, then GB written, kit GB (share) and
+# each drive's free GB at day end with its change; it answers how much is written, by whom (kit or not) and whether a drive fills up.
+# An hour: shade = machine GB (one scale for the week), bottom stripe = kit share, the number only from writes.cellMinGB; no sample
+# covered it: hatched (never 0); $Drives: Resources disk rows (free = GB per day of $DDays, oldest first)
+function Format-KitWritesCard($W, $Drives = @(), $DDays = @()) {
+  $drv = @($Drives | Where-Object { $_ -and @($_.free | Where-Object { $null -ne $_ }).Count })
+  # no write samples yet: the days still carry the drives' free space (hours hatched)
+  $ds = @($W.days | Where-Object { $_ }); if (-not $ds.Count) { if (-not $drv.Count) { return '' }; $ds = @(@($DDays)[(@($DDays).Count - 1)..0] | ForEach-Object { [pscustomobject]@{ d = "$_"; m = 0; k = 0; h = @() } }) }
+  $hard = [double](Get-KitParam 'writes.hardGBPerHour'); $minGB = [double](Get-KitParam 'writes.cellMinGB'); $dropGB = [double](Get-KitParam 'writes.freeDropWarnGB'); $ic = [cultureinfo]::InvariantCulture
   $gv = { param($v) $d = [double]$v; if ($d -le 0) { '0' } elseif ($d -lt 0.095) { $d.ToString('0.00', $ic) } else { & $n1 $d } }
   $gbT = { param($v) $d = [double]$v; if ($d -lt 1) { "$([math]::Round($d * 1024)) MB" } else { "$(& $n1 $d) GB" } }
+  $fGB = { param($v) $d = [double]$v; if ($d -ge 100) { "$([math]::Round($d))" } else { & $n1 $d } }
+  $at = if ($W.at) { [datetime]$W.at } else { $at }; $last = if ($W.last) { [datetime]$W.last } else { $null }
   $scD = [math]::Max($hard, [double](@($ds | ForEach-Object { @($_.h) | ForEach-Object { [double]@($_)[0] } }) + 0 | Measure-Object -Maximum).Maximum)
-  $dHead = "<div class='gk gh'><span class=gn>day · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead ([datetime]$ds[0].d) -Clock)</span><span class=gc title='GB the machine wrote that day'><small>day</small></span><span class=gc title='GB kit-owned processes wrote that day'><small>kit</small></span><span class=gc title='most GB in one hour that day'><small>peak</small></span></div>"
-  $dRows = @(for ($di = 0; $di -lt $ds.Count; $di++) { $dy = $ds[$di]; $d0 = [datetime]$dy.d; $dl = if ($di) { $d0.ToString('ddd dd', $ic) } else { 'today' }; $pk = [double](@($dy.h | ForEach-Object { [double]@($_)[0] }) + 0 | Measure-Object -Maximum).Maximum
-      $dv = @((& $gv $dy.m), (& $gv $dy.k), (& $gv $pk))
-      "<div class=gk><span class=gn title='$(& $e "${dl}: $(& $gbT $dy.m) written, $(& $gbT $dy.k) kit-owned, peak $(& $gbT $pk) an hour")'>$(& $e $dl)</span>" +
-      (Format-KitHeatCells @($dy.h) $d0 "$dl, GB written per hour: machine over kit-owned" { param($hv) "machine $(& $gbT $hv[0]) · kit-owned $(& $gbT $hv[1])" } { param($hv) @((Get-KitHeatShade ([double]$hv[0] / $scD)), (Format-KitHeatNum $hv[0]), (Get-KitHeatShade ([double]$hv[1] / $scD)), (Format-KitHeatNum $hv[1])) } 'sp ws' -NowAt $(if ($di) { -1 } else { ([datetime]$W.at).Hour })) +
-      (@(for ($ci = 0; $ci -lt 3; $ci++) { "<span class='gc$(if ($dv[$ci] -eq '0') { ' z' })'>$($dv[$ci])</span>" }) -join '') + '</div>' })
-  $tot = [double](@($ds | ForEach-Object { [double]$_.m }) + 0 | Measure-Object -Sum).Sum
-  & $fold 'writes' 'Disk writes · 7 days' '' "<div class='gks w3' data-mk=writes-day-hour>$dHead$($dRows -join '')</div>$(Format-KitLegend "<i class='lgk c'></i>machine <i class='lgk r'></i>kit-owned · GB / hour" 'top half = the whole machine (disk counter), bottom half = kit-owned (est. = share of process I/O x disk writes) · outlined = now · per owner: Resources · 24 h, Writes GB')" -tag h4 -cls 'sub st wr' -extra "<span class=fsm>$(& $gbT $tot) in 7 days · today $(& $gbT $ds[0].m) ($(& $gbT $ds[0].k) kit)</span>"
+  $lowD = @{}; foreach ($dv in $drv) { $lowD[$dv.n] = [double](@($dv.free | Where-Object { $null -ne $_ }) | Measure-Object -Minimum).Minimum }
+  $cell = { param($hv, [datetime]$t, [bool]$isNow) $m = [double]@($hv)[0]; $k = [double]@($hv)[1]; $tw = "$(@($hv)[2])"; $hh = $t.ToString('HH:00'); $nw = if ($isNow) { ' nw' } else { '' }
+    if ($t -gt $at) { return '<i class=fu></i>' }
+    if (-not [int]@($hv)[3] -and $m -le 0) { return "<i class='ns$nw' title='$hh · no samples'></i>" }
+    if ($m -le 0) { return "<i$(if ($nw) { ' class=nw' }) title='$hh · 0 written'></i>" }
+    $a = Get-KitHeatShade ($m / $scD); $kp = [int][math]::Round(100 * [math]::Min(1.0, $k / $m))
+    "<i class='$("$(if ($a -ge 55) { 'hi' })$nw".Trim())' style='--a:$a%;--k:$kp%' title='$(& $e "$hh · $(& $gbT $m) machine · $(& $gbT $k) kit ($kp%)$(if ($tw) { " · top writer: $tw" })")'>$(if ($m -ge $minGB) { Format-KitHeatNum $m })</i>" }
+  $dHead = "<div class='gk gh'><span class=gn>day · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead ([datetime]$ds[0].d) -Clock)</span><span class=gc title='GB the machine wrote that day'><small>written</small></span><span class=gc title='GB kit-owned processes wrote that day (share of the day)'><small>kit</small></span>$(@($drv | ForEach-Object { "<span class=gc title='$(& $e "$($_.n): free GB at the day's last sample, change vs the day before")'><small>$(& $e ($_.n -replace '^disk ')) free</small></span>" }) -join '')</div>"
+  $dRows = @(for ($di = 0; $di -lt $ds.Count; $di++) { $dy = $ds[$di]; $d0 = [datetime]$dy.d; $dl = if ($di) { $d0.ToString('ddd dd', $ic) } else { "today · as of $(if ($last) { $last.ToString('HH:mm') } else { $at.ToString('HH:mm') })" }
+      $kp = if ([double]$dy.m -gt 0) { [int][math]::Round(100 * [math]::Min(1.0, [double]$dy.k / [double]$dy.m)) } else { 0 }
+      $hrs = "<span class='gs hm dw' role=img aria-label='$(& $e "$dl, GB written per hour")'>$(@(for ($hi = 0; $hi -lt 24; $hi++) { & $cell @($dy.h)[$hi] $d0.AddHours($hi) ((-not $di) -and $hi -eq $at.Hour) }) -join '')</span>"
+      $ix = [array]::IndexOf(@($DDays), $d0.ToString('yyyy-MM-dd'))
+      $fc = @(foreach ($dv in $drv) { $fv = if ($ix -ge 0) { @($dv.free)[$ix] } else { $null }; $pv = if ($ix -gt 0) { @($dv.free)[$ix - 1] } else { $null }
+          if ($null -eq $fv) { "<span class='gc z' title='no free-space sample that day'>—</span>"; continue }
+          $dd = if ($null -ne $pv) { [double]$fv - [double]$pv } else { $null }; $wn = $null -ne $dd -and -$dd -ge $dropGB
+          "<span class='gc fr$(if ($wn) { ' warn' })$(if ([double]$fv -le $lowD[$dv.n]) { ' lo' })' title='$(& $e "$($dv.n) $dl`: $(& $n1 $fv) GB free$(if ($null -ne $dd) { ", $(if ($dd -lt 0) { 'down' } else { 'up' }) $(& $n1 ([math]::Abs($dd))) GB vs the day before" })")'>$(& $fGB $fv)$(if ($null -ne $dd -and [math]::Abs($dd) -ge 0.05) { "<small>$(if ($dd -lt 0) { '▼' } else { '▲' })$(& $n1 ([math]::Abs($dd)))</small>" })</span>" })
+      $cov = [bool]@(@($dy.h) | Where-Object { [int]@($_)[3] -or [double]@($_)[0] -gt 0 }).Count   # a day no sample covered: "—", not 0
+      $wc = if ($cov) { "<span class='gc$(if ((& $gv $dy.m) -eq '0') { ' z' })'>$(& $gv $dy.m)</span><span class='gc$(if ((& $gv $dy.k) -eq '0') { ' z' })'>$(& $gv $dy.k)$(if ($kp) { "<small>$kp%</small>" })</span>" } else { "<span class='gc z' title='no samples that day'>—</span><span class='gc z'>—</span>" }
+      "<div class=gk><span class=gn title='$(& $e "${dl}: $(if ($cov) { "$(& $gbT $dy.m) written, $(& $gbT $dy.k) kit-owned ($kp%)" } else { 'no samples' })")'>$(& $e $dl)</span>$hrs$wc$($fc -join '')</div>" })
+  $tot = [double](@($ds | ForEach-Object { [double]$_.m }) + 0 | Measure-Object -Sum).Sum; $totK = [double](@($ds | ForEach-Object { [double]$_.k }) + 0 | Measure-Object -Sum).Sum
+  $stale = $last -and ($at - $last).TotalMinutes -gt 2 * [double](Get-KitParam 'supervise.heartbeatMinutes')
+  $sum = "$(& $gbT $tot) written in 7 days (kit $(& $gbT $totK), $(if ($tot -gt 0) { [int][math]::Round(100 * $totK / $tot) } else { 0 })%)$(if ($drv.Count) { " · free now $(@($drv | ForEach-Object { "$($_.n -replace '^disk ') $(& $fGB $_.fnow) GB" }) -join ' · ')" })$(if ($stale) { " · no samples since $($last.ToString('HH:mm'))" })"
+  & $fold 'writes' 'Disk · 7 days' '' "<div class='gks wdk' style='--rc:$(2 + $drv.Count)' data-mk=writes-day-hour>$dHead$($dRows -join '')</div>$(Format-KitLegend "<i class='lgk r'></i>shade = GB / hour <i class='lgk kst'></i>stripe = kit share <i class='lgk nsx'></i>hatch = no samples · ▼ = free-space drop" "an hour: shade = GB the machine wrote (one scale for the week; a number from $(& $n1 $minGB) GB), the bottom stripe's width = the kit-owned share (est. = share of process I/O x disk writes) · outlined = now · free = GB at the day's last sample, amber = a drop of $(& $n1 $dropGB) GB or more, bold = the week's lowest · per owner: Resources · 24 h, Writes GB")" -tag h4 -cls 'sub st wr' -extra "<span class=fsm>$(& $e $sum)</span>"
 }
 # a share 0..1 -> cell shade % (square root: a small value still shows; 0 = blank)
 function Get-KitHeatShade([double]$F) { if ($F -gt 0) { [int][math]::Round(25 + 75 * [math]::Sqrt([math]::Min(1.0, $F))) } else { 0 } }
@@ -646,7 +668,7 @@ function Get-KitParamDays([datetime]$Now, [int]$Days = 7, [int]$Top = 16) {
   $from = $Now.Date.AddDays(1 - $Days)
   $rs = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 5000 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { } } | Where-Object { $_.key -and $(try { [datetime]$_.at -ge $from -and [datetime]$_.at -le $Now } catch { $false }) })
   @($rs | Group-Object { "$($_.key)|$(if ("$($_.ctx)" -ne '_') { $_.ctx })" } | ForEach-Object { $g = @($_.Group | Sort-Object { [datetime]$_.at }); $k0, $c0 = $_.Name -split '\|', 2
-      [pscustomobject]@{ key = $k0; ctx = $c0; n = $g.Count; cur = $g[-1].to; last = ([datetime]$g[-1].at).ToString('o'); why = "$($g[-1].why)"
+      [pscustomobject]@{ key = $k0; ctx = $c0; n = $g.Count; cur = $g[-1].to; lf = $g[-1].from; last = ([datetime]$g[-1].at).ToString('o'); why = "$($g[-1].why)"
         days = @(for ($i = 0; $i -lt $Days; $i++) { $in = @($g | Where-Object { ([datetime]$_.at).Date -eq $from.AddDays($i) }); if ($in.Count) { [pscustomobject]@{ f = $in[0].from; t = $in[-1].to; c = $in.Count } } else { $null } }) } } |
     Sort-Object { [datetime]$_.last } -Descending | Select-Object -First $Top)
 }
@@ -722,6 +744,10 @@ function Get-KitStatsCss {
   '.gks .gn small{color:var(--mt);font-weight:500;font-size:11px;margin-left:6px}.rsh .gk.orphan>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.rsh .gk.orphan>.gs{outline:1px dashed color-mix(in srgb,var(--watch) 60%,var(--ln));outline-offset:1px}' +
   # disk writes: muted sage cells; the 7-day block slate over sage
   '.hm.ws:not(.sp) i{background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}' +
+  # Disk · 7 days: right columns at their width, the hour grid flexes; shade = machine GB, bottom stripe = kit share, hatch = no samples
+  '@media(min-width:700px){.gks.wdk{grid-template-columns:minmax(0,max-content) minmax(264px,1fr) repeat(var(--rc),minmax(48px,max-content))}}.hm.dw i{background:linear-gradient(var(--slate),var(--slate)) left bottom/var(--k,0%) 3px no-repeat,color-mix(in srgb,var(--sage2) var(--a,0%),var(--sf2))}' +
+  '.hm.dw i.ns,.lgk.nsx{background:repeating-linear-gradient(135deg,var(--sf2) 0 3px,color-mix(in srgb,var(--mt) 35%,var(--sf2)) 3px 5px)}.hm.dw i.fu{background:transparent;outline:1px dashed var(--ln);outline-offset:-1px}.lgk.kst{background:linear-gradient(var(--slate),var(--slate)) left bottom/100% 3px no-repeat,var(--sf2)}' +
+  '.wdk .gc small{margin-left:3px;color:var(--mt);font-size:10px}.wdk .gc.fr.warn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.wdk .gc.fr.warn small{color:inherit}.wdk .gc.lo{font-weight:700}@media(max-width:699px){.gks.wdk .gk{grid-template-columns:repeat(var(--rc),minmax(0,1fr))}}' +
   # day heatmaps: a column per day (--n), taller cells for the wider numbers
   '.hm.dy,.hrs.dy{grid-template-columns:repeat(var(--n),minmax(0,1fr))}.dyh .hm.dy{height:20px}.dyh .hm.dy i{line-height:20px;font-size:10.5px}.hm.dy i[data-ft]{cursor:pointer}.hrs.dy b{text-align:center}.dyh .gk.gl0>*{border-top:1px solid var(--ln);padding-top:2px}.dyh .gk.gl0>.hm.dy{height:23px}' +   # 23 = 20 + the rule above
   '.cpg{margin-top:6px}:is(.cpg,.fhm) .gk.gl0>*{border-top:1px solid var(--ln);padding-top:2px}.gks .gc small{color:var(--mt);font-weight:500}.cpg .gk.hot>.gn,.cpg .gk.hot>.gc:nth-last-child(15){color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.cpg .gk.warn>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}' +
@@ -746,14 +772,17 @@ function Get-KitStatsCss {
   '.rgt{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 4px}.rgt button{all:unset;cursor:pointer;padding:1px 9px;border:1px solid var(--ln);border-radius:10px;font-size:11.5px;color:var(--mt)}.rgt button[aria-pressed=true]{background:var(--sf2);color:var(--fg);border-color:var(--sage2)}.rgt button:focus-visible{outline:2px solid var(--sage)}' +
   '.rsh .gc.hot{color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.rsh .gc.warn{color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:650}' +
   '.lcp>.ya{z-index:1}' +
-  # Tuning tiles: a group row each, a tile per key (source colour, value inside), changed in 7 days outlined
-  # Settings tile map (owner 2026-11-20): a tile per group, width by key count, sage by changes this week, a source strip; open = a full row
-  '.tgs{display:flex;flex-wrap:wrap;gap:4px}.tgr{flex:var(--w,1) 1 calc(84px + var(--w,1) * 3px);max-width:100%;border:1px solid var(--ln);border-radius:6px;--tb:color-mix(in srgb,var(--sage) calc(var(--c,0%) * var(--kcap) * .6),var(--sf2));background:var(--tb)}.tgr[open]{flex-basis:100%;background:var(--sf)}.tgr[open]>summary{background:var(--tb);border-radius:5px 5px 0 0}' +
-  '.tgr>summary{display:flex;flex-direction:column;align-items:stretch;min-height:0;padding:3px 6px 0;gap:0;cursor:pointer}.tgr>summary::after{display:none}.tgr>summary .tgn{min-width:0;overflow-wrap:anywhere}.tgm{font-size:10.5px;line-height:13px;min-height:13px;color:var(--fg)}' +
-  '.tgx{display:flex;height:3px;margin:2px 0 4px;border-radius:2px;overflow:hidden;background:color-mix(in srgb,var(--mt) 18%,transparent)}.tgx i{display:block;flex:0 1 0}.tgx .pl{background:var(--sage2)}.tgx .ps{background:var(--plum)}.tgx .pc{background:var(--slate)}.tgr>.tgt{padding:2px 6px 6px}' +
-  '.tgr[hidden],.pt[hidden]{display:none}.tsv{margin-left:auto;border:1px solid var(--ln);cursor:pointer;font:inherit;font-size:11px;font-weight:600}summary:has(>.tsv)::after{margin-left:0}@media(pointer:fine){summary>.tsv{min-height:24px;padding:1px 10px}}.tgn{font-weight:600;font-size:12px}.tgn small{color:var(--mt);font-weight:500;margin-left:6px}.tgt{display:flex;flex-wrap:wrap;gap:4px}.pt{display:inline-flex;flex-direction:column;max-width:240px;padding:2px 8px;border-radius:5px;background:var(--sf2);font-size:11px;line-height:1.35;cursor:default}.pt small{color:var(--mt);overflow-wrap:anywhere}.pt b{font-weight:600;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}' +
-  '.pt.p-l,.lgk.pl{background:color-mix(in srgb,var(--sage2) 30%,var(--sf2))}.pt.p-s,.lgk.ps{background:color-mix(in srgb,var(--plum) 30%,var(--sf2))}.pt.p-c,.lgk.pc{background:color-mix(in srgb,var(--slate) 30%,var(--sf2))}.lgk.pd{background:var(--sf2);outline:1px solid var(--ln)}.pt.c7{box-shadow:inset 0 0 0 1.5px var(--watch)}.tat>summary{cursor:pointer;color:var(--mt);font-size:12px;margin-top:8px}.tat .mtb{min-width:720px}' +
-  '@media(max-width:699px){.tgr>summary .tgn{min-width:0}}' +
+  # Settings (owner 2026-11-21): equal tiles in a dense grid (an open group's panel spans the row under its tile), a badge, a source bar
+  '.tgc{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 6px}.tgc input{flex:0 1 220px;min-width:140px;font:inherit;font-size:12px;padding:3px 8px;border:1px solid var(--ln);border-radius:6px;background:var(--sf2);color:var(--fg)}.tgk{all:unset;cursor:pointer;padding:2px 10px;border:1px solid var(--ln);border-radius:10px;font-size:11.5px;color:var(--mt)}.tgk:hover{color:var(--fg)}.tgk:focus-visible{outline:2px solid var(--sage)}.tgk[aria-pressed=true]{border-color:var(--sage2);background:color-mix(in srgb,var(--sage2) 22%,var(--sf2))}' +
+  '.tgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(136px,1fr));grid-auto-flow:row dense;gap:4px}.tgb{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:2px;min-width:0;padding:4px 8px 6px;border:1px solid var(--ln);border-radius:6px;background:var(--sf2);cursor:pointer}.tgb:hover{border-color:var(--mt)}.tgb:focus-visible{outline:2px solid var(--sage);outline-offset:1px}.tgb[aria-expanded=true]{border-color:var(--sage2);background:color-mix(in srgb,var(--sage2) 18%,var(--sf2))}' +
+  '.tgh{display:flex;align-items:baseline;gap:6px;min-width:0}.tgh::before{content:"\25B8";color:var(--mt);font-size:10px}.tgb[aria-expanded=true] .tgh::before{content:"\25BE";color:var(--fg)}.tgn{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:12px}.tgh small{color:var(--mt);font-size:11px;font-variant-numeric:tabular-nums}' +
+  '.tgm{min-height:16px;line-height:16px}.bdg{display:inline-block;padding:0 6px;border-radius:8px;font-size:10.5px;line-height:15px;font-weight:600;background:color-mix(in srgb,var(--sage2) 32%,var(--sf2));color:var(--fg)}' +
+  '.tgx{display:flex;gap:1px;height:5px;border-radius:2px;overflow:hidden}.tgx i{display:block;flex:0 1 0;min-width:2px}.tgx .pl,.lgk.pl{background:var(--sage2)}.tgx .ps,.lgk.ps{background:var(--plum)}.tgx .pc,.lgk.pc{background:var(--slate)}.tgx .pd,.lgk.pd{background:color-mix(in srgb,var(--mt) 40%,transparent)}' +
+  '.tgp{display:none;grid-column:1/-1;border:1px solid var(--sage2);border-radius:6px;background:var(--sf);padding:4px 8px 6px}.tgp.on,.tgs.all .tgp,.flq .tgs .tgp{display:block}.tgs.all .tgb,.flq .tgs .tgb{display:none}.tgs .tgp[hidden],.tgs .tgp.sx,.tgs.ch .tgb:not(.c7g),.tgs.ch .tgp:not(.c7g),.tgs.ch tbody tr:not(.c7),.tkt tr.sx{display:none}' +
+  '.tph{display:flex;align-items:center;gap:8px;margin-bottom:2px}.tph b{font-size:12.5px}.tph small{color:var(--mt)}.tpx{all:unset;margin-left:auto;cursor:pointer;padding:0 8px;border-radius:4px;font-size:15px;line-height:20px;color:var(--mt)}.tpx:hover{color:var(--fg);background:var(--sf2)}.tpx:focus-visible{outline:2px solid var(--sage)}.tgs.all .tpx,.flq .tpx{display:none}' +
+  '.tkt{width:100%;table-layout:fixed;font-size:11.5px}.tkt th{padding:0}.tks{all:unset;cursor:pointer;display:block;padding:2px 6px;font-weight:600}.tks:focus-visible{outline:2px solid var(--sage)}.tkt th[aria-sort=ascending] .tks::after{content:" \25B4"}.tkt th[aria-sort=descending] .tks::after{content:" \25BE"}' +
+  '.tkt td{padding:2px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tkt td.tv{font-variant-numeric:tabular-nums;font-weight:600}.tkt td.tk.rep{color:transparent}.tkt tr.c7>td:first-child{box-shadow:inset 2px 0 0 var(--sage2)}.cmk{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage2);margin-right:5px;vertical-align:1px}.tkt td .lgk{margin:0 5px 0 0}' +
+  '.tsv{margin-left:auto;border:1px solid var(--ln);cursor:pointer;font:inherit;font-size:11px;font-weight:600}summary:has(>.tsv)::after{margin-left:0}@media(pointer:fine){summary>.tsv{min-height:24px;padding:1px 10px}}.tat>summary{cursor:pointer;color:var(--mt);font-size:12px;margin-top:8px}.tat .mtb{min-width:720px}' +
   # a phone: nested folds keep their width for the maps (thin side padding), day labels wrap, the repo table packs its columns
   '@media(max-width:699px){details.sub details.sub>.bd,details.sub .st>.bd{padding-left:4px;padding-right:4px}.hrs.dy b{white-space:normal;overflow-wrap:anywhere;font-size:9.5px}.mtb{font-size:11px;width:100%}.mtb th{font-size:9.5px;text-transform:none;letter-spacing:0;overflow-wrap:anywhere}.mtb :is(th,td){padding:2px 3px}}' +
   'dialog.drw{position:fixed;inset:0 0 0 auto;margin:0;height:100dvh;max-height:none;width:min(1100px,94vw);max-width:none;padding:0;border:0;border-left:1px solid var(--ln);background:var(--bg);color:var(--fg)}dialog.drw[open]{display:flex;flex-direction:column}dialog.drw::backdrop{background:rgba(0,0,0,.35)}.dwh{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--ln)}.dwh b{flex:1;font-size:13px;overflow-wrap:anywhere}.drw iframe{flex:1;border:0;width:100%;background:var(--bg)}' +

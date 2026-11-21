@@ -81,6 +81,8 @@
   "kitTests.fullEveryDays": "config default=7 unit=d",
   "writes.softGBPerHour": "config default=1 unit=GB",
   "writes.hardGBPerHour": "config default=2 unit=GB",
+  "writes.cellMinGB": "config default=0.5 unit=GB",
+  "writes.freeDropWarnGB": "config default=10 unit=GB",
   "supervise.osTimerLimitMinutes": "config default=10 unit=min",
   "supervise.osTimerTickMinutes": "config default=5 unit=min",
   "runtimeProbe.isUpSec": "config default=20 unit=s",

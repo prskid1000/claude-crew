@@ -167,7 +167,7 @@ $pg = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resou
 $vt = $v | ConvertTo-Json -Depth 8 | ConvertFrom-Json; $vt.src = 'tracer'
 $pgT = Format-KitSuperviseHtml ([pscustomobject]@{ at = $now.ToString('o'); resources = @([pscustomobject]@{ name = 'build x'; by = 'kitty'; gb = 1 }); stats = [pscustomobject]@{ writes = $vt } })
 "label:$($v.src -eq 'est' -and $pg -match '>Writes GB est\.</button>' -and $pg -match 'a cell = est\. GB written' -and $pgT -match '>Writes GB</button>' -and $pgT -match 'a cell = GB written')"
-"card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm sp ws'" -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
+"card:$($card -match "^<f sub st wr" -and $card -match 'day · hour' -and $card -match "class='gs hm dw'" -and $card -match '>today · as of \d\d:\d\d<' -and $card -match "<i class='ns' title='00:00 · no samples'></i>" -and $card -match "style='--a:\d+%;--k:\d+%' title='[^']*top writer: " -and $card -match '<i class=fu></i>' -and $card -notmatch '>peak<' -and $pg -match "data-g='rg-build'>.*?>build x<small>kitty</small>.*?<span data-mv=w class='gs hm ws'" -and $pg -match '>other processes<')"
 '@
 Expect-Each (Invoke-PsTest 'writes' $wrt @($supBossy, (Kd))) 'disk writes per owner: #' @('first', 'soft', 'hard', 'fold', 'unseen', 'over', 'scaled', 'nodisk', 'mixed', 'notkit', 'tracer', 'folders', 'redo', 'owners', 'twomysqld', 'laneini', 'bound', 'labels', 'buckets', 'history', 'view', 'label', 'card') -Show 8
 # the hour counts each second once: a 2 h window by its part in the hour, two sweeps' overlapping tracer windows once, never above all
@@ -199,7 +199,8 @@ Expect "cpu: a holder with pids 300, 250 sums both trees (1 + 90), pid 0 skipped
 $fo = & { . $supBossy 6>$null; $n = Get-Date; $lv = @(@{ at = $n.AddDays(-1).ToString('o'); disks = @{ 'C:' = 50.5 } }, @{ at = $n.AddMinutes(-10).ToString('o'); disks = @{ 'C:' = 48.2 } })
   $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ live = $lv; disks = @(@{ drive = 'C:'; free = 48.2; rate = 0; total = 100 }); now = [pscustomobject]@{ disks = @(@{ drive = 'C:'; free = 48.2; rate = 0 }) }
       repos = @{ repos = @(@{ repo = 'web'; branches = 3; worktrees = 2; kept = 1 }) }; writes = @{ at = $n.ToString('o'); days = @(@{ d = $n.Date.ToString('o'); m = 2.5; k = 1; h = @(, @(1, 0.5)) }) } } })
-  @(@{ id = 'disk-free'; s = 'now C: 48.2 GB' }, @{ id = 'writes'; s = '2.5 GB in 7 days · today 2.5 GB (1 GB kit)' }, @{ id = 'repos-now'; s = '3 branches · 2 worktrees' }) | ForEach-Object { $h -match "id=sec-$($_.id)><summary><h4>[^<]*</h4>(<span class=cnt>[^<]*</span>)?<span class=fsm>$([regex]::Escape($_.s))</span>" }
+  @(@{ id = 'writes'; s = '2.5 GB written in 7 days (kit 1 GB, 40%) &#183; free now C: 48.2 GB' }, @{ id = 'repos-now'; s = '3 branches · 2 worktrees' }) | ForEach-Object { $h -match "id=sec-$($_.id)><summary><h4>[^<]*</h4>(<span class=cnt>[^<]*</span>)?<span class=fsm>$([regex]::Escape($_.s))</span>" }
+  $h -notmatch 'sec-disk-free' -and $h -match "<span class='gc fr lo' title='[^']*'>48\.2<small>▼2\.3</small></span>"
   $h.IndexOf("<details class='sec top' id=sec-internals>") -lt $h.IndexOf("id=sec-trends open>") }
 Expect "page: disk free / writes / repos folded closed with a header summary; Trends inside the closed Kit internals ($fo)" ("$fo" -eq 'True True True True')
 # supervise's forced tick reuses a db list under 5 min old while every drive is OK and no query held 1 GB; a drive not OK or a 1 GB query: asked again
