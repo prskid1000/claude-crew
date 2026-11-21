@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L152 record-args · L171 budget · L190 build-prompt · L265 ship-prompt · L283 plan · L302 spike ·
-//   L315 local-loop · L388 stages · L541 ship · L581 debate · L694 deploy · L709 learn
+// Sections: L18 args · L153 record-args · L172 budget · L191 build-prompt · L269 ship-prompt · L287 plan · L306 spike ·
+//   L319 local-loop · L392 stages · L543 ship · L583 debate · L696 deploy · L711 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -106,7 +106,8 @@ const REPORT = {
   needsEnvFix: { type: 'array', items: obj({ item: S, envFixId: { ...S, description: 'the id bossy.ps1 decide ask -Kind envfix printed' }, need: S }),
    description: 'items stopped for a local-env fix only the coordinator may do (up/down/refresh/drop, shared DB repair); [] when none' },
   localTest: { type: 'object', properties: {
-   status: { ...S, enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS = every goal passed locally, clean logs; FAIL = goals failing; BLOCKED = ONLY an owner decision or a remote-only dependency (blockedKind); NONE = no local env (automated tests only)' },
+   status: { ...S, enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS = every goal passed locally, clean logs; FAIL = goals failing; BLOCKED = ONLY an owner decision or a remote-only dependency (blockedKind); NONE = no local env (automated tests only; merge waits for decisionId)' },
+   decisionId: { ...S, description: 'NONE only: the owner\'s decide id allowing the merge' },
    blockedKind: { ...S, enum: ['decision', 'remote'], description: 'BLOCKED only: decision = waits for the owner (decide ask); remote = needs a system only reachable remotely' },
    blockedReason: { ...S, description: 'BLOCKED only: the decision id or the remote dependency' },
    envGap: { ...B, description: 'FAIL only: true = every failing goal is an ENV GAP (THE DEV FLOW); a product failure: false' },
@@ -204,11 +205,11 @@ const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (loc
 "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
 
 function buildPrompt(a) {
- const dn = a.debate && MODE !== 'resume' ? `ITEM ${a.debate.item} WAITS for the owner (${a.debate.question}; the workflow debates and asks): build the rest, never report it.\n` : ''
+ const dn = a.debate && MODE !== 'resume' ? `ITEM ${a.debate.item} WAITS for the owner (${a.debate.question}; the workflow debates and asks): build the rest, never report it.\n` : '', rs = RES[a.id] || {}
  return `${WHY}${dn}
 You are devy ${a.id} in a parallel wave (${MODE}; kind: ${a.kind || (MODE === 'bugfix' ? 'fix' : 'feature')}).${PATHS}${AGENT_ENV(a.id)}
 Follow ${K}/SKILL.md (its steps and Rules; tools in ${DEV}, ${DT}) and the brief ${A.brief} (repos, ownership, ranges, local env, decisions; it wins).
-${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat((RES[a.id] || {}).skip || []).join(', ') || 'none'}${(((RES[a.id] || {}).mrs) || []).length ? `; open MRs ${RES[a.id].mrs.map((m) => m.url).join(' ')}` : ''}${(((RES[a.id] || {}).worktrees) || []).length ? `; worktrees ${RES[a.id].worktrees.join(' ')} (continue there)` : ''} (resume brief table); work out the rest (templates.md "Resume brief"), continue.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
+${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat(rs.skip || []).join(', ') || 'none'}${(rs.mrs || []).length ? `; open MRs ${rs.mrs.map((m) => m.url).join(' ')}` : ''}${(rs.worktrees || []).length ? `; worktrees ${rs.worktrees.join(' ')} (continue there)` : ''} (resume brief table); work out the rest (templates.md "Resume brief"), continue.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
 Board: & ${ORCH} board join -Type devy -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
 Worktrees: pool slots leased as ${a.id} (crafty Rules "Worktrees"). Never touch other agents' slots, branches or processes.
 ${a.note || ''}
@@ -247,6 +248,9 @@ function migrationPrompt(a, r) {
 ${r.mrs.map((m) => `- ${m.url} (${m.repo})`).join('\n')}
 blocking = data loss, no rollback, rows touched outside the change's filter. Return the findings (review schema).`
 }
+// revy (+ datay on an area with migrations); none: the migration slot without migrations
+const reviews = (a, r, more = '', none = null) => Promise.all([agent(reviewPrompt(a, r) + more, { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
+ a.migrations ? agent(migrationPrompt(a, r) + more, { label: `migration-review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'datay', ...pick('review') }) : none])
 const fkey = (f) => `${f.file}${f.line ? ':' + f.line : ''}`
 const cl = (s, n) => String(s || '').replace(/["'`$\r\n]+/g, ' ').replace(/,/g, ';').slice(0, n)   // a quoted pwsh arg; no option split
 const ANSWERS = obj({ answers: { type: 'array', items: obj({ finding: S, verdict: { enum: ['withdrawn', 'upheld'] }, evidence: S, why: S }, ['finding', 'verdict', 'evidence']) } })
@@ -330,10 +334,10 @@ async function waitAnswer(id, label, tries) {
 function mergeReports(x, r2, note) {
  if (!r2) return x
  const mrs = [...r2.mrs, ...x.mrs.filter((m) => !r2.mrs.some((n) => nu(n.url) === nu(m.url)))]
- return { ...x, ...r2, mrs, worktrees: uniqPath([...(x.worktrees || []), ...(r2.worktrees || [])]), done: uniq([...(x.done || []), ...(r2.done || [])]),
-  deferred: byId([...(x.deferred || []), ...(r2.deferred || [])]).filter((d) => !(r2.done || []).includes(d.id)),
-  needsDecision: byKey([...(x.needsDecision || []), ...(r2.needsDecision || [])], 'decisionId'), debate: byKey([...(x.debate || []), ...(r2.debate || [])], 'item'), needsEnvFix: byKey([...(x.needsEnvFix || []), ...(r2.needsEnvFix || [])], 'envFixId'), needsLiveCheck: uniq([...(x.needsLiveCheck || []), ...(r2.needsLiveCheck || [])]),
-  seed: uniq([...(x.seed || []), ...(r2.seed || [])]), foreignHooks: uniq([...(x.foreignHooks || []), ...(r2.foreignHooks || [])]),
+ const both = (f) => [...(x[f] || []), ...(r2[f] || [])]
+ return { ...x, ...r2, mrs, worktrees: uniqPath(both('worktrees')), done: uniq(both('done')), deferred: byId(both('deferred')).filter((d) => !(r2.done || []).includes(d.id)),
+  needsDecision: byKey(both('needsDecision'), 'decisionId'), debate: byKey(both('debate'), 'item'), needsEnvFix: byKey(both('needsEnvFix'), 'envFixId'), needsLiveCheck: uniq(both('needsLiveCheck')),
+  seed: uniq(both('seed')), foreignHooks: uniq(both('foreignHooks')),
   testerGuide: r2.testerGuide && !/^none/i.test(r2.testerGuide) ? r2.testerGuide : x.testerGuide, summary: `${x.summary}\n\n${note}: ${r2.summary}` }
 }
 const settleOnThrow = async (a, fn) => { try { return await fn() } catch (e) { SETTLED[a.id].done(null); throw e } }
@@ -356,8 +360,8 @@ function normLocal(r) {
  if (lt && lt.status === 'BLOCKED' && !['decision', 'remote'].includes(lt.blockedKind)) return { ...r, localTest: { ...lt, status: 'FAIL', failing: [...(lt.failing || []), `reported BLOCKED without blockedKind (${lt.blockedReason || lt.env || 'no reason'}): the local env is ours`] } }
  return r
 }
-// BLOCKED, or a FAIL beyond env gaps (envGap: no fix rounds; review, CI, merge)
-const holdsMerge = (lt) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap))
+// BLOCKED, a FAIL beyond env gaps (envGap: no fix rounds); with a: a code area's NONE without a decide id
+const holdsMerge = (lt, a) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap) || (!!a && lt.status === 'NONE' && !/^d-\d{14}-/.test(lt.decisionId) && !['doc', 'spike', 'repro'].includes(a.kind)))
 // local loop: FAIL -> `retries` rounds, then ONE on MODELS.retest
 async function localLoop(a, r, retries, stage) {
  for (let h = 0; r && r.handoff && h < 3; h++) {   // budget handoff -> a fresh devy
@@ -470,15 +474,14 @@ const results = await pipeline(
   if (['done', 'merged'].includes(r.resumed)) return { id: a.id, report: r, findings: [], resumed: r.resumed }   // merged before the stop: no review, CI or merge
   const lt = r.localTest || { status: 'NONE' }
   if (!holdsMerge(lt) && lt.status === 'FAIL') log(`${a.id}: local FAIL only env gaps (${(lt.failing || []).join('; ')}): merged on a green pipeline`)
-  if (holdsMerge(lt)) {
-   // FAIL or remote, no ask pending: coordinator decides
-   const why = lt.status === 'BLOCKED' ? `${lt.blockedKind}: ${lt.blockedReason || ''}` : (lt.failing || []).join('; ') || lt.env
-   log(`${a.id}: local test ${lt.status} - not reviewed, not merged (${why})${lt.status === 'FAIL' || lt.blockedKind === 'remote' ? ': the coordinator decides' : ''}`)
+  if (holdsMerge(lt, r.mrs.length && a)) {
+   // FAIL, NONE or remote, no ask pending: coordinator decides
+   const why = lt.status === 'BLOCKED' ? `${lt.blockedKind}: ${lt.blockedReason || ''}` : lt.status === 'NONE' ? 'no local loop: run it, or the owner allows it (localTest.decisionId)' : (lt.failing || []).join('; ') || lt.env
+   log(`${a.id}: local test ${lt.status} - not reviewed, not merged (${why})${['FAIL', 'NONE'].includes(lt.status) || lt.blockedKind === 'remote' ? ': the coordinator decides' : ''}`)
    return { id: a.id, report: r, findings: [], blocked: `local test ${lt.status}${lt.status === 'FAIL' ? ' after the stronger fix round' : ''}: ${why}` }
   }
   if (!r.mrs.length) return { id: a.id, report: r, findings: [] }
-  const [rv, mv] = await Promise.all([agent(reviewPrompt(a, r), { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
-   a.migrations ? agent(migrationPrompt(a, r), { label: `migration-review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'datay', ...pick('review') }) : null])
+  const [rv, mv] = await reviews(a, r)
   if (!rv) return { id: a.id, report: r, findings: [BLOCK(r.mrs, 'The review agent returned nothing: the MRs are unreviewed and were not merged.', REREVIEW)], reviewFailed: true }
   if (a.migrations && !mv) return { id: a.id, report: r, findings: [BLOCK(r.mrs, 'The migration review (datay) returned nothing: the migrations are unreviewed and were not merged.', 'Re-run datay kind migration on these MRs, then merge.')], reviewFailed: true }
   const findings = [...(rv.findings || []), ...((mv && mv.findings) || [])]
@@ -492,7 +495,7 @@ const results = await pipeline(
    if (!r2) return { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: false, stopped: true }
    x = { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: true, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(r, r2, 'Fix round'), 0, 'Fix')) }
    const lt2 = x.report.localTest || {}
-   if (holdsMerge(lt2)) return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
+   if (holdsMerge(lt2, a)) return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
    // re-review: blocking holds the merge (a round, then a decision); rest -> Follow-ups; contested findings: settleDisputes
    const gone = [], decided = new Map()   // finding key -> 'A' | 'B' | a pending decision id
    const settle = async (rep, l) => { const k = await settleDisputes(a, rep, l, decided); gone.push(...l.filter((f) => !k.includes(f))); x = { ...x, findings: x.findings.filter((f) => !gone.includes(f)) }; return k }
@@ -500,8 +503,7 @@ const results = await pipeline(
    const held = async (y, more = []) => ({ ...x, ...y, fixed: false, findings: [...x.findings, ...open], ...((soft.length || more.length) && { followUps: await followUps(a, x.report, [...soft, ...more]) }) })
    for (let round = 1; open.length; round++) {
     const rr = `\nRE-REVIEW after fix round ${round}: check that these findings are resolved and that the fix added no new problem:\n${open.map((f) => `- ${fkey(f)}: ${f.problem}`).join('\n')}${gone.length ? `\nSettled in a dispute, never raise again: ${gone.map(fkey).join(', ')}` : ''}`
-    const [rv2, mv2] = await Promise.all([agent(reviewPrompt(a, x.report) + rr, { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
-     a.migrations ? agent(migrationPrompt(a, x.report) + rr, { label: `migration-review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'datay', ...pick('review') }) : {}])
+    const [rv2, mv2] = await reviews(a, x.report, rr, {})
     const again = [rv2, mv2].flatMap((v) => v ? (v.findings || []) : [BLOCK(x.report.mrs, 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', REREVIEW)])
     soft.push(...again.filter((f) => f.severity !== 'blocking')); open = again.filter((f) => f.severity === 'blocking')
     if (!open.length) break
@@ -514,7 +516,7 @@ const results = await pipeline(
     open = await settle(r4, open)
     x = { ...x, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(x.report, r4, 'Fix round 2'), 0, 'Fix')) }
     const lt3 = x.report.localTest || {}
-    if (holdsMerge(lt3)) return held({ blocked: `local test ${lt3.status} after fix round 2` })
+    if (holdsMerge(lt3, a)) return held({ blocked: `local test ${lt3.status} after fix round 2` })
    }
    if (soft.length) x = { ...x, followUps: await followUps(a, x.report, soft) }
    const failures = await ciGate(a, x.report)
@@ -697,7 +699,7 @@ const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.
 const DEPLOYS = `${KIT}/skills/bossy/adapters/deploys.ps1`
 const dp = shipped.length ? await runStep(`# record the merged MRs as pending only: this step deploys nothing and asks nobody
 if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
- 'deploy-batch', 'Deploy', { whole: true }) : null
+ 'deploy-batch', 'Deploy', { whole: true, slow: true }) : null
 if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: no deploys adapter in this kit (merged work waits for a person)')
 else if (shipped.length) {
  try { outcome.deployBatch = JSON.parse((dp && dp.output) || '[]') } catch (e) { outcome.deployBatch = { raw: dp ? dp.output : 'deploy-batch agent returned nothing' } }

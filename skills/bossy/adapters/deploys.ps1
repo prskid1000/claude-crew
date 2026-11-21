@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L93 intest · L248 deploy · L427 restart · L476 supervise
+Sections: L14 helpers · L101 intest · L256 deploy · L453 restart · L502 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -20,10 +20,18 @@ function Get-CanonMr([string]$m) {
   $rp = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $Matches.r -or @($_.aliases) -contains $Matches.r } | Select-Object -First 1
   if ($rp) { "$($rp.name)!$($Matches.i)" } else { $m }
 }
-# an MR's target branch, one host call per MR and process; $null = unknown
+# MR -> target branch memo, seeded once from pokey's merged-MR cache (deployed-rows.json: a merged MR's target never changes)
+function Get-KitMrTbMemo {
+  if ($null -eq $script:KitMrTb) {
+    $script:KitMrTb = @{}; $rc = try { Read-KitText (Join-Path (Get-KitPath cache) 'deployed-rows.json') | ConvertFrom-Json -AsHashtable } catch { $null }
+    if ($rc -is [hashtable]) { foreach ($rk in @($rc.Keys -like 'mr|*')) { if ($tb = "$($rc[$rk].mr.target_branch)") { $script:KitMrTb[$rk.Substring(3)] = $tb } } }
+  }
+  $script:KitMrTb
+}
+# an MR's target branch, one host call per MR (the memo above); $null = unknown
 function Get-MrTargetBranch([string]$Mr, $Fx) {
   $c = Get-CanonMr (ConvertTo-MrRef $Mr); if ($Fx) { return ((Get-KitMember $Fx.mrs $Mr) ?? (Get-KitMember $Fx.mrs $c)).targetBranch }
-  if (-not $script:KitMrTb) { $script:KitMrTb = @{} }
+  $null = Get-KitMrTbMemo
   if ($script:KitMrTb.ContainsKey($c)) { return $script:KitMrTb[$c] }
   $rn, $iid = $c -split '!', 2; $v = try { (Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject (($rn -split '/')[-1]) -Raw); n = $iid }).target_branch } catch { $null }
   if ($v) { $script:KitMrTb[$c] = $v }; $v   # a failed lookup is retried next time
@@ -332,6 +340,11 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $nm = @($grp.Values | ForEach-Object { $_.m.Count } | Measure-Object -Sum).Sum; $per = [math]::Max(4, [math]::Ceiling($nm / 16))
     $grp = @(foreach ($g in $grp.Values) { for ($i = 0; $i -lt $g.m.Count; $i += $per) { [pscustomobject]@{ t = $g.t; m = @($g.m)[$i..([math]::Min($i + $per, $g.m.Count) - 1)] } } })
     if (($until - (Get-Date)).TotalSeconds -lt $lim / 2) { $until = (Get-Date).AddSeconds($lim / 2) }   # the ancestry step ran late: probes still get half (they got -TimeoutSec 1)
+    # probes as in a supervise beat: pokey's kept answers (merged MRs, settled rows) and one shared host answer per call (a plan ran past 120 s)
+    # an owner's plan keeps a DEPLOYED row deploy.planKeepHours only (a rollback shows); env restored in finally
+    $ownBeat = -not $env:KIT_API_BEAT; $keep0 = $env:KIT_PARAM_DEPLOY_DEPLOYEDKEEPHOURS
+    if ($ownBeat) { $env:KIT_API_BEAT = "plan-$PID-$([DateTime]::UtcNow.Ticks)"; if (-not $keep0) { $env:KIT_PARAM_DEPLOY_DEPLOYEDKEEPHOURS = "$(Get-KitParam 'deploy.planKeepHours')" } }
+    try {
     $runs = @(foreach ($g in $grp) {
         $t = $g.t; $tm = @($g.m)
         $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
@@ -360,10 +373,22 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
       $parsed = @(foreach ($x in $parsed) { if ($x.target -in $qts) { $x } else { foreach ($y in $qts) { [pscustomobject]@{ mr = $x.mr; target = $y; state = $x.state; detail = $x.detail } } } })   # a row for no one target (NOT-MERGED, the deadline): one per target
       $seen = @($parsed | ForEach-Object { "$(Get-CanonMr $_.mr)|$($_.target)" })
       $parsed += @(foreach ($y in $qts) { $q.m | Where-Object { "$(Get-CanonMr $_)|$y" -notin $seen } | ForEach-Object { [pscustomobject]@{ mr = $_; target = $y; state = 'UNKNOWN'; detail = "not checked: $(if ($fw) { $fw } else { "no row from pokey.ps1 deployed on $y" })" } } })   # an MR x target without a row never vanishes: UNKNOWN each
-      foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x; if ($x.branch) { if (-not $script:KitMrTb) { $script:KitMrTb = @{} }; $script:KitMrTb[(Get-CanonMr $x.mr)] = $x.branch } } }   # Get-MrTargetBranch's memo
+      foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x; if ($x.branch) { $null = Get-KitMrTbMemo; $script:KitMrTb[(Get-CanonMr $x.mr)] = $x.branch } } }   # Get-MrTargetBranch's memo
     }
+    } finally { if ($ownBeat) { Remove-Item -LiteralPath (Join-Path (Get-KitPath cache) "api-memo/$env:KIT_API_BEAT") -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Env:KIT_API_BEAT; $env:KIT_PARAM_DEPLOY_DEPLOYEDKEEPHOURS = $keep0 } }   # walk-ok: this plan's folder
     if (-not $Json -and $runs.Count) { [Console]::Error.WriteLine("deploy plan probes: $((@($script:probeCount.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key) $($_.Value)" }) + @(if ($anc.Count) { "DEPLOYED (green job) $($anc.Count)" })) -join ' · ')") }
   }
+  # a deploy MR ships work, it is none: out of the batch (opsy 2026-11-21: merged deploy MRs listed NOT-DEPLOYED) = into a deploys[].branch
+  # from a deploys[].from / branch or a deploy source (Test-KitDeployMr: protected, deploy/*; a hotfix branch into it is work); never a -Mrs one; no host call (memo, rows)
+  $named = @($Mrs | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) })
+  $depMrs = @(foreach ($m in @($cand.Keys)) {
+      $rp = @($repos | Where-Object { $_.name -eq (& $repoOf $m) } | Select-Object -First 1)[0]; $rws = @(& $rowsOf $m | Where-Object { $_ -and $_.state -in 'NOT-DEPLOYED', 'MANUAL' })
+      if ((Get-CanonMr (ConvertTo-MrRef $m)) -in $named -or -not $rws.Count) { continue }
+      $tb = @($rws.branch | Where-Object { $_ })[0]; if (-not $tb) { $tb = if ($fx) { Get-MrTargetBranch $m $fx } else { (Get-KitMrTbMemo)[(Get-CanonMr (ConvertTo-MrRef $m))] } }
+      $sb = @($rws.source | Where-Object { $_ })[0]
+      if ($tb -and $tb -in @($rp.deploys.branch) -and $sb -and ((Test-KitDeployMr $rp.name $sb '') -or $sb -in @(@($rp.deploys) | ForEach-Object { @($_.from) + @($_.branch) }))) { $m } })
+  foreach ($m in $depMrs) { $cand.Remove($m) }
+  if ($depMrs.Count -and -not $Json) { [Console]::Error.WriteLine("deploy plan: $($depMrs.Count) deploy MR(s) left out (merged into a deploy branch, not work): $($depMrs -join ', ')") }
   $trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower()
   $win = if ($env:KIT_PARAM_DEPLOY_MININTERVALHOURS) { Get-KitParam 'deploy.minIntervalHours' } else { Get-KitSetting 'deploy.minIntervalHours' (Get-KitParam 'deploy.minIntervalHours') }   # env > kit.local.json (a per-target object too)
   $winScope = ([string](Get-KitSetting 'deploy.minIntervalScope' 'repo')).ToLower()
@@ -373,7 +398,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $recOf = @{}; foreach ($x in $logged) { foreach ($m in @($x.mrs)) { $recOf["$(Get-CanonMr (ConvertTo-MrRef $m))|$($x.target)"] = 1 } }   # MANUAL (no check can see it): a recorded deploy is the proof
   $feeds = @{}   # no deadline here: a cut lookup would batch an MR for a target it never feeds
   $plan = foreach ($t in $targets) {
-    $batch = @(foreach ($m in @($cand.Keys)) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { if (-not $feeds.ContainsKey($m)) { $feeds[$m] = @(Get-MrDeployTargets $m $repos $fx $null -NoPaths:(-not $fx)) }; if ($t -notin $feeds[$m]) { continue }; [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })   # feeds-lookup only for a not-deployed row
+    $batch = @(foreach ($m in @($cand.Keys)) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { if (-not $feeds.ContainsKey($m)) { $feeds[$m] = @(Get-MrDeployTargets $m $repos $fx $null -NoPaths:(-not $fx)) }; if ($t -notin $feeds[$m]) { continue }; [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m]; mrState = "$($r.mrState)"; mergedAt = $(if ($r.mergedAt -is [datetime]) { ([datetimeoffset]$r.mergedAt).ToString('yyyy-MM-ddTHH:mm:sszzz') } else { "$($r.mergedAt)" }) } } })   # feeds-lookup only for a not-deployed row; mrState: the host's mr.get (pokey row), never inferred
     $last = $null; $src = ''; $lastBy = @{}; $envAt = $null   # lastBy: each repo's own last deploy here; envAt: one of no known repo (CI fixture)
     foreach ($l in @($logged | Where-Object { $_.target -eq $t })) { $la = [datetime]$l.at; if (-not $last -or $la -gt $last) { $last = $la; $src = "kit log ($($l.by))" }
       if (-not @($l.mrs | Where-Object { $_ }).Count -and (-not $envAt -or $la -gt $envAt)) { $envAt = $la }   # a record without -Mrs: every repo's window
@@ -416,7 +441,8 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $when = switch ($p.status) { 'WAIT' { " until $(([datetime]$p.nextAllowed).ToString('yyyy-MM-dd HH:mm')) (one deploy per $($p.windowHours) h)" } 'ASK' { ': ask the owner ONCE with this batch' } 'READY' { ": waits for a person's 'deploy $($p.target)' (deploy.trigger owner: nobody asks)" } 'UNKNOWN' { ": the deploy check failed: $($p.why) (plan again)" } 'DEPLOYING' { ': a deploy pipeline runs now (wait, then plan again)' } default { '' } }
     "DEPLOY $($p.target): $($p.status)$when | last $(if ($p.last) { "$(([datetime]$p.last).ToString('yyyy-MM-dd HH:mm')) ($($p.lastSource))" } else { 'unknown' })"
     foreach ($b in $p.mrs) {
-      "  - $($b.mr)$(if ($b.task) { " task $($b.task)" }) $($b.state): $($b.detail) [$($b.why)]$(if ($b.files) { " · $($b.files) file(s): $(@($b.source).Count) source, $($b.test) test" })"
+      $ms = (@($b.mrState, $b.mergedAt) | Where-Object { $_ }) -join ' '
+      "  - $($b.mr)$(if ($b.task) { " task $($b.task)" })$(if ($ms) { " $ms," }) $($b.state): $($b.detail) [$($b.why)]$(if ($b.files) { " · $($b.files) file(s): $(@($b.source).Count) source, $($b.test) test" })"
       if (($bo = @($b.outOfArea | Where-Object { $_ })).Count) { "    OUT-OF-AREA: $($b.mr) changes $($bo.Count) file(s) outside its area ($(@($b.globs) -join ', ')): $($bo -join ', ')" }
     }
   }

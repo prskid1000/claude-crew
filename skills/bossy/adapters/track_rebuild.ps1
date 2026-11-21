@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 track_rebuild.ps1: bossy.ps1 track -Rebuild (dot-sourced by bossy.ps1 from skills/bossy/adapters/). Recreates the task records
-(.state/tasks/<id>.json, skills/bossy/STATE.md) from MRs tagged with the tracker tag (last 14 days); runs inside Invoke-Track.
+(.state/tasks/<id>.json, skills/bossy/STATE.md) from MRs tagged with the tracker tag (last track.rebuildDays, 14 d); runs inside Invoke-Track.
 Usage: & <kit>/skills/bossy/bossy.ps1 track -Rebuild [-Force]
 Exit codes: 0 ok · 1 problem (bossy.ps1 track).
 #>
@@ -14,7 +14,7 @@ function Invoke-TrackRebuild {
     "rebuilt $tf with no tasks: discovery needs ""trackerRepos"" and a tracker tag (tracker.branchTag) in kit.local.json. Re-add open tasks with: bossy.ps1 track add -Task <id> -Discover"
     return
   }
-  $since = (Get-Date).AddDays(-14).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+  $since = (Get-Date).AddDays(-(Get-KitParam 'track.rebuildDays')).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   $found = @{}
   foreach ($r in $repos) {
     $pp = ProjPath $r; if (-not $pp) { "skip $r : use <group/repo> or set ""gitHostGroup"""; continue }
@@ -34,5 +34,5 @@ function Invoke-TrackRebuild {
     if ($Detail) { "  $id : $($o.mrs -join ', ')$(if ($o.done) { ' (done)' })" }
   }
   if (-not (Test-Path $tf)) { Update-KitTracking { param($t) } }
-  "rebuilt $tf : $n task(s) from $($repos.Count) repo(s) ($nDone already done; MRs with $tag<id> updated in the last 14 days)"
+  "rebuilt $tf : $n task(s) from $($repos.Count) repo(s) ($nDone already done; MRs with $tag<id> updated in the last $(Get-KitParam 'track.rebuildDays') days)"
 }

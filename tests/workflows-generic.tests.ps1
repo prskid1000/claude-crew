@@ -18,8 +18,26 @@ const a = await run(base, mk('NO-DEPLOYS', seen), (m) => logs.push(m), _n, pipel
 const b = await run(base, mk('[{"target":"t1","trigger":"owner"}]', []), _n, _n, pipeline)
 console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /no deploys adapter in this kit/.test(l)) && seen[0].includes("Test-Path 'C:/kit/skills/bossy/adapters/deploys.ps1'")}`)
 console.log(`deploy-batch:${Array.isArray(b.deployBatch) && b.deployBatch[0].target === 't1'}`)
+console.log(`deploy-slow:${/\(tool timeout 600000\)/.test(seen[0])}`)
 '@
-Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: #' 'deploy-skip', 'deploy-batch' -Show 5
+Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: # (slow: the plan ran past a 120 s tool timeout, 2026-11-21)' 'deploy-skip', 'deploy-batch', 'deploy-slow' -Show 5
+# buildy: localTest NONE never merges a code area (an MR merged without one, 2026-11-21) unless the owner allowed it (decisionId); kind doc needs no loop
+$jsn0 = @'
+const none = (extra = {}) => ({ status: 'NONE', env: 'none: no local env', rounds: 0, failing: [], goalsDoc: '', ...extra })
+const { calls, agent } = _mock((p, o) => {
+ if (o.label === 'build:N3') return _rep(none({ decisionId: 'd-20261121120000-owner-ab12' }))
+ if (o.label === 'build:N4') return _rep(none({ decisionId: 'ok' }))
+ if (/^build:/.test(o.label)) return _rep(none())
+ if (/^review:/.test(o.label)) return { findings: [] }
+ if (/^ship:/.test(o.label)) return _rep(none(), _merged(1))
+}, '[]')
+const o = await run({ brief: 'C:/b/w.md', mandate: ['m'], ..._kl, agents: [{ id: 'N1', items: 'A1' }, { id: 'N2', items: 'A2', kind: 'doc' }, { id: 'N3', items: 'A3' }, { id: 'N4', items: 'A4' }] }, agent, _n, _n, pipeline)
+const L = calls.map((c) => c.label)
+console.log(`none-held:${!L.includes('review:N1') && !L.includes('ship:N1') && o.blocked.some((b) => b.agent === 'N1' && /local test NONE/.test(b.why))}`)
+console.log(`none-doc:${L.includes('ship:N2')}`)
+console.log(`none-decided:${L.includes('ship:N3') && !L.includes('ship:N4')}`)
+'@
+Expect-Each (Invoke-Js dw-none $jsn0 $wfd) 'buildy merge gate: localTest NONE # (a code area held, kind doc and an owner decide id ship, a made-up id not)' 'none-held', 'none-doc', 'none-decided' -Show 8
 # generic: no CONFIG roles = independent repos, no merge order; repos[].role (any name, GitHub URLs) orders them; models.<phase> win
 $jsg = @'
 const mr = (r) => ({ url: `https://github.com/o/${r}/pull/4`, repo: '', merged: false }), lt = { status: 'PASS' }

@@ -168,7 +168,7 @@ function Set-KitItemsChecklist([string]$Task, $Items) { Set-KitTaskChecklist $Ta
 function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $ix = Read-KitState (Get-KitTaskFile $Parent); $ro = if ($ix.rollup -is [Collections.IDictionary]) { $ix.rollup } else { @{} }
   $trk = (Read-KitTracking).tasks; $known = @($ro.subtasks | Where-Object { $_ })
-  $sig0 = Get-KitRollupLocalSig $ro $known $trk; $mins = [double](Get-KitSetting 'track.rollupMinutes' 30)
+  $sig0 = Get-KitRollupLocalSig $ro $known $trk; $mins = [double](Get-KitParam 'track.rollupMinutes')
   $ans = $ro.closeAsk -and $ro.closeActed -ne $ro.closeAsk -and (Get-KitCloseAsk "$($ro.closeAsk)").status -eq 'answered'   # a new answer: act now
   $fresh = $ro.readAt -and ((Get-Date) - [datetime]$ro.readAt).TotalMinutes -lt $mins
   if (-not $Force -and (($ro.parentClosed -and $fresh -and $ro.localSig -eq $sig0) -or (-not $ro.parentClosed -and -not $ans -and $ro.localSig -eq $sig0 -and $fresh))) { return }   # a closed parent: its status read once per rollupMinutes
@@ -286,7 +286,7 @@ function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
   $one = -not $ids.Count -or "$ids" -eq 'MRs'; if ($one) { if (-not @($tr.mrs).Count) { return }; $ids = @('MRs'); if ($T.name) { $dsc.MRs = $T.name } }
   $mc = @{}; if ($x.itemsMrs -is [Collections.IDictionary]) { foreach ($k in $x.itemsMrs.Keys) { $mc[$k] = $x.itemsMrs[$k] } }; $named = @{}
   $om = @{}; if ($x.itemsOpenMrs -is [Collections.IDictionary]) { foreach ($k in $x.itemsOpenMrs.Keys) { $om[$k] = $x.itemsOpenMrs[$k] } }   # open MRs: the ids they name (fix rounds)
-  $look = -not $x.itemsReadAt -or ((Get-Date) - [datetime]$x.itemsReadAt).TotalMinutes -ge [double](Get-KitSetting 'track.rollupMinutes' 30)
+  $look = -not $x.itemsReadAt -or ((Get-Date) - [datetime]$x.itemsReadAt).TotalMinutes -ge [double](Get-KitParam 'track.rollupMinutes')
   foreach ($ref in @(Get-KitTrackRefs $tr.mrs)) {
     if (($look -or $Force -or -not $om.Contains("$ref")) -and -not $mc.Contains("$ref") -and "$ref" -match '^(?<r>[^!]+)!(?<i>\d+)$') {   # merged MRs only, each read once
       $pp = ProjPath $Matches.r; $mv = if ($pp) { try { Invoke-HostVerb 'mr.get' @{ repo = $pp; n = $Matches.i } } catch { } }

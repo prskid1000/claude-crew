@@ -195,12 +195,16 @@ $a1 = @($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*win
 Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names (#)' @('none', 'good', 'oa', 'stale', 'watch', 'empty', 'live', 'intest', 'ask')
 # a deploy MR (into deploys[].branch) feeds its own target only; from / paths pick an MR's targets in the intest gate too; old requests expire
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da' }, @{ target = 'b-st'; branch = 'st/b'; job = 'db' }) }) } $cfgF
-& $J @{ tasks = @{ g = @{ task = 'g'; mrs = @('jc!1', 'jc!2'); done = $true; doneAt = $now } }; automerge = @{} } $tf
-$nd5 = { param($tb) @{ targetBranch = $tb; rows = @('a-st', 'b-st' | ForEach-Object { @{ target = $_; state = 'NOT-DEPLOYED'; detail = 'x' } }) } }
-$fx5 = Join-Path (Kd) 'deploy-fixture5.json'; & $J @{ mrs = @{ 'jc!1' = (& $nd5 'st/b'); 'jc!2' = (& $nd5 'main'); 'jc!3' = (& $nd5 'main'); 'jc!4' = (& $nd5 'main') } } $fx5
+& $J @{ tasks = @{ g = @{ task = 'g'; mrs = @('jc!1', 'jc!2', 'jc!5'); done = $true; doneAt = $now } }; automerge = @{} } $tf
+$nd5 = { param($tb, $sb = 'f/x') @{ targetBranch = $tb; rows = @('a-st', 'b-st' | ForEach-Object { @{ target = $_; state = 'NOT-DEPLOYED'; detail = 'x'; mrState = 'merged'; mergedAt = '2026-01-02T03:04:05Z'; source = $sb } }) } }
+$fx5 = Join-Path (Kd) 'deploy-fixture5.json'; & $J @{ mrs = @{ 'jc!1' = (& $nd5 'st/b' 'main'); 'jc!5' = (& $nd5 'st/b'); 'jc!2' = (& $nd5 'main'); 'jc!3' = (& $nd5 'main'); 'jc!4' = (& $nd5 'main') } } $fx5
 $pdf = Join-Path (TkPath $k deploys -Create) 'pending.json'; & $J @{ requests = @(@{ at = (Get-Date).AddDays(-30).ToString('s'); run = 'old'; mrs = @('jc!3') }, @{ at = $now; run = 'new'; mrs = @('jc!4') }) } $pdf
 $p = @(& $dep plan -Offline $fx5 -Json | ConvertFrom-Json); $by = { param($t) (@(@($p | Where-Object target -eq $t).mrs.mr) | Sort-Object) -join ',' }
-Expect "deploy plan: a deploy MR counts for its own target only ($(& $by a-st) | $(& $by b-st))" ((& $by a-st) -eq 'jc!2,jc!4' -and (& $by b-st) -eq 'jc!1,jc!2,jc!4')
+$pt5 = & $dep plan -Offline $fx5 2>&1 | Out-String; $pn5 = @(& $dep plan -Offline $fx5 -Mrs 'jc!1' -Json | ConvertFrom-Json | Where-Object target -eq 'b-st').mrs.mr -join ','
+Expect "deploy plan: a deploy MR (main -> a deploy branch) left out; a hotfix or -Mrs one stays ($(& $by b-st) | $pn5)" ((& $by a-st) -eq 'jc!2,jc!4' -and (& $by b-st) -eq 'jc!2,jc!4,jc!5' -and $pn5 -match 'jc!1' -and $pt5 -match 'deploy plan: 1 deploy MR\(s\) left out \(merged into a deploy branch, not work\): jc!1')
+Expect "deploy plan: a batch MR shows the host's MR state + merge time" ($pt5 -match 'jc!2 task g merged 2026-01-02T\d\d:04:05[+-]\d\d:\d\d, NOT-DEPLOYED: x' -and @(@($p | Where-Object target -eq 'a-st').mrs | Where-Object { $_.mrState -eq 'merged' }).Count -eq 2)
+$tbm = Join-Path (TkPath $k cache -Create) 'deployed-rows.json'; & $J @{ 'mr|jc!9' = @{ at = $now; mr = @{ target_branch = 'st/a' } } } $tbm
+Expect-Each (Invoke-PsTest 'tb-memo' '. $args[0]; function Invoke-HostVerb { throw }; "memo:$((Get-MrTargetBranch ''jc!9'' $null) -eq ''st/a'')"' @($O)) 'deploy plan: target branch from pokey''s cache, no host call (#)' @('memo') 3; Remove-Item $tbm
 Expect 'deploy plan: a request older than -Days expires, a new one stays' ((@((Get-Content $pdf -Raw | ConvertFrom-Json).requests.run) -join ',') -eq 'new')
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da'; paths = @('a/api/**', 'common/**') }, @{ target = 'b-st'; branch = 'st/b'; job = 'db'; paths = @('b/**', 'common/**') }) }); productTargets = @(@{ pathRegex = '^a/'; targetRegex = '^a-'; label = 'A env' }, @{ pathRegex = '^b/'; targetRegex = '^b-'; label = 'B env' }) } $cfgF
 $fq2 = Join-Path (Kd) 'fake-deployed-gate.ps1'

@@ -215,7 +215,7 @@ param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [swi
 $ErrorActionPreference = 'SilentlyContinue'
 
 $repos = @(Get-KitValue 'repos' @())
-function Row($d, $s, $x) { [pscustomobject]@{ mr = $ref; target = $d.target; state = $s; detail = $x; branch = "$($mr.target_branch)" } }   # branch: deploy plan's feeds check needs no host call
+function Row($d, $s, $x) { [pscustomobject]@{ mr = $ref; target = $d.target; state = $s; detail = $x; branch = "$($mr.target_branch)"; mrState = "$($mr.state)"; mergedAt = $(if ($mr.merged_at -is [datetime]) { ([datetimeoffset]$mr.merged_at).ToString('yyyy-MM-ddTHH:mm:sszzz') } else { "$($mr.merged_at)" }); source = "$($mr.source_branch)" } }   # branch: deploy plan's feeds check needs no host call; mrState / mergedAt: mr.get's, shown as is
 function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
 # memoised: supervise asks per round
 $memo = @{}
@@ -302,7 +302,7 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   if (-not @($r.deploys | Where-Object { $_ }).Count) { [pscustomobject]@{ mr = "$($r.name)!$iid"; target = "$Target"; state = 'N/A'; detail = 'n/a: no deploys configured for this repo' }; continue }
   $p = Get-HostProject $r.name -Raw; $ref = "$($r.name)!$iid"   # gitHostGroup/<repo>
   $mr = if ($rcache["mr|$ref"]) { $rcache["mr|$ref"].mr } else { Hv 'mr.get' @{ n = $iid } }
-  if ($mr.state -eq 'merged' -and -not $rcache["mr|$ref"]) { $rcache["mr|$ref"] = @{ at = (Get-Date).ToString('o'); mr = $mr | Select-Object iid, state, merged_at, target_branch, squash_commit_sha, merge_commit_sha, sha }; $rdirty.on = $true }   # a merged MR never changes
+  if ($mr.state -eq 'merged' -and -not $rcache["mr|$ref"]) { $rcache["mr|$ref"] = @{ at = (Get-Date).ToString('o'); mr = $mr | Select-Object iid, state, merged_at, target_branch, source_branch, squash_commit_sha, merge_commit_sha, sha }; $rdirty.on = $true }   # a merged MR never changes
   if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
   if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
   # fast-forward: the MR head sha landed
