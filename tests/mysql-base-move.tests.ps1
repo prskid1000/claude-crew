@@ -141,4 +141,12 @@ $tmNestKit = Join-Path $env:TEMP 'nest78'; $null = New-Item -ItemType Directory 
 Copy-Item (Join-Path $src 'skills/crafty/kit.example.json') (Join-Path $tmNestKit 'skills/crafty')
 $tmNestHome = & $pwshExe -NoProfile -Command ". '$(Join-Path $PSScriptRoot 'test-mysql.ps1')'; `$src = '$tmNestKit'; Get-TestMySqlHome"
 Expect "test-mysql.ps1: a nested suite in a test kit inherits the outer home ($tmNestHome)" ("$tmNestHome" -eq (Get-TestMySqlHome) -and "$tmNestHome" -notlike "$tmNestKit*")
+# (moved from db-engine-presets-2.tests.ps1: its cap)
+# K78 (tests/test-mysql.ps1): one area holds the one server at a time; a second kit-test mysqld is a stray (TEST-MYSQLD)
+$tmLk = New-Item -ItemType Directory -Force (Join-Path $env:TEMP 'lock78')   # its own lock dir: the shared one may be held by another run
+$tmHeld = Enter-TestMySqlLock $tmLk 0; $tmSecond = try { (Enter-TestMySqlLock $tmLk 0).Dispose(); 'got it' } catch { 'refused' } finally { $tmHeld.Dispose() }
+$tmFake = { param($i, $p, $c) [pscustomobject]@{ ProcessId = $i; ParentProcessId = $p; CommandLine = $c } }
+$tmStrays = @(Get-TestMySqlStrays @((& $tmFake 10 1 '"mysqld.exe" --no-defaults "--datadir=D:\k\.state\kit-tests\mysql" --port=1'), (& $tmFake 11 10 'mysqld.exe --no-defaults --datadir=D:\k\.state\kit-tests\mysql'),
+  (& $tmFake 20 2 "mysqld.exe --no-defaults `"--datadir=D:\w\$($tmpMap.runtimeDir)\work\tests\mysqld-77`" --port=2"), (& $tmFake 30 3 'mysqld.exe --defaults-file=C:\ProgramData\my.ini')) -Server '10:5')
+Expect "test-mysql.ps1: one area holds the server at a time (a second take waits: $tmSecond); a second kit-test mysqld (old per-area dir) is a stray, the one server, its worker and the OS service are not ($($tmStrays -join '; '))" ($tmSecond -eq 'refused' -and $tmStrays.Count -eq 1 -and $tmStrays[0] -match '^20 .*mysqld-77$')
 if ($script:fails) { exit 1 }

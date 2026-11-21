@@ -21,6 +21,8 @@ $tmSrv = Start-TestMySql -Binlog; $port = $tmSrv.port
 try {
   $env:MYSQL_PWD = ''
   function Q([string]$sql) { Invoke-TestMySql $sql $port }
+  # a killed run's empty schema folder (error 3678)
+  foreach ($fs in 'fa', 'fb') { $fd = Join-Path (Get-TestMySqlHome) "mysql/$fs"; if ((Test-Path $fd) -and -not (Get-ChildItem $fd -Force)) { Remove-Item $fd } }
   Q @"
 CREATE DATABASE fa; CREATE DATABASE fb;
 CREATE TABLE fa.t (id int primary key auto_increment, s varchar(40), d decimal(8,2), f double, dt datetime(3), ts timestamp(2) null, dd date, tm time, j json, e enum('x','y'), st set('a','b','c'), b blob, u int unsigned, bt bit(4), g int as (char_length(s)) virtual, n text) charset utf8mb4;
@@ -244,11 +246,4 @@ DELIMITER ;
   Stop-TestMySql $tmSrv
   Remove-TestKit $k3
 }
-# K78 (tests/test-mysql.ps1): one area holds the one server at a time; a second kit-test mysqld is a stray (TEST-MYSQLD)
-$tmLk = New-Item -ItemType Directory -Force (Join-Path $env:TEMP 'lock78')   # its own lock dir: the shared one may be held by another run
-$tmHeld = Enter-TestMySqlLock $tmLk 0; $tmSecond = try { (Enter-TestMySqlLock $tmLk 0).Dispose(); 'got it' } catch { 'refused' } finally { $tmHeld.Dispose() }
-$tmFake = { param($i, $p, $c) [pscustomobject]@{ ProcessId = $i; ParentProcessId = $p; CommandLine = $c } }
-$tmStrays = @(Get-TestMySqlStrays @((& $tmFake 10 1 '"mysqld.exe" --no-defaults "--datadir=D:\k\.state\kit-tests\mysql" --port=1'), (& $tmFake 11 10 'mysqld.exe --no-defaults --datadir=D:\k\.state\kit-tests\mysql'),
-  (& $tmFake 20 2 "mysqld.exe --no-defaults `"--datadir=D:\w\$($tmpMap.runtimeDir)\work\tests\mysqld-77`" --port=2"), (& $tmFake 30 3 'mysqld.exe --defaults-file=C:\ProgramData\my.ini')) -Server '10:5')
-Expect "test-mysql.ps1: one area holds the server at a time (a second take waits: $tmSecond); a second kit-test mysqld (old per-area dir) is a stray, the one server, its worker and the OS service are not ($($tmStrays -join '; '))" ($tmSecond -eq 'refused' -and $tmStrays.Count -eq 1 -and $tmStrays[0] -match '^20 .*mysqld-77$')
 Complete-Tests
