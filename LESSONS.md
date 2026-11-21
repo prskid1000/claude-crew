@@ -19,6 +19,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- deploy plan shows a MERGED MR as NOT-DEPLOYED, or mr.get prints null -> Re-query MR state with the host verb before reporting; run deploy plan with a long timeout (Wrong not-merged summary and skipped MR body, docs and tracker updates)
 - a scratch file (probe, diff, config copy) -> only under crafty.ps1 dir -Agent <id> (a stray in <runtime>/work cannot be removed later: the guard blocks deletes there, 7x on 2026-11-19)
 - writing the MR body local-env row -> state the real lane result; never claim PASS on another product's env or when the brief said FAIL (RM web MR claimed local PASS on hm r211)
 - a change touches files outside the area paths of the brief -> raise the scope decide ask at plan time, not at wt commit (wt commit refused files and the agent waited with no answer) (2×)
@@ -35,7 +36,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - After `wt lease` / `wt new` -> check the dependency links (node_modules, linkPaths) exist before editing; missing: save the diff, lease again (a worktree without them fails wt remove and can empty the folder). (1×)
 - Wave branches of one task -> pass `--override` with the wave id to devtools finish and mr on each sibling branch (the prior-work gate refuses siblings until it counts the batch as one task). (2x) (2×)
 - Writing a shared task doc (one testing-ai key, many wave agents) -> read the current doc first, keep every other area's section and Rounds rows, write patches with the Edit tool or a file (heredoc python collapses backslash-n; areas lost rows). (4x)
-- A stacked MR after a fix round on its base -> rebuild it on the new base plus a revert of the moved commit (the stacked diff stays clean). (1x)
 - envy deploy REFUSED by a foreign layer not based on the published head -> board msg its holder; holder off the board: raise an ENV-FIX (deploying over it breaks the holder's test). (2x)
 - A doc change, final rebase or flaky tracker call -> re-run devtools.py finish and check the tracker status after it (it updates the two docs, the links block and the solution comment in place). (4x)
 - Before devtools.py mr -> run `kitbag.py prose --kind mr-body` and fix the body (260 words, How tested bullets, one Not run line) (fixing after mr's warning means a second push). (4x) (2×)
@@ -110,6 +110,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- A test fixture is made with tracker create -Key -> Use a non-keyed create or expect the [Bug] prefix and no Items check (Keyed creates became a [Bug] and silently skipped the Items check)
+- Edit removes a block spanning line ends in a CRLF file -> Include the whole lines with their CRLF in old_string, then check the file parses (A newline-only old_string joined two lines and caused a parse error)
 - ui-check --click uses a child selector (a>b) from Git Bash -> quote the selector, run from the PowerShell tool, do not pipe stdout (unquoted > redirected stdout, left a stray file named summary, later calls refused (3x)
 - writing test data or fixtures -> use invented paths and ids, never copy a real repo path or cloud resource id from live state (pre-push ORG-TERM block)
 - a scripted replace has ONE pair -> write @(,@(a,b)) so PowerShell keeps the pair nested (single pair flattened, every 5 in a file was replaced)
