@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L349 shells · L528 page · L1049 release · L1094 lines · L1126 cleanup · L1193 launch ·
-  L1310 pause · L1429 heartbeat · L1444 sessions · L1496 ci tasks ·
-  L1554 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L361 shells · L540 page · L1061 release · L1106 lines · L1138 cleanup · L1205 launch ·
+  L1322 pause · L1441 heartbeat · L1456 sessions · L1508 ci tasks ·
+  L1566 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -69,6 +69,18 @@ function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
     $m = if ($r.last) { [int]($Now - [datetime]$r.last).TotalMinutes } else { [int]::MaxValue }
     [pscustomobject]@{ level = $(if ($m -ge 3 * $StuckMin) { 'ACT' } else { 'WATCH' }); kind = 'STUCK'; who = "$($r.name) ($($r.task))"; age = $(if ($m -lt [int]::MaxValue) { "$m min" }); problem = "no progress$(if ($m -eq [int]::MaxValue) { ' for its whole run' }), nothing it waits on"; what = "STUCK $($r.name) ($($r.task)): no progress for $(if ($m -lt [int]::MaxValue) { "$m min" } else { 'its whole run' }), nothing it waits on"; action = "Read its transcript tail; resume it with RESUME_BRIEF or $($r.next -replace '^.*; resume it or ')." }
   }
+}
+# /testy has no live lead (2026-11-21): a tester's question in <qa-runs>/<run>/lead-notes.md ("- HH:mm CODE: ...?", pokey.ps1 lead-notes add)
+# with no later line of its code, older than qa.questionWatchMinutes = a WATCH the coordinator answers
+function Get-KitQaQuestionFlags([datetime]$Now = (Get-Date)) {
+  $after = [double](Get-KitParam 'qa.questionWatchMinutes')
+  foreach ($nf in @(Get-ChildItem -LiteralPath (Get-KitPath qa-runs) -Filter 'lead-notes.md' -File -Recurse -Depth 1 -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $Now.AddHours(-24))) {
+    $ls = @(Get-Content -LiteralPath $nf.FullName -Encoding utf8 | ForEach-Object { if ($_ -match '^- (\d\d):(\d\d) (\S+?): (.+)$') { [pscustomobject]@{ t = $nf.LastWriteTime.Date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2]); c = $Matches[3]; x = $Matches[4].Trim() } } })
+    for ($i = 0; $i -lt $ls.Count; $i++) { $q = $ls[$i]; if ($q.x -notmatch '\?$' -or @($ls | Select-Object -Skip ($i + 1) | Where-Object c -eq $q.c).Count) { continue }
+      $age = ($Now - $q.t).TotalMinutes; if ($age -lt 0) { $age += 1440 }; if ($age -lt $after) { continue }   # a line from before midnight
+      $run = Split-Path $nf.DirectoryName -Leaf
+      [pscustomobject]@{ level = 'WATCH'; kind = 'QA QUESTION'; who = "$run $($q.c)"; age = "$([int]$age) min"; problem = $q.x; what = "QA QUESTION · $run $($q.c): $($q.x)"
+        action = "Answer it: pokey.ps1 lead-notes add -RunDir $($nf.DirectoryName) -Code $($q.c) -Text '<answer>'" } } }
 }
 # every ACT / WATCH flag's age (owner 2026-11-19) = since its text (Get-KitFlagKey: counts vary) first showed; supervise-state
 # flagSeen keeps first + last seen, an entry unseen for 2 h drops (a skipped section keeps its age); a producer's own age wins

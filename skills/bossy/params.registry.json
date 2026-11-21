@@ -46,6 +46,7 @@
   "idle.beatMinutes": "config default=20 unit=min",
   "qa.bugsLockSec": "config default=120 unit=s",
   "qa.finalizeLockSec": "config default=600 unit=s",
+  "qa.questionWatchMinutes": "config default=10 unit=min",
   "cleanup.worktreeDays": "config default=7 unit=d",
   "pool.size": "config default=10 unit=slots",
   "pool.warm": "config default=2 unit=slots",

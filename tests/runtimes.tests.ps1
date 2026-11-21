@@ -85,6 +85,10 @@ $rov = & { . $O; $n = [datetime]'2026-01-02T15:00:00'; $sx = [pscustomobject]@{ 
   "$([regex]::Match($h, "(?s)data-g='rr-wf_8'.{0,600}").Value -notmatch 's-act''>running') $($h -match 'usage as of 01-02 12:00')" }
 Expect "runs band: this sweep's ended workflow row beats an older usage pass's running; the band says how old usage is ($rov)" ($rov -eq 'True True')
 Expect "runs band: a stale run is chipped, its hours only where its steps ran (1 hour), a board-only run newer than usage says counting ($rbd)" ($rbd -eq 'True 1 True')
+$qaq = & { . $O; $n = Get-Date; $rd = New-Item -ItemType Directory -Force (Join-Path (Get-KitPath qa-runs -Create) 'qq-run'); $hm = { param($m) $n.AddMinutes(-$m).ToString('HH:mm') }
+  Set-Content (Join-Path $rd 'lead-notes.md') @('# Lead notes', '## Answers (newest last)', "- $(& $hm 30) T1: which tenant for step 3?", "- $(& $hm 25) T2: is the flag on?", "- $(& $hm 20) T2: yes, on", "- $(& $hm 3) T3: a fresh one?", "- $(& $hm 40) T4: done, PASS") -Encoding utf8
+  $f = @(Get-KitQaQuestionFlags $n); "$($f.Count) $(@($f.what) -join '|') $($f[0].action -match 'lead-notes add -RunDir .*qq-run -Code T1')" }
+Expect "QA QUESTION: an unanswered tester question older than 10 min is a WATCH with the answer command; answered, fresh or no-question lines are not ($qaq)" ($qaq -eq '1 QA QUESTION · qq-run T1: which tenant for step 3? True')
 $dsk = & { . $O; $pv0 = [pscustomobject]@{ disks = @(@{ drive = 'C'; at = (Get-Date).AddHours(-3).ToString('o'); free = 1 }, @{ drive = 'D'; at = (Get-Date).AddMinutes(-5).ToString('o'); free = 2 }, @{ drive = 'E'; free = 3 }) }
   @((Get-KitSuperviseSeries @() $pv0).disks | ForEach-Object { $_.drive }) -join ',' }
 Expect "disks: no disk line this sweep keeps only rows under 2 heartbeats old, never an old copy as today's ($dsk)" ($dsk -eq 'D')
