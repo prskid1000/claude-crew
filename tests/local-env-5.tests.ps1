@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 local-env-5.tests.ps1: envy.ps1 thin artifacts (services[].classpathFile): per-release classpath.txt + java.args, {javaArgs};
-a QA tester's lease needs its run.json item's localParts / localEnv.
+a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers.
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-5.tests.ps1 (tests/kit-tests.ps1 -Area local-env-5 runs it with the other areas).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -98,5 +98,11 @@ $tqOld = New-Item -ItemType Directory -Force (Join-Path (Split-Path $tqDir) '202
 $tqNo = Invoke-TestScript $L5 use -Env q -Services ui -Agent 'test:T3@123456' -Wait 0
 $tqOk = Invoke-TestScript $L5 use -Env q -Services ui -Agent 'test:T4@123456' -Wait 0
 Expect "envy use: a tester whose run.json item has no localParts / localEnv is refused, exit 1; one with localParts passes the check ($($tqNo.out.Trim()) | $($tqOk.out -split "`n" | Select-Object -First 1))" ($tqNo.code -eq 1 -and $tqNo.out -match 'item T3 tests target stg' -and $tqOk.out -match 'lease for test:T4')
+# an owner PAUSE: the agent releases before board leave -Status paused; an open pause on its run keeps its layers (retro 2026-11-21)
+& $J @{ agent = 'PQ'; session = 'PQ-s'; run = 'rq'; status = 'working'; beat = (Get-Date).ToString('o') } (Join-Path (TkPath $k board -Create) 'PQ-s.json')
+$pqNo = Px $L5 drop -Env q -Agent PQ 2>&1 | Out-String; & $J @{ run = 'rq'; state = 'paused'; reason = 'owner'; at = (Get-Date).ToString('o') } (Join-Path (TkPath $k pauses -Create) 'pause-pq.json')
+$pqYes = Px $L5 drop -Env q -Agent PQ 2>&1 | Out-String
+& $J @{ agent = 'PQ'; session = 'PQ-s'; run = 'rq'; status = 'left'; beat = (Get-Date).ToString('o') } (Join-Path (TkPath $k board) 'PQ-s.json'); $pqLeft = Px $L5 drop -Env q -Agent PQ 2>&1 | Out-String
+Expect "release under an open PAUSE of the agent's run: layers kept, before board leave -Status paused; a finished (left) agent's go ($($pqNo.Trim()) / $($pqYes.Trim()) / $($pqLeft.Trim()))" ($pqNo -match 'PQ has no layer' -and $pqYes -match 'layers of PQ kept: it paused' -and $pqLeft -match 'PQ has no layer')
 Remove-TestKit $k
 Complete-Tests

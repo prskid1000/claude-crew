@@ -58,5 +58,9 @@ Expect 'QA report HTML: a knownBug FAIL reads FAIL (known: <id>) with the task l
 # retro 2205: a mistyped cases verb names the closest one; a verb without <task> says so (exit 2 both)
 $cv = @(foreach ($cva in @('reslt', 'T1'), @('add')) { $cvo = & $py -X utf8 $DT cases @cva 2>&1 | Out-String; "$LASTEXITCODE|$(($cvo -split "`r?`n" | Where-Object { $_.Trim() })[-1])" })
 Expect "devtools cases: closest verb / missing task named ($($cv -join ' ; '))" ($cv[0] -eq '2|did you mean: cases result (see its example above)' -and $cv[1] -eq '2|cases add needs <task> first (example above)')
+# retro 2026-11-21: cases --help = usage, exit 0; cases <task> <verb> = the swapped form, run as cases <verb> <task>
+$chOut = & $py -X utf8 $DT cases --help 2>&1 | Out-String; $chCode = $LASTEXITCODE
+$csOut = & $py -X utf8 $DT cases T1 render nosuchkind 2>&1 | Out-String
+Expect "devtools cases: --help exits 0 with the examples ($chCode); <task> <verb> runs the verb" ($chCode -eq 0 -and $chOut -match 'cases render T1 ai' -and $csOut -match "kind 'nosuchkind'|has no cases spec" -and $csOut -notmatch 'did you mean')
 Remove-TestKit $k
 Complete-Tests

@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L239 state · L286 layer drops · L358 leases · L466 code · L477 migrations ·
-  L480 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L627 shared builds · L765 hooks · L837 marks · L1018 seed ·
-  L1085 processes · L1468 daemon · L1930 cleanup · L2002 verbs
+Sections: L36 config · L239 state · L286 layer drops · L361 leases · L469 code · L480 migrations ·
+  L483 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L630 shared builds · L768 hooks · L840 marks · L1021 seed ·
+  L1088 processes · L1471 daemon · L1933 cleanup · L2005 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -285,7 +285,10 @@ function EnvProcess([int]$p, [string]$e) {
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Object { $_ }) }
 # ---- layer drops: release (finished), supervise (merged, gone, orphan); each queued with its reason (leases.jsonl kind env-layer)
 # paused or handed off (its newest board entry): its successor keeps its layers
-function Test-Parked([string]$a) { $b = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -eq $a } | Sort-Object { "$($_.beat)" })[-1]; [bool]($b -and ($b.paused -or $b.handoffBrief)) }
+function Test-Parked([string]$a) { $b = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -eq $a } | Sort-Object { "$($_.beat)" })[-1]; if (-not $b) { return $false }; if ($b.paused -or $b.handoffBrief) { return $true }
+  # an open PAUSE on its run: the pause steps release leases before board leave -Status paused (a resume had to redeploy, 2026-11-20)
+  # a row already left without paused = finished: its layers go
+  $b.status -ne 'left' -and [bool]@(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq "$($b.run)" -or ($_.run -eq '*' -and "$($b.run)" -notin @($_.released))) }).Count }
 # one drop request per branch; nobody leases or holds the env: it waits for the next lease or request (no rebuild while idle)
 function Add-LayerDrops([string]$e, [object[]]$drops) {
   $o = @{ out = @() }

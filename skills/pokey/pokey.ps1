@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L972 results · L1005 retest · L1062 prepare
+Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L973 results · L1006 retest · L1063 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -530,7 +530,8 @@ $prose = {
   $lm = @{ folderLink = $D; files = @{} }; foreach ($x in @(@($files.Name) + @($vText.Keys) | Where-Object { $_ })) { $lm.files[$x] = @{ link = $x } }
   $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
   # each finding names its file + field (kitbag result_notes): this package's results and report only
-  $mdProse = ($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', ''   # link lists are not prose
+  # link lists are not prose; the H1 = the lead's run title (capped at prepare): a tester cannot fix it
+  $mdProse = ($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', '' -replace '\A# [^\n]*', ''
   foreach ($trName in @(@($item.subtasks) | ForEach-Object { "$($_.name)" -replace '\|', '\|' -replace "`r?`n", ' ' } | ForEach-Object Trim | Where-Object { $_ })) { $mdProse = $mdProse.Replace("| $trName |", '| |') }   # tracker task names: quoted, not ours to rewrite
   @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text $mdProse 3>$null))
 }
@@ -1129,7 +1130,7 @@ foreach ($tid in @($cand.Keys)) {
   $it.guideFile = $gf; if ($doc -notlike 'task:*') { $it.guideUrl = $doc }; $items.Add($it); $byDoc[$doc] = $it
 }
 # 5. run.json + lead-notes.md (fixed headings; testers and the lead append with lead-notes add)
-# the title: 25 words at most (finalize -Check refuses a longer one)
+# the title: 25 words at most (capped here; finalize skips the report H1)
 $run = [ordered]@{ title = (Limit-KitWords "$($jb.target): $(@($items | ForEach-Object title) -join '; ')" 25 "+$(@($items).Count)-items"); target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }
 foreach ($rk in @(@($jb.runSettings.Keys) | Where-Object { $_ -and $_ -notin $run.Keys })) { $run[$rk] = $jb.runSettings[$rk] }
 Write-KitAtomic "$dir/run.json" ($run | ConvertTo-Json -Depth 8)

@@ -71,8 +71,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
    limits: 40 words per observed or finding, 25 per sentence, 900 per report; same for run.json `envLines`), run `pokey.ps1
    finalize -RunDir <run> -Code <CODE> -Check -FixNames` (scoped retry: `-Results results-retry.json`) until exit 0;
-   kill your background shells, `board leave`, release seat / phone, close your tab (`s.done()`, never `killSession` or log
-   out); return the results.
+   kill your background shells, `board leave`, release seat / phone, close your tab (`s.done()`, never `killSession`);
+   return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
 all pass -> **closed** · an own check FAILED or not all tested -> **failedTesting** (fallback `inProgress` + comment),
@@ -82,8 +82,9 @@ request named: WATCH, no [Bug] · `knownBug` FAIL: not own, no task, "Seen again
 
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
 change may be another agent's; an app setting (never env config) only when a check needs it, restored at once, in
-`setup_changes`; never deactivate, delete or re-password test logins; one shared Chrome per target + tenant + user
-(`session()`: own tab, `relogin(s)` on a 401, never log out), <= 2 tabs an agent; app lanes: your serial, no `adb kill-server`.
+`setup_changes`; test logins: `api -As` / `session()` only, never read (`targets.local.json`), deactivated,
+deleted or re-passworded; one shared Chrome per target + tenant + user (`session()`: own tab, `relogin(s)` on a 401,
+never log out), <= 2 tabs an agent; app lanes: your serial, no `adb kill-server`.
 
 ## Evidence
 - Where: `<run>/<CODE>/shots` (web `.jpeg`, app `.png`, `.mp4` <= 30 s), `/evidence` (`.json` request/response, `.jsonl`, `.log`
@@ -105,8 +106,8 @@ change may be another agent's; an app setting (never env config) only when a che
   a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "<product> — <defect>"` (kit adds [Bug]).
 
 ## Lead steps (a test-only run; bossy T1-T4)
-- L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
-  passwords), `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
+- L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (writes targets.local.json),
+  `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
   gdocs, git host).
 - L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/testy.js`; one
   item per testing doc: `{code, title, guideFile, lane: a qa.lanes name, target?, services? (local: leased),

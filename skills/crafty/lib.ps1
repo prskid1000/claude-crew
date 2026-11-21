@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1122 tracker · L1449 prior ·
-  L1465 ask bugs · L1651 git-host · L1838 kitlog · L1958 params · L2263 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1122 tracker · L1454 prior ·
+  L1470 ask bugs · L1656 git-host · L1843 kitlog · L1963 params · L2268 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -525,7 +525,7 @@ $script:KitLeaseLogMax = 1MB
 function Write-KitLeaseLog([string]$Event, [string]$Kind, [string]$Name, $Lease = @{}, [string]$Reason) {
   if (-not $Reason) { $Reason = "$env:KIT_LEASE_REASON" }; if ($Event -eq 'release' -and $Reason -like 'reclaim*') { $Event = 'reclaim' }
   $iso = { param($v) if ($v -is [datetime]) { $v.ToString('o') } else { "$v" } }
-  $f = [ordered]@{ kind = $Kind; name = $Name; agent = "$($Lease.agent)"; session = "$($Lease.session)"; holder = "$($Lease.holder)"; run = "$($Lease.run)"
+  $f = [ordered]@{ kind = $Kind; name = $Name; branch = "$($Lease.branch)"; agent = "$($Lease.agent)"; session = "$($Lease.session)"; holder = "$($Lease.holder)"; run = "$($Lease.run)"
     since = & $iso $(if ($Lease.at) { $Lease.at } else { $Lease.since }); seen = & $iso $Lease.seen; reason = $Reason; by = "$(if ($script:KitWho.agent) { $script:KitWho.agent } else { $env:KIT_AGENT })" }
   foreach ($k in @($f.Keys)) { if (-not $f[$k]) { $f.Remove($k) } }
   Write-KitLog leases $Event $f
@@ -1437,6 +1437,11 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
 }
 function Get-TrackerTasks([string]$List, [string]$Status) {
   if (-not $List) { $List = [string]$(if ($__trType -in 'github', 'gitlab') { $__trRepo } else { Get-KitSetting 'tracker.list' '' }) }
+  # no -List, no tracker.list: every trackerLists container (15 'tracker list' calls without -List failed)
+  $tlAll = @(if (-not $List) { @(Get-KitValue 'trackerLists' @()) | Where-Object { $_ } | Select-Object -Unique })
+  if ($tlAll.Count) { $tlSeen = @{}; $tlErr = $null; $tlOk = 0
+    foreach ($tl in $tlAll) { try { foreach ($t in @(Get-TrackerTasks "$tl" $Status)) { $tk = if ($t.id) { [string]$t.id } else { [guid]::NewGuid() }; if (-not $tlSeen[$tk]) { $tlSeen[$tk] = 1; $t } }; $tlOk++ } catch { if (-not $tlErr) { $tlErr = $_ }; Write-Warning "tracker list $tl failed: $_" } }
+    if (-not $tlOk -and $tlErr) { throw $tlErr }; return }   # one list down never hides the others
   # every name of the role in this scope (lists differ: "in test" / "for test"); a role the scope lacks: none; not a role: as given
   $rk = ConvertTo-TrackerStatusKey $Status; $names = @(if ($__trStatus.Contains($rk)) { Get-KitRoleNames $rk $List } else { $Status })
   $seen = @{}; $err = $null; $ok = 0

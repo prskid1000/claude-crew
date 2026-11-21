@@ -25,6 +25,8 @@ Expect "lease: a second slot up to poolSize; all leased -> no slot within -WaitM
 $lm = (pwsh @np $D wt lease -Dir (Kd) -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join ' '; $env:KIT_AGENT = 'devA'
 $ld = (pwsh @np $D wt lease -Dir $s1 -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join "`n"; $lo = (pwsh @np $D wt lease -Dir $s1 -Repo (Kd) -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join ' '; Remove-Item Env:KIT_AGENT
 Expect "lease: defaults from KIT_AGENT + the slot at -Dir (same slot back); another -Repo never takes its branch; none -> names -Agent -Branch -Repo ($lm | $lo | $(& $slotOf $ld))" ($lm -match 'lease needs -Agent -Branch -Repo:' -and $lo -match 'lease needs -Branch:' -and (& $slotOf $ld) -eq $s1)
+$lb = (pwsh @np $D wt lease -Repo app -Agent devA -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join "`n"
+Expect "lease: no -Branch outside a worktree -> the agent's last leased branch on that repo, same slot ($(& $slotOf $lb))" ($lb -match '(?m)^default:  -Branch feat/one ' -and (& $slotOf $lb) -eq $s1)
 $py1 = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools; print(devtools.target_of(r'$s1'))" 2>&1 | Select-Object -Last 1
 Expect "devtools.py mr / merge read the slot's target record ($py1)" ("$py1".Trim() -eq 'main')
 

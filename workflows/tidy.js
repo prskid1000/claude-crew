@@ -8,15 +8,16 @@ export const meta = {
  ],
 }
 
-// Sections: L12 args · L26 prep · L51 judge
+// Sections: L12 args · L27 prep · L52 judge
 // ---- args: all optional
 /* args (all optional): {
  applyScripts: false,  // true: also apply script/default edits
  kitDir: 'C:/work/.claude',  // absolute (recommended); default '.claude' under workspace root
  runtimeDir: 'C:/work/.claude/.runtime',  // default <kitDir>/.runtime
+ mandate: ['<the owner words, verbatim>'],  // as for every workflow (bossy step 3): the judge reads it as WHY
 } */
 const A = args || {}
-const badArgs = Object.keys(A).filter((k) => !['applyScripts', 'kitDir', 'runtimeDir'].includes(k))   // refused, never dropped
+const badArgs = Object.keys(A).filter((k) => !['applyScripts', 'kitDir', 'runtimeDir', 'mandate'].includes(k))   // refused, never dropped
 if (badArgs.length) throw new Error(`tidy.js args refused: unknown ${badArgs.join(', ')}`)
 const C = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
 const RT = (A.runtimeDir || `${C}/.runtime`).replace(/[\\/]+$/, '')
@@ -60,7 +61,7 @@ const RESULT = {
  },
  required: ['applied', 'proposedForApproval', 'rejected', 'report'],
 }
-const res = await agent(`Kind retro (judge): you maintain the kit (${C}). The script step did the counting and the upkeep; you only judge.${PATHS}
+const res = await agent(`Kind retro (judge): you maintain the kit (${C}). The script step did the counting and the upkeep; you only judge.${PATHS}${A.mandate && [].concat(A.mandate).length ? `\nWHY: the owner asked, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}` : ''}
 Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line needs its source to decide).
 
 1. Lessons (& ${C}/skills/bossy/bossy.ps1 learn): a "Signal groups" line with "-> lesson" = -Skill <s> -Bump "<words of that lesson>";

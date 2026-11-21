@@ -58,6 +58,9 @@ Expect "finalize publish: over prose limits exits 1 like -Check, nothing publish
 $tm = New-Run 'TM' @(@{ code = 'M1'; task = 'TM1'; checks = , @('C1', 'PASS') }); $rj = Read-Json "$tm/run.json"; $rj.items[0].subtasks[0].name = "really $((1..14 | % { "name$_" }) -join ' ')"; $rj.items[0].subtasks[0] | Add-Member mrs ((1..13 | % { "repo!$_" }) -join ', '); & $J $rj "$tm/run.json"
 $tmo = Fin $tm M1 -Check; $tmc = $LASTEXITCODE; $null = Fin $tm M1; $tmr = "$(Get-Content "$tm/M1/report.md" -Raw -ErrorAction Ignore)"
 Expect "report Tasks row: a 15-word name with 13 MRs -> [id](link) · 13 MRs; a tracker name's filler is no prose finding ($tmc)" ($tmc -eq 0 -and $tmr -match '\| Tasks \| \[TM1\]\([^)]*\) · 13 MRs \|' -and $tmr -notmatch 'repo!')
+$ltRun = New-Run 'LTT' @(@{ code = 'L1'; task = 'TL'; checks = , @('C1', 'PASS') }); $rj = Read-Json "$ltRun/run.json"; $rj | Add-Member -Force title ((1..30 | % { "tw$_" }) -join ' '); & $J $rj "$ltRun/run.json"
+$lto = Fin $ltRun L1 -Check; $ltc = $LASTEXITCODE
+Expect "finalize -Check: a 30-word run title (report H1, the lead's) is no prose finding ($ltc)" ($ltc -eq 0 -and $lto -notmatch 'prose check')
 $s12 = "$(1..12) ."; $note = "$s12 $s12 $s12"; $bg = New-Run 'BG' @(@{ code = 'G1'; task = 'TG'; checks = @(1..44 | % { , @("C$_", 'PASS') }) }); $sm = New-Run 'SM' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') })
 $rj = Read-Json "$bg/G1/results.json"; foreach ($x in $rj.checks) { $x.observed = $x.what_was_done = $note }; foreach ($i in 0, 1) { $rj.checks[$i].result = 'FAIL'; $rj.checks[$i] | Add-Member verify "confirmed | $(1..(300 - 270 * $i))" }; $rj.checks[0].evidence = @(10..39 | % { $e = "G1-C1_$($_)_e.json"; $null = New-Item "$bg/G1/shots/$e" -Force -Value 1; $e }); & $J $rj "$bg/G1/results.json"; $rj = Read-Json "$sm/S1/results.json"; $rj.findings = @(1..14 | % { "$note $note" }); & $J $rj "$sm/S1/results.json"
 $go = Fin $bg G1 -Check; $gc = $LASTEXITCODE; $so = Fin $sm S1 -Check

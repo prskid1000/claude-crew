@@ -32,8 +32,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L346 process · L528 git host · L601 scope · L691 MR · L883 merge · L1210 docs ·
-  L1365 publish · L1824 render · L2273 plugins · L2287 keepboth · L2306 selftest · L2923 CLI
+Sections: L51 config · L106 run · L194 tracker · L347 process · L529 git host · L602 scope · L692 MR · L884 merge · L1211 docs ·
+  L1366 publish · L1825 render · L2279 plugins · L2293 keepboth · L2312 selftest · L2930 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -322,7 +322,8 @@ def prose_gate(kind, text):
     """prose() before a write: over a limit -> exit 1 before anything is written, unless --prose-ok."""
     found = prose(kind, text)
     if found and not PROSE_OK:
-        lim = prose_limits(kind)
+        lim = prose_limits(kind)   # the rendered text, not the agent's file, is what failed (48 refusals guessed at it)
+        print(f'[prose] {kind} as checked ({len(text.split())} words, {len(text)} chars):\n{text[:4000]}', file=sys.stderr)
         raise SystemExit(f'[prose] {kind} refused: {len(found)} finding(s) above; rewrite to the limits (same facts){f" ({lim})" if lim else ""},'
                          ' or pass --prose-ok "<why>" for a format the brief fixes. Nothing was written.')
     return found
@@ -2014,6 +2015,11 @@ def cases_cmd(a):
       python -X utf8 devtools.py cases round T1 --fix 1a2b3c4 --bugs none
       python -X utf8 devtools.py cases render T1 ai"""
     verbs = ('add', 'result', 'round', 'render')
+    if a and a[0] in ('--help', '-h', 'help'):   # 47 of 61 usage errors (2026-11-18..21) were help asks: usage, exit 0
+        print(cases_cmd.__doc__)
+        return 0
+    if len(a) >= 2 and a[0] not in verbs and a[1] in verbs:   # cases <task> <verb> ...: the common swapped form
+        a = [a[1], a[0]] + list(a[2:])
     if len(a) < 2 or a[0] not in verbs:
         print(cases_cmd.__doc__, file=sys.stderr)
         near = difflib.get_close_matches(a[0].lower(), verbs, 1, 0.5) if a and a[0] not in verbs else []   # retro 2205: 30 usage errors
@@ -2598,8 +2604,9 @@ def _publish_selftest(expect, refused):
             long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
                    not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))
-            with contextlib.redirect_stderr(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()) as pg_err:
                 g['PROSE_OK'] = ''; refused('prose_gate: the refusal names the kind\'s format and limits (mr-title)', lambda: prose_gate('mr-title', 'x' * 200), 'limits 1l 90ch'); g['PROSE_OK'] = 'selftest'
+            expect('prose_gate: a refusal prints the rendered text it checked', 'mr-title as checked (1 words, 200 chars):\n' + 'x' * 200 in pg_err.getvalue())
         h = md_to_html(doc.replace('| | |\n', '| PASS | ![T1: list](https://img/1.png "900") |\n').replace('1. Open the list.', 'Run `tool check -Step test -Tests ALongClassNameSmokeTest`')
                        + '```\n{"a": 1}\n```\n')
         th = re.findall(r'<th style="([^"]*)"><b>([^<]*)</b></th>', h)

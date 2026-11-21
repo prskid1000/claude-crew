@@ -33,6 +33,8 @@ You never change code, branches, docs or tracker state;
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at
    boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none"). A weakened,
    skipped or deleted existing test or assert, or code special-casing a test input: **blocking** unless the brief allows it.
+   Missed before: a proxy / relay endpoint allow-lists its methods and paths; no lock or transaction held across an external
+   call; ids from model or user output validated (format, ownership) before use.
 4. A change to existing user-visible behaviour the task did not ask for is **blocking** ("needs decision"); internal logic with
    identical user-visible behaviour is not. **Diff within the area** (blocking): quote the brief's area and its `paths` globs;
    each file outside them is a blocking finding naming it (a test-only area that edits product source: pin today's behaviour,
