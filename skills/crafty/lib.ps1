@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1143 tracker · L1475 prior ·
-  L1491 ask bugs · L1677 git-host · L1864 kitlog · L1984 params · L2289 entry-scripts
+  L1491 ask bugs · L1677 git-host · L1864 kitlog · L1986 params · L2291 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1971,6 +1971,8 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       if ($inline -eq '') { $inline = $null; if ($pm.SwitchParameter -and $i -lt $Tokens.Count -and ($Tokens[$i] -is [bool] -or "$($Tokens[$i])" -match '^(true|false)$')) { $inline = "$($Tokens[$i])"; $i++ } }
       if ($pm.SwitchParameter) { $named[$p[0]] = if ($null -ne $inline) { $inline -notmatch '^(\$?false|0)$' } else { $true }; continue }
       $vals = [Collections.Generic.List[object]]::new(); if ($null -ne $inline) { $vals.Add($inline) }
+      # a dash-leading value with a digit or inner dash that names no parameter (-Run '-hm-1121') is the value; a typo (-Agnet) still fails
+      if ($null -eq $inline -and $i -lt $Tokens.Count -and "$($Tokens[$i])" -match '^-([A-Za-z][\w-]*[\d-][\w-]*)$' -and -not @($own | Where-Object { $_ -like "$($Matches[1])*" -or @($meta[$_].Aliases) -contains $Matches[1] }).Count) { $vals.Add($Tokens[$i]); $i++ }
       while ($i -lt $Tokens.Count -and "$($Tokens[$i])" -notmatch '^-[A-Za-z][\w-]*(:.*)?$') { $vals.Add($Tokens[$i]); $i++ }
       $named[$p[0]] = if ($pm.ParameterType.IsArray) { @($vals) } elseif ($vals.Count -gt 1) { @($vals) -join ' ' } elseif ($vals.Count) { $vals[0] } else { '' }
     } else { $pos.Add($Tokens[$i]); $i++ }

@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L45 login · L125 browsers · L168 tabs · L256 session · L302 actions · L401 ui checks · L422 evidence
+// Sections: L17 config · L50 login · L130 browsers · L173 tabs · L261 session · L309 actions · L408 ui checks · L429 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -15,10 +15,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 
 // ---- config: targets.local.json, kit paths, the browser binary
-const TF = new globalThis.URL('./targets.local.json', import.meta.url)
-const CFG = existsSync(TF) ? JSON.parse(readFileSync(TF, 'utf8')) : { targets: {} }
 const __HERE = dirname(fileURLToPath(import.meta.url))
 export const KIT = resolve(__HERE, '..', '..')
+// worktree: the main clone's *.local.* files
+export function localFile(rel, kit = KIT) {
+  const own = join(kit, rel)
+  try { const gd = resolve(kit, readFileSync(join(kit, '.git'), 'utf8').slice(8).trim()), alt = join(resolve(gd, readFileSync(join(gd, 'commondir'), 'utf8').trim(), '..'), rel); return existsSync(own) || !existsSync(alt) ? own : alt } catch { return own }
+}
+const TF = localFile('skills/pokey/targets.local.json'), KLF = localFile('skills/crafty/kit.local.json')
+const CFG = existsSync(TF) ? JSON.parse(readFileSync(TF, 'utf8')) : { targets: {} }
 const MAP = JSON.parse(readFileSync(join(__HERE, '..', 'crafty', 'kit.example.json'), 'utf8'))._paths
 export const runtimeDir = () => { const d = process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir); if (!d || d === '/' || d === '\\') throw new Error(`runtimeDir: bad '${d}'`); return resolve(KIT, d) }
 export function kitPath(name, { create = false } = {}) {
@@ -37,14 +42,14 @@ const BROWSERS = [process.env.CHROME_PATH, ...(process.platform === 'win32' ? [.
   : process.platform === 'darwin' ? [MAC('Google Chrome'), homedir() + MAC('Google Chrome'), MAC('Microsoft Edge'), MAC('Chromium')]
   : ['/opt/google/chrome/chrome', '/opt/microsoft/msedge/msedge', ...onPath(['google-chrome', 'google-chrome-stable', 'microsoft-edge', 'microsoft-edge-stable', 'chromium', 'chromium-browser']), '/snap/bin/chromium'])].filter(Boolean)
 export const CHROME = BROWSERS.find(existsSync)
-// the one quiet list of every kit Chromium (crafty vocab.json); profiles: engine-playwright.mjs quietProfile
+// kit Chromium quiet args (crafty vocab.json)
 export const QUIET_ARGS = (() => { try { return JSON.parse(readFileSync(join(__HERE, '..', 'crafty', 'vocab.json'), 'utf8')).chromeQuietArgs || [] } catch { return [] } })()
 const browserOpts = (t) => ({ engine: 'chrome', lang: Intl.DateTimeFormat().resolvedOptions().locale, width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ---- login: targets, network watch, login steps, saved logins
 export const targetOf = (name) => CFG.targets[name || CFG.default] || (() => { throw new Error(`unknown target "${name}" (known: ${Object.keys(CFG.targets).join(', ')})`) })()
-let BASE = ''   // fallback web for pages without a session
+let BASE = ''   // no-session fallback web
 export const url = (p, base = BASE) => (/^https?:/.test(p) ? p : base + p)
 const pageUrl = (page, p) => url(p, page.__qa ? page.__qa.t.web : BASE)   // against the tab's own target
 
@@ -62,7 +67,7 @@ function watch(page, apiPattern) {
 }
 
 const fill = (s, user, pass, tenant) => String(s).replace(/\{(user|pass|tenant)\}/g, (_, k) => ({ user, pass, tenant })[k] || '')
-// a part from adapters/, loaded on first use (its packages, e.g. playwright, only then)
+// adapters/ load on first use (playwright only then)
 const adapter = (file) => import(pathToFileURL(join(__HERE, 'adapters', file)).href)
 const nav = (page, u, waitUntil = 'domcontentloaded') => page.goto(u, { waitUntil, timeout: 90000 }).catch(() => {})
 // off-host (an IdP) or the login path = a login page
@@ -118,7 +123,7 @@ async function restoreLogin(page, t, tenant, as) {
   const f = sessionFile(t, tenant, as)
   if (!existsSync(f)) return false
   await applyState(page, JSON.parse(readFileSync(f, 'utf8'))); await nav(page, t.web + '/')
-  await sleep(1500)   // the auth guard redirects if the token is invalid
+  await sleep(1500)   // auth guard redirect
   return loggedIn(page, t)
 }
 
@@ -170,7 +175,7 @@ async function ensureLogin(page, t, tenant, as, key) {
 const tabsFile = (key) => `${kitPath('sessions', { create: true })}/tabs-${keyFile(key)}.json`
 const readJson = (f, d) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return d } }
 const saveJson = (f, o) => { writeFileSync(`${f}.tmp`, JSON.stringify(o)); renameSync(`${f}.tmp`, f) }
-// .state/leases.jsonl, as lib.ps1 Write-KitLeaseLog (bossy.ps1 status: last used); never fails a tab
+// lease log as lib.ps1 Write-KitLeaseLog; never fails a tab
 const leaseLog = (event, key, h, reason) => { try { appendFileSync(kitPath('leases', { create: true }), JSON.stringify({ at: new Date().toISOString(), script: 'browser.mjs', event, kind: 'tab', name: key, agent: h.agent, since: new Date(h.at).toISOString(), ...(reason && { reason }) }) + '\n') } catch {} }
 const alive = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
 function leftBoard(agent) {   // all its board entries say left
@@ -179,10 +184,10 @@ function leftBoard(agent) {   // all its board entries say left
   return es.length > 0 && es.every((e) => e.status === 'left')
 }
 const tabId = async (p) => p.__tid || (p.__tid = await (async () => { const c = await p.createCDPSession(); try { return (await c.send('Target.getTargetInfo')).targetInfo.targetId } finally { await c.detach().catch(() => {}) } })())
-// as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, a kit.local.json / param pin (<key>[.<ctx>]), learned, else def
+// as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, a pin, learned, else def
 export function kitParam(key, def, ctx = '') {
   const env = process.env['KIT_PARAM_' + key.replace(/\W/g, '_').toUpperCase()]; if (env) return +env
-  const cfg = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}), at = (p) => p.split('.').reduce((o, k) => o?.[k], cfg)
+  const cfg = readJson(KLF, {}), at = (p) => p.split('.').reduce((o, k) => o?.[k], cfg)
   for (const p of ctx ? [key, `${key}.${ctx}`] : [key]) { const v = at(p); if (v != null && v !== '' && typeof v !== 'object') return v }
   const s = readJson(kitPath('param-state'), {}), pin = s.pins?.[`${key}|${ctx}`]
   if (pin) return pin.value
@@ -190,7 +195,7 @@ export function kitParam(key, def, ctx = '') {
   return v ?? def
 }
 const GRACE_MS = 60000 * kitParam('idle.graceMinutes', 10)
-// close tabs with no live holder for idle.graceMinutes (caller has the tabs lock); unregistered tabs count from first sight
+// close tabs idle past idle.graceMinutes (caller holds the tabs lock); unregistered: from first sight
 async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bossy.ps1 release)
   const f = tabsFile(key), reg = readJson(f, {}), keep = { _key: key }, now = Date.now()   // _key: file names lose '__' vs '|'
   let live = 0, closed = 0
@@ -207,7 +212,7 @@ async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bo
   saveJson(f, keep)
   return { live, closed }
 }
-// a free tab slot, atomic: count + open + register under one lock; waits <= waitMs (logged as since), then fails
+// a free tab slot: count + open + register under one lock; waits <= waitMs, then fails
 export async function openTab(browser, key, { agent = process.env.CLAUDE_AGENT || `pid-${process.pid}`, waitMs = TAB_WAIT_MS } = {}) {
   const end = Date.now() + waitMs
   for (;;) {
@@ -228,7 +233,7 @@ export async function closeTab(page, key) {
   await page.close().catch(() => {})
   await withLock(`tabs-${keyFile(key)}`, async () => { const f = tabsFile(key), reg = readJson(f, {}); if (reg[id]) leaseLog('release', key, reg[id]); delete reg[id]; saveJson(f, reg) }).catch(() => {})
 }
-// orphan tabs of each shared browser (supervise -AutoFix) or all `agent`'s (bossy.ps1 release); failed connect: kept
+// orphan tabs (supervise -AutoFix) or all `agent`'s (bossy.ps1 release); failed connect: kept
 export async function sweepAll(agent = '') {
   const d = kitPath('sessions', { create: true }), ports = readJson(kitPath('browser-ports'), {})
   let closed = 0
@@ -255,16 +260,18 @@ export function releaseOnExit(done) {
 export const relogin = (s) => ensureLogin(s.page, s.target, s.tenant, s.as, s.key)
 // ---- session: your logged-in tab
 export function defaultUser(t, name = '') {
-  const u = Object.keys(t.users || {}), d = t.defaultUser || readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}).api?.defaultUser || (u.length == 1 && u[0])
+  const u = Object.keys(t.users || {}), d = t.defaultUser || readJson(KLF, {}).api?.defaultUser || (u.length == 1 && u[0])
   if (d || !u.length) return d || ''
   throw new Error(`target ${name}: several users: { as } or defaultUser`)
 }
+// a user create login keeps its tenant
+export const tenantOf = (t, as, tenant) => tenant ?? t.created?.[as]?.tenant ?? t.defaultTenant ?? ''
 export async function session({ target, tenant, as } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
   if (pin.length && !pin.includes(tn)) throw new Error(`target '${tn}' is not this QA run's target (${pin.join(', ')})`)
   const t0 = targetOf(target)
   as = as || defaultUser(t0, tn)
-  tenant = tenant ?? t0.defaultTenant ?? ''
+  tenant = tenantOf(t0, as, tenant)
   const t = { ...t0, web: fill(t0.web || '', '', '', tenant) }, bo = browserOpts(t0), eng = process.env.KIT_BROWSER_ENGINE || bo.engine
   const key = sessionKey(tn, tenant, as), VIEW = { width: Number(bo.width), height: Number(bo.height) }
   BASE = t.web
@@ -359,7 +366,7 @@ export async function clickText(page, label, { nth = 0, within = 'body', exact =
 }
 
 const mid = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 })
-// per-action log {at, action, target, box}: record()'s sidecar anchors a video's keyframes (pokey.ps1 evidence)
+// action log {at, action, target, box}: anchors record()'s keyframes
 const act = (page, action, target, b = null, text = '') => { (page.__acts ||= []).push({ at: Date.now(), action, target: String(target), ...(b && { box: [b.x, b.y, b.width, b.height].map(Math.round) }), ...(text && { text: String(text).slice(0, 120) }) }) }
 // nth match, scrolled in, with its box
 export async function pick(page, selector, nth = 0, what = 'element') {
@@ -398,9 +405,9 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   return page.evaluate((e) => e.value, el)
 }
 
-// ---- ui checks: qa.matrix variants; layout and contrast checks (adapters/ui_checks.mjs)
+// ---- ui checks: qa.matrix variants, layout, contrast (adapters/ui_checks.mjs)
 // fn({ viewport, fontScale, theme, tag }) sets the app's font scale / theme; [] = axis off
-export async function matrix(s, fn, { matrix: m = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}).qa?.matrix || {} } = {}) {
+export async function matrix(s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {} } = {}) {
   const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()
   try {
     for (const viewport of ax('viewports')) for (const fontScale of ax('fontScales')) for (const theme of ax('themes')) {
@@ -420,7 +427,7 @@ export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs')).lay
 export const contrast = async (...a) => (await adapter('ui_checks.mjs')).contrast(...a)
 
 // ---- evidence: marks, network logs, screenshots, token
-// evidence names (pokey SKILL.md "Evidence"); same literal as pokey.ps1 $script:EvidenceName
+// evidence names: same literal as pokey.ps1 $script:EvidenceName
 const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$/i
 function checkName(file) {
   if (!EVIDENCE_NAME.test(basename(file))) console.warn(`[evidence] "${basename(file)}" is not <CODE>-<check>_<nn>_<what>.<ext> (F2-T4_01_order-saved.jpeg)`)
@@ -455,7 +462,7 @@ export async function shot(page, file, { full = false, selector = null } = {}) {
   return file
 }
 
-// a screen recording (.mp4 / .webm by name; ffmpeg on PATH) + <file>.events.json (actions since start): stop() ends both
+// screen recording (.mp4 / .webm; ffmpeg) + <file>.events.json: stop() ends both
 export async function record(s, file) {
   checkName(file)
   const acts = (s.page.__acts ||= []), from = acts.length, start = Date.now()

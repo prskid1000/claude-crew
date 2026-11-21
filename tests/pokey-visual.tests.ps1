@@ -71,6 +71,17 @@ if ($bk) {
   Expect "browser.mjs quietProfile: seeds vocab.json chromeLocalState into a profile's Local State (kept keys; a new profile gets it) ($qp)" (
     $qs.component_updates.component_updates_enabled -eq $false -and $qs.component_updates.other -eq 2 -and $qs.browser.x -eq 1 -and $qn.component_updates.component_updates_enabled -eq $false)
 } else { 'SKIP browser.mjs quietProfile (no puppeteer-core in skills/pokey)' }
+# a kit worktree reads the main clone's logins file; a login user create made keeps its tenant
+if ($bk) {
+  $res = NodeT wtlogins @'
+const { mkdirSync, writeFileSync } = await import('node:fs'), { join } = await import('node:path'), r = process.argv[2], mn = join(r, 'main'), wt = join(r, 'wt'), gd = join(mn, '.git', 'worktrees', 'w')
+for (const d of [gd, join(mn, 'skills', 'pokey'), wt]) mkdirSync(d, { recursive: true })
+writeFileSync(join(gd, 'commondir'), '../..\n'); writeFileSync(join(wt, '.git'), `gitdir: ${gd}\n`); writeFileSync(join(mn, 'skills', 'pokey', 'targets.local.json'), '{}')
+const t = { defaultTenant: 'd', created: { qa: { tenant: 'c' } } }
+console.log(m.localFile('skills/pokey/targets.local.json', wt) === join(mn, 'skills', 'pokey', 'targets.local.json'), m.localFile('nope.json', wt) === join(wt, 'nope.json'), [m.tenantOf(t, 'qa'), m.tenantOf(t, 'x'), m.tenantOf(t, 'qa', 'e')].join())
+'@ (Join-Path (Kd) 'wtl')
+  Expect 'browser.mjs: a kit worktree finds the main clone logins file; a created login keeps its tenant' ("$res" -eq 'true true c,d,e')
+} else { 'SKIP browser.mjs worktree logins (no puppeteer-core in skills/pokey)' }
 $qUsers = @{ 'skills/crafty/adapters/report_pdf.py' = "dt.VOCAB.get('chromeQuietArgs'"; 'skills/pokey/adapters/media_grab.mjs' = 'quietProfile(mkdtempSync('; 'skills/bossy/kitbag.py' = 'userDataDir: ud,'; 'skills/crafty/adapters/build_heap.ps1' = "if (`$Kind -eq 'cypress' -and -not `$env:ELECTRON_EXTRA_LAUNCH_ARGS) { `$env:ELECTRON_EXTRA_LAUNCH_ARGS = `$script:KitVocab.chromeQuietArgs -join"; 'skills/pokey/adapters/engine-playwright.mjs' = "args: eng === 'chromium' ? quiet : []" }
 $qMiss = @($qUsers.Keys | Where-Object { -not (Get-Content (Join-Path $src $_) -Raw).Contains($qUsers[$_]) })
 $qCopies = @(git -C $src grep -l -e 'OptimizationGuideModelDownloading' -- 'skills' | Where-Object { $_ -ne 'skills/crafty/vocab.json' })

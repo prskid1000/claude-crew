@@ -115,5 +115,9 @@ $env:PATH = $path0
 Expect "container-tests: an IT test with no answering engine exits 4 ($c1)" ($c1 -eq 4 -and $out -match 'need a container engine')
 Expect "container-tests: a plain unit test runs ($c2)" ($c2 -eq 0 -and $out2 -notmatch 'container engine')
 Expect "container-tests: a configured engine that is down is leased and started for an IT test, a failing docker info aside ($c3)" ($c3 -eq 0 -and $out3 -match 'runtime docker: started by the kit' -and $ls[0].leases[0].agent -and $ls[0].startedByKit)
+# Invoke-KitVerb (moved here for the per-file test caps)
+$dashRun = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Run, [string]`$Message) ""`$Run|`$Message"" }; Invoke-KitVerb Invoke-M @('-Run', '-hm-1121', '-Message', 'm'); Invoke-KitVerb Invoke-M @('-Run', '-Mess', 'x')"
+$dashTypo = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Run) `$Run }; Invoke-KitVerb Invoke-M @('-Run', '-Agnet', 'x')" 2>&1 | Out-String; $dashRc = $LASTEXITCODE
+Expect "Invoke-KitVerb: a dash-leading value naming no parameter is the value; a parameter name stays one; a typo exits 2 ($($dashRun -join ' / ') | $dashRc)" (($dashRun -join ' / ') -eq '-hm-1121|m / |x' -and $dashRc -eq 2 -and $dashTypo -match 'unknown or ambiguous parameter -Agnet')
 Remove-TestKit $k
 Complete-Tests

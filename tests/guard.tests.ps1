@@ -18,7 +18,7 @@ Expect "guard: git commit in a nested worktree passes; a tracked folder, an igno
 # test logins (owner 2026-11-19): a command reading targets.local.json is denied; a grep of the bare name, check-ignore or ls pass
 $sec = foreach ($c in @(@('cat', 'cat skills/pokey/targets.local.json'), @('gc', 'Get-Content D:\k\skills\pokey\targets.local.json | ConvertFrom-Json'), @('py', "python -c `"print(open('skills/pokey/targets.local.json').read())`""),
     @('sls', 'Select-String pass D:/k/skills/pokey/targets.local.json'), @('pattern', 'grep -n targets.local.json README.md; git check-ignore -q skills/pokey/targets.local.json; ls skills/pokey/targets.local.json'))) {
-  "$($c[0]):$((& $D guard -Json (@{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress)) -join '' -match 'holds test logins')" }
+  "$($c[0]):$((& $D guard -Json (@{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress)) -join '' -match 'holds test logins.+user list -Target')" }
 Expect "guard secrets: reads of targets.local.json denied, a name in a pattern passes ($($sec -join ' '))" (($sec -join ' ') -eq 'cat:True gc:True py:True sls:True pattern:False')
 $shop = Join-Path (Kd) 'shop'; git init -q -b f/TT-42-x $shop; git -C $shop commit -q --allow-empty -m init; git -C $shop remote add origin 'https://h.example/g/shop.git'
 $plain = Join-Path (Kd) 'plain'; git init -q -b fix/plain $plain; git -C $plain commit -q --allow-empty -m init; git -C $plain remote add origin 'https://h.example/g/shop.git'
