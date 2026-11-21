@@ -178,10 +178,11 @@ Set-JsonFile $sbSpec @{ title = 'Phase two api'; list = 'L1'; parent = $sbPar; n
 $sbSub = (Px $crPath tracker create -Spec $sbSpec | ConvertFrom-Json).id
 $sbBug = (Px $crPath tracker create -List L1 -Name '[Bug] ask — crash' -Parent $sbPar -NewTask x -Key qa-sb-bug -Description 'steps, saw, expected' | ConvertFrom-Json).id
 $sbLog = pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog calls (Get-Date).AddMinutes(-9) | Where-Object { `$_.event -eq 'prior-override' -and `$_.parent -eq '$sbPar' } | ForEach-Object { `"`$(`$null -ne `$_.PSObject.Properties['matched'])/`$(@(`$_.matched | Where-Object { `$_ }).Count)`" }) -join ','"
-Expect "tracker create: a subtask or a [Kind] task in free text refused (rc 1: -Spec; -Key too); a spec and a keyed [Bug] pass; -NewTask logs matched [] ($sb0c $sb1c $sbLog)" ($sb0c -eq 1 -and $sb0 -match 'rendered from a spec: tracker create -Spec' -and
+Expect "tracker create: a subtask or a [Kind] task in free text refused (rc 1: -Spec; a keyed one without a description too); a spec and a keyed [Bug] pass; -NewTask logs matched [] ($sb0c $sb1c $sbLog)" ($sb0c -eq 1 -and $sb0 -match 'tracker create -Spec' -and
   $sb1c -eq 1 -and $sb1 -match 'tracker create -Spec' -and $sbSub -and $sbBug -and "$sbLog".Trim() -eq 'True/0,True/0')
 # launch -Check / -Self (buildy): every item task an Items list (the owner's task: scope), a subtask the template + a parent delivery section
-$sbTop = (Px $crPath tracker create -Key qa-fx-flow-187 -List L1 -Name 'Own task no items' -Description 'the owner text' | ConvertFrom-Json).id
+# the owner's own task: written by a person (a keyed kit create makes a [Bug], which has its own shape)
+$sbTop = "$(@(Invoke-PsTest own-task '. $args[0]; (New-TrackerTask -List L1 -Name "Own task no items" -Description "the owner text").id' @((Lib)))[-1])".Trim()
 $sbArgs = Join-Path (Kd) 'chk-args.json'; [IO.File]::WriteAllText($sbArgs, (@{ brief = (Join-Path (Kd) 'wave-c.md'); agents = @(@{ id = 'X1'; items = "$sbSub, $sbTop" }) } | ConvertTo-Json -Depth 4 -Compress))
 $ck1 = Px $O launch -Check -ArgsFile $sbArgs 2>&1 | Out-String; $ck1c = $LASTEXITCODE
 $null = Px $crPath tracker describe $sbPar "the ask`n<!-- kit:delivery -->`nx`n<!-- /kit:delivery -->"; $null = Px $crPath tracker scope -Task $sbTop -Add '**Items:** B1'
