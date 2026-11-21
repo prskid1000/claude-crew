@@ -218,7 +218,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 - palette: muted sage / slate / stone / clay tokens, each fill capped (`--kcap`) so text keeps 4.5:1 in both themes; every
   legend one short line of swatches and 1-2 word keys, the explanation in an (i) tooltip;
 - runs: one runs x hour heatmap (a cell = minutes active under that hour's output tokens), live runs on top over the last 24 h,
-  ended ones by day (today open, older days folded); a run row: label, kind, its steps page, tokens · cost, time (agent minutes
+  ended ones by day (today open on the same 24 h axis, older days folded), in each day a fold per kind (build, test, kit, deploy,
+  agents: its sums; the newest open); a run row: short title (run name + task codes; the mandate in its tooltip), kind, its steps page, tokens · cost, time (agent minutes
   added up; elapsed = to its last step's write in the tooltip); agents (steps by agent code, live board rows with
   state and age) under it on a tap; board agents outside a workflow run grouped by their run;
 - machine and resources: tiles (RAM used, builds running / queued / today, longest gate wait, QA seats, phone lanes,

@@ -85,6 +85,27 @@ $rov = & { . $O; $n = [datetime]'2026-01-02T15:00:00'; $sx = [pscustomobject]@{ 
   "$([regex]::Match($h, "(?s)data-g='rr-wf_8'.{0,600}").Value -notmatch 's-act''>running') $($h -match 'usage as of 01-02 12:00')" }
 Expect "runs band: this sweep's ended workflow row beats an older usage pass's running; the band says how old usage is ($rov)" ($rov -eq 'True True')
 Expect "runs band: a stale run is chipped, its hours only where its steps ran (1 hour), a board-only run newer than usage says counting ($rbd)" ($rbd -eq 'True 1 True')
+# a workflow reviewer that joined the board without -Run (review-A1 = step review:A1): its run counts it, no standalone row; a run's
+# title = its run name + task codes, the mandate in the tooltip (owner 2026-11-21)
+$rsa = & { . $O; $n = [datetime]'2026-01-02T15:00:00'; $sx = [pscustomobject]@{ label = 'review:A1'; role = 'revy'; at = $n.AddHours(-2).ToString('o'); min = 20; result = 'pass'; tok = 5 }
+  $a7 = [pscustomobject]@{ brief = 'C:/b/wave-brief.md'; agents = @([pscustomobject]@{ items = 'T-17' }); mandate = @('Owner: fix these long words') }
+  $run = [pscustomobject]@{ run = 'bugfix-r7'; id = 'wf_7'; label = (Get-KitRunLabel $a7 'bugfix-r7'); mandate = (Get-KitRunMandate $a7); kind = 'build'; started = $n.AddHours(-3).ToString('o'); status = 'ended'; at = $sx.at; tok = 5; steps = @($sx); wall = 60 }
+  $ag = @([pscustomobject]@{ name = 'review-A1 (revy)'; run = ''; state = 'FINISHED'; started = $n.AddMinutes(-135).ToString('o'); ended = $n.AddMinutes(-121).ToString('o'); last = $n.AddMinutes(-121).ToString('o'); tx = '' })
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = $ag; stats = [pscustomobject]@{ usage = [pscustomobject]@{ at = $n.ToString('o'); runs = @($run) } } })
+  "$($h -notmatch "rr-board-|>Standalone agents<") $($run.label) $($h -match "(?s)data-g='rr-wf_7'.{0,200}title='[^']*Owner: fix these long words'")" }
+Expect "runs band: a reviewer joined without -Run counts in its run (no standalone row); run title = run name + codes, mandate in the tooltip ($rsa)" ($rsa -eq 'True bugfix-r7 · T-17 True')
+# kind groups (owner 2026-11-21): a day's ended runs by kind, each a fold with its count, the newest open; today on the running block's axis
+$kgo = & { . $O; $n = [datetime]'2026-01-02T15:00:00'; $mk = { param($id, $kind, $h) [pscustomobject]@{ run = $id; id = $id; label = $id; kind = $kind; started = $n.AddHours(-$h - 1).ToString('o'); status = $(if ($h) { 'ended' } else { 'running' }); at = $n.AddHours(-$h).ToString('o'); tok = 5; steps = @(); wall = 60 } }
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ usage = [pscustomobject]@{ at = $n.ToString('o'); runs = @((& $mk wf_l build 0), (& $mk wf_b build 3), (& $mk wf_c build 3), (& $mk wf_k kit 1), (& $mk wf_t test 2), (& $mk wf_y test 20)) } } })
+  $kg = @([regex]::Matches($h, "<div class='rgg rkg( cl)?' data-g='rk-([a-z]+)-[\d-]+'") | ForEach-Object { "$($_.Groups[2].Value)$($_.Groups[1].Value)" }); $ax = @([regex]::Matches([regex]::Match($h, "(?s)id=sec-runs(?: open)?>.*?(?=<details class='sec top'|<footer)").Value, "<span class='gs0 hrs' aria-hidden=true>(.*?)</span>") | ForEach-Object { $_.Groups[1].Value })
+  "$($kg -join ',') $($h -match "(?s)data-g='rk-kit-2026-01-02'.{0,1500}?<small>1 ended</small>.*?data-g='rr-wf_k'") $($ax.Count -eq 3 -and $ax[0] -eq $ax[1] -and $ax[2] -notmatch 'class=nw') $($h -match "build (·|&#183;) 120 min active") $(($lb = Get-KitRunLabel ([pscustomobject]@{ agents = @([pscustomobject]@{ items = 'T-17,T-18,T-19' }) }) 'bugfix-dashboard-labels-wave-twelve-and-more') -match ' · 3 items$' -and $lb.Length -le 48)" }
+Expect "runs band: ended runs folded by kind per day (build, test, kit order; newest open; minutes added up), title codes never cut, today on the running block's axis ($kgo)" ($kgo -eq 'build cl,test cl,kit,test True True True True')
+# a short agent that left before any status scan: one scan after it left finds its transcript (its tokens on the Runs band)
+$env:KIT_TRANSCRIPTS = Join-Path (Kd) 'tx-left'; $lvd = New-Item -ItemType Directory -Force (Join-Path $env:KIT_TRANSCRIPTS 's1/subagents')
+$lvj = pwsh @np $O board join -Type revy -Agent LV1 | Out-String; $lvs = if ($lvj -match 'SESSION (\S+)') { $Matches[1] }
+@("{""type"":""user"",""text"":""SESSION $lvs""}") | Set-Content (Join-Path $lvd 'agent-lv1.jsonl'); $null = Px $O board leave -Session $lvs
+$lvt = & { . $O; @(Get-KitStatusRows | Where-Object { $_.name -like 'LV1 *' } | ForEach-Object { [IO.Path]::GetFileName("$($_.tx)") }) -join ',' }; Remove-Item Env:KIT_TRANSCRIPTS
+Expect "status: an agent that left before any scan: one transcript scan after it left ($lvt)" ($lvt -eq 'agent-lv1.jsonl')
 $qaq = & { . $O; $n = Get-Date; $rd = New-Item -ItemType Directory -Force (Join-Path (Get-KitPath qa-runs -Create) 'qq-run'); $hm = { param($m) $n.AddMinutes(-$m).ToString('HH:mm') }
   Set-Content (Join-Path $rd 'lead-notes.md') @('# Lead notes', '## Answers (newest last)', "- $(& $hm 30) T1: which tenant for step 3?", "- $(& $hm 25) T2: is the flag on?", "- $(& $hm 20) T2: yes, on", "- $(& $hm 3) T3: a fresh one?", "- $(& $hm 40) T4: done, PASS") -Encoding utf8
   $f = @(Get-KitQaQuestionFlags $n); "$($f.Count) $(@($f.what) -join '|') $($f[0].action -match 'lead-notes add -RunDir .*qq-run -Code T1')" }

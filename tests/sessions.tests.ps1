@@ -197,7 +197,7 @@ $fh3 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; shells = @(1..12 | 
 $uxRx = @("<tr class='f more'>", 'class=sa data-n=12>Show all \(12\)', '<nav class=jl', 'id=nm class=empty hidden', 'maven\|<wbr>a/<wbr>b', '\.tw \.lo\{display:none', 'function jp\(k,f\)\{try', 'fbl>details\[open\]', 'gk\{display:contents', "try\{L\.setItem\('kc-open'", "jp\('kc-tg',\{\}\)", "x\.key=='Escape'&&ts\.op", 'grid-auto-flow:row dense', 'if\(!r\.offsetParent\)return')   # a low column only inside tables (.st.lo tiles stay); stored state parsed safely
 $rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text mixed toward --fg: WCAG AA in the light theme
 "ux:$(([regex]::Matches($fh3, $uxRx[0])).Count -eq 2 -and -not @($uxRx | Where-Object { $fh3 -notmatch $_ }).Count -and $fh3 -notmatch $rawTone)"
-"cap:$(([regex]::Matches($fh2, 'class=rtg ')).Count -eq 27)"
+"cap:$(([regex]::Matches($fh2, "data-g='rr-")).Count -eq 27)"
 "agents:$($runsH -match '>devy-1<small>devy</small>' -and $runsH -match ">old<small>devy</small><span class='chip s-fin'>finished</span>" -and $fh -match $rxOrphan)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
 $fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Trim() })

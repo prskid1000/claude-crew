@@ -237,14 +237,14 @@ ${areaNote(a)}${FLOW}${HOLD_NOTE}
 Return the full report (every MR, all items done so far).`
 }
 function reviewPrompt(a, r) {
- return `Kind mr: review devy ${a.id}'s MRs (items ${a.items}, area ${a.area}; brief ${A.brief}) as your agent definition says.${PATHS}${AGENT_ENV(`review-${a.id}`)}
+ return `Kind mr: review devy ${a.id}'s MRs (items ${a.items}, area ${a.area}; brief ${A.brief}; run ${RUN}) per your agent definition.${PATHS}${AGENT_ENV(`review-${a.id}`)}
 ${r.mrs.map((m) => `- ${m.url} (${m.repo}${m.merged ? ', merged' : ''})`).join('\n')}
 Testing-goals doc: ${(r.localTest || {}).goalsDoc || '(none reported)'}; local test: ${(r.localTest || {}).status || '?'} on ${(r.localTest || {}).env || '?'}.
 Rules: ${K}/SKILL.md Rules (scope, tests, migrations). Only real problems; "blocking" = must be fixed before it ships (an unasked
 user-visible behaviour change is blocking; same behaviour, other internals is not). Change no code; give each finding its suggested change. Only the brief and these MRs define the review.`
 }
 function migrationPrompt(a, r) {
- return `Kind migration: review the migrations in devy ${a.id}'s MRs (brief ${A.brief}) as your agent definition says; findings only.${PATHS}${AGENT_ENV(`migration-review-${a.id}`)}
+ return `Kind migration: review the migrations in devy ${a.id}'s MRs (brief ${A.brief}; run ${RUN}) per your agent definition; findings only.${PATHS}${AGENT_ENV(`migration-review-${a.id}`)}
 ${r.mrs.map((m) => `- ${m.url} (${m.repo})`).join('\n')}
 blocking = data loss, no rollback, rows touched outside the change's filter. Return the findings (review schema).`
 }

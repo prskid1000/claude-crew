@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L327 split · L401 budget
+Sections: L9 usage · L332 split · L406 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -104,10 +104,15 @@ function Get-KitPct($Vals, [double]$P) { $s = @($Vals | Where-Object { $null -ne
 # runs, steps, background agents of the last $Days days; parses for at most $Seconds (the cache keeps offsets: the rest next call); stored with the result
 # one window for every number: the $Days calendar days ending today (tokens cut by the day they were spent)
 # a run's human label: its mandate's first words, else the first agent's area or items, else a test run's name and target, else the brief's file name (the run id: the tooltip)
-function Get-KitRunLabel($A) {
-  $s = @(@($A.mandate) + @(@($A.agents)[0].area) + @(@($A.agents)[0].items) + @(if ($A.name) { "$($A.name)$(if ($A.target) { " · $($A.target)" })" }) + @(if ($A.brief) { [IO.Path]::GetFileNameWithoutExtension("$($A.brief)") }) | ForEach-Object { ("$_" -replace '\s+', ' ').Trim() } | Where-Object { $_ -and $_ -notmatch '^<' })[0]
-  if ("$s".Length -gt 48) { $s = ($s.Substring(0, 47) -replace '\s+\S*$', '') + '…' }; "$s"
+# a run's short title (owner 2026-11-21): QA name · target, else the run name, else the brief; its task codes unless the title holds
+# them; the mandate only when nothing else names it (the row tooltip shows it: Get-KitRunMandate)
+function Get-KitRunLabel($A, [string]$Run = '') {
+  $s = @(@(if ($A.name) { "$($A.name)$(if ($A.target) { " · $($A.target)" })" }) + $Run + @(if ($A.brief) { [IO.Path]::GetFileNameWithoutExtension("$($A.brief)") }) + @($A.mandate) + @(@($A.agents)[0].area) | ForEach-Object { ("$_" -replace '\s+', ' ').Trim() } | Where-Object { $_ -and $_ -notmatch '^<' })[0]
+  $cs = @(@(@($A.agents) | ForEach-Object { "$($_.items)" -split '[,\s]+' }) + @($A.select.tasks) + @($A.tasks) + @($A.task) | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^(?=[\w-]*\d)[\w-]{2,}$' -and "$s" -notmatch [regex]::Escape($_) } | Select-Object -Unique)
+  $sfx = if ($cs.Count -le 2) { $cs -join ', ' } else { "$($cs.Count) items" }; $room = 48 - $(if ($sfx) { $sfx.Length + 3 } else { 0 })   # the codes are never cut
+  if ("$s".Length -gt $room) { $s = ("$s".Substring(0, [math]::Max(8, $room) - 1) -replace '\s+\S*$', '') + '…' }; (@($s, $sfx) | Where-Object { $_ }) -join ' · '
 }
+function Get-KitRunMandate($A) { $m = ((@($A.mandate) | Where-Object { $_ }) -join ' · ' -replace '\s+', ' ').Trim(); if ($m.Length -gt 400) { $m.Substring(0, 399) + '…' } else { $m } }
 function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seconds = 60) {
   $cf = Get-KitPath usage-cache -Create; $all = try { Read-KitText $cf | ConvertFrom-Json -AsHashtable } catch { $null }; $cache = $all.files; if ($cache -isnot [hashtable]) { $cache = @{} }
   $cfCold = $cf -replace '\.json$', '.cold.json'; $coldAll = try { Read-KitText $cfCold | ConvertFrom-Json -AsHashtable } catch { $null }
@@ -179,7 +184,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
         $name = $rm.Groups[2].Value; $scr = $rm.Groups[1].Value
         $a0 = @($launch | Where-Object { $_.run -eq $name -and $_.args -and (Split-Path "$($_.script)" -Leaf) -eq $scr } | Sort-Object { [math]::Abs(([datetime]$_.at - $w.CreationTime).TotalMinutes) } | ForEach-Object args)[0] }
       $rTasks = @(@(@($a0.agents) | ForEach-Object { $_.task }) + @($a0.select.tasks) + @($a0.tasks) + @($a0.task) | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^(?=[\w-]*\d)[\w-]{4,}$' } | Select-Object -Unique)   # a page link each
-      $runs.Add((& $withSplit ([pscustomobject]@{ run = $name; id = $w.Name; label = (Get-KitRunLabel $a0); qaName = "$($a0.name)"; tasks = $rTasks; mrAll = @($rs | ForEach-Object { $_.mrAll } | Where-Object { $_ } | Select-Object -Unique); kind = $(if ($scr -match 'testy') { 'test' } elseif ($scr -match 'buildy') { 'build' } elseif ($scr -match 'tidy|retro') { 'kit' } else { '' }); started = $w.CreationTime.ToString('o'); status = $(if ($live) { 'running' } elseif ($rst -eq 'paused') { 'paused' } else { 'ended' }); state = $rst; lastAt = $lastW.ToString('o'); cap = [long]$cap; spent = [long]$spent; tok = [long]($rs | Measure-Object tok -Sum).Sum; cost = $(if (@($rs | Where-Object { $null -ne $_.cost }).Count) { [math]::Round(($rs | Measure-Object cost -Sum).Sum, 2) })
+      $runs.Add((& $withSplit ([pscustomobject]@{ run = $name; id = $w.Name; label = (Get-KitRunLabel $a0 $(if ($name -ne $w.Name) { $name })); mandate = (Get-KitRunMandate $a0); qaName = "$($a0.name)"; tasks = $rTasks; mrAll = @($rs | ForEach-Object { $_.mrAll } | Where-Object { $_ } | Select-Object -Unique); kind = $(if ($scr -match 'testy') { 'test' } elseif ($scr -match 'buildy') { 'build' } elseif ($scr -match 'tidy|retro') { 'kit' } else { '' }); started = $w.CreationTime.ToString('o'); status = $(if ($live) { 'running' } elseif ($rst -eq 'paused') { 'paused' } else { 'ended' }); state = $rst; lastAt = $lastW.ToString('o'); cap = [long]$cap; spent = [long]$spent; tok = [long]($rs | Measure-Object tok -Sum).Sum; cost = $(if (@($rs | Where-Object { $null -ne $_.cost }).Count) { [math]::Round(($rs | Measure-Object cost -Sum).Sum, 2) })
           wall = [math]::Round(($wEnd - $w.CreationTime).TotalMinutes); roles = (@($rs | Group-Object role | Sort-Object Count -Descending | ForEach-Object { "$(if ($_.Name) { $_.Name } else { 'step' }) $($_.Count)" }) -join ' · ')
           done = @($rs | Where-Object { $_.result -in 'pass', 'empty', 'fail' }).Count; total = $rs.Count; merged = @($rs.mrs | Where-Object { $_ } | Select-Object -Unique).Count; items = $items
           loop = [long](@($rs | Where-Object { $_.type -in 'review', 'fix' }) | Measure-Object tok -Sum).Sum; at = $wEnd.ToString('o'); steps = @($rs) }) $rs)) }
@@ -198,7 +203,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
   $runs = @(foreach ($grpRun in $byRun.Values) { if ($grpRun.Count -eq 1) { $grpRun[0]; continue }
       $nw = $grpRun[-1]; $ss = @($grpRun | ForEach-Object { $_.steps }); $sumOf = { param([string]$p) [long](@($grpRun | ForEach-Object { [double](Get-KitMember $_ $p) }) | Measure-Object -Sum).Sum }
       $mx = { param([string]$p) @($grpRun | ForEach-Object { "$(Get-KitMember $_ $p)" } | Sort-Object)[-1] }; $cs0 = @($grpRun | Where-Object { $null -ne $_.cost })
-      & $withSplit ([pscustomobject]@{ run = $nw.run; id = $nw.id; ids = @($grpRun.id); resumed = $grpRun.Count - 1; label = $nw.label; qaName = $nw.qaName; tasks = @($grpRun.tasks | Where-Object { $_ } | Select-Object -Unique)
+      & $withSplit ([pscustomobject]@{ run = $nw.run; id = $nw.id; ids = @($grpRun.id); resumed = $grpRun.Count - 1; label = $nw.label; mandate = $nw.mandate; qaName = $nw.qaName; tasks = @($grpRun.tasks | Where-Object { $_ } | Select-Object -Unique)
           mrAll = @($grpRun.mrAll | Where-Object { $_ } | Select-Object -Unique); kind = $nw.kind; started = $grpRun[0].started; status = $nw.status; state = $nw.state; lastAt = (& $mx lastAt)
           cap = [long](@($grpRun.cap) | Measure-Object -Maximum).Maximum; spent = [long](@($grpRun.spent) | Measure-Object -Maximum).Maximum; tok = (& $sumOf tok); cost = $(if ($cs0.Count) { [math]::Round(($cs0 | Measure-Object cost -Sum).Sum, 2) })
           wall = (& $sumOf wall); roles = (@($ss | Group-Object role | Sort-Object Count -Descending | ForEach-Object { "$(if ($_.Name) { $_.Name } else { 'step' }) $($_.Count)" }) -join ' · ')
@@ -285,7 +290,7 @@ function Format-KitUsageHtml($U) {
   $lbOf = { param($r) if ("$($r.label)".Trim()) { $r.label } else { $r.run } }
   $pageOf = { param($r) "supervise-runs/$([Uri]::EscapeDataString("$($r.id)")).html" }   # Write-KitSuperviseHtml writes $Pages next to the page
   $head = { param($r) $bp = if ($r.cap) { [double]$r.spent / [double]$r.cap } else { 0 }
-    "<span class=gn0 title='$(& $e "$($r.run) · $($r.id)")'>$(& $e (& $lbOf $r))</span><span class='chip k-$(& $e (& $kindOf $r))'>$(& $e (& $kindOf $r))</span>$(if ($resumed["$($r.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(if ($r.status -eq 'running') { "<span class='chip s-act'>running</span>" })$(& $segBar $r)" +
+    "<span class=gn0 title='$(& $e "$($r.run) · $($r.id)$(if ($r.mandate) { "`n$($r.mandate)" })")'>$(& $e (& $lbOf $r))</span><span class='chip k-$(& $e (& $kindOf $r))'>$(& $e (& $kindOf $r))</span>$(if ($resumed["$($r.id)"]) { "<span class='chip s-oth'>resumed</span>" })$(if ($r.status -eq 'running') { "<span class='chip s-act'>running</span>" })$(& $segBar $r)" +
     "$(Format-KitSplitCell $r 'tc' (Get-KitSplitTip $r))$(Format-KitSplitCell $r 'time' (Get-KitSplitTip ($r | Select-Object tm, tmN, tmAll, wall)))$(if ([int]$r.merged) { "<span class='chip s-act'>$($r.merged) merged</span>" })$(if ($r.cap -and ($r.status -eq 'running' -or $bp -ge 0.8)) { & $bar ([double]$r.spent) ([double]$r.cap) "budget $(& $tk $r.spent) of $(& $tk $r.cap)" $(if ($bp -ge 0.8) { 'watch' }) })" }   # budget = context spend (budget -Run), not billed tokens
   # what an ended run did, never a bare "failed" (owner, 2026-11-16): a test run's QA checks (task index), MRs merged, then the workflow's own
   # steps that errored (failed, empty, stopped, stuck: named in the tooltip)
