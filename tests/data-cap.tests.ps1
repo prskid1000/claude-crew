@@ -195,11 +195,11 @@ $cpm = & { . $supBossy; $c = [math]::Max(1, [Environment]::ProcessorCount); $n =
   $acc = [pscustomobject]@{ '200|' = 1000; '250|' = 1000; '300|' = 1000; idle = 1000 }
   try { "$((Update-KitCpuStats ([pscustomobject]@{ at = $n.AddSeconds(-600).ToString('o'); acc = $acc; samples = @() }) $n @() @(@{ name = 'browser x'; pid = @(300, 250, 0) })).samples[-1].g.'browser x')" } catch { "crash $($_.Exception.Message)" } }
 Expect "cpu: a holder with pids 300, 250 sums both trees (1 + 90), pid 0 skipped ($cpm)" ("$cpm" -eq '91')
-# owner 2026-11-19: Disk free, Disk writes, Repos now fold closed, a one-line summary in the header; Trends inside Kit internals
+# owner 2026-11-19: Disk free, Disk writes, Repos now fold closed, a one-line summary in the header (repos: as of its sweep); Trends inside Kit internals
 $fo = & { . $supBossy 6>$null; $n = Get-Date; $lv = @(@{ at = $n.AddDays(-1).ToString('o'); disks = @{ 'C:' = 50.5 } }, @{ at = $n.AddMinutes(-10).ToString('o'); disks = @{ 'C:' = 48.2 } })
   $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ live = $lv; disks = @(@{ drive = 'C:'; free = 48.2; rate = 0; total = 100 }); now = [pscustomobject]@{ disks = @(@{ drive = 'C:'; free = 48.2; rate = 0 }) }
-      repos = @{ repos = @(@{ repo = 'web'; branches = 3; worktrees = 2; kept = 1 }) }; writes = @{ at = $n.ToString('o'); days = @(@{ d = $n.Date.ToString('o'); m = 2.5; k = 1; h = @(, @(1, 0.5)) }) } } })
-  @(@{ id = 'writes'; s = '2.5 GB written in 7 days (kit 1 GB, 40%) &#183; free now C: 48.2 GB' }, @{ id = 'repos-now'; s = '3 branches · 2 worktrees' }) | ForEach-Object { $h -match "id=sec-$($_.id)><summary><h4>[^<]*</h4>(<span class=cnt>[^<]*</span>)?<span class=fsm>$([regex]::Escape($_.s))</span>" }
+      repos = @{ at = $n.Date.AddMinutes(5).ToString('o'); repos = @(@{ repo = 'web'; branches = 3; worktrees = 2; kept = 1 }) }; writes = @{ at = $n.ToString('o'); days = @(@{ d = $n.Date.ToString('o'); m = 2.5; k = 1; h = @(, @(1, 0.5)) }) } } })
+  @(@{ id = 'writes'; s = '2.5 GB written in 7 days (kit 1 GB, 40%) &#183; free now C: 48.2 GB' }, @{ id = 'repos-now'; s = '3 branches · 2 worktrees · as of 00:05' }) | ForEach-Object { $h -match "id=sec-$($_.id)><summary><h4>[^<]*</h4>(<span class=cnt>[^<]*</span>)?<span class=fsm>$([regex]::Escape($_.s))</span>" }
   $h -notmatch 'sec-disk-free' -and $h -match "<span class='gc fr lo' title='[^']*'>48\.2<small>▼2\.3</small></span>"
   $h.IndexOf("<details class='sec top' id=sec-internals>") -lt $h.IndexOf("id=sec-trends open>") }
 Expect "page: disk free / writes / repos folded closed with a header summary; Trends inside the closed Kit internals ($fo)" ("$fo" -eq 'True True True True')

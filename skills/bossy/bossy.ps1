@@ -30,8 +30,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L37 init · L48 board · L227 budget · L257 launch · L498 recover · L585 pause · L596 resume · L663 program · L714 param ·
-  L720 track · L1057 supervise · L1387 report · L1467 audit · L1527 storage · L1530 bugbrief · L1644 cleanup · L1731 learn ·
-  L1762 decide · L1913 debate · L1957 health · L2025 setup · L2122 guard-sendmessage
+  L720 track · L1057 supervise · L1393 report · L1473 audit · L1533 storage · L1536 bugbrief · L1650 cleanup · L1737 learn ·
+  L1768 decide · L1919 debate · L1963 health · L2031 setup · L2128 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1056,6 +1056,12 @@ function Invoke-Status([switch]$Watch, [int]$Seconds = 30, [switch]$Json, [strin
 function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.completed -and $_.runId } | ForEach-Object runId) }
 # ---- supervise: coordinator heartbeat (FLAGS ACT / WATCH / INFO)
 # coordAt on disk as text: a session that stepped aside mid-sweep stamped it (ConvertFrom-Json makes a DateTime)
+# the last sweep (step-aside, OS timer): the lock's start while its pwsh still runs, else the last finished report (a dead or hung sweep's lock never counts)
+function Get-KitLastSweepAt { $h = try { Read-KitText (Join-Path (Get-KitPath cache -Create) 'supervise.lock') | ConvertFrom-Json -AsHashtable } catch { $null }
+  $ra = try { (Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json -AsHashtable).report.at } catch { $null }
+  # a live pid (a reused one started later never counts): its start or, a long-lived host, the report it finished since
+  if ($h.at -and $h.pid) { $sp = Get-Process -Id ([int]$h.pid) -ErrorAction SilentlyContinue; if ($sp -and $sp.StartTime -le ([datetime]$h.at).AddSeconds(5)) { return @(@([datetime]$h.at) + @(if ($ra) { [datetime]$ra }) | Sort-Object)[-1] } }
+  if ($ra) { [datetime]$ra } }
 function Get-KitDiskCoordAt([string]$File) { $cv = try { (Read-KitText $File | ConvertFrom-Json -AsHashtable).coordAt } catch { $null }; if ($cv -is [datetime]) { $cv.ToString('o') } else { "$cv" } }
 function Invoke-Supervise {
 param([string]$Session, [switch]$Json, [switch]$AutoFix, [switch]$Brief, [switch]$Takeover, [string]$Ack, [string]$Reason = '')
@@ -1080,7 +1086,7 @@ Invoke-KitLocked $lk {
   $myHolder = Get-KitHolder   # only a live other process blocks (not a restart or a dead holder)
   $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
   # report never much over a beat old: the OS timer ticks every osTimerTickMinutes and sweeps once the last sweep (its own too) is a beat old, a session skips one under half a beat
-  $agoMin = if ($held.at) { ((Get-Date) - [datetime]$held.at).TotalMinutes } else { 1e9 }; $asideMin = if ($me -eq 'os-timer') { Get-KitOsBeatAsideMinutes } else { (Get-KitBeatMinutes) * 0.5 }
+  $lsa = Get-KitLastSweepAt; $agoMin = if ($lsa) { ((Get-Date) - $lsa).TotalMinutes } else { 1e9 }; $asideMin = if ($me -eq 'os-timer') { Get-KitOsBeatAsideMinutes } else { (Get-KitBeatMinutes) * 0.5 }
   if (-not $Takeover -and ($other -or $me -eq 'os-timer') -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"
     # a session that skips still beats: health OVERDUE reads coordAt
     if ($me -ne 'os-timer') { try { $sf0 = Get-KitPath supervise-state -Create; $st0 = Read-KitText $sf0 | ConvertFrom-Json -AsHashtable; if ($st0) { $st0.coordAt = (Get-Date).ToString('o'); Write-KitAtomic $sf0 ($st0 | ConvertTo-Json -Depth 5) } } catch {} }; return }

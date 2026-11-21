@@ -115,9 +115,9 @@ Expect 'decide rules -Revoke: the rule stops answering; the rules file keeps onl
 # tidy prep: the digest carries the outcomes section
 $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json
 Expect 'tidy prep: digest has the Outcomes section' ((Get-Content $tp.digest -Raw) -match '## Outcomes, 30 days')
-# stats reset (owner 2026-11-20): the newest forgotten/stats-reset-<day> cuts what the charts read from kept logs; a wait across it is clipped
+# stats reset (owner 2026-11-20): the newest forgotten/stats-reset-<day> folder creation time (not its midnight) cuts what the charts read from kept logs; a wait across it is clipped
 $cutT = & { . $O; $n = (Get-Date).Date.AddHours(12); $y = $n.Date.AddDays(-1); $fgDir = Get-KitPath forgotten -Create
-  $cutDirs = @((Join-Path $fgDir "stats-reset-$($n.AddDays(-3).ToString('yyyyMMdd'))"), (Join-Path $fgDir "stats-reset-$($n.ToString('yyyyMMdd'))-101500")); foreach ($cd in $cutDirs) { $null = New-Item -ItemType Directory -Force $cd }
+  $cutDirs = @((Join-Path $fgDir "stats-reset-$($n.AddDays(-3).ToString('yyyyMMdd'))"), (Join-Path $fgDir "stats-reset-$($n.ToString('yyyyMMdd'))-101500")); foreach ($cd in $cutDirs) { $null = New-Item -ItemType Directory -Force $cd }; (Get-Item $cutDirs[0]).CreationTime = $n.AddDays(-3).Date; (Get-Item $cutDirs[1]).CreationTime = $n.Date
   $sCut = Get-KitStatsCutoff; $yDir = Join-Path (Get-KitPath audit) $y.ToString('yyyy-MM-dd'); $yNew = -not (Test-Path $yDir); $null = New-Item -ItemType Directory -Force $yDir
   $yBuilds = Join-Path $yDir 'builds.jsonl'; $yCalls = Join-Path $yDir 'calls.jsonl'
   @(@{ at = $y.AddHours(20).ToString('o'); event = 'start'; owner = 'old'; waitSec = 600 }, @{ at = $n.Date.AddMinutes(10).ToString('o'); event = 'start'; owner = 'mid'; waitSec = 1200 }, @{ at = $y.AddHours(20).ToString('o'); event = 'end'; kind = 'maven'; owner = 'old'; sec = 60; waitSec = 0; code = 0 }) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content $yBuilds
@@ -130,9 +130,9 @@ $cutT = & { . $O; $n = (Get-Date).Date.AddHours(12); $y = $n.Date.AddDays(-1); $
     merged = [pscustomobject]@{ source = 'host'; user = 'u'; n = 2 }; rates = [pscustomobject]@{ n = 2; fail = 1 } }
   $uCut = Select-KitUsageSince $uIn $sCut
   "$($sCut -eq $n.Date)|$(& $gr (Get-KitGateStats $n @()))$(& $gr (Get-KitGateStats $n @() -StatsFrom $sCut))|$(& $wr (Get-KitLeaseWaits $n)) $(& $wr (Get-KitLeaseWaits $n -StatsFrom $sCut))|$(& $qr (Get-KitQaDays $n)) $(& $qr (Get-KitQaDays $n -StatsFrom $sCut))|$(& $dr (Get-KitSuperviseDays $null $n 3))-$(& $dr (Get-KitSuperviseDays $null $n 3 -StatsFrom $sCut))|" +
-    "$(@($uCut.runs.id) -join ',') $(@($uCut.days | ForEach-Object { "$($_.tok)" }) -join ',') $(@($uCut.mrList).Count)$($uCut.merged.n) $($uCut.rates.n)$($uCut.rates.fail) $([object]::ReferenceEquals((Select-KitUsageSince $uIn ([datetime]::MinValue)), $uIn)) $(@($uIn.runs).Count)"
+    "$(@($uCut.runs.id) -join ',') $(@($uCut.days | ForEach-Object { "$($_.tok)" }) -join ',') $(@($uCut.mrList).Count)$($uCut.merged.n) $($uCut.rates.n)$($uCut.rates.fail) $([object]::ReferenceEquals((Select-KitUsageSince $uIn ([datetime]::MinValue)), $uIn)) $(@($uIn.runs).Count)" + "|$((Get-Item $cutDirs[1]).CreationTime = $n.Date.AddMinutes(615); (Get-KitStatsCutoff) -eq $n.Date.AddMinutes(615))"
   foreach ($cutF in @($yBuilds, $yCalls, $qaRes)) { Remove-Item -LiteralPath $cutF }; Remove-Item -LiteralPath (Split-Path $qaRes) -Recurse; Remove-Item -LiteralPath (Join-Path (Get-KitPath qa-runs) 'cutq'); foreach ($cd in $cutDirs) { Remove-Item -LiteralPath $cd }; if ($yNew) { Remove-Item -LiteralPath $yDir } }
-Expect "stats reset: the newest stats-reset-<day> = cutoff; gate, waits (one clipped), QA, agents failed per day and usage (runs, day values, MRs, step outcomes) drop what came before it ($cutT)" ($cutT -eq 'True|10|2/30 1/10|1 0|1-|b,c ,7 11 10 True 4')
+Expect "stats reset: the newest stats-reset-<day> = cutoff; gate, waits (one clipped), QA, agents failed per day and usage (runs, day values, MRs, step outcomes) drop what came before it ($cutT)" ($cutT -eq 'True|10|2/30 1/10|1 0|1-|b,c ,7 11 10 True 4|True')
 # split (owner 2026-11-20): cost per type (5-min vs 1-h writes), the time split from transcript gaps (gate queue = waiting), hourly tokens
 $spc = & { . $O; $cs = Get-KitUsageCostSplit @(100, 10, 1000, 200, 50) 'claude-opus-5-5'
   "$(@($cs | ForEach-Object { [math]::Round($_, 6) }) -join '/') $([math]::Round((Get-KitUsageCost @(100, 10, 1000, 200, 50) 'claude-opus-5-5'), 6)) $($null -eq (Get-KitUsageCostSplit @(1, 1, 1, 0, 0) 'mystery-1'))" }

@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L361 shells · L540 page · L1061 release · L1106 lines · L1138 cleanup · L1205 launch ·
-  L1322 pause · L1441 heartbeat · L1456 sessions · L1508 ci tasks ·
-  L1566 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L363 shells · L542 page · L1057 release · L1102 lines · L1134 cleanup · L1201 launch ·
+  L1318 pause · L1437 heartbeat · L1452 sessions · L1504 ci tasks ·
+  L1562 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -30,7 +30,7 @@ function Get-KitBuildFailures($Hist, [datetime]$Now, $Log = @(), [int]$Minutes =
 function Send-KitBuildsRule([string]$Owner, [int]$N, [int]$Max, [datetime]$Now) {
   if (-not (Test-KitBoardAgent $Owner)) { return }   # a worktree-name owner: nobody reads its inbox
   $f = Get-InboxFile $Owner; $last = @(if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { "$($_.ref)" -eq 'gate.buildsPerHour' } }) | Select-Object -Last 1
-  if ($last -and ($Now - [datetime]$last.at).TotalMinutes -lt 60) { return "sent $(([datetime]$last.at).ToString('HH:mm'))" }
+  if ($last -and ($Now - [datetime]$last.at).TotalMinutes -lt (Get-KitParam 'gate.ruleEveryMinutes')) { return "sent $(([datetime]$last.at).ToString('HH:mm'))" }
   Send-BoardMsg 'supervise' $Owner "$N gated builds in the last hour (gate.buildsPerHour $Max): batch your fixes into one rebuild; only the changed module and named tests (-Tests); a flaky test rerun alone; no build per small edit (crafty SKILL.md Rules, Builds)" 'rule' 'gate.buildsPerHour'
   "sent $($Now.ToString('HH:mm'))"
 }
@@ -39,7 +39,7 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
   $cmd = "$(Get-KitSetting 'gate.cacheFlush' '')".Trim()
   if (-not $cmd -or $WaitMin -lt 10) { return }
   $stamp = Join-Path (Get-KitPath cache -Create) 'cache-flush.stamp'
-  if ((Test-Path $stamp) -and ($Now - (Get-Item $stamp).LastWriteTime).TotalMinutes -lt 30) { return }
+  if ((Test-Path $stamp) -and ($Now - (Get-Item $stamp).LastWriteTime).TotalMinutes -lt (Get-KitParam 'gate.flushEveryMinutes')) { return }
   $cacheGB = try {
     if ($KitIsWindows) { (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop).SystemCacheResidentBytes / 1GB }   # \Memory\System Cache Resident Bytes
     elseif (Test-Path /proc/meminfo) { [double](([regex]::Match((Get-Content /proc/meminfo -Raw), '(?m)^Cached:\s+(\d+)')).Groups[1].Value) / 1MB }   # kB
@@ -74,7 +74,7 @@ function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
 # with no later line of its code, older than qa.questionWatchMinutes = a WATCH the coordinator answers
 function Get-KitQaQuestionFlags([datetime]$Now = (Get-Date)) {
   $after = [double](Get-KitParam 'qa.questionWatchMinutes')
-  foreach ($nf in @(Get-ChildItem -LiteralPath (Get-KitPath qa-runs) -Filter 'lead-notes.md' -File -Recurse -Depth 1 -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $Now.AddHours(-24))) {
+  foreach ($nf in @(Get-ChildItem -LiteralPath (Get-KitPath qa-runs) -Filter 'lead-notes.md' -File -Recurse -Depth 1 -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $Now.AddHours(-(Get-KitParam 'supervise.windowHours')))) {
     $ls = @(Get-Content -LiteralPath $nf.FullName -Encoding utf8 | ForEach-Object { if ($_ -match '^- (\d\d):(\d\d) (\S+?): (.+)$') { [pscustomobject]@{ t = $nf.LastWriteTime.Date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2]); c = $Matches[3]; x = $Matches[4].Trim() } } })
     for ($i = 0; $i -lt $ls.Count; $i++) { $q = $ls[$i]; if ($q.x -notmatch '\?$' -or @($ls | Select-Object -Skip ($i + 1) | Where-Object c -eq $q.c).Count) { continue }
       $age = ($Now - $q.t).TotalMinutes; if ($age -lt 0) { $age += 1440 }; if ($age -lt $after) { continue }   # a line from before midnight
@@ -86,10 +86,12 @@ function Get-KitQaQuestionFlags([datetime]$Now = (Get-Date)) {
 # flagSeen keeps first + last seen, an entry unseen for 2 h drops (a skipped section keeps its age); a producer's own age wins
 function Set-KitFlagAge($Flags, $State, [datetime]$Now) {
   $seen = if ($State.flagSeen -is [Collections.IDictionary]) { $State.flagSeen } else { @{} }; $keep = @{}
+  $gapMin = [double](Get-KitParam 'supervise.flagGapMinutes'); $keepH = [double](Get-KitParam 'supervise.flagKeepHours')
   foreach ($f in @($Flags | Where-Object { $_.level -in 'ACT', 'WATCH' })) { $k = Get-KitFlagKey "$($f.what)"
-    $first = try { ([datetime]$seen[$k].first).ToString('o') } catch { $Now.ToString('o') }; $keep[$k] = @{ first = $first; last = $Now.ToString('o') }   # ISO, never a culture string
+    # a flag gone longer than a section's cadence came back: its age starts again (a kept first-seen claimed hours it was not there)
+    $first = try { if (($Now - [datetime]$seen[$k].last).TotalMinutes -gt $gapMin) { throw 'gap' }; ([datetime]$seen[$k].first).ToString('o') } catch { $Now.ToString('o') }; $keep[$k] = @{ first = $first; last = $Now.ToString('o') }   # ISO, never a culture string
     if (-not "$($f.age)".Trim()) { $f | Add-Member -Force NoteProperty age "$([int][math]::Max(0.0, ($Now - [datetime]$first).TotalMinutes)) min" } }
-  foreach ($k in @($seen.Keys)) { if (-not $keep.ContainsKey($k) -and $(try { ($Now - [datetime]$seen[$k].last).TotalHours -lt 2 } catch { $false })) { $keep[$k] = $seen[$k] } }
+  foreach ($k in @($seen.Keys)) { if (-not $keep.ContainsKey($k) -and $(try { ($Now - [datetime]$seen[$k].last).TotalHours -lt $keepH } catch { $false })) { $keep[$k] = $seen[$k] } }
   $State.flagSeen = $keep
 }
 # a guard deny's agent: its own agent field, else the status row whose transcript names its subagent id or session, else the session
@@ -126,7 +128,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $builds = @(Get-ChildItem $ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { $t = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($t -and (Test-KitPid $t.pid $t.start)) { $t } })
   foreach ($t in @($builds | Where-Object { $_.gate })) {   # holder = its gate process (then its owner agent)
     $bl = @{ agent = $t.owner; pid = $t.gate; seen = $t.seen }; $keep = Update-KitLease $bl; if ("$($bl.seen)" -ne "$($t.seen)") { $t | Add-Member -Force seen $bl.seen; $t | ConvertTo-Json | Set-Content (Join-Path $ledger "$($t.pid).json") }
-    $bp = Get-Process -Id ([int]$t.pid) -ErrorAction SilentlyContinue; if (-not $bp -or $bp.StartTime -gt ([datetime]$t.started).AddSeconds(5)) { continue }   # pid reused: not ours
+    $bp = Get-Process -Id ([int]$t.pid) -ErrorAction SilentlyContinue; if (-not $bp -or $bp.StartTime -gt ([datetime]$t.started).AddSeconds((Get-KitParam 'proc.startSlackSec'))) { continue }   # pid reused: not ours
     if ($keep) { if ($null -ne $bl.graceLeft) { $graceRows["build $(Split-Path "$($t.dir)" -Leaf) $($t.kind)"] = $bl.graceLeft }; continue }
     if ($AutoFix) { $t | Add-Member -Force reclaimed "reclaim: no live holder for $($bl.graceMin) min"; $t | ConvertTo-Json | Set-Content (Join-Path $ledger "$($t.pid).json"); Stop-KitProcessTree $bp; & $flag 'INFO' "auto-fixed: stopped build $($t.kind) of $($t.owner) (pid $($t.pid)): no live holder" 'Nothing to do.' }
     else { & $flag 'ACT' "build $($t.kind) of $($t.owner) (pid $($t.pid)) runs with no live holder" 'supervise -AutoFix stops it.' }
@@ -137,7 +139,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   if ($wait -ge 30) { & $flag 'ACT' "gate: $($oldest.owner) $($oldest.kind) has waited $wait min" 'Memory-bound: start no new agents, run bossy.ps1 cleanup, ask the owner to close big apps; fewer agents per wave.' }
   elseif ($queue.Count -ge 6) { & $flag 'WATCH' "gate: $($queue.Count) builds queued" 'Do not launch more build-heavy agents until the queue drains.' }
   $hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
-  $bLog = @(Read-KitLog builds $now.AddHours(-24)); $bph = [int](Get-KitParam 'gate.buildsPerHour')
+  $bLog = @(Read-KitLog builds $now.AddHours(-(Get-KitParam 'supervise.windowHours'))); $bph = [int](Get-KitParam 'gate.buildsPerHour')
   foreach ($bo in @(Get-KitBuildsByOwner @($bLog | Where-Object { $_.event -eq 'end' -and $_.at -and [datetime]$_.at -ge $now.AddHours(-1) }) | Where-Object { $bph -gt 0 -and $_.n -gt $bph })) {
     $sent = if ($AutoFix) { try { Send-KitBuildsRule $bo.name $bo.n $bph $now } catch { } }
     [pscustomobject]@{ level = 'WATCH'; what = "builds: $($bo.name) ran $($bo.n) gated builds ($($bo.min) build-min, $($bo.failed) failed) in the last hour, over gate.buildsPerHour $bph"; kind = 'BUILDS'; who = $bo.name
@@ -167,7 +169,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   foreach ($lf in @(Get-ChildItem (Get-KitPath wt-slots) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
     $ls = try { Get-Content $lf.FullName -Raw | ConvertFrom-Json } catch { continue }
     if ($ls -isnot [pscustomobject] -or -not $ls.slot) { continue }   # a slot lease only, never another file in the folder
-    if ($ls.parked) { $pa = [datetime]$(if ($ls.parkedAt) { $ls.parkedAt } else { $ls.since }); if (($now - $pa).TotalHours -ge 24) { & $flag 'WATCH' "slot $($ls.slot) parked $([int]($now - $pa).TotalHours) h: $($ls.parkedWhy)" "Its branch's next agent resumes it (crafty.ps1 wt lease -Branch $($ls.branch)); else commit or drop the files in $($ls.path), then wt release -Dir $($ls.path)" }; continue }
+    if ($ls.parked) { $pa = [datetime]$(if ($ls.parkedAt) { $ls.parkedAt } else { $ls.since }); if (($now - $pa).TotalHours -ge (Get-KitParam 'phone.parkedWatchHours')) { & $flag 'WATCH' "slot $($ls.slot) parked $([int]($now - $pa).TotalHours) h: $($ls.parkedWhy)" "Its branch's next agent resumes it (crafty.ps1 wt lease -Branch $($ls.branch)); else commit or drop the files in $($ls.path), then wt release -Dir $($ls.path)" }; continue }
     $s0 = "$($ls.seen)"; $keep = Update-KitLease $ls
     if ($keep -and "$($ls.seen)" -ne $s0 -and (Test-Path $lf.FullName)) { Write-KitAtomic $lf.FullName ($ls | ConvertTo-Json -Depth 5) }
     if ($keep) { if ($null -ne $ls.graceLeft) { $graceRows["slot $($ls.slot)"] = $ls.graceLeft }; continue }
@@ -218,7 +220,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
     $ls = try { Get-Content (Join-Path (Get-KitPath phones) "$nm.json") -Raw | ConvertFrom-Json } catch { $null }
     $rows.Add([pscustomobject]@{ name = "phone $nm"; by = $(if ($ls) { $ls.agent } else { 'no lease' }); gb = & $tree $p; pid = $p.Id })
   }
-  foreach ($wq in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ($now - $_.LastWriteTime).TotalMinutes -lt 3 })) {   # queued / booting lanes
+  foreach ($wq in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ($now - $_.LastWriteTime).TotalMinutes -lt (Get-KitParam 'phone.waitFreshMinutes') })) {   # queued / booting lanes
     $w = try { Get-Content $wq.FullName -Raw | ConvertFrom-Json } catch { continue }
     $held = @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object { $_.agent -eq $w.agent })[0]
     $rows.Add([pscustomobject]@{ name = "phone $(if ($held) { $held.lane } elseif ($w.lane) { $w.lane } else { 'next lane' })"; by = "$($w.agent) $(if ($held) { '(waiting for RAM)' } else { '(waiting for a lane)' })"; gb = 0 })
@@ -234,7 +236,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $quietMin = 3 * [double](Get-KitParam 'idle.graceMinutes')
   # quiet counts from the first beat that saw no live holder (an acquire row has no `seen`: its age alone flagged a holder dead 1 min)
   $idf = Join-Path (Get-KitPath cache -Create) 'idle-holders.json'; $idOld = try { Get-Content -LiteralPath $idf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $idOld) { $idOld = @{} }; $idNew = @{}
-  foreach ($ir in @(Get-KitResourceRows $now.AddHours(-24) | Where-Object { $null -ne $_.quiet })) {
+  foreach ($ir in @(Get-KitResourceRows $now.AddHours(-(Get-KitParam 'supervise.windowHours')) | Where-Object { $null -ne $_.quiet })) {
     $idAt = if ($idOld[$ir.resource]) { [datetime]$idOld[$ir.resource] } else { $now }; $idNew[$ir.resource] = $idAt.ToString('o')
     $q = [int][math]::Min([double]$ir.quiet, ($now - $idAt).TotalMinutes)
     if ($q -ge $quietMin) { & $flag 'WATCH' "$($ir.resource) held by $($ir.holder): no live holder for $q min" "bossy.ps1 release -Agent $(@("$($ir.holder)" -split ', ')[0]) frees it (README Leases)" } }
@@ -296,7 +298,7 @@ function Get-KitStatusWaitResources {
     [pscustomobject]@{ agent = $t.owner; why = "build gate: RAM for $($t.kind)"; at = $t.since; next = 'the gate starts it when RAM frees' }
   }
   foreach ($w in @((Get-KitLockState).waiting)) { [pscustomobject]@{ agent = $w.holder; why = "test lock $($w.lock)"; at = $w.at; next = 'crafty.ps1 check takes it when its holder ends' } }
-  foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt 3 })) {
+  foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt (Get-KitParam 'phone.waitFreshMinutes') })) {
     $w = try { Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { continue }; [pscustomobject]@{ agent = $w.agent; why = "phone lane$(if ($w.lane) { " $($w.lane)" })"; at = $f.LastWriteTime; next = 'phoney.ps1 acquire hands it a lane' }
   }
 }
@@ -306,7 +308,7 @@ function Get-KitResourceRows([datetime]$Since = [datetime]::MinValue) {
   $held = [ordered]@{}; $last = @{}; $lf = Get-KitLogFile leases
   foreach ($x in @(if (Test-Path -LiteralPath $lf) { Get-KitLogLines $lf $Since })) {
     $o = try { $x | ConvertFrom-Json } catch { continue }; $r = "$($o.kind)|$($o.name)"
-    if ($o.event -eq 'acquire' -and $o.kind -ne 'build' -and ((Get-Date) - [datetime]$o.at).TotalHours -lt 24) { if (-not $held[$r]) { $held[$r] = @{} }; $held[$r]["$($o.agent)"] = $o; continue }
+    if ($o.event -eq 'acquire' -and $o.kind -ne 'build' -and ((Get-Date) - [datetime]$o.at).TotalHours -lt (Get-KitParam 'supervise.windowHours')) { if (-not $held[$r]) { $held[$r] = @{} }; $held[$r]["$($o.agent)"] = $o; continue }
     if ($o.event -ne 'down') { $last[$r] = $o }; if (-not $held[$r]) { $held[$r] = @{} }; if ($o.event -eq 'down') { $held[$r].Clear() } else { $held[$r].Remove("$($o.agent)") }
   }
   foreach ($p in @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object { $_.lane -and $_.agent -ne '__stopping__' })) { $held["lane|$($p.lane)"] = @{ "$($p.agent)" = [pscustomobject]@{ agent = $p.agent; session = $p.session; holder = $p.holder; at = $p.since; seen = $p.seen } } }
@@ -331,11 +333,11 @@ function Format-KitResourceTable($Rows) {
 # per repo, at most 2 lists a beat, oldest first: 4 lists in one beat took 15 s of a 40 s sweep; a cut-short beat keeps the rest's lists
 function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = { $true }) {
   $um = $State.untrackedMrs; if (-not $um -or $um.repos -isnot [Collections.IDictionary]) { $um = @{ user = "$($um.user)"; repos = @{} } }
-  $ttl = [math]::Max(30.0, 2 * (Get-KitBeatMinutes)); $since = $Now.ToUniversalTime().AddHours(-24).ToString('o')
+  $ttl = [math]::Max([double](Get-KitParam 'supervise.claimTtlMinutes'), 2 * (Get-KitBeatMinutes)); $since = $Now.ToUniversalTime().AddHours(-(Get-KitParam 'supervise.windowHours')).ToString('o')
   $due = @(@(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ -and (-not $um.repos[$_] -or ($Now - [datetime]$um.repos[$_].at).TotalMinutes -ge $ttl) } |
     Sort-Object { if ($um.repos[$_]) { [datetime]$um.repos[$_].at } else { [datetime]::MinValue } } | Select-Object -First 2)
   if ($due.Count) {
-    $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt 24) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
+    $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt (Get-KitParam 'supervise.hostUserHours')) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
     if ($hu -and $hu -ne $um.user) { $um = @{ user = $hu; repos = @{} } }
     foreach ($rp in @(if ($hu) { $due })) {
       if (-not (& $Within)) { break }
@@ -346,7 +348,7 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
     $State.untrackedMrs = $um
   }
   $um = @{ user = $um.user; mrs = @($um.repos.Values | ForEach-Object { $_.mrs }) }
-  $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
+  $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-(Get-KitParam 'supervise.windowHours'))
   $ig =@{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
   $known = if ($State.known) { @($State.known.Keys) } else { @() }   # supervise -Ack on this flag: one decision per MR
   $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and -not (Test-KitDeployMr $_.repo $_.branch $_.target) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and "$($_.repo)!$($_.iid)" -notin $known -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
@@ -512,7 +514,7 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
     $s60 = $short.Substring(0, [math]::Min(60, $short.Length))
     if ($shellState -ne 'running') { $flags.Add([pscustomobject]@{ level = 'WATCH'; kind = "SHELL $shellState"; who = $o.name; age = "$([int]$age) min"; problem = "pid $($p.Id) $s60`: $why"; what = "SHELL $shellState pid $($p.Id) of $($o.name) ($s60): $why"; action = $next }) }
   }
-  $finMin = [double](Get-KitSetting 'supervise.finishedMinutes' 30)
+  $finMin = [double](Get-KitParam 'supervise.finishedMinutes')
   foreach ($k in @($old.Keys)) {
     $g = $old[$k]; if ($new.ContainsKey($k) -or $g -isnot [Collections.IDictionary] -or -not $g.listed) { continue }
     if ($g.ended) { if (($Now.Ticks - [long]$g.ended) / [double][TimeSpan]::TicksPerMinute -lt $finMin) { $new[$k] = $g }; continue }
@@ -600,7 +602,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $prior = try { Read-KitText $pj | ConvertFrom-Json } catch { $null }
   $fl = @(@($d.flags) + @($d.info | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }) | Sort-Object { $rk["$($_.level)"] })
   $fixedN = @($fl | Where-Object { $_.level -eq 'INFO' -and "$($_.what)" -like 'auto-fixed:*' }).Count
-  $History = @(@([pscustomobject]@{ at = $d.at.ToString('o'); flags = @($d.flags | Where-Object level -ne 'INFO' | Select-Object level, what); active = @($d.rows | Where-Object state -ne 'FINISHED').Count; fixed = $fixedN }) + @($prior.history | Where-Object { $_ }) | Select-Object -First ([int](Get-KitSetting 'supervise.historySweeps' 12)))
+  $History = @(@([pscustomobject]@{ at = $d.at.ToString('o'); flags = @($d.flags | Where-Object level -ne 'INFO' | Select-Object level, what); active = @($d.rows | Where-Object state -ne 'FINISHED').Count; fixed = $fixedN }) + @($prior.history | Where-Object { $_ }) | Select-Object -First ([int](Get-KitParam 'supervise.historySweeps')))
   $series = try { Get-KitSuperviseSeries (@($Sweep) + @($fl | ForEach-Object what)) $prior.stats } catch { [ordered]@{ ram = @(); disks = @() } }
   $nowT = try { Get-KitSuperviseNow $Sweep ([double](Get-KitParam 'idle.graceMinutes')) } catch { $null }
   if ($nowT -and -not @($nowT.disks).Count) { $nowT.disks = @($series.disks | Where-Object { $_ } | ForEach-Object { [ordered]@{ drive = $_.drive; free = $_.free; rate = $_.rate; ttf = $null } }) }   # storage skipped this sweep: the last disk values
@@ -615,7 +617,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     paramDays = @(try { Get-KitParamDays $d.at } catch { $serr.Add("param days: $($_.Exception.Message)") })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ((Get-KitMember $apv "$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })") -or (Get-KitMember $apv "$($_.key)|")) { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
-            learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); default = $_.default; changed = $_.changed; why = $_.why } } } catch { $serr.Add("params: $($_.Exception.Message)") }) }
+            learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); default = $_.default; changed = (ConvertTo-KitOutcomeIso $_.changed); why = $_.why } } } catch { $serr.Add("params: $($_.Exception.Message)") }) }
   $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
   $stats.gate = try { Get-KitGateStats $d.at @($d.resources) -StatsFrom $statsFrom } catch { $serr.Add("gate: $($_.Exception.Message)") }
   $stats.waits = try { Get-KitLeaseWaits $d.at -StatsFrom $statsFrom } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at -StatsFrom $statsFrom } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $serr.Add("cpu: $($_.Exception.Message)"); $prior.stats.cpu }   # adapters/supervise_stats.ps1
@@ -643,12 +645,6 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     # a failed build never leaves the last good page passing for this sweep: a minimal page that says so
     try { $ep = [IO.Path]::ChangeExtension((Get-KitPath supervise-report -Create), '.html'); Write-KitAtomic $ep "<!doctype html><meta charset=utf-8><title>Supervisor</title><body style='font:14px system-ui;padding:20px'><h1>Supervisor page failed</h1><p>$([Net.WebUtility]::HtmlEncode("$((Get-Date).ToString('yyyy-MM-dd HH:mm')): $($_.Exception.Message)"))</p><p>The sweep's flags and report still ran; the next sweep rebuilds this page.</p>" } catch { }; '' }   # $flags: the supervise verb's list (-Json, plain)
 }
-# one icon set for the words the page repeats (running, queued, today, wait, RAM, stuck): inline SVG, currentColor, <title> = tooltip
-function Format-KitIcon([string]$Name, [string]$Label = $Name) {
-  $p = switch ($Name) { 'run' { "<path fill=currentColor stroke=none d='M5 3.2v9.6L12.8 8z'/>" } 'queue' { "<path fill=none d='M4.5 2h7M4.5 14h7M5.5 2v1.8c0 2 5 2.4 5 4.2s-5 2.2-5 4.2V14M10.5 2v1.8c0 2-5 2.4-5 4.2s5 2.2 5 4.2V14'/>" }
-    'today' { "<path fill=none d='M3 8.6l3.2 3.1L13 4.6'/>" } 'wait' { "<circle fill=none cx=8 cy=8 r=6 /><path fill=none d='M8 4.6V8l2.3 1.6'/>" } 'stuck' { "<path fill=none d='M8 2.2l6.3 11.3H1.7zM8 6.6v3.2M8 11.6v.1'/>" }
-    'ram' { "<rect fill=none x=4 y=4 width=8 height=8 rx=1.2 /><path fill=none d='M6 1.6V4M10 1.6V4M6 12v2.4M10 12v2.4M1.6 6H4M1.6 10H4M12 6h2.4M12 10h2.4'/>" } default { throw "Format-KitIcon: unknown icon '$Name'" } }
-  $l = [Net.WebUtility]::HtmlEncode($Label); "<svg class='ic i-$Name hit' viewBox='0 0 16 16' role=img aria-label='$l'><title>$l</title>$p</svg>" }
 # pure (tests feed a sample); values HtmlEncoded; inline CSS / JS / SVG only: no request leaves the page; $Pages: filled with run id -> run page
 function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $iv = [cultureinfo]::InvariantCulture; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $n1 = { param($x) ([double]$x).ToString('0.#', $iv) }
@@ -756,7 +752,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $lastOf = { param($vs) @($vs)[-1] }; $br = & $perDay @($lv | Where-Object { $null -ne $_.br }) { [double]$_.br } $lastOf; $wt = & $perDay @($lv | Where-Object { $null -ne $_.wt }) { [double]$_.wt } $lastOf
   $s7 = { param($vs) $v1 = @($vs | Where-Object { $null -ne $_ }); if ($v1.Count) { Format-KitCompactNum ($v1 | Measure-Object -Sum).Sum } else { '—' } }; $a7 = { param($vs) $v1 = & $avgOf $vs; if ($null -ne $v1) { Format-KitCompactNum $v1 } else { '—' } }
   $p7 = { param($vs) $v1 = @($vs | Where-Object { $null -ne $_ }); if ($v1.Count) { Format-KitCompactNum ($v1 | Measure-Object -Maximum).Maximum } else { '—' } }
-  $hRows = @(@{ n = 'sweep s'; mk = 'sweep-day'; sub = $(if ($nw.secs) { "now $(& $fmt $nw.secs) s" }); title = "seconds per sweep, the day's average; 7 d: average$(if ($nw.slow) { " · slowest step now: $($nw.slow)" })"; v = $sw; t = (& $a7 $sw); keep = $true },
+  $hRows = @(@{ n = 'Sweep time (s)'; mk = 'sweep-day'; sub = $(if ($nw.secs) { "now $(& $fmt $nw.secs) s" }); title = "seconds per sweep, the day's average; 7 d: average$(if ($nw.slow) { " · slowest step now: $($nw.slow)" })"; v = $sw; t = (& $a7 $sw); keep = $true },
     @{ n = 'agents failed'; mk = 'agents-failed-day'; title = 'agents that left the board failed, blocked or in error; 7 d: sum'; v = $fd; t = (& $s7 $fd); cls = 'fh l-act'; gl = $true },
     @{ n = 'agents finished'; mk = 'agents-left-day'; title = 'agents that left the board (any status); 7 d: sum'; v = $lf; t = (& $s7 $lf) },
     @{ n = 'branches'; mk = 'branches-day'; title = 'local branches over all repos, the day''s last sample; 7 d: peak (per repo now: the table below)'; v = $br; t = (& $p7 $br); cls = 'ws'; gl = $true },
@@ -788,7 +784,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $tv = { param($v) if ($null -eq $v) { '' } elseif ($v -is [string] -or $v -is [ValueType]) { "$v" } else { $v | ConvertTo-Json -Compress -Depth 4 } }
   # state (· suffix: config) -> words; pinned / frozen / shadow kept (a shadow is a proposal, not applied)
   $tSrc = { param([string]$s, [string]$note, $dflt) if ($s -match '· |config|override|local') { "local config$(if ("$dflt" -ne '') { " (default $dflt)" })" } elseif ($s -match '^(live|approved|learned)') { "learned ($s$(if ($note) { ", $note" }))" } elseif ($s -match '^default') { 'default' } else { "$s$(if ($note) { " ($note)" })" } }
-  $tun = @(@($prm | ForEach-Object { [pscustomobject]@{ key = "$($_.key)"; ctx = $(if ("$($_.ctx)" -in '', '_') { '' } else { "$($_.ctx)" }); val = & $tv $_.value; dflt = & $tv $_.default; src = & $tSrc "$($_.source)" "$($_.learned)" $null; chg = & $hm $_.changed; chgAt = $(try { ([datetime]$_.changed).ToString('o') } catch { '' }); c7 = $(try { [datetime]$_.changed -ge $at.AddDays(-7) } catch { $false }); why = "$($_.why)" } }) +
+  $tun = @(@($prm | ForEach-Object { [pscustomobject]@{ key = "$($_.key)"; ctx = $(if ("$($_.ctx)" -in '', '_') { '' } else { "$($_.ctx)" }); val = & $tv $_.value; dflt = & $tv $_.default; src = & $tSrc "$($_.source)" "$($_.learned)" $null; chg = & $hm $_.changed; chgAt = $(try { ([datetime]$_.changed).ToString('o') } catch { '' }); c7 = $(try { [datetime]$_.changed -ge $at.AddDays(-(Get-KitParam 'supervise.statsDays')) } catch { $false }); why = "$($_.why)" } }) +
     @($setRows | Where-Object { $sk = $_[0]; -not @($prm | Where-Object { "$($_.key)" -eq $sk -and "$($_.ctx)" -in '', '_' }).Count } | ForEach-Object { $sv = $_[1]; $hasSrc = $null -ne $sv -and (Get-KitProps $sv).Name -contains 'source'
       [pscustomobject]@{ key = $_[0]; ctx = ''; val = & $tv $(if ($hasSrc) { $sv.value } else { $sv }); dflt = $(if ($hasSrc) { & $tv $sv.default } else { '' }); src = $(if ($hasSrc) { & $tSrc "$($sv.source)" '' $sv.default } else { '' }); chg = ''; why = '' } }))
   # changed keys (owner 2026-11-20, K100; stats.paramDays): a row per key + scope (short label, full one in the tooltip), the latest change
@@ -799,7 +795,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $pd = @($st.paramDays | Where-Object { $_ -and $_.key -and $null -ne $_.last }); $pdDates = @(6..0 | ForEach-Object { & $dayKey $_ })
   $drift = if ($pd.Count) { Format-KitDayHeat @($pd | ForEach-Object { $pr = $_; $ds = @(for ($i = 0; $i -lt 7; $i++) { @($pr.days)[$i] }); $sc = & $pScope "$($pr.ctx)"
         $full = "$($pr.key)$(if ("$($pr.ctx)" -notin '', '_') { " [$($pr.ctx)]" })"
-        @{ n = "$(($pr.key -split '\.')[-1])$(if ($sc) { " · $sc" })"; title = "$full = $(& $pv $pr.cur) · $($pr.n) change(s) in 7 days, last $(& $hm $pr.last)$(if ($pr.why) { ": $($pr.why)" })"; mk = "param-day-$($pr.key)-$($pr.ctx)"; cls = 'pd'; keep = $true
+        @{ n = "$(($pr.key -split '\.')[-1])$(if ($sc) { " · $sc" })"; id = $true; title = "$full = $(& $pv $pr.cur) · $($pr.n) change(s) in 7 days, last $(& $hm $pr.last)$(if ($pr.why) { ": $($pr.why)" })"; mk = "param-day-$($pr.key)-$($pr.ctx)"; cls = 'pd'; keep = $true
           v = @($ds | ForEach-Object { if ($_) { [int]$_.c } else { $null } }); sh = @($ds | ForEach-Object { if ($_) { 45 } else { 0 } }); t = & $pv $pr.cur
           tx = @($ds | ForEach-Object { if (-not $_) { '' } elseif ($null -eq $_.t -or "$($_.t)" -eq '') { '→default' } elseif ($null -eq $_.f) { "→$(& $pvc $_.t)" } else { "$(& $pvc $_.f)→`u{200B}$(& $pvc $_.t)" } })   # zero-width space: a narrow cell wraps after the arrow, never inside a number
           dd = @($ds | ForEach-Object { if (-not $_) { '' } elseif ($null -eq $_.t -or "$($_.t)" -eq '') { 'rs' } elseif ($_.f -is [ValueType] -and $_.t -is [ValueType] -and $_.f -isnot [bool] -and $_.t -isnot [bool] -and [double]$_.t -ne [double]$_.f) { if ([double]$_.t -gt [double]$_.f) { 'up' } else { 'dn' } } else { 'ch' } })
@@ -828,7 +824,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
       $cols = @('key|22%') + @(if ($hasK) { 'scope|11%' }) + @(if ($hasP) { 'path|auto' }) + @('value|10%', 'default|10%', 'source|10%', "changed · from → to|$(if ($hasP) { '18%' } else { 'auto' })")
       $tbl = "<div class=tw><table class=tkt><colgroup>$(@($cols | ForEach-Object { "<col style='width:$(($_ -split '\|')[1])'>" }) -join '')</colgroup><thead><tr>$(@($cols | ForEach-Object { "<th aria-sort=none><button type=button class=tks>$(& $e ($_ -split '\|')[0])</button></th>" }) -join '')</tr></thead><tbody>$($trs -join '')</tbody></table></div>"
       "<button type=button class='tgb$(if ($g7) { ' c7g' })' id=tg-$gid aria-expanded=false aria-controls=tp-$gid aria-label='$(& $e $gSay)'><span class=tgh><span class=tgn title='$(& $e $g.Name)'>$(& $e $g.Name)</span><small>$($g.Count)</small></span><span class=tgm>$(if ($g7) { "<span class=bdg>$g7 changed</span>" })</span>$gBar</button>" +
-      "<section class='tgp f$(if ($g7) { ' c7g' })' id=tp-$gid data-t=tg-$gid aria-label='$(& $e $g.Name) keys'><div class=tph><b>$(& $e $g.Name)</b><small>$($g.Count) key$(if ($g.Count -ne 1) { 's' })</small>$(if ($g7) { "<span class=bdg>$g7 changed</span>" })<button type=button class=tpx aria-label='Close $(& $e $g.Name)' title='Close (Esc)'>×</button></div>$tbl</section>" })
+      "<section class='tgp f$(if ($g7) { ' c7g' })' id=tp-$gid data-t=tg-$gid aria-label='$(& $e $g.Name) keys'><div class=tph><b>$(& $e (Format-KitLabel $g.Name -Humanize))</b><small>$($g.Count) key$(if ($g.Count -ne 1) { 's' })</small>$(if ($g7) { "<span class=bdg>$g7 changed</span>" })<button type=button class=tpx aria-label='Close $(& $e $g.Name)' title='Close (Esc)'>×</button></div>$tbl</section>" })
   $tgBar = "<div class=tgc><input id=tgq type=search placeholder='Search keys' aria-label='Search settings keys'><button type=button class=tgk data-tga=ch aria-pressed=false>Changed only</button><button type=button class=tgk data-tga=all aria-pressed=false>Expand all</button><button type=button class=tgk data-tga=none>Collapse all</button></div>"
   $tLeg = Format-KitLegend "bar: <i class='lgk pl'></i>learned <i class='lgk ps'></i>shadow <i class='lgk pc'></i>local <i class='lgk pd'></i>default · <span class=bdg>n changed</span> = in 7 days" 'a tile = a key group; its bar = the share of its keys from each source (shadow = proposed, not applied; local = set in config or pinned) · tap a tile or press Enter: its keys open under its row; again or Esc closes · Expand all = every group as a list · tap a table header to sort'
   # owner 2026-11-19: no rendered table; its rows go to the clipboard as TSV
@@ -920,14 +916,14 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   # Trends (owner 2026-11-19): Delivery + Usage + kit health in one day heatmap, its tiles one strip, spend and repos as sub-blocks (adapters/outcomes.ps1)
   $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats -StatsFrom (Get-KitStatsCutoff) } catch { $null } }
   $trends = try { Format-KitDeliveryHtml $oc $UP (Format-KitQaTile $st.qa $at) @(@($hRows) + @($UP.dayRows)) "$($UP.spend)$(Format-KitRepoGrid $st.repos $st.sync)" } catch { "<p class=m>Trends view failed: $(& $e $_.Exception.Message)</p>" }
-  $runsH = try { Format-KitRunsTimeline @($st.usage.runs) $agents @($UP.pages.Keys) $st.usage.at } catch { "<p class=m>Runs view failed: $(& $e $_.Exception.Message)</p>" }
-  if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$($UP.pages[$pk] -replace " data-tip='", " title='")</main></body></html>" } }
+  $runsH = try { Format-KitRunsTimeline @($st.usage.runs) $agents @($UP.pages.Keys) $st.usage.at @($st.usage.agentSteps) } catch { "<p class=m>Runs view failed: $(& $e $_.Exception.Message)</p>" }
+  if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$((ConvertTo-KitLabelCase $UP.pages[$pk]) -replace " data-tip='", " title='")</main></body></html>" } }
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open -extra '<button type=button class=ga data-tg=fl-hist aria-expanded=false>24 h history</button>') +
     (& $section 'runs' 'Runs' "$(if ($UP.nRunning) { "$($UP.nRunning) running · " })$(if ($UP.runsN) { $UP.runsN } else { 'none ended in 7 days' })" "<p class=fclr hidden>Runs: <b></b> <button type=button>Clear</button></p>$runsH" -Open) +   # a Trends day click filters the runs
     (& $section 'machine' 'Machine and resources' '' $machineHtml -Open) + (& $section 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open) +
     (& $section 'internals' 'Kit internals' '' ((& $fold 'trends' 'Trends' '' $trends -Open -cls sub) + $setHtml)) +
     "<p id=nm class=empty hidden>No match.</p><footer>Written by bossy.ps1 supervise each sweep (no model tokens) · data: supervise-report.json · times local (UTC$($at.ToString('zzz')))</footer></main>"
-  "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$head$main<script>$js</script><script>$(Get-KitStatsJs)</script></body></html>"
+  "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$(ConvertTo-KitLabelCase "$head$main")<script>$js</script><script>$(Get-KitStatsJs)</script></body></html>"
 }
 # page CSS: muted sage palette, light / dark (prefers-color-scheme; data-theme overrides)
 function Get-KitSupervisePageCss {
@@ -1096,7 +1092,7 @@ function Invoke-KitReleaseAgent([string[]]$Agent, [string]$Reason = 'agent finis
       # a hold only the leases log still has (its store dropped it without a release row): the idle-holder WATCH read it for 24 h
       # kinds whose stores were checked above and hold nothing of $a (a tab with no puppeteer, a parked slot: still held)
       $kinds = @('env', 'env-layer', 'gpu') + @(if (-not @($tabs | Where-Object agent -eq $a).Count) { 'tab' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -eq $a }).Count) { 'slot' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object agent -eq $a).Count) { 'lane' })
-      if (-not $n) { $lo = @(Get-KitResourceRows (Get-Date).AddHours(-24) | Where-Object { ($_.key -split '\|')[0] -in $kinds -and $_.agents -contains $a })
+      if (-not $n) { $lo = @(Get-KitResourceRows (Get-Date).AddHours(-(Get-KitParam 'supervise.windowHours')) | Where-Object { ($_.key -split '\|')[0] -in $kinds -and $_.agents -contains $a })
         foreach ($x in $lo) { $xk, $xn = $x.key -split '\|', 2; Write-KitLeaseLog release $xk $xn @{ agent = $a } "$Reason (no store held it: log row closed)" }
         if ($lo.Count) { "${a}: $($lo.Count) stale log hold(s) closed: $(@($lo.resource) -join ', ')" } else { "${a}: no lease held" } }
     }
@@ -1170,7 +1166,7 @@ function Invoke-KitCleanupResources {
       ForEach-Object { try { $e = Get-Content $_.FullName -Raw | ConvertFrom-Json; if ($e.kind -match $dm.busyKinds -and (Test-KitPid $e.pid $e.start)) { $e } } catch {} }).Count
     if ($busy) { continue }
     foreach ($d in Get-SysProcs -Name $(if ($dm.process) { "$($dm.process)" } else { '.' }) | Where-Object { $_.CommandLine -match $dm.match }) {
-      if (($now - $d.Created).TotalMinutes -gt 10) { [void]$actions.Add(("stopped idle {0} pid {1} ({2:N1} GB)" -f $(if ($dm.label) { $dm.label } else { $dm.match }), $d.Id, ($d.WorkingSet / 1GB))); $script:freed += [long]$d.WorkingSet; if (-not $DryRun) { Stop-SysProcess $d.Id } }
+      if (($now - $d.Created).TotalMinutes -gt (Get-KitParam 'cleanup.idleDaemonMinutes')) { [void]$actions.Add(("stopped idle {0} pid {1} ({2:N1} GB)" -f $(if ($dm.label) { $dm.label } else { $dm.match }), $d.Id, ($d.WorkingSet / 1GB))); $script:freed += [long]$d.WorkingSet; if (-not $DryRun) { Stop-SysProcess $d.Id } }
     }
   }
 }
@@ -1206,7 +1202,7 @@ function Get-KitSuperviseFlagsScratch([switch]$AutoFix) {
 # resumeFromRunId keeps the folder: its self record re-bound to this session (health, status, recover read its holder)
 function Update-KitSelfHolder([string]$Dir, [string]$RunId, [string]$Script) {
   $c = @{}; $leaf = Split-Path "$Script" -Leaf   # no wfDir (budget -Run never ran): its launch -Self line in that run's folder, by args hash (48 h)
-  $mine = { param($s) if ($s.wfDir) { return (Split-Path "$($s.wfDir)" -Leaf) -eq $RunId }; if ((Split-Path "$($s.script)" -Leaf) -ne $leaf -or -not $s.fnv -or ((Get-Date) - [datetime]$s.at).TotalHours -gt 48) { return $false }
+  $mine = { param($s) if ($s.wfDir) { return (Split-Path "$($s.wfDir)" -Leaf) -eq $RunId }; if ((Split-Path "$($s.script)" -Leaf) -ne $leaf -or -not $s.fnv -or ((Get-Date) - [datetime]$s.at).TotalHours -gt (Get-KitParam 'launch.selfRecordHours')) { return $false }
     if (-not $c.ContainsKey('wd')) { $c.wd = @(Get-KitWorkflowDirs | Where-Object Name -eq $RunId) }; $c.wd.Count -and (Resolve-KitRunId ([pscustomobject]@{ selfFile = $s.file; leaf = $leaf; run = $s.run }) $c.wd -FnvOnly) -eq $RunId }
   foreach ($so in @(Read-KitJsonFiles $Dir 'self-*.json' | Where-Object { -not $_.completed -and (& $mine $_) })) {
     Invoke-KitLocked $so.file { $x = Get-Content -LiteralPath $so.file -Raw | ConvertFrom-Json -AsHashtable; foreach ($kv in (Get-KitHolder).GetEnumerator()) { $x[$kv.Key] = $kv.Value }; $x.Remove('crashed'); $x.rebound = (Get-Date).ToString('o'); Write-KitState $so.file $x }
@@ -1228,7 +1224,7 @@ function Invoke-KitStopLearn($S, [string]$By) {
   if (-not @($jl | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -and -not @($lab.Values | Where-Object { $_ -eq 'learn' }).Count) {
     $skill = if ($S.leaf -like 'buildy*') { 'crafty' } elseif ($S.leaf -like 'testy*') { 'pokey' } else { 'bossy' }
     $cut = { param($t) $t = "$t" -replace '\s+', ' '; $t.Substring(0, [math]::Min(200, $t.Length)) }
-    $since = if ($S.at) { [datetime]$S.at } else { (Get-Date).AddDays(-2) }
+    $since = if ($S.at) { [datetime]$S.at } else { (Get-Date).AddDays(-(Get-KitParam 'launch.learnLookbackDays')) }
     $sig = @(foreach ($r in $res) { $l = $lab[$r.agentId]
         if ($r.result.error) { , @('failure', "$l`: $(& $cut $r.result.error)") }
         if ($r.result.handoff) { , @('friction', "$l handed off at its budget: $(& $cut $r.result.handoff)") }
@@ -1499,7 +1495,7 @@ function Get-KitTaskClaims([string]$Run) {
 # board beat: the HANDOFF line (spend at the handoff point, or one step longer than budget.stepHours)
 function Get-KitHandoffLine($Me, [string]$Session, [string]$Why) { $hb = Join-Path (Get-KitPath briefs -Create) "$(ConvertTo-KitSlug "handoff-$($Me.agent)-$Session").md"; "HANDOFF: $Why`: write a resume brief: crafty.ps1 checkpoint -Agent $($Me.agent)$(if ("$($Me.run)") { " -Run $($Me.run)" }) -Step <last done> -Notes '<one line>' -Brief $hb, commit WIP, board leave -Session $Session -Handoff $hb, return handoff = $hb and stop: a fresh agent continues" }
 function Get-KitStepAgeHandoff($Me, [string]$Session) {
-  $h = [double](Get-KitSetting 'budget.stepHours' 2); if ($h -le 0 -or -not $Me.joined -or $Me.type -eq 'coordinator') { return }   # a coordinator has no steps
+  $h = [double](Get-KitParam 'budget.stepHours'); if ($h -le 0 -or -not $Me.joined -or $Me.type -eq 'coordinator') { return }   # a coordinator has no steps
   $ck = Get-KitCheckpoint $Me.agent "$($Me.run)"; if (-not $ck.updated -or $ck.done) { return }   # agents that checkpoint their steps only
   $from = [datetimeoffset]$Me.joined; if ([datetimeoffset]$ck.updated -gt $from) { $from = [datetimeoffset]$ck.updated }   # the step since the last checkpoint (a resumed agent rejoins: joined)
   $age = ([datetimeoffset](Get-Date) - $from).TotalHours; if ($age -ge $h) { Get-KitHandoffLine $Me $Session ('one step running {0:0.0} h >= budget.stepHours {1}' -f $age, $h) }

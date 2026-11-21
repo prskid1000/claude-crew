@@ -133,10 +133,6 @@ $rt = Read-KitTracking; "mrref:$((@($rt.tasks['t10'].mrs) -join ',') -eq 'web!4'
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
 Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; stalehold: closed = done, 1 read/30 min; nodoc: promoted only with both doc links, the human one alone held; staledoc: a cached no-doc ATTENTION is dropped once the task is promoted; mrref: group/repo!n, URL and repo!n stored once, old duplicates dedupe on read)' @('skip', 'once', 'hold', 'throttle', 'keep', 'stalehold', 'nodoc', 'staledoc', 'mrref') 9
-$lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
-Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
-$sv = pwsh @np $O supervise -Brief -Session me | Out-String
-Expect 'supervise: another session''s fresh lock -> steps aside, lock file kept, its .lock not held' ($sv -match 'steps aside' -and (Get-Content $lkf -Raw) -match 'other' -and -not (Test-FileLockHeld $lkf))
 $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $dp.WaitForExit()
 $gb = Join-Path (TkPath $k board -Create) 'gone-s.json'; Set-JsonFile $gb @{ session = 'gone-s'; agent = 'X9'; run = 'r1'; status = 'working'; beat = (Get-Date).ToString('o'); joined = (Get-Date).ToString('o'); holderPid = $dp.Id }
 $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters')

@@ -168,7 +168,7 @@ function Format-KitDeliveryHtml($S, $UP, [string]$QaTile = '', $More = @(), [str
         $per = @(foreach ($d in $dk) { , @($mrs | Where-Object { (& $repoOf $_.ref) -eq $rn -and "$($_.day)" -eq $d }) }); $tot = [int](@($per | ForEach-Object { @($_).Count }) + 0 | Measure-Object -Sum).Sum
         $bkR = @($S.tasks | Where-Object { $rn -in $_.repos -and $_.backAt } | ForEach-Object { [pscustomobject]@{ d = (& $dayOf $_.backAt); id = $_.id } })
         $lr = & $med @($mrs | Where-Object { (& $repoOf $_.ref) -eq $rn -and $null -ne $_.lead } | ForEach-Object { [double]$_.lead })
-        @{ n = $rn; mk = "mrs-day-$rn"; cls = 'fh l-mr'; t = "$tot"; title = "${rn}: $tot MR(s) merged in $nd days$(if ($null -ne $lr) { " · lead time p50 $(& $n1 $lr) h (open -> merged)" })"
+        @{ n = $rn; id = $true; mk = "mrs-day-$rn"; cls = 'fh l-mr'; t = "$tot"; title = "${rn}: $tot MR(s) merged in $nd days$(if ($null -ne $lr) { " · lead time p50 $(& $n1 $lr) h (open -> merged)" })"
           v = @(for ($i = 0; $i -lt $nd; $i++) { [double]@($per[$i]).Count })
           tips = @(for ($i = 0; $i -lt $nd; $i++) { $m0 = @($per[$i]); $lt = & $med @($m0 | Where-Object { $null -ne $_.lead } | ForEach-Object { [double]$_.lead }); $b0 = @($bkR | Where-Object d -eq $dk[$i] | ForEach-Object id)
             "$($m0.Count) MR(s) merged$(if ($m0.Count) { ": $(& $idList @($m0 | ForEach-Object ref))" })$(if ($null -ne $lt) { " · lead time p50 $(& $n1 $lt) h" })$(if ($b0.Count) { " · came back: $(& $idList $b0)" })" }) } })

@@ -26,10 +26,14 @@ function Get-KitActivePause($Run) { }
 "tick:$((Invoke-KitOsBeatTick) -eq 'ok: 2 ACT · 1 WATCH' -and $script:kx -match 'supervise -Session os-timer -AutoFix -Brief$' -and (Read-KitOsBeat).lastTick)"
 # 5-min tick, beat 20: a session swept at 0; ticks at 4, 9, 14, 19 min step aside in-process (no child), 24 sweeps
 $lkT = Join-Path (Get-KitPath cache -Create) 'supervise.lock'; Write-KitAtomic (Get-KitPath supervise-state -Create) (@{ nextBeat = 20; report = @{ at = (Get-Date).ToString('o') } } | ConvertTo-Json)
-$tickRun = foreach ($tickAge in 4, 9, 14, 19, 24) { $script:kx = ''; Write-KitAtomic $lkT (@{ session = 'coord-a'; at = (Get-Date).AddMinutes(-$tickAge).ToString('o') } | ConvertTo-Json); $tr = Invoke-KitOsBeatTick; "$tickAge=$(if ($script:kx) { 'sweep' } elseif ($tr -like 'stepped aside: last sweep*') { 'aside' } else { $tr })" }
+$tickRun = foreach ($tickAge in 4, 9, 14, 19, 24) { $script:kx = ''; Write-KitAtomic $lkT (@{ session = 'coord-a'; at = (Get-Date).AddMinutes(-$tickAge).ToString('o') } | ConvertTo-Json); Write-KitAtomic (Get-KitPath supervise-state) (@{ nextBeat = 20; report = @{ at = (Get-Date).AddMinutes(-$tickAge).ToString('o') } } | ConvertTo-Json); $tr = Invoke-KitOsBeatTick; "$tickAge=$(if ($script:kx) { 'sweep' } elseif ($tr -like 'stepped aside: last sweep*') { 'aside' } else { $tr })" }
 "tick5:$(($tickRun -join ' ') -eq '4=aside 9=aside 14=aside 19=aside 24=sweep')"
 # its own sweep counts: an OS sweep 5 min ago is never repeated at the next tick
-Write-KitAtomic $lkT (@{ session = 'os-timer'; at = (Get-Date).AddMinutes(-5).ToString('o') } | ConvertTo-Json); $script:kx = ''; $null = Invoke-KitOsBeatTick; "tickown:$(-not $script:kx)"
+Write-KitAtomic $lkT (@{ session = 'os-timer'; at = (Get-Date).AddMinutes(-5).ToString('o') } | ConvertTo-Json); Write-KitAtomic (Get-KitPath supervise-state) (@{ nextBeat = 20; report = @{ at = (Get-Date).AddMinutes(-5).ToString('o') } } | ConvertTo-Json); $script:kx = ''; $null = Invoke-KitOsBeatTick; "tickown:$(-not $script:kx)"
+# a sweep that died after stamping the lock (its pid gone, no newer report): never counts, the tick sweeps
+Write-KitAtomic $lkT (@{ session = 'coord-a'; at = (Get-Date).ToString('o'); pid = 999999 } | ConvertTo-Json); Write-KitAtomic (Get-KitPath supervise-state) (@{ nextBeat = 20; report = @{ at = (Get-Date).AddMinutes(-25).ToString('o') } } | ConvertTo-Json); $script:kx = ''; $null = Invoke-KitOsBeatTick; "tickdead:$([bool]$script:kx)"
+# a sweep still running (its pid alive, started before the lock): counts
+Write-KitAtomic $lkT (@{ session = 'coord-a'; at = (Get-Date).ToString('o'); pid = $PID } | ConvertTo-Json); $script:kx = ''; $null = Invoke-KitOsBeatTick; "ticklive:$(-not $script:kx)"
 # the header's next sweep: last tick 1 min ago, every 5 min, last sweep 6 min ago -> the tick at +14 min (first one 19.5 min after the sweep)
 $nowT = Get-Date; $osB = Read-KitOsBeat; $osB.installed = $true; $osB.minutes = 5; $osB.lastTick = $nowT.AddMinutes(-1).ToString('o'); Write-KitState (Get-KitOsBeatFile) $osB
 "nextsweep:$([int]((Get-KitOsBeatNextSweep $nowT.AddMinutes(-6) $nowT) - $nowT).TotalMinutes -eq 14 -and -not (Get-KitOsBeatNextSweep $nowT.AddMinutes(-6) $nowT.AddMinutes(30)))"
@@ -44,7 +48,7 @@ function Get-KitActivePause($Run) { [pscustomobject]@{ reason = 'power off' } };
 $__cfg = [pscustomobject]@{ supervise = [pscustomobject]@{ osTimer = $false } }; Remove-Item (Get-KitOsBeatFile)
 "false:$((Get-KitOsBeatAdapter) -eq 'none' -and -not (Get-KitOsBeatHealth))"
 '@ @($O)
-Expect-Each $ob 'os-timer: # (off: the install line; inst; schema: updated + schemaVersion; fresh: quiet; stale; gone: reinstalled; removed: quiet; tick: supervise as os-timer; tick5: 5-min ticks sweep only a beat after the last; tickown; nextsweep; regate; regatefail; paused: skipped; false: adapter none, quiet)' 'off', 'inst', 'schema', 'fresh', 'stale', 'gone', 'removed', 'tick', 'tick5', 'tickown', 'nextsweep', 'regate', 'regatefail', 'paused', 'false'
+Expect-Each $ob 'os-timer: # (off: the install line; inst; schema: updated + schemaVersion; fresh: quiet; stale; gone: reinstalled; removed: quiet; tick: supervise as os-timer; tick5: 5-min ticks sweep only a beat after the last; tickown; tickdead: a dead sweep''s lock never counts; ticklive: a running sweep counts; nextsweep; regate; regatefail; paused: skipped; false: adapter none, quiet)' 'off', 'inst', 'schema', 'fresh', 'stale', 'gone', 'removed', 'tick', 'tick5', 'tickown', 'tickdead', 'ticklive', 'nextsweep', 'regate', 'regatefail', 'paused', 'false'
 # cron + launchd: the exact command lines (Invoke-KitSchedCmd replaced: nothing is scheduled on this machine)
 $cl = Invoke-PsTest os-beat-cron @'
 . $args[0]; $script:tab = "MAILTO=x`n5 * * * * other # keep"; $script:calls = @()
@@ -77,11 +81,15 @@ Expect-Each $cl 'os-timer: cron + launchd # (cronline: one tagged line, other li
 # half a beat and still stamps coordAt (health OVERDUE); [holder, minutes ago, caller, steps aside]
 $lk = Join-Path (TkPath $k cache -Create) 'supervise.lock'; $sf = TkPath $k supervise-state -Create
 $asideBad = @(foreach ($ac in @(@('os-timer', 3, 'coord-a', 1), @('os-timer', 6, 'coord-a', 0), @('coord-a', 7, 'os-timer', 1), @('coord-a', 9, 'os-timer', 1), @('os-timer', 4, 'os-timer', 1), @('coord-a', 10, 'os-timer', 0))) {
-  & $J @{ nextBeat = 10; report = @{ at = (Get-Date).ToString('o') }; coordAt = (Get-Date).AddHours(-1).ToString('o') } $sf
+  & $J @{ nextBeat = 10; report = @{ at = (Get-Date).AddMinutes(-$ac[1]).ToString('o') }; coordAt = (Get-Date).AddHours(-1).ToString('o') } $sf
   & $J @{ session = $ac[0]; at = (Get-Date).AddMinutes(-$ac[1]).ToString('o'); pid = 1 } $lk
   $asideOut = Px $O supervise -Session $ac[2] | Out-String; $stamped = ((Get-Date) - [datetime](Get-Content $sf -Raw | ConvertFrom-Json).coordAt).TotalMinutes -lt 5
   if ([int]($asideOut -match 'steps aside') -ne $ac[3] -or $stamped -ne ($ac[2] -eq 'coord-a')) { "$($ac[2]) vs $($ac[0]) $($ac[1]) min (coordAt fresh: $stamped)" } })
 Expect "os-timer: the timer steps aside for any sweep under a beat, a session under half a beat and stamps coordAt ($asideBad)" (-not $asideBad.Count)
+# a dead sweep (fresh lock, its pid gone, the last report 2 beats old): a session sweeps, no coordAt stamp hides OVERDUE
+& $J @{ nextBeat = 10; report = @{ at = (Get-Date).AddMinutes(-20).ToString('o') }; coordAt = (Get-Date).AddHours(-1).ToString('o') } $sf; & $J @{ session = 'os-timer'; at = (Get-Date).ToString('o'); pid = 999999 } $lk
+$deadOut = Px $O supervise -Session coord-a | Out-String
+Expect "supervise: a dead sweep's fresh lock never makes a session step aside" ($deadOut -notmatch 'steps aside' -and (Get-Content $lk -Raw) -match 'coord-a')
 # K102 regression: no supervise.lock yet (fresh install) sweeps, never "Cannot convert null to type System.DateTime"
 Remove-Item -LiteralPath $lk -Force; $noLock = Px $O supervise -Session coord-a | Out-String
 Expect "supervise: a first sweep without supervise.lock runs and writes the lock ($($noLock -match 'FAILED' -as [bool]))" ($noLock -notmatch 'Supervise FAILED' -and (Test-Path -LiteralPath $lk))
@@ -93,5 +101,10 @@ Expect "os-timer: heartbeat tick while paused = skipped; heartbeat status of a n
 $nxh = & { . $O; $n = [datetime]'2026-01-02T18:49:00'; $hs = @(foreach ($on in @($n.AddMinutes(24).ToString('o'), $null)) { Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); next = '12 min'; osNext = $on }) })
   @($hs | ForEach-Object { if ($_ -match "data-next='(\d+)'.*id=nx [^>]*data-due='([^']+)' data-dn='([^']+)'[^>]*data-tail='([^']*)'") { "$($Matches[1]) $($Matches[2]) $($Matches[3])$($Matches[4])" } }) -join '|' }
 Expect "supervise page: next = the OS timer's sweep, else the session NEXT; staleness stays on NEXT ($nxh)" ($nxh -eq '12 19:13 24 &#183; OS timer|12 19:01 12')
+# (moved from bossy.tests.ps1: its cap)
+$lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
+Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }; Set-JsonFile (TkPath $k supervise-state -Create) @{ report = @{ at = (Get-Date).ToString('o') } }   # its sweep ended just now
+$sv = pwsh @np $O supervise -Brief -Session me | Out-String
+Expect 'supervise: another session''s fresh lock -> steps aside, lock file kept, its .lock not held' ($sv -match 'steps aside' -and (Get-Content $lkf -Raw) -match 'other' -and -not (Test-FileLockHeld $lkf))
 Remove-TestKit $k
 Complete-Tests

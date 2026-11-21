@@ -82,7 +82,6 @@ function Get-KitOsBeatFile { Join-Path (Get-KitPath programs -Create) 'os-timer.
 function Read-KitOsBeat { $s = try { Read-KitText (Get-KitOsBeatFile) | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -is [hashtable]) { $s } else { @{} } }
 # the tick sweeps once the last sweep (any session, its own too) is a beat old; 0.5 min = its own start-up before it stamps the lock
 function Get-KitOsBeatAsideMinutes { [math]::Max(1.0, (Get-KitBeatMinutes) - 0.5) }
-function Get-KitLastSweepAt { $h = try { Read-KitText (Join-Path (Get-KitPath cache -Create) 'supervise.lock') | ConvertFrom-Json -AsHashtable } catch { $null }; if ($h.at) { [datetime]$h.at } }
 # when the OS timer sweeps next: its first tick (lastTick + k x minutes) at least a beat after $At; $null when it is off or not ticking
 function Get-KitOsBeatNextSweep([datetime]$At, [datetime]$Now = (Get-Date)) {
   $s = Read-KitOsBeat; if (-not $s.installed -or -not $s.lastTick -or -not ([double]$s.minutes -gt 0)) { return $null }

@@ -6,7 +6,7 @@
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
-  $fm = [double](Get-KitSetting 'supervise.finishedMinutes' 30)
+  $fm = [double](Get-KitParam 'supervise.finishedMinutes')
   @($Rows | Where-Object { $_.state -ne 'FINISHED' -or -not $_.ended -or ($Now - [datetime]$_.ended).TotalMinutes -le $fm })
 }
 function Format-KitReport($d) {
