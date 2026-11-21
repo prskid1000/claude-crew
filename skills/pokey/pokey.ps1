@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L159 seat · L233 api · L467 users · L598 finalize · L1113 results · L1146 retest ·
-  L1203 prepare
+Sections: L29 lanes · L43 report · L159 seat · L233 api · L473 users · L604 finalize · L1119 results · L1152 retest ·
+  L1209 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -355,6 +355,12 @@ if (-not (Get-KitMember $t.users $As) -and $kind -ne 'none') {   # not @(...).Co
   $nu = "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $((Get-KitProps $t.users).Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"
   if ($script:ApiNoExit) { throw $nu }; $nu; exit 2 }   # user create: in-process, an exit would drop the text
 if (-not $PSBoundParameters['Tenant'] -and ($ut = [string](Get-KitMember (Get-KitMember $t.created $As) 'tenant'))) { $Tenant = $ut }   # pokey.ps1 user create kept the login's tenant
+# userAuth.<user>: that login's own auth fields over auth (a super admin's endpoint); its tenant unless -Tenant
+if (($ua = Get-KitMember $t.userAuth $As)) {
+  $ao = [ordered]@{}; foreach ($p in (Get-KitProps $a)) { $ao[$p.Name] = $p.Value }; foreach ($p in (Get-KitProps $ua)) { if ($p.Name -ne 'tenant' -and $null -ne $p.Value) { $ao[$p.Name] = $p.Value } }
+  $a = Resolve-ApiAuth ([pscustomobject]$ao); $kind = "$($a.type)"; if (-not $kind) { $kind = 'login' }
+  if (-not $PSBoundParameters['Tenant'] -and "$($ua.tenant)") { $Tenant = [string]$ua.tenant }
+}
 $ext = Get-Command 'Get-ApiAuthHeaders' -ErrorAction SilentlyContinue   # adapters/api_auth.ps1: basic, cookie, command
 $core = 'login', 'none', 'token', 'query'
 if ($kind -notin $core -and -not ($ext -and $kind -in 'basic', 'cookie', 'command')) {

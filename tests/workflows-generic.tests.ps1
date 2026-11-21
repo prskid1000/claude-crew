@@ -23,21 +23,36 @@ console.log(`deploy-slow:${/\(tool timeout 600000\)/.test(seen[0])}`)
 Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: # (slow: the plan ran past a 120 s tool timeout, 2026-11-21)' 'deploy-skip', 'deploy-batch', 'deploy-slow' -Show 5
 # buildy: localTest NONE never merges a code area (an MR merged without one, 2026-11-21) unless the owner allowed it (decisionId); kind doc needs no loop
 $jsn0 = @'
-const none = (extra = {}) => ({ status: 'NONE', env: 'none: no local env', rounds: 0, failing: [], goalsDoc: '', ...extra })
+const none = (extra = {}) => ({ status: 'NONE', env: 'none: no local env', rounds: 0, failing: [], goalsDoc: '', ...extra }), logs = []
 const { calls, agent } = _mock((p, o) => {
  if (o.label === 'build:N3') return _rep(none({ decisionId: 'd-20261121120000-owner-ab12' }))
  if (o.label === 'build:N4') return _rep(none({ decisionId: 'ok' }))
+ if (o.label === 'build:N5') return _rep(none({ decisionId: 'd-20261121120000-owner-cd34' }))
+ if (o.label === 'none-word:N3') return _ok('WORD d-20261121120000-owner-ab12 (merge A3): "ship it" by owner via chat at t | question: q')
+ if (o.label === 'none-word:N5') return { ok: false, output: 'NO-WORD id d-20261121120000-owner-cd34: d-20261121120000-owner-cd34 answered by devy-x, no person' }
  if (/^build:/.test(o.label)) return _rep(none())
  if (/^review:/.test(o.label)) return { findings: [] }
  if (/^ship:/.test(o.label)) return _rep(none(), _merged(1))
 }, '[]')
-const o = await run({ brief: 'C:/b/w.md', mandate: ['m'], ..._kl, agents: [{ id: 'N1', items: 'A1' }, { id: 'N2', items: 'A2', kind: 'doc' }, { id: 'N3', items: 'A3' }, { id: 'N4', items: 'A4' }] }, agent, _n, _n, pipeline)
+const o = await run({ brief: 'C:/b/w.md', mandate: ['m'], ..._kl, agents: [{ id: 'N1', items: 'A1' }, { id: 'N2', items: 'A2', kind: 'doc' }, { id: 'N3', items: 'A3' }, { id: 'N4', items: 'A4' }, { id: 'N5', items: 'A5' }] }, agent, (m) => logs.push(m), _n, pipeline)
 const L = calls.map((c) => c.label)
+console.log(`none-verified:${L.includes('none-word:N5') && !L.includes('ship:N5') && calls.find((c) => c.label === 'none-word:N3').prompt.includes("decide check -Id d-20261121120000-owner-ab12 -Gate 'merge,scope,other' -Item 'N3,A3,api!1")
+ && logs.some((l) => /N5: .*refused \(NO-WORD/.test(l))}`)
 console.log(`none-held:${!L.includes('review:N1') && !L.includes('ship:N1') && o.blocked.some((b) => b.agent === 'N1' && /local test NONE/.test(b.why))}`)
 console.log(`none-doc:${L.includes('ship:N2')}`)
 console.log(`none-decided:${L.includes('ship:N3') && !L.includes('ship:N4')}`)
 '@
-Expect-Each (Invoke-Js dw-none $jsn0 $wfd) 'buildy merge gate: localTest NONE # (a code area held, kind doc and an owner decide id ship, a made-up id not)' 'none-held', 'none-doc', 'none-decided' -Show 8
+Expect-Each (Invoke-Js dw-none $jsn0 $wfd) 'buildy merge gate: localTest NONE # (a code area held, kind doc and a person''s merge word ship; a made-up id or a NO-WORD from decide check -Gate merge,scope,other -Item <area keys> not, 2026-11-21)' 'none-held', 'none-doc', 'none-decided', 'none-verified' -Show 8
+# buildy kind foundation (no human-facing change): no human doc asked, merge passes the docs gate with --no-docs, the report says exempt (2026-11-21: 5 consumer areas never started)
+$jsfd = @'
+const pass = { status: 'PASS', failing: [] }, logs = []
+const { calls, agent } = _mock((p, o) => /^build:/.test(o.label) ? _rep(pass) : /^ship:/.test(o.label) ? _rep(pass, _merged(1)) : /^review:/.test(o.label) ? { findings: [] } : undefined, '[]')
+const o = await run({ brief: 'C:/b/w.md', mandate: ['m'], ..._kl, agents: [{ id: 'F1', items: 'A1', kind: 'foundation' }, { id: 'F2', items: 'A2' }] }, agent, (m) => logs.push(m), _n, pipeline)
+const P = (l) => (calls.find((c) => c.label === l) || {}).prompt || ''
+console.log(`fd-ship:${/merge <wt> <iid> --no-docs 'foundation F1'/.test(P('ship:F1')) && !/--no-docs/.test(P('ship:F2')) && /kind: foundation\)/.test(P('build:F1'))}`)
+console.log(`fd-report:${o.testerGuides.some((g) => g.agent === 'F1' && g.docsExempt && /^exempt: foundation/.test(g.guide)) && o.testerGuides.some((g) => g.agent === 'F2' && !g.docsExempt) && logs.some((l) => /^F1: exempt: foundation/.test(l))}`)
+'@
+Expect-Each (Invoke-Js dw-foundation $jsfd $wfd) 'buildy kind foundation: # (no human doc, merge --no-docs, exempt in the report)' 'fd-ship', 'fd-report' -Show 6
 # generic: no CONFIG roles = independent repos, no merge order; repos[].role (any name, GitHub URLs) orders them; models.<phase> win
 $jsg = @'
 const mr = (r) => ({ url: `https://github.com/o/${r}/pull/4`, repo: '', merged: false }), lt = { status: 'PASS' }

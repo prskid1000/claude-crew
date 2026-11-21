@@ -1,5 +1,5 @@
 // ui_checks.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
-// ui_checks.mjs: layout faults and contrast for any web UI, selector-free; browser.mjs re-exports both.
+// ui_checks.mjs: layout faults and contrast for any web UI, selector-free, and the qa.matrix loop; browser.mjs re-exports them.
 //   const b = await import('file:///<kit>/skills/pokey/browser.mjs'); await b.layoutIssues(s.page); await b.contrast(s.page, '.icon')
 
 // controls another element covers (hit test at the centre of the first line box), text boxes overlapping, text cut by an overflow
@@ -59,4 +59,21 @@ export async function contrast(page, selector, { min = null } = {}) {
   })
   const m = min ?? (r.text ? 4.5 : 3)
   return { ...r, min: m, pass: r.ratio != null && r.ratio >= m }
+}
+
+// browser.mjs matrix(): fn per qa.matrix variant (m = qa.matrix), the viewport restored after
+export async function matrix(s, fn, m) {
+  const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()
+  try {
+    for (const viewport of ax('viewports')) for (const fontScale of ax('fontScales')) for (const theme of ax('themes')) {
+      if (viewport) {
+        const [width, height] = String(viewport).split('x').map(Number)
+        if (!(width > 0 && height > 0)) throw new Error(`qa.matrix.viewports "${viewport}" is not <width>x<height>, e.g. 1280x720: fix kit.local.json`)
+        await s.page.setViewport({ ...(v0 || {}), width, height })   // keeps scale factor / mobile / touch
+      }
+      const tag = [viewport, fontScale != null && 'f' + fontScale, theme].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9.]+/g, '-')).join('_')
+      out.push({ variant: tag, result: await fn({ viewport, fontScale, theme, tag }) })
+    }
+  } finally { if (v0) await s.page.setViewport(v0) }
+  return out
 }

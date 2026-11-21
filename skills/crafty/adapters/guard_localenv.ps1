@@ -66,5 +66,15 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
 # ---- secrets: test logins (owner 2026-11-19: QA agents printed passwords): no command reads targets.local.json; a grep of the bare name is a pattern
 Register-KitAdapter 'guard' 'secrets' @{ check = { param($a)
   $secRead = '(?i)(^|[\s;|&(`])(cat|type|more|less|head|tail|sed|awk|jq|bat|strings|xxd|od|base64|cp|copy|Copy-Item|cpi|Get-Content|gc|Import-Csv|scp|curl)(\.exe)?\s|open\(|readFile|ReadAll(Text|Lines|Bytes)|json\.load'
-  if (@("$($a.raw)" -split '[;&|\r\n]+' | Where-Object { $_ -match '(?i)targets\.local\.json' -and ($_ -match $secRead -or ($_ -match '(?i)\b(grep|egrep|rg|findstr|Select-String|sls)\b' -and $_ -match '(?i)[\/]targets\.local\.json')) }).Count) {
+  # a commit message is text, not a read (2026-11-21: a message quoting the file name was denied); $( ) or ` in it still runs
+  $secCmd = "$($a.raw)"
+  if ($secCmd -match '(?i)\bcommit\b') {
+    $secCmd = $secCmd -replace '(?i)(-m|--message|-Message)(=|\s*)"\$\(cat\s+<<-?\s*''(\w+)''\r?\n[\s\S]*?\r?\n\s*\3\s*\r?\n?\s*\)"', '$1 MSG' `
+      -replace '(?i)(-F|--file)(=|\s+)-\s+<<-?\s*''(\w+)''\r?\n[\s\S]*?\r?\n\s*\3(?=\s*(\r?\n|$))', '$1 - MSG' `
+      -replace '(?i)(-m|--message|-Message)\s+@''\r?\n[\s\S]*?\r?\n''@', '$1 MSG' `
+      -replace '(?i)(-m|--message|-Message)(=|\s+)''[^'']*''', '$1 MSG' `
+      -replace '(?i)(-m|--message|-Message)(=|\s+)"[^"$`\\]*"', '$1 MSG'
+    # no escapes inside: '' (pwsh) or \" (bash) means another quote in the other shell; unstripped text is checked (a safe deny)
+  }
+  if (@($secCmd -split '[;&|\r\n]+' | Where-Object { $_ -match '(?i)targets\.local\.json' -and ($_ -match $secRead -or ($_ -match '(?i)\b(grep|egrep|rg|findstr|Select-String|sls)\b' -and $_ -match '(?i)[\/]targets\.local\.json')) }).Count) {
     'kit guard: skills/pokey/targets.local.json holds test logins: never read or print it. Instead: names + tenants: pokey.ps1 user list -Target <t> · a call: pokey.ps1 api -Target <t> -As <login> -Method GET -Path ''/...'' · a browser: session({ target, as }) · an app: pokey.ps1 ui login -Target <t> -As <login> · none fits: pokey.ps1 user create -Target <t> -Name <login> -Role <role> · keys: kitbag.py audit config' } } }

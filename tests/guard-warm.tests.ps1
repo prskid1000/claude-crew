@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 guard-warm.tests.ps1: the warm PreToolUse guard (guard_client.mjs + guard_server.ps1, K48): the same answers as crafty.ps1 guard,
-a fast call once the server runs, a caller's env per call, a kit file change ends the server (the next call is plain again).
+a fast call once the server runs, a caller's env per call, a kit file change ends the server (the next call is plain again);
+the plain guard's secrets and kit-evidence rules.
 Usage: pwsh -NoProfile -File <kit>/tests/guard-warm.tests.ps1 (or tests/kit-tests.ps1 -Area guard-warm). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit)
@@ -9,6 +10,21 @@ param([string]$Kit)
 $TestKitFiles = @('skills/crafty/guard_client.mjs', 'skills/crafty/guard_server.ps1')
 $k = New-TestKit gwarm; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $gc = Join-Path $k 'skills/crafty/guard_client.mjs'
 $kw = (Resolve-Path -LiteralPath $k).Path.TrimEnd('\', '/'); $mine = { @($(if ($IsWindows) { Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' AND CommandLine LIKE '%guard[_]server%'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; CommandLine = $_.CommandLine } } } else { Get-Process pwsh -ErrorAction SilentlyContinue }) | Where-Object { "$($_.CommandLine)".Contains("$kw$([IO.Path]::DirectorySeparatorChar)skills") -and "$($_.CommandLine)" -like '*guard_server*' }) }   # this kit's servers only
+# plain guard rules (moved from guard.tests.ps1: file cap)
+# test logins (owner 2026-11-19): a command reading targets.local.json is denied; a grep of the bare name, check-ignore or ls pass
+$sec = foreach ($c in @(@('cat', 'cat skills/pokey/targets.local.json'), @('gc', 'Get-Content D:\k\skills\pokey\targets.local.json | ConvertFrom-Json'), @('py', "python -c `"print(open('skills/pokey/targets.local.json').read())`""),
+    @('sls', 'Select-String pass D:/k/skills/pokey/targets.local.json'), @('pattern', 'grep -n targets.local.json README.md; git check-ignore -q skills/pokey/targets.local.json; ls skills/pokey/targets.local.json'),
+    @('msg', "git commit -m `"fix: never cat targets.local.json; copy names only`""), @('msgq', "git -C x commit -m 'docs: cp targets.local.json is denied'"),
+    @('msgdoc', "git commit -m `"`$(cat <<'EOF'`nfix: a guard read of targets.local.json (copy)`nEOF`n)`""), @('wtmsg', "pwsh -File crafty.ps1 wt commit -Message 'cat targets.local.json no more'"),
+    @('chain', "git commit -m 'x' && cat skills/pokey/targets.local.json"), @('subst', "git commit -m `"`$(cat skills/pokey/targets.local.json)`""),
+    @('bsq', "git commit -m `"a\`" ; cat skills/pokey/targets.local.json ; echo `"b`""), @('sqq', "git commit -m 'x'' ; cat skills/pokey/targets.local.json ; echo ''y'"))) {
+  "$($c[0]):$((& $D guard -Json (@{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress)) -join '' -match 'holds test logins.+user list -Target')" }
+Expect "guard secrets: reads of targets.local.json denied (also chained after a commit or run inside its message), a name in a pattern or commit message text passes ($($sec -join ' '))" (($sec -join ' ') -eq 'cat:True gc:True py:True sls:True pattern:False msg:False msgq:False msgdoc:False wtmsg:False chain:True subst:True bsq:True sqq:True')
+# tester evidence inside the kit's skills/ (2026-11-21: skills/shots/) is denied; the run's output folder passes
+$ev = foreach ($c in @(@('write', 'Write', @{ file_path = "$k/skills/shots/F1-T1_01_x.jpeg"; content = 'x' }), @('bash', 'Bash', @{ command = "mkdir -p $k/skills/pokey/evidence/run" }),
+    @('run', 'Write', @{ file_path = "$k/notes/F1/shots/F1-T1_01_x.jpeg"; content = 'x' }))) {
+  "$($c[0]):$((& $D guard -Json (@{ tool_name = $c[1]; cwd = $k; tool_input = $c[2] } | ConvertTo-Json -Compress)) -join '' -match 'tester evidence inside the kit')" }
+Expect "guard: evidence writes into <kit>/skills/**/shots|evidence denied, the run folder passes ($($ev -join ' '))" (($ev -join ' ') -eq 'write:True bash:True run:False')
 $ins = @('git stash', 'git status --short', 'echo hi') | ForEach-Object { @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $_ } } | ConvertTo-Json -Compress -Depth 4 }
 # the decision and its reason (key order differs per process)
 $nz = { param($s) if ("$s".Trim()) { $h = ("$s" | ConvertFrom-Json).hookSpecificOutput; "$($h.permissionDecision)|$($h.permissionDecisionReason)|$($h.additionalContext)" } else { '' } }

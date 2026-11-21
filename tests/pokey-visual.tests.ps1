@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/pokey-visual.tests.ps1: pokey's visual helpers on one test kit: annotate draws a labelled box into a copy; ui_checks.mjs
-layoutIssues / contrast in a real headless Chrome; browser.mjs logins (totp, sso-steps over Playwright, shared cookie, the firefox hint).
+layoutIssues / contrast in a real headless Chrome; browser.mjs logins (totp, sso-steps over Playwright, shared cookie, the firefox hint), evidence paths.
 Usage: pwsh -NoProfile -File tests/pokey-visual.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
@@ -19,6 +19,12 @@ if ($IsWindows) {
 } else { 'SKIP annotate (Windows only)' }
 # ---- ui-checks
 if ($bk) {
+  # 2026-11-21: a relative shots/ path from a kit folder wrote <kit>/skills/shots
+  $res = NodeT evpath ("const { join } = await import('node:path'), t = (f) => { try { return m.checkName(f) } catch (e) { return /inside the kit/.test(e.message) ? 'refused' : e.message } }, rt = m.kitPath('runtime', { create: true })`n" +
+    "process.chdir(join(m.KIT, 'skills')); const a = t('shots/F1-T1_01_x.jpeg'); process.chdir(rt); const b = t('qa/F1/shots/F1-T1_01_x.jpeg')`n" +
+    "const c = t(rt + '-x/F1-T1_01_x.jpeg'), d = t(rt.toUpperCase() + '/F1-T1_01_x.jpeg')`n" +
+    "console.log(a, b === join(rt, 'qa/F1/shots/F1-T1_01_x.jpeg'), c, process.platform === 'win32' ? d !== 'refused' : true)")
+  Expect "browser.mjs evidence: a relative path inside the kit or a runtime sibling is refused; the runtime folder (any case) gets an absolute path ($res)" ("$res" -eq 'refused true refused true')
   New-Item -ItemType Directory -Force "$qk/adapters" | Out-Null; Copy-Item (Join-Path $src 'skills/pokey/adapters/ui_checks.mjs') "$qk/adapters"
   $res = NodeT ui @'
 import { createRequire } from 'node:module'

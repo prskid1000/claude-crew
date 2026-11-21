@@ -89,6 +89,11 @@ $sbA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Option
 $sbR = pwsh @np $O decide answer -Id $sbId -Answer 'B' | Out-String
 $byC = pwsh @np $O decide record -Gate scope -Item f/CU-1-x -Question q -Answer yes -Source chat -By coordinator 2>&1 | Out-String
 Expect "decide answer: a scope ask's record pick records gate scope on the branch (check WORD, wait names it); a split pick records none; record -By coordinator says omit -By ($scW)" ($scW -and $scC -match '^WORD ' -and $scWt -match "scope word: wt commit -ScopeOk $scW" -and $sbR -match 'no scope word' -and $sbR -notmatch 'SCOPE RECORDED' -and $byC -match 'omit -By')
+# buildy NONE word: -Gate a,b = the record's gate is one of them; -Item a,b = any of them, or the record's MR (2026-11-21: only the id's shape was checked)
+$lg = @(@('merge,scope,other', 'X9,f/CU-1-x'), @('merge,other', 'f/CU-1-x'), @('merge,scope,other', 'X9,Y8')) | ForEach-Object { "$(pwsh @np $O decide check -Id $scW -Gate $_[0] -Item $_[1])"[0..1] -join '' }
+$lmId = if ((pwsh @np $O decide record -Gate merge -Item t9 -Mrs 'api!7' -Question q -Answer yes -Source chat | Out-String) -match 'RECORDED (\S+)') { $Matches[1] }
+$lm = @('N1,api!7', 'api!7') | ForEach-Object { pwsh @np $O decide check -Id $lmId -Gate 'merge,scope,other' -Item $_ | Out-String }
+Expect "decide check lists: gate one of -Gate, item any of -Item or the record's MR ($($lg -join ' '))" ("$lg" -eq 'WO NO NO' -and @($lm -match '^WORD ').Count -eq 2)
 # standing rules: one ask, the owner's A, auto-answers (never deploy), a gate check refuses it, revoke
 $po = pwsh @np $O decide rules -Propose | Out-String
 $askId = if ($po -match 'ask (d-\S+)') { $Matches[1] }

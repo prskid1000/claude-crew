@@ -39,6 +39,8 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
   const j = (o, st = 200) => { s.writeHead(st, { 'content-type': 'application/json' }); s.end(JSON.stringify(o)) }, u = q.url
   fs.appendFileSync(log, JSON.stringify({ m: q.method, u, b }) + '\n')
   if (u === '/login') return j({ access_token: 'T-' + JSON.parse(b).t })
+  if (u === '/admin/auth') return JSON.parse(b).t === 'adm' ? j({ sa_token: 'S-1' }) : j({ error: 'wrong tenant' }, 401)
+  if (u === '/me' && q.headers.authorization === 'Bearer S-1') return j({ superAdmin: true })
   if (u.startsWith('/emp?login=')) return j(Object.values(emps).filter((e) => e.user.login === decodeURIComponent(u.slice(11))))
   if (u === '/emp' && q.method === 'POST' && /qa-bad/.test(b)) return j({ error: 'rejected ' + b }, 400)
   if (u === '/emp' && q.method === 'POST') { const x = JSON.parse(b); emps[x.login] = { id: 7, user: { login: x.login }, active: true }; return j({ id: 7 }, 201) }
@@ -70,6 +72,11 @@ Expect "user create refused: exit 1, HTTP 400 with the password [redacted], no u
 $ud1 = Px $Q user deactivate -Target tu -Name qa-drv -As admin 2>&1 | Out-String; $uPut = @(Get-Content $usLog | ConvertFrom-Json | Where-Object { $_.m -eq 'PUT' })[0].b | ConvertFrom-Json
 $uRow2 = (Get-Content $tjf -Raw | ConvertFrom-Json).targets.tu
 Expect "user deactivate: steps reuse the saved id (GET /emp/7, PUT from it + set), login removed from users, created.<login>.deactivated set" ($ud1 -match 'DEACTIVATED qa-drv' -and $uPut.active -eq $false -and $uPut.id -eq 7 -and -not $uRow2.users.'qa-drv' -and $uRow2.created.'qa-drv'.deactivated)
+# userAuth.<user> (2026-11-21: a super admin logs in at its own endpoint + tenant): its fields over auth, its tenant; other users keep auth
+$saTj = Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable; $saTj.targets.tu.users.sa = @('root', 'SaPw7'); $saTj.targets.tu.userAuth = @{ sa = @{ path = '/admin/auth'; tenant = 'adm'; tokenField = 'sa_token' } }; & $J $saTj $tjf 6
+$saMe = Px $Q api -Target tu -As sa -Path '/me' -Save 'A1-C1_01_sa' -OutDir (Kd) 2>&1 | Out-String; $saAd = Px $Q api -Target tu -As admin -Path '/me' 2>&1 | Out-String
+$saPost = @(Get-Content $usLog | ConvertFrom-Json | Where-Object { $_.u -eq '/admin/auth' })
+Expect "api userAuth: the super admin logs in at its endpoint with its tenant (token field its own), the admin still at auth.path; no password printed" ($saMe -match 'HTTP 200' -and (Get-Content "$(Kd)/A1-C1_01_sa.json" -Raw) -match 'superAdmin' -and $saPost.Count -eq 1 -and ($saPost[0].b | ConvertFrom-Json).t -eq 'adm' -and $saAd -match 'HTTP 200' -and "$saMe$saAd" -notmatch 'SaPw7')
 $uProc.Kill()
 Remove-TestKit $k
 Complete-Tests

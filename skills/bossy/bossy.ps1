@@ -31,7 +31,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L37 init · L48 board · L227 budget · L257 launch · L498 recover · L585 pause · L596 resume · L663 program · L714 param ·
   L720 track · L1057 supervise · L1393 report · L1473 audit · L1533 storage · L1536 bugbrief · L1650 cleanup · L1737 learn ·
-  L1768 decide · L1919 debate · L1963 health · L2031 setup · L2128 guard-sendmessage
+  L1768 decide · L1922 debate · L1966 health · L2034 setup · L2131 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1889,16 +1889,19 @@ function Invoke-Decide {
       & $pub $resolvedTask ([bool]$Task)
     }
     'check' {
-      if (-not ($Id -or ($Gate -and ($Item -or $Mrs)))) { 'usage: decide check (-Id <id> [-Item <env|task>] | -Gate <gate> (-Item <env|task> | -Mrs <refs>)) [-MaxHours 12] [-Use -Agent <id>]   (with -Id a non-gate -Gate such as ask is ignored)'; exit 2 }
-      $wantMrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); $wantTask = NormTask $Item
+      if (-not ($Id -or ($Gate -and ($Item -or $Mrs)))) { 'usage: decide check (-Id <id> [-Item <env|task|mr>,..] [-Gate <g>,..] | -Gate <gate> (-Item <env|task> | -Mrs <refs>)) [-MaxHours 12] [-Use -Agent <id>]   (with -Id a non-gate -Gate such as ask is ignored)'; exit 2 }
+      # -Item a,b: any of them (also a record's MR); -Id with -Gate a,b: the record's gate is one of them (buildy NONE word)
+      $wantMrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); $items = @(Split-KitList $Item); $gates = @(Split-KitList $Gate)
+      $wantTasks = @($items | ForEach-Object { NormTask $_ } | Where-Object { $_ })
       $since = (Get-Date).AddHours(-$MaxHours); $why = @()
       $found = @(Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
         Where-Object { $_.status -eq 'answered' -and $_.kind -ne 'envfix' } |
         Where-Object {
           # every key given matches: a staging yes never serves production
-          $rec = $_; $itemOk = -not $Item -or $rec.item -eq $Item -or ($wantTask -and $rec.task -eq $wantTask)
+          $rec = $_; $itemOk = -not $items.Count -or $rec.item -in $items -or ($rec.task -and $rec.task -in $wantTasks) -or @($rec.mrs | Where-Object { $_ -in $items }).Count
           $mrOk = -not $wantMrs.Count -or -not @($wantMrs | Where-Object { $_ -notin @($rec.mrs) }).Count
-          $gateOk = if ($Id) { $rec.id -eq $Id -and ($rec.gate -or $Item -or $wantMrs.Count) -and (-not $rec.gate -or $Gate -notin $kitGates -or $rec.gate -eq $Gate) } else { $rec.gate -eq $Gate }          $gateOk -and $itemOk -and $mrOk })
+          $gateOk = if ($Id) { $rec.id -eq $Id -and ($rec.gate -or $Item -or $wantMrs.Count) -and $(if ($gates.Count -gt 1) { $rec.gate -in $gates } else { -not $rec.gate -or $Gate -notin $kitGates -or $rec.gate -eq $Gate }) } else { $rec.gate -in $gates }
+          $gateOk -and $itemOk -and $mrOk })
       foreach ($d in $found) {
         if ($d.by -match $crewRx -or $d.source -eq 'rule') { $why += "$($d.id) answered by $($d.by), no person"; continue }
         if ($d.usedAt) { $why += "$($d.id) already used by $($d.usedBy) at $($d.usedAt)"; continue }

@@ -23,7 +23,7 @@
   "process": "gates.<promote|merge|finish|bugFix|mrBody>: unset = pass, builtin:testingDocs / builtin:reproRow, or a hook command (payload JSON on stdin, exit 0 = pass); docs[] {key, label, linkRx, headerRx, required} (unset: vocab.json pair, [] = none); bugFixRx",
   "mr": "footer: last line of every MR body (\"\" = none); sections, uiFilesRx: devtools.py render",
   "protectedBranchesBase, linkDefaults, stack.presets": "protected branches (main/master/develop/release/*): never swept, force-pushed or pushed to (MR only), a deploy-MR source; dep folders wt lease / new link; false = no built-in stack presets",
-  "api, auth": "api.defaultUser (none: a target with one user uses it, several refuse), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 | oidc",
+  "api, auth": "api.defaultUser (none: a target with one user uses it, several refuse), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 | oidc; userAuth.<user> = that login's own auth fields (path, body, tokenField, ...) over auth plus its tenant (a super admin endpoint)",
   "masking, migrations": "masking.rules {table.column glob: kind}, logins, names {first, last, streets} (envy db.md); migrations.tool (none), lbcheck.*, historyTables (envy db.md)",
   "configVersion": "below 2: migrate adds old defaults" },
  "configVersion": 2,
@@ -108,7 +108,7 @@
  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
  "localFiles": {
   "skills/pokey/targets.local.json": {
-   "_readme": "One entry per TEST environment (never production), local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]; created.<login> {tenant, role, run, ids}: written by pokey.ps1 user create (api -As uses its tenant). auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: pokey adapters/api_auth.ps1; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
+   "_readme": "One entry per TEST environment (never production), local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]; created.<login> {tenant, role, run, ids}: written by pokey.ps1 user create (api -As uses its tenant). auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: pokey adapters/api_auth.ps1; api may hold {tenant}. userAuth.<user> {path, tenant, ...}: that login's own auth fields (a super admin endpoint). browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
    "default": "my-staging",
    "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000, "diskCache": false },
    "targets": {
@@ -125,7 +125,7 @@
  "_manifest": {
   "_readme": "The kit's registry: crew, skills, workflows, Router / Events rows, caps; names live only here (lint checks files against it; kitbag.py new / rename / remove edit it; port writes Character blocks + the Crew table). renamed: old -> new (setup -Migrate).",
   "agents": {
-   "devy": { "job": "builder: makes or changes anything in product repos through the dev flow", "kinds": ["feature", "fix", "refactor", "migration", "config", "doc", "tests", "spike", "repro"], "roles": [], "skill": "crafty", "tools": "all", "usedIn": ["/buildy", "R5", "R6"], "cant": "deploy, merge into deploy branches, edit the kit",
+   "devy": { "job": "builder: makes or changes anything in product repos through the dev flow", "kinds": ["feature", "fix", "refactor", "migration", "config", "doc", "tests", "foundation", "spike", "repro"], "roles": [], "skill": "crafty", "tools": "all", "usedIn": ["/buildy", "R5", "R6"], "cant": "deploy, merge into deploy branches, edit the kit",
     "character": { "traits": "pragmatic builder", "bias": "the smallest change that passes every goal", "catchphrase": "Small, tested, shipped.", "never": "gold-plates or widens the scope" } },
    "revy": { "job": "reviewer: reviews anything and suggests concrete changes", "kinds": ["mr", "kit", "doc", "qa", "plan", "module", "config", "dispute"], "roles": [], "skill": "crafty", "tools": "Read, Grep, Glob, Bash", "usedIn": ["/buildy", "R13", "R14"], "cant": "edit anything (suggests only)",
     "character": { "traits": "sceptical, blunt", "bias": "assumes a bug until the evidence proves otherwise", "catchphrase": "Show me the test.", "never": "reports a problem without its fix, or edits the artefact itself" } },

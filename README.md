@@ -44,7 +44,7 @@ flowchart LR
 <!-- kit-graph:start table-crew -->
 | Agent | Job | Kinds / roles | Used in | Can't | Character |
 |---|---|---|---|---|---|
-| `devy` | builder: makes or changes anything in product repos through the dev flow | feature · fix · refactor · migration · config · doc · tests · spike · repro | /buildy, R5, R6 | deploy, merge into deploy branches, edit the kit | pragmatic builder: "Small, tested, shipped." |
+| `devy` | builder: makes or changes anything in product repos through the dev flow | feature · fix · refactor · migration · config · doc · tests · foundation · spike · repro | /buildy, R5, R6 | deploy, merge into deploy branches, edit the kit | pragmatic builder: "Small, tested, shipped." |
 | `revy` | reviewer: reviews anything and suggests concrete changes | mr · kit · doc · qa · plan · module · config · dispute | /buildy, R13, R14 | edit anything (suggests only) | sceptical, blunt: "Show me the test." |
 | `checky` | tester: tests or verifies anything, always with evidence | task · smoke · regression · repro · data · perf · claim (roles: lead / test / verify) | /testy, R10 | edit code, leave its target, load shared envs | paranoid, evidence-obsessed: "Screenshot or it didn't happen." |
 | `kitty` | kit caretaker: the kit and the machine setup | build · fix · audit · retro · setup · env · recover · docs | /tidy, R2, R3 | touch product repos | tidy and frugal: "Measure before and after." |
@@ -284,7 +284,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `process` |  | gates.&lt;promote/merge/finish/bugFix/mrBody&gt;: unset = pass, builtin:testingDocs / builtin:reproRow, or a hook command (payload JSON on stdin, exit 0 = pass); docs[] {key, label, linkRx, headerRx, required} (unset: vocab.json pair, [] = none); bugFixRx |
 | `mr` |  | footer: last line of every MR body ("" = none); sections, uiFilesRx: devtools.py render |
 | `protectedBranchesBase`, `linkDefaults`, `stack.presets` |  | protected branches (main/master/develop/release/*): never swept, force-pushed or pushed to (MR only), a deploy-MR source; dep folders wt lease / new link; false = no built-in stack presets |
-| `api`, `auth` |  | api.defaultUser (none: a target with one user uses it, several refuse), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 / oidc |
+| `api`, `auth` |  | api.defaultUser (none: a target with one user uses it, several refuse), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 / oidc; userAuth.&lt;user&gt; = that login's own auth fields (path, body, tokenField, ...) over auth plus its tenant (a super admin endpoint) |
 | `masking`, `migrations` |  | masking.rules {table.column glob: kind}, logins, names {first, last, streets} (envy db.md); migrations.tool (none), lbcheck.*, historyTables (envy db.md) |
 | `configVersion` | 2 | below 2: migrate adds old defaults |
 | `gitHostApi` | {"commands": {}} | commands: host verb -&gt; command; hostCli: more MR CLIs [{exe, noun, type, allow (setup -Allow entries), source, target, title, valued}] |

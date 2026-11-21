@@ -16,9 +16,10 @@
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
  mr / merge [--scope "<glob>,.."] [--scope-ok <decision id>]: a diff outside the area (--scope, else the wt lease / new -Scope record)
   is refused naming the files (merge: the host's diff); --scope-ok = a person's decide record -Gate scope -Item <branch>, logged
- python -X utf8 devtools.py merge <worktree> <iid> [--override "<why>"]   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
+ python -X utf8 devtools.py merge <worktree> <iid> [--override "<why>"] [--no-docs "<why>"]   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
-  whose AI testing doc has no local reproduction; --override passes, logged)
+  whose AI testing doc has no local reproduction; --override passes, logged); --no-docs: an area with no human-facing change
+  (brief kind foundation) passes the testing-docs gate, logged
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
   publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
   (same text: none; human doc: earlier rounds no env run tested show as one "Replaced drafts (not tested): <dates>" line)
@@ -32,8 +33,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L51 config · L106 run · L194 tracker · L347 process · L529 git host · L602 scope · L692 MR · L884 merge · L1211 docs ·
-  L1366 publish · L1825 render · L2279 plugins · L2293 keepboth · L2312 selftest · L2930 CLI
+Sections: L52 config · L107 run · L195 tracker · L349 process · L531 git host · L604 scope · L696 MR · L888 merge · L1219 docs ·
+  L1374 publish · L1833 render · L2287 plugins · L2301 keepboth · L2320 selftest · L2952 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -243,6 +244,7 @@ def prose(kind, text):
 
 PROSE_OK = ''   # --prose-ok "<why>": a format the brief fixes; the findings still print
 OVERRIDE = ''   # --override "<why>": past the prior-work gate, logged
+NO_DOCS = ''   # merge --no-docs "<why>": a foundation area (no human-facing change) passes the testing-docs gate, logged
 SCOPE, SCOPE_OK = '', ''   # --scope "<globs>" (mr, merge): the area; --scope-ok <decision id>: a person's scope word, logged
 def vendor():
     """The tracker vendor's built-in vocabulary (vocab.json trackers.<tracker.type>)."""
@@ -623,10 +625,12 @@ def _json_or_none(line):
         return None
 
 
-def scope_of(worktree, given='', mr='', log=None):
-    """Area globs: --scope (comma list), else the worktree's wt lease / new -Scope record, else the MR's last scope-log area (a deferred
-    merge from the main checkout: bossy.ps1 track run); [] = no area."""
-    if given or (rec := wt_record(worktree, 'scope')):
+def scope_of(worktree, given='', mr='', log=None, branch=''):
+    """Area globs: --scope (comma list), else the worktree's wt lease / new -Scope record when the worktree is on `branch` (a pool
+    slot re-leased to another area holds that area's record), else the MR's last scope-log area (a deferred merge: bossy.ps1
+    track run); [] = no area."""
+    on = not branch or _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD']).strip() == branch
+    if given or (on and (rec := wt_record(worktree, 'scope'))):
         return [g.strip() for g in given.split(',') if g.strip()] if given else rec
     try:
         lines = open(log or kit_path('scope-log'), encoding='utf-8').read().splitlines() if mr else []
@@ -1090,7 +1094,11 @@ def _repro_gap(m, proj, iid):
 
 def _merge_docs(m, proj, iid, H, body):
     """builtin:testingDocs for merge -> NOT_MERGED text or '': a task MR (a tracker task link in its body) links every required doc
-    (written here from the published records), and its first doc line never says "none"."""
+    (written here from the published records), and its first doc line never says "none"; --no-docs passes, logged."""
+    if NO_DOCS:   # 2026-11-21: a foundation area's MR was refused, its 5 consumer areas never started
+        kitlog('calls', 'docs-exempt', {'mr': f'{proj}!{iid}', 'branch': m.get('source_branch') or '', 'reason': NO_DOCS})
+        _progress(f'!{iid}: testing-docs gate passed by --no-docs ({NO_DOCS}), logged')
+        return ''
     req = [d for d in docs() if d['required']]
     link = task_link()
     if link and link in body and not all(doc_link_rx(d).search(body) for d in req):   # a task's MR: the docs linked first
@@ -1138,7 +1146,7 @@ def _auto_merge(worktree, iid, max_wait):
     if m.get('state') != 'opened':
         return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
     ref = f'{proj.rsplit("/", 1)[-1]}!{iid}'
-    if globs := scope_of(worktree, SCOPE, ref):   # the host's diff, not the worktree's: what merges is checked
+    if globs := scope_of(worktree, SCOPE, ref, branch=m.get('source_branch') or ''):   # the host's diff, not the worktree's: what merges is checked
         ch = H('mr.changes')
         ch = ch if isinstance(ch, dict) else {}
         files = sorted({p for c in ch.get('changes') or [] for p in (c.get('new_path'), c.get('old_path')) if p})
@@ -2349,6 +2357,13 @@ def selftest():
         fh.write(''.join(json.dumps({'event': 'area', 'mr': 'api!5', 'globs': g}) + '\n' for g in (['old/**'], spec_only)) + '{"event": "area", "mr": "api!55", "globs": ["x"]}\n{"event": "area", "mr": "api!5", "glo\n')
     expect('scope: a deferred merge (no record, no --scope) takes the MR\'s last logged area, a torn line skipped', scope_of(td, '', 'api!5', lg) == spec_only
            and scope_of(td, '', 'api!6', lg) == [] and scope_of(td, 'a/**, b/', 'api!5', lg) == ['a/**', 'b/'])
+    for c in (['init', '-q', '-b', 'f/area-m'], ['-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-q', '--allow-empty', '-m', 'x']):
+        subprocess.run(['git', '-C', td, *c], capture_output=True)
+    with open(os.path.join(td, '.git', 'claude-scope'), 'w', encoding='utf-8') as fh:
+        fh.write('web/site/**\n')   # incident 2026-11-21: a pool slot re-leased to area M refused another branch's MR with M's globs
+    expect('scope: merge reads the worktree record only when the slot is on the MR\'s branch, else the MR\'s logged area',
+           scope_of(td, '', 'api!5', lg, branch='f/area-m') == ['web/site/**'] and scope_of(td, '', 'api!5', lg, branch='fix/other') == spec_only
+           and scope_of(td, '', 'api!6', lg, branch='fix/other') == [])
     shutil.rmtree(td, ignore_errors=True)
     wb = {'name': 'w', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}
     expect('wave brief: an area\'s paths are in the brief and the /buildy args', 'svc/api/cypress/**' in render_wave_brief(wb)
@@ -2424,6 +2439,13 @@ def selftest():
         calls.clear(); g['_host'] = nd('https://app.clickup.com/t/9\n- Testing doc: pending'); rp = auto_merge('.', '7'); pend = not merged()
         calls.clear(); g['_host'] = nd('https://app.clickup.com/t/9\n- Testing doc: [d](https://doc/1)\n- Testing doc (AI): https://doc/2'); g['TRACKER_TYPE'] = tt0
         expect('MR with a task link: "Testing doc: pending" NOT_MERGED, a linked doc merges', merge_word(rp) == 'NOT_MERGED' and pend and merge_word(auto_merge('.', '7')) == 'MERGED')
+        kl0, logged = g['kitlog'], []; g['kitlog'] = lambda *a: logged.append(a); g['TRACKER_TYPE'] = 'clickup'; g['NO_DOCS'] = 'foundation area M'
+        try:
+            calls.clear(); g['_host'] = nd('https://app.clickup.com/t/9\n- Testing doc: none'); rx = merge_word(auto_merge('.', '7'))
+        finally:
+            g['kitlog'], g['NO_DOCS'], g['TRACKER_TYPE'] = kl0, '', tt0
+        expect('merge --no-docs: a foundation area\'s task MR with no / "none" doc lines merges, the exemption logged with its reason',
+               rx == 'MERGED' and [x[1] for x in logged if x[1] == 'docs-exempt'] and any(x[2].get('reason') == 'foundation area M' for x in logged if x[1] == 'docs-exempt'))
         pr0, tag0 = g['_pub_read'], g['TAG']; g['TAG'] = 'CU-'; g['TRACKER_TYPE'] = 'clickup'
         g['_pub_read'] = lambda key: {'url': f'https://d/{key.split(":")[1]}'} if key.startswith('T7:') and not key.endswith(g.get('_nodoc', '-')) else {}
         tb = lambda body: (lambda f: lambda v, **a: dict(f(v, **a), source_branch='f/CU-T7-x') if v == 'mr.get' else f(v, **a))(nd(body))
@@ -2929,7 +2951,7 @@ def _report_selftest(expect):
 
 # ---- CLI: argument checks, verb dispatch
 def _cli():
-    global REPORT_TYPE, PROSE_OK, OVERRIDE, SCOPE, SCOPE_OK
+    global REPORT_TYPE, PROSE_OK, OVERRIDE, SCOPE, SCOPE_OK, NO_DOCS
     a = sys.argv[1:]
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
@@ -2942,7 +2964,7 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'docgaps': 0, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
-    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--run-id', '--override') if cmd in ('doc', 'evidence', 'docgaps') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok') if cmd == 'merge' else ():
+    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--run-id', '--override') if cmd in ('doc', 'evidence', 'docgaps') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok', '--no-docs') if cmd == 'merge' else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
         elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, not "unknown option"
@@ -2952,7 +2974,7 @@ def _cli():
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
     PROSE_OK = opt.get('--prose-ok') or ''
     OVERRIDE = opt.get('--override') or ''
-    SCOPE, SCOPE_OK = opt.get('--scope') or '', opt.get('--scope-ok') or ''
+    SCOPE, SCOPE_OK, NO_DOCS = opt.get('--scope') or '', opt.get('--scope-ok') or '', opt.get('--no-docs') or ''
     if PROSE_OK:
         print(f'[prose] --prose-ok: {PROSE_OK}', file=sys.stderr)
     if not cmd:   # agents call it bare to see the verbs: no usage error

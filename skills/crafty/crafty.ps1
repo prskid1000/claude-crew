@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 wt · L321 stack · L503 gate · L818 check · L1134 pipes · L1190 guard · L2079 dir · L2089 checkpoint ·
-  L2119 prior · L2157 tracker · L2179 task spec · L2361 scope · L2409 host
+Sections: L24 init · L31 wt · L321 stack · L503 gate · L818 check · L1134 pipes · L1190 guard · L2091 dir · L2101 checkpoint ·
+  L2131 prior · L2169 tracker · L2191 task spec · L2373 scope · L2421 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1574,6 +1574,17 @@ function StrayWrite([string]$p, [string]$base) {
 }
 $rootWhy = "agent files go under & $($KitCmd.dev) dir -Agent <id> -Name <file>; an owner-asked place: guard.writeRoots"
 foreach ($e in $edits) { if (($sk = StrayWrite $e $here)) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $sk ($rootWhy)" } }
+# tester evidence written from a kit folder (2026-11-21: skills/shots/) belongs to the run
+$shotsWhy = "is tester evidence inside the kit's skills/: write it under the run's output folder (<outDir>/shots|evidence) or & $($KitCmd.dev) dir -Kind evidence -Item <task>"
+function KitEvidenceWrite([string]$p, [string]$base) {
+  if (-not ($f = FullOf $p $base)) { return $false }
+  foreach ($kr in @($script:KitRoot, $live) | Where-Object { $_ }) {
+    $sk = Join-Path $kr 'skills'; if (-not (Under $f $sk)) { continue }
+    if (@([IO.Path]::GetRelativePath($sk, $f) -split '[\\/]' | Select-Object -SkipLast 1) -match '^(shots|screenshots|evidence)$') { return $true }
+  }
+  $false
+}
+foreach ($e in $edits) { if (KitEvidenceWrite $e $here) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $shotsWhy" } }
 # runtime / state writes need a _paths name (guard.layout)
 $layout = @(@((Get-KitRuntime), 'runtime'), @((Split-Path (Get-KitPath tracking)), 'durable'))
 function OffLayout([string]$p, [string]$base) {
@@ -1697,6 +1708,7 @@ foreach ($seg in DeleteSegments $raw) {
   if (@($wrote | ForEach-Object { RuntimeKinds " $($_.Trim('''"'))" $segBase }) -contains 'stray') { Deny "kit guard: that writes $strayWhy" }
   foreach ($x in $wrote) { if (MainScratch $x.Trim('''"') $segBase) { Deny "kit guard: $x $scratchWhy" } }
   foreach ($x in $wrote -match '[\\/.]') { if (($sk = StrayWrite $x.Trim('''"') $segBase)) { Deny "kit guard: $x $sk ($rootWhy)" } }
+  foreach ($x in $wrote -match '[\\/]') { if (KitEvidenceWrite $x.Trim('''"') $segBase) { Deny "kit guard: $x $shotsWhy" } }
 }
 # a bare remove leaves junction skeletons no repo lists, and the branch
 if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+("[^"]*"|\S+)\s+)*worktree\s+remove\b') { Deny "kit guard: use & $($KitCmd.dev) wt remove -Dir <worktree>: it unlinks shared folders first, prunes and deletes the branch once nothing is lost (a bare git worktree remove leaves junctions behind)" }

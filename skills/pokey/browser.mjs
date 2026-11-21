@@ -6,11 +6,11 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L50 login · L130 browsers · L173 tabs · L261 session · L309 actions · L408 ui checks · L429 evidence
+// Sections: L17 config · L50 login · L130 browsers · L173 tabs · L261 session · L309 actions · L408 ui checks · L415 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { basename, delimiter, dirname, join, resolve } from 'node:path'
+import { basename, delimiter, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 
@@ -406,22 +406,8 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 }
 
 // ---- ui checks: qa.matrix variants, layout, contrast (adapters/ui_checks.mjs)
-// fn({ viewport, fontScale, theme, tag }) sets the app's font scale / theme; [] = axis off
-export async function matrix(s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {} } = {}) {
-  const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()
-  try {
-    for (const viewport of ax('viewports')) for (const fontScale of ax('fontScales')) for (const theme of ax('themes')) {
-      if (viewport) {
-        const [width, height] = String(viewport).split('x').map(Number)
-        if (!(width > 0 && height > 0)) throw new Error(`qa.matrix.viewports "${viewport}" is not <width>x<height>, e.g. 1280x720: fix kit.local.json`)
-        await s.page.setViewport({ ...(v0 || {}), width, height })   // keeps scale factor / mobile / touch
-      }
-      const tag = [viewport, fontScale != null && 'f' + fontScale, theme].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9.]+/g, '-')).join('_')
-      out.push({ variant: tag, result: await fn({ viewport, fontScale, theme, tag }) })
-    }
-  } finally { if (v0) await s.page.setViewport(v0) }
-  return out
-}
+// matrix(s, fn): fn({ viewport, fontScale, theme, tag }) per qa.matrix variant; [] = axis off
+export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {} } = {}) => (await adapter('ui_checks.mjs')).matrix(s, fn, m)
 // layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG (ui_checks.mjs)
 export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs')).layoutIssues(...a)
 export const contrast = async (...a) => (await adapter('ui_checks.mjs')).contrast(...a)
@@ -429,9 +415,14 @@ export const contrast = async (...a) => (await adapter('ui_checks.mjs')).contras
 // ---- evidence: marks, network logs, screenshots, token
 // evidence names: same literal as pokey.ps1 $script:EvidenceName
 const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$/i
-function checkName(file) {
+// a relative path wrote <kit>/skills/shots (2026-11-21)
+export function checkName(file) {
   if (!EVIDENCE_NAME.test(basename(file))) console.warn(`[evidence] "${basename(file)}" is not <CODE>-<check>_<nn>_<what>.<ext> (F2-T4_01_order-saved.jpeg)`)
-  mkdirSync(dirname(file), { recursive: true })
+  const abs = resolve(file)
+  const out = (b) => /^(\.\.|[\\/]|\w:)/.test(relative(b, abs))
+  if (!out(KIT) && out(runtimeDir())) throw new Error(`[evidence] ${abs} is inside the kit: use <outDir>/shots`)
+  mkdirSync(dirname(abs), { recursive: true })
+  return abs
 }
 
 // red outline until the next shot / unmark()
@@ -445,7 +436,7 @@ export async function unmark(page) {
 }
 
 export function saveNet(s, file, { calls = null, meta = {} } = {}) {
-  checkName(file)
+  file = checkName(file)
   const m = basename(file).match(/^([A-Za-z0-9]+)-([A-Za-z]*\d+)/) || []
   writeFileSync(file, JSON.stringify({ meta: { code: m[1] || '', check: m[2] || '', target: s.target.web, at: new Date().toISOString(), tool: 'browser.mjs', ...meta },
     calls: (calls || s.net.failed).map((c) => ({ request: { method: c.method || '', url: c.url }, response: { status: c.status, body: c.body || '' } })) }, null, 2))
@@ -453,7 +444,7 @@ export function saveNet(s, file, { calls = null, meta = {} } = {}) {
 }
 
 export async function shot(page, file, { full = false, selector = null } = {}) {
-  checkName(file)
+  file = checkName(file)
   const png = file.endsWith('.png'), opts = { path: file, type: png ? 'png' : 'jpeg', ...(!png && { quality: 80 }) }
   try {
     if (selector) { const el = await page.$(selector); if (el) { await el.screenshot(opts); return file } }
@@ -464,7 +455,7 @@ export async function shot(page, file, { full = false, selector = null } = {}) {
 
 // screen recording (.mp4 / .webm; ffmpeg) + <file>.events.json: stop() ends both
 export async function record(s, file) {
-  checkName(file)
+  file = checkName(file)
   const acts = (s.page.__acts ||= []), from = acts.length, start = Date.now()
   const rec = await s.page.screencast({ path: file, format: file.endsWith('.webm') ? 'webm' : 'mp4' })
   return async () => { await rec.stop(); const v = s.page.viewport() || {}
