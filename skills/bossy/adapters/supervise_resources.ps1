@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L349 shells · L528 page · L1043 release · L1088 lines · L1120 cleanup · L1187 launch ·
-  L1304 pause · L1423 heartbeat · L1438 sessions · L1490 ci tasks ·
-  L1548 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L349 shells · L528 page · L1049 release · L1094 lines · L1126 cleanup · L1193 launch ·
+  L1310 pause · L1429 heartbeat · L1444 sessions · L1496 ci tasks ·
+  L1554 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -550,8 +550,9 @@ function Get-KitSuperviseSeries([string[]]$Lines, $Prev) {
     $tot = try { [math]::Round([IO.DriveInfo]::new($dv).TotalSize / 1GB, 1) } catch { $null }
     $sm = if (Get-Command Get-KitStorageSamples -ErrorAction SilentlyContinue) { @(Get-KitStorageSamples $dv 480) } else { @() }
     $h1 = if ($sm.Count) { $hourAgo = @($sm | Where-Object { $_.t -le $sm[-1].t - 3600 })[-1]; if ($hourAgo) { [math]::Round($sm[-1].free - $hourAgo.free, 1) } }   # free now - an hour ago
-    [ordered]@{ drive = $dv; free = $fr; rate = $rt; h1 = $h1; total = $tot; series = @(& $thin @($sm | ForEach-Object free)) } } })
-  [ordered]@{ ram = @(& $thin $ram); disks = @(if ($disks.Count) { $disks } else { $Prev.disks | Where-Object { $_ } }) }
+    [ordered]@{ drive = $dv; at = (Get-Date).ToString('o'); free = $fr; rate = $rt; h1 = $h1; total = $tot; series = @(& $thin @($sm | ForEach-Object free)) } } })
+  # no disk line this sweep: the last rows only while under 2 heartbeats old (an old copy passed for today's free space)
+  [ordered]@{ ram = @(& $thin $ram); disks = @(if ($disks.Count) { $disks } else { $Prev.disks | Where-Object { $_ -and $_.at -and ((Get-Date) - [datetime]$_.at).TotalMinutes -le 2 * [double](Get-KitParam 'supervise.heartbeatMinutes') } }) }
 }
 # this sweep's tile values from its lines; null = no line
 function Get-KitSuperviseNow([string[]]$Lines, [double]$GraceMinutes = 10) {
@@ -597,17 +598,20 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $rs = [ordered]@{}; foreach ($r0 in @($d.resources | Where-Object { $_.name })) { $rs["$($r0.name)"] = [pscustomobject]@{ gb = $r0.gb; by = "$($r0.by)" } }   # each resource's RAM + holder: the cards' 24 h history
     $rsw = @((Get-KitRepoSweep).repos | Where-Object { $_ })   # the Branches tile's lines
     $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
-  $statsFrom = Get-KitStatsCutoff; $usage = Select-KitUsageSince (Read-KitUsageResult) $statsFrom   # budget -Usage writes it; nothing before the stats reset
-  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at -StatsFrom $statsFrom } catch { }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
-    paramDays = @(try { Get-KitParamDays $d.at } catch { })
+  $serr = [Collections.Generic.List[string]]::new(); $statsFrom = Get-KitStatsCutoff; $usage = Select-KitUsageSince (Read-KitUsageResult) $statsFrom   # budget -Usage writes it; nothing before the stats reset
+  $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { $serr.Add("repo sync: $($_.Exception.Message)") }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at -StatsFrom $statsFrom } catch { $serr.Add("days: $($_.Exception.Message)") }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
+    paramDays = @(try { Get-KitParamDays $d.at } catch { $serr.Add("param days: $($_.Exception.Message)") })
     params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
             source = "$(if ((Get-KitMember $apv "$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })") -or (Get-KitMember $apv "$($_.key)|")) { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
-            learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); default = $_.default; changed = $_.changed; why = $_.why } } } catch { }) }
+            learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); default = $_.default; changed = $_.changed; why = $_.why } } } catch { $serr.Add("params: $($_.Exception.Message)") }) }
   $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
-  $stats.gate = try { Get-KitGateStats $d.at @($d.resources) -StatsFrom $statsFrom } catch { $null }
-  $stats.waits = try { Get-KitLeaseWaits $d.at -StatsFrom $statsFrom } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at -StatsFrom $statsFrom } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $prior.stats.cpu }   # adapters/supervise_stats.ps1
+  $stats.gate = try { Get-KitGateStats $d.at @($d.resources) -StatsFrom $statsFrom } catch { $serr.Add("gate: $($_.Exception.Message)") }
+  $stats.waits = try { Get-KitLeaseWaits $d.at -StatsFrom $statsFrom } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at -StatsFrom $statsFrom } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $serr.Add("cpu: $($_.Exception.Message)"); $prior.stats.cpu }   # adapters/supervise_stats.ps1
   $stats.writes = try { $wc = Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'supervise-writes.json') -Raw | ConvertFrom-Json; if ($wc.at) { Get-KitWriteView @($wc.samples) @(Get-Content -LiteralPath (Get-KitPath disk-writes) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } }) $d.at } } catch { $null }   # Get-KitSuperviseFlagsWrites; history: Update-KitWriteHistory
-  $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
+  $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { $serr.Add("flag hours: $($_.Exception.Message)"); @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
+  # a failed source keeps its last data or none: the sweep says which, never a silent stale section
+  if ($serr.Count) { $stats.errs = @($serr); $w2 = [pscustomobject]@{ level = 'WATCH'; what = "dashboard data not updated this sweep: $($serr -join '; ')"; action = 'Fix the named source (adapters/supervise_stats.ps1); its section shows its last data.' }
+    $fl = @($fl) + $w2; $d.flags = @($d.flags) + $w2; if ($flags -is [Collections.IList]) { [void]$flags.Add($w2) } }
   $osNext = if (Get-Command Get-KitOsBeatNextSweep -ErrorAction SilentlyContinue) { try { (Get-KitOsBeatNextSweep $d.at).ToString('o') } catch { $null } }   # adapters/os_timer.ps1
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; osNext = $osNext; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   # compact, no copy of usage.result.json (0.7 MB): each sweep rewrote 1.8 MB (NTFS journal churn); the page still shows it
@@ -623,7 +627,9 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $sp = @{ FilePath = 'pwsh'; ArgumentList = @('-NoProfile', '-NonInteractive', '-ec', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($pub))); ErrorAction = 'Stop' }; if ($KitIsWindows) { $sp.WindowStyle = 'Hidden' }
     $env:KIT_SUPERVISE_HTML = $p; $env:KIT_SUPERVISE_RUNS = $rpd; try { Start-Process @sp | Out-Null } catch { Write-Warning "supervise.publish failed to start: $($_.Exception.Message)" } finally { Remove-Item Env:KIT_SUPERVISE_HTML, Env:KIT_SUPERVISE_RUNS -ErrorAction SilentlyContinue } }
   $p
-  } catch { $w = [pscustomobject]@{ level = 'WATCH'; what = "supervise page failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Write-KitSuperviseHtml.' }; $d.flags = @($d.flags) + $w; if ($flags -is [Collections.IList]) { [void]$flags.Add($w) }; '' }   # $flags: the supervise verb's list (-Json, plain)
+  } catch { $w = [pscustomobject]@{ level = 'WATCH'; what = "supervise page failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Write-KitSuperviseHtml.' }; $d.flags = @($d.flags) + $w; if ($flags -is [Collections.IList]) { [void]$flags.Add($w) }
+    # a failed build never leaves the last good page passing for this sweep: a minimal page that says so
+    try { $ep = [IO.Path]::ChangeExtension((Get-KitPath supervise-report -Create), '.html'); Write-KitAtomic $ep "<!doctype html><meta charset=utf-8><title>Supervisor</title><body style='font:14px system-ui;padding:20px'><h1>Supervisor page failed</h1><p>$([Net.WebUtility]::HtmlEncode("$((Get-Date).ToString('yyyy-MM-dd HH:mm')): $($_.Exception.Message)"))</p><p>The sweep's flags and report still ran; the next sweep rebuilds this page.</p>" } catch { }; '' }   # $flags: the supervise verb's list (-Json, plain)
 }
 # one icon set for the words the page repeats (running, queued, today, wait, RAM, stuck): inline SVG, currentColor, <title> = tooltip
 function Format-KitIcon([string]$Name, [string]$Label = $Name) {
@@ -901,8 +907,8 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $nSh = @($j.shells | Where-Object { $_ }).Count
   # Trends (owner 2026-11-19): Delivery + Usage + kit health in one day heatmap, its tiles one strip, spend and repos as sub-blocks (adapters/outcomes.ps1)
   $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats -StatsFrom (Get-KitStatsCutoff) } catch { $null } }
-  $trends = try { Format-KitDeliveryHtml $oc $UP (Format-KitQaTile $st.qa $at) @(@($UP.dayRows) + @($hRows)) "$($UP.spend)$(Format-KitRepoGrid $st.repos $st.sync)" } catch { "<p class=m>Trends view failed: $(& $e $_.Exception.Message)</p>" }
-  $runsH = try { Format-KitRunsTimeline @($st.usage.runs) $agents @($UP.pages.Keys) } catch { "<p class=m>Runs view failed: $(& $e $_.Exception.Message)</p>" }
+  $trends = try { Format-KitDeliveryHtml $oc $UP (Format-KitQaTile $st.qa $at) @(@($hRows) + @($UP.dayRows)) "$($UP.spend)$(Format-KitRepoGrid $st.repos $st.sync)" } catch { "<p class=m>Trends view failed: $(& $e $_.Exception.Message)</p>" }
+  $runsH = try { Format-KitRunsTimeline @($st.usage.runs) $agents @($UP.pages.Keys) $st.usage.at } catch { "<p class=m>Runs view failed: $(& $e $_.Exception.Message)</p>" }
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)) { $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$($UP.pages[$pk] -replace " data-tip='", " title='")</main></body></html>" } }
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open -extra '<button type=button class=ga data-tg=fl-hist aria-expanded=false>24 h history</button>') +
     (& $section 'runs' 'Runs' "$(if ($UP.nRunning) { "$($UP.nRunning) running · " })$(if ($UP.runsN) { $UP.runsN } else { 'none ended in 7 days' })" "<p class=fclr hidden>Runs: <b></b> <button type=button>Clear</button></p>$runsH" -Open) +   # a Trends day click filters the runs

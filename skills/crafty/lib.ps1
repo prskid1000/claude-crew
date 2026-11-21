@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1122 tracker · L1454 prior ·
-  L1470 ask bugs · L1656 git-host · L1843 kitlog · L1963 params · L2268 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1143 tracker · L1475 prior ·
+  L1491 ask bugs · L1677 git-host · L1864 kitlog · L1984 params · L2289 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -870,6 +870,27 @@ function Get-KitWorkflowStop($Dir, $Records) {
   $h = @($Records | Where-Object holderPid); if ($h.Count) { if (-not @($h | Where-Object { (Test-KitHolder $_) -ne $false }).Count) { 'session gone' }; return }
   if (-not @($Records).Count -and ($cs = @(Get-KitClaudeStarts)).Count -and -not @($cs | Where-Object { $_ -le $Dir.CreationTime }).Count) { 'session gone' }   # no Claude process found: unknown
 }
+# a workflow folder's newest journal / transcript write (the folder's own time moves only when a file is added)
+function Get-KitWorkflowLastWrite($Dir) { $m = (@(Get-ChildItem -LiteralPath "$Dir" -Filter '*.jsonl' -File -ErrorAction SilentlyContinue) | Measure-Object LastWriteTime -Maximum).Maximum; if ($m) { [datetime]$m } else { (Get-Item -LiteralPath "$Dir").CreationTime } }
+# workflow folders written in $Hours, newest write last (a folder's own time misses a long run's later writes; top 6 by it hid live runs)
+function Get-KitRecentWorkflowDirs([string]$Session, [double]$Hours = 48, [int]$Max = 12) { $cut = (Get-Date).AddHours(-$Hours)
+  @(Get-KitWorkflowDirs $Session | Where-Object { $_.LastWriteTime -gt $cut.AddDays(-7) } | ForEach-Object { $lw = Get-KitWorkflowLastWrite $_; if ($lw -gt $cut) { $_ | Add-Member -Force NoteProperty KitLastWrite $lw -PassThru } } | Sort-Object KitLastWrite | Select-Object -Last $Max) }
+# THE run state (Runs band, usage, supervise close; a live holder is no live run): ended | paused | stopped | running (a write within
+# supervise.stuckMinutes) | stuck (a step still open, quiet under 3x) | stale (no end record and quiet: crashed or ended unrecorded)
+function Get-KitRunState($Dir, $Records, $Events, [datetime]$Now = (Get-Date)) {
+  if (@($Events | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or @($Records | Where-Object completed).Count) { return 'ended' }
+  if (@($Records | Where-Object paused).Count) { return 'paused' }
+  if (Get-KitWorkflowStop $Dir $Records) { return 'stopped' }
+  $q = ($Now - (Get-KitWorkflowLastWrite $Dir)).TotalMinutes; $sm = [double](Get-KitParam 'supervise.stuckMinutes')
+  $open = @(Get-JournalRunning @($Events | Where-Object type -eq 'started') @($Events | Where-Object type -eq 'result' | ForEach-Object agentId)).Count
+  if ($q -lt $sm) { 'running' } elseif ($open -and $q -lt 3 * $sm) { 'stuck' } else { 'stale' }
+}
+# supervise -AutoFix closes a stale run's record: no open step, and no live session or quiet 6x stuckMinutes (a CI or merge wait between steps)
+function Test-KitRunCloseable($Dir, $Records, $Events, [datetime]$Now = (Get-Date)) {
+  if ((Get-KitRunState $Dir $Records $Events $Now) -ne 'stale') { return $false }
+  if (@(Get-JournalRunning @($Events | Where-Object type -eq 'started') @($Events | Where-Object type -eq 'result' | ForEach-Object agentId)).Count) { return $false }
+  -not @($Records | Where-Object { $_ -and (Test-KitHolder $_) -eq $true }).Count -or ($Now - (Get-KitWorkflowLastWrite $Dir)).TotalMinutes -ge 6 * [double](Get-KitParam 'supervise.stuckMinutes')
+}
 function Get-KitClaudeStarts { @(Get-Process -ErrorAction SilentlyContinue | Where-Object ProcessName -match '^claude' | ForEach-Object { try { $_.StartTime } catch {} }) }
 # a broken file is skipped
 function Read-KitJsonFiles([string]$Dir, [string]$Filter = '*.json') {
@@ -1001,7 +1022,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   $recent = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { -not $_.takenOverBy -and ($Now - [datetime]$_.beat).TotalHours -lt $(if ($_.status -eq 'left') { 2 } else { 6 }) })   # supervise's window
   $runOf = @{}; foreach ($e in $recent) { if ("$($e.transcript)" -match '[\\/]workflows[\\/]([^\\/]+)[\\/]agent-' -and $e.run) { $runOf[$Matches[1]] = $e.run } }
   $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $steps = @{}; $anyRun = @{}; $runSteps = [Collections.Generic.List[object]]::new()
-  foreach ($w in @(Get-KitWorkflowDirs $Session | Sort-Object LastWriteTime -Descending | Select-Object -First 6 | Sort-Object LastWriteTime)) {   # oldest first: a relaunch's steps win
+  foreach ($w in @(Get-KitRecentWorkflowDirs $Session)) {   # oldest first: a relaunch's steps win
     $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
     $ev = @(Get-Content $j | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} }); $jt = (Get-Item $j).LastWriteTime
     $rec = @(Get-KitWorkflowRecords $w $ev $launch); $lr = @($rec | Where-Object { $_.runId -or $_.wfDir })

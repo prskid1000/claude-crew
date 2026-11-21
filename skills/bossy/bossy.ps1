@@ -30,8 +30,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L37 init · L48 board · L227 budget · L257 launch · L498 recover · L585 pause · L596 resume · L663 program · L714 param ·
-  L720 track · L1057 supervise · L1383 report · L1463 audit · L1523 storage · L1526 bugbrief · L1640 cleanup · L1727 learn ·
-  L1758 decide · L1909 debate · L1953 health · L2021 setup · L2118 guard-sendmessage
+  L720 track · L1057 supervise · L1387 report · L1467 audit · L1527 storage · L1530 bugbrief · L1644 cleanup · L1731 learn ·
+  L1762 decide · L1913 debate · L1957 health · L2025 setup · L2122 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1105,7 +1105,7 @@ if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRun
 if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
 
 # 1. workflows
-Phase 'workflows'; $wfDirs = Get-KitWorkflowDirs $Session | Sort-Object LastWriteTime -Descending | Select-Object -First 6
+Phase 'workflows'; $wfDirs = @(Get-KitRecentWorkflowDirs $Session | Sort-Object KitLastWrite -Descending)
 $doneAt = @{}; $finishedRuns = Get-KitFinishedRuns; $lnch = @(Read-KitJsonFiles (Get-KitPath launches)); $pausedRuns = @($lnch | Where-Object { $_.paused -and $_.runId -and -not $_.completed } | ForEach-Object runId)
 if (-not $Session) { foreach ($q in $state.quietRuns, $state.closedRuns) { foreach ($k in @($q.Keys)) { if ($k -notin @($wfDirs | ForEach-Object Name)) { $q.Remove($k) } } } }   # -Session sees only its own runs
 foreach ($w in $wfDirs) {
@@ -1116,6 +1116,10 @@ foreach ($w in $wfDirs) {
   if ($w.Name -in $finishedRuns) { continue }
   $wrec = @(Get-KitWorkflowRecords $w $ev $lnch); $wsc = "$(@($wrec | Where-Object script)[0].script)"
   $done = [bool]($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }) -or ($wsc -and (Get-Command Test-KitJournalFinished -ErrorAction SilentlyContinue) -and (Test-KitJournalFinished $w.FullName (Split-Path $wsc -Leaf) $(if (@($wrec | Where-Object { (Test-KitHolder $_) -eq $true }).Count) { 10 } else { 2 })))   # the engine writes no end marker
+  # stale and closeable (lib Test-KitRunCloseable): its record closes, it stops counting as running
+  if (-not $done -and $AutoFix -and -not $state.closedRuns[$w.Name] -and (Test-KitRunCloseable $w $wrec $ev $now) -and (Within 'run records')) {
+    $state.closedRuns[$w.Name] = $now.ToString('o'); $null = Invoke-KitBackground "launch -Done $($w.Name)" $KitCmd.orch @('launch', '-Done', '-RunId', $w.Name)
+    Flag 'INFO' "auto-fixed: run $($w.Name) went quiet with no end record: its launch record closes in the background" 'Nothing to do.'; Phase 'workflows'; continue }
   if (-not $done -and (Get-KitWorkflowStop $w $wrec)) { continue }   # stopped (TaskStop, restart)
   if ($done -and $AutoFix -and -not $state.closedRuns[$w.Name] -and (Within 'run records')) {
     $state.closedRuns[$w.Name] = $now.ToString('o')   # a child bossy took 3-8 s of the sweep budget (K20): closed in the background

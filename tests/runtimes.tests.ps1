@@ -1,7 +1,8 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/runtimes.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 # tests/runtimes.tests.ps1: runtimes (fake isUp / up / down lines on a flag file): lease, start, stop, an owner-started runtime stays,
-# the guard's auto lease, supervise -AutoFix on a dead holder. Usage: pwsh -NoProfile -File tests/runtimes.tests.ps1
+# the guard's auto lease, supervise -AutoFix on a dead holder; dashboard liveness: run state, Runs band hours and chips, disk rows' age,
+# a failed page or stats source, Trends split cells. Usage: pwsh -NoProfile -File tests/runtimes.tests.ps1
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/container_tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit rt; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
@@ -59,5 +60,43 @@ Expect-Each $pr 'runtimes: sweep #' 'probe'
 # retro 2205: a verb crash names its innermost frame (16 finalize crashes named only the caller's line)
 $vst = pwsh -NoProfile -Command ". '$(Lib)'; function Get-TInner { `$null.X() }; function Invoke-T { Get-TInner }; Invoke-KitVerb Invoke-T @()" 2>&1 | Out-String
 Expect "Invoke-KitVerb: a crash names the innermost frame ($(($vst -replace '\s+', ' ').Trim()))" ($vst -match 'FAILED: .*\(at Get-TInner')
+# run state (owner 2026-11-21: 17 old runs "running" at 60 min an hour): live = own writes within stuckMinutes, a live holder is not enough
+$rsd = Join-Path (Kd) 'wf-state'; $rsOut = Invoke-PsTest run-state @'
+$null = . $args[0] 6>$null; $n = Get-Date; $root = $args[1]; $me = [pscustomobject]@{ runId = 'x'; holderPid = $PID; holderStart = (Get-KitPidStart $PID) }
+$st = { param([int]$ago, [string[]]$ev, $rec = $me, [string]$fn = 'Get-KitRunState') $d = New-Item -ItemType Directory -Force (Join-Path $root "w$ago-$($ev.Count)-$([guid]::NewGuid().ToString('n').Substring(0, 6))")
+  $j = Join-Path $d 'journal.jsonl'; Set-Content $j $ev; (Get-Item $j).LastWriteTime = $n.AddMinutes(-$ago); & $fn $d @($rec) @($ev | ForEach-Object { $_ | ConvertFrom-Json }) $n }
+$open = '{"type":"started","agentId":"a1","label":"build:A"}'; $done = '{"type":"result","agentId":"a1","result":{"ok":true}}'
+@((& $st 1 @($open)), (& $st 30 @($open)), (& $st 90 @($open)), (& $st 30 @($open, $done)), (& $st 1 @($open, '{"type":"finished"}')), (& $st 1 @($open) ([pscustomobject]@{ runId = 'x'; paused = 'now' }))) -join ' '
+$dead = [pscustomobject]@{ runId = 'x'; holderPid = 999999; holderStart = '2020-01-01T00:00:00Z' }; $cl = 'Test-KitRunCloseable'
+"close: $((& $st 30 @($open, $done) $me $cl), (& $st 30 @($open, $done) $dead $cl), (& $st 130 @($open, $done) $me $cl), (& $st 90 @($open) $dead $cl) -join ' ')"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $rsd) | Out-String
+Expect "run state: running (fresh write) · stuck (open step, quiet < 3x) · stale (open step quiet 3x, or no open step quiet) · ended · paused, whatever the holder; AutoFix closes a stale run only with no open step after 6x quiet (a dead session: stopped, resumed, never closed) ($($rsOut.Trim()))" ($rsOut.Trim() -eq "running stuck stale stale ended paused`r`nclose: False False True False" -or $rsOut.Trim() -eq "running stuck stale stale ended paused`nclose: False False True False")
+# Runs band: hours = the steps' activity, never start-to-now; a stale run chipped; a board-only run newer than the usage pass: counting
+$rbd = & { . $O; $n = [datetime]'2026-01-02T15:00:00'; $sx = [pscustomobject]@{ label = 'build:A'; role = 'devy'; at = $n.AddHours(-5).ToString('o'); min = 30; result = 'stopped'; tok = 5 }
+  $run = [pscustomobject]@{ run = 'r9'; id = 'wf_9'; label = 'r9'; kind = 'build'; started = $n.AddHours(-6).ToString('o'); status = 'ended'; state = 'stale'; lastAt = $sx.at; at = $sx.at; tok = 5; steps = @($sx); wall = 60 }
+  $ag = @([pscustomobject]@{ name = 'k1 (kitty)'; run = 'kit-x'; state = 'ACTIVE'; since = $n.AddMinutes(-9).ToString('o'); last = $n.ToString('o') })
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = $ag; stats = [pscustomobject]@{ usage = [pscustomobject]@{ at = $n.AddMinutes(-30).ToString('o'); runs = @($run) } } })
+  $r9 = [regex]::Match($h, "(?s)data-g='rr-wf_9'.*?</div><div class='gk ag").Value
+  "$($r9 -match 'stale &#183; no end record|stale · no end record') $(([regex]::Matches($r9, ' [1-9]\d* min active')).Count) $($h -match '>counting… \(usage as of 14:30\)<')" }
+$rov = & { . $O; $n = [datetime]'2026-01-02T15:00:00'; $sx = [pscustomobject]@{ label = 'build:A'; role = 'devy'; at = $n.AddHours(-3).ToString('o'); min = 9; result = 'running'; tok = 5 }
+  $run = [pscustomobject]@{ run = 'r8'; id = 'wf_8'; label = 'r8'; kind = 'build'; started = $n.AddHours(-4).ToString('o'); status = 'running'; at = $sx.at; tok = 5; steps = @($sx); wall = 60 }
+  $ag = @([pscustomobject]@{ name = 'r8 (workflow)'; run = 'r8'; state = 'FINISHED'; since = $n.AddHours(-3).ToString('o'); last = $n.AddHours(-3).ToString('o') })
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = $ag; stats = [pscustomobject]@{ usage = [pscustomobject]@{ at = $n.AddHours(-3).ToString('o'); runs = @($run) } } })
+  "$([regex]::Match($h, "(?s)data-g='rr-wf_8'.{0,600}").Value -notmatch 's-act''>running') $($h -match 'usage as of 01-02 12:00')" }
+Expect "runs band: this sweep's ended workflow row beats an older usage pass's running; the band says how old usage is ($rov)" ($rov -eq 'True True')
+Expect "runs band: a stale run is chipped, its hours only where its steps ran (1 hour), a board-only run newer than usage says counting ($rbd)" ($rbd -eq 'True 1 True')
+$dsk = & { . $O; $pv0 = [pscustomobject]@{ disks = @(@{ drive = 'C'; at = (Get-Date).AddHours(-3).ToString('o'); free = 1 }, @{ drive = 'D'; at = (Get-Date).AddMinutes(-5).ToString('o'); free = 2 }, @{ drive = 'E'; free = 3 }) }
+  @((Get-KitSuperviseSeries @() $pv0).disks | ForEach-Object { $_.drive }) -join ',' }
+Expect "disks: no disk line this sweep keeps only rows under 2 heartbeats old, never an old copy as today's ($dsk)" ($dsk -eq 'D')
+$epg = & { . $O; function Format-KitSuperviseHtml { throw 'boom-x' }; $hp = [IO.Path]::ChangeExtension((Get-KitPath supervise-report -Create), '.html'); [IO.File]::WriteAllText($hp, 'old page')
+  $null = Write-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date); flags = @(); rows = @() }) @() ''; $t = [IO.File]::ReadAllText($hp); "$($t -match 'Supervisor page failed') $($t -match 'boom-x') $($t -notmatch 'old page')" }
+$sfl = & { . $O; function Get-KitGateStats { throw 'boom-g' }; $dd = [pscustomobject]@{ at = (Get-Date); flags = @(); rows = @() }; $hp = Write-KitSuperviseHtml $dd @() ''; "$([IO.File]::ReadAllText($hp) -match 'dashboard data not updated this sweep: gate: boom-g') $(@($dd.flags | Where-Object what -match 'boom-g').Count)" }
+Expect "a stats source that fails raises a WATCH flag on the page, never a silent stale section, and in the sweep's own flags ($sfl)" ($sfl -eq 'True 1')
+Expect "page build failed: a minimal page says so (never the last good page passing as this sweep's) ($epg)" ($epg -eq 'True True True')
+# Trends tokens / est. cost (owner 2026-11-21: three sub-cells that did not add up): a day = one total = the sum of its 4 parts over a bar
+$sbt = & { . $O; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $d1 = [pscustomobject]@{ tok = 100; in = 10; out = 20; cr = 60; cw = 10 }; $d2 = [pscustomobject]@{ tok = 50; in = 5; out = 5; cr = 30; cw = 10 }
+  $h = Format-KitDayHeat @(@{ n = 'tokens'; v = @(100, 50); sk = 'tokens'; so = @($d1, $d2); t = '150' }) @('2026-01-01', '2026-01-02') 'x'
+  $c = @([regex]::Matches($h, "<i class='sdc[^']*' style='--a:\d+%;--sb:linear-gradient\(90deg,(var\(--[\w]+\) [\d.]+% [\d.]+%,?){4}\)' title='[^']*'>(\d+)</i>") | ForEach-Object { $_.Groups[2].Value }); "$($c -join ',') $($h -match '>150</span></div>')" }
+Expect "Trends tokens row: a day cell = the sum of its 4 parts (one number, a stacked bar), the 7-day total = the days' sum ($sbt)" ($sbt -eq '100,50 True')
 Remove-TestKit $k
 Complete-Tests
