@@ -88,6 +88,24 @@ Expect "prepare: a run folder with files is refused (exit 1, no -2 suffix); an e
 Set-JsonFile $kl @{ process = @{ docs = @() } }   # [] = no docs (unset: the built-in pair, vocab.json)
 $ppNd = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-nodoc') 2>&1); $ndRun = ("$($ppNd[-1])" -replace '^RUN ') | ConvertFrom-Json
 Expect "prepare, process.docs []: no doc needed, the task text is the guide, lane = the first qa.lanes lane (web) ($($ppNd[-2]))" (@($ndRun.items).Count -eq 2 -and -not @($ndRun.left).Count -and (Get-Content -Raw $ndRun.items[1].guideFile) -match 'No testing doc configured' -and $ndRun.items[0].lane -eq 'web')
+# select.tasks + statuses: those ids and their subtasks in a status only, no list sweep (in-test tasks of another product got in); '-<name>' gets the stamp
+New-Task 'SUB1' '[Bug] Sort sub' $tA 'in test' 'MR: https://git.example/g/web/-/merge_requests/8'; New-Task 'SUB2' '[Bug] Sort open sub' $tA 'open' 'MR: https://git.example/g/web/-/merge_requests/9'
+$idsJob = @{ runFolder = "$wd/qa-runs/-ids"; statuses = @('inTest'); tasks = @($tA); target = 'stg-a'; kitDir = $k } | ConvertTo-Json -Compress
+$ppIds = @(pwsh -NoProfile -File $PKp prepare -Job $idsJob 2>&1); $idsRun = ("$($ppIds[-1])" -replace '^RUN ') | ConvertFrom-Json
+$idsGot = @(@($idsRun.items.subtasks.id) + @($idsRun.left.id) | Sort-Object) -join ','
+Expect "prepare select.tasks: only the named task + its in-test subtask (not $tB, not SUB2); a '-ids' folder gets its date stamp ($idsGot | $($idsRun.runDir))" ($idsGot -eq ((@($tA, 'SUB1') | Sort-Object) -join ',') -and $idsRun.runDir -match 'qa-runs/\d{4}-\d\d-\d\d-\d{6}-ids$')
+foreach ($subId in 'SUB1', 'SUB2') { New-Task $subId 'closed sub' $tA 'closed' }   # out of the later status sweeps
+# NOT_TESTED undeployed whose MRs are all N/A for the target (another product's change): kept open, never failedTesting; NOT-DEPLOYED, a mixed row or another untested check still fails
+$naFin = @'
+. $args[0]; $global:depRow = $args[3]; function Invoke-Deployed { $global:depRow }
+$null = Invoke-Finalize -RunDir $args[1] -Code $args[2]
+'@
+$naOut = foreach ($na in @(@('NA', '{"mr":"py!5","target":"t","state":"N/A","detail":"n/a for t: merged into main, not release"}'), @('ND', '{"mr":"py!5","target":"t","state":"NOT-DEPLOYED","detail":"not on staging yet"}'), @('MX', '[{"mr":"py!5","target":"t","state":"N/A","detail":"n/a for t: x"},{"mr":"py!6","target":"t","state":"NOT-DEPLOYED","detail":"y"}]'), @('NX', '{"mr":"py!5","target":"t","state":"N/A","detail":"n/a for t: x"}', 'blocked'))) {
+  $nRun = New-Run $na[0] @(@{ code = 'U1'; task = "T$($na[0])"; checks = @(, @('C1', 'NOT_TESTED')) + @(if ($na.Count -gt 2) { , @('C2', 'NOT_TESTED') }) }); New-Task "T$($na[0])" "Task $($na[0])" $null 'in test'
+  $nj = Read-Json "$nRun/run.json"; $nj.items[0].subtasks[0] | Add-Member mrs 'py!5'; & $J $nj "$nRun/run.json"
+  $nr2 = Read-Json "$nRun/U1/results.json"; $nr2.checks[0] | Add-Member cause 'undeployed'; if ($na.Count -gt 2) { $nr2.checks[1] | Add-Member cause $na[2] }; & $J $nr2 "$nRun/U1/results.json"
+  $null = Invoke-PsTest "na-$($na[0])" $naFin @($Q, $nRun, 'U1', $na[1]); $nRec = Rec $nRun U1; "$($na[0])=$([bool]$nRec.failedTesting)/$((Task "T$($na[0])").status)/$($nRec.keptOpen -match '^other product / target: py!5 N/A on t')" }
+Expect "finalize: undeployed + every MR N/A for the target -> kept open (other product), NOT-DEPLOYED, mixed rows, an extra untested check -> failed testing ($($naOut -join ' '))" (($naOut -join ' ') -eq 'NA=False/in test/True ND=True/failed testing/False MX=True/failed testing/False NX=True/failed testing/False')
 # K68r: a retest supersedes only the FAILs its only list names: the original's other FAIL still fails testing
 New-Task 'TQ' 'Task Q' $null 'promoted'; $rq = New-Run 'RQ' @(@{ code = 'Q1'; task = 'TQ'; checks = @(@('C1', 'FAIL'), @('C2', 'FAIL')) }, @{ code = 'Q2'; task = 'TQ'; checks = , @('C1', 'PASS') })
 $rqj = Read-Json "$rq/run.json"; $rqj.items[1] | Add-Member retest $true; $rqj.items[1] | Add-Member only @('C1'); & $J $rqj "$rq/run.json"

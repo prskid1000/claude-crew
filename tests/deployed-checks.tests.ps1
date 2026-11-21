@@ -156,6 +156,17 @@ $sf = @($all | ForEach-Object { @($_ | Where-Object target -eq 'sf')[0] }); $fx 
 Expect "deployed ssh.shaFile: holds the merge (branch ahead: pending), lacks it, none, a short sha + text, host silent = UNKNOWN ($(@($sf.state) -join ','))" ((@($sf.state) -join ',') -eq 'DEPLOYED,NOT-DEPLOYED,UNKNOWN,DEPLOYED,UNKNOWN' -and $sf[4].detail -match 'git host did not answer' -and
   $sf[0].detail -match 'deployed commit dddddddd \(/opt/a/deployed\.sha\) holds ffffffff; stage/py is at bbbbbbbb: a deploy pending or failed' -and $sf[2].detail -match 'no commit in /opt/a/deployed\.sha on h1')
 Expect "deployed: a target whose from lacks the MR's branch is N/A before any probe ($($fx.state): $($fx.detail))" ($fx.state -eq 'N/A' -and $fx.detail -match 'merged into main, not release')
+# prepare: a task whose every MR is N/A for the target (another product's change) is left out, never tested as undeployed
+$env:KIT_TRACKER_TYPE = 'none'; $craftyQ = Join-Path $k 'skills/crafty/crafty.ps1'
+$tOther = (pwsh -NoProfile -File $craftyQ tracker create -Key qa-fx-deployed-checks-160 -Name '[Bug] Other product' -Description "**Testing doc (human):** [open](https://docs.example/h9)`n`nMR: https://git.example/g/py/-/merge_requests/5" -NewTask fixture 2>$null | ConvertFrom-Json).id
+$null = pwsh -NoProfile -File $craftyQ tracker status $tOther 'in test' 2>&1
+Set-Content "$(Kd)/other.ps1" @'
+. $args[0]; . $env:KIT_TEST_SHIM; function Invoke-HostApi($p) { if ($p -like '*requests/5*') { @{ iid = 5; state = 'merged'; sha = 'f' * 40; merged_at = '2026-01-02'; target_branch = 'main' } } }
+Invoke-Prepare -Job $args[1]
+'@
+$otOut = @(Px "$(Kd)/other.ps1" $Q (@{ runFolder = "$(Kd)/qa-runs/<yyyy-MM-dd>-other"; tasks = @($tOther); target = 'fx'; kitDir = $k } | ConvertTo-Json -Compress) 2>&1); $env:KIT_TRACKER_TYPE = $null
+$otRun = try { "$($otOut[-1])" -replace '^RUN ' | ConvertFrom-Json } catch { $null }
+Expect "prepare: every MR N/A for the target -> left out 'other product / target', no item ($(@($otRun.left.reason) -join '; '))" ($otRun -and -not @($otRun.items).Count -and @($otRun.left | Where-Object { $_.id -eq $tOther -and $_.reason -match '^other product / target: py!5 N/A on fx' }).Count -eq 1)
 # K93: a beat's parallel deployed probes share a branch-level host answer: one call, the others read it (16 processes asked the same ci.runs: 96 calls a beat)
 $bsw = Join-Path (Kd) 'beat-shared.ps1'; $bsc = Join-Path (Kd) 'beat-calls.txt'
 Set-Content $bsw '. $args[0]; . $args[1]; $env:KIT_API_BEAT = "b1"; $v = Get-BeatShared "ci.runs|ref=main&repo=o/r" { Add-Content $args2 x; Start-Sleep 2; @([pscustomobject]@{ id = 7; created_at = "2026-11-19T05:00:00Z" }) }; "$(@($v).Count)/$(@($v)[0].id)/$([datetimeoffset]@($v)[0].created_at -eq [datetimeoffset]"2026-11-19T05:00:00Z")"'.Replace('$args2', "'$bsc'")

@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L973 results · L1006 retest · L1063 prepare
+Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L978 results · L1011 retest · L1068 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -876,6 +876,11 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if ($sib.pending -and -not ($rec.fail + $sib.fail)) { $rec.keptOpen = "$($sib.pending) check(s) of a sibling item pending in another lane"; return }
   # local env: untested = ENV-FIX
   if ($isLocal -and -not ($rec.fail + $sib.fail) -and ($rec.notTested + $sib.notTested)) { $rec.keptOpen = "local env ${isLocal}: $($rec.notTested + $sib.notTested) check(s) not tested: ENV-FIX + pokey.ps1 retest"; return }
+  # undeployed, but every MR is N/A on this target: another product's change, never failedTesting
+  if (-not ($rec.fail + $sib.fail + $sib.notTested) -and $rec.undeployed -and $rec.undeployed -eq $rec.notTested -and (Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue)) {
+    $qaTgt = [string]$(if ($item.target) { $item.target } else { $run.target }); $stMrs = @("$($st.mrs)" -split '[,\s]+' | Where-Object { $_ -match '^[\w./-]+!\d+$' })
+    if ($stMrs.Count -and (Test-QaOtherTarget @(Invoke-Deployed -Mrs $stMrs -Target $qaTgt -Json | ConvertFrom-Json))) { $rec.keptOpen = "other product / target: $($stMrs -join ', ') N/A on $qaTgt (not undeployed): test it on its own target"; return }
+  }
   $hold = [int]$rec.notTestedHold + [int]$sib.notTestedHold   # owner decides (close / retest)
   if ($rec.fail + $sib.fail + $rec.notTested + $sib.notTested - $hold) { Set-FailedTesting $rec $st; return }
   if ($hold) {
@@ -907,7 +912,7 @@ foreach ($st in @($item.subtasks)) {
   $ntChecks = @($mine | Where-Object { $_.result -eq 'NOT_TESTED' }); $nt = $ntChecks.Count; $pend = Cnt $mine 'PENDING'
   $pass = (Cnt $mine 'PASS') + (Cnt $mine 'PASS_WITH_NOTE'); $oos = Cnt $mine 'OUT_OF_SCOPE'   # OUT_OF_SCOPE: qa.outOfScope
   $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $ownFails.Count; newDefects = $newDefects.Count; known = @($knownFails | ForEach-Object { "$($_.id) -> $("$($_.knownBug)".Trim())" }); notTested = $nt; outOfScope = $oos; pending = $pend; bug = $null; closed = $false; failedTesting = $false
-    notTestedHold = @($ntChecks | Where-Object { "$($_.cause)" -in $script:NtHold }).Count; unproven = @($unproven | ForEach-Object id); failIds = @($ownFails | ForEach-Object id) }
+    notTestedHold = @($ntChecks | Where-Object { "$($_.cause)" -in $script:NtHold }).Count; undeployed = @($ntChecks | Where-Object { "$($_.cause)" -eq 'undeployed' }).Count; unproven = @($unproven | ForEach-Object id); failIds = @($ownFails | ForEach-Object id) }
   # supervise reads watch: one WATCH + a watchy triage per unproven finding
   foreach ($u in $unproven) { $out.watch += [pscustomobject]@{ id = $u.id; task = $st.id; screen = $u.screen; env = [string]$(if ($item.target) { $item.target } else { $run.target }); observed = $u.observed } }
   $prevRec =if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
@@ -1067,6 +1072,8 @@ function Split-QaLiveParts($Dep) {
   if ($noTgt.Count -and $noTgt.Count -eq $notLive.Count -and @($Dep | Where-Object { $_.state -match '^DEPLOYED' }).Count) { return @{ notLive = @(); local = @($noTgt | ForEach-Object { "$($_.mr)" }) } }
   @{ notLive = $notLive; local = @() }
 }
+# every row N/A, at least one proven for this target (deployed_checks "n/a for <t>": another branch or no path under it): another product's change
+function Test-QaOtherTarget($Dep) { $rows = @($Dep | Where-Object { $_ }); $rows.Count -and -not @($rows | Where-Object { "$($_.state)" -ne 'N/A' }).Count -and @($rows | Where-Object { "$($_.detail)" -like 'n/a for *' }).Count }
 function Invoke-Prepare {
 param([string]$Job, [string]$RunDir)
 $ErrorActionPreference = 'Stop'
@@ -1076,14 +1083,20 @@ if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run
 $jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
 if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
 $dir = [regex]::Replace("$($jb.runFolder)", '<([yMdHms][^<>]*)>', { param($DateTok) Get-Date -Format $DateTok.Groups[1].Value })   # <yyyy-MM-dd> and other date formats
+# a caller that expanded the stamp itself to nothing left '-<name>' (a leading '-' reads as a CLI flag)
+if ((Split-Path $dir -Leaf) -like '-*') { $dir = Join-Path (Split-Path $dir -Parent) "$(Get-Date -Format 'yyyy-MM-dd-HHmmss')$(Split-Path $dir -Leaf)" }
 if (Get-ChildItem -LiteralPath $dir -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1) { throw "prepare: $dir exists with files: pass another name, or launch with { runDir }" }   # an empty one is reused
 New-Item -ItemType Directory -Force (Join-Path $dir 'guides') | Out-Null; $dir = (Resolve-Path -LiteralPath $dir).Path -replace '\\', '/'
 # 1. candidates: lists x statuses, plus tasks, minus exclude; mine = the tracker owner's
 $lists = @($jb.lists | Where-Object { $_ }); if (-not $lists.Count) { $lists = @(@(Get-KitValue 'trackerLists' @()) | Where-Object { $_ }) }; if (-not $lists.Count) { $lists = @('') }
 $sts = @($jb.statuses | Where-Object { $_ }); if (-not $sts.Count) { $sts = @('inTest') }
-$byIds = @($jb.tasks | Where-Object { $_ }).Count -and -not @($jb.lists | Where-Object { $_ }).Count -and -not @($jb.statuses | Where-Object { $_ }).Count   # a selection by ids: only those ids
-$cand = [ordered]@{}; foreach ($ls in $lists) { foreach ($st in @($sts | Where-Object { -not $byIds })) { foreach ($row in @(Get-TrackerTasks "$ls" "$st")) { if ($row.id) { $cand["$($row.id)"] = "$ls" } } } }
-foreach ($tid in @($jb.tasks | Where-Object { $_ })) { $cand["$tid"] = '' }
+$ids = @($jb.tasks | Where-Object { $_ }); $stPick = @($jb.statuses | Where-Object { $_ })
+$cand = [ordered]@{}
+if ($ids.Count) {
+  # named tasks: exactly those ids plus their subtasks (in statuses when given, else open ones), never a list sweep
+  $subIn = { param($Sub) if ($stPick.Count) { [bool]@($stPick | Where-Object { (Test-TrackerStatus "$($Sub.status)" $_) -or "$($Sub.status)" -ieq $_ }).Count } else { -not (Test-TrackerStatus "$($Sub.status)" 'closed') } }
+  foreach ($tid in $ids) { $cand["$tid"] = ''; foreach ($sub in @((Get-TrackerTask "$tid").subtasks | Where-Object { $_.id })) { if (& $subIn $sub) { $cand["$($sub.id)"] = '' } } }
+} else { foreach ($ls in $lists) { foreach ($st in $sts) { foreach ($row in @(Get-TrackerTasks "$ls" "$st")) { if ($row.id) { $cand["$($row.id)"] = "$ls" } } } } }
 foreach ($tid in @($jb.exclude | Where-Object { $_ })) { $cand.Remove("$tid") }
 $owner = if ($jb.mine) { "$(Get-TrackerOwner)" }
 $tgtRules = Get-KitSetting "qa.targets.$($jb.target)" $null
@@ -1115,10 +1128,11 @@ foreach ($tid in @($cand.Keys)) {
     if (-not $hit) { & $out "no qa.targets.$($jb.target) rule matches"; continue }
     $it.target = "$($hit.target)"; if ($hit.localEnv) { $it.localEnv = "$($hit.localEnv)" }
   } else { $it.target = "$($jb.target)"; if ($null -eq $script:QaJobLocal) { $script:QaJobLocal = Get-TargetLocalEnv $jb.target }; if ($script:QaJobLocal) { $it.localEnv = $script:QaJobLocal } }   # a local target: envy deploys what is missing (lead)
-  # 4. live: every MR deployed on the target (N/A, MANUAL count as in); a local env: its own check (lead)
+  # 4. live: every MR deployed on the target (N/A, MANUAL count as in; all N/A for this target: left out); a local env: its own check (lead)
   $depFn = Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue   # adapters/deployed_checks.ps1
   if (-not $it.localEnv -and $depFn) {
     $dep = @(& $depFn -Mrs $mrs -Target $it.target -Json | ConvertFrom-Json)
+    if (Test-QaOtherTarget $dep) { & $out "other product / target: $($mrs -join ', ') N/A on $($it.target) (no change for it)"; continue }
     $lp = Split-QaLiveParts $dep; $notLive = $lp.notLive; if ($lp.local.Count) { $it.localParts = $lp.local }
     if ($notLive.Count) { & $out "not live on $($it.target): $(@($notLive | ForEach-Object { "$($_.mr) $($_.state)" }) -join ', ')"; continue }
   }

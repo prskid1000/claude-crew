@@ -30,7 +30,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop, report.
    Phones: `phoney.ps1 acquire|release` (kept through waits < 30 min). Local env "pause": stop its checks; "deploy done": re-run.
 2. **Deployed?** Before any FAIL: `pokey.ps1 deployed -Mrs <repo>!<iid>,...` per repo of the task; not deployed -> NOT_TESTED
-   "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
+   "not deployed yet" (all N/A: another product, not undeployed); MANUAL -> lead notes say if live; unresolved ->
+   NOT_TESTED, never FAIL.
 3. **Test each check:** API
    `pokey.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
    on HTTP 0 / 4xx / 5xx; status and body still print);
@@ -112,14 +113,13 @@ never log out), <= 2 tabs an agent; app lanes: your serial, no `adb kill-server`
 - L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/testy.js`; one
   item per testing doc: `{code, title, guideFile, lane: a qa.lanes name, target?, services? (local: leased),
   subtasks:[{id,name,mrs}], retest?, only?}`),
-  guides exported to text. Deploy check: `pokey.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos: `lead-notes.md`; not
-  deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, baseline data (by id;
-  local env: `seed -Check`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
+  guides exported to text. `lead-notes.md`: MANUAL deploy state; prerequisites per guide: flags, accounts, roles, data (by
+  id; local env: `seed -Check`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
   **Selection** (`pokey.ps1 prepare -Job <job JSON>` runs steps 1-5, the workflow's Prepare step; by hand the same):
   1. Folder = `runFolder`, date placeholders (`<yyyy-MM-dd-HHmmss>`) expanded; one with files is refused, an empty one reused.
      Candidates: `crafty.ps1 tracker list <container> <status>` per `lists` (empty: `trackerLists`, else `tracker.list` /
      `tracker.repo`) x `statuses` (logical names via `tracker.statuses`; `in test` = `inTest`; other names pass through);
-     plus `tasks` (`tracker view`), minus `exclude`; `mine` = only the `tracker owner`'s.
+     `tasks` given: only those + their subtasks in `statuses`; minus `exclude`; `mine` = only the `tracker owner`'s.
   2. Per task: MRs `<repo>!<iid>` (`tracking` `<id>.json` `track.mrs`, else the task's MR links); its "Testing doc
      (human):" link -> `<run>/guides/<code>.md` (its kept copy, else the link).
      None of either -> left out. Tasks sharing a doc = one item.
@@ -127,7 +127,8 @@ never log out), <= 2 tabs an agent; app lanes: your serial, no `adb kill-server`
      `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none
      -> left out.
   4. Live: test env -> `pokey.ps1 deployed -Mrs <MRs> -Target <t>`, DEPLOYED or N/A (MANUAL resolved): in (NO-TARGET next to a
-     live MR: `localParts`, local env); `localEnv` -> in after `envy.ps1 status -Env <env>`. Else left out with the state.
+     live MR: `localParts`, local env); all N/A for the target: left out (other product); `localEnv` -> in after
+     `envy.ps1 status -Env <env>`. Else left out with the state.
   5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
      `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
 - L2. Launch `/testy { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,
