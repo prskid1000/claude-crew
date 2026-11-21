@@ -158,7 +158,7 @@ switch ($Action) {
     if ($script:beatTaken) { $me = $script:beatTaken; "TAKEN OVER: session $($me.takenOverBy) replaced $Session at $(([datetime]$me.takenOverAt).ToString('HH:mm')). Stop without writing and tell the coordinator."; exit 1 }
     $me = $script:beatEntry
     $rt = if ($me.tool) { Invoke-KitAdapter transcript (Get-KitTranscriptKind $me.tool) root }
-    $tf = if ($me.transcript) { $me.transcript } elseif ($rt -and -not ($me.txTry -and ((Get-Date) - [datetime]$me.txTry).TotalMinutes -lt 10)) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty txTry (Get-Date).ToString('o'); $x }; Find-KitTranscript "SESSION $Session" $rt.filter $rt.dir }; $sp = Get-KitSpend $tf
+    $tf = if ($me.transcript) { $me.transcript } elseif ($rt -and -not ($me.txTry -and ((Get-Date) - [datetime]$me.txTry).TotalMinutes -lt 10)) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty txTry (Get-Date).ToString('o'); $x }; Find-KitTranscript "(pass -Session $Session to beat" $rt.filter $rt.dir }; $sp = Get-KitSpend $tf
     if ($tf -and -not $sp -and -not $me.transcript) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty transcript $tf; $x } }   # Codex / Antigravity: no usage lines
     if ($sp) {
       $bg = if ($sp.model -and $sp.model -ne $me.model) { Get-KitBudget -Model $sp.model } else { [pscustomobject]@{ budget = $me.budget; handoff = $me.handoff; model = $me.model } }

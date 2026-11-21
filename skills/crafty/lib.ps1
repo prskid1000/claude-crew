@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1145 tracker · L1477 prior ·
-  L1493 ask bugs · L1679 git-host · L1866 kitlog · L1988 params · L2293 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1146 tracker · L1478 prior ·
+  L1494 ask bugs · L1680 git-host · L1867 kitlog · L1989 params · L2294 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1059,10 +1059,11 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   }
   # a running step of the same name is that agent now
   $trk = (Read-KitTracking).tasks; $txCache = @{}; $byTx = @{}
-  # Agent-tool subagent: transcript found by its SESSION line, saved in the entry; a left one gets one scan after it left (a short agent left before the first)
+  # Agent-tool subagent: transcript found by its own join line (SESSION <id>   (pass -Session <id> to beat: a bare id is also in transcripts
+  # that only grep or quote it), saved in the entry; a left one gets one scan after it left (a short agent left before the first)
   $txOf = { param($e) if ($e.transcript -or -not $e.session -or ($e.status -eq 'left' -and (($e.txTry -and [datetime]$e.txTry -ge [datetime]$e.beat) -or ($Now - [datetime]$(if ($e.beat) { $e.beat } else { $e.joined })).TotalMinutes -gt 360)) -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt 10)) { return "$($e.transcript)" }
     $k = Get-KitTranscriptKind $e.tool; if (-not $txCache.ContainsKey($k)) { $txCache[$k] = @(Get-KitLiveTranscripts $Now 360 $k) }
-    $hit = @($txCache[$k] | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Select-String -LiteralPath $_.FullName -SimpleMatch "SESSION $($e.session)" -Quiet) })[0]
+    $hit = @($txCache[$k] | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Select-String -LiteralPath $_.FullName -SimpleMatch "(pass -Session $($e.session) to beat" -Quiet) })[0]
     try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { if ($hit) { $x.transcript = $hit.FullName } else { $x.txTry = $Now.ToString('o') }; Write-KitState $e.file $x } } } catch { }   # a miss: 10 min until the next scan
     if ($hit) { $hit.FullName } }
   foreach ($e in @($recent | Group-Object { "$($_.run)/$($_.agent)" } | ForEach-Object { $_.Group | Sort-Object { [datetime]$_.joined } | Select-Object -Last 1 } | Sort-Object -Stable { -not $_.type })) {   # a re-join replaces its older entry; typed first

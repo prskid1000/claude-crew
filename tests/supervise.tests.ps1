@@ -49,7 +49,7 @@ $wj = { param($id, $run, [object[]]$L, $m, $x = @{}) New-Journal $id $L; (Get-It
 & $wj wf_s2 sp @(@{ type = 'started'; agentId = 'y1'; label = 'build:P1' }) 30; $null = & $tx "$(Split-Path $wd)/wf_s2/agent-y1.jsonl" '{}' 30
 & $J @{ id = 'e-2'; kind = 'envfix'; run = 'sp'; agent = 'P1'; status = 'pending'; at = (& $ago 25) } (Join-Path (TkPath $k decisions) 'e-2.json')
 & $wj wf_s3 sq @(@{ type = 'started'; agentId = 'z1'; label = 'build:Q1' }, @{ type = 'result'; agentId = 'z1'; result = @{} }) 5 @{ paused = (& $ago 4) }
-& $se S9 @{ beat = (& $ago 30) }; $null = & $tx (Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/agent-a9.jsonl') '{"message":{"content":[{"type":"tool_result","content":"SESSION s-S9 (pass -Session)"}]}}'   # an Agent-tool subagent no beat mapped
+& $se S9 @{ beat = (& $ago 30) }; $null = & $tx (Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/agent-a9.jsonl') '{"message":{"content":[{"type":"tool_result","content":"SESSION s-S9   (pass -Session s-S9 to beat / check / leave)"}]}}'   # an Agent-tool subagent no beat mapped
 & $wj wf_s4 sv @(@{ type = 'launched' }) 30
 $st = Invoke-PsTest 'status' '. $args[0]; $r = Get-KitStatusRows; Format-KitStatusTable $r (Get-Date) $script:KitTxVersions; Get-KitStuckFlags $r (Get-Date) 20 | ForEach-Object { "[$($_.level)] $($_.what)" }' @($O)
 $sv = { param($n, $rx) [bool]@($st | Where-Object { $_ -match "^\| $([regex]::Escape($n)) \|[^|]*\| $rx" }).Count }

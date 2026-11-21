@@ -221,7 +221,7 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   ended ones by day (today open on the same 24 h axis, older days folded), in each day a fold per kind (build, test, kit, deploy,
   agents: its sums; the newest open); a run row: short title (run name + task codes; the mandate in its tooltip), kind, its steps page, tokens · cost, time (agent minutes
   added up; elapsed = to its last step's write in the tooltip); agents (steps by agent code, live board rows with
-  state and age) under it on a tap; board agents outside a workflow run grouped by their run;
+  state and age) under it on a tap; board agents outside a workflow run grouped by their run (in one only by proof: its run name or transcript folder), with no run a row each (agents kind);
 - machine and resources: tiles (RAM used, builds running / queued / today, longest gate wait, QA seats, phone lanes,
   emulators, test browsers) and one RAM bar (used / promised to builds / free above the floor / floor); Resources · 24 h: one
   heatmap, metric switch CPU · RAM | Writes GB | Waits min | Builds min, rows in folding groups (count + the worst state): the

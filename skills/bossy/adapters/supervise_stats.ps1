@@ -7,7 +7,7 @@ page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L13 gate · L65 waits · L91 qa · L108 cpu · L144 writes (owner 2026-11-18 · L428 cards · L715 flags · L855 bands ·
-  L999 shells · L1070 reset
+  L1000 shells · L1071 reset
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -911,17 +911,18 @@ function Format-KitRunsTimeline($Runs, $Agents, $Pages, $UsageAt = $null, $Usage
   # board-only agents: tokens from their own transcript (usage agentSteps: Agent-tool spawns), matched by path, else by file name (agent-<agentId>.jsonl)
   $txKey = { param($p) "$p".ToLowerInvariant() -replace '\\', '/' }; $axPath = @{}; $axLeaf = @{}
   foreach ($x in @($UsageAgents | Where-Object { $_ -and $_.tf })) { $axPath[(& $txKey $x.tf)] = $x; $axLeaf[[IO.Path]::GetFileName((& $txKey $x.tf))] = $x }
-  # a workflow step that joined the board without -Run (review-X1 = step review:X1, its transcript in workflows/<run id>): its run row counts it
-  $wfIds = @{}; $stepWin = @{}; foreach ($r in @($Runs | Where-Object { $_ })) { foreach ($i in @(@($r.ids) + $r.id | Where-Object { $_ })) { $wfIds["$i"] = 1 }
-    foreach ($s in @($r.steps | Where-Object { $_ -and $_.at -and $_.label })) { $sk = ("$($s.label)" -replace ':', '-').ToLowerInvariant(); $t1 = & $tOf $s.at; if (-not $t1) { continue }
-      if (-not $stepWin.ContainsKey($sk)) { $stepWin[$sk] = [Collections.Generic.List[object]]::new() }; $stepWin[$sk].Add(@($t1.AddMinutes(-[double]$s.min - 2), $t1.AddMinutes(2))) } }
-  $inRun = { param($sb) if ("$($sb.tf)" -match '[\\/]workflows[\\/]([^\\/]+)[\\/]' -and $wfIds.ContainsKey($Matches[1])) { return $true }; $w0 = $stepWin["$($sb.n)".ToLowerInvariant()]; if (-not $w0 -or -not $sb.spans.Count) { return $false }
-    $p0 = $sb.spans[0]; [bool]@($w0 | Where-Object { $_[0] -le $p0[1] -and $_[1] -ge $p0[0] }).Count }
-  foreach ($rn in @($byRun.Keys | Where-Object { -not $seen.ContainsKey($_) })) { $subs = @($byRun[$rn] | ForEach-Object { & $agSub $_ } | Where-Object { $_.spans.Count -and -not (& $inRun $_) }); if (-not $subs.Count) { continue }
+  # proof only (owner 2026-11-21): a board agent belongs to a workflow run by the run it joined with or its transcript in workflows/<run id>;
+  # a name or time overlap never attaches it (a standalone revy audit during a wave keeps its own row)
+  $wfIds = @{}; foreach ($r in @($Runs | Where-Object { $_ })) { foreach ($i in @(@($r.ids) + $r.id | Where-Object { $_ })) { $wfIds["$i"] = 1 } }
+  $inRun = { param($sb) "$($sb.tf)" -match '[\\/]workflows[\\/]([^\\/]+)[\\/]' -and $wfIds.ContainsKey($Matches[1]) }
+  foreach ($rn in @($byRun.Keys | Where-Object { -not $seen.ContainsKey($_) })) { $all = @($byRun[$rn] | ForEach-Object { & $agSub $_ } | Where-Object { $_.spans.Count -and -not (& $inRun $_) }); if (-not $all.Count) { continue }
+   # a named run: one row; no run name: a row per agent (its type + board name, its own tokens) in the agents kind
+   foreach ($subs in @(if ($rn) { , $all } else { $all | ForEach-Object { , @($_) } })) {
     $own = @(foreach ($sb in $subs) { if (-not $sb.tf) { continue }; $kx = & $txKey $sb.tf; $x = if ($axPath[$kx]) { $axPath[$kx] } else { $axLeaf[[IO.Path]::GetFileName($kx)] }; if ($x) { $sb.sp = & $spOf @($x); $sb.tok = [double]$x.tok; $xt = & $tOf $x.at; if ($xt -and $null -ne $x.min -and $sb.spans.Count) { $x0 = $xt.AddMinutes(-[double]$x.min); $sp0 = $sb.spans[0]; $sb.spans = @(, @($(if ($x0 -lt $sp0[0]) { $x0 } else { $sp0[0] }), $(if (-not $sb.live -and $xt -gt $sp0[1]) { $xt } else { $sp0[1] }))) }; $x } })
     $lv = [bool]@($subs | Where-Object live).Count; $s0 = @($subs | ForEach-Object { $_.spans[0][0] } | Sort-Object)[0]; $e0 = if ($lv) { $at } else { @($subs | ForEach-Object { $_.spans[0][1] } | Sort-Object)[-1] }
     $rsp = if ($own.Count) { & $spOf $own }
-    $items.Add([pscustomobject]@{ id = "board-$rn"; run = $rn; label = $(if ($rn) { $rn } else { 'Standalone agents' }); kind = $(if (@($subs.sub | Select-Object -Unique).Count -eq 1) { "$(@($subs.sub)[0])" } else { 'agents' }); live = $lv; s = $s0; e = $e0; tok = $rsp.tok; cost = $rsp.cost; wall = [math]::Round(($e0 - $s0).TotalMinutes); sp = $rsp; oc = ''; subs = $subs }) }
+    $sb0 = $subs[0]; $items.Add([pscustomobject]@{ id = $(if ($rn) { "board-$rn" } else { "board-solo-$($sb0.n)-$(if ($sb0.tf) { [IO.Path]::GetFileNameWithoutExtension($sb0.tf) } else { $s0.ToString('MMddHHmmss') })" }); run = $rn; label = $(if ($rn) { $rn } else { "$(if ($sb0.sub) { "$($sb0.sub) · " })$($sb0.n)" }); grp = $(if (-not $rn) { 'agents' })
+        kind = $(if (@($subs.sub | Select-Object -Unique).Count -eq 1) { "$(@($subs.sub)[0])" } else { 'agents' }); live = $lv; s = $s0; e = $e0; tok = $rsp.tok; cost = $rsp.cost; wall = [math]::Round(($e0 - $s0).TotalMinutes); sp = $rsp; oc = ''; subs = $subs }) } }
   # tokens · cost and time (owner 2026-11-20): one split cell each (usage.ps1 split); no transcript: its elapsed time, no tokens
   $vcol = { param($o, [string]$tip, $wall, $s1 = $null) if (-not $o) { $cnt = $UsageAt -and $s1 -and ([datetime]$UsageAt) -lt $s1; return "<span class='gc z' title='$(if ($cnt) { 'tokens are counted when the usage pass reaches this run' } else { 'no usage record: the agent started outside a workflow and no transcript of it was found (another tool, or not read yet)' })'>$(if ($cnt) { "Counting… (usage as of $(([datetime]$UsageAt).ToString('HH:mm')))" } else { 'No usage record' })</span><span class=gc>$(if ($null -ne $wall) { "$([int]$wall) min" } else { '—' })</span>" }
     "$(Format-KitSplitCell $o 'tc' $tip)$(Format-KitSplitCell $o 'time' (Get-KitSplitTip ($o | Select-Object tm, tmN, tmAll, min, wall)))" }   # the time cell: its own lines only (page weight)
@@ -953,7 +954,7 @@ function Format-KitRunsTimeline($Runs, $Agents, $Pages, $UsageAt = $null, $Usage
   $kOrd = @('build', 'test', 'kit', 'deploy', 'agents')
   $dayG = @(@($items | Where-Object { -not $_.live }) | Group-Object { $_.e.ToString('yyyy-MM-dd') } | Sort-Object Name -Descending | ForEach-Object { $d0 = [datetime]$_.Name; $td = $d0 -eq $at.Date; $rs = @($_.Group | Sort-Object e -Descending)
       $hD = if ($td) { $hL } else { $d0 }; $nD = if ($td) { 23 } else { -1 }   # today: the running block's axis (last 24 h, now at the right), so the columns line up
-      $kg = @($rs | Group-Object { & $kindKey $_.kind } | Sort-Object { [array]::IndexOf($kOrd, $_.Name) }); $newK = @($kg | Sort-Object { @($_.Group | Sort-Object e)[-1].e } -Descending)[0].Name
+      $kg = @($rs | Group-Object { if ($_.grp) { $_.grp } else { & $kindKey $_.kind } } | Sort-Object { [array]::IndexOf($kOrd, $_.Name) }); $newK = @($kg | Sort-Object { @($_.Group | Sort-Object e)[-1].e } -Descending)[0].Name
       $kH = @($kg | ForEach-Object { $ks = @($_.Group); $kp = @($ks | ForEach-Object { $_.sp } | Where-Object { $_ }); $kw = [double]($ks | Measure-Object wall -Sum).Sum
           $gsp = if ($kp.Count) { & $spOf $kp }; if ($gsp) { $gsp | Add-Member -NotePropertyName wall -NotePropertyValue $kw -Force }
           $gi = [pscustomobject]@{ id = "$($_.Name)-$($d0.ToString('yyyy-MM-dd'))"; label = $_.Name; n = $ks.Count; open = $_.Name -eq $newK; sp = $gsp; wall = $kw
