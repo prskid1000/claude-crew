@@ -10,13 +10,16 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   prepare -Job <job JSON | file> | -RunDir <run>   L1 selection: run.json, lead-notes.md, Left out; last line RUN <run JSON>
   lead-notes add -RunDir <run> -Code <code> -Text '<question or answer>'   one line under "## Answers (newest last)"
   results patch|hold -RunDir <run> -Code <code> [-Patch '<{set, add, top} JSON>'] [-Why <w> -Summary <s> -EnvFix <json>]   the workflow's deltas / held.json
-  ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL)
-In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
+  ui dump|tap|tapid|tapxy|type|clear|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL)
+  ui login -Target <t> -As <login> [-Serial <phone>] [-Tenant <t>]   types a stored login into the app (qa.userRecipes app.steps)
+  user create -Target <t> -Name <login> -Role <role> [-As <admin>] [-Tenant <t>] [-Run <run>] · user list -Target <t> · user deactivate -Target <t> -Name <login>
+In: targets.local.json (logins; user create writes users.<login> + created.<login>, never prints a password), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage,
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L26 lanes · L40 report · L156 seat · L230 api · L463 finalize · L978 results · L1011 retest · L1068 prepare
+Sections: L29 lanes · L43 report · L159 seat · L233 api · L467 users · L598 finalize · L1113 results · L1146 retest ·
+  L1203 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -240,7 +243,7 @@ function Get-KitEnvyLanes {
 }
 # the local env a target runs on: its web / api URL ports are a lane-1 env's ports ('' = a deployed env)
 function Get-TargetLocalEnv([string]$Name) {
-  $tc = try { (Get-Content (Join-Path $PSScriptRoot 'targets.local.json') -Raw | ConvertFrom-Json).targets } catch { $null }; $t = Get-KitMember $tc $Name
+  $tc = try { (Get-Content (Get-TargetsFile) -Raw | ConvertFrom-Json).targets } catch { $null }; $t = Get-KitMember $tc $Name
   $urls = "$((Get-KitMember $t 'web')) $((Get-KitMember $t 'api'))"; if (-not $urls.Trim()) { return '' }
   "$(@(Get-KitEnvyLanes | Where-Object { $_.lane -eq 1 -and @((Get-KitProps $_.ports) | Where-Object { $urls -match ":$($_.Value)(?!\d)" }).Count })[0].env)"
 }
@@ -326,8 +329,7 @@ if ($saveIn) { $PSBoundParameters['Save'] = $Save }; if ($OutDir) { $PSBoundPara
 if ($OutDir -and -not [IO.Path]::IsPathRooted($OutDir)) { throw "-OutDir must be an absolute folder path, got '$OutDir' (a variable holding an object? PowerShell names are case-insensitive: `$o is `$O)" }
 # undo Git Bash's '/api/x' -> Git path rewrite
 if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $p0 = $Path; $Path = '/' + ($Matches.rest -replace '\\', '/'); Write-KitLog calls msys-path @{ from = $p0; to = $Path } }   # the calls log has the raw arg
-$here = $PSScriptRoot
-$cfgFile = Join-Path $here 'targets.local.json'
+$cfgFile = Get-TargetsFile
 if (-not (Test-Path $cfgFile)) { throw "Missing $cfgFile - run bossy.ps1 setup -WriteLocal, then fill it in" }
 $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
 if (-not $Target) { $Target = $cfg.default }
@@ -343,14 +345,16 @@ $a = Resolve-ApiAuth $t.auth
 $kind = "$($a.type)"; if (-not $kind) { $kind = 'login' }
 if (-not $As -and $kind -ne 'none') {
   $who0 = Resolve-ApiUser $t   # [string]$As would turn $null into ''
-  if ($null -eq $who0) { "NO-USER target $Target has several users and none is chosen (not retried): pass -As <user>, or set targets.local.json targets.$Target.defaultUser or kit.local.json api.defaultUser. Known: $((Get-KitProps $t.users).Name -join ', ')"; exit 2 }
+  if ($null -eq $who0) { $nu = "NO-USER target $Target has several users and none is chosen (not retried): pass -As <user>, or set targets.local.json targets.$Target.defaultUser or kit.local.json api.defaultUser. Known: $((Get-KitProps $t.users).Name -join ', ')"; if ($script:ApiNoExit) { throw $nu }; $nu; exit 2 }
   $As = $who0
 }
 $u = @((Get-KitMember $t.users $As))
 if (-not (Get-KitMember $t.users $As) -and $kind -ne 'none') {   # not @(...).Count: @($null).Count is 1
   $holders = @((Get-KitProps $cfg.targets) | Where-Object { $_.Name -ne $Target -and (Get-KitMember $_.Value.users $As) } | ForEach-Object Name)   # names only, never values
   # exit 2, not a throw: a missing user never appears on retry (163x loop)
-  "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $((Get-KitProps $t.users).Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"; exit 2 }
+  $nu = "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $((Get-KitProps $t.users).Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"
+  if ($script:ApiNoExit) { throw $nu }; $nu; exit 2 }   # user create: in-process, an exit would drop the text
+if (-not $PSBoundParameters['Tenant'] -and ($ut = [string](Get-KitMember (Get-KitMember $t.created $As) 'tenant'))) { $Tenant = $ut }   # pokey.ps1 user create kept the login's tenant
 $ext = Get-Command 'Get-ApiAuthHeaders' -ErrorAction SilentlyContinue   # adapters/api_auth.ps1: basic, cookie, command
 $core = 'login', 'none', 'token', 'query'
 if ($kind -notin $core -and -not ($ext -and $kind -in 'basic', 'cookie', 'command')) {
@@ -457,7 +461,138 @@ if ($Save) {
 }
 "HTTP $status"
 $content
-if (-not $status -or [int]$status -ge 400) { exit 1 }   # else a 500 looked like success
+if (-not $status -or [int]$status -ge 400) { if ($script:ApiNoExit) { return }; exit 1 }   # else a 500 looked like success; user create reads the status itself
+}
+
+# ---- users: test logins agents create through the admin API (kit.local.json qa.userRecipes); passwords stay in targets.local.json, never printed
+# this kit's targets.local.json, else the one next to kit.local.json (a kit worktree has neither: lib.ps1 reads the main clone's config)
+function Get-TargetsFile {
+  $f = Join-Path $PSScriptRoot 'targets.local.json'; if (Test-Path -LiteralPath $f) { return $f }
+  $alt = Join-Path (Split-Path (Split-Path (Split-Path $KitConf.ConfigFile))) 'skills/pokey/targets.local.json'; if (Test-Path -LiteralPath $alt) { $alt } else { $f }
+}
+# ISO times stay text on a read-modify-write (pwsh 7.5+; older: DateTime, printed in the local culture)
+$script:JsonKeepDates = if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { @{ DateKind = 'String' } } else { @{} }
+function Get-PokeyTargets {
+  $f = Get-TargetsFile; if (-not (Test-Path -LiteralPath $f)) { throw "Missing $f - run bossy.ps1 setup -WriteLocal, then fill it in" }
+  [pscustomobject]@{ file = $f; data = (Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable @JsonKeepDates) }
+}
+# the recipe whose targets regex matches the target
+function Get-UserRecipe([string]$Target) {
+  foreach ($p in (Get-KitProps (Get-KitSetting 'qa.userRecipes' $null))) { if ($p.Value.targets -and $Target -match [string]$p.Value.targets) { $h = $p.Value | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable; $h.name = $p.Name; return $h } }
+  throw "no kit.local.json qa.userRecipes entry matches target '$Target' (each: targets regex, find, create, deactivate, roles, app; README Configuration)"
+}
+# '{x}' alone -> the value of x (arrays and objects too); '{x}' inside text -> its text; unknown names stay
+function Expand-UserTemplate($Value, [hashtable]$Vars) {
+  if ($Value -is [Collections.IDictionary]) { $o = [ordered]@{}; foreach ($key in $Value.Keys) { $o[$key] = Expand-UserTemplate $Value[$key] $Vars }; return $o }
+  if ($Value -is [Collections.IList]) { return , @(foreach ($x in $Value) { Expand-UserTemplate $x $Vars }) }
+  if ($Value -isnot [string]) { return $Value }
+  if ($Value -match '^\{(\w+)\}$' -and $Vars.ContainsKey($Matches[1])) { $whole = $Vars[$Matches[1]]; if ($whole -is [Collections.IList]) { return , $whole }; return $whole }
+  [regex]::Replace($Value, '\{(\w+)\}', { param($m) if ($Vars.ContainsKey($m.Groups[1].Value)) { [string]$Vars[$m.Groups[1].Value] } else { $m.Value } })
+}
+function Get-DottedValue($Obj, [string]$Path) { foreach ($key in ($Path -split '\.')) { $Obj = if ($Obj -is [Collections.IDictionary]) { $Obj[$key] } else { $null } }; $Obj }
+# 20+ characters, each class once: upper, lower, digit, one of - _ . (safe for adb input text and JSON)
+function New-TestPassword([int]$Length = 20) {
+  # random bytes from v4 GUIDs (OS random source; version / variant bytes skipped): the crypto class name would make pwsh log this script (lint ARCH-SBLOG)
+  $rnd = [Collections.Generic.Queue[int]]::new(); while ($rnd.Count -lt 2 * $Length + 8) { $g = [guid]::NewGuid().ToByteArray(); foreach ($bt in @($g[0..6] + $g[9..15])) { $rnd.Enqueue([int]$bt) } }
+  $sets = 'ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '-_.'; $pool = -join $sets
+  $chars = @(foreach ($set in $sets) { $set[$rnd.Dequeue() % $set.Length] }) + @(for ($i = $sets.Count; $i -lt $Length; $i++) { $pool[$rnd.Dequeue() % $pool.Length] })
+  $mixed = -join ($chars | Sort-Object { $rnd.Dequeue() }); $first = $mixed.IndexOfAny([char[]]'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz')
+  "$($mixed[$first])$($mixed.Remove($first, 1))"   # a letter first: '-x' would read as an option to adb input text
+}
+# one recipe step as the admin: { method, path, body | from + set, match, name, save { var: dotted path } }; returns the answer (match: the element whose match path = login, or $null)
+function Invoke-UserStep($Step, [hashtable]$Vars, [string]$Target, [string]$As, [string]$Tenant) {
+  $body = if ($Step.from) { $src0 = $Vars["@$($Step.from)"]; if ($null -eq $src0) { throw "step from '$($Step.from)': no earlier step named so" }; $b0 = $src0 | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable; $set0 = Expand-UserTemplate $Step.set $Vars; foreach ($key in @($set0.Keys)) { $b0[$key] = $set0[$key] }; $b0 } elseif ($null -ne $Step.body) { Expand-UserTemplate $Step.body $Vars }
+  $json = if ($null -ne $body) { $body | ConvertTo-Json -Depth 30 -Compress }
+  $method = if ($Step.method) { ([string]$Step.method).ToUpper() } else { 'GET' }
+  $script:ApiNoExit = $true
+  try { $out = @(Invoke-Api -Method $method -Path (Expand-UserTemplate ([string]$Step.path) $Vars) -Body $json -Target $Target -As $As -Tenant $Tenant) } finally { $script:ApiNoExit = $false }
+  $status = if ("$($out[0])" -match '^HTTP (\d+)') { [int]$Matches[1] } else { 0 }; $text = (@($out | Select-Object -Skip 1) -join "`n")
+  $ans = try { $text | ConvertFrom-Json -AsHashtable -NoEnumerate @JsonKeepDates } catch { $null }
+  if ($Step.match) { if ($status -eq 404) { return $null }; $ans = @(@($ans) + @(Get-DottedValue $ans 'content') | Where-Object { $_ -is [Collections.IDictionary] -and "$(Get-DottedValue $_ $Step.match)" -ieq "$($Vars.login)" })[0] }
+  if ($status -lt 200 -or $status -ge 300) { $pw = [string]$Vars.password; throw "$method $($Step.path) -> HTTP $status $(-join ("$text" -replace $(if ($pw) { [regex]::Escape($pw) } else { '(?!)' }), '[redacted]' -replace '\s+', ' ')[0..299])" }
+  if ($null -ne $ans) { if ($Step.name) { $Vars["@$($Step.name)"] = $ans }; if ($Step.save) { foreach ($key in $Step.save.Keys) { $Vars[$key] = Get-DottedValue $ans $Step.save[$key] } } }
+  $ans
+}
+function Invoke-User {
+param(
+  [Parameter(Mandatory, Position = 0)][ValidateSet('create', 'list', 'deactivate')][string]$Action,
+  [Parameter(Mandatory)][string]$Target,
+  [string]$Name,                     # the login (and its users key)
+  [string]$Role,                     # a key of the recipe's roles
+  [string]$As = '',                  # the admin user ('' = the target's default user)
+  [string]$Tenant,                   # '' = targets.<t>.defaultTenant
+  [string]$Run = $env:KIT_RUN        # kept with the login: cleanup finds a run's logins
+)
+$ErrorActionPreference = 'Stop'
+$tf = Get-PokeyTargets; $t = $tf.data.targets[$Target]
+if (-not $t) { throw "Unknown target '$Target'. Known: $(@($tf.data.targets.Keys) -join ', ')" }
+$made = if ($t.created -is [Collections.IDictionary]) { $t.created } else { [ordered]@{} }
+if ($Action -eq 'list') {
+  foreach ($n in @($t.users.Keys)) { $c = $made[$n]; "$n$(if ($c) { " · created $($c.at) · tenant $($c.tenant) · role $($c.role)$(if ($c.run) { " · run $($c.run)" })$(if ($c.deactivated) { " · deactivated $($c.deactivated)" })" })" }
+  foreach ($n in @($made.Keys | Where-Object { $_ -notin @($t.users.Keys) })) { "$n · deactivated $($made[$n].deactivated) · tenant $($made[$n].tenant)" }
+  return
+}
+if ($Name -notmatch '^[_.@A-Za-z0-9-]{1,50}$') { "usage: pokey.ps1 user $Action -Target <t> -Name <login: 1-50 of A-Z a-z 0-9 _ . @ -> ..."; exit 2 }
+$rc = Get-UserRecipe $Target
+if (-not $Tenant) { $Tenant = if ($made[$Name].tenant) { [string]$made[$Name].tenant } else { [string]$t.defaultTenant } }
+$local = $t.users[$Name]
+$vars = @{ login = $Name; tenant = $Tenant; run = $Run; role = $Role; password = $(if ($local) { [string]@($local)[1] } else { New-TestPassword }) }
+if ($made[$Name].ids -is [Collections.IDictionary]) { foreach ($key in @($made[$Name].ids.Keys)) { $vars[$key] = $made[$Name].ids[$key] } }
+$vars.email = Expand-UserTemplate $(if ($rc.email) { $rc.email } else { '{login}@example.invalid' }) $vars
+$save = {   # one writer, under the file lock; never prints a value
+  param([scriptblock]$Change)
+  Invoke-KitLocked $tf.file { $d = Get-Content -LiteralPath $tf.file -Raw | ConvertFrom-Json -AsHashtable @JsonKeepDates; $tt = $d.targets[$Target]; if ($tt.created -isnot [Collections.IDictionary]) { $tt.created = [ordered]@{} }; if ($tt.users -isnot [Collections.IDictionary]) { $tt.users = [ordered]@{} }; & $Change $tt; Write-KitAtomic $tf.file ($d | ConvertTo-Json -Depth 30) }
+}
+# ids = what the recipe's steps save (find, create): deactivate reuses them
+$ids = { $o = [ordered]@{}; foreach ($st in @(@($rc.find) + @($rc.create) | Where-Object { $_.save })) { foreach ($key in $st.save.Keys) { if ($null -ne $vars[$key]) { $o[$key] = $vars[$key] } } }; $o }
+if ($Action -eq 'deactivate') {
+  if (-not $made[$Name] -or $made[$Name].deactivated) { "REFUSED: '$Name' on $Target was not made by user create or is deactivated already (shared logins are never deactivated)"; exit 2 }
+  if (-not $rc.deactivate) { throw "recipe $($rc.name) has no deactivate steps" }
+  foreach ($st in @($rc.deactivate)) { $null = Invoke-UserStep $st $vars $Target $As $Tenant }
+  & $save { param($tt) $tt.users.Remove($Name); if (-not $tt.created[$Name]) { $tt.created[$Name] = [ordered]@{ tenant = $Tenant } }; $tt.created[$Name].deactivated = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+  "DEACTIVATED $Name on $Target tenant '$Tenant'"; return
+}
+if (-not $Role -or -not $rc.roles -or -not $rc.roles.Contains($Role)) { "usage: -Role <$(@($rc.roles.Keys) -join ' | ')> (recipe $($rc.name) roles)"; exit 2 }
+foreach ($key in $rc.roles[$Role].Keys) { $vars[$key] = $rc.roles[$Role][$key] }
+$found = if ($rc.find) { Invoke-UserStep $rc.find $vars $Target $As $Tenant }
+if ($found -and -not $local) { throw "'$Name' exists on $Target tenant '$Tenant' with no password in targets.local.json: pick another -Name" }
+$state = if ($found) { 'EXISTS' } else { 'CREATED' }
+$rec = [ordered]@{ tenant = $Tenant; role = $Role; recipe = $rc.name; at = $(if ($made[$Name].at) { $made[$Name].at } else { (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }); run = $(if ($made[$Name].run) { $made[$Name].run } else { $Run }); ids = (& $ids) }
+# the password is stored before the create call: a crash after it never leaves a server login nobody can use
+& $save { param($tt) $tt.users[$Name] = @($Name, [string]$vars.password); $tt.created[$Name] = $rec }
+if (-not $found) {
+  try { foreach ($st in @($rc.create)) { $null = Invoke-UserStep $st $vars $Target $As $Tenant } }
+  catch { $failed = $_; $there = try { if ($rc.find) { Invoke-UserStep $rc.find $vars $Target $As $Tenant } } catch { $null }; if (-not $there) { & $save { param($tt) $tt.users.Remove($Name); $tt.created.Remove($Name) } }; throw $failed }
+  $rec.ids = (& $ids); & $save { param($tt) $tt.created[$Name] = $rec }
+}
+$check = ''
+if ($rc.check) {
+  $script:ApiNoExit = $true; try { $co = @(Invoke-Api -Method GET -Path ([string]$rc.check) -Target $Target -As $Name -Tenant $Tenant) } catch { $co = @("HTTP 0 $($_.Exception.Message)") } finally { $script:ApiNoExit = $false }
+  $check = " · login check $(-join "$($co[0])"[0..119])"; if ("$($co[0])" -notmatch '^HTTP 2') { $state = "$state-LOGIN-FAIL" } }
+"$state $Name (role $Role) on $Target tenant '$Tenant'$check · password in targets.local.json (not shown): pokey.ps1 api -Target $Target -As $Name · ui login -Target $Target -As $Name"
+"SETUP_CHANGE: test login $Name ($Role) $(if ($state -like 'EXISTS*') { 'reused' } else { 'created' }) on $Target/$Tenant; remove: pokey.ps1 user deactivate -Target $Target -Name $Name"
+if ($state -like '*LOGIN-FAIL') { exit 1 }
+}
+# type a stored login into the app's login screen (qa.userRecipes.<r>.app.steps); the password never reaches stdout
+function Invoke-UiLogin {
+param([Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$As, [string]$Serial, [string]$Tenant)
+if ($Serial) { $env:ANDROID_SERIAL = $Serial }
+$tf = Get-PokeyTargets; $t = $tf.data.targets[$Target]; if (-not $t) { throw "Unknown target '$Target'. Known: $(@($tf.data.targets.Keys) -join ', ')" }
+$u = @($t.users[$As]); if (-not $t.users[$As]) { "NO-USER '$As' in target ${Target}: pokey.ps1 user list -Target $Target, or user create"; exit 2 }
+if (-not $Tenant) { $Tenant = if ($t.created -is [Collections.IDictionary] -and $t.created[$As].tenant) { [string]$t.created[$As].tenant } else { [string]$t.defaultTenant } }
+$app = (Get-UserRecipe $Target).app; if (-not $app.steps) { throw "kit.local.json qa.userRecipes entry for '$Target' has no app.steps ([{ into: <resource-id>, text: '{user}' | '{pass}' | '{tenant}', optional }, { key: <keycode> }, { tap: <resource-id> }, { wait: <text> }])" }
+$vars = @{ user = [string]$u[0]; pass = [string]$u[1]; tenant = $Tenant }; $android = (Get-KitSetting 'devices.type' 'none') -ne 'ios'
+foreach ($s in @($app.steps)) {
+  if ($s.into) {
+    if ($s.optional -and -not (@(Invoke-Ui dump) -match "#\S*$([regex]::Escape([string]$s.into))$")) { "skipped #$($s.into) (not on screen)"; continue }
+    Invoke-Ui tapid ([string]$s.into); if ($android) { $null = Invoke-Ui clear }
+    $null = Invoke-Ui type (Expand-UserTemplate ([string]$s.text) $vars); "typed #$($s.into)$(if ("$($s.text)" -match '\{pass\}') { ' (hidden)' })"
+  }
+  elseif ($s.key) { Invoke-Ui key ([string]$s.key) }
+  elseif ($s.tap) { Invoke-Ui tapid ([string]$s.tap) }
+  elseif ($s.wait) { Invoke-Ui wait ([string]$s.wait) $(if ($s.seconds) { [string]$s.seconds } else { '30' }) }
+}
+"LOGIN typed for $As on $Target tenant '$Tenant'$(if ($env:ANDROID_SERIAL) { " ($env:ANDROID_SERIAL)" })"
 }
 
 # ---- finalize: publish one package; re-run safe
@@ -1176,7 +1311,8 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'prepare' { Invoke-KitVerb Invoke-Prepare $__rest; exit 0 }   # pwsh -File would exit with a helper's git code (128); a crash exits 1 inside
     'lead-notes' { Invoke-KitVerb Invoke-LeadNotes $__rest }
     'results' { Invoke-KitVerb Invoke-Results $__rest }
-    'ui' { Invoke-KitVerb Invoke-Ui $__rest }   # adapters/ui_android.ps1
+    'ui' { if ("$($__rest[0])" -eq 'login') { Invoke-KitVerb Invoke-UiLogin @($__rest | Select-Object -Skip 1) } else { Invoke-KitVerb Invoke-Ui $__rest } }   # adapters/ui_android.ps1
+    'user' { Invoke-KitVerb Invoke-User $__rest }
     { $_ -in '-h', '--help', 'help', '-?' } { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 0 }
     default { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 2 }   # the header only
   }

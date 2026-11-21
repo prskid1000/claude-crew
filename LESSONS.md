@@ -150,8 +150,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A review sheet of 100+ items -> split verification across read-only agents by surface plus one endpoint-inventory agent, each writing one fixed-shape file, then merge (one agent ran out of context). (1x)
 - Launch args mode -> feature, bugfix or resume; map a new-work ask to feature (buildy.js rejects anything else, e.g. build, at once). (1x)
 ## opsy
-- listing the login keys of the local targets file -> never sed or print that file; use a script that outputs key names only (user/password pairs were printed (redaction missed array values)
-- listing logins in targets.local.json -> its key names only ((Get-Content <f> -Raw | ConvertFrom-Json).PSObject.Properties.Name), never sed / grep / cat it (a sed printed user and password pairs)
 ## watchy
 ## rechy
 - Checking an adapter against a vendor API -> read the vendor reference (an llms.txt index lists .md pages) and diff request and response shapes field by field (adapters drifted from the vendor). (1x)

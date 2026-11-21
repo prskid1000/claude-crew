@@ -69,6 +69,7 @@ switch ($Action) {
   'tapid' { Tap (Find (Get-Nodes) "#$Arg") "#$Arg" }
   'tapxy' { & $adb shell input tap $Arg $Arg2; "tapped $Arg,$Arg2" }
   'type' { & $adb shell input text ($Arg -replace ' ', '%s' -replace '([#&;()<>|$''"])', '\$1'); 'typed' }
+  'clear' { & $adb shell input keyevent KEYCODE_MOVE_END; & $adb shell input keyevent @(1..$(if ($Arg) { [int]$Arg } else { 50 }) | ForEach-Object { 'KEYCODE_DEL' }); 'cleared' }   # the focused field; Arg = deletes
   'key' { & $adb shell input keyevent $Arg; "key $Arg" }
   'swipe' { & $adb shell input swipe $Arg $Arg2 $Arg3 $Arg4 400; 'swiped' }
   'openurl' { & $adb shell am start -a android.intent.action.VIEW -d $Arg | Out-Null; "opened $Arg" }
@@ -149,7 +150,7 @@ const t0 = Date.now();   // real-time mode, paced 100 ms packets: the blocking m
 '@
     try { node --input-type=module -e $js $kv['grpc.port'] $wav $(if ($Arg2) { $Arg2 } else { 60 }); if ($LASTEXITCODE) { exit $LASTEXITCODE } } finally { Remove-Item Env:KIT_GRPC_TOKEN -ErrorAction SilentlyContinue }
   }
-  default { "unknown action $Action (pokey.ps1 ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic)"; exit 2 }
+  default { "unknown action $Action (pokey.ps1 ui dump|tap|tapid|tapxy|type|clear|key|swipe|openurl|shot|shotmark|wait|log|photo|mic)"; exit 2 }
 }
 if ($script:uiFailed) { exit 1 }   # NOT FOUND: the caller must not read it as done
 }

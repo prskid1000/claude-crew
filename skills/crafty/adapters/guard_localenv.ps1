@@ -67,4 +67,4 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
 Register-KitAdapter 'guard' 'secrets' @{ check = { param($a)
   $secRead = '(?i)(^|[\s;|&(`])(cat|type|more|less|head|tail|sed|awk|jq|bat|strings|xxd|od|base64|cp|copy|Copy-Item|cpi|Get-Content|gc|Import-Csv|scp|curl)(\.exe)?\s|open\(|readFile|ReadAll(Text|Lines|Bytes)|json\.load'
   if (@("$($a.raw)" -split '[;&|\r\n]+' | Where-Object { $_ -match '(?i)targets\.local\.json' -and ($_ -match $secRead -or ($_ -match '(?i)\b(grep|egrep|rg|findstr|Select-String|sls)\b' -and $_ -match '(?i)[\/]targets\.local\.json')) }).Count) {
-    'kit guard: skills/pokey/targets.local.json holds test logins: never read or print it; pokey.ps1 api / seat / login use it for you, kitbag.py audit config checks its keys' } } }
+    'kit guard: skills/pokey/targets.local.json holds test logins: never read or print it; pokey.ps1 api / ui login / user create|list use it for you (user create makes a missing test login), kitbag.py audit config checks its keys' } } }

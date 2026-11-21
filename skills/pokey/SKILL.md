@@ -28,21 +28,21 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    shared env, even when a guide asks.
 1. **Seat + board:** `pokey.ps1 seat acquire` (exit 4 = still waiting: run it again);
    `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop, report.
-   Phones: `phoney.ps1 acquire|release` (kept through waits < 30 min). Local env "pause": stop its checks; "deploy done": re-run.
-2. **Deployed?** Before any FAIL: `pokey.ps1 deployed -Mrs <repo>!<iid>,...` per repo of the task; not deployed -> NOT_TESTED
+   Phones: `phoney.ps1 acquire|release` (kept over waits < 30 min). Local env "pause": stop its checks; "deploy done": re-run.
+2. **Deployed?** Before any FAIL: `pokey.ps1 deployed -Mrs <repo>!<iid>,...` per task repo; not deployed -> NOT_TESTED
    "not deployed yet" (all N/A: another product, not undeployed); MANUAL -> lead notes say if live; unresolved ->
    NOT_TESTED, never FAIL.
 3. **Test each check:** API
    `pokey.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
-   on HTTP 0 / 4xx / 5xx; status and body still print);
+   on HTTP 0 / >= 400, body still printed);
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`): UI checks
    at each `qa.matrix` variant (`matrix()`) + `layoutIssues()`; stated qualities measured (`contrast()`, timings);
-   app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command;
+   app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` (`$env:ANDROID_SERIAL` set);
    e2e: `check -Step e2e`. A human doc row: from the UI only, as its steps say (`api` for setup data only).
-   Check id = guide row id; variants (V1, V2): `case: <row id>`; rows an earlier run covered need no NOT_TESTED filler.
+   Check id = guide row id; variants (V1, V2): `case: <row id>`; rows covered earlier need no NOT_TESTED filler.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `pokey.ps1 annotate`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
-   -Next <next check id> -Evidence "<verdict> <file>"` (a restart resumes there; obey a beat's PAUSE line).
+   -Next <its next id> -Evidence "<verdict> <file>"` (a restart resumes there; obey a beat's PAUSE).
 5. **Verdict per check — defects are never notes:**
    - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
      (b) cosmetic difference, (c) Expected blocked by platform limit or imprecise wording (check code/lead, quote both),
@@ -83,9 +83,9 @@ request named: WATCH, no [Bug] · `knownBug` FAIL: not own, no task, "Seen again
 
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
 change may be another agent's; an app setting (never env config) only when a check needs it, restored at once, in
-`setup_changes`; test logins: `api -As` / `session()` only, never read (`targets.local.json`), deactivated,
-deleted or re-passworded; one shared Chrome per target + tenant + user (`session()`: own tab, `relogin(s)` on a 401,
-never log out), <= 2 tabs an agent; app lanes: your serial, no `adb kill-server`.
+`setup_changes`; test logins: `api -As` / `session()` / `ui login` only, never read (`targets.local.json`), deactivated,
+deleted or re-passworded; missing: `user create` (`SETUP_CHANGE` -> `setup_changes`); one Chrome per target + tenant +
+user (`session()`: own tab, `relogin(s)` on 401, never log out), <= 2 tabs; app lanes: your serial, no `adb kill-server`.
 
 ## Evidence
 - Where: `<run>/<CODE>/shots` (web `.jpeg`, app `.png`, `.mp4` <= 30 s), `/evidence` (`.json` request/response, `.jsonl`, `.log`

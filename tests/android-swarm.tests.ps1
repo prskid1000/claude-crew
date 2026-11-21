@@ -120,6 +120,14 @@ Set-Content "$ud/platform-tools/adb.cmd" "@echo off`r`nexit /b 0" -Encoding asci
 $d2 = Px "$ud/u.ps1" $Q $ud dump 2>&1 | Out-String; $dc2 = $LASTEXITCODE
 Set-Content "$ud/platform-tools/adb.cmd" $adbOk -NoNewline -Encoding ascii; $env:KIT_PARAM_PHONE_UIDUMPRETRYMS = $null
 Expect "ui dump: one failed pull retried (exit $dc1), 3 failed tries exit 1 ($dc2)" ($dc1 -eq 0 -and $d1 -match 'Hello @\(5,5\)' -and $dc2 -eq 1 -and $d2 -match 'failed 3 times')
+# ui login (owner 2026-11-21): app.steps type the stored login (user, password, tenant) via adb; the password reaches adb only, never stdout; an optional field not on screen is skipped
+Set-Content "$ud/s.xml" '<hierarchy><node text="" resource-id="username" class="android.widget.EditText" bounds="[0,0][10,10]"/><node text="" resource-id="password" class="android.widget.EditText" bounds="[0,20][10,30]"/><node text="Log in" resource-id="login-button" class="x" bounds="[0,40][10,50]"/></hierarchy>'
+Set-Content "$ud/platform-tools/adb.cmd" "@echo off`r`necho %*>>`"$ud\adb.log`"`r`nif `"%1`"==`"pull`" copy /y `"$ud\s.xml`" `"%3`" >nul`r`nexit /b 0" -Encoding ascii
+& $J @{ targets = @{ tu = @{ api = 'http://127.0.0.1:9'; defaultTenant = 'acme'; users = @{ 'qa-drv' = 'qa-drv', 'Pw-x7Kq2_LongEnough9' }; created = @{ 'qa-drv' = @{ tenant = 't2' } } } } } (Join-Path $k 'skills/pokey/targets.local.json') 6
+& $J @{ devices = @{ type = 'android' }; qa = @{ userRecipes = @{ r1 = @{ targets = '^tu$'; app = @{ steps = @(@{ into = 'username'; text = '{user}' }, @{ into = 'password'; text = '{pass}' }, @{ into = 'client-id'; text = '{tenant}'; optional = $true }, @{ tap = 'login-button' }) } } } } } (Join-Path $k 'skills/crafty/kit.local.json') 8
+Set-Content "$ud/l.ps1" '$a = @($args); Set-Item Env:CLAUDE_RUNTIME "$($a[1])/rt"; $env:ANDROID_HOME = $a[1]; . $a[0]; function Get-ExeName($n) { "$n.cmd" }; Invoke-UiLogin -Target tu -As qa-drv -Serial emulator-5554'
+$ul = Px "$ud/l.ps1" $Q $ud 2>&1 | Out-String; $ulc = $LASTEXITCODE; $ulog = Get-Content "$ud/adb.log" -Raw
+Expect "ui login: user + password typed via adb, client-id skipped (optional, not on screen), button tapped; stdout has no password ($ulc)" ($ulc -eq 0 -and $ulog -match 'input text qa-drv' -and $ulog -match 'input text Pw-x7Kq2_LongEnough9' -and $ulog -match 'KEYCODE_DEL' -and $ul -match 'typed #password \(hidden\)' -and $ul -match 'skipped #client-id' -and $ul -match "tapped #login-button" -and $ul -match "tenant 't2'" -and $ul -notmatch 'Pw-x7Kq2')
 # ui mic: no emulator serial = usage 2; an emulator with no gRPC discovery file = 1, nothing sent
 Set-Content "$ud/s.wav" 'x'; $env:ANDROID_SERIAL = $null; $null = Px "$ud/u.ps1" $Q $ud mic "$ud/s.wav" 2>&1; $m1 = $LASTEXITCODE
 $env:ANDROID_SERIAL = 'emulator-5999'; $mo = Px "$ud/u.ps1" $Q $ud mic "$ud/s.wav" 2>&1 | Out-String; $m2 = $LASTEXITCODE; $env:ANDROID_SERIAL = $null
