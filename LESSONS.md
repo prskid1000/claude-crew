@@ -21,7 +21,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 ## crafty
 - Review returns blocking findings and the MR head has not moved -> fix and push a commit, then re-request review; do not repeat the round unchanged (2 blocking findings stayed unresolved after round 1)
 - A spec is edited (e.g. a revert) after the last green local pass -> re-run that spec before finish (role-gating revert left 6 tests never re-run)
-- Cypress runs leave untracked cypress/reports and cypress/screenshots in the web worktree -> move or delete them before wt commit; it stages them and refuses on scope (wt commit refused every commit (seen twice)
+- Cypress runs leave untracked cypress/reports and cypress/screenshots in the web worktree -> nothing to do: wt commit never stages them (fixed in kit: `commit.ignore`; seen again = regression) (wt commit refused every commit (seen twice)
 - deploy plan shows a MERGED MR as NOT-DEPLOYED, or mr.get prints null -> Re-query MR state with the host verb before reporting; run deploy plan with a long timeout (Wrong not-merged summary and skipped MR body, docs and tracker updates)
 - a scratch file (probe, diff, config copy) -> only under crafty.ps1 dir -Agent <id> (a stray in <runtime>/work cannot be removed later: the guard blocks deletes there, 7x on 2026-11-19)
 - writing the MR body local-env row -> state the real lane result; never claim PASS on another product's env or when the brief said FAIL (RM web MR claimed local PASS on hm r211)
