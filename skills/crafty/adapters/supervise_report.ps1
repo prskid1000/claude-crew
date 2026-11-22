@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L128 transcript tails · L160 supervise sweep
+# Sections: L6 supervise report · L130 transcript tails · L162 supervise sweep
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -57,16 +57,18 @@ function Get-KitFlagCells($f, [switch]$Fill) {
   [pscustomobject]@{ kind = $kind; who = $who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
 }
 # a flag's identity across rounds: counts, times and sizes vary; an id list in another order is the same flag (an ack holds)
-function Get-KitSortedLists([string]$T) { [regex]::Replace($T, '(?<![\w.-])[\w.-]+(?:\s*,\s*[\w.-]+)+', { param($m) (@($m.Value -split '\s*,\s*') | Sort-Object) -join ', ' }) }
+function Get-KitSortedLists([string]$T) { [regex]::Replace($T, '(?<![\w.-])[\w.-]*\w(?:\s*,\s*[\w.-]*\w)+', { param($m) (@($m.Value -split '\s*,\s*') | Sort-Object) -join ', ' }) }
 function Get-KitFlagKey([string]$What) { $k = ((Get-KitSortedLists $What.ToLower()) -replace '\b\d+\b', '#' -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
 # -Ack text pasted from the -Brief table: cells add spaces after - / (word wrap), escape |, end in …, join with ·; counts vary
 # lane ids as shown names first (K55: an ack copied from the shown flag, rm·Kestrel, matches a flag stored with rm2)
-function ConvertTo-KitAckText([string]$Text) { ((Get-KitSortedLists (ConvertTo-KitLaneText $Text).ToLower()) -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
+function ConvertTo-KitAckText([string]$Text, [switch]$NoSort) { $t = (ConvertTo-KitLaneText $Text).ToLower(); if (-not $NoSort) { $t = Get-KitSortedLists $t }; ($t -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
 # an ack matches the flag's whole line or any one cell; a short one only a whole flag or its kind + who start ("BUILDS · HQA")
-function Get-KitAckWholes($Flag) { $c = Get-KitFlagCells $Flag; @((ConvertTo-KitAckText "$($Flag.what)"), (ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"), $(if ($c.kind -and $c.who) { ConvertTo-KitAckText "$($c.kind) $($c.who)" })) | Where-Object { $_ } }
-function Test-KitAcked($Flag, [string[]]$Keys) {
-  $c = Get-KitFlagCells $Flag; $w = ConvertTo-KitAckText "$($Flag.what)"; $cells = ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"; $wh = @(Get-KitAckWholes $Flag)
-  [bool]@($Keys | ForEach-Object { ConvertTo-KitAckText $_ } | Where-Object { $_ -and ($_ -in $wh -or ($_.Length -ge 12 -and ($w.Contains($_) -or $cells.Contains($_)))) }).Count
+function Get-KitAckWholes($Flag, [switch]$NoSort) { $c = Get-KitFlagCells $Flag; @((ConvertTo-KitAckText "$($Flag.what)" -NoSort:$NoSort), (ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)" -NoSort:$NoSort), $(if ($c.kind -and $c.who) { ConvertTo-KitAckText "$($c.kind) $($c.who)" -NoSort:$NoSort })) | Where-Object { $_ } }
+# sorted (ids reordered) or as typed (a cut list "a, b…" is a prefix only unsorted)
+function Test-KitAcked($Flag, [string[]]$Keys) { foreach ($ns in $false, $true) {
+  $c = Get-KitFlagCells $Flag; $w = ConvertTo-KitAckText "$($Flag.what)" -NoSort:$ns; $cells = ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)" -NoSort:$ns; $wh = @(Get-KitAckWholes $Flag -NoSort:$ns)
+  if (@($Keys | ForEach-Object { ConvertTo-KitAckText $_ -NoSort:$ns } | Where-Object { $_ -and ($_ -in $wh -or ($_.Length -ge 12 -and ($w.Contains($_) -or $cells.Contains($_)))) }).Count) { return $true } }
+  $false
 }
 # -Ack under 20 characters: allowed when it is a last-round flag's whole text or its kind + who (a short flag has no longer start)
 function Test-KitAckWhole([string]$Ack) {
