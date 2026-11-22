@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L148 record-args · L167 budget · L185 build-prompt · L264 ship-prompt · L281 plan · L300 spike ·
-//   L312 local-loop · L390 stages · L535 ship · L575 debate · L684 deploy · L699 learn
+// Sections: L18 args · L149 record-args · L168 budget · L186 build-prompt · L265 ship-prompt · L282 plan · L301 spike ·
+//   L313 local-loop · L391 stages · L536 ship · L576 debate · L685 deploy · L700 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -126,9 +126,10 @@ const FIXES = { blocking: true, 'should-fix': true, nit: false }
 const mustFix = (f) => FIXES[f.severity] !== false
 const CI_SCHEMA = obj({ done: B, mrs: { type: 'array', items: obj({ mr: S, status: S, job: S, error: S }, ['mr', 'status']) } })
 const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
-const SO = (label, phase, model = MODELS.step) => ({ label, phase, schema: OK_SCHEMA, model, effort: 'low' })   // a cheap STEP agent
+// a STEP agent: kit commands as kitty (no MCP tools: start 44k -> 29k), product MRs as devy
+const SO = (label, phase, model = MODELS.step) => ({ label, phase, schema: OK_SCHEMA, model, effort: 'low' })
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
- agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`, { ...SO(label, phaseName), agentType: 'devy' })
+ agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`, { ...SO(label, phaseName), agentType: 'kitty' })
 
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request.
 `
@@ -158,7 +159,7 @@ ARGS>>>
 2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)} -Plan '${plan}'
 Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
-  const r = await agent(prompt, { ...SO(label, phaseName, model), agentType: 'devy' })
+  const r = await agent(prompt, { ...SO(label, phaseName, model), agentType: 'kitty' })
   if (r && r.ok) return r.output || ''
  }
  log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume needs them by hand')
@@ -338,7 +339,7 @@ async function agentOrRedo(prompt, opts) {
  const r = await agent(prompt, opts)
  if (r) return r
  log(`${opts.label}: redo`)
- return agent(`No report came back: do it now (a merged / scheduled MR: report it, never merge twice).\n${prompt}`, { ...opts, label: `${opts.label}@redo`, agentType: 'devy' })
+ return agent(`No report came back: do it now (a merged / scheduled MR: report it, never merge twice).\n${prompt}`, { agentType: 'devy', ...opts, label: `${opts.label}@redo` })
 }
 const releaseAll = (ids, phaseName) => runStep(`& ${ORCH} release -Agent '${[].concat(ids).join(',')}' -Reason 'agent finished'`, `release-${[].concat(ids).join('-')}`, phaseName, { ok: 'when it exits 0' })
  .then((r) => { if (!r || !r.ok) log(`WARNING release of ${ids} failed (${r ? r.output : 'no answer'}): supervise -AutoFix reclaims after the grace`) }).catch(() => null)
@@ -526,7 +527,7 @@ const results = await pipeline(
 MRs: ${x.report.mrs.map((m) => m.url).join(', ')}
 1. The task id is in each MR's title after the tracker tag (the title wins over the branch); group the MRs by task.
 2. Per task: & ${ORCH} track add -Task <task id> -Discover -Mrs '<repo>!<iid>','<repo>!<iid>'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}
-Return ok=true and the output lines.`, { label: `track:${a.id}`, phase: 'Fix', schema: OK_SCHEMA, agentType: 'devy', ...pick('ship'), effort: 'low' })
+Return ok=true and the output lines.`, { label: `track:${a.id}`, phase: 'Fix', schema: OK_SCHEMA, agentType: 'kitty', model: MODELS.ship || MODELS.step, effort: 'low' })
   if (!tr || !tr.ok) log(`${a.id}: WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'})`)
   return why ? { ...x, trackHeld: why } : x
  },
@@ -535,7 +536,7 @@ Return ok=true and the output lines.`, { label: `track:${a.id}`, phase: 'Fix', s
 // ---- ship: CI gate, merge, outcome
 async function ciGate(a, r) {
  if (!r.mrs.some((m) => !m.merged)) return []
- const ci = await agentOrRedo(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, agentType: 'devy', ...pick('ci'), effort: 'low' })
+ const ci = await agentOrRedo(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, agentType: 'kitty', model: MODELS.ci || MODELS.step, effort: 'low' })
  if (!ci) { log(`${a.id}: WARNING CI gate agent returned nothing; merge-when-green still waits for the pipelines`); return [] }
  return (ci.mrs || []).filter((m) => m.status === 'failed').map((m) => ({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking',
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,

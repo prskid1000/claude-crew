@@ -221,5 +221,10 @@ run(args, agent, _n, _n, pipeline).then(() => {
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js dw-areatask $jsat $wfd) 'buildy: #' 'area-task', 'no-release' -Show 5
+# kit-only STEP agents run as kitty (no MCP tools: start 44k -> 29k, 2026-11-22); product MRs (ship, followups) stay devy
+$stT = foreach ($wn in 'buildy', 'testy') { $wt = Get-Content (Join-Path (Split-Path $PSScriptRoot) "workflows/$wn.js") -Raw
+  @([regex]::Matches($wt, "(?s)STEP: (?:run exactly this|record this workflow)[^\n]*\n.{0,900}?agentType: '(\w+)'") | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique) -join '/' }
+$stS = [regex]::Matches((Get-Content (Join-Path (Split-Path $PSScriptRoot) 'workflows/buildy.js') -Raw), "label: ``(ship|track|ci):[^\n]*?agentType: '(\w+)'") | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" }
+Expect "workflows: kit-command STEP agents are kitty, ship stays devy ($($stT -join ' ') | $($stS -join ' '))" (($stT -join ' ') -eq 'kitty kitty' -and ($stS -join ' ') -eq 'track=kitty ci=kitty ship=devy')
 Remove-TestKit $k
 Complete-Tests
