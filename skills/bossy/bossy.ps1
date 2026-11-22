@@ -31,8 +31,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L38 init · L49 board · L228 budget · L258 launch · L499 recover · L586 pause · L597 resume · L664 program · L715 param ·
-  L721 track · L1058 supervise · L1394 report · L1474 audit · L1534 storage · L1537 bugbrief · L1651 cleanup · L1738 learn ·
-  L1769 decide · L1923 debate · L1967 health · L2035 setup · L2132 guard-sendmessage
+  L721 track · L1058 supervise · L1396 report · L1476 audit · L1536 storage · L1539 bugbrief · L1653 cleanup · L1740 learn ·
+  L1771 decide · L1925 debate · L1969 health · L2037 setup · L2134 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1201,6 +1201,8 @@ $calls = if (@($stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
 foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent -notin $doneNames -and $_.agent -notin $runNames }) {   # a running step: STUCK row, never left
   $sib = @($entries | Where-Object { $_.run -eq $s.run -and $_.session -ne $s.session })
   if ($AutoFix -and $s.run -and $sib.Count -and -not @($sib | Where-Object status -ne 'left').Count) { & $markLeft $s 'finished'; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) left: every other agent of its run left" 'Nothing to do.'; continue }
+  $dupBase = if ("$($s.agent)" -match '^(.+)-\d+$') { $Matches[1] }   # "<agent>-<n>" whose base agent of the run beats: a stale copy
+  if ($AutoFix -and $dupBase -and @($entries | Where-Object { $_.agent -eq $dupBase -and $_.run -eq $s.run -and $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt $bm }).Count) { & $markLeft $s 'finished'; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) left: a stale duplicate of $dupBase, which beats" 'Nothing to do.'; continue }
   if ($s.agent -in $calls) { continue }   # kit calls, no beat: alive (a silent one: a STUCK row)
   if ($AutoFix -and (& $quiet $s).TotalHours -ge 2) { & $markLeft $s; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) silent $([int]($now - [datetime]$s.beat).TotalMinutes) min -> marked left" 'Nothing to do.'; continue }
 }

@@ -184,5 +184,9 @@ $fgOut = & { . $O; $now = Get-Date
   $gf = @([pscustomobject]@{ level = 'WATCH'; what = 'back' }, [pscustomobject]@{ level = 'WATCH'; what = 'held' }); Set-KitFlagAge $gf $gst $now; "flaggap:$($gf[0].age)/$($gf[1].age)"
 }
 Expect "flag age: a flag back after more than supervise.flagGapMinutes starts again, one seen 15 min ago keeps its first-seen ($fgOut)" ("$fgOut" -eq 'flaggap:0 min/50 min')
+# an id list in another order is the same flag: the ack holds, one key (heartbeat noise 2026-11-22)
+$ro = pwsh -NoProfile -Command ". '$O'; `$f = { param(`$w) [pscustomobject]@{ level = 'ACT'; what = `$w } }; `$x = 'FAILED TESTING · t9a, t2b, t5c'; `$y = 'FAILED TESTING · t5c, t9a, t2b'; `$z = 'FAILED TESTING · t5c, t9a, t2d'
+  (Get-KitFlagKey `$x) -eq (Get-KitFlagKey `$y); Test-KitAcked (& `$f `$y) @(`$x); Test-KitAcked (& `$f `$z) @(`$x)"
+Expect "supervise: an ack and the flag key ignore the order of an id list, a changed id flags again ($($ro -join ','))" (($ro -join ',') -eq 'True,True,False')
 Remove-TestKit $k
 Complete-Tests

@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L127 transcript tails · L159 supervise sweep
+# Sections: L6 supervise report · L128 transcript tails · L160 supervise sweep
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -56,11 +56,12 @@ function Get-KitFlagCells($f, [switch]$Fill) {
   if ($Fill -and -not "$who".Trim() -and $f.level -in 'ACT', 'WATCH') { $who = 'coordinator' }
   [pscustomobject]@{ kind = $kind; who = $who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
 }
-# a flag's identity across rounds: counts, times and sizes vary
-function Get-KitFlagKey([string]$What) { $k = (($What.ToLower() -replace '\b\d+\b', '#') -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
+# a flag's identity across rounds: counts, times and sizes vary; an id list in another order is the same flag (an ack holds)
+function Get-KitSortedLists([string]$T) { [regex]::Replace($T, '(?<![\w.-])[\w.-]+(?:\s*,\s*[\w.-]+)+', { param($m) (@($m.Value -split '\s*,\s*') | Sort-Object) -join ', ' }) }
+function Get-KitFlagKey([string]$What) { $k = ((Get-KitSortedLists $What.ToLower()) -replace '\b\d+\b', '#' -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
 # -Ack text pasted from the -Brief table: cells add spaces after - / (word wrap), escape |, end in …, join with ·; counts vary
 # lane ids as shown names first (K55: an ack copied from the shown flag, rm·Kestrel, matches a flag stored with rm2)
-function ConvertTo-KitAckText([string]$Text) { ((ConvertTo-KitLaneText $Text).ToLower() -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
+function ConvertTo-KitAckText([string]$Text) { ((Get-KitSortedLists (ConvertTo-KitLaneText $Text).ToLower()) -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
 # an ack matches the flag's whole line or any one cell; a short one only a whole flag or its kind + who start ("BUILDS · HQA")
 function Get-KitAckWholes($Flag) { $c = Get-KitFlagCells $Flag; @((ConvertTo-KitAckText "$($Flag.what)"), (ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"), $(if ($c.kind -and $c.who) { ConvertTo-KitAckText "$($c.kind) $($c.who)" })) | Where-Object { $_ } }
 function Test-KitAcked($Flag, [string[]]$Keys) {

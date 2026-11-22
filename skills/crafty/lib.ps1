@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L449 leases · L857 status · L1148 tracker · L1480 prior ·
-  L1496 ask bugs · L1682 git-host · L1869 kitlog · L1991 params · L2296 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L449 leases · L857 status · L1150 tracker · L1482 prior ·
+  L1498 ask bugs · L1684 git-host · L1871 kitlog · L1993 params · L2298 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1074,6 +1074,8 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
       if (-not $e.transcript -and $e.file) { try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { $x.transcript = $sa.tf; Write-KitState $e.file $x } } } catch { } } }   # lease grace and shell owners read it too
     # an older attempt whose name runs as a newer step (a retest): superseded, never STUCK
     $sup = if (-not $st -and $sa -and $e.status -ne 'left' -and $sa.type -and $sa.type -eq $e.type -and $sa.created -and [datetime]$e.joined -lt $sa.created.AddMinutes(-1) -and [datetime]$e.beat -le $sa.created.AddMinutes(1)) { $sa }
+    # a quiet "<agent>-<n>" row whose base agent of the run beats: a stale duplicate (pre-pause copy), never STUCK
+    $dupOf = if (-not $st -and $e.status -ne 'left' -and "$($e.agent)" -match '^(?<b>.+)-\d+$' -and ($Now - [datetime]$e.beat).TotalMinutes -ge $stuck) { $bn = $Matches.b; if (@($recent | Where-Object { $_.agent -eq $bn -and $_.run -eq $e.run -and $_.status -ne 'left' -and ($Now - [datetime]$_.beat).TotalMinutes -lt $stuck }).Count) { $bn } }
     if ($st) { $st.covered = $true }; $on = [bool]$st.tx
     $t = if ($on) { $st.tx } else { $tx = & $txOf $e; & $last $e.tool $(if ($tx) { $tx } elseif ($st) { $st.tf }) }
     $w = if ($e.paused -and -not $on) { [pscustomobject]@{ why = 'owner pause'; at = $e.paused; next = "bossy.ps1 resume -Run $($e.run)" } } else { & $waitOf $e.run @($e.agent) }
@@ -1083,8 +1085,8 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $dupKey = "$($e.agent)|$($t.file)"; $twin = if ($t.file) { $byTx[$dupKey] }
     if ($twin) { if ($twin.state -notmatch '^(FIN|STOP)' -or $e.status -eq 'left') { continue }; [void]$rows.Remove($twin) }   # joined twice: one row, live wins
     $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$($e.agent) ($($e.type))"; run = $e.run; session = $e.session; tx = $t.file; task = (@($(if ($on) { $st.label }), $e.items, $e.run) | Where-Object { $_ }) -join ' · '
-          stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($sup) { $null } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
-          done = $(if ($on) { '' } elseif ($sup) { "superseded by $($sup.label)" } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
+          stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($sup -or $dupOf) { $null } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
+          done = $(if ($on) { '' } elseif ($sup) { "superseded by $($sup.label)" } elseif ($dupOf) { "stale duplicate of $dupOf (it beats)" } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
           wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at); doing = & $doing $t ((@($ph, $ck.step) | Where-Object { $_ }) -join ' · '); started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
           next = $(if ($e.handoffBrief) { "a fresh $($e.type) from $(Split-Path "$($e.handoffBrief)" -Leaf)" } elseif ($tn) { $tn } elseif ("$($e.status)" -notin 'working', 'left') { "$($e.status)" } elseif ($ck.next -and $ck.next -ne 'none') { "next: $($ck.next)" } elseif ($npOn) { "next: $npOn" }) }) $Now $stuck))
     $byTx[$dupKey] = $rows[$rows.Count - 1]
