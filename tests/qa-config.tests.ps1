@@ -217,5 +217,9 @@ $qbs = & { . (Join-Path $k 'skills/crafty/lib.ps1'); function Get-TrackerTask($I
   @('ok', 'bad', 'slow', 'none') | ForEach-Object { "$($_):$(@(Get-KitQaBugSubtasks $_ 1).id -join ',')" } }
 Expect "QA bug tasks: a prefetched view's subtasks, a failed child viewed inline, a timed-out one none this beat ($($qbs -join ' '))" (($qbs -join ' ') -eq 'ok:B1 bad:inline-bad slow: none:inline-none')
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE -ErrorAction SilentlyContinue
+# guide copy (owner 2026-11-22: a 1494-line guide of earlier runs): the head + the newest env run, older runs only counted; one run: whole
+$gkept = Join-Path (Kd) 'kept.md'; Set-Content $gkept "# Testing: X`n## Checks`n| C1 | a |`n## rm-staging run 2026-11-05 16:54`nold-a`n## rm-staging run 2026-11-07 09:18`nnew-b`n### Results`nnew-c`n## hm-staging run 2026-11-06 10:20`nold-d"
+$gcp = pwsh -NoProfile -Command "`$a = [Management.Automation.Language.Parser]::ParseFile('$Q', [ref]`$null, [ref]`$null); iex `$a.Find({ param(`$n) `$n.Name -eq 'Copy-QaGuide' }, `$true).Extent.Text; Copy-QaGuide '$gkept' '$gkept.out'; Copy-QaGuide '$gkept.out' '$gkept.one'; (Get-Content '$gkept.out') -join '|'; (Get-Content '$gkept.one') -join '|'"
+Expect "guide copy: head + newest run (its ### parts), older runs named; a one-run doc copied whole ($($gcp -join ' // '))" ($gcp[0] -match '^# Testing: X\|## Checks\|\| C1 \| a \|\|## rm-staging run 2026-11-07 09:18\|new-b\|### Results\|new-c\|\|> Older runs \(2\): ' -and $gcp[0] -notmatch 'old-' -and $gcp[1] -eq $gcp[0])
 Remove-TestKit $k
 Complete-Tests

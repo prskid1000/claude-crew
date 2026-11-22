@@ -92,7 +92,14 @@ $sf = Join-Path (Get-KitPath cache) 'context-norm-seen.json'; $n1 = @((Get-Conte
 '@ @($O)
 $fj = $fl -join "`n"
 Expect "context WATCH (live agent): near its budget (900k of 967k), a file read 4x, one 20k result, a pasted build log, a start over 1.5x its type's norm ($fj)" ($fj -match 'WATCH context: devy build:A1 over 75% of its budget => at 900k of 967k: hand it off' -and $fj -match 'WATCH context: devy build:A1 re-reads big\.java => 4x' -and $fj -match 'WATCH context: devy build:A1 took an oversized result \(Bash pwsh crafty\.ps1 check -Dir /w/app\) => 20k tokens' -and $fj -match 'WATCH context: devy build:A1 pasted full build / test logs => 1 log' -and $fj -match 'WATCH context: devy build:A1 start load over its type''s norm => started at 40k vs the devy norm 10k' -and $fj -match 'flag keys stable True')
-Expect "context ACT (2+ agents): the same oversized build output -> a kitty task with the fix, logs pasted by 2 agents, devy start load over its norm in 2 ended agents; ended agents' starts observed once each ($fj)" ($fj -match 'ACT context: Bash pwsh results over 8000 tokens in 3 agents => Spawn kitty \(kind fix\): trim build / test output.*roles devy' -and $fj -match 'ACT context: full build / test logs pasted by 2 agents' -and $fj -match 'ACT context: devy start load over 1\.5 x its norm in 2 agents' -and $fj -match 'ACT context: 2 agents re-read one file 3\+ times' -and $fj -match 'seen 2 2')
+Expect "context ACT (2+ agents): the same oversized build output -> a kitty task with the fix, logs pasted by 2 agents, devy start load over its norm in 2 ended agents; ended agents' starts observed once each ($fj)" ($fj -match 'ACT context: build \+ test output results over 8000 tokens in 3 agents => Spawn kitty \(kind fix\): trim build / test output.*top: Bash pwsh 3; roles devy' -and $fj -match 'ACT context: full build / test logs pasted by 2 agents' -and $fj -match 'ACT context: devy start load over 1\.5 x its norm in 2 agents' -and $fj -match 'ACT context: 2 agents re-read one file 3\+ times' -and $fj -match 'seen 2 2')
+# one ACT per source class (before: one per file, 15 a beat): two big files of one class in 4 ended agents -> one line, both files named
+$cg = Invoke-PsTest ctx-class @'
+$null = . $args[0] 6>$null; $now = Get-Date
+$mk = { param($n, $t) [pscustomobject]@{ label = $n; role = 'kitty'; run = $n; result = 'pass'; at = $now.AddHours(-1).ToString('o'); cx = [pscustomobject]@{ n = 3; s0 = 1; pk = 1; sum = 3; last = 1; w = @(0) * 6; rr = @(0, ''); top = @($t) } } }
+@(Get-KitContextFlags @((& $mk a '9500|2|Read a.ps1'), (& $mk b '9500|2|Read a.ps1'), (& $mk c '9600|2|Read b.ps1'), (& $mk d '9600|2|Read b.ps1')) $now) | Where-Object level -eq 'ACT' | ForEach-Object { "$($_.what) => $($_.action)" }
+'@ @($O)
+Expect "context ACT: one line per source class, its top files by agents ($cg)" (@($cg).Count -eq 1 -and "$cg" -match '^context: code reads results over 8000 tokens in 4 agents => .*top: Read a\.ps1 2, Read b\.ps1 2; roles kitty')
 
 # the page: the Runs band cell (peak over a stacked bar, the tooltip per source + waste), the day heat's mix bar, the per-role table
 $pg = Invoke-PsTest ctx-page @'

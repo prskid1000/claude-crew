@@ -97,6 +97,20 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 | unknown | 160000 | 0.8 x 200k |
 <!-- kit-graph:end -->
 
+Context = start load + every kept result, re-sent each call; the 80% handoff is a context size (WATCH past `usage.context.peakWatch`,
+75%); `bossy.ps1 usage -Context [-Type <role>] [-Since 24h]` measures it.
+<!-- kit-graph:start flow-context -->
+```mermaid
+flowchart LR
+  F_transcripts["transcripts"] -->|"usage pass"| F_usage_ps1["usage.ps1"]
+  F_usage_ps1["usage.ps1"] -->|"live agent"| F_WATCH["WATCH"]
+  F_usage_ps1["usage.ps1"] -->|"2+ agents"| F_ACT["ACT"]
+  F_usage_ps1["usage.ps1"] -->|"ended starts"| F_startNorm["startNorm"]
+  F_WATCH["WATCH"] -->|"past peakWatch"| F_handoff_at_80_["handoff at 80%"]
+  F_ACT["ACT"] -->|"coordinator"| F_kitty_fix_at_the_source["kitty fix at the source"]
+```
+<!-- kit-graph:end -->
+
 ## Leases
 One rule (`lib.ps1` `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes, worktree slots;
 only owner holds (`envy.ps1 up -Owner`, phone `manual`) keep minutes, with a reminder.
@@ -104,29 +118,29 @@ Worktree slots (`crafty.ps1 wt lease / release / pool`): a fixed pool per repo (
 released slot keeps its build caches and goes detached, a fair queue when all are leased. One naming scheme, shown on the
 dashboard: member n of any pool (slot, env lane, phone lane) is the n-th bird of `pool.names` (`backend·Falcon`, `shop·Kestrel`).
 The local STT server (`local-stt`; `skills/pokey/media.md`): one job at a time, bound to the job's process, its RAM through the memory gate.
-The GPU (`gpu.exclusive.<kind>`, `lib.ps1` `Use-KitGpu`): one kind at a time (e.g. lane emulators); another kind waits, supervise
-shows `waiting for GPU: held by <holder>`. `processes` (regex): running processes that hold it; `idleExcept` (regex of the kind's own backend):
-it also waits while nvidia-smi shows any other GPU process, or `idleMaxMB` (512) used with its backend down; `minFreeMB` (default: the
-caller's, lanes 2048; 0 off): waits while nvidia-smi `memory.free` is lower, then refuses naming the GPU processes; no nvidia-smi: one warning, no check.
-Test locks (`repos[].exclusiveTests` `[{dir, match, lock}]`, `lib.ps1` `Use-KitLock`): `check -Step test` under `dir` whose test names or
-sources match the regex `match` (no names: all) holds lock `lock`;
-others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learned `gate.waitMinutes` (context `lock:<name>`), then exit 3; an ended holder is dropped; supervise RAM rows show `lock <name>`.
+GPU (`gpu.exclusive.<kind>`, `lib.ps1` `Use-KitGpu`): one kind at a time (e.g. lane emulators), others wait (`waiting for GPU:
+held by <holder>`); `processes` (regex) hold it; `idleExcept` (the kind's own backend): also waits on any other nvidia-smi process,
+or over `idleMaxMB` (512) with its backend down; `minFreeMB` (caller's, lanes 2048; 0 off): waits while `memory.free` is lower,
+then refuses naming the processes; no nvidia-smi: one warning.
+Test locks (`repos[].exclusiveTests` `[{dir, match, lock}]`, `lib.ps1` `Use-KitLock`): a `check -Step test` under `dir` whose test
+names or sources match `match` (no names: all) holds `lock`; others queue up to the learned `gate.waitMinutes` (context
+`lock:<name>`), then exit 3; an ended holder is dropped; supervise RAM rows show `lock <name>`.
 - **End:** an agent ends with `bossy.ps1 release -Agent <id>` (every lease of that id: lane + its emulator, env and its layers, GPU, build, tabs);
   `board leave` and /buildy, /testy after each agent stage repeat it. A holder on the board with no live entry is dead (its holder
   pid is the shared session process); `supervise -AutoFix` reclaims every kind after the grace (lanes stop with `emu kill`).
-- **Activity:** one source (`lib.ps1` `Get-KitLastActivity`) for leases, STUCK rows, stale board rows and shell owners: the newest of
-  the board beat and the agent's transcript write (+ task outputs it names); a workflow step counts under any run name it joined with.
-- **Log:** `.state/leases.jsonl` (`lib.ps1` `Write-KitLeaseLog`): one line per acquire / release / reclaim / down (kind, name, agent,
-  session, run, since, reason); the newest half kept past 1 MB. Last used: `bossy.ps1 status`, the lane and env status.
+- **Activity** (`lib.ps1` `Get-KitLastActivity`, for leases, STUCK and stale board rows, shell owners): the newest board beat or
+  transcript write (+ task outputs it names); a workflow step counts under any run name it joined with.
+- **Log:** `.state/leases.jsonl` (`lib.ps1` `Write-KitLeaseLog`): a line per acquire / release / reclaim / down (kind, name, agent,
+  session, run, since, reason); past 1 MB the newest half kept. Last used: `bossy.ps1 status`, lane and env status.
 
 ## Worktrees and lanes
 - **Pool slots** (`crafty.ps1 wt lease`): per repo, folder `<bird>-<repo>`, shown as `<repo>·<Bird>`; agents lease one per branch
   and release it; a free slot sits detached at `origin/<target>`, never on a stale branch; warm free slots: 7-day p90 + 1 (`pool.warm` first).
-- **Lanes** (envy): lane k of env `<product>` runs from its own worktrees `lane-<product>-<bird>-<repo>` on the local branch
-  `lane/<product>-<bird>` (never pushed): the target plus the task branches merged in as layers. Old names (`localenv-<env>-<repo>`,
-  `localenv/<env>`) move once the lane is idle: `envy.ps1 lanes -Migrate [-DryRun]`, and supervise each sweep (`-LanesOnly`);
-  it also removes a clean worktree of a `localenv/*` branch no lane owns, deletes `[gone]` branches merged into the target and
-  backup branches whose commits are all on origin, and lists the rest.
+- **Lanes** (envy): lane k of env `<product>` runs from worktrees `lane-<product>-<bird>-<repo>` on local branch
+  `lane/<product>-<bird>` (never pushed): the target + task branches merged as layers. Old names (`localenv-<env>-<repo>`,
+  `localenv/<env>`) move when the lane is idle (`envy.ps1 lanes -Migrate [-DryRun]`; supervise each sweep, `-LanesOnly`), which
+  also removes clean worktrees of `localenv/*` branches no lane owns, deletes `[gone]` branches merged into the target and
+  backups fully on origin, and lists the rest.
 - **One lane name:** output shows `<product>·<Bird>`; state and logs keep the id (records with an old id show and group as its bird); `-Env` takes either (ui-check: LANE-ID).
 - **Lanes in sync** (`wt pool -Sync` -> `envy.ps1 lanes -Sync`): an idle lane is rebuilt as a build would (`origin/<target>` +
   open layers + prepare; merged layers dropped; a conflict: left as it was, listed); `lane/*` track no upstream; Branches tile:
@@ -143,25 +157,21 @@ others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learn
   state is written atomically (temp + rename) or appended; leases, gate slots and board entries keep their process id with its
   start time (a pid reused after a cold boot holds nothing); a lock whose holder died is taken at once (Windows).
 - **Pause** (power off, a day offline): `bossy.ps1 pause -All | -Run <run> [-Reason]` returns in seconds; `pause -Status`
-  says when it is "safe to power off" (exit 1 until then; `-Wait <min>` blocks as before): every agent left, or not yet left
-  but at a checkpoint with a clean worktree and no build. Gated builds and tests of the paused agents stop at once (queued
-  ones never start; the gate says `redo`); agents read PAUSE on their next `board beat` (and inbox), let a git or MR call
-  finish, checkpoint `-Next 'redo: <step>'`, commit WIP locally, release leases and leave the board `paused`; a background
-  finisher then stops env services no live holder needs;
+  says "safe to power off" (exit 1 until then; `-Wait <min>` blocks): every agent left, or at a checkpoint with a clean
+  worktree and no build. The paused agents' gated builds stop at once (queued ones never start: `redo`); agents read PAUSE on
+  their next `board beat` (and inbox), let a git or MR call finish, checkpoint `-Next 'redo: <step>'`, commit WIP locally,
+  release leases, leave the board `paused`; a background finisher stops env services no live holder needs;
   `.state/pauses/` records runs, launch records, agents, checkpoints and worktree heads. Nothing after it needs the network.
-- **Crash** (power loss, kill): SessionStart `health` marks dead board entries and launch records crashed and prints
-  `paused/crashed runs: N -> bossy.ps1 resume`.
-- **Resume**: `bossy.ps1 resume -All | -Run <run> [-Wait <min>] [-Hours 24] [-MaxSeconds 150]`: paused runs and runs
-  crashed in `-Hours`; a run whose journal ended at its last phase is closed, not listed (also `health`, `pause`); lines
-  stream as found; past `-MaxSeconds` a `partial:` line names the runs left. Offline -> says so, stops. Per agent a brief
-  (`work/agents/<id>/resume-<run>-brief.md`) starting AT its next step: done steps verified (commit present, MR state), never
-  redone; the uncommitted diff kept for the interrupted step; journal results kept (`resumeFromRunId`); a run whose MRs all
-  merged skipped; then the exact Workflow call. `board join` shows each relaunched agent its CHECKPOINT. Recording the
-  resumed run (`launch -RunId`) re-binds its self record to the new session; a run is live while any record's holder lives or
-  its folder was written within `supervise.stuckMinutes` (quiet past that: STUCK; STOPPED only when every holder is gone).
-- Kept: commits, diffs, MRs, tracker state, decisions, checkpoints, launch records, coordinator program state (`bossy.ps1
-  program set|get`). Lost: agent conversations (a fresh agent from its brief), running builds and tests (rerun), env service
-  processes (started on the next lease), browser logins.
+- **Crash** (power loss, kill): SessionStart `health` marks dead board entries and launch records crashed: `paused/crashed runs: N -> bossy.ps1 resume`.
+- **Resume**: `bossy.ps1 resume -All | -Run <run> [-Wait <min>] [-Hours 24] [-MaxSeconds 150]`: paused runs and runs crashed
+  in `-Hours` (a journal ended at its last phase: closed, not listed; also `health`, `pause`); lines stream; past `-MaxSeconds`
+  a `partial:` line names the rest; offline: says so, stops. Per agent a brief (`work/agents/<id>/resume-<run>-brief.md`) AT
+  its next step: done steps verified (commit, MR state), never redone; the interrupted step's diff and journal results
+  (`resumeFromRunId`) kept; a run with all MRs merged skipped; then the exact Workflow call; `board join` shows the CHECKPOINT.
+  `launch -RunId` re-binds the self record to the new session; a run is live while a record's holder lives or its folder was
+  written within `supervise.stuckMinutes` (then STUCK; STOPPED when every holder is gone).
+- Kept: commits, diffs, MRs, tracker, decisions, checkpoints, launch records, program state (`bossy.ps1 program set|get`).
+  Lost: agent conversations (fresh agent from its brief), running builds (rerun), env processes (next lease), browser logins.
 
 ## Install
 ```powershell
@@ -241,6 +251,10 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   list or the runs; est. cost, tokens, sweep s, agents failed / finished, branches, worktrees); tasks per repo by outcome, work in
   flight, test runs; Spend per role (roles x steps, tokens · est. cost, share, avg / p90 time = active minutes, wall clock where no split, and the 3 biggest models' share);
   Repos now (repo x branches, worktrees, kept, dirty amber, diverged red);
+- context: a run row's peak cell (bar by source, waste in the tooltip); Trends "Context mix", "Peak context"; the per-role
+  table; flags (`usage.context.*`): WATCH per live agent (`peakWatch`,
+  `rereadWatch`, `bigResultTokens`, `logTokens`, `startFactor` x role norm), ACT per source class in `actRuns`+ agents; ended
+  starts learn `startNorm`;
 - kit internals (folded): Tuning: Settings = a tile map of key groups (width = keys, sage = changed this week, a source strip; a
   tap opens the group as a full row: a tile per key, colour = learned / shadow / local / default, the value inside, changed in 7
   days outlined), keys changed in 7 days as a key + scope x day heatmap (latest change first; a cell = old→new, up slate,

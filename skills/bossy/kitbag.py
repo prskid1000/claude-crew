@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1485 audit ·
-  L1633 registry · L1965 arch lint · L2232 prose · L2397 sections · L2527 budget · L2541 migrate · L2702 plugins ·
-  L2756 state lint · L2944 main
+Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1213 lint command · L1489 audit ·
+  L1637 registry · L1969 arch lint · L2236 prose · L2401 sections · L2531 budget · L2545 migrate · L2706 plugins ·
+  L2760 state lint · L2948 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1153,6 +1153,10 @@ def readme_sections(k, g):
     out['table-config'] = ['| Key | Example / default | Meaning |', '|---|---|---|'] + rows
     caps = man.get('caps') or {}
     out['table-caps'] = [' · '.join(f'{n} {v}' for n, v in BUDGETS.items()) + f" · start per role {START_CAP} · files:{caps.get('content')} content + {caps.get('plumbing')} plumbing"]
+    fid = lambda s: 'F_' + re.sub(r'[^A-Za-z0-9]', '_', s)
+    for fn, es in (man.get('flows') or {}).items():   # _manifest.flows: [from, label, to] edges
+        if not fn.startswith('_'):
+            out[f'flow-{fn}'] = ['flowchart LR'] + [f'  {fid(a)}[{mq(a)}] -->|{mq(lb)}| {fid(b)}[{mq(b)}]' for a, lb, b in es]
     ma, mw = man.get('agents') or {}, man.get('workflows') or {}   # crew hero: who starts whom
     out['crew'] = ['flowchart LR', f'  OW([{mq("owner")}]) -->|{mq("asks, says deploy env")}| CO[{mq("coordinator: Router + Events")}]'] + [
      x for w, m in mw.items() for x in [f"  CO -->|{mq(m.get('router', ''))}| W_{w}[/{mq(w)}/]"] + [f'  W_{w} -->|{mq("spawns")}| A_{c}({mq(c)})' for c in m.get('crew', [])]] + [

@@ -162,6 +162,9 @@
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
   "caps": { "content": 28, "plumbing": 9 },
+  "flows": { "_readme": "README flow-<name> graphs (kitbag.py flow --readme): [from, edge label, to] per edge.",
+   "context": [["transcripts", "usage pass", "usage.ps1"], ["usage.ps1", "live agent", "WATCH"], ["usage.ps1", "2+ agents", "ACT"],
+    ["usage.ps1", "ended starts", "startNorm"], ["WATCH", "past peakWatch", "handoff at 80%"], ["ACT", "coordinator", "kitty fix at the source"]] },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/crafty/lib.ps1", "verbs": "view url status statuses comment comments create describe rename move attach list owner", "names": "command none", "vendors": "clickup github gitlab jira jira-server linear youtrack azure" },
@@ -202,7 +205,7 @@
    "launches": "work/launches/", "decisions": "work/decisions/", "disputes": "work/disputes/", "duels": "work/duels/",
    "deploys": "work/deploys/", "audits": "work/audits/", "docs": "work/docs/", "evidence": "work/evidence/",
    "shots": "work/shots/", "chrome-profiles": "cache/chrome-profiles/", "sessions": "cache/sessions/",
-   "tokens": "cache/tokens/", "tsbuild": "cache/tsbuild/", "check-builds": "cache/check-builds/", "check-stamps": "cache/check-stamps/", "android-swarm": "cache/android-swarm/",
+   "tokens": "cache/tokens/", "tsbuild": "cache/tsbuild/", "check-builds": "cache/check-builds/", "check-stamps": "cache/check-stamps/", "check-logs": "logs/check-logs/", "android-swarm": "cache/android-swarm/",
    "android-tmp": "cache/android-tmp/", "stopped": "cache/stopped/", "kit-flow": "cache/kit-flow.html",
    "kit-flow-cache": "cache/kit-flow-model.json", "kit-flow-stamp": "cache/kit-flow-stamp.txt",
    "supervise-state": "cache/supervise-state.json", "live-steps": "cache/live-steps.json", "supervise-report": "logs/supervise-report.md", "supervise-digest": "logs/supervise-digest.md", "mem-samples": "cache/mem-samples.txt",
@@ -231,6 +234,6 @@
     ["://[^/\\s:@]+:[^/\\s@]+@", "://[redacted]@"], ["[\\w.+-]+@[\\w-]+(\\.[\\w-]+)*\\.[A-Za-z]{2,}\\b", "[email]"]] },
   "keep": { "_readme": "cleanup: hours an entry of the path stays after its last write ([hours, newest N kept]); unnamed entries: 72 h in the runtime root, 168 h in work/, 720 h in cache/ and logs/ (.state: never).",
    "sessions": 8, "tokens": 8, "android-tmp": 72, "shots": 72, "launches": 72, "agents": 168, "node-spec": 168, "apks": [72, 3], "evidence": 168, "waves": 168, "board": 168,
-   "qa-seats": 168, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "audit": 720, "retros": 2160, "kitty-audits": 2160, "media": 168, "background": 72, "tmp": 24 }
+   "qa-seats": 168, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "check-logs": 72, "audit": 720, "retros": 2160, "kitty-audits": 2160, "media": 168, "background": 72, "tmp": 24 }
  }
 }

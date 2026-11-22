@@ -1207,6 +1207,17 @@ function Get-QaGuideDocUrl([string]$Description, $Track, $Spec) {
 }
 
 # ---- prepare: a test-only run from a job (SKILL.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it
+# kept testing doc -> the run's guide: its head + the newest "## <env> run <date>" section, older runs only named (owner 2026-11-22:
+# a 1494-line guide of earlier runs filled testers' context)
+function Copy-QaGuide([string]$Kept, [string]$Dest) {
+  $gl = @(Get-Content -LiteralPath $Kept -Encoding utf8); $rx = '^## (?!#).*\brun (\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)'
+  $runs = @(for ($i = 0; $i -lt $gl.Count; $i++) { if ($gl[$i] -match $rx) { [pscustomobject]@{ at = $i; key = $Matches[1] } } })
+  if ($runs.Count -le 1) { Copy-Item -LiteralPath $Kept $Dest; return }
+  $nw = @($runs | Sort-Object key -Descending)[0]; $end = $gl.Count
+  for ($i = $nw.at + 1; $i -lt $gl.Count; $i++) { if ($gl[$i] -match '^## (?!#)') { $end = $i; break } }
+  $body = @(if ($runs[0].at) { $gl[0..($runs[0].at - 1)] }) + @($gl[$nw.at..($end - 1)]) + @('', "> Older runs ($($runs.Count - 1)): $Kept (read a range when a retest needs one)")
+  Set-Content -LiteralPath $Dest -Encoding utf8 ($body -join "`n")
+}
 # deploy rows -> not live / local parts: an MR with no build on the target (NO-TARGET) next to a live one runs on the local env
 function Split-QaLiveParts($Dep) {
   $notLive = @($Dep | Where-Object { $_.state -notmatch '^(DEPLOYED|N/A|MANUAL)' }); $noTgt = @($notLive | Where-Object { $_.state -eq 'NO-TARGET' })
@@ -1279,7 +1290,7 @@ foreach ($tid in @($cand.Keys)) {
   }
   if ($byDoc[$doc]) { $byDoc[$doc].subtasks += $it.subtasks[0]; continue }   # tasks sharing a doc = one item
   $it.code = "T$($items.Count + 1)"; $gf = "$dir/guides/$($it.code).md"; $kept = Join-Path (Get-KitPath docs) "$($tid)_testing-doc.md"
-  if (Test-Path -LiteralPath $kept) { Copy-Item -LiteralPath $kept $gf }
+  if (Test-Path -LiteralPath $kept) { Copy-QaGuide $kept $gf }
   elseif ($doc -like 'task:*') { Set-Content -LiteralPath $gf -Encoding utf8 "# Guide: $nm`n`nNo testing doc configured (process.docs): test what the task text below asks.`n`n$($tk.description)" }
   else { Set-Content -LiteralPath $gf -Encoding utf8 "# Guide: $nm`n`n$($gSpec.label): $doc (no kept copy: read the doc itself, fully, before the first check)" }
   $it.guideFile = $gf; if ($doc -notlike 'task:*') { $it.guideUrl = $doc }; $items.Add($it); $byDoc[$doc] = $it

@@ -73,10 +73,10 @@ the **Target**. A mixed request is split and each part routed on its own.
   into the main line after review, CI and the local test loop need none.
 
 ## Multi-agent work, builds and testing (every repo of the workspace)
-`<kit>` = the workspace's `.claude` folder (kit scripts find it). These rules hold on every route:
+`<kit>` = the workspace's `.claude` folder; on every route:
 
 - File inspection: the Read tool (`offset` / `limit`), never a bare file path as a command (it opens a desktop app); the top 40
-  lines (section map), then only the range you need.
+  lines (section map), then only the range you need; a file needed again: note its facts once.
 - Builds and tests go through `<kit>/skills/crafty/crafty.ps1 check` (the machine-wide memory gate queues
   them); parallel work in worktrees (`crafty.ps1 wt`), commits with `crafty.ps1 wt commit`; never install packages into linked
   `node_modules` / `.venv`. The guard hook blocks `git stash`, `--no-verify` and ungated builds. Rebase (`wt sync`) before

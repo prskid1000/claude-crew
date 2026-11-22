@@ -112,6 +112,15 @@ $out2 = pwsh @np $D check -Dir $jd -Step test -Tests OrderTest 2>&1 | Out-String
 $kl = Join-Path $k 'skills/crafty/kit.local.json'; $fl = Join-Path (Kd) 'eng.up'; & $J @{ runtimes = @{ docker = @{ isUp = "if (Test-Path '$fl') { 'up' }"; up = "New-Item -Force '$fl' | Out-Null" } } } $kl
 $out3 = pwsh @np $D check -Dir $jd -Step test -Tests OrderIT 2>&1 | Out-String; $c3 = $LASTEXITCODE; $ls = pwsh @np $D runtime status -Name docker -Json | Out-String | ConvertFrom-Json; Remove-Item $kl
 $env:PATH = $path0
+# digest (owner 2026-11-22: 60 agents pasted whole logs): a 200-line failing run prints its failure line (+2 after), the last 10 and
+# the log path, never line 50; a passing run the last 10; a short run whole
+$dg = Join-Path (Kd) 'digest-repo'; New-Item -ItemType Directory -Force $dg | Out-Null; '<project></project>' | Set-Content "$dg/pom.xml"
+'param($n, $rc) 1..$n | ForEach-Object { if ($_ -eq 100) { "ERROR boom in Foo" } else { "noise $_" } }; exit $rc' | Set-Content "$dg/gen.ps1"
+$dgr = foreach ($c in @(@('fail', 200, 1), @('pass', 200, 0), @('short', 5, 0))) {
+  "{ ""stack"": ""java-maven"", ""commands"": { ""test"": ""pwsh -NoProfile -File gen.ps1 $($c[1]) $($c[2]) {tests}"" } }" | Set-Content "$dg/.claude-stack.json"
+  $o = pwsh @np $D check -Dir $dg -Step test -Tests DigestTest -Force 2>&1 | Out-String
+  "$($c[0]):$LASTEXITCODE,$($o -match 'ERROR boom in Foo'),$($o -match 'noise 101\b'),$($o -match 'noise [15]0\b'),$($o -match 'noise (200|5)\b'),$($o -match 'the full log: \S+\.log')" }
+Expect "check digest: failure line + 2 after, the last 10, the log path; a pass only the tail; a short run whole ($($dgr -join ' '))" (($dgr -join ' ') -eq 'fail:1,True,True,False,True,True pass:0,False,False,False,True,True short:0,False,False,False,True,False')
 Expect "container-tests: an IT test with no answering engine exits 4 ($c1)" ($c1 -eq 4 -and $out -match 'need a container engine')
 Expect "container-tests: a plain unit test runs ($c2)" ($c2 -eq 0 -and $out2 -notmatch 'container engine')
 Expect "container-tests: a configured engine that is down is leased and started for an IT test, a failing docker info aside ($c3)" ($c3 -eq 0 -and $out3 -match 'runtime docker: started by the kit' -and $ls[0].leases[0].agent -and $ls[0].startedByKit)

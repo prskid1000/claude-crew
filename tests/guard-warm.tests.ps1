@@ -30,6 +30,16 @@ $ins = @('git stash', 'git status --short', 'echo hi') | ForEach-Object { @{ too
 $nz = { param($s) if ("$s".Trim()) { $h = ("$s" | ConvertFrom-Json).hookSpecificOutput; "$($h.permissionDecision)|$($h.permissionDecisionReason)|$($h.additionalContext)" } else { '' } }
 $viaPlain = { param($j) & $nz (($j | pwsh @np $D guard) -join '') }
 $viaClient = { param($j) & $nz (($j | node $gc) -join '') }
+# context rules in the client (owner 2026-11-22): a whole-file Read over guard.readMaxLines (600) / readMaxKB (32) denied, a range or a
+# small file passes; SQL: SELECT *, a row query without LIMIT or LIMIT over guard.sqlMaxRows (200) denied; aggregates, SHOW pass
+$big = Join-Path (Kd) 'big.ps1'; Set-Content $big (1..700 | ForEach-Object { "# line $_" }); $wide = Join-Path (Kd) 'wide.md'; Set-Content $wide ('x' * 40000); $small = Join-Path (Kd) 'small.md'; Set-Content $small 'a'
+$cx = foreach ($c in @(@('big', 'Read', @{ file_path = $big }), @('wide', 'Read', @{ file_path = $wide }), @('range', 'Read', @{ file_path = $big; offset = 1; limit = 40 }), @('small', 'Read', @{ file_path = $small }),
+    @('star', 'mcp__db__run_sql', @{ query = 'SELECT * FROM t LIMIT 5' }), @('nolim', 'mcp__db__run_sql', @{ query = "select id from t where n = 'limit 5'" }), @('over', 'mcp__db__run_sql', @{ query = 'select id from t limit 5000' }),
+    @('lim', 'mcp__db__run_sql', @{ query = 'select id, name from t limit 50;' }), @('count', 'mcp__db__run_sql', @{ query = 'SELECT COUNT(*) FROM t' }), @('grp', 'mcp__db__run_sql', @{ query = 'select a, count(*) from t group by a' }), @('show', 'mcp__db__run_sql', @{ query = 'SHOW DATABASES' }),
+    @('exists', 'mcp__db__run_sql', @{ sql = 'select id from t where exists (select * from u where u.t = t.id) limit 5' }), @('cte', 'mcp__db__run_sql', @{ sql = 'with x as (select a from t) select count(*) from x' }),
+    @('tick', 'mcp__db__run_sql', @{ sql = 'select a from t where `c#` = 1 limit 5' }), @('inner', 'mcp__db__run_sql', @{ sql = 'select id from t where id in (select id from u limit 5)' }), @('pdf', 'Read', @{ file_path = "$big.pdf" }))) {
+  "$($c[0]):$(@(& $viaClient (@{ tool_name = $c[1]; cwd = $k; tool_input = $c[2] } | ConvertTo-Json -Compress)) -join '' -replace '^deny\|.*', 'deny' -replace '^$', 'ok')" }
+Expect "guard context: big / wide whole-file Reads and wide or unbounded SQL denied, ranges, small files, LIMIT, aggregates pass ($($cx -join ' '))" (($cx -join ' ') -eq 'big:deny wide:deny range:ok small:ok star:deny nolim:deny over:deny lim:ok count:ok grp:deny show:ok exists:ok cte:ok tick:ok inner:deny pdf:ok')
 $plain = @($ins | ForEach-Object { & $viaPlain $_ })
 # K75: a cold call past the client's hook-time bound under load passes once with no answer; answers are compared without that bound
 $env:KIT_GUARD_TIMEOUT_MS = '120000'

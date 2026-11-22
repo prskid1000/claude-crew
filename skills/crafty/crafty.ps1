@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 wt · L321 stack · L503 gate · L818 check · L1134 pipes · L1190 guard · L2104 dir · L2114 checkpoint ·
-  L2144 prior · L2182 tracker · L2204 task spec · L2386 scope · L2434 host
+Sections: L24 init · L31 wt · L321 stack · L503 gate · L837 check · L1155 pipes · L1211 guard · L2125 dir · L2135 checkpoint ·
+  L2165 prior · L2203 tracker · L2225 task spec · L2407 scope · L2455 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -570,7 +570,8 @@ param(
   [int]$WaitMinutes = -1,   # -1 = learned gate.waitMinutes (90); 0 = no wait
   [double]$KeepFreeGB = -1,   # -1 = Get-KitKeepFreeGB
   [double]$NeedGB = 0,
-  [int]$MaxParallel = 0
+  [int]$MaxParallel = 0,
+  [string]$Log   # the command's output goes there; the gate prints its digest (Write-KitRunDigest), not the whole log
 )
 $waitLearned = $WaitMinutes -lt 0; if ($waitLearned) { $WaitMinutes = Get-KitParam 'gate.waitMinutes' }
 $keepFromConfig = $KeepFreeGB -lt 0   # re-read each round for queued builds
@@ -749,10 +750,11 @@ while ((Get-Date) -lt $deadline) {
       $reserved = $need   # an OOM near this = failure
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" }); queued $([int]((Get-Date) - [datetime]$gtk.since).TotalSeconds) s"   # usage.ps1 Step-KitUsageTime: the queue = waiting
       if ($gt = Get-Command Set-GateTemp -ErrorAction SilentlyContinue) { & $gt $Cmd $Dir }
-      # /s + outer quotes: a leading quoted path survives
-      if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
+      # /s + outer quotes: a leading quoted path survives; -Log wraps only what runs (history and ledger keep the command)
+      $runCmd = if ($Log) { "($Cmd) > `"$Log`" 2>&1" } else { $Cmd }
+      if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$runCmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
       else {
-        $psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $psi.ArgumentList.Add('-c'); $psi.ArgumentList.Add($Cmd)
+        $psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $psi.ArgumentList.Add('-c'); $psi.ArgumentList.Add($runCmd)
         $psi.WorkingDirectory = $Dir; $psi.UseShellExecute = $false
         $proc = [Diagnostics.Process]::Start($psi)
       }
@@ -812,7 +814,24 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator' -and -not $why) {
     }
   } catch {} finally { if ($got) { $gate.ReleaseMutex() } }
 }
+if ($Log) { Write-KitRunDigest $Log $code }
 exit $code
+}
+# a gated run's log -> what an agent reads (owner 2026-11-22: 60 agents pasted whole build / test logs): a short log whole; else the
+# failure lines (+ the next 2 lines each) up to check.printLines, the last 10 lines (the summary), the log path
+function Write-KitRunDigest([string]$Path, [int]$Code) {
+  $ls = @(try { Get-Content -LiteralPath $Path -Encoding utf8 -ErrorAction Stop } catch { })
+  $cap = [int](Get-KitParam 'check.printLines')
+  if ($ls.Count -le $cap) { foreach ($l in $ls) { Write-Host $l }; return }
+  $tail = 10; $keep = [Collections.Generic.SortedSet[int]]::new()
+  if ($Code) {
+    $rx = '(?i)\b(error|errors|fail(ed|ure|ures|ing)?|exception|assert\w*|traceback|panic|fatal|expected|not ok)\b|^\s*[✗×✖]|(?-i:^E\s)'
+    for ($i = 0; $i -lt $ls.Count - $tail -and $keep.Count -lt $cap - $tail; $i++) { if ($ls[$i] -match $rx) { for ($j = $i; $j -le [math]::Min($i + 2, $ls.Count - $tail - 1); $j++) { $null = $keep.Add($j) } } }
+  }
+  $prev = -1; foreach ($i in $keep) { if ($prev -ge 0 -and $i -gt $prev + 1) { Write-Host '  ...' }; Write-Host $ls[$i]; $prev = $i }
+  if ($keep.Count) { Write-Host '  ...' }
+  foreach ($l in @($ls | Select-Object -Last $tail)) { Write-Host $l }
+  Write-Host "[gate] $($ls.Count) lines, $(if ($Code) { "$($keep.Count) failure line(s) and " })the last $tail shown; the full log: $Path (read a range: never the whole file)"
 }
 
 # ---- check: gated stack steps; exit = failing step's code (3 gate / test lock, 4 no container engine, 5 UNRUN)
@@ -857,6 +876,8 @@ function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
   Write-Host "[check] ENV-FIX to kitty (shared venv, when no build uses it; never run it from a worktree): `"$venvPy`" -m pip install -c `"$cons`" $quoted"
 }
 # check builds and stamps: adapters/check_stamps.ps1
+# a step's log: per dir, step and run (parallel checks of one dir); cleanup drops it after keep.check-logs hours
+function Get-CheckLog([string]$Dir, [string]$Step) { Join-Path (Get-KitPath check-logs -Create) "$((Get-KitHash $Dir.ToLower() MD5).Substring(0, 12))-$Step-$PID.log" }
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -1017,7 +1038,7 @@ if ($Step -eq 'e2e') {
   $rc = 0; $n = 0
   foreach ($r in $runs) {
     $n++; if ($runs.Count -gt 1) { Write-Host "[check] e2e run $n/$($runs.Count): $r" }
-    & $KitCmd.dev gate -Dir $st.dir -Cmd $r; if ($LASTEXITCODE) { $rc = $LASTEXITCODE }
+    & $KitCmd.dev gate -Dir $st.dir -Cmd $r -Log (Get-CheckLog $st.dir "e2e-$n"); if ($LASTEXITCODE) { $rc = $LASTEXITCODE }
   }
   Write-Host "[check] e2e $(if ($rc) { "FAILED (exit $rc)" } else { 'ok' })"; exit $rc
 }
@@ -1110,15 +1131,15 @@ foreach ($s in $steps) {
     $lk = if ($s -eq 'test') { Get-TestLock @($Tests -split '[,\s]+' | Where-Object { $_ }) }
     if ($lk -and -not (Use-KitLock "$($lk.lock)" $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Split-Path (Get-CheckRepo).top -Leaf }) $st.dir)) { Write-Host "[check] test not started: lock $($lk.lock) still held by $($script:KitLockRefused.holder) (repos[].exclusiveTests); retry when it ends"; exit 3 }
     # "No module named" = a stale venv, not a failed test
-    $runLog = if ($s -eq 'test' -and $pyRun) { Join-Path (Get-KitPath logs -Create) "check-$(Hash12 $st.dir.ToLower())-$PID.log" }   # per run: parallel checks of one dir
-    if ($runLog) { Write-Host "[check] test output goes to $runLog and prints when the run ends"; $env:PYTHONUTF8 = '1' }
+    $runLog = Get-CheckLog $st.dir $s   # every step: the gate prints its digest (failure lines + summary), the log keeps the rest
+    Write-Host "[check] $s output goes to $runLog; its digest prints when the run ends"; if ($pyRun) { $env:PYTHONUTF8 = '1' }
     $bt0 = (Get-Date).AddSeconds(-2)
-    try { & $KitCmd.dev gate -Dir $st.dir -Cmd $(if ($runLog) { "($cmd) > `"$runLog`" 2>&1" } else { $cmd }); $rc = $LASTEXITCODE } finally {
+    try { & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd -Log $runLog; $rc = $LASTEXITCODE } finally {
       if ($lk) { Remove-KitLock "$($lk.lock)" }
-      if ($runLog) { $runText = Get-Content -LiteralPath $runLog -Raw -Encoding utf8 -ErrorAction SilentlyContinue; if ($runText) { Write-Host $runText.TrimEnd() }; Remove-Item -LiteralPath $runLog -ErrorAction SilentlyContinue } }
+      if ($pyRun -and $s -eq 'test') { $runText = Get-Content -LiteralPath $runLog -Raw -Encoding utf8 -ErrorAction SilentlyContinue } }
   }
   $ran++
-  $stale = if ($rc -and $runLog) { @(Get-PyStaleModules $st.dir $pyRun $runText $tl) } else { @() }   # 24 of 39 python builds failed on the env, not the code
+  $stale = if ($rc -and $pyRun -and $s -eq 'test') { @(Get-PyStaleModules $st.dir $pyRun $runText $tl) } else { @() }   # 24 of 39 python builds failed on the env, not the code
   if ($stale.Count) { Write-PyStaleEnv $st.dir $pyRun $stale; Write-Host "[check] exit 5: $s UNRUN (stale-env, test exit $rc)"; exit 5 }
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
   if ($s -eq 'build' -and -not $unrun) { Save-CheckBuild $st.dir $cmd $bt0 }
@@ -2085,7 +2106,7 @@ if (@($cmd -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_ -match $e2eRx -and $_
   Deny "e2e runs go through & $($KitCmd.dev) check -Dir <module> -Step e2e: only the specs related to the change (the whole suite: -AllTests, on the owner's word)."
 }
 if ($heavy -and -not $gated) {
-  Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else crafty.ps1 gate -Dir <dir> -Cmd '<cmd>'."
+  Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else crafty.ps1 gate -Dir <dir> -Cmd '<cmd>' -Log <crafty.ps1 dir file> (prints a digest, not the whole log)."
 }
 # background shells: endless waits / stdin reads hang for hours
 $bgNote = $null; if ($in.tool_input.run_in_background -eq $true) {

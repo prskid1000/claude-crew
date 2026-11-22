@@ -5,7 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L50 plain · L90 warm
+// Sections: L25 crash · L50 plain · L90 warm · L109 context
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
@@ -106,5 +106,42 @@ function ask(tries) {
   })
 }
 
+// ---- context: Read and SQL calls answered here, never by pwsh (owner 2026-11-22: big whole-file Reads and wide SQL results filled
+// agents' context): a Read without offset / limit of a text file over guard.readMaxLines lines or guard.readMaxKB; a SELECT * or a row
+// SELECT without LIMIT <= guard.sqlMaxRows (aggregates, SHOW, DESCRIBE, EXPLAIN pass). Pins: kit.local.json guard.<key>
+function param(key) {
+  let v; try { v = key.split('.').reduce((o, k) => o?.[k], JSON.parse(readFileSync(join(here, 'kit.local.json'), 'utf8'))) } catch { }
+  if (typeof v === 'number') return v
+  try { return Number(/default=([\d.]+)/.exec(JSON.parse(readFileSync(join(kit, 'skills', 'bossy', 'params.registry.json'), 'utf8')).params[key])[1]) } catch { return 0 }
+}
+function deny(why) { process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
+function readRule(ti) {
+  const f = `${ti.file_path || ''}`
+  if (!f || ti.offset != null || ti.limit != null || ti.pages || /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|ipynb)$/i.test(f)) return
+  const maxL = param('guard.readMaxLines'), maxKB = param('guard.readMaxKB'); let kb = 0, lines = 0
+  try { const st = statSync(f); if (!st.isFile()) return; kb = Math.round(st.size / 1024); if (!(maxKB && kb > maxKB)) for (const b of readFileSync(f)) if (b === 10) lines++ } catch { return }   // size first: a huge log is never read here
+  if ((maxL && lines > maxL) || (maxKB && kb > maxKB)) deny(`kit guard: ${f} is ${lines} lines / ${kb} KB (cap ${maxL} lines / ${maxKB} KB, AGENTS.md "File inspection"): read its section map (top 40 lines; a .md: Grep '^#' for its headings) then the range you need (offset / limit); note what you need from it once (your crafty.ps1 dir notes)`)
+}
+function sqlRule(ti) {
+  const q0 = `${ti.query || ti.sql || ti.statement || ''}`; if (!q0.trim()) return
+  const q1 = q0.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`[^`]*`/g, 'x').replace(/--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\//g, ' ').trim()
+  if (!/^\(?\s*(select|with)\b/i.test(q1)) return
+  // the top level only: subqueries, CTE bodies and EXISTS (SELECT * ...) return no rows to the agent
+  let depth = 0, q = ''; for (const ch of q1) { if (ch === ')') depth--; if (depth <= 0) q += ch; if (ch === '(') depth++ }
+  q = q.replace(/^\(\)\s*/, '')
+  if (!q.trim()) q = q1.replace(/^\(\s*|\s*\)\s*;?\s*$/g, '')   // the whole query in parens
+  if (/\bselect\s+(?:distinct\s+)?(?:[\w]+\.)?\*/i.test(q)) deny('kit guard: SELECT * pulls every column into your context: name the columns you need (DESCRIBE <table> or information_schema.columns ... LIMIT first)')
+  const max = param('guard.sqlMaxRows'), lim = /\blimit\s+(?:\d+\s*,\s*)?(\d+)\s*(?:offset\s+\d+\s*)?(?:for\s+update\s*|lock\s+in\s+share\s+mode\s*)?;?\s*$/i.exec(q)
+  if (lim) { if (max && Number(lim[1]) > max) deny(`kit guard: LIMIT ${lim[1]} is over ${max} rows (guard.sqlMaxRows): aggregate (COUNT, GROUP BY) or page with a smaller LIMIT`); return }
+  const sel = [...q.matchAll(/\bselect\s+([\s\S]*?)\bfrom\b/gi)].pop(); if (!sel) return   // no FROM: one row
+  const agg = sel[1].split(',').every((x) => /^\s*(?:distinct\s+)?(count|sum|min|max|avg|group_concat|bit_and|bit_or|std\w*|var\w*)\s*\(\)/i.test(x))
+  if (agg && !/\bgroup\s+by\b/i.test(q)) return
+  deny(`kit guard: a row query without LIMIT can fill your context: add LIMIT <= ${max} (guard.sqlMaxRows), or aggregate (COUNT, GROUP BY ... LIMIT)`)
+}
+
 if (!input.trim()) process.exit(0)
+{ let j = null; try { j = JSON.parse(input) } catch { }
+  const tn = `${j?.tool_name || ''}`
+  if (tn === 'Read') { readRule(j.tool_input || {}); process.exit(0) }
+  if (/^mcp__/.test(tn)) { sqlRule(j.tool_input || {}); process.exit(0) } }
 if (process.env.KIT_GUARD_WARM === '0') plain(false); else ask(2)

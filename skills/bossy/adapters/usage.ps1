@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L358 context · L652 split · L726 budget
+Sections: L9 usage · L358 context · L655 split · L729 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -621,8 +621,11 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
   # ACT: a signal in actRuns+ agents of the window; the fix by source (owner: a param or setting -> -AutoFix; code / skill -> a kitty task line)
   $fix = @{ 4 = 'trim build / test output to the failure lines at the source (crafty.ps1 check prints the full log path)'; 2 = 'read big code files in ranges, keep their facts in notes'; 3 = 'kit data commands print a summary, not the whole file'; 5 = 'make that command print only what the agent asks (a field filter, a line cap)'; 6 = 'fetch only the needed section of web pages and docs'; 0 = 'move detail behind a pointer'; 1 = 'shorter briefs and prompts'; 7 = 'shorter agent reports' }
   $grpBy = @{}; foreach ($s in $ss) { foreach ($tp in @($s.cx.top | Where-Object { $_ })) { $p = "$tp" -split '\|', 3; if ([double]$p[0] -le $big) { continue }; $hd = (("$($p[2])" -replace '^(\S+)\s+(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:\w+=\S*\s+)*', '$1 ') -split '\s+' | Select-Object -First 2) -join ' '; $gk = "$($p[1])|$hd"; if (-not $grpBy[$gk]) { $grpBy[$gk] = @{} }; $grpBy[$gk][(& $who $s)] = "$($s.role)" } }
-  foreach ($gk in @($grpBy.Keys | Sort-Object)) { $ag = $grpBy[$gk]; if ($ag.Count -lt $nAct) { continue }; $cat, $hd = $gk -split '\|', 2
-    $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $hd results over $([long]$big) tokens in $($ag.Count) agents"; action = "Spawn kitty (kind fix): $($fix[[int]$cat]) ($hd; roles $(@($ag.Values | Sort-Object -Unique) -join ', '); bossy.ps1 usage -Context)" }) }   # roles in the action: a new role keeps the key
+  # one ACT per source class (owner 2026-11-22: 15 per-file lines a beat), its top sources by agents in the action
+  foreach ($cg in @($grpBy.Keys | Where-Object { $grpBy[$_].Count -ge $nAct } | Group-Object { [int]("$_" -split '\|', 2)[0] } | Sort-Object Name)) {
+    $hs = @($cg.Group | Sort-Object { -$grpBy[$_].Count }, { "$_" }); $who2 = @{}; foreach ($gk in $hs) { foreach ($a in $grpBy[$gk].Keys) { $who2[$a] = $grpBy[$gk][$a] } }
+    $top = @($hs | Select-Object -First 5 | ForEach-Object { "$(("$_" -split '\|', 2)[1]) $($grpBy[$_].Count)" }) -join ', '; if ($hs.Count -gt 5) { $top += ", +$($hs.Count - 5) more" }
+    $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $($script:KitCtxCats[[int]$cg.Name][1]) results over $([long]$big) tokens in $($who2.Count) agents"; action = "Spawn kitty (kind fix): $($fix[[int]$cg.Name]) (top: $top; roles $(@($who2.Values | Sort-Object -Unique) -join ', '); bossy.ps1 usage -Context)" }) }   # roles in the action: a new role keeps the key
   $lg = @($ss | Where-Object { [long]@($_.cx.w)[4] }); if ($lg.Count -ge $nAct) { $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: full build / test logs pasted by $($lg.Count) agents"; action = "Spawn kitty (kind fix): $($fix[4]) (roles $(@($lg.role | Sort-Object -Unique) -join ', '))" }) }
   $rr = @($ss | Where-Object { [int]@($_.cx.rr)[0] -ge $rrW }); if ($rr.Count -ge $nAct) { $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $($rr.Count) agents re-read one file $rrW+ times"; action = "Spawn kitty (kind fix): a step-0 rule in those skills: note a file's facts once, read ranges after (roles $(@($rr.role | Sort-Object -Unique) -join ', '))" }) }
   foreach ($g in @($ss | Where-Object { -not (& $isLive $_) } | Group-Object { "$($_.role)" })) { $nr = & $norm $g.Name; if (-not $nr) { continue }; $hi = @($g.Group | Where-Object { [double]$_.cx.s0 -gt $fac * $nr })
