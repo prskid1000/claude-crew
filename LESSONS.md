@@ -61,6 +61,9 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
+- before publishing results -> run finalize -Check -FixNames first; evidence entries must be files, prose fields within word caps (it caught evidence renames and prose overruns on 3 tests before publish; a T2 stop after Check left the run unpublished, so always send publish right after)
+- a run starts and chrome-devtools MCP may be down (CONNECT_TIMEOUT seen in 5 tests) -> health check the MCP once at run start; use skills/pokey/browser.mjs when it is down (repeated connect failures in T1-T10 though no step needed it)
+- calling pokey.ps1 in command position (pwsh -Command, stdin heredoc) -> always run pwsh -NoProfile -File <kit>/skills/pokey/pokey.ps1 <verb>  (guard blocked it in 4 tests and each retry cost a round)
 - selecting tasks for an env run (rm-staging / hm-staging) -> route a task by its product: an HM-only task goes only to the hm run, RM-only to rm; never retry N/A on the other env (HM-only and RM-only tasks were packaged in the wrong run and retried twice)
 - pokey.ps1 prepare writes run.json title -> keep the title one short sentence (<=20 words) before finalize -Check; prose gate reads it, a tester cannot fix it (finalize -Check failed prose for every item in 5 signals)
 - calling kit scripts from pwsh in a tester run -> use pwsh -NoProfile -File <script> <args>, never -Command, stdin or a bare & script.ps1 (guard blocked -Command and stdin forms and flagged & script.ps1 as a desktop launch (2x)
@@ -73,7 +76,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - a test run lasts longer than a few minutes (a full e2e suite) -> start it detached with Start-Process and a log file, never as a Bash run_in_background child (a 3.5 h e2e run died at 42 min with the shell, no exit line)
 - publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames) (3×)
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
-- A PASS_WITH_NOTE whose observed text describes a defect (clipped control, wrong data) -> make it a FAIL; re-read every note before closing (a defect passed as a note once). (1x)
 - A node QA script -> wrap it in try/finally s.done(); after a hard kill run `bossy.ps1 release -Agent <id>` (leased tabs, 8 max, made session() hang silently). (2x)
 - Before a QA run starts -> check its targets and alsoTargets cover every env each task's checks call (a missing second product's staging left the task untested for env-data). (2×)
 - A setting-dependent check -> change the setting, wait for the cache, check, restore and verify the restore by GET; log each step in lead-notes.md (an unrestored setting broke other checks). (1×)
@@ -110,6 +112,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- a small fix touches files near their token cap (buildy.js, crafty SKILL.md, a test file) -> measure headroom per file first (kitbag.py budget), then forget or move a block before editing (measuring after the edit cost most of a small fix, twice)
 - A test fixture is made with tracker create -Key -> Use a non-keyed create or expect the [Bug] prefix and no Items check (Keyed creates became a [Bug] and silently skipped the Items check)
 - Edit removes a block spanning line ends in a CRLF file -> Include the whole lines with their CRLF in old_string, then check the file parses (A newline-only old_string joined two lines and caused a parse error)
 - ui-check --click uses a child selector (a>b) from Git Bash -> quote the selector, run from the PowerShell tool, do not pipe stdout (unquoted > redirected stdout, left a stray file named summary, later calls refused (3x)
