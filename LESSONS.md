@@ -19,6 +19,9 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- Review returns blocking findings and the MR head has not moved -> fix and push a commit, then re-request review; do not repeat the round unchanged (2 blocking findings stayed unresolved after round 1)
+- A spec is edited (e.g. a revert) after the last green local pass -> re-run that spec before finish (role-gating revert left 6 tests never re-run)
+- Cypress runs leave untracked cypress/reports and cypress/screenshots in the web worktree -> move or delete them before wt commit; it stages them and refuses on scope (wt commit refused every commit (seen twice)
 - deploy plan shows a MERGED MR as NOT-DEPLOYED, or mr.get prints null -> Re-query MR state with the host verb before reporting; run deploy plan with a long timeout (Wrong not-merged summary and skipped MR body, docs and tracker updates)
 - a scratch file (probe, diff, config copy) -> only under crafty.ps1 dir -Agent <id> (a stray in <runtime>/work cannot be removed later: the guard blocks deletes there, 7x on 2026-11-19)
 - writing the MR body local-env row -> state the real lane result; never claim PASS on another product's env or when the brief said FAIL (RM web MR claimed local PASS on hm r211)
@@ -31,7 +34,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A spec-only (test-only) area finds a product bug -> pin today's behaviour in the spec, report BACKEND FIX + `decide ask`, never edit product source (a spec-only area's MR changed 4 service / repository files, passed review and CI, and reached a test env). (1x)
 - devtools.py finish on a parent task whose description is rendered from a spec -> update the description with crafty.ps1 tracker update -Spec before finish; finish must skip describe on spec-rendered tasks (finish failed 3x at tracker describe after docs and MRs were already posted)
 - looking for a skill, script or file -> Glob / Grep the kit, ~/.claude or the repo; never a whole-drive find (an orphaned whole-drive find held the shell and disk)
-- wt commit refused (prose or lint finding) -> fix it and commit before any wt sync (uncommitted review-fix edits were lost across a sync). (1x)
 - A contract claims an old consumer ignores a new param -> test it against the deployed consumer (one call on staging) before merge (kwargs-strict handlers reject unknown params). (2x)
 - After `wt lease` / `wt new` -> check the dependency links (node_modules, linkPaths) exist before editing; missing: save the diff, lease again (a worktree without them fails wt remove and can empty the folder). (1×)
 - Wave branches of one task -> pass `--override` with the wave id to devtools finish and mr on each sibling branch (the prior-work gate refuses siblings until it counts the batch as one task). (2x) (2×)
@@ -40,9 +42,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A doc change, final rebase or flaky tracker call -> re-run devtools.py finish and check the tracker status after it (it updates the two docs, the links block and the solution comment in place). (4x)
 - Before devtools.py mr -> run `kitbag.py prose --kind mr-body` and fix the body (260 words, How tested bullets, one Not run line) (fixing after mr's warning means a second push). (4x) (2×)
 - Writing an MR's state in a report -> re-query the host's mergeState before the summary (earlier output went stale: open vs merged was inferred wrong). (4×)
-- Test cleanup deletes several rows -> collect each failure and assert once at the end (one 409 left the rest behind: hard failure). (1x)
 - A rule names only items that exist (statuses, keys) -> check every listed name against its source before commit (invented and stale entries shipped). (2x)
-- Running a script -> always through its interpreter (`python -X utf8 x.py`, `node x.mjs`, `& x.ps1` / `pwsh -File`) (`& x.py` or `.\x.py` opens the Windows association, an editor on the owner's screen; the guard denies it, doc openers, `--web`, `gh browse` too).
 - Before merge -> confirm a pipeline exists for the MR head; none (rules skipped): trigger one or report NOT_MERGED with the reason (agents waited silently on no pipeline). (2x)
 - Asking for re-review or merge after review fixes -> push the commit first and check the host's MR head sha equals the local HEAD (reviews ran on the old head). (2x)
 - Any claim in the MR body or goals doc (PASS, cleanup added, red before the fix, "no gate exists", "untested methods: none") -> name its proof from the final head (test, grep, request) and update the goals doc before done (a compile error was called a red test). (6×)
@@ -112,6 +112,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- A kit test needs a port or matches a CLI flag -> use a free port from TcpListener 0 and -cmatch (fixed port 3307 and case-insensitive match broke the test)
 - a small fix touches files near their token cap (buildy.js, crafty SKILL.md, a test file) -> measure headroom per file first (kitbag.py budget), then forget or move a block before editing (measuring after the edit cost most of a small fix, twice)
 - A test fixture is made with tracker create -Key -> Use a non-keyed create or expect the [Bug] prefix and no Items check (Keyed creates became a [Bug] and silently skipped the Items check)
 - Edit removes a block spanning line ends in a CRLF file -> Include the whole lines with their CRLF in old_string, then check the file parses (A newline-only old_string joined two lines and caused a parse error)
