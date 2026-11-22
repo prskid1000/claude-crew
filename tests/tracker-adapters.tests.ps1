@@ -117,11 +117,11 @@ $v = foreach ($b in 'main', 'dev', 'release', 'locked', 'auth') { "$b=$(Invoke-H
 Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;release=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
 $null = Invoke-HostVerb 'mr.update' @{ type = 'gitlab'; repo = 'o/r'; n = 5; title = 't'; body = 'b' } -NoMemo
 Check 'host: mr.update edits the open MR (PUT, devtools.py mr re-run)' ($global:calls[-1] -like 'glab api -X PUT projects/o%2Fr/merge_requests/5 *')
-# a CI task naming its job by name next to a run link (gitlab: the pipeline link): github's run id is read too, not only from a job URL
+# a CI task naming its job next to a run link: github's run id is read too, not only from a job URL
 . (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/github.ps1')
 $gp = @(foreach ($tx in 'job `unit` of [run](https://github.com/o/r/actions/runs/77)', 'https://github.com/o/r/actions/runs/77/job/9') { $u = Invoke-KitAdapter ci github parseUrl @{ text = $tx }; "$($u.run)/$($u.job)" }) -join ' '
 if ($gp -ne '77/ 77/9') { $global:failed++ }; "$(if ($gp -eq '77/ 77/9') { 'PASS' } else { 'FAIL' }) github ci.parseUrl: a run link alone gives the run, a job URL the run and the job ($gp)"
-# parent sync (lib.ps1 Sync-TrackerParent) on each adapter's recorded answers: child -> inTest, its sibling done -> the parent read, then set in test
+# parent sync (Sync-TrackerParent) per adapter: child -> inTest, its sibling done -> the parent set in test
 function Psy($type, $kid, $par, $fx, $want) {
  try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $null = Set-TrackerStatus $kid inTest 6>$null; $pass = $global:log[-1] -match $want -and @($global:log -match [regex]::Escape($par)).Count -ge 2
   # the same with the sibling still in progress: the parent is read, never set in test
@@ -142,7 +142,7 @@ Psy youtrack D-5 D-4 ([ordered]@{ 'GET .*issues/D-5\?' = '{"idReadable":"D-5","s
 Psy azure 45 44 ([ordered]@{ 'GET .*workitems/45\?\$expand' = '{"id":45,"fields":{"System.Title":"K","System.State":"In Progress"},"relations":[{"rel":"System.LinkTypes.Hierarchy-Reverse","url":"https://dev.azure.com/acme/_apis/wit/workItems/44"}]}'
  'GET .*workitems/44\?\$expand' = '{"id":44,"fields":{"System.Title":"A","System.State":"In Progress"},"relations":[{"rel":"System.LinkTypes.Hierarchy-Forward","url":"u/45"},{"rel":"System.LinkTypes.Hierarchy-Forward","url":"u/46"}]}'
  'ids=45,46&' = '{"value":[{"id":45,"fields":{"System.Title":"K","System.State":"In Progress"}},{"id":46,"fields":{"System.Title":"O","System.State":"Done"}}]}'; 'PATCH .*workitems/4[45]\?' = '{"id":1}' }) '(?=PATCH .*workitems/44\?)(?=.*"value":"in test")'
-# a fake token: the statuses read must never pick up the CLI's stored one (it would show in a FAIL log)
+# a fake token: the statuses read never use the CLI's stored one
 $tkWas = $env:CLICKUP_API_TOKEN; $env:CLICKUP_API_TOKEN = 'tk-test'
 try { Psy clickup C5 C4 ([ordered]@{ 'task view C5 --json' = '{"id":"C5","name":"K","status":{"status":"in progress"},"parent":"C4","list":{"id":"L9"}}'
  'task view C4 --json' = '{"id":"C4","name":"A","status":{"status":"in progress"},"list":{"id":"L9"},"subtasks":[{"id":"C5","name":"K","status":{"status":"in progress"}},{"id":"C6","name":"O","status":{"status":"closed"}}]}'
@@ -162,16 +162,16 @@ try {
 } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $global:failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: view, status, comment, create (no list: the parent's), list on recorded answers"
-# a leaf task (subtasks / assignees null): no phantom subtask (id '', url ".../t/": a candidate in the duplicate check), no $null assignee
+# a leaf task (subtasks / assignees null): no phantom subtask, no $null assignee
 $fx0 = $global:fx; $global:fx = [ordered]@{ 'task view C9' = '{"id":"C9","name":"Leaf","status":{"status":"open"},"list":{"id":"L9"},"subtasks":null,"assignees":null}'; 'GET https://j.test/rest/api/3/issue/P-9\?' = '{"key":"P-9","fields":{"summary":"Leaf","status":{"name":"To Do"},"subtasks":null}}' }
 $leaf = @(foreach ($lt in 'clickup:C9', 'jira:P-9') { $ty, $ti = $lt -split ':'; try { Initialize-KitTracker -Type $ty; $x = Get-TrackerTask $ti; "$ty=$(@($x.subtasks).Count)/$(@($x.assignees).Count)" } catch { "$ty error: $_" } }) -join ' '
 $global:fx = $fx0; Initialize-KitTracker -Type clickup
 if ($leaf -ne 'clickup=0/0 jira=0/0') { $global:failed++ }; "$(if ($leaf -eq 'clickup=0/0 jira=0/0') { 'PASS' } else { 'FAIL' }) tracker clickup / jira: a task with no subtasks lists none, no assignee none ($leaf)"
-$global:fx.Insert(0, 'task view P2', '{"id":"P2","list":{"id":"L7"}}'); $global:fx.Insert(0, 'task view P3', '{"id":"P3","list":{"id":"L9"}}'); $global:fx['task create --list-id L7 .*--parent P2'] = '{"id":"C7"}'; $global:fx['task create --list-id L9 --name w .*--parent P4'] = '{"id":"C8"}'; $global:log.Clear()
+$global:fx.Insert(0, 'task view P2', '{"id":"P2","list":{"id":"L7"}}'); $global:fx.Insert(0, 'task view P3', '{"id":"P3","list":{"id":"L9"}}'); $global:fx.Insert(0, 'task view P5', '{"parent":"P1"}'); $global:fx['task create --list-id L7 .*--parent P2'] = '{"id":"C7"}'; $global:fx['task create --list-id L9 --name w .*--parent P4'] = '{"id":"C8"}'; $global:log.Clear()
 $sw = [IO.StringWriter]::new(); $se = [Console]::Error; [Console]::SetError($sw)
-try { $xw = __TrA 'create' @{ list = 'L9'; name = 'y'; description = 'd'; parent = 'P2' }; $xe = try { $null = __TrA 'create' @{ list = 'L9'; name = 'z'; description = 'd'; parent = 'P3' }; 'no throw' } catch { "$_" }; $xv = __TrA 'create' @{ list = 'L9'; name = 'w'; description = 'd'; parent = 'P4' } } finally { [Console]::SetError($se) }
-$pass = $xw.id -eq 'C7' -and $xv.id -eq 'C8' -and "$sw" -match 'parent P2 is in list L7, not L9' -and $xe -match 'subtask of P3 failed, nothing created' -and -not ($global:log -match 'create --list-id L9 --name z(?!.*--parent)'); if (-not $pass) { $global:failed++ }
-"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: -Parent in another list -> created in the parent's list, said on stderr; a failed parent look-up keeps -List; a failed subtask create throws, never a silent top-level task ($xe)"
+try { $xw = __TrA 'create' @{ list = 'L9'; name = 'y'; description = 'd'; parent = 'P2' }; $xe = try { $null = __TrA 'create' @{ list = 'L9'; name = 'z'; description = 'd'; parent = 'P3' }; 'no throw' } catch { "$_" }; $xv = __TrA 'create' @{ list = 'L9'; name = 'w'; description = 'd'; parent = 'P4' }; $xs = try { __TrA 'create' @{ name = 's'; parent = 'P5' } } catch { "$_" } } finally { [Console]::SetError($se) }
+$pass = $xw.id -eq 'C7' -and $xv.id -eq 'C8' -and "$sw" -match 'parent P2 is in list L7, not L9' -and $xe -match 'subtask of P3 failed, nothing created' -and -not ($global:log -match 'create --list-id L9 --name z(?!.*--parent)') -and $xs -match 'P5 is itself a subtask of P1.*-Parent P1' -and -not ($global:log -match '--name s '); if (-not $pass) { $global:failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup create: -Parent in another list -> its list (stderr); failed look-up keeps -List; failed subtask create throws, no silent top-level task; a subtask as -Parent refused ($xe)"
 $global:log.Clear(); $dsc = "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l"; $pw = try { $null = New-TrackerTask -List L9 -Name 'New one' -Description $dsc -Parent C1 -Assignee 'Ann Lee' -Priority urgent -NewTask t; 'ok' } catch { "$_" }; $pb = try { $null = New-TrackerTask -List L9 -Name 'New one' -Description $dsc -Parent C1 -Priority asap -NewTask t; 'no throw' } catch { "$_" }
 $pass = $pw -eq 'ok' -and ($global:log -join "`n") -match '--priority 1' -and $pb -match "priority 'asap' unknown: 1-4 or urgent" -and -not ($global:log -match 'priority asap'); if (-not $pass) { $global:failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: a priority word maps to 1-4 (urgent -> 1); an unknown one is refused before the CLI ($pw | $pb)"
@@ -205,7 +205,7 @@ $cl = $global:log -join "`n"
 $pass = $cl -match '(?m)^task checklist item remove K1 i1$' -and $cl -match '(?m)^task checklist item add K1 A1 · x · u · held: real-API check$' -and $cl -match '(?m)^task checklist item remove K1 i3$' -and $cl -match '(?m)^task checklist item remove K1 i4$' -and $cl -notmatch 'remove K1 i[29]|resolve K1 i2'
 if (-not $pass) { $global:failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: checklist unticks a resolved item (remove + add: no unresolve verb); prune drops a kit line not wanted and a repeat, a person's line kept ($ck)"
-# K54: re-parent through the REST API (the CLI has no --parent), the stored token as the header; another list: refused before the call
+# K54: re-parent via REST (the CLI has no --parent); another list: refused first
 $global:http = [Collections.Generic.List[string]]::new(); function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Headers = @{}) { $global:http.Add("$Method $Uri $($Body | ConvertTo-Json -Compress) $($Headers.Authorization)"); @{ id = 'C9' } }
 $env:CLICKUP_API_TOKEN = 'tk-test'; $global:fx.Insert(0, 'task view C9 --json', '{"id":"C9","list":{"id":"L9"}}')
 $__cfg = [pscustomobject]@{ tracker = [pscustomobject]@{ workspace = 'W1' } }

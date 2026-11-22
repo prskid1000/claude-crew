@@ -197,7 +197,7 @@ $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step commi
 $hbo = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step mr -Evidence 'web!5' -Notes "rebase  pending`nthen push" -Brief $hbf 2>&1 | Out-String
 $hbt = (Get-Content -Raw $hbf) -replace '\d{4}-\d\d-\d\dT[\d:.+\-Z]+', 'T' -replace '\d{4}-\d\d-\d\d \d\d:\d\d', 'T' -replace '(?m)^\| T \|', '| T |'
 Expect "checkpoint -Notes -Brief: golden resume brief (Done table, Open, Notes as one line) ($($hbo.Trim()))" ($hbo -match 'resume brief: .*board leave -Handoff' -and (Gold $hbt "# Resume brief: h8 (run ``r8``)`n**Result:** Next: review (start here; the steps below are done: verify, never redo) · T`n`n## Done`n`n| At | Step | Item | Evidence | Worktree @ head |`n|---|---|---|---|---|`n| T | commit | — | abc1234 | — |`n| T | mr | — | web!5 | — |`n`n## Open`n`n**Worktrees:** `n**Leases:** `n**Decisions pending:** `n`n## Notes`n`n- T rebase pending then push"))
-# a hand-written brief at -Brief keeps its text; the rendered part follows a marker and is replaced on the next checkpoint (retro 2026-11-17 10:12)
+# a hand-written brief at -Brief keeps its text; the rendered part after a marker is replaced each checkpoint
 $hwf = Join-Path $wd 'own-h9.md'; [IO.File]::WriteAllText($hwf, "# My plan`n- keep me`n"); foreach ($stp in 'commit', 'mr') { $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h9 -Run r9 -Step $stp -Brief $hwf 2>&1 }
 $hwt = Get-Content -Raw $hwf
 Expect 'checkpoint -Brief on a hand-written brief: its text kept, one rendered part after the marker' ($hwt.StartsWith("# My plan`n- keep me`n`n<!-- checkpoint") -and ([regex]::Matches($hwt, '# Resume brief: h9')).Count -eq 1 -and ([regex]::Matches($hwt, '<!-- checkpoint')).Count -eq 1 -and $hwt -match '\| mr \|')
@@ -240,7 +240,7 @@ Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13
   repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true; debate = [ordered]@{ item = 'A2'; options = 'A: x', 'B: y' } })
   contracts = @([ordered]@{ name = 'GET /orders?sort'; type = 'query'; producer = 'X2'; consumers = 'X1'; order = 'X2 first'; compatible = $true }); openQuestions = @([ordered]@{ question = 'Which index?'; blocks = 'A2'; answers = 'rechy' }); mandate = @('sort orders'); mode = 'feature' })
 $wbo = Dt render wave-brief "$wd/wb.json" "$wd/wb.md"; $wbArgs = Get-Content -Raw "$wd/wb.args.json" | ConvertFrom-Json
-Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped, debate kept), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold (Get-Content -Raw "$wd/wb.md") @"
+Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped, debate kept), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold ((Get-Content -Raw "$wd/wb.md") -creplace '\*\*MR limits.*\n') @"
 # Wave brief: orders-sort, 2026-11-13
 **Read first:** ``K/skills/crafty/SKILL.md``; this brief wins where they differ.
 **Items:** T-1 epic · **Decisions:** none; final, don't re-ask (a NEW choice -> crafty D1).

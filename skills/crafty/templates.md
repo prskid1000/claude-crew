@@ -68,6 +68,7 @@ holdMerge? }`.
 
 **Overlaps:** <who touches what in a shared file> · **Contracts:** <field / endpoint X1 adds, X2 consumes after X1 merges>
 **Branch:** `f/<tag><task>-<slug>`, pool slots leased as the agent id · **Tracker:** task under <epic> in <list>, assigned to <user>.
+**MR limits** (...): <mr-title; mr-body limits>
 Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
 
 ## openQuestions

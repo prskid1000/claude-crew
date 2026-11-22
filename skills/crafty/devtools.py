@@ -34,7 +34,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L52 config · L107 run · L195 tracker · L349 process · L531 git host · L604 scope · L696 MR · L888 merge · L1219 docs ·
-  L1374 publish · L1833 render · L2287 plugins · L2301 keepboth · L2320 selftest · L2952 CLI
+  L1374 publish · L1833 render · L2289 plugins · L2303 keepboth · L2322 selftest · L2956 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2221,6 +2221,8 @@ def render_wave_brief(s):
                              for r, a in zip(rows(('id', 'items', 'area', 'repos', 'migrationRange', 'services'), s['agents']), s['agents'])]), '',
         f'**Overlaps:** {s.get("overlaps") or "none"} · **Contracts:** `{s.get("contractsFile") or s["name"] + ".contracts.md"}` ({len(s.get("contracts") or [])} crossing)',
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
+        # the limits where devy reads first (retro 2026-11-22: 13 mr prose refusals)
+        f'**MR limits** (`devtools.py mr` refuses over them; `kitbag.py prose --kind mr-body` first): {prose_limits("mr-title") or "mr-title"}; {prose_limits("mr-body") or "mr-body"}',
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
         '## openQuestions', *(qs or ['none']), '## Findings (rechy)', 'none yet', '## Rule changes during the wave (newest last)']) + '\n'
 
@@ -2368,6 +2370,8 @@ def selftest():
     wb = {'name': 'w', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}
     expect('wave brief: an area\'s paths are in the brief and the /buildy args', 'svc/api/cypress/**' in render_wave_brief(wb)
            and json.loads(wave_files(wb, 'b.md')['b.args.json'])['agents'][0]['paths'] == spec_only)
+    expect('wave brief: the MR title and body limits from "Writing standards" (retro 2026-11-22)', f'; {prose_limits("mr-body") or "mr-body"}' in render_wave_brief(wb)
+           and (not os.path.exists(os.path.join(KIT_DIR, 'skills/crafty/templates.md')) or ' limits ' in prose_limits('mr-body')))   # a test kit may lack templates.md
     td = tempfile.mkdtemp(); wsp, wbp = os.path.join(td, 'w.json'), os.path.join(td, 'wave-x.md')
     with open(wsp, 'w', encoding='utf-8') as fh:
         json.dump(wb, fh)

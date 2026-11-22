@@ -44,7 +44,9 @@ Register-KitAdapter 'tracker' 'clickup' @{
   'comment-delete' = { param($a) __TrCli 'clickup' @('comment', 'delete', $a.comment, '--yes') }
   'create' = { param($a)
     # a subtask lives in its parent's list (ClickUp "subtasks in multiple lists" off): no list or another list -> the parent's, said on stderr
-    $lid = $a.list; $plid = if ($a.parent -and -not $__trDry) { try { [string](__TrJson (__TrCli 'clickup' @('task', 'view', $a.parent, '--json'))).list.id } catch { if (-not $lid) { throw } } }   # a failed look-up with -List: that list
+    $lid = $a.list; $pj = if ($a.parent -and -not $__trDry) { try { __TrJson (__TrCli 'clickup' @('task', 'view', $a.parent, '--json')) } catch { if (-not $lid) { throw } } }; $plid = if ($pj) { [string]$pj.list.id }   # a failed look-up with -List: that list
+    # one subtask level (HTTP 400 ITEM_002, 11x retried 2026-11-21): the cause and the fix before the call
+    if ($pj.parent) { throw "tracker (clickup) create: parent $($a.parent) is itself a subtask of $($pj.parent) (ClickUp nests one level), nothing created: use -Parent $($pj.parent), or add the item to $($a.parent)'s Items" }
     if ($plid -and $lid -and $plid -ne $lid) { [Console]::Error.WriteLine("WARNING: tracker: parent $($a.parent) is in list $plid, not ${lid}: the subtask goes to list $plid") }
     if ($plid) { $lid = $plid }
     if (-not $lid -and -not $__trDry) { throw 'tracker (clickup) create: no list (-List, tracker.list) and no parent to take it from' }

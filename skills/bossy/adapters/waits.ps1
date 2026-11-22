@@ -13,7 +13,7 @@ function Get-KitWaitsOverCap([datetime]$Now, [double]$CapMin) {
   $st = Get-KitLockState; $phones = @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object { $_.lane -and $_.agent -and $_.agent -ne '__stopping__' })
   foreach ($w in @($st.waiting)) { $m = [int]($Now - [datetime]$w.at).TotalMinutes
     if ($m -ge $CapMin) { [pscustomobject]@{ agent = $w.holder; why = "test lock $($w.lock)"; min = $m; holder = "$($st.held[$w.lock].holder)"; next = 'crafty.ps1 check takes it when its holder ends' } } }
-  foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ($Now - $_.LastWriteTime).TotalMinutes -lt 3 })) {
+  foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ($Now - $_.LastWriteTime).TotalMinutes -lt (Get-KitParam 'phone.waitFreshMinutes') })) {
     $w = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { continue }; if (-not $w.since) { continue }; $m = [int]($Now - [datetime]$w.since).TotalMinutes
     $hs = @($phones | Where-Object { -not $w.lane -or $_.lane -eq $w.lane } | ForEach-Object { "$($_.agent) ($($_.lane))" })
     if ($m -ge $CapMin) { [pscustomobject]@{ agent = $w.agent; why = "phone $(if ($w.lane) { "lane $($w.lane)" } else { 'any lane' })"; min = $m; holder = ($hs -join ', '); next = 'phoney.ps1 acquire hands it the first lane released (phoney.ps1 status)' } } }
