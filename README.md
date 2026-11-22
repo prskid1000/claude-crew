@@ -93,7 +93,7 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 | claude-1m | 967000 | Claude Code docs: 1M models compact at ~967k |
 | claude-200k | 167000 | conservative 83.5% of 200k (docs: at the limit) |
 | codex | 0.9 x window | 0.9 x the models_cache.json window; auto_compact_token_limit wins |
-| antigravity | 0.8 x window | unverified: 0.8 x the model window |
+| antigravity | 800000 | unverified: 0.8 x the model window (no window: 0.8 x a 1M Gemini window) |
 | unknown | 160000 | 0.8 x 200k |
 <!-- kit-graph:end -->
 

@@ -9,6 +9,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   program set|get|list -Program <name> [-Key <k>] [-Value <v>]   the coordinator's program state in .state
   param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Usage] [-Json]   agent budget, run cap + spend; -Usage: page usage
+  usage -Context [-Agent <id> | -Run <run> | -Type <role>] [-Since 24h|7d] [-Json] [-Refresh]   context per agent: start, peak, sources, waste
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged and every launched area delivered (add: at once; -HoldPromotion '' releases)
     | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists
     | rollup -Status (-Task <parent> | -All) [-Apply]   parent status = its least advanced open subtask (dry run unless -Apply)
@@ -29,9 +30,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L37 init · L48 board · L227 budget · L257 launch · L498 recover · L585 pause · L596 resume · L663 program · L714 param ·
-  L720 track · L1057 supervise · L1393 report · L1473 audit · L1533 storage · L1536 bugbrief · L1650 cleanup · L1737 learn ·
-  L1768 decide · L1922 debate · L1966 health · L2034 setup · L2131 guard-sendmessage
+Sections: L38 init · L49 board · L228 budget · L258 launch · L499 recover · L586 pause · L597 resume · L664 program · L715 param ·
+  L721 track · L1058 supervise · L1394 report · L1474 audit · L1534 storage · L1537 bugbrief · L1651 cleanup · L1738 learn ·
+  L1769 decide · L1923 debate · L1967 health · L2035 setup · L2132 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -2178,6 +2179,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'program' { Invoke-KitVerb Invoke-Program $__rest }
     'param' { Invoke-KitVerb Invoke-Param $__rest }
     'budget' { Invoke-KitVerb Invoke-Budget $__rest }
+    'usage' { Invoke-KitVerb Invoke-KitContextUsage $__rest }
     'heartbeat' { $fn = if ("$__rest" -match '^(install|uninstall|status|tick)\b') { 'Invoke-KitOsBeat' } else { 'Invoke-Heartbeat' }; Invoke-KitVerb $fn $__rest }
     'health' { Invoke-KitVerb Invoke-Health $__rest }
     'setup' { Invoke-KitVerb Invoke-Setup $__rest }

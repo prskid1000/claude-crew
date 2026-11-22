@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L447 leases · L855 status · L1146 tracker · L1478 prior ·
-  L1494 ask bugs · L1680 git-host · L1867 kitlog · L1989 params · L2294 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L449 leases · L857 status · L1148 tracker · L1480 prior ·
+  L1496 ask bugs · L1682 git-host · L1869 kitlog · L1991 params · L2296 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -400,6 +400,8 @@ function Read-KitSpendLines([string[]]$t) {
     if ($t[$i] -match '"token_count"') {   # Codex rollout: the last request's context = its compaction measure
       $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; $u = $o.payload.info.last_token_usage; if ($u) { return [pscustomobject]@{ spend = [int]$u.total_tokens; model = '' } }
     }
+    if ($t[$i].StartsWith('{"step_index"') -and $t[$i] -match '"type":"PLANNER_RESPONSE".*"input_tokens":(\d+)') {   # Antigravity: input (without the cache read) + cache read + output of the last call
+      $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; return [pscustomobject]@{ spend = [int]([long]$o.input_tokens + [long]$o.cache_read_tokens + [long]$o.output_tokens); model = '' } }
     if ($t[$i] -notmatch '"usage"') { continue }
     $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; $u = $o.message.usage; if (-not $u) { continue }
     return [pscustomobject]@{ spend = [int]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens + $u.output_tokens); model = "$($o.message.model)" }
@@ -950,7 +952,7 @@ Register-KitAdapter 'transcript' 'claude' @{
 }
 # adapter:transcript/codex: $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl; line 1 session_meta; newest task_complete = turn ended
 Register-KitAdapter 'transcript' 'codex' @{
-  'root' = { @{ dir = Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }) 'sessions'; filter = 'rollout-*.jsonl'; sub = '*/*/*' } }
+  'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS_CODEX) { $env:KIT_TRANSCRIPTS_CODEX } else { Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }) 'sessions' }); filter = 'rollout-*.jsonl'; sub = '*/*/*' } }
   'last' = { param($a) $s = Read-KitTranscriptTail $a.file 'function_call"|task_started|task_complete' { param($o, $s) $p = $o.payload
       if (-not $s.tool -and $o.type -eq 'response_item' -and $p.type -eq 'function_call') { $s.tool = "$($p.name)"; $g = try { "$($p.arguments)" | ConvertFrom-Json } catch { $null }; $s.what = "$(if ($g.cmd) { $g.cmd } else { $g.command })" }
       elseif ($null -eq $s.ended -and $o.type -eq 'event_msg' -and $p.type -in 'task_started', 'task_complete') { $s.ended = $p.type -eq 'task_complete' }
@@ -959,7 +961,7 @@ Register-KitAdapter 'transcript' 'codex' @{
 }
 # adapter:transcript/antigravity: brain/<id>/.system_generated/logs/transcript.jsonl; killed per the parent's subagents/<id>.json state
 Register-KitAdapter 'transcript' 'antigravity' @{
-  'root' = { @{ dir = Join-Path $HOME '.gemini/antigravity-cli/brain'; filter = 'transcript.jsonl'; sub = '*/.system_generated/logs' } }
+  'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS_ANTIGRAVITY) { $env:KIT_TRANSCRIPTS_ANTIGRAVITY } else { Join-Path $HOME '.gemini/antigravity-cli/brain' }); filter = 'transcript.jsonl'; sub = '*/.system_generated/logs' } }
   'last' = { param($a) $s = Read-KitTranscriptTail $a.file '"tool_calls"' { param($o, $s) $c = @($o.tool_calls)[-1]; if ($c.name) { $s.tool = "$($c.name)"; $s.what = "$($c.args.toolSummary)" }; [bool]$c.name }
     if ($s) { $id = Split-Path (Split-Path (Split-Path (Split-Path $s.file))) -Leaf; $brain = Split-Path (Split-Path (Split-Path (Split-Path $s.file)))
       $k = @(Get-Item -Force -Path (Join-Path $brain "*/.system_generated/subagents/$id.json") -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} })[0]
