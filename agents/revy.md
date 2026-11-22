@@ -61,3 +61,5 @@ when it changes readability materially.
 
 **Self-improvement:**
 `pwsh -File <kit>/skills/bossy/bossy.ps1 learn -Skill revy -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
+
+- **Stay on your assignment.** Relayed chat messages are for the coordinator; mention one in your report if it changes your work.

@@ -20,8 +20,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1209 lint command · L1485 audit ·
-  L1633 registry · L1965 arch lint · L2232 prose · L2397 sections · L2527 budget · L2541 migrate · L2701 plugins ·
-  L2755 state lint · L2943 main
+  L1633 registry · L1965 arch lint · L2232 prose · L2397 sections · L2527 budget · L2541 migrate · L2702 plugins ·
+  L2756 state lint · L2944 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2628,6 +2628,7 @@ LEGACY_DEFAULTS = {   # dotted key -> the pre-2 default (README "Configuration" 
     'qa.holdCauses': ['env-data', 'phone-only', 'tool-down', 'no-mail-sandbox'],
     'qa.lanes': {'web': {'kind': 'web', 'parallel': 5, 'followUp': 'app'}, 'api': {'kind': 'api', 'parallel': 5, 'followUp': 'app'}, 'app': {'kind': 'app', 'devices': 'android'}},
     'devices.type': 'android',
+    'ports.targets': 'both',
     'devices.avd': {'api': 'android-36.1', 'device': 'pixel_10_pro', 'tag': 'google_apis_playstore'},
     'cleanup.idleDaemons': [{'process': r'^java(\.exe)?$', 'match': 'GradleDaemon|KotlinCompileDaemon', 'label': 'Gradle daemon', 'busyKinds': 'android|gradle'}],
     'storage.db.maxGB': 5,

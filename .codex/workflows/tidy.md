@@ -4,12 +4,14 @@
 
 **When to run it:** A /buildy or /testy finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective
 
-Codex has no workflow engine: you are the coordinator. Per phase, in order: `spawn_agent` each of its agents from `.codex/agents/*.toml` (up to the session's concurrency limit), `wait_agent` for them, then the next phase.
+Codex has no workflow engine: you are the coordinator. Per phase, in order: `spawn_agent` each of its agents from `.codex/agents/*.toml` (up to the session's concurrency limit), `wait_agent` for them, then the next phase. Hold every gate below (the .js enforces them in Claude Code and Antigravity). No run journal here: the launch record keeps the args, but the Runs band, stuck checks and `recover` resume cover Claude Code and Antigravity runs only.
 
 ## Phases
 
 1. **Prep** -- one STEP: launch record + bossy.ps1 tidy prep (no LLM work)
+   - **Launch record**: write `args` as ONE JSON line to `<runtime>/work/launches/args-tidy-<run>.json` (`<runtime>` = `kitbag.py` kit_path 'runtime'), then `& <kit>/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run '<run>' -ArgsFile '<that file>' -Fnv <FNV-1a hex of the file> -Plan 'step/haiku:1,kitty/:1'` (no `-Plan`: no BUDGET line, nothing gated; the record `recover`, resume and the Runs band read); then `bossy.ps1 tidy prep -Json` (no work: stop).
 2. **Judge** -- one kitty: lesson wording, rule edits, script proposals, retro report, tidy done
+   - One kitty (kind retro) judges the digest; the run ends with `bossy.ps1 tidy done -At '<prep at>'`.
 
 ## Owner decisions
 

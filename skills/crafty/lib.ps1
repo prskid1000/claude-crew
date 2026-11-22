@@ -853,9 +853,9 @@ function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   @{ Authorization = switch ($Kind) { 'basic' { 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($(if ($t -match ':') { $t } else { ":$t" }))) } 'token' { "token $t" } default { "Bearer $t" } } }
 }
 # ---- status: one row per agent and workflow run, from files only; no LLM, no network
-# <Claude project dir>/<session>/subagents/workflows/<run>
+# <Claude project dir>/<session>/subagents/workflows/<run>; Antigravity runs (kitbag_ports.py RUNNER): <port-runs>/antigravity/...
 function Get-KitWorkflowDirs([string]$Session) {
-  Get-ChildItem $(if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }) -Directory -ErrorAction SilentlyContinue | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
+  @($(if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }), (Get-KitPath port-runs)) | ForEach-Object { Get-ChildItem $_ -Directory -ErrorAction SilentlyContinue } | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
 }
 # launch records by run id or wfDir, plus the record-args step's "RECORDED <leaf> <run> (fnv <h>)" within 30 min
 function Get-KitWorkflowRecords($Dir, $Events, $Launches) {

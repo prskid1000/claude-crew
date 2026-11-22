@@ -10,12 +10,22 @@ $plugin = Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/kitbag_ports.py'
 $res = @(& $py -X utf8 (Join-Path $PSScriptRoot 'ports_test.py') (Join-Path $src 'skills/bossy/kitbag.py') $plugin 2>&1)
 Expect 'ports: a quote and a backslash stay valid TOML / YAML, LF only' ($res -contains 'ports-escape:True')
 Expect 'ports: port_deploy keeps user files, removes only stale generated ports' ($res -contains 'ports-deploy:True')
+Expect 'ports.targets unset or unknown: off, no workspace copies (owner 2026-11-22)' ($res -contains 'ports-default-off:True')
 Expect 'ports: hooks absolute, no double quotes (agy cmd /c); Codex cleanup async + KIT_TOOL; agy cleanup detached, hidden' ($res -contains 'ports-hooks:True')
 Expect 'ports: workspace skill links, org rules always-on (split under 24 KB) + AGENTS.override.md, none in the kit' ($res -contains 'ports-workspace:True')
 Expect "ports.targets: every transition (both/codex/antigravity/none) keeps the chosen copies, removes only kit-written ones ($($res -match '^ports-targets:'))" ($res -contains 'ports-targets:True []')
 Expect 'ports.targets: deselected folder gone when empty or clutter only, kept + listed with an authored file; clutter override; old copies by manifest' ($res -contains 'ports-folders:True True True True')
 Expect 'ports: run_workflow bridge runs the .js; agent() -> agentType, role, workspace inherit, haiku -> flash; a failed agent = null' ($res -contains 'ports-workflow:True')
 Expect 'ports: owner decisions: blocking -> request_user_input (Codex Plan mode) / ask_question when listed, else text; FYI list' ($res -contains 'ports-ask:True')
+Expect 'ports: agy runner phase / effort opts; its journal: launched, started + result per agent, done on success, finished on a failure' ($res -contains 'ports-journal:True')
+Expect "ports: Codex docs carry the gates (anchors in the .js), approval never + network, workspace-write agents, test-login rules ($($res -match '^ports-codex:'))" ($res -contains 'ports-codex:True True True True')
+# an Antigravity run's journal (<port-runs>/antigravity/...) is a workflow dir: Runs band, recover and resume see it
+$k = New-TestKit 'port-runs'; $prT = Join-Path (Kd) 'no-transcripts'; New-Item -ItemType Directory -Force $prT | Out-Null
+$prD = New-Item -ItemType Directory -Force (Join-Path (TkPath $k 'port-runs' -Create) 'antigravity/subagents/workflows/wf_agy-test')
+Set-Content (Join-Path $prD 'journal.jsonl') @('{"type":"launched"}', '{"type":"started","agentId":"agy1","label":"build:A"}', '{"type":"result","agentId":"agy1","result":{"ok":true}}', '{"type":"done"}')
+$prOut = pwsh -NoProfile -Command "`$env:KIT_TRANSCRIPTS = '$prT'; . '$(Lib)' 6>`$null; `$d = @(Get-KitWorkflowDirs 'antigravity'); `$ev = @(Get-Content (Join-Path `$d[0].FullName 'journal.jsonl') | ConvertFrom-Json); `"`$(`$d.Name) `$(Get-KitRunState `$d[0] @() `$ev)`"" 2>&1 | Out-String
+Expect "ports: Get-KitWorkflowDirs lists Antigravity run journals; a done run is ended ($($prOut.Trim()))" ($prOut.Trim() -eq 'wf_agy-test ended')
+Remove-TestKit $k
 $beatRx = 'Get-KitBeatPrompt \{ "Run & .+? supervise -AutoFix -Brief\. (.+?)" \}'
 $libBeat = if ((Get-Content (Join-Path $src 'skills/crafty/lib.ps1') -Raw) -match $beatRx) { $Matches[1] }
 $portBeat = & $py -X utf8 -c "import ast, sys; t = ast.parse(open(sys.argv[1], encoding='utf-8').read()); print(next(ast.literal_eval(n.value) for n in t.body if isinstance(n, ast.Assign) and getattr(n.targets[0], 'id', '') == 'E1_PROMPT'))" $plugin

@@ -174,13 +174,17 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs and **Org router rows** (the
 Router's columns) in `rules/*.local.md`; products, repos, test envs (names only), deploy rules and tracker statuses there too; org-only
 skills listed in `localOnly`.
-Codex / Antigravity (`kitbag.py port`): start them in the workspace root (Codex: a trusted project in
-`~/.codex/config.toml`, kit hooks approved once with `/hooks`); the port writes absolute hook paths, `.agents/skills/<name>`
-links, the org rules (`.agents/rules/` always-on, `AGENTS.override.md` for Codex; local only) and each CLI's mechanics
-(GEMINI.md, AGENTS.override.md). Antigravity runs the workflows (`run_workflow` on `.agents/kit-workflows/<name>.py`); Codex
-follows `.codex/workflows/*.md` by hand. Not ported: the SendMessage guard, the guard on file edits outside shell commands,
-Claude's per-agent tool lists (all tools load; the guard covers both), Artifacts, the CronList check (the heartbeat:
-Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Codex outside Plan mode.
+Codex / Antigravity (`kitbag.py port`): off by default; `kit.local.json` `ports.targets: codex | antigravity | both` deploys
+them (`none` removes the kit-written copies; unset keeps an earlier deploy). Start them in the workspace root (Codex: hooks approved once with `/hooks`); the port writes absolute hook paths, `.agents/skills/<name>` links, the org rules (`.agents/rules/` always-on,
+`AGENTS.override.md`; local only) and each CLI's mechanics (GEMINI.md, AGENTS.override.md). Antigravity runs the workflows
+(`run_workflow` on `.agents/kit-workflows/<name>.py`, journal in `<runtime>/work/port-runs/`); Codex follows
+`.codex/workflows/*.md` by hand (each phase with the engine's gates). Codex config: `approval_policy = "never"`, workspace-write
+with network (trusted project; Windows: `~/.codex/config.toml` `[windows] sandbox`). Not ported: the SendMessage guard, the guard on non-shell
+edits, per-agent tool lists (all tools load, Codex agents workspace-write; the guard covers both),
+Artifacts, the CronList check (heartbeat: agy `schedule`, Codex `bossy.ps1 heartbeat`), Codex blocking questions outside Plan
+mode, Codex run journals (Runs band, stuck checks, `recover`: Claude Code + Antigravity), the Monitor / background-shell check
+(reads Claude transcripts). Test logins: Claude's Read deny, the guard (shell), an agy always-on rule, Codex `kit.rules`
+(best-effort); agy's file viewer rests on the rule alone.
 
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`: a recurring durable
@@ -297,7 +301,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack: testFor = test names -Touched derives from a changed file's base name ({name}). e2e (check -Step e2e; module globs): specs (default *.cy.*, e2e/*.spec, *.e2e.*), map[] {dir?, paths, specs}, else folder, name, import, route; run[] {dir, cmd?, env?, split?: folder} per module. |
 | `browsers` | {"chromePolicies": {}} | chromePolicies: {&lt;policy key under Software/Policies, e.g. Google/Chrome, Microsoft/Edge, Chromium, BraveSoftware/Brave&gt;: {&lt;policy&gt;: &lt;number or text; no list policies&gt;}}: bossy.ps1 setup writes them per user (Windows HKCU, admin-only key: setup prints the one elevated command; every profile of that browser, a person's own too), e.g. GenAILocalFoundationalModelSettings 1 + ComponentUpdatesEnabled 0 = no on-device AI or optimization-guide model downloads; setup -BrowserPolicy -Undo removes them, -Clean deletes model folders left in kit and Cypress profiles. Kit-started Chromium also gets vocab.json chromeQuietArgs. |
 | `guard` | {"layout": "warn", "writeRoots": []} | heavyPatterns / e2ePatterns: commands that need the gate. layout: warn (default) / block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt). writeRoots: more folders where an agent may create files (an owner-asked report place); envChangeCommands: more deployed-env change commands to deny (regexes; built-in: crafty/vocab.json); a new file at a drive root or outside the workspace, kit, repos, worktree roots, temp, ~/.claude and ~/Downloads is denied. |
-| `ports` | {"targets": "both"} | kitbag.py port targets: both / codex / antigravity / none |
+| `ports` | {"targets": "none", "models": {"haiku": "flash"}} | kitbag.py port workspace copies: none (default) / codex / antigravity / both. models: {&lt;Claude model&gt;: &lt;agy model&gt;} for the runner (default haiku -&gt; flash) |
 | `memory` | {"keepDefault": false} | keepDefault: false = auto memory in &lt;kit&gt;/memory/ (git-ignored); true = the user's. |
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off). |
 | `build` | {"mavenOffline": true} | mavenOffline: Maven -o if ~/.m2/repository exists (default true). |

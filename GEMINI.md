@@ -2,7 +2,7 @@
 
 - **Start** agy in the workspace root (this folder): it reads `.agents/` between the start folder and the project root.
 - **Hooks** (`.agents/hooks.json`, absolute paths): PreToolUse `run_command` -> `crafty.ps1 guard`; SessionStart `bossy.ps1 health` (its lines arrive as a system message) and `bossy.ps1 cleanup -IfDue` (detached). No SendMessage guard.
-- **Skills**: `.agents/skills.json` -> `.claude/skills`; org rules: `.agents/rules/` (from `rules/*.local.md`, always on).
+- **Skills**: `.agents/skills.json` -> `.claude/skills`; always-on rules: `.agents/rules/` (from `rules/*.local.md`, plus `kit-test-logins.md`).
 - **Agents**: `.agents/agents/*.md`; `bossy.ps1 board join` takes `-Tool antigravity`.
 - **Workflows**: `run_workflow(ScriptPath="<workspace>/.agents/kit-workflows/<name>.py", Args={...}, Description="<name>")` runs `.claude/workflows/<name>.js` (node + python3 on PATH); never `workspace: branch`.
 - **Heartbeat** (bossy E1): while a run or agent is live, end each coordinator turn with ONE `schedule` one-shot: DurationSeconds = 60 x the last stderr `NEXT=<n>` (none: `supervise.heartbeatMinutes`), Prompt = "Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Act on every ACT and WATCH line; no live run or agent left: stop this heartbeat. Reply = 1-4 lines of the actions taken this beat, plus one line only when an ACT needs the owner; never paste the stdout (detail: supervise-report.html) (bossy E1).", re-armed the same way each beat; the dashboard has its own OS timer (`bossy.ps1 heartbeat install`). The reply = 1-4 lines of the actions taken this beat, never the supervise stdout; resolve WATCH lines like ACT ones without asking; ask the owner only for a real decision.

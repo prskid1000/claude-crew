@@ -68,7 +68,7 @@
  "cleanup": { "maxBrowserProfiles": 4 },
  "browsers": { "_readme": "chromePolicies: {<policy key under Software/Policies, e.g. Google/Chrome, Microsoft/Edge, Chromium, BraveSoftware/Brave>: {<policy>: <number or text; no list policies>}}: bossy.ps1 setup writes them per user (Windows HKCU, admin-only key: setup prints the one elevated command; every profile of that browser, a person's own too), e.g. GenAILocalFoundationalModelSettings 1 + ComponentUpdatesEnabled 0 = no on-device AI or optimization-guide model downloads; setup -BrowserPolicy -Undo removes them, -Clean deletes model folders left in kit and Cypress profiles. Kit-started Chromium also gets vocab.json chromeQuietArgs.", "chromePolicies": {} },
  "guard": { "_readme": "heavyPatterns / e2ePatterns: commands that need the gate. layout: warn (default) | block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt). writeRoots: more folders where an agent may create files (an owner-asked report place); envChangeCommands: more deployed-env change commands to deny (regexes; built-in: crafty/vocab.json); a new file at a drive root or outside the workspace, kit, repos, worktree roots, temp, ~/.claude and ~/Downloads is denied.", "layout": "warn", "writeRoots": [] },
- "ports": { "_readme": "kitbag.py port targets: both | codex | antigravity | none", "targets": "both" },
+ "ports": { "_readme": "kitbag.py port workspace copies: none (default) / codex / antigravity / both. models: {<Claude model>: <agy model>} for the runner (default haiku -> flash)", "targets": "none", "models": { "haiku": "flash" } },
  "memory": { "_readme": "keepDefault: false = auto memory in <kit>/memory/ (git-ignored); true = the user's.", "keepDefault": false },
  "devices": { "type": "android" },
  "kitAudit": { "_readme": "everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off).", "everyDays": 7 },
@@ -211,7 +211,7 @@
    "retros": "logs/retros/", "kitty-audits": "logs/kitty-audits/", "localenv": "work/localenv/",
    "localenv-logs": "logs/localenv/",
    "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt", "tracker-statuses": "cache/tracker-statuses/",
-   "tmp": "tmp/", "build-gate": "work/build-gate/"
+   "tmp": "tmp/", "build-gate": "work/build-gate/", "port-runs": "work/port-runs/"
   },
   "durable": {
    "signals": "learning.jsonl", "last-retro": "learning.stamp", "last-kitty-audit": "kitty-audit.stamp",

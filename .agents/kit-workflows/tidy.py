@@ -4,13 +4,29 @@
 # Run: run_workflow(ScriptPath="<workspace>/.agents/kit-workflows/tidy.py", Args={<the workflow's args>}, Description="tidy")
 # node runs the .js; each agent() it calls is an Antigravity agent of that agentType (.agents/agents), workspace "inherit"
 # (worktrees stay where crafty.ps1 wt puts them); a failed agent returns null to the script, as in Claude Code.
-import asyncio, json, os, shutil
+# opts: phase -> phase(), effort -> a prompt line (agy's agent() has no effort), model -> MODELS (kit.local.json ports.models over it).
+# The run journal (kit_path('port-runs')/antigravity/subagents/workflows/<run>/journal.jsonl) feeds the Runs band, recover and resume.
+import asyncio, json, os, shutil, sys, uuid
 WF = 'tidy'
 SHIM = "\nconst fs = require('fs'), rl = require('readline')\nconst [src] = process.argv.slice(1)\nconst body = fs.readFileSync(src, 'utf8').replace(/^export\\s+const\\s+meta\\s*=/m, 'const meta =')\nlet args = null\nconst send = (o, done) => process.stdout.write(JSON.stringify(o) + '\\n', done)\nconst pend = new Map(); let n = 0\nrl.createInterface({ input: process.stdin }).on('line', (l) => { const m = JSON.parse(l); if (args === null) { args = m; run(); return }\n  const r = pend.get(m.id); if (r) { pend.delete(m.id); r(m.result) } })\nconst agent = (prompt, opts) => new Promise((res) => { const id = ++n; pend.set(id, res); send({ t: 'agent', id, prompt, opts: opts || {} }) })\nconst phase = (name) => send({ t: 'phase', name })\nconst log = (...x) => send({ t: 'log', text: x.join(' ') })\nconsole.log = log\n// pipeline(items, ...stages): per item, each stage gets (the previous stage's result, the item); items run side by side\nconst pipeline = (items, ...stages) => Promise.all(items.map(async (it) => { let v = it; for (const s of stages) v = await s(v, it); return v }))\nconst AF = Object.getPrototypeOf(async function () {}).constructor\nconst fail = (e) => send({ t: 'error', text: String((e && e.stack) || e) }, () => process.exit(1))\nfunction run() {\n  let fn; try { fn = new AF('args', 'agent', 'phase', 'log', 'pipeline', body) } catch (e) { return fail(e) }\n  fn(args, agent, phase, log, pipeline).then((r) => send({ t: 'done', result: r === undefined ? null : r }, () => process.exit(0)), fail)\n}\n"
 MODELS = {'haiku': 'flash'}   # Claude model names -> agy tiers; the rest inherit
 ws = WORKSPACES[0] if WORKSPACES else os.getcwd()
 A = dict(args or {})
 A.setdefault('kitDir', os.path.join(ws, '.claude').replace('\\', '/'))
+try:
+    with open(os.path.join(A['kitDir'], 'skills', 'crafty', 'kit.local.json'), encoding='utf-8') as fh:
+        MODELS.update((json.load(fh).get('ports') or {}).get('models') or {})
+except (OSError, ValueError, AttributeError):
+    pass
+sys.path.insert(0, os.path.join(A['kitDir'], 'skills', 'bossy'))
+from kitbag import kit_path   # the one runtime map (CLAUDE_RUNTIME, _paths)
+RUN_DIR = os.path.join(kit_path('port-runs'), 'antigravity', 'subagents', 'workflows', 'wf_agy-' + uuid.uuid4().hex[:12])
+os.makedirs(RUN_DIR, exist_ok=True)
+def journal(o):
+    with open(os.path.join(RUN_DIR, 'journal.jsonl'), 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps(o, ensure_ascii=False) + '\n')
+journal({'type': 'launched', 'workflow': WF})
+cur = {'phase': None}
 node = shutil.which('node')
 if not node:
     raise RuntimeError('node is not on PATH: the kit workflows are JavaScript')
@@ -20,30 +36,43 @@ proc.stdin.write((json.dumps(A) + '\n').encode())   # the args: stdin, never the
 
 async def answer(m):
     o = m['opts']
+    if o.get('phase') and o['phase'] != cur['phase']:
+        cur['phase'] = o['phase']
+        phase(o['phase'])
+    aid = 'agy' + uuid.uuid4().hex[:16]
+    journal({'type': 'started', 'agentId': aid, 'label': o.get('label') or '', 'phase': o.get('phase') or cur['phase'] or ''})
+    prompt = m['prompt'] + (f"\n(Reasoning effort for this step: {o['effort']}.)" if o.get('effort') else '')
     try:
-        r = await agent(m['prompt'], schema=o.get('schema') or {'type': 'string'}, role=o.get('label'), type_name=o.get('agentType') or 'self',
+        r = await agent(prompt, schema=o.get('schema') or {'type': 'string'}, role=o.get('label'), type_name=o.get('agentType') or 'self',
             workspace='inherit', model=MODELS.get(o.get('model'), 'inherit'))
     except Exception as e:
         log(f"agent {o.get('label')} failed: {e}")
         r = None
+    journal({'type': 'result', 'agentId': aid, 'result': r})
     proc.stdin.write((json.dumps({'id': m['id'], 'result': r}) + '\n').encode())
     await proc.stdin.drain()
 
 running, result, done = [], None, False
-while line := await proc.stdout.readline():
-    m = json.loads(line)
-    if m['t'] == 'agent':
-        running.append(asyncio.ensure_future(answer(m)))
-    elif m['t'] == 'phase':
-        phase(m['name'])
-    elif m['t'] == 'log':
-        log(m['text'])
-    elif m['t'] == 'error':
-        raise RuntimeError(m['text'])
-    else:
-        result, done = m['result'], True
-        break
-await proc.wait()
-if not done:
-    raise RuntimeError(f'workflow {WF}: node ended (exit {proc.returncode}) without a result')
+try:
+    while line := await proc.stdout.readline():
+        m = json.loads(line)
+        if m['t'] == 'agent':
+            running.append(asyncio.ensure_future(answer(m)))
+        elif m['t'] == 'phase':
+            cur['phase'] = m['name']
+            phase(m['name'])
+        elif m['t'] == 'log':
+            log(m['text'])
+        elif m['t'] == 'error':
+            raise RuntimeError(m['text'])
+        else:
+            result, done = m['result'], True
+            break
+    await proc.wait()
+    if not done:
+        raise RuntimeError(f'workflow {WF}: node ended (exit {proc.returncode}) without a result')
+except BaseException as e:   # ended, not stuck: the Runs band and supervise see a finished run
+    journal({'type': 'finished', 'error': str(e)[:300]})
+    raise
+journal({'type': 'done'})
 print(json.dumps(result, ensure_ascii=False))

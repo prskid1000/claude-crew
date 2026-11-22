@@ -27,6 +27,14 @@ for p in ('.codex/config.local.toml', '.codex/agents/old.toml', '.agents/agents/
     (ws / p).parent.mkdir(parents=True, exist_ok=True); (ws / p).write_text('user', encoding='utf-8')
 (ws / '.codex/agents/old.toml').write_text('> Ported note: an old port', encoding='utf-8'); (ws / '.agents/agents/own.md').write_text('mine', encoding='utf-8')
 pt.KIT, pt.WORKSPACE = kit, ws
+pt.local_config = lambda k, f: {}
+ok_off = pt.port_targets(pt.ports_conf()) == () and pt.port_targets({'targets': 'bogus'}) == ()   # unset or unknown: off (owner 2026-11-22)
+pt.manifest_file().parent.mkdir(parents=True, exist_ok=True); pt.manifest_file().write_text(json.dumps({'files': {'.codex/config.toml': 'x', 'AGENTS.md': 'y'}}), encoding='utf-8')
+ok_off = ok_off and pt.port_targets(pt.ports_conf()) == ('codex',)   # unset, deployed before (old default both): kept until set
+pt.local_config = lambda k, f: {'ports': {'targets': 'none'}}
+ok_off = ok_off and pt.port_targets(pt.ports_conf()) == ()
+pt.manifest_file().unlink()
+pt.local_config = lambda k, f: {'ports': {'targets': 'both'}}
 with contextlib.redirect_stdout(io.StringIO()):
     pt.port_deploy()
 ok_deploy = (ws / '.codex/config.local.toml').exists() and (ws / '.agents/agents/mine.txt').exists() and (ws / '.agents/agents/own.md').exists() and not (ws / '.codex/agents/old.toml').exists() \
@@ -42,6 +50,7 @@ ok_ask = all(x in cx for x in ('## Owner decisions', '`request_user_input`', 'Pl
 print(f'ports-ask:{ok_ask}')
 print(f'ports-escape:{ok_toml}')
 print(f'ports-deploy:{ok_deploy}')
+print(f'ports-default-off:{ok_off}')
 
 # hooks: absolute paths, no double quotes (agy's cmd /c keeps them in the path), Codex cleanup async, agy cleanup detached hidden
 cx = tomllib.loads(pt.codex_config_text('D:/w/.claude'))
@@ -60,7 +69,7 @@ for p2, txt in (('skills/s1/SKILL.md', 'x'), ('AGENTS.md', 'shared'), ('GEMINI.m
 pt.KIT, pt.WORKSPACE = kit2, ws2
 with contextlib.redirect_stdout(io.StringIO()):
     pt.port_deploy()
-rules = sorted(p.name for p in (ws2 / '.agents/rules').glob('*.md'))
+rules = sorted(p.name for p in (ws2 / '.agents/rules').glob('*.md') if p.name != 'kit-test-logins.md')
 ok_ws = (ws2 / '.agents/skills/s1/SKILL.md').read_text(encoding='utf-8') == 'x' and rules == ['org.local-1.md', 'org.local-2.md'] \
     and all(len((ws2 / '.agents/rules' / r).read_bytes()) <= 24000 and 'trigger: always_on' in (ws2 / '.agents/rules' / r).read_text(encoding='utf-8') for r in rules) \
     and (ws2 / 'AGENTS.override.md').read_text(encoding='utf-8').startswith('shared') and 'rrrrrrrrrr' in (ws2 / 'AGENTS.override.md').read_text(encoding='utf-8') \
@@ -69,7 +78,7 @@ print(f'ports-workspace:{ok_ws}')
 # run_workflow bridge: the kit's .js runs under node; its agent() calls become Antigravity agents (type, role, workspace inherit)
 wfd = kit2 / 'workflows'; wfd.mkdir(exist_ok=True)
 (wfd / 't.js').write_text("export const meta = {\n name: 't',\n}\nphase('P'); log('hi', args.n)\n"
-  "const [x, y] = await pipeline([1], (i) => agent('p1', { label: 'a', agentType: 'devy' }), async (r, i) => [r, await agent('p2', { label: 'b', model: 'haiku' })]).then((v) => v[0])\n"
+  "const [x, y] = await pipeline([1], (i) => agent('p1', { label: 'a', agentType: 'devy', phase: 'Q' }), async (r, i) => [r, await agent('p2', { label: 'b', model: 'haiku', effort: 'low' })]).then((v) => v[0])\n"
   "return { x, y, z: await agent('boom', { label: 'c' }) }\n", encoding='utf-8')
 calls, logs = [], []
 async def fake_agent(prompt, schema=None, role=None, type_name='self', workspace='branch', model=None):
@@ -77,7 +86,9 @@ async def fake_agent(prompt, schema=None, role=None, type_name='self', workspace
     if prompt == 'boom':
         raise RuntimeError('no finish')
     return {'got': prompt}
-src = pt.RUNNER.format(name='t', shim=pt.SHIM, description='d', when='w')
+RF = {'shim': pt.SHIM, 'description': 'd', 'when': 'w'}
+(kit2 / 'skills/bossy').mkdir(parents=True, exist_ok=True); shutil.copy(sys.argv[1], kit2 / 'skills/bossy'); shutil.copytree(Path(sys.argv[1]).parents[1] / 'crafty', kit2 / 'skills/crafty', dirs_exist_ok=True, ignore=lambda d, n: [x for x in n if x != 'kit.example.json'])
+src = pt.RUNNER.format(name='t', **RF)
 g = {'args': {'n': 7}, 'agent': fake_agent, 'phase': lambda n: logs.append(n), 'log': lambda *a: logs.append(' '.join(map(str, a))), 'WORKSPACES': (str(ws2),)}
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
@@ -87,13 +98,50 @@ res = json.loads(out.getvalue().strip().splitlines()[-1]) if shutil.which('node'
 g2 = dict(g, args={})
 try:
     with contextlib.redirect_stdout(io.StringIO()):
-        asyncio.run(eval(compile(pt.RUNNER.format(name='u', shim=pt.SHIM, description='d', when='w'), 'wf2', 'exec', flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT), g2))
+        asyncio.run(eval(compile(pt.RUNNER.format(name='u', **RF), 'wf2', 'exec', flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT), g2))
     bad_ok = False
 except RuntimeError as e:
     bad_ok = 'SyntaxError' in str(e) or 'without a result' in str(e)
-ok_wf = res is None or bad_ok and (res == {'x': {'got': 'p1'}, 'y': {'got': 'p2'}, 'z': None} and ('a', 'devy', 'inherit', 'inherit') in calls
-    and ('b', 'self', 'inherit', 'flash') in calls and logs[:2] == ['P', 'hi 7'])
+ok_wf = res is None or bad_ok and (res == {'x': {'got': 'p1'}, 'y': {'got': 'p2\n(Reasoning effort for this step: low.)'}, 'z': None}
+    and ('a', 'devy', 'inherit', 'inherit') in calls and ('b', 'self', 'inherit', 'flash') in calls and logs[:2] == ['P', 'hi 7'] and 'Q' in logs)
 print(f'ports-workflow:{ok_wf}')
+# the runner's journal (Runs band, recover): launched, started + result per agent (label, phase), done on success only
+jl = sorted((Path(pt.kit_path('port-runs', kit=str(kit2))) / 'antigravity/subagents/workflows').glob('wf_agy-*/journal.jsonl'), key=lambda p: p.stat().st_mtime)
+ev = [json.loads(l) for l in jl[0].read_text(encoding='utf-8').splitlines()] if jl else []
+ok_jl = not shutil.which('node') or (len(jl) == 2 and ev[0]['type'] == 'launched' and ev[-1]['type'] == 'done'
+    and any(e['type'] == 'started' and e['label'] == 'a' and e['phase'] == 'Q' for e in ev) and sum(e['type'] == 'result' for e in ev) == 3
+    and '"done"' not in jl[1].read_text(encoding='utf-8') and '"finished"' in jl[1].read_text(encoding='utf-8'))
+print(f'ports-journal:{ok_jl}')
+# Codex: the engine's gates in each procedure doc, every anchor still in its .js; autonomous config; workspace-write agents; test logins
+kroot = Path(sys.argv[2]).resolve().parents[2]
+def gdoc(n):
+    js = (kroot / 'workflows' / f'{n}.js').read_text(encoding='utf-8')
+    g, gone = pt.workflow_gates(n, js)
+    return pt.workflow_procedure_doc(pt.workflow_meta(js), 'Codex', 'h', g), gone
+(bd, bg), (td, tg), (_, yg) = gdoc('buildy'), gdoc('testy'), gdoc('tidy')
+ok_gates = not (bg or tg or yg) and pt.workflow_gates('buildy', '')[1] and all(x in bd for x in ("decide check -Id <id> -Gate 'merge,scope,other'",
+    "--no-docs 'foundation", '`holdMerge`', '`args.batch`', 'budget -Run', 'launch -Self -Script buildy.js', 'TASKS REFUSED')) \
+    and all(x in td for x in ('`select.tasks` = exactly', 'another product', 'budget -Run', 'finalize -RunDir')) and '## Before any phase' in bd
+cfg = tomllib.loads(pt.codex_config_text('D:/w/.claude'))
+pt.write_codex('r', {'description': 'd', 'tools': 'Read, Bash'}, 'body'); pt.write_codex('k', {'description': 'd', 'tools': 'Read, Edit, Write'}, 'body')
+rv, kv = (tomllib.loads((tmp / 'c' / f'{n}.toml').read_text(encoding='utf-8')) for n in ('r', 'k'))
+ok_cx = cfg['approval_policy'] == 'never' and cfg['sandbox_mode'] == 'workspace-write' and cfg['sandbox_workspace_write']['network_access'] is True \
+    and rv['sandbox_mode'] == kv['sandbox_mode'] == 'workspace-write' and 'edit no file outside' in rv['developer_instructions'] and 'edit no file' not in kv['developer_instructions']
+lg = (ws2 / '.agents/rules/kit-test-logins.md').read_text(encoding='utf-8')
+ok_logins = lg.startswith('---\ntrigger: always_on\n---\n') and 'targets.local.json' in lg \
+    and all(f'prefix_rule(pattern=["{c}", ["skills/pokey/targets.local.json"' in pt.CODEX_RULES_TEXT for c in ('cat', 'type', 'Get-Content')) and 'decision="forbidden"' in pt.CODEX_RULES_TEXT
+# port --check: a gate whose anchor left the .js, or whose phase is not in meta.phases, is stale
+kit4 = tmp / 'kit4'; (kit4 / 'workflows').mkdir(parents=True)
+(kit4 / 'workflows' / 'tidy.js').write_text("export const meta = {\n name: 'tidy',\n description: 'd',\n phases: [\n  { title: 'Prep', detail: 'p' },\n ],\n}\n", encoding='utf-8')
+pt.KIT = kit4
+for n4, r4 in (('CODEX_AGENTS', '.codex/agents'), ('GRAVITY_AGENTS', '.agents/agents'), ('CODEX_CONFIG', '.codex/config.toml'), ('CODEX_RULES', '.codex/rules/kit.rules'),
+               ('GRAVITY_HOOKS', '.agents/hooks.json'), ('GRAVITY_SKILLS', '.agents/skills.json'), ('CODEX_WORKFLOWS', '.codex/workflows'), ('GRAVITY_WORKFLOWS', '.agents/kit-workflows')):
+    setattr(pt, n4, kit4 / r4)
+with contextlib.redirect_stdout(io.StringIO()):
+    st4 = pt.check_stale()
+ok_gates = ok_gates and any('tidy.js gate anchor gone: launch' in x for x in st4) and 'tidy.js gate phase unknown: Judge' in st4 \
+    and all("-Plan '" in d and '-Fnv' in d for d in (bd, td))
+print(f'ports-codex:{bool(ok_gates and ok_cx and ok_logins)} {bool(ok_gates)} {ok_cx} {ok_logins}')
 
 # ports.targets: every transition keeps the chosen target's copies and removes only the kit-written rest
 kit3 = tmp / 'ws3' / '.claude'; ws3 = kit3.parent
