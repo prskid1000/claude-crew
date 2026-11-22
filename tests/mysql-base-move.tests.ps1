@@ -76,11 +76,12 @@ $old = foreach ($f in @(Get-ChildItem (Join-Path (Split-Path $PSScriptRoot) 'ski
 Expect "lint: no hard-coded old lane id in envy / supervise code ($(@($old) -join ' '))" (-not @($old).Count)
 
 # -Rename: the lane-scoped names (mysql dir + ini, state, logs, run dir, cmd, lane env file) -> <product>-<bird>; dry run changes nothing; rollback restores
+$rnPort = & { $tl = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tl.Start(); $tl.LocalEndpoint.Port; $tl.Stop() }   # a free port: a live lane on 3307 refused the rename
 $rt = Join-Path $kd 'rt'; $ln = (Join-Path $kd 'st/lanes')-replace '\\', '/'; $wl = "$rt/work/localenv"; $lg = "$rt/logs/localenv"
 foreach ($d in "$ln/mysql-shop2", "$wl/run/shop2/api", $lg, "$wl/tmp") { New-Item -ItemType Directory -Force $d | Out-Null }
-Set-Content "$ln/mysql-shop2.ini" "datadir=$ln/mysql-shop2`nport=3307"; Set-Content "$ln/mysql-shop2/lane-ready.txt" "cloned; ini $ln/mysql-shop2.ini"
+Set-Content "$ln/mysql-shop2.ini" "datadir=$ln/mysql-shop2`nport=$rnPort"; Set-Content "$ln/mysql-shop2/lane-ready.txt" "cloned; ini $ln/mysql-shop2.ini"
 Set-Content "$wl/shop2.json" '{}'; Set-Content "$wl/run/shop2-api.cmd" 'x'; Set-Content "$lg/shop2-api.log" 'x'; Set-Content "$kd/st/shop2.env" 'A=1'; Set-Content "$kd/st/shop.env" 'A=1'
-$rc = Join-Path $kd 'rename.json'; & $J @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api' }) }; shop2 = @{ services = @(@{ name = 'mysql'; port = 3307; start = 'mysqld --defaults-file=x' }) } } } } $rc 8
+$rc = Join-Path $kd 'rename.json'; & $J @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api' }) }; shop2 = @{ services = @(@{ name = 'mysql'; port = $rnPort; start = 'mysqld --defaults-file=x' }) } } } } $rc 8
 $pf = Join-Path $kd 'targets.local.json'; & $J @{ targets = @{ 'local-shop' = @{ api = 'http://x:8443' }; 'local-shop2' = @{ api = 'http://x:8543' }; other = @{ api = 'y' } } } $pf 8
 $pkBefore = (Get-Content $pf -Raw | ConvertFrom-Json).targets.PSObject.Properties.Name -join ','
 $rn = @(pwsh -NoProfile -File $mv -Rename -Lanes $ln -Runtime $rt -ConfigFile $rc -PokeyFile $pf 2>&1) -join "`n"
@@ -93,7 +94,7 @@ Expect "rename -Apply: dir, ini (datadir rewritten), lane-ready, state, run dir,
 $null = pwsh -NoProfile -File $mv -Rename -Rollback -Lanes $ln -Runtime $rt -ConfigFile $rc -PokeyFile $pf 2>&1
 Expect 'rename -Rollback: pokey targets back' ((Get-Content $pf -Raw | ConvertFrom-Json).targets.PSObject.Properties.Name -join ',' -eq $pkBefore)
 # a re-run after -Config -Apply (bird keys, a lanes.max lane with no key): no crash, a bird id is never renamed again (hm-falcon-falcon)
-$rb = Join-Path $kd 'rename-bird.json'; & $J @{ localEnv = @{ laneIds = 'bird'; envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api' }) }; 'shop-kestrel' = @{ services = @(@{ name = 'mysql'; port = 3307; start = 'x' }) } } } } $rb 8
+$rb = Join-Path $kd 'rename-bird.json'; & $J @{ localEnv = @{ laneIds = 'bird'; envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api' }) }; 'shop-kestrel' = @{ services = @(@{ name = 'mysql'; port = $rnPort; start = 'x' }) } } } } $rb 8
 $rr = @(pwsh -NoProfile -File $mv -Rename -Lanes $ln -Runtime $rt -ConfigFile $rb -PokeyFile $pf 2>&1) -join "`n"
 Expect "rename re-run on a bird config: exit 0, no null-array error, no <bird>-<bird> name ($LASTEXITCODE)" ($LASTEXITCODE -eq 0 -and $rr -notmatch 'null array|kestrel-falcon|falcon-falcon')
 Expect 'rename -Rollback: every old name back, the ini as it was' ((Test-Path "$ln/mysql-shop2/lane-ready.txt") -and (Get-Content "$ln/mysql-shop2.ini" -Raw) -match 'datadir=.*mysql-shop2' -and (Test-Path "$wl/shop2.json") -and (Test-Path "$wl/run/shop2-api.cmd") -and (Test-Path "$lg/shop2-api.log") -and (Test-Path "$kd/st/shop2.env") -and -not (Test-Path "$wl/shop-kestrel.json"))

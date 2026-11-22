@@ -312,7 +312,7 @@ foreach ($c in @('tsk1abc phase 6', '', 't-tsk1abc-6a'), @('tsk1abc phase 5', 'h
   "$($s.state):$(@($s.items | ForEach-Object { $_.mrs.ref | Sort-Object }) -join ' ')" }
 '@ @($O, $gw)
 Expect 'recover: MRs on the area''s branch (worktree, checkpoint, note; none known: a note's MR unless a sibling's), task id only without one, never a sibling''s; merged + registered = done' (($pa -join '|') -eq 'open:g/api!43|done:g/api!39|merged:g/api!45 g/api!45|start:|open:g/api!43|open:g/api!43|start:|open:g/api!39 g/api!43|unknown:g/web!47|open:g/api!43|done:g/api!39')
-$lq = TkPath $k launches -Create; Remove-Item "$lq/*.json"; $t0 = [datetime]'2026-10-23T10:00'
+$lq = TkPath $k launches -Create; Remove-Item "$lq/*.json"; $t0 = (Get-Date).Date.AddDays(-2).AddHours(10)
 $rec = { param($f, $m, $x) $r = [ordered]@{ script = "$k/workflows/buildy.js"; at = $t0.AddMinutes($m).ToString('o') }; foreach ($q in $x.Keys) { $r[$q] = $x[$q] }; & $J $r "$lq/$f.json" 10 }
 $ar = { param($b, $i) @{ brief = $b; agents = @(@{ id = 'W1'; items = $i }) } }
 & $rec wf_a1 0 @{ runId = 'wf_a1'; args = @{} }; & $rec self-buildy-p6-1 1 @{ run = 'p6'; args = (& $ar 'C:/b/p6.md' 'tsk1abc') }
