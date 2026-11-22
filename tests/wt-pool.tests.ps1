@@ -14,10 +14,12 @@ Save-GitRepo $app base; git -C $app remote add origin $orig; git -C $app push -q
 $lease = { param($ag, $br, [int]$wm = 0) (pwsh @np $D wt lease -Repo app -Branch $br -Agent $ag -WaitMinutes $wm 2>&1 | ForEach-Object { "$_" }) -join "`n" }
 $slotOf = { param($o) if ($o -match '(?m)^worktree: (.+)$') { $Matches[1].Trim().Replace('\', '/') } }
 $falcon = "$base/wt/falcon-app".Replace('\', '/'); $kestrel = "$base/wt/kestrel-app".Replace('\', '/')
+$atp = foreach ($atpIn in '', $src, "$base/nogit") { try { $null = if ($atpIn -like '*nogit') { Get-TestGitDir $atpIn } else { Assert-TestPath $atpIn }; 'kept' } catch { 'threw' } }
+Expect "harness Assert-TestPath / Get-TestGitDir: an empty dir, one outside the test home, a non-repo throw (no `"/<name>`" write at the drive root) ($($atp -join ','))" (($atp -join ',') -eq 'threw,threw,threw' -and (Assert-TestPath $base) -eq $base)
 
 # task 1: a new slot on a new branch, a commit, the MR's branch pushed
 $o1 = & $lease devA feat/one; $s1 = & $slotOf $o1
-'one' | Set-Content "$s1/one.txt"; $c1 = pwsh @np $D wt commit -Dir $s1 -Message 'feat: one' 2>&1 | Out-String; git -C $s1 push -q -u origin feat/one 2>$null
+'one' | Set-Content "$(Assert-TestPath $s1)/one.txt"; $c1 = pwsh @np $D wt commit -Dir $s1 -Message 'feat: one' 2>&1 | Out-String; git -C $s1 push -q -u origin feat/one 2>$null
 Expect "lease: the first slot created lazily (app·Falcon), the branch new from origin/main ($($o1 -replace '\s+', ' '))" ($o1 -match 'new slot app·Falcon \(pool 1/2\)' -and $s1 -eq $falcon -and (git -C $s1 branch --show-current) -eq 'feat/one' -and $o1 -match 'new, from origin/main' -and (git -C $s1 log -1 --format=%s) -eq 'feat: one')
 $o2 = & $lease devB feat/two; $o3 = & $lease devC feat/three; $o4 = & $lease devB feat/one
 Expect "lease: a second slot up to poolSize; all leased -> no slot within -WaitMinutes; a branch another agent holds -> refused" ($o2 -match 'new slot app·Kestrel' -and $o3 -match 'no app slot free within 0 min' -and $o4 -match 'two agents never share a slot')
@@ -31,7 +33,7 @@ $py1 = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); i
 Expect "devtools.py mr / merge read the slot's target record ($py1)" ("$py1".Trim() -eq 'main')
 
 # release with uncommitted work: a WIP commit on the branch, the slot detached in place (no file written), branch kept
-'wip' | Set-Content "$s1/two.txt"; $r1 = pwsh @np $D wt release -Agent devA 2>&1 | Out-String
+'wip' | Set-Content "$(Assert-TestPath $s1)/two.txt"; $r1 = pwsh @np $D wt release -Agent devA 2>&1 | Out-String
 Expect "release: uncommitted work -> WIP commit; detached at the same commit; the unmerged branch kept ($($r1 -replace '\s+', ' '))" ($r1 -match 'WIP commit' -and $r1 -match 'released app·Falcon' -and $r1 -match 'branch feat/one kept' -and -not (git -C $s1 branch --show-current) -and (git -C $app log -1 --format=%s feat/one) -match '^wip: ' -and -not (git -C $s1 status --porcelain))
 
 # fix round: another agent re-leases by branch: the warm slot that had it
@@ -75,7 +77,7 @@ Expect "pool -Migrate: merged per-task worktree removed, unpushed one kept with 
 $wn = (pwsh @np $D wt new -Repo app -Branch f/T-1-x -Target main -Name z 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '   # the error view wraps
 Expect "wt new refuses a task branch of a pooled repo (wt lease)" ($wn -match 'has a worktree pool and f/T-1-x is a task branch: .*wt lease -Repo' -and -not (Test-Path "$base/wt/z-app"))
 # a parked slot whose resuming lease fails after the switch (a missing dep source): parked again with its files, never orphaned
-$o10 = & $lease devH feat/seven; $s10 = & $slotOf $o10; 'p' | Set-Content "$s10/p.txt"; git -C $app config core.hooksPath $hd; $null = pwsh @np $D wt release -Agent devH 2>&1; git -C $app config --unset core.hooksPath
+$o10 = & $lease devH feat/seven; $s10 = & $slotOf $o10; 'p' | Set-Content "$(Assert-TestPath $s10)/p.txt"; git -C $app config core.hooksPath $hd; $null = pwsh @np $D wt release -Agent devH 2>&1; git -C $app config --unset core.hooksPath
 & $J @{ repos = @(@{ name = 'app'; checkout = $app; target = 'main'; poolSize = 2; linkFromByTarget = @{ main = "$base/no-deps" } }); tracker = @{ type = 'none' } } "$k/skills/crafty/kit.local.json"
 $o11 = & $lease devI feat/seven; $pf = Get-ChildItem $kf -Filter '*-app.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { $_.branch -eq 'feat/seven' }
 Expect "a failed resume of a parked slot parks it again (files kept, parkedAt set), the lease file stays ($($o11 -replace '\s+', ' '))" ($o11 -match 'dep source .* is missing' -and $pf.parked -and $pf.parkedAt -and (Test-Path "$s10/p.txt"))

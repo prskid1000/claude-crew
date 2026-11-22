@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 wt · L321 stack · L503 gate · L818 check · L1134 pipes · L1190 guard · L2091 dir · L2101 checkpoint ·
-  L2131 prior · L2169 tracker · L2191 task spec · L2373 scope · L2421 host
+Sections: L24 init · L31 wt · L321 stack · L503 gate · L818 check · L1134 pipes · L1190 guard · L2104 dir · L2114 checkpoint ·
+  L2144 prior · L2182 tracker · L2204 task spec · L2386 scope · L2434 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1564,8 +1564,12 @@ $writeRoots = @(@($wsRoot, $script:KitRoot, (Get-KitRuntime), (Split-Path (Get-K
   @(@(Get-KitSetting 'guard.writeRoots' @()) | ForEach-Object { "$_" -replace '^~(?=[\\/]|$)', $uh }) + "$uh/.claude" + "$uh/Downloads" |
   Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') } | Where-Object { $_ } | Select-Object -Unique)
 function StrayWrite([string]$p, [string]$base) {
-  if (-not $p -or $p -match '[$%*?<>|`]|^[A-Za-z]:(?![\\/]|$)|^(nul|-)$' -or ($IsWindows -and $p -match '^[\\/](?![A-Za-z]([\\/]|$))')) { return }
+  if (-not $p -or $p -match '[$%*?<>|`]|^[A-Za-z]:(?![\\/]|$)|^(nul|-)$|^[\\/]dev[\\/](null|stderr|stdout|tty)$') { return }
+  # Windows "/x" outside Git Bash = the cwd drive's root (2026-11-22: a test's "$empty/one.txt" wrote D:\one.txt); in Git Bash, the Git install dir
+  $driveRel = $IsWindows -and $p -match '^[\\/](?![\\/]|[A-Za-z]([\\/]|$))'
+  if ($driveRel -and ($in.tool_name -eq 'Bash' -or -not $base)) { return }
   $p = ($p -replace '^~(?=[\\/]|$)', $uh) -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'
+  if ($driveRel) { $p = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($base)).TrimEnd('\', '/') + $p }
   if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return }; $p = Join-Path $base $p }
   $f = [IO.Path]::GetFullPath($p); $r0 = [IO.Path]::GetPathRoot($f); if ($f.Length -gt $r0.Length) { $f = $f.TrimEnd('\', '/') }; $par = [IO.Path]::GetDirectoryName($f)
   if (@($writeRoots | Where-Object { Under $f $_ }).Count) { return }
@@ -1705,9 +1709,13 @@ foreach ($seg in DeleteSegments $raw) {
   if ($seg -match '(^|[\s(`])(cp|mv|Copy-Item|Move-Item)\s') { $wrote += ($seg.TrimEnd() -split '\s+')[-1] }
   if ($seg -match '(^|[\s(`])(?<v>mkdir|md|New-Item|ni|touch|tee|Out-File|Set-Content|Add-Content)\s+(?<a>.*)$') { $wrote += @($Matches.a -split '\s+' | Where-Object { $_ -and $_ -notmatch '^-' }) }
   $wrote += @([regex]::Matches($seg, '(?i)::(Write|Append)All\w*\(\s*(?<t>[^,\s)]+)') | ForEach-Object { $_.Groups['t'].Value })
+  # git init <dir> / git clone <url> <dir> make a repo there (no -C: a relative dir is the cwd's)
+  $gitDest = @(); if ($seg -match '(^|[\s(`])git(\.exe)?\s+(-c\s+\S+\s+)*(?<v>init|clone)\s+(?<a>.*)$' -and $seg -cnotmatch '\s-C\s') {
+    $gitVerb = $Matches.v; $gitPos = @(); $gitSkip = $false; foreach ($gt in @($Matches.a -split '\s+' | Where-Object { $_ })) { if ($gitSkip) { $gitSkip = $false } elseif ($gt -match '^(-[bocju]|--(branch|origin|depth|reference|template|config|separate-git-dir|jobs|filter|upload-pack|object-format|shallow-since)|\d*>{1,2}|&>)$') { $gitSkip = $true } elseif ($gt -notmatch '^-|^\d*>|^&>') { $gitPos += $gt } }
+    if ($gitPos.Count -and ($gitVerb -eq 'init' -or $gitPos.Count -ge 2) -and $gitPos[-1] -notmatch '://|^[\w.-]+@[\w.-]+:') { $gitDest = @($gitPos[-1]); $wrote += $gitDest } }
   if (@($wrote | ForEach-Object { RuntimeKinds " $($_.Trim('''"'))" $segBase }) -contains 'stray') { Deny "kit guard: that writes $strayWhy" }
   foreach ($x in $wrote) { if (MainScratch $x.Trim('''"') $segBase) { Deny "kit guard: $x $scratchWhy" } }
-  foreach ($x in $wrote -match '[\\/.]') { if (($sk = StrayWrite $x.Trim('''"') $segBase)) { Deny "kit guard: $x $sk ($rootWhy)" } }
+  foreach ($x in @(@($wrote -match '[\\/.]') + $gitDest | Select-Object -Unique)) { if (($sk = StrayWrite $x.Trim('''"') $segBase)) { Deny "kit guard: $x $sk ($rootWhy)" } }
   foreach ($x in $wrote -match '[\\/]') { if (KitEvidenceWrite $x.Trim('''"') $segBase) { Deny "kit guard: $x $shotsWhy" } }
 }
 # a bare remove leaves junction skeletons no repo lists, and the branch
@@ -1920,7 +1928,11 @@ function Get-KitScriptRewrite([string]$text) {   # the first script in command p
   if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>(?:''[^'']*''|"(?:[^"\\]|\\.)*"|[^\r\n;|&''"]|[''"])*)') { return '' }
   " Rewrite: $(@{ ps1 = 'pwsh -NoProfile -File'; py = 'python -X utf8' }[$Matches.x] ?? 'node') $($Matches.s)$($Matches.r.TrimEnd())"
 }
-$od = Test-OpenDoc $raw $tn
+# a heredoc fed to pwsh -Command - is PowerShell, where & x.ps1 runs in place (2026-11-17..21: 50+ false blocks of & pokey.ps1)
+$script:psBodies = @(); $bashText = $raw
+if ($tn -eq 'Bash') { foreach ($hd in @([regex]::Matches($raw, '(?ms)^(?<open>[^\r\n]*(?<!<)<<(?!<)-?\s*(?<q>[''"]?)(?<tag>\w+)\k<q>[^\r\n]*)\r?\n(?<body>.*?)\r?\n[ \t]*\k<tag>[ \t]*(?=\r?\n|$)'))) {
+  if ($hd.Groups['open'].Value -match '\b(pwsh|powershell)(\.exe)?\s.*-(c|Command)\s+-(\s|$)') { $script:psBodies += $hd.Groups['body'].Value; $bashText = $bashText.Replace($hd.Value, $hd.Groups['open'].Value) } } }
+$od = Test-OpenDoc $bashText $tn; foreach ($pb in $script:psBodies) { if (-not $od) { $od = Test-OpenDoc $pb 'PowerShell' } }
 if ($od -eq 'script') {
   $fix = Get-KitScriptRewrite $raw
   Deny "$(if ($fix) { "$($fix.Trim()) -> " })That runs a script file directly: Windows opens it in an editor. Run it through its interpreter (python -X utf8, node, pwsh -File). $hl" }
@@ -1986,7 +1998,8 @@ function Find-RunsFile([string]$text, [string]$tool, [string]$base) {
   }
   $null
 }
-if (($rf = Find-RunsFile $raw $tn $here)) { $rw = if ($rf -match '\.(ps1|py|mjs|cjs|js)$') { Get-KitScriptRewrite $raw }   # the ready command first (agents missed it at the end)
+$rf = Find-RunsFile $bashText $tn $here; foreach ($pb in $script:psBodies) { if (-not $rf) { $rf = Find-RunsFile $pb 'PowerShell' $here } }
+if ($rf) { $rw = if ($rf -match '\.(ps1|py|mjs|cjs|js)$') { Get-KitScriptRewrite $raw }   # the ready command first (agents missed it at the end)
   Deny "kit guard:$(if ($rw) { "$rw ->" }) $rf in command position opens it in its default desktop app (a window on the owner's screen), not your terminal: $readIt" }
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
     $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run: commit with $($KitCmd.dev) wt commit; fix what the hook reports." }

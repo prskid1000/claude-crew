@@ -47,7 +47,9 @@ $d, $kd = $args; $dq = [IO.Path]::GetPathRoot($kd); $dm = '/' + $dq.Substring(0,
 $cases = @(@('Bash', "crafty.ps1 wt new x > $dq$sf.txt", $dr), @('Bash', "pokey.ps1 deployed > $dm/$sf.txt", $dr), @('Bash', "echo x >> `"$dq$sf.md`"", $dr),
   @('Bash', "git log | tee $dq$sf.txt", $dr), @('Bash', "cp a.txt $dq", $dr), @('Bash', "cd $dm/ && git log > $sf.txt", $dr),
   @('PowerShell', "git log | Out-File -FilePath $dq$sf.txt", $dr), @('PowerShell', "Set-Content -Path $dq$sf.txt -Value 1", $dr),
-  @('PowerShell', "[IO.File]::WriteAllText('$dq$sf.txt', 'x')", $dr), @('Write', "$dq$sf.md", $dr), @('Bash', "echo x > ~/$sf.txt", $ou), @('Write', "~/$sf/notes.md", $ou),
+  @('PowerShell', "[IO.File]::WriteAllText('$dq$sf.txt', 'x')", $dr), @('PowerShell', "'p' | Set-Content `"/$sf.txt`"", $dr), @('PowerShell', "git init -q --bare /$sf.git", $dr),
+  @('PowerShell', "git clone -q $kd /$sf", $dr), @('PowerShell', "git log > /dev/null; git log > /dev/stderr; git clone -q -b main /$sf.git; git init -b main; git clone https://h.example/r.git", ''),
+  @('Bash', "git clone https://h.example/r.git $dm/$sf 2>&1", $dr), @('Bash', "git -c a=b clone git@h.example:r.git $dm/$sf", $dr), @('PowerShell', "git init $sf", $dr, $dq),@('Write', "$dq$sf.md", $dr), @('Bash', "echo x > ~/$sf.txt", $ou), @('Write', "~/$sf/notes.md", $ou),
   @('Bash', "cat $dq$sf.txt; git -C $dq status 2>/dev/null >/dev/null; echo x > nul; echo a > x:y; ls $dm > $kd/$sf.txt; echo x > ~/.claude/$sf/n.md", ''),
   @('PowerShell', "Get-Content $dq$sf.txt; 'x' | Out-File ~/Downloads/$sf.html; git log > $kd/$sf.txt; 1 > `$null", ''), @('Write', "~/Downloads/$sf.html", ''),
   @('PowerShell', "New-Item -ItemType Directory -Force -Path $kd/o; git log | Out-File -Encoding utf8 $kd/a.txt", '', $dq))   # option values from a cwd outside every root
@@ -59,7 +61,7 @@ foreach ($c in $cases) {
 $kl = "$kd/skills/crafty/kit.local.json"; '{"guard":{"writeRoots":["~/' + $sf + '"]}}' | Set-Content $kl
 if (((& $d guard -Json (@{ tool_name = 'Write'; cwd = $kd; tool_input = @{ file_path = "~/$sf/notes.md" } } | ConvertTo-Json -Compress)) -join '') -match '"deny"') { 'FAIL writeRoots' }; Remove-Item $kl
 '@ @($D, $k)
-Expect "guard: new files at a drive root or outside every root denied (redirect, tee, cp, cd + redirect, Out-File, Set-Content, WriteAllText, Write); reads, /dev/null, nul, kit, ~/.claude, Downloads, guard.writeRoots pass ($swr)" (-not "$swr".Trim())
+Expect "guard: new files at a drive root or outside every root denied (redirect, tee, cp, cd + redirect, Out-File, Set-Content, WriteAllText, Write, PowerShell /x, git init / clone <dir>); reads, /dev/null, nul, kit, ~/.claude, Downloads, guard.writeRoots pass ($swr)" (-not "$swr".Trim())
 $churnTest = @'
 param($LibPath, $Dir)
 . $LibPath; $f = Join-Path $Dir 'churn.json'; $new = (Get-Date).AddMinutes(-2); $old = [datetime]'2020-01-01'
@@ -89,6 +91,10 @@ Expect "guard: a .ps1 / .py in command position -> the pwsh -File / python -X ut
   ($gRw[2] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: pwsh -NoProfile -File skills/pokey/pokey.ps1 results patch -Patch ''{"set":{"T1":{"verify":"a | b; c"}}}'' ->') -and
   ($gRw[3] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: python -X utf8 tools/a.py --msg it''s --n 2 ->') -and
   ($gRw[4] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: pwsh -NoProfile -File skills/pokey/pokey.ps1 api -Path "D:\x\" -Flag 1 ->'))   # the ready command first (retro 2205)
+# a heredoc fed to pwsh -Command - is PowerShell: & <script>.ps1 there runs in place (retro 2026-11-22: 50+ false blocks)
+$gHd = foreach ($gc in "pwsh -NoProfile -Command - <<'EOF'`n`$j = 'a'`n& 'skills/pokey/pokey.ps1' results patch -Code T1`nEOF", "cat <<'PS' | pwsh -NoProfile -Command -`n& skills/pokey/pokey.ps1 api`nPS", "bash <<'EOF'`nskills/pokey/pokey.ps1 api`nEOF") {
+  $gj = @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $gc } } | ConvertTo-Json -Compress; $(if (((pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') guard -Json $gj) -join '') -match '"deny"') { 'deny' } else { 'allow' }) }
+Expect "guard: & pokey.ps1 in a pwsh heredoc (either form) runs; the same in a bash heredoc is denied ($($gHd -join ','))" (($gHd -join ',') -eq 'allow,allow,deny')
 # org names from config, one name for writer and readers: tracker.taskTemplate items label, kindPrefixes.bug (Get-KitItemsLabel, Get-KitKindPrefix)
 $ilr = Invoke-PsTest itemslabel @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; . $args[1]; $kl = Join-Path $KitConf.Kit 'skills/crafty/kit.local.json'

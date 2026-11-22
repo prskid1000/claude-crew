@@ -8,7 +8,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<ar
  -Detail: every area's full output here too (else a green area is one line; all of it in <runtime>/logs/kit-tests-last.txt).
  K79: a run ends with what started it (a process of its parent chain gone: the run, its areas and their children stop) and,
  on Windows, its areas die with it (a kill-on-close job); -Detached: no parent watch (the nightly run, started by a short beat).
-Outputs: the picked areas and why, per area its time and pass count (a failed or crashed area: its whole output), TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), TEST-MYSQLD (the one test mysqld started twice: tests/test-mysql.ps1), a recap of the failed checks, then a total.
+Outputs: the picked areas and why, per area its time and pass count (a failed or crashed area: its whole output), TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), TEST-ROOT lines (a new entry at a drive root), TEST-MYSQLD (the one test mysqld started twice: tests/test-mysql.ps1), a recap of the failed checks, then a total.
  A green full run stamps its tree (<runtime>/cache/kit-tests-green.txt). No git hook runs it: the agent runs the touched areas before it
  commits and pushes; -Full runs from supervise -AutoFix while idle, every kitTests.fullEveryDays, a stamped tree skipped (adapters/kit_admin.ps1). One setup per area: a new case
  joins the area that builds its setup, as a table row.
@@ -65,6 +65,9 @@ $env:KIT_TESTS_SNAPSHOT = Join-Path $tmpRoot "kit-tests-src-$PID"
 # timing bounds stretch with the load this run puts on the CPU (harness Get-TestBound): 1 alone, at most 3
 if (-not $env:KIT_TESTS_SLACK) { $env:KIT_TESTS_SLACK = [Math]::Round([Math]::Min(3, [Math]::Max(1, $areas.Count / [Environment]::ProcessorCount)), 2).ToString([Globalization.CultureInfo]::InvariantCulture) }
 $started = Get-Date
+# TEST-ROOT: what each drive root holds now ("$empty/x" = "/x" wrote origin.git, repo, one.txt at D:\, 2026-11-22)
+$driveRoots = @((Get-Location).Path, $tmpRoot | ForEach-Object { [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($_)) } | Select-Object -Unique)   # the cwd's and the tests' temp drive: where "/x" lands
+$rootsBefore = @{}; foreach ($dr in $driveRoots) { $rootsBefore[$dr] = @(Get-ChildItem -LiteralPath $dr -Force -Name -ErrorAction SilentlyContinue) }
 $env:KIT_TESTS_RUNNER = $PID   # the one test mysqld's holder for every area of this run (test-mysql.ps1)
 $src = Split-Path $PSScriptRoot; $myMysqlRun = [pscustomobject]@{ starts = 0; strays = @() }; $myMysqlErr = ''
 $myMysql = (Test-Path (Join-Path $PSScriptRoot 'test-mysql.ps1')) -and (Test-Path (Join-Path $src 'skills/crafty/kit.example.json'))   # a bare tests/ copy (kitbag.tests): none
@@ -159,6 +162,8 @@ Remove-Item -LiteralPath $env:KIT_TESTS_SNAPSHOT -Recurse -Force -ErrorAction Si
 if ($myMysqlErr) { "TEST-MYSQLD the test mysqld did not stop: $myMysqlErr" }
 if ($myMysqlRun.starts -gt 1) { "TEST-MYSQLD this run started the test mysqld $($myMysqlRun.starts) times (at most 1: tests/test-mysql.ps1)"; $fails++ }
 foreach ($sy in @($myMysqlRun.strays)) { "TEST-MYSQLD a second kit-test mysqld ran during this run (one at a time machine-wide): $(($sy -split " ", 2)[1])"; $fails++ }
+foreach ($dr in $driveRoots) { foreach ($nw in @(Get-ChildItem -LiteralPath $dr -Force -Name -ErrorAction SilentlyContinue | Where-Object { $_ -notin $rootsBefore[$dr] -and $_ -notmatch '^\$|\.sys$' })) {
+  "TEST-ROOT $(Join-Path $dr $nw): new at a drive root during this run (a test or another process; a test's `"`$empty/<name>`": build it with harness Assert-TestPath)"; $fails++ } }
 # FAIL recap, indented: never counted twice
 $failed = @($cases | Where-Object fail); if ($failed.Count) { 'Failed checks:'; $failed | ForEach-Object { "  [$($_.at)] $($_.text)" } }
 "$fails failure(s) in $($areas.Count) area(s), $([int]((Get-Date) - $started).TotalSeconds) s"

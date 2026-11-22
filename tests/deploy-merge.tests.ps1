@@ -10,7 +10,7 @@ $TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapte
 $k = New-TestKit deploy-merge; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # deploy merge is a verb of adapters/deploys.ps1
 $dpa = Join-Path $src 'skills/bossy/adapters/deploys.ps1'
-Copy-Item $dpa (Join-Path $k 'skills/bossy/adapters'); $r = Join-Path (Kd) 'git'
+Copy-Item $dpa (Join-Path $k 'skills/bossy/adapters'); $r = Assert-TestPath (Join-Path (Kd) 'git')
 $env:CLAUDE_WT_ROOT = "$r/wt"
 git init -q --bare "$r/origin.git"; git clone -q "$r/origin.git" "$r/repo" 2>$null
 'a' | Set-Content "$r/repo/a.txt"; git -C "$r/repo" add -A; git -C "$r/repo" commit -q -m init; git -C "$r/repo" branch -M main

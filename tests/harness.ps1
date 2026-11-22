@@ -50,6 +50,15 @@ function Kd {
   if (-not $p) { throw "Kd: Split-Path for '$k' returned empty" }
   $p
 }
+# a test dir a write goes under; empty ("$x/f" = "/f": the current drive's root, 2026-11-22 strays at D:\) or outside the test home -> throw
+function Assert-TestPath([string]$Dir) {
+  if (-not $Dir) { throw 'Assert-TestPath: the dir is empty (the write would land at the drive root)' }
+  $full = [IO.Path]::GetFullPath($Dir); $home0 = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+  if ($full -ne $home0 -and -not $full.StartsWith($home0 + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Assert-TestPath: $Dir is outside the test home $home0" }
+  $Dir
+}
+# a test repo's git dir (rev-parse --git-dir), never empty
+function Get-TestGitDir([string]$Dir) { Assert-TestPath "$(git -C (Assert-TestPath $Dir) rev-parse --path-format=absolute --git-dir 2>$null)".Trim() }
 function Lib {
   if (-not $k) { throw 'Lib: $k is unset or empty' }
   Join-Path $k 'skills/crafty/lib.ps1'

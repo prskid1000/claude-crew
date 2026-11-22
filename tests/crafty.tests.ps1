@@ -44,10 +44,10 @@ try {
   Expect 'wt remove -Name: only that worktree; main tree, no args, no match, 2 matches -> refused' (-not ($bad -contains 0) -and $code -eq 0 -and -not (Test-Path "$r/wt/a-outer") -and @('ab', 'c-1', 'c-2' | Where-Object { Test-Path "$r/wt/$_-outer" }).Count -eq 3 -and (Test-Path "$r/outer/.git"))
   $uv = pwsh @np $D wt remove -Dir "$r/`$n" 2>&1
   Expect 'wt remove: -Dir with a $var refused' ($LASTEXITCODE -and "$uv" -match 'unexpanded variable \(\$n\)')
-  foreach ($n in 'ci', 'cu') { $w = "$r/wt/$n"; git -C "$r/outer" worktree add -q -b $n $w 2>$null; [IO.File]::WriteAllBytes("$(git -C $w rev-parse --path-format=absolute --git-dir)/index", [byte[]]::new(64)) }
+  foreach ($n in 'ci', 'cu') { $w = "$r/wt/$n"; git -C "$r/outer" worktree add -q -b $n $w 2>$null; [IO.File]::WriteAllBytes("$(Get-TestGitDir $w)/index", [byte[]]::new(64)) }
   'u' | Set-Content "$r/wt/cu/u.txt"; $ci, $cu = 'ci', 'cu' | ForEach-Object { "$(pwsh @np $D wt remove -Dir "$r/wt/$_" 2>&1) rc=$LASTEXITCODE" }
   Expect "wt remove: a corrupt index is rebuilt; clean: removed, untracked file: refused" ($ci -match '(?s)rebuilt the corrupt index.*rc=0' -and -not (Test-Path "$r/wt/ci") -and $cu -match '(?s)u\.txt.*rc=[1-9]' -and (Test-Path "$r/wt/cu/u.txt"))
-  $w = "$r/wt/ab-outer"; git -C "$r/outer" worktree lock "$r/wt/c-1-outer"; 'main' | Set-Content "$(git -C $w rev-parse --path-format=absolute --git-dir)/claude-target"; 'y' | Set-Content "$w/stray.txt"
+  $w = "$r/wt/ab-outer"; git -C "$r/outer" worktree lock "$r/wt/c-1-outer"; 'main' | Set-Content "$(Get-TestGitDir $w)/claude-target"; 'y' | Set-Content "$w/stray.txt"
   $ws = (& { pwsh @np $D wt remove -Dir "$r/wt/c-1-outer" -Force; pwsh @np $D wt sync -Dir $w; pwsh @np $D wt sync -Dir "$r/wt" } 2>&1 | Out-String) -replace '\s*\r?\n\s*\|?\s*', ' '
   Expect 'wt remove: git''s why; wt sync: dirty -> wt commit line, worktrees root -> its worktrees' ($ws -match 'remove failed.*locked' -and $ws -match 'wt commit -Dir .*ab-outer -Message ''wip: ' -and $ws -match 'holds worktrees.*-outer')
   $g = "$r/gen"; git init -q --bare "$r/fix.git"; git clone -q "$r/fix.git" $g 2>$null; 'gen.bin binary' | Set-Content "$g/.gitattributes"; 'base' | Set-Content "$g/gen.bin"
