@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 wt · L321 stack · L503 gate · L837 check · L1155 pipes · L1211 guard · L2125 dir · L2135 checkpoint ·
-  L2165 prior · L2203 tracker · L2225 task spec · L2407 scope · L2455 host
+Sections: L24 init · L31 wt · L323 stack · L505 gate · L839 check · L1157 pipes · L1213 guard · L2130 dir · L2140 checkpoint ·
+  L2170 prior · L2208 tracker · L2230 task spec · L2412 scope · L2460 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -221,7 +221,9 @@ switch ($Action) {
     }
     $stagePaths = @(Split-KitList $Paths)   # -Paths: a split commit stages only its group, the next group stays out
     if ($stagePaths.Count -and $NoStage) { throw 'commit: -Paths or -NoStage, not both' }
-    if ($stagePaths.Count) { git -C $Dir add -A -- @($stagePaths); if ($LASTEXITCODE) { throw "commit -Paths: git add failed for $($stagePaths -join ', ')" } } elseif (-not $NoStage) { git -C $Dir add -A }
+    # test-run output (reports, screenshots, videos) never blocks a commit or lands in an MR
+    $skipGlobs = @(@(Get-KitSetting 'commit.ignore' @('**/cypress/reports/**', '**/cypress/screenshots/**', '**/cypress/videos/**')) | Where-Object { $_ } | ForEach-Object { ":(exclude,glob)$_" })
+    if ($stagePaths.Count) { git -C $Dir add -A -- @($stagePaths) @($skipGlobs); if ($LASTEXITCODE) { throw "commit -Paths: git add failed for $($stagePaths -join ', ')" } } elseif (-not $NoStage) { git -C $Dir add -A -- . @($skipGlobs) }
     if (($area = @(Meta $Dir 'scope' | Where-Object { $_ })).Count) {   # the branch's diff and this commit stay in the brief area
       $at = Meta $Dir 'target'; $br = (git -C $Dir rev-parse --abbrev-ref HEAD).Trim()
       $out = @(Get-KitScopeOutside @(@(if ($at) { git -C $Dir -c core.quotepath=false diff --name-only "origin/$at...HEAD" }) + @(git -C $Dir -c core.quotepath=false diff --cached --name-only) | Select-Object -Unique) $area)
@@ -1946,8 +1948,11 @@ function Test-OpenDoc([string]$text, [string]$tool) {
   $null
 }
 function Get-KitScriptRewrite([string]$text) {   # the first script in command position, via its interpreter
-  if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>(?:''[^'']*''|"(?:[^"\\]|\\.)*"|[^\r\n;|&''"]|[''"])*)') { return '' }
-  " Rewrite: $(@{ ps1 = 'pwsh -NoProfile -File'; py = 'python -X utf8' }[$Matches.x] ?? 'node') $($Matches.s)$($Matches.r.TrimEnd())"
+  if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>(?:''[^'']*''|"(?:[^"\\]|\\.)*"|\d?>&\d|[^\r\n;|&''"]|[''"])*)') { return '' }   # 2>&1 stays: a cut "2>" rewrite fails again
+  $hit = $Matches; $pre = $text.Substring(0, [Math]::Max(0, $text.IndexOf($hit.s)))
+  # Bash: an env var set before it (export X=v, $env:X='v') carries over as a prefix
+  $envSet = @(@(if ($tn -eq 'Bash') { [regex]::Matches($pre, '(?:\bexport\s+|\$env:)(?<n>\w+)\s*=\s*(?<v>''[^'']*''|"[^"]*"|[^\s;]+)') }) | ForEach-Object { "$($_.Groups['n'].Value)=$($_.Groups['v'].Value) " }) -join ''
+  " Rewrite: $envSet$(@{ ps1 = 'pwsh -NoProfile -File'; py = 'python -X utf8' }[$hit.x] ?? 'node') $($hit.s)$($hit.r.TrimEnd())"
 }
 # a heredoc fed to pwsh -Command - is PowerShell, where & x.ps1 runs in place (2026-11-17..21: 50+ false blocks of & pokey.ps1)
 $script:psBodies = @(); $bashText = $raw

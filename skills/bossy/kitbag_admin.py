@@ -90,7 +90,7 @@ def cmd_setup(kit, fix):
         need_setup.append('origin main protection: ' + ', '.join(bad))
     if need_setup:
         if fix:
-            rc, o, e = pwsh(setup_ps, 'setup', timeout=120)
+            rc, o, e = pwsh(setup_ps, 'setup', timeout=kit_param('audit.stepTimeoutSec'))
             out('FIX' if rc == 0 else 'ACT', 'SETUP-INSTALL', 'bossy.ps1 setup', '; '.join(need_setup) + ('' if rc == 0 else f' (bossy.ps1 setup failed: {e[:200]})'))
         else:
             out('ACT', 'SETUP-INSTALL', kit, '; '.join(need_setup), f'pwsh -File {setup_ps} setup')
@@ -137,7 +137,7 @@ def cmd_setup(kit, fix):
     # Codex / Antigravity ports + deployed copies
     pk = osp.join(kit, 'skills', 'bossy', 'kitbag.py')
     if osp.isfile(pk):
-        rc, o, e = run([py(), '-X', 'utf8', pk, 'port', '--check'], timeout=60)
+        rc, o, e = run([py(), '-X', 'utf8', pk, 'port', '--check'], timeout=kit_param('audit.probeTimeoutSec'))
         if rc:
             out('ACT', 'SETUP-PORTS', 'kitbag.py port --check', (o or e)[:300], f'python -X utf8 {pk} port (in the clone that changed, then commit)')
     ws = osp.dirname(kit)
@@ -164,7 +164,7 @@ def cmd_setup(kit, fix):
             continue
         auth = {'gh': ['gh', 'auth', 'status'], 'glab': ['glab', 'auth', 'status']}.get(exe)
         if auth:
-            rc, o, e = run([shutil.which(exe)] + auth[1:], timeout=30)
+            rc, o, e = run([shutil.which(exe)] + auth[1:], timeout=kit_param('audit.authTimeoutSec'))
             if rc:
                 out('ASK', 'SETUP-AUTH', exe, 'not logged in (auth status failed): the owner logs in by hand, never headlessly')
     envs = {'jira': ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'], 'jira-server': ['JIRA_BASE_URL'] + ([] if os.environ.get('JIRA_TOKEN') or (os.environ.get('JIRA_EMAIL') and os.environ.get('JIRA_API_TOKEN')) else ['JIRA_TOKEN']), 'linear': ['LINEAR_API_KEY'], 'azure': ['AZURE_DEVOPS_EXT_PAT'], 'youtrack': ['YOUTRACK_URL', 'YOUTRACK_TOKEN']}
@@ -359,7 +359,7 @@ def swarm_rules(s):
 
 # ---- recover: audit recover, stopped work and leftovers
 def cmd_recover(kit, fix):
-    rc, _, _ = git(kit, 'fetch', '--quiet', '--prune', timeout=120)
+    rc, _, _ = git(kit, 'fetch', '--quiet', '--prune', timeout=kit_param('audit.stepTimeoutSec'))
     if rc:
         out('WARN', 'RECOVER-GIT', kit, 'git fetch failed: ahead/behind and merged checks use the last fetched state')
     rc, st, _ = git(kit, 'status', '--porcelain=v1', '--branch')
@@ -402,7 +402,7 @@ def cmd_recover(kit, fix):
         tip = br or str(w.get('HEAD', ''))   # a detached worktree: its own HEAD commit, never the main clone's
         rc_m, _, _ = git(kit, 'merge-base', '--is-ancestor', tip, 'origin/main') if tip else (1, '', '')
         _, ahead, _ = git(kit, 'rev-list', '--count', f'origin/main..{tip}') if tip else (0, '?', '')
-        _, remote, _ = git(kit, 'ls-remote', '--heads', 'origin', br, timeout=60) if br else (0, '', '')
+        _, remote, _ = git(kit, 'ls-remote', '--heads', 'origin', br, timeout=kit_param('audit.probeTimeoutSec')) if br else (0, '', '')
         idle_h = (time.time() - max((osp.getmtime(osp.join(path, f)) for f in os.listdir(path)), default=0)) / 3600 if osp.isdir(path) else 99
         if rc_m == 0 and not wd.strip():
             if fix and idle_h > 2:
@@ -481,7 +481,7 @@ def cmd_recover(kit, fix):
                     out('ACT', 'RECOVER-ORPHAN', osp.join(root, d), 'worktree folder whose repo record is gone (git cannot see or clean it)',
                      'check it holds nothing unpushed, then the lead deletes the folder; run git worktree prune in its repo')
     cl = osp.join(kit, 'skills', 'bossy', 'bossy.ps1')
-    rc, o, e = pwsh(cl, 'cleanup', *(['-Quiet'] if fix else ['-DryRun']), timeout=300)   # without the verb: usage, exit 2
+    rc, o, e = pwsh(cl, 'cleanup', *(['-Quiet'] if fix else ['-DryRun']), timeout=kit_param('audit.cleanupTimeoutSec'))   # without the verb: usage, exit 2
     if rc == 124:
         out('WARN', 'RECOVER-CLEANUP', 'bossy.ps1 cleanup', 'did not finish within 5 min (git host lookups for many branches?): run it by hand with -DryRun')
     elif rc != 0:
@@ -624,7 +624,7 @@ def workflow_calls(kit):
         src = osp.join(tmp, 'cost.mjs')
         with open(src, 'w', encoding='utf-8') as fh:
             fh.write(COST_MJS)
-        rc, o, e = run([node, src, kit], timeout=120)
+        rc, o, e = run([node, src, kit], timeout=kit_param('audit.stepTimeoutSec'))
     try:
         calls = json.loads(o).get('calls', [])
     except ValueError:

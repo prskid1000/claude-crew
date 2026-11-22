@@ -7,8 +7,9 @@
   `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec
  python -X utf8 devtools.py cases add|result|round|render <task> ...   the task's test cases (one spec, "render" section):
   goals file, AI doc and human doc rendered from it, never hand-written
- python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch: title
-  (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec; the old form `mr <wt> "<title>" <body.md>` still works
+ python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"] [--check]   open a merge/pull request from the current branch: title
+  (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec; the old form `mr <wt> "<title>" <body.md>` still works;
+  --check: only the title / body gates, before the push (CHECK OK, nothing opened)
  python -X utf8 devtools.py render <kind> <spec.json> [<out file>]   an artefact rendered from its spec (kinds: mr-title mr-body commit
   comment-solution comment-status final-report retro wave-brief; crafty.ps1 wt commit -Spec)
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
@@ -33,8 +34,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L52 config · L107 run · L195 tracker · L349 process · L531 git host · L604 scope · L696 MR · L888 merge · L1219 docs ·
-  L1374 publish · L1833 render · L2289 plugins · L2303 keepboth · L2322 selftest · L2956 CLI
+Sections: L53 config · L108 run · L196 tracker · L375 process · L567 git host · L640 scope · L732 MR · L927 merge · L1258 docs ·
+  L1413 publish · L1872 render · L2332 plugins · L2346 keepboth · L2365 selftest · L3029 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -221,8 +222,24 @@ def _tracker(*args):
 
 
 def task(tid):
-    """{id, name, status, url, parent, assignees[], subtasks[{id,name,status,url}], list, description}"""
-    return _json(_tracker('view', tid))
+    """{id, name, status, url, parent, assignees[], subtasks[{id,name,status,url}], list, description}; a failed read: {'raw': why}"""
+    t = _json(_tracker('view', tid))
+    if not t.get('id') and AUTH_FAIL.search(view_why(t)):   # one retry: a token refresh or a blip (_run retries only transient errors)
+        t = _json(_tracker('view', tid))
+    return t
+
+
+AUTH_FAIL = re.compile(r'(?i)\b40[13]\b|unauthori[sz]ed|forbidden|not authorized')
+
+
+def view_why(t):
+    """A failed read's reason: plain-text output or a JSON error body ({err | error | message})."""
+    return '' if t.get('id') else str(t.get('raw') or t.get('err') or t.get('error') or t.get('message') or '').strip()
+
+
+def view_failed(tid, t):
+    """One line for an unreadable tracker task (the error's first line), else ''."""
+    return '' if t.get('id') else f'tracker view {tid} failed ({(view_why(t) or "no output").splitlines()[0][:160]})'
 
 
 
@@ -302,6 +319,15 @@ def prior_gate(task, repo, what):
         kitlog('calls', 'prior-refused', {'task': task, 'what': what, 'found': f"{hit[0].get('kind')} {hit[0].get('ref')}"})
         raise SystemExit(f"{what} refused: already exists: {'; '.join(f'{h.get("kind")} {h.get("ref")} {h.get("title")}' for h in hit)}: "
                          f"reuse it (a task: extend it with crafty.ps1 tracker scope -Task <id> -Add '<item>'), or --override '<reason>'")
+
+
+def doc_prior(key):
+    """doc --key <task>:testing-*: the prior-work gate on the first publish; the task's own published doc updates in place
+    (5 --override past a duplicate-task refusal, 2026-11-22)."""
+    if _pub_read(key).get('url'):
+        print(f'INFO devtools.py doc --key {key}: updates its published doc in place (no prior-work gate)', file=sys.stderr)
+    else:
+        prior_gate(key.rpartition(':')[0], '', f'devtools.py doc --key {key}')
 
 
 def task_of_branch(branch):
@@ -462,7 +488,15 @@ def bug_twins(tid, ts):
     by_mrs = [o for o, x in tr.items() if o != tid and (s := {_norm_ref(r) for r in (x or {}).get('mrs') or []} - {None}) and s <= mine]
     named = [w for w in re.findall(r'\b[\w-]*\d[\w-]*\b', str((ts.get('cases') or {}).get('tasks') or '')) if w != tid]
     bp = ((CFG.get('tracker') or {}).get('kindPrefixes') or {}).get('bug') or cfg('tracker.bugPrefix', '[Bug]')
-    return [x for x in (task(o) for o in dict.fromkeys(by_mrs + named)) if x.get('id') and str(x.get('name') or '').startswith(bp)]
+    out = []
+    for o in dict.fromkeys(by_mrs + named):
+        x = task(o)
+        if why := view_failed(o, x):   # tid itself read fine (auth works): the word is no task id here
+            print(f'[finish] {why}: skipped' + (f'; tracker auth works ({tid} read), so {o} is no task id: the cases "tasks" row names tracker task ids only'
+                  if AUTH_FAIL.search(view_why(x)) else f'; if {o} is a [Bug] task this fixes, add its doc links by hand'), file=sys.stderr)
+        elif str(x.get('name') or '').startswith(bp):
+            out.append(x)
+    return out
 
 
 def finish(tid, guide, solution_md, status='review', ai=None):
@@ -475,6 +509,8 @@ def finish(tid, guide, solution_md, status='review', ai=None):
         raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); both docs are linked on every task. Nothing was written.')
     prose_gate('comment-solution', solution_md)   # before doc, describe, status
     t, ts = task(tid), state_read(task_file(tid[len(TAG):] if TAG and tid.startswith(TAG) else tid)) or {}   # state keys carry no tag
+    if why := view_failed(tid, t):   # was a silent skip of the links block
+        raise SystemExit(f'finish {tid}: {why}; check tracker auth (crafty.ps1 tracker view {tid}; never log in headlessly), then finish again. Nothing was written.')
     ok, why, how = process_gate('finish', {'task': tid, 'guide': guide, 'ai': ai, 'status': status, 't': t, 'ts': ts})
     if not ok:
         raise SystemExit(f'finish {tid}: {why}{"" if how.startswith("builtin:") else f" (process.gates.finish {how})"}. Nothing was written.')
@@ -781,7 +817,8 @@ def refresh_mr_docs(tid, host=None, states=None):
     return done
 
 
-def mr_create(worktree, title, body_md, tgt=None):
+def mr_create(worktree, title, body_md, tgt=None, check=False):
+    """check: the title / body gates only, before the push (no git host call)."""
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
         print(f'[mr] body is missing {missing} - templates.md "MR spec"', file=sys.stderr)
@@ -798,6 +835,8 @@ def mr_create(worktree, title, body_md, tgt=None):
     link = task_link()
     if link and link not in body_md:
         print(f'[mr] body has no tracker ({TRACKER_TYPE}) task link', file=sys.stderr)
+    if check:
+        return 'CHECK OK: title and body pass the limits; push, then mr without --check (nothing was opened)'
     if FOOTER and FOOTER not in body_md:
         body_md = body_md.rstrip() + '\n\n' + FOOTER + '\n'
     host, proj = remote(worktree)
@@ -2052,10 +2091,10 @@ def cases_cmd(a):
             raise SystemExit('cases result <task> <case id> <PASS|FAIL|NOT_TESTED_LOCAL ...> [<evidence link> ...]\n'
                              '  e.g. python -X utf8 devtools.py cases result T1 A1 PASS https://drive.example/a1.png')
         new = {'cases': [{'id': rest[0], 'result': rest[1], 'evidence': rest[2:]}]}   # evidence replaced: an old FAIL's link never stays
-    gaps = []
+    gaps, mgap = [], ''
 
     def change(x):
-        nonlocal gaps
+        nonlocal gaps, mgap
         c = x.get('cases') or {}
         if verb == 'result' and rest[0] not in [k.get('id') for k in c.get('cases') or []]:
             raise SystemExit(f'cases result: {tid} has no case {rest[0]} (cases add it first)')
@@ -2076,9 +2115,13 @@ def cases_cmd(a):
                 own_spec(c, new, '--replace' in rest)
             c = merge_spec(c, new)
         gaps = cases_gaps(c)
+        if not gaps and verb in ('add', 'result'):   # the qa.matrix gap now, not first at finish (4 late refusals, retro 2026-11-22)
+            mgap = next((g for g in case_gaps(render_cases(c, 'ai', tid)) if g.startswith('UI cases miss qa.matrix')), '')
         x['cases'] = c
     task_index(tid, change)
     print(f'cases {tid}: {verb} ok' + (f' (render refuses until fixed: {"; ".join(gaps)})' if gaps else ''))
+    if mgap:
+        print(f'WARN cases {tid}: {mgap} (the spec\'s "matrix" field renders that line); doc and finish refuse until then', file=sys.stderr)
     return 0
 
 
@@ -2683,6 +2726,16 @@ def _publish_selftest(expect, refused):
         g['CFG'] = {**CFG, 'qa': {'matrix': {'viewports': ['1280x720', '1920x1080'], 'fontScales': [2], 'themes': ['High contrast']}}}
         expect('case_gaps: the "Matrix:" line may list matrix() tags (1280x720_f2_high-contrast)',
                not cg([row('A3', 's', 'PASS', '![a](https://i/a.png)'), 'Matrix: 1280x720_f2_high-contrast, 1920x1080_f2_high-contrast\n']))
+        mxs = w(os.path.join(tmp, 'mx.json'), json.dumps({'title': 'm', 'cases': [{'id': 'A1', 'type': 'positive', 'steps': 's', 'expected': 'e', 'result': 'PASS',
+                'evidence': ['s.png=https://i/s.png']}, {'id': 'A2', 'type': 'negative', 'steps': 's', 'expected': 'e'}]}))
+        with contextlib.redirect_stderr(io.StringIO()) as fe, contextlib.redirect_stdout(io.StringIO()):
+            cases_cmd(['add', 'T78', mxs])
+        task_index('T78', lambda x: x.pop('cases', None))
+        expect('cases add: a UI case without each qa.matrix value warns at once, not first at finish', 'WARN cases T78: UI cases miss qa.matrix value(s) 1280x720' in fe.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()) as fe:
+            refused('doc --key: the first publish of a task doc needs a fresh prior', lambda: doc_prior('T79:testing-ai'), 'run crafty.ps1 prior -Task T79')
+            _pub_update('T79:testing-ai', url='https://x/d79'); doc_prior('T79:testing-ai')
+        expect('doc --key: the task\'s own published doc updates in place (no prior gate)', 'updates its published doc in place' in fe.getvalue())
         g['CFG'] = {**CFG, 'qa': {'notLocal': [{'name': 'help service', 'match': r'/help\b'}], 'matrix': {'viewports': ['1280x720']}}}
         legacy = ('# AI\n' + ait + row('L1', 'GET /help', 'PASS', '`test_help`') + '| L2 | negative | s | ok | PASS | ![a](https://i/a.png) |\n'
                   + rt + '| 1 | 2026-11-01 | L1-L2 | 2 PASS | | | |\n')
@@ -2868,6 +2921,22 @@ def _publish_selftest(expect, refused):
         bd = {a[1]: a[2] for a in calls if a[0] == 'describe'}
         expect(f'finish: a [Bug] task with only its MRs or named in its cases tasks row gets the same doc links; other MRs or no bug prefix: none ({sorted(bd)})',
                sorted(bd) == ['B1', 'B3'] and all(v.startswith(f'**Testing doc (human):** {u1}\n\n**Testing doc (AI):** {ua}\n') and v.endswith('Saw x.') for v in bd.values()))
+        sv = {x: g[x] for x in ('_tracker', 'read_tracking', 'refresh_mr_docs', 'task')}; views = []   # retro 2026-11-22: UP-T1..T5 read as tasks, 401 each
+        g.update(_tracker=lambda *a: (views.append(a[1]) or (f'failed to fetch task {a[1]}: 401 Unauthorized' if a[1] != 'T9' else json.dumps({'id': 'T9', 'name': 'n', 'status': 'promoted', 'description': st['d']}))) if a[0] == 'view' else calls.append(a) or '',
+                 read_tracking=lambda: {'tasks': {}}, refresh_mr_docs=lambda t, host=None, states=None: [], task=saved['task'])
+        task_index('T9', lambda x: x.update(cases={'tasks': 'UP-T1'}))
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as fe:
+                finish('T9', human, '**Solution** — x', ai=a2p)
+            calls.clear()
+            refused('finish: an unreadable task (401 twice) -> one line naming the auth check, nothing written', lambda: finish('T8', human, '**Solution** — x', ai=a2p), 'check tracker auth (crafty.ps1 tracker view T8')
+        finally:
+            g.update(sv); task_index('T9', lambda x: x.pop('cases', None))
+        expect(f'finish: a cases "tasks" word that is no task (401) -> one retry, one skip line, finish goes on ({views})',
+               views.count('UP-T1') == 2 and views.count('T8') == 2 and 'UP-T1 is no task id' in fe.getvalue() and not calls)
+        jb = {'err': 'Team not authorized', 'ECODE': 'OAUTH_027'}
+        expect('a JSON error body (no id) is a failed read with its reason, retried as an auth error',
+               view_failed('X1', jb) == 'tracker view X1 failed (Team not authorized)' and AUTH_FAIL.search(view_why(jb)) and not view_failed('X1', {'id': 'X1'}))
         expect('_merge_val (K32): nested dicts per key, a type clash keeps the first, a prefix of an earlier value still appends, a repeat adds nothing',
                _merge_val({'a': {'x': 1}}, {'a': {'y': 2}}, 'B') == {'a': {'x': 1, 'y': 2}} and _merge_val(['a'], 'b', 'B') == ['a'] and _merge_val('a', ['b'], 'B') == 'a'
                and _merge_val('A; B: xy', 'x', 'B') == 'A; B: xy; B: x' and _merge_val('A; B: x', 'x', 'B') == 'A; B: x')
@@ -2883,6 +2952,10 @@ def _publish_selftest(expect, refused):
             [{'iid': 5, 'web_url': 'https://h/g/r/5'}] if v == 'mr.list' else {'web_url': 'https://h/g/r/5'}))
         u = mr_create('.', 'fix(x): y (T9)', '## Summary\n## Changes\n## How tested\n| Not run | nothing |\n## Risks\n## Links\n', 'main')
         expect('mr: an open MR from the branch is edited (mr.update), never a second one', u == 'https://h/g/r/5' and hc == ['mr.list', 'mr.update'])
+        hc.clear(); uc = mr_create('.', 'fix(x): y (T9)', '## Summary\n## Changes\n## How tested\n| Not run | nothing |\n## Risks\n## Links\n', 'main', check=True)
+        with contextlib.redirect_stderr(io.StringIO()):
+            g['PROSE_OK'] = ''; (refused if os.path.exists(os.path.join(KIT_DIR, 'skills/crafty/templates.md')) else lambda *x: None)('mr --check: an over-limit body is refused before the push (a test kit without templates.md has no limits)', lambda: mr_create('.', 'fix(x): y', '## Summary\n' + 'word ' * 400 + '\n## Changes\n## How tested\n## Risks\n## Links\n', 'main', check=True), 'mr-body refused'); g['PROSE_OK'] = 'selftest'
+        expect('mr --check: the gates only, no git host call (CHECK OK)', uc.startswith('CHECK OK') and hc == [])
         mb = {'b': '## Summary\nx\n\n' + FOOTER + '\n'}
         g['_host'] = lambda v, **a: {'title': 't', 'description': mb['b']} if v == 'mr.get' else (mb.update(b=a['body']) or {'web_url': 'https://h/g/r/5'})
         fx = lambda p, s='nit': {'mr': 'https://h/g/r/5', 'file': 'a.ts', 'line': 3, 'severity': s, 'problem': p}
@@ -2968,6 +3041,8 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'docgaps': 0, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
+    CHECK = cmd == 'mr' and '--check' in a   # the body gates before the push (retro 2026-11-22: 9 mr-body refusals after it)
+    a = [x for x in a if not (CHECK and x == '--check')]
     for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--run-id', '--override') if cmd in ('doc', 'evidence', 'docgaps') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok', '--no-docs') if cmd == 'merge' else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
@@ -3015,10 +3090,10 @@ def _cli():
         s = load_spec(opt['--spec'])
         if gaps := spec_gaps(s, 'mr-body'):
             raise SystemExit(f'mr spec refused: missing {", ".join(gaps)}')
-        print(mr_create(a[1], render_title(s), render_mr_body(s), *(a[2:3] or [])))
+        print(mr_create(a[1], render_title(s), render_mr_body(s), *(a[2:3] or [None]), check=CHECK))
     elif cmd == 'mr':
         print('WARN devtools.py mr: a hand-written title / body; render them: mr <wt> --spec <mr.json> (templates.md "MR spec")', file=sys.stderr)
-        print(mr_create(a[1], a[2], _body(a[3]), *(a[4:5] or [])))
+        print(mr_create(a[1], a[2], _body(a[3]), *(a[4:5] or [None]), check=CHECK))
     elif cmd == 'followups':   # each finding to its MR (an unnamed MR: every MR)
         items, urls = json.load(open(a[1], encoding='utf-8')), a[2:]
         for u in urls:
@@ -3045,7 +3120,7 @@ def _cli():
             print('devtools.py doc: --mode append|replace', file=sys.stderr)
             sys.exit(2)
         if (opt.get('--key') or '').rpartition(':')[2] in ('testing-doc', 'testing-ai') and not opt.get('--run'):   # a dev round's task doc
-            prior_gate(opt['--key'].rpartition(':')[0], '', f"devtools.py doc --key {opt['--key']}")
+            doc_prior(opt['--key'])
         print(publish(opt['--key'], title, path, *(a[3:4] or [None]), mode=opt.get('--mode'), label=opt.get('--label') or '',
                       run=json.load(open(opt['--run'], encoding='utf-8-sig')) if opt.get('--run') else None, run_id=opt.get('--run-id') or '') if opt.get('--key')
               else make_doc(title, path, *(a[3:4] or [])))

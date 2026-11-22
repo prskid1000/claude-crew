@@ -40,7 +40,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Writing a shared task doc (one testing-ai key, many wave agents) -> read the current doc first, keep every other area's section and Rounds rows, write patches with the Edit tool or a file (heredoc python collapses backslash-n; areas lost rows). (4x)
 - envy deploy REFUSED by a foreign layer not based on the published head -> board msg its holder; holder off the board: raise an ENV-FIX (deploying over it breaks the holder's test). (2x)
 - A doc change, final rebase or flaky tracker call -> re-run devtools.py finish and check the tracker status after it (it updates the two docs, the links block and the solution comment in place). (4x)
-- Before devtools.py mr -> run `kitbag.py prose --kind mr-body` and fix the body (260 words, How tested bullets, one Not run line) (fixing after mr's warning means a second push). (4x) (2×)
+- Before the push -> `devtools.py mr <wt> --spec mr.json --check` and fix the body (260 words, How tested bullets, one Not run line) (fixed in kit: crafty step 6 runs it; fixing after mr's refusal meant a second push; seen again = regression). (4x) (2×)
 - Writing an MR's state in a report -> re-query the host's mergeState before the summary (earlier output went stale: open vs merged was inferred wrong). (4×)
 - A rule names only items that exist (statuses, keys) -> check every listed name against its source before commit (invented and stale entries shipped). (2x)
 - Before merge -> confirm a pipeline exists for the MR head; none (rules skipped): trigger one or report NOT_MERGED with the reason (agents waited silently on no pipeline). (2x)

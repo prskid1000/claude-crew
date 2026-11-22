@@ -91,6 +91,8 @@ Expect "guard: a .ps1 / .py in command position -> the pwsh -File / python -X ut
   ($gRw[2] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: pwsh -NoProfile -File skills/pokey/pokey.ps1 results patch -Patch ''{"set":{"T1":{"verify":"a | b; c"}}}'' ->') -and
   ($gRw[3] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: python -X utf8 tools/a.py --msg it''s --n 2 ->') -and
   ($gRw[4] | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason -match [regex]::Escape('Rewrite: pwsh -NoProfile -File skills/pokey/pokey.ps1 api -Path "D:\x\" -Flag 1 ->'))   # the ready command first (retro 2205)
+$gEnv = foreach ($gc in "export CLAUDE_AGENT='t'; & skills/bossy/bossy.ps1 track add -Mrs 'r!9' 2>&1 | tail -5", "`$env:CLAUDE_AGENT='p'; & skills/bossy/bossy.ps1 launch -List") { $gj = @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $gc } } | ConvertTo-Json -Compress; ((pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') guard -Json $gj) -join '' | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason }
+Expect "guard rewrite keeps 2>&1 and carries a set env var as a bash prefix (retro 2026-11-22: $($gEnv -join ' | '))" ($gEnv[0] -match [regex]::Escape("Rewrite: CLAUDE_AGENT='t' pwsh -NoProfile -File skills/bossy/bossy.ps1 track add -Mrs 'r!9' 2>&1 ->") -and $gEnv[1] -match [regex]::Escape("Rewrite: CLAUDE_AGENT='p' pwsh -NoProfile -File skills/bossy/bossy.ps1 launch -List ->"))
 # a heredoc fed to pwsh -Command - is PowerShell: & <script>.ps1 there runs in place (retro 2026-11-22: 50+ false blocks)
 $gHd = foreach ($gc in "pwsh -NoProfile -Command - <<'EOF'`n`$j = 'a'`n& 'skills/pokey/pokey.ps1' results patch -Code T1`nEOF", "cat <<'PS' | pwsh -NoProfile -Command -`n& skills/pokey/pokey.ps1 api`nPS", "bash <<'EOF'`nskills/pokey/pokey.ps1 api`nEOF") {
   $gj = @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $gc } } | ConvertTo-Json -Compress; $(if (((pwsh -NoProfile -File (Join-Path $k 'skills/crafty/crafty.ps1') guard -Json $gj) -join '') -match '"deny"') { 'deny' } else { 'allow' }) }
@@ -120,5 +122,11 @@ Expect "guard: kit branch = kitBranch, else main ($($kbr -join ' '))" (($kbr -jo
 $ng = Join-Path (Kd) 'ng'; New-Item -ItemType Directory -Force $ng | Out-Null; '{}' | Set-Content "$ng/angular.json"; '{ "name": "x" }' | Set-Content "$ng/package.json"
 $ngRun = "$((pwsh @np $D stack -Dir $ng -Json | ConvertFrom-Json).commands.run)"
 Expect "stack: the angular run binds 127.0.0.1 ($ngRun)" ($ngRun -eq 'npx ng serve --host 127.0.0.1 --port {port}')
+# wt commit never stages test-run output (commit.ignore default; retro 2026-11-22)
+$ci = Join-Path (Kd) 'commit-ignore'; New-Item -ItemType Directory -Force "$ci/web/cypress/screenshots", "$ci/web/cypress/reports", "$ci/web/src" | Out-Null; 'x' | Set-Content "$ci/a.txt"; Save-GitRepo $ci i
+'y' | Set-Content "$ci/web/src/b.ts"; 'png' | Set-Content "$ci/web/cypress/screenshots/s.png"; 'r' | Set-Content "$ci/web/cypress/reports/r.json"
+$null = pwsh @np $D wt commit -Dir $ci -Message 'feat: add the b module' 2>&1; $cic = $LASTEXITCODE; $cif = @(git -C $ci show --name-only --format= HEAD)
+$null = pwsh @np $D wt commit -Dir $ci -Paths web -Message 'feat: stage web only' -AllowEmpty 2>&1
+Expect "wt commit: cypress screenshots / reports stay out (with -Paths too); the source change goes in ($cic; $($cif -join ', '))" ($cic -eq 0 -and ($cif -join ',') -eq 'web/src/b.ts' -and -not (git -C $ci diff --cached --name-only) -and @(git -C $ci status --porcelain --untracked-files=all).Count -eq 2)
 Remove-TestKit $k
 Complete-Tests

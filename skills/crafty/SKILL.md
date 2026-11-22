@@ -26,7 +26,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 
 ## Steps (every devy; your brief wins where it differs)
 ```powershell
-$D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L = '<kit>/skills/envy/envy.ps1'
+$D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L = '<kit>/skills/envy/envy.ps1'; $P = '<kit>/skills/crafty/devtools.py'
 & $O learn -Read -Skill crafty   # 0. lessons
 & $D prior -Task <id> -Repo <repo>   # 0. FOUND: stop, tell the coordinator
 & $O board join -Agent <id> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
@@ -46,11 +46,11 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 #      coordinator); never BLOCKED for an env reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting,
 #      pause" -> stop checks there until "deploy done", then re-run; 0 bugs, every goal met -> release -> 6
 & $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
-& $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
-python <kit>/skills/crafty/devtools.py mr <wt> --spec mr.json   # 6. MR (templates.md "MR spec"); after finish: again, both links
-python <kit>/skills/crafty/devtools.py finish <task> cases solution.json review --ai cases   # human doc, links block, comment, status; lists each MR's tester guide (an open one without: refused)
+& $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; python $P mr <wt> --spec mr.json --check; git -C <wt> push -u origin <branch>
+python $P mr <wt> --spec mr.json   # 6. MR (templates.md "MR spec"); after finish: again, both links
+python $P finish <task> cases solution.json review --ai cases   # human doc, links block, comment, status; lists each MR's tester guide (an open one without: refused)
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
-python <kit>/skills/crafty/devtools.py merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
+python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic); no task: & $D tracker create -Spec <json> ("task spec"; 2+ related: parent first, or tracker group)
 & $O deploy request -Mrs <repo>!<iid>,... -Run <run>   # 8. deploy batch, silently (never deploy, never ask)
 & $O board leave -Session <token> -Status done   # 9. final report (templates.md "Final reports")

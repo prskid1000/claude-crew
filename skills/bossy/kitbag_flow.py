@@ -1559,7 +1559,7 @@ def live_root(kit):
 
 def is_live(kit):
     """kit is the main worktree of a git repo (not a linked worktree, not a copy outside git)."""
-    rc, top, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-common-dir', timeout=20)
+    rc, top, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-common-dir', timeout=kit_param('flow.gitTimeoutSec'))
     return rc == 0 and osp.normcase(osp.realpath(osp.dirname(osp.normpath(top)))) == osp.normcase(osp.realpath(kit))
 
 def default_out(kit):
