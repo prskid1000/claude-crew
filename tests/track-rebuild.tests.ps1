@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/track-rebuild.tests.ps1: bossy.ps1 track -Rebuild, offline, on a throw-away test kit with adapters/track_rebuild.ps1; track remove; invalid task files;
-status writes (debounce, no step back, a parent follows its subtasks); launch area subtasks.
+status writes (debounce, no step back, a parent follows its subtasks); launch area subtasks; track route; -Ack of a no-fix-linked flag.
 Usage: pwsh -NoProfile -File tests/track-rebuild.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -121,5 +121,45 @@ Expect "roles: Linear states (Todo = open, Done = closed, Backlog / Canceled no 
 Expect "roles: writes use the scope's names, a role it lacks is skipped (never invented), inTest -> review and closed -> inProgress refused, -Back reopens ($(& $rx 'wr'))" ((& $rx 'wr') -eq 'P-1=Code Review,P-1=QA,P-1=Shipped,P-1=In Progress|True|True|True')
 Expect "roles: an unknown live name is read again once, then listed as unmapped ($(& $rx 'unk'))" ((& $rx 'unk') -eq '|Verified')
 Expect "roles: a live agent owns its task's code round; a sibling's write is refused, the coordinator's passes ($(& $rx 'own'))" ((& $rx 'own') -eq 'True|Code Review')
+# track route (2026-11-22: 5 failed tasks fixed in another task's wave stayed failed): a failed task follows the wave task's NEW MRs
+# (merged before the route: not counted), promoted with a -Back naming them when merged; a [Bug] collector follows a run's MRs
+$route = Invoke-PsTest track-route @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+$KitConf.TrackerType = 'fake'; $global:sts = @{ rt1 = 'failed testing'; bg1 = 'open'; wv1 = 'review' }; $global:ms = @{ '1' = 'merged'; '9' = 'merged'; '2' = 'opened'; '4' = 'opened' }; $global:backs = @{}
+function Get-TrackerTask($id) { [pscustomobject]@{ name = "task $id"; status = $global:sts[$id]; subtasks = @() } }
+function Set-TrackerStatus($id, $s, $b) { $global:sts[$id] = $s; $global:backs[$id] = "$b" }
+function Get-TrackerComments($id) { @() }; function Test-KitProcessGate { @{ ok = $true } }; function Test-KitTaskDocLink { $true }; function Update-KitTaskItems { }
+function Start-Process { }; function ProjPath($r) { "g/$r" }
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -eq 'mr.get' -and $global:ms.ContainsKey("$($A.n)")) { [pscustomobject]@{ state = $global:ms["$($A.n)"] } } }
+Update-KitTracking { param($t) $t.tasks['rt1'] = @{ task = 'rt1'; mrs = @('api!9'); onMerged = @('promoted'); done = $true; doneAt = (Get-Date).AddDays(-1).ToString('o') } }
+$null = Invoke-Track add -Task wv1 -Mrs 'api!1'
+$r1 = Invoke-Track route -From rt1 -To wv1 -Items X1 | Out-String; $o1 = (Read-KitTracking).tasks['rt1']
+"wait:$($r1 -match 'already merged there, not counted: api!1' -and $r1 -match 'HOLD rt1: routed to wv1, no new fix MR' -and -not $o1.done -and $global:sts['rt1'] -eq 'failed testing' -and @($o1.routes)[0].items -contains 'X1')"
+$null = Invoke-Track add -Task wv1 -Mrs 'api!2'; $null = Invoke-Track run -Task rt1; $o2 = (Read-KitTracking).tasks['rt1']
+"joined:$(@($o2.mrs) -contains 'api!2' -and @($o2.routedMrs) -join ',' -eq 'api!2' -and $global:sts['rt1'] -eq 'failed testing')"
+$global:ms['2'] = 'merged'; $r3 = Invoke-Track run -Task rt1 | Out-String
+"promoted:$($global:sts['rt1'] -eq 'promoted' -and $global:backs['rt1'] -match 'fixed by api!2$' -and (Read-KitTracking).tasks['rt1'].done -and $r3 -match 'DONE rt1')"
+$global:sts['rt1'] = 'failed testing'; $r5 = Invoke-Track route -From rt1 -To wv1 | Out-String   # failed again: the old route's api!2 is no fix for it
+"again:$($global:sts['rt1'] -eq 'failed testing' -and $r5 -match 'HOLD rt1: routed to wv1, no new fix MR' -and -not (Read-KitTracking).tasks['rt1'].done)"
+$wd = Get-KitPath waves -Create; Set-Content (Join-Path $wd 'run-a.json') (@{ run = 'run-a'; running = @(); agents = @{ a = @{ mrs = @(@{ url = 'https://h.example/g/api/-/merge_requests/4' }) } } } | ConvertTo-Json -Depth 6)
+$null = Invoke-Track route -From bg1 -To run-a; $s4 = $global:sts['bg1']; $global:ms['4'] = 'merged'; $null = Invoke-Track run -Task bg1
+"bug:$($s4 -eq 'open' -and $global:sts['bg1'] -eq 'promoted' -and @((Read-KitTracking).tasks['bg1'].routedMrs) -join ',' -eq 'g/api!4' -and (Read-KitTracking).tasks['bg1'].wave -eq 'run-a')"
+$null = Invoke-Track add -Task wv2 -Mrs 'api!5'; $null = Invoke-Track route -From rt9 -To wv2   # api!5 unread: refused (exits 1)
+'@ @($O)
+Expect-Each $route 'track route: # (wait: merged-before MRs not counted, held; joined: a new wave MR joins the failed task; promoted: merged -> promoted, -Back lists it; again: a second route after a promotion holds; bug: a [Bug] collector follows a run''s MRs)' @('wait', 'joined', 'promoted', 'again', 'bug') 4
+Expect "track route: an MR state not read refuses the route ($(@($route) -match 'not read' | Select-Object -First 1))" (@($route | Where-Object { "$_" -match 'route: MR state of api!5 not read' }).Count -eq 1)
+# a FAILED TESTING / new [Bug] flag (no fix MR linked) hides only for an ack naming a decision id or an MR, 2 h; -Ack without one is refused
+$ackRef = Invoke-PsTest ack-ref @'
+. $args[0] 6>$null; $now = Get-Date; $ff = [pscustomobject]@{ level = 'ACT'; what = '2 task(s) failed testing, back to the dev flow, no fix MR linked: ft1 (q1); ft2 (q1)'; action = 'x'; ackNeeds = 'ref' }
+$ok = { param($r, $h) $a = @{}; $a[(Get-KitFlagKey $ff.what)] = @{ at = $now.AddHours(-$h).ToString('o'); reason = $r }; -not @(Select-KitFlags @($ff) $a $now | Where-Object level -eq 'ACT').Count }
+$dd = Get-KitPath decisions -Create; Set-Content (Join-Path $dd 'd-20261121120000-coordinator-ab12.json') '{}'   # api!2: tracked by the route checks above
+$hv = "$(& $ok 'being fixed in the polish wave' 1)/$(& $ok 'fix in api!2' 1)/$(& $ok 'd-20261121120000-coordinator-ab12' 1)/$(& $ok 'fix in api!2' 3)/$(& $ok 'fix in api!9179' 1)/$(& $ok 'd-20261121000000-x-1' 1)"; "hide:$($hv -eq 'False/True/True/False/False/False')"; $hv
+$sf = Get-KitPath supervise-state -Create; Set-Content $sf (@{ lastFlags = @(@{ level = 'ACT'; what = $ff.what; action = 'x'; ackNeeds = 'ref' }) } | ConvertTo-Json -Depth 5)
+$a1 = Add-KitFlagAck '2 task(s) failed testing, back to the dev flow' 'being fixed in the polish wave'; $n1 = @((Get-Content $sf -Raw | ConvertFrom-Json -AsHashtable).acks.Keys | Where-Object { $_ }).Count
+$a2 = Add-KitFlagAck '2 task(s) failed testing, back to the dev flow' 'routed: api!2'
+"refuse:$("$a1" -like 'REFUSED: no fix MR linked*' -and $n1 -eq 0 -and "$a2" -like 'acknowledged for 2 h*')"; Remove-Item -LiteralPath $sf   # its ack would hide the failedTesting checks below
+'@ @($O)
+Expect-Each $ackRef 'supervise -Ack, no fix MR linked: #' @('hide', 'refuse') 2
 Remove-TestKit $k
 Complete-Tests

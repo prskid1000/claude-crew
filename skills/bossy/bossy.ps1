@@ -15,6 +15,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
     | rollup -Status (-Task <parent> | -All) [-Apply]   parent status = its least advanced open subtask (dry run unless -Apply)
     | forget-item -Task -Item <codes>   items removed from a task's checklist on purpose: never written back
     | remove -Task -Mrs [-Reason]   a wrongly attached MR off the task (kept in its removed list; add -Mrs re-attaches)
+    | route -From <failed / [Bug] task> -To <task | run> [-Items <check ids>] [-Mrs]   fixed in that wave: its new MRs join, all merged -> promoted
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
     one row per resource: holder, since, last seen, last used (files only)
@@ -30,9 +31,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L38 init · L49 board · L228 budget · L258 launch · L499 recover · L586 pause · L597 resume · L664 program · L715 param ·
-  L721 track · L1058 supervise · L1396 report · L1476 audit · L1536 storage · L1539 bugbrief · L1653 cleanup · L1740 learn ·
-  L1771 decide · L1925 debate · L1969 health · L2037 setup · L2134 guard-sendmessage
+Sections: L39 init · L50 board · L229 budget · L259 launch · L500 recover · L587 pause · L598 resume · L665 program · L716 param ·
+  L722 track · L1096 supervise · L1436 report · L1516 audit · L1576 storage · L1579 bugbrief · L1693 cleanup · L1780 learn ·
+  L1811 decide · L1965 debate · L2009 health · L2077 setup · L2174 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -749,7 +750,7 @@ function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.r
 # a cached track-run ATTENTION about missing testing docs / solution whose task moved on since (devtools.py finish promoted it)
 function Test-KitTrackLineStale([string]$Line) { $Line -match '^ATTENTION (?<t>\S+): .*no (solution/testing comment|testing-doc link)' -and (Test-TrackerStatus $(try { [string](Get-TrackerTask $Matches.t).status } catch { '' }) 'promoted', 'inTest', 'closed') }
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item')][string]$Action = 'show', [string]$Reason, [string]$From, [string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion, [switch]$Status, [switch]$All, [switch]$Apply)
+param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item', 'route')][string]$Action = 'show', [string]$Reason, [string]$From, [string]$To, [Alias('Items')][string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion, [switch]$Status, [switch]$All, [switch]$Apply)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # throw is swallowed under SilentlyContinue
@@ -802,7 +803,8 @@ function Save($o, [switch]$Run) {
       if ($o.done -and -not $cur.done -and [string]$cur.reopenedAt -ne [string]$o.reopenedAt) { $o.done = $false; $o.reopenedAt = $cur.reopenedAt; foreach ($k in $script:doneFields) { $o.Remove($k) } }
       elseif ($cur.done -and -not $o.done -and [string]$cur.reopenedAt -eq [string]$o.reopenedAt -and -not $newMrs.Count) { $o.done = $true; $o.doneAt = $cur.doneAt }
     }
-    if ($cur -and $Run) { foreach ($k in 'holdPromotion', 'onMerged', 'wave', 'planReleased', 'removed') { if ($cur.ContainsKey($k)) { $o[$k] = $cur[$k] } else { $o.Remove($k) } } }
+    if ($cur -and $Run) { foreach ($k in 'holdPromotion', 'onMerged', 'wave', 'planReleased', 'removed', 'routes') { if ($cur.ContainsKey($k)) { $o[$k] = $cur[$k] } else { $o.Remove($k) } }
+      $rmU = @(@($o.routedMrs) + @($cur.routedMrs) | Where-Object { $_ } | Select-Object -Unique); if ($rmU.Count) { $o.routedMrs = $rmU } else { $o.Remove('routedMrs') } }   # a route -Mrs during this run stays
     if ($cur) { foreach ($k in 'mrs', 'mergeAfter') { $o[$k] = @(@($o[$k]) + @($cur[$k]) | Where-Object { $_ } | Select-Object -Unique) }; if ($cur.discover) { $o.discover = $true } }
     # a removed MR stays off; track add -Mrs re-attaches it
     $rmSeen = @{}; $rmList = @(@($cur.removed) + @($o.removed) | Where-Object { $_ -and $_.mr -and -not $rmSeen.ContainsKey("$($_.mr)") -and "$($_.mr)" -notin $script:trackReadd } | ForEach-Object { $rmSeen["$($_.mr)"] = 1; $_ })
@@ -846,6 +848,12 @@ function MrState0($ref) {
   if ($m.state -eq 'opened' -and $m.head_pipeline -and ($ps = ConvertTo-KitCiState "$($m.head_pipeline.status)") -in 'failed', 'canceled') { return "opened (pipeline $ps)" }
   if ($m.state -eq 'opened' -and ($m.has_conflicts -or $m.detailed_merge_status -eq 'conflict')) { return 'opened (conflict)' }
   $m.state
+}
+# a route's MRs: a run's from its wave file (agents.*.mrs), a task's from its tracking
+function RouteRefs($rt) {
+  $rr = if ("$($rt.kind)" -eq 'run') { $wf = Join-Path $wavesDir "$($rt.to).json"; if (Test-Path -LiteralPath $wf) { $w = Get-Content -LiteralPath $wf -Raw | ConvertFrom-Json; foreach ($p in (Get-KitProps $w.agents)) { foreach ($m in @($p.Value.mrs)) { if ($m.url) { $m.url } else { "$m" } } } } }
+    else { @((Read-KitTracking).tasks["$($rt.to)"].mrs) }
+  @(@($rr) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
 }
 # MR links: the task's Items checklist (adapters/task_rollup.ps1), no MRs comment
 function Set-KitTaskMrItems($id) { if ($fn = Get-Command Update-KitTaskItems -ErrorAction Ignore) { try { $null = & $fn $id (Get-TrackerTask $id) -Force } catch { Write-Warning "Items of ${id} not updated: $_" } } }
@@ -949,6 +957,13 @@ switch ($Action) {
       }
       if ($o.holdPromotion -and ($hp = HeldPast $o)) { if (-not $Quiet) { $hp }; continue }
       if ($o.holdPromotion) { Hold "HOLD $($o.task): promotion held ($($o.holdPromotion)); release: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
+      # track route: the fix lands in another task's or run's MRs; new ones join this task (Items checklist) and promote it when merged
+      if (@($o.routes | Where-Object { $_ }).Count) {
+        $rtOff = @(@($o.removed) | ForEach-Object { "$($_.mr)" }) + @($o.routes | ForEach-Object { @($_.base) })
+        $rtNew = @($o.routes | ForEach-Object { RouteRefs $_ } | Where-Object { $_ -notin $rtOff -and @($o.mrs) -notcontains $_ } | Select-Object -Unique)
+        if ($rtNew.Count) { $o.mrs = @(@($o.mrs) + $rtNew); $o.routedMrs = @(@($o.routedMrs) + $rtNew | Where-Object { $_ } | Select-Object -Unique); Save $o -Run; Set-KitTaskMrItems $o.task }
+        if (-not @($o.routedMrs | Where-Object { $_ }).Count) { Hold "HOLD $($o.task): routed to $(@($o.routes.to) -join ', '), no new fix MR there yet (one merged already: bossy.ps1 track add -Task $($o.task) -Mrs <it>)"; continue }
+      }
       if ($o.discover) {
         if (-not @($KitConf.TrackerRepos).Count -and -not @($o.mrs).Count) { if (-not $Quiet) { "CONFIG $($o.task): -Discover needs ""trackerRepos"" in kit.local.json (or register MRs: bossy.ps1 track add -Task $($o.task) -Mrs <repo>!<iid>)" } }
         # slow search: every 30 min once MRs are known
@@ -994,7 +1009,8 @@ switch ($Action) {
       $ciTask = Get-KitCiTask $o.task   # a CI job's task: the job passing again is its test, no testing docs
       if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and -not ($pg = Test-KitProcessGate promote @{ task = $o.task }).ok) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, $(if ($pg.how -eq 'builtin:testingDocs') { 'no testing-doc link (human + AI) or the task is unread' } else { "process.gates.promote refused ($($pg.how)): $($pg.why)" }): not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
       $setFailed = $false; $kept = ''
-      foreach ($s in $todo) { try { if (($sr = "$(Set-TrackerStatus $o.task $s)") -like 'SKIPPED*' -and $sr -notmatch 'has no \w+ status') { $kept = $sr.Substring(9); break } } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
+      $fixBack = if (Test-TrackerStatus $now 'failedTesting') { "failed testing, fixed by $(@($(if (@($o.routedMrs | Where-Object { $_ }).Count) { $o.routedMrs } else { $o.mrs })) -join ', ')" } else { '' }
+      foreach ($s in $todo) { try { if (($sr = "$(Set-TrackerStatus $o.task $s $fixBack)") -like 'SKIPPED*' -and $sr -notmatch 'has no \w+ status') { $kept = $sr.Substring(9); break } } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
       if ($kept) { $o.done = $true; Save $o -Run; "KEPT $($o.task): $kept"; continue }
       if ($ciTask) { Set-KitTaskMrItems $o.task; $cj = Close-KitCiTask $o.task $ciTask @($o.mrs)
@@ -1038,6 +1054,28 @@ switch ($Action) {
     Set-KitTaskMrItems $rmTask; $rmS = Load $rmTask
     "removed $($rmRefs -join ', ') from $rmTask$(if ($Reason) { " ($Reason)" }): its MRs now $(if (@($rmS.mrs).Count) { @($rmS.mrs) -join ', ' } else { 'none' }); listed under removed (track add -Mrs re-attaches)"
   }
+  'route' {   # a failed or [Bug] task fixed in another task's or run's wave (contracts addendum): it follows those MRs
+    $rtFrom = NormTask $From; $rtTo = "$To".Trim()
+    if (-not $rtFrom -or -not $rtTo) { Stop-KitVerb "usage: bossy.ps1 track route -From <failed or [Bug] task> -To <task id | run id> [-Items <check ids>] [-Mrs <its fix MRs already open or merged>]" }
+    $rtKind = if (Test-Path -LiteralPath (Join-Path $wavesDir "$rtTo.json")) { 'run' } else { 'task' }
+    if ($rtKind -eq 'task') { $rtTo = NormTask $rtTo; if (-not $rtTo -or $rtTo -eq $rtFrom) { Fail "route: -To $To is neither a run (no waves/$To.json) nor another task id" } }
+    $rtGiven = @(Split-KitList $Mrs | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
+    $rtO = Load $rtFrom; if (-not $rtO) { $rtO = @{ task = $rtFrom; mrs = @(); onMerged = @('promoted'); done = $false; created = (Get-Date).ToString('o') } }
+    if ($rtO.done) { $rtO.routes = @(); $rtO.routedMrs = @() }   # a finished route (promoted, then failed again) never counts for this one
+    $rtAt = (Get-Date).ToString('o'); $rtR = [ordered]@{ to = $rtTo; kind = $rtKind; items = @(Split-KitList $Item); at = $rtAt }
+    if ($rtKind -eq 'run') { & $KitCmd.orch report -Run $rtTo *> $null }   # the wave file lists MRs merged since its last report
+    # merged before the route: not this defect's fix (named in -Mrs: it is); an unread state could hide one
+    $rtSt = @{}; foreach ($rtRef in @(RouteRefs $rtR | Where-Object { $_ -notin $rtGiven })) { $rtSt[$rtRef] = MrState $rtRef }
+    $rtUnk = @($rtSt.Keys | Where-Object { $rtSt[$_] -in 'unknown', 'bad-ref' -or "$($rtSt[$_])" -like 'bad-ref*' }); if ($rtUnk.Count) { Fail "route: MR state of $($rtUnk -join ', ') not read (host auth / gitHostGroup): nothing routed" }
+    $rtR.base = @($rtSt.Keys | Where-Object { $rtSt[$_] -eq 'merged' })
+    $rtO.routes = @(@($rtO.routes) | Where-Object { $_ -and "$($_.to)" -ne $rtTo }) + @($rtR)
+    if ($rtGiven.Count) { $rtO.mrs = @(@($rtO.mrs) + $rtGiven | Where-Object { $_ } | Select-Object -Unique); $rtO.routedMrs = @(@($rtO.routedMrs) + $rtGiven | Where-Object { $_ } | Select-Object -Unique); $script:trackReadd = $rtGiven }
+    if ($rtKind -eq 'run') { $rtO.wave = $rtTo }   # held while that run still fixes
+    $rtO.done = $false; foreach ($k in $script:doneFields) { $rtO.Remove($k) }; $rtO.reopenedAt = $rtAt
+    Save $rtO
+    "routed $rtFrom -> $rtKind $rtTo$(if ($rtR.items.Count) { " (checks $($rtR.items -join ', '))" }): its new MRs join $rtFrom; all merged -> $rtFrom $(@($rtO.onMerged) -join ' -> ')$(if ($rtR.base.Count) { " (already merged there, not counted: $($rtR.base -join ', '))" })"
+    Invoke-Track run -Task $rtFrom -Detail -Quiet:$Quiet
+  }
   'rollup' { Invoke-TaskRollup -Task $Task -From $From -Quiet:$Quiet -Status:$Status -All:$All -Apply:$Apply }
   'forget-item' { Invoke-KitForgetItems -Task $Task -Item $Item }
 }
@@ -1069,7 +1107,7 @@ param([string]$Session, [switch]$Json, [switch]$AutoFix, [switch]$Brief, [switch
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Ack) {   # flag hidden 24 h
   if ($Ack.Trim().Length -lt 20 -and -not (Test-KitAckWhole $Ack)) { "supervise -Ack: give the flag's start, 20+ characters, or a short flag's whole text (a short start would hide other problems)"; exit 2 }
-  Add-KitFlagAck $Ack $Reason; return
+  $ackRes = Add-KitFlagAck $Ack $Reason; $ackRes; if ("$ackRes" -like 'REFUSED*') { exit 1 }; return
 }
 $idleMin = [double](Get-KitParam 'supervise.stuckMinutes')   # no progress longer, waiting on nothing = STUCK
 $wfAgents = New-Object System.Collections.ArrayList; $runTotal = 0; $toolErr = 0; $errRun = ''; $now = Get-Date; $t0 = $now
@@ -1298,7 +1336,7 @@ else {
     if (-not $new.Count) { continue }
     $list = ($new | ForEach-Object { "$($_.id) $($_.name.Substring(0, [math]::Min(70, $_.name.Length)))" }) -join '; '
     $note = if ($openRuns[$par]) { " (run $($openRuns[$par]) is still testing: later bugs go into the next wave)" } else { '' }
-    Flag 'ACT' "$($new.Count) new QA bug task(s) not being fixed$note`: $list" "ONE wave now: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' [-Hints ...] per task (brief, tracking, /buildy args), the briefs in one file (a section per agent), one /buildy."
+    Flag 'ACT' "$($new.Count) new QA bug task(s) not being fixed$note`: $list" "ONE wave now: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' [-Hints ...] per task (brief, tracking, /buildy args), the briefs in one file (a section per agent), one /buildy; fixed in a running wave instead: & $($KitCmd.orch) track route -From <id> -To <task | run>." @{ ackNeeds = 'ref' }
   }
   foreach ($qv in @($script:KitQaBugs.views.Values | Where-Object { $_ -and -not $_.p.HasExited })) { Stop-KitProcessTree $qv.p }   # cut short: no view outlives the sweep
 }
@@ -1313,7 +1351,8 @@ if (Within 'failedTesting tasks') {
   if ($uw.Count) { Flag 'WATCH' "$($uw.Count) unproven QA finding(s), verify inconclusive, no request named: $($uw -join '; ')" "One watchy kind triage per env for the finding's window (its results.json observed); a confirmed defect -> its [Bug]; then supervise -Ack." }
   $trk = (Read-KitTracking).tasks; if ($state.ftStatus -isnot [Collections.IDictionary]) { $state.ftStatus = @{} }
   foreach ($id in @($state.ftStatus.Keys)) { if ($id -notin $ft.Keys) { $state.ftStatus.Remove($id) } }
-  $ids = @($ft.Keys | Where-Object { (($o = $trk[$_]).done -or -not $o) -and -not ($o.doneAt -and [datetime]$o.doneAt -gt $ftAt[$_]) })   # merged after it: fixed
+  # a route whose target brought no fix MR in 24 h is no link either
+  $ids = @($ft.Keys | Where-Object { (($o = $trk[$_]).done -or -not $o -or (@($o.routes | Where-Object { $_ }).Count -and -not @($o.routedMrs | Where-Object { $_ }).Count -and ($now - [datetime]@($o.routes)[-1].at).TotalHours -ge 24)) -and -not ($o.doneAt -and [datetime]$o.doneAt -gt $ftAt[$_]) })   # merged after it: fixed
   $ttl = [math]::Max(15.0, 2 * (Get-KitBeatMinutes))   # closed: 6 h
   $due = @($ids | Where-Object { -not ($c = $state.ftStatus[$_]) -or ($now - [datetime]$c.at).TotalMinutes -ge $(if (Test-TrackerStatus $c.st 'closed') { 360 } else { $ttl }) })
   foreach ($l in @(if ($due.Count) { Invoke-Bounded $KitCmd.dev @('tracker', 'statuses', ($due -join ',')) })) {   # the last finished run: a view newer than the cache wins
@@ -1321,7 +1360,8 @@ if (Within 'failedTesting tasks') {
     if ("$l" -match '^(\S+) (\S+) (.+)$' -and $Matches[1] -in $ids -and (-not ($c = $state.ftStatus[$Matches[1]]) -or [datetimeoffset]$Matches[2] -gt [datetimeoffset]$c.at)) { $state.ftStatus[$Matches[1]] = @{ at = $Matches[2]; st = $Matches[3] } }
   }
   $back = @(Select-KitFailedLive $ids $trk $state.ftStatus | ForEach-Object { "$_ ($($ft[$_]))" })
-  if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow: $($back -join '; ')" "ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." @{ kind = 'FAILED TESTING'; who = @($back | ForEach-Object { ($_ -split ' ')[0] }) -join ', '; problem = "back to the dev flow: $($back -join '; ')" } }
+  # $ids = no fix MR linked since the run (track add -Mrs / route reopen it): an -Ack needs a decision id or MR and hides 2 h (2026-11-22: 5 acks hid a fix tracked on another task)
+  if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow, no fix MR linked: $($back -join '; ')" "Fixed in another task's or run's wave: & $($KitCmd.orch) track route -From <id> -To <task | run> [-Items <check ids>] [-Mrs <its fix MRs>], or & $($KitCmd.orch) track add -Task <id> -Mrs <fix MRs>; not fixed yet: ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." @{ kind = 'FAILED TESTING'; who = @($back | ForEach-Object { ($_ -split ' ')[0] }) -join ', '; problem = "no fix MR linked: $($back -join '; ')"; ackNeeds = 'ref' } }
 }
 foreach ($w in @(Get-KitScopeWatch)) { Flag 'WATCH' $w.what $w.action }   # live status names of no role
 
@@ -1368,7 +1408,7 @@ $s1 = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch 
 $state.known = @{}; foreach ($r in @(if ($s1.known) { $s1.known.Keys })) { if (($now - [datetime]$s1.known[$r]).TotalDays -lt $(if ("$r".StartsWith('noise:')) { 30 } else { 2 })) { $state.known[$r] = $s1.known[$r] } }   # -Ack refs: MRs 2 d, noise 30 d
 foreach ($k in @(if ($a0) { $a0.Keys })) { if (($now - [datetime]$a0[$k].at).TotalHours -lt 24) { $state.acks[$k] = $a0[$k] } }
 Set-KitFlagAge $flags $state $now   # the page and -Brief Age column
-$state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @{ level = $_.level; what = $_.what; action = $_.action; kind = $_.kind; who = $_.who; problem = $_.problem; refs = @($_.refs | Where-Object { $_ }) } })   # supervise -Ack; a stepped-aside session's own flags
+$state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @{ level = $_.level; what = $_.what; action = $_.action; kind = $_.kind; who = $_.who; problem = $_.problem; refs = @($_.refs | Where-Object { $_ }); ackNeeds = $_.ackNeeds } })   # supervise -Ack; a stepped-aside session's own flags
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }
 $base = [double](Get-KitParam 'supervise.heartbeatMinutes'); $acts = @($flags | Where-Object level -eq 'ACT' | ForEach-Object { Get-KitFlagKey $_.what })

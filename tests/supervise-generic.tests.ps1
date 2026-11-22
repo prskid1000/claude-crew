@@ -92,17 +92,20 @@ $c4 = Get-KitCiTask ci4; $t4 = Test-KitCiTaskJob $c4 @('api!5')
 "named:$("$($c4.jobName)|$($c4.run)|$($c4.branch)|$($t4.state)" -eq 'unit-x|100|staging/x|pass')"
 '@ @($O)
 Expect-Each $ciTrack 'track: CI task # (wait: track add of a merged MR promotes at once, holds while the job runs again; closed: job passed -> closed + one qa-result comment with the job link; plain: no pattern match = the testing-doc gate; named: a pipeline link + a job name, no job URL)' @('wait', 'closed', 'plain', 'named') 3
-# supervise failedTesting: tracker views in the background (inline: 6-9 s a sweep), cached statuses now, a 2-beat cache
+# supervise failedTesting: background views (inline: 6-9 s), a 2-beat cache
 $qd = TkPath $k qa-runs -Create; $null = New-Item -ItemType Directory -Force "$qd/q1/A1"; & $J @{ subtasks = @(1..4 | ForEach-Object { @{ id = "ft$_"; failedTesting = $true } }); watch = @(@{ id = 'X1'; task = 'ft1'; screen = 'api'; env = 'stg' }) } "$qd/q1/A1/finalize.json"
 $tn = TkPath $k tracker-none -Create; $ts = { param($i, $s) & $J @{ id = "ft$i"; name = 'n'; status = $s } "$tn/ft$i.json" }; 1..4 | ForEach-Object { & $ts $_ 'failed testing' }
-$ftn = { "$(@((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags.what) -match 'failed testing, back' -replace ' .*')" }
+$ftn = { "$(@((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags.what) -match 'no fix MR linked: ' -replace ' .*')" }
 $ftw = { foreach ($bj in @(Get-ChildItem (TkPath $k background) -Filter '*statuses*.json' -ErrorAction SilentlyContinue)) { $bjr = Get-Content $bj.FullName -Raw | ConvertFrom-Json; for ($i = 0; $i -lt 300 -and (Get-Process -Id $bjr.pid -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 100 } } }
 $fta = { $svf = TkPath $k supervise-state; $svs = Get-Content $svf -Raw | ConvertFrom-Json -AsHashtable; foreach ($v in $svs.ftStatus.Values) { $v.at = (Get-Date).AddDays(-1).ToString('o') }; $svs | ConvertTo-Json -Depth 20 | Set-Content $svf }
 $f1 = & $ftn; & $ftw; $f2 = & $ftn; & $ftw; & $ts 4 'in progress'; $f3 = & $ftn; & $fta; $f4 = & $ftn; & $ftw; & $fta; $f5 = & $ftn
-Expect "supervise failedTesting: views in the background, the last result next sweep; an ACT reads the live status role first (a task moved on since the cached view drops at once) ($f1 $f2 $f3 $f4 $f5)" ("$f1|$f2$f3$f4$f5" -eq '|4333')
+Expect "supervise failedTesting: background views, the result next sweep; the live role decides (a moved-on task drops at once) ($f1 $f2 $f3 $f4 $f5)" ("$f1|$f2$f3$f4$f5" -eq '|4333')
 & $J @{ task = 'ft1'; track = @{ task = 'ft1'; done = $true; mrs = @(); doneAt = (Get-Date).AddMinutes(1).ToString('o') } } (Join-Path (TkPath $k tasks -Create) 'ft1.json'); $f6 = & $ftn
 & $ts 2 'Closed'; $f7 = & $ftn
-Expect "supervise failedTesting: all MRs merged after the run (track doneAt) clears the task; a task closed since the cached view is no ACT (2026-11-19) ($f5 -> $f6 -> $f7)" ("$f6|$f7" -eq '2|1')
+$rf = { param($h) & $J @{ task = 'ft3'; track = @{ routes = @(@{ at = (Get-Date).AddHours(-$h).ToString('o') }) } } (Join-Path (TkPath $k tasks) 'ft3.json') }
+& $rf 1; $f8 = & $ftn; & $rf 25; $f9 = & $ftn
+Expect "supervise failedTesting: routed 24 h, no MR: flagged ($f8 -> $f9)" ("$f8|$f9" -eq '|1')
+Expect "supervise failedTesting: merged after the run (doneAt) clears it; closed since the view: no ACT (2026-11-19) ($f5 -> $f6 -> $f7)" ("$f6|$f7" -eq '2|1')
 # every view fails (tracker down): one WATCH, not silence
 & $ftw; Remove-Item "$tn/ft*.json"; & $fta; $null = & $ftn; & $ftw; & $fta
 $fwa = @((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags); $fw = @($fwa | Where-Object { $_.level -eq 'WATCH' -and $_.what -match '^failedTesting views: background .*failed: tracker statuses: 3 view\(s\) failed' })

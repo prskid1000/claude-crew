@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L130 transcript tails · L162 supervise sweep
+# Sections: L6 supervise report · L140 transcript tails · L172 supervise sweep
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -75,11 +75,20 @@ function Test-KitAckWhole([string]$Ack) {
   $s0 = try { Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json } catch { $null }; $a = ConvertTo-KitAckText $Ack
   [bool]($a -and @($s0.lastFlags | Where-Object { $_ -and $a -in @(Get-KitAckWholes $_) }).Count)
 }
+# an ack of a flag with ackNeeds (no fix MR linked) names a decision id or an MR in its reason and hides it 2 h
+# (a recorded decision, or an MR some task tracks: a made-up ref hides nothing)
+function Test-KitAckRef([string]$Reason) {
+  foreach ($d in [regex]::Matches("$Reason", '\bd-\d{8,}-[\w-]+')) { if (Test-Path -LiteralPath (Join-Path (Get-KitPath decisions) "$($d.Value).json")) { return $true } }
+  $named = @([regex]::Matches("$Reason", '(?<r>[\w.-]+)(?:!|/-/merge_requests/|/pulls?/)(?<n>\d+)') | ForEach-Object { "$($_.Groups['r'].Value)!$($_.Groups['n'].Value)" })
+  if (-not $named.Count) { return $false }
+  [bool]@((Read-KitTracking).tasks.Values | ForEach-Object { @($_.mrs) } | Where-Object { $_ -and ("$_" -split '/')[-1] -in $named }).Count
+}
 # an acknowledged one (answered / proven false) hides 24 h
 function Select-KitFlags($Flags, $Acks, [datetime]$Now) {
   $seen = @{}; $hid = 0; $live = @($Acks.Keys | Where-Object { ($Now - [datetime]$Acks[$_].at).TotalHours -lt 24 })
   $keep = @(foreach ($f in @($Flags)) { $k = Get-KitFlagKey $f.what; if ($seen[$k]) { continue }; $seen[$k] = 1
-      if ($f.level -ne 'INFO' -and $live.Count -and (Test-KitAcked $f $live)) { $hid++; continue }; $f })
+      $fk = if ($f.ackNeeds) { @($live | Where-Object { (Test-KitAckRef $Acks[$_].reason) -and ($Now - [datetime]$Acks[$_].at).TotalHours -lt 2 }) } else { $live }
+      if ($f.level -ne 'INFO' -and $fk.Count -and (Test-KitAcked $f $fk)) { $hid++; continue }; $f })
   if ($hid) { $keep += [pscustomobject]@{ level = 'INFO'; what = "$hid acknowledged flag(s) hidden (supervise -Ack, 24 h)"; action = 'Nothing to do.' } }
   $keep
 }
@@ -88,10 +97,11 @@ function Add-KitFlagAck([string]$Ack, [string]$Reason) {
   $sf0 = Get-KitPath supervise-state -Create; $k0 = Get-KitFlagKey $Ack; $script:ackOut = ''
   Invoke-KitLocked $sf0 { $s0 = try { Get-Content $sf0 -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $s0) { $s0 = @{} }; if (-not $s0.acks) { $s0.acks = @{} }
     $hit = @($s0.lastFlags | Where-Object { $_ -and (Test-KitAcked ([pscustomobject]$_) @($k0)) }); $refs = @($hit | ForEach-Object { @($_.refs) } | Where-Object { $_ })
+    $need = @($hit | Where-Object { $_.ackNeeds }); if ($need.Count -and -not (Test-KitAckRef $Reason)) { $script:ackOut = "REFUSED: no fix MR linked ($(@($need | ForEach-Object { "$($_.what)".Substring(0, [math]::Min(90, "$($_.what)".Length)) }) -join ' · ')): link it (the flag's track route / track add), or -Reason naming a decision id (d-...) or the fix MR (repo!n): hides 2 h"; return }
     if ($refs.Count) { if (-not $s0.known) { $s0.known = @{} }; foreach ($r in $refs) { $s0.known[$r] = (Get-Date).ToString('o') } }
     if (-not $hit.Count -or @($hit | Where-Object { -not @(@($_.refs) | Where-Object { $_ }).Count }).Count) { $s0.acks[$k0] = @{ at = (Get-Date).ToString('o'); reason = $Reason } }
     Write-KitAtomic $sf0 ($s0 | ConvertTo-Json -Depth 5)
-    $script:ackOut = "$(if ($refs.Count) { "known from now on (they no longer flag; a new one does): $(@($refs | Select-Object -First 5) -join ' · ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" })" } else { "acknowledged for 24 h: $k0" })$(if ($Reason) { " ($Reason)" })`n$(if ($hit.Count) { "hides $($hit.Count) flag(s) of the last round: $(@($hit | ForEach-Object { "$($_.what)".Substring(0, [math]::Min(90, "$($_.what)".Length)) }) -join ' · ')" } else { 'matches no flag of the last round: check the text (any later flag containing it hides)' })" }
+    $script:ackOut = "$(if ($refs.Count) { "known from now on (they no longer flag; a new one does): $(@($refs | Select-Object -First 5) -join ' · ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" })" } else { "acknowledged for $(if ($need.Count) { '2 h (no fix MR linked)' } else { '24 h' }): $k0" })$(if ($Reason) { " ($Reason)" })`n$(if ($hit.Count) { "hides $($hit.Count) flag(s) of the last round: $(@($hit | ForEach-Object { "$($_.what)".Substring(0, [math]::Min(90, "$($_.what)".Length)) }) -join ' · ')" } else { 'matches no flag of the last round: check the text (any later flag containing it hides)' })" }
   $script:ackOut
 }
 # supervise anomalies: pure -> WATCH flags + next state

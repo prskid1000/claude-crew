@@ -16,7 +16,7 @@ description: "Load when: you are the main session routed here: launching or supe
 | `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (run by `.githooks`) |
 | `STATE.md` | a script's state file changes; an agent needs a task's doc / comment / MR / env-run links (`.state/tasks/<id>.json`) |
 | `params.registry.json` | a timeout, wait or limit is added or changed (every tunable key: learned or fixed); `bossy.ps1 param show` |
-| `adapters/*.ps1` | dot-sourced by bossy.ps1: E1 `supervise`, `board show`, `recover`, `cleanup`, `launch -Check`, `storage`, `track`, `deploy`, `heartbeat`, hooks |
+| `adapters/*.ps1` | dot-sourced by bossy.ps1 (its verbs and hooks) |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge`, `<kit>/.githooks/post-rewrite` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
 | `kitbag.py` (+ the `kitbag_*.py` it loads, `lint-vocab.json` its ARCH-* words), `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 | `kit-admin.md` | K1-K3: `kitty` step 0, `revy` kind kit |
@@ -26,10 +26,10 @@ description: "Load when: you are the main session routed here: launching or supe
 State every run shares (STATE.md): launch record (`bossy.ps1 launch`), agent board (`board`), tracking (`track`),
 decisions (`decide`), contracts (`<brief>.contracts.md` or `<runDir>/lead-notes.md`), the run report (`report -Run <id>`), agent
 checkpoints (`crafty.ps1 checkpoint`), your own program state (`bossy.ps1 program set|get -Program <name>`: phases -> runs, MRs,
-synced; never only in the session: a heartbeat after a restart reads it). Both
+synced; never only in the session). Both
 workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`.
 What happened when, who called what: `bossy.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
-line per step, call, build, block, signal, decision, deploy; never read journals or logs). Tunables (lease grace,
+line per step, call, block, decision, deploy; never read journals or logs). Tunables (lease grace,
 timeouts, gate memory, heartbeat, budgets) learn live in supervise -AutoFix: `bossy.ps1 param show`. Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })` with `kitDir` (absolute); buildy / testy: `mandate` (owner's words).
 
@@ -62,8 +62,9 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 3. **Status:** before the first agent of ANY task (spikes, analysis, docs too): `crafty.ps1 tracker status <task> inProgress`.
    **Launch** `/buildy` with `{ brief, agents:[{id, items, area, dependsOn?, migrations?}], mode, kitDir, mandate, holdMerge?,
    openQuestions? }`; then
-   `bossy.ps1 launch -RunId <id> -Script <path> -ArgsJson '<args>'` (the workflow records its exact args itself); then E1.
+   `bossy.ps1 launch -RunId <id> -Script <path> -ArgsJson '<args>'` (the workflow records its args); then E1.
 4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (hook-blocked).
+   An addendum fixing another task's defect: `track route` (E6).
 5. **Close** (deploys only on a person's word, E5): reconcile backlog vs merged MRs; list only what is open, each with a reason.
 - T1-T4 (test-only): `/testy { select: { statuses: ['promoted', 'inTest'], lists?, tasks?, exclude? }, target, kitDir,
   mandate }` (its Prepare agent builds the run: pokey L1 Selection; `target` = an env or a `qa.targets` group), or a ready
@@ -78,8 +79,8 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 | E3 | Agents/workflow stopped (crash, limits, restart, power loss), budget handoff, or the owner pauses (power off, offline) | pause: `bossy.ps1 pause -All` (or `-Run <run>`, `-Reason`), then `pause -Status` until "safe to power off"; the machine stays on: stop runs and heartbeat. Back or after a crash: `bossy.ps1 resume -All` (network first; a brief per agent from its checkpoint; then `recover`'s exact `Workflow({ scriptPath, resumeFromRunId, args })`, refused -> its RELAUNCH line (`mode: 'resume'`, per-area `resume` skip list from host + tracker: done steps skipped, all done = no agent); unpublished QA -> `pokey.ps1 finalize` lines); then E1. You stopped it: `launch -Done -RunId <id>` |
 | E4 | DECISION <id> (supervise, decisions, debates) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | deploys.md "Before an ask"; DECISION blocking: one question-tool call (`AskUserQuestion`) from `decide list -Ask -Json`, no tool: its text; FYI: a numbered list (`decide list -Fyi`), owner answers "1 A, 2 B"; then `decide answer -Id <id> -Answer '<choice>'` per id (it updates the task's Decisions checklist); a debate: its table first; close ask (every subtask closed): `A` closes the parent. ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, service starts only from live lease; shared DB data: `datay` kind localdb); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `pokey.ps1 retest` |
 | E5 | A person says `deploy <env>`, or supervise DEPLOY ASK | at once, no question back: one `opsy` per env (kind deploy, the `decide record` id of their words or pick; `<kit>/skills/bossy/deploys.md`); its `watch` -> E15; then in test: testers, or /testy on request |
-| E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `bossy.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r> [-Only <ids>] [-Skip 'id=why; ...']` per task, then ONE /buildy `mode: 'bugfix'` for all (reproduce locally first; the fix adds an AI doc round, the retest an "<env> run" section) |
-| E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (timeline: `audit -Run`); `next` (budget stop, batch, refusal; `spikeOpen`: answer its questions first) -> launch it; `afterMerge.next` once its `waitFor` merged; MR states from report; open findings -> follow-up wave; `deployBatch` waits for a person (E5); test data the run left -> `datay` kind cleanup; then E10 |
+| E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `bossy.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r> [-Only <ids>] [-Skip 'id=why; ...']` per task, then ONE /buildy `mode: 'bugfix'` for all (reproduce locally first; the fix adds an AI doc round, the retest an "<env> run" section); fixed in another wave: `track route -From <id> -To <task or run>` (merged -> promoted); unlinked: `-Ack` needs a decision id or MR (2 h) |
+| E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>`; `next` (budget stop, batch, refusal; `spikeOpen`: answer its questions first) -> launch it; `afterMerge.next` once its `waitFor` merged; MR states from report; open findings -> follow-up wave; `deployBatch` waits for a person (E5); test data the run left -> `datay` kind cleanup; then E10 |
 | E8 | The owner changes a rule or scope mid-run | `briefy` kind rule-change: appends to brief AND contracts file (QA: `lead-notes.md`), `board msg` to each agent it touches; agents re-read before every push / check |
 | E9 | The owner asks for something destructive while runs go on | do it yourself after they finish |
 | E10 | A run finished or stopped (pause, `launch -Done`: their signals are recorded then), supervise says "retro due", or signals piled up | launch /tidy yourself, no owner ask, once no other workflow of this session runs (one retro covers several runs) |
