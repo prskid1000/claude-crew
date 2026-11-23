@@ -161,5 +161,28 @@ $a2 = Add-KitFlagAck '2 task(s) failed testing, back to the dev flow' 'routed: a
 "refuse:$("$a1" -like 'REFUSED: no fix MR linked*' -and $n1 -eq 0 -and "$a2" -like 'acknowledged for 2 h*')"; Remove-Item -LiteralPath $sf   # its ack would hide the failedTesting checks below
 '@ @($O)
 Expect-Each $ackRef 'supervise -Ack, no fix MR linked: #' @('hide', 'refuse') 2
+# track run: planned-area holds (S1) and LAG on the live status (S2), 2026-11-23
+$stTest = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+$global:sets = @()
+function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }
+function Set-TrackerStatus($id, $s) { $global:sets += "$id=$s" }
+function Set-TrackerKitComment { }; function Get-TrackerComments { }; function Add-TrackerComment { }; function Start-Process { }
+function Get-TrackerTask($id) { [pscustomobject]@{ status = 'for review'; subtasks = @() } }   # the stale cached status
+# S1: an area whose agent left for good is delivered (MRs merged); one that never joined in an ended run = HOLD (stale) -> supervise ACT
+@{ script = 'buildy.js'; run = 'pz'; at = (Get-Date).ToString('o'); completed = (Get-Date).ToString('o'); args = @{ agents = @(@{ id = 'Z1'; items = 'tz1' }, @{ id = 'Z2'; items = 'tz2' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path (Get-KitPath launches -Create) 'self-buildy-pz-1.json')
+@{ agent = 'Z1'; run = 'pz'; status = 'left'; session = 'sz1' } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath board -Create) 'sz1.json')
+$script:planRecs = $null; $null = Invoke-Track add -Task tz1 -Mrs 'g/web!5'; $null = Invoke-Track add -Task tz2 -Mrs 'g/web!6'; $h2 = Invoke-Track run -Detail | Out-String
+"stale:$(-not ($h2 -match 'HOLD tz1') -and $global:sets -contains 'tz1=promoted' -and $h2 -match 'HOLD tz2: .*\(stale: Z2 never joined, run pz ended\)')"
+# S2: LAG only when the live status (no memo) is still before promoted (tz2 stays held: its LAG check runs each round)
+$global:liveSt = 'promoted'; function __Get-TrackerTask($id) { [pscustomobject]@{ id = $id; name = 'n'; status = $global:liveSt } }
+$old = { param($t) $t.tasks['tz2'].mergedSeenAt = (Get-Date).AddHours(-2).ToString('o'); $t.tasks['tz2'].lagAt = (Get-Date).AddHours(-1).ToString('o') }
+Update-KitTracking $old; $l1 = Invoke-Track run -Detail | Out-String; $global:liveSt = 'for review'; Update-KitTracking $old; $l2 = Invoke-Track run -Detail | Out-String
+"lag:$($l1 -notmatch 'LAG tz2' -and $l2 -match 'LAG tz2: all MRs merged')"
+'@
+Expect-Each (Invoke-PsTest 'track-status' $stTest @($O)) 'track run: # (stale: a finished area is delivered, a never-joined one in an ended run = HOLD stale -> supervise ACT; lag: LAG only on the live status)' @('stale', 'lag') 2
+Expect 'supervise: a stale planned-area HOLD line is an ACT, other HOLD lines INFO' ((Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -like "*-match '^HOLD \S+: .*\(stale: ') { Flag 'ACT'*")
 Remove-TestKit $k
 Complete-Tests

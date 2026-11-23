@@ -10,7 +10,7 @@ Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L16 builds · L60 supervise · L363 shells · L542 page · L1050 release · L1095 lines · L1127 cleanup · L1194 launch ·
   L1311 pause · L1430 heartbeat · L1445 sessions · L1504 ci tasks ·
-  L1562 the kit origin's default branch (kitBranch, else origin/HEAD)
+  L1568 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1540,9 +1540,15 @@ function Close-KitCiTask([string]$Task, $Ci, [string[]]$Mrs) {
   try { $null = Set-TrackerKitComment $Task 'qa-result' "QA: PASS · CI job $($cj.name) passed on $($Ci.branch) with $(@($Mrs | ForEach-Object { Format-KitMrLink $_ }) -join ', ') merged: $($cj.url)" } catch { Write-Warning "QA comment of $Task not written: $_" }
   @{ state = 'closed'; why = "all $(@($Mrs).Count) MRs merged, CI job $($cj.name) passed on $($Ci.branch) -> closed" }
 }
-# track (bossy.ps1): launched areas (track.planHours) no wave report lists done: a later batch or budget cut
-function Get-KitPlannedAreas([string]$TaskId, $Since) {
-  $TaskId = NormTask $TaskId
+# track (bossy.ps1): launched areas (track.planHours) no wave report lists done: a later batch or budget cut. -Merged (the task's MRs
+# all merged): an area whose agent joined and finished is delivered; one with no live agent in an ended run -> $script:planStale
+function Get-KitPlannedAreas([string]$TaskId, $Since, [switch]$Merged) {
+  $TaskId = NormTask $TaskId; $script:planStale = @{}
+  $areaGone = { param($pr, $id) if (-not $Merged) { return $false }
+    $rows = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -eq $pr.run -and $_.agent -eq $id })
+    $live = @($rows | Where-Object { $_.status -notin 'left', 'crashed' -and (Test-KitHolder $_) -ne $false })
+    if (-not $live.Count -and @($rows | Where-Object { $_.status -eq 'left' -and -not ($_.handoffBrief -or $_.crashed -or $_.paused -or $_.takenOverBy) }).Count) { return $true }   # left for good
+    if (-not $live.Count -and $pr.completed) { $script:planStale[$id] = "$($pr.run)" }; $false }
   if ($null -eq $script:planRecs) {
     $script:planRecs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and ((Get-Date) - [datetime]$_.at).TotalHours -lt [double](Get-KitParam 'track.planHours') })
     $script:planDone = @{}; $planFrom = @($script:planRecs | ForEach-Object { [datetime]$_.at } | Sort-Object)[0]   # waves written since the oldest launch
@@ -1555,8 +1561,8 @@ function Get-KitPlannedAreas([string]$TaskId, $Since) {
       if ($Since -and [datetime]$pr.at -le [datetime]$Since) { continue }
       foreach ($pa in @($pr.args.agents | Where-Object { $_.id -and $_.items })) {
         $paT = NormTask "$(Get-KitMember $pr.areaTasks "$($pa.id)")"   # an area subtask (New-KitAreaTasks): its area counts as planned
-        if ($paT -and $paT -eq $TaskId) { if (-not @((Read-KitTracking).tasks[$TaskId].mrs | Where-Object { $script:planDone["$($pa.id)|$(NormRef $_)"] }).Count) { "$($pa.id)" }; continue }   # delivered: a wave lists this area done with one of its MRs (area ids repeat across runs)
-        if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"]) { "$($pa.id)" }
+        if ($paT -and $paT -eq $TaskId) { if (-not @((Read-KitTracking).tasks[$TaskId].mrs | Where-Object { $script:planDone["$($pa.id)|$(NormRef $_)"] }).Count -and -not (& $areaGone $pr "$($pa.id)")) { "$($pa.id)" }; continue }   # delivered: a wave lists this area done with one of its MRs (area ids repeat across runs)
+        if (@("$($pa.items)" -split '[,\s]+' | ForEach-Object { NormTask $_ }) -contains $TaskId -and -not $script:planDone["$($pa.id)|$TaskId"] -and -not (& $areaGone $pr "$($pa.id)")) { "$($pa.id)" }
       } }) | Select-Object -Unique
 }
 # ---- the kit origin's default branch (kitBranch, else origin/HEAD): no force push or delete, direct push on (branch.protect; never product repos)

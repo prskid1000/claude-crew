@@ -32,8 +32,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L39 init · L50 board · L230 budget · L260 launch · L501 recover · L588 pause · L599 resume · L666 program · L717 param ·
-  L723 track · L1110 supervise · L1450 report · L1530 audit · L1590 storage · L1593 bugbrief · L1707 cleanup · L1794 learn ·
-  L1826 decide · L1980 debate · L2024 health · L2092 setup · L2187 guard-sendmessage
+  L723 track · L1112 supervise · L1453 report · L1533 audit · L1593 storage · L1596 bugbrief · L1598 cleanup · L1685 learn ·
+  L1717 decide · L1871 debate · L1915 health · L1983 setup · L2080 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -768,6 +768,8 @@ function Hold($s) { if ($Quiet) { return }; if ($Detail -or $Task) { $s } else {
 $script:gone = @{}   # deleted in the tracker
 $script:trackReadd = @()   # track add -Mrs: refs named again, out of the removed list
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { if (Remove-KitGoneTask $id $_) { $script:gone[$id] = $true }; '' } }
+# LAG only on the live status (no memo): moved on -> the LAG is dropped
+function Test-LagLive($o) { $lv = try { [string](__Get-TrackerTask $o.task).status } catch { '' }; if (-not $lv -or (Test-TrackerStatus $lv 'open', 'inProgress', 'review')) { return $true }; $o.Remove('lagLine'); $null = Save $o -Run; $false }
 # a held task already closed / in test is done (never promoted backwards); status read once per track.holdCheckMinutes
 function HeldPast($o) { $nw = Get-Date; if ($o.holdCheckedAt -and ($nw - [datetime]$o.holdCheckedAt).TotalMinutes -lt [double](Get-KitParam 'track.holdCheckMinutes')) { return '' }
   $hs = TaskStatus $o.task; if (-not $hs -or $script:gone[$o.task]) { return '' }   # unread or deleted: retry next sweep, never re-saved
@@ -943,7 +945,7 @@ switch ($Action) {
       $o.checkedAt = (Get-Date).ToString('o'); Save $o -Run
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
       # merged 60+ min, not promoted, not HELD = LAG
-      if ($o.lagLine -and -not $o.holdPromotion -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt 30 -and -not $Quiet) { $o.lagLine }
+      if ($o.lagLine -and -not $o.holdPromotion -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt 30 -and -not $Quiet -and (Test-LagLive $o)) { $o.lagLine }
       if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge 30)) {
         $o.lagAt = (Get-Date).ToString('o'); $o.Remove('lagLine'); Save $o -Run
         $ms = @($o.mrs | Where-Object { -not ((MrState $_) -eq 'closed' -and $_ -in $igRefs) } | ForEach-Object { MrState $_ }); $ls = TaskStatus $o.task
@@ -952,7 +954,7 @@ switch ($Action) {
           if (-not $Quiet) { $lr }
         } elseif ($ls -and -not @($ms | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus $ls 'open', 'inProgress', 'review')) {
           if (-not $o.mergedSeenAt) { $o.mergedSeenAt = (Get-Date).ToString('o'); Save $o -Run }
-          elseif (-not $o.holdPromotion -and ((Get-Date) - [datetime]$o.mergedSeenAt).TotalMinutes -ge 60) { $o.lagLine = "LAG $($o.task): all MRs merged at $(([datetime]$o.mergedSeenAt).ToString('HH:mm')), status still '$ls'"; Save $o -Run; if (-not $Quiet) { $o.lagLine } }
+          elseif (-not $o.holdPromotion -and ((Get-Date) - [datetime]$o.mergedSeenAt).TotalMinutes -ge 60 -and (Test-LagLive $o)) { $o.lagLine = "LAG $($o.task): all MRs merged at $(([datetime]$o.mergedSeenAt).ToString('HH:mm')), status still '$ls'"; Save $o -Run; if (-not $Quiet) { $o.lagLine } }
         }
       }
       foreach ($pair in @($o.mergeAfter)) {
@@ -1000,7 +1002,7 @@ switch ($Action) {
       $failed = @($states.GetEnumerator() | Where-Object { $_.Value -match 'pipeline (failed|canceled)|closed|conflict' })
       if ($failed) { if (-not $Quiet) { "ATTENTION $($o.task): $(($failed | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ', ')" }; continue }
       if (@($states.Values | Where-Object { $_ -ne 'merged' }).Count) { continue }
-      if ($planned = @(Get-KitPlannedAreas $o.task $o.planReleased)) { if ($hp = HeldPast $o) { if (-not $Quiet) { $hp }; continue }; Hold "HOLD $($o.task): MRs merged, planned area(s) $($planned -join ', ') not delivered yet (a later batch or wave); dropped for good: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
+      if ($planned = @(Get-KitPlannedAreas $o.task $o.planReleased -Merged)) { if ($hp = HeldPast $o) { if (-not $Quiet) { $hp }; continue }; $st = @($planned | Where-Object { $script:planStale[$_] }); Hold "HOLD $($o.task): MRs merged, planned area(s) $($planned -join ', ') not delivered yet ($(if ($st.Count) { "stale: $($st -join ', ') never joined, run $($script:planStale[$st[0]]) ended" } else { 'a later batch or wave' })); dropped for good: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
       $held =@(Get-ChildItem $wavesDir -Filter '*.json' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-6) } | ForEach-Object {
           $w = Get-Content $_.FullName -Raw | ConvertFrom-Json
           if (@($w.running).Count) { & $KitCmd.orch report -Run $w.run *> $null; $w = Get-Content $_.FullName -Raw | ConvertFrom-Json }
@@ -1309,6 +1311,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
     elseif ($l -match '^(DONE|COMMENTED|DROPPED|MOVED|RELEASED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^CONFIG') { Flag 'INFO' $l 'A kit.local.json key is missing for this task; add it or register its MRs by hand.' }
     elseif ($l -match '^LAG') { Flag 'ACT' $l "Promote it (& $($KitCmd.dev) tracker status <id> <status>) or hold it on purpose (bossy.ps1 track add -Task <id> -HoldPromotion '<why>')." }
+    elseif ($l -match '^HOLD \S+: .*\(stale: ') { Flag 'ACT' $l 'Its run ended with the area never started: relaunch the area, or drop the hold (the command in the line).' }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION \S+: could not set status') { Flag 'ACT' $l "MRs merged, the tracker refused the status (track retries each round): check auth and tracker.statuses (& $($KitCmd.dev) tracker view <id>), or set it by hand." }
     elseif ($l -match '^ATTENTION .*no (solution/testing comment|testing-doc link)') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps (testing doc link) on the task (& $($KitCmd.dev) tracker comment <id> -File <solution.md> -Kind comment-solution: the template, edited in place)." }
@@ -1590,119 +1593,7 @@ foreach ($e in $out) { '{0:MM-dd HH:mm:ss} {1,-10} {2} -> {3}{4}' -f $e.at, $e.a
 # ---- storage: free space per drive, folder scans, rescue (adapters/storage.ps1)
 function Invoke-Storage { param([string]$Drive, [string]$Since = '24h', [switch]$Folders, [switch]$Scan) Show-KitStorage @PSBoundParameters }
 
-# ---- bugbrief: bug-fix brief + /buildy args
-function Invoke-BugBrief {
-param(
-  [Parameter(Mandatory)][string]$Task,
-  [string]$Agent,
-  [string[]]$Repos = @(),   # else its MRs' repos
-  [string[]]$Hints = @(),
-  [string]$Range,
-  [string[]]$Mandate = @(),
-  [string[]]$Only = @(), [string]$Skip = '',   # override: fix only these check ids; 'id=why; ..' skipped
-  [switch]$Complex
-)
-$ErrorActionPreference = 'Stop'
-$kit = Split-Path $PSScriptRoot
-$claude = Split-Path $kit
-$cfgFile = Join-Path $kit 'crafty/kit.local.json'
-$cfg = if (Test-Path $cfgFile) { Get-Content $cfgFile -Raw | ConvertFrom-Json } else { $null }
-if (-not $cfg -or -not $cfg.repos) { throw "add a ""repos"" list to $cfgFile (see kit.example.json)" }
-
-$j = Get-TrackerTask $Task
-if (-not $j.name) { throw "cannot read task $Task from the tracker ($($KitConf.TrackerType)) - check its CLI auth / tracker config" }
-$desc = [string]$j.description
-$texts = @($desc) + @(@(try { Get-TrackerComments $Task } catch { @() }) | Sort-Object date -Descending | ForEach-Object { [string]$_.text })
-$checks = @(Get-KitFailedChecks $texts)   # description, comments newest first
-$saw = ($desc -replace '\s+', ' ').Trim()   # no checks (watchy [Bug]): task is the check
-if (-not $checks) { $checks = @([pscustomobject]@{ id = $Task; screen = [string]$j.name; saw = $saw.Substring(0, [math]::Min(300, $saw.Length)) }) }
-if (-not $Agent) { $Agent = "B-$Task" }
-$Only = @(Split-KitList $Only); $skipWhy = @{}; foreach ($sk in @($Skip -split ';\s*(?=[^;=]+=)|;\s*$' | Where-Object { $_.Trim() })) { $skId, $skWhy = $sk -split '=', 2; $skipWhy[$skId.Trim()] = $(if ("$skWhy".Trim()) { "$skWhy" -replace '\s+', ' ' } else { 'skipped' }).Trim() }
-$unk = @(@($skipWhy.Keys) + $Only | Where-Object { $_ -notin $checks.id }); if ($unk) { throw "bugbrief: no check $($unk -join ', ') on $Task" }
-$notHere = @($checks | Where-Object { $skipWhy.ContainsKey($_.id) -or ($Only.Count -and $_.id -notin $Only) }); $checks = @($checks | Where-Object { $_ -notin $notHere })
-if (-not $checks.Count) { throw "bugbrief: -Only / -Skip leave no check of $Task" }
-
-$runItem = $null
-foreach ($fin in @(Get-KitQaRunFiles finalize.json)) {
-  $o = Get-Content $fin.FullName -Raw | ConvertFrom-Json
-  if (@($o.subtasks | Where-Object { $_.bug -eq $Task }).Count) { $runItem = $fin.Directory; break }
-}
-$evidence = if ($runItem) { "Evidence + exported guide: ``$($runItem.FullName)/`` and ``$(Split-Path $runItem.FullName)/guides/$($runItem.Name).txt``." } else { 'Evidence: the results doc linked in the task.' }
-
-$Repos = @($Repos -split '\s*,\s*' | Where-Object { $_ })
-$orig = @(try { Get-TaskMrBranches @($Task, [string]$j.parent) } catch { @() })
-function RepoName($r) { @($cfg.repos | Where-Object { $_.name -eq $r -or @($_.aliases) -contains $r })[0].name }
-foreach ($o in $orig) {   # original ask's repos join unless named
-  $rn = RepoName $o.repo
-  if ($rn -and -not @($Repos | Where-Object { (RepoName ($_ -split '@')[0]) -eq $rn }).Count) { $Repos += "$rn@$($o.branch)" }
-}
-if (-not $Repos.Count) {   # no MR yet: the configured area repos (trackerRepos, else repos[]), named on stderr
-  $Repos = @(@(if (@($KitConf.TrackerRepos).Count) { $KitConf.TrackerRepos } else { @($cfg.repos | ForEach-Object name) }) | Where-Object { $_ } | Select-Object -Unique)
-  if ($Repos.Count) { [Console]::Error.WriteLine("bugbrief: no -Repos and no MR on $Task or its parent: using $($Repos -join ', ') (-Repos narrows it)") } }
-if (-not $Repos.Count) { throw "no -Repos, no MR on $Task or its parent and no repos in kit.local.json: -Repos <repo>[@<branch>],..." }
-$origLine = if ($orig) { "Original ask's MRs: " + (($orig | ForEach-Object { "$($_.ref) -> ``$($_.branch)``" }) -join ', ') + '.' }
-$rows = foreach ($spec in $Repos) {
-  $r, $branch = $spec -split '@', 2
-  $repo = @($cfg.repos | Where-Object { $_.name -eq $r -or @($_.aliases) -contains $r })[0]
-  if (-not $repo) { throw "unknown repo '$r' (kit.local.json repos: $(@($cfg.repos.name) -join ', '))" }
-  # must not borrow the default's linked deps
-  $deps = if ($branch -and $branch -ne $repo.target) { "a checkout on ``$branch`` (not ``$($repo.linkFrom)``, which is on ``$($repo.target)``; crafty.ps1 wt warns on a mismatch)" } elseif ($repo.linkFrom) { "``$($repo.linkFrom)`` (-LinkFrom)" } else { 'main checkout' }
-  "| $($repo.name) | ``$($repo.checkout)`` | ``$(if ($branch) { $branch } else { $repo.target })`` | $deps |"
-}
-$ids = ($checks | ForEach-Object id) -join ', '
-# only what the config declares: a migration tool (repos[].migrations, db.migrations) or -Range; an app lane (qa.lanes kind app)
-$briefRepos = @($Repos | ForEach-Object { RepoName ($_ -split '@')[0] })
-$mig = [bool]$Range -or [bool](Get-KitSetting 'db.migrations' $null) -or [bool]@($cfg.repos | Where-Object { $_.migrations -and $_.name -in $briefRepos }).Count
-$lanes = Get-KitSetting 'qa.lanes' $null; $app = [bool]@(if ($lanes) { (Get-KitProps $lanes) | Where-Object { $_.Name -notlike '_*' -and "$($_.Value.kind)" -eq 'app' } }).Count
-$slugAgent = $Agent.ToLower()
-$runName = "bugfix-$($Task)"
-$md = @"
-# Bug-fix brief: $($j.name)
-
-Follow ``$claude/skills/crafty/templates.md`` "Bug-fix brief", ``$claude/skills/crafty/SKILL.md`` and ``$claude/skills/envy/SKILL.md`` "Debug locally".
-This brief wins where they differ.
-
-Task: $($j.url) — checks $ids to fix. **Reproduce each check on the local env FIRST** (template steps 1-4).
-$evidence
-$origLine
-
-## Failed checks
-$(($checks | ForEach-Object { "- **$($_.id)** — $($_.screen): $($_.saw)" }) -join "`n")
-$(if ($notHere) { "`n## Not yours (coordinator)`n" + (($notHere | ForEach-Object { "- **$($_.id)** — $(if ($skipWhy.ContainsKey($_.id)) { $skipWhy[$_.id] } else { 'outside -Only' })" }) -join "`n") + "`n" })$(if ($Hints) { "`n## Coordinator notes`n" + (($Hints | ForEach-Object { "- $_" }) -join "`n") + "`n" })
-Fix every check above (root cause + test) or prove it stale/expected with evidence. Fix only these checks. A check you cannot
-fix here (another area or repo) needs a follow-up tracker task (cause, proposed fix) linked in a comment on $Task before your MR is done.
-Product calls: the reference behaviour or a recorded decision, named. Additive only: users the fix does not target see no change
-(crash/500/data-loss fixes may apply to everyone: list them under "Kept for everyone").
-
-## Repos
-| Repo | Main checkout | Target | Link deps from |
-|---|---|---|---|
-$($rows -join "`n")
-
-## Ownership
-| Agent | Bug task | Items |$(if ($mig) { ' Migration range |' })
-|---|---|---|$(if ($mig) { '---|' })
-| $Agent | $Task | $ids |$(if ($mig) { " $(if ($Range) { $Range } else { 'ask the coordinator if you need one' }) |" })
-
-Branches ``$(Get-KitSetting 'tracker.bugBranchPrefix' 'fix/')$($KitConf.TrackerTag)$Task-<slug>``; worktree prefix ``$slugAgent``; board run ``$runName``. Tracker (``$claude/skills/crafty/crafty.ps1 tracker``):
-in progress → review (bossy.ps1 track sets promoted when all merge). The workflow merges after review: do NOT merge yourself.
-Register: ``$claude/skills/bossy/bossy.ps1 track add -Task $Task -Discover``.
-$(if ($app) { "Phones (app bugs): the local-env APK (``phoney.ps1 build -Local``, ``phoney.ps1 acquire -Agent $Agent -Apk local``); release it when done." })
-"@
-$dir = Get-KitPath briefs -Create
-$out = Join-Path $dir "$Task.md"
-Set-Content $out $md -Encoding utf8
-$null = Test-KitProse -Kind bug-brief -Path $out
-$wfArgs = Get-BugWfArgs $out $runName $Agent "$Task $ids" (($checks | ForEach-Object screen) -join '; ') $Mandate $Complex $claude
-"brief: $out ($($checks.Count) checks: $ids; model: $(if ($Complex) { 'session (-Complex)' } else { 'sonnet' }))"
-"Workflow args (scriptPath $claude/workflows/buildy.js):"
-$wfArgs | ConvertTo-Json -Depth 5 -Compress
-$tracked = (Read-KitTracking).tasks.ContainsKey($Task)
-if ($tracked) { "already tracked: $Task" } else {
-  $ta = @(& $KitCmd.orch track add -Task $Task -Discover 2>&1); $tc = $LASTEXITCODE
-  if ($tc) { "NOT tracked: $Task (track add exit ${tc}: $(($ta | Select-Object -Last 2) -join ' ')): run bossy.ps1 track add -Task $Task -Discover" } else { "tracking $Task (-Discover)" }
-}
-}
+# ---- bugbrief: bug-fix brief + /buildy args (adapters/bugbrief.ps1)
 
 # ---- cleanup: kit-created leftovers only, never repos or in-use
 function Invoke-Cleanup {
