@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L358 context · L672 split · L746 budget
+Sections: L9 usage · L358 context · L675 split · L749 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -618,7 +618,10 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
   $f = { param($v) if ([double]$v -le 0) { '0' } else { Format-KitCompactNum ([double]$v) } }; $fl = [Collections.Generic.List[object]]::new()
   $big = [double](Get-KitParam 'usage.context.bigResultTokens'); $rrW = [int](Get-KitParam 'usage.context.rereadWatch'); $fac = [double](Get-KitParam 'usage.context.startFactor'); $nAct = [int](Get-KitParam 'usage.context.actRuns')
   $beat = [double](Get-KitBeatMinutes); $ss = @($Steps | Where-Object { $_.cx -and "$($_.role)" -ne 'coordinator' })
-  $isLive = { param($s) if ($s.result) { "$($s.result)" -in 'running', 'stuck' } else { $at = try { [datetime]"$($s.at)" } catch { $null }; $at -and ($Now - $at).TotalMinutes -lt 2 * $beat } }
+  # live = running and its transcript written in the last 2 beats (a finished agent kept 'running' and its WATCHes, 2026-11-23)
+  $isLive = { param($s) $tw = if ("$($s.tf)" -and (Test-Path -LiteralPath "$($s.tf)")) { (Get-Item -LiteralPath "$($s.tf)").LastWriteTime }
+    if ($tw -and ($Now - $tw).TotalMinutes -ge 2 * $beat) { return $false }
+    if ($s.result) { "$($s.result)" -in 'running', 'stuck' } else { $at = try { [datetime]"$($s.at)" } catch { $null }; $at -and ($Now - $at).TotalMinutes -lt 2 * $beat } }
   $norm = { param([string]$r) $rv = try { Resolve-KitParam 'usage.context.startNorm' $null $r (Get-KitParamState) } catch { @($null, 'default') }; if ("$($rv[1])" -notlike 'default*') { [double]$rv[0] } }   # only a learned (or pinned) norm: the 30k default would flag every main-session start
   $who = { param($s) "$($s.role) $(if ("$($s.label)".Trim()) { $s.label } else { [IO.Path]::GetFileNameWithoutExtension("$($s.tf)") })".Trim() }
   $wl = [Collections.Generic.List[object]]::new()

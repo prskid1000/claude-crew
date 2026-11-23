@@ -94,5 +94,15 @@ try { $null = Set-TrackerStatus 'o/r#9' 'inTest'; 'real:False' } catch { "real:$
 '@
 $res = Invoke-PsTest 'outbox-test' $nt @(Lib)
 Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')
+# supervise untracked-MR WATCH: CI-only MRs need no task (from supervise-generic.tests.ps1: its token cap)
+$O = Join-Path $k 'skills/bossy/bossy.ps1'
+$uc = Invoke-PsTest ulci @'
+. $args[0]; $n = Get-Date; $mrd = (Get-Date).ToUniversalTime().ToString('o'); function Get-HostProject($r, [switch]$Raw) { $r }
+$mk = { param($i, $t) [pscustomobject]@{ iid = $i; title = $t; source_branch = "b$i"; target_branch = 'main'; author = @{ username = 'u' }; merged_at = $mrd } }
+function Invoke-HostVerb($v, $p) { if ($v -eq 'mr.list') { @((& $mk 1 'ci: runner'), (& $mk 2 'chore: pipeline'), (& $mk 3 'feat: y')) } elseif ($v -eq 'mr.changes') { @{ changes = @(@{ new_path = $(if ($p.n -eq 2) { '.gitlab-ci.yml' } else { 'src/a.ts' }) }) } } }
+$KitConf.TrackerRepos = @('a'); $s = @{ hostUser = @{ at = "$n"; v = 'u' } }; $f = Get-KitUntrackedMrFlag $s $n
+"uc:$("$($f.what)" -match 'a!3' -and "$($f.what)" -notmatch 'a!1 |a!2 ')"
+'@ @($O)
+Expect "supervise: CI-only MRs (title ci:, or only CI config files) need no task: no untracked WATCH for them ($uc)" (@($uc | Where-Object { "$_" -eq 'uc:True' }).Count -eq 1)
 Remove-TestKit $k
 Complete-Tests

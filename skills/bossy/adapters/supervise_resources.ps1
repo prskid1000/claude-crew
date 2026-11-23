@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L363 shells · L542 page · L1050 release · L1095 lines · L1127 cleanup · L1194 launch ·
-  L1311 pause · L1430 heartbeat · L1445 sessions · L1504 ci tasks ·
-  L1568 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1051 release · L1097 lines · L1129 cleanup · L1196 launch ·
+  L1313 pause · L1432 heartbeat · L1447 sessions · L1506 ci tasks ·
+  L1569 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -343,7 +343,8 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
       if (-not (& $Within)) { break }
       $got = $null; try { $got = @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $since; per_page = 50 }) } catch { }; if ($null -eq $got) { continue }   # failed: retried next beat (an empty list is a result)
       $um.repos[$rp] = @{ at = $Now.ToString('o'); mrs = @(foreach ($m in @($got | Where-Object { $_.iid })) {
-            @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; target = "$($m.target_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)" } }) }
+            $ci = "$($m.title)" -match '^ci(\(.+?\))?!?:' -or $(if ($m.author.username -eq $hu) { $fs = @(try { (Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $rp -Raw); n = $m.iid }).changes.new_path } catch { }); $fs.Count -and -not @($fs | Where-Object { $_ -notmatch '(^|/)\.gitlab-ci[^/]*\.ya?ml$|^\.gitlab/ci/|^\.github/workflows/' }).Count })
+            @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; target = "$($m.target_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)"; ciOnly = [bool]$ci } }) }
     }
     $State.untrackedMrs = $um
   }
@@ -351,7 +352,7 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-(Get-KitParam 'supervise.windowHours'))
   $ig =@{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
   $known = if ($State.known) { @($State.known.Keys) } else { @() }   # supervise -Ack on this flag: one decision per MR
-  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and -not (Test-KitDeployMr $_.repo $_.branch $_.target) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and "$($_.repo)!$($_.iid)" -notin $known -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
+  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and -not $_.ciOnly -and -not (Test-KitDeployMr $_.repo $_.branch $_.target) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and "$($_.repo)!$($_.iid)" -notin $known -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
   if (-not $un.Count) { return }
   $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
   $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
@@ -1080,14 +1081,15 @@ function Invoke-KitReleaseAgent([string[]]$Agent, [string]$Reason = 'agent finis
       foreach ($x in @(Stop-KitAgentBuilds $a $Reason)) { $x; $n++ }
       if (@($tabs | Where-Object agent -eq $a).Count -and (Test-Path (Join-Path $KitConf.Kit 'skills/pokey/node_modules/puppeteer-core'))) {
         $r = Invoke-KitExe 'node' @('--input-type=module', '-e', "const m = await import('$([Uri]::new((Join-Path $KitConf.Kit 'skills/pokey/browser.mjs')).AbsoluteUri)'); console.log(await m.sweepAll('$($a -replace "'", '')'))") 120
-        "$a tabs: $("$($r.out)".Trim()) closed"; $n++
-      }
+        "$a tabs: $("$($r.out)".Trim()) closed"; $n++; $swept = $true
+      } else { $swept = $false }
       # a hold only the leases log still has (its store dropped it without a release row): the idle-holder WATCH read it for 24 h
       # kinds whose stores were checked above and hold nothing of $a (a tab with no puppeteer, a parked slot: still held)
-      $kinds = @('env', 'env-layer', 'gpu') + @(if (-not @($tabs | Where-Object agent -eq $a).Count) { 'tab' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -eq $a }).Count) { 'slot' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object agent -eq $a).Count) { 'lane' })
-      if (-not $n) { $lo = @(Get-KitResourceRows (Get-Date).AddHours(-(Get-KitParam 'supervise.windowHours')) | Where-Object { ($_.key -split '\|')[0] -in $kinds -and $_.agents -contains $a })
+      $kinds = @('env', 'env-layer', 'gpu') + @(if ($swept -or -not @($tabs | Where-Object agent -eq $a).Count) { 'tab' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -eq $a }).Count) { 'slot' }) + @(if (-not @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object agent -eq $a).Count) { 'lane' })
+      # every release closes them (a swept tab kept its row)
+      $lo = @(Get-KitResourceRows (Get-Date).AddHours(-(Get-KitParam 'supervise.windowHours')) | Where-Object { ($_.key -split '\|')[0] -in $kinds -and $_.agents -contains $a })
         foreach ($x in $lo) { $xk, $xn = $x.key -split '\|', 2; Write-KitLeaseLog release $xk $xn @{ agent = $a } "$Reason (no store held it: log row closed)" }
-        if ($lo.Count) { "${a}: $($lo.Count) stale log hold(s) closed: $(@($lo.resource) -join ', ')" } else { "${a}: no lease held" } }
+        if ($lo.Count) { "${a}: $($lo.Count) stale log hold(s) closed: $(@($lo.resource) -join ', ')" } elseif (-not $n) { "${a}: no lease held" }
     }
   }
 }
@@ -1540,14 +1542,13 @@ function Close-KitCiTask([string]$Task, $Ci, [string[]]$Mrs) {
   try { $null = Set-TrackerKitComment $Task 'qa-result' "QA: PASS · CI job $($cj.name) passed on $($Ci.branch) with $(@($Mrs | ForEach-Object { Format-KitMrLink $_ }) -join ', ') merged: $($cj.url)" } catch { Write-Warning "QA comment of $Task not written: $_" }
   @{ state = 'closed'; why = "all $(@($Mrs).Count) MRs merged, CI job $($cj.name) passed on $($Ci.branch) -> closed" }
 }
-# track (bossy.ps1): launched areas (track.planHours) no wave report lists done: a later batch or budget cut. -Merged (the task's MRs
-# all merged): an area whose agent joined and finished is delivered; one with no live agent in an ended run -> $script:planStale
+# track: launched areas (track.planHours) no wave lists done. -Merged: an area whose agent left for good = delivered; never joined, run ended -> planStale
 function Get-KitPlannedAreas([string]$TaskId, $Since, [switch]$Merged) {
   $TaskId = NormTask $TaskId; $script:planStale = @{}
   $areaGone = { param($pr, $id) if (-not $Merged) { return $false }
     $rows = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -eq $pr.run -and $_.agent -eq $id })
     $live = @($rows | Where-Object { $_.status -notin 'left', 'crashed' -and (Test-KitHolder $_) -ne $false })
-    if (-not $live.Count -and @($rows | Where-Object { $_.status -eq 'left' -and -not ($_.handoffBrief -or $_.crashed -or $_.paused -or $_.takenOverBy) }).Count) { return $true }   # left for good
+    if (-not $live.Count -and @($rows | Where-Object { $_.status -eq 'left' -and -not ($_.handoffBrief -or $_.crashed -or $_.paused -or $_.takenOverBy) }).Count) { return $true }
     if (-not $live.Count -and $pr.completed) { $script:planStale[$id] = "$($pr.run)" }; $false }
   if ($null -eq $script:planRecs) {
     $script:planRecs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and ((Get-Date) - [datetime]$_.at).TotalHours -lt [double](Get-KitParam 'track.planHours') })

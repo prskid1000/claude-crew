@@ -184,5 +184,12 @@ Update-KitTracking $old; $l1 = Invoke-Track run -Detail | Out-String; $global:li
 '@
 Expect-Each (Invoke-PsTest 'track-status' $stTest @($O)) 'track run: # (stale: a finished area is delivered, a never-joined one in an ended run = HOLD stale -> supervise ACT; lag: LAG only on the live status)' @('stale', 'lag') 2
 Expect 'supervise: a stale planned-area HOLD line is an ACT, other HOLD lines INFO' ((Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -like "*-match '^HOLD \S+: .*\(stale: ') { Flag 'ACT'*")
+$tbr = Invoke-PsTest release-tabrow @'
+$null = . $args[0] 6>$null
+# L1: a release that freed a store lease (gpu) still closes the agent's log-only rows (a swept tab kept its idle WATCH)
+Write-KitLeaseLog acquire tab 'stg|t|qa' @{ agent = 'DT' }; function Get-KitGpuState { @{ leases = @(@{ holder = 'DT' }) } }; function Remove-KitGpu { }
+$r2 = "$(Invoke-KitReleaseAgent DT)"; "tabrow:$($r2 -match 'DT gpu: 1 lease' -and $r2 -match 'DT: 1 stale log hold' -and -not @(Get-KitResourceRows | Where-Object { $_.agents -contains 'DT' }).Count)"
+'@ @($O)
+Expect-Each $tbr 'release (from bossy-generic.tests.ps1: its token cap): #' 'tabrow'
 Remove-TestKit $k
 Complete-Tests
