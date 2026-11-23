@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/crafty-check.tests.ps1: crafty.ps1 check / gate / stack on one test kit: stack presets detect, the ts-typecheck baseline,
-build heap and temp per stack, spec.mjs without esbuild, the container engine check (last: it leases a runtime).
+build heap and temp per stack, spec.mjs without esbuild, the container engine check (it leases a runtime), check -Step e2e spec picking (from guard.tests).
 Usage: pwsh -NoProfile -File tests/crafty-check.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
@@ -145,5 +145,28 @@ $pvc = pwsh @np $D check -Dir $pvd -Step test -Tests cases -Show 2>&1 | Out-Stri
 Expect "check python -Tests <folder with test cases>: the runner gets the folder ($($pvc.Trim() -replace '\s+', ' '))" ($pvc -match 'test\s*:.*\bcases\b' -and $pvc -notmatch 'test_c\.py')
 $pvo = pwsh @np $D check -Dir $pvd -Step test -Tests validation -Show 2>&1 | Out-String
 Expect "check python -Tests <folder>: each test_*.py run with python, no unittest ($($pvo.Trim() -replace '\s+', ' '))" ($pvo -match 'test\s*:.*"validation/test_alpha\.py"' -and $pvo -notmatch 'unittest|helper\.py')
+# e2e (from guard.tests: its cap): the changed specs, else the diff's specs (map, folder, name, imports, visits), none = NOT_TESTED, the whole suite only with -AllTests (logged)
+$er = Join-Path (Kd) 'e2e-repo'; $ef = @{ 'cypress/e2e/02-orders/01.create.cy.ts' = 'x'; 'cypress/e2e/misc.cy.ts' = "import { a } from '../../src/app/orders/list.component'`nimport d from '../fixtures/d.json'"; 'cypress/fixtures/d.json' = '1'; 'cypress/e2e/pay.cy.ts' = 'x'; 'cypress/e2e/n.cy.ts.snap' = 'x'; 'src/app/pay/components/row/row.ts' = 'a'
+  'cypress/e2e/nav.cy.ts' = "cy.visit('/orders?x=1')"; 'cypress/e2e/users.cy.ts' = "cy.visit('/users')"; 'cypress/e2e/invoices/a.cy.ts' = 'x'; 'src/app/orders/list.component.ts' = 'a'; 'src/billing/rate.ts' = 'a' }
+foreach ($p in $ef.Keys) { New-Item -Force "$er/$p" -Value $ef[$p] | Out-Null }; '{ "commands": { "e2e": "node -e 0 cypress run --spec \"{specs}\"" }, "stack": "custom" }' | Set-Content "$er/.claude-stack.json"; Save-GitRepo $er i
+& $J @{ tests = @{ e2e = @{ map = @(@{ paths = @('src/billing/**'); specs = @('cypress/e2e/invoices/**') }) } } } $kl
+$e2 = { param($f, [string[]]$x = @()) git -C $er checkout -q -- .; foreach ($p in @($f)) { Add-Content "$er/$p" 'b' }; Invoke-TestScript $D check -Dir $er -Step e2e @x }
+$cy = Join-Path (Kd) 'cy'; $null = mkdir -Force $cy; '{ "devDependencies": { "cypress": "13" } }' | Set-Content "$cy/package.json"; $cs = pwsh @np $D stack -Dir $cy 2>&1 | Out-String
+Expect-Cases @(
+  , @('check -Step e2e: the map picks its specs', { & $e2 'src/billing/rate.ts' '-Show' }, { param($r) $r.code -eq 0 -and $r.out -match 'invoices/a\.cy\.ts <- map src/billing/\*\*' -and $r.out -match '--spec "cypress/e2e/invoices/a\.cy\.ts"' -and $r.out -notmatch 'orders' })
+  , @('check -Step e2e: unmapped -> folder, imports, visits; unrelated specs left out', { & $e2 'src/app/orders/list.component.ts' '-Show' },
+      { param($r) $r.out -match '02-orders/01\.create\.cy\.ts <- folder orders' -and $r.out -match 'misc\.cy\.ts <- imports src/app/orders/list\.component\.ts' -and $r.out -match 'nav\.cy\.ts <- visits /orders\?x=1' -and $r.out -notmatch 'users\.cy|invoices' })
+  , @('check -Step e2e: nested file -> its nearest named folder; a changed JSON a spec imports; a .snap is no spec', { & $e2 @('src/app/pay/components/row/row.ts', 'cypress/fixtures/d.json') '-Show' }, { param($r) $r.out -match 'pay\.cy\.ts <- folder pay' -and $r.out -match 'misc\.cy\.ts <- imports cypress/fixtures/d\.json' -and $r.out -match '\(of 6\)' })
+  , @('check -Step e2e: changed specs only, related ones left out (named)', { & $e2 @('src/billing/rate.ts', 'cypress/e2e/pay.cy.ts') '-Show' }, { param($r) $r.out -match 'the 1 changed spec\(s\) only; 1 related' -and $r.out -match '--spec "cypress/e2e/pay\.cy\.ts"' -and $r.out -notmatch 'invoices/a' })
+  , @('check -Step e2e: a changed fixture keeps its related specs next to a changed spec', { & $e2 @('cypress/fixtures/d.json', 'cypress/e2e/pay.cy.ts') '-Show' }, { param($r) $r.out -match 'misc\.cy\.ts <- imports' -and $r.out -notmatch 'changed spec\(s\) only' })
+  , @('check -Step e2e: no related spec = NOT_TESTED (exit 5), nothing runs', { & $e2 'README.md' }, { param($r) $r.code -eq 5 -and $r.out -match 'e2e NOT_TESTED: no spec relates to the 1 changed file' -and $r.out -notmatch 'gate' })
+  , @('check -Step e2e -AllTests: the whole suite, logged; gate refuses a bare suite; cypress dep = e2e step', { $a = & $e2 'src/billing/rate.ts' '-AllTests'; $g = Invoke-TestScript $D gate -Dir $er -Cmd 'npx cypress run'; $a.out += "|$($g.code)|$(pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog builds | Where-Object event -eq e2e-all).Count")"; $a },
+      { param($r) $r.code -eq 0 -and $r.out -match 'WHOLE suite' -and $r.out -match '\|2\|1' -and $cs -match 'e2e\s+npx cypress run --spec "\{specs\}"' })
+)
+& $J @{ tests = @{ e2e = @{ run = @(@{ dir = ''; cmd = 'x -r0 --spec "{specs}"'; env = @{ CY_L = '1' }; split = 'folder' }) } } } $kl
+$er2 = "$((& $e2 'src/app/orders/list.component.ts' '-Show').out)|$((& $e2 'README.md' @('-AllTests', '-Show')).out)"
+Expect 'check -Step e2e: tests.e2e.run = cmd + env, one run per spec folder; -AllTests: a folder glob each' ($er2 -match 'env: CY_L=1' -and $er2 -match 'e2e : x -r0 --spec "cypress/e2e/02-orders/01\.create\.cy\.ts"' -and
+  $er2 -match '"cypress/e2e/(misc|nav)\.cy\.ts,cypress/e2e/(misc|nav)\.cy\.ts"' -and $er2 -match '"cypress/e2e/invoices/\*\.cy\.\*"' -and @([regex]::Matches($er2, 'e2e : ')).Count -eq 5)
+Remove-Item $kl
 Remove-TestKit $k
 Complete-Tests

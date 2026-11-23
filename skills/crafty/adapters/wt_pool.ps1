@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L130 names · L183 slots · L209 lease · L320 release · L351 lanes · L456 sync · L556 pool · L599 sweep
+Sections: L15 worktrees · L134 names · L187 slots · L213 lease · L324 release · L355 lanes · L460 sync · L560 pool · L603 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -125,7 +125,11 @@ function Add-DepLinks($path, $srcs, $target) {
 # porcelain status minus the worktree's own dependency links
 function Get-WtDirty($d) {
   $mine = @(@(Meta $d 'links') | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetRelativePath($d, $_).Replace('\', '/') })
-  @(git -C $d status --porcelain 2>$null | Where-Object { $_ -and ($_.Substring(3).Trim('"').TrimEnd('/') -notin $mine) })
+  # untracked test-run output (commit.ignore, else the runners' ignore globs) is no work: never WIP-committed (retro tidy-20261123-01); tracked files always count
+  $outSpec = @(@(Get-KitSetting 'commit.ignore' @(@(Get-KitSetting 'tests.runners' $script:KitVocab.testRunners) | ForEach-Object { $_.ignore })) | Where-Object { $_ } | ForEach-Object { ":(glob)$_" })
+  $outU = @(if ($outSpec.Count) { git -C $d ls-files -o --exclude-standard -- @outSpec 2>$null })
+  $uAll = @(if ($outU.Count) { '--untracked-files=all' })
+  @(git -C $d status --porcelain @uAll 2>$null | Where-Object { $_ -and ($_.Substring(3).Trim('"').TrimEnd('/') -notin $mine) -and -not ($_.StartsWith('??') -and $_.Substring(3).Trim('"') -in $outU) })
 }
 # ---- names: member n of every pool is the n-th bird
 # one naming scheme for every pooled resource: member n of a pool (worktree slot, env lane, phone lane) = the n-th bird

@@ -3,12 +3,12 @@
 # deploys: bossy.ps1 deploy merge, dot-sourced by bossy.ps1.
 # Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env>-<date> pushed, MR per deploy.mergeMethod, merged on green),
 # or tags it (deploys[].tag; -Push pushes the tag). A deploy branch itself is never pushed to.
-# Sections: L7 merge · L77 mr
+# Sections: L7 merge · L96 mr
 # ---- merge: tag or trunk, the merge in a worktree
 function Invoke-DeployMerge {
 param(
   [Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$To, [string]$From,
-  [string]$Check, [switch]$Push, [switch]$Mr, [string[]]$Mrs = @(), [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300
+  [string]$Check, [switch]$Push, [switch]$Mr, [string[]]$Mrs = @(), [string]$Decision, [int]$WaitMinutes = 8, [int]$History = 300
 )
 $ErrorActionPreference = 'Stop'
 $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
@@ -43,8 +43,27 @@ $bp = [string]$(if ($dep.branchPrefix) { $dep.branchPrefix } else { Get-KitSetti
 $dmm = [string]$(if ($dep.mergeMethod) { $dep.mergeMethod } else { Get-KitSetting 'deploy.mergeMethod' 'merge' })
 $dmmText = if ($dmm -eq 'merge') { 'a merge commit, squash off' } else { "merge method $dmm" }   # the MR texts follow deploy.mergeMethod
 if ($Push) { "REFUSED: deploy merge -Push would push straight to $To (a deploy branch). It changes only through a deploy MR: re-run with -Mr (pushes $bp$envName-<date>, opens the MR ($dmmText), merges on a green pipeline)."; exit 2 }
+$envSlug = $envName -replace '[^\w]+', '-'
+if ($Mr) {   # host project + adapter from the origin URL (else repos[].name and gitHostType)
+  $hostRepo = Get-HostProject "$($rc.name)" -Raw; $hostType = $script:HostType
+  if ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -match '^(?:https?://(?:[^@/]+@)?(?<host>[^/]+)/|[^@]+@(?<host>[^:]+):)(?<path>.+?)(?:\.git)?/?$') {
+    $hostRepo = $Matches.path -replace '/_git/', '/' -replace '^v3/', ''; if ($Matches.host -ne $KitConf.GitHost) { $hostType = Get-HostKind $Matches.host }
+    if ($hostType -eq 'gitlab') { $env:GITLAB_HOST = $Matches.host }
+  }
+  $ha = @{ repo = $hostRepo; type = $hostType }
+  # a re-run after a cut wait (opsy's shell timeout, 2026-11-23 !651): the open deploy MR of this env resumes, no second branch or MR
+  $listed = try { @(Invoke-HostVerb 'mr.list' ($ha + @{ state = 'opened'; target_branch = $To; per_page = 50 }) -NoMemo) } catch { "deploy merge: open deploy MRs unreadable ($($_.Exception.Message)): nothing done, run it again"; exit 1 }
+  $open = @($listed | Where-Object { $_ -and "$($_.source_branch)" -match "^$([regex]::Escape("$bp$envSlug"))-\d{8}-\d{6}$" -and "$($_.target_branch)" -eq $To } | Sort-Object { "$($_.source_branch)" } -Descending)[0]
+}
+if ($open) {
+  $iid = "$($open.iid)"; $br = "$($open.source_branch)"; $made = $null
+  git -C $Repo fetch -q origin $From $br 2>$null; git -C $Repo merge-base --is-ancestor "origin/$From" "origin/$br" 2>$null
+  if ($LASTEXITCODE) { "deploy MR !$iid ($br) is open but lacks origin/$From (stale): close it, then run this again; nothing merged"; exit 1 }
+  $url = if ($open.web_url) { $open.web_url } else { Invoke-HostVerb 'mr.url' ($ha + @{ n = $iid }) }
+  "deploy MR: $url ($br -> $To; resumed: open from an earlier run)"
+} else {
 $name = 'deploymerge-' + ($To -replace '[^\w]+', '-')
-$br = "$bp$($envName -replace '[^\w]+', '-')-$(Get-KitStamp file)"
+$br = "$bp$envSlug-$(Get-KitStamp file)"
 $out = & $KitCmd.dev wt new -Repo $Repo -Branch $br -Target $To -Name $name -Override 'deploy merge: a dedicated worktree'
 $wt = ($out | Where-Object { $_ -match '^worktree:\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() }) | Select-Object -First 1
 if (-not $wt) { throw "crafty.ps1 wt new failed: $out" }
@@ -81,21 +100,15 @@ git -C $wt merge-base --is-ancestor "origin/$To" HEAD
 if ($LASTEXITCODE) { "origin/$To moved while merging - re-run"; exit 1 }
 git -C $wt push -q origin "HEAD:refs/heads/$br"
 if ($LASTEXITCODE) { "push of $br FAILED (exit $LASTEXITCODE): no deploy MR; worktree kept: $wt"; exit 1 }
-# host project + adapter from the origin URL (else repos[].name and gitHostType)
-$hostRepo = Get-HostProject "$($rc.name)" -Raw; $hostType = $script:HostType
-if ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -match '^(?:https?://(?:[^@/]+@)?(?<host>[^/]+)/|[^@]+@(?<host>[^:]+):)(?<path>.+?)(?:\.git)?/?$') {
-  $hostRepo = $Matches.path -replace '/_git/', '/' -replace '^v3/', ''; if ($Matches.host -ne $KitConf.GitHost) { $hostType = Get-HostKind $Matches.host }
-  if ($hostType -eq 'gitlab') { $env:GITLAB_HOST = $Matches.host }
-}
 $refs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
 $trk = Read-KitTracking; $taskIds = @($trk.tasks.Keys | Where-Object { @(@($trk.tasks[$_].mrs) | Where-Object { $_ -in $refs }).Count } | Sort-Object)
 $mrw = [string]$(if ("$(Get-KitMember $script:KitVocab.mrWord $script:HostType)") { Get-KitMember $script:KitVocab.mrWord $script:HostType } else { 'MR' })   # vocab.json mrWord: PR off GitLab
 $body = "Deploy ${mrw}: $From into $To (bossy.ps1 deploy merge; $dmmText).`n`n- Env: $envName`n- ${mrw}s: $(if ($refs.Count) { $refs -join ', ' } else { 'none given' })`n- Tasks: $(if ($taskIds.Count) { $taskIds -join ', ' } else { 'none tracked' })`n- Deploy decision: $(if ($Decision) { $Decision } else { 'none given (deploy.trigger rule)' })`n- Commits from ${From}: $ahead"
-$ha = @{ repo = $hostRepo; type = $hostType }
 $made = Invoke-HostVerb 'mr.create' ($ha + @{ source = $br; target = $To; title = ($ct.Replace('{from}', $From).Replace('{to}', $To).Replace('{env}', $envName) -replace '\bmerge (?=\S+ into)', '') + " ($envName)"; body = $body; method = $dmm })
 $iid = "$($made.iid)"; if (-not $iid) { "deploy MR create FAILED for $br -> $To (host $hostType, repo $hostRepo): open it by hand ($dmmText); worktree kept: $wt"; exit 1 }
 $url = if ($made.web_url) { $made.web_url } else { Invoke-HostVerb 'mr.url' ($ha + @{ n = $iid }) }
 "deploy MR: $url ($br -> $To)"
+}
 # squash is a GitLab MR field; the other hosts take it per merge call (method merge)
 if ($made.squash -eq $true -and $dmm -ne 'squash') { "deploy MR $url has squash ON (the project forces it?): turn it off, then merge it by hand on green; not merged"; exit 1 }
 $noCi = $rc.ci.mrPipelines -eq $false; $end = (Get-Date).AddMinutes($WaitMinutes); $bk = @{}
@@ -106,10 +119,10 @@ do {   # wait for its pipeline: success merges, any other end state stops; an un
 } while ($true)
 if ($cur.state -eq 'merged') { "deploy MR $url already merged"; exit 0 }
 if ($cur.state -ne 'opened') { "deploy MR $url is $(if ($cur) { $cur.state } else { 'unreadable' }): not merged"; exit 1 }
-if (-not $noCi -and $cs -ne 'success') { "deploy MR $url pipeline $(if ($st) { $st } else { 'none' })$(if ((Get-Date) -gt $end) { " after $WaitMinutes min" }): not merged (crafty.ps1 pipes -Mrs $url; merge it on green)"; exit 1 }
+if (-not $noCi -and $cs -ne 'success') { "deploy MR $url pipeline $(if ($st) { $st } else { 'none' })$(if ((Get-Date) -gt $end) { " after $WaitMinutes min" }): not merged$(if ($cs -notin 'failed', 'canceled') { '; re-run the same command: it resumes this MR' } else { " (crafty.ps1 pipes -Mrs $url; merge it on green)" })"; exit 1 }
 $done = Invoke-HostVerb 'mr.merge' ($ha + @{ n = $iid; method = $dmm; sha = $cur.sha })
 # the host merges asynchronously: 'opened' for some seconds after an accepted merge call
 for ($i = 0; $i -lt 30 -and "$($done.state)" -ne 'merged'; $i++) { if ($i) { Start-Sleep (Get-KitParam 'deploy.mergeSettleSec') }; $done = Invoke-HostVerb 'mr.get' ($ha + @{ n = $iid }) -NoMemo; if ($done -and $done.state -notin 'opened', 'locked') { break } }
 if ($done.state -ne 'merged') { "deploy MR $url merge FAILED (state $($done.state)): merge it by hand ($dmmText)"; exit 1 }
-"merged deploy MR $url into $To (merge commit, $ahead commits from $From)"
+"merged deploy MR $url into $To (merge commit$(if ($ahead) { ", $ahead commits from $From" }))"
 }

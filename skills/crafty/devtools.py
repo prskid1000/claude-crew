@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L393 process · L602 git host · L675 scope · L767 MR · L962 merge · L1293 docs ·
-  L1456 publish · L1951 render · L2472 spec · L2829 plugins · L2843 keepboth · L2862 selftest · L3550 CLI
+Sections: L55 config · L110 run · L198 tracker · L393 process · L602 git host · L675 scope · L767 MR · L963 merge · L1294 docs ·
+  L1457 publish · L1952 render · L2473 spec · L2830 plugins · L2844 keepboth · L2863 selftest · L3551 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -807,10 +807,11 @@ def doc_link_rx(d):
 
 def with_doc_lines(body, tid):
     """(body, missing): each process doc's "<mrLabel>: <url>" line from <tid>'s published records (older lines of a published kind
-    replaced), under "## Links" or above the footer; missing = the required doc keys with no record."""
+    replaced: its own URL or no link), under "## Links" or above the footer; missing = the required doc keys with no record.
+    Another task's linked line stays: one MR of several tasks lists every task's docs (retro tidy-20261123-01)."""
     dk = docs()
     urls = {d['key']: _pub_read(f'{tid}:{d["key"]}').get('url') for d in dk}
-    lines = [ln for ln in (body or '').split('\n') if not any(urls[d['key']] and doc_label_rx(d).match(ln) for d in dk)]
+    lines = [ln for ln in (body or '').split('\n') if not any(urls[d['key']] and doc_label_rx(d).match(ln) and (urls[d['key']] in ln or not doc_link_rx(d).match(ln)) for d in dk)]
     add = [f'- {d["mrLabel"]}: {urls[d["key"]]}' for d in dk if urls[d['key']]]
     at = next((i + 1 for i, ln in enumerate(lines) if ln.strip() == '## Links'), next((i for i, ln in enumerate(lines) if FOOTER and FOOTER in ln), len(lines)))
     return '\n'.join(lines[:at] + add + lines[at:]) if add else body, [d['key'] for d in dk if d['required'] and not urls[d['key']]]
@@ -3003,7 +3004,7 @@ def selftest():
             rr = refresh_mr_docs('T7', 'github', states=(rst := []))
         g['read_tracking'], g['CFG'] = rt0, cfg0; rfin = rr == ['o/web!5'] and rst == [('o/web!5', 'opened', True), ('web!6', 'unreadable', False)] and 'Testing doc (AI): https://d/testing-ai' in ups[0]['body'] and rnone == 'MERGED'
         g['_nodoc'] = 'testing-ai'; calls.clear(); g['_host'] = tb(lb); rn = auto_merge('.', '7'); nm = not merged()
-        wl, miss = with_doc_lines(lb, 'T7'); g.pop('_nodoc')
+        wl, miss = with_doc_lines(lb, 'T7'); wm = with_doc_lines(lb.replace('- Testing doc: pending', '- Testing doc: https://d/T8-doc\n- Testing doc: pending'), 'T7')[0]; g.pop('_nodoc')
         g['_pub_read'] = lambda key: {'rounds': [{'body': g['_aib']}]} if key == 'T7:testing-ai' else {}
         fb = lambda: (lambda f: lambda v, **a: dict(f(v, **a), source_branch='fix/CU-T7-x') if v == 'mr.get' else f(v, **a))(nd('x'))
         g['_aib'] = '| A1 | regression | s | ok | PASS | [j](https://j) |'; calls.clear(); g['_host'] = fb(); rb = auto_merge('.', '7'); bnm = not merged()
@@ -3013,7 +3014,7 @@ def selftest():
         g['_pub_read'], g['TAG'], g['TRACKER_TYPE'] = pr0, tag0, tt0
         expect(f'merge: a task MR without doc lines (or "none") gets them from the published docs and merges; finish writes them into tracked open MRs; a doc not published: NOT_MERGED naming it ({rf}, {miss})',
                rf == 'MERGED' and rfin and up and '## Links\n- Testing doc: https://d/testing-doc\n- Testing doc (AI): https://d/testing-ai\n' in up[0] and 'pending' not in up[0]
-               and merge_word(rn) == 'NOT_MERGED' and 'testing-ai' in rn and nm and miss == ['testing-ai'] and 'Testing doc: https://d/testing-doc' in wl and 'pending' not in wl)
+               and merge_word(rn) == 'NOT_MERGED' and 'testing-ai' in rn and nm and miss == ['testing-ai'] and 'Testing doc: https://d/testing-doc' in wl and 'pending' not in wl and '- Testing doc: https://d/T8-doc' in wm and 'pending' not in wm)   # several tasks: lines merged
         # neutral: process.gates unset -> no doc lines, no "none" refusal, no repro gate; a hook gate refuses with its stdout
         g['CFG']['process'] = {}; g['TRACKER_TYPE'] = 'clickup'; g['TAG'] = 'CU-'
         g['_pub_read'] = lambda key: {}

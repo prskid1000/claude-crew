@@ -117,6 +117,8 @@
   "usage.context.startNorm": "quantile q=.5 k=1 default=30000 floor=5000 ceil=300000 unit=tokens",
   "usage.context.startFactor": "config default=1.5",
   "usage.context.actRuns": "config default=2",
+  "usage.context.wasteMinTokens": "config default=2000 unit=tokens",
+  "usage.context.startAim": "config default=20000 unit=tokens",
   "idle.beatMinutes": "config default=20 unit=min",
   "qa.bugsLockSec": "config default=120 unit=s",
   "qa.finalizeLockSec": "config default=600 unit=s",

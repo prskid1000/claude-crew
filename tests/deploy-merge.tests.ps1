@@ -40,10 +40,11 @@ switch ($v) {
     @{ iid = 5; sha = 'abc'; state = $(if ($gets -ge 2) { 'merged' } else { 'opened' }) } | ConvertTo-Json -Compress }
   'merge' { Add-Content $log "merge $($rest -join ' ')"; Set-Content $flag 0; '{"iid":5,"state":"opened"}' }
   'ci' { '{"id":1,"status":"success"}' }
+  'list' { if (Test-Path "$log.open") { Get-Content "$log.open" -Raw } else { '[]' } }
 }
 '@
 $hostCmd = { param($v, $a) "pwsh -NoProfile -File `"$hostPs`" $v $a" }
-@{ gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.create' = (& $hostCmd create '{source} {target} {method} "{body}"'); 'mr.get' = (& $hostCmd get '{n}'); 'mr.merge' = (& $hostCmd merge '{n} {method} {sha}') } }; ci = @{ type = 'command'; commands = @{ status = (& $hostCmd ci '{sha}') } }
+@{ gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.create' = (& $hostCmd create '{source} {target} {method} "{body}"'); 'mr.get' = (& $hostCmd get '{n}'); 'mr.merge' = (& $hostCmd merge '{n} {method} {sha}'); 'mr.list' = (& $hostCmd list '{state}') } }; ci = @{ type = 'command'; commands = @{ status = (& $hostCmd ci '{sha}') } }
    repos = @(@{ name = 'shop'; checkout = "$r/repo"; target = 'main'; deploys = @(@{ target = 'st'; branch = 'staging' }) }) } | ConvertTo-Json -Depth 6 | Set-Content $kl
 'c' | Set-Content "$r/repo/c.txt"; git -C "$r/repo" add -A; git -C "$r/repo" commit -q -m 'feat: c'; git -C "$r/repo" push -q origin main 2>$null
 Get-ChildItem "$r/wt" -Directory -Filter 'deploymerge-*' -ErrorAction SilentlyContinue | ForEach-Object { git -C "$r/repo" worktree remove --force $_.FullName 2>$null }
@@ -56,6 +57,15 @@ $env:DM_HOST_LOG = $hostLog
 $o6 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Mrs 'shop!12' -Decision 'd-42' -WaitMinutes 1 2>&1 | Out-String
 $hl = if (Test-Path $hostLog) { Get-Content $hostLog -Raw } else { '' }; $depBr = @(git -C "$r/origin.git" for-each-ref --format='%(refname:short)' 'refs/heads/deploy/')
 Expect "deploy merge -Mr: deploy/st-<date> pushed, MR to staging with method merge and MRs + decision in the body, merged on green, staging never pushed ($($o6.Trim()) | $hl)" ($o6 -match 'merged deploy MR https://h\.example/g/shop/-/merge_requests/5' -and $depBr -match '^deploy/st-\d{8}-\d{6}$' -and $hl -match 'create deploy/st-\d{8}-\d{6} \| staging \| merge \| ' -and $hl -match 'shop!12' -and $hl -match 'Deploy decision: d-42' -and $hl -match 'merge 5 merge abc' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
+# a re-run after a cut wait (an agent shell's timeout): the open deploy MR of the env resumes: no new branch, no second MR
+Set-Content "$hostLog.open" '[{"iid":7,"source_branch":"deploy/st-20260101-101010","target_branch":"staging","state":"opened","web_url":"https://h.example/g/shop/-/merge_requests/7"}]'
+git -C "$r/repo" push -q origin main:refs/heads/deploy/st-20260101-101010 2>$null; Remove-Item "$hostLog.merged", $hostLog -ErrorAction SilentlyContinue; $brN = @(git -C "$r/origin.git" for-each-ref 'refs/heads/deploy/').Count
+$o6r = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -WaitMinutes 1 2>&1 | Out-String; $hlr = if (Test-Path $hostLog) { Get-Content $hostLog -Raw } else { '' }
+Expect "deploy merge -Mr re-run: the open deploy MR resumed and merged, no create, no new branch ($($o6r.Trim()) | $hlr)" ($o6r -match 'resumed' -and $o6r -match 'merged deploy MR https://h\.example/g/shop/-/merge_requests/7' -and $hlr -notmatch 'create' -and $hlr -match 'merge 7 ' -and @(git -C "$r/origin.git" for-each-ref 'refs/heads/deploy/').Count -eq $brN)
+git -C "$r/repo" push -q origin main~1:refs/heads/deploy/st-20260101-121212 2>$null   # an open deploy MR without the newest main: stale, never merged
+Set-Content "$hostLog.open" '[{"iid":8,"source_branch":"deploy/st-20260101-121212","target_branch":"staging","state":"opened"}]'; $o6s = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -WaitMinutes 1 2>&1 | Out-String
+Expect "deploy merge -Mr: an open deploy MR lacking origin/main = stale, refused ($($o6s.Trim()))" ($o6s -match 'lacks origin/main \(stale\)' -and $o6s -notmatch 'merged deploy MR')
+Remove-Item "$hostLog.open"
 Remove-Item Env:DM_HOST_LOG
 $o3 = pwsh @np $O deploy merge -To staging 2>&1 | Out-String
 Expect "deploy merge without -Repo: a clear error, no binding crash ($($o3.Trim()))" ($o3 -match 'deploy merge: -Repo missing' -and $o3 -notmatch 'Cannot bind')
@@ -114,11 +124,15 @@ $script:viewed = @(); $mq = Invoke-MarkInTest -FromMrs 'api!4,api!3,api!9' | Out
 function Get-TrackerTask($id) { $script:viewed += $id; Start-Sleep -Milliseconds 700; [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } }
 $script:viewed = @(); $bq = Invoke-MarkInTest -FromMrs 'api!4' -BudgetSec 1 | Out-String
 $rxBud = 'not checked \(time budget\) \('; "budget:$($script:viewed[0] -eq 'open4' -and $script:viewed.Count -lt 4 -and $bq -match $rxBud)"
+# no -Mrs: bounded too, pages: a re-run starts with the task the last run left (oldest check first), the summary says so
+$script:viewed = @(); $pq1 = Invoke-MarkInTest -BudgetSec 1 | Out-String; $pv1 = @($script:viewed); $script:viewed = @(); $pq2 = Invoke-MarkInTest -BudgetSec 1 | Out-String
+"page:$($pv1.Count -eq 1 -and $script:viewed[0] -and $script:viewed[0] -ne $pv1[0] -and $pq1 -match 'run deploy intest again: the next page starts with them')"
+$null = Invoke-MarkInTest -Task old3 | Out-String; $ckj = Get-Content (Join-Path (Get-KitPath deploys) 'intest-checked.json') -Raw | ConvertFrom-Json -AsHashtable; "keep:$($ckj.ContainsKey('ok2') -and $ckj.ContainsKey('qa5') -and $ckj.ContainsKey('old3'))"   # a -Task run keeps the pages
 # a tracker with no promoted / review role (tracker.statuses.<role> null): merged work waits in inProgress, the source role
 function Test-TrackerStatusOff($s) { $s -in 'promoted', 'review' }; $tq2 = Invoke-MarkInTest -Task old3 | Out-String; "minimal:$($tq2 -notmatch 'SKIP  old3  status')"
 '@
 $itR = Invoke-PsTest 'intest-gone' $it @($O); Expect 'deploy intest: one progress line per task on stderr' (@($itR -match '^intest \d+s task 1/').Count -gt 0)
-Expect-Each $itR 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (SKIP line), -Mrs their tracked tasks on top of every candidate; no promoted / review role: inProgress is the source (#)' @('gone', 'scope', 'task', 'mrs', 'budget', 'minimal')
+Expect-Each $itR 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (SKIP line), -Mrs their tracked tasks on top of every candidate; no promoted / review role: inProgress is the source (#)' @('gone', 'scope', 'task', 'mrs', 'budget', 'page', 'keep', 'minimal')
 # deploy plan target-branch memo (from deploys.tests.ps1: its token cap)
 $tbm = Join-Path (TkPath $k cache -Create) 'deployed-rows.json'; & $J @{ 'mr|jc!9' = @{ at = (Get-Date).ToString('s'); mr = @{ target_branch = 'st/a' } } } $tbm
 Expect-Each (Invoke-PsTest 'tb-memo' '. $args[0]; function Invoke-HostVerb { throw }; "memo:$((Get-MrTargetBranch ''jc!9'' $null) -eq ''st/a'')"' @($O)) 'deploy plan: target branch from pokey''s cache, no host call (#)' @('memo') 3; Remove-Item $tbm

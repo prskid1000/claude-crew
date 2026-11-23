@@ -72,6 +72,8 @@ $jq = pwsh @np $O board join -Agent BQ -Run rq -Claims $bqw | Out-String; $jq2 =
 $js = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc | Out-String; $fc = Join-Path $bd "$(($js -csplit 'SESSION ')[-1].Split(' ')[0]).json"
 $ec = Read-Json $fc; $ec.holderPid = $PID; $ec.holderStart = & { . (Lib); Get-KitPidStart $PID }; & $J $ec $fc   # both kittys share the coordinator's process
 $js2 = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc | Out-String; $js3 = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc -Session $ec.session | Out-String
+$jo = pwsh @np $O board join -Agent kitty-kc -Run other | Out-String; $joc = $LASTEXITCODE   # the id live in run kc: refused
+Expect "board join: an id live in another run -> REFUSED, exit 2 ($($jo.Trim()))" ($joc -eq 2 -and $jo -match 'REFUSED: agent id kitty-kc is live in run kc')
 Expect "board: parallel joins of one id without claims -> 2 rows, 2 sessions ($($pa -join ',')); one after the other -> the second is PARALLEL kitty-kc-2; same claims or its -Session within 2 min -> REJOIN" ($ps.Count -eq 2 -and $ps[0] -ne $ps[1] -and $pa.Count -eq 2 -and $js2 -match 'PARALLEL: kitty-kc runs .*you are kitty-kc-2' -and $jq2 -match 'REJOIN' -and $js3 -match "REJOIN: .*reusing session $($ec.session)")
 # bossy.ps1 bugbrief (a QA bug's brief; moved from bossy-generic.tests: its cap)
 $bbScript = Join-Path $k 'skills/bossy/bossy.ps1'
@@ -92,5 +94,21 @@ $null = Invoke-BugBrief -Task b1 -Repos w -Only C1, C2 -Skip 'C2=web; api area' 
 "n:$(try { Invoke-BugBrief -Task b1 -Repos w -Only C9 3>$null; 0 } catch { "$_" -match 'no check C9 ' })"
 '@ @($bbScript); Remove-Item $kl
 Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else the configured repos; -Only / -Skip -> a Not yours list (a ; in a why kept), an unknown id = error; no repo name anywhere = error; Migration range only with a configured tool (#)' 'd', 'r', 'm', 'e', 'o', 'n'
+# Waste panel (context.tests: its cap): every item tagged (fixable / open / fixed / ignored, reason), fixable first; a pattern in 2 runs -> one
+# retro signal (then open); a win signal "fixed in <sha>" -> fixed; filter chips, ignored muted
+$wz = Invoke-PsTest waste @'
+$null = . $args[0] 6>$null; $z = @(0, 0, 0, 0, 0, 0)
+$st = { param($r, $l, $run, $s0, $w, $rr) [pscustomobject]@{ role = $r; label = $l; run = $run; cx = [pscustomobject]@{ n = 3; s0 = $s0; w = $w; rr = $rr } } }
+$ss = @((& $st devy d1 r1 31000 $z @(0, '')), (& $st devy d2 r2 26000 $z @(0, '')), (& $st checky c1 r3 9000 @(0, 478, 0, 0, 0, 0) @(2, 'D:/x/notes.md')), (& $st revy v1 r4 9000 @(0, 0, 0, 0, 1, 5000) @(0, '')))
+Write-KitLog signals '' ([ordered]@{ skill = 'revy'; kind = 'friction'; text = 'w'; ref = 'waste:revy:buildlog'; source = 'supervise' })
+$a = @(Get-KitWasteItems $ss); "tags:$((@($a | ForEach-Object { "$($_.role)-$($_.kind)-$($_.tag)" }) -join ',') -eq 'devy-startload-fixable,revy-buildlog-open,checky-reread-ignored' -and $a[0].what -match '^avg start \S+ vs the 20k aim$')"
+"why:$(@($a | Where-Object tag -eq 'ignored')[0].why -eq '478 tokens, under 2k, one-off')"
+$r1 = Add-KitWasteSignals $a; $r2 = Add-KitWasteSignals @(Get-KitWasteItems $ss); "raised:$("$r1|$r2|$(@(Get-KitWasteItems $ss)[0].tag)" -eq '1|0|open')"
+$null = Invoke-Learn -Skill devy -Kind win -Text 'fixed in abc1234: devy start files slimmed' -Ref waste:devy:startload; $b = @(Get-KitWasteItems $ss)
+"fixed:$(@($b | Where-Object kind -eq 'startload')[0].why -eq 'fixed in abc1234')"
+$fd = { param($id, $t, $n, [string]$inner, [string]$tag, [string]$cls, [string]$extra) "<details id=$id><summary>$t $n $extra</summary>$inner</details>" }
+$h = Format-KitWastePanel $b $fd; "html:$(([regex]::Matches($h, '<button type=button data-w=')).Count -eq 4 -and $h -match 'class=wsx data-w=all' -and $h -match "class='wr t-ignored' title='478 tokens, under 2k, one-off")"
+'@ @($O)
+Expect-Each $wz 'waste: # (tags: fixable first by tokens, open, ignored; why: the reason; raised: one signal per 2-run pattern, once, then open; fixed: its commit; html: 4 chips, all shown, ignored muted with its reason)' @('tags', 'why', 'raised', 'fixed', 'html') -Show 6
 Remove-TestKit $k
 Complete-Tests

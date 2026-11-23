@@ -72,6 +72,7 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
  (forget on cap: content is cut and archived; a BATCH line = features: run its decide ask once, never remove them yourself).
 2. Rules: a lesson at (3×) or more and still true -> a short rule in its SKILL.md or rules/*.md, then learn -Skill <s> -Fixed "<words>".
  "Outcomes" lines (results, not friction): a repeat cause or an area / agent with most fix rounds -> a lesson (-Skill of the step that failed) or a rule edit for the brief or check that would have caught it.
+ A "waste:" signal (ref waste:<role>:<kind>, its fix kind in the text): apply that fix in step 3, then after the push learn -Skill <role> -Kind win -Text "fixed in <sha>" -Ref <its ref> (Waste panel: fixed).
  "Standing rules proposed": the script already asked the owner (one decide ask); never apply one. An approved rule that holds for any org -> propose it as a kit rule edit.
 3. Scripts, defaults, templates (guard blocks, script errors, slow builds, failed upkeep steps): ${A.applyScripts ? 'apply the smallest fix, re-parse every changed .ps1 ([System.Management.Automation.Language.Parser]::ParseFile) and node --check every changed .js/.mjs; revert one that breaks.' : 'list each with the exact edit (file, function, new value); do not apply.'}
 4. The report is rendered, never hand-written: write retro.json { "date", "applied": [{ "change", "file", "count" }], "proposed":

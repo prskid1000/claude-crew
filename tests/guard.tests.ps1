@@ -101,7 +101,7 @@ $dd.flags = @([pscustomobject]@{ level = 'WATCH'; what = 'w1'; action = 'a1' }, 
 $pg = foreach ($i in 1, 2) { Write-KitSuperviseHtml $dd @('sweep line') 'NEXT 5 min (x)' }; $hx = Get-Content $pg[1] -Raw; $hj = Get-Content ([IO.Path]::ChangeExtension($pg[1], '.json')) -Raw | ConvertFrom-Json
 "svgfill:$($hx -match "<tr class='f fr ACT'>" -and $hx -match "id=sec-flagmap open><summary><h4>Flags &#183; 24 h</h4><span class=cnt>\(3 flags\)</span>" -and $hx -match "hasAttribute\('data-end'\)&&!tp\[n-1\]\?n-1:" -and $hx -notmatch 'class=fl data-row' -and $hx -match 'data-tg=fx-rows aria-expanded=false>1 auto-fixed this sweep &#183; 1 note' -and $hx -match 'colspan=5>plain info<' -and -not @([regex]::Matches($hx, '<(path|polyline|polygon)\b[^>]*>') | Where-Object { $_.Value -notmatch '\sfill(-opacity)?=' }).Count -and $hx -match '(^|\})svg \.ln\{fill:none')"   # an SVG line without fill draws black (dark theme)
 $sx2 = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); agents = @([pscustomobject]@{ name = 's (devy)'; run = 'solo'; state = 'ACTIVE' }); shells = @([pscustomobject]@{ pid = 1; cmd = "a`nb`nc" }, [pscustomobject]@{ pid = 2; age = 19; dir = "$script:KitRoot/"; cmd = 'x' * 200 }, [pscustomobject]@{ pid = 3; cmd = 'ls'; next = ' ' }) })
-"fold3:$($sx2 -match 'rtg aria-expanded=false>devy (·|&#183;) s<' -and $sx2 -match "class=cmd><summary title='a b c'>a b c</summary><div class=cmdf>a`nb`nc<" -and $sx2 -match "'>x{119}…</sum" -and $sx2 -match '<colgroup>(<col [^>]+>){5}</colgroup>' -and $sx2 -notmatch '<th>(Dir|Next)</th>' -and $sx2 -match "'Age'><span class=ago [^>]+>19 min<")"
+"fold3:$($sx2 -match 'rtg aria-expanded=false>s (·|&#183;) devy<' -and $sx2 -match "class=cmd><summary title='a b c'>a b c</summary><div class=cmdf>a`nb`nc<" -and $sx2 -match "'>x{119}…</sum" -and $sx2 -match '<colgroup>(<col [^>]+>){5}</colgroup>' -and $sx2 -notmatch '<th>(Dir|Next)</th>' -and $sx2 -match "'Age'><span class=ago [^>]+>19 min<")"
 $o1 = @(Format-KitSuperviseOut $dd $dd $pg[1]);$o0 = @(Format-KitSuperviseOut $dd $dd '') -join "`n"
 # T8: 2 ACT + 30 WATCH of one kind + 3 auto-fixes
 $fB = @(1..2 | ForEach-Object { [pscustomobject]@{ level = 'ACT'; what = "BUILD-FAIL: a$_ broke"; action = 'fix' } }) + @(1..30 | ForEach-Object { [pscustomobject]@{ level = 'WATCH'; what = "STALE: w$_ quiet"; who = "w$_"; action = 'ping' } }) + @(1..3 | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: f$_" } })
@@ -172,27 +172,6 @@ $bf = & { . $O; function Test-KitLive($l) { $l.agent -ne 'gone' }; $n = Get-Date
   $e = { param($p, $o, $c, $h) @{ event = 'end'; kind = 'm'; project = $p; owner = $o; code = $c; at = $n.AddMinutes(-$h).ToString('o') } }
   @(Get-KitBuildFailures @{ 'm|old' = & $x 70; 'm|new' = & $x 5; 'm|gone' = & $x 5; 'm|fixed' = & $x 5; 'm|mix' = @((& $f 3 $false), (& $f 2 $true), (& $f 1 $false)) } $n @((& $e new w 1 5), (& $e gone gone 1 5), (& $e fixed w2 1 5), (& $e fixed/sub w2 0 2)) | ForEach-Object { "$($_.key)@$($_.who)" }) -join ',' }
 Expect "build failures: 3 in a row flag only < 60 min old, while their agent lives and has no green build of that dir since ($bf)" ($bf -eq 'm|new@w')
-# e2e: the diff's specs only (map, folder, name, imports, visits), none = NOT_TESTED, the whole suite only with -AllTests (logged)
-$er = Join-Path (Kd) 'e2e-repo'; $ef = @{ 'cypress/e2e/02-orders/01.create.cy.ts' = 'x'; 'cypress/e2e/misc.cy.ts' = "import { a } from '../../src/app/orders/list.component'`nimport d from '../fixtures/d.json'"; 'cypress/fixtures/d.json' = '1'; 'cypress/e2e/pay.cy.ts' = 'x'; 'cypress/e2e/n.cy.ts.snap' = 'x'; 'src/app/pay/components/row/row.ts' = 'a'
-  'cypress/e2e/nav.cy.ts' = "cy.visit('/orders?x=1')"; 'cypress/e2e/users.cy.ts' = "cy.visit('/users')"; 'cypress/e2e/invoices/a.cy.ts' = 'x'; 'src/app/orders/list.component.ts' = 'a'; 'src/billing/rate.ts' = 'a' }
-foreach ($p in $ef.Keys) { New-Item -Force "$er/$p" -Value $ef[$p] | Out-Null }; '{ "commands": { "e2e": "node -e 0 cypress run --spec \"{specs}\"" }, "stack": "custom" }' | Set-Content "$er/.claude-stack.json"; Save-GitRepo $er i
-& $J @{ tests = @{ e2e = @{ map = @(@{ paths = @('src/billing/**'); specs = @('cypress/e2e/invoices/**') }) } } } $kl
-$e2 = { param($f, [string[]]$x = @()) git -C $er checkout -q -- .; foreach ($p in @($f)) { Add-Content "$er/$p" 'b' }; Invoke-TestScript $D check -Dir $er -Step e2e @x }
-$cy = Join-Path (Kd) 'cy'; $null = mkdir -Force $cy; '{ "devDependencies": { "cypress": "13" } }' | Set-Content "$cy/package.json"; $cs = pwsh @np $D stack -Dir $cy 2>&1 | Out-String
-Expect-Cases @(
-  , @('check -Step e2e: the map picks its specs', { & $e2 'src/billing/rate.ts' '-Show' }, { param($r) $r.code -eq 0 -and $r.out -match 'invoices/a\.cy\.ts <- map src/billing/\*\*' -and $r.out -match '--spec "cypress/e2e/invoices/a\.cy\.ts"' -and $r.out -notmatch 'orders' })
-  , @('check -Step e2e: unmapped -> folder, imports, visits; unrelated specs left out', { & $e2 'src/app/orders/list.component.ts' '-Show' },
-      { param($r) $r.out -match '02-orders/01\.create\.cy\.ts <- folder orders' -and $r.out -match 'misc\.cy\.ts <- imports src/app/orders/list\.component\.ts' -and $r.out -match 'nav\.cy\.ts <- visits /orders\?x=1' -and $r.out -notmatch 'users\.cy|invoices' })
-  , @('check -Step e2e: nested file -> its nearest named folder; a changed JSON a spec imports; a .snap is no spec', { & $e2 @('src/app/pay/components/row/row.ts', 'cypress/fixtures/d.json') '-Show' }, { param($r) $r.out -match 'pay\.cy\.ts <- folder pay' -and $r.out -match 'misc\.cy\.ts <- imports cypress/fixtures/d\.json' -and $r.out -match '\(of 6\)' })
-  , @('check -Step e2e: no related spec = NOT_TESTED (exit 5), nothing runs', { & $e2 'README.md' }, { param($r) $r.code -eq 5 -and $r.out -match 'e2e NOT_TESTED: no spec relates to the 1 changed file' -and $r.out -notmatch 'gate' })
-  , @('check -Step e2e -AllTests: the whole suite, logged; gate refuses a bare suite; cypress dep = e2e step', { $a = & $e2 'src/billing/rate.ts' '-AllTests'; $g = Invoke-TestScript $D gate -Dir $er -Cmd 'npx cypress run'; $a.out += "|$($g.code)|$(pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog builds | Where-Object event -eq e2e-all).Count")"; $a },
-      { param($r) $r.code -eq 0 -and $r.out -match 'WHOLE suite' -and $r.out -match '\|2\|1' -and $cs -match 'e2e\s+npx cypress run --spec "\{specs\}"' })
-)
-& $J @{ tests = @{ e2e = @{ run = @(@{ dir = ''; cmd = 'x -r0 --spec "{specs}"'; env = @{ CY_L = '1' }; split = 'folder' }) } } } $kl
-$er2 = "$((& $e2 'src/app/orders/list.component.ts' '-Show').out)|$((& $e2 'README.md' @('-AllTests', '-Show')).out)"
-Expect 'check -Step e2e: tests.e2e.run = cmd + env, one run per spec folder; -AllTests: a folder glob each' ($er2 -match 'env: CY_L=1' -and $er2 -match 'e2e : x -r0 --spec "cypress/e2e/02-orders/01\.create\.cy\.ts"' -and
-  $er2 -match '"cypress/e2e/(misc|nav)\.cy\.ts,cypress/e2e/(misc|nav)\.cy\.ts"' -and $er2 -match '"cypress/e2e/invoices/\*\.cy\.\*"' -and @([regex]::Matches($er2, 'e2e : ')).Count -eq 5)
-Remove-Item $kl
 # pokey.ps1 api: auth kinds, -Save, -ContentType, paths
 $Q = Join-Path $k 'skills/pokey/pokey.ps1'
 $api = Start-TestApi; $apiPort = $api.port

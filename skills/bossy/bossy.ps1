@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L248 budget · L278 launch · L521 recover · L608 pause · L619 resume · L686 program · L737 param ·
-  L743 track · L1132 supervise · L1473 report · L1553 audit · L1613 storage · L1616 bugbrief · L1618 cleanup · L1705 learn ·
-  L1740 decide · L1910 debate · L1954 health · L2022 setup · L2117 guard-sendmessage
+Sections: L40 init · L51 board · L251 budget · L281 launch · L524 recover · L611 pause · L622 resume · L689 program · L740 param ·
+  L746 track · L1135 supervise · L1476 report · L1556 audit · L1616 storage · L1619 bugbrief · L1621 cleanup · L1708 learn ·
+  L1745 decide · L1915 debate · L1959 health · L2027 setup · L2122 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -131,6 +131,9 @@ switch ($Action) {
     $rejoin = $same | Where-Object { -not $Resume -and ($myClaims.Count -or ($Session -and $_.session -eq $Session)) -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
       Sort-Object { [datetime]$_.joined } -Descending | Select-Object -First 1
     $peer = @($same | Where-Object { -not ($Resume -or $rejoin) -and (Test-KitHolder $_) -and (($now - [datetime]$_.beat).TotalMinutes -lt $staleMin -or ($_.transcript -and ($now - [IO.File]::GetLastWriteTime($_.transcript)).TotalMinutes -lt $staleMin / 6)) })   # or a fresh transcript
+    # one id in two live runs shares leases (retro)
+    $other = @(All | Where-Object { -not $auto -and -not $Resume -and $Run -and $_.run -and (-not $Session -or $_.session -ne $Session) -and $Type -ne 'coordinator' -and $_.agent -eq $Agent -and "$($_.run)" -ne "$Run" -and $_.status -ne 'left' -and (Test-KitHolder $_) -and ($now - [datetime]$_.beat).TotalMinutes -lt $staleMin })
+    if ($other) { "REFUSED: agent id $Agent is live in run $($other[0].run): give this agent another id"; exit 2 }
     if ($peer) { $b = $Agent; $n = 2; if ($auto) { $Agent = New-KitAgentId $Type } else { while (@(Active | Where-Object agent -eq "$b-$n").Count) { $n++ }; $Agent = "$b-$n" }; $same = @(); $notes += "PARALLEL: $b runs in session $($peer[0].session): you are $Agent" }
     if ($rejoin) { $tok = $rejoin.session; $joined = $rejoin.joined; $notes += "REJOIN: same agent, run and claims within 2 min - reusing session $tok" }
     else { $tok = "$($Agent -replace '[\\/:*?"<>|\s]', '-')-" + ([guid]::NewGuid().ToString('N').Substring(0, 8)); $joined = $now.ToString('o') }
@@ -1708,7 +1711,7 @@ function Read-KitLessonLines([string]$Path) { if (Test-Path $Path) { , [Collecti
 function Find-KitLessonSection($Lines, [string]$Name) { $s = $Lines.IndexOf("## $Name"); if ($s -lt 0) { return $null }; $e = $s + 1; while ($e -lt $Lines.Count -and $Lines[$e] -notmatch '^## ') { $e++ }; , @($s, $e) }
 function Invoke-Learn {
   param(
-    [string]$Skill, [ValidateSet('friction', 'failure', 'defect-missed', 'false-positive', 'rule-violation', 'stale-env', 'flaky', 'idea', 'win')][string]$Kind,
+    [string]$Skill, [string]$Kind,
     [string]$Text, [string]$Ref = '', [string]$Source = 'agent',
     [switch]$Show, [int]$Last = 30, [switch]$Stats, [switch]$Read, [switch]$History, [string]$Grep,
     [string]$Lesson, [string]$When, [string]$Do, [string]$Why, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
@@ -1731,7 +1734,9 @@ function Invoke-Learn {
     Get-KitRoleRules $Skill
     return
   }
-  if (-not ($Skill -and $Kind -and $Text)) { 'need -Skill -Kind -Text (or -Read, -Show; kit-admin: -Stats, -History, -When -Do -Why, -Bump, -Fixed, -Trim)'; exit 2 }
+  $kinds = 'friction | failure | defect-missed | false-positive | rule-violation | stale-env | flaky | idea | win'
+  if ($Kind -and $Kind -notin ($kinds -split ' \| ')) { "learn: -Kind $kinds (not '$Kind')"; exit 2 }
+  if (-not ($Skill -and $Kind -and $Text)) { "need -Skill -Kind -Text (Kind: $kinds; or -Read, -Show; kit-admin: -Stats, -History, -When -Do -Why, -Bump, -Fixed, -Trim)"; exit 2 }
   if ($Text.Length -gt 400) { "learn: -Text $($Text.Length) chars > 400: what happened + what fixed it, one line"; exit 2 }
   Write-KitLog signals '' ([ordered]@{ skill = $Skill; kind = $Kind; text = $Text; ref = $Ref; source = $Source })
   "recorded ($Skill/$Kind)"

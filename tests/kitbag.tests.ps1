@@ -203,6 +203,8 @@ Expect "kit-tests default: changed areas (.md none, a named file its areas, an a
 $qo = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area a).out
 $qd = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area a -Detail).out; $cdp = (Read-Json "$cd/skills/crafty/kit.example.json")._paths; $ql = Get-Content -Raw -LiteralPath (Join-Path (Join-Path (Join-Path $cd $cdp.runtimeDir) $cdp.runtime.logs) 'kit-tests-last.txt') -ErrorAction SilentlyContinue
 Expect "kit-tests: a green area prints one line, its PASS lines in <runtime>/logs/kit-tests-last.txt; -Detail prints them" ($qo -match '(?m)^== a \(\d+ s\): 1 passed\s*$' -and $qo -notmatch 'PASS a uses' -and $ql -match 'PASS a uses' -and $qd -match '(?m)^PASS a uses')
+"'x' | Set-Content '$cd/pz.txt'; function Pz {" | Set-Content "$cd/tests/c.tests.ps1"; $pzo = Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area c
+Expect "kit-tests: an area or harness that does not parse -> no area runs, exit 2 (no helpers: drive-root writes) ($($pzo.code))" ($pzo.code -eq 2 -and $pzo.out -match 'parse errors: c\.tests\.ps1:1' -and -not (Test-Path "$cd/pz.txt"))
 '"cwd $((Get-Location).Path)"; ''PASS c''' | Set-Content "$cd/tests/c.tests.ps1"; $cwo = (Invoke-TestScript "$cd/tests/kit-tests.ps1" -Area c -Detail).out
 Expect "kit-tests: areas run in the kit under test, whatever the caller's cwd" ($cwo -match "(?m)^cwd $([regex]::Escape((Resolve-Path $cd).Path))\s*$" -and (Get-Location).Path -ne (Resolve-Path $cd).Path)
 # K95: area slots are machine-wide: while another process holds every slot, an area waits, then runs

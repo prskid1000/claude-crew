@@ -28,6 +28,9 @@ Expect 'api login: no token field configured -> refused naming tokenField / pres
 $du1 = Px $Q api -Target t2 -Path '/l' 2>&1 | Out-String; $du1c = $LASTEXITCODE; $du2 = Px $Q api -Target t2d -Path '/l' 2>&1 | Out-String
 $tokFiles = @(Get-ChildItem (TkPath $k tokens) -Filter 't2d-*' -ErrorAction SilentlyContinue).Name
 Expect "api user: several users, none chosen -> exit 2 naming defaultUser; target defaultUser used ($du1c $tokFiles $($du1 -replace '\s+', ' '))" ($du1c -eq 2 -and $du1 -match 'several users and none is chosen' -and $du1 -match 'defaultUser' -and $du2 -match 'HTTP 200' -and "$tokFiles" -match 'viewer')
+# -Anonymous: no user picked, no login (t2 has several users: no NO-USER stop); with -As refused
+$an1 = Px $Q api -Target t2 -Path '/l' -Anonymous 2>&1 | Out-String; $an2 = Px $Q api -Target t2 -Path '/l' -Anonymous -As admin 2>&1 | Out-String
+Expect "api -Anonymous: sent without a login (the test API answers 401); -As with it refused ($($an1.Trim() -replace '\s+', ' '))" ($an1 -match 'HTTP 401' -and $an1 -notmatch 'NO-USER|LOGIN' -and $an2 -match 'drop -As')
 # a local auth kind: an adapters/*.local.ps1 registers api-auth <type> (verb invoke); an unregistered type is refused
 $tjf = Join-Path $k 'skills/pokey/targets.local.json'; $tj = Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable; $tj.targets.tx = & $T @{ type = 'vendorx' }; & $J $tj $tjf 6
 $xo1 = Px $Q api -Target tx -Path '/l' 2>&1 | Out-String

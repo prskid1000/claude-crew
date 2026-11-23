@@ -104,6 +104,9 @@ Expect "board leave -Agent -Run: the newest of 2 rows left, the older kept ($($b
 $akS = pwsh @np $O supervise -Ack 'BUILDS · HQA' -Reason t 2>&1 | Out-String; $akN = pwsh @np $O supervise -Ack 'BUILDS · XYZ' 2>&1 | Out-String; $akC = $LASTEXITCODE
 $akH = pwsh -NoProfile -Command ". '$O'; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; @(Select-KitFlags @([pscustomobject]@{ level = 'WATCH'; what = 'b1'; kind = 'BUILDS'; who = 'HQA'; problem = 'x failed' }, [pscustomobject]@{ level = 'WATCH'; what = 'b2'; kind = 'BUILDS'; who = 'HQB'; problem = 'y failed' }) `$a (Get-Date) | ForEach-Object what) -join ','"
 Expect "supervise -Ack: short kind + who accepted, hides that holder's flag only; an unknown short one refused, exit 2 ($akH)" ($akS -match 'hides 1 flag' -and $akN -match '20\+ characters' -and $akC -eq 2 -and "$akH" -match '^b2,1 acknowledged')
+# learn: an unknown or missing -Kind names the valid kinds first (retro tidy-20261123-01: -Kind surprise, the digest cut the list)
+$lkU = pwsh @np $O learn -Skill x -Kind surprise -Text t 2>&1 | Out-String; $lkC = $LASTEXITCODE; $lkM = pwsh @np $O learn -Skill x -Text t 2>&1 | Out-String
+Expect "learn: -Kind surprise -> exit 2, the kinds first; none -> the kinds in the need line ($($lkU.Trim()))" ($lkC -eq 2 -and $lkU -match '^learn: -Kind friction \| failure .* win \(not ''surprise''\)' -and $lkM -match 'Kind: friction \| failure')
 # shell progress (fake clock): output file from the tool_result, Git Bash child with a dead parent adopted, CPU / sample pair / output reset the quiet clock
 $pg = Invoke-PsTest 'shellprog' @'
 . $args[0]; $tr = Join-Path $args[1] 'tx-pg'; $env:KIT_TRANSCRIPTS = $tr; $env:KIT_PARAM_SUPERVISE_SHELLSTUCKMINUTES = '5'; $env:KIT_PARAM_SUPERVISE_HEARTBEATMINUTES = '1'

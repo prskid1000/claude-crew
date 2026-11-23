@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L365 context · L706 split · L780 budget
+Sections: L9 usage · L365 context · L707 waste (owner 2026-11-23 · L749 split · L823 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -358,7 +358,7 @@ function Format-KitUsageHtml($U) {
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
   [pscustomobject]@{ runsN = $(if ($shown.Count) { "$($devRuns.Count - $nRunning) ended in 7 days" } else { 0 }); nRunning = $nRunning; tpm = $tpm
     dayRuns = $byDay; days = $dy; mrs = @($U.mrList | Where-Object { $_ })
-    tiles = $uTiles; dayRows = $uRows; spend = $spend
+    tiles = $uTiles; dayRows = $uRows; spend = "$spend$(Format-KitWastePanel (Get-KitWasteItems @(Get-KitContextSteps $U)) $fold)"
     pages = $pages
     usageN = "$(& $tk $td.tok) tokens today" }
 }
@@ -681,7 +681,8 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
   $rr = @($ss | Where-Object { [int]@($_.cx.rr)[0] -ge $rrW }); if ($rr.Count -ge $nAct) { $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $($rr.Count) agents re-read one file $rrW+ times"; action = "Spawn kitty (kind fix): a step-0 rule in those skills: note a file's facts once, read ranges after (roles $(@($rr.role | Sort-Object -Unique) -join ', '))" }) }
   foreach ($g in @($ss | Where-Object { -not (& $isLive $_) } | Group-Object { "$($_.role)" })) { $nr = & $norm $g.Name; if (-not $nr) { continue }; $hi = @($g.Group | Where-Object { [double]$_.cx.s0 -gt $fac * $nr })
     if ($hi.Count -ge $nAct) { $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $($g.Name) start load over $fac x its norm in $($hi.Count) agents"; action = "Spawn kitty (kind fix): cut $($g.Name)'s start load (avg $(& $f ((@($hi | ForEach-Object { [double]$_.cx.s0 }) | Measure-Object -Average).Average)) vs norm $(& $f $nr); kitbag.py cost, its agent file and skill)" }) } }
-  if ($Observe) { Add-KitContextNormObs @($ss | Where-Object { -not (& $isLive $_) }) }
+  if ($Observe) { Add-KitContextNormObs @($ss | Where-Object { -not (& $isLive $_) })
+    $null = Add-KitWasteSignals (Get-KitWasteItems $ss) }   # W2: retro signals, /tidy applies them (Waste panel: open)
   $fl
 }
 # ended agents' start sizes -> the learned norm per type (usage.context.startNorm), each transcript once (cache/context-norm-seen.json)
@@ -702,6 +703,48 @@ function Format-KitContextRoles($Roles, $Tk) {
   "$(Format-KitMetricHeat $rows (@('avg start', 'avg peak', 'start / peak') + @($script:KitCtxCats | ForEach-Object { $_[1] })) 'role · context' 'context-role')$(Format-KitLegend "context per role · shade = column peak · $(Format-KitContextLegend)" 'start = the first model call''s context (the instruction load) · peak = the largest call · the source columns: each source''s share of the tokens re-sent with every call (carried); hover a role for the waste signals · bossy.ps1 usage -Context -Type <role>')"
 }
 function Format-KitContextLegend { "<span class=kleg>$(@($script:KitCtxCats | ForEach-Object { "<i class='lgk x-$($_[0])'></i>$($_[1])" }) -join ' ')</span>" }
+
+# ---- waste (owner 2026-11-23: every item shown, never hidden, each tagged): fixed (a win signal "fixed in <commit>", ref waste:<role>:<kind>)
+# · open (its signal raised, not fixed) · fixable (over usage.context.wasteMinTokens, or in actRuns+ runs: supervise raises it) · ignored (under, one-off)
+$script:KitWasteFix = [ordered]@{ startload = 'slim the role''s start files (kitbag.py budget)'; reread = 'a note-once / read-range lesson, or a reader agent'; bigresult = 'a narrower command (a filter, a range)'; buildlog = 'the failure lines only (crafty.ps1 check)' }
+function Get-KitWasteItems($Steps, $Signals = $null) {
+  $min = [double](Get-KitParam 'usage.context.wasteMinTokens'); $nAct = [int](Get-KitParam 'usage.context.actRuns'); $aim = [double](Get-KitParam 'usage.context.startAim'); $f = { param($v) Format-KitCompactNum ([double]$v) }
+  if ($null -eq $Signals) { $Signals = @(Get-Content -LiteralPath (Get-KitPath signals) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { "$($_.ref)" -like 'waste:*' }) }
+  $fixed = @{}; $raised = @{}; foreach ($g in @($Signals | Where-Object { $_ })) { if ("$($g.kind)" -eq 'win') { $fixed["$($g.ref)"] = $(if ("$($g.text)" -match 'fixed in (\w+)') { $Matches[1] } else { 'kit' }) } else { $raised["$($g.ref)"] = "$($g.at)" } }
+  $its = @(foreach ($s in @($Steps | Where-Object { $_ -and $_.cx -and [int]$_.cx.n })) { $c = $s.cx; $w = @($c.w); $rr = @($c.rr); $who = "$(if ("$($s.label)".Trim()) { $s.label } else { [IO.Path]::GetFileNameWithoutExtension("$($s.tf)") })"
+      $mk = { param($k, $t, $what) [pscustomobject]@{ role = "$($s.role)"; who = $who; run = "$(if ($s.run) { $s.run } else { $who })"; kind = $k; tokens = [long]$t; what = $what; key = "waste:$($s.role):$k" } }
+      if ([int]$rr[0] -ge 2) { & $mk reread $w[1] "re-read $([IO.Path]::GetFileName("$($rr[1])")) $($rr[0])x" }
+      if ([long]$w[2]) { & $mk bigresult $w[3] "$($w[2]) result(s) over $(& $f (Get-KitParam 'usage.context.bigResultTokens'))" }
+      if ([long]$w[4]) { & $mk buildlog $w[5] "$($w[4]) build / test log(s) pasted" } })
+  $runsOf = @{}; foreach ($g in @($its | Group-Object key)) { $runsOf[$g.Name] = @($g.Group.run | Sort-Object -Unique).Count }
+  # W3 start load: one item per role (every agent of it would bury the rest: 2,350 of 2,734 items), its avg start vs usage.context.startAim
+  foreach ($g in @($Steps | Where-Object { $_ -and $_.cx -and [int]$_.cx.n -and [double]$_.cx.s0 } | Group-Object { "$($_.role)" })) { $avg = [double](@($g.Group | ForEach-Object { [double]$_.cx.s0 }) | Measure-Object -Average).Average
+    if (-not $aim -or $avg -le $aim) { continue }; $k = "waste:$($g.Name):startload"; $runsOf[$k] = @($g.Group | ForEach-Object { if ($_.run) { "$($_.run)" } else { "$($_.label)" } } | Sort-Object -Unique).Count
+    $its += [pscustomobject]@{ role = $g.Name; who = "$($g.Count) agent(s)"; run = ''; kind = 'startload'; tokens = [long]($avg - $aim); what = "avg start $(& $f $avg) vs the $(& $f $aim) aim"; key = $k } }
+  $rank = @{ fixable = 0; open = 1; fixed = 2; ignored = 3 }
+  @(foreach ($i in $its) { $n = $runsOf[$i.key]
+      $tag, $why = if ($fixed[$i.key]) { 'fixed', "fixed in $($fixed[$i.key])" } elseif ($raised[$i.key]) { 'open', "retro signal raised $("$($raised[$i.key])".Substring(0, [math]::Min(10, "$($raised[$i.key])".Length))), not fixed: $($script:KitWasteFix[$i.kind])" }
+        elseif ($i.tokens -ge $min -or $n -ge $nAct) { 'fixable', "$(& $f $i.tokens) tokens$(if ($i.tokens -ge $min) { ", over $(& $f $min)" })$(if ($n -ge $nAct) { ", in $n runs: a retro signal" }) -> $($script:KitWasteFix[$i.kind])" }
+        else { 'ignored', "$(& $f $i.tokens) tokens, under $(& $f $min), one-off" }
+      $i | Add-Member -Force NoteProperty tag $tag -PassThru | Add-Member -Force NoteProperty why $why -PassThru | Add-Member -Force NoteProperty runs $n -PassThru }) | Sort-Object { $rank[$_.tag] }, { -$_.tokens }
+}
+# W2: a pattern (role + kind) in actRuns+ runs, neither raised nor fixed -> ONE counted retro signal with its fix kind; /tidy applies it,
+# then records `bossy.ps1 learn -Skill <role> -Kind win -Text "fixed in <commit>" -Ref waste:<role>:<kind>`
+function Add-KitWasteSignals($Items) {
+  $nAct = [int](Get-KitParam 'usage.context.actRuns'); $n = 0
+  foreach ($g in @($Items | Where-Object { $_.tag -eq 'fixable' -and $_.runs -ge $nAct } | Group-Object key)) { $i = $g.Group[0]; $tk = [long](@($g.Group.tokens) | Measure-Object -Sum).Sum
+    Write-KitLog signals '' ([ordered]@{ skill = $i.role; kind = 'friction'; text = "waste: $($i.role) $($i.kind) in $($i.runs) runs, $(Format-KitCompactNum $tk) tokens; fix: $($script:KitWasteFix[$i.kind])"; ref = $g.Name; source = 'supervise' }); $n++ }
+  $n
+}
+# the Waste panel: a filter chip per tag (counts), every item (fixable / open first, ignored muted), its reason in the tooltip
+function Format-KitWastePanel($Items, $Fold) {
+  $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $its = @($Items | Where-Object { $_ })
+  $cnt = [ordered]@{}; foreach ($t in 'fixable', 'open', 'fixed', 'ignored') { $cnt[$t] = @($its | Where-Object tag -eq $t).Count }
+  $chips = "<div class=wsf role=group aria-label='waste tag'>$(@($cnt.Keys | ForEach-Object { "<button type=button data-w=$_ aria-pressed=false title='show only $_ items (again: all)'><span class='wtg t-$_'>$_</span> $($cnt[$_])</button>" }) -join '')</div>"
+  $rows = @($its | ForEach-Object { "<div class='wr t-$($_.tag)' title='$(& $e "$($_.why)`n$($_.role) · $($_.who) · $($_.run)")'><span class='wtg t-$($_.tag)'>$($_.tag)</span><span>$(& $e $_.role)</span><span class=wwh>$(& $e $_.what) · $(& $e $_.who)</span><b>$(& $e (Format-KitCompactNum ([double]$_.tokens)))</b></div>" }) -join ''
+  $hd = "<span class=fsm>$(@($cnt.Keys | Where-Object { $cnt[$_] } | ForEach-Object { "$($cnt[$_]) $_" }) -join ' · ')</span>"
+  & $Fold 'u-waste' 'Waste' $its.Count -tag h4 -cls 'sub st' -extra $hd -inner "<div class=wsx data-w=all>$chips$(if ($rows) { $rows } else { '<p class=empty>No waste recorded.</p>' })</div>$(Format-KitLegend 'tag: fixable · open · fixed · ignored (muted)' "fixable = over $(Format-KitCompactNum ([double](Get-KitParam 'usage.context.wasteMinTokens'))) tokens or in $(Get-KitParam 'usage.context.actRuns')+ runs (supervise raises a retro signal) · open = signal raised, not fixed · fixed = a win signal with its commit · ignored = under the threshold, one-off · hover an item for why")"
+}
 
 # ---- split: tokens, cost and time by type in one stacked form (owner 2026-11-20: a single "tokens" number misleads, 96% are cache reads)
 # parts of $O (a step, run, role or day: in, out, cr, cw, cs = [in, out, cache read, cache write] USD, tm = minutes [model, build, ci, browser,

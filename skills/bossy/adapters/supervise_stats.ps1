@@ -7,8 +7,8 @@ page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence
 every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L718 flags · L942 bands ·
-  L1089 shells · L1160 reset
+Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L718 flags · L947 bands ·
+  L1094 shells · L1165 reset
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -856,6 +856,8 @@ function Get-KitStatsJs {
   # Resources · 24 h: group fold and metric switch, both kept in localStorage
   "function rp(r,m){r.dataset.m=m;r.querySelectorAll('.rgt button').forEach(function(z){z.setAttribute('aria-pressed',z.dataset.m==m)})}function rf(g,c){g.classList.toggle('cl',c);var b=g.querySelector('.rgb');if(b)b.setAttribute('aria-expanded',!c)}" +
   "d.addEventListener('click',function(x){var b=x.target.closest('.rgb'),t=x.target.closest('.rgt button'),g,c;if(b){g=b.closest('.rgg');c=!g.classList.contains('cl');rf(g,c);try{localStorage.setItem('kc-'+g.dataset.g,c?'1':'0')}catch(e){}}else if(t){rp(t.closest('.rgx'),t.dataset.m);try{localStorage.setItem('kc-rm',t.dataset.m)}catch(e){}}});" +
+  # Waste: a tag chip shows only that tag's items, again: all
+  "d.addEventListener('click',function(x){var t=x.target.closest('.wsf button');if(!t)return;var r=t.closest('.wsx');r.dataset.w=r.dataset.w==t.dataset.w?'all':t.dataset.w;r.querySelectorAll('.wsf button').forEach(function(z){z.setAttribute('aria-pressed',z.dataset.w==r.dataset.w)})});" +
   # [data-tg]: a button shows / hides the element of that id (kept); .rtg: a run row shows its agents
   "d.addEventListener('click',function(x){var b=x.target.closest('[data-tg]');if(!b)return;x.preventDefault();var t=d.getElementById(b.dataset.tg);if(!t)return;t.hidden=!t.hidden;b.setAttribute('aria-expanded',!t.hidden);try{localStorage.setItem('kc-tg-'+t.id,t.hidden?'0':'1')}catch(e){}});" +
   "d.querySelectorAll('[data-tg]').forEach(function(b){var t=d.getElementById(b.dataset.tg),v=null;try{v=localStorage.getItem('kc-tg-'+b.dataset.tg)}catch(e){}if(t&&v!==null){t.hidden=v!='1';b.setAttribute('aria-expanded',v=='1')}});" +
@@ -895,7 +897,10 @@ function Get-KitStatsCss {
   '.mtw{margin:4px 0 6px}.mtb{font-size:12px;border-collapse:collapse}.mtb th{color:var(--mt);font-weight:500;padding:2px 10px;text-align:right}.mtb td{padding:2px 10px;border-top:1px solid var(--ln);text-align:right;font-variant-numeric:tabular-nums}.mtb th:first-child,.mtb td:first-child{text-align:left;overflow-wrap:anywhere}' +
   '.rgx[data-m=c] [data-mv=w],.rgx[data-m=c] [data-mv=q],.rgx[data-m=w] [data-mv=c],.rgx[data-m=w] [data-mv=q],.rgx[data-m=q] [data-mv=c],.rgx[data-m=q] [data-mv=w]{display:none}.rgg{display:contents}.rgg.cl>.gk:not(.rgh){display:none}' +
   '.rgh>.rgb{grid-column:1/-1}.rgb{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;border-top:1px solid var(--ln);padding-top:4px}.rgb::before{content:"\25B8";color:var(--mt)}.rgg:not(.cl) .rgb::before{content:"\25BE"}.rgb .gn0{font-weight:650}.rgb .gcn{color:var(--mt)}.rgb:focus-visible{outline:2px solid var(--sage);outline-offset:2px}' +
-  '.rgt{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 4px}.rgt button{all:unset;cursor:pointer;padding:1px 9px;border:1px solid var(--ln);border-radius:10px;font-size:11.5px;color:var(--mt)}.rgt button[aria-pressed=true]{background:var(--sf2);color:var(--fg);border-color:var(--sage2)}.rgt button:focus-visible{outline:2px solid var(--sage)}' +
+  ':is(.rgt,.wsf){display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 4px}:is(.rgt,.wsf) button{all:unset;cursor:pointer;padding:1px 9px;border:1px solid var(--ln);border-radius:10px;font-size:11.5px;color:var(--mt)}:is(.rgt,.wsf) button[aria-pressed=true]{background:var(--sf2);color:var(--fg);border-color:var(--sage2)}:is(.rgt,.wsf) button:focus-visible{outline:2px solid var(--sage)}' +
+  '.wr{display:grid;grid-template-columns:64px minmax(56px,max-content) minmax(0,1fr) 52px;gap:2px 8px;align-items:baseline;padding:2px 0;font-size:12px;border-top:1px solid var(--ln)}.wr b{text-align:right;font-variant-numeric:tabular-nums}.wwh{overflow-wrap:anywhere}.wr.t-ignored{color:var(--mt)}.wr.t-ignored b{font-weight:400}' +
+  '.wsx:not([data-w=all]) .wr{display:none}.wsx[data-w=fixable] .wr.t-fixable,.wsx[data-w=open] .wr.t-open,.wsx[data-w=fixed] .wr.t-fixed,.wsx[data-w=ignored] .wr.t-ignored{display:grid}' +
+  '.wtg{display:inline-block;padding:0 6px;border-radius:8px;font-size:10.5px;line-height:15px;font-weight:600;text-align:center;color:var(--fg)}.wtg.t-fixable{background:color-mix(in srgb,var(--watch) 30%,var(--sf2))}.wtg.t-open{background:color-mix(in srgb,var(--act) 24%,var(--sf2))}.wtg.t-fixed{background:color-mix(in srgb,var(--sage) 34%,var(--sf2))}.wtg.t-ignored{background:var(--sf2);color:var(--mt);font-weight:500}' +
   '.rsh .gc.hot{color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.rsh .gc.warn{color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:650}' +
   '.lcp>.ya{z-index:1}' +
   # Settings (owner 2026-11-21): equal tiles in a dense grid (an open group's panel spans the row under its tile), a badge, a source bar

@@ -55,6 +55,9 @@ if (-not $Full -and -not $Area.Count) {
   if (-not $areas.Count) { 'no area tests what changed: nothing to run'; exit 0 } }
 $unknown = @($areas | Where-Object { $_ -notin $all })
 if (-not $areas -or $unknown) { Write-Error "kit-tests.ps1: unknown or no area(s) '$($unknown -join ', ')'; known: $($all -join ', ')" -ErrorAction Continue; exit 2 }
+# a harness that does not parse loads no helpers (Kd, Assert-TestPath): an area then writes "$empty/app" at the drive root (D:\app, 2026-11-23)
+$unparsed = foreach ($pf in @('harness.ps1') + @($areas | ForEach-Object { "$_.tests.ps1" }) | Where-Object { Test-Path -LiteralPath (Join-Path $PSScriptRoot $_) }) { $pe = $null; $null = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $pf), [ref]$null, [ref]$pe); if ($pe) { "$pf`:$($pe[0].Extent.StartLineNumber) $($pe[0].Message)" } }
+if ($unparsed) { Write-Error "kit-tests.ps1: no area runs, parse errors: $($unparsed -join ' · ')" -ErrorAction Continue; exit 2 }
 
 # one snapshot of the source files for every area (harness.ps1 New-TestKit links to it); scratch of dead area runs removed
 $kx = Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/kit.example.json'; $tmpMap = if (Test-Path $kx) { (Get-Content $kx -Raw | ConvertFrom-Json)._paths }

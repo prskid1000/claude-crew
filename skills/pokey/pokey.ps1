@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L160 seat · L234 api · L481 users · L613 finalize · L1154 results · L1187 retest ·
-  L1244 prepare
+Sections: L29 lanes · L43 report · L160 seat · L234 api · L483 users · L615 finalize · L1156 results · L1189 retest ·
+  L1246 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -307,7 +307,8 @@ param(
   [hashtable]$Headers = @{},
   [string]$ContentType = 'application/json',
   [Alias('TimeoutSeconds')][int]$TimeoutSec = 180,
-  [Parameter(Position = 1)][string]$PathAfterMethod   # api GET /x: the habit of curl
+  [Parameter(Position = 1)][string]$PathAfterMethod,   # api GET /x: the habit of curl
+  [switch]$Anonymous                # no login, no auth header: a public endpoint as a visitor sees it
 )
 $ErrorActionPreference = 'Stop'
 if ($PathAfterMethod -and $Path -match '^(GET|POST|PUT|PATCH|DELETE|HEAD)$') { $Method, $Path = $Path, $PathAfterMethod; $PSBoundParameters.Method = $Method; $PSBoundParameters.Path = $Path; $null = $PSBoundParameters.Remove('PathAfterMethod') }
@@ -344,6 +345,7 @@ if (-not $t) { throw "Unknown target '$Target'. Known: $((Get-KitProps $cfg.targ
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $a = Resolve-ApiAuth $t.auth
 $kind = "$($a.type)"; if (-not $kind) { $kind = 'login' }
+if ($Anonymous) { if ($As) { throw '-Anonymous sends no login: drop -As' }; $kind = 'none' }   # without it a default login is sent (retro tidy-20261123-01)
 if (-not $As -and $kind -ne 'none') {
   $who0 = Resolve-ApiUser $t   # [string]$As would turn $null into ''
   if ($null -eq $who0) { $nu = "NO-USER target $Target has several users and none is chosen (not retried): pass -As <user>, or set targets.local.json targets.$Target.defaultUser or kit.local.json api.defaultUser. Known: $((Get-KitProps $t.users).Name -join ', ')"; if ($script:ApiNoExit) { throw $nu }; $nu; exit 2 }

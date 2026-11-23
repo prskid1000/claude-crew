@@ -33,9 +33,9 @@ $py1 = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); i
 Expect "devtools.py mr / merge read the slot's target record ($py1)" ("$py1".Trim() -eq 'main')
 
 # release with uncommitted work: a WIP commit on the branch, the slot detached in place (no file written), branch kept
-'wip' | Set-Content "$(Assert-TestPath $s1)/two.txt"; 'rewritten by a test run' | Set-Content "$s1/one.txt"; $r1 = pwsh @np $D wt release -Agent devA 2>&1 | Out-String
-Expect "release: uncommitted work -> WIP commit; detached at the same commit; the unmerged branch kept ($($r1 -replace '\s+', ' '))" ($r1 -match 'WIP commit' -and $r1 -match 'released app·Falcon' -and $r1 -match 'branch feat/one kept' -and -not (git -C $s1 branch --show-current) -and (git -C $app log -1 --format=%s feat/one) -match '^wip: ' -and -not (git -C $s1 status --porcelain) -and
-  "$(git -C $app show --name-only --format= feat/one)".Trim() -eq 'two.txt' -and (Get-Content "$s1/one.txt") -eq 'one')   # pool.wipRestore: one.txt restored, not committed
+'wip' | Set-Content "$(Assert-TestPath $s1)/two.txt"; 'rewritten by a test run' | Set-Content "$s1/one.txt"; $null = New-Item -Force "$s1/cypress/reports/r.json" -Value '{}'; $r1 = pwsh @np $D wt release -Agent devA 2>&1 | Out-String
+Expect "release: uncommitted work -> WIP commit; detached at the same commit; the unmerged branch kept ($($r1 -replace '\s+', ' '))" ($r1 -match 'WIP commit' -and $r1 -match 'released app·Falcon' -and $r1 -match 'branch feat/one kept' -and -not (git -C $s1 branch --show-current) -and (git -C $app log -1 --format=%s feat/one) -match '^wip: ' -and "$(git -C $s1 status --porcelain)".Trim() -eq '?? cypress/' -and
+  "$(git -C $app show --name-only --format= feat/one)".Trim() -eq 'two.txt' -and (Get-Content "$s1/one.txt") -eq 'one')   # pool.wipRestore: one.txt restored, not committed; untracked cypress/reports output left out
 
 # fix round: another agent re-leases by branch: the warm slot that had it
 $o5 = & $lease devA2 feat/one

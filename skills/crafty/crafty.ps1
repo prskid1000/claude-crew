@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1082 pipes · L1144 guard · L2061 dir · L2071 checkpoint ·
-  L2105 prior · L2143 tracker · L2165 task spec · L2363 scope · L2411 host
+Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2065 dir · L2075 checkpoint ·
+  L2109 prior · L2147 tracker · L2169 task spec · L2367 scope · L2415 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -934,6 +934,10 @@ if ($Step -eq 'e2e') {
     }
     foreach ($key in $f, $noExt, ($noExt -replace '/index$', '')) { if ($byImp[$key]) { foreach ($s in $byImp[$key].Keys) { & $add $s "imports $f" } } }
   }
+  # the diff changed specs: those only (a one-spec diff ran a 23 min folder through a map entry, retro tidy-20261123-01); the rest by -Tests
+  $own = @($why.Keys | Where-Object { $why[$_].Contains('changed') })
+  $supp = @($chg | Where-Object { -not $isSpec[$_] -and $_ -match '(?i)(^|/)(cypress|e2e|tests?|__tests__|specs?|fixtures?|support)/' })   # a changed support file / fixture keeps every spec it relates to
+  if ($own.Count -and $own.Count -lt $why.Count -and -not $supp.Count) { Write-Host "[check] e2e: the $($own.Count) changed spec(s) only; $($why.Count - $own.Count) related spec(s) left out (name them with -Tests, the whole suite: -AllTests)"; foreach ($s in @($why.Keys | Where-Object { $_ -notin $own })) { $why.Remove($s) } }
   foreach ($t in @($Tests -split '[,\s]+' | Where-Object { $_ })) { & $add $t.Replace('\', '/') 'named (-Tests)' }
   # split = folder: one run per spec folder (one long run crashed Cypress)
   $split = "$($recipe.split)" -eq 'folder'; $groups = [ordered]@{}
