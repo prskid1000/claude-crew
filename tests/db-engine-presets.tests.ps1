@@ -80,7 +80,7 @@ if ($IsWindows) {
   $em = & { . (Join-Path $k4 'skills/envy/envy.ps1'); foreach ($q0 in 'SELECT 1', 'DELETE FROM t', 'WITH x AS (SELECT 1) DELETE FROM t') { try { Invoke-DbSql s $q0; 'rows' } catch { "$_" -replace '^mysql: exit 0 without the end marker \((\w+).*', '$1' } } }
   $ep = & $py -X utf8 -c "import sys, types; sys.path.insert(0, r'$(Join-Path $k4 'skills/envy/adapters')'); import db_flashback as f; d = f.Db(types.SimpleNamespace(host='h', port='1', user='u', mysql=r'$fakeBin\mysql.cmd'))`ntry: d.rows('SELECT 1'); print('rows')`nexcept RuntimeError as e: print('no output 3 times' in str(e))"
   Expect "an exit 0 without output is no answer: a read retries then fails, a write fails at once, never 0 rows ($em | $ep)" ("$em" -eq '3 a a' -and "$ep" -eq 'True')
-  # the cause: the Windows client lost its buffered output at exit under load (6 of 1600; 0 with --unbuffered): every client call flushes per statement
+  # the Windows client lost buffered output at exit under load (6 of 1600; 0 with --unbuffered)
   Set-Content (Join-Path $fakeBin 'mysql.cmd') '@echo %*', '@echo __kit_rows_end__'
   $ua = & { . (Join-Path $k4 'skills/envy/envy.ps1'); "$(Invoke-DbSql s 'SELECT 1')" }
   $ub = & $py -X utf8 -c "import sys, types; sys.path.insert(0, r'$(Join-Path $k4 'skills/envy/adapters')'); import db_flashback as f; print(f.Db(types.SimpleNamespace(host='h', port='1', user='u', mysql=r'$fakeBin\mysql.cmd')).rows('SELECT 1'))"
@@ -244,9 +244,11 @@ CREATE TABLE pa.u (login varchar(40)); INSERT INTO pa.u VALUES ('alice'), ('bob'
   Stop-TestMySql $tmSrv
   Remove-TestKit $k3
 }
-# K78: one persistent test mysqld (tests/test-mysql.ps1): the data dir stays in the main clone's state after Stop, the lock is free, one start per run
+# K78: one persistent test mysqld (test-mysql.ps1)
 $tmDataRx = '[\\/]\.state[\\/]kit-tests[\\/]mysql$'
-$tmSt = Read-TestMySqlState $tmSrv.home; $tmFree = try { (Enter-TestMySqlLock $tmSrv.home 0).Dispose(); $true } catch { "$((Read-TestMySqlState $tmSrv.home).lock.holder)" -notin '', "$(Get-TestProcStamp $PID)" }   # held: by another run, not this area
-$tmRun = Get-TestProcStamp $(if ($env:KIT_TESTS_RUNNER) { [int]$env:KIT_TESTS_RUNNER } else { $PID })
-Expect "test-mysql.ps1: one data dir under .state (kept after Stop-TestMySql), lock free, this run started it at most once ($($tmSrv.data), starts $(@($tmSt.starts | Where-Object { "$_" -eq $tmRun }).Count))" ((Test-Path (Join-Path $tmSrv.data 'mysql.ibd')) -and $tmSrv.data -match $tmDataRx -and $tmFree -and @($tmSt.starts | Where-Object { "$_" -eq $tmRun }).Count -le 1)
+$tmSt = Read-TestMySqlState $tmSrv.home
+# held by another area: it stamps server.json just after it opens the lock, re-read 5 s
+$tmFree = $false; $tmHeld = ''; foreach ($tmTry in 1..25) { $tmFree = try { (Enter-TestMySqlLock $tmSrv.home 0).Dispose(); $true } catch { $tmHeld = "$((Read-TestMySqlState $tmSrv.home).lock.holder)"; $tmHeld -notin '', "$(Get-TestProcStamp $PID)" }; if ($tmFree) { break }; Start-Sleep -Milliseconds 200 }
+$tmRun = Get-TestProcStamp $(if ($env:KIT_TESTS_RUNNER) { [int]$env:KIT_TESTS_RUNNER } else { $PID }); $tmIbd = Test-Path (Join-Path $tmSrv.data 'mysql.ibd')
+Expect "test-mysql.ps1: one data dir under .state (kept after Stop-TestMySql), lock free, this run started it at most once ($($tmSrv.data), mysql.ibd $tmIbd, free $tmFree$(if (-not $tmFree) { " (holder '$tmHeld')" }), starts $(@($tmSt.starts | Where-Object { "$_" -eq $tmRun }).Count))" ($tmIbd -and $tmSrv.data -match $tmDataRx -and $tmFree -and @($tmSt.starts | Where-Object { "$_" -eq $tmRun }).Count -le 1)
 Complete-Tests

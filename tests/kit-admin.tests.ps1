@@ -55,6 +55,9 @@ $began = { (Get-Content $sf -Raw | ConvertFrom-Json).pid -ne 999999 }   # a star
 & $wk (Get-Date).AddDays(-2) (Get-Date).AddDays(-2); $null = Invoke-KitWeeklyTests $true; $w1 = & $began
 & $wk (Get-Date).AddDays(-8) (Get-Date).AddDays(-8); $null = Invoke-KitWeeklyTests $true; $w2 = & $began; $hl = Get-KitHealthLinesFullTests
 git -C $KitConf.Kit rev-parse 'HEAD^{tree}' | Set-Content (Join-Path (Get-KitPath cache -Create) 'kit-tests-green.txt'); & $wk (Get-Date).AddDays(-8) (Get-Date).AddDays(-8); $null = Invoke-KitWeeklyTests $true; $w3 = & $began
+# a green manual full run of this tree ("<tree> <date>", kit-tests.ps1) after a failed weekly one: its date, no stale "last run"
+"$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}') $((Get-Date).ToString('o'))" | Set-Content (Join-Path (Get-KitPath cache) 'kit-tests-green.txt'); & $wk (Get-Date).AddDays(-8) (Get-Date).AddDays(-1); $hm = Get-KitHealthLinesFullTests
+"manual:$($hm -match "last green $((Get-Date).ToString('yyyy-MM-dd'))\.$")"; "manual detail: $hm"
 "week:$(-not $w1 -and $w2 -and -not $w3 -and $hl -match '^Kit tests \(full, every 7 days while idle\): last green \d{4}-\d\d-\d\d, last run \d{4}-\d\d-\d\d')"; "week detail: $w1 $w2 $hl"
 # no total: started before the last boot = cut by a machine restart (no ACT, due again); started after it = a crash (ACT)
 $lfn = (Get-KitFullTestsState).log; $cutAt = { param($t) @{ at = $t.ToString('o'); start = $t.ToString('o'); pid = 999999; read = $false } | ConvertTo-Json -Compress | Set-Content $sf; '  x done (1 s)' | Set-Content $lfn }
@@ -62,7 +65,7 @@ $lfn = (Get-KitFullTestsState).log; $cutAt = { param($t) @{ at = $t.ToString('o'
 & $cutAt (Get-Date).AddMinutes(-5); $o5 = @(Invoke-KitWeeklyTests $false)
 "cut:$(-not $o4.Count -and $s4.read -and $s4.cut -eq 'machine restart' -and ((Get-Date) - [datetime]$s4.at).TotalHours -ge 24 -and $o5.Count -eq 1 -and $o5[0] -match 'no total \(crashed\)')"; "cut detail: $($o4 -join ' ') | $($o5 -join ' ')"
 '@; $ng = @(pwsh @np $nf (Join-Path $kc 'skills/crafty/lib.ps1') (Join-Path $kc 'skills/bossy/adapters/kit_admin.ps1') 2>&1)
-Expect-Each $ng 'kit-admin: weekly full kit tests: #' 'busy', 'read', 'week', 'cut' -Show 6
+Expect-Each $ng 'kit-admin: weekly full kit tests: #' 'busy', 'read', 'week', 'manual', 'cut' -Show 8
 $env:KIT_TESTS_SNAPSHOT = $snap; git -C $kc reset -q --hard $base
 # release: the next SemVer from Conventional Commits
 $rel = & $py -X utf8 $KT release 2>&1 | Out-String

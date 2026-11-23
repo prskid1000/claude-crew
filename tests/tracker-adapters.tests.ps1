@@ -5,6 +5,7 @@ git host on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call
 Usage: pwsh -NoProfile -File tests/tracker-adapters.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
+Set-Item Env:CLAUDE_RUNTIME ($trRt = Join-Path ([IO.Path]::GetTempPath()) "kit-tr-rt-$PID")   # own cache: a kit's list statuses changed list calls
 . (Join-Path $Kit 'skills/crafty/lib.ps1')
 foreach ($a in 'tracker_jira', 'tracker_linear', 'tracker_youtrack', 'tracker_azure', 'gitlab', 'tracker_clickup') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
 $global:log = [Collections.Generic.List[string]]::new(); $global:failed = 0
@@ -17,13 +18,13 @@ foreach ($c in 'clickup', 'gh', 'glab', 'mytr') { Set-Item "function:$c" { $i = 
 function Run($type, $fx, $id, $list, [scriptblock]$ok) {
  try {
   Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear()
-  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id 'in-test'; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }   # in-test: the kebab alias of inTest (2026-11-18)
+  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id 'in-test'; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }   # in-test: kebab alias of inTest
   $pass = [bool](& $ok $r ($global:log -join "`n"))
  } catch { $pass = $false; "  $type error: $_" }
  if (-not $pass) { $global:failed++ }
  "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker ${type}: view, status, comment, create, list"
 }
-function Cmt($type, $fx, $id, $cid) {   # comment ids, then a kit comment edited in place and a stale one deleted (lib.ps1 Set-TrackerKitComment, tracker uncomment)
+function Cmt($type, $fx, $id, $cid) {   # comment ids, edit in place, delete a stale one
  try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $c = @(Get-TrackerComments $id); $null = __TrA 'comment-edit' @{ id = $id; comment = $c[0].id; text = 'new words' }; $null = __TrA 'comment-delete' @{ id = $id; comment = $c[0].id }; $pass = "$($c[0].id)" -eq $cid -and $global:log.Count -eq 3 } catch { $pass = $false; "  $type error: $_" }
  if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker ${type}: comment ids, comment-edit, comment-delete"
 }
@@ -79,7 +80,7 @@ $okHtml = $html -match '<table><tr><th>Subtask</th><th>MRs</th></tr><tr><td><a h
 if (-not $okHtml) { $global:failed++; "  html: $html`n  back: $back" }
 "$(if ($okHtml) { 'PASS' } else { 'FAIL' }) tracker azure: Markdown tables, links, breaks, lists -> HTML; read back to the same Markdown (markers kept)"
 Cmt azure ([ordered]@{ 'GET .*workItems/42/comments\?' = '{"comments":[{"id":7,"createdBy":{"displayName":"A"},"createdDate":"2026-01-01T00:00:00Z","text":"<div>old</div>"}]}'; 'PATCH .*workItems/42/comments/7\?.*new words' = '{"id":7}'; 'DELETE .*workItems/42/comments/7\?' = '' }) 42 '7'
-# K54 move: the old parent link removed by index, the new one added, the area path set; top-level: only the removal
+# K54 move: old parent link removed by index, new one added, area path set; top-level: removal only
 try { Initialize-KitTracker -Type azure; $global:fx = [ordered]@{ 'GET .*workitems/42\?\$expand=relations' = '{"id":42,"relations":[{"rel":"System.LinkTypes.Related","url":"u"},{"rel":"System.LinkTypes.Hierarchy-Reverse","url":"p"}]}'; 'PATCH .*workitems/42\?' = '{"id":42}' }; $global:log.Clear()
   $m1 = Move-TrackerTask 42 -Parent 7 -List 'Shop\Team'; $m2 = Move-TrackerTask 42 -Top; $pl = @($global:log -match '^PATCH')
   $o0 = @(($pl[0] -replace '^[^\[]*') | ConvertFrom-Json); $o1 = @(($pl[1] -replace '^[^\[]*') | ConvertFrom-Json)   # key order differs per process
@@ -91,7 +92,7 @@ Run gitlab ([ordered]@{ 'PUT projects/g%2Fp/issues/5 .*status:in test' = '{"iid"
  'GET projects/g%2Fp/issues/6' = '{"iid":6,"title":"Sub","state":"closed","labels":[]}'; 'users\?username=Ann' = '[{"id":3}]'; 'POST projects/g%2Fp/issues .*"assignee_ids":\[3\]' = '{"iid":12}'; 'PUT projects/g%2Fp/issues/5 .*#12' = '{"iid":5}'
  'issues\?state=opened&labels=status%3Ain%20test' = '[{"iid":7,"title":"A","assignees":[{"id":3,"username":"ann"}]}]' }) 'g/p#5' g/p { param($r, $l) & $v $r 3 12 }
 Cmt gitlab ([ordered]@{ 'GET projects/g%2Fp/issues/5/notes' = '[{"id":77,"author":{"username":"a"},"created_at":"2026-01-01T00:00:00Z","body":"old","system":false}]'; 'PUT projects/g%2Fp/issues/5/notes/77 .*new words' = '{"id":77}'; 'DELETE projects/g%2Fp/issues/5/notes/77' = '' }) 'g/p#5' '77'
-# K54 move: a task-list line on the parent once (an existing one kept), the issue move API to another project, top-level refused
+# K54 move: one task-list line on the parent, the move API to another project, top-level refused
 try { Initialize-KitTracker -Type gitlab; $global:fx = [ordered]@{ 'GET projects/g%2Fp/issues/5 ' = '{"iid":5,"description":"x\n- [ ] #6"}'; 'PUT projects/g%2Fp/issues/5 .*#8' = '{"iid":5}'; 'GET projects/g%2Fq ' = '{"id":44}'; 'POST projects/g%2Fp/issues/8/move .*"to_project_id":44' = '{"iid":3}' }; $global:log.Clear()
   $m1 = Move-TrackerTask 'g/p#8' -Parent 'g/p#5'; $m2 = Move-TrackerTask 'g/p#6' -Parent 'g/p#5'; $m3 = Move-TrackerTask 'g/p#8' -List g/q; $mt = try { Move-TrackerTask 'g/p#8' -Top; 'no throw' } catch { "$_" }
   $ok = $m1 -eq 'moved #8 under g/p#5' -and @($global:log -match 'PUT projects/g%2Fp/issues/5 ').Count -eq 1 -and $m2 -eq 'moved #6 under g/p#5' -and $m3 -eq 'moved #8 to g/q as #3' -and $mt -match 'task-list line on its parent' } catch { $ok = $false; "  gitlab move error: $_" }
@@ -117,11 +118,11 @@ $v = foreach ($b in 'main', 'dev', 'release', 'locked', 'auth') { "$b=$(Invoke-H
 Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;release=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
 $null = Invoke-HostVerb 'mr.update' @{ type = 'gitlab'; repo = 'o/r'; n = 5; title = 't'; body = 'b' } -NoMemo
 Check 'host: mr.update edits the open MR (PUT, devtools.py mr re-run)' ($global:calls[-1] -like 'glab api -X PUT projects/o%2Fr/merge_requests/5 *')
-# a CI task naming its job next to a run link: github's run id is read too, not only from a job URL
+# a CI task with a job and a run link: github's run id is read too
 . (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/github.ps1')
 $gp = @(foreach ($tx in 'job `unit` of [run](https://github.com/o/r/actions/runs/77)', 'https://github.com/o/r/actions/runs/77/job/9') { $u = Invoke-KitAdapter ci github parseUrl @{ text = $tx }; "$($u.run)/$($u.job)" }) -join ' '
 if ($gp -ne '77/ 77/9') { $global:failed++ }; "$(if ($gp -eq '77/ 77/9') { 'PASS' } else { 'FAIL' }) github ci.parseUrl: a run link alone gives the run, a job URL the run and the job ($gp)"
-# parent sync (Sync-TrackerParent) per adapter: child -> inTest, its sibling done -> the parent set in test
+# Sync-TrackerParent per adapter: child inTest, sibling done -> parent in test
 function Psy($type, $kid, $par, $fx, $want) {
  try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $null = Set-TrackerStatus $kid inTest 6>$null; $pass = $global:log[-1] -match $want -and @($global:log -match [regex]::Escape($par)).Count -ge 2
   # the same with the sibling still in progress: the parent is read, never set in test
@@ -216,4 +217,5 @@ $pass = $rp -eq 'moved C9 under C1' -and $global:http.Count -eq 3 -and $global:h
 $sk = @('in-test', 'in test', 'In_Test', 'inTest', 'failed-testing', 'for review') | ForEach-Object { ConvertTo-TrackerStatusKey $_ }
 $pass = ($sk -join ',') -eq 'inTest,inTest,inTest,inTest,failedTesting,for review'; if (-not $pass) { $global:failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker status: kebab, spaced and snake forms of a kit status key resolve to the key for every adapter; a board name stays as given ($($sk -join ','))"
+Remove-Item $trRt -Recurse -Force -ErrorAction SilentlyContinue
 exit [int]($global:failed -gt 0)

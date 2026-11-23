@@ -6,7 +6,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L106 health · L115 browser policy · L158 prepush · L222 weekly tests · L254 state lint · L263 precommit
+Sections: L13 learn · L106 health · L115 browser policy · L158 prepush · L222 weekly tests · L258 state lint · L267 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -221,6 +221,8 @@ exit 0
 
 # ---- weekly tests: the full kit suite while nothing runs (supervise -AutoFix), when the last green full run is kitTests.fullEveryDays
 # old (a missed week: the next idle beat); one try a day; its FAILs returned once; health names the last full run
+# kit-tests-green.txt lines "<tree> [<date>]" (tests/kit-tests.ps1): the tree's stamp date ('-' = no date), '' = not stamped
+function Get-KitGreenTreeDate([string]$Tree) { $gl = @(Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'kit-tests-green.txt') -ErrorAction SilentlyContinue | Where-Object { ($_ -split ' ')[0] -eq $Tree })[-1]; if ($gl) { $gd = ($gl -split ' ', 2)[1]; if ($gd) { $gd } else { '-' } } else { '' } }
 function Get-KitFullTestsState { $sf = Join-Path (Get-KitPath cache -Create) 'kit-tests-full.json'; [pscustomobject]@{ file = $sf; log = (Join-Path (Get-KitPath logs -Create) 'kit-tests-full.txt'); s = $(try { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json } catch { $null }) } }
 function Invoke-KitWeeklyTests([bool]$Idle) {
   $kt = Join-Path $KitConf.Kit 'tests/kit-tests.ps1'; if ($env:KIT_TESTS_SNAPSHOT -or -not (Test-Path -LiteralPath $kt)) { return }   # inside a test run: never
@@ -236,7 +238,7 @@ function Invoke-KitWeeklyTests([bool]$Idle) {
   $days = [double](Get-KitParam 'kitTests.fullEveryDays'); if ($days -le 0 -or -not $Idle -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
   if ($s.greenAt -and ((Get-Date) - [datetime]$s.greenAt).TotalDays -lt $days) { return }   # green within the week
   $tree = "$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}' 2>$null)".Trim()   # owner: an unchanged kit (its tree green-stamped by kit-tests.ps1) never reruns, whatever the age
-  if ($tree -and $tree -in @(Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'kit-tests-green.txt') -ErrorAction SilentlyContinue)) { return }
+  if ($tree -and (Get-KitGreenTreeDate $tree)) { return }
   if ($s.at -and ((Get-Date) - [datetime]$s.at).TotalHours -lt (Get-KitParam 'kitTests.retryHours')) { return }   # one try a day until green
   $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "`$env:KIT_PRIORITY = 'background'; & '$($kt.Replace("'", "''"))' -Full -Detached *> '$($lf.Replace("'", "''"))'"
   $st = @{ at = (Get-Date).ToString('o'); read = $false; greenAt = "$($s.greenAt)" }
@@ -247,8 +249,10 @@ function Invoke-KitWeeklyTests([bool]$Idle) {
 # health: the last full run (green or not) and when the next is due
 function Get-KitHealthLinesFullTests {
   $days = [double](Get-KitParam 'kitTests.fullEveryDays'); if ($days -le 0) { return }
-  $s = (Get-KitFullTestsState).s
-  "Kit tests (full, every $days days while idle): last green $(if ($s.greenAt) { ([datetime]$s.greenAt).ToString('yyyy-MM-dd') } else { 'never' })$(if ($s.start -and "$($s.start)" -ne "$($s.greenAt)") { ", last run $(([datetime]$s.start).ToString('yyyy-MM-dd'))$(if (Test-KitPid $s.pid $s.start) { ' (running)' } elseif ($s.read) { ' (not green: log kit-tests-full.txt)' })" })."
+  $s = (Get-KitFullTestsState).s; $g = if ($s.greenAt) { [datetimeoffset]$s.greenAt }
+  # a green full run of this kit's tree (a worktree's, before the pull) counts too
+  $td = Get-KitGreenTreeDate "$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}' 2>$null)".Trim(); if ($td -and $td -ne '-') { try { $tdo = [datetimeoffset]$td; if (-not $g -or $tdo -gt $g) { $g = $tdo } } catch {} }
+  "Kit tests (full, every $days days while idle): last green $(if ($g) { $g.LocalDateTime.ToString('yyyy-MM-dd') } else { 'never' })$(if ($s.start -and (-not $g -or [datetimeoffset]$s.start -gt $g)) { ", last run $(([datetime]$s.start).ToString('yyyy-MM-dd'))$(if (Test-KitPid $s.pid $s.start) { ' (running)' } elseif ($s.read) { ' (not green: log kit-tests-full.txt)' })" })."
 }
 
 # ---- state lint: unreadable state files (STATE.md) in supervise; the python child (1-2 s) starts with the sweep, read in its section

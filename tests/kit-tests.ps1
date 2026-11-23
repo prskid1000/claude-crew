@@ -9,7 +9,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<ar
  K79: a run ends with what started it (a process of its parent chain gone: the run, its areas and their children stop) and,
  on Windows, its areas die with it (a kill-on-close job); -Detached: no parent watch (the nightly run, started by a short beat).
 Outputs: the picked areas and why, per area its time and pass count (a failed or crashed area: its whole output), TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), TEST-ROOT lines (a new entry at a drive root), TEST-MYSQLD (the one test mysqld started twice: tests/test-mysql.ps1), a recap of the failed checks, then a total.
- A green full run stamps its tree (<runtime>/cache/kit-tests-green.txt). No git hook runs it: the agent runs the touched areas before it
+ A green full run of a clean tree stamps its tree and date in the main clone's cache (kit-tests-green.txt). No git hook runs it: the agent runs the touched areas before it
  commits and pushes; -Full runs from supervise -AutoFix while idle, every kitTests.fullEveryDays, a stamped tree skipped (adapters/kit_admin.ps1). One setup per area: a new case
  joins the area that builds its setup, as a table row.
 Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
@@ -167,9 +167,12 @@ foreach ($dr in $driveRoots) { foreach ($nw in @(Get-ChildItem -LiteralPath $dr 
 # FAIL recap, indented: never counted twice
 $failed = @($cases | Where-Object fail); if ($failed.Count) { 'Failed checks:'; $failed | ForEach-Object { "  [$($_.at)] $($_.text)" } }
 "$fails failure(s) in $($areas.Count) area(s), $([int]((Get-Date) - $started).TotalSeconds) s"
-# a green full run of a clean tree: its tree id stamped (the weekly full run skips a stamped tree)
+# a green full run of a clean tree: "<tree id> <date>" in the main clone's cache (a worktree's cache goes with it): the weekly full
+# run skips a stamped tree; health names the date of the kit's tree as its last green
 $kitDir = Split-Path $PSScriptRoot
 if ($Full -and -not $fails -and $tmpMap -and -not (git -C $kitDir status --porcelain 2>$null)) {
-  $tree = "$(git -C $kitDir rev-parse 'HEAD^{tree}' 2>$null)".Trim(); $gf = Join-Path (Join-Path (Join-Path $kitDir $tmpMap.runtimeDir) $tmpMap.runtime.cache) 'kit-tests-green.txt'
-  if ($tree) { $null = New-Item -ItemType Directory -Force (Split-Path $gf); @(@(Get-Content -LiteralPath $gf -ErrorAction SilentlyContinue) + $tree | Select-Object -Last 20) | Set-Content -LiteralPath $gf; "green full run: tree $tree stamped" } }
+  $gMain = "$(git -C $kitDir rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim() -replace '[\\/]\.git$', ''
+  $gRoot = if ($gMain -and (Test-Path (Join-Path $gMain 'skills/crafty/kit.example.json'))) { $gMain } else { $kitDir }
+  $tree = "$(git -C $kitDir rev-parse 'HEAD^{tree}' 2>$null)".Trim(); $gf = Join-Path (Join-Path (Join-Path $gRoot $tmpMap.runtimeDir) $tmpMap.runtime.cache) 'kit-tests-green.txt'
+  if ($tree) { $null = New-Item -ItemType Directory -Force (Split-Path $gf); @(@(Get-Content -LiteralPath $gf -ErrorAction SilentlyContinue) + "$tree $((Get-Date).ToString('o'))" | Select-Object -Last 20) | Set-Content -LiteralPath $gf; "green full run: tree $tree stamped ($gf)" } }
 exit [int]($fails -gt 0)
