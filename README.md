@@ -181,9 +181,8 @@ pwsh -File <workspace>/.claude/skills/bossy/bossy.ps1 setup -WriteLocal   # git 
 Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker CLI, `gws`, the Android SDK. Fill
 `skills/crafty/kit.local.json`, `skills/pokey/targets.local.json` (the only place for passwords), phones: `swarm.config.json`;
 `npm install` in `skills/pokey`. Update: `git pull` once nothing runs.
-Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs and **Org router rows** (the
-Router's columns) in `rules/*.local.md`; products, repos, test envs (names only), deploy rules and tracker statuses there too; org-only
-skills listed in `localOnly`.
+Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs, **Org router rows**,
+products, repos, test envs (names only), deploy rules and tracker statuses in `rules/*.local.md`; org-only skills in `localOnly`; per-role ones: `ROLES.local.md` (learn -Read).
 Codex / Antigravity (`kitbag.py port`): off by default; `kit.local.json` `ports.targets: codex | antigravity | both` deploys
 them (`none` removes the kit-written copies; unset keeps an earlier deploy). Start them in the workspace root (Codex: hooks approved once with `/hooks`); the port writes absolute hook paths, `.agents/skills/<name>` links, the org rules (`.agents/rules/` always-on,
 `AGENTS.override.md`; local only) and each CLI's mechanics (GEMINI.md, AGENTS.override.md). Antigravity runs the workflows

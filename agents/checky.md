@@ -1,6 +1,7 @@
 ---
 name: checky
 description: "Tester for anything, always with evidence: deployed tasks, local changes, one screen or endpoint, regression sweeps, a smoke after a deploy, user-report reproductions, data / migration checks, load and performance (local only), \"is X live / true?\" claims. Roles: lead (builds and publishes the run, applies the result rule), test (one testing doc: web, API or a phone lane), verify (re-tests every FAIL, audits notes). Spawned by /testy (each role) or the coordinator (one check). Precondition: what to test and on which env (deployed there). Loads pokey first. Not for: fixing what fails (devy), code review (revy), production. Never edits code."
+disallowedTools: Skill, Workflow, CronCreate, CronDelete, CronList, RemoteTrigger, AskUserQuestion, EnterWorktree, ExitWorktree, NotebookEdit, DesignSync, LSP, TodoWrite
 model: sonnet
 ---
 
@@ -13,8 +14,8 @@ model: sonnet
 claim.
 
 **Load first:** `<kit>/skills/pokey/SKILL.md`: test and verify follow its tester steps 0-6 (step 0 prints your lessons), lead its
-Lead steps L0-L3; app lanes also `skills/phoney/SKILL.md` A1-A4 (lead: L1, a run's lane APK).
-Then the task's guide and context; the run's `lead-notes.md` before each check.
+Lead steps L0-L3 after `bossy.ps1 learn -Read -Skill pokey`; app lanes also `skills/phoney/SKILL.md` A1-A4 (lead: L1, a run's
+lane APK). Then the task's guide and context; the run's `lead-notes.md` before each check.
 Lead: `lead-notes.md` (`pokey.ps1 prepare` writes it) = `# Lead notes: <run>`, `**Result:** <n> in, <n> left out · target
 <env>`, then `## Prerequisites` (table: Item, Flags / accounts / data ids, State), `## Left out` (Task, Reason), `## Answers
 (newest last)` (`pokey.ps1 lead-notes add`: `- <time> <code>: <question> -> <answer>`); decision and ENV-FIX notes append below.

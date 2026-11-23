@@ -33,7 +33,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L39 init · L50 board · L229 budget · L259 launch · L500 recover · L587 pause · L598 resume · L665 program · L716 param ·
   L722 track · L1109 supervise · L1449 report · L1529 audit · L1589 storage · L1592 bugbrief · L1706 cleanup · L1793 learn ·
-  L1824 decide · L1978 debate · L2022 health · L2090 setup · L2187 guard-sendmessage
+  L1825 decide · L1979 debate · L2023 health · L2091 setup · L2188 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1790,7 +1790,7 @@ if (-not $Quiet) { $summary; $groups | ForEach-Object { '{0,9:N1} MB {1,5} x  {2
 $global:LASTEXITCODE = 0
 }
 
-# ---- learn: signals + LESSONS.md (edits, -Stats, -History: adapters/kit_admin.ps1)
+# ---- learn: signals + LESSONS.md (rest: adapters/kit_admin.ps1)
 # lessons as LF lines; a "## <name>" section as [start, end)
 function Read-KitLessonLines([string]$Path) { if (Test-Path $Path) { , [Collections.Generic.List[string]]@(([IO.File]::ReadAllText($Path) -replace "`r", '') -split "`n") } else { , [Collections.Generic.List[string]]::new() } }
 function Find-KitLessonSection($Lines, [string]$Name) { $s = $Lines.IndexOf("## $Name"); if ($s -lt 0) { return $null }; $e = $s + 1; while ($e -lt $Lines.Count -and $Lines[$e] -notmatch '^## ') { $e++ }; , @($s, $e) }
@@ -1813,6 +1813,7 @@ function Invoke-Learn {
       $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' } | Select-Object -First 41)   # step-0 read cap: 40 lessons
       if ($lines.Count -gt 1) { "$(if ($f -like '*.local.md') { '(local) ' })$($lines -join "`n")" }
     }
+    Get-KitRoleRules $Skill
     return
   }
   if (-not ($Skill -and $Kind -and $Text)) { 'need -Skill -Kind -Text (or -Read, -Show; kit-admin: -Stats, -History, -When -Do -Why, -Bump, -Fixed, -Trim)'; exit 2 }

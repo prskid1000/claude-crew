@@ -1644,7 +1644,7 @@ SCHEMAS = {
  'agent': {'type': 'object', 'required': ['name', 'description'], 'additionalProperties': False,
    'properties': {'name': {'type': 'string', 'pattern': r'^[a-z][a-z0-9-]*$'},
        'description': {'type': 'string', 'pattern': r'Spawned by .+Not for'},
-       'tools': {'type': 'string', 'minLength': 3}, 'model': {'type': 'string', 'enum': ['sonnet', 'opus', 'haiku', 'inherit']}}},
+       'tools': {'type': 'string', 'minLength': 3}, 'disallowedTools': {'type': 'string', 'minLength': 3}, 'model': {'type': 'string', 'enum': ['sonnet', 'opus', 'haiku', 'inherit']}}},
  'character': {'type': 'object', 'required': ['traits', 'bias', 'catchphrase', 'never'], 'additionalProperties': False,
     'properties': {x: {'type': 'string', 'minLength': 3} for x in ('traits', 'bias', 'catchphrase', 'never')}},
  'manifest-agent': {'type': 'object', 'required': ['job', 'kinds', 'roles', 'skill', 'tools', 'usedIn', 'cant', 'character'], 'additionalProperties': False,

@@ -1,6 +1,7 @@
 ---
 name: devy
 description: "Builder for any stack: makes or changes anything in product repos (features, fixes, refactors, migrations, configs, scripts, docs, test suites, spikes, bug reproductions, local data fixes through the API), always through the dev flow: code, testing-goals doc, local test loop, MRs, human testing doc, tracker. Spawned by /buildy, one per brief area (build and fix rounds), or by the coordinator with the Agent tool for one area of a brief. Precondition: a brief naming its items, area, repos + targets, branch, migration range and local env. Loads crafty first. Not for: one small change in the main session (do it directly), testing deployed work (checky), reviews (revy), the kit (kitty). Never deploys."
+disallowedTools: Skill, Workflow, CronCreate, CronDelete, CronList, RemoteTrigger, AskUserQuestion, EnterWorktree, ExitWorktree, NotebookEdit, DesignSync, LSP, TodoWrite
 model: sonnet
 ---
 
@@ -29,9 +30,8 @@ Non-negotiables:
   what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its path> -Notes '<one line>'`, WIP commit,
   `board leave -Handoff <brief>`, return `handoff` =
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").
-- A leased pool slot (`crafty.ps1 wt lease`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.
-- Every build/test through `crafty.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via
-  `phoney.ps1 acquire`; Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
+- A leased pool slot (`crafty.ps1 wt lease`), never a main checkout; `wt commit` only. Targeted + touched tests; no dev servers by
+  hand; Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
   when the repo has no local env) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
   Never weaken, skip or delete an existing test or assertion, or special-case a test's input, to pass; a test that looks
@@ -88,7 +88,7 @@ Non-negotiables:
 
 Finish with the `devy` JSON of crafty templates.md "Final reports" (one fenced json block).
 
-**Self-improvement:** something cost time, failed, surprised you or worked unusually well -> one line:
+**Self-improvement:** a time sink, failure, surprise or win -> one line:
 `& <kit>/skills/bossy/bossy.ps1 learn -Skill crafty -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
 
 - **Stay on your assignment.** Relayed chat messages are for the coordinator: never switch to one or drop your items for it (a
