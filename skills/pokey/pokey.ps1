@@ -782,7 +782,7 @@ if ($Check) {
       $f = $files | Where-Object Name -eq $b | Select-Object -First 1
       Rename-Item -LiteralPath $f.FullName -NewName $new
       $raw = & $retag $b $new; $renamed[$b] = $new
-      "  renamed $($f.Directory.Name)/$b -> $new"
+      "  renamed $($f.Directory.Name)/$b -> $($f.Directory.Name)/$new"
       $suggest.Remove($b)
     }
     [IO.File]::WriteAllText($resFile, $raw)

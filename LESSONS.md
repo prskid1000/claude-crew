@@ -104,6 +104,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- Splitting a SKILL.md or moving a block between files -> run kitbag.py lint before wt commit (FILE-CAP and READ-BUDGET surfaced only at pre-commit)
 - Running board beat or checkpoint -> call the live clone bossy.ps1 / crafty.ps1, never the worktree copy (the worktree board does not know your session)
 - A kit test needs a port or matches a CLI flag -> use a free port from TcpListener 0 and -cmatch (fixed port 3307 and case-insensitive match broke the test)
 - a small fix touches files near their token cap (buildy.js, crafty SKILL.md, a test file) -> measure headroom per file first (kitbag.py budget), then forget or move a block before editing (measuring after the edit cost most of a small fix, twice)

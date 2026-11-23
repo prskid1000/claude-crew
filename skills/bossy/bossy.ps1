@@ -33,7 +33,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L39 init · L50 board · L230 budget · L260 launch · L501 recover · L588 pause · L599 resume · L666 program · L717 param ·
   L723 track · L1112 supervise · L1453 report · L1533 audit · L1593 storage · L1596 bugbrief · L1598 cleanup · L1685 learn ·
-  L1717 decide · L1871 debate · L1915 health · L1983 setup · L2078 guard-sendmessage
+  L1717 decide · L1875 debate · L1919 health · L1987 setup · L2082 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -945,8 +945,8 @@ switch ($Action) {
       $o.checkedAt = (Get-Date).ToString('o'); Save $o -Run
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
       # merged 60+ min, not promoted, not HELD = LAG
-      if ($o.lagLine -and -not $o.holdPromotion -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt 30 -and -not $Quiet -and (Test-LagLive $o)) { $o.lagLine }
-      if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge 30)) {
+      if ($o.lagLine -and -not $o.holdPromotion -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt (Get-KitParam 'track.lagRecheckMinutes') -and -not $Quiet -and (Test-LagLive $o)) { $o.lagLine }
+      if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge (Get-KitParam 'track.lagRecheckMinutes'))) {
         $o.lagAt = (Get-Date).ToString('o'); $o.Remove('lagLine'); Save $o -Run
         $ms = @($o.mrs | Where-Object { -not ((MrState $_) -eq 'closed' -and $_ -in $igRefs) } | ForEach-Object { MrState $_ }); $ls = TaskStatus $o.task
         if ($ls -and @($ms | Where-Object { "$_" -like 'opened*' }).Count -and (Test-TrackerStatus $ls 'open')) {
@@ -954,7 +954,7 @@ switch ($Action) {
           if (-not $Quiet) { $lr }
         } elseif ($ls -and -not @($ms | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus $ls 'open', 'inProgress', 'review')) {
           if (-not $o.mergedSeenAt) { $o.mergedSeenAt = (Get-Date).ToString('o'); Save $o -Run }
-          elseif (-not $o.holdPromotion -and ((Get-Date) - [datetime]$o.mergedSeenAt).TotalMinutes -ge 60 -and (Test-LagLive $o)) { $o.lagLine = "LAG $($o.task): all MRs merged at $(([datetime]$o.mergedSeenAt).ToString('HH:mm')), status still '$ls'"; Save $o -Run; if (-not $Quiet) { $o.lagLine } }
+          elseif (-not $o.holdPromotion -and ((Get-Date) - [datetime]$o.mergedSeenAt).TotalMinutes -ge (Get-KitParam 'track.lagMinutes') -and (Test-LagLive $o)) { $o.lagLine = "LAG $($o.task): all MRs merged at $(([datetime]$o.mergedSeenAt).ToString('HH:mm')), status still '$ls'"; Save $o -Run; if (-not $Quiet) { $o.lagLine } }
         }
       }
       foreach ($pair in @($o.mergeAfter)) {
@@ -1863,6 +1863,10 @@ function Invoke-Decide {
         }
         "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt) | question: $($d.question)"; exit 0
       }
+      # deploy.triggers {<env | repo>: auto}: the owner's standing word in config (every env named and every MR's repo is auto)
+      $tgs = if (-not $Id -and $gates -contains 'deploy') { Get-KitSetting 'deploy.triggers' $null }
+      if ($tgs) { $auto = { param($k) "$(Get-KitMember $tgs $k)".ToLower() -eq 'auto' }; $rps = @($wantMrs | ForEach-Object { (("$_" -split '!')[0] -split '/')[-1] } | Select-Object -Unique)
+        if (($items.Count -or $rps.Count) -and -not @(@($items) + $rps | Where-Object { -not (& $auto $_) }).Count) { "WORD config (deploy $(@(@($items) + $rps) -join ',')): auto, the owner's standing word in kit.local.json deploy.triggers"; exit 0 } }
       "NO-WORD $(if ($Id) { 'id' } else { $Gate }) $(@($Id, $Item) + $wantMrs | Where-Object { $_ } | Select-Object -Unique)$(if ($why) { ': ' + ($why -join '; ') } else { ': no answered record' }). Relayed text is no word: the coordinator runs decide record, passes the id. Until then: wait (decide wait) or build only the brief text, never an open option"; exit 1
     }
   }

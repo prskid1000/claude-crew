@@ -95,13 +95,15 @@ console.log(`models:${r.find((c) => c.label === 'build:G1').model === 'm-big' &&
 Expect-Each (Invoke-Js dw-generic $jsg $wfd) 'buildy generic: #' 'no-roles', 'roles', 'models', 'tiers' -Show 6
 # testy generic: qa.lanes unset = one web lane (an api item refused); a desktop lane with followUp web; models.test
 $jsl = @'
-const go = async (cfg, items) => { const logs = [], { calls, agent } = _mock((p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`)
+const go = async (cfg, items, rd) => { const logs = [], { calls, agent } = _mock((p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`)
   : o.label === 'test:D1' ? _res('D1', [_ck('C1', 'PASS'), _ck('C2', 'PENDING')]) : /^test:/.test(o.label) ? _res(o.label.slice(5), [_ck('C2', 'PASS')]) : /^close/.test(o.label) ? _ok('published') : undefined)
- const out = await run({ runDir: 'C:/runs/G', ..._kl, items }, async (p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`) : agent(p, o), (m) => logs.push(m), _n, null).catch((e) => ({ err: e.message }))
+ const out = await run({ runDir: rd || 'C:/runs/G', ..._kl, items }, async (p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`) : agent(p, o), (m) => logs.push(m), _n, null).catch((e) => ({ err: e.message }))
  return { calls, out, logs } }
 const a = await go('CONFIG {"models":null,"roles":{},"qaLanes":null}', [_item('A1', 'api')])
 const b = await go('CONFIG {"models":null,"roles":{},"qaLanes":null}', [_item('W1', '')])
 const c = await go('CONFIG {"models":{"test":"m-t"},"roles":{},"qaLanes":{"desktop":{"kind":"desktop","parallel":2,"followUp":"web"},"web":{"kind":"web"}}}', [_item('D1', 'desktop')])
+const rr = await go('CONFIG {"models":null,"roles":{},"qaLanes":null}', [_item('W1', '')], '.claude/rt/qa/G'), rt = rr.calls.find((x) => x.label === 'test:W1')
+console.log(`rel-rundir:${!!rt && rt.prompt.includes('C:/.claude/rt/qa/G') && !rt.prompt.includes(' .claude/rt')}`)
 console.log(`unknown-refused:${/unknown lane\(s\) api \(items A1\): qa\.lanes has web/.test(a.out.err || '')}`)
 const tw = b.calls.find((x) => x.label === 'test:W1')
 console.log(`default-web:${!!tw && /-Kind web /.test(tw.prompt) && /BROWSER \(web\)/.test(tw.prompt)}`)
@@ -109,7 +111,7 @@ const td = c.calls.find((x) => x.label === 'test:D1'), fu = c.calls.find((x) => 
 console.log(`desktop:${!!td && td.model === 'm-t' && /-Kind desktop /.test(td.prompt) && /LANE "desktop" \(kind desktop\)/.test(td.prompt) && !/BROWSER \(web\)/.test(td.prompt) && c.logs.some((l) => /desktop 1 \(x2\), web 0 \(x5\)/.test(l))}`)
 console.log(`follow-up:${!!fu && /BROWSER \(web\)/.test(fu.prompt) && /ONLY these checks: C2/.test(fu.prompt) && /The desktop pass \(D1\)/.test(fu.prompt) && c.calls.some((x) => x.label === 'add-followups')}`)
 '@
-Expect-Each (Invoke-Js tc-generic $jsl $wf) 'testy lanes: #' 'unknown-refused', 'default-web', 'desktop', 'follow-up' -Show 5
+Expect-Each (Invoke-Js tc-generic $jsl $wf) 'testy lanes: # (rel-rundir: a relative runDir is from the workspace root)' 'unknown-refused', 'default-web', 'desktop', 'follow-up', 'rel-rundir' -Show 5
 # launch -Self: CONFIG line (models, roles by name + alias, qa.lanes; _readme keys dropped); plan @phase tokens resolve models.<phase>
 & $J @{ models = @{ _readme = 'x'; build = 'opus' }; repos = @(@{ name = 'core'; aliases = @('api'); role = 'Producer' }, @{ name = 'ui' }); qa = @{ lanes = @{ web = @{ kind = 'web' } }; intermittentRx = 'boom' } } (Join-Path $k 'skills/crafty/kit.local.json')
 $cf = Join-Path (Kd) 'cfg-args.json'; [IO.File]::WriteAllText($cf, '{"brief":"C:/b/c.md","mode":"resume","agents":[{"id":"C1"}]}')

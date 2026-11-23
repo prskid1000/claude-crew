@@ -123,9 +123,9 @@ Expect "budget: a start line per role + INFO totals; START-BUDGET over 12000; a 
   $b2 -match 'INFO repo total \d+ tokens . tests \d+' -and $l4 -match 'START-BUDGET\s+agents/rechy\.md: rechy loads \d+ tokens at start' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 9000\)' -and
   $l4 -notmatch 'BUDGET-TESTS|BUDGET-CAP|kit total' -and $l4 -match 'ORPHAN-DOC\s+zz-orphan\.md' -and $l4 -match 'SCRIPT-READ\s+agents/rechy\.md:\d+')
 $kxj = Join-Path $kc 'skills/crafty/kit.example.json'; $kxKeep = [IO.File]::ReadAllText($kxj)
-foreach ($kxPad in 32000, 40000) { [IO.File]::WriteAllText($kxj, ('{"_pad": "' + ('#' * [math]::Max(0, $kxPad - [Text.Encoding]::UTF8.GetByteCount($kxKeep) - 12)) + '", ' + $kxKeep.Substring($kxKeep.IndexOf('{') + 1))); Set-Variable "kxl$kxPad" (& $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String) }
+foreach ($kxPad in 0, 46000) { if ($kxPad) { [IO.File]::WriteAllText($kxj, ('{"_pad": "' + ('#' * [math]::Max(0, $kxPad - [Text.Encoding]::UTF8.GetByteCount($kxKeep) - 12)) + '", ' + $kxKeep.Substring($kxKeep.IndexOf('{') + 1))) }; Set-Variable "kxl$kxPad" (& $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String) }
 [IO.File]::WriteAllText($kxj, $kxKeep)
-Expect 'budget: kit.example.json has its own config cap (9500), not the json one (7000): 8000 tokens pass, 10000 flag' ($kxl32000 -notmatch 'kit\.example\.json: \d+ tokens \(cap' -and $kxl40000 -match 'kit\.example\.json: \d+ tokens \(cap 9500\)')
+Expect 'budget: kit.example.json has its own config cap (9500), not the json one (7000): the file as shipped passes, padded past 9500 flags' ($kxl0 -notmatch 'kit\.example\.json: \d+ tokens \(cap' -and $kxl46000 -match 'kit\.example\.json: \d+ tokens \(cap 9500\)')
 # migrate: the retired install blocks leave .git/info/exclude; a listed file git no longer tracks goes, tracked and localOnly ones
 # stay; the use stamps and the config key named after the marker go; a second run prints nothing (words built: no retired word here)
 $mgw = 'go' + 'ody'; $mgKey = 'go' + 'odies'; $mgx = git -C $kc rev-parse --path-format=absolute --git-path info/exclude

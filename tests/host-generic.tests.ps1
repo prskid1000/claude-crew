@@ -104,5 +104,10 @@ $KitConf.TrackerRepos = @('a'); $s = @{ hostUser = @{ at = "$n"; v = 'u' } }; $f
 "uc:$("$($f.what)" -match 'a!3' -and "$($f.what)" -notmatch 'a!1 |a!2 ')"
 '@ @($O)
 Expect "supervise: CI-only MRs (title ci:, or only CI config files) need no task: no untracked WATCH for them ($uc)" (@($uc | Where-Object { "$_" -eq 'uc:True' }).Count -eq 1)
+# kit lint RUNTIME-STRAY: a stray .runtime written in the last hour (a live run) is a WARN, an idle one a problem
+$sl = Join-Path (Kd) 'strayrt'; New-Item -ItemType Directory -Force "$sl/work" | Out-Null; 'x' | Set-Content "$sl/work/run.json"; $slp = Join-Path (Kd) 'sl.py'
+[IO.File]::WriteAllText($slp, "import sys, os`nsys.path.insert(0, sys.argv[1])`nimport kitbag`nd = sys.argv[2]; a = kitbag.stray_live(d); os.utime(os.path.join(d, 'work', 'run.json'), (1, 1)); print(a, kitbag.stray_live(d))`n")
+$slo = python -X utf8 $slp (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy') $sl
+Expect "kit lint: a stray .runtime a run wrote to in the last hour = WARN, an idle one = problem ($slo)" ("$slo".Trim() -eq 'True False')
 Remove-TestKit $k
 Complete-Tests

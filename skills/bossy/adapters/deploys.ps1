@@ -641,8 +641,8 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     # tasks (tracked + trackerLists, whoever deployed) when a task went live or every deploy.inTestSweepMinutes; one background run
     $due = @((Read-KitTracking).tasks.Values | Where-Object { $_.inTestDue -and ($now - [datetime]$_.inTestDue).TotalHours -lt (Get-KitParam 'deploy.inTestDueHours') } | ForEach-Object task | Sort-Object)
     $swf = Join-Path (Get-KitPath deploys -Create) 'intest-sweep.json'; $swAt = try { [datetime](Get-Content $swf -Raw | ConvertFrom-Json).at } catch { [datetime]::MinValue }
-    $opsy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { ($_.type -eq 'opsy' -or "$($_.agent)" -match '^opsy') -and $_.status -ne 'left' -and (Test-KitHolder $_) -ne $false -and (-not $_.beat -or ($now - [datetime]$_.beat).TotalMinutes -lt 60) }).Count
-    $out = @(if (-not $opsy -and (($due.Count -and ($now - $swAt).TotalMinutes -ge 10) -or ($now - $swAt).TotalMinutes -ge (Get-KitParam 'deploy.inTestSweepMinutes'))) {   # a due retry: at most every 10 min
+    $opsy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { ($_.type -eq 'opsy' -or "$($_.agent)" -match '^opsy') -and $_.status -ne 'left' -and (Test-KitHolder $_) -ne $false -and (-not $_.beat -or ($now - [datetime]$_.beat).TotalMinutes -lt (Get-KitParam 'deploy.opsyBeatMinutes')) }).Count
+    $out = @(if (-not $opsy -and (($due.Count -and ($now - $swAt).TotalMinutes -ge (Get-KitParam 'deploy.inTestRetryMinutes')) -or ($now - $swAt).TotalMinutes -ge (Get-KitParam 'deploy.inTestSweepMinutes'))) {   # a due retry: at most every 10 min
         Set-Content $swf (@{ at = $now.ToString('o') } | ConvertTo-Json -Compress) -Encoding utf8; foreach ($t1 in $due) { Set-KitTaskFields $t1 @{ inTestDue = $null } }
         Invoke-Bounded $KitCmd.orch @('deploy', 'intest', '-Apply') })
     foreach ($l2 in $out) {

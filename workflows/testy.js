@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L58 record-args · L79 prepare · L108 config · L140 prompts · L232 local · L260 app · L290 test-prompt ·
-//   L348 verify · L410 run-item · L594 pool · L616 budget · L648 run · L694 learn
+// Sections: L16 args · L61 record-args · L82 prepare · L111 config · L143 prompts · L235 local · L263 app · L293 test-prompt ·
+//   L351 verify · L413 run-item · L597 pool · L619 budget · L651 run · L697 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -38,6 +38,9 @@ const ARG_KEYS = 'select name only instance batch runtimeDir envFixWaitMinutes t
 const badArgs = Object.keys(ARGS0).filter((k) => !ARG_KEYS.includes(k))
 if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.join(', ')}; free text for testers goes in args.context`)
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
+// a relative runDir is from the workspace root, never the kit folder agents run in (one made <kit>/.claude/.runtime, 2026-11-23)
+const ABS0 = /^([A-Za-z]:|[\\/])/
+if (R.runDir && !ABS0.test(R.runDir) && ABS0.test(K0)) R = { ...R, runDir: `${K0.replace(/[\\/][^\\/]+$/, '')}/${String(R.runDir).replace(/^\.[\\/]/, '')}` }
 // test = sonnet, never the session model; close, hold, steps, learn = haiku. models.<phase> wins (kit.local.json, CONFIG line of launch -Self)
 // tier (fast | balanced | strong | inherit) -> model; CONFIG tiers + models.<phase> win
 const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']

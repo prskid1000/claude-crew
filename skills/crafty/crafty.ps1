@@ -18,7 +18,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L24 init · L33 wt · L325 stack · L424 gate · L758 check · L1076 pipes · L1132 guard · L2049 dir · L2059 checkpoint ·
-  L2089 prior · L2127 tracker · L2149 task spec · L2342 scope · L2390 host
+  L2091 prior · L2129 tracker · L2151 task spec · L2344 scope · L2392 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2080,7 +2080,9 @@ $md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next
   @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Worktree @ head' @($c.steps | ForEach-Object { , @($_.at, $_.step, $_.item, $_.evidence, "$(if ($_.head) { "``$($_.dir)`` @ $($_.head)" })") })) +
   @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')") +
   @(if ($c.notes) { '', '## Notes', ''; @($c.notes | ForEach-Object { "- $_" }) })
-Write-KitAtomic $mf (($md -join "`n") + "`n")
+# a hand-written resume-<run>.md keeps its text above the generated part (the checkpoint overwrote it, 2026-11-23)
+$own0 = if (Test-Path -LiteralPath $mf) { ([IO.File]::ReadAllText($mf) -split '<!-- checkpoint -->')[0] -replace '(?s)^# (Resume brief|Checkpoint): .*' }
+Write-KitAtomic $mf ("$(if ("$own0".Trim()) { "$("$own0".TrimEnd())`n`n<!-- checkpoint -->`n" })" + ($md -join "`n") + "`n")
 if ($Brief) { $own = "$(if (Test-Path $Brief) { ([IO.File]::ReadAllText($Brief) -split '<!-- checkpoint -->')[0] })" -replace '(?s)^# Resume brief: .*'
   Write-KitAtomic $Brief ("$(if ($own.Trim()) { "$($own.TrimEnd())`n`n<!-- checkpoint -->`n" })# Resume brief: $Agent (run ``$($c.run)``)`n" + ($md[1..($md.Count - 1)] -join "`n") + "`n"); "resume brief: $Brief (board leave -Handoff $Brief)" }
 "checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"

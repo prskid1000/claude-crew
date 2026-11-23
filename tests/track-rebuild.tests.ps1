@@ -191,5 +191,11 @@ Write-KitLeaseLog acquire tab 'stg|t|qa' @{ agent = 'DT' }; function Get-KitGpuS
 $r2 = "$(Invoke-KitReleaseAgent DT)"; "tabrow:$($r2 -match 'DT gpu: 1 lease' -and $r2 -match 'DT: 1 stale log hold' -and -not @(Get-KitResourceRows | Where-Object { $_.agents -contains 'DT' }).Count)"
 '@ @($O)
 Expect-Each $tbr 'release (from bossy-generic.tests.ps1: its token cap): #' 'tabrow'
+# R1: deploy.triggers {<env | repo>: auto} = the owner's standing word: decide check -Gate deploy says WORD for those only
+$klR = Join-Path $k 'skills/crafty/kit.local.json'; $klKeepR = if (Test-Path $klR) { [IO.File]::ReadAllText($klR) }
+$cfgR = if ($klKeepR) { $klKeepR | ConvertFrom-Json -AsHashtable } else { @{} }; $cfgR.deploy = @{ triggers = @{ 'svc-staging' = 'auto'; 'svc' = 'auto' } }; $cfgR | ConvertTo-Json -Depth 9 | Set-Content $klR
+$w1 = pwsh @np $O decide check -Gate deploy -Item svc-staging | Out-String; $w2 = pwsh @np $O decide check -Gate deploy -Mrs 'grp/svc!3' | Out-String; $w3 = pwsh @np $O decide check -Gate deploy -Item web-staging | Out-String; $w4 = pwsh @np $O decide check -Gate deploy -Item 'svc-staging,web-staging' | Out-String
+if ($null -ne $klKeepR) { [IO.File]::WriteAllText($klR, $klKeepR) } else { Remove-Item $klR }
+Expect "decide check -Gate deploy: an auto env or repo in deploy.triggers = WORD (config); any other env, or a mix, = NO-WORD" ($w1 -match '^WORD config \(deploy svc-staging\)' -and $w2 -match '^WORD config \(deploy svc\)' -and $w3 -match '^NO-WORD' -and $w4 -match '^NO-WORD')
 Remove-TestKit $k
 Complete-Tests

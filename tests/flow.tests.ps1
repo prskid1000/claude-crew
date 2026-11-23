@@ -144,6 +144,9 @@ $null = pwsh @np $D checkpoint -Agent oldie -Run r1 -Step mr 2>&1; $legacyKept =
 Expect "checkpoint: same -Agent, two runs = two files (resume-<run>.json); -Read -Run its own; an old resume.json / .md still read; its run in flight keeps writing it" (
   @($legacyKept.steps).Count -eq 1 -and $legacyKept.next -eq 'review' -and -not (Test-Path (Join-Path $legacyDir 'resume-r1.json')) -and $twinFix.run -eq 'r-fix' -and
   @($twinFix.steps).Count -eq 1 -and $twinAud.run -eq 'r-aud' -and $twinRead -match 'run `r-fix`' -and $legacyRead -match 'old checkpoint md' -and $legacyNoRun -match 'old checkpoint md' -and $twinNewest -match 'run `r-aud`' -and $legacyRj -match "CHECKPOINT: start at step 'mr'.*oldie[\\/]resume\.md")
+# R3: a hand-written resume-<run>.md keeps its text; the checkpoint goes below <!-- checkpoint -->
+"# My brief`nkeep me" | Set-Content (Join-Path $ckDirTwin 'resume-r-fix.md'); $null = pwsh @np $D checkpoint -Agent twin -Run r-fix -Step mr 2>&1; $twinMd = Get-Content (Join-Path $ckDirTwin 'resume-r-fix.md') -Raw
+Expect 'checkpoint: a hand-written resume-<run>.md keeps its text above the generated part' ($twinMd -match '(?s)^# My brief\s+keep me\s+<!-- checkpoint -->\s+# Checkpoint: twin')
 $lf = Join-Path (Kd) 'mrs.ps1'; Set-Content $lf "'[]'"; & $J @{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.list' = "pwsh -NoProfile -File `"$lf`"" } }; tracker = @{ type = 'none'; branchTag = 'TK-' }; pool = @{ size = 0 } } "$k/skills/crafty/kit.local.json"
 $gr = Join-Path (Kd) 'pr'; git init -q -b main $gr; git -C $gr commit -q --allow-empty -m i; git -C $gr remote add origin $gr; git -C $gr branch TK-7-old
 $w = { param($b, $o) $wa = @('wt', 'new', '-Repo', $gr, '-Branch', $b, '-Target', 'main', '-Name', $b, '-Root', (Join-Path (Kd) 'pw')) + @(if ($o) { '-Override', $o }); pwsh @np $D @wa 2>&1 | Out-String; $LASTEXITCODE }

@@ -70,7 +70,7 @@ Expect 'finalize: verify status in the cell, a long text in a linked file' ((Rea
 # -FixNames: a reference in another case is rewritten; a results.json written again with the old name still resolves (rename log)
 $rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-TestDir "$rn/R1/shots"
 [IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); $rj.checks[0].what_was_done = 'Opened it, see ShotOne.PNG.'; & $J $rj "$rn/R1/results.json"
-$null = Fin $rn R1 -Check -FixNames; $f1 = Read-Text "$rn/R1/results.json"; $new = @(Get-ChildItem "$rn/R1/shots").Name; $p0 = Test-Path "$rn/R1/finalize.json"
+$fxo = Fin $rn R1 -Check -FixNames | Out-String; $f1 = Read-Text "$rn/R1/results.json"; $new = @(Get-ChildItem "$rn/R1/shots").Name; $p0 = Test-Path "$rn/R1/finalize.json"
 & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check; $f2c = $LASTEXITCODE
 $null = Fin $rn R1 -FixNames; $f3 = Read-Text "$rn/R1/results.json"; $p1 = Test-Path "$rn/R1/finalize.json"
 [IO.File]::WriteAllBytes("$rn/R1/shots/two.png", [byte[]](1, 2)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence += 'two.png'; $o0 = $rj.checks[0].observed; $rj.checks[0].observed = "$(1..60)"; & $J $rj "$rn/R1/results.json"
@@ -81,7 +81,7 @@ $rjRun = Read-Text "$rn/run.json"; $rr = Read-Json "$rn/run.json"; $rr | Add-Mem
 [IO.File]::WriteAllBytes("$rn/R1/shots/X9-a.png", [byte[]](1, 2))
 $ow = Fin $rn R1 -Check -FixNames | Out-String; $owc = $LASTEXITCODE; Remove-Item "$rn/bugs.json"; Set-Content "$rn/run.json" $rjRun -NoNewline
 Expect "finalize -Check: bugs.json / runSettings.notes = WARN, exit 0; uncited X9- keeps its id ($owc)" ($owc -eq 0 -and $ow -match 'R1 prose WARN' -and (Test-Path "$rn/R1/shots/R1-X9_01_a.png"))
-Expect "finalize -FixNames: any-case refs renamed, in the text too; an old name after a rewrite resolves; alone it publishes ($new)" (-not $p0 -and $p1 -and $new -match '^R1-C1_' -and $f1 -match "see $([regex]::Escape($new))\." -and $f1 -notmatch '(?i)[" ]shotone\.png' -and $f2c -eq 0 -and $f3 -match [regex]::Escape($new) -and $f3 -notmatch '(?i)[" ]shotone\.png')
+Expect "finalize -FixNames: each rename printed old -> new path; any-case refs renamed, in the text too; an old name after a rewrite resolves; alone it publishes ($new)" ($fxo -match "renamed shots/shotone\.png -> shots/$([regex]::Escape($new))" -and -not $p0 -and $p1 -and $new -match '^R1-C1_' -and $f1 -match "see $([regex]::Escape($new))\." -and $f1 -notmatch '(?i)[" ]shotone\.png' -and $f2c -eq 0 -and $f3 -match [regex]::Escape($new) -and $f3 -notmatch '(?i)[" ]shotone\.png')
 $pvRun = New-Run 'PV' @(@{ code = 'P1'; task = 'TP'; checks = , @('C1', 'PASS') }); $pvJson = @{ out = @(1..3 | ForEach-Object { [ordered]@{ q = 'How do I give my customers access to the portal today'; ans = "first`nsecond part of the answer text"; ms = 1 } }) }
 $null = New-Item "$pvRun/P1/shots/P1-C1_01_answers.json" -Force -Value ($pvJson | ConvertTo-Json -Depth 4); $rj = Read-Json "$pvRun/P1/results.json"; $rj.checks[0].evidence = @('P1-C1_01_answers.json'); & $J $rj "$pvRun/P1/results.json"
 $pvOut = Fin $pvRun P1 -Check | Out-String; $pvCode = $LASTEXITCODE; $null = Fin $pvRun P1; $pvMd = Get-Content "$pvRun/P1/report.md" -Raw
