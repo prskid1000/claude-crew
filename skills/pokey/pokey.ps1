@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L159 seat · L233 api · L473 users · L604 finalize · L1126 results · L1159 retest ·
-  L1216 prepare
+Sections: L29 lanes · L43 report · L159 seat · L233 api · L480 users · L612 finalize · L1152 results · L1185 retest ·
+  L1242 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -348,8 +348,15 @@ if (-not $As -and $kind -ne 'none') {
   if ($null -eq $who0) { $nu = "NO-USER target $Target has several users and none is chosen (not retried): pass -As <user>, or set targets.local.json targets.$Target.defaultUser or kit.local.json api.defaultUser. Known: $((Get-KitProps $t.users).Name -join ', ')"; if ($script:ApiNoExit) { throw $nu }; $nu; exit 2 }
   $As = $who0
 }
-$u = @((Get-KitMember $t.users $As))
-if (-not (Get-KitMember $t.users $As) -and $kind -ne 'none') {   # not @(...).Count: @($null).Count is 1
+$u = @((Get-KitMember $t.users $As) | ForEach-Object { Resolve-KitSecretRef $_ })   # secret:<name> = a secrets.store entry
+# profiles.<name> (README "Adapters" login profiles): login, secret (a secrets.store name), auth (over auth), fields (opaque
+# {field} placeholders; tenant = the -Tenant default)
+$pfFields = @{}; if (($pf = Get-KitMember $t.profiles $As)) {
+  $u = @($(if ($pf.login) { "$($pf.login)" } else { $As }), $(if ($pf.secret) { Get-KitSecret "$($pf.secret)" }))
+  if ($pf.auth) { $t | Add-Member -Force NoteProperty userAuth ([pscustomobject]@{ $As = $pf.auth }) }
+  foreach ($fp in @(Get-KitProps $pf.fields)) { if ($fp.Name -ne 'tenant') { $pfFields[$fp.Name] = "$($fp.Value)" } elseif (-not $PSBoundParameters['Tenant']) { $Tenant = "$($fp.Value)" } }
+}
+if (-not (Get-KitMember $t.users $As) -and -not $pf -and $kind -ne 'none') {   # not @(...).Count: @($null).Count is 1
   $holders = @((Get-KitProps $cfg.targets) | Where-Object { $_.Name -ne $Target -and (Get-KitMember $_.Value.users $As) } | ForEach-Object Name)   # names only, never values
   # exit 2, not a throw: a missing user never appears on retry (163x loop)
   $nu = "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $((Get-KitProps $t.users).Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"
@@ -368,12 +375,12 @@ if ($kind -notin $core -and -not ($ext -and $kind -in 'basic', 'cookie', 'comman
   if ($KitAdapters['api-auth'] -and $KitAdapters['api-auth'][$kind]) { $bp = @{}; foreach ($kv in $PSBoundParameters.GetEnumerator()) { $bp[$kv.Key] = $kv.Value }; $bp.As = $As; $bp.Target = $Target; return Invoke-KitAdapter 'api-auth' $kind 'invoke' $bp }
   throw "target '$Target' auth.type '$kind' unknown: $($core -join ', ')$(if ($ext) { ', basic, cookie, command' } else { ' (basic, cookie, command: adapters/api_auth.ps1)' })" }
 if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has no api URL (web-only: use browser.mjs)" }
-$base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
+$base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/'); foreach ($fk in $pfFields.Keys) { $base = $base.Replace("{$fk}", $pfFields[$fk]) }
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
 if ($kind -eq 'query') { $uri += "$(if ($uri -match '\?') { '&' } else { '?' })$($a.param)=$([uri]::EscapeDataString([string]$u[1]))" }
 $tls = if (-not $a.cert) { @{} } elseif ("$($a.certPass)") { @{ Certificate = Get-PfxCertificate -LiteralPath ([string]$a.cert) -Password (ConvertTo-SecureString ([string]$a.certPass) -AsPlainText -Force) } } else { @{ Certificate = Get-PfxCertificate -LiteralPath ([string]$a.cert) -NoPromptForPassword } }
 
-function Fill($s) { ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant) }
+function Fill($s) { $fs = ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant); foreach ($fk in $pfFields.Keys) { $fs = $fs.Replace("{$fk}", $pfFields[$fk]) }; $fs }
 
 $tokDir = Get-KitPath tokens -Create
 $cache = Join-Path $tokDir ("$Target-$Tenant-$As.txt" -replace '[^\w.\-]', '_')
@@ -565,7 +572,8 @@ if ($found -and -not $local) { throw "'$Name' exists on $Target tenant '$Tenant'
 $state = if ($found) { 'EXISTS' } else { 'CREATED' }
 $rec = [ordered]@{ tenant = $Tenant; role = $Role; recipe = $rc.name; at = $(if ($made[$Name].at) { $made[$Name].at } else { (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }); run = $(if ($made[$Name].run) { $made[$Name].run } else { $Run }); ids = (& $ids) }
 # the password is stored before the create call: a crash after it never leaves a server login nobody can use
-& $save { param($tt) $tt.users[$Name] = @($Name, [string]$vars.password); $tt.created[$Name] = $rec }
+$pwRef = [string]$vars.password; if ((Get-KitSecretStore) -ne 'file') { $pwRef = "secret:targets/$Target/$Name/password"; $null = Set-KitSecret $pwRef.Substring(7) $vars.password }
+& $save { param($tt) $tt.users[$Name] = @($Name, $pwRef); $tt.created[$Name] = $rec }
 if (-not $found) {
   try { foreach ($st in @($rc.create)) { $null = Invoke-UserStep $st $vars $Target $As $Tenant } }
   catch { $failed = $_; $there = try { if ($rc.find) { Invoke-UserStep $rc.find $vars $Target $As $Tenant } } catch { $null }; if (-not $there) { & $save { param($tt) $tt.users.Remove($Name); $tt.created.Remove($Name) } }; throw $failed }
@@ -937,9 +945,11 @@ function Get-Ask($st) {
 }
 # one [Bug] per ask and run (bugs.json, mutex); edits only its own
 function Add-NewDefects($st, [object[]]$defects) {
-  # process.qaResult.newDefect: collector (default: one [Bug] per ask) | none (defects stay in the results report only)
-  if ("$(Get-KitSetting 'process.qaResult.newDefect' 'collector')" -eq 'none') { return $null }
+  # process.qaResult.newDefect: collector (default: one [Bug] per ask) | per-defect (one [Bug] each) | none (results report only)
+  $ndMode = "$(Get-KitSetting 'process.qaResult.newDefect' 'collector')"
+  if ($ndMode -eq 'none') { return [pscustomobject]@{ id = $null; none = $true } }
   $ask = Get-Ask $st; $key = if ($ask.id) { $ask.id } else { '-' }
+  if ($ndMode -eq 'per-defect') { return Add-NewDefectEach $st $defects $ask }
   $h = (Get-KitHash ($RunDir.ToLower()) SHA256).Substring(0, 16)
   $mx = [Threading.Mutex]::new($false, "Global\kit-bugs-$h")
   $own = $true; try { $own = $mx.WaitOne(1000 * [int](Get-KitParam 'qa.bugsLockSec')) } catch [Threading.AbandonedMutexException] { $own = $true }   # abandoned = ours now
@@ -977,6 +987,21 @@ function Add-NewDefects($st, [object[]]$defects) {
     [pscustomobject]@{ groups = $groups } | ConvertTo-Json -Depth 8 | Out-File $f -Encoding utf8
     [pscustomobject]@{ id = $s.id; url = $s.url }
   } finally { if ($own) { $mx.ReleaseMutex() }; $mx.Dispose() }
+}
+# per-defect: one [Bug] per defect under the ask, its own section key (ask + signature: a rerun updates it, a twin elsewhere
+# is caught by the create duplicate check); <run>/bugs-each.json maps keys to ids
+function Add-NewDefectEach($st, [object[]]$defects, $ask) {
+  $f = "$RunDir/bugs-each.json"
+  Invoke-KitLocked $f {
+    $map = if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
+    $ids = @(foreach ($d in @($defects)) {
+      $sg = @(Get-KitDefectSigs $d); $md = Format-Check $d; $k = "qa-$((Get-KitHash "$($ask.id)|$(if ($sg.Count) { $sg[0] } else { $md })" SHA256).Substring(0, 12))"
+      $t = [regex]::Match($md, '(?m)^### \S+ — (.+?)(?: \(flaky\))?\r?$').Groups[1].Value
+      $r = Add-KitAskBug -Ask $ask.id -Key $k -Name "$(Get-KitKindPrefix 'bug') $(if ($t) { $t } else { "$Code $($d.id)" })" -Head "QA run **$title** ($Date): $(Format-KitMdLink $docUrl)" -Defects @([pscustomobject]@{ label = "$Code $($d.id)"; sig = $sg; md = $md; group = '' }) -List $bugList -Assignee $tr.owner -Id $map[$k] -Mine:([bool]$map[$k]) -Single
+      if ($r.id) { $map[$k] = $r.id; $r.id } })
+    $map | ConvertTo-Json | Out-File $f -Encoding utf8
+    if ($ids.Count) { [pscustomobject]@{ id = ($ids | Select-Object -Unique) -join ', ' } } else { $null }
+  }
 }
 # no failedTesting status -> inProgress + comment
 # knownBug FAILs: no [Bug]; one edited-in-place "Seen again" line per known task and run item; a failure is retried next run
@@ -1089,7 +1114,8 @@ foreach ($st in @($item.subtasks)) {
     if ($rec.late.Count) { $msg += ". Status unchanged: $($rec.late -join ', ') merged after this run started; retest after their deploy" }
     if ($newDefects.Count -and $canCreate) {
       $b = TrySay { Add-NewDefects $st $newDefects } 'record the new defects in the [Bug] task'
-      if ($b.id) { $rec.bug = $b.id; $msg += ". New defects ($(($newDefects | ForEach-Object id) -join ', ')) moved to [Bug] task $($b.id)" }   # one link: the report
+      if ($b.none) { $msg += ". New defects ($(($newDefects | ForEach-Object id) -join ', ')) stay in the results report (process.qaResult.newDefect none)" }
+      elseif ($b.id) { $rec.bug = $b.id; $msg += ". New defects ($(($newDefects | ForEach-Object id) -join ', ')) moved to [Bug] task $($b.id)" }   # one link: the report
       else { $rec.bugError = '[Bug] task could not be created'; Write-Warning "$($st.id): could not create the [Bug] task for $(($newDefects | ForEach-Object id) -join ', ')" }
     }
     elseif ($newDefects.Count) { $rec.bugError = 'no bug list configured'; Write-Warning "$($st.id): no tracker list for bug tasks (tracker.list) - task kept open" }

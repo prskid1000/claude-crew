@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L456 leases · L864 status · L1157 tracker · L1504 prior ·
-  L1520 ask bugs · L1706 git-host · L1893 kitlog · L2015 params · L2320 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L456 leases · L873 status · L1166 tracker · L1483 prior ·
+  L1499 ask bugs · L1685 git-host · L1872 kitlog · L1994 params · L2299 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -838,9 +838,18 @@ function Register-KitAdapter([string]$Kind, [string]$Name, [hashtable]$Verbs) { 
 function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtable]$a = @{}) {
   $ad = $KitAdapters[$Kind][$Name]; $f = if (-not $ad) { $null } elseif ($ad.ContainsKey($Verb)) { $ad[$Verb] } else { $ad['*'] }
   if (-not $ad -and $Name) { throw "$Kind ${Name}: no such adapter (README ""Adapters"")" }
+  if (-not $f -and $ad.caps) { throw "UNSUPPORTED $Kind/$Name/$Verb (check Test-KitCap first, README ""Adapters"")" }
   if (-not $f) { Write-Warning "$Kind ($Name): no adapter or verb $Verb (README ""Adapters"")"; return $null }
   if ($env:KIT_API_LEDGER) { Add-KitApiCall $Kind $Verb }
   & $f $a $Verb
+}
+# a capability (README "Adapters" caps): config <kind>.caps.<cap> false switches it off; else the adapter's caps entry
+# (hashtable or a scriptblock returning one), else its verb (cap name -> kebab verb: commentEdit -> comment-edit)
+function Test-KitCap([string]$Kind, [string]$Name, [string]$Cap) {
+  $ad = $KitAdapters[$Kind][$Name]; if (-not $ad -or (Get-KitSetting "$Kind.caps.$Cap" $true) -eq $false) { return $false }
+  $c = $ad.caps; if ($c -is [scriptblock]) { $c = & $c }
+  if ($c -is [hashtable] -and $c.ContainsKey($Cap)) { return [bool]$c[$Cap] }
+  $ad.ContainsKey(($Cap -creplace '([A-Z])', '-$1').ToLower())
 }
 # a config command line -> argv: quotes group, {name} = $a.name
 function Split-KitCommand([string]$Line, [hashtable]$a) { @([regex]::Matches($Line, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { [regex]::Replace($_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value, '\{(\w+)\}', { param($m) [string]$a[$m.Groups[1].Value] }) }) }
@@ -1258,37 +1267,6 @@ function __TrOsFullName {
 }
 # ----- backends: $a = id, text, status (tracker name), logical, name, list, parent, assignee, priority, file, leaf
 # tracker clickup, github: adapters/tracker_clickup.ps1, adapters/github.ps1
-# adapter:tracker/command: tracker.commands.<verb> = a CLI line, {placeholders} = $a keys; prints the kit's JSON
-Register-KitAdapter 'tracker' 'command' @{ '*' = { param($a, $v)
-    $c = Get-KitSetting 'tracker.commands' $null; if ($v -in 'url', 'owner' -and -not (Get-KitMember $c $v)) { return $(if ($v -eq 'url') { $a.id } else { $a.name }) }
-    if ($__trDry) { Write-Host "DRYRUN: tracker command $v $(__TrShort ($a | ConvertTo-Json -Compress))"; return }
-    Invoke-KitCommand 'tracker' $c $v $a } }
-# adapter:tracker/none: local store (.state/tracker-none) + log
-Register-KitAdapter 'tracker' 'none' @{
-  'url' = { param($a) Join-Path $__trNoneDir "$($a.id -replace '[^\w.-]', '_').json" }
-  'view' = { param($a)
-    $o = __TrNone $a.id 'view' $null; if (-not $o) { return }
-    __TrTask $o.id $o.name $o.status (Get-TrackerUrl $o.id) $o.parent @($o.assignees) $o.list @(__TrNoneAll | Where-Object { $_.parent -eq $a.id } | ForEach-Object { __TrSub $_.id $_.name $_.status (Get-TrackerUrl $_.id) }) $o.description
-  }
-  'status' = { param($a) $null = __TrNone $a.id "status $($a.status)" { param($o) $o.status = $a.status }; "status of $($a.id): $($a.status) (tracker none)" }
-  'comment' = { param($a) $null = __TrNone $a.id "comment $($a.text)" { param($o) __TrNoneNote $o $a.text }; "commented on $($a.id) (tracker none)" }
-  'comments' = { param($a) @((__TrNone $a.id 'comments' $null).comments) }
-  'comment-edit' = { param($a) $null = __TrNone $a.id "comment-edit $($a.comment)" { param($o) foreach ($c in @($o.comments)) { if ($c.id -eq $a.comment) { $c.text = $a.text } } }; "edited comment $($a.comment) on $($a.id) (tracker none)" }
-  'comment-delete' = { param($a) $null = __TrNone $a.id "comment-delete $($a.comment)" { param($o) $o.comments = @($o.comments | Where-Object { $_.id -ne $a.comment }) }; "deleted comment $($a.comment) on $($a.id) (tracker none)" }
-  'create' = { param($a)
-    $d = Get-KitPath tracker-none -Create; $n = 1 + @(Get-ChildItem $d -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue).Count
-    while (Test-Path (Join-Path $d "LOCAL-$n.json")) { $n++ }
-    $null = __TrNone "LOCAL-$n" "create $($a.name)" { param($o) $o.name = $a.name; $o.status = @($__trStatus.open)[0]; $o.parent = $a.parent; $o.list = $a.list; $o.assignees = @($a.assignee | Where-Object { $_ }); $o.description = $a.description }
-    [pscustomobject]@{ id = "LOCAL-$n"; url = Get-TrackerUrl "LOCAL-$n" }
-  }
-  'describe' = { param($a) $null = __TrNone $a.id 'describe' { param($o) $o.description = $a.text }; "described $($a.id) (tracker none)" }
-  'rename' = { param($a) $null = __TrNone $a.id "rename $($a.name)" { param($o) $o.name = $a.name }; "renamed $($a.id) (tracker none)" }
-  'move' = { param($a) $null = __TrNone $a.id "move $($a.parent)$($a.list)" { param($o) if ($a.top) { $o.parent = $null } elseif ($a.parent) { $o.parent = $a.parent }; if ($a.list) { $o.list = $a.list } }; "moved $($a.id) (tracker none)" }
-  'attach' = { param($a) $null = __TrNone $a.id "attach $($a.file)" { param($o) __TrNoneNote $o "$($a.text) [attachment: $($a.file)]" }; "attached $($a.leaf) to $($a.id) (tracker none)" }
-  'list' = { param($a) @(__TrNoneAll | Where-Object { (-not $a.list -or "$($_.list)" -eq $a.list) -and ((Test-TrackerStatus "$($_.status)" $a.logical) -or "$($_.status)" -ieq $a.status) } | ForEach-Object { __TrRow $_.id $_.name $_.status @($_.assignees | ForEach-Object { __TrWho $_ $_ }) }) }
-  'owner' = { param($a) $a.name }
-  'statuses' = { param($a) }   # no live names: every role uses its default names
-}
 # adapter-end:tracker
 # adapters/*.ps1 register before the tracker type is resolved; a vendor file (names below) loads only when config selects one
 # of its names: the tracker here, git host and ci once the host type is known (Import-KitVendorAdapters below)
@@ -1381,7 +1359,7 @@ function Get-TrackerHeadComments([string]$Id, [string]$Heading, [scriptblock]$Ma
 # -Heading: found by heading, not this kit copy's index (agents run from several copies), under a machine-wide lock
 function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Heading, [scriptblock]$Match) {
   if ($Heading) { return Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-comment-$("$Id-$Kind" -replace '[^\w.-]', '_')") { Set-TrackerHeadComment $Id $Kind $Text $Heading $Match } }
-  $body = (__TrText "$Text").TrimEnd(); if (-not $body.Trim()) { throw "tracker comment: empty $Kind text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit'); $sig = Get-KitCommentSig $body
+  $body = (__TrText "$Text").TrimEnd(); if (-not $body.Trim()) { throw "tracker comment: empty $Kind text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; $ad = $KitAdapters['tracker'][$__trType]; $edit = __TrCan commentEdit; $sig = Get-KitCommentSig $body
   $keep = { param($cid) try { Update-KitTaskIndex $Id { param($x) if ($cid) { $x.comments[$Kind] = "$cid"; $x.comments.Remove("$Kind#text") } else { $x.comments["$Kind#text"] = $sig } } } catch { } }
   $ix = (Read-KitState (Get-KitTaskFile $Id)).comments; if ($ix -isnot [Collections.IDictionary]) { $ix = @{} }; $known = "$((Get-KitMember $ix $Kind))"; $last = "$($ix["$Kind#text"])"
   if ($known -and $edit) { try { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $known; text = $body } } catch { Write-KitLog calls comment-index-stale @{ task = $Id; kind = $Kind; error = "$_" } } }
@@ -1390,7 +1368,7 @@ function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Headi
   $r = Add-TrackerComment $Id $body; $cid = $r.id
   if (-not $cid -and "$r" -notmatch '^QUEUED') { $cid = (@(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and (Get-KitCommentSig $_.text) -eq $sig } | Select-Object -Last 1).id }   # adapters that print no id
   & $keep $cid
-  if ($old -and $ad -and $ad.ContainsKey('comment-delete') -and "$r" -notmatch '^QUEUED') { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
+  if ($old -and (__TrCan commentDelete) -and "$r" -notmatch '^QUEUED') { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
   $r
 }
 # $Text may be a scriptblock run under the lock, so a writer never drops another's MRs
@@ -1399,13 +1377,13 @@ function Set-TrackerHeadComment([string]$Id, [string]$Kind, $Text, [string]$Head
   $body = (__TrText "$Text").TrimEnd(); if (-not $body.Trim()) { throw "tracker comment: empty $Kind text for $Id (a tracker CLI would open an editor): pass the text, -File or -Spec" }; $ad = $KitAdapters['tracker'][$__trType]; if (-not $ad) { throw "tracker: no adapter for type '$__trType'" }
   $all = @(Get-TrackerHeadComments $Id $Heading $Match)   # a failed read throws: a duplicate is worse than a late one
   $first = $all | Select-Object -First 1; $extra = @($all | Select-Object -Skip 1)
-  if ($first -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $first.id; text = $body }; $cid = $first.id }
-  elseif ($all.Count -and -not $ad.ContainsKey('comment-delete') -and (ConvertTo-KitLetters $all[-1].text) -eq (ConvertTo-KitLetters (ConvertTo-KitPlainText $body))) { return }   # no edit, no delete: post only on a change
+  if ($first -and (__TrCan commentEdit)) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $first.id; text = $body }; $cid = $first.id }
+  elseif ($all.Count -and -not (__TrCan commentDelete) -and (ConvertTo-KitLetters $all[-1].text) -eq (ConvertTo-KitLetters (ConvertTo-KitPlainText $body))) { return }   # no edit, no delete: post only on a change
   else {
     $r = Add-TrackerComment $Id $body; if ("$r" -match '^QUEUED') { return $r }
     $cid = (@(Get-TrackerHeadComments $Id $Heading $Match) | Where-Object { @($all.id) -notcontains $_.id } | Select-Object -Last 1).id; $extra = $all
   }
-  if ($extra.Count -and -not $ad.ContainsKey('comment-delete')) { Write-Warning "tracker ($__trType): earlier '$Heading' comment(s) $($extra.id -join ', ') on $Id (the adapter cannot delete): remove by hand" }
+  if ($extra.Count -and -not (__TrCan commentDelete)) { Write-Warning "tracker ($__trType): earlier '$Heading' comment(s) $($extra.id -join ', ') on $Id (the adapter cannot delete): remove by hand" }
   elseif ($extra.Count) { foreach ($x in $extra) { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $x.id } } catch { Write-Warning "tracker ($__trType): duplicate '$Heading' comment $($x.id) on $Id not deleted: $_" } } }
   try { Update-KitTaskIndex $Id { param($ix) if ($cid) { $ix.comments[$Kind] = "$cid" } } } catch { }
   $r
@@ -1483,6 +1461,7 @@ function Move-TrackerTask([string]$Id, [string]$Parent = '', [string]$List = '',
   $mv }
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }
+  if (-not (__TrCan attach)) { return Add-TrackerComment $Id "$Text (file $(Split-Path $File -Leaf) kept with the run: the tracker takes no attachments)".Trim() }
   __TrA 'attach' @{ id = $Id; file = $File; text = $Text; leaf = (Split-Path $File -Leaf) }
 }
 function Get-TrackerTasks([string]$List, [string]$Status) {
@@ -1532,7 +1511,7 @@ function Get-KitDefectSigs($Check) {
 # a QA collector [Bug]: text opens with a kit:bug marker or title says "— new defects (n)"; a hand-made [Bug] takes no sections
 function Test-KitBugCollector($Task) { "$($Task.name)" -match "[—-]\s*$([regex]::Escape([string](Get-KitSetting 'tracker.bugCollectorTitle' 'new defects')))(\s*\(\d+\))?(:|\s*$)" -or "$($Task.description)".TrimStart() -match '^[^\r\n]*\\?\[kit:bug:[^\]\r\n]+?\\?\][ \t]*(\r?\n|$)' }
 # $Defects: [{ label; sig = @(); md; group }]; -Id: the [Bug] this source wrote before; -Mine: its whole unmarked text is this source's
-function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head, [object[]]$Defects, [string]$List, [string]$Assignee, [string]$Priority = '2', [string]$Id, [switch]$Mine) {
+function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head, [object[]]$Defects, [string]$List, [string]$Assignee, [string]$Priority = '2', [string]$Id, [switch]$Mine, [switch]$Single) {
   $Name = Format-KitBugName $Name
   $Key = ("$Key" -replace '[^\w.-]+', '_').Trim('_'); if (-not $Key) { throw 'Add-KitAskBug: -Key (the section key) is required' }
   if ($Key.Length -gt 80) { $Key = $Key.Substring(0, 70) + '-' + (Get-KitHash $Key SHA256).Substring(0, 8) }
@@ -1558,7 +1537,7 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
       [pscustomobject]@{ id = $bug.id; url = (Get-TrackerUrl $bug.id); action = $(if ($Id -and $bug.id -eq $Id) { 'updated' } else { 'appended' }); duplicates = $dup }
     }
     $bug = & $open $Id; if ($bug -and -not ($Mine -or (Test-KitBugCollector $bug))) { $bug = $null }   # a hand-made [Bug] adopted before
-    if (-not $bug -and $Ask -and $Ask -ne '-') { Clear-TrackerMemo $Ask
+    if (-not $bug -and $Ask -and $Ask -ne '-' -and -not $Single) { Clear-TrackerMemo $Ask   # -Single: its own [Bug], never the ask's collector
       $bug = @(foreach ($sb in @((Get-TrackerTask $Ask).subtasks | Where-Object { "$($_.name)".StartsWith($pre) -and -not (Test-TrackerStatus "$($_.status)" 'closed') })) { if (($v = & $open $sb.id) -and (Test-KitBugCollector $v)) { $v; break } }) | Select-Object -First 1 }
     if ($bug) { return & $put $bug }
     $s0 = & $put ([pscustomobject]@{ id = $null; description = '' })

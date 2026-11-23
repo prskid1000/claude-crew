@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L57 setup · L178 config · L392 recover · L537 release · L588 cost · L695 registry · L699 scan
+Sections: L16 helpers · L57 setup · L178 config · L398 recover · L543 release · L594 cost · L701 registry · L705 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -256,14 +256,20 @@ def caps_of(c):
             'partitions': v(get(le, 'defaults.tenants.model') or next((get(e, 'tenants.model') for e in envs if get(e, 'tenants.model')), None), 'none'),
             'migrations': v(get(c, 'migrations.tool'), 'none'), 'phones': v(get(c, 'devices.type'), 'none'),
             'qaLanes': v(sorted((get(c, 'qa.lanes') or {}).keys())), 'e2e': 'on' if get(c, 'tests.e2e') else 'off',
-            'fallbackRunner': v(get(c, 'tests.fallbackRunner'), 'none'), 'mavenOffline': v(get(c, 'build.mavenOffline'), 'False')}
+            'fallbackRunner': v(get(c, 'tests.fallbackRunner'), 'none'), 'mavenOffline': v(get(c, 'build.mavenOffline'), 'False'),
+            # adapter contracts (README "Adapters"): a tracker cap switched off in tracker.caps, the stores, the QA result rule
+            'trackerCaps': v(sorted(k for k in TRACKER_CAPS if get(c, f'tracker.caps.{k}') is not False)), 'secretStore': v(get(c, 'secrets.store'), 'file'),
+            'evidenceStore': v(get(c, 'reports.evidence') if get(c, 'reports.evidence') not in (None, '', 'report') else {'gdocs': 'drive'}.get(get(c, 'reports.type'), 'local')), 'newDefect': v(get(c, 'process.qaResult.newDefect'), 'collector')}
+TRACKER_CAPS = ('attach', 'checklist', 'commentDelete', 'commentEdit', 'move', 'statuses')
 
 def caps_rules(kit, c, ack=False):
     caps, bf = caps_of(c), osp.join(kit, MAP.get('stateDir', '.state'), 'caps-baseline.json')
     out('INFO', 'CAPS', 'kit.local.json', ' · '.join(f'{k}={x}' for k, x in caps.items()))
     base, err = load_json(bf) if osp.isfile(bf) else ({}, 'missing')
+    # off now, or a list (gates, deploy kinds, tracker caps) that lost a member
     lost = [f'{k} {b} -> {caps.get(k, "off")}' for k, b in (base if isinstance(base, dict) else {}).items()
-            if b not in ('off', 'none', 'False') and caps.get(k, 'off') in ('off', 'none', 'False')]
+            if b not in ('off', 'none', 'False') and (caps.get(k, 'off') in ('off', 'none', 'False')
+                                                      or ',' in b and set(b.split(',')) - set(caps.get(k, '').split(',')))]
     for x in lost:
         out('ACT', 'CAPS-LOST', f'kit.local.json {x.split()[0]}', f'on in the baseline, off now ({x}): set it in kit.local.json; switched off on purpose: audit config --ack-caps')
     if err or not lost or ack:   # first run, nothing lost or acknowledged: the baseline follows the config

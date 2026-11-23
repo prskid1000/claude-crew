@@ -3,7 +3,9 @@
 # db_engines.ps1: the db.engine adapters (kind db-engine). A local-only adapters/*.local.ps1 can add an engine the same way.
 # Props: defaultPort, passwordEnv, supportsMarks (binlog marks, restore, cascade guard, schema tenant model), supportsTemp
 #   (dbtemp, watchdog, pool), query / exec / jdbc (command presets: {H} {P} {U} {N} {URI}, then {sql} {file} {schema}),
-#   schemaSizes (SQL: schema TAB rows TAB MB per schema; envy.ps1 sql -Query schemaSizes, supervise's data-growth check).
+#   schemaSizes (SQL: schema TAB rows TAB MB per schema; envy.ps1 sql -Query schemaSizes, supervise's data-growth check), sizes
+#   (the same rows from a scriptblock: non-SQL stores). Caps (README "Adapters" data-store): marks = supportsMarks, temp =
+#   supportsTemp, sizes = schemaSizes or sizes; a cap that is off drops its feature (no marks: restore by seed; no sizes: no growth check).
 # Verbs: sql @{ e; sql; sec } -> rows (string[] each) · pos @{ e } -> "<file>:<pos>" · binlogs @{ e } -> names.
 # An engine without a verb refuses it ("engine <x>: verb <v> not implemented"); never another engine's client.
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'
@@ -22,6 +24,15 @@ Register-KitAdapter db-engine sqlserver @{ defaultPort = 1433; query = "$ss -d {
 Register-KitAdapter db-engine sqlite @{ query = "sqlite3 `"{N}`" `"{sql}`""; exec = "sqlite3 `"{N}`" `".read {file}`"" }
 Register-KitAdapter db-engine oracle @{ defaultPort = 1521; exec = "sqlplus -s -l {U}@{H}:{P}/{N} @{file}" }
 Register-KitAdapter db-engine mongodb @{ defaultPort = 27017; query = "mongosh `"{URI}`" --quiet --eval `"{sql}`"" }
+# key-value and search stores (no SQL, no marks): sizes = a scriptblock giving the schemaSizes rows (scope TAB rows TAB MB)
+Register-KitAdapter db-engine redis @{ defaultPort = 6379; passwordEnv = 'REDISCLI_AUTH'; query = 'redis-cli -h {H} -p {P} {sql}'
+  sizes = { param($a) $c = DbConn $a.e; $r = Invoke-KitExe 'redis-cli' @('-h', $c.host, '-p', $c.port, 'INFO') 30; if ($r.code) { throw "redis-cli: $($r.err)" }
+    $um = [regex]::Match("$($r.out)", 'used_memory:(\d+)').Groups[1].Value; $mb = if ($um) { [math]::Round([double]$um / 1MB) } else { 0 }; $ks = @([regex]::Matches("$($r.out)", '(?m)^(db\d+):keys=(\d+)'))
+    $all = ($ks | ForEach-Object { [long]$_.Groups[2].Value } | Measure-Object -Sum).Sum
+    foreach ($m in $ks) { "$($m.Groups[1].Value)`t$($m.Groups[2].Value)`t$(if ($all) { [math]::Round($mb * [long]$m.Groups[2].Value / $all) } else { 0 })" } } }
+$search = @{ defaultPort = 9200; query = 'curl -s http://{H}:{P}/{sql}'
+  sizes = { param($a) $c = DbConn $a.e; foreach ($ix in @(Invoke-RestMethod "http://$($c.host):$($c.port)/_cat/indices?format=json&bytes=mb" -TimeoutSec 30 | Where-Object { "$($_.index)" -notlike '.*' })) { "$($ix.index)`t$($ix.'docs.count')`t$($ix.'store.size')" } } }
+Register-KitAdapter db-engine elasticsearch $search; Register-KitAdapter db-engine opensearch $search.Clone()
 }
 $script:DbAlias = @{ postgresql = 'postgres'; pg = 'postgres'; mssql = 'sqlserver'; mongo = 'mongodb' }
 

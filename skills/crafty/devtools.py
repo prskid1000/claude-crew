@@ -34,8 +34,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L53 config · L108 run · L196 tracker · L375 process · L567 git host · L640 scope · L732 MR · L927 merge · L1258 docs ·
-  L1413 publish · L1872 render · L2332 plugins · L2346 keepboth · L2365 selftest · L3029 CLI
+Sections: L53 config · L108 run · L196 tracker · L375 process · L574 git host · L647 scope · L739 MR · L934 merge · L1265 docs ·
+  L1423 publish · L1896 render · L2357 plugins · L2371 keepboth · L2390 selftest · L3065 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -380,8 +380,15 @@ def docs():
     for d in (pc['docs'] if 'docs' in pc else VOCAB.get('docs')) or []:
         if isinstance(d, dict) and d.get('key') and d.get('label'):
             out.append({'key': d['key'], 'label': d['label'], 'mrLabel': d.get('mrLabel') or d['label'], 'linkRx': d.get('linkRx') or re.escape(d['label']),
-                        'headerRx': py_rx(d.get('headerRx') or ''), 'required': d.get('required') is not False})
+                        'headerRx': py_rx(d.get('headerRx') or ''), 'required': d.get('required') is not False,
+                        'columns': [str(c) for c in d.get('columns') or []]})
     return out
+
+
+def human_head():
+    """The human testing doc's columns: process.docs[testing-doc].columns (with '#' and 'Result'), else HUMAN_HEAD."""
+    cols = next((d['columns'] for d in docs() if d['key'] == 'testing-doc' and d['columns']), [])
+    return cols if '#' in cols and 'Result' in cols else HUMAN_HEAD
 
 
 def _label_alts():
@@ -1395,11 +1402,14 @@ def make_doc(title, path, parent=None, url=None):
 
 
 def make_evidence(name, files, folder=None, parent=None, key=None):
-    """Host evidence files -> {folderId, folderLink, label, files}; {} = they stay in the run folder; key: reuse its folder."""
+    """Host evidence files -> {folderId, folderLink, label, files}; {} = they stay in the run folder; key: reuse its folder.
+    Evidence store (README "Adapters"): reports.evidence report (default: the report adapter's own host, e.g. gdocs = Drive) |
+    local (the run folder) | command (reports.evidenceCommand: a bucket / share CLI)."""
+    st = str(RCFG.get('evidence') or 'report').lower()
     ad = ADAPTERS['report'].get(REPORT_TYPE)
-    if ad is None:   # evidence stays in the run folder; say why once
+    if ad is None and st == 'report':   # evidence stays in the run folder; say why once
         print(f'reports.type {REPORT_TYPE}: no such report adapter, evidence stays in the run folder', file=sys.stderr)
-    fn = (ad or {}).get('evidence')
+    fn = {'local': None, 'command': _evidence_command}.get(st, (ad or {}).get('evidence'))
     if not fn:
         return {}
     rec = _pub_read(key) if key else {}
@@ -1730,7 +1740,8 @@ def _check_doc(kind, scope, path, body, prior=()):
     if GOALS_MARK.search(body):
         raise SystemExit(f'{path} is the local goals file (templates.md "Test cases"): never published; publish the AI doc'
                          ' (`doc "<title>" cases --key <task>:testing-ai`) and, after the loop PASS, the human doc. Nothing was published.')
-    tb, name, tpl = (CHECKS_TABLE, '| ' + ' | '.join(HUMAN_HEAD) + ' |', 'Human testing doc') if kind == 'testing-doc' else \
+    hh = human_head()
+    tb, name, tpl = (CHECKS_TABLE if hh == HUMAN_HEAD else re.compile(r'(?im)^\|\s*' + r'\s*\|\s*'.join(map(re.escape, hh)) + r'\s*\|'), '| ' + ' | '.join(hh) + ' |', 'Human testing doc') if kind == 'testing-doc' else \
         (AI_TABLE, '| # | Type | Steps / API call + payload | Expected | Result | Evidence |', 'Testing doc (AI)')
     tb = next((re.compile(d['headerRx']) for d in docs() if d['key'] == kind and d['headerRx']), tb)   # process.docs[].headerRx
     if not tb.search(body):
@@ -1869,6 +1880,19 @@ R['command'] = {'publish': _command}
 # adapter-end:report
 
 
+# evidence store command: reports.evidenceCommand {name} {parent} {files} (each file quoted); prints '<file name> <URL>' per
+# file (a folder link line: 'folder <URL>'); a failure keeps the files in the run folder
+def _evidence_command(a):
+    c = RCFG.get('evidenceCommand') or sys.exit('reports.evidence command needs reports.evidenceCommand')
+    c = c.replace('{name}', _q(a['name'])).replace('{parent}', _q(a.get('parent') or '')).replace('{files}', ' '.join(_q(f) for f in a['files']))
+    r = subprocess.run(c, shell=True, capture_output=True, text=True, errors='replace', timeout=600)
+    if r.returncode:
+        print(f'reports.evidenceCommand failed (exit {r.returncode}): {(r.stdout + r.stderr)[-300:]}; evidence stays in the run folder', file=sys.stderr)
+        return {}
+    got = dict(ln.split(None, 1) for ln in r.stdout.splitlines() if len(ln.split(None, 1)) == 2)
+    return {'folderLink': got.pop('folder', ''), 'label': a['name'], 'files': {k: {'src': v.strip(), 'link': v.strip()} for k, v in got.items()}}
+
+
 # ---- render: agent-written artefacts from small specs (one renderer per kind; agents never write the Markdown)
 # lists merged by key on update; any other key replaces
 SPEC_KEYS = {'checks': 'id', 'qualities': 'id', 'unchanged': 'id', 'cases': 'id', 'rounds': 'round', 'switches': 'setting',
@@ -1945,8 +1969,8 @@ def cases_gaps(c):
     out += [f'{k}: an entry without {SPEC_KEYS[k]}' for k in ('checks', 'qualities', 'unchanged', 'cases') for x in c.get(k) or [] if not x.get(SPEC_KEYS[k])]
     out += [f'check {x["id"]}: steps / expected name an API call or endpoint; a human check says what a person clicks or types and sees'
             ' (a backend change through the UI action that triggers it; no UI trigger: noUi, steps = the screen or log where its effect shows)'
-            for x in c.get('checks') or []
-            if x.get('id') and API_WORDS.search(f'{x.get("steps", "")} {x.get("expected", "")}')]
+            for x in c.get('checks') or []   # process.humanDocUiOnly false: a human check may name API calls
+            if x.get('id') and cfg('process.humanDocUiOnly', True) is not False and API_WORDS.search(f'{x.get("steps", "")} {x.get("expected", "")}')]
     out += [f'{k}: an object' for k in ('plan',) if c.get(k) and not isinstance(c[k], dict)]
     return out + ([] if c.get('title') else ['title'])
 
@@ -1977,18 +2001,19 @@ def render_cases(c, kind, tid=''):
                             [[r.get(k, '') for k in ('round', 'date', 'cases', 'result', 'bugs', 'fix', 'retest')] for r in rnd])]) + '\n'
     if kind != 'human':
         raise SystemExit(f'cases render: kind {kind!r}: goals | ai | human')
-    areas = {}
-    for t in c.get('checks') or []:
-        areas.setdefault(t.get('area') or 'Checks', []).append([t['id'], (f'**No UI trigger** ({t["noUi"]}): ' if t.get('noUi') else '') + t.get('steps', ''),
-                                                              t.get('expected', ''), '', '', ''])
+    areas, hh = {}, human_head()
+    for t in c.get('checks') or []:   # a column by its name: '#', *step*, *expect*; the rest stay empty for the run
+        st = (f'**No UI trigger** ({t["noUi"]}): ' if t.get('noUi') else '') + t.get('steps', '')
+        areas.setdefault(t.get('area') or 'Checks', []).append([t['id'] if h == '#' else st if 'step' in h.lower() else t.get('expected', '') if 'expect' in h.lower() else '' for h in hh])
     sw, oos = c.get('switches') or [], c.get('outOfScope') or []
     return '\n\n'.join([f'# Testing: {c.get("title", "")}', _table(['', ''], [['Tasks', c.get('tasks') or tid], ['Environment', c.get('environment') or ''],
                       ['Logins', c.get('logins') or ''], ['Test data', c.get('testData') or '']]), '## What changed', c.get('whatChanged') or c.get('change', ''),
                       '## Before you start / Feature switches'] + (['Set these first, restore them after:', _table(['Setting', 'Where', 'Value'],
                       [[s.get('setting'), s.get('where', ''), s.get('value', '')] for s in sw])] if sw else ['none'])
-                     + ['## Checks', 'Do each check in the app as a user would; a screenshot of what you see, every check; network or log JSON'
-                        ' from that action only as extra evidence. "No UI trigger": check the visible effect it names.']
-                     + [f'{a}:\n\n' + _table(HUMAN_HEAD, r) for a, r in areas.items()]
+                     + ['## Checks', ('Do each check in the app as a user would; a screenshot of what you see, every check; network or log JSON'
+                        ' from that action only as extra evidence. "No UI trigger": check the visible effect it names.') if cfg('process.humanDocUiOnly', True) is not False
+                        else 'Do each check as its steps say (UI or API); evidence for every check.']
+                     + [f'{a}:\n\n' + _table(human_head(), r) for a, r in areas.items()]
                      + ['## Out of scope'] + ([_table(['Item', 'Why'], [[o.get('item'), o.get('why', '')] for o in oos])] if oos else ['none'])
                      + ['## Result (testers)', 'All checks pass -> close the task. A check of this change fails or could not be tested -> failedTesting with the'
                         ' check ids and why. A defect outside this change -> one [Bug] task under the original ask.']) + '\n'
@@ -2807,6 +2832,13 @@ def _publish_selftest(expect, refused):
                any('API call' in x for x in cases_gaps({'title': 'x', 'checks': [{'id': 'T1', 'steps': 'GET /orders', 'expected': '200'}]}))
                and not cases_gaps({'title': 'x', 'checks': [{'id': 'T1', 'steps': 'Open Job history', 'expected': 'a run at 02:00', 'noUi': 'nightly job'}]})
                and '**No UI trigger** (nightly job): Open Job history' in render_cases({'title': 'x', 'checks': [{'id': 'T1', 'steps': 'Open Job history', 'expected': 'e', 'noUi': 'nightly job'}]}, 'human'))
+        cg0 = dict(CFG); CFG.update(process={'humanDocUiOnly': False, 'docs': [{'key': 'testing-doc', 'label': 'Human testing doc', 'columns': ['#', 'Steps', 'Expected', 'Result', 'Evidence']}]})
+        try:
+            hd = render_cases({'title': 'x', 'checks': [{'id': 'T1', 'steps': 'GET /orders', 'expected': '200'}]}, 'human')
+            expect('process.docs[].columns + humanDocUiOnly false: the human table uses the columns, an API step is no gap',
+                   '| # | Steps | Expected | Result | Evidence |' in hd and '| T1 | GET /orders | 200 |  |  |' in hd and not cases_gaps({'title': 'x', 'checks': [{'id': 'T1', 'steps': 'GET /orders', 'expected': '200'}]}))
+        finally:
+            CFG.clear(); CFG.update(cg0)
         ur = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'PASS', 'evidence': '![T2: list](https://img/s2.png)'}})
         hb = open(ur, encoding='utf-8').read()
         expect('env run: the human doc (same link) gets Result / Evidence from the deployed run and a dated "<env> run" section; no report doc',
@@ -3013,6 +3045,10 @@ def _report_selftest(expect):
         expect('html: Markdown -> HTML, kept', '<h1>T</h1>' in open(make_doc('T', md, tmp), encoding='utf-8').read())
         use('command', {'command': _q(sys.executable) + ' -c "import sys; print(\'https://w.ex/\' + sys.argv[1])" {title}'})
         expect('command: {title} filled, the last output = the URL', make_doc('T1', md) == 'https://w.ex/T1')
+        use('gdocs', {'evidence': 'command', 'evidenceCommand': _q(sys.executable) + ' -c "import sys,os; print(\'folder https://b.ex/\' + sys.argv[1]); [print(os.path.basename(f), \'https://b.ex/\' + os.path.basename(f)) for f in sys.argv[2:]]" {name} {files}'})
+        ev = make_evidence('run1', [png])
+        use('gdocs', {'evidence': 'local'})
+        expect('evidence store: command -> a link per file + the folder; local keeps the files (any report type)', ev.get('folderLink') == 'https://b.ex/run1' and ev['files']['s.png']['src'] == 'https://b.ex/s.png' and make_evidence('e', [png]) == {})
         use('no-such-type', {}); err = io.StringIO()
         try:
             with _c.redirect_stderr(err):

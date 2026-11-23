@@ -37,7 +37,7 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
   (statement-format DML).
 - A schema dropped / created after the mark (a tenant reset): its tables fall back to seed; its objects stay as they are now
   (never dropped as new).
-- `db.rollback` (a tool's rollback command; the migration tool's name or `tool`: its tag `release-<n>` per set before each release's migrations, roll back to it)
+- `db.rollback` (a rollback command; the tool's name or `tool`: its tag `release-<n>` per set before each release's migrations, rolled back to)
   runs only with `db.restoreVia: tool-then-kit` or `-UseToolRollback`.
 - `restore.after` [ { name, cmd } ] ({mark}): runs after it and before a release with migrations switches over
   (`onMigrations: false`: after restores only): marker resets (a "latest changeSet" marker skips a layer's changeSet included
@@ -66,14 +66,15 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
 - mysql, `db.bufferPool` set (e.g. `{}`): while a lease or train is live on any env of that db server, the controller grows
   `innodb_buffer_pool_size` online to `busyMB` (2048); once none was for `idle.graceMinutes` (or the loop exits) it shrinks
   it to `idleMB` (256).
-- Chunk-aligned, one resize at a time, never during a switch-over, one log line each; `db.expect` then skips the pool.
-- Doctor: the pool and the server's RAM. Windows can keep the freed memory in mysqld's working set until a restart.
-- The resize is `SET GLOBAL` only: keep the server's configured size (my.cnf / `SET PERSIST`) the idle one.
+- Chunk-aligned, one resize at a time, never mid switch-over, one log line each; `db.expect` skips the pool.
+- Doctor: the pool and the server's RAM (Windows may hold freed memory in mysqld until a restart).
+- `SET GLOBAL` only: keep the configured size (my.cnf / `SET PERSIST`) the idle one.
 
 ## Tenants (owner upkeep)
-- `tenants.model` (kind tenant-model, `adapters/tenant_models.ps1`): none (default: tenant verbs refuse) | schema (one
-  schema per tenant + a registry, `adapters/tenant_schema.ps1`) | database (the same, databases as schemas) | column (one
-  scope; `tenants.column` { table, column }: list only).
+- `tenants.model` (kind tenant-model, `adapters/tenant_models.ps1`): none (default: tenant verbs refuse) | schema (a
+  schema per tenant + a registry, `adapters/tenant_schema.ps1`) | database (same, databases as schemas) | column (one
+  scope; `tenants.column` { table, column }) | instance (`tenants.instances` [{ name, db }]): list only. Non-SQL engines (redis,
+  search): `sizes` only.
 - `tenant list | drop -Name <t,..> [-DryRun]` (schema model: `tenants.registry` or flat `tenants` { schema, table, key, name
   (required, no defaults), tables, idColumns, nameColumns, users { table, key, tenantTable, tenantKey }, keep, keepFrom, verify }).
 - Kept = `keep` or a name in `keepFrom` (default none; files, { file, keys }, `builtin:kit-config` / `builtin:targets` /
@@ -102,7 +103,7 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
   ({tenant} {template} {source}).
 - Saved copy: one masked dump per source + tenant + profile config (`profiles.<p>` + `masking`; a kit or masker update keeps it:
   the migrations bring its schema up to date), reused until `-Refresh` or `cacheHours`; the source is read only with no usable
-  copy (on reuse only its metadata: read-only, size, charset, `set` values). Profile config changed: the old copy is reused with a warning (no unmasked copy is kept to re-mask from); `-Refresh`
+  copy (on reuse only its metadata: read-only, size, charset, `set` values). Profile changed: the old copy is reused, warned (no unmasked copy to re-mask); `-Refresh`
   masks a new one. Lanes (own DB copies): import on each lane (`-Env <env><k>`), one source read.
 - A failed load or registration deletes only the registry rows it inserted (auto-increment id above the max before it; a
   plan row pointing at a staying tenant's row: left, named); a template plan reaching other tenants' rows is refused.

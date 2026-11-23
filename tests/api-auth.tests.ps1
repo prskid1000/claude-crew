@@ -77,6 +77,11 @@ $saTj = Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable; $saTj.targets.tu.
 $saMe = Px $Q api -Target tu -As sa -Path '/me' -Save 'A1-C1_01_sa' -OutDir (Kd) 2>&1 | Out-String; $saAd = Px $Q api -Target tu -As admin -Path '/me' 2>&1 | Out-String
 $saPost = @(Get-Content $usLog | ConvertFrom-Json | Where-Object { $_.u -eq '/admin/auth' })
 Expect "api userAuth: the super admin logs in at its endpoint with its tenant (token field its own), the admin still at auth.path; no password printed" ($saMe -match 'HTTP 200' -and (Get-Content "$(Kd)/A1-C1_01_sa.json" -Raw) -match 'superAdmin' -and $saPost.Count -eq 1 -and ($saPost[0].b | ConvertFrom-Json).t -eq 'adm' -and $saAd -match 'HTTP 200' -and "$saMe$saAd" -notmatch 'SaPw7')
+# login profiles: profiles.<name> = login + secret (a secrets.store name) + opaque fields (tenant one of them); not in users
+$pfTj = Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable; $pfTj.targets.tu.users.p1 = @('p1', 'PfPw3'); $pfTj.targets.tu.profiles = @{ ops = @{ login = 'p1'; secret = 'targets/tu/p1/password'; fields = @{ tenant = 'zeta' } } }; & $J $pfTj $tjf 6
+$pfMe = Px $Q api -Target tu -As ops -Path '/me' 2>&1 | Out-String
+$pfLog = @(Get-Content $usLog | ConvertFrom-Json | Where-Object { $_.u -eq '/login' } | ForEach-Object { $_.b | ConvertFrom-Json } | Where-Object { $_.u -eq 'p1' })
+Expect "api login profile: login + secret from the store + tenant field; no password printed ($($pfMe.Trim() -replace '\s+', ' '))" ($pfMe -match 'HTTP 200' -and $pfLog.Count -eq 1 -and $pfLog[0].p -eq 'PfPw3' -and $pfLog[0].t -eq 'zeta' -and $pfMe -notmatch 'PfPw3')
 $uProc.Kill()
 Remove-TestKit $k
 Complete-Tests

@@ -22,6 +22,7 @@ function __TrClickupToken {
 # comments: the CLI posts plain text (Markdown shows as typed) -> lib.ps1 ConvertTo-KitPlainText; descriptions render Markdown
 # adapter:tracker/clickup: clickup CLI
 Register-KitAdapter 'tracker' 'clickup' @{
+  'caps' = @{ checklist = $true; subtasks = $true; commentEdit = $true; commentDelete = $true; statuses = $true; move = $true; attach = $true }
   'url' = { param($a) "https://app.clickup.com/t/$($a.id)" }
   'view' = { param($a)
     $j = __TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--json')); if (-not $j.id) { return }

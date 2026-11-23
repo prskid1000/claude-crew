@@ -51,10 +51,12 @@ try {
   # tenant models: none refuses tenant verbs, column lists the distinct values, one-DB = db.name scope
   & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; user = 'u'; name = 'shop' } }; c = @{ services = @(); db = @{ engine = 'mysql'; user = 'u'; name = 'shop' }; tenants = @{ model = 'column'; column = @{ table = 'orders'; column = 'org' }; keep = @('a') } } } } } $cfg 8
   $n = & $flat (Px $L tenant list -Env s 2>&1 | Out-String); $nc = $LASTEXITCODE
-  Expect "tenants.model unset = none: tenant list refuses, names the models ($nc)" ($nc -ne 0 -and $n -match 'tenant-model none: verb list not implemented \(set envs\.s\.tenants\.model: column \| database \| schema\)')
+  Expect "tenants.model unset = none: tenant list refuses, names the models ($nc)" ($nc -ne 0 -and $n -match 'tenant-model none: verb list not implemented \(set envs\.s\.tenants\.model: column \| database \| instance \| schema\)')
   $cl = & { . $L; function Invoke-DbSql { param($e, $sql) if ($sql -eq 'SELECT DISTINCT org FROM orders') { , @('a'); , @('b'); , @('NULL') } }; @(Invoke-TenantModel c 'list' | ForEach-Object { "$($_.name)$(if ($_.keep) { '*' })" }) -join ',' }
   $sc = & { . $L; @(Get-DataScopes s) -join ',' }
   Expect "column model lists the column's values (keep marked); one-DB scopes = db.name ($cl | $sc)" ($cl -eq 'a*,b' -and $sc -eq 'shop')
+  $il = & { . $L; function Get-EnvCfg { @{ tenants = @{ model = 'instance'; instances = @(@{ name = 'eu' }, @{ name = 'us' }); keep = @('us') } } }; @(Invoke-TenantModel c 'list' | ForEach-Object { "$($_.name)$(if ($_.keep) { '*' })" }) -join ',' }
+  Expect "instance model lists tenants.instances names, keep marked ($il)" ($il -eq 'eu,us*')
   # postgres: the engine adapter has no sql verb -> refused, the mysql client never runs (also not for a schema tenant model)
   & $J @{ localEnv = @{ envs = @{ pg = @{ services = @(); db = @{ engine = 'postgresql'; user = 'u'; name = 'app' }; tenants = @{ model = 'schema'; schema = 'adm'; table = 'reg'; key = 'id'; name = 'name' } }; lite = @{ services = @(); db = @{ engine = 'sqlite'; name = 'app.db' } } } } } $cfg 8
   $p = & { . $L; try { Invoke-DbSql pg 'SELECT 1'; 'ran' } catch { "$_" } }

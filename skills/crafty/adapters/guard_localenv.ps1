@@ -76,5 +76,8 @@ Register-KitAdapter 'guard' 'secrets' @{ check = { param($a)
       -replace '(?i)(-m|--message|-Message)(=|\s+)"[^"$`\\]*"', '$1 MSG'
     # no escapes inside: '' (pwsh) or \" (bash) means another quote in the other shell; unstripped text is checked (a safe deny)
   }
-  if (@($secCmd -split '[;&|\r\n]+' | Where-Object { $_ -match '(?i)targets\.local\.json' -and ($_ -match $secRead -or ($_ -match '(?i)\b(grep|egrep|rg|findstr|Select-String|sls)\b' -and $_ -match '(?i)[\/]targets\.local\.json')) }).Count) {
-    'kit guard: skills/pokey/targets.local.json holds test logins: never read or print it. Instead: names + tenants: pokey.ps1 user list -Target <t> · a call: pokey.ps1 api -Target <t> -As <login> -Method GET -Path ''/...'' · a browser: session({ target, as }) · an app: pokey.ps1 ui login -Target <t> -As <login> · none fits: pokey.ps1 user create -Target <t> -Name <login> -Role <role> · keys: kitbag.py audit config' } } }
+  # the secret store's backing files (secrets.<store>.paths; file store: targets.local.json)
+  $secLeaf = '(?i)(' + ((@(Get-KitSecretPaths) | ForEach-Object { [regex]::Escape((Split-Path $_ -Leaf)) }) -join '|') + ')'
+  $secHit = @($secCmd -split '[;&|\r\n]+' | Where-Object { $secLeaf -ne '(?i)()' -and $_ -match $secLeaf -and ($_ -match $secRead -or ($_ -match '(?i)\b(grep|egrep|rg|findstr|Select-String|sls)\b' -and $_ -match ('(?i)[\/]' + $secLeaf.Substring(4)))) })
+  if ($secHit.Count) {
+    "kit guard: $(@(Get-KitSecretPaths) -join ', ') holds test logins and secrets (secrets.store): never read or print it." + ' Instead: names + tenants: pokey.ps1 user list -Target <t> · a call: pokey.ps1 api -Target <t> -As <login> -Method GET -Path ''/...'' · a browser: session({ target, as }) · an app: pokey.ps1 ui login -Target <t> -As <login> · none fits: pokey.ps1 user create -Target <t> -Name <login> -Role <role> · keys: kitbag.py audit config' } } }

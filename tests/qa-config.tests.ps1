@@ -28,7 +28,13 @@ $rt = New-Run 'RT' @(@{ code = 'Z1'; task = 'TZ'; checks = , @('C1', 'FAIL') });
 # process.qaResult: fail reopen = inProgress, not failedTesting; newDefect none = the new defect stays in the report (no [Bug])
 '{"process":{"qaResult":{"fail":"reopen","newDefect":"none"}}}' | Set-Content $kl; $qb0 = @(Get-ChildItem $store -Filter 'LOCAL-*.json').Count
 $rq = New-Run 'RQ' @(@{ code = 'R1'; task = 'TR'; checks = @(@('C1', 'FAIL'), @('X1', 'FAIL', 'new')) }); New-Task TR 'Task R'; $null = Fin $rq 'R1'
-Expect "process.qaResult fail reopen + newDefect none: own FAIL -> inProgress, no [Bug] ($((Task 'TR').status))" ((Task 'TR').status -match 'progress' -and @(Get-ChildItem $store -Filter 'LOCAL-*.json').Count -eq $qb0)
+Expect "process.qaResult fail reopen + newDefect none: own FAIL -> inProgress, no [Bug], no bugError ($((Task 'TR').status))" ((Task 'TR').status -match 'progress' -and @(Get-ChildItem $store -Filter 'LOCAL-*.json').Count -eq $qb0 -and -not (Rec $rq R1).bugError)
+# newDefect per-defect: one [Bug] per new defect under the ask; a second finalize updates them (no twins)
+'{"process":{"qaResult":{"newDefect":"per-defect"}}}' | Set-Content $kl; New-Task 'PD' 'Ask D'; New-Task 'TPD' 'Task PD' 'PD'
+$pd = New-Run 'PD' @(@{ code = 'E1'; task = 'TPD'; checks = @(@('X1', 'FAIL', 'new'), @('X2', 'FAIL', 'new')) })
+$rjp = Read-Json "$pd/E1/results.json"; $rjp.checks[0].screen = 'Login page'; $rjp.checks[1].screen = 'Export dialog'; & $J $rjp "$pd/E1/results.json"
+$null = Fin $pd E1; $null = Fin $pd E1; $pdb = @(Get-ChildItem $store -Filter *.json | ForEach-Object { Read-Json $_.FullName } | Where-Object { $_.parent -eq 'PD' -and $_.name -like '`[Bug`]*' })
+Expect "process.qaResult newDefect per-defect: 2 defects -> 2 [Bug] under the ask, a rerun adds none ($(@($pdb.name) -join '; '); bug $((Rec $pd E1).bug))" ($pdb.Count -eq 2 -and @("$((Rec $pd E1).bug)" -split ', ').Count -eq 2)
 # tracker.bugPrefix; a check without evidence; guideId is a Docs URL only for gdocs
 '{"tracker":{"bugPrefix":"[Defect]"}}' | Set-Content $kl
 foreach ($x in @('PY', 'Ask Y'), @('TY', 'T', 'PY'), @('BY', '[Defect] Ask Y — new defects (1)', 'PY')) { New-Task @x }

@@ -1157,8 +1157,8 @@ def readme_sections(k, g):
      f"{(m.get('character') or {}).get('traits', '')}: \"{(m.get('character') or {}).get('catchphrase', '')}\" |" for a, m in (man.get('agents') or {}).items()]
     out['table-workflows'] = ['| Workflow | Covers | Crew | Router row |', '|---|---|---|---|'] + [
      f"| `/{w}` | {m.get('covers', '')} | {', '.join('`' + c + '`' for c in m.get('crew', []))} | {m.get('router', '')} |" for w, m in (man.get('workflows') or {}).items()]
-    out['table-adapters'] = ['| Kind | Selected by | Interface (verbs) | Built in | Vendor (config-selected) | Code |', '|---|---|---|---|---|---|'] + [
-     f"| {n} | `{a.get('config', '')}` | {a.get('verbs', '')} | {', '.join(a.get('names', '').split())} | {', '.join(a.get('vendors', '').split())} | `{a.get('file', '')}` |" for n, a in (man.get('adapters') or {}).items() if isinstance(a, dict)]
+    out['table-adapters'] = ['| Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Code |', '|---|---|---|---|---|---|'] + [
+     f"| {n} | `{a.get('config', '')}` | {a.get('verbs', '')}{'; caps: ' + a['caps'] if a.get('caps') else ''} | {', '.join(a.get('names', '').split())} | {', '.join(a.get('vendors', '').split())} | `{a.get('file', '')}` |" for n, a in (man.get('adapters') or {}).items() if isinstance(a, dict)]
     bd = ((json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}').get('budget') or {}).get('defaults') or {})   # per-tool budget defaults
     out['table-budget'] = ['| Tool / window | Budget | Source |', '|---|---|---|'] + [f"| {n} | {v.get('tokens') or str(v.get('fraction')) + ' x window'} | {v.get('source', '')} |" for n, v in bd.items()]
     ex = json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}')   # config table: each key's _readme, else its _doc row

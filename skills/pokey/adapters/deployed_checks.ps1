@@ -2,7 +2,7 @@
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
 # deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L199 deployed
+# Sections: L6 shell · L15 probe · L78 kinds · L213 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -77,7 +77,8 @@ function SshState($s, $sha) {
 }
 # ---- kinds: the deploy-kind registry (README "Adapters"): Register-KitAdapter 'deploy-kind' <name> @{ <verb> = { param($a) } }, $a.d = the
 # deploys[] row. Verbs: isDeployed (a row; runs inside Invoke-Deployed: its $sha, $s8, $mr, $p, $r, Row, OnRef, LocalAncestor, Hv),
-# lastDeploy (@{ at; source } | $null; $a.repo, $a.name), isRunning ($true | $false | $null), restart (deploys.ps1 deploy restart), plan (a hint line).
+# lastDeploy (@{ at; source } | $null; $a.repo, $a.name), isRunning ($true | $false | $null), restart (deploys.ps1 deploy restart), plan (a hint line),
+# deploy (bossy.ps1 deploy run: $a.repo = the repos[] row, env, mrs, decision -> @{ id; url; note }; a kind without it: run by a person).
 # A verb a kind lacks = UNKNOWN. deploys[].kind names one; else the row's keys pick it (laneApk, ssh, tag, probe, manual, awsStack, command, branch = ci-job).
 function Get-KitDeployKind($d) {
   if ($d.kind) { return "$($d.kind)" }
@@ -118,7 +119,12 @@ Register-KitAdapter 'deploy-kind' 'command' @{
   lastDeploy = { param($a) $o = "$(__DkCmd $a.d 'lastDeploy' @{})".Trim(); $at = try { [datetime]$o } catch { $null }; if ($at) { @{ at = $at; source = "command $($a.d.target)" } } }
   isRunning = { param($a) $o = "$(__DkCmd $a.d 'isRunning' @{})".Trim(); if ($o -match '^(?i)(yes|true|running)\b') { $true } elseif ($o) { $false } else { $null } }
   restart = { param($a) __DkCmd $a.d 'restart' @{ service = "$($a.service)" } }
+  deploy = { param($a) @{ id = "$(__DkCmd $a.d 'deploy' @{ sha = (__DkHead $a.repo $a.d); repo = "$($a.repo.name)"; mr = (@($a.mrs) -join ',') })".Trim() } }
 }
+# the commit a deploy ships: the deploy branch's remote head in the checkout, else its HEAD
+function __DkHead($r, $d) { if (-not $r.checkout) { return '' }; $h = git -C $r.checkout rev-parse --verify --quiet "origin/$(if ($d.branch) { $d.branch } else { 'HEAD' })" 2>$null; if (-not $h) { $h = git -C $r.checkout rev-parse HEAD 2>$null }; "$h" }
+# deploy through the deploy-branch MR (ci-job: its job then deploys; tag: -Push)
+function __DkMerge($a, [switch]$Push) { Invoke-DeployMerge -Repo $(if ($a.repo.checkout) { $a.repo.checkout } else { $a.repo.name }) -To $a.env -Mr:(-not $Push) -Push:$Push -Mrs @($a.mrs) -Decision $a.decision }
 # CI deploy job on deploys[].branch (deploys[].job, a -like pattern): the MR on the branch and a green job run that holds it
 # adapter:deploy-kind/ci-job
 Register-KitAdapter 'deploy-kind' 'ci-job' @{
@@ -136,21 +142,29 @@ Register-KitAdapter 'deploy-kind' 'ci-job' @{
   lastDeploy = { param($a) foreach ($pl in @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; ref = $a.d.branch; per_page = 5 })) { if ((ConvertTo-KitCiState "$($pl.status)") -eq 'success') { return @{ at = ([datetime]$(if ($pl.updated_at) { $pl.updated_at } else { $pl.created_at })).ToLocalTime(); source = "CI $($a.name) $($a.d.branch)" } } } }
   isRunning = { param($a) foreach ($pl in @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; ref = $a.d.branch; per_page = 5 })) { $w = __CiWord "$($pl.status)"; if ($w -eq 'success') { return $false }; if ($w -in 'running', 'pending') { return $true } }; $false }
   plan = { param($a) "merge into $($a.d.branch); CI job $($a.d.job) deploys (bossy.ps1 deploy merge -To $($a.d.target) -Mr)" }
+  deploy = { param($a) @{ id = "$(__DkMerge $a)" } }
 }
 # deploys[].branch reached through a deploy MR (bossy.ps1 deploy merge -Mr); live = on that branch (no job to wait for)
 # adapter:deploy-kind/branch-mr
 Register-KitAdapter 'deploy-kind' 'branch-mr' @{
   isDeployed = { param($a) $d = $a.d; if (OnRef $p $mr $sha $d.branch) { Row $d 'DEPLOYED' "on $($d.branch)" } else { NotLiveRow $p $ref $d "not on $($d.branch) yet" } }
   plan = { param($a) "deploy MR into $($a.d.branch) (bossy.ps1 deploy merge -To $($a.d.target) -Mr)" }
+  deploy = { param($a) @{ id = "$(__DkMerge $a)" } }
 }
 # adapter:deploy-kind/ssh
-Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; restart = { param($a) Invoke-DeployRestartSsh $a.d.target $a.d $a.service } }
+# deploy: deploys[].ssh.deployCmd ({sha} {branch}) runs on the host; none = UNSUPPORTED (a person deploys)
+Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; restart = { param($a) Invoke-DeployRestartSsh $a.d.target $a.d $a.service }
+  deploy = { param($a) $s = $a.d.ssh; if (-not $s.deployCmd) { return @{ note = 'no deploys[].ssh.deployCmd: a person deploys' } }; $c = "$($s.deployCmd)".Replace('{sha}', (__DkHead $a.repo $a.d)).Replace('{branch}', "$($a.d.branch)"); $key = [string]$s.key -replace '^~', $HOME
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($c)); $o = @(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', $s.host, "echo $b64 | base64 -d | bash")) 900)
+    @{ id = "ssh $($s.host)"; note = ($o | Select-Object -Last 3) -join ' / ' } } }
 # adapter:deploy-kind/tag
-Register-KitAdapter 'deploy-kind' 'tag' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "tag $($a.d.tag) (bossy.ps1 deploy merge -To $($a.d.target) -Push)" } }
+Register-KitAdapter 'deploy-kind' 'tag' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "tag $($a.d.tag) (bossy.ps1 deploy merge -To $($a.d.target) -Push)" }; deploy = { param($a) @{ id = "$(__DkMerge $a -Push)" } } }
 # adapter:deploy-kind/probe
 Register-KitAdapter 'deploy-kind' 'probe' @{ isDeployed = { param($a) Test-DeployedExtra $a.d } }
 # adapter:deploy-kind/manual
-Register-KitAdapter 'deploy-kind' 'manual' @{ isDeployed = { param($a) Test-DeployedExtra $a.d } }
+# deploy: prints the steps (deploys[].manual: text or a link); a person deploys, then bossy.ps1 deploy record
+Register-KitAdapter 'deploy-kind' 'manual' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "a person deploys: $($a.d.manual)" }
+  deploy = { param($a) @{ id = 'manual'; note = "waiting for a person: $($a.d.manual); then bossy.ps1 deploy record -Env $($a.env)" } } }
 # adapter:deploy-kind/awsStack
 Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-DeployedExtra $a.d } }
 # adapter:deploy-kind/laneApk

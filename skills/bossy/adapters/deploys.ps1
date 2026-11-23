@@ -4,9 +4,10 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
+  bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L103 intest · L269 deploy · L466 restart · L515 supervise
+Sections: L15 helpers · L104 intest · L270 deploy · L468 restart · L529 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -267,7 +268,7 @@ function Format-KitInTestSummary([int]$Total, [int]$FromKit, [int]$FromLists, [i
 }
 
 # ---- deploy: plan, request, record
-function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest', 'restart')][string]$Action = 'plan',
+function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest', 'restart', 'run')][string]$Action = 'plan',
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [switch]$Mr, [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300,
     [string]$Service, [int]$RecheckSeconds = 120, [switch]$Ungated,
@@ -278,6 +279,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   }
   if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <env|deploy branch> [-From <branch>] -Mr [-Mrs <refs>] [-Decision <id>] (tag deploys: -Push)" }
   if ($Action -eq 'merge') { Invoke-DeployMerge -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -Mr:$Mr -Mrs $Mrs -Decision $Decision -WaitMinutes $WaitMinutes -History $History; return }
+  if ($Action -eq 'run') { if (-not $To) { 'usage: deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]'; exit 2 }; Invoke-DeployRun $To $Repo @(Split-KitList $Mrs) $Decision; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task -Days $Days -FromMrs @(Split-KitList $Mrs) -TimeoutSec $TimeoutSec; return }
   $Mrs = @(Split-KitList $Mrs)
   $dd = Get-KitPath deploys -Create; $pf = Join-Path $dd 'pending.json'; $log = Get-KitPath deploy-log -Create
@@ -466,6 +468,18 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
 # ---- restart: services of an ssh deploy, gated by its busy check in the same shell, right before each restart
 # deploys[].ssh.busy: a host shell command whose output = live work (e.g. a running agent turn); busy -> wait, re-check, bounded
 # the row's deploy kind restarts (ssh: below; command: deploys[].command.restart); a kind without restart is refused
+# deploy run (README "Adapters" deploy-kind deploy): only on a person's word (deploy.trigger); a kind without a deploy verb prints
+# UNSUPPORTED + its plan line (a person deploys, then deploy record); DEPLOY / FAILED per row
+function Invoke-DeployRun([string]$To, [string]$Repo, [string[]]$Mrs, [string]$Decision) {
+  $rows = @(foreach ($r in @(Get-KitValue 'repos' @())) { if (-not $Repo -or $r.name -eq $Repo) { foreach ($d in @($r.deploys | Where-Object { "$($_.target)" -eq $To })) { [pscustomobject]@{ r = $r; d = $d } } } })
+  if (-not $rows.Count) { "deploy run: no repos[].deploys[] row with target $To$(if ($Repo) { " in $Repo" })"; exit 2 }
+  foreach ($x in $rows) {
+    $kd = Get-KitDeployKind $x.d
+    if (-not (Test-KitCap 'deploy-kind' $kd 'deploy')) { "UNSUPPORTED deploy-kind/$kd/deploy $($x.r.name) -> ${To}: a person deploys ($(Invoke-KitDeployKind $x.d 'plan')), then deploy record -Env $To"; continue }
+    $o = try { Invoke-KitDeployKind $x.d 'deploy' @{ repo = $x.r; env = $To; mrs = $Mrs; decision = $Decision } } catch { @{ note = "$_" } }
+    "$(if ($o.id) { 'DEPLOY' } else { 'FAILED' }) $($x.r.name) -> $To ($kd)$(if ($o.id) { ": $(@($o.url, $o.id) | Where-Object { $_ } | Select-Object -First 1)" })$(if ($o.note) { " · $($o.note)" })"
+  }
+}
 function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMinutes = 20, [int]$RecheckSeconds = 120, [switch]$Ungated) {
   foreach ($t in $Targets) {
     $d = @(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -eq $t } | Select-Object -First 1

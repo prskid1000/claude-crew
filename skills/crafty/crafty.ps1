@@ -2240,7 +2240,7 @@ function Add-TrackerScope([string]$Id, [string]$Item) {
   "scope of $Id extended: work and open MRs under it"
 }
 function Remove-TrackerComment([string]$Id, [string]$Comment) {
-  $ad = $KitAdapters['tracker'][$__trType]; if (-not ($ad -and $ad.ContainsKey('comment-delete'))) { throw "tracker ($__trType): the adapter has no comment-delete verb: remove comment $Comment by hand" }
+  if (-not (__TrCan commentDelete)) { throw "tracker ($__trType): the adapter has no comment-delete verb: remove comment $Comment by hand" }
   Clear-TrackerMemo $Id; __TrA 'comment-delete' @{ id = $Id; comment = $Comment }
 }
 function Invoke-Tracker {

@@ -2132,7 +2132,7 @@ function Show-Status([string]$env1) {
     keepFree = $("$((Get-KeepFree).gb) GB: $((Get-KeepFree).why)"); keepFreeGB = [double](Get-KeepFree).gb
     marks = $(if (@($st.marks | Where-Object { $_ }).Count -or $st.binlog) { $ms = @($st.marks | Where-Object { $_ }); $b = @($ms | Where-Object kind -eq 'baseline')[-1]
       [pscustomobject]@{ count = $ms.Count; newest = @($ms)[-1].name; baseline = $b.name; baselineAgeDays = $(if ($b) { [math]::Round(((Get-Date) - [datetime]$b.at).TotalDays, 1) }); expired = @($st.expiredMarks | Where-Object { $_ }); binlogDays = $st.binlog.days; dbDown = (DbSvcDown $env1) } })
-    schemaSizes = [bool]$(if (Get-Command Get-DbEngine -ErrorAction SilentlyContinue) { (Get-DbEngine $env1).schemaSizes })   # the engine reads schema sizes (supervise: data growth)
+    schemaSizes = [bool]$(if (Get-Command Get-DbEngine -ErrorAction SilentlyContinue) { (Get-DbEngine $env1).schemaSizes -or (Get-DbEngine $env1).sizes })   # the engine reads schema sizes (supervise: data growth)
     seed = $(if ($st.seed) { [pscustomobject]@{ at = $st.seed.at; ok = [bool]$st.seed.ok; missing = @($st.seed.missing | Where-Object { $_ }); drift = @($st.seed.drift | Where-Object { $_ }) } })
     loop = $(if (Owned $st.loop "_daemon -Env $env1") { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
     lanesOpen = Get-LanesOpen $env1
@@ -2391,6 +2391,7 @@ switch ($Action) {
     }
   }
   'sql' {   # read-only, through db.query (a db.engine preset or the env's hook); -Query schemaSizes = the engine's own query
+    if ($Query -eq 'schemaSizes' -and (Get-DbEngine $e).sizes -is [scriptblock]) { & (Get-DbEngine $e).sizes @{ e = $e }; return }
     if ($Query -eq 'schemaSizes') { $Query = (Get-DbEngine $e).schemaSizes; if (-not $Query) { throw "engine $(Get-DbEngineName $e): no schemaSizes query (adapters/db_engines.ps1)" } }
     if (-not (Test-ReadOnlySql $Query)) { throw 'sql needs -Query with ONE read-only statement (select / show / explain / with ...)' }
     $err = Invoke-Hook $e 'query' @{ sql = $Query }; $script:HookOut; if ($err) { throw $err }
