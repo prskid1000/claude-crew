@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L103 intest · L261 deploy · L458 restart · L507 supervise
+Sections: L14 helpers · L103 intest · L269 deploy · L466 restart · L515 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -103,8 +103,11 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
 # ---- intest: promoted tasks live on a test env -> inTest
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
-param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @())   # not $Mrs: pwsh names ignore case ($mrs below)
+param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @(), [int]$BudgetSec = -1)   # not $Mrs: pwsh names ignore case ($mrs below)
 $ErrorActionPreference = 'SilentlyContinue'
+# -Mrs / -Task: bounded (default 50 s): named tasks first, the rest after 60% of it waits for the sweep; progress per task on stderr
+if ($BudgetSec -lt 0) { $BudgetSec = if ($FromMrs.Count -or $Task.Count) { 50 } else { 0 } }; $t0 = Get-Date
+function Write-InTestProgress([string]$s) { if (-not $Quiet) { [Console]::Error.WriteLine("intest $([int]((Get-Date) - $t0).TotalSeconds)s $s") } }
 function Out-Line($s) { if (-not $Quiet -or $s -like 'MARKED*') { $s } }
 # -Mrs (what opsy deployed): the kit maps each MR to its task (tracking, else the tag in its title), never the caller; those tasks
 # join every other candidate: a task deployed by anyone moves too (owner 2026-11-23: an owner-deployed batch stayed promoted)
@@ -138,6 +141,8 @@ elseif ($lists.Count) {
 # pwsh -File passes a,b as one string
 if ($Task.Count) { $keep = @($Task | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ }); foreach ($k in @($cand.Keys)) { if ($k -notin $keep) { $cand.Remove($k) } }; foreach ($k in $keep) { if (-not $cand.Contains($k)) { $cand[$k] = @{ mrs = @(); name = '' } } } }
 foreach ($k in @($mapped | Select-Object -Unique)) { if (-not $cand.Contains($k)) { $cand[$k] = @{ mrs = @($track[$k].mrs | Where-Object { $_ }); name = '' }; $nKit++ } }
+$first = @(@($mapped) + @($Task | ForEach-Object { "$_" -split '[,\s]+' }) | Where-Object { $_ -and $cand.Contains($_) } | Select-Object -Unique)
+$c2 = [ordered]@{}; foreach ($k in @($first) + @($cand.Keys | Where-Object { $_ -notin $first })) { $c2[$k] = $cand[$k] }; $cand = $c2
 
 $productTargets = @(Get-KitValue 'productTargets' @()); $repos = @(Get-KitValue 'repos' @())
 $recOf = @{}; $dlog = Get-KitPath deploy-log   # recorded deploys: mr|target
@@ -153,7 +158,10 @@ function Get-MrPaths([string]$mr) {
 
 $gone = @(); $tally = [ordered]@{}; $ready = [Collections.Generic.List[object]]::new()   # outcome -> task ids (and why); tasks whose MRs are probed
 function Add-Tally([string]$Outcome, [string]$Detail) { if (-not $tally.Contains($Outcome)) { $tally[$Outcome] = [Collections.Generic.List[string]]::new() }; $tally[$Outcome].Add($Detail) }
+$nIt = 0
 foreach ($id in $cand.Keys) {
+  $nIt++; if ($BudgetSec -and $id -notin $first -and ((Get-Date) - $t0).TotalSeconds -gt 0.6 * $BudgetSec) { Add-Tally 'not checked (time budget)' $id; continue }
+  Write-InTestProgress "task $nIt/$($cand.Count) $id"
   # a task deleted in the tracker: skipped, reported, dropped from tracking; another task's failure never ends the batch
   $info = try { Get-TrackerTask $id } catch { if (Remove-KitGoneTask $id $_) { $gone += $id; Add-Tally 'deleted in the tracker' $id; Out-Line "GONE  $id  deleted in the tracker: skipped, no longer tracked" } else { Add-Tally 'unreadable' "$id`: $($_.Exception.Message)"; Out-Line "ERROR $id  tracker view failed: $($_.Exception.Message)" }; continue }
   if (-not $info) { Add-Tally 'unreadable' "$id`: the tracker returned nothing"; if ($Task.Count) { Out-Line "SKIP  $id  the tracker returned nothing" }; continue }
@@ -176,10 +184,10 @@ foreach ($id in $cand.Keys) {
 }
 # ONE deployed probe for every task's MRs (pokey memoises the branch lookups per repo); rounds re-probe what its -TimeoutSec left
 # unchecked until none is left or a round checks nothing (a hung host: K31). Per-MR calls in one budget left 4 of 10 tasks unchecked
-$rowsOf = @{}; $whyOf = @{}; $round = 0; $probeEnd = (Get-Date).AddSeconds(10 * $TimeoutSec)   # a host slower than -TimeoutSec per MR: one MR a round (K31)
+$rowsOf = @{}; $whyOf = @{}; $round = 0; $probeEnd = (Get-Date).AddSeconds($(if ($BudgetSec) { [math]::Max(15.0, $BudgetSec - ((Get-Date) - $t0).TotalSeconds) } else { 10 * $TimeoutSec }))   # a host slower than -TimeoutSec per MR: one MR a round (K31)
 $todo = @($ready | ForEach-Object { $_.mrs } | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) } | Select-Object -Unique)
 while ($todo.Count) {
-  $round++; $cap = [int][math]::Max(5.0, [math]::Min($TimeoutSec * 1.5 + 5.0, ($probeEnd - (Get-Date)).TotalSeconds))
+  Write-InTestProgress "probe round $($round + 1): $($todo.Count) MR(s)"; $round++; $cap = [int][math]::Max(5.0, [math]::Min($TimeoutSec * 1.5 + 5.0, ($probeEnd - (Get-Date)).TotalSeconds))
   $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
   foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($todo -join ','), '-Lines', '-Exclude', (Get-NoTestRx), '-TimeoutSec', $TimeoutSec)) { $si.ArgumentList.Add([string]$x) }
   $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
@@ -253,8 +261,8 @@ if (-not $Quiet -or $gone.Count -or $tally.Contains('blocked') -or $tally.Contai
 # "mark-in-test: <n> tasks checked (<where from>): <n> <outcome>, ..."; ids where a person acts (blocked, unreadable, deleted)
 function Format-KitInTestSummary([int]$Total, [int]$FromKit, [int]$FromLists, [int]$Days, [bool]$Named, $Tally) {
   $src = if ($Named) { 'the tasks named (-Task / -Mrs)' } else { @(if ($FromKit) { "$FromKit promoted by the kit in $Days d, subtasks included" }; if ($FromLists) { "$FromLists more assigned to you in trackerLists" }) -join ', ' }
-  $order = @('moved to in test', 'would move to in test (no -Apply)', 'already closed', 'already in test') + @($Tally.Keys | Where-Object { $_ -like 'now *' }) + @('not deployed yet', 'no MRs found', 'blocked', 'unreadable', 'deleted in the tracker')
-  $parts = foreach ($k in $order | Where-Object { $Tally.Contains($_) }) { "$($Tally[$k].Count) $k$(if ($k -in 'blocked', 'unreadable', 'deleted in the tracker') { " ($($Tally[$k] -join '; '))" })" }
+  $order = @('moved to in test', 'would move to in test (no -Apply)', 'already closed', 'already in test') + @($Tally.Keys | Where-Object { $_ -like 'now *' }) + @('not deployed yet', 'no MRs found', 'not checked (time budget)', 'blocked', 'unreadable', 'deleted in the tracker')
+  $parts = foreach ($k in $order | Where-Object { $Tally.Contains($_) }) { "$($Tally[$k].Count) $k$(if ($k -in 'blocked', 'unreadable', 'deleted in the tracker', 'not checked (time budget)') { " ($($Tally[$k] -join '; '))" })" }
   "mark-in-test: $Total task(s) checked$(if ($src) { " ($src)" }): $(if ($parts) { $parts -join ', ' } else { 'nothing to do' })"
 }
 
