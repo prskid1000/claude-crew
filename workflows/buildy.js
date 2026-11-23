@@ -13,26 +13,16 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L158 record-args · L177 budget · L195 build-prompt · L279 ship-prompt · L296 plan · L315 spike ·
-//   L327 local-loop · L408 stages · L562 ship · L602 debate · L711 deploy · L726 learn
+// Sections: L18 args · L146 record-args · L165 budget · L183 build-prompt · L267 ship-prompt · L284 plan · L303 spike ·
+//   L315 local-loop · L396 stages · L550 ship · L590 debate · L699 deploy · L714 learn
 // ---- args: the run's input, checked
-/* args = {
- brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
- task: '<tracker id>' (2+ areas: a subtask each, AREA TASK lines),
- agents: [{ id: 'X1', items: 'A3, A4', area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: ['X0'] (after its producers MERGED),
-  migrations: true (datay reviews them), debate: { item, question, options: ['A: ..', 'B: ..'], owner } (briefy: debated before the build; owner: past 1 per run) }],
- debateModels: ['<A>', '<B>'] (default sonnet),
- openQuestions: ['<question>'] (Spike: rechy answers them first; one open -> spikeOpen),
- mandate: ['<owner words, verbatim>'], mode: 'feature' | 'bugfix' (repro first) | 'resume',
- resume: { X1: { state, skip: [done STEPS], mrs: [{ url, repo, merged }], doc, worktrees, uncommitted } }
-  (bossy.ps1 recover; skipped steps never run; all skipped = no agent),
- complex: ['X1'] (session model, not sonnet),
- phases: true (default: a fresh devy per phase: code + unit, local loop, ship on models.docs) | false (one devy, steps 0-9),
- holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
- kitDir: '<abs .claude>', runtimeDir: '<default <kitDir>/.runtime>', run: '<board run; default from the brief>',
-}
-Returns { resumedDone } (every area done) or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch | taskGaps, next } or { spikeOpen, next } (no devy started).
-*/
+/* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
+ agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
+  migrations (datay reviews), debate: { item, question, options: [A, B], owner } }], debateModels: [A, B], openQuestions: [q] (rechy first),
+ mandate: [owner words], mode: feature | bugfix | resume, resume: { X1: { state, skip: [STEPS], mrs, doc, worktrees, uncommitted } } (bossy.ps1 recover),
+ complex: [ids], phases: true (devy per phase) | false, holdMerge: [repo] | true, learn: true | false | 'auto', batch: <areas per run>,
+ kitDir: '<abs .claude>', runtimeDir, run: '<board run>' }
+Returns { resumedDone } or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch | taskGaps, next } or { spikeOpen, next }. */
 const A0 = args || {}   // as given (resume); A = this run's batch
 const BATCH = A0.batch > 0 && Array.isArray(A0.agents) && A0.agents.length > A0.batch ? A0.batch : 0
 const IN = BATCH ? A0.agents.slice(0, BATCH) : A0.agents || []
@@ -94,25 +84,23 @@ const REPORT = {
  type: 'object',
  properties: {
   mrs: { type: 'array', items: obj({ url: S, repo: S,
-   merged: { ...B, description: 'true ONLY on a confirmed merge (devtools.py merge printed MERGED, or the host says merged)' },
+   merged: { ...B, description: 'true ONLY on a confirmed merge (MERGED printed or host says so)' },
    mergeState: { ...S, enum: ['MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED', 'OPEN'] } }, ['url', 'repo', 'merged']) },
   worktrees: SA,
   done: { ...SA, description: 'item ids finished (local test passed, MR open)' },
-  deferred: { type: 'array', items: obj({ id: S, reason: S, ownerDecided: B, kind: { enum: ['code', 'people'], description: 'people: no code; it and ownerDecided never hold promotion' } }, ['id', 'reason']) },
-  needsDecision: { type: 'array', items: obj({ item: S, decisionId: { ...S, description: 'the id bossy.ps1 decide ask printed' }, question: S }),
-   description: 'items stopped for an owner decision (decide ask); []' },
-  debate: { type: 'array', items: obj({ item: S, question: S, options: SA }), description: 'items with 2 valid paths ("A: <label> — <its effect>", "B: ..") no test settles: the workflow debates, the owner decides; []' },
-  disputes: { type: 'array', items: obj({ finding: S, evidence: S }), description: 'fix round: findings you contest ("<file>:<line>" as listed; evidence: file:line, a test, a measurement); []' },
-  needsEnvFix: { type: 'array', items: obj({ item: S, envFixId: { ...S, description: 'the id bossy.ps1 decide ask -Kind envfix printed' }, need: S }),
-   description: 'items stopped for a coordinator-only local-env fix (up/down/refresh/drop, shared DB repair); []' },
+  deferred: { type: 'array', items: obj({ id: S, reason: S, ownerDecided: B, kind: { enum: ['code', 'people'], description: 'people: no code (never holds promotion)' } }, ['id', 'reason']) },
+  needsDecision: { type: 'array', items: obj({ item: S, decisionId: { ...S, description: 'decide ask id' }, question: S }), description: 'items waiting on the owner; []' },
+  debate: { type: 'array', items: obj({ item: S, question: S, options: SA }), description: '2 valid paths ("A: <label> — <effect>", "B: ..") no test settles; []' },
+  disputes: { type: 'array', items: obj({ finding: S, evidence: S }), description: 'fix round: contested findings ("<file>:<line>"; evidence file:line, test or measurement); []' },
+  needsEnvFix: { type: 'array', items: obj({ item: S, envFixId: { ...S, description: 'decide ask -Kind envfix id' }, need: S }), description: 'items waiting on a coordinator-only env fix; []' },
   localTest: { type: 'object', properties: {
-   status: { ...S, enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS = every goal passed locally, clean logs; FAIL = goals failing; BLOCKED = ONLY an owner decision or a remote-only dependency; NONE = no local env (merge waits for decisionId or fallback)' },
-   decisionId: { ...S, description: 'NONE only: the owner\'s decide id allowing the merge' },
-   fallback: { ...S, enum: ['ci', 'unit'], description: 'NONE, repos[].localTest optional / none: the localFallback that passed' },
-   unitRun: { ...obj({ command: S, result: S }), description: 'fallback unit: the crafty.ps1 check run + result (none: held)' },
-   blockedKind: { ...S, enum: ['decision', 'remote'], description: 'BLOCKED only: decision = waits for the owner; remote = needs a remote-only system' },
+   status: { ...S, enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS all goals, clean logs; BLOCKED only owner decision / remote-only; NONE no local env' },
+   decisionId: { ...S, description: 'NONE: owner decide id allowing the merge' },
+   fallback: { ...S, enum: ['ci', 'unit'], description: 'NONE: the localFallback that passed' },
+   unitRun: { ...obj({ command: S, result: S }), description: 'fallback unit: crafty.ps1 check run + result' },
+   blockedKind: { ...S, enum: ['decision', 'remote'], description: 'BLOCKED only' },
    blockedReason: { ...S, description: 'BLOCKED only: the decision id or the remote dependency' },
-   envGap: { ...B, description: 'FAIL only: true = every failing goal is an ENV GAP (THE DEV FLOW); a product failure: false' },
+   envGap: { ...B, description: 'FAIL: true = every failing goal is an ENV GAP' },
    env: { ...S, description: '<env> r<n>, or "none: <why>"' }, rounds: N,
    failing: { ...SA, description: 'goal ids still failing, with one line each' },
    goalsDoc: { ...S, description: 'cases render <task> goals path' } }, required: ['status', 'env', 'rounds', 'failing', 'goalsDoc'] },

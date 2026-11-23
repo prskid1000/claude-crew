@@ -440,7 +440,6 @@ flowchart LR
   AGENTS_md --> workflows_buildy_js
   AGENTS_md --> workflows_testy_js
   AGENTS_md --> workflows_tidy_js
-  workflows_buildy_js -->|"spawns"| agents_briefy_md
   workflows_buildy_js -->|"spawns"| agents_datay_md
   workflows_buildy_js -->|"spawns"| agents_devy_md
   workflows_buildy_js -->|"spawns"| agents_kitty_md

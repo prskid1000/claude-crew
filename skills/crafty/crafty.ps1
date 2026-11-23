@@ -19,7 +19,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1078 pipes · L1140 guard · L2057 dir · L2067 checkpoint ·
-  L2099 prior · L2137 tracker · L2159 task spec · L2357 scope · L2405 host
+  L2101 prior · L2139 tracker · L2161 task spec · L2359 scope · L2407 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2084,10 +2084,12 @@ if ($PSBoundParameters.ContainsKey('Leases')) { $c.leases = @(Split-KitList $Lea
 if ($Notes) { $c.notes = @(@($c.notes) + "$($s.at.Substring(0, 16)) $($Notes -replace '\s+', ' ')" | Where-Object { $_ }) }   # the agent's only free text: one line each
 $c.decisions = @(Get-ChildItem (Get-KitPath decisions) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.agent -eq $Agent -and $_.status -eq 'pending' } | ForEach-Object id)
 Write-KitState $jf $c
-$md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next) (start here; the steps below are done: verify, never redo) · $($c.updated)", '', '## Done', '') +
-  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Worktree @ head' @($c.steps | ForEach-Object { , @($_.at, $_.step, $_.item, $_.evidence, "$(if ($_.head) { "``$($_.dir)`` @ $($_.head)" })") })) +
+# compact for the resumer's context: last 8 steps and 6 notes, the worktree once (head sha per row)
+$ckRows = @($c.steps); $ckOld = [Math]::Max(0, $ckRows.Count - 8); $ckNotes = @($c.notes | Where-Object { $_ }); $ckNoteOld = [Math]::Max(0, $ckNotes.Count - 6)
+$md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next) (start here; the steps below are done: verify, never redo) · $($c.updated)", '', "## Done$(if ($ckOld) { " (last 8; $ckOld earlier: $(@($ckRows[0..($ckOld - 1)] | ForEach-Object step | Select-Object -Unique) -join ', '))" })", '') +
+  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Head' @($ckRows | Select-Object -Skip $ckOld | ForEach-Object { , @("$($_.at)".Substring(0, [Math]::Min(16, "$($_.at)".Length)).Replace('T', ' '), $_.step, $_.item, $_.evidence, $_.head) })) +
   @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')") +
-  @(if ($c.notes) { '', '## Notes', ''; @($c.notes | ForEach-Object { "- $_" }) })
+  @(if ($ckNotes) { '', "## Notes$(if ($ckNoteOld) { " (last 6)" })", ''; @($ckNotes | Select-Object -Skip $ckNoteOld | ForEach-Object { "- $_" }) })
 # a hand-written resume-<run>.md keeps its text above the generated part (the checkpoint overwrote it, 2026-11-23)
 $own0 = if (Test-Path -LiteralPath $mf) { ([IO.File]::ReadAllText($mf) -split '<!-- checkpoint -->')[0] -replace '(?s)^# (Resume brief|Checkpoint): .*' }
 Write-KitAtomic $mf ("$(if ("$own0".Trim()) { "$("$own0".TrimEnd())`n`n<!-- checkpoint -->`n" })" + ($md -join "`n") + "`n")

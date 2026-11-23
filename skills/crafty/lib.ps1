@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L878 status · L1175 tracker · L1493 prior ·
-  L1509 ask bugs · L1695 git-host · L1882 kitlog · L2004 params · L2309 entry-scripts
+Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L878 status · L1176 tracker · L1494 prior ·
+  L1510 ask bugs · L1696 git-host · L1883 kitlog · L2005 params · L2310 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1113,6 +1113,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
           stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($sup -or $dupOf) { $null } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
           done = $(if ($on) { '' } elseif ($sup) { "superseded by $($sup.label)" } elseif ($dupOf) { "stale duplicate of $dupOf (it beats)" } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
           wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at); doing = & $doing $t ((@($ph, $ck.step) | Where-Object { $_ }) -join ' · '); started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
+          budget = $(if ($e.handoff) { "handoff at $(& $tok $e.handoff) ($($e.capBy))$(if ($e.ctxCheck) { " · context check $($e.ctxCheck.decision) at $(& $tok $e.ctxCheck.ctx)" })" })
           next = $(if ($e.handoffBrief) { "a fresh $($e.type) from $(Split-Path "$($e.handoffBrief)" -Leaf)" } elseif ($tn) { $tn } elseif ("$($e.status)" -notin 'working', 'left') { "$($e.status)" } elseif ($ck.next -and $ck.next -ne 'none') { "next: $($ck.next)" } elseif ($npOn) { "next: $npOn" }) }) $Now $stuck))
     $byTx[$dupKey] = $rows[$rows.Count - 1]
   }
