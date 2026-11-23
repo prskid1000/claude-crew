@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L140 transcript tails · L172 supervise sweep
+# Sections: L6 supervise report · L156 transcript tails · L188 supervise sweep
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -137,6 +137,22 @@ function Read-KitInboxNew([string]$Agent, [switch]$All) {
 # named agent (CLAUDE_AGENT) or one live on the board: a worktree-name owner never drains another agent's inbox
 function Test-KitBoardAgent([string]$Agent) { [bool]@(Get-ChildItem (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddDays(-1) | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { "$($_.agent)" -eq $Agent -and $_.status -ne 'left' }).Count }
 function Show-KitGateInbox([string]$Owner) { if (-not $env:CLAUDE_AGENT -and -not (Test-KitBoardAgent $Owner)) { return }; foreach ($m in @(try { Read-KitInboxNew $Owner } catch { })) { Write-Host "[gate] MESSAGE for $Owner (follow it for this and every later build): $m" } }
+# -Brief stdout (supervise.output): html = link, ACT / WATCH / fix lines, counts; chat = tables; both
+function Format-KitSuperviseOut($d, $Shown, [string]$Path) {
+  $o = if ($Path) { ([string](Get-KitSetting 'supervise.output' 'html')).Trim().ToLower() } else { 'chat' }; if ($o -notin 'chat', 'both') { $o = 'html' }
+  if ($o -ne 'html') { Format-KitReport $Shown }; if ($o -eq 'chat') { return }
+  "report: $(([Uri]$Path).AbsoluteUri) (updated $($d.at.ToString('HH:mm'))) · detail: $(([Uri][IO.Path]::ChangeExtension($Path, '.json')).AbsoluteUri)"
+  # T8 (coordinator context): at most supervise.briefLines lines: every ACT, then WATCH; past it one WATCH line per kind (+N more: who)
+  $ln = { param($f) $c = Get-KitFlagCells $f; "$($f.level) · $(@($c.kind, $c.who, $c.problem | Where-Object { "$_".Trim() } | ForEach-Object { ("$_" -replace '\s+', ' ').Trim() }) -join ' · ')$(if ("$($c.action)".Trim()) { " -> $(("$($c.action)" -replace '\s+', ' ').Trim())" })" }
+  $acts = @($d.flags | Where-Object level -eq 'ACT'); $ws = @($d.flags | Where-Object level -eq 'WATCH'); $fx = @($d.flags | Where-Object { $_.level -eq 'INFO' -and "$($_.what)" -like 'auto-fixed:*' } | ForEach-Object { "$($_.what)" -replace '^auto-fixed:\s*' })
+  $acts | ForEach-Object { & $ln $_ }; $room = [int](Get-KitParam 'supervise.briefLines') - 2 - [int][bool]$fx.Count - $acts.Count
+  if ($ws.Count -le $room) { $ws | ForEach-Object { & $ln $_ } }
+  else { $gs = @($ws | Group-Object { "$((Get-KitFlagCells $_).kind)" }); $n = 0
+    foreach ($g in $gs) { if ($n -ge [math]::Max(1, $room) - 1 -and $n -lt $gs.Count - 1) { "WATCH · $(@($gs | Select-Object -Skip $n | ForEach-Object Group).Count) more in $($gs.Count - $n) kind(s): the report"; break }
+      $n++; "$(& $ln $g.Group[0])$(if ($g.Count -gt 1) { " (+$($g.Count - 1) more$(if ($wh = @($g.Group | Select-Object -Skip 1 | ForEach-Object { (Get-KitFlagCells $_).who } | Where-Object { $_ } | Select-Object -Unique)) { ": $($wh -join ', ')" }))" })" } }
+  if ($fx.Count) { "FIXED · $($fx -join ' · ')" }
+  "$(@($d.rows | Where-Object state -ne 'FINISHED').Count) agent(s) active · $(@($d.flags | Where-Object level -eq 'ACT').Count) ACT · $(@($d.flags | Where-Object level -eq 'WATCH').Count) WATCH"
+}
 # ---- transcript tails: the board's Doing detail, cached per transcript (lib.ps1 Get-KitStatusRows)
 # what a tool call works on (board "Doing"): its description, else a file name + its folder tail, a workflow / skill name, a search pattern, the command
 function Get-KitToolWhat($U) { $i = $U.input; $pt = { param($p) $ps = @("$p" -split '[\\/]' | Where-Object { $_ }); if ($ps.Count -gt 1) { "$($ps[-1]) · $(@($ps | Select-Object -SkipLast 1 | Select-Object -Last 2) -join '/')" } else { "$p" } }

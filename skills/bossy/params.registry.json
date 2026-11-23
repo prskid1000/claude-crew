@@ -74,6 +74,7 @@
   "localEnv.trainWaitFlagMinutes": "config default=10 unit=min",
   "localEnv.plannedDownActMinutes": "config default=15 unit=min",
   "supervise.stuckMinutes": "config default=20 unit=min",
+  "supervise.briefLines": "config default=25 unit=lines",
   "supervise.shellStuckMinutes": "quantile q=.95 k=2 default=30 floor=10 ceil=240 unit=min",
   "supervise.manyAgents": "config default=8 unit=agents",
   "supervise.ramCleanupPct": "config default=85 unit=%",

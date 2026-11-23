@@ -142,8 +142,8 @@ renders `<status> — <why> · <link>`. MR and task refs in a comment or MR body
 ```
 
 ## Final reports (one JSON shape per crew member, <= 200 words)
-The last reply is one fenced `json` block, `role` first; the coordinator reads it with `devtools.py render final-report <file>`.
-Before it: stop every Monitor and background shell you started (by its id); supervise flags the ones a finished agent left.
+The last reply is at most 10 lines, then one fenced `json` block, `role` first; the coordinator reads it with `devtools.py render final-report <file>`.
+Before it: stop every Monitor and background shell you started (by its id; supervise flags leftovers).
 - **devy**: `{ "role": "devy", "agent", "mrs": [{ "url", "state" }], "localTest": { "status", "rounds", "envFix": [], "blocked" },
   "doc": "<testing doc link>", "done": [], "deferred": [], "needsDecision": [], "seed": "<settings / data>", "hooks": [], "disputes": [] }`
 - **revy**: `{ "role": "revy", "findings": [{ "where": "<file:line | section>", "severity", "change": "<patch hunk | rewritten text>" }] }`
