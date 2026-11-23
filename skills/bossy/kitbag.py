@@ -20,9 +20,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L38 paths · L127 state · L184 kitlog · L283 load · L737 lint · L1145 README graph · L1252 lint command · L1533 audit ·
-  L1681 registry · L2013 arch lint · L2286 prose · L2451 sections · L2581 budget · L2597 migrate · L2745 plugins ·
-  L2799 state lint · L2987 main
+Sections: L38 paths · L127 state · L184 kitlog · L283 load · L738 lint · L1146 README graph · L1253 lint command · L1534 audit ·
+  L1682 registry · L2014 arch lint · L2287 prose · L2452 sections · L2582 budget · L2598 migrate · L2746 plugins ·
+  L2800 state lint · L2988 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -372,7 +372,8 @@ def budget_type(f):
     return ext if ext in BUDGETS else None
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/crafty/kit.example.json'
-PATH_HELPERS = {PATHS_JSON, 'skills/crafty/lib.ps1', 'skills/crafty/devtools.py', 'skills/pokey/browser.mjs', 'skills/bossy/kitbag.py', 'skills/crafty/spec.mjs'}
+PATH_HELPERS = {PATHS_JSON, 'skills/crafty/lib.ps1', 'skills/crafty/devtools.py', 'skills/pokey/browser.mjs', 'skills/bossy/kitbag.py', 'skills/crafty/spec.mjs',
+                'skills/bossy/ctx_hook.mjs'}   # a per-call hook: no helper import (browser.mjs loads puppeteer)
 TEXT_EXT = ('.md', '.ps1', '.psm1', '.py', '.js', '.mjs', '.json', '.html', '.txt', '.sh', '.yml', '.yaml', '.ini')
 JUNK_EXT = ('.apk', '.aab', '.log', '.zip', '.tmp')
 RESERVED = {'nul', 'con', 'prn', 'aux'}

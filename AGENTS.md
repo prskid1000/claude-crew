@@ -4,7 +4,7 @@ A multi-agent dev + QA kit for any stack, repo shape, migration tool, local/test
 configured in `skills/crafty/kit.local.json`. Org specifics live only in `*.local.*` files and `rules/*.local.md`. **Never put
 passwords, tokens or API keys here**: test logins live only in `skills/pokey/targets.local.json` (git-ignored).
 
-Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md`; edit only here.
+Codex and Antigravity read this file, Claude Code via `CLAUDE.md`; edit only here.
 
 ## Writing (hard rule, every agent and session)
 - Result first, then only what the reader needs to act: `<thing> <state/action> <reason>` -> next step.
@@ -27,7 +27,7 @@ Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md`; 
   back. Bugs are reproduced locally before they are fixed.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per human testing doc -> all pass: closed · own check failed
   or untested (undeployed): failedTesting · untested, no dev fix: owner decides · a new defect: one [Bug] under the original ask.
-- **Budget** (README "Configuration"): agent hands off at 80% of tool compaction point, never earlier (resume brief, fresh agent); run over cap is refused with split, at 80% nothing new starts (rest returns as `next`).
+- **Budget** (README "Configuration"): agent hands off (resume brief, fresh agent) at 80% of tool compaction point, or at a `CONTEXT-CHECK` by its own call; run over cap is refused with split, at 80% nothing new starts (rest returns as `next`).
 - **Decision pauses**: user-visible behaviour change not asked for, or multiple valid paths -> ask (`bossy.ps1 decide ask`), item waits, rest continue; internal logic with identical output needs no ask.
 
 ## Router

@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-workflows-generic.tests.ps1: buildy.js / testy.js on neutral and custom config (CONFIG line of launch -Self): repo roles, qa.lanes, models.<phase>;
+workflows-generic.tests.ps1: buildy.js / testy.js on neutral and custom config (CONFIG line of launch -Self): repo roles, qa.lanes, models.<phase>, model tiers per tool;
 testy.js resultsPatch -> pokey.ps1 results patch / hold.
 Usage: pwsh -NoProfile -File <kit>/tests/workflows-generic.tests.ps1 (or tests/kit-tests.ps1 -Area workflows-generic).
 Exit codes: 0 pass · 1 a check failed.
@@ -270,5 +270,14 @@ $stT = foreach ($wn in 'buildy', 'testy') { $wt = Get-Content (Join-Path (Split-
   @([regex]::Matches($wt, "(?s)STEP: (?:run exactly this|record this workflow)[^\n]*\n.{0,900}?agentType: '(\w+)'") | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique) -join '/' }
 $stS = [regex]::Matches((Get-Content (Join-Path (Split-Path $PSScriptRoot) 'workflows/buildy.js') -Raw), "label: ``(ship|track|ci):[^\n]*?agentType: '(\w+)'") | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" }
 Expect "workflows: kit-command STEP agents are kitty, ship stays devy ($($stT -join ' ') | $($stS -join ' '))" (($stT -join ' ') -eq 'kitty kitty' -and ($stS -join ' ') -eq 'track=kitty ci=kitty ship=devy')
+# model tiers (T4): budget.models picks the claude row; models.tiers.<tool> with a missing tier = the next stronger, then inherit
+$mt = Invoke-PsTest ctx-tiers @'
+$null = . $args[0] 6>$null
+"$((Get-KitBudget -Tool claude -Model 'claude-opus-4-7').row) $((Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row) $((Get-KitBudget -Tool claude -Model 'claude-haiku-5-5').row) $((Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6[1m]').row)"
+$t = Get-KitTiers claude; "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)"
+$__cfg = [pscustomobject]@{ models = [pscustomobject]@{ tiers = [pscustomobject]@{ codex = [pscustomobject]@{ strong = 'big-x'; fast = '' } } }; budget = [pscustomobject]@{ models = @([pscustomobject]@{ match = 'sonnet'; row = 'claude-1m' }) } }
+$t = Get-KitTiers codex; "$($t.fast)/$($t.balanced)/$($t.strong)"; $t = Get-KitTiers local; "[$($t.fast)/$($t.strong)]"; (Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row
+'@ @($O)
+Expect "tiers: budget.models rows (opus 4.7 / haiku 5.5 / [1m] = 1M, sonnet 4.6 = 200k; a local list wins); claude tiers; codex fast unset -> balanced; local -> inherit ($($mt -join ' / '))" ("$($mt -join '|')" -eq 'claude-1m claude-200k claude-1m claude-1m|haiku/sonnet/opus/|big-x/big-x/big-x|[/]|claude-1m')
 Remove-TestKit $k
 Complete-Tests

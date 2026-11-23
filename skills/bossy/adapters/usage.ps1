@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L358 context · L675 split · L749 budget
+Sections: L9 usage · L358 context · L699 split · L773 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -533,6 +533,27 @@ function Get-KitInstrLive([string]$File, [string]$Cache) {
   if ($Cache) { try { $rec | ConvertTo-Json -Depth 10 -Compress | Set-Content -LiteralPath $Cache -Encoding utf8 } catch {} }
   [long]([math]::Max(0.0, [double]@($rec.cx.live)[0] - [double]$rec.cx.s0) + (Get-KitInstrCap 0).start)
 }
+# context self-check (owner 2026-11-23, every role and the coordinator): at budget.reviewAt x the design window, then every budget.reviewEvery
+# tokens, the agent decides continue or a fresh agent; one record per transcript (cache/ctx-checks/<transcript name>.json), shared with
+# skills/bossy/ctx_hook.mjs (Claude Code PostToolUse; same thresholds and line); board beat asks it on every CLI
+function Get-KitCtxCheckFile([string]$Key) { Join-Path (Get-KitPath cache -Create) "ctx-checks/$($Key -replace '[^\w.-]', '_').json" }
+function Get-KitCtxCheckLine([string]$Transcript, [double]$Ctx, [double]$Design) {
+  if (-not $Transcript -or $Ctx -le 0) { return }; $key = [IO.Path]::GetFileNameWithoutExtension($Transcript); $cf = Get-KitCtxCheckFile $key
+  $at = [math]::Round([double](Get-KitParam 'budget.reviewAt') * $Design); $ev = [double](Get-KitParam 'budget.reviewEvery'); if ($at -le 0 -or $ev -le 0 -or $Ctx -lt $at) { return }
+  $th = $at + $ev * [math]::Floor(($Ctx - $at) / $ev); $rec = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($rec -isnot [hashtable]) { $rec = @{} }
+  if ([double]$rec.asked -ge $th) { return }
+  $rec.transcript = $Transcript; $rec.asked = $th; $rec.askedAt = (Get-Date).ToString('o'); $null = New-Item -ItemType Directory -Force (Split-Path $cf); $rec | ConvertTo-Json -Compress | Set-Content -LiteralPath $cf -Encoding utf8
+  "CONTEXT-CHECK: context $([math]::Round($Ctx / 1000))k (self-check at $([math]::Round($th / 1000))k, next at $([math]::Round(($th + $ev) / 1000))k): decide now: continue when the rest of this phase fits (reads in ranges, no new phase), else hand off at the phase end (crafty.ps1 checkpoint -Brief, board leave -Handoff, a fresh agent); record it: & '$($KitCmd.orch -replace '\\', '/')' board check -Decision continue|handoff -Reason '<why>' -Ctx $key"
+}
+# the agent's answer: the record (supervise shows it), the board row (-Session) and a calls log line
+function Set-KitCtxCheck([string]$Key, [string]$Decision, [string]$Reason, [string]$BoardFile) {
+  $cf = Get-KitCtxCheckFile $Key; $rec = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($rec -isnot [hashtable]) { return "board check: no CONTEXT-CHECK asked for '$Key' (-Ctx: the key its line prints)" }
+  $ck = [ordered]@{ decision = $Decision; reason = $Reason; at = (Get-Date).ToString('o'); ctx = [long]$rec.asked }; $rec.check = $ck; $rec | ConvertTo-Json -Compress -Depth 4 | Set-Content -LiteralPath $cf -Encoding utf8
+  if ($BoardFile -and (Test-Path -LiteralPath $BoardFile)) { Update-BoardEntry $BoardFile { param($x) $x | Add-Member -Force NoteProperty ctxCheck ([pscustomobject]$ck); $x } }
+  Write-KitLog calls context-check ([ordered]@{ key = $Key; decision = $Decision; reason = $Reason; ctx = [long]$rec.asked }); "context check recorded: $Decision at $([math]::Round([double]$rec.asked / 1000))k ($Reason)"
+}
+# transcript (lower case) -> its record: supervise skips the design-window WATCH an answered check covers
+function Read-KitCtxChecks { $m = @{}; foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath cache) 'ctx-checks') -Filter *.json -File -ErrorAction SilentlyContinue)) { $r = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($r.transcript) { $m["$($r.transcript)".ToLower()] = $r } }; $m }
 # a step's context numbers from its record: calls, start, peak, sum, compactions, handoff, added / carried per category, waste, rereads, largest
 function Get-KitContextSummary($Cx) {
   if (-not $Cx -or -not [int]$Cx.n) { return $null }
@@ -624,12 +645,15 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
     if ($s.result) { "$($s.result)" -in 'running', 'stuck' } else { $at = try { [datetime]"$($s.at)" } catch { $null }; $at -and ($Now - $at).TotalMinutes -lt 2 * $beat } }
   $norm = { param([string]$r) $rv = try { Resolve-KitParam 'usage.context.startNorm' $null $r (Get-KitParamState) } catch { @($null, 'default') }; if ("$($rv[1])" -notlike 'default*') { [double]$rv[0] } }   # only a learned (or pinned) norm: the 30k default would flag every main-session start
   $who = { param($s) "$($s.role) $(if ("$($s.label)".Trim()) { $s.label } else { [IO.Path]::GetFileNameWithoutExtension("$($s.tf)") })".Trim() }
-  $wl = [Collections.Generic.List[object]]::new()
+  $wl = [Collections.Generic.List[object]]::new(); $cks = Read-KitCtxChecks
   foreach ($s in @($ss | Where-Object { & $isLive $_ })) { $c = $s.cx; $w = @($c.w); $nm = & $who $s
     $bo = Get-KitBudget -Tool $(if ("$($s.tool)" -in 'codex', 'antigravity', 'local') { "$($s.tool)" } else { '' }) -Model "$($s.model)"; $b = $bo.budget
-    if ($bo.design -lt $b -and [double]$c.last -gt $bo.design) { $wl.Add(@(3, "context: $nm past the $(& $f $bo.design) design window", "at $(& $f $c.last) (the model holds $(& $f $b)): why? a long phase, big reads or no handoff; the kit sizes one agent to fit $(& $f $bo.design)")) }
+    # its self-check answered at the last threshold: shown (INFO), no WATCH; asked, no answer: the WATCH says so
+    $ck = $cks["$($s.tf)".ToLower()]; $dn = $ck.check -and [double]$ck.check.ctx -ge [double]$ck.asked
+    if ($dn) { $fl.Add([pscustomobject]@{ level = 'INFO'; what = "context: $nm self-check $($ck.check.decision) at $(& $f $ck.check.ctx)"; action = "$($ck.check.reason)" }) }
+    elseif ($bo.design -lt $b -and [double]$c.last -gt $bo.design) { $wl.Add(@(3, "context: $nm past the $(& $f $bo.design) design window", "at $(& $f $c.last) (the model holds $(& $f $b)), $(if ($ck.asked) { "self-check asked at $(& $f $ck.asked), no answer" } else { 'no self-check' }): board msg it to answer its CONTEXT-CHECK (continue or hand off)")) }
     # what = stable per agent (the flag key: Get-KitFlagKey keeps 412k as is), the moving numbers in the action
-    $pw = [double](Get-KitParam 'usage.context.peakWatch'); if ($b -and [double]$c.last -gt $pw * $b) { $wl.Add(@(3, "context: $nm over $([math]::Round(100 * $pw))% of its budget", "at $(& $f $c.last) of $(& $f $b): hand it off now (crafty.ps1 checkpoint -Brief, a fresh agent: README Budget); bossy.ps1 usage -Context -Agent <its label>")) }
+    $pw = [double](Get-KitParam 'usage.context.peakWatch'); if (-not $dn -and $b -and [double]$c.last -gt $pw * $b) { $wl.Add(@(3, "context: $nm over $([math]::Round(100 * $pw))% of its budget", "at $(& $f $c.last) of $(& $f $b): hand it off now (crafty.ps1 checkpoint -Brief, a fresh agent: README Budget); bossy.ps1 usage -Context -Agent <its label>")) }
     $ic = Get-KitInstrCap $b; $kl = [long]$c.kl + $ic.start   # kit docs held + the kit start
     if ($kl -gt $ic.cap) { $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $nm holds kit instructions over the cap"; action = "$(& $f $kl) of cap $(& $f $ic.cap): its next board beat prints HANDOFF itself (checkpoint, fresh agent with its phase's instructions); no beat within 2 heartbeats: board msg it to hand off now" }) }
     elseif ($kl -gt $ic.watch) { $wl.Add(@(2, "context: $nm kit instructions near the cap", "$(& $f $kl) of cap $(& $f $ic.cap): reads whole skills or references; tell it to read only the section its step names")) }
@@ -767,7 +791,8 @@ function Get-KitTiers([string]$Tool = '') {
   if (-not $Tool) { $Tool = Get-KitTool }
   $ex = Get-KitMember (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).models.tiers $Tool
   $t = [ordered]@{}; $up = ''
-  foreach ($k in 'strong', 'balanced', 'fast') { $v = "$(Get-KitSetting "models.tiers.$Tool.$k" (Get-KitMember $ex $k))"; if ($v) { $up = $v }; $t[$k] = $up }
+  $lo = Get-KitSetting "models.tiers.$Tool" $null   # a local key set to '' = unset: the next stronger tier, not the sample's
+  foreach ($k in 'strong', 'balanced', 'fast') { $v = "$(if ($lo -and (Get-KitProps $lo).Name -contains $k) { Get-KitMember $lo $k } else { Get-KitMember $ex $k })"; if ($v) { $up = $v }; $t[$k] = $up }
   $t['inherit'] = ''; $t
 }
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Role = '') {

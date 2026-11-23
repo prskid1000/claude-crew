@@ -1,6 +1,7 @@
 <#
 bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skills/bossy/bossy.ps1 <verb> [args]
-  board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool] [-Kind] [-Ref]   agent board, messages
+  board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool] [-Kind] [-Ref]   agent board, messages;
+    check -Decision continue|handoff -Reason <why> -Ctx <key>: answers a CONTEXT-CHECK (board beat, the Claude Code hook)
   learn -Skill -Kind -Text | -Read | -Show (-When -Do -Why | -Bump | -Fixed | -Trim | -Stats | -History)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Check -ArgsFile (buildy item tasks) | -Done -RunId|-Run | -List [-Brief]
   recover [-RunId <id> | -Run <runs>] [-Hours 24] [-MaxSeconds 150] [-Everyone]   stopped runs: state, resume brief, exact resume call
@@ -31,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L39 init · L50 board · L230 budget · L260 launch · L503 recover · L590 pause · L601 resume · L668 program · L719 param ·
-  L725 track · L1114 supervise · L1455 report · L1535 audit · L1595 storage · L1598 bugbrief · L1600 cleanup · L1687 learn ·
-  L1719 decide · L1887 debate · L1931 health · L1999 setup · L2094 guard-sendmessage
+Sections: L40 init · L51 board · L234 budget · L264 launch · L507 recover · L594 pause · L605 resume · L672 program · L723 param ·
+  L729 track · L1118 supervise · L1459 report · L1539 audit · L1599 storage · L1602 bugbrief · L1604 cleanup · L1691 learn ·
+  L1723 decide · L1891 debate · L1935 health · L2003 setup · L2098 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -66,7 +67,8 @@ param(
   [Parameter(Position = 0)][ValidateSet('join', 'beat', 'show', 'list', 'check', 'leave', 'msg', 'inbox')][string]$Action = 'show',
   [string]$Agent, [string]$Area = '', [string[]]$Items = @(), [Alias('Claims')][string[]]$Worktrees = @(), [string]$Run = '', [string]$Contracts = '',
   [string]$Session, [string]$Status = '', [string]$Worktree, [switch]$Resume, [string]$Type = '',
-  [string]$To, [string]$Text, [switch]$All, [string]$Model = '', [string]$Tool = '', [string]$Handoff = '', [double]$Wait = 1.5, [switch]$Force, [string]$Kind = 'note', [string]$Ref = ''
+  [string]$To, [string]$Text, [switch]$All, [string]$Model = '', [string]$Tool = '', [string]$Handoff = '', [double]$Wait = 1.5, [switch]$Force, [string]$Kind = 'note', [string]$Ref = '',
+  [ValidateSet('', 'continue', 'handoff')][string]$Decision = '', [string]$Reason = '', [string]$Ctx = ''
 )
 $dir = Get-KitPath board -Create
 $staleMin = [double](Get-KitParam 'idle.beatMinutes')
@@ -167,6 +169,7 @@ switch ($Action) {
       Update-BoardEntry $f { param($x) foreach ($p in @{ transcript = $tf; spend = $sp.spend; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff }.GetEnumerator()) { $x | Add-Member -Force NoteProperty $p.Key $p.Value }; $x }
       "budget: spend $($sp.spend) / $($bg.budget) (handoff at $($bg.handoff): $($bg.capBy))"
       if ($bg.handoff -and $sp.spend -ge $bg.handoff) { $ho = Get-KitHandoffLine $me $Session "spend $($sp.spend) >= $($bg.handoff)" }
+      else { Get-KitCtxCheckLine $tf $sp.spend (Get-KitBudget -Model $bg.model -Role $me.type).design }   # Claude Code: its hook asked first (one record)
     }
     if (-not $ho -and $tf) { $ih = Get-KitInstrHandoff $me $Session $tf "$f.cx"; if ("$ih" -like 'HANDOFF*') { $ho = $ih } else { $ih } }
     if (-not $ho) { $ho = Get-KitStepAgeHandoff $me $Session }; $ho   # past budget.stepHours: a fresh agent from the checkpoint
@@ -178,6 +181,7 @@ switch ($Action) {
   { $_ -in 'show', 'list' } { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" }
     Invoke-KitHooks Get-KitBoardLines }   # QA seats, local-env leases
   'check' {
+    if ($Decision) { if (-not $Ctx -or -not $Reason) { 'usage: board check -Decision continue|handoff -Reason <why> -Ctx <key> [-Session <token>]'; exit 2 }; Set-KitCtxCheck $Ctx $Decision $Reason $(if ($Session) { Join-Path $dir "$Session.json" }); exit 0 }
     if (-not $Worktree) { 'usage: board check -Worktree <dir> -Session <token>'; exit 2 }
     $mine = Norm $Worktree
     $others = @(Active | Where-Object { $_.session -ne $Session -and (@($_.worktrees | ForEach-Object { Norm $_ }) -contains $mine) })

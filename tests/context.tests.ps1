@@ -7,7 +7,7 @@ Usage: pwsh -NoProfile -File tests/context.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$k = New-TestKit ctx; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $fx = New-Item -ItemType Directory -Force (Join-Path (Kd) 'fx')
+$TestKitFiles = @('skills/bossy/ctx_hook.mjs'); $k = New-TestKit ctx; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $fx = New-Item -ItemType Directory -Force (Join-Path (Kd) 'fx')
 $t0 = (Get-Date).Date.AddHours(9).ToUniversalTime(); $iso = { param($s) $t0.AddSeconds($s).ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
 $q = { param($s) $s.Replace('\', '\\').Replace('"', '\"').Replace("`n", '\n') }   # a JSON string body
 # Claude: prompt (a resume brief), call 1 (Read a code file), its result, a skill load, call 2 (a gated build), a 16 KB log, the same
@@ -80,15 +80,6 @@ $__cfg = $null; $env:OLLAMA_CONTEXT_LENGTH = ''; $env:LLAMA_ARG_CTX_SIZE = '1638
 '@ @($O, (Kd))
 Expect "board beat: a 15k start at a 32k window is no handoff (harness not counted); a 5k kit doc read on top -> HANDOFF over the 15k cap; at 200k (cap 75k) nothing; parse cached ($($bu[7..9] -join ' / '))" ($bu[7] -eq 'ki ' -and $bu[8] -match '^ki1 HANDOFF: kit instructions in context 1[67]\d{3} > cap 15000' -and $bu[9] -eq 'ki2 |True')
 Expect "budget: a role's 0 turns off a 300k default (800k), another role gets the default (kit budget default); llama.cpp n_ctx read ($($bu[10..12] -join ' / '))" ($bu[10] -like '800000|*' -and $bu[11] -eq '300000|200000|75000|kit budget default' -and $bu[12] -like '13107|16384|15000|local 0.8 x (llama n_ctx*')
-# model tiers (T4): budget.models picks the claude row; models.tiers.<tool> with a missing tier = the next stronger, then inherit
-$mt = Invoke-PsTest ctx-tiers @'
-$null = . $args[0] 6>$null
-"$((Get-KitBudget -Tool claude -Model 'claude-opus-4-7').row) $((Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row) $((Get-KitBudget -Tool claude -Model 'claude-haiku-5-5').row) $((Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6[1m]').row)"
-$t = Get-KitTiers claude; "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)"
-$__cfg = [pscustomobject]@{ models = [pscustomobject]@{ tiers = [pscustomobject]@{ codex = [pscustomobject]@{ strong = 'big-x'; fast = '' } } }; budget = [pscustomobject]@{ models = @([pscustomobject]@{ match = 'sonnet'; row = 'claude-1m' }) } }
-$t = Get-KitTiers codex; "$($t.fast)/$($t.balanced)/$($t.strong)"; $t = Get-KitTiers local; "[$($t.fast)/$($t.strong)]"; (Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row
-'@ @($O)
-Expect "tiers: budget.models rows (opus 4.7 / haiku 5.5 / [1m] = 1M, sonnet 4.6 = 200k; a local list wins); claude tiers; codex fast unset -> balanced; local -> inherit ($($mt -join ' / '))" ("$($mt -join '|')" -eq 'claude-1m claude-200k claude-1m claude-1m|haiku/sonnet/opus/|gpt-5.5/gpt-5.5/big-x|[/]|claude-1m')
 Expect "budget: 1M -> handoff 800k (no kit cap), 200k -> 160k, 32k local -> 25.6k, design 32k, instruction cap floor 15k ($($bu[0..2] -join ' / '))" ($bu[0] -eq '800000|200000|75000|local 0.8 x (window given)' -and $bu[1] -like '160000|200000|75000|*' -and $bu[2] -like '25600|32000|15000|*')
 Expect "budget: kit role cap 400k wins over 800k (shown: kit budget devy), another role keeps 800k; Ollama's context length read ($($bu[3..5] -join ' / '))" ($bu[3] -eq '400000|200000|75000|kit budget devy' -and $bu[4] -like '800000|*' -and $bu[5] -like '52429|65536|24576|local 0.8 x (ollama OLLAMA_CONTEXT_LENGTH)')
 Expect "spend: a transcript without usage fields (a local model) is estimated from its text, bytes / 4 ($($bu[6]))" ($bu[6] -match '^est 100\d\d True$')
@@ -192,4 +183,21 @@ if (Use-BrowserKit) {
   $popOut = @(& $py -X utf8 $uiKb ui-check $uiPop --widths 1366 2>&1 | Out-String) -split "`n"
   Expect "popover: structured context + token tips inside the viewport, title moved (a rewritten one too), Esc closes, colon key line, key list, heat row arrows ($(@($popOut -match 'CLIP tip|render failed') -join ' / '))" (-not @($popOut -match 'CLIP tip|render failed').Count -and @($popOut -match '1366 px').Count)
 }
+# C1 context self-check: hook, board check (record + row), supervise, beat line
+$sc = Invoke-PsTest ctx-check @'
+$null = . $args[0] 6>$null; $tf = Join-Path $args[1] 'sess1.jsonl'; $hk = Join-Path (Split-Path $args[0]) 'ctx_hook.mjs'
+$u = { param([int]$n) Set-Content $tf "{`"type`":`"assistant`",`"message`":{`"usage`":{`"input_tokens`":$n,`"output_tokens`":0}}}" }
+$run = { param($j) ($j | ConvertTo-Json -Compress | node $hk) -join '' }
+& $u 150000; "a $(& $run @{ transcript_path = $tf })"; & $u 185000; "b $(& $run @{ transcript_path = $tf })"; "c $(& $run @{ transcript_path = $tf })"
+& $u 390000; "d $(& $run @{ transcript_path = $tf })"; "e $(& $run @{ transcript_path = $tf; agent_id = 'zz' })"
+$ss = "$(& $args[0] board join -Agent b1 -Type devy)" -replace '(?s).*SESSION (\S+).*', '$1'; "f $(& $args[0] board check -Decision continue -Reason 'phase ends soon' -Ctx sess1 -Session $ss) $((Get-Content (Join-Path (Get-KitPath board) "$ss.json") -Raw | ConvertFrom-Json).ctxCheck.decision)"
+$cx = [pscustomobject]@{ n = 9; s0 = 1; pk = 390000; sum = 9; last = 390000; cmp = 0; ho = 0; w = @(0) * 6; rr = @(0, ''); top = @() }
+$s = [pscustomobject]@{ label = 'b1'; role = 'devy'; run = 'r1'; model = 'claude-opus-5-5'; result = 'running'; at = (Get-Date).ToString('o'); tf = $tf; cx = $cx }
+"g $(@(Get-KitContextFlags @($s) (Get-Date) | ForEach-Object { "$($_.level) $($_.what) => $($_.action)" }) -join ' | ')"
+$s.tf = Join-Path $args[1] 'other.jsonl'; '{}' | Set-Content $s.tf; "h $(@(Get-KitContextFlags @($s) (Get-Date) | ForEach-Object { "$($_.level) $($_.what)" }) -join ' | ')"
+"i $(Get-KitCtxCheckLine $s.tf 200000 200000) | $(Get-KitCtxCheckLine $s.tf 210000 200000)"
+'@ @($O, (Kd))
+$sj = $sc -join "`n"
+Expect "context self-check: none at 150k, one CONTEXT-CHECK at 180k (once), the next at 380k, none for a subagent without its own transcript ($sj)" ($sj -match '(?m)^a $' -and $sj -match '(?m)^b .*CONTEXT-CHECK: context 185k \(self-check at 180k, next at 380k\).*board check -Decision continue\|handoff .*-Ctx sess1' -and $sj -match '(?m)^c $' -and $sj -match '(?m)^d .*self-check at 380k, next at 580k' -and $sj -match '(?m)^e $')
+Expect "context self-check: board check records it; supervise INFO instead of the design-window WATCH; unanswered -> WATCH says no self-check; beat line once ($sj)" ($sj -match 'f context check recorded: continue at 380k \(phase ends soon\) continue' -and $sj -match '(?m)^g INFO context: devy b1 self-check continue at 380k => phase ends soon$' -and $sj -match '(?m)^h .*WATCH context: devy b1 past the 200k design window' -and $sj -match '(?m)^i CONTEXT-CHECK: context 200k \(self-check at 180k.* \| $')
 Remove-TestKit $k

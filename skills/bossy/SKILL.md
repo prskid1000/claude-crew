@@ -13,10 +13,10 @@ description: "Load when: you are the main session routed here: launching or supe
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `bossy.ps1 learn -Read -Skill bossy` |
-| `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (run by `.githooks`) |
+| `bossy.ps1`, `ctx_hook.mjs` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, PostToolUse (.mjs), git `prepush` / `precommit` (`.githooks`) |
 | `STATE.md` | a script's state file changes; an agent needs a task's doc / comment / MR / env-run links (`.state/tasks/<id>.json`) |
 | `params.registry.json` | a timeout, wait or limit is added or changed (every tunable key: learned or fixed); `bossy.ps1 param show` |
-| `adapters/*.ps1` | dot-sourced by bossy.ps1 (its verbs and hooks) |
+| `adapters/*.ps1` | dot-sourced by bossy.ps1 |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge`, `<kit>/.githooks/post-rewrite` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
 | `kitbag.py` (+ the `kitbag_*.py` it loads, `lint-vocab.json` its ARCH-* words), `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 | `kit-admin.md` | K1-K3: `kitty` step 0, `revy` kind kit |

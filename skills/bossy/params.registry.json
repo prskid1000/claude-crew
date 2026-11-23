@@ -98,6 +98,8 @@
   "launch.selfRecordHours": "config default=48 unit=h",
   "launch.learnLookbackDays": "config default=2 unit=d",
   "budget.stepHours": "config default=2 unit=h",
+  "budget.reviewAt": "config default=0.9",
+  "budget.reviewEvery": "config default=200000 unit=tokens",
   "writes.tracerFreshMinutes": "config default=20 unit=min",
   "writes.keepDays": "config default=35 unit=d",
   "usage.keepDays": "config default=8 unit=d",
