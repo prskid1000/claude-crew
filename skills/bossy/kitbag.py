@@ -20,9 +20,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L38 paths · L135 state · L192 kitlog · L291 load · L746 lint · L1154 README graph · L1261 lint command · L1542 audit ·
-  L1690 registry · L2022 arch lint · L2295 prose · L2475 sections · L2605 budget · L2621 migrate · L2769 plugins ·
-  L2826 state lint · L3014 main
+Sections: L38 paths · L135 state · L192 kitlog · L291 load · L753 lint · L1165 README graph · L1272 lint command · L1553 audit ·
+  L1701 registry · L2033 arch lint · L2306 prose · L2486 sections · L2616 budget · L2632 migrate · L2780 plugins ·
+  L2837 state lint · L3025 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -471,6 +471,8 @@ def main_clone(d):
 
 def stray_live(d, minutes=60, cap=2000):
     """True when a file under d changed in the last `minutes` (a bounded walk: at most `cap` files)."""
+    if stray_link(d):
+        return False   # a junction into the kit runtime: its fresh files are the kit's own writes (a stuck WARN, 2026-11-23)
     cut, n = time.time() - minutes * 60, 0
     for root, _, files in os.walk(d):
         for f in files:
@@ -481,6 +483,11 @@ def stray_live(d, minutes=60, cap=2000):
             if n >= cap:
                 return False
     return False
+
+
+def stray_link(d):
+    """True when d is a symlink or a Windows junction."""
+    return osp.islink(d) or getattr(osp, 'isjunction', lambda _: False)(d)
 
 
 def stray_runtimes(kit):
@@ -909,6 +916,10 @@ def lint(k, g=None, org_terms=None):
     for d in stray_runtimes(k.dir):
         if stray_live(d):   # a live run still writes there: never block an unrelated commit; counted once it is idle
             print(f'WARN RUNTIME-STRAY {d}: a live run writes there (changed in the last hour): move it once that run ends', file=sys.stderr)
+            continue
+        if stray_link(d):
+            print(f'WARN RUNTIME-STRAY {d}: a link to {osp.realpath(d)} (writes land there): repoint run.json files that name it, '
+                  'then delete the link only (rmdir, never its content)', file=sys.stderr)
             continue
         bad('RUNTIME-STRAY', d, f'a {MAP["runtimeDir"]} outside the kit (a relative path from the wrong folder; the guard denies new ones): '
             f'move what is needed under <kit>/{MAP["runtimeDir"]} (crafty.ps1 dir), then delete it')

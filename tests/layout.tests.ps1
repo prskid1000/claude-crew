@@ -16,8 +16,12 @@ $strayFound = python -X utf8 -c "import sys, os; sys.path.insert(0, sys.argv[1])
 # a live run's stray (a file changed in the last hour) warns, never blocks; an idle one counts
 $slF = New-Item -ItemType File -Force (Join-Path $strayWs "repo/$rtName/x.json"); $slNow = python -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print(kitbag.stray_live(sys.argv[2]))" (Join-Path $k 'skills/bossy') (Split-Path $slF)
 $slF.LastWriteTime = (Get-Date).AddHours(-3); $slOld = python -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print(kitbag.stray_live(sys.argv[2]))" (Join-Path $k 'skills/bossy') (Split-Path $slF)
-foreach ($sd in $rtName, 'repo', 'wt', 'a') { Remove-Item -Recurse -Force (Join-Path $strayWs $sd) }
-Expect "lint RUNTIME-STRAY: <ws>/$rtName and <ws>/repo/$rtName only ($strayFound); a live one warns ($slNow / idle $slOld)" ($strayFound -eq "['$rtName', 'repo/$rtName']" -and "$slNow|$slOld" -eq 'True|False')
+# a junction into the kit runtime is never live (its fresh files are the kit's own writes: a stuck WARN)
+$slJ = Join-Path $strayWs "jl/$rtName"; New-Item -ItemType Directory -Force (Split-Path $slJ) | Out-Null; New-Item -ItemType Junction -Path $slJ -Value (Join-Path $strayWs "repo/$rtName") | Out-Null
+(Get-Item $slF.FullName).LastWriteTime = Get-Date; $slLink = python -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print(kitbag.stray_live(sys.argv[2]), kitbag.stray_link(sys.argv[2]))" (Join-Path $k 'skills/bossy') $slJ
+(Get-Item $slJ).Delete()
+foreach ($sd in $rtName, 'repo', 'wt', 'a', 'jl') { Remove-Item -Recurse -Force (Join-Path $strayWs $sd) }
+Expect "lint RUNTIME-STRAY: <ws>/$rtName and <ws>/repo/$rtName only ($strayFound); a live one warns ($slNow / idle $slOld); a junction is a link, never live ($slLink)" ($strayFound -eq "['$rtName', 'repo/$rtName']" -and "$slNow|$slOld" -eq 'True|False' -and $slLink -eq 'False True')
 # a relative runtime override resolves from the kit, never the cwd
 Set-Item Env:CLAUDE_RUNTIME 'rt-rel'
 $relRuntimes = @((python -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print(kitbag.runtime_dir())" (Join-Path $k 'skills/bossy')), (pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; Get-KitRuntime"))

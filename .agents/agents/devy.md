@@ -38,12 +38,8 @@ Non-negotiables:
   SKILL.md `repos[].localTest`) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
   Never weaken, skip or delete an existing test or assertion, or special-case a test's input, to pass; a test that looks
   wrong -> `bossy.ps1 decide ask` (unless the brief allows that change by name).
-- The local env is ours: never stop for an env reason (envy "Unblock yourself"); a fix only kitty or the coordinator may
-  do -> `bossy.ps1 decide ask -Kind envfix`, stop that item. BLOCKED only for an owner decision or a remote-only dependency.
-- A choice the task did not make that changes what a user sees (existing behaviour, business rules, data, UX), or several
-  valid paths (design, data handling, migration strategy) -> `bossy.ps1 decide ask`, stop that item, continue the others;
+- The local env is ours: never stop for an env reason (envy "Unblock yourself"); ENV-FIX and decision pauses: crafty D2 / D1;
   in a /buildy wave, low confidence between 2 paths no test settles -> report `debate` instead (the workflow debates it).
-  Internal logic with identical user-visible behaviour: no pause.
 - You disagree with a review finding -> contest it in the fix round's `disputes` (evidence: file:line, a test, a
   measurement; your Character argues, the evidence decides); another agent's result -> `board msg` it; still split -> `bossy.ps1
   decide ask` with both sides' evidence; never a silent override.
@@ -54,10 +50,7 @@ Non-negotiables:
 - **In a /buildy wave** (its prompt names the run and mode; `<O>` = `<kit>/skills/bossy/bossy.ps1`), this run's commands:
   - BUG FIX (mode bugfix): reproduce each bug locally BEFORE fixing: a `repro` case in the cases spec (merge refuses without).
   - Lease ONLY the services your items declare (brief "Services") with -Session <board token>.
-  - ENV-FIX: `& <O> decide ask -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`; that item -> needsEnvFix.
-  - DECISION (plain words): `& <O> decide ask -Run <run> -Agent <id> -Item <item> -Context "<today, why>" -Question "<q>"
-    -Options "A: <label> — <effect>","B: .." -Recommend <A|B> -Contracts <brief>.contracts.md`; item -> needsDecision.
-    Both: continue the other items.
+  - ENV-FIX / DECISION: crafty D2 / D1 (a decision adds `-Context "<today, why>"`, plain words).
   - LOCAL LOOP until 0 open bugs and every goal PASS (a qa.notLocal path: NOT_TESTED_LOCAL naming the stub, counted as passed;
     its human check runs after deploy) (bugs you or checky find come back to the code): each round appends its row to the AI
     doc's Rounds table and republishes it (--label "loop round <n>").
