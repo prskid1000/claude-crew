@@ -19,6 +19,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- one-off python from Git Bash -> write a scratch .py and run it with pwsh python -X utf8, not python -c (python shim echoes goto :error)
 - a kit worktree push is refused as protected branch -> use git -C <wt> push origin HEAD:main, not from the worktree cwd (guard refuses cwd form)
 - Review returns blocking findings and the MR head has not moved -> fix and push a commit, then re-request review; do not repeat the round unchanged (2 blocking findings stayed unresolved after round 1)
 - A spec is edited (e.g. a revert) after the last green local pass -> re-run that spec before finish (role-gating revert left 6 tests never re-run)
@@ -33,7 +34,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - devtools.py finish on a parent task whose description is rendered from a spec -> update the description with crafty.ps1 tracker update -Spec before finish; finish must skip describe on spec-rendered tasks (finish failed 3x at tracker describe after docs and MRs were already posted)
 - looking for a skill, script or file -> Glob / Grep the kit, ~/.claude or the repo; never a whole-drive find (an orphaned whole-drive find held the shell and disk)
 - After `wt lease` / `wt new` -> check the dependency links (node_modules, linkPaths) exist before editing; missing: save the diff, lease again (a worktree without them fails wt remove and can empty the folder). (1×)
-- Wave branches of one task -> pass `--override` with the wave id to devtools finish and mr on each sibling branch (the prior-work gate refuses siblings until it counts the batch as one task). (2x) (2×)
+- Wave branches of one task -> pass `--override` with the wave id to devtools finish and mr on each sibling branch (the prior-work gate refuses siblings until it counts the batch as one task). (3×) (2×)
 - Writing a shared task doc (one testing-ai key, many wave agents) -> read the current doc first, keep every other area's section and Rounds rows, write patches with the Edit tool or a file (heredoc python collapses backslash-n; areas lost rows). (4x)
 - envy deploy REFUSED by a foreign layer not based on the published head -> board msg its holder; holder off the board: raise an ENV-FIX (deploying over it breaks the holder's test). (2x)
 - A doc change, final rebase or flaky tracker call -> re-run devtools.py finish and check the tracker status after it (it updates the two docs, the links block and the solution comment in place). (4x)
@@ -107,6 +108,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- writing kit edit scripts -> create each edit .py with the Write tool, not a Bash heredoc (heredoc lost backslashes and missed CRLF anchors (3 failures)
 - editing with a scripted replace -> write the script with the Write tool; no pwsh -Command from Git Bash, no heredoc python with backslash-n (dropped apostrophes, 5 MISSed replaces)
 - Splitting a SKILL.md or moving a block between files -> run kitbag.py lint before wt commit (FILE-CAP and READ-BUDGET surfaced only at pre-commit)
 - Running board beat or checkpoint -> call the live clone bossy.ps1 / crafty.ps1, never the worktree copy (the worktree board does not know your session)
@@ -151,6 +153,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - 2026-10-16 Leases: context resources held by fixed hours · decision every resource has a live holder; no holder for idle.graceMinutes -> released; services start only from a lease or a person (owner) · consequences lint LEASE-HOLDER.
 - 2026-10-16 Readability: context indentation halving and aliases to save tokens · decision normal indentation and full cmdlet names (owner).
 ## briefy
+- render wave-brief fails prose check on the renderer MR limits line (339 chars vs 130) -> shorten the limits line in the renderer template to <=130 chars (wave-brief render refused twice)
 - render wave-brief output feeds buildy -> check args.json for agents[].kind, run name and spec openQuestions before launch; patch if missing (render drops them, hand patch after each render, revy caught empty openQuestions)
 - A review sheet of 100+ items -> split verification across read-only agents by surface plus one endpoint-inventory agent, each writing one fixed-shape file, then merge (one agent ran out of context). (1x)
 - Launch args mode -> feature, bugfix or resume; map a new-work ask to feature (buildy.js rejects anything else, e.g. build, at once). (1x)
