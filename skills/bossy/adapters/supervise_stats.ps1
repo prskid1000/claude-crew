@@ -7,8 +7,8 @@ page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence
 every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L718 flags · L941 bands ·
-  L1086 shells · L1157 reset
+Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L718 flags · L942 bands ·
+  L1087 shells · L1158 reset
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -771,7 +771,7 @@ function Get-KitPopoverJs {
 var tp=d.createElement('div');tp.id='tip';tp.setAttribute('role','tooltip');tp.hidden=true;d.body.appendChild(tp);
 var cur=null,pin=false,pt='mouse',PAL=['var(--sage)','var(--slate)','var(--plum)','var(--watch)','var(--k2)','var(--k3)','var(--k4)'];
 var ROW=/^([^·:]*[A-Za-z][^·:]*?) ([<>~]?[$£€]?-?\d[\d.,]*(?:[kMGT]B?|%)?)(?: (min|h|s|ms|GB|MB|KB|tokens|x))?(?: \((\d+(?:\.\d+)?%)\))?(?: · ([^·]+))?$/,
-TILE=/^(.*?)([<>~]?[$£€]?-?\d[\d.,]*(?:[kMGT]B?|%)?)(?:\s?(min|h|s|ms|GB|MB|KB|tokens|x)\b)?(.*)$/,
+TILE=/^((?:.*?\s)?)([<>~]?[$£€]?-?\d[\d.,]*(?:[kMGT]B?|%)?)(?:\s?(min|h|s|ms|GB|MB|KB|tokens|x)\b)?(.*)$/,
 TOOL=/^(Bash|PowerShell|Read|Write|Edit|MultiEdit|Grep|Glob|WebFetch|WebSearch|Task|Agent|NotebookRead|StructuredOutput|run_command|view_file|read_file|exec_command)\b\s*(.*)$/,
 SIZE=/^(.*\S)\s+([\d.]+[kM]?)$/,CMD=/(^|\s)(--?[A-Za-z]|[A-Za-z]:[\\\/]|\$\(|&&|\|\s|;\s)|\.(ps1|py|mjs|js|exe|jsonl?|md|txt|java|ts|sh)\b|\/[\w.-]+\//,
 NOTE=/^(waste|warnings?|notes?|why|risks?|problems?|cause|errors?): (.+)$/i,HINT=/^(click|tap|press|enter|keys?)\b/i,KV=/^([a-z][\w .\/+-]{0,26}): (.+)$/i,
@@ -794,13 +794,13 @@ function notes(k,it){var f=d.createDocumentFragment(),ul=E('ul','tp-pn'),w=!/^(n
 function tl(ps){return ps.length>=3&&ps.every(function(p){return/\d/.test(p)&&p.length<=110})}
 // plain tip text -> title row (line 1: what · scope), stat tiles (the first line of 3+ numbers), breakdown tables ("<name> <value> (<pct>) · <extra>" lines,
 // an optional "<cols>:" header), "<header>:" + item lines, waste / note lines, " | " lists, long " · " lines as facts, click hints
-function render(s){var L=s.replace(/\r/g,'').split('\n').map(function(z){return z.trim()}).filter(Boolean),t0,ps,ti=[],c,hint='',tlu=false,i=0,m,j,hd,rows,it,pp,dl;tp.textContent='';tp.className='';if(!L.length)return;
+function rd(s){var L=s.replace(/\r/g,'').split('\n').map(function(z){return z.trim()}).filter(Boolean),t0,ps,ti=[],c,hint='',tlu=false,i=0,m,j,hd,rows,it,pp,dl;tp.textContent='';tp.className='';if(!L.length)return;
   t0=L[0];ps=t0.split(' · ');
   if(!tl(ps)){L.shift();if(t0.length>70||ps.length>3){while(ps.length>1&&ti.length<3&&ps[0].length<=32&&ps[0].indexOf(': ')<0)ti.push(ps.shift());if(!ti.length){if(ps.length>1&&ps[0].length<=90)ti=[ps.shift()];else if((c=CL.exec(t0))){ti=[c[1]];ps=[c[2]]}else{ti=[t0];ps=[]}}if(ps.length)L.unshift(ps.join(' · '))}else ti=ps;
     c=E('div','tp-pt');c.appendChild(E('b',null,ti[0]));if(ti.length>1)c.appendChild(E('span',null,ti.slice(1).join(' · ')));tp.appendChild(c)}
   if(!L.length){tp.classList.add('one');return}
-  while(i<L.length){var l=L[i];hd=null;j=i;if(/:$/.test(l)&&l.length<=80){hd=l;j=i+1}rows=[];
-    while(j<L.length&&(m=ROW.exec(L[j]))&&m[1].length<=40&&!TOOL.test(m[1])&&!CMD.test(m[1])){rows.push(m);j++}
+  for(var n0=0;i<L.length&&n0<400;n0++){var l=L[i];hd=null;j=i;if(/:$/.test(l)&&l.length<=80){hd=l;j=i+1}rows=[];
+    while(j<L.length&&L[j].length<=200&&(m=ROW.exec(L[j]))&&m[1].length<=40&&!TOOL.test(m[1])&&!CMD.test(m[1])){rows.push(m);j++}
     if(rows.length>=2||(hd&&rows.length)){if(hd&&hd.split(' · ').length<2&&!rows.some(function(r){return r[4]}))tp.appendChild(E('div','tp-px',cap(hd.slice(0,-1))));tp.appendChild(table(rows,hd&&(hd.split(' · ').length>1||rows.some(function(r){return r[4]}))?hd:null));i=j;continue}
     if(hd){it=[];j=i+1;while(j<L.length&&!/:$/.test(L[j])&&!NOTE.test(L[j])&&!HINT.test(L[j]))it.push(L[j++]);if(it.length){tp.appendChild(E('div','tp-px',cap(hd.slice(0,-1))));tp.appendChild(list('tp-pl',it,6));i=j;continue}}
     if((m=NOTE.exec(l))){tp.appendChild(notes(m[1],m[2].split(' · ')));i++;continue}
@@ -808,11 +808,12 @@ function render(s){var L=s.replace(/\r/g,'').split('\n').map(function(z){return 
     ps=l.split(' · ');if(!tlu&&tl(ps)){tlu=true;c=tiles(ps);if(c.classList.contains('tp-dt'))tp.classList.add('wide');tp.appendChild(c);if(ps.length>4)tp.appendChild(E('div','tp-pm',ps.slice(4).join(' · ')));i++;continue}
     pp=l.split(' | ');if(pp.length>=2){if((c=CL.exec(pp[0]))){tp.appendChild(E('div','tp-px',c[1]));pp[0]=c[2]}tp.appendChild(list('tp-pl',pp,6));i++;continue}
     if(l.length>90&&ps.length>=2){if((c=CL.exec(ps[0]))&&!CMD.test(c[1])){tp.appendChild(E('div','tp-px',cap(c[1])));ps[0]=c[2]}tp.appendChild(list('tp-pl',ps,8));i++;continue}
-    if(KV.test(l)&&!/^https?:/i.test(l)){dl=E('dl');while(i<L.length&&(m=KV.exec(L[i]))&&!NOTE.test(L[i])&&!HINT.test(L[i])&&!/:$/.test(L[i])){dl.appendChild(E('tp-dt',null,cap(m[1])));dl.appendChild(E('dd',null,m[2]));i++}tp.appendChild(dl);continue}
+    if(KV.test(l)&&!/:$/.test(l)&&!/^https?:/i.test(l)){dl=E('dl');do{m=KV.exec(L[i]);dl.appendChild(E('dt',null,cap(m[1])));dl.appendChild(E('dd',null,m[2]));i++}while(i<L.length&&KV.test(L[i])&&!NOTE.test(L[i])&&!HINT.test(L[i])&&!/:$/.test(L[i]));tp.appendChild(dl);continue}
     tp.appendChild(E('p',null,l));i++}
   if(hint)tp.appendChild(E('div','tp-ph',hint))}
+function render(s){try{rd(s)}catch(e){tp.textContent='';tp.className='';tp.appendChild(E('p',null,s))}}
 // the holder of a tip: data-tip, else a title moved to data-tip (no native tooltip next to the popover; an empty element keeps its name)
-function src(n){for(;n&&n.nodeType==1&&n!==d.body;n=n.parentNode){if(n===tp)return null;if(n.dataset&&n.dataset.tip)return n;var t=n.tagName!='IFRAME'&&n.getAttribute('title');if(t){if(!n.hasAttribute('aria-label')&&!n.textContent.trim())n.setAttribute('aria-label',t.split('\n')[0]);n.dataset.tip=t;n.removeAttribute('title');return n}}return null}
+function src(n){for(;n&&n.nodeType==1&&n!==d.body;n=n.parentNode){if(n===tp)return null;var t=n.tagName!='IFRAME'&&n.getAttribute('title'),st=!t&&n.namespaceURI!=d.documentElement.namespaceURI&&n.querySelector(':scope>title');if(st){t=st.textContent;st.remove()}if(t){if(!n.hasAttribute('aria-label')&&!n.textContent.trim())n.setAttribute('aria-label',t.split('\n')[0]);n.dataset.tip=t;n.removeAttribute('title');if(cur===n)render(t);return n}if(n.dataset&&n.dataset.tip)return n}return null}
 // below the holder, else above, else the side with more room (scrolls inside when pinned); a chart column: beside it; always in the viewport
 function place(el){var b=el.getBoundingClientRect(),W=d.documentElement.clientWidth,H=innerHeight,g=8,w,h,l,t,lo,hi;if(!b.width&&!b.height){hide();return}tp.style.maxHeight='';tp.style.left='0px';tp.style.top='0px';w=tp.offsetWidth;h=tp.offsetHeight;
   if(el.classList.contains('col')){l=b.right+10;if(l+w>W-g)l=b.left-w-10;t=b.top+b.height/2-h/2}
@@ -825,12 +826,12 @@ function hc(g,k){var cs=[].filter.call(g.children,function(c){return c.dataset.t
   cs.forEach(function(c){c.classList.remove('tp-kf')});cs[x].classList.add('tp-kf');return src(cs[x])}
 function kb(){d.querySelectorAll('.gs:not([tabindex])').forEach(function(g){if(g.querySelector(':scope>[title],:scope>[data-tip]'))g.tabIndex=0});d.querySelectorAll('.gc[title]:not([tabindex]),.kst[title]:not([tabindex])').forEach(function(e){e.tabIndex=0})}
 // a heat cell's number wider than the cell: hidden, never clipped (the popover holds it); again on resize and when a fold opens
-function fit(){var o=[];d.querySelectorAll('.gs .tp-nf').forEach(function(s){s.classList.remove('tp-nf')});d.querySelectorAll('.gs>i').forEach(function(c){var ss=c.children.length?c.children:[c];for(var k=0;k<ss.length;k++)if(ss[k].textContent&&ss[k].scrollWidth>ss[k].clientWidth+1)o.push(ss[k])});o.forEach(function(s){s.classList.add('tp-nf')})}
-var fq=0;function fl(){if(!fq)fq=requestAnimationFrame(function(){fq=0;fit()})}
+function fit(rt){var o=[];rt=rt||d;rt.querySelectorAll('.gs .tp-nf').forEach(function(s){s.classList.remove('tp-nf')});rt.querySelectorAll('.gs>i').forEach(function(c){var ss=c.children.length?c.children:[c];for(var k=0;k<ss.length;k++)if(ss[k].textContent&&ss[k].scrollWidth>ss[k].clientWidth+1)o.push(ss[k])});o.forEach(function(s){s.classList.add('tp-nf')})}
+var fq=0;function fl(x){var t=x&&x.type=='toggle'?x.target:null;if(t){if(t.open)requestAnimationFrame(function(){fit(t)});return}if(!fq)fq=requestAnimationFrame(function(){fq=0;fit()})}
 kb();fit();d.addEventListener('toggle',fl,true);
-d.addEventListener('pointerdown',function(x){pt=x.pointerType||'mouse'},true);
+var pdt=0,pde=null;d.addEventListener('pointerdown',function(x){pt=x.pointerType||'mouse';pdt=Date.now();pde=x.target},true);
 d.addEventListener('mouseover',function(x){if(pin||tp.contains(x.target))return;var el=src(x.target);if(el)show(el);else hide()});
-d.addEventListener('focusin',function(x){var e=x.target;if(tp.contains(e))return;if(e.classList&&e.classList.contains('gs')){show(hc(e,''));return}var el=src(e);if(el)show(el);else if(!pin)hide()});
+d.addEventListener('focusin',function(x){var e=x.target;if(tp.contains(e))return;if(e.classList&&e.classList.contains('gs')){if(!(Date.now()-pdt<600&&pde&&e.contains(pde)))show(hc(e,''));return}var el=src(e);if(el)show(el);else if(!pin)hide()});
 d.addEventListener('focusout',function(x){var e=x.target;if(e.classList&&e.classList.contains('gs'))e.querySelectorAll('.tp-kf').forEach(function(c){c.classList.remove('tp-kf')});if(!pin)hide()});
 d.addEventListener('keydown',function(x){var e=x.target;if(x.key=='Escape'){hide();return}if(e.classList&&e.classList.contains('gs')&&/^(ArrowLeft|ArrowRight|Home|End)$/.test(x.key)){x.preventDefault();show(hc(e,x.key))}},true);
 d.addEventListener('click',function(x){if(tp.contains(x.target))return;var el=src(x.target),ia=x.target.closest('a,button,input,select,label,[data-ft],.gkx,.ocb'),sm=x.target.closest('summary');
