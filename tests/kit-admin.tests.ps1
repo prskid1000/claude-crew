@@ -106,6 +106,8 @@ $sx = Join-Path $kc 'skills/sx.ps1'; "<#`nSections: L9 a`n#>`n# ---- a: x`n" | S
 Expect 'kit-admin: precommit rewrites and stages a stale Sections: map' (@(git -C $kc show :skills/sx.ps1) -contains 'Sections: L4 a'); git -C $kc rm -qf -- skills/sx.ps1
 $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE
 Expect 'kit-admin: learn -Bump miss exits 1, LESSONS.md lock released' ($bc -eq 1 -and -not (Test-FileLockHeld (Join-Path $kc 'LESSONS.md')))
+Add-Content (Join-Path $kc 'LESSONS.md') "`n## zz`n- old one -> a (b)`n- hit -> a (b) (3×)`n- new one -> a (b)"; $rz = @((& $lo -Read -Skill zz -Max 2) -split "`r?`n" | Where-Object { $_ }) -join '|'
+Expect "learn -Read cap: the most-hit lessons in file order, the oldest of the fewest-hit left out and counted (T7) ($rz)" ($rz -match '^## zz\|- hit -> a \(b\) \(3×\)\|- new one -> a \(b\)\|\(1 more, fewest hits' -and $rz -notmatch 'old one')
 '{ "orgTerms": ["Acmecorp"] }' | Set-Content (Join-Path $kc 'skills/crafty/kit.local.json')
 $null = & $lo -Skill revy -When 'a generic case' -Do 'a generic lesson' -Why 'test'; $null = & $lo -Skill revy -When 'an Acmecorp case' -Do 'an Acmecorp lesson' -Why 'org'
 $null = & $lo -Skill revy -Lesson 'free text, no shape'; $freeCode = $LASTEXITCODE

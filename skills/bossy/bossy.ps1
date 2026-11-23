@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L248 budget · L278 launch · L521 recover · L608 pause · L619 resume · L686 program · L737 param ·
   L743 track · L1132 supervise · L1473 report · L1553 audit · L1613 storage · L1616 bugbrief · L1618 cleanup · L1705 learn ·
-  L1737 decide · L1904 debate · L1948 health · L2016 setup · L2111 guard-sendmessage
+  L1740 decide · L1907 debate · L1951 health · L2019 setup · L2114 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1722,7 +1722,10 @@ function Invoke-Learn {
     if (-not $Skill) { 'usage: learn -Read -Skill <skill>'; exit 2 }
     foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) {
       $L = Read-KitLessonLines $f; $r = Find-KitLessonSection $L $Skill; if (-not $r) { continue }
-      $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' } | Select-Object -First 41)   # step-0 read cap: 40 lessons
+      # read cap (learn.readCap, -Max): the most-hit lessons in file order; the stale rest (fewest hits, oldest) wait for /tidy -Trim
+      $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' }); $rcap = if ($PSBoundParameters.ContainsKey('Max')) { $Max } else { [int](Get-KitParam 'learn.readCap') }
+      $lsIdx = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -like '- *' }); $lsOut = @($lsIdx | Sort-Object { if ($lines[$_] -match '\((\d+)[x×]\)\s*$') { -[int]$Matches[1] } else { -1 } }, { -$_ } | Select-Object -Skip $rcap)
+      $lines = @(0..($lines.Count - 1) | Where-Object { $_ -notin $lsOut } | ForEach-Object { $lines[$_] }) + @(if ($lsOut.Count) { "($($lsOut.Count) more, fewest hits: learn -Read -Skill $Skill -Max 99)" })
       if ($lines.Count -gt 1) { "$(if ($f -like '*.local.md') { '(local) ' })$($lines -join "`n")" }
     }
     Get-KitRoleRules $Skill
