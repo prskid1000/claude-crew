@@ -104,12 +104,13 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- editing with a scripted replace -> write the script with the Write tool; no pwsh -Command from Git Bash, no heredoc python with backslash-n (dropped apostrophes, 5 MISSed replaces)
 - Splitting a SKILL.md or moving a block between files -> run kitbag.py lint before wt commit (FILE-CAP and READ-BUDGET surfaced only at pre-commit)
 - Running board beat or checkpoint -> call the live clone bossy.ps1 / crafty.ps1, never the worktree copy (the worktree board does not know your session)
 - A kit test needs a port or matches a CLI flag -> use a free port from TcpListener 0 and -cmatch (fixed port 3307 and case-insensitive match broke the test)
 - a small fix touches files near their token cap (buildy.js, crafty SKILL.md, a test file) -> measure headroom per file first (kitbag.py budget), then forget or move a block before editing (measuring after the edit cost most of a small fix, twice)
 - A test fixture is made with tracker create -Key -> Use a non-keyed create or expect the [Bug] prefix and no Items check (Keyed creates became a [Bug] and silently skipped the Items check)
-- Edit removes a block spanning line ends in a CRLF file -> Include the whole lines with their CRLF in old_string, then check the file parses (A newline-only old_string joined two lines and caused a parse error)
+- Edit removes a block spanning line ends in a CRLF file -> Include the whole lines with their CRLF in old_string, then check the file parses (A newline-only old_string joined two lines and caused a parse error) (3×)
 - ui-check --click uses a child selector (a>b) from Git Bash -> quote the selector, run from the PowerShell tool, do not pipe stdout (unquoted > redirected stdout, left a stray file named summary, later calls refused (3x)
 - writing test data or fixtures -> use invented paths and ids, never copy a real repo path or cloud resource id from live state (pre-push ORG-TERM block)
 - a scripted replace has ONE pair -> write @(,@(a,b)) so PowerShell keeps the pair nested (single pair flattened, every 5 in a file was replaced)
@@ -119,7 +120,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - a full kit suite or pre-push -Full runs while other kittys run suites -> run tests/kit-tests.ps1 -Full yourself first, with a long timeout; never kill a shell by pid (subagents share one claude pid) (pre-push hit the 30 min cap, flaked under load, and one kitty killed another's push shell)
 - kit push runs the full pre-push suite -> use a timeout over 20 min or run it in background; rerun a flaky area (guard-warm, wt-pool) alone before judging (a 590 s timeout killed pre-push (exit 143) and left orphan tests; 3 load-only flakes)
 - Adding a trailing # comment with Edit to a PowerShell one-liner (hash literal, foreach body) -> Put the comment on its own line above the statement (The # swallowed the rest of the line, 4x broken scripts)
-- a kit test reads durable state (.state leases, acks, status cache) or a block moves into a new adapters/*.ps1 -> redirect .state in the harness, clear acks / caches it reads, add new files to tests/harness.ps1 New-TestKit list (torn lease lines and missing files failed moved tests)
+- a kit test reads durable state (.state leases, acks, status cache) or a block moves into a new adapters/*.ps1 -> redirect .state in the harness, clear acks / caches it reads, add new files to harness New-TestKit and each area's list (torn leases, missing files failed tests) (2×)
 - a multi-line program or a > or // argument to python from Git Bash (pyenv shim, MSYS conversion) -> write a .py into crafty.ps1 dir, run it and pass selectors from pwsh (cut programs, stray files, 4 flaky FAILs, a dropped slash) (3×)
 - counting a property that may be null in PowerShell -> use @($x.prop | Where-Object { $_ }).Count or test $null first; @($null).Count is 1 (deploy plan printed OUT-OF-AREA for every MR, supervise info on an empty cache, a route hold skipped) (3×)
 - Working after a push in a merged clean worktree -> run every later command with absolute paths into it, never cd then a command that falls back to the live clone (cleanup swept the worktree: hard failure). (2×)
