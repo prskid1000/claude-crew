@@ -5,6 +5,9 @@
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/pokey/adapters/api_auth.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'
+# pokey api: api GET /x binds the method; a second positional otherwise is an error, not a missing -Path (moved from flow.tests: room; before any targets file)
+$pa = Px $Q api GET '/x' -Target nosuch 2>&1 | Out-String; $pb = Px $Q api '/x' '/y' -Target nosuch 2>&1 | Out-String
+Expect "pokey api: <METHOD> <path> positional (reaches the targets file), a second path refused" ($pa -notmatch 'positional parameter|missing -Path' -and $pa -match 'targets\.local\.json' -and $pb -match "a second positional '/y'")
 $api = Start-TestApi; $P = $api.port
 # K63h: an OS-picked port per server (two at once differ) and ready on return (no sleep)
 $api2 = Start-TestApi; $taUp = $null; try { $taUp = (Invoke-WebRequest "http://127.0.0.1:$($api2.port)/v" -TimeoutSec 5).StatusCode } catch { }; $api2.proc.Kill()

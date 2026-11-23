@@ -82,10 +82,10 @@ Expect 'choices: a contraction is a no; sensitive: delete, tenant, user-visible 
 
 # a scope ask answered with its record pick records the scope word (devy's wt commit -ScopeOk); a split pick does not; -By coordinator: a hint
 $scQ = 'Review blocks MR 9 on scope. Record ONE scope word (decide record -Gate scope -Item f/CU-1-x) for the 2 test files.'
-$scA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: record the scope word for both', 'B: split them into a separate MR' | Out-String; $scId = if ($scA -match 'DECISION (\S+)') { $Matches[1] }
+$scA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: record the scope word for both', 'B: split them into a separate MR' -Recommend A | Out-String; $scId = if ($scA -match 'DECISION (\S+)') { $Matches[1] }
 $scR = pwsh @np $O decide answer -Id $scId -Answer 'A' | Out-String; $scW = if ($scR -match 'SCOPE RECORDED (\S+)') { $Matches[1] }
 $scC = pwsh @np $O decide check -Id $scW -Gate scope -Item f/CU-1-x | Out-String; $scWt = pwsh @np $O decide wait -Id $scId -MaxMinutes 0 | Out-String
-$sbA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: split them into a separate MR', 'B: do not record the scope word' | Out-String; $sbId = if ($sbA -match 'DECISION (\S+)') { $Matches[1] }
+$sbA = pwsh @np $O decide ask -Run r -Agent devy -Item t1 -Question $scQ -Options 'A: split them into a separate MR', 'B: do not record the scope word' -Recommend A | Out-String; $sbId = if ($sbA -match 'DECISION (\S+)') { $Matches[1] }
 $sbR = pwsh @np $O decide answer -Id $sbId -Answer 'B' | Out-String
 $byC = pwsh @np $O decide record -Gate scope -Item f/CU-1-x -Question q -Answer yes -Source chat -By coordinator 2>&1 | Out-String
 Expect "decide answer: a scope ask's record pick records gate scope on the branch (check WORD, wait names it); a split pick records none; record -By coordinator says omit -By ($scW)" ($scW -and $scC -match '^WORD ' -and $scWt -match "scope word: wt commit -ScopeOk $scW" -and $sbR -match 'no scope word' -and $sbR -notmatch 'SCOPE RECORDED' -and $byC -match 'omit -By')
@@ -105,16 +105,16 @@ $po2 = pwsh @np $O decide rules -Propose | Out-String; $askId2 = if ($po2 -match
 $null = pwsh @np $O decide answer -Id $askId2 -Answer 'A: approve all'
 $md = Join-Path $k 'rules/standing-rules.local.md'; $rl = pwsh @np $O decide rules | Out-String
 Expect 'owner A -> approved (date, by), rules/standing-rules.local.md written, deploy one marked guidance' ((Test-Path $md) -and (Get-Content $md -Raw) -match 'guidance: never auto-answered' -and (Get-Content $md -Raw) -match 'approved \d{4}-\d\d-\d\d by owner' -and ([regex]::Matches($rl, 'APPROVED')).Count -eq 2)
-$aa = pwsh @np $O decide ask -Run r -Agent devy -Item t9 -Gate scope -Question 'Replay sends for earlier slots on re-activate?' -Options 'A: Replay — send missed', 'B: No replay — next slot only' | Out-String
+$aa = pwsh @np $O decide ask -Run r -Agent devy -Item t9 -Gate scope -Context 'missed slots are dropped' -Question 'Replay sends for earlier slots on re-activate?' -Options 'A: Replay — send missed', 'B: No replay — next slot only' -Recommend B | Out-String
 $aid = if ($aa -match 'DECISION (\S+)') { $Matches[1] }
 Expect 'decide ask matching an approved rule -> answered by it, option B, logged' ($aa -match 'ANSWERED by standing rule sr-' -and $aa -match 'B: No replay' -and (pwsh @np $O decide wait -Id $aid -MaxMinutes 0 | Out-String) -match '^ANSWERED')
 $ck = pwsh @np $O decide check -Id $aid -Gate scope -Item t9 | Out-String
 Expect 'decide check: a standing rule answer is no person''s word' ($ck -match 'NO-WORD' -and $ck -match 'no person' -and $ck -match 'never an open option')   # retro 2205: NO-WORD names what to do meanwhile
-$dd = pwsh @np $O decide ask -Run r -Agent opsy -Item staging -Gate deploy -Question 'Deploy the api to staging now?' -Options 'A: yes deploy', 'B: wait' | Out-String
+$dd = pwsh @np $O decide ask -Run r -Agent opsy -Item staging -Gate deploy -Context 'merged, not deployed' -Question 'Deploy the api to staging now?' -Options 'A: yes deploy — testers get it', 'B: wait — nothing changes' -Recommend B | Out-String
 Expect 'decide ask on a deploy gate: never auto-answered' ($dd -match 'pending' -and $dd -notmatch 'standing rule')
 $sid = if ($rl -match 'APPROVED (sr-\w+) \[scope\]') { $Matches[1] }
 $null = pwsh @np $O decide rules -Revoke $sid
-$a2 = pwsh @np $O decide ask -Run r -Agent devy -Item t9 -Gate scope -Question 'Replay sends for earlier slots on create?' -Options 'A: Replay', 'B: No replay' | Out-String
+$a2 = pwsh @np $O decide ask -Run r -Agent devy -Item t9 -Gate scope -Context 'missed slots are dropped' -Question 'Replay sends for earlier slots on create?' -Options 'A: Replay — send missed', 'B: No replay — next slot only' -Recommend B | Out-String
 Expect 'decide rules -Revoke: the rule stops answering; the rules file keeps only the deploy guidance' ($a2 -match 'pending' -and (Get-Content $md -Raw) -notmatch [regex]::Escape($sid))
 
 # tidy prep: the digest carries the outcomes section

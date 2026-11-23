@@ -28,26 +28,12 @@ $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -Er
 $ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
 Expect 'supervise: without -Session the lock owner is the session, stable per round' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
-$cf =Join-Path (Kd) 'brief.contracts.md'; '# contracts' | Set-Content $cf
-$out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Keep the old total?' -Options 'B: recompute','A: keep — no data change' -Recommend A -Contracts $cf | Out-String
-$id = if ($out -match 'DECISION (\S+) pending') { $Matches[1] }
-$pend = @(pwsh @np $O decide list -Pending -Json | ConvertFrom-Json)
-Expect 'decide ask: structured, blocking; note table, recommended first' ($id -and $pend.Count -eq 1 -and $pend[0].blocking -and $pend[0].options[1].description -eq 'no data change' -and
-  (Get-Content $cf -Raw) -match "DECISION NEEDED $id(?s).*\| A \(recommended\) \| keep \| no data change \|\n\| B \|" -and (Test-Prose decision-request $cf))
-$null = pwsh @np $O decide answer -Id $id -Answer 'A, keep it'
-$w = pwsh @np $O decide wait -Id $id -MaxMinutes 1 | Out-String
-Expect 'decide answer: wait returns it, contracts carry it, none pending' ($w -match 'ANSWERED' -and $w -match 'keep it' -and (Get-Content $cf -Raw) -match "$id ANSWERED" -and -not @(pwsh @np $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_ }).Count)
-$out = pwsh @np $O decide ask -Kind envfix -Run w1 -Agent X1 -Item A3 -Question 'refresh the release' -Contracts $cf | Out-String
-$eid = if ($out -match 'ENV-FIX (e-\S+) pending') { $Matches[1] }
-$pend = @(Px $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_ })
-$null = Px $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
-$w = Px $O decide wait -Id $eid -MaxMinutes 1 | Out-String
-Expect 'decide envfix: pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')
-$i1, $i2 = @('A1'), @('A2', '-Fyi') | ForEach-Object { (Px $O decide ask -Run w1 -Agent X9 -Item $_[0] -Question "q$($_[0])" -Options 'A: a','B: b' -Recommend B @($_ | Select-Object -Skip 1) | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1' }
+$i1, $i2 = @('A1'), @('A2', '-Fyi') | ForEach-Object { (Px $O decide ask -Run w1 -Agent X9 -Item $_[0] -Context 'c' -Question "q$($_[0])" -Options 'A: a — x','B: b — y' -Recommend B @($_ | Select-Object -Skip 1) | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1' }
 $ak = Px $O decide list -Ask -Json | ConvertFrom-Json; $fy = Px $O decide list -Fyi | Out-String
+Expect "decide: unique ids, -Ask payload, -Fyi list ($($ak.questions[0].options[0].label) | $(($fy -split "`n")[0]))" ($i1 -ne $i2 -and "$($ak.ids)" -eq $i1 -and $ak.questions[0].header -eq 'A1' -and $ak.questions[0].options[0].label -match '^B: b' -and $fy -match "qA2 \(``$i2``\)")
 $null = Px $O board check -Session s1 2>&1; $bc = $LASTEXITCODE
 $hp = Px (Join-Path $k 'skills/bossy/bossy.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
-Expect 'decide: unique ids, -Ask payload, -Fyi list; board check w/o -Worktree exit 2; setup --help exit 0' ($i1 -ne $i2 -and "$($ak.ids)" -eq $i1 -and $ak.questions[0].header -eq 'A1' -and $ak.questions[0].options[0].label -eq 'B: b (Recommended)' -and $fy -match "^1\. qA2 \(``$i2``\): B b \(recommended\) · A a" -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'coordinator \+ kit commands' -and $hp -notmatch 'setup:')
+Expect 'board check w/o -Worktree exit 2; setup --help exit 0 (decide: debate.tests)' ($bc -eq 2 -and $hc -eq 0 -and $hp -match 'coordinator \+ kit commands' -and $hp -notmatch 'setup:')
 $ld = TkPath $k launches -Create
 # launch -Self <script> <run> <json> [fnv] [args]
 $self = { param($s, $run, $json, $fnv) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv ($fnv ?? (& { . $O; Get-KitFnv $json })) @args | Out-String }

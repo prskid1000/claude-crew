@@ -14,7 +14,7 @@ Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused
 . (Join-Path $PSScriptRoot '../../pokey/adapters/deployed_checks.ps1')   # Get-DeployPaths, Test-DeployTouched: one paths rule for plan, intest, deployed
 # ---- helpers: test-env filter, MR refs
 # not a test env: deploys[].production, else deploy.productionPattern on the name (no default: nothing is production by name); -Lanes: + laneApk
-function Get-NoTestRx([switch]$Lanes) { $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $rx -and $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
+function Get-NoTestRx([Alias('Lane')][switch]$Lanes) { $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $rx -and $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
 # <alias>!<iid> -> <repo name>!<iid>
 # a QA run's start from its folder name (yyyy-MM-dd[-HHmmss]-<label>; date only: midnight); $null when it has none
 function Get-KitQaRunStart([string]$Run) { if ($Run -match '^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2})(\d{2}))?(?:-|$)') { [datetime]"$($Matches[1])T$(if ($Matches[2]) { "$($Matches[2]):$($Matches[3]):$($Matches[4])" } else { '00:00:00' })" } }
@@ -64,7 +64,7 @@ function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until, [switch]$NoPaths)
 }
 # MRs in a CI deploy's last green job (its commit holds the merge): mr|target -> detail; per repo one MR list and one git
 # rev-list per deploy instead of one pokey.ps1 deployed probe per MR (229 MRs ran past 600 s); past $Until the rest is probed
-function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int]$Days = 14, [datetime]$Until = (Get-Date).AddSeconds((Get-KitParam 'deploy.ancestryBudgetSec'))) {
+function Get-DeployedByAncestry([Alias('Mr')][string[]]$Mrs, $Repos, [string[]]$Targets, [int]$Days = 14, [datetime]$Until = (Get-Date).AddSeconds((Get-KitParam 'deploy.ancestryBudgetSec'))) {
   $hit = @{}; $env:GIT_TERMINAL_PROMPT = '0'
   foreach ($rp in $Repos) {
     if ((Get-Date) -gt $Until) { break }
@@ -104,7 +104,7 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
 # ---- intest: promoted tasks live on a test env -> inTest
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
-param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @(), [int]$BudgetSec = -1)   # not $Mrs: pwsh names ignore case ($mrs below)
+param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @(), [int]$BudgetSec = -1)   # not $Mrs: pwsh names ignore case ($mrs below)
 $ErrorActionPreference = 'SilentlyContinue'
 # -Mrs / -Task: bounded (default 50 s): named tasks first, the rest after 60% of it waits for the sweep; progress per task on stderr
 if ($BudgetSec -lt 0) { $BudgetSec = if ($FromMrs.Count -or $Task.Count) { 50 } else { 0 } }; $t0 = Get-Date
@@ -272,7 +272,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [switch]$Mr, [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300,
     [string]$Service, [int]$RecheckSeconds = 120, [switch]$Ungated,
-    [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
+    [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
   if ($Action -eq 'restart') {
     if (-not $Env) { 'usage: deploy restart -Env <target>[,<target>..] [-Service <a,b>] [-WaitMinutes 20] [-Ungated]'; exit 2 }
     Invoke-DeployRestart @(Split-KitList @($Env)) $Service $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 20 }) $RecheckSeconds -Ungated:$Ungated; return
@@ -470,7 +470,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
 # the row's deploy kind restarts (ssh: below; command: deploys[].command.restart); a kind without restart is refused
 # deploy run (README "Adapters" deploy-kind deploy): only on a person's word (deploy.trigger); a kind without a deploy verb prints
 # UNSUPPORTED + its plan line (a person deploys, then deploy record); DEPLOY / FAILED per row
-function Invoke-DeployRun([string]$To, [string]$Repo, [string[]]$Mrs, [string]$Decision) {
+function Invoke-DeployRun([string]$To, [string]$Repo, [Alias('Mr')][string[]]$Mrs, [string]$Decision) {
   $rows = @(foreach ($r in @(Get-KitValue 'repos' @())) { if (-not $Repo -or $r.name -eq $Repo) { foreach ($d in @($r.deploys | Where-Object { "$($_.target)" -eq $To })) { [pscustomobject]@{ r = $r; d = $d } } } })
   if (-not $rows.Count) { "deploy run: no repos[].deploys[] row with target $To$(if ($Repo) { " in $Repo" })"; exit 2 }
   # a person's word first (AGENTS.md): checked, not used (deploy merge uses it)

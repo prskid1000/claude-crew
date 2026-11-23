@@ -35,6 +35,8 @@ Cases:
 | A1 (T1) | positive | click Date | newest first | PASS | ![A1](https://x/a1.png) |
 | A2 | negative | GET /orders?sort=x | 400 \| bad sort | PASS | [json](https://x/a2.json) |
 
+Matrix: n/a — no qa.matrix variant
+
 Rounds (one per round, appended):
 
 | Round | Date | Cases run | Result | Bugs found | Fix commit | Retest |
@@ -75,7 +77,7 @@ Orders screen:
 
 ## Out of scope
 
-none
+n/a — nothing left out
 
 ## Result (testers)
 
@@ -190,7 +192,7 @@ Expect 'render final-report: the role''s keys in order, empty ones dropped, othe
 # ---- retro report (item 9) from the judge's lists
 Set-JsonFile "$wd/retro.json" ([ordered]@{ date = '2026-11-13'; applied = @([ordered]@{ change = 'gate waits learned'; file = '`lib.ps1`'; count = 3 }); rejected = @([ordered]@{ signal = 'one flaky run'; why = 'single' }) })
 $rr = Dt render retro "$wd/retro.json" (Join-Path $wd 'retro.md')
-Expect 'render retro: golden kit-report (Result counts, Changed / Awaiting approval / Rejected), written to the out file' (Gold (Get-Content -Raw (Join-Path $wd 'retro.md')) "# Retro 2026-11-13`n`n**Result:** 1 applied · 0 awaiting approval · 1 rejected`n`n## Changed`n`n| Change | File | Digest count |`n|---|---|---|`n| gate waits learned | ``lib.ps1`` | 3 |`n`n## Awaiting approval`n`nnone`n`n## Rejected`n`n| Signal | Why |`n|---|---|`n| one flaky run | single |")
+Expect 'render retro: golden kit-report (Result counts, Changed / Awaiting approval / Rejected), written to the out file' (Gold (Get-Content -Raw (Join-Path $wd 'retro.md')) "# Retro 2026-11-13`n`n**Result:** 1 applied · 0 awaiting approval · 1 rejected`n`n## Changed`n`n| Change | File | Digest count |`n|---|---|---|`n| gate waits learned | ``lib.ps1`` | 3 |`n`n## Awaiting approval`n`nn/a — nothing awaiting approval`n`n## Rejected`n`n| Signal | Why |`n|---|---|`n| one flaky run | single |")
 # ---- handoff resume brief (item 8): rendered from the checkpoint; the agent adds one notes line
 $craftyPs = Join-Path $k 'skills/crafty/crafty.ps1'; $hbf = Join-Path $wd 'handoff-h8.md'
 $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step commit -Evidence abc1234 2>&1
@@ -235,37 +237,6 @@ Add-Content (TkPath $k signals) '{"at":"2026-11-13T10:00:00Z","skill":"kitty","k
 $sigLint = @(& $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json | Where-Object name -eq 'signals' | ForEach-Object problem) -join ' '
 $shape = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KB)'); import kitbag as k; print([bool(k.LESSON_SHAPE.match(x)) for x in ('- a case -> do it (why) (2×)', '- free text (2×)', '- a -> b (3x)', '- (fixed in kit) a -> b (why)')])"
 Expect "learn: -Text over 400 chars refused (2); signals: a key outside the schema is drift; LESSON-SHAPE wants '<when> -> <do> (<why>)', a count is no why ($shape)" ($sigLongCode -eq 2 -and $sigLint -match 'drift: key\(s\) colour' -and "$shape".Trim() -eq '[True, False, False, True]')
-# ---- wave brief (item 6): one spec -> brief + contracts + /buildy args
-Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13'; items = 'T-1 epic'; decisions = 'none'; localEnv = 'r3'; testEnv = 'stg'; kitDir = 'K'
-  repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true; debate = [ordered]@{ item = 'A2'; options = 'A: x', 'B: y' } })
-  contracts = @([ordered]@{ name = 'GET /orders?sort'; type = 'query'; producer = 'X2'; consumers = 'X1'; order = 'X2 first'; compatible = $true }); openQuestions = @([ordered]@{ question = 'Which index?'; blocks = 'A2'; answers = 'rechy' }); mandate = @('sort orders'); mode = 'feature' })
-$wbo = Dt render wave-brief "$wd/wb.json" "$wd/wb.md"; $wbArgs = Get-Content -Raw "$wd/wb.args.json" | ConvertFrom-Json
-Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped, debate kept), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold ((Get-Content -Raw "$wd/wb.md") -creplace '\*\*MR limits.*\n') @"
-# Wave brief: orders-sort, 2026-11-13
-**Read first:** ``K/skills/crafty/SKILL.md``; this brief wins where they differ.
-**Items:** T-1 epic · **Decisions:** none; final, don't re-ask (a NEW choice -> crafty D1).
-**Local env:** r3 · **Test env after deploy:** stg (never production).
-## Repos
-| Repo | Main checkout | Target | Link deps from | Migrations |
-|---|---|---|---|---|
-| web | R/web | main |  | none |
-## Agents
-| Agent | Items | Area (screens / packages / files) | Paths (enforced) | Repos | Migration range | Services (leased, nothing else) | Complex? |
-|---|---|---|---|---|---|---|---|
-| X1 | A1 | orders screen | any | web |  | api | yes: new grid |
-| X2 | A2 | api sort | any | api |  |  | no |
-
-**Overlaps:** none · **Contracts:** ``wb.contracts.md`` (1 crossing)
-**Branch:** ``f/<tag><task>-<slug>``, pool slots leased as the agent id · **Tracker:** —.
-Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
-
-## openQuestions
-Which index? · blocks A2 · answers: rechy
-## Findings (rechy)
-none yet
-## Rule changes during the wave (newest last)
-"@) -and (Gold (Get-Content -Raw "$wd/wb.contracts.md") "# Contracts: orders-sort`n| Field / endpoint | Type | Producer | Consumers | Merge / deploy order | Backward-compatible |`n|---|---|---|---|---|---|`n| GET /orders?sort | query | X2 | X1 | X2 first | yes |`n## Rule changes during the wave (newest last)") -and
-  $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true,"debate":{"item":"A2","options":["A: x","B: y"]}}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
 foreach ($n in 'a', 'b', 'c') { Set-JsonFile "$wd/s$n.json" @{ title = $n; checks = @(@{ id = $(if ($n -eq 'c') { 'S2' } else { 'S1' }) }) } }
 $s = foreach ($n in 'AA:a', 'BB:b', 'BB:c') { $env:CLAUDE_AGENT, $f = $n -split ':'; Dt cases add T7 "$wd/s$f.json" }; $env:CLAUDE_AGENT = $null
 Expect 'cases add, shared task: another agent''s id refused, its title kept' ($s[1].out -match 'S1 \(AA\) belong to another' -and $s[2].out -match "title kept \('a', set by AA")

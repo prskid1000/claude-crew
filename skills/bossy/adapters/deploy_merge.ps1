@@ -44,7 +44,7 @@ $dmm = [string]$(if ($dep.mergeMethod) { $dep.mergeMethod } else { Get-KitSettin
 $dmmText = if ($dmm -eq 'merge') { 'a merge commit, squash off' } else { "merge method $dmm" }   # the MR texts follow deploy.mergeMethod
 if ($Push) { "REFUSED: deploy merge -Push would push straight to $To (a deploy branch). It changes only through a deploy MR: re-run with -Mr (pushes $bp$envName-<date>, opens the MR ($dmmText), merges on a green pipeline)."; exit 2 }
 $name = 'deploymerge-' + ($To -replace '[^\w]+', '-')
-$br = "$bp$($envName -replace '[^\w]+', '-')-$(Get-Date -Format yyyyMMddHHmm)"
+$br = "$bp$($envName -replace '[^\w]+', '-')-$(Get-KitStamp file)"
 $out = & $KitCmd.dev wt new -Repo $Repo -Branch $br -Target $To -Name $name -Override 'deploy merge: a dedicated worktree'
 $wt = ($out | Where-Object { $_ -match '^worktree:\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() }) | Select-Object -First 1
 if (-not $wt) { throw "crafty.ps1 wt new failed: $out" }

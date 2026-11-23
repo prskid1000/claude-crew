@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L130 names · L183 slots · L209 lease · L319 release · L347 lanes · L452 sync · L552 pool · L595 sweep
+Sections: L15 worktrees · L130 names · L183 slots · L209 lease · L320 release · L348 lanes · L453 sync · L553 pool · L596 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -220,6 +220,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
     if ($rlLast) { $Branch = "$(@(Get-Content -LiteralPath (Get-KitLogFile leases) -ErrorAction SilentlyContinue | Where-Object { $_ -match '"kind":"slot"' -and $_ -match '"event":"acquire"' } | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_.agent -eq $Agent -and $_.branch -and "$($_.name)" -like "$rlLast·*" })[-1].branch)" }
     if ($Branch -and -not "$(git -C (Resolve-WtRepo $Repo) for-each-ref --count=1 "refs/heads/$Branch" "refs/remotes/origin/$Branch" 2>$null)".Trim()) { $Branch = '' }   # merged and deleted: no default
     if ($Branch) { "default:  -Branch $Branch (your last lease on $rlLast; pass -Branch for another)" } }
+  if (-not $Branch -and $Task) { $Branch = Get-KitTaskBranch $Task; "branch:   $Branch (kitbag.py naming make branch)" } elseif ($Task) { Test-KitTaskBranch $Task $Branch }
   $miss = @(@{ '-Repo' = $Repo; '-Branch' = $Branch; '-Agent' = $Agent }.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Name | Sort-Object)
   if ($miss.Count) { throw "lease needs $($miss -join ' '): wt lease -Repo <repo> -Branch <branch> -Agent <id> (-Agent: -Session <board session> or KIT_AGENT; -Repo / -Branch: run it in the linked worktree or pass -Dir <it>)" }
   $Repo = Resolve-WtRepo $Repo; $rl = Split-Path $Repo -Leaf; $size = Get-KitPoolSize $Repo

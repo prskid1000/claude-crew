@@ -1,6 +1,7 @@
 #Requires -Version 7
 <#
-debate.tests.ps1: bossy.ps1 debate (1 per run, -Owner, A/B options, each role's Character, the owner's table + decide ask) and the
+debate.tests.ps1: bossy.ps1 decide ask / answer / envfix (a bare ask refused: specs.tests), debate (1 per run, -Owner, A/B options, each role's
+Character, the owner's table + decide ask) and the
 buildy sims of the review rebuttal (disputes) and the trigger debates (brief, dispute, rejected twice, low confidence); board join of
 one id spawned twice (PARALLEL, REJOIN only with claims or -Session).
 Usage: pwsh -NoProfile -File <kit>/tests/debate.tests.ps1 (or tests/kit-tests.ps1 -Area debate).
@@ -19,6 +20,22 @@ $dbj.rows = @(@{ option = 'A'; label = 'Per request'; change = 'always current';
 Set-JsonFile $dbf $dbj; $dbk = pwsh @np $O debate ask -File $dbf | Out-String
 Expect "debate: 2nd per run refused (1), -Owner allowed, options not A:/B: or rows not [A, B] = usage (2); brief: Character + round; ask: table, decide ask ($dbc $dbu $dbx)" ($dbc -eq 1 -and $dbo -match '^DEBATE ' -and $dbu -eq 2 -and $dbx -eq 2 -and
   $dbA -match 'Cite it or drop it.*\n.*\n.*ROUND 0 \(blind' -and $dbR -match 'Show me the' -and $dbk -match '\| B: Cached \| lags 5 min \| -35 ms \| stale price \| 1 d \| C\.java:20 \| a wrong price at 9:00 \|' -and $dbk -match 'revy recommends A' -and $dbk -match 'DECISION d-')
+# ---- decide ask (moved from bossy.tests: room): structured, blocking; today's context, option effects, a recommendation (A5)
+$cf = Join-Path (Kd) 'brief.contracts.md'; '# contracts' | Set-Content $cf
+$out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Context 'edits recompute it' -Question 'Keep the old total?' -Options 'B: recompute — old invoices change','A: keep — no data change' -Recommend A -Contracts $cf | Out-String
+$id = if ($out -match 'DECISION (\S+) pending') { $Matches[1] }
+$pend = @(pwsh @np $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.run -eq 'w1' })   # the debate above has its own
+Expect 'decide ask: structured, blocking; note table, recommended first' ($id -and $pend.Count -eq 1 -and $pend[0].blocking -and $pend[0].options[1].description -eq 'no data change' -and
+  (Get-Content $cf -Raw) -match "DECISION NEEDED $id(?s).*\| A \(recommended\) \| keep \| no data change \|\n\| B \|" -and (Test-Prose decision-request $cf))
+$null = pwsh @np $O decide answer -Id $id -Answer 'A, keep it'
+$w = pwsh @np $O decide wait -Id $id -MaxMinutes 1 | Out-String
+Expect 'decide answer: wait returns it, contracts carry it, none pending' ($w -match 'ANSWERED' -and $w -match 'keep it' -and (Get-Content $cf -Raw) -match "$id ANSWERED" -and -not @(pwsh @np $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.run -eq 'w1' }).Count)
+$out = pwsh @np $O decide ask -Kind envfix -Run w1 -Agent X1 -Item A3 -Question 'refresh the release' -Contracts $cf | Out-String
+$eid = if ($out -match 'ENV-FIX (e-\S+) pending') { $Matches[1] }
+$pend = @(Px $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.run -eq 'w1' })
+$null = Px $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
+$w = Px $O decide wait -Id $eid -MaxMinutes 1 | Out-String
+Expect 'decide envfix: no context needed, pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')
 # buildy sims, one body, variant V: q = brief debate beside the build + a dispute; k = rejected twice; p = moderator fails, answer pending; d = low confidence
 $jsq = @'
 const V = '__V__', lt = (status = 'PASS') => ({ status, env: 'e r1', rounds: 1, failing: status === 'PASS' ? [] : ['G1'], goalsDoc: 'g.md' }), F = (file, line) => ({ mr: '1', file, line, severity: 'blocking', problem: `p ${file}`, fix: `f ${file}` })

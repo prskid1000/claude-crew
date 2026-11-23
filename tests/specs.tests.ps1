@@ -96,10 +96,10 @@ Expect 'wave-brief: a draft spec refuses the brief (spec before build)' ($w2.cod
 # ---- interview questions in plain words (decide ask): today + why, each option's effect, a default; the bare ask kept for rules
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $qa = pwsh -NoProfile -File $O decide ask -Run r1 -Agent briefy-1 -Item T1 -Context 'the list shows oldest first' -Question 'Sort newest first?' -Options 'A: newest first — dispatchers see new work at once', 'B: keep — no change for users' -Recommend A 2>&1 | Out-String
-$qb = pwsh -NoProfile -File $O decide ask -Run r1 -Agent briefy-1 -Item T1 -Question 'Sort?' -Options 'A: yes', 'B: no' 2>&1 | Out-String
+$qb = pwsh -NoProfile -File $O decide ask -Run r1 -Agent briefy-1 -Item T1 -Question 'Sort?' -Options 'A: yes', 'B: no' 2>&1 | Out-String; $qbc = $LASTEXITCODE
 $qr = @(pwsh -NoProfile -File $O decide list -Pending -Json | ConvertFrom-Json) | Where-Object { $_.ask -eq 'Sort newest first?' }
-Expect "decide ask: the owner reads today + the question + its default; a bare one WARNs naming context, effects, recommendation" ($qa -match 'DECISION \S+ pending' -and $qa -notmatch 'WARN' -and
-  $qr.question -eq 'Today: the list shows oldest first. Sort newest first? Not sure? The default is A.' -and $qb -match 'WARN decide ask: missing -Context .*each option .*-Recommend')
+Expect "decide ask: the owner reads today + the question + its default; a bare one refused (exit $qbc) naming context, effects, recommendation" ($qa -match 'DECISION \S+ pending' -and $qa -notmatch 'refused' -and
+  $qr.question -eq 'Today: the list shows oldest first. Sort newest first? Not sure? The default is A.' -and $qbc -eq 2 -and $qb -match 'decide ask refused: missing -Context .*each option .*-Recommend')
 
 # ---- MR body + commit cite S-ids; usage
 Set-JsonFile "$wd/mr.json" @{ type = 'feat'; change = 'sort orders'; summary = 'Orders sort by date'; specIds = 'S1,S2'; changes = @(@{ text = 'sort by date' }) }
@@ -107,5 +107,38 @@ $mb = Dt render mr-body "$wd/mr.json"; $cm = Dt render commit "$wd/mr.json"
 Expect 'MR body Links: Spec S-ids line; commit body: Spec line' ($mb.out -match '(?m)^- \*\*Spec S-ids:\*\* S1, S2$' -and $cm.out -match '(?m)^- Spec: S1, S2$')
 $hp = Dt spec --help
 Expect 'spec --help: verbs and the JSON fields, exit 0' ($hp.code -eq 0 -and $hp.out -match 'rules \[\{id: S1, text,' -and $hp.out -match 'spec write T1')
+# ---- wave brief (moved from render.tests: room): one spec -> brief + contracts + /buildy args; empty sections n/a — <why> (A3)
+function Gold($a, $b) { ("$a" -replace "`r`n", "`n").TrimEnd() -eq ("$b" -replace "`r`n", "`n").TrimEnd() }
+Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13'; items = 'T-1 epic'; decisions = 'none'; localEnv = 'r3'; testEnv = 'stg'; kitDir = 'K'
+  repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true; debate = [ordered]@{ item = 'A2'; options = 'A: x', 'B: y' } })
+  contracts = @([ordered]@{ name = 'GET /orders?sort'; type = 'query'; producer = 'X2'; consumers = 'X1'; order = 'X2 first'; compatible = $true }); openQuestions = @([ordered]@{ question = 'Which index?'; blocks = 'A2'; answers = 'rechy' }); mandate = @('sort orders'); mode = 'feature' })
+$wbo = Dt render wave-brief "$wd/wb.json" "$wd/wb.md"; $wbArgs = Get-Content -Raw "$wd/wb.args.json" | ConvertFrom-Json
+Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped, debate kept), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold ((Get-Content -Raw "$wd/wb.md") -creplace '\*\*MR limits.*\n') @"
+# Wave brief: orders-sort, 2026-11-13
+**Read first:** ``K/skills/crafty/SKILL.md``; this brief wins where they differ.
+**Items:** T-1 epic · **Decisions:** none; final, don't re-ask (a NEW choice -> crafty D1).
+**Local env:** r3 · **Test env after deploy:** stg (never production).
+## Repos
+| Repo | Main checkout | Target | Link deps from | Migrations |
+|---|---|---|---|---|
+| web | R/web | main |  | none |
+## Agents
+| Agent | Items | Area (screens / packages / files) | Paths (enforced) | Repos | Migration range | Services (leased, nothing else) | Complex? |
+|---|---|---|---|---|---|---|---|
+| X1 | A1 | orders screen | any | web |  | api | yes: new grid |
+| X2 | A2 | api sort | any | api |  |  | no |
+
+**Overlaps:** none · **Contracts:** ``wb.contracts.md`` (1 crossing)
+**Branch:** ``f/<tag><task>-<slug>``, pool slots leased as the agent id · **Tracker:** —.
+Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
+
+## openQuestions
+Which index? · blocks A2 · answers: rechy
+## Findings (rechy)
+n/a — no spike yet (the Spike phase appends here)
+## Rule changes during the wave (newest last)
+n/a — none yet (appended during the wave)
+"@) -and (Gold (Get-Content -Raw "$wd/wb.contracts.md") "# Contracts: orders-sort`n| Field / endpoint | Type | Producer | Consumers | Merge / deploy order | Backward-compatible |`n|---|---|---|---|---|---|`n| GET /orders?sort | query | X2 | X1 | X2 first | yes |`n## Rule changes during the wave (newest last)`nn/a — none yet (appended during the wave)") -and
+  $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true,"debate":{"item":"A2","options":["A: x","B: y"]}}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
 Remove-TestKit $k
 Complete-Tests

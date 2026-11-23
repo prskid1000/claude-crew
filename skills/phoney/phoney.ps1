@@ -501,7 +501,7 @@ if (-not $NoForceStop) { & $adb -s $Serial shell am force-stop $pkg }
 function Invoke-Avd {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('list', 'create', 'reset')][string]$Action,
-  [string[]]$Lanes,
+  [Alias('Lane')][string[]]$Lanes,
   [ValidateSet('cold', 'snapshots', 'wipe', 'recreate')][string]$Level = 'cold',
   [switch]$NoBoot, # create/reset: don't boot afterwards
   [switch]$Force # even if leased
@@ -589,7 +589,7 @@ switch ($Action) {
 function Invoke-Up {
 param(
   [int]$Count = 0, # 0 = all lanes
-  [string[]]$Lanes, # or name them
+  [Alias('Lane')][string[]]$Lanes, # or name them
   [switch]$ColdBoot, # ignore the snapshot
   [ValidateSet('Release', 'None')][string]$Mode = 'Release',
   [switch]$Headless, # no windows
@@ -686,7 +686,7 @@ if ($Mode -ne 'None' -and $out) { & $KitCmd.swarm install -Serials $out.serial }
 
 # ---- down: stop lanes (snapshot saved only without -no-snapshot-save, reverses removed, browser.mjs browsers killed)
 function Invoke-Down {
-param([string[]]$Lanes, [switch]$KeepBrowsers)
+param([Alias('Lane')][string[]]$Lanes, [switch]$KeepBrowsers)
 $Lanes = @(Split-KitList $Lanes)
 $c = Get-SwarmConfig
 $adb = $c.adb

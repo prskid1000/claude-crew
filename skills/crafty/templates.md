@@ -1,11 +1,12 @@
 # Templates (crafty)
 
-Copy a section, fill the `<...>` parts, drop what does not apply; which step fills which: the using skill's Files index.
+Copy a section, fill the `<...>` parts; which step fills which: the using skill's Files index.
 
 ## Writing standards (every artefact the kit reads or writes)
 Rules: AGENTS.md "Writing"; every limit is a ceiling. `kitbag.py prose --kind <kind> <file>` measures a text (exit 1 =
 findings); the generators (`devtools.py mr/comment/finish`, `crafty.ps1 wt commit`, `bossy.ps1 bugbrief/decide`,
-`pokey.ps1 finalize`) run it, print findings, never truncate; fix a finding by rewriting.
+`pokey.ps1 finalize`) run it, print findings, never truncate; fix a finding by rewriting. Listed `##` sections: always, in
+order, never empty or bare "none": `n/a — <why>` (prose; `devtools.py doc` / `finish` refuse a doc without).
 Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
 `<Section>:` that section (`_` for a space) · `prose:` without table rows (cells: their own kind) and image lines. Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
 `cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·
@@ -25,19 +26,19 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | reference | a guide inside a SKILL.md / README | `##` per topic, bullets, tables | each:250w 130ch | path |
 | lesson | one LESSONS.md line | `- <when> -> <do this> (<why>)` | 1l 50w 300ch | — |
 | history | one retired lesson (`learn -History`; an older LESSONS.local.md `## History`) | `- <date> <what was retired / merged> -> <where it lives now>` | 1l 50w 300ch | — |
-| wave-brief | what a wave builds, by whom | the "Wave brief" render | 600w each:12b 130ch | id path |
+| wave-brief | what a wave builds, by whom | ## Repos, ## Agents, ## openQuestions, ## Findings (rechy), ## Rule changes during the wave (newest last) | 600w each:12b 130ch | id path |
 | spec | a task's or subject's spec ("Spec") | every section always: answered, `n/a — <why>` or its open question; S-id rules + acceptance; change log | 2500w 130ch | id |
 | bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
 | testing-goals | local goals file, never published (`cases render goals`) | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
 | testing-doc | the human testing doc (positive UI cases; a screenshot each; `cases render human`) | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected |
 | testing-ai | the AI testing doc (the local loop record; `cases render ai`) | setup line, case table, Rounds table | 2500w 25sw | expected |
-| qa-report | the QA run report (an "<env> run" section of the human doc) | header table, Tasks table, Results table (Check, Result, Observed, Evidence: images inline), failures in detail | prose:900w each:15b 25sw | id verdict evidence |
+| qa-report | the QA run report (an "<env> run" section of the human doc) | header table, ## Tasks, ## Results, ## Failures in detail, ## Notes, ## Setup changes and test data, ## Evidence index | prose:900w each:15b 25sw | id verdict evidence |
 | result-note | a results.json `observed` / `what_was_done` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
-| mr-title | MR / PR title ("MR spec") | `mrTitleFormat`, default `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
+| mr-title | MR / PR title ("MR spec") | keyed task: `<type>(<scope>): <change> [<KEY>]`; else `mrTitleFormat`, default `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
 | mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |
 | commit | commit message ("MR spec") | `commitFormat` subject; blank line; body bullets | first:72ch 12l 100ch | conv |
 | merge-commit | a merge commit (deploy merge, target into a branch) | subject naming both branches; blank line; why | 12l 100ch | — |
-| task-name | tracker task name (`kitbag.py naming make title`; keys `naming next key`) | `<KEY> [Feature/Bug/Chore/Spike] <product> — <area>: <outcome>` (no registry: no key) | 1l 100ch | — |
+| task-name | tracker task name (`tracker create`: `naming make title`) | `<KEY> [Feature/Bug/Chore/Spike] <area>: <outcome>` (DUP-WORDS: nothing the key says twice) | 1l 100ch | — |
 | task-description | tracker task text (`tracker create -Spec`) | Problem, Goal, Items, Acceptance, Links | 200w each:6b | link |
 | comment-solution | solution comment on a task | "Comment spec" | 8l 120w | — |
 | comment-status | a status change note ("Comment spec") | `<status> — <why> · <link>` | 2l 40w | link |
@@ -45,6 +46,8 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | decisions | a task's Decisions checklist | `decide publish`: `<id> · <question> → <answer> · <by> <MM-dd>`, open unresolved | 80l 600ch | — |
 | decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
 | kit-report | supervise report, retro, lead notes, resume brief | `# <title>`, a `**Result:**` line, `##` sections, tables for like items | prose:400w 130ch | — |
+| retro | the /tidy retro (`render retro`) | ## Changed, ## Awaiting approval, ## Rejected | prose:400w 130ch | — |
+| runbook | an ops procedure (deploy, restore, rollback) | ## Purpose, ## Preconditions, ## Steps, ## Verify, ## Rollback | 800w 130ch | cmd |
 | final-report | an agent's last reply | the "Final reports" JSON of its role (`render final-report`) | 200w 25sw | link |
 | owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
 ## Wave brief

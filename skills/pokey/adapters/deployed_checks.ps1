@@ -230,7 +230,7 @@ function Get-BeatShared([string]$Key, [scriptblock]$Call) {
   $script:beatAnswer
 }
 function Invoke-Deployed {
-param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines, [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout); -TimeoutSec: past it the MRs left are UNKNOWN (the first is always checked)
+param([Parameter(Mandatory)][Alias('Mr')][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines, [Alias('TimeoutSeconds')][int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout); -TimeoutSec: past it the MRs left are UNKNOWN (the first is always checked)
 $ErrorActionPreference = 'SilentlyContinue'
 
 $repos = @(Get-KitValue 'repos' @())

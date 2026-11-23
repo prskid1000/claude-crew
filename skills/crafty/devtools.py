@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L377 process · L586 git host · L659 scope · L751 MR · L946 merge · L1277 docs ·
-  L1440 publish · L1913 render · L2356 spec · L2687 plugins · L2701 keepboth · L2720 selftest · L3408 CLI
+Sections: L55 config · L110 run · L198 tracker · L387 process · L596 git host · L669 scope · L761 MR · L956 merge · L1287 docs ·
+  L1450 publish · L1945 render · L2434 spec · L2765 plugins · L2779 keepboth · L2798 selftest · L3486 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -346,6 +346,16 @@ def prose_limits(kind):
     except Exception:   # a broken standards table must not block a write that passes
         return ''
     return f'{kind}: {s.get("format") or "-"} · limits {s.get("limits") or "-"}' if s else ''
+
+
+def doc_section_gaps(kind, body):
+    """A doc kind's listed `##` sections (templates.md "Writing standards"): missing, out of order, empty or a bare 'none' -> findings."""
+    try:
+        from kitbag import writing_standards, section_gaps, prose_parts
+        spec = writing_standards(KIT_DIR)[0].get({'brief': 'wave-brief'}.get(kind, kind))
+    except Exception:   # a broken standards table must not block a publish that passes
+        return []
+    return section_gaps(spec, prose_parts(body)[1]) if spec else []
 
 
 def prose_gate(kind, text):
@@ -1808,6 +1818,8 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None, run_id
         key, kind, run = f'{scope}:qa-report', 'qa-report', None
     if kind in ('testing-doc', 'testing-ai') and run is None:
         _check_doc(kind, scope, path, body, [r['body'] for r in _pub_read(key).get('rounds') or []])
+    if path.lower().endswith('.md') and not PROSE_OK and (gaps := doc_section_gaps('qa-report' if run is not None else kind, body)):
+        raise SystemExit(f'{path}: {kind} sections (templates.md "Writing standards"): {"; ".join(gaps)}. Nothing was published.')
     bare = bare_evidence([(i, (c or {}).get('result'), (c or {}).get('evidence')) for i, c in (run or {}).items()])
     if bare:
         print(f'[publish] {key}: run row(s) {", ".join(bare)} have a Result but no Evidence link or inline image', file=sys.stderr)
@@ -1838,10 +1850,30 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None, run_id
             pass   # same text again (finish after the last loop round): no new round
         else:
             rounds = (rounds if (mode or PUB_KINDS.get(kind, 'replace')) == 'append' else []) + [new]
-        url = _render(key, rec, rec.get('title') or title, rounds, runs, parent)
-        _pub_write(key, {**rec, 'key': key, 'title': rec.get('title') or title, 'url': url, 'type': REPORT_TYPE,
+        old = rec.get('rounds') or []   # v<n>: +1 per new text, never for the same text again
+        ver = int(rec.get('ver') or len(old)) + (1 if rounds and rounds[-1] is new and (not old or old[-1].get('body') != body) else 0)
+        title = doc_title(scope, kind, rec.get('title') or title, max(ver, 1))
+        url = _render(key, rec, title, rounds, runs, parent)
+        _pub_write(key, {**rec, 'key': key, 'title': title, 'ver': max(ver, 1), 'url': url, 'type': REPORT_TYPE,
                          'updated': new['at'], 'rounds': rounds, 'runs': runs})
     return url
+
+
+DOC_KIND_NAMES = {'testing-goals': 'Testing goals', 'testing-doc': 'Testing doc', 'testing-ai': 'Testing doc (AI)', 'qa-report': 'QA report',
+                  'spec': 'Spec', 'brief': 'Brief', 'retro': 'Retro', 'runbook': 'Runbook'}
+
+
+def doc_title(scope, kind, title, ver):
+    """A keyed task's doc (naming on): `<KEY> <Kind> v<n> — <outcome>` (kitbag.py naming make doc), the outcome from the task name;
+    else the given title (old style: accepted one version, warned)."""
+    k = task_key(scope)
+    if not k:
+        if naming_on() and not re.match(KEY_RX, str(title)):
+            print(f'[publish] {scope}:{kind}: no kit key on {scope}: old-style title {title!r} kept (one version; tracker create keys new tasks)', file=sys.stderr)
+        return title
+    nm = re.sub(r'\s*\(was [^)]*\)\s*$', '', _KEYS.get(f'name:{scope}', ''))
+    out = nm.split(': ', 1)[1] if re.match(KEY_RX, nm) and ': ' in nm else re.sub(rf'^\S+ v\d+ — ', '', str(title))
+    return naming().make('doc', {'key': k, 'kind': DOC_KIND_NAMES.get(kind, kind.replace('-', ' ').capitalize()), 'ver': ver, 'title': out})
 
 
 def _render(key, rec, title, rounds, runs, parent=None):
@@ -2020,14 +2052,14 @@ def render_cases(c, kind, tid=''):
         return '\n\n'.join([f'# Testing goals: {head}', f'Change: {c.get("change", "")}. Repos/MRs: {_cell(c.get("repos", ""))}. Local env: {c.get("env", "none")}, services {_cell(c.get("services", "none"))}.',
                           '## Goals (what must be true)', 'Before merge (each human check; Q = a stated quality, measured):',
                           _table(['#', 'Goal', 'How checked', 'Pass rule', 'Result'], goals), '## Test plan (automated)']
-                         + [f'- {k}: {_cell(v)}' for k, v in plan.items()] + ['## Data needed', c.get('data') or 'none', '## Reproduction (bugs)', c.get('repro') or 'not a bug',
+                         + ([f'- {k}: {_cell(v)}' for k, v in plan.items() if v] or ['n/a — no automated test planned']) + ['## Data needed', c.get('data') or 'n/a — no test data needed', '## Reproduction (bugs)', c.get('repro') or 'n/a — not a bug',
                          '## Rounds', _table(['Round', 'What failed', 'Fix'], [[r.get('round'), r.get('bugs') or 'none', r.get('fix') or ''] for r in rnd])]) + '\n'
     if kind == 'ai':
         rows = [[f'{x["id"]} ({x["check"]})' if x.get('check') else x['id'], x.get('type'), x.get('steps', ''), x.get('expected', '') + _sids(x), x.get('result') or '',
                  _ev(x['id'], x.get('evidence'))] for x in cases]
-        return '\n\n'.join([f'# Testing doc (AI): {head}', f'Setup and cleanup: {c.get("setup") or "none"}.', 'Cases:',
+        return '\n\n'.join([f'# Testing doc (AI): {head}', f'Setup and cleanup: {c.get("setup") or "n/a — no setup"}.', 'Cases:',
                           _table(['#', 'Type', 'Steps / API call + payload', 'Expected', 'Result', 'Evidence'], rows)]
-                         + ([f'Matrix: {_cell(c["matrix"])}'] if c.get('matrix') else [])
+                         + [f'Matrix: {_cell(c["matrix"]) if c.get("matrix") else "n/a — no qa.matrix variant"}']
                          + ['Rounds (one per round, appended):', _table(['Round', 'Date', 'Cases run', 'Result', 'Bugs found', 'Fix commit', 'Retest'],
                             [[r.get(k, '') for k in ('round', 'date', 'cases', 'result', 'bugs', 'fix', 'retest')] for r in rnd])]) + '\n'
     if kind != 'human':
@@ -2040,12 +2072,12 @@ def render_cases(c, kind, tid=''):
     return '\n\n'.join([f'# Testing: {c.get("title", "")}', _table(['', ''], [['Tasks', c.get('tasks') or tid], ['Environment', c.get('environment') or ''],
                       ['Logins', c.get('logins') or ''], ['Test data', c.get('testData') or '']]), '## What changed', c.get('whatChanged') or c.get('change', ''),
                       '## Before you start / Feature switches'] + (['Set these first, restore them after:', _table(['Setting', 'Where', 'Value'],
-                      [[s.get('setting'), s.get('where', ''), s.get('value', '')] for s in sw])] if sw else ['none'])
+                      [[s.get('setting'), s.get('where', ''), s.get('value', '')] for s in sw])] if sw else ['n/a — no feature switch to set'])
                      + ['## Checks', ('Do each check in the app as a user would; a screenshot of what you see, every check; network or log JSON'
                         ' from that action only as extra evidence. "No UI trigger": check the visible effect it names.') if cfg('process.humanDocUiOnly', True) is not False
                         else 'Do each check as its steps say (UI or API); evidence for every check.']
                      + [f'{a}:\n\n' + _table(human_head(), r) for a, r in areas.items()]
-                     + ['## Out of scope'] + ([_table(['Item', 'Why'], [[o.get('item'), o.get('why', '')] for o in oos])] if oos else ['none'])
+                     + ['## Out of scope'] + ([_table(['Item', 'Why'], [[o.get('item'), o.get('why', '')] for o in oos])] if oos else ['n/a — nothing left out'])
                      + ['## Result (testers)', 'All checks pass -> close the task. A check of this change fails or could not be tested -> failedTesting with the'
                         ' check ids and why. A defect outside this change -> one [Bug] task under the original ask.']) + '\n'
 
@@ -2192,16 +2224,56 @@ def fmt_line(f, s):
     return re.sub(r'\x00(\d+)\x00', lambda m: keep[int(m.group(1))], out)
 
 
+_NAMING = []
+KEY_RX = r'([A-Z]{2,6}-[A-Z]{2,6}-\d{2,})(?:\.\d+)?(?=\s|$)'
+
+
+def naming():
+    """kitbag_naming.py (a kitbag plugin, with kitbag's names): make / clean / naming_cfg; None without the plugin (naming off)."""
+    p = os.path.join(KIT_DIR, 'skills', 'bossy', 'kitbag_naming.py')
+    if not _NAMING and not os.path.isfile(p):
+        return None
+    if not _NAMING:
+        import kitbag
+        sp = importlib.util.spec_from_file_location('kitbag_naming', p)
+        m = importlib.util.module_from_spec(sp)
+        m.__dict__.update({n: v for n, v in vars(kitbag).items() if not n.startswith('__')})
+        sp.loader.exec_module(m)
+        _NAMING.append(m)
+    return _NAMING[0]
+
+
+_KEYS = {}
+naming_on = lambda: bool((n := naming()) and n.naming_cfg()['areas'])
+
+
+def task_key(tid):
+    """A task's kit key (naming on): its spec's, else its tracker name's prefix; '' when none or naming is off."""
+    if not tid or not naming_on():
+        return ''
+    if tid not in _KEYS:
+        _KEYS[f'name:{tid}'] = nm = str(task(tid).get('name') or '')
+        _KEYS[tid] = ((state_read(task_file(tid)) or {}).get('spec') or {}).get('key') or ((m := re.match(KEY_RX, nm)) and m[1]) or ''
+    return _KEYS[tid]
+
+
 def render_title(s):
-    """MR / PR title: kit.local.json mrTitleFormat (templates.md kind mr-title)."""
-    return fmt_line(CFG.get('mrTitleFormat') or '{type}({scope}): {change} ({task})', s)
+    """MR / PR title: a keyed task (naming): `<type>(<scope>): <change> [<KEY>]` (kitbag.py naming make mr) unless mrTitleFormat
+    names {key}; else kit.local.json mrTitleFormat (templates.md kind mr-title)."""
+    k = str(s.get('key') or '') or task_key(s.get('task'))
+    fmt = CFG.get('mrTitleFormat') or ''
+    if k and '{key}' not in fmt:
+        return naming().make('mr', {'type': s.get('type'), 'scope': s.get('scope'), 'summary': s.get('change') or s.get('summary'), 'key': k})
+    return fmt_line(fmt or '{type}({scope}): {change} ({task})', {**s, 'key': k})
 
 
 def render_commit(s):
     """Commit message: commitFormat subject, a bullet per change, trailers (e.g. Co-Authored-By) after a blank line."""
     body = [f'- {c["text"]}' + (f' (`{c["technical"]}`)' if c.get('technical') else '') for c in s.get('changes') or [] if c.get('text')]
     body += [f'- Spec: {", ".join(map(str, _as_list(s["specIds"])))}'] if _as_list(s.get('specIds')) else []   # the S-ids this commit builds
-    return '\n'.join([fmt_line(CFG.get('commitFormat') or '{type}({scope}): {change}', s)] + ([''] + body if body else []) + ([''] + list(s['trailers']) if s.get('trailers') else [])) + '\n'
+    k = str(s.get('key') or '') or task_key(s.get('task'))   # naming: the MR title's form, <type>(<scope>): <change> [<KEY>]
+    subj = naming().make('mr', {**s, 'summary': s.get('change'), 'key': k}) if k and not CFG.get('commitFormat') else fmt_line(CFG.get('commitFormat') or '{type}({scope}): {change}', {**s, 'key': k})
+    return '\n'.join([subj] +([''] + body if body else []) + ([''] + list(s['trailers']) if s.get('trailers') else [])) + '\n'
 
 
 def render_mr_body(s):
@@ -2217,7 +2289,7 @@ def render_mr_body(s):
     risks = [f'- {r["text"]}' for r in s.get('risks') or [] if r.get('text')] + [f'- **Behaviour limits:** {s.get("limits") or "none"}', f'- **Needs after deploy:** {s.get("afterDeploy") or "none"}']
     sib = s.get('siblings') or []
     return '\n\n'.join(['## Summary', (f'[{t}]({url}) — ' if t and url else f'{t} — ' if t else '') + str(s.get('summary') or s.get('change') or ''),
-                        '## Changes', '\n'.join(f'- {c["text"]}' + (f' · **Technical:** `{c["technical"]}`' if c.get('technical') else '') for c in s.get('changes') or []) or '- none',
+                        '## Changes', '\n'.join(f'- {c["text"]}' + (f' · **Technical:** `{c["technical"]}`' if c.get('technical') else '') for c in s.get('changes') or []) or 'n/a — the spec lists no change',
                         '## How tested', _table(['Check', 'Result'], rows), '## Risks', '\n'.join(risks), '## Links',
                         (f'- **Sibling {mr_word()}s:** {", ".join(link_refs(x) for x in sib)} (merge order: producers first)' if sib else f'- **Sibling {mr_word()}s:** none')
                         + (f'\n- **Spec S-ids:** {", ".join(map(str, _as_list(s["specIds"])))}' + (f' (v{v})' if (v := spec_rec(t).get('version')) else '')
@@ -2302,7 +2374,7 @@ def render_report(s):
 def render_retro(s):
     """The /tidy retro report (kit-report) from the judge's lists: Changed, Awaiting approval, Rejected tables."""
     a, p, r = s.get('applied') or [], s.get('proposed') or [], s.get('rejected') or []
-    sec = lambda h, cols, keys, rows: [f'## {h}', _table(cols, [[x.get(k, '') for k in keys] for x in rows]) if rows else 'none']
+    sec = lambda h, cols, keys, rows: [f'## {h}', _table(cols, [[x.get(k, '') for k in keys] for x in rows]) if rows else f'n/a — nothing {h.lower()}']
     return '\n\n'.join([f'# Retro {s.get("date", "")}', f'**Result:** {len(a)} applied · {len(p)} awaiting approval · {len(r)} rejected']
                          + sec('Changed', ['Change', 'File', 'Digest count'], ('change', 'file', 'count'), a)
                          + sec('Awaiting approval', ['Proposal', 'Exact edit'], ('proposal', 'edit'), p)
@@ -2335,7 +2407,8 @@ def render_wave_brief(s):
         # the limits where devy reads first (retro 2026-11-22: 13 mr prose refusals)
         f'**MR limits** (`devtools.py mr` refuses over them; `kitbag.py prose --kind mr-body` first): {prose_limits("mr-title") or "mr-title"}; {prose_limits("mr-body") or "mr-body"}',
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
-        '## openQuestions', *(qs or ['none']), '## Findings (rechy)', 'none yet', '## Rule changes during the wave (newest last)']) + '\n'
+        '## openQuestions', *(qs or ['n/a — no open question']), '## Findings (rechy)', 'n/a — no spike yet (the Spike phase appends here)',
+        '## Rule changes during the wave (newest last)', 'n/a — none yet (appended during the wave)']) + '\n'
 
 
 def wave_files(s, brief_path):
@@ -2343,8 +2416,13 @@ def wave_files(s, brief_path):
     stem = os.path.splitext(brief_path)[0]
     con = '\n'.join([f'# Contracts: {s["name"]}', _table(['Field / endpoint', 'Type', 'Producer', 'Consumers', 'Merge / deploy order', 'Backward-compatible'],
                      [[str(c.get(k) or '') for k in ('name', 'type', 'producer', 'consumers', 'order')] + ['yes' if c.get('compatible') else 'no'] for c in s.get('contracts') or []])
-                     if s.get('contracts') else 'none', '## Rule changes during the wave (newest last)']) + '\n'
+                     if s.get('contracts') else 'n/a — nothing crosses areas', '## Rule changes during the wave (newest last)', 'n/a — none yet (appended during the wave)']) + '\n'
     keep = ('id', 'items', 'area', 'paths', 'note', 'kind', 'complex', 'model', 'effort', 'dependsOn', 'migrations', 'branch', 'branches', 'debate', 'task')   # buildy's agent keys
+    if not s.get('run') and (n := naming()):   # naming: buildy-<YYYYMMDD>-<nn>, once per brief (a re-render keeps its args' run)
+        old = ''
+        with contextlib.suppress(OSError, ValueError, AttributeError), open(f'{stem}.args.json', encoding='utf-8') as fh:
+            old = json.load(fh).get('run') or ''
+        s = {**s, 'run': old or n.next_id('buildy')}
     args = {'brief': brief_path.replace('\\', '/'), 'agents': [{k: a[k] for k in keep if a.get(k) not in (None, '', [], False)} for a in s['agents']],
             'mode': s.get('mode') or 'feature', 'mandate': s['mandate'], **({'task': s['task']} if s.get('task') else {}),
             **({'run': s['run']} if s.get('run') else {}),   # buildy reads `run`, never `name` (its args check refuses unknown keys)

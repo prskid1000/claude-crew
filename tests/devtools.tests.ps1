@@ -100,5 +100,15 @@ Expect "doc cases: a doc process.docs lacks is skipped, a listed one renders ($p
 $rjf = Join-Path (Kd) 'retro-bs.json'; [IO.File]::WriteAllText($rjf, '{"date":"2026-11-23","applied":[{"change":"c","file":"D:\work\tmp\x\new.ps1","count":1}],"rejected":[]}')
 $rjo = (& $py -X utf8 $DT render retro $rjf 2>&1 | Out-String)
 Expect "render retro: lone backslashes in the spec (a Windows path) are kept, not a JSON error ($($rjo.Trim() -replace '\s+', ' '))" ($rjo -match [regex]::Escape('D:\work\tmp\x\new.ps1') -and $rjo -notmatch 'Traceback|JSONDecodeError')
+# ---- A3: every listed section of a doc kind always present; empty -> `n/a — <why>` (renders), a gap refused (doc publish, prose)
+$a3 = Join-Path (Kd) 'a3'; New-Item -ItemType Directory -Force $a3 | Out-Null; $KB = Join-Path $k 'skills/bossy/kitbag.py'; Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty')
+$a3Rb = "# Runbook: restore`n`n## Purpose`nRestore the DB.`n`n## Preconditions`nnone`n`n## Steps`n1. ``pwsh restore.ps1```n`n## Verify`nRow count matches."
+Set-Content "$a3/rb.md" $a3Rb; $a3Bad = & $py -X utf8 $DT doc 'Restore' "$a3/rb.md" --key RB1:runbook 2>&1 | Out-String; $a3BadC = $LASTEXITCODE
+Set-Content "$a3/rb.md" ($a3Rb -replace 'none', 'n/a — no lock needed' -replace '$', "`n`n## Rollback`nn/a — read-only restore check"); $null = & $py -X utf8 $DT doc 'Restore' "$a3/rb.md" --key RB1:runbook 2>&1; $a3OkC = $LASTEXITCODE
+Set-JsonFile "$a3/retro.json" @{ date = '2026-11-23' }; & $py -X utf8 $DT render retro "$a3/retro.json" "$a3/retro.md" 2>$null | Out-Null
+$a3Qa = pwsh -NoProfile -Command ". '$Q' 6>`$null; (Build-QaReportMd -Title t -Code T2 -Item @{} -Res ([pscustomobject]@{ checks = @([pscustomobject]@{ id = 'C1'; result = 'PASS'; observed = 'ok' }) }) -Map @{ files = @{} } -Run @{} -Tester x -Date d) -join ""``n""" 2>$null | Out-String
+Set-Content "$a3/qa.md" $a3Qa; $a3Pr = foreach ($a3k in @(@('retro', 'retro.md'), @('qa-report', 'qa.md'))) { & $py -X utf8 $KB prose --kind $a3k[0] "$a3/$($a3k[1])" 2>&1 | Where-Object { $_ -match 'section' } }
+Expect "A3: a runbook missing ## Rollback and a bare 'none' refused ($a3BadC), complete published ($a3OkC); retro + QA report render every section ($($a3Pr -join ' | '))" ($a3BadC -ne 0 -and $a3Bad -match 'missing sections: ## Rollback' -and
+  $a3Bad -match "section ## Preconditions is 'none'" -and $a3OkC -eq 0 -and -not @($a3Pr).Count -and $a3Qa -match '## Failures in detail\s+n/a — no check failed' -and (Get-Content "$a3/retro.md" -Raw) -match '## Rejected\s+n/a — nothing rejected')
 Remove-TestKit $k
 Complete-Tests

@@ -21,7 +21,7 @@ $out = "Merge branch 'feature/long-branch-name-for-testing' into deploy/staging-
 Expect 'prose: merge-commit kind (no conv, no 72-char subject)' ($LASTEXITCODE -eq 0)
 $KT = Join-Path $src 'skills/bossy/kitbag.py'; $pf = Join-Path $k 'mr.md'
 function KtPy($code) { python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kitbag as k; $code" }   # kitbag internals
-"## Summary`nhttps://t.example.com/T-1 — keep the offset`n## Changes`n- ISO dates`n## How tested`n- tests ``ExportTest```n## Risks`n- none`n## Links`n- doc" | Set-Content $pf
+"## Summary`nhttps://t.example.com/T-1 — keep the offset`n## Changes`n- ISO dates`n## How tested`n- tests ``ExportTest```n## Risks`n- n/a — a date format only`n## Links`n- doc" | Set-Content $pf
 $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-shaped MR body passes' ($LASTEXITCODE -eq 0)
 "# Lead notes: r1`n**Result:** 2 in, 1 left out · target ``local```n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| P1 | flag ``x`` ON | ready |" | Set-Content $pf
 $tj = Get-Content (Join-Path $src 'workflows/tidy.js') -Raw

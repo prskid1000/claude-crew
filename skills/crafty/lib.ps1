@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L874 status · L1170 tracker · L1487 prior ·
-  L1503 ask bugs · L1689 git-host · L1876 kitlog · L1998 params · L2303 entry-scripts
+Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L878 status · L1175 tracker · L1492 prior ·
+  L1508 ask bugs · L1694 git-host · L1881 kitlog · L2003 params · L2308 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -117,11 +117,11 @@ function Read-KitTracking([switch]$Strict) {
   $t = @{ tasks = @{}; automerge = @{} }; $f = Get-KitPath tracking
   if (Test-Path -LiteralPath $f) {
     try { $old = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable; foreach ($s in 'tasks', 'automerge') { if ((Get-KitMember $old $s) -is [Collections.IDictionary]) { foreach ($k in @((Get-KitMember $old $s).Keys)) { (Get-KitMember $t $s)[$k] = (Get-KitMember $old $s)[$k] } } } }
-    catch { $m = "tracking: $f is not valid JSON ($_)"; if ($Strict) { Copy-Item $f "$f.bad-$(Get-Date -Format yyyyMMddHHmmss)" -Force; throw "$m - fix or remove it; not writing" }; Write-Warning $m }
+    catch { $m = "tracking: $f is not valid JSON ($_)"; if ($Strict) { Copy-Item $f "$f.bak-$(Get-KitStamp file)" -Force; throw "$m - fix or remove it; not writing" }; Write-Warning $m }
   }
   foreach ($g in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
     $x = Read-KitState $g.FullName
-    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict -and -not (Test-Path "$($g.FullName).bad-*")) { Copy-Item $g.FullName "$($g.FullName).bad-$(Get-Date -Format yyyyMMddHHmmss)" -Force; Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
+    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict -and -not (Test-Path "$($g.FullName).bak-*")) { Copy-Item $g.FullName "$($g.FullName).bak-$(Get-KitStamp file)" -Force; Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
   }
   $am = (Read-KitState (Get-KitPath automerge)).refs; if ($am -is [Collections.IDictionary]) { foreach ($k in @($am.Keys)) { $t.automerge[$k] = $am[$k] } }
   $t
@@ -808,6 +808,10 @@ function Resolve-Tool {
   $null
 }
 
+# one time format per use (kitbag.py kit_stamp): stored UTC ISO ms · file / dir name UTC yyyyMMdd-HHmmss (day: yyyyMMdd) · display local yyyy-MM-dd HH:mm
+function Get-KitStamp([ValidateSet('stored', 'file', 'day', 'display')][string]$Kind = 'stored', [datetime]$At = [datetime]::UtcNow) {
+  $u = $At.ToUniversalTime(); switch ($Kind) { 'stored' { $u.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'") } 'file' { $u.ToString('yyyyMMdd-HHmmss') } 'day' { $u.ToString('yyyyMMdd') } 'display' { $At.ToLocalTime().ToString('yyyy-MM-dd HH:mm') } }
+}
 function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
 
 # -WarnSkip: a check that could not run (no kitbag.py, no python, no JSON) warns instead of passing silently
@@ -902,6 +906,7 @@ function Get-KitRunState($Dir, $Records, $Events, [datetime]$Now = (Get-Date)) {
   if (Get-KitWorkflowStop $Dir $Records) { return 'stopped' }
   $q = ($Now - (Get-KitWorkflowLastWrite $Dir)).TotalMinutes; $sm = [double](Get-KitParam 'supervise.stuckMinutes')
   $open = @(Get-JournalRunning @($Events | Where-Object type -eq 'started') @($Events | Where-Object type -eq 'result' | ForEach-Object agentId)).Count
+  if (-not $open -and @($Events)[-1].type -eq 'result' -and @($Events | Where-Object { $_.type -eq 'started' -and "$($_.phase)" -eq 'Learn' }).Count) { return 'ended' }   # the harness writes no end event: Learn is the last phase
   if ($q -lt $sm) { 'running' } elseif ($open -and $q -lt 3 * $sm) { 'stuck' } else { 'stale' }
 }
 # supervise -AutoFix closes a stale run's record: no open step, and no live session or quiet 6x stuckMinutes (a CI or merge wait between steps)
@@ -1404,8 +1409,8 @@ function Get-TrackerOwner {
   $script:__trOwner = ([string]$o).Trim(); $script:__trOwner
 }
 # -NewTask '<why>' skips the duplicate check (logged); -Related: tasks the owner named this session
-function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related) {
-  $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask })   # no bare subtasks (owner, 2026-11-11)
+function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related, [string]$Area) {
+  $Name = Resolve-KitTaskName $Name $Parent $Area; $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask })   # no bare subtasks (owner, 2026-11-11)
   if ($gap.Count) { throw "tracker create refused: subtask '$Name' of $Parent lacks $($gap -join ', ') (templates.md task-description): crafty.ps1 tracker create -Spec <json> (crafty.ps1 ""task spec"")" }
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
   # under -Parent the check sees only siblings: the reason acks them
@@ -1547,7 +1552,7 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
     $s0 = & $put ([pscustomobject]@{ id = $null; description = '' })
     $t = try { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority } catch {   # owner rule: grow a related open task
       if ("$_" -match 'UNKNOWN: the duplicate check failed') { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask 'ask bug: duplicate check unavailable' }
-      elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid) -and (Test-KitBugCollector $b2)) { return & $put $b2 }
+      elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid) -and (Test-KitBugCollector $b2) -and (Test-KitSameArea $b2.name $Ask)) { return & $put $b2 }   # naming: never another area's collector
         New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask "ask bug: the related task $rid is closed or not a QA collector" } else { throw } }
     if ($t.id) { [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
   }
@@ -1651,7 +1656,7 @@ function Get-KitTaskDecisionRows([string]$Task) {
   foreach ($d in @(Read-KitLog decisions-log ([datetime]'2000-01-01')) + $files) {
     if (-not ($d.id -and $d.question) -or $d.kind -eq 'envfix' -or ("$($d.task)" -ne $Task -and "$($d.item)" -ne $Task)) { continue }
     $at = if ($d.answeredAt) { $d.answeredAt } else { $d.at }; if ($at -is [datetime]) { $at = $at.ToString('o') }   # JSON gives a DateTime: "$x" drops the fraction and offset
-    $rows["$($d.id)"] = [ordered]@{ id = "$($d.id)"; at = "$at"; question = "$($d.question)"; answer = "$($d.answer)"
+    $rows["$($d.id)"] = [ordered]@{ id = "$($d.id)"; at = "$at"; question = "$(if ($d.ask) { $d.ask } else { $d.question })"; answer = "$($d.answer)"
       by = "$($d.by)"; status = "$($d.status)"; supersedes = @($d.supersedes | Where-Object { $_ }) }
   }
   $live = @($files.id)   # a pending row whose record expired unanswered is no open question

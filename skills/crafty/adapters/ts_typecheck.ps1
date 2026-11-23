@@ -7,7 +7,7 @@ function Invoke-Typecheck([string]$TcCmd) {
   $top = git -C $st.dir rev-parse --show-toplevel 2>$null
   $top = if ($top) { [IO.Path]::GetFullPath("$top".Trim()) } else { $null }
   $Repo = Split-Path $(if ($top) { $top } else { $st.dir }) -Leaf
-  $log = Join-Path (Get-KitPath logs -Create) "typecheck-$Repo-$(Get-Date -Format yyyyMMdd-HHmmss).log"
+  $log = Join-Path (Get-KitPath logs -Create) "typecheck-$Repo-$(Get-KitStamp file).log"
   # 2 newest per repo kept (355 piled up); older after 1 h
   Get-ChildItem -LiteralPath (Split-Path $log) -Filter "typecheck-$Repo-*.log" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^typecheck-$([regex]::Escape($Repo))-\d{8}-\d{6}\.log$" } | Sort-Object Name -Descending | Select-Object -Skip 2 | Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-1) } | Remove-Item -Force -ErrorAction SilentlyContinue
   $proj = if ($TcCmd -match '\s-p\s+"?([^"\s]+)"?') { $Matches[1] } else { 'tsconfig.json' }

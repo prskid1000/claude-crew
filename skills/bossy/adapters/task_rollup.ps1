@@ -317,7 +317,7 @@ function Update-KitParentClose([string]$Parent, $Pt, $Rows, $Ro) {
   if (-not $Rows.Count -or @($Rows | Where-Object { -not $_.closed }).Count) { if ($Ro.closeHold) { Update-KitTaskIndex $Parent { param($y) $y.rollup.closeHold = '' } }; return @{ ask = $(if ($d.status -eq 'pending') { $ask }); note = '' } }
   if ($Ro.closeHold) { return @{ ask = ''; note = 'parent reopened: no close ask until a subtask reopens' } }   # a person reopened it: never closed again by the old answer
   if (-not $d) {
-    $o = Invoke-Decide ask -Run rollup -Agent coordinator -Item $Parent -Task $Parent -Gate close -Question "All $($Rows.Count) subtasks of $Parent are closed: close the parent?" -Options 'A: close the parent — every subtask is closed', 'B: keep it open — the answer says why' -Recommend A
+    $o = Invoke-Decide ask -Run rollup -Agent coordinator -Item $Parent -Task $Parent -Gate close -Context "every subtask is closed; the parent task stays open until a person says close" -Question "All $($Rows.Count) subtasks of $Parent are closed: close the parent?" -Options 'A: close the parent — every subtask is closed', 'B: keep it open — the answer says why' -Recommend A
     $nid = if ("$o" -match 'DECISION (\S+) pending') { $Matches[1] }; Update-KitTaskIndex $Parent { param($y) if ($y.rollup -isnot [Collections.IDictionary]) { $y.rollup = @{} }; $y.rollup.closeAsk = "$nid" }; return @{ ask = "$nid"; note = "parent: close asked ($nid)"; did = "close asked $nid" }
   }
   if ($d.status -ne 'answered') { return @{ ask = $ask; note = "parent: close asked ($ask)" } }

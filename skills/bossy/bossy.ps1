@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L234 budget · L264 launch · L507 recover · L594 pause · L605 resume · L672 program · L723 param ·
   L729 track · L1118 supervise · L1459 report · L1539 audit · L1599 storage · L1602 bugbrief · L1604 cleanup · L1691 learn ·
-  L1723 decide · L1891 debate · L1935 health · L2003 setup · L2098 guard-sendmessage
+  L1723 decide · L1890 debate · L1934 health · L2002 setup · L2097 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -757,7 +757,7 @@ function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.r
 # a cached track-run ATTENTION about missing testing docs / solution whose task moved on since (devtools.py finish promoted it)
 function Test-KitTrackLineStale([string]$Line) { $Line -match '^ATTENTION (?<t>\S+): .*no (solution/testing comment|testing-doc link)' -and (Test-TrackerStatus $(try { [string](Get-TrackerTask $Matches.t).status } catch { '' }) 'promoted', 'inTest', 'closed') }
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item', 'route')][string]$Action = 'show', [string]$Reason, [string]$From, [string]$To, [Alias('Items')][string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion, [switch]$Status, [switch]$All, [switch]$Apply)
+param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item', 'route')][string]$Action = 'show', [string]$Reason, [string]$From, [string]$To, [Alias('Items')][string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [Alias('Mr')][string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion, [switch]$Status, [switch]$All, [switch]$Apply)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # throw is swallowed under SilentlyContinue
@@ -1125,7 +1125,7 @@ function Get-KitLastSweepAt { $h = try { Read-KitText (Join-Path (Get-KitPath ca
   if ($ra) { [datetime]$ra } }
 function Get-KitDiskCoordAt([string]$File) { $cv = try { (Read-KitText $File | ConvertFrom-Json -AsHashtable).coordAt } catch { $null }; if ($cv -is [datetime]) { $cv.ToString('o') } else { "$cv" } }
 function Invoke-Supervise {
-param([string]$Session, [switch]$Json, [switch]$AutoFix, [switch]$Brief, [switch]$Takeover, [string]$Ack, [string]$Reason = '')
+param([string]$Session, [switch]$Json, [switch]$AutoFix, [switch]$Brief, [Alias('Resume')][switch]$Takeover, [string]$Ack, [string]$Reason = '')
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Ack) {   # flag hidden 24 h
   if ($Ack.Trim().Length -lt 20 -and -not (Test-KitAckWhole $Ack)) { "supervise -Ack: give the flag's start, 20+ characters, or a short flag's whole text (a short start would hide other problems)"; exit 2 }
@@ -1737,7 +1737,7 @@ function Invoke-Decide {
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
     [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
-    [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
+    [string]$Task, [Alias('Mr')][string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
     [string]$Gate = '',   # record: one of $kitGates; check -Id: a non-gate word is ignored
     [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use,
     [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish, [switch]$Propose, [string]$Approve, [string]$Revoke, [string]$Context)
@@ -1758,7 +1758,7 @@ function Invoke-Decide {
   $supIds = @(Split-KitList $Supersedes)
   switch ($Action) {
     'ask' {
-      if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." [-Recommend A] [-Fyi] [-Contracts <file>]'; exit 2 }
+      if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Context "today: <what happens now>" -Question "<q>" -Options "A: <label> — <its effect>","B: .." -Recommend A [-Fyi] [-Contracts <file>]'; exit 2 }
       $opts = @(Get-KitDecisionChoices @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) $Recommend)
       # the owner may not know the internals: today's behaviour + why, each option's effect, a recommendation (owner 2026-11-23)
       $miss = @(if ($Kind -eq 'decision') {
@@ -1766,8 +1766,7 @@ function Invoke-Decide {
           if ($opts.Count -lt 2) { 'two or more -Options' }
           if (@($opts | Where-Object { -not $_.description -and @("$($_.label)" -split '\s+').Count -lt 6 }).Count) { 'each option "<key>: <label> — <its effect on users / business / cost / risk, plain words>"' }
           if (-not $Recommend) { '-Recommend <key> (the default when the owner is not sure)' } })
-      # WARN until every caller passes them (then refused: kit to-do A5-REFUSE)
-      if ($miss.Count) { "WARN decide ask: missing $($miss -join '; '). Plain words; a technical term gets a one-line explanation." }
+      if ($miss.Count) { "decide ask refused: missing $($miss -join '; '). Plain words; a technical term gets a one-line explanation. Nothing was asked."; exit 2 }
       $shown = "$(if ($Context) { "Today: $($Context.Trim().TrimEnd('.')). " })$("$Question".Trim())$(if ($Kind -eq 'decision' -and $Recommend -and -not $Fyi) { " Not sure? The default is $Recommend." })"
       $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
       $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }

@@ -45,7 +45,7 @@ $null = Fin $c 'C1'
 Expect 'all pass (+ OUT_OF_SCOPE) -> closed' ((Rec $c 'C1').closed -and (Rec $c 'C1').outOfScope -eq 1 -and (Read-Text "$c/C1/report.md") -match 'OUT OF SCOPE 1')
 $rb = Read-Text "$b/B1/report.md"; $rc1 = Get-Content "$c/C1/report.md" -Raw
 Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observed only in the table' ($rb -match '\| \[details\]\(#c2--s\) \|' -and ([regex]::Matches($rb, 'o C2')).Count -eq 1 -and
-  $rc1 -notmatch '## Notes' -and ([regex]::Matches($rc1, 'o C2')).Count -eq 1)
+  $rc1 -match '## Notes\s+n/a — no re-test note or finding' -and ([regex]::Matches($rc1, 'o C2')).Count -eq 1)
 Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty/')   # the prose limits
 $pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = @(1..3 | ForEach-Object { , @("C$_", 'PASS_WITH_NOTE') }) })
 $rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; $rj.checks[1].observed = '(b) pre-existing overlap'; $rj.checks[2] | Add-Member verify 'no'; & $J $rj "$pl/P1/results.json"

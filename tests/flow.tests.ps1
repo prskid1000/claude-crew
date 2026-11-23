@@ -70,10 +70,7 @@ print('ref:', d._norm_ref('top/sub/web!5'), d._norm_ref('other/x!6'), d.followup
 '@)
 $fo = & $py -X utf8 $fy (Join-Path $k 'skills/crafty') 2>&1 | Out-String
 Expect "devtools: finish runs track run -Task for a tracked open task only; prior gate: a tracked task is no duplicate, an unknown one stops; group/repo!n = a configured repo, followups takes a ref ($fo)" ($fo -match 'finish: True' -and $fo -match 'prior: True' -and $fo -match "\('web', '5'\) \('other/x', '6'\)" -and $fo -match "\('mr\.update', '[\w/]*web', '7'\)")
-# pokey api: api GET /x binds the method; a second positional otherwise is an error, not a missing -Path
 $Q = Join-Path $k 'skills/pokey/pokey.ps1'
-$pa = Px $Q api GET '/x' -Target nosuch 2>&1 | Out-String; $pb = Px $Q api '/x' '/y' -Target nosuch 2>&1 | Out-String
-Expect "pokey api: <METHOD> <path> positional (reaches the targets file), a second path refused" ($pa -notmatch 'positional parameter|missing -Path' -and $pa -match 'targets\.local\.json' -and $pb -match "a second positional '/y'")
 # pokey seat claims and seats: live holders keep theirs, dead or unknown ones are taken over (moved from pokey.tests: its cap)
 & $J @{ qa = @{ lanes = @{ web = @{ kind = 'web' }; api = @{ kind = 'api' } } } } (Join-Path $k 'skills/crafty/kit.local.json')
 $sd = TkPath $k qa-seats; $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force (Join-Path $sd 'claims'), $crd, (Join-Path $sd 'seats') | Out-Null
@@ -114,7 +111,7 @@ $rec = Px $O decide record -Gate deploy -Item hx -Mrs 'api!8' -Question q -Answe
 $rid = if ($rec -match 'RECORDED (d-\S+)') { $Matches[1] }
 $wm = Px $O decide check -Gate deploy -Mrs 'grp/api!8' | Out-String; $null = Px $O decide check -Gate merge -Item hx; $c3 = $LASTEXITCODE
 $wu = Px $O decide check -Gate deploy -Id $rid -Use -Agent op1 | Out-String; $wv = Px $O decide check -Gate deploy -Item hx | Out-String; $c4 = $LASTEXITCODE
-$aid = (Px $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Close T1?' -Options 'A: close','B: keep' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
+$aid = (Px $O decide ask -Run w1 -Agent X1 -Item A2 -Context 'T1 is tested' -Question 'Close T1?' -Options 'A: close — testers stop on it','B: keep — it stays in test' -Recommend A | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
 $null = Px $O decide answer -Id $aid -Answer 'A, close it'; $wl = Px $O decide check -Gate close -Id $aid -Item A2 | Out-String; $null = Px $O decide check -Gate deploy -Id $aid; $c6 = $LASTEXITCODE
 $null = Px $O decide record -Gate deploy -Item hx -Question q -Answer y -Source chat -Agent opsy; $c7 = $LASTEXITCODE
 Expect 'decide record/check: none, an agent -By / -Agent refused; found by MR (group/repo!n too), gate-bound, used once; an answered ask by -Id + its item only' ("$c1$c2$c3$c4$c6$c7" -eq '121112' -and $nw -match 'NO-WORD' -and $rid -and (Get-Content $gcf -Raw) -match "$rid RECORDED" -and
@@ -162,7 +159,7 @@ Set-Content $lf "'[{""state"":""merged"",""target_branch"":""main"",""source_bra
 Expect 'prior gate: merged into target = fix round' ($p11 -match 'FOUND mr pr pr!7' -and $p11 -notmatch 'pr!6|TK-11-a|commit')
 $env:KIT_TRACKER_TYPE = 'none'; $crPath = Join-Path $k 'skills/crafty/crafty.ps1'; $dt = (Px $crPath tracker create -Key qa-fx-flow-163 -List L1 -Name 'Decide me' -Description 'd' | ConvertFrom-Json).id
 $null = pwsh -NoProfile -Command ". '$(Lib)'; Add-TrackerComment '$dt' ""Decisions``nship it"""   # a person's comment under the same heading
-$dAsk = { param($dq, $di) ((Px $O decide ask -Run w2 -Agent X5 -Item $di -Question $dq -Options 'A: s3','B: db' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1').Trim() }
+$dAsk = { param($dq, $di) ((Px $O decide ask -Run w2 -Agent X5 -Item $di -Context 'files sit on disk' -Question $dq -Options 'A: s3 — files move to S3','B: db — files go in the DB' -Recommend A | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1').Trim() }
 $da = & $dAsk 'Where? Long tail' $dt; $dn = Px $O decide answer -Id $da -Answer 'A: s3 (owner, 2026-11-10)' | Out-String; $d1 = Px $O decide publish -Task $dt | Out-String
 $db = & $dAsk 'Where? Long tail' $dt; $null = Px $O decide answer -Id $db -Answer 'B: db'; $null = & $dAsk 'Pending?' $dt
 $di = & $dAsk 'Item code?' 'A2'; $dx = Px $O decide answer -Id $di -Answer 'A' | Out-String

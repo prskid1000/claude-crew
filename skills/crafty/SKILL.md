@@ -32,7 +32,7 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D prior -Task <id> -Repo <repo>   # 0. FOUND: stop, tell the coordinator
 & $O board join -Agent <id> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress
-& $D wt lease -Repo <repo> -Branch <branch> -Agent <id> [-Target <t>] [-Scope '<globs>']; & $D wt sync -Dir <wt>   # 1. a pool slot (<wt> = its "worktree:" line), latest target
+& $D wt lease -Repo <repo> -Task <task> -Agent <id> [-Target <t>] [-Scope '<globs>']; & $D wt sync -Dir <wt>   # 1. a pool slot (<wt> = its "worktree:" line), latest target
 #   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it as the cases spec `repro`; no brief
 #      (a direct fix): impact first (callers, settings that enable it, rows hit, code of the deployed branch); gone -> stop, report
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)

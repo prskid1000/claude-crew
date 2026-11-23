@@ -225,7 +225,7 @@ function With-Env($vars, [scriptblock]$body) {
 function LogFile([string]$e, [string]$n) { Join-Path (Get-KitPath localenv-logs -Create) "$e-$n.log" }
 # a failed start's log, kept past the next start's rotation (last 3 per service; TODO-PARAM fixed default) -> "<cause line>. Log: <kept>"
 function Save-FailLog([string]$log, $release) {
-  $keep = $log -replace '\.log$', ".fail-$(ConvertTo-KitSlug $(if ($release) { $release } else { (Get-Date).ToString('yyyyMMdd-HHmmss') })).log"
+  $keep = $log -replace '\.log$', ".fail-$(ConvertTo-KitSlug $(if ($release) { $release } else { Get-KitStamp file })).log"
   $t = @(Get-Content -LiteralPath $log -Tail 2000 -ErrorAction SilentlyContinue); Copy-Item -LiteralPath $log $keep -Force -ErrorAction SilentlyContinue
   Get-ChildItem -LiteralPath (Split-Path $log) -Filter "$([IO.Path]::GetFileNameWithoutExtension($log)).fail-*.log" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force -ErrorAction SilentlyContinue
   $c = @($t | Where-Object { $_ -match '^\s*Caused by:' })[-1]; if (-not $c) { $c = @($t | Where-Object { $_ -match '\bERROR\b|Exception' })[0] }

@@ -7,7 +7,7 @@ unique / FK checks off); never clone + drop (that churned 12.9 GB of mysql.ibd f
   pwsh -NoProfile -File mysql-base-move.ps1                      dry run: checks + the plan + the switch-over steps (changes nothing)
   pwsh -NoProfile -File mysql-base-move.ps1 -Apply [-Replace] [-Only <schemas>]   copy, point the db_pool at the new port, verify, MB written;
     MYSQL_PWD from the env file; -Only = a trial with those schemas (no orphan check; use a scratch -Lanes and target port)
-  pwsh -NoProfile -File mysql-base-move.ps1 -Config [-Apply]     the kit.local.json edit (dry run prints it; -Apply writes, .bak-<date> kept)
+  pwsh -NoProfile -File mysql-base-move.ps1 -Config [-Apply]     the kit.local.json edit (dry run prints it; -Apply writes, .bak-<yyyyMMdd-HHmmss> kept)
   pwsh -NoProfile -File mysql-base-move.ps1 -Rename [-Apply|-Rollback]   every lane-scoped name (mysql dirs + inis, envy state, logs, run dirs, cmd files, lane env files) to <product>-<bird>, everything down; journal kept
 Targets `<env>:<port>` (next to the lane ports, never the service's). -Targets, -Bin, -Service, -AdminSchema, -RegistryTable, -PoolTable:
 unset = kit.local.json localEnv.baseMove {targets, bin, service, adminSchema, registryTable, poolTable}; -Bin else mysqld on PATH. Each keeps only its product's
@@ -134,7 +134,7 @@ if ($Config) {
   if (-not $Targets) { 'REFUSED: no targets: pass -Targets <env>:<port>,... or set localEnv.baseMove.targets'; exit 1 }
   $ch = Update-BaseMoveConfig $cfg $Targets $DonorPort $Lanes
   $ch | ForEach-Object { "config: $_" }
-  if ($Apply) { Copy-Item -LiteralPath $ConfigFile "$ConfigFile.bak-$(Get-Date -Format yyyyMMdd)" -Force; ($cfg | ConvertTo-Json -Depth 50) | Set-Content -LiteralPath $ConfigFile -Encoding utf8; "written: $ConfigFile" } else { 'dry run: -Config -Apply writes it' }
+  if ($Apply) { Copy-Item -LiteralPath $ConfigFile "$ConfigFile.bak-$([datetime]::UtcNow.ToString('yyyyMMdd-HHmmss'))" -Force; ($cfg | ConvertTo-Json -Depth 50) | Set-Content -LiteralPath $ConfigFile -Encoding utf8; "written: $ConfigFile" } else { 'dry run: -Config -Apply writes it' }
   exit 0
 }
 
@@ -163,7 +163,7 @@ if ($Rename -or $Rollback) {
       $rd = "$($m['oldDir'])/lane-ready.txt"; if (Test-Path -LiteralPath $rd) { (Get-Content -LiteralPath $rd -Raw).Replace($m['newDir'], $m['oldDir']).Replace($m['newIni'], $m['oldIni']) | Set-Content -LiteralPath $rd -NoNewline }
       "back: $($m['newDir']) -> $($m['oldDir'])"
     }
-    Remove-Item -LiteralPath $jf -Force; 'rollback done: restore kit.local.json from its .bak-<date> too'; exit 0
+    Remove-Item -LiteralPath $jf -Force; 'rollback done: restore kit.local.json from its .bak-<yyyyMMdd-HHmmss> too'; exit 0
   }
   $cfgR = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50; $envsR = $cfgR['localEnv']['envs']; $mysqlMoves = @(); $moves = @(); $badR = @()
   foreach ($id in @(Get-LaneIds $envsR)) {

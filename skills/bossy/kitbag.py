@@ -20,9 +20,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L38 paths · L128 state · L185 kitlog · L284 load · L739 lint · L1147 README graph · L1254 lint command · L1535 audit ·
-  L1683 registry · L2015 arch lint · L2288 prose · L2453 sections · L2583 budget · L2599 migrate · L2747 plugins ·
-  L2801 state lint · L2989 main
+Sections: L38 paths · L135 state · L192 kitlog · L291 load · L746 lint · L1154 README graph · L1261 lint command · L1542 audit ·
+  L1690 registry · L2022 arch lint · L2295 prose · L2475 sections · L2605 budget · L2621 migrate · L2769 plugins ·
+  L2826 state lint · L3014 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -38,6 +38,13 @@ if not os.environ.get('GIT_CONFIG_COUNT'):   # no auto maintenance per kit fetch
 # ---- paths: kit.example.json _paths
 with open(osp.join(KIT_DIR, 'skills', 'crafty', 'kit.example.json'), encoding='utf-8') as _f:
     MAP = json.load(_f)['_paths']
+
+def kit_stamp(kind='stored', t=None):
+    """One time format per use (lib.ps1 Get-KitStamp): stored UTC ISO ms · file UTC yyyyMMdd-HHmmss · day yyyyMMdd · display local yyyy-MM-dd HH:mm."""
+    t = t or datetime.datetime.now(datetime.timezone.utc)
+    u = t.astimezone(datetime.timezone.utc)
+    return {'stored': u.strftime('%Y-%m-%dT%H:%M:%S.') + f'{u.microsecond // 1000:03d}Z', 'file': u.strftime('%Y%m%d-%H%M%S'),
+            'day': u.strftime('%Y%m%d'), 'display': t.astimezone().strftime('%Y-%m-%d %H:%M')}[kind]
 
 def runtime_dir(kit=None):
     k, rt = kit or KIT_DIR, os.environ.get('CLAUDE_RUNTIME') or MAP['runtimeDir']   # a relative one: from the kit, never the cwd;
@@ -1279,7 +1286,7 @@ def cmd_lint(a):
         with open(flags['--json'], 'w', encoding='utf-8') as fh:
             json.dump([{'code': c, 'where': w, 'problem': m} for c, w, m in problems], fh, indent=1)
     warns = [] if '--summary' in flags else literal_warns(k, '--ratchet' in flags) + \
-        [p for p in arch_lint(k) if p[0] not in ARCH_COUNTED | {'ARCH-VOCAB'}]   # not counted (WARN; an error later)
+        [p for p in arch_lint(k) if p[0] not in ARCH_COUNTED | {'ARCH-VOCAB'}] + [p for h in WARN_HOOKS for p in h(k)]   # not counted (WARN; an error later)
     if '--summary' in flags:
         if problems:
             c, w, m = problems[0]
@@ -2372,15 +2379,7 @@ def prose_check(kind, text, spec, banned):
                     if words(s) > n:
                         out.append(f'{name}: a sentence of {words(s)} words (max {n}): {s.strip()[:60]}...')
                         break
-    want = re.findall(r'##\s+([^,#]+?)\s*(?:,|$)', spec['format'])
-    if want:
-        have = list(secs)
-        missing = [w for w in want if w not in have]
-        if missing:
-            out.append(f'missing sections: {", ".join("## " + w for w in missing)} (format: {spec["format"]})')
-        order = [w for w in have if w in want]
-        if not missing and order != want:
-            out.append(f'sections out of order: {" > ".join(order)} (format: {" > ".join(want)})')
+    out += section_gaps(spec, secs)
     for r in spec['required']:
         rx = commit_rx() if r == 'conv' else (locale_terms().get(r) or REQ_RX.get(r))
         if rx and not re.search(rx, text if r != 'conv' else (body[0] if body else ''), re.M):
@@ -2399,6 +2398,29 @@ def prose_check(kind, text, spec, banned):
         if mm:
             out.append(f'local path "{mm.group(0).strip()}": link the doc / MR URL instead, or leave it out')
     return out
+
+NA_BARE = re.compile(r'(?i)^\s*(?:[-*]\s*)?(?:none|n/?a|-|—|tbd|todo|nothing)\.?\s*$')
+
+
+def section_gaps(spec, secs):
+    """A doc's `##` sections vs its kind's format (templates.md "Writing standards"): every one present, in order, never empty or a
+    bare 'none' (A3: `n/a — <why>` when it does not apply)."""
+    want, out = re.findall(r'##\s+([^,#]+?)\s*(?:,|$)', spec['format']), []
+    if not want:
+        return out
+    have = list(secs)
+    missing = [w for w in want if w not in have]
+    if missing:
+        out.append(f'missing sections: {", ".join("## " + w for w in missing)} (format: {spec["format"]})')
+    order = [w for w in have if w in want]
+    if not missing and order != want:
+        out.append(f'sections out of order: {" > ".join(order)} (format: {" > ".join(want)})')
+    for w in [w for w in want if w in secs]:
+        body = [l for l in secs[w] if l.strip()]
+        if not body or (len(body) == 1 and NA_BARE.match(body[0])):
+            out.append(f'section ## {w} is {"empty" if not body else repr(body[0].strip())}: write it, or `n/a — <why it does not apply>`')
+    return out
+
 
 def env_change_rx():
     """A deployed-env change in a testing doc: a command of crafty/vocab.json envChangeCommands (the guard's list), or words that tell
@@ -2747,6 +2769,7 @@ def migrate_config(path):
 # ---- plugins: skills/bossy/kitbag_<name>.py modules add commands, audit verbs, args and lint hooks
 PLUGINS = {}      # command -> handler, from the plugins (skills/bossy/kitbag_<name>.py)
 LINT_HOOKS = []   # (kit, problems, flags) -> None: adds problems
+WARN_HOOKS = []   # (kit) -> [(code, where, msg)]: lint warnings, not counted
 
 def config_values(cfg, dotted):
     """Every value at a dotted path; `*` walks every key or list item."""
@@ -2797,6 +2820,8 @@ def load_plugins():
             ARGS[cmd] = (have[0] | switches, have[1] | valued, have[2])
         if 'lint_hook' in own:
             LINT_HOOKS.append(own['lint_hook'])
+        if 'warn_hook' in own:
+            WARN_HOOKS.append(own['warn_hook'])
 
 # ---- state lint: every file of skills/bossy/STATE.md "Inventory" (the schema registry)
 ISO_TIME = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$')

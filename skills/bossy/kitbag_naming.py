@@ -7,14 +7,16 @@
   python -X utf8 skills/bossy/kitbag.py naming scan [--json]                       # live names (tasks, docs, board, launches) vs the standard
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
   python -X utf8 skills/bossy/kitbag.py naming seed <PRODUCT-AREA> <n>          # after an applied rename: next key is n+1
-Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 [Feature] Shop — Catalogue: <outcome>`
+Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 [Feature] Catalogue: <outcome>`
  · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-20261123-01` · agent `devy-01` · area `area-CAT` (`-2`: a second one
    in a run) · lane `lane-01`
  · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-20261123-01`.
 PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code: name}); an unknown code or a key without
 one is refused. A tracker with native ids keeps them as the link; the kit key lives in the title prefix and a field.
+DUP-WORDS: a name never repeats what its key or type says (product, a leading area word, a [Type] tag, a repo list); make and
+rename strip them.
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L22 model
+Sections: L24 model · L80 no repeats
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -37,7 +39,7 @@ def patterns(cfg):
     key = rf'(?:{alt(cfg["products"])})-(?:{alt(cfg["areas"])})-\d{{{cfg["digits"]},}}'
     ty, slug = '|'.join(TYPES), r'[a-z0-9]+(?:-[a-z0-9]+)*'
     return {'key': rf'^{key}$', 'item': rf'^{key}\.\d+ {slug}$', 'case': rf'^{key}-TC\d{{2,}}$',
-            'title': rf'^{key}(?:\.\d+)? \[(?:{"|".join(TITLE_TYPES)})\] \S.* — \S.*: \S.*$',
+            'title': rf'^{key}(?:\.\d+)? \[(?:{"|".join(TITLE_TYPES)})\] [^:]+: \S.*$',
             'doc': rf'^{key}(?:\.\d+)? (?:{"|".join(map(re.escape, DOC_KINDS))}) v\d+ — \S.*$',
             'run': r'^[a-z]+(?:-[a-z]+)*-\d{8}-\d{2,}$', 'id': r'^[a-z]+-\d{8}-\d{2,}$', 'agent': r'^[a-z]+-\d{2,}$',
             'area': rf'^area-(?:{alt(cfg["areas"])})(?:-\d+)?$', 'lane': r'^lane-\d{2,}$',
@@ -51,7 +53,7 @@ def name_problem(kind, name, cfg=None):
     if rx is None:
         return f'unknown kind {kind!r} ({", ".join(patterns(cfg))})'
     if re.match(rx, name):
-        return ''
+        return dup_words(kind, name, cfg)
     m = re.search(r'\b([A-Z]{2,6})-([A-Z]{2,6})-\d+', name)
     need = cfg['areas'] if kind == 'area' else cfg['products'] and cfg['areas']   # an area name needs only the areas
     if kind in ('key', 'item', 'case', 'title', 'doc', 'branch', 'mr', 'area') and not need:
@@ -66,7 +68,7 @@ def name_problem(kind, name, cfg=None):
 
 
 EXAMPLES = {'key': 'SHOP-CAT-004', 'item': 'SHOP-CAT-004.2 add-price-projection', 'case': 'SHOP-CAT-004-TC03',
-            'title': 'SHOP-CAT-004 [Feature] Shop — Catalogue: <outcome>', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
+            'title': 'SHOP-CAT-004 [Feature] Catalogue: <outcome>', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
             'run': 'buildy-20261123-01', 'id': 'dec-20261123-01', 'agent': 'devy-01', 'area': 'area-CAT', 'lane': 'lane-01',
             'branch': 'feat/SHOP-CAT-004-public-catalogue', 'mr': 'feat(web): <summary> [SHOP-CAT-004]'}
 
@@ -75,18 +77,91 @@ def slugify(text, words=6):
     return '-'.join(re.findall(r'[a-z0-9]+', str(text).lower())[:words])
 
 
+# ---- no repeats: the key carries PRODUCT and AREA, the tag carries the type; a name never says them twice (owner, 2026-11-23)
+REPO_LIST = r'\s*\([a-z][\w.-]*(?:\s*,\s*[a-z][\w.-]*)*\)\s*$'   # a trailing "(api, web)": repos belong in the MR, not the name
+KIND_WORDS = {'feat': 'feature', 'fix': 'bug', 'feature': 'feat', 'bug': 'fix'}
+
+
+def carried(key, cfg, ty=''):
+    """(words said anywhere: product code + name; leading [(words, needs a ':' after)]: area code + name, the type; a multi-word
+    area name said anywhere) for a key. A work type word leads only as a label ("Bug: x"): "Bug report ..." is a noun."""
+    m = re.match(r'([A-Z]{2,6})-([A-Z]{2,6})-\d+', str(key or ''))
+    if not m:
+        return set(), [], []
+    words = lambda s: re.findall(r'[a-z0-9]+', str(s).lower())
+    ty = str(ty or '').lower()
+    an = words(cfg['areas'].get(m[2], ''))
+    lab = ty in KIND_WORDS or ty in (t.lower() for t in TITLE_TYPES + TYPES)
+    lead = [(an, False), ([m[2].lower()], False)] + [([w], False) for w in an if len(an) > 1 and len(w) > 3] + \
+        [(w, lab) for w in ([words(ty), [KIND_WORDS[ty]]] if ty in KIND_WORDS else [words(ty)] if ty else [])]
+    return {m[1].lower(), *words(cfg['products'].get(m[1], ''))}, [x for x in lead if x[0]], [an] if len(an) > 1 else []
+
+
+def clean(text, key, cfg, ty=''):
+    """<text> without what <key> / <ty> already says: product words anywhere, a leading area or type word, a type tag, a repo list."""
+    anywhere, lead, phrases = carried(key, cfg, ty)
+    t = re.sub(REPO_LIST, '', str(text or ''))
+    t = re.sub(rf'\[(?:{"|".join(TITLE_TYPES)})\]\s*', '', t, flags=re.I)
+    t = re.sub(r'\b[A-Z]{2,6}-[A-Z]{2,6}-\d+(?:\.\d+)?\b', '', t)   # the key itself
+    for ws in phrases:   # "Create customer via Ask Shop: ..." under area "Ask Shop" -> "Create customer: ..."
+        t = re.sub(r'(?i)(?:\s+(?:via|in|on|with|from|through|using))?\s*(?<![a-z0-9])' + r'[\s-]+'.join(map(re.escape, ws)) + r'(?![a-z0-9])', ' ', t)
+    for w in anywhere:
+        t, n = re.subn(rf'(?i)(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])', '', t)
+        t = re.sub(r'(?i)\s+(?:in|on|for|of|to|at)(?=\s*(?:\(was [^)]*\))?$)', '', t.rstrip()) if n else t   # "queue in RM" -> "queue"
+    t = re.sub(r'\s+([:;,)])', r'\1', re.sub(r'^[\s:;,—–-]+', '', re.sub(r'\s{2,}', ' ', t))).strip()
+    changed = True
+    while changed:   # leading carried words, in any order (Catalogue catalogue-blocks, Feature: ...)
+        changed = False
+        for ws, colon in lead:
+            sp = lambda w: re.escape(w[:-1] if w.endswith('s') and len(w) > 3 else w) + 's?'   # Accounts / Account
+            m = re.match(r'(?i)' + r'[\s:—–-]+'.join(map(sp, ws)) + (r'\s*:[\s—–-]*' if colon else r'(?![a-z0-9])[\s:;,—–-]*'), t)
+            if m and t[m.end():].strip():
+                t, changed = re.sub(r'(?i)^(?:for|of|on|about)\s+(?=\S)', '', t[m.end():]), True   # "Spec of the page" -> "the page"
+    return t.strip()
+
+
+def dup_words(kind, name, cfg):
+    """'' or 'DUP-WORDS ...': the free text of a standard <name> repeats its product, area, type or repos."""
+    km = re.search(r'[A-Z]{2,6}-[A-Z]{2,6}-\d+', name)
+    if not km or kind not in ('title', 'doc', 'branch', 'mr', 'item'):
+        return ''
+    key = km[0]
+    if kind == 'title':
+        free, ty = name.split('] ', 1)[1], re.search(r'\[(\w+)\]', name)[1]
+        head, _, free = free.partition(': ')
+        if (a := cfg['areas'].get(key.split('-')[1], '')) and head.strip().lower() != a.lower():
+            return f'DUP-WORDS: "{head}" before ":" is the area name {a!r} only (the key carries the product)'
+    elif kind == 'doc':
+        ty, free = '', name.split(' — ', 1)[1]
+        ty = next((k for k in DOC_KINDS if name[len(key):].strip().startswith(k)), '')
+    elif kind == 'branch':
+        ty, free = name.split('/', 1)[0], name.split(key, 1)[1].replace('-', ' ')
+    elif kind == 'mr':
+        ty, free = re.match(r'\w+', name)[0], re.sub(rf'\s*\[{key}\]$', '', name.split(': ', 1)[1])
+    else:
+        ty, free = '', name.split(' ', 1)[1].replace('-', ' ')
+    c = clean(free, key, cfg, ty)
+    if re.sub(r'\W+', ' ', c).strip().lower() != re.sub(r'\W+', ' ', free).strip().lower():
+        gone = [w for w in re.findall(r'[\w-]+', free) if w.lower() not in re.findall(r'[\w-]+', c.lower())]
+        return f'DUP-WORDS: repeats {" ".join(gone) or "a repo list"} (the key / type already say it): {c!r}'
+    return ''
+
+
 def make(kind, p, cfg=None):
-    """A name from its parts: title (key type product area outcome) · doc (key kind ver title) · branch (type key slug) · mr (type
-    scope summary key) · case (key n) · item (key m slug)."""
+    """A name from its parts, free text cleaned of what the key / type say: title (key type outcome; area from the key) · doc (key
+    kind ver title) · branch (type key slug tag?) · mr (type scope summary key) · case (key n) · item (key m slug)."""
     cfg = cfg or naming_cfg()
     g = lambda k, d='': str(p.get(k) or d)
-    prod = cfg['products'].get(g('product').upper(), g('product'))
-    area = cfg['areas'].get(g('area').upper(), g('area'))
-    out = {'title': lambda: f'{g("key")} [{g("type", "Feature")}] {prod} — {area}: {g("outcome")}',
-           'doc': lambda: f'{g("key")} {g("kind", "Spec")} v{g("ver", "1")} — {g("title")}',
-           'branch': lambda: f'{g("type", "feat")}/{g("key")}-{slugify(g("slug") or g("title"))}',
-           'mr': lambda: f'{g("type", "feat")}{"(" + g("scope") + ")" if g("scope") else ""}: {g("summary")} [{g("key")}]',
-           'case': lambda: f'{g("key")}-TC{int(g("n", "1")):02d}', 'item': lambda: f'{g("key")}.{g("m", "1")} {slugify(g("slug"))}'}
+    key = g('key')
+    ac = (key.split('-') + ['', ''])[1] or g('area').upper()
+    area = cfg['areas'].get(ac, g('area'))
+    cl = lambda t, ty='': clean(t, key, cfg, ty)
+    tag = slugify(g('tag'), 3)   # a tracker's native branch tag (CU-<id>): kept so its links and the kit's branch parsers still match
+    out = {'title': lambda: f'{key} [{g("type", "Feature")}] {area}: {cl(g("outcome"), g("type", "Feature"))}',
+           'doc': lambda: f'{key} {g("kind", "Spec")} v{g("ver", "1")} — {cl(g("title"), g("kind", "Spec"))}',
+           'branch': lambda: f'{g("type", "feat")}/{key}-' + '-'.join(x for x in (tag, slugify(cl(g("slug") or g("title"), g("type", "feat")))) if x),
+           'mr': lambda: f'{g("type", "feat")}{"(" + g("scope") + ")" if g("scope") else ""}: {cl(g("summary"), g("type", "feat"))} [{key}]',
+           'case': lambda: f'{key}-TC{int(g("n", "1")):02d}', 'item': lambda: f'{key}.{g("m", "1")} {slugify(cl(g("slug")))}'}
     if kind not in out:
         raise SystemExit(f'naming make: kind {kind!r} ({", ".join(out)})')
     return out[kind]()
@@ -136,19 +211,31 @@ def live_names(kit=None):
 
 def plan_rows(plan, cfg):
     """A rename plan: {product, area (default), products?, areas? (codes proposed for kit.local.json naming), start? {"SHOP-CAT": 3},
-    items: [{code, id, title, area?, type?, outcome?}]} -> rows old code -> new key / title (dry)."""
+    items: [{code, id, title, area?, type?, outcome?}]} -> rows old code -> new key / title (dry). A title already keyed keeps its key
+    (a re-run over renamed tasks); its words repeated from the key are a problem."""
     rows, seq = [], {}
     cfg = {**cfg, **{k: {**cfg[k], **{str(c).upper(): v for c, v in (plan.get(k) or {}).items()}} for k in ('products', 'areas')}}
     for it in plan.get('items') or []:
-        prod, area = str(it.get('product') or plan.get('product') or '').upper(), str(it.get('area') or plan.get('area') or '').upper()
+        old, code = str(it.get('title') or ''), str(it.get('code') or '')
+        km = re.match(r'([A-Z]{2,6})-([A-Z]{2,6})-(\d+)\s+(?:\[(\w+)\]\s*)?', old)
+        prod = str(it.get('product') or (km and km[1]) or plan.get('product') or '').upper()
+        area = str(it.get('area') or (km and km[2]) or plan.get('area') or '').upper()
         bad = [f'unknown PRODUCT {prod}'] if prod not in cfg['products'] else []
         bad += [f'unknown AREA {area}'] if area not in cfg['areas'] else []
-        base = int(plan.get('start', {}).get(f'{prod}-{area}', 0)) if isinstance(plan.get('start'), dict) else 0
-        seq[(prod, area)] = seq.get((prod, area), base) + 1
-        key = f'{prod}-{area}-{seq[(prod, area)]:0{cfg["digits"]}d}'
-        outcome = it.get('outcome') or re.sub(r'\s*\([\w ,.-]+\)\s*$', '', str(it.get('title') or '').split(f' {it.get("code")} ', 1)[-1]).strip()
-        title = make('title', {'key': key, 'type': it.get('type') or 'Feature', 'product': prod, 'area': area, 'outcome': outcome}, cfg)
-        rows.append({'old': it.get('code', ''), 'id': it.get('id', ''), 'oldTitle': it.get('title', ''), 'key': key, 'title': title, 'problems': bad})
+        if km:   # already renamed: same key, the outcome after "<area>: "
+            key, rest = km[0].split()[0], old[km.end():]
+            rest = rest.split(': ', 1)[1] if ': ' in rest else rest
+            bad += [f'old title {w}' for w in [name_problem('title', old, cfg)] if w.startswith('DUP-WORDS')]
+        else:
+            base = int(plan.get('start', {}).get(f'{prod}-{area}', 0)) if isinstance(plan.get('start'), dict) else 0
+            seq[(prod, area)] = seq.get((prod, area), base) + 1
+            key, rest = f'{prod}-{area}-{seq[(prod, area)]:0{cfg["digits"]}d}', old.split(f' {code} ', 1)[-1] if code else old
+        rest = re.sub(r'\s*\(was [^)]*\)\s*$', '', rest)
+        outcome = it.get('outcome') or re.sub(r'^\s*v\d+\s+', '', re.sub(REPO_LIST, '', rest)).strip()
+        ty = it.get('type') or (km and km[4]) or (re.match(rf'\s*\[({"|".join(TITLE_TYPES)})\]', old) or [None, 'Feature'])[1]
+        title = make('title', {'key': key, 'type': ty, 'outcome': outcome}, cfg)
+        title += f' (was {code})' if code and code != key else ''
+        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'problems': bad})
     return rows
 
 
@@ -225,6 +312,25 @@ def lint_hook(k, problems, flags):
         for code in (c.get(reg) or {}):
             if not re.match(r'^[A-Z]{2,6}$', str(code)):
                 problems.append(('NAME-CONFIG', 'kit.local.json', f'naming.{reg} code {code!r}: 2-6 capital letters'))
+
+
+FILE_RX = {'.py': r'^[a-z][a-z0-9_]*\.py$', '.ps1': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.tests)?\.ps1$', '.mjs': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.mjs$',
+           '.js': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.js$'}
+BAK_RX = re.compile(r'\.(?:bak|bad|orig|old|stale)(?:[-.]|$)', re.I)
+
+
+def warn_hook(k):
+    """NAME-FILE: a script name off its language's rule (py snake_case; ps1 / mjs / js kebab-case; renames: next version, each caller
+    with it). NAME-BACKUP: a backup beside the live config other than `<file>.bak-<yyyyMMdd-HHmmss>` (Get-KitStamp file)."""
+    out = [('NAME-FILE', f, f'{osp.basename(f)}: {"snake_case" if f.endswith(".py") else "kebab-case"} for {osp.splitext(f)[1]} files')
+           for f in k.files if re.match(r'(?:skills|workflows|tests)/', f) and osp.splitext(f)[1] in FILE_RX
+           and not re.match(FILE_RX[osp.splitext(f)[1]], osp.basename(f))]
+    for base in {k.dir, main_clone(k.dir)}:
+        for d in sorted(os.listdir(osp.join(base, 'skills'))) if osp.isdir(osp.join(base, 'skills')) else []:
+            sd = osp.join(base, 'skills', d)
+            out += [('NAME-BACKUP', f'skills/{d}/{n}', 'one backup form, <file>.bak-<yyyyMMdd-HHmmss> (Get-KitStamp file); or move it to .state/backups/')
+                    for n in sorted(os.listdir(sd)) if BAK_RX.search(n) and not re.search(r'\.bak-\d{8}-\d{6}$', n) and osp.isfile(osp.join(sd, n))]
+    return out
 
 
 COMMANDS = {'naming': cmd_naming}

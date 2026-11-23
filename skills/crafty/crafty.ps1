@@ -1,7 +1,8 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
  wt lease|release|pool|new|sync|commit|remove|status|list ...  worktrees (lease -Repo -Branch -Agent: a pool slot, release: back, pool [-Sync] [-Migrate]; deps linked, hooks run; commit -Spec <json> (devtools.py render commit) | -Message [-ProseOk '<why>'] [-AllowEmpty] [-Paths <p,..> (stages only them)]: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate;
-   new -Scope '<glob>,..' (brief agents[].paths): commit refuses files outside, -ScopeOk <decision id> = the owner's scope word)
+   new -Scope '<glob>,..' (brief agents[].paths): commit refuses files outside, -ScopeOk <decision id> = the owner's scope word;
+   new / lease -Task <id> without -Branch: a keyed task's branch, kitbag.py naming make branch)
  scope [-Mrs <refs> [-Json]] [-Days 7]  -Mrs: each MR's source / test files + OUT-OF-AREA vs its logged area; none: one WATCH line for MRs merged outside it
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force]  gated checks (e2e: the diff's specs only; -AllTests = whole suite;
@@ -17,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L33 wt · L325 stack · L424 gate · L758 check · L1076 pipes · L1138 guard · L2055 dir · L2065 checkpoint ·
-  L2097 prior · L2135 tracker · L2157 task spec · L2351 scope · L2399 host
+Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1078 pipes · L1140 guard · L2057 dir · L2067 checkpoint ·
+  L2099 prior · L2137 tracker · L2159 task spec · L2357 scope · L2405 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -42,7 +43,7 @@ function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep', 'lease', 'release', 'pool')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [string[]]$Paths, [switch]$AllowEmpty, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override,
+  [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [string[]]$Paths, [switch]$AllowEmpty, [string]$ProseOk, [Alias('Mr')][string]$Mrs, [string]$Task, [string]$Override,
   [string]$Scope, [string]$ScopeOk, [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json,
   [string]$Agent, [string]$Session, [int]$WaitMinutes = 60, [string]$Reason, [switch]$Migrate, [switch]$Sync
 )
@@ -150,7 +151,8 @@ function Set-WtDeps($path, $rp, $tg, $from) {
 
 switch ($Action) {
   'new' {
-    if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch -Target -Name' }
+    if (-not $Branch -and $Task) { $Branch = Get-KitTaskBranch $Task } elseif ($Task) { Test-KitTaskBranch $Task $Branch }   # naming make branch
+    if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch (or -Task: a keyed task names it) -Target -Name' }
     $Repo = Resolve-WtRepo $Repo
     if (($tx = Get-KitTaskTagRx) -and $Branch -match $tx -and (Get-KitPoolSize $Repo) -gt 0 -and -not $Override) { throw "wt new refused: $(Get-KitCheckoutName $Repo) has a worktree pool and $Branch is a task branch: & $($KitCmd.dev) wt lease -Repo $Repo -Branch $Branch -Agent <your id> (a free slot, kept warm); a dedicated worktree on purpose: -Override '<why>'" }
     if (-not $Root) { $Root = @($KitConf.WorktreeRoots)[0] }
@@ -1075,7 +1077,7 @@ exit 0
 
 # ---- pipes: wait for MR/PR pipelines (JSON)
 function Invoke-Pipes {
-param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run, [string]$Repo, [string]$Branch, [string]$Sha)   # -UntilMerged: a consumer waits for producers; -Sha: the branch run of that commit
+param([Alias('Mr')][string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run, [string]$Repo, [string]$Branch, [string]$Sha)   # -UntilMerged: a consumer waits for producers; -Sha: the branch run of that commit
 if ($Branch) { if (-not $Repo) { Stop-KitVerb 'pipes: -Branch needs -Repo <repo> (a deploy branch: its newest pipeline)' }; $Mrs = @("branch:$Repo@$Branch") }   # retro 1508: opsy waits on a deploy branch
 if (-not $Mrs) {   # a wt worktree: its branch's open MRs; else the tracked tasks' (-Run: its)
   $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
@@ -2168,7 +2170,8 @@ function Test-KitTaskSpec($Spec) {
 }
 # tracker.nameFormat ({prefix} {title} {kind} {code}); prefix = tracker.kindPrefixes[kind]; a typed known kind prefix ([Bug]) is swapped, another "[...]" stays
 function Get-KitSpecName($Spec) {
-  $t = "$($Spec.title)".Trim(); if (-not $Spec.kind) { return $t }
+  if ($Spec.key) { $nk = [hashtable]::new($Spec); $nk.Remove('key'); return (Format-KitKeyedName (Get-KitSpecName $nk) "$($Spec.key)") }   # naming: <KEY> [Type] <Area>: <outcome>
+  $t = (Remove-KitNameKey "$($Spec.title)").Trim(); if (-not $Spec.kind) { return $t }
   $nk = Get-KitNameKind $t
   if ($nk.rest -ne $t -and $nk.kind -ieq "$($Spec.kind)") { $t = $nk.rest } elseif ($t -match '^\[') { return $t }   # another kind typed: kept as written
   $v = @{ prefix = (Get-KitKindPrefix "$($Spec.kind)"); title = $t; kind = "$($Spec.kind)"; code = "$($Spec.code)" }
@@ -2206,6 +2209,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
     $dn = @(@($sp.items | Where-Object done | ForEach-Object { "$($_.code)" }) + @(if ($tx.itemsMrs -is [Collections.IDictionary]) { @($tx.itemsMrs.Values | ForEach-Object { $_ }) }) + @([regex]::Matches("$((Get-TrackerTask $Task).description)", '(?m)^- \[x\] (\S+) · ') | ForEach-Object { $_.Groups[1].Value }))
     $nk = @($Spec.items | ForEach-Object { "$($_.code)" }); $keep = @($sp.items | Where-Object { $_.code -and ("$($_.code)" -in $nk -or (-not $Force -and "$($_.code)" -in $dn)) }); foreach ($e in $keep) { if ("$($e.code)" -notin $nk) { $e.done = $true } }
     $drop = @($sp.items | Where-Object { $_.code -and $keep -notcontains $_ } | ForEach-Object { "$($_.code)" }); $sp.items = $keep }
+  Set-KitSpecKey $sp $Task   # a new task: <P>-<A>-000 until it passes the gates
   $gap = @(Test-KitTaskSpec $sp); if ($gap.Count) { throw "tracker spec refused: missing or wrong: $($gap -join '; ') (crafty.ps1 ""task spec"")" }
   $r = ConvertTo-KitTaskRender $sp $Task
   $dt = "`n`n$(@($r.decisions.text) -join "`n")"; $pf = @(if (-not $Spec.proseOk) { Test-KitProse -Kind task-description -Text "$($r.name)`n`n$($r.description)$dt" })
@@ -2215,6 +2219,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
   }
   if ($pf.Count) { throw "tracker spec refused: $($pf.Count) prose finding(s): $($pf -join '; ')" }
   if ($DryRun) { return $r }
+  if ("$($sp.key)" -like '*-000') { $sp.key = ''; Set-KitSpecKey $sp '' -Allocate; $r.name = Get-KitSpecName $sp }
   if ($Task) {   # kept from the live text: doc links the spec lacks, rollup sections
     Clear-TrackerMemo $Task; $cur = "$((Get-TrackerTask $Task).description)" -replace "`r`n", "`n"; $nd = $r.description
     $lbs = @(Get-KitProcessDocs | ForEach-Object label)
@@ -2257,7 +2262,7 @@ function Invoke-Tracker {
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json|NoParent|ReplaceItems|Force)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Tasks|Add|Signature|Spec|Back)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Tasks|Add|Signature|Spec|Back|Area|Product)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
     elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -NoParent -ReplaceItems -Force -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
@@ -2305,7 +2310,8 @@ function Invoke-Tracker {
     'render' { if (-not $__sp) { 'usage: tracker render -Spec <json>'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -DryRun) }
     'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> [-ReplaceItems [-Force]] (merged by key into the stored spec; -ReplaceItems: its items are the whole list)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id -ReplaceItems:([bool]$__trOpt.ReplaceItems) -Force:([bool]$__trOpt.Force)) }
     'create' {   # -Spec: rendered ("task spec"); free text only for a keyed QA / watch defect
-      if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
+      if ($__sp) { foreach ($__f in @(@('List', 'list'), @('Parent', 'parent'), @('Area', 'area'), @('Product', 'product'))) { if ($__trOpt[$__f[0]] -and -not $__sp[$__f[1]]) { $__sp[$__f[1]] = "$($__trOpt[$__f[0]])" } }   # command-line values fill the spec
+        __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
       $__specHint = 'tracker create -Spec <json> (crafty.ps1 "task spec": kind, title, problem, goal, items, acceptance, links)'
       if ("$($__trOpt.Key)" -notmatch '^(qa|watch)-') { "tracker create refused: every task the kit creates is rendered from a spec: $__specHint; free text only for a keyed QA / watch defect (-Key qa-<run> or watch-<env>-<signature>$(if ($__trOpt.Key) { "; '$($__trOpt.Key)' is neither" }))"; exit 1 }   # owner, 2026-11-15: a free-text [Bug] for merged MRs; 2026-11-16: a made-up key skipped the spec
       if ("$($__trOpt.Name)".Trim() -and -not (Test-KitKindName $__trOpt.Name)) { $__trOpt.Name = Format-KitBugName $__trOpt.Name }   # a keyed defect: the kit adds the configured bug prefix
@@ -2317,7 +2323,7 @@ function Invoke-Tracker {
         $null = Set-TrackerName $old.id $__trOpt.Name; $null = Set-TrackerDescription $old.id $__trOpt.Description
         __TrOut ([pscustomobject]@{ id = $old.id; url = (Get-TrackerUrl $old.id); reused = $true }); return
       }
-      $nt = New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority -NewTask $__trOpt.NewTask -Related @(Split-KitList $__trOpt.Related)
+      $nt = New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority -NewTask $__trOpt.NewTask -Related @(Split-KitList $__trOpt.Related) -Area ((@($__trOpt.Product, $__trOpt.Area) | Where-Object { $_ }) -join '-')
       if ($kf -and $nt.id) { Write-KitState $kf ([ordered]@{ key = $__trOpt.Key; id = $nt.id }) }
       __TrOut $nt
     }
@@ -2359,7 +2365,7 @@ function Get-KitScopeOutside([string[]]$Files, [string[]]$Globs) {   # no globs:
   @($Files | Where-Object { $f = $_; $_ -and -not @($rx | Where-Object { $f -cmatch $_ }).Count })
 }
 $script:KitTestPathRx = '(?i)(^|/)(tests?|__tests__|specs?|cypress|e2e|fixtures?)/|[._-](test|spec|cy)\.\w+$|Tests?\.\w+$|(^|/)test_[^/]+\.py$'
-function Invoke-Scope([string]$Mrs, [int]$Days = 7, [switch]$Json) {
+function Invoke-Scope([Alias('Mr')][string]$Mrs, [int]$Days = 7, [switch]$Json) {
   $now = Get-Date; $log = @(Read-KitLog scope-log $now.AddDays(-30)); $areas = [ordered]@{}; $seen = @{}
   foreach ($x in $log) { if ($x.event -eq 'area' -and $x.mr) { $areas["$($x.mr)"] = $x } elseif ($x.event -eq 'checked') { $seen["$($x.mr)"] = $x } }
   $crew = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).BaseName

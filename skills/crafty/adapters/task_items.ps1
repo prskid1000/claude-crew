@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task_rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L87 move · L130 status roles · L276 task text
+# Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -284,22 +284,75 @@ function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask) {
 # tracker.kindPrefixes (kind -> name prefix; bug: tracker.bugPrefix), tracker.nameFormat, tracker.taskTemplate: today's kit shapes by default
 function Get-KitKindPrefix([string]$Kind) {
   $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $p = if ($kp) { @((Get-KitProps $kp) | Where-Object { $_.Name -ieq $Kind } | ForEach-Object { "$($_.Value)" })[0] }
-  if ($p) { $p } elseif ($Kind -ieq 'bug') { [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]') } elseif ($Kind) { "[$Kind]" } else { '' }
+  if ($p) { $p } elseif ($Kind -ieq 'bug') { [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]') } elseif ($Kind) { "[$((Get-Culture).TextInfo.ToTitleCase($Kind.ToLower()))]" } else { '' }   # feature -> [Feature]
 }
 function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kindPrefixes)
   $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { (Get-KitProps $kp).Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
   $n = "$Name".TrimStart(); [bool]@($ks | Where-Object { $n.StartsWith((Get-KitKindPrefix $_), 'OrdinalIgnoreCase') }).Count
 }
-# a task name's kind and the rest: a configured prefix (tracker.kindPrefixes, bugPrefix), else a leading [Kind], else Feature
+# ---- naming: the kit key (kitbag.py naming, kit.local.json naming) at a name's start: <KEY> [Type] <Area>: <outcome>
+function Get-KitNameKey([string]$Name) { if ("$Name".TrimStart() -cmatch '^([A-Z]{2,6}-[A-Z]{2,6}-\d{2,})(?:\.\d+)?(?=\s|$)') { $Matches[1] } else { '' } }
+function Remove-KitNameKey([string]$Name) { "$Name".TrimStart() -creplace '^[A-Z]{2,6}-[A-Z]{2,6}-\d{2,}(?:\.\d+)?\s+', '' }
+function Test-KitNamingOn { [bool]@(Get-KitProps (Get-KitSetting 'naming.areas' $null)).Count }
+# kitbag.py naming <verb> ...: its last stdout line, or a throw with its refusal
+function Invoke-KitNaming([string[]]$Argv) {
+  $lec = $global:LASTEXITCODE; $o = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming @Argv 2>&1 | ForEach-Object { "$_" }); $rc = $global:LASTEXITCODE; $global:LASTEXITCODE = $lec
+  if ($rc) { throw "kitbag.py naming $($Argv -join ' '): $($o -join ' ')" }; "$($o[-1])".Trim()
+}
+# a key for a new task: its own, else allocated from Area ("AREA" or "PRODUCT-AREA") or the parent's key; product: given, the parent's, the
+# only one registered. '' when none can be derived (old-style name kept one version, with a warning)
+function Get-KitNewTaskKey([string]$Name, [string]$Parent, [string]$Area, [switch]$NoAllocate) {
+  if ($k = Get-KitNameKey $Name) { return $k }
+  $pk = if ($Parent -and $Parent -ne '-') { Get-KitNameKey "$((Get-TrackerTask $Parent).name)" }; $pp = @("$pk" -split '-')
+  $ar = @("$Area".ToUpper() -split '-' | Where-Object { $_ }); $prods = @((Get-KitProps (Get-KitSetting 'naming.products' $null)).Name)
+  $a = if ($ar.Count) { $ar[-1] } elseif ($pk) { $pp[1] }; $p = if ($ar.Count -gt 1) { $ar[0] } elseif ($pk) { $pp[0] } elseif ($prods.Count -eq 1) { $prods[0] }
+  if (-not ($a -and $p)) { [Console]::Error.WriteLine("WARNING: naming: '$Name' gets no key (pass the spec's area: one of $(@((Get-KitProps (Get-KitSetting 'naming.areas' $null)).Name) -join ' '), or a parent with a key); old-style names are accepted one version"); return '' }
+  if ($NoAllocate) { return "$p-$a-000" }   # a dry run: the counter is not used
+  Invoke-KitNaming @('next', 'key', $p, $a)
+}
+# <KEY> [Type] <Area>: <outcome> (kitbag.py naming make title: nothing the key or tag says twice); naming off or no key: the name as given
+function Format-KitKeyedName([string]$Name, [string]$Key) {
+  if (-not $Key) { return $Name }; $nk = Get-KitNameKind (Remove-KitNameKey $Name)
+  $ty = if ("$($nk.kind)" -in 'Feature', 'Bug', 'Chore', 'Spike') { (Get-Culture).TextInfo.ToTitleCase("$($nk.kind)".ToLower()) } else { 'Feature' }
+  Invoke-KitNaming @('make', 'title', "key=$Key", "type=$ty", "outcome=$($nk.rest)")
+}
+function Resolve-KitTaskName([string]$Name, [string]$Parent, [string]$Area) { if (-not (Test-KitNamingOn)) { return $Name }; Format-KitKeyedName $Name (Get-KitNewTaskKey $Name $Parent $Area) }
+# wt new / lease -Task without -Branch: <feat|fix>/<KEY>-<tracker tag>-<slug> (kitbag.py naming make branch; the tag keeps every
+# branch -> task parser and the tracker's own links working); a task without a key: throw (pass -Branch)
+function Get-KitTaskBranch([string]$Task) {
+  $nm = "$((Get-TrackerTask $Task).name)"; $ky = Get-KitNameKey $nm
+  if (-not $ky) { throw "wt: task $Task has no kit key in its name ('$nm'): pass -Branch, or key the task first (kitbag.py naming)" }
+  $nk = Get-KitNameKind $nm; $rest = $nk.rest -creplace '^[^:]+:\s*', '' -creplace '\s*\(was [^)]*\)\s*$', ''
+  Invoke-KitNaming @('make', 'branch', "key=$ky", "type=$(if ("$($nk.kind)" -ieq 'bug') { 'fix' } else { 'feat' })", "slug=$rest", "tag=$($KitConf.TrackerTag)$Task")
+}
+# an explicit -Branch of a keyed task off the standard: a warning (old-style names accepted one version)
+function Test-KitTaskBranch([string]$Task, [string]$Branch) {
+  if (-not ($Task -and (Test-KitNamingOn))) { return }; $ky = Get-KitNameKey "$((Get-TrackerTask $Task).name)"
+  if ($ky -and $Branch -cnotmatch "/$([regex]::Escape($ky))-") { [Console]::Error.WriteLine("WARNING: wt: branch '$Branch' of $ky is off the naming standard (<type>/$ky-<slug>; omit -Branch to get it): accepted one version") }
+}
+# naming on and the ask keyed: <Name> is in the ask's area (its key's AREA); naming off or an unkeyed ask: true
+function Test-KitSameArea([string]$Name, [string]$Ask) {
+  if (-not ((Test-KitNamingOn) -and $Ask -and $Ask -ne '-')) { return $true }; $ak = Get-KitNameKey "$((Get-TrackerTask $Ask).name)"
+  if (-not $ak) { return $true }; $nk = Get-KitNameKey $Name; [bool]($nk -and ($nk -split '-')[1] -ceq ($ak -split '-')[1])
+}
+# a spec's key: its own, the title's, the live task's (a hand-renamed one keeps it), else allocated on create (-Allocate)
+function Set-KitSpecKey($Spec, [string]$Task, [switch]$Allocate) {
+  if (-not (Test-KitNamingOn) -or $Spec.key) { return }
+  $tk = Get-KitNameKey "$($Spec.title)"   # create: a typed key only names PRODUCT-AREA; the counter gives the number (owner 2026-11-23)
+  $ar = if ($Spec.area) { (@($Spec.product, $Spec.area) | Where-Object { $_ }) -join '-' } elseif ($tk) { ($tk -split '-')[0..1] -join '-' }
+  $k = if ($Task) { Get-KitNameKey "$((Get-TrackerTask $Task).name)" } else { Get-KitNewTaskKey (Remove-KitNameKey "$($Spec.title)") "$($Spec.parent)" $ar -NoAllocate:(-not $Allocate) }
+  if ($k) { $Spec.key = $k }
+}
+# a task name's kind and the rest: a configured prefix (tracker.kindPrefixes, bugPrefix), else a leading [Kind], else Feature (a kit key first is skipped)
 function Get-KitNameKind([string]$Name) {
-  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $n = "$Name".TrimStart()
+  $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $n = Remove-KitNameKey $Name
   foreach ($k in @(@(if ($kp) { (Get-KitProps $kp).Name }) + 'Feature', 'Bug', 'Chore' | Select-Object -Unique)) { $p = Get-KitKindPrefix $k; if ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) { return [pscustomobject]@{ kind = $k; rest = $n.Substring($p.Length).Trim() } } }
   if ($n -match '^\[([^\]]+)\]\s*(.*)$') { [pscustomobject]@{ kind = $Matches[1]; rest = $Matches[2] } } else { [pscustomobject]@{ kind = 'Feature'; rest = $n } }
 }
 # a defect name under tracker.kindPrefixes.bug: a typed [Bug] / [Kind] prefix swapped for the configured one
-function Format-KitBugName([string]$Name) { $bp = Get-KitKindPrefix 'bug'; $n = "$Name".Trim(); if ($n.StartsWith($bp, 'OrdinalIgnoreCase')) { return $n }
-  $nk = Get-KitNameKind $n; $kp = Get-KitSetting 'tracker.kindPrefixes' $null; "$bp $(if ($nk.rest -ne $n -and $nk.kind -in @(@('Feature', 'Bug', 'Chore') + @(if ($kp) { (Get-KitProps $kp).Name }))) { $nk.rest } else { $n })".Trim() }   # a known kind's prefix swapped, [ui] kept
-function Test-KitBugName([string]$Name) { $p = Get-KitKindPrefix 'bug'; $n = "$Name".TrimStart(); ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) -or $n -match '^\W*Bug\]' }
+function Format-KitBugName([string]$Name) { $bp = Get-KitKindPrefix 'bug'; $ky = "$(Get-KitNameKey $Name) ".TrimStart(); $n = (Remove-KitNameKey $Name).Trim(); if ($n.StartsWith($bp, 'OrdinalIgnoreCase')) { return "$ky$n" }
+  $nk = Get-KitNameKind $n; $kp = Get-KitSetting 'tracker.kindPrefixes' $null; "$ky$bp $(if ($nk.rest -ne $n -and $nk.kind -in @(@('Feature', 'Bug', 'Chore') + @(if ($kp) { (Get-KitProps $kp).Name }))) { $nk.rest } else { $n })".Trim() }   # a known kind's prefix swapped, [ui] kept
+function Test-KitBugName([string]$Name) { $p = Get-KitKindPrefix 'bug'; $n = Remove-KitNameKey $Name; ($p -and $n.StartsWith($p, 'OrdinalIgnoreCase')) -or $n -match '^\W*Bug\]' }
 function Get-KitTaskTemplate {
   $t = @(Get-KitSetting 'tracker.taskTemplate' $null | Where-Object { $_ -and $_.label })
   if ($t.Count) { return $t }

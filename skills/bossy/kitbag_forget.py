@@ -13,7 +13,7 @@ config keys) are only proposed: --apply writes one batch and prints its decide a
 indexes and produced texts are only proposed. Each cut goes to <state>/forgotten/<kind>/<date>.md (`--restore <id>` puts it
 back); a kind's archive lives 7 days, doubled per restore up to 90, halved after a window with none; --purge deletes the rest.
 Exit codes: 0 fits / done · 1 still over cap, or a confirm refused · 2 usage error.
-Sections: L29 model · L74 items · L213 plan · L265 archive · L475 hooks
+Sections: L29 model · L74 items · L213 plan · L265 archive · L476 hooks
 """
 import ast, contextlib, datetime, hashlib, json, os, re, sys, time
 import os.path as osp
@@ -371,7 +371,8 @@ def _batch(p, xs, now):
     names = ', '.join(x['label'] for x in xs)[:200]
     who = kit_who().get('agent') or 'kitty'
     print(f'BATCH {b}: {len(xs)} feature(s) wait for the owner. Ask once: & <kit>/skills/bossy/bossy.ps1 decide ask -Agent {who} -Item forget-{b} '
-          f'-Question "Forget {len(xs)} unused feature(s) of {p["rel"] or p["path"]}: {names}?" -Options "yes: forget them (archived, restorable)","no: keep them"')
+          f'-Context "{p["rel"] or p["path"]} is over its cap; no call site uses them" -Question "Forget {len(xs)} unused feature(s): {names}?" '
+          '-Options "yes: forget them — archived and restorable, the file gets room","no: keep them — the file stays over its cap" -Recommend yes')
     print(f'then: python -X utf8 <kit>/skills/bossy/kitbag.py forget --confirm {b} --decision <id>')
 
 def confirm(b, did, now):

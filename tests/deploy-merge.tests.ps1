@@ -55,7 +55,7 @@ Expect "deploy merge texts follow deploy.mergeMethod: squash never says squash o
 $env:DM_HOST_LOG = $hostLog
 $o6 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Mrs 'shop!12' -Decision 'd-42' -WaitMinutes 1 2>&1 | Out-String
 $hl = if (Test-Path $hostLog) { Get-Content $hostLog -Raw } else { '' }; $depBr = @(git -C "$r/origin.git" for-each-ref --format='%(refname:short)' 'refs/heads/deploy/')
-Expect "deploy merge -Mr: deploy/st-<date> pushed, MR to staging with method merge and MRs + decision in the body, merged on green, staging never pushed ($($o6.Trim()) | $hl)" ($o6 -match 'merged deploy MR https://h\.example/g/shop/-/merge_requests/5' -and $depBr -match '^deploy/st-\d{12}$' -and $hl -match 'create deploy/st-\d{12} \| staging \| merge \| ' -and $hl -match 'shop!12' -and $hl -match 'Deploy decision: d-42' -and $hl -match 'merge 5 merge abc' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
+Expect "deploy merge -Mr: deploy/st-<date> pushed, MR to staging with method merge and MRs + decision in the body, merged on green, staging never pushed ($($o6.Trim()) | $hl)" ($o6 -match 'merged deploy MR https://h\.example/g/shop/-/merge_requests/5' -and $depBr -match '^deploy/st-\d{8}-\d{6}$' -and $hl -match 'create deploy/st-\d{8}-\d{6} \| staging \| merge \| ' -and $hl -match 'shop!12' -and $hl -match 'Deploy decision: d-42' -and $hl -match 'merge 5 merge abc' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
 Remove-Item Env:DM_HOST_LOG
 $o3 = pwsh @np $O deploy merge -To staging 2>&1 | Out-String
 Expect "deploy merge without -Repo: a clear error, no binding crash ($($o3.Trim()))" ($o3 -match 'deploy merge: -Repo missing' -and $o3 -notmatch 'Cannot bind')
