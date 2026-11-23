@@ -22,7 +22,19 @@ function __TrClickupToken {
 # comments: the CLI posts plain text (Markdown shows as typed) -> lib.ps1 ConvertTo-KitPlainText; descriptions render Markdown
 # adapter:tracker/clickup: clickup CLI
 Register-KitAdapter 'tracker' 'clickup' @{
-  'caps' = @{ checklist = $true; subtasks = $true; commentEdit = $true; commentDelete = $true; statuses = $true; move = $true; attach = $true }
+  'caps' = @{ checklist = $true; subtasks = $true; commentEdit = $true; commentDelete = $true; statuses = $true; move = $true; attach = $true; dependencies = $true; labels = $true }
+  # waits on (REST v2 dependency: task_id waits on depends_on); on = ids to add (missing only); returns what it waits on now
+  'dependencies' = { param($a)
+    $have = @(@((__TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--json'))).dependencies) | Where-Object { "$($_.task_id)" -eq $a.id } | ForEach-Object { "$($_.depends_on)" })
+    foreach ($on in @($a.on | Where-Object { $_ -and $_ -notin $have })) {
+      if ($__trDry) { Write-Host "DRYRUN: POST https://api.clickup.com/api/v2/task/$($a.id)/dependency depends_on=$on"; continue }
+      $o = @(Invoke-KitHttp 'POST' "https://api.clickup.com/api/v2/task/$($a.id)/dependency" @{ depends_on = $on } @{ Authorization = (__TrClickupToken) } 3>&1)
+      $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { throw "tracker (clickup) dependency $($a.id) -> ${on}: $($w[0].Message)" }; $have += $on }
+    $have }
+  # tags (lower case in ClickUp): REST v2 add tag to task
+  'labels' = { param($a) foreach ($l in @($a.add)) { $u = "https://api.clickup.com/api/v2/task/$($a.id)/tag/$([uri]::EscapeDataString("$l".ToLower()))"
+      if ($__trDry) { Write-Host "DRYRUN: POST $u"; continue }
+      $o = @(Invoke-KitHttp 'POST' $u @{} @{ Authorization = (__TrClickupToken) } 3>&1); $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { throw "tracker (clickup) tag ${l}: $($w[0].Message)" } } }
   'url' = { param($a) "https://app.clickup.com/t/$($a.id)" }
   'view' = { param($a)
     $j = __TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--json')); if (-not $j.id) { return }

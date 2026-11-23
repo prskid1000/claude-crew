@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 tests/host-rest.tests.ps1: the REST git hosts and CI (gitea, bitbucket, azure-devops, ci-jenkins) on recorded answers (Invoke-KitHttp
-mocked): one fixture table, one case per row, the call log reset per row.
+mocked): one fixture table, one case per row, the call log reset per row; then the tracker order verbs (dependencies, labels) of
+clickup, jira, gitlab, github on their own recorded answers.
 Usage: pwsh -NoProfile -File tests/host-rest.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -54,5 +55,28 @@ foreach ($row in $rows) {
  $ok = $false; try { $ok = [bool](& $row[1]) } catch { "  $($row[0]) error: $_" }
  if (-not $ok) { $fail++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) $($row[0])"
 }
+# order (owner 2026-11-23): dependencies (waits on; a known link never posted twice; returns the waits) + labels per adapter
+$env:JIRA_BASE_URL = 'https://j.test'; $env:JIRA_EMAIL = 'a@x'; $env:JIRA_API_TOKEN = 't'; $__trRepo = 'g/p'; $global:ordLog = [Collections.Generic.List[string]]::new(); $global:ordHttp = [Collections.Generic.List[string]]::new()
+foreach ($a in 'tracker_jira', 'gitlab', 'tracker_clickup') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
+function OrdFx($call) { $global:ordLog.Add($call); foreach ($k in $global:ordFx.Keys) { if ($call -match $k) { return $global:ordFx[$k] } }; throw "404 no fixture: $call" }
+function Invoke-RestMethod($Method, $Uri, $Headers, $TimeoutSec, $MaximumRetryCount, $RetryIntervalSec, $Body, $ContentType, $Form, $InFile) { $j = OrdFx "$Method $Uri $ContentType $(if ($Body) { [Text.Encoding]::UTF8.GetString($Body) })"; if ($j) { $j | ConvertFrom-Json } }
+foreach ($c in 'clickup', 'gh') { Set-Item "function:$c" { $global:LASTEXITCODE = 0; OrdFx "$($args -join ' ') " } }
+. (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/github.ps1')
+Set-Item 'function:glab' { $i = [array]::IndexOf($args, '--input'); $global:LASTEXITCODE = 0; OrdFx "$($args -join ' ') $(if ($i -ge 0) { gc $args[$i + 1] -Raw })" }
+function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Headers = @{}) { $hl = "$Method $Uri $($Body | ConvertTo-Json -Compress -Depth 10) $($Headers.Authorization)"; $global:ordHttp.Add($hl); $hj = try { OrdFx $hl } catch { $null }; if ($hj) { $hj | ConvertFrom-Json } else { @{ id = 'C9' } } }
+$ord = [ordered]@{}
+try { $env:CLICKUP_API_TOKEN = 'tk-test'; Initialize-KitTracker -Type clickup; $global:ordHttp.Clear(); $global:ordFx = [ordered]@{ 'task view C9 --json' = '{"id":"C9","dependencies":[{"task_id":"C9","depends_on":"C1"},{"task_id":"C7","depends_on":"C9"}]}' }
+  $ord.clickup = "$(@(__TrA 'dependencies' @{ id = 'C9'; on = @('C1', 'C2') }) -join ',')|$(__TrA 'labels' @{ id = 'C9'; add = @('Wave: v2 wave 1') })$($global:ordHttp -join ' ; ')" } catch { $ord.clickup = "error: $_" } finally { Remove-Item Env:CLICKUP_API_TOKEN -ErrorAction SilentlyContinue }
+try { Initialize-KitTracker -Type jira; $global:ordLog.Clear(); $global:ordFx = [ordered]@{ 'GET https://j.test/rest/api/3/issue/P-5\?fields=issuelinks' = '{"fields":{"issuelinks":[{"type":{"name":"Blocks"},"inwardIssue":{"key":"P-1"}},{"type":{"name":"Blocks"},"outwardIssue":{"key":"P-9"}}]}}'; 'POST https://j.test/rest/api/3/issueLink' = ''; 'PUT https://j.test/rest/api/3/issue/P-5 ' = '' }
+  $ord.jira = "$(@(__TrA 'dependencies' @{ id = 'P-5'; on = @('P-1', 'P-2') }) -join ',')|$(__TrA 'labels' @{ id = 'P-5'; add = @('Wave: v2 wave 1') })$($global:ordLog -join ' ; ')" } catch { $ord.jira = "error: $_" }
+try { Initialize-KitTracker -Type gitlab; $global:ordLog.Clear(); $global:ordFx = [ordered]@{ 'GET projects/g%2Fp/issues/5/links' = '[{"iid":1,"link_type":"is_blocked_by"},{"iid":9,"link_type":"blocks"}]'; 'POST projects/g%2Fp/issues/5/links' = '{}'; 'PUT projects/g%2Fp/issues/5 ' = '{"iid":5}' }
+  $ord.gitlab = "$(@(__TrA 'dependencies' @{ id = '5'; on = @('1', 'g/p#2') }) -join ',')|$(__TrA 'labels' @{ id = '5'; add = @('Wave: v2 wave 1') })$($global:ordLog -join ' ; ')" } catch { $ord.gitlab = "error: $_" }
+try { Initialize-KitTracker -Type github; $global:ordLog.Clear(); $global:ordFx = [ordered]@{ '^api repos/g/p/issues/5/dependencies/blocked_by $' ='[{"number":1}]'; 'api repos/g/p/issues/2 --jq .id' = '4402'; 'api -X POST repos/g/p/issues/5/dependencies/blocked_by -F issue_id=4402' = '{}'; '^label create' = ''; '^issue edit 5' = '' }
+  $ord.github = "$(@(__TrA 'dependencies' @{ id = '5'; on = @('1', '2') }) -join ',')|$(__TrA 'labels' @{ id = '5'; add = @('Wave: v2 wave 1') })$($global:ordLog -join ' ; ')" } catch { $ord.github = "error: $_" }
+$pass = $ord.clickup -match '^C1,C2\|' -and $ord.clickup -match 'POST https://api.clickup.com/api/v2/task/C9/dependency \{"depends_on":"C2"\} tk-test ; POST https://api.clickup.com/api/v2/task/C9/tag/wave%3A%20v2%20wave%201 ' -and $ord.clickup -notmatch '"depends_on":"C1"' -and
+  $ord.jira -match '^P-1,P-2\|' -and @([regex]::Matches($ord.jira, 'POST https://j.test/rest/api/3/issueLink')).Count -eq 1 -and $ord.jira -match '"inwardIssue":\{"key":"P-5"\}' -and $ord.jira -match '"outwardIssue":\{"key":"P-2"\}' -and $ord.jira -match '"add":"wave-v2-wave-1"' -and
+  $ord.gitlab -match '^1,2\|' -and @([regex]::Matches($ord.gitlab, 'POST projects/g%2Fp/issues/5/links')).Count -eq 1 -and $ord.gitlab -match '"target_issue_iid":"2"' -and $ord.gitlab -match '"link_type":"is_blocked_by"' -and $ord.gitlab -match '"add_labels":"Wave: v2 wave 1"' -and
+  $ord.github -match '^1,2\|' -and $ord.github -match 'issue_id=4402' -and $ord.github -match 'issue edit 5 -R g/p --add-label Wave: v2 wave 1'; if (-not $pass) { $fail++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker order: dependencies (waits on, a known link not posted again) and labels on clickup, jira, gitlab, github ($(@($ord.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' // '))"
 Remove-Item -Recurse -Force $script:KitRoot -ErrorAction SilentlyContinue
 exit [int]($fail -gt 0)

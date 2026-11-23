@@ -5,7 +5,7 @@
 function Save-CheckBuild([string]$Dir, [string]$Cmd, [datetime]$Start) {
   $top = "$(git -C $Dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $top -or @(git -C $top status --porcelain 2>$null).Count) { return }
   $tree = "$(git -C $top rev-parse 'HEAD^{tree}' 2>$null)".Trim(); if (-not $tree) { return }
-  Write-KitAtomic (Join-Path (Get-KitPath check-builds -Create) "$tree.json") ([ordered]@{ tree = $tree; dir = $Dir; rel = [IO.Path]::GetRelativePath($top, $Dir).Replace('\', '/'); cmd = $Cmd; start = $Start.ToString('o'); at = (Get-Date).ToString('o') } | ConvertTo-Json)
+  Write-KitAtomic (Join-Path (Get-KitPath check-builds -Create) "$tree.json") ([ordered]@{ tree = $tree; dir = $Dir; rel = [IO.Path]::GetRelativePath($top, $Dir).Replace('\', '/'); cmd = $Cmd; start = (Get-KitStamp stored $Start); at = (Get-KitStamp) } | ConvertTo-Json)
 }
 
 # ---- check stamps: per module dir, step + command -> the source key of its last pass; Invoke-Check skips an unchanged rerun
@@ -35,7 +35,7 @@ function Test-CheckStamp([string]$Dir, [string]$Slot, [switch]$Force) {
 function Save-CheckStamp([string]$Dir, [string]$Slot) {   # the newest 30 slots per dir
   if ($null -eq $script:CheckSrcKey) { $script:CheckSrcKey = "$(Get-CheckSourceKey $Dir)" }
   if (-not $script:CheckSrcKey) { return }
-  $h = Read-CheckStamps $Dir; $h[$Slot] = @{ key = $script:CheckSrcKey; at = (Get-Date).ToString('o') }
+  $h = Read-CheckStamps $Dir; $h[$Slot] = @{ key = $script:CheckSrcKey; at = (Get-KitStamp) }
   $keep = [ordered]@{}; foreach ($kv in @($h.GetEnumerator() | Sort-Object { "$($_.Value.at)" } -Descending | Select-Object -First 30)) { $keep[$kv.Key] = $kv.Value }
   Write-KitAtomic (Get-CheckStampFile $Dir) ($keep | ConvertTo-Json -Depth 4)
 }

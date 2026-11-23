@@ -102,5 +102,11 @@ Register-KitAdapter 'tracker' 'gitlab' @{
     $q = if (__TrIsClosed $a.status) { 'state=closed' } else { "state=opened&labels=$([uri]::EscapeDataString("$__trLp$($a.status)"))" }
     @(__TrGl 'GET' "projects/$([uri]::EscapeDataString((__TrRepoOf $a.list)))/issues?$q&per_page=100" $null) | Where-Object { $_ -and $_.iid } | ForEach-Object { __TrRow "$($_.iid)" ([string]$_.title) $a.status @($_.assignees | ForEach-Object { __TrWho $_.id $_.username }) }
   }
+  # waits on = an is_blocked_by issue link (blocking links: GitLab Premium; refused on Free -> the description line)
+  'dependencies' = { param($a) $r, $n = __TrRef $a.id
+    $have = @(@(__TrGl 'GET' (__TrGlPath $a.id '/links') $null) | Where-Object { "$($_.link_type)" -eq 'is_blocked_by' } | ForEach-Object { "$($_.iid)" })
+    foreach ($on in @($a.on | ForEach-Object { "$_" -replace '^.*#' } | Where-Object { $_ -and $_ -notin $have })) { $null = __TrGl 'POST' (__TrGlPath $a.id '/links') @{ target_project_id = $r; target_issue_iid = $on; link_type = 'is_blocked_by' }; $have += $on }
+    $have }
+  'labels' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id) @{ add_labels = (@($a.add) -join ',') } }
   'owner' = { param($a) [string](__TrGl 'GET' 'user' $null).username }
 }

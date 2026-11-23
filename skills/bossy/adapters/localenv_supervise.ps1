@@ -110,7 +110,7 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix, [string[]]$Known = @()) {
     $rf = Join-Path (Get-KitPath cache -Create) 'localenv-retries.json'; $tried = try { Get-Content $rf -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $tried) { $tried = @{} }
     $key = $L.path; foreach ($k0 in @($tried.Keys)) { if (((Get-Date) - [datetime]$tried[$k0]).TotalMinutes -ge (Get-KitParam 'localEnv.retryEveryMinutes')) { $tried.Remove($k0) } }   # once per log per window
     if ($up -and $AutoFix -and -not $tried[$key]) {
-      $tried[$key] = (Get-Date).ToString('o'); $tried | ConvertTo-Json | Set-Content $rf
+      $tried[$key] = (Get-KitStamp); $tried | ConvertTo-Json | Set-Content $rf
       $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'restart', '-Env', $ev.env, '-Services', $svc, '-Agent', 'supervise') ([math]::Min(120.0, (Left)))
       return [pscustomobject]@{ level = $(if ($r.code) { 'ACT' } else { 'INFO' }); what = "$(if ($r.code) { 'ERROR SPIKE' } else { 'auto-fixed' }): $where failed to start while $($L.dep) was down; it is up now: restarted once$(if ($r.code) { " - FAILED: $("$($r.out)".Trim())" })"; action = "& $($KitCmd.local) logs -Env $($ev.env) -Service $svc" }
     }
@@ -153,7 +153,7 @@ function Read-KitEnvStatus {
   if ($r.out) { return [pscustomobject]@{ code = 0; out = $r.out; err = ''; timedOut = $false } }
   if (-not $r.h) { return Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30.0, (Left))) }
   $le = Receive-KitExe $r.h ([math]::Min(30.0, (Left)))
-  if (-not $le.code -and -not $le.timedOut -and "$($le.out)".Trim()) { Write-KitAtomic (Join-Path (Get-KitPath cache -Create) 'localenv-status.json') (@{ key = $r.key; at = (Get-Date).ToString('o'); out = $le.out } | ConvertTo-Json -Compress) }
+  if (-not $le.code -and -not $le.timedOut -and "$($le.out)".Trim()) { Write-KitAtomic (Join-Path (Get-KitPath cache -Create) 'localenv-status.json') (@{ key = $r.key; at = (Get-KitStamp); out = $le.out } | ConvertTo-Json -Compress) }
   $le
 }
 function Get-KitSuperviseGuardLocalEnv([switch]$AutoFix) {
@@ -219,7 +219,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   }
   # no large writes (owner, 2026-11-18): a schema on an env's DB grown past data.maxRows / data.maxMB since its baseline (first
   # sight; reset by a shrink, a flag or 24 h) -> WATCH; sizes: a background envy.ps1 sql -Query schemaSizes (the engine's; the last run read)
-  $dcRows = [long](Get-KitParam 'data.maxRows'); $dcMB = [double](Get-KitParam 'data.maxMB'); $dcBaseH = [double](Get-KitParam 'localEnv.dataBaselineHours'); $dcAt = $now.ToString('o')
+  $dcRows = [long](Get-KitParam 'data.maxRows'); $dcMB = [double](Get-KitParam 'data.maxMB'); $dcBaseH = [double](Get-KitParam 'localEnv.dataBaselineHours'); $dcAt = (Get-KitStamp stored $now)
   # rows may be estimates (the engine's statistics), so a row flag also needs 1 MB more
   foreach ($dk in @($last.Keys | Where-Object { "$_" -like '*/data' })) { $seenEnv[$dk] = $last[$dk] }   # a beat with no sizes (busy, DB down) keeps baselines
   foreach ($ev in @($envs | Where-Object { $_.schemaSizes -and -not ($_.marks -and $_.marks.dbDown) })) {

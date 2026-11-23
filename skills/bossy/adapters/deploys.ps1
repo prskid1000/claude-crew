@@ -106,7 +106,7 @@ function Get-DeployedByAncestry([Alias('Mr')][string[]]$Mrs, $Repos, [string[]]$
 # ---- intest: promoted tasks live on a test env -> inTest
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
-param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @(), [int]$BudgetSec = -1)   # not $Mrs: pwsh names ignore case ($mrs below)
+param([switch]$Apply, [switch]$Quiet, [Alias('Item')][string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @(), [Alias('BudgetSeconds')][int]$BudgetSec = -1)   # not $Mrs: pwsh names ignore case ($mrs below)
 $ErrorActionPreference = 'SilentlyContinue'
 # bounded (-Mrs / -Task 50 s, else 240 s: one page fits an agent shell): named tasks first, the rest after 60% of it waits for a re-run; progress per task on stderr
 if ($BudgetSec -lt 0) { $BudgetSec = if ($FromMrs.Count -or $Task.Count) { 50 } else { 240 } }; $t0 = Get-Date
@@ -279,7 +279,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [switch]$Mr, [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300,
     [string]$Service, [int]$RecheckSeconds = 120, [switch]$Ungated,
-    [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
+    [switch]$Apply, [switch]$Quiet, [Alias('Item')][string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
   if ($Action -eq 'restart') {
     if (-not $Env) { 'usage: deploy restart -Env <target>[,<target>..] [-Service <a,b>] [-WaitMinutes 20] [-Ungated]'; exit 2 }
     Invoke-DeployRestart @(Split-KitList @($Env)) $Service $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 20 }) $RecheckSeconds -Ungated:$Ungated; return
@@ -630,11 +630,11 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       # heads of its repos' deploy branches unmoved since its last settled answer: no probe (D13: 111 host verbs a beat re-asked them)
       $rns = @(@($o.mrs) | ForEach-Object { ((Get-CanonMr (ConvertTo-MrRef "$_")) -split '!', 2)[0] } | Where-Object { $_ } | Sort-Object -Unique)
       $hs = Get-KitDeployHeads $rns; $hk = if ($rns.Count -and -not @($rns | Where-Object { -not $hs[$_] }).Count) { "$(@($o.mrs | Sort-Object) -join ',')|$(@($rns | ForEach-Object { "$_=$($hs[$_])" }) -join '|')" }   # its MR list too: a new MR is asked
-      if ($hk -and $o.liveSettled -and $o.liveHeads -eq $hk) { Set-KitTaskFields $o.task @{ liveCheckedAt = $now.ToString('o') }; continue }
+      if ($hk -and $o.liveSettled -and $o.liveHeads -eq $hk) { Set-KitTaskFields $o.task @{ liveCheckedAt = (Get-KitStamp stored $now) }; continue }
       $raw = @(Invoke-Bounded $KitCmd.qa @('deployed', '-Mrs', (@($o.mrs) -join ','), '-Json'))   # a background run: none yet (started now, still running) or failed = ask again next round
       if (($raw -join "`n").Trim() -notmatch '^[\[{]') { foreach ($w in @($raw -match '^WATCH ')) { & $flag 'WATCH' "deployed check $($o.task): $($w -replace '^WATCH ')" 'Supervise checks it again next round.' }; continue }
       $rows = @($raw | Out-String | ConvertFrom-Json)
-      $o.liveCheckedAt = $now.ToString('o')
+      $o.liveCheckedAt = (Get-KitStamp stored $now)
       $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -notin 'DEPLOYED', 'N/A' }).Count -and @($rows | Where-Object { $_.target -eq $t -and $_.state -eq 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
       $new = @($live | Where-Object { $_ -notin @($o.liveOn) })
       # these rows came from the run started last time (heads then: livePending); the run started now sees $hk
@@ -642,7 +642,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       if ($new.Count) { $fields.liveOn = @(@($o.liveOn) + $new | Where-Object { $_ } | Select-Object -Unique) }
       Set-KitTaskFields $o.task $fields
       if ($new.Count -and (Test-TrackerStatus $(try { (Get-TrackerTask $o.task).status } catch { '' }) 'closed')) { Set-KitTaskFields $o.task @{ qaCovered = @('closed') }; continue }
-      if ($new.Count) { Set-KitTaskFields $o.task @{ inTestDue = $now.ToString('o') } }
+      if ($new.Count) { Set-KitTaskFields $o.task @{ inTestDue = (Get-KitStamp stored $now) } }
     }
     # in test: opsy moves every promoted task after its deploy; the safety net (owner 2026-11-23): while no opsy is live, ALL promoted
     # tasks (tracked + trackerLists, whoever deployed) when a task went live or every deploy.inTestSweepMinutes; one background run
@@ -650,12 +650,12 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     $swf = Join-Path (Get-KitPath deploys -Create) 'intest-sweep.json'; $swAt = try { [datetime](Get-Content $swf -Raw | ConvertFrom-Json).at } catch { [datetime]::MinValue }
     $opsy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { ($_.type -eq 'opsy' -or "$($_.agent)" -match '^opsy') -and $_.status -ne 'left' -and (Test-KitHolder $_) -ne $false -and (-not $_.beat -or ($now - [datetime]$_.beat).TotalMinutes -lt (Get-KitParam 'deploy.opsyBeatMinutes')) }).Count
     $out = @(if (-not $opsy -and (($due.Count -and ($now - $swAt).TotalMinutes -ge (Get-KitParam 'deploy.inTestRetryMinutes')) -or ($now - $swAt).TotalMinutes -ge (Get-KitParam 'deploy.inTestSweepMinutes'))) {   # a due retry: at most every 10 min
-        Set-Content $swf (@{ at = $now.ToString('o') } | ConvertTo-Json -Compress) -Encoding utf8; foreach ($t1 in $due) { Set-KitTaskFields $t1 @{ inTestDue = $null } }
+        Set-Content $swf (@{ at = (Get-KitStamp stored $now) } | ConvertTo-Json -Compress) -Encoding utf8; foreach ($t1 in $due) { Set-KitTaskFields $t1 @{ inTestDue = $null } }
         Invoke-Bounded $KitCmd.orch @('deploy', 'intest', '-Apply') })
     foreach ($l2 in $out) {
       if ($l2 -match '^WATCH ') { & $flag 'WATCH' "deploy intest: $($l2 -replace '^WATCH ')" 'Supervise runs it again next round.'; continue }
       if ($l2 -match '^MARKED\s+(?<t>\S+)\s+in test \((?<l>[^|]*?)\)\s*(\||$)') { & $flag 'INFO' "auto-fixed: FIXED $($Matches.t): promoted -> in test, every MR live ($($Matches.l))" 'Tracker set to inTest; nothing to do.' }
-      elseif ($l2 -match '^ERROR (?<t>\S+)\s+(?<w>.*)') { Set-KitTaskFields $Matches.t @{ inTestDue = $now.ToString('o') }; & $flag 'WATCH' "STATUS $($Matches.t): every MR live, still promoted: $($Matches.w)" "& $($KitCmd.dev) tracker status $($Matches.t) inTest (supervise retries next round)" }
+      elseif ($l2 -match '^ERROR (?<t>\S+)\s+(?<w>.*)') { Set-KitTaskFields $Matches.t @{ inTestDue = (Get-KitStamp stored $now) }; & $flag 'WATCH' "STATUS $($Matches.t): every MR live, still promoted: $($Matches.w)" "& $($KitCmd.dev) tracker status $($Matches.t) inTest (supervise retries next round)" }
       elseif ($l2 -match '^WAIT\s+(?<t>\S+)\s+(?<w>[^|]*(not checked|timed out|UNKNOWN)[^|]*?)\s*(\||$)') { & $flag 'WATCH' "STATUS $($Matches.t): deployed state unknown: $($Matches.w)" 'Supervise checks it again next round; still unknown: & bossy.ps1 deploy intest -Task <id> shows the probe (opsy kind status).' }
     }
   }
@@ -664,7 +664,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     $cache = if (Test-Path $pc) { try { Get-Content $pc -Raw | ConvertFrom-Json } catch { $null } }
     $plan = $null; $asked = $null
     if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge (Get-KitParam 'deploy.planCacheMinutes')) {
-      $from = $cache.asked; $asked = $now.ToString('o')   # a background run: this call returns the plan started at the last ask and starts a fresh one
+      $from = $cache.asked; $asked = (Get-KitStamp stored $now)   # a background run: this call returns the plan started at the last ask and starts a fresh one
       $out = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')))
       # timed out, still running in the background or failed (no JSON): keep the last good plan, plan again next round
       try { if (($out -join "`n").Trim() -match '^[\[{]') { $plan = @($out | Out-String | ConvertFrom-Json -ErrorAction Stop | Where-Object { $_ }) } } catch { $plan = $null }
@@ -672,7 +672,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     }
     if ($null -ne $plan) {
       $mrsOf = [ordered]@{}; foreach ($p in @($plan | Where-Object { $_.status -in 'READY', 'ASK' -and $_.target })) { $mrsOf["$($p.target)"] = @(@($p.mrs) | ForEach-Object mr) }
-      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { $now.ToString('o') }); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object { $_.status -eq 'ASK' -and $_.target -and @($_.mrs).Count } | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }); mrsOf = [pscustomobject]$mrsOf; held = $cache.held
+      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { (Get-KitStamp stored $now) }); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object { $_.status -eq 'ASK' -and $_.target -and @($_.mrs).Count } | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }); mrsOf = [pscustomobject]$mrsOf; held = $cache.held
         outOfArea = @($plan | ForEach-Object { @($_.mrs) } | Where-Object { $_.outOfArea } | ForEach-Object { "$($_.mr) ($(@($_.outOfArea).Count) file(s) outside its area)" } | Select-Object -Unique) }
     }
     if ($asked -and $cache -and $null -eq $plan -and $cache.asked -and -not @($out -match '^WATCH ').Count) { $asked = $null }   # no output: the run of the last ask still goes, keep its time

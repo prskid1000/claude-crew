@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # github: GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L6 gh · L17 tracker · L75 git-host · L111 ci
+# Sections: L6 gh · L17 tracker · L82 git-host · L118 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -70,6 +70,13 @@ Register-KitAdapter 'tracker' 'github' @{
     $c += if (__TrIsClosed $a.status) { @('--state', 'closed') } else { @('--state', 'open', '--label', "$__trLp$($a.status)") }
     @(__TrJson (__GhCli $c)) | Where-Object { $_ -and $_.number } | ForEach-Object { __TrRow "$($_.number)" ([string]$_.title) $a.status @($_.assignees | ForEach-Object { __TrWho $_.login $_.login }) }
   }
+  # waits on = issue dependencies "blocked by" (REST; the blocker by its issue id); returns the numbers it waits on
+  'dependencies' = { param($a) $r, $n = __TrRef $a.id
+    $have = @(@(__TrJson (__GhCli @('api', "repos/$r/issues/$n/dependencies/blocked_by"))) | Where-Object { $_.number } | ForEach-Object { "$($_.number)" })
+    foreach ($on in @($a.on | ForEach-Object { "$_" -replace '^.*#' } | Where-Object { $_ -and $_ -notin $have })) {
+      $iid = "$(__GhCli @('api', "repos/$r/issues/$on", '--jq', '.id'))".Trim(); $null = __GhCli @('api', '-X', 'POST', "repos/$r/issues/$n/dependencies/blocked_by", '-F', "issue_id=$iid"); $have += $on }
+    $have }
+  'labels' = { param($a) $r, $n = __TrRef $a.id; foreach ($l in @($a.add)) { $null = __GhCli @('label', 'create', $l, '-R', $r, '--force', '--color', 'ededed'); $null = __GhCli @('issue', 'edit', $n, '-R', $r, '--add-label', $l) } }
   'owner' = { param($a) [string](__GhCli @('api', 'user', '--jq', '.login')) }
 }
 # ---- git-host: pull requests, repos, branch protection

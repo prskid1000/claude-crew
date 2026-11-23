@@ -8,7 +8,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force]  gated checks (e2e: the diff's specs only; -AllTests = whole suite;
    a pass on the same sources + command is not rerun, -Force reruns)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text kept in desc-backups), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text kept in desc-backups), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), order <parent> [-Apply <brief>.order.json] (waves, waits-on links, wave labels), list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
  pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch> [-Sha <commit>]  wait for MR pipelines, or a branch's newest one (of that commit) (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
@@ -19,7 +19,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2066 dir · L2076 checkpoint ·
-  L2110 prior · L2148 tracker · L2170 task spec · L2368 scope · L2416 host
+  L2115 prior · L2153 tracker · L2175 task spec · L2378 scope · L2426 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -43,7 +43,7 @@ function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep', 'lease', 'release', 'pool')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [string[]]$Paths, [switch]$AllowEmpty, [string]$ProseOk, [Alias('Mr')][string]$Mrs, [string]$Task, [string]$Override,
+  [string]$Dir, [Alias('Text')][string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [string[]]$Paths, [switch]$AllowEmpty, [string]$ProseOk, [Alias('Mr')][string]$Mrs, [Alias('Item')][string]$Task, [string]$Override,
   [string]$Scope, [string]$ScopeOk, [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json,
   [string]$Agent, [string]$Session, [int]$WaitMinutes = 60, [string]$Reason, [switch]$Migrate, [switch]$Sync
 )
@@ -684,8 +684,8 @@ while ((Get-Date) -lt $deadline) {
       Remove-Item $myTicket -ErrorAction SilentlyContinue; $waitSec = [int]((Get-Date) - $queuedAt).TotalSeconds
       Write-KitLog builds start ([ordered]@{ owner = $owner; kind = $kind; project = $project; needGB = $need; waitSec = $waitSec; availGB = $s.Avail; running = $s.Running })
       $entry = Join-Path $ledger "$($proc.Id).json"
-      Write-KitAtomic $entry (@{ pid = $proc.Id; start = (Get-KitPidStart $proc.Id); gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('o'); backfill = $smallFill } | ConvertTo-Json)
-      $buildLease = @{ agent = $owner; at = (Get-Date).ToString('o') }; Write-KitLeaseLog acquire build "$kind $(Split-Path $Dir -Leaf)" $buildLease
+      Write-KitAtomic $entry (@{ pid = $proc.Id; start = (Get-KitPidStart $proc.Id); gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-KitStamp); backfill = $smallFill } | ConvertTo-Json)
+      $buildLease = @{ agent = $owner; at = (Get-KitStamp) }; Write-KitLeaseLog acquire build "$kind $(Split-Path $Dir -Leaf)" $buildLease
       break
     }
     $waits++; Add-KitMemSample $s.Avail
@@ -730,7 +730,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator' -and -not $why) {
       $txt = if (Test-Path $histFile) { Read-KitText $histFile } else { '' }
       $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -ErrorAction Stop } else { @{} }
       if ($h -is [hashtable]) {
-        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; wait = $waitSec; ctr = [math]::Round($ctrPeak, 2); cmd = (Get-GateHistCmd $Cmd $Dir) } | Select-Object -Last 10)
+        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-KitStamp); code = $code; wait = $waitSec; ctr = [math]::Round($ctrPeak, 2); cmd = (Get-GateHistCmd $Cmd $Dir) } | Select-Object -Last 10)
         $h | ConvertTo-Json -Depth 3 | Set-Content "$histFile.tmp" -ErrorAction Stop
         Move-Item "$histFile.tmp" $histFile -Force -ErrorAction Stop
       }
@@ -2082,15 +2082,15 @@ if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }
 $null = Invoke-Dir -Agent $Agent; $jf = Get-KitCheckpointFile $Agent $Run -Write:(-not $Read); $mf = $jf -replace '\.json$', '.md'   # per run: same-named agents never overwrite
 if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent$(if ($Run) { " run $Run" })" }; return }
 $c = try { Read-KitText $jf | ConvertFrom-Json -AsHashtable } catch { $null }
-foreach ($ckObj in @($c) + @($c.steps)) { foreach ($ckKey in 'at', 'updated') { if ($ckObj -is [Collections.IDictionary] -and $ckObj[$ckKey] -is [datetime]) { $ckObj[$ckKey] = $ckObj[$ckKey].ToString('o') } } }   # times stay ISO text (-DateKind needs pwsh 7.5)
+foreach ($ckObj in @($c) + @($c.steps)) { foreach ($ckKey in 'at', 'updated') { if ($ckObj -is [Collections.IDictionary] -and $ckObj[$ckKey] -is [datetime]) { $ckObj[$ckKey] = Get-KitStamp stored $ckObj[$ckKey] } } }   # times stay ISO text
 if (-not $c -or ($Run -and "$($c.run)" -ne $Run)) { $c = @{ agent = $Agent; run = $Run; steps = @(); worktrees = @(); leases = @() } }   # another run's: start over
-$s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-Date).ToString('o') }
+$s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-KitStamp) }
 if ($Dir) { $Dir = (Resolve-Path -LiteralPath $Dir).Path; $s.dir = $Dir; $s.head = "$(git -C $Dir rev-parse --short HEAD 2>$null)".Trim(); $c.worktrees = @(@($c.worktrees) + $Dir | Where-Object { $_ } | Select-Object -Unique) }
 $i = [array]::IndexOf($script:KitSteps, $Step.ToLower())
 $c.steps = @(@($c.steps) + $s); $c.done = $false; $c.updated = $s.at
 $c.next = if ($Next) { $Next } elseif ($Step -eq 'done') { 'none' } elseif ($i -ge 0) { $script:KitSteps[$i + 1] } else { 'the next check' }
 if ($PSBoundParameters.ContainsKey('Leases')) { $c.leases = @(Split-KitList $Leases) }
-if ($Notes) { $c.notes = @(@($c.notes) + "$($s.at.Substring(0, 16)) $($Notes -replace '\s+', ' ')" | Where-Object { $_ }) }   # the agent's only free text: one line each
+if ($Notes) { $c.notes = @(@($c.notes) + "$(Get-KitStamp display ([datetime]$s.at)) $($Notes -replace '\s+', ' ')" | Where-Object { $_ }) }   # the agent's only free text: one line each
 $c.decisions = @(Get-ChildItem (Get-KitPath decisions) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.agent -eq $Agent -and $_.status -eq 'pending' } | ForEach-Object id)
 Write-KitState $jf $c
 # compact for the resumer's context: last 8 steps and 6 notes, the worktree once (head sha per row)
@@ -2114,7 +2114,7 @@ if ($Brief) { $briefOld = if (Test-Path -LiteralPath $Brief) { [IO.File]::ReadAl
 
 # ---- prior: a task's work of the last 30 days (lib.ps1 Assert-KitPrior)
 function Invoke-Prior {
-param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Json)
+param([Alias('Item')][string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Json)
   if (-not $Task) { 'usage: crafty.ps1 prior -Task <id> [-Repo <r>] [-Query <words>] [-Symbol <s>] [-Json]'; exit 2 }
   $tag = "$($KitConf.TrackerTag)$Task"; $since = (Get-Date).AddDays(-30); $priorHits = [Collections.Generic.List[object]]::new()
   $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # branches wt lease / new made for this task
@@ -2125,7 +2125,7 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
   foreach ($r in @(if ($Repo) { $Repo } elseif ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()) | ForEach-Object name })) {
     $n = ($r -split '[\\/]')[-1]; $tgtBr = Get-RepoConf $n target 'main'; $mergedSrc = @()   # merged into the target: a fix round, not a duplicate
     foreach ($q in @($tag) + @($Query | Where-Object { $_ })) {
-      foreach ($m in @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $n -Raw); state = 'all'; search = $q; updated_after = $since.ToString('o') })) {
+      foreach ($m in @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $n -Raw); state = 'all'; search = $q; updated_after = (Get-KitStamp stored $since) })) {
         if ($m.state -eq 'merged' -and "$($m.target_branch)" -eq $tgtBr) { $mergedSrc += "$($m.source_branch)"; continue }
         if ($m.iid -and $m.state -ne 'closed' -and "$($m.source_branch)" -notin $claimed -and ($q -ne $tag -or "$($m.title) $($m.source_branch)" -match $idRx)) { & $add mr $n "$n!$($m.iid) ($($m.state))" $m.title ("$($m.title) $($m.source_branch)" -match $idRx) $m.source_branch } } }
     $dir = @($r, (Get-RepoConf $n checkout $null), (Join-Path $KitConf.ReposRoot $n)) | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ '.git')) } | Select-Object -First 1
@@ -2143,7 +2143,7 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
   $priorHits = @($priorHits | Group-Object { "$($_.kind) $($_.ref)" } | ForEach-Object { $_.Group[0] })
   $own = { param($h) $h.kind -in 'doc', 'qa' -or (@($claimed | Where-Object { $_ }).Count -and $h.kind -eq 'branch' -and $h.ref -match $idRx) }   # gate passed once: tagged branches are the same wave's
   $gate = @($priorHits | Where-Object { -not (& $own $_) })   # own docs, QA runs, tagged work: shown, never a stop
-  Update-KitTaskIndex $Task { param($x) $x.prior = [ordered]@{ at = (Get-Date).ToString('o'); validUntil = (Get-Date).AddHours([double](Get-KitParam 'prior.validHours')).ToString('o'); found = $gate; claimed = $claimed } }
+  Update-KitTaskIndex $Task { param($x) $x.prior = [ordered]@{ at = (Get-KitStamp); validUntil = (Get-KitStamp stored (Get-Date).AddHours([double](Get-KitParam 'prior.validHours'))); found = $gate; claimed = $claimed } }
   $paired = { param($h) -not $Repo -and $h.tagged -and $h.repo -and $h.kind -ne 'task' }   # no -Repo: the task's own work across repos
   $stop = @($gate | Where-Object { -not (& $paired $_) })
   if ($Json) { [pscustomobject]@{ task = $Task; found = $priorHits } | ConvertTo-Json -Depth 5 } else { if ($priorHits.Count) { $priorHits | ForEach-Object { "$(if ((& $own $_) -or (& $paired $_)) { 'INFO' } else { 'FOUND' }) $($_.kind) $(if ($_.repo) { "$($_.repo) " })$($_.ref) $($_.title)" } }; if (-not $stop.Count) { "NONE: no prior work for $Task (valid $(Get-KitParam 'prior.validHours') h)" } }
@@ -2155,7 +2155,7 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
 # -WaitMinutes -1: gate.waitMinutes learned per lock:<name>
 function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]$WaitMinutes = -1, [int]$ProcessId = $PID) {
   $ctx = "lock:$Name"; $learned = $WaitMinutes -lt 0; if ($learned) { $WaitMinutes = [double](Get-KitParam 'gate.waitMinutes' $null $ctx) }
-  $me = @{ lock = $Name; holder = $Holder; pid = $ProcessId; pidStart = (Get-KitPidStart $ProcessId); at = (Get-Date).ToString('o'); dir = $Dir }
+  $me = @{ lock = $Name; holder = $Holder; pid = $ProcessId; pidStart = (Get-KitPidStart $ProcessId); at = (Get-KitStamp); dir = $Dir }
   $f = Get-KitLockFile; $end = (Get-Date).AddMinutes($WaitMinutes); $n = 0; $script:KitLockRefused = $null
   while ($true) {
     $o = Invoke-KitLocked $f {
@@ -2163,7 +2163,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
       $ahead = @($st.waiting | Where-Object { $_.lock -eq $Name -and $_.pid -ne $ProcessId -and [datetime]$_.at -lt [datetime]$me.at } | Sort-Object { [datetime]$_.at })
       $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId })
       $by = if ($h -and $h.pid -ne $ProcessId) { $h } elseif ($ahead.Count) { $ahead[0] + @{ queued = $true } } else { $null }
-      if ($by) { $st.waiting += $me } else { $g = $me.Clone(); $g.at = (Get-Date).ToString('o'); $st.held[$Name] = $g }   # held since = taken, not queued
+      if ($by) { $st.waiting += $me } else { $g = $me.Clone(); $g.at = (Get-KitStamp); $st.held[$Name] = $g }   # held since = taken, not queued
       Save-KitLockState $st; $by
     }
     if (-not $o) { Write-KitLeaseLog acquire lock $Name @{ agent = $Holder; at = $me.at }; if ($n) { Write-Host "[lock] $Name taken after $([int]((Get-Date) - [datetime]$me.at).TotalMinutes) min" }; return $true }
@@ -2176,7 +2176,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 # description (doc lines, tracker.taskTemplate sections), the items checklist `<code> · <desc> · <MR URLs>`, Decisions
 # (lib.ps1 Format-KitDecisionItems), parent items (adapters/task_items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
-# { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], proseOk }.
+# { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<label>' (adapters/task_items.ps1 order), proseOk }.
 # what a spec lacks (bug: name + problem), a link or MR no full URL
 function Test-KitTaskSpec($Spec) {
   $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")
@@ -2257,6 +2257,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
         if ($x.spec -and -not $x.spec.parent -and -not $x.spec.subtasks -and "$($x.holder.session)" -eq $env:KIT_SESSION) { $_.BaseName } })
     if ($flat.Count) { [Console]::Error.WriteLine("WARNING: tracker create: this session made $($flat.Count + 1) top-level tasks ($(@(@($flat) + $id) -join ', ')): related tasks go under one parent ask (create it from a spec, then -Parent), or tracker group -Parent <p> -Tasks $(@(@($flat) + $id) -join ',')") } }
   $o = [pscustomobject]@{ id = $id; url = (Get-TrackerUrl $id); name = $r.name; items = $r.items.Count; decisions = $r.decisions.Count; parent = "$po" }
+  if ($sp.waitsOn -or $sp.wave) { $o | Add-Member order (Set-KitTaskOrder $id @($sp.waitsOn) "$($sp.wave)") }
   if ($ReplaceItems) { $o | Add-Member dropped $drop; $o | Add-Member checklist "$cl" }; if ($bkp) { $o | Add-Member backup $bkp }; $o
 }
 # a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy nobody updates; "Decision needed for X" passes
@@ -2278,8 +2279,8 @@ function Invoke-Tracker {
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json|NoParent|ReplaceItems|Force)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Tasks|Add|Signature|Spec|Back|Area|Product)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Area -Product -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -NoParent -ReplaceItems -Force -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Tasks|Add|Signature|Spec|Back|Area|Product|Apply)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Area -Product -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -Apply -NoParent -ReplaceItems -Force -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   $__sp = if ($__trOpt.Spec) {   # `skills/crafty/crafty.ps1` "task spec": a file or inline JSON
@@ -2294,7 +2295,7 @@ function Invoke-Tracker {
   function __TrOut($o) { if ($null -ne $o) { ConvertTo-Json -InputObject $o -Depth 6 } }
   switch ($__v) {
     'view' { __TrOut (Get-TrackerTask $__id) }
-    'statuses' { $__bad = 0; foreach ($__s in @(Split-KitList $__id)) { $__st = try { "$((Get-TrackerTask $__s).status)" } catch { '' }; if ($__st) { "$__s $((Get-Date).ToString('o')) $__st" } else { $__bad++ } }; if ($__bad) { [Console]::Error.WriteLine("tracker statuses: $__bad view(s) failed") } }   # supervise: <id> <at> <status>
+    'statuses' { $__bad = 0; foreach ($__s in @(Split-KitList $__id)) { $__st = try { "$((Get-TrackerTask $__s).status)" } catch { '' }; if ($__st) { "$__s $((Get-KitStamp)) $__st" } else { $__bad++ } }; if ($__bad) { [Console]::Error.WriteLine("tracker statuses: $__bad view(s) failed") } }   # supervise: <id> <at> <status>
     'roles' { Show-KitScopeRoles $__id }
     'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> [-Back <why>] (read it: tracker view <id>)'; exit 2 }; $__sr = Set-TrackerStatus $__id $__x $__trOpt.Back; $__sr; if ("$__sr" -like 'SKIPPED*') { exit 1 } }   # an empty status set Open
     'comment' {   # -Kind required; over prose limits = refused
@@ -2364,6 +2365,10 @@ function Invoke-Tracker {
     'group' {   # K54: tasks under one parent (made from -Spec if missing)
       if (-not ($__trOpt.Tasks -and ($__trOpt.Parent -or $__trOpt.Spec))) { 'usage: tracker group -Parent <p> | -Spec <parent spec json> -Tasks <id,id,...> [-DryRun]'; exit 2 }
       Invoke-KitTaskGroup -Parent "$($__trOpt.Parent)" -Tasks @(Split-KitList $__trOpt.Tasks) -Spec $(if ($__trOpt.Spec) { $__sp }) -DryRun:([bool]$__trOpt.DryRun) }
+    'order' {   # waits-on links + wave labels (owner 2026-11-23); -Apply <brief>.order.json (devtools.py render wave-brief) sets them first
+      if (-not $__id) { 'usage: tracker order <parent> [-Apply <brief>.order.json] [-Json]'; exit 2 }
+      if ($__trOpt.Apply) { foreach ($__ot in @((Get-Content -LiteralPath $__trOpt.Apply -Raw | ConvertFrom-Json).tasks)) { Set-KitTaskOrder "$($__ot.task)" @($__ot.waitsOn) "$($__ot.wave)" } }
+      $__o = Get-KitTaskOrder $__id; if ($__trOpt.Json) { $__o | ConvertTo-Json -Depth 6 } else { Format-KitTaskOrder $__o }; if (@($__o.flags -match '^(CYCLE|MISSING)').Count) { exit 1 } }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
     default { 'usage: crafty.ps1 tracker view|statuses|status|comment|comments|uncomment|create|update|render|bug|scope|owner|url|describe|rename|move|group|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
@@ -2406,7 +2411,7 @@ function Invoke-Scope([Alias('Mr')][string]$Mrs, [int]$Days = 7, [switch]$Json) 
     if (-not ($c = $seen["$($a.mr)"])) {
       if ((Get-Date) -gt $stopAt -or ($probed["$($a.mr)"] -and ($now - [datetime]$probed["$($a.mr)"]).TotalMinutes -lt 30)) { continue }
       $rn, $iid = "$($a.mr)" -split '!', 2; $m = try { Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject $rn -Raw); n = $iid } } catch { $null }
-      if ($m.state -and $m.state -ne 'merged') { $probed["$($a.mr)"] = $now.ToString('o') }   # open or closed; unknown: next round
+      if ($m.state -and $m.state -ne 'merged') { $probed["$($a.mr)"] = (Get-KitStamp stored $now) }   # open or closed; unknown: next round
       if ($m.state -ne 'merged' -or -not ($f = @(& $filesOf "$($a.mr)")).Count) { continue }   # open: devtools.py merge checks it; unknown: next round
       $c = [ordered]@{ mr ="$($a.mr)"; branch = "$($a.branch)"; globs = @($a.globs); outside = @(Get-KitScopeOutside $f @($a.globs)); mergedAt = "$($m.merged_at)" }
       Write-KitLog scope-log checked $c

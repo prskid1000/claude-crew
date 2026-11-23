@@ -55,7 +55,7 @@ function Get-KitTaskOutcome($Ix, $Ctx) {
     hClosed = $(if ($stage -eq 'passed') { Get-KitOutcomeHours $tr.created $last.at }); spend = [int][math]::Round([double]$Ctx.spend[$t])
     doneAt = $(if ($tr.done) { ConvertTo-KitOutcomeIso $tr.doneAt }); closedAt = $(if ($stage -eq 'passed') { ConvertTo-KitOutcomeIso $last.at })   # the day chart's points
     backAt = @(@(ConvertTo-KitOutcomeIso $tr.reopenedAt) + @($runs | Where-Object { [int]$_.fail -gt 0 } | ForEach-Object { ConvertTo-KitOutcomeIso $_.at }) + @($Ctx.bugAt[$t]) | Where-Object { $_ } | Sort-Object)[0]
-    seen = $(if ($Ix.updated) { ([datetime]$Ix.updated).ToString('o') }) }   # the task's last change (window); not in the row signature
+    seen = $(if ($Ix.updated) { (Get-KitStamp stored ([datetime]$Ix.updated)) }) }   # the task's last change (window); not in the row signature
 }
 function Read-KitOutcomeRows { $f = Get-KitPath outcomes; if (Test-Path -LiteralPath $f) { foreach ($l in [IO.File]::ReadAllLines($f)) { try { $l | ConvertFrom-Json } catch {} } } }
 # rows changed since the last sweep (-All: every task); cumulative fields never shrink (wave reports and launches age out)
@@ -63,7 +63,7 @@ function Update-KitOutcomes([switch]$All) {
   $t0 = Get-Date; $stampFile = Get-KitPath outcomes-sweep -Create
   $stamp = if (-not $All -and (Test-Path -LiteralPath $stampFile)) { try { [datetime](Get-Content -LiteralPath $stampFile -Raw).Trim() } catch { $null } }
   $fresh = { param($n, $f) @(Get-ChildItem -LiteralPath (Get-KitPath $n) -Filter $f -File -ErrorAction SilentlyContinue | Where-Object { -not $stamp -or $_.LastWriteTime -gt $stamp }).Count }
-  if ($stamp -and -not ((& $fresh tasks '*.json') + (& $fresh waves '*.json') + (& $fresh launches 'self-*.json'))) { Set-Content -LiteralPath $stampFile $t0.ToString('o'); return 0 }
+  if ($stamp -and -not ((& $fresh tasks '*.json') + (& $fresh waves '*.json') + (& $fresh launches 'self-*.json'))) { Set-Content -LiteralPath $stampFile (Get-KitStamp stored $t0); return 0 }
   $ctx = Get-KitOutcomeContext
   $n = Invoke-KitLocked (Get-KitPath outcomes -Create) {   # supervise and tidy prep: one sweep at a time, else duplicate rows
   $prev = @{}; foreach ($r in @(Read-KitOutcomeRows)) { if ($r.task) { $prev["$($r.task)"] = $r } }
@@ -75,7 +75,7 @@ function Update-KitOutcomes([switch]$All) {
     Write-KitLog outcomes 'state' $row; $n++
   }
   $n }
-  Set-Content -LiteralPath $stampFile $t0.ToString('o'); $n
+  Set-Content -LiteralPath $stampFile (Get-KitStamp stored $t0); $n
 }
 # supervise hook: every 30 min (lib.ps1 New-KitSweep; 1.5-3 s while tasks change; tidy prep runs its own), only when a task, wave or launch file changed
 function Get-KitSuperviseFlagsOutcomes([switch]$AutoFix) { if (-not (Within 'outcomes')) { return }; try { $null = Update-KitOutcomes } catch { [pscustomobject]@{ level = 'WATCH'; what = "outcomes sweep failed: $($_.Exception.Message)"; action = 'bossy.ps1 tidy prep reruns it; else a kitty (kind fix)' } } }
@@ -269,7 +269,7 @@ function Set-KitStandingRuleAnswer([string]$AskId, [string]$Answer, [string]$By)
     $named = @([regex]::Matches("$Answer", 'sr-[0-9a-f]{4,}') | ForEach-Object Value)
     if ("$Answer" -match '(?i)\b(except|but not|excluding)\b') { foreach ($r in $mine) { $r.askId = '' }; Save-KitStandingRules $rules; return }   # unclear pick: the next prep asks again
     $all = -not $named.Count -and "$Answer" -match '(?i)^\s*(a\s*([:.)]|$)|approve all\b|all\b|yes\b)'
-    foreach ($r in $mine) { if ($all -or $r.id -in $named) { $r.status = 'approved'; $r.approvedAt = (Get-Date).ToString('o'); $r.approvedBy = $By } else { $r.status = 'rejected' } }
+    foreach ($r in $mine) { if ($all -or $r.id -in $named) { $r.status = 'approved'; $r.approvedAt = (Get-KitStamp); $r.approvedBy = $By } else { $r.status = 'rejected' } }
     Save-KitStandingRules $rules
   }
 }
@@ -291,7 +291,7 @@ function Invoke-KitStandingRules([switch]$Propose, [string]$Approve, [string]$Re
     $ids = @(Split-KitList @($Revoke, $Approve | Where-Object { $_ }))
     $out = Invoke-KitLocked $file {
       $rules = @(Read-KitStandingRules); $hit = @($rules | Where-Object { $_.id -in $ids -or ($Approve -eq 'all' -and $_.status -eq 'proposed') })
-      foreach ($r in $hit) { if ($Revoke) { $r.status = 'revoked'; $r.revokedAt = (Get-Date).ToString('o') } else { $r.status = 'approved'; $r.approvedAt = (Get-Date).ToString('o'); $r.approvedBy = $By } }   # read back as hashtables (Read-KitState): keys, not Add-Member
+      foreach ($r in $hit) { if ($Revoke) { $r.status = 'revoked'; $r.revokedAt = (Get-KitStamp) } else { $r.status = 'approved'; $r.approvedAt = (Get-KitStamp); $r.approvedBy = $By } }   # read back as hashtables (Read-KitState): keys, not Add-Member
       if ($hit.Count) { Save-KitStandingRules $rules }; $hit
     }
     if (-not @($out).Count) { "no standing rule $($ids -join ', ')"; exit 1 }
@@ -304,7 +304,7 @@ function Invoke-KitStandingRules([switch]$Propose, [string]$Approve, [string]$Re
         $have = Find-KitStandingRule $rules $p.gate (ConvertTo-KitWordSet $p.words)
         if ($have) { $have.evidence = @(@($have.evidence) + @($p.evidence) | Select-Object -Unique); continue }   # rejected / revoked stay so: the owner re-opens with -Approve
         $r = [pscustomobject][ordered]@{ id = "sr-$([guid]::NewGuid().ToString('N').Substring(0, 6))"; status = 'proposed'; gate = $p.gate; question = $p.question; answer = $p.answer
-          evidence = @($p.evidence); words = @($p.words); auto = $p.auto; proposedAt = (Get-Date).ToString('o'); askId = '' }
+          evidence = @($p.evidence); words = @($p.words); auto = $p.auto; proposedAt = (Get-KitStamp); askId = '' }
         $rules.Add($r); $added += $r
       }
       Save-KitStandingRules @($rules); $added
@@ -342,7 +342,7 @@ param([Parameter(Position = 0)][string]$Action, [string]$At, [switch]$DryRun, [s
 if ($Action -eq 'done') {   # signals up to the prep time count as reviewed
   $t = try { [datetime]$At } catch { $null }; if (-not $t) { 'usage: tidy done -At <time>'; exit 2 }
   $m = Get-KitPath last-retro -Create
-  if (-not $DryRun) { Set-Content $m $t.ToString('o'); Remove-Item "$m.start" -ErrorAction SilentlyContinue }   # .start: the old workflow's marker
+  if (-not $DryRun) { Set-Content $m (Get-KitStamp stored $t); Remove-Item "$m.start" -ErrorAction SilentlyContinue }   # .start: the old workflow's marker
   "last retro = $($t.ToString('s'))"; return
 }
 if ($Action -ne 'prep') { 'usage: tidy prep [-DryRun] [-Json] | tidy done -At <time> [-DryRun]'; exit 2 }
@@ -402,8 +402,22 @@ $d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the l
 $file = Join-Path (Get-KitPath retros -Create) "digest-$(Get-KitStamp file $t0).md"
 [IO.File]::WriteAllText($file, (($d -join "`n") + "`n"))
 $stamped = -not $work -and -not $DryRun -and -not @($steps | Where-Object state -eq 'failed').Count
-if ($stamped) { $null = Invoke-Tidy done -At $t0.ToString('o') }   # nothing to judge
-$o = [ordered]@{ digest = $file; at = $t0.ToString('o'); work = $work; groups = @($groups | Where-Object n -ge 2).Count; minutes = $min; stamped = $stamped; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); steps = @($steps | ForEach-Object { "$($_.step) $($_.state) $($_.sec)s" }) }
+if ($stamped) { $null = Invoke-Tidy done -At (Get-KitStamp stored $t0) }   # nothing to judge
+$o = [ordered]@{ digest = $file; at = (Get-KitStamp stored $t0); work = $work; groups = @($groups | Where-Object n -ge 2).Count; minutes = $min; stamped = $stamped; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); steps = @($steps | ForEach-Object { "$($_.step) $($_.state) $($_.sec)s" }) }
 if ($Json) { $o | ConvertTo-Json -Compress; return }
 "DIGEST $file"; "AT $($o.at)"; "WORK $work ($($o.groups) group(s) of 2+)$(if ($stamped) { '; nothing to judge: last retro stamped' })"; "MINUTES $min"; $o.steps | ForEach-Object { "  $_" }
+}
+# signals of one skill joined when any two overlap >= $Min; each group with its closest lesson (bump candidate)
+function Get-KitSignalGroups($Signals, $Lessons, [double]$Min = 0.3) {   # TODO-PARAM (fixed default)
+  $groups = [Collections.Generic.List[object]]::new()
+  foreach ($s in $Signals) {
+    $w = Get-KitWordSet $s.text; $hit = $null
+    foreach ($g in $groups) { if ($g.skill -eq $s.skill -and @($g.words | Where-Object { (Get-KitOverlap $_ $w) -ge $Min }).Count) { $hit = $g; break } }
+    if ($hit) { $hit.items.Add($s); $hit.words.Add($w) } else { $groups.Add([pscustomobject]@{ skill = $s.skill; items = [Collections.Generic.List[object]]@($s); words = [Collections.Generic.List[object]]@(, $w) }) }
+  }
+  foreach ($g in $groups) {
+    $best = $null; $bs = 0
+    foreach ($l in @($Lessons | Where-Object skill -eq $g.skill)) { $lw = Get-KitWordSet $l.text; $sc = @($g.words | ForEach-Object { Get-KitOverlap $_ $lw } | Measure-Object -Maximum).Maximum; if ($sc -gt $bs) { $bs = $sc; $best = $l } }
+    [pscustomobject]@{ skill = $g.skill; n = $g.items.Count; kinds = @($g.items.kind | Select-Object -Unique) -join ','; text = $g.items[0].text; refs = @($g.items.ref | Where-Object { $_ } | Select-Object -Unique); lesson = $(if ($bs -ge $Min) { $best.text }); score = [math]::Round($bs, 2) }
+  }
 }

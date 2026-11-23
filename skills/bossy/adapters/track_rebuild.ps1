@@ -28,8 +28,8 @@ function Invoke-TrackRebuild {
   $n = 0; $nDone = 0
   foreach ($id in $found.Keys) {
     if ((Load $id) -and -not $Force) { continue }
-    $o = @{ task = $id; mrs = @($found[$id].mrs); onMerged = @('promoted'); discover = $true; done = $false; created = (Get-Date).ToString('o'); rebuilt = $true }
-    if (-not @($found[$id].states | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus (TaskStatus $id) 'promoted', 'inTest', 'closed')) { $o.done = $true; $o.doneAt = (Get-Date).ToString('o'); $nDone++ }
+    $o = @{ task = $id; mrs = @($found[$id].mrs); onMerged = @('promoted'); discover = $true; done = $false; created = (Get-KitStamp); rebuilt = $true }
+    if (-not @($found[$id].states | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus (TaskStatus $id) 'promoted', 'inTest', 'closed')) { $o.done = $true; $o.doneAt = (Get-KitStamp); $nDone++ }
     Save $o; $n++
     if ($Detail) { "  $id : $($o.mrs -join ', ')$(if ($o.done) { ' (done)' })" }
   }

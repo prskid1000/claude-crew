@@ -98,8 +98,8 @@ function Add-KitFlagAck([string]$Ack, [string]$Reason) {
   Invoke-KitLocked $sf0 { $s0 = try { Get-Content $sf0 -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $s0) { $s0 = @{} }; if (-not $s0.acks) { $s0.acks = @{} }
     $hit = @($s0.lastFlags | Where-Object { $_ -and (Test-KitAcked ([pscustomobject]$_) @($k0)) }); $refs = @($hit | ForEach-Object { @($_.refs) } | Where-Object { $_ })
     $need = @($hit | Where-Object { $_.ackNeeds }); if ($need.Count -and -not (Test-KitAckRef $Reason)) { $script:ackOut = "REFUSED: no fix MR linked ($(@($need | ForEach-Object { "$($_.what)".Substring(0, [math]::Min(90, "$($_.what)".Length)) }) -join ' · ')): link it (the flag's track route / track add), or -Reason naming a decision id (d-...) or the fix MR (repo!n): hides 2 h"; return }
-    if ($refs.Count) { if (-not $s0.known) { $s0.known = @{} }; foreach ($r in $refs) { $s0.known[$r] = (Get-Date).ToString('o') } }
-    if (-not $hit.Count -or @($hit | Where-Object { -not @(@($_.refs) | Where-Object { $_ }).Count }).Count) { $s0.acks[$k0] = @{ at = (Get-Date).ToString('o'); reason = $Reason } }
+    if ($refs.Count) { if (-not $s0.known) { $s0.known = @{} }; foreach ($r in $refs) { $s0.known[$r] = (Get-KitStamp) } }
+    if (-not $hit.Count -or @($hit | Where-Object { -not @(@($_.refs) | Where-Object { $_ }).Count }).Count) { $s0.acks[$k0] = @{ at = (Get-KitStamp); reason = $Reason } }
     Write-KitAtomic $sf0 ($s0 | ConvertTo-Json -Depth 5)
     $script:ackOut = "$(if ($refs.Count) { "known from now on (they no longer flag; a new one does): $(@($refs | Select-Object -First 5) -join ' · ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" })" } else { "acknowledged for $(if ($need.Count) { '2 h (no fix MR linked)' } else { '24 h' }): $k0" })$(if ($Reason) { " ($Reason)" })`n$(if ($hit.Count) { "hides $($hit.Count) flag(s) of the last round: $(@($hit | ForEach-Object { "$($_.what)".Substring(0, [math]::Min(90, "$($_.what)".Length)) }) -join ' · ')" } else { 'matches no flag of the last round: check the text (any later flag containing it hides)' })" }
   $script:ackOut
@@ -168,7 +168,7 @@ function Get-KitTailCached([string]$Kind, [string]$File) {
   if ($c -and "$($c.sig)" -eq $sig) { $s = [pscustomobject]@{ file = $fi.FullName; at = $fi.LastWriteTime; tool = "$($c.tool)"; what = "$($c.what)"; say = "$($c.say)"; ended = [bool]$c.ended; killed = $false; version = "$($c.version)"; outs = @($c.outs) }
     foreach ($o in $s.outs) { $f = Get-Item -LiteralPath $o -ErrorAction SilentlyContinue; if ($f -and $f.LastWriteTime -gt $s.at) { $s.at = $f.LastWriteTime } }; return $s }
   $s = Invoke-KitAdapter transcript claude last @{ file = $File }; if (-not $s) { return }
-  $script:KitTailCache[$fi.FullName] = @{ sig = $sig; tool = $s.tool; what = $s.what; say = $s.say; ended = [bool]$s.ended; version = $s.version; outs = @($s.outs); seen = (Get-Date).ToString('o') }; $script:KitTailDirty = $true; $s
+  $script:KitTailCache[$fi.FullName] = @{ sig = $sig; tool = $s.tool; what = $s.what; say = $s.say; ended = [bool]$s.ended; version = $s.version; outs = @($s.outs); seen = (Get-KitStamp) }; $script:KitTailDirty = $true; $s
 }
 function Save-KitTailCache { if (-not $script:KitTailDirty) { return }; $old = (Get-Date).AddDays(-1)
   foreach ($k in @($script:KitTailCache.Keys)) { if ([datetime]"$($script:KitTailCache[$k].seen)" -lt $old -or -not (Test-Path -LiteralPath $k)) { $script:KitTailCache.Remove($k) } }   # a day unseen or gone: dropped
@@ -212,7 +212,7 @@ function Test-KitSweep($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
 # sweep end: stores costs (EWMA 0.3) and the starved list
 function Complete-KitSweep($Sw, $State, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds; $Sw.cur = $null }
-  foreach ($n in @($Sw.ran.Keys | Where-Object { -not "$_".StartsWith('~') })) { $c = $Sw.cost[$n]; $Sw.cost[$n] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $Sw.ran[$n] } else { $Sw.ran[$n] }), 2); if ($Sw.every[$n]) { $Sw.last[$n] = $Now.ToString('o') } }
+  foreach ($n in @($Sw.ran.Keys | Where-Object { -not "$_".StartsWith('~') })) { $c = $Sw.cost[$n]; $Sw.cost[$n] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $Sw.ran[$n] } else { $Sw.ran[$n] }), 2); if ($Sw.every[$n]) { $Sw.last[$n] = (Get-KitStamp stored $Now) } }
   $State.sweep = @{ v = 2; cost = $Sw.cost; last = $Sw.last; starved = @($Sw.skipped | Where-Object { -not $Sw.ran.ContainsKey($_) }) }
   $secs = [ordered]@{}; foreach ($kv in @($Sw.ran.GetEnumerator() | Where-Object { $_.Value -ge 0.5 } | Sort-Object { -$_.Value })) { $secs[$kv.Key] = [math]::Round($kv.Value, 1) }
   Write-KitLog calls sweep @{ secs = $secs; skipped = @($State.sweep.starved); timedOut = @($Sw.timedOut) }   # a budget hit names its slow sections (K8: no per-sweep data before)
@@ -260,7 +260,7 @@ function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scr
       $sq = { param($s) "'$("$s" -replace '([\u2018-\u201B''])', '$1$1')'" }   # PowerShell reads the smart quotes as ' too
       $bc = "(Start-Process pwsh -ArgumentList $(@($fileArgs | ForEach-Object { & $sq $_ }) -join ',') -NoNewWindow -PassThru -RedirectStandardOutput $(& $sq "$base.out") -RedirectStandardError $(& $sq "$base.err")).WaitForExit()"
       $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-ec', ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bc))) -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $fileArgs -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
-      Write-KitAtomic "$base.json" (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id); at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress)
+      Write-KitAtomic "$base.json" (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id); at = (Get-KitStamp) } | ConvertTo-Json -Compress)
     }
   }
   $res.out

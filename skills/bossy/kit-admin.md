@@ -32,7 +32,7 @@ adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters
 
 ## Shapes
 - **Script** [SCRIPT-HEADER, PS-VERSION, RUNTIME-RAW, RUNTIME-MAP, DESKTOP-OPEN, SECTION-MAP, SECTION-UNMAPPED]: one entry file per area with
-  verbs, each function in a `---- <name>:` section (README "Extending"); header with usage, `Sections:` and `Exit codes:` (0 ok · 1 problem · 2 usage); shared params `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`; a
+  verbs, each function in a `---- <name>:` section (README "Extending"); header with usage, `Sections:` and `Exit codes:` (0 ok · 1 problem · 2 usage); shared params `-Env -Run -Item -Repo -Dir -Agent -Mr -Text -DryRun -Json -Quiet`; a
   failed call is UNKNOWN; paths via `Get-KitPath` / `kit_path` / `kitPath` / `rp()`; bounded network calls; no desktop opens
   without `--open` / `-Open`.
 - **Skill** [SKILL-DESC, SKILL-BLOCK, FILES-*]: `description: "Load when: ... Not when: ... -> <sibling>."`; blocks Load when,

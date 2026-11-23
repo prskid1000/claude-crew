@@ -162,7 +162,7 @@ function Invoke-Seat {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status')][string]$Action,
   [string]$Agent, [string]$Kind = '',   # a qa.lanes lane name or kind; '' = the first lane
-  [string]$RunDir, [string]$Code, [string]$Owner = 'w1',
+  [string]$RunDir, [Alias('Item')][string]$Code, [string]$Owner = 'w1',
   [int]$WaitMinutes = 8, [double]$KeepFreeGB = 0   # 0 = the gate's floor (gate.keepFreeGB)
 )
 $ErrorActionPreference = 'Stop'
@@ -211,7 +211,7 @@ switch ($Action) {
         if (Test-Path (Join-Path $RunDir "$Code/held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
         $c = if (Test-Path $cf) { Read-Seat $cf }
         if ($c -and $c.owner -ne $Owner -and (LeaseLive $c $cf)) { return "ALREADY: $Code is being tested by worker $($c.owner)" }
-        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('o'); lease = $Agent } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $cf $_ }
+        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-KitStamp); lease = $Agent } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $cf $_ }
         $null
       }
       if ($verdict) { $verdict; exit 3 }
@@ -222,11 +222,11 @@ switch ($Action) {
     $fresh = [double](@(Locked { Seats }) | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 } | Measure-Object need -Sum).Sum
     $ga = @('-Dir', $dir, '-Cmd', 'exit 0 #qa-seat', '-NeedGB', ($need + $fresh), '-WaitMinutes', $WaitMinutes); if ($KeepFreeGB) { $ga += '-KeepFreeGB', $KeepFreeGB }
     # first queue time across exit-4 retries (a retry comes within minutes; an older marker is a dropped wait)
-    $wq = "$sf.since"; if (-not (Test-Path -LiteralPath $wq) -or ((Get-Date) - (Get-Item -LiteralPath $wq).LastWriteTime).TotalMinutes -gt $WaitMinutes + 10) { (Get-Date).ToString('o') | Set-Content -LiteralPath $wq }
+    $wq = "$sf.since"; if (-not (Test-Path -LiteralPath $wq) -or ((Get-Date) - (Get-Item -LiteralPath $wq).LastWriteTime).TotalMinutes -gt $WaitMinutes + 10) { (Get-KitStamp) | Set-Content -LiteralPath $wq }
     $env:KIT_GATE_SINCE = "$(Get-Content -LiteralPath $wq -TotalCount 1)"; try { $said = @(& $KitCmd.dev gate @ga *>&1 | ForEach-Object { "$_" }) } finally { Remove-Item Env:KIT_GATE_SINCE -ErrorAction SilentlyContinue }
     if (-not $LASTEXITCODE) { Remove-Item -LiteralPath $wq -ErrorAction SilentlyContinue } else { (Get-Item -LiteralPath $wq).LastWriteTime = Get-Date }
     if ($LASTEXITCODE) { "STILL WAITING (no memory turn within $WaitMinutes min$(@($said | Where-Object { $_ -match 'waiting|queued' } | ForEach-Object { ": $_" })[-1])): run the same command again"; exit 4 }
-    ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('o') } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ }
+    ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-KitStamp) } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ }
     "seat taken: $Agent ($Kind, ~$need GB); free RAM $(Get-FreeGB) GB"
   }
 }
@@ -622,7 +622,7 @@ foreach ($s in @($app.steps)) {
 function Invoke-Finalize {
 param(
   [Parameter(Mandatory)][string]$RunDir,
-  [Parameter(Mandatory)][string]$Code,
+  [Alias('Item')][Parameter(Mandatory)][string]$Code,
   [switch]$NoTracker,
   [switch]$Force,
   [switch]$Check,
@@ -1145,12 +1145,12 @@ Save-Fin
 # indexes (STATE.md) spare re-reading tracker / run folder
 $envName = [string]$(if ($item.target) { $item.target } else { $run.target }); $runName = Split-Path $RunDir -Leaf
 foreach ($s in @($out.subtasks | Where-Object { $_.id })) {
-  $er = [ordered]@{ env = $envName; run = $runName; code = $Code; pass = [int]$s.pass; fail = [int]$s.fail; notTested = [int]$s.notTested; doc = $docUrl; at = (Get-Date).ToString('o') }
+  $er = [ordered]@{ env = $envName; run = $runName; code = $Code; pass = [int]$s.pass; fail = [int]$s.fail; notTested = [int]$s.notTested; doc = $docUrl; at = (Get-KitStamp) }
   try { Update-KitTaskIndex ([string]$s.id) { param($x) $x.envRuns = @(@($x.envRuns) | Where-Object { -not ($_.run -eq $runName -and $_.code -eq $Code) }) + $er } } catch { Write-Warning "task index $($s.id): $_" }
 }
 $rix = Join-Path $RunDir 'index.json'
 try { Invoke-KitLocked $rix { $ri = Read-KitState $rix; if (-not $ri) { $ri = [ordered]@{ run = $runName; env = $envName; items = @{} } }; if ($ri.items -isnot [Collections.IDictionary]) { $ri.items = @{} }
-  $ri.items[$Code] = [ordered]@{ tasks = @($out.subtasks.id); doc = $docUrl; pubKey = $pubKey; pass = [int](($out.subtasks | Measure-Object pass -Sum).Sum); fail = [int](($out.subtasks | Measure-Object fail -Sum).Sum); at = (Get-Date).ToString('o') }
+  $ri.items[$Code] = [ordered]@{ tasks = @($out.subtasks.id); doc = $docUrl; pubKey = $pubKey; pass = [int](($out.subtasks | Measure-Object pass -Sum).Sum); fail = [int](($out.subtasks | Measure-Object fail -Sum).Sum); at = (Get-KitStamp) }
   Write-KitState $rix $ri } } catch { Write-Warning "run index ${rix}: $_" }
 } finally { $fmx.ReleaseMutex(); $fmx.Dispose() }
 "$Code report ($rtype): $docUrl"
@@ -1163,11 +1163,11 @@ $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, faile
 # a row's keys: testy.js CHECKS_SCHEMA + the keys the workflow adds (kitbag lint RESULT-KEYS keeps them in step)
 $script:ResultRowKeys = 'id', 'subtask_id', 'case', 'screen', 'result', 'defect', 'knownBug', 'signature', 'cause', 'env_fix', 'what_was_done', 'observed', 'evidence', 'attempts', 'window', 'guideId', 'verify', 'flaky', 'firstAttempt'
 function Invoke-Results {
-param([Parameter(Mandatory, Position = 0)][ValidateSet('patch', 'hold')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Code,
+param([Parameter(Mandatory, Position = 0)][ValidateSet('patch', 'hold')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Alias('Item')][Parameter(Mandatory)][string]$Code,
   [string]$Patch, [string]$Why, [string]$Summary, [string]$EnvFix)
 $dir = Join-Path $RunDir $Code
 if ($Action -eq 'hold') {   # supervise + workers read it; the time is the script's
-  Write-KitAtomic (Join-Path $dir 'held.json') ([ordered]@{ code = $Code; held = $Why; envFix = $(if ($EnvFix) { $EnvFix | ConvertFrom-Json } else { $null }); summary = $Summary; at = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json -Depth 6)
+  Write-KitAtomic (Join-Path $dir 'held.json') ([ordered]@{ code = $Code; held = $Why; envFix = $(if ($EnvFix) { $EnvFix | ConvertFrom-Json } else { $null }); summary = $Summary; at = (Get-KitStamp) } | ConvertTo-Json -Depth 6)
   "held $Code`: $Why"; return
 }
 # -Patch { set: { <id>: { <field>: <value> } }, add: [<rows>], top: { findings, setup_changes, data_created } }
@@ -1195,7 +1195,7 @@ Write-KitAtomic $f ($r | ConvertTo-Json -Depth 8)
 # ---- retest: RETEST item for a live fix (same -Code replaces it)
 function Invoke-Retest {
 param(
-  [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][string]$Code,
+  [Parameter(Mandatory)][string]$RunDir, [Alias('Item')][Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][string]$Code,
   [string]$Title, [Alias('Mr')][string]$Mrs = '', [string[]]$Only, [string]$Lane = ''   # a qa.lanes lane; '' = the first lane
 )
 $ErrorActionPreference = 'Stop'
@@ -1360,7 +1360,7 @@ Write-KitAtomic "$dir/lead-notes.md" (($ln -join "`n") + "`n")
 }
 # testers ask and the lead answers in lead-notes.md: one line each under "## Answers (newest last)"
 function Invoke-LeadNotes {
-param([Parameter(Position = 0)][ValidateSet('add')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Code, [Parameter(Mandatory)][string]$Text)
+param([Parameter(Position = 0)][ValidateSet('add')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Alias('Item')][Parameter(Mandatory)][string]$Code, [Parameter(Mandatory)][string]$Text)
 $nf = Join-Path $RunDir 'lead-notes.md'; if (-not (Test-Path -LiteralPath $nf)) { throw "no lead-notes.md in $RunDir (pokey.ps1 prepare writes it)" }
 Invoke-KitLocked $nf { Add-Content -LiteralPath $nf -Encoding utf8 "- $(Get-Date -Format 'HH:mm') $Code`: $($Text -replace '\s+', ' ')" }
 "noted $Code in $nf"

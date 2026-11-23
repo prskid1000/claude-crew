@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L606 git host · L679 scope · L771 MR · L967 merge · L1298 docs ·
-  L1461 publish · L1956 render · L2477 spec · L2834 plugins · L2848 keepboth · L2867 selftest · L3558 CLI
+  L1461 publish · L1956 render · L2508 spec · L2865 plugins · L2879 keepboth · L2898 selftest · L3596 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -49,7 +49,7 @@ KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 os.environ['GIT_OPTIONAL_LOCKS'] = '0'   # git probes never rewrite a repo's index (lib.ps1, kitbag.py too)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
-from kitbag import kit_path, locked, audited, state_read, state_write, task_index, task_file, read_tracking, kitlog   # one path map, lock, call log for all kit scripts
+from kitbag import kit_path, kit_stamp, locked, audited, state_read, state_write, task_index, task_file, read_tracking, kitlog   # one path map, lock, call log for all kit scripts
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -301,7 +301,7 @@ def prior_gate(task, repo, what):
         return
     p = (state_read(os.path.join(kit_path('tasks'), re.sub(r'[^\w.-]', '_', task) + '.json')) or {}).get('prior') or {}
     try:   # validUntil: crafty.ps1 prior stores it from prior.validHours (pins and learned values included)
-        fresh = datetime.now().astimezone() < datetime.fromisoformat(p['validUntil'])
+        fresh = datetime.now().astimezone() < datetime.fromisoformat(p['validUntil']).astimezone()
     except (KeyError, TypeError, ValueError):
         fresh = False
     if not fresh and not OVERRIDE:
@@ -972,7 +972,7 @@ def _remember_automerge(ref):
     try:
         with locked(os.path.join(kit_path('tasks', create=True), '_tracking')):
             am = (state_read(path) or {}).get('refs') or {}
-            am[ref] = datetime.now().astimezone().isoformat()
+            am[ref] = kit_stamp()
             state_write(path, {'refs': am})
     except Exception as e:   # a lost intent is never re-armed
         print(f'[merge] could not record the merge-when-green intent for {ref} in {path}: {e}', file=sys.stderr)
@@ -2425,6 +2425,35 @@ def run_label(s):
     return f'{key} {" ".join(rest.split()[:7])}'.strip()
 
 
+def wave_order(s):
+    """Areas in waves (owner 2026-11-23): an area waits on its dependsOn and the producers of contracts it consumes; wave n = the
+    areas whose waits all sit in earlier waves (one wave = parallel); a cycle is the last row. -> [(wave, [ids])], {id: [waits]}."""
+    ids, ws = [a['id'] for a in s['agents']], lambda v: re.findall(r'[^,;\s]+', ' '.join(v) if isinstance(v, list) else str(v or ''))
+    waits = {a['id']: set(a.get('dependsOn') or []) for a in s['agents']}
+    for c in s.get('contracts') or []:
+        for con in ws(c.get('consumers')):
+            if con in waits:
+                waits[con] |= set(ws(c.get('producer'))) - {con}
+    waits, left, waves = {k: sorted(v & set(ids)) for k, v in waits.items()}, list(ids), []
+    for _ in range(len(ids)):   # each round places one area at least, or ends on a cycle
+        if not left:
+            break
+        ready = [a for a in left if not set(waits[a]) & set(left)]
+        waves.append((len(waves) + 1, ready) if ready else ('cycle', left))
+        left = [a for a in left if a not in ready] if ready else []
+    return waves, waits
+
+
+def order_tasks(s):
+    """<brief>.order.json for `crafty.ps1 tracker order <parent> -Apply`: per area task its wave label and the tasks it waits on
+    (an area sharing its task with another: skipped, its subtask gets links once made)."""
+    waves, waits = wave_order(s)
+    tk = {a['id']: a.get('task') or s.get('task') or '' for a in s['agents']}
+    shared = {t for t in tk.values() if t and list(tk.values()).count(t) > 1}
+    return {'parent': s.get('task') or '', 'tasks': [{'task': tk[a], 'area': a, 'wave': s.get('wave') or f'{s["name"]} wave {w}',
+             'waitsOn': sorted({tk[d] for d in waits[a] if tk[d] and tk[d] != tk[a]})} for w, grp in waves for a in grp if tk[a] and tk[a] not in shared]}
+
+
 def render_wave_brief(s):
     """templates.md "Wave brief" from briefy's spec; the contracts file and the /buildy args come from the same spec (wave_files)."""
     s = wave_ids(s)
@@ -2449,6 +2478,7 @@ def render_wave_brief(s):
         *__import__('textwrap').wrap(f'**MR limits** (`devtools.py mr` refuses over them; `devtools.py mr <worktree> --spec <mr.json> --check` first: the same gates, nothing opened): {prose_limits("mr-title") or "mr-title"}; '
                                      f'{prose_limits("mr-body") or "mr-body"}', 128, break_long_words=False, break_on_hyphens=False),
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
+        '## Order (waves: a row runs in parallel; `crafty.ps1 tracker order <parent> -Apply <brief>.order.json` links the tasks)', _table(['Wave', 'Areas (parallel)', 'Tasks', 'Waits on'], [[str(w), ', '.join(g), ', '.join(sorted({a.get('task') or s.get('task') or '—' for a in s['agents'] if a['id'] in g})), ', '.join(sorted({d for x in g for d in wo[x]})) or '—'] for wv in [wave_order(s)] for wo in [wv[1]] for w, g in wv[0]]),
         '## openQuestions', *(qs or ['n/a — no open question']), '## Findings (rechy)', 'n/a — no spike yet (the Spike phase appends here)',
         '## Rule changes during the wave (newest last)', 'n/a — none yet (appended during the wave)']) + '\n'
 
@@ -2471,7 +2501,8 @@ def wave_files(s, brief_path):
             **({'label': lb} if (lb := s.get('label') or run_label(s)) else {}),   # N3 '<KEY> <short title>': board show, dashboard
             'openQuestions': [q['question'] for q in map(_oq, s.get('openQuestions') or []) if q['question'] and (q.get('answers') or '') == 'rechy'],
             **({'holdMerge': s['holdMerge']} if s.get('holdMerge') else {}), **({'kitDir': s['kitDir']} if s.get('kitDir') else {})}
-    return {f'{stem}.contracts.md': con, f'{stem}.args.json': json.dumps(args, ensure_ascii=False, indent=1) + '\n'}
+    return {f'{stem}.contracts.md': con, f'{stem}.args.json': json.dumps(args, ensure_ascii=False, indent=1) + '\n',
+            f'{stem}.order.json': json.dumps(order_tasks(s), ensure_ascii=False, indent=1) + '\n'}
 
 
 # ---- spec: one versioned spec doc per task or standing subject; its S-ids are cited by cases, commits, MRs and QA results
@@ -2924,6 +2955,13 @@ def selftest():
         render_cmd(['wave-brief', wsp, wbp])
     expect('wave brief: names the contracts file it writes (<brief stem>.contracts.md)', '`wave-x.contracts.md`' in open(wbp, encoding='utf-8').read() and os.path.isfile(os.path.join(td, 'wave-x.contracts.md')))
     shutil.rmtree(td, ignore_errors=True)
+    # order (owner 2026-11-23): dependsOn + contract producers -> waves; one task per area -> its waits-on tasks; a shared task skipped; a cycle last
+    wo = {'name': 'v2', 'agents': [{'id': 'A', 'task': 't1'}, {'id': 'B', 'task': 't2', 'dependsOn': ['A']}, {'id': 'C', 'task': 't3'}, {'id': 'D', 'task': 't4'}, {'id': 'E', 'task': 't4'}],
+          'contracts': [{'producer': 'B', 'consumers': 'C, D'}]}
+    ot = order_tasks(wo); cy = wave_order({'agents': [{'id': 'X', 'dependsOn': ['Y']}, {'id': 'Y', 'dependsOn': ['X']}, {'id': 'Z'}]})[0]
+    expect('wave order: A then B (dependsOn) then C (contract consumer); D / E share t4 (skipped); labels "<name> wave <n>"; a cycle is its own row',
+           wave_order(wo)[0] == [(1, ['A', 'E']), (2, ['B']), (3, ['C', 'D'])] and [(t['task'], t['wave'], t['waitsOn']) for t in ot['tasks']] == [('t1', 'v2 wave 1', []), ('t2', 'v2 wave 2', ['t1']), ('t3', 'v2 wave 3', ['t2'])]
+           and cy == [(1, ['Z']), ('cycle', ['X', 'Y'])] and '| 2 | B | t2 | A |' in render_wave_brief(wo) and 'b.order.json' in wave_files({**wo, 'mandate': ['m']}, 'b.md'))
     agent_env = {n: os.environ.pop(n, None) for n in ('CLAUDE_AGENT', 'KIT_AGENT')}
     try:
         own_spec({'by': 'AA', 'checks': [{'id': 'S2', 'by': 'BB'}]}, {'checks': [{'id': 'S3'}]})

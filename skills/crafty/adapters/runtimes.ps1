@@ -30,7 +30,7 @@ function Update-KitRuntimeState([string]$Name, [scriptblock]$Change) {
   }
 }
 # WSL_UTF8: wsl.exe prints UTF-8 instead of UTF-16
-function Invoke-KitRuntimeCmd([string]$Line, [int]$TimeoutSec) { $env:WSL_UTF8 = '1'; Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-Command', $Line) $TimeoutSec }
+function Invoke-KitRuntimeCmd([string]$Line, [Alias('TimeoutSeconds')][int]$TimeoutSec) { $env:WSL_UTF8 = '1'; Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-Command', $Line) $TimeoutSec }
 # $true running · $false not running · $null unknown (timed out): unknown is never a state, so it never starts or stops anything
 # runtimeProbe.isUpSec: a full wait; the guard's no-wait probe a quarter, the sweep's a half (under load 5 s timed out: K76 flakes)
 function Test-KitRuntimeUp([string]$Name, [int]$TimeoutSec = (Get-KitParam 'runtimeProbe.isUpSec')) {
@@ -49,7 +49,7 @@ function Stop-KitRuntime([string]$Name, [hashtable]$St) {
   $down = Get-KitSetting "runtimes.$Name.down" ''
   if (-not $down) { return "runtime ${Name}: no lease left; no runtimes.$Name.down: left running" }
   $r = Invoke-KitRuntimeCmd $down 90   # + isUp stays under the 130 s a waiting writer gives the lock
-  if ($r.code) { $St.emptySince = (Get-Date).ToString('o'); return "runtime ${Name}: down failed (exit $($r.code)): $(@("$($r.err)`n$($r.out)" -split "`n" | Where-Object { $_.Trim() })[0])" }
+  if ($r.code) { $St.emptySince = (Get-KitStamp); return "runtime ${Name}: down failed (exit $($r.code)): $(@("$($r.err)`n$($r.out)" -split "`n" | Where-Object { $_.Trim() })[0])" }
   $St.startedByKit = $false; $St.Remove('startedAt'); $St.Remove('emptySince')
   "runtime ${Name}: stopped ($down): the kit started it, no lease left"
 }
@@ -58,9 +58,9 @@ function Use-KitRuntime([string]$Name, [string]$Agent, [string]$Session, [switch
  Update-KitRuntimeState $Name { param($st)
     $script:up = Test-KitRuntimeUp $Name ([double](Get-KitParam 'runtimeProbe.isUpSec') / $(if ($NoWait) { 4 } else { 1 }))
     $st.leases = @($st.leases | Where-Object { -not ($_.agent -eq $Agent -and "$($_.session)" -eq $Session) })   # one per agent + session
-    $l = New-KitLease $Agent $Session; if ($Auto) { $l.auto = $true; $l.used = (Get-Date).ToString('o') }
+    $l = New-KitLease $Agent $Session; if ($Auto) { $l.auto = $true; $l.used = (Get-KitStamp) }
     $st.leases += $l; $st.Remove('emptySince')
-    if ($script:up -eq $false) { $st.startedByKit = $true; $st.startedAt = (Get-Date).ToString('o') }
+    if ($script:up -eq $false) { $st.startedByKit = $true; $st.startedAt = (Get-KitStamp) }
   }
   $up = $script:up
   if ($up) { return "runtime ${Name}: running; leased by $Agent" }
@@ -128,7 +128,7 @@ Register-KitAdapter 'guard' 'runtimes' @{ check = { param($a)
       $m = "$(Get-KitSetting "runtimes.$n.match" '')"; if (-not $m -or -not @($segs | Where-Object { $_ -match "^(?:$m)" }).Count) { continue }
       if (Test-KitLockHeld (Get-KitRuntimeFile $n)) { continue }   # a use / down in progress: never past the hook timeout; the next command retries
       $mine = @((Get-KitRuntimeState $n).leases | Where-Object { $_.agent -eq $who })
-      if ($mine.Count) { if (@($mine | Where-Object { $_.auto }).Count) { Update-KitRuntimeState $n { param($st) foreach ($l in @($st.leases | Where-Object { $_.agent -eq $who -and $_.auto })) { $l.used = (Get-Date).ToString('o') } } }; continue }
+      if ($mine.Count) { if (@($mine | Where-Object { $_.auto }).Count) { Update-KitRuntimeState $n { param($st) foreach ($l in @($st.leases | Where-Object { $_.agent -eq $who -and $_.auto })) { $l.used = (Get-KitStamp) } } }; continue }
       try { "$(Use-KitRuntime $n $who -Auto -NoWait). When done: & $($KitCmd.dev) runtime release -Name $n -Agent $who" } catch {}   # never fail a hook over a lease
     }
     if ($notes) { @{ note = ($notes -join "`n") } }
@@ -145,8 +145,8 @@ function Get-KitSuperviseGuardRuntimes([switch]$AutoFix) {
     Update-KitRuntimeState $n { param($st)
       $now = Get-Date; $live = 0
       $dead = @(foreach ($l in $st.leases) {
-          if (Test-KitRuntimeLease $l) { $l.seen = $now.ToString('o'); $live++; continue }
-          if (-not $l.seen) { $l.seen = $now.ToString('o') }
+          if (Test-KitRuntimeLease $l) { $l.seen = (Get-KitStamp stored $now); $live++; continue }
+          if (-not $l.seen) { $l.seen = (Get-KitStamp stored $now) }
           if (($now - [datetime]$l.seen).TotalMinutes -ge $grace) { $l }
         })
       # probed only when a stop may follow (kit-started, no live lease): the probe cost 1-4 s a sweep under load
@@ -158,7 +158,7 @@ function Get-KitSuperviseGuardRuntimes([switch]$AutoFix) {
         else { $script:rtOut += [pscustomobject]@{ level = 'WATCH'; what = "runtime ${n}: the lease of $($l.agent) has no live holder"; action = 'supervise -AutoFix releases it (and stops the runtime when the kit started it).' } }
       }
       if ($st.startedByKit -and -not $st.leases.Count -and $null -ne $running) {   # unknown state: never a stop
-        if (-not $st.emptySince) { $st.emptySince = $now.ToString('o') }
+        if (-not $st.emptySince) { $st.emptySince = (Get-KitStamp stored $now) }
         if ($dead.Count -or ($now - [datetime]$st.emptySince).TotalMinutes -ge $grace) {
           if ($AutoFix) { $msg = Stop-KitRuntime $n $st; $script:rtOut += [pscustomobject]@{ level = $(if ($msg -match 'failed') { 'WATCH' } else { 'INFO' }); what = $(if ($msg -match 'failed') { $msg } else { "auto-fixed: $msg" }); action = $(if ($msg -match 'failed') { "Run runtimes.$n.down by hand; check the config." } else { 'Nothing to do.' }) } }
           else { $script:rtOut += [pscustomobject]@{ level = 'WATCH'; what = "runtime ${n}: started by the kit, no lease since $([int]($now - [datetime]$st.emptySince).TotalMinutes) min"; action = 'supervise -AutoFix stops it.' } }

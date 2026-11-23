@@ -32,7 +32,7 @@ function Update-KitLocalAi([string]$Name, [scriptblock]$Change) {
 }
 function Use-KitLocalAi([string]$Name, [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session = '', [double]$WaitMinutes = 30) {
   $max = [math]::Max(1, [int](Get-KitSetting 'media.stt.maxConcurrent' 1))
-  $me = @{ agent = $Agent; session = $Session; pid = $PID; pidStart = (Get-KitPidStart $PID); at = (Get-Date).ToString('o') }
+  $me = @{ agent = $Agent; session = $Session; pid = $PID; pidStart = (Get-KitPidStart $PID); at = (Get-KitStamp) }
   $end = (Get-Date).AddMinutes($WaitMinutes); $said = $false
   while ($true) {
     $got = Update-KitLocalAi $Name { param($st)

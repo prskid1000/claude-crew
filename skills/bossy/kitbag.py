@@ -144,7 +144,7 @@ def state_read(path):
 
 def state_write(path, data, version=1):
     """schemaVersion, updated (ISO + offset), holder; an atomic replace."""
-    data = dict(data, schemaVersion=version, updated=datetime.datetime.now().astimezone().isoformat(),
+    data = dict(data, schemaVersion=version, updated=kit_stamp(),
                 holder={'agent': kit_who().get('agent', ''), 'session': os.environ.get('KIT_SESSION', ''), 'pid': os.getpid()})
     os.makedirs(osp.dirname(path), exist_ok=True)
     tmp = f'{path}.{os.getpid()}.tmp'
@@ -239,7 +239,7 @@ _CALL = {}
 def kitlog(stream, event='', fields=None, who=None):
     """Append one masked JSON line to a stream; never raises."""
     try:
-        o = {'at': datetime.datetime.now().astimezone().isoformat()}
+        o = {'at': kit_stamp()}
         o.update({k: v for k, v in (who or _CALL.get('who') or kit_who()).items() if v})
         o.update(script=_CALL.get('script', ''), verb=_CALL.get('verb', ''), **({'event': event} if event else {}))
         o.update(mask(fields or {}))
@@ -1549,7 +1549,7 @@ def cmd_ui_check(a):
     stamp = ui_check_stamp()
     os.makedirs(osp.dirname(stamp), exist_ok=True)
     with open(stamp, 'w', encoding='utf-8') as fh:
-        json.dump({'at': datetime.datetime.now().astimezone().isoformat(), 'page': osp.abspath(rest[0]), 'widths': widths}, fh)
+        json.dump({'at': kit_stamp(), 'page': osp.abspath(rest[0]), 'widths': widths}, fh)
     print('kitbag ui-check: no clipped text; now read each shot (overlap, gaps, contrast) before the commit')
     return 0
 
@@ -1680,7 +1680,7 @@ def ps_case(t):
 
 def cmd_stamp(kit):
     p = kit_path('last-kitty-audit', create=True, kit=kit)
-    now = datetime.datetime.now().isoformat(timespec='seconds')
+    now = kit_stamp()
     with open(p, 'w', encoding='utf-8') as f:
         f.write(now + '\n')
     out('FIX', 'AUDIT-STAMP', p, f'last kit audit = {now} (the SessionStart nudge resets)')

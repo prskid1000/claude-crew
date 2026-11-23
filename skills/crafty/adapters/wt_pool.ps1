@@ -240,7 +240,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
     if ($tk) { Update-KitTaskIndex $tk { param($x) if ($x.prior) { $x.prior.claimed = @(@($x.prior.claimed) + $Branch | Where-Object { $_ } | Select-Object -Unique) } } }
   }
   $sdir = Get-KitPath wt-slots -Create; $wdir = Join-Path $sdir 'wait'; New-Item -ItemType Directory -Force $wdir | Out-Null
-  $poolLock = Join-Path $sdir "$rl.pool"; $wf = Join-Path $wdir "$(ConvertTo-KitSlug $Agent)-$rl.json"; $since = (Get-Date).ToString('o')
+  $poolLock = Join-Path $sdir "$rl.pool"; $wf = Join-Path $wdir "$(ConvertTo-KitSlug $Agent)-$rl.json"; $since = (Get-KitStamp)
   $slotRoot = if ($Root) { $Root } else { @($KitConf.WorktreeRoots)[0] }
   $deadline = (Get-Date).AddMinutes($WaitMinutes); $got = $null; $told = $false
   Write-KitAtomic $wf (@{ agent = $Agent; repo = $rl; branch = $Branch; since = $since } | ConvertTo-Json -Compress)
@@ -274,7 +274,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
             $pick = [pscustomobject]@{ n = $n; name = "$rl·$(Get-KitBirdName $n)"; path = (Join-Path $slotRoot $sleaf); branch = ''; head = ''; new = $true; file = (Get-KitSlotFile $sleaf) }
           }
         }
-        $lease = [ordered]@{ slot = $pick.name; n = $pick.n; repo = $Repo; path = $pick.path; branch = $Branch; since = (Get-Date).ToString('o') } + (New-KitLease $Agent $Session)
+        $lease = [ordered]@{ slot = $pick.name; n = $pick.n; repo = $Repo; path = $pick.path; branch = $Branch; since = (Get-KitStamp) } + (New-KitLease $Agent $Session)
         if ($pick.new) { $lease.creating = $true }
         Write-KitAtomic $pick.file ($lease | ConvertTo-Json -Depth 5)
         $lg = @{}; foreach ($k in $lease.Keys) { $lg[$k] = $lease[$k] }; $lg.at = $since; Write-KitLeaseLog acquire slot $pick.name $lg   # since = when it began to wait
@@ -309,7 +309,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
     $o = Read-KitSlotLease $got.file; if ($o) { $o = $o | Select-Object -Property * -ExcludeProperty creating; Set-KitProp $o branch $Branch; Write-KitAtomic $got.file ($o | ConvertTo-Json -Depth 5) }
   } catch {
     $err = $_; Invoke-KitLocked $poolLock { $o = Read-KitSlotLease $got.file; if ($o -and $o.agent -eq $Agent) {   # dirty (a resumed parked slot): parked again, never orphaned
-        if ((Test-Path -LiteralPath $got.path) -and @(Get-WtDirty $got.path).Count) { $pw = "lease failed, files kept: $($err.Exception.Message)"; Set-KitProp $o parked $true; Set-KitProp $o parkedAt (Get-Date).ToString('o'); Set-KitProp $o parkedWhy $pw.Substring(0, [math]::Min(300, $pw.Length)); Write-KitAtomic $got.file ($o | ConvertTo-Json -Depth 5) }
+        if ((Test-Path -LiteralPath $got.path) -and @(Get-WtDirty $got.path).Count) { $pw = "lease failed, files kept: $($err.Exception.Message)"; Set-KitProp $o parked $true; Set-KitProp $o parkedAt (Get-KitStamp); Set-KitProp $o parkedWhy $pw.Substring(0, [math]::Min(300, $pw.Length)); Write-KitAtomic $got.file ($o | ConvertTo-Json -Depth 5) }
         else { Remove-Item -LiteralPath $got.file -Force }
         Write-KitLeaseLog release slot $got.name $o "lease failed: $($err.Exception.Message)" } }
     throw $err
@@ -340,7 +340,7 @@ function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo)
       $said = 'uncommitted files on a detached HEAD'
       if ($br) { git -C $p add -A -- @($dirty | ForEach-Object { ($_.Substring(3).Trim('"') -split ' -> ')[-1] }) 2>$null; $said = @(git -C $p commit -q -m "wip: $($o.slot) released with uncommitted work ($why)" 2>&1 | ForEach-Object { "$_" }) -join ' '; $wc = $LASTEXITCODE; if ($wc) { git -C $p reset -q 2>$null; $said = "WIP commit refused (exit $wc) $said".Trim() } else { $said = '' } }
       if ($said) {
-        Set-KitProp $o parked $true; Set-KitProp $o parkedAt (Get-Date).ToString('o'); $pw = "uncommitted files: $said"; Set-KitProp $o parkedWhy $pw.Substring(0, [math]::Min(300, $pw.Length)); Write-KitAtomic $lf ($o | ConvertTo-Json -Depth 5)
+        Set-KitProp $o parked $true; Set-KitProp $o parkedAt (Get-KitStamp); $pw = "uncommitted files: $said"; Set-KitProp $o parkedWhy $pw.Substring(0, [math]::Min(300, $pw.Length)); Write-KitAtomic $lf ($o | ConvertTo-Json -Depth 5)
         Write-KitLeaseLog release slot $o.slot $o "$why (parked)"; "PARKED $($o.slot) ($p): $said; wt lease -Branch $(if ($br) { $br } else { '<branch>' }) -Repo $(Split-Path $o.repo -Leaf) -Agent <id> resumes it, nobody else gets it"; continue
       }
       "$($o.slot): uncommitted work committed on $br as a WIP commit"
@@ -438,7 +438,7 @@ function Invoke-LaneResync([switch]$DryRun) {
           $rs = $st.release.repos[$rl]; $old = "$(git -C $d rev-parse HEAD 2>$null)".Trim()
           $mk = { param($l) "$rl|$($l.branch)|$($l.sha)" }   # the sha too: a layer re-pushed since the read is judged again by Sync-Repo
           $ly = @($rs.layers | Where-Object { $_ -and -not $mergedWhy[(& $mk $_)] }); $pre = @($rs.layers | Where-Object { $_ -and $mergedWhy[(& $mk $_)] } | ForEach-Object { "$($_.branch) ($($mergedWhy[(& $mk $_)]))" })   # merged: dropped, never re-merged
-          $row = [ordered]@{ lane = $e; repo = $rl; head = $old; base = ''; behind = 0; merges = $ly.Count; at = (Get-Date).ToString('o'); kept = '' }
+          $row = [ordered]@{ lane = $e; repo = $rl; head = $old; base = ''; behind = 0; merges = $ly.Count; at = (Get-KitStamp); kept = '' }
           if ($busy) { "kept [$e] ${rl}: in use ($busy)"; $row.kept = $busy }
           elseif (@(git -C $d status --porcelain --untracked-files=no 2>$null).Count) { "kept [$e] ${rl}: uncommitted edits in $d (a sync never discards them)"; $row.kept = 'uncommitted edits' }
           elseif ($DryRun) { "plan [$e] ${rl}: origin/$($r.target) + $($ly.Count) layer(s)$(if ($pre.Count) { "; drop $($pre -join ', ')" })" }
@@ -474,11 +474,11 @@ function Save-KitBranchBackup([string]$Repo, [string]$Branch, [switch]$DryRun) {
 # numbers, newest bird first; -Shrunk: the sync removed one, the day starts) }
 function Update-KitPoolUsage([string]$Repo, [int]$Size, [int]$Default, $Slots, [datetime]$Now = (Get-Date), [switch]$Shrunk) {
   $rk = Get-KitCheckoutName $Repo; $f = Get-KitPath pool-usage; $res = @{ warm = $Default; target = $Default; drop = @() }
-  if ($Shrunk) { Invoke-KitLocked $f { $st = Read-KitState $f; if ($st.repos[$rk]) { $st.repos[$rk].shrunk = $Now.ToString('o'); Write-KitState $f $st } }; return $res }
+  if ($Shrunk) { Invoke-KitLocked $f { $st = Read-KitState $f; if ($st.repos[$rk]) { $st.repos[$rk].shrunk = (Get-KitStamp stored $Now); Write-KitState $f $st } }; return $res }
   Invoke-KitLocked $f { $st = Read-KitState $f; if (-not $st) { $st = [ordered]@{ repos = [ordered]@{} } }; if (-not $st.repos[$rk]) { $st.repos[$rk] = [ordered]@{ samples = @(); used = [ordered]@{}; shrunk = '' } }
-    $u = $st.repos[$rk]; $held = @($Slots | Where-Object { Read-KitSlotLease $_.file }); foreach ($s in $held) { $u.used["$($s.n)"] = $Now.ToString('o') }
-    foreach ($s in @($Slots | Where-Object { -not $u.used["$($_.n)"] })) { $u.used["$($s.n)"] = $Now.ToString('o') }   # first seen: counts as used now
-    $u.samples = @(@($u.samples | Where-Object { $_ -and [datetime]$_[0] -gt $Now.AddDays(-7) }) + , @($Now.ToString('o'), $held.Count))
+    $u = $st.repos[$rk]; $held = @($Slots | Where-Object { Read-KitSlotLease $_.file }); foreach ($s in $held) { $u.used["$($s.n)"] = (Get-KitStamp stored $Now) }
+    foreach ($s in @($Slots | Where-Object { -not $u.used["$($_.n)"] })) { $u.used["$($s.n)"] = (Get-KitStamp stored $Now) }   # first seen: counts as used now
+    $u.samples = @(@($u.samples | Where-Object { $_ -and [datetime]$_[0] -gt $Now.AddDays(-7) }) + , @((Get-KitStamp stored $Now), $held.Count))
     $vals = @($u.samples | ForEach-Object { [int]$_[1] } | Sort-Object)
     if ($vals.Count -and (@($u.samples | ForEach-Object { [datetime]$_[0] }) | Measure-Object -Minimum).Minimum -le $Now.AddDays(-1)) { $res.target = [math]::Min($Size, $vals[[math]::Min($vals.Count - 1, [int][math]::Ceiling(0.9 * $vals.Count) - 1)] + 1); $res.warm = $res.target }
     $recent = @($u.samples | Where-Object { [datetime]$_[0] -gt $Now.AddDays(-3) } | ForEach-Object { [int]$_[1] }); $span = @($u.samples | Where-Object { [datetime]$_[0] -le $Now.AddDays(-3) }).Count
@@ -488,7 +488,7 @@ function Update-KitPoolUsage([string]$Repo, [int]$Size, [int]$Default, $Slots, [
   $res
 }
 function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
-  $rl = Split-Path $Repo -Leaf; $r = [ordered]@{ repo = $rl; at = (Get-Date).ToString('o'); ff = @(); diverged = @(); dirty = @(); pruned = @(); warmed = @(); maint = $false; err = '' }
+  $rl = Split-Path $Repo -Leaf; $r = [ordered]@{ repo = $rl; at = (Get-KitStamp); ff = @(); diverged = @(); dirty = @(); pruned = @(); warmed = @(); maint = $false; err = '' }
   # a preview (wt pool) reuses a fetch under 10 min old: no 6-repo fetch per look
   $fh = "$(git -C $Repo rev-parse --path-format=absolute --git-path FETCH_HEAD 2>$null)".Trim(); $fresh = $DryRun -and $fh -and (Test-Path -LiteralPath $fh) -and ((Get-Date) - (Get-Item -LiteralPath $fh).LastWriteTime).TotalMinutes -lt 10
   $fo = @(if (-not $fresh) { git -C $Repo fetch -q --prune origin 2>&1 }); if (-not $fresh -and $LASTEXITCODE) { $r.err = "fetch failed: $(@($fo)[-1])"; return [pscustomobject]$r }
@@ -709,6 +709,6 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     }
     [void]$counts.Add([ordered]@{ repo = $leaf; branches = @(git -C $rp for-each-ref --format='%(refname:short)' refs/heads 2>$null).Count; worktrees = [math]::Max(0, @(Get-KitWorktrees $rp).Count - 1); removable = $(if ($DryRun) { $del } else { 0 }); kept = $keptN })
   }
-  Write-KitAtomic (Get-KitPath repo-sweep -Create) ([ordered]@{ at = $now.ToString('o'); dryRun = [bool]$DryRun; repos = @($counts) } | ConvertTo-Json -Depth 4) -Volatile '"at":\s*"[^"]*"'
+  Write-KitAtomic (Get-KitPath repo-sweep -Create) ([ordered]@{ at = (Get-KitStamp stored $now); dryRun = [bool]$DryRun; repos = @($counts) } | ConvertTo-Json -Depth 4) -Volatile '"at":\s*"[^"]*"'
   [pscustomobject]@{ actions = @($actions); kept = @($kept); notes = @($notes) }
 }

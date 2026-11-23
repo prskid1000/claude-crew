@@ -57,7 +57,7 @@ function Get-KitGateStats([datetime]$Now = (Get-Date), $Resources = @(), [dateti
         hours = @($_.hours | ForEach-Object { , @([int]$_[0], [math]::Round($_[1], 1), [math]::Round($_[2], 1)) }) } } | Sort-Object { - ($_.running * 1000 + $_.queued * 100 + $_.done) })
   $owners = @(Get-KitBuildsByOwner @($ends | Where-Object { (& $at $_.at) -ge $Now.Date }))
   $lanes = @(try { (Read-KitText (Join-Path $KitConf.Kit 'skills/phoney/swarm.config.json') | ConvertFrom-Json).lanes } catch { })
-  [pscustomobject]@{ h0 = $h0.ToString('o'); running = $run.Count; queued = $que.Count; today = [int](($rows | Measure-Object done -Sum).Sum); waitMax = [double](@($rows.waitMax) + 0 | Measure-Object -Maximum).Maximum
+  [pscustomobject]@{ h0 = (Get-KitStamp stored $h0); running = $run.Count; queued = $que.Count; today = [int](($rows | Measure-Object done -Sum).Sum); waitMax = [double](@($rows.waitMax) + 0 | Measure-Object -Maximum).Maximum
     ram = [math]::Round([double](($run | Measure-Object need -Sum).Sum), 1); rows = $rows; owners = $owners
     lanes = $lanes.Count; leased = @($lanes | Where-Object { $_.name -and (Test-Path (Join-Path (Get-KitPath phones) "$($_.name).json")) }).Count; emulators = @($Resources | Where-Object { "$($_.name)" -like 'phone *' }).Count
     browsers = @($Resources | Where-Object { "$($_.name)" -like 'browser *' }).Count; browserGB = [math]::Round([double](@($Resources | Where-Object { "$($_.name)" -like 'browser *' } | ForEach-Object { [double]$_.gb }) + 0 | Measure-Object -Sum).Sum, 1) }   # leases, never gated
@@ -86,7 +86,7 @@ function Get-KitLeaseWaits([datetime]$Now = (Get-Date), [datetime]$StatsFrom = [
   foreach ($q in @(Get-ChildItem (Join-Path (Get-KitGateLedger) 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { $_.since -and (Test-KitPid $_.pid $_.start) })) { & $add 'build gate' $q.since $Now "$($q.owner)" }
   foreach ($w in @(try { (Get-KitLockState).waiting } catch { })) { if ($w.at) { & $add "lock $($w.lock)" $w.at $Now "$($w.holder)" } }
   foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ($Now - $_.LastWriteTime).TotalMinutes -lt (Get-KitParam 'phone.waitFreshMinutes') })) { $w = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { continue }; & $add "phone $(if ($w.lane) { $w.lane } else { 'any lane' })" $w.since $Now "$($w.agent)" }
-  [pscustomobject]@{ h0 = $h0.ToString('o'); rows = @($rows.Values | Sort-Object { - $_.min } | ForEach-Object { [pscustomobject]@{ name = $_.name; n = $_.n; min = [math]::Round($_.min, 1); max = [math]::Round($_.max, 1); hours = @($_.hours | ForEach-Object { , @([int]$_[0], [math]::Round($_[1], 1), [math]::Round($_[2], 1), "$($_[3])") }) } }) }
+  [pscustomobject]@{ h0 = (Get-KitStamp stored $h0); rows = @($rows.Values | Sort-Object { - $_.min } | ForEach-Object { [pscustomobject]@{ name = $_.name; n = $_.n; min = [math]::Round($_.min, 1); max = [math]::Round($_.max, 1); hours = @($_.hours | ForEach-Object { , @([int]$_[0], [math]::Round($_[1], 1), [math]::Round($_[2], 1), "$($_[3])") }) } }) }
 }
 
 # ---- qa: checks per day from the QA runs' results.json (7 days): PASS / FAIL / NOT_TESTED / OUT_OF_SCOPE, NOT_TESTED causes, runs per day
@@ -137,9 +137,9 @@ function Update-KitCpuStats($Prior, [datetime]$Now = (Get-Date), $Shells = @(), 
         [ordered]@{ n = "$($p.Name)"; pid = $p.Id; p = [math]::Round($pct[$_], 1); o = (& $owner $p.Id); c = $(if ($p.CommandLine) { $one = Protect-KitText ("$($p.CommandLine)" -replace '\s+', ' '); $one.Substring(0, [math]::Min(160, $one.Length)) } else { '' }) } })
     # the machine from idle time (a build that came and went between sweeps counts too); no idle process: the sum
     $all = if ($idle -and $null -ne $pa.idle) { [math]::Max(0.0, [math]::Min(100.0, 100 - 100 * ([double]$idle.Cpu - [double]$pa.idle) / $dt / $cores)) } else { [double](@($pct.Values) + 0 | Measure-Object -Sum).Sum }
-    $samples += [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; all = [math]::Round($all, 1); g = $g; m = $m; top = $top }
+    $samples += [ordered]@{ at = (Get-KitStamp stored $Now); s = [int]$dt; all = [math]::Round($all, 1); g = $g; m = $m; top = $top }
   }
-  [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; svc = @($svcNames | Select-Object -Unique) }   # svc: every configured service, up or not (its row stays)
+  [ordered]@{ at = (Get-KitStamp stored $Now); acc = $acc; samples = $samples; svc = @($svcNames | Select-Object -Unique) }   # svc: every configured service, up or not (its row stays)
 }
 
 # ---- writes (owner 2026-11-18: no work that writes huge data): bytes written per process (Windows I/O counters) since the last
@@ -281,7 +281,7 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Di
     # the disks' growth this beat (a reboot resets the counter: no scale); each GB = its share of all process I/O x that
     $wasD = Get-KitMember $Prior.acc 'disk'; $dg = if ($null -ne $Disk -and $null -ne $wasD -and [double]$Disk -ge [double]$wasD) { ([double]$Disk - [double]$wasD) / 1GB }
     $f = if ($null -eq $dg) { 1.0 } elseif ($mach -gt 0) { [math]::Min(1.0, $dg / $mach) } else { 0.0 }
-    $smp = [ordered]@{ at = $Now.ToString('o'); s = [int]$dt; m = [math]::Round($(if ($null -ne $dg) { $dg } else { $mach }), 3) }; if ($null -ne $dg) { $smp.e = 1 }
+    $smp = [ordered]@{ at = (Get-KitStamp stored $Now); s = [int]$dt; m = [math]::Round($(if ($null -ne $dg) { $dg } else { $mach }), 3) }; if ($null -ne $dg) { $smp.e = 1 }
     $smp.w = @($rw.Keys | Where-Object { $rw[$_].g * $f -ge 0.001 } | ForEach-Object { $o1 = [ordered]@{ n = "$_"; a = $rw[$_].a; g = [math]::Round($rw[$_].g * $f, 3); c = $rw[$_].c; k = $rw[$_].k }; if (($rw[$_].k -or $rw[$_].c -match '--(datadir|defaults-file)[= ]') -and $rw[$_].f.Count) { $o1.f = $rw[$_].f }; $o1 }); $samples += $smp
   }
   # owner 2026-11-19 ("it should record pure disk writes"): with a tracer every row's GB is its physical disk MB (a cached write, e.g. qemu
@@ -293,7 +293,7 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Di
         $ws = @(Get-KitWriteRows $s); $sh = Get-KitTracerShare $Tracer $s1 $e1 $ws
         $s2 = [ordered]@{}; foreach ($p in @(Get-KitWritePairs $s)) { if ($p.Name -ne 'w') { $s2[$p.Name] = $p.Value } }; $s2.t = 1
         $s2.w = @($ws | Where-Object { $sh["$($_.n)"] -ge 0.001 } | ForEach-Object { $o1 = [ordered]@{ n = $_.n; a = $_.a; g = [math]::Round($sh["$($_.n)"], 3); c = $_.c; k = $_.k }; if (@($_.f).Count) { $o1.f = @($_.f) }; $o1 })
-        if ("$($s.at)" -ne $Now.ToString('o')) { $redo.Add($s2) }; $s2 }) }
+        if ("$($s.at)" -ne (Get-KitStamp stored $Now)) { $redo.Add($s2) }; $s2 }) }
   $hr = @{}; $last = @{}; $hd = 0.0; $he = $false; $est = @{}; $kk = @{}
   # only disk-scaled or tracer samples count (one from before the disk counter, a reboot or a lost prior is raw I/O); the card keeps them all;
   # each sample by the part of its window inside the hour not counted yet (two sweeps' overlapping windows, a 2 h window: counted once)
@@ -307,11 +307,11 @@ function Update-KitWriteStats($Prior, [datetime]$Now, $Procs, $Owners = @(), $Di
   $soft = [double](Get-KitParam 'writes.softGBPerHour'); $hard = [double](Get-KitParam 'writes.hardGBPerHour')
   # a burst that is over (no write in the last 2 samples: exited or stopped) leaves the flags, the card keeps its hour; not kit-owned:
   # only the tracer's own disk MB flags it (never ACT), an estimate never (2026-11-19: Edge est. 1.12 GB, ~0 MB on disk)
-  $nowS = @($samples | Where-Object { "$($_.at)" -eq $Now.ToString('o') })[0]; $cur = @($samples | Select-Object -Last 2 | ForEach-Object { Get-KitWriteRows $_ } | ForEach-Object { "$($_.n)" })
+  $nowS = @($samples | Where-Object { "$($_.at)" -eq (Get-KitStamp stored $Now) })[0]; $cur = @($samples | Select-Object -Last 2 | ForEach-Object { Get-KitWriteRows $_ } | ForEach-Object { "$($_.n)" })
   $flags = @(foreach ($h in @($hour | Where-Object { $he -and $_.gb -ge $soft -and (-not $nowS -or $_.label -in $cur) -and ($_.k -or -not $_.est) })) { $lv = if ($h.k -and $h.gb -ge $hard) { 'ACT' } else { 'WATCH' }; $who = "$($h.label)$(if ($h.tag) { " ($($h.tag))" })"
       [pscustomobject]@{ level = $lv; kind = 'WRITES'; who = $who; what = "WRITES ${who}: $(if ($h.est) { 'est. ' })$($h.gb) GB to disk in the last hour (all disks $([math]::Round($hd, 2)) GB; soft $soft / hard $hard GB$(if (-not $h.k) { '; not kit-owned' })); top: $(Get-KitWriteLabel '' $h.cmd)" -replace "; top: $([regex]::Escape($h.label))$"
         action = "$(if ($lv -eq 'ACT') { 'Check whether it is a one-off (a burst already over, a false positive) before acting; still writing: stop it, then ' })tell its owner: no bulk data, dumps, tree copies, reinstalls or big captures (AGENTS.md); links / moves, small fixtures, read-only checks." } })
-  [ordered]@{ at = $Now.ToString('o'); acc = $acc; samples = $samples; hour = $hour; flags = $flags; redo = @($redo) }
+  [ordered]@{ at = (Get-KitStamp stored $Now); acc = $acc; samples = $samples; hour = $hour; flags = $flags; redo = @($redo) }
 }
 # the owners from this sweep (resources, shells, lane services): label = the resource, tag = its holder agent (no branch); a shell: the
 # agent, tag shell; an env service with no pid (an external one, e.g. the shared database): the pid listening on its port (one netstat)
@@ -423,7 +423,7 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
         , @([math]::Round((& $val $bk '*m'), 3), [math]::Round((& $val $bk '*k'), 3), $tw, [int][bool]$bk) })
       [ordered]@{ d = $d0.ToString('yyyy-MM-dd'); h = $hp; m = [math]::Round((& $val $dm[$d0.ToString('yyyy-MM-dd')] '*m'), 2); k = [math]::Round((& $val $dm[$d0.ToString('yyyy-MM-dd')] '*k'), 2) } })
   $byName = @($names | Where-Object { $_ -notin $tops } | ForEach-Object { & $mk $_ $_ "$($tags[$_])" (& $line $_) $now60[$_] (& $sumD $_ 1) (& $sumD $_ 7) (& $sumD $_ 30) })   # the Writes metric of Resources · 24 h: every owner, not only the top
-  [ordered]@{ at = $Now.ToString('o'); last = $(@($Samples | Where-Object { $_ -and $_.at } | ForEach-Object { ([datetime]$_.at).ToString('o') } | Sort-Object)[-1]); h0 = $h0.ToString('o'); src =$(if (@($Samples | Where-Object { $_ })[-1].t) { 'tracer' } else { 'est' }); rows = $rows; more = $byName; days = $days }   # src tracer: disk MB, no "est." label
+  [ordered]@{ at = (Get-KitStamp stored $Now); last = $(@($Samples | Where-Object { $_ -and $_.at } | ForEach-Object { (Get-KitStamp stored ([datetime]$_.at)) } | Sort-Object)[-1]); h0 = (Get-KitStamp stored $h0); src =$(if (@($Samples | Where-Object { $_ })[-1].t) { 'tracer' } else { 'est' }); rows = $rows; more = $byName; days = $days }   # src tracer: disk MB, no "est." label
 }
 
 # ---- cards: render inside Format-KitSuperviseHtml and use its helpers ($e, $n1, $fmt, $icv, $at, $st, $nw, $j, $l24, $fold)
@@ -677,7 +677,7 @@ function Get-KitParamDays([datetime]$Now, [int]$Days = 7, [int]$Top = 16) {
   $from = $Now.Date.AddDays(1 - $Days)
   $rs = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 5000 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { } } | Where-Object { $_.key -and $(try { [datetime]$_.at -ge $from -and [datetime]$_.at -le $Now } catch { $false }) })
   @($rs | Group-Object { "$($_.key)|$(if ("$($_.ctx)" -ne '_') { $_.ctx })" } | ForEach-Object { $g = @($_.Group | Sort-Object { [datetime]$_.at }); $k0, $c0 = $_.Name -split '\|', 2
-      [pscustomobject]@{ key = $k0; ctx = $c0; n = $g.Count; cur = $g[-1].to; lf = $g[-1].from; last = ([datetime]$g[-1].at).ToString('o'); why = "$($g[-1].why)"
+      [pscustomobject]@{ key = $k0; ctx = $c0; n = $g.Count; cur = $g[-1].to; lf = $g[-1].from; last = (Get-KitStamp stored ([datetime]$g[-1].at)); why = "$($g[-1].why)"
         days = @(for ($i = 0; $i -lt $Days; $i++) { $in = @($g | Where-Object { ([datetime]$_.at).Date -eq $from.AddDays($i) }); if ($in.Count) { [pscustomobject]@{ f = $in[0].from; t = $in[-1].to; c = $in.Count } } else { $null } }) } } |
     Sort-Object { [datetime]$_.last } -Descending | Select-Object -First $Top)
 }
@@ -1151,7 +1151,7 @@ function Invoke-Shells {
   $now0 = Get-Date; $sw = Get-KitShellSweep $sst $now0 -GapSeconds $GapSeconds -ReadOnly -SampleAll
   $ended = @($sst.shells.Values | Where-Object { $_ -is [Collections.IDictionary] -and $_.ended } | Sort-Object { -[long]$_.ended } | ForEach-Object {
     [pscustomobject]@{ owner = "$($_.owner)"; short = "$($_.short)"; endedMin = [math]::Round(($now0.Ticks - [long]$_.ended) / [double][TimeSpan]::TicksPerMinute); killed = [bool]$_.killed; last = "$($_.last)" } })
-  if ($Json) { [pscustomobject]@{ at = $now0.ToString('o'); live = @($sw.rows); ended = $ended; flags = @($sw.flags) } | ConvertTo-Json -Depth 4; return }
+  if ($Json) { [pscustomobject]@{ at = (Get-KitStamp stored $now0); live = @($sw.rows); ended = $ended; flags = @($sw.flags) } | ConvertTo-Json -Depth 4; return }
   if (-not @($sw.rows).Count -and -not $ended.Count) { 'shells: none running'; return }
   $c = { param($t, [int]$m) $t1 = ("$t" -replace '\s+', ' ').Trim(); if ($t1.Length -gt $m) { $t1.Substring(0, $m - 1) + '…' } else { $t1 } }
   if (@($sw.rows).Count) {

@@ -310,7 +310,7 @@ switch ($Action) {
 function Invoke-Build {
 param(
   [string]$AppDir,
-  [string]$Task,
+  [Alias('Item')][string]$Task,
   [string]$BuildArgs,
   [switch]$Clean,
   [string]$JavaHome, # default: JDK 17/21 (24+ breaks native steps)

@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task_rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming · L368 track lines · L373 task ids
+# Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming · L368 track lines · L373 task ids · L389 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -90,7 +90,7 @@ function Move-KitTask([string]$Id, [string]$Parent = '', [string]$List = '', [sw
   $mvFrom = "$((Get-TrackerTask $Id).parent)"; $mvParent = $Parent; $mvList = $List; $mvTop = [bool]$Top
   $mvOut = Move-TrackerTask $Id -Parent $Parent -List $List -Top:$Top; if ($DryRun) { return $mvOut }
   Update-KitTaskIndex $Id { param($x) if ($x.spec -is [Collections.IDictionary]) { if ($mvTop) { $x.spec.Remove('parent') } elseif ($mvParent) { $x.spec.parent = $mvParent }; if ($mvList) { $x.spec.list = $mvList } }
-    $x.moves = @(@($x.moves | Where-Object { $_ }) + [ordered]@{ at = (Get-Date).ToString('o'); from = $mvFrom; parent = $(if ($mvTop) { '' } else { $mvParent }); list = $mvList }) }
+    $x.moves = @(@($x.moves | Where-Object { $_ }) + [ordered]@{ at = (Get-KitStamp); from = $mvFrom; parent = $(if ($mvTop) { '' } else { $mvParent }); list = $mvList }) }
   @(@($mvOut) + @(foreach ($p in @($mvFrom, $mvParent) | Where-Object { $_ } | Select-Object -Unique) { try { Update-KitParentItems $p } catch { "parent items ${p}: $($_.Exception.Message)" } }) | Where-Object { $_ }) -join ' · '
 }
 # tracker group (K54; a wave's related tasks under one ask): the parent from -Spec when missing; a task in the parent's list -> moved
@@ -149,7 +149,7 @@ function Get-KitScopeRoles([string]$Scope, [switch]$Refresh) {
   $live = if ($c) { @($c.statuses) } else { $null }; $ad = $KitAdapters['tracker'][$__trType]
   if (-not $c -and -not $__trDry -and $ad -and ((__TrCan statuses) -or ($ad.ContainsKey('*') -and $__trType -ne 'command'))) {
     $live = try { @(__TrA 'statuses' @{ scope = $Scope } | Where-Object { "$($_.name)".Trim() } | ForEach-Object { [pscustomobject]@{ name = "$($_.name)".Trim(); type = "$($_.type)".ToLower() } }) } catch { Write-Warning "tracker ($__trType): statuses of $Scope not read ($("$_".Split("`n")[0])): default names"; $null }
-    if (@($live).Count) { [IO.File]::WriteAllText($f, ([ordered]@{ scope = $Scope; type = $__trType; at = (Get-Date).ToString('o'); statuses = @($live) } | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false)) } else { $live = $null }
+    if (@($live).Count) { [IO.File]::WriteAllText($f, ([ordered]@{ scope = $Scope; type = $__trType; at = (Get-KitStamp); statuses = @($live) } | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false)) } else { $live = $null }
   }
   $m = ConvertTo-KitScopeRoles $Scope $live; $m.fresh = -not $c; $script:KitScopeRoles[$key] = $m; $m
 }
@@ -194,7 +194,7 @@ function Select-KitFailedLive([string[]]$Ids, $Trk, $Cache) {
   $bk = { param($id, $st, $sc) (Test-TrackerStatus $st 'failedTesting' $sc) -or ($Trk[$id].done -and (Test-TrackerStatus $st 'inProgress' $sc)) }
   foreach ($id in $Ids) {
     if (-not (& $bk $id "$($Cache[$id].st)")) { continue }; $lv = try { Clear-TrackerMemo $id; Get-TrackerTask $id } catch { $null }
-    if ($lv.status) { $Cache[$id] = @{ at = (Get-Date).ToString('o'); st = "$($lv.status)" }; if (-not (& $bk $id "$($lv.status)" "$($lv.list)")) { continue } }; $id }
+    if ($lv.status) { $Cache[$id] = @{ at = (Get-KitStamp); st = "$($lv.status)" }; if (-not (& $bk $id "$($lv.status)" "$($lv.list)")) { continue } }; $id }
 }
 # every cached scope (supervise WATCH on unmapped names; a status read without its scope)
 function Get-KitCachedScopeRoles {
@@ -385,4 +385,41 @@ function Save-TrackerKey($Task) {   # a keyed task read: key -> native id, once 
   if (-not $ky -or -not $Task.id -or "$($Task.id)" -ceq $ky -or $script:KitKeyIds[$ky] -eq "$($Task.id)") { return }
   $f = Join-Path (Get-KitPath cache -Create) 'task-keys.json'; $script:KitKeyIds[$ky] = "$($Task.id)"
   try { Invoke-KitLocked $f { $m = Read-KitState $f; if (-not $m) { $m = @{} }; if ($m[$ky] -ne "$($Task.id)") { $m[$ky] = "$($Task.id)"; Write-KitState $f $m } } } catch { Write-KitLog calls task-keys @{ key = $ky; error = "$_" } }
+}
+# ---- order: waits-on links and wave labels (owner 2026-11-23: order and parallel work readable without titles)
+# native when the tracker can (caps dependencies / labels), else a <!-- kit:order --> description section; titles never change
+function Set-KitTaskOrder([string]$Task, [string[]]$WaitsOn, [string]$Wave) {
+  $WaitsOn = @($WaitsOn | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -ne $Task } | Select-Object -Unique); $nat = @()
+  if ($WaitsOn.Count -and (__TrCan dependencies)) { try { $null = __TrA 'dependencies' @{ id = $Task; on = $WaitsOn }; $nat += 'links' } catch { Write-Warning "tracker dependencies on $Task failed ($($_.Exception.Message)): a Waits on line instead" } }
+  if ($Wave -and (__TrCan labels)) { try { $null = __TrA 'labels' @{ id = $Task; add = @("Wave: $Wave") }; $nat += 'label' } catch { Write-Warning "tracker labels on $Task failed ($($_.Exception.Message)): a Wave line instead" } }
+  $ln = @(if ($WaitsOn.Count -and 'links' -notin $nat) { "**Waits on:** $($WaitsOn -join ', ')" }; if ($Wave -and 'label' -notin $nat) { "**Wave:** $Wave" })
+  if ($ln.Count) { Clear-TrackerMemo $Task; $tk = Get-TrackerTask $Task; if (-not $tk.name) { throw "tracker read of $Task failed" }
+    $nd = Set-KitDescSection $tk.description 'order' ($ln -join "`n") ''; if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { $null = Set-TrackerDescription $Task $nd } }
+  Update-KitTaskIndex $Task { param($x) $x.order = [ordered]@{ waitsOn = $WaitsOn; wave = $Wave } }
+  "order of ${Task}: waits on $(if ($WaitsOn.Count) { $WaitsOn -join ', ' } else { 'nothing' })$(if ($Wave) { " · $Wave" }) ($((@(if ($nat.Count) { "native $($nat -join ', ')" }) + @(if ($ln.Count) { 'description' })) -join ' + '))"
+}
+# a parent's subtasks as waves (Kahn): wave n = tasks whose waits-on siblings are all in earlier waves; same wave, no link = parallel
+function Get-KitTaskOrder([string]$Parent) {
+  Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { throw "tracker read of $Parent failed" }
+  $info = [ordered]@{}
+  foreach ($k in @(@($pt.subtasks | ForEach-Object { "$($_.id)" }) | Where-Object { $_ } | Select-Object -Unique)) {
+    $tk = Get-TrackerTask $k; $ix = (Read-KitState (Get-KitTaskFile $k)).order
+    $sec = [regex]::Match(("$($tk.description)" -replace "`r`n", "`n"), '(?s)<!-- kit:order -->\n(.*?)\n<!-- /kit:order -->').Groups[1].Value
+    $w = @(if (__TrCan dependencies) { @(__TrA 'dependencies' @{ id = $k; on = @() }) }) + @($ix.waitsOn) + @(if ($sec -match '(?m)^\*\*Waits on:\*\* (.+)$') { $Matches[1] -split ',\s*' })
+    $wl = if ($ix.wave) { "$($ix.wave)" } elseif ($sec -match '(?m)^\*\*Wave:\*\* (.+)$') { $Matches[1].Trim() } else { '' }
+    $info[$k] = [pscustomobject]@{ id = $k; name = "$($tk.name)"; waitsOn = @($w | ForEach-Object { "$_".Trim() } | Where-Object { $_ } | Select-Object -Unique); label = $wl; wave = 0 }
+  }
+  $left = [Collections.Generic.List[string]]::new([string[]]@($info.Keys)); $n = 0
+  while ($left.Count) { $ready = @($left | Where-Object { $ti = $_; -not @($info[$ti].waitsOn | Where-Object { $left.Contains($_) }).Count }); if (-not $ready.Count) { break }
+    $n++; foreach ($r in $ready) { $info[$r].wave = $n; [void]$left.Remove($r) } }
+  $flags = @(if ($left.Count) { "CYCLE: $($left -join ', ') wait on each other: remove one link" }
+    if ($info.Count -gt 1 -and -not @($info.Values | Where-Object { $_.waitsOn.Count }).Count) { "MISSING: no task under $Parent waits on another: all $($info.Count) look parallel (tracker order $Parent -Apply <brief>.order.json)" }
+    foreach ($t in $info.Values) { foreach ($d in @($t.waitsOn | Where-Object { -not $info.Contains($_) })) { "OUTSIDE: $($t.id) waits on $d (not under $Parent)" }
+      if ($t.label -match '(\d+)\s*$' -and [int]$Matches[1] -gt 1 -and -not $t.waitsOn.Count) { "MISSING: $($t.id) is labelled $($t.label) but waits on nothing" } })
+  [pscustomobject]@{ parent = $Parent; tasks = @($info.Values); waves = $n; flags = $flags }
+}
+# the order as a table: one row per wave (its tasks run in parallel), then the flags
+function Format-KitTaskOrder($Order) {
+  @(Format-KitMdTable 'Wave', 'Tasks (parallel)', 'Waits on' @(foreach ($g in @($Order.tasks | Group-Object wave | Sort-Object { [int]$_.Name })) {
+        , @($(if ([int]$g.Name) { $g.Name } else { 'cycle' }), (@($g.Group | ForEach-Object { "$($_.id) $($_.name)".Trim() }) -join '; '), (@($g.Group.waitsOn | Select-Object -Unique) -join ', ')) })) + @($Order.flags)
 }

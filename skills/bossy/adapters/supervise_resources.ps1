@@ -35,7 +35,7 @@ function Send-KitBuildsRule([string]$Owner, [int]$N, [int]$Max, [datetime]$Now) 
   "sent $($Now.ToString('HH:mm'))"
 }
 # gate head waited 10+ min, file cache 25%+ of RAM: run gate.cacheFlush (e.g. an elevated task), max once per 30 min
-function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$TimeoutSec = 120) {
+function Invoke-KitCacheFlush([Alias('WaitMinutes')][int]$WaitMin, $Mem, [datetime]$Now, [Alias('TimeoutSeconds')][int]$TimeoutSec = 120) {
   $cmd = "$(Get-KitSetting 'gate.cacheFlush' '')".Trim()
   if (-not $cmd -or $WaitMin -lt 10) { return }
   $stamp = Join-Path (Get-KitPath cache -Create) 'cache-flush.stamp'
@@ -46,7 +46,7 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
     else { 0 }
   } catch { 0 }
   if ($cacheGB -lt 0.25 * $Mem.TotalGB) { return }
-  Set-Content $stamp $Now.ToString('o')
+  Set-Content $stamp (Get-KitStamp stored $Now)
   $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-Command', $cmd) $TimeoutSec
   if ($r.timedOut -or $r.code) {
     $why = if ($r.timedOut) { "timed out after $TimeoutSec s" } else { "exit $($r.code): $(@("$($r.err)`n$($r.out)" -split "`n" | Where-Object { $_.Trim() })[0])" }
@@ -89,7 +89,7 @@ function Set-KitFlagAge($Flags, $State, [datetime]$Now) {
   $gapMin = [double](Get-KitParam 'supervise.flagGapMinutes'); $keepH = [double](Get-KitParam 'supervise.flagKeepHours')
   foreach ($f in @($Flags | Where-Object { $_.level -in 'ACT', 'WATCH' })) { $k = Get-KitFlagKey "$($f.what)"
     # a flag gone longer than a section's cadence came back: its age starts again (a kept first-seen claimed hours it was not there)
-    $first = try { if (($Now - [datetime]$seen[$k].last).TotalMinutes -gt $gapMin) { throw 'gap' }; ([datetime]$seen[$k].first).ToString('o') } catch { $Now.ToString('o') }; $keep[$k] = @{ first = $first; last = $Now.ToString('o') }   # ISO, never a culture string
+    $first = try { if (($Now - [datetime]$seen[$k].last).TotalMinutes -gt $gapMin) { throw 'gap' }; (Get-KitStamp stored ([datetime]$seen[$k].first)) } catch { (Get-KitStamp stored $Now) }; $keep[$k] = @{ first = $first; last = (Get-KitStamp stored $Now) }   # ISO, never a culture string
     if (-not "$($f.age)".Trim()) { $f | Add-Member -Force NoteProperty age "$([int][math]::Max(0.0, ($Now - [datetime]$first).TotalMinutes)) min" } }
   foreach ($k in @($seen.Keys)) { if (-not $keep.ContainsKey($k) -and $(try { ($Now - [datetime]$seen[$k].last).TotalHours -lt $keepH } catch { $false })) { $keep[$k] = $seen[$k] } }
   $State.flagSeen = $keep
@@ -112,7 +112,7 @@ function Get-KitSilentRun([string]$Name, [double]$SilentHours, $Quiet, [datetime
   if ($SilentHours -lt 48) { $Quiet.Remove($Name); return [pscustomobject]@{ skip = $false; flag = $null } }   # alive again: a later silence flags anew
   $flag = $null
   if (-not $Quiet.ContainsKey($Name)) {
-    $Quiet[$Name] = $Now.ToString('o')
+    $Quiet[$Name] = (Get-KitStamp stored $Now)
     $flag = [pscustomobject]@{ level = 'WATCH'; what = "run $Name silent $([int]($SilentHours / 24)) days with unfinished agents"; action = "Resume it (bossy.ps1 recover -RunId $Name) or let it go: this flag does not repeat" }
   }
   [pscustomobject]@{ skip = $true; flag = $flag }
@@ -237,7 +237,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   # quiet counts from the first beat that saw no live holder (an acquire row has no `seen`: its age alone flagged a holder dead 1 min)
   $idf = Join-Path (Get-KitPath cache -Create) 'idle-holders.json'; $idOld = try { Get-Content -LiteralPath $idf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $idOld) { $idOld = @{} }; $idNew = @{}
   foreach ($ir in @(Get-KitResourceRows $now.AddHours(-(Get-KitParam 'supervise.windowHours')) | Where-Object { $null -ne $_.quiet })) {
-    $idAt = if ($idOld[$ir.resource]) { [datetime]$idOld[$ir.resource] } else { $now }; $idNew[$ir.resource] = $idAt.ToString('o')
+    $idAt = if ($idOld[$ir.resource]) { [datetime]$idOld[$ir.resource] } else { $now }; $idNew[$ir.resource] = (Get-KitStamp stored $idAt)
     $q = [int][math]::Min([double]$ir.quiet, ($now - $idAt).TotalMinutes)
     if ($q -ge $quietMin) { & $flag 'WATCH' "$($ir.resource) held by $($ir.holder): no live holder for $q min" "bossy.ps1 release -Agent $(@("$($ir.holder)" -split ', ')[0]) frees it (README Leases)" } }
   Write-KitAtomic $idf ($idNew | ConvertTo-Json -Compress)
@@ -337,12 +337,12 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   $due = @(@(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ -and (-not $um.repos[$_] -or ($Now - [datetime]$um.repos[$_].at).TotalMinutes -ge $ttl) } |
     Sort-Object { if ($um.repos[$_]) { [datetime]$um.repos[$_].at } else { [datetime]::MinValue } } | Select-Object -First 2)
   if ($due.Count) {
-    $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt (Get-KitParam 'supervise.hostUserHours')) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
+    $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt (Get-KitParam 'supervise.hostUserHours')) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = (Get-KitStamp stored $Now); v = $x } }; $x }
     if ($hu -and $hu -ne $um.user) { $um = @{ user = $hu; repos = @{} } }
     foreach ($rp in @(if ($hu) { $due })) {
       if (-not (& $Within)) { break }
       $got = $null; try { $got = @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $since; per_page = 50 }) } catch { }; if ($null -eq $got) { continue }   # failed: retried next beat (an empty list is a result)
-      $um.repos[$rp] = @{ at = $Now.ToString('o'); mrs = @(foreach ($m in @($got | Where-Object { $_.iid })) {
+      $um.repos[$rp] = @{ at = (Get-KitStamp stored $Now); mrs = @(foreach ($m in @($got | Where-Object { $_.iid })) {
             $ci = "$($m.title)" -match '^ci(\(.+?\))?!?:' -or $(if ($m.author.username -eq $hu) { $fs = @(try { (Invoke-HostVerb 'mr.changes' @{ repo = (Get-HostProject $rp -Raw); n = $m.iid }).changes.new_path } catch { }); $fs.Count -and -not @($fs | Where-Object { $_ -notmatch '(^|/)\.gitlab-ci[^/]*\.ya?ml$|^\.gitlab/ci/|^\.github/workflows/' }).Count })
             @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; target = "$($m.target_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)"; ciOnly = [bool]$ci } }) }
     }
@@ -494,10 +494,10 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
     if ($act -or -not $s.activeTicks) { $s.activeTicks = $Now.Ticks }
     $quiet = [math]::Max(0.0, ($Now.Ticks - [long]$s.activeTicks) / [double][TimeSpan]::TicksPerMinute)
     $stuck = -not $act -and $quiet -ge $stuckMin -and $age -ge $stuckMin
-    if (-not $stuck) { $s.stuck = 0; $s.stuckAt = $null } elseif (-not $s.stuckAt -or ($Now - [datetime]$s.stuckAt).TotalMinutes * 2 -ge $hbMin) { $s.stuck = [int]$s.stuck + 1; $s.stuckAt = $Now.ToString('o') }
+    if (-not $stuck) { $s.stuck = 0; $s.stuckAt = $null } elseif (-not $s.stuckAt -or ($Now - [datetime]$s.stuckAt).TotalMinutes * 2 -ge $hbMin) { $s.stuck = [int]$s.stuck + 1; $s.stuckAt = (Get-KitStamp stored $Now) }
     $idle = if ($o.last) { ($Now - [datetime]$o.last).TotalMinutes } else { 1e9 }; $poll = $cmd -match $pollRx
     $ownerGone = $o.finished -and -not $o.live -and -not $busy -and $idle -ge $graceMin  # meta "finished" alone also marks an agent idling on this very shell
-    if (-not $ownerGone) { $s.gone = 0; $s.goneAt = $null } elseif (-not $s.goneAt -or ($Now - [datetime]$s.goneAt).TotalMinutes * 2 -ge $hbMin) { $s.gone = [int]$s.gone + 1; $s.goneAt = $Now.ToString('o') }
+    if (-not $ownerGone) { $s.gone = 0; $s.goneAt = $null } elseif (-not $s.goneAt -or ($Now - [datetime]$s.goneAt).TotalMinutes * 2 -ge $hbMin) { $s.gone = [int]$s.gone + 1; $s.goneAt = (Get-KitStamp stored $Now) }
     $why = @($(if ($ownerGone) { "owner $($o.name) finished, idle $([int]$idle) min" }), $(if ($gone) { "dir gone: $dir" }), $(if ($stuck) { "no CPU, IO or output for $([int]$quiet) min, $($s.stuck) sweep(s)" }) | Where-Object { $_ }) -join '; '
     $short = "$(if ($s.mon) { 'monitor: ' })$(Get-KitShellShort $cmd)"; $one = ($cmd -replace '\s+', ' ').Trim(); $s.owner = $o.name; $s.short = $short
     if ($ownerGone -and ($s.gone -ge 2 -or (-not $poll -and $idle -ge 20)) -and $AutoFix -and -not $ReadOnly -and (Test-KitPid $p.Id $made)) {
@@ -565,7 +565,7 @@ function Get-KitSuperviseSeries([string[]]$Lines, $Prev) {
     $tot = try { [math]::Round([IO.DriveInfo]::new($dv).TotalSize / 1GB, 1) } catch { $null }
     $sm = if (Get-Command Get-KitStorageSamples -ErrorAction SilentlyContinue) { @(Get-KitStorageSamples $dv 480) } else { @() }
     $h1 = if ($sm.Count) { $hourAgo = @($sm | Where-Object { $_.t -le $sm[-1].t - 3600 })[-1]; if ($hourAgo) { [math]::Round($sm[-1].free - $hourAgo.free, 1) } }   # free now - an hour ago
-    [ordered]@{ drive = $dv; at = (Get-Date).ToString('o'); free = $fr; rate = $rt; h1 = $h1; total = $tot; series = @(& $thin @($sm | ForEach-Object free)) } } })
+    [ordered]@{ drive = $dv; at = (Get-KitStamp); free = $fr; rate = $rt; h1 = $h1; total = $tot; series = @(& $thin @($sm | ForEach-Object free)) } } })
   # no disk line this sweep: the last rows only while under 2 heartbeats old (an old copy passed for today's free space)
   [ordered]@{ ram = @(& $thin $ram); disks = @(if ($disks.Count) { $disks } else { $Prev.disks | Where-Object { $_ -and $_.at -and ((Get-Date) - [datetime]$_.at).TotalMinutes -le 2 * [double](Get-KitParam 'supervise.heartbeatMinutes') } }) }
 }
@@ -603,7 +603,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $prior = try { Read-KitText $pj | ConvertFrom-Json } catch { $null }
   $fl = @(@($d.flags) + @($d.info | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }) | Sort-Object { $rk["$($_.level)"] })
   $fixedN = @($fl | Where-Object { $_.level -eq 'INFO' -and "$($_.what)" -like 'auto-fixed:*' }).Count
-  $History = @(@([pscustomobject]@{ at = $d.at.ToString('o'); flags = @($d.flags | Where-Object level -ne 'INFO' | Select-Object level, what); active = @($d.rows | Where-Object state -ne 'FINISHED').Count; fixed = $fixedN }) + @($prior.history | Where-Object { $_ }) | Select-Object -First ([int](Get-KitParam 'supervise.historySweeps')))
+  $History = @(@([pscustomobject]@{ at = (Get-KitStamp stored $d.at); flags = @($d.flags | Where-Object level -ne 'INFO' | Select-Object level, what); active = @($d.rows | Where-Object state -ne 'FINISHED').Count; fixed = $fixedN }) + @($prior.history | Where-Object { $_ }) | Select-Object -First ([int](Get-KitParam 'supervise.historySweeps')))
   $series = try { Get-KitSuperviseSeries (@($Sweep) + @($fl | ForEach-Object what)) $prior.stats } catch { [ordered]@{ ram = @(); disks = @() } }
   $nowT = try { Get-KitSuperviseNow $Sweep ([double](Get-KitParam 'idle.graceMinutes')) } catch { $null }
   if ($nowT -and -not @($nowT.disks).Count) { $nowT.disks = @($series.disks | Where-Object { $_ } | ForEach-Object { [ordered]@{ drive = $_.drive; free = $_.free; rate = $_.rate; ttf = $null } }) }   # storage skipped this sweep: the last disk values
@@ -612,7 +612,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   if ($nowT) { $dFree = [ordered]@{}; foreach ($dk in $nowT.disks) { $dFree[$dk.drive] = $dk.free }
     $rs = [ordered]@{}; foreach ($r0 in @($d.resources | Where-Object { $_.name })) { $rs["$($r0.name)"] = [pscustomobject]@{ gb = $r0.gb; by = "$($r0.by)" } }   # each resource's RAM + holder: the cards' 24 h history
     $rsw = @((Get-KitRepoSweep).repos | Where-Object { $_ })   # the Branches tile's lines
-    $samples += [pscustomobject]@{ at = $d.at.ToString('o'); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
+    $samples += [pscustomobject]@{ at = (Get-KitStamp stored $d.at); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
   $serr = [Collections.Generic.List[string]]::new(); $statsFrom = Get-KitStatsCutoff; $usage = Select-KitUsageSince (Read-KitUsageResult) $statsFrom   # budget -Usage writes it; nothing before the stats reset
   $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { $serr.Add("repo sync: $($_.Exception.Message)") }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at -StatsFrom $statsFrom } catch { $serr.Add("days: $($_.Exception.Message)") }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
     paramDays = @(try { Get-KitParamDays $d.at } catch { $serr.Add("param days: $($_.Exception.Message)") })
@@ -628,8 +628,8 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   # a failed source keeps its last data or none: the sweep says which, never a silent stale section
   if ($serr.Count) { $stats.errs = @($serr); $w2 = [pscustomobject]@{ level = 'WATCH'; what = "dashboard data not updated this sweep: $($serr -join '; ')"; action = 'Fix the named source (adapters/supervise_stats.ps1); its section shows its last data.' }
     $fl = @($fl) + $w2; $d.flags = @($d.flags) + $w2; if ($flags -is [Collections.IList]) { [void]$flags.Add($w2) } }
-  $osNext = if (Get-Command Get-KitOsBeatNextSweep -ErrorAction SilentlyContinue) { try { (Get-KitOsBeatNextSweep $d.at).ToString('o') } catch { $null } }   # adapters/os_timer.ps1
-  $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; osNext = $osNext; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
+  $osNext = if (Get-Command Get-KitOsBeatNextSweep -ErrorAction SilentlyContinue) { try { Get-KitStamp stored (Get-KitOsBeatNextSweep $d.at) } catch { $null } }   # adapters/os_timer.ps1
+  $j = [pscustomobject]@{ at = (Get-KitStamp stored $d.at); next = $Next; osNext = $osNext; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   # compact, no copy of usage.result.json (0.7 MB): each sweep rewrote 1.8 MB (NTFS journal churn); the page still shows it
   $sj = [ordered]@{}; foreach ($sk in $stats.Keys) { if ($sk -ne 'usage') { $sj[$sk] = $stats[$sk] } }; $sj.usageFile = (Get-KitPath usage-cache) -replace '\.json$', '.result.json'
   $jw = $j.PSObject.Copy(); $jw.stats = $sj; Write-KitAtomic $pj ($jw | ConvertTo-Json -Depth 9 -Compress)
@@ -786,7 +786,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $tv = { param($v) if ($null -eq $v) { '' } elseif ($v -is [string] -or $v -is [ValueType]) { "$v" } else { $v | ConvertTo-Json -Compress -Depth 4 } }
   # state (· suffix: config) -> words; pinned / frozen / shadow kept (a shadow is a proposal, not applied)
   $tSrc = { param([string]$s, [string]$note, $dflt) if ($s -match '· |config|override|local') { "local config$(if ("$dflt" -ne '') { " (default $dflt)" })" } elseif ($s -match '^(live|approved|learned)') { "learned ($s$(if ($note) { ", $note" }))" } elseif ($s -match '^default') { 'default' } else { "$s$(if ($note) { " ($note)" })" } }
-  $tun = @(@($prm | ForEach-Object { [pscustomobject]@{ key = "$($_.key)"; ctx = $(if ("$($_.ctx)" -in '', '_') { '' } else { "$($_.ctx)" }); val = & $tv $_.value; dflt = & $tv $_.default; src = & $tSrc "$($_.source)" "$($_.learned)" $null; chg = & $hm $_.changed; chgAt = $(try { ([datetime]$_.changed).ToString('o') } catch { '' }); c7 = $(try { [datetime]$_.changed -ge $at.AddDays(-(Get-KitParam 'supervise.statsDays')) } catch { $false }); why = "$($_.why)" } }) +
+  $tun = @(@($prm | ForEach-Object { [pscustomobject]@{ key = "$($_.key)"; ctx = $(if ("$($_.ctx)" -in '', '_') { '' } else { "$($_.ctx)" }); val = & $tv $_.value; dflt = & $tv $_.default; src = & $tSrc "$($_.source)" "$($_.learned)" $null; chg = & $hm $_.changed; chgAt = $(try { (Get-KitStamp stored ([datetime]$_.changed)) } catch { '' }); c7 = $(try { [datetime]$_.changed -ge $at.AddDays(-(Get-KitParam 'supervise.statsDays')) } catch { $false }); why = "$($_.why)" } }) +
     @($setRows | Where-Object { $sk = $_[0]; -not @($prm | Where-Object { "$($_.key)" -eq $sk -and "$($_.ctx)" -in '', '_' }).Count } | ForEach-Object { $sv = $_[1]; $hasSrc = $null -ne $sv -and (Get-KitProps $sv).Name -contains 'source'
       [pscustomobject]@{ key = $_[0]; ctx = ''; val = & $tv $(if ($hasSrc) { $sv.value } else { $sv }); dflt = $(if ($hasSrc) { & $tv $sv.default } else { '' }); src = $(if ($hasSrc) { & $tSrc "$($sv.source)" '' $sv.default } else { '' }); chg = ''; why = '' } }))
   # changed keys (owner 2026-11-20, K100; stats.paramDays): a row per key + scope (short label, full one in the tooltip), the latest change
@@ -1113,7 +1113,7 @@ function Get-KitRecoverLinesResources {
 $script:KitMsgKinds = 'note', 'hold', 'dispute', 'rule', 'rollback', 'report', 'pause'   # board msg schema { kind, to, text, ref }
 function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind = 'note', [string]$Ref = '') {
   $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
-  $line = [ordered]@{ at = (Get-Date).ToString('o'); from = $From; to = $To; kind = $Kind; text = $Text; ref = $Ref; read = $false } | ConvertTo-Json -Compress
+  $line = [ordered]@{ at = (Get-KitStamp); from = $From; to = $To; kind = $Kind; text = $Text; ref = $Ref; read = $false } | ConvertTo-Json -Compress
   Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
 }
 # ---- cleanup: idle resources
@@ -1190,7 +1190,7 @@ function Update-KitSelfHolder([string]$Dir, [string]$RunId, [string]$Script) {
   $mine = { param($s) if ($s.wfDir) { return (Split-Path "$($s.wfDir)" -Leaf) -eq $RunId }; if ((Split-Path "$($s.script)" -Leaf) -ne $leaf -or -not $s.fnv -or ((Get-Date) - [datetime]$s.at).TotalHours -gt (Get-KitParam 'launch.selfRecordHours')) { return $false }
     if (-not $c.ContainsKey('wd')) { $c.wd = @(Get-KitWorkflowDirs | Where-Object Name -eq $RunId) }; $c.wd.Count -and (Resolve-KitRunId ([pscustomobject]@{ selfFile = $s.file; leaf = $leaf; run = $s.run }) $c.wd -FnvOnly) -eq $RunId }
   foreach ($so in @(Read-KitJsonFiles $Dir 'self-*.json' | Where-Object { -not $_.completed -and (& $mine $_) })) {
-    Invoke-KitLocked $so.file { $x = Get-Content -LiteralPath $so.file -Raw | ConvertFrom-Json -AsHashtable; foreach ($kv in (Get-KitHolder).GetEnumerator()) { $x[$kv.Key] = $kv.Value }; $x.Remove('crashed'); $x.rebound = (Get-Date).ToString('o'); Write-KitState $so.file $x }
+    Invoke-KitLocked $so.file { $x = Get-Content -LiteralPath $so.file -Raw | ConvertFrom-Json -AsHashtable; foreach ($kv in (Get-KitHolder).GetEnumerator()) { $x[$kv.Key] = $kv.Value }; $x.Remove('crashed'); $x.rebound = (Get-KitStamp); Write-KitState $so.file $x }
     "re-bound $(Split-Path $so.file -Leaf) to this session"
   }
 }
@@ -1222,15 +1222,15 @@ function Invoke-KitStopLearn($S, [string]$By) {
     foreach ($x in $sig) { Write-KitLog signals '' ([ordered]@{ skill = $skill; kind = $x[0]; text = $x[1]; ref = $S.run; source = "stop:$By" }); $n++ }
     if ($id) { $null = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.orch, 'report', '-Run', $id, '-Stopped') 30 }   # waves/<id>.json; bounded: pause must stay quick
   }
-  Set-KitLaunchField $recs learned "$((Get-Date).ToString('o')) ($By)"
+  Set-KitLaunchField $recs learned "$((Get-KitStamp)) ($By)"
   "learn: run $($S.run) stopped by $By - $(if ($n) { "$n signal(s) recorded" } else { 'nothing to record (finished, its own Learn phase ran or a clean pause)' })"
 }
 # a (re)launch ends its pause and leaves a '*' pause
 function Clear-KitPauseFor([string]$Run) {
   foreach ($p in @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) })) {
     Invoke-KitLocked $p.file { $j = Get-Content -LiteralPath $p.file -Raw | ConvertFrom-Json
-      if ($j.run -eq '*') { $j | Add-Member -Force NoteProperty released @(@($j.released | Where-Object { $_ }) + $Run) } else { $j.state = 'resumed'; $j | Add-Member -Force NoteProperty resumedAt (Get-Date).ToString('o') }
-      $j | Add-Member -Force NoteProperty releasedBy @(@($j.releasedBy | Where-Object { $_ }) + "launch $Run $((Get-Date).ToString('o'))")
+      if ($j.run -eq '*') { $j | Add-Member -Force NoteProperty released @(@($j.released | Where-Object { $_ }) + $Run) } else { $j.state = 'resumed'; $j | Add-Member -Force NoteProperty resumedAt (Get-KitStamp) }
+      $j | Add-Member -Force NoteProperty releasedBy @(@($j.releasedBy | Where-Object { $_ }) + "launch $Run $((Get-KitStamp))")
       Write-KitAtomic $p.file ($j | ConvertTo-Json -Depth 30) }
     "PAUSE $(Split-Path $p.file -Leaf) ($($p.reason)) released for run ${Run}: it was launched again"
   }
@@ -1314,7 +1314,7 @@ $board0 = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne
 $foreign = if ($Everyone) { @{} } else { Get-KitForeignRuns @(@(Get-StoppedRuns -Hours 24 -All) + $board0) }   # another live coordinator's runs: its own pause
 if ($Run -and $foreign[$Run]) { "OWNED: run $Run belongs to $($foreign[$Run]): pause it in that session, or add -Everyone"; exit 1 }
 $pf = Join-Path (Get-KitPath pauses -Create) "pause-$(Get-KitStamp file).json"
-$rec = [ordered]@{ at = (Get-Date).ToString('o'); reason = $Reason; run = $(if ($All) { '*' } else { $Run }); state = 'pausing'; wait = $Wait; finisher = $(if ($PSBoundParameters.ContainsKey('Wait')) { $PID }); agents = @(); runs = @(); released = @($foreign.Keys) } + (Get-KitMe)
+$rec = [ordered]@{ at = (Get-KitStamp); reason = $Reason; run = $(if ($All) { '*' } else { $Run }); state = 'pausing'; wait = $Wait; finisher = $(if ($PSBoundParameters.ContainsKey('Wait')) { $PID }); agents = @(); runs = @(); released = @($foreign.Keys) } + (Get-KitMe)
 Write-KitState $pf $rec   # from now every board beat prints PAUSE
 $mine = { param($x) ($All -or $x.run -eq $Run) -and -not $foreign["$($x.run)"] }
 $live = @($board0 | Where-Object { (& $mine $_) -and ($Everyone -or $_.run -or -not (Get-KitRunOwner $_)) })   # a run's agents follow its owner
@@ -1326,7 +1326,7 @@ $closed = @(Close-KitFinishedRuns 24)   # after PAUSE went out: agents stop at o
 $runs = @(Get-StoppedRuns -Hours 24 -All | Where-Object { & $mine $_ })
 foreach ($s in $runs) {
   Set-KitLaunchField @($s.file, $s.selfFile) paused $pf
-  $rec.runs += [ordered]@{ run = $s.run; leaf = $s.leaf; runId = $s.runId; file = $s.file; selfFile = $s.selfFile; at = $s.at.ToString('o')
+  $rec.runs += [ordered]@{ run = $s.run; leaf = $s.leaf; runId = $s.runId; file = $s.file; selfFile = $s.selfFile; at = (Get-KitStamp stored $s.at)
     launch = $(if ($s.file) { Get-Content -LiteralPath $s.file -Raw | ConvertFrom-Json }); self = $(if ($s.selfFile) { Get-Content -LiteralPath $s.selfFile -Raw | ConvertFrom-Json }) }   # cleanup may remove launches/
 }
 $rec.agents = @(foreach ($b in $live) { [ordered]@{ agent = $b.agent; run = $b.run; session = $b.session; board = $b.file; confirmed = $false } })
@@ -1349,7 +1349,7 @@ function Test-KitJournalFinished([string]$Dir, [string]$Leaf, [double]$QuietMin 
 }
 # open launch records whose journal finished -> completed (nobody ran launch -Done); stale records made pause and resume scan them
 function Close-KitFinishedRuns([int]$Hours = 168) {
-  $wfs = @(Get-KitWorkflowDirs); $now = (Get-Date).ToString('o')
+  $wfs = @(Get-KitWorkflowDirs); $now = (Get-KitStamp)
   foreach ($s in @(Get-StoppedRuns -Hours $Hours -Raw)) {
     $sj = if (-not $s.runId -and $s.selfFile) { Get-Content -LiteralPath $s.selfFile -Raw | ConvertFrom-Json }   # its own folder only, its args hash in it: no scan of every transcript
     $rx = [regex]::Escape("launch -Self -Script $($s.leaf) -Run '$($s.run)' ") + ".*-Fnv $($sj.fnv)"
@@ -1396,7 +1396,7 @@ function Complete-KitPause([string]$Pf, [double]$Wait) {
   $hooks = @(Invoke-KitHooks Invoke-KitPause)   # localenv_supervise.ps1: stops unheld services
   if (& $resumed) { "resumed while the local env stopped: start what the run needs again (envy.ps1 up)" }
   # only this finisher's fields onto the current record: a resume's state / released written meanwhile stay
-  Invoke-KitLocked $Pf { $now = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json; if ($now.state -ne 'resumed') { $now.state = 'paused'; foreach ($kv in @{ finishedAt = (Get-Date).ToString('o'); notes = @($hooks | ForEach-Object { "$_" }); agents = @($rec.agents) }.GetEnumerator()) { $now | Add-Member -Force NoteProperty $kv.Key $kv.Value }; Write-KitState $Pf $now } }
+  Invoke-KitLocked $Pf { $now = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json; if ($now.state -ne 'resumed') { $now.state = 'paused'; foreach ($kv in @{ finishedAt = (Get-KitStamp); notes = @($hooks | ForEach-Object { "$_" }); agents = @($rec.agents) }.GetEnumerator()) { $now | Add-Member -Force NoteProperty $kv.Key $kv.Value }; Write-KitState $Pf $now } }
   "PAUSED $(@($rec.agents).Count - $open.Count) of $(@($rec.agents).Count) agent(s) at a checkpoint$(if ($open.Count) { "; not confirmed: $(@($open.agent) -join ', ') (their last checkpoint and worktree hold the state; resume treats them as crashed)" }); $(@($rec.runs).Count) run(s) marked paused$(if (@($rec.runs).Count) { ": $(@($rec.runs.run) -join ', ')" })"
   $hooks
   "record: $Pf"
@@ -1455,7 +1455,7 @@ function Get-KitForeignRuns($Items) {
 # resume / recover: a live coordinator's run is relaunched only by it (-Everyone: anyway)
 function Get-KitOwnedLine($S, [bool]$Everyone) { if (-not $Everyone -and ($o = Get-KitRunOwner $S)) { "== OWNED: $($S.leaf) run $($S.run) belongs to $o (another coordinator): resume or recover it there, or add -Everyone" } }
 # every heartbeat beats this session's `board join -Type coordinator` row (registry: board show lists each coordinator)
-function Update-KitCoordinatorBeat { foreach ($e in @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.type -eq 'coordinator' -and $_.status -ne 'left' -and $_.holderPid -and "$($_.holderPid)" -eq "$((Get-KitMe).holderPid)" })) { try { Update-BoardEntry $e.file { param($x) $x.beat = (Get-Date).ToString('o'); $x } } catch {} } }
+function Update-KitCoordinatorBeat { foreach ($e in @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.type -eq 'coordinator' -and $_.status -ne 'left' -and $_.holderPid -and "$($_.holderPid)" -eq "$((Get-KitMe).holderPid)" })) { try { Update-BoardEntry $e.file { param($x) $x.beat = (Get-KitStamp); $x } } catch {} } }
 # one session supervises (lock); a session that steps aside prints that sweep's flags of its own runs (workflow folders, launch holders)
 function Get-KitAsideFlags([string]$Me) {
   $st = try { Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $st.lastFlags) { return }

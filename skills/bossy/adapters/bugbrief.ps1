@@ -9,7 +9,7 @@ Sections: L9 bugbrief
 # ---- bugbrief: bug-fix brief + /buildy args
 function Invoke-BugBrief {
 param(
-  [Parameter(Mandatory)][string]$Task,
+  [Alias('Item')][Parameter(Mandatory)][string]$Task,
   [string]$Agent,
   [string[]]$Repos = @(),   # else its MRs' repos
   [string[]]$Hints = @(),

@@ -67,7 +67,8 @@ Non-negotiables:
    item table rows, `desc` = Title plus ports; links = full URLs, never a local path); 2+ related: the parent ask first, the
    rest with its `parent` (another list: an Items link); flat ones: `tracker group -Parent <p> -Tasks <ids>`; the item
    table `items.md` (`ID | Area | Title`, optional Sev, Ports) beside the brief with `{ agents: [{ id: <Area>, task }] }`
-   in a `.json`, then `bossy.ps1 track rollup -Task <parent> -From <brief dir>` (Items checklists, delivery section).
+   in a `.json`, then `bossy.ps1 track rollup -Task <parent> -From <brief dir>` (Items checklists, delivery section) and
+   `crafty.ps1 tracker order <parent> -Apply <brief>.order.json` (waits-on links + Wave labels; titles stay clean).
 **rule-change:** append the owner's words (verbatim, timestamp) under the brief's "Rule changes during the wave" and to the
 contracts file; a spec it changes: `spec write` with a `change` line (prints `RETEST <task>: <S-ids>`; the task's Spec line
 shows them); `board show` -> `board msg -Kind rule` every agent whose area or task it touches (what changed, the S-ids,
@@ -75,7 +76,7 @@ re-read before the next push).
 
 Finish with the `briefy` JSON (crafty templates.md "Final reports"), keys: specs (task, version, ready) · brief + contracts ·
 areas (id, items,
-dependsOn) · impact findings · openQuestions · the launch
+dependsOn) · order (the `tracker order` table) · impact findings · openQuestions · the launch
 args · agents messaged (rule-change) · decision ids (<= 200 words).
 
 **Self-improvement:**

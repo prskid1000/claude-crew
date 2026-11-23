@@ -280,7 +280,7 @@ function OnRef($p, $mr, $sha, $ref, $branch = $ref) {
   $at = if ($env:KIT_API_BEAT -and $null -ne $rcache) { RefSha $p $ref }; $ok = if ($at) { "on|$sha|$at" }
   if ($ok -and $rcache[$ok]) { return $true }
   $on = (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref)
-  if ($on -and $ok) { $rcache[$ok] = @{ at = (Get-Date).ToString('o') }; $rdirty.on = $true }
+  if ($on -and $ok) { $rcache[$ok] = @{ at = (Get-KitStamp) }; $rdirty.on = $true }
   $on
 }
 # a merged MR's changed files (never change): kept across beats
@@ -288,7 +288,7 @@ function MrChanges($iid) {
   # keyed by repo + iid, never $ref: ContentOn's parameter of that name (a branch) shadows it
   $k = "chg|$($r.name)!$iid"; if ($null -ne $rcache -and $rcache[$k]) { return [pscustomobject]@{ changes = @($rcache[$k].files | ForEach-Object { [pscustomobject]@{ new_path = $_; old_path = $_ } }); overflow = [bool]$rcache[$k].overflow } }
   $ch = Hv 'mr.changes' @{ n = $iid }
-  if ($env:KIT_API_BEAT -and $null -ne $rcache -and $ch -and $mr.state -eq 'merged') { $rcache[$k] = @{ at = (Get-Date).ToString('o'); overflow = [bool]$ch.overflow -or @($ch.changes).Count -ge 100; files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique) }; $rdirty.on = $true }
+  if ($env:KIT_API_BEAT -and $null -ne $rcache -and $ch -and $mr.state -eq 'merged') { $rcache[$k] = @{ at = (Get-KitStamp); overflow = [bool]$ch.overflow -or @($ch.changes).Count -ge 100; files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique) }; $rdirty.on = $true }
   $ch
 }
 # $null if the checkout or either commit is missing
@@ -321,7 +321,7 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
   if (-not @($r.deploys | Where-Object { $_ }).Count) { [pscustomobject]@{ mr = "$($r.name)!$iid"; target = "$Target"; state = 'N/A'; detail = 'n/a: no deploys configured for this repo' }; continue }
   $p = Get-HostProject $r.name -Raw; $ref = "$($r.name)!$iid"   # gitHostGroup/<repo>
   $mr = if ($rcache["mr|$ref"]) { $rcache["mr|$ref"].mr } else { Hv 'mr.get' @{ n = $iid } }
-  if ($mr.state -eq 'merged' -and -not $rcache["mr|$ref"]) { $rcache["mr|$ref"] = @{ at = (Get-Date).ToString('o'); mr = $mr | Select-Object iid, state, merged_at, target_branch, source_branch, squash_commit_sha, merge_commit_sha, sha }; $rdirty.on = $true }   # a merged MR never changes
+  if ($mr.state -eq 'merged' -and -not $rcache["mr|$ref"]) { $rcache["mr|$ref"] = @{ at = (Get-KitStamp); mr = $mr | Select-Object iid, state, merged_at, target_branch, source_branch, squash_commit_sha, merge_commit_sha, sha }; $rdirty.on = $true }   # a merged MR never changes
   if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
   if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
   # fast-forward: the MR head sha landed
@@ -346,7 +346,7 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
     $kRow = try { Invoke-KitDeployKind $d 'isDeployed' } catch { Row $d 'UNKNOWN' "deploy kind ${kd}: $($_.Exception.Message)" }
     if (-not $kRow) { $kRow = Row $d 'UNKNOWN' $(if ($kd) { "deploy kind $kd has no isDeployed check (README ""Adapters"" deploy-kind)" } else { 'no deploy kind: set deploys[].kind or branch + job, ssh, probe, tag, awsStack, manual, command' }) }
     # NOT-DEPLOYED only while the merge is not on the branch: on it, a deploy job or host install finishes with the head unchanged
-    if (@($kRow).Count -eq 1 -and ($kRow.state -eq 'DEPLOYED' -or ($kRow.state -eq 'NOT-DEPLOYED' -and "$($kRow.detail)" -like 'not on * yet'))) { $rcache[$ck] = @{ at = (Get-Date).ToString('o'); head = $hd; row = $kRow }; $rdirty.on = $true }
+    if (@($kRow).Count -eq 1 -and ($kRow.state -eq 'DEPLOYED' -or ($kRow.state -eq 'NOT-DEPLOYED' -and "$($kRow.detail)" -like 'not on * yet'))) { $rcache[$ck] = @{ at = (Get-KitStamp); head = $hd; row = $kRow }; $rdirty.on = $true }
     $kRow
   }
 } } | ForEach-Object { $out.Add($_); if ($Lines) { $_ | ConvertTo-Json -Depth 3 -Compress } }

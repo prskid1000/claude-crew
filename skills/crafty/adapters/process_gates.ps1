@@ -6,7 +6,7 @@
 # Sections: L7 gate · L38 process docs · L103 waits · L122 api budget
 # ---- gate: process gates, a bounded stdin command
 # a command with text on stdin, bounded: { code; out; err }
-function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [int]$TimeoutSec = 120) {
+function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [Alias('TimeoutSeconds')][int]$TimeoutSec = 120) {
   $cmd = Get-Command $Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $cmd) { return [pscustomobject]@{ code = 127; out = ''; err = "$Exe is not on PATH" } }
   $si = [Diagnostics.ProcessStartInfo]::new($cmd.Source); foreach ($x in @($A)) { $si.ArgumentList.Add([string]$x) }
@@ -72,7 +72,7 @@ function Update-KitQaParents([scriptblock]$Change) {
     Write-KitAtomic $qf ($q | ConvertTo-Json -Depth 4 -Compress); $q }
 }
 function Add-KitQaParent([string]$Parent, [datetime]$At = [datetime]::Now) {
-  if ($Parent) { $null = Update-KitQaParents { param($q) $o = $q[$Parent]; if (-not $o -or [datetime]$o.at -lt $At) { $q[$Parent] = @{ at = $At.ToString('o'); seen = $o.seen } } } }
+  if ($Parent) { $null = Update-KitQaParents { param($q) $o = $q[$Parent]; if (-not $o -or [datetime]$o.at -lt $At) { $q[$Parent] = @{ at = (Get-KitStamp stored $At); seen = $o.seen } } } }
 }
 # qa-runs/<run>/run.json or <run>/<code>/finalize.json at their fixed depth (a -Recurse walk listed every evidence file and
 # matched scripts/run.json and archive-*/finalize.json copies); -SinceDays: written within that many days
@@ -89,7 +89,7 @@ function Get-KitQaRunFiles([ValidateSet('run.json', 'finalize.json')][string]$Na
 function Start-KitSupervisePrefetchQaBugs {
   $now = Get-Date; $recent = @(foreach ($rf in @(Get-KitQaRunFiles run.json -SinceDays 7)) { try { [pscustomobject]@{ dir = $rf.Directory; j = ([IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json) } } catch {} })
   $idx = Update-KitQaParents { param($q) foreach ($qr in $recent) { $qp = [string]$qr.j.tracker.parent; $qt = $qr.dir.LastWriteTime
-      if ($qp -and (-not $q[$qp] -or [datetime]$q[$qp].at -lt $qt)) { $q[$qp] = @{ at = $qt.ToString('o'); seen = $q[$qp].seen } } } }
+      if ($qp -and (-not $q[$qp] -or [datetime]$q[$qp].at -lt $qt)) { $q[$qp] = @{ at = (Get-KitStamp stored $qt); seen = $q[$qp].seen } } } }
   $parents = @($idx.Keys | Where-Object { $qo = $idx[$_]; ($now - [datetime]$qo.at).TotalDays -le 7 -or -not $qo.seen -or ($now - [datetime]$qo.seen).TotalHours -ge 6 })
   $views = @{}; foreach ($qp in $parents) { $views[$qp] = try { Start-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.dev, 'tracker', 'view', $qp) } catch { $null } }
   $script:KitQaBugs = [pscustomobject]@{ recent = $recent; parents = $parents; views = $views }

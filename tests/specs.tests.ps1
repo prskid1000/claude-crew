@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 specs.tests.ps1: spec docs (devtools.py spec): the standard layout, versions + change log, S-id traceability into cases, MR bodies,
-commits and the finish gate, standing subject specs linked to tasks, retest marks on a changed S-id.
+commits and the finish gate, standing subject specs linked to tasks, retest marks on a changed S-id; task order (spec waitsOn / wave, tracker order waves).
 Usage: pwsh -NoProfile -File <kit>/tests/specs.tests.ps1 (or tests/kit-tests.ps1 -Area specs).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -148,5 +148,24 @@ n/a — none yet (appended during the wave)
   $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true,"debate":{"item":"A2","options":["A: x","B: y"]}}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
 $wbLong = @((Get-Content "$wd/wb.md") | Where-Object { $_.Length -gt 130 -and $_ -notmatch '^\||https?://' })
 Expect "render wave-brief: its own lines fit the brief's 130ch prose cap (MR limits wrapped; briefys 2026-11-23) ($($wbLong -join ' // '))" (-not $wbLong.Count -and ((Get-Content -Raw "$wd/wb.md") -match '\*\*MR limits\*\*[^#]*mr-title[^#]*mr-body'))
+# order (owner 2026-11-23): spec waitsOn / wave -> waits-on links (native verb) or a kit:order description section; tracker order = waves + flags
+$tor = Invoke-PsTest taskorder @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'
+$base = @{ kind = 'Feature'; problem = 'p.'; goal = 'g.'; acceptance = @('a'); links = @('https://t/9'); newTask = 'fixture'; proseOk = 'order fixture' }
+$pid0 = (Publish-KitTaskSpec ($base + @{ title = 'Order parent'; items = @(@{ code = 'O1'; desc = 'o' }) })).id
+$mk = { param($t, $w, $wv) (Publish-KitTaskSpec ($base + @{ title = $t; parent = $pid0; items = @(@{ code = $t; desc = $t }); waitsOn = $w; wave = $wv })).id }
+$a = & $mk 'Alpha' @() 'v2 wave 1'; $b = & $mk 'Beta' @($a) 'v2 wave 2'; $c = & $mk 'Gamma' @() 'v2 wave 1'; $d = & $mk 'Delta' @($b, $c) 'v2 wave 3'
+$o = Get-KitTaskOrder $pid0; "waves:$((@($o.tasks | Sort-Object wave, id | ForEach-Object { "$($_.wave)=$($_.id)" })) -join ',')"
+"section:$((Get-TrackerTask $b).description -match "(?s)<!-- kit:order -->\n\*\*Waits on:\*\* $a\n\*\*Wave:\*\* v2 wave 2\n<!-- /kit:order -->")"
+"flags:$(@($o.flags).Count)"; "table:$((Format-KitTaskOrder $o) -join '//')"
+$null = Set-KitTaskOrder $a @($d) 'v2 wave 1'; "cycle:$(@((Get-KitTaskOrder $pid0).flags) -join '//')"
+$e = & $mk 'Eps' @() 'v2 wave 2'; "missing:$(@((Get-KitTaskOrder $pid0).flags -match "^MISSING: $e").Count)"
+$got = [Collections.Generic.List[string]]::new(); $KitAdapters['tracker']['none']['dependencies'] = { param($x) foreach ($n in @($x.on)) { $got.Add("$($x.id)<-$n") }; @($x.on) }
+$null = Set-KitTaskOrder $c @($a) ''; "native:$($got -join ',')|$((Get-TrackerTask $c).description -match 'Waits on')"
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
+$tw ="$($tor -match '^waves:')" -replace '^waves:'
+Expect "tracker order: spec waitsOn / wave -> a kit:order section (no native verb); waves: Alpha + Gamma, Beta, Delta; table rows per wave; a cycle and a later wave with no link flagged; a native dependencies verb gets the links ($($tor -join ' // '))" (
+  $tw -match '^1=LOCAL-\d+,1=LOCAL-\d+,2=LOCAL-\d+,3=LOCAL-\d+$' -and @($tor -match '^section:True').Count -and @($tor -match '^flags:0$').Count -and @($tor -match '^table:.*\| 1 \| [^|]*(Alpha[^|]*Gamma|Gamma[^|]*Alpha)[^|]*\|.*\| 3 \| [^|]*Delta').Count -and
+  @($tor -match '^cycle:CYCLE: LOCAL-\d+, LOCAL-\d+, LOCAL-\d+ wait on each other').Count -and @($tor -match '^missing:1$').Count -and @($tor -match '^native:LOCAL-\d+<-LOCAL-\d+\|False$').Count)
 Remove-TestKit $k
 Complete-Tests

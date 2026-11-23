@@ -75,7 +75,7 @@ function Invoke-KitShellLine([string]$Cmd, [int]$Sec = 5) { if ($KitIsWindows) {
 # storage.db.use / kill; 5 s max (full-disk db hangs), timeout skips 5 min
 function Get-KitDbQueries($C) {
   if (-not $C.db.use) { return @() }; $st = Get-KitStorageState; if ($st.dbDownAt -and ((Get-Date) - [datetime]$st.dbDownAt).TotalMinutes -lt [double](Get-KitParam 'storage.dbDownRetryMinutes')) { return @() }
-  $r = Invoke-KitShellLine $C.db.use; if ($r.timedOut) { Set-KitStorageState { param($s) $s.dbDownAt = (Get-Date).ToString('o') }; return @() }
+  $r = Invoke-KitShellLine $C.db.use; if ($r.timedOut) { Set-KitStorageState { param($s) $s.dbDownAt = (Get-KitStamp) }; return @() }
   @("$($r.out)" -split "`r?`n" | ForEach-Object { if ($_ -match '^\s*(?<id>\d+)\s+(?<gb>\d+(\.\d+)?)\s+(?<s>\d+)\s*(?<q>.*)$') { [pscustomobject]@{ id = $Matches.id; gb = [double]$Matches.gb; secs = [int]$Matches.s; query = (Protect-KitText $Matches.q) } } })
 }
 function Stop-KitDbQuery($C, $Q, [string]$Why) {
@@ -103,7 +103,7 @@ function Invoke-KitStorageTick([switch]$Force) {
   else {
     $q = @(Get-KitDbQueries $c); $max = if ($c.db -and $c.db.maxGB) { [double]$c.db.maxGB } else { 0 }   # storage.db.maxGB: temp cap a query may hold (unset: no cap)
     $top = @($q | Sort-Object gb -Descending)[0]; if ($max -gt 0 -and $top -and $top.gb -gt $max) { $null = Stop-KitDbQuery $c $top "temp above $max GB"; $q = @($q | Where-Object id -ne $top.id) }
-    if ($c.db.use) { $q0 = $q; Set-KitStorageState { param($s) $s.dbAt = (Get-Date).ToString('o'); $s.dbQ = @($q0) } }
+    if ($c.db.use) { $q0 = $q; Set-KitStorageState { param($s) $s.dbAt = (Get-KitStamp); $s.dbQ = @($q0) } }
   }
   foreach ($v in $out | Where-Object rescue) { Invoke-KitDiskRescue $c $v $q }
   $script:KitStorageDbQ = $q   # the round's diagnosis reuses this list (one db call a sweep, K20)
@@ -113,7 +113,7 @@ function Invoke-KitStorageTick([switch]$Force) {
 function Invoke-KitDiskRescue($C, $V, $Q) {
   $why = "disk $($V.drive): $($V.free) GB free, filling $($V.rate) GB/h, full in $($V.ttf) h"
   $go = Set-KitStorageState { param($s) if (-not $s.rescues) { $s.rescues = @{} }; $h = $s.rescues[$V.drive]
-    if ($h -and ((Get-Date) - [datetime]$h.at).TotalMinutes -lt [double](Get-KitParam 'storage.rescueEveryMinutes')) { $false } else { $s.rescues[$V.drive] = @{ drive = $V.drive; kit = [bool]$V.kit; at = (Get-Date).ToString('o'); reason = $why; lines = @() }; $true } }
+    if ($h -and ((Get-Date) - [datetime]$h.at).TotalMinutes -lt [double](Get-KitParam 'storage.rescueEveryMinutes')) { $false } else { $s.rescues[$V.drive] = @{ drive = $V.drive; kit = [bool]$V.kit; at = (Get-KitStamp); reason = $why; lines = @() }; $true } }
   if (-not $go) { return }
   $dq = @(@($Q) | Where-Object { $_.gb -ge 0.1 } | Sort-Object gb, secs -Descending)[0]   # db is a cause only while a query holds temp
   $lines = @(@(Stop-KitDbQuery $C $dq 'disk rescue') + @(Invoke-KitHooks Stop-KitDiskWriter @{ Verdict = $V }) | Where-Object { $_ })
@@ -140,7 +140,7 @@ function Start-KitStorageScan([string]$Drive) {
   if (-not $o -and (Test-Path -LiteralPath $lk) -and ((Get-Date) - (Get-Item -LiteralPath $lk).LastWriteTime).TotalMinutes -lt 1) { return }   # a starter mid-write
   if (Test-Path -LiteralPath $lk) { Remove-Item -LiteralPath $lk -ErrorAction SilentlyContinue }   # stale (its scan is gone) or empty (its start failed): never a lock for good
   try { [IO.File]::Open($lk, 'CreateNew', 'Write', 'None').Dispose() } catch { return }   # another caller starts it
-  Set-KitStorageState { param($s) if (-not $s.scanAt) { $s.scanAt = @{} }; $s.scanAt[$Drive] = (Get-Date).ToString('o') }   # a failing scan waits the cooldown
+  Set-KitStorageState { param($s) if (-not $s.scanAt) { $s.scanAt = @{} }; $s.scanAt[$Drive] = (Get-KitStamp) }   # a failing scan waits the cooldown
   $a = @('-NoProfile', '-NonInteractive', '-File', "`"$($KitCmd.orch)`"", 'storage', '-Scan', '-Drive', $Drive)
   $p = try { if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $a -PassThru } } catch { Remove-Item -LiteralPath $lk -ErrorAction SilentlyContinue; return }
   try { $p.PriorityClass = 'Idle' } catch {}; Write-KitAtomic $lk (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id) } | ConvertTo-Json)
@@ -163,9 +163,9 @@ function Update-KitTracked($Fo, $Scan, $Prev, $C, [datetime]$Now = (Get-Date)) {
   $grew = @($sz.Keys | Where-Object { $Prev.sizes.ContainsKey($_) } | ForEach-Object { [pscustomobject]@{ path = $_; gb = [math]::Round($sz[$_] - [double]$Prev.sizes[$_], 2) } } | Where-Object gb -ge $C.drillGB | Sort-Object gb -Descending)   # new folders have no growth yet
   foreach ($g in $grew | Select-Object -First 3) { $nk = $Scan.kids[$g.path]; $pk = $Prev.kids[$g.path]; if (-not $nk) { continue }
     $best = @($nk.Keys | ForEach-Object { [pscustomobject]@{ p = $_; gb = $nk[$_] - [double]$(if ($pk) { $pk[$_] }) } } | Where-Object gb -ge $C.drillGB | Sort-Object gb -Descending)[0]
-    if ($best -and -not $Fo.tracked[$best.p]) { $Fo.tracked[$best.p] = @{ src = 'learned'; at = $Now.ToString('o') } } }
+    if ($best -and -not $Fo.tracked[$best.p]) { $Fo.tracked[$best.p] = @{ src = 'learned'; at = (Get-KitStamp stored $Now) } } }
   foreach ($k in @($Fo.tracked.Keys | Where-Object { $Fo.tracked[$_].src -eq 'learned' -and $sz.ContainsKey($_) })) {
-    if ([math]::Abs($sz[$k] - [double]$Prev.sizes[$k]) -ge 0.05) { $Fo.tracked[$k].flat = $null } elseif (-not $Fo.tracked[$k].flat) { $Fo.tracked[$k].flat = $Now.ToString('o') }
+    if ([math]::Abs($sz[$k] - [double]$Prev.sizes[$k]) -ge 0.05) { $Fo.tracked[$k].flat = $null } elseif (-not $Fo.tracked[$k].flat) { $Fo.tracked[$k].flat = (Get-KitStamp stored $Now) }
     elseif (($Now - [datetime]$Fo.tracked[$k].flat).TotalDays -ge $C.flatDays) { $Fo.tracked.Remove($k) } }
   $grew
 }
@@ -174,7 +174,7 @@ function Invoke-KitStorageScan([string]$Drive) {
     $c = Get-KitStorageConf; $d = @(Get-KitDrives | Where-Object name -eq $Drive)[0]; if (-not $d) { return "no fixed drive $Drive" }
     $ff = Get-KitStorageFile $Drive 'folders.json'; $fo = try { Read-KitText $ff | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $fo) { $fo = @{ tracked = @{}; scans = @() } }
     $top = @(Get-ChildItem -LiteralPath $d.root -Directory -Force -ErrorAction SilentlyContinue | Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } | ForEach-Object FullName)
-    foreach ($t in @($top) + @(Get-KitStorageDefaults $d.root)) { if (-not $fo.tracked[$t]) { $fo.tracked[$t] = @{ src = 'default'; at = (Get-Date).ToString('o') } } }
+    foreach ($t in @($top) + @(Get-KitStorageDefaults $d.root)) { if (-not $fo.tracked[$t]) { $fo.tracked[$t] = @{ src = 'default'; at = (Get-KitStamp) } } }
     $m = Measure-KitFolders $d.root @($fo.tracked.Keys); $gb = { param($b) [math]::Round($b / 1GB, 2) }
     $used = [math]::Round($d.size - $d.free, 2); $sz = @{}; foreach ($k in @($fo.tracked.Keys)) { $sz[$k] = & $gb $m.sizes[$k.ToLower()] }
     $known = (@($top | ForEach-Object { $sz[$_] }) | Measure-Object -Sum).Sum + (& $gb $m.rootFiles)
@@ -203,7 +203,7 @@ function Get-KitStorageRound {
     $nm = @{}; $cut = [DateTimeOffset]::Now.ToUnixTimeSeconds() - $c.keepDays * 86400
     foreach ($v in $vs) { $f = Get-KitStorageFile $v.drive; $nm[$v.drive] = Get-KitDiskNormal (Get-KitStorageSamples $v.drive 20160)
       Invoke-KitLocked $f { $ls = @(Get-Content -LiteralPath $f); $keep = @($ls | Where-Object { $_ -match '"t":(\d+)' -and [long]$Matches[1] -ge $cut }); if ($keep.Count -lt $ls.Count) { Write-KitAtomic $f (($keep -join "`n") + "`n") } } }
-    Set-KitStorageState { param($s) $s.normal = $nm; $s.normalAt = (Get-Date).ToString('o') }
+    Set-KitStorageState { param($s) $s.normal = $nm; $s.normalAt = (Get-KitStamp) }
   }
   $hm = [double]$c.holdMinutes
   foreach ($v in $vs) {
@@ -216,7 +216,7 @@ function Get-KitStorageRound {
     $h = if ($st.rescues) { $st.rescues[$v.drive] }; $held = $h -and ((Get-Date) - [datetime]$h.at).TotalMinutes -lt $hm
     if ($v.level -eq 'OK') { if ($h) { Set-KitStorageState { param($s) $s.rescues.Remove($v.drive) }; if ($held) { [pscustomobject]@{ level = 'INFO'; what = "disk $($v.drive) back to normal: build hold lifted"; action = 'Nothing to do.' } } }; continue }
     $why = @(); if ($v.anomaly -or $v.rescue) {   # top writers sample ~2 s: once per 5 min while a drive stays anomalous (K20)
-      $tw = if ($st.topAt -and ((Get-Date) - [datetime]$st.topAt).TotalMinutes -lt [double](Get-KitParam 'storage.topCacheMinutes')) { @($st.top) } else { $tw0 = @(Get-KitTopWriters); Set-KitStorageState { param($s) $s.top = $tw0; $s.topAt = (Get-Date).ToString('o') }; $st.top = $tw0; $st.topAt = (Get-Date).ToString('o'); $tw0 }
+      $tw = if ($st.topAt -and ((Get-Date) - [datetime]$st.topAt).TotalMinutes -lt [double](Get-KitParam 'storage.topCacheMinutes')) { @($st.top) } else { $tw0 = @(Get-KitTopWriters); Set-KitStorageState { param($s) $s.top = $tw0; $s.topAt = (Get-KitStamp) }; $st.top = $tw0; $st.topAt = (Get-KitStamp); $tw0 }
       if (@($tw).Count) { $why += "top writers: $(@($tw | ForEach-Object { "$($_.name) ($($_.pid)) $($_.mbs) MB/s" }) -join ', ')" }
       $q = @($(if ($null -ne $script:KitStorageDbQ) { $script:KitStorageDbQ } else { Get-KitDbQueries $c }) | Sort-Object gb -Descending)[0]; if ($q -and $q.gb -gt 0) { $why += "db query $($q.id): $($q.gb) GB temp, $($q.secs) s" } }
     $del = Get-KitHeldDeletedGB $v.root; if ($null -ne $del) { $why += "deleted-but-open $del GB" }

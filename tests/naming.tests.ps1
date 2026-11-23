@@ -101,9 +101,23 @@ $fl = foreach ($ff in 'skills/bossy/bossy.ps1', 'skills/crafty/crafty.ps1', 'ski
   $fstd = @{ Mrs = 'Mr'; Lanes = 'Lane'; TimeoutSec = 'TimeoutSeconds'; Takeover = 'Resume' }   # a block that has the standard name already keeps the old one
   @($fa | Where-Object { ($fo = $_.Name.VariablePath.UserPath) -in $fstd.Keys -and -not ($_.Attributes | Where-Object { $_.TypeName.Name -eq 'Alias' }) -and
     $fstd[$fo] -notin @($_.Parent.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }) } | ForEach-Object { "$ff $($_.Name)" }) }
+# FLAGS-REST: every verb function (Invoke-*) takes -Item (old -Task / -Code), -Text (old -Message / -Msg), whole-word Seconds / Minutes
+$fl += foreach ($ff in Get-ChildItem (Join-Path $src 'skills') -Recurse -Filter '*.ps1') {
+  foreach ($fd in [Management.Automation.Language.Parser]::ParseFile($ff.FullName, [ref]$null, [ref]$null).FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -like 'Invoke-*' }, $true)) {
+    $fps = if ($fd.Body.ParamBlock) { @($fd.Body.ParamBlock.Parameters) } else { @($fd.Parameters) }; $fnm = @($fps | ForEach-Object { $_.Name.VariablePath.UserPath }) + @($fps.Attributes | Where-Object { $_.TypeName.Name -eq 'Alias' } | ForEach-Object { $_.PositionalArguments.Value })
+    foreach ($fp in $fps) { $fo = $fp.Name.VariablePath.UserPath
+      $fw = if ($fo -in 'Task', 'Code') { 'Item' } elseif ($fo -in 'Message', 'Msg') { 'Text' } elseif ($fo -cmatch '^([A-Z]\w*?)(Sec|Min)$') { "$($Matches[1])$(@{ Sec = 'Seconds'; Min = 'Minutes' }[$Matches[2]])" }
+      if ($fw -and $fw -notin $fnm -and -not ($fo -eq 'Code' -and 'Task' -in $fnm)) { "$($ff.Name) $($fd.Name) -$fo" } } } }
 $fs = pwsh -NoProfile -Command ". '$(Lib)'; Get-KitStamp file ([datetime]'2026-11-23T10:05:06Z'); Get-KitStamp stored ([datetime]'2026-11-23T10:05:06.5Z')"
-Expect "flags: -Mr records, -Mrs finds it; every -Mrs / -Lanes / -TimeoutSec / -Takeover has its standard alias ($($fl -join ', ')); stamps ($($fs -join ' '))" ($fr -match 'RECORDED' -and $fw -match 'WORD ' -and
+Expect "flags: -Mr records, -Mrs finds it; every -Mrs / -Lanes / -TimeoutSec / -Takeover and verb -Task / -Code / -Message / -*Sec / -*Min has its standard alias ($($fl -join ', ')); stamps ($($fs -join ' '))" ($fr -match 'RECORDED' -and $fw -match 'WORD ' -and
   -not @($fl).Count -and $fs[0] -eq '20261123-100506' -and $fs[1] -eq '2026-11-23T10:05:06.500Z')
+# TS-STORED: writers store UTC ...Z; a fresh ...Z beat reads as local (board HH:mm local, age ~0, never stale)
+$tsOut = Px $O board join -Type devy -Agent tsz-01 -Run tsr | Out-String; $tsFile = @(Get-ChildItem (TkPath $k board) -Filter 'tsz-01*.json')[0].FullName
+$tsRaw = Get-Content -LiteralPath $tsFile -Raw; $tsLocal = ([datetimeoffset]($tsRaw | ConvertFrom-Json -DateKind String).beat).LocalDateTime.ToString('HH:mm'); $tsShow = Px $O board show | Out-String
+$tsRead = pwsh -NoProfile -Command ". '$(Lib)'; `$e = Get-Content -LiteralPath '$tsFile' -Raw | ConvertFrom-Json; [int][math]::Abs(((Get-Date) - [datetime]`$e.beat).TotalMinutes); ([datetime]`$e.beat).ToString('HH:mm')"
+$tsLeft = Px $O board leave -Agent tsz-01 | Out-String
+Expect "TS-STORED: board beat stored as UTC ...Z, read back local ($($tsRead -join ' ')) and shown as local $tsLocal, not stale" ($tsRaw -match '"beat":\s*"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z"' -and
+  [int]$tsRead[0] -le 1 -and $tsRead[1] -eq $tsLocal -and $tsShow -match "tsz-01.*\| beat $tsLocal" -and $tsShow -notmatch 'STALE|QUIET')
 
 # ---- scan: live names (a published doc title) vs the standard
 $pub = TkPath $k published -Create; Set-JsonFile (Join-Path $pub 'T1_testing-ai.json') @{ key = 'T1:testing-ai'; title = 'T1 testing doc (AI)' }
@@ -118,6 +132,11 @@ Set-Content "$lc.bak" '{}'; Set-Content "$lc.bak-20261123-100506" '{}'; $lw = Kb
 Expect "lint --warn: NAME-BACKUP for a backup off <file>.bak-<yyyyMMdd-HHmmss>, the standard one passes; NAME-FILE for a snake_case .ps1 (not counted: exit $($lw.code))" (
   $lw.out -match 'WARN NAME-BACKUP skills/crafty/kit.local.json.bak:' -and $lw.out -notmatch 'NAME-BACKUP \S+\.bak-20261123-100506' -and $lw.out -match 'WARN NAME-FILE\s+skills/crafty/adapters/task_items.ps1')
 
+# run lineage: a fresh agent of the same type on the next suffix run (kit-x-1520c -> kit-x-1520d) continues the handoff; another run does not
+& $J @{ agent = 'kitty-kit-x-1520c'; type = 'kitty'; session = 'kx-a'; run = 'kit-x-1520c'; status = 'left'; handoffBrief = 'C:/b/kx.md'; joined = (Get-Date).AddHours(-2).ToString('o'); beat = (Get-Date).AddMinutes(-30).ToString('o') } (Join-Path (TkPath $k board -Create) 'kx-a.json')
+$lnOther = Px $O board join -Type kitty -Agent kitty-kit-x-1530 -Run kit-x-1530 | Out-String; $lnMid = @(& { . $O; Get-KitHandoffs 24 }).agent -contains 'kitty-kit-x-1520c'
+$lnJoin = Px $O board join -Type kitty -Agent kitty-kit-x-1520d -Run kit-x-1520d | Out-String; $lnAfter = @(& { . $O; Get-KitHandoffs 24 }).agent -contains 'kitty-kit-x-1520c'
+Expect "handoff lineage: kitty-kit-x-1520d continues kitty-kit-x-1520c (CONTINUE, no HANDOFF left); kit-x-1530 does not" ($lnOther -notmatch 'CONTINUE' -and $lnMid -and $lnJoin -match 'CONTINUE: the previous kitty-kit-x-1520c \(kit-x-1520c\) handed off.*C:/b/kx\.md' -and -not $lnAfter)
 # ---- N3 (owner 2026-11-23): board join gives <role>-<nn> (same run + area: the same id); legacy <role>-<run> aliased; labels
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $bj = { param($bjArgs) $bo = pwsh -NoProfile -File $O board join @bjArgs | Out-String; [pscustomobject]@{ id = $(if ($bo -match 'RUN-ID: you are (\S+)') { $Matches[1] }); out = $bo } }

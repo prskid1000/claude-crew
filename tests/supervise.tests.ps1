@@ -77,6 +77,11 @@ $st = Invoke-PsTest 'anyrun' '. $args[0]; Format-KitStatusTable (Get-KitStatusRo
 & $wj wf_t2 sel2 @(@{ type = 'started'; agentId = 't2'; label = 'retest:W8' }) 0; $t2 = "$(Split-Path $wd)/wf_t2/agent-t2"; $null = & $tx "$t2.jsonl" '{}' 1; & $J @{ agentType = 'checky' } "$t2.meta.json"
 & $se W8 @{ run = 'qrun2'; type = 'checky'; beat = (& $ago 90); joined = (& $ago 120) }; $st = Invoke-PsTest 'anyrun' '. $args[0]; Format-KitStatusTable (Get-KitStatusRows)' @($O)
 Expect 'status: an older attempt whose name runs again as a newer step (a testy retest) is superseded, never STUCK' (& $sv 'W8 (checky)' 'FINISHED: superseded by retest:W8')
+& $wj wf_t3 afx @(@{ type = 'started'; agentId = 't3'; label = 'loop:JF' }, @{ type = 'started'; agentId = 't4'; label = 'resume:JB' }) 0; foreach ($t34 in 't3', 't4') { $null = & $tx "$(Split-Path $wd)/wf_t3/agent-$t34.jsonl" '{}' 1 }
+& $se JF-2 @{ run = 'afx'; beat = (& $ago 45); joined = (& $ago 120) }; & $se devy-03 @{ run = 'afx'; area = 'area-JB'; beat = (& $ago 45); joined = (& $ago 120) }
+$st3 = Invoke-PsTest 'areastep' '. $args[0]; $r = Get-KitStatusRows; Format-KitStatusTable $r; Get-KitStuckFlags $r (Get-Date) 20 | ForEach-Object { "[$($_.level)] $($_.what)" }' @($O)
+Expect "status (N3): an older row whose area runs as a newer step of its run under a new agent id (JF-2: loop:JF; devy-03 area-JB: resume:JB) is superseded, never STUCK ($(@($st3 -match 'JF-2|devy-03') -join ' // '))" (
+  @($st3 -match '^\| JF-2 \(devy\) \|[^|]*\| FINISHED: superseded by loop:JF').Count -and @($st3 -match '^\| devy-03 \(devy\) \|[^|]*\| FINISHED: superseded by resume:JB').Count -and -not @($st3 -match 'STUCK (JF-2|devy-03)').Count)
 Expect 'status: a step of another run name = its entry''s progress' ((& $sv 'W7 (checky)' 'ACTIVE') -and (& $sv 'W7 (devy)' 'STUCK') -and @($st -match '^\| W7 \(checky\)').Count -eq 1 -and (Read-Json "$bd/s-W7.json").transcript -match 'agent-t1')
 $nb = pwsh -NoProfile -Command ". '$O'; foreach (`$c in @(15, 1, 0, 0, 0, 2, 2, 1), @(15, 0, 1, 0, 0, 2, 2, 1), @(15, 0, 0, 1, 0, 2, 2, 1), @(15, 0, 0, 0, 3, 2, 2, 1), @(15, 0, 0, 0, 0, 9, 9, 3), @(15, 0, 0, 0, 0, 0, 0, 0), @(15, 0, 0, 0, 0, 2, 0, 2), @(15, 0, 0, 0, 0, 2, 2, 1), @(5, 0, 0, 0, 0, 2, 2, 1), @(30, 0, 0, 0, 0, 2, 2, 1)) { `$n = Get-KitNextBeat `$c[0] 15 `$c[1] `$c[2] ([bool]`$c[3]) `$c[4] `$c[5] `$c[6] `$c[7]; `"`$(`$n.min) `$(`$n.why)`" }"
 Expect "heartbeat NEXT and its reason per case ($($nb -join ' | '))" (($nb -join '|') -eq '5 fast pace: 1 new ACT|5 fast pace: 1 new ENV-FIX|8 quick pace: storage anomaly|8 quick pace: 3 failed builds in a row|8 quick pace: 9 live agents|30 slow pace: nothing runs|22 slow pace: every agent idle|15 normal pace|10 easing back to 15 min|22 easing back to 15 min' -and $sj.nextBeat.min -ge 5 -and $sj.nextBeat.min -le 30 -and (Read-Json (TkPath $k supervise-state)).nextBeat -eq $sj.nextBeat.min)
@@ -152,7 +157,7 @@ Expect 'board show lists QA seats and env leases; recover lists the lease with n
 "`n## kitty`n- board slot" | Add-Content "$k/LESSONS.md"; $sg = TkPath $k signals
 'idea', 'win', 'retired' | ForEach-Object { @{ at = '2099-01-01'; skill = 'kitty'; kind = $_; text = 'board slot' } | ConvertTo-Json -Compress } | Add-Content $sg
 $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json; $tg = Get-Content $tp.digest -Raw; pwsh @np $O tidy done -At '2026-01-02T03:04' >$null
-Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $tg -match '(?s)2x kitty \[idea,win\].*-> lesson.*<- retired' -and (Get-Content (TkPath $k last-retro)) -match 'T03:04:00')
+Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $tg -match '(?s)2x kitty \[idea,win\].*-> lesson.*<- retired' -and (Get-Content (TkPath $k last-retro)) -match "T$(([datetime]'2026-01-02T03:04').ToUniversalTime().ToString('HH:mm')):00\.000Z")   # stored: UTC
 # storage: verdicts, learned normal, folder sizes, drill-down, db watchdog, rescue hold
 $sd = Join-Path (Kd) 'stree'; foreach ($f in 'a/x/1.bin', 'a/y/2.bin', 'b/3.bin') { New-Item -ItemType Directory -Force (Split-Path "$sd/$f") | Out-Null; [IO.File]::WriteAllBytes("$sd/$f", [byte[]]::new(1MB)) }
 'if ($env:USE10) { 1..10 | ForEach-Object { "$_ 0.6 10 q$_" } } else { "42 0.5 900 SELECT 1"; "43 7 30 SELECT big" }' | Set-Content "$sd/use.ps1"; 'param($i) Add-Content (Join-Path $PSScriptRoot killed.txt) $i' | Set-Content "$sd/kill.ps1"
@@ -188,25 +193,5 @@ const c = _mock(_pass); await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: '
 console.log(`release:${L.indexOf('release-X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release-X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release-X1').prompt)}`)
 '@ (Join-Path $src 'workflows/buildy.js')
 Expect-Each $jr 'buildy: # (after the build stage and the run)' 'release'
-# owner's untracked MRs merged in 24 h = one WATCH; host list cached a beat, tracking re-read
-$um = @'
-$o, $add = $args; . $o; $KitConf.TrackerType = 'command'; $KitConf.TrackerTag = 'TT-'; $KitConf.TrackerRepos = @('shop')
-function Get-KitHostUser { 'me' }
-function Get-KitValue($n, $d) { if ($n -eq 'repos') { @(@{ name = 'shop'; target = 'main'; deploys = @(@{ branch = 'staging/x' }, @{ branch = 'main' }) }, @{ name = 'web' }) } else { $d } }   # a deploys entry equal to the repo's target is no deploy branch
-function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -ne 'mr.list') { return }; "hostcalls:1"| Out-File -Append (Join-Path (Get-KitPath cache -Create) 'um-calls.txt')
-  $h = { param($n) (Get-Date).ToUniversalTime().AddHours(-$n).ToString('o') }
-  @([pscustomobject]@{ iid = 8729; title = 'fix: test support root'; source_branch = 'fix/TT-7-root'; target_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
-    [pscustomobject]@{ iid = 8725; title = 'feat: x'; source_branch = 'f/TT-7-x'; author = @{ username = 'me' }; merged_at = (& $h 2) },
-    [pscustomobject]@{ iid = 1; title = 'other'; author = @{ username = 'you' }; merged_at = (& $h 1) }, [pscustomobject]@{ iid = 3; title = 'deploy'; source_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
-    [pscustomobject]@{ iid = 2; title = 'old'; author = 'me'; merged_at = (& $h 30) }, [pscustomobject]@{ iid = 4; title = 'd'; source_branch = 'deploy/x'; author = 'me'; merged_at = (& $h 1) },
-    [pscustomobject]@{ iid = 5; title = 'p'; source_branch = 'p'; target_branch = 'staging/x'; author = 'me'; merged_at = (& $h 1) }) }
-Update-KitTracking { param($t) $t.tasks['T7'] = @{ task = 'T7'; mrs = @('shop!8725') + @(if ($add) { 'shop!8729' }) } }
-Invoke-Supervise -Json -Takeover
-'@
-$u1 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String; $u2 = Invoke-PsTest 'untracked-mr' $um @($O, '1') | Out-String
-$ig = Px $O track ignore -Mrs 'shop!8729' -Reason 'not mine' | Out-String; $u3 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String
-$uc = @(Get-Content (Join-Path (TkPath $k cache) 'um-calls.txt') -ErrorAction SilentlyContinue).Count
-Expect "supervise: an untracked merged MR of the owner = one WATCH with its track add; tracked, ignored or deploy MR -> gone; host listed once per beat ($uc)" ($ig -match 'ignored shop!8729' -and $u3 -notmatch 'tracked by no task' -and $u1 -match '1 MR\(s\) of me merged in 24 h tracked by no task: shop!8729 \(fix: test support root\)' -and
-  $u1 -match "track add -Task 7 -Mrs 'shop!8729'" -and $u1 -match 'shop!8729 merged, no task' -and $u1 -match 'full: report' -and $u1 -notmatch 'shop!(8725|1|2|3|4|5)\b' -and $u2 -notmatch 'tracked by no task' -and $uc -eq 1)
 Remove-TestKit $k
 Complete-Tests

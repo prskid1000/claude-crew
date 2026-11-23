@@ -242,7 +242,7 @@ function Invoke-KitWeeklyTests([bool]$Idle) {
   if ($s -and -not $s.read -and -not (Test-KitPid $s.pid $s.start)) {   # finished since the last beat: read once
     $s | Add-Member -Force NoteProperty read $true
     $tail = @(Get-Content -LiteralPath $lf -ErrorAction SilentlyContinue | Select-String -Pattern '^(\d+) failure\(s\) in' | ForEach-Object Line)[-1]
-    if (-not $tail -and $s.start -and (Get-KitBootTime) -gt [datetime]$s.start) { $s.at = ([datetime]$s.start).AddDays(-1).ToString('o'); $s | Add-Member -Force NoteProperty cut 'machine restart' }   # cut by a restart: due again at the next idle beat
+    if (-not $tail -and $s.start -and (Get-KitBootTime) -gt [datetime]$s.start) { $s.at = (Get-KitStamp stored ([datetime]$s.start).AddDays(-1)); $s | Add-Member -Force NoteProperty cut 'machine restart' }   # cut by a restart: due again at the next idle beat
     elseif ($tail -match '^0 failure') { $s | Add-Member -Force NoteProperty greenAt $s.start }
     else { "kit tests (full): $(if ($tail) { $tail } else { 'no total (crashed)' }), $(@(Get-Content -LiteralPath $lf -ErrorAction SilentlyContinue | Select-String -Pattern '^  \[').Count) failed check(s): $lf" }
     Write-KitAtomic $sf ($s | ConvertTo-Json -Compress)
@@ -253,8 +253,8 @@ function Invoke-KitWeeklyTests([bool]$Idle) {
   if ($tree -and (Get-KitGreenTreeDate $tree)) { return }
   if ($s.at -and ((Get-Date) - [datetime]$s.at).TotalHours -lt (Get-KitParam 'kitTests.retryHours')) { return }   # one try a day until green
   $exe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source; $cmd = "`$env:KIT_PRIORITY = 'background'; & '$($kt.Replace("'", "''"))' -Full -Detached *> '$($lf.Replace("'", "''"))'"
-  $st = @{ at = (Get-Date).ToString('o'); read = $false; greenAt = "$($s.greenAt)" }
-  try { $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }; $st.pid = $p.Id; $st.start = $p.StartTime.ToString('o'); try { $p.PriorityClass = 'BelowNormal' } catch {} }   # background: agents' starts and builds get the CPU first (children inherit it)
+  $st = @{ at = (Get-KitStamp); read = $false; greenAt = "$($s.greenAt)" }
+  try { $p = if ($KitIsWindows) { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden -PassThru } else { Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -PassThru }; $st.pid = $p.Id; $st.start = (Get-KitStamp stored $p.StartTime); try { $p.PriorityClass = 'BelowNormal' } catch {} }   # background: agents' starts and builds get the CPU first (children inherit it)
   catch { $st.read = $true; "kit tests (full): the run did not start ($($_.Exception.Message)); next try in 24 h" }   # stamped: no retry every beat
   Write-KitAtomic $sf ($st | ConvertTo-Json -Compress)
 }

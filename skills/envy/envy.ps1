@@ -118,7 +118,7 @@ foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filte
 foreach ($__k in 'db-engine', 'tenant-model', 'migration', 'envy-verb') { if (-not $KitAdapters[$__k]) { $KitAdapters[$__k] = @{} } }   # a kind nobody registered: lookups find nothing, never a null index
 $script:OomPattern = 'JavaScript heap out of memory|Reached heap limit'   # also scanned in running services' logs
 $script:FailPattern = [string](Opt 'failPattern' "APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module|$script:OomPattern|java\.lang\.OutOfMemoryError")
-function Now { (Get-Date).ToString('o') }
+function Now { (Get-KitStamp) }
 function EnvNames { if ($script:LE -and $script:LE.envs) { @((Get-KitProps $script:LE.envs).Name) } else { @() } }
 function Get-EnvCfg([string]$e) { $c = (Get-KitMember $script:LE.envs $e); if (-not $c) { $c = (Get-KitMember $script:LE.envs (Resolve-EnvAlias $e)) }; if (-not $c) { throw "unknown env '$e' (configured: $((EnvNames) -join ', '))" }; $c }
 function LaneNames([string]$e) { $g = (Get-EnvCfg $e).group; @(EnvNames | Where-Object { (Get-KitMember $script:LE.envs $_).group -eq $g }) }   # lane order
@@ -421,7 +421,7 @@ function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[
       $queued = @($x.requests | Where-Object { $_.kind -eq 'deploy' -and $_.status -eq 'queued' } | ForEach-Object agent)   # blocked in envy deploy behind this train: not testing, never waited for
       $o.who = @($x.leases.Keys | Where-Object { $_ -notin $skipAgents -and $_ -notin $script:Preempted -and $_ -notin $queued } | Where-Object { $l = $x.leases[$_]; @($l.services | Where-Object { $_ -in $services }).Count -or @($l.repos | Where-Object { $_ -in $repos }).Count })
       if ($o.who.Count -and -not $script:LeaseWait0) { $script:LeaseWait0 = Get-Date }   # one clock per train, from the first blocking lease
-      if ($x.train) { $x.train.waitingFor = @($o.who); $x.train.waitSince = $(if ($script:LeaseWait0) { $script:LeaseWait0.ToString('o') }) }
+      if ($x.train) { $x.train.waitingFor = @($o.who); $x.train.waitSince = $(if ($script:LeaseWait0) { Get-KitStamp stored $script:LeaseWait0 }) }
     }
     if (-not $o.who.Count) { & $logWait; return }
     $held = @(@($held) + @($o.who) | Select-Object -Unique); if (-not $w0) { $w0 = Get-Date }; $waited = ((Get-Date) - $script:LeaseWait0).TotalMinutes; $on = @(@($services) + @($repos) | Where-Object { $_ }) -join ', '
@@ -767,7 +767,7 @@ srv.on('error', (e) => { if (e.code === 'EAFNOSUPPORT' && host === '::') { up('0
 # ---- hooks: db query / exec / rollback / applied / tag, smoke checks; db.timeoutSec = seconds for every hook or { <hook>: seconds }
 # a shell command, time-bounded (lib Invoke-KitExe kills the tree), output appended to $log and kept in $script:ShellOut; -1 = timed out
 $script:Misconfigured = @(64, 127, 9009)   # usage error / command not found (sh, cmd): fail fast, never retried
-function Invoke-Shell([string]$cmd, [string]$log, $vars, [int]$TimeoutSec = 1800) {
+function Invoke-Shell([string]$cmd, [string]$log, $vars, [Alias('TimeoutSeconds')][int]$TimeoutSec = 1800) {
   $r = With-Env $(if ($vars) { $vars } else { @{} }) {
     if ($KitIsWindows) { Invoke-KitExe 'cmd.exe' @() $TimeoutSec -Raw "/d /s /c `"$cmd`"" } else { Invoke-KitExe '/bin/sh' @('-c', $cmd) $TimeoutSec }
   }
@@ -1279,7 +1279,7 @@ function Wait-Room([string]$e, $s) {
       if ($ramOk) { if (-not $cpu0) { $cpu0 = Get-Date } } else { $cpu0 = $null }   # CPU only delays: cpuWaitMinutes of busy CPU in a row, then it starts
       if ($cpu0 -and ((Get-Date) - $cpu0).TotalMinutes -ge $script:CpuWaitMin) { "[$e] CPU $cpu% for $($script:CpuWaitMin) min (localEnv.cpuWaitMinutes): starting $($s.name) anyway"; $roomOk = $true; return }
       $eta = if ($cpu0) { $cpu0.AddMinutes($script:CpuWaitMin) } else { $until }
-      if ($marked -ne $for) { Update-State $e { param($x) $v = $x.services[$s.name]; $v.status = 'waiting'; $v.waitFor = $for; $v.waitPid = $PID; $v.waitStart = Get-KitPidStart $PID; $v.waitSince = $t0.ToString('o'); $v.waitUntil = $eta.ToString('o') }; $marked = $for }
+      if ($marked -ne $for) { Update-State $e { param($x) $v = $x.services[$s.name]; $v.status = 'waiting'; $v.waitFor = $for; $v.waitPid = $PID; $v.waitStart = Get-KitPidStart $PID; $v.waitSince = (Get-KitStamp stored $t0); $v.waitUntil = (Get-KitStamp stored $eta) }; $marked = $for }
       if (-not $ramOk -and (Get-Date) -gt $until) {
         $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
         Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = 'no room to start' }; $marked = ''
@@ -2019,7 +2019,7 @@ param(
   [string]$From, [string]$Tenant, [string]$As, [string]$Mask,
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
-  [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
+  [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [Alias('Item')][string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
   [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [switch]$Fix, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
   [int]$Lane = 0, [string]$Until, [int]$Timeout = 600, [Alias('All')][switch]$AllServices
@@ -2343,7 +2343,7 @@ switch ($Action) {
     Update-State $e { param($x)
       foreach ($a in @($x.holds.Keys)) { $x.holds[$a].services = @($x.holds[$a].services | Where-Object { $_ -notin $names }); if (-not $x.holds[$a].services.Count) { $x.holds.Remove($a) } }
       foreach ($a in @($x.leases.Keys)) { if (@($x.leases[$a].services | Where-Object { $_ -in $names }).Count) { $o.lost += $a; $x.leases.Remove($a) } }
-      $x.suppress = @{ services = $names; until = (Get-Date).AddMinutes(30).ToString('o') }
+      $x.suppress = @{ services = $names; until = (Get-KitStamp stored (Get-Date).AddMinutes(30)) }
     }
     if ($o.lost.Count) { "[$e] ended the leases of $($o.lost -join ', ')" }
     $order = @(EnvServices $e | Where-Object { $_.name -in $names }); [array]::Reverse($order)   # dependents first
