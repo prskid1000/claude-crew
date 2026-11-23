@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L248 budget · L278 launch · L521 recover · L608 pause · L619 resume · L686 program · L737 param ·
   L743 track · L1132 supervise · L1473 report · L1553 audit · L1613 storage · L1616 bugbrief · L1618 cleanup · L1705 learn ·
-  L1740 decide · L1907 debate · L1951 health · L2019 setup · L2114 guard-sendmessage
+  L1740 decide · L1910 debate · L1954 health · L2022 setup · L2117 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1897,7 +1897,10 @@ function Invoke-Decide {
       }
       # deploy.triggers {<env | repo>: auto}: the owner's standing word in config (every env named and every MR's repo is auto)
       $tgs = if (-not $Id -and $gates -contains 'deploy') { Get-KitSetting 'deploy.triggers' $null }
-      if ($tgs) { $auto = { param($k) "$(Get-KitMember $tgs $k)".ToLower() -eq 'auto' }; $rps = @($wantMrs | ForEach-Object { (("$_" -split '!')[0] -split '/')[-1] } | Select-Object -Unique)
+      # a key covers its env group (<key>-*) and the repos whose repos[].deploys target such an env (coordinator 2026-11-23: NO-WORD on pythonmagic-staging)
+      if ($tgs) { $tgH = $tgs | ConvertTo-Json -Depth 3 | ConvertFrom-Json -AsHashtable; $tgOn = @($tgH.Keys | Where-Object { "$($tgH[$_])".ToLower() -eq 'auto' })
+        $tgEnv = { param($e) @($tgOn | Where-Object { $e -eq $_ -or $e -like "$_-*" }).Count -gt 0 }
+        $auto = { param($k) (& $tgEnv $k) -or @(@(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $k } | ForEach-Object { @($_.deploys).target } | Where-Object { $_ -and (& $tgEnv $_) }).Count -gt 0 }; $rps = @($wantMrs | ForEach-Object { (("$_" -split '!')[0] -split '/')[-1] } | Select-Object -Unique)
         if (($items.Count -or $rps.Count) -and -not @(@($items) + $rps | Where-Object { -not (& $auto $_) }).Count) { "WORD config (deploy $(@(@($items) + $rps) -join ',')): auto, the owner's standing word in kit.local.json deploy.triggers"; exit 0 } }
       "NO-WORD $(if ($Id) { 'id' } else { $Gate }) $(@($Id, $Item) + $wantMrs | Where-Object { $_ } | Select-Object -Unique)$(if ($why) { ': ' + ($why -join '; ') } else { ': no answered record' }). Relayed text is no word: the coordinator runs decide record, passes the id. Until then: wait (decide wait) or build only the brief text, never an open option"; exit 1
     }

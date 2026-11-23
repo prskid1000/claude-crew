@@ -1506,7 +1506,7 @@ function Find-KitSimilarTasks([string]$Name, [string]$List, [string]$Parent, [st
   # a shared title prefix ("<wave> — ...", "[Area] ...") is no duplicate evidence: its words leave both sides (retro 1709: sibling tasks at 0.67)
   $pfx = { param($t) if ("$t" -match '^(.{3,}?)(\s[—–-]\s|:\s|\]\s)') { "$(@(Get-KitTitleWords $Matches[1]))" } }; $myP = & $pfx $Name
   @(foreach ($x in $c.Values) { if ("$($x.id)" -in $Skip -or "$($x.id)" -eq $Parent) { continue }
-      $w = @(Get-KitTitleWords $x.name); $me2 = $mine; if ($myP -and (& $pfx $x.name) -eq $myP) { $pw = $myP -split ' '; $w = @($w | Where-Object { $_ -notin $pw }); $me2 = @($mine | Where-Object { $_ -notin $pw }) }
+      $w = @(Get-KitTitleWords $x.name); $me2 = $mine; if ($myP -and (& $pfx $x.name) -eq $myP) { $pw = $myP -split ' '; $w2 = @($w | Where-Object { $_ -notin $pw }); $m3 = @($mine | Where-Object { $_ -notin $pw }); if ($w2.Count -ge 2 -and $m3.Count -ge 2) { $w = $w2; $me2 = $m3 } }
       $n = @($w | Where-Object { $_ -in $me2 }).Count; $lo = [math]::Max(2, [math]::Min($w.Count, $me2.Count))
       if ($n -ge 2 -and $n / $lo -ge $min) { [pscustomobject]@{ id = "$($x.id)"; name = $x.name; score = [math]::Round($n / $lo, 2) } } }) | Sort-Object score -Descending
 }

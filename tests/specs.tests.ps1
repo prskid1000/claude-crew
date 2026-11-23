@@ -84,6 +84,8 @@ Expect "subject spec: link names S2; trace wants S2 only; a change to S1 marks n
 $rt0 = Dt spec retire orders-list; $rt1 = Dt spec retire orders-list --reason 'superseded by T7'; $rtDoc = Get-Content -Raw (Join-Path $docs 'orders-list-spec.md')
 Expect "spec retire: --reason required; doc SUPERSEDED + change log v4; T2 loses the spec; show says retired ($($rt0.code) $($rt1.code))" ($rt0.code -ne 0 -and $rt0.out -match '--reason' -and $rt1.code -eq 0 -and
   $rtDoc -match '^\*\*SUPERSEDED\*\* \S+: superseded by T7' -and $rtDoc -match 'retired: superseded by T7' -and (Dt spec show T2).out -match 'no spec' -and (Dt spec trace T2).code -eq 0 -and (Dt spec show orders-list).out -match 'v4 retired: superseded by T7')
+Set-JsonFile "$wd/sub4.json" @{ change = 'back in use'; goal = 'a revived goal' }; $null = Dt spec write orders-list "$wd/sub4.json"
+Expect 'spec write after retire: a new version is live again (not retired)' ((Dt spec show orders-list).out -match 'orders-list:spec v5 (ready|draft)')
 
 # ---- thin brief: spec links per task; the args file is what buildy accepts (`run`, never `name`)
 Set-JsonFile "$wd/wb.json" @{ name = 'orders-sort'; run = 'buildy-20261123-01'; mandate = @('sort orders'); specs = @('T1'); agents = @(@{ id = 'area-01'; items = 'T1'; area = 'Orders'; repos = 'web'; kind = 'foundation' })

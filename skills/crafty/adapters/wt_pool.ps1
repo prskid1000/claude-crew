@@ -331,7 +331,7 @@ function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo)
     $br = "$(git -C $p branch --show-current 2>$null)".Trim(); $dirty = @(Get-WtDirty $p)
     # pool.wipRestore: tracked files a test run rewrites (fixtures, reports) are restored, never WIP-committed (retro 1709)
     $wipGen = @($dirty | Where-Object { $wf = ($_.Substring(3).Trim('"') -split ' -> ')[-1]; $_.Substring(0, 2) -match 'M' -and @(@(Get-KitSetting 'pool.wipRestore' @()) | Where-Object { $_ -and $wf -like $_ }).Count })
-    foreach ($wg in $wipGen) { git -C $p checkout -q -- (($wg.Substring(3).Trim('"') -split ' -> ')[-1]) 2>$null }; if ($wipGen.Count) { $dirty = @(Get-WtDirty $p) }
+    foreach ($wg in $wipGen) { git -C $p checkout -q HEAD -- (($wg.Substring(3).Trim('"') -split ' -> ')[-1]) 2>$null }; if ($wipGen.Count) { $dirty = @(Get-WtDirty $p) }
     if ($dirty.Count) {   # never lost: a WIP commit on its branch (hooks run), else parked for that branch
       $said = 'uncommitted files on a detached HEAD'
       if ($br) { git -C $p add -A -- @($dirty | ForEach-Object { ($_.Substring(3).Trim('"') -split ' -> ')[-1] }) 2>$null; $said = @(git -C $p commit -q -m "wip: $($o.slot) released with uncommitted work ($why)" 2>&1 | ForEach-Object { "$_" }) -join ' '; $wc = $LASTEXITCODE; if ($wc) { git -C $p reset -q 2>$null; $said = "WIP commit refused (exit $wc) $said".Trim() } else { $said = '' } }

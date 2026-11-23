@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L57 setup · L178 config · L401 recover · L546 release · L597 cost · L704 registry · L708 scan
+Sections: L16 helpers · L57 setup · L178 config · L407 recover · L552 release · L603 cost · L710 registry · L714 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -219,6 +219,12 @@ def cmd_config(kit, fill, ack=False):
             if get(ex, p) is None and p not in documented and f'`{p}' not in doc and not any(p.startswith(m + '.') for m in USER_MAPS) \
               and top not in ('default', 'browser', 'keepFreeGB') and not under_documented(p, documented):
                 out('WARN', 'CONFIG-UNKNOWN', f'{loc_rel} {p}', 'key not in the example nor README "Configuration": a typo, or an undocumented key a script reads?')
+        # deploy.triggers: a key = an env, its group (<key>-*) or a repo; one matching nothing never gives the standing word
+        rps = [r for r in loc.get('repos') or [] if isinstance(r, dict)]
+        envs = {str(d.get('target')) for r in rps for d in r.get('deploys') or [] if isinstance(d, dict) and d.get('target')}
+        for tk in ((loc.get('deploy') or {}).get('triggers') or {}) if isinstance(loc.get('deploy'), dict) else ():
+            if tk not in {str(r.get('name')) for r in rps} and not any(e == tk or e.startswith(tk + '-') for e in envs):
+                out('WARN', 'CONFIG-TRIGGER', f'{loc_rel} deploy.triggers.{tk}', 'matches no repos[].name nor repos[].deploys target (exact or <key>-*): never a standing word')
         if changed:
             bak = osp.join(kit_path('cache', create=True, kit=kit), osp.basename(loc_rel) + time.strftime('.bak-%Y%m%d-%H%M%S'))
             shutil.copyfile(osp.join(kit, loc_rel), bak)

@@ -30,6 +30,9 @@ $cp2 = & $py -X utf8 $KT audit config --kit $kc 2>&1 | Out-String
 Expect "kit-admin: CAPS lists each capability; one switched off since the baseline = CAPS-LOST, a gain passes ($(($cp2 -split "`n" -match 'CAPS') -join ' '))" ($cp1 -match 'INFO CAPS .*phones=android' -and $cp1 -notmatch 'CAPS-LOST' -and
   $cp2 -match 'ACT\s+CAPS-LOST\s+kit\.local\.json phones' -and $cp2 -notmatch 'CAPS-LOST.*(docStore|migrations)' -and ((& $py -X utf8 $KT audit config --kit $kc --ack-caps 2>&1 | Out-String) -match 'CAPS-LOST') -and
   ((& $py -X utf8 $KT audit config --kit $kc 2>&1 | Out-String) -notmatch 'CAPS-LOST'))
+Set-JsonFile (Join-Path $kc 'skills/crafty/kit.local.json') @{ tracker = @{ type = 'zzt' }; repos = @(@{ name = 'pycode'; deploys = @(@{ target = 'pyx-staging' }) }); deploy = @{ triggers = @{ pyx = 'auto'; pycode = 'auto'; ghost = 'auto' } } }
+$ctr = @((& $py -X utf8 $KT audit config --kit $kc 2>&1) -match 'CONFIG-TRIGGER')
+Expect "kit-admin: audit config warns a deploy.triggers key that matches no env, env group or repo ($($ctr -join ' '))" ($ctr.Count -eq 1 -and "$ctr" -match 'deploy\.triggers\.ghost')
 Remove-Item (Join-Path $kc '.state/caps-baseline.json') -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $cad 'tracker_zzt.ps1'), (Join-Path $kc 'skills/crafty/kit.local.json'), (Join-Path $kc 'skills/phoney/swarm.config.json') -ErrorAction SilentlyContinue
 # prepush: a pushed git-ignored file = LOCAL FILE; a file an old `# kitbag <kind> <name>` exclude block lists (now tracked) is not

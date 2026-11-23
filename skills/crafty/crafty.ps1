@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1080 pipes · L1142 guard · L2059 dir · L2069 checkpoint ·
-  L2103 prior · L2141 tracker · L2163 task spec · L2361 scope · L2409 host
+Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1082 pipes · L1144 guard · L2061 dir · L2071 checkpoint ·
+  L2105 prior · L2143 tracker · L2165 task spec · L2363 scope · L2411 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -997,8 +997,10 @@ foreach ($s in $steps) {
     # commas reached runners as one name, spaces broke -Dtest
     $tl = @($Tests -split '[,\s]+' | Where-Object { $_ })
     $pyRun = if ($st.stack -eq 'python' -and $cmd -match '^(?<py>.+?)\s+-m\s+(pytest|unittest)\b') { $Matches.py } else { $null }
-    # a test folder: its test_*.py files (unittest on a plain folder found 0 tests, exit 5: retro 1709)
-    if ($pyRun) { $tl = @(foreach ($t in $tl) { $td = Join-Path $st.dir $t; if (Test-Path -LiteralPath $td -PathType Container) { @(Get-ChildItem -LiteralPath $td -Filter 'test_*.py' -File | ForEach-Object { [IO.Path]::GetRelativePath($st.dir, $_.FullName) -replace '\\', '/' }) } else { $t } }) }
+    # a folder of plain test_*.py scripts (no test cases): the scripts, run below (the runner found 0 tests, exit 5: retro 1709); a folder with cases stays the runner's
+    $tcRx = '^\s*(def test_|class \w+\(.*TestCase\)|import (unittest|pytest)|from (unittest|pytest)\b)'
+    if ($pyRun) { $tl = @(foreach ($t in $tl) { $td = Join-Path $st.dir $t; $tdf = if (Test-Path -LiteralPath $td -PathType Container) { @(Get-ChildItem -LiteralPath $td -Filter 'test_*.py' -File -Recurse) } else { @() }
+        if ($tdf.Count -and -not @($tdf | Where-Object { Select-String -LiteralPath $_.FullName -Pattern $tcRx -Quiet }).Count) { @($tdf | ForEach-Object { [IO.Path]::GetRelativePath($st.dir, $_.FullName) -replace '\\', '/' }) } else { $t } }) }
     # unittest/pytest exit 5 on files without test cases
     $scripts = if ($pyRun -and $tl.Count) { @($tl | Where-Object { $_ -match '\.py$' -and (Test-Path -LiteralPath (Join-Path $st.dir $_) -PathType Leaf) -and -not (Select-String -LiteralPath (Join-Path $st.dir $_) -Pattern '^\s*(def test_|class \w+\(.*TestCase\)|import (unittest|pytest)|from (unittest|pytest)\b)' -Quiet) }) } else { @() }
     if ($scripts.Count -and $scripts.Count -eq $tl.Count) {
@@ -2089,7 +2091,7 @@ Write-KitState $jf $c
 # compact for the resumer's context: last 8 steps and 6 notes, the worktree once (head sha per row)
 $ckRows = @($c.steps); $ckOld = [Math]::Max(0, $ckRows.Count - 8); $ckNotes = @($c.notes | Where-Object { $_ }); $ckNoteOld = [Math]::Max(0, $ckNotes.Count - 6)
 $md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next) (start here; the steps below are done: verify, never redo) · $($c.updated)", '', "## Done$(if ($ckOld) { " (last 8; $ckOld earlier: $(@($ckRows[0..($ckOld - 1)] | ForEach-Object step | Select-Object -Unique) -join ', '))" })", '') +
-  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Head' @($ckRows | Select-Object -Skip $ckOld | ForEach-Object { , @($(if ($_.at -is [datetime]) { $_.at.ToString('yyyy-MM-dd HH:mm') } else { "$($_.at)".Substring(0, [Math]::Min(16, "$($_.at)".Length)).Replace('T', ' ') }), $_.step, $_.item, $_.evidence, $_.head) })) +
+  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Head' @($ckRows | Select-Object -Skip $ckOld | ForEach-Object { , @($(if ($_.at -is [datetime]) { $_.at.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) } else { "$($_.at)".Substring(0, [Math]::Min(16, "$($_.at)".Length)).Replace('T', ' ') }), $_.step, $_.item, $_.evidence, $_.head) })) +
   @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')") +
   @(if ($ckNotes) { '', "## Notes$(if ($ckNoteOld) { " (last 6)" })", ''; @($ckNotes | Select-Object -Skip $ckNoteOld | ForEach-Object { "- $_" }) })
 # a hand-written resume-<run>.md keeps its text above the generated part (the checkpoint overwrote it, 2026-11-23)

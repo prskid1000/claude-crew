@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L393 process · L602 git host · L675 scope · L767 MR · L962 merge · L1293 docs ·
-  L1456 publish · L1951 render · L2472 spec · L2828 plugins · L2842 keepboth · L2861 selftest · L3549 CLI
+  L1456 publish · L1951 render · L2472 spec · L2829 plugins · L2843 keepboth · L2862 selftest · L3550 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2437,7 +2437,7 @@ def render_wave_brief(s):
                              for r, a in zip(rows(('id', 'items', 'area', 'repos', 'migrationRange', 'services'), s['agents']), s['agents'])]), '',
         f'**Overlaps:** {s.get("overlaps") or "none"} · **Contracts:** `{s.get("contractsFile") or s["name"] + ".contracts.md"}` ({len(s.get("contracts") or [])} crossing)',
         *([f'**Specs** (build against their S-ids; `devtools.py spec show <task>`): ' + ' · '.join(
-            f'{t} v{r.get("version")} {r.get("url")}' for t in s['specs'] if (r := spec_rec(t)).get('url'))] if s.get('specs') else []),
+            f'{t} v{r.get("version")} {r.get("url")}' for t in s['specs'] if (r := spec_rec(t)).get('url') and not r.get('retired'))] if s.get('specs') else []),
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
         # the limits where devy reads first (retro 2026-11-22: 13 mr prose refusals)
         # wrapped: one 340-char line failed the brief's own 130ch prose check (briefys 2026-11-23)
@@ -2636,8 +2636,8 @@ def link_task_spec(tid, rec):
     try:
         if not t.get('id'):
             raise SystemExit(view_why(t)[:120] or f'tracker.type {TRACKER_TYPE}')
-        if (state_read(task_file(tid)) or {}).get('spec') and re.match(r'https?://', rec.get('url') or '') and not rec.get('retired'):
-            _tracker('update', tid, '-Spec', json.dumps({'docs': {'spec': rec['url']}}) + '\n')
+        if (state_read(task_file(tid)) or {}).get('spec') and re.match(r'https?://', rec.get('url') or ''):   # retired: the Spec field emptied
+            _tracker('update', tid, '-Spec', json.dumps({'docs': {'spec': '' if rec.get('retired') else rec['url']}}) + '\n')
         elif (new := links_block(t.get('description') or '', task_doc_links(tid))) != (t.get('description') or ''):
             _tracker('describe', tid, new)
     except SystemExit as e:   # the doc is published and recorded; finish writes the Spec line with the testing docs
@@ -2672,7 +2672,7 @@ def spec_write(key, path, by='', subject=False):
         fh.write(render_spec(data, key, ver, log, tasks))
     url = publish(pk, f'{key} Spec — {data["title"]}', out, mode='replace')
     qs = spec_questions(data)
-    _pub_update(pk, data=data, version=ver, log=log, tasks=tasks, subject=subject, ready=not qs)
+    _pub_update(pk, data=data, version=ver, log=log, tasks=tasks, subject=subject, ready=not qs, retired=None)   # a new version un-retires
     for t in tasks:
         sel = (state_read(task_file(t)) or {}).get('specIds') if subject else None
         mine = [i for i in log[-1]['retest'] if not sel or i in sel]   # a new rule or an answer to a draft is no retest
@@ -2811,7 +2811,8 @@ def render_cmd(a):
         return 2
     con = {'contractsFile': os.path.basename(os.path.splitext(a[2])[0]) + '.contracts.md'} if a[0] == 'wave-brief' else None   # the file wave_files writes
     if a[0] == 'wave-brief' and (draft := [t for t in load_spec(a[1]).get('specs') or [] if not spec_rec(t).get('ready')]):   # Spec before build
-        raise SystemExit(f'wave-brief refused: spec of {", ".join(draft)} not ready (devtools.py spec questions <task>). Nothing was written.')
+        why = lambda t: f'retired: {r["retired"].get("reason")}' if (r := spec_rec(t)).get('retired') else 'not ready (devtools.py spec questions <task>)'
+        raise SystemExit(f'wave-brief refused: spec of {"; ".join(f"{t} {why(t)}" for t in draft)}. Nothing was written.')
     txt = spec_text(a[1], a[0], add=con).rstrip('\n') + '\n'
     if len(a) > 2:   # an out file: written, its path printed
         extra = wave_files(load_spec(a[1]), a[2]) if a[0] == 'wave-brief' else {}

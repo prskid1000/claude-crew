@@ -140,6 +140,9 @@ Expect "Invoke-KitVerb: a dash-leading value naming no parameter is the value; a
 # python -Tests <folder>: its test_*.py scripts run directly, never `unittest <folder>` (0 tests, exit 5: retro 1709)
 $pvd = Join-Path (Kd) 'py-val'; New-Item -ItemType Directory -Force "$pvd/validation" | Out-Null; 'x==1' | Set-Content "$pvd/requirements.txt"
 'print("ok")' | Set-Content "$pvd/validation/test_alpha.py"; 'print("ok")' | Set-Content "$pvd/validation/helper.py"
+New-Item -ItemType Directory -Force "$pvd/cases/sub" | Out-Null; "import unittest`nclass T(unittest.TestCase):`n    def test_a(self): pass" | Set-Content "$pvd/cases/sub/test_c.py"
+$pvc = pwsh @np $D check -Dir $pvd -Step test -Tests cases -Show 2>&1 | Out-String
+Expect "check python -Tests <folder with test cases>: the runner gets the folder ($($pvc.Trim() -replace '\s+', ' '))" ($pvc -match 'test\s*:.*\bcases\b' -and $pvc -notmatch 'test_c\.py')
 $pvo = pwsh @np $D check -Dir $pvd -Step test -Tests validation -Show 2>&1 | Out-String
 Expect "check python -Tests <folder>: each test_*.py run with python, no unittest ($($pvo.Trim() -replace '\s+', ' '))" ($pvo -match 'test\s*:.*"validation/test_alpha\.py"' -and $pvo -notmatch 'unittest|helper\.py')
 Remove-TestKit $k
