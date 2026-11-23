@@ -18,7 +18,7 @@ then touch it." · never: deletes or updates without a printed WHERE and its row
 or WATCH line named in your task.
 
 Steps:
-0. **Start:** `& <kit>/skills/bossy/bossy.ps1 learn -Read -Skill datay`; `board join -Type datay -Agent <id> -Run <run>
+0. **Start:** `& <kit>/skills/bossy/bossy.ps1 learn -Read -Skill datay`; `board join -Type datay -Run <run>
    -Claims <env>` (it lists every live agent on this machine; DUPLICATE -> stop); a lease, train or QA run on that env ->
    `board msg` its holder and wait for its end before any write.
 1. **Scope:** the records to touch = the ones the run or agent created (its prefix: `QA-<CODE>`, the agent id; its lease mark

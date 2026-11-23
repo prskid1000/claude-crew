@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L387 process · L596 git host · L669 scope · L761 MR · L956 merge · L1287 docs ·
-  L1450 publish · L1945 render · L2434 spec · L2765 plugins · L2779 keepboth · L2798 selftest · L3486 CLI
+  L1450 publish · L1945 render · L2464 spec · L2795 plugins · L2809 keepboth · L2828 selftest · L3516 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2386,8 +2386,37 @@ def _oq(q):
     return {'question': q, 'answers': 'rechy'} if isinstance(q, str) else dict(q or {})
 
 
+def wave_ids(s):
+    """N3 (naming on): agent ids -> area-<AREA> (its task key's AREA; -2, -3 for a second one), dependsOn and contract producers /
+    consumers with them; never typed by briefy. A legacy id without a keyed task stays."""
+    if not naming_on():
+        return s
+    rx, used, new = naming().patterns(naming().naming_cfg())['area'], {a['id'] for a in s['agents']}, {}
+    for a in s['agents']:
+        key = '' if re.match(rx, a['id']) else task_key(a.get('task') or s.get('task') or '')
+        if key:
+            base, i = f'area-{key.split("-")[1]}', 1
+            while (cand := base if i == 1 else f'{base}-{i}') in used:
+                i += 1
+            used.add(cand)
+            new[a['id']] = cand
+    sub = lambda v: [sub(x) for x in v] if isinstance(v, list) else re.sub(r'[^,;\s]+', lambda m: new.get(m[0], m[0]), str(v)) if v else v
+    return {**s, 'contracts': [{**c, 'producer': sub(c.get('producer')), 'consumers': sub(c.get('consumers'))} for c in s.get('contracts') or []], 'agents': [{**a, 'id': new.get(a['id'], a['id']), **({'dependsOn': [new.get(p, p) for p in a['dependsOn']]} if a.get('dependsOn') else {})}
+                            for a in s['agents']]}
+
+
+def run_label(s):
+    """'<KEY> <short title>' of a wave's task (naming on; '' without a key): the title without key, [Type] and 'Area:'."""
+    tid = s.get('task') or next((a['task'] for a in s['agents'] if a.get('task')), '')
+    if not (key := task_key(tid)):
+        return ''
+    rest = re.sub(rf'^(?:{re.escape(key)}\S*\s+)?(?:\[[^\]]+\]\s*)?(?:[^:]{{1,30}}:\s*)?', '', _KEYS.get(f'name:{tid}', ''))
+    return f'{key} {" ".join(rest.split()[:7])}'.strip()
+
+
 def render_wave_brief(s):
     """templates.md "Wave brief" from briefy's spec; the contracts file and the /buildy args come from the same spec (wave_files)."""
+    s = wave_ids(s)
     yn = lambda v: f'yes: {v}' if isinstance(v, str) and v else ('yes' if v else 'no')
     rows = lambda keys, xs: [[str(x.get(k) or '') for k in keys] for x in xs]
     qs = [f'{q.get("question", "")} · blocks {q.get("blocks") or "—"} · answers: {q.get("answers") or "owner"}' for q in map(_oq, s.get('openQuestions') or [])]
@@ -2413,7 +2442,7 @@ def render_wave_brief(s):
 
 def wave_files(s, brief_path):
     """{path: text} beside the brief: <name>.contracts.md and <name>.args.json (/buildy launch args); same spec, no retyping."""
-    stem = os.path.splitext(brief_path)[0]
+    stem, s = os.path.splitext(brief_path)[0], wave_ids(s)
     con = '\n'.join([f'# Contracts: {s["name"]}', _table(['Field / endpoint', 'Type', 'Producer', 'Consumers', 'Merge / deploy order', 'Backward-compatible'],
                      [[str(c.get(k) or '') for k in ('name', 'type', 'producer', 'consumers', 'order')] + ['yes' if c.get('compatible') else 'no'] for c in s.get('contracts') or []])
                      if s.get('contracts') else 'n/a — nothing crosses areas', '## Rule changes during the wave (newest last)', 'n/a — none yet (appended during the wave)']) + '\n'
@@ -2426,6 +2455,7 @@ def wave_files(s, brief_path):
     args = {'brief': brief_path.replace('\\', '/'), 'agents': [{k: a[k] for k in keep if a.get(k) not in (None, '', [], False)} for a in s['agents']],
             'mode': s.get('mode') or 'feature', 'mandate': s['mandate'], **({'task': s['task']} if s.get('task') else {}),
             **({'run': s['run']} if s.get('run') else {}),   # buildy reads `run`, never `name` (its args check refuses unknown keys)
+            **({'label': lb} if (lb := s.get('label') or run_label(s)) else {}),   # N3 '<KEY> <short title>': board show, dashboard
             'openQuestions': [q['question'] for q in map(_oq, s.get('openQuestions') or []) if q['question'] and (q.get('answers') or '') == 'rechy'],
             **({'holdMerge': s['holdMerge']} if s.get('holdMerge') else {}), **({'kitDir': s['kitDir']} if s.get('kitDir') else {})}
     return {f'{stem}.contracts.md': con, f'{stem}.args.json': json.dumps(args, ensure_ascii=False, indent=1) + '\n'}

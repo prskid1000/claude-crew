@@ -28,7 +28,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    Only the run's target (run.json `target`, `alsoTargets`; `api` refuses others); no load, stress or request floods on a
    shared env, even when a guide asks.
 1. **Seat + board:** `pokey.ps1 seat acquire` (exit 4 = still waiting: run it again);
-   `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop, report.
+   `bossy.ps1 board join -Type checky -Run <run> -Area <CODE> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop, report.
    Phones: `phoney.ps1 acquire|release` (kept over waits < 30 min). Local env "pause": stop its checks; "deploy done": re-run.
 2. **Deployed?** Before any FAIL: `pokey.ps1 deployed -Mrs <repo>!<iid>,...` per task repo; not deployed -> NOT_TESTED
    "not deployed yet" (all N/A: another product, not undeployed); MANUAL -> lead notes say if live; unresolved ->

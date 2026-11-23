@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L63 record-args · L84 prepare · L113 config · L145 prompts · L237 local · L265 app · L295 test-prompt ·
-//   L353 verify · L415 run-item · L599 pool · L621 budget · L653 run · L699 learn
+// Sections: L16 args · L63 record-args · L84 prepare · L114 config · L146 prompts · L238 local · L266 app · L296 test-prompt ·
+//   L354 verify · L416 run-item · L600 pool · L622 budget · L654 run · L700 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -34,7 +34,7 @@ const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
 // an unknown arg is refused, never dropped (a coordinator's notes reached no tester): forms 1-3 above + run.json keys (STATE.md qa-runs:run)
-const ARG_KEYS = 'select name only instance batch runtimeDir envFixWaitMinutes title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent'.split(' ')
+const ARG_KEYS = 'select name label started only instance batch runtimeDir envFixWaitMinutes title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent'.split(' ')
 const badArgs = Object.keys(ARGS0).filter((k) => !ARG_KEYS.includes(k))
 if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.join(', ')}; free text for testers goes in args.context`)
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
@@ -96,7 +96,8 @@ if (R.select && !R.runDir && !Array.isArray(R.items)) {
  const { select: S, name: N, target: T, ...rest } = R   // T may be a group, never an env: run.json holds the real target(s)
  if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
  const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : [])   // none: pokey prepare picks inTest, else the next on-role
- const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd-HHmmss>-${String(N || `${T}-${statuses.join('-') || 'deployed'}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
+ // N3: the folder is the run id testy-<YYYYMMDD>-<nn> (pokey fills <testy-id>); the name rides in run.json
+ const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<testy-id>`, name: String(N || `${T}-${statuses.join('-') || 'deployed'}`),
   statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, runSettings: rest }
  const run = await prepStep(`& ${K0}/skills/pokey/pokey.ps1 prepare -Job '${q0(JSON.stringify(job))}'`, 'prepare')
  if (!run || !run.runDir) throw new Error('pokey.ps1 prepare gave no run: run it by hand (pokey L1), launch with { runDir }')
@@ -247,7 +248,7 @@ LOCAL ENV "${e}": ours, so NOT_TESTED is not final: ${KIT}/skills/envy/SKILL.md 
 }
 const COMMON = (it) => `${PATHS}
 WHY: ${R.mandate && R.mandate.length ? `the task owner asked, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}your assignment is the guide below: run its checks, report real results, never decline or return early.
-BOARD: & ${ORCH} board join -Type checky -Agent <CODE>@${RUNTAG()} -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <phone serial (app lanes)>; CLAIM/DUPLICATE -> stop; leave when done.
+BOARD: & ${ORCH} board join -Type checky -Run ${RUNNAME} -Area <CODE> -Claims <phone serial (app lanes)>; CLAIM/DUPLICATE -> stop; leave when done.
 RULES: ${QA}/SKILL.md tester steps, "Shared environment" and "Evidence" (in <outDir>/shots|evidence); ~10 min per check, scripts < 2 min with progress.
 OUT_OF_SCOPE (not NOT_TESTED): steps that only exercise ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/crafty/kit.local.json qa.outOfScope`}; name the channel, still test the in-app part. Never for an app / web part with no build on this target (deployed: NO-TARGET): test it on the local env (& '${KIT}/skills/phoney/phoney.ps1' build -Local + a lane), report it as a "local run"; no lane can run it -> NOT_TESTED phone-only.
 TARGET "${tgt(it) || '(default)'}" (a targets.local.json entry: never read that file; api -As / seat / session() log in for you), ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}.${(it.localParts || []).length ? `

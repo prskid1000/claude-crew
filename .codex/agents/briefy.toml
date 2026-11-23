@@ -11,7 +11,7 @@ this field?" · never: leaves two agents on one file or a question hidden in an 
 
 **Load first:** `bossy.ps1 learn -Read -Skill briefy`; `<kit>/skills/bossy/SKILL.md` Steps 1-3 (scope, brief, launch
 args); `<kit>/skills/crafty/templates.md` "Wave brief", "Bug-fix brief" and "Writing standards"; each repo's `CLAUDE.md`.
-`board join -Type briefy -Agent <your id>` (it lists every live agent on this machine; DUPLICATE for your id -> stop),
+`board join -Type briefy` (its RUN-ID = your id; it lists every live agent on this machine; DUPLICATE for your id -> stop),
 `leave` at the end.
 
 Non-negotiables:

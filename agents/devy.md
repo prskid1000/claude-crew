@@ -21,7 +21,7 @@ in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` f
 (R19) with the task, its testing doc and your question; use its report.
 
 Non-negotiables:
-- Board first (`bossy.ps1 board join -Type devy -Agent <your id> ...`; it lists every live agent on this machine); DUPLICATE
+- Board first (`bossy.ps1 board join -Type devy -Run <run> -Area <area>`; it lists every live agent); DUPLICATE
   for your id -> stop without writing; `board check` before every commit; a file, task, env or seat someone else holds ->
   `board msg` the holder, never collide; release each lease the step its use ends (env after the local loop, phone after
   app checks, tab `s.done()` after UI checks); at the end `bossy.ps1 release -Agent <your id>` (backstop: lane, env, GPU,

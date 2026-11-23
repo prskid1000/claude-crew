@@ -89,7 +89,7 @@ Only these dev paths need you (the workflow handles the rest: `workflows/buildy.
 - K1. Spawn ONE `kitty` (`subagent_type: 'kitty'`, kind build / fix / docs / audit / setup / env / recover) with the change or the
   friction in the owner's words; kinds docs / env / retro pass `model: 'sonnet'`. It works in its own kit worktree (never the
   live clone), keeps the kit generic (org values in `kit.local.json`), prefers a script check over a rule, has `revy` (kind
-  kit) review the diff; board run `kit-<kind>-<HHmm>` (HANDOFF: pass it on). A queued kit item (`- [ ]` in
+  kit) review the diff; its run id (HANDOFF: pass it on). A queued kit item (`- [ ]` in
   `work/agents/kitty/kit-*.md`) = a kitty spawned now or live.
 - K2. Its checks: kitty step 8 (lint 0, ports, parses, `tests/kit-tests.ps1`, `lint --org-terms`). A start over its cap: move
   detail behind a pointer.

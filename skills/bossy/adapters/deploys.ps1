@@ -7,7 +7,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L15 helpers · L104 intest · L270 deploy · L468 restart · L532 supervise
+Sections: L15 helpers · L106 intest · L272 deploy · L470 restart · L534 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -16,8 +16,10 @@ Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused
 # not a test env: deploys[].production, else deploy.productionPattern on the name (no default: nothing is production by name); -Lanes: + laneApk
 function Get-NoTestRx([Alias('Lane')][switch]$Lanes) { $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $rx -and $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
 # <alias>!<iid> -> <repo name>!<iid>
-# a QA run's start from its folder name (yyyy-MM-dd[-HHmmss]-<label>; date only: midnight); $null when it has none
-function Get-KitQaRunStart([string]$Run) { if ($Run -match '^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2})(\d{2}))?(?:-|$)') { [datetime]"$($Matches[1])T$(if ($Matches[2]) { "$($Matches[2]):$($Matches[3]):$($Matches[4])" } else { '00:00:00' })" } }
+# a QA run's start: an N3 id (testy-<YYYYMMDD>-<nn>) from its run.json started; legacy folder name yyyy-MM-dd[-HHmmss]-<label> (date only: midnight); $null when none
+function Get-KitQaRunStart([string]$Run) {
+  if ($Run -match '^[a-z]+(?:-[a-z]+)*-\d{8}-\d{2,}$') { $st = try { (Read-KitText (Join-Path (Get-KitPath qa-runs) "$Run/run.json") | ConvertFrom-Json).started } catch { $null }; if ($st) { return ([datetimeoffset]$st).LocalDateTime }; return }
+  if ($Run -match '^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2})(\d{2}))?(?:-|$)') { [datetime]"$($Matches[1])T$(if ($Matches[2]) { "$($Matches[2]):$($Matches[3]):$($Matches[4])" } else { '00:00:00' })" } }
 function Get-CanonMr([string]$m) {
   if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }
   $rp = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $Matches.r -or @($_.aliases) -contains $Matches.r } | Select-Object -First 1

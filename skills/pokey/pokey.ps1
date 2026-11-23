@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L160 seat · L234 api · L481 users · L613 finalize · L1153 results · L1186 retest ·
-  L1243 prepare
+Sections: L29 lanes · L43 report · L160 seat · L234 api · L481 users · L613 finalize · L1154 results · L1187 retest ·
+  L1244 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1032,8 +1032,9 @@ function Set-FailedTesting($rec, $st) {
 }
 # the task's MRs (run item + track) merged after this run started (folder stamp yyyy-MM-dd-HHmmss): a newer fix round the run never tested
 function Get-LateMerges($st) {
-  if ((Split-Path $RunDir -Leaf) -notmatch '^(\d{4}-\d{2}-\d{2}-\d{6})') { return }
-  $t0 = [datetimeoffset][datetime]::ParseExact($Matches[1], 'yyyy-MM-dd-HHmmss', $null)
+  # N3 run ids carry no time: run.json started; the legacy folder stamp yyyy-MM-dd-HHmmss for one version
+  $t0 = if ((Split-Path $RunDir -Leaf) -match '^(\d{4}-\d{2}-\d{2}-\d{6})') { [datetimeoffset][datetime]::ParseExact($Matches[1], 'yyyy-MM-dd-HHmmss', $null) } elseif ($rs = try { (Read-KitText (Join-Path $RunDir 'run.json') | ConvertFrom-Json).started } catch { $null }) { [datetimeoffset]$rs }
+  if (-not $t0) { return }
   $refs = @(@("$($st.mrs)" -split '[,\s]+') + @((Read-KitTracking).tasks["$($st.id)"].mrs) | Where-Object { "$_" -match '^[\w./-]+!\d+$' } | Select-Object -Unique)
   foreach ($ref in $refs) { $rp, $iid = "$ref" -split '!', 2; if ($rp -notmatch '/' -and $KitConf.GitlabGroup) { $rp = "$($KitConf.GitlabGroup)/$rp" }
     $m = try { Invoke-HostVerb 'mr.get' @{ repo = $rp; n = $iid } } catch { $null }
@@ -1268,6 +1269,9 @@ if ($RunDir) { $rf = Join-Path $RunDir 'run.json'; if (-not (Test-Path -LiteralP
 if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run>'; exit 2 }
 $jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
 if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
+# N3: <testy-id> -> testy-<YYYYMMDD>-<nn> (kitbag.py naming next id: one locked day counter)
+if ("$($jb.runFolder)" -match '<(?<k>[a-z]+)-id>') { $idKind = $Matches.k; $nid = "$(& (Get-Python) -X utf8 $KitCmd.kitbag naming next id $idKind 2>$null | Select-Object -Last 1)".Trim()
+  if ($nid -notmatch '^[a-z]+-\d{8}-\d{2,}$') { throw "prepare: kitbag.py naming next id $idKind gave '$nid'" }; $jb.runFolder = "$($jb.runFolder)" -replace '<[a-z]+-id>', $nid }
 $dir = [regex]::Replace("$($jb.runFolder)", '<([yMdHms][^<>]*)>', { param($DateTok) Get-Date -Format $DateTok.Groups[1].Value })   # <yyyy-MM-dd> and other date formats
 if (-not [IO.Path]::IsPathRooted($dir)) { $dir = Join-Path (Split-Path $KitConf.Kit) $dir }   # testy's relative runFolder is from the workspace root, never this cwd (the kit: <kit>/.claude/.runtime, retro 1549)
 # a caller that expanded the stamp itself to nothing left '-<name>' (a leading '-' reads as a CLI flag)
@@ -1333,7 +1337,9 @@ foreach ($tid in @($cand.Keys)) {
 }
 # 5. run.json + lead-notes.md (fixed headings; testers and the lead append with lead-notes add)
 # the title: 25 words at most (capped here; finalize skips the report H1)
-$run = [ordered]@{ title = (Limit-KitWords "$($jb.target): $(@($items | ForEach-Object title) -join '; ')" 25 "+$(@($items).Count)-items"); target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }
+# N3 label '<KEY> <short title>' (+N more tasks): the run's name on the board and dashboard; a task without a key: none (the old label)
+$lb = if ("$(@($items)[0].title)" -match '^(?<k>[A-Z]{2,6}-[A-Z]{2,6}-\d{2,})\s+(?:\[[^\]]+\]\s*)?(?:[^:]{1,30}:\s*)?(?<t>.+)$') { "$($Matches.k) $(Limit-KitWords $Matches.t 7)$(if (@($items).Count -gt 1) { " +$(@($items).Count - 1)" })" }
+$run = [ordered]@{ name = "$($jb.name)"; label = "$lb"; started = (Get-KitStamp); title = (Limit-KitWords "$($jb.target): $(@($items | ForEach-Object title) -join '; ')" 25 "+$(@($items).Count)-items"); target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }
 foreach ($rk in @(@($jb.runSettings.Keys) | Where-Object { $_ -and $_ -notin $run.Keys })) { $run[$rk] = $jb.runSettings[$rk] }
 Write-KitAtomic "$dir/run.json" ($run | ConvertTo-Json -Depth 8)
 $cell = { param($Text) "$Text" -replace '\s+', ' ' -replace '\|', '\|' }

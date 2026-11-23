@@ -160,7 +160,7 @@ $j1 = pwsh @np $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C
 $j2 = pwsh @np $O board join -Type revy -Agent R7 -Run w7 | Out-String
 $null = pwsh @np $O board msg -Agent R7 -To X7 -Text 'I need a.ts'
 $ib = pwsh @np $O board inbox -Agent X7 | Out-String
-Expect 'board: join -Type shown; msg in inbox' ($j2 -match 'X7\s+devy' -and $ib -match 'from R7: I need a\.ts')
+Expect 'board: join -Type shown; msg in inbox' ($j2 -match 'X7 · devy' -and $ib -match 'from R7: I need a\.ts')
 $dx = Invoke-TestScript $O board dispute -Agent X7 -With R7
 $ad = Join-Path $k 'skills/bossy/adapters'; New-Item -ItemType Directory -Force $ad | Out-Null
 'function Invoke-TrackRebuild { "fake rebuild $Force" }' | Set-Content (Join-Path $ad 'fake.ps1'); 'this is { not powershell' | Set-Content (Join-Path $ad 'broken.ps1')

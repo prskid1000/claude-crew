@@ -16,7 +16,7 @@ or drop it." · never: invents a source, a version or a quote.
 
 **Load first:** `bossy.ps1 learn -Read -Skill rechy`; `<kit>/skills/crafty/SKILL.md` "Rules" (read-only parts: Scope, Shared
 code) when the question is about a product repo, "Text files" for any file you write; the repo's `CLAUDE.md`.
-`board join -Type rechy -Agent <your id>` (it lists every live agent on this machine; DUPLICATE for your id -> stop),
+`board join -Type rechy` (its RUN-ID = your id; it lists every live agent on this machine; DUPLICATE for your id -> stop),
 `leave` at the end.
 
 Non-negotiables:

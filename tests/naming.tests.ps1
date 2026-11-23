@@ -6,7 +6,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/naming.tests.ps1 (or tests/kit-tests.ps
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/kitbag_naming.py')
+$TestKitFiles = @('skills/bossy/kitbag_naming.py', 'skills/bossy/adapters/deploys.ps1', 'skills/pokey/adapters/deployed_checks.ps1')
 $k = New-TestKit naming; $KB = Join-Path $k 'skills/bossy/kitbag.py'; $wd = Join-Path (Kd) 'w'; New-Item -ItemType Directory -Force $wd | Out-Null
 function Kb { $o = & $py -X utf8 $KB @args 2>&1 | Out-String; [pscustomobject]@{ out = $o.Trim(); code = $LASTEXITCODE } }
 $lc = Join-Path $k 'skills/crafty/kit.local.json'
@@ -117,5 +117,48 @@ Expect 'lint NAME-CONFIG: a lower-case / punctuated area code is a problem' ($ln
 Set-Content "$lc.bak" '{}'; Set-Content "$lc.bak-20261123-100506" '{}'; $lw = Kb lint $k --warn
 Expect "lint --warn: NAME-BACKUP for a backup off <file>.bak-<yyyyMMdd-HHmmss>, the standard one passes; NAME-FILE for a snake_case .ps1 (not counted: exit $($lw.code))" (
   $lw.out -match 'WARN NAME-BACKUP skills/crafty/kit.local.json.bak:' -and $lw.out -notmatch 'NAME-BACKUP \S+\.bak-20261123-100506' -and $lw.out -match 'WARN NAME-FILE\s+skills/crafty/adapters/task_items.ps1')
+
+# ---- N3 (owner 2026-11-23): board join gives <role>-<nn> (same run + area: the same id); legacy <role>-<run> aliased; labels
+$O = Join-Path $k 'skills/bossy/bossy.ps1'
+$bj = { param($bjArgs) $bo = pwsh -NoProfile -File $O board join @bjArgs | Out-String; [pscustomobject]@{ id = $(if ($bo -match 'RUN-ID: you are (\S+)') { $Matches[1] }); out = $bo } }
+$d1 = & $bj @('-Type', 'devy', '-Run', 'buildy-20261123-01', '-Area', 'area-CAT'); $null = pwsh -NoProfile -File $O board leave -Agent $d1.id
+$d2 = & $bj @('-Type', 'devy', '-Run', 'buildy-20261123-01', '-Area', 'area-CAT'); $d3 = & $bj @('-Type', 'devy', '-Run', 'buildy-20261123-01', '-Area', 'area-PAY')
+$kc = & $bj @('-Type', 'kitty', '-Run', 'kitty-build-20261123-01', '-Area', 'kit'); $null = pwsh -NoProfile -File $O board msg -Agent t -To kitty-kitty-build-20261123-01 -Text 'via alias'
+$kcIn = pwsh -NoProfile -File $O board inbox -Agent $kc.id | Out-String; $co = & $bj @('-Type', 'coordinator')
+$null = pwsh -NoProfile -File $O board join -Type devy -Agent api -Run buildy-old -Area api; $lg = & $bj @('-Type', 'devy', '-Run', 'buildy-old', '-Area', 'api')
+Expect "board join: <role>-<nn>; the next phase of a run's area keeps it; another area a new one; <type>-<run> msg reaches it; the coordinator keeps its name; a live legacy row keeps its id ($($d1.id) $($d2.id) $($d3.id) $($kc.id))" (
+  $d1.id -match '^devy-\d{2,}$' -and $d2.id -eq $d1.id -and $d3.id -match '^devy-\d{2,}$' -and $d3.id -ne $d1.id -and $kc.id -match '^kitty-\d{2,}$' -and $kcIn -match 'via alias' -and -not $co.id -and $co.out -match 'SESSION coordinator-[0-9a-f]{8}' -and $lg.id -eq 'api')
+Set-JsonFile (Join-Path (TkPath $k launches -Create) 'self-buildy-n3.json') @{ script = 'buildy.js'; run = 'buildy-20261123-01'; at = '2026-11-23T10:00:00.000Z'; args = @{ brief = 'b.md'; label = 'SHOP-CAT-004 public price list' } }
+$qd = Join-Path (TkPath $k qa-runs -Create) 'testy-20261123-02'; Set-JsonFile (Join-Path $qd 'run.json') @{ label = 'SHOP-PAY-001 card refunds'; started = '2026-11-23T10:00:00.000Z' }
+$show = pwsh -NoProfile -File $O board show | Out-String
+$lbl = pwsh -NoProfile -Command ". '$O'; Get-KitRunLabel ([pscustomobject]@{ name = 'v2-wave1'; agents = @(@{ items = 'A1, A2, A3' }) }) 'testy-20261123-09'; Get-KitRunLabel ([pscustomobject]@{ runDir = '$qd' }) 'select-x'
+  Get-KitAgentLabel ([pscustomobject]@{ n = 'devy-01'; ar = 'area-CAT'; sub = 'devy' }); Get-KitAgentLabel ([pscustomobject]@{ n = 'briefy-v1retest'; sub = 'briefy' }); Get-KitAgentLabel ([pscustomobject]@{ n = 'JC'; sub = 'devy' })
+  (Get-KitQaRunStart 'testy-20261123-02').ToString('o'); (Get-KitQaRunStart '2026-11-23-150132-old').ToString('HH:mm:ss')"
+Expect "labels: board show '<run> · <KEY> <title>' + '<role>-<nn> · <area>'; dashboard runs and agents; QA run start from run.json, legacy folder kept ($($lbl -join ' | '))" (
+  $show -match "run buildy-20261123-01 · SHOP-CAT-004 public price list" -and $show -match "$($d2.id) · area-CAT" -and $lbl[0] -eq 'testy-20261123-09 · v2-wave1 · 3 items' -and
+  $lbl[1] -eq 'testy-20261123-02 · SHOP-PAY-001 card refunds' -and $lbl[2] -eq 'devy-01 · area-CAT' -and $lbl[3] -eq 'briefy-v1retest' -and $lbl[4] -eq 'JC · devy' -and
+  [datetime]$lbl[5] -eq ([datetimeoffset]'2026-11-23T10:00:00Z').LocalDateTime -and $lbl[6] -eq '15:01:32')
+# the wave-brief render names areas area-<AREA> (dependsOn follows, old ids aliased) and the run label '<KEY> <short title>'
+Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' } } }; $wpy = Join-Path $wd 'wave_ids_check.py'
+Set-Content -LiteralPath $wpy -Encoding utf8 -Value @"
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import devtools as d
+keys = {'t1': 'SHOP-CAT-004', 't2': 'SHOP-CAT-005', 't3': 'SHOP-PAY-001'}
+d.task_key = lambda t: keys.get(t or '', '')
+d._KEYS['name:t1'] = 'SHOP-CAT-004 [Feature] Catalogue: public price list for guests'
+s = d.wave_ids({'agents': [{'id': 'JC', 'task': 't1', 'dependsOn': ['JP']}, {'id': 'JD', 'task': 't2'}, {'id': 'JP', 'task': 't3'}, {'id': 'X9'}], 'contracts': [{'producer': 'JP', 'consumers': 'JC, X9'}]})
+print(json.dumps({'ids': [a['id'] for a in s['agents']], 'dep': s['agents'][0]['dependsOn'], 'label': d.run_label({'task': 't1', 'agents': []}), 'con': s['contracts'][0]}))
+"@
+$wv = & $py -X utf8 $wpy (Join-Path $k 'skills/crafty') 2>&1 | Select-Object -Last 1 | ConvertFrom-Json
+Expect "wave-brief ids: area-CAT, area-CAT-2, area-PAY, a keyless X9 kept; dependsOn and contracts renamed; label without key / [Type] / Area: ($($wv.ids -join ',') · $($wv.label))" (
+  ($wv.ids -join ',') -eq 'area-CAT,area-CAT-2,area-PAY,X9' -and $wv.dep[0] -eq 'area-PAY' -and $wv.con.producer -eq 'area-PAY' -and $wv.con.consumers -eq 'area-CAT, X9' -and $wv.label -eq 'SHOP-CAT-004 public price list for guests')
+# tidy: the prep step returns the run id (kitbag.py naming next id tidy); worktree, branch and retro file carry it
+$jsT = @'
+const { calls, agent } = _mock((prompt, o) => o.label === 'prep' ? { ok: true, record: 'RECORDED', prep: JSON.stringify({ work: 1, groups: 0, sec: 1, steps: [], digest: 'd.md', at: 'x' }), run: 'tidy-20261123-04' } : { applied: [], proposedForApproval: [], rejected: [], report: 'r.md' })
+run({ kitDir: 'C:/k' }, agent, _n, _n, null).then(() => { const j = calls.find((c) => /Kind retro/.test(c.prompt)) || { prompt: '' }
+ console.log(`tidy-run:${/naming next id tidy/.test(calls[0].prompt) && /-Branch kit\/tidy-20261123-04 -Target main -Name tidy-20261123-04;/.test(j.prompt) && /\/tidy-20261123-04\.md\./.test(j.prompt)}`) }).catch(_err)
+'@
+Expect-Each (Invoke-Js nm-tidy $jsT (Join-Path $src 'workflows/tidy.js')) 'tidy: N3 run id from the prep step: #' 'tidy-run' -Show 8
 Remove-TestKit $k
 Complete-Tests

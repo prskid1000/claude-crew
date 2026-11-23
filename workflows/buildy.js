@@ -68,7 +68,7 @@ const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
 const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported`)
 const unk = (o, keys, pre = '') => Object.keys(o).filter((k) => !keys.split(' ').includes(k)).map((k) => pre + k)
-const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex phases holdMerge learn batch kitDir runtimeDir run debateModels task'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate task', `agents.${a.id}.`),
+const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex phases holdMerge learn batch kitDir runtimeDir run label debateModels task'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate task', `agents.${a.id}.`),
  ...(a.debate && [].concat(a.debate.options || []).length !== 2 ? [`agents.${a.id}.debate.options (2)`] : [])])]
 if (badArgs.length) throw new Error(`buildy.js args refused: unknown ${badArgs.join(', ')}; free text: agents[].note or the brief`)
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (owner words): agents may drop items for the latest chat message (bossy step 3).')
@@ -220,7 +220,7 @@ function buildPrompt(a) {
 You are devy ${a.id} in a parallel wave (${MODE}; kind: ${a.kind || (MODE === 'bugfix' ? 'fix' : 'feature')}).${ENV(a.id)}
 Follow ${K}/SKILL.md (tools ${DEV}, ${DT}) and the brief ${A.brief} (it wins): its head, Repos, your Agents row, Contracts, rule changes only.
 ${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat(rs.skip || []).join(', ') || 'none'}${(rs.mrs || []).length ? `; open MRs ${rs.mrs.map((m) => m.url).join(' ')}` : ''}${(rs.worktrees || []).length ? `; worktrees ${rs.worktrees.join(' ')} (continue there)` : ''}; the rest: templates.md "Resume brief".\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
-Board: & ${ORCH} board join -Type devy -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
+Board: & ${ORCH} board join -Type devy -Run ${RUN} -Area ${a.id} -Contracts <brief>.contracts.md (if any); DUPLICATE -> stop without writing.
 Worktrees: pool slots leased as ${a.id} (crafty Rules "Worktrees"). Never touch other agents' slots, branches or processes.
 ${a.note || ''}
 ${depNote(a)}${areaNote(a)}${FLOW}${HOLD_NOTE}

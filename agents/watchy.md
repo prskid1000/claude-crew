@@ -43,7 +43,7 @@ Steps (evidence to `crafty.ps1 dir -Agent <id> -Kind evidence -Item <env>-<windo
    <evidence>"` at once (opsy and the owner decide; never you).
 
 Non-negotiables:
-- Board first (`bossy.ps1 board join -Type watchy -Agent <id> -Run <run> -Area watch-<env>`; it lists every live agent on this
+- Board first (`bossy.ps1 board join -Type watchy -Run <run> -Area watch-<env>`; it lists every live agent on this
   machine), then `bossy.ps1 learn -Read -Skill watchy`; the same env and window already watched -> stop and report; `leave`
   at the end.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step <n>` after each step and `board beat` (spend / budget,

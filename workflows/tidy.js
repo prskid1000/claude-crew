@@ -29,21 +29,21 @@ const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relati
  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 const AJ = JSON.stringify(A), AF = `${rp('launches')}/args-tidy-tidy.json`
-const STEP = { type: 'object', properties: { ok: { type: 'boolean' }, record: { type: 'string' }, prep: { type: 'string' } }, required: ['ok', 'record', 'prep'] }
+const STEP = { type: 'object', properties: { ok: { type: 'boolean' }, record: { type: 'string' }, prep: { type: 'string' }, run: { type: 'string' } }, required: ['ok', 'record', 'prep', 'run'] }
 phase('Prep')
-let P = null
+let P = null, RUN = 'tidy'   // N3 run id from the prep step (legacy: 'tidy')
 for (const [label, model] of [['prep', 'haiku'], ['prep-retry', 'sonnet']]) {
  const r = await agent(`STEP: record this workflow's launch args, then run the tidy script step. Do exactly this, nothing else:${PATHS}
 1. Write the line between the markers to ${AF} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${AJ}
 ARGS>>>
-2. Run in PowerShell: & ${C}/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run 'tidy' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/haiku:1,kitty/:1'
+2. run = the line python -X utf8 ${C}/skills/bossy/kitbag.py naming next id tidy prints (tidy-<YYYYMMDD>-<nn>). Run in PowerShell: & ${C}/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run '<run>' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/haiku:1,kitty/:1'
  (MISMATCH = the file differs: write it again once, re-run.) record = its full output.
 3. Run in PowerShell (takes up to 2 min): & ${C}/skills/bossy/bossy.ps1 tidy prep -Json
  prep = its last output line (one line of JSON), verbatim.
 Return ok=true when step 3 printed the JSON line.`, { label, phase: 'Prep', schema: STEP, agentType: 'kitty', model, effort: 'low' })
- try { P = JSON.parse((r && r.prep) || ''); break } catch (e) { P = null }
+ try { P = JSON.parse((r && r.prep) || ''); RUN = /^tidy-\d{8}-\d{2,}$/.test(r.run) ? r.run : 'tidy'; break } catch (e) { P = null }
 }
 if (!P) return { applied: [], proposedForApproval: [], rejected: [], report: 'tidy prep failed twice: run bossy.ps1 tidy prep by hand' }
 log(`tidy prep: ${P.work} item(s), ${P.groups} group(s) of 2+, ${P.sec} s: ${(P.steps || []).join(', ')}`)
@@ -64,7 +64,7 @@ const RESULT = {
 const res = await agent(`Kind retro (judge): you maintain the kit (${C}). The script step did the counting and the upkeep; you only judge.${PATHS}${A.mandate && [].concat(A.mandate).length ? `\nWHY: the owner asked, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}` : ''}
 Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line needs its source to decide).
 
-0. Worktree (${C} is the live clone: a changed tracked file there blocks the coordinator's pull): & ${C}/skills/crafty/crafty.ps1 wt new -Repo ${C} -Branch kit/<yyyy-MM-dd>-retro-<HHmm> -Target main -Name retro-<HHmm>; W = its dir. Steps 1-3 and 5 use W's copies (W/skills/bossy/bossy.ps1 learn, W/skills/bossy/kitbag.py, edits in W), never ${C}'s.
+0. Worktree (${C} is the live clone: a changed tracked file there blocks the coordinator's pull): & ${C}/skills/crafty/crafty.ps1 wt new -Repo ${C} -Branch kit/${RUN} -Target main -Name ${RUN}; W = its dir. Steps 1-3 and 5 use W's copies (W/skills/bossy/bossy.ps1 learn, W/skills/bossy/kitbag.py, edits in W), never ${C}'s.
 1. Lessons (& W/skills/bossy/bossy.ps1 learn): a "Signal groups" line with "-> lesson" = -Skill <s> -Bump "<words of that lesson>";
  a group without one = -Skill <s> -When "<situation>" -Do "<how to avoid it>" -Why "<the cost seen>" (one line <= 50 words) (org-, project- or vendor-specific (names a product, host, tracker, DB or tool our config picks): add -Project <name>, it goes to LESSONS.local.md);
  a single signal only when it is a clear win or a hard failure; a "seen again" line = a regression: list it as a script-change proposal.
@@ -76,7 +76,7 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
 3. Scripts, defaults, templates (guard blocks, script errors, slow builds, failed upkeep steps): ${A.applyScripts ? 'apply the smallest fix, re-parse every changed .ps1 ([System.Management.Automation.Language.Parser]::ParseFile) and node --check every changed .js/.mjs; revert one that breaks.' : 'list each with the exact edit (file, function, new value); do not apply.'}
 4. The report is rendered, never hand-written: write retro.json { "date", "applied": [{ "change", "file", "count" }], "proposed":
  [{ "proposal", "edit" }], "rejected": [{ "signal", "why" }], "lint" } (ids, paths, commands in backticks), then python -X utf8
- ${C}/skills/crafty/devtools.py render retro retro.json ${rp('retros')}/retro-<yyyy-MM-dd-HHmm>.md.
+ ${C}/skills/crafty/devtools.py render retro retro.json ${rp('retros')}/${RUN}.md.
 5. python -X utf8 W/skills/bossy/kitbag.py lint: fix what your edits broke; list the rest in the report. Ship W: & ${C}/skills/crafty/crafty.ps1 wt commit -Dir W, git -C W rebase origin/main, git -C W push origin HEAD:main (fast-forward only), & ${C}/skills/crafty/crafty.ps1 wt remove -Dir W; a refused push goes in the report, never into ${C}.
 6. & ${C}/skills/bossy/bossy.ps1 tidy done -At '${P.at}' (marks these signals reviewed).
 Return the lists and the report path.`, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'sonnet' })   // kitty kind retro: sonnet (bossy K1)

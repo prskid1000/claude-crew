@@ -118,7 +118,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - writing test data or fixtures -> use invented paths and ids, never copy a real repo path or cloud resource id from live state (pre-push ORG-TERM block)
 - a scripted replace has ONE pair -> write @(,@(a,b)) so PowerShell keeps the pair nested (single pair flattened, every 5 in a file was replaced)
 - changing a status-guard or transition table -> run every -Area that starts tasks open (pokey, qa-config), not only the touched one (QA fixtures broke after a transition-table change)
-- two kittys start in the same minute (run id kit-<kind>-<HHmm>) -> add a random suffix or the printed PARALLEL id to the run id and worktree name (kit-build-1710 shared one worktree and board row (REJOIN merged them)
 - a shell command reads stdin (heredoc ending in cat > /dev/null) -> never run a stdin-reading command; use a timeout or bounded input (blocked 64 min, SHELL STALLED)
 - a full kit suite or pre-push -Full runs while other kittys run suites -> run tests/kit-tests.ps1 -Full yourself first, with a long timeout; never kill a shell by pid (subagents share one claude pid) (pre-push hit the 30 min cap, flaked under load, and one kitty killed another's push shell)
 - kit push runs the full pre-push suite -> use a timeout over 20 min or run it in background; rerun a flaky area (guard-warm, wt-pool) alone before judging (a 590 s timeout killed pre-push (exit 143) and left orphan tests; 3 load-only flakes)

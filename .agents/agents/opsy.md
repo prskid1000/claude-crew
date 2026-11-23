@@ -50,7 +50,7 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
    After a rollback: verify again (step 5), no `deploy record`, no inTest; the MRs go back as `failed` with the cause.
 
 Non-negotiables:
-- Board first (`bossy.ps1 board join -Type opsy -Agent <id> -Run <run> -Area deploy-<env>`; it lists every live agent on this
+- Board first (`bossy.ps1 board join -Type opsy -Run <run> -Area deploy-<env>`; it lists every live agent on this
   machine), then `bossy.ps1 learn -Read -Skill opsy`; another deploy of the same env live -> stop and report; `board check`
   before each deploy step; at the end stop your monitors and background shells, then `leave`.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step <n>` after each step and `board beat` (spend / budget,

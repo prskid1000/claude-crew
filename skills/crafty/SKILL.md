@@ -30,7 +30,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L = '<kit>/skills/envy/envy.ps1'; $P = '<kit>/skills/crafty/devtools.py'
 & $O learn -Read -Skill crafty   # 0. lessons
 & $D prior -Task <id> -Repo <repo>   # 0. FOUND: stop, tell the coordinator
-& $O board join -Agent <id> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
+& $O board join -Type <role> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress
 & $D wt lease -Repo <repo> -Task <task> -Agent <id> [-Target <t>] [-Scope '<globs>']; & $D wt sync -Dir <wt>   # 1. a pool slot (<wt> = its "worktree:" line), latest target
 #   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it as the cases spec `repro`; no brief

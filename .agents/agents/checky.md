@@ -23,7 +23,7 @@ Lead: `lead-notes.md` (`pokey.ps1 prepare` writes it) = `# Lead notes: <run>`, `
 (newest last)` (`pokey.ps1 lead-notes add`: `- <time> <code>: <question> -> <answer>`); decision and ENV-FIX notes append below.
 
 Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
-- Board first (`bossy.ps1 board join -Type checky -Agent <CODE> -Run <run> -Claims <phone serial>`; it lists every live agent on
+- Board first (`bossy.ps1 board join -Type checky -Run <run> -Area <CODE> -Claims <phone serial>`; it lists every live agent on
   this machine); CLAIM or DUPLICATE -> stop and report; a seat or record someone holds -> `board msg` the holder; release each
   lease the step its use ends (phone after the app checks, env after the local checks, tab `s.done()`); at the end
   `bossy.ps1 release -Agent <your id>` (backstop: lane, env, GPU, build, tabs; the workflow repeats it), stop your monitors and
