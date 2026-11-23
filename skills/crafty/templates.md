@@ -25,7 +25,8 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | reference | a guide inside a SKILL.md / README | `##` per topic, bullets, tables | each:250w 130ch | path |
 | lesson | one LESSONS.md line | `- <when> -> <do this> (<why>)` | 1l 50w 300ch | — |
 | history | one retired lesson (`learn -History`; an older LESSONS.local.md `## History`) | `- <date> <what was retired / merged> -> <where it lives now>` | 1l 50w 300ch | — |
-| wave-brief | what a wave builds, by whom | the "Wave brief" template | 600w each:12b 130ch | id path |
+| wave-brief | what a wave builds, by whom | the "Wave brief" render | 600w each:12b 130ch | id path |
+| spec | a task's or subject's spec ("Spec") | every section always: answered, `n/a — <why>` or its open question; S-id rules + acceptance; change log | 2500w 130ch | id |
 | bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
 | testing-goals | local goals file, never published (`cases render goals`) | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
 | testing-doc | the human testing doc (positive UI cases; a screenshot each; `cases render human`) | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected |
@@ -52,31 +53,14 @@ items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, l
 repos, migrationRange, services, complex, note?, dependsOn?, migrations?, model?, effort?, debate?, task? }], task?, overlaps, branch, tracker,
 contracts: [{ name, type, producer, consumers, order, compatible }], openQuestions: [{ question, blocks, answers }], mandate, mode,
 holdMerge? }`.
-```markdown
-# Wave brief: <wave name>, <date>
-**Read first:** `<kit>/skills/crafty/SKILL.md`; this brief wins where they differ.
-**Items:** <tracker epic / sheet> · **Decisions:** <doc>; final, don't re-ask (a NEW choice -> crafty D1).
-**Local env:** <kit.local.json localEnv name, or "none: <why>"> · **Test env after deploy:** <name> (never production).
-## Repos
-| Repo | Main checkout | Target | Link deps from | Migrations |
-|---|---|---|---|---|
-| <repo> | `<repos root>/<repo>` | `main` | | <tool / none> |
-## Agents
-| Agent | Items | Area (screens / packages / files) | Paths (enforced) | Repos | Migration range | Services (leased, nothing else) | Complex? |
-|---|---|---|---|---|---|---|---|
-| X1 | <ids> | <area> | `<repo-relative glob>`, .. or any | <repos> | <range or —> | <api; api-only items: no web> | <yes: why / no> |
+Layout: the renderer (`render wave-brief`; `**Specs:**` links each task's spec); `name` titles it, `run` is the /buildy run.
 
-**Overlaps:** <who touches what in a shared file> · **Contracts:** <field / endpoint X1 adds, X2 consumes after X1 merges>
-**Branch:** `f/<tag><task>-<slug>`, pool slots leased as the agent id · **Tracker:** task under <epic> in <list>, assigned to <user>.
-**MR limits** (...): <mr-title; mr-body limits>
-Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
-
-## openQuestions
-<question> · blocks <item> · answers: rechy | owner (or "none")
-## Findings (rechy)
-<the Spike phase appends one block per question>
-## Rule changes during the wave (newest last)
-```
+## Spec
+Rendered, never hand-written: `devtools.py spec write <task|subject> <spec.json>` (fields, interview: `spec --help`); one doc
+per task (its Spec line, like the testing docs) or a standing subject spec tasks link (`spec link`). S-ids (`S<n>`, never
+reused) are the contract: cases cite them (`"spec"`, rendered `[S<n>]`), MR / commit specs list `specIds`, finish refuses
+an uncited one (`spec trace`). A change: a `change` line -> v<n+1>, a change-log row with the S-ids touched, `RETEST` on
+their tasks; a draft spec refuses the wave brief.
 
 ## Bug-fix brief
 `bossy.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos), added to the wave brief:

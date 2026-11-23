@@ -17,6 +17,7 @@
  "trackers": {"clickup": {"branchTag": "CU-", "urlFragment": "clickup.com"}, "github": {"listless": true, "branchTag": "GH-", "urlFragment": "/issues/"}, "gitlab": {"listless": true, "branchTag": "GL-", "urlFragment": "/issues/"}, "jira": {"idPattern": "[A-Z][A-Z0-9_]+-\\d+", "urlFragment": "/browse/"}, "jira-server": {"idPattern": "[A-Z][A-Z0-9_]+-\\d+", "urlFragment": "/browse/"}, "linear": {"idPattern": "[A-Z][A-Z0-9]+-\\d+", "urlFragment": "linear.app"}, "youtrack": {"idPattern": "[A-Z][A-Z0-9_]+-\\d+", "urlFragment": "/issue/"}, "azure": {"branchRx": "(?i)(?:\\bAB#|(?:^|/)(?=\\d+[-_]))(?<id>\\d+)", "urlFragment": "_workitems"}},
  "docs": [
   {"key": "testing-doc", "label": "Testing doc (human)", "mrLabel": "Testing doc", "linkRx": "testing doc(?! \\(ai\\))[^:\\n]{0,12}", "headerRx": "(?im)^\\|\\s*#\\s*\\|\\s*(UI steps\\s*\\|\\s*Expected on screen\\s*\\|\\s*Screenshot\\s*\\|\\s*Extra evidence\\s*\\|\\s*Result|Steps\\s*\\|\\s*Expected\\s*\\|\\s*Result\\s*\\|\\s*Evidence)\\s*\\|", "required": true},
-  {"key": "testing-ai", "label": "Testing doc (AI)", "linkRx": "testing doc \\(ai\\)[ \\t*_]*", "headerRx": "(?im)^\\|\\s*#\\s*\\|\\s*Type\\s*\\|\\s*Steps\\s*/\\s*API call[^|]*\\|\\s*Expected\\s*\\|\\s*Result\\s*\\|\\s*Evidence\\s*\\|", "required": true}
+  {"key": "testing-ai", "label": "Testing doc (AI)", "linkRx": "testing doc \\(ai\\)[ \\t*_]*", "headerRx": "(?im)^\\|\\s*#\\s*\\|\\s*Type\\s*\\|\\s*Steps\\s*/\\s*API call[^|]*\\|\\s*Expected\\s*\\|\\s*Result\\s*\\|\\s*Evidence\\s*\\|", "required": true},
+  {"key": "spec", "label": "Spec", "linkRx": "spec(?! s-ids)", "required": false, "urlOnly": true}
  ]
 }

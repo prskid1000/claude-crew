@@ -59,7 +59,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 
 - **Crew** (the only agent types, spawned only through these targets; names, roles and characters: `kit.example.json`
   `_manifest`): `devy` builds (one per brief area), `revy` reviews, `checky` tests (lead / test /
-  verify), `kitty` keeps the kit and the machine, `briefy` writes briefs and contracts, `rechy` researches, `opsy` deploys on a
+  verify), `kitty` keeps the kit and the machine, `briefy` writes specs, briefs and contracts, `rechy` researches, `opsy` deploys on a
   person's word, `watchy` watches deployed envs, `datay` guards test and local data, `vidy` reads videos and screenshots for any
   agent (an existing vidy index is reused, never re-read).
   Each loads its skill first; its Character shapes judgement, tone and how it argues a dispute or debate, never a rule or the

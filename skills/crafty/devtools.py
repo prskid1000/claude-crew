@@ -10,6 +10,8 @@
  python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"] [--check]   open a merge/pull request from the current branch: title
   (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec; the old form `mr <wt> "<title>" <body.md>` still works;
   --check: only the title / body gates, before the push (CHECK OK, nothing opened)
+ python -X utf8 devtools.py spec write|link|gaps|show <task|subject> ...   the task's or a subject's spec doc (S-id rules, versioned,
+  change log; Spec line on the task; finish refuses S-ids no case cites); spec --help: the JSON fields
  python -X utf8 devtools.py render <kind> <spec.json> [<out file>]   an artefact rendered from its spec (kinds: mr-title mr-body commit
   comment-solution comment-status final-report retro wave-brief; crafty.ps1 wt commit -Spec)
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
@@ -34,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L53 config · L108 run · L196 tracker · L375 process · L574 git host · L647 scope · L739 MR · L934 merge · L1265 docs ·
-  L1423 publish · L1896 render · L2357 plugins · L2371 keepboth · L2390 selftest · L3065 CLI
+Sections: L55 config · L110 run · L198 tracker · L377 process · L580 git host · L653 scope · L745 MR · L940 merge · L1271 docs ·
+  L1429 publish · L1902 render · L2345 spec · L2669 plugins · L2683 keepboth · L2702 selftest · L3377 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -381,7 +383,7 @@ def docs():
         if isinstance(d, dict) and d.get('key') and d.get('label'):
             out.append({'key': d['key'], 'label': d['label'], 'mrLabel': d.get('mrLabel') or d['label'], 'linkRx': d.get('linkRx') or re.escape(d['label']),
                         'headerRx': py_rx(d.get('headerRx') or ''), 'required': d.get('required') is not False,
-                        'columns': [str(c) for c in d.get('columns') or []]})
+                        'columns': [str(c) for c in d.get('columns') or []], 'urlOnly': bool(d.get('urlOnly'))})
     return out
 
 
@@ -392,8 +394,10 @@ def human_head():
 
 
 def _label_alts():
-    """Every doc label (+ mrLabel) as one regex alternation, longest first ('' when no docs)."""
-    return '|'.join(sorted({re.escape(x) for d in docs() for x in (d['label'], d['mrLabel'])}, key=len, reverse=True))
+    """Every doc label (+ mrLabel) as one regex alternation, longest first ('' when no docs); a urlOnly doc's label (Spec) only
+    when a link follows its colon: a person's own 'Spec: ...' line stays."""
+    link = r'(?=(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*(?:\[open\]|https?://|[A-Za-z]:[\\/]))'
+    return '|'.join(sorted({re.escape(x) + (link if d.get('urlOnly') else '') for d in docs() for x in (d['label'], d['mrLabel'])}, key=len, reverse=True))
 
 
 def gate_how(gate):
@@ -521,10 +525,12 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     ok, why, how = process_gate('finish', {'task': tid, 'guide': guide, 'ai': ai, 'status': status, 't': t, 'ts': ts})
     if not ok:
         raise SystemExit(f'finish {tid}: {why}{"" if how.startswith("builtin:") else f" (process.gates.finish {how})"}. Nothing was written.')
+    if gaps := spec_trace_gaps(tid):   # every spec rule is proven by a case (templates.md "Spec")
+        raise SystemExit(f'finish {tid}: spec S-id(s) {", ".join(gaps)} have no test case: cases add a check or case with "spec" naming each. Nothing was written.')
     ai_url = _doc_url(tid, 'testing-ai', ai) if ai else ''
     guide_url = _doc_url(tid, 'testing-doc', guide) if guide else ''
     md = t.get('description') or ''
-    new = links_block(md, {'testing-doc': guide_url, 'testing-ai': ai_url})
+    new = links_block(md, {**spec_link(tid), 'testing-doc': guide_url, 'testing-ai': ai_url})   # the Spec line stays
     given = {k: u for k, u in (('human', guide_url), ('ai', ai_url)) if u}
     # failed lookup: describing would wipe the description
     if ts.get('spec') and given and all(re.match(r'https?://', u) for u in given.values()):   # a spec-rendered task refuses describe: the links go into its spec
@@ -532,7 +538,7 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     elif t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
     for o in bug_twins(tid, ts) if given else []:   # its promotion needs the same links (a bug task was stuck unpromoted)
-        od = o.get('description') or ''; nd = links_block(od, {'testing-doc': guide_url, 'testing-ai': ai_url})
+        od = o.get('description') or ''; nd = links_block(od, {**task_doc_links(o['id']), 'testing-doc': guide_url, 'testing-ai': ai_url})
         if (state_read(task_file(o['id'])) or {}).get('spec'):
             _tracker('update', o['id'], '-Spec', json.dumps({'docs': given}) + '\n')
         elif nd != od:
@@ -1900,11 +1906,11 @@ SPEC_KEYS = {'checks': 'id', 'qualities': 'id', 'unchanged': 'id', 'cases': 'id'
 CASE_TYPES = ('positive', 'negative', 'edge', 'regression', 'repro')
 
 
-def merge_spec(old, new):
-    """new into old: SPEC_KEYS lists by key (an entry's fields merged), other keys replaced; None deletes."""
+def merge_spec(old, new, keys=None):
+    """new into old: SPEC_KEYS (or keys) lists by key (an entry's fields merged), other keys replaced; None deletes."""
     out = dict(old or {})
     for k, v in (new or {}).items():
-        key = SPEC_KEYS.get(k)
+        key = (keys or SPEC_KEYS).get(k)
         if v is None:
             out.pop(k, None)
         elif key and isinstance(v, list):
@@ -1971,8 +1977,22 @@ def cases_gaps(c):
             ' (a backend change through the UI action that triggers it; no UI trigger: noUi, steps = the screen or log where its effect shows)'
             for x in c.get('checks') or []   # process.humanDocUiOnly false: a human check may name API calls
             if x.get('id') and cfg('process.humanDocUiOnly', True) is not False and API_WORDS.search(f'{x.get("steps", "")} {x.get("expected", "")}')]
+    out += [f'{k} {x.get("id")}: spec {v!r} is no S-id (S<n> or <subject>:S<n>)' for k in ('checks', 'cases') for x in c.get(k) or []
+            for v in _as_list(x.get('spec')) if not SID_REF.match(str(v))]
     out += [f'{k}: an object' for k in ('plan',) if c.get(k) and not isinstance(c[k], dict)]
     return out + ([] if c.get('title') else ['title'])
+
+
+SID_REF = re.compile(r'^(?:[\w.-]+:)?S\d+$')   # a spec rule id a check, case, MR or QA result cites
+
+
+def _as_list(v):
+    return [x for x in (v if isinstance(v, list) else re.split(r'[\s,]+', str(v)) if v else []) if str(x).strip()]
+
+
+def _sids(x):
+    """' [S1, S2]': the spec rules a check or case proves (its 'spec' field), cited in every rendered doc."""
+    return f' [{", ".join(map(str, _as_list(x.get("spec"))))}]' if _as_list(x.get('spec')) else ''
 
 
 def render_cases(c, kind, tid=''):
@@ -1981,7 +2001,7 @@ def render_cases(c, kind, tid=''):
     of = lambda cid: [x for x in cases if x.get('check') == cid]
     rnd = c.get('rounds') or []
     if kind == 'goals':
-        row = lambda g, gid: [gid, g.get('goal') or g.get('expected') or g.get('steps', ''), g.get('how') or ' · '.join(
+        row = lambda g, gid: [gid, (g.get('goal') or g.get('expected') or g.get('steps', '')) + _sids(g), g.get('how') or ' · '.join(
                               filter(None, [f'UI: {g["steps"]}' if g.get('steps') and g.get('expected') else '', ', '.join(x['id'] for x in of(g['id']))])),
                               g.get('rule') or g.get('expected', ''), _verdict([x.get('result') for x in of(g['id'])]) if of(g['id']) else '']
         goals = [row(g, f'G{i} ({g["id"]})') for i, g in enumerate(c.get('checks') or [], 1)] + [row(g, g['id']) for k in ('qualities', 'unchanged') for g in c.get(k) or []]
@@ -1992,7 +2012,7 @@ def render_cases(c, kind, tid=''):
                          + [f'- {k}: {_cell(v)}' for k, v in plan.items()] + ['## Data needed', c.get('data') or 'none', '## Reproduction (bugs)', c.get('repro') or 'not a bug',
                          '## Rounds', _table(['Round', 'What failed', 'Fix'], [[r.get('round'), r.get('bugs') or 'none', r.get('fix') or ''] for r in rnd])]) + '\n'
     if kind == 'ai':
-        rows = [[f'{x["id"]} ({x["check"]})' if x.get('check') else x['id'], x.get('type'), x.get('steps', ''), x.get('expected', ''), x.get('result') or '',
+        rows = [[f'{x["id"]} ({x["check"]})' if x.get('check') else x['id'], x.get('type'), x.get('steps', ''), x.get('expected', '') + _sids(x), x.get('result') or '',
                  _ev(x['id'], x.get('evidence'))] for x in cases]
         return '\n\n'.join([f'# Testing doc (AI): {head}', f'Setup and cleanup: {c.get("setup") or "none"}.', 'Cases:',
                           _table(['#', 'Type', 'Steps / API call + payload', 'Expected', 'Result', 'Evidence'], rows)]
@@ -2004,7 +2024,7 @@ def render_cases(c, kind, tid=''):
     areas, hh = {}, human_head()
     for t in c.get('checks') or []:   # a column by its name: '#', *step*, *expect*; the rest stay empty for the run
         st = (f'**No UI trigger** ({t["noUi"]}): ' if t.get('noUi') else '') + t.get('steps', '')
-        areas.setdefault(t.get('area') or 'Checks', []).append([t['id'] if h == '#' else st if 'step' in h.lower() else t.get('expected', '') if 'expect' in h.lower() else '' for h in hh])
+        areas.setdefault(t.get('area') or 'Checks', []).append([t['id'] if h == '#' else st if 'step' in h.lower() else t.get('expected', '') + _sids(t) if 'expect' in h.lower() else '' for h in hh])
     sw, oos = c.get('switches') or [], c.get('outOfScope') or []
     return '\n\n'.join([f'# Testing: {c.get("title", "")}', _table(['', ''], [['Tasks', c.get('tasks') or tid], ['Environment', c.get('environment') or ''],
                       ['Logins', c.get('logins') or ''], ['Test data', c.get('testData') or '']]), '## What changed', c.get('whatChanged') or c.get('change', ''),
@@ -2147,6 +2167,8 @@ def cases_cmd(a):
     print(f'cases {tid}: {verb} ok' + (f' (render refuses until fixed: {"; ".join(gaps)})' if gaps else ''))
     if mgap:
         print(f'WARN cases {tid}: {mgap} (the spec\'s "matrix" field renders that line); doc and finish refuse until then', file=sys.stderr)
+    if verb == 'add' and (sg := spec_trace_gaps(tid)):
+        print(f'WARN cases {tid}: spec S-id(s) {", ".join(sg)} have no check or case citing them ("spec"); finish refuses until then', file=sys.stderr)
     return 0
 
 
@@ -2167,6 +2189,7 @@ def render_title(s):
 def render_commit(s):
     """Commit message: commitFormat subject, a bullet per change, trailers (e.g. Co-Authored-By) after a blank line."""
     body = [f'- {c["text"]}' + (f' (`{c["technical"]}`)' if c.get('technical') else '') for c in s.get('changes') or [] if c.get('text')]
+    body += [f'- Spec: {", ".join(map(str, _as_list(s["specIds"])))}'] if _as_list(s.get('specIds')) else []   # the S-ids this commit builds
     return '\n'.join([fmt_line(CFG.get('commitFormat') or '{type}({scope}): {change}', s)] + ([''] + body if body else []) + ([''] + list(s['trailers']) if s.get('trailers') else [])) + '\n'
 
 
@@ -2185,7 +2208,9 @@ def render_mr_body(s):
     return '\n\n'.join(['## Summary', (f'[{t}]({url}) — ' if t and url else f'{t} — ' if t else '') + str(s.get('summary') or s.get('change') or ''),
                         '## Changes', '\n'.join(f'- {c["text"]}' + (f' · **Technical:** `{c["technical"]}`' if c.get('technical') else '') for c in s.get('changes') or []) or '- none',
                         '## How tested', _table(['Check', 'Result'], rows), '## Risks', '\n'.join(risks), '## Links',
-                        f'- **Sibling {mr_word()}s:** {", ".join(link_refs(x) for x in sib)} (merge order: producers first)' if sib else f'- **Sibling {mr_word()}s:** none']) + '\n'
+                        (f'- **Sibling {mr_word()}s:** {", ".join(link_refs(x) for x in sib)} (merge order: producers first)' if sib else f'- **Sibling {mr_word()}s:** none')
+                        + (f'\n- **Spec S-ids:** {", ".join(map(str, _as_list(s["specIds"])))}' + (f' (v{v})' if (v := spec_rec(t).get('version')) else '')
+                           if _as_list(s.get('specIds')) else '')]) + '\n'
 
 
 
@@ -2273,11 +2298,16 @@ def render_retro(s):
                          + sec('Rejected', ['Signal', 'Why'], ('signal', 'why'), r) + ([f'**Lint:** {s["lint"]}'] if s.get('lint') else [])) + '\n'
 
 
+def _oq(q):
+    """An openQuestions entry: {question, blocks, answers}; a plain string is a question the Spike phase (rechy) answers."""
+    return {'question': q, 'answers': 'rechy'} if isinstance(q, str) else dict(q or {})
+
+
 def render_wave_brief(s):
     """templates.md "Wave brief" from briefy's spec; the contracts file and the /buildy args come from the same spec (wave_files)."""
     yn = lambda v: f'yes: {v}' if isinstance(v, str) and v else ('yes' if v else 'no')
     rows = lambda keys, xs: [[str(x.get(k) or '') for k in keys] for x in xs]
-    qs = [f'{q.get("question", "")} · blocks {q.get("blocks") or "—"} · answers: {q.get("answers") or "owner"}' for q in s.get('openQuestions') or []]
+    qs = [f'{q.get("question", "")} · blocks {q.get("blocks") or "—"} · answers: {q.get("answers") or "owner"}' for q in map(_oq, s.get('openQuestions') or [])]
     return '\n'.join([
         f'# Wave brief: {s["name"]}, {s.get("date") or time.strftime("%Y-%m-%d")}',
         f'**Read first:** `{s.get("kitDir") or "<kit>"}/skills/crafty/SKILL.md`; this brief wins where they differ.',
@@ -2288,6 +2318,8 @@ def render_wave_brief(s):
                             [r[:3] + [', '.join(f'`{g}`' for g in a.get('paths') or []) or 'any'] + r[3:] + [yn(a.get('complex'))]
                              for r, a in zip(rows(('id', 'items', 'area', 'repos', 'migrationRange', 'services'), s['agents']), s['agents'])]), '',
         f'**Overlaps:** {s.get("overlaps") or "none"} · **Contracts:** `{s.get("contractsFile") or s["name"] + ".contracts.md"}` ({len(s.get("contracts") or [])} crossing)',
+        *([f'**Specs** (build against their S-ids; `devtools.py spec show <task>`): ' + ' · '.join(
+            f'{t} v{r.get("version")} {r.get("url")}' for t in s['specs'] if (r := spec_rec(t)).get('url'))] if s.get('specs') else []),
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
         # the limits where devy reads first (retro 2026-11-22: 13 mr prose refusals)
         f'**MR limits** (`devtools.py mr` refuses over them; `kitbag.py prose --kind mr-body` first): {prose_limits("mr-title") or "mr-title"}; {prose_limits("mr-body") or "mr-body"}',
@@ -2301,12 +2333,290 @@ def wave_files(s, brief_path):
     con = '\n'.join([f'# Contracts: {s["name"]}', _table(['Field / endpoint', 'Type', 'Producer', 'Consumers', 'Merge / deploy order', 'Backward-compatible'],
                      [[str(c.get(k) or '') for k in ('name', 'type', 'producer', 'consumers', 'order')] + ['yes' if c.get('compatible') else 'no'] for c in s.get('contracts') or []])
                      if s.get('contracts') else 'none', '## Rule changes during the wave (newest last)']) + '\n'
-    keep = ('id', 'items', 'area', 'paths', 'note', 'complex', 'model', 'effort', 'dependsOn', 'migrations', 'debate', 'task')
+    keep = ('id', 'items', 'area', 'paths', 'note', 'kind', 'complex', 'model', 'effort', 'dependsOn', 'migrations', 'branch', 'branches', 'debate', 'task')   # buildy's agent keys
     args = {'brief': brief_path.replace('\\', '/'), 'agents': [{k: a[k] for k in keep if a.get(k) not in (None, '', [], False)} for a in s['agents']],
             'mode': s.get('mode') or 'feature', 'mandate': s['mandate'], **({'task': s['task']} if s.get('task') else {}),
-            'openQuestions': [q['question'] for q in s.get('openQuestions') or [] if (q.get('answers') or '') == 'rechy'],
+            **({'run': s['run']} if s.get('run') else {}),   # buildy reads `run`, never `name` (its args check refuses unknown keys)
+            'openQuestions': [q['question'] for q in map(_oq, s.get('openQuestions') or []) if q['question'] and (q.get('answers') or '') == 'rechy'],
             **({'holdMerge': s['holdMerge']} if s.get('holdMerge') else {}), **({'kitDir': s['kitDir']} if s.get('kitDir') else {})}
     return {f'{stem}.contracts.md': con, f'{stem}.args.json': json.dumps(args, ensure_ascii=False, indent=1) + '\n'}
+
+
+# ---- spec: one versioned spec doc per task or standing subject; its S-ids are cited by cases, commits, MRs and QA results
+SPEC_KINDS, SPEC_LISTS = ('feature', 'bug', 'subject'), {'rules': 'id', 'decisions': 'id', 'contracts': 'name', 'users': 'who', 'options': 'choice'}
+# every section, always rendered: (field, heading, the interview question an open one raises); {"na": "<why>"} = does not apply
+SPEC_SECTIONS = (
+    ('goal', 'Goal', 'What outcome does the business want, for whom, and how is success measured?'),
+    ('scope', 'Scope', 'What is in scope (screens, flows, data)?'),
+    ('nonGoals', 'Non-goals', 'What is explicitly out of scope?'),
+    ('users', 'Users and flows', 'Who uses it, and what does each user do step by step?'),
+    ('rules', 'Behaviour rules and acceptance', 'Which behaviour rules must hold, each with a Given / When / Then acceptance?'),
+    ('options', 'Options and trade-offs', 'Which design choices exist (paths A / B / C), which one is chosen, why, and when to revisit?'),
+    ('approach', 'Implementation approach', 'How is it built (layers, components, sequence)?'),
+    ('impact', 'Impacted modules / APIs / data', 'Which modules, APIs, tables and jobs change or are read?'),
+    ('contracts', 'Data / API contracts', 'Which fields or endpoints cross repos or areas (contracts file rows)?'),
+    ('ui', 'UI', 'Which screens and states change, and which theme rule do they follow?'),
+    ('edges', 'Edge cases', 'Which edge cases (empty, limits, concurrency, permissions, bad input) must behave how?'),
+    ('risks', 'Risks', 'What can go wrong (data, performance, security, migration), and the mitigation?'),
+    ('rollout', 'Rollout and feature flag', 'How is it rolled out: flag name, how to enable, how to roll back?'),
+    ('tests', 'Test strategy', 'Which layers prove it (unit, integration, API, UI, local env, test env)?'),
+    ('diagrams', 'Diagrams', 'Does a flow, state machine, sequence or data model need a diagram (Mermaid)?'),
+    ('repro', 'Bug', 'Repro steps, expected, actual and root cause?'),
+    ('decisions', 'Decisions', 'Which decisions were made, by whom?'),
+    ('questions', 'Open questions', ''),
+)
+SPEC_FIELDS = """spec JSON (devtools.py spec write; merged into the stored spec, lists by key): kind feature|bug|subject · title · change (what
+ changed and why: every version after v1) · any section below: a value, or {"na": "<why it does not apply>"}; a missing one is open
+ (rendered as its question; the spec stays draft): goal · scope [..] · nonGoals [..] · users [{who, flow}] · rules [{id: S1, text,
+ acceptance (Given / When / Then), status: removed}] (an id is never reused) · options [{choice, options: [{id: A, text, pros, cons}],
+ chosen, why, rejected, revisit}] · approach · impact [..] · contracts [{name, ref: contracts file row}] · ui {screens, states, theme}
+ · edges [{text, rule: S1}] · risks [{text, mitigation}] · rollout {flag, enable, rollback} · tests [..] · diagrams [{title, mermaid}]
+ (an image when mmdc is on PATH; the source always) · repro {steps, expected, actual, rootCause} (bug) · decisions [{id, question,
+ answer, by}] · questions [..] (open ones: ready only when none)
+Interview (briefy, the architect; people are the business owners): spec questions <key> prints every open section and rule gap as
+ one question; batch them to the owner (bossy.ps1 decide ask, via the coordinator), never guess; write each answer back (or n/a + why)."""
+
+
+def spec_rec(key):
+    """The published spec record of a task or subject (<key>:spec), else the one the task links (task index specKey)."""
+    r = _pub_read(f'{key}:spec') if key else {}
+    if not r.get('data') and key and (sk := (state_read(task_file(key)) or {}).get('specKey')) and sk != key:
+        r = _pub_read(f'{sk}:spec')
+    return r
+
+
+def spec_shape(s):
+    """Shape errors that refuse a write (kind, S-id form, an id twice)."""
+    ids = [str(r.get('id')) for r in s.get('rules') or [] if isinstance(r, dict)]
+    return ([] if s.get('kind') in SPEC_KINDS else [f'kind ({"/".join(SPEC_KINDS)})']) + ([] if s.get('title') else ['title']) \
+        + [f'rule id {i!r}: S<n>' for i in ids if not re.match(r'^S\d+$', i)] + [f'rule {i}: twice' for i in sorted({i for i in ids if ids.count(i) > 1})]
+
+
+def _na(v):
+    return isinstance(v, dict) and set(v) == {'na'}
+
+
+def spec_questions(s):
+    """The interview: one question per open section or rule gap (a draft spec is not ready while any is left)."""
+    out = []
+    for f, head, q in SPEC_SECTIONS:
+        v = s.get(f)
+        if f == 'repro' and s.get('kind') != 'bug' or f == 'questions' or _na(v) and str(v['na']).strip():
+            continue
+        if v in (None, '', [], {}) or _na(v):
+            out.append(f'{head}: {q}' + (' (n/a needs its reason)' if _na(v) else ''))
+    for r in s.get('rules') or []:
+        out += [f'{r.get("id")}: {k}? ({"the rule" if k == "text" else "Given / When / Then"})' for k in ('text', 'acceptance')
+                if r.get('status') != 'removed' and not r.get(k)]
+    out += [f'{o.get("choice")}: which option, and why?' for o in s.get('options') or [] if isinstance(o, dict) and not o.get('chosen')]
+    if (s.get('ui') or {}).get('screens') and not s['ui'].get('theme'):
+        out.append('UI: which theme rule do the screens follow?')
+    return out + ([] if _na(s.get('questions')) else [f'Open: {q}' for q in s.get('questions') or []])
+
+
+def _diagram(key, i, d):
+    """A diagram: the image (mmdc on PATH renders the Mermaid source) above its source block."""
+    src = str(d.get('mermaid') or '').strip()
+    img, mmdc = '', shutil.which('mmdc')
+    if src and mmdc:
+        base = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', f'{key}-d{i}'))
+        with open(base + '.mmd', 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write(src + '\n')
+        try:
+            ok = subprocess.run([mmdc, '-i', base + '.mmd', '-o', base + '.png'], capture_output=True, timeout=90).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        img = f'![{d.get("title", "diagram")}]({base}.png)\n\n'.replace('\\', '/') if ok else ''
+    elif src:
+        print(f'[spec] {key}: diagram "{d.get("title", "")}" kept as Mermaid source (no mmdc on PATH for an image)', file=sys.stderr)
+    return f'### {d.get("title") or f"Diagram {i}"}\n\n{img}```mermaid\n{src}\n```'
+
+
+def _spec_body(f, v, s, key):
+    """One section's body (v answered, never None)."""
+    li = lambda xs: '\n'.join(f'- {x}' if isinstance(x, str) else '- ' + ' · '.join(str(y) for y in x.values() if y) for x in (xs if isinstance(xs, list) else [xs]))
+    tab = lambda head, keys, xs: _table(head, [[x.get(k, '') for k in keys] for x in xs])
+    if f == 'users':
+        return tab(['Who', 'Flow'], ('who', 'flow'), v)
+    if f == 'rules':
+        return 'One testable rule per S-id; test cases, commits, MRs and QA results cite it.\n\n' + _table(['S-id', 'Rule', 'Acceptance'], [
+            [r['id'] + (' (removed)' if r.get('status') == 'removed' else ''), r.get('text') or '**open**', r.get('acceptance') or '**open**'] for r in v])
+    if f == 'options':
+        return '\n\n'.join(f'**{o.get("choice")}** · chosen: {o.get("chosen") or "**open**"} · why: {o.get("why", "")} · rejected: {o.get("rejected") or "—"}'
+                           f' · revisit: {o.get("revisit") or "—"}\n\n' + tab(['Option', 'What', 'Pros', 'Cons'], ('id', 'text', 'pros', 'cons'), o.get('options') or []) for o in v)
+    if f == 'contracts':
+        return tab(['Contract', 'Contracts file row'], ('name', 'ref'), v)
+    if f in ('ui', 'rollout', 'repro') and isinstance(v, dict):
+        lab = {'screens': 'Screens', 'states': 'States', 'theme': 'Theme rule', 'flag': 'Flag', 'enable': 'How to enable', 'rollback': 'Roll back',
+               'steps': 'Repro steps', 'expected': 'Expected', 'actual': 'Actual', 'rootCause': 'Root cause'}
+        keys = {'ui': ('screens', 'states', 'theme'), 'rollout': ('flag', 'enable', 'rollback'), 'repro': ('steps', 'expected', 'actual', 'rootCause')}[f]
+        return _table(['', ''], [[lab[k], v.get(k) or ('not known yet' if k == 'rootCause' else '**open**')] for k in keys])
+    if f == 'edges':
+        return '\n'.join(f'- {e}' if isinstance(e, str) else f'- {e.get("text", "")}' + (f' ({e["rule"]})' if e.get('rule') else '') for e in v)
+    if f == 'risks':
+        return '\n'.join(f'- {r}' if isinstance(r, str) else f'- {r.get("text", "")}' + (f' · mitigation: {r["mitigation"]}' if r.get('mitigation') else '') for r in v)
+    if f == 'diagrams':
+        return '\n\n'.join(_diagram(key, i, d) for i, d in enumerate(v, 1))
+    if f == 'decisions':
+        return tab(['#', 'Question', 'Answer', 'By'], ('id', 'question', 'answer', 'by'), v)
+    return li(v) if isinstance(v, (list, dict)) else str(v)
+
+
+def render_spec(s, key, ver, log, tasks=()):
+    """The spec doc (templates.md "Spec"): every section always present (answered, 'n/a — <why>' or its open question), the change log
+    with the S-ids each version touched."""
+    qs, last, parts = spec_questions(s), (log or [{}])[-1], []
+    for f, head, q in SPEC_SECTIONS:
+        v = s.get(f)
+        if f == 'repro' and s.get('kind') != 'bug':
+            body = 'n/a — not a bug'
+        elif f == 'questions':
+            body = '\n'.join(f'- {x}' for x in qs) if qs else 'none — every section answered'
+        elif _na(v):
+            body = f'n/a — {v["na"]}' if str(v['na']).strip() else f'**Open:** {q} (n/a needs its reason)'
+        elif v in (None, '', [], {}):
+            body = f'**Open:** {q}'
+        else:
+            body = _spec_body(f, v, s, key)
+        parts += [f'## {head}', body]
+    head = [f'# {key} Spec v{ver} — {s.get("title", "")}',
+            _table(['', ''], [['Kind', s.get('kind', '')], ['Status', f'draft · {len(qs)} open question(s)' if qs else 'ready'],
+                              ['Version', f'v{ver} · {last.get("date", "")} · {last.get("by", "")}'], ['Tasks', ', '.join(tasks) or 'none (standing subject spec)']])]
+    log_t = _table(['Version', 'Date', 'By', 'What changed', 'S-ids'], [[f'v{e["v"]}', e.get('date', ''), e.get('by', ''), e.get('what', ''), ', '.join(e.get('ids') or []) or '—'] for e in log])
+    return '\n\n'.join(head + parts + ['## Change log', log_t]) + '\n'
+
+
+def spec_link(tid, rec=None):
+    """{'spec': link text} for a task's description links block: '[open](url) · v<n>' (+ the S-ids its last change touched)."""
+    rec = rec or spec_rec(tid)
+    if not rec.get('url'):
+        return {}
+    ids = (rec.get('log') or [{}])[-1].get('retest') or []   # S-ids of built work this version changed
+    u = f'[open]({rec["url"]})' if re.match(r'https?://\S+$', rec['url']) else rec['url']
+    return {'spec': f'{u} · v{rec.get("version")}' + (f' (changed {", ".join(ids)}: retest)' if ids else '')}
+
+
+def task_doc_links(tid):
+    """Every published doc link of a task (process.docs) for links_block: a new links block never drops another doc's line."""
+    return {**{d['key']: u for d in docs() if d['key'] != 'spec' and (u := _pub_read(f'{tid}:{d["key"]}').get('url'))}, **spec_link(tid)}
+
+
+def link_task_spec(tid, rec):
+    """The task's Spec line: through its tracker spec (spec-rendered task) or the description's links block; no tracker: skipped."""
+    t = task(tid) if TRACKER_TYPE != 'none' else {}
+    if 'spec' not in [d['key'] for d in docs()]:
+        print(f'WARN [spec] {tid}: process.docs (kit.local.json) has no "spec" doc: the task gets no Spec line (add vocab.json\'s spec entry)', file=sys.stderr)
+    try:
+        if not t.get('id'):
+            raise SystemExit(view_why(t)[:120] or f'tracker.type {TRACKER_TYPE}')
+        if (state_read(task_file(tid)) or {}).get('spec') and re.match(r'https?://', rec.get('url') or ''):
+            _tracker('update', tid, '-Spec', json.dumps({'docs': {'spec': rec['url']}}) + '\n')
+        elif (new := links_block(t.get('description') or '', task_doc_links(tid))) != (t.get('description') or ''):
+            _tracker('describe', tid, new)
+    except SystemExit as e:   # the doc is published and recorded; finish writes the Spec line with the testing docs
+        print(f'[spec] {tid}: Spec line not written on the tracker ({str(e)[:160]}); finish writes it', file=sys.stderr)
+
+
+def spec_write(key, path, by='', subject=False):
+    """Merge a spec JSON into <key>'s spec, bump the version with a change-log line (S-ids touched), publish it (replace: one doc,
+    same link), link it on its tasks and mark their changed S-ids for retest -> URL."""
+    new, pk = load_spec(path), f'{key}:spec'
+    what, rec = str(new.pop('change', '') or ''), _pub_read(pk)
+    subject = bool(subject or rec.get('subject'))
+    old = rec.get('data') or {}
+    data = merge_spec(old, new, SPEC_LISTS)
+    if gaps := spec_shape(data):
+        raise SystemExit(f'spec {key} refused: {"; ".join(gaps)} (devtools.py spec --help). Nothing was written.')
+    if data == old:
+        print(f'spec {key}: unchanged (v{rec.get("version")})', file=sys.stderr)
+        return rec.get('url') or ''
+    ver = int(rec.get('version') or 0) + 1
+    if ver > 1 and not what:
+        raise SystemExit(f'spec {key}: v{ver} needs a "change" line (what changed and why) for its change log. Nothing was written.')
+    was = {str(r.get('id')): r for r in old.get('rules') or []}
+    ids = [str(r['id']) for r in data.get('rules') or [] if was.get(str(r['id'])) != r]
+    log = list(rec.get('log') or []) + [{'v': ver, 'date': time.strftime('%Y-%m-%d'), 'by': by or me_agent() or 'unknown', 'what': what or 'first version', 'ids': ids,
+                                         'retest': [i for i in ids if i in was] if rec.get('ready') else []}]
+    tasks = list(rec.get('tasks') or ([] if subject else [key]))
+    for t in tasks if not subject else ():   # the task index first: publish points its docs.spec at the record
+        task_index(t, lambda x: x.__setitem__('specKey', key))
+    out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', key) + '-spec.md')
+    with open(out, 'w', encoding='utf-8', newline='\n') as fh:
+        fh.write(render_spec(data, key, ver, log, tasks))
+    url = publish(pk, f'{key} Spec — {data["title"]}', out, mode='replace')
+    qs = spec_questions(data)
+    _pub_update(pk, data=data, version=ver, log=log, tasks=tasks, subject=subject, ready=not qs)
+    for t in tasks:
+        sel = (state_read(task_file(t)) or {}).get('specIds') if subject else None
+        mine = [i for i in log[-1]['retest'] if not sel or i in sel]   # a new rule or an answer to a draft is no retest
+        if mine:   # built or deployed work on these S-ids is retested; briefy messages the agents (E8)
+            task_index(t, lambda x: x.__setitem__('specRetest', {'key': key, 'version': ver, 'ids': mine}))
+            print(f'RETEST {t}: {", ".join(mine)} (spec {key} v{ver})')
+        link_task_spec(t, _pub_read(pk))
+    print(f'spec {key} v{ver} {"ready" if not qs else f"draft, {len(qs)} open (spec questions {key})"}: {url}'
+          + (f' · changed {", ".join(ids)}' if ver > 1 and ids else ''), file=sys.stderr)
+    return url
+
+
+def spec_trace_gaps(tid):
+    """The S-ids of a task's spec (own, or a linked subject's: the ids the link names) that no check or case of its cases spec cites."""
+    rec, ts = spec_rec(tid), state_read(task_file(tid)) or {}
+    key = (rec.get('key') or '').rpartition(':')[0]
+    if not rec.get('data'):
+        return []
+    want = [str(r['id']) for r in rec['data'].get('rules') or [] if r.get('status') != 'removed']
+    want = [i for i in want if key == tid or not ts.get('specIds') or i in ts['specIds']]
+    c = ts.get('cases') or {}
+    cited = {str(v) for k in ('checks', 'cases') for x in c.get(k) or [] for v in _as_list(x.get('spec'))}
+    return [i for i in want if i not in cited and f'{key}:{i}' not in cited]
+
+
+def spec_cmd(a):
+    """spec write <task|subject> <spec.json> [--subject] [--by <who>] · questions <key> · link <task> <subject> [--ids S1,S2]
+    · trace <task> · show <task|subject>
+      python -X utf8 devtools.py spec write T1 spec-t1.json --by briefy-w2      (a task's spec: linked on T1 as its Spec line)
+      python -X utf8 devtools.py spec questions T1     (the open sections and rule gaps: the interview, one question per line; exit 1 when any)
+      python -X utf8 devtools.py spec write orders-list spec.json --subject     (a standing spec for a module or flow)
+      python -X utf8 devtools.py spec link T1 orders-list --ids S1,S3           (a task builds against a standing spec)
+      python -X utf8 devtools.py spec trace T1         (S-ids no test case cites: exit 1; finish refuses them)"""
+    verbs = ('write', 'questions', 'link', 'trace', 'show')
+    if not a or a[0] in ('-h', '--help', 'help') or a[0] not in verbs or len(a) < 2:
+        hlp = a and a[0] in ('-h', '--help', 'help')
+        print(spec_cmd.__doc__ + '\n' + SPEC_FIELDS, file=sys.stdout if hlp else sys.stderr)
+        return 0 if hlp else 2
+    opt = {a[i][2:]: a[i + 1] for i in range(len(a) - 1) if a[i] in ('--by', '--ids')}
+    verb, key = a[0], a[1]
+    if verb == 'write':
+        if len(a) < 3:
+            raise SystemExit('spec write <task|subject> <spec.json> [--subject] [--by <who>]')
+        print(spec_write(key, a[2], opt.get('by') or '', '--subject' in a))
+    elif verb == 'questions':
+        rec = spec_rec(key)
+        qs = spec_questions(rec.get('data') or {}) if rec.get('data') else [f'{h}: {q}' for f, h, q in SPEC_SECTIONS if q and f != 'repro']
+        print('\n'.join(f'Q{i} {q}' for i, q in enumerate(qs, 1)) or f'{key}: ready (no open question)')
+        return 1 if qs else 0
+    elif verb == 'link':
+        rec = _pub_read(f'{a[2]}:spec') if len(a) > 2 else {}
+        if not rec.get('data'):
+            raise SystemExit(f'spec link {key}: no spec {a[2] if len(a) > 2 else "<subject>"} (spec write <subject> <spec.json> --subject first)')
+        ids = _as_list(opt.get('ids'))
+        task_index(key, lambda x: x.update(specKey=a[2], **({'specIds': ids} if ids else {})))
+        _pub_update(f'{a[2]}:spec', tasks=sorted(set(rec.get('tasks') or []) | {key}))
+        link_task_spec(key, rec)
+        print(f'spec {a[2]} v{rec.get("version")} linked on {key}' + (f' ({", ".join(ids)})' if ids else ''))
+    elif verb == 'trace':
+        gaps = spec_trace_gaps(key)
+        print('\n'.join(f'{key}: {i} has no test case (cases add: a check or case with "spec": "{i}")' for i in gaps) or f'{key}: every S-id has a test case')
+        return 1 if gaps else 0
+    else:
+        rec, rt = spec_rec(key), (state_read(task_file(key)) or {}).get('specRetest')
+        if not rec.get('data'):
+            print(f'{key}: no spec')
+            return 1
+        print(f'{rec["key"]} v{rec.get("version")} {"ready" if rec.get("ready") else "draft"} {rec.get("url")} · S-ids '
+              + ', '.join(str(r['id']) for r in rec['data'].get('rules') or [] if r.get('status') != 'removed')
+              + (f' · retest {", ".join(rt["ids"])} (v{rt["version"]})' if rt else ''))
+    return 0
 
 
 RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': render_commit, 'comment-solution': render_solution,
@@ -2341,6 +2651,8 @@ def render_cmd(a):
         print('usage: devtools.py render wave-brief <spec.json> <brief.md> (contracts + /buildy args land beside it)', file=sys.stderr)
         return 2
     con = {'contractsFile': os.path.basename(os.path.splitext(a[2])[0]) + '.contracts.md'} if a[0] == 'wave-brief' else None   # the file wave_files writes
+    if a[0] == 'wave-brief' and (draft := [t for t in load_spec(a[1]).get('specs') or [] if not spec_rec(t).get('ready')]):   # Spec before build
+        raise SystemExit(f'wave-brief refused: spec of {", ".join(draft)} not ready (devtools.py spec questions <task>). Nothing was written.')
     txt = spec_text(a[1], a[0], add=con).rstrip('\n') + '\n'
     if len(a) > 2:   # an out file: written, its path printed
         extra = wave_files(load_spec(a[1]), a[2]) if a[0] == 'wave-brief' else {}
@@ -3073,6 +3385,8 @@ def _cli():
         sys.exit(cases_cmd(a[1:]))
     if cmd == 'render':
         sys.exit(render_cmd(a[1:]))
+    if cmd == 'spec':
+        sys.exit(spec_cmd(a[1:]))
     # --help never becomes an id; unknown flags and missing args are usage errors
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'docgaps': 0, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}

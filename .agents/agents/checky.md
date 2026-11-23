@@ -39,6 +39,8 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
   human testing doc and its one result comment in place. Never a hand-written verdict comment, status or a second report doc.
 - A human testing doc row runs from the UI, as a person would (pokey step 3): a screenshot per check, JSON only as the UI
   action's network or log capture, never a hand-made API call instead.
+- Spec: each result's `observed` names the row's S-ids (its `[S<n>]`); a task whose Spec line says `changed S<n>: retest`
+  (`devtools.py spec show <task>`) gets every check citing those S-ids retested, never a carried-over PASS.
 - Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
 - Evidence links in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` first; frames `unread: run
   vidy` -> spawn `vidy` (R19) with the task, its testing doc and your question; use its report (`read-chunk` only to check one

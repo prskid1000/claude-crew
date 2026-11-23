@@ -33,7 +33,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L39 init · L50 board · L230 budget · L260 launch · L501 recover · L588 pause · L599 resume · L666 program · L717 param ·
   L723 track · L1112 supervise · L1453 report · L1533 audit · L1593 storage · L1596 bugbrief · L1598 cleanup · L1685 learn ·
-  L1717 decide · L1875 debate · L1919 health · L1987 setup · L2082 guard-sendmessage
+  L1717 decide · L1885 debate · L1929 health · L1997 setup · L2092 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1734,7 +1734,7 @@ function Invoke-Decide {
     [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
     [string]$Gate = '',   # record: one of $kitGates; check -Id: a non-gate word is ignored
     [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use,
-    [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish, [switch]$Propose, [string]$Approve, [string]$Revoke)
+    [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish, [switch]$Propose, [string]$Approve, [string]$Revoke, [string]$Context)
   $dir = Get-KitPath decisions -Create; $kitGates = @('deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'data', 'scope', 'other')
   # a gate word is a person's: an agent or the coordinator as -By is none
   $crewNames = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue | ForEach-Object BaseName)
@@ -1754,6 +1754,15 @@ function Invoke-Decide {
     'ask' {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." [-Recommend A] [-Fyi] [-Contracts <file>]'; exit 2 }
       $opts = @(Get-KitDecisionChoices @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) $Recommend)
+      # the owner may not know the internals: today's behaviour + why, each option's effect, a recommendation (owner 2026-11-23)
+      $miss = @(if ($Kind -eq 'decision') {
+          if (-not $Context -and @("$Question" -split '\s+').Count -lt 15) { '-Context "today: <what happens now, a short example>; why it comes up"' }
+          if ($opts.Count -lt 2) { 'two or more -Options' }
+          if (@($opts | Where-Object { -not $_.description -and @("$($_.label)" -split '\s+').Count -lt 6 }).Count) { 'each option "<key>: <label> — <its effect on users / business / cost / risk, plain words>"' }
+          if (-not $Recommend) { '-Recommend <key> (the default when the owner is not sure)' } })
+      # WARN until every caller passes them (then refused: kit to-do A5-REFUSE)
+      if ($miss.Count) { "WARN decide ask: missing $($miss -join '; '). Plain words; a technical term gets a one-line explanation." }
+      $shown = "$(if ($Context) { "Today: $($Context.Trim().TrimEnd('.')). " })$("$Question".Trim())$(if ($Kind -eq 'decision' -and $Recommend -and -not $Fyi) { " Not sure? The default is $Recommend." })"
       $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
       $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }
       $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
@@ -1762,6 +1771,7 @@ function Invoke-Decide {
         task = $resolvedTask; mrs = $mrsClean; commit = $Commit; parentId = $ParentId; gate = $(if ($Gate -in $kitGates) { $Gate }) }
       $sr = if (Get-Command Get-KitStandingRuleAnswer -ErrorAction SilentlyContinue) { Get-KitStandingRuleAnswer ([pscustomobject]$o) }   # an owner-approved standing rule answers it (adapters/outcomes.ps1)
       if ($sr) { $o.status = 'answered'; $o.answer = $sr[0]; $o.by = "standing rule $($sr[1])"; $o.source = 'rule'; $o.answeredAt = $o.at }
+      $o.question = $shown; $o.ask = "$Question"   # standing rules match the bare ask; the owner reads the plain-words question
       & $save ([pscustomobject]$o)
       if ($resolvedTask) {
         Update-KitTracking { param($t) if ($t.tasks[$resolvedTask]) { $t.tasks[$resolvedTask].decisions = @(@($t.tasks[$resolvedTask].decisions) + $o.id | Select-Object -Unique) } }
@@ -1911,7 +1921,7 @@ function Invoke-Debate {
         "**revy recommends $($v.recommend):** $(& $cell $v.why)$(if ($v.test) { " · test: $(& $cell $v.test)" })"
       $md = $File -replace '\.json$', '.md'; Set-Content -LiteralPath $md ($t -join "`n") -Encoding utf8; $t
       $opt = { param($r) ("$($r.option): $($r.label) — $($r.change); cost $($r.cost); risk $($r.risk); effort $($r.effort); against: $($r.against)" -replace ',(?=\s*\w+\s*:)', ';') -replace '[\r\n]+', ' ' }
-      Invoke-Decide ask -Run $d.run -Agent $d.agent -Item $d.item -Question "$($d.question) (debate table: $md)" -Options @($rows | ForEach-Object { & $opt $_ }) -Recommend $v.recommend
+      Invoke-Decide ask -Run $d.run -Agent $d.agent -Item $d.item -Question "$($d.question) (debate table: $md)" -Options @($rows | ForEach-Object { & $opt $_ }) -Recommend $v.recommend -Context "two advocates and a judge compared both options ($($d.trigger)); the table has the evidence"
     }
   }
 }

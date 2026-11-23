@@ -42,7 +42,9 @@ You never change code, branches, docs or tracker state;
    finding is a **should-fix**: rewrite, never cut facts.
 **doc / qa:** the artefact against its templates.md section and "Writing standards" (`kitbag.py prose --kind <kind>`); qa: every
 verdict has its evidence, defects are FAIL never notes, own vs new right; a human testing doc and its runs: UI steps and screen
-wording only (no endpoints or code), a screenshot per check, JSON only from the UI action. **plan:** each claim checked
+wording only (no endpoints or code), a screenshot per check, JSON only from the UI action; a spec (`devtools.py spec show`):
+each S-id one testable rule with a Given / When / Then acceptance, n/a sections with a reason, options with trade-offs,
+owner questions in plain words, no rule contradicting its contracts. **plan:** each claim checked
 against its evidence (runs, numbers, diffs); unsupported claims called out.
 
 **dispute** (/buildy fix round: devy contests your findings with evidence; one answer, no second round): re-read your Character;

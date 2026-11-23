@@ -1058,7 +1058,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if ($rec.fail + $sib.fail + $rec.notTested + $sib.notTested - $hold) { Set-FailedTesting $rec $st; return }
   if ($hold) {
     $rec.keptOpen = "$hold check(s) not tested for a cause no developer can fix ($($script:NtHold -join ', ')): status kept, the owner decides"
-    $rec.decision = TrySay { "$(& $KitCmd.orch decide ask -Run (Split-Path $RunDir -Leaf) -Agent "qa-$Code" -Item $st.id -Task $st.id -Question "$($st.id): $hold check(s) not tested ($($script:NtHold -join ' / ') causes; report $docUrl). Close it or retest?" -Options 'A: close it', 'B: keep it open for a retest' -Recommend B)" } "ask the owner about $($st.id)"
+    $rec.decision = TrySay { "$(& $KitCmd.orch decide ask -Run (Split-Path $RunDir -Leaf) -Agent "qa-$Code" -Item $st.id -Task $st.id -Question "$($st.id): $hold check(s) not tested ($($script:NtHold -join ' / ') causes; report $docUrl). Close it or retest?" -Options 'A: close it — testers see it done; the untested checks stay unproven', 'B: keep it open for a retest — it stays in test until a run covers those checks' -Recommend B -Context "the agent run could not test every check of $($st.id); the rest passed")" } "ask the owner about $($st.id)"
     return
   }
   if ($orphans.Count) { $rec.keptOpen = "$($orphans.Count) check(s) name no subtask of this item ($(@($orphans.subtask_id | Select-Object -Unique) -join ', ')): fix their subtask_id, finalize again"; return }   # never dropped

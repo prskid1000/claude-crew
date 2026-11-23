@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L83 summary · L214 patterns · L249 rules · L327 retro due · L337 tidy
+Sections: L14 outcomes · L83 summary · L214 patterns · L250 rules · L328 retro due · L338 tidy
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -232,7 +232,7 @@ function Test-KitRuleSensitive([string]$Gate, [string]$Question) { $Gate -in $sc
 function Get-KitDecisionPatterns([int]$Min = (Get-KitParam 'decide.patternMin'), [double]$Topic = (Get-KitParam 'decide.topicSimilarity'), [double]$Same = (Get-KitParam 'decide.sameChoice')) {
   $groups = [Collections.Generic.List[object]]::new()
   foreach ($d in @(Get-KitOwnerAnswers | Sort-Object { [datetime]$_.at })) {
-    $w = Get-KitTopicWords $d.question; if ($w.Count -lt 2) { continue }
+    $w = Get-KitTopicWords "$(if ($d.ask) { $d.ask } else { $d.question })"; if ($w.Count -lt 2) { continue }   # ask: the bare question (no plain-words context)
     $hit = $null; foreach ($g in $groups) { if ($g.gate -eq "$($d.gate)" -and @($g.words | Where-Object { (Get-KitOverlap $_ $w) -ge $Topic }).Count) { $hit = $g; break } }
     if ($hit) { $hit.items.Add($d); $hit.words.Add($w) } else { $groups.Add([pscustomobject]@{ gate = "$($d.gate)"; items = [Collections.Generic.List[object]]@(, $d); words = [Collections.Generic.List[object]]@(, $w) }) }
   }
@@ -241,8 +241,9 @@ function Get-KitDecisionPatterns([int]$Min = (Get-KitParam 'decide.patternMin'),
     $ref = $g.items[$g.items.Count - 1]; $rw = Get-KitChoiceWords $ref.answer
     $agree = @($g.items | Where-Object { Test-KitSameChoice (Get-KitChoiceWords $_.answer) $rw $Same })
     if ($agree.Count -lt $Min -or $agree.Count -ne $g.items.Count) { continue }   # one contrary answer: no pattern
-    [pscustomobject]@{ gate = $g.gate; question = "$($ref.question)"; answer = "$($ref.answer)"; evidence = @($g.items.id); words = @((Get-KitTopicWords $ref.question) | ForEach-Object { $_ })
-      auto = -not @($g.items | Where-Object { Test-KitRuleSensitive "$($_.gate)" "$($_.question)" }).Count }
+    $rq = "$(if ($ref.ask) { $ref.ask } else { $ref.question })"
+    [pscustomobject]@{ gate = $g.gate; question = $rq; answer = "$($ref.answer)"; evidence = @($g.items.id); words = @((Get-KitTopicWords $rq) | ForEach-Object { $_ })
+      auto = -not @($g.items | Where-Object { Test-KitRuleSensitive "$($_.gate)" "$(if ($_.ask) { $_.ask } else { $_.question })" }).Count }
   }
 }
 
