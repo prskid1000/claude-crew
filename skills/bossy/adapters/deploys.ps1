@@ -7,7 +7,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L15 helpers · L104 intest · L270 deploy · L468 restart · L529 supervise
+Sections: L15 helpers · L104 intest · L270 deploy · L468 restart · L532 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -473,6 +473,9 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
 function Invoke-DeployRun([string]$To, [string]$Repo, [string[]]$Mrs, [string]$Decision) {
   $rows = @(foreach ($r in @(Get-KitValue 'repos' @())) { if (-not $Repo -or $r.name -eq $Repo) { foreach ($d in @($r.deploys | Where-Object { "$($_.target)" -eq $To })) { [pscustomobject]@{ r = $r; d = $d } } } })
   if (-not $rows.Count) { "deploy run: no repos[].deploys[] row with target $To$(if ($Repo) { " in $Repo" })"; exit 2 }
+  # a person's word first (AGENTS.md): checked, not used (deploy merge uses it)
+  $drWord = if ($Decision) { "$(& pwsh -NoProfile -File $KitCmd.orch decide check -Id $Decision -Gate deploy -Item $To 2>&1)" } else { '' }
+  if ($drWord -notmatch '^WORD ') { "REFUSED deploy run -To ${To}: no person's deploy word (decide record -Gate deploy -Item $To, then -Decision <id>)$(if ($drWord) { ": $drWord" })"; exit 1 }
   foreach ($x in $rows) {
     $kd = Get-KitDeployKind $x.d
     if (-not (Test-KitCap 'deploy-kind' $kd 'deploy')) { "UNSUPPORTED deploy-kind/$kd/deploy $($x.r.name) -> ${To}: a person deploys ($(Invoke-KitDeployKind $x.d 'plan')), then deploy record -Env $To"; continue }

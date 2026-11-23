@@ -26,7 +26,7 @@ Register-KitAdapter db-engine oracle @{ defaultPort = 1521; exec = "sqlplus -s -
 Register-KitAdapter db-engine mongodb @{ defaultPort = 27017; query = "mongosh `"{URI}`" --quiet --eval `"{sql}`"" }
 # key-value and search stores (no SQL, no marks): sizes = a scriptblock giving the schemaSizes rows (scope TAB rows TAB MB)
 Register-KitAdapter db-engine redis @{ defaultPort = 6379; passwordEnv = 'REDISCLI_AUTH'; query = 'redis-cli -h {H} -p {P} {sql}'
-  sizes = { param($a) $c = DbConn $a.e; $r = Invoke-KitExe 'redis-cli' @('-h', $c.host, '-p', $c.port, 'INFO') 30; if ($r.code) { throw "redis-cli: $($r.err)" }
+  sizes = { param($a) $c = DbConn $a.e; $r = With-Env (EnvVars $a.e ([pscustomobject]@{})) { Invoke-KitExe 'redis-cli' @('-h', $c.host, '-p', $c.port, 'INFO') 30 }; if ($r.code) { throw "redis-cli: $($r.err)" }
     $um = [regex]::Match("$($r.out)", 'used_memory:(\d+)').Groups[1].Value; $mb = if ($um) { [math]::Round([double]$um / 1MB) } else { 0 }; $ks = @([regex]::Matches("$($r.out)", '(?m)^(db\d+):keys=(\d+)'))
     $all = ($ks | ForEach-Object { [long]$_.Groups[2].Value } | Measure-Object -Sum).Sum
     foreach ($m in $ks) { "$($m.Groups[1].Value)`t$($m.Groups[2].Value)`t$(if ($all) { [math]::Round($mb * [long]$m.Groups[2].Value / $all) } else { 0 })" } } }

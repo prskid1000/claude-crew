@@ -2,7 +2,7 @@
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
 # deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L213 deployed
+# Sections: L6 shell · L15 probe · L78 kinds · L218 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -124,7 +124,10 @@ Register-KitAdapter 'deploy-kind' 'command' @{
 # the commit a deploy ships: the deploy branch's remote head in the checkout, else its HEAD
 function __DkHead($r, $d) { if (-not $r.checkout) { return '' }; $h = git -C $r.checkout rev-parse --verify --quiet "origin/$(if ($d.branch) { $d.branch } else { 'HEAD' })" 2>$null; if (-not $h) { $h = git -C $r.checkout rev-parse HEAD 2>$null }; "$h" }
 # deploy through the deploy-branch MR (ci-job: its job then deploys; tag: -Push)
-function __DkMerge($a, [switch]$Push) { Invoke-DeployMerge -Repo $(if ($a.repo.checkout) { $a.repo.checkout } else { $a.repo.name }) -To $a.env -Mr:(-not $Push) -Push:$Push -Mrs @($a.mrs) -Decision $a.decision }
+# a child bossy.ps1: deploy merge ends with exit, which would end deploy run before its other rows
+function __DkMerge($a, [switch]$Push) {
+  $dmArgs = @('deploy', 'merge', '-Repo', $(if ($a.repo.checkout) { $a.repo.checkout } else { $a.repo.name }), '-To', $a.env, $(if ($Push) { '-Push' } else { '-Mr' })) + @(if (@($a.mrs).Count) { '-Mrs', (@($a.mrs) -join ',') }) + @(if ($a.decision) { '-Decision', $a.decision })
+  $dmOut = & pwsh -NoProfile -File $KitCmd.orch @dmArgs 2>&1 | Out-String; if ($LASTEXITCODE) { throw $dmOut.Trim() }; @($dmOut.Trim() -split "`r?`n")[-1] }
 # CI deploy job on deploys[].branch (deploys[].job, a -like pattern): the MR on the branch and a green job run that holds it
 # adapter:deploy-kind/ci-job
 Register-KitAdapter 'deploy-kind' 'ci-job' @{
@@ -155,8 +158,10 @@ Register-KitAdapter 'deploy-kind' 'branch-mr' @{
 # deploy: deploys[].ssh.deployCmd ({sha} {branch}) runs on the host; none = UNSUPPORTED (a person deploys)
 Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; restart = { param($a) Invoke-DeployRestartSsh $a.d.target $a.d $a.service }
   deploy = { param($a) $s = $a.d.ssh; if (-not $s.deployCmd) { return @{ note = 'no deploys[].ssh.deployCmd: a person deploys' } }; $c = "$($s.deployCmd)".Replace('{sha}', (__DkHead $a.repo $a.d)).Replace('{branch}', "$($a.d.branch)"); $key = [string]$s.key -replace '^~', $HOME
-    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($c)); $o = @(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', $s.host, "echo $b64 | base64 -d | bash")) 900)
-    @{ id = "ssh $($s.host)"; note = ($o | Select-Object -Last 3) -join ' / ' } } }
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($c)); $o = @(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', $s.host, "echo $b64 | base64 -d | bash && echo KIT_DEPLOY_OK")) 900)
+    # the marker proves the command ran and exited 0 (the bounded ssh drops exit codes, a timeout returns nothing)
+    if ($o -notcontains 'KIT_DEPLOY_OK') { return @{ note = "ssh deploy failed or timed out: $(($o | Select-Object -Last 3) -join ' / ')" } }
+    @{ id = "ssh $($s.host)"; note = ($o | Where-Object { $_ -ne 'KIT_DEPLOY_OK' } | Select-Object -Last 3) -join ' / ' } } }
 # adapter:deploy-kind/tag
 Register-KitAdapter 'deploy-kind' 'tag' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "tag $($a.d.tag) (bossy.ps1 deploy merge -To $($a.d.target) -Push)" }; deploy = { param($a) @{ id = "$(__DkMerge $a -Push)" } } }
 # adapter:deploy-kind/probe

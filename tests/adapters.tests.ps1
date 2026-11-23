@@ -38,32 +38,39 @@ $secR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $mem = @{}; Register-KitAdapter 'secret-store' 'fake' @{ caps = @{ write = $true; list = $true }; get = { param($a) $mem[$a.name] }; set = { param($a) $mem[$a.name] = $a.value }; list = { param($a) @($mem.Keys) } }
   $__cfg = '{"secrets":{"store":"fake","fake":{"paths":["vault.local.txt"]}}}' | ConvertFrom-Json
   $null = Set-KitSecret 'targets/x/u/password' 'F-2'; $o.fake = (Get-KitSecret 'targets/x/u/password') -eq 'F-2' -and @(Get-KitSecretNames).Count -eq 1
-  $o.guardStore = "$(Invoke-KitAdapter guard secrets check @{ raw = 'type C:\v\vault.local.txt' })" -match 'vault\.local\.txt holds test logins and secrets' -and -not "$(Invoke-KitAdapter guard secrets check @{ raw = 'cat skills/pokey/targets.local.json' })"
+  $o.guardStore = "$(Invoke-KitAdapter guard secrets check @{ raw = 'type C:\v\vault.local.txt' })" -match 'vault\.local\.txt holds test logins and secrets' -and "$(Invoke-KitAdapter guard secrets check @{ raw = 'cat skills/pokey/targets.local.json' })" -match 'never read'
+  # command store: set gets the value through env KIT_SECRET_VALUE (not argv), get prints it raw (JSON-looking text stays text)
+  $cs = (Join-Path $k 'cs.txt').Replace('\', '/'); $pw = 'pwsh -NoProfile -Command'
+  $__cfg = ([ordered]@{ secrets = @{ store = 'command'; command = @{ set = "$pw Set-Content -Path '$cs' -Value `$env:KIT_SECRET_VALUE -NoNewline"; get = "$pw Get-Content -Raw '$cs'" } } } | ConvertTo-Json -Depth 5 | ConvertFrom-Json)
+  $null = Set-KitSecret 'targets/x/u/password' '{"p":1}'; $o.command = (Get-KitSecret 'targets/x/u/password') -eq '{"p":1}' -and -not (Test-KitCap 'secret-store' 'command' 'list')
   Remove-Item Env:KIT_SECRET_TARGETS_TQ_QA2_PASSWORD
   $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
-Expect-Each $secR 'secret store: #' @('set', 'get', 'shape', 'names', 'guardFile', 'env', 'envRO', 'missing', 'fake', 'guardStore') -Show 12
+Expect-Each $secR 'secret store: #' @('set', 'get', 'shape', 'names', 'guardFile', 'env', 'envRO', 'missing', 'fake', 'guardStore', 'command') -Show 12
 
 # deploy run: each deploys[] row of the target through its kind's deploy verb; command runs without a git host, manual
 # prints the steps, ssh without deployCmd and a kind with no deploy verb (probe) say a person deploys
 $kl = Join-Path $k 'skills/crafty/kit.local.json'
 & $J @{ repos = @(@{ name = 'svc'; deploys = @(@{ target = 't1'; command = @{ deploy = 'pwsh -NoProfile -Command Write-Output shipped-{repo}-{mr}' } }, @{ target = 't2'; manual = 'open the console, press Deploy' }, @{ target = 't2'; kind = 'probe'; probe = 'echo x' }, @{ target = 't3'; ssh = @{ host = 'h.invalid' } }) }) } $kl
-$dr1 = Px (Join-Path $k 'skills/bossy/bossy.ps1') deploy run -To t1 -Mrs 'svc!4' 2>&1 | Out-String
-$dr2 = Px (Join-Path $k 'skills/bossy/bossy.ps1') deploy run -To t2 2>&1 | Out-String
-$dr3 = Px (Join-Path $k 'skills/bossy/bossy.ps1') deploy run -To t3 2>&1 | Out-String
+$B = Join-Path $k 'skills/bossy/bossy.ps1'
+$drW = { param($e) if ((Px $B decide record -Gate deploy -Item $e -Question "deploy $e?" -Answer "yes, deploy $e" -Source chat 2>&1 | Out-String) -match 'RECORDED (\S+)') { $Matches[1] } }
+$dr0 = Px $B deploy run -To t1 2>&1 | Out-String; $dr0c = $LASTEXITCODE
+$dr1 = Px $B deploy run -To t1 -Mrs 'svc!4' -Decision (& $drW t1) 2>&1 | Out-String
+$dr2 = Px $B deploy run -To t2 -Decision (& $drW t2) 2>&1 | Out-String
+$dr3 = Px $B deploy run -To t3 -Decision (& $drW t3) 2>&1 | Out-String
 $dr4 = Px (Join-Path $k 'skills/bossy/bossy.ps1') deploy run -To nowhere 2>&1 | Out-String; $dr4c = $LASTEXITCODE
-Expect "deploy run: command kind deploys ($($dr1.Trim()))" ($dr1 -match 'DEPLOY svc -> t1 \(command\): shipped-svc-svc!4')
+Expect "deploy run: no person's word = REFUSED, nothing runs; with one the command kind deploys ($($dr1.Trim()))" ($dr0c -eq 1 -and $dr0 -match '^REFUSED deploy run -To t1' -and $dr0 -notmatch 'shipped' -and $dr1 -match 'DEPLOY svc -> t1 \(command\): shipped-svc-svc!4')
 Expect "deploy run: manual waits for a person, probe is UNSUPPORTED ($(($dr2 -split "`n" | Where-Object { $_ }) -join ' | '))" ($dr2 -match 'DEPLOY svc -> t2 \(manual\): manual · waiting for a person: open the console' -and $dr2 -match 'UNSUPPORTED deploy-kind/probe/deploy svc -> t2')
 Expect "deploy run: ssh without deployCmd fails naming it; no row = exit 2 ($($dr3.Trim()))" ($dr3 -match 'FAILED svc -> t3 \(ssh\) · no deploys\[\]\.ssh\.deployCmd' -and $dr4c -eq 2)
 Remove-Item $kl
 
 # data stores: redis and search engines answer schemaSizes rows from their own APIs (no SQL); no marks / temp caps
 $dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/envy/adapters/db_engines.ps1')
-  function Get-EnvCfg { @{ db = @{ host = 'h'; port = 1 } } }; function Get-DbEngine { $KitAdapters['db-engine'][$script:dsEng] }
+  function Get-EnvCfg { @{ db = @{ host = 'h'; port = 1 } } }; function EnvVars { @{ REDISCLI_AUTH = 'x' } }; function With-Env($v, $b) { $script:dsEnv = $v.REDISCLI_AUTH; & $b }; function Get-DbEngine { $KitAdapters['db-engine'][$script:dsEng] }
   function Invoke-KitExe { [pscustomobject]@{ code = 0; out = "used_memory:20971520`ndb0:keys=30,expires=0`ndb1:keys=10,expires=0"; err = '' } }
   function Invoke-RestMethod { @([pscustomobject]@{ index = 'orders'; 'docs.count' = '12'; 'store.size' = '3' }, [pscustomobject]@{ index = '.kibana'; 'docs.count' = '1'; 'store.size' = '1' }) }
   $script:dsEng = 'redis'; $rd = @(& $KitAdapters['db-engine'].redis.sizes @{ e = 'x' }) -join '|'
   $script:dsEng = 'opensearch'; $os = @(& $KitAdapters['db-engine'].opensearch.sizes @{ e = 'x' }) -join '|'
-  "redis:$($rd -eq "db0`t30`t15|db1`t10`t5")"; "search:$($os -eq "orders`t12`t3")"
+  "redis:$($rd -eq "db0`t30`t15|db1`t10`t5" -and $script:dsEnv -eq 'x')"; "search:$($os -eq "orders`t12`t3")"
   "nocaps:$(-not $KitAdapters['db-engine'].redis.supportsMarks -and -not $KitAdapters['db-engine'].elasticsearch.supportsTemp)" }
 Expect-Each $dsR 'data store: #' @('redis', 'search', 'nocaps') -Show 4
 

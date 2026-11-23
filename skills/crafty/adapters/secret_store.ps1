@@ -20,10 +20,10 @@ function Remove-KitSecret([string]$Name) { $s = Get-KitSecretStore; if (Test-Kit
 # names only, never values
 function Get-KitSecretNames([string]$Prefix = '') { $s = Get-KitSecretStore; if (Test-KitCap 'secret-store' $s 'list') { @(Invoke-KitAdapter 'secret-store' $s 'list' @{ prefix = $Prefix } | Where-Object { "$_".StartsWith($Prefix) }) } }
 function Resolve-KitSecretRef($Value) { if ("$Value" -match '^secret:(.+)$') { Get-KitSecret $Matches[1] } else { $Value } }
-# files whose reads the guard denies: secrets.<store>.paths, plus the file store's own file
+# files whose reads the guard denies: the logins file (any store: it keeps names and secret: refs) + secrets.<store>.paths
 function Get-KitSecretPaths {
   $s = Get-KitSecretStore
-  @(@(if ($s -eq 'file') { 'skills/pokey/targets.local.json' }) + @(Get-KitSetting "secrets.$s.paths" @()) | Where-Object { $_ } | Select-Object -Unique)
+  @(@('skills/pokey/targets.local.json') + @(Get-KitSetting "secrets.$s.paths" @()) | Where-Object { $_ } | Select-Object -Unique)
 }
 function Get-KitSecretFile { $f = Join-Path (Split-Path $KitLibDir) 'pokey/targets.local.json'; if (Test-Path -LiteralPath $f) { return $f }; Join-Path (Split-Path (Split-Path (Split-Path $KitConf.ConfigFile))) 'skills/pokey/targets.local.json' }
 
@@ -58,8 +58,13 @@ Register-KitAdapter 'secret-store' 'keychain' @{ caps = @{ write = $false; list 
     $r = if (Get-Command security -ErrorAction SilentlyContinue) { Invoke-KitNetExe 'security' @('find-generic-password', '-s', $a.name, '-w') } else { Invoke-KitNetExe 'secret-tool' @('lookup', 'service', $a.name) }
     if (-not $r.code) { "$($r.out)".Trim() } }
 }
-# adapter:secret-store/command: secrets.command.get|set|list|delete = CLI lines ({name}, {value}, {prefix}); list prints names
+# adapter:secret-store/command: secrets.command.get|set|list|delete = CLI lines ({name}, {prefix}); set reads the value from env
+# KIT_SECRET_VALUE (never argv: process lists show it); get prints the raw value, list the names
 Register-KitAdapter 'secret-store' 'command' @{ caps = { $c = Get-KitSetting 'secrets.command' $null; @{ write = [bool](Get-KitMember $c 'set'); list = [bool](Get-KitMember $c 'list'); rotate = [bool](Get-KitMember $c 'set') } }
-  '*' = { param($a, $v) Invoke-KitCommand 'secret-store' (Get-KitSetting 'secrets.command' $null) $v $a }
+  '*' = { param($a, $v) $line = [string](Get-KitMember (Get-KitSetting 'secrets.command' $null) $v); if (-not $line) { throw "UNSUPPORTED secret-store/command/${v}: no secrets.command.$v" }
+    $t = Split-KitCommand $line @{ name = $a.name; prefix = $a.prefix }; $env:KIT_SECRET_VALUE = $(if ($v -eq 'set') { $a.value })
+    try { $r = Invoke-KitNetExe $t[0] @($t | Select-Object -Skip 1) } finally { Remove-Item Env:KIT_SECRET_VALUE -ErrorAction SilentlyContinue }
+    if ($r.code) { throw "secret-store command $v failed (exit $($r.code)): $(@("$($r.err)" -split "`n")[0])" }
+    if ($v -eq 'list') { @("$($r.out)" -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() }) } elseif ($v -eq 'get') { "$($r.out)".TrimEnd("`r", "`n") } }
 }
 # adapter-end:secret-store

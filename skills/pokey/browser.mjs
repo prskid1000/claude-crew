@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L50 login · L130 browsers · L173 tabs · L261 session · L309 actions · L408 ui checks · L415 evidence
+// Sections: L17 config · L50 login · L134 browsers · L177 tabs · L265 session · L313 actions · L412 ui checks · L419 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -95,8 +95,12 @@ async function step(page, s, f) {
 }
 
 async function login(page, t, tenant, as) {
-  const L = t.webLogin, type = L.type || 'form', [user, pass, otp] = t.users[as] || []
+  // profiles: a file-store secret reads that user; other stores: pokey.ps1 api only
+  const pf = (t.profiles || {})[as], pu = /^targets\/[^/]+\/([^/]+)\/password$/.exec(pf?.secret || '')
+  const L = t.webLogin, type = L.type || 'form', [user0, pass, otp] = t.users[as] || (pu && t.users[pu[1]]) || [], user = pf?.login || user0
   if (!user) throw new Error(`no user "${as}" in this target`)
+  if (/^secret:/.test(pass || '')) throw new Error(`user "${as}": its password is in secrets.store (${pass}); the browser reads the file store only: pokey.ps1 api -As ${as}, or keep this login in targets.local.json`)
+  if (pf?.fields?.tenant && !tenant) tenant = pf.fields.tenant
   if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types, TOTP: adapters/web-login.mjs
     const ext = await adapter('web-login.mjs')
     await ext.login({ page, t, tenant, user, pass, otp, type }, { nav, step, applyState, onLogin, fill, here: __HERE })

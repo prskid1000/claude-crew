@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L37 paths · L126 state · L183 kitlog · L282 load · L722 lint · L1127 README graph · L1234 lint command · L1515 audit ·
-  L1663 registry · L1995 arch lint · L2268 prose · L2433 sections · L2563 budget · L2579 migrate · L2727 plugins ·
-  L2781 state lint · L2969 main
+Sections: L37 paths · L126 state · L183 kitlog · L282 load · L736 lint · L1144 README graph · L1251 lint command · L1532 audit ·
+  L1680 registry · L2012 arch lint · L2285 prose · L2450 sections · L2580 budget · L2596 migrate · L2744 plugins ·
+  L2798 state lint · L2986 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -459,6 +459,20 @@ def main_clone(d):
     rc, common, _ = git(d, 'rev-parse', '--path-format=absolute', '--git-common-dir', timeout=20)
     return osp.dirname(osp.normpath(common)) if rc == 0 and common else d
 
+def stray_live(d, minutes=60, cap=2000):
+    """True when a file under d changed in the last `minutes` (a bounded walk: at most `cap` files)."""
+    cut, n = time.time() - minutes * 60, 0
+    for root, _, files in os.walk(d):
+        for f in files:
+            n += 1
+            with contextlib.suppress(OSError):
+                if os.path.getmtime(osp.join(root, f)) > cut:
+                    return True
+            if n >= cap:
+                return False
+    return False
+
+
 def stray_runtimes(kit):
     """<workspace>/.runtime folders up to 3 levels deep that are no kit checkout's own (an installed <workspace>/.claude only)."""
     main = main_clone(kit)
@@ -883,6 +897,9 @@ def lint(k, g=None, org_terms=None):
     elif k.texts.get('workflows/testy.js') and k.texts.get('skills/pokey/pokey.ps1'):
         bad('RESULT-KEYS', 'workflows/testy.js', 'CHECKS_SCHEMA rows or pokey.ps1 $script:ResultRowKeys not found (the results row schema)')
     for d in stray_runtimes(k.dir):
+        if stray_live(d):   # a live run still writes there: never block an unrelated commit; counted once it is idle
+            print(f'WARN RUNTIME-STRAY {d}: a live run writes there (changed in the last hour): move it once that run ends', file=sys.stderr)
+            continue
         bad('RUNTIME-STRAY', d, f'a {MAP["runtimeDir"]} outside the kit (a relative path from the wrong folder; the guard denies new ones): '
             f'move what is needed under <kit>/{MAP["runtimeDir"]} (crafty.ps1 dir), then delete it')
     # ---- file caps (ports excluded), per group

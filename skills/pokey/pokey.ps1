@@ -576,7 +576,7 @@ $pwRef = [string]$vars.password; if ((Get-KitSecretStore) -ne 'file') { $pwRef =
 & $save { param($tt) $tt.users[$Name] = @($Name, $pwRef); $tt.created[$Name] = $rec }
 if (-not $found) {
   try { foreach ($st in @($rc.create)) { $null = Invoke-UserStep $st $vars $Target $As $Tenant } }
-  catch { $failed = $_; $there = try { if ($rc.find) { Invoke-UserStep $rc.find $vars $Target $As $Tenant } } catch { $null }; if (-not $there) { & $save { param($tt) $tt.users.Remove($Name); $tt.created.Remove($Name) } }; throw $failed }
+  catch { $failed = $_; $there = try { if ($rc.find) { Invoke-UserStep $rc.find $vars $Target $As $Tenant } } catch { $null }; if (-not $there) { & $save { param($tt) $tt.users.Remove($Name); $tt.created.Remove($Name) }; if ($pwRef -like 'secret:*') { Remove-KitSecret $pwRef.Substring(7) } }; throw $failed }
   $rec.ids = (& $ids); & $save { param($tt) $tt.created[$Name] = $rec }
 }
 $check = ''

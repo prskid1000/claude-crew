@@ -1881,7 +1881,7 @@ R['command'] = {'publish': _command}
 
 
 # evidence store command: reports.evidenceCommand {name} {parent} {files} (each file quoted); prints '<file name> <URL>' per
-# file (a folder link line: 'folder <URL>'); a failure keeps the files in the run folder
+# file, the URL last (a folder link line: 'folder <URL>'); a failure keeps the files in the run folder
 def _evidence_command(a):
     c = RCFG.get('evidenceCommand') or sys.exit('reports.evidence command needs reports.evidenceCommand')
     c = c.replace('{name}', _q(a['name'])).replace('{parent}', _q(a.get('parent') or '')).replace('{files}', ' '.join(_q(f) for f in a['files']))
@@ -1889,7 +1889,7 @@ def _evidence_command(a):
     if r.returncode:
         print(f'reports.evidenceCommand failed (exit {r.returncode}): {(r.stdout + r.stderr)[-300:]}; evidence stays in the run folder', file=sys.stderr)
         return {}
-    got = dict(ln.split(None, 1) for ln in r.stdout.splitlines() if len(ln.split(None, 1)) == 2)
+    got = dict(ln.rsplit(None, 1) for ln in r.stdout.splitlines() if len(ln.rsplit(None, 1)) == 2)   # the URL last: a file name may hold spaces
     return {'folderLink': got.pop('folder', ''), 'label': a['name'], 'files': {k: {'src': v.strip(), 'link': v.strip()} for k, v in got.items()}}
 
 
