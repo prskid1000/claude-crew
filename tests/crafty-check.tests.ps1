@@ -137,5 +137,10 @@ Expect "container-tests: a configured engine that is down is leased and started 
 $dashRun = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Run, [string]`$Message) ""`$Run|`$Message"" }; Invoke-KitVerb Invoke-M @('-Run', '-hm-1121', '-Message', 'm'); Invoke-KitVerb Invoke-M @('-Run', '-Mess', 'x')"
 $dashTypo = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Run) `$Run }; Invoke-KitVerb Invoke-M @('-Run', '-Agnet', 'x')" 2>&1 | Out-String; $dashRc = $LASTEXITCODE
 Expect "Invoke-KitVerb: a dash-leading value naming no parameter is the value; a parameter name stays one; a typo exits 2 ($($dashRun -join ' / ') | $dashRc)" (($dashRun -join ' / ') -eq '-hm-1121|m / |x' -and $dashRc -eq 2 -and $dashTypo -match 'unknown or ambiguous parameter -Agnet')
+# python -Tests <folder>: its test_*.py scripts run directly, never `unittest <folder>` (0 tests, exit 5: retro 1709)
+$pvd = Join-Path (Kd) 'py-val'; New-Item -ItemType Directory -Force "$pvd/validation" | Out-Null; 'x==1' | Set-Content "$pvd/requirements.txt"
+'print("ok")' | Set-Content "$pvd/validation/test_alpha.py"; 'print("ok")' | Set-Content "$pvd/validation/helper.py"
+$pvo = pwsh @np $D check -Dir $pvd -Step test -Tests validation -Show 2>&1 | Out-String
+Expect "check python -Tests <folder>: each test_*.py run with python, no unittest ($($pvo.Trim() -replace '\s+', ' '))" ($pvo -match 'test\s*:.*"validation/test_alpha\.py"' -and $pvo -notmatch 'unittest|helper\.py')
 Remove-TestKit $k
 Complete-Tests

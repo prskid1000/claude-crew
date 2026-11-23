@@ -10,7 +10,7 @@ $k = New-TestKit pool; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $DT = Join-
 $base = Kd; $orig = "$base/origin.git"; $app = "$base/app"; $env:CLAUDE_WT_ROOT = "$base/wt"
 git init -q --bare -b main $orig; git init -q -b main $app; 'v1' | Set-Content "$app/a.txt"; 1..30 | ForEach-Object { "f$_" | Set-Content "$app/f$_.txt" }
 Save-GitRepo $app base; git -C $app remote add origin $orig; git -C $app push -q origin main 2>$null
-& $J @{ repos = @(@{ name = 'app'; checkout = $app; target = 'main'; poolSize = 2 }); tracker = @{ type = 'none' } } "$k/skills/crafty/kit.local.json"
+& $J @{ repos = @(@{ name = 'app'; checkout = $app; target = 'main'; poolSize = 2 }); tracker = @{ type = 'none' }; pool = @{ wipRestore = @('one.txt') } } "$k/skills/crafty/kit.local.json"
 $lease = { param($ag, $br, [int]$wm = 0) (pwsh @np $D wt lease -Repo app -Branch $br -Agent $ag -WaitMinutes $wm 2>&1 | ForEach-Object { "$_" }) -join "`n" }
 $slotOf = { param($o) if ($o -match '(?m)^worktree: (.+)$') { $Matches[1].Trim().Replace('\', '/') } }
 $falcon = "$base/wt/falcon-app".Replace('\', '/'); $kestrel = "$base/wt/kestrel-app".Replace('\', '/')
@@ -33,8 +33,9 @@ $py1 = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); i
 Expect "devtools.py mr / merge read the slot's target record ($py1)" ("$py1".Trim() -eq 'main')
 
 # release with uncommitted work: a WIP commit on the branch, the slot detached in place (no file written), branch kept
-'wip' | Set-Content "$(Assert-TestPath $s1)/two.txt"; $r1 = pwsh @np $D wt release -Agent devA 2>&1 | Out-String
-Expect "release: uncommitted work -> WIP commit; detached at the same commit; the unmerged branch kept ($($r1 -replace '\s+', ' '))" ($r1 -match 'WIP commit' -and $r1 -match 'released app·Falcon' -and $r1 -match 'branch feat/one kept' -and -not (git -C $s1 branch --show-current) -and (git -C $app log -1 --format=%s feat/one) -match '^wip: ' -and -not (git -C $s1 status --porcelain))
+'wip' | Set-Content "$(Assert-TestPath $s1)/two.txt"; 'rewritten by a test run' | Set-Content "$s1/one.txt"; $r1 = pwsh @np $D wt release -Agent devA 2>&1 | Out-String
+Expect "release: uncommitted work -> WIP commit; detached at the same commit; the unmerged branch kept ($($r1 -replace '\s+', ' '))" ($r1 -match 'WIP commit' -and $r1 -match 'released app·Falcon' -and $r1 -match 'branch feat/one kept' -and -not (git -C $s1 branch --show-current) -and (git -C $app log -1 --format=%s feat/one) -match '^wip: ' -and -not (git -C $s1 status --porcelain) -and
+  "$(git -C $app show --name-only --format= feat/one)".Trim() -eq 'two.txt' -and (Get-Content "$s1/one.txt") -eq 'one')   # pool.wipRestore: one.txt restored, not committed
 
 # fix round: another agent re-leases by branch: the warm slot that had it
 $o5 = & $lease devA2 feat/one

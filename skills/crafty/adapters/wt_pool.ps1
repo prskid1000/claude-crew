@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L130 names · L183 slots · L209 lease · L320 release · L348 lanes · L453 sync · L553 pool · L596 sweep
+Sections: L15 worktrees · L130 names · L183 slots · L209 lease · L320 release · L351 lanes · L456 sync · L556 pool · L599 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -329,6 +329,9 @@ function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo)
     $o = $h.o; $p = $o.path; $lf = $h.f
     if (-not (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $lf -Force; Write-KitLeaseLog release slot $o.slot $o "$why (folder gone)"; "released $($o.slot): its folder is gone"; continue }
     $br = "$(git -C $p branch --show-current 2>$null)".Trim(); $dirty = @(Get-WtDirty $p)
+    # pool.wipRestore: tracked files a test run rewrites (fixtures, reports) are restored, never WIP-committed (retro 1709)
+    $wipGen = @($dirty | Where-Object { $wf = ($_.Substring(3).Trim('"') -split ' -> ')[-1]; $_.Substring(0, 2) -match 'M' -and @(@(Get-KitSetting 'pool.wipRestore' @()) | Where-Object { $_ -and $wf -like $_ }).Count })
+    foreach ($wg in $wipGen) { git -C $p checkout -q -- (($wg.Substring(3).Trim('"') -split ' -> ')[-1]) 2>$null }; if ($wipGen.Count) { $dirty = @(Get-WtDirty $p) }
     if ($dirty.Count) {   # never lost: a WIP commit on its branch (hooks run), else parked for that branch
       $said = 'uncommitted files on a detached HEAD'
       if ($br) { git -C $p add -A -- @($dirty | ForEach-Object { ($_.Substring(3).Trim('"') -split ' -> ')[-1] }) 2>$null; $said = @(git -C $p commit -q -m "wip: $($o.slot) released with uncommitted work ($why)" 2>&1 | ForEach-Object { "$_" }) -join ' '; $wc = $LASTEXITCODE; if ($wc) { git -C $p reset -q 2>$null; $said = "WIP commit refused (exit $wc) $said".Trim() } else { $said = '' } }

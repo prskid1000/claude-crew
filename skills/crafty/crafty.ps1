@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1078 pipes · L1140 guard · L2057 dir · L2067 checkpoint ·
-  L2101 prior · L2139 tracker · L2161 task spec · L2359 scope · L2407 host
+Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1080 pipes · L1142 guard · L2059 dir · L2069 checkpoint ·
+  L2103 prior · L2141 tracker · L2163 task spec · L2361 scope · L2409 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -997,6 +997,8 @@ foreach ($s in $steps) {
     # commas reached runners as one name, spaces broke -Dtest
     $tl = @($Tests -split '[,\s]+' | Where-Object { $_ })
     $pyRun = if ($st.stack -eq 'python' -and $cmd -match '^(?<py>.+?)\s+-m\s+(pytest|unittest)\b') { $Matches.py } else { $null }
+    # a test folder: its test_*.py files (unittest on a plain folder found 0 tests, exit 5: retro 1709)
+    if ($pyRun) { $tl = @(foreach ($t in $tl) { $td = Join-Path $st.dir $t; if (Test-Path -LiteralPath $td -PathType Container) { @(Get-ChildItem -LiteralPath $td -Filter 'test_*.py' -File | ForEach-Object { [IO.Path]::GetRelativePath($st.dir, $_.FullName) -replace '\\', '/' }) } else { $t } }) }
     # unittest/pytest exit 5 on files without test cases
     $scripts = if ($pyRun -and $tl.Count) { @($tl | Where-Object { $_ -match '\.py$' -and (Test-Path -LiteralPath (Join-Path $st.dir $_) -PathType Leaf) -and -not (Select-String -LiteralPath (Join-Path $st.dir $_) -Pattern '^\s*(def test_|class \w+\(.*TestCase\)|import (unittest|pytest)|from (unittest|pytest)\b)' -Quiet) }) } else { @() }
     if ($scripts.Count -and $scripts.Count -eq $tl.Count) {

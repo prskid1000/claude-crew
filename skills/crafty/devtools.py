@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L387 process · L596 git host · L669 scope · L761 MR · L956 merge · L1287 docs ·
-  L1450 publish · L1945 render · L2466 spec · L2822 plugins · L2836 keepboth · L2855 selftest · L3543 CLI
+Sections: L55 config · L110 run · L198 tracker · L393 process · L602 git host · L675 scope · L767 MR · L962 merge · L1293 docs ·
+  L1456 publish · L1951 render · L2472 spec · L2828 plugins · L2842 keepboth · L2861 selftest · L3549 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -364,6 +364,12 @@ def prose_gate(kind, text):
     if found and not PROSE_OK:
         lim = prose_limits(kind)   # the rendered text, not the agent's file, is what failed (48 refusals guessed at it)
         print(f'[prose] {kind} as checked ({len(text.split())} words, {len(text)} chars):\n{text[:4000]}', file=sys.stderr)
+        secs = re.split(r'(?m)^## +', text)[1:]   # per field next to the limits (retro 1709: 8 mr refusals guessed which field)
+        if secs:
+            mk = r'(?m)^\s*(?:[-*]|\d+\.)\s'
+            cnt = lambda b: f'{len(re.sub(mk, "", b).split())}w {len(re.findall(mk, b))}b'
+            print(f'[prose] {kind} per section ({lim or "limits: templates.md"}): '
+                  + ' · '.join(f'{s.split(chr(10), 1)[0].strip()} {cnt(s.split(chr(10), 1)[1] if chr(10) in s else "")}' for s in secs), file=sys.stderr)
         raise SystemExit(f'[prose] {kind} refused: {len(found)} finding(s) above; rewrite to the limits (same facts){f" ({lim})" if lim else ""},'
                          ' or pass --prose-ok "<why>" for a format the brief fixes. Nothing was written.')
     return found

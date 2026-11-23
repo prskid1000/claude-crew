@@ -110,5 +110,9 @@ $a3Qa = pwsh -NoProfile -Command ". '$Q' 6>`$null; (Build-QaReportMd -Title t -C
 Set-Content "$a3/qa.md" $a3Qa; $a3Pr = foreach ($a3k in @(@('retro', 'retro.md'), @('qa-report', 'qa.md'))) { & $py -X utf8 $KB prose --kind $a3k[0] "$a3/$($a3k[1])" 2>&1 | Where-Object { $_ -match 'section' } }
 Expect "A3: a runbook missing ## Rollback and a bare 'none' refused ($a3BadC), complete published ($a3OkC); retro + QA report render every section ($($a3Pr -join ' | '))" ($a3BadC -ne 0 -and $a3Bad -match 'missing sections: ## Rollback' -and
   $a3Bad -match "section ## Preconditions is 'none'" -and $a3OkC -eq 0 -and -not @($a3Pr).Count -and $a3Qa -match '## Failures in detail\s+n/a — no check failed' -and (Get-Content "$a3/retro.md" -Raw) -match '## Rejected\s+n/a — nothing rejected')
+# mr prose refusal names each section's words and bullets next to the limits (retro 1709: 8 refusals guessed which field)
+$pgBody = "## Summary`n$((@('word') * 60) -join ' ')`n## Changes`n- a`n- b`n- c`n- d`n## How tested`nunit`n## Risks`nnone`n## Links`nx"
+$pgOut = $pgBody | & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d; d.prose_gate('mr-body', sys.stdin.read())" 2>&1 | Out-String
+Expect "mr prose refusal: per-section word / bullet counts with the limits ($(($pgOut -split "`n" | Where-Object { $_ -match 'per section' }) -join ''))" ($pgOut -match 'per section \(mr-body: .*limits .*\): Summary 60w 0b · Changes 4w 4b · How tested 1w 0b' -and $pgOut -match 'refused')
 Remove-TestKit $k
 Complete-Tests

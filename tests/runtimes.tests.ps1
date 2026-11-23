@@ -189,5 +189,9 @@ $ro = pwsh -NoProfile -Command ". '$O'; `$f = { param(`$w) [pscustomobject]@{ le
   (Get-KitFlagKey `$x) -eq (Get-KitFlagKey `$y); Test-KitAcked (& `$f `$y) @(`$x); Test-KitAcked (& `$f `$z) @(`$x)
   Test-KitAcked (& `$f 'FAILED TESTING · t9a, t2b, t5c, t1d need a fix round') @('FAILED TESTING · t9a, t2b…'); (Get-KitFlagKey 'ids: a1, b1.') -eq (Get-KitFlagKey 'ids: b1, a1.')"
 Expect "supervise: an ack and the flag key ignore the order of an id list (a period after it too), a changed id flags again, a cut list still acks ($($ro -join ','))" (($ro -join ',') -eq 'True,True,False,True,True')
+# duplicate-task score: a shared wave prefix ("<wave> — ...") is no evidence; the same words after it still match (retro 1709)
+$simT = Invoke-PsTest 'similar' '$null = . $args[0] 6>$null; $script:__trStatus = [ordered]@{ open = @("open") }; function Get-TrackerTasks { @([pscustomobject]@{ id = "A2"; name = "Agents run now panel — cases tools import" }, [pscustomobject]@{ id = "A3"; name = "orders list sort newest first" }) }
+"S1=" + (@(Find-KitSimilarTasks "Agents run now panel — web screen" "L" "" @()).id -join ","); "S2=" + (@(Find-KitSimilarTasks "Agents run now panel — cases tools import" "L" "" @()).id -join ","); "S3=" + (@(Find-KitSimilarTasks "orders list sort newest" "L" "" @()).id -join ",")' @($O)
+Expect "similar tasks: a shared title prefix alone is no duplicate; the same rest and plain titles still are ($($simT -join ' '))" ("$simT" -match 'S1= ' -and "$simT" -match 'S2=A2' -and "$simT" -match 'S3=A3')
 Remove-TestKit $k
 Complete-Tests

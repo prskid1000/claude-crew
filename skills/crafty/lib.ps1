@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L878 status · L1176 tracker · L1494 prior ·
-  L1510 ask bugs · L1696 git-host · L1883 kitlog · L2005 params · L2310 entry-scripts
+  L1513 ask bugs · L1699 git-host · L1886 kitlog · L2008 params · L2313 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1503,8 +1503,11 @@ function Find-KitSimilarTasks([string]$Name, [string]$List, [string]$Parent, [st
   $c = @{}; if (-not $Parent -or $Parent -eq '-') { foreach ($st in @($__trStatus.Keys | Where-Object { $_ -ne 'closed' })) { foreach ($x in @(Get-TrackerTasks $List $st)) { $c["$($x.id)"] = $x } } }
   foreach ($id in @(@($Parent) + @($Related) | Where-Object { $_ -and $_ -ne '-' })) { $v = Get-TrackerTask $id; if ($id -ne $Parent -and $v.name) { $c[$id] = $v }; foreach ($s in @($v.subtasks)) { if (-not (Test-TrackerStatus "$($s.status)" 'closed')) { $c["$($s.id)"] = $s } } }
   $min = [double](Get-KitParam 'tracker.duplicateScore')
+  # a shared title prefix ("<wave> — ...", "[Area] ...") is no duplicate evidence: its words leave both sides (retro 1709: sibling tasks at 0.67)
+  $pfx = { param($t) if ("$t" -match '^(.{3,}?)(\s[—–-]\s|:\s|\]\s)') { "$(@(Get-KitTitleWords $Matches[1]))" } }; $myP = & $pfx $Name
   @(foreach ($x in $c.Values) { if ("$($x.id)" -in $Skip -or "$($x.id)" -eq $Parent) { continue }
-      $w = @(Get-KitTitleWords $x.name); $n = @($w | Where-Object { $_ -in $mine }).Count; $lo = [math]::Max(2, [math]::Min($w.Count, $mine.Count))
+      $w = @(Get-KitTitleWords $x.name); $me2 = $mine; if ($myP -and (& $pfx $x.name) -eq $myP) { $pw = $myP -split ' '; $w = @($w | Where-Object { $_ -notin $pw }); $me2 = @($mine | Where-Object { $_ -notin $pw }) }
+      $n = @($w | Where-Object { $_ -in $me2 }).Count; $lo = [math]::Max(2, [math]::Min($w.Count, $me2.Count))
       if ($n -ge 2 -and $n / $lo -ge $min) { [pscustomobject]@{ id = "$($x.id)"; name = $x.name; score = [math]::Round($n / $lo, 2) } } }) | Sort-Object score -Descending
 }
 # ---- ask bugs: ONE open QA collector [Bug] per ask across agents; each source owns a "[kit:bug:<key>]" section; known signatures = duplicates
