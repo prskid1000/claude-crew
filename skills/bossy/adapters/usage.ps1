@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L358 context · L656 split · L730 budget
+Sections: L9 usage · L358 context · L672 split · L746 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -368,7 +368,7 @@ function Get-KitTranscriptModel([string]$L) {
 }
 # the parser's params, read once per process (a line read them 5 times: half the pass)
 function Get-KitContextParam([string]$Key) { if ($null -eq $script:KitCtxP) { $script:KitCtxP = @{} }; if (-not $script:KitCtxP.ContainsKey($Key)) { $script:KitCtxP[$Key] = [double](Get-KitParam "usage.context.$Key") }; $script:KitCtxP[$Key] }
-function New-KitContextRec { [ordered]@{ off = 0L; n = 0; s0 = 0L; pk = 0L; sum = 0L; last = 0L; cmp = 0; ho = 0; cut = 0; lastId = ''; lastOut = 0L; add = @(0L) * 8; car = @(0L) * 8; live = @(0.0) * 8; pend = @{}; q = @(); rd = @{}; rmax = @(0, ''); w = @(0L) * 6; top = @(); days = @{} } }
+function New-KitContextRec { [ordered]@{ off = 0L; n = 0; s0 = 0L; pk = 0L; sum = 0L; last = 0L; cmp = 0; ho = 0; cut = 0; kpk = 0L; lastId = ''; lastOut = 0L; add = @(0L) * 8; car = @(0L) * 8; live = @(0.0) * 8; pend = @{}; q = @(); rd = @{}; rmax = @(0, ''); w = @(0L) * 6; top = @(); days = @{} } }
 # a tool's category: 0 kit instructions · 1 task input · 2 code reads · 3 kit data · 4 build + test output · 5 other tool output · 6 web + docs
 # (7 = model output: output tokens); tool names of the 3 CLIs; $Key = its path or command
 function Get-KitContextCat([string]$Name, [string]$Key) {
@@ -415,17 +415,18 @@ function Add-KitContextTok($Cx, [int]$Cat, [double]$Tok, [string]$Day) {
 function Add-KitContextCall($Cx, [double]$Ctx, [string]$Day) {
   if ($Ctx -le 0) { return }; $lv = $Cx.live; $rest = 0.0; for ($i = 1; $i -lt 8; $i++) { $rest += [double]$lv[$i] }
   $pre0 = -1L; if (-not [int]$Cx.n) { $pre0 = [long]$Cx.add[0]; $lv[0] = [math]::Max(0.0, $Ctx - $rest); $Cx.add[0] = [long]$lv[0]; $Cx.s0 = [long]$Ctx }
-  elseif (-not [int]$Cx.cut -and [double]$Cx.last -gt (Get-KitContextParam compactMinTokens) -and $Ctx -lt (Get-KitContextParam compactDrop) * [double]$Cx.last) { $Cx.cmp = [int]$Cx.cmp + 1 }
+  elseif (-not [int]$Cx.cut -and [double]$Cx.last -gt (Get-KitContextParam compactMinTokens) -and $Ctx -lt (Get-KitContextParam compactDrop) * [double]$Cx.last) { $Cx.cmp = [int]$Cx.cmp + 1; $lv[0] = [math]::Min([double]$lv[0], [double]$Cx.s0) }   # kit docs read go too
   $lv[0] = [math]::Min([double]$lv[0], $Ctx); $rest = 0.0; for ($i = 1; $i -lt 8; $i++) { $rest += [double]$lv[$i] }
   if ($rest -gt 0) { $f = ($Ctx - [double]$lv[0]) / $rest; for ($i = 1; $i -lt 8; $i++) { $lv[$i] = [double]$lv[$i] * $f } } else { $lv[0] = $Ctx }   # nothing added yet: all start load
   if ($Day -and $null -eq $Cx.days[$Day]) { $Cx.days[$Day] = @(0L) * 17 }; $dv = $null; if ($Day) { $dv = $Cx.days[$Day] }   # the array itself (an if-expression would copy it)
   if ($pre0 -ge 0 -and $dv) { $dv[0] = [long]$dv[0] + [long]$Cx.add[0] - $pre0 }   # the start load counts as added on its day
   for ($i = 0; $i -lt 8; $i++) { $Cx.car[$i] = [long]$Cx.car[$i] + [long]$lv[$i]; if ($dv) { $dv[8 + $i] = [long]$dv[8 + $i] + [long]$lv[$i] } }
   if ($dv -and $Ctx -gt [double]$dv[16]) { $dv[16] = [long]$Ctx }
+  if ([double]$lv[0] -gt [double]$Cx.kpk) { $Cx.kpk = [long]$lv[0] }
   $Cx.n = [int]$Cx.n + 1; $Cx.sum = [long]$Cx.sum + [long]$Ctx; $Cx.last = [long]$Ctx; $Cx.cut = 0; if ($Ctx -gt [double]$Cx.pk) { $Cx.pk = [long]$Ctx }
 }
 # a compaction marker: the start load stays, the rest is gone (the summary comes next as model output)
-function Reset-KitContextLive($Cx) { if (-not [int]$Cx.n -or [int]$Cx.cut) { return }; $Cx.cmp = [int]$Cx.cmp + 1; $Cx.cut = 1; for ($i = 1; $i -lt 8; $i++) { $Cx.live[$i] = 0.0 } }
+function Reset-KitContextLive($Cx) { if (-not [int]$Cx.n -or [int]$Cx.cut) { return }; $Cx.cmp = [int]$Cx.cmp + 1; $Cx.cut = 1; for ($i = 1; $i -lt 8; $i++) { $Cx.live[$i] = 0.0 }; $Cx.live[0] = [math]::Min([double]$Cx.live[0], [double]$Cx.s0) }   # kit docs read mid-run go too
 # a tool result: its tokens + the waste signals: w = [rereads, their tokens, results over usage.context.bigResultTokens, their tokens,
 # build / test results over usage.context.logTokens, their tokens]; rmax = the most re-read file; top = the 3 largest results "tok|cat|label"
 function Add-KitContextResult($Cx, [string]$Pend, [double]$Tok, [string]$Day) {
@@ -521,10 +522,21 @@ function Update-KitContextFile([string]$Path, $Rec, [ref]$Left) {
   if ($cx.days.Count) { $cut = (Get-Date).AddDays(-(Get-KitParam 'usage.keepDays')).ToString('yyyy-MM-dd'); foreach ($dk in @($cx.days.Keys | Where-Object { "$_" -lt $cut })) { $cx.days.Remove($dk) } }
   $Rec
 }
+# kit-instruction tokens in an agent's context now: the kit start (budget.instructions.start, lint-enforced; the harness prompt is not
+# the kit's) + kit docs read since call 1 and still held (a compaction drops them); cached next to the board row ($Cache): a beat reads new bytes only
+function Get-KitInstrLive([string]$File, [string]$Cache) {
+  if (-not $File -or -not (Test-Path -LiteralPath $File)) { return 0 }
+  $rec = $null; if ($Cache -and (Test-Path -LiteralPath $Cache)) { $rec = try { Get-Content -LiteralPath $Cache -Raw | ConvertFrom-Json -AsHashtable -Depth 10 } catch { $null } }
+  if (-not $rec -or "$($rec.file)" -ne $File) { $rec = @{ file = $File; cx = (New-KitContextRec) } }
+  $rec.off = (Get-Item -LiteralPath $File).Length; $left = [long]$rec.off
+  $rec.cx.live = @($rec.cx.live | ForEach-Object { [double]$_ }); $null = Update-KitContextFile $File $rec ([ref]$left)
+  if ($Cache) { try { $rec | ConvertTo-Json -Depth 10 -Compress | Set-Content -LiteralPath $Cache -Encoding utf8 } catch {} }
+  [long]([math]::Max(0.0, [double]@($rec.cx.live)[0] - [double]$rec.cx.s0) + (Get-KitInstrCap 0).start)
+}
 # a step's context numbers from its record: calls, start, peak, sum, compactions, handoff, added / carried per category, waste, rereads, largest
 function Get-KitContextSummary($Cx) {
   if (-not $Cx -or -not [int]$Cx.n) { return $null }
-  [ordered]@{ n = [int]$Cx.n; s0 = [long]$Cx.s0; pk = [long]$Cx.pk; sum = [long]$Cx.sum; last = [long]$Cx.last; cmp = [int]$Cx.cmp; ho = [int]$Cx.ho; agents = 1; pks = [long]$Cx.pk
+  [ordered]@{ n = [int]$Cx.n; s0 = [long]$Cx.s0; pk = [long]$Cx.pk; sum = [long]$Cx.sum; last = [long]$Cx.last; cmp = [int]$Cx.cmp; ho = [int]$Cx.ho; agents = 1; pks = [long]$Cx.pk; kl = [long][math]::Max(0.0, [double]@($Cx.live)[0] - [double]$Cx.s0); kpk = [long]$Cx.kpk
     add = @($Cx.add | ForEach-Object { [long]$_ }); car = @($Cx.car | ForEach-Object { [long]$_ }); w = @($Cx.w | ForEach-Object { [long]$_ })
     rr = @([int]@($Cx.rmax)[0], "$(@($Cx.rmax)[1])"); top = @($Cx.top) }
 }
@@ -611,9 +623,13 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
   $who = { param($s) "$($s.role) $(if ("$($s.label)".Trim()) { $s.label } else { [IO.Path]::GetFileNameWithoutExtension("$($s.tf)") })".Trim() }
   $wl = [Collections.Generic.List[object]]::new()
   foreach ($s in @($ss | Where-Object { & $isLive $_ })) { $c = $s.cx; $w = @($c.w); $nm = & $who $s
-    $b = (Get-KitBudget -Tool $(if ("$($s.tool)" -in 'codex', 'antigravity') { "$($s.tool)" } else { '' }) -Model "$($s.model)").budget
+    $bo = Get-KitBudget -Tool $(if ("$($s.tool)" -in 'codex', 'antigravity', 'local') { "$($s.tool)" } else { '' }) -Model "$($s.model)"; $b = $bo.budget
+    if ($bo.design -lt $b -and [double]$c.last -gt $bo.design) { $wl.Add(@(3, "context: $nm past the $(& $f $bo.design) design window", "at $(& $f $c.last) (the model holds $(& $f $b)): why? a long phase, big reads or no handoff; the kit sizes one agent to fit $(& $f $bo.design)")) }
     # what = stable per agent (the flag key: Get-KitFlagKey keeps 412k as is), the moving numbers in the action
     $pw = [double](Get-KitParam 'usage.context.peakWatch'); if ($b -and [double]$c.last -gt $pw * $b) { $wl.Add(@(3, "context: $nm over $([math]::Round(100 * $pw))% of its budget", "at $(& $f $c.last) of $(& $f $b): hand it off now (crafty.ps1 checkpoint -Brief, a fresh agent: README Budget); bossy.ps1 usage -Context -Agent <its label>")) }
+    $ic = Get-KitInstrCap $b; $kl = [long]$c.kl + $ic.start   # kit docs held + the kit start
+    if ($kl -gt $ic.cap) { $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $nm holds kit instructions over the cap"; action = "$(& $f $kl) of cap $(& $f $ic.cap): its next board beat prints HANDOFF itself (checkpoint, fresh agent with its phase's instructions); no beat within 2 heartbeats: board msg it to hand off now" }) }
+    elseif ($kl -gt $ic.watch) { $wl.Add(@(2, "context: $nm kit instructions near the cap", "$(& $f $kl) of cap $(& $f $ic.cap): reads whole skills or references; tell it to read only the section its step names")) }
     if ([int]@($c.rr)[0] -ge $rrW) { $wl.Add(@(2, "context: $nm re-reads $([IO.Path]::GetFileName("$(@($c.rr)[1])"))", "$(@($c.rr)[0])x, $(& $f $w[1]) tokens re-read: tell it to note what it needs from that file once, or read a range (offset / limit)")) }
     $t0 = "$(@($c.top)[0])" -split '\|', 3; if ([double]$t0[0] -gt $big) { $wl.Add(@(1, "context: $nm took an oversized result ($($t0[2]))", "$(& $f $t0[0]) tokens in one result: narrow that call (a range, a filter, the failure lines only)")) }
     if ([long]$w[4]) { $wl.Add(@(1, "context: $nm pasted full build / test logs", "$($w[4]) log(s), $(& $f $w[5]) tokens: read only the failing tests and errors (crafty.ps1 check prints them; the full log stays in its file)")) }
@@ -728,12 +744,21 @@ function Format-KitLegend([string]$Keys, [string]$Info = '') {
 }
 
 # ---- budget: a tool + model's token budget (compaction point), its handoff and run-stop fractions (README "Configuration")
-function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0) {
+# the kit-instruction cap of a budget window: min(cap, capPct x window); watch = watchAt x it (a 32k local model: 12k, 9.6k)
+function Get-KitInstrCap([double]$Window) {
+  $ei = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget.instructions
+  $cap = [double](Get-KitSetting 'budget.instructions.cap' $ei.cap); $pct = [double](Get-KitSetting 'budget.instructions.capPct' $ei.capPct)
+  if ($Window -gt 0 -and $pct -gt 0) { $cap = [math]::Min($cap, $pct * $Window) }
+  $st = [double](Get-KitSetting 'budget.instructions.start' $ei.start); $cap = [math]::Max($cap, $st + [double](Get-KitSetting 'budget.instructions.skillAlways' $ei.skillAlways))   # a small window still holds the kit start + one skill
+  [pscustomobject]@{ start = [int]$st; cap = [int]$cap; watch = [int]($cap * [double](Get-KitSetting 'budget.instructions.watchAt' $ei.watchAt)) }
+}
+function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Role = '') {
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
   $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { (Get-KitMember $ex.defaults $n) } }
   $envs = @(Get-ChildItem env: | ForEach-Object Name)
   if (-not $Tool) {
-    $Tool = if ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' }
+    $Tool = if ($Model -match '^local/') { 'local' }
+    elseif ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' }
     elseif ($Model -match '^gpt') { 'codex' }
     elseif ($Model -match '^gemini') { 'antigravity' }
     elseif ($v = $env:KIT_TOOL) { $v }
@@ -766,7 +791,17 @@ function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0
       $tok = [int]($w * [double](& $row $n).fraction)
     }
   } elseif ($Tool -eq 'antigravity') { $n = 'antigravity'; $tok = if ($Window) { [int]($Window * [double](& $row $n).fraction) } else { [int](& $row $n).tokens } }   # no window known (board join): the row's tokens
+  elseif ($Tool -eq 'local') { $n = 'local'; $tok = [int](& $row $n).tokens   # the server's context: llama.cpp LLAMA_ARG_CTX_SIZE (-c), Ollama OLLAMA_CONTEXT_LENGTH
+    if ($Window) { $tok = $Window; $src = 'window given' } elseif ($v = $env:LLAMA_ARG_CTX_SIZE) { $tok = [int]$v; $src = 'llama n_ctx (LLAMA_ARG_CTX_SIZE)' } elseif ($v = $env:OLLAMA_CONTEXT_LENGTH) { $tok = [int]$v; $src = 'ollama OLLAMA_CONTEXT_LENGTH' } }
   if (-not $tok) { $n = 'unknown'; $tok = [int](& $row $n).tokens }
-  $h = [double](Get-KitSetting 'budget.handoffAt' $ex.handoffAt)
-  [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = [int]($tok * $h); handoffAt = $h; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $(if ($src) { $src } else { (& $row $n).source }) }
+  if (-not $src) { $src = (& $row $n).source }
+  # handoff = whichever comes first (owner 2026-11-23): handoffAt x the tool's own cap, or the kit's budget for the role (budget.agentCap.<role>,
+  # else .default; 0 = none); design window = min(budget.window, the tool's cap): instruction cap and the WATCH past it (optimise for 200k)
+  $win = [int](Get-KitSetting 'budget.window' $ex.window); if ($win -le 0) { $win = [int]$ex.window }; $dw = [int][math]::Min($win, $tok)
+  $h = [double](Get-KitSetting 'budget.handoffAt' $ex.handoffAt); $ho = [int]($tok * $h); $by = "$n $h x ($src)"
+  $rv = if ($Role) { Get-KitSetting "budget.agentCap.$Role" (Get-KitMember $ex.agentCap $Role) }   # a role's 0 = none, even over a default
+  $kc = if ($null -ne $rv) { [int]$rv } else { [int](Get-KitSetting 'budget.agentCap.default' $ex.agentCap.default) }
+  if ($kc -gt 0 -and $kc -lt $ho) { $ho = $kc; $by = "kit budget $(if ($null -ne $rv) { $Role } else { 'default' })" }
+  $ic = Get-KitInstrCap $dw
+  [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = $ho; capBy = $by; handoffAt = $h; design = $dw; instrCap = $ic.cap; instrWatch = $ic.watch; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $src }
 }

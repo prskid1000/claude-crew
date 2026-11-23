@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L37 paths · L126 state · L183 kitlog · L282 load · L704 lint · L1106 README graph · L1213 lint command · L1489 audit ·
-  L1637 registry · L1969 arch lint · L2236 prose · L2401 sections · L2531 budget · L2545 migrate · L2706 plugins ·
-  L2760 state lint · L2948 main
+Sections: L37 paths · L126 state · L183 kitlog · L282 load · L722 lint · L1130 README graph · L1237 lint command · L1513 audit ·
+  L1661 registry · L1993 arch lint · L2260 prose · L2425 sections · L2555 budget · L2571 migrate · L2732 plugins ·
+  L2786 state lint · L2974 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -320,7 +320,25 @@ def start_rows(k):
         own = ftok(f'agents/{agent}.md') + (ftok(f'skills/{skill}/SKILL.md') if skill else 0) + sum(section_tok(x) for x in {agent, skill} if x)
         rows.append((agent, always, own))
     return rows
-# token budgets (UTF-8 bytes / 4), README "Extending"
+def instr_cap(kdir, key='cap', dflt=75000):
+    """budget.instructions.<key> of kit.example.json: cap = kit-instruction tokens one agent may hold (75k at the 200k design
+    window), start = a role's kit files at start (START-BUDGET), skillAlways = a SKILL.md (BUDGET skill)."""
+    try:
+        return int(json.loads(read(osp.join(kdir, PATHS_JSON)))['budget']['instructions'][key])
+    except Exception:
+        return dflt
+
+def read_rows(k, sizes):
+    """[(role, start + required reads, largest reads)]: the worst case of one run: its start, every doc of its skill folder
+    and templates.md (lint READ-BUDGET)."""
+    rows = []
+    for role, always, own in start_rows(k):
+        skill = (manifest(k.dir).get('agents') or {}).get(role, {}).get('skill') or ''
+        docs = {f: n for f, n in sizes.items() if skill and f.startswith(f'skills/{skill}/') and f.endswith('.md') and not f.endswith('SKILL.md')}
+        docs['skills/crafty/templates.md'] = sizes.get('skills/crafty/templates.md', 0)
+        rows.append((role, always + own + sum(docs.values()), [f for f, _ in sorted(docs.items(), key=lambda x: -x[1])]))
+    return rows
+# token budgets (UTF-8 bytes / 4), README "Extending"; skill = its always-part (budget.instructions.skillAlways): the rest in references
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
   'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 9500, 'tests': 9000}
 
@@ -884,11 +902,17 @@ def lint(k, g=None, org_terms=None):
          f'.github/*, settings.json): {", ".join(plumbing)}')
     # ---- token budgets: per role at start, per file type
     for role, always, own in start_rows(k):
-        if always + own > START_CAP:
+        if always + own > instr_cap(k.dir, 'start', START_CAP):
             bad('START-BUDGET', f'agents/{role}.md', f'{role} loads {always + own} tokens at start (always-loaded {always} + own {own}; cap '
                 f'{START_CAP}): move detail behind a pointer (a doc its skill names at the step that needs it)')
     sizes = {f: size_tokens(k.dir, f) for f in counted}
-    over = [(f, n, BUDGETS[b]) for f, n in sizes.items() if (b := budget_type(f)) and n > BUDGETS[b]]
+    icap = instr_cap(k.dir)
+    for role, total, reads in read_rows(k, sizes):
+        if total > icap:
+            bad('READ-BUDGET', f'agents/{role}.md', f'{role} start + every doc its skill can read = {total} tokens (cap {icap}, '
+                f'budget.instructions.cap): split a reference so a step reads only its section ({", ".join(reads[:4])})')
+    caps_t = {**BUDGETS, 'skill': instr_cap(k.dir, 'skillAlways', BUDGETS['skill'])}
+    over = [(f, n, caps_t[b]) for f, n in sizes.items() if (b := budget_type(f)) and n > caps_t[b]]
     always = sum(sizes.get(f, 0) for f in ('CLAUDE.md', 'AGENTS.md') + tuple(f for f in counted if re.match(r'rules/[^/]+\.md$', f) and 'paths' not in frontmatter(k.texts.get(f, ''))))
     if always > BUDGETS['always']:
         over.append(('always-loaded (CLAUDE.md + AGENTS.md + rules)', always, BUDGETS['always']))
@@ -2536,9 +2560,11 @@ def cmd_budget(a):
         print(cmd_budget.__doc__, file=sys.stderr)
         return 2
     k = load(KIT_DIR)
+    sizes = {f: size_tokens(KIT_DIR, f) for f in counted_files(KIT_DIR)}
+    reads = {r: t for r, t, _ in read_rows(k, sizes)}
     for role, always, own in start_rows(k):
-        print(f'{role:8} start {always + own:6} of {START_CAP} (always-loaded {always} + own {own})')
-    total, tests = split_total({f: size_tokens(KIT_DIR, f) for f in counted_files(KIT_DIR)})
+        print(f'{role:8} start {always + own:6} of {START_CAP} (always-loaded {always} + own {own}) · with every read {reads.get(role, 0)} of {instr_cap(KIT_DIR)}')
+    total, tests = split_total(sizes)
     print(f'INFO repo total {total} tokens · tests {tests} (no cap: agents load per role, then through pointers)')
     return 0
 

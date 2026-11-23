@@ -9,8 +9,8 @@ Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L16 builds · L60 supervise · L363 shells · L542 page · L1050 release · L1095 lines · L1127 cleanup · L1194 launch ·
-  L1311 pause · L1430 heartbeat · L1445 sessions · L1497 ci tasks ·
-  L1555 the kit origin's default branch (kitBranch, else origin/HEAD)
+  L1311 pause · L1430 heartbeat · L1445 sessions · L1504 ci tasks ·
+  L1562 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1492,6 +1492,13 @@ function Get-KitStepAgeHandoff($Me, [string]$Session) {
   $ck = Get-KitCheckpoint $Me.agent "$($Me.run)"; if (-not $ck.updated -or $ck.done) { return }   # agents that checkpoint their steps only
   $from = [datetimeoffset]$Me.joined; if ([datetimeoffset]$ck.updated -gt $from) { $from = [datetimeoffset]$ck.updated }   # the step since the last checkpoint (a resumed agent rejoins: joined)
   $age = ([datetimeoffset](Get-Date) - $from).TotalHours; if ($age -ge $h) { Get-KitHandoffLine $Me $Session ('one step running {0:0.0} h >= budget.stepHours {1}' -f $age, $h) }
+}
+# kit instructions held (owner 2026-11-23): over the cap = HANDOFF (a fresh agent loads only its phase's instructions), over watchAt = WATCH;
+# the cap scales with the agent's window (Get-KitInstrCap); $Cache keeps the parse offset between beats
+function Get-KitInstrHandoff($Me, [string]$Session, [string]$Transcript, [string]$Cache) {
+  $ic = Get-KitInstrCap $(if ($Me.budget) { [double]$Me.budget } else { (Get-KitBudget).budget }); $ki = try { Get-KitInstrLive $Transcript $Cache } catch { 0 }   # a parse error never breaks a beat
+  if ($ki -gt $ic.cap) { Get-KitHandoffLine $Me $Session "kit instructions in context $ki > cap $($ic.cap)" }
+  elseif ($ki -gt $ic.watch) { "WATCH: kit instructions in context $ki of cap $($ic.cap): read only the section a step names, never a whole skill or reference again" }
 }
 
 # ---- ci tasks: test-only tasks a CI job raised, closed by bossy.ps1 track run once that job passes again

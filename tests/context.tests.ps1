@@ -63,6 +63,26 @@ Expect "context codex: added kit (start), task 250, code 1500, build 3500 (a log
 Expect "context antigravity: model from the switch line, tokens in 11000 out 400 cache read 5000, 2 calls, start 10k, a checkpoint = a compaction, view_file = code, mvn = build ($($r[2]))" ($c3[0] -eq 'gemini-3.5-flash' -and $c3[1] -eq '11000/400/5000' -and $c3[2] -eq '2' -and $c3[3] -eq '10000' -and $c3[5] -eq '1' -and $c3[7] -match '^\d+,\d+,20\d\d,0,39\d\d,0,0,\d+$')
 Expect "time split: Codex and Antigravity record model and tool time (was Claude-only) ($($c2[11]) $($c3[11]))" ([int]($c2[11] -split '/')[0] -gt 0 -and [int]($c3[11] -split '/')[0] -gt 0)
 Expect "spend: an Antigravity agent's last call = input + cache read + output (6100); its budget without a window = 800k (antigravity row) ($($r[3]) $($r[4]))" ($r[3] -eq 'spend 6100' -and $r[4] -eq 'budget 800000 antigravity')
+# budget (owner 2026-11-23): handoff = whichever first, handoffAt x the tool's cap or the kit's role budget; design window = min(200k, the cap)
+$bu = Invoke-PsTest ctx-budget @'
+$null = . $args[0] 6>$null; $o = { param($b) "$($b.handoff)|$($b.design)|$($b.instrCap)|$($b.capBy)" }
+& $o (Get-KitBudget -Tool local -Window 1000000 -Role devy); & $o (Get-KitBudget -Tool local -Window 200000); & $o (Get-KitBudget -Tool local -Window 32000)
+$__cfg = [pscustomobject]@{ budget = [pscustomobject]@{ agentCap = [pscustomobject]@{ devy = 400000 } } }; & $o (Get-KitBudget -Tool local -Window 1000000 -Role devy); & $o (Get-KitBudget -Tool local -Window 1000000 -Role checky)
+$__cfg = $null; $env:OLLAMA_CONTEXT_LENGTH = '65536'; & $o (Get-KitBudget -Tool local)
+$x = [IO.Path]::Combine($args[1], 'big.jsonl'); [IO.File]::WriteAllText($x, '{"type":"user","message":{"content":"' + ('w' * 40000) + '"}}' + "`n"); "est $((Get-KitSpend $x).spend) $((Get-KitSpend $x).estimated)"
+# the beat: a 15k start (harness + kit) at a 32k window is no handoff (kit start 12k counted, cap floor 15.2k); a 5k kit doc read on top is
+$tr = [IO.Path]::Combine($args[1], 'ki.jsonl'); [IO.File]::WriteAllText($tr, '{"type":"assistant","timestamp":"2026-01-02T09:00:00Z","message":{"id":"m1","usage":{"input_tokens":15000,"output_tokens":10},"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/k/.claude/skills/x/SKILL.md"}}]}}' + "`n")
+$me = [pscustomobject]@{ agent = 'devy-x'; run = 'r1'; budget = 32000 }; $cc = [IO.Path]::Combine($args[1], 's1.cx'); "ki $(Get-KitInstrHandoff $me 's1' $tr $cc)"
+[IO.File]::AppendAllText($tr, '{"type":"user","timestamp":"2026-01-02T09:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"' + ('x' * 20000) + '"}]}}' + "`n" + '{"type":"assistant","timestamp":"2026-01-02T09:00:02Z","message":{"id":"m2","usage":{"input_tokens":20000,"output_tokens":10},"content":[]}}' + "`n")
+"ki1 $(Get-KitInstrHandoff $me 's1' $tr $cc)"; $me.budget = 200000; "ki2 $(Get-KitInstrHandoff $me 's1' $tr $cc)|$(Test-Path $cc)"
+$__cfg = [pscustomobject]@{ budget = [pscustomobject]@{ agentCap = [pscustomobject]@{ default = 300000; devy = 0 } } }; & $o (Get-KitBudget -Tool local -Window 1000000 -Role devy); & $o (Get-KitBudget -Tool local -Window 1000000 -Role checky)
+$__cfg = $null; $env:OLLAMA_CONTEXT_LENGTH = ''; $env:LLAMA_ARG_CTX_SIZE = '16384'; & $o (Get-KitBudget -Tool local)
+'@ @($O, (Kd))
+Expect "board beat: a 15k start at a 32k window is no handoff (harness not counted); a 5k kit doc read on top -> HANDOFF over the 15.2k cap; at 200k (cap 75k) nothing; parse cached ($($bu[7..9] -join ' / '))" ($bu[7] -eq 'ki ' -and $bu[8] -match '^ki1 HANDOFF: kit instructions in context 1[67]\d{3} > cap 15200' -and $bu[9] -eq 'ki2 |True')
+Expect "budget: a role's 0 turns off a 300k default (800k), another role gets the default (kit budget default); llama.cpp n_ctx read ($($bu[10..12] -join ' / '))" ($bu[10] -like '800000|*' -and $bu[11] -eq '300000|200000|75000|kit budget default' -and $bu[12] -like '13107|16384|15200|local 0.8 x (llama n_ctx*')
+Expect "budget: 1M -> handoff 800k (no kit cap), 200k -> 160k, 32k local -> 25.6k, design 32k, instruction cap floor 15.2k ($($bu[0..2] -join ' / '))" ($bu[0] -eq '800000|200000|75000|local 0.8 x (window given)' -and $bu[1] -like '160000|200000|75000|*' -and $bu[2] -like '25600|32000|15200|*')
+Expect "budget: kit role cap 400k wins over 800k (shown: kit budget devy), another role keeps 800k; Ollama's context length read ($($bu[3..5] -join ' / '))" ($bu[3] -eq '400000|200000|75000|kit budget devy' -and $bu[4] -like '800000|*' -and $bu[5] -like '52429|65536|24576|local 0.8 x (ollama OLLAMA_CONTEXT_LENGTH)')
+Expect "spend: a transcript without usage fields (a local model) is estimated from its text, bytes / 4 ($($bu[6]))" ($bu[6] -match '^est 100\d\d True$')
 
 # Get-KitUsage walks all 3 CLIs (tests: KIT_TRANSCRIPTS_<TOOL>), steps carry the summary; the day rows the mix; usage -Context text + JSON
 $tx = New-Item -ItemType Directory -Force (Join-Path (Kd) 'tx/s1/subagents'); Copy-Item "$fx/claude.jsonl" "$tx/agent-d1.jsonl"; '{"agentType":"devy","description":"build A1"}' | Set-Content "$tx/agent-d1.meta.json"
@@ -83,6 +103,7 @@ $fl = Invoke-PsTest ctx-flags @'
 $null = . $args[0] 6>$null; $env:KIT_PARAM_USAGE_CONTEXT_STARTNORM = '10000'; $now = Get-Date
 $cx = { param([long]$s0, [long]$last, [int]$rr, [long]$log, [string]$top) [pscustomobject]@{ n = 9; s0 = $s0; pk = $last; sum = 9 * $last; last = $last; cmp = 0; ho = 0; agents = 1; pks = $last; add = @(0) * 8; car = @(1) * 8; w = @(0, 0, 0, 0, [int][bool]$log, $log); rr = @($rr, '/w/app/big.java'); top = @($top) } }
 $live = [pscustomobject]@{ label = 'build:A1'; role = 'devy'; run = 'r1'; model = 'claude-sonnet-5-5'; result = 'running'; at = $now.ToString('o'); cx = (& $cx 40000 900000 4 9000 '20000|4|Bash pwsh crafty.ps1 check -Dir /w/app') }
+$live.cx | Add-Member kl 68000   # kit docs held; + the 12k kit start = 80k
 $e1 = [pscustomobject]@{ label = 'build:A2'; role = 'devy'; run = 'r2'; result = 'pass'; at = $now.AddHours(-2).ToString('o'); tf = '/t/a2.jsonl'; cx = (& $cx 30000 50000 3 5000 '12000|4|Bash pwsh crafty.ps1 check -Dir /w/b') }
 $e2 = [pscustomobject]@{ label = 'build:A3'; role = 'devy'; run = 'r3'; result = 'pass'; at = $now.AddHours(-3).ToString('o'); tf = '/t/a3.jsonl'; cx = (& $cx 31000 60000 1 0 '9000|4|Bash pwsh crafty.ps1 check -Dir /w/c') }
 $f = @(Get-KitContextFlags @($live, $e1, $e2) $now -Observe); $f | ForEach-Object { "$($_.level) $($_.what) => $($_.action)" }
@@ -92,6 +113,7 @@ $sf = Join-Path (Get-KitPath cache) 'context-norm-seen.json'; $n1 = @((Get-Conte
 '@ @($O)
 $fj = $fl -join "`n"
 Expect "context WATCH (live agent): near its budget (900k of 967k), a file read 4x, one 20k result, a pasted build log, a start over 1.5x its type's norm ($fj)" ($fj -match 'WATCH context: devy build:A1 over 75% of its budget => at 900k of 967k: hand it off' -and $fj -match 'WATCH context: devy build:A1 re-reads big\.java => 4x' -and $fj -match 'WATCH context: devy build:A1 took an oversized result \(Bash pwsh crafty\.ps1 check -Dir /w/app\) => 20k tokens' -and $fj -match 'WATCH context: devy build:A1 pasted full build / test logs => 1 log' -and $fj -match 'WATCH context: devy build:A1 start load over its type''s norm => started at 40k vs the devy norm 10k' -and $fj -match 'flag keys stable True')
+Expect "context: a live agent at 900k is past the 200k design window (WATCH: why?) and holds 80k kit instructions over the 75k cap (ACT: its beat hands off) ($fj)" ($fj -match 'WATCH context: devy build:A1 past the 200k design window => at 900k' -and $fj -match 'ACT context: devy build:A1 holds kit instructions over the cap => 80k of cap 75k: its next board beat prints HANDOFF')
 Expect "context ACT (2+ agents): the same oversized build output -> a kitty task with the fix, logs pasted by 2 agents, devy start load over its norm in 2 ended agents; ended agents' starts observed once each ($fj)" ($fj -match 'ACT context: build \+ test output results over 8000 tokens in 3 agents => Spawn kitty \(kind fix\): trim build / test output.*top: Bash pwsh 3; roles devy' -and $fj -match 'ACT context: full build / test logs pasted by 2 agents' -and $fj -match 'ACT context: devy start load over 1\.5 x its norm in 2 agents' -and $fj -match 'ACT context: 2 agents re-read one file 3\+ times' -and $fj -match 'seen 2 2')
 # one ACT per source class (before: one per file, 15 a beat): two big files of one class in 4 ended agents -> one line, both files named
 $cg = Invoke-PsTest ctx-class @'

@@ -94,11 +94,12 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 | claude-200k | 167000 | conservative 83.5% of 200k (docs: at the limit) |
 | codex | 0.9 x window | 0.9 x the models_cache.json window; auto_compact_token_limit wins |
 | antigravity | 800000 | unverified: 0.8 x the model window (no window: 0.8 x a 1M Gemini window) |
+| local | 32000 | a locally served model (llama.cpp -c, Ollama num_ctx): set tokens to its context; KIT_TOOL=local or a model id under local/ |
 | unknown | 160000 | 0.8 x 200k |
 <!-- kit-graph:end -->
 
-Context = start load + every kept result, re-sent each call; the 80% handoff is a context size (WATCH past `usage.context.peakWatch`,
-75%); `bossy.ps1 usage -Context [-Type <role>] [-Since 24h]` measures it.
+Handoff: the first of 80% x the tool's cap and `budget.agentCap.<role>`; kit sized to
+min(`budget.window`, the cap) (past: WATCH); instructions over `budget.instructions.cap`: handoff.
 <!-- kit-graph:start flow-context -->
 ```mermaid
 flowchart LR
@@ -323,7 +324,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `watch` | {"windows": ["15m", "2h", "24h"], "rising": {"factor": 3, "hits": 10}} | watchy after a deploy: windows = one-shot timers (default 15m, 2h, 24h; bossy E15); rising = a signature at factor x its baseline and at least hits (default 3, 10) |
 | `pool` | {"size": 10} | Worktree pool (crafty SKILL.md Worktrees): size = slots per repo (default 10; repos[].poolSize per repo, 0 = no pool: wt new), created on lease, never deleted; warm = free slots kept made (default 2; repos[].poolWarm); sync.everyMinutes (60): supervise runs wt pool -Sync (fetch, fast-forward, prune, idle slots at origin/&lt;target&gt;); names: the n-th member of every pool (slot, env lane, phone lane), default birds Falcon, Kestrel, Osprey, ... |
 | `params` | {"learning": "on", "shadowDays": 14} | Tunables (param show; keys: params.registry.json) learn both ways per machine (.state/params.json) from the default within default/4..x4: a failure (timeout, OOM, short: holder back past grace, handoff, 2+ new ACTs a sweep) steps safe next use (x1.5 or the need); risky steps &lt;= 10%/day after 5 new samples, none 7 d after a failure; shadowDays: shown, then used; past 2x default: param approve (owner). kit.local.json value = pin; learning on / shadow / off. |
-| `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "stepHours": 2, "prices":… | Budget = an agent tool's compaction point: handoff at handoffAt x it or a step &gt; stepHours (0: off); run cap = planned budgets: estimate &gt; runStopAt x cap refused (split), at it no new item; defaults.&lt;tool&gt;: its compaction point (tokens or fraction, source; README Budget and handoff); estimate per agent, item |
+| `budget` | {"window": 200000, "agentCap": {"_readme": "the kit's own handoff… | Budget = an agent tool's compaction point: handoff at handoffAt x it or a step &gt; stepHours (0: off); run cap = planned budgets: estimate &gt; runStopAt x cap refused (split), at it no new item; defaults.&lt;tool&gt;: its compaction point (README Budget and handoff); estimate per agent, item |
 <!-- kit-graph:end -->
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
 `KIT_REPORT_TYPE`, `KIT_NET_TIMEOUT_SEC` / `KIT_NET_TRIES` / `KIT_NO_OUTBOX`, `CHROME_PATH`; adapters name theirs (file header).

@@ -31,9 +31,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L39 init · L50 board · L229 budget · L259 launch · L500 recover · L587 pause · L598 resume · L665 program · L716 param ·
-  L722 track · L1109 supervise · L1449 report · L1529 audit · L1589 storage · L1592 bugbrief · L1706 cleanup · L1793 learn ·
-  L1825 decide · L1979 debate · L2023 health · L2091 setup · L2188 guard-sendmessage
+Sections: L39 init · L50 board · L230 budget · L260 launch · L501 recover · L588 pause · L599 resume · L666 program · L717 param ·
+  L723 track · L1110 supervise · L1450 report · L1530 audit · L1590 storage · L1593 bugbrief · L1707 cleanup · L1794 learn ·
+  L1826 decide · L1980 debate · L2024 health · L2092 setup · L2189 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -134,7 +134,7 @@ switch ($Action) {
     }
     $me = [ordered]@{ agent = $Agent; type = $(if ($Type) { $Type } else { "$env:CLAUDE_AGENT_TYPE" }); session = $tok; run = $Run; area = $Area; items = (@($Items) -join ','); worktrees = @(Split-KitList $Worktrees); contracts = $Contracts
                       status = 'working'; joined = $joined; beat = $now.ToString('o'); pid = $PID; pidStart = (Get-KitPidStart $PID) } + (Get-KitHolder)
-    $bg = Get-KitBudget -Tool $Tool -Model $Model; $me += [ordered]@{ tool = $bg.tool; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; spend = 0 }
+    $bg = Get-KitBudget -Tool $Tool -Model $Model -Role $me.type; $me += [ordered]@{ tool = $bg.tool; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; capBy = $bg.capBy; spend = 0 }
     $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { Write-KitState $mf $me }
     $ho = @(Get-KitHandoffs 1e6 $tok | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" } | Sort-Object { [datetime]$_.beat } -Descending)[0]
     if ($ho) { Update-BoardEntry $ho.file { param($x) $x | Add-Member -Force NoteProperty continuedBy $tok; $x }; "CONTINUE: the previous $Agent handed off at its budget: read its resume brief $($ho.handoffBrief) first" }
@@ -150,7 +150,7 @@ switch ($Action) {
     if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" } }
     $c = if ($Contracts) { $Contracts } else { (Active | Where-Object { $_.run -eq $Run -and $_.contracts } | Select-Object -First 1).contracts }
     if ($c -and (Test-Path $c)) { "CONTRACTS ($c) - re-read before every push:"; Get-Content $c | Select-Object -First 60 | ForEach-Object { "  $_" } }
-    "budget: $($bg.tool) $(if ($bg.model) { $bg.model } else { '(default model)' }) $($bg.budget) tokens, handoff at $($bg.handoff) ($($bg.row): $($bg.source)); every beat prints the spend"
+    "budget: $($bg.tool) $(if ($bg.model) { $bg.model } else { '(default model)' }) $($bg.budget) tokens, handoff at $($bg.handoff) ($($bg.capBy)); instructions cap $($bg.instrCap)"
     "SESSION $tok   (pass -Session $tok to beat / check / leave)"
   }
   'beat' {
@@ -163,11 +163,12 @@ switch ($Action) {
     $tf = if ($me.transcript) { $me.transcript } elseif ($rt -and -not ($me.txTry -and ((Get-Date) - [datetime]$me.txTry).TotalMinutes -lt (Get-KitParam 'board.transcriptRetryMinutes'))) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty txTry (Get-Date).ToString('o'); $x }; Find-KitTranscript "(pass -Session $Session to beat" $rt.filter $rt.dir }; $sp = Get-KitSpend $tf
     if ($tf -and -not $sp -and -not $me.transcript) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty transcript $tf; $x } }   # Codex / Antigravity: no usage lines
     if ($sp) {
-      $bg = if ($sp.model -and $sp.model -ne $me.model) { Get-KitBudget -Model $sp.model } else { [pscustomobject]@{ budget = $me.budget; handoff = $me.handoff; model = $me.model } }
+      $bg = if ($sp.model -and $sp.model -ne $me.model) { Get-KitBudget -Model $sp.model -Role $me.type } else { [pscustomobject]@{ budget = $me.budget; handoff = $me.handoff; model = $me.model; capBy = $me.capBy } }
       Update-BoardEntry $f { param($x) foreach ($p in @{ transcript = $tf; spend = $sp.spend; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff }.GetEnumerator()) { $x | Add-Member -Force NoteProperty $p.Key $p.Value }; $x }
-      "budget: spend $($sp.spend) / $($bg.budget) (handoff at $($bg.handoff))"
+      "budget: spend $($sp.spend) / $($bg.budget) (handoff at $($bg.handoff): $($bg.capBy))"
       if ($bg.handoff -and $sp.spend -ge $bg.handoff) { $ho = Get-KitHandoffLine $me $Session "spend $($sp.spend) >= $($bg.handoff)" }
     }
+    if (-not $ho -and $tf) { $ih = Get-KitInstrHandoff $me $Session $tf "$f.cx"; if ("$ih" -like 'HANDOFF*') { $ho = $ih } else { $ih } }
     if (-not $ho) { $ho = Get-KitStepAgeHandoff $me $Session }; $ho   # past budget.stepHours: a fresh agent from the checkpoint
     try { $null = Invoke-KitStorageTick } catch {}
     foreach ($m in @(Read-KitInboxNew $me.agent)) { "MESSAGE (follow it; a rule holds for the rest of your run): $m" }
@@ -257,7 +258,7 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 }
 
 # ---- launch: records for resume after a restart
-# a workflow's config (CONFIG line of launch -Self; workflows read no files): models.<phase>, repos[].role by name + alias, qa.lanes
+# a workflow's config (CONFIG line of launch -Self): models.<phase>, repos[].role by name + alias, qa.lanes
 function Get-KitWorkflowConfig {
   $roles = [ordered]@{}
   foreach ($r in @(Get-KitSetting 'repos' @())) { if ($r.role) { foreach ($n in @(@($r.name) + @($r.aliases) | Where-Object { $_ })) { $roles["$n".ToLower()] = "$($r.role)".ToLower() } } }
@@ -970,7 +971,7 @@ switch ($Action) {
       if ($o.holdPromotion -and ($rl = Clear-KitStaleHold $o) -and -not $Quiet) { $rl }
       if ($o.holdPromotion -and ($hp = HeldPast $o)) { if (-not $Quiet) { $hp }; continue }
       if ($o.holdPromotion) { Hold "HOLD $($o.task): promotion held ($($o.holdPromotion)); release: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
-      # track route: the fix lands in another task's or run's MRs; new ones join this task (Items checklist) and promote it when merged
+      # track route: the fix lands in other MRs; new ones join this task and promote it when merged
       if (@($o.routes | Where-Object { $_ }).Count) {
         $rtOff = @(@($o.removed) | ForEach-Object { "$($_.mr)" }) + @($o.routes | ForEach-Object { @($_.base) })
         $rtNew = @($o.routes | ForEach-Object { RouteRefs $_ } | Where-Object { $_ -notin $rtOff -and @($o.mrs) -notcontains $_ } | Select-Object -Unique)
@@ -1108,7 +1109,7 @@ function Invoke-Status([switch]$Watch, [int]$Seconds = 30, [switch]$Json, [strin
 function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.completed -and $_.runId } | ForEach-Object runId) }
 # ---- supervise: coordinator heartbeat (FLAGS ACT / WATCH / INFO)
 # coordAt on disk as text: a session that stepped aside mid-sweep stamped it (ConvertFrom-Json makes a DateTime)
-# the last sweep (step-aside, OS timer): the lock's start while its pwsh still runs, else the last finished report (a dead or hung sweep's lock never counts)
+# the last sweep: the lock's start while its pwsh runs, else the last finished report (a dead or hung sweep's lock never counts)
 function Get-KitLastSweepAt { $h = try { Read-KitText (Join-Path (Get-KitPath cache -Create) 'supervise.lock') | ConvertFrom-Json -AsHashtable } catch { $null }
   $ra = try { (Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json -AsHashtable).report.at } catch { $null }
   # a live pid (a reused one started later never counts): its start or, a long-lived host, the report it finished since
@@ -1137,7 +1138,7 @@ Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
   $myHolder = Get-KitHolder   # only a live other process blocks (not a restart or a dead holder)
   $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
-  # report never much over a beat old: the OS timer ticks every osTimerTickMinutes and sweeps once the last sweep (its own too) is a beat old, a session skips one under half a beat
+  # report at most ~a beat old: the OS timer ticks every osTimerTickMinutes, sweeps once the last sweep is a beat old; a session skips one under half a beat
   $lsa = Get-KitLastSweepAt; $agoMin = if ($lsa) { ((Get-Date) - $lsa).TotalMinutes } else { 1e9 }; $asideMin = if ($me -eq 'os-timer') { Get-KitOsBeatAsideMinutes } else { (Get-KitBeatMinutes) * 0.5 }
   if (-not $Takeover -and ($other -or $me -eq 'os-timer') -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"
     # a session that skips still beats: health OVERDUE reads coordAt
@@ -1270,7 +1271,7 @@ $nAct = [math]::Max($active.Count, @(Get-KitLiveTranscripts $now 10 '*').Count) 
 Phase 'memory'; $mem = Get-SysMem; $pct = [int](100 * (1 - $mem.AvailGB / $mem.TotalGB)); L "memory: $pct% used, $([math]::Round($mem.AvailGB, 1)) GB available"
 $state.load = @{ at = $now.ToString('o'); availGB = $mem.AvailGB; cpu = (Get-SysCpu); agents = $nAct + $wfAgents.Count }   # for Get-KitLoadTags
 $keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($mem.TotalGB * 0.15)))) }
-# adapter hooks see $now, $mem, $keepFree, Within, Left; return {level,what,action} flag, {name,by,gb} row, {info} owner line, {ramNeed} GB, a sweep line
+# adapter hooks see $now, $mem, $keepFree, Within, Left; return a {level,what,action} flag, {name,by,gb} row, {info}, {ramNeed} or a line
 $res = [Collections.Generic.List[object]]::new(); $script:ownerInfo = @(Get-KitParamChanges $(if ($state.settingsSeen) { [datetime]$state.settingsSeen } else { $now.AddHours(-1) })); if ($AutoFix -and $me -ne 'os-timer') { $state.settingsSeen = $now.ToString('o') }; $script:ramNeed = 0   # SETTINGS changed since last beat
 function Add-KitResult($x) { if ($x -is [string]) { L $x } elseif ($x.level) { Set-ActSection $x.level $x.what; [void]$flags.Add($x) } elseif ($x.info) { $script:ownerInfo += $x.info } elseif ($x.ramNeed) { $script:ramNeed = [math]::Max($script:ramNeed, [double]$x.ramNeed) } elseif ($x.name) { $res.Add($x) } }
 # machine guards first (build gate, cache flush, phones, QA seats)
@@ -1373,7 +1374,7 @@ if (Within 'failedTesting tasks') {
     if ("$l" -match '^(\S+) (\S+) (.+)$' -and $Matches[1] -in $ids -and (-not ($c = $state.ftStatus[$Matches[1]]) -or [datetimeoffset]$Matches[2] -gt [datetimeoffset]$c.at)) { $state.ftStatus[$Matches[1]] = @{ at = $Matches[2]; st = $Matches[3] } }
   }
   $back = @(Select-KitFailedLive $ids $trk $state.ftStatus | ForEach-Object { "$_ ($($ft[$_]))" })
-  # $ids = no fix MR linked since the run (track add -Mrs / route reopen it): an -Ack needs a decision id or MR and hides 2 h (2026-11-22: 5 acks hid a fix tracked on another task)
+  # $ids = no fix MR linked since the run (track add -Mrs / route reopen it): an -Ack needs a decision id or MR, hides 2 h
   if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow, no fix MR linked: $($back -join '; ')" "Fixed in another task's or run's wave: & $($KitCmd.orch) track route -From <id> -To <task | run> [-Items <check ids>] [-Mrs <its fix MRs>], or & $($KitCmd.orch) track add -Task <id> -Mrs <fix MRs>; not fixed yet: ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." @{ kind = 'FAILED TESTING'; who = @($back | ForEach-Object { ($_ -split ' ')[0] }) -join ', '; problem = "no fix MR linked: $($back -join '; ')"; ackNeeds = 'ref' } }
 }
 foreach ($w in @(Get-KitScopeWatch)) { Flag 'WATCH' $w.what $w.action }   # live status names of no role
@@ -1757,7 +1758,7 @@ foreach ($f in Get-ChildItem (Get-KitGateLedger) -Filter '*.json' | Where-Object
 
 $ct = if ($DryRun) { [long](Size (Join-Path $osTmp 'claude')) }; if ($ct) { $notes += "Claude session temp (outside the kit, not managed): $([math]::Round($ct / 1MB)) MB in $(Join-Path $osTmp 'claude')" }
 
-# legacy: kit files in the OS temp (before <runtime>/tmp; the old build-gate ledger); 24 h idle so a not-yet-pulled kit copy keeps its live ones
+# legacy: kit files in the OS temp (the old build-gate ledger); 24 h idle: a not-yet-pulled kit copy keeps its live ones
 foreach ($f in Get-ChildItem $osTmp -Force | Where-Object { $_.Name -match '^(kit-|claude-kit-|claude-build-gate$|wfc\.js$|gradletest$|report-preview\.html$|gate-debug\.ps1$|bad-findings\.json$|audit-test$|kitshots$|tsc\d\.log$|claude-wt-selftest$)' }) {
   if (Old $f 24) { Gone $f.FullName 'kit leftover in the OS temp (legacy)' }
 }

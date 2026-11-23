@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L449 leases · L857 status · L1150 tracker · L1497 prior ·
-  L1513 ask bugs · L1699 git-host · L1886 kitlog · L2008 params · L2313 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L456 leases · L864 status · L1157 tracker · L1504 prior ·
+  L1520 ask bugs · L1706 git-host · L1893 kitlog · L2015 params · L2320 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -392,8 +392,15 @@ function Get-KitSpend([string]$File) {
     $fs = [IO.File]::Open($File, 'Open', 'Read', 'ReadWrite, Delete')
     try { $n = [int][math]::Min($fs.Length, $cap); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $null = $fs.Read($b, 0, $n); $whole = $n -ge $fs.Length } finally { $fs.Dispose() }
     $t = @([Text.Encoding]::UTF8.GetString($b) -split "`r?`n" | Select-Object -Skip $(if ($whole) { 0 } else { 1 }))   # a cut tail's first line is partial
-    $r = Read-KitSpendLines $t; if ($r -or $whole) { return $r }
+    $r = Read-KitSpendLines $t; if ($r -or $whole) { break }
   }
+  if ($r) { return $r }
+  # no usage fields (a local model, an unknown CLI): estimate from text, bytes / 4 after the last compaction (JSON overhead: hands off early, never late)
+  $all = $(if ($whole) { $t } else { @() }); if (-not $all.Count) { return $null }
+  # the markers unescaped: a tool result's text never matches
+  $from = 0; for ($i = $all.Count - 1; $i -ge 0; $i--) { if ($all[$i] -match '"subtype":"compact_boundary"|^\{"timestamp":"[^"]*",("ordinal":\d+,)?"type":"compacted"|^\{"step_index":\d+,"source":"\w+","type":"CHECKPOINT"') { $from = $i + 1; break } }
+  $est = [long]0; for ($i = $from; $i -lt $all.Count; $i++) { $est += [Text.Encoding]::UTF8.GetByteCount($all[$i]) }
+  if ($est -le 0) { return $null }; [pscustomobject]@{ spend = [int]($est / 4); model = ''; estimated = $true }
 }
 function Read-KitSpendLines([string[]]$t) {
   for ($i = $t.Count - 1; $i -ge 0; $i--) {
