@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/track-rebuild.tests.ps1: bossy.ps1 track -Rebuild, offline, on a throw-away test kit with adapters/track_rebuild.ps1; track remove; invalid task files;
-status writes (debounce, no step back, a parent follows its subtasks); launch area subtasks; track route; -Ack of a no-fix-linked flag; supervise's untracked merged MRs of the owner (track ignore).
+status writes (debounce, no step back, a parent follows its subtasks); launch area subtasks; track route; -Ack of a no-fix-linked flag.
 Usage: pwsh -NoProfile -File tests/track-rebuild.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -199,25 +199,5 @@ Expect "deploy.triggers: a key covers its env group (<key>-*) and the repos depl
 $w1 = pwsh @np $O decide check -Gate deploy -Item svc-staging | Out-String; $w2 = pwsh @np $O decide check -Gate deploy -Mrs 'grp/svc!3' | Out-String; $w3 = pwsh @np $O decide check -Gate deploy -Item web-staging | Out-String; $w4 = pwsh @np $O decide check -Gate deploy -Item 'svc-staging,web-staging' | Out-String
 if ($null -ne $klKeepR) { [IO.File]::WriteAllText($klR, $klKeepR) } else { Remove-Item $klR }
 Expect "decide check -Gate deploy: an auto env or repo in deploy.triggers = WORD (config); any other env, or a mix, = NO-WORD" ($w1 -match '^WORD config \(deploy svc-staging\)' -and $w2 -match '^WORD config \(deploy svc\)' -and $w3 -match '^NO-WORD' -and $w4 -match '^NO-WORD')
-# owner's untracked MRs merged in 24 h = one WATCH; host list cached a beat, tracking re-read
-$um = @'
-$o, $add = $args; . $o; $KitConf.TrackerType = 'command'; $KitConf.TrackerTag = 'TT-'; $KitConf.TrackerRepos = @('shop')
-function Get-KitHostUser { 'me' }
-function Get-KitValue($n, $d) { if ($n -eq 'repos') { @(@{ name = 'shop'; target = 'main'; deploys = @(@{ branch = 'staging/x' }, @{ branch = 'main' }) }, @{ name = 'web' }) } else { $d } }   # a deploys entry equal to the repo's target is no deploy branch
-function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -ne 'mr.list') { return }; "hostcalls:1"| Out-File -Append (Join-Path (Get-KitPath cache -Create) 'um-calls.txt')
-  $h = { param($n) (Get-Date).ToUniversalTime().AddHours(-$n).ToString('o') }
-  @([pscustomobject]@{ iid = 8729; title = 'fix: test support root'; source_branch = 'fix/TT-7-root'; target_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
-    [pscustomobject]@{ iid = 8725; title = 'feat: x'; source_branch = 'f/TT-7-x'; author = @{ username = 'me' }; merged_at = (& $h 2) },
-    [pscustomobject]@{ iid = 1; title = 'other'; author = @{ username = 'you' }; merged_at = (& $h 1) }, [pscustomobject]@{ iid = 3; title = 'deploy'; source_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
-    [pscustomobject]@{ iid = 2; title = 'old'; author = 'me'; merged_at = (& $h 30) }, [pscustomobject]@{ iid = 4; title = 'd'; source_branch = 'deploy/x'; author = 'me'; merged_at = (& $h 1) },
-    [pscustomobject]@{ iid = 5; title = 'p'; source_branch = 'p'; target_branch = 'staging/x'; author = 'me'; merged_at = (& $h 1) }) }
-Update-KitTracking { param($t) $t.tasks['T7'] = @{ task = 'T7'; mrs = @('shop!8725') + @(if ($add) { 'shop!8729' }) } }
-Invoke-Supervise -Json -Takeover
-'@
-$u1 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String; $u2 = Invoke-PsTest 'untracked-mr' $um @($O, '1') | Out-String
-$ig = Px $O track ignore -Mrs 'shop!8729' -Reason 'not mine' | Out-String; $u3 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String
-$uc = @(Get-Content (Join-Path (TkPath $k cache) 'um-calls.txt') -ErrorAction SilentlyContinue).Count
-Expect "supervise: an untracked merged MR of the owner = one WATCH with its track add; tracked, ignored or deploy MR -> gone; host listed once per beat ($uc)" ($ig -match 'ignored shop!8729' -and $u3 -notmatch 'tracked by no task' -and $u1 -match '1 MR\(s\) of me merged in 24 h tracked by no task: shop!8729 \(fix: test support root\)' -and
-  $u1 -match "track add -Task 7 -Mrs 'shop!8729'" -and $u1 -match 'shop!8729 merged, no task' -and $u1 -match 'full: report' -and $u1 -notmatch 'shop!(8725|1|2|3|4|5)\b' -and $u2 -notmatch 'tracked by no task' -and $uc -eq 1)
 Remove-TestKit $k
 Complete-Tests

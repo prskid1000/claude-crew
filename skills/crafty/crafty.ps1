@@ -19,7 +19,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2066 dir · L2076 checkpoint ·
-  L2115 prior · L2153 tracker · L2175 task spec · L2378 scope · L2426 host
+  L2116 prior · L2154 tracker · L2176 task spec · L2379 scope · L2427 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2105,8 +2105,9 @@ $own0 = if ($ckPrev -match '<!-- checkpoint -->') { ($ckPrev -split '<!-- checkp
 Write-KitAtomic $mf ("$(if ("$own0".Trim()) { "$("$own0".TrimEnd())`n`n" })<!-- checkpoint -->`n" + ($md -join "`n") + "`n")
 if ($Brief) { $briefOld = if (Test-Path -LiteralPath $Brief) { [IO.File]::ReadAllText($Brief) } else { '' }
   # an existing brief without the marker is hand-written: never overwritten, the stub goes next to it
-  $briefOut = if ($briefOld -and $briefOld -notmatch '<!-- checkpoint -->') { [IO.Path]::ChangeExtension($Brief, '.generated.md') } else { $Brief }
-  $own = if ($briefOut -eq $Brief) { ($briefOld -split '<!-- checkpoint -->')[0] } else { '' }
+  $briefOut = if ($briefOld -and $briefOld -notmatch '<!-- checkpoint -->' -and $briefOld -notmatch '^# Resume brief: \S+ \(run `[^`]*`\)\r?\n\*\*Result:\*\* Next: ') {   # an older generated one (no marker) is still refreshed
+    [IO.Path]::ChangeExtension($Brief, '.generated.md') } else { $Brief }
+  $own = if ($briefOut -eq $Brief -and $briefOld -match '<!-- checkpoint -->') { ($briefOld -split '<!-- checkpoint -->')[0] } else { '' }
   Write-KitAtomic $briefOut ("$(if ($own.Trim()) { "$($own.TrimEnd())`n`n" })<!-- checkpoint -->`n# Resume brief: $Agent (run ``$($c.run)``)`n" + ($md[1..($md.Count - 1)] -join "`n") + "`n")
   "resume brief: $Brief$(if ($briefOut -ne $Brief) { " (hand-written: kept; checkpoint part in $briefOut)" }) (board leave -Handoff $Brief)" }
 "checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"
@@ -2368,7 +2369,7 @@ function Invoke-Tracker {
     'order' {   # waits-on links + wave labels (owner 2026-11-23); -Apply <brief>.order.json (devtools.py render wave-brief) sets them first
       if (-not $__id) { 'usage: tracker order <parent> [-Apply <brief>.order.json] [-Json]'; exit 2 }
       if ($__trOpt.Apply) { foreach ($__ot in @((Get-Content -LiteralPath $__trOpt.Apply -Raw | ConvertFrom-Json).tasks)) { Set-KitTaskOrder "$($__ot.task)" @($__ot.waitsOn) "$($__ot.wave)" } }
-      $__o = Get-KitTaskOrder $__id; if ($__trOpt.Json) { $__o | ConvertTo-Json -Depth 6 } else { Format-KitTaskOrder $__o }; if (@($__o.flags -match '^(CYCLE|MISSING)').Count) { exit 1 } }
+      $__o = Get-KitTaskOrder $__id; if ($__trOpt.Json) { $__o | ConvertTo-Json -Depth 6 } else { Format-KitTaskOrder $__o }; if (@($__o.flags -match '^CYCLE').Count) { exit 1 } }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
     default { 'usage: crafty.ps1 tracker view|statuses|status|comment|comments|uncomment|create|update|render|bug|scope|owner|url|describe|rename|move|group|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }

@@ -208,9 +208,11 @@ Expect "checkpoint -Brief on a hand-written brief: byte-identical, one rendered 
 $hmf = Join-Path $wd 'own-h10.md'; [IO.File]::WriteAllText($hmf, "# My plan`n- keep me`n`n<!-- checkpoint -->`nold"); foreach ($stp in 'commit', 'mr') { $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h10 -Run r10 -Step $stp -Brief $hmf 2>&1 }
 $hmt = Get-Content -Raw $hmf
 Expect 'checkpoint -Brief on a marked brief: text above the marker kept, one rendered part' ($hmt.StartsWith("# My plan`n- keep me`n`n<!-- checkpoint") -and ([regex]::Matches($hmt, '# Resume brief: h10')).Count -eq 1 -and ([regex]::Matches($hmt, '<!-- checkpoint')).Count -eq 1 -and $hmt -match '\| mr \|' -and $hmt -notmatch 'old')
+$hgf = Join-Path $wd 'old-h11.md'; [IO.File]::WriteAllText($hgf, "# Resume brief: h11 (run ``r11``)`n**Result:** Next: mr (start here)"); $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h11 -Run r11 -Step commit -Brief $hgf 2>&1
+Expect 'checkpoint -Brief: an older generated brief (no marker) is refreshed in place, no .generated.md' ((Get-Content -Raw $hgf) -match '(?s)^<!-- checkpoint -->.*\| commit \|' -and -not (Test-Path (Join-Path $wd 'old-h11.generated.md')))
 foreach ($stp in 1..10) { $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h7 -Run r7 -Step "c$stp" -Notes "n$stp" 2>&1 }
 $hct = pwsh -NoProfile -File $craftyPs checkpoint -Agent h7 -Run r7 -Read 2>&1 | Out-String
-Expect "checkpoint brief compact: last 8 steps (earlier named), last 6 notes" ($hct -match '## Done \(last 8; 2 earlier: c1, c2\)' -and $hct -notmatch '\| c2 \|' -and $hct -match '\| c10 \|' -and $hct -match '- \S+ n10' -and $hct -notmatch ' n4\b')
+Expect "checkpoint brief compact: last 8 steps (earlier named), last 6 notes" ($hct -match '## Done \(last 8; 2 earlier: c1, c2\)' -and $hct -notmatch '\| c2 \|' -and $hct -match '\| c10 \|' -and $hct -match '- \d{4}-\d\d-\d\d \d\d:\d\d n10' -and $hct -notmatch ' n4\b')
 $hlNoRun = & { . (Join-Path $k 'skills/bossy/bossy.ps1'); Get-KitHandoffLine ([pscustomobject]@{ agent = 'h8'; run = '' }) 's8' 'why' }
 Expect "HANDOFF line: the checkpoint call it names drops -Run when the agent has none ($hlNoRun)" ($hlNoRun -match 'checkpoint -Agent h8 -Step <last done>' -and $hlNoRun -notmatch '-Run ')
 if (Use-BrowserKit) {   # kitbag.py ui-check on a canvas page

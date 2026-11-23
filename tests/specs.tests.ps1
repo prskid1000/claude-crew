@@ -138,6 +138,10 @@ Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty
 **Branch:** ``f/<tag><task>-<slug>``, pool slots leased as the agent id · **Tracker:** —.
 Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
 
+## Order (waves: a row runs in parallel; ``crafty.ps1 tracker order <parent> -Apply <brief>.order.json`` links the tasks)
+| Wave | Areas (parallel) | Tasks | Waits on |
+|---|---|---|---|
+| cycle | X1, X2 | — | X1, X2 |
 ## openQuestions
 Which index? · blocks A2 · answers: rechy
 ## Findings (rechy)

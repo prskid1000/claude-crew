@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-supervise.tests.ps1: bossy.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, stopped runs, storage.
+supervise.tests.ps1: bossy.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, stopped runs (storage: os-timer.tests).
 Usage: pwsh -NoProfile -File <kit>/tests/supervise.tests.ps1 (or tests/kit-tests.ps1 -Area supervise).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -158,40 +158,30 @@ Expect 'board show lists QA seats and env leases; recover lists the lease with n
 'idea', 'win', 'retired' | ForEach-Object { @{ at = '2099-01-01'; skill = 'kitty'; kind = $_; text = 'board slot' } | ConvertTo-Json -Compress } | Add-Content $sg
 $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json; $tg = Get-Content $tp.digest -Raw; pwsh @np $O tidy done -At '2026-01-02T03:04' >$null
 Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $tg -match '(?s)2x kitty \[idea,win\].*-> lesson.*<- retired' -and (Get-Content (TkPath $k last-retro)) -match "T$(([datetime]'2026-01-02T03:04').ToUniversalTime().ToString('HH:mm')):00\.000Z")   # stored: UTC
-# storage: verdicts, learned normal, folder sizes, drill-down, db watchdog, rescue hold
-$sd = Join-Path (Kd) 'stree'; foreach ($f in 'a/x/1.bin', 'a/y/2.bin', 'b/3.bin') { New-Item -ItemType Directory -Force (Split-Path "$sd/$f") | Out-Null; [IO.File]::WriteAllBytes("$sd/$f", [byte[]]::new(1MB)) }
-'if ($env:USE10) { 1..10 | ForEach-Object { "$_ 0.6 10 q$_" } } else { "42 0.5 900 SELECT 1"; "43 7 30 SELECT big" }' | Set-Content "$sd/use.ps1"; 'param($i) Add-Content (Join-Path $PSScriptRoot killed.txt) $i' | Set-Content "$sd/kill.ps1"
-$sto = Invoke-PsTest storage @'
-$null = . $args[0] 6>$null; $sd = $args[1]
-$c = [pscustomobject]@{ watchFreeGB = 50; actHours = 1; factor = 10; minRateGBh = 5; scanDropGB = 1; actFreeGB = 30; drillGB = 1; flatDays = 7; holdMinutes = 60; sampleSeconds = 60; watch = @()
-  db = @{ use = "pwsh -NoProfile -File `"$sd/use.ps1`""; kill = "pwsh -NoProfile -File `"$sd/kill.ps1`" {id}"; maxGB = 5 } }
-function Get-KitStorageConf { $c }
-$xs = { param($f, $pm) @(0..20 | ForEach-Object { [pscustomobject]@{ t = 1e6 + 60 * $_; free = $f + $pm * (20 - $_) } }) }
-foreach ($x in @(40, 0.12, 0.2), @(600, 0.12, 0.2), @(3, 0.12, 0.2), @(600, 0.12, 2), @(600, 0, 0.2), @(20, 0, 0.2, 0)) { $v = Get-KitDiskVerdict (& $xs $x[0] $x[1]) $c $x[2] ($x.Count -lt 4); "v:$($v.level),$($v.rescue),$($v.scan)" }
-$b = @(0..20 | ForEach-Object { [pscustomobject]@{ t = 1e6 + 60 * $_; free = 8 + [math]::Max(0, 2 - 0.7 * $_) } }); $v = Get-KitDiskVerdict $b $c; "burst:$($v.level),$($v.rescue)"
-"normal:$(Get-KitDiskNormal @(0..10 | ForEach-Object { [pscustomobject]@{ t = 3600 * $_; free = 100 - 0.5 * $_ } }))"
-$m = Measure-KitFolders $sd @("$sd/a".Replace('/', [IO.Path]::DirectorySeparatorChar)); $ak = "$sd/a".Replace('/', [IO.Path]::DirectorySeparatorChar).ToLower()
-"folders:$($m.sizes[$ak] / 1MB):$((@($m.kids[$ak].Values) | Sort-Object) -join ',')"
-$fo = @{ tracked = @{ R = @{ src = 'default' }; L = @{ src = 'learned'; flat = (Get-Date).AddDays(-8).ToString('s') } } }
-$g = Update-KitTracked $fo @{ sizes = @{ R = 13; L = 2 }; kids = @{ R = @{ 'R/a' = 1.2; 'R/b' = 7.8 } } } @{ sizes = @{ R = 10; L = 2 }; kids = @{ R = @{ 'R/a' = 1; 'R/b' = 5 } } } $c
-"drill:$($g[0].path)+$($g[0].gb):$(@($fo.tracked.Keys | Sort-Object) -join ',')"
-$q = @(Get-KitDbQueries $c); $null = Invoke-KitStorageTick -Force; $env:USE10 = '1'; $null = Invoke-KitStorageTick -Force; $z = [pscustomobject]@{ drive = 'Z'; kit = $true; free = 3; rate = 9; ttf = 0.3 }
-Invoke-KitDiskRescue $c $z @($q | Where-Object id -ne 43); Invoke-KitDiskRescue $c $z $q; $h1 = (Get-KitDiskHold).drive
-Set-KitStorageState { param($s) $s.rescues.Z.at = (Get-Date).AddHours(-2).ToString('o') }
-"db:$($q.Count):$((Get-Content "$sd/killed.txt") -join ','):hold $h1/$([bool](Get-KitDiskHold))"
-[IO.File]::WriteAllText((Get-KitStorageFile Q), (@(0..2 | ForEach-Object { '{"t":' + ([DateTimeOffset]::Now.ToUnixTimeSeconds() - 60 * $_) + ',"free":' + (50 + $_) + ',"size":100}' }) -join "`n") + "`n")
-Invoke-Storage -Drive Q -Since 1h
-'@ @($O, $sd)
-Expect 'storage verdicts: odd fill ACT + rescue, far WATCH, full in 1 h rescue, normal OK, 1 GB/beat scan, kit drives only, burst no rescue' ((($sto | Where-Object { $_ -like 'v:*' -or $_ -like 'burst:*' }) -join ' ') -eq 'v:ACT,True,True v:WATCH,False,True v:ACT,True,True v:OK,False,True v:OK,False,False v:OK,False,False burst:ACT,False')
-Expect 'storage: the learned normal = the median hourly fill rate' ($sto -contains 'normal:0.5')
-Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto -contains 'folders:2:1048576,1048576')
-Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
-Expect 'storage: over maxGB killed (43), small not; rescue kills the temp holder (42) once per 10 min, holds builds' ($sto -contains 'db:2:43,42:hold Z/False')
-Expect 'bossy.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
 $jr = Invoke-Js wf-rel @'
 const c = _mock(_pass); await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1' }] }, c.agent, _n, _n, pipeline); const L = c.calls.map((x) => x.label)
 console.log(`release:${L.indexOf('release-X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release-X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release-X1').prompt)}`)
 '@ (Join-Path $src 'workflows/buildy.js')
+# owner's untracked MRs merged in 24 h = one WATCH; host list cached a beat, tracking re-read
+$um = @'
+$o, $add = $args; . $o; $KitConf.TrackerType = 'command'; $KitConf.TrackerTag = 'TT-'; $KitConf.TrackerRepos = @('shop')
+function Get-KitHostUser { 'me' }
+function Get-KitValue($n, $d) { if ($n -eq 'repos') { @(@{ name = 'shop'; target = 'main'; deploys = @(@{ branch = 'staging/x' }, @{ branch = 'main' }) }, @{ name = 'web' }) } else { $d } }   # a deploys entry equal to the repo's target is no deploy branch
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -ne 'mr.list') { return }; "hostcalls:1"| Out-File -Append (Join-Path (Get-KitPath cache -Create) 'um-calls.txt')
+  $h = { param($n) (Get-Date).ToUniversalTime().AddHours(-$n).ToString('o') }
+  @([pscustomobject]@{ iid = 8729; title = 'fix: test support root'; source_branch = 'fix/TT-7-root'; target_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
+    [pscustomobject]@{ iid = 8725; title = 'feat: x'; source_branch = 'f/TT-7-x'; author = @{ username = 'me' }; merged_at = (& $h 2) },
+    [pscustomobject]@{ iid = 1; title = 'other'; author = @{ username = 'you' }; merged_at = (& $h 1) }, [pscustomobject]@{ iid = 3; title = 'deploy'; source_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
+    [pscustomobject]@{ iid = 2; title = 'old'; author = 'me'; merged_at = (& $h 30) }, [pscustomobject]@{ iid = 4; title = 'd'; source_branch = 'deploy/x'; author = 'me'; merged_at = (& $h 1) },
+    [pscustomobject]@{ iid = 5; title = 'p'; source_branch = 'p'; target_branch = 'staging/x'; author = 'me'; merged_at = (& $h 1) }) }
+Update-KitTracking { param($t) $t.tasks['T7'] = @{ task = 'T7'; mrs = @('shop!8725') + @(if ($add) { 'shop!8729' }) } }
+Invoke-Supervise -Json -Takeover
+'@
+$u1 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String; $u2 = Invoke-PsTest 'untracked-mr' $um @($O, '1') | Out-String
+$ig = Px $O track ignore -Mrs 'shop!8729' -Reason 'not mine' | Out-String; $u3 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String
+$uc = @(Get-Content (Join-Path (TkPath $k cache) 'um-calls.txt') -ErrorAction SilentlyContinue).Count
+Expect "supervise: an untracked merged MR of the owner = one WATCH with its track add; tracked, ignored or deploy MR -> gone; host listed once per beat ($uc)" ($ig -match 'ignored shop!8729' -and $u3 -notmatch 'tracked by no task' -and $u1 -match '1 MR\(s\) of me merged in 24 h tracked by no task: shop!8729 \(fix: test support root\)' -and
+  $u1 -match "track add -Task 7 -Mrs 'shop!8729'" -and $u1 -match 'shop!8729 merged, no task' -and $u1 -match 'full: report' -and $u1 -notmatch 'shop!(8725|1|2|3|4|5)\b' -and $u2 -notmatch 'tracked by no task' -and $uc -eq 1)
 Expect-Each $jr 'buildy: # (after the build stage and the run)' 'release'
 Remove-TestKit $k
 Complete-Tests

@@ -2450,7 +2450,7 @@ def order_tasks(s):
     waves, waits = wave_order(s)
     tk = {a['id']: a.get('task') or s.get('task') or '' for a in s['agents']}
     shared = {t for t in tk.values() if t and list(tk.values()).count(t) > 1}
-    return {'parent': s.get('task') or '', 'tasks': [{'task': tk[a], 'area': a, 'wave': s.get('wave') or f'{s["name"]} wave {w}',
+    return {'parent': s.get('task') or '', 'tasks': [{'task': tk[a], 'area': a, 'wave': s.get('wave') or (f'{s["name"]} wave {w}' if w != 'cycle' else ''),
              'waitsOn': sorted({tk[d] for d in waits[a] if tk[d] and tk[d] != tk[a]})} for w, grp in waves for a in grp if tk[a] and tk[a] not in shared]}
 
 

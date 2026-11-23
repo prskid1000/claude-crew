@@ -1882,7 +1882,7 @@ function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
   $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq ($Repo -split '/')[-1] } | Select-Object -First 1
   [bool]($Target -and $r -and $Target -in @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }))
 }
-function Get-KitRepoSweep { $rf = Get-KitPath repo-sweep; if (Test-Path -LiteralPath $rf) { try { $o = Read-KitText $rf | ConvertFrom-Json; $o.at = (Get-KitStamp stored [IO.File]::GetLastWriteTime($rf)); $o } catch { $null } } }   # last cleanup's counts per repo; at = the file time
+function Get-KitRepoSweep { $rf = Get-KitPath repo-sweep; if (Test-Path -LiteralPath $rf) { try { $o = Read-KitText $rf | ConvertFrom-Json; $o.at = (Get-KitStamp stored ([IO.File]::GetLastWriteTime($rf))); $o } catch { $null } } }   # last cleanup's counts per repo; at = the file time
 
 # ---- kitlog: every log line (kit.example.json _paths.log)
 $script:KitLogMap = $script:KitPathMap.log

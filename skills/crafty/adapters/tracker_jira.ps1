@@ -121,10 +121,11 @@ Register-KitAdapter 'tracker' 'jira' @{
     $j = __TrJira 'GET' "$(if ($__trType -eq 'jira') { 'search/jql' } else { 'search' })?jql=$q&fields=summary,assignee&maxResults=200" $null
     @($j.issues) | Where-Object { $_ -and $_.key } | ForEach-Object { __TrRow $_.key ([string]$_.fields.summary) $a.status @($_.fields.assignee | Where-Object { $_ } | ForEach-Object { __TrWho $(if ($_.accountId) { $_.accountId } else { $_.name }) $_.displayName }) }
   }
-  # waits on = a Blocks link (tracker.blockLinkType): the blocker is the outward issue; an entry with inwardIssue = it waits on that
+  # waits on = a Blocks link (tracker.blockLinkType): read, an entry with inwardIssue = its blocker; written with the
+  # blocker as inwardIssue (Jira's POST names the sides the other way round from GET)
   'dependencies' = { param($a) $lt = "$(Get-KitSetting 'tracker.blockLinkType' 'Blocks')"
     $have = @(@((__TrJira 'GET' "issue/$($a.id)?fields=issuelinks" $null).fields.issuelinks) | Where-Object { "$($_.type.name)" -eq $lt -and $_.inwardIssue.key } | ForEach-Object { "$($_.inwardIssue.key)" })
-    foreach ($on in @($a.on | Where-Object { $_ -and $_ -notin $have })) { $null = __TrJira 'POST' 'issueLink' @{ type = @{ name = $lt }; inwardIssue = @{ key = $a.id }; outwardIssue = @{ key = $on } }; $have += $on }
+    foreach ($on in @($a.on | Where-Object { $_ -and $_ -notin $have })) { $null = __TrJira 'POST' 'issueLink' @{ type = @{ name = $lt }; inwardIssue = @{ key = $on }; outwardIssue = @{ key = $a.id } }; $have += $on }
     $have }
   # labels hold no spaces: 'Wave: v2 wave 1' -> wave-v2-wave-1
   'labels' = { param($a) $null = __TrJira 'PUT' "issue/$($a.id)" @{ update = @{ labels = @(@($a.add) | ForEach-Object { @{ add = (("$_".ToLower() -replace '[^a-z0-9]+', '-').Trim('-')) } }) } } }

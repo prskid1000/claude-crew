@@ -106,11 +106,11 @@ $fl += foreach ($ff in Get-ChildItem (Join-Path $src 'skills') -Recurse -Filter 
   foreach ($fd in [Management.Automation.Language.Parser]::ParseFile($ff.FullName, [ref]$null, [ref]$null).FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -like 'Invoke-*' }, $true)) {
     $fps = if ($fd.Body.ParamBlock) { @($fd.Body.ParamBlock.Parameters) } else { @($fd.Parameters) }; $fnm = @($fps | ForEach-Object { $_.Name.VariablePath.UserPath }) + @($fps.Attributes | Where-Object { $_.TypeName.Name -eq 'Alias' } | ForEach-Object { $_.PositionalArguments.Value })
     foreach ($fp in $fps) { $fo = $fp.Name.VariablePath.UserPath
-      $fw = if ($fo -in 'Task', 'Code') { 'Item' } elseif ($fo -in 'Message', 'Msg') { 'Text' } elseif ($fo -cmatch '^([A-Z]\w*?)(Sec|Min)$') { "$($Matches[1])$(@{ Sec = 'Seconds'; Min = 'Minutes' }[$Matches[2]])" }
-      if ($fw -and $fw -notin $fnm -and -not ($fo -eq 'Code' -and 'Task' -in $fnm)) { "$($ff.Name) $($fd.Name) -$fo" } } } }
+      $fwant = if ($fo -in 'Task', 'Code') { 'Item' } elseif ($fo -in 'Message', 'Msg') { 'Text' } elseif ($fo -cmatch '^([A-Z]\w*?)(Sec|Min)$') { "$($Matches[1])$(@{ Sec = 'Seconds'; Min = 'Minutes' }[$Matches[2]])" }
+      if ($fwant -and $fwant -notin $fnm -and -not ($fo -eq 'Code' -and 'Task' -in $fnm)) { "$($ff.Name) $($fd.Name) -$fo" } } } }
 $fs = pwsh -NoProfile -Command ". '$(Lib)'; Get-KitStamp file ([datetime]'2026-11-23T10:05:06Z'); Get-KitStamp stored ([datetime]'2026-11-23T10:05:06.5Z')"
 Expect "flags: -Mr records, -Mrs finds it; every -Mrs / -Lanes / -TimeoutSec / -Takeover and verb -Task / -Code / -Message / -*Sec / -*Min has its standard alias ($($fl -join ', ')); stamps ($($fs -join ' '))" ($fr -match 'RECORDED' -and $fw -match 'WORD ' -and
-  -not @($fl).Count -and $fs[0] -eq '20261123-100506' -and $fs[1] -eq '2026-11-23T10:05:06.500Z')
+  -not @($fl | Where-Object { $_ }).Count -and $fs[0] -eq '20261123-100506' -and $fs[1] -eq '2026-11-23T10:05:06.500Z')
 # TS-STORED: writers store UTC ...Z; a fresh ...Z beat reads as local (board HH:mm local, age ~0, never stale)
 $tsOut = Px $O board join -Type devy -Agent tsz-01 -Run tsr | Out-String; $tsFile = @(Get-ChildItem (TkPath $k board) -Filter 'tsz-01*.json')[0].FullName
 $tsRaw = Get-Content -LiteralPath $tsFile -Raw; $tsLocal = ([datetimeoffset]($tsRaw | ConvertFrom-Json -DateKind String).beat).LocalDateTime.ToString('HH:mm'); $tsShow = Px $O board show | Out-String
@@ -179,5 +179,10 @@ run({ kitDir: 'C:/k' }, agent, _n, _n, null).then(() => { const j = calls.find((
  console.log(`tidy-run:${/naming next id tidy/.test(calls[0].prompt) && /-Branch kit\/tidy-20261123-04 -Target main -Name tidy-20261123-04;/.test(j.prompt) && /\/tidy-20261123-04\.md\./.test(j.prompt)}`) }).catch(_err)
 '@
 Expect-Each (Invoke-Js nm-tidy $jsT (Join-Path $src 'workflows/tidy.js')) 'tidy: N3 run id from the prep step: #' 'tidy-run' -Show 8
+# a reset counter never hands out an id live on the board (retro tidy-20261123-01): agent ids at join, run ids at naming next id
+$lvBd = TkPath $k board -Create; $lvDay = (Get-Date).ToUniversalTime().ToString('yyyyMMdd'); Remove-Item (TkPath $k naming) -ErrorAction SilentlyContinue
+& $J @{ agent = 'rechy-01'; type = 'rechy'; session = 'lv-a'; run = "rlive-$lvDay-01"; status = 'working'; joined = (Get-Date).ToString('o'); beat = (Get-Date).ToString('o') } (Join-Path $lvBd 'lv-a.json')
+$lvJoin = & $bj @('-Type', 'rechy', '-Run', 'lv-run'); $null = pwsh -NoProfile -File $O board leave -Agent $lvJoin.id; $lvRun = Kb naming next id rlive
+Expect "id allocator: rechy-01 and rlive-$lvDay-01 live on the board -> join gives rechy-02, next id rlive-$lvDay-02 ($($lvJoin.id), $($lvRun.out))" ($lvJoin.id -eq 'rechy-02' -and $lvRun.out -eq "rlive-$lvDay-02")
 Remove-TestKit $k
 Complete-Tests

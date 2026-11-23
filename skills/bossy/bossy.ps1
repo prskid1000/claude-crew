@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L251 budget · L281 launch · L524 recover · L611 pause · L622 resume · L689 program · L742 param ·
-  L748 track · L1136 supervise · L1478 report · L1558 audit · L1618 storage · L1621 bugbrief · L1623 cleanup · L1710 learn ·
-  L1747 decide · L1917 debate · L1961 health · L2029 setup · L2124 guard-sendmessage
+Sections: L40 init · L51 board · L252 budget · L282 launch · L525 recover · L612 pause · L623 resume · L690 program · L743 param ·
+  L749 track · L1137 supervise · L1479 report · L1559 audit · L1619 storage · L1622 bugbrief · L1624 cleanup · L1711 learn ·
+  L1748 decide · L1918 debate · L1962 health · L2030 setup · L2125 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -65,7 +65,8 @@ function Get-KitActivePause([string]$Run) { @(Read-KitJsonFiles (Get-KitPath pau
 # N3 agent ids <role>-<nn>: one counter per role in .state naming.json (kitbag_naming.py's file, same lock), never reused (an old
 # holder's inbox); $Legacy (the old <role>-<run> form) -> aliases, read by msg -To for one version
 function New-KitAgentId([string]$Type, [string]$Legacy = '') { $f = Get-KitPath naming -Create
-  Invoke-KitLocked $f { $x = Read-KitState $f; if ($x -isnot [Collections.IDictionary]) { $x = @{} }; $k = "agent:$($Type.ToLower())"; $x[$k] = 1 + [int]$x[$k]; $id = '{0}-{1:00}' -f $Type.ToLower(), $x[$k]
+  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' } | ForEach-Object { "$($_.agent)" })   # never a live id
+  Invoke-KitLocked $f { $x = Read-KitState $f; if ($x -isnot [Collections.IDictionary]) { $x = @{} }; $k = "agent:$($Type.ToLower())"; do { $x[$k] = 1 + [int]$x[$k]; $id = '{0}-{1:00}' -f $Type.ToLower(), $x[$k] } while ($id -in $live -and $x[$k] -lt 999)
     if ($Legacy) { if ($x.aliases -isnot [Collections.IDictionary]) { $x.aliases = @{} }; if (-not $x.aliases[$Legacy]) { $x.aliases[$Legacy] = $id } }; Write-KitState $f $x; $id } }   # the run's first of its role keeps the old name
 function Resolve-KitAgentAlias([string]$Id) { $a = (Read-KitState (Get-KitPath naming)).aliases; if ($a -is [Collections.IDictionary] -and $a[$Id]) { $a[$Id] } else { $Id } }
 function Invoke-Board {
@@ -110,7 +111,7 @@ function Print($act) {
   'board (active agents):'
   # N3 (owner 2026-11-23): a run line '<run id> · <KEY> <short title>', its agents '<role>-<nn> · <area>'
   foreach ($g in @($act | Group-Object { "$($_.run)" } | Sort-Object Name)) { if ($g.Name) { "  run $(Get-KitRunTitle $g.Name)" }
-  $g.Group | Sort-Object agent | ForEach-Object { $task = "$($_.items)"; $cl = (@($_.worktrees | ForEach-Object { Split-Path "$_" -Leaf }) -join ',')
+  $g.Group | Sort-Object agent | ForEach-Object { $task = "$($_.items)"; $cl = (@($_.worktrees | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf }) -join ',')
     '    {0,-24} {1,-8} {2,-30} {3,-22} {4} | beat {5}{6}' -f (Get-KitAgentLabel ([pscustomobject]@{ n = $_.agent; ar = $_.area; sub = $_.type })), "$(if ($_.holderPid) { "s$($_.holderPid)" })", $task.Substring(0, [math]::Min(30, $task.Length)), $cl.Substring(0, [math]::Min(22, $cl.Length)), $_.status, ([datetime]$_.beat).ToString('HH:mm'), $(if ($_.budget) { " | spend $([int]($_.spend / 1000))k/$([int]($_.budget / 1000))k" }) } }
 }
 
@@ -707,8 +708,8 @@ if ($Json -or $p -isnot [string]) { ConvertTo-Json -InputObject $p -Depth 20 } e
 
 # open = no successor: none marked, no later row of that agent (not $Except) in its run, or any run for a one-per-machine agent
 # named after its type (kitty ran as kit-build); area ids (D1) repeat across runs
-# a successor's run continues a handoff's: the same run, or its lineage (a letter suffix per successor: kit-spec-1520c -> kit-spec-1520d)
-function Test-KitRunLineage($Ho, $Row) { "$($Row.run)" -eq "$($Ho.run)" -or ($Ho.run -and $Row.type -eq $Ho.type -and ("$($Row.run)" -replace '(?<=\d)[a-z]$') -eq ("$($Ho.run)" -replace '(?<=\d)[a-z]$')) }
+# a successor's run continues a handoff's: the same run, or its lineage (same type + area, a letter suffix per successor: kit-x-1520c -> kit-x-1520d)
+function Test-KitRunLineage($Ho, $Row) { "$($Row.run)" -eq "$($Ho.run)" -or ($Ho.run -and $Ho.type -and $Row.type -eq $Ho.type -and "$($Row.area)" -eq "$($Ho.area)" -and ("$($Row.run)" -replace '(?<=\d)[a-z]$') -eq ("$($Ho.run)" -replace '(?<=\d)[a-z]$')) }
 function Get-KitHandoffs([double]$Hours = 48, [string]$Except = '') {
   $boardRows = @(Read-KitJsonFiles (Get-KitPath board))
   @($boardRows | Where-Object { $ho = $_; $ho.handoffBrief -and -not $ho.continuedBy -and ((Get-Date) - [datetime]$ho.beat).TotalHours -lt $Hours -and

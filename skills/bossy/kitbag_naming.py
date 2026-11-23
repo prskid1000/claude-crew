@@ -189,8 +189,22 @@ def next_key(product, area, cfg=None):
 def next_id(kind):
     if not re.match(r'^[a-z]+(?:-[a-z]+)*$', kind):
         raise SystemExit(f'naming next id: kind {kind!r}: lowercase words joined by -')
-    day = time.strftime('%Y%m%d', time.gmtime())
-    return f'{kind}-{day}-{_counter(f"id:{kind}:{day}"):02d}'
+    day, live = time.strftime('%Y%m%d', time.gmtime()), board_live('run')
+    for _ in range(100):   # a reset counter never hands out a run id live on the board
+        rid = f'{kind}-{day}-{_counter(f"id:{kind}:{day}"):02d}'
+        if rid not in live:
+            return rid
+    raise SystemExit(f'naming next id: 100 {kind} ids of {day} live on the board')
+
+
+def board_live(field):
+    """{field value} of the board rows not left (board join, kitbag.py naming next id)."""
+    d, out = kit_path('board'), set()
+    for f in (osp.join(d, n) for n in os.listdir(d) if n.endswith('.json')) if os.path.isdir(d) else []:
+        row, err = load_json(f)
+        if not err and isinstance(row, dict) and row.get('status') != 'left' and row.get(field):
+            out.add(str(row[field]))
+    return out
 
 
 # ---- commands
