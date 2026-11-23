@@ -33,7 +33,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L39 init · L50 board · L230 budget · L260 launch · L501 recover · L588 pause · L599 resume · L666 program · L717 param ·
   L723 track · L1112 supervise · L1453 report · L1533 audit · L1593 storage · L1596 bugbrief · L1598 cleanup · L1685 learn ·
-  L1717 decide · L1871 debate · L1915 health · L1983 setup · L2080 guard-sendmessage
+  L1717 decide · L1871 debate · L1915 health · L1983 setup · L2078 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
