@@ -181,7 +181,7 @@ switch ($Action) {
   { $_ -in 'show', 'list' } { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" }
     Invoke-KitHooks Get-KitBoardLines }   # QA seats, local-env leases
   'check' {
-    if ($Decision) { if (-not $Ctx -or -not $Reason) { 'usage: board check -Decision continue|handoff -Reason <why> -Ctx <key> [-Session <token>]'; exit 2 }; Set-KitCtxCheck $Ctx $Decision $Reason $(if ($Session) { Join-Path $dir "$Session.json" }); exit 0 }
+    if ($Decision) { if (-not $Ctx -or -not $Reason) { 'usage: board check -Decision continue|handoff -Reason <why> -Ctx <key> [-Session <token>]'; exit 2 }; $cr = Set-KitCtxCheck $Ctx $Decision $Reason $(if ($Session) { Join-Path $dir "$Session.json" }); $cr; exit $(if ("$cr" -like 'board check: no *') { 1 } else { 0 }) }
     if (-not $Worktree) { 'usage: board check -Worktree <dir> -Session <token>'; exit 2 }
     $mine = Norm $Worktree
     $others = @(Active | Where-Object { $_.session -ne $Session -and (@($_.worktrees | ForEach-Object { Norm $_ }) -contains $mine) })

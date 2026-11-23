@@ -189,7 +189,10 @@ $null = . $args[0] 6>$null; $tf = Join-Path $args[1] 'sess1.jsonl'; $hk = Join-P
 $u = { param([int]$n) Set-Content $tf "{`"type`":`"assistant`",`"message`":{`"usage`":{`"input_tokens`":$n,`"output_tokens`":0}}}" }
 $run = { param($j) ($j | ConvertTo-Json -Compress | node $hk) -join '' }
 & $u 150000; "a $(& $run @{ transcript_path = $tf })"; & $u 185000; "b $(& $run @{ transcript_path = $tf })"; "c $(& $run @{ transcript_path = $tf })"
-& $u 390000; "d $(& $run @{ transcript_path = $tf })"; "e $(& $run @{ transcript_path = $tf; agent_id = 'zz' })"
+& $u 390000; "d $(& $run @{ transcript_path = $tf })"; "e $(& $run @{ transcript_path = $tf; agent_id = 'zz' })"; "k[$(Get-KitCtxCheckLine $tf 390000 200000)]"
+$sd = New-Item -ItemType Directory -Force (Join-Path $args[1] 'sess1/subagents/workflows/wf1'); Copy-Item $tf "$sd/agent-ab.jsonl"; "l $(& $run @{ transcript_path = $tf; agent_id = 'ab' })"
+[Environment]::SetEnvironmentVariable('CLAUDE_RUNTIME', '.claude/.rtw'); Copy-Item $tf (Join-Path $args[1] 's2.jsonl'); $null = & $run @{ transcript_path = (Join-Path $args[1] 's2.jsonl') }
+"m $(Test-Path (Join-Path $args[1] '.claude/.rtw/cache/ctx-checks/s2.json'))"; [Environment]::SetEnvironmentVariable('CLAUDE_RUNTIME', $null)
 $ss = "$(& $args[0] board join -Agent b1 -Type devy)" -replace '(?s).*SESSION (\S+).*', '$1'; "f $(& $args[0] board check -Decision continue -Reason 'phase ends soon' -Ctx sess1 -Session $ss) $((Get-Content (Join-Path (Get-KitPath board) "$ss.json") -Raw | ConvertFrom-Json).ctxCheck.decision)"
 $cx = [pscustomobject]@{ n = 9; s0 = 1; pk = 390000; sum = 9; last = 390000; cmp = 0; ho = 0; w = @(0) * 6; rr = @(0, ''); top = @() }
 $s = [pscustomobject]@{ label = 'b1'; role = 'devy'; run = 'r1'; model = 'claude-opus-5-5'; result = 'running'; at = (Get-Date).ToString('o'); tf = $tf; cx = $cx }
@@ -198,6 +201,6 @@ $s.tf = Join-Path $args[1] 'other.jsonl'; '{}' | Set-Content $s.tf; "h $(@(Get-K
 "i $(Get-KitCtxCheckLine $s.tf 200000 200000) | $(Get-KitCtxCheckLine $s.tf 210000 200000)"; "j $(Get-KitHandoffLine ([pscustomobject]@{ agent = 'h9' }) 's9' 'why')"
 '@ @($O, (Kd))
 $sj = $sc -join "`n"
-Expect "context self-check: none at 150k, one CONTEXT-CHECK at 180k (once), the next at 380k, none for a subagent without its own transcript ($sj)" ($sj -match '(?m)^a $' -and $sj -match '(?m)^b .*CONTEXT-CHECK: context 185k \(self-check at 180k, next at 380k\).*board check -Decision continue\|handoff .*-Ctx sess1' -and $sj -match '(?m)^c $' -and $sj -match '(?m)^d .*self-check at 380k, next at 580k' -and $sj -match '(?m)^e $')
+Expect "context self-check: none at 150k, one CONTEXT-CHECK at 180k (once), the next at 380k, none for a subagent without its own transcript, a workflow agent's own; one record with the beat; '<kit name>/.rtw' runtime ($sj)" ($sj -match '(?m)^a $' -and $sj -match '(?m)^b .*CONTEXT-CHECK: context 185k \(self-check at 180k, next at 380k\).*board check -Decision continue\|handoff .*-Ctx sess1' -and $sj -match '(?m)^c $' -and $sj -match '(?m)^d .*self-check at 380k, next at 580k' -and $sj -match '(?m)^e $' -and $sj -match '(?m)^k\[\]$' -and $sj -match '(?m)^l .*self-check at 380k.*-Ctx agent-ab' -and $sj -match '(?m)^m True$')
 Expect "context self-check: board check records it; supervise INFO instead of the design-window WATCH; unanswered -> WATCH says no self-check; beat line once; HANDOFF runs the check first (RT1) ($sj)" ($sj -match 'f context check recorded: continue at 380k \(phase ends soon\) continue' -and $sj -match 'j HANDOFF: why: code changed .* crafty\.ps1 check -Dir <worktree> first' -and $sj -match '(?m)^g INFO context: devy b1 self-check continue at 380k => phase ends soon$' -and $sj -match '(?m)^h .*WATCH context: devy b1 past the 200k design window' -and $sj -match '(?m)^i CONTEXT-CHECK: context 200k \(self-check at 180k.* \| $')
 Remove-TestKit $k

@@ -70,13 +70,13 @@ console.log(`none-decided:${L.includes('ship:N3') && !L.includes('ship:N4')}`)
 Expect-Each (Invoke-Js dw-none $jsn0 $wfd) 'buildy merge gate: localTest NONE # (a code area held, kind doc and a person''s merge word ship; a made-up id or a NO-WORD from decide check -Gate merge,scope,other -Item <area keys> not, 2026-11-21)' 'none-held', 'none-doc', 'none-decided', 'none-verified' -Show 8
 # repos[].localTest optional / none (CONFIG local): NONE + localFallback ships with no decision; required (unset) or unit without its run: held
 $jslf = @'
-const lt = (fb) => ({ status: 'NONE', env: 'none: no local env', rounds: 0, failing: [], goalsDoc: '', ...(fb ? { fallback: fb } : {}) })
-const go = async (cfg, fb) => { const m = _mock((p, o) => /^(build|ship):F1/.test(o.label) ? _rep(lt(fb)) : /^review/.test(o.label) ? { findings: [] } : undefined, '[]')
+const UR = { command: 'crafty.ps1 check -Dir C:/w', result: 'PASS 12 tests' }, lt = (fb, ur) => ({ status: 'NONE', env: 'none: no local env', rounds: 0, failing: [], goalsDoc: '', ...(fb ? { fallback: fb } : {}), ...(ur ? { unitRun: ur } : {}) })
+const go = async (cfg, fb, ur) => { const m = _mock((p, o) => /^(build|ship):F1/.test(o.label) ? _rep(lt(fb, ur)) : /^review/.test(o.label) ? { findings: [] } : undefined, '[]')
  const a = async (p, o) => /^record-args/.test(o.label) ? (m.calls.push({ label: o.label, prompt: p }), _ok(`RECORDED\nCONFIG {"roles":{},"local":${cfg}}`)) : m.agent(p, o)
  await run({ brief: 'C:/b/f.md', mandate: ['m'], ..._kl, agents: [{ id: 'F1', items: 'A1' }] }, a, _n, _n, pipeline); return m.calls.map((c) => c.label) }
-const ci = await go('{"api":"ci"}', 'ci'), unit = await go('{"api":"unit"}', 'unit'), unitCi = await go('{"api":"unit"}', 'ci'), req = await go('{}', 'ci')
+const ci = await go('{"api":"ci"}', 'ci'), unit = await go('{"api":"unit"}', 'unit', UR), unitBare = await go('{"api":"unit"}', 'unit'), unitFail = await go('{"api":"unit"}', 'unit', { ...UR, result: '3 failed' }), unitCi = await go('{"api":"unit"}', 'ci'), req = await go('{}', 'ci')
 console.log(`fallback-ci:${ci.includes('ship:F1') && !ci.some((l) => /^none-word/.test(l))}`)
-console.log(`fallback-unit:${unit.includes('ship:F1') && !unitCi.includes('ship:F1')}`)
+console.log(`fallback-unit:${unit.includes('ship:F1') && !unitCi.includes('ship:F1') && !unitBare.includes('ship:F1') && !unitFail.includes('ship:F1')}`)   // RF: unit needs its passed run
 console.log(`required-held:${!req.includes('ship:F1') && !req.includes('review:F1')}`)
 '@
 $lcR = & { . $O; $__cfg = '{"repos":[{"name":"api","aliases":["be"],"localTest":"none"},{"name":"web","localTest":"optional","localFallback":"unit"},{"name":"app","localTest":"none","ci":{"mrPipelines":false}},{"name":"core"}]}' | ConvertFrom-Json; $wc = Get-KitWorkflowConfig; "$($wc.local | ConvertTo-Json -Compress) $($wc.humanDoc)"
@@ -119,6 +119,8 @@ const b = await go('CONFIG {"models":null,"roles":{},"qaLanes":null}', [_item('W
 const c = await go('CONFIG {"models":{"test":"m-t"},"roles":{},"qaLanes":{"desktop":{"kind":"desktop","parallel":2,"followUp":"web"},"web":{"kind":"web"}}}', [_item('D1', 'desktop')])
 const rr = await go('CONFIG {"models":null,"roles":{},"qaLanes":null}', [_item('W1', '')], '.claude/rt/qa/G'), rt = rr.calls.find((x) => x.label === 'test:W1')
 console.log(`rel-rundir:${!!rt && rt.prompt.includes('C:/.claude/rt/qa/G') && !rt.prompt.includes(' .claude/rt')}`)
+const rk = await run({ runDir: 'C:/r', kitDir: '.claude', items: [] }, async () => _ok(''), _n, _n, null).catch((e) => ({ err: e.message }))
+console.log(`rel-kitdir:${/absolute <workspace>\/\.claude path/.test((rk && rk.err) || '')}`)
 console.log(`unknown-refused:${/unknown lane\(s\) api \(items A1\): qa\.lanes has web/.test(a.out.err || '')}`)
 const tw = b.calls.find((x) => x.label === 'test:W1')
 console.log(`default-web:${!!tw && /-Kind web /.test(tw.prompt) && /BROWSER \(web\)/.test(tw.prompt)}`)
@@ -126,7 +128,7 @@ const td = c.calls.find((x) => x.label === 'test:D1'), fu = c.calls.find((x) => 
 console.log(`desktop:${!!td && td.model === 'm-t' && /-Kind desktop /.test(td.prompt) && /LANE "desktop" \(kind desktop\)/.test(td.prompt) && !/BROWSER \(web\)/.test(td.prompt) && c.logs.some((l) => /desktop 1 \(x2\), web 0 \(x5\)/.test(l))}`)
 console.log(`follow-up:${!!fu && /BROWSER \(web\)/.test(fu.prompt) && /ONLY these checks: C2/.test(fu.prompt) && /The desktop pass \(D1\)/.test(fu.prompt) && c.calls.some((x) => x.label === 'add-followups')}`)
 '@
-Expect-Each (Invoke-Js tc-generic $jsl $wf) 'testy lanes: # (rel-rundir: a relative runDir is from the workspace root)' 'unknown-refused', 'default-web', 'desktop', 'follow-up', 'rel-rundir' -Show 5
+Expect-Each (Invoke-Js tc-generic $jsl $wf) 'testy lanes: # (rel-rundir: a relative runDir is from the workspace root; rel-kitdir: refused)' 'unknown-refused', 'default-web', 'desktop', 'follow-up', 'rel-rundir', 'rel-kitdir' -Show 6
 # launch -Self: CONFIG line (models, roles by name + alias, qa.lanes; _readme keys dropped); plan @phase tokens resolve models.<phase>
 & $J @{ models = @{ _readme = 'x'; build = 'opus' }; repos = @(@{ name = 'core'; aliases = @('api'); role = 'Producer' }, @{ name = 'ui' }); qa = @{ lanes = @{ web = @{ kind = 'web' } }; intermittentRx = 'boom' } } (Join-Path $k 'skills/crafty/kit.local.json')
 $cf = Join-Path (Kd) 'cfg-args.json'; [IO.File]::WriteAllText($cf, '{"brief":"C:/b/c.md","mode":"resume","agents":[{"id":"C1"}]}')

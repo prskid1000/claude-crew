@@ -11,13 +11,13 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L61 record-args · L82 prepare · L111 config · L143 prompts · L235 local · L263 app · L293 test-prompt ·
-//   L351 verify · L413 run-item · L597 pool · L619 budget · L651 run · L697 learn
+// Sections: L16 args · L63 record-args · L84 prepare · L113 config · L145 prompts · L237 local · L265 app · L295 test-prompt ·
+//   L353 verify · L415 run-item · L599 pool · L621 budget · L653 run · L699 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
  target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
-2. Short form (preferred): { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next> }
+2. Short form (preferred): { runDir, kitDir (absolute: every form), only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next> }
 3. Full run.json (+ runDir; also written to <runDir>/run.json for pokey.ps1 finalize):
 { runDir: '<runtime>/work/qa-runs/<date>-<name>', kitDir: '<abs .claude>', title: '<doc names, bug titles>', target: '<targets name>',
  tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
@@ -40,6 +40,8 @@ if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.jo
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
 // a relative runDir is from the workspace root, never the kit folder agents run in (one made <kit>/.claude/.runtime, 2026-11-23)
 const ABS0 = /^([A-Za-z]:|[\\/])/
+// agents run in the kit folder: a relative kitDir made every step path wrong (testers fixed '.claude/skills/pokey/pokey.ps1' by hand, 2026-11-23)
+if (!ABS0.test(K0)) throw new Error(`testy.js args.kitDir '${K0}': the absolute <workspace>/.claude path (bossy SKILL "Launch")`)
 if (R.runDir && !ABS0.test(R.runDir) && ABS0.test(K0)) R = { ...R, runDir: `${K0.replace(/[\\/][^\\/]+$/, '')}/${String(R.runDir).replace(/^\.[\\/]/, '')}` }
 // test = sonnet, never the session model; close, hold, steps, learn = haiku. models.<phase> wins (kit.local.json, CONFIG line of launch -Self)
 // tier (fast | balanced | strong | inherit) -> model; CONFIG tiers + models.<phase> win

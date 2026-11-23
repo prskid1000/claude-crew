@@ -9,7 +9,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text kept in desc-backups), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
- pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch>  wait for MR pipelines, or a branch's newest one (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
+ pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch> [-Sha <commit>]  wait for MR pipelines, or a branch's newest one (of that commit) (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
@@ -1075,7 +1075,7 @@ exit 0
 
 # ---- pipes: wait for MR/PR pipelines (JSON)
 function Invoke-Pipes {
-param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run, [string]$Repo, [string]$Branch)   # -UntilMerged: a consumer waits for producers
+param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run, [string]$Repo, [string]$Branch, [string]$Sha)   # -UntilMerged: a consumer waits for producers; -Sha: the branch run of that commit
 if ($Branch) { if (-not $Repo) { Stop-KitVerb 'pipes: -Branch needs -Repo <repo> (a deploy branch: its newest pipeline)' }; $Mrs = @("branch:$Repo@$Branch") }   # retro 1508: opsy waits on a deploy branch
 if (-not $Mrs) {   # a wt worktree: its branch's open MRs; else the tracked tasks' (-Run: its)
   $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
@@ -1098,9 +1098,9 @@ if (-not $Mrs) {   # a wt worktree: its branch's open MRs; else the tracked task
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ } | ForEach-Object { if ("$_" -match '^([\w./-]+)!(\d+)$') { $pmUrl = Invoke-HostVerb 'mr.url' @{ repo = (Get-HostProject $Matches[1] -Raw); n = $Matches[2] }; if ($pmUrl) { $pmUrl } else { $_ } } else { $_ } })   # repo!iid -> its url (retro 2026-11-20)
 $noMrCi = @(Get-KitValue 'repos' @() | Where-Object { $_.ci.mrPipelines -eq $false } | ForEach-Object { @($_.name) + @($_.aliases) } | Where-Object { $_ } | ForEach-Object { "$_".ToLower() })
-# no head pipeline: no-ci (no CI config) or no-pipeline (may start)
+# no head pipeline: no-ci (no CI config) or no-pipeline (may start); a branch with -Sha: no-pipeline until a run of that commit exists
 function State($url) {
-  if ("$url" -match '^branch:(.+)@([^@]+)$') { $rq = @{ repo = (Get-HostProject $Matches[1] -Raw) }; $bp = @(Invoke-HostVerb 'ci.runs' ($rq + @{ ref = $Matches[2]; per_page = 1 }) -NoMemo)[0]
+  if ("$url" -match '^branch:(.+)@([^@]+)$') { $rq = @{ repo = (Get-HostProject $Matches[1] -Raw) }; $bp = @(Invoke-HostVerb 'ci.runs' ($rq + @{ ref = $Matches[2]; per_page = $(if ($Sha) { 10 } else { 1 }) }) -NoMemo | ForEach-Object { $_ } | Where-Object { $_ -and (-not $Sha -or "$($_.sha)".StartsWith($Sha)) })[0]
     if (-not $bp) { return [ordered]@{ mr = $url; status = 'no-pipeline' } }; return (Get-PipeFailure ([ordered]@{ mr = $url; status = "$($bp.state)" }) $rq $bp.id) }   # state: the host's word normalised
   $u = ConvertFrom-MrUrl $url; if (-not $u) { return [ordered]@{ mr = $url; status = 'bad-url' } }
   if ($u.type -eq 'gitlab' -and $url -match '^https?://([^/]+)/') { $env:GITLAB_HOST = $Matches[1] }   # else glab asks gitlab.com

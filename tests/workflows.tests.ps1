@@ -56,7 +56,7 @@ run(args, agentLost, _n, _n, pipeline).then(() => {
  const rv = calls.filter((c) => c.label === 'review:X1'), ti = calls.findIndex((c) => c.label === 'track:X1@redo'), si = calls.findIndex((c) => c.label === 'ship:X1')
  console.log(`re-review:${rv.length === 2 && /RE-REVIEW after fix round 1/.test(rv[1].prompt) && /null check missing/.test(rv[1].prompt) && si > calls.indexOf(rv[1])}`)
  console.log(`follow-ups:${calls.some((c) => c.label === 'followups:X1' && /rename y/.test(c.prompt) && / followups \S+ https:\/\/h\/g\/api/.test(c.prompt))}`)
- console.log(`wt-dedup:${calls[si].prompt.includes('last used: worktrees: C:/wt/x1)')}`)
+ console.log(`wt-dedup:${calls[si].prompt.includes('last: C:/wt/x1)')}`)
  console.log(`steps-ref:${/skills\/crafty\/SKILL\.md/.test(calls.find((c) => c.label === 'build:X1').prompt)}`)
  console.log(`hold:${lost === 1 && ti >= 0 && /^No report came back[\s\S]*-HoldPromotion 'deferred items: A2'/.test(calls[ti].prompt)}`)   // track redone once
  const m = /-Run '([^']+)'/.exec(calls.find((c) => c.label === 'record-args').prompt)

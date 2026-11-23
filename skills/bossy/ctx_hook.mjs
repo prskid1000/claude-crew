@@ -3,7 +3,7 @@
 // line to the agent's context; the agent decides continue or a fresh agent and records it (bossy.ps1 board check -Decision). Same
 // record and line as usage.ps1 Get-KitCtxCheckLine (board beat asks it on Codex / Antigravity). Node, not pwsh: it runs after every
 // tool call (~50 ms). Usage: node <kit>/skills/bossy/ctx_hook.mjs < hook input. Exit codes: 0 always (a check never blocks a call).
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, openSync, readSync, fstatSync, closeSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, openSync, readSync, fstatSync, closeSync, statSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -42,9 +42,14 @@ try {
   const win = Number(at(loc, 'budget.window') || at(ex, 'budget.window') || 0), first = Math.round(param('budget.reviewAt') * win), every = param('budget.reviewEvery')
   if (first <= 0 || every <= 0 || ctx < first) process.exit(0)
   const th = first + every * Math.floor((ctx - first) / every), key = basename(tf).replace(/\.jsonl?$/i, '')
-  const cache = join(process.env.CLAUDE_RUNTIME || join(kit, ex._paths.runtimeDir), ex._paths.runtime.cache, 'ctx-checks'), cf = join(cache, `${key.replace(/[^\w.-]/g, '_')}.json`)
-  const rec = json(cf) || {}; if (Number(rec.asked || 0) >= th) process.exit(0)
-  Object.assign(rec, { transcript: tf, asked: th, askedAt: new Date().toISOString() }); mkdirSync(cache, { recursive: true }); writeFileSync(cf, JSON.stringify(rec))
+  const rtv = process.env.CLAUDE_RUNTIME || ex._paths.runtimeDir   // lib.ps1 Get-KitRuntime: kit-relative; '<kit name>/..' workspace-relative
+  const cache = join(resolve(rtv.split(/[\\/]/)[0] === basename(kit) ? dirname(kit) : kit, rtv), ex._paths.runtime.cache, 'ctx-checks'), cf = join(cache, `${key.replace(/[^\w.-]/g, '_')}.json`)
+  mkdirSync(cache, { recursive: true }); const lock = `${cf}.lock`
+  try { if (Date.now() - statSync(lock).mtimeMs > 10000) unlinkSync(lock) } catch { }   // a crashed hook's lock
+  try { writeFileSync(lock, '', { flag: 'wx' }) } catch { process.exit(0) }   // parallel tool calls: one hook asks
+  let ask = false
+  try { const rec = json(cf) || {}; if (Number(rec.asked || 0) < th) { ask = true; writeFileSync(cf, JSON.stringify(Object.assign(rec, { transcript: tf, asked: th, askedAt: new Date().toISOString() }))) } } finally { try { unlinkSync(lock) } catch { } }
+  if (!ask) process.exit(0)
   const orch = join(here, 'bossy.ps1').replace(/\\/g, '/')
   const line = `CONTEXT-CHECK: context ${Math.round(ctx / 1000)}k (self-check at ${Math.round(th / 1000)}k, next at ${Math.round((th + every) / 1000)}k): decide now: continue when the rest of this phase fits (reads in ranges, no new phase), else hand off at the phase end (crafty.ps1 checkpoint -Brief, board leave -Handoff, a fresh agent); record it: & '${orch}' board check -Decision continue|handoff -Reason '<why>' -Ctx ${key}`
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: line } }))

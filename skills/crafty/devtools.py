@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L377 process · L586 git host · L659 scope · L751 MR · L946 merge · L1277 docs ·
-  L1435 publish · L1908 render · L2351 spec · L2682 plugins · L2696 keepboth · L2715 selftest · L3403 CLI
+  L1440 publish · L1913 render · L2356 spec · L2687 plugins · L2701 keepboth · L2720 selftest · L3408 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1340,7 +1340,9 @@ def md_to_html(md, title=''):
         w = min(600, int(m[3] or m[4] or 600))   # default and cap 600 px (the page width)
         if not cap:
             return f'<p><img src="{m[2]}" width="{w}"><br><i>{m[1]}</i></p>'
-        return f'<p><img src="{m[2]}" width="{min(w, cap)}"><br><i>{m[1]}</i><br><a href="{full_link(m[2])}">open full</a></p>'
+        return f'<p><img src="{m[2]}" width="{min(w, cap)}"><br><i>{m[1]}</i><br><a href="{full_link(m[2])}"{new_tab(full_link(m[2]))}>open full</a></p>'
+
+    new_tab = lambda u: ' target="_blank" rel="noopener"' if re.match(r'https?://', u) else ''   # ui-check: a web link never replaces the doc
 
     def inline(t, cap=None):
         t = html.escape(t, quote=False).replace('&lt;br&gt;', '<br>')   # a line break inside a table cell (evidence previews)
@@ -1350,7 +1352,7 @@ def md_to_html(md, title=''):
         t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
         # images before links: ![alt](url "width px"); in a cell: cell-fit, stacked, each linked
         t = re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;(\d+)&quot;|\s+"(\d+)")?\)', lambda m: img(m, cap), t)
-        t = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2">\1</a>', t)
+        t = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', lambda m: f'<a href="{m[2]}"{new_tab(m[2])}>{m[1]}</a>', t)
         return re.sub(r'\0(\d+)\0', lambda m: f'<span style="{CODE_CSS}">{code[int(m[1])]}</span>', t)
 
     out, lines, i, lst = [], md.splitlines(), 0, None
@@ -1372,7 +1374,7 @@ def md_to_html(md, title=''):
             rows = ['<tr>' + ''.join(f'<th style="{HEAD_CSS}{f";width:{w}%" if w else ""}"><b>{inline(c)}</b></th>' for c, w in zip(head, cw)) + '</tr>']
             i += 2
             while i < len(lines) and lines[i].startswith('|'):
-                rows.append('<tr>' + ''.join(f'<td style="{CELL_CSS}">{inline(c.replace(chr(92) + "|", "|"), caps[j] if j < len(caps) else caps[-1])}</td>'
+                rows.append('<tr>' + ''.join(f'<td data-l="{html.escape(re.sub(r"[*`]", "", head[j]) if j < len(head) else "", quote=True)}" style="{CELL_CSS}">{inline(c.replace(chr(92) + "|", "|"), caps[j] if j < len(caps) else caps[-1])}</td>'
                                              for j, c in enumerate(_cells(lines[i]))) + '</tr>'); i += 1
             out.append(f'<table border="1" style="border-collapse:collapse{";width:100%" if any(cw) else ""}">' + ''.join(rows) + '</table>'); continue
         m = re.match(r'^(#{1,6})\s+(.*)$', l)
@@ -1391,7 +1393,10 @@ def md_to_html(md, title=''):
             out.append(f'<p>{inline(l)}</p>')
         i += 1
     close()
-    return f'<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title></head><body>' + '\n'.join(out) + '</body></html>'
+    # a phone (ui-check 390 px squeezed a 5-column table's cells to 62 px): each row stacks, a cell under its column name
+    narrow = ('<style>@media (max-width:640px){table,tbody,tr,td{display:block;width:auto!important}tr:first-child{display:none}'
+              'td::before{content:attr(data-l);display:block;font-weight:bold}}</style>')
+    return f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>{narrow}</head><body>' + '\n'.join(out) + '</body></html>'
 
 
 def _html_of(a):
@@ -2643,7 +2648,7 @@ def load_spec(src):
     except json.JSONDecodeError as e:   # retro 1549: retro.json with raw Windows paths failed render retro
         if 'escape' not in str(e):
             raise
-        return json.loads(re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', text))
+        return json.loads(re.sub(r'\\(["\\/]|u[0-9a-fA-F]{4})|\\', lambda m: m.group(0) if m.group(1) else '\\\\', text))   # \t \n \b in a path stay text
 
 
 def spec_text(path, kind, task='', add=None):
@@ -2737,7 +2742,7 @@ def selftest():
     refused('merge: a repo name instead of a worktree folder is refused', lambda: remote('no-such-checkout-x1'), 'not a folder')
     page = md_to_html('![shot 1](https://x/a.png "260") [link](https://y)\n![b](c.png)')
     expect('md_to_html: images with width (default 600) and captions, links stay links', '<img src="https://x/a.png" width="260"><br><i>shot 1</i>' in page
-           and '<img src="c.png" width="600">' in page and '<a href="https://y">link</a>' in page)
+           and '<img src="c.png" width="600">' in page and '<a href="https://y" target="_blank" rel="noopener">link</a>' in page)
     spec_only = ['svc/api/cypress/**', 'svc/api/package.json']   # incident 2026-11-14: a spec-only area's MR changed product files
     diff = ['svc/api/cypress/e2e/inv.cy.js', 'svc/api/package.json', 'svc/api/src/main/java/InventoryService.java', 'svc/api/cypress.config.js']
     expect('scope: files outside the area globs are named (** any depth, an exact file, a sibling is outside)',
@@ -3045,11 +3050,11 @@ def _publish_selftest(expect, refused):
         expect('md_to_html (the gdocs upload): tables stay HTML tables, header bold + shaded, widths by role (# 5, Steps 40, Expected 25,'
                ' Result 10, Evidence 20), cells padded and top-aligned, images inline and fit to the cell (human Evidence 112 px)',
                [(n, re.search(r'width:([\d.]+)%', s)[1]) for s, n in th[3:8]] == [('#', '5.0'), ('Steps', '40.0'), ('Expected', '25.0'), ('Result', '10.0'), ('Evidence', '20.0')]
-               and all(HEAD_CSS in s for s, _ in th) and re.search(rf'<td style="{CELL_CSS}"><p><img src="https://img/1.png" width="112"', h) and '| T1 |' not in h)
+               and all(HEAD_CSS in s for s, _ in th) and re.search(rf'<td data-l="[^"]*" style="{CELL_CSS}"><p><img src="https://img/1.png" width="112"', h) and '| T1 |' not in h)
         d1, d2 = 'https://drive.google.com/uc?export=view&id=1Ab-C', 'https://drive.google.com/uc?export=view&id=2De_F'
         ha = md_to_html(ait.split('\n')[0] + '\n|---|---|---|---|---|---|\n' + f'| A1 | positive | GET /x | 200 | PASS | ![A1: list]({d1} "600")<br>![A1: zoom]({d2}) |\n')
         hq = md_to_html(f'| Check | Result | Observed | Evidence |\n|---|---|---|---|\n| T1 | PASS | ok | ![T1: phone]({d1} "260") |\n')
-        imgs = re.findall(r'<img src="([^"]+)" width="(\d+)"><br><i>([^<]*)</i><br><a href="([^"]+)">open full</a>', ha)
+        imgs = re.findall(r'<img src="([^"]+)" width="(\d+)"><br><i>([^<]*)</i><br><a href="([^"]+)"[^>]*>open full</a>', ha)
         expect('md_to_html: a cell image fits its column (AI Evidence 100 px, QA report 118 px, a smaller asked width kept, outside a table'
                ' 600), images stack in one cell, each with an "open full" link to its Drive /file/d/<id>/view',
                [(w, c, l) for _, w, c, l in imgs] == [('100', 'A1: list', 'https://drive.google.com/file/d/1Ab-C/view'), ('100', 'A1: zoom', 'https://drive.google.com/file/d/2De_F/view')]
