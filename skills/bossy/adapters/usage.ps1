@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L358 context · L655 split · L729 budget
+Sections: L9 usage · L358 context · L656 split · L730 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -437,7 +437,7 @@ function Add-KitContextResult($Cx, [string]$Pend, [double]$Tok, [string]$Day) {
   if ($cat -eq 4 -and $Tok -gt (Get-KitContextParam logTokens)) { $w[4] = [long]$w[4] + 1; $w[5] = [long]$w[5] + [long]$Tok }
   # a command is masked whole before the cut (a cut token escapes the mask): flag values of password / user / token flags too
   $cm = (($key -replace '\s+', ' ').Trim() -replace '^((\w+=\S*)\s+)+', '') -replace '(?i)(\s-{1,2}(?:p|pw|pwd|passw\w*|password|u|user|token|secret|api-?key|auth)\s+)\S+', '$1[redacted]' -replace '(?i)(\s-u\s*[^\s:]+:)\S+', '$1[redacted]'
-  $lb = "$tool $(if ($tool -match '^(Bash|PowerShell|run_command|shell\w*|exec_command)$') { Protect-KitText $cm } else { [IO.Path]::GetFileName(($key -replace '\\', '/').TrimEnd('/')) })"; if ($lb.Length -gt 70) { $lb = $lb.Substring(0, 69) + '…' }
+  $lb = "$tool $(if ($tool -match '^(Bash|PowerShell|run_command|shell\w*|exec_command)$') { Protect-KitText $cm } else { [IO.Path]::GetFileName(($key -replace '\\', '/').TrimEnd('/')) })"; if ($lb.Length -gt 160) { $sp = $lb.LastIndexOf(' ', 159); $lb = $lb.Substring(0, $(if ($sp -gt 100) { $sp } else { 159 })) + ' …' }   # cut between words; the popover wraps it
   $Cx.top = @(@(@($Cx.top) + "$([long]$Tok)|$cat|$(Protect-KitText $lb.Trim())") | Sort-Object { -[double](("$_" -split '\|')[0]) } | Select-Object -First 3)
 }
 # a tool call's pending entry "cat|tool|key" (its result comes later, maybe in a later read); $In = its input (a dictionary or JSON text)
@@ -552,9 +552,10 @@ function Get-KitContextTip($Cx, [string]$Head = '') {
   if (-not $Cx) { return "$(if ($Head) { "$Head`n" })context not recorded" }; $f = { param($v) if ([double]$v -le 0) { '0' } else { Format-KitCompactNum ([double]$v) } }; $car = @($Cx.car); $add = @($Cx.add); $ct = [math]::Max(1.0, [double](@($car | ForEach-Object { [double]$_ }) | Measure-Object -Sum).Sum)
   $ls = [Collections.Generic.List[string]]::new(); if ($Head) { $ls.Add($Head) }
   $ls.Add("context peak $(& $f $Cx.pk) · start $(& $f $Cx.s0)$(if ([int]$Cx.agents -gt 1) { ' (avg)' }) · avg $(& $f ([double]$Cx.sum / [math]::Max(1, [int]$Cx.n))) · $($Cx.n) call(s)$(if ([int]$Cx.agents -gt 1) { " · $($Cx.agents) agents" })$(if ([int]$Cx.cmp) { " · $($Cx.cmp) compaction(s)" })$(if ([int]$Cx.ho) { " · $($Cx.ho) resumed from a handoff" })")
-  $ls.Add('carried (re-sent each call) · added:'); for ($i = 0; $i -lt 8; $i++) { $ls.Add("$($script:KitCtxCats[$i][1]) $(& $f $car[$i]) ($([math]::Round(100 * [double]$car[$i] / $ct))%) · $(& $f $add[$i])") }
+  # one line per category with tokens (an empty one adds no fact, only page weight); the largest results one per line (a command may hold " · ")
+  $ls.Add('carried (re-sent each call) · added:'); for ($i = 0; $i -lt 8; $i++) { if ([double]$car[$i] -gt 0 -or [double]$add[$i] -gt 0) { $ls.Add("$($script:KitCtxCats[$i][1]) $(& $f $car[$i]) ($([math]::Round(100 * [double]$car[$i] / $ct))%) · $(& $f $add[$i])") } }
   $ws = @(Get-KitContextWaste $Cx); if ($ws.Count) { $ls.Add("waste: $($ws -join ' · ')") }
-  $tp = @($Cx.top | Where-Object { $_ } | ForEach-Object { $p = "$_" -split '\|', 3; "$($p[2]) $(& $f $p[0])" }); if ($tp.Count) { $ls.Add("largest results: $($tp -join ' · ')") }
+  $tp = @($Cx.top | Where-Object { $_ } | ForEach-Object { $p = "$_" -split '\|', 3; "$($p[2]) $(& $f $p[0])" }); if ($tp.Count) { $ls.Add('largest results:'); $ls.AddRange([string[]]$tp) }
   $ls -join "`n"
 }
 # a category vector as one stacked bar (CSS gradient stops, the x-<key> colours)
@@ -713,7 +714,7 @@ function Get-KitSplitPeaks($Objs, [string]$Kind) { $pk = @{}; foreach ($o in @($
 # the legend line of every split (one colour per type)
 function Format-KitSplitLegend {
   $sw = { param($k, $l) "<i class='lgk k-$k'></i>$l" }
-  "<span class=kleg>$(& $sw out output) $(& $sw in fresh) $(& $sw cw 'cache write') $(& $sw cr 'cache read') $(& $sw tot total) · $(& $sw mo model) $(& $sw to tools) $(& $sw wa waiting)</span>"
+  "<span class=kleg>Tokens: $(& $sw out output) $(& $sw in fresh) $(& $sw cw 'cache write') $(& $sw cr 'cache read') $(& $sw tot total) · Time: $(& $sw mo model) $(& $sw to tools) $(& $sw wa waiting)</span>"   # each group named (was one run-on line: "total · model")
 }
 # a split column's sub-header (owner 2026-11-20: tiles need names): the cell's tile row with names, same widths and container query as the cells
 function Format-KitSplitHead([string]$Kind) {

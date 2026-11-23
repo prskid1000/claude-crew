@@ -2,7 +2,7 @@
 <#
 tests/context.tests.ps1: adapters/usage.ps1 context offline: what fills each agent's context per model call (Claude, Codex, Antigravity
 transcripts: categories, start load, peak, carried, compactions, handoffs, waste signals), the CLIs' tokens and spend, usage -Context, the
-supervise WATCH / ACT rules and the learned start norm, the Runs band cell, the Trends rows and the per-role table.
+supervise WATCH / ACT rules and the learned start norm, the Runs band cell, the Trends rows and the per-role table, the info popover.
 Usage: pwsh -NoProfile -File tests/context.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -127,4 +127,31 @@ $u = Update-KitUsageFile $tx $null ([ref][long]1MB)
 "$($cmd -join ',')|$($pth -join ',')|$(@($cx.rmax)[0]):$($p.Split('|')[0])|$((@($sec.top) -join ' ') -notmatch 'Hunter2pw|S3cretpw|Hunter3pw')|$($u.t1)|$(@($u.days.Keys) -join ',')"
 '@ @($O, "$(Kd)")
 Expect "category rules: reads naming test tools = code (2), git commit = other (5), mvn / yarn test = build (4), VAR= and sh -c wrappers off, kit .md = instructions (0); MandateService.java = code, briefs/mandate.md = task; Antigravity Path read twice = 2 re-reads of a kit .md; no secret in labels; the line's timestamp, not a tool input's created_at ($cr)" ("$cr" -eq '2,2,2,2,2,5,4,4,2,0,2|2,1|2:0|True|2026-01-05T09:00:00.000Z|2026-01-05|claude-sonnet-5-5')
+# the info popover (owner 2026-11-23): one script on the page and each run page (titles stay data, no title rewrite); context tip text
+# the popover structures: empty categories left out, the largest results one per line; tile labels wrap (no ellipsis on the page)
+$popT = & { . $O; $n = [datetime]'2026-01-02T10:00:00'
+  $cx = [pscustomobject]@{ n = 4; s0 = 20000; pk = 29000; sum = 94000; agents = 1; pks = 29000; add = @(21500, 1000, 3000, 0, 4000, 0, 0, 1200); car = @(60000, 3000, 9000, 0, 12000, 0, 0, 10000); w = @(0, 0, 0, 0, 0, 0); rr = @(0, ''); top = @('4000|4|Bash pwsh crafty.ps1 check', '900|2|Read a.ps1') }
+  $tx = Get-KitContextTip $cx 'build:A1'; $pgs = @{}; $hk = $n.AddHours(-1).ToString('yyyy-MM-dd HH')
+  $sp = [pscustomobject]@{ label = 'devy:A1'; role = 'devy'; at = $n.AddMinutes(-10).ToString('o'); min = 50; result = 'pass'; tok = 1000; in = 10; out = 90; cr = 800; cw = 100; cs = @(0.01, 0.2, 0.02, 0.05); tm = @(20, 10, 0, 0, 5, 15); hrs = @{ $hk = @(10, 90, 800, 100, 0.01, 0.2, 0.02, 0.05) }; mrs = @() }
+  $run = [pscustomobject]@{ run = 'r1'; id = 'wf_1'; label = 'build a thing'; kind = 'build'; started = $n.AddHours(-2).ToString('o'); status = 'ended'; at = $n.AddMinutes(-10).ToString('o'); tok = 1000; cost = 0.28; in = 10; out = 90; cr = 800; cw = 100; cs = $sp.cs; tm = $sp.tm; tmN = 1; wall = 50; hrs = $sp.hrs; steps = @($sp); total = 1; done = 1; merged = 0; roles = 'devy 1' }
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); agents = @(); stats = [pscustomobject]@{ usage = [pscustomobject]@{ runs = @($run); days = @([pscustomobject]@{ day = $n.ToString('yyyy-MM-dd'); tok = 1000; cost = 0.28; in = 10; out = 90; cr = 800; cw = 100; cs = $run.cs }) } } }) $pgs
+  "$($tx -match "(?m)^largest results:\r?\n^Bash pwsh crafty\.ps1 check 4k\r?\n^Read a\.ps1 900$") $($tx -notmatch 'kit data|web \+ docs') $(@([regex]::Matches($h, 'window\.KC_SW=\{"kit instructions":"var\(--x-ki\)"')).Count -eq 1 -and $h -notmatch 'text-overflow:ellipsis') $(@($pgs.Values | Where-Object { $_ -match 'KC_SW' -and $_ -notmatch 'text-overflow:ellipsis' }).Count -ge 1)" }
+Expect "popover: context tip lines (largest results one per line, no empty category), one script with the chart swatches, run pages carry it; no ellipsis ($popT)" ($popT -eq 'True True True True')
+if (Use-BrowserKit) {
+  $uiKb = Join-Path $k 'skills/bossy/kitbag.py'
+  # the popover (owner 2026-11-23): a context tip at the bottom-right corner opens on hover inside the viewport as title, 4 tiles, a swatch
+  # table, a waste note and command lines (no native title left); a token tip = a table with its total row; Esc closes it
+  $uiPop = Join-Path (Kd) 'popover.html'
+  & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }
+    $cx = [pscustomobject]@{ n = 4; s0 = 20000; pk = 29000; sum = 94000; cmp = 1; agents = 1; pks = 29000; add = @(21500, 1000, 3000, 0, 4000, 0, 0, 1200); car = @(60000, 3000, 9000, 0, 12000, 0, 0, 10000); w = @(2, 2000, 0, 0, 1, 4000); rr = @(3, '/w/app/src/main.java'); top = @('4000|4|Bash pwsh crafty.ps1 check -Kind build --spec a/b.cy.ts', '900|2|Read a.ps1') }
+    $tk = Get-KitSplitTip ([pscustomobject]@{ in = 10; out = 90; cr = 800; cw = 100; cs = @(0.01, 0.2, 0.02, 0.05); tok = 1 }) 'devy:A1'
+    $chk = "var o0=window.uiChecks;window.uiChecks=function(){var r=o0?o0():[],d=document,t=d.getElementById('tip'),q=function(s){return t.querySelectorAll(s).length},hv=function(i){d.getElementById(i).dispatchEvent(new MouseEvent('mouseover',{bubbles:true}))};" +
+      "hv('p1');var b=t.getBoundingClientRect(),n=[t.hidden?'hidden':'',q('.tp-pt b'),q('.tp-ps>div'),q('tbody tr'),q('.tp-sw'),q('.tp-pn li'),q('.tp-pl code')].join(',');if(n!=',1,4,5,5,3,2')r.push({el:'tip',why:'context popover parts '+n,text:''});" +
+      "var hb=d.getElementById('p1').getBoundingClientRect();if(b.left<0||b.top<0||b.right>innerWidth||b.bottom>innerHeight)r.push({el:'tip',why:'outside the viewport',text:''});if(b.bottom>hb.top+1||hb.top-b.bottom>16||b.right<hb.left-24)r.push({el:'tip',why:'not flipped above its corner holder',text:''});if(d.getElementById('p1').hasAttribute('title'))r.push({el:'tip',why:'native title kept',text:''});" +
+      "hv('p2');if(q('tr.tp-tt')!=1||q('tbody tr')!=5)r.push({el:'tip',why:'token popover rows '+q('tbody tr'),text:''});d.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));if(!t.hidden)r.push({el:'tip',why:'Esc leaves it open',text:''});return r}"
+    $sp = "<span id=p1 style='position:fixed;right:0;bottom:0' title='$(& $e (Get-KitContextTip $cx 'build:A1'))'>c</span><span id=p2 title='$(& $e $tk)'>t</span>"
+    (Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00' })).Replace('<main class=wrap>', "<main class=wrap>$sp").Replace('</body>', "<script>$chk</script></body>") } | Set-Content $uiPop -Encoding utf8
+  $popOut = @(& $py -X utf8 $uiKb ui-check $uiPop --widths 1366 2>&1 | Out-String) -split "`n"
+  Expect "popover: structured context + token tips inside the viewport, title moved, Esc closes ($(@($popOut -match 'CLIP tip|render failed') -join ' / '))" (-not @($popOut -match 'CLIP tip|render failed').Count -and @($popOut -match '1366 px').Count)
+}
 Remove-TestKit $k
