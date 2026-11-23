@@ -118,6 +118,11 @@ function Get-TrackerTask($id) { $global:n13 += $id -eq 't13'; [pscustomobject]@{
 $r12 = @(Invoke-Track add -Task t12 -Mrs 'g/web!2' -HoldPromotion Z1) + @(Invoke-Track run -Detail) | Out-String
 $null = Invoke-Track add -Task t13 -Mrs 'g/web!7' -HoldPromotion Z; $global:n13 = 0; $r13 = 1, 2 | % { Invoke-Track run -Detail } | Out-String
 "stalehold:$($r12 -match "DONE t12: status 'closed'.+ \(Z1\)" -and $r12 -notmatch 'HOLD t12' -and (Read-KitTracking).tasks['t12'].done -and ([regex]::Matches($r13, 'HOLD t13')).Count -eq 2 -and !$global:n13)"
+# deferred to another tracked task that is done: released with a line; to itself, to an open task or free text: kept
+Update-KitTracking { param($t) $t.tasks['t15'] = @{ task = 't15'; mrs = @('g/web!15'); done = $true }; $t.tasks['t18'] = @{ task = 't18'; mrs = @('g/web!18'); done = $false; holdPromotion = 'x' }; $t.tasks['t19'] = @{ task = 't19'; mrs = @('g/web!19'); done = $true; holdPromotion = 'deferred items: t15 z' } }
+$adh = foreach ($dh in @(@('t14', 'deferred items: t15 B-2, t15 B-3'), @('t16', 'deferred items: t16 self'), @('t17', 'deferred items: t15 a, t18 b'))) { Invoke-Track add -Task $dh[0] -Mrs "g/web!$($dh[0].Substring(1))" -HoldPromotion $dh[1] -Detail }
+$rdh = @(@($adh) + @(Invoke-Track run -Detail)) | Out-String; $tdh = (Read-KitTracking).tasks
+"deferhold:$($rdh -match "RELEASED t14: hold 'deferred items: t15 B-2, t15 B-3' dropped: t15 done" -and $rdh -notmatch 'HOLD t14' -and -not $tdh.t14.holdPromotion -and $rdh -match 'HOLD t16' -and $rdh -match 'HOLD t17' -and $tdh.t17.holdPromotion -and $rdh -match 'RELEASED t19' -and -not $tdh.t19.holdPromotion)"
 $__cfg = if ($__cfg) { $__cfg } else { [pscustomobject]@{} }; $__cfg | Add-Member -Force process ([pscustomobject]@{ gates = [pscustomobject]@{ promote = 'builtin:testingDocs' } })   # the legacy row
 $KitConf.TrackerType = 'fake'; $global:tdesc = 'Testing doc (human): https://d/h'; function Get-TrackerTask($id) { [pscustomobject]@{ name = 'n'; status = 'review'; subtasks = @(); description = $global:tdesc } }
 $null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invoke-Track run | Out-String; $s0 = @($global:sets)
@@ -132,7 +137,7 @@ Update-KitTaskIndex t11 { param($x) $x.track = @{ task = 't11'; mrs = @('web!3',
 $rt = Read-KitTracking; "mrref:$((@($rt.tasks['t10'].mrs) -join ',') -eq 'web!4' -and (@($rt.tasks['t11'].mrs) -join ',') -eq 'web!3')"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
-Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; stalehold: closed = done, 1 read/30 min; nodoc: promoted only with both doc links, the human one alone held; staledoc: a cached no-doc ATTENTION is dropped once the task is promoted; mrref: group/repo!n, URL and repo!n stored once, old duplicates dedupe on read)' @('skip', 'once', 'hold', 'throttle', 'keep', 'stalehold', 'nodoc', 'staledoc', 'mrref') 9
+Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; stalehold: closed = done, 1 read/30 min; deferhold: deferred to a done task = released; nodoc: promoted only with both doc links, the human one alone held; staledoc: a cached no-doc ATTENTION is dropped once the task is promoted; mrref: group/repo!n, URL and repo!n stored once, old duplicates dedupe on read)' @('skip', 'once', 'hold', 'throttle', 'keep', 'stalehold', 'deferhold', 'nodoc', 'staledoc', 'mrref') 10
 $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $dp.WaitForExit()
 $gb = Join-Path (TkPath $k board -Create) 'gone-s.json'; Set-JsonFile $gb @{ session = 'gone-s'; agent = 'X9'; run = 'r1'; status = 'working'; beat = (Get-Date).ToString('o'); joined = (Get-Date).ToString('o'); holderPid = $dp.Id }
 $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters')
@@ -164,19 +169,6 @@ Expect 'cleanup keep rules: newest N APKs, old job files and off-layout entries 
 $env:KIT_RUN = 'r-9'; $env:KIT_AGENT = 'K1'; $null = pwsh @np $O decide list; $null = pwsh @np $O learn -Skill kitty -Kind idea -Text 'Bearer abc123defghij token=abc1 a@b.co'
 $null = python -X utf8 "$k/skills/bossy/kitbag.py" budget; $env:KIT_RUN = $env:KIT_AGENT = $null; $au = (pwsh @np $O audit -Run r-9 -Since 7 2>&1) -join "`n"
 Expect 'kitlog: call lines (ps1 + py) masked; audit -Since 7 (days) merges the streams' ($au -match '(?s)^audit run r-9: [3-9] events.*bossy\.ps1 decide list -> rc 0.*learn kitty/idea -> Bearer \[redacted\] token=\[redacted\] \[email\].*kitbag\.py budget')
-$nt = @'
-. $args[0]
-$env:KIT_NET_TRIES = '1'   # a tracker CLI failing per $global:trFails: network, then fine, then a real error
-Register-KitAdapter 'tracker' 'fake' @{ status = { param($a) if ($global:trFails) { throw $global:trFails }; 'ok' } }; Initialize-KitTracker -Type fake
-$global:trFails = 'dial tcp: lookup api.example: no such host'
-$q = Set-TrackerStatus 'o/r#9' 'inTest' 3>$null; "queued:$("$q" -match '^QUEUED' -and (Test-Path (Get-KitPath outbox)))"
-$global:trFails = ''
-$s = @(Invoke-KitOutbox); "sent:$("$s" -match '^SENT status o/r#9' -and -not (Test-Path (Get-KitPath outbox)))"
-$global:trFails = 'no issue 9 in o/r (HTTP 404)'
-try { $null = Set-TrackerStatus 'o/r#9' 'inTest'; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
-'@
-$res = Invoke-PsTest 'outbox-test' $nt @(Lib)
-Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')
 & $J @{ gitHostType = 'gitlab' } (Join-Path $k 'skills/crafty/kit.local.json')   # no load-time git lookup
 $j1 = pwsh @np $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C:/wt/x7' | Out-String
 $j2 = pwsh @np $O board join -Type revy -Agent R7 -Run w7 | Out-String

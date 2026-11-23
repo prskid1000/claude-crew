@@ -144,23 +144,6 @@ $gone = @([pscustomobject]@{ name = 'api'; checkout = 'Z:/no-such-checkout'; dep
 '@
 $res = Invoke-PsTest 'deploy-ancestry' $ua @($O, $fa, $c1, $c2, (Join-Path (Kd) 'asked.txt'))
 Expect-Each $res 'deploy plan: an MR in the last green deploy job is not probed; the request is recorded before the probe; another deploy to the same env, no checkout or a passed deadline -> probed (#)' @('skip', 'batch', 'first', 'degrade')
-$it = @'
-$env:KIT_TRACKER_TYPE = 'none'
-. $args[0]
-$d0 = (Get-Date).ToString('o'); $old = (Get-Date).AddDays(-30).ToString('o')
-Update-KitTracking { param($t) $t.tasks['gone1'] = @{ task = 'gone1'; mrs = @('api!1'); done = $true; doneAt = $d0 }; $t.tasks['ok2'] = @{ task = 'ok2'; mrs = @('api!2'); done = $true; doneAt = $d0 }
-  $t.tasks['old3'] = @{ task = 'old3'; mrs = @('api!3'); done = $true; doneAt = $old }; $t.tasks['open4'] = @{ task = 'open4'; mrs = @('api!4') }; $t.tasks['qa5'] = @{ task = 'qa5'; mrs = @('api!5'); done = $true; doneAt = $d0; qaCovered = @('r1') } }
-$script:viewed = @(); function Get-TrackerTask($id) { $script:viewed += $id; if ($id -eq 'gone1') { throw "HTTP 404 'Task not found, deleted'" }; [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } }
-$o = Invoke-MarkInTest -Apply | Out-String
-"gone:$($o -match 'GONE  gone1' -and $o -match 'deleted in the tracker \(gone1\)' -and -not (Read-KitTracking).tasks.ContainsKey('gone1') -and (Read-KitTracking).tasks.ContainsKey('ok2'))"
-"scope:$((@($script:viewed | Sort-Object) -join ',') -eq 'gone1,ok2,qa5' -and $o -match "mark-in-test: 3 task\(s\) checked \(3 promoted by the kit in 14 d, subtasks included\): 2 now 'inProgress', 1 deleted in the tracker \(gone1\)")"
-$script:viewed = @(); $tq = Invoke-MarkInTest -Task old3 | Out-String; "task:$(($script:viewed -join ',') -eq 'old3' -and $tq -match "SKIP  old3  status 'inProgress', not promoted")"
-Update-KitTracking { param($t) $t.tasks['api!4'] = @{ task = 'api!4'; mrs = @('api!4') } }   # an MR ref registered as a task
-function Get-TrackerTask($id) { $script:viewed += $id; if ($id -ne 'nil1') { [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } } }; $nq = Invoke-MarkInTest -Task nil1 | Out-String
-$script:viewed = @(); $mq = Invoke-MarkInTest -FromMrs 'api!4,api!3,api!9' | Out-String
-"mrs:$((@($script:viewed | Sort-Object) -join ',') -eq 'old3,open4' -and $mq -match 'MAP   api!4 -> open4\r?\n' -and $mq -match 'api!9 -> no task' -and $nq -match 'SKIP  nil1  the tracker returned nothing')"
-'@
-Expect-Each (Invoke-PsTest 'intest-gone' $it @($O)) 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (SKIP line), -Mrs their tracked tasks (#)' @('gone', 'scope', 'task', 'mrs')
 $pt = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
@@ -182,9 +165,18 @@ Update-KitTracking { param($t) $t.tasks.d1 = @{ task = 'd1'; mrs = @('api!1'); d
 $script:planOut = @('WATCH background d failed: boom'); $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)   # a deployed check with no JSON: flagged, not stamped (asked again)
 "live:$(@($r.what -match '^deployed check d1: background d failed').Count -and -not (Read-KitTracking).tasks.d1.liveCheckedAt)"
 Set-KitTaskFields d1 @{ inTestDue = $now.ToString('o') }; Update-KitTracking { param($t) $t.tasks.d2 = @{ task = 'd2'; inTestDue = $now.ToString('o') } }
-function Invoke-Bounded { param($s, $a) if ($a[1] -eq 'intest') { $script:it = $a; @('MARKED  d2  in test (api!2 on stage) | n', 'ERROR d1  could not set status: x', 'mark-in-test: 2 task(s) checked (the tasks named (-Task / -Mrs)): 1 moved to in test, 1 blocked (d1: x)') } }
-$r = @(Get-KitSuperviseFlagsDeploys -AutoFix); $tk = (Read-KitTracking).tasks
-"intest:$(($script:it -join ' ') -eq 'deploy intest -Apply -Task d1,d2' -and @($r | Where-Object { "$($_.what)" -match '^auto-fixed: MARKED  d2 ' }).Count -eq 1 -and -not @($r | Where-Object { "$($_.what)" -match 'd1' }).Count -and $tk.d1.inTestDue -and -not $tk.d2.inTestDue)"
+function Invoke-Bounded { param($s, $a) if ($a[1] -eq 'intest') { $script:it = $a; @('MARKED  d2  in test (api!2 on stage) | n', 'ERROR d1  could not set status: x', 'WAIT  d5  api!5 not checked | n', 'WAIT  d6  api!6 not live on: stage | n', 'mark-in-test: 4 task(s) checked: 1 moved to in test, 1 blocked (d1: x)') } }
+$swf = Join-Path (Get-KitPath deploys) 'intest-sweep.json'; $null = Get-KitSuperviseFlagsDeploys -AutoFix; $thr = -not $script:it   # a sweep just ran: a due retry waits 10 min
+Remove-Item $swf; $r = @(Get-KitSuperviseFlagsDeploys -AutoFix); $tk = (Read-KitTracking).tasks
+"intest:$($thr -and ($script:it -join ' ') -eq 'deploy intest -Apply' -and @($r | Where-Object { "$($_.what)" -eq 'auto-fixed: FIXED d2: promoted -> in test, every MR live (api!2 on stage)' }).Count -eq 1 -and @($r | Where-Object { "$($_.what)" -match '^STATUS d5: deployed state unknown: api!5 not checked' }).Count -eq 1 -and -not @($r | Where-Object { "$($_.what)" -match 'd6' }).Count -and @($r | Where-Object { $_.level -eq 'WATCH' -and "$($_.what)" -match '^STATUS d1: every MR live' }).Count -eq 1 -and $tk.d1.inTestDue -and -not $tk.d2.inTestDue)"
+# no due task: ALL promoted tasks every deploy.inTestSweepMinutes (no -Task), once per window; a QA run older than doneAt covers nothing
+Update-KitTracking { param($t) foreach ($k in 'd1', 'd2') { $t.tasks[$k].inTestDue = $null }; $t.tasks.q1 = @{ task = 'q1'; mrs = @('api!7'); done = $true; doneAt = $now.ToString('o'); qaCovered = @('2020-01-01-120000-x') }; $t.tasks.q2 = @{ task = 'q2'; mrs = @('api!8'); done = $true; doneAt = $now.ToString('o'); qaCovered = @("$($now.AddHours(1).ToString('yyyy-MM-dd-HHmmss'))-y") }
+  $t.tasks.q3 = @{ task = 'q3'; mrs = @('api!11'); done = $true; doneAt = $now.ToString('o'); qaCovered = @('2020-01-01-x') }; $t.tasks.q4 = @{ task = 'q4'; mrs = @('api!12'); done = $true; doneAt = $now.ToString('o'); qaCovered = @("$($now.AddDays(1).ToString('yyyy-MM-dd'))-z") } }   # date-only folders: midnight
+$swf = Join-Path (Get-KitPath deploys) 'intest-sweep.json'; Remove-Item $swf -ErrorAction SilentlyContinue; $script:its = @(); $script:dep = @(); function Invoke-Bounded { param($s, $a) if ($a[1] -eq 'intest') { $script:its += ($a -join ' ') } elseif ($a[0] -eq 'deployed') { $script:dep += $a[2] } }
+$null = Get-KitSuperviseFlagsDeploys -AutoFix; $null = Get-KitSuperviseFlagsDeploys -AutoFix
+$bo = Join-Path (Get-KitPath board -Create) 'opsy-x.json'; @{ type = 'opsy'; agent = 'opsy-x'; status = 'working'; beat = $now.ToString('o') } | ConvertTo-Json | Set-Content $bo
+Remove-Item $swf -ErrorAction SilentlyContinue; Set-KitTaskFields q1 @{ inTestDue = $now.ToString('o') }; $null = Get-KitSuperviseFlagsDeploys -AutoFix; Remove-Item $bo   # a live opsy moves them itself
+"sweep:$(($script:its -join ';') -eq 'deploy intest -Apply' -and (Read-KitTracking).tasks.q1.inTestDue -and ($script:dep -join ';') -match '(^|;)api!7(;|$)' -and ($script:dep -join ';') -notmatch 'api!8' -and ($script:dep -join ';') -match 'api!11' -and ($script:dep -join ';') -notmatch 'api!12')"
 $gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())   # trigger ask, the rest real
 @{ at = $now.AddMinutes(-90).ToString('o'); ready = @('stage (1 MR(s))'); ask = @('stage: 1 MR(s) (api!1)') } | ConvertTo-Json | Set-Content $pc
 $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
@@ -192,7 +184,7 @@ $a1 = @($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*win
 @{ at = $now.AddMinutes(-90).ToString('o'); ready = @(); ask = $null } | ConvertTo-Json | Set-Content $pc; $r = @(Get-KitSuperviseFlagsDeploys)   # no batch: no empty ask
 "ask:$([bool]$a1 -and -not @($r | Where-Object { "$($_.what)" -match '^DEPLOY ASK' }).Count)"
 '@
-Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names (#)' @('none', 'good', 'oa', 'stale', 'watch', 'empty', 'live', 'intest', 'ask')
+Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again; due inTest moves = one background run, each line credited to the task it names, all promoted tasks moved (FIXED), a refused or unknown one = one STATUS WATCH; no due task: an hourly sweep; a live opsy: none (it moves them); a QA run from before doneAt covers nothing (#)' @('none', 'good', 'oa', 'stale', 'watch', 'empty', 'live', 'intest', 'sweep', 'ask')
 # a deploy MR (into deploys[].branch) feeds its own target only; from / paths pick an MR's targets in the intest gate too; old requests expire
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da' }, @{ target = 'b-st'; branch = 'st/b'; job = 'db' }) }) } $cfgF
 & $J @{ tasks = @{ g = @{ task = 'g'; mrs = @('jc!1', 'jc!2', 'jc!5'); done = $true; doneAt = $now } }; automerge = @{} } $tf
@@ -203,8 +195,6 @@ $p = @(& $dep plan -Offline $fx5 -Json | ConvertFrom-Json); $by = { param($t) (@
 $pt5 = & $dep plan -Offline $fx5 2>&1 | Out-String; $pn5 = @(& $dep plan -Offline $fx5 -Mrs 'jc!1' -Json | ConvertFrom-Json | Where-Object target -eq 'b-st').mrs.mr -join ','
 Expect "deploy plan: a deploy MR (main -> a deploy branch) left out; a hotfix or -Mrs one stays ($(& $by b-st) | $pn5)" ((& $by a-st) -eq 'jc!2,jc!4' -and (& $by b-st) -eq 'jc!2,jc!4,jc!5' -and $pn5 -match 'jc!1' -and $pt5 -match 'deploy plan: 1 deploy MR\(s\) left out \(merged into a deploy branch, not work\): jc!1')
 Expect "deploy plan: a batch MR shows the host's MR state + merge time" ($pt5 -match 'jc!2 task g merged 2026-01-02T\d\d:04:05[+-]\d\d:\d\d, NOT-DEPLOYED: x' -and @(@($p | Where-Object target -eq 'a-st').mrs | Where-Object { $_.mrState -eq 'merged' }).Count -eq 2)
-$tbm = Join-Path (TkPath $k cache -Create) 'deployed-rows.json'; & $J @{ 'mr|jc!9' = @{ at = $now; mr = @{ target_branch = 'st/a' } } } $tbm
-Expect-Each (Invoke-PsTest 'tb-memo' '. $args[0]; function Invoke-HostVerb { throw }; "memo:$((Get-MrTargetBranch ''jc!9'' $null) -eq ''st/a'')"' @($O)) 'deploy plan: target branch from pokey''s cache, no host call (#)' @('memo') 3; Remove-Item $tbm
 Expect 'deploy plan: a request older than -Days expires, a new one stays' ((@((Get-Content $pdf -Raw | ConvertFrom-Json).requests.run) -join ',') -eq 'new')
 & $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da'; paths = @('a/api/**', 'common/**') }, @{ target = 'b-st'; branch = 'st/b'; job = 'db'; paths = @('b/**', 'common/**') }) }); productTargets = @(@{ pathRegex = '^a/'; targetRegex = '^a-'; label = 'A env' }, @{ pathRegex = '^b/'; targetRegex = '^b-'; label = 'B env' }) } $cfgF
 $fq2 = Join-Path (Kd) 'fake-deployed-gate.ps1'

@@ -24,6 +24,7 @@
   "deploy.waitWordHours": "config default=12 unit=h",
   "deploy.doneLookbackDays": "config default=3 unit=d",
   "deploy.inTestDueHours": "config default=24 unit=h",
+  "deploy.inTestSweepMinutes": "config default=60 unit=min",
   "deploy.mergePollSec": "config default=30 unit=s",
   "deploy.mergeSettleSec": "config default=3 unit=s",
   "poll.maxSec": "config default=300 unit=s",

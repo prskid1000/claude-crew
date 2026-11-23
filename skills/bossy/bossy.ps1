@@ -32,8 +32,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L39 init · L50 board · L229 budget · L259 launch · L500 recover · L587 pause · L598 resume · L665 program · L716 param ·
-  L722 track · L1096 supervise · L1436 report · L1516 audit · L1576 storage · L1579 bugbrief · L1693 cleanup · L1780 learn ·
-  L1811 decide · L1965 debate · L2009 health · L2077 setup · L2174 guard-sendmessage
+  L722 track · L1109 supervise · L1449 report · L1529 audit · L1589 storage · L1592 bugbrief · L1706 cleanup · L1793 learn ·
+  L1824 decide · L1978 debate · L2022 health · L2090 setup · L2187 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -773,6 +773,16 @@ function HeldPast($o) { $nw = Get-Date; if ($o.holdCheckedAt -and ($nw - [dateti
   $o.holdCheckedAt = $nw.ToString('o'); $past = Test-TrackerStatus $hs 'closed', 'inTest'
   if ($past) { $o.done = $true; $o.doneAt = $o.holdCheckedAt }; $null = Save $o -Run
   if ($past) { "DONE $($o.task): status '$hs' already past promoted; hold dropped ($(if ($o.holdPromotion) { $o.holdPromotion } else { 'planned areas' }))" } }
+# a hold 'deferred items: <task> <why>, ...' whose every piece names another tracked task that is done is a fact gone stale:
+# released with a line (owner 2026-11-23); free text ('pin 744') or the task's own id stays held
+function Clear-KitStaleHold($o) {
+  if ("$($o.holdPromotion)".Trim() -notmatch '^deferred items:\s*(?<l>.+)$') { return '' }
+  $hp = "$($o.holdPromotion)"; $to = @([regex]::Split($Matches.l, ',(?![^()]*\))') | ForEach-Object { ($_.Trim() -split '[\s:]', 2)[0] } | Where-Object { $_ } | Select-Object -Unique)
+  $all = (Read-KitTracking).tasks
+  if (-not $to.Count -or @($to | Where-Object { $_ -eq $o.task -or -not $all[$_] -or -not $all[$_].done }).Count) { return '' }
+  Update-KitTracking { param($t) if ($t.tasks[$o.task]) { $t.tasks[$o.task].Remove('holdPromotion') } }; $o.Remove('holdPromotion')
+  "RELEASED $($o.task): hold '$hp' dropped: $($to -join ', ') done"
+}
 function Load($t) { $x = Read-KitState (Get-KitTaskFile $t); $o = if ($x.track -is [Collections.IDictionary]) { $x.track } else { (Read-KitTracking).tasks[$t] }   # one file, not all
   if ($o) { $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique) }; $o }   # old duplicates
 function TaskOfMr($ref) {
@@ -918,6 +928,8 @@ switch ($Action) {
       $gone = @($am.Keys | Where-Object { -not $keep.ContainsKey($_) })
       if ($gone) { Update-KitTracking { param($t) foreach ($r in $gone) { $t.automerge.Remove($r) } } }
     }
+    # a done task's stale hold still unticks its Items: released too
+    if (-not $Task) { foreach ($sh in @((Read-KitTracking).tasks.Values | Where-Object { $_.done -and $_.holdPromotion })) { if (($rl = Clear-KitStaleHold $sh) -and -not $Quiet) { $rl } } }
     # least recently checked first: no starving
     foreach ($id in @((Read-KitTracking).tasks.Values | Where-Object { -not $_.done -and (-not $Task -or $_.task -eq $Task) } | Sort-Object { [string]$_.checkedAt } | ForEach-Object task)) {
       $o = Load $id; if (-not $o -or $o.done) { continue }   # fresh: a hold added meanwhile counts
@@ -955,6 +967,7 @@ switch ($Action) {
         }
         if ($o.mrs -notcontains $dep) { $o.mrs = @(@($o.mrs) + $dep) }
       }
+      if ($o.holdPromotion -and ($rl = Clear-KitStaleHold $o) -and -not $Quiet) { $rl }
       if ($o.holdPromotion -and ($hp = HeldPast $o)) { if (-not $Quiet) { $hp }; continue }
       if ($o.holdPromotion) { Hold "HOLD $($o.task): promotion held ($($o.holdPromotion)); release: bossy.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
       # track route: the fix lands in another task's or run's MRs; new ones join this task (Items checklist) and promote it when merged
@@ -1292,7 +1305,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   foreach ($l in @(Invoke-Bounded $KitCmd.orch @('track', 'run', '-Detail'))) {   # the last background result
     if ((Test-KitHeldLine $l $heldIds) -or (Test-KitTrackLineStale $l)) { continue }
     if ($l -match '^ATTENTION \S+: no tracker id') { Flag 'ACT' $l 'Register its MRs under the real task id (the command in the line).' }
-    elseif ($l -match '^(DONE|COMMENTED|DROPPED|MOVED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
+    elseif ($l -match '^(DONE|COMMENTED|DROPPED|MOVED|RELEASED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^CONFIG') { Flag 'INFO' $l 'A kit.local.json key is missing for this task; add it or register its MRs by hand.' }
     elseif ($l -match '^LAG') { Flag 'ACT' $l "Promote it (& $($KitCmd.dev) tracker status <id> <status>) or hold it on purpose (bossy.ps1 track add -Task <id> -HoldPromotion '<why>')." }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }

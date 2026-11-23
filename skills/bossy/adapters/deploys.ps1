@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L101 intest · L256 deploy · L453 restart · L502 supervise
+Sections: L14 helpers · L103 intest · L259 deploy · L456 restart · L505 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -15,6 +15,8 @@ Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused
 # not a test env: deploys[].production, else deploy.productionPattern on the name (no default: nothing is production by name); -Lanes: + laneApk
 function Get-NoTestRx([switch]$Lanes) { $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $rx -and $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
 # <alias>!<iid> -> <repo name>!<iid>
+# a QA run's start from its folder name (yyyy-MM-dd[-HHmmss]-<label>; date only: midnight); $null when it has none
+function Get-KitQaRunStart([string]$Run) { if ($Run -match '^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2})(\d{2}))?(?:-|$)') { [datetime]"$($Matches[1])T$(if ($Matches[2]) { "$($Matches[2]):$($Matches[3]):$($Matches[4])" } else { '00:00:00' })" } }
 function Get-CanonMr([string]$m) {
   if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }
   $rp = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $Matches.r -or @($_.aliases) -contains $Matches.r } | Select-Object -First 1
@@ -104,15 +106,15 @@ function Invoke-MarkInTest {
 param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @())   # not $Mrs: pwsh names ignore case ($mrs below)
 $ErrorActionPreference = 'SilentlyContinue'
 function Out-Line($s) { if (-not $Quiet -or $s -like 'MARKED*') { $s } }
-# -Mrs (what opsy deployed): the kit maps each MR to its task (tracking, else the tag in its title), never the caller
-$track = (Read-KitTracking).tasks
+# -Mrs (what opsy deployed): the kit maps each MR to its task (tracking, else the tag in its title), never the caller; those tasks
+# join every other candidate: a task deployed by anyone moves too (owner 2026-11-23: an owner-deployed batch stayed promoted)
+$track = (Read-KitTracking).tasks; $mapped = @()
 foreach ($m in @($FromMrs | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ })) {
   $c = Get-CanonMr (ConvertTo-MrRef $m); $rn, $iid = $c -split '!', 2
   $own = @($track.Keys | Where-Object { $_ -notmatch '!|\s' -and @($track[$_].mrs | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) }) -contains $c })
   if (-not $own.Count -and ($rx = Get-KitTaskTagRx) -and "$(try { (Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject (($rn -split '/')[-1]) -Raw); n = $iid }).title } catch { })" -match $rx) { $own = @($Matches.id) }
-  Out-Line "MAP   $c -> $(if ($own.Count) { $own -join ', ' } else { 'no task (untracked, no tag in its title)' })"; $Task = @(@($Task) + $own)
+  Out-Line "MAP   $c -> $(if ($own.Count) { $own -join ', ' } else { 'no task (untracked, no tag in its title)' })"; $mapped = @(@($mapped) + $own)
 }
-if ($FromMrs.Count -and -not $Task.Count) { return }
 
 # candidates: tasks this kit promoted in $Days (deploy plan's window: older ones it no longer offers), plus list tasks assigned to
 # the owner (tracker.owner); -Task: those
@@ -133,6 +135,7 @@ elseif ($lists.Count) {
 }
 # pwsh -File passes a,b as one string
 if ($Task.Count) { $keep = @($Task | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ }); foreach ($k in @($cand.Keys)) { if ($k -notin $keep) { $cand.Remove($k) } }; foreach ($k in $keep) { if (-not $cand.Contains($k)) { $cand[$k] = @{ mrs = @(); name = '' } } } }
+foreach ($k in @($mapped | Select-Object -Unique)) { if (-not $cand.Contains($k)) { $cand[$k] = @{ mrs = @($track[$k].mrs | Where-Object { $_ }); name = '' }; $nKit++ } }
 
 $productTargets = @(Get-KitValue 'productTargets' @()); $repos = @(Get-KitValue 'repos' @())
 $recOf = @{}; $dlog = Get-KitPath deploy-log   # recorded deploys: mr|target
@@ -581,12 +584,14 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       if (-not (Within 'deploy checks')) { break }
       # a repo may deploy to several test envs
       if (-not $o.done -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt (Get-KitParam 'deploy.doneLookbackDays')) { continue }
-      if ($o.qaCovered) { continue }
+      # a QA run covers only the promotion it tested: one started before doneAt (a reopen, a fix wave) never holds the inTest move
+      $doneT = [datetime]$o.doneAt; $after = { param($r) if ($r -eq 'closed') { return $true }; $rs = Get-KitQaRunStart $r; $null -ne $rs -and $rs -ge $doneT }
+      if (@($o.qaCovered | Where-Object { & $after "$_" }).Count) { continue }
       if ($o.liveCheckedAt -and ($now - [datetime]$o.liveCheckedAt).TotalMinutes -lt $(if (@($o.liveOn).Count) { 60 } else { 10 })) { continue }
       # a QA run already covers it: skip the deploy lookup (10+ calls); exact id: 12 is no AB-12
       # one read of the run.json files per sweep, not per task (each task re-walked 12k QA files)
       if ($null -eq $qaRunsByTask) { $qaRunsByTask = @{}; foreach ($rf in @(Get-KitQaRunFiles run.json)) { $j = try { [IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json } catch { $null }; foreach ($qid in @(@($j.items.subtasks.id) + @($j.tracker.parent) | ForEach-Object { "$_" } | Where-Object { $_ } | Select-Object -Unique)) { $qaRunsByTask[$qid] = @(@($qaRunsByTask[$qid] | Where-Object { $_ }) + $rf.Directory.Name) } } }
-      $covered = @($qaRunsByTask["$($o.task)"] | Where-Object { $_ })
+      $covered = @($qaRunsByTask["$($o.task)"] | Where-Object { $_ -and (& $after "$_") })
       if ($covered.Count) { Set-KitTaskFields $o.task @{ qaCovered = @($covered) }; continue }
       # heads of its repos' deploy branches unmoved since its last settled answer: no probe (D13: 111 host verbs a beat re-asked them)
       $rns = @(@($o.mrs) | ForEach-Object { ((Get-CanonMr (ConvertTo-MrRef "$_")) -split '!', 2)[0] } | Where-Object { $_ } | Sort-Object -Unique)
@@ -605,13 +610,19 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       if ($new.Count -and (Test-TrackerStatus $(try { (Get-TrackerTask $o.task).status } catch { '' }) 'closed')) { Set-KitTaskFields $o.task @{ qaCovered = @('closed') }; continue }
       if ($new.Count) { Set-KitTaskFields $o.task @{ inTestDue = $now.ToString('o') } }
     }
-    # deployed = in test (never before): one background run for every due task (inline it outran the sweep); each line names its own task
+    # in test: opsy moves every promoted task after its deploy; the safety net (owner 2026-11-23): while no opsy is live, ALL promoted
+    # tasks (tracked + trackerLists, whoever deployed) when a task went live or every deploy.inTestSweepMinutes; one background run
     $due = @((Read-KitTracking).tasks.Values | Where-Object { $_.inTestDue -and ($now - [datetime]$_.inTestDue).TotalHours -lt (Get-KitParam 'deploy.inTestDueHours') } | ForEach-Object task | Sort-Object)
-    foreach ($l2 in @(if ($due.Count) { Invoke-Bounded $KitCmd.orch @('deploy', 'intest', '-Apply', '-Task', ($due -join ',')) })) {
-      if ($l2 -match '^WATCH ') { & $flag 'WATCH' "deploy intest: $($l2 -replace '^WATCH ')" 'Supervise runs it again next round.' }
-      if ($l2 -notmatch '^(?<w>MARKED|WAIT|SKIP|GONE|ERROR)\s+(?<t>\S+)') { continue }
-      if ($Matches.w -ne 'ERROR') { Set-KitTaskFields $Matches.t @{ inTestDue = $null } }   # ERROR: asked again next round
-      if ($Matches.w -eq 'MARKED') { & $flag 'INFO' "auto-fixed: $l2" 'Tracker set to inTest; nothing to do.' }
+    $swf = Join-Path (Get-KitPath deploys -Create) 'intest-sweep.json'; $swAt = try { [datetime](Get-Content $swf -Raw | ConvertFrom-Json).at } catch { [datetime]::MinValue }
+    $opsy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { ($_.type -eq 'opsy' -or "$($_.agent)" -match '^opsy') -and $_.status -ne 'left' -and (Test-KitHolder $_) -ne $false -and (-not $_.beat -or ($now - [datetime]$_.beat).TotalMinutes -lt 60) }).Count
+    $out = @(if (-not $opsy -and (($due.Count -and ($now - $swAt).TotalMinutes -ge 10) -or ($now - $swAt).TotalMinutes -ge (Get-KitParam 'deploy.inTestSweepMinutes'))) {   # a due retry: at most every 10 min
+        Set-Content $swf (@{ at = $now.ToString('o') } | ConvertTo-Json -Compress) -Encoding utf8; foreach ($t1 in $due) { Set-KitTaskFields $t1 @{ inTestDue = $null } }
+        Invoke-Bounded $KitCmd.orch @('deploy', 'intest', '-Apply') })
+    foreach ($l2 in $out) {
+      if ($l2 -match '^WATCH ') { & $flag 'WATCH' "deploy intest: $($l2 -replace '^WATCH ')" 'Supervise runs it again next round.'; continue }
+      if ($l2 -match '^MARKED\s+(?<t>\S+)\s+in test \((?<l>[^|]*?)\)\s*(\||$)') { & $flag 'INFO' "auto-fixed: FIXED $($Matches.t): promoted -> in test, every MR live ($($Matches.l))" 'Tracker set to inTest; nothing to do.' }
+      elseif ($l2 -match '^ERROR (?<t>\S+)\s+(?<w>.*)') { Set-KitTaskFields $Matches.t @{ inTestDue = $now.ToString('o') }; & $flag 'WATCH' "STATUS $($Matches.t): every MR live, still promoted: $($Matches.w)" "& $($KitCmd.dev) tracker status $($Matches.t) inTest (supervise retries next round)" }
+      elseif ($l2 -match '^WAIT\s+(?<t>\S+)\s+(?<w>[^|]*(not checked|timed out|UNKNOWN)[^|]*?)\s*(\||$)') { & $flag 'WATCH' "STATUS $($Matches.t): deployed state unknown: $($Matches.w)" 'Supervise checks it again next round; still unknown: & bossy.ps1 deploy intest -Task <id> shows the probe (opsy kind status).' }
     }
   }
   if (Within 'deploy plan') {
