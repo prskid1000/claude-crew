@@ -149,6 +149,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - 2026-10-16 Leases: context resources held by fixed hours · decision every resource has a live holder; no holder for idle.graceMinutes -> released; services start only from a lease or a person (owner) · consequences lint LEASE-HOLDER.
 - 2026-10-16 Readability: context indentation halving and aliases to save tokens · decision normal indentation and full cmdlet names (owner).
 ## briefy
+- render wave-brief output feeds buildy -> check args.json for agents[].kind, run name and spec openQuestions before launch; patch if missing (render drops them, hand patch after each render, revy caught empty openQuestions)
 - A review sheet of 100+ items -> split verification across read-only agents by surface plus one endpoint-inventory agent, each writing one fixed-shape file, then merge (one agent ran out of context). (1x)
 - Launch args mode -> feature, bugfix or resume; map a new-work ask to feature (buildy.js rejects anything else, e.g. build, at once). (1x)
 ## opsy
