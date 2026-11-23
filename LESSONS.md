@@ -19,6 +19,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- a kit worktree push is refused as protected branch -> use git -C <wt> push origin HEAD:main, not from the worktree cwd (guard refuses cwd form)
 - Review returns blocking findings and the MR head has not moved -> fix and push a commit, then re-request review; do not repeat the round unchanged (2 blocking findings stayed unresolved after round 1)
 - A spec is edited (e.g. a revert) after the last green local pass -> re-run that spec before finish (role-gating revert left 6 tests never re-run)
 - deploy plan shows a MERGED MR as NOT-DEPLOYED, or mr.get prints null -> Re-query MR state with the host verb before reporting; run deploy plan with a long timeout (Wrong not-merged summary and skipped MR body, docs and tracker updates)
@@ -56,6 +57,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5×)
 
 ## pokey
+- run dir is under <kit>/.claude/.runtime and browser.mjs shot()/saveNet refuse it -> set CLAUDE_RUNTIME to that dir before running browser.mjs; use crafty.ps1 dir for run files (seen 3x: shot refused, Write guard-denied)
+- finalize -Check fails a prose limit (observed text over 40 words) -> count words in each observed text before finalize; keep <= 40 (seen 2x: found only at check, needed a results patch)
 - before publishing results -> run finalize -Check -FixNames first; evidence entries must be files, prose fields within word caps (it caught evidence renames and prose overruns on 3 tests before publish; a T2 stop after Check left the run unpublished, so always send publish right after)
 - a run starts and chrome-devtools MCP may be down (CONNECT_TIMEOUT seen in 5 tests) -> health check the MCP once at run start; use skills/pokey/browser.mjs when it is down (repeated connect failures in T1-T10 though no step needed it)
 - calling pokey.ps1 in command position (pwsh -Command, stdin heredoc) -> always run pwsh -NoProfile -File <kit>/skills/pokey/pokey.ps1 <verb>  (guard blocked it in 4 tests and each retry cost a round)
