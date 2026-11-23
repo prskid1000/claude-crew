@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L151 record-args · L170 budget · L188 build-prompt · L272 ship-prompt · L289 plan · L308 spike ·
-//   L320 local-loop · L398 stages · L547 ship · L587 debate · L696 deploy · L711 learn
+// Sections: L18 args · L151 record-args · L170 budget · L188 build-prompt · L273 ship-prompt · L290 plan · L309 spike ·
+//   L321 local-loop · L399 stages · L553 ship · L593 debate · L702 deploy · L717 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -205,7 +205,8 @@ const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (loc
 const PH = {
  code: `\nPHASE code (1 of 3): crafty steps 0-4 only (code, cases spec, unit tests, wt commit, push the branch), checkpoint -Step commit; no MR. Report localTest NONE (env "phase code") and stop: a fresh devy runs step 5.`,
  local: `PHASE local (2 of 3): crafty step 5 only on your pushed branch (a fix: steps 3-4 again), checkpoint -Step loop; no MR. Report localTest and stop: a fresh devy ships.`,
- ship: `PHASE ship (3 of 3): ${K}/ship.md steps 6-9 only (MR, both docs, tracker, deploy batch); code changes only when a check fails. Report.` }
+ ship: `PHASE ship (3 of 3): ${K}/ship.md steps 6-9 only (MR, both docs, tracker, deploy batch); code changes only when a check fails. Report.`,
+ held: ' The local loop is held (FAIL, BLOCKED or not run): Draft MRs only; no finish, tracker step or deploy request.' }
 
 function buildPrompt(a) {
  const dn = a.debate && MODE !== 'resume' ? `ITEM ${a.debate.item} WAITS for the owner (${a.debate.question}; the workflow debates and asks): build the rest, never report it.\n` : '', rs = RES[a.id] || {}
@@ -411,14 +412,19 @@ const results = await pipeline(
   if (open.length) { const why = `producer(s) ${open.join(', ')} not MERGED: not started (outcome.afterMerge)`; log(`${a.id}: ${why}`); return { id: a.id, error: why, blocked: why, waitFor: open } }
   return releasing(a, 'Build', async () => {
   const dbt = a.debate && MODE !== 'resume' ? debateOrAsk(a, { ...a.debate, trigger: 'brief' }, 'Build') : null
-  let r = await agent(buildPrompt(a) + (PHASED ? PH.code : ''), dvo(a, 'build', 'Build'))
+  const ph = PHASED && !['spike', 'repro'].includes(a.kind)
+  let r = await agent(buildPrompt(a) + (ph ? PH.code : ''), dvo(a, 'build', 'Build'))
   if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt lease your branch + wt status, the board), continue.'), dvo(a, 'build-retry', 'Build')) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
-  const phaseNext = (x) => PHASED && x && !x.handoff && !x.budgetStopped && !(x.mrs || []).length && !(x.needsDecision || []).length && !(x.needsEnvFix || []).length
-  const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)   // no report: the phase before stands (its localTest holds the merge)
-  if (phaseNext(r)) r = mergeReports(r, asRep(await agent(continuePrompt(a, r, PH.local), dvo(a, 'loop', 'Build'))), 'Phase local')
+  // phases: a HANDOFF continues in its phase; no report (after a redo): the phase before stands (its localTest holds the merge)
+  const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)
+  const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < 3; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `HANDOFF: read your resume brief ${x.handoff} first, continue. ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return x }
+  const phase = async (x, text, l, more) => ((await gate('Build')) ? goOnIn(mergeReports(x, asRep(await agentOrRedo(continuePrompt(a, x, text), { ...dvo(a, l, 'Build'), ...more })), `Phase ${l}`), text) : { ...x, budgetStopped: true })
+  const phaseNext = (x) => ph && !x.budgetStopped && !(x.mrs || []).length && !(x.needsDecision || []).length && !(x.needsEnvFix || []).length
+  r = await goOnIn(r, PH.code)
+  if (phaseNext(r)) r = await phase(r, PH.local, 'loop', {})
   let o = await localLoop(a, r, LOCAL_RETRIES, 'Build')
-  if (phaseNext(o)) o = { ...mergeReports(o, asRep(await agent(continuePrompt(a, o, PH.ship), { ...dvo(a, 'docs', 'Build'), ...pick('docs') })), 'Phase ship'), localTest: o.localTest }
+  if (phaseNext(o)) o = { ...(await phase(o, PH.ship + (holdsMerge(o.localTest, a) ? PH.held : ''), 'docs', pick('docs'))), localTest: o.localTest }
   return dbt ? debated(o, a.debate.item, await dbt, a.debate.question) : o
   })
  }),

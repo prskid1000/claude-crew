@@ -26,5 +26,3 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
 - **Publish once per key:** docs and evidence via `devtools.py doc|evidence --key <task|run>:<kind>` (same link, a dated
   section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one; decisions: `bossy.ps1 decide` only);
   `devtools.py mr` edits the open MR.
-- **Evidence:** UI -> screenshots, backend -> `pokey.ps1 api -Save` JSON (names: pokey SKILL.md "Evidence"); never production;
-  a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.

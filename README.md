@@ -99,8 +99,7 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 <!-- kit-graph:end -->
 
 Handoff: the first of 80% x the tool's cap and `budget.agentCap.<role>`; kit sized to
-min(`budget.window`, the cap) (past: WATCH); instructions over `budget.instructions.cap`: handoff.
-<!-- kit-graph:start flow-context -->
+min(`budget.window`, the cap) (past: WATCH); instructions over `budget.instructions.cap`: handoff.<!-- kit-graph:start flow-context -->
 ```mermaid
 flowchart LR
   F_transcripts["transcripts"] -->|"usage pass"| F_usage_ps1["usage.ps1"]

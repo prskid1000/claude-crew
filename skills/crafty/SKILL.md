@@ -13,7 +13,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 | `<kit>/LESSONS.md` | step 0 (`bossy.ps1 learn -Read -Skill crafty`) |
 | `templates.md` | "Writing standards" whenever you write; steps 4 and 6, D1 |
 | `testing.md` | steps 4-5 (Rules > Tests: what to test, how, where, when) |
-| `ship.md` | steps 6-9 (MR, docs, tracker, merge, deploy batch; rules Ship, Tracker, Publish, Evidence) |
+| `ship.md` | steps 6-9 (MR, docs, tracker, merge, deploy batch; rules Ship, Tracker, Publish) |
 | `crafty.ps1` | steps 1-5, CI wait (`pipes`), the PreToolUse hook (`guard`) |
 | `guard_client.mjs`, `guard_server.ps1` | the PreToolUse hook: a warm `guard` (~0.1 s a call); `KIT_GUARD_WARM=0`: the plain path; a guard crash blocks the call (fail-closed), `KIT_GUARD_BYPASS=1` (owner only) lets it through; never by hand |
 | `lib.ps1` | dot-sourced by every kit script; never run by hand |
@@ -109,7 +109,9 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
   (`repos[].migrations.check`, else the `migrations.tool` adapter; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
   leftover table, a missing user): report it, never "fix" the shared DB by hand.
-- **Ship, Tracker, Publish, Evidence:** ship.md (steps 6-9); re-read `<brief>.contracts.md` and the brief's bottom before the
+- **Evidence:** UI -> screenshots, backend -> `pokey.ps1 api -Save` JSON (names: pokey SKILL.md "Evidence"); never production;
+  a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.
+- **Ship, Tracker, Publish:** ship.md (steps 6-9); re-read `<brief>.contracts.md` and the brief's bottom before the
   local test loop and before every push.
 
 **Learn:** something cost time, failed or worked well ->
