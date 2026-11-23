@@ -279,7 +279,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 <!-- kit-graph:start table-config -->
 | Key | Example / default | Meaning |
 |---|---|---|
-| `gitHost`, `gitHostType`, `githubHost`, `gitHostGroup` | gitlab.com | git host (no default), owner in &lt;repo&gt;!&lt;n&gt; (was gitlabGroup) |
+| `gitHost`, `gitHostType`, `githubHost`, `gitHostGroup` | gitlab.com | git host (no default), owner in &lt;repo&gt;!&lt;n&gt; (was `gitlabGroup`, still read) |
 | `reposRoot`, `worktreeRoots`, `repoAliases`, `protectedBranches` | /path/to/src | checkouts (default the workspace), worktrees (&lt;repos&gt;-wt); short repo names; branches never force-pushed; `protectedBranchesMode` extend (replace: without main/master/develop) |
 | `commitStyle`, `mrTitleFormat`, `commitFormat`, `commit.ignore`, `locale.testCommentPattern`, `locale.proseTerms` |  | subject rule conventional (free / a regex); formats: devtools.py render; globs wt commit never stages; English defaults: testing comment, prose required words ({expected: regex, ...}) |
 | `devices` | {"type": "none"} | type: none (default: verbs refuse, app checks NOT_TESTED) / android / ios (swarm-ios.ps1); avd {api, device, tag, extra: {config.ini key: value}}; phoneGB (4.5: memory gate need per phone); snapshotSave (false: no multi-GB snapshot save on each close) |
@@ -289,13 +289,14 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs, reports (gdocs) |
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "briefSeconds": 40,… | heartbeat: ramActPct, ramCleanupPct (85: RAM % to clean), minDiskFreeGB, ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): NEXT=&lt;n&gt; (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent = STUCK / a shell with no CPU, IO, output = STALLED; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: section cadence |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
-| `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: profiles kept; worktreeDays (7): idle days before a clean worktree with a gone upstream goes; idle build daemons to stop: [{process, match, label, busyKinds}] |
+| `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: profiles kept; worktreeDays (7): idle days before a clean worktree with a gone upstream goes; idleDaemons: idle build daemons to stop [{process, match, label, busyKinds}] |
 | `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: tier fast / balanced / strong / inherit, or a model id; tiers.&lt;tool&gt;: tier -&gt; model (unset: next stronger) |
 | `localOnly`, `orgTerms` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words pre-push blocks |
 | `localFiles` | {"skills/pokey/targets.local.json": {"_readme": "One entry per TEST… | example only (setup -WriteLocal) |
 | `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (shape, example: envy reference.md); baseMove {targets, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1 |
 | `runtimes` |  | runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match |
-| `media` |  | evidence videos -&gt; text index (pokey media.md) |
+| `media` |  | evidence videos -&gt; text index (pokey media.md); stt {baseUrl, model, maxConcurrent (1), ramGB (2)}: local speech-to-text |
+| `writes` |  | tracer {csv, time, kind, process, folder, mb, disk}: a disk-write tracer CSV and its column names (tracerCsv: older csv key); softGBPerHour, hardGBPerHour: params pins |
 | `findings` |  | required: the fields every module-audit finding fills (revy kind module; default root_cause, why_today, why_not_prod, db_migration, code_location) |
 | `gpu` |  | exclusive.&lt;kind&gt;.processes (regex): one kind on the GPU at a time; unset: no limit |
 | `process` |  | gates.&lt;promote/merge/finish/bugFix/mrBody&gt;: unset = pass, builtin:testingDocs / builtin:reproRow, or a hook (payload JSON on stdin, exit 0 = pass); docs[] {key, label, linkRx, headerRx, required, columns} (unset: vocab.json pair, [] = none); humanDocUiOnly (default true); bugFixRx; qaResult {fail: role (default) / reopen / none, newDefect: collector (default) / per-defect / none} |

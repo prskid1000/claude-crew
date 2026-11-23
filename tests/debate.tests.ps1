@@ -3,7 +3,7 @@
 debate.tests.ps1: bossy.ps1 decide ask / answer / envfix (a bare ask refused: specs.tests), debate (1 per run, -Owner, A/B options, each role's
 Character, the owner's table + decide ask) and the
 buildy sims of the review rebuttal (disputes) and the trigger debates (brief, dispute, rejected twice, low confidence); board join of
-one id spawned twice (PARALLEL, REJOIN only with claims or -Session).
+one id spawned twice (PARALLEL, REJOIN only with claims or -Session); bugbrief (repos from MRs, else configured; Migration range).
 Usage: pwsh -NoProfile -File <kit>/tests/debate.tests.ps1 (or tests/kit-tests.ps1 -Area debate).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -73,5 +73,24 @@ $js = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc | Out-String; $
 $ec = Read-Json $fc; $ec.holderPid = $PID; $ec.holderStart = & { . (Lib); Get-KitPidStart $PID }; & $J $ec $fc   # both kittys share the coordinator's process
 $js2 = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc | Out-String; $js3 = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc -Session $ec.session | Out-String
 Expect "board: parallel joins of one id without claims -> 2 rows, 2 sessions ($($pa -join ',')); one after the other -> the second is PARALLEL kitty-kc-2; same claims or its -Session within 2 min -> REJOIN" ($ps.Count -eq 2 -and $ps[0] -ne $ps[1] -and $pa.Count -eq 2 -and $js2 -match 'PARALLEL: kitty-kc runs .*you are kitty-kc-2' -and $jq2 -match 'REJOIN' -and $js3 -match "REJOIN: .*reusing session $($ec.session)")
+# bossy.ps1 bugbrief (a QA bug's brief; moved from bossy-generic.tests: its cap)
+$bbScript = Join-Path $k 'skills/bossy/bossy.ps1'
+$kl = Join-Path $k 'skills/crafty/kit.local.json'; Set-JsonFile $kl @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm' }) }
+$bb = Invoke-PsTest bb @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; Update-KitTracking { param($tk) $tk.tasks.b1 = @{ task = 'b1' } }
+function Get-TrackerTask { @{ name = 'E500'; description = 'spike' } }; function Get-TrackerComments { }; function Get-TaskMrBranches { @{ repo = 'w'; branch = 'm' } }
+$o = Invoke-BugBrief -Task b1 3>$null | Out-String; "d:$($o -match '"id":"B-b1"' -and (Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match '(?s)\*\*b1\*\* .*E500: spike.*\| w \| `C:/w` \| `m`')"
+function Get-TaskMrBranches { }; Remove-Item (Join-Path (Get-KitPath briefs) b1.md); $null = Invoke-BugBrief -Task b1 3>$null 2>$null; "r:$((Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match '\| w \| `C:/w` \|')"   # no MR: the configured repos
+# migration column only from a configured tool: localEnv envs.<env>.db.migrations (was a top-level db.migrations nobody sets)
+$mg0 = (Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -notmatch 'Migration range'; $cfg0 = $__cfg; $__cfg = '{"repos":[{"name":"w","checkout":"C:/w","target":"m"}],"localEnv":{"envs":{"x":{"db":{"migrations":{"tool":"t"}}}}}}' | ConvertFrom-Json
+Remove-Item (Join-Path (Get-KitPath briefs) b1.md); $null = Invoke-BugBrief -Task b1 -Repos w 3>$null 2>$null; "m:$($mg0 -and (Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match 'Migration range')"; $__cfg = $cfg0
+$klx = Join-Path (Split-Path (Split-Path $args[0])) 'crafty/kit.local.json'; $kl0 = Get-Content $klx -Raw; '{"repos":[{"checkout":"C:/w"}]}' | Set-Content $klx
+"e:$(try { $null = Invoke-BugBrief -Task b1 3>$null 2>$null; 'no throw' } catch { "$_" -match 'no repos in kit.local.json' })"; Set-Content $klx $kl0   # no repo name anywhere: an error
+function Get-TrackerTask { @{ name = 'E500'; description = "## Failed checks`n### C1 — a`n**Saw:** x`n### C2 — b`n**Saw:** y`n### C3 — c`n**Saw:** z" } }
+$null = Invoke-BugBrief -Task b1 -Repos w -Only C1, C2 -Skip 'C2=web; api area' 3>$null; $bt = Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw
+"o:$($bt -match '(?s)## Failed checks\s+- \*\*C1\*\*[^\n]*\n\n## Not yours \(coordinator\)\s+- \*\*C2\*\* — web; api area\s+- \*\*C3\*\* — outside -Only')"
+"n:$(try { Invoke-BugBrief -Task b1 -Repos w -Only C9 3>$null; 0 } catch { "$_" -match 'no check C9 ' })"
+'@ @($bbScript); Remove-Item $kl
+Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else the configured repos; -Only / -Skip -> a Not yours list (a ; in a why kept), an unknown id = error; no repo name anywhere = error; Migration range only with a configured tool (#)' 'd', 'r', 'm', 'e', 'o', 'n'
 Remove-TestKit $k
 Complete-Tests

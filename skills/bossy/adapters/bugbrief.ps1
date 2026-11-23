@@ -66,9 +66,11 @@ $rows = foreach ($spec in $Repos) {
   "| $($repo.name) | ``$($repo.checkout)`` | ``$(if ($branch) { $branch } else { $repo.target })`` | $deps |"
 }
 $ids = ($checks | ForEach-Object id) -join ', '
-# only what the config declares: a migration tool (repos[].migrations, db.migrations) or -Range; an app lane (qa.lanes kind app)
+# only what the config declares: a migration tool (repos[].migrations, migrations.tool, localEnv db.migrations) or -Range; an app lane (qa.lanes kind app)
 $briefRepos = @($Repos | ForEach-Object { RepoName ($_ -split '@')[0] })
-$mig = [bool]$Range -or [bool](Get-KitSetting 'db.migrations' $null) -or [bool]@($cfg.repos | Where-Object { $_.migrations -and $_.name -in $briefRepos }).Count
+$migTool = "$(Get-KitSetting 'migrations.tool' '')"; $leCfg = Get-KitSetting 'localEnv' $null
+$leMig = [bool]@(if ($leCfg) { @($leCfg.defaults) + @(if ($leCfg.envs) { (Get-KitProps $leCfg.envs).Value }) | Where-Object { $_ -and $_.db -and $_.db.migrations } }).Count
+$mig = [bool]$Range -or ($migTool -and $migTool -ne 'none') -or $leMig -or [bool]@($cfg.repos | Where-Object { $_.migrations -and $_.name -in $briefRepos }).Count
 $lanes = Get-KitSetting 'qa.lanes' $null; $app = [bool]@(if ($lanes) { (Get-KitProps $lanes) | Where-Object { $_.Name -notlike '_*' -and "$($_.Value.kind)" -eq 'app' } }).Count
 $slugAgent = $Agent.ToLower()
 $runName = "bugfix-$($Task)"
