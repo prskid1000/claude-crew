@@ -19,6 +19,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- writing the MR body How tested -> count PASS rows from the diff; say UI change when the diff touches a UI file (MR body marked not a UI change while the AI panel changed (6791)
 - one-off python from Git Bash -> write a scratch .py and run it with pwsh python -X utf8, not python -c (python shim echoes goto :error)
 - a kit worktree push is refused as protected branch -> use git -C <wt> push origin HEAD:main, not from the worktree cwd (guard refuses cwd form)
 - Review returns blocking findings and the MR head has not moved -> fix and push a commit, then re-request review; do not repeat the round unchanged (2 blocking findings stayed unresolved after round 1)
@@ -108,6 +109,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- a command prints a long result (audit, lint, scan, ls-files) -> filter or range it (--warn | head, grep, -First) before it enters context (kitty bigresult: 28 runs, 327k tokens)
+- a kit file is needed again in the same run -> note its facts once; later Read only an offset/limit range or grep the line (kitty reread: 101 runs, 843k tokens in one retro window)
 - writing kit edit scripts -> create each edit .py with the Write tool, not a Bash heredoc (heredoc lost backslashes and missed CRLF anchors (3 failures)
 - editing with a scripted replace -> write the script with the Write tool; no pwsh -Command from Git Bash, no heredoc python with backslash-n (dropped apostrophes, 5 MISSed replaces)
 - Splitting a SKILL.md or moving a block between files -> run kitbag.py lint before wt commit (FILE-CAP and READ-BUDGET surfaced only at pre-commit)
@@ -141,6 +144,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Kit token cap work -> measure the whole pass's headroom first (one trim plan), then one file per agent, never trim a file another agent edits, prove each trim by token or AST equality (parallel trims collided). (4×)
 
 ## revy
+- reviewing a diff or the same files twice -> read each file once, note facts, then only ranges; build output as failure lines only (revy reread 23 runs 336k tokens, buildlog 15 runs 81k)
 - Reviewing an MR in a main checkout -> read diffs with `git show <sha>:path` or `git diff <base>...<sha>`, never git checkout there (a main checkout may sit on a detached head others use). (2x)
 
 ## Decisions
@@ -160,4 +164,5 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 ## opsy
 ## watchy
 ## rechy
+- a search or fetch returns a large page or list -> narrow it (filter, range, one section) and note the facts once (rechy bigresult 118k + reread 111k tokens in 5 runs)
 - Checking an adapter against a vendor API -> read the vendor reference (an llms.txt index lists .md pages) and diff request and response shapes field by field (adapters drifted from the vendor). (1x)
