@@ -1,5 +1,5 @@
 <#
-phoney.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.type: android (emulators, default) | none
+phoney.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.type: none (default) | android (emulators) | ios
 (verbs refuse; app checks NOT_TESTED) | ios (this script forwards to swarm-ios.ps1).
   pwsh 7: & <kit>/skills/phoney/phoney.ps1 <verb> [args]
   acquire -Agent <id> [-Lane <name>] [-Holder <board code>] [-Apk local|<path>] [-Reverse <port>,..] [-NoInstall]   lease a phone

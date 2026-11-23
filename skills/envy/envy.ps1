@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L239 state · L286 layer drops · L361 leases · L469 code · L480 migrations ·
-  L483 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L630 shared builds · L768 hooks · L840 marks · L1021 seed ·
-  L1088 processes · L1471 daemon · L1933 cleanup · L2005 verbs
+Sections: L36 config · L238 state · L285 layer drops · L360 leases · L468 code · L479 migrations ·
+  L482 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L629 shared builds · L767 hooks · L839 marks · L1020 seed ·
+  L1087 processes · L1473 daemon · L1935 cleanup · L2007 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -115,7 +115,6 @@ $script:ReadyPattern = [string](Opt 'readyPattern' '(?i)\bStarted \S+ in [\d.]+ 
 $script:MigPattern = [string](Opt 'migrationPattern' '(?i)^(?!.*\.(md|txt|rst|adoc)$)(.*/)?(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)')
 # adapters/ files are dot-sourced in name order (db_engines.ps1 registers the engines db_presets.ps1 fills unset db hooks from)
 foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | Sort-Object Name) { . $__adapter.FullName }
-$__lb = Join-Path (Split-Path $PSScriptRoot) 'crafty/adapters/liquibase.ps1'; if (Test-Path -LiteralPath $__lb) { . $__lb }   # the liquibase migration adapter (lib.ps1 loads it too; a test kit may hold envy alone)
 foreach ($__k in 'db-engine', 'tenant-model', 'migration', 'envy-verb') { if (-not $KitAdapters[$__k]) { $KitAdapters[$__k] = @{} } }   # a kind nobody registered: lookups find nothing, never a null index
 $script:OomPattern = 'JavaScript heap out of memory|Reached heap limit'   # also scanned in running services' logs
 $script:FailPattern = [string](Opt 'failPattern' "APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module|$script:OomPattern|java\.lang\.OutOfMemoryError")
@@ -1215,7 +1214,9 @@ function Need-GB([string]$e, $s) {
   $xs = @((Get-LocalEnvHistory)["$e/$($s.name)"] | Where-Object { $_ })
   if ($xs.Count) { return [math]::Round(($xs | Measure-Object -Maximum).Maximum * 1.15, 1) }
   $st = if ($s.repo -or $s.dir) { "$((StackOf (SvcDir $e $s)).stack)" } else { '' }
-  switch -regex ($st) { '^java|^gradle|^android' { 3 } '^angular' { 3 } '^dotnet' { 1.5 } '^node|^react' { 1.5 } '^python|^go|^rust' { 0.5 } default { 1 } }
+  # a first start's guess per stack family (params.registry.json localEnv.needGB.<family>), until a start is measured
+  $fam = switch -regex ($st) { '^java|^gradle|^android' { 'jvm' } '^angular' { 'angular' } '^dotnet' { 'dotnet' } '^node|^react' { 'node' } '^python|^go|^rust' { 'light' } default { 'other' } }
+  [double](Get-KitParam "localEnv.needGB.$fam")
 }
 function GraceMin([string]$e, $s) {
   $xs = @((Get-LocalEnvHistory)["$e/$($s.name)/startSec"] | Where-Object { $_ })
@@ -1236,12 +1237,13 @@ function Add-RamSample([double]$gb) {
 # the keep-free floor from samples (oldest first): a sane minimum + how far free RAM falls in 10 min + how often it dipped under 6 GB
 function Get-KeepFreeFrom([double[]]$xs, [double]$total) {
   $min = [math]::Max(3.0, [math]::Round($total * 0.05, 1))   # TODO-PARAM (fixed default)
-  if ($xs.Count -lt 60) { return @{ gb = [math]::Max(6.0, [math]::Round($total * 0.15, 1)); why = "learning ($($xs.Count)/60 free-RAM samples): max(6 GB, 15% of RAM)" } }
+  $floor = [double](Get-KitParam 'localEnv.keepFreeFloorGB')
+  if ($xs.Count -lt 60) { return @{ gb = [math]::Max($floor, [math]::Round($total * 0.15, 1)); why = "learning ($($xs.Count)/60 free-RAM samples): max($floor GB, 15% of RAM)" } }
   $drops = @(for ($i = 10; $i -lt $xs.Count; $i++) { [math]::Max(0.0, $xs[$i - 10] - $xs[$i]) }) | Sort-Object
   $swing = [math]::Round([double]@($drops)[[int][math]::Floor(0.9 * (@($drops).Count - 1))], 1)
-  $dips = @(for ($i = 1; $i -lt $xs.Count; $i++) { if ($xs[$i] -lt 6 -and $xs[$i - 1] -ge 6) { 1 } }).Count
+  $dips = @(for ($i = 1; $i -lt $xs.Count; $i++) { if ($xs[$i] -lt $floor -and $xs[$i - 1] -ge $floor) { 1 } }).Count
   $gb = [math]::Max($min, [math]::Min([math]::Round($total * 0.25, 1), [math]::Round($min + $swing + 0.5 * [math]::Min($dips, 8), 1)))
-  @{ gb = $gb; why = "min $min + 10-min fall $swing (p90 of 24 h) + $dips dip(s) under 6 GB x 0.5" }
+  @{ gb = $gb; why = "min $min + 10-min fall $swing (p90 of 24 h) + $dips dip(s) under $floor GB x 0.5" }
 }
 $script:KeepFree = $null
 function Get-KeepFree {
@@ -1465,7 +1467,7 @@ function Invoke-DbChores([string]$e, $st, [hashtable]$at) {
 }
 # the loop's inputs: kit.local.json, envy.ps1, lib.ps1 and the dot-sourced adapters; a changed stamp = a fresh loop between trains
 function Get-LoopStamp {
-  $fs = @($__cfgFile, (Join-Path $PSScriptRoot 'envy.ps1'), (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1'), (Join-Path (Split-Path $PSScriptRoot) 'crafty/adapters/liquibase.ps1')) + @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName)
+  $fs = @($__cfgFile, (Join-Path $PSScriptRoot 'envy.ps1'), (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1')) + @($script:KitAdapterFiles) + @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName)
   @($fs | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { "$(Split-Path $_ -Leaf)=$((Get-Item -LiteralPath $_).LastWriteTimeUtc.Ticks)" }) -join ','
 }
 # ---- daemon: this script only; -Env = loop, -Train = train worker, -Start = start worker; logs <logs>/<env>-loop.log, -train.log; events: kitlog stream env
@@ -2130,6 +2132,7 @@ function Show-Status([string]$env1) {
     keepFree = $("$((Get-KeepFree).gb) GB: $((Get-KeepFree).why)"); keepFreeGB = [double](Get-KeepFree).gb
     marks = $(if (@($st.marks | Where-Object { $_ }).Count -or $st.binlog) { $ms = @($st.marks | Where-Object { $_ }); $b = @($ms | Where-Object kind -eq 'baseline')[-1]
       [pscustomobject]@{ count = $ms.Count; newest = @($ms)[-1].name; baseline = $b.name; baselineAgeDays = $(if ($b) { [math]::Round(((Get-Date) - [datetime]$b.at).TotalDays, 1) }); expired = @($st.expiredMarks | Where-Object { $_ }); binlogDays = $st.binlog.days; dbDown = (DbSvcDown $env1) } })
+    schemaSizes = [bool]$(if (Get-Command Get-DbEngine -ErrorAction SilentlyContinue) { (Get-DbEngine $env1).schemaSizes })   # the engine reads schema sizes (supervise: data growth)
     seed = $(if ($st.seed) { [pscustomobject]@{ at = $st.seed.at; ok = [bool]$st.seed.ok; missing = @($st.seed.missing | Where-Object { $_ }); drift = @($st.seed.drift | Where-Object { $_ }) } })
     loop = $(if (Owned $st.loop "_daemon -Env $env1") { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
     lanesOpen = Get-LanesOpen $env1
@@ -2387,7 +2390,8 @@ switch ($Action) {
       foreach ($i in @($tm.items)) { '   {0,-7} {1}{2}' -f $i.kind, $i.table, $(if (@($i.columns).Count) { " ($(@($i.columns) -join ', '))" }) }
     }
   }
-  'sql' {   # read-only, through db.query (a db.engine preset or the env's hook)
+  'sql' {   # read-only, through db.query (a db.engine preset or the env's hook); -Query schemaSizes = the engine's own query
+    if ($Query -eq 'schemaSizes') { $Query = (Get-DbEngine $e).schemaSizes; if (-not $Query) { throw "engine $(Get-DbEngineName $e): no schemaSizes query (adapters/db_engines.ps1)" } }
     if (-not (Test-ReadOnlySql $Query)) { throw 'sql needs -Query with ONE read-only statement (select / show / explain / with ...)' }
     $err = Invoke-Hook $e 'query' @{ sql = $Query }; $script:HookOut; if ($err) { throw $err }
   }

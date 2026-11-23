@@ -2,7 +2,8 @@
 # Usage: dot-sourced by envy.ps1 from adapters/ (before db_presets.ps1). Exit codes: none here (its verbs exit through envy.ps1).
 # db_engines.ps1: the db.engine adapters (kind db-engine). A local-only adapters/*.local.ps1 can add an engine the same way.
 # Props: defaultPort, passwordEnv, supportsMarks (binlog marks, restore, cascade guard, schema tenant model), supportsTemp
-#   (dbtemp, watchdog, pool), query / exec / jdbc (command presets: {H} {P} {U} {N} {URI}, then {sql} {file} {schema}).
+#   (dbtemp, watchdog, pool), query / exec / jdbc (command presets: {H} {P} {U} {N} {URI}, then {sql} {file} {schema}),
+#   schemaSizes (SQL: schema TAB rows TAB MB per schema; envy.ps1 sql -Query schemaSizes, supervise's data-growth check).
 # Verbs: sql @{ e; sql; sec } -> rows (string[] each) · pos @{ e } -> "<file>:<pos>" · binlogs @{ e } -> names.
 # An engine without a verb refuses it ("engine <x>: verb <v> not implemented"); never another engine's client.
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'
@@ -11,10 +12,12 @@ $mysql = @{ defaultPort = 3306; passwordEnv = 'MYSQL_PWD'; supportsMarks = $true
   jdbc = 'jdbc:mysql://{H}:{P}/{schema}?useSSL=false&allowPublicKeyRetrieval=true'
   sql = { param($a) Invoke-MySqlStatement $a.e $a.sql $a.sec }
   pos = { param($a) Get-MySqlPos $a.e }
-  binlogs = { param($a) @(Invoke-MySqlStatement $a.e 'SHOW BINARY LOGS' 120 | ForEach-Object { $_[0] }) } }
+  binlogs = { param($a) @(Invoke-MySqlStatement $a.e 'SHOW BINARY LOGS' 120 | ForEach-Object { $_[0] }) }
+  # fresh statistics (MySQL 8 caches them 24 h); rows are InnoDB estimates
+  schemaSizes = "SELECT /*+ SET_VAR(information_schema_stats_expiry=0) */ table_schema, COALESCE(SUM(table_rows), 0), ROUND(COALESCE(SUM(data_length + index_length), 0) / 1048576) FROM information_schema.tables WHERE table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') GROUP BY table_schema" }
 Register-KitAdapter db-engine mysql $mysql
 $maria = $mysql.Clone(); $maria.supportsTemp = $false; Register-KitAdapter db-engine mariadb $maria   # temp / pool read mysql 8 tables
-Register-KitAdapter db-engine postgres @{ defaultPort = 5432; passwordEnv = 'PGPASSWORD'; query = "psql $q -d {N} -At -c `"{sql}`""; exec = "psql $q -d {N} -v ON_ERROR_STOP=1 -f `"{file}`""; jdbc = 'jdbc:postgresql://{H}:{P}/{N}?currentSchema={schema}' }
+Register-KitAdapter db-engine postgres @{ defaultPort = 5432; passwordEnv = 'PGPASSWORD'; schemaSizes = "SELECT schemaname || chr(9) || COALESCE(SUM(n_live_tup), 0) || chr(9) || ROUND(COALESCE(SUM(pg_total_relation_size(relid)), 0) / 1048576.0) FROM pg_stat_user_tables GROUP BY schemaname"; query = "psql $q -d {N} -At -c `"{sql}`""; exec = "psql $q -d {N} -v ON_ERROR_STOP=1 -f `"{file}`""; jdbc = 'jdbc:postgresql://{H}:{P}/{N}?currentSchema={schema}' }
 Register-KitAdapter db-engine sqlserver @{ defaultPort = 1433; query = "$ss -d {N} -h -1 -Q `"{sql}`""; exec = "$ss -d {N} -b -i `"{file}`"" }
 Register-KitAdapter db-engine sqlite @{ query = "sqlite3 `"{N}`" `"{sql}`""; exec = "sqlite3 `"{N}`" `".read {file}`"" }
 Register-KitAdapter db-engine oracle @{ defaultPort = 1521; exec = "sqlplus -s -l {U}@{H}:{P}/{N} @{file}" }

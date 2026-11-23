@@ -25,6 +25,10 @@ function Task($id) { Read-Json (Join-Path $store "$id.json") }
 function Rec($d, $c) { (Read-Json "$d/$c/finalize.json").subtasks[0] }
 function New-Task($id, $name, $parent = $null, $status = 'open', $desc = '') { & $J @{ id = $id; name = $name; status = $status; parent = $parent; list = 'L1'; assignees = @(); description = $desc; comments = @() } (Join-Path $store "$id.json") }
 $rt = New-Run 'RT' @(@{ code = 'Z1'; task = 'TZ'; checks = , @('C1', 'FAIL') }); New-Task TZ 'Task Z' $null open '### C1 — s'; $null = Fin $rt 'Z1'
+# process.qaResult: fail reopen = inProgress, not failedTesting; newDefect none = the new defect stays in the report (no [Bug])
+'{"process":{"qaResult":{"fail":"reopen","newDefect":"none"}}}' | Set-Content $kl; $qb0 = @(Get-ChildItem $store -Filter 'LOCAL-*.json').Count
+$rq = New-Run 'RQ' @(@{ code = 'R1'; task = 'TR'; checks = @(@('C1', 'FAIL'), @('X1', 'FAIL', 'new')) }); New-Task TR 'Task R'; $null = Fin $rq 'R1'
+Expect "process.qaResult fail reopen + newDefect none: own FAIL -> inProgress, no [Bug] ($((Task 'TR').status))" ((Task 'TR').status -match 'progress' -and @(Get-ChildItem $store -Filter 'LOCAL-*.json').Count -eq $qb0)
 # tracker.bugPrefix; a check without evidence; guideId is a Docs URL only for gdocs
 '{"tracker":{"bugPrefix":"[Defect]"}}' | Set-Content $kl
 foreach ($x in @('PY', 'Ask Y'), @('TY', 'T', 'PY'), @('BY', '[Defect] Ask Y — new defects (1)', 'PY')) { New-Task @x }
@@ -69,7 +73,7 @@ $tA = & $mkTask '[Bug] Orders sort' "**Testing doc (human):** [open](https://doc
 $tB = & $mkTask '[Bug] No doc' 'MR: https://git.example/g/web/-/merge_requests/6'
 $tC = & $mkTask '[Bug] Excluded' "**Testing doc (human):** [open](https://docs.example/h3)`n`nMR: https://git.example/g/web/-/merge_requests/7"
 foreach ($tx in $tA, $tB, $tC) { $null = pwsh -NoProfile -File $craftyPs tracker status $tx 'in test' 2>&1 }
-$pjob = @{ runFolder = "$wd/qa-runs/<yyyy-MM-dd>-stg"; statuses = @('inTest'); exclude = @($tC); target = 'stg-a'; kitDir = $k; runSettings = @{ mandate = @('test the sort') } } | ConvertTo-Json -Compress -Depth 4
+$pjob = @{ runFolder = "$wd/qa-runs/<yyyy-MM-dd>-stg"; statuses = @(); exclude = @($tC); target = 'stg-a'; kitDir = $k; runSettings = @{ mandate = @('test the sort') } } | ConvertTo-Json -Compress -Depth 4
 # the guide doc comes from process.docs (qa.guideDoc picks the entry); these values = the legacy two-doc rows
 Set-JsonFile "$k/skills/crafty/kit.local.json" @{ process = @{ docs = @(@{ key = 'ai'; label = 'Testing doc (AI)' }, @{ key = 'human'; label = 'Testing doc (human)' }) }; qa = @{ guideDoc = 'human' } }
 $pp = @(pwsh -NoProfile -File $PKp prepare -Job $pjob 2>&1); $ppCode = $LASTEXITCODE; $pRun = ("$($pp[-1])" -replace '^RUN ') | ConvertFrom-Json

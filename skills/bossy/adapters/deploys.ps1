@@ -6,7 +6,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L14 helpers · L103 intest · L259 deploy · L456 restart · L505 supervise
+Sections: L14 helpers · L103 intest · L261 deploy · L458 restart · L507 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -122,11 +122,13 @@ $cand = [ordered]@{}   # tracking: tasks/<id>.json (skills/bossy/STATE.md)
 foreach ($id in @($track.Keys)) { $o = $track[$id]; if ($Task.Count -or ($o.done -and $o.doneAt -and ((Get-Date) - [datetime]$o.doneAt).TotalDays -le $Days)) { $cand[$id] = @{ mrs = @($o.mrs); name = '' } } }
 $nKit = $cand.Count; $nList = 0   # the summary says where the checked tasks came from
 $ownerId = try { "$(Get-TrackerOwner)".Trim() } catch { '' }
+# the role merged work waits in: promoted, else (tracker.statuses.promoted null / []) review, else inProgress
+$srcRole = @(@('promoted', 'review', 'inProgress') | Where-Object { -not (Test-TrackerStatusOff $_) })[0]
 $lists = @(Get-KitValue 'trackerLists' @()) | Where-Object { $_ } | Select-Object -Unique
 if ($lists.Count -and -not $ownerId -and -not $Task.Count) { Out-Line "SKIP  trackerLists: the owner is unknown (tracker.owner), so other people's tasks stay out" }
 elseif ($lists.Count) {
   foreach ($l in $lists) {
-    $arr = try { @(Get-TrackerTasks $l 'promoted') } catch { Write-Warning "mark-in-test: list $l lookup failed: $($_.Exception.Message)"; @() }
+    $arr = try { @(Get-TrackerTasks $l $srcRole) } catch { Write-Warning "mark-in-test: list $l lookup failed: $($_.Exception.Message)"; @() }
     foreach ($t in $arr) {
       if ($ownerId -and -not (@($t.assignees | ForEach-Object { "$($_.id)" }) -contains $ownerId)) { continue }
       if (-not $cand.Contains($t.id)) { $cand[$t.id] = @{ mrs = @(); name = $t.name }; $nList++ } elseif (-not $cand[$t.id].name) { $cand[$t.id].name = $t.name }
@@ -155,9 +157,9 @@ foreach ($id in $cand.Keys) {
   # a task deleted in the tracker: skipped, reported, dropped from tracking; another task's failure never ends the batch
   $info = try { Get-TrackerTask $id } catch { if (Remove-KitGoneTask $id $_) { $gone += $id; Add-Tally 'deleted in the tracker' $id; Out-Line "GONE  $id  deleted in the tracker: skipped, no longer tracked" } else { Add-Tally 'unreadable' "$id`: $($_.Exception.Message)"; Out-Line "ERROR $id  tracker view failed: $($_.Exception.Message)" }; continue }
   if (-not $info) { Add-Tally 'unreadable' "$id`: the tracker returned nothing"; if ($Task.Count) { Out-Line "SKIP  $id  the tracker returned nothing" }; continue }
-  if (-not (Test-TrackerStatus ([string]$info.status) 'promoted')) {   # never override a person
+  if (-not (Test-TrackerStatus ([string]$info.status) $srcRole)) {   # never override a person
     Add-Tally $(if (Test-TrackerStatus ([string]$info.status) 'closed') { 'already closed' } elseif (Test-TrackerStatus ([string]$info.status) 'inTest') { 'already in test' } else { "now '$($info.status)'" }) $id
-    if ($Task.Count) { Out-Line "SKIP  $id  status '$($info.status)', not promoted" }; continue }
+    if ($Task.Count) { Out-Line "SKIP  $id  status '$($info.status)', not $srcRole" }; continue }
   $name = if ($info.name) { $info.name } else { $cand[$id].name }
   $short = if ($name.Length -gt 70) { $name.Substring(0, 70) } else { $name }
   $mrs = @($cand[$id].mrs | Where-Object { $_ })

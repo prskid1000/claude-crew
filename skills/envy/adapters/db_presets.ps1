@@ -83,9 +83,9 @@ function Get-DbTempUse([string]$e) {
   @(Invoke-DbSql $e $script:DbTempSql | ForEach-Object { [pscustomobject]@{ id = $_[0]; gb = [double]$_[1]; secs = [int]$_[2]; query = "$($_[3])" } })
 }
 function Stop-DbConn([string]$e, [string]$Id) { if ($Id -notmatch '^\d+$') { throw "kill needs a connection id, not '$Id'" }; $null = Invoke-DbSql $e "KILL $Id" }
-# the controller's watchdog: the connection using the most temp above db.tempMaxGB (default 5) is killed -> its line, else nothing
+# the controller's watchdog: the connection using the most temp above db.tempMaxGB (default localEnv.db.tempMaxGB) is killed -> its line, else nothing
 function Invoke-DbTempWatch([string]$e) {
-  $max = [double]$(if ((Get-EnvCfg $e).db.tempMaxGB) { (Get-EnvCfg $e).db.tempMaxGB } else { 5 })   # owner: no query above 5 GB of temp
+  $max = [double]$(if ((Get-EnvCfg $e).db.tempMaxGB) { (Get-EnvCfg $e).db.tempMaxGB } else { Get-KitParam 'localEnv.db.tempMaxGB' })
   $top = @(Get-DbTempUse $e)[0]; if (-not $top -or $top.gb -le $max) { return }
   Stop-DbConn $e $top.id
   "killed db connection $($top.id): $($top.gb) GB temp > db.tempMaxGB $max, $($top.secs) s: $(Protect-KitText $top.query)"
@@ -96,7 +96,7 @@ function Get-DbTempDoctor([string]$e) {
   $w = @{}
   try { foreach ($row in Invoke-DbSql $e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('temptable_max_ram', 'temptable_max_mmap', 'innodb_temp_data_file_path', 'max_execution_time', 'slow_query_log', 'log_output', 'datadir')") { $w[$row[0]] = $row[1] } }
   catch { [pscustomobject]@{ level = 'WARN'; what = "db temp: $("$_".Split("`n")[0])" }; return }
-  $max = [double]$(if ((Get-EnvCfg $e).db.tempMaxGB) { (Get-EnvCfg $e).db.tempMaxGB } else { 5 }); $gb = { param($b) [math]::Round([double]$b / 1GB, 2) }
+  $max = [double]$(if ((Get-EnvCfg $e).db.tempMaxGB) { (Get-EnvCfg $e).db.tempMaxGB } else { Get-KitParam 'localEnv.db.tempMaxGB' }); $gb = { param($b) [math]::Round([double]$b / 1GB, 2) }
   $ib = if ("$($w.innodb_temp_data_file_path)" -match ':max:(\d+)([KMG])') { [double]$Matches[1] * @{ K = 1KB; M = 1MB; G = 1GB }[$Matches[2]] } elseif ("$($w.innodb_temp_data_file_path)" -notmatch 'autoextend') { 0 } else { -1 }
   $bad = @()
   if ($ib -lt 0) { $bad += "ibtmp1 has no max: it grows until the disk is full (server config [mysqld] innodb_temp_data_file_path = ibtmp1:12M:autoextend:max:1G, restart)" }

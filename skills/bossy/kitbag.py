@@ -19,9 +19,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L37 paths · L126 state · L183 kitlog · L282 load · L722 lint · L1130 README graph · L1237 lint command · L1513 audit ·
-  L1661 registry · L1993 arch lint · L2260 prose · L2425 sections · L2555 budget · L2571 migrate · L2732 plugins ·
-  L2786 state lint · L2974 main
+Sections: L37 paths · L126 state · L183 kitlog · L282 load · L722 lint · L1127 README graph · L1234 lint command · L1515 audit ·
+  L1663 registry · L1995 arch lint · L2268 prose · L2433 sections · L2563 budget · L2579 migrate · L2727 plugins ·
+  L2781 state lint · L2969 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1109,10 +1109,7 @@ def lint(k, g=None, org_terms=None):
     if org_terms:
         scan = [(f, k.texts.get(f) or read(osp.join(k.dir, f))) for f in k.files if not is_overlay(k, f)]
         scan += [(f, read(osp.join(k.dir, f))) for f in k.repo_files if f.split('/')[0] != 'LICENSE']
-        # whole words; capitalised = case-sensitive; trailing * = prefix
-        pats = [(t.strip(), re.compile(r'(?<![\w-])' + re.escape(t.strip().rstrip('*')) + ('' if t.strip().endswith('*') else r'(?![\w-])'),
-               0 if t.strip() != t.strip().lower() else re.I))
-          for t in org_terms if t.strip()]
+        pats = [(t.strip(), r) for t in org_terms for r in org_term_rx([t])]
         for where, text in scan:
             for t, rx in pats:
                 if rx.search(text):
@@ -1235,6 +1232,11 @@ def cmd_flow(a):
     return 0
 
 # ---- lint command: print, --json, exit code
+def org_term_rx(terms):
+    """One regex per org term: whole words; capitalised = case-sensitive; trailing * = prefix; <placeholders> skipped."""
+    return [re.compile(r'(?<![\w-])' + re.escape(t.strip().rstrip('*')) + ('' if t.strip().endswith('*') else r'(?![\w-])'),
+                       0 if t.strip() != t.strip().lower() else re.I) for t in terms if isinstance(t, str) and t.strip() and not t.strip().startswith('<')]
+
 def org_terms_of(value):
     """--org-terms: a kit.local.json (its orgTerms) or a comma list."""
     if value.lower().endswith('.json') and not osp.isfile(value):   # a mistyped path as a "term" passes every file
@@ -1513,7 +1515,7 @@ def cmd_ui_check(a):
 # ---- audit: findings, shared helpers, stamp (scan: kitbag_admin.py)
 # user-named subtrees (or samples): never "missing"
 USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples',
-  'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets', 'qa.lanes', 'masking.rules', 'runtimes')
+  'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets', 'qa.lanes', 'qa.userRecipes', 'masking.rules', 'runtimes')
 AUTOMATIC = {'input', 'args', 'matches', 'error', 'host', 'home', 'pid', 'pwd', 'profile', 'this', 'event', 'sender', 'ofs',
    'psitem', 'iswindows', 'islinux', 'ismacos', 'executioncontext', 'myinvocation', 'psboundparameters', 'lastexitcode'}
 AUDIT_VERBS = {'stamp': lambda kit, flags: cmd_stamp(kit)}   # kitbag_admin.py adds setup, config, recover, scan
@@ -1992,7 +1994,7 @@ def literal_warns(k, ratchet=False):
 
 # ---- arch lint: ARCH-* (core stays neutral: defaults, enums, vendor calls, platform calls, lessons, dead keys); vocab in VOCAB_JSON
 VOCAB_JSON = 'skills/bossy/lint-vocab.json'
-ARCH_COUNTED = {'ARCH-DEAD-KEY', 'ARCH-DEFAULT', 'ARCH-VENDOR-API', 'ARCH-PLATFORM', 'ARCH-LESSON', 'ARCH-SBLOG', 'ARCH-TEMP'}   # counted; ARCH-ENUM stays WARN (vendor dispatch tables name vendors)
+ARCH_COUNTED = {'ARCH-DEAD-KEY', 'ARCH-DEFAULT', 'ARCH-VENDOR-API', 'ARCH-PLATFORM', 'ARCH-LESSON', 'LESSONS-ORG', 'ARCH-SBLOG', 'ARCH-TEMP'}   # counted; ARCH-ENUM stays WARN (vendor dispatch tables name vendors)
 CODE_EXT = ('.ps1', '.py', '.js', '.mjs')
 
 def word_rx(words):
@@ -2141,13 +2143,19 @@ def arch_lint(k):
             if h:
                 probs.append(('ARCH-TEMP', f'{f}:{n}', f'OS temp "{h.group(0)[:30]}": Get-KitTemp / New-KitTempFile (lib.ps1), kitPath(\'tmp\') (node), '
                               'import kitbag (python tempfile then lands in <runtime>/tmp); an external tool\'s own temp: `arch-ok: <why>` on the line'))
-    # ARCH-LESSON: tracked lessons and rules name a vendor or stack -> LESSONS.local.md / a rules/*.local.md
+    # ARCH-LESSON: tracked rules name a vendor or stack -> a rules/*.local.md; LESSONS-ORG: LESSONS.md holds kit lessons only:
+    # a vendor / stack / runner word, an org-shaped name (lessonOrg) or a kit.local.json orgTerm -> LESSONS.local.md
     lrx = word_rx([w for x in fams.values() if x.get('lesson') for w in x.get('words') or []])
-    for f in [f for f in base if f == 'LESSONS.md' or re.match(r'rules/[^/]+\.md$', f)]:
+    for f in [f for f in base if re.match(r'rules/[^/]+\.md$', f)]:
         for n, c, _ in arch_lines(f, k.texts.get(f) or ''):
             if lrx and (ws := sorted({m.group(0).lower() for m in lrx.finditer(c)})):
-                probs.append(('ARCH-LESSON', f'{f}:{n}', f'names {", ".join(ws)}: a vendor / stack lesson goes in '
-                              + ('LESSONS.local.md (bossy.ps1 learn writes org lessons there)' if f == 'LESSONS.md' else 'a rules/*.local.md')))
+                probs.append(('ARCH-LESSON', f'{f}:{n}', f'names {", ".join(ws)}: a vendor / stack lesson goes in a rules/*.local.md'))
+    cfg, _ = load_json(osp.join(k.dir, 'skills', 'crafty', 'kit.local.json')) if osp.isfile(osp.join(k.dir, 'skills', 'crafty', 'kit.local.json')) else ({}, None)
+    orx = [lrx] + [re.compile(p, re.I) for p in voc.get('lessonOrg') or []] + org_term_rx((cfg or {}).get('orgTerms') or [] if isinstance(cfg, dict) else [])
+    for n, c, _ in (arch_lines('LESSONS.md', k.texts.get('LESSONS.md') or '') if 'LESSONS.md' in base else []):
+        if hits := [r for r in orx if r and r.search(c)]:
+            probs.append(('LESSONS-ORG', f'LESSONS.md:{n}', f'{len(hits)} org / vendor / stack pattern(s): a kit lesson only; this one goes in LESSONS.local.md '
+                          '(bossy.ps1 learn routes it there; never quoted here: an org term may be the hit)'))
     # ARCH-SBLOG: pwsh 7 writes a script's whole text to the event log (4104) on every load when it holds a flagged word (any
     # case, comments too) or a $o.$name member; the kit's .ps1 load on every tool call (guard hook)
     sb = voc.get('sbLog') or {}
@@ -2639,64 +2647,55 @@ def cmd_migrate(a):
         print(f'kitbag migrate: {x}')
     return 0
 
-# Neutral defaults since configVersion 2 (2026-11-14): an older kit.local.json gets the value that reproduces the old default,
-# once, for each key it does not set; a new one (setup -WriteLocal: kit.example.json) starts at CONFIG_VERSION.
-CONFIG_VERSION = 2
+# Changed defaults: a kit.local.json older than a version gets, once, the value that reproduced the old default for each key it
+# does not set; a new one (setup -WriteLocal: kit.example.json) starts at CONFIG_VERSION. Only kit-shaped rows ship here; an org's
+# own old values (hosts, branch names, stack, tracker patterns) go in the git-ignored LEGACY_LOCAL next to kit.local.json.
+CONFIG_VERSION = 3
 # legacy-defaults:start
-LEGACY_DEFAULTS = {   # dotted key -> the pre-2 default (README "Configuration" has the neutral one)
-    'gitHost': 'gitlab.com',
-    'protectedBranchesBase': ['main', 'master', 'develop', 'release/*', 'staging', 'staging/*', 'production', 'production/*', 'prod/*', 'hotfix/*', 'critical/*'],
-    'process.gates': {'promote': 'builtin:testingDocs', 'merge': 'builtin:testingDocs', 'finish': 'builtin:testingDocs', 'mrBody': 'builtin:testingDocs', 'bugFix': 'builtin:reproRow'},
-    'mr.footer': '\U0001f916 Generated with [Claude Code](https://claude.com/claude-code)',
-    'tracker.ciTaskPattern': r'^\W*\[[^\]]*Unit Test\]',
-    'deploy.productionPattern': '(?i)prod|critical',
-    'deploy.ssh.manager': 'systemd',
-    'deploy.ssh.sudo': True,
-    'api.defaultUser': 'admin',
-    'api.tokenFields': ['access_token'],
-    'qa.newDefectIdRx': r'^X\d',
-    'qa.holdCauses': ['env-data', 'phone-only', 'tool-down', 'no-mail-sandbox'],
-    'qa.lanes': {'web': {'kind': 'web', 'parallel': 5, 'followUp': 'app'}, 'api': {'kind': 'api', 'parallel': 5, 'followUp': 'app'}, 'app': {'kind': 'app', 'devices': 'android'}},
-    'devices.type': 'android',
-    'ports.targets': 'both',
-    'devices.avd': {'api': 'android-36.1', 'device': 'pixel_10_pro', 'tag': 'google_apis_playstore'},
-    'cleanup.idleDaemons': [{'process': r'^java(\.exe)?$', 'match': 'GradleDaemon|KotlinCompileDaemon', 'label': 'Gradle daemon', 'busyKinds': 'android|gradle'}],
-    'storage.db.maxGB': 5,
-    'migrations.tool': 'liquibase',
-    'migrations.lbcheck': {'requireRollback': True, 'tagDatabaseAlone': True, 'stampPattern': r'(\d{14})',
-                           'roots': [r'^(.*?)[\\/]config[\\/]liquibase[\\/]', r'^(.*[\\/]resources)[\\/]']},
-    'localEnv.defaultService': 'api',
-    'localEnv.defaults.db.cascadeGuard': True,
-    'localEnv.defaults.tenants': {'model': 'schema', 'key': 'id', 'name': 'name', 'idColumns': ['tenant_id'], 'nameColumns': ['tenant_name'],
-                                  'keepFrom': ['builtin:kit-config', 'builtin:targets', 'builtin:seed']},
-    'localEnv.logClasses': {
-        'expected': r'(?i)\bbad\.request\b|\bnot[ .]found\b|\bvalidation\b|MethodArgumentNotValid|ConstraintViolation|\b(BadRequest|NotFound|AccessDenied|Unauthorized|Forbidden)\w*\b|\b(status|HTTP/\S+)\W+4\d\d\b',
-        'startup': r'(?i)Application run failed|APPLICATION FAILED TO START|failed to start|BeanCreationException|\brolling back\b|\brollback\b',
-        'connection': r'(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|\b(elasticsearch|search|mysql|redis|kafka|rabbit\w*)\b.{0,40}\b(not reachable|unreachable|refused|timed? ?out|down)\b',
-        'dependency': r'(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|whilst connecting to|\bES client\b|elasticsearch.{0,40}(unreachable|refused|not reachable|timed? ?out)'},
-    'masking.rules': {'*.mfa_key': 'hash', '*.reset_key': 'hash', '*.activation_key': 'hash', '*.created_by': 'login', '*.last_modified_by': 'login',
-                      '*.modified_by': 'login', '*.updated_by': 'login', 'customer.name': 'name', 'contact.name': 'name', 'employee.name': 'name',
-                      'driver.name': 'name', 'user.name': 'name', 'person.name': 'name'},
-    'masking.logins': ['admin', 'system', 'anonymousUser', 'user'],
-    'masking.names': {
-        'first': 'Alex Sam Chris Jo Robin Kim Lee Pat Max Ash Drew Jamie Morgan Casey Taylor Jordan Riley Quinn Avery Charlie Ellis Frankie Harper Jesse Kai Logan Noel Reese Rowan Sage Shay Skyler Toby Val Wren Blake Dana Emery Finley Hayden'.split(),
-        'last': 'Smith Jones Brown Taylor Wilson Evans Thomas Johnson Roberts Walker Wright Robinson Thompson White Hughes Edwards Green Hall Wood Harris Clarke Jackson Turner Hill Moore Cooper Ward King Baker Harrison Morris Lee Martin Allen Bell Carter Mason Parker Shaw Young'.split(),
-        'streets': 'High Street,Station Road,Church Lane,Mill Road,Park Avenue,Victoria Road,Green Lane,Manor Way,Kings Road,Queens Drive,Oak Close,Bridge Street'.split(',')},
+LEGACY_DEFAULTS = {   # version -> {dotted key -> the default before it} (README "Configuration" has today's)
+    2: {
+        'process.gates': {'promote': 'builtin:testingDocs', 'merge': 'builtin:testingDocs', 'finish': 'builtin:testingDocs', 'mrBody': 'builtin:testingDocs', 'bugFix': 'builtin:reproRow'},
+        'mr.footer': '\U0001f916 Generated with [Claude Code](https://claude.com/claude-code)',
+        'deploy.ssh.manager': 'systemd',
+        'deploy.ssh.sudo': True,
+        'api.tokenFields': ['access_token'],
+        'ports.targets': 'both',
+        'localEnv.defaultService': 'api',
+        'localEnv.defaults.db.cascadeGuard': True,
+    },
+    3: {
+        'tests.fallbackRunner': 'spec',
+        'build.mavenOffline': True,
+    },
 }
 # legacy-defaults:end
+LEGACY_LOCAL = 'migrate.legacy.local.json'   # {"<version>": {"<dotted key>": value}}: merged over LEGACY_DEFAULTS
+
+def legacy_rows(path, since):
+    """[(dotted, value)] of every version above `since`: LEGACY_DEFAULTS, then the org's LEGACY_LOCAL beside `path` (error, rows)."""
+    rows = {}
+    extra, err = load_json(osp.join(osp.dirname(path), LEGACY_LOCAL)) if osp.isfile(osp.join(osp.dirname(path), LEGACY_LOCAL)) else ({}, None)
+    if err or not isinstance(extra, dict):
+        return f'{LEGACY_LOCAL} unreadable', []
+    for ver in sorted({int(v) for v in list(LEGACY_DEFAULTS) + [x for x in extra if str(x).isdigit()]}):
+        if since < ver <= CONFIG_VERSION:
+            rows.update(LEGACY_DEFAULTS.get(ver) or {})
+            rows.update(extra.get(str(ver)) if isinstance(extra.get(str(ver)), dict) else {})
+    return None, list(rows.items())
 
 def migrate_config(path):
-    """(error, [dotted keys added]): LEGACY_DEFAULTS into a kit.local.json older than CONFIG_VERSION; keys it sets win."""
+    """(error, [dotted keys added]): the legacy rows of each version above the file's configVersion; keys it sets win."""
     cfg, err = load_json(path)
     if err or not isinstance(cfg, dict):
         return f'{osp.basename(path)} unreadable', []
-    if int(cfg.get('configVersion') or 1) >= CONFIG_VERSION:
+    since = int(cfg.get('configVersion') or 1)
+    if since >= CONFIG_VERSION:
         return None, []
+    err, rows = legacy_rows(path, since)
+    if err:
+        return err, []
     added = []
-    legacy = dict(LEGACY_DEFAULTS)
-    if shutil.which('gws'):   # reports.type was gdocs where the gws CLI ran, else markdown (today's default)
-        legacy['reports.type'] = 'gdocs'
-    for dotted, value in legacy.items():
+    for dotted, value in rows:
         if dotted.split('.')[0] in ('localEnv', 'masking') and 'localEnv' not in cfg:   # no local env: nothing used them
             continue
         cur, parts = cfg, dotted.split('.')
@@ -2717,10 +2716,6 @@ def migrate_config(path):
                 if k not in cur[parts[-1]]:
                     cur[parts[-1]][k] = v
                     added.append(f'{dotted}.{k}')
-    host = str(cfg.get('gitHost') or '')
-    if host and not cfg.get('gitHostType') and not re.search(r'github|bitbucket|dev\.azure|visualstudio|gitea|forgejo|codeberg|gitlab', host, re.I):
-        cfg['gitHostType'] = 'gitlab'   # an unnamed host was GitLab before; now unknown hosts need a type
-        added.append('gitHostType')
     cfg['configVersion'] = CONFIG_VERSION
     text = read(path)
     indent = len(re.search(r'\n( *)"', text).group(1)) if re.search(r'\n( *)"', text) else 2

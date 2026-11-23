@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L159 seat · L233 api · L473 users · L604 finalize · L1119 results · L1152 retest ·
-  L1209 prepare
+Sections: L29 lanes · L43 report · L159 seat · L233 api · L473 users · L604 finalize · L1126 results · L1159 retest ·
+  L1216 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -937,6 +937,8 @@ function Get-Ask($st) {
 }
 # one [Bug] per ask and run (bugs.json, mutex); edits only its own
 function Add-NewDefects($st, [object[]]$defects) {
+  # process.qaResult.newDefect: collector (default: one [Bug] per ask) | none (defects stay in the results report only)
+  if ("$(Get-KitSetting 'process.qaResult.newDefect' 'collector')" -eq 'none') { return $null }
   $ask = Get-Ask $st; $key = if ($ask.id) { $ask.id } else { '-' }
   $h = (Get-KitHash ($RunDir.ToLower()) SHA256).Substring(0, 16)
   $mx = [Threading.Mutex]::new($false, "Global\kit-bugs-$h")
@@ -986,6 +988,11 @@ function Send-KnownSeen($rec, [object[]]$known) {
   if ($rec -is [Collections.IDictionary]) { $rec.seenFailed = $lost } else { $rec | Add-Member -Force NoteProperty seenFailed $lost }
 }
 function Set-FailedTesting($rec, $st) {
+  # process.qaResult.fail: role (default: the failed-testing status role, else inProgress) | reopen (inProgress) | none (status kept)
+  $qf = "$(Get-KitSetting 'process.qaResult.fail' 'role')"
+  if ($qf -eq 'none') { $rec.keptOpen = 'process.qaResult.fail none: status kept'; return }
+  if ($qf -eq 'reopen') { $ok = TrySay { Set-TrackerStatus $st.id 'inProgress' 'failed testing'; $true } "set $($st.id) inProgress (process.qaResult.fail reopen)"
+    if ($null -ne $ok) { $rec.failedTesting = $true; $rec.statusFallback = 'inProgress' } else { $rec.keptOpen = 'the tracker refused inProgress (see warning)' }; return }
   $sr = TrySay { "$(Set-TrackerStatus $st.id 'failedTesting')" } "set $($st.id) failedTesting"
   if ("$sr" -like 'SKIPPED*' -and "$sr" -notmatch 'has no failedTesting status') { $rec.keptOpen = "$sr".Substring(9); return }   # not a role transition from where it is now
   $ok = if ($null -ne $sr -and "$sr" -notmatch 'has no failedTesting status') { $true }   # a scope without it: the inProgress fallback below
@@ -1241,7 +1248,8 @@ if (Get-ChildItem -LiteralPath $dir -Recurse -File -Force -ErrorAction SilentlyC
 New-Item -ItemType Directory -Force (Join-Path $dir 'guides') | Out-Null; $dir = (Resolve-Path -LiteralPath $dir).Path -replace '\\', '/'
 # 1. candidates: lists x statuses, plus tasks, minus exclude; mine = the tracker owner's
 $lists = @($jb.lists | Where-Object { $_ }); if (-not $lists.Count) { $lists = @(@(Get-KitValue 'trackerLists' @()) | Where-Object { $_ }) }; if (-not $lists.Count) { $lists = @('') }
-$sts = @($jb.statuses | Where-Object { $_ }); if (-not $sts.Count) { $sts = @('inTest') }
+# default: deployed work's role, inTest, else the next on-role down (a tracker without inTest / promoted: tracker.statuses.<role> null)
+$sts = @($jb.statuses | Where-Object { $_ }); if (-not $sts.Count) { $sts = @(@(@('inTest', 'promoted', 'review', 'inProgress') | Where-Object { -not (Test-TrackerStatusOff $_) })[0]) }
 $ids = @($jb.tasks | Where-Object { $_ }); $stPick = @($jb.statuses | Where-Object { $_ })
 $cand = [ordered]@{}
 if ($ids.Count) {

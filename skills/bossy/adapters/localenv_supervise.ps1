@@ -4,7 +4,7 @@ localenv_supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L247 waits · L258 cpu
+Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L246 waits · L257 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -213,18 +213,17 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       if ($new.Count) { & $watch "MARKS EXPIRED: $($ev.env) $($new -join ', ') (the binlog keeps $($ev.marks.binlogDays) d)" "restore to them is gone; envy.ps1 doctor -Env $($ev.env)" }
       if (-not $ev.marks.baseline) { if (-not $ev.marks.dbDown) { & $watch "NO BASELINE MARK: $($ev.env)" "envy.ps1 seed -Env $($ev.env) (a green seed marks baseline-<date>)" } }   # a lane's DB at rest: its start marks it
       elseif ($ev.marks.binlogDays -and [double]$ev.marks.baselineAgeDays -gt [double]$ev.marks.binlogDays - 3) { & $watch "BASELINE EXPIRES: $($ev.env) $($ev.marks.baseline) is $($ev.marks.baselineAgeDays) d old, the binlog keeps $($ev.marks.binlogDays) d" "envy.ps1 seed -Env $($ev.env)" }
-      if ($ev.marks.binlogDays -and [double]$ev.marks.binlogDays -lt [double](Get-KitParam 'localEnv.marks.keepDays')) { & $watch "SHORT BINLOG: $($ev.env) keeps $($ev.marks.binlogDays) d < marks.keepDays" "envy.ps1 doctor -Env $($ev.env) (SET PERSIST binlog_expire_logs_seconds)" }
+      if ($ev.marks.binlogDays -and [double]$ev.marks.binlogDays -lt [double](Get-KitParam 'localEnv.marks.keepDays')) { & $watch "SHORT BINLOG: $($ev.env) keeps $($ev.marks.binlogDays) d < marks.keepDays" "envy.ps1 doctor -Env $($ev.env) (it names the DB's retention setting)" }
     }
     if ($ev.seed -and -not $ev.seed.ok) { & $watch "SEED DRIFT: $($ev.env) $(@(@($ev.seed.missing) + @($ev.seed.drift)) -join ', ')" "envy.ps1 seed -Env $($ev.env) (ENV-FIX)" }
   }
-  # no large writes (owner, 2026-11-18): a schema on an env's MySQL grown past data.maxRows / data.maxMB since its baseline (first
-  # sight; reset by a shrink, a flag or 24 h) -> WATCH; sizes from a background envy.ps1 sql per env (the last finished run read)
+  # no large writes (owner, 2026-11-18): a schema on an env's DB grown past data.maxRows / data.maxMB since its baseline (first
+  # sight; reset by a shrink, a flag or 24 h) -> WATCH; sizes: a background envy.ps1 sql -Query schemaSizes (the engine's; the last run read)
   $dcRows = [long](Get-KitParam 'data.maxRows'); $dcMB = [double](Get-KitParam 'data.maxMB'); $dcBaseH = [double](Get-KitParam 'localEnv.dataBaselineHours'); $dcAt = $now.ToString('o')
-  # fresh statistics (MySQL 8 caches them 24 h); rows are InnoDB estimates, so a row flag also needs 1 MB more
+  # rows may be estimates (the engine's statistics), so a row flag also needs 1 MB more
   foreach ($dk in @($last.Keys | Where-Object { "$_" -like '*/data' })) { $seenEnv[$dk] = $last[$dk] }   # a beat with no sizes (busy, DB down) keeps baselines
-  $dcSql = "SELECT /*+ SET_VAR(information_schema_stats_expiry=0) */ table_schema, COALESCE(SUM(table_rows), 0), ROUND(COALESCE(SUM(data_length + index_length), 0) / 1048576) FROM information_schema.tables WHERE table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') GROUP BY table_schema"
-  foreach ($ev in @($envs | Where-Object { $_.marks -and -not $_.marks.dbDown })) {
-    $dcNow = @{}; foreach ($dl in @(Invoke-KitBackground "envy.ps1 sql data $($ev.env)" $KitCmd.local @('sql', '-Env', $ev.env, '-Query', $dcSql))) { $dc = "$dl" -split "`t"; if ($dc.Count -ge 3 -and $dc[1] -match '^\d+$') { $dcNow[$dc[0]] = @{ rows = [long]$dc[1]; mb = [double]$dc[2] } } }
+  foreach ($ev in @($envs | Where-Object { $_.schemaSizes -and -not ($_.marks -and $_.marks.dbDown) })) {
+    $dcNow = @{}; foreach ($dl in @(Invoke-KitBackground "envy.ps1 sql data $($ev.env)" $KitCmd.local @('sql', '-Env', $ev.env, '-Query', 'schemaSizes'))) { $dc = "$dl" -split "`t"; if ($dc.Count -ge 3 -and $dc[1] -match '^\d+$') { $dcNow[$dc[0]] = @{ rows = [long]$dc[1]; mb = [double]$dc[2] } } }
     if (-not $dcNow.Count) { continue }
     $dcKey = "$($ev.env)/data"; $dcOld = $last[$dcKey]; $dcNew = @{}   # $dcOld none: first sight (baselines, no flag)
     foreach ($ds in $dcNow.Keys) { $dn = $dcNow[$ds]; $db = if (-not $dcOld) { $null } elseif ($dcOld[$ds]) { $dcOld[$ds] } else { @{ rows = 0; mb = 0; at = $dcAt } }

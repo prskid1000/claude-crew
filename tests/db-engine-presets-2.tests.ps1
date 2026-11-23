@@ -54,7 +54,7 @@ INSERT INTO fa.o VALUES (1, 'a é', 1.5), (2, NULL, 2), (3, 'c', 3); INSERT INTO
     Q 'CREATE TABLE fa.DATABASECHANGELOG (id varchar(255))'
     $oldPath = $env:PATH; $env:PATH = "$bin$([IO.Path]::PathSeparator)$env:PATH"
     try {
-      $lt = & { . $L3; $pf = Join-Path (Kd) 'pending.sql'
+      $lt = & { . $L3; . (Join-Path $k3 'skills/crafty/adapters/liquibase.ps1'); $pf = Join-Path (Kd) 'pending.sql'   # no migrations.tool in this config: the adapter by hand
         $set = [pscustomobject]@{ name = 'default'; tool = 'liquibase'; changelog = "$repo/db/changelog/master.xml"; searchPath = $null; schemas = @(LiquibaseSchemas s) }
         $u = Invoke-MigVerb liquibase pendingSql @{ e = 's'; set = $set; out = $pf }
         $t = @((Invoke-DbFb s 'touched' @('--files', $pf)).items); $g = Invoke-MigVerb liquibase tag @{ e = 's'; set = $set; tag = 'release-3' }

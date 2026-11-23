@@ -1,6 +1,6 @@
 <#
-swarm-ios.ps1 (ios-simulator; phoney.ps1 forwards here when devices.type is ios): device lanes + the app under test. devices.type: android (emulators, default) |
-ios (Simulators, macOS) | none (verbs refuse; app checks NOT_TESTED).
+swarm-ios.ps1 (ios-simulator; phoney.ps1 forwards here when devices.type is ios): device lanes + the app under test. devices.type: none (default: verbs refuse; app checks NOT_TESTED) |
+android (emulators) | ios (Simulators, macOS).
   pwsh 7: & <kit>/skills/phoney/phoney.ps1 <verb> [args]
   acquire -Agent <id> [-Lane <name>] [-Holder <board code>] [-Apk local|<path>] [-Reverse <port>,..] [-NoInstall]   lease a phone
   ensure -Agent <id> · release -Agent <id> [-Keep] · status

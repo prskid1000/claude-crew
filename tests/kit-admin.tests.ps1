@@ -22,6 +22,15 @@ $cad = Join-Path $kc 'skills/crafty/adapters'; New-Item -ItemType Directory -For
 Set-JsonFile (Join-Path $kc 'skills/crafty/kit.local.json') @{ tracker = @{ type = 'zzt' } }; '{"lanes": []}' | Set-Content (Join-Path $kc 'skills/phoney/swarm.config.json')
 $cfo = & $py -X utf8 $KT audit config --kit $kc 2>&1 | Out-String; $sco = & $py -X utf8 $KT audit scan --kit $kc 2>&1 | Out-String
 Expect "kit-admin: config knows vendor tracker names and example-less local files; scan reads plain sub-keys ($(($cfo + $sco) -split "`n" -match 'CONFIG-(VALUE|FILE|UNDOC)' -join ' '))" ($cfo -notmatch 'CONFIG-VALUE.+tracker\.type|CONFIG-FILE.+swarm' -and $sco -notmatch 'CONFIG-UNDOC kit\.example\.json supervise\.heartbeatMinutes')
+# capabilities: the first config run writes the baseline; a capability on there and off now = ACT CAPS-LOST (gains pass)
+Set-JsonFile (Join-Path $kc 'skills/crafty/kit.local.json') @{ tracker = @{ type = 'zzt' }; devices = @{ type = 'android' }; migrations = @{ tool = 'liquibase' } }
+$cp1 = & $py -X utf8 $KT audit config --kit $kc 2>&1 | Out-String
+Set-JsonFile (Join-Path $kc 'skills/crafty/kit.local.json') @{ tracker = @{ type = 'zzt' }; migrations = @{ tool = 'liquibase' }; reports = @{ type = 'html' } }
+$cp2 = & $py -X utf8 $KT audit config --kit $kc 2>&1 | Out-String
+Expect "kit-admin: CAPS lists each capability; one switched off since the baseline = CAPS-LOST, a gain passes ($(($cp2 -split "`n" -match 'CAPS') -join ' '))" ($cp1 -match 'INFO CAPS .*phones=android' -and $cp1 -notmatch 'CAPS-LOST' -and
+  $cp2 -match 'ACT\s+CAPS-LOST\s+kit\.local\.json phones' -and $cp2 -notmatch 'CAPS-LOST.*(docStore|migrations)' -and ((& $py -X utf8 $KT audit config --kit $kc --ack-caps 2>&1 | Out-String) -match 'CAPS-LOST') -and
+  ((& $py -X utf8 $KT audit config --kit $kc 2>&1 | Out-String) -notmatch 'CAPS-LOST'))
+Remove-Item (Join-Path $kc '.state/caps-baseline.json') -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $cad 'tracker_zzt.ps1'), (Join-Path $kc 'skills/crafty/kit.local.json'), (Join-Path $kc 'skills/phoney/swarm.config.json') -ErrorAction SilentlyContinue
 # prepush: a pushed git-ignored file = LOCAL FILE; a file an old `# kitbag <kind> <name>` exclude block lists (now tracked) is not
 $ad = Join-Path $kc 'skills/bossy/adapters'; New-Item -ItemType Directory -Force $ad, (Join-Path $kc 'notes') | Out-Null
@@ -81,7 +90,7 @@ $cd = @($cstJ | Where-Object agent -eq 'devy (start)')[0]
 Expect "kit-admin: cost start rows equal kitbag.py budget ($($cd.total))" ($cd -and $bud -match "(?m)^devy\s+start\s+$($cd.total) of 12000")
 # kit-admin.md: every [CODE] it names is a lint code kitbag.py emits (no stale rule names)
 $doc = Get-Content (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/kit-admin.md') -Raw
-$emitted = [regex]::Matches((Get-Content (Join-Path $src 'skills/bossy/kitbag.py') -Raw), "(?:bad\('|\('(?=SECTION-))([A-Z-]+)'") | ForEach-Object { $_.Groups[1].Value }
+$emitted = [regex]::Matches((Get-Content (Join-Path $src 'skills/bossy/kitbag.py') -Raw), "(?:bad\('|\('(?=SECTION-|LESSONS-))([A-Z-]+)'") | ForEach-Object { $_.Groups[1].Value }
 $named = [regex]::Matches($doc, '\[([A-Z][A-Z, *-]+)\]') | ForEach-Object { $_.Groups[1].Value -split ',\s*' } | Where-Object { $_ -notmatch '\*' -and $_ -ne 'CODE' }
 $stale = @($named | Where-Object { $_ -notin $emitted })
 Expect "kit-admin: kit-admin.md names only lint codes kitbag.py emits (stale: $($stale -join ', '))" ($named.Count -gt 5 -and -not $stale.Count)
@@ -102,6 +111,9 @@ $null = & $lo -Skill revy -When 'a generic case' -Do 'a generic lesson' -Why 'te
 $null = & $lo -Skill revy -Lesson 'free text, no shape'; $freeCode = $LASTEXITCODE
 $r1 = & $lo -Read -Skill revy
 Expect 'kit-admin: learn -When -Do -Why renders ''- <when> -> <do> (<why>)'': generic -> LESSONS.md, org term -> LESSONS.local.md; a free -Lesson refused (2)' ($freeCode -eq 2 -and $r1 -notmatch 'free text' -and $r1 -match '- a generic case -> a generic lesson \(test\)' -and $r1 -match '\(local\)' -and (Get-Content (Join-Path $kc 'LESSONS.local.md') -Raw) -match 'Acmecorp' -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'Acmecorp')
+# no -Project: a runner word (lint-vocab.json lesson families) or an env-shaped name (lessonOrg) also goes local (lint LESSONS-ORG)
+$null = & $lo -Skill revy -When 'cypress specs flake' -Do 'rerun one spec' -Why 'load'; $null = & $lo -Skill revy -When 'shop-staging login fails' -Do 'reseat the user' -Why 'expired'
+Expect 'kit-admin: learn routes a runner word or an env-shaped name to LESSONS.local.md' ((Get-Content (Join-Path $kc 'LESSONS.local.md') -Raw) -match 'cypress specs' -and (Get-Content (Join-Path $kc 'LESSONS.local.md') -Raw) -match 'shop-staging' -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'cypress specs|shop-staging')
 $null = & $lo -Skill revy -Lesson 'an ascii case -> an ascii counted lesson (why) (1x)'; $null = & $lo -Skill revy -Bump 'ascii counted'
 Expect 'kit-admin: learn -Bump counts an ASCII (1x) up to (2×)' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match 'an ascii counted lesson \(why\) \(2×\)')
 $null = & $lo -Skill revy -Lesson "an overlong case $('padword ' * 50)-> refuse it (why)" 3>$null; $longCode = $LASTEXITCODE

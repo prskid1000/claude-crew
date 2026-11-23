@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L872 cycles · L948 pack · L1085 page · L1556 command
+Sections: L17 rules · L88 parts · L173 control · L346 parse · L648 link · L882 cycles · L958 pack · L1095 page · L1566 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -32,8 +32,18 @@ GIT_VERBS = set('add am apply bisect branch checkout cherry-pick clean clone com
     'switch tag update-index worktree'.split())
 EXT = [re.compile(r'\bgit(?:\.exe)?\s+(?:-C\s+\S+\s+|-c\s+\S+\s+)*([a-z][a-z-]+)'),
  re.compile(r"""['"]git['"]\s*,\s*(?:['"]-C['"]\s*,\s*[^,\]]+,\s*)?['"]([a-z][a-z-]+)['"]""")]
-TOOLS = re.compile(r'\b(glab|gh)\s+(api|mr|pr|ci|run|auth|issue|repo|release)\b|\b(clickup|gws|aws|nr1|adb|emulator|avdmanager)\b'
-    r'(?:\s+(?:-s\s+\S+\s+)?([a-z][\w:-]*))?|\b(npm|npx|yarn|pnpm)\s+([a-z][\w-]*)|\b(mvn|mvnw|gradlew?|dotnet|cargo)\b')
+def tools_rx():
+    """External CLI calls the graph draws: lint-vocab.json flowTools (host CLI + verb, other CLIs + verb, package runners, builds)."""
+    try:
+        with open(osp.join(osp.dirname(osp.abspath(__file__)), 'lint-vocab.json'), encoding='utf-8') as fh:
+            ft = json.load(fh).get('flowTools') or {}
+    except (OSError, ValueError):
+        ft = {}
+    alt = lambda k, esc=True: '|'.join(re.escape(w) if esc else w for w in ft.get(k) or []) or '(?!)'
+    return re.compile(rf'\b({alt("hosts")})\s+({alt("hostVerbs")})\b|\b({alt("clis")})\b'
+                      rf'(?:\s+(?:-s\s+\S+\s+)?([a-z][\w:-]*))?|\b({alt("packages")})\s+([a-z][\w-]*)|\b({alt("builds", False)})\b')
+TOOLS = tools_rx()
+PARSER_KEY += ':' + hashlib.sha1(TOOLS.pattern.encode()).hexdigest()[:8]   # a vocab edit re-parses too
 CMD = re.compile(r'\b([\w-]+\.(?:ps1|py|mjs))[\'"`]?[ \t]+([a-z_][\w-]*)(?:[ \t]+([a-z][\w-]*))?')
 ALIAS_CALL = re.compile(r'(?:\$KitCmd\.(\w+)|\$\{(\w+)\}|&\s*\$(\w+))[\'"`]?[ \t]+([a-z_][\w-]*)(?:[ \t]+([a-z][\w-]*))?')
 STATE = re.compile(r"(?:Get-KitPath\s+['\"]?|kit_path\(\s*['\"]|\brp\(\s*['\"]|kitPath\(\s*['\"])([\w-]+)")

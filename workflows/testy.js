@@ -15,7 +15,7 @@ export const meta = {
 //   L343 verify · L405 run-item · L589 pool · L611 budget · L643 run · L689 learn
 // ---- args: the run's input
 /* args, one of:
-1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
+1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
  target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
 2. Short form (preferred): { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next> }
 3. Full run.json (+ runDir; also written to <runDir>/run.json for pokey.ps1 finalize):
@@ -85,8 +85,8 @@ if (R.select && !R.runDir && !Array.isArray(R.items)) {
  phase('Prepare')
  const { select: S, name: N, target: T, ...rest } = R   // T may be a group, never an env: run.json holds the real target(s)
  if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
- const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : ['inTest'])
- const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd-HHmmss>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
+ const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : [])   // none: pokey prepare picks inTest, else the next on-role
+ const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd-HHmmss>-${String(N || `${T}-${statuses.join('-') || 'deployed'}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
   statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, runSettings: rest }
  const run = await prepStep(`& ${K0}/skills/pokey/pokey.ps1 prepare -Job '${q0(JSON.stringify(job))}'`, 'prepare')
  if (!run || !run.runDir) throw new Error('pokey.ps1 prepare gave no run: run it by hand (pokey L1), launch with { runDir }')

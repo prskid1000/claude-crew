@@ -1,5 +1,5 @@
 {
- "_readme": "kitbag.py lint ARCH-* vocabulary (kit-admin.md lint codes). families: words matched case-insensitive as whole words; default = ARCH-DEFAULT, enum = ARCH-ENUM (3+ distinct quoted values of one family in one file), lesson = ARCH-LESSON. vendorApi / platform / osTemp (ARCH-TEMP; python tempfile.* also outside a file that imports kitbag): regexes on comment-stripped code lines. A line with `arch-ok: <reason>` or inside legacy-defaults:start / :end markers is skipped.",
+ "_readme": "kitbag.py lint ARCH-* vocabulary (kit-admin.md lint codes). families: words matched case-insensitive as whole words; default = ARCH-DEFAULT, enum = ARCH-ENUM (3+ distinct quoted values of one family in one file), lesson = ARCH-LESSON (rules/*.md) and LESSONS-ORG (LESSONS.md, with lessonOrg regexes and kit.local.json orgTerms; bossy.ps1 learn routes such a lesson to LESSONS.local.md). flowTools: the CLIs kitbag.py flow draws as external calls (builds: regex fragments). vendorApi / platform / osTemp (ARCH-TEMP; python tempfile.* also outside a file that imports kitbag): regexes on comment-stripped code lines. A line with `arch-ok: <reason>` or inside legacy-defaults:start / :end markers is skipped.",
  "families": {
   "vendors": {"default": true, "lesson": true, "words": ["gitlab", "github", "bitbucket", "gitea", "jira", "clickup", "youtrack", "azure devops", "confluence", "notion", "gdocs", "new relic", "newrelic", "nrql", "sentry", "datadog", "jenkins", "aws", "gws", "glab", "slack", "whatsapp"]},
   "stacks": {"default": true, "lesson": true, "words": ["spring", "springframework", "elasticsearch", "liquibase", "flyway", "hibernate", "jhipster", "maven", "gradle", "angular", "react-native", "mysql", "mysqldump", "postgres", "systemd", "systemctl", "elastic beanstalk"]},
@@ -10,8 +10,12 @@
   "lanes": {"enum": true, "words": ["web", "api", "app"]},
   "deployKinds": {"enum": true, "words": ["branch", "awsStack", "ssh", "manual", "laneApk"]},
   "trackerTypes": {"enum": true, "words": ["clickup", "jira", "linear", "youtrack", "azure", "github", "gitlab"]},
-  "hostTypes": {"enum": true, "words": ["gitlab", "github", "bitbucket", "gitea", "azure"]}
+  "hostTypes": {"enum": true, "words": ["gitlab", "github", "bitbucket", "gitea", "azure"]},
+  "testRunners": {"lesson": true, "words": ["cypress", "playwright", "jest", "karma"]}
  },
+ "lessonOrg": ["(?<![\\w-])(?!(?:non|pre|post|re|un|per|read)-)[a-z][a-z0-9]*-(?:staging|prod|production|preprod|uat)(?![\\w-])"],
+ "flowTools": {"hosts": ["glab", "gh"], "hostVerbs": ["api", "mr", "pr", "ci", "run", "auth", "issue", "repo", "release"], "clis": ["clickup", "gws", "aws", "nr1", "adb", "emulator", "avdmanager"],
+  "packages": ["npm", "npx", "yarn", "pnpm"], "builds": ["mvn", "mvnw", "gradlew?", "dotnet", "cargo"]},
  "vendorApi": [
   "(?:^|[;|({=&]\\s*|\\bthen\\s+|^\\s*)&?\\s*['\"]?(?:glab|gh)['\"]?\\s+(?:api|mr|pr|ci|run|repo|issue|auth|release)\\b",
   "/api/v4/",

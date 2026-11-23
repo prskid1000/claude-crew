@@ -26,9 +26,9 @@ adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters
 - **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files
   row; mentions do not count; every edge has its reason.
 - **Generic** [ORG-TERM, RETIRED-WORD]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`,
-  org rules -> `rules/*.local.md`, org lessons -> `LESSONS.local.md`.
-- **Neutral** [ARCH-*, `lint-vocab.json`]: defaults off / none; vendor calls in `adapters/`; Windows calls checked; vendor
-  lessons local. A changed default = a `kitbag.py migrate` LEGACY_DEFAULTS row.
+  org rules -> `rules/*.local.md`, org lessons -> `LESSONS.local.md` [LESSONS-ORG].
+- **Neutral** [ARCH-*, `lint-vocab.json`]: defaults off / none; vendor calls in `adapters/`; Windows calls checked.
+  A changed default = a `kitbag.py migrate` LEGACY_DEFAULTS row.
 
 ## Shapes
 - **Script** [SCRIPT-HEADER, PS-VERSION, RUNTIME-RAW, RUNTIME-MAP, DESKTOP-OPEN, SECTION-MAP, SECTION-UNMAPPED]: one entry file per area with

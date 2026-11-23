@@ -45,11 +45,11 @@ Set-Content (Join-Path $kc 'skills/crafty/zz_math.ps1') "#Requires -Version 7`n`
 $sbPy = "import subprocess`nPS_ZZ = '''`$a = 1`n`$b = [Runtime.InteropServices.Marshal]'''`nsubprocess.run(['pwsh', '-EncodedCommand', PS_ZZ])`nsubprocess.run(['pwsh', '-Command', 'Get-NetTCPConnection'])`nsubprocess.run(['git', '-c', 'x.GetField=1'])`nsubprocess.run(['pwsh', '-Command', f'& {{ Add-Type {PS_ZZ} }}'])"
 Set-Content (Join-Path $kc 'skills/crafty/zz_sbi.py') $sbPy -Encoding utf8
 Set-Content (Join-Path $kc 'skills/crafty/zz_gitlab.ps1') "#Requires -Version 7`n`$a = Get-KitSetting 'zz.vendor' 'gitlab'" -Encoding utf8
-Add-Content (Join-Path $kc 'LESSONS.md') "`n## zz`n- a migration fails -> run liquibase status first (it hides the lock)" -Encoding utf8
+Add-Content (Join-Path $kc 'LESSONS.md') "`n## zz`n- a migration fails -> run liquibase status first (it hides the lock)`n- shop-staging logins expire -> reseat (stale)`n- an Acme deploy waits -> ask (slow)`n- a kit lock is stale -> clear it (crash)`n- a non-prod lane waits -> retry (slow)" -Encoding utf8
 $null = New-Item -ItemType Directory -Force (Join-Path $kc 'rules'); Set-Content (Join-Path $kc 'rules/zz.local.md') "# zz`nliquibase lock: release it" -Encoding utf8
 # an org-only rule (kit.local.json localOnly + .git/info/exclude) may name its stack; a published one may not
 foreach ($zr in 'zz-org', 'zz-pub') { Set-Content (Join-Path $kc "rules/$zr.md") "# $zr`nspring beans: inject by constructor" -Encoding utf8 }
-& $J @{ localOnly = @('rules/zz-org.md') } (Join-Path $kc 'skills/crafty/kit.local.json'); Add-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) '/rules/zz-org.md'
+& $J @{ localOnly = @('rules/zz-org.md'); orgTerms = @('Acme') } (Join-Path $kc 'skills/crafty/kit.local.json'); Add-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) '/rules/zz-org.md'
 # ARCH-TEMP fixtures: OS temp in pwsh / python / node = a hit; Get-KitTemp, arch-ok, a guard self-test row, python importing kitbag pass
 $ftp = @'
 #Requires -Version 7
@@ -79,7 +79,7 @@ Expect 'ARCH-PLATFORM: Get-CimInstance / os.startfile unguarded = a problem; ins
 Expect 'ARCH-TEMP: GetTempPath / python tempfile without kitbag / node tmpdir() = a problem; Get-KitTemp, a comment, arch-ok, a guard self-test row, a kitbag importer pass' (
   $l1 -match '(?m)^ARCH-TEMP\s+skills/crafty/zz_tmp\.ps1:2: OS temp' -and $l1 -match '(?m)^ARCH-TEMP\s+skills/crafty/zz_tmp\.py:2:' -and $l1 -match '(?m)^ARCH-TEMP\s+skills/crafty/zz_tmp\.mjs:2:' -and
   (& $cnt 'ARCH-TEMP\s+skills/crafty/zz_tmp\.ps1') -eq 1 -and $l1 -notmatch 'ARCH-TEMP\s+skills/crafty/zz_tmpk\.py' -and (& $cnt '(?m)^ARCH-TEMP\s') -eq 3)
-Expect 'ARCH-LESSON: liquibase in tracked LESSONS.md = a problem; a rules/*.local.md and a localOnly / excluded rule pass, a published rule fails' ($l1 -match '(?m)^ARCH-LESSON\s+LESSONS\.md:\d+: names liquibase' -and
+Expect 'LESSONS-ORG: a stack word, an env-shaped name and an orgTerm in LESSONS.md = 3 problems, the term never quoted; a kit lesson passes; ARCH-LESSON: a rules/*.local.md and a localOnly / excluded rule pass, a published rule fails' ((& $cnt '(?m)^LESSONS-ORG\s+LESSONS\.md:\d+') -eq 3 -and $l1 -notmatch 'LESSONS-ORG.*Acme' -and $l1 -notmatch 'ARCH-LESSON\s+LESSONS\.md' -and
   $l1 -notmatch 'ARCH-LESSON\s+rules/zz\.local\.md' -and $l1 -notmatch 'ARCH-LESSON\s+rules/zz-org\.md' -and $l1 -match '(?m)^ARCH-LESSON\s+rules/zz-pub\.md:\d+: names spring')
 Expect "ARCH-DEAD-KEY: a documented key no script reads is a counted problem (exit $LASTEXITCODE); a read key passes" ($LASTEXITCODE -eq 1 -and
   $l1 -match '(?m)^ARCH-DEAD-KEY\s+skills/crafty/kit\.example\.json: "zzDeadKey"' -and $l1 -notmatch 'ARCH-DEAD-KEY.*zzLiveKey')

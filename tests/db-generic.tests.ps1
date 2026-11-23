@@ -56,7 +56,7 @@ try {
   $sc = & { . $L; @(Get-DataScopes s) -join ',' }
   Expect "column model lists the column's values (keep marked); one-DB scopes = db.name ($cl | $sc)" ($cl -eq 'a*,b' -and $sc -eq 'shop')
   # postgres: the engine adapter has no sql verb -> refused, the mysql client never runs (also not for a schema tenant model)
-  & $J @{ localEnv = @{ envs = @{ pg = @{ services = @(); db = @{ engine = 'postgresql'; user = 'u'; name = 'app' }; tenants = @{ model = 'schema'; schema = 'adm'; table = 'reg'; key = 'id'; name = 'name' } } } } } $cfg 8
+  & $J @{ localEnv = @{ envs = @{ pg = @{ services = @(); db = @{ engine = 'postgresql'; user = 'u'; name = 'app' }; tenants = @{ model = 'schema'; schema = 'adm'; table = 'reg'; key = 'id'; name = 'name' } }; lite = @{ services = @(); db = @{ engine = 'sqlite'; name = 'app.db' } } } } } $cfg 8
   $p = & { . $L; try { Invoke-DbSql pg 'SELECT 1'; 'ran' } catch { "$_" } }
   $pt = Px $L tenant list -Env pg 2>&1 | Out-String
   Expect "postgres: Invoke-DbSql refuses, tenant (schema model) refuses, mysql never called ($p)" ($p -eq 'engine postgres: verb sql not implemented' -and $pt -match 'tenant needs db\.engine mysql / mariadb' -and -not (Test-Path $hit))
@@ -64,6 +64,12 @@ try {
   "Register-KitAdapter envy-verb hello @{ ops = @('wave'); run = { `"hello `$Op from `$e`" } }" | Set-Content (Join-Path $ad 'zz_hello.local.ps1')
   $h = Px $L hello wave -Env pg 2>&1 | Out-String; $hc = $LASTEXITCODE
   $hb = & $flat (Px $L hello jump -Env pg 2>&1 | Out-String); $u = & $flat (Px $L nosuchverb 2>&1 | Out-String); $uc = $LASTEXITCODE
+  # schemaSizes: each engine's own query (supervise data growth); none -> refused, never the mysql client
+  $ssq = & { . $L; "$($KitAdapters['db-engine'].mysql.schemaSizes -match 'information_schema\.tables')|$($KitAdapters['db-engine'].postgres.schemaSizes -match 'pg_total_relation_size')|$([bool]$KitAdapters['db-engine'].sqlite.schemaSizes)" }
+  $ssn = & $flat (Px $L sql -Env lite -Query schemaSizes 2>&1 | Out-String)
+  # the migration adapter loads only when config names its tool (here: none)
+  $lbOff = & { . $L; [bool](Get-Command Get-LiquibaseCmd -ErrorAction SilentlyContinue) }
+  Expect "schemaSizes: mysql information_schema, postgres pg_total_relation_size, sqlite refused; liquibase.ps1 not loaded without migrations.tool ($ssq | $lbOff)" ($ssq -eq 'True|True|False' -and $ssn -match 'engine sqlite: no schemaSizes query' -and -not (Test-Path $hit) -and -not $lbOff)
   Expect "envy verbs: a registered verb runs, its ops checked; an unknown verb refused ($hc | $($h.Trim()))" ($hc -eq 0 -and $h -match 'hello wave from pg' -and $hb -match 'hello jump : unknown \(wave\)' -and $uc -ne 0 -and $u -match "unknown verb 'nosuchverb'.*hello")
 } finally { $env:PATH = $oldPath }
 Remove-TestKit $k

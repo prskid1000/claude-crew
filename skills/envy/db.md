@@ -42,15 +42,15 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
 - `restore.after` [ { name, cmd } ] ({mark}): runs after it and before a release with migrations switches over
   (`onMigrations: false`: after restores only): marker resets (a "latest changeSet" marker skips a layer's changeSet included
   above the target's newest), reindex, cache clears.
-- That release first nulls `MD5SUM` of applied Liquibase changeSets a rebuilt layer edited and its target lacks (unmerged;
-  the edited DDL is not re-applied), each named in the notes and `<env>-migrations.log`.
+- That release first runs the tool's `resetEdited` verb (liquibase: nulls `MD5SUM` of applied changeSets a rebuilt layer edited and its
+  target lacks; the edited DDL is not re-applied), each named in the notes and `<env>-migrations.log`.
 - Marks expire with the binlog (`binlog_expire_logs_seconds`; `marks.keepDays` 30, `marks.max` 60). Doctor checks binlog
   ROW / FULL images / FULL metadata / retention.
 - `seed [-Check]`: the env's baseline data (`envs.<env>.seed`, JSON `items` [ { name, check: { sql, expect } | { cmd },
   create: { cmd, upsert }, how, needs, tables } ], default `<state>/localenv/<env>.seed.json`); a create runs on MISSING, on DRIFT only with `create.upsert: true`, then
   the check again; the last line names each item not created and why.
-- With Liquibase also DRIFT `routines:<schema>` = a procedure / function an executed changeSet file created that the schema
-  lacks (fix: delete those rows, reset a migration skip marker, restart).
+- A tool with `missingRoutines` (liquibase) adds DRIFT `routines:<schema>` = a procedure / function an executed migration created
+  that the schema lacks (fix: `rerunRoutines`, reset a migration skip marker, restart).
 - `db.timeoutSec`: seconds per hook (a number or `{ "<hook>": n }`; default 1800, query 120). `tasks` (`task -Task <name>`),
   `sql -Query` (read-only).
 

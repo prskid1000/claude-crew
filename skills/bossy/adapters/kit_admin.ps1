@@ -6,7 +6,7 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L112 health · L121 browser policy · L164 prepush · L228 weekly tests · L264 state lint · L273 precommit
+Sections: L13 learn · L118 health · L127 browser policy · L170 prepush · L234 weekly tests · L270 state lint · L279 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -16,6 +16,12 @@ function Get-KitRoleRules([string]$Skill) {
   $on = $false
   $ro = @(foreach ($rl in (Read-KitLessonLines (Join-Path $KitConf.Kit 'ROLES.local.md'))) { if ($rl -match '^## (.+)$') { $on = @($Matches[1] -split ',' | ForEach-Object { $_.Trim() }) -contains $Skill }; if ($on -and $rl.Trim()) { $rl } })
   if ($ro.Count -gt 1) { "(org rules for ${Skill}: ROLES.local.md)`n$($ro -join "`n")" }
+}
+# a lesson naming a vendor / stack / runner word or an org-shaped name (lint-vocab.json lesson families, lessonOrg; lint LESSONS-ORG) -> local
+function Test-KitVendorLesson([string]$Text) {
+  $voc = try { Get-Content (Join-Path $PSScriptRoot '../lint-vocab.json') -Raw | ConvertFrom-Json } catch { $null }; if (-not $voc) { return $false }
+  $words = @(foreach ($fam in (Get-KitProps $voc.families)) { if ($fam.Value.lesson) { $fam.Value.words } })
+  (@($words | Where-Object { $Text -match "(?i)(?<![\w-])$([regex]::Escape($_))(?![\w-])" }).Count + @($voc.lessonOrg | Where-Object { $_ -and $Text -match "(?i)$_" }).Count) -gt 0
 }
 function Invoke-LearnAdmin {
   param(
@@ -55,7 +61,7 @@ function Invoke-LearnAdmin {
   if (-not $Skill) { 'need -Skill <skill> with -Lesson / -Bump / -Fixed / -Trim'; exit 2 }
   $terms = @(Get-KitValue 'orgTerms' @()) | Where-Object { $_ -and $_ -notmatch '^<' }
   $key = if ($Bump) { $Bump } elseif ($Fixed) { $Fixed } else { $null }
-  $orgWord = $Lesson -and @($terms | Where-Object { $Lesson -match [regex]::Escape($_) }).Count
+  $orgWord = $Lesson -and (@($terms | Where-Object { $Lesson -match [regex]::Escape($_) }).Count -or (Test-KitVendorLesson $Lesson))
   $inLocal = $key -and (Test-Path $loc) -and ([IO.File]::ReadAllText($loc)).Contains($key) -and -not ([IO.File]::ReadAllText($pub)).Contains($key)
   $f = if ($Project -or $orgWord -or $inLocal) { $loc } else { $pub }
   if ($f -eq $loc -and -not (Test-Path $loc)) { [IO.File]::WriteAllText($loc, "# Kit lessons - org / project (LOCAL ONLY, never published)`nShape of LESSONS.md; learn -Read prints both.`n") }

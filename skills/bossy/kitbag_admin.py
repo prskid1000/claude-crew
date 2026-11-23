@@ -1,13 +1,13 @@
 """kitbag_admin.py: kitty's tools - the install, config and recovery checks of agents/kitty.md steps 1-3, the step 4
 scan, token cost and releases.
 
-  python -X utf8 skills/bossy/kitbag.py audit setup [--fix] | config [--fill] | recover [--fix] | scan [--kit <dir>] [--json <file>]
+  python -X utf8 skills/bossy/kitbag.py audit setup [--fix] | config [--fill] [--ack-caps] | recover [--fix] | scan [--kit <dir>] [--json <file>]
   python -X utf8 skills/bossy/kitbag.py cost [<kit>] [--steps] [--json]   # start tokens per agent type, workflow prompts
   python -X utf8 skills/bossy/kitbag.py release [--tag] [--publish]        # next SemVer + notes from Conventional Commits
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L57 setup · L178 config · L360 recover · L505 release · L556 cost · L663 registry · L667 scan
+Sections: L16 helpers · L57 setup · L178 config · L392 recover · L537 release · L588 cost · L695 registry · L699 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -176,7 +176,7 @@ def cmd_setup(kit, fix):
         out('ASK', 'SETUP-CLI', 'gws', 'reports.type gdocs needs the gws CLI on PATH, logged in')
 
 # ---- config: audit config, missing org values
-def cmd_config(kit, fill):
+def cmd_config(kit, fill, ack=False):
     doc, documented = config_doc_keys(OWN)
     for ex_rel, loc_rel, what in PAIRS:
         ex, _ = example_of(ex_rel)
@@ -228,6 +228,7 @@ def cmd_config(kit, fill):
             out('INFO', 'CONFIG-DEFAULT', loc_rel, f'written (backup {bak}: disposable runtime cache)')
         if loc_rel.endswith('kit.local.json'):
             config_rules(kit, loc)
+            caps_rules(kit, loc, ack)
         elif loc_rel.endswith('targets.local.json'):
             targets_rules(loc)
         else:
@@ -238,6 +239,37 @@ def cmd_config(kit, fill):
         top = key.split('.')[0]
         if top not in documented and f'`{top}' not in doc:
             out('ACT', 'CONFIG-UNDOC', where, f'script reads kit.local.json "{key}", not documented in README "Configuration" (nor kit.example.json)')
+
+# capabilities: optional features (off in the generic kit) as this config resolves them; a capability the baseline had on and
+# the config now resolves off = ACT CAPS-LOST (a kit change switched a feature off here). Baseline: <state>/caps-baseline.json
+def caps_of(c):
+    le = c.get('localEnv') if isinstance(c.get('localEnv'), dict) else {}
+    envs = [e for e in (le.get('envs') or {}).values() if isinstance(e, dict)]
+    eng = sorted({str((e.get('db') or {}).get('engine') or (get(le, 'defaults.db.engine') or '')).lower() for e in envs} - {''})
+    deps = sorted({deploy_kind(d) for r in c.get('repos') or [] if isinstance(r, dict) for d in (r.get('deploys') or []) if isinstance(d, dict)} - {''})
+    v = lambda x, d='off': d if x in (None, '', [], {}) else (','.join(map(str, x)) if isinstance(x, list) else str(x))
+    return {'tracker': v(get(c, 'tracker.type'), 'none'), 'gitHost': v(c.get('gitHostType') or ('set' if c.get('gitHost') else None)),
+            'docStore': v(get(c, 'reports.type'), 'markdown'), 'processGates': v(sorted((get(c, 'process.gates') or {}).keys())),
+            'deployKinds': v(deps), 'deployTrigger': v(get(c, 'deploy.trigger'), 'owner'), 'localEnv': v(len(envs) or None),
+            'lanes': 'on' if le.get('laneIds') or any(e.get('lane') for e in envs) else 'off', 'dataStore': v(eng),
+            'dbMarks': 'on' if set(eng) & {'mysql', 'mariadb'} else 'off',
+            'partitions': v(get(le, 'defaults.tenants.model') or next((get(e, 'tenants.model') for e in envs if get(e, 'tenants.model')), None), 'none'),
+            'migrations': v(get(c, 'migrations.tool'), 'none'), 'phones': v(get(c, 'devices.type'), 'none'),
+            'qaLanes': v(sorted((get(c, 'qa.lanes') or {}).keys())), 'e2e': 'on' if get(c, 'tests.e2e') else 'off',
+            'fallbackRunner': v(get(c, 'tests.fallbackRunner'), 'none'), 'mavenOffline': v(get(c, 'build.mavenOffline'), 'False')}
+
+def caps_rules(kit, c, ack=False):
+    caps, bf = caps_of(c), osp.join(kit, MAP.get('stateDir', '.state'), 'caps-baseline.json')
+    out('INFO', 'CAPS', 'kit.local.json', ' · '.join(f'{k}={x}' for k, x in caps.items()))
+    base, err = load_json(bf) if osp.isfile(bf) else ({}, 'missing')
+    lost = [f'{k} {b} -> {caps.get(k, "off")}' for k, b in (base if isinstance(base, dict) else {}).items()
+            if b not in ('off', 'none', 'False') and caps.get(k, 'off') in ('off', 'none', 'False')]
+    for x in lost:
+        out('ACT', 'CAPS-LOST', f'kit.local.json {x.split()[0]}', f'on in the baseline, off now ({x}): set it in kit.local.json; switched off on purpose: audit config --ack-caps')
+    if err or not lost or ack:   # first run, nothing lost or acknowledged: the baseline follows the config
+        os.makedirs(osp.dirname(bf), exist_ok=True)
+        with open(bf, 'w', encoding='utf-8') as fh:
+            json.dump({k: x for k, x in caps.items()}, fh, indent=1)
 
 # deploy kinds = the registry (Register-KitAdapter 'deploy-kind' <name> in skills/*/adapters/*.ps1); a row's kind as Get-KitDeployKind
 def _deploy_kinds():
@@ -800,8 +832,8 @@ def doc_flags(texts):
                         if fl not in ('file', 'noprofile', 'command', 'whatif', 'verbose', 'erroraction') and not any(p.startswith(fl) for p in params[s]):
                             out('WARN', 'DOC-FLAG', f'{f}:{ln}', f'`{s} -{flag}`: {s} has no such parameter')
 
-AUDIT_VERBS = {'scan': lambda kit, flags: cmd_scan(kit), 'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags),
+AUDIT_VERBS = {'scan': lambda kit, flags: cmd_scan(kit), 'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags, '--ack-caps' in flags),
   'recover': lambda kit, flags: cmd_recover(kit, '--fix' in flags)}
 COMMANDS = {'cost': cmd_cost, 'release': cmd_release}
-ARGS = {'audit': ({'--fix', '--fill'}, {'--kit', '--json'}, False), 'cost': ({'--steps', '--json'}, set(), True),
+ARGS = {'audit': ({'--fix', '--fill', '--ack-caps'}, {'--kit', '--json'}, False), 'cost': ({'--steps', '--json'}, set(), True),
   'release': ({'--tag', '--publish'}, set(), False)}

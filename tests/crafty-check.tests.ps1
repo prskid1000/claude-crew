@@ -99,8 +99,17 @@ Expect "check stamps: source key over many long untracked names, an edit among t
 # a Spring Boot Maven module's check build skips the repackage (no fat jar a lane never stages); a plain one keeps package
 $sb = Join-Path (Kd) 'sb'; $pl = Join-Path (Kd) 'plain'; New-Item -ItemType Directory -Force $sb, $pl | Out-Null
 '<project><parent><artifactId>spring-boot-starter-parent</artifactId></parent></project>' | Set-Content "$sb/pom.xml"; '<project/>' | Set-Content "$pl/pom.xml"
-$bs = (pwsh @np $D stack -Dir $sb -Json | ConvertFrom-Json).commands.build; $bp = (pwsh @np $D stack -Dir $pl -Json | ConvertFrom-Json).commands.build
-Expect "stack: Spring Boot check build skips the repackage, a plain Maven build does not ($bs | $bp)" ($bs -match 'package -DskipTests -Dspring-boot\.repackage\.skip=true$' -and $bp -match 'package -DskipTests$')
+$bs = (pwsh @np $D stack -Dir $sb -Json | ConvertFrom-Json).commands.build; $bpj = pwsh @np $D stack -Dir $pl -Json | ConvertFrom-Json; $bp = $bpj.commands.build
+Expect "stack: the core preset names Maven; Spring Boot check build skips the repackage, a plain one does not; no -o unless build.mavenOffline ($bs | $bp)" ($bs -match 'package -DskipTests -Dspring-boot\.repackage\.skip=true$' -and $bp -match 'package -DskipTests$' -and $bpj.stack -eq 'java-maven' -and $bp -notmatch ' -o ')
+# an Android Gradle module with root node tooling: the core preset leaves it to the Android preset (no node fall-through)
+$an = Join-Path (Kd) 'and-rn'; New-Item -ItemType Directory -Force "$an/src/main" | Out-Null; 'android { }' | Set-Content "$an/build.gradle"; '<manifest/>' | Set-Content "$an/src/main/AndroidManifest.xml"; '{ "name": "x" }' | Set-Content "$an/package.json"
+$ans = "$((pwsh @np $D stack -Dir $an -Json | ConvertFrom-Json).stack)"
+Expect "stack: Android Gradle + a root package.json = android-gradle, not node ($ans)" ($ans -eq 'android-gradle')
+# e2e runners (vocab.json testRunners): a bare playwright suite is refused like a bare cypress run; its package names the e2e step
+$pwg = pwsh @np $D gate -Dir $an -Cmd 'npx playwright test' 2>&1 | Out-String; $pwc = $LASTEXITCODE
+$pwDir = Join-Path (Kd) 'pw'; New-Item -ItemType Directory -Force $pwDir | Out-Null; '{ "devDependencies": { "@playwright/test": "1" } }' | Set-Content "$pwDir/package.json"
+$pwe = "$((pwsh @np $D stack -Dir $pwDir -Json | ConvertFrom-Json).commands.e2e)"
+Expect "e2e runners: bare playwright test refused (exit $pwc); @playwright/test -> its e2e step ($pwe)" ($pwc -eq 2 -and $pwg -match 'runs the whole e2e suite' -and $pwe -eq 'npx playwright test {specs}')
 
 # container-tests: no answering engine -> exit 4; a configured runtimes.docker is leased (started when down)
 $jd = Join-Path (Kd) 'jvm-repo'; $bin = Join-Path (Kd) 'bin'; New-Item -ItemType Directory -Force $jd, $bin | Out-Null

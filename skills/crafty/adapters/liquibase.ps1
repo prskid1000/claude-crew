@@ -1,5 +1,5 @@
 #Requires -Version 7
-# Usage: dot-sourced by lib.ps1 and envy.ps1 from adapters/. Exit codes: none here (its verbs exit through their callers).
+# Usage: dot-sourced by lib.ps1 from adapters/ (a test: by hand). Exit codes: none here (its verbs exit through their callers).
 # liquibase.ps1: the Liquibase migration adapter (kind migration, name liquibase; selected by migrations.tool,
 # repos[].migrations.tool or localEnv db.migrations.tool / sets[].tool).
 # Verbs: check @{ top; dir; since; show } -> exit code (crafty.ps1 check -Step migrations: devtools.py lbcheck per master)
@@ -9,7 +9,9 @@
 #   historyScopes @{ e } -> the env scopes holding DATABASECHANGELOG
 # A set: { name, tool, repo, base, changelog, dir, searchPath, schemas, registry, ambiguous }; searchPath default: the nearest
 # 'resources' folder above the changelog (classpath-relative includes), else the changelog's folder.
-# Sections: L13 crafty.ps1 check · L47 local env (envy.ps1)
+# Sections: L15 crafty.ps1 check · L49 local env (envy.ps1)
+# loaded by lib.ps1 only when config names the tool (a "tool" or db "rollback" value liquibase, anywhere): no config, no adapter
+if ($__plugin -eq $PSCommandPath -and ($__cfg | ConvertTo-Json -Depth 30 -Compress) -notmatch '"(?:tool|rollback)":"liquibase"') { return }
 # ---- crafty.ps1 check: the repo's changelog masters: XML (lbcheck reads them) or, -Other, the YAML / JSON / SQL ones it cannot (UNRUN)
 function Get-LiquibaseMasters([string]$Top, [switch]$Other) {
   @(git -C $Top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' -and ($_ -match '\.xml$') -ne $Other })

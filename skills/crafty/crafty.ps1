@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L31 wt · L323 stack · L505 gate · L839 check · L1157 pipes · L1213 guard · L2130 dir · L2140 checkpoint ·
-  L2170 prior · L2208 tracker · L2230 task spec · L2423 scope · L2471 host
+Sections: L24 init · L33 wt · L325 stack · L424 gate · L758 check · L1076 pipes · L1132 guard · L2049 dir · L2059 checkpoint ·
+  L2089 prior · L2127 tracker · L2149 task spec · L2342 scope · L2390 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -28,6 +28,8 @@ $__rest = @($args | Select-Object -Skip 1)
 function Lock-Gate($m) { try { $m.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $true } }
 . (Join-Path $PSScriptRoot 'lib.ps1')
 $script:TscNoOutput = [string]$script:KitVocab.tscNoOutput   # unset: no typecheck command
+# e2e test runners: kit.local.json tests.runners, else vocab.json testRunners [{ name, deps, files, cmd, wholeSuiteRx, specGlobs, ignore }]
+function Get-KitTestRunners { $r = Get-KitSetting 'tests.runners' $null; @($(if ($r) { $r } else { $script:KitVocab.testRunners }) | Where-Object { $_ }) }
 # ---- wt: a worktree per agent; deps linked, never installed
 # a lock file newer than the install: packages added since are missing (fails at runtime, not at link time)
 function Get-StaleDepsNote([string]$nmDir) {
@@ -222,7 +224,7 @@ switch ($Action) {
     $stagePaths = @(Split-KitList $Paths)   # -Paths: a split commit stages only its group, the next group stays out
     if ($stagePaths.Count -and $NoStage) { throw 'commit: -Paths or -NoStage, not both' }
     # test-run output (reports, screenshots, videos) never blocks a commit or lands in an MR
-    $skipGlobs = @(@(Get-KitSetting 'commit.ignore' @('**/cypress/reports/**', '**/cypress/screenshots/**', '**/cypress/videos/**')) | Where-Object { $_ } | ForEach-Object { ":(exclude,glob)$_" })
+    $skipGlobs = @(@(Get-KitSetting 'commit.ignore' @(Get-KitTestRunners | ForEach-Object { $_.ignore })) | Where-Object { $_ } | ForEach-Object { ":(exclude,glob)$_" })
     if ($stagePaths.Count) { git -C $Dir add -A -- @($stagePaths) @($skipGlobs); if ($LASTEXITCODE) { throw "commit -Paths: git add failed for $($stagePaths -join ', ')" } } elseif (-not $NoStage) { git -C $Dir add -A -- . @($skipGlobs) }
     if (($area = @(Meta $Dir 'scope' | Where-Object { $_ })).Count) {   # the branch's diff and this commit stay in the brief area
       $at = Meta $Dir 'target'; $br = (git -C $Dir rev-parse --abbrev-ref HEAD).Trim()
@@ -358,8 +360,8 @@ function TsProject($d) {
   $null
 }
 
-# tests.fallbackRunner: a TS project with no test runner; unset = the kit's spec.mjs, 'none' = no test step, else a command with {tests}
-function NodeSpecCmd { $f = "$(Get-KitSetting 'tests.fallbackRunner' '')".Trim(); if ($f -eq 'none') { $null } elseif ($f) { $f } else { "node `"$($KitCmd.spec)`" {tests}" } }
+# tests.fallbackRunner: a TS project with no test runner; unset / 'none' = no test step, 'spec' = the kit's spec.mjs (opt-in), else a command with {tests}
+function NodeSpecCmd { $f = "$(Get-KitSetting 'tests.fallbackRunner' '')".Trim(); if (-not $f -or $f -eq 'none') { $null } elseif ($f -eq 'spec') { "node `"$($KitCmd.spec)`" {tests}" } else { $f } }
 
 function Get-NodeTools($d) {
   $pkg = ReadJson (Join-Path $d 'package.json')
@@ -375,8 +377,7 @@ function Get-NodeTools($d) {
     Vitest = $deps -contains 'vitest'
     Eslint = ($deps -contains 'eslint') -or (Has $d 'eslint.config.*', '.eslintrc*')
     # check -Step e2e fills {specs}
-    E2e = if (($deps -contains 'cypress') -or (Has $d 'cypress.config.*', 'cypress.json')) { 'npx cypress run --spec "{specs}"' }
-          elseif (($deps -contains '@playwright/test') -or (Has $d 'playwright.config.*')) { 'npx playwright test {specs}' } else { $null }
+    E2e = (@(Get-KitTestRunners | Where-Object { @(@($_.deps) | Where-Object { $_ -and $deps -contains $_ }).Count -or (@($_.files).Count -and (Has $d @($_.files))) })[0]).cmd
   }
 }
 
@@ -384,96 +385,14 @@ function Get-Stack($d) {
   $c = [ordered]@{ compile = $null; typecheck = $null; lint = $null; test = $null; e2e = $null; build = $null; format = $null; run = $null }
   $s = $null; $deps = @()
 
-  if (Test-Path (Join-Path $d 'pom.xml')) {
-    $s = 'java-maven'
-    $mvn = Wrapper $d 'mvnw' 'cmd' 'mvn'
-    # offline: no repo lock fights
-    $off = if ((Get-KitSetting 'build.mavenOffline' $true) -ne $false -and "$(Get-KitSetting 'build.mavenOffline' $true)" -ne 'false' -and (Test-Path (Join-Path $HOME '.m2/repository'))) { '-o ' } else { '' }
-    $c.compile = "$mvn $off-q compile"
-    $c.test = "$mvn $off-q test -Dtest={tests} -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false"
-    $c.build = "$mvn $off-q package -DskipTests"
-    if ((ReadText (Join-Path $d 'pom.xml')) -match 'spring-boot') { $c.build += ' -Dspring-boot.repackage.skip=true'; $c.run = "$mvn $($off)spring-boot:run" }
-  }
-  elseif (Has $d 'build.gradle', 'build.gradle.kts', 'settings.gradle*') {
-    $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
-    # Android: adapters/stack_presets.ps1
-    $android = [bool](Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if (-not $android) {
-      $s = 'gradle'
-      $c.compile = "$gw classes -q"
-      $c.test = "$gw test --tests {tests}"
-      $c.build = "$gw assemble"
-      $c.run = if ((@(Get-ChildItem -LiteralPath $d -Filter 'build.gradle*' -File -ErrorAction SilentlyContinue | ForEach-Object { ReadText $_.FullName }) -join ' ') -match 'org\.springframework\.boot') { "$gw bootRun" } else { "$gw run" }
-    }
-  }
-  elseif (Test-Path (Join-Path $d 'angular.json')) {
-    $s = 'angular'; $n = Get-NodeTools $d; $deps = @('node_modules')
-    $tsc = if (Test-Path (Join-Path $d 'tsconfig.app.json')) { 'tsconfig.app.json' } else { 'tsconfig.json' }
-    if ($script:TscNoOutput) { $c.typecheck = "npx tsc -p $tsc $script:TscNoOutput" }
-    $c.build = 'npx ng build --configuration production'
-    $ngTest = $null
-    try {
-      $aj = Get-Content (Join-Path $d 'angular.json') -Raw | ConvertFrom-Json
-      $bt = foreach ($p in (Get-KitProps $aj.projects)) { $b = if ($p.Value.architect.build) { $p.Value.architect.build } else { $p.Value.targets.build }; if ($b) { $b; break } }
-      if ($bt -and -not ($bt.configurations -and (Get-KitProps $bt.configurations).Name -contains 'production')) { $c.build = 'npx ng build' }
-      foreach ($p in (Get-KitProps $aj.projects)) {
-        $t = if ($p.Value.architect.test) { $p.Value.architect.test } elseif ($p.Value.targets.test) { $p.Value.targets.test } else { $null }
-        if ($t) { $ngTest = [string]$t.builder; break }
-      }
-    } catch { $ngTest = 'karma' }
-    if ($ngTest -match 'karma') { $c.test = 'npx ng test --watch=false --browsers=ChromeHeadless --include {tests}' }
-    elseif ($ngTest) { $c.test = 'npx ng test --watch=false --include {tests}' }
-    else { $c.test = NodeSpecCmd }
-    if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
-    $c.e2e = $n.E2e
-    $c.run = 'npx ng serve --host 127.0.0.1 --port {port}'   # localhost = ::1 on Windows: envy's IPv4 check never saw it up (restart loop)
-  }
-  elseif (Test-Path (Join-Path $d 'package.json')) {
-    $n = Get-NodeTools $d; $deps = @('node_modules')
-    $s = if ($n.Deps -contains 'react-native') { 'react-native' } elseif ($n.Deps -contains 'next') { 'node-next' } elseif ($n.Deps -contains 'react') { 'node-react' } else { 'node' }
-    $pm = Get-NodePm $d
-    if ($n.Ts -and $script:TscNoOutput) { $tp = TsProject $d; $c.typecheck = if ($tp) { "npx tsc -p $tp $script:TscNoOutput" } else { "npx tsc $script:TscNoOutput" } }
-    if ($n.Vitest) { $c.test = 'npx vitest run {tests}' }
-    elseif ($n.Jest) { $c.test = 'npx jest ' + $(if ($n.JestCfg) { "--config $($n.JestCfg) " } else { '' }) + '{tests} --no-watchman --forceExit' }
-    elseif ($n.Scripts -contains 'test') { $c.test = NodeRun $pm 'test' '{tests}' }
-    elseif ($n.Ts -and $s -ne 'react-native') { $c.test = NodeSpecCmd }
-    if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
-    $c.e2e = $n.E2e
-    if ($s -ne 'react-native' -and $n.Scripts -contains 'build') { $c.build = NodeRun $pm 'build' '' }
-    $agw = Wrapper (Join-Path $d 'android') 'gradlew' 'bat' $null
-    if ($s -eq 'react-native' -and $agw) { $c.build = "cd android && $agw assembleRelease" }
-    $c.run = if ($s -eq 'react-native') { if ($n.Deps -contains 'expo') { 'npx expo start --port {port}' } else { 'npx react-native start --port {port}' } }
-            elseif ($n.Scripts -contains 'dev') { NodeRun $pm 'dev' '' } elseif ($n.Scripts -contains 'start') { NodeRun $pm 'start' '' } else { $null }
-  }
-  elseif (Has $d 'pyproject.toml', 'requirements*.txt', 'setup.py', 'Pipfile') {
-    $s = 'python'; $deps = @('.venv')
-    $py = if ($KitIsWindows -and (Test-Path (Join-Path $d '.venv\Scripts\python.exe'))) { '.venv\Scripts\python.exe' }
-          elseif (-not $KitIsWindows -and (Test-Path (Join-Path $d '.venv/bin/python'))) { '.venv/bin/python' }
-          elseif ($KitIsWindows -or -not (Resolve-Tool python3)) { 'python' } else { 'python3' }
-    $c.compile = "$py -m compileall -q -x `"[\\/](\.venv|venv|node_modules|\.git)[\\/]`" {files}"
-    $cfgText = @('pyproject.toml', 'setup.cfg', 'tox.ini') | ForEach-Object { ReadText (Join-Path $d $_) }
-    $have = $null
-    $pyExe = if ($py -match '^\.venv') { Join-Path $d $py } else { (Resolve-Tool $py) }
-    if ($pyExe -and (Test-Path $pyExe)) {
-      $have = @(& $pyExe -c "import importlib.util as u; print(' '.join(m for m in ('ruff','flake8','pytest') if u.find_spec(m)))" 2>$null) -join ' '
-      if ($LASTEXITCODE) { $have = $null }
-    }
-    $ruffCfg = (Has $d 'ruff.toml', '.ruff.toml') -or ("$cfgText" -match '\[tool\.ruff')
-    $flakeCfg = (Has $d '.flake8') -or ("$cfgText" -match '\[flake8\]')
-    $pytestCfg = (Has $d 'pytest.ini', 'conftest.py') -or ("$cfgText" -match '\[tool\.pytest|\[pytest\]|\[tool:pytest\]')
-    if ($null -eq $have) { $c.lint = if ($flakeCfg -and -not $ruffCfg) { "$py -m flake8 {files}" } else { "$py -m ruff check {files}" }; $c.test = "$py -m pytest {tests} -q" }
-    else {
-      $c.lint = if ($have -match 'ruff' -and ($ruffCfg -or -not ($flakeCfg -and $have -match 'flake8'))) { "$py -m ruff check {files}" } elseif ($have -match 'flake8') { "$py -m flake8 {files}" } else { $null }
-      $c.test = if ($have -match 'pytest' -or $pytestCfg) { "$py -m pytest {tests} -q" } else { "$py -m unittest {tests}" }
-    }
-    if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
-    if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
-  }
-  # stack.presets: names to try (unset = all)
+  # adapters/stack_presets.ps1: core always first, then the others stack.presets names (unset = all)
   $on = Get-KitSetting 'stack.presets' $null; $raw = $__cfg.stack -and (Get-KitProps $__cfg.stack).Name -contains 'presets'
-  foreach ($plugin in @(@(if ($KitAdapters.stack) { $KitAdapters.stack.GetEnumerator() }) | Where-Object { $_.Value -and (-not $raw -or @($on) -contains $_.Key) } | ForEach-Object Value)) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
+  $det = @{ dir = $d; commands = $c; deps = @() }
+  $order = @(@($KitAdapters.stack.core) + @(@(if ($KitAdapters.stack) { $KitAdapters.stack.GetEnumerator() }) | Where-Object { $_.Key -ne 'core' -and $_.Value -and (-not $raw -or @($on) -contains $_.Key) } | ForEach-Object Value)) | Where-Object { $_ }
+  foreach ($plugin in $order) { if (-not $s) { $s = & $plugin.detect $det } }
+  $deps = @($det.deps)
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
-  if (-not $s -and -not $ovr.stack -and ($android -or (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile'))) { throw "stack: no preset detects $d (a .claude-stack.json sets one; README ""Adapters"")" }
+  if (-not $s -and -not $ovr.stack -and ((Has $d 'build.gradle', 'build.gradle.kts', 'settings.gradle*') -or (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile'))) { throw "stack: no preset detects $d (a .claude-stack.json sets one; README ""Adapters"")" }
   if (-not $s -and -not $ovr.stack) { return $null }   # an override's stack alone counts
 
   if ($ovr) {
@@ -511,35 +430,35 @@ function Get-KitPauseFor([string]$Agent, [string]$Dir) {
   if (-not $me) { return }
   @($ps | Where-Object { ($me.run -and ($_.run -eq $me.run -or ($_.run -eq '*' -and $me.run -notin @($_.released)))) -or $me.agent -in @($_.agents.agent) })[0]
 }
-# kind: command regex -> default GB until 2 runs are learned
+# kind: command regex; its starting GB until 2 runs are learned: params.registry.json gate.kindGB.<kind> (other: gate.kindGB.other)
 $script:GateKinds = [ordered]@{
-  'emulator' = @('^exit 0 #emulator', 4.5)
-  'android-build' = @('gradlew.*\b(assemble|bundle)', 7)
-  'android-test' = @('gradlew.*\btest|connectedAndroidTest|lintDebug', 6)
-  'gradle' = @('gradle(w|w\.bat)?\b', 3.5)
-  'rn-bundle' = @('export:embed|react-native bundle|expo export', 3)
-  'typecheck' = @("^\s*((npx|yarn|pnpm)\s+(exec\s+)?)?(vue-)?tsc\b[^&|;]*$([regex]::Escape($script:TscNoOutput))", 2)   # before e2e: tsc -p cypress/tsconfig.json is no e2e run
-  'cypress' = @('cypress', 5)   # 3.5 GB runner + its browser
-  'e2e' = @('playwright|\b(npm|yarn|pnpm|bun)\s+(run\s+)?e2e\b', 3.5)
-  'docker' = @('\bdocker(\.exe)?"?\s+(compose\s+(-\S+(\s+(?!-)\S+)?\s+)*)?(build|run|up|buildx\s+build)\b|\bdocker-compose(\.exe)?\s+(-\S+(\s+(?!-)\S+)?\s+)*(build|run|up)\b', 3)
-  'ng-test' = @('\bng test\b|\bkarma\b', 3)
-  'web-build' = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)
-  'maven-test' = @('^(?!.*-D(skipTests|maven\.test\.skip)\b).*\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
-  'maven' = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b', 2.5)
-  'dotnet' = @('msbuild|dotnet (build|test|publish)', 3)
-  'rust' = @('cargo (build|test|clippy|check)', 4)
-  'native' = @('cmake --build|\bmake\b', 3)
-  'js-test' = @('jest|vitest', 2)
-  'tsc-lint' = @('\btsc\b|eslint', 2)
-  'local-ai' = @('video\.py"? transcribe\b', 2)   # pokey.ps1 evidence: -NeedGB = the STT server's RAM
-  'python' = @('pytest|mypy|ruff|compileall|-m unittest\b|\btest_\w*\.py\b', 1.5)
-  'go' = @('go (build|test|vet)', 2)
+  'emulator' = '^exit 0 #emulator'
+  'android-build' = 'gradlew.*\b(assemble|bundle)'
+  'android-test' = 'gradlew.*\btest|connectedAndroidTest|lintDebug'
+  'gradle' = 'gradle(w|w\.bat)?\b'
+  'rn-bundle' = 'export:embed|react-native bundle|expo export'
+  'typecheck' = "^\s*((npx|yarn|pnpm)\s+(exec\s+)?)?(vue-)?tsc\b[^&|;]*$([regex]::Escape($script:TscNoOutput))"   # before e2e: tsc -p cypress/tsconfig.json is no e2e run
+  'cypress' = 'cypress'   # 3.5 GB runner + its browser
+  'e2e' = 'playwright|\b(npm|yarn|pnpm|bun)\s+(run\s+)?e2e\b'
+  'docker' = '\bdocker(\.exe)?"?\s+(compose\s+(-\S+(\s+(?!-)\S+)?\s+)*)?(build|run|up|buildx\s+build)\b|\bdocker-compose(\.exe)?\s+(-\S+(\s+(?!-)\S+)?\s+)*(build|run|up)\b'
+  'ng-test' = '\bng test\b|\bkarma\b'
+  'web-build' = 'ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build'
+  'maven-test' = '^(?!.*-D(skipTests|maven\.test\.skip)\b).*\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b'
+  'maven' = '\b(mvn|mvnd|mvnw(\.cmd)?)\b'
+  'dotnet' = 'msbuild|dotnet (build|test|publish)'
+  'rust' = 'cargo (build|test|clippy|check)'
+  'native' = 'cmake --build|\bmake\b'
+  'js-test' = 'jest|vitest'
+  'tsc-lint' = '\btsc\b|eslint'
+  'local-ai' = 'video\.py"? transcribe\b'   # pokey.ps1 evidence: -NeedGB = the STT server's RAM
+  'python' = 'pytest|mypy|ruff|compileall|-m unittest\b|\btest_\w*\.py\b'
+  'go' = 'go (build|test|vet)'
 }
 function Get-GateKind([string]$c, [string]$Dir = '') {
   # a package script is its body
   $sb = if ($Dir -and $c -match '^\s*(npm|yarn|pnpm|bun)\s+(run\s+)?([\w:.-]+)') { try { "$((Read-KitText (Join-Path $Dir 'package.json') | ConvertFrom-Json -AsHashtable).scripts[$Matches[3]])" } catch { '' } }
   if ($sb -match 'cypress\s+run') { return 'cypress' }
-  foreach ($t in @($c, $sb) | Where-Object { $_ }) { foreach ($k in $script:GateKinds.Keys) { if ($t -match $script:GateKinds[$k][0]) { return $k } } }; 'other'
+  foreach ($t in @($c, $sb) | Where-Object { $_ }) { foreach ($k in $script:GateKinds.Keys) { if ($t -match $script:GateKinds[$k]) { return $k } } }; 'other'
 }
 # testcontainers in the module's build files: the run starts containers whose RAM sits outside its process tree
 function Test-GateContainers([string]$Dir) {
@@ -597,7 +516,7 @@ function ConvertTo-CmdSeparators([string]$c) {
   $sb.ToString()
 }
 # whole e2e suite only with -AllTests (KIT_E2E_ALL)
-if ($Cmd -match '\bcypress\s+run\b(?![^&|;]*--spec[=\s])' -and $env:KIT_E2E_ALL -ne '1') { Write-Host "[gate] refused: $Cmd runs the whole e2e suite: use crafty.ps1 check -Dir <module> -Step e2e (the diff's specs; whole suite: -AllTests on the owner's word)"; exit 2 }
+if (@(Get-KitTestRunners | Where-Object { $_.wholeSuiteRx -and $Cmd -match $_.wholeSuiteRx }).Count -and $env:KIT_E2E_ALL -ne '1') { Write-Host "[gate] refused: $Cmd runs the whole e2e suite: use crafty.ps1 check -Dir <module> -Step e2e (the diff's specs; whole suite: -AllTests on the owner's word)"; exit 2 }
 if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) { Write-Host "[gate] cmd.exe has no ';': running $semi"; $Cmd = $semi } }
 
 # NoDefaultCurrentDirectoryInExePath hides bare names in cwd
@@ -616,7 +535,7 @@ $histFile = Join-Path $ledger 'history.json'
 function Read-History { $h = try { Read-KitText $histFile | ConvertFrom-Json -AsHashtable } catch {}; if ($h) { $h } else { @{} } }
 
 $kind = Get-GateKind $Cmd $Dir
-$default = if ($script:GateKinds.Contains($kind)) { $script:GateKinds[$kind][1] } else { 2 }
+$default = [double](Get-KitParam "gate.kindGB.$(if ($script:GateKinds.Contains($kind)) { $kind } else { 'other' })")
 # containers: learned peaks (docker stats growth) hold RAM; until then +2 GB (a DB + a search engine)
 $ctr = $kind -eq 'docker' -or (($kind -match 'test|cypress|e2e|dotnet|^go$' -or ($kind -eq 'python' -and $Cmd -match 'pytest|unittest|\btest_')) -and (Test-GateContainers $Dir))
 if ($ctr -and $kind -ne 'docker') { $default += 2 }
@@ -975,7 +894,7 @@ if ($Step -eq 'e2e') {
   if (-not $cmd) { Write-Host "[check] $($st.stack) has no 'e2e' step (no Cypress / Playwright here: set .claude-stack.json commands.e2e with {specs})"; exit 2 }
   $rel = { param($f) [IO.Path]::GetRelativePath($st.dir, $f).Replace('\', '/') }
   $all = @(@(git -C $st.dir ls-files 2>$null) + @(git -C $st.dir ls-files --others --exclude-standard 2>$null) | Where-Object { $_ } | Select-Object -Unique)
-  $sg = if ($cfg.specs) { @($cfg.specs) } else { @('**/*.cy.*', 'cypress/integration/**/*.{js,ts}', 'e2e/**/*.spec.*', '**/*.e2e.*') + @(if ($cmd -match 'playwright') { 'tests/**/*.spec.*' }) }
+  $sg = if ($cfg.specs) { @($cfg.specs) } else { $rns = @(Get-KitTestRunners); $own = @($rns | Where-Object { $cmd -match "\b$([regex]::Escape($_.name))\b" }); @(@($(if ($own.Count) { $own } else { $rns[0] }) | ForEach-Object { $_.specGlobs }) + 'e2e/**/*.spec.*', '**/*.e2e.*') }
   $specs = @($all | Where-Object { $_ -match '\.([cm]?[jt]sx?|feature)$' -and (Test-Glob $_ $sg) })
   $map = @($cfg.map | Where-Object { $_ -and (-not $_.dir -or "$($_.dir)".Replace('\', '/').Trim('/') -eq $mod) })
   $mapSpecs = @($map | ForEach-Object { $ms = $_.specs; , @($all | Where-Object { Test-Glob $_ $ms }) })
