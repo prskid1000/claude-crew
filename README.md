@@ -99,7 +99,7 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 <!-- kit-graph:end -->
 
 Handoff: the first of 80% x the tool's cap and `budget.agentCap.<role>`; kit sized to
-min(`budget.window`, the cap) (past: WATCH); instructions over `budget.instructions.cap`: handoff.<!-- kit-graph:start flow-context -->
+min(`budget.window`, the cap) (past: WATCH; self-check: C1); instructions over `budget.instructions.cap`: handoff.<!-- kit-graph:start flow-context -->
 ```mermaid
 flowchart LR
   F_transcripts["transcripts"] -->|"usage pass"| F_usage_ps1["usage.ps1"]
@@ -315,7 +315,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `browsers` | {"chromePolicies": {}} | chromePolicies: {&lt;policy key under Software/Policies, e.g. Google/Chrome, Microsoft/Edge, Chromium, BraveSoftware/Brave&gt;: {&lt;policy&gt;: &lt;number or text; no list policies&gt;}}: bossy.ps1 setup writes them per user (Windows HKCU; an admin-only key: it prints the elevated command), e.g. GenAILocalFoundationalModelSettings 1 + ComponentUpdatesEnabled 0 = no on-device AI model downloads; setup -BrowserPolicy -Undo removes them, -Clean deletes model folders in kit and Cypress profiles. Kit-started Chromium gets vocab.json chromeQuietArgs. |
 | `guard` | {"layout": "warn", "writeRoots": []} | heavyPatterns / e2ePatterns: commands that need the gate. layout: warn (default) / block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt). writeRoots: more folders where an agent may create files; envChangeCommands: more deployed-env change commands to deny (regexes; built-in: crafty/vocab.json); a new file at a drive root or outside the workspace, kit, repos, worktree roots, temp, ~/.claude and ~/Downloads is denied. |
 | `ports` | {"targets": "none", "models": {"haiku": "flash"}} | kitbag.py port workspace copies: none (default) / codex / antigravity / both. models: {&lt;Claude model&gt;: &lt;agy model&gt;} for the runner (default haiku -&gt; flash) |
-| `memory` | {"keepDefault": false} | keepDefault: false = auto memory in &lt;kit&gt;/memory/ (git-ignored); true = the user's. |
+| `memory` | {"keepDefault": false} | false = auto memory off (settings.json); true = on (settings.local.json). |
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off). |
 | `build` | {"mavenOffline": false} | mavenOffline: Maven -o when ~/.m2/repository exists (default false). |
 | `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build_heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |

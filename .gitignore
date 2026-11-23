@@ -17,7 +17,7 @@ skills/phoney/swarm.config.json
 skills/phoney/swarm.json
 rules/*.local.md
 
-# harness state Claude Code writes into .claude (auto memory: bossy.ps1 setup points autoMemoryDirectory at /memory)
+# harness state Claude Code writes into .claude (old auto memory folder; settings.json now turns auto memory off)
 /memory/
 /agent-memory-local/
 /scheduled_tasks.lock

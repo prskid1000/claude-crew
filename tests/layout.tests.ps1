@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks, run records (resumed run liveness, re-bind); the
-supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage); testy's envy / phoney calls; tracked ports current.
+supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log) and Usage (budget -Usage); testy's envy / phoney calls; tracked ports current; local files git-ignored; auto memory off.
 Usage: pwsh -NoProfile -File <kit>/tests/layout.tests.ps1 (or tests/kit-tests.ps1 -Area layout).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -175,5 +175,15 @@ Expect "status: two board entries of one agent on one transcript = one row, the 
 # tracked ports current (GEMINI.md went stale after a commit): kitbag.py port --check, workspace copies aside; 2 = ports unavailable
 $pck = python -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') port --check 2>&1 | Out-String; $pckc = $LASTEXITCODE; $pst = @([regex]::Matches($pck, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -notmatch '\(workspace copy\)$' })
 Expect "port: the tracked ports (.codex, .agents, GEMINI.md) match a fresh generation: run kitbag.py port before committing ($($pst -join ', '))" ($pckc -eq 2 -or -not $pst.Count)
+# org and project facts live only in local files: each stays git-ignored (pre-push also blocks them)
+$ignRel = @('ROLES.local.md', 'rules/org.local.md', 'LESSONS.local.md', 'skills/crafty/kit.local.json', 'skills/pokey/targets.local.json', 'settings.local.json', "$rtName/", '.state/')
+$ignOut = @(git -C $src check-ignore --no-index -- @ignRel); Expect "gitignore: org and local files never reach git ($($ignOut.Count) of $($ignRel.Count) ignored)" ($ignOut.Count -eq $ignRel.Count)
+# kit memory (AGENTS.md "Memory"): settings.json turns harness auto memory off; setup drops a local opt-in unless memory.keepDefault
+$memSl = Join-Path $k 'settings.local.json'; $memCfg = Join-Path $k 'skills/crafty/kit.local.json'; $memOld = if (Test-Path $memCfg) { [IO.File]::ReadAllText($memCfg) }
+[IO.File]::WriteAllText($memSl, '{ "autoMemoryEnabled": true }'); [IO.File]::WriteAllText($memCfg, '{}')
+$null = pwsh @np $O setup -Exclude -Quiet 2>&1; $memOff = -not (Get-Content $memSl -Raw | ConvertFrom-Json -AsHashtable).ContainsKey('autoMemoryEnabled')
+[IO.File]::WriteAllText($memCfg, '{ "memory": { "keepDefault": true } }'); $null = pwsh @np $O setup -Exclude -Quiet 2>&1; $memOn = (Get-Content $memSl -Raw | ConvertFrom-Json).autoMemoryEnabled -eq $true
+if ($null -ne $memOld) { [IO.File]::WriteAllText($memCfg, $memOld) } else { Remove-Item $memCfg }; Remove-Item $memSl
+Expect "memory: settings.json autoMemoryEnabled false; setup drops a local opt-in ($memOff), keeps it under memory.keepDefault ($memOn)" ((Get-Content (Join-Path $src 'settings.json') -Raw | ConvertFrom-Json).autoMemoryEnabled -eq $false -and $memOff -and $memOn)
 Remove-TestKit $k
 Complete-Tests

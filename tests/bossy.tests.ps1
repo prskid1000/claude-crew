@@ -9,7 +9,7 @@ $k = New-TestKit orch; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Pa
 $lw = New-LinkedKit 'kit main' @{ localOnly = @('secret.txt') } 'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1', 'skills/bossy/adapters/outcomes.ps1', 'skills/crafty/adapters/supervise_report.ps1', 'skills/crafty/adapters/wt_pool.ps1'
 $mk = "$(Kd)/kit main"; Add-Content "$mk/.git/info/exclude" "# >>> kit localOnly (managed by an older setup)`n/old.txt`n# <<< kit localOnly`n/mine.txt`n/skills/bossy/bossy.ps1"
 $kx = (pwsh @np "$lw/skills/bossy/bossy.ps1" setup -Exclude 2>&1 | Out-String)
-Expect 'setup -Exclude in a kit worktree: main clone excludes (old block replaced, own lines kept, tracked line dropped), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '(?m)/old\.txt|^/skills/bossy/bossy\.ps1' -and (Get-Content "$mk/.git/info/exclude" -Raw) -match '/mine\.txt' -and $kx -match 'dropped .*/skills/bossy/bossy\.ps1' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
+Expect 'setup -Exclude in a kit worktree: main clone excludes (old block replaced, own lines kept, tracked line dropped), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '(?m)/old\.txt|^/skills/bossy/bossy\.ps1' -and (Get-Content "$mk/.git/info/exclude" -Raw) -match '/mine\.txt' -and $kx -match 'dropped .*/skills/bossy/bossy\.ps1' -and $kx -notmatch 'memory' -and -not (Test-Path "$lw/memory"))
 git -C $mk remote add origin https://github.com/o/r.git; git -C $mk update-ref refs/remotes/origin/main HEAD; git -C $mk symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main; git -C $mk update-ref refs/remotes/origin/trunk HEAD
 $protect = @'
 $null = . $args[0] 6>$null; $global:seen = @()
@@ -193,7 +193,7 @@ $hj = pwsh @np $O board join -Agent H1 -Run hr -Model claude-opus-5-5 | Out-Stri
 $hb = Px $O board beat -Session $ht | Out-String; $hf = if ($hb -match 'leave -Session \S+ -Handoff (\S+),') { $Matches[1] }
 $null = Px $O board leave -Session $ht -Handoff $hf; $hr = Px $O recover | Out-String
 $h2 = Px $O board join -Agent H1 -Run hr | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
-Expect 'budget: join shows it, a beat at 80% = HANDOFF, recover lists the brief, a fresh join continues' ($hj -match 'budget: claude claude-opus-5-5 967000 tokens, handoff at 773600' -and $hb -match 'HANDOFF: spend 800000 >= 773600' -and $hf -and $hr -match "== HANDOFF H1 \(hr\).*$([regex]::Escape($hf))" -and $h2 -match "CONTINUE: .*$([regex]::Escape($hf))" -and $h2 -notmatch 'DUPLICATE')
+Expect 'budget: join shows it, a beat at 80% = HANDOFF, recover lists the brief, a fresh join continues' ($hj -match 'budget: claude claude-opus-5-5 967000 tokens, handoff at 773600' -and $hj -match 'never earlier; .*design window \d+ \(no stop\)' -and $hb -match 'HANDOFF: spend 800000 >= 773600' -and $hf -and $hr -match "== HANDOFF H1 \(hr\).*$([regex]::Escape($hf))" -and $h2 -match "CONTINUE: .*$([regex]::Escape($hf))" -and $h2 -notmatch 'DUPLICATE')
 $an = & { . $O; $c = @{ outbox = 4; toolErrors = 2; errorRun = 'wf1' }
   "$((Get-KitAnomalies $c @{ outbox = 1; toolErrors = 1 }).flags.what -join "`n")`n$((Get-KitAnomalies @{ outbox = 0 } @{}).flags.Count)" }
 $want = 'outbox grew to 4', '1 new agent', '\n0$'

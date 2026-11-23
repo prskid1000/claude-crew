@@ -27,7 +27,7 @@ Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md`; 
   back. Bugs are reproduced locally before they are fixed.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per human testing doc -> all pass: closed · own check failed
   or untested (undeployed): failedTesting · untested, no dev fix: owner decides · a new defect: one [Bug] under the original ask.
-- **Budget** (README "Configuration"): agent hands off at 80% of tool compaction point (resume brief, fresh agent); run over cap is refused with split, at 80% nothing new starts (rest returns as `next`).
+- **Budget** (README "Configuration"): agent hands off at 80% of tool compaction point, never earlier (resume brief, fresh agent); run over cap is refused with split, at 80% nothing new starts (rest returns as `next`).
 - **Decision pauses**: user-visible behaviour change not asked for, or multiple valid paths -> ask (`bossy.ps1 decide ask`), item waits, rest continue; internal logic with identical output needs no ask.
 
 ## Router
@@ -58,15 +58,13 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R18 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
 
 - **Crew** (the only agent types, spawned only through these targets; names, roles and characters: `kit.example.json`
-  `_manifest`): `devy` builds (by /buildy, one per brief area), `revy` reviews (by /buildy, R13, R14),
-  `checky` tests (by /testy as lead / test / verify, R10), `kitty` keeps the kit and the machine (R2, R3, /tidy), `briefy` writes briefs and contracts (R5, E8), `rechy` researches (R17,
-  /buildy Spike), `opsy` deploys on a person's word (R7, E5), `watchy` watches deployed envs (R16, E15), `datay` guards test and
-  local data (R15, /buildy migrations, E2, E7), `vidy` reads videos and screenshots for any agent (R19; an existing vidy index is
-  reused, never re-read).
+  `_manifest`): `devy` builds (one per brief area), `revy` reviews, `checky` tests (lead / test /
+  verify), `kitty` keeps the kit and the machine, `briefy` writes briefs and contracts, `rechy` researches, `opsy` deploys on a
+  person's word, `watchy` watches deployed envs, `datay` guards test and local data, `vidy` reads videos and screenshots for any
+  agent (an existing vidy index is reused, never re-read).
   Each loads its skill first; its Character shapes judgement, tone and how it argues a dispute or debate, never a rule or the
   Writing standards. Step 0 of every agent reads the board (who is alive here); a disagreement: /buildy `disputes`, a
-  debate or `board msg`, still split -> the owner decides (`decide ask`, both sides). Codex / Antigravity: the ported agents,
-  workflows and mechanics are in AGENTS.override.md / GEMINI.md (`kitbag.py port`).
+  debate or `board msg`, still split -> the owner decides (`decide ask`, both sides).
 - **Autonomous:** user invocation is the standing opt-in. The coordinator and agents run all routed steps (worktrees, checks, edits, local test loops, reviews, CI, merging) without approval pauses. A request running in a workflow is never launched twice: add via contracts.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
   the person says `deploy <env>`, then `opsy` runs it end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
@@ -100,6 +98,14 @@ the **Target**. A mixed request is split and each part routed on its own.
   `bossy.ps1 learn`.
 - **The main session coordinating agents** loads `bossy` and follows its Events table (heartbeat, decisions, `deploy <env>`,
   recovery after a restart, HEAL, LEARN, retro, kit commits).
+- **Memory:** no harness auto-memory here (Claude Code: `settings.json` `autoMemoryEnabled: false`):
+
+| Fact | Kit store |
+|---|---|
+| rule / standing answer | `kitty` change / `decide rules` |
+| lesson | `bossy.ps1 learn` |
+| org fact | ROLES.local.md, `rules/*.local.md` |
+| config | `kit.local.json` |
 
 ## CLIs
 Check auth before using a CLI (never log in headlessly). Windows: resolve shims (`gws`, `gh`, `npx`, ...) with `shutil.which()`.

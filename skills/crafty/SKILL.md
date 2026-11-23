@@ -33,7 +33,8 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $O board join -Agent <id> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress
 & $D wt lease -Repo <repo> -Branch <branch> -Agent <id> [-Target <t>] [-Scope '<globs>']; & $D wt sync -Dir <wt>   # 1. a pool slot (<wt> = its "worktree:" line), latest target
-#   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it as the cases spec `repro`
+#   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it as the cases spec `repro`; no brief
+#      (a direct fix): impact first (callers, settings that enable it, rows hit, code of the deployed branch); gone -> stop, report
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
 #   4. FIRST (templates.md "Test cases"): the task's cases spec, human checks from the request (never the code), UI-driven:
 #      devtools.py cases add <task> cases.json; automated tests (`testing.md`); each loop round: cases result / round, then

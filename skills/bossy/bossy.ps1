@@ -33,7 +33,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L39 init · L50 board · L230 budget · L260 launch · L501 recover · L588 pause · L599 resume · L666 program · L717 param ·
   L723 track · L1110 supervise · L1450 report · L1530 audit · L1590 storage · L1593 bugbrief · L1707 cleanup · L1794 learn ·
-  L1826 decide · L1980 debate · L2024 health · L2092 setup · L2189 guard-sendmessage
+  L1826 decide · L1980 debate · L2024 health · L2092 setup · L2187 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -150,7 +150,7 @@ switch ($Action) {
     if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" } }
     $c = if ($Contracts) { $Contracts } else { (Active | Where-Object { $_.run -eq $Run -and $_.contracts } | Select-Object -First 1).contracts }
     if ($c -and (Test-Path $c)) { "CONTRACTS ($c) - re-read before every push:"; Get-Content $c | Select-Object -First 60 | ForEach-Object { "  $_" } }
-    "budget: $($bg.tool) $(if ($bg.model) { $bg.model } else { '(default model)' }) $($bg.budget) tokens, handoff at $($bg.handoff) ($($bg.capBy)); instructions cap $($bg.instrCap)"
+    "budget: $($bg.tool) $(if ($bg.model) { $bg.model } else { '(default model)' }) $($bg.budget) tokens, handoff at $($bg.handoff) ($($bg.capBy)), never earlier; instructions cap $($bg.instrCap); design window $($bg.design) (no stop)"
     "SESSION $tok   (pass -Session $tok to beat / check / leave)"
   }
   'beat' {
@@ -2123,19 +2123,17 @@ function Say($s) { if (-not $Quiet) { $s } }
 
 function Set-Memory {
   try { $cfg = Read-KitText $KitConf.ConfigFile | ConvertFrom-Json } catch { $cfg = $null }
-  if ($cfg -and $cfg.memory -and $cfg.memory.keepDefault) { return $null }
+  # settings.json turns auto memory off; memory.keepDefault opts back in
+  $keep = [bool]($cfg -and $cfg.memory -and $cfg.memory.keepDefault)
   $gd = "$(git -C $kit rev-parse --path-format=absolute --git-dir 2>$null)".Trim(); $cd = "$(git -C $kit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
-  if ($gd -and $cd -and $gd -ne $cd) { return 'memory: a linked kit worktree - autoMemoryDirectory is set only in the main clone' }
-  $dir = Join-Path $kit 'memory'
-  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
-  $want = ($dir -replace '\\', '/')
+  if ($gd -and $cd -and $gd -ne $cd) { return $null }
   $sl = Join-Path $kit 'settings.local.json'
   $s = if (Test-Path $sl) { try { Get-Content $sl -Raw | ConvertFrom-Json -AsHashtable } catch { $null } } else { @{} }
-  if ($null -eq $s) { return "settings.local.json is not valid JSON: autoMemoryDirectory not set (fix the file, then re-run)" }
-  if ($s['autoMemoryDirectory'] -eq $want) { return $null }
-  $s['autoMemoryDirectory'] = $want
+  if ($null -eq $s) { return 'settings.local.json is not valid JSON: autoMemoryEnabled unchecked' }
+  if ($keep -eq ($s['autoMemoryEnabled'] -eq $true)) { return $null }
+  if ($keep) { $s['autoMemoryEnabled'] = $true } else { $s.Remove('autoMemoryEnabled') }
   [IO.File]::WriteAllText($sl, ($s | ConvertTo-Json -Depth 20))
-  "memory: autoMemoryDirectory = $want (settings.local.json; from the next session)"
+  "memory: auto memory $(if ($keep) { 'on (memory.keepDefault)' } else { 'off (settings.json)' }) in settings.local.json; from the next session"
 }
 
 function Update-Exclude {
