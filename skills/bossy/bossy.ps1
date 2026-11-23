@@ -31,9 +31,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L39 init · L50 board · L230 budget · L260 launch · L501 recover · L588 pause · L599 resume · L666 program · L717 param ·
-  L723 track · L1112 supervise · L1453 report · L1533 audit · L1593 storage · L1596 bugbrief · L1598 cleanup · L1685 learn ·
-  L1717 decide · L1885 debate · L1929 health · L1997 setup · L2092 guard-sendmessage
+Sections: L39 init · L50 board · L230 budget · L260 launch · L503 recover · L590 pause · L601 resume · L668 program · L719 param ·
+  L725 track · L1114 supervise · L1455 report · L1535 audit · L1595 storage · L1598 bugbrief · L1600 cleanup · L1687 learn ·
+  L1719 decide · L1887 debate · L1931 health · L1999 setup · L2094 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -260,10 +260,12 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 # ---- launch: records for resume after a restart
 # a workflow's config (CONFIG line of launch -Self): models.<phase>, repos[].role by name + alias, qa.lanes
 function Get-KitWorkflowConfig {
-  $roles = [ordered]@{}
-  foreach ($r in @(Get-KitSetting 'repos' @())) { if ($r.role) { foreach ($n in @(@($r.name) + @($r.aliases) | Where-Object { $_ })) { $roles["$n".ToLower()] = "$($r.role)".ToLower() } } }
+  $roles = [ordered]@{}; $local = [ordered]@{}
+  foreach ($r in @(Get-KitSetting 'repos' @())) { $nm = @(@($r.name) + @($r.aliases) | Where-Object { $_ } | ForEach-Object { "$_".ToLower() }); if ($r.role) { foreach ($n in $nm) { $roles[$n] = "$($r.role)".ToLower() } }
+    # repos[].localTest optional / none: its localFallback; ci needs MR pipelines, else unit
+    if ("$($r.localTest)" -in 'optional', 'none') { foreach ($n in $nm) { $local[$n] = $(if ("$($r.localFallback)" -eq 'unit' -or ($r.ci -and $r.ci.mrPipelines -eq $false)) { 'unit' } else { 'ci' }) } } }
   $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }
-  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); tiers = Get-KitTiers; roles = $roles; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
+  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); tiers = Get-KitTiers; roles = $roles; local = $local; humanDoc = [bool]@(Get-KitProcessDocs | Where-Object key -eq 'testing-doc').Count; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
 }
 function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
 function Invoke-Launch {
@@ -1023,7 +1025,7 @@ switch ($Action) {
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
       $ciTask = Get-KitCiTask $o.task   # a CI job's task: the job passing again is its test, no testing docs
-      if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and -not ($pg = Test-KitProcessGate promote @{ task = $o.task }).ok) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, $(if ($pg.how -eq 'builtin:testingDocs') { 'no testing-doc link (human + AI) or the task is unread' } else { "process.gates.promote refused ($($pg.how)): $($pg.why)" }): not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
+      if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and -not ($pg = Test-KitProcessGate promote @{ task = $o.task }).ok) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, $(if ($pg.how -eq 'builtin:testingDocs') { 'no testing-doc link (process.docs) or the task is unread' } else { "process.gates.promote refused ($($pg.how)): $($pg.why)" }): not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
       $setFailed = $false; $kept = ''
       $fixBack = if (Test-TrackerStatus $now 'failedTesting') { "failed testing, fixed by $(@($(if (@($o.routedMrs | Where-Object { $_ }).Count) { $o.routedMrs } else { $o.mrs })) -join ', ')" } else { '' }
       foreach ($s in $todo) { try { if (($sr = "$(Set-TrackerStatus $o.task $s $fixBack)") -like 'SKIPPED*' -and $sr -notmatch 'has no \w+ status') { $kept = $sr.Substring(9); break } } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
@@ -1455,7 +1457,7 @@ function Invoke-Report {
 param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json, [switch]$Detail, [switch]$Stopped)
 $ErrorActionPreference = 'SilentlyContinue'
 $dir = Get-KitWorkflowDirs $Session | Where-Object Name -eq $Run | Select-Object -First 1 -ExpandProperty FullName
-if (-not $dir) { Stop-KitVerb "wave-report: workflow $Run not found under $($KitConf.ClaudeProjectDir)" 1 }  # swallowed under SilentlyContinue
+if (-not $dir) { Stop-KitVerb "wave-report: workflow $Run not found under $((Invoke-KitAdapter transcript claude root).dir)" 1 }  # swallowed under SilentlyContinue
 $ev = @(Get-Content (Join-Path $dir 'journal.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
 $label = @{}; foreach ($e in $ev | Where-Object type -eq 'started') { $label[$e.agentId] = $e.label }
 $results = @($ev | Where-Object type -eq 'result' | ForEach-Object { [pscustomobject]@{ label = $label[$_.agentId]; r = $_.result } })
@@ -2096,7 +2098,7 @@ $in = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() | ConvertFro
 $to = "$($in.tool_input.to)".Trim()
 if ($to -notmatch '^(?<id>a[0-9a-f]{12,})$') { exit 0 }
 $id = $Matches.id
-$meta = Get-ChildItem (Join-Path $HOME ".claude/projects/*/*/subagents/workflows/*/agent-$id.meta.json") | Select-Object -First 1
+$meta = Invoke-KitAdapter transcript claude agent-meta @{ id = $id }   # SendMessage: a Claude Code tool
 if (-not $meta) { exit 0 }
 $label = (Get-Content $meta.FullName -Raw | ConvertFrom-Json).description
 $why = "Blocked: '$to' ($label) is an agent inside workflow $($meta.Directory.Name). SendMessage would resume a SECOND copy of it that writes the same worktree. Relay through the wave's <brief>.contracts.md (agents re-read it before every push) and, if needed, let the running agent's report come back to you."

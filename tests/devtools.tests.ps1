@@ -89,5 +89,12 @@ Expect "tracker update -ReplaceItems: an item not in the spec leaves spec and ch
   "$($riU.dropped)" -eq 'OLD-1' -and $riU.checklist -match '1 removed' -and $riD -notmatch 'OLD-1' -and $riD -match '- \[x\] OLD-2' -and $riD -match '- \[ \] NEW-1' -and
   "$($riF.dropped)" -eq 'OLD-2' -and $riD2 -notmatch 'OLD-' -and $riD2 -match 'KEEP' -and (@($riX.itemsDropped) -join ',') -eq 'OLD-1,OLD-2' -and (@($riX.spec.items.code) -join ',') -eq 'KEEP,NEW-1')
 Remove-Item Env:KIT_TRACKER_TYPE
+# process.docs = the AI doc only: `doc ... cases` for the human doc is skipped (exit 0, nothing rendered); the AI doc still renders
+$pdF = Join-Path $k 'skills/crafty/kit.local.json'; $pdOld = if (Test-Path $pdF) { Get-Content -Raw $pdF } else { $null }
+$pdC = if ($pdOld) { $pdOld | ConvertFrom-Json -AsHashtable } else { @{} }; $pdC.process = @{ docs = @(@{ key = 'testing-ai'; label = 'AI doc' }) }; Set-JsonFile $pdF $pdC
+$pdH = python -X utf8 $DT doc 'T9 human' cases --key PD9:testing-doc 2>&1 | Out-String; $pdHc = $LASTEXITCODE
+$pdA = python -X utf8 $DT doc 'T9 ai' cases --key PD9:testing-ai 2>&1 | Out-String
+if ($null -ne $pdOld) { [IO.File]::WriteAllText($pdF, $pdOld) } else { Remove-Item -LiteralPath $pdF }
+Expect "doc cases: a doc process.docs lacks is skipped, a listed one renders ($pdHc; $($pdA.Trim()))" ($pdHc -eq 0 -and $pdH -match 'testing-doc is not in process\.docs' -and $pdA -match 'no cases spec')
 Remove-TestKit $k
 Complete-Tests

@@ -1230,7 +1230,7 @@ function Get-QaGuideDocSpec {
   $want = [string](Get-KitSetting 'qa.guideDoc' '')
   $at = if ($want) { [array]::IndexOf(@($docs.key), $want) } else { 0 }
   if ($at -lt 0) { throw "qa.guideDoc '$want' is not a process docs key ($(@($docs.key) -join ', '))" }
-  $d = $docs[$at]; [pscustomobject]@{ key = $d.key; label = $d.label; rx = $d.linkRx; legacy = @('human', 'ai')[[Math]::Min($at, 1)] }
+  $d = $docs[$at]; [pscustomobject]@{ key = $d.key; label = $d.label; rx = $d.linkRx; legacy = $(if ("$($d.key)" -like 'testing-*') { @{ 'testing-doc' = 'human'; 'testing-ai' = 'ai' }["$($d.key)"] } else { @('human', 'ai')[[Math]::Min($at, 1)] }) }
 }
 # the guide doc's URL: a "<label>: [x](url)" line in the task text, else the tracking file's docs.<key> (older records: docs.human / docs.ai)
 function Get-QaGuideDocUrl([string]$Description, $Track, $Spec) {

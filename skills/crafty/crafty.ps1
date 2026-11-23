@@ -18,7 +18,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L24 init · L33 wt · L325 stack · L424 gate · L758 check · L1076 pipes · L1132 guard · L2049 dir · L2059 checkpoint ·
-  L2091 prior · L2129 tracker · L2151 task spec · L2344 scope · L2392 host
+  L2091 prior · L2129 tracker · L2151 task spec · L2345 scope · L2393 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2152,13 +2152,13 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 # description (doc lines, tracker.taskTemplate sections), the items checklist `<code> · <desc> · <MR URLs>`, Decisions
 # (lib.ps1 Format-KitDecisionItems), parent items (adapters/task_items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
-# { text, url }], docs: { human, ai }, decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], proseOk }.
+# { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], proseOk }.
 # what a spec lacks (bug: name + problem), a link or MR no full URL
 function Test-KitTaskSpec($Spec) {
   $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")
   @(if (-not "$($Spec.title)".Trim()) { 'title' }; if (-not "$($Spec.problem)".Trim()) { 'problem' }
     if (-not $bug) { if (-not "$($Spec.goal)".Trim()) { 'goal' }; if (-not (@($Spec.items) + @($Spec.subtasks) | Where-Object { $_.code }).Count) { 'items[{code, desc}] (or subtasks)' }; if (-not @($Spec.acceptance | Where-Object { $_ }).Count) { 'acceptance' } }
-    foreach ($ln in @($Spec.links) + @(if ($Spec.docs -is [Collections.IDictionary]) { @($Spec.docs.Values) } else { @($Spec.docs.human, $Spec.docs.ai) }) +@($Spec.items | ForEach-Object { @($_.mrs) })) { $u = if ($ln -is [Collections.IDictionary]) { $ln.url } else { "$ln" }; if ($u -and $u -notmatch '^https?://\S+$') { "a full URL instead of '$u'" } })
+    foreach ($ln in @($Spec.links) + @(if ($Spec.docs -is [Collections.IDictionary]) { @($Spec.docs.Values) } else { @(Get-KitProps $Spec.docs | ForEach-Object Value) }) +@($Spec.items | ForEach-Object { @($_.mrs) })) { $u = if ($ln -is [Collections.IDictionary]) { $ln.url } else { "$ln" }; if ($u -and $u -notmatch '^https?://\S+$') { "a full URL instead of '$u'" } })
 }
 # tracker.nameFormat ({prefix} {title} {kind} {code}); prefix = tracker.kindPrefixes[kind]; a typed known kind prefix ([Bug]) is swapped, another "[...]" stays
 function Get-KitSpecName($Spec) {
@@ -2168,8 +2168,9 @@ function Get-KitSpecName($Spec) {
   $v = @{ prefix = (Get-KitKindPrefix "$($Spec.kind)"); title = $t; kind = "$($Spec.kind)"; code = "$($Spec.code)" }
   ([regex]::Replace([string](Get-KitSetting 'tracker.nameFormat' '{prefix} {title}'), '\{(\w+)\}', { param($m) [string]$v[$m.Groups[1].Value] }) -replace '\s{2,}', ' ').Trim()
 }
-# a spec doc's link: docs.<doc key>, or the legacy docs.human / docs.ai of the first two process docs
-function Get-KitSpecDocUrl($Spec, $Doc, [int]$At) { $u = (Get-KitMember $Spec.docs "$($Doc.key)"); if (-not $u) { $u = (Get-KitMember $Spec.docs (@('human', 'ai')[$At])) }; "$u" }
+# a spec doc's link: docs.<doc key>, or the legacy docs.human / docs.ai: testing-doc / testing-ai by key (a one-doc set), other keys by place
+function Get-KitSpecDocUrl($Spec, $Doc, [int]$At) { $u = (Get-KitMember $Spec.docs "$($Doc.key)"); $o = if ("$($Doc.key)" -like 'testing-*') { @{ 'testing-doc' = 'human'; 'testing-ai' = 'ai' }["$($Doc.key)"] } else { @('human', 'ai')[$At] }
+  if (-not $u -and $o) { $u = (Get-KitMember $Spec.docs $o) }; "$u" }
 # the description: doc links (process.docs, once they exist), then the tracker.taskTemplate sections
 function Format-KitTaskText($Spec) {
   $ln = @(); $dk = @(Get-KitProcessDocs); for ($i = 0; $i -lt $dk.Count; $i++) { if ($u = Get-KitSpecDocUrl $Spec $dk[$i] $i) { $ln += "**$($dk[$i].label):** [open]($u)", '' } }

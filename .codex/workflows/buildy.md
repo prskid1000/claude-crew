@@ -1,6 +1,6 @@
 # buildy (ported procedure, not a native Codex workflow)
 
-> The dev flow for any multi-item build (any stack): features, fixes, migrations, bug waves, resume; devy: code, goals, local loop, decisions; review, CI, merge (producers first), testing docs + tracker; merged work waits for a person\'s deploy
+> The dev flow for any multi-item build (any stack): devy code, goals, local loop, decisions; review, CI, merge (producers first), testing docs + tracker; deploys on a person\'s word
 
 **When to run it:** Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)
 
@@ -14,25 +14,25 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
 
 ## Phases
 
-1. **Spike** -- args.openQuestions: one rechy answers them in the brief before any devy starts
+1. **Spike** -- one rechy answers args.openQuestions in the brief before any devy
    - A question still open after rechy: no devy starts.
-2. **Build** -- one devy per area: worktree, code, testing goals, local test loop, MRs, testing doc
+2. **Build** -- a devy per area: worktree, code, testing goals, local loop, MRs, testing docs
    - An area with `dependsOn` starts only once its producers' MRs are merged.
    - Before each new devy round (build, fix, decide resume): `& <kit>/skills/bossy/bossy.ps1 budget -Run '<run>' -Json`; spent >= stopAt x cap -> no new one starts (running ones finish), the rest -> `next`.
    - A devy returning `handoff`: a fresh devy continues from that resume brief (at most 3 times).
-3. **Decide** -- items paused for an owner decision or an ENV-FIX resume after the answer
-4. **Review** -- one revy per devy (+ datay on an area with migrations) + CI pipelines
+3. **Decide** -- items paused for an owner decision or ENV-FIX resume after the answer
+4. **Review** -- a revy per devy (+ datay on migrations) + CI pipelines
    - Not reviewed, not merged (the coordinator decides) when the local test is BLOCKED, FAIL beyond env gaps, or NONE in a code area (kind not doc / spike / repro) without an owner word.
    - NONE needs `localTest.decisionId` = `d-<14 digits>-<suffix>` and `& <kit>/skills/bossy/bossy.ps1 decide check -Id <id> -Gate 'merge,scope,other' -Item '<area>,<task>,<branch>,<items>,<repo>!<iid>' -MaxHours 720` printing `WORD ` (any other output: held).
    - One revy per area, plus datay on an area with `migrations`; an empty review blocks the merge.
-5. **Fix** -- a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; others -> MR Follow-ups); merge in order, register the tracker task
+5. **Fix** -- a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; rest -> MR Follow-ups); merge in order, tracker task
    - Blocking findings or a failed pipeline -> one fix round (local loop again), re-review; still blocking after round 2 -> `decide ask` (A merge + Follow-ups / B hold), not merged; non-blocking re-review findings -> MR Follow-ups (`devtools.py followups`).
    - `holdMerge` repos (`true` = all): reviewed + green, never merged.
    - Merge per MR, producers first, consumers last: `crafty.ps1 wt lease`, then `python -X utf8 <kit>/skills/crafty/devtools.py merge <wt> <iid> --scope '<area paths>'`; kind `foundation` adds `--no-docs 'foundation <area>'`; a WAIT "waiting for producer" is never merged another way.
    - Register each task: `bossy.ps1 track add -Task <id> -Discover -Mrs '<repo>!<iid>'` (`-HoldPromotion '<why>'` when blocked, budget-stopped or items deferred).
 6. **Deploy** -- merged work joins the deploy batch (bossy.ps1 deploy); a person says deploy <env>, never asked
    - Merged MRs: `bossy.ps1 deploy request -Mrs <urls> -Run <run>`, then `deploy plan -Json`; nobody deploys or asks (a `trigger: ask` env: one ask per env).
-7. **Learn** -- signals from this wave, cleanup (/tidy turns them into lessons)
+7. **Learn** -- signals from this wave, cleanup (/tidy makes lessons)
 
 ## Owner decisions
 

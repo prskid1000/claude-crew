@@ -128,5 +128,12 @@ $ci = Join-Path (Kd) 'commit-ignore'; New-Item -ItemType Directory -Force "$ci/w
 $null = pwsh @np $D wt commit -Dir $ci -Message 'feat: add the b module' 2>&1; $cic = $LASTEXITCODE; $cif = @(git -C $ci show --name-only --format= HEAD)
 $null = pwsh @np $D wt commit -Dir $ci -Paths web -Message 'feat: stage web only' -AllowEmpty 2>&1
 Expect "wt commit: cypress screenshots / reports stay out (with -Paths too); the source change goes in ($cic; $($cif -join ', '))" ($cic -eq 0 -and ($cif -join ',') -eq 'web/src/b.ts' -and -not (git -C $ci diff --cached --name-only) -and @(git -C $ci status --porcelain --untracked-files=all).Count -eq 2)
+# process.docs drives the task spec's doc links: a one-doc set (AI only) shows only that doc (an old docs.human never lands on it);
+# keyed docs from devtools.py finish are URL-checked like the old human / ai pair
+$pdR = & { . $D; $__cfg = '{"process":{"docs":[{"key":"testing-ai","label":"AI doc"}]}}' | ConvertFrom-Json
+  $old = [pscustomobject]@{ title = 't'; problem = 'p'; docs = [pscustomobject]@{ human = 'https://h/1'; ai = 'https://h/2' } }
+  $txt = Format-KitTaskText $old; "one:$($txt -match '\*\*AI doc:\*\* \[open\]\(https://h/2\)' -and $txt -notmatch 'h/1')"
+  "keyed:$((@(Test-KitTaskSpec ([pscustomobject]@{ title = '[Bug] t'; problem = 'p'; docs = [pscustomobject]@{ 'testing-ai' = 'not-a-url' } })) -join ' | ') -match "a full URL instead of 'not-a-url'")" }
+Expect-Each $pdR 'task spec doc links from process.docs: #' 'one', 'keyed' -Show 4
 Remove-TestKit $k
 Complete-Tests

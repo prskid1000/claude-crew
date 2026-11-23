@@ -61,7 +61,10 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
   `localTest` BLOCKED only for an owner decision or a remote-only dependency (`blockedKind`, `blockedReason`).
 - D3. **Deferred** person's step, no code:
   `kind: people` (holds no promotion).
-- No `localEnv` for your repo: step 5 = automated tests only; "local env: none" in MR and report.
+- No `localEnv` for your repo: step 5 = automated tests only; "local env: none" in MR and report. `repos[].localTest`
+  `required` (default): the merge waits for a person's word (`localTest.decisionId`); `optional` / `none`: run its
+  `localFallback` (`ci`: green MR pipeline; `unit`: `check -Step test`), `checkpoint -Step loop -Evidence "fallback <ci|unit>
+  PASS"`, report `localTest` NONE + `fallback`; it merges on review + green CI.
 
 **Rules**
 - **Board:** `join` first (DUPLICATE -> stop, write nothing); `beat -Session <t> -Status "<doing>"` before builds

@@ -74,6 +74,20 @@ $dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/e
   "nocaps:$(-not $KitAdapters['db-engine'].redis.supportsMarks -and -not $KitAdapters['db-engine'].elasticsearch.supportsTemp)" }
 Expect-Each $dsR 'data store: #' @('redis', 'search', 'nocaps') -Show 4
 
+# transcripts: every read goes through the transcript adapter (workflow dirs, own-transcript search, agent meta); Codex / Antigravity
+# say UNSUPPORTED for Claude-only verbs; no kit file outside the adapter names a CLI's transcript folder
+$txR = & { $tdir = Join-Path $k 'tx'; New-Item -ItemType Directory -Force (Join-Path $tdir 's1/subagents/workflows/wf1') | Out-Null
+  '{"description":"x1 build"}' | Set-Content (Join-Path $tdir 's1/subagents/workflows/wf1/agent-a1b2c3d4e5f6a.meta.json'); 'marker-tx-77' | Set-Content (Join-Path $tdir 's1/subagents/workflows/wf1/agent-a1.jsonl')
+  $env:KIT_TRANSCRIPTS = $tdir; . (Join-Path $k 'skills/crafty/lib.ps1')
+  "wfdirs:$(@(Get-KitWorkflowDirs | ForEach-Object Name) -contains 'wf1')"; "find:$((Find-KitTranscript 'marker-tx-77' 'agent-*.jsonl') -like '*agent-a1.jsonl')"
+  "meta:$((Invoke-KitAdapter transcript claude agent-meta @{ id = 'a1b2c3d4e5f6a' }).Name -eq 'agent-a1b2c3d4e5f6a.meta.json')"
+  "unsupported:$(@(foreach ($txKind in 'codex', 'antigravity', 'none') { try { Invoke-KitAdapter transcript $txKind agent-meta @{ id = 'a1' }; $txKind } catch { if ("$_" -notmatch "^UNSUPPORTED transcript/$txKind/agent-meta") { $txKind } } }).Count -eq 0)"
+  $env:KIT_TRANSCRIPTS = $null
+  $by = @(Get-ChildItem -Recurse -File (Join-Path $src 'skills'), (Join-Path $src 'workflows') -Include *.ps1, *.py, *.js, *.mjs | Where-Object { $_.FullName -notmatch 'node_modules' } |
+    Select-String -Pattern 'ClaudeProjectDir|\.claude[/\\]projects|\.codex[/\\]sessions|antigravity-cli[/\\]brain' | Where-Object { -not ($_.Path -like '*crafty?lib.ps1' -and ($_.Line -match "^\s*(ClaudeProjectDir =|'root' =|'agent-meta' =)")) })
+  "bypass:$(-not $by.Count)"; if ($by.Count) { $by | Select-Object -First 3 | ForEach-Object { "  $($_.Path):$($_.LineNumber)" } } }
+Expect-Each $txR 'transcript adapter: #' @('wfdirs', 'find', 'meta', 'unsupported', 'bypass') -Show 9
+
 # local-env caps off (no localEnv, no devices, no tenants): supervise and health print no WATCH / ACT for lanes, marks, partitions, phones
 $k9 = New-TestKit adapters-lec; $env:KIT_TRACKER_TYPE = 'none'
 $lecJ = pwsh @np (Join-Path $k9 'skills/bossy/bossy.ps1') supervise -Json 2>$null | Out-String | ConvertFrom-Json

@@ -68,6 +68,21 @@ console.log(`none-doc:${L.includes('ship:N2')}`)
 console.log(`none-decided:${L.includes('ship:N3') && !L.includes('ship:N4')}`)
 '@
 Expect-Each (Invoke-Js dw-none $jsn0 $wfd) 'buildy merge gate: localTest NONE # (a code area held, kind doc and a person''s merge word ship; a made-up id or a NO-WORD from decide check -Gate merge,scope,other -Item <area keys> not, 2026-11-21)' 'none-held', 'none-doc', 'none-decided', 'none-verified' -Show 8
+# repos[].localTest optional / none (CONFIG local): NONE + localFallback ships with no decision; required (unset) or unit without its run: held
+$jslf = @'
+const lt = (fb) => ({ status: 'NONE', env: 'none: no local env', rounds: 0, failing: [], goalsDoc: '', ...(fb ? { fallback: fb } : {}) })
+const go = async (cfg, fb) => { const m = _mock((p, o) => /^(build|ship):F1/.test(o.label) ? _rep(lt(fb)) : /^review/.test(o.label) ? { findings: [] } : undefined, '[]')
+ const a = async (p, o) => /^record-args/.test(o.label) ? (m.calls.push({ label: o.label, prompt: p }), _ok(`RECORDED\nCONFIG {"roles":{},"local":${cfg}}`)) : m.agent(p, o)
+ await run({ brief: 'C:/b/f.md', mandate: ['m'], ..._kl, agents: [{ id: 'F1', items: 'A1' }] }, a, _n, _n, pipeline); return m.calls.map((c) => c.label) }
+const ci = await go('{"api":"ci"}', 'ci'), unit = await go('{"api":"unit"}', 'unit'), unitCi = await go('{"api":"unit"}', 'ci'), req = await go('{}', 'ci')
+console.log(`fallback-ci:${ci.includes('ship:F1') && !ci.some((l) => /^none-word/.test(l))}`)
+console.log(`fallback-unit:${unit.includes('ship:F1') && !unitCi.includes('ship:F1')}`)
+console.log(`required-held:${!req.includes('ship:F1') && !req.includes('review:F1')}`)
+'@
+$lcR = & { . $O; $__cfg = '{"repos":[{"name":"api","aliases":["be"],"localTest":"none"},{"name":"web","localTest":"optional","localFallback":"unit"},{"name":"app","localTest":"none","ci":{"mrPipelines":false}},{"name":"core"}]}' | ConvertFrom-Json; $wc = Get-KitWorkflowConfig; "$($wc.local | ConvertTo-Json -Compress) $($wc.humanDoc)"
+  $__cfg = '{"process":{"docs":[{"key":"testing-ai","label":"AI"}]}}' | ConvertFrom-Json; "$((Get-KitWorkflowConfig).humanDoc)" }
+Expect "launch CONFIG: local = repos[].localTest optional / none -> localFallback (no MR pipelines -> unit), required repos absent; humanDoc follows process.docs ($lcR)" ("$lcR" -eq '{"api":"ci","be":"ci","web":"unit","app":"unit"} True False')
+Expect-Each (Invoke-Js dw-fallback $jslf $wfd) 'buildy merge gate: repos[].localTest # (a repo without a local env merges on CI + review, ours stay required)' 'fallback-ci', 'fallback-unit', 'required-held' -Show 6
 # buildy kind foundation (no human-facing change): no human doc asked, merge passes the docs gate with --no-docs, the report says exempt (2026-11-21: 5 consumer areas never started)
 $jsfd = @'
 const pass = { status: 'PASS', failing: [] }, logs = []

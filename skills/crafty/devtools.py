@@ -3,8 +3,8 @@
 
  python -X utf8 devtools.py comment <taskId> --spec <c.json> [comment-solution|comment-status] (templates.md "Comment spec"; <file.md | "text"> [kind] warns) [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
  python -X utf8 devtools.py finish <taskId> <testing.md|url|-> <solution.md> [review] [--ai <ai.md|url>] [--prose-ok "<why>"]   the docs given
-  (process.gates.finish builtin:testingDocs: both, human + AI) by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status;
-  `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec
+  (process.gates.finish builtin:testingDocs: the required process.docs) by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status;
+  `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec (a doc process.docs lacks: skipped)
  python -X utf8 devtools.py cases add|result|round|render <task> ...   the task's test cases (one spec, "render" section):
   goals file, AI doc and human doc rendered from it, never hand-written
  python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"] [--check]   open a merge/pull request from the current branch: title
@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L377 process · L580 git host · L653 scope · L745 MR · L940 merge · L1271 docs ·
-  L1429 publish · L1902 render · L2345 spec · L2669 plugins · L2683 keepboth · L2702 selftest · L3377 CLI
+Sections: L55 config · L110 run · L198 tracker · L377 process · L586 git host · L659 scope · L751 MR · L946 merge · L1277 docs ·
+  L1435 publish · L1908 render · L2351 spec · L2675 plugins · L2689 keepboth · L2708 selftest · L3396 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -393,6 +393,11 @@ def human_head():
     return cols if '#' in cols and 'Result' in cols else HUMAN_HEAD
 
 
+def need_docs():
+    """The required process doc keys (unset: the vocab pair testing-doc + testing-ai; [] = none)."""
+    return {d['key'] for d in docs() if d['required']}
+
+
 def _label_alts():
     """Every doc label (+ mrLabel) as one regex alternation, longest first ('' when no docs); a urlOnly doc's label (Spec) only
     when a link follows its colon: a person's own 'Spec: ...' line stays."""
@@ -470,13 +475,14 @@ def _doc_url(tid, kind, doc):
 
 
 def _finish_strict(p):
-    """builtin:testingDocs for finish: both docs given, the local loop PASS (a guide URL), the AI doc's case gaps."""
+    """builtin:testingDocs for finish: each required process doc given (testing-doc: the guide, testing-ai: --ai), the local
+    loop PASS (no guide file), the AI doc's case gaps."""
     tid, guide, ai = p['task'], p.get('guide'), p.get('ai')
-    if not ai:
-        return False, 'no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); both docs are linked on every task'
-    if not guide:
-        return False, 'no human testing doc (finish <task> <testing.md|url> ...); both docs are linked on every task'
-    if not os.path.isfile(guide):   # a URL: the local-loop gate still holds
+    if not ai and 'testing-ai' in need_docs():
+        return False, 'no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); process.docs requires it on every task'
+    if not guide and 'testing-doc' in need_docs():
+        return False, 'no human testing doc (finish <task> <testing.md|url> ...); process.docs requires it on every task'
+    if not (guide and os.path.isfile(guide)):   # a URL or no human doc: the local-loop gate still holds
         ok, ev = local_pass(tid)
         if not ok:
             return False, f'the local test loop is {"at " + repr(ev) if ev else "not recorded"}, not PASS (crafty.ps1 checkpoint -Step loop -Item {tid} -Evidence "round <n> PASS")'
@@ -511,13 +517,13 @@ def bug_twins(tid, ts):
 
 
 def finish(tid, guide, solution_md, status='review', ai=None):
-    """The docs given (human + AI; process.gates.finish builtin:testingDocs: both required) published by key, the description's
-    links block, one solution comment, status (never backwards). guide '-' = none."""
+    """The docs given (human, AI; process.gates.finish builtin:testingDocs: the required process.docs) published by key, the
+    description's links block, one solution comment, status (never backwards). guide '-' = none."""
     ai = ai or _pub_read(f'{tid}:testing-ai').get('url')
     guide = None if guide in (None, '', '-') else guide
     solution_md = no_doc_links(solution_md)   # doc links live only in the description
-    if gate_how('finish') == 'builtin:testingDocs' and not ai:   # before the prose gate, as always
-        raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); both docs are linked on every task. Nothing was written.')
+    if gate_how('finish') == 'builtin:testingDocs' and not ai and 'testing-ai' in need_docs():   # before the prose gate, as always
+        raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Test cases"); process.docs requires it on every task. Nothing was written.')
     prose_gate('comment-solution', solution_md)   # before doc, describe, status
     t, ts = task(tid), state_read(task_file(tid[len(TAG):] if TAG and tid.startswith(TAG) else tid)) or {}   # state keys carry no tag
     if why := view_failed(tid, t):   # was a silent skip of the links block
@@ -531,7 +537,7 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     guide_url = _doc_url(tid, 'testing-doc', guide) if guide else ''
     md = t.get('description') or ''
     new = links_block(md, {**spec_link(tid), 'testing-doc': guide_url, 'testing-ai': ai_url})   # the Spec line stays
-    given = {k: u for k, u in (('human', guide_url), ('ai', ai_url)) if u}
+    given = {k: u for k, u in (('testing-doc', guide_url), ('testing-ai', ai_url)) if u}   # by doc key (crafty.ps1 Get-KitSpecDocUrl)
     # failed lookup: describing would wipe the description
     if ts.get('spec') and given and all(re.match(r'https?://', u) for u in given.values()):   # a spec-rendered task refuses describe: the links go into its spec
         _tracker('update', tid, '-Spec', json.dumps({'docs': given, **({'proseOk': PROSE_OK} if PROSE_OK else {})}) + '\n')   # \n: via a file, quotes kept
@@ -2951,6 +2957,19 @@ def _process_selftest(expect, legacy):
         expect(f'process gates: unset = all five pass with no docs; legacy finish refuses without the AI doc; an unknown built-in refuses; '
                f'process.docs [] = no links block ({strict[1][:40]!r})', all(neutral) and not strict[0] and 'no AI testing doc' in strict[1]
                and nodocs == '**Testing doc (human):** x\n\nbody' and not unknown[0] and 'no such built-in' in unknown[1])
+        one = lambda keys: [{'key': x, 'label': f'Doc {x}'} for x in keys]
+        CFG['process'] = {'gates': dict(legacy), 'docs': one(['testing-doc'])}
+        h1 = process_gate('finish', {**p, 'guide': 'https://h/g'})
+        h0 = process_gate('finish', p)
+        CFG['process'] = {'gates': dict(legacy), 'docs': one(['testing-ai'])}
+        a1 = process_gate('finish', {**p, 'ai': 'https://h/a'})
+        lb = links_block('body', {'testing-doc': 'https://h/g', 'testing-ai': 'https://h/a'})
+        CFG['process'] = {'gates': dict(legacy), 'docs': []}
+        n0 = process_gate('finish', p)
+        expect('process.docs drives finish: one human doc needs no AI doc, one AI doc no guide, [] none; the local loop gate always holds;'
+               ' the links block lists only configured docs',
+               all('local test loop' in x[1] for x in (h1, a1, n0)) and 'no human testing doc' in h0[1]
+               and lb == '**Doc testing-ai:** [open](https://h/a)\n\nbody')
         CFG['tracker'] = {'statuses': {'promoted': None, 'inTest': 'deployed'}}
         st = statuses()
         expect('statuses: one source (vocab.json) per key overridden; null = off ([]); a name = a list',
@@ -3430,9 +3449,10 @@ def _cli():
         print(comment(a[1], _text(a[2]), a[3] if len(a) > 3 else 'comment-status'))
     elif cmd == 'finish':
         prior_gate(a[1], '', f'devtools.py finish {a[1]}')
-        rc = lambda p, k: cases_file(a[1], k) if p == 'cases' else p   # rendered from the task's cases spec
+        # 'cases' = rendered from the task's cases spec, only for a doc process.docs lists (one command fits any doc set)
+        rc = lambda p, k, key: (cases_file(a[1], k) if key in {d['key'] for d in docs()} else None) if p == 'cases' else p
         sol = spec_text(a[3], 'comment-solution', a[1]) if a[3].endswith('.json') else _body(a[3])   # a .json = the comment spec
-        finish(a[1], rc(a[2], 'human'), sol, *(a[4:5] or ['review']), ai=rc(opt.get('--ai'), 'ai'))
+        finish(a[1], rc(a[2], 'human', 'testing-doc'), sol, *(a[4:5] or ['review']), ai=rc(opt.get('--ai'), 'ai', 'testing-ai'))
         print('done')
     elif cmd == 'mr' and opt.get('--spec'):   # title + body rendered (devtools.py "render"); a 2nd positional = target
         if len(a) > 3:
@@ -3459,6 +3479,9 @@ def _cli():
         sys.exit(selftest())
     elif cmd == 'doc':
         title, path = a[1], a[2]
+        if path == 'cases' and (dk := (opt.get('--key') or '').rpartition(':')[2]) in ('testing-doc', 'testing-ai') and dk not in {d['key'] for d in docs()}:
+            print(f'devtools.py doc: {dk} is not in process.docs: not published (the cases spec keeps the record)')
+            sys.exit(0)
         if path == 'cases' and (opt.get('--key') or '').rpartition(':')[2] in ('testing-doc', 'testing-ai'):   # rendered from the cases spec
             path = cases_file(opt['--key'].rpartition(':')[0], {'testing-doc': 'human', 'testing-ai': 'ai'}[opt['--key'].rpartition(':')[2]])
         if os.path.isfile(title) and not os.path.isfile(path):   # swapped order: doc <file> "<title>"

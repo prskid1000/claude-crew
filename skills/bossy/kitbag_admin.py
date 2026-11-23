@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L57 setup · L178 config · L398 recover · L543 release · L594 cost · L701 registry · L705 scan
+Sections: L16 helpers · L57 setup · L178 config · L401 recover · L546 release · L597 cost · L704 registry · L708 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -259,7 +259,10 @@ def caps_of(c):
             'fallbackRunner': v(get(c, 'tests.fallbackRunner'), 'none'), 'mavenOffline': v(get(c, 'build.mavenOffline'), 'False'),
             # adapter contracts (README "Adapters"): a tracker cap switched off in tracker.caps, the stores, the QA result rule
             'trackerCaps': v(sorted(k for k in TRACKER_CAPS if get(c, f'tracker.caps.{k}') is not False)), 'secretStore': v(get(c, 'secrets.store'), 'file'),
-            'evidenceStore': v(get(c, 'reports.evidence') if get(c, 'reports.evidence') not in (None, '', 'report') else {'gdocs': 'drive'}.get(get(c, 'reports.type'), 'local')), 'newDefect': v(get(c, 'process.qaResult.newDefect'), 'collector')}
+            'evidenceStore': v(get(c, 'reports.evidence') if get(c, 'reports.evidence') not in (None, '', 'report') else {'gdocs': 'drive'}.get(get(c, 'reports.type'), 'local')), 'newDefect': v(get(c, 'process.qaResult.newDefect'), 'collector'),
+            # repos whose merge needs the local loop (repos[].localTest required, the default); the testing docs (process.docs, unset: vocab pair)
+            'localLoopRepos': v(sorted(str(r.get('name')) for r in c.get('repos') or [] if isinstance(r, dict) and r.get('name') and str(r.get('localTest') or 'required') == 'required')),
+            'testingDocs': v(sorted(str(d.get('key')) for d in (get(c, 'process.docs') if isinstance(get(c, 'process.docs'), list) else (load_json(osp.join(OWN, 'skills', 'crafty', 'vocab.json'))[0] or {}).get('docs') or []) if isinstance(d, dict) and d.get('key')))}
 TRACKER_CAPS = ('attach', 'checklist', 'commentDelete', 'commentEdit', 'move', 'statuses')
 
 def caps_rules(kit, c, ack=False):

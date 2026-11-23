@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L456 leases · L873 status · L1166 tracker · L1483 prior ·
-  L1499 ask bugs · L1685 git-host · L1872 kitlog · L1994 params · L2299 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L456 leases · L873 status · L1169 tracker · L1486 prior ·
+  L1502 ask bugs · L1688 git-host · L1875 kitlog · L1997 params · L2302 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -415,7 +415,7 @@ function Read-KitSpendLines([string[]]$t) {
   }
 }
 function Find-KitTranscript([string]$Marker, [string]$Filter = '*.jsonl', [string]$Root) {
-  $root = if ($Root) { $Root } elseif ($v = $env:KIT_TRANSCRIPTS) { $v } else { $KitConf.ClaudeProjectDir }; $sid = "$env:CLAUDE_CODE_SESSION_ID"
+  $root = if ($Root) { $Root } else { (Invoke-KitAdapter transcript claude root).dir }; $sid = "$env:CLAUDE_CODE_SESSION_ID"
   foreach ($f in @(Get-ChildItem $root -Recurse -Filter $Filter -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-24) } | Sort-Object { -not $sid -or $_.FullName -notmatch [regex]::Escape($sid) }, { -$_.LastWriteTime.Ticks })) {
     if (Select-String -LiteralPath $f.FullName -SimpleMatch $Marker -Quiet) { return $f.FullName }
   }
@@ -873,7 +873,7 @@ function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
 # ---- status: one row per agent and workflow run, from files only; no LLM, no network
 # <Claude project dir>/<session>/subagents/workflows/<run>; Antigravity runs (kitbag_ports.py RUNNER): <port-runs>/antigravity/...
 function Get-KitWorkflowDirs([string]$Session) {
-  @($(if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }), (Get-KitPath port-runs)) | ForEach-Object { Get-ChildItem $_ -Directory -ErrorAction SilentlyContinue } | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
+  @((Invoke-KitAdapter transcript claude root).dir, (Get-KitPath port-runs)) | ForEach-Object { Get-ChildItem $_ -Directory -ErrorAction SilentlyContinue } | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
 }
 # launch records by run id or wfDir, plus the record-args step's "RECORDED <leaf> <run> (fnv <h>)" within 30 min
 function Get-KitWorkflowRecords($Dir, $Events, $Launches) {
@@ -965,9 +965,12 @@ Register-KitAdapter 'transcript' 'claude' @{
     $outs = foreach ($m in [regex]::Matches($s.raw, 'tasks(?:\\\\|/)\w+\.output')) { $i = $s.raw.LastIndexOfAny([char[]]'"<> ', $m.Index) + 1; $s.raw.Substring($i, $m.Index + $m.Length - $i) -replace '\\\\', '\' }   # scan back: a forward regex backtracks for seconds
     $s.outs = @($outs | Select-Object -Unique); foreach ($o in $s.outs) { $f = Get-Item -LiteralPath $o -ErrorAction SilentlyContinue; if ($f -and $f.LastWriteTime -gt $s.at) { $s.at = $f.LastWriteTime } }
     $s }
+  # a workflow agent's meta file (any project of this user, as SendMessage can target any)
+  'agent-meta' = { param($a) $p = if ($env:KIT_TRANSCRIPTS) { Join-Path $env:KIT_TRANSCRIPTS '*' } else { Join-Path (Split-Path $KitConf.ClaudeProjectDir) '*/*' }
+    Get-ChildItem (Join-Path $p "subagents/workflows/*/agent-$($a.id).meta.json") -ErrorAction SilentlyContinue | Select-Object -First 1 }
 }
 # adapter:transcript/codex: $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl; line 1 session_meta; newest task_complete = turn ended
-Register-KitAdapter 'transcript' 'codex' @{
+Register-KitAdapter 'transcript' 'codex' @{ caps = @{ agentMeta = $false }
   'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS_CODEX) { $env:KIT_TRANSCRIPTS_CODEX } else { Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }) 'sessions' }); filter = 'rollout-*.jsonl'; sub = '*/*/*' } }
   'last' = { param($a) $s = Read-KitTranscriptTail $a.file 'function_call"|task_started|task_complete' { param($o, $s) $p = $o.payload
       if (-not $s.tool -and $o.type -eq 'response_item' -and $p.type -eq 'function_call') { $s.tool = "$($p.name)"; $g = try { "$($p.arguments)" | ConvertFrom-Json } catch { $null }; $s.what = "$(if ($g.cmd) { $g.cmd } else { $g.command })" }
@@ -976,7 +979,7 @@ Register-KitAdapter 'transcript' 'codex' @{
     if ($s) { $m = try { Get-Content -LiteralPath $s.file -TotalCount 1 | ConvertFrom-Json } catch { $null }; if ($m.payload.cli_version) { $s.version = "codex $($m.payload.cli_version)" } }; $s }
 }
 # adapter:transcript/antigravity: brain/<id>/.system_generated/logs/transcript.jsonl; killed per the parent's subagents/<id>.json state
-Register-KitAdapter 'transcript' 'antigravity' @{
+Register-KitAdapter 'transcript' 'antigravity' @{ caps = @{ agentMeta = $false }
   'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS_ANTIGRAVITY) { $env:KIT_TRANSCRIPTS_ANTIGRAVITY } else { Join-Path $HOME '.gemini/antigravity-cli/brain' }); filter = 'transcript.jsonl'; sub = '*/.system_generated/logs' } }
   'last' = { param($a) $s = Read-KitTranscriptTail $a.file '"tool_calls"' { param($o, $s) $c = @($o.tool_calls)[-1]; if ($c.name) { $s.tool = "$($c.name)"; $s.what = "$($c.args.toolSummary)" }; [bool]$c.name }
     if ($s) { $id = Split-Path (Split-Path (Split-Path (Split-Path $s.file))) -Leaf; $brain = Split-Path (Split-Path (Split-Path (Split-Path $s.file)))
@@ -984,7 +987,7 @@ Register-KitAdapter 'transcript' 'antigravity' @{
       $s.killed = "$($k.state)" -eq 'SUBAGENT_STATE_KILLED' }; $s }
 }
 # adapter:transcript/none: no transcript (another tool): board and journal only
-Register-KitAdapter 'transcript' 'none' @{ 'root' = { $null }; 'last' = { $null } }
+Register-KitAdapter 'transcript' 'none' @{ caps = @{ agentMeta = $false }; 'root' = { $null }; 'last' = { $null } }
 # adapter-end:transcript
 # SessionStart output: Antigravity (input has conversationId) takes injectSteps, others a systemMessage
 function Format-KitSessionStart([string]$Text, $Hook) {

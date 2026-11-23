@@ -34,8 +34,8 @@ Non-negotiables:
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").
 - A leased pool slot (`crafty.ps1 wt lease`), never a main checkout; `wt commit` only. Targeted + touched tests; no dev servers by
   hand; Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
-- Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
-  when the repo has no local env) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
+- Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (no local env: crafty
+  SKILL.md `repos[].localTest`) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
   Never weaken, skip or delete an existing test or assertion, or special-case a test's input, to pass; a test that looks
   wrong -> `bossy.ps1 decide ask` (unless the brief allows that change by name).
 - The local env is ours: never stop for an env reason (envy "Unblock yourself"); a fix only kitty or the coordinator may
@@ -66,7 +66,7 @@ Non-negotiables:
     envGap false.
   - Every goal PASS: `crafty.ps1 checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"`, push,
     MRs (templates.md "MR spec"), then `devtools.py finish <task> cases solution.json review --ai cases` (docs from the cases
-    spec), then `devtools.py mr` again with both links (edits it). A fix round (review, CI, failedTesting): a new AI doc round,
+    spec), then `devtools.py mr` again with the doc links (edits it). A fix round (review, CI, failedTesting): a new AI doc round,
     then the same commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc,
     never an earlier round removed.
   - FIX round (review or CI findings): a blocking review finding first sets the task `failedReview`, then `inProgress`

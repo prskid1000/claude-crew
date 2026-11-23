@@ -19,7 +19,7 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
   MR state in any report or text: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
   brief or memory. Over its prose limit, `wt commit`, `tracker comment -Kind <comment-*>`, `devtools.py comment|finish|mr`
   refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
-- **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once MR, both docs and
+- **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once MR, `process.docs` and
   solution comment posted -> `promoted` by `track` when all merge -> `inTest` after deploy (coordinator)). Never set
   `inTest`, `closed`, a parent's (= least open child), a step back (new code round: `-Back`); `promoted` passes
   `process.gates.promote` (`builtin:testingDocs`: doc links atop the description).
