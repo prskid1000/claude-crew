@@ -19,6 +19,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `adapters/*`, `video.py` | used by the `pokey.ps1` / `browser.mjs` verb that needs them |
 | `media.md` | task videos (`pokey.ps1 evidence`) |
+| `lead.md` | L0-L3: `checky` lead, the coordinator (a test-only run, Selection) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
 ## Tester / verifier steps (test environment only, never production)
@@ -42,7 +43,9 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    Check id = guide row id; variants (V1, V2): `case: <row id>`; rows covered earlier need no NOT_TESTED filler.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `pokey.ps1 annotate`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
-   -Next <its next id> -Evidence "<verdict> <file>"` (a restart resumes there; obey a beat's PAUSE).
+   -Next <its next id> -Evidence "<verdict> <file>"` (a restart resumes there; obey a beat's PAUSE; a beat's HANDOFF: at
+   that check boundary, never mid-check). Code to read (a big module): a short `rechy` kind question returns `file:line`
+   facts, never file dumps.
 5. **Verdict per check — defects are never notes:**
    - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
      (b) cosmetic difference, (c) Expected blocked by platform limit or imprecise wording (check code/lead, quote both),
@@ -107,33 +110,6 @@ user (`session()`: own tab, `relogin(s)` on 401, never log out), <= 2 tabs; app 
   a new defect: `crafty.ps1 tracker create -Parent <ask> -Key qa-<ask>-<defect> -Name "<product> — <defect>"` (kit adds [Bug]).
 
 ## Lead steps (a test-only run; bossy T1-T4)
-- L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (writes targets.local.json),
-  `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
-  gdocs, git host).
-- L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/testy.js`; one
-  item per testing doc: `{code, title, guideFile, lane: a qa.lanes name, target?, services? (local: leased),
-  subtasks:[{id,name,mrs}], retest?, only?}`),
-  guides exported to text. `lead-notes.md`: MANUAL deploy state; prerequisites per guide: flags, accounts, roles, data (by
-  id; local env: `seed -Check`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
-  **Selection** (`pokey.ps1 prepare -Job <job JSON>` runs steps 1-5, the workflow's Prepare step; by hand the same):
-  1. Folder = `runFolder`, date placeholders (`<yyyy-MM-dd-HHmmss>`) expanded; one with files is refused, an empty one reused.
-     Candidates: `crafty.ps1 tracker list <container> <status>` per `lists` (empty: `trackerLists`, else `tracker.list` /
-     `tracker.repo`) x `statuses` (logical names via `tracker.statuses`; `in test` = `inTest`; other names pass through);
-     `tasks` given: only those + their subtasks in `statuses`; minus `exclude`; `mine` = only the `tracker owner`'s.
-  2. Per task: MRs `<repo>!<iid>` (`tracking` `<id>.json` `track.mrs`, else the task's MR links); its "Testing doc
-     (human):" link -> `<run>/guides/<code>.md` (its kept copy, else the link).
-     None of either -> left out. Tasks sharing a doc = one item.
-  3. Target: `target` names a `targets.local.json` entry -> every item; else `kit.local.json` `qa.targets.<target>` = rules
-     `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none
-     -> left out.
-  4. Live: test env -> `pokey.ps1 deployed -Mrs <MRs> -Target <t>`, DEPLOYED or N/A (MANUAL resolved): in (NO-TARGET next to a
-     live MR: `localParts`, local env); all N/A for the target: left out (other product); `localEnv` -> in after
-     `envy.ps1 status -Env <env>`. Else left out with the state.
-  5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
-     `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
-- L2. Launch `/testy { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,
-  kitDir, mandate }` (Prepare = L1 Selection); `launch` record (bossy). Lead notes are the only channel to running testers.
-- L3. After the run: items the workflow could not publish -> `pokey.ps1 finalize -RunDir <run> -Code <code>` (results.json);
-  a fix went live and needs a retest -> `pokey.ps1 retest -RunDir <run> -Task <id> -Code <code>R -Mrs <refs>`.
+L0-L3 (machine setup, run folder, Selection, launch, after the run): `lead.md`.
 
 **Learn:** `bossy.ps1 learn -Skill pokey -Kind <kind> -Text "<what + fix>" -Ref <CODE-check>`.

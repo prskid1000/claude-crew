@@ -8,6 +8,27 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit workflows-generic; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $wfd = Join-Path $src 'workflows/buildy.js'; $wf = Join-Path $src 'workflows/testy.js'
+# buildy phases (T2): code -> loop -> docs, each a fresh devy; the ship phase keeps the loop's localTest; phases:false = one devy
+$jsph = @'
+const lt = (status) => ({ status, env: status === 'NONE' ? 'phase code' : 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' })
+const mk = () => _mock((prompt, o) => {
+ if (/^build:/.test(o.label)) return o.label === 'build:X1' && /PHASE code/.test(prompt) ? _rep(lt('NONE'), { mrs: [] }) : _rep(lt('PASS'))
+ if (/^loop:/.test(o.label)) return _rep(lt('PASS'), { mrs: [] })
+ if (/^docs:/.test(o.label)) return _rep(lt('NONE'))
+ if (/^review:/.test(o.label)) return { findings: [] }
+ if (/^ship:/.test(o.label)) return _rep(lt('PASS'), _merged(1))
+}, '[]')
+const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], ..._kl }
+const p = mk(), q = mk()
+run(args, p.agent, _n, _n, pipeline).then((op) => run({ ...args, phases: false }, q.agent, _n, _n, pipeline).then(() => {
+ const L = p.calls.map((c) => c.label), d = p.calls.find((c) => c.label === 'docs:X1')
+ console.log(`order:${L.indexOf('build:X1') < L.indexOf('loop:X1') && L.indexOf('loop:X1') < L.indexOf('docs:X1') && L.indexOf('docs:X1') < L.indexOf('review:X1')}`)
+ console.log(`prompts:${/PHASE local/.test(p.calls.find((c) => c.label === 'loop:X1').prompt) && /PHASE ship/.test(d.prompt) && /ship\.md/.test(d.prompt) && d.model === 'sonnet'}`)
+ console.log(`kept:${p.calls.some((c) => c.label === 'ship:X1') && !op.blocked.length}`)
+ console.log(`off:${!q.calls.some((c) => /^(loop|docs):/.test(c.label)) && !/PHASE code/.test(q.calls.find((c) => c.label === 'build:X1').prompt)}`)
+})).catch(_err)
+'@
+Expect-Each (Invoke-Js dw-phases $jsph $wfd) 'buildy phases: # (code, loop, docs as fresh devy; phases:false = one devy)' 'order', 'prompts', 'kept', 'off' -Show 4
 # buildy deploy batch: skipped without adapters/deploys.ps1, else parsed
 $jsdp = @'
 const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
@@ -63,7 +84,7 @@ const n = await go('CONFIG {"models":null,"roles":{},"qaLanes":null}'), r = awai
 const sh = (c) => c.find((x) => x.label === 'ship:G1').prompt
 console.log(`no-roles:${!n.some((c) => c.label === 'order:G1') && /storefront\/pull\/4 \(, independent\)/.test(sh(n)) && n.find((c) => c.label === 'build:G1').model === 'sonnet'}`)
 console.log(`roles:${/storefront\/pull\/4>https:\/\/github\.com\/o\/core\/pull\/4/.test(r.find((c) => c.label === 'order:G1').prompt) && /1\. \S+core\/pull\/4 \(, producer\)[\s\S]*2\. \S+storefront/.test(sh(r))}`)
-console.log(`models:${r.find((c) => c.label === 'build:G1').model === 'm-big' && r.find((c) => c.label === 'order:G1').model === 'm-small' && /-Plan 'devy\/@build=sonnet:1,revy\/@review=sonnet:1,step\/@ship=haiku:3,item:1,step\/@step=haiku:2,kitty\/@learn=haiku:1'/.test(r.find((c) => c.label === 'record-args').prompt)}`)
+console.log(`models:${r.find((c) => c.label === 'build:G1').model === 'm-big' && r.find((c) => c.label === 'order:G1').model === 'm-small' && /-Plan 'devy\/@build=sonnet:2,devy\/@docs=sonnet:1,revy\/@review=sonnet:1,step\/@ship=haiku:3,item:1,step\/@step=haiku:2,kitty\/@learn=haiku:1'/.test(r.find((c) => c.label === 'record-args').prompt)}`)
 '@
 Expect-Each (Invoke-Js dw-generic $jsg $wfd) 'buildy generic: #' 'no-roles', 'roles', 'models' -Show 5
 # testy generic: qa.lanes unset = one web lane (an api item refused); a desktop lane with followUp web; models.test

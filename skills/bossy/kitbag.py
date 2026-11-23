@@ -339,7 +339,7 @@ def read_rows(k, sizes):
         rows.append((role, always + own + sum(docs.values()), [f for f, _ in sorted(docs.items(), key=lambda x: -x[1])]))
     return rows
 # token budgets (UTF-8 bytes / 4), README "Extending"; skill = its always-part (budget.instructions.skillAlways): the rest in references
-BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
+BUDGETS = {'always': 3500, 'skill': 3000, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
   'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 9500, 'tests': 9000}
 
 def budget_type(f):

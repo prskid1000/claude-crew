@@ -29,8 +29,8 @@ checkpoints (`crafty.ps1 checkpoint`), your own program state (`bossy.ps1 progra
 synced; never only in the session). Both
 workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`.
 What happened when, who called what: `bossy.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
-line per step, call, block, decision, deploy; never read journals or logs). Tunables (lease grace,
-timeouts, gate memory, heartbeat, budgets) learn live in supervise -AutoFix: `bossy.ps1 param show`. Launch by path:
+line per step, call, block, decision, deploy; never read journals or logs). Tunables learn live
+(supervise -AutoFix; `params.registry.json`). Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })` with `kitDir` (absolute); buildy / testy: `mandate` (owner's words).
 
 **Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change;
@@ -48,9 +48,7 @@ Only these dev paths need you (the workflow handles the rest: `workflows/buildy.
 | dispute / debate (`buildy.js`; `rechy` kind debate) | E4; the owner asks one: `rechy` kind debate (`debate start -Owner`), then `debate ask` |
 | stopped / restarted (launch record without completion) | E3 |
 
-**Test-only flow** (/testy; steps: `workflows/testy.js`): all pass -> closed; own FAIL or incomplete -> failedTesting (E6); new
-defect -> one [Bug] per ask (E6); a local env item still NOT_TESTED -> ENV-FIX (E4), then held, never failedTesting;
-unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
+**Test-only flow** (/testy) and T1-T4: `<kit>/skills/pokey/lead.md` "Coordinator".
 
 ## Steps (you = the coordinator)
 0. `bossy.ps1 learn -Read -Skill bossy`. Project facts: the brief, run.json, memory, the repo's CLAUDE.md. Several coordinators
@@ -66,15 +64,12 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (hook-blocked).
    An addendum fixing another task's defect: `track route` (E6).
 5. **Close** (deploys only on a person's word, E5): reconcile backlog vs merged MRs; list only what is open, each with a reason.
-- T1-T4 (test-only): `/testy { select: { statuses: ['promoted', 'inTest'], lists?, tasks?, exclude? }, target, kitDir,
-  mandate }` (its Prepare agent builds the run: pokey L1 Selection; `target` = an env or a `qa.targets` group), or a ready
-  `{ runDir, kitDir }` -> `launch` record -> E1. Its log lists the tasks left out (not live, no testing doc, no target).
 ~15 devy queue fine on the gate; beside app-lane QA cap `lanes` at 2.
 
 ## Events (check this table whenever something happens)
 | # | Event | Action |
 |---|---|---|
-| E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat, recurring, durable (no one-shot): every 15 min (`supervise.heartbeatMinutes`, learned), prompt = stderr `HEARTBEAT_PROMPT=` word for word: "Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Act on every ACT and WATCH line; no live run or agent left: stop this heartbeat. Reply = 1-4 lines of the actions taken this beat, plus one line only when an ACT needs the owner; never paste the stdout (detail: supervise-report.html) (bossy E1)." (health prints the call; stop = CronDelete). No session: OS timer `bossy.ps1 heartbeat install` |
+| E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat, recurring, durable (no one-shot): every 15 min (`supervise.heartbeatMinutes`, learned), prompt = stderr `HEARTBEAT_PROMPT=` word for word (health prints the call; stop = CronDelete). No session: OS timer `bossy.ps1 heartbeat install` |
 | E2 | supervise prints ACT / WATCH | do the printed action (setup-data build failures -> `datay` kind fixture); leave healthy agents alone; answered or false: `supervise -Ack '<flag or cell text>' -Reason '<why>'` (24 h; MRs, error signatures: kept) |
 | E3 | Agents/workflow stopped (crash, limits, restart, power loss), budget handoff, or the owner pauses (power off, offline) | pause: `bossy.ps1 pause -All` (or `-Run <run>`, `-Reason`), then `pause -Status` until "safe to power off"; the machine stays on: stop runs and heartbeat. Back or after a crash: `bossy.ps1 resume -All` (network first; a brief per agent from its checkpoint; then `recover`'s exact `Workflow({ scriptPath, resumeFromRunId, args })`, refused -> its RELAUNCH line (`mode: 'resume'`, per-area `resume` skip list from host + tracker: done steps skipped, all done = no agent); unpublished QA -> `pokey.ps1 finalize` lines); then E1. You stopped it: `launch -Done -RunId <id>` |
 | E4 | DECISION <id> (supervise, decisions, debates) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | deploys.md "Before an ask"; DECISION blocking: one question-tool call (`AskUserQuestion`) from `decide list -Ask -Json`, no tool: its text; FYI: a numbered list (`decide list -Fyi`), owner answers "1 A, 2 B"; then `decide answer -Id <id> -Answer '<choice>'` per id (it updates the task's Decisions checklist); a debate: its table first; close ask (every subtask closed): `A` closes the parent. ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, service starts only from live lease; shared DB data: `datay` kind localdb); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `pokey.ps1 retest` |

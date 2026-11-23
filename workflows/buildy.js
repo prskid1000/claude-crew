@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L149 record-args · L168 budget · L186 build-prompt · L265 ship-prompt · L282 plan · L301 spike ·
-//   L313 local-loop · L391 stages · L536 ship · L576 debate · L685 deploy · L700 learn
+// Sections: L18 args · L151 record-args · L170 budget · L188 build-prompt · L272 ship-prompt · L289 plan · L308 spike ·
+//   L320 local-loop · L398 stages · L547 ship · L587 debate · L696 deploy · L711 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -27,6 +27,7 @@ export const meta = {
  resume: { X1: { state, skip: [done STEPS], mrs: [{ url, repo, merged }], doc, worktrees, uncommitted } }
   (from bossy.ps1 recover; skipped steps never run, all skipped = no agent),
  complex: ['X1'] (session model instead of sonnet),
+ phases: true (default: per area a fresh devy per phase: code + unit, local loop, ship on models.docs) | false (one devy, steps 0-9),
  holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
  kitDir: '<abs .claude>', runtimeDir: '<default <kitDir>/.runtime>', run: '<board run; default from the brief>',
 }
@@ -67,13 +68,14 @@ const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
 const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported`)
 const unk = (o, keys, pre = '') => Object.keys(o).filter((k) => !keys.split(' ').includes(k)).map((k) => pre + k)
-const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex holdMerge learn batch kitDir runtimeDir run debateModels task'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate task', `agents.${a.id}.`),
+const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex phases holdMerge learn batch kitDir runtimeDir run debateModels task'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate task', `agents.${a.id}.`),
  ...(a.debate && [].concat(a.debate.options || []).length !== 2 ? [`agents.${a.id}.debate.options (2)`] : [])])]
 if (badArgs.length) throw new Error(`buildy.js args refused: unknown ${badArgs.join(', ')}; free text: agents[].note or the brief`)
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (owner words): agents may drop items for the latest chat message (bossy step 3).')
 const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // hash: same name, other wave
 const LEARN = A.learn === undefined ? true : A.learn
 const LOCAL_RETRIES = 1
+const PHASED = A.phases !== false && MODE !== 'resume'   // a fresh devy per phase: no context carries 300+ calls
 // 9-minute wait slices: 34 = ~5 h
 const WAIT_SLICES = 34
 const ENV_FIX_CYCLES = 2
@@ -134,7 +136,7 @@ const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whol
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request.
 `
 // defaults; models.<phase> (launch -Self CONFIG line) wins
-const MODELS = { spike: 'opus', debate: 'sonnet', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high', step: 'haiku', stepRetry: 'sonnet' }
+const MODELS = { spike: 'opus', debate: 'sonnet', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', docs: 'sonnet', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high', step: 'haiku', stepRetry: 'sonnet' }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token: launch -Self resolves models.<stage>
 // repos[].role by repo name / alias: merge order
@@ -199,6 +201,11 @@ const areaNote = (a) => (globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\
 const IBW = 'your agent definition\'s "In a /buildy wave"'
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses) with your agent definition's
 "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
+// phases (args.phases): each a fresh devy; the branch, its checkpoints and the cases spec carry the state
+const PH = {
+ code: `\nPHASE code (1 of 3): crafty steps 0-4 only (code, cases spec, unit tests, wt commit, push the branch), checkpoint -Step commit; no MR. Report localTest NONE (env "phase code") and stop: a fresh devy runs step 5.`,
+ local: `PHASE local (2 of 3): crafty step 5 only on your pushed branch (a fix: steps 3-4 again), checkpoint -Step loop; no MR. Report localTest and stop: a fresh devy ships.`,
+ ship: `PHASE ship (3 of 3): ${K}/ship.md steps 6-9 only (MR, both docs, tracker, deploy batch); code changes only when a check fails. Report.` }
 
 function buildPrompt(a) {
  const dn = a.debate && MODE !== 'resume' ? `ITEM ${a.debate.item} WAITS for the owner (${a.debate.question}; the workflow debates and asks): build the rest, never report it.\n` : '', rs = RES[a.id] || {}
@@ -281,7 +288,7 @@ Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: n
 
 // ---- plan: the budget gate before any agent
 const OQ = MODE === 'resume' ? [] : [].concat(A.openQuestions || []).map(String).filter(Boolean)
-const PLAN = [...(OQ.length ? [`rechy/${PM('spike')}:1`] : []), ...A.agents.map((a) => `devy/${a.model || PM(isComplex(a) ? 'complex' : 'build')}:1,revy/${PM('review')}:1,${a.migrations ? `datay/${PM('review')}:1,` : ''}${a.debate ? `rechy/${PM('debate')}:5,revy/${PM('review')}:1,` : ''}step/${PM('ship')}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
+const PLAN = [...(OQ.length ? [`rechy/${PM('spike')}:1`] : []), ...A.agents.map((a) => `devy/${a.model || PM(isComplex(a) ? 'complex' : 'build')}:${PHASED ? `2,devy/${PM('docs')}:1` : 1},revy/${PM('review')}:1,${a.migrations ? `datay/${PM('review')}:1,` : ''}${a.debate ? `rechy/${PM('debate')}:5,revy/${PM('review')}:1,` : ''}step/${PM('ship')}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
  `step/${PM('step')}:2,kitty/${PM('learn')}:1`].join(',')
 if (A.agents.every(allDone)) { log('RESUME: every area is done (MRs merged, tracker and testing doc set): nothing to run'); return { resumedDone: A.agents.map((a) => ({ agent: a.id, mrs: RES[a.id].mrs || [] })) } }
 const REC = await recordArgs('buildy', RUN, A0, 'Build', PLAN), GAPS = REC.match(/^TASKS REFUSED .*$/gm)
@@ -404,10 +411,14 @@ const results = await pipeline(
   if (open.length) { const why = `producer(s) ${open.join(', ')} not MERGED: not started (outcome.afterMerge)`; log(`${a.id}: ${why}`); return { id: a.id, error: why, blocked: why, waitFor: open } }
   return releasing(a, 'Build', async () => {
   const dbt = a.debate && MODE !== 'resume' ? debateOrAsk(a, { ...a.debate, trigger: 'brief' }, 'Build') : null
-  let r = await agent(buildPrompt(a), dvo(a, 'build', 'Build'))
+  let r = await agent(buildPrompt(a) + (PHASED ? PH.code : ''), dvo(a, 'build', 'Build'))
   if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt lease your branch + wt status, the board), continue.'), dvo(a, 'build-retry', 'Build')) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
-  const o = await localLoop(a, r, LOCAL_RETRIES, 'Build')
+  const phaseNext = (x) => PHASED && x && !x.handoff && !x.budgetStopped && !(x.mrs || []).length && !(x.needsDecision || []).length && !(x.needsEnvFix || []).length
+  const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)   // no report: the phase before stands (its localTest holds the merge)
+  if (phaseNext(r)) r = mergeReports(r, asRep(await agent(continuePrompt(a, r, PH.local), dvo(a, 'loop', 'Build'))), 'Phase local')
+  let o = await localLoop(a, r, LOCAL_RETRIES, 'Build')
+  if (phaseNext(o)) o = { ...mergeReports(o, asRep(await agent(continuePrompt(a, o, PH.ship), { ...dvo(a, 'docs', 'Build'), ...pick('docs') })), 'Phase ship'), localTest: o.localTest }
   return dbt ? debated(o, a.debate.item, await dbt, a.debate.question) : o
   })
  }),

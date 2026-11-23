@@ -386,7 +386,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 lessons; lint START-BUDGET), per file (lint BUDGET), docs reached only through a SKILL.md pointer (lint ORPHAN-DOC); scripts are
 run, never named as files to read. `kitbag.py budget` prints each role's start and the repo / tests totals (INFO, no cap):
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 9500 · tests 9000 · start per role 12000 · files:28 content + 9 plumbing
+always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 9500 · tests 9000 · start per role 12000 · files:30 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: in `tests/`, shared setup in `tests/harness.ps1`; a case name
@@ -502,6 +502,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"step 0 (bossy.ps1 learn -Read -Skill crafty)"| LESSONS_md["LESSONS.md"]
   skills_crafty_SKILL_md -->|"#quot;Writing standards#quot; whenever you write; steps 4…"| skills_crafty_templates_md["templates.md"]
   skills_crafty_SKILL_md -->|"steps 4-5 (Rules #gt; Tests: what to test, how,…"| skills_crafty_testing_md["testing.md"]
+  skills_crafty_SKILL_md -->|"steps 6-9 (MR, docs, tracker, merge, deploy…"| skills_crafty_ship_md["ship.md"]
   skills_crafty_SKILL_md -->|"steps 1-5, CI wait (pipes), the PreToolUse hook…"| skills_crafty_crafty_ps1["crafty.ps1"]
   skills_crafty_SKILL_md -->|"the PreToolUse hook: a warm guard (~0.1 s a…"| skills_crafty_guard_client_mjs["guard_client.mjs"]
   skills_crafty_SKILL_md -->|"the PreToolUse hook: a warm guard (~0.1 s a…"| skills_crafty_guard_server_ps1["guard_server.ps1"]
@@ -566,6 +567,7 @@ flowchart LR
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_web_login_mjs["web-login.mjs"]
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_video_py["video.py"]
   skills_pokey_SKILL_md -->|"task videos (pokey.ps1 evidence)"| skills_pokey_media_md["media.md"]
+  skills_pokey_SKILL_md -->|"L0-L3: checky lead, the coordinator (a…"| skills_pokey_lead_md["lead.md"]
   skills_pokey_SKILL_md -->|"L0: npm install in this folder (puppeteer-core)"| skills_pokey_package_json["package.json"]
 ```
 <!-- kit-graph:end -->

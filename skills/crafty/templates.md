@@ -18,7 +18,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 
 | Kind | Purpose | Format (sections in order) | Limits | Required facts |
 |---|---|---|---|---|
-| skill | how an agent does one job | front matter, Load when, Not when, Hands off to, Files, numbered steps, Rules, Learn | 3200t 130ch | path |
+| skill | how an agent does one job | front matter, Load when, Not when, Hands off to, Files, numbered steps, Rules, Learn | 3000t 130ch | path |
 | skill-step | one numbered step | `N. **Name:** action -> result` + commands | 90w 30sw | cmd |
 | agent | an agent's contract (a crew member holds its own steps) | front matter, Character, Kind, Load first, non-negotiables, report shape, self-improvement | 2400t 130ch | path |
 | rule | a hard rule for one file kind | `paths:` front matter (path-scoped), bullets | 900t 12b 130ch | — |

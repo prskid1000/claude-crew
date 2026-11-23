@@ -39,7 +39,11 @@ V = {'tool.py': "def cmd_lint(a):\n    pass\n\nCOMMANDS = {'lint': cmd_lint, 'au
      'doc.md': '# d\n- `tool.py lint`, `tool.py audit scan`, `a.ps1 board`, `a.ps1 deploy request`, `a.ps1 annotate`, `a.ps1 nope`, `tool.py json`\n'}
 k = types.SimpleNamespace(files=list(V), texts=V, dir=sys.argv[2], skills=[], agents={}, workflows={})
 print('verbs=' + ','.join(sorted(i['text'].split(':')[0] for i in flow.model(k, [])['issues'] if i['code'] == 'UNRESOLVED')))
-tool = "function Invoke-Go { Set-Content run.json '{}' }\nswitch ($__verb) {\n  'go' { Invoke-KitVerb Invoke-Go $r }\n  default { exit 2 }\n}\n"
+R = {'skills/sk/SKILL.md': '# sk\n## Steps\n1. Run it.\n', 'skills/sk/lead.md': '# lead\n- L1. Select.\n- L2. Launch.\n',
+     'doc.md': '# d\n- sk step L1 first, then sk step L9\n'}   # a step split out of SKILL.md into a reference of the same skill resolves
+k = types.SimpleNamespace(files=list(R), texts=R, dir=sys.argv[2], skills=['sk'], agents={}, workflows={})
+print('refsteps=' + ','.join(sorted(i['text'].split(':')[0] for i in flow.model(k, [])['issues'] if i['code'] == 'UNRESOLVED')))
+tool ="function Invoke-Go { Set-Content run.json '{}' }\nswitch ($__verb) {\n  'go' { Invoke-KitVerb Invoke-Go $r }\n  default { exit 2 }\n}\n"
 runread = "& pwsh tool.ps1 go\n$j = Get-Content run.json | ConvertFrom-Json\n"
 for name, S in [('tests', {'tool.ps1': tool, 'tests/t.tests.ps1': runread}), ('driver', {'tool.ps1': tool, 'driver.ps1': runread}),
                 ('doc', {'tool.ps1': tool, 'doc.md': '# d\n## Steps\n1. Run `tool.ps1 go`, then read run.json.\n'}),
@@ -137,6 +141,7 @@ $checks += [ordered]@{
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
   'run-then-read is a loop from a script, never from a test file, a doc step or one read-modify-write' = $res -match 'scc-tests=0 scc-driver=1 scc-doc=0 scc-rmw=0'
   'verbs from COMMANDS tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'
+  'a skill step moved from SKILL.md to a reference of the same skill resolves; an unknown one stays UNRESOLVED' = $res -match 'refsteps=sk step L9(\s|$)'
 }
 $fails = 0
 foreach ($c in $checks.GetEnumerator()) { if ($c.Value) { "PASS flow-map: $($c.Key)" } else { "FAIL flow-map: $($c.Key)"; $fails++ } }

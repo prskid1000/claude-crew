@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L870 cycles · L946 pack · L1083 page · L1554 command
+Sections: L17 rules · L78 parts · L163 control · L336 parse · L638 link · L872 cycles · L948 pack · L1085 page · L1556 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -796,6 +796,8 @@ def link(k, parsed, problems):
             elif kind == 'step':
                 sk, sid = r[2], r[3]
                 tf = skills.get(sk) or (f if not sk else None)
+                if sk in skills and sid not in steps.get(tf, {}):   # a step split out of SKILL.md into a reference of the same skill
+                    tf = next((x for x in sorted(steps) if x.startswith(f'skills/{sk}/') and sid in steps[x]), tf)
                 if tf and sid in steps.get(tf, {}):
                     t = steps[tf][sid]
                     if t != src:

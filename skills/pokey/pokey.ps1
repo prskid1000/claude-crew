@@ -1206,7 +1206,7 @@ function Get-QaGuideDocUrl([string]$Description, $Track, $Spec) {
   $v = if ($Track.docs) { $x = (Get-KitMember $Track.docs ($Spec.key)); if (-not $x) { $x = (Get-KitMember $Track.docs ($Spec.legacy)) }; $x }; if ($v) { "$v" }
 }
 
-# ---- prepare: a test-only run from a job (SKILL.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it
+# ---- prepare: a test-only run from a job (lead.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it
 # kept testing doc -> the run's guide: its head + the newest "## <env> run <date>" section, older runs only named (owner 2026-11-22:
 # a 1494-line guide of earlier runs filled testers' context)
 function Copy-QaGuide([string]$Kept, [string]$Dest) {

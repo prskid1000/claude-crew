@@ -13,6 +13,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 | `<kit>/LESSONS.md` | step 0 (`bossy.ps1 learn -Read -Skill crafty`) |
 | `templates.md` | "Writing standards" whenever you write; steps 4 and 6, D1 |
 | `testing.md` | steps 4-5 (Rules > Tests: what to test, how, where, when) |
+| `ship.md` | steps 6-9 (MR, docs, tracker, merge, deploy batch; rules Ship, Tracker, Publish, Evidence) |
 | `crafty.ps1` | steps 1-5, CI wait (`pipes`), the PreToolUse hook (`guard`) |
 | `guard_client.mjs`, `guard_server.ps1` | the PreToolUse hook: a warm `guard` (~0.1 s a call); `KIT_GUARD_WARM=0`: the plain path; a guard crash blocks the call (fail-closed), `KIT_GUARD_BYPASS=1` (owner only) lets it through; never by hand |
 | `lib.ps1` | dot-sourced by every kit script; never run by hand |
@@ -46,14 +47,7 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 #      coordinator); never BLOCKED for an env reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting,
 #      pause" -> stop checks there until "deploy done", then re-run; 0 bugs, every goal met -> release -> 6
 & $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
-& $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; python $P mr <wt> --spec mr.json --check; git -C <wt> push -u origin <branch>
-python $P mr <wt> --spec mr.json   # 6. MR (templates.md "MR spec"); after finish: again, both links
-python $P finish <task> cases solution.json review --ai cases   # human doc, links block, comment, status; lists each MR's tester guide (an open one without: refused)
-#   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
-python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
-& $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic); no task: & $D tracker create -Spec <json> ("task spec"; 2+ related: parent first, or tracker group)
-& $O deploy request -Mrs <repo>!<iid>,... -Run <run>   # 8. deploy batch, silently (never deploy, never ask)
-& $O board leave -Session <token> -Status done   # 9. final report (templates.md "Final reports")
+#   6-9. ship (MR, docs, merge, deploy batch, leave): ship.md
 ```
 - D1. **Decision pause**: about to change user-visible behaviour the task did not ask for (internal logic with the same
   behaviour: no pause), or several valid paths (design, data handling, migration strategy, UX)? `& $O decide ask -Run <run>
@@ -95,7 +89,10 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
   loop|mr|review|ci|doc|tracker|merge> -Evidence "<sha|url|result>" -Dir <wt>`, and a WIP commit (`chore(wip): <step>`) after
   steps 1-5. `board join` prints CHECKPOINT: start at that step; verify the done ones, never redo them; keep an uncommitted
   diff. `board beat` prints PAUSE (do what it says; a gate line `stopped by the kit: PAUSE` = that build or test is not done:
-  checkpoint `-Next 'redo: <step>'`, never a fix round).
+  checkpoint `-Next 'redo: <step>'`, never a fix round). Hand off at a phase end (code + unit, local loop, ship), never carry
+  one context through all three: checkpoint, then HANDOFF as the beat says.
+- **Big modules:** a module too big to read: spawn a short read-only reader (`rechy` kind question: the question, the
+  paths, "facts only, <= 30 lines"); it returns `file:line`, signatures and callers, never file dumps.
 - **Scope:** your items, in the brief's area `paths` (`wt commit`, `devtools.py mr / merge` refuse others; exception: owner's
   `decide record -Gate scope` id, `-ScopeOk`/`--scope-ok`); additive (optional fields, new params, flags); never
   remove features or inputs; DTOs not entities in APIs; foreign files: listed one-line hooks in `paths`;
@@ -112,21 +109,8 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
   (`repos[].migrations.check`, else the `migrations.tool` adapter; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
   leftover table, a missing user): report it, never "fix" the shared DB by hand.
-- **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before the local test loop and before every push (a scope
-  change stamped after your head commit is still yours; append-only if you write to it); one MR per repo, title with
-  `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own branch.
-  MR state in any report or text: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
-  brief or memory. Over its prose limit, `wt commit`, `tracker comment -Kind <comment-*>`, `devtools.py comment|finish|mr`
-  refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
-- **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once MR, both docs and
-  solution comment posted -> `promoted` by `track` when all merge -> `inTest` after deploy (coordinator)). Never set
-  `inTest`, `closed`, a parent's (= least open child), a step back (new code round: `-Back`); `promoted` passes
-  `process.gates.promote` (`builtin:testingDocs`: doc links atop the description).
-- **Publish once per key:** docs and evidence via `devtools.py doc|evidence --key <task|run>:<kind>` (same link, a dated
-  section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one; decisions: `bossy.ps1 decide` only);
-  `devtools.py mr` edits the open MR.
-- **Evidence:** UI -> screenshots, backend -> `pokey.ps1 api -Save` JSON (names: pokey SKILL.md "Evidence"); never production;
-  a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.
+- **Ship, Tracker, Publish, Evidence:** ship.md (steps 6-9); re-read `<brief>.contracts.md` and the brief's bottom before the
+  local test loop and before every push.
 
 **Learn:** something cost time, failed or worked well ->
 `& $O learn -Skill crafty -Kind <kind> -Text "<what + fix>"`.
