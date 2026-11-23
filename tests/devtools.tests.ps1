@@ -96,5 +96,9 @@ $pdH = python -X utf8 $DT doc 'T9 human' cases --key PD9:testing-doc 2>&1 | Out-
 $pdA = python -X utf8 $DT doc 'T9 ai' cases --key PD9:testing-ai 2>&1 | Out-String
 if ($null -ne $pdOld) { [IO.File]::WriteAllText($pdF, $pdOld) } else { Remove-Item -LiteralPath $pdF }
 Expect "doc cases: a doc process.docs lacks is skipped, a listed one renders ($pdHc; $($pdA.Trim()))" ($pdHc -eq 0 -and $pdH -match 'testing-doc is not in process\.docs' -and $pdA -match 'no cases spec')
+# retro 1549: a retro.json with a raw Windows path (lone backslashes) renders; the path is kept
+$rjf = Join-Path (Kd) 'retro-bs.json'; [IO.File]::WriteAllText($rjf, '{"date":"2026-11-23","applied":[{"change":"c","file":"D:\work\kit\x.ps1","count":1}],"rejected":[]}')
+$rjo = (& $py -X utf8 $DT render retro $rjf 2>&1 | Out-String)
+Expect "render retro: lone backslashes in the spec (a Windows path) are kept, not a JSON error ($($rjo.Trim() -replace '\s+', ' '))" ($rjo -match [regex]::Escape('D:\work\kit\x.ps1') -and $rjo -notmatch 'Traceback|JSONDecodeError')
 Remove-TestKit $k
 Complete-Tests

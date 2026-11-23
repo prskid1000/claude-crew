@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L456 leases · L873 status · L1169 tracker · L1486 prior ·
-  L1502 ask bugs · L1688 git-host · L1875 kitlog · L1997 params · L2302 entry-scripts
+Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L874 status · L1170 tracker · L1487 prior ·
+  L1503 ask bugs · L1689 git-host · L1876 kitlog · L1998 params · L2303 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -27,7 +27,8 @@ function Set-KitMember($InputObject, [string]$Name, $Value) {   # = $InputObject
 }
 function Get-KitHash([string]$Text, [ValidateSet('MD5', 'SHA1', 'SHA256')][string]$Algorithm = 'SHA256') { & (Join-Path $script:KitLibDir 'flagged.ps1') hash -Text $Text -Algorithm $Algorithm }   # upper hex of the UTF-8 bytes
 $script:KitLibDir = $PSScriptRoot
-function Get-KitRuntime { $rt = if ($env:CLAUDE_RUNTIME) { if ([IO.Path]::IsPathRooted($env:CLAUDE_RUNTIME) -or -not $script:KitRoot) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $env:CLAUDE_RUNTIME } } elseif ($script:KitRoot -and $script:KitRoot -notin '/', '\') { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir }; if (-not $rt -or $rt -in '/', '\') { throw "Get-KitRuntime: bad runtime '$rt'" }; $rt }
+# a relative CLAUDE_RUNTIME is kit-relative; one that starts with the kit's own folder name is workspace-relative (it made <kit>/.claude/.runtime, retro 1549)
+function Get-KitRuntime { $rt = if ($env:CLAUDE_RUNTIME) { if ([IO.Path]::IsPathRooted($env:CLAUDE_RUNTIME) -or -not $script:KitRoot) { $env:CLAUDE_RUNTIME } elseif (($env:CLAUDE_RUNTIME -split '[\\/]')[0] -eq (Split-Path $script:KitRoot -Leaf)) { Join-Path (Split-Path $script:KitRoot) $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $env:CLAUDE_RUNTIME } } elseif ($script:KitRoot -and $script:KitRoot -notin '/', '\') { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir }; if (-not $rt -or $rt -in '/', '\') { throw "Get-KitRuntime: bad runtime '$rt'" }; $rt }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   $m = $script:KitPathMap
   if ($Name -eq 'runtime') { $p = Get-KitRuntime; $dir = $true }

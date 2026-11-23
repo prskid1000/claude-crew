@@ -125,6 +125,7 @@
   "sync.everyMinutes": "config default=60 unit=min",
   "cleanup.worktreeIdleHours": "config default=2 unit=h",
   "tidy.judgeMinutes": "config default=3 unit=min",
+  "retro.dueSignals": "config default=25",
   "tidy.windowDays": "config default=14 unit=d",
   "tidy.busyBeatMinutes": "config default=20 unit=min",
   "tidy.regressionSimilarity": "config default=0.4 unit=ratio",

@@ -10,10 +10,10 @@
 // project's jsdom (no layout: sizes 0); no jsdom -> NOT RUN.
 // <spec>: paths (relative to --dir, default cwd; space/comma-separated) or a path part ("price-calc"); none = all (slow).
 // Exit codes: 0 all passed · 1 a failure / bundle error / NOT RUN spec · 2 no esbuild, no spec found or usage error.
-// Sections: L21 kit paths · L26 spec shim · L162 registry · L223 runner · L270 angular · L327 jsdom · L369 main
+// Sections: L21 kit paths · L27 spec shim · L163 registry · L224 runner · L271 angular · L328 jsdom · L370 main
 import Module, { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, relative } from 'node:path'
+import { basename, dirname, join, resolve, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
@@ -21,7 +21,8 @@ import { inspect } from 'node:util'
 // ---- kit paths: bundles go to <runtime>/cache (kit.example.json _paths; runtime = $CLAUDE_RUNTIME, else <kit>/.runtime)
 const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const MAP = JSON.parse(readFileSync(join(KIT, 'skills', 'crafty', 'kit.example.json'), 'utf8'))._paths
-const cacheDir = join(resolve(KIT, process.env.CLAUDE_RUNTIME || MAP.runtimeDir), MAP.runtime.cache.replace(/\/$/, ''))   // relative: from the kit
+const RTV = process.env.CLAUDE_RUNTIME || MAP.runtimeDir   // relative: from the kit; '<kit name>/..': from the workspace (lib.ps1 Get-KitRuntime)
+const cacheDir = join(resolve(RTV.split(/[\\/]/)[0] === basename(KIT) ? dirname(KIT) : KIT, RTV), MAP.runtime.cache.replace(/\/$/, ''))
 
 // ---- spec shim: jasmine / jest-style globals for pure logic (no TestBed, DOM or fakeAsync): install() sets them, run() runs the
 // registered specs. Every matcher has .not; spies answer both jasmine (.and.*, .calls.*) and jest (.mock*) calls.

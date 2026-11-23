@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L83 summary · L214 patterns · L250 rules · L328 retro due · L338 tidy
+Sections: L14 outcomes · L83 summary · L214 patterns · L250 rules · L328 retro due · L339 tidy
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -327,12 +327,13 @@ function Invoke-KitStandingRules([switch]$Propose, [string]$Approve, [string]$Re
 }
 # ---- retro due: one rule for health, supervise and report
 function Get-KitRetroSince { $m = Get-KitPath last-retro; if (Test-Path $m) { [datetime](Get-Content $m -Raw).Trim() } else { [datetime]::MinValue } }
-# 15+ signals and guard blocks since the last retro, or any after a run
+# signals since the last retro after a finished run, or retro.dueSignals of them without one; guard blocks only shown (retro 1549:
+# blocks alone re-raised the ACT every ~40 min with 0 runs finished)
 function Get-KitRetroDue([switch]$RunFinished) {
   $since = Get-KitRetroSince
   $n = @(Get-Content (Get-KitPath signals) -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '"kind":"retired"' -and $_ -match '"at":"([^"]+)"' -and [datetime]$Matches[1] -gt $since }).Count
   $g = @(Read-KitLog guard $since | Where-Object event -eq 'deny').Count
-  if ($n + $g -ge 15 -or ($RunFinished -and $n)) { "$n signal(s) + $g guard block(s) since the last retro" }
+  if ($n -ge [int](Get-KitParam 'retro.dueSignals') -or ($RunFinished -and $n)) { "$n signal(s) + $g guard block(s) since the last retro" }
 }
 
 # ---- tidy: /tidy script step (digest + upkeep) and retro stamp

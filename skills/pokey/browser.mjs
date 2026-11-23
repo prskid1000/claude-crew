@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L50 login · L134 browsers · L177 tabs · L265 session · L313 actions · L412 ui checks · L419 evidence
+// Sections: L17 config · L49 login · L133 browsers · L176 tabs · L264 session · L312 actions · L411 ui checks · L418 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -25,7 +25,7 @@ export function localFile(rel, kit = KIT) {
 const TF = localFile('skills/pokey/targets.local.json'), KLF = localFile('skills/crafty/kit.local.json')
 const CFG = existsSync(TF) ? JSON.parse(readFileSync(TF, 'utf8')) : { targets: {} }
 const MAP = JSON.parse(readFileSync(join(__HERE, '..', 'crafty', 'kit.example.json'), 'utf8'))._paths
-export const runtimeDir = () => { const d = process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir); if (!d || d === '/' || d === '\\') throw new Error(`runtimeDir: bad '${d}'`); return resolve(KIT, d) }
+export const runtimeDir = () => { const d = process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir); if (!d || d === '/' || d === '\\') throw new Error(`runtimeDir: bad '${d}'`); return resolve(d.split(/[\\/]/)[0] === basename(KIT) ? dirname(KIT) : KIT, d) }
 export function kitPath(name, { create = false } = {}) {
   const [rel, base] = name === 'runtime' ? ['/', runtimeDir()] : name in MAP.runtime ? [MAP.runtime[name], runtimeDir()] : name in MAP.durable ? [MAP.durable[name], join(KIT, MAP.stateDir)] : []
   if (!rel) throw new Error(`kitPath: unknown name '${name}' (kit.example.json _paths)`)
@@ -42,7 +42,6 @@ const BROWSERS = [process.env.CHROME_PATH, ...(process.platform === 'win32' ? [.
   : process.platform === 'darwin' ? [MAC('Google Chrome'), homedir() + MAC('Google Chrome'), MAC('Microsoft Edge'), MAC('Chromium')]
   : ['/opt/google/chrome/chrome', '/opt/microsoft/msedge/msedge', ...onPath(['google-chrome', 'google-chrome-stable', 'microsoft-edge', 'microsoft-edge-stable', 'chromium', 'chromium-browser']), '/snap/bin/chromium'])].filter(Boolean)
 export const CHROME = BROWSERS.find(existsSync)
-// kit Chromium quiet args (crafty vocab.json)
 export const QUIET_ARGS = (() => { try { return JSON.parse(readFileSync(join(__HERE, '..', 'crafty', 'vocab.json'), 'utf8')).chromeQuietArgs || [] } catch { return [] } })()
 const browserOpts = (t) => ({ engine: 'chrome', lang: Intl.DateTimeFormat().resolvedOptions().locale, width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

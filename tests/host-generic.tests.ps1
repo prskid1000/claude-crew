@@ -104,5 +104,14 @@ $KitConf.TrackerRepos = @('a'); $s = @{ hostUser = @{ at = "$n"; v = 'u' } }; $f
 "uc:$("$($f.what)" -match 'a!3' -and "$($f.what)" -notmatch 'a!1 |a!2 ')"
 '@ @($O)
 Expect "supervise: CI-only MRs (title ci:, or only CI config files) need no task: no untracked WATCH for them ($uc)" (@($uc | Where-Object { "$_" -eq 'uc:True' }).Count -eq 1)
+# RT2 (retro 1508): pipes -Repo -Branch reads the branch's newest pipeline (a deploy branch) and names its failed job; -Branch alone = usage
+$pb = Invoke-PsTest hg-pipes @'
+. $args[0]; function Get-HostProject([string]$Repo, [switch]$Raw) { $Repo }
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { [Console]::Error.WriteLine("CALL $Verb $($A.repo) $($A.ref)")
+  switch ($Verb) { 'ci.runs' { , @([pscustomobject]@{ id = 7; status = 'failed'; state = 'failed' }) } 'ci.jobs' { , @([pscustomobject]@{ id = 9; name = 'deploy-stg'; status = 'failed' }) } 'ci.log' { "ok`nERROR: rollout timed out" } } }
+Invoke-Pipes -Repo shop -Branch staging -MaxMinutes 1
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
+$pu = @(pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') pipes -Branch staging 2>&1) -join ' '
+Expect "pipes -Repo -Branch: the branch's newest pipeline, its failed job and error; -Branch without -Repo = usage ($pb | $pu)" ("$pb" -match '"done":true' -and "$pb" -match '"mr":"branch:shop@staging","status":"failed","job":"deploy-stg","error":"ERROR: rollout timed out"' -and "$pb" -match 'CALL ci\.runs shop staging' -and $pu -match '-Branch needs -Repo')
 Remove-TestKit $k
 Complete-Tests

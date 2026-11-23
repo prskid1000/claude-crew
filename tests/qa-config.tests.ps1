@@ -100,10 +100,10 @@ $ppNd = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-
 Expect "prepare, process.docs []: no doc needed, the task text is the guide, lane = the first qa.lanes lane (web) ($($ppNd[-2]))" (@($ndRun.items).Count -eq 2 -and -not @($ndRun.left).Count -and (Get-Content -Raw $ndRun.items[1].guideFile) -match 'No testing doc configured' -and $ndRun.items[0].lane -eq 'web')
 # select.tasks + statuses: those ids and their subtasks in a status only, no list sweep (in-test tasks of another product got in); '-<name>' gets the stamp
 New-Task 'SUB1' '[Bug] Sort sub' $tA 'in test' 'MR: https://git.example/g/web/-/merge_requests/8'; New-Task 'SUB2' '[Bug] Sort open sub' $tA 'open' 'MR: https://git.example/g/web/-/merge_requests/9'
-$idsJob = @{ runFolder = "$wd/qa-runs/-ids"; statuses = @('inTest'); tasks = @($tA); target = 'stg-a'; kitDir = $k } | ConvertTo-Json -Compress
+$idsJob = @{ runFolder = 'w/qa-runs/-ids'; statuses = @('inTest'); tasks = @($tA); target = 'stg-a'; kitDir = $k } | ConvertTo-Json -Compress
 $ppIds = @(pwsh -NoProfile -File $PKp prepare -Job $idsJob 2>&1); $idsRun = ("$($ppIds[-1])" -replace '^RUN ') | ConvertFrom-Json
 $idsGot = @(@($idsRun.items.subtasks.id) + @($idsRun.left.id) | Sort-Object) -join ','
-Expect "prepare select.tasks: only the named task + its in-test subtask (not $tB, not SUB2); a '-ids' folder gets its date stamp ($idsGot | $($idsRun.runDir))" ($idsGot -eq ((@($tA, 'SUB1') | Sort-Object) -join ',') -and $idsRun.runDir -match 'qa-runs/\d{4}-\d\d-\d\d-\d{6}-ids$')
+Expect "prepare select.tasks: only the named task + its in-test subtask (not $tB, not SUB2); a '-ids' folder gets its date stamp; a relative runFolder is from the workspace root ($idsGot | $($idsRun.runDir))" ($idsGot -eq ((@($tA, 'SUB1') | Sort-Object) -join ',') -and $idsRun.runDir -match 'qa-runs/\d{4}-\d\d-\d\d-\d{6}-ids$' -and $idsRun.runDir.StartsWith(($wd -replace '\\', '/')))
 foreach ($subId in 'SUB1', 'SUB2') { New-Task $subId 'closed sub' $tA 'closed' }   # out of the later status sweeps
 # NOT_TESTED undeployed whose MRs are all N/A for the target (another product's change): kept open, never failedTesting; NOT-DEPLOYED, a mixed row or another untested check still fails
 $naFin = @'

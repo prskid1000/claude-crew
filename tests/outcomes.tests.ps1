@@ -200,5 +200,12 @@ $u = Get-KitUsage -Seconds 30; $cr = @($u.byRole | Where-Object k -eq 'coordinat
 "$(@($u.coord | Where-Object { [double]$_.min -gt 7 * 1440 }).Count)|$(@($c1.tm | ForEach-Object { [double]$_ }) -join ',')|$($null -eq $c2.tm)|$($cr.wallN)"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uc) | Out-String
 Expect "usage time: a session's elapsed is cut at the 7-day window; active minutes count the window's days only (m1: 2 of 4 min); a record cached before the per-day split and begun before the window: wall clock ($($ucOut.Trim()))" ($ucOut.Trim() -match '0\|2,0,0,0,0,0\|True\|1$')
+# retro due (retro 1549): 7 signals + 30 guard blocks, no run finished = not due; a finished run or 25 signals = due
+$rd = Invoke-PsTest retro-due @'
+$null = . $args[0] 6>$null; $sg = Get-KitPath signals -Create; $at = (Get-Date).ToString('o')
+1..7 | ForEach-Object { "{`"at`":`"$at`",`"kind`":`"friction`"}" } | Set-Content $sg; 1..30 | ForEach-Object { Write-KitLog guard deny @{} }
+"a[$(Get-KitRetroDue)] b[$(Get-KitRetroDue -RunFinished)]"; 1..25 | ForEach-Object { "{`"at`":`"$at`",`"kind`":`"idea`"}" } | Add-Content $sg; "c[$(Get-KitRetroDue)]"
+'@ @($O)
+Expect "retro due: guard blocks alone never make it due; a finished run or retro.dueSignals (25) signals do ($rd)" ("$rd" -match 'a\[\] b\[7 signal\(s\) \+ 30 guard' -and "$rd" -match 'c\[32 signal')
 Remove-TestKit $k
 Complete-Tests

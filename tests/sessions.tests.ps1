@@ -46,7 +46,7 @@ try {
   $ss = if ((Px $O board join -Agent S1 -Run sr | Out-String) -match 'SESSION (\S+)') { $Matches[1] }; $sf = Join-Path $bd "$ss.json"
   $x = Read-Json $sf; $x.joined = (Get-Date).AddHours(-3).ToString('o'); & $J $x $sf; $h0 = Px $O board beat -Session $ss | Out-String
   $cp = & { . (Lib); Get-KitCheckpointFile S1 sr -Write }; $hb = foreach ($c in @(-3, $false), @(-3, $true), @(0, $false)) { & $J @{ agent = 'S1'; run = 'sr'; next = 'test'; done = $c[1]; updated = (Get-Date).AddHours($c[0]).ToString('o') } $cp; Px $O board beat -Session $ss | Out-String }
-  Expect 'board beat: a step past budget.stepHours -> HANDOFF; none without a checkpoint, a done one or after a newer one' ($hb[0] -match 'HANDOFF: one step running 3\.0 h >= budget\.stepHours 2: write a resume brief' -and "$h0$($hb[1])$($hb[2])" -notmatch 'HANDOFF')
+  Expect 'board beat: a step past budget.stepHours -> HANDOFF; none without a checkpoint, a done one or after a newer one' ($hb[0] -match 'HANDOFF: one step running 3\.0 h >= budget\.stepHours 2: .*write a resume brief' -and "$h0$($hb[1])$($hb[2])" -notmatch 'HANDOFF')
   # a handoff's successor = a later row of that agent, any run (a fresh kitty ran as kit-build): no HANDOFF flag, no stale CONTINUE
   foreach ($hr in @('HK', 'HK'), @('D9', 'devy')) { & $J @{ agent = $hr[0]; type = $hr[1]; session = "$($hr[0])-a"; run = 'r1'; status = 'left'; handoffBrief = 'C:/b/h.md'; joined = (Get-Date).AddHours(-2).ToString('o'); beat = (Get-Date).AddMinutes(-30).ToString('o') } (Join-Path $bd "$($hr[0])-a.json") }
   $hoCount = { (@(& { . $O; Get-KitHandoffs 24 }).agent | Where-Object { $_ -in 'HK', 'D9' } | Sort-Object) -join ',' }

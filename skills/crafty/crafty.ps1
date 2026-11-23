@@ -9,7 +9,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text kept in desc-backups), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
- pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
+ pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch>  wait for MR pipelines, or a branch's newest one (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
@@ -17,8 +17,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L24 init · L33 wt · L325 stack · L424 gate · L758 check · L1076 pipes · L1132 guard · L2049 dir · L2059 checkpoint ·
-  L2091 prior · L2129 tracker · L2151 task spec · L2345 scope · L2393 host
+Sections: L24 init · L33 wt · L325 stack · L424 gate · L758 check · L1076 pipes · L1138 guard · L2055 dir · L2065 checkpoint ·
+  L2097 prior · L2135 tracker · L2157 task spec · L2351 scope · L2399 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1075,7 +1075,8 @@ exit 0
 
 # ---- pipes: wait for MR/PR pipelines (JSON)
 function Invoke-Pipes {
-param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run)   # -UntilMerged: a consumer waits for producers
+param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run, [string]$Repo, [string]$Branch)   # -UntilMerged: a consumer waits for producers
+if ($Branch) { if (-not $Repo) { Stop-KitVerb 'pipes: -Branch needs -Repo <repo> (a deploy branch: its newest pipeline)' }; $Mrs = @("branch:$Repo@$Branch") }   # retro 1508: opsy waits on a deploy branch
 if (-not $Mrs) {   # a wt worktree: its branch's open MRs; else the tracked tasks' (-Run: its)
   $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
   $wtTarget = if ($wtGit -and (Test-Path -LiteralPath (Join-Path $wtGit 'claude-target'))) { (Get-Content -LiteralPath (Join-Path $wtGit 'claude-target') -TotalCount 1).Trim() }
@@ -1099,6 +1100,8 @@ $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ } | ForEach-Object { if ("$_
 $noMrCi = @(Get-KitValue 'repos' @() | Where-Object { $_.ci.mrPipelines -eq $false } | ForEach-Object { @($_.name) + @($_.aliases) } | Where-Object { $_ } | ForEach-Object { "$_".ToLower() })
 # no head pipeline: no-ci (no CI config) or no-pipeline (may start)
 function State($url) {
+  if ("$url" -match '^branch:(.+)@([^@]+)$') { $rq = @{ repo = (Get-HostProject $Matches[1] -Raw) }; $bp = @(Invoke-HostVerb 'ci.runs' ($rq + @{ ref = $Matches[2]; per_page = 1 }) -NoMemo)[0]
+    if (-not $bp) { return [ordered]@{ mr = $url; status = 'no-pipeline' } }; return (Get-PipeFailure ([ordered]@{ mr = $url; status = "$($bp.state)" }) $rq $bp.id) }   # state: the host's word normalised
   $u = ConvertFrom-MrUrl $url; if (-not $u) { return [ordered]@{ mr = $url; status = 'bad-url' } }
   if ($u.type -eq 'gitlab' -and $url -match '^https?://([^/]+)/') { $env:GITLAB_HOST = $Matches[1] }   # else glab asks gitlab.com
   $m = Invoke-HostVerb 'mr.get' $u -NoMemo
@@ -1107,12 +1110,15 @@ function State($url) {
   if ($UntilMerged -and $m.state -eq 'closed') { return [ordered]@{ mr = $url; status = 'closed' } }
   $p = $m.head_pipeline
   if (-not $p) { return [ordered]@{ mr = $url; status = $(if (@($noMrCi | Where-Object { "/$($u.repo)".ToLower().EndsWith("/$_") }).Count -or (Invoke-HostVerb 'ci.config' @{ repo = $u.repo; ref = $m.target_branch; type = $u.type }) -eq $false) { 'no-ci' } else { 'no-pipeline' }) } }
-  $o = [ordered]@{ mr = $url; status = $p.status }
-  if ($p.status -eq 'failed' -and $p.id) {
-    $job = @(Invoke-HostVerb 'ci.jobs' @{ repo = $u.repo; id = $p.id; type = $u.type } | Where-Object status -eq 'failed')[0]
+  Get-PipeFailure ([ordered]@{ mr = $url; status = $p.status }) @{ repo = $u.repo; type = $u.type } $p.id
+}
+# a failed pipeline: its failed job and the error lines of its log
+function Get-PipeFailure($o, [hashtable]$Rq, $Id) {
+  if ($o.status -eq 'failed' -and $Id) {
+    $job = @(Invoke-HostVerb 'ci.jobs' ($Rq + @{ id = $Id }) | Where-Object { "$($_.status)" -eq 'failed' -or "$($_.state)" -eq 'failed' })[0]
     if ($job) {
       $o.job = $job.name
-      $trace = ([string](Invoke-HostVerb 'ci.log' @{ repo = $u.repo; id = $job.id; type = $u.type })) -split "`n" | ForEach-Object { $_ -replace '\x1b\[[0-9;]*m', '' -replace '^\S+Z \d+O ', '' }
+      $trace = ([string](Invoke-HostVerb 'ci.log' ($Rq + @{ id = $job.id }))) -split "`n" | ForEach-Object { $_ -replace '\x1b\[[0-9;]*m', '' -replace '^\S+Z \d+O ', '' }
       $o.error = (@($trace | Where-Object { $_ -match '(?i)error|fail|invalid|exception|\[ERROR\]' } | Select-Object -Last 8) -join "`n")
     }
   }

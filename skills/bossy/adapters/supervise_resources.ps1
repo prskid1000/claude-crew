@@ -1488,7 +1488,7 @@ function Get-KitTaskClaims([string]$Run) {
   $c
 }
 # board beat: the HANDOFF line (spend at the handoff point, or one step longer than budget.stepHours)
-function Get-KitHandoffLine($Me, [string]$Session, [string]$Why) { $hb = Join-Path (Get-KitPath briefs -Create) "$(ConvertTo-KitSlug "handoff-$($Me.agent)-$Session").md"; "HANDOFF: $Why`: write a resume brief: crafty.ps1 checkpoint -Agent $($Me.agent)$(if ("$($Me.run)") { " -Run $($Me.run)" }) -Step <last done> -Notes '<one line>' -Brief $hb, commit WIP, board leave -Session $Session -Handoff $hb, return handoff = $hb and stop: a fresh agent continues" }
+function Get-KitHandoffLine($Me, [string]$Session, [string]$Why) { $hb = Join-Path (Get-KitPath briefs -Create) "$(ConvertTo-KitSlug "handoff-$($Me.agent)-$Session").md"; "HANDOFF: $Why`: code changed since your last check -> crafty.ps1 check -Dir <worktree> first, its result in -Notes; write a resume brief: crafty.ps1 checkpoint -Agent $($Me.agent)$(if ("$($Me.run)") { " -Run $($Me.run)" }) -Step <last done> -Notes '<one line>' -Brief $hb, commit WIP, board leave -Session $Session -Handoff $hb, return handoff = $hb and stop: a fresh agent continues" }
 function Get-KitStepAgeHandoff($Me, [string]$Session) {
   $h = [double](Get-KitParam 'budget.stepHours'); if ($h -le 0 -or -not $Me.joined -or $Me.type -eq 'coordinator') { return }   # a coordinator has no steps
   $ck = Get-KitCheckpoint $Me.agent "$($Me.run)"; if (-not $ck.updated -or $ck.done) { return }   # agents that checkpoint their steps only

@@ -20,9 +20,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L38 paths · L127 state · L184 kitlog · L283 load · L738 lint · L1146 README graph · L1253 lint command · L1534 audit ·
-  L1682 registry · L2014 arch lint · L2287 prose · L2452 sections · L2582 budget · L2598 migrate · L2746 plugins ·
-  L2800 state lint · L2988 main
+Sections: L38 paths · L128 state · L185 kitlog · L284 load · L739 lint · L1147 README graph · L1254 lint command · L1535 audit ·
+  L1683 registry · L2015 arch lint · L2288 prose · L2453 sections · L2583 budget · L2599 migrate · L2747 plugins ·
+  L2801 state lint · L2989 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -40,7 +40,8 @@ with open(osp.join(KIT_DIR, 'skills', 'crafty', 'kit.example.json'), encoding='u
     MAP = json.load(_f)['_paths']
 
 def runtime_dir(kit=None):
-    return osp.join(kit or KIT_DIR, os.environ.get('CLAUDE_RUNTIME') or MAP['runtimeDir'])   # a relative one: from the kit, never the cwd
+    k, rt = kit or KIT_DIR, os.environ.get('CLAUDE_RUNTIME') or MAP['runtimeDir']   # a relative one: from the kit, never the cwd;
+    return osp.join(osp.dirname(osp.normpath(k)) if re.split(r'[\\/]', rt)[0] == osp.basename(osp.normpath(k)) else k, rt)   # '<kit name>/..': the workspace's
 
 def kit_path(name, create=False, kit=None):
     """Absolute path of a named runtime or durable entry. kit= resolves it for another kit folder (kit-lint on a clone)."""
@@ -341,7 +342,7 @@ def read_rows(k, sizes):
     return rows
 # token budgets (UTF-8 bytes / 4), README "Extending"; skill = its always-part (budget.instructions.skillAlways): the rest in references
 BUDGETS = {'always': 3500, 'skill': 3000, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-  'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 9500, 'tests': 9000}
+  'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 9975, 'tests': 9000}   # config +5% (retro 1549: 3-6 lint rounds per new key)
 
 def budget_type(f):
     """The BUDGETS key of a tracked kit file (relative, /), None = no per-file cap (CLAUDE.md, AGENTS.md: the 'always' cap)."""

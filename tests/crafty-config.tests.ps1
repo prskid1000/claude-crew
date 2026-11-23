@@ -135,5 +135,11 @@ $pdR = & { . $D; $__cfg = '{"process":{"docs":[{"key":"testing-ai","label":"AI d
   $txt = Format-KitTaskText $old; "one:$($txt -match '\*\*AI doc:\*\* \[open\]\(https://h/2\)' -and $txt -notmatch 'h/1')"
   "keyed:$((@(Test-KitTaskSpec ([pscustomobject]@{ title = '[Bug] t'; problem = 'p'; docs = [pscustomobject]@{ 'testing-ai' = 'not-a-url' } })) -join ' | ') -match "a full URL instead of 'not-a-url'")" }
 Expect-Each $pdR 'task spec doc links from process.docs: #' 'one', 'keyed' -Show 4
+# retro 1549: CLAUDE_RUNTIME '<kit name>/.runtime' is workspace-relative (it made <kit>/.claude/.runtime); '.rt2' stays kit-relative
+$rtw = Invoke-PsTest rt-ws @'
+$rtv = 'CLAUDE_RUNTIME'; [Environment]::SetEnvironmentVariable($rtv, "$(Split-Path $args[1] -Leaf)/.runtime"); . $args[0]; $a = Get-KitRuntime; $p = & $args[2] -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print(kitbag.runtime_dir())" (Join-Path $args[1] 'skills/bossy')
+[Environment]::SetEnvironmentVariable($rtv, '.rt2'); "$([IO.Path]::GetFullPath($a) -eq [IO.Path]::GetFullPath((Join-Path $args[1] '.runtime')))|$([IO.Path]::GetFullPath("$p") -eq [IO.Path]::GetFullPath((Join-Path $args[1] '.runtime')))|$(Get-KitRuntime)"
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'), $k, $py)
+Expect "runtime: '<kit name>/.runtime' resolves from the workspace (lib.ps1, kitbag.py), '.rt2' from the kit ($rtw)" ("$rtw" -match "True\|True\|$([regex]::Escape((Join-Path $k '.rt2')))")
 Remove-TestKit $k
 Complete-Tests

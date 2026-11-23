@@ -125,7 +125,7 @@ Expect "budget: a start line per role + INFO totals; START-BUDGET over 12000; a 
 $kxj = Join-Path $kc 'skills/crafty/kit.example.json'; $kxKeep = [IO.File]::ReadAllText($kxj)
 foreach ($kxPad in 0, 46000) { if ($kxPad) { [IO.File]::WriteAllText($kxj, ('{"_pad": "' + ('#' * [math]::Max(0, $kxPad - [Text.Encoding]::UTF8.GetByteCount($kxKeep) - 12)) + '", ' + $kxKeep.Substring($kxKeep.IndexOf('{') + 1))) }; Set-Variable "kxl$kxPad" (& $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String) }
 [IO.File]::WriteAllText($kxj, $kxKeep)
-Expect 'budget: kit.example.json has its own config cap (9500), not the json one (7000): the file as shipped passes, padded past 9500 flags' ($kxl0 -notmatch 'kit\.example\.json: \d+ tokens \(cap' -and $kxl46000 -match 'kit\.example\.json: \d+ tokens \(cap 9500\)')
+Expect 'budget: kit.example.json has its own config cap (9975), not the json one (7000): the file as shipped passes, padded past 9975 flags' ($kxl0 -notmatch 'kit\.example\.json: \d+ tokens \(cap' -and $kxl46000 -match 'kit\.example\.json: \d+ tokens \(cap 9975\)')
 # migrate: the retired install blocks leave .git/info/exclude; a listed file git no longer tracks goes, tracked and localOnly ones
 # stay; the use stamps and the config key named after the marker go; a second run prints nothing (words built: no retired word here)
 $mgw = 'go' + 'ody'; $mgKey = 'go' + 'odies'; $mgx = git -C $kc rev-parse --path-format=absolute --git-path info/exclude

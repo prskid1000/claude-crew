@@ -1268,6 +1268,7 @@ if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run
 $jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
 if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
 $dir = [regex]::Replace("$($jb.runFolder)", '<([yMdHms][^<>]*)>', { param($DateTok) Get-Date -Format $DateTok.Groups[1].Value })   # <yyyy-MM-dd> and other date formats
+if (-not [IO.Path]::IsPathRooted($dir)) { $dir = Join-Path (Split-Path $KitConf.Kit) $dir }   # testy's relative runFolder is from the workspace root, never this cwd (the kit: <kit>/.claude/.runtime, retro 1549)
 # a caller that expanded the stamp itself to nothing left '-<name>' (a leading '-' reads as a CLI flag)
 if ((Split-Path $dir -Leaf) -like '-*') { $dir = Join-Path (Split-Path $dir -Parent) "$(Get-Date -Format 'yyyy-MM-dd-HHmmss')$(Split-Path $dir -Leaf)" }
 if (Get-ChildItem -LiteralPath $dir -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1) { throw "prepare: $dir exists with files: pass another name, or launch with { runDir }" }   # an empty one is reused

@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L377 process · L586 git host · L659 scope · L751 MR · L946 merge · L1277 docs ·
-  L1435 publish · L1908 render · L2351 spec · L2675 plugins · L2689 keepboth · L2708 selftest · L3396 CLI
+  L1435 publish · L1908 render · L2351 spec · L2682 plugins · L2696 keepboth · L2715 selftest · L3403 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2630,13 +2630,20 @@ RENDERERS = {'mr-title': render_title, 'mr-body': render_mr_body, 'commit': rend
 
 
 def load_spec(src):
-    """A spec: a JSON file path or the JSON itself (starts with '{')."""
+    """A spec: a JSON file path or the JSON itself (starts with '{'); a Windows path's lone backslash (D:\\x) is kept, not an error."""
     if str(src).lstrip().startswith('{'):
-        return json.loads(src)
-    if not os.path.isfile(src):
+        text = src
+    elif not os.path.isfile(src):
         print(f'no such spec file {src} (pass a file path or inline JSON)', file=sys.stderr)
         raise SystemExit(2)   # a usage error, not a traceback
-    return json.loads(open(src, encoding='utf-8-sig').read())
+    else:
+        text = open(src, encoding='utf-8-sig').read()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:   # retro 1549: retro.json with raw Windows paths failed render retro
+        if 'escape' not in str(e):
+            raise
+        return json.loads(re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', text))
 
 
 def spec_text(path, kind, task='', add=None):
