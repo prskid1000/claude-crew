@@ -2073,7 +2073,7 @@ New-Item -ItemType Directory -Force $d | Out-Null
 if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug $Agent)-" })$(& $slug $Name)" } else { $d.TrimEnd('\', '/') }
 }
 
-# ---- checkpoint: resume point per step: resume-<run>.json + .md, atomic; -Brief: a hand-written brief keeps its text
+# ---- checkpoint: resume point per step: resume-<run>.json + .md, atomic; -Brief: a hand-written brief is never overwritten (<name>.generated.md)
 $script:KitSteps = 'worktree', 'commit', 'goals', 'loop', 'mr', 'review', 'ci', 'doc', 'tracker', 'merge', 'done'
 function Invoke-Checkpoint {
 param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read, [string]$Notes = '', [string]$Brief = '')
@@ -2099,11 +2099,16 @@ $md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next
   @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Head' @($ckRows | Select-Object -Skip $ckOld | ForEach-Object { , @($(if ($_.at -is [datetime]) { $_.at.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) } else { "$($_.at)".Substring(0, [Math]::Min(16, "$($_.at)".Length)).Replace('T', ' ') }), $_.step, $_.item, $_.evidence, $_.head) })) +
   @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')") +
   @(if ($ckNotes) { '', "## Notes$(if ($ckNoteOld) { " (last 6)" })", ''; @($ckNotes | Select-Object -Skip $ckNoteOld | ForEach-Object { "- $_" }) })
-# a hand-written resume-<run>.md keeps its text above the generated part (the checkpoint overwrote it, 2026-11-23)
-$own0 = if (Test-Path -LiteralPath $mf) { ([IO.File]::ReadAllText($mf) -split '<!-- checkpoint -->')[0] -replace '(?s)^# (Resume brief|Checkpoint): .*' }
-Write-KitAtomic $mf ("$(if ("$own0".Trim()) { "$("$own0".TrimEnd())`n`n<!-- checkpoint -->`n" })" + ($md -join "`n") + "`n")
-if ($Brief) { $own = "$(if (Test-Path $Brief) { ([IO.File]::ReadAllText($Brief) -split '<!-- checkpoint -->')[0] })" -replace '(?s)^# Resume brief: .*'
-  Write-KitAtomic $Brief ("$(if ($own.Trim()) { "$($own.TrimEnd())`n`n<!-- checkpoint -->`n" })# Resume brief: $Agent (run ``$($c.run)``)`n" + ($md[1..($md.Count - 1)] -join "`n") + "`n"); "resume brief: $Brief (board leave -Handoff $Brief)" }
+# hand-written text above <!-- checkpoint --> is kept; the generated part always follows the marker (a hand-written brief was overwritten, 2026-11-23)
+$ckPrev = if (Test-Path -LiteralPath $mf) { [IO.File]::ReadAllText($mf) } else { '' }
+$own0 = if ($ckPrev -match '<!-- checkpoint -->') { ($ckPrev -split '<!-- checkpoint -->')[0] } elseif ($ckPrev -notmatch '^# Checkpoint: ') { $ckPrev }
+Write-KitAtomic $mf ("$(if ("$own0".Trim()) { "$("$own0".TrimEnd())`n`n" })<!-- checkpoint -->`n" + ($md -join "`n") + "`n")
+if ($Brief) { $briefOld = if (Test-Path -LiteralPath $Brief) { [IO.File]::ReadAllText($Brief) } else { '' }
+  # an existing brief without the marker is hand-written: never overwritten, the stub goes next to it
+  $briefOut = if ($briefOld -and $briefOld -notmatch '<!-- checkpoint -->') { [IO.Path]::ChangeExtension($Brief, '.generated.md') } else { $Brief }
+  $own = if ($briefOut -eq $Brief) { ($briefOld -split '<!-- checkpoint -->')[0] } else { '' }
+  Write-KitAtomic $briefOut ("$(if ($own.Trim()) { "$($own.TrimEnd())`n`n" })<!-- checkpoint -->`n# Resume brief: $Agent (run ``$($c.run)``)`n" + ($md[1..($md.Count - 1)] -join "`n") + "`n")
+  "resume brief: $Brief$(if ($briefOut -ne $Brief) { " (hand-written: kept; checkpoint part in $briefOut)" }) (board leave -Handoff $Brief)" }
 "checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"
 }
 

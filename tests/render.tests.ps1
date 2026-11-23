@@ -198,11 +198,16 @@ $craftyPs = Join-Path $k 'skills/crafty/crafty.ps1'; $hbf = Join-Path $wd 'hando
 $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step commit -Evidence abc1234 2>&1
 $hbo = pwsh -NoProfile -File $craftyPs checkpoint -Agent h8 -Run r8 -Step mr -Evidence 'web!5' -Notes "rebase  pending`nthen push" -Brief $hbf 2>&1 | Out-String
 $hbt = (Get-Content -Raw $hbf) -replace '\d{4}-\d\d-\d\dT[\d:.+\-Z]+', 'T' -replace '\d{4}-\d\d-\d\d \d\d:\d\d', 'T' -replace '(?m)^\| T \|', '| T |'
-Expect "checkpoint -Notes -Brief: golden resume brief (Done table, Open, Notes as one line) ($($hbo.Trim()))" ($hbo -match 'resume brief: .*board leave -Handoff' -and (Gold $hbt "# Resume brief: h8 (run ``r8``)`n**Result:** Next: review (start here; the steps below are done: verify, never redo) · T`n`n## Done`n`n| At | Step | Item | Evidence | Head |`n|---|---|---|---|---|`n| T | commit | — | abc1234 | — |`n| T | mr | — | web!5 | — |`n`n## Open`n`n**Worktrees:** `n**Leases:** `n**Decisions pending:** `n`n## Notes`n`n- T rebase pending then push"))
-# a hand-written brief at -Brief keeps its text; the rendered part after a marker is replaced each checkpoint
-$hwf = Join-Path $wd 'own-h9.md'; [IO.File]::WriteAllText($hwf, "# My plan`n- keep me`n"); foreach ($stp in 'commit', 'mr') { $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h9 -Run r9 -Step $stp -Brief $hwf 2>&1 }
-$hwt = Get-Content -Raw $hwf
-Expect 'checkpoint -Brief on a hand-written brief: its text kept, one rendered part after the marker' ($hwt.StartsWith("# My plan`n- keep me`n`n<!-- checkpoint") -and ([regex]::Matches($hwt, '# Resume brief: h9')).Count -eq 1 -and ([regex]::Matches($hwt, '<!-- checkpoint')).Count -eq 1 -and $hwt -match '\| mr \|')
+Expect "checkpoint -Notes -Brief: golden resume brief (Done table, Open, Notes as one line) ($($hbo.Trim()))" ($hbo -match 'resume brief: .*board leave -Handoff' -and (Gold $hbt "<!-- checkpoint -->`n# Resume brief: h8 (run ``r8``)`n**Result:** Next: review (start here; the steps below are done: verify, never redo) · T`n`n## Done`n`n| At | Step | Item | Evidence | Head |`n|---|---|---|---|---|`n| T | commit | — | abc1234 | — |`n| T | mr | — | web!5 | — |`n`n## Open`n`n**Worktrees:** `n**Leases:** `n**Decisions pending:** `n`n## Notes`n`n- T rebase pending then push"))
+# a hand-written brief at -Brief (no marker; even one titled "# Resume brief:") is never touched: the rendered part goes to <name>.generated.md
+$hwf = Join-Path $wd 'own-h9.md'; $hwOwn = "# Resume brief: h9 (run ``r9``), part 2`n**Result:** my plan`n- keep me`n"; [IO.File]::WriteAllText($hwf, $hwOwn)
+$hwo = foreach ($stp in 'commit', 'mr') { pwsh -NoProfile -File $craftyPs checkpoint -Agent h9 -Run r9 -Step $stp -Brief $hwf 2>&1 | Out-String }
+$hwg = Get-Content -Raw (Join-Path $wd 'own-h9.generated.md')
+Expect "checkpoint -Brief on a hand-written brief: byte-identical, one rendered part in own-h9.generated.md ($("$hwo".Trim()))" ([IO.File]::ReadAllText($hwf) -ceq $hwOwn -and ([regex]::Matches($hwg, '# Resume brief: h9')).Count -eq 1 -and $hwg -match '\| mr \|' -and "$hwo" -match 'hand-written: kept')
+# a brief with the marker keeps the text above it; the part below is replaced each checkpoint
+$hmf = Join-Path $wd 'own-h10.md'; [IO.File]::WriteAllText($hmf, "# My plan`n- keep me`n`n<!-- checkpoint -->`nold"); foreach ($stp in 'commit', 'mr') { $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h10 -Run r10 -Step $stp -Brief $hmf 2>&1 }
+$hmt = Get-Content -Raw $hmf
+Expect 'checkpoint -Brief on a marked brief: text above the marker kept, one rendered part' ($hmt.StartsWith("# My plan`n- keep me`n`n<!-- checkpoint") -and ([regex]::Matches($hmt, '# Resume brief: h10')).Count -eq 1 -and ([regex]::Matches($hmt, '<!-- checkpoint')).Count -eq 1 -and $hmt -match '\| mr \|' -and $hmt -notmatch 'old')
 foreach ($stp in 1..10) { $null = pwsh -NoProfile -File $craftyPs checkpoint -Agent h7 -Run r7 -Step "c$stp" -Notes "n$stp" 2>&1 }
 $hct = pwsh -NoProfile -File $craftyPs checkpoint -Agent h7 -Run r7 -Read 2>&1 | Out-String
 Expect "checkpoint brief compact: last 8 steps (earlier named), last 6 notes" ($hct -match '## Done \(last 8; 2 earlier: c1, c2\)' -and $hct -notmatch '\| c2 \|' -and $hct -match '\| c10 \|' -and $hct -match '- \S+ n10' -and $hct -notmatch ' n4\b')
