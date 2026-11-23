@@ -80,6 +80,10 @@ Set-JsonFile "$wd/sub3.json" @{ rules = @(@{ id = 'S2'; text = 'filters persist 
 $s3w = Dt spec write orders-list "$wd/sub3.json"
 Expect "subject spec: link names S2; trace wants S2 only; a change to S1 marks nothing, to S2 marks T2 ($($sw.code)$($ln.code))" ($sw.code + $ln.code -eq 0 -and $ln.out -match 'orders-list v1 linked on T2 \(S2\)' -and
   $gp.out -match 'T2: S2 has no test case' -and $gp.out -notmatch 'S1' -and $s2w.out -notmatch 'RETEST' -and $s3w.out -match 'RETEST T2: S2 \(spec orders-list v3\)' -and (Dt spec show T2).out -match 'orders-list:spec v3')
+# ---- retire a superseded spec (briefys 2026-11-23): no reason refused; doc SUPERSEDED, v+1 logged, its task unlinked, no trace gaps
+$rt0 = Dt spec retire orders-list; $rt1 = Dt spec retire orders-list --reason 'superseded by T7'; $rtDoc = Get-Content -Raw (Join-Path $docs 'orders-list-spec.md')
+Expect "spec retire: --reason required; doc SUPERSEDED + change log v4; T2 loses the spec; show says retired ($($rt0.code) $($rt1.code))" ($rt0.code -ne 0 -and $rt0.out -match '--reason' -and $rt1.code -eq 0 -and
+  $rtDoc -match '^\*\*SUPERSEDED\*\* \S+: superseded by T7' -and $rtDoc -match 'retired: superseded by T7' -and (Dt spec show T2).out -match 'no spec' -and (Dt spec trace T2).code -eq 0 -and (Dt spec show orders-list).out -match 'v4 retired: superseded by T7')
 
 # ---- thin brief: spec links per task; the args file is what buildy accepts (`run`, never `name`)
 Set-JsonFile "$wd/wb.json" @{ name = 'orders-sort'; run = 'buildy-20261123-01'; mandate = @('sort orders'); specs = @('T1'); agents = @(@{ id = 'area-01'; items = 'T1'; area = 'Orders'; repos = 'web'; kind = 'foundation' })
@@ -113,7 +117,7 @@ Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13
   repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true; debate = [ordered]@{ item = 'A2'; options = 'A: x', 'B: y' } })
   contracts = @([ordered]@{ name = 'GET /orders?sort'; type = 'query'; producer = 'X2'; consumers = 'X1'; order = 'X2 first'; compatible = $true }); openQuestions = @([ordered]@{ question = 'Which index?'; blocks = 'A2'; answers = 'rechy' }); mandate = @('sort orders'); mode = 'feature' })
 $wbo = Dt render wave-brief "$wd/wb.json" "$wd/wb.md"; $wbArgs = Get-Content -Raw "$wd/wb.args.json" | ConvertFrom-Json
-Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped, debate kept), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold ((Get-Content -Raw "$wd/wb.md") -creplace '\*\*MR limits.*\n') @"
+Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped, debate kept), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold ((Get-Content -Raw "$wd/wb.md") -creplace '(?s)\*\*MR limits.*?(?=Rule changes during)') @"
 # Wave brief: orders-sort, 2026-11-13
 **Read first:** ``K/skills/crafty/SKILL.md``; this brief wins where they differ.
 **Items:** T-1 epic · **Decisions:** none; final, don't re-ask (a NEW choice -> crafty D1).
@@ -140,5 +144,7 @@ n/a — no spike yet (the Spike phase appends here)
 n/a — none yet (appended during the wave)
 "@) -and (Gold (Get-Content -Raw "$wd/wb.contracts.md") "# Contracts: orders-sort`n| Field / endpoint | Type | Producer | Consumers | Merge / deploy order | Backward-compatible |`n|---|---|---|---|---|---|`n| GET /orders?sort | query | X2 | X1 | X2 first | yes |`n## Rule changes during the wave (newest last)`nn/a — none yet (appended during the wave)") -and
   $wbArgs.brief -like '*/wb.md' -and ($wbArgs.agents[1] | ConvertTo-Json -Compress) -eq '{"id":"X2","items":"A2","area":"api sort","dependsOn":["X1"],"migrations":true,"debate":{"item":"A2","options":["A: x","B: y"]}}' -and $wbArgs.openQuestions[0] -eq 'Which index?' -and $wbArgs.mandate[0] -eq 'sort orders')
+$wbLong = @((Get-Content "$wd/wb.md") | Where-Object { $_.Length -gt 130 -and $_ -notmatch '^\||https?://' })
+Expect "render wave-brief: its own lines fit the brief's 130ch prose cap (MR limits wrapped; briefys 2026-11-23) ($($wbLong -join ' // '))" (-not $wbLong.Count -and ((Get-Content -Raw "$wd/wb.md") -match '\*\*MR limits\*\*[^#]*mr-title[^#]*mr-body'))
 Remove-TestKit $k
 Complete-Tests

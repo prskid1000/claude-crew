@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L387 process · L596 git host · L669 scope · L761 MR · L956 merge · L1287 docs ·
-  L1450 publish · L1945 render · L2464 spec · L2795 plugins · L2809 keepboth · L2828 selftest · L3516 CLI
+  L1450 publish · L1945 render · L2466 spec · L2822 plugins · L2836 keepboth · L2855 selftest · L3543 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2434,7 +2434,9 @@ def render_wave_brief(s):
             f'{t} v{r.get("version")} {r.get("url")}' for t in s['specs'] if (r := spec_rec(t)).get('url'))] if s.get('specs') else []),
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
         # the limits where devy reads first (retro 2026-11-22: 13 mr prose refusals)
-        f'**MR limits** (`devtools.py mr` refuses over them; `kitbag.py prose --kind mr-body` first): {prose_limits("mr-title") or "mr-title"}; {prose_limits("mr-body") or "mr-body"}',
+        # wrapped: one 340-char line failed the brief's own 130ch prose check (briefys 2026-11-23)
+        *__import__('textwrap').wrap(f'**MR limits** (`devtools.py mr` refuses over them; `kitbag.py prose --kind mr-body` first): {prose_limits("mr-title") or "mr-title"}; '
+                                     f'{prose_limits("mr-body") or "mr-body"}', 128, break_long_words=False, break_on_hyphens=False),
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
         '## openQuestions', *(qs or ['n/a — no open question']), '## Findings (rechy)', 'n/a — no spike yet (the Spike phase appends here)',
         '## Rule changes during the wave (newest last)', 'n/a — none yet (appended during the wave)']) + '\n'
@@ -2608,7 +2610,7 @@ def render_spec(s, key, ver, log, tasks=()):
 def spec_link(tid, rec=None):
     """{'spec': link text} for a task's description links block: '[open](url) · v<n>' (+ the S-ids its last change touched)."""
     rec = rec or spec_rec(tid)
-    if not rec.get('url'):
+    if not rec.get('url') or rec.get('retired'):   # a retired spec: its Spec line goes
         return {}
     ids = (rec.get('log') or [{}])[-1].get('retest') or []   # S-ids of built work this version changed
     u = f'[open]({rec["url"]})' if re.match(r'https?://\S+$', rec['url']) else rec['url']
@@ -2628,7 +2630,7 @@ def link_task_spec(tid, rec):
     try:
         if not t.get('id'):
             raise SystemExit(view_why(t)[:120] or f'tracker.type {TRACKER_TYPE}')
-        if (state_read(task_file(tid)) or {}).get('spec') and re.match(r'https?://', rec.get('url') or ''):
+        if (state_read(task_file(tid)) or {}).get('spec') and re.match(r'https?://', rec.get('url') or '') and not rec.get('retired'):
             _tracker('update', tid, '-Spec', json.dumps({'docs': {'spec': rec['url']}}) + '\n')
         elif (new := links_block(t.get('description') or '', task_doc_links(tid))) != (t.get('description') or ''):
             _tracker('describe', tid, new)
@@ -2677,11 +2679,33 @@ def spec_write(key, path, by='', subject=False):
     return url
 
 
+def spec_retire(key, reason, by=''):
+    """A superseded spec: its doc republished with a SUPERSEDED banner (v+1, change log), its tasks lose the link and the Spec line."""
+    pk, rec = f'{key}:spec', _pub_read(f'{key}:spec')
+    if not rec.get('data') or not reason:
+        raise SystemExit(f'spec retire {key}: {"--reason <why> (e.g. superseded by <task>)" if rec.get("data") else "no spec (spec show " + key + ")"}. Nothing was written.')
+    if rec.get('retired'):
+        print(f'spec {key}: already retired ({rec["retired"].get("reason")})', file=sys.stderr)
+        return rec.get('url') or ''
+    ver, tasks, day, who = int(rec.get('version') or 0) + 1, list(rec.get('tasks') or []), time.strftime('%Y-%m-%d'), by or me_agent() or 'unknown'
+    log = list(rec.get('log') or []) + [{'v': ver, 'date': day, 'by': who, 'what': f'retired: {reason}', 'ids': [], 'retest': []}]
+    out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', key) + '-spec.md')
+    with open(out, 'w', encoding='utf-8', newline='\n') as fh:
+        fh.write(f'**SUPERSEDED** {day}: {reason}. Do not build or test against this spec.\n\n' + render_spec(rec['data'], key, ver, log, tasks))
+    url = publish(pk, f'[Superseded] {key} Spec — {rec["data"].get("title")}', out, mode='replace')
+    _pub_update(pk, version=ver, log=log, ready=False, retired={'reason': reason, 'date': day, 'by': who})
+    for t in dict.fromkeys(tasks + ([] if rec.get('subject') else [key])):
+        task_index(t, lambda x: [x.pop(f, None) for f in ('specKey', 'specIds', 'specRetest')] if x.get('specKey') in (key, None) else None)
+        link_task_spec(t, _pub_read(pk))   # links_block without the spec: the Spec line goes
+    print(f'spec {key} retired (v{ver}, {len(tasks)} task(s) unlinked): {url}', file=sys.stderr)
+    return url
+
+
 def spec_trace_gaps(tid):
     """The S-ids of a task's spec (own, or a linked subject's: the ids the link names) that no check or case of its cases spec cites."""
     rec, ts = spec_rec(tid), state_read(task_file(tid)) or {}
     key = (rec.get('key') or '').rpartition(':')[0]
-    if not rec.get('data'):
+    if not rec.get('data') or rec.get('retired'):
         return []
     want = [str(r['id']) for r in rec['data'].get('rules') or [] if r.get('status') != 'removed']
     want = [i for i in want if key == tid or not ts.get('specIds') or i in ts['specIds']]
@@ -2692,18 +2716,19 @@ def spec_trace_gaps(tid):
 
 def spec_cmd(a):
     """spec write <task|subject> <spec.json> [--subject] [--by <who>] · questions <key> · link <task> <subject> [--ids S1,S2]
-    · trace <task> · show <task|subject>
+    · trace <task> · show <task|subject> · retire <task|subject> --reason <why>
       python -X utf8 devtools.py spec write T1 spec-t1.json --by briefy-w2      (a task's spec: linked on T1 as its Spec line)
       python -X utf8 devtools.py spec questions T1     (the open sections and rule gaps: the interview, one question per line; exit 1 when any)
       python -X utf8 devtools.py spec write orders-list spec.json --subject     (a standing spec for a module or flow)
       python -X utf8 devtools.py spec link T1 orders-list --ids S1,S3           (a task builds against a standing spec)
-      python -X utf8 devtools.py spec trace T1         (S-ids no test case cites: exit 1; finish refuses them)"""
-    verbs = ('write', 'questions', 'link', 'trace', 'show')
+      python -X utf8 devtools.py spec trace T1         (S-ids no test case cites: exit 1; finish refuses them)
+      python -X utf8 devtools.py spec retire T1 --reason 'superseded by T7'   (doc marked SUPERSEDED, Spec line and links removed)"""
+    verbs = ('write', 'questions', 'link', 'trace', 'show', 'retire')
     if not a or a[0] in ('-h', '--help', 'help') or a[0] not in verbs or len(a) < 2:
         hlp = a and a[0] in ('-h', '--help', 'help')
         print(spec_cmd.__doc__ + '\n' + SPEC_FIELDS, file=sys.stdout if hlp else sys.stderr)
         return 0 if hlp else 2
-    opt = {a[i][2:]: a[i + 1] for i in range(len(a) - 1) if a[i] in ('--by', '--ids')}
+    opt = {a[i][2:]: a[i + 1] for i in range(len(a) - 1) if a[i] in ('--by', '--ids', '--reason')}
     verb, key = a[0], a[1]
     if verb == 'write':
         if len(a) < 3:
@@ -2723,6 +2748,8 @@ def spec_cmd(a):
         _pub_update(f'{a[2]}:spec', tasks=sorted(set(rec.get('tasks') or []) | {key}))
         link_task_spec(key, rec)
         print(f'spec {a[2]} v{rec.get("version")} linked on {key}' + (f' ({", ".join(ids)})' if ids else ''))
+    elif verb == 'retire':
+        print(spec_retire(key, opt.get('reason') or '', opt.get('by') or ''))
     elif verb == 'trace':
         gaps = spec_trace_gaps(key)
         print('\n'.join(f'{key}: {i} has no test case (cases add: a check or case with "spec": "{i}")' for i in gaps) or f'{key}: every S-id has a test case')
@@ -2732,7 +2759,7 @@ def spec_cmd(a):
         if not rec.get('data'):
             print(f'{key}: no spec')
             return 1
-        print(f'{rec["key"]} v{rec.get("version")} {"ready" if rec.get("ready") else "draft"} {rec.get("url")} · S-ids '
+        print(f'{rec["key"]} v{rec.get("version")} {"retired: " + rec["retired"].get("reason", "") if rec.get("retired") else "ready" if rec.get("ready") else "draft"} {rec.get("url")} · S-ids '
               + ', '.join(str(r['id']) for r in rec['data'].get('rules') or [] if r.get('status') != 'removed')
               + (f' · retest {", ".join(rt["ids"])} (v{rt["version"]})' if rt else ''))
     return 0

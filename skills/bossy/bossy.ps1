@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L247 budget · L277 launch · L520 recover · L607 pause · L618 resume · L685 program · L736 param ·
-  L742 track · L1131 supervise · L1472 report · L1552 audit · L1612 storage · L1615 bugbrief · L1617 cleanup · L1704 learn ·
-  L1736 decide · L1903 debate · L1947 health · L2015 setup · L2110 guard-sendmessage
+Sections: L40 init · L51 board · L248 budget · L278 launch · L521 recover · L608 pause · L619 resume · L686 program · L737 param ·
+  L743 track · L1132 supervise · L1473 report · L1553 audit · L1613 storage · L1616 bugbrief · L1618 cleanup · L1705 learn ·
+  L1737 decide · L1904 debate · L1948 health · L2016 setup · L2111 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -70,12 +70,13 @@ function New-KitAgentId([string]$Type, [string]$Legacy = '') { $f = Get-KitPath 
 function Resolve-KitAgentAlias([string]$Id) { $a = (Read-KitState (Get-KitPath naming)).aliases; if ($a -is [Collections.IDictionary] -and $a[$Id]) { $a[$Id] } else { $Id } }
 function Invoke-Board {
 param(
-  [Parameter(Position = 0)][ValidateSet('join', 'beat', 'show', 'list', 'check', 'leave', 'msg', 'inbox')][string]$Action = 'show',
+  [Parameter(Position = 0)][ValidateSet('join', 'beat', 'show', 'list', 'check', 'leave', 'msg', 'inbox', 'help')][string]$Action = 'show',
   [string]$Agent, [string]$Area = '', [string[]]$Items = @(), [Alias('Claims')][string[]]$Worktrees = @(), [string]$Run = '', [string]$Contracts = '',
   [string]$Session, [string]$Status = '', [string]$Worktree, [switch]$Resume, [string]$Type = '',
   [string]$To, [string]$Text, [switch]$All, [string]$Model = '', [string]$Tool = '', [string]$Handoff = '', [double]$Wait = 1.5, [switch]$Force, [string]$Kind = 'note', [string]$Ref = '',
   [ValidateSet('', 'continue', 'handoff')][string]$Decision = '', [string]$Reason = '', [string]$Ctx = ''
 )
+if ($Action -eq 'help') { (Get-Content $PSCommandPath -TotalCount 6 | Select-String -Pattern '^\s+(board |check -Decision)').Line; return }   # retro 1709: board help failed validation
 $dir = Get-KitPath board -Create
 $staleMin = [double](Get-KitParam 'idle.beatMinutes')
 function All { Read-KitJsonFiles $dir }
@@ -178,7 +179,7 @@ switch ($Action) {
     if ($tf -and -not $sp -and -not $me.transcript) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty transcript $tf; $x } }   # Codex / Antigravity: no usage lines
     if ($sp) {
       $bg = if ($sp.model -and $sp.model -ne $me.model) { Get-KitBudget -Model $sp.model -Role $me.type } else { [pscustomobject]@{ budget = $me.budget; handoff = $me.handoff; model = $me.model; capBy = $me.capBy } }
-      Update-BoardEntry $f { param($x) foreach ($p in @{ transcript = $tf; spend = $sp.spend; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff }.GetEnumerator()) { $x | Add-Member -Force NoteProperty $p.Key $p.Value }; $x }
+      Update-BoardEntry $f { param($x) foreach ($p in @{ transcript = $tf; spend = $sp.spend; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; capBy = $bg.capBy }.GetEnumerator()) { $x | Add-Member -Force NoteProperty $p.Key $p.Value }; $x }
       "budget: spend $($sp.spend) / $($bg.budget) (handoff at $($bg.handoff): $($bg.capBy))"
       if ($bg.handoff -and $sp.spend -ge $bg.handoff) { $ho = Get-KitHandoffLine $me $Session "spend $($sp.spend) >= $($bg.handoff)" }
       else { Get-KitCtxCheckLine $tf $sp.spend (Get-KitBudget -Model $bg.model -Role $me.type).design }   # Claude Code: its hook asked first (one record)

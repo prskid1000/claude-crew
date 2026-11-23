@@ -2087,7 +2087,7 @@ Write-KitState $jf $c
 # compact for the resumer's context: last 8 steps and 6 notes, the worktree once (head sha per row)
 $ckRows = @($c.steps); $ckOld = [Math]::Max(0, $ckRows.Count - 8); $ckNotes = @($c.notes | Where-Object { $_ }); $ckNoteOld = [Math]::Max(0, $ckNotes.Count - 6)
 $md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next) (start here; the steps below are done: verify, never redo) · $($c.updated)", '', "## Done$(if ($ckOld) { " (last 8; $ckOld earlier: $(@($ckRows[0..($ckOld - 1)] | ForEach-Object step | Select-Object -Unique) -join ', '))" })", '') +
-  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Head' @($ckRows | Select-Object -Skip $ckOld | ForEach-Object { , @("$($_.at)".Substring(0, [Math]::Min(16, "$($_.at)".Length)).Replace('T', ' '), $_.step, $_.item, $_.evidence, $_.head) })) +
+  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Head' @($ckRows | Select-Object -Skip $ckOld | ForEach-Object { , @($(if ($_.at -is [datetime]) { $_.at.ToString('yyyy-MM-dd HH:mm') } else { "$($_.at)".Substring(0, [Math]::Min(16, "$($_.at)".Length)).Replace('T', ' ') }), $_.step, $_.item, $_.evidence, $_.head) })) +
   @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')") +
   @(if ($ckNotes) { '', "## Notes$(if ($ckNoteOld) { " (last 6)" })", ''; @($ckNotes | Select-Object -Skip $ckNoteOld | ForEach-Object { "- $_" }) })
 # a hand-written resume-<run>.md keeps its text above the generated part (the checkpoint overwrote it, 2026-11-23)

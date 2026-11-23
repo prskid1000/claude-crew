@@ -41,7 +41,8 @@ Non-negotiables:
    with an example, why it comes up, each option's effect on users / business / cost / risk, recommended + why, "not sure?
    the default is X"); write each answer back (or `{"na": "<why>"}`) until it exits 0 (ready). Never guess.
 3. You explain how: options with trade-offs, approach, impact, risks, rollout + flag, test strategy, diagrams (Mermaid).
-4. One `revy` (kind doc) per new or changed spec; its findings -> `spec write` with a `change` line.
+4. One `revy` (kind doc) per new or changed spec; its findings -> `spec write` with a `change` line. A superseded spec:
+   `spec retire <task> --reason 'superseded by <task>'`.
 **brief / bugfix:**
 1. Read every item (`crafty.ps1 tracker view <id>` + comments; bugs: `bossy.ps1 bugbrief -Task <id> -Mandate '<words>'`).
 2. **Impact check** per item (read-only): callers of each changed API, method or table (grep, `git log -S`), settings and

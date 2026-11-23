@@ -116,7 +116,9 @@ function Invoke-TestMySql([string]$Sql, [string]$Port) {
 function Test-FileLockHeld([string]$File) { $l = "$File.lock"; if (-not (Test-Path -LiteralPath $l)) { return $false }; if ($IsMacOS) { return $true }; $fs = $null; try { $fs = [IO.FileStream]::new($l, 'Open', 'ReadWrite', 'ReadWrite'); $fs.Lock(0, 1); $fs.Unlock(0, 1); $false } catch { $true } finally { if ($fs) { $fs.Dispose() } } }
 function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git -C $Dir init -q }; git -C $Dir add -A; git -C $Dir commit -q -m $Message }
 # one read-only copy of the source files per suite run (kit-tests.ps1 sets KIT_TESTS_SNAPSHOT; an area run alone: its own)
-if (-not $env:KIT_TESTS_SNAPSHOT) { $env:KIT_TESTS_SNAPSHOT = Join-Path $env:TEMP 'src' }
+# a direct area run never reuses a finished suite's snapshot (an in-process kit-tests run leaves the variable set: stale copies, retro 1709)
+$snapOwner = if ($env:KIT_TESTS_SNAPSHOT) { "$(Get-Content -LiteralPath (Join-Path $env:KIT_TESTS_SNAPSHOT '.owner') -ErrorAction SilentlyContinue)".Trim() }
+if (-not ($snapOwner -match '^\d+$' -and (Get-Process -Id ([int]$snapOwner) -ErrorAction SilentlyContinue))) { if ($env:KIT_TESTS_SNAPSHOT) { Write-Warning "harness: snapshot $env:KIT_TESTS_SNAPSHOT has no live suite: a fresh one for this run" }; $env:KIT_TESTS_SNAPSHOT = Join-Path $env:TEMP 'src'; $null = New-Item -ItemType Directory -Force $env:KIT_TESTS_SNAPSHOT; Set-Content -LiteralPath (Join-Path $env:KIT_TESTS_SNAPSHOT '.owner') $PID }
 function Get-TestSnapshotFile([string]$Rel) {   # the snapshot's copy of $src/$Rel, made on first use (parallel areas: first rename wins)
   $sf = Join-Path $env:KIT_TESTS_SNAPSHOT $Rel; if (Test-Path -LiteralPath $sf) { return $sf }
   $s1 = Join-Path $src $Rel; if (-not (Test-Path -LiteralPath $s1 -PathType Leaf)) { return $null }

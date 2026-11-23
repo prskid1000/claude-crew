@@ -1113,7 +1113,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
           stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($sup -or $dupOf) { $null } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
           done = $(if ($on) { '' } elseif ($sup) { "superseded by $($sup.label)" } elseif ($dupOf) { "stale duplicate of $dupOf (it beats)" } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
           wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at); doing = & $doing $t ((@($ph, $ck.step) | Where-Object { $_ }) -join ' · '); started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
-          budget = $(if ($e.handoff) { "handoff at $(& $tok $e.handoff) ($($e.capBy))$(if ($e.ctxCheck) { " · context check $($e.ctxCheck.decision) at $(& $tok $e.ctxCheck.ctx)" })" })
+          budget = $(if ($e.handoff) { "handoff at $(& $tok $e.handoff)$(if ($e.capBy) { " ($($e.capBy))" })$(if ($e.ctxCheck) { " · context check $($e.ctxCheck.decision) at $(& $tok $e.ctxCheck.ctx)" })" })
           next = $(if ($e.handoffBrief) { "a fresh $($e.type) from $(Split-Path "$($e.handoffBrief)" -Leaf)" } elseif ($tn) { $tn } elseif ("$($e.status)" -notin 'working', 'left') { "$($e.status)" } elseif ($ck.next -and $ck.next -ne 'none') { "next: $($ck.next)" } elseif ($npOn) { "next: $npOn" }) }) $Now $stuck))
     $byTx[$dupKey] = $rows[$rows.Count - 1]
   }

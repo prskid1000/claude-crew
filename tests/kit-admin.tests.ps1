@@ -223,4 +223,8 @@ $tplMd = Get-Content (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/templa
 $tplLim = "$(@('mr-body', 'mr-title', 'commit') | ForEach-Object { if ($tplMd -match "(?m)^\| $_ \|[^|]*\|[^|]*\| ([^|]+) \|") { $Matches[1].Trim() } })"
 $tplSpec = if ($tplMd -match '(?s)## MR spec.*?\nLimits (.*?)\n```') { $Matches[1] -replace '\s+', ' ' } else { '' }
 Expect "templates: MR spec limits = the table ($tplLim)" ($tplLim -eq '260w each:3b Summary:40w 1l 90ch first:72ch 12l 100ch' -and $tplSpec -match 'body 260 words, 3 bullets per section, Summary 40 words; title 90 chars; commit subject 72 chars, lines 100 chars')
+# a direct area run with a finished suite's KIT_TESTS_SNAPSHOT left set: refused, a fresh snapshot (retro 1709: stale copies tested)
+$stSnap = Join-Path (Kd) 'stale-snap'; $null = New-Item -ItemType Directory -Force $stSnap
+$stOut = pwsh -NoProfile -Command "`$env:KIT_TESTS_SNAPSHOT = '$stSnap'; . '$(Join-Path $src 'tests/harness.ps1')' 3>&1; 'SNAP=' + `$env:KIT_TESTS_SNAPSHOT; 'OWN=' + (Get-Content (Join-Path `$env:KIT_TESTS_SNAPSHOT '.owner')) + '/' + `$PID" 2>&1 | Out-String
+Expect "harness: a snapshot with no live suite is refused, the run makes its own (owner = its pid) ($($stOut.Trim() -replace '\s+', ' '))" ($stOut -match 'no live suite' -and $stOut -match 'SNAP=.*kit-tests-\d+[\\/]src' -and $stOut -match 'OWN=(\d+)/\1')
 Complete-Tests
