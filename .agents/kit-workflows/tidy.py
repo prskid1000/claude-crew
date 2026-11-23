@@ -9,13 +9,15 @@
 import asyncio, json, os, shutil, sys, uuid
 WF = 'tidy'
 SHIM = "\nconst fs = require('fs'), rl = require('readline')\nconst [src] = process.argv.slice(1)\nconst body = fs.readFileSync(src, 'utf8').replace(/^export\\s+const\\s+meta\\s*=/m, 'const meta =')\nlet args = null\nconst send = (o, done) => process.stdout.write(JSON.stringify(o) + '\\n', done)\nconst pend = new Map(); let n = 0\nrl.createInterface({ input: process.stdin }).on('line', (l) => { const m = JSON.parse(l); if (args === null) { args = m; run(); return }\n  const r = pend.get(m.id); if (r) { pend.delete(m.id); r(m.result) } })\nconst agent = (prompt, opts) => new Promise((res) => { const id = ++n; pend.set(id, res); send({ t: 'agent', id, prompt, opts: opts || {} }) })\nconst phase = (name) => send({ t: 'phase', name })\nconst log = (...x) => send({ t: 'log', text: x.join(' ') })\nconsole.log = log\n// pipeline(items, ...stages): per item, each stage gets (the previous stage's result, the item); items run side by side\nconst pipeline = (items, ...stages) => Promise.all(items.map(async (it) => { let v = it; for (const s of stages) v = await s(v, it); return v }))\nconst AF = Object.getPrototypeOf(async function () {}).constructor\nconst fail = (e) => send({ t: 'error', text: String((e && e.stack) || e) }, () => process.exit(1))\nfunction run() {\n  let fn; try { fn = new AF('args', 'agent', 'phase', 'log', 'pipeline', body) } catch (e) { return fail(e) }\n  fn(args, agent, phase, log, pipeline).then((r) => send({ t: 'done', result: r === undefined ? null : r }, () => process.exit(0)), fail)\n}\n"
-MODELS = {'haiku': 'flash'}   # Claude model names -> agy tiers; the rest inherit
+MODELS = {'haiku': 'flash'}   # Claude model names -> agy models; an agy model already in it passes; the rest inherit
 ws = WORKSPACES[0] if WORKSPACES else os.getcwd()
 A = dict(args or {})
 A.setdefault('kitDir', os.path.join(ws, '.claude').replace('\\', '/'))
 try:
     with open(os.path.join(A['kitDir'], 'skills', 'crafty', 'kit.local.json'), encoding='utf-8') as fh:
-        MODELS.update((json.load(fh).get('ports') or {}).get('models') or {})
+        LC = json.load(fh)
+    MODELS.update((LC.get('ports') or {}).get('models') or {})
+    MODELS.update({v: v for v in (((LC.get('models') or {}).get('tiers') or {}).get('antigravity') or {}).values() if v})
 except (OSError, ValueError, AttributeError):
     pass
 sys.path.insert(0, os.path.join(A['kitDir'], 'skills', 'bossy'))
@@ -44,7 +46,7 @@ async def answer(m):
     prompt = m['prompt'] + (f"\n(Reasoning effort for this step: {o['effort']}.)" if o.get('effort') else '')
     try:
         r = await agent(prompt, schema=o.get('schema') or {'type': 'string'}, role=o.get('label'), type_name=o.get('agentType') or 'self',
-            workspace='inherit', model=MODELS.get(o.get('model'), 'inherit'))
+            workspace='inherit', model=MODELS.get(o.get('model')) or (o.get('model') if o.get('model') in MODELS.values() else 'inherit'))
     except Exception as e:
         log(f"agent {o.get('label')} failed: {e}")
         r = None

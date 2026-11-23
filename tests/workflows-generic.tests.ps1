@@ -85,12 +85,14 @@ const go = async (cfg) => { const m = _mock((p, o) => /^record-args/.test(o.labe
  const a = async (p, o) => /^record-args/.test(o.label) ? (m.calls.push({ label: o.label, model: o.model, prompt: p }), _ok(`RECORDED\n${cfg}`)) : m.agent(p, o)
  await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }] }, a, _n, _n, pipeline); return m.calls }
 const n = await go('CONFIG {"models":null,"roles":{},"qaLanes":null}'), r = await go('CONFIG {"models":{"build":"m-big","step":"m-small"},"roles":{"storefront":"consumer","core":"producer"},"qaLanes":null}')
+const t = await go('CONFIG {"models":{"build":"strong","review":"m-own"},"tiers":{"fast":"t-f","balanced":"t-b","strong":"t-s","inherit":""},"roles":{},"qaLanes":null}')
+console.log(`tiers:${t.find((c) => c.label === 'build:G1').model === 't-s' && /^review/.test((t.find((c) => c.model === 'm-own') || {}).label) && t.some((c) => c.model === 't-f')}`)
 const sh = (c) => c.find((x) => x.label === 'ship:G1').prompt
 console.log(`no-roles:${!n.some((c) => c.label === 'order:G1') && /storefront\/pull\/4 \(, independent\)/.test(sh(n)) && n.find((c) => c.label === 'build:G1').model === 'sonnet'}`)
 console.log(`roles:${/storefront\/pull\/4>https:\/\/github\.com\/o\/core\/pull\/4/.test(r.find((c) => c.label === 'order:G1').prompt) && /1\. \S+core\/pull\/4 \(, producer\)[\s\S]*2\. \S+storefront/.test(sh(r))}`)
 console.log(`models:${r.find((c) => c.label === 'build:G1').model === 'm-big' && r.find((c) => c.label === 'order:G1').model === 'm-small' && /-Plan 'devy\/@build=sonnet:2,devy\/@docs=sonnet:1,revy\/@review=sonnet:1,step\/@ship=haiku:3,item:1,step\/@step=haiku:2,kitty\/@learn=haiku:1'/.test(r.find((c) => c.label === 'record-args').prompt)}`)
 '@
-Expect-Each (Invoke-Js dw-generic $jsg $wfd) 'buildy generic: #' 'no-roles', 'roles', 'models' -Show 5
+Expect-Each (Invoke-Js dw-generic $jsg $wfd) 'buildy generic: #' 'no-roles', 'roles', 'models', 'tiers' -Show 6
 # testy generic: qa.lanes unset = one web lane (an api item refused); a desktop lane with followUp web; models.test
 $jsl = @'
 const go = async (cfg, items) => { const logs = [], { calls, agent } = _mock((p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`)
@@ -121,7 +123,7 @@ $jsir = Join-Path (Kd) 'ir.mjs'; [IO.File]::WriteAllText($jsir, @'
 import fs from 'node:fs'
 const src = fs.readFileSync(process.argv[2], 'utf8'), cut = (a, b) => src.slice(src.indexOf(a), src.indexOf(b, src.indexOf(a)))
 const body = cut('let QL =', '// ---- record-args') + cut('let INTERMITTENT', '\nfunction verifyPrompt') + '\nreturn { takeConfig, attemptsNeeded }'
-const mk = (logs) => new Function('log', 'MODELS', body)((m) => logs.push(m), {}), at = (t, s) => t.attemptsNeeded({ observed: s })
+const mk = (logs) => new Function('log', 'MODELS', 'TIERS', 'MT', 'tierModels', 'setStr', body)((m) => logs.push(m), {}, {}, {}, () => {}, () => {}), at = (t, s) => t.attemptsNeeded({ observed: s })
 const d = mk([]); d.takeConfig('CONFIG {"intermittentRx":""}')
 const c = mk([]); c.takeConfig('CONFIG {"intermittentRx":"boom"}')
 const bl = [], b = mk(bl); b.takeConfig('CONFIG {"intermittentRx":"("}')

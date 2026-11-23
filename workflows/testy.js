@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L53 record-args · L74 prepare · L103 config · L135 prompts · L227 local · L255 app · L285 test-prompt ·
-//   L343 verify · L405 run-item · L589 pool · L611 budget · L643 run · L689 learn
+// Sections: L16 args · L58 record-args · L79 prepare · L108 config · L140 prompts · L232 local · L260 app · L290 test-prompt ·
+//   L348 verify · L410 run-item · L594 pool · L616 budget · L648 run · L694 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -39,14 +39,19 @@ const badArgs = Object.keys(ARGS0).filter((k) => !ARG_KEYS.includes(k))
 if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.join(', ')}; free text for testers goes in args.context`)
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
 // test = sonnet, never the session model; close, hold, steps, learn = haiku. models.<phase> wins (kit.local.json, CONFIG line of launch -Self)
-const MODELS = { test: 'sonnet', verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high', step: 'haiku', stepRetry: 'sonnet' }
+// tier (fast | balanced | strong | inherit) -> model; CONFIG tiers + models.<phase> win
+const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
+const MT = { test: TB, verify: TB, audit: TB, close: TF, hold: TF, learn: TF, retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
+const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
+const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
+tierModels()
 // test lanes: qa.lanes { <lane>: { kind, parallel, followUp, devices } }; unset = one web lane
 let QL = { web: { kind: 'web', parallel: 5 } }
 function takeConfig(out) {
  let c = null
  try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { c = null }
  if (!c) { log('WARNING: no CONFIG line from launch -Self: default models, one web lane'); return }
- for (const [k, v] of Object.entries(c.models || {})) if (typeof v === 'string') MODELS[k] = v
+ setStr(TIERS, c.tiers); setStr(MT, c.models); tierModels()
  if (c.qaLanes && typeof c.qaLanes === 'object' && Object.keys(c.qaLanes).length) QL = c.qaLanes
  if (typeof c.intermittentRx === 'string' && c.intermittentRx) { try { INTERMITTENT = new RegExp(c.intermittentRx, 'i') } catch (e) { log(`WARNING: qa.intermittentRx is no regex (${e.message}): the default stays`) } }
 }
@@ -148,7 +153,7 @@ SEAT (memory + item claim) - your FIRST command, before anything else:
  Your LAST command before returning (also on errors): & ${Q} seat release -Agent "${label}"`
 }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
-const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token: launch -Self resolves models.<stage>
+const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token
 // it.model/effort win; else MODELS.test
 function modelFor(it) {
  if (it.model) return { model: it.model, ...(it.effort ? { effort: it.effort } : {}) }

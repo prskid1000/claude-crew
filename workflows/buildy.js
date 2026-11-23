@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L151 record-args · L170 budget · L188 build-prompt · L273 ship-prompt · L290 plan · L309 spike ·
-//   L321 local-loop · L399 stages · L553 ship · L593 debate · L702 deploy · L717 learn
+// Sections: L18 args · L155 record-args · L174 budget · L192 build-prompt · L277 ship-prompt · L294 plan · L313 spike ·
+//   L325 local-loop · L403 stages · L557 ship · L597 debate · L706 deploy · L721 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -128,24 +128,28 @@ const FIXES = { blocking: true, 'should-fix': true, nit: false }
 const mustFix = (f) => FIXES[f.severity] !== false
 const CI_SCHEMA = obj({ done: B, mrs: { type: 'array', items: obj({ mr: S, status: S, job: S, error: S }, ['mr', 'status']) } })
 const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
-// a STEP agent: kit commands as kitty (no MCP tools: start 44k -> 29k), product MRs as devy
+// STEP agent: kit commands as kitty, product MRs as devy
 const SO = (label, phase, model = MODELS.step) => ({ label, phase, schema: OK_SCHEMA, model, effort: 'low' })
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
  agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`, { ...SO(label, phaseName), agentType: 'kitty' })
 
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request.
 `
-// defaults; models.<phase> (launch -Self CONFIG line) wins
-const MODELS = { spike: 'opus', debate: 'sonnet', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', docs: 'sonnet', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high', step: 'haiku', stepRetry: 'sonnet' }
+// tier -> model; CONFIG tiers, models win
+const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
+const MT = { spike: TS, debate: TB, build: TB, review: TB, ci: TF, ship: TF, docs: TB, learn: TF, complex: 'inherit', retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
+const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
+const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
+tierModels()
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
-const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token: launch -Self resolves models.<stage>
-// repos[].role by repo name / alias: merge order
+const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token
+// repos[].role (name / alias): merge order
 const CFG = { roles: {} }
 function takeConfig(out) {
- let c = null
- try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { c = null }
- if (!c) { log('WARNING: no CONFIG line from launch -Self: default models, no repo roles (merge order)'); return }
- for (const [k, v] of Object.entries(c.models || {})) if (typeof v === 'string') MODELS[k] = v
+ let c
+ try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { }
+ if (!c) { log('WARNING: no CONFIG line: default models, no repo roles'); return }
+ setStr(TIERS, c.tiers); setStr(MT, c.models); tierModels()
  CFG.roles = c.roles || {}
 }
 // ---- record-args: the launch record (byte-exact: a resume reads it)
@@ -201,9 +205,9 @@ const areaNote = (a) => (globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\
 const IBW = 'your agent definition\'s "In a /buildy wave"'
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses) with your agent definition's
 "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
-// phases (args.phases): each a fresh devy; the branch, its checkpoints and the cases spec carry the state
+// phases (args.phases): each a fresh devy; branch, checkpoints and cases spec carry the state
 const PH = {
- code: `\nPHASE code (1 of 3): crafty steps 0-4 only (code, cases spec, unit tests, wt commit, push the branch), checkpoint -Step commit; no MR. Report localTest NONE (env "phase code") and stop: a fresh devy runs step 5.`,
+ code: `\nPHASE code (1 of 3): crafty steps 0-4 only (code, cases spec, unit tests, commit, push), checkpoint -Step commit; no MR. Report localTest NONE (env "phase code") and stop: a fresh devy runs step 5.`,
  local: `PHASE local (2 of 3): crafty step 5 only on your pushed branch (a fix: steps 3-4 again), checkpoint -Step loop; no MR. Report localTest and stop: a fresh devy ships.`,
  ship: `PHASE ship (3 of 3): ${K}/ship.md steps 6-9 only (MR, both docs, tracker, deploy batch); code changes only when a check fails. Report.`,
  held: ' The local loop is held (FAIL, BLOCKED or not run): Draft MRs only; no finish, tracker step or deploy request.' }
@@ -416,7 +420,7 @@ const results = await pipeline(
   let r = await agent(buildPrompt(a) + (ph ? PH.code : ''), dvo(a, 'build', 'Build'))
   if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: find what is done (crafty.ps1 wt lease your branch + wt status, the board), continue.'), dvo(a, 'build-retry', 'Build')) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
-  // phases: a HANDOFF continues in its phase; no report (after a redo): the phase before stands (its localTest holds the merge)
+  // phases: a HANDOFF stays in its phase; no report (after a redo): the phase before stands (its localTest holds the merge)
   const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)
   const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < 3; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `HANDOFF: read your resume brief ${x.handoff} first, continue. ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return x }
   const phase = async (x, text, l, more) => ((await gate('Build')) ? goOnIn(mergeReports(x, asRep(await agentOrRedo(continuePrompt(a, x, text), { ...dvo(a, l, 'Build'), ...more })), `Phase ${l}`), text) : { ...x, budgetStopped: true })

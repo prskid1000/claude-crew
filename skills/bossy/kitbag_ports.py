@@ -11,7 +11,7 @@ deployed targets; a deselected one's kit-written copies are removed (its folder 
 the files (bossy.ps1 health, prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py
 loads this file and shares its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L37 characters · L72 agents · L122 hooks · L180 workflows · L408 mechanics · L442 deploy · L492 targets · L705 command
+Sections: L37 characters · L72 agents · L122 hooks · L180 workflows · L410 mechanics · L444 deploy · L494 targets · L707 command
 """
 import base64, contextlib, fnmatch, hashlib, io, json, os, re, shutil, tempfile
 from pathlib import Path
@@ -317,13 +317,15 @@ RUNNER = r'''# {name}: the kit's /{name} workflow (.claude/workflows/{name}.js) 
 import asyncio, json, os, shutil, sys, uuid
 WF = {name!r}
 SHIM = {shim!r}
-MODELS = {{'haiku': 'flash'}}   # Claude model names -> agy tiers; the rest inherit
+MODELS = {{'haiku': 'flash'}}   # Claude model names -> agy models; an agy model already in it passes; the rest inherit
 ws = WORKSPACES[0] if WORKSPACES else os.getcwd()
 A = dict(args or {{}})
 A.setdefault('kitDir', os.path.join(ws, '.claude').replace('\\', '/'))
 try:
     with open(os.path.join(A['kitDir'], 'skills', 'crafty', 'kit.local.json'), encoding='utf-8') as fh:
-        MODELS.update((json.load(fh).get('ports') or {{}}).get('models') or {{}})
+        LC = json.load(fh)
+    MODELS.update((LC.get('ports') or {{}}).get('models') or {{}})
+    MODELS.update({{v: v for v in (((LC.get('models') or {{}}).get('tiers') or {{}}).get('antigravity') or {{}}).values() if v}})
 except (OSError, ValueError, AttributeError):
     pass
 sys.path.insert(0, os.path.join(A['kitDir'], 'skills', 'bossy'))
@@ -352,7 +354,7 @@ async def answer(m):
     prompt = m['prompt'] + (f"\n(Reasoning effort for this step: {{o['effort']}}.)" if o.get('effort') else '')
     try:
         r = await agent(prompt, schema=o.get('schema') or {{'type': 'string'}}, role=o.get('label'), type_name=o.get('agentType') or 'self',
-            workspace='inherit', model=MODELS.get(o.get('model'), 'inherit'))
+            workspace='inherit', model=MODELS.get(o.get('model')) or (o.get('model') if o.get('model') in MODELS.values() else 'inherit'))
     except Exception as e:
         log(f"agent {{o.get('label')}} failed: {{e}}")
         r = None

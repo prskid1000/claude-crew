@@ -752,27 +752,32 @@ function Get-KitInstrCap([double]$Window) {
   $st = [double](Get-KitSetting 'budget.instructions.start' $ei.start); $cap = [math]::Max($cap, $st + [double](Get-KitSetting 'budget.instructions.skillAlways' $ei.skillAlways))   # a small window still holds the kit start + one skill
   [pscustomobject]@{ start = [int]$st; cap = [int]$cap; watch = [int]($cap * [double](Get-KitSetting 'budget.instructions.watchAt' $ei.watchAt)) }
 }
+# the agent tool this runs under: a model id's prefix, KIT_TOOL, then the tool's own env vars
+function Get-KitTool([string]$Model = '') {
+  $envs = @(Get-ChildItem env: | ForEach-Object Name)
+  if ($Model -match '^local/') { 'local' } elseif ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' } elseif ($Model -match '^gpt') { 'codex' }
+  elseif ($Model -match '^gemini') { 'antigravity' } elseif ($v = $env:KIT_TOOL) { $v } elseif ($env:CLAUDECODE) { 'claude' }
+  elseif ($envs -like 'CODEX_*') { 'codex' } elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' } else { 'unknown' }
+}
+# workflow model tiers of a tool: models.tiers.<tool> (kit.local.json per key over the example); a missing tier = the next stronger, then '' (inherit)
+function Get-KitTiers([string]$Tool = '') {
+  if (-not $Tool) { $Tool = Get-KitTool }
+  $ex = Get-KitMember (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).models.tiers $Tool
+  $t = [ordered]@{}; $up = ''
+  foreach ($k in 'strong', 'balanced', 'fast') { $v = "$(Get-KitSetting "models.tiers.$Tool.$k" (Get-KitMember $ex $k))"; if ($v) { $up = $v }; $t[$k] = $up }
+  $t['inherit'] = ''; $t
+}
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Role = '') {
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
   $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { (Get-KitMember $ex.defaults $n) } }
-  $envs = @(Get-ChildItem env: | ForEach-Object Name)
-  if (-not $Tool) {
-    $Tool = if ($Model -match '^local/') { 'local' }
-    elseif ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' }
-    elseif ($Model -match '^gpt') { 'codex' }
-    elseif ($Model -match '^gemini') { 'antigravity' }
-    elseif ($v = $env:KIT_TOOL) { $v }
-    elseif ($env:CLAUDECODE) { 'claude' }
-    elseif ($envs -like 'CODEX_*') { 'codex' }
-    elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' }
-    else { 'unknown' }
-  }
+  if (-not $Tool) { $Tool = Get-KitTool $Model }
   $n = 'unknown'; $tok = 0; $src = ''
   if ($Tool -eq 'claude') {
     if (-not $Model) { $Model = "$env:ANTHROPIC_MODEL" }
-    $m = $Model.ToLower(); $big = $m -match '\[1m\]|fable|^(opus|sonnet|haiku|inherit|default)?$'
-    if ($m -match '(opus|sonnet|haiku)-(\d+)(?:-(\d)(?!\d))?') { $big = $big -or ([double]$Matches[2] + [double]"0$($Matches[3])" / 10) -ge @{ opus = 4.7; sonnet = 5; haiku = 5.5 }[$Matches[1]] }
-    if ($big -or $m -match 'claude|opus|sonnet|haiku') {
+    # budget.models [{match, row}]: first match picks the row (kit.local.json list wins over the example's)
+    $m = $Model.ToLower(); $mr = @(@(Get-KitSetting 'budget.models' $ex.models) | Where-Object { $_.match -and $m -match $_.match })[0]
+    $big = $mr.row -eq 'claude-1m'
+    if ($mr -or $m -match 'claude|opus|sonnet|haiku') {
       if ($env:CLAUDE_CODE_DISABLE_1M_CONTEXT -eq '1') { $big = $false }
       $n = if ($big) { 'claude-1m' } else { 'claude-200k' }; $tok = [int](& $row $n).tokens
       if ($v = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW) { $tok = [int]$v; $src = 'env CLAUDE_CODE_AUTO_COMPACT_WINDOW' }

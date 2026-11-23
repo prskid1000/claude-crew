@@ -262,8 +262,8 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 function Get-KitWorkflowConfig {
   $roles = [ordered]@{}
   foreach ($r in @(Get-KitSetting 'repos' @())) { if ($r.role) { foreach ($n in @(@($r.name) + @($r.aliases) | Where-Object { $_ })) { $roles["$n".ToLower()] = "$($r.role)".ToLower() } } }
-  $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }   # _readme keys dropped
-  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); roles = $roles; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
+  $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }
+  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); tiers = Get-KitTiers; roles = $roles; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
 }
 function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
 function Invoke-Launch {

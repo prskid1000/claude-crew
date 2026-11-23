@@ -80,6 +80,15 @@ $__cfg = $null; $env:OLLAMA_CONTEXT_LENGTH = ''; $env:LLAMA_ARG_CTX_SIZE = '1638
 '@ @($O, (Kd))
 Expect "board beat: a 15k start at a 32k window is no handoff (harness not counted); a 5k kit doc read on top -> HANDOFF over the 15k cap; at 200k (cap 75k) nothing; parse cached ($($bu[7..9] -join ' / '))" ($bu[7] -eq 'ki ' -and $bu[8] -match '^ki1 HANDOFF: kit instructions in context 1[67]\d{3} > cap 15000' -and $bu[9] -eq 'ki2 |True')
 Expect "budget: a role's 0 turns off a 300k default (800k), another role gets the default (kit budget default); llama.cpp n_ctx read ($($bu[10..12] -join ' / '))" ($bu[10] -like '800000|*' -and $bu[11] -eq '300000|200000|75000|kit budget default' -and $bu[12] -like '13107|16384|15000|local 0.8 x (llama n_ctx*')
+# model tiers (T4): budget.models picks the claude row; models.tiers.<tool> with a missing tier = the next stronger, then inherit
+$mt = Invoke-PsTest ctx-tiers @'
+$null = . $args[0] 6>$null
+"$((Get-KitBudget -Tool claude -Model 'claude-opus-4-7').row) $((Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row) $((Get-KitBudget -Tool claude -Model 'claude-haiku-5-5').row) $((Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6[1m]').row)"
+$t = Get-KitTiers claude; "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)"
+$__cfg = [pscustomobject]@{ models = [pscustomobject]@{ tiers = [pscustomobject]@{ codex = [pscustomobject]@{ strong = 'big-x'; fast = '' } } }; budget = [pscustomobject]@{ models = @([pscustomobject]@{ match = 'sonnet'; row = 'claude-1m' }) } }
+$t = Get-KitTiers codex; "$($t.fast)/$($t.balanced)/$($t.strong)"; $t = Get-KitTiers local; "[$($t.fast)/$($t.strong)]"; (Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row
+'@ @($O)
+Expect "tiers: budget.models rows (opus 4.7 / haiku 5.5 / [1m] = 1M, sonnet 4.6 = 200k; a local list wins); claude tiers; codex fast unset -> balanced; local -> inherit ($($mt -join ' / '))" ("$($mt -join '|')" -eq 'claude-1m claude-200k claude-1m claude-1m|haiku/sonnet/opus/|gpt-5.5/gpt-5.5/big-x|[/]|claude-1m')
 Expect "budget: 1M -> handoff 800k (no kit cap), 200k -> 160k, 32k local -> 25.6k, design 32k, instruction cap floor 15k ($($bu[0..2] -join ' / '))" ($bu[0] -eq '800000|200000|75000|local 0.8 x (window given)' -and $bu[1] -like '160000|200000|75000|*' -and $bu[2] -like '25600|32000|15000|*')
 Expect "budget: kit role cap 400k wins over 800k (shown: kit budget devy), another role keeps 800k; Ollama's context length read ($($bu[3..5] -join ' / '))" ($bu[3] -eq '400000|200000|75000|kit budget devy' -and $bu[4] -like '800000|*' -and $bu[5] -like '52429|65536|24576|local 0.8 x (ollama OLLAMA_CONTEXT_LENGTH)')
 Expect "spend: a transcript without usage fields (a local model) is estimated from its text, bytes / 4 ($($bu[6]))" ($bu[6] -match '^est 100\d\d True$')
