@@ -10,6 +10,7 @@
   python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (kitbag_admin.py)
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show]   # start tokens per role vs START_CAP (lint START-BUDGET); repo and tests totals (INFO)
+  python -X utf8 kitbag.py naming check|next|make|scan|rename ...   # the naming standard: keys, titles, docs, runs, branches (kitbag_naming.py)
   python -X utf8 kitbag.py migrate         # one-time: retired install records out (.githooks/post-merge runs it)
   python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers | state todo add|done|lint <file> ...   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
   python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
@@ -19,9 +20,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L37 paths · L126 state · L183 kitlog · L282 load · L736 lint · L1144 README graph · L1251 lint command · L1532 audit ·
-  L1680 registry · L2012 arch lint · L2285 prose · L2450 sections · L2580 budget · L2596 migrate · L2744 plugins ·
-  L2798 state lint · L2986 main
+Sections: L38 paths · L127 state · L184 kitlog · L283 load · L737 lint · L1145 README graph · L1252 lint command · L1533 audit ·
+  L1681 registry · L2013 arch lint · L2286 prose · L2451 sections · L2581 budget · L2597 migrate · L2745 plugins ·
+  L2799 state lint · L2987 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2989,7 +2990,7 @@ ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-term
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
   'budget': (set(), set(), False), 'migrate': (set(), set(), False), 'sections': ({'--fix'}, set(), False),
   'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False)}
-NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check')   # positionals: files, verbs or names, never a kit dir
+NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check', 'naming')   # positionals: files, verbs or names, never a kit dir
 COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'migrate': cmd_migrate, 'sections': cmd_sections, 'state': cmd_state, 'ui-check': cmd_ui_check}
 
 def parse_opts(a, valued=()):

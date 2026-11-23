@@ -41,8 +41,9 @@
  "productTargets": [ { "pathRegex": "^product-a/", "targetRegex": "^a-", "label": "product A test env" } ],
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
+ "naming": { "_readme": "products / areas {CODE: name}, digits (3): <PRODUCT>-<AREA>-<nnn> keys", "products": {} },
  "tracker": {
-  "_readme": "type: none (default) | command | a vendor adapter. Status roles (fixed: open inProgress review failedReview promoted inTest failedTesting closed; transitions: README \"Flows\"): statuses = default names per role (list: first set, all match; null = the step is skipped); caps.<cap> false switches a capability off (checklist, commentEdit, commentDelete, statuses, move, attach); caps.<cap> false = off (README Adapters); statusMap.<scope>.<role> = overrides for one scope (ClickUp list id, Jira project, Linear team, repo; .other = names that are no role) over its live names (crafty.ps1 tracker roles <scope>); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; bugBranchPrefix: bug-fix brief branches (fix/); ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json).",
+  "_readme": "type: none (default) | command | a vendor adapter. Status roles (fixed: open inProgress review failedReview promoted inTest failedTesting closed; transitions: README \"Flows\"): statuses = default names per role (first set, all match; null skips the step); caps.<cap> false switches a capability off (checklist, commentEdit, commentDelete, statuses, move, attach; README Adapters); statusMap.<scope>.<role> = overrides for one scope (ClickUp list id, Jira project, Linear team, repo; .other = names that are no role) over its live names (crafty.ps1 tracker roles <scope>); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; bugBranchPrefix: bug-fix brief branches (fix/); ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json).",
   "type": "none",
   "repo": "<owner/name, for github issues>",
   "list": "<container of new tasks, e.g. a ClickUp list id>", "workspace": "<ClickUp: workspace id for tracker move -List; default the CLI config>",
@@ -67,7 +68,7 @@
  "tests": { "_readme": "Per stack: testFor = test names -Touched derives from a changed file's name ({name}). e2e (check -Step e2e): specs (default *.cy.*, e2e/*.spec, *.e2e.*), map[] {dir?, paths, specs}, else folder, name, import, route; run[] {dir, cmd?, env?, split?: folder}.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
  "protectedBranches": [],
  "cleanup": { "maxBrowserProfiles": 4 },
- "browsers": { "_readme": "chromePolicies: {<key under Software/Policies, e.g. Google/Chrome>: {<policy>: <number or text>}}: bossy.ps1 setup writes them per user (Windows HKCU; an admin-only key: it prints the elevated command), e.g. GenAILocalFoundationalModelSettings 1 + ComponentUpdatesEnabled 0 = no on-device AI model downloads; setup -BrowserPolicy -Undo removes them, -Clean deletes model folders in kit and Cypress profiles. Kit Chromium gets vocab.json chromeQuietArgs.", "chromePolicies": {} },
+ "browsers": { "_readme": "chromePolicies: {<key under Software/Policies, e.g. Google/Chrome>: {<policy>: <number or text>}}: bossy.ps1 setup writes them per user (HKCU; an admin-only key: prints the elevated command), e.g. GenAILocalFoundationalModelSettings 1 + ComponentUpdatesEnabled 0 = no on-device AI model downloads; setup -BrowserPolicy -Undo removes them, -Clean deletes model folders in kit and Cypress profiles. Kit Chromium gets vocab.json chromeQuietArgs.", "chromePolicies": {} },
  "guard": { "_readme": "heavyPatterns / e2ePatterns: commands that need the gate. layout: warn (default) | block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir; kit scripts exempt). writeRoots: more folders agents may create files in; envChangeCommands: more deployed-env change commands to deny (regexes; built-in: vocab.json); a new file at a drive root or outside the workspace, kit, repos, worktree roots, temp, ~/.claude, ~/Downloads is denied.", "layout": "warn", "writeRoots": [] },
  "ports": { "_readme": "kitbag.py port workspace copies: none (default) / codex / antigravity / both. models: {<Claude model>: <agy model>} for the runner (default haiku -> flash)", "targets": "none", "models": { "haiku": "flash" } },
  "memory": { "_readme": "false = auto memory off (settings.json); true = on (settings.local.json).", "keepDefault": false },
@@ -85,7 +86,7 @@
  "params": { "_readme": "Tunables (param show; keys: params.registry.json) learn both ways per machine (.state/params.json) within default/4..x4: a failure (timeout, OOM, short: holder back past grace, handoff, 2+ new ACTs a sweep) steps safe next use (x1.5 or the need); risky steps <= 10%/day after 5 new samples, none 7 d after a failure; shadowDays: shown, then used; past 2x default: param approve (owner). kit.local.json value = pin; learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
  "budget": { "_readme": "Budget = an agent tool's compaction point: handoff at handoffAt x it or a step > stepHours (0: off); run cap = planned budgets: estimate > runStopAt x cap refused (split), at it no new item; defaults.<tool>: its compaction point; models: claude id -> row; estimate per agent, item",
   "window": 200000, "agentCap": { "_readme": "the kit's own handoff budget per role (tokens; 0 = none): handoff = whichever comes first, it or handoffAt x the tool's cap", "default": 0 }, "handoffAt": 0.8, "runStopAt": 0.8, "stepHours": 2,
-  "instructions": { "_readme": "kit-instruction tokens held in one agent's context (start load + every kit doc read); cap = min(cap, capPct x the budget window): over watchAt x cap WATCH, over cap ACT + handoff (supervise); lint: a role's kit files at start <= start (the harness prompt and task input come on top), start + every doc its skill can read <= cap, a SKILL.md <= skillAlways", "cap": 75000, "capPct": 0.375, "watchAt": 0.8, "start": 12000, "skillAlways": 3000 },
+  "instructions": { "_readme": "kit-instruction tokens held in one agent's context (start load + every kit doc read); cap = min(cap, capPct x the budget window): over watchAt x cap WATCH, over cap ACT + handoff (supervise); lint: a role's kit files at start <= start, start + every doc its skill can read <= cap, a SKILL.md <= skillAlways", "cap": 75000, "capPct": 0.375, "watchAt": 0.8, "start": 12000, "skillAlways": 3000 },
   "prices": {"_readme": "USD/1M [in, out, cache read, 5-min write, 1-h (2x in)]; list 2026-11-03",
    "opus-5-5":[4,20,0.2,5],"sonnet-5-5":[2,10,0.1,2.5],"haiku-5-5":[0.1,0.5,0.01,0.125]},
   "estimate": { "devy": 70000, "revy": 50000, "checky": 60000, "kitty": 60000, "rechy": 60000, "datay": 50000, "step": 15000, "item": 30000 },
@@ -128,7 +129,7 @@
   }
  },
  "_manifest": {
-  "_readme": "The kit's registry: crew, skills, workflows, Router / Events rows, caps; names live only here (lint checks files against it; kitbag.py new / rename / remove edit it; port writes Character blocks + the Crew table). renamed: old -> new (setup -Migrate).",
+  "_readme": "The kit's registry: crew, skills, workflows, Router / Events rows, caps; names live only here (lint; kitbag.py new / rename / remove edit it; port writes Character blocks + Crew table). renamed: old -> new (setup -Migrate).",
   "agents": {
    "devy": { "job": "builder: makes or changes anything in product repos through the dev flow", "kinds": ["feature", "fix", "refactor", "migration", "config", "doc", "tests", "foundation", "spike", "repro"], "roles": [], "skill": "crafty", "tools": "all", "usedIn": ["/buildy", "R5", "R6"], "cant": "deploy, merge into deploy branches, edit the kit",
     "character": { "traits": "pragmatic builder", "bias": "the smallest change that passes every goal", "catchphrase": "Small, tested, shipped.", "never": "gold-plates or widens the scope" } },
@@ -193,7 +194,7 @@
    "localenv.ps1": "envy.ps1", "swarm.ps1": "phoney.ps1" }
  },
  "_paths": {
-  "_readme": "The one map of local state (schemas: skills/bossy/STATE.md); names resolved by Get-KitPath, kit_path, kitPath, rp() (lint RUNTIME-RAW / -MAP). runtime: $CLAUDE_RUNTIME, else <kit>/.runtime, disposable; durable: <kit>/.state/. Folders end in '/'.",
+  "_readme": "The one map of local state (schemas: STATE.md); names via Get-KitPath / kit_path / kitPath / rp() (lint RUNTIME-RAW / -MAP). runtime: $CLAUDE_RUNTIME, else <kit>/.runtime, disposable; durable: <kit>/.state/. Folders end in '/'.",
   "runtimeDir": ".runtime",
   "stateDir": ".state",
   "legacy": {
@@ -230,7 +231,7 @@
    "tracker-none": "tracker-none/", "published": "published/", "desc-backups": "desc-backups/",
    "localenv-env": "localenv/",
    "browser-ports": "browser-ports.json", "ports-deployed": "ports-deployed.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "locks": "runtimes/locks.json", "storage": "storage/",
-   "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl", "outcomes": "outcomes.jsonl", "standing-rules": "standing-rules.json", "pool-usage": "pool-usage.json", "disk-writes": "disk-writes.jsonl", "kit-tests-db": "kit-tests/server.json", "forgotten": "forgotten/"
+   "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl", "outcomes": "outcomes.jsonl", "standing-rules": "standing-rules.json", "pool-usage": "pool-usage.json", "disk-writes": "disk-writes.jsonl", "kit-tests-db": "kit-tests/server.json", "forgotten": "forgotten/", "naming": "naming.json"
   },
   "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kitbag.py kitlog): every log line: at, run, agent, task, script, verb, event + fields, secrets masked. A durable name's stream writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl (merged by bossy.ps1 audit).",
    "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log", "scope-log", "params", "params-changes", "logs-summary", "leases", "outcomes"],

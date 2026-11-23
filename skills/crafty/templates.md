@@ -37,7 +37,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |
 | commit | commit message ("MR spec") | `commitFormat` subject; blank line; body bullets | first:72ch 12l 100ch | conv |
 | merge-commit | a merge commit (deploy merge, target into a branch) | subject naming both branches; blank line; why | 12l 100ch | — |
-| task-name | tracker task name | `[Feature/Bug/Chore] <area> — <outcome>` | 1l 100ch | — |
+| task-name | tracker task name (`kitbag.py naming make title`; keys `naming next key`) | `<KEY> [Feature/Bug/Chore/Spike] <product> — <area>: <outcome>` (no registry: no key) | 1l 100ch | — |
 | task-description | tracker task text (`tracker create -Spec`) | Problem, Goal, Items, Acceptance, Links | 200w each:6b | link |
 | comment-solution | solution comment on a task | "Comment spec" | 8l 120w | — |
 | comment-status | a status change note ("Comment spec") | `<status> — <why> · <link>` | 2l 40w | link |
