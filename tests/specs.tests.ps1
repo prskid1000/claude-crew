@@ -95,10 +95,10 @@ Expect 'wave-brief: a draft spec refuses the brief (spec before build)' ($w2.cod
 
 # ---- interview questions in plain words (decide ask): today + why, each option's effect, a default; the bare ask kept for rules
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
-$qa = pwsh -NoProfile -File $O decide ask -Run r1 -Agent briefy-1 -Item T1 -Context 'the list shows oldest first' -Question 'Sort newest first?' -Options 'A: newest first — dispatchers see new work at once', 'B: keep — no change for users' -Recommend A 2>&1 | Out-String
+$qa = pwsh -NoProfile -File $O decide ask -Run r1 -Agent briefy-1 -Item T1 -Context 'today: the list shows oldest first' -Question 'Sort newest first?' -Options 'A: newest first — dispatchers see new work at once', 'B: keep — no change for users' -Recommend A 2>&1 | Out-String
 $qb = pwsh -NoProfile -File $O decide ask -Run r1 -Agent briefy-1 -Item T1 -Question 'Sort?' -Options 'A: yes', 'B: no' 2>&1 | Out-String; $qbc = $LASTEXITCODE
 $qr = @(pwsh -NoProfile -File $O decide list -Pending -Json | ConvertFrom-Json) | Where-Object { $_.ask -eq 'Sort newest first?' }
-Expect "decide ask: the owner reads today + the question + its default; a bare one refused (exit $qbc) naming context, effects, recommendation" ($qa -match 'DECISION \S+ pending' -and $qa -notmatch 'refused' -and
+Expect "decide ask: the owner reads today (said once) + the question + its default; a bare one refused (exit $qbc) naming context, effects, recommendation" ($qa -match 'DECISION \S+ pending' -and $qa -notmatch 'refused' -and
   $qr.question -eq 'Today: the list shows oldest first. Sort newest first? Not sure? The default is A.' -and $qbc -eq 2 -and $qb -match 'decide ask refused: missing -Context .*each option .*-Recommend')
 
 # ---- MR body + commit cite S-ids; usage

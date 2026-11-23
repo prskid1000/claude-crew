@@ -1767,7 +1767,7 @@ function Invoke-Decide {
           if (@($opts | Where-Object { -not $_.description -and @("$($_.label)" -split '\s+').Count -lt 6 }).Count) { 'each option "<key>: <label> — <its effect on users / business / cost / risk, plain words>"' }
           if (-not $Recommend) { '-Recommend <key> (the default when the owner is not sure)' } })
       if ($miss.Count) { "decide ask refused: missing $($miss -join '; '). Plain words; a technical term gets a one-line explanation. Nothing was asked."; exit 2 }
-      $shown = "$(if ($Context) { "Today: $($Context.Trim().TrimEnd('.')). " })$("$Question".Trim())$(if ($Kind -eq 'decision' -and $Recommend -and -not $Fyi) { " Not sure? The default is $Recommend." })"
+      $shown = "$(if ($Context) { "Today: $(($Context.Trim() -replace '^(?i)today\s*:\s*').TrimEnd('.')). " })$("$Question".Trim())$(if ($Kind -eq 'decision' -and $Recommend -and -not $Fyi) { " Not sure? The default is $Recommend." })"
       $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
       $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }
       $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')-$([guid]::NewGuid().ToString('N').Substring(0, 4))"

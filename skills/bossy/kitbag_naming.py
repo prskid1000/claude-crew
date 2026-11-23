@@ -92,7 +92,7 @@ def carried(key, cfg, ty=''):
     ty = str(ty or '').lower()
     an = words(cfg['areas'].get(m[2], ''))
     lab = ty in KIND_WORDS or ty in (t.lower() for t in TITLE_TYPES + TYPES)
-    lead = [(an, False), ([m[2].lower()], False)] + [([w], False) for w in an if len(an) > 1 and len(w) > 3] + \
+    lead = [(an, False), ([m[2].lower()], True)] +[([w], False) for w in an if len(an) > 1 and len(w) > 3] + \
         [(w, lab) for w in ([words(ty), [KIND_WORDS[ty]]] if ty in KIND_WORDS else [words(ty)] if ty else [])]
     return {m[1].lower(), *words(cfg['products'].get(m[1], ''))}, [x for x in lead if x[0]], [an] if len(an) > 1 else []
 
@@ -116,7 +116,7 @@ def clean(text, key, cfg, ty=''):
             sp = lambda w: re.escape(w[:-1] if w.endswith('s') and len(w) > 3 else w) + 's?'   # Accounts / Account
             m = re.match(r'(?i)' + r'[\s:—–-]+'.join(map(sp, ws)) + (r'\s*:[\s—–-]*' if colon else r'(?![a-z0-9])[\s:;,—–-]*'), t)
             if m and t[m.end():].strip():
-                t, changed = re.sub(r'(?i)^(?:for|of|on|about)\s+(?=\S)', '', t[m.end():]), True   # "Spec of the page" -> "the page"
+                t, changed = re.sub(r'(?i)^(?:for|of|on|about|by)\s+(?=\S)', '', t[m.end():]), True   # "Spec of the page" -> "the page"
     return t.strip()
 
 

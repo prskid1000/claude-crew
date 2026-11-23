@@ -2418,7 +2418,7 @@ def wave_files(s, brief_path):
                      [[str(c.get(k) or '') for k in ('name', 'type', 'producer', 'consumers', 'order')] + ['yes' if c.get('compatible') else 'no'] for c in s.get('contracts') or []])
                      if s.get('contracts') else 'n/a — nothing crosses areas', '## Rule changes during the wave (newest last)', 'n/a — none yet (appended during the wave)']) + '\n'
     keep = ('id', 'items', 'area', 'paths', 'note', 'kind', 'complex', 'model', 'effort', 'dependsOn', 'migrations', 'branch', 'branches', 'debate', 'task')   # buildy's agent keys
-    if not s.get('run') and (n := naming()):   # naming: buildy-<YYYYMMDD>-<nn>, once per brief (a re-render keeps its args' run)
+    if not s.get('run') and naming_on() and (n := naming()):   # naming: buildy-<YYYYMMDD>-<nn>, once per brief (a re-render keeps its args' run)
         old = ''
         with contextlib.suppress(OSError, ValueError, AttributeError), open(f'{stem}.args.json', encoding='utf-8') as fh:
             old = json.load(fh).get('run') or ''

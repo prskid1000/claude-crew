@@ -82,6 +82,10 @@ $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; "$(Test-KitSameArea 'SHOP-CAT-012 [B
 '@ @($D, $tNew.id)
 Expect "tracker create: a typed key names only PRODUCT-AREA (next number, one type tag), -List fills the spec; a QA bug joins only its area's collector ($($tTyped.name) | $tArea)" (
   $tTyped.name -eq 'SHOP-CAT-011 [Feature] Catalogue: typed key' -and (pwsh -NoProfile -File $D tracker view $tTyped.id 2>$null | ConvertFrom-Json).list -eq 'L2' -and "$tArea" -eq 'True|False|False')
+$null = pwsh -NoProfile -File $D tracker create -List L2 -Spec (@{ kind = 'feature'; title = 'Catalogue typed key'; area = 'CAT'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'x' }); acceptance = @('a') } | ConvertTo-Json -Compress -Depth 4) 2>$null; $tDupC = $LASTEXITCODE
+$tNext = pwsh -NoProfile -File $D tracker create -List L2 -Spec (@{ kind = 'chore'; title = 'Price import job'; area = 'CAT'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'x' }); acceptance = @('a') } | ConvertTo-Json -Compress -Depth 4) 2>$null | ConvertFrom-Json
+$null = pwsh -NoProfile -File $D tracker create -Key qa-fx-naming-1 -List L1 -Parent $tNew.id -Name 'Shop: crash on save again' -Description 'd2' 2>$null; $tReuse = (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name
+Expect "tracker create: a refused duplicate burns no key ($tDupC, next $($tNext.name)); a reused QA defect keeps its key ($tReuse)" ($tDupC -ne 0 -and $tNext.name -eq 'SHOP-CAT-012 [Chore] Catalogue: Price import job' -and $tReuse -match '^SHOP-CAT-010 \[Bug\] Catalogue: crash on save again$')
 Remove-Item Env:KIT_TRACKER_TYPE
 Expect "keyed task: MR title, commit subject, doc title (v per changed round), branch (fix/ for a bug, the tracker tag kept); no key: -Branch needed ($tMr | $tCm | $tDoc | $($tBr -join ' | '))" (
   $tMr -eq 'feat(web): grid page [SHOP-CAT-009]' -and $tCm -eq 'feat(web): grid page [SHOP-CAT-009]' -and $tDoc -eq 'SHOP-CAT-009 Testing goals v2 — blocks and nav' -and

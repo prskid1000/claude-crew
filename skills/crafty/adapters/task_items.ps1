@@ -316,7 +316,7 @@ function Format-KitKeyedName([string]$Name, [string]$Key) {
   $ty = if ("$($nk.kind)" -in 'Feature', 'Bug', 'Chore', 'Spike') { (Get-Culture).TextInfo.ToTitleCase("$($nk.kind)".ToLower()) } else { 'Feature' }
   Invoke-KitNaming @('make', 'title', "key=$Key", "type=$ty", "outcome=$($nk.rest)")
 }
-function Resolve-KitTaskName([string]$Name, [string]$Parent, [string]$Area) { if (-not (Test-KitNamingOn)) { return $Name }; Format-KitKeyedName $Name (Get-KitNewTaskKey $Name $Parent $Area) }
+function Resolve-KitTaskName([string]$Name, [string]$Parent, [string]$Area, [switch]$NoAllocate) { if (-not (Test-KitNamingOn)) { return $Name }; Format-KitKeyedName $Name (Get-KitNewTaskKey $Name $Parent $Area -NoAllocate:$NoAllocate) }
 # wt new / lease -Task without -Branch: <feat|fix>/<KEY>-<tracker tag>-<slug> (kitbag.py naming make branch; the tag keeps every
 # branch -> task parser and the tracker's own links working); a task without a key: throw (pass -Branch)
 function Get-KitTaskBranch([string]$Task) {

@@ -2219,7 +2219,6 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
   }
   if ($pf.Count) { throw "tracker spec refused: $($pf.Count) prose finding(s): $($pf -join '; ')" }
   if ($DryRun) { return $r }
-  if ("$($sp.key)" -like '*-000') { $sp.key = ''; Set-KitSpecKey $sp '' -Allocate; $r.name = Get-KitSpecName $sp }
   if ($Task) {   # kept from the live text: doc links the spec lacks, rollup sections
     Clear-TrackerMemo $Task; $cur = "$((Get-TrackerTask $Task).description)" -replace "`r`n", "`n"; $nd = $r.description
     $lbs = @(Get-KitProcessDocs | ForEach-Object label)
@@ -2228,7 +2227,8 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
     foreach ($m in $ms) { $nd = Set-KitDescSection $nd $m.Groups[1].Value $m.Groups[2].Value '' }
     $null = Set-TrackerName $Task $r.name; $null = Set-TrackerDescription $Task $nd -Resolved; $bkp = $script:KitDescBackup; $id = $Task
   }
-  else { $nt = New-TrackerTask -List "$($sp.list)" -Name $r.name -Description $r.description -Parent "$($sp.parent)" -Assignee "$($sp.assignee)" -Priority "$($sp.priority)" -NewTask "$($sp.newTask)" -Related @($sp.related); $id = "$($nt.id)"; if (-not $id) { throw "tracker create returned no id: $nt" } }
+  else { $nt = New-TrackerTask -List "$($sp.list)" -Name $r.name -Description $r.description -Parent "$($sp.parent)" -Assignee "$($sp.assignee)" -Priority "$($sp.priority)" -NewTask "$($sp.newTask)" -Related @($sp.related); $id = "$($nt.id)"; if (-not $id) { throw "tracker create returned no id: $nt" }
+    if ("$($sp.key)" -like '*-000') { Clear-TrackerMemo $id; $r.name = "$((Get-TrackerTask $id).name)"; $sp.key = Get-KitNameKey $r.name } }   # the key New-TrackerTask allocated after its checks
   $cl = if ($r.items.Count) { Set-KitTaskChecklist $id (Get-KitItemsLabel) $r.items -Prune:$ReplaceItems -KeepDone:($ReplaceItems -and -not $Force) }
   if ($r.decisions.Count) { $null = Set-KitTaskChecklist $id 'Decisions' $r.decisions }
   $nkx = @($sp.items | ForEach-Object { "$($_.code)" })
@@ -2263,7 +2263,7 @@ function Invoke-Tracker {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json|NoParent|ReplaceItems|Force)$') { $__trOpt[$Matches[1]] = $true }
     elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Tasks|Add|Signature|Spec|Back|Area|Product)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -NoParent -ReplaceItems -Force -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Area -Product -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -NoParent -ReplaceItems -Force -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   $__sp = if ($__trOpt.Spec) {   # `skills/crafty/crafty.ps1` "task spec": a file or inline JSON
@@ -2320,7 +2320,7 @@ function Invoke-Tracker {
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
       $ot = if ($old.id) { Get-TrackerTask $old.id }
       if ($ot.name -and -not (Test-TrackerStatus $ot.status 'closed')) {
-        $null = Set-TrackerName $old.id $__trOpt.Name; $null = Set-TrackerDescription $old.id $__trOpt.Description
+        $null = Set-TrackerName $old.id $(if ($__ky = Get-KitNameKey "$($ot.name)") { Format-KitKeyedName $__trOpt.Name $__ky } else { $__trOpt.Name }); $null = Set-TrackerDescription $old.id $__trOpt.Description
         __TrOut ([pscustomobject]@{ id = $old.id; url = (Get-TrackerUrl $old.id); reused = $true }); return
       }
       $nt = New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority -NewTask $__trOpt.NewTask -Related @(Split-KitList $__trOpt.Related) -Area ((@($__trOpt.Product, $__trOpt.Area) | Where-Object { $_ }) -join '-')

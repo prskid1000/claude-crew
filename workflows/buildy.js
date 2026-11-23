@@ -101,7 +101,7 @@ const REPORT = {
   deferred: { type: 'array', items: obj({ id: S, reason: S, ownerDecided: B, kind: { enum: ['code', 'people'], description: 'people: no code; it and ownerDecided never hold promotion' } }, ['id', 'reason']) },
   needsDecision: { type: 'array', items: obj({ item: S, decisionId: { ...S, description: 'the id bossy.ps1 decide ask printed' }, question: S }),
    description: 'items stopped for an owner decision (decide ask); []' },
-  debate: { type: 'array', items: obj({ item: S, question: S, options: SA }), description: 'items with 2 valid paths ("A: ..", "B: ..") no test settles: the workflow debates, the owner decides; []' },
+  debate: { type: 'array', items: obj({ item: S, question: S, options: SA }), description: 'items with 2 valid paths ("A: <label> — <its effect>", "B: ..") no test settles: the workflow debates, the owner decides; []' },
   disputes: { type: 'array', items: obj({ finding: S, evidence: S }), description: 'fix round: findings you contest ("<file>:<line>" as listed; evidence: file:line, a test, a measurement); []' },
   needsEnvFix: { type: 'array', items: obj({ item: S, envFixId: { ...S, description: 'the id bossy.ps1 decide ask -Kind envfix printed' }, need: S }),
    description: 'items stopped for a coordinator-only local-env fix (up/down/refresh/drop, shared DB repair); []' },
@@ -207,7 +207,7 @@ const isFnd = (a) => (a || {}).kind === 'foundation'   // no human-facing change
 const areaNote = (a) => (globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\n` : '') + (AREA_TASK[a.id] ? `TRACKER TASK: ${AREA_TASK[a.id]} (subtask of ${a.task || A.task}) = <task> in every tracker step (status, MR title, track add); never the parent's status.\n` : '')
 const IBW = 'your agent definition\'s "In a /buildy wave"'
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules with ${IBW} commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
-// phases (args.phases): each a fresh devy; branch, checkpoints and cases spec carry the state
+// args.phases: a fresh devy per phase; branch, checkpoints, cases spec carry state
 const PH = {
  code: `\nPHASE code (1 of 3): crafty steps 0-4 only (code, cases spec, unit tests, commit, push), checkpoint -Step commit; no MR. Report localTest NONE (env "phase code") and stop: a fresh devy runs step 5.`,
  local: `PHASE local (2 of 3): crafty step 5 only on your pushed branch (a fix: steps 3-4 again), checkpoint -Step loop; no MR. Report localTest and stop: a fresh devy ships.`,
@@ -260,7 +260,7 @@ blocking = data loss, no rollback, rows touched outside the change's filter. Ret
 const reviews = (a, r, more = '', none = null) => Promise.all([agent(reviewPrompt(a, r) + more, { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
  a.migrations ? agent(migrationPrompt(a, r) + more, { label: `migration-review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'datay', ...pick('review') }) : none])
 const fkey = (f) => `${f.file}${f.line ? ':' + f.line : ''}`
-const cl = (s, n) => String(s || '').replace(/["'`$\r\n]+/g, ' ').replace(/,/g, ';').slice(0, n)   // a quoted pwsh arg; no option split
+const cl = (s, n) => String(s || '').replace(/["'`$\r\n]+/g, ' ').replace(/,/g, ';').slice(0, n)   // one quoted pwsh arg
 const ANSWERS = obj({ answers: { type: 'array', items: obj({ finding: S, verdict: { enum: ['withdrawn', 'upheld'] }, evidence: S, why: S }, ['finding', 'verdict', 'evidence']) } })
 const DEB = { used: 0 }, DM = [].concat(A.debateModels || [])
 const debated = (o, item, id, question) => id ? { ...o, needsDecision: [...(o.needsDecision || []), { item, decisionId: id, question }] } : { ...o, deferred: [...(o.deferred || []), { id: item, reason: 'debate and ask failed: the coordinator decides' }] }
@@ -425,7 +425,7 @@ const results = await pipeline(
   let r = await agent(buildPrompt(a) + (ph ? PH.code : ''), dvo(a, 'build', 'Build'))
   if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'No report came back: find what is done (wt lease + wt status, the board), continue.'), dvo(a, 'build-retry', 'Build')) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
-  // phases: a HANDOFF stays in its phase; no report (after a redo): the phase before stands (its localTest holds the merge)
+  // a HANDOFF stays in its phase; no report after a redo: the phase before stands
   const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)
   const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < 3; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `HANDOFF: read your resume brief ${x.handoff} first, continue. ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return x }
   const phase = async (x, text, l, more) => ((await gate('Build')) ? goOnIn(mergeReports(x, asRep(await agentOrRedo(continuePrompt(a, x, text), { ...dvo(a, l, 'Build'), ...more })), `Phase ${l}`), text) : { ...x, budgetStopped: true })
@@ -631,9 +631,9 @@ as your agent definition says (advocate models: ${DM.join(', ') || MODELS.debate
   log(`${a.id}: debate (${d.trigger}) on ${d.item}: ${id ? `decision ${id}` : 'failed, plain ask'}`)
   if (id) return id
  }
- return did(await runStep(`& ${ORCH} decide ask -Run ${RUN} -Agent ${a.id} ${arg}${d.recommend ? ` -Recommend ${d.recommend}` : ''}`, `decide:${a.id}`, ph, DOK))
+ return did(await runStep(`& ${ORCH} decide ask -Run ${RUN} -Agent ${a.id} -Context "${cl(d.why || `${d.trigger || 'a review'} left 2 valid paths`, 200)}" ${arg}${d.recommend ? ` -Recommend ${d.recommend}` : ''}`, `decide:${a.id}`, ph, DOK))
 }
-// open producer ids (polled): consumers build and merge after them
+// open producer ids (polled): consumers wait
 async function producersOpen(a) {
  if (!DEPS[a.id].length) return []
  const prods = await Promise.all(DEPS[a.id].map((id) => SETTLED[id].p))

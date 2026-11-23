@@ -314,7 +314,7 @@ function Invoke-KitStandingRules([switch]$Propose, [string]$Approve, [string]$Re
     if ($open.Count -and -not @(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object { $_.item -eq 'standing-rules' -and $_.status -eq 'pending' }).Count) {
       $each = @($open | ForEach-Object { $_.id + ': asked "' + $_.question + '" -> "' + $_.answer + '"' + $(if (-not $_.auto) { ' [guidance only]' }) + ' (evidence ' + (@($_.evidence) -join ', ') + ')' })
       $q = 'Standing rules from repeated answers (approve once; decide ask then answers matching questions, logged, revocable): ' + ($each -join ' · ')
-      $ask = @(Invoke-Decide ask -Run tidy -Agent coordinator -Item standing-rules -Question $q -Options 'A: approve all — each answers its future matches', 'B: approve none — keep asking', 'C: approve only the sr- ids I name — the rest stay asked' -Recommend A -NoPublish)
+      $ask = @(Invoke-Decide ask -Run tidy -Agent coordinator -Item standing-rules -Context 'you answered these questions the same way 3+ times' -Question $q -Options 'A: approve all — each answers its future matches', 'B: approve none — keep asking', 'C: approve only the sr- ids I name — the rest stay asked' -Recommend A -NoPublish)
       $askId = if ("$($ask -join ' ')" -match 'DECISION (\S+)') { $Matches[1] }
       if ($askId) { Invoke-KitLocked $file { $rules = @(Read-KitStandingRules); foreach ($r in @($rules | Where-Object { $_.id -in @($open.id) })) { $r.askId = $askId }; Save-KitStandingRules $rules } }
       "PROPOSED $($open.Count) standing rule(s) ($(@($open.id) -join ', ')): ask $askId"

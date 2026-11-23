@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L878 status · L1175 tracker · L1492 prior ·
-  L1508 ask bugs · L1694 git-host · L1881 kitlog · L2003 params · L2308 entry-scripts
+Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L878 status · L1175 tracker · L1493 prior ·
+  L1509 ask bugs · L1695 git-host · L1882 kitlog · L2004 params · L2309 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -906,7 +906,7 @@ function Get-KitRunState($Dir, $Records, $Events, [datetime]$Now = (Get-Date)) {
   if (Get-KitWorkflowStop $Dir $Records) { return 'stopped' }
   $q = ($Now - (Get-KitWorkflowLastWrite $Dir)).TotalMinutes; $sm = [double](Get-KitParam 'supervise.stuckMinutes')
   $open = @(Get-JournalRunning @($Events | Where-Object type -eq 'started') @($Events | Where-Object type -eq 'result' | ForEach-Object agentId)).Count
-  if (-not $open -and @($Events)[-1].type -eq 'result' -and @($Events | Where-Object { $_.type -eq 'started' -and "$($_.phase)" -eq 'Learn' }).Count) { return 'ended' }   # the harness writes no end event: Learn is the last phase
+  if (-not $open -and @($Events)[-1].type -eq 'result' -and "$(@($Events | Where-Object type -eq 'started')[-1].phase)" -eq 'Learn') { return 'ended' }   # the harness writes no end event: Learn is the last phase
   if ($q -lt $sm) { 'running' } elseif ($open -and $q -lt 3 * $sm) { 'stuck' } else { 'stale' }
 }
 # supervise -AutoFix closes a stale run's record: no open step, and no live session or quiet 6x stuckMinutes (a CI or merge wait between steps)
@@ -1410,7 +1410,7 @@ function Get-TrackerOwner {
 }
 # -NewTask '<why>' skips the duplicate check (logged); -Related: tasks the owner named this session
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related, [string]$Area) {
-  $Name = Resolve-KitTaskName $Name $Parent $Area; $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask })   # no bare subtasks (owner, 2026-11-11)
+  $Name = Resolve-KitTaskName $Name $Parent $Area -NoAllocate; $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask })   # no bare subtasks (owner, 2026-11-11)
   if ($gap.Count) { throw "tracker create refused: subtask '$Name' of $Parent lacks $($gap -join ', ') (templates.md task-description): crafty.ps1 tracker create -Spec <json> (crafty.ps1 ""task spec"")" }
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
   # under -Parent the check sees only siblings: the reason acks them
@@ -1421,6 +1421,7 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
       throw "tracker create refused: possible duplicate of $($dup[0].id) $($dup[0].name) (score $($dup[0].score)): extend it (crafty.ps1 tracker scope -Task $($dup[0].id) -Add '<item>'), or -NewTask '<why it cannot be folded in>'" }
   }
   if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # assignee: the kit runner unless '-' (nobody)
+  if ($Name -cmatch '^([A-Z]{2,6}-[A-Z]{2,6})-0+\s') { $Name = Resolve-KitTaskName (Remove-KitNameKey $Name) $Parent $Matches[1] }   # naming: the key only after every check passed
   $nt = __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = (ConvertTo-KitPriority $Priority) }
   if ($sub -and $nt.id) { $null = Sync-TrackerParent "$($nt.id)" (Resolve-TrackerStatus 'open') -ParentId $Parent -NewChild }   # the parent follows its new open child
   $nt
