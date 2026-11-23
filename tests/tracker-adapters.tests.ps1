@@ -118,10 +118,6 @@ $v = foreach ($b in 'main', 'dev', 'release', 'locked', 'auth') { "$b=$(Invoke-H
 Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;release=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
 $null = Invoke-HostVerb 'mr.update' @{ type = 'gitlab'; repo = 'o/r'; n = 5; title = 't'; body = 'b' } -NoMemo
 Check 'host: mr.update edits the open MR (PUT, devtools.py mr re-run)' ($global:calls[-1] -like 'glab api -X PUT projects/o%2Fr/merge_requests/5 *')
-# a CI task with a job and a run link: github's run id is read too
-. (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/github.ps1')
-$gp = @(foreach ($tx in 'job `unit` of [run](https://github.com/o/r/actions/runs/77)', 'https://github.com/o/r/actions/runs/77/job/9') { $u = Invoke-KitAdapter ci github parseUrl @{ text = $tx }; "$($u.run)/$($u.job)" }) -join ' '
-if ($gp -ne '77/ 77/9') { $global:failed++ }; "$(if ($gp -eq '77/ 77/9') { 'PASS' } else { 'FAIL' }) github ci.parseUrl: a run link alone gives the run, a job URL the run and the job ($gp)"
 # Sync-TrackerParent per adapter: child inTest, sibling done -> parent in test
 function Psy($type, $kid, $par, $fx, $want) {
  try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $null = Set-TrackerStatus $kid inTest 6>$null; $pass = $global:log[-1] -match $want -and @($global:log -match [regex]::Escape($par)).Count -ge 2
@@ -206,6 +202,8 @@ $cl = $global:log -join "`n"
 $pass = $cl -match '(?m)^task checklist item remove K1 i1$' -and $cl -match '(?m)^task checklist item add K1 A1 · x · u · held: real-API check$' -and $cl -match '(?m)^task checklist item remove K1 i3$' -and $cl -match '(?m)^task checklist item remove K1 i4$' -and $cl -notmatch 'remove K1 i[29]|resolve K1 i2'
 if (-not $pass) { $global:failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: checklist unticks a resolved item (remove + add: no unresolve verb); prune drops a kit line not wanted and a repeat, a person's line kept ($ck)"
+$global:log.Clear(); $ck = try { __TrA 'checklist' @{ id = 'C1'; name = 'Items'; prune = $true; keepDone = $true; items = @(@{ text = 'A2 · y'; done = $true }) } } catch { "$_" }   # tracker update -ReplaceItems
+$pass = $ck -match '0 removed' -and "$global:log" -match 'remove K1 i3' -and "$global:log" -notmatch 'remove K1 i[1249]'; if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: keepDone keeps resolved kit lines, a repeat goes ($ck)"
 # K54: re-parent via REST (the CLI has no --parent); another list: refused first
 $global:http = [Collections.Generic.List[string]]::new(); function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Headers = @{}) { $global:http.Add("$Method $Uri $($Body | ConvertTo-Json -Compress) $($Headers.Authorization)"); @{ id = 'C9' } }
 $env:CLICKUP_API_TOKEN = 'tk-test'; $global:fx.Insert(0, 'task view C9 --json', '{"id":"C9","list":{"id":"L9"}}')

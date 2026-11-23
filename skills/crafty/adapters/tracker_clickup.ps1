@@ -94,20 +94,22 @@ Register-KitAdapter 'tracker' 'clickup' @{
   }
   'owner' = { param($a) if ($a.name) { __TrClickupMemberId $a.name } }
   # one checklist by name: items keyed by their text up to the first ' · ' (added, renamed, resolved; a resolved one to untick is removed
-  # and added again: the CLI cannot unresolve); prune: kit lines ('<key> · ...', key without spaces) not wanted and repeats removed, others' lines kept
+  # and added again: the CLI cannot unresolve); prune: kit lines ('<key> · ...', key without spaces) not wanted and repeats removed, others' lines kept;
+  # keepDone: a resolved unwanted line stays
   'checklist' = { param($a)
     $get = { @(__TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--jq', '.checklists'))) | Where-Object { $_ -and $_.name -eq $a.name } | Select-Object -First 1 }
     $key = { param($t) ("$t" -split ' · ', 2)[0].Trim() }
     $cl = & $get; if (-not $cl -and -not $__trDry) { $null = __TrCli 'clickup' @('task', 'checklist', 'add', $a.id, $a.name); $cl = & $get }
     if (-not $cl) { if ($__trDry) { return }; throw "tracker (clickup): checklist '$($a.name)' not created on $($a.id)" }
     $want = @{}; foreach ($w in @($a.items)) { $want[(& $key $w.text)] = $w }
-    $have = @{}; $n = 0
+    $have = @{}; $n = 0; $rm = 0
     foreach ($i in @($cl.items)) { $k = & $key $i.name
-      $gone = $have.ContainsKey($k) -or ($want.ContainsKey($k) -and $i.resolved -and -not $want[$k].done) -or ($a.prune -and -not $want.ContainsKey($k) -and $k -notmatch '\s' -and "$($i.name)".Contains(' · '))
-      if ($gone -and ($a.prune -or -not $have.ContainsKey($k))) { $null = __TrCli 'clickup' @('task', 'checklist', 'item', 'remove', $cl.id, $i.id); $n++ } elseif (-not $have.ContainsKey($k)) { $have[$k] = $i } }
+      $unw = $a.prune -and -not $want.ContainsKey($k) -and $k -notmatch '\s' -and "$($i.name)".Contains(' · ') -and -not ($a.keepDone -and $i.resolved)
+      $gone = $have.ContainsKey($k) -or ($want.ContainsKey($k) -and $i.resolved -and -not $want[$k].done) -or $unw
+      if ($gone -and ($a.prune -or -not $have.ContainsKey($k))) { $null = __TrCli 'clickup' @('task', 'checklist', 'item', 'remove', $cl.id, $i.id); $n++; if ($unw) { $rm++ } } elseif (-not $have.ContainsKey($k)) { $have[$k] = $i } }
     foreach ($w in @($a.items)) { $i = $have[(& $key $w.text)]; if (-not $i) { $null = __TrCli 'clickup' @('task', 'checklist', 'item', 'add', $cl.id, $w.text); $n++ } elseif ($i.name -cne $w.text) { $null = __TrCli 'clickup' @('task', 'checklist', 'item', 'edit', $cl.id, $i.id, '--name', $w.text); $n++ } }
     if (@($a.items | Where-Object done).Count) { $have = @{}; foreach ($i in @((& $get).items)) { $have[(& $key $i.name)] = $i } }
     foreach ($w in @($a.items | Where-Object done)) { $i = $have[(& $key $w.text)]; if ($i -and -not $i.resolved) { $null = __TrCli 'clickup' @('task', 'checklist', 'item', 'resolve', $cl.id, $i.id); $n++ } }
-    "checklist $($a.name) on $($a.id): $n change(s)"
+    "checklist $($a.name) on $($a.id): $n change(s), $rm removed"
   }
 }

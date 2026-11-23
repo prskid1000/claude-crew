@@ -221,7 +221,7 @@
    "kit-protect": "kit-protect.txt", "tracking": "tracking.json",
    "deploy-log": "deploys.jsonl", "decisions-log": "decisions.jsonl", "scope-log": "scopes.jsonl", "audit": "audit/",
    "outbox": "outbox.jsonl", "pauses": "pauses/", "programs": "programs/",
-   "tracker-none": "tracker-none/", "published": "published/",
+   "tracker-none": "tracker-none/", "published": "published/", "desc-backups": "desc-backups/",
    "localenv-env": "localenv/",
    "browser-ports": "browser-ports.json", "ports-deployed": "ports-deployed.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "locks": "runtimes/locks.json", "storage": "storage/",
    "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl", "outcomes": "outcomes.jsonl", "standing-rules": "standing-rules.json", "pool-usage": "pool-usage.json", "disk-writes": "disk-writes.jsonl", "kit-tests-db": "kit-tests/server.json", "forgotten": "forgotten/"

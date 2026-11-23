@@ -3,18 +3,23 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task_rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L83 move · L126 status roles · L272 task text
+# Sections: L7 items · L88 move · L131 status roles · L277 task text
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
-# checklist, else a <!-- kit:<name> --> description section (always the whole list); -Prune: kit lines ('<key> · ...') not in $Items and repeats go
-function Set-KitTaskChecklist([string]$Task, [string]$Name, $Items, [switch]$Prune) {
+# checklist, else a <!-- kit:<name> --> description section (always the whole list); -Prune: kit lines ('<key> · ...') not in $Items and repeats go;
+# -KeepDone: a ticked line stays even when pruned
+function Set-KitTaskChecklist([string]$Task, [string]$Name, $Items, [switch]$Prune, [switch]$KeepDone) {
   $seen = @{}; $Items = @($Items | Where-Object { $ky = ("$($_.text)" -split ' · ', 2)[0].Trim(); -not $seen[$ky]++ })   # one line per key
   $ad = $KitAdapters['tracker'][$__trType]
-  if ($ad -and $ad.ContainsKey('checklist')) { return __TrA 'checklist' @{ id = $Task; name = $Name; prune = [bool]$Prune; items = @($Items | ForEach-Object { @{ text = $_.text; done = [bool]$_.done } }) } }
+  if ($ad -and $ad.ContainsKey('checklist')) { return __TrA 'checklist' @{ id = $Task; name = $Name; prune = [bool]$Prune; keepDone = [bool]$KeepDone; items = @($Items | ForEach-Object { @{ text = $_.text; done = [bool]$_.done } }) } }
   Clear-TrackerMemo $Task; $tk = Get-TrackerTask $Task; if (-not $tk.name) { throw "tracker read of $Task failed" }
-  $nd = Set-KitDescSection $tk.description $Name.ToLower() ((@("**$Name**") + @($Items | ForEach-Object { "- [$(if ($_.done) { 'x' } else { ' ' })] $($_.text)" })) -join "`n") ''
-  if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { Set-TrackerDescription $Task $nd }
+  $sx = [regex]::Match(("$($tk.description)" -replace "`r`n", "`n"), "(?s)<!-- kit:$([regex]::Escape($Name.ToLower())) -->\n(.*?)\n<!-- /kit:"); $wk = @($Items | ForEach-Object { ("$($_.text)" -split ' · ', 2)[0].Trim() })
+  $gone = @(if ($sx.Success) { @($sx.Groups[1].Value -split "`n" | Where-Object { $_ -match '^- \[( |x)\] (?<t>.+)$' -and $wk -notcontains ($Matches.t -split ' · ', 2)[0].Trim() } ) })
+  $kd = @(if ($KeepDone) { @($gone | Where-Object { $_ -like '- `[x`]*' }) })
+  $nd = Set-KitDescSection $tk.description $Name.ToLower() ((@("**$Name**") + @($Items | ForEach-Object { "- [$(if ($_.done) { 'x' } else { ' ' })] $($_.text)" }) + $kd) -join "`n") ''
+  if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { $null = Set-TrackerDescription $Task $nd }
+  "checklist $Name on ${Task}: $($gone.Count - $kd.Count) removed"
 }
 # why a task's items are not done although merged (owner, 2026-11-16: counts match the task state): id -> ' · <reason>' suffix.
 # track.holdPromotion 'deferred items: <id> <why>, ...' (its own or another open task's) naming the id -> 'held: <why>'; a piece

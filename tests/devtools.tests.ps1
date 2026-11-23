@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 tests/devtools.tests.ps1: devtools.py adapters on one test kit: module_audit.py findings schema / validate / summary; the gdocs report
-adapter (devtools selftest on recorded gws replies) and pokey.ps1 finalize -Report gdocs with a fake gws CLI, the QA report HTML.
+adapter (devtools selftest on recorded gws replies) and pokey.ps1 finalize -Report gdocs with a fake gws CLI, the QA report HTML;
+tracker bodies (a missing path refused, desc-backups, update -ReplaceItems).
 Usage: pwsh -NoProfile -File <kit>/tests/devtools.tests.ps1 [-Kit <kit>] (or tests/kit-tests.ps1 -Area devtools).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -62,5 +63,31 @@ Expect "devtools cases: closest verb / missing task named ($($cv -join ' ; '))" 
 $chOut = & $py -X utf8 $DT cases --help 2>&1 | Out-String; $chCode = $LASTEXITCODE
 $csOut = & $py -X utf8 $DT cases T1 render nosuchkind 2>&1 | Out-String
 Expect "devtools cases: --help exits 0 with the examples ($chCode); <task> <verb> runs the verb" ($chCode -eq 0 -and $chOut -match 'cases render T1 ai' -and $csOut -match "kind 'nosuchkind'|has no cases spec" -and $csOut -notmatch 'did you mean')
+# ---- tracker bodies (kept off tracker.tests.ps1: its cap)
+$dpCr = Join-Path $k 'skills/crafty/crafty.ps1'; $env:KIT_TRACKER_TYPE = 'none'; $bk = Kd; $fbSec = "**Problem:** p`n**Goal:** g`n**Acceptance:** a`n**Links:** https://x.example/2"
+$fbOwn = (pwsh @np $dpCr tracker create -List L1 -Key qa-dp-own -Name 'Owner shaped' -NewTask x -Description $fbSec | ConvertFrom-Json).id
+$null = pwsh @np $dpCr tracker describe $fbOwn "**Testing doc (AI):** [open](https://x.example/a)`n`n$fbSec"
+# a body that looks like a path but is no file: refused, nothing written (2026-11-23: a path string replaced a parent's description); the replaced text kept
+$dpOld = (pwsh @np $dpCr tracker view $fbOwn | ConvertFrom-Json).description
+$dpMiss = pwsh @np $dpCr tracker describe $fbOwn "$bk/gone/brief.md" 2>&1 | Out-String; $dpCodes = "$LASTEXITCODE"
+$null = pwsh @np $dpCr tracker describe $fbOwn 'brief-v2.md' 2>&1; $dpCodes += " $LASTEXITCODE"; $null = pwsh @np $dpCr tracker describe $fbOwn -Text 'work\x\desc.txt' 2>&1; $dpCodes += " $LASTEXITCODE"
+$null = pwsh @np $dpCr tracker comment $fbOwn 'work/x/comment.md' -Kind comment-status 2>&1; $dpCodes += " $LASTEXITCODE"
+foreach ($dpWord in 'n/a', 'yes/no') { $null = pwsh @np $dpCr tracker comment $fbOwn $dpWord -Kind comment-status -ProseOk t 2>&1; $dpCodes += " $LASTEXITCODE" }   # one-word text, no path
+$dpSame = (pwsh @np $dpCr tracker view $fbOwn | ConvertFrom-Json).description -eq $dpOld
+$dpOk = pwsh @np $dpCr tracker describe $fbOwn "**Testing doc (human):** [open](https://x.example/h2)`n`n$fbSec" 2>&1 | Out-String
+$dpBk = @(Get-ChildItem (Join-Path (TkPath $k desc-backups) $fbOwn) -Filter '*.md' -ErrorAction SilentlyContinue | Sort-Object Name)
+Expect "tracker describe / comment: a missing path-like body (absolute, bare .md, -Text, comment) exits 1 and writes nothing, n/a and yes/no are text; a write keeps the old text in desc-backups ($dpCodes; $($dpBk.Count) backups)" ($dpCodes -eq '1 1 1 1 0 0' -and $dpMiss -match 'no such file' -and $dpSame -and $dpOk -match 'old description kept: .*desc-backups' -and $dpBk.Count -ge 2 -and [IO.File]::ReadAllText($dpBk[-1].FullName) -eq $dpOld)
+# tracker update -ReplaceItems: the spec's items are the whole list; a done one stays unless -Force; dropped codes stay out of rollups
+Set-JsonFile "$bk/ri1.json" @{ kind = 'Feature'; title = 'Replace items'; list = 'L1'; newTask = 'x'; problem = 'p.'; goal = 'g.'; acceptance = @('a'); links = @('https://x.example/r'); items = @(@{ code = 'OLD-1'; desc = 'old one' }, @{ code = 'OLD-2'; desc = 'old done' }, @{ code = 'KEEP'; desc = 'kept' }) }
+Set-JsonFile "$bk/ri2.json" @{ items = @(@{ code = 'KEEP'; desc = 'kept' }, @{ code = 'NEW-1'; desc = 'new one' }) }
+$riId = (pwsh @np $dpCr tracker create -Spec "$bk/ri1.json" | ConvertFrom-Json).id; $riSf = TkPath $k tasks | Join-Path -ChildPath "$riId.json"
+$riS = Get-Content -Raw $riSf | ConvertFrom-Json -AsHashtable; $riS.itemsMrs = @{ 'web!5' = @('OLD-2') }; Set-JsonFile $riSf $riS 20   # OLD-2 done: named by a merged MR
+$riU = pwsh @np $dpCr tracker update $riId -Spec "$bk/ri2.json" -ReplaceItems | ConvertFrom-Json; $riD = (pwsh @np $dpCr tracker view $riId | ConvertFrom-Json).description
+$riF = pwsh @np $dpCr tracker update $riId -Spec "$bk/ri2.json" -ReplaceItems -Force | ConvertFrom-Json; $riD2 = (pwsh @np $dpCr tracker view $riId | ConvertFrom-Json).description
+$riX = Get-Content -Raw $riSf | ConvertFrom-Json
+Expect "tracker update -ReplaceItems: an item not in the spec leaves spec and checklist, a done one only with -Force, counts reported, dropped kept in itemsDropped ($("$($riU.dropped)") $($riU.checklist) | $("$($riF.dropped)") $($riF.checklist))" (
+  "$($riU.dropped)" -eq 'OLD-1' -and $riU.checklist -match '1 removed' -and $riD -notmatch 'OLD-1' -and $riD -match '- \[x\] OLD-2' -and $riD -match '- \[ \] NEW-1' -and
+  "$($riF.dropped)" -eq 'OLD-2' -and $riD2 -notmatch 'OLD-' -and $riD2 -match 'KEEP' -and (@($riX.itemsDropped) -join ',') -eq 'OLD-1,OLD-2' -and (@($riX.spec.items.code) -join ',') -eq 'KEEP,NEW-1')
+Remove-Item Env:KIT_TRACKER_TYPE
 Remove-TestKit $k
 Complete-Tests

@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L92 state · L173 config · L254 OS · L449 leases · L857 status · L1150 tracker · L1482 prior ·
-  L1498 ask bugs · L1684 git-host · L1871 kitlog · L1993 params · L2298 entry-scripts
+Sections: L11 paths · L92 state · L173 config · L254 OS · L449 leases · L857 status · L1150 tracker · L1497 prior ·
+  L1513 ask bugs · L1699 git-host · L1886 kitlog · L2008 params · L2313 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1167,9 +1167,14 @@ function ConvertTo-TrackerStatusKey([string]$Status) { $n = $Status -replace '[\
 function Resolve-TrackerStatus([string]$Status, [string]$Scope) { $k = ConvertTo-TrackerStatusKey $Status; if ($__trStatus.Contains($k)) { "$(@(Get-KitRoleNames $k $Scope)[0])" } else { $Status } }   # '' = the status is off
 function Test-TrackerStatusOff([string]$Status) { $k = ConvertTo-TrackerStatusKey $Status; $__trStatus.Contains($k) -and -not @($__trStatus[$k]).Count }
 function Test-TrackerStatus([string]$Status, [string[]]$Logical, [string]$Scope) { $k = Get-TrackerStatusKey $Status $Scope; [bool]($k -and @($Logical | Where-Object { $_ -ieq $k }).Count) }
+# one line that reads as a file path: a drive / ./ / ~/ / UNC start, or one word ending .md / .txt / .json ('n/a', 'yes/no', a URL: text)
+function Test-KitPathLike([string]$s) { $t = "$s".Trim(); $t -and $t -notmatch '[\r\n]' -and $t -notmatch '^\w+://' -and ($t -match '^(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|~[\\/]|\\\\)' -or ($t -notmatch '\s' -and $t -match '(?i)\.(md|txt|json)$')) }
+# a body: an existing file's text, else the text itself; a path-like one that is no file throws (a missing file once became a task's description)
 function __TrText([string]$s) {
   $isFile = $false; if ($s -and $s.Length -lt 260 -and $s -notmatch '[\r\n<>|"*?]') { try { $isFile = Test-Path -LiteralPath $s -PathType Leaf } catch {} }
-  if ($isFile) { Get-Content -LiteralPath $s -Raw -Encoding utf8 } else { $s }
+  if ($isFile) { return Get-Content -LiteralPath $s -Raw -Encoding utf8 }
+  if (Test-KitPathLike $s) { throw "tracker: no such file '$("$s".Trim())': nothing written (a body that looks like a path must be an existing file; pass the text itself or -File <existing file>)" }
+  $s
 }
 function __TrQuote([string[]]$a) { ($a | ForEach-Object { if ("$_" -match '[\s"]' -or "$_" -eq '') { '"' + ("$_" -replace '"', '\"') + '"' } else { "$_" } }) -join ' ' }
 function __TrShort([string]$s) { $s = $s -replace "`r?`n", '\n'; if ($s.Length -gt 160) { $s.Substring(0, 157) + '...' } else { $s } }
@@ -1432,7 +1437,17 @@ function ConvertTo-KitPriority([string]$Priority) {
   $n = @{ urgent = 1; highest = 1; critical = 1; high = 2; normal = 3; medium = 3; low = 4; lowest = 4 }[$p.ToLower()]
   if ($n) { "$n" } else { throw "tracker create: priority '$p' unknown: 1-4 or urgent / high / normal / low" }
 }
-function Set-TrackerDescription([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'describe' @{ id = $Id; text = (__TrText $Text) } }
+# every description write: refused when empty; the text it replaces is kept first (desc-backups/<id>/, newest 10; its path: $script:KitDescBackup, printed by tracker describe / update)
+function Set-TrackerDescription([string]$Id, [string]$Text, [switch]$Resolved) {   # -Resolved: $Text is the body already (no second file lookup)
+  $nd = if ($Resolved) { $Text } else { __TrText $Text }; if (-not "$nd".Trim()) { throw "tracker describe ${Id}: empty text refused (it would wipe the description)" }
+  $script:KitDescBackup = ''
+  if (-not $__trDry) { Clear-TrackerMemo $Id; $otk = Get-TrackerTask $Id; if (-not $otk.name) { throw "tracker describe ${Id}: the old description cannot be read for its backup: nothing written" }; $od = "$($otk.description)"
+    if ($od.Trim() -and ($od -replace "`r`n", "`n") -ne ("$nd" -replace "`r`n", "`n")) { $bd = Join-Path (Get-KitPath desc-backups -Create) ($Id -replace '[^\w.-]+', '_'); $null = New-Item -ItemType Directory -Force -Path $bd
+      $bf = Join-Path $bd "$((Get-Date).ToString('yyyyMMdd-HHmmss-fff')).md"; [IO.File]::WriteAllText($bf, $od, [Text.UTF8Encoding]::new($false))
+      @(Get-ChildItem -LiteralPath $bd -Filter '*.md' | Sort-Object Name -Descending | Select-Object -Skip 10) | Remove-Item -ErrorAction SilentlyContinue
+      $script:KitDescBackup = $bf } }
+  Clear-TrackerMemo $Id; __TrA 'describe' @{ id = $Id; text = $nd }
+}
 # owner text stays: only the <!-- kit:<name> --> block is replaced; new: after $After, else under the testing-doc links
 function Set-KitDescSection([string]$Desc, [string]$Name, [string]$Body, [string]$After) {
   $s = "<!-- kit:$Name -->"; $e = "<!-- /kit:$Name -->"; $block = "$s`n$Body`n$e"; $d = "$Desc" -replace "`r`n", "`n"

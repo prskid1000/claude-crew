@@ -1,21 +1,21 @@
 # Kit state (`.state/` durable, `.runtime/` disposable)
-Read by kitty (state changes), revy (kind kit), agents needing task links ("Indexes").
-Paths: `kit.example.json` `_paths` (`Get-KitPath` / `kit_path`); schemas: the Inventory below (`kitbag.py state lint`;
+Read by kitty, revy (kind kit), agents needing task links ("Indexes").
+Paths: `kit.example.json` `_paths`; schemas: the Inventory below (`kitbag.py state lint`;
 supervise: BAD = WATCH).
 
 ## Rules
 - **One file per key** (task, session, decision, run, publish key); a shared map only with one owning writer.
 - **Writes:** `Write-KitState` (lib.ps1) / `state_write` (kitbag.py): temp file + move, `schemaVersion`, `updated`,
   `holder` {agent, session, pid, pidStart, holderPid, holderStart}; read-modify-write inside `Invoke-KitLocked` / `locked()`
-  on that file. Log lines: kitlog only (`Write-KitLog`, `kitlog()`).
+  on that file. Log lines: kitlog only.
 - **Reads:** `Read-KitState` / `state_read`: `$null` / `None` when missing or broken, never throws; unknown fields kept.
 - **Times:** ISO 8601 with offset (`ToString('o')`, `isoformat()`); readers accept offset-less ones.
 - **Ids:** stable, file-safe: session `<agent>-<8 hex>`, decision `d-<yyyyMMddHHmmss>-<agent>-<4>`, task = tracker id, run =
-  workflow run name.
+  its name.
 - **Format:** JSON for scripts; markdown only for people (templates.md `kit-report`).
 - **Change a schema:** bump `v<n>` in its row and the writer; readers accept `n-1`. A new file: a `_paths` name + a row.
   Deleting state in use: the owner decides.
-- **Lifecycle:** `.runtime` ages out by `_paths.keep` (`bossy.ps1 cleanup`); in `.state` it only trims the Inventory's logs
+- **Lifecycle:** `.runtime` ages out by `_paths.keep`; in `.state` it only trims the Inventory's logs
   (`Invoke-KitLogTrim`), deletes `tracking.json.migrated`.
 
 ## Indexes (not the tracker's comments)
@@ -37,6 +37,7 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `automerge` | `devtools.py merge`, `bossy.ps1 track run` | `json v1: refs` | an entry until its MR merges |
 | `mr-ignore` | `bossy.ps1 track ignore` | `json v1: mrs` | keep |
 | `published` | `devtools.py publish`, `crafty.ps1 tracker create -Key` | `dir v1: key` | keep |
+| `desc-backups` | `Set-TrackerDescription` | `text v0` | newest 10 per task |
 | `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) |
 | `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) |
 | `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep |

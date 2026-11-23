@@ -7,7 +7,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force]  gated checks (e2e: the diff's specs only; -AllTests = whole suite;
    a pass on the same sources + command is not rerun, -Force reruns)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text kept in desc-backups), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
  pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
@@ -18,7 +18,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L24 init · L31 wt · L323 stack · L505 gate · L839 check · L1157 pipes · L1213 guard · L2130 dir · L2140 checkpoint ·
-  L2170 prior · L2208 tracker · L2230 task spec · L2412 scope · L2460 host
+  L2170 prior · L2208 tracker · L2230 task spec · L2423 scope · L2471 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2268,9 +2268,16 @@ function ConvertTo-KitTaskRender($Spec, [string]$Task) {
     items = @(ConvertTo-KitSpecItems $Spec $Task)
     decisions = @(if ($dec.Count) { Format-KitDecisionItems $dec '' $Task }) }
 }
-# create (no -Task) or update by key (-Task: merged into its stored spec); refused on gaps or prose findings (a local path is one)
-function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
+# create (no -Task) or update by key (-Task: merged into its stored spec); refused on gaps or prose findings (a local path is one);
+# -ReplaceItems: items not in this spec leave the spec and the Items checklist (kept out of rollups like track forget-item), a done one stays unless -Force
+function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$ReplaceItems, [switch]$Force) {
   $old = if ($Task) { (Read-KitState (Get-KitTaskFile $Task)).spec }; $sp = if ($old -is [Collections.IDictionary]) { Merge-KitTaskSpec $old $Spec } else { $Spec }
+  $drop = @(); if ($ReplaceItems) {
+    if (-not $Task -or -not @($Spec.items | Where-Object { $_.code }).Count) { throw 'tracker update -ReplaceItems: needs <id> and a spec with items[{code, desc}] (the full new list)' }
+    $tx = Read-KitState (Get-KitTaskFile $Task)   # done = spec done, named by a merged MR (itemsMrs), or ticked in the description's Items section
+    $dn = @(@($sp.items | Where-Object done | ForEach-Object { "$($_.code)" }) + @(if ($tx.itemsMrs -is [Collections.IDictionary]) { @($tx.itemsMrs.Values | ForEach-Object { $_ }) }) + @([regex]::Matches("$((Get-TrackerTask $Task).description)", '(?m)^- \[x\] (\S+) · ') | ForEach-Object { $_.Groups[1].Value }))
+    $nk = @($Spec.items | ForEach-Object { "$($_.code)" }); $keep = @($sp.items | Where-Object { $_.code -and ("$($_.code)" -in $nk -or (-not $Force -and "$($_.code)" -in $dn)) }); foreach ($e in $keep) { if ("$($e.code)" -notin $nk) { $e.done = $true } }
+    $drop = @($sp.items | Where-Object { $_.code -and $keep -notcontains $_ } | ForEach-Object { "$($_.code)" }); $sp.items = $keep }
   $gap = @(Test-KitTaskSpec $sp); if ($gap.Count) { throw "tracker spec refused: missing or wrong: $($gap -join '; ') (crafty.ps1 ""task spec"")" }
   $r = ConvertTo-KitTaskRender $sp $Task
   $dt = "`n`n$(@($r.decisions.text) -join "`n")"; $pf = @(if (-not $Spec.proseOk) { Test-KitProse -Kind task-description -Text "$($r.name)`n`n$($r.description)$dt" })
@@ -2286,18 +2293,22 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun) {
     $docs = @($cur -split "`n" | Where-Object { $l = $_; @($lbs | Where-Object { $l.StartsWith("**$($_):**") -and -not $nd.Contains("$($_):") }).Count }); if ($docs.Count) { $nd = (($docs -join "`n`n") + "`n`n" + $nd) }
     $ms = @([regex]::Matches($cur, '(?s)<!-- kit:([\w-]+) -->\n(.*?)\n<!-- /kit:\1 -->')); [array]::Reverse($ms)   # each lands on top: last first keeps their order
     foreach ($m in $ms) { $nd = Set-KitDescSection $nd $m.Groups[1].Value $m.Groups[2].Value '' }
-    $null = Set-TrackerName $Task $r.name; $null = Set-TrackerDescription $Task $nd; $id = $Task
+    $null = Set-TrackerName $Task $r.name; $null = Set-TrackerDescription $Task $nd -Resolved; $bkp = $script:KitDescBackup; $id = $Task
   }
   else { $nt = New-TrackerTask -List "$($sp.list)" -Name $r.name -Description $r.description -Parent "$($sp.parent)" -Assignee "$($sp.assignee)" -Priority "$($sp.priority)" -NewTask "$($sp.newTask)" -Related @($sp.related); $id = "$($nt.id)"; if (-not $id) { throw "tracker create returned no id: $nt" } }
-  if ($r.items.Count) { $null = Set-KitTaskChecklist $id (Get-KitItemsLabel) $r.items }
+  $cl = if ($r.items.Count) { Set-KitTaskChecklist $id (Get-KitItemsLabel) $r.items -Prune:$ReplaceItems -KeepDone:($ReplaceItems -and -not $Force) }
   if ($r.decisions.Count) { $null = Set-KitTaskChecklist $id 'Decisions' $r.decisions }
-  $sp.Remove('proseOk'); Update-KitTaskIndex $id { param($x) $x.spec = $sp; $x.parentItemsSig = ''; if ($r.items.Count) { $x.itemsSig = '' } }   # Items just rewritten: the rollup / parent items write theirs again
+  $nkx = @($sp.items | ForEach-Object { "$($_.code)" })
+  $sp.Remove('proseOk'); Update-KitTaskIndex $id { param($x) $x.spec = $sp; $x.parentItemsSig = ''; if ($r.items.Count) { $x.itemsSig = '' }   # Items just rewritten: the rollup / parent items write theirs again
+    if ($ReplaceItems) { $x.itemsDropped = @(@($x.itemsDropped) + $drop | Where-Object { $_ -and $nkx -notcontains $_ } | Select-Object -Unique); if ($x.itemIds) { $x.itemIds = @($x.itemIds | Where-Object { $drop -notcontains $_ }) }
+      if ($x.itemDesc -is [Collections.IDictionary]) { foreach ($c in $drop) { $x.itemDesc.Remove($c) } } } }
   $po = @(if ($sp.parent) { Update-KitParentItems "$($sp.parent)" }; if ($Task -or $sp.subtasks) { Update-KitParentItems $id }) -join ' · '
   if (-not $Task -and -not $sp.parent -and $env:KIT_SESSION) {   # K54: 2+ related tasks of one session go under one parent ask
     $flat = @(Get-ChildItem (Get-KitPath tasks) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.BaseName -ne $id -and $_.LastWriteTime -gt (Get-Date).AddHours(-2) } | ForEach-Object { $x = Read-KitState $_.FullName
         if ($x.spec -and -not $x.spec.parent -and -not $x.spec.subtasks -and "$($x.holder.session)" -eq $env:KIT_SESSION) { $_.BaseName } })
     if ($flat.Count) { [Console]::Error.WriteLine("WARNING: tracker create: this session made $($flat.Count + 1) top-level tasks ($(@(@($flat) + $id) -join ', ')): related tasks go under one parent ask (create it from a spec, then -Parent), or tracker group -Parent <p> -Tasks $(@(@($flat) + $id) -join ',')") } }
-  [pscustomobject]@{ id = $id; url = (Get-TrackerUrl $id); name = $r.name; items = $r.items.Count; decisions = $r.decisions.Count; parent = "$po" }
+  $o = [pscustomobject]@{ id = $id; url = (Get-TrackerUrl $id); name = $r.name; items = $r.items.Count; decisions = $r.decisions.Count; parent = "$po" }
+  if ($ReplaceItems) { $o | Add-Member dropped $drop; $o | Add-Member checklist "$cl" }; if ($bkp) { $o | Add-Member backup $bkp }; $o
 }
 # a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy nobody updates; "Decision needed for X" passes
 function Test-KitDecisionText([string]$Text) { "$Text".Trim() -match '^\W{0,3}decisions?\W*(\(|:|\r?\n|$)' }
@@ -2317,9 +2328,9 @@ function Invoke-Tracker {
   $__trA = @($args); $__trPos = New-Object System.Collections.ArrayList; $__trOpt = @{}
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
-    if ($__a -match '^-(DryRun|Json|NoParent)$') { $__trOpt[$Matches[1]] = $true }
+    if ($__a -match '^-(DryRun|Json|NoParent|ReplaceItems|Force)$') { $__trOpt[$Matches[1]] = $true }
     elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Tasks|Add|Signature|Spec|Back)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -NoParent -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -NoParent -ReplaceItems -Force -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   $__sp = if ($__trOpt.Spec) {   # `skills/crafty/crafty.ps1` "task spec": a file or inline JSON
@@ -2364,7 +2375,7 @@ function Invoke-Tracker {
       "deleted comment $__x on $__id`: $((("$($__c[0].text)" -split "`r?`n")[0]))"
     }
     'render' { if (-not $__sp) { 'usage: tracker render -Spec <json>'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -DryRun) }
-    'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> (merged by key into the stored spec)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id) }
+    'update' { if (-not ($__id -and $__sp)) { 'usage: tracker update <id> -Spec <json> [-ReplaceItems [-Force]] (merged by key into the stored spec; -ReplaceItems: its items are the whole list)'; exit 2 }; __TrOut (Publish-KitTaskSpec $__sp -Task $__id -ReplaceItems:([bool]$__trOpt.ReplaceItems) -Force:([bool]$__trOpt.Force)) }
     'create' {   # -Spec: rendered ("task spec"); free text only for a keyed QA / watch defect
       if ($__sp) { __TrOut (Publish-KitTaskSpec $__sp -DryRun:([bool]$__trOpt.DryRun)); return }
       $__specHint = 'tracker create -Spec <json> (crafty.ps1 "task spec": kind, title, problem, goal, items, acceptance, links)'
@@ -2391,11 +2402,11 @@ function Invoke-Tracker {
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
     'describe' { if ((Read-KitState (Get-KitTaskFile $__id)).spec) { "tracker describe refused: $__id is rendered from its spec: tracker update $__id -Spec <json with the changed keys>"; exit 1 }
-      $__nd = __TrText $(if ($__x) { $__x } else { $__trOpt.Description }); $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # text or a file path; spec-less free text keeps every template section
+      $__nd = __TrText $(if ($__x) { $__x } elseif ($__trOpt.Description) { $__trOpt.Description } else { $__trOpt.Text }); if (-not "$__nd".Trim()) { 'usage: tracker describe <id> <text | existing file> | -Text <text> | -File <file> (empty text refused)'; exit 2 }; $__ot = Get-TrackerTask $__id; $__sub = [bool]"$($__ot.parent)"   # text or a file path; spec-less free text keeps every template section
       $__oldG = @(Get-KitTaskTextGaps 'x' "$($__ot.description)" -Subtask:$__sub); if ($__oldG -contains 'a description') { $__oldG = @(Get-KitTaskTemplate | ForEach-Object { "$($_.label)" }) }   # empty today: nothing to lose
       $__lost = @(Get-KitTaskTextGaps 'x' $__nd -Subtask:$__sub | Where-Object { $_ -notin $__oldG })
       if ($__lost.Count) { "tracker describe refused: the text lacks $($__lost -join ', ') (templates.md task-description): render it from a spec: tracker update $__id -Spec <json> (crafty.ps1 ""task spec""; doc links and kit sections stay)"; exit 1 }
-      Set-TrackerDescription $__id $__nd }
+      Set-TrackerDescription $__id $__nd -Resolved; if ($script:KitDescBackup) { "old description kept: $script:KitDescBackup" } }
     'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
     'move' {   # K54: re-parent, list or top-level; state and both parents' Items follow
       if (-not ($__id -and ($__trOpt.Parent -or $__trOpt.List -or $__trOpt.NoParent))) { 'usage: tracker move <id> [-Parent <p>] [-List <l>] [-NoParent] [-DryRun]'; exit 2 }

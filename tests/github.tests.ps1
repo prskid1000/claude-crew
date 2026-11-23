@@ -63,5 +63,11 @@ $env:KIT_TRACKER_TYPE = 'github'; 'body text' | Set-Content "$(Kd)/c.md"
 $out = pwsh @np $D tracker comment o/r#12 -File "$(Kd)/c.md" -Kind comment-status -ProseOk x -DryRun 6>&1 2>&1 | Out-String
 Remove-Item Env:KIT_TRACKER_TYPE
 Expect 'github: tracker comment -File sends the file as the body' ($out -match 'issue comment 12 -R o/r --body "body text')
+# (cap move) a CI task with a job and a run link: github's run id is read too
+$gp = "$(Invoke-PsTest 'github-ciurl' @'
+$null = . $args[0] 6>$null; . (Join-Path (Split-Path $args[0]) 'adapters/github.ps1')
+@(foreach ($tx in 'job `unit` of [run](https://github.com/o/r/actions/runs/77)', 'https://github.com/o/r/actions/runs/77/job/9') { $u = Invoke-KitAdapter ci github parseUrl @{ text = $tx }; "$($u.run)/$($u.job)" }) -join ' '
+'@ @(Join-Path $k 'skills/crafty/lib.ps1') | Select-Object -Last 1)"
+Expect "github ci.parseUrl: a run link alone gives the run, a job URL the run and the job ($gp)" ($gp -eq '77/ 77/9')
 Remove-TestKit $k
 Complete-Tests
