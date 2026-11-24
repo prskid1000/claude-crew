@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming · L395 track lines · L400 task ids · L416 order
+# Sections: L7 items · L87 move · L130 status roles · L282 task text · L299 naming · L401 track lines · L406 task ids · L422 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -200,6 +200,12 @@ function Select-KitFailedLive([string[]]$Ids, $Trk, $Cache) {
 function Get-KitCachedScopeRoles {
   if ($null -eq $script:KitScopeAll) { $script:KitScopeAll = @(Get-ChildItem (Get-KitPath tracker-statuses) -Filter "$__trType-*.json" -ErrorAction SilentlyContinue | ForEach-Object { try { "$((Get-Content $_.FullName -Raw | ConvertFrom-Json).scope)" } catch { } } | Where-Object { $_ } | ForEach-Object { Get-KitScopeRoles $_ }) }
   $script:KitScopeAll
+}
+# a raw status name (no kit role) the scope's live list lacks: the refusal, before the tracker call (retro tidy-20261124-03: failedReview)
+function Test-KitScopeStatus([string]$Scope, [string]$Status) {
+  if (-not $Scope -or $__trStatus.Contains($Status) -or -not ($m = Get-KitScopeRoles $Scope) -or -not @($m.names).Count) { return '' }
+  if (@($m.names | Where-Object { (ConvertTo-KitStatusWord $_) -eq (ConvertTo-KitStatusWord $Status) }).Count) { return '' }
+  "scope $Scope has no status '$Status' (its statuses: $(@($m.names) -join ', '); a kit role: crafty.ps1 tracker roles $Scope)"
 }
 # a role's names in a scope ([] = the scope lacks it: skip that step), else the default names
 function Get-KitRoleNames([string]$Role, [string]$Scope) {

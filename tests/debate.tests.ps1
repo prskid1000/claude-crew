@@ -120,6 +120,8 @@ $gk = Join-Path (Get-KitPath work -Create) 'wfix'; $null = git init -q $gk; git 
 '@ @($O)
 Expect-Each $wz 'waste: # (tags: fixable first by tokens, open, ignored; why: the reason; raised: one signal per 2-run pattern, once, then open; fixed: its commit; cells: one item per role + kind, per role fixable / open / fixed counts, items + reasons per cell, ignored apart; heat: waste columns of the role · context map, the window in its legend, no own panel; closed: /tidy''s reason -> ignored; refix: runs after the fix re-measure it; trailer: a Waste-Fix: commit fixes it)' @('tags', 'why', 'raised', 'fixed', 'cells', 'heat', 'closed', 'refix', 'trailer') -Show 10
 # retro tidy-20261124-01 (moved here: room): usage errors, decision ids in answers, prior wave siblings, log slack
+$tSt = Px $O track status 2>&1 | Out-String; $tStc = $LASTEXITCODE
+Expect "usage: track status names the read verb (show), exit 2 ($tStc)" ($tStc -eq 2 -and $tSt -match 'Did you mean: show\?')
 $dShow = (Px $O decide show 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $dShowc = $LASTEXITCODE; $tRm = Px $O track remove -Task X1 2>&1 | Out-String; $tRmc = $LASTEXITCODE
 Expect "usage: decide show names its verbs + the read verb (list); track remove without -Mrs prints its params, exit 2 ($dShowc $tRmc)" ($dShowc -eq 2 -and $dShow -match 'ask,list,answer' -and $dShow -match 'Did you mean: list\?' -and $tRmc -eq 2 -and $tRm -match 'track remove -Task <id> -Mrs')
 $sup = Invoke-PsTest supersede @'

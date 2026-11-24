@@ -108,6 +108,8 @@ $null = Set-TrackerStatus 'P-1' 'closed' 6>$null; $nb = "$(Set-TrackerStatus 'P-
 "wr:$($global:W -join ',')|$($pr -match 'has no promoted')|$($bk -like 'SKIPPED*')|$($nb -like 'SKIPPED*')"
 # a name the cache does not know: read again once
 $global:Live['P'] += @{ name = 'Verified'; type = 'custom' }; $script:KitScopeRoles.Clear(); "unk:$(Get-TrackerStatusKey 'Verified' 'P')|$(@((Get-KitScopeRoles 'P').unmapped) -join '/')"
+$rw = try { Set-TrackerStatus 'P-1' 'Shipping Soon' 6>$null; 'no throw' } catch { "$_" }; $rwx = [regex]::Escape("scope P has no status 'Shipping Soon' (its statuses: To Do, ")
+"raw:$($rw -match $rwx -and -not ($global:W -match 'Shipping'))"
 # the round's owner: another live agent's write is refused, the coordinator's passes
 function Test-KitLive { $true }; $global:Tk['P-2'] = @{ status = 'To Do'; list = 'P' }
 $script:KitWho = @{ agent = 'W1' }; $null = Set-TrackerStatus 'P-2' 'inProgress' 6>$null; $script:KitWho = @{ agent = 'W2' }; $o2 = "$(Set-TrackerStatus 'P-2' 'review' 6>$null)"
@@ -120,6 +122,7 @@ Expect "roles: a Jira-shaped project: open / closed by type, missing roles empty
 Expect "roles: Linear states (Todo = open, Done = closed, Backlog / Canceled no role) and GitHub labels (a custom status label unmapped) ($(& $rx 'lin') / $(& $rx 'gh'))" ((& $rx 'lin') -match '^open=Todo;inProgress=In Progress;review=In Review;.*closed=Done\|$' -and (& $rx 'gh') -match '^open=open;inProgress=in progress;.*closed=closed\|needs triage$')
 Expect "roles: writes use the scope's names, a role it lacks is skipped (never invented), inTest -> review and closed -> inProgress refused, -Back reopens ($(& $rx 'wr'))" ((& $rx 'wr') -eq 'P-1=Code Review,P-1=QA,P-1=Shipped,P-1=In Progress|True|True|True')
 Expect "roles: an unknown live name is read again once, then listed as unmapped ($(& $rx 'unk'))" ((& $rx 'unk') -eq '|Verified')
+Expect "roles: a status name the scope's live list lacks is refused before the tracker call, with the list ($(& $rx 'raw'))" ((& $rx 'raw') -eq 'True')
 Expect "roles: a live agent owns its task's code round; a sibling's write is refused, the coordinator's passes ($(& $rx 'own'))" ((& $rx 'own') -eq 'True|Code Review')
 # track route (2026-11-22: 5 failed tasks fixed in another task's wave stayed failed): a failed task follows the wave task's NEW MRs
 # (merged before the route: not counted), promoted with a -Back naming them when merged; a [Bug] collector follows a run's MRs

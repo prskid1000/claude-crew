@@ -133,6 +133,7 @@
   "tidy.windowDays": "config default=14 unit=d",
   "tidy.busyBeatMinutes": "config default=20 unit=min",
   "tidy.regressionSimilarity": "config default=0.4 unit=ratio",
+  "tidy.groupSimilarity": "config default=0.3 unit=ratio",
   "storage.dbDownRetryMinutes": "config default=5 unit=min",
   "storage.dbFastMinutes": "config default=5 unit=min",
   "storage.dbSlowMinutes": "config default=15 unit=min",

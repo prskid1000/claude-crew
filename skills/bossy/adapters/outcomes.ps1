@@ -408,7 +408,7 @@ if ($Json) { $o | ConvertTo-Json -Compress; return }
 "DIGEST $file"; "AT $($o.at)"; "WORK $work ($($o.groups) group(s) of 2+)$(if ($stamped) { '; nothing to judge: last retro stamped' })"; "MINUTES $min"; $o.steps | ForEach-Object { "  $_" }
 }
 # signals of one skill joined when any two overlap >= $Min; each group with its closest lesson (bump candidate)
-function Get-KitSignalGroups($Signals, $Lessons, [double]$Min = 0.3) {   # TODO-PARAM (fixed default)
+function Get-KitSignalGroups($Signals, $Lessons, [double]$Min = (Get-KitParam 'tidy.groupSimilarity')) {
   $groups = [Collections.Generic.List[object]]::new()
   foreach ($s in $Signals) {
     $w = Get-KitWordSet $s.text; $hit = $null

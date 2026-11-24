@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L460 leases · L879 status · L1179 tracker · L1497 prior ·
-  L1516 ask bugs · L1702 git-host · L1889 kitlog · L1999 params · L2304 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L460 leases · L879 status · L1179 tracker · L1498 prior ·
+  L1517 ask bugs · L1703 git-host · L1890 kitlog · L2000 params · L2305 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1350,6 +1350,7 @@ function Set-TrackerStatus([string]$Id, [string]$Status, [string]$Back) {
   if (Test-TrackerStatusOff $Status) { Write-Host "tracker: $Id status $Status skipped (tracker.statuses.$Status is null)"; return }
   $was = try { if (-not $__trDry) { Clear-TrackerMemo $Id; Get-TrackerTask $Id } } catch { $null }
   $sc = "$($was.list)"; if ($sc -and $__trStatus.Contains($Status) -and -not @(Get-KitRoleNames $Status $sc).Count) { $skip = "SKIPPED: $Id kept '$($was.status)': scope $sc has no $Status status (step skipped; crafty.ps1 tracker roles $sc)"; Write-Host "tracker: $skip"; return $skip }   # never invented
+  if ($bad = Test-KitScopeStatus $sc $Status) { throw "tracker: $Id not set: $bad" }
   if ($skip = Test-KitStatusWrite $Id $Status $Back $was) { Write-Host "tracker: $skip"; return @($skip) -like 'SKIPPED*' }
   # promoted: process.gates.promote (an unread task fails closed)
   if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and -not ($pg = Test-KitProcessGate promote @{ task = $Id; status = $Status }).ok) {
@@ -1960,7 +1961,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   # bad parameters: exit 2 with the usage line, never a prompt
   $usage = { param([string]$why, [bool]$missing)
     # decide show: the set's read verb
-    if ($why -match 'argument "(?<bad>[^"]+)" does not belong to the set "(?<set>[^"]+)"' -and $Matches.bad -in 'show', 'view', 'get', 'ls', 'read', 'info' -and ($rv = @(($Matches.set -split ',') | Where-Object { $_ -in 'list', 'show', 'view', 'status' })[0])) { $why += " Did you mean: $($rv)?" }
+    if ($why -match 'argument "(?<bad>[^"]+)" does not belong to the set "(?<set>[^"]+)"' -and $Matches.bad -in 'show', 'view', 'get', 'ls', 'read', 'info', 'status' -and ($rv = @(($Matches.set -split ',') | Where-Object { $_ -in 'list', 'show', 'view', 'status' })[0])) { $why += " Did you mean: $($rv)?" }
     $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues } | Where-Object { $_ }); if ($vs.Count -and $missing) { $why += " Verbs: $($vs -join ', ')." }    $use = if ($src -and (Test-Path $src)) { [regex]::Match((Get-Content $src -Raw), "(?m)^\s+$([regex]::Escape(($Fn -replace '^Invoke-', '').ToLower()))\b[^\r\n]*").Value.Trim() }; if ($use) { $why += " Usage: $use" }
     $script:KitRc = 2; & $end $why; [Console]::Error.WriteLine($why); exit 2 }
   # a crash exits 1, never 0: a statement error alone lets `pwsh -File` exit 0

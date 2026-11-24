@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L606 git host · L679 scope · L771 MR · L967 merge · L1298 docs ·
-  L1461 publish · L1956 render · L2520 spec · L2877 plugins · L2891 keepboth · L2910 selftest · L3608 CLI
+  L1461 publish · L1956 render · L2525 spec · L2882 plugins · L2896 keepboth · L2915 selftest · L3613 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2181,6 +2181,8 @@ def cases_cmd(a):
         print(f'cases {tid}: {c.get("title") or "(no title)"} · {len(c.get("rounds") or [])} round(s)')
         for k in c.get('cases') or []:
             print(f'  {k.get("id")} · {k.get("type") or "?"} · {k.get("result") or "open"}' + (f' (round {k["ran"]})' if k.get('ran') else ''))
+        for r in c.get('rounds') or []:
+            print(f'  round {r.get("round")}: {r.get("result") or "-"}' + (f' · failed {r["failed"]}' if r.get('failed') else ''))
         for g in cases_gaps(c):
             print(f'  GAP {g}')
         return 0
@@ -2208,7 +2210,8 @@ def cases_cmd(a):
         nonlocal gaps, mgap
         c = x.get('cases') or {}
         if verb == 'result' and rest[0] not in [k.get('id') for k in c.get('cases') or []]:
-            raise SystemExit(f'cases result: {tid} has no case {rest[0]} (cases add it first)')
+            ids = ', '.join(str(k.get('id')) for k in c.get('cases') or []) or 'none'
+            raise SystemExit(f'cases result: {tid} has no case {rest[0]}; its cases: {ids} (a new one: cases add it first)')
         n = len(c.get('rounds') or []) + 1   # the round in progress
         if verb == 'result':
             new['cases'][0]['ran'] = n
@@ -2220,7 +2223,9 @@ def cases_cmd(a):
                 cnt[w] = cnt.get(w, 0) + 1
             c = merge_spec(c, {'rounds': [{'round': n, 'date': time.strftime('%Y-%m-%d'), 'cases': ', '.join(k['id'] for k in ran),
                                            'result': ', '.join(f'{v} {w}' for w, v in cnt.items()), 'bugs': opt.get('bugs') or 'none',
-                                           'fix': opt.get('fix') or '', 'retest': opt.get('retest') or ''}]})
+                                           'fix': opt.get('fix') or '', 'retest': opt.get('retest') or '',
+                                           # retro tidy-20261124-03: a 7-round loop showed no cause per round
+                                           'failed': '; '.join(f"{k['id']}: {k['result']}" for k in ran if str(k['result']).upper().startswith('FAIL'))}]})
         else:
             if verb == 'add':   # a shared task: one wave agent never rewrites another's title or ids
                 own_spec(c, new, '--replace' in rest)
