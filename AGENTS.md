@@ -58,7 +58,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R18 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
 
 - **Crew** (the only agent types, spawned only through these targets; roles and characters: `kit.example.json` `_manifest`):
-  one `devy` per brief area; `briefy` writes specs, briefs and contracts; an existing `vidy` index is reused, never re-read.
+  one `devy` per brief area; `briefy` writes specs, briefs and contracts; any agent may spawn `vidy`; an existing vidy index is reused, never re-read.
   Each loads its skill first; its Character shapes judgement, tone and how it argues a dispute or debate, never a rule or the
   Writing standards. Step 0 of every agent reads the board (who is alive here); a disagreement: /buildy `disputes`, a
   debate or `board msg`, still split -> the owner decides (`decide ask`, both sides).
