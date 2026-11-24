@@ -36,7 +36,7 @@ $ls = & { . $lkL
   Update-State shop3 { param($x) $x.requests = @(@{ id = 'q9'; kind = 'deploy'; status = 'queued'; agent = 'Q1' }, @{ id = 'q8'; kind = 'deploy'; status = 'done'; agent = 'Q2' }) }
   $queued = Select-Lane shop Q1 0 'deploy'; $waitId = Select-Lane shop Q2 0 'wait' 'q8'
   "$sticky|$pick|$read|$pin|$cold|$bad|$queued|$waitId" } 6>$null
-Expect "lanes: the agent's lane (layer, lease, open deploy) sticks; wait -Id finds its request's lane; deploy / use share the warm lane (all cold: lane 1, K58); other verbs stay; -Lane pins; a lane past max refused ($ls)" ($ls -eq 'shop2|shop|shop|shop2|shop|refused|shop3|shop3')
+Expect "lanes: the agent's lane (layer, lease, open deploy) sticks; wait -Id finds its request's lane; deploy / use share the warm lane (all cold: lane 1, K58), a deploy skips one others lease while a lane has room; other verbs stay; -Lane pins; a lane past max refused ($ls)" ($ls -eq 'shop2|shop3|shop|shop2|shop|refused|shop3|shop3')
 # K58 lane opening: a free warm lane first; busy warm lanes are shared until the queue wait reaches localEnv.lanes.openAfterMinutes,
 # then a cold lane with room opens; status shows "lanes open N of M (why)"; an extra lane idles out after idle.graceMinutes
 $k58Kit = New-LocalEnvKit lek58; $k58L = Join-Path $k58Kit 'skills/envy/envy.ps1'
@@ -45,7 +45,7 @@ $k58 = & { . $k58L
   function Get-GateAvailGB { 50 }; function KeepFreeGB { 10 }; function Need-GB { 1 }
   Update-State shop2 { param($x) $x.services = @{ api = @{ status = 'up' } } }
   $free = Select-Lane shop F1 0 'deploy'
-  Update-State shop2 { param($x) $x.leases.F1 = @{ services = @('api'); agent = 'F1' }; $x.requests = @(@{ id = 'w1'; kind = 'deploy'; status = 'queued'; agent = 'F1'; at = (Get-Date).AddMinutes(-5).ToString('o') }) }
+  Update-State shop2 { param($x) $x.release.repos.r = @{ layers = @(@{ branch = 'b'; agent = 'F1' }) }; $x.requests = @(@{ id = 'w1'; kind = 'deploy'; status = 'queued'; agent = 'F1'; at = (Get-Date).AddMinutes(-5).ToString('o') }) }
   $shared = Select-Lane shop S1 0 'deploy'
   Update-State shop2 { param($x) $x.requests[0].status = 'in-train'; $x.train = @{ id = 't1'; at = (Get-Date).AddMinutes(-30).ToString('o'); requests = @('w1') } }
   $shared += '/' + (Select-Lane shop T1 0 'deploy')

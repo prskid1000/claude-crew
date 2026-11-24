@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L67 lane pick · L110 thin artifacts
+# Sections: L4 shared builds · L67 lane pick · L116 thin artifacts
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -69,24 +69,30 @@ function Write-Reactor([string]$e, $s) {
 function Get-LaneLoad([string]$n) {
   $st = Read-State $n
   $who = @(@($st.leases.Keys | ForEach-Object { if ($st.leases[$_].agent) { $st.leases[$_].agent } else { ($_ -split '/')[0] } }) + @($st.holds.Keys) + @($st.release.repos.Values | ForEach-Object { @($_.layers) } | Where-Object { $_ } | ForEach-Object agent) + @($st.requests | Where-Object { $_.kind -eq 'deploy' -and $_.status -in 'queued', 'in-train' } | ForEach-Object agent))
-  [pscustomobject]@{ env = $n; agents = @($who | Where-Object { $_ } | Select-Object -Unique); up = @($st.services.Values | Where-Object { $_.status -eq 'up' }).Count; train = [bool]$st.train }
+  $lessees = @($st.leases.Keys | ForEach-Object { if ($st.leases[$_].agent) { $st.leases[$_].agent } else { ($_ -split '/')[0] } } | Where-Object { $_ } | Select-Object -Unique)
+  [pscustomobject]@{ env = $n; agents = @($who | Where-Object { $_ } | Select-Object -Unique); leased = $lessees; up = @($st.services.Values | Where-Object { $_.status -eq 'up' }).Count; train = [bool]$st.train }
 }
-# -Lane k; else the lane the agent already uses; else (deploy / use / task) the least busy warm lane (K58 below)
-function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [string]$id) {
+# -Lane k; else the lane the agent already uses; else (deploy / use / task) the least busy warm lane (K58 below); $pinned: an agent's
+# -Env <lane k> (no K58 pick). A deploy onto a lane another agent leases waits for that lease: any free lane instead (v2-wave1 JCF)
+function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [string]$id, [string]$pinned = '') {
   $names = @(LaneNames $e)
   if ($k) { if ($k -gt $names.Count) { throw "-Lane ${k}: $($names[0]) has $($names.Count) lane(s) (localEnv.envs.$($names[0]).lanes.max)" }; return $names[$k - 1] }
   $loads = @($names | ForEach-Object { Get-LaneLoad $_ })
   if ($id) { foreach ($n in $names) { if (@((Read-State $n).requests | Where-Object id -eq $id).Count) { return $n } } }   # wait -Id: the lane holding that request
   $mine = @($loads | Where-Object { $agent -in $_.agents })[0]; if ($mine) { return $mine.env }
-  if ($action -notin 'deploy', 'use', 'task') { return $e }
+  if ($action -notin 'deploy', 'use', 'task') { return $(if ($pinned) { $pinned } else { $e }) }
   # K58 (owner 2026-11-17): a warm lane (services up or a train) first, even shared; a cold one only past the queue wait
   # localEnv.lanes.openAfterMinutes (learned) with room for all its services; a person opens one with -Env <lane> / -Lane k
   $room = (Get-GateAvailGB (Get-SysMem)) - (KeepFreeGB)
   $fits = { param($n) (@(EnvServices $n | Where-Object { Managed $_ } | ForEach-Object { Need-GB $n $_ }) | Measure-Object -Sum).Sum -le $room }
   $warm = @($loads | Where-Object { $_.up -or $_.train }); if (-not $warm.Count) { $warm = @($loads[0]) }   # all cold: lane 1
-  $best = @($warm | Sort-Object @{ Expression = { $_.agents.Count + [int]$_.train } }, @{ Expression = { $_.up }; Descending = $true }, @{ Expression = { [array]::IndexOf($names, $_.env) } })[0]
-  $why = 'warm lane, free'
-  if ($best.agents.Count + [int]$best.train) {
+  $best = if ($pinned) { @($loads | Where-Object env -eq $pinned)[0] } else { @($warm | Sort-Object @{ Expression = { $_.agents.Count + [int]$_.train } }, @{ Expression = { $_.up }; Descending = $true }, @{ Expression = { [array]::IndexOf($names, $_.env) } })[0] }
+  $why = if ($pinned) { 'the lane -Env names' } else { 'warm lane, free' }
+  $taken = @($best.leased | Where-Object { $_ -ne $agent })
+  $free = @($loads | Where-Object { -not @($_.leased | Where-Object { $_ -ne $agent }).Count -and -not $_.train -and ($_.up -or (& $fits $_.env)) } | Sort-Object @{ Expression = { $_.agents.Count } }, @{ Expression = { $_.up }; Descending = $true }, @{ Expression = { [array]::IndexOf($names, $_.env) } })
+  if ($action -eq 'deploy' -and $taken.Count -and $free.Count) { $why = "$($best.env) leased by $($taken -join ', '): a free lane instead of waiting for that lease"; $best = $free[0] }
+  elseif ($pinned) { }
+  elseif ($best.agents.Count + [int]$best.train) {
     $wait = [int](@($warm | ForEach-Object { Get-LaneWaitMin $_.env }) | Measure-Object -Minimum).Minimum; $after = [double](Get-KitParam 'localEnv.lanes.openAfterMinutes')
     $cold = @($loads | Where-Object { $_.env -notin $warm.env -and (& $fits $_.env) })[0]
     $why = if ($wait -lt $after) { "warm lanes busy, shared: queue wait $wait min < lanes.openAfterMinutes $after" } elseif (-not $cold) { "warm lanes busy, shared: queue wait $wait min, no cold lane with room" } else { "cold lane opened: warm lanes busy, queue wait $wait min >= lanes.openAfterMinutes $after" }

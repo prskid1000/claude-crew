@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2066 dir · L2076 checkpoint ·
-  L2116 prior · L2154 tracker · L2176 task spec · L2379 scope · L2427 host
+Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2070 dir · L2080 checkpoint ·
+  L2120 prior · L2158 tracker · L2180 task spec · L2383 scope · L2431 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1566,6 +1566,10 @@ function LayoutCheck {
   if ($in.session_id) { Write-KitLog guard warn @{ session = "$($in.session_id)"; tool = "$($in.tool_name)"; why = $lw } }; $script:layoutNote = $lw
 }
 foreach ($e in $edits) { if ($pwWhy = Test-KitLoginLiteral $e "$($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)") { $raw = "$($in.tool_name) $e"; Deny $pwWhy } }
+# a shell write (heredoc or echo redirect, tee, Set-Content / Add-Content / Out-File) gets the same check: 2026-11-24, a heredoc slipped past it
+foreach ($pwSw in [regex]::Matches("$cmd", '(?i)(?:>>?|\btee(?:\s+-a)?|\b(?:Set-Content|Add-Content|Out-File)\b(?:\s+-(?:Path|FilePath|LiteralPath))?)\s*["'']?([^\s"''`;|&<>()]+)')) {
+  $pwSwPath = $pwSw.Groups[1].Value; if ($here -and $pwSwPath -notmatch '^([\\/]|[A-Za-z]:)') { $pwSwPath = Join-Path $here $pwSwPath }
+  if ($pwWhy = Test-KitLoginLiteral $pwSwPath "$cmd") { $raw = "$($in.tool_name) $pwSwPath"; Deny $pwWhy } }
 $off = @(foreach ($e in $edits) { OffLayout $e $here })
 if (-not $cmd) {
   LayoutCheck

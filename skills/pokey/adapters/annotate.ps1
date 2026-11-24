@@ -7,6 +7,7 @@ param([Parameter(Mandatory)][string]$In, [string]$Out, [string[]]$Rect = @(), [s
 $ErrorActionPreference = 'Stop'
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'annotate needs Windows (System.Drawing): elsewhere mark() before shot(), or name the element in the check note' }
 $Rect = @(Split-KitList $Rect ';')   # one box each, its commas stay
+foreach ($r in $Rect) { if (@(($r -split ',', 5)[0..3] | Where-Object { "$_".Trim() -match '^-?\d+(\.\d+)?$' }).Count -ne 4) { throw "-Rect '$r': want 'x,y,w,h[,label]', numbers in image px" } }   # before the image opens
 $src = (Resolve-Path $In).Path
 if (-not $Out -and $Copy) { $Out = Join-Path (Split-Path $src) ("{0}-marked{1}" -f [IO.Path]::GetFileNameWithoutExtension($src), [IO.Path]::GetExtension($src)) }
 if (-not $Out) { $Out = $src }

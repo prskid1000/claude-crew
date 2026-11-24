@@ -15,7 +15,7 @@ if ($IsWindows) {
   $m = [Drawing.Bitmap]::new((Join-Path (Kd) 'shot-marked.png')); $px = $m.GetPixel(10, 50); $m.Dispose()
   Expect "annotate: -Copy writes <name>-marked.png with a red box ($out)" ($out -match 'annotated .*shot-marked\.png \(1 rect\)' -and $px.R -gt 150 -and $px.G -lt 100)
   $badOut = Px $Q annotate -In $png -Rect 'a,b,c,d' 2>&1 | Out-String; $unlocked = try { [IO.File]::Open($png, 'Open', 'ReadWrite', 'None').Dispose(); $true } catch { $false }
-  Expect "annotate: a bad -Rect fails and leaves the image unlocked ($($badOut.Trim()))" ($badOut -notmatch 'annotated ' -and $unlocked)
+  Expect "annotate: a bad -Rect fails naming the shape and leaves the image unlocked ($(@($badOut -split "`n" -match 'want ')[0].Trim()))" ($badOut -notmatch 'annotated ' -and $badOut -match "-Rect 'a,b,c,d': want 'x,y,w,h\[,label\]'" -and $unlocked)
 } else { 'SKIP annotate (Windows only)' }
 # ---- ui-checks
 if ($bk) {
@@ -54,15 +54,19 @@ if ($bk) {
 const [TF, PW] = process.argv.slice(2), F = { '#u': '{user}', '#c': '{totp}' }, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]
 writeFileSync(TF, JSON.stringify({ default: 'form', targets: { form: { web, webLogin: { path: '/login', fields: F, submit: 'button' }, users: U },
   sso: { web, browser: { engine: 'chromium' }, webLogin: { type: 'sso-steps', steps }, users: U }, ff: { web, browser: { engine: 'firefox' }, webLogin: {}, users: U } } }))
+// each key on its own free port: a hashed one may be a live agent's or another suite's Chrome (cookies, posts, kills cross)
+const net = await import('node:net'), free = () => new Promise((r) => { const sv = net.createServer().listen(0, '127.0.0.1', () => { const p = sv.address().port; sv.close(() => r(p)) }) })
+writeFileSync(m.kitPath('browser-ports', { create: true }), JSON.stringify({ [m.sessionKey('form', 'a', 'admin')]: await free(), [m.sessionKey('sso', 'b', 'admin')]: await free(), [m.sessionKey('ff', '', 'admin')]: await free() }))
 const { b, home, out } = await login()
 console.log('totp:' + ((await import(BM.replace('browser.mjs', 'adapters/web-login.mjs'))).totp(U.admin[2], 59000) === '287082'))
 await out('totp-login', async () => { const s = await b.session({ tenant: 'a' }), r = s.key === 'form|a|admin' && await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
 PW && (process.env.KIT_PLAYWRIGHT = PW)
-for (const k of ['sso', 'shared']) await out(k, async () => { const s = await b.session({ target: 'sso', tenant: 'b' }), r = s.engine === 'chromium' && await home(s) && posts === 3; await s.done(); return r })
+const p0 = posts   // sso posts once, shared reuses its cookie: counted from here, so a totp-login miss is its own FAIL only
+for (const k of ['sso', 'shared']) await out(k, async () => { const s = await b.session({ target: 'sso', tenant: 'b' }), r = s.engine === 'chromium' && await home(s) && posts === p0 + 1; await s.done(); return r })
 await out('hint', () => b.session({ target: 'ff' }).then(() => false, (e) => /playwright install firefox/.test(e.message)))
 process.exit(0)
 '@) "$qk/targets.local.json" $(if (-not $nopw) { $pwm })
-  foreach ($x in 'totp', 'totp-login', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright)" } else { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") } }
+  foreach ($x in 'totp', 'totp-login', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright)" } else { Expect "browser.mjs login: $x$(if (@($res) -notcontains "${x}:true") { " ($(@($res) -match "^${x}:" | Select-Object -First 1))" })" (@($res) -contains "${x}:true") } }
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/pokey)' }
 $bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
 $bmUsers = @('skills/pokey/adapters/media-grab.mjs', 'skills/bossy/kitbag.py' | Where-Object { (Get-Content (Join-Path $src $_) -Raw) -notmatch 'QUIET_ARGS \}?\s*=\s*await import\(bm\)|import \{ kitPath, QUIET_ARGS \}|args: QUIET_ARGS|args: \[\.\.\.QUIET_ARGS' })

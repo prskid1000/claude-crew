@@ -109,6 +109,20 @@ Expect "release under an open PAUSE of the agent's run: layers kept, before boar
 & { . $L5; Update-State shop { param($x) $x.leases.rl1 = @{ until = (Get-Date).AddHours(1).ToString('o'); holderPid = $PID } } }
 $rlo = Px $L5 release -Agent rl1 2>&1 | Out-String; $rlc = $LASTEXITCODE; $rln = Px $L5 release -Agent rl2 2>&1 | Out-String
 Expect "localenv: release with no -Env picks the leased env; no lease anywhere still needs -Env ($rlc)" ($rlc -eq 0 -and $rlo -match '\[shop\] lease of rl1 released' -and $rln -match '-Env needed')
+$lfKit = New-TestKit le5lanes; $lfE = New-Item -ItemType Directory -Force (Join-Path $lfKit 'skills/envy/adapters'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $lfE)
+Copy-Item @((Join-Path $src 'skills/envy/adapters/shared_builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane_standard.ps1')) $lfE; $lfL = Join-Path $lfKit 'skills/envy/envy.ps1'
+& $J @{ localEnv = @{ lanes = @{ openAfterMinutes = 15 }; envs = @{ shop = @{ lanes = @{ max = 3 }; services = @(@{ name = 'api'; port = 41071; start = 'echo' }) } } } } (Join-Path $lfKit 'skills/crafty/kit.local.json') 8
+# v2-wave1 JCF: a deploy onto a lane another agent leases (picked or named) waits for that lease; a free lane of the group instead
+$lf = & { . $lfL
+  function Get-GateAvailGB { 50 }; function KeepFreeGB { 10 }; function Need-GB { 1 }
+  foreach ($n in 'shop', 'shop2', 'shop3') { Update-State $n { param($x) $x.leases = @{}; $x.holds = @{}; $x.requests = @(); $x.train = $null; if ($x.release) { $x.release.repos = @{} } } }
+  Update-State shop2 { param($x) $x.services = @{ api = @{ status = 'up' } }; $x.leases.WA = @{ services = @('api'); agent = 'WA' } }
+  $picked = Select-Lane shop J1 0 'deploy'; $named = Select-Lane shop2 J2 0 'deploy' '' 'shop2'; $nw = (Read-State shop).lanePick.why -match 'shop2 leased by WA: a free lane'; $logs = Select-Lane shop2 J3 0 'logs' '' 'shop2'
+  Update-State shop { param($x) $x.release.repos.r = @{ layers = @(@{ branch = 'b'; agent = 'J5' }) } }; $stick = Select-Lane shop2 J5 0 'use' '' 'shop2'
+  function Get-GateAvailGB { 10.5 }; $none = Select-Lane shop2 J4 0 'deploy' '' 'shop2'
+  "$picked|$named|$logs|$stick|$none|$nw" } 6>$null
+Expect "lanes: a deploy onto a lane another agent leases (picked or named) goes to a free lane; other verbs keep the named lane, the agent's own lane sticks; none free (no room): the leased lane, its wait bounded by leaseMinutes ($lf)" ($lf -eq 'shop|shop|shop2|shop|shop2|True')
+Remove-TestKit $lfKit
 Remove-TestKit $k
 # moved from local-env-4.tests.ps1 (its token cap)
 function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }

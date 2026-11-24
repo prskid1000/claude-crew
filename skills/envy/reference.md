@@ -31,10 +31,10 @@ For kitty / the coordinator editing `localEnv` or running owner verbs; any agent
   `{lane}` ('' / k), `{port:<svc>}` and `:<old port>` follow.
 - `envs.<env><k>` (bird: `envs.<env>-<bird>`) keys override that lane (e.g. its own DB service; `db.port` follows its port); env file `<env>.env`, then
   `<env><k>.env`.
-- `-Env <env>` (deploy, use, task) = the lane the agent already uses, else the least busy warm lane (services up or a train;
-  shared when busy); a cold lane opens only when the warm lanes' queue wait reaches `localEnv.lanes.openAfterMinutes` (learned
-  from queue waits) and free RAM minus the keep-free floor holds all its services; `-Env <env>-<bird>` / `-Lane <k>` opens or pins
-  one; owner verbs act on the named lane. An extra lane's services stop after `idle.graceMinutes` unheld (at least 3 start times). `status`: `lanes open
+- `-Env <env>` (deploy, use, task) = the agent's lane, else the least busy warm lane (services up or a train; shared when
+  busy; a deploy skips one others lease for a free one with room); a cold one opens when warm queue wait reaches
+  `localEnv.lanes.openAfterMinutes` (learned) and free RAM minus the keep-free floor holds its services; `-Env <env>-<bird>` /
+  `-Lane <k>` opens or pins one; owner verbs: the named lane. An extra lane's services stop after `idle.graceMinutes` unheld (at least 3 start times). `status`: `lanes open
   N of M (why)`.
 - API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1; old `<target><k>` accepted with a warning). Seed: the env's seed file; `{bird}` in it (e.g. `-Target local-shop-{bird}`).
 - `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).

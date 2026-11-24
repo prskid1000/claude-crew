@@ -29,9 +29,12 @@ Expect "guard: evidence writes into <kit>/skills/**/shots|evidence denied, the r
 $pwF = "$k/x/work/agents/a1/setup.mjs"
 $pwc = foreach ($c in @(@('lit', 'Write', @{ file_path = $pwF; content = "const PW = 'Zq7-x9Lm'`ncall({ login, password: PW })" }), @('edit', 'Edit', @{ file_path = $pwF; old_string = 'a'; new_string = "{ user: 'qa1', password: `"Zq7-x9Lm`" }" }),
     @('look', 'Write', @{ file_path = $pwF; content = "const PW = B.targetOf('t').users['qa1'][1]`ncall({ login, password: PW })" }), @('tpl', 'Write', @{ file_path = $pwF; content = "{ login: '{user}', password: '{pass}' }" }),
-    @('kit', 'Write', @{ file_path = "$k/notes/x.mjs"; content = "{ login: 'a', password: 'Zq7-x9Lm' }" }))) {
+    @('kit', 'Write', @{ file_path = "$k/notes/x.mjs"; content = "{ login: 'a', password: 'Zq7-x9Lm' }" }),
+    @('heredoc', 'Bash', @{ command = "cat > '$pwF' <<'EOF'`nconst PW = 'Zq7-x9Lm'`ncall({ login, password: PW })`nEOF" }), @('rel', 'Bash', @{ command = "echo `"{ user: 'qa1', password: 'Zq7-x9Lm' }`" >> x/work/agents/a1/u.json" }),
+    @('setc', 'PowerShell', @{ command = "Set-Content -Path '$pwF' -Value `"{ login: 'a', pwd: 'Zq7-x9Lm' }`"" }), @('hdlook', 'Bash', @{ command = "cat > '$pwF' <<'EOF'`nconst PW = B.targetOf('t').users['qa1'][1]`ncall({ login, password: PW })`nEOF" }),
+    @('hdkit', 'Bash', @{ command = "cat > '$k/notes/x.mjs' <<'EOF'`n{ login: 'a', password: 'Zq7-x9Lm' }`nEOF" }))) {
   "$($c[0]):$((& $D guard -Json (@{ tool_name = $c[1]; cwd = $k; tool_input = $c[2] } | ConvertTo-Json -Compress)) -join '' -match 'password literal next to a login.+pokey\.ps1 user create')" }
-Expect "guard: a login's password literal in work/agents files denied; a targets lookup, a placeholder, a non-agent file pass ($($pwc -join ' '))" (($pwc -join ' ') -eq 'lit:True edit:True look:False tpl:False kit:False')
+Expect "guard: a login's password literal in work/agents files denied (Write, Edit, a heredoc, echo >> or Set-Content); a targets lookup, a placeholder, a non-agent file pass ($($pwc -join ' '))" (($pwc -join ' ') -eq 'lit:True edit:True look:False tpl:False kit:False heredoc:True rel:True setc:True hdlook:False hdkit:False')
 $ins = @('git stash', 'git status --short', 'echo hi') | ForEach-Object { @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = $_ } } | ConvertTo-Json -Compress -Depth 4 }
 # the decision and its reason (key order differs per process)
 $nz = { param($s) if ("$s".Trim()) { $h = ("$s" | ConvertFrom-Json).hookSpecificOutput; "$($h.permissionDecision)|$($h.permissionDecisionReason)|$($h.additionalContext)" } else { '' } }
