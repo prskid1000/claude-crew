@@ -21,7 +21,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 ## crafty
 - a resumed agent reports done -> confirm the tester guide link exists before finish (area-ASK-2 and -5 reported done with the guide MISSING)
 - wt sync leaves a detached HEAD while the branch ref lags -> before push run git checkout -B <branch> <HEAD sha> (push of the stale branch ref lost the synced commits)
-- wt commit -ScopeOk after an owner answer saying scope ok -> record scope with decide record -Gate scope -Item <branch>; the check reads a record keyed by branch (NO-WORD 2x) (2×)
+- wt commit -ScopeOk after an owner answer saying scope ok -> record scope with decide record -Gate scope -Item <branch>; the check reads a record keyed by branch (NO-WORD 2x) (3×)
 - opening an MR -> run kitbag.py prose --kind mr-title and mr-body before ship; title carries the task id, max 3 link bullets, body states UI change truthfully (MR title and body failed the prose check only at ship time)
 - [ship] writing the MR body How tested -> count PASS rows from the diff; say UI change when the diff touches a UI file (MR body marked not a UI change while the AI panel changed (6791)
 - one-off python from Git Bash -> write a scratch .py and run it with pwsh python -X utf8, not python -c (python shim echoes goto :error)
@@ -116,7 +116,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - renaming lanes, slots or other owner-visible names -> ask first (decide ask); keep the bird names (lane-<nn>/slot-<nn> switch without asking was rejected by the owner)
 - editing files from Git Bash via pwsh -Command with ${...} -> use the Edit tool (bash ate the variable and an empty string emptied testy.js)
 - piping a long kit-tests run through grep | head -> redirect kit-tests output to a file, read it after (no output until the end, run stopped and redone)
-- pushing a kit worktree to main from Git Bash -> run git -C D:/<wt> push origin HEAD:main; no cd /d/... prefix (it hides the kit dir from the guard) (push refused 2x)
+- pushing a kit worktree to main from Git Bash -> run git -C D:/<wt> push origin HEAD:main; no cd /d/... prefix (it hides the kit dir from the guard) (push refused 2x) (2×)
 - launching a .bat launcher (codexl.bat) with a prompt -> pass a one-line prompt (%* cuts a multi-line prompt at the first newline)
 - running pwsh -Command from Bash -> use single quotes or a script file; backticks inside Bash double quotes run as bash commands (the command ran wrong, 0 matches)
 - a command prints a long result (audit, lint, scan, ls-files) -> filter or range it (--warn | head, grep, -First) before it enters context (kitty bigresult: 28 runs, 327k tokens)
