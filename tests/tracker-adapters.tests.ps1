@@ -7,7 +7,7 @@ Usage: pwsh -NoProfile -File tests/tracker-adapters.tests.ps1 [-Kit <kit>] (test
 param([string]$Kit = (Split-Path $PSScriptRoot))
 Set-Item Env:CLAUDE_RUNTIME ($trRt = Join-Path ([IO.Path]::GetTempPath()) "kit-tr-rt-$PID")   # own cache: a kit's list statuses changed list calls
 . (Join-Path $Kit 'skills/crafty/lib.ps1')
-foreach ($a in 'tracker-jira', 'tracker-linear', 'tracker-youtrack', 'tracker-azure', 'gitlab', 'tracker-clickup') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
+foreach ($a in 'tracker-jira', 'tracker-linear', 'tracker-youtrack', 'tracker-azure', 'gitlab', 'github', 'tracker-clickup') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
 $global:log = [Collections.Generic.List[string]]::new(); $global:failed = 0
 $__cfg = '{"tracker":{"org":"acme","project":"Shop","commands":{"view":"mytr view {id}","status":"mytr status {id} {status}","comment":"mytr comment {id} {text}","create":"mytr create {list} {name}","list":"mytr list {list} {status}"}}}' | ConvertFrom-Json; $__trRepo = 'g/p'
 $env:JIRA_BASE_URL = 'https://j.test'; $env:JIRA_EMAIL = 'a@x'; $env:JIRA_API_TOKEN = 't'; $env:JIRA_TOKEN = 'pat'; $env:LINEAR_API_KEY = 'k'; $env:AZURE_DEVOPS_EXT_PAT = 'p'; $env:YOUTRACK_URL = 'https://yt.test'; $env:YOUTRACK_TOKEN = 'y'
@@ -80,6 +80,11 @@ try { Initialize-KitTracker -Type gitlab; $global:fx = [ordered]@{ 'GET projects
   $m1 = Move-TrackerTask 'g/p#8' -Parent 'g/p#5'; $m2 = Move-TrackerTask 'g/p#6' -Parent 'g/p#5'; $m3 = Move-TrackerTask 'g/p#8' -List g/q; $mt = try { Move-TrackerTask 'g/p#8' -Top; 'no throw' } catch { "$_" }
   $ok = $m1 -eq 'moved #8 under g/p#5' -and @($global:log -match 'PUT projects/g%2Fp/issues/5 ').Count -eq 1 -and $m2 -eq 'moved #6 under g/p#5' -and $m3 -eq 'moved #8 to g/q as #3' -and $mt -match 'task-list line on its parent' } catch { $ok = $false; "  gitlab move error: $_" }
 if (-not $ok) { $global:failed++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) tracker gitlab: move (a task-list line once, the move API to another project, top-level refused)"
+# checklist (parity): GitLab / GitHub's own checklist is a description task list: the native verb rewrites the kit section, a stale line goes
+try { Initialize-KitTracker -Type gitlab; $global:fx = [ordered]@{ 'GET projects/g%2Fp/issues/5 ' = '{"iid":5,"title":"Bug","state":"opened","labels":[],"description":"x\n<!-- kit:items -->\n**Items**\n- [ ] OLD · gone\n<!-- /kit:items -->"}'; 'PUT projects/g%2Fp/issues/5 .*kit:items' = '{"iid":5}' }; $global:log.Clear()
+  $ckr = Set-KitTaskChecklist 'g/p#5' 'Items' @([pscustomobject]@{ text = 'A1 · one'; done = $true }, [pscustomobject]@{ text = 'A2 · two'; done = $false }); $put = "$($global:log -match '-X PUT ')"
+  $ok = (Test-KitCap 'tracker' 'gitlab' 'checklist') -and (Test-KitCap 'tracker' 'github' 'checklist') -and -not (Test-KitCap 'tracker' 'jira' 'checklist') -and $ckr -match '1 removed' -and $put -match '- \[x\] A1 · one\\n- \[ \] A2 · two' -and $put -notmatch 'OLD' } catch { $ok = $false; "  gitlab checklist error: $_" }
+if (-not $ok) { $global:failed++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) tracker gitlab, github: checklist is native (a description task list), a stale kit line removed ($ckr)"
 # git host: glab calls, the memo, branch.protect answers
 function Check($what, $ok) { if (-not $ok) { $global:failed++ }; "$(if ($ok) { 'PASS' } else { 'FAIL' }) gitlab ${what}" }
 $global:calls = [Collections.Generic.List[string]]::new(); $global:post = ''

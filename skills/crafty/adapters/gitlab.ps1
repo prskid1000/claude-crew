@@ -81,6 +81,8 @@ Register-KitAdapter 'tracker' 'gitlab' @{
   }
   'statuses' = { param($a) __TrLabelLive @(__TrGl 'GET' "projects/$([uri]::EscapeDataString($a.scope))/labels?per_page=100" $null).name }   # as on github
   'comment' = { param($a) $res = __TrGl 'POST' (__TrGlPath $a.id '/notes') @{ body = $a.text }; if ($res) { "commented on #$((__TrRef $a.id)[1])" } }
+  # GitLab's checklist is a task list in the issue description (docs.gitlab.com/user/markdown/#task-lists)
+  'checklist' = { param($a) Set-KitDescChecklist $a.id $a.name $a.items -KeepDone:([bool]$a.keepDone) }
   'comments' = { param($a) @(__TrGl 'GET' (__TrGlPath $a.id '/notes?sort=asc&per_page=100') $null) | Where-Object { $_ -and -not $_.system } | ForEach-Object { __TrComment $_.author.username $_.created_at $_.body $_.id } }
   'comment-edit' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id "/notes/$($a.comment)") @{ body = $a.text }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment
   'comment-delete' = { param($a) $null = __TrGl 'DELETE' (__TrGlPath $a.id "/notes/$($a.comment)") $null; "deleted comment $($a.comment)" }

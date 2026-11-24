@@ -2,7 +2,7 @@
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
 # deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L247 deployed
+# Sections: L6 shell · L15 probe · L78 kinds · L253 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -167,11 +167,17 @@ Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-Deploye
     # the marker proves the command ran and exited 0 (the bounded ssh drops exit codes, a timeout returns nothing)
     if ($o -notcontains 'KIT_DEPLOY_OK') { return @{ note = "ssh deploy failed or timed out: $(($o | Select-Object -Last 3) -join ' / ')" } }
     @{ id = "ssh $($s.host)"; note = ($o | Where-Object { $_ -ne 'KIT_DEPLOY_OK' } | Select-Object -Last 3) -join ' / ' } }
+  # last deploy = the host's own record: ssh.shaFile's write time (a CI deploy writes it), else when the host checkout's HEAD last moved (reflog)
+  lastDeploy = { param($a) $s = $a.d.ssh; $key = [string]$s.key -replace '^~', $HOME; $su = if (Test-KitSshSudo $s) { 'sudo -n ' } else { '' }
+    $c = "$(if ($s.shaFile) { "${su}stat -c %Y $(Sq $s.shaFile) 2>/dev/null || " })git -C $(Sq ([string]$s.repoDir).TrimEnd('/')) log -g -1 --date=unix --format=%gd HEAD 2>/dev/null"
+    $o = "$(@(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', $s.host, $c)) ([int](Get-KitParam 'deploy.sshTimeoutSeconds'))) -join ' ')"
+    $n = [regex]::Match($o, '\b\d{9,11}\b').Value; if ($n) { @{ at = [DateTimeOffset]::FromUnixTimeSeconds([long]$n).LocalDateTime; source = "ssh $($s.host) $(if ($o -match 'HEAD@') { 'HEAD moved' } else { $s.shaFile })" } } }
   plan = { param($a) if ($a.d.ssh.deployCmd) { "deploys[].ssh.deployCmd on $($a.d.ssh.host) (bossy.ps1 deploy run -To $($a.d.target))" } else { "a person deploys on $($a.d.ssh.host), then bossy.ps1 deploy record" } } }
 # adapter:deploy-kind/tag
 Register-KitAdapter 'deploy-kind' 'tag' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "tag $($a.d.tag) (bossy.ps1 deploy merge -To $($a.d.target) -Push)" }; deploy = { param($a) @{ id = "$(__DkMerge $a -Push)" } }
-  # in flight = the newest CI run on a matching tag still running / pending
-  isRunning = { param($a) $pl = @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; per_page = 20 } | Where-Object { $_ -and "$($_.ref)" -match $a.d.tag })[0]; if ($pl) { (__CiWord "$($pl.status)") -in 'running', 'pending' } } }
+  # in flight = the newest CI run on a matching tag still running / pending; last deploy = the newest green one (newest first)
+  isRunning = { param($a) $pl = @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; per_page = 20 } | Where-Object { $_ -and "$($_.ref)" -match $a.d.tag })[0]; if ($pl) { (__CiWord "$($pl.status)") -in 'running', 'pending' } }
+  lastDeploy = { param($a) foreach ($pl in @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; per_page = 20 } | Where-Object { $_ -and "$($_.ref)" -match $a.d.tag })) { if ((__CiWord "$($pl.status)") -eq 'success') { return @{ at = ([datetime]$(if ($pl.updated_at) { $pl.updated_at } else { $pl.created_at })).ToLocalTime(); source = "CI tag $($pl.ref)" } } } } }
 # adapter:deploy-kind/probe
 Register-KitAdapter 'deploy-kind' 'probe' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "a person deploys, then bossy.ps1 deploy record; the probe $($a.d.probe) checks it" } }
 # adapter:deploy-kind/manual

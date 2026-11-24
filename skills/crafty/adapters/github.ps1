@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # github: GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L6 gh · L17 tracker · L83 git-host · L122 ci
+# Sections: L6 gh · L17 tracker · L85 git-host · L124 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -38,6 +38,8 @@ Register-KitAdapter 'tracker' 'github' @{
   # a repo's states: open / closed + its status labels (task-items.ps1 __TrLabelLive; a missing role label is created on its first write)
   'statuses' = { param($a) __TrLabelLive @(__TrJson (__GhCli @('label', 'list', '-R', $a.scope, '--limit', '200', '--json', 'name'))).name }
   'comment' = { param($a) $r, $n = __TrRef $a.id; __TrGhBody @('issue', 'comment', $n, '-R', $r) $a.text }
+  # GitHub's checklist is a task list in the issue body (docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/about-task-lists)
+  'checklist' = { param($a) Set-KitDescChecklist $a.id $a.name $a.items -KeepDone:([bool]$a.keepDone) }
   'comments' = { param($a) $r, $n = __TrRef $a.id; @((__TrJson (__GhCli @('issue', 'view', $n, '-R', $r, '--json', 'comments'))).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.createdAt $_.body $(if ("$($_.url)" -match '#issuecomment-(\d+)') { $Matches[1] }) } }
   # a kit comment edited in place / a stale one removed (lib.ps1 Set-TrackerKitComment, tracker uncomment): REST id from the comment URL
   'comment-edit' = { param($a) $r = (__TrRef $a.id)[0]; if ($__trDry) { return "DRYRUN: gh api -X PATCH repos/$r/issues/comments/$($a.comment)" }; __GhEnv; $x = __Cli gh "repos/$r/issues/comments/$($a.comment)" 'PATCH' @{ body = $a.text } -Json -Res; if (-not $x -or $x.code) { throw "tracker (github): comment $($a.comment) not edited: $($x.err)" }; "edited comment $($a.comment)" }

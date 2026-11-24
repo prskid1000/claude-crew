@@ -3,8 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L8 items · L88 move · L131 status roles · L290 task text · L307 naming · L430 track lines · L435 task ids ·
-#   L451 tags · L510 order
+# Sections: L8 items · L93 move · L136 status roles · L295 task text · L312 naming · L435 track lines · L440 task ids ·
+#   L456 tags · L515 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -13,6 +13,11 @@ $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrit
 function Set-KitTaskChecklist([string]$Task, [string]$Name, $Items, [switch]$Prune, [switch]$KeepDone) {
   $seen = @{}; $Items = @($Items | Where-Object { $ky = ("$($_.text)" -split ' · ', 2)[0].Trim(); -not $seen[$ky]++ })   # one line per key
   if (__TrCan checklist) { return __TrA 'checklist' @{ id = $Task; name = $Name; prune = [bool]$Prune; keepDone = [bool]$KeepDone; items = @($Items | ForEach-Object { @{ text = $_.text; done = [bool]$_.done } }) } }
+  Set-KitDescChecklist $Task $Name $Items -KeepDone:$KeepDone
+}
+# the checklist as a markdown task list in a <!-- kit:<name> --> description section (the whole list; GitHub / GitLab render it as
+# their native checkboxes, other trackers as text): kit lines not in $Items go, -KeepDone keeps a ticked one
+function Set-KitDescChecklist([string]$Task, [string]$Name, $Items, [switch]$KeepDone) {
   Clear-TrackerMemo $Task; $tk = Get-TrackerTask $Task; if (-not $tk.name) { throw "tracker read of $Task failed" }
   $sx = [regex]::Match(("$($tk.description)" -replace "`r`n", "`n"), "(?s)<!-- kit:$([regex]::Escape($Name.ToLower())) -->\n(.*?)\n<!-- /kit:"); $wk = @($Items | ForEach-Object { ("$($_.text)" -split ' · ', 2)[0].Trim() })
   $gone = @(if ($sx.Success) { @($sx.Groups[1].Value -split "`n" | Where-Object { $_ -match '^- \[( |x)\] (?<t>.+)$' -and $wk -notcontains ($Matches.t -split ' · ', 2)[0].Trim() } ) })

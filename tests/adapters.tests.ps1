@@ -117,15 +117,23 @@ Remove-Item $kl
 $dkR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/pokey/adapters/deployed-checks.ps1')
   function aws { "2026-11-20T10:00:00.000Z`tUPDATE_IN_PROGRESS`t2026-01-01T00:00:00Z" }
   function LaneApk { [pscustomobject]@{ commit = 'abc1234'; built = '2026-11-21T09:00:00' } }
-  function Invoke-HostVerb { param($Verb, $A) if ($Verb -eq 'repo.commit' -and $A.ref -eq 'release') { [pscustomobject]@{ id = 'f00'; committed_date = '2026-11-22T08:00:00Z' } } }
+  function Invoke-HostVerb { param($Verb, $A) if ($Verb -eq 'repo.commit' -and $A.ref -eq 'release') { [pscustomobject]@{ id = 'f00'; committed_date = '2026-11-22T08:00:00Z' } }
+    if ($Verb -eq 'ci.runs') { @([pscustomobject]@{ ref = 'v1.3'; status = 'running' }, [pscustomobject]@{ ref = 'main'; status = 'success' }, [pscustomobject]@{ ref = 'v1.2'; status = 'success'; updated_at = '2026-11-23T07:00:00Z' }) } }
+  # ssh lastDeploy: shaFile stat (sudo when set), else the HEAD reflog time; the remote command is what the host runs
+  function Invoke-BoundedSsh($A, $Sec) { $global:dkSsh = $A[-1]; if ($A[-1] -match 'stat -c') { '1763884800' } else { 'HEAD@{1763971200}' } }
   $o = [ordered]@{}; $st = @{ awsStack = 'shop-api'; target = 't' }; $ld = Invoke-KitDeployKind $st 'lastDeploy'
   $o.stack = $ld.source -eq 'stack shop-api' -and $ld.at.ToUniversalTime().Hour -eq 10 -and (Invoke-KitDeployKind $st 'isRunning') -eq $true
   $o.apk = (Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'lastDeploy').source -eq 'lane APK abc1234'
   $o.branch = (Invoke-KitDeployKind @{ kind = 'branch-mr'; branch = 'release'; target = 't' } 'lastDeploy' @{ repo = 'g/shop' }).source -eq 'branch release head'
+  $tg = Invoke-KitDeployKind @{ tag = '^v\d'; target = 't' } 'lastDeploy' @{ repo = 'g/shop' }; $o.tag = $tg.source -eq 'CI tag v1.2' -and $tg.at.ToUniversalTime().Hour -eq 7
+  $s1 = Invoke-KitDeployKind @{ ssh = @{ host = 'h1'; repoDir = '/srv/app/'; shaFile = '/srv/app/REVISION'; sudo = $true }; target = 't' } 'lastDeploy'; $c1 = $global:dkSsh
+  $s2 = Invoke-KitDeployKind @{ ssh = @{ host = 'h1'; repoDir = '/srv/app' }; target = 't' } 'lastDeploy'
+  $o.ssh = $s1.source -eq 'ssh h1 /srv/app/REVISION' -and $c1 -match "^sudo -n stat -c %Y '/srv/app/REVISION'" -and ([DateTimeOffset]$s1.at).ToUnixTimeSeconds() -eq 1763884800 -and
+    $s2.source -eq 'ssh h1 HEAD moved' -and $global:dkSsh -match "^git -C '/srv/app' log -g" -and ([DateTimeOffset]$s2.at).ToUnixTimeSeconds() -eq 1763971200
   $dks = @(@{ command = @{ deploy = 'x' }; target = 't' }, @{ ssh = @{ host = 'h1' }; target = 't' }, @{ probe = 'echo x'; target = 't' }, $st, @{ laneApk = $true; target = 't' })
   $o.plan = @($dks | Where-Object { -not "$(Invoke-KitDeployKind $_ 'plan')" }).Count -eq 0 -and "$(Invoke-KitDeployKind $dks[1] 'plan')" -match 'a person deploys on h1'
   $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
-Expect-Each $dkR 'deploy kind: #' @('stack', 'apk', 'branch', 'plan') -Show 5
+Expect-Each $dkR 'deploy kind: #' @('stack', 'apk', 'branch', 'tag', 'ssh', 'plan') -Show 7
 
 # data stores: redis and search engines answer schemaSizes rows from their own APIs (no SQL); no marks / temp caps
 $dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/envy/adapters/db-engines.ps1')

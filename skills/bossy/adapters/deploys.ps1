@@ -510,7 +510,7 @@ function Invoke-DeployRun([string]$To, [string]$Repo, [Alias('Mr')][string[]]$Mr
 function Test-KitDeployRunning([string]$To) {
   $j = try { Get-Content -LiteralPath (Join-Path (Get-KitPath deploys) "running-$(ConvertTo-KitSlug $To).json") -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
   $pr = if ($j) { Get-Process -Id ([int]$j.pid) -ErrorAction SilentlyContinue }   # a reused pid started after the marker is not it
-  [bool]($pr -and (-not $pr.StartTime -or $pr.StartTime -le ([datetimeoffset]"$($j.start)").LocalDateTime.AddSeconds(1)))
+  [bool]($pr -and (-not $pr.StartTime -or -not $j.start -or $pr.StartTime -le ([datetimeoffset]"$($j.start)").LocalDateTime.AddSeconds(1)))
 }
 function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMinutes = 20, [int]$RecheckSeconds = 120, [switch]$Ungated) {
   foreach ($t in $Targets) {

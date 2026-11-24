@@ -10,7 +10,7 @@
       "names": "command none",
       "vendors": "clickup github gitlab jira jira-server linear youtrack azure",
       "fallback": {
-        "checklist": "an Items block in the description (<!-- kit:<name> -->)",
+        "checklist": "an Items block in the description (<!-- kit:<name> -->): the markdown task list GitHub and GitLab use natively; the other issue APIs have no checklist field (Jira: Marketplace apps only)",
         "dependencies": "a **Waits on:** line in the description"
       }
     },
@@ -61,10 +61,10 @@
       "caps": "deploy",
       "names": "command ci-job branch-mr ssh tag probe manual awsStack laneApk",
       "fallback": {
-        "lastDeploy": "the kit's deploy log (bossy.ps1 deploy run / record) of the target: the deploy board's last time",
-        "deploy": "the row's command.deploy line ({sha} {repo} {mr}; bossy.ps1 deploy run), else UNSUPPORTED: a person deploys, then bossy.ps1 deploy record",
-        "isRunning": "a bossy.ps1 deploy run of the target in flight (deploys/running-<target>.json, its process alive: deploys.ps1 Test-KitDeployRunning)",
-        "restart": "the row's command.restart line ({service}), else its ssh block (host, manager or restartCmd), else bossy.ps1 deploy restart refuses naming them"
+        "lastDeploy": "the kit's deploy log (bossy.ps1 deploy run / record) of the target: the deploy board's last time (manual, probe: a person deploys, no system records it)",
+        "deploy": "the row's command.deploy line ({sha} {repo} {mr}; bossy.ps1 deploy run), else UNSUPPORTED: a person deploys, then bossy.ps1 deploy record (probe: it only reads the live commit)",
+        "isRunning": "a bossy.ps1 deploy run of the target in flight (deploys/running-<target>.json, its process alive: deploys.ps1 Test-KitDeployRunning; manual, probe: no system to ask; ssh: the host runs any deployCmd, no lock to read; laneApk: phoney.ps1 build keeps none)",
+        "restart": "the row's command.restart line ({service}), else its ssh block (host, manager or restartCmd), else bossy.ps1 deploy restart refuses naming them (a kind is the delivery path, not the runtime: the row says how its service restarts)"
       }
     },
     "secret-store": {
